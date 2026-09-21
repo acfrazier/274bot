@@ -346,6 +346,19 @@ table Snapshot {
   // Last-seen unobserved obligation count (latest/prev seq>observed + held).
   // Advisory; isolate authorize can lag the host drain.
   route_inspect_unobserved: ulong = 0;
+  // One current-plane raw i32 collision grid. Slot 242. Omitted in a delta
+  // is keep; first post without the table materializes unavailable.
+  collision: Collision;
+}
+
+table Collision {
+  available: bool;
+  base_x: int;
+  base_z: int;
+  level: int;
+  width: int;
+  height: int;
+  flags: [int];
 }
 
 // One packed inspect hop (transports only). kind is TransportKind lowercased.

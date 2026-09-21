@@ -10278,6 +10278,180 @@ fn script_snapshot_crops_shared_canlight_from_profile_plane() {
 }
 
 #[test]
+fn script_snapshot_fb_posts_collision_and_los_identity() {
+    use client::dash3d::CollisionFlag;
+    let mut c = prepare_client(
+        ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 1,
+            cache_dir: String::new(),
+            members: true,
+            lowmem: true,
+        },
+        1,
+        Arc::new(Cache::default()),
+        Arc::new(vec![]),
+        Vec::new(),
+    );
+    c.ingame = true;
+    c.scene_state = 2;
+    c.map_build_base_x = 3200;
+    c.map_build_base_z = 3200;
+    c.minusedlevel = 0;
+    c.collision[0].add_wall(5, 1, 0, 0, true);
+    c.bump_gens(ServerProt::REBUILD_NORMAL);
+    let mut snap = GameSnapshot::new();
+    snap.rebuild(&c);
+    assert!(snap.scene().available);
+    assert_eq!(snap.scene().width, 104);
+    assert_eq!(snap.scene().collision_flags.len(), 104 * 104);
+    assert_ne!(
+        snap.scene().collision_flags[5 * 104 + 1] & CollisionFlag::V_W,
+        0
+    );
+
+    let (bytes, fp) = script_snapshot_fb(
+        None,
+        false,
+        1,
+        Some((3201, 3201, 0)),
+        true,
+        None,
+        Some(&snap),
+        None,
+        None,
+        false,
+        false,
+        false,
+    );
+    let view = script::isolate_fb::decode_snapshot(&bytes).expect("snapshot decodes");
+    let packed = view.collision().expect("production packer posts collision");
+    assert!(packed.available());
+    assert_eq!(
+        (packed.base_x(), packed.base_z(), packed.level()),
+        (3200, 3200, 0)
+    );
+    assert_eq!((packed.width(), packed.height()), (104, 104));
+    let flags = packed.flags();
+    assert_eq!(flags.len(), 104 * 104);
+    assert_ne!(flags[5 * 104 + 1] & CollisionFlag::V_W, 0);
+    assert_eq!(flags[1 * 104 + 1], CollisionFlag::_OPEN);
+
+    script::line_of_sight::on_reset();
+    script::line_of_sight::on_snapshot(&view);
+    let here = api::snapshot::WorldTile {
+        x: 3201,
+        z: 3201,
+        level: 0,
+    };
+    let open_to = api::snapshot::WorldTile {
+        x: 3203,
+        z: 3201,
+        level: 0,
+    };
+    let blocked_to = api::snapshot::WorldTile {
+        x: 3208,
+        z: 3201,
+        level: 0,
+    };
+    assert_eq!(
+        script::line_of_sight::query_v2(here, open_to, Some(1)),
+        Ok(true)
+    );
+    assert_eq!(
+        script::line_of_sight::query_v2(here, blocked_to, Some(1)),
+        Ok(false)
+    );
+    assert!(script::line_of_sight::query_v1(here, open_to, None));
+    assert!(!script::line_of_sight::query_v1(here, blocked_to, None));
+    assert_eq!(
+        script::line_of_sight::raw_flag_at(1 * 104 + 1),
+        Some(CollisionFlag::_OPEN)
+    );
+    assert_eq!(script::line_of_sight::raw_flag_at(-1), None);
+
+    let iso = script::LoadIsolate::spawn(
+        r#"
+export const apiVersion = 2;
+export function tick(api) {
+  const c = api.snapshot.collision;
+  const here = { x: 3201, z: 3201, level: 0 };
+  globalThis.__probe = {
+    available: c.available,
+    length: c.flags.length,
+    atSelf: c.flags.at(1 * c.height + 1),
+    atVis: c.flags.at(5 * c.height + 1),
+    open: api.lineOfSight({ from: here, to: { x: 3203, z: 3201, level: 0 }, size: 1 }),
+    blocked: api.lineOfSight({ from: here, to: { x: 3208, z: 3201, level: 0 }, size: 1 }),
+  };
+}
+"#
+        .into(),
+        script::LoadShape::NativeTick,
+        vec![],
+    )
+    .unwrap();
+    iso.post_snapshot(bytes);
+    iso.on_game_tick(1);
+    let value = iso.probe("globalThis.__probe").unwrap();
+    assert_eq!(value["available"], true);
+    assert_eq!(value["length"], serde_json::json!(104 * 104));
+    assert_eq!(value["atSelf"], serde_json::json!(CollisionFlag::_OPEN));
+    assert_ne!(value["atVis"].as_i64().unwrap() & CollisionFlag::V_W as i64, 0);
+    assert_eq!(value["open"]["ok"], true);
+    assert_eq!(value["open"]["value"], true);
+    assert_eq!(value["blocked"]["ok"], true);
+    assert_eq!(value["blocked"]["value"], false);
+    iso.join();
+
+    let (delta, fp2) = script_snapshot_fb(
+        Some(&fp),
+        false,
+        2,
+        Some((3201, 3201, 0)),
+        true,
+        None,
+        Some(&snap),
+        None,
+        None,
+        false,
+        false,
+        false,
+    );
+    let delta = script::isolate_fb::decode_snapshot(&delta).expect("delta");
+    assert!(
+        !delta.has_collision(),
+        "unchanged production collision must be omitted"
+    );
+    assert!(
+        std::sync::Arc::ptr_eq(&fp.collision.flags, &fp2.collision.flags),
+        "unchanged tick reuses the last flags Arc"
+    );
+
+    c.scene_state = 1;
+    snap.rebuild(&c);
+    assert!(!snap.scene().available);
+    let (cleared, _) = script_snapshot_fb(
+        Some(&fp2),
+        false,
+        3,
+        Some((3201, 3201, 0)),
+        true,
+        None,
+        Some(&snap),
+        None,
+        None,
+        false,
+        false,
+        false,
+    );
+    let cleared = script::isolate_fb::decode_snapshot(&cleared).expect("cleared");
+    let gone = cleared.collision().expect("unpublish posts a clear");
+    assert!(!gone.available());
+    assert!(gone.flags().is_empty());
+}
+
+#[test]
 fn native_chat_producer_reaches_isolate_with_request_identity() {
     let mut c = prepare_client(
         ClientConfig {
@@ -14203,6 +14377,7 @@ fn observer_pump_inactive_watches_skip_lifecycle_and_guardian_producers() {
             catalog_core::BoundedGuardian::default()
         },
         None,
+        None,
     );
 
     assert!(
@@ -14248,6 +14423,7 @@ fn observer_pump_configured_catalog_runs_producers_and_clear_stops_them() {
                 }
             },
             None,
+            None,
         );
     };
 
@@ -14286,6 +14462,7 @@ fn observer_pump_paired_only_skips_catalog_fact_producers() {
             None
         },
         || catalog_core::BoundedGuardian::default(),
+        None,
         None,
     );
 
@@ -14327,6 +14504,7 @@ fn observer_pump_session_boundary_skips_guardian_producer_but_keeps_catalog_life
             guardian_called.set(true);
             unreachable!("session boundary must not read prior-frame random status")
         },
+        None,
         None,
     );
 

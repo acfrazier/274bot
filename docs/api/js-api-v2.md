@@ -185,6 +185,33 @@ required.
 
 Example: `crates/script/examples/loadout_potion_v2.ts`.
 
+## Line of sight
+
+`snapshot.collision` is the posted one-plane raw `i32` grid. `flags` is a
+readonly view (`length`, `at(index)`). Index is `lx * height + lz`. `0` is
+clear, not absent. `at` returns `undefined` for a non-finite or non-integer
+index, a negative index, or an index `>= length`. Do not treat it as a
+TypedArray.
+
+`api.lineOfSight({ from, to, size? })` is the typed v2 helper. Size omitted
+is `1`; a present size must be an integer in `1..=104` even when the family
+is absent (`width === 0`). Different planes return `{ok:true, value:false}`
+without a family. Same-plane absence is `{ok:false, error:'missing-observation'}`.
+A destination footprint that extends past the scene is not rejected when both
+origins and the sampled ray stay valid.
+
+v1 `Reachability.lineOfSight(from, to, size?)` marshals the same Rust ray and
+returns `false` for invalid tiles, missing family, or a non-integer / `0` /
+`>104` size.
+
+Example: `crates/script/examples/line_of_sight_v2.ts`. The File witness
+selects two observed cardinal adjacent pairs from raw `flags.at` (open:
+start not `WALK_SCENERY` and entering projectile V-bit clear; blocked:
+entering V-direction bit set). `VIS_SCENERY` at the destination is not a
+blocked pair. It then calls real `api.lineOfSight` and imported
+`Reachability.lineOfSight` on those pairs. Pair selection is qualification
+fixture logic, not API policy.
+
 ## Sync and async tick
 
 A v2 `tick` may be async. The isolate will not re-enter `tick` while that

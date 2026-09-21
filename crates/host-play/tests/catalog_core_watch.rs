@@ -1,11 +1,15 @@
 use std::sync::Arc;
 
 use host_play::catalog_core::{
-    firemaker_spec, BoundedLoc, CoreCase, CoreWatch, CoreWatchStatus, FiremakerCycle, Observation,
+    firemaker_spec, line_of_sight_dest_vis_alone, line_of_sight_pair_is_blocked,
+    line_of_sight_pair_is_open, select_line_of_sight_pairs, BoundedLoc, CoreCase, CoreWatch,
+    CoreWatchStatus, FiremakerCycle, LineOfSightHere, LineOfSightIdentity, LineOfSightObservation,
+    LineOfSightPair, LineOfSightPairResult, LineOfSightScriptReceipt, LineOfSightTile, Observation,
     RouteInspectHopFact, BRIMHAVEN_INSPECT_BANK, BRIMHAVEN_INSPECT_FIELD, BRIMHAVEN_INSPECT_PIER,
-    CERT_RUNE_CHAINBODY_ID, COINS_ID, HIGH_ALCH_MAGIC_XP, LOBSTER_ID, NATURE_RUNE_ID, OAK_LOGS_ID,
-    RUNE_CHAINBODY_HIGH_ALCH_COINS, STAFF_OF_FIRE_ID, TINDERBOX_ID, UNIDENTIFIED_GUAM_ID,
-    UNIDENTIFIED_MARENTILL_ID, VARROCK_EAST_BANK, VARROCK_WEST_BANK,
+    CERT_RUNE_CHAINBODY_ID, COINS_ID, HIGH_ALCH_MAGIC_XP, LOBSTER_ID, LOS_V2_STOP, LOS_VIS_SCENERY,
+    LOS_V_E, LOS_V_W, LOS_WALK_SCENERY, NATURE_RUNE_ID, OAK_LOGS_ID, RUNE_CHAINBODY_HIGH_ALCH_COINS,
+    STAFF_OF_FIRE_ID, TINDERBOX_ID, UNIDENTIFIED_GUAM_ID, UNIDENTIFIED_MARENTILL_ID,
+    VARROCK_EAST_BANK, VARROCK_WEST_BANK,
 };
 
 fn thiever_observation() -> Observation {
@@ -1443,5 +1447,561 @@ fn prayer_unready_and_outoforder_cannot_pass() {
     assert!(
         watch.qualify().is_err(),
         "later all-off+stop without a prior ON latch is out of order"
+    );
+}
+
+fn los_identity() -> LineOfSightIdentity {
+    LineOfSightIdentity {
+        base_x: 3200,
+        base_z: 3200,
+        level: 0,
+        width: 104,
+        height: 104,
+    }
+}
+
+fn los_open_pair() -> LineOfSightPair {
+    LineOfSightPair {
+        from: LineOfSightTile {
+            x: 3201,
+            z: 3201,
+            level: 0,
+        },
+        to: LineOfSightTile {
+            x: 3200,
+            z: 3201,
+            level: 0,
+        },
+        src: 0,
+        dst: 0,
+        mask: 0x1000,
+    }
+}
+
+fn los_blocked_pair() -> LineOfSightPair {
+    LineOfSightPair {
+        from: LineOfSightTile {
+            x: 3201,
+            z: 3201,
+            level: 0,
+        },
+        to: LineOfSightTile {
+            x: 3202,
+            z: 3201,
+            level: 0,
+        },
+        src: 0,
+        dst: LOS_V_W,
+        mask: LOS_V_W,
+    }
+}
+
+fn los_pair_result(pair: LineOfSightPair, v2: bool, v1: bool) -> LineOfSightPairResult {
+    LineOfSightPairResult {
+        from: pair.from,
+        to: pair.to,
+        src: pair.src,
+        dst: pair.dst,
+        mask: pair.mask,
+        v2,
+        v1,
+    }
+}
+
+fn los_ready() -> Observation {
+    let mut observation = Observation {
+        ingame: true,
+        scene_state: 2,
+        player: Some("catalogtest".into()),
+        tile: Some((3201, 3201, 0)),
+        ..Observation::default()
+    };
+    observation.los = LineOfSightObservation {
+        available: true,
+        identity: los_identity(),
+        here: Some(LineOfSightTile {
+            x: 3201,
+            z: 3201,
+            level: 0,
+        }),
+        here_flag: Some(0),
+        ..LineOfSightObservation::default()
+    };
+    observation
+}
+
+fn los_joined(mut observation: Observation) -> Observation {
+    observation.tick += 1;
+    let open = los_open_pair();
+    let blocked = los_blocked_pair();
+    observation.los.host_open = Some(open);
+    observation.los.host_blocked = Some(blocked);
+    observation.los.receipt = Some(LineOfSightScriptReceipt {
+        identity: los_identity(),
+        here: LineOfSightHere {
+            x: 3201,
+            z: 3201,
+            level: 0,
+            flag: 0,
+        },
+        open: los_pair_result(open, true, true),
+        blocked: los_pair_result(blocked, false, false),
+    });
+    observation
+}
+
+fn los_stop(mut observation: Observation, reason: &str) -> Observation {
+    observation.tick += 1;
+    observation.script_lifecycle = Some(script::ScriptLifecycleReceipt {
+        runtime_generation: 1,
+        state: script::ScriptTerminalState::Stopped,
+        tick: observation.tick as u64,
+        reason: reason.into(),
+    });
+    observation
+}
+
+#[test]
+fn line_of_sight_selection_uses_v_mask_not_walk_or_dest_vis() {
+    let here = LineOfSightTile {
+        x: 5,
+        z: 5,
+        level: 0,
+    };
+    let vis_only = |x: i32, z: i32| {
+        if x == 7 && z == 5 {
+            Some(LOS_VIS_SCENERY)
+        } else {
+            Some(0)
+        }
+    };
+    assert!(
+        select_line_of_sight_pairs(here, vis_only).is_err(),
+        "destination VIS_SCENERY alone is not a blocked pair"
+    );
+
+    let walk_dest = |x: i32, z: i32| {
+        if x == 6 && z == 5 {
+            Some(LOS_WALK_SCENERY)
+        } else {
+            Some(0)
+        }
+    };
+    assert!(
+        select_line_of_sight_pairs(here, walk_dest).is_err(),
+        "destination WALK_SCENERY is not an entering V-wall"
+    );
+
+    let flags = |x: i32, z: i32| {
+        if x == 6 && z == 5 {
+            Some(LOS_V_W)
+        } else {
+            Some(0)
+        }
+    };
+    let (open, blocked) = select_line_of_sight_pairs(here, flags).expect("V-wall pair");
+    assert!(line_of_sight_pair_is_open(&open));
+    assert!(line_of_sight_pair_is_blocked(&blocked));
+    assert!(!line_of_sight_dest_vis_alone(&blocked));
+    assert_eq!(blocked.to.x, 6);
+    assert_eq!(blocked.mask, LOS_V_W);
+}
+
+#[test]
+fn line_of_sight_rejects_source_scenery_blocked_despite_entering_v() {
+    // Matches the R2 root disqualification shape: dest carries entering V_E
+    // (and more), but source WALK_SCENERY makes the helper return false before
+    // wall tracing — not a wall-specific negative.
+    let scenery_src = LOS_WALK_SCENERY | 0x210080;
+    let pair = LineOfSightPair {
+        from: LineOfSightTile {
+            x: 3217,
+            z: 3217,
+            level: 0,
+        },
+        to: LineOfSightTile {
+            x: 3216,
+            z: 3217,
+            level: 0,
+        },
+        src: scenery_src,
+        dst: LOS_V_E | 0x8,
+        mask: LOS_V_E,
+    };
+    assert!(
+        !line_of_sight_pair_is_blocked(&pair),
+        "source WALK_SCENERY + entering V is not a wall-specific blocked pair"
+    );
+
+    let here = LineOfSightTile {
+        x: 5,
+        z: 5,
+        level: 0,
+    };
+    // Only candidate: from (6,5) has WALK_SCENERY, dest (7,5) has V_W.
+    let scenery_only = |x: i32, z: i32| {
+        if x == 6 && z == 5 {
+            Some(LOS_WALK_SCENERY)
+        } else if x == 7 && z == 5 {
+            Some(LOS_V_W)
+        } else {
+            Some(0)
+        }
+    };
+    assert!(
+        select_line_of_sight_pairs(here, scenery_only).is_err(),
+        "source-scenery-only negative must fail the fixture honestly"
+    );
+
+    // Earlier scenery+V candidate at r=1, clear-source V-wall at r=2.
+    // Selector must skip the scenery source and latch the clear wall pair.
+    let skip_to_clear = |x: i32, z: i32| {
+        if x == 6 && z == 5 {
+            Some(LOS_WALK_SCENERY)
+        } else if x == 7 && z == 5 {
+            Some(LOS_V_W)
+        } else if x == 7 && z == 6 {
+            Some(LOS_V_W)
+        } else {
+            Some(0)
+        }
+    };
+    let (open, blocked) =
+        select_line_of_sight_pairs(here, skip_to_clear).expect("clear-source V-wall pair");
+    assert!(line_of_sight_pair_is_open(&open));
+    assert!(line_of_sight_pair_is_blocked(&blocked));
+    assert_eq!(blocked.src & LOS_WALK_SCENERY, 0);
+    assert_eq!(blocked.from.x, 6);
+    assert_eq!(blocked.from.z, 6);
+    assert_eq!(blocked.to.x, 7);
+    assert_eq!(blocked.to.z, 6);
+    assert_eq!(blocked.mask, LOS_V_W);
+}
+
+#[test]
+fn line_of_sight_v2_requires_joined_receipt_and_named_stop() {
+    let case = CoreCase::parse("line_of_sight_v2_ts").expect("named los cell");
+    assert!(case.copies_line_of_sight());
+    assert!(!case.copies_prayer_varps());
+    assert!(!case.copies_route_inspect());
+    let watch = CoreWatch::default();
+    watch.configure(case, "catalogtest");
+    let baseline = los_ready();
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    watch.observe("catalogtest", baseline.clone(), false);
+    assert!(
+        watch.qualify().unwrap_err().contains("incomplete"),
+        "seed-only scene identity must not qualify"
+    );
+
+    let joined = los_joined(baseline);
+    watch.observe("catalogtest", joined.clone(), false);
+    assert!(
+        watch.qualify().is_err(),
+        "joined receipt without the named helper stop is incomplete"
+    );
+
+    watch.observe("catalogtest", los_stop(joined, LOS_V2_STOP), false);
+    watch
+        .qualify()
+        .expect("host pairs, joined receipt, and named stop");
+}
+
+#[test]
+fn line_of_sight_rejects_noquery_negative_identity_and_wrong_stop() {
+    let case = CoreCase::parse("line_of_sight_v2_ts").expect("named los cell");
+    let watch = CoreWatch::default();
+    watch.configure(case, "catalogtest");
+    let baseline = los_ready();
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    watch.observe(
+        "catalogtest",
+        los_stop(baseline.clone(), LOS_V2_STOP),
+        false,
+    );
+    assert!(
+        watch.qualify().is_err(),
+        "named stop without a post-Start query receipt cannot pass"
+    );
+
+    watch.configure(case, "catalogtest");
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    let mut negative = los_joined(baseline.clone());
+    if let Some(receipt) = negative.los.receipt.as_mut() {
+        receipt.open.v2 = false;
+        receipt.open.v1 = false;
+    }
+    watch.observe("catalogtest", negative, false);
+    assert!(
+        watch.qualify().is_err(),
+        "negative-only answers cannot pass"
+    );
+
+    watch.configure(case, "catalogtest");
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    let mut mismatch = los_joined(baseline.clone());
+    if let Some(receipt) = mismatch.los.receipt.as_mut() {
+        receipt.identity.base_x = 0;
+    }
+    mismatch.script_lifecycle = los_stop(mismatch.clone(), LOS_V2_STOP).script_lifecycle;
+    watch.observe("catalogtest", mismatch, false);
+    assert!(
+        watch.qualify().is_err(),
+        "receipt identity mismatch cannot pass"
+    );
+
+    watch.configure(case, "catalogtest");
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    let joined = los_joined(baseline);
+    watch.observe("catalogtest", joined.clone(), false);
+    watch.observe(
+        "catalogtest",
+        los_stop(joined, "some other stop"),
+        false,
+    );
+    assert!(
+        watch.qualify().is_err(),
+        "wrong named stop cannot pass"
+    );
+}
+
+#[test]
+fn line_of_sight_rejects_walk_mask_dest_vis_unready_and_missing() {
+    let case = CoreCase::parse("line_of_sight_v2_ts").expect("named los cell");
+    let watch = CoreWatch::default();
+    watch.configure(case, "catalogtest");
+    let mut unready = los_ready();
+    unready.scene_state = 1;
+    watch.observe("catalogtest", unready, false);
+    assert!(
+        watch.begin_start("catalogtest").is_err(),
+        "scene_state!=2 is unready"
+    );
+
+    watch.configure(case, "catalogtest");
+    let mut missing = los_ready();
+    missing.los.available = false;
+    missing.los.here_flag = None;
+    watch.observe("catalogtest", missing, false);
+    assert!(
+        watch.begin_start("catalogtest").is_err(),
+        "missing SceneView cannot start"
+    );
+
+    watch.configure(case, "catalogtest");
+    let baseline = los_ready();
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    let mut walk_blocked = los_joined(baseline.clone());
+    let walk_pair = LineOfSightPair {
+        from: LineOfSightTile {
+            x: 3201,
+            z: 3201,
+            level: 0,
+        },
+        to: LineOfSightTile {
+            x: 3202,
+            z: 3201,
+            level: 0,
+        },
+        src: 0,
+        dst: LOS_WALK_SCENERY,
+        mask: LOS_V_W,
+    };
+    walk_blocked.los.host_blocked = Some(walk_pair);
+    if let Some(receipt) = walk_blocked.los.receipt.as_mut() {
+        receipt.blocked = los_pair_result(walk_pair, false, false);
+    }
+    walk_blocked.script_lifecycle = los_stop(walk_blocked.clone(), LOS_V2_STOP).script_lifecycle;
+    watch.observe("catalogtest", walk_blocked, false);
+    assert!(
+        watch.qualify().is_err(),
+        "WALK_SCENERY destination is not an entering V-wall"
+    );
+
+    watch.configure(case, "catalogtest");
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    let mut vis = los_joined(baseline.clone());
+    let vis_pair = LineOfSightPair {
+        from: LineOfSightTile {
+            x: 3201,
+            z: 3201,
+            level: 0,
+        },
+        to: LineOfSightTile {
+            x: 3202,
+            z: 3201,
+            level: 0,
+        },
+        src: 0,
+        dst: LOS_VIS_SCENERY,
+        mask: LOS_V_W,
+    };
+    vis.los.host_blocked = Some(vis_pair);
+    if let Some(receipt) = vis.los.receipt.as_mut() {
+        receipt.blocked = los_pair_result(vis_pair, false, false);
+    }
+    vis.script_lifecycle = los_stop(vis.clone(), LOS_V2_STOP).script_lifecycle;
+    watch.observe("catalogtest", vis, false);
+    assert!(
+        watch.qualify().is_err(),
+        "destination VIS_SCENERY alone is not a blocked pair"
+    );
+
+    watch.configure(case, "catalogtest");
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    let mut scenery_src = los_joined(baseline);
+    let scenery_pair = LineOfSightPair {
+        from: LineOfSightTile {
+            x: 3201,
+            z: 3201,
+            level: 0,
+        },
+        to: LineOfSightTile {
+            x: 3202,
+            z: 3201,
+            level: 0,
+        },
+        // R2 shape: source WALK_SCENERY set, dest still carries entering V.
+        src: LOS_WALK_SCENERY | 0x210080,
+        dst: LOS_V_W | 0x8,
+        mask: LOS_V_W,
+    };
+    scenery_src.los.host_blocked = Some(scenery_pair);
+    if let Some(receipt) = scenery_src.los.receipt.as_mut() {
+        receipt.blocked = los_pair_result(scenery_pair, false, false);
+    }
+    scenery_src.script_lifecycle =
+        los_stop(scenery_src.clone(), LOS_V2_STOP).script_lifecycle;
+    watch.observe("catalogtest", scenery_src, false);
+    assert!(
+        watch.qualify().is_err(),
+        "source WALK_SCENERY blocked pair cannot join Core even with entering V"
+    );
+}
+
+#[test]
+fn line_of_sight_join_then_host_drift_retains_coherent_evidence() {
+    let case = CoreCase::parse("line_of_sight_v2_ts").expect("named los cell");
+    let watch = CoreWatch::default();
+    watch.configure(case, "catalogtest");
+    let baseline = los_ready();
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+
+    let open = los_open_pair();
+    let blocked = los_blocked_pair();
+    let joined = los_joined(baseline.clone());
+    watch.observe("catalogtest", joined.clone(), false);
+
+    // Later host selection / identity drift without a new joined receipt.
+    let mut drifted = joined.clone();
+    drifted.tick += 1;
+    drifted.los.identity.base_x = 3100;
+    drifted.los.host_open = Some(LineOfSightPair {
+        from: LineOfSightTile {
+            x: 3210,
+            z: 3210,
+            level: 0,
+        },
+        to: LineOfSightTile {
+            x: 3209,
+            z: 3210,
+            level: 0,
+        },
+        src: 0,
+        dst: 0,
+        mask: LOS_V_E,
+    });
+    drifted.los.host_blocked = Some(LineOfSightPair {
+        from: LineOfSightTile {
+            x: 3210,
+            z: 3210,
+            level: 0,
+        },
+        to: LineOfSightTile {
+            x: 3211,
+            z: 3210,
+            level: 0,
+        },
+        src: 0,
+        dst: LOS_V_W,
+        mask: LOS_V_W,
+    });
+    // Stale paint receipt no longer joins the drifted host pairs.
+    drifted.los.receipt = joined.los.receipt;
+    watch.observe("catalogtest", drifted.clone(), false);
+
+    // Named stop on a later frame that still carries drifted host selection
+    // (multi-frame post-stop paint retention path). Must not freeze host=P'.
+    watch.observe("catalogtest", los_stop(drifted, LOS_V2_STOP), false);
+    let evidence = watch
+        .qualify()
+        .expect("coherent historical join + named stop must still qualify");
+    let cycle = evidence
+        .get("line_of_sight_cycle")
+        .expect("line_of_sight_cycle in evidence");
+    let host_open: LineOfSightPair =
+        serde_json::from_value(cycle.get("host_open").cloned().unwrap())
+            .expect("host_open");
+    let host_blocked: LineOfSightPair =
+        serde_json::from_value(cycle.get("host_blocked").cloned().unwrap())
+            .expect("host_blocked");
+    let identity: LineOfSightIdentity =
+        serde_json::from_value(cycle.get("identity").cloned().unwrap())
+            .expect("identity");
+    let receipt: LineOfSightScriptReceipt =
+        serde_json::from_value(cycle.get("receipt").cloned().unwrap())
+            .expect("receipt");
+    assert_eq!(host_open, open, "host_open must stay the joined witness");
+    assert_eq!(
+        host_blocked, blocked,
+        "host_blocked must stay the joined witness"
+    );
+    assert_eq!(identity, los_identity(), "identity must stay the joined witness");
+    assert_eq!(receipt.open.pair(), open);
+    assert_eq!(receipt.blocked.pair(), blocked);
+    assert_eq!(receipt.identity, identity);
+}
+
+#[test]
+fn line_of_sight_rejects_mismatched_here_and_here_flag() {
+    let case = CoreCase::parse("line_of_sight_v2_ts").expect("named los cell");
+    let watch = CoreWatch::default();
+    watch.configure(case, "catalogtest");
+    let baseline = los_ready();
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+
+    let mut bad_here = los_joined(baseline.clone());
+    if let Some(receipt) = bad_here.los.receipt.as_mut() {
+        receipt.here.x = 9999;
+    }
+    bad_here.script_lifecycle = los_stop(bad_here.clone(), LOS_V2_STOP).script_lifecycle;
+    watch.observe("catalogtest", bad_here, false);
+    assert!(
+        watch.qualify().is_err(),
+        "receipt.here tile must join host here"
+    );
+
+    watch.configure(case, "catalogtest");
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    let mut bad_flag = los_joined(baseline);
+    if let Some(receipt) = bad_flag.los.receipt.as_mut() {
+        receipt.here.flag = 0x7f;
+    }
+    bad_flag.script_lifecycle = los_stop(bad_flag.clone(), LOS_V2_STOP).script_lifecycle;
+    watch.observe("catalogtest", bad_flag, false);
+    assert!(
+        watch.qualify().is_err(),
+        "receipt.here.flag must join host here_flag"
     );
 }

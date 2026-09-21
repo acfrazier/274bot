@@ -860,6 +860,7 @@ pub(super) fn wire_runtime(
     super::buyout_plan::install(runtime).map_err(|e| format!("buyout plan: {e}"))?;
     super::supply_v8::install(runtime).map_err(|e| format!("supply v8: {e}"))?;
     super::loadout_v8::install(runtime).map_err(|e| format!("loadout v8: {e}"))?;
+    super::line_of_sight::install(runtime).map_err(|e| format!("line of sight: {e}"))?;
     super::paint_chrome::install(runtime).map_err(|e| format!("paint chrome: {e}"))?;
     super::paint_jive::install(runtime).map_err(|e| format!("paint jive: {e}"))?;
     let content = format!(
@@ -950,7 +951,7 @@ const SNAPSHOT_KEYS = new Set([
   'route_inspect_running_id','route_inspect_pending_id','route_inspect_accepted_id',
   'route_inspect_replaced_id','route_inspect_replaced_prev_id',
   'route_inspect_refused_id','route_inspect_refused_id_2','route_inspect_refused_id_3',
-  'route_inspect_unobserved',
+  'route_inspect_unobserved','collision',
 ]);
 const V2_OPS = {
   'held': ['name','action'],
@@ -1289,6 +1290,9 @@ api.potionToSip = function (input) {
     return helperErr('invalid-args');
   }
   return loadoutV2('potionToSip', input);
+};
+api.lineOfSight = function (input) {
+  return globalThis.__rs2b0t_line_of_sight('v2', input);
 };
 function recordSettlement(generation) {
   if (generation !== lifecycleGeneration) return;

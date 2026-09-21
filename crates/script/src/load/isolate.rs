@@ -1434,6 +1434,7 @@ fn tick_loop(
                         crate::dialog::on_snapshot(&snap);
                         crate::modals::on_snapshot(&snap);
                         crate::reach::on_snapshot(&snap);
+                        crate::line_of_sight::on_snapshot(&snap);
                         crate::fire::on_snapshot(&snap);
                         crate::trade::on_snapshot(&snap);
                         crate::drive_partner_trade::on_snapshot(&snap);
@@ -1804,6 +1805,7 @@ fn tick_loop(
                 crate::dialog::on_reset();
                 crate::modals::on_reset();
                 crate::reach::on_reset();
+                crate::line_of_sight::on_reset();
                 crate::fire::on_reset();
                 crate::trade::on_reset();
                 crate::drive_partner_trade::on_reset();

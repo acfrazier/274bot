@@ -28,6 +28,8 @@ mod paint_jive;
 mod snapshot;
 #[cfg(feature = "load")]
 mod isolate;
+#[cfg(feature = "load")]
+mod line_of_sight;
 
 pub use shape::{
     collect_raw_sibling_hashes, detect_shape, first_unloadable_for_card,

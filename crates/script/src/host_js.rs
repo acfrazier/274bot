@@ -372,10 +372,42 @@ fn render_native_v2(out: &mut String) {
     out.push_str("  boostFaded(input: { base: number; effective: number; floor?: number }): HelperResult<boolean>;\n");
     out.push_str("  plannedPotions(input: { carry: Array<{ item: string; qty: number }> }): HelperResult<PotionPlan[]>;\n");
     out.push_str("  potionToSip(input: { plans: PotionPlan[]; held: number[]; levels: Array<{ skill: string; base: number; effective: number }> }): HelperResult<PotionPlan | null>;\n");
+    out.push_str("  lineOfSight(input: { from: WorldTile; to: WorldTile; size?: number }): HelperResult<boolean>;\n");
     out.push_str("}\n");
 }
 
 const SUPPORTING_INTERFACES: &[TsInterface] = &[
+    TsInterface {
+        name: "CollisionFlagsView",
+        doc: Some("Readonly raw i32 flags. at requires a finite integer index in [0, length). Negative and non-integers are undefined."),
+        fields: &[
+            TsField {
+                name: "length",
+                ty: "number",
+                optional: false,
+                doc: Some("width*height, or 0 when !available."),
+            },
+            TsField {
+                name: "at",
+                ty: "(index: number) => number | undefined",
+                optional: false,
+                doc: None,
+            },
+        ],
+    },
+    TsInterface {
+        name: "CollisionView",
+        doc: Some("Posted one-plane collision identity. Retained views stay historical after a later post."),
+        fields: &[
+            TsField { name: "available", ty: "boolean", optional: false, doc: None },
+            TsField { name: "base_x", ty: "number", optional: false, doc: None },
+            TsField { name: "base_z", ty: "number", optional: false, doc: None },
+            TsField { name: "level", ty: "number", optional: false, doc: None },
+            TsField { name: "width", ty: "number", optional: false, doc: None },
+            TsField { name: "height", ty: "number", optional: false, doc: None },
+            TsField { name: "flags", ty: "CollisionFlagsView", optional: false, doc: None },
+        ],
+    },
     TsInterface {
         name: "WorldTile",
         doc: Some("Absolute world tile `{x, z, level}`."),
@@ -2268,6 +2300,12 @@ const NATIVE_SNAPSHOT_FIELDS: &[TsField] = &[
     TsField { name: "route_inspect_refused_id_2", ty: "number", optional: false, doc: None },
     TsField { name: "route_inspect_refused_id_3", ty: "number", optional: false, doc: None },
     TsField { name: "route_inspect_unobserved", ty: "number", optional: false, doc: Some("Host unobserved obligation count. Advisory; may lag the next drain.") },
+    TsField {
+        name: "collision",
+        ty: "CollisionView",
+        optional: false,
+        doc: Some("One current-plane raw i32 grid. flags.at is indexed lx*height+lz. 0 is clear, not absent."),
+    },
 ];
 
 const NATIVE_OP_VARIANTS: &[InteractVariant] = &[

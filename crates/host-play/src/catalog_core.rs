@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 
 use api::obj_names::ObjNames;
 use api::snapshot::{ActorKind, GameSnapshot, LocView, NpcView, SceneView, WorldTile};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 #[path = "catalog_core_ranging.rs"]
@@ -25,7 +25,7 @@ pub use ranging::{
     TARGET_RESULT_MODAL, TICKETS_PER_TRADE, VARP_TARGET_COUNT, VARP_TARGET_HIT, VARP_TARGET_SCORE,
 };
 
-pub const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|chicken_killer_bank|thiever|alcher|alcher_defaults|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|alcher_low|alcher_fire_battlestaff|alcher_swarm_drain|bank_fletcher|bank_fletcher_shafts|bank_fletcher_headless|bank_fletcher_string|bank_fletcher_cut_string|dart_fletcher|dart_fletcher_iron|herb_cleaner|herb_cleaner_named|herb_cleaner_empty_bank|gem_cutter|gem_cutter_named|door_opener|door_opener_gate|gnome_course|gnome_course_radius|wildy_agility|brimhaven_agility|flax_picker|superheater|superheater_steel|superheater_fire_battlestaff|superheater_silver_low_natures|vial_filler|vial_filler_east|potion_maker|potion_maker_named|tanner_bot|tanner_bot_hard|rune_crafter|rune_crafter_earth|mule_crafter|ardy_cakes|ardy_cakes_fight|ardy_thiever|ardy_thiever_fight|ardy_thiever_knight|gnome_chop|gnome_fletch_short|gnome_fletch_long|coal_trucks|cook_bot|cook_bot_lobster|smelter_bot|smelter_bot_steel|flax_spinner|flax_aio|flax_aio_pick|flax_aio_spin|herblore_secondaries|herblore_secondaries_newt|chaos_druid|chaos_druid_tower|chaos_druid_yanille|moss_giant|moss_giant_prepared|moss_giant_dart|hill_giant|auto_fighter|auto_fighter_mage|auto_fighter_range|rock_crab|rock_crab_range|green_dragon|green_dragon_prepared|green_dragon_mage_prepared|green_dragon_special|green_dragon_special_prepared|green_dragon_potions|green_dragon_potions_prepared|fire_giant|fire_giant_prepared|ardy_fighter|auto_fighter_bank|moss_giant_bank|hill_giant_bank|hill_giant_bank_prepared|chaos_druid_bank|ardy_fighter_bank|rock_crab_bank|green_dragon_bank|green_dragon_bank_prepared|green_dragon_bank_default_prepared|green_dragon_tele|green_dragon_tele_prepared|fire_giant_approach|fire_giant_bank|fire_giant_bank_prepared|fire_giant_camelot_prepared|aio_teleport|aio_teleport_falador|aio_teleport_no_staff|shop_buyout|shop_buyout_aubury|shop_buyout_lowe|shop_buyout_hickton|shop_buyout_harry|shop_buyout_betty|shop_buyout_gerrant|smithing_bot|smithing_bot_platebody|leather_crafter|leather_crafter_hard_body|firemaker|firemaker_oak|climbing_boots|climbing_boots_teleport|ranging_guild_round|ranging_guild_redeem|ranging_guild_bank|ranging_guild_full|brimhaven_moss_inspect_v1|route_inspect_brimhaven_v2_ts|prayer_v2_ts|prayer_v1_ts";
+pub const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|chicken_killer_bank|thiever|alcher|alcher_defaults|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|alcher_low|alcher_fire_battlestaff|alcher_swarm_drain|bank_fletcher|bank_fletcher_shafts|bank_fletcher_headless|bank_fletcher_string|bank_fletcher_cut_string|dart_fletcher|dart_fletcher_iron|herb_cleaner|herb_cleaner_named|herb_cleaner_empty_bank|gem_cutter|gem_cutter_named|door_opener|door_opener_gate|gnome_course|gnome_course_radius|wildy_agility|brimhaven_agility|flax_picker|superheater|superheater_steel|superheater_fire_battlestaff|superheater_silver_low_natures|vial_filler|vial_filler_east|potion_maker|potion_maker_named|tanner_bot|tanner_bot_hard|rune_crafter|rune_crafter_earth|mule_crafter|ardy_cakes|ardy_cakes_fight|ardy_thiever|ardy_thiever_fight|ardy_thiever_knight|gnome_chop|gnome_fletch_short|gnome_fletch_long|coal_trucks|cook_bot|cook_bot_lobster|smelter_bot|smelter_bot_steel|flax_spinner|flax_aio|flax_aio_pick|flax_aio_spin|herblore_secondaries|herblore_secondaries_newt|chaos_druid|chaos_druid_tower|chaos_druid_yanille|moss_giant|moss_giant_prepared|moss_giant_dart|hill_giant|auto_fighter|auto_fighter_mage|auto_fighter_range|rock_crab|rock_crab_range|green_dragon|green_dragon_prepared|green_dragon_mage_prepared|green_dragon_special|green_dragon_special_prepared|green_dragon_potions|green_dragon_potions_prepared|fire_giant|fire_giant_prepared|ardy_fighter|auto_fighter_bank|moss_giant_bank|hill_giant_bank|hill_giant_bank_prepared|chaos_druid_bank|ardy_fighter_bank|rock_crab_bank|green_dragon_bank|green_dragon_bank_prepared|green_dragon_bank_default_prepared|green_dragon_tele|green_dragon_tele_prepared|fire_giant_approach|fire_giant_bank|fire_giant_bank_prepared|fire_giant_camelot_prepared|aio_teleport|aio_teleport_falador|aio_teleport_no_staff|shop_buyout|shop_buyout_aubury|shop_buyout_lowe|shop_buyout_hickton|shop_buyout_harry|shop_buyout_betty|shop_buyout_gerrant|smithing_bot|smithing_bot_platebody|leather_crafter|leather_crafter_hard_body|firemaker|firemaker_oak|climbing_boots|climbing_boots_teleport|ranging_guild_round|ranging_guild_redeem|ranging_guild_bank|ranging_guild_full|brimhaven_moss_inspect_v1|route_inspect_brimhaven_v2_ts|prayer_v2_ts|prayer_v1_ts|line_of_sight_v2_ts";
 pub const CATALOG_COMMIT_A: &str = "100adccc037d9f6898080e1cad58fcfc43364775";
 pub const CATALOG_COMMIT_B: &str = "8e7d965be2071d6ec65c3265e12af797082d720a";
 pub const ADAMANT_SCIMITAR_ID: i32 = 1331;
@@ -607,6 +607,7 @@ pub enum CoreCase {
     RouteInspectBrimhavenV2,
     PrayerV2,
     PrayerV1,
+    LineOfSightV2,
 }
 
 impl CoreCase {
@@ -741,6 +742,7 @@ impl CoreCase {
             "route_inspect_brimhaven_v2_ts" => Ok(Self::RouteInspectBrimhavenV2),
             "prayer_v2_ts" => Ok(Self::PrayerV2),
             "prayer_v1_ts" => Ok(Self::PrayerV1),
+            "line_of_sight_v2_ts" => Ok(Self::LineOfSightV2),
             _ => Err(format!(
                 "unknown CATALOG_SCENARIO {value:?}; expected {CORE_SCENARIOS}"
             )),
@@ -878,6 +880,7 @@ impl CoreCase {
             Self::RouteInspectBrimhavenV2 => "route_inspect_brimhaven_v2_ts",
             Self::PrayerV2 => "prayer_v2_ts",
             Self::PrayerV1 => "prayer_v1_ts",
+            Self::LineOfSightV2 => "line_of_sight_v2_ts",
         }
     }
 
@@ -983,6 +986,7 @@ impl CoreCase {
             Self::RouteInspectBrimhavenV2 => "route_inspect_brimhaven_v2",
             Self::PrayerV2 => "prayer_v2",
             Self::PrayerV1 => "prayer_v1",
+            Self::LineOfSightV2 => "line_of_sight_v2",
         }
     }
 
@@ -997,10 +1001,21 @@ impl CoreCase {
         matches!(self, Self::PrayerV2 | Self::PrayerV1)
     }
 
+    pub fn copies_line_of_sight(self) -> bool {
+        matches!(self, Self::LineOfSightV2)
+    }
+
     pub fn prayer_stop_reason(self) -> Option<&'static str> {
         match self {
             Self::PrayerV2 => Some(PRAYER_V2_STOP),
             Self::PrayerV1 => Some(PRAYER_V1_STOP),
+            _ => None,
+        }
+    }
+
+    pub fn los_stop_reason(self) -> Option<&'static str> {
+        match self {
+            Self::LineOfSightV2 => Some(LOS_V2_STOP),
             _ => None,
         }
     }
@@ -1106,6 +1121,9 @@ pub struct Observation {
     /// Missing-terminal Observation defaults are 0 and are not this value.
     pub route_inspect_live_generation: u64,
     pub route_inspect_has_terminal: bool,
+    /// Compact current-plane identity and selected pair cells. Empty unless
+    /// the active Core case asked for collision. Never a whole-grid dump.
+    pub los: LineOfSightObservation,
 }
 
 /// Compact hop projection for Core JSON. Only `locName` is copied from the
@@ -1616,6 +1634,7 @@ impl Observation {
             route_inspect_hops: Vec::new(),
             route_inspect_live_generation: 0,
             route_inspect_has_terminal: false,
+            los: LineOfSightObservation::default(),
         }
     }
 
@@ -1675,6 +1694,53 @@ impl Observation {
                 self.varps.insert(varp.index, varp.value);
             }
         }
+    }
+
+    /// Compact current-plane identity, independently selected one-step pairs,
+    /// and the script paint receipt. Never copies the collision grid.
+    pub fn attach_line_of_sight(
+        &mut self,
+        snapshot: &GameSnapshot,
+        paint: Option<&script::shim::ScriptPaint>,
+    ) {
+        let scene = snapshot.scene();
+        let identity = LineOfSightIdentity {
+            base_x: scene.base_x,
+            base_z: scene.base_z,
+            level: scene.level,
+            width: scene.width,
+            height: scene.height,
+        };
+        let here = self
+            .tile
+            .map(|(x, z, level)| LineOfSightTile { x, z, level });
+        let here_flag = here.and_then(|tile| collision_flag_at(scene, tile));
+        let (host_open, host_blocked, fixture_failure) = match here {
+            Some(tile) if scene.available => match select_line_of_sight_pairs(tile, |x, z| {
+                collision_flag_at(
+                    scene,
+                    LineOfSightTile {
+                        x,
+                        z,
+                        level: tile.level,
+                    },
+                )
+            }) {
+                Ok((open, blocked)) => (Some(open), Some(blocked), None),
+                Err(msg) => (None, None, Some(msg)),
+            },
+            _ => (None, None, None),
+        };
+        self.los = LineOfSightObservation {
+            available: scene.available,
+            identity,
+            here,
+            here_flag,
+            host_open,
+            host_blocked,
+            fixture_failure,
+            receipt: paint.and_then(parse_los_receipt_from_paint),
+        };
     }
 
     pub fn equipment_id(&self, id: i32) -> i32 {
@@ -2054,6 +2120,333 @@ impl PrayerDeliveryCycle {
 
     pub fn qualified(&self) -> bool {
         self.saw_on && self.later_all_off && self.stopped.is_some()
+    }
+}
+
+pub const LOS_V2_STOP: &str = "line of sight qualification complete";
+pub const LOS_RECEIPT_PREFIX: &str = "los-receipt:";
+pub const LOS_WALK_SCENERY: i32 = 0x100;
+pub const LOS_V_N: i32 = 0x400;
+pub const LOS_V_E: i32 = 0x1000;
+pub const LOS_V_S: i32 = 0x4000;
+pub const LOS_V_W: i32 = 0x10000;
+pub const LOS_VIS_SCENERY: i32 = 0x20000;
+pub const LOS_PAIR_RADIUS: i32 = 8;
+const LOS_DIRS: [(i32, i32, i32); 4] = [
+    (1, 0, LOS_V_W),
+    (-1, 0, LOS_V_E),
+    (0, 1, LOS_V_S),
+    (0, -1, LOS_V_N),
+];
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LineOfSightIdentity {
+    pub base_x: i32,
+    pub base_z: i32,
+    pub level: i32,
+    pub width: i32,
+    pub height: i32,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LineOfSightTile {
+    pub x: i32,
+    pub z: i32,
+    pub level: i32,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LineOfSightPair {
+    pub from: LineOfSightTile,
+    pub to: LineOfSightTile,
+    pub src: i32,
+    pub dst: i32,
+    pub mask: i32,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LineOfSightPairResult {
+    pub from: LineOfSightTile,
+    pub to: LineOfSightTile,
+    pub src: i32,
+    pub dst: i32,
+    pub mask: i32,
+    pub v2: bool,
+    pub v1: bool,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LineOfSightHere {
+    pub x: i32,
+    pub z: i32,
+    pub level: i32,
+    pub flag: i32,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LineOfSightScriptReceipt {
+    pub identity: LineOfSightIdentity,
+    pub here: LineOfSightHere,
+    pub open: LineOfSightPairResult,
+    pub blocked: LineOfSightPairResult,
+}
+
+#[derive(Debug, Clone, Default, Serialize, PartialEq, Eq)]
+pub struct LineOfSightObservation {
+    pub available: bool,
+    pub identity: LineOfSightIdentity,
+    pub here: Option<LineOfSightTile>,
+    pub here_flag: Option<i32>,
+    pub host_open: Option<LineOfSightPair>,
+    pub host_blocked: Option<LineOfSightPair>,
+    pub fixture_failure: Option<String>,
+    pub receipt: Option<LineOfSightScriptReceipt>,
+}
+
+impl LineOfSightPairResult {
+    pub fn pair(self) -> LineOfSightPair {
+        LineOfSightPair {
+            from: self.from,
+            to: self.to,
+            src: self.src,
+            dst: self.dst,
+            mask: self.mask,
+        }
+    }
+}
+
+fn collision_flag_at(scene: &SceneView, tile: LineOfSightTile) -> Option<i32> {
+    if !scene.available || tile.level != scene.level {
+        return None;
+    }
+    let lx = tile.x - scene.base_x;
+    let lz = tile.z - scene.base_z;
+    if lx < 0 || lz < 0 || lx >= scene.width || lz >= scene.height {
+        return None;
+    }
+    scene
+        .collision_flags
+        .get((lx * scene.height + lz) as usize)
+        .copied()
+}
+
+pub fn los_entering_mask(dx: i32, dz: i32) -> Option<i32> {
+    match (dx, dz) {
+        (1, 0) => Some(LOS_V_W),
+        (-1, 0) => Some(LOS_V_E),
+        (0, 1) => Some(LOS_V_S),
+        (0, -1) => Some(LOS_V_N),
+        _ => None,
+    }
+}
+
+pub fn line_of_sight_pair_is_open(pair: &LineOfSightPair) -> bool {
+    let dx = pair.to.x - pair.from.x;
+    let dz = pair.to.z - pair.from.z;
+    pair.from.level == pair.to.level
+        && los_entering_mask(dx, dz) == Some(pair.mask)
+        && pair.src & LOS_WALK_SCENERY == 0
+        && pair.dst & pair.mask == 0
+}
+
+pub fn line_of_sight_pair_is_blocked(pair: &LineOfSightPair) -> bool {
+    let dx = pair.to.x - pair.from.x;
+    let dz = pair.to.z - pair.from.z;
+    // Source WALK_SCENERY must be clear: the LOS helper returns false on
+    // source scenery before ray tracing, so a scenery-sourced negative is
+    // not attributable to the entering V-wall.
+    pair.from.level == pair.to.level
+        && los_entering_mask(dx, dz) == Some(pair.mask)
+        && pair.src & LOS_WALK_SCENERY == 0
+        && pair.dst & pair.mask != 0
+}
+
+pub fn line_of_sight_dest_vis_alone(pair: &LineOfSightPair) -> bool {
+    pair.dst & LOS_VIS_SCENERY != 0 && pair.dst & pair.mask == 0
+}
+
+/// Deterministic Chebyshev 0..=8 cardinal scan. Expected answers come from
+/// one-step raw V-mask facts, not from calling the LOS helper.
+pub fn select_line_of_sight_pairs(
+    here: LineOfSightTile,
+    flag_at: impl Fn(i32, i32) -> Option<i32>,
+) -> Result<(LineOfSightPair, LineOfSightPair), String> {
+    let mut open = None;
+    let mut blocked = None;
+    for r in 0..=LOS_PAIR_RADIUS {
+        for dx in -r..=r {
+            for dz in -r..=r {
+                if dx.abs().max(dz.abs()) != r {
+                    continue;
+                }
+                let from = LineOfSightTile {
+                    x: here.x + dx,
+                    z: here.z + dz,
+                    level: here.level,
+                };
+                if (from.x - here.x).abs().max((from.z - here.z).abs()) > LOS_PAIR_RADIUS {
+                    continue;
+                }
+                let Some(src) = flag_at(from.x, from.z) else {
+                    continue;
+                };
+                for (sx, sz, mask) in LOS_DIRS {
+                    let to = LineOfSightTile {
+                        x: from.x + sx,
+                        z: from.z + sz,
+                        level: here.level,
+                    };
+                    if (to.x - here.x).abs().max((to.z - here.z).abs()) > LOS_PAIR_RADIUS {
+                        continue;
+                    }
+                    let Some(dst) = flag_at(to.x, to.z) else {
+                        continue;
+                    };
+                    let pair = LineOfSightPair {
+                        from,
+                        to,
+                        src,
+                        dst,
+                        mask,
+                    };
+                    if blocked.is_none() && line_of_sight_pair_is_blocked(&pair) {
+                        blocked = Some(pair);
+                    } else if open.is_none() && line_of_sight_pair_is_open(&pair) {
+                        open = Some(pair);
+                    }
+                    if let (Some(open), Some(blocked)) = (open, blocked) {
+                        return Ok((open, blocked));
+                    }
+                }
+            }
+        }
+    }
+    Err("los fixture failure: no cardinal open+blocked V-wall pair within 8".into())
+}
+
+pub fn parse_los_receipt_from_paint(
+    paint: &script::shim::ScriptPaint,
+) -> Option<LineOfSightScriptReceipt> {
+    paint.lines.iter().find_map(|line| {
+        line.strip_prefix(LOS_RECEIPT_PREFIX)
+            .and_then(|json| serde_json::from_str(json).ok())
+    })
+}
+
+pub fn line_of_sight_baseline_ready(baseline: &Observation) -> bool {
+    baseline.ingame
+        && baseline.scene_state == 2
+        && baseline.los.available
+        && baseline.los.here_flag.is_some()
+}
+
+fn los_receipt_joined(now: &LineOfSightObservation) -> bool {
+    let (Some(host_open), Some(host_blocked), Some(receipt), Some(here), Some(here_flag)) = (
+        now.host_open,
+        now.host_blocked,
+        now.receipt.as_ref(),
+        now.here,
+        now.here_flag,
+    ) else {
+        return false;
+    };
+    now.available
+        && now.fixture_failure.is_none()
+        && receipt.identity == now.identity
+        && receipt.here.x == here.x
+        && receipt.here.z == here.z
+        && receipt.here.level == here.level
+        && receipt.here.flag == here_flag
+        && line_of_sight_pair_is_open(&host_open)
+        && line_of_sight_pair_is_blocked(&host_blocked)
+        && !line_of_sight_dest_vis_alone(&host_blocked)
+        && !line_of_sight_dest_vis_alone(&receipt.blocked.pair())
+        && receipt.open.pair() == host_open
+        && receipt.blocked.pair() == host_blocked
+        && receipt.open.v2
+        && !receipt.blocked.v2
+        && receipt.open.v1
+        && !receipt.blocked.v1
+}
+
+/// Post-Start witness: host-selected one-step pairs, user-script receipt
+/// joined to the same SceneView identity/flags, then the named helper stop.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct LineOfSightDeliveryCycle {
+    pub host_open: Option<LineOfSightPair>,
+    pub host_blocked: Option<LineOfSightPair>,
+    pub identity: Option<LineOfSightIdentity>,
+    pub receipt: Option<LineOfSightScriptReceipt>,
+    pub stopped: Option<script::ScriptLifecycleReceipt>,
+    pub fixture_failure: Option<String>,
+}
+
+impl LineOfSightDeliveryCycle {
+    pub fn observe(&mut self, now: &Observation) {
+        if let Some(msg) = now.los.fixture_failure.clone() {
+            self.fixture_failure = Some(msg);
+        }
+        // Once a same-observation host/receipt join is latched, freeze host
+        // pairs and identity with that historical witness. Later host drift
+        // must not overwrite evidence that still backs a valid receipt.
+        if self.receipt.is_some() {
+            return;
+        }
+        if now.los.available {
+            if let (Some(open), Some(blocked)) = (now.los.host_open, now.los.host_blocked) {
+                if line_of_sight_pair_is_open(&open) && line_of_sight_pair_is_blocked(&blocked) {
+                    self.host_open = Some(open);
+                    self.host_blocked = Some(blocked);
+                    self.identity = Some(now.los.identity);
+                }
+            }
+        }
+        if los_receipt_joined(&now.los) {
+            // Latch host + receipt from the same joined observation.
+            self.host_open = now.los.host_open;
+            self.host_blocked = now.los.host_blocked;
+            self.identity = Some(now.los.identity);
+            self.receipt = now.los.receipt;
+        }
+    }
+
+    pub fn observe_script_lifecycle(
+        &mut self,
+        receipt: script::ScriptLifecycleReceipt,
+        expected: &str,
+    ) {
+        if self.receipt.is_some()
+            && receipt.runtime_generation > 0
+            && receipt.state == script::ScriptTerminalState::Stopped
+            && receipt.reason == expected
+        {
+            self.stopped = Some(receipt);
+        }
+    }
+
+    pub fn qualified(&self) -> bool {
+        if self.fixture_failure.is_some() || self.stopped.is_none() {
+            return false;
+        }
+        let (Some(host_open), Some(host_blocked), Some(identity), Some(receipt)) = (
+            self.host_open,
+            self.host_blocked,
+            self.identity,
+            self.receipt.as_ref(),
+        ) else {
+            return false;
+        };
+        // Re-assert stored host still matches the latched receipt (fail-closed).
+        identity == receipt.identity
+            && host_open == receipt.open.pair()
+            && host_blocked == receipt.blocked.pair()
+            && line_of_sight_pair_is_open(&host_open)
+            && line_of_sight_pair_is_blocked(&host_blocked)
+            && !line_of_sight_dest_vis_alone(&host_blocked)
+            && receipt.open.v2
+            && !receipt.blocked.v2
+            && receipt.open.v1
+            && !receipt.blocked.v1
     }
 }
 
@@ -3002,6 +3395,7 @@ pub fn validate_case_baseline_with_preparation(
         CoreCase::BrimhavenMossInspectV1 => brimhaven_moss_inspect_v1_baseline_ready(baseline),
         CoreCase::RouteInspectBrimhavenV2 => route_inspect_brimhaven_v2_baseline_ready(baseline),
         CoreCase::PrayerV2 | CoreCase::PrayerV1 => prayer_delivery_baseline_ready(baseline),
+        CoreCase::LineOfSightV2 => line_of_sight_baseline_ready(baseline),
     };
     if ready {
         return Ok(());
@@ -3358,6 +3752,9 @@ pub fn validate_case_baseline_with_preparation(
         CoreCase::PrayerV2 | CoreCase::PrayerV1 => {
             "ingame && scene_state==2, prayer base>=43, positive points, varps 83..97 present and 0"
         }
+        CoreCase::LineOfSightV2 => {
+            "ingame && scene_state==2 && SceneView.available, here in published collision bounds"
+        }
     };
     Err(format!(
         "{} Start baseline lacks required preparation ({requirement}): {baseline:?}",
@@ -3428,6 +3825,7 @@ pub struct CoreWitness {
     pub brimhaven_moss_inspect_cycle: BrimhavenMossInspectCycle,
     pub route_inspect_brimhaven_v2_cycle: RouteInspectBrimhavenV2Cycle,
     pub prayer_delivery_cycle: PrayerDeliveryCycle,
+    pub line_of_sight_cycle: LineOfSightDeliveryCycle,
     pub ordered_first_exhausted: bool,
 }
 
@@ -8728,6 +9126,7 @@ impl CoreWitness {
             brimhaven_moss_inspect_cycle: BrimhavenMossInspectCycle::default(),
             route_inspect_brimhaven_v2_cycle: RouteInspectBrimhavenV2Cycle::default(),
             prayer_delivery_cycle: PrayerDeliveryCycle::default(),
+            line_of_sight_cycle: LineOfSightDeliveryCycle::default(),
             ordered_first_exhausted: false,
         }
     }
@@ -8955,6 +9354,9 @@ impl CoreWitness {
         }
         if matches!(self.case, CoreCase::PrayerV2 | CoreCase::PrayerV1) {
             self.prayer_delivery_cycle.observe(observation);
+        }
+        if matches!(self.case, CoreCase::LineOfSightV2) {
+            self.line_of_sight_cycle.observe(observation);
         }
         if matches!(self.case, CoreCase::Superheater) {
             self.superheater_cycle.observe(
@@ -9192,6 +9594,12 @@ impl CoreWitness {
                         .observe_script_lifecycle(receipt, expected);
                 }
             }
+            CoreCase::LineOfSightV2 => {
+                if let Some(expected) = self.case.los_stop_reason() {
+                    self.line_of_sight_cycle
+                        .observe_script_lifecycle(receipt, expected);
+                }
+            }
             _ => {}
         }
     }
@@ -9407,6 +9815,7 @@ impl CoreWitness {
             CoreCase::BrimhavenMossInspectV1 => self.brimhaven_moss_inspect_cycle.qualified(),
             CoreCase::RouteInspectBrimhavenV2 => self.route_inspect_brimhaven_v2_cycle.qualified(),
             CoreCase::PrayerV2 | CoreCase::PrayerV1 => self.prayer_delivery_cycle.qualified(),
+            CoreCase::LineOfSightV2 => self.line_of_sight_cycle.qualified(),
             CoreCase::ChaosDruid
             | CoreCase::ChaosDruidTower
             | CoreCase::ChaosDruidYanille
@@ -9504,6 +9913,7 @@ impl CoreWitness {
             "brimhaven_moss_inspect_cycle": self.brimhaven_moss_inspect_cycle,
             "route_inspect_brimhaven_v2_cycle": self.route_inspect_brimhaven_v2_cycle,
             "prayer_delivery_cycle": self.prayer_delivery_cycle,
+            "line_of_sight_cycle": self.line_of_sight_cycle,
             "ordered_first_exhausted": self.ordered_first_exhausted,
         }))
     }
@@ -9769,6 +10179,7 @@ impl CoreWatch {
             BoundedGuardian::default(),
             session_boundary,
             None,
+            None,
         );
     }
 
@@ -9784,6 +10195,7 @@ impl CoreWatch {
         guardian: BoundedGuardian,
         session_boundary: bool,
         inspect: Option<RouteInspectPublished>,
+        paint: Option<&script::shim::ScriptPaint>,
     ) {
         if !self.active.load(Ordering::Acquire) {
             return;
@@ -9804,6 +10216,13 @@ impl CoreWatch {
                 CoreWatchState::Running { witness, .. } => witness.case.copies_prayer_varps(),
                 CoreWatchState::Disabled | CoreWatchState::Qualified { .. } => false,
             };
+            let copies_los = match &*state {
+                CoreWatchState::Ready { case, .. } | CoreWatchState::Failed { case, .. } => {
+                    case.copies_line_of_sight()
+                }
+                CoreWatchState::Running { witness, .. } => witness.case.copies_line_of_sight(),
+                CoreWatchState::Disabled | CoreWatchState::Qualified { .. } => false,
+            };
             let mut observation = Observation::from_snapshot(snapshot, names);
             observation.script_lifecycle = lifecycle;
             observation.guardian = guardian;
@@ -9812,6 +10231,9 @@ impl CoreWatch {
             }
             if copies_prayer {
                 observation.attach_prayer_varps(snapshot);
+            }
+            if copies_los {
+                observation.attach_line_of_sight(snapshot, paint);
             }
             Self::observe_locked(&mut state, account, observation, session_boundary);
         }
@@ -9832,6 +10254,21 @@ impl CoreWatch {
                 case.copies_route_inspect()
             }
             CoreWatchState::Running { witness, .. } => witness.case.copies_route_inspect(),
+            CoreWatchState::Disabled | CoreWatchState::Qualified { .. } => false,
+        }
+    }
+
+    /// True only for the line-of-sight File card. Callers attach paint and
+    /// compact collision identity only then.
+    pub fn copies_line_of_sight(&self) -> bool {
+        if !self.active.load(Ordering::Acquire) {
+            return false;
+        }
+        match &*self.inner.lock().unwrap() {
+            CoreWatchState::Ready { case, .. } | CoreWatchState::Failed { case, .. } => {
+                case.copies_line_of_sight()
+            }
+            CoreWatchState::Running { witness, .. } => witness.case.copies_line_of_sight(),
             CoreWatchState::Disabled | CoreWatchState::Qualified { .. } => false,
         }
     }

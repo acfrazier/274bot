@@ -3,6 +3,24 @@
 // NativeTick Load is 0.2.5. JS API v2 is NativeApi (explicit export const apiVersion = 2).
 // Not a clone of rs2b0t-api.
 
+/** Readonly raw i32 flags. at requires a finite integer index in [0, length). Negative and non-integers are undefined. */
+export interface CollisionFlagsView {
+  /** width*height, or 0 when !available. */
+  length: number;
+  at: (index: number) => number | undefined;
+}
+
+/** Posted one-plane collision identity. Retained views stay historical after a later post. */
+export interface CollisionView {
+  available: boolean;
+  base_x: number;
+  base_z: number;
+  level: number;
+  width: number;
+  height: number;
+  flags: CollisionFlagsView;
+}
+
 /** Absolute world tile `{x, z, level}`. */
 export interface WorldTile {
   x: number;
@@ -377,6 +395,8 @@ export interface NativeSnapshot {
   route_inspect_refused_id_3: number;
   /** Host unobserved obligation count. Advisory; may lag the next drain. */
   route_inspect_unobserved: number;
+  /** One current-plane raw i32 grid. flags.at is indexed lx*height+lz. 0 is clear, not absent. */
+  collision: CollisionView;
 }
 
 /** Typed settings access over the per-identity host bag. */
@@ -492,4 +512,5 @@ export interface NativeApi {
   boostFaded(input: { base: number; effective: number; floor?: number }): HelperResult<boolean>;
   plannedPotions(input: { carry: Array<{ item: string; qty: number }> }): HelperResult<PotionPlan[]>;
   potionToSip(input: { plans: PotionPlan[]; held: number[]; levels: Array<{ skill: string; base: number; effective: number }> }): HelperResult<PotionPlan | null>;
+  lineOfSight(input: { from: WorldTile; to: WorldTile; size?: number }): HelperResult<boolean>;
 }

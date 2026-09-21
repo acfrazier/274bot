@@ -2229,6 +2229,7 @@ fn observe_slot_catalog_and_paired(
     lifecycle_receipt: impl FnOnce() -> Option<script::ScriptLifecycleReceipt>,
     guardian_fact: impl FnOnce() -> catalog_core::BoundedGuardian,
     inspect: Option<catalog_core::RouteInspectPublished>,
+    paint: Option<&script::shim::ScriptPaint>,
 ) {
     if catalog.configured() {
         let script_lifecycle = lifecycle_receipt();
@@ -2245,6 +2246,7 @@ fn observe_slot_catalog_and_paired(
             guardian,
             session_boundary,
             inspect,
+            paint,
         );
     }
     if paired.configured() {
@@ -2558,6 +2560,11 @@ fn spawn_slot_thread(
                             } else {
                                 None
                             };
+                            let catalog_paint = if obs_catalog_core.copies_line_of_sight() {
+                                script_paint_of(&slot_scripts, name)
+                            } else {
+                                None
+                            };
                             observe_slot_catalog_and_paired(
                                 &obs_catalog_core,
                                 &obs_paired_core,
@@ -2572,6 +2579,7 @@ fn spawn_slot_thread(
                                 },
                                 || bounded_guardian_fact(status),
                                 inspect,
+                                catalog_paint.as_ref(),
                             );
                             let ready = c.ingame && c.scene_state == 2
                                 && nav_snapshot.local_player().is_some();

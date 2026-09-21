@@ -22,6 +22,7 @@ use flatbuffers::{
     root_with_opts, FlatBufferBuilder, Follow, ForwardsUOffset, InvalidFlatbuffer, Table, VOffsetT,
     Vector, Verifiable, Verifier, VerifierOptions, WIPOffset,
 };
+use std::sync::Arc;
 
 /// Max shim interact rows per tick (isolate→host).
 const MAX_INTERACT_REQS: usize = 256;
@@ -223,6 +224,15 @@ const VT_SNAP_ROUTE_INSPECT_REFUSED_ID: VOffsetT = 234;
 const VT_SNAP_ROUTE_INSPECT_REFUSED_ID_2: VOffsetT = 236;
 const VT_SNAP_ROUTE_INSPECT_REFUSED_ID_3: VOffsetT = 238;
 const VT_SNAP_ROUTE_INSPECT_UNOBSERVED: VOffsetT = 240;
+const VT_SNAP_COLLISION: VOffsetT = 242;
+
+const VT_COL_AVAILABLE: VOffsetT = 4;
+const VT_COL_BASE_X: VOffsetT = 6;
+const VT_COL_BASE_Z: VOffsetT = 8;
+const VT_COL_LEVEL: VOffsetT = 10;
+const VT_COL_WIDTH: VOffsetT = 12;
+const VT_COL_HEIGHT: VOffsetT = 14;
+const VT_COL_FLAGS: VOffsetT = 16;
 
 // InspectHop
 const VT_IH_KIND: VOffsetT = 4;
@@ -484,6 +494,30 @@ impl ReachViewInput<'static> {
         adjacent_rank: &[],
         step: &[],
         canlight: &[],
+    };
+}
+
+/// One current-plane raw i32 collision grid posted on the isolate snapshot.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct CollisionViewInput<'a> {
+    pub available: bool,
+    pub base_x: i32,
+    pub base_z: i32,
+    pub level: i32,
+    pub width: i32,
+    pub height: i32,
+    pub flags: &'a [i32],
+}
+
+impl CollisionViewInput<'static> {
+    pub const UNAVAILABLE: Self = Self {
+        available: false,
+        base_x: 0,
+        base_z: 0,
+        level: 0,
+        width: 0,
+        height: 0,
+        flags: &[],
     };
 }
 
@@ -749,6 +783,9 @@ pub struct NativeFactsInput<'a> {
     pub walk_outcome_allow_teleports: bool,
     pub walk_outcome_request_id: u64,
     pub route_inspect: RouteInspectFactsInput<'a>,
+    /// Posted collision family. `None` omits the table (old callers / first
+    /// post without Collision). `Some(UNAVAILABLE)` posts a clear.
+    pub collision: Option<CollisionViewInput<'a>>,
 }
 
 /// Host-published inspect family on the snapshot. All-zero is omitted / old buffer.
@@ -950,6 +987,60 @@ impl Verifiable for ReachReader<'_> {
                 false,
             )?
             .visit_field::<ForwardsUOffset<Vector<u32>>>("canlight", VT_REACH_CANLIGHT, false)?
+            .finish();
+        Ok(())
+    }
+}
+
+/// One current-plane collision table as decoded from a buffer.
+#[derive(Clone, Copy)]
+pub struct CollisionReader<'a> {
+    tab: Table<'a>,
+}
+
+impl<'a> Follow<'a> for CollisionReader<'a> {
+    type Inner = CollisionReader<'a>;
+    unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+        Self {
+            tab: Table::new(buf, loc),
+        }
+    }
+}
+
+impl CollisionReader<'_> {
+    pub fn available(&self) -> bool {
+        unsafe { self.tab.get::<bool>(VT_COL_AVAILABLE, None) }.unwrap_or(false)
+    }
+    pub fn base_x(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_COL_BASE_X, None) }.unwrap_or(0)
+    }
+    pub fn base_z(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_COL_BASE_Z, None) }.unwrap_or(0)
+    }
+    pub fn level(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_COL_LEVEL, None) }.unwrap_or(0)
+    }
+    pub fn width(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_COL_WIDTH, None) }.unwrap_or(0)
+    }
+    pub fn height(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_COL_HEIGHT, None) }.unwrap_or(0)
+    }
+    pub fn flags(&self) -> Vec<i32> {
+        i32_vec(&self.tab, VT_COL_FLAGS)
+    }
+}
+
+impl Verifiable for CollisionReader<'_> {
+    fn run_verifier(v: &mut Verifier, pos: usize) -> Result<(), InvalidFlatbuffer> {
+        v.visit_table(pos)?
+            .visit_field::<bool>("available", VT_COL_AVAILABLE, false)?
+            .visit_field::<i32>("base_x", VT_COL_BASE_X, false)?
+            .visit_field::<i32>("base_z", VT_COL_BASE_Z, false)?
+            .visit_field::<i32>("level", VT_COL_LEVEL, false)?
+            .visit_field::<i32>("width", VT_COL_WIDTH, false)?
+            .visit_field::<i32>("height", VT_COL_HEIGHT, false)?
+            .visit_field::<ForwardsUOffset<Vector<i32>>>("flags", VT_COL_FLAGS, false)?
             .finish();
         Ok(())
     }
@@ -1649,6 +1740,7 @@ impl Verifiable for SnapshotReader<'_> {
             .visit_field::<u64>("route_inspect_refused_id_2", VT_SNAP_ROUTE_INSPECT_REFUSED_ID_2, false)?
             .visit_field::<u64>("route_inspect_refused_id_3", VT_SNAP_ROUTE_INSPECT_REFUSED_ID_3, false)?
             .visit_field::<u64>("route_inspect_unobserved", VT_SNAP_ROUTE_INSPECT_UNOBSERVED, false)?
+            .visit_field::<ForwardsUOffset<CollisionReader>>("collision", VT_SNAP_COLLISION, false)?
             .finish();
         Ok(())
     }
@@ -2127,6 +2219,19 @@ impl SnapshotReader<'_> {
                 .get::<ForwardsUOffset<ReachReader>>(VT_SNAP_REACH, None)
         }
     }
+    pub fn has_collision(&self) -> bool {
+        unsafe {
+            self.tab
+                .get::<ForwardsUOffset<CollisionReader>>(VT_SNAP_COLLISION, None)
+                .is_some()
+        }
+    }
+    pub fn collision(&self) -> Option<CollisionReader<'_>> {
+        unsafe {
+            self.tab
+                .get::<ForwardsUOffset<CollisionReader>>(VT_SNAP_COLLISION, None)
+        }
+    }
     pub fn has_attacked_by_player(&self) -> bool {
         unsafe {
             self.tab
@@ -2423,6 +2528,13 @@ where
     }
 }
 
+fn i32_vec(tab: &Table<'_>, slot: VOffsetT) -> Vec<i32> {
+    match unsafe { tab.get::<ForwardsUOffset<Vector<i32>>>(slot, None) } {
+        Some(v) => v.iter().collect(),
+        None => Vec::new(),
+    }
+}
+
 fn u32_vec(tab: &Table<'_>, slot: VOffsetT) -> Vec<u32> {
     match unsafe { tab.get::<ForwardsUOffset<Vector<u32>>>(slot, None) } {
         Some(v) => v.iter().collect(),
@@ -2557,6 +2669,47 @@ pub struct NearestBoothFp {
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
+pub struct CollisionViewFp {
+    pub available: bool,
+    pub base_x: i32,
+    pub base_z: i32,
+    pub level: i32,
+    pub width: i32,
+    pub height: i32,
+    pub flags: Arc<[i32]>,
+}
+
+fn collision_fp(
+    last: Option<&CollisionViewFp>,
+    input: Option<CollisionViewInput<'_>>,
+) -> CollisionViewFp {
+    let Some(input) = input else {
+        return last.cloned().unwrap_or_default();
+    };
+    if let Some(prev) = last {
+        if prev.available == input.available
+            && prev.base_x == input.base_x
+            && prev.base_z == input.base_z
+            && prev.level == input.level
+            && prev.width == input.width
+            && prev.height == input.height
+            && prev.flags.as_ref() == input.flags
+        {
+            return prev.clone();
+        }
+    }
+    CollisionViewFp {
+        available: input.available,
+        base_x: input.base_x,
+        base_z: input.base_z,
+        level: input.level,
+        width: input.width,
+        height: input.height,
+        flags: Arc::from(input.flags),
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
 pub struct ReachViewFp {
     pub available: bool,
     pub base_x: i32,
@@ -2665,6 +2818,7 @@ pub struct SnapshotFingerprint {
     pub walk_outcome_allow_teleports: bool,
     pub walk_outcome_request_id: u64,
     pub route_inspect: RouteInspectFp,
+    pub collision: CollisionViewFp,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
@@ -2935,6 +3089,7 @@ impl SnapshotFingerprint {
             walk_outcome_allow_teleports: native.walk_outcome_allow_teleports,
             walk_outcome_request_id: native.walk_outcome_request_id,
             route_inspect: route_inspect_fp(&native.route_inspect),
+            collision: collision_fp(None, native.collision),
         }
     }
 }
@@ -3070,6 +3225,7 @@ pub struct DeltaMask {
     pub bank_approaches: bool,
     pub walk_outcome: bool,
     pub route_inspect: bool,
+    pub collision: bool,
 }
 
 impl DeltaMask {
@@ -3154,6 +3310,7 @@ impl DeltaMask {
             bank_approaches: true,
             walk_outcome: true,
             route_inspect: true,
+            collision: true,
         }
     }
 
@@ -3256,6 +3413,7 @@ impl DeltaMask {
                 || next.walk_outcome_allow_teleports != last.walk_outcome_allow_teleports
                 || next.walk_outcome_request_id != last.walk_outcome_request_id,
             route_inspect: next.route_inspect != last.route_inspect,
+            collision: next.collision != last.collision,
         }
     }
 }
@@ -3331,7 +3489,8 @@ impl IsolateBuf {
         native: NativeFactsInput<'_>,
         force_banks: bool,
     ) -> (Vec<u8>, SnapshotFingerprint) {
-        let fp = SnapshotFingerprint::from_input_with_native(input, native);
+        let mut fp = SnapshotFingerprint::from_input_with_native(input, native);
+        fp.collision = collision_fp(last.map(|prev| &prev.collision), native.collision);
         let mask = match last {
             None => DeltaMask::all(),
             Some(prev) => DeltaMask::changed(prev, &fp, force_banks),
@@ -3651,6 +3810,11 @@ fn encode_snapshot_masked_into(
     };
     let reach_table_off = if mask.reach {
         Some(reach_off(b, &input.reach))
+    } else {
+        None
+    };
+    let collision_table_off = if mask.collision {
+        native.collision.map(|c| collision_off(b, &c))
     } else {
         None
     };
@@ -4071,6 +4235,11 @@ fn encode_snapshot_masked_into(
         b.push_slot_always(VT_SNAP_ROUTE_INSPECT_REFUSED_ID_3, facts.refused_id_3);
         b.push_slot_always(VT_SNAP_ROUTE_INSPECT_UNOBSERVED, facts.unobserved);
     }
+    if mask.collision {
+        if let Some(off) = collision_table_off {
+            b.push_slot_always(VT_SNAP_COLLISION, off);
+        }
+    }
     b.push_slot_always(VT_SNAP_CANVAS_WIDTH, SNAPSHOT_CANVAS_W);
     b.push_slot_always(VT_SNAP_CANVAS_HEIGHT, SNAPSHOT_CANVAS_H);
     let root = b.end_table(tab);
@@ -4139,6 +4308,22 @@ fn bank_approach_off<'b>(
     b.push_slot_always(VT_BA_DEST_X, row.dest_x);
     b.push_slot_always(VT_BA_DEST_Z, row.dest_z);
     b.push_slot_always(VT_BA_DEST_LEVEL, row.dest_level);
+    WIPOffset::new(b.end_table(tab).value())
+}
+
+fn collision_off<'b>(
+    b: &mut FlatBufferBuilder<'b>,
+    c: &CollisionViewInput<'_>,
+) -> WIPOffset<CollisionReader<'b>> {
+    let flags = b.create_vector(c.flags);
+    let tab = b.start_table();
+    b.push_slot_always(VT_COL_AVAILABLE, c.available);
+    b.push_slot_always(VT_COL_BASE_X, c.base_x);
+    b.push_slot_always(VT_COL_BASE_Z, c.base_z);
+    b.push_slot_always(VT_COL_LEVEL, c.level);
+    b.push_slot_always(VT_COL_WIDTH, c.width);
+    b.push_slot_always(VT_COL_HEIGHT, c.height);
+    b.push_slot_always(VT_COL_FLAGS, flags);
     WIPOffset::new(b.end_table(tab).value())
 }
 
@@ -7713,5 +7898,52 @@ pub(crate) mod tests {
         let view = decode_snapshot(&cleared).expect("cleared");
         assert!(view.has_reach());
         assert!(view.reach().expect("cleared").canlight().is_empty());
+    }
+
+    #[test]
+    fn collision_keyframe_posts_and_unchanged_delta_omits() {
+        let flags = vec![0i32, 1, 2, 3];
+        let mut native = NativeFactsInput {
+            collision: Some(CollisionViewInput {
+                available: true,
+                base_x: 3200,
+                base_z: 3200,
+                level: 0,
+                width: 2,
+                height: 2,
+                flags: &flags,
+            }),
+            ..NativeFactsInput::default()
+        };
+        let input = empty_input(1);
+        let (keyframe, fp) = encode_snapshot_delta_with_native(None, &input, native, false);
+        let kf = decode_snapshot(&keyframe).expect("keyframe");
+        assert!(kf.has_collision());
+        let c = kf.collision().expect("collision");
+        assert!(c.available());
+        assert_eq!(c.flags(), flags);
+        let (delta, fp2) = encode_snapshot_delta_with_native(Some(&fp), &input, native, false);
+        let view = decode_snapshot(&delta).expect("delta");
+        assert!(!view.has_collision(), "unchanged collision omitted");
+        assert!(
+            std::sync::Arc::ptr_eq(&fp.collision.flags, &fp2.collision.flags),
+            "unchanged tick reuses the last flags Arc"
+        );
+
+        native.collision = Some(CollisionViewInput::UNAVAILABLE);
+        let (cleared, _) = encode_snapshot_delta_with_native(Some(&fp2), &input, native, false);
+        let view = decode_snapshot(&cleared).expect("cleared");
+        assert!(view.has_collision(), "available→false must post");
+        let c = view.collision().expect("cleared");
+        assert!(!c.available());
+        assert!(c.flags().is_empty());
+    }
+
+    #[test]
+    fn first_post_without_collision_table_omits_field() {
+        let input = empty_input(1);
+        let bytes = encode_snapshot(&input);
+        let view = decode_snapshot(&bytes).expect("snapshot");
+        assert!(!view.has_collision());
     }
 }

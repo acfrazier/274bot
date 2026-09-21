@@ -669,6 +669,10 @@ pub struct GameSnapshot {
     /// gen can be consumed before `loc_change_do_queue` applies.
     #[serde(skip)]
     loc_static_gen: u64,
+    /// One complete-rebuild fold of `loc_dirty_bits`. Standalone Scene/Loc
+    /// compute the pair themselves; this is never a cross-tick cache.
+    #[serde(skip)]
+    loc_bits_prelude: Option<(u64, u64)>,
     /// Local-player tile the cached `LocView.distance` scalars were last
     /// written for. Player ticks refresh those integers in place when this
     /// origin moves, without cloning loc names or re-sweeping the world.
@@ -818,6 +822,7 @@ impl Default for GameSnapshot {
             loc_gen: 0,
             loc_model_stamp: empty_loc_model_stamp(),
             loc_static_gen: 0,
+            loc_bits_prelude: None,
             loc_distance_tile: None,
             ground_item_gen: 0,
             inventory: Vec::new(),
@@ -1023,6 +1028,7 @@ impl GameSnapshot {
     /// Only a real PLAYER_INFO observation advances the host tick.
     pub fn rebuild_from_drain(&mut self, client: &Client, player_info: bool) -> bool {
         self.refresh_native_facts(client);
+        self.loc_bits_prelude = Some(loc_dirty_bits(client));
         let mut dirty = false;
         dirty |= self.rebuild_family(client, Family::Npc);
         dirty |= self.rebuild_player(client, player_info);
@@ -1032,6 +1038,7 @@ impl GameSnapshot {
         dirty |= self.rebuild_family(client, Family::Chat);
         dirty |= self.rebuild_family(client, Family::Scene);
         dirty |= self.rebuild_family(client, Family::Loc);
+        self.loc_bits_prelude = None;
         dirty |= self.rebuild_family(client, Family::GroundItem);
         dirty |= self.rebuild_family(client, Family::Iface);
         dirty |= self.rebuild_family(client, Family::Camera);
@@ -2224,6 +2231,41 @@ impl GameSnapshot {
         moved
     }
 
+    fn loc_bits(&self, client: &Client) -> (u64, u64) {
+        self.loc_bits_prelude
+            .unwrap_or_else(|| loc_dirty_bits(client))
+    }
+
+    fn publish_scene_from_client(&mut self, client: &Client) {
+        if !client.ingame || client.scene_state != 2 {
+            self.scene = SceneView::default();
+            return;
+        }
+        let level = client.minusedlevel;
+        match client.collision.get(level as usize) {
+            Some(cmap) => {
+                self.scene = SceneView {
+                    available: true,
+                    base_x: client.map_build_base_x,
+                    base_z: client.map_build_base_z,
+                    level,
+                    width: cmap.size_x,
+                    height: cmap.size_z,
+                    collision_flags: cmap.flags.iter().flatten().copied().collect(),
+                };
+            }
+            None => {
+                self.scene = SceneView {
+                    available: false,
+                    base_x: client.map_build_base_x,
+                    base_z: client.map_build_base_z,
+                    level,
+                    ..SceneView::default()
+                };
+            }
+        }
+    }
+
     /// Scene-family rebuild: `ingame` + `scene_state`, always fresh —
     /// these flip locally (`check_scene` sets `scene_state = 2` on the SIM
     /// loop with no gen bump), so a gen-gated copy would pin the snapshot
@@ -2239,31 +2281,21 @@ impl GameSnapshot {
         self.ingame = client.ingame;
         self.scene_state = client.scene_state;
         self.attached = client.stream.is_some();
-        let materialize_missing = !self.scene.available && client.ingame && client.scene_state == 2;
-        if moved || materialize_missing {
-            let level = client.minusedlevel;
-            match client.collision.get(level as usize) {
-                Some(cmap) => {
-                    self.scene = SceneView {
-                        available: true,
-                        base_x: client.map_build_base_x,
-                        base_z: client.map_build_base_z,
-                        level,
-                        width: cmap.size_x,
-                        height: cmap.size_z,
-                        collision_flags: cmap.flags.iter().flatten().copied().collect(),
-                    };
-                }
-                None => {
-                    self.scene = SceneView {
-                        available: false,
-                        base_x: client.map_build_base_x,
-                        base_z: client.map_build_base_z,
-                        level,
-                        ..SceneView::default()
-                    };
-                }
+        let (stamp, static_gen) = self.loc_bits(client);
+        let publishable = client.ingame && client.scene_state == 2;
+        if !publishable {
+            if self.scene.available || !self.scene.collision_flags.is_empty() {
+                self.scene = SceneView::default();
             }
+            return moved;
+        }
+        let loc_dirty = stamp != self.loc_model_stamp || static_gen != self.loc_static_gen;
+        let identity_stale = !self.scene.available
+            || self.scene.level != client.minusedlevel
+            || self.scene.base_x != client.map_build_base_x
+            || self.scene.base_z != client.map_build_base_z;
+        if moved || loc_dirty || identity_stale {
+            self.publish_scene_from_client(client);
         }
         moved
     }
@@ -2278,14 +2310,17 @@ impl GameSnapshot {
     /// gate leaves nav reading the previous build's door or flax.
     fn rebuild_loc(&mut self, client: &Client) -> bool {
         let moved = track(client.gens.scene, &mut self.loc_gen);
-        let stamp = loc_model_stamp(client);
-        let static_gen = client.world.static_loc_generation();
+        let standalone = self.loc_bits_prelude.is_none();
+        let (stamp, static_gen) = self.loc_bits(client);
         if !moved && stamp == self.loc_model_stamp && static_gen == self.loc_static_gen {
             return false;
         }
         let dirty = moved || stamp != self.loc_model_stamp || static_gen != self.loc_static_gen;
         self.loc_model_stamp = stamp;
         self.loc_static_gen = static_gen;
+        if standalone && client.ingame && client.scene_state == 2 {
+            self.publish_scene_from_client(client);
+        }
         let base = (client.map_build_base_x, client.map_build_base_z);
         let level = client.minusedlevel;
         let local_tile = local_world_tile(client);
@@ -3047,6 +3082,10 @@ fn track(world: u64, tracked: &mut u64) -> bool {
 /// Cheap dirty bit for loc rebuilds: aggregate every scene tile's
 /// `model_stamp` (bumped by wall/decor/scenery mutations including door
 /// multilocs). Integer reads only — no loc string clones.
+fn loc_dirty_bits(client: &Client) -> (u64, u64) {
+    (loc_model_stamp(client), client.world.static_loc_generation())
+}
+
 fn loc_model_stamp(client: &Client) -> u64 {
     let level = client.minusedlevel;
     let mut stamp = 0u64;

@@ -311,7 +311,8 @@ pub fn live_example_path(file_name: &str) -> Option<PathBuf> {
         | "bone_burier_v2.js"
         | "route_inspect_brimhaven_v2.ts"
         | "prayer_v2.ts"
-        | "prayer_v1.ts" => {
+        | "prayer_v1.ts"
+        | "line_of_sight_v2.ts" => {
             let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                 .join("examples")
                 .join(file_name);
@@ -845,5 +846,13 @@ mod tests {
         assert!(live_example_path("prayer_v2").is_none());
         assert!(live_example_path("prayer_v1").is_none());
         assert!(live_example_path("Prayer.ts").is_none());
+    }
+
+    #[test]
+    fn line_of_sight_qualification_example_is_an_exact_file_card() {
+        let v2 = live_example_path("line_of_sight_v2.ts").expect("checked-in los v2 example");
+        assert!(v2.ends_with("line_of_sight_v2.ts"), "{}", v2.display());
+        assert!(live_example_path("line_of_sight_v2").is_none());
+        assert!(live_example_path("LineOfSight.ts").is_none());
     }
 }

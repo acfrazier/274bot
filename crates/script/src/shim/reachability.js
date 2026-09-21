@@ -90,6 +90,12 @@ export const Reachability = proxy('Reachability', {
         const maxSteps = opts && opts.maxSteps !== undefined ? opts.maxSteps : 400;
         return boundedReach(reach, tile, !!(opts && opts.adjacentOk), maxSteps);
     },
+    lineOfSight(from, to, size) {
+        const a = resolveTile(from);
+        const b = resolveTile(to);
+        if (!a || !b) return false;
+        return globalThis.__rs2b0t_line_of_sight('v1', a, b, size === undefined ? undefined : size);
+    },
     canStep(from, to) {
         const a = resolveTile(from);
         const b = resolveTile(to);
