@@ -2325,6 +2325,12 @@ const NATIVE_SNAPSHOT_FIELDS: &[TsField] = &[
         doc: Some("One current-plane raw i32 grid. flags.at is indexed lx*height+lz. 0 is clear, not absent."),
     },
     TsField {
+        name: "npcs",
+        ty: "SceneEntity[]",
+        optional: false,
+        doc: Some("Packet-time NPC_INFO rows. Copy if retaining past this tick. size<1 is unavailable, not a synthetic 1."),
+    },
+    TsField {
         name: "self_target_kind",
         ty: "number",
         optional: false,

@@ -404,6 +404,8 @@ export interface NativeSnapshot {
   route_inspect_unobserved: number;
   /** One current-plane raw i32 grid. flags.at is indexed lx*height+lz. 0 is clear, not absent. */
   collision: CollisionView;
+  /** Packet-time NPC_INFO rows. Copy if retaining past this tick. size<1 is unavailable, not a synthetic 1. */
+  npcs: SceneEntity[];
   /** 0 none, 1 npc, 2 player. Packet-time local face. */
   self_target_kind: number;
   /** -1 when kind is 0. 0 is a legal NPC index. */

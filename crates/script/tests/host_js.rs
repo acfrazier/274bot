@@ -76,6 +76,38 @@ fn host_js_dts_includes_required_interfaces() {
         !src.contains("export type NativeOp =\n  | { op: 'walk'"),
         "v2 NativeOp must not dump the full InteractReq union"
     );
+
+    let native = native_snapshot_block(&src);
+    assert!(
+        native.contains("npcs: SceneEntity[]"),
+        "typed NativeSnapshot.npcs required"
+    );
+    assert!(native.contains("self_target_kind: number"));
+    assert!(native.contains("self_target_index: number"));
+    assert!(
+        native.contains("Packet-time NPC_INFO"),
+        "npcs must document packet-time freshness"
+    );
+    assert!(
+        native.contains("size<1 is unavailable"),
+        "npcs must document unavailable size"
+    );
+    assert!(
+        !native.contains("locs:") && !native.contains("players:") && !native.contains("ground:"),
+        "locs/players/ground stay off NativeSnapshot: {native}"
+    );
+}
+
+fn native_snapshot_block(src: &str) -> &str {
+    const START: &str = "export interface NativeSnapshot {";
+    let start = src
+        .find(START)
+        .unwrap_or_else(|| panic!("missing NativeSnapshot"));
+    let rest = &src[start..];
+    let end = rest
+        .find("\n}\n")
+        .unwrap_or_else(|| panic!("unclosed NativeSnapshot"));
+    &rest[..=end]
 }
 
 /// Writes `host-js/index.d.ts` from the host verb tables.
