@@ -1141,6 +1141,13 @@ function enqueueIfButton(component_id) {
   h.interact.push({ op: 'if-button', component_id: component_id });
 }
 function runPrayerMachine(payload) {
+  // Before: a second begin overwrote __rs_prayer_pump; Rust abort of the
+  // old token did not resolve the first Promise (hang).
+  // After: refuse a second native Set/Clear with busy before Rust begin
+  // or click. The admitted operation keeps the pump and must settle.
+  if (typeof globalThis.__rs_prayer_pump === 'function') {
+    return Promise.resolve(helperErr('busy'));
+  }
   const generation = lifecycleGeneration;
   const begin = prayerCall(payload);
   if (begin && begin.kind === 'if-button') {
@@ -1185,6 +1192,10 @@ api.prayerActive = function (input) {
   return prayerCall({ op: 'active', name: input.name });
 };
 api.prayerSet = function (input) {
+  // Sequential await is the preferred example. An already-admitted
+  // operation still progresses on later eligible NativeTicks even if
+  // this Promise is not returned from tick. A second Set while busy
+  // settles immediately with error busy and does not click.
   if (!input || typeof input.name !== 'string' || typeof input.on !== 'boolean') {
     return Promise.resolve(helperErr('invalid-args'));
   }
@@ -1195,6 +1206,7 @@ api.prayerSet = function (input) {
   });
 };
 api.prayerClear = function () {
+  // Same admission rule as prayerSet: busy if a pump is already installed.
   return runPrayerMachine({ op: 'begin-clear' });
 };
 function recordSettlement(generation) {

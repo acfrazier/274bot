@@ -105,6 +105,28 @@ The corresponding `bone_burier_v2` integration tests are synthetic isolate
 tests (not LIVE tests). They load both the TypeScript source and bundled
 JavaScript, and verify per-isolate settings and bounded failure behavior.
 
+## Prayer helpers
+
+Eight named methods. Queries (`prayerPoints` / `Max` / `Full` / `Known` /
+`Available` / `Active`) are sync `HelperResult`. `prayerSet` and
+`prayerClear` are the named async private-lifecycle exception
+(`Promise<HelperResult<…>>`). Callers never see the private Step.
+
+**Before:** a second overlapping `prayerSet` / `prayerClear` overwrote the
+single private pump. Rust abort of the old token did not settle the first
+Promise. A sync tick that fired Set/Clear without returning that Promise
+did not advance the admitted job.
+
+**After:** if an operation is already admitted, the second Set/Clear
+returns `{ok:false, error:'busy'}` before Rust begin or click. The original
+keeps ownership and must settle. Sequential `await` inside a returned
+async tick remains the preferred example. Fire-and-forget still progresses
+on later eligible NativeTicks (not paused, held, or unready). Matching
+snapshot completion can enqueue the next clear click only through the
+existing Rust machine. Additional public error: `busy`.
+
+See `crates/script/examples/prayer_v2.ts`.
+
 ## Sync and async tick
 
 A v2 `tick` may be async. The isolate will not re-enter `tick` while that

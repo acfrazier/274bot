@@ -1606,42 +1606,38 @@ fn tick_loop(
                     // paints. Drain so await + onPaint + loop
                     // continuation land on this tick before paint
                     // forward.
-                    let result = runtime.call_function(None, "__rs2b0t_pump", json_args!(n));
-                    let _ = runtime.block_on_event_loop(
-                        rustyscript::deno_core::PollEventLoopOptions::default(),
-                        Some(Duration::from_millis(10)),
-                    );
-                    let _ = runtime.eval::<()>("if (typeof globalThis.__rs2b0t_flush_native_events === 'function') globalThis.__rs2b0t_flush_native_events()");
-                    result
+                    runtime.call_function(None, "__rs2b0t_pump", json_args!(n))
                 } else if v2_pending {
                     // Rust-owned v2 single-flight: do not re-enter tick
                     // while a previous returned Promise is pending.
                     // Snapshot posts still merge; this only skips tick.
-                    // Prayer's private machine advances here so the
-                    // existing NativeTick Promise can settle.
-                    let _ = runtime.eval::<()>(
-                        "if (typeof globalThis.__rs_prayer_pump === 'function') globalThis.__rs_prayer_pump()",
-                    );
-                    let _ = runtime.block_on_event_loop(
-                        rustyscript::deno_core::PollEventLoopOptions::default(),
-                        Some(Duration::from_millis(10)),
-                    );
                     Ok(())
                 } else {
                     // `__rs_tick` is a synchronous entry that returns
                     // immediately (parked or not), so this cannot hang on
-                    // a wait. Drain microtasks so the runner's await
-                    // continuations and onPaint land inside this tick; a
-                    // parked wait leaves no pending work, so the drain
-                    // returns at once (the timeout is only a backstop).
-                    let result =
-                        runtime.call_function_immediate(None, "__rs_tick", json_args!(n));
-                    let _ = runtime.block_on_event_loop(
-                        rustyscript::deno_core::PollEventLoopOptions::default(),
-                        Some(Duration::from_millis(10)),
-                    );
-                    result
+                    // a wait.
+                    runtime.call_function_immediate(None, "__rs_tick", json_args!(n))
                 };
+                // Eligible NativeTick only: pause, generation mismatch,
+                // and guardian hold already `continue` above. Advance an
+                // admitted prayer private pump once per tick, including
+                // a sync caller that did not return the Promise.
+                // Before: pump ran only on `v2_pending` (and reset).
+                // After: one no-op-if-absent call here, then the same
+                // single event-loop drain as before — not a second 10ms
+                // framework and not a duplicate drain.
+                if v2_native {
+                    let _ = runtime.eval::<()>(
+                        "if (typeof globalThis.__rs_prayer_pump === 'function') globalThis.__rs_prayer_pump()",
+                    );
+                }
+                let _ = runtime.block_on_event_loop(
+                    rustyscript::deno_core::PollEventLoopOptions::default(),
+                    Some(Duration::from_millis(10)),
+                );
+                if parked {
+                    let _ = runtime.eval::<()>("if (typeof globalThis.__rs2b0t_flush_native_events === 'function') globalThis.__rs2b0t_flush_native_events()");
+                }
                 // The host may have armed `terminate_execution` to
                 // interrupt a slow tick; clear it now that the tick's
                 // JS frames have fully unwound. This is the only cancel

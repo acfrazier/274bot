@@ -656,3 +656,212 @@ fn published_example_queries_sets_clears_and_stops() {
     );
     iso.join();
 }
+
+#[test]
+fn v2_overlap_set_and_clear_busy_settles_without_mutating_first() {
+    let src = r#"
+export const apiVersion = 2;
+export async function tick(api) {
+  if (globalThis.__started) return;
+  globalThis.__started = true;
+  const setP = api.prayerSet({ name: 'Protect from Melee', on: true });
+  const clearP = api.prayerClear();
+  setP.then((r) => { globalThis.__set = r; });
+  clearP.then((r) => { globalThis.__clear = r; });
+  await Promise.all([setP, clearP]);
+}
+"#;
+    let iso = spawn_v2(src, data());
+    let stats = [prayer_stat(43, 43)];
+    let varps = [VarpInput {
+        index: 95,
+        value: 1,
+    }];
+    let mut snap = base_snapshot();
+    snap.stats = &stats;
+    snap.varps = &varps;
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 1);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![if_button(5623)],
+        "refused clear must not click the already-active Magic row"
+    );
+    let clear = iso.probe("globalThis.__clear").unwrap();
+    assert_eq!(clear["ok"], false);
+    assert_eq!(clear["error"], "busy");
+    assert!(
+        iso.probe("globalThis.__set").unwrap().is_null(),
+        "original set must still own the admitted pump"
+    );
+    snap.varps = &[
+        VarpInput {
+            index: 95,
+            value: 1,
+        },
+        VarpInput {
+            index: 97,
+            value: 1,
+        },
+    ];
+    snap.tick = 2;
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 2);
+    let set = iso.probe("globalThis.__set").unwrap();
+    assert_eq!(set["ok"], true);
+    assert_eq!(set["value"], true);
+    assert_eq!(iso.probe("globalThis.__clear").unwrap()["error"], "busy");
+    assert!(iso.drain_interacts().is_empty());
+    iso.join();
+}
+
+#[test]
+fn v2_second_set_is_busy_and_original_completes() {
+    let src = r#"
+export const apiVersion = 2;
+export async function tick(api) {
+  if (globalThis.__started) return;
+  globalThis.__started = true;
+  const first = api.prayerSet({ name: 'Protect from Melee', on: true });
+  const second = api.prayerSet({ name: 'Protect from Magic', on: true });
+  first.then((r) => { globalThis.__first = r; });
+  second.then((r) => { globalThis.__second = r; });
+  await Promise.all([first, second]);
+}
+"#;
+    let iso = spawn_v2(src, data());
+    let stats = [prayer_stat(43, 43)];
+    let varps = [VarpInput {
+        index: 97,
+        value: 0,
+    }];
+    let mut snap = base_snapshot();
+    snap.stats = &stats;
+    snap.varps = &varps;
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 1);
+    assert_eq!(iso.drain_interacts(), vec![if_button(5623)]);
+    let second = iso.probe("globalThis.__second").unwrap();
+    assert_eq!(second["ok"], false);
+    assert_eq!(second["error"], "busy");
+    assert!(iso.probe("globalThis.__first").unwrap().is_null());
+    snap.varps = &[VarpInput {
+        index: 97,
+        value: 1,
+    }];
+    snap.tick = 2;
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 2);
+    let first = iso.probe("globalThis.__first").unwrap();
+    assert_eq!(first["ok"], true);
+    assert_eq!(first["value"], true);
+    assert_eq!(iso.probe("globalThis.__second").unwrap()["error"], "busy");
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "refused second set must not click Magic"
+    );
+    iso.join();
+}
+
+#[test]
+fn v2_sync_tick_fire_and_forget_set_progresses_without_new_admission() {
+    let src = r#"
+export const apiVersion = 2;
+export function tick(api) {
+  if (globalThis.__started) return;
+  globalThis.__started = true;
+  api.prayerSet({ name: 'Protect from Melee', on: true }).then((r) => {
+    globalThis.__set = r;
+  });
+}
+"#;
+    let iso = spawn_v2(src, data());
+    let stats = [prayer_stat(43, 43)];
+    let varps = [VarpInput {
+        index: 97,
+        value: 0,
+    }];
+    let mut snap = base_snapshot();
+    snap.stats = &stats;
+    snap.varps = &varps;
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 1);
+    assert_eq!(iso.drain_interacts(), vec![if_button(5623)]);
+    assert_eq!(iso.probe("__rs_v2_tick_pending").unwrap(), false);
+    assert!(iso.probe("globalThis.__set").unwrap().is_null());
+    snap.varps = &[VarpInput {
+        index: 97,
+        value: 1,
+    }];
+    snap.tick = 2;
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 2);
+    let set = iso.probe("globalThis.__set").unwrap();
+    assert_eq!(set["ok"], true);
+    assert_eq!(set["value"], true);
+    assert_eq!(
+        iso.probe("typeof globalThis.__rs_prayer_pump").unwrap(),
+        "undefined"
+    );
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "matching snapshot must settle the admitted set, not admit another click"
+    );
+    iso.join();
+}
+
+#[test]
+fn v2_pause_and_hold_do_not_progress_admitted_set() {
+    let src = r#"
+export const apiVersion = 2;
+export async function tick(api) {
+  if (globalThis.__done) return;
+  globalThis.__set = await api.prayerSet({ name: 'Protect from Melee', on: true });
+  globalThis.__done = true;
+}
+"#;
+    let iso = spawn_v2(src, data());
+    let stats = [prayer_stat(43, 43)];
+    let mut snap = base_snapshot();
+    snap.stats = &stats;
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 1);
+    assert_eq!(iso.drain_interacts(), vec![if_button(5623)]);
+    assert!(iso.probe("globalThis.__set").unwrap().is_null());
+
+    iso.pause();
+    std::thread::sleep(std::time::Duration::from_millis(2_050));
+    snap.tick = 2;
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 2);
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "paused ticks must not click or settle"
+    );
+    assert!(iso.probe("globalThis.__set").unwrap().is_null());
+    iso.resume();
+
+    snap.hold = true;
+    snap.tick = 3;
+    post_snapshot_input(&iso, &snap);
+    std::thread::sleep(std::time::Duration::from_millis(2_050));
+    tick(&iso, 3);
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "held ticks must not click or settle"
+    );
+    assert!(iso.probe("globalThis.__set").unwrap().is_null());
+
+    snap.hold = false;
+    snap.varps = &[VarpInput {
+        index: 97,
+        value: 1,
+    }];
+    snap.tick = 4;
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 4);
+    let set = iso.probe("globalThis.__set").unwrap();
+    assert_eq!(set["ok"], true, "deadline must stay frozen while blocked: {set}");
+    assert_eq!(set["value"], true);
+    iso.join();
+}

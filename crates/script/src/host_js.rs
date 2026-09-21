@@ -327,9 +327,12 @@ fn render_native_v2(out: &mut String) {
     out.push_str("  prayerKnown(input: { name: string }): HelperResult<boolean>;\n");
     out.push_str("  prayerAvailable(input: { name: string }): HelperResult<boolean>;\n");
     out.push_str("  prayerActive(input: { name: string }): HelperResult<boolean>;\n");
-    out.push_str("  /** Named async private-lifecycle exception. Final HelperResult only; callers never see Step. */\n");
+    out.push_str("  /** Named async private-lifecycle exception. Final HelperResult only; callers never see Step.\n");
+    out.push_str("   * Before: a second Set/Clear overwrote the private pump and could hang the first Promise; a sync tick that did not return that Promise did not advance it.\n");
+    out.push_str("   * After: a second Set/Clear while one operation is already admitted returns `{ok:false, error:'busy'}` without begin/click. The admitted operation keeps ownership and must settle. Sequential `await` is the preferred example; fire-and-forget still progresses on later eligible NativeTicks. Additional public error: `busy`.\n");
+    out.push_str("   */\n");
     out.push_str("  prayerSet(input: { name: string; on: boolean }): Promise<HelperResult<boolean>>;\n");
-    out.push_str("  /** Completes the 15-row walk. timed_out may be nonzero; LIVE later requires all off. */\n");
+    out.push_str("  /** Completes the 15-row walk. timed_out may be nonzero; LIVE later requires all off. Same busy refuse as prayerSet. */\n");
     out.push_str("  prayerClear(): Promise<HelperResult<PrayerClearCounts>>;\n");
     out.push_str("}\n");
 }

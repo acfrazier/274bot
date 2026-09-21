@@ -443,8 +443,11 @@ export interface NativeApi {
   prayerKnown(input: { name: string }): HelperResult<boolean>;
   prayerAvailable(input: { name: string }): HelperResult<boolean>;
   prayerActive(input: { name: string }): HelperResult<boolean>;
-  /** Named async private-lifecycle exception. Final HelperResult only; callers never see Step. */
+  /** Named async private-lifecycle exception. Final HelperResult only; callers never see Step.
+   * Before: a second Set/Clear overwrote the private pump and could hang the first Promise; a sync tick that did not return that Promise did not advance it.
+   * After: a second Set/Clear while one operation is already admitted returns `{ok:false, error:'busy'}` without begin/click. The admitted operation keeps ownership and must settle. Sequential `await` is the preferred example; fire-and-forget still progresses on later eligible NativeTicks. Additional public error: `busy`.
+   */
   prayerSet(input: { name: string; on: boolean }): Promise<HelperResult<boolean>>;
-  /** Completes the 15-row walk. timed_out may be nonzero; LIVE later requires all off. */
+  /** Completes the 15-row walk. timed_out may be nonzero; LIVE later requires all off. Same busy refuse as prayerSet. */
   prayerClear(): Promise<HelperResult<PrayerClearCounts>>;
 }
