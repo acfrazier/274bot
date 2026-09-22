@@ -1,4 +1,4 @@
-//! Typed local V8 marshalling for the trail pack-plan helper.
+//! Typed local V8 marshalling for the trail pack-plan and hard-kit helpers.
 //! Not a rustyscript `register_function` JSON op and not a clue machine.
 
 use rustyscript::Runtime;
@@ -47,6 +47,7 @@ fn run_clue_pack<'s>(
     let op = js_to_string(scope, op)?;
     match op.as_str() {
         "packPlan" => pack_plan_op(scope, args.get(1)),
+        "hardKit" => hard_kit_op(scope, args.get(1)),
         _ => Err(INVALID_ARGS.into()),
     }
 }
@@ -85,6 +86,120 @@ fn pack_plan_op<'s>(
         }
         Err(error) => Err(error.into()),
     }
+}
+
+/// The caller's own kit facts, and nothing else: no quest tab, no snapshot, no
+/// inventory, no equipment, and no bank. Every field is required here, so an
+/// omitted `attack` is `invalid-args` rather than the status `attack` and an
+/// omitted `lostCity` is `invalid-args` rather than `lost-city`. Extra keys are
+/// ignored, on the input and on each item.
+fn hard_kit_op<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    input: v8::Local<v8::Value>,
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    if input.is_null() || input.is_undefined() || input.is_array() || !input.is_object() {
+        return Err(INVALID_ARGS.into());
+    }
+    let attack = required_count(scope, input, "attack")?;
+    let lost_city = required_flag(scope, input, "lostCity")?;
+    let items = required_items(scope, input, "items")?;
+    let kit = api::clue_pack::HardKitInput {
+        attack,
+        lost_city,
+        items: &items,
+    };
+    match api::clue_pack::hard_clue_kit(&kit) {
+        Ok(value) => {
+            let value = materialize(scope, &value)?;
+            helper_ok(scope, value)
+        }
+        Err(error) => Err(error.into()),
+    }
+}
+
+/// A required field. Absent is `invalid-args`: the `count()` default of `0`
+/// would turn an omitted `attack` into the status `attack`.
+fn required_count(
+    scope: &mut v8::HandleScope,
+    input: v8::Local<v8::Value>,
+    name: &str,
+) -> Result<i32, String> {
+    match optional_count(scope, input, name)? {
+        Some(value) => Ok(value),
+        None => Err(INVALID_ARGS.into()),
+    }
+}
+
+/// A required real `i32`. Unlike a count it may be negative: an item id that
+/// matches no dose, dagger, or shark is a miss in the frozen reduce, not an
+/// argument error. `is_int32` is false for a string, a fraction, a bigint, a
+/// boxed number, and negative zero.
+fn required_i32(
+    scope: &mut v8::HandleScope,
+    input: v8::Local<v8::Value>,
+    name: &str,
+) -> Result<i32, String> {
+    if !has_own(scope, input, name)? {
+        return Err(INVALID_ARGS.into());
+    }
+    let value = field(scope, input, name)?;
+    if !value.is_int32() {
+        return Err(INVALID_ARGS.into());
+    }
+    value
+        .int32_value(scope)
+        .ok_or_else(|| INVALID_ARGS.to_string())
+}
+
+/// A required boolean. Absent is `invalid-args`: the `flag()` default of
+/// `false` would turn an omitted `lostCity` into the status `lost-city`, and
+/// `1`/`0` are not booleans here either.
+fn required_flag(
+    scope: &mut v8::HandleScope,
+    input: v8::Local<v8::Value>,
+    name: &str,
+) -> Result<bool, String> {
+    if !has_own(scope, input, name)? {
+        return Err(INVALID_ARGS.into());
+    }
+    let value = field(scope, input, name)?;
+    if !value.is_boolean() {
+        return Err(INVALID_ARGS.into());
+    }
+    Ok(value.boolean_value(scope))
+}
+
+/// A required array of kit rows. An element that is not an object, or whose
+/// `id` or `count` is missing, `null`, or the wrong type, is `invalid-args`:
+/// the frozen reduce reads those two fields only, so an extra `worn`, `slot`,
+/// or `name` key is ignored rather than refused.
+fn required_items(
+    scope: &mut v8::HandleScope,
+    input: v8::Local<v8::Value>,
+    name: &str,
+) -> Result<Vec<api::clue_pack::HardKitItem>, String> {
+    if !has_own(scope, input, name)? {
+        return Err(INVALID_ARGS.into());
+    }
+    let value = field(scope, input, name)?;
+    if !value.is_array() {
+        return Err(INVALID_ARGS.into());
+    }
+    let rows = v8::Local::<v8::Array>::try_from(value).map_err(|_| INVALID_ARGS.to_string())?;
+    let mut items = Vec::with_capacity(rows.length() as usize);
+    for index in 0..rows.length() {
+        let row = rows
+            .get_index(scope, index)
+            .ok_or_else(|| PENDING.to_string())?;
+        if row.is_null() || row.is_undefined() || row.is_array() || !row.is_object() {
+            return Err(INVALID_ARGS.into());
+        }
+        items.push(api::clue_pack::HardKitItem {
+            id: required_i32(scope, row, "id")?,
+            count: required_count(scope, row, "count")?,
+        });
+    }
+    Ok(items)
 }
 
 /// An absent field is `0`. The same real-`i32` check as `clue.row`, plus the

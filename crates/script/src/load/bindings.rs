@@ -1373,6 +1373,9 @@ function clueLogicV2(op) {
 function cluePackV2(input) {
   return globalThis.__rs2b0t_clue_pack_v2('packPlan', input);
 }
+function clueHardKitV2(input) {
+  return globalThis.__rs2b0t_clue_pack_v2('hardKit', input);
+}
 api.clue = {
   row: function (input) {
     if (arguments.length === 0) return helperErr('invalid-args');
@@ -1406,6 +1409,13 @@ api.clue = {
   // food and the pack cannot spare a slot.
   packPlan: function (input) {
     return cluePackV2(input);
+  },
+  // Pure kit status over the caller's own facts: no snapshot, no quest tab,
+  // no inventory, no equipment, no bank. Every field is required, so an
+  // omitted attack or lostCity is invalid-args rather than a default, and a
+  // failed check is the whole result.
+  hardKit: function (input) {
+    return clueHardKitV2(input);
   },
 };
 const SCENE_LIMIT_MAX = 64;

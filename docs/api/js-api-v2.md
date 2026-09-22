@@ -204,18 +204,20 @@ Example: `crates/script/examples/quest_facts_v2.ts`.
 
 ## Clue helpers
 
-Three sync `HelperResult` methods. `row` and `heldStep` read the selected pin's
+Four sync `HelperResult` methods. `row` and `heldStep` read the selected pin's
 landed trail membership family; `packPlan` is pure slot arithmetic over the
-caller's own numbers and reads nothing at all. None is a Promise, none is a
-`request()` op, and none pushes `h.interact`. `row` and `heldStep` read
+caller's own numbers and reads nothing at all; `hardKit` is a pure hard-clue kit
+status over the caller's own facts and reads nothing at all. None is a Promise,
+none is a `request()` op, and none pushes `h.interact`. `row` and `heldStep` read
 `trails()` only: not `items()`, and not the challenge answers. `api.clue` holds
-`row`, `heldStep`, and `packPlan`, and nothing else.
+`row`, `heldStep`, `packPlan`, and `hardKit`, and nothing else.
 
 | Method | OK | Errors |
 | --- | --- | --- |
 | `clue.row({ id } \| { alias })` | landed membership row | `invalid-args`, `missing-selected-data`, `family-unavailable:trails`, `unknown-id` |
 | `clue.heldStep()` | the first held membership row | `missing-selected-data`, `family-unavailable:trails`, `none-held` |
 | `clue.packPlan(input)` | the published pack targets | `invalid-args`, `no-room` |
+| `clue.hardKit(input)` | `{ status: 'ready' }` | `invalid-args`, `attack`, `lost-city`, `dds`, `superantipoison`, `sharks` |
 
 `clue.row` takes exactly one of `id` or `alias`. Neither, both, a non-object, an
 array, or a non-string `alias` is `invalid-args`, and `api.clue.row()` and
@@ -340,9 +342,66 @@ The arithmetic widens past `i32`: `perCast: 2147483647` publishes
 huge room that still caps `food` at `10` rather than wrapping into a false
 `no-room`.
 
+`clue.hardKit(input)` is a pure status over the caller's own kit facts. It reads
+no snapshot, no `snapshot.inv` page, no quest tab, no equipment, and no bank, so
+`snapshot-unavailable`, `quest-tab-unbound`, `not-on-tab`, `none-held`,
+`unknown-id`, and `no-room` are not its errors, and an extra input key is neither
+an inventory override nor a snapshot substitute. `lostCity` is already resolved
+by the caller: a caller who has not checked the quest passes `false` and receives
+`lost-city`. It is sync `HelperResult`, not a Promise, and
+`api.request({ op: 'hardKit' })` stays `not impl`.
+
+The five kit failures are the whole result, with no value, and neither sum is
+ever published. First failure wins:
+
+| Check | Result |
+| --- | --- |
+| `attack < 60` | `attack` |
+| `lostCity` false | `lost-city` |
+| no item with id `1231` or `1215` and `count > 0` | `dds` |
+| summed superantipoison doses is `0` | `superantipoison` |
+| summed id `385` count `< 15` | `sharks` |
+| otherwise | `{ status: 'ready' }` |
+
+| Field | Rule |
+| --- | --- |
+| `attack` | required non-negative `i32` |
+| `lostCity` | required boolean |
+| `items` | required array; each element is an object with required `id` (a real `i32`) and `count` (a non-negative `i32`) |
+
+`ready` is the only ok value, and it carries nothing else. The constants are the
+frozen ones: attack minimum `60`, DDS ids `1231` and `1215`, superantipoison
+`2448` × 4, `181` × 3, `183` × 2, `185` × 1, shark id `385`, and fifteen sharks.
+`attack: 60` passes and `59` is `attack` even when Lost City is false and the kit
+is otherwise ready; a present `attack: 0` is a number, so it is `attack` rather
+than `invalid-args`. One dose of any size is enough, ordinary antipoison `2446`
+contributes `0` doses, and dragon longsword `1305` is not a DDS. Fourteen sharks
+fail and fifteen pass however the stacks are split, and two stacks that sum to
+`15` pass. An item id with `count: 0` does not satisfy `count > 0`.
+
+Nothing is defaulted. An omitted `attack` is `invalid-args`, never the status
+`attack`, and an omitted `lostCity` is `invalid-args`, never `lost-city`.
+Presence is `hasOwnProperty` and `1`/`0` are not booleans, so a present `null`, a
+wrong type, a fraction, a negative, `-0`, a string number, a bigint, or a boxed
+`Number` is `invalid-args` rather than the omitted default, and nothing is
+clamped or coerced. An empty `items` array is a present array: after attack and
+Lost City pass, it is `dds`. An item that is not an object, or whose `id` or
+`count` is missing, `null`, or the wrong type, is `invalid-args`. Extra keys on
+an item are ignored, so `{ id: 1231, count: 1, slot: 3, worn: true }` is a held
+dagger, and an id that matches nothing (a negative one included) is a miss rather
+than `invalid-args`. `includeBank` is not an input: a present key is ignored and
+is not a bank read.
+
+The dose and shark sums widen past `i32`: `count: 1073741824` of `2448` is
+`4294967296` doses, not a wrapped `0`, and two `2147483647` shark stacks sum to
+`4294967294`, not a wrapped `-2` under the minimum. `hardTrailFoodTarget` and
+`hardKitSnapshot` are not published: no `trailFoodCap`, no snapshot gatherer, and
+no bank prep.
+
 Example: `crates/script/examples/clue_facts_v2.ts` (row),
-`crates/script/examples/clue_held_step_v2.ts` (held step), and
-`crates/script/examples/clue_pack_v2.ts` (pack targets).
+`crates/script/examples/clue_held_step_v2.ts` (held step),
+`crates/script/examples/clue_pack_v2.ts` (pack targets), and
+`crates/script/examples/clue_hard_kit_v2.ts` (hard-kit status).
 
 ## Scene projections
 

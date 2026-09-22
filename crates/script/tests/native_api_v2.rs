@@ -1372,7 +1372,7 @@ export function tick(api) {
     assert_eq!(probe["rowType"], "function", "{probe:?}");
     assert_eq!(
         probe["keys"],
-        serde_json::json!(["row", "heldStep", "packPlan"]),
+        serde_json::json!(["row", "heldStep", "packPlan", "hardKit"]),
         "{probe:?}"
     );
     assert_eq!(probe["flat"], "undefined", "{probe:?}");

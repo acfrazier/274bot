@@ -309,3 +309,334 @@ fn example_clue_pack_v2_is_one_read_only_plan_call() {
     assert_eq!(plan["value"]["weaponNeeded"], false, "{plan:?}");
     assert_eq!(plan["value"]["rewardSlots"], 6, "{plan:?}");
 }
+
+#[test]
+fn v2_clue_hard_kit_status_is_the_frozen_first_failure() {
+    let src = r#"
+export const apiVersion = 2;
+function kit(over) {
+  return Object.assign({
+    attack: 60,
+    lostCity: true,
+    items: [{ id: 1231, count: 1 }, { id: 185, count: 1 }, { id: 385, count: 15 }],
+  }, over || {});
+}
+export function tick(api) {
+  const ready = api.clue.hardKit(kit());
+  globalThis.__probe = JSON.stringify({
+    ok: ready.ok,
+    then: typeof ready.then,
+    status: ready.value && ready.value.status,
+    keys: ready.value ? Object.keys(ready.value) : 'no-value',
+    error: ready.error,
+    type: typeof api.clue.hardKit,
+    // First failure wins: attack, then Lost City, then the kit.
+    lowAttack: api.clue.hardKit(kit({ attack: 59 })),
+    lowAttackEmpty: api.clue.hardKit(kit({ attack: 59, lostCity: false, items: [] })),
+    noLostCity: api.clue.hardKit(kit({ lostCity: false, items: [] })),
+    zeroAttack: api.clue.hardKit(kit({ attack: 0 })),
+    empty: api.clue.hardKit({ attack: 60, lostCity: true, items: [] }),
+    // A DDS id with no charge is not a dagger we hold, and a dragon longsword
+    // is not a DDS at all.
+    chargedOut: api.clue.hardKit(kit({ items: [{ id: 1231, count: 0 }, { id: 185, count: 1 }, { id: 385, count: 15 }] })),
+    longsword: api.clue.hardKit(kit({ items: [{ id: 1305, count: 1 }, { id: 185, count: 1 }, { id: 385, count: 15 }] })),
+    // The unpoisoned local DDS is enough, and ordinary antipoison is not
+    // superantipoison.
+    unpoisoned: api.clue.hardKit(kit({ items: [{ id: 1215, count: 1 }, { id: 185, count: 1 }, { id: 385, count: 15 }] })),
+    antipoison: api.clue.hardKit(kit({ items: [{ id: 1231, count: 1 }, { id: 2446, count: 4 }, { id: 385, count: 15 }] })),
+    // One dose is enough, whatever its size: the ready kit with each
+    // superantipoison size swapped in.
+    dose2448: api.clue.hardKit(kit({ items: [{ id: 1231, count: 1 }, { id: 2448, count: 1 }, { id: 385, count: 15 }] })),
+    dose181: api.clue.hardKit(kit({ items: [{ id: 1231, count: 1 }, { id: 181, count: 1 }, { id: 385, count: 15 }] })),
+    dose183: api.clue.hardKit(kit({ items: [{ id: 1231, count: 1 }, { id: 183, count: 1 }, { id: 385, count: 15 }] })),
+    dose185: api.clue.hardKit(kit({ items: [{ id: 1231, count: 1 }, { id: 185, count: 1 }, { id: 385, count: 15 }] })),
+    // An id that matches nothing is a miss, not an argument error.
+    otherId: api.clue.hardKit(kit({ items: [{ id: -1231, count: 1 }, { id: 185, count: 1 }, { id: 385, count: 15 }] })),
+    fourteen: api.clue.hardKit(kit({ items: [{ id: 1231, count: 1 }, { id: 185, count: 1 }, { id: 385, count: 14 }] })),
+    split: api.clue.hardKit(kit({ items: [{ id: 1231, count: 1 }, { id: 185, count: 1 }, { id: 385, count: 7 }, { id: 385, count: 8 }] })),
+    otherFood: api.clue.hardKit(kit({ items: [{ id: 1231, count: 1 }, { id: 185, count: 1 }, { id: 391, count: 30 }] })),
+    // Extra keys are ignored, on the input and on an item: a worn flag is not
+    // an input, and includeBank is neither an input nor a bank read.
+    extras: api.clue.hardKit(kit({
+      includeBank: true, snapshot: {}, questStatus: 'complete',
+      items: [
+        Object.assign({ id: 1231, count: 1 }, { slot: 3, worn: true, name: 'Dragon dagger(p)' }),
+        Object.assign({ id: 185, count: 1 }, { slot: 4 }),
+        Object.assign({ id: 385, count: 15 }, { slot: 5 }),
+      ],
+    })),
+  });
+}
+"#;
+    let value = probe(src);
+    assert_eq!(value["ok"], true, "{value:?}");
+    assert_eq!(value["then"], "undefined", "{value:?}");
+    assert_eq!(value["status"], "ready", "{value:?}");
+    assert_eq!(value["keys"], serde_json::json!(["status"]), "{value:?}");
+    assert!(value.get("error").is_none(), "{value:?}");
+    assert_eq!(value["type"], "function", "{value:?}");
+    for key in ["lowAttack", "lowAttackEmpty", "zeroAttack"] {
+        assert_eq!(value[key]["error"], "attack", "{key} {value:?}");
+    }
+    assert_eq!(value["noLostCity"]["error"], "lost-city", "{value:?}");
+    for key in ["empty", "chargedOut", "longsword", "otherId"] {
+        assert_eq!(value[key]["error"], "dds", "{key} {value:?}");
+    }
+    assert_eq!(value["antipoison"]["error"], "superantipoison", "{value:?}");
+    for key in ["fourteen", "otherFood"] {
+        assert_eq!(value[key]["error"], "sharks", "{key} {value:?}");
+    }
+    // A failure is the whole result, with no value and no published sum.
+    for key in ["lowAttack", "noLostCity", "chargedOut", "fourteen"] {
+        assert_eq!(value[key]["ok"], false, "{key} {value:?}");
+        assert!(value[key].get("value").is_none(), "{key} {value:?}");
+        let mut keys = value[key]
+            .as_object()
+            .map(|row| row.keys().cloned().collect::<Vec<_>>())
+            .unwrap_or_default();
+        keys.sort();
+        assert_eq!(keys, vec!["error".to_string(), "ok".to_string()], "{key} {value:?}");
+    }
+    for key in [
+        "unpoisoned",
+        "split",
+        "extras",
+        "dose2448",
+        "dose181",
+        "dose183",
+        "dose185",
+    ] {
+        assert_eq!(value[key]["ok"], true, "{key} {value:?}");
+        assert_eq!(value[key]["value"]["status"], "ready", "{key} {value:?}");
+    }
+}
+
+#[test]
+fn v2_clue_hard_kit_widens_the_dose_and_shark_sums() {
+    let src = r#"
+export const apiVersion = 2;
+export function tick(api) {
+  const dose = api.clue.hardKit({
+    attack: 60, lostCity: true,
+    items: [
+      { id: 1231, count: 1 },
+      { id: 2448, count: 1073741824 },
+      { id: 385, count: 15 },
+    ],
+  });
+  const sharks = api.clue.hardKit({
+    attack: 60, lostCity: true,
+    items: [
+      { id: 1231, count: 1 },
+      { id: 185, count: 1 },
+      { id: 385, count: 2147483647 },
+      { id: 385, count: 2147483647 },
+    ],
+  });
+  globalThis.__probe = JSON.stringify({
+    doseOk: dose.ok,
+    doseStatus: dose.value && dose.value.status,
+    doseError: dose.error,
+    sharkOk: sharks.ok,
+    sharkStatus: sharks.value && sharks.value.status,
+    sharkError: sharks.error,
+  });
+}
+"#;
+    let value = probe(src);
+    // 1073741824 doses is 4294967296, not a wrapped 0.
+    assert_eq!(value["doseOk"], true, "{value:?}");
+    assert_eq!(value["doseStatus"], "ready", "{value:?}");
+    assert!(value.get("doseError").is_none(), "{value:?}");
+    // Two i32::MAX stacks are 4294967294, not a wrapped -2.
+    assert_eq!(value["sharkOk"], true, "{value:?}");
+    assert_eq!(value["sharkStatus"], "ready", "{value:?}");
+    assert!(value.get("sharkError").is_none(), "{value:?}");
+}
+
+#[test]
+fn v2_clue_hard_kit_requires_every_field_and_rejects_a_converted_one() {
+    let src = r#"
+export const apiVersion = 2;
+export function tick(api) {
+  globalThis.__probe = JSON.stringify({
+    omitted: api.clue.hardKit(),
+    undefinedInput: api.clue.hardKit(undefined),
+    nullArg: api.clue.hardKit(null),
+    array: api.clue.hardKit([]),
+    stringArg: api.clue.hardKit('kit'),
+    numberArg: api.clue.hardKit(60),
+    // An omitted field is not the omitted default: this is invalid-args, not
+    // the status attack and not the status lost-city.
+    noAttack: api.clue.hardKit({ lostCity: true, items: [] }),
+    noLostCity: api.clue.hardKit({ attack: 60, items: [] }),
+    noItems: api.clue.hardKit({ attack: 60, lostCity: true }),
+    nullAttack: api.clue.hardKit({ attack: null, lostCity: true, items: [] }),
+    stringAttack: api.clue.hardKit({ attack: '60', lostCity: true, items: [] }),
+    fractionAttack: api.clue.hardKit({ attack: 59.5, lostCity: true, items: [] }),
+    negativeAttack: api.clue.hardKit({ attack: -1, lostCity: true, items: [] }),
+    negativeZeroAttack: api.clue.hardKit({ attack: -0, lostCity: true, items: [] }),
+    aboveI32Attack: api.clue.hardKit({ attack: 2147483648, lostCity: true, items: [] }),
+    bigintAttack: api.clue.hardKit({ attack: BigInt(60), lostCity: true, items: [] }),
+    boxedAttack: api.clue.hardKit({ attack: new Number(60), lostCity: true, items: [] }),
+    // 1 and 0 are not booleans here.
+    numberLostCity: api.clue.hardKit({ attack: 60, lostCity: 1, items: [] }),
+    zeroLostCity: api.clue.hardKit({ attack: 60, lostCity: 0, items: [] }),
+    nullLostCity: api.clue.hardKit({ attack: 60, lostCity: null, items: [] }),
+    stringLostCity: api.clue.hardKit({ attack: 60, lostCity: 'true', items: [] }),
+    boxedLostCity: api.clue.hardKit({ attack: 60, lostCity: new Boolean(true), items: [] }),
+    itemsObject: api.clue.hardKit({ attack: 60, lostCity: true, items: {} }),
+    itemsString: api.clue.hardKit({ attack: 60, lostCity: true, items: 'items' }),
+    itemsNull: api.clue.hardKit({ attack: 60, lostCity: true, items: null }),
+    itemNull: api.clue.hardKit({ attack: 60, lostCity: true, items: [null] }),
+    itemNumber: api.clue.hardKit({ attack: 60, lostCity: true, items: [1231] }),
+    itemString: api.clue.hardKit({ attack: 60, lostCity: true, items: ['dds'] }),
+    itemArray: api.clue.hardKit({ attack: 60, lostCity: true, items: [[1231, 1]] }),
+    itemNoId: api.clue.hardKit({ attack: 60, lostCity: true, items: [{ count: 1 }] }),
+    itemNoCount: api.clue.hardKit({ attack: 60, lostCity: true, items: [{ id: 1231 }] }),
+    itemNullId: api.clue.hardKit({ attack: 60, lostCity: true, items: [{ id: null, count: 1 }] }),
+    itemStringId: api.clue.hardKit({ attack: 60, lostCity: true, items: [{ id: '1231', count: 1 }] }),
+    itemFractionId: api.clue.hardKit({ attack: 60, lostCity: true, items: [{ id: 1231.5, count: 1 }] }),
+    itemAboveI32Id: api.clue.hardKit({ attack: 60, lostCity: true, items: [{ id: 2147483648, count: 1 }] }),
+    itemNullCount: api.clue.hardKit({ attack: 60, lostCity: true, items: [{ id: 1231, count: null }] }),
+    itemStringCount: api.clue.hardKit({ attack: 60, lostCity: true, items: [{ id: 1231, count: '1' }] }),
+    itemFractionCount: api.clue.hardKit({ attack: 60, lostCity: true, items: [{ id: 1231, count: 1.5 }] }),
+    itemNegativeCount: api.clue.hardKit({ attack: 60, lostCity: true, items: [{ id: 1231, count: -1 }] }),
+    itemNegativeZeroCount: api.clue.hardKit({ attack: 60, lostCity: true, items: [{ id: 1231, count: -0 }] }),
+    itemAboveI32Count: api.clue.hardKit({ attack: 60, lostCity: true, items: [{ id: 1231, count: 4294967296 }] }),
+  });
+}
+"#;
+    let value = probe(src);
+    for key in [
+        "omitted",
+        "undefinedInput",
+        "nullArg",
+        "array",
+        "stringArg",
+        "numberArg",
+        "noAttack",
+        "noLostCity",
+        "noItems",
+        "nullAttack",
+        "stringAttack",
+        "fractionAttack",
+        "negativeAttack",
+        "negativeZeroAttack",
+        "aboveI32Attack",
+        "bigintAttack",
+        "boxedAttack",
+        "numberLostCity",
+        "zeroLostCity",
+        "nullLostCity",
+        "stringLostCity",
+        "boxedLostCity",
+        "itemsObject",
+        "itemsString",
+        "itemsNull",
+        "itemNull",
+        "itemNumber",
+        "itemString",
+        "itemArray",
+        "itemNoId",
+        "itemNoCount",
+        "itemNullId",
+        "itemStringId",
+        "itemFractionId",
+        "itemAboveI32Id",
+        "itemNullCount",
+        "itemStringCount",
+        "itemFractionCount",
+        "itemNegativeCount",
+        "itemNegativeZeroCount",
+        "itemAboveI32Count",
+    ] {
+        assert_eq!(value[key]["error"], "invalid-args", "{key} {value:?}");
+        assert!(value[key].get("value").is_none(), "{key} {value:?}");
+    }
+}
+
+#[test]
+fn v2_clue_hard_kit_is_not_a_request_op_and_pushes_no_interact() {
+    let src = r#"
+export const apiVersion = 2;
+export function tick(api) {
+  let requested = null;
+  try { api.request({ op: 'hardKit' }); requested = 'ok'; }
+  catch (e) { requested = String(e && (e.message || e)); }
+  globalThis.__probe = JSON.stringify({
+    kit: api.clue.hardKit({
+      attack: 60, lostCity: true,
+      items: [{ id: 1231, count: 1 }, { id: 185, count: 1 }, { id: 385, count: 15 }],
+    }),
+    keys: api.clue && Object.keys(api.clue),
+    begin: typeof api.clue.begin,
+    next: typeof api.clue.next,
+    challengeAnswer: typeof api.clue.challengeAnswer,
+    deposit: typeof api.clue.deposit,
+    requested,
+  });
+}
+"#;
+    let iso = LoadIsolate::spawn(src.into(), LoadShape::NativeTick, vec![]).unwrap();
+    iso.on_game_tick(1);
+    let value: serde_json::Value =
+        serde_json::from_str(iso.probe("globalThis.__probe").unwrap().as_str().unwrap()).unwrap();
+    let interacts = iso.drain_interacts();
+    iso.join();
+    assert_eq!(value["kit"]["ok"], true, "{value:?}");
+    assert_eq!(value["kit"]["value"]["status"], "ready", "{value:?}");
+    assert_eq!(
+        value["keys"],
+        serde_json::json!(["row", "heldStep", "packPlan", "hardKit"]),
+        "{value:?}"
+    );
+    for key in ["begin", "next", "challengeAnswer", "deposit"] {
+        assert_eq!(value[key], "undefined", "{key} {value:?}");
+    }
+    assert!(
+        value["requested"]
+            .as_str()
+            .unwrap_or("")
+            .contains("not impl"),
+        "{value:?}"
+    );
+    assert!(
+        interacts.is_empty(),
+        "hardKit must not push interact: {interacts:?}"
+    );
+}
+
+#[test]
+fn example_clue_hard_kit_v2_is_one_read_only_kit_call() {
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("examples")
+        .join("clue_hard_kit_v2.ts");
+    let src = std::fs::read_to_string(&path).expect("example source");
+    assert!(!src.contains("request("));
+    assert!(!src.contains("h.interact"));
+    assert!(!src.contains("api.snapshot"));
+    assert!(!src.contains("questStatus"));
+    assert!(!src.contains("includeBank"));
+    assert!(!src.contains("challengeAnswer"));
+    assert!(!src.contains("deposit"));
+    assert_eq!(src.matches("api.clue").count(), 1);
+    assert_eq!(src.matches("hardKit").count(), 1);
+    let js = script::transpile_ts(&src).expect("transpile clue_hard_kit_v2.ts");
+    let iso = LoadIsolate::spawn(js, LoadShape::NativeTick, vec![]).unwrap();
+    iso.on_game_tick(1);
+    let err = iso
+        .probe("globalThis.__rs2b0t_host.lastError || ''")
+        .unwrap();
+    let logs = iso.drain_logs();
+    iso.join();
+    assert_eq!(err.as_str().unwrap_or(""), "", "example lastError: {err:?}");
+    let last = logs
+        .iter()
+        .rev()
+        .find(|line| line.contains("\"status\""))
+        .unwrap_or_else(|| panic!("example logged a kit status; logs={logs:?}"));
+    let kit: serde_json::Value = serde_json::from_str(last).unwrap();
+    assert_eq!(kit["ok"], true, "{kit:?}");
+    assert_eq!(kit["value"]["status"], "ready", "{kit:?}");
+}

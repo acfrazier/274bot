@@ -99,7 +99,7 @@ fn host_js_dts_includes_required_interfaces() {
     assert!(src.contains("params: Array<{ key: string; value: string }>;"));
     assert!(src.contains("access?: 'constrained';"));
     assert!(src.contains(
-        "clue: { row(input: { id: number } | { alias: string }): HelperResult<ClueRow>; heldStep(): HelperResult<ClueRow>; packPlan(input: PackPlanInput): HelperResult<PackPlanTargets> }"
+        "clue: { row(input: { id: number } | { alias: string }): HelperResult<ClueRow>; heldStep(): HelperResult<ClueRow>; packPlan(input: PackPlanInput): HelperResult<PackPlanTargets>; hardKit(input: { attack: number; lostCity: boolean; items: { id: number; count: number }[] }): HelperResult<{ status: 'ready' }> }"
     ));
     assert!(src.contains("export interface PackPlanInput {"));
     assert!(src.contains("  rewardSlots?: number;"));
@@ -109,6 +109,9 @@ fn host_js_dts_includes_required_interfaces() {
     assert!(!src.contains("heldStep(input"));
     assert!(!src.contains("heldStep(): Promise"));
     assert!(!src.contains("packPlan(input: PackPlanInput): Promise"));
+    assert!(!src.contains("hardKit(input: { attack: number; lostCity: boolean; items: { id: number; count: number }[] }): Promise"));
+    // Hard-kit is a status, not a kit read: no snapshot or inventory page.
+    assert!(!src.contains("hardKit(input: { includeBank"));
     assert!(!src.contains("clueRow("));
     assert!(src.contains(
         "sceneLocs(input: { ids: number[]; limit: number; region?: SceneRegionInput }): HelperResult<SceneProjection>"

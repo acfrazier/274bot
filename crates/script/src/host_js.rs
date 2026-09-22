@@ -504,8 +504,8 @@ fn render_native_v2(out: &mut String) {
     out.push_str("  questIdentity(input: { name: string } | { id: string }): HelperResult<QuestIdentityRow>;\n");
     out.push_str("  /** Sync seed-id requirements read. A name field is not a key. Not a Promise and not a request op. */\n");
     out.push_str("  questPrereqs(input: { id: string; name?: string }): HelperResult<QuestRequirements>;\n");
-    out.push_str("  /** Sync landed trail-row read and pure pack arithmetic over caller numbers. Neither is a Promise and neither is a request op; `packPlan` reads no snapshot, inventory, or family. */\n");
-    out.push_str("  clue: { row(input: { id: number } | { alias: string }): HelperResult<ClueRow>; heldStep(): HelperResult<ClueRow>; packPlan(input: PackPlanInput): HelperResult<PackPlanTargets> };\n");
+    out.push_str("  /** Sync landed trail-row read, pure pack arithmetic, and pure hard-kit status over caller numbers. None is a Promise and none is a request op; `packPlan` and `hardKit` read no snapshot, inventory, or family. */\n");
+    out.push_str("  clue: { row(input: { id: number } | { alias: string }): HelperResult<ClueRow>; heldStep(): HelperResult<ClueRow>; packPlan(input: PackPlanInput): HelperResult<PackPlanTargets>; hardKit(input: { attack: number; lostCity: boolean; items: { id: number; count: number }[] }): HelperResult<{ status: 'ready' }> };\n");
     out.push_str("  /** Sync posted-loc copy. Historical copy, not live. Not a Promise and not a request op. */\n");
     out.push_str("  sceneLocs(input: { ids: number[]; limit: number; region?: SceneRegionInput }): HelperResult<SceneProjection>;\n");
     out.push_str("  /** Sync posted-npc copy. actions is required: omitted is not match-any. Historical copy, not live. Not a Promise and not a request op. */\n");

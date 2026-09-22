@@ -1,14 +1,16 @@
-//! Trail pack budgeting: pure slot arithmetic over the caller's own numbers.
-//! Nothing here reads `host().snapshot`, `trails()`, `items()`, equipment, the
-//! bank, `identify_step`, or `clue_row`, so a missing page or family is not an
-//! error of this method.
+//! Trail pack budgeting and hard-kit status: pure arithmetic over the caller's
+//! own numbers. Nothing here reads `host().snapshot`, `trails()`, `items()`,
+//! equipment, the bank, `questStatus`, `identify_step`, or `clue_row`, so a
+//! missing page or family is not an error of either method.
 //!
-//! Frozen source of truth: `packPlan.ts` in
-//! `release-0.1.8/reference/rs2b0t-beecd9126b/` (`trailFoodTarget`,
-//! `teleportRuneTarget`, `weaponNeeded`, `casketRewardSlots`). Where the older
-//! preflight arithmetic disagrees with that file, the file controls. The four
+//! Frozen source of truth: `packPlan.ts` (`trailFoodTarget`,
+//! `teleportRuneTarget`, `weaponNeeded`, `casketRewardSlots`) and
+//! `hardClueKit.ts` (`superantiDoses`, `hardClueKit`) in
+//! `release-0.1.8/reference/rs2b0t-beecd9126b/`. Where the older preflight
+//! arithmetic disagrees with those files, the files control. The four pack
 //! helpers widen to `i64`: `perCast = i32::MAX` publishes `42949672940`, not a
-//! wrapped or saturated `i32`.
+//! wrapped or saturated `i32`. The dose and shark sums widen the same way, so a
+//! huge stack cannot wrap into a false failure.
 //!
 //! The V8 wrapper is the only production caller.
 
@@ -116,6 +118,100 @@ pub fn pack_plan(input: &PackPlanInput<'_>) -> Result<Value, &'static str> {
         value["rewardSlots"] = json!(casket_reward_slots(casket_alias));
     }
     Ok(value)
+}
+
+/// Frozen `hardClueKit` minimums and identities. The kit check reads the
+/// caller's facts only: the quest tab, skills, equipment, and the bank stay
+/// with the caller who resolved them.
+pub const MIN_ATTACK: i32 = 60;
+
+/// Frozen `DDS_IDS`: the poisoned dragon dagger and the unpoisoned local one.
+pub const DDS_IDS: [i32; 2] = [1231, 1215];
+
+/// Frozen `SUPERANTI`: `(id, doses)` of the four superantipoison sizes.
+/// Ordinary antipoison (`2446`) is not one of them and contributes no dose.
+pub const SUPERANTI: [(i32, i64); 4] = [(2448, 4), (181, 3), (183, 2), (185, 1)];
+
+/// Frozen `SHARK_ID`: the only food this check counts.
+pub const SHARK_ID: i32 = 385;
+
+/// Frozen `MIN_SHARKS`: fifteen, however the stacks are split.
+pub const MIN_SHARKS: i64 = 15;
+
+const READY: &str = "ready";
+const ATTACK: &str = "attack";
+const LOST_CITY: &str = "lost-city";
+const DDS: &str = "dds";
+const SUPERANTIPOISON: &str = "superantipoison";
+const SHARKS: &str = "sharks";
+
+/// One kit row. The frozen reduce reads `id` and `count` only: a `worn`,
+/// `slot`, or `name` key is not an input and is not an error.
+pub struct HardKitItem {
+    pub id: i32,
+    pub count: i32,
+}
+
+/// The caller's kit facts as required fields. `attack` is non-negative and
+/// `lost_city` is already resolved: the wrapper rejects a missing or
+/// wrong-typed field before anything here compares, so an omitted `attack` is
+/// never the status `attack` and an omitted `lostCity` is never `lost-city`.
+pub struct HardKitInput<'a> {
+    pub attack: i32,
+    pub lost_city: bool,
+    pub items: &'a [HardKitItem],
+}
+
+/// The frozen `superantiDoses`, widened: `1073741824` of `2448` is `4294967296`
+/// doses, so it is not a wrapped `0`.
+pub fn superanti_doses(items: &[HardKitItem]) -> i64 {
+    items
+        .iter()
+        .map(|item| {
+            let doses = SUPERANTI
+                .iter()
+                .find(|(id, _)| *id == item.id)
+                .map_or(0, |(_, doses)| *doses);
+            i64::from(item.count) * doses
+        })
+        .sum()
+}
+
+/// The frozen shark reduce, widened: two `i32::MAX` stacks are `4294967294`,
+/// so they are not a wrapped `-2` under the minimum.
+pub fn shark_count(items: &[HardKitItem]) -> i64 {
+    items
+        .iter()
+        .filter(|item| item.id == SHARK_ID)
+        .map(|item| i64::from(item.count))
+        .sum()
+}
+
+/// The frozen `hardClueKit` status, first failure wins: `attack`, then
+/// `lost-city`, then `dds`, then `superantipoison`, then `sharks`, else the one
+/// ok value `{ status: "ready" }`. A failure is the whole result, with no
+/// value: neither sum is ever published.
+pub fn hard_clue_kit(input: &HardKitInput<'_>) -> Result<Value, &'static str> {
+    if input.attack < MIN_ATTACK {
+        return Err(ATTACK);
+    }
+    if !input.lost_city {
+        return Err(LOST_CITY);
+    }
+    if !input
+        .items
+        .iter()
+        .any(|item| DDS_IDS.contains(&item.id) && item.count > 0)
+    {
+        return Err(DDS);
+    }
+    if superanti_doses(input.items) == 0 {
+        return Err(SUPERANTIPOISON);
+    }
+    if shark_count(input.items) < MIN_SHARKS {
+        return Err(SHARKS);
+    }
+    Ok(json!({ "status": READY }))
 }
 
 #[cfg(test)]
@@ -276,6 +372,93 @@ mod tests {
                 "weaponNeeded": false,
                 "rewardSlots": 5,
             })
+        );
+    }
+
+    fn kit_items(rows: &[(i32, i32)]) -> Vec<HardKitItem> {
+        rows.iter()
+            .map(|(id, count)| HardKitItem {
+                id: *id,
+                count: *count,
+            })
+            .collect()
+    }
+
+    fn kit_status(attack: i32, lost_city: bool, rows: &[(i32, i32)]) -> Result<Value, &'static str> {
+        let items = kit_items(rows);
+        hard_clue_kit(&HardKitInput {
+            attack,
+            lost_city,
+            items: &items,
+        })
+    }
+
+    fn ready() -> Result<Value, &'static str> {
+        Ok(json!({ "status": "ready" }))
+    }
+
+    /// The frozen status order: first failure wins, and that failure is the
+    /// whole result.
+    #[test]
+    fn hard_kit_reports_the_first_frozen_failure() {
+        assert_eq!(kit_status(60, true, &[(1231, 1), (185, 1), (385, 15)]), ready());
+        // Attack 60 is enough, `attack: 0` is a number rather than a miss, and
+        // attack is decided before Lost City.
+        assert_eq!(kit_status(0, true, &[(1231, 1), (185, 1), (385, 15)]), Err(ATTACK));
+        assert_eq!(kit_status(59, false, &[]), Err(ATTACK));
+        assert_eq!(kit_status(60, false, &[]), Err(LOST_CITY));
+        // An empty or unrelated pack is `dds`, not an empty success.
+        assert_eq!(kit_status(60, true, &[]), Err(DDS));
+        assert_eq!(kit_status(60, true, &[(1305, 1)]), Err(DDS));
+        // A DDS id with no charge is not a dagger we hold.
+        assert_eq!(kit_status(60, true, &[(1231, 0)]), Err(DDS));
+        assert_eq!(kit_status(60, true, &[(1215, 1)]), Err(SUPERANTIPOISON));
+        // Ordinary antipoison is not superantipoison.
+        assert_eq!(kit_status(60, true, &[(1231, 1), (2446, 4)]), Err(SUPERANTIPOISON));
+        // One dose is enough, whatever its size, so every catalogued id is in
+        // the table.
+        for id in [2448, 181, 183, 185] {
+            assert_eq!(
+                kit_status(60, true, &[(1231, 1), (id, 1), (385, 15)]),
+                ready(),
+                "{id}"
+            );
+        }
+        // Fourteen sharks fail, fifteen pass however they are split, and other
+        // food is not sharks.
+        assert_eq!(kit_status(60, true, &[(1231, 1), (185, 1), (385, 14)]), Err(SHARKS));
+        assert_eq!(
+            kit_status(60, true, &[(1231, 1), (185, 1), (385, 7), (385, 8)]),
+            ready()
+        );
+        assert_eq!(kit_status(60, true, &[(1231, 1), (185, 1), (391, 30)]), Err(SHARKS));
+    }
+
+    /// The widening lock on both sums: a wrapped `i32` product of one legal
+    /// count is a false `superantipoison`, and a wrapped `i32` pair of stacks
+    /// is a false `sharks`.
+    #[test]
+    fn hard_kit_sums_widen_past_i32() {
+        assert_eq!(
+            superanti_doses(&kit_items(&[(2448, 1), (181, 1), (183, 1), (185, 1)])),
+            10
+        );
+        assert_eq!(superanti_doses(&kit_items(&[(2446, 1), (385, 15)])), 0);
+        assert_eq!(
+            superanti_doses(&kit_items(&[(2448, 1_073_741_824)])),
+            4_294_967_296
+        );
+        assert_eq!(
+            shark_count(&kit_items(&[(385, i32::MAX), (385, i32::MAX)])),
+            4_294_967_294
+        );
+        assert_eq!(
+            kit_status(60, true, &[(1231, 1), (2448, 1_073_741_824), (385, 15)]),
+            ready()
+        );
+        assert_eq!(
+            kit_status(60, true, &[(1231, 1), (185, 1), (385, i32::MAX), (385, i32::MAX)]),
+            ready()
         );
     }
 }
