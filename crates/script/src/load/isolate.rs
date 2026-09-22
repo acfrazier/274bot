@@ -1434,6 +1434,7 @@ fn tick_loop(
                         crate::hunt_lair::on_snapshot(&snap);
                         crate::hunt_leave::on_snapshot(&snap);
                         crate::hunt_key::on_snapshot(&snap);
+                        crate::hunt_cell::on_snapshot(&snap);
                         crate::production::on_snapshot(&snap);
                         crate::dialog::on_snapshot(&snap);
                         crate::modals::on_snapshot(&snap);
@@ -1459,6 +1460,7 @@ fn tick_loop(
                             crate::hunt_lair::on_hold(host_hold);
                             crate::hunt_leave::on_hold(host_hold);
                             crate::hunt_key::on_hold(host_hold);
+                            crate::hunt_cell::on_hold(host_hold);
                             crate::production::on_hold(host_hold);
                             crate::dialog::on_hold(host_hold);
                             crate::modals::on_hold(host_hold);
@@ -1813,6 +1815,7 @@ fn tick_loop(
                 crate::hunt_lair::on_reset();
                 crate::hunt_leave::on_reset();
                 crate::hunt_key::on_reset();
+                crate::hunt_cell::on_reset();
                 crate::production::on_reset();
                 crate::dialog::on_reset();
                 crate::modals::on_reset();
@@ -1857,6 +1860,7 @@ fn tick_loop(
                 crate::hunt_lair::on_pause();
                 crate::hunt_leave::on_pause();
                 crate::hunt_key::on_pause();
+                crate::hunt_cell::on_pause();
                 crate::production::on_pause();
                 crate::dialog::on_pause();
                 crate::modals::on_pause();
@@ -1884,6 +1888,7 @@ fn tick_loop(
                 crate::hunt_lair::on_resume();
                 crate::hunt_leave::on_resume();
                 crate::hunt_key::on_resume();
+                crate::hunt_cell::on_resume();
                 crate::production::on_resume();
                 crate::dialog::on_resume();
                 crate::modals::on_resume();

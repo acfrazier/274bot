@@ -319,6 +319,175 @@ function walkspotCall(payload) {
     return fn(payload);
 }
 
+function cellCall(payload) {
+    const fn = globalThis.rustyscript && globalThis.rustyscript.functions
+        ? globalThis.rustyscript.functions.__rs2b0t_cell
+        : undefined;
+    if (typeof fn !== 'function') {
+        throw notImpl('cell');
+    }
+    return fn(payload);
+}
+
+function cellProjection(site) {
+    const item = site.keyItem;
+    const out = {
+        key: site.key,
+        keyItem: item == null ? null : item,
+        boxes: site.boxes || [],
+    };
+    if (site.route) out.route = site.route;
+    if (site.outLever) out.outLever = site.outLever;
+    if (site.upLadder) out.upLadder = site.upLadder;
+    return out;
+}
+
+function beginCellWalk(step, radius) {
+    const walkFn = globalThis.rustyscript && globalThis.rustyscript.functions
+        ? globalThis.rustyscript.functions.__rs2b0t_walk
+        : undefined;
+    if (typeof walkFn !== 'function') {
+        throw notImpl('walk');
+    }
+    return walkFn({
+        op: 'begin',
+        x: step.x,
+        z: step.z,
+        level: step.level,
+        radius,
+        allow_teleports: false,
+        allow_wilderness: false,
+        allow_bank_fetch: false,
+    });
+}
+
+export async function cell(host, site) {
+    const started = cellCall({ op: 'begin' });
+    if (!started || started.kind === 'aborted' || started.kind === 'notImpl') {
+        return false;
+    }
+    const token = started.token;
+    let reply = null;
+    for (;;) {
+        const step = cellCall({
+            op: 'next',
+            token,
+            reply,
+            ...cellProjection(site),
+        });
+        reply = null;
+        if (!step || step.kind === 'aborted' || step.kind === 'notImpl') {
+            return false;
+        }
+        if (step.kind === 'yield') {
+            return step.value === true;
+        }
+        if (step.kind === 'walk-to') {
+            queue({ op: 'walk-to', x: step.x, z: step.z, level: step.level });
+            reply = { queued: true };
+            continue;
+        }
+        switch (step.kind) {
+            case 'log':
+                host.log?.(step.message);
+                break;
+            case 'status':
+                host.setStatus?.(step.message);
+                break;
+            case 'leave':
+                reply = { left: (await leaveLair(host, site)) === true };
+                break;
+            case 'key':
+                reply = { held: (await acquireKey(host, site)) === true };
+                break;
+            case 'walk': {
+                const walkToken = beginCellWalk(step, 0);
+                queue({
+                    op: 'walk',
+                    x: step.x,
+                    z: step.z,
+                    level: step.level,
+                    radius: 0,
+                    request_id: walkToken,
+                    allow_teleports: false,
+                    allow_wilderness: false,
+                    allow_bank_fetch: false,
+                });
+                reply = { queued: true, walkToken };
+                break;
+            }
+            case 'walk-near': {
+                const radius = Number(step.radius);
+                const walkToken = beginCellWalk(step, radius);
+                queue({
+                    op: 'walk-near',
+                    x: step.x,
+                    z: step.z,
+                    level: step.level,
+                    radius,
+                    request_id: walkToken,
+                    allow_teleports: false,
+                    allow_wilderness: false,
+                    allow_bank_fetch: false,
+                });
+                reply = { queued: true, walkToken };
+                break;
+            }
+            case 'npc':
+                queue({
+                    op: 'npc',
+                    name: step.name,
+                    action: step.action,
+                    index: step.index,
+                });
+                reply = { queued: true };
+                break;
+            case 'use-on':
+                queue({
+                    op: 'use-on',
+                    name: step.name,
+                    kind: 'loc',
+                    x: step.x,
+                    z: step.z,
+                    level: step.level,
+                    source_item_id: step.id,
+                    source_item_slot: step.slot,
+                    index: null,
+                });
+                reply = { queued: true };
+                break;
+            case 'loc':
+                queue({
+                    op: 'loc',
+                    x: step.x,
+                    z: step.z,
+                    level: step.level,
+                    action: step.action,
+                    id: step.id,
+                });
+                reply = { queued: true };
+                break;
+            case 'continue':
+                queue({ op: 'continue' });
+                break;
+            case 'answer':
+                queue({ op: 'answer', option: step.option });
+                break;
+            case 'sustain':
+                await Sustain.run();
+                break;
+            case 'delay-ticks':
+                await Execution.delayTicks(Number(step.n) || 1);
+                break;
+            case 'wait':
+                await Execution.delayTicks(1);
+                break;
+            default:
+                return false;
+        }
+    }
+}
+
 export class WalkToSpot {
     constructor(host, site) {
         this.host = host;
@@ -775,7 +944,6 @@ export async function leaveLair(host, site) {
         }
     }
 }
-
 function keyCall(payload) {
     const fn = globalThis.rustyscript && globalThis.rustyscript.functions
         ? globalThis.rustyscript.functions.__rs2b0t_key
