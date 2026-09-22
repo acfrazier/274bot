@@ -202,16 +202,17 @@ and `unknown_as_satisfied: false`. Items stay script aliases.
 
 Example: `crates/script/examples/quest_facts_v2.ts`.
 
-## Clue row helper
+## Clue helpers
 
-One sync `HelperResult` method over the selected pin's landed trail membership
-family. It is not a Promise, not a `request()` op, and it does not push
-`h.interact`. It reads `trails()` only: not `items()`, and not the challenge
-answers. `api.clue` holds `row` and nothing else.
+Two sync `HelperResult` methods over the selected pin's landed trail membership
+family. They are not Promises, not `request()` ops, and they do not push
+`h.interact`. They read `trails()` only: not `items()`, and not the challenge
+answers. `api.clue` holds `row` and `heldStep`, and nothing else.
 
 | Method | OK | Errors |
 | --- | --- | --- |
 | `clue.row({ id } \| { alias })` | landed membership row | `invalid-args`, `missing-selected-data`, `family-unavailable:trails`, `unknown-id` |
+| `clue.heldStep()` | the first held membership row | `missing-selected-data`, `family-unavailable:trails`, `none-held` |
 
 `clue.row` takes exactly one of `id` or `alias`. Neither, both, a non-object, an
 array, or a non-string `alias` is `invalid-args`, and `api.clue.row()` and
@@ -246,10 +247,31 @@ parent. Input keys other than the one pin are ignored:
 3554 row with `access: "constrained"` and no `supported` key.
 
 Not a Promise and not a `request()` op: `api.request({ op: 'clue.row' })` stays
-`not impl`. `heldStep`, `begin`, `next`, `packPlan`, `challengeAnswer`, and
-`deposit` do not exist on `api.clue`.
+`not impl`. `begin`, `next`, `packPlan`, `challengeAnswer`, and `deposit` do not
+exist on `api.clue`.
 
-Example: `crates/script/examples/clue_facts_v2.ts`.
+`clue.heldStep()` takes no argument. The page is the already-posted
+`host().snapshot.inv` `(id, count)` sequence and nothing else: an argument is
+ignored, nothing rebuilds the tab, and a missing or empty page is an empty held
+list rather than a snapshot error. A pair is held only when its count is
+positive, and the held `id` is matched against the membership rows alone — no
+name, noted, cert, or alias match, and no second inventory page. A held id that
+is not a membership row is skipped, not `unknown-id`, so a pack of unrelated
+items (a challenge row included) is `none-held`, and the challenge answers stay
+unread.
+
+The step is the first held casket, else the first held clue: a clue earlier in
+the pack does not beat a later casket, and within one role the posted order of
+the page decides, not the membership table. The value is the same landed row
+object `clue.row` returns, including `access: "constrained"` on the packed 3554
+clue; it is not `{ rows }`, not a coordinate, not an npc, and not an answer. The
+order is `missing-selected-data`, then `family-unavailable:trails`, then
+`none-held`, then the row. Nothing held is a named error, never `ok` with a
+`null` value. It is sync `HelperResult`, not a Promise, and
+`api.request({ op: 'clue.heldStep' })` stays `not impl`.
+
+Example: `crates/script/examples/clue_facts_v2.ts` (row) and
+`crates/script/examples/clue_held_step_v2.ts` (held step).
 
 ## Scene projections
 

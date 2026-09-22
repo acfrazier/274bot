@@ -201,11 +201,30 @@ fn query_does_not_open_the_answers_or_the_writer() {
 }
 
 fn post_base(iso: &LoadIsolate, tick: u64) {
+    post_page(iso, tick, &[]);
+}
+
+/// The same keyframe with a posted pack page: `(obj id, count)` rows in posted
+/// order, the page the isolate packer posts as `snapshot.inv`.
+fn post_page(iso: &LoadIsolate, tick: u64, page: &[(i32, i32)]) {
+    let rows: Vec<script::isolate_fb::ItemRowInput<'_>> = page
+        .iter()
+        .map(|(id, count)| script::isolate_fb::ItemRowInput {
+            name: None,
+            count: *count,
+            id: *id,
+            ops: &[],
+            noted: false,
+            cert: -1,
+            component_id: -1,
+            slot: -1,
+        })
+        .collect();
     let input = script::isolate_fb::SnapshotInput {
         tick,
         here: None,
         ingame: true,
-        inv: &[],
+        inv: &rows,
         inv_size: 28,
         stats: &[],
         booths: &[],
@@ -288,6 +307,18 @@ fn probe(src: &str, revision: ClientRevision) -> serde_json::Value {
     serde_json::from_str(value.as_str().unwrap()).unwrap()
 }
 
+/// The same probe over a posted pack page instead of an empty pack.
+fn probe_page(src: &str, revision: ClientRevision, page: &[(i32, i32)]) -> serde_json::Value {
+    let data = api::game_data::for_revision(revision).unwrap();
+    let iso =
+        LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data).unwrap();
+    post_page(&iso, 1, page);
+    iso.on_game_tick(1);
+    let value = iso.probe("globalThis.__probe").unwrap();
+    iso.join();
+    serde_json::from_str(value.as_str().unwrap()).unwrap()
+}
+
 /// A schema-4 selected slot that decodes with no trail family at all.
 fn data_without_trails() -> std::sync::Arc<api::game_data::SelectedGameData> {
     let raw = r#"{
@@ -332,7 +363,7 @@ export function tick(api) {
     casketParams: casket.value && casket.value.params.length,
     rowType: typeof api.clue.row,
     flat: typeof api.clueRow,
-    heldStep: typeof api.clue.heldStep,
+    heldStepType: typeof api.clue.heldStep,
     begin: typeof api.clue.begin,
     next: typeof api.clue.next,
     packPlan: typeof api.clue.packPlan,
@@ -359,8 +390,8 @@ export function tick(api) {
         assert_eq!(value["casketParams"], 0, "{value:?}");
         assert_eq!(value["rowType"], "function", "{value:?}");
         assert_eq!(value["flat"], "undefined", "{value:?}");
+        assert_eq!(value["heldStepType"], "function", "{value:?}");
         for key in [
-            "heldStep",
             "begin",
             "next",
             "packPlan",
@@ -372,7 +403,7 @@ export function tick(api) {
         assert_eq!(value["quest"], "undefined", "{value:?}");
         assert_eq!(
             value["questionNamespace"],
-            serde_json::json!(["row"]),
+            serde_json::json!(["row", "heldStep"]),
             "{value:?}"
         );
     }
@@ -436,6 +467,121 @@ export function tick(api) {
     assert_eq!(value["stringAlias"]["ok"], true, "{value:?}");
     assert_eq!(value["stringAlias"]["value"]["id"], 3554, "{value:?}");
     assert_eq!(value["stringAlias"]["value"]["access"], "constrained", "{value:?}");
+}
+
+#[test]
+fn v2_clue_held_step_is_a_sync_helper_result_over_the_posted_page() {
+    let src = r#"
+export const apiVersion = 2;
+export function tick(api) {
+  const step = api.clue.heldStep();
+  // Zero parameters: an argument is ignored, not an inventory override.
+  const extra = api.clue.heldStep([{ id: 2714, count: 1 }], 'held', 7);
+  globalThis.__probe = JSON.stringify({
+    ok: step.ok,
+    then: typeof step.then,
+    alias: step.value && step.value.alias,
+    id: step.value && step.value.id,
+    role: step.value && step.value.role,
+    params: step.value && step.value.params,
+    access: step.value && step.value.access,
+    rows: step.value ? Object.prototype.hasOwnProperty.call(step.value, 'rows') : 'no-row',
+    extraSame: JSON.stringify(extra) === JSON.stringify(step),
+    type: typeof api.clue.heldStep,
+  });
+}
+"#;
+    for revision in [ClientRevision::R274, ClientRevision::R289] {
+        // A clue earlier in the pack does not beat a later casket, and a held
+        // id that is not a membership row is skipped, not unknown-id.
+        let value = probe_page(src, revision, &[(999_999, 1), (3554, 1), (3531, 1)]);
+        assert_eq!(value["ok"], true, "{revision:?} {value:?}");
+        assert_eq!(value["then"], "undefined", "{value:?}");
+        assert_eq!(value["alias"], "trail_clue_hard_sextant016_casket", "{value:?}");
+        assert_eq!(value["id"], 3531, "{value:?}");
+        assert_eq!(value["role"], "casket", "{value:?}");
+        assert_eq!(value["params"], serde_json::json!([]), "{value:?}");
+        assert!(value["access"].is_null(), "casket omits access: {value:?}");
+        assert_eq!(value["rows"], false, "{value:?}");
+        assert_eq!(value["extraSame"], true, "{value:?}");
+        assert_eq!(value["type"], "function", "{value:?}");
+    }
+}
+
+#[test]
+fn v2_clue_held_step_takes_the_first_held_step_and_else_none_held() {
+    let src = r#"
+export const apiVersion = 2;
+export function tick(api) {
+  globalThis.__probe = JSON.stringify({ step: api.clue.heldStep() });
+}
+"#;
+    // Zero and negative counts are not held, so the clue behind the unheld
+    // casket wins and carries the landed access field.
+    let value = probe_page(src, ClientRevision::R274, &[(3531, 0), (0, 3), (3554, 1)]);
+    assert_eq!(value["step"]["ok"], true, "{value:?}");
+    assert_eq!(value["step"]["value"]["id"], 3554, "{value:?}");
+    assert_eq!(
+        value["step"]["value"]["alias"], "trail_clue_hard_sextant028",
+        "{value:?}"
+    );
+    assert_eq!(value["step"]["value"]["role"], "clue", "{value:?}");
+    assert_eq!(value["step"]["value"]["access"], "constrained", "{value:?}");
+    assert_eq!(
+        value["step"]["value"]["params"].as_array().map(Vec::len),
+        Some(4),
+        "{value:?}"
+    );
+    // Within one role the page decides, not the membership table: 3554 is
+    // posted before 2713 and is the step even though 2713 is the earlier row.
+    let value = probe_page(src, ClientRevision::R274, &[(3554, 1), (2713, 1)]);
+    assert_eq!(value["step"]["value"]["id"], 3554, "{value:?}");
+    // A held challenge id is not a membership row: an unrelated pack is
+    // none-held, not unknown-id, and it is not an ok null.
+    let value = probe_page(src, ClientRevision::R274, &[(2842, 1), (0, 3), (3531, -1)]);
+    assert_eq!(value["step"]["ok"], false, "{value:?}");
+    assert_eq!(value["step"]["error"], "none-held", "{value:?}");
+    assert!(value["step"].get("value").is_none(), "{value:?}");
+    // An empty page is the same none-held.
+    let value = probe_page(src, ClientRevision::R274, &[]);
+    assert_eq!(value["step"]["error"], "none-held", "{value:?}");
+}
+
+#[test]
+fn v2_clue_held_step_prefers_the_slot_token_then_the_family_token() {
+    let src = r#"
+export const apiVersion = 2;
+export function tick(api) {
+  globalThis.__probe = JSON.stringify({ step: api.clue.heldStep() });
+}
+"#;
+    // No selected slot: the slot token, even with a held casket.
+    let iso = LoadIsolate::spawn(src.into(), LoadShape::NativeTick, vec![]).unwrap();
+    post_page(&iso, 1, &[(3531, 1)]);
+    iso.on_game_tick(1);
+    let value: serde_json::Value =
+        serde_json::from_str(iso.probe("globalThis.__probe").unwrap().as_str().unwrap()).unwrap();
+    iso.join();
+    assert_eq!(value["step"]["error"], "missing-selected-data", "{value:?}");
+
+    // A selected slot without the trail family: the family token, before
+    // none-held, even with an empty page.
+    let iso = LoadIsolate::spawn_with_game_data(
+        src.into(),
+        LoadShape::NativeTick,
+        vec![],
+        data_without_trails(),
+    )
+    .unwrap();
+    post_base(&iso, 1);
+    iso.on_game_tick(1);
+    let value: serde_json::Value =
+        serde_json::from_str(iso.probe("globalThis.__probe").unwrap().as_str().unwrap()).unwrap();
+    iso.join();
+    assert_eq!(
+        value["step"]["error"], "family-unavailable:trails",
+        "{value:?}"
+    );
 }
 
 #[test]
@@ -529,4 +675,39 @@ fn example_clue_facts_v2_is_one_read_only_row_call() {
     assert_eq!(row["value"]["alias"], "trail_clue_hard_sextant028");
     assert_eq!(row["value"]["access"], "constrained");
     assert!(row["value"].get("supported").is_none(), "{row:?}");
+}
+
+#[test]
+fn example_clue_held_step_v2_is_one_read_only_held_step_call() {
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("examples")
+        .join("clue_held_step_v2.ts");
+    let src = std::fs::read_to_string(&path).expect("example source");
+    assert!(!src.contains("request("));
+    assert!(!src.contains("h.interact"));
+    assert!(!src.contains("challengeAnswer"));
+    assert!(!src.contains("deposit"));
+    assert_eq!(src.matches("api.clue").count(), 1);
+    assert_eq!(src.matches("heldStep").count(), 1);
+    let js = script::transpile_ts(&src).expect("transpile clue_held_step_v2.ts");
+    let data = api::game_data::for_revision(ClientRevision::R274).unwrap();
+    let iso = LoadIsolate::spawn_with_game_data(js, LoadShape::NativeTick, vec![], data).unwrap();
+    post_base(&iso, 1);
+    iso.on_game_tick(1);
+    let err = iso
+        .probe("globalThis.__rs2b0t_host.lastError || ''")
+        .unwrap();
+    let logs = iso.drain_logs();
+    iso.join();
+    assert_eq!(err.as_str().unwrap_or(""), "", "example lastError: {err:?}");
+    let last = logs
+        .iter()
+        .rev()
+        .find(|line| line.contains("\"none-held\""))
+        .unwrap_or_else(|| panic!("example logged the held step; logs={logs:?}"));
+    let step: serde_json::Value = serde_json::from_str(last).unwrap();
+    // The example injects no page: the keyframe pack holds nothing.
+    assert_eq!(step["ok"], false, "{step:?}");
+    assert_eq!(step["error"], "none-held", "{step:?}");
+    assert!(step.get("value").is_none(), "{step:?}");
 }

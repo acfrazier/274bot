@@ -21,6 +21,7 @@ mod buyout_plan;
 mod supply_v8;
 mod gather_methods_v8;
 mod clue_facts_v8;
+mod clue_logic_v8;
 mod quest_facts_v8;
 mod loadout_v8;
 #[cfg(feature = "load")]

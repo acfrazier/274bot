@@ -934,6 +934,7 @@ pub(super) fn wire_runtime(
     super::gather_methods_v8::install(runtime).map_err(|e| format!("gather methods v8: {e}"))?;
     super::quest_facts_v8::install(runtime).map_err(|e| format!("quest facts v8: {e}"))?;
     super::clue_facts_v8::install(runtime).map_err(|e| format!("clue facts v8: {e}"))?;
+    super::clue_logic_v8::install(runtime).map_err(|e| format!("clue logic v8: {e}"))?;
     super::loadout_v8::install(runtime).map_err(|e| format!("loadout v8: {e}"))?;
     super::line_of_sight::install(runtime).map_err(|e| format!("line of sight: {e}"))?;
     super::paint_chrome::install(runtime).map_err(|e| format!("paint chrome: {e}"))?;
@@ -1365,6 +1366,9 @@ api.questPrereqs = function (input) {
 function clueV2(op, input) {
   return globalThis.__rs2b0t_clue_facts_v2(op, input);
 }
+function clueLogicV2(op) {
+  return globalThis.__rs2b0t_clue_logic_v2(op);
+}
 api.clue = {
   row: function (input) {
     if (arguments.length === 0) return helperErr('invalid-args');
@@ -1386,6 +1390,11 @@ api.clue = {
       return helperErr('invalid-args');
     }
     return clueV2('row', input);
+  },
+  // Zero parameters: the page is the already-posted snapshot.inv, never an
+  // argument. Extra arguments are ignored, not an inventory override.
+  heldStep: function () {
+    return clueLogicV2('heldStep');
   },
 };
 const SCENE_LIMIT_MAX = 64;
