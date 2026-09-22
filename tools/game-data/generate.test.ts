@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { extractDropFacts, extractFacts, extractEquipmentNamesFacts, extractFlourSixFacts, extractGatherMethodsFacts, extractHerbFacts, extractMagicFacts, extractAutocastControls, extractDuelControls, extractNurmofEssenceFacts, extractPrayerFacts, extractSpecialControls, extractTeleportSpells, herbKeyFromName, identifiedHerbLevelDefault, joinEquipmentName, loadEquipmentNamesCurated, parseFrozenEquipmentNameArrays, parseFrozenEquipmentSingleQuoted, parseIdentifyHerbPairs, parseInvShopStock, parseJm2LocPlacements, parseMapsquarePath, parseObjSections, parsePack, parseParamDefinitions, parsePrayerInterface, parseQuestEnumEntry, parseRows } from './generate.ts';
+import { extractDropFacts, extractFacts, extractEquipmentNamesFacts, extractFlourSixFacts, extractGatherMethodsFacts, extractQuestIdentityFacts, extractHerbFacts, extractMagicFacts, extractAutocastControls, extractDuelControls, extractNurmofEssenceFacts, extractPrayerFacts, extractSpecialControls, extractTeleportSpells, herbKeyFromName, identifiedHerbLevelDefault, joinEquipmentName, loadEquipmentNamesCurated, parseFrozenEquipmentNameArrays, parseFrozenEquipmentSingleQuoted, parseIdentifyHerbPairs, parseInvShopStock, parseJm2LocPlacements, parseMapsquarePath, parseObjSections, parsePack, parseParamDefinitions, parsePrayerInterface, parseQuestEnumEntry, parseRows } from './generate.ts';
 
 const repoRoot = path.resolve(import.meta.dirname, '../..');
 
@@ -927,5 +927,220 @@ assert.equal(pin289.woods.find((row) => row.resource_key === 'normal')?.loc_ids.
 assert.equal(pin289.woods.find((row) => row.resource_key === 'normal')?.empty_ids.some((loc) => loc.alias.includes('mm_bush')), false);
 assert.equal(pin274.woods.find((row) => row.resource_key === 'normal')?.qualification, 'complete');
 assert.equal(pin289.woods.find((row) => row.resource_key === 'normal')?.qualification, 'partial');
+
+function writeQuestFixture(rootDir: string, mutate?: (files: Record<string, string>) => void) {
+    const files: Record<string, string> = {
+        'scripts/general/scripts/quests.rs2': `~send_quest_progress_colour($component, $progress, $complete_progress);
+%qp = $questpointrecount;
+~send_quest_progress_colour(questlist:runemysteries, %runemysteries, ^runemysteries_complete);
+~send_quest_progress_colour(questlist:cook, %cookquest, ^cook_complete);
+~send_quest_progress_colour(questlist:zanaris, %zanaris, ^zanaris_complete);
+~send_quest_progress_colour(questlist:waterfall, %waterfall_quest, ^waterfall_complete);
+~send_quest_progress_colour(questlist:murder, %murderquest, ^murder_complete);
+~send_quest_progress_colour(questlist:death, %death_equiproom, ^death_complete);
+~send_quest_progress_colour(questlist:itexam, ~itexam_progress, ^itexam_complete);
+~send_quest_progress_colour(questlist:blackarmgang, %phoenixgang, ^phoenixgang_complete);
+~send_quest_progress_colour(questlist:blackarmgang, %blackarmgang, ^blackarmgang_complete);
+~send_quest_progress_colour(questlist:elemental_workshop, %elemental_workshop_bits, sub(pow(2, ^elemental_workshop_complete), 1));
+~send_quest_progress_colour(questlist:legends, %legendsquest, ^legends_complete);
+~send_quest_progress_colour(questlist:regicide, %regicide_quest, ^regicide_complete);
+`,
+        'scripts/general/configs/quest.constant': `^cook_complete = 2
+^cookquest_complete = 7
+^cook_questpoints = 1
+^runemysteries_complete = 6
+^runemysteries_questpoints = 1
+^murder_complete = 2
+^murder_questpoints = 3
+^waterfall_complete = 10
+^waterfall_questpoints = 1
+^death_equiproom_complete = 999
+^death_complete = 80
+^death_questpoints = 1
+^zanaris_complete = 6
+^zanaris_questpoints = 3
+`,
+        'scripts/player/interfaces/questlist.if': `[death]
+y=1
+text=Death Plateau
+[zanaris]
+y=2
+text=Lost City
+[cook]
+y=99
+text=Cook's Assistant
+[runemysteries]
+y=3
+text=Rune Mysteries Quest
+[murder]
+y=4
+text=Murder Mystery
+[waterfall]
+y=5
+text=Waterfall Quest
+`,
+        'pack/varp.pack': `29=cookquest
+63=runemysteries
+192=murderquest
+65=waterfall_quest
+219=death
+314=death_equiproom
+147=zanaris
+101=qp
+`,
+        'scripts/general/configs/quest.enum': `[quest_names_enum]
+val=1,Cook's Assistant
+val=13,Rune Mysteries Quest
+val=37,Murder Mystery
+val=50,Waterfall Quest
+val=55,Death Plateau
+val=34,Lost City
+`,
+        'scripts/quests/quest_cook/scripts/quest_cook.rs2': `if(inv_total(inv, pot_flour) > 0 & inv_total(inv, egg) > 0 & inv_total(inv, bucket_milk) > 0) {
+}
+inv_del(inv, egg, 1);
+inv_del(inv, bucket_milk, 1);
+inv_del(inv, pot_flour, 1);
+`,
+        'scripts/quests/quest_waterfall/scripts/quest_waterfall.rs2': `// rope comment is not a requirement list
+if(last_useitem ! rope) {
+}
+if(last_useitem ! rope) {
+}
+`,
+        'scripts/quests/quest_zanaris/scripts/quest_zanaris.rs2': `if(stat(woodcutting) < 36) {
+}
+if(stat(crafting) < 31) {
+}
+if(inv_total(inv, axe) > 0) {
+}
+inv_del(inv, knife, 1);
+if(last_useitem ! dramen_branch) {
+}
+`,
+        'scripts/quests/quest_death/scripts/death_sherpa.rs2': `inv_del(inv, death_climbingboots, 1);
+inv_del(inv, death_secretwaymap, 1);
+inv_del(inv, trout, 1);
+`,
+    };
+    mutate?.(files);
+    for (const [relative, body] of Object.entries(files)) {
+        const absolute = path.join(rootDir, relative);
+        fs.mkdirSync(path.dirname(absolute), { recursive: true });
+        fs.writeFileSync(absolute, body);
+    }
+}
+function questFixture(mutate?: (files: Record<string, string>) => void) {
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'quest-identity-'));
+    writeQuestFixture(rootDir, mutate);
+    return rootDir;
+}
+function assertQuestRows(facts: ReturnType<typeof extractQuestIdentityFacts>) {
+    assert.deepEqual(facts.rows.map((row) => row.id), ['cook', 'runemysteries', 'murder', 'waterfall', 'death', 'zanaris']);
+    assert.deepEqual(facts.rows.map((row) => [row.display, row.varp, row.varp_id, row.complete, row.quest_points]), [
+        ["Cook's Assistant", 'cookquest', 29, 2, 1],
+        ['Rune Mysteries Quest', 'runemysteries', 63, 6, 1],
+        ['Murder Mystery', 'murderquest', 192, 2, 3],
+        ['Waterfall Quest', 'waterfall_quest', 65, 10, 1],
+        ['Death Plateau', 'death_equiproom', 314, 80, 1],
+        ['Lost City', 'zanaris', 147, 6, 3],
+    ]);
+    assert.equal(facts.rows.every((row) => row.requirements.qualification === 'partial' && row.requirements.unknown_as_satisfied === false && row.unknown_sides.length === 0), true);
+    assert.equal(facts.rows.every((row) => !('enum_index' in row) && !('engine_id' in row) && typeof row.complete === 'number'), true);
+    assert.equal(facts.rows.some((row) => row.varp_id === 101 || row.varp_id === 219 || row.varp === 'death'), false);
+    assert.deepEqual(facts.rows[0].requirements.items, [
+        { alias: 'egg', quantity: 1, kind: 'inv' },
+        { alias: 'bucket_milk', quantity: 1, kind: 'inv' },
+        { alias: 'pot_flour', quantity: 1, kind: 'inv' },
+    ]);
+    assert.equal(facts.rows[0].requirements.empty_must_have, false);
+    for (const id of ['runemysteries', 'murder', 'death']) {
+        const row = facts.rows.find((entry) => entry.id === id);
+        assert.equal(row?.requirements.empty_must_have, true);
+        assert.deepEqual(row?.requirements.items, []);
+        assert.deepEqual(row?.requirements.skills, []);
+    }
+    assert.deepEqual(facts.rows.find((row) => row.id === 'waterfall')?.requirements.items, [{ alias: 'rope', quantity: null, kind: 'use-site' }]);
+    assert.deepEqual(facts.rows.find((row) => row.id === 'zanaris')?.requirements.skills, [{ skill: 'woodcutting', level: 36 }, { skill: 'crafting', level: 31 }]);
+    assert.deepEqual(facts.rows.find((row) => row.id === 'zanaris')?.requirements.items, []);
+    const blob = JSON.stringify(facts);
+    assert.equal(blob.includes('family-unavailable') || blob.includes('quest_prereqs') || blob.includes('death_climbingboots') || blob.includes('Egg') || blob.includes('Lost City Of Zanaris'), false);
+    assert.equal('quest_prereqs' in facts, false);
+}
+
+const questRoot = questFixture();
+const quest274 = extractQuestIdentityFacts(questRoot, 274);
+assertQuestRows(quest274);
+assert.equal(quest274.coverage.length, 1);
+assert.deepEqual(quest274.coverage[0], { class: 'revision-absent', alias: 'routequest', on_revision: 274, other_pin_id: 387, copied: false, reason: '289-only quest, not copied onto 274' });
+assert.equal('display' in quest274.coverage[0] || 'complete' in quest274.coverage[0] || 'quest_points' in quest274.coverage[0], false);
+const quest289 = extractQuestIdentityFacts(questRoot, 289);
+assertQuestRows(quest289);
+assert.deepEqual(quest289.coverage, []);
+assert.doesNotThrow(() => extractQuestIdentityFacts(questRoot, 274));
+
+assert.throws(() => extractQuestIdentityFacts(questFixture((files) => { delete files['scripts/general/scripts/quests.rs2']; }), 274), /quests\.rs2/);
+assert.throws(() => extractQuestIdentityFacts(questFixture((files) => { delete files['scripts/general/configs/quest.constant']; }), 274), /quest\.constant/);
+assert.throws(() => extractQuestIdentityFacts(questFixture((files) => { delete files['scripts/player/interfaces/questlist.if']; }), 274), /questlist\.if/);
+assert.throws(() => extractQuestIdentityFacts(questFixture((files) => { delete files['pack/varp.pack']; }), 274), /varp\.pack/);
+assert.throws(() => extractQuestIdentityFacts(questFixture((files) => { delete files['scripts/general/configs/quest.enum']; }), 274), /quest\.enum/);
+assert.throws(() => extractQuestIdentityFacts(questFixture((files) => { delete files['scripts/quests/quest_cook/scripts/quest_cook.rs2']; }), 274), /quest_cook\.rs2/);
+assert.throws(() => extractQuestIdentityFacts(questFixture((files) => {
+    files['pack/varp.pack'] = files['pack/varp.pack'].replace('314=death_equiproom\n', '');
+}), 274), /absent from varp\.pack/);
+assert.throws(() => extractQuestIdentityFacts(questFixture((files) => {
+    files['scripts/general/scripts/quests.rs2'] = files['scripts/general/scripts/quests.rs2'].replace('%cookquest', '~cook_progress');
+}), 274), /proc operand/);
+assert.throws(() => extractQuestIdentityFacts(questFixture((files) => {
+    files['scripts/general/scripts/quests.rs2'] += '~send_quest_progress_colour(questlist:cook, %cookquest, ^cook_complete);\n';
+}), 274), /dual binding/);
+assert.throws(() => extractQuestIdentityFacts(questFixture((files) => {
+    files['scripts/general/scripts/quests.rs2'] = files['scripts/general/scripts/quests.rs2'].replace('^cook_complete);', 'sub(^cook_complete, 0));');
+}), 274), /computed complete/);
+assert.throws(() => extractQuestIdentityFacts(questFixture((files) => {
+    files['scripts/general/scripts/quests.rs2'] = files['scripts/general/scripts/quests.rs2'].replace('%death_equiproom, ^death_complete', '%death_equiproom, ^death_equiproom_complete');
+}), 274), /constant stem/);
+assert.throws(() => extractQuestIdentityFacts(questFixture((files) => {
+    files['scripts/player/interfaces/questlist.if'] = files['scripts/player/interfaces/questlist.if'].replace("text=Rune Mysteries Quest", 'text=Rune Mysteries');
+}), 274), /display mismatch/);
+assert.throws(() => extractQuestIdentityFacts(questFixture((files) => {
+    files['scripts/player/interfaces/questlist.if'] = files['scripts/player/interfaces/questlist.if'].replace('text=Lost City', 'text=Lost City Of Zanaris');
+}), 274), /display mismatch/);
+assert.throws(() => extractQuestIdentityFacts(questFixture((files) => {
+    files['scripts/general/scripts/quests.rs2'] = '// no colour calls\n';
+}), 274), /no extracted rows/);
+assert.throws(() => extractQuestIdentityFacts(questFixture((files) => {
+    files['pack/varp.pack'] += '387=routequest\n';
+}), 274), /routequest is in varp\.pack/);
+
+const withExtras = extractQuestIdentityFacts(questFixture((files) => {
+    files['scripts/general/scripts/quests.rs2'] += `~send_quest_progress_colour(questlist:routequest, %routequest, ^routequest_complete);
+~send_quest_progress_colour(questlist:misc, %misc_quest, ^misc_complete);
+~send_quest_progress_colour(questlist:troll_love, %troll_love, ^troll_love_complete);
+~send_quest_progress_colour(questlist:mm, %mm_main, ^mm_complete);
+`;
+    files['pack/varp.pack'] += '387=routequest\n359=misc_quest\n385=troll_love\n365=mm_main\n';
+    files['scripts/player/interfaces/questlist.if'] += '[routequest]\ny=372\ntext=In Search of the Myreque\n';
+    files['scripts/general/configs/quest.enum'] += 'val=99,In Search of the Myreque\n';
+    files['scripts/general/configs/quest.constant'] += '^routequest_complete = 105\n^routequest_questpoints = 2\n';
+}), 289);
+assertQuestRows(withExtras);
+assert.deepEqual(withExtras.coverage, []);
+assert.equal(withExtras.rows.some((row) => row.id === 'routequest' || row.display === 'In Search of the Myreque' || row.complete === 105 || row.varp_id === 387), false);
+assert.equal(withExtras.rows.some((row) => row.id === 'misc' || row.id === 'troll_love' || row.id === 'mm'), false);
+
+const pinQuest274 = extractQuestIdentityFacts('/Users/acfrazier/experiments/Server/content', 274);
+const pinQuest289 = extractQuestIdentityFacts('/Users/acfrazier/experiments/lostcity-289/content', 289);
+assertQuestRows(pinQuest274);
+assertQuestRows(pinQuest289);
+assert.deepEqual(pinQuest274.rows.map((row) => [row.id, row.varp, row.varp_id, row.complete, row.quest_points]), pinQuest289.rows.map((row) => [row.id, row.varp, row.varp_id, row.complete, row.quest_points]));
+assert.equal(pinQuest274.coverage.length, 1);
+assert.equal(pinQuest274.coverage[0].alias, 'routequest');
+assert.equal(pinQuest274.coverage[0].other_pin_id, 387);
+assert.equal(pinQuest274.coverage[0].copied, false);
+assert.equal(pinQuest274.coverage[0].class, 'revision-absent');
+assert.deepEqual(pinQuest289.coverage, []);
+assert.equal(pinQuest274.rows.some((row) => row.display === 'In Search of the Myreque' || row.complete === 105), false);
+assert.equal(pinQuest289.rows.some((row) => row.id === 'routequest' || row.id === 'misc' || row.id === 'troll_love' || row.id === 'mm'), false);
 
 console.log('generate fixture passed');

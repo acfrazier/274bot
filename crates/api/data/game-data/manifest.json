@@ -59,8 +59,12 @@
         "weapons": 12
       },
       "teleports": 7,
-      "bytes": 1488107,
-      "sha256": "399bb54944240af8758305161ffeacfd37d0ab0d723c70873f20da8d6757a556",
+      "quest_identity": {
+        "rows": 6,
+        "coverage": 1
+      },
+      "bytes": 1492901,
+      "sha256": "5ff90a101a141d87193661708e8c29e92916d8343b4fad02c778f4adf2121b60",
       "engine_commit": "4c95f87efe00b068cadbd229d94736626907bd1a",
       "content_commit": "000c19997e07206131bcb3c884265840efce416d",
       "inputs": [
@@ -325,6 +329,36 @@
           "path": "scripts/skill_fishing/configs/fishing.npc",
           "bytes": 17356,
           "sha256": "5e7602f6854684177b2a84c32c6c895fa23bacf0b34e003c2dbf2bd3e68f0aad"
+        },
+        {
+          "path": "scripts/general/scripts/quests.rs2",
+          "bytes": 15291,
+          "sha256": "1ee64cbb8aca7d2d6a198d27a2ef979f705c036d60889752c551063086d58a45"
+        },
+        {
+          "path": "scripts/general/configs/quest.constant",
+          "bytes": 3150,
+          "sha256": "bbcabc6a990efc79f20eef9d4b5581e820666636deea8099850b515ba3c482a2"
+        },
+        {
+          "path": "scripts/player/interfaces/questlist.if",
+          "bytes": 13895,
+          "sha256": "c0ca1ec29801112bacb45bfb7d123aa60d529183a2782aa82580c4c0238b6fcd"
+        },
+        {
+          "path": "scripts/quests/quest_cook/scripts/quest_cook.rs2",
+          "bytes": 4197,
+          "sha256": "acc3d72665ea7d818d9d876252fd61ab94170cb6a0603c75a743cd15bcef613a"
+        },
+        {
+          "path": "scripts/quests/quest_waterfall/scripts/quest_waterfall.rs2",
+          "bytes": 19822,
+          "sha256": "4a659081a07248ad23d8d8baa8b02d8355d64f7b87d25e1a55a1f6906ce24509"
+        },
+        {
+          "path": "scripts/quests/quest_zanaris/scripts/quest_zanaris.rs2",
+          "bytes": 3670,
+          "sha256": "7549736daa8afe09567901f46df9901f989226248bf25b4443a851052cc3b6fb"
         }
       ],
       "decoder_sources": [
@@ -473,8 +507,12 @@
         "weapons": 12
       },
       "teleports": 7,
-      "bytes": 1550595,
-      "sha256": "07c8f91695fdec20fc791bdd81d689fe3deed75af4f89bf4c8723454b75356a0",
+      "quest_identity": {
+        "rows": 6,
+        "coverage": 0
+      },
+      "bytes": 1555163,
+      "sha256": "38e67493339c93594004fb7513762d101c4e176180dc655b2668ba4730bae873",
       "engine_commit": "cc359656b4acd216ca452495874b6beba9a0ac75",
       "content_commit": "92649430fcbc83538d8c4367ecb96cee1a67a944",
       "inputs": [
@@ -739,6 +777,36 @@
           "path": "scripts/skill_fishing/configs/fishing.npc",
           "bytes": 17340,
           "sha256": "c1c222a2b911f65c833ff83522671eb3e207bd06b67fe9f190b4d2d23f461e40"
+        },
+        {
+          "path": "scripts/general/scripts/quests.rs2",
+          "bytes": 17588,
+          "sha256": "a9b2012c78dd7185c64a5b5c1215413a816dcff18177fe9b9e7a8ef45c19e7b6"
+        },
+        {
+          "path": "scripts/general/configs/quest.constant",
+          "bytes": 3295,
+          "sha256": "767678ee7d9aa2afd75f4b51165883e8e7e2273fd8224cbcf6b341073142ee52"
+        },
+        {
+          "path": "scripts/player/interfaces/questlist.if",
+          "bytes": 14857,
+          "sha256": "2f0b0e1eda82752ef657ed8888c29198581b88b9651497cde95a33b6bf50cc5c"
+        },
+        {
+          "path": "scripts/quests/quest_cook/scripts/quest_cook.rs2",
+          "bytes": 4197,
+          "sha256": "acc3d72665ea7d818d9d876252fd61ab94170cb6a0603c75a743cd15bcef613a"
+        },
+        {
+          "path": "scripts/quests/quest_waterfall/scripts/quest_waterfall.rs2",
+          "bytes": 19822,
+          "sha256": "4a659081a07248ad23d8d8baa8b02d8355d64f7b87d25e1a55a1f6906ce24509"
+        },
+        {
+          "path": "scripts/quests/quest_zanaris/scripts/quest_zanaris.rs2",
+          "bytes": 3670,
+          "sha256": "31375f0b99e0aaf5a07765cc1867100cf8280d602812166fcfba1b65d8d9e05c"
         }
       ],
       "decoder_sources": [

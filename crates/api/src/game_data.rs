@@ -618,6 +618,68 @@ pub struct GatherMethodsFacts {
     pub coverage: Vec<GatherCoverageRecord>,
 }
 
+/// Script alias from a selected handler. Not a pack-joined display name.
+/// `quantity` is the `inv_del` count; a use-site check has none.
+#[derive(Debug, Deserialize, Clone)]
+pub struct QuestItemAlias {
+    pub alias: String,
+    pub quantity: Option<i32>,
+    pub kind: String,
+}
+
+/// Mid-quest stat gate. Not a complete start set.
+#[derive(Debug, Deserialize, Clone)]
+pub struct QuestSkillGate {
+    pub skill: String,
+    pub level: i32,
+}
+
+/// Requirements sit on the identity row. Qualification stays `partial`.
+/// Empty frozen mustHave is not complete and is not unknown-as-satisfied.
+#[derive(Debug, Deserialize, Clone)]
+pub struct QuestRequirements {
+    pub qualification: String,
+    pub skills: Vec<QuestSkillGate>,
+    pub items: Vec<QuestItemAlias>,
+    pub empty_must_have: bool,
+    pub unknown_as_satisfied: bool,
+}
+
+/// One seed join. `id` is the seed id. `complete` is one constant, not a range.
+/// `unknown_sides` stays empty. Enum index is not a field.
+#[derive(Debug, Deserialize, Clone)]
+pub struct QuestIdentityRow {
+    pub id: String,
+    pub component: String,
+    pub display: String,
+    pub varp: String,
+    pub varp_id: i32,
+    pub complete: i32,
+    pub quest_points: i32,
+    pub unknown_sides: Vec<String>,
+    pub requirements: QuestRequirements,
+}
+
+/// Revision coverage. Not an identity row and not a copied id.
+#[derive(Debug, Deserialize, Clone)]
+pub struct QuestCoverageRecord {
+    pub class: String,
+    pub alias: String,
+    pub on_revision: i32,
+    pub other_pin_id: i32,
+    pub copied: bool,
+    pub reason: String,
+}
+
+/// Six-seed quest identity. Absence is `None`, not an empty list.
+/// A coverage record is a sibling, not a row.
+#[derive(Debug, Deserialize, Clone)]
+pub struct QuestIdentityFacts {
+    pub rows: Vec<QuestIdentityRow>,
+    #[serde(default)]
+    pub coverage: Vec<QuestCoverageRecord>,
+}
+
 /// Generated immutable facts for one client/cache revision.
 #[derive(Debug, Deserialize)]
 pub struct SelectedGameData {
@@ -655,6 +717,8 @@ pub struct SelectedGameData {
     equipment_names: Option<EquipmentNamesFacts>,
     #[serde(default)]
     gather_methods: Option<GatherMethodsFacts>,
+    #[serde(default)]
+    quest_identity: Option<QuestIdentityFacts>,
 }
 
 impl SelectedGameData {
@@ -670,6 +734,36 @@ impl SelectedGameData {
         if let Some(facts) = &data.gather_methods {
             if facts.woods.is_empty() && facts.mining.is_empty() && facts.fishing.is_empty() {
                 return Err("gather_methods present with no extracted rows".to_string());
+            }
+        }
+        if let Some(facts) = &data.quest_identity {
+            if facts.rows.is_empty() {
+                return Err("quest_identity present with no identity rows".to_string());
+            }
+            if facts
+                .rows
+                .iter()
+                .any(|row| row.requirements.qualification != "partial")
+            {
+                return Err("quest_identity requirements must stay partial".to_string());
+            }
+            if facts
+                .rows
+                .iter()
+                .any(|row| row.requirements.unknown_as_satisfied)
+            {
+                return Err("quest_identity empty mustHave is not unknown-satisfied".to_string());
+            }
+            if facts.rows.iter().any(|row| !row.unknown_sides.is_empty()) {
+                return Err("quest_identity unknown_sides must stay empty".to_string());
+            }
+            if facts.rows.iter().any(|row| {
+                row.requirements.empty_must_have
+                    && (!row.requirements.items.is_empty() || !row.requirements.skills.is_empty())
+            }) {
+                return Err(
+                    "quest_identity empty mustHave cannot carry items or skills".to_string()
+                );
             }
         }
         if data.revision != expected_revision.as_i32() {
@@ -838,6 +932,11 @@ impl SelectedGameData {
     /// Gather methods and loc-resource ids. `None` is family absence, not an empty extract.
     pub fn gather_methods(&self) -> Option<&GatherMethodsFacts> {
         self.gather_methods.as_ref()
+    }
+
+    /// Six-seed quest identity. `None` is family absence, not an empty extract.
+    pub fn quest_identity(&self) -> Option<&QuestIdentityFacts> {
+        self.quest_identity.as_ref()
     }
 
     /// Resolved equipment family row by frozen display name, when present.
@@ -1221,5 +1320,102 @@ mod tests {
         )
         .expect_err("Some with no extracted rows is not success");
         assert!(error.contains("no extracted rows"), "unexpected error: {error}");
+    }
+
+    #[test]
+    fn missing_quest_identity_is_absent_not_an_empty_list() {
+        let data = SelectedGameData::decode(minimal_json("").as_bytes(), ClientRevision::R274)
+            .expect("schema 4 without the field still decodes");
+        assert!(data.quest_identity().is_none());
+    }
+
+    #[test]
+    fn bare_quest_identity_vec_does_not_decode() {
+        let error = SelectedGameData::decode(
+            minimal_json(r#", "quest_identity": []"#).as_bytes(),
+            ClientRevision::R274,
+        )
+        .expect_err("a bare vec must not decode as an empty family");
+        assert!(
+            error.contains("quest_identity") || error.contains("decode"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn coverage_only_quest_identity_is_not_success() {
+        let error = SelectedGameData::decode(
+            minimal_json(
+                r#", "quest_identity": {"rows": [], "coverage": [{"class": "revision-absent", "alias": "routequest", "on_revision": 274, "other_pin_id": 387, "copied": false, "reason": "not copied"}]}"#,
+            )
+            .as_bytes(),
+            ClientRevision::R274,
+        )
+        .expect_err("coverage-only is not success");
+        assert!(
+            error.contains("no identity rows"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn quest_complete_range_does_not_decode() {
+        let error = SelectedGameData::decode(
+            minimal_json(
+                r#", "quest_identity": {"rows": [{"id": "death", "component": "death", "display": "Death Plateau", "varp": "death_equiproom", "varp_id": 314, "complete": {"min": 80}, "quest_points": 1, "unknown_sides": [], "requirements": {"qualification": "partial", "skills": [], "items": [], "empty_must_have": true, "unknown_as_satisfied": false}}], "coverage": []}"#,
+            )
+            .as_bytes(),
+            ClientRevision::R274,
+        )
+        .expect_err("a complete range must not decode");
+        assert!(error.contains("decode"), "unexpected error: {error}");
+    }
+
+    #[test]
+    fn promoted_quest_requirements_do_not_decode() {
+        let error = SelectedGameData::decode(
+            minimal_json(
+                r#", "quest_identity": {"rows": [{"id": "runemysteries", "component": "runemysteries", "display": "Rune Mysteries Quest", "varp": "runemysteries", "varp_id": 63, "complete": 6, "quest_points": 1, "unknown_sides": [], "requirements": {"qualification": "complete", "skills": [], "items": [], "empty_must_have": true, "unknown_as_satisfied": false}}], "coverage": []}"#,
+            )
+            .as_bytes(),
+            ClientRevision::R274,
+        )
+        .expect_err("a successful join must not promote requirements");
+        assert!(error.contains("partial"), "unexpected error: {error}");
+    }
+
+    #[test]
+    fn unknown_as_satisfied_quest_requirements_do_not_decode() {
+        let error = SelectedGameData::decode(
+            minimal_json(
+                r#", "quest_identity": {"rows": [{"id": "murder", "component": "murder", "display": "Murder Mystery", "varp": "murderquest", "varp_id": 192, "complete": 2, "quest_points": 3, "unknown_sides": [], "requirements": {"qualification": "partial", "skills": [], "items": [], "empty_must_have": true, "unknown_as_satisfied": true}}], "coverage": []}"#,
+            )
+            .as_bytes(),
+            ClientRevision::R274,
+        )
+        .expect_err("empty mustHave is not unknown-satisfied");
+        assert!(
+            error.contains("unknown-satisfied"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn partial_quest_identity_row_decodes() {
+        let data = SelectedGameData::decode(
+            minimal_json(
+                r#", "quest_identity": {"rows": [{"id": "cook", "component": "cook", "display": "Cook's Assistant", "varp": "cookquest", "varp_id": 29, "complete": 2, "quest_points": 1, "unknown_sides": [], "requirements": {"qualification": "partial", "skills": [], "items": [{"alias": "egg", "quantity": 1, "kind": "inv"}], "empty_must_have": false, "unknown_as_satisfied": false}}], "coverage": []}"#,
+            )
+            .as_bytes(),
+            ClientRevision::R274,
+        )
+        .expect("partial requirements still decode");
+        let facts = data.quest_identity().expect("present family");
+        assert_eq!(facts.rows.len(), 1);
+        assert_eq!(facts.rows[0].varp_id, 29);
+        assert_eq!(facts.rows[0].complete, 2);
+        assert_eq!(facts.rows[0].requirements.qualification, "partial");
+        assert!(!facts.rows[0].requirements.unknown_as_satisfied);
+        assert!(facts.coverage.is_empty());
     }
 }

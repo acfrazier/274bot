@@ -61,7 +61,15 @@ const flourSixContentFiles = [
     'pack/loc.pack',
     'pack/obj.pack',
 ];
-const contentFiles = ['scripts/player/configs/consumption/consume.dbtable', 'scripts/player/configs/consumption/consume_normal.dbrow', 'scripts/player/configs/consumption/consume_effects.dbrow', 'scripts/skill_thieving/configs/pickpocking/pickpocket.dbtable', 'scripts/skill_thieving/configs/pickpocking/pickpocket.dbrow', 'scripts/player/scripts/consumption/effects/scripts/consume_effects.rs2', 'scripts/skill_combat/configs/magic/magic_combat_spells.dbrow', 'scripts/skill_magic/configs/magic.dbtable', 'scripts/skill_magic/configs/magic_spells.dbrow', 'scripts/skill_magic/configs/magic_staff.dbrow', 'scripts/skill_combat/configs/combat.constant', 'scripts/skill_herblore/configs/herbs.obj', 'scripts/skill_herblore/configs/identifying/identify.param', 'scripts/skill_herblore/scripts/identifying/identify.rs2', ...prayerContentFiles, ...nurmofEssenceContentFiles, ...flourSixContentFiles, 'pack/interface.pack', 'pack/varp.pack', 'pack/param.pack', ...dropContentFiles, ...gatherContentFiles];
+export const questIdentityContentFiles = [
+    'scripts/general/scripts/quests.rs2',
+    'scripts/general/configs/quest.constant',
+    'scripts/player/interfaces/questlist.if',
+    'scripts/quests/quest_cook/scripts/quest_cook.rs2',
+    'scripts/quests/quest_waterfall/scripts/quest_waterfall.rs2',
+    'scripts/quests/quest_zanaris/scripts/quest_zanaris.rs2',
+];
+const contentFiles = ['scripts/player/configs/consumption/consume.dbtable', 'scripts/player/configs/consumption/consume_normal.dbrow', 'scripts/player/configs/consumption/consume_effects.dbrow', 'scripts/skill_thieving/configs/pickpocking/pickpocket.dbtable', 'scripts/skill_thieving/configs/pickpocking/pickpocket.dbrow', 'scripts/player/scripts/consumption/effects/scripts/consume_effects.rs2', 'scripts/skill_combat/configs/magic/magic_combat_spells.dbrow', 'scripts/skill_magic/configs/magic.dbtable', 'scripts/skill_magic/configs/magic_spells.dbrow', 'scripts/skill_magic/configs/magic_staff.dbrow', 'scripts/skill_combat/configs/combat.constant', 'scripts/skill_herblore/configs/herbs.obj', 'scripts/skill_herblore/configs/identifying/identify.param', 'scripts/skill_herblore/scripts/identifying/identify.rs2', ...prayerContentFiles, ...nurmofEssenceContentFiles, ...flourSixContentFiles, 'pack/interface.pack', 'pack/varp.pack', 'pack/param.pack', ...dropContentFiles, ...gatherContentFiles, ...questIdentityContentFiles];
 function sha256(file: string) { const data = fs.readFileSync(file); return { bytes: data.length, sha256: crypto.createHash('sha256').update(data).digest('hex') }; }
 function commit(dir: string) { return execFileSync('git', ['-C', dir, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(); }
 function sourceFile(dir: string, relative: string) { return { path: relative, ...sha256(path.join(dir, relative)) }; }
@@ -1552,6 +1560,234 @@ export function extractGatherMethodsFacts(content: string, revision: number) {
     return { woods, mining, fishing, coverage };
 }
 
+const QUEST_IDENTITY_SEEDS = [
+    { id: 'cook', component: 'cook' },
+    { id: 'runemysteries', component: 'runemysteries' },
+    { id: 'murder', component: 'murder' },
+    { id: 'waterfall', component: 'waterfall' },
+    { id: 'death', component: 'death' },
+    { id: 'zanaris', component: 'zanaris' },
+] as const;
+
+type QuestItemAlias = { alias: string; quantity: number | null; kind: 'inv' | 'use-site' };
+type QuestSkillGate = { skill: string; level: number };
+type QuestRequirements = {
+    qualification: 'partial';
+    skills: QuestSkillGate[];
+    items: QuestItemAlias[];
+    empty_must_have: boolean;
+    unknown_as_satisfied: false;
+};
+
+function parseQuestColourCalls(text: string) {
+    const calls: { component: string; progress: string; complete: string }[] = [];
+    for (const raw of text.split(/\r?\n/)) {
+        const line = raw.trim();
+        if (!line.startsWith('~send_quest_progress_colour(questlist:')) continue;
+        const match = /^~send_quest_progress_colour\(questlist:([A-Za-z0-9_]+),\s*([^,]+),\s*(.+)\);$/.exec(line);
+        if (!match) throw new Error(`quests.rs2: malformed colour call ${line}`);
+        calls.push({ component: match[1], progress: match[2].trim(), complete: match[3].trim() });
+    }
+    return calls;
+}
+
+function parseQuestConstants(text: string) {
+    const out = new Map<string, number>();
+    for (const raw of text.split(/\r?\n/)) {
+        const line = raw.trim();
+        if (!line || line.startsWith('//')) continue;
+        const match = /^\^([A-Za-z0-9_]+)\s*=\s*(-?\d+)\s*(?:\/\/.*)?$/.exec(line);
+        if (!match) continue;
+        if (out.has(match[1])) throw new Error(`quest.constant: duplicate ^${match[1]}`);
+        out.set(match[1], integer(match[2], `^${match[1]}`));
+    }
+    if (out.size === 0) throw new Error('quest.constant: no constants');
+    return out;
+}
+
+function parseQuestListText(text: string) {
+    const out = new Map<string, string>();
+    let section: string | null = null;
+    for (const raw of text.split(/\r?\n/)) {
+        const line = raw.trim();
+        if (!line || line.startsWith('//')) continue;
+        if (line.startsWith('[') && line.endsWith(']')) {
+            section = line.slice(1, -1);
+            continue;
+        }
+        if (!section || !line.startsWith('text=')) continue;
+        if (out.has(section)) throw new Error(`questlist.if: duplicate text= for ${section}`);
+        const display = line.slice('text='.length).trim();
+        if (!display) throw new Error(`questlist.if: empty text= for ${section}`);
+        out.set(section, display);
+    }
+    return out;
+}
+
+function parseQuestEnumDisplays(text: string) {
+    const names = new Set<string>();
+    let inQuestNames = false;
+    let saw = false;
+    for (const raw of text.split(/\r?\n/)) {
+        const line = raw.trim();
+        if (!line || line.startsWith('//')) continue;
+        if (line.startsWith('[') && line.endsWith(']')) {
+            const section = line.slice(1, -1);
+            if (inQuestNames && section !== 'quest_names_enum') break;
+            inQuestNames = section === 'quest_names_enum';
+            if (inQuestNames) saw = true;
+            continue;
+        }
+        if (!inQuestNames || !line.startsWith('val=')) continue;
+        const comma = line.indexOf(',');
+        if (comma < 0) throw new Error(`quest.enum: malformed val line ${line}`);
+        const name = line.slice(comma + 1).trim();
+        if (!name) throw new Error(`quest.enum: empty display ${line}`);
+        if (names.has(name)) throw new Error(`quest.enum: duplicate display ${name}`);
+        names.add(name);
+    }
+    if (!saw || names.size === 0) throw new Error('quest.enum: missing [quest_names_enum]');
+    return names;
+}
+
+function scriptHas(text: string, pattern: RegExp, label: string) {
+    if (!pattern.test(text)) throw new Error(label);
+}
+
+function cookRequirements(text: string): QuestRequirements {
+    const aliases = ['egg', 'bucket_milk', 'pot_flour'] as const;
+    for (const alias of aliases) {
+        scriptHas(text, new RegExp(`inv_total\\(inv, ${alias}\\)(?![A-Za-z0-9_])`), `quest_cook.rs2: missing inv_total for ${alias}`);
+        scriptHas(text, new RegExp(`inv_del\\(inv, ${alias}, 1\\)(?![A-Za-z0-9_])`), `quest_cook.rs2: missing inv_del quantity 1 for ${alias}`);
+    }
+    return {
+        qualification: 'partial',
+        skills: [],
+        items: aliases.map((alias) => ({ alias, quantity: 1, kind: 'inv' as const })),
+        empty_must_have: false,
+        unknown_as_satisfied: false,
+    };
+}
+
+function waterfallRequirements(text: string): QuestRequirements {
+    scriptHas(text, /last_useitem ! rope(?![A-Za-z0-9_])/, 'quest_waterfall.rs2: missing rope use-site check');
+    return {
+        qualification: 'partial',
+        skills: [],
+        items: [{ alias: 'rope', quantity: null, kind: 'use-site' }],
+        empty_must_have: false,
+        unknown_as_satisfied: false,
+    };
+}
+
+function zanarisRequirements(text: string): QuestRequirements {
+    const skills = [
+        { skill: 'woodcutting', level: 36 },
+        { skill: 'crafting', level: 31 },
+    ];
+    for (const gate of skills) {
+        scriptHas(text, new RegExp(`stat\\(${gate.skill}\\) < ${gate.level}(?!\\d)`), `quest_zanaris.rs2: missing ${gate.skill} gate ${gate.level}`);
+    }
+    return {
+        qualification: 'partial',
+        skills,
+        items: [],
+        empty_must_have: false,
+        unknown_as_satisfied: false,
+    };
+}
+
+function emptyMustHave(): QuestRequirements {
+    return {
+        qualification: 'partial',
+        skills: [],
+        items: [],
+        empty_must_have: true,
+        unknown_as_satisfied: false,
+    };
+}
+
+function requirementsFor(id: string, content: string): QuestRequirements {
+    if (id === 'cook') return cookRequirements(requireGatherText(content, 'scripts/quests/quest_cook/scripts/quest_cook.rs2'));
+    if (id === 'waterfall') return waterfallRequirements(requireGatherText(content, 'scripts/quests/quest_waterfall/scripts/quest_waterfall.rs2'));
+    if (id === 'zanaris') return zanarisRequirements(requireGatherText(content, 'scripts/quests/quest_zanaris/scripts/quest_zanaris.rs2'));
+    if (id === 'runemysteries' || id === 'murder' || id === 'death') return emptyMustHave();
+    throw new Error(`quest_identity: unknown seed ${id}`);
+}
+
+export function extractQuestIdentityFacts(content: string, revision: number) {
+    const quests = requireGatherText(content, 'scripts/general/scripts/quests.rs2');
+    const constants = parseQuestConstants(requireGatherText(content, 'scripts/general/configs/quest.constant'));
+    const displays = parseQuestListText(requireGatherText(content, 'scripts/player/interfaces/questlist.if'));
+    const varpPack = parsePack(requireGatherText(content, 'pack/varp.pack'));
+    const enumNames = parseQuestEnumDisplays(requireGatherText(content, 'scripts/general/configs/quest.enum'));
+    if (varpPack.size === 0) throw new Error('pack/varp.pack: required file missing ids');
+    const calls = parseQuestColourCalls(quests);
+    const rows = QUEST_IDENTITY_SEEDS.map((seed) => {
+        const found = calls.filter((call) => call.component === seed.component);
+        if (found.length === 0) throw new Error(`quest_identity: no extracted rows; quests.rs2 has no colour call for ${seed.id}`);
+        if (found.length !== 1) throw new Error(`quests.rs2: dual binding for ${seed.id}`);
+        const call = found[0];
+        const progress = /^%([A-Za-z0-9_]+)$/.exec(call.progress);
+        if (!progress) {
+            const why = call.progress.startsWith('~') ? 'proc operand' : 'not a %varp';
+            throw new Error(`quests.rs2: ${seed.id} ${why} ${call.progress}`);
+        }
+        const varp = progress[1];
+        const varpId = varpPack.get(varp);
+        if (varpId === undefined) throw new Error(`quests.rs2: ${seed.id} colour operand %${varp} is absent from varp.pack`);
+        const stem = `^${seed.id}_complete`;
+        if (call.complete !== stem) {
+            const why = call.complete.includes('(') || call.complete.includes(',') ? 'computed complete' : 'constant stem';
+            throw new Error(`quests.rs2: ${seed.id} ${why} ${call.complete}`);
+        }
+        const complete = constants.get(`${seed.id}_complete`);
+        const questPoints = constants.get(`${seed.id}_questpoints`);
+        if (complete === undefined) throw new Error(`quest.constant: missing ^${seed.id}_complete`);
+        if (questPoints === undefined) throw new Error(`quest.constant: missing ^${seed.id}_questpoints`);
+        const display = displays.get(seed.component);
+        if (!display) throw new Error(`questlist.if: missing text= for ${seed.component}`);
+        if (!enumNames.has(display)) throw new Error(`quest.enum: display mismatch for ${seed.id}: ${display}`);
+        return {
+            id: seed.id,
+            component: seed.component,
+            display,
+            varp,
+            varp_id: varpId,
+            complete,
+            quest_points: questPoints,
+            unknown_sides: [] as string[],
+            requirements: requirementsFor(seed.id, content),
+        };
+    });
+    if (rows.length !== QUEST_IDENTITY_SEEDS.length) throw new Error('quest_identity: no extracted rows');
+    if (rows.some((row) => row.requirements.qualification !== 'partial' || row.requirements.unknown_as_satisfied)) {
+        throw new Error('quest_identity: requirements must stay partial');
+    }
+    const coverage: {
+        class: 'revision-absent';
+        alias: string;
+        on_revision: number;
+        other_pin_id: number;
+        copied: false;
+        reason: string;
+    }[] = [];
+    if (revision === 274) {
+        if (varpPack.has('routequest')) throw new Error('274: routequest is in varp.pack; do not copy it and do not emit revision-absent');
+        coverage.push({
+            class: 'revision-absent',
+            alias: 'routequest',
+            on_revision: 274,
+            other_pin_id: 387,
+            copied: false,
+            reason: '289-only quest, not copied onto 274',
+        });
+    }
+    const facts = { rows, coverage };
+    if (JSON.stringify(facts).includes('family-unavailable')) throw new Error('quest_identity: must not emit family-unavailable');
+    return facts;
+}
+
 export function extractFacts(content: string, items: ObjType[], npcs: NpcType[]) {
     const itemIds = new Map(items.filter((item) => item.debugname !== null).map((item) => [item.debugname as string, { id: item.id, name: item.name }]));
     const npcIds = new Map(npcs.filter((npc) => npc.debugname != null).map((npc) => [npc.debugname as string, { id: npc.id, name: npc.name }]));
@@ -1571,8 +1807,8 @@ async function generate(spec: Revision) {
     process.chdir(spec.engine); const objModule = (await import(pathToFileURL(path.join(spec.engine, 'src/cache/config/ObjType.ts')).href)) as { default: { load(dir: string): void; configs: ObjType[] } }; objModule.default.load('data/pack');
     const npcModule = (await import(pathToFileURL(path.join(spec.engine, 'src/cache/config/NpcType.ts')).href)) as { default: { load(dir: string): void; configs: NpcType[] } }; npcModule.default.load('data/pack');
     const items = objModule.default.configs.map(row); const aliases = items.filter((item) => item.alias !== null).map((item) => item.alias as string); if (new Set(items.map((item) => item.id)).size !== items.length || new Set(aliases).size !== aliases.length) throw new Error(`${spec.revision}: duplicate ids or aliases`);
-    const facts = extractFacts(spec.content, objModule.default.configs, npcModule.default.configs); const drops = extractDropFacts(spec.content, objModule.default.configs, npcModule.default.configs); if (drops.length !== 4) throw new Error(`${spec.revision}: expected four combat drop tables, got ${drops.length}`); const magic = extractMagicFacts(spec.content, objModule.default.configs); if (magic.spells.length !== 16 || magic.spells[15].name !== 'Fire Wave' || magic.staves.length !== 14) throw new Error(`${spec.revision}: expected 16 combat spells and 14 staves, got ${magic.spells.length}/${magic.staves.length}`); const herbs = extractHerbFacts(spec.content, objModule.default.configs); if (herbs.herbs.length < 14) throw new Error(`${spec.revision}: expected a full herb identify table, got ${herbs.herbs.length}`); if (herbs.herb_level_default !== 3) throw new Error(`${spec.revision}: expected identify.param default 3, got ${herbs.herb_level_default}`); const autocast = extractAutocastControls(spec.content); const duel = extractDuelControls(spec.content); const special = extractSpecialControls(spec.content, objModule.default.configs);     const teleports = extractTeleportSpells(spec.content, objModule.default.configs); if (teleports.length !== 7 || teleports[0].name !== 'Varrock' || teleports[6].name !== 'Trollheim' || teleports[0].component_id !== 1164 || teleports[6].component_id !== 7455) throw new Error(`${spec.revision}: expected 7 standard teleports, got ${teleports.map((row) => row.name).join(',')}`);     const prayer = extractPrayerFacts(spec.content); if (prayer.prayers.length !== 15) throw new Error(`${spec.revision}: expected 15 prayers, got ${prayer.prayers.length}`); const nurmofEssence = extractNurmofEssenceFacts(spec.content, objModule.default.configs, npcModule.default.configs); if (nurmofEssence.pickaxes.length !== 6) throw new Error(`${spec.revision}: expected six pickaxes, got ${nurmofEssence.pickaxes.length}`);     const flourSix = extractFlourSixFacts(spec.content, objModule.default.configs); if (flourSix.pot.id !== 1931 || flourSix.flour_barrel.id !== 2662) throw new Error(`${spec.revision}: flour six join mismatch`); const objPackPath = path.join(spec.content, 'pack/obj.pack'); if (!fs.existsSync(objPackPath)) throw new Error(`${spec.revision}: missing pack/obj.pack`); const objPack = parsePack(fs.readFileSync(objPackPath, 'utf8')); if (objPack.size === 0) throw new Error(`${spec.revision}: empty pack/obj.pack`); const equipmentNames = extractEquipmentNamesFacts(items, objPack); const gatherMethods = extractGatherMethodsFacts(spec.content, spec.revision); if (gatherMethods.mining.length !== 17 || gatherMethods.woods.length !== 10 || gatherMethods.fishing.length !== 9) throw new Error(`${spec.revision}: expected 17 mine, 10 wood, and 9 fishing rows, got ${gatherMethods.mining.length}/${gatherMethods.woods.length}/${gatherMethods.fishing.length}`); const inputs = ['data/pack/server/obj.dat', 'data/pack/server/npc.dat', 'data/pack/client/config'].map((file) => sourceFile(spec.engine, file)); const contentInputs = contentFiles.map((file) => sourceFile(spec.content, file)); const sources = decoderSources.map((file) => sourceFile(spec.engine, file));
-    const payload = { schema_version: 4, revision: spec.revision, provenance: { engine_commit: pinned.engineCommit, content_commit: pinned.contentCommit, inputs, content_inputs: contentInputs, decoder_sources: sources, cache_identity: spec.cacheIdentity }, items, ...facts, drop_tables: drops, ...magic, ...herbs, ...prayer, nurmof_essence: nurmofEssence, flour_six: flourSix, equipment_names: equipmentNames, gather_methods: gatherMethods, autocast, duel, special, teleports }; const bytes = `${JSON.stringify(payload, null, 2)}\n`; fs.mkdirSync(path.dirname(spec.output), { recursive: true }); fs.writeFileSync(spec.output, bytes); return { revision: spec.revision, output: path.relative(root, spec.output), records: items.length, consumption: facts.consumption.length, pickpocket: facts.pickpocket.length, drop_tables: drops.length, spells: magic.spells.length, staves: magic.staves.length, herbs: herbs.herbs.length, prayers: prayer.prayers.length, pickaxes: nurmofEssence.pickaxes.length, flour_six: 6, gather_methods: { mining: gatherMethods.mining.length, woods: gatherMethods.woods.length, fishing: gatherMethods.fishing.length }, equipment_names: { bows: equipmentNames.bows.length, crossbows: equipmentNames.crossbows.length, darts: equipmentNames.darts.length, arrows: equipmentNames.arrows.length, bolts: equipmentNames.bolts.length, melee_weapons: equipmentNames.melee_weapons.length, staffs: equipmentNames.staffs.length, resolved: EQUIPMENT_FAMILY_ORDER.reduce((sum, family) => sum + equipmentNames[family].filter((row) => row.disposition === 'resolved').length, 0), absent: EQUIPMENT_FAMILY_ORDER.reduce((sum, family) => sum + equipmentNames[family].filter((row) => row.disposition === 'absent').length, 0) }, autocast, duel, special: { energy_varp: special.energy_varp, armed_varp: special.armed_varp, max_energy: special.max_energy, bars: special.bars.length, weapons: special.weapons.length }, teleports: teleports.length, bytes: Buffer.byteLength(bytes), sha256: crypto.createHash('sha256').update(bytes).digest('hex'), engine_commit: pinned.engineCommit, content_commit: pinned.contentCommit, inputs, content_inputs: contentInputs, decoder_sources: sources, cache_identity: spec.cacheIdentity };
+    const facts = extractFacts(spec.content, objModule.default.configs, npcModule.default.configs); const drops = extractDropFacts(spec.content, objModule.default.configs, npcModule.default.configs); if (drops.length !== 4) throw new Error(`${spec.revision}: expected four combat drop tables, got ${drops.length}`); const magic = extractMagicFacts(spec.content, objModule.default.configs); if (magic.spells.length !== 16 || magic.spells[15].name !== 'Fire Wave' || magic.staves.length !== 14) throw new Error(`${spec.revision}: expected 16 combat spells and 14 staves, got ${magic.spells.length}/${magic.staves.length}`); const herbs = extractHerbFacts(spec.content, objModule.default.configs); if (herbs.herbs.length < 14) throw new Error(`${spec.revision}: expected a full herb identify table, got ${herbs.herbs.length}`); if (herbs.herb_level_default !== 3) throw new Error(`${spec.revision}: expected identify.param default 3, got ${herbs.herb_level_default}`); const autocast = extractAutocastControls(spec.content); const duel = extractDuelControls(spec.content); const special = extractSpecialControls(spec.content, objModule.default.configs);     const teleports = extractTeleportSpells(spec.content, objModule.default.configs); if (teleports.length !== 7 || teleports[0].name !== 'Varrock' || teleports[6].name !== 'Trollheim' || teleports[0].component_id !== 1164 || teleports[6].component_id !== 7455) throw new Error(`${spec.revision}: expected 7 standard teleports, got ${teleports.map((row) => row.name).join(',')}`);     const prayer = extractPrayerFacts(spec.content); if (prayer.prayers.length !== 15) throw new Error(`${spec.revision}: expected 15 prayers, got ${prayer.prayers.length}`); const nurmofEssence = extractNurmofEssenceFacts(spec.content, objModule.default.configs, npcModule.default.configs); if (nurmofEssence.pickaxes.length !== 6) throw new Error(`${spec.revision}: expected six pickaxes, got ${nurmofEssence.pickaxes.length}`);     const flourSix = extractFlourSixFacts(spec.content, objModule.default.configs); if (flourSix.pot.id !== 1931 || flourSix.flour_barrel.id !== 2662) throw new Error(`${spec.revision}: flour six join mismatch`); const objPackPath = path.join(spec.content, 'pack/obj.pack'); if (!fs.existsSync(objPackPath)) throw new Error(`${spec.revision}: missing pack/obj.pack`); const objPack = parsePack(fs.readFileSync(objPackPath, 'utf8')); if (objPack.size === 0) throw new Error(`${spec.revision}: empty pack/obj.pack`); const equipmentNames = extractEquipmentNamesFacts(items, objPack); const gatherMethods = extractGatherMethodsFacts(spec.content, spec.revision); if (gatherMethods.mining.length !== 17 || gatherMethods.woods.length !== 10 || gatherMethods.fishing.length !== 9) throw new Error(`${spec.revision}: expected 17 mine, 10 wood, and 9 fishing rows, got ${gatherMethods.mining.length}/${gatherMethods.woods.length}/${gatherMethods.fishing.length}`); const questIdentity = extractQuestIdentityFacts(spec.content, spec.revision); if (questIdentity.rows.length !== 6 || questIdentity.rows[4].id !== 'death' || questIdentity.rows[4].varp !== 'death_equiproom' || questIdentity.rows[4].varp_id !== 314 || questIdentity.rows[4].complete !== 80 || questIdentity.rows.some((row) => row.requirements.qualification !== 'partial')) throw new Error(`${spec.revision}: quest identity join mismatch`); if (spec.revision === 274 && (questIdentity.coverage.length !== 1 || questIdentity.coverage[0].alias !== 'routequest' || questIdentity.coverage[0].other_pin_id !== 387 || questIdentity.coverage[0].copied !== false)) throw new Error(`${spec.revision}: quest coverage mismatch`); if (spec.revision !== 274 && questIdentity.coverage.length !== 0) throw new Error(`${spec.revision}: quest coverage must be empty`); const inputs = ['data/pack/server/obj.dat', 'data/pack/server/npc.dat', 'data/pack/client/config'].map((file) => sourceFile(spec.engine, file)); const contentInputs = contentFiles.map((file) => sourceFile(spec.content, file)); const sources = decoderSources.map((file) => sourceFile(spec.engine, file));
+    const payload = { schema_version: 4, revision: spec.revision, provenance: { engine_commit: pinned.engineCommit, content_commit: pinned.contentCommit, inputs, content_inputs: contentInputs, decoder_sources: sources, cache_identity: spec.cacheIdentity }, items, ...facts, drop_tables: drops, ...magic, ...herbs, ...prayer, nurmof_essence: nurmofEssence, flour_six: flourSix, equipment_names: equipmentNames, gather_methods: gatherMethods, quest_identity: questIdentity, autocast, duel, special, teleports }; const bytes = `${JSON.stringify(payload, null, 2)}\n`; fs.mkdirSync(path.dirname(spec.output), { recursive: true }); fs.writeFileSync(spec.output, bytes); return { revision: spec.revision, output: path.relative(root, spec.output), records: items.length, consumption: facts.consumption.length, pickpocket: facts.pickpocket.length, drop_tables: drops.length, spells: magic.spells.length, staves: magic.staves.length, herbs: herbs.herbs.length, prayers: prayer.prayers.length, pickaxes: nurmofEssence.pickaxes.length, flour_six: 6, gather_methods: { mining: gatherMethods.mining.length, woods: gatherMethods.woods.length, fishing: gatherMethods.fishing.length }, equipment_names: { bows: equipmentNames.bows.length, crossbows: equipmentNames.crossbows.length, darts: equipmentNames.darts.length, arrows: equipmentNames.arrows.length, bolts: equipmentNames.bolts.length, melee_weapons: equipmentNames.melee_weapons.length, staffs: equipmentNames.staffs.length, resolved: EQUIPMENT_FAMILY_ORDER.reduce((sum, family) => sum + equipmentNames[family].filter((row) => row.disposition === 'resolved').length, 0), absent: EQUIPMENT_FAMILY_ORDER.reduce((sum, family) => sum + equipmentNames[family].filter((row) => row.disposition === 'absent').length, 0) }, autocast, duel, special: { energy_varp: special.energy_varp, armed_varp: special.armed_varp, max_energy: special.max_energy, bars: special.bars.length, weapons: special.weapons.length }, teleports: teleports.length, quest_identity: { rows: questIdentity.rows.length, coverage: questIdentity.coverage.length }, bytes: Buffer.byteLength(bytes), sha256: crypto.createHash('sha256').update(bytes).digest('hex'), engine_commit: pinned.engineCommit, content_commit: pinned.contentCommit, inputs, content_inputs: contentInputs, decoder_sources: sources, cache_identity: spec.cacheIdentity };
 }
 async function main() { const results = []; for (const spec of revisions) results.push(await generate(spec)); const manifest = { schema_version: 4, generator: 'tools/game-data/generate.ts', revisions: results }; const manifestPath = path.join(root, 'crates/api/data/game-data/manifest.json'); fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`); console.log(JSON.stringify({ manifest: path.relative(root, manifestPath), revisions: results }, null, 2)); }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main().catch((error) => { console.error(error); process.exitCode = 1; });

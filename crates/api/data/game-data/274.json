@@ -266,6 +266,36 @@
         "path": "scripts/skill_fishing/configs/fishing.npc",
         "bytes": 17356,
         "sha256": "5e7602f6854684177b2a84c32c6c895fa23bacf0b34e003c2dbf2bd3e68f0aad"
+      },
+      {
+        "path": "scripts/general/scripts/quests.rs2",
+        "bytes": 15291,
+        "sha256": "1ee64cbb8aca7d2d6a198d27a2ef979f705c036d60889752c551063086d58a45"
+      },
+      {
+        "path": "scripts/general/configs/quest.constant",
+        "bytes": 3150,
+        "sha256": "bbcabc6a990efc79f20eef9d4b5581e820666636deea8099850b515ba3c482a2"
+      },
+      {
+        "path": "scripts/player/interfaces/questlist.if",
+        "bytes": 13895,
+        "sha256": "c0ca1ec29801112bacb45bfb7d123aa60d529183a2782aa82580c4c0238b6fcd"
+      },
+      {
+        "path": "scripts/quests/quest_cook/scripts/quest_cook.rs2",
+        "bytes": 4197,
+        "sha256": "acc3d72665ea7d818d9d876252fd61ab94170cb6a0603c75a743cd15bcef613a"
+      },
+      {
+        "path": "scripts/quests/quest_waterfall/scripts/quest_waterfall.rs2",
+        "bytes": 19822,
+        "sha256": "4a659081a07248ad23d8d8baa8b02d8355d64f7b87d25e1a55a1f6906ce24509"
+      },
+      {
+        "path": "scripts/quests/quest_zanaris/scripts/quest_zanaris.rs2",
+        "bytes": 3670,
+        "sha256": "7549736daa8afe09567901f46df9901f989226248bf25b4443a851052cc3b6fb"
       }
     ],
     "decoder_sources": [
@@ -61833,6 +61863,153 @@
         "other_pin_id": 5084,
         "copied": false,
         "reason": "289-only loc, not copied onto 274"
+      }
+    ]
+  },
+  "quest_identity": {
+    "rows": [
+      {
+        "id": "cook",
+        "component": "cook",
+        "display": "Cook's Assistant",
+        "varp": "cookquest",
+        "varp_id": 29,
+        "complete": 2,
+        "quest_points": 1,
+        "unknown_sides": [],
+        "requirements": {
+          "qualification": "partial",
+          "skills": [],
+          "items": [
+            {
+              "alias": "egg",
+              "quantity": 1,
+              "kind": "inv"
+            },
+            {
+              "alias": "bucket_milk",
+              "quantity": 1,
+              "kind": "inv"
+            },
+            {
+              "alias": "pot_flour",
+              "quantity": 1,
+              "kind": "inv"
+            }
+          ],
+          "empty_must_have": false,
+          "unknown_as_satisfied": false
+        }
+      },
+      {
+        "id": "runemysteries",
+        "component": "runemysteries",
+        "display": "Rune Mysteries Quest",
+        "varp": "runemysteries",
+        "varp_id": 63,
+        "complete": 6,
+        "quest_points": 1,
+        "unknown_sides": [],
+        "requirements": {
+          "qualification": "partial",
+          "skills": [],
+          "items": [],
+          "empty_must_have": true,
+          "unknown_as_satisfied": false
+        }
+      },
+      {
+        "id": "murder",
+        "component": "murder",
+        "display": "Murder Mystery",
+        "varp": "murderquest",
+        "varp_id": 192,
+        "complete": 2,
+        "quest_points": 3,
+        "unknown_sides": [],
+        "requirements": {
+          "qualification": "partial",
+          "skills": [],
+          "items": [],
+          "empty_must_have": true,
+          "unknown_as_satisfied": false
+        }
+      },
+      {
+        "id": "waterfall",
+        "component": "waterfall",
+        "display": "Waterfall Quest",
+        "varp": "waterfall_quest",
+        "varp_id": 65,
+        "complete": 10,
+        "quest_points": 1,
+        "unknown_sides": [],
+        "requirements": {
+          "qualification": "partial",
+          "skills": [],
+          "items": [
+            {
+              "alias": "rope",
+              "quantity": null,
+              "kind": "use-site"
+            }
+          ],
+          "empty_must_have": false,
+          "unknown_as_satisfied": false
+        }
+      },
+      {
+        "id": "death",
+        "component": "death",
+        "display": "Death Plateau",
+        "varp": "death_equiproom",
+        "varp_id": 314,
+        "complete": 80,
+        "quest_points": 1,
+        "unknown_sides": [],
+        "requirements": {
+          "qualification": "partial",
+          "skills": [],
+          "items": [],
+          "empty_must_have": true,
+          "unknown_as_satisfied": false
+        }
+      },
+      {
+        "id": "zanaris",
+        "component": "zanaris",
+        "display": "Lost City",
+        "varp": "zanaris",
+        "varp_id": 147,
+        "complete": 6,
+        "quest_points": 3,
+        "unknown_sides": [],
+        "requirements": {
+          "qualification": "partial",
+          "skills": [
+            {
+              "skill": "woodcutting",
+              "level": 36
+            },
+            {
+              "skill": "crafting",
+              "level": 31
+            }
+          ],
+          "items": [],
+          "empty_must_have": false,
+          "unknown_as_satisfied": false
+        }
+      }
+    ],
+    "coverage": [
+      {
+        "class": "revision-absent",
+        "alias": "routequest",
+        "on_revision": 274,
+        "other_pin_id": 387,
+        "copied": false,
+        "reason": "289-only quest, not copied onto 274"
       }
     ]
   },
