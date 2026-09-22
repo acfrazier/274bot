@@ -63,8 +63,15 @@
         "rows": 6,
         "coverage": 1
       },
-      "bytes": 1492901,
-      "sha256": "5ff90a101a141d87193661708e8c29e92916d8343b4fad02c778f4adf2121b60",
+      "trails": {
+        "rows": 257,
+        "clues": 186,
+        "caskets": 71,
+        "challenge_answers": 6,
+        "access_constrained": 1
+      },
+      "bytes": 1587549,
+      "sha256": "6cbea9d96d244335ce56c004537b569bb53fae70a88b80516ba0c7ee4beaba54",
       "engine_commit": "4c95f87efe00b068cadbd229d94736626907bd1a",
       "content_commit": "000c19997e07206131bcb3c884265840efce416d",
       "inputs": [
@@ -359,6 +366,41 @@
           "path": "scripts/quests/quest_zanaris/scripts/quest_zanaris.rs2",
           "bytes": 3670,
           "sha256": "7549736daa8afe09567901f46df9901f989226248bf25b4443a851052cc3b6fb"
+        },
+        {
+          "path": "scripts/minigames/game_trail/configs/trail_easy.enum",
+          "bytes": 2175,
+          "sha256": "ff601cc4b5f59860c880885f1669e755ecfc9e4cfafdda151875d97c6a278a0c"
+        },
+        {
+          "path": "scripts/minigames/game_trail/configs/trail_easy.obj",
+          "bytes": 21380,
+          "sha256": "3bcbbd8764775c504ac22be1b00239ccf85c26d779a81dfee0f8c4577fc70a0f"
+        },
+        {
+          "path": "scripts/minigames/game_trail/configs/trail_medium.enum",
+          "bytes": 2026,
+          "sha256": "238e689ccf07eface54bb1ad2cb0e447bcaefd691254b110ef3585cdbefdd1a2"
+        },
+        {
+          "path": "scripts/minigames/game_trail/configs/trail_medium.obj",
+          "bytes": 24336,
+          "sha256": "5dd4c37eb2cfad0089a9689f7a09348fb0c3820a250a48929fd900da645f00c1"
+        },
+        {
+          "path": "scripts/minigames/game_trail/configs/trail_hard.enum",
+          "bytes": 2170,
+          "sha256": "60b4a013e99de6126b7a2088fd53fd0ab2d6c935e1e29f37eb071ead1bc9d85d"
+        },
+        {
+          "path": "scripts/minigames/game_trail/configs/trail_hard.obj",
+          "bytes": 32572,
+          "sha256": "1879300a884133a163cf3cf6ab7f3b4731aa93dace18198b2f5a3d73711748b4"
+        },
+        {
+          "path": "scripts/minigames/game_trail/configs/trail_casket.obj",
+          "bytes": 698,
+          "sha256": "f7477fc1204e759617d0d1f7c62a5f1c7ca91cc088b777298c4a646ccb937364"
         }
       ],
       "decoder_sources": [
@@ -511,8 +553,15 @@
         "rows": 6,
         "coverage": 0
       },
-      "bytes": 1555163,
-      "sha256": "38e67493339c93594004fb7513762d101c4e176180dc655b2668ba4730bae873",
+      "trails": {
+        "rows": 257,
+        "clues": 186,
+        "caskets": 71,
+        "challenge_answers": 6,
+        "access_constrained": 1
+      },
+      "bytes": 1649811,
+      "sha256": "92fbb0d3a5e5b5dde51ea9dbd71eae51cdc187587f14c850adbff5f37833d5d3",
       "engine_commit": "cc359656b4acd216ca452495874b6beba9a0ac75",
       "content_commit": "92649430fcbc83538d8c4367ecb96cee1a67a944",
       "inputs": [
@@ -807,6 +856,41 @@
           "path": "scripts/quests/quest_zanaris/scripts/quest_zanaris.rs2",
           "bytes": 3670,
           "sha256": "31375f0b99e0aaf5a07765cc1867100cf8280d602812166fcfba1b65d8d9e05c"
+        },
+        {
+          "path": "scripts/minigames/game_trail/configs/trail_easy.enum",
+          "bytes": 2175,
+          "sha256": "ff601cc4b5f59860c880885f1669e755ecfc9e4cfafdda151875d97c6a278a0c"
+        },
+        {
+          "path": "scripts/minigames/game_trail/configs/trail_easy.obj",
+          "bytes": 21380,
+          "sha256": "3bcbbd8764775c504ac22be1b00239ccf85c26d779a81dfee0f8c4577fc70a0f"
+        },
+        {
+          "path": "scripts/minigames/game_trail/configs/trail_medium.enum",
+          "bytes": 2026,
+          "sha256": "238e689ccf07eface54bb1ad2cb0e447bcaefd691254b110ef3585cdbefdd1a2"
+        },
+        {
+          "path": "scripts/minigames/game_trail/configs/trail_medium.obj",
+          "bytes": 24336,
+          "sha256": "5dd4c37eb2cfad0089a9689f7a09348fb0c3820a250a48929fd900da645f00c1"
+        },
+        {
+          "path": "scripts/minigames/game_trail/configs/trail_hard.enum",
+          "bytes": 2170,
+          "sha256": "60b4a013e99de6126b7a2088fd53fd0ab2d6c935e1e29f37eb071ead1bc9d85d"
+        },
+        {
+          "path": "scripts/minigames/game_trail/configs/trail_hard.obj",
+          "bytes": 32572,
+          "sha256": "1879300a884133a163cf3cf6ab7f3b4731aa93dace18198b2f5a3d73711748b4"
+        },
+        {
+          "path": "scripts/minigames/game_trail/configs/trail_casket.obj",
+          "bytes": 698,
+          "sha256": "f7477fc1204e759617d0d1f7c62a5f1c7ca91cc088b777298c4a646ccb937364"
         }
       ],
       "decoder_sources": [

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { extractDropFacts, extractFacts, extractEquipmentNamesFacts, extractFlourSixFacts, extractGatherMethodsFacts, extractQuestIdentityFacts, extractHerbFacts, extractMagicFacts, extractAutocastControls, extractDuelControls, extractNurmofEssenceFacts, extractPrayerFacts, extractSpecialControls, extractTeleportSpells, herbKeyFromName, identifiedHerbLevelDefault, joinEquipmentName, loadEquipmentNamesCurated, parseFrozenEquipmentNameArrays, parseFrozenEquipmentSingleQuoted, parseIdentifyHerbPairs, parseInvShopStock, parseJm2LocPlacements, parseMapsquarePath, parseObjSections, parsePack, parseParamDefinitions, parsePrayerInterface, parseQuestEnumEntry, parseRows } from './generate.ts';
+import { assertTrailPins, extractDropFacts, extractFacts, extractEquipmentNamesFacts, extractFlourSixFacts, extractGatherMethodsFacts, extractQuestIdentityFacts, extractTrailFacts, extractHerbFacts, extractMagicFacts, extractAutocastControls, extractDuelControls, extractNurmofEssenceFacts, extractPrayerFacts, extractSpecialControls, extractTeleportSpells, herbKeyFromName, identifiedHerbLevelDefault, joinEquipmentName, loadEquipmentNamesCurated, parseFrozenEquipmentNameArrays, parseFrozenEquipmentSingleQuoted, parseIdentifyHerbPairs, parseTrailEnumAliases, parseTrailObjBlocks, parseInvShopStock, parseJm2LocPlacements, parseMapsquarePath, parseObjSections, parsePack, parseParamDefinitions, parsePrayerInterface, parseQuestEnumEntry, parseRows } from './generate.ts';
 
 const repoRoot = path.resolve(import.meta.dirname, '../..');
 
@@ -1142,5 +1142,360 @@ assert.equal(pinQuest274.coverage[0].class, 'revision-absent');
 assert.deepEqual(pinQuest289.coverage, []);
 assert.equal(pinQuest274.rows.some((row) => row.display === 'In Search of the Myreque' || row.complete === 105), false);
 assert.equal(pinQuest289.rows.some((row) => row.id === 'routequest' || row.id === 'misc' || row.id === 'troll_love' || row.id === 'mm'), false);
+
+
+// ---- trails ------------------------------------------------------------------
+
+const TRAIL_CONFIG = 'scripts/minigames/game_trail/configs';
+const TRAIL_FIXTURE_IDS: Record<string, number> = {
+    trail_clue_easy_simple001: 2677,
+    trail_clue_easy_vague003: 2678,
+    trail_clue_easy_map001: 2713,
+    trail_clue_easy_map001_casket: 2714,
+    trail_clue_medium_anagram001: 2841,
+    trail_clue_medium_anagram001_challenge: 2842,
+    trail_clue_medium_anagram002_challenge: 2844,
+    trail_clue_medium_anagram003_challenge: 2846,
+    trail_clue_medium_anagram006_challenge: 2850,
+    trail_clue_medium_anagram007_challenge: 2852,
+    trail_clue_medium_anagram008_challenge: 2854,
+    trail_clue_medium_map002: 2831,
+    trail_clue_medium_map002_casket: 2830,
+    trail_clue_hard_riddle004: 2778,
+    trail_clue_hard_riddle004_casket: 2779,
+    trail_clue_hard_sextant004: 3600,
+    trail_clue_hard_sextant004_casket: 3534,
+    trail_clue_hard_sextant016: 3587,
+    trail_clue_hard_sextant016_casket: 3531,
+    trail_clue_hard_sextant017: 3532,
+    trail_clue_hard_sextant017_casket: 3533,
+    trail_clue_hard_sextant026: 3552,
+    trail_clue_hard_sextant026_casket: 3551,
+    trail_clue_hard_sextant028: 3554,
+    trail_clue_hard_sextant028_casket: 3555,
+};
+const trailFixtureItems = Object.entries(TRAIL_FIXTURE_IDS).map(([debugname, id]) => ({
+    id,
+    debugname,
+    name: debugname.endsWith('_casket') ? 'Casket' : 'Clue scroll',
+    cost: 1,
+    stackable: false,
+    members: true,
+    certlink: -1,
+    certtemplate: -1,
+    wearpos: -1,
+    wearpos2: 0,
+    wearpos3: 0,
+})) as any;
+
+function writeTrailFixture(rootDir: string, mutate?: (files: Record<string, string>) => void) {
+    const files: Record<string, string> = {
+        'pack/obj.pack': `${Object.entries(TRAIL_FIXTURE_IDS).map(([alias, id]) => `${id}=${alias}`).join('\n')}\n`,
+        [`${TRAIL_CONFIG}/trail_easy.enum`]: `[trail_easy_enum]
+inputtype=int
+outputtype=namedobj
+val=0,trail_clue_easy_simple001
+val=1,trail_clue_easy_vague003
+val=2,trail_clue_easy_map001
+`,
+        [`${TRAIL_CONFIG}/trail_medium.enum`]: `[trail_medium_enum]
+inputtype=int
+outputtype=namedobj
+val=0,trail_clue_medium_anagram001
+`,
+        [`${TRAIL_CONFIG}/trail_hard.enum`]: `[trail_hard_enum]
+inputtype=int
+outputtype=namedobj
+val=0,trail_clue_hard_sextant004
+val=1,trail_clue_hard_riddle004
+val=2,trail_clue_hard_sextant016
+val=3,trail_clue_hard_sextant017
+val=4,trail_clue_hard_sextant028
+`,
+        [`${TRAIL_CONFIG}/trail_easy.obj`]: `[trail_clue_easy_simple001]
+name=Clue scroll
+category=trail_clue_easy
+param=trail_desc,Search the chest in the|Duke of Lumbridge's bedroom.
+param=trail_coord,1_50_50_9_18
+param=trail_loc,^true
+param=trail_loc,^false
+
+[trail_clue_easy_vague003]
+name=Clue scroll
+category=trail_clue_easy
+param=trail_desc,Dig near the drawers.
+
+[trail_clue_easy_map001]
+name=Clue scroll
+category=trail_clue_easy
+param=trail_coord,0_49_52_41_32
+param=trail_casket,trail_clue_easy_map001_casket
+`,
+        [`${TRAIL_CONFIG}/trail_medium.obj`]: `[trail_clue_medium_anagram001]
+name=Clue scroll
+category=trail_clue_medium
+param=trail_desc,Speak to Hazelmere.
+
+[trail_clue_medium_anagram001_challenge]
+name=Challenge scroll
+category=trail_clue_medium
+param=trail_challenge_answer,6859
+
+[trail_clue_medium_anagram002_challenge]
+name=Challenge scroll
+category=trail_clue_medium
+param=trail_challenge_answer,9
+
+[trail_clue_medium_anagram003_challenge]
+name=Challenge scroll
+category=trail_clue_medium
+param=trail_challenge_answer,40
+
+[trail_clue_medium_anagram006_challenge]
+name=Challenge scroll
+category=trail_clue_medium
+param=trail_challenge_answer,5
+
+[trail_clue_medium_anagram007_challenge]
+name=Challenge scroll
+category=trail_clue_medium
+param=trail_challenge_answer,48
+
+[trail_clue_medium_anagram008_challenge]
+name=Challenge scroll
+category=trail_clue_medium
+param=trail_challenge_answer,5096
+
+[trail_clue_medium_map002]
+name=Clue scroll
+category=trail_clue_medium
+param=trail_coord,0_42_53_14_36
+param=trail_casket,trail_clue_medium_map002_casket
+`,
+        [`${TRAIL_CONFIG}/trail_hard.obj`]: `[trail_clue_hard_sextant004]
+name=Clue scroll
+category=trail_clue_hard
+param=trail_sextant,yes
+param=trail_casket,trail_clue_hard_sextant004_casket
+
+[trail_clue_hard_riddle004]
+name=Clue scroll
+category=trail_clue_hard
+param=trail_desc,Speak to the keeper of my trail.
+param=trail_casket,trail_clue_hard_riddle004_casket
+
+[trail_clue_hard_sextant016]
+name=Clue scroll
+category=trail_clue_hard
+param=trail_sextant,yes
+param=trail_coord,0_43_45_23_11
+param=trail_casket,trail_clue_hard_sextant016_casket
+
+[trail_clue_hard_sextant017]
+name=Clue scroll
+category=trail_clue_hard
+param=trail_sextant,yes
+param=trail_casket,trail_clue_hard_sextant016_casket
+param=trail_guardian,trail_hard2
+
+[trail_clue_hard_sextant028]
+name=Clue scroll
+category=trail_clue_hard
+param=trail_desc,02 degrees 46 minutes North|29 degrees 11 minutes East
+param=trail_sextant,yes
+param=trail_casket,trail_clue_hard_sextant028_casket
+param=trail_coord,0_52_50_46_50
+
+[trail_clue_hard_sextant026]
+name=Clue scroll
+category=trail_clue_hard
+
+[trail_clue_hard_sextant026_casket]
+name=Casket
+category=trail_casket_hard
+`,
+        [`${TRAIL_CONFIG}/trail_casket.obj`]: `[trail_clue_hard_sextant004_casket]
+name=Casket
+category=trail_casket_hard
+`,
+    };
+    mutate?.(files);
+    for (const [relative, body] of Object.entries(files)) {
+        const absolute = path.join(rootDir, relative);
+        fs.mkdirSync(path.dirname(absolute), { recursive: true });
+        fs.writeFileSync(absolute, body);
+    }
+}
+function trailFixture(mutate?: (files: Record<string, string>) => void) {
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'trail-inventory-'));
+    writeTrailFixture(rootDir, mutate);
+    return rootDir;
+}
+function trailRow(facts: ReturnType<typeof extractTrailFacts>, alias: string) {
+    const found = facts.rows.find((row) => row.alias === alias);
+    assert.ok(found, `missing trail row ${alias}`);
+    return found;
+}
+const TRAIL_HANDLER_CONSTANT_COORDS = ['0_51_54_45_47', '1_42_53_14_17', '1_40_51_14_62'];
+
+const trailFacts = extractTrailFacts(trailFixture(), trailFixtureItems);
+assert.doesNotThrow(() => assertTrailPins(trailFacts, 274));
+
+// repeated param= keys survive as a list, not last-write-wins
+assert.deepEqual(trailRow(trailFacts, 'trail_clue_easy_simple001').params, [
+    { key: 'trail_desc', value: "Search the chest in the|Duke of Lumbridge's bedroom." },
+    { key: 'trail_coord', value: '1_50_50_9_18' },
+    { key: 'trail_loc', value: '^true' },
+    { key: 'trail_loc', value: '^false' },
+]);
+// ^true and yes stay raw strings
+assert.equal(trailRow(trailFacts, 'trail_clue_hard_sextant016').params.some((param) => param.key === 'trail_sextant' && param.value === 'yes'), true);
+assert.equal(trailRow(trailFacts, 'trail_clue_hard_sextant017').params.some((param) => param.key === 'trail_guardian' && param.value === 'trail_hard2'), true);
+// a block without trail_sextant omits the key: absent is not false
+assert.equal(trailRow(trailFacts, 'trail_clue_easy_simple001').params.some((param) => param.key === 'trail_sextant'), false);
+assert.equal(trailFacts.rows.some((row) => row.alias === 'trail_clue_medium_anagram001' && row.params.some((param) => param.key === 'trail_sextant')), false);
+assert.equal(trailFacts.rows.every((row) => row.params.every((param) => typeof param.value === 'string' && typeof param.key === 'string')), true);
+
+// the six answers are a sibling list on the challenge aliases, never a membership row
+assert.deepEqual(trailFacts.challenge_answers, [
+    { alias: 'trail_clue_medium_anagram001_challenge', id: 2842, answer: '6859' },
+    { alias: 'trail_clue_medium_anagram002_challenge', id: 2844, answer: '9' },
+    { alias: 'trail_clue_medium_anagram003_challenge', id: 2846, answer: '40' },
+    { alias: 'trail_clue_medium_anagram006_challenge', id: 2850, answer: '5' },
+    { alias: 'trail_clue_medium_anagram007_challenge', id: 2852, answer: '48' },
+    { alias: 'trail_clue_medium_anagram008_challenge', id: 2854, answer: '5096' },
+]);
+assert.equal(trailFacts.rows.some((row) => row.alias.endsWith('_challenge')), false);
+assert.equal(trailFacts.rows.some((row) => row.params.some((param) => param.key === 'trail_challenge_answer')), false);
+// the answer is not copied onto the parent that shares its prefix, and no link is invented
+assert.deepEqual(trailRow(trailFacts, 'trail_clue_medium_anagram001').params, [{ key: 'trail_desc', value: 'Speak to Hazelmere.' }]);
+assert.equal(JSON.stringify(trailFacts).includes('"parent"'), false);
+assert.equal(JSON.stringify(trailFacts).includes('npc'), false);
+
+// the casket alias is the param value, not the suffix-matching pack alias
+assert.deepEqual(trailRow(trailFacts, 'trail_clue_hard_sextant016_casket'), { alias: 'trail_clue_hard_sextant016_casket', id: 3531, role: 'casket', params: [] });
+assert.equal(trailFacts.rows.filter((row) => row.id === 3531).length, 1);
+assert.deepEqual(trailRow(trailFacts, 'trail_clue_hard_sextant017').params.filter((param) => param.key === 'trail_casket'), [{ key: 'trail_casket', value: 'trail_clue_hard_sextant016_casket' }]);
+assert.equal(trailFacts.rows.some((row) => row.id === 3533 || row.alias === 'trail_clue_hard_sextant017_casket'), false);
+// a casket with its own obj block is still a row without params
+assert.deepEqual(trailRow(trailFacts, 'trail_clue_hard_sextant004_casket').params, []);
+assert.equal(trailRow(trailFacts, 'trail_clue_hard_sextant004_casket').role, 'casket');
+// a named casket with no obj block is still a row: alias, id, no params
+assert.deepEqual(trailRow(trailFacts, 'trail_clue_hard_riddle004_casket'), { alias: 'trail_clue_hard_riddle004_casket', id: 2779, role: 'casket', params: [] });
+
+// blocks that no enum row lists are not members, and neither are their caskets
+for (const alias of ['trail_clue_medium_map002', 'trail_clue_medium_map002_casket', 'trail_clue_hard_sextant026', 'trail_clue_hard_sextant026_casket']) {
+    assert.equal(trailFacts.rows.some((row) => row.alias === alias), false);
+}
+
+// membership is not support: no support field, no coverage label, no class list
+assert.equal(JSON.stringify(trailFacts).includes('supported'), false);
+assert.equal(JSON.stringify(trailFacts).includes('facts-verified-both'), false);
+assert.equal(JSON.stringify(trailFacts).includes('coverage'), false);
+assert.equal(trailFacts.rows.every((row) => Object.keys(row).every((key) => ['alias', 'id', 'role', 'params', 'access'].includes(key))), true);
+assert.equal(trailFacts.rows.some((row) => 'display' in row || 'name' in row || 'enum_index' in row), false);
+
+// one access qualification, and it is not "open"
+const constrainedRows = trailFacts.rows.filter((row) => 'access' in row);
+assert.deepEqual(constrainedRows.map((row) => [row.alias, row.id, row.access]), [['trail_clue_hard_sextant028', 3554, 'constrained']]);
+assert.equal(constrainedRows[0].role, 'clue');
+assert.equal(JSON.stringify(trailFacts).includes('"open"'), false);
+
+// a constant-table coordinate is not selected when the obj param is absent
+assert.deepEqual(trailRow(trailFacts, 'trail_clue_easy_vague003').params, [{ key: 'trail_desc', value: 'Dig near the drawers.' }]);
+assert.equal(trailFacts.rows.some((row) => row.params.some((param) => param.key === 'handler_coord' || param.key === 'coord')), false);
+assert.equal(TRAIL_HANDLER_CONSTANT_COORDS.some((coord) => JSON.stringify(trailFacts).includes(coord)), false);
+
+// fail closed: a missing required input, a missing join, and an id mismatch
+assert.throws(() => extractTrailFacts(trailFixture((files) => { delete files[`${TRAIL_CONFIG}/trail_easy.enum`]; }), trailFixtureItems), /trail_easy\.enum/);
+assert.throws(() => extractTrailFacts(trailFixture((files) => { delete files[`${TRAIL_CONFIG}/trail_casket.obj`]; }), trailFixtureItems), /trail_casket\.obj/);
+assert.throws(() => extractTrailFacts(trailFixture((files) => { delete files['pack/obj.pack']; }), trailFixtureItems), /pack\/obj\.pack/);
+assert.throws(() => extractTrailFacts(trailFixture((files) => {
+    files['pack/obj.pack'] = files['pack/obj.pack'].replace('3554=trail_clue_hard_sextant028\n', '');
+}), trailFixtureItems), /pack\/obj\.pack lacks trail_clue_hard_sextant028/);
+assert.throws(() => extractTrailFacts(trailFixture((files) => {
+    files['pack/obj.pack'] = files['pack/obj.pack'].replace('2714=trail_clue_easy_map001_casket\n', '');
+}), trailFixtureItems), /pack\/obj\.pack lacks trail_clue_easy_map001_casket/);
+assert.throws(() => extractTrailFacts(trailFixture((files) => {
+    files['pack/obj.pack'] = files['pack/obj.pack'].replace('2779=trail_clue_hard_riddle004_casket', '9999=trail_clue_hard_riddle004_casket');
+}), trailFixtureItems), /disagrees with decoded item id/);
+assert.throws(() => extractTrailFacts(trailFixture((files) => {
+    files[`${TRAIL_CONFIG}/trail_easy.enum`] += 'val=9,trail_clue_easy_missing\n';
+}), trailFixtureItems), /has no obj block/);
+assert.throws(() => extractTrailFacts(trailFixture(), trailFixtureItems.filter((item: any) => item.debugname !== 'trail_clue_hard_sextant028')), /has no decoded item row/);
+
+// A fixture that drops trail_clue_hard_riddle004_casket publishes one row fewer:
+// that is the rejected corpus aggregate (186 clues plus 70 caskets), and the
+// producer's own pin check refuses it.
+const droppedCasketFixture = extractTrailFacts(trailFixture((files) => {
+    files[`${TRAIL_CONFIG}/trail_hard.obj`] = (files[`${TRAIL_CONFIG}/trail_hard.obj`] as string).replace('param=trail_casket,trail_clue_hard_riddle004_casket\n', '');
+}), trailFixtureItems);
+assert.equal(droppedCasketFixture.rows.length, trailFacts.rows.length - 1);
+assert.equal(droppedCasketFixture.rows.some((row) => row.alias === 'trail_clue_hard_riddle004_casket'), false);
+assert.throws(() => assertTrailPins(droppedCasketFixture, 274), /missing trail_clue_hard_riddle004_casket/);
+
+const pinTrail274Root = '/Users/acfrazier/experiments/Server/content';
+const pinTrail289Root = '/Users/acfrazier/experiments/lostcity-289/content';
+function pinDecodedItems(revision: number) {
+    const payload = JSON.parse(fs.readFileSync(path.join(repoRoot, `crates/api/data/game-data/${revision}.json`), 'utf8')) as { items: any[] };
+    return payload.items.filter((item: any) => item.alias !== null).map((item: any) => ({ id: item.id, debugname: item.alias, name: item.name, cost: item.cost, stackable: item.stackable, members: item.members, certlink: item.certificate_link, certtemplate: item.certificate_template, wearpos: item.wear_position, wearpos2: item.wear_position_2, wearpos3: item.wear_position_3 })) as any;
+}
+function pinTrailInputs(root: string) {
+    const enums = ['easy', 'medium', 'hard'].flatMap((tier) => parseTrailEnumAliases(fs.readFileSync(path.join(root, `${TRAIL_CONFIG}/trail_${tier}.enum`), 'utf8')));
+    const blocks = new Map<string, { key: string; value: string }[]>();
+    for (const tier of ['easy', 'medium', 'hard']) {
+        for (const [alias, params] of parseTrailObjBlocks(fs.readFileSync(path.join(root, `${TRAIL_CONFIG}/trail_${tier}.obj`), 'utf8'))) blocks.set(alias, params);
+    }
+    const caskets: string[] = [];
+    for (const alias of enums) {
+        for (const param of blocks.get(alias) ?? []) {
+            if (param.key === 'trail_casket' && !caskets.includes(param.value)) caskets.push(param.value);
+        }
+    }
+    return { enums, caskets };
+}
+
+const pinTrail274 = extractTrailFacts(pinTrail274Root, pinDecodedItems(274));
+const pinTrail289 = extractTrailFacts(pinTrail289Root, pinDecodedItems(289));
+assert.deepEqual(pinTrail274, pinTrail289);
+assert.doesNotThrow(() => assertTrailPins(pinTrail274, 274));
+assert.doesNotThrow(() => assertTrailPins(pinTrail289, 289));
+const pinTrailInputs274 = pinTrailInputs(pinTrail274Root);
+assert.equal(pinTrailInputs274.enums.includes('trail_clue_medium_map002'), false);
+assert.equal(pinTrailInputs274.enums.includes('trail_clue_hard_sextant026'), false);
+assert.equal(pinTrail274.rows.filter((row) => row.role === 'clue').length, pinTrailInputs274.enums.length);
+assert.equal(pinTrail274.rows.filter((row) => row.role === 'casket').length, pinTrailInputs274.caskets.length);
+assert.equal(pinTrail274.rows.length, pinTrailInputs274.enums.length + pinTrailInputs274.caskets.length);
+assert.equal(new Set(pinTrail274.rows.map((row) => row.alias)).size, pinTrail274.rows.length);
+assert.equal(pinTrail274.rows.filter((row) => row.id === 3531).length, 1);
+assert.equal(trailRow(pinTrail274, 'trail_clue_hard_riddle004_casket').id, 2779);
+assert.equal(trailRow(pinTrail274, 'trail_clue_hard_sextant016_casket').id, 3531);
+assert.equal(trailRow(pinTrail274, 'trail_clue_hard_sextant017').params.some((param) => param.key === 'trail_casket' && param.value === 'trail_clue_hard_sextant016_casket'), true);
+assert.equal(pinTrail274.rows.some((row) => row.id === 3533), false);
+assert.equal(trailRow(pinTrail274, 'trail_clue_easy_simple001').params.some((param) => param.key === 'trail_loc' && param.value === '^true'), true);
+assert.equal(trailRow(pinTrail274, 'trail_clue_hard_sextant028').params.some((param) => param.key === 'trail_sextant' && param.value === 'yes'), true);
+assert.equal(trailRow(pinTrail274, 'trail_clue_medium_anagram001').params.some((param) => param.key === 'trail_sextant'), false);
+assert.deepEqual(pinTrail274.rows.filter((row) => 'access' in row).map((row) => [row.alias, row.id, row.access]), [['trail_clue_hard_sextant028', 3554, 'constrained']]);
+assert.equal(pinTrail274.rows.every((row) => Object.keys(row).every((key) => ['alias', 'id', 'role', 'params', 'access'].includes(key))), true);
+assert.equal(JSON.stringify(pinTrail274).includes('facts-verified-both'), false);
+assert.equal(JSON.stringify(pinTrail274).includes('supported'), false);
+assert.equal(TRAIL_HANDLER_CONSTANT_COORDS.some((coord) => JSON.stringify(pinTrail274).includes(coord)), false);
+assert.equal(pinTrail274.challenge_answers.some((entry) => typeof entry.answer !== 'string'), false);
+assert.equal(pinTrail274.rows.some((row) => ['trail_clue_medium_map002', 'trail_clue_hard_sextant026'].includes(row.alias)), false);
+assert.equal(pinTrail274.rows.filter((row) => row.alias.startsWith('trail_clue_hard_riddle0') && row.role === 'casket' && row.id === 2779).length, 1);
+
+// Kharazi and Tirannwn members are inventoried as plain rows: no crossing class,
+// no jungle-cut or seam fact, no guardian display name, and no puzzle pieces.
+for (const [alias, id] of [['trail_clue_hard_sextant017', 3532], ['trail_clue_hard_sextant018', 3534], ['trail_clue_hard_sextant019', 3536], ['trail_clue_hard_sextant031', 3560], ['trail_clue_hard_sextant032', 3562], ['trail_clue_hard_riddle018', 3564]] as const) {
+    const row = trailRow(pinTrail274, alias);
+    assert.equal(row.id, id);
+    assert.equal(row.role, 'clue');
+    assert.equal('access' in row, false);
+}
+assert.equal(pinTrail274.rows.some((row) => row.alias.endsWith('_puzzlebox')), false);
+assert.equal(JSON.stringify(pinTrail274).includes('trail_puzzle'), false);
+assert.equal(JSON.stringify(pinTrail274).includes('"npc"'), false);
+assert.equal(JSON.stringify(pinTrail274).includes('regicide'), false);
+assert.equal(JSON.stringify(pinTrail274).includes('legends'), false);
 
 console.log('generate fixture passed');

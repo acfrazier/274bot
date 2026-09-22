@@ -296,6 +296,41 @@
         "path": "scripts/quests/quest_zanaris/scripts/quest_zanaris.rs2",
         "bytes": 3670,
         "sha256": "7549736daa8afe09567901f46df9901f989226248bf25b4443a851052cc3b6fb"
+      },
+      {
+        "path": "scripts/minigames/game_trail/configs/trail_easy.enum",
+        "bytes": 2175,
+        "sha256": "ff601cc4b5f59860c880885f1669e755ecfc9e4cfafdda151875d97c6a278a0c"
+      },
+      {
+        "path": "scripts/minigames/game_trail/configs/trail_easy.obj",
+        "bytes": 21380,
+        "sha256": "3bcbbd8764775c504ac22be1b00239ccf85c26d779a81dfee0f8c4577fc70a0f"
+      },
+      {
+        "path": "scripts/minigames/game_trail/configs/trail_medium.enum",
+        "bytes": 2026,
+        "sha256": "238e689ccf07eface54bb1ad2cb0e447bcaefd691254b110ef3585cdbefdd1a2"
+      },
+      {
+        "path": "scripts/minigames/game_trail/configs/trail_medium.obj",
+        "bytes": 24336,
+        "sha256": "5dd4c37eb2cfad0089a9689f7a09348fb0c3820a250a48929fd900da645f00c1"
+      },
+      {
+        "path": "scripts/minigames/game_trail/configs/trail_hard.enum",
+        "bytes": 2170,
+        "sha256": "60b4a013e99de6126b7a2088fd53fd0ab2d6c935e1e29f37eb071ead1bc9d85d"
+      },
+      {
+        "path": "scripts/minigames/game_trail/configs/trail_hard.obj",
+        "bytes": 32572,
+        "sha256": "1879300a884133a163cf3cf6ab7f3b4731aa93dace18198b2f5a3d73711748b4"
+      },
+      {
+        "path": "scripts/minigames/game_trail/configs/trail_casket.obj",
+        "bytes": 698,
+        "sha256": "f7477fc1204e759617d0d1f7c62a5f1c7ca91cc088b777298c4a646ccb937364"
       }
     ],
     "decoder_sources": [
@@ -62010,6 +62045,3810 @@
         "other_pin_id": 387,
         "copied": false,
         "reason": "289-only quest, not copied onto 274"
+      }
+    ]
+  },
+  "trails": {
+    "rows": [
+      {
+        "alias": "trail_clue_easy_map001",
+        "id": 2713,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_coord",
+            "value": "0_49_52_41_32"
+          },
+          {
+            "key": "trail_casket",
+            "value": "trail_clue_easy_map001_casket"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_easy_map002",
+        "id": 2716,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_coord",
+            "value": "0_51_52_26_46"
+          },
+          {
+            "key": "trail_casket",
+            "value": "trail_clue_easy_map002_casket"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_easy_map003",
+        "id": 2719,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_coord",
+            "value": "0_47_53_35_6"
+          },
+          {
+            "key": "trail_casket",
+            "value": "trail_clue_easy_map003_casket"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_easy_simple001",
+        "id": 2677,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "Search the chest in the|Duke of Lumbridge's bedroom."
+          },
+          {
+            "key": "trail_coord",
+            "value": "1_50_50_9_18"
+          },
+          {
+            "key": "trail_loc",
+            "value": "^true"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_easy_simple002",
+        "id": 2678,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "Search the crate in the left-|hand tower of Lumbridge Castle."
+          },
+          {
+            "key": "trail_coord",
+            "value": "1_50_50_28_16"
+          },
+          {
+            "key": "trail_loc",
+            "value": "^true"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_easy_simple003",
+        "id": 2679,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "Search the boxes in the goblin|house near Lumbridge."
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_50_50_48_46"
+          },
+          {
+            "key": "trail_loc",
+            "value": "^true"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_easy_simple004",
+        "id": 2680,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "Search the chests upstairs in|Al Kharid Palace."
+          },
+          {
+            "key": "trail_coord",
+            "value": "1_51_49_37_33"
+          },
+          {
+            "key": "trail_loc",
+            "value": "^true"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_easy_simple005",
+        "id": 2681,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "Speak to Hans to|solve the clue."
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_easy_simple006",
+        "id": 2682,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "Search the crates in the|most north-western house in Al Kharid."
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_51_50_25_2"
+          },
+          {
+            "key": "trail_loc",
+            "value": "^true"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_easy_simple007",
+        "id": 2683,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "Talk to Zeke in Al Kharid."
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_easy_simple008",
+        "id": 2684,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "Speak to the tanner|in Al Kharid."
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_easy_simple009",
+        "id": 2685,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "Search the boxes in|the house near the|south entrance to Varrock."
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_50_52_3_56"
+          },
+          {
+            "key": "trail_loc",
+            "value": "^true"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_easy_simple010",
+        "id": 2686,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "Speak to the bartender of the|Blue Moon Inn in Varrock."
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_easy_simple011",
+        "id": 2687,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "Search the drawers, upstairs|in the bank to|the East of Varrock."
+          },
+          {
+            "key": "trail_coord",
+            "value": "1_50_53_50_28"
+          },
+          {
+            "key": "trail_loc",
+            "value": "^true"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_easy_simple012",
+        "id": 2688,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "Search the crates|in Horvik's armoury."
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_50_53_28_41"
+          },
+          {
+            "key": "trail_loc",
+            "value": "^true"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_easy_simple013",
+        "id": 2689,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "Search the drawers in|one of Gertrude's bedrooms."
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_49_53_20_14"
+          },
+          {
+            "key": "trail_loc",
+            "value": "^true"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_easy_simple014",
+        "id": 2690,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "Search the boxes in the|Barbarian Village helmet shop."
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_48_53_1_38"
+          },
+          {
+            "key": "trail_loc",
+            "value": "^true"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_easy_simple015",
+        "id": 2691,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "Search the drawers upstairs|in Falador's shield shop."
+          },
+          {
+            "key": "trail_coord",
+            "value": "1_46_52_27_58"
+          },
+          {
+            "key": "trail_loc",
+            "value": "^true"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_easy_simple016",
+        "id": 2692,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "Search the boxes of|Falador's general store."
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_46_52_11_62"
+          },
+          {
+            "key": "trail_loc",
+            "value": "^true"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_easy_simple017",
+        "id": 2693,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "Talk to the Squire in the|White Knights' castle in Falador."
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_easy_simple018",
+        "id": 2694,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "Search the drawers in|Falador's chain mail shop."
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_46_51_25_46"
+          },
+          {
+            "key": "trail_loc",
+            "value": "^true"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_easy_simple019",
+        "id": 2695,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "Search the crates in the|Port Sarim Fishing shop."
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_47_50_4_22"
+          },
+          {
+            "key": "trail_loc",
+            "value": "^true"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_easy_simple020",
+        "id": 2696,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "Talk to the bartender of the|Rusty Anchor in Port Sarim."
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_easy_simple021",
+        "id": 2697,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "Speak to Ned in|Draynor Village."
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_easy_simple022",
+        "id": 2698,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "Speak to Doric, who|lives north of Falador."
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_easy_simple023",
+        "id": 2699,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "Speak to Gaius in Taverley."
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_easy_simple024",
+        "id": 2700,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "Search the drawers in|Catherby's Archery shop."
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_44_53_9_50"
+          },
+          {
+            "key": "trail_loc",
+            "value": "^true"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_easy_simple025",
+        "id": 2701,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "Speak to Arhein in Catherby."
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_easy_simple026",
+        "id": 2702,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "Speak to Sir Kay|in Camelot Castle."
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_easy_simple027",
+        "id": 2703,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "Search the chest in the left-|hand tower of Camelot Castle."
+          },
+          {
+            "key": "trail_coord",
+            "value": "2_42_54_60_39"
+          },
+          {
+            "key": "trail_loc",
+            "value": "^true"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_easy_simple028",
+        "id": 2704,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "Search the crates in the|guard house of the northern|gate of East Ardougne."
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_41_52_21_10"
+          },
+          {
+            "key": "trail_loc",
+            "value": "^true"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_easy_simple029",
+        "id": 2705,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "Search the boxes just|outside the Armour shop|in East Ardougne."
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_41_51_30_35"
+          },
+          {
+            "key": "trail_loc",
+            "value": "^true"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_easy_simple030",
+        "id": 2706,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "Search the crates in East|Ardougne's general store."
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_40_51_55_27"
+          },
+          {
+            "key": "trail_loc",
+            "value": "^true"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_easy_simple031",
+        "id": 2707,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "Search the crates in the shed|just north of East Ardougne."
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_40_52_57_19"
+          },
+          {
+            "key": "trail_loc",
+            "value": "^true"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_easy_vague001",
+        "id": 2708,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "Search the drawers|above Varrock's shops."
+          },
+          {
+            "key": "trail_coord",
+            "value": "1_50_53_6_27"
+          },
+          {
+            "key": "trail_loc",
+            "value": "^true"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_easy_vague002",
+        "id": 2709,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "Search the crates near|a cart in Varrock."
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_50_53_26_60"
+          },
+          {
+            "key": "trail_loc",
+            "value": "^true"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_easy_vague003",
+        "id": 2710,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "Search the drawers found upstairs|in East Ardougne's houses."
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_easy_vague004",
+        "id": 2711,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "The crate in the ground|floor of a church is|your next location."
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_40_51_49_40"
+          },
+          {
+            "key": "trail_loc",
+            "value": "^true"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_easy_vague005",
+        "id": 2712,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "Look in the ground floor|crates of houses in Falador."
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_47_52_21_27"
+          },
+          {
+            "key": "trail_loc",
+            "value": "^true"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_easy_vague006",
+        "id": 3490,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "Search the drawers of|houses in Burthorpe."
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_45_55_49_50"
+          },
+          {
+            "key": "trail_loc",
+            "value": "^true"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_easy_vague007",
+        "id": 3491,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "Search the crates in a house|in Yanille that has a piano."
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_40_48_38_33"
+          },
+          {
+            "key": "trail_loc",
+            "value": "^true"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_easy_vague008",
+        "id": 3492,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "Search the drawers in|the ground floor of a|house in Yanille."
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_40_48_10_13"
+          },
+          {
+            "key": "trail_loc",
+            "value": "^true"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_easy_vague009",
+        "id": 3493,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "Search the chests in|the Dwarven Mine."
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_46_153_56_6"
+          },
+          {
+            "key": "trail_loc",
+            "value": "^true"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_easy_vague010",
+        "id": 3494,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "Search through some drawers|in the upstairs of a|house in Rimmington."
+          },
+          {
+            "key": "trail_coord",
+            "value": "1_46_50_26_14"
+          },
+          {
+            "key": "trail_loc",
+            "value": "^true"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_easy_vague011",
+        "id": 3495,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "Search chests found in the|upstairs of shops in Port Sarim."
+          },
+          {
+            "key": "trail_coord",
+            "value": "1_47_50_8_5"
+          },
+          {
+            "key": "trail_loc",
+            "value": "^true"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_easy_vague012",
+        "id": 3496,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "One of the sailors|in Port Sarim is your|next destination."
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_easy_vague013",
+        "id": 3497,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "Search through chests found|in the upstairs of houses |in eastern Falador."
+          },
+          {
+            "key": "trail_coord",
+            "value": "1_47_52_33_36"
+          },
+          {
+            "key": "trail_loc",
+            "value": "^true"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_easy_vague014",
+        "id": 3498,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "Search the drawers upstairs|of houses in the eastern|part of Falador."
+          },
+          {
+            "key": "trail_coord",
+            "value": "1_47_52_27_19"
+          },
+          {
+            "key": "trail_loc",
+            "value": "^true"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_easy_vague015",
+        "id": 3499,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "Search the boxes in|a shop in Taverley."
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_45_53_6_57"
+          },
+          {
+            "key": "trail_loc",
+            "value": "^true"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_easy_vague016",
+        "id": 3500,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "Search through some drawers|found in Taverley's houses."
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_45_53_14_26"
+          },
+          {
+            "key": "trail_loc",
+            "value": "^true"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_easy_vague017",
+        "id": 3501,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "Search the boxes in one|of the tents in Al Kharid."
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_51_50_44_6"
+          },
+          {
+            "key": "trail_loc",
+            "value": "^true"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_easy_vague018",
+        "id": 3502,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "Search the crates|in Draynor Manor."
+          },
+          {
+            "key": "trail_coord",
+            "value": "2_48_52_34_41"
+          },
+          {
+            "key": "trail_loc",
+            "value": "^true"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_easy_vague019",
+        "id": 3503,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "Search the tents in the|Imperial Guard camp in|Burthorpe for some boxes."
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_45_55_5_20"
+          },
+          {
+            "key": "trail_loc",
+            "value": "^true"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_easy_vague020",
+        "id": 3504,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "Search the crate near|a cart in Port Khazard."
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_41_49_36_13"
+          },
+          {
+            "key": "trail_loc",
+            "value": "^true"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_easy_vague021",
+        "id": 3505,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "Search the drawers on|the first floor of a|building overlooking|Ardougne's Market."
+          },
+          {
+            "key": "trail_coord",
+            "value": "1_41_51_33_58"
+          },
+          {
+            "key": "trail_loc",
+            "value": "^true"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_easy_vague022",
+        "id": 3506,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "Search for a crate in a|building in Hemenster."
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_41_53_12_61"
+          },
+          {
+            "key": "trail_loc",
+            "value": "^true"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_easy_vague023",
+        "id": 3507,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "Search the drawers|in the upstairs of a|house in Catherby."
+          },
+          {
+            "key": "trail_coord",
+            "value": "1_43_53_57_59"
+          },
+          {
+            "key": "trail_loc",
+            "value": "^true"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_easy_vague024",
+        "id": 3508,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "Search the upstairs of|houses in Seers' Village|for some drawers."
+          },
+          {
+            "key": "trail_coord",
+            "value": "1_42_54_28_16"
+          },
+          {
+            "key": "trail_loc",
+            "value": "^true"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_easy_vague025",
+        "id": 3509,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "Search for a crate on|the ground floor of a|house in Seers' Village."
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_42_54_11_14"
+          },
+          {
+            "key": "trail_loc",
+            "value": "^true"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_easy_vague026",
+        "id": 3510,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "Dig near some giant mushrooms,|behind the Grand Tree."
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_38_54_26_48"
+          },
+          {
+            "key": "trail_casket",
+            "value": "trail_clue_easy_vague026_casket"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_easy_vague027",
+        "id": 3512,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "Search the drawers in a|house in Draynor Village."
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_48_51_25_13"
+          },
+          {
+            "key": "trail_loc",
+            "value": "^true"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_easy_vague028",
+        "id": 3513,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "Speak to the staff|of Sinclair mansion."
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_easy_vague029",
+        "id": 3514,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "Someone watching the fights|in the Duel Arena is your|next destination."
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_easy_vague030",
+        "id": 3515,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "Search for a crate|in Varrock Castle."
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_50_54_24_36"
+          },
+          {
+            "key": "trail_loc",
+            "value": "^true"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_easy_map004",
+        "id": 3516,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_coord",
+            "value": "0_40_54_52_26"
+          },
+          {
+            "key": "trail_casket",
+            "value": "trail_clue_easy_map004_casket"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_easy_map005",
+        "id": 3518,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_coord",
+            "value": "0_48_49_37_17"
+          },
+          {
+            "key": "trail_casket",
+            "value": "trail_clue_easy_map005_casket"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_medium_map001",
+        "id": 2827,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_coord",
+            "value": "0_48_50_21_27"
+          },
+          {
+            "key": "trail_casket",
+            "value": "trail_clue_medium_map001_casket"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_medium_sextant001",
+        "id": 2801,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "02 degrees 48 minutes North|22 degrees 30 minutes East"
+          },
+          {
+            "key": "trail_sextant",
+            "value": "yes"
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_49_50_24_51"
+          },
+          {
+            "key": "trail_casket",
+            "value": "trail_clue_medium_sextant001_casket"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_medium_sextant002",
+        "id": 2803,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "01 degrees 35 minutes South|07 degrees 28 minutes East"
+          },
+          {
+            "key": "trail_sextant",
+            "value": "yes"
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_41_48_55_38"
+          },
+          {
+            "key": "trail_casket",
+            "value": "trail_clue_medium_sextant002_casket"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_medium_sextant003",
+        "id": 2805,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "01 degrees 26 minutes North|08 degrees 01 minutes East"
+          },
+          {
+            "key": "trail_sextant",
+            "value": "yes"
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_42_50_9_7"
+          },
+          {
+            "key": "trail_casket",
+            "value": "trail_clue_medium_sextant003_casket"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_medium_sextant004",
+        "id": 2807,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "06 degrees 31 minutes North|01 degrees 46 minutes West"
+          },
+          {
+            "key": "trail_sextant",
+            "value": "yes"
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_37_52_15_42"
+          },
+          {
+            "key": "trail_casket",
+            "value": "trail_clue_medium_sextant004_casket"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_medium_sextant005",
+        "id": 2809,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "00 degrees 05 minutes South|01 degrees 13 minutes East"
+          },
+          {
+            "key": "trail_sextant",
+            "value": "yes"
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_38_49_47_22"
+          },
+          {
+            "key": "trail_casket",
+            "value": "trail_clue_medium_sextant005_casket"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_medium_sextant006",
+        "id": 2811,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "09 degrees 33 minutes North|02 degrees 15 minutes East"
+          },
+          {
+            "key": "trail_sextant",
+            "value": "yes"
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_39_54_16_11"
+          },
+          {
+            "key": "trail_casket",
+            "value": "trail_clue_medium_sextant006_casket"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_medium_sextant007",
+        "id": 2813,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "02 degrees 50 minutes North|06 degrees 20 minutes East"
+          },
+          {
+            "key": "trail_sextant",
+            "value": "yes"
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_41_50_19_52"
+          },
+          {
+            "key": "trail_casket",
+            "value": "trail_clue_medium_sextant007_casket"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_medium_sextant008",
+        "id": 2815,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "04 degrees 13 minutes North|12 degrees 45 minutes East"
+          },
+          {
+            "key": "trail_sextant",
+            "value": "yes"
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_44_51_32_32"
+          },
+          {
+            "key": "trail_casket",
+            "value": "trail_clue_medium_sextant008_casket"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_medium_sextant009",
+        "id": 2817,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "04 degrees 00 minutes South|12 degrees 46 minutes East"
+          },
+          {
+            "key": "trail_sextant",
+            "value": "yes"
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_44_47_33_25"
+          },
+          {
+            "key": "trail_casket",
+            "value": "trail_clue_medium_sextant009_casket"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_medium_sextant010",
+        "id": 2819,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "00 degrees 31 minutes South|17 degrees 43 minutes East"
+          },
+          {
+            "key": "trail_sextant",
+            "value": "yes"
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_46_49_63_8"
+          },
+          {
+            "key": "trail_casket",
+            "value": "trail_clue_medium_sextant010_casket"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_medium_sextant011",
+        "id": 2821,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "07 degrees 33 minutes North|15 degrees 00 minutes East"
+          },
+          {
+            "key": "trail_sextant",
+            "value": "yes"
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_45_53_40_11"
+          },
+          {
+            "key": "trail_casket",
+            "value": "trail_clue_medium_sextant011_casket"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_medium_sextant012",
+        "id": 2823,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "00 degrees 30 minutes North|24 degrees 16 minutes East"
+          },
+          {
+            "key": "trail_sextant",
+            "value": "yes"
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_50_49_17_41"
+          },
+          {
+            "key": "trail_casket",
+            "value": "trail_clue_medium_sextant012_casket"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_medium_sextant013",
+        "id": 2825,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "05 degrees 43 minutes North|23 degrees 05 minutes East"
+          },
+          {
+            "key": "trail_sextant",
+            "value": "yes"
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_49_52_43_16"
+          },
+          {
+            "key": "trail_casket",
+            "value": "trail_clue_medium_sextant013_casket"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_medium_riddle001",
+        "id": 2831,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "You'll need to look for|a town with a central|fountain. Look for a locked|chest in the town's chapel."
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_medium_riddle002",
+        "id": 2833,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "In a town where the guards|are armed with maces search|the upstairs rooms of the|Public House."
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_medium_riddle003",
+        "id": 2835,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "In a town where thieves|steal from stalls, search for|some drawers in the upstairs|of a house near the bank."
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_medium_riddle004",
+        "id": 2837,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "Look for some locked drawers|in the house opposite a|workshop in a town where|everyone has perfect vision."
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_medium_riddle005",
+        "id": 2839,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "In a town where wizards are|known to gather, search|upstairs in a large|house to the north."
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_medium_anagram001",
+        "id": 2841,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "Speak to Hazelmere."
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_medium_anagram002",
+        "id": 2843,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "This anagram reveals|who to speak to next:||OK CO"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_medium_anagram003",
+        "id": 2845,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "This anagram reveals|who to speak to next:||EEK ZERO OP"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_medium_anagram004",
+        "id": 2847,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "This anagram reveals|who to speak to next:||EL OW"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_medium_anagram005",
+        "id": 2848,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "Speak to Hajedy."
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_medium_anagram006",
+        "id": 2849,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "This anagram reveals|who to speak to next:||BAR BELL SEEK"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_medium_anagram007",
+        "id": 2851,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "This anagram reveals|who to speak to next:||ARE COL"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_medium_anagram008",
+        "id": 2853,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "Speak to a referee."
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_medium_anagram009",
+        "id": 2855,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "Speak to Donovan, the|Family Handyman."
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_medium_anagram010",
+        "id": 2856,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "This anagram reveals|who to speak to next:||PEATY PERT"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_medium_anagram011",
+        "id": 2857,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "This anagram reveals|who to speak to next:||GOBLIN KERN"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_medium_anagram012",
+        "id": 2858,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "This anagram reveals|who to speak to next:||HALT US"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_medium_sextant014",
+        "id": 3582,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "11 degrees 03 minutes North|31 degrees 20 minutes East"
+          },
+          {
+            "key": "trail_sextant",
+            "value": "yes"
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_53_54_51_59"
+          },
+          {
+            "key": "trail_casket",
+            "value": "trail_clue_medium_sextant014_casket"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_medium_sextant015",
+        "id": 3584,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "07 degrees 05 minutes North|30 degrees 56 minutes East"
+          },
+          {
+            "key": "trail_sextant",
+            "value": "yes"
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_53_52_38_60"
+          },
+          {
+            "key": "trail_casket",
+            "value": "trail_clue_medium_sextant015_casket"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_medium_sextant016",
+        "id": 3586,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "11 degrees 41 minutes North|14 degrees 58 minutes East"
+          },
+          {
+            "key": "trail_sextant",
+            "value": "yes"
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_45_55_39_15"
+          },
+          {
+            "key": "trail_casket",
+            "value": "trail_clue_medium_sextant016_casket"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_medium_sextant017",
+        "id": 3588,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "00 degrees 13 minutes South|13 degrees 58 minutes East"
+          },
+          {
+            "key": "trail_sextant",
+            "value": "yes"
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_45_49_7_18"
+          },
+          {
+            "key": "trail_casket",
+            "value": "trail_clue_medium_sextant017_casket"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_medium_sextant018",
+        "id": 3590,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "00 degrees 18 minutes South|09 degrees 28 minutes East"
+          },
+          {
+            "key": "trail_sextant",
+            "value": "yes"
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_42_49_55_15"
+          },
+          {
+            "key": "trail_casket",
+            "value": "trail_clue_medium_sextant018_casket"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_medium_sextant019",
+        "id": 3592,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "08 degrees 33 minutes North|01 degrees 39 minutes West"
+          },
+          {
+            "key": "trail_sextant",
+            "value": "yes"
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_37_53_19_43"
+          },
+          {
+            "key": "trail_casket",
+            "value": "trail_clue_medium_sextant019_casket"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_medium_sextant020",
+        "id": 3594,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "11 degrees 05 minutes North|00 degrees 45 minutes West"
+          },
+          {
+            "key": "trail_sextant",
+            "value": "yes"
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_37_54_48_60"
+          },
+          {
+            "key": "trail_casket",
+            "value": "trail_clue_medium_sextant020_casket"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_medium_map003",
+        "id": 3596,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_coord",
+            "value": "0_45_51_27_31"
+          },
+          {
+            "key": "trail_casket",
+            "value": "trail_clue_medium_map003_casket"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_medium_map004",
+        "id": 3598,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_coord",
+            "value": "0_41_54_34_32"
+          },
+          {
+            "key": "trail_loc",
+            "value": "^true"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_medium_map005",
+        "id": 3599,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_coord",
+            "value": "0_41_50_26_31"
+          },
+          {
+            "key": "trail_casket",
+            "value": "trail_clue_medium_map005_casket"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_medium_map006",
+        "id": 3601,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_coord",
+            "value": "0_40_50_5_48"
+          },
+          {
+            "key": "trail_loc",
+            "value": "^true"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_medium_map007",
+        "id": 3602,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_coord",
+            "value": "0_45_50_44_9"
+          },
+          {
+            "key": "trail_casket",
+            "value": "trail_clue_medium_map007_casket"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_medium_riddle006",
+        "id": 3604,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "In a village made of bamboo,|look for some crates|under one of the houses."
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_43_48_48_2"
+          },
+          {
+            "key": "trail_loc",
+            "value": "^true"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_medium_riddle007",
+        "id": 3605,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "Search the upstairs drawers|of a house in a village where|pirates are known to have a good time."
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_medium_riddle008",
+        "id": 3607,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "Go to the village being|attacked by trolls, search the|drawers in one of the houses."
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_medium_riddle009",
+        "id": 3609,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "A town with a different sort of|night-life is your destination.|Search for some crates|in one of the houses."
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_54_54_42_51"
+          },
+          {
+            "key": "trail_loc",
+            "value": "^true"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_medium_riddle010",
+        "id": 3610,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "Find a crate close to the|monks that like to paaarty!"
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_40_50_54_4"
+          },
+          {
+            "key": "trail_loc",
+            "value": "^true"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_medium_anagram013",
+        "id": 3611,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "This anagram reveals|who to speak to next:||ME IF"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_medium_anagram014",
+        "id": 3612,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "This anagram reveals|who to speak to next:||BAIL TRIMS"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_medium_anagram015",
+        "id": 3613,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "This anagram reveals|who to speak to next:||A BAS"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_medium_anagram016",
+        "id": 3614,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "Speak to Ulizius."
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_medium_anagram017",
+        "id": 3615,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "Speak to Roavar."
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_medium_anagram018",
+        "id": 3616,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "This anagram reveals|who to speak to next:||AHA JAR"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_medium_anagram019",
+        "id": 3617,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "Speak to Kangai Mau."
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_medium_anagram020",
+        "id": 3618,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "This anagram reveals|who to speak to next:||ICY FE"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_hard_map001",
+        "id": 2722,
+        "role": "clue",
+        "params": []
+      },
+      {
+        "alias": "trail_clue_hard_sextant001",
+        "id": 2723,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "22 degrees 35 minutes North|19 degrees 18 minutes East"
+          },
+          {
+            "key": "trail_sextant",
+            "value": "yes"
+          },
+          {
+            "key": "trail_casket",
+            "value": "trail_clue_hard_sextant001_casket"
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_47_60_50_44"
+          },
+          {
+            "key": "trail_guardian",
+            "value": "trail_hard"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_hard_sextant002",
+        "id": 2725,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "25 degrees 03 minutes North|17 degrees 05 minutes East"
+          },
+          {
+            "key": "trail_sextant",
+            "value": "yes"
+          },
+          {
+            "key": "trail_casket",
+            "value": "trail_clue_hard_sextant002_casket"
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_46_61_43_59"
+          },
+          {
+            "key": "trail_guardian",
+            "value": "trail_hard"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_hard_sextant003",
+        "id": 2727,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "24 degrees 56 minutes North|22 degrees 28 minutes East"
+          },
+          {
+            "key": "trail_sextant",
+            "value": "yes"
+          },
+          {
+            "key": "trail_casket",
+            "value": "trail_clue_hard_sextant003_casket"
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_49_61_23_55"
+          },
+          {
+            "key": "trail_guardian",
+            "value": "trail_hard"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_hard_sextant004",
+        "id": 2729,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "25 degrees 03 minutes North|23 degrees 24 minutes East"
+          },
+          {
+            "key": "trail_sextant",
+            "value": "yes"
+          },
+          {
+            "key": "trail_casket",
+            "value": "trail_clue_hard_sextant004_casket"
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_49_61_53_59"
+          },
+          {
+            "key": "trail_guardian",
+            "value": "trail_hard"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_hard_sextant005",
+        "id": 2731,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "22 degrees 45 minutes North|26 degrees 33 minutes East"
+          },
+          {
+            "key": "trail_sextant",
+            "value": "yes"
+          },
+          {
+            "key": "trail_casket",
+            "value": "trail_clue_hard_sextant005_casket"
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_51_60_26_49"
+          },
+          {
+            "key": "trail_guardian",
+            "value": "trail_hard"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_hard_sextant006",
+        "id": 2733,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "20 degrees 05 minutes North|21 degrees 52 minutes East"
+          },
+          {
+            "key": "trail_sextant",
+            "value": "yes"
+          },
+          {
+            "key": "trail_casket",
+            "value": "trail_clue_hard_sextant006_casket"
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_49_59_4_28"
+          },
+          {
+            "key": "trail_guardian",
+            "value": "trail_hard"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_hard_sextant007",
+        "id": 2735,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "20 degrees 33 minutes North|15 degrees 48 minutes East"
+          },
+          {
+            "key": "trail_sextant",
+            "value": "yes"
+          },
+          {
+            "key": "trail_casket",
+            "value": "trail_clue_hard_sextant007_casket"
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_46_59_2_43"
+          },
+          {
+            "key": "trail_guardian",
+            "value": "trail_hard"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_hard_sextant008",
+        "id": 2737,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "21 degrees 24 minutes North|17 degrees 54 minutes East"
+          },
+          {
+            "key": "trail_sextant",
+            "value": "yes"
+          },
+          {
+            "key": "trail_casket",
+            "value": "trail_clue_hard_sextant008_casket"
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_47_60_5_6"
+          },
+          {
+            "key": "trail_guardian",
+            "value": "trail_hard"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_hard_sextant009",
+        "id": 2739,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "24 degrees 58 minutes North|18 degrees 43 minutes East"
+          },
+          {
+            "key": "trail_sextant",
+            "value": "yes"
+          },
+          {
+            "key": "trail_casket",
+            "value": "trail_clue_hard_sextant009_casket"
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_47_61_31_56"
+          },
+          {
+            "key": "trail_guardian",
+            "value": "trail_hard"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_hard_sextant010",
+        "id": 2741,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "19 degrees 43 minutes North|25 degrees 07 minutes East"
+          },
+          {
+            "key": "trail_sextant",
+            "value": "yes"
+          },
+          {
+            "key": "trail_casket",
+            "value": "trail_clue_hard_sextant010_casket"
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_50_59_44_16"
+          },
+          {
+            "key": "trail_guardian",
+            "value": "trail_hard"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_hard_sextant011",
+        "id": 2743,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "16 degrees 07 minutes North|22 degrees 45 minutes East"
+          },
+          {
+            "key": "trail_sextant",
+            "value": "yes"
+          },
+          {
+            "key": "trail_casket",
+            "value": "trail_clue_hard_sextant011_casket"
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_49_57_32_29"
+          },
+          {
+            "key": "trail_guardian",
+            "value": "trail_hard"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_hard_sextant012",
+        "id": 2745,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "16 degrees 43 minutes North|19 degrees 13 minutes East"
+          },
+          {
+            "key": "trail_sextant",
+            "value": "yes"
+          },
+          {
+            "key": "trail_casket",
+            "value": "trail_clue_hard_sextant012_casket"
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_47_57_47_48"
+          },
+          {
+            "key": "trail_guardian",
+            "value": "trail_hard"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_hard_sextant013",
+        "id": 2747,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "19 degrees 00 minutes North|27 degrees 13 minutes East"
+          },
+          {
+            "key": "trail_sextant",
+            "value": "yes"
+          },
+          {
+            "key": "trail_casket",
+            "value": "trail_clue_hard_sextant013_casket"
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_51_58_47_57"
+          },
+          {
+            "key": "trail_guardian",
+            "value": "trail_hard"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_hard_riddle001",
+        "id": 2773,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "You will need to under-cook|to solve this one."
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_50_150_19_17"
+          },
+          {
+            "key": "trail_loc",
+            "value": "^true"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_hard_riddle002",
+        "id": 2774,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "Come to the @or2@evil ledge|@bla@Yew know you want to@end@|And try not to get stung."
+          },
+          {
+            "key": "trail_casket",
+            "value": "trail_clue_hard_riddle002_casket"
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_48_54_17_12"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_hard_riddle003",
+        "id": 2776,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "I am a token of the strongest love.|My middle is empty, I have no|beginning or end. My eye is red yet|I can fit like a glove. Go to the|place where money they lend, And|dig by the gate to be my friend."
+          },
+          {
+            "key": "trail_casket",
+            "value": "trail_clue_hard_riddle003_casket"
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_49_153_55_33"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_hard_riddle004",
+        "id": 2778,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "If a man carried my burden,|he would break his back.|I am not rich,|but leave silver in my track.|Speak to the keeper of my trail."
+          },
+          {
+            "key": "trail_casket",
+            "value": "trail_clue_hard_riddle004_casket"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_hard_riddle005",
+        "id": 2780,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "Aggie I see.|Lonely and southern I feel.|I am neither inside nor outside|the house, yet no house would|be complete without me.|Your treasure waits beneath me!"
+          },
+          {
+            "key": "trail_casket",
+            "value": "trail_clue_hard_riddle005_casket"
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_48_50_13_55"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_hard_riddle006",
+        "id": 2782,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "|My home is grey, and made of stone;|A castle with a search for a meal.|Hidden in some drawers I am,|across from a wooden wheel."
+          },
+          {
+            "key": "trail_coord",
+            "value": "1_50_50_13_16"
+          },
+          {
+            "key": "trail_loc",
+            "value": "^true"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_hard_riddle007",
+        "id": 2783,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "The beasts to my east snap claws and|tail. The rest to my west can slide and|eat fish. The northern will jump and|wail. Dig by my fire and make a wish."
+          },
+          {
+            "key": "trail_casket",
+            "value": "trail_clue_hard_riddle007_casket"
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_40_51_39_3"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_hard_riddle008",
+        "id": 2785,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "Four blades I have|yet I draw no blood.|But I mash and turn|my victims to powder.|Search in my head,|search in my rafters,|where my blades are louder."
+          },
+          {
+            "key": "trail_coord",
+            "value": "2_49_51_30_45"
+          },
+          {
+            "key": "trail_loc",
+            "value": "^true"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_hard_riddle009",
+        "id": 2786,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "I lie lonely and forgotten|in mid wilderness,|where the dead rise from their beds.|Feel free to quarrel and wind me up,|and dig while you shoot their heads."
+          },
+          {
+            "key": "trail_casket",
+            "value": "trail_clue_hard_riddle009_casket"
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_49_57_38_15"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_hard_riddle010",
+        "id": 2788,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "46 is my number.|My body is burnt orange colour|and crawls with those with eight.|3 mouths I have, yet I cannot eat.|My blinking blue eye|hides my grave."
+          },
+          {
+            "key": "trail_casket",
+            "value": "trail_clue_hard_riddle010_casket"
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_49_60_34_45"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_hard_riddle011",
+        "id": 2790,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "My giant guardians below|the market streets would|be fans of rock and roll,|if only they could grab hold of it.|Dig near my green bubbles!"
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_49_154_25_49"
+          },
+          {
+            "key": "trail_casket",
+            "value": "trail_clue_hard_riddle011_casket"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_hard_riddle012",
+        "id": 2792,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "Snah? I feel all confused,|like one of those cakes..."
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_hard_riddle013",
+        "id": 2793,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "@or2@'A bag belt only?'@end@|He asked his balding brothers."
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_hard_riddle014",
+        "id": 2794,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "The keeper of Melzars...|Spare? Skeleton? Anar?"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_hard_riddle015",
+        "id": 2796,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "Surprising? I bet he is..."
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_hard_riddle016",
+        "id": 2797,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "My name is like a tree,|yet it is spelt with a 'g'.|Come see the fur|which is right near me."
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_hard_riddle017",
+        "id": 2799,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "Generally speaking,|his nose was very bent."
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_hard_map002",
+        "id": 3520,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_coord",
+            "value": "0_40_48_56_5"
+          },
+          {
+            "key": "trail_casket",
+            "value": "trail_clue_hard_map002_casket"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_hard_map003",
+        "id": 3522,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_coord",
+            "value": "0_38_51_56_44"
+          },
+          {
+            "key": "trail_casket",
+            "value": "trail_clue_hard_map003_casket"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_hard_map004",
+        "id": 3524,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_coord",
+            "value": "0_38_49_27_43"
+          },
+          {
+            "key": "trail_loc",
+            "value": "^true"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_hard_map005",
+        "id": 3525,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_coord",
+            "value": "0_47_56_18_44"
+          },
+          {
+            "key": "trail_loc",
+            "value": "^true"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_hard_sextant014",
+        "id": 3526,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "16 degrees 03 minutes North|14 degrees 07 minutes East"
+          },
+          {
+            "key": "trail_sextant",
+            "value": "yes"
+          },
+          {
+            "key": "trail_casket",
+            "value": "trail_clue_hard_sextant014_casket"
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_45_57_12_27"
+          },
+          {
+            "key": "trail_guardian",
+            "value": "trail_hard2"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_hard_sextant015",
+        "id": 3528,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "16 degrees 31 minutes North|12 degrees 54 minutes East"
+          },
+          {
+            "key": "trail_sextant",
+            "value": "yes"
+          },
+          {
+            "key": "trail_casket",
+            "value": "trail_clue_hard_sextant015_casket"
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_44_57_37_42"
+          },
+          {
+            "key": "trail_guardian",
+            "value": "trail_hard2"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_hard_sextant016",
+        "id": 3530,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "05 degrees 50 minutes South|10 degrees 05 minutes East"
+          },
+          {
+            "key": "trail_sextant",
+            "value": "yes"
+          },
+          {
+            "key": "trail_casket",
+            "value": "trail_clue_hard_sextant016_casket"
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_43_46_11_30"
+          },
+          {
+            "key": "trail_guardian",
+            "value": "trail_hard2"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_hard_sextant017",
+        "id": 3532,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "08 degrees 26 minutes South|10 degrees 28 minutes East"
+          },
+          {
+            "key": "trail_sextant",
+            "value": "yes"
+          },
+          {
+            "key": "trail_casket",
+            "value": "trail_clue_hard_sextant016_casket"
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_43_45_23_11"
+          },
+          {
+            "key": "trail_guardian",
+            "value": "trail_hard2"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_hard_sextant018",
+        "id": 3534,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "07 degrees 43 minutes South|12 degrees 26 minutes East"
+          },
+          {
+            "key": "trail_sextant",
+            "value": "yes"
+          },
+          {
+            "key": "trail_casket",
+            "value": "trail_clue_hard_sextant018_casket"
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_44_45_22_34"
+          },
+          {
+            "key": "trail_guardian",
+            "value": "trail_hard2"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_hard_sextant019",
+        "id": 3536,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "08 degrees 05 minutes South|15 degrees 56 minutes East"
+          },
+          {
+            "key": "trail_sextant",
+            "value": "yes"
+          },
+          {
+            "key": "trail_casket",
+            "value": "trail_clue_hard_sextant019_casket"
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_46_45_6_22"
+          },
+          {
+            "key": "trail_guardian",
+            "value": "trail_hard2"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_hard_sextant020",
+        "id": 3538,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "04 degrees 16 minutes South|16 degrees 16 minutes East"
+          },
+          {
+            "key": "trail_sextant",
+            "value": "yes"
+          },
+          {
+            "key": "trail_casket",
+            "value": "trail_clue_hard_sextant020_casket"
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_46_47_17_16"
+          },
+          {
+            "key": "trail_guardian",
+            "value": "trail_hard2"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_hard_sextant021",
+        "id": 3540,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "06 degrees 11 minutes South|15 degrees 07 minutes East"
+          },
+          {
+            "key": "trail_sextant",
+            "value": "yes"
+          },
+          {
+            "key": "trail_casket",
+            "value": "trail_clue_hard_sextant021_casket"
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_45_46_44_19"
+          },
+          {
+            "key": "trail_guardian",
+            "value": "trail_hard2"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_hard_sextant022",
+        "id": 3542,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "05 degrees 37 minutes North|31 degrees 15 minutes East"
+          },
+          {
+            "key": "trail_sextant",
+            "value": "yes"
+          },
+          {
+            "key": "trail_casket",
+            "value": "trail_clue_hard_sextant022_casket"
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_53_52_48_13"
+          },
+          {
+            "key": "trail_guardian",
+            "value": "trail_hard2"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_hard_sextant023",
+        "id": 3544,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "08 degrees 03 minutes North|31 degrees 16 minutes East"
+          },
+          {
+            "key": "trail_sextant",
+            "value": "yes"
+          },
+          {
+            "key": "trail_casket",
+            "value": "trail_clue_hard_sextant023_casket"
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_53_53_49_27"
+          },
+          {
+            "key": "trail_guardian",
+            "value": "trail_hard2"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_hard_sextant024",
+        "id": 3546,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "04 degrees 03 minutes South|03 degrees 11 minutes East"
+          },
+          {
+            "key": "trail_sextant",
+            "value": "yes"
+          },
+          {
+            "key": "trail_casket",
+            "value": "trail_clue_hard_sextant024_casket"
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_39_47_46_23"
+          },
+          {
+            "key": "trail_guardian",
+            "value": "trail_hard2"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_hard_sextant025",
+        "id": 3548,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "04 degrees 05 minutes South|04 degrees 24 minutes East"
+          },
+          {
+            "key": "trail_sextant",
+            "value": "yes"
+          },
+          {
+            "key": "trail_casket",
+            "value": "trail_clue_hard_sextant025_casket"
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_40_47_21_22"
+          },
+          {
+            "key": "trail_guardian",
+            "value": "trail_hard2"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_hard_sextant027",
+        "id": 3552,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "03 degrees 45 minutes South|22 degrees 45 minutes East"
+          },
+          {
+            "key": "trail_sextant",
+            "value": "yes"
+          },
+          {
+            "key": "trail_casket",
+            "value": "trail_clue_hard_sextant027_casket"
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_49_47_32_33"
+          },
+          {
+            "key": "trail_guardian",
+            "value": "trail_hard2"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_hard_sextant028",
+        "id": 3554,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "02 degrees 46 minutes North|29 degrees 11 minutes East"
+          },
+          {
+            "key": "trail_sextant",
+            "value": "yes"
+          },
+          {
+            "key": "trail_casket",
+            "value": "trail_clue_hard_sextant028_casket"
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_52_50_46_50"
+          }
+        ],
+        "access": "constrained"
+      },
+      {
+        "alias": "trail_clue_hard_sextant029",
+        "id": 3556,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "18 degrees 50 minutes North|20 degrees 26 minutes East"
+          },
+          {
+            "key": "trail_sextant",
+            "value": "yes"
+          },
+          {
+            "key": "trail_casket",
+            "value": "trail_clue_hard_sextant029_casket"
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_48_58_22_52"
+          },
+          {
+            "key": "trail_guardian",
+            "value": "trail_hard"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_hard_sextant030",
+        "id": 3558,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "24 degrees 24 minutes North|26 degrees 24 minutes East"
+          },
+          {
+            "key": "trail_sextant",
+            "value": "yes"
+          },
+          {
+            "key": "trail_casket",
+            "value": "trail_clue_hard_sextant030_casket"
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_51_61_21_38"
+          },
+          {
+            "key": "trail_guardian",
+            "value": "trail_hard"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_hard_sextant031",
+        "id": 3560,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "00 degrees 00 minutes North|07 degrees 13 minutes West"
+          },
+          {
+            "key": "trail_sextant",
+            "value": "yes"
+          },
+          {
+            "key": "trail_casket",
+            "value": "trail_clue_hard_sextant031_casket"
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_34_49_33_25"
+          },
+          {
+            "key": "trail_guardian",
+            "value": "trail_hard2"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_hard_sextant032",
+        "id": 3562,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "01 degrees 24 minutes North|08 degrees 05 minutes West"
+          },
+          {
+            "key": "trail_sextant",
+            "value": "yes"
+          },
+          {
+            "key": "trail_casket",
+            "value": "trail_clue_hard_sextant032_casket"
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_34_50_5_6"
+          },
+          {
+            "key": "trail_guardian",
+            "value": "trail_hard2"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_hard_riddle018",
+        "id": 3564,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "There is no 'worthier' lord."
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_hard_riddle019",
+        "id": 3566,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "Often examined by learners of|what has past, find me where|words of wisdom speak volumes."
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_hard_riddle020",
+        "id": 3568,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "Identify the back of this|over-acting brother.||(He's a long way from home.)"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_hard_riddle021",
+        "id": 3570,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "This aviator is at the|peak of his profession."
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_hard_riddle022",
+        "id": 3572,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "Read 'How to breed scorpions.'|By O.W.Thathurt."
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_hard_riddle023",
+        "id": 3573,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "A great view - watch|the rapidly drying|hides get splashed.|Check the box you are sitting on."
+          },
+          {
+            "key": "trail_coord",
+            "value": "1_39_54_27_37"
+          },
+          {
+            "key": "trail_loc",
+            "value": "^true"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_hard_riddle024",
+        "id": 3574,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "Must be full of railings."
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_40_54_16_8"
+          },
+          {
+            "key": "trail_loc",
+            "value": "^true"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_hard_riddle025",
+        "id": 3575,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "Citric cellar."
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_hard_riddle026",
+        "id": 3577,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "'Small shoe.'|Often found with|rod on mushroom."
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_hard_riddle027",
+        "id": 3579,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "When no weapons are at hand,|then is the time to reflect.|In Saradomin's name,|redemption draws closer..."
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_44_52_2_23"
+          },
+          {
+            "key": "trail_loc",
+            "value": "^true"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_hard_riddle028",
+        "id": 3580,
+        "role": "clue",
+        "params": [
+          {
+            "key": "trail_desc",
+            "value": "Mine was the strangest birth|under the sun. I left the|crimson sack, yet life had not|begun. Entered the world, and|yet was seen by none."
+          },
+          {
+            "key": "trail_casket",
+            "value": "trail_clue_hard_riddle028_casket"
+          },
+          {
+            "key": "trail_coord",
+            "value": "0_44_149_16_50"
+          }
+        ]
+      },
+      {
+        "alias": "trail_clue_easy_map001_casket",
+        "id": 2714,
+        "role": "casket",
+        "params": []
+      },
+      {
+        "alias": "trail_clue_easy_map002_casket",
+        "id": 2717,
+        "role": "casket",
+        "params": []
+      },
+      {
+        "alias": "trail_clue_easy_map003_casket",
+        "id": 2720,
+        "role": "casket",
+        "params": []
+      },
+      {
+        "alias": "trail_clue_easy_vague026_casket",
+        "id": 3511,
+        "role": "casket",
+        "params": []
+      },
+      {
+        "alias": "trail_clue_easy_map004_casket",
+        "id": 3517,
+        "role": "casket",
+        "params": []
+      },
+      {
+        "alias": "trail_clue_easy_map005_casket",
+        "id": 3519,
+        "role": "casket",
+        "params": []
+      },
+      {
+        "alias": "trail_clue_medium_map001_casket",
+        "id": 2828,
+        "role": "casket",
+        "params": []
+      },
+      {
+        "alias": "trail_clue_medium_sextant001_casket",
+        "id": 2802,
+        "role": "casket",
+        "params": []
+      },
+      {
+        "alias": "trail_clue_medium_sextant002_casket",
+        "id": 2804,
+        "role": "casket",
+        "params": []
+      },
+      {
+        "alias": "trail_clue_medium_sextant003_casket",
+        "id": 2806,
+        "role": "casket",
+        "params": []
+      },
+      {
+        "alias": "trail_clue_medium_sextant004_casket",
+        "id": 2808,
+        "role": "casket",
+        "params": []
+      },
+      {
+        "alias": "trail_clue_medium_sextant005_casket",
+        "id": 2810,
+        "role": "casket",
+        "params": []
+      },
+      {
+        "alias": "trail_clue_medium_sextant006_casket",
+        "id": 2812,
+        "role": "casket",
+        "params": []
+      },
+      {
+        "alias": "trail_clue_medium_sextant007_casket",
+        "id": 2814,
+        "role": "casket",
+        "params": []
+      },
+      {
+        "alias": "trail_clue_medium_sextant008_casket",
+        "id": 2816,
+        "role": "casket",
+        "params": []
+      },
+      {
+        "alias": "trail_clue_medium_sextant009_casket",
+        "id": 2818,
+        "role": "casket",
+        "params": []
+      },
+      {
+        "alias": "trail_clue_medium_sextant010_casket",
+        "id": 2820,
+        "role": "casket",
+        "params": []
+      },
+      {
+        "alias": "trail_clue_medium_sextant011_casket",
+        "id": 2822,
+        "role": "casket",
+        "params": []
+      },
+      {
+        "alias": "trail_clue_medium_sextant012_casket",
+        "id": 2824,
+        "role": "casket",
+        "params": []
+      },
+      {
+        "alias": "trail_clue_medium_sextant013_casket",
+        "id": 2826,
+        "role": "casket",
+        "params": []
+      },
+      {
+        "alias": "trail_clue_medium_sextant014_casket",
+        "id": 3583,
+        "role": "casket",
+        "params": []
+      },
+      {
+        "alias": "trail_clue_medium_sextant015_casket",
+        "id": 3585,
+        "role": "casket",
+        "params": []
+      },
+      {
+        "alias": "trail_clue_medium_sextant016_casket",
+        "id": 3587,
+        "role": "casket",
+        "params": []
+      },
+      {
+        "alias": "trail_clue_medium_sextant017_casket",
+        "id": 3589,
+        "role": "casket",
+        "params": []
+      },
+      {
+        "alias": "trail_clue_medium_sextant018_casket",
+        "id": 3591,
+        "role": "casket",
+        "params": []
+      },
+      {
+        "alias": "trail_clue_medium_sextant019_casket",
+        "id": 3593,
+        "role": "casket",
+        "params": []
+      },
+      {
+        "alias": "trail_clue_medium_sextant020_casket",
+        "id": 3595,
+        "role": "casket",
+        "params": []
+      },
+      {
+        "alias": "trail_clue_medium_map003_casket",
+        "id": 3597,
+        "role": "casket",
+        "params": []
+      },
+      {
+        "alias": "trail_clue_medium_map005_casket",
+        "id": 3600,
+        "role": "casket",
+        "params": []
+      },
+      {
+        "alias": "trail_clue_medium_map007_casket",
+        "id": 3603,
+        "role": "casket",
+        "params": []
+      },
+      {
+        "alias": "trail_clue_hard_sextant001_casket",
+        "id": 2724,
+        "role": "casket",
+        "params": []
+      },
+      {
+        "alias": "trail_clue_hard_sextant002_casket",
+        "id": 2726,
+        "role": "casket",
+        "params": []
+      },
+      {
+        "alias": "trail_clue_hard_sextant003_casket",
+        "id": 2728,
+        "role": "casket",
+        "params": []
+      },
+      {
+        "alias": "trail_clue_hard_sextant004_casket",
+        "id": 2730,
+        "role": "casket",
+        "params": []
+      },
+      {
+        "alias": "trail_clue_hard_sextant005_casket",
+        "id": 2732,
+        "role": "casket",
+        "params": []
+      },
+      {
+        "alias": "trail_clue_hard_sextant006_casket",
+        "id": 2734,
+        "role": "casket",
+        "params": []
+      },
+      {
+        "alias": "trail_clue_hard_sextant007_casket",
+        "id": 2736,
+        "role": "casket",
+        "params": []
+      },
+      {
+        "alias": "trail_clue_hard_sextant008_casket",
+        "id": 2738,
+        "role": "casket",
+        "params": []
+      },
+      {
+        "alias": "trail_clue_hard_sextant009_casket",
+        "id": 2740,
+        "role": "casket",
+        "params": []
+      },
+      {
+        "alias": "trail_clue_hard_sextant010_casket",
+        "id": 2742,
+        "role": "casket",
+        "params": []
+      },
+      {
+        "alias": "trail_clue_hard_sextant011_casket",
+        "id": 2744,
+        "role": "casket",
+        "params": []
+      },
+      {
+        "alias": "trail_clue_hard_sextant012_casket",
+        "id": 2746,
+        "role": "casket",
+        "params": []
+      },
+      {
+        "alias": "trail_clue_hard_sextant013_casket",
+        "id": 2748,
+        "role": "casket",
+        "params": []
+      },
+      {
+        "alias": "trail_clue_hard_riddle002_casket",
+        "id": 2775,
+        "role": "casket",
+        "params": []
+      },
+      {
+        "alias": "trail_clue_hard_riddle003_casket",
+        "id": 2777,
+        "role": "casket",
+        "params": []
+      },
+      {
+        "alias": "trail_clue_hard_riddle004_casket",
+        "id": 2779,
+        "role": "casket",
+        "params": []
+      },
+      {
+        "alias": "trail_clue_hard_riddle005_casket",
+        "id": 2781,
+        "role": "casket",
+        "params": []
+      },
+      {
+        "alias": "trail_clue_hard_riddle007_casket",
+        "id": 2784,
+        "role": "casket",
+        "params": []
+      },
+      {
+        "alias": "trail_clue_hard_riddle009_casket",
+        "id": 2787,
+        "role": "casket",
+        "params": []
+      },
+      {
+        "alias": "trail_clue_hard_riddle010_casket",
+        "id": 2789,
+        "role": "casket",
+        "params": []
+      },
+      {
+        "alias": "trail_clue_hard_riddle011_casket",
+        "id": 2791,
+        "role": "casket",
+        "params": []
+      },
+      {
+        "alias": "trail_clue_hard_map002_casket",
+        "id": 3521,
+        "role": "casket",
+        "params": []
+      },
+      {
+        "alias": "trail_clue_hard_map003_casket",
+        "id": 3523,
+        "role": "casket",
+        "params": []
+      },
+      {
+        "alias": "trail_clue_hard_sextant014_casket",
+        "id": 3527,
+        "role": "casket",
+        "params": []
+      },
+      {
+        "alias": "trail_clue_hard_sextant015_casket",
+        "id": 3529,
+        "role": "casket",
+        "params": []
+      },
+      {
+        "alias": "trail_clue_hard_sextant016_casket",
+        "id": 3531,
+        "role": "casket",
+        "params": []
+      },
+      {
+        "alias": "trail_clue_hard_sextant018_casket",
+        "id": 3535,
+        "role": "casket",
+        "params": []
+      },
+      {
+        "alias": "trail_clue_hard_sextant019_casket",
+        "id": 3537,
+        "role": "casket",
+        "params": []
+      },
+      {
+        "alias": "trail_clue_hard_sextant020_casket",
+        "id": 3539,
+        "role": "casket",
+        "params": []
+      },
+      {
+        "alias": "trail_clue_hard_sextant021_casket",
+        "id": 3541,
+        "role": "casket",
+        "params": []
+      },
+      {
+        "alias": "trail_clue_hard_sextant022_casket",
+        "id": 3543,
+        "role": "casket",
+        "params": []
+      },
+      {
+        "alias": "trail_clue_hard_sextant023_casket",
+        "id": 3545,
+        "role": "casket",
+        "params": []
+      },
+      {
+        "alias": "trail_clue_hard_sextant024_casket",
+        "id": 3547,
+        "role": "casket",
+        "params": []
+      },
+      {
+        "alias": "trail_clue_hard_sextant025_casket",
+        "id": 3549,
+        "role": "casket",
+        "params": []
+      },
+      {
+        "alias": "trail_clue_hard_sextant027_casket",
+        "id": 3553,
+        "role": "casket",
+        "params": []
+      },
+      {
+        "alias": "trail_clue_hard_sextant028_casket",
+        "id": 3555,
+        "role": "casket",
+        "params": []
+      },
+      {
+        "alias": "trail_clue_hard_sextant029_casket",
+        "id": 3557,
+        "role": "casket",
+        "params": []
+      },
+      {
+        "alias": "trail_clue_hard_sextant030_casket",
+        "id": 3559,
+        "role": "casket",
+        "params": []
+      },
+      {
+        "alias": "trail_clue_hard_sextant031_casket",
+        "id": 3561,
+        "role": "casket",
+        "params": []
+      },
+      {
+        "alias": "trail_clue_hard_sextant032_casket",
+        "id": 3563,
+        "role": "casket",
+        "params": []
+      },
+      {
+        "alias": "trail_clue_hard_riddle028_casket",
+        "id": 3581,
+        "role": "casket",
+        "params": []
+      }
+    ],
+    "challenge_answers": [
+      {
+        "alias": "trail_clue_medium_anagram001_challenge",
+        "id": 2842,
+        "answer": "6859"
+      },
+      {
+        "alias": "trail_clue_medium_anagram002_challenge",
+        "id": 2844,
+        "answer": "9"
+      },
+      {
+        "alias": "trail_clue_medium_anagram003_challenge",
+        "id": 2846,
+        "answer": "40"
+      },
+      {
+        "alias": "trail_clue_medium_anagram006_challenge",
+        "id": 2850,
+        "answer": "5"
+      },
+      {
+        "alias": "trail_clue_medium_anagram007_challenge",
+        "id": 2852,
+        "answer": "48"
+      },
+      {
+        "alias": "trail_clue_medium_anagram008_challenge",
+        "id": 2854,
+        "answer": "5096"
       }
     ]
   },

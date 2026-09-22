@@ -680,6 +680,44 @@ pub struct QuestIdentityFacts {
     pub coverage: Vec<QuestCoverageRecord>,
 }
 
+/// One raw `param=` line on a selected trail obj block. Repeated keys stay a list,
+/// in file order. Values are never coerced to a boolean or a number.
+#[derive(Debug, Deserialize, Clone)]
+pub struct TrailParam {
+    pub key: String,
+    pub value: String,
+}
+
+/// One trail membership row: an enum alias joined to `pack/obj.pack`, or a casket
+/// alias those rows name. `params` is part of the row shape, not a defaulted list.
+/// `access` is present only on the one bounded inclusion (packed 3554).
+#[derive(Debug, Deserialize, Clone)]
+pub struct TrailMembershipRow {
+    pub alias: String,
+    pub id: i32,
+    pub role: String,
+    pub params: Vec<TrailParam>,
+    #[serde(default)]
+    pub access: Option<String>,
+}
+
+/// One selected challenge answer. The raw param string, not a coerced number.
+#[derive(Debug, Deserialize, Clone)]
+pub struct TrailChallengeAnswer {
+    pub alias: String,
+    pub id: i32,
+    pub answer: String,
+}
+
+/// Trail inventory and its selected challenge answers. Absence is `None`, not an
+/// empty list. `challenge_answers` has no serde default: a present family that
+/// omits the sibling list is a decode error, and so is an empty list.
+#[derive(Debug, Deserialize, Clone)]
+pub struct TrailFacts {
+    pub rows: Vec<TrailMembershipRow>,
+    pub challenge_answers: Vec<TrailChallengeAnswer>,
+}
+
 /// Generated immutable facts for one client/cache revision.
 #[derive(Debug, Deserialize)]
 pub struct SelectedGameData {
@@ -719,6 +757,8 @@ pub struct SelectedGameData {
     gather_methods: Option<GatherMethodsFacts>,
     #[serde(default)]
     quest_identity: Option<QuestIdentityFacts>,
+    #[serde(default)]
+    trails: Option<TrailFacts>,
 }
 
 impl SelectedGameData {
@@ -764,6 +804,31 @@ impl SelectedGameData {
                 return Err(
                     "quest_identity empty mustHave cannot carry items or skills".to_string()
                 );
+            }
+        }
+        if let Some(facts) = &data.trails {
+            if facts.rows.is_empty() {
+                return Err("trails present with no membership rows".to_string());
+            }
+            if facts.challenge_answers.is_empty() {
+                return Err("trails present with no selected challenge answers".to_string());
+            }
+            if facts
+                .rows
+                .iter()
+                .any(|row| row.role != "clue" && row.role != "casket")
+            {
+                return Err("trails row role must be clue or casket".to_string());
+            }
+            if facts.rows.iter().any(|row| {
+                row.access
+                    .as_deref()
+                    .is_some_and(|access| access != "constrained")
+            }) {
+                return Err("trails access is only the constrained membership row".to_string());
+            }
+            if facts.rows.iter().filter(|row| row.access.is_some()).count() > 1 {
+                return Err("trails access must stay on one bounded row".to_string());
             }
         }
         if data.revision != expected_revision.as_i32() {
@@ -937,6 +1002,11 @@ impl SelectedGameData {
     /// Six-seed quest identity. `None` is family absence, not an empty extract.
     pub fn quest_identity(&self) -> Option<&QuestIdentityFacts> {
         self.quest_identity.as_ref()
+    }
+
+    /// Trail inventory and challenge answers. `None` is family absence, not an empty extract.
+    pub fn trails(&self) -> Option<&TrailFacts> {
+        self.trails.as_ref()
     }
 
     /// Resolved equipment family row by frozen display name, when present.
@@ -1417,5 +1487,147 @@ mod tests {
         assert_eq!(facts.rows[0].requirements.qualification, "partial");
         assert!(!facts.rows[0].requirements.unknown_as_satisfied);
         assert!(facts.coverage.is_empty());
+    }
+
+    #[test]
+    fn missing_trails_is_absent_not_an_empty_list() {
+        let data = SelectedGameData::decode(minimal_json("").as_bytes(), ClientRevision::R274)
+            .expect("schema 4 without the field still decodes");
+        assert!(data.trails().is_none());
+    }
+
+    #[test]
+    fn bare_trails_vec_does_not_decode() {
+        let error = SelectedGameData::decode(
+            minimal_json(r#", "trails": []"#).as_bytes(),
+            ClientRevision::R274,
+        )
+        .expect_err("a bare vec must not decode as an empty family");
+        assert!(
+            error.contains("trails") || error.contains("decode"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn trails_without_challenge_answers_do_not_decode() {
+        let error = SelectedGameData::decode(
+            minimal_json(
+                r#", "trails": {"rows": [{"alias": "trail_clue_easy_simple001", "id": 2677, "role": "clue", "params": [{"key": "trail_loc", "value": "^true"}]}]}"#,
+            )
+            .as_bytes(),
+            ClientRevision::R274,
+        )
+        .expect_err("an omitted challenge_answers key is not an empty list");
+        assert!(
+            error.contains("challenge_answers"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn empty_challenge_answers_are_not_success() {
+        let error = SelectedGameData::decode(
+            minimal_json(
+                r#", "trails": {"rows": [{"alias": "trail_clue_easy_simple001", "id": 2677, "role": "clue", "params": []}], "challenge_answers": []}"#,
+            )
+            .as_bytes(),
+            ClientRevision::R274,
+        )
+        .expect_err("Some with no selected answer is not success");
+        assert!(
+            error.contains("challenge answers"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn empty_trails_rows_are_not_success() {
+        let error = SelectedGameData::decode(
+            minimal_json(
+                r#", "trails": {"rows": [], "challenge_answers": [{"alias": "trail_clue_medium_anagram001_challenge", "id": 2842, "answer": "6859"}]}"#,
+            )
+            .as_bytes(),
+            ClientRevision::R274,
+        )
+        .expect_err("a present family with no membership rows is not success");
+        assert!(
+            error.contains("no membership rows"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn trail_row_without_params_does_not_decode() {
+        let error = SelectedGameData::decode(
+            minimal_json(
+                r#", "trails": {"rows": [{"alias": "trail_clue_easy_simple001", "id": 2677, "role": "clue"}], "challenge_answers": [{"alias": "trail_clue_medium_anagram001_challenge", "id": 2842, "answer": "6859"}]}"#,
+            )
+            .as_bytes(),
+            ClientRevision::R274,
+        )
+        .expect_err("params is part of the row shape, not a defaulted list");
+        assert!(error.contains("params"), "unexpected error: {error}");
+    }
+
+    #[test]
+    fn guardian_trail_role_does_not_decode() {
+        let error = SelectedGameData::decode(
+            minimal_json(
+                r#", "trails": {"rows": [{"alias": "trail_clue_hard_sextant017", "id": 3532, "role": "trail_hard2", "params": []}], "challenge_answers": [{"alias": "trail_clue_medium_anagram001_challenge", "id": 2842, "answer": "6859"}]}"#,
+            )
+            .as_bytes(),
+            ClientRevision::R274,
+        )
+        .expect_err("a guardian param is not a role and membership is not support");
+        assert!(error.contains("role"), "unexpected error: {error}");
+    }
+
+    #[test]
+    fn open_trail_access_does_not_decode() {
+        let error = SelectedGameData::decode(
+            minimal_json(
+                r#", "trails": {"rows": [{"alias": "trail_clue_easy_simple001", "id": 2677, "role": "clue", "params": [], "access": "open"}], "challenge_answers": [{"alias": "trail_clue_medium_anagram001_challenge", "id": 2842, "answer": "6859"}]}"#,
+            )
+            .as_bytes(),
+            ClientRevision::R274,
+        )
+        .expect_err("membership is not support and is not open access");
+        assert!(error.contains("constrained"), "unexpected error: {error}");
+    }
+
+    #[test]
+    fn numeric_challenge_answer_does_not_decode() {
+        let error = SelectedGameData::decode(
+            minimal_json(
+                r#", "trails": {"rows": [{"alias": "trail_clue_easy_simple001", "id": 2677, "role": "clue", "params": []}], "challenge_answers": [{"alias": "trail_clue_medium_anagram002_challenge", "id": 2844, "answer": 9}]}"#,
+            )
+            .as_bytes(),
+            ClientRevision::R274,
+        )
+        .expect_err("a coerced answer is not a raw param string");
+        assert!(error.contains("decode"), "unexpected error: {error}");
+    }
+
+    #[test]
+    fn partial_trail_facts_decode() {
+        let data = SelectedGameData::decode(
+            minimal_json(
+                r#", "trails": {"rows": [{"alias": "trail_clue_easy_simple001", "id": 2677, "role": "clue", "params": [{"key": "trail_loc", "value": "^true"}, {"key": "trail_sextant", "value": "yes"}]}, {"alias": "trail_clue_hard_sextant016_casket", "id": 3531, "role": "casket", "params": []}, {"alias": "trail_clue_hard_sextant028", "id": 3554, "role": "clue", "params": [], "access": "constrained"}], "challenge_answers": [{"alias": "trail_clue_medium_anagram001_challenge", "id": 2842, "answer": "6859"}]}"#,
+            )
+            .as_bytes(),
+            ClientRevision::R274,
+        )
+        .expect("partial trail facts still decode");
+        let facts = data.trails().expect("present family");
+        assert_eq!(facts.rows.len(), 3);
+        assert_eq!(facts.rows[0].role, "clue");
+        assert_eq!(facts.rows[0].params[0].key, "trail_loc");
+        assert_eq!(facts.rows[0].params[0].value, "^true");
+        assert_eq!(facts.rows[0].params[1].value, "yes");
+        assert_eq!(facts.rows[1].params.len(), 0);
+        assert_eq!(facts.rows[2].access.as_deref(), Some("constrained"));
+        assert_eq!(facts.challenge_answers[0].id, 2842);
+        assert_eq!(facts.challenge_answers[0].answer, "6859");
     }
 }
