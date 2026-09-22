@@ -27,6 +27,21 @@ const dropContentFiles = [
     'scripts/drop tables/scripts/green_dragon.rs2',
     'scripts/drop tables/scripts/shared_droptables.rs2',
 ];
+export const gatherContentFiles = [
+    'scripts/skill_mining/configs/mine.dbrow',
+    'scripts/skill_mining/configs/rocks.loc',
+    'scripts/skill_woodcutting/configs/trees.dbrow',
+    'scripts/skill_woodcutting/configs/trees/achey.loc',
+    'scripts/skill_woodcutting/configs/trees/burnt.loc',
+    'scripts/skill_woodcutting/configs/trees/hollow.loc',
+    'scripts/skill_woodcutting/configs/trees/magic.loc',
+    'scripts/skill_woodcutting/configs/trees/maple.loc',
+    'scripts/skill_woodcutting/configs/trees/normal.loc',
+    'scripts/skill_woodcutting/configs/trees/oak.loc',
+    'scripts/skill_woodcutting/configs/trees/willow.loc',
+    'scripts/skill_woodcutting/configs/trees/yew.loc',
+    'scripts/skill_fishing/configs/fishing.npc',
+];
 const prayerContentFiles = [
     'scripts/skill_prayer/configs/prayers.dbrow',
     'scripts/skill_prayer/configs/prayers.constant',
@@ -46,7 +61,7 @@ const flourSixContentFiles = [
     'pack/loc.pack',
     'pack/obj.pack',
 ];
-const contentFiles = ['scripts/player/configs/consumption/consume.dbtable', 'scripts/player/configs/consumption/consume_normal.dbrow', 'scripts/player/configs/consumption/consume_effects.dbrow', 'scripts/skill_thieving/configs/pickpocking/pickpocket.dbtable', 'scripts/skill_thieving/configs/pickpocking/pickpocket.dbrow', 'scripts/player/scripts/consumption/effects/scripts/consume_effects.rs2', 'scripts/skill_combat/configs/magic/magic_combat_spells.dbrow', 'scripts/skill_magic/configs/magic.dbtable', 'scripts/skill_magic/configs/magic_spells.dbrow', 'scripts/skill_magic/configs/magic_staff.dbrow', 'scripts/skill_combat/configs/combat.constant', 'scripts/skill_herblore/configs/herbs.obj', 'scripts/skill_herblore/configs/identifying/identify.param', 'scripts/skill_herblore/scripts/identifying/identify.rs2', ...prayerContentFiles, ...nurmofEssenceContentFiles, ...flourSixContentFiles, 'pack/interface.pack', 'pack/varp.pack', 'pack/param.pack', ...dropContentFiles];
+const contentFiles = ['scripts/player/configs/consumption/consume.dbtable', 'scripts/player/configs/consumption/consume_normal.dbrow', 'scripts/player/configs/consumption/consume_effects.dbrow', 'scripts/skill_thieving/configs/pickpocking/pickpocket.dbtable', 'scripts/skill_thieving/configs/pickpocking/pickpocket.dbrow', 'scripts/player/scripts/consumption/effects/scripts/consume_effects.rs2', 'scripts/skill_combat/configs/magic/magic_combat_spells.dbrow', 'scripts/skill_magic/configs/magic.dbtable', 'scripts/skill_magic/configs/magic_spells.dbrow', 'scripts/skill_magic/configs/magic_staff.dbrow', 'scripts/skill_combat/configs/combat.constant', 'scripts/skill_herblore/configs/herbs.obj', 'scripts/skill_herblore/configs/identifying/identify.param', 'scripts/skill_herblore/scripts/identifying/identify.rs2', ...prayerContentFiles, ...nurmofEssenceContentFiles, ...flourSixContentFiles, 'pack/interface.pack', 'pack/varp.pack', 'pack/param.pack', ...dropContentFiles, ...gatherContentFiles];
 function sha256(file: string) { const data = fs.readFileSync(file); return { bytes: data.length, sha256: crypto.createHash('sha256').update(data).digest('hex') }; }
 function commit(dir: string) { return execFileSync('git', ['-C', dir, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(); }
 function sourceFile(dir: string, relative: string) { return { path: relative, ...sha256(path.join(dir, relative)) }; }
@@ -1303,6 +1318,240 @@ export function extractDropFacts(content: string, items: ObjType[], npcs: NpcTyp
     });
 }
 
+type GatherLocRef = { alias: string; id: number };
+type GatherOutputRef = { alias: string; id: number };
+type GatherConfigSection = { params: Record<string, string>; [key: string]: string | Record<string, string> };
+
+const WOOD_PUBLICATION: Record<string, 'published' | 'conditional' | 'unpublished'> = {
+    normal: 'published',
+    oak: 'published',
+    willow: 'published',
+    maple: 'published',
+    yew: 'published',
+    magic: 'published',
+    achey: 'conditional',
+    hollow: 'conditional',
+    jungle: 'unpublished',
+    burnt: 'unpublished',
+};
+const REVISION_ABSENT_ON_274 = [
+    { alias: 'dungeon_tree_closed', other_pin_id: 5083 },
+    { alias: 'karam_dungeon_exit', other_pin_id: 5084 },
+];
+
+export function parseConfigSections(text: string) {
+    const sections = new Map<string, GatherConfigSection>();
+    let current: GatherConfigSection | null = null;
+    for (const raw of text.split(/\r?\n/)) {
+        const line = raw.trim();
+        if (!line || line.startsWith('//')) continue;
+        if (line.startsWith('[') && line.endsWith(']')) {
+            current = { params: {} };
+            sections.set(line.slice(1, -1), current);
+            continue;
+        }
+        if (!current) continue;
+        const eq = line.indexOf('=');
+        if (eq <= 0) continue;
+        const key = line.slice(0, eq);
+        const value = line.slice(eq + 1);
+        if (key === 'param') {
+            const comma = value.indexOf(',');
+            const paramKey = comma < 0 ? value : value.slice(0, comma);
+            const paramValue = comma < 0 ? '' : value.slice(comma + 1);
+            if (paramKey) current.params[paramKey] = paramValue;
+            continue;
+        }
+        if (typeof current[key] !== 'string') current[key] = value;
+    }
+    return sections;
+}
+
+function requireGatherText(content: string, relative: string) {
+    const file = path.join(content, relative);
+    if (!fs.existsSync(file)) throw new Error(`${relative}: required file missing`);
+    return fs.readFileSync(file, 'utf8');
+}
+
+function joinPack(pack: Map<string, number>, alias: string, label: string, packName: string) {
+    const id = pack.get(alias);
+    if (id === undefined) throw new Error(`${label}: failed join, ${packName} lacks ${alias}`);
+    return { alias, id };
+}
+
+function assertSelectedColumn(sections: Map<string, GatherConfigSection>, key: string, label: string) {
+    if (![...sections.values()].some((section) => Object.prototype.hasOwnProperty.call(section.params, key))) {
+        throw new Error(`${label}: missing selected column ${key}`);
+    }
+}
+
+function extractLocResources(
+    rows: { name: string; values: Record<string, string[][]> }[],
+    locPack: Map<string, number>,
+    objPack: Map<string, number>,
+    sections: Map<string, GatherConfigSection>,
+    spec: { aliasKey: string; outputKey: string; levelKey: string; transformKey: string; wood: boolean },
+) {
+    return rows.map((parsed) => {
+        const aliases = (parsed.values[spec.aliasKey] ?? []).map((row) => row[0]).filter((alias): alias is string => Boolean(alias));
+        if (aliases.length === 0) throw new Error(`${parsed.name}: no loc aliases`);
+        const levelRaw = parsed.values[spec.levelKey]?.[0]?.[0];
+        if (levelRaw === undefined) throw new Error(`${parsed.name}: missing ${spec.levelKey}`);
+        const locIds = aliases.map((alias) => joinPack(locPack, alias, parsed.name, 'loc.pack'));
+        const missingTransform: string[] = [];
+        const empty = new Map<string, GatherLocRef>();
+        for (const alias of aliases) {
+            const section = sections.get(alias);
+            const next = section?.params?.[spec.transformKey];
+            if (!next) {
+                missingTransform.push(alias);
+                continue;
+            }
+            const joined = joinPack(locPack, next, `${parsed.name} transform ${alias}`, 'loc.pack');
+            empty.set(joined.alias, joined);
+        }
+        const outputAlias = parsed.values[spec.outputKey]?.[0]?.[0];
+        const output = outputAlias ? joinPack(objPack, outputAlias, `${parsed.name} output`, 'obj.pack') : null;
+        const partialSides: string[] = [];
+        if (missingTransform.length > 0) partialSides.push('transform');
+        if (!output) partialSides.push('output');
+        const resourceKey = spec.wood ? woodKey(parsed.name) : parsed.values.ore_name?.[0]?.[0];
+        if (!resourceKey) throw new Error(`${parsed.name}: missing resource key`);
+        const row: {
+            table: string;
+            resource_key: string;
+            loc_ids: GatherLocRef[];
+            empty_ids: GatherLocRef[];
+            output: GatherOutputRef | null;
+            level: number;
+            qualification: 'complete' | 'partial';
+            partial_sides: string[];
+            missing_transform: string[];
+            publication?: 'published' | 'conditional' | 'unpublished';
+        } = {
+            table: parsed.name,
+            resource_key: resourceKey,
+            loc_ids: locIds,
+            empty_ids: [...empty.values()].sort((a, b) => a.id - b.id || a.alias.localeCompare(b.alias)),
+            output,
+            level: integer(levelRaw, parsed.name),
+            qualification: partialSides.length === 0 ? 'complete' : 'partial',
+            partial_sides: partialSides,
+            missing_transform: missingTransform,
+        };
+        if (spec.wood) {
+            const publication = WOOD_PUBLICATION[resourceKey];
+            if (!publication) throw new Error(`${parsed.name}: unknown wood publication ${resourceKey}`);
+            row.publication = publication;
+        }
+        return row;
+    });
+}
+
+function woodKey(table: string) {
+    const suffix = '_tree_table';
+    if (!table.endsWith(suffix) || table.length === suffix.length) throw new Error(`${table}: expected wood table key`);
+    return table.slice(0, -suffix.length);
+}
+
+export function extractGatherMethodsFacts(content: string, revision: number) {
+    const mineText = requireGatherText(content, 'scripts/skill_mining/configs/mine.dbrow');
+    const rockText = requireGatherText(content, 'scripts/skill_mining/configs/rocks.loc');
+    const treeText = requireGatherText(content, 'scripts/skill_woodcutting/configs/trees.dbrow');
+    const treeLocTexts = gatherContentFiles
+        .filter((relative) => relative.startsWith('scripts/skill_woodcutting/configs/trees/') && relative.endsWith('.loc'))
+        .map((relative) => requireGatherText(content, relative));
+    const fishingText = requireGatherText(content, 'scripts/skill_fishing/configs/fishing.npc');
+    const locPack = parsePack(requireGatherText(content, 'pack/loc.pack'));
+    const objPack = parsePack(requireGatherText(content, 'pack/obj.pack'));
+    if (locPack.size === 0) throw new Error('pack/loc.pack: required file missing ids');
+    if (objPack.size === 0) throw new Error('pack/obj.pack: required file missing ids');
+    const rockSections = parseConfigSections(rockText);
+    const treeSections = new Map<string, GatherConfigSection>();
+    for (const text of treeLocTexts) {
+        for (const [alias, section] of parseConfigSections(text)) treeSections.set(alias, section);
+    }
+    assertSelectedColumn(rockSections, 'next_loc_stage_mining', 'scripts/skill_mining/configs/rocks.loc');
+    assertSelectedColumn(treeSections, 'next_loc_stage', 'scripts/skill_woodcutting/configs/trees');
+    const mining = extractLocResources(parseRows(mineText), locPack, objPack, rockSections, {
+        aliasKey: 'rock',
+        outputKey: 'rock_output',
+        levelKey: 'rock_level',
+        transformKey: 'next_loc_stage_mining',
+        wood: false,
+    });
+    const woods = extractLocResources(parseRows(treeText), locPack, objPack, treeSections, {
+        aliasKey: 'tree',
+        outputKey: 'product',
+        levelKey: 'levelrequired',
+        transformKey: 'next_loc_stage',
+        wood: true,
+    });
+    const fishingSeen = new Set<string>();
+    const fishing: {
+        category: string;
+        primary_op: string;
+        pair_op: string | null;
+        level: null;
+        output: null;
+        qualification: 'partial';
+        partial_sides: string[];
+    }[] = [];
+    for (const [name, section] of parseConfigSections(fishingText)) {
+        const primary = typeof section.op1 === 'string' ? section.op1 : '';
+        if (!primary) throw new Error(`${name}: missing primary op`);
+        const category = typeof section.category === 'string' && section.category ? section.category : 'unknown';
+        const pair = typeof section.op3 === 'string' ? section.op3 : null;
+        const signature = `${category}\0${primary}\0${pair ?? ''}`;
+        if (fishingSeen.has(signature)) continue;
+        fishingSeen.add(signature);
+        const partialSides = category === 'unknown' ? ['category', 'level', 'output'] : ['level', 'output'];
+        fishing.push({
+            category,
+            primary_op: primary,
+            pair_op: pair,
+            level: null,
+            output: null,
+            qualification: 'partial',
+            partial_sides: partialSides,
+        });
+    }
+    if (mining.length === 0 || woods.length === 0 || fishing.length === 0) {
+        throw new Error('gather_methods: no extracted rows');
+    }
+    const coverage: {
+        class: string;
+        table?: string;
+        resource_key?: string;
+        alias?: string;
+        on_revision?: number;
+        other_pin_id?: number;
+        copied?: boolean;
+        reason: string;
+    }[] = [];
+    for (const wood of woods) {
+        if (wood.publication === 'conditional') {
+            coverage.push({ class: 'conditional', table: wood.table, resource_key: wood.resource_key, reason: 'no supported consumer' });
+        } else if (wood.publication === 'unpublished') {
+            coverage.push({ class: 'unpublished', table: wood.table, resource_key: wood.resource_key, reason: 'unpublished wood' });
+        }
+    }
+    if (revision === 274) {
+        for (const absent of REVISION_ABSENT_ON_274) {
+            if (locPack.has(absent.alias)) continue;
+            coverage.push({
+                class: 'revision-absent',
+                alias: absent.alias,
+                on_revision: 274,
+                other_pin_id: absent.other_pin_id,
+                copied: false,
+                reason: '289-only loc, not copied onto 274',
+            });
+        }
+    }
+    return { woods, mining, fishing, coverage };
+}
+
 export function extractFacts(content: string, items: ObjType[], npcs: NpcType[]) {
     const itemIds = new Map(items.filter((item) => item.debugname !== null).map((item) => [item.debugname as string, { id: item.id, name: item.name }]));
     const npcIds = new Map(npcs.filter((npc) => npc.debugname != null).map((npc) => [npc.debugname as string, { id: npc.id, name: npc.name }]));
@@ -1322,8 +1571,8 @@ async function generate(spec: Revision) {
     process.chdir(spec.engine); const objModule = (await import(pathToFileURL(path.join(spec.engine, 'src/cache/config/ObjType.ts')).href)) as { default: { load(dir: string): void; configs: ObjType[] } }; objModule.default.load('data/pack');
     const npcModule = (await import(pathToFileURL(path.join(spec.engine, 'src/cache/config/NpcType.ts')).href)) as { default: { load(dir: string): void; configs: NpcType[] } }; npcModule.default.load('data/pack');
     const items = objModule.default.configs.map(row); const aliases = items.filter((item) => item.alias !== null).map((item) => item.alias as string); if (new Set(items.map((item) => item.id)).size !== items.length || new Set(aliases).size !== aliases.length) throw new Error(`${spec.revision}: duplicate ids or aliases`);
-    const facts = extractFacts(spec.content, objModule.default.configs, npcModule.default.configs); const drops = extractDropFacts(spec.content, objModule.default.configs, npcModule.default.configs); if (drops.length !== 4) throw new Error(`${spec.revision}: expected four combat drop tables, got ${drops.length}`); const magic = extractMagicFacts(spec.content, objModule.default.configs); if (magic.spells.length !== 16 || magic.spells[15].name !== 'Fire Wave' || magic.staves.length !== 14) throw new Error(`${spec.revision}: expected 16 combat spells and 14 staves, got ${magic.spells.length}/${magic.staves.length}`); const herbs = extractHerbFacts(spec.content, objModule.default.configs); if (herbs.herbs.length < 14) throw new Error(`${spec.revision}: expected a full herb identify table, got ${herbs.herbs.length}`); if (herbs.herb_level_default !== 3) throw new Error(`${spec.revision}: expected identify.param default 3, got ${herbs.herb_level_default}`); const autocast = extractAutocastControls(spec.content); const duel = extractDuelControls(spec.content); const special = extractSpecialControls(spec.content, objModule.default.configs);     const teleports = extractTeleportSpells(spec.content, objModule.default.configs); if (teleports.length !== 7 || teleports[0].name !== 'Varrock' || teleports[6].name !== 'Trollheim' || teleports[0].component_id !== 1164 || teleports[6].component_id !== 7455) throw new Error(`${spec.revision}: expected 7 standard teleports, got ${teleports.map((row) => row.name).join(',')}`);     const prayer = extractPrayerFacts(spec.content); if (prayer.prayers.length !== 15) throw new Error(`${spec.revision}: expected 15 prayers, got ${prayer.prayers.length}`); const nurmofEssence = extractNurmofEssenceFacts(spec.content, objModule.default.configs, npcModule.default.configs); if (nurmofEssence.pickaxes.length !== 6) throw new Error(`${spec.revision}: expected six pickaxes, got ${nurmofEssence.pickaxes.length}`);     const flourSix = extractFlourSixFacts(spec.content, objModule.default.configs); if (flourSix.pot.id !== 1931 || flourSix.flour_barrel.id !== 2662) throw new Error(`${spec.revision}: flour six join mismatch`); const objPackPath = path.join(spec.content, 'pack/obj.pack'); if (!fs.existsSync(objPackPath)) throw new Error(`${spec.revision}: missing pack/obj.pack`); const objPack = parsePack(fs.readFileSync(objPackPath, 'utf8')); if (objPack.size === 0) throw new Error(`${spec.revision}: empty pack/obj.pack`); const equipmentNames = extractEquipmentNamesFacts(items, objPack); const inputs = ['data/pack/server/obj.dat', 'data/pack/server/npc.dat', 'data/pack/client/config'].map((file) => sourceFile(spec.engine, file)); const contentInputs = contentFiles.map((file) => sourceFile(spec.content, file)); const sources = decoderSources.map((file) => sourceFile(spec.engine, file));
-    const payload = { schema_version: 4, revision: spec.revision, provenance: { engine_commit: pinned.engineCommit, content_commit: pinned.contentCommit, inputs, content_inputs: contentInputs, decoder_sources: sources, cache_identity: spec.cacheIdentity }, items, ...facts, drop_tables: drops, ...magic, ...herbs, ...prayer, nurmof_essence: nurmofEssence, flour_six: flourSix, equipment_names: equipmentNames, autocast, duel, special, teleports }; const bytes = `${JSON.stringify(payload, null, 2)}\n`; fs.mkdirSync(path.dirname(spec.output), { recursive: true }); fs.writeFileSync(spec.output, bytes); return { revision: spec.revision, output: path.relative(root, spec.output), records: items.length, consumption: facts.consumption.length, pickpocket: facts.pickpocket.length, drop_tables: drops.length, spells: magic.spells.length, staves: magic.staves.length, herbs: herbs.herbs.length, prayers: prayer.prayers.length, pickaxes: nurmofEssence.pickaxes.length, flour_six: 6, equipment_names: { bows: equipmentNames.bows.length, crossbows: equipmentNames.crossbows.length, darts: equipmentNames.darts.length, arrows: equipmentNames.arrows.length, bolts: equipmentNames.bolts.length, melee_weapons: equipmentNames.melee_weapons.length, staffs: equipmentNames.staffs.length, resolved: EQUIPMENT_FAMILY_ORDER.reduce((sum, family) => sum + equipmentNames[family].filter((row) => row.disposition === 'resolved').length, 0), absent: EQUIPMENT_FAMILY_ORDER.reduce((sum, family) => sum + equipmentNames[family].filter((row) => row.disposition === 'absent').length, 0) }, autocast, duel, special: { energy_varp: special.energy_varp, armed_varp: special.armed_varp, max_energy: special.max_energy, bars: special.bars.length, weapons: special.weapons.length }, teleports: teleports.length, bytes: Buffer.byteLength(bytes), sha256: crypto.createHash('sha256').update(bytes).digest('hex'), engine_commit: pinned.engineCommit, content_commit: pinned.contentCommit, inputs, content_inputs: contentInputs, decoder_sources: sources, cache_identity: spec.cacheIdentity };
+    const facts = extractFacts(spec.content, objModule.default.configs, npcModule.default.configs); const drops = extractDropFacts(spec.content, objModule.default.configs, npcModule.default.configs); if (drops.length !== 4) throw new Error(`${spec.revision}: expected four combat drop tables, got ${drops.length}`); const magic = extractMagicFacts(spec.content, objModule.default.configs); if (magic.spells.length !== 16 || magic.spells[15].name !== 'Fire Wave' || magic.staves.length !== 14) throw new Error(`${spec.revision}: expected 16 combat spells and 14 staves, got ${magic.spells.length}/${magic.staves.length}`); const herbs = extractHerbFacts(spec.content, objModule.default.configs); if (herbs.herbs.length < 14) throw new Error(`${spec.revision}: expected a full herb identify table, got ${herbs.herbs.length}`); if (herbs.herb_level_default !== 3) throw new Error(`${spec.revision}: expected identify.param default 3, got ${herbs.herb_level_default}`); const autocast = extractAutocastControls(spec.content); const duel = extractDuelControls(spec.content); const special = extractSpecialControls(spec.content, objModule.default.configs);     const teleports = extractTeleportSpells(spec.content, objModule.default.configs); if (teleports.length !== 7 || teleports[0].name !== 'Varrock' || teleports[6].name !== 'Trollheim' || teleports[0].component_id !== 1164 || teleports[6].component_id !== 7455) throw new Error(`${spec.revision}: expected 7 standard teleports, got ${teleports.map((row) => row.name).join(',')}`);     const prayer = extractPrayerFacts(spec.content); if (prayer.prayers.length !== 15) throw new Error(`${spec.revision}: expected 15 prayers, got ${prayer.prayers.length}`); const nurmofEssence = extractNurmofEssenceFacts(spec.content, objModule.default.configs, npcModule.default.configs); if (nurmofEssence.pickaxes.length !== 6) throw new Error(`${spec.revision}: expected six pickaxes, got ${nurmofEssence.pickaxes.length}`);     const flourSix = extractFlourSixFacts(spec.content, objModule.default.configs); if (flourSix.pot.id !== 1931 || flourSix.flour_barrel.id !== 2662) throw new Error(`${spec.revision}: flour six join mismatch`); const objPackPath = path.join(spec.content, 'pack/obj.pack'); if (!fs.existsSync(objPackPath)) throw new Error(`${spec.revision}: missing pack/obj.pack`); const objPack = parsePack(fs.readFileSync(objPackPath, 'utf8')); if (objPack.size === 0) throw new Error(`${spec.revision}: empty pack/obj.pack`); const equipmentNames = extractEquipmentNamesFacts(items, objPack); const gatherMethods = extractGatherMethodsFacts(spec.content, spec.revision); if (gatherMethods.mining.length !== 17 || gatherMethods.woods.length !== 10 || gatherMethods.fishing.length !== 9) throw new Error(`${spec.revision}: expected 17 mine, 10 wood, and 9 fishing rows, got ${gatherMethods.mining.length}/${gatherMethods.woods.length}/${gatherMethods.fishing.length}`); const inputs = ['data/pack/server/obj.dat', 'data/pack/server/npc.dat', 'data/pack/client/config'].map((file) => sourceFile(spec.engine, file)); const contentInputs = contentFiles.map((file) => sourceFile(spec.content, file)); const sources = decoderSources.map((file) => sourceFile(spec.engine, file));
+    const payload = { schema_version: 4, revision: spec.revision, provenance: { engine_commit: pinned.engineCommit, content_commit: pinned.contentCommit, inputs, content_inputs: contentInputs, decoder_sources: sources, cache_identity: spec.cacheIdentity }, items, ...facts, drop_tables: drops, ...magic, ...herbs, ...prayer, nurmof_essence: nurmofEssence, flour_six: flourSix, equipment_names: equipmentNames, gather_methods: gatherMethods, autocast, duel, special, teleports }; const bytes = `${JSON.stringify(payload, null, 2)}\n`; fs.mkdirSync(path.dirname(spec.output), { recursive: true }); fs.writeFileSync(spec.output, bytes); return { revision: spec.revision, output: path.relative(root, spec.output), records: items.length, consumption: facts.consumption.length, pickpocket: facts.pickpocket.length, drop_tables: drops.length, spells: magic.spells.length, staves: magic.staves.length, herbs: herbs.herbs.length, prayers: prayer.prayers.length, pickaxes: nurmofEssence.pickaxes.length, flour_six: 6, gather_methods: { mining: gatherMethods.mining.length, woods: gatherMethods.woods.length, fishing: gatherMethods.fishing.length }, equipment_names: { bows: equipmentNames.bows.length, crossbows: equipmentNames.crossbows.length, darts: equipmentNames.darts.length, arrows: equipmentNames.arrows.length, bolts: equipmentNames.bolts.length, melee_weapons: equipmentNames.melee_weapons.length, staffs: equipmentNames.staffs.length, resolved: EQUIPMENT_FAMILY_ORDER.reduce((sum, family) => sum + equipmentNames[family].filter((row) => row.disposition === 'resolved').length, 0), absent: EQUIPMENT_FAMILY_ORDER.reduce((sum, family) => sum + equipmentNames[family].filter((row) => row.disposition === 'absent').length, 0) }, autocast, duel, special: { energy_varp: special.energy_varp, armed_varp: special.armed_varp, max_energy: special.max_energy, bars: special.bars.length, weapons: special.weapons.length }, teleports: teleports.length, bytes: Buffer.byteLength(bytes), sha256: crypto.createHash('sha256').update(bytes).digest('hex'), engine_commit: pinned.engineCommit, content_commit: pinned.contentCommit, inputs, content_inputs: contentInputs, decoder_sources: sources, cache_identity: spec.cacheIdentity };
 }
 async function main() { const results = []; for (const spec of revisions) results.push(await generate(spec)); const manifest = { schema_version: 4, generator: 'tools/game-data/generate.ts', revisions: results }; const manifestPath = path.join(root, 'crates/api/data/game-data/manifest.json'); fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`); console.log(JSON.stringify({ manifest: path.relative(root, manifestPath), revisions: results }, null, 2)); }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main().catch((error) => { console.error(error); process.exitCode = 1; });

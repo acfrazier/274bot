@@ -547,6 +547,77 @@ impl EquipmentNamesFacts {
     }
 }
 
+/// One packed loc or depleted-stage id joined from this pin. Alias is the pack key, not a display name.
+#[derive(Debug, Deserialize, Clone)]
+pub struct GatherLocId {
+    pub alias: String,
+    pub id: i32,
+}
+
+/// Item produced by a loc-resource row. Absent when the table names no output.
+#[derive(Debug, Deserialize, Clone)]
+pub struct GatherOutput {
+    pub alias: String,
+    pub id: i32,
+}
+
+/// Wood or mining identity. Not a fishing method. Resource key is the wood key or `ore_name`, never the loc display name.
+#[derive(Debug, Deserialize, Clone)]
+pub struct GatherLocResource {
+    pub table: String,
+    pub resource_key: String,
+    pub loc_ids: Vec<GatherLocId>,
+    pub empty_ids: Vec<GatherLocId>,
+    pub output: Option<GatherOutput>,
+    pub level: i32,
+    pub qualification: String,
+    pub partial_sides: Vec<String>,
+    pub missing_transform: Vec<String>,
+    #[serde(default)]
+    pub publication: Option<String>,
+}
+
+/// Fishing method identity: category plus posted ops. Not a spawn tile.
+#[derive(Debug, Deserialize, Clone)]
+pub struct GatherFishingMethod {
+    pub category: String,
+    pub primary_op: String,
+    pub pair_op: Option<String>,
+    pub level: Option<i32>,
+    pub output: Option<GatherOutput>,
+    pub qualification: String,
+    pub partial_sides: Vec<String>,
+}
+
+/// Coverage for conditional woods and revision-absent locs. Not a copied id.
+#[derive(Debug, Deserialize, Clone)]
+pub struct GatherCoverageRecord {
+    pub class: String,
+    #[serde(default)]
+    pub table: Option<String>,
+    #[serde(default)]
+    pub resource_key: Option<String>,
+    #[serde(default)]
+    pub alias: Option<String>,
+    #[serde(default)]
+    pub on_revision: Option<i32>,
+    #[serde(default)]
+    pub other_pin_id: Option<i32>,
+    #[serde(default)]
+    pub copied: Option<bool>,
+    pub reason: String,
+}
+
+/// One gather family. Absence is `None`, not an empty list.
+#[derive(Debug, Deserialize, Clone)]
+pub struct GatherMethodsFacts {
+    pub woods: Vec<GatherLocResource>,
+    pub mining: Vec<GatherLocResource>,
+    pub fishing: Vec<GatherFishingMethod>,
+    #[serde(default)]
+    pub coverage: Vec<GatherCoverageRecord>,
+}
+
 /// Generated immutable facts for one client/cache revision.
 #[derive(Debug, Deserialize)]
 pub struct SelectedGameData {
@@ -582,6 +653,8 @@ pub struct SelectedGameData {
     flour_six: Option<FlourSixFacts>,
     #[serde(default)]
     equipment_names: Option<EquipmentNamesFacts>,
+    #[serde(default)]
+    gather_methods: Option<GatherMethodsFacts>,
 }
 
 impl SelectedGameData {
@@ -593,6 +666,11 @@ impl SelectedGameData {
                 "generated game data schema mismatch: expected {SCHEMA_VERSION}, got {}",
                 data.schema_version
             ));
+        }
+        if let Some(facts) = &data.gather_methods {
+            if facts.woods.is_empty() && facts.mining.is_empty() && facts.fishing.is_empty() {
+                return Err("gather_methods present with no extracted rows".to_string());
+            }
         }
         if data.revision != expected_revision.as_i32() {
             return Err(format!(
@@ -755,6 +833,11 @@ impl SelectedGameData {
 
     pub fn equipment_names(&self) -> Option<&EquipmentNamesFacts> {
         self.equipment_names.as_ref()
+    }
+
+    /// Gather methods and loc-resource ids. `None` is family absence, not an empty extract.
+    pub fn gather_methods(&self) -> Option<&GatherMethodsFacts> {
+        self.gather_methods.as_ref()
     }
 
     /// Resolved equipment family row by frozen display name, when present.
@@ -1079,4 +1162,64 @@ pub fn for_optional_profile(
 ) -> Result<Option<Arc<SelectedGameData>>, String> {
     let data = for_revision(revision)?;
     Ok(accepts_cache_id(&data, cache_id).then_some(data))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn minimal_json(tail: &str) -> String {
+        format!(
+            r#"{{
+                "schema_version": 4,
+                "revision": 274,
+                "provenance": {{
+                    "cache_identity": {{"cache_id": "x"}},
+                    "inputs": [],
+                    "content_inputs": [],
+                    "decoder_sources": []
+                }},
+                "items": [],
+                "consumption": [],
+                "pickpocket": []
+                {tail}
+            }}"#
+        )
+    }
+
+    #[test]
+    fn missing_gather_methods_is_absent_not_an_empty_list() {
+        let data = SelectedGameData::decode(
+            minimal_json("").as_bytes(),
+            ClientRevision::R274,
+        )
+        .expect("schema 4 without the field still decodes");
+        assert!(data.gather_methods().is_none());
+    }
+
+    #[test]
+    fn bare_gather_methods_vec_does_not_decode() {
+        let error = SelectedGameData::decode(
+            minimal_json(r#", "gather_methods": []"#).as_bytes(),
+            ClientRevision::R274,
+        )
+        .expect_err("a bare vec must not decode as an empty family");
+        assert!(
+            error.contains("gather_methods") || error.contains("decode"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn empty_gather_methods_object_is_not_success() {
+        let error = SelectedGameData::decode(
+            minimal_json(
+                r#", "gather_methods": {"woods": [], "mining": [], "fishing": []}"#,
+            )
+            .as_bytes(),
+            ClientRevision::R274,
+        )
+        .expect_err("Some with no extracted rows is not success");
+        assert!(error.contains("no extracted rows"), "unexpected error: {error}");
+    }
 }

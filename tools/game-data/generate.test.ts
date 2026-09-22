@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { extractDropFacts, extractFacts, extractEquipmentNamesFacts, extractFlourSixFacts, extractHerbFacts, extractMagicFacts, extractAutocastControls, extractDuelControls, extractNurmofEssenceFacts, extractPrayerFacts, extractSpecialControls, extractTeleportSpells, herbKeyFromName, identifiedHerbLevelDefault, joinEquipmentName, loadEquipmentNamesCurated, parseFrozenEquipmentNameArrays, parseFrozenEquipmentSingleQuoted, parseIdentifyHerbPairs, parseInvShopStock, parseJm2LocPlacements, parseMapsquarePath, parseObjSections, parsePack, parseParamDefinitions, parsePrayerInterface, parseQuestEnumEntry, parseRows } from './generate.ts';
+import { extractDropFacts, extractFacts, extractEquipmentNamesFacts, extractFlourSixFacts, extractGatherMethodsFacts, extractHerbFacts, extractMagicFacts, extractAutocastControls, extractDuelControls, extractNurmofEssenceFacts, extractPrayerFacts, extractSpecialControls, extractTeleportSpells, herbKeyFromName, identifiedHerbLevelDefault, joinEquipmentName, loadEquipmentNamesCurated, parseFrozenEquipmentNameArrays, parseFrozenEquipmentSingleQuoted, parseIdentifyHerbPairs, parseInvShopStock, parseJm2LocPlacements, parseMapsquarePath, parseObjSections, parsePack, parseParamDefinitions, parsePrayerInterface, parseQuestEnumEntry, parseRows } from './generate.ts';
 
 const repoRoot = path.resolve(import.meta.dirname, '../..');
 
@@ -633,5 +633,299 @@ assert.equal(
     joinEquipmentName('arrows', 'Dragon arrow', [], equipmentPack).absent_class,
     'no_exact_selected_match',
 );
+
+const gatherTreeLocs = ['achey.loc', 'burnt.loc', 'hollow.loc', 'magic.loc', 'maple.loc', 'normal.loc', 'oak.loc', 'willow.loc', 'yew.loc'];
+function writeGatherFixture(rootDir: string, mutate?: (files: Record<string, string>) => void) {
+    const files: Record<string, string> = {
+        'scripts/skill_mining/configs/mine.dbrow': `[copper_rock_table]
+data=rock,copperrock1
+data=rock,macro_copperrock1
+data=ore_name,copper
+data=rock_output,copper_ore
+data=rock_level,1
+data=rock_exp,175
+[gem_rock]
+data=rock,gemrock
+data=ore_name,gems
+data=rock_level,40
+[limestone_rock3]
+data=rock,loc_4027
+data=ore_name,limestone
+data=rock_output,limestone
+data=rock_level,10
+[limestone_rock2]
+data=rock,loc_4028
+data=ore_name,limestone
+data=rock_output,limestone
+data=rock_level,10
+[limestone_rock1]
+data=rock,loc_4029
+data=ore_name,limestone
+data=rock_output,limestone
+data=rock_level,10
+[desertrescue_rock]
+data=rock,punishrocks
+data=ore_name,rock
+data=rock_output,thpunishrock
+data=rock_level,1
+[rune_essence_table]
+data=rock,blankrunestone
+data=ore_name,rune stones
+data=rock_output,blankrune
+data=rock_level,1
+`,
+        'scripts/skill_woodcutting/configs/trees.dbrow': `[normal_tree_table]
+data=tree,tree
+data=levelrequired,0
+data=product,logs
+data=productexp,250
+[jungle_tree_table]
+data=tree,kharazi_jungle_tree1
+data=levelrequired,0
+data=product,logs
+[achey_tree_table]
+data=tree,achey_tree
+data=levelrequired,0
+data=product,achey_tree_logs
+[burnt_tree_table]
+data=tree,deadtree_burnt
+data=levelrequired,0
+data=product,charcoal
+`,
+        'scripts/skill_mining/configs/rocks.loc': `[copperrock1]
+name=Rocks
+param=next_loc_stage_mining,rocks1
+[macro_copperrock1]
+name=Rocks
+category=mining_rock_macro_gas
+[gemrock]
+name=Rocks
+param=next_loc_stage_mining,rocks1
+[blankrunestone]
+name=Rune Essence
+[loc_4027]
+name=Rocks
+param=next_loc_stage_mining,loc_4028
+[loc_4028]
+name=Rocks
+param=next_loc_stage_mining,loc_4029
+[loc_4029]
+name=Rocks
+param=next_loc_stage_mining,loc_4030
+`,
+        'scripts/skill_woodcutting/configs/trees/normal.loc': `[tree]
+name=Tree
+param=next_loc_stage,treestump2
+`,
+        'scripts/skill_woodcutting/configs/trees/achey.loc': `[achey_tree]
+name=Tree
+param=next_loc_stage,achey_tree_stump
+`,
+        'scripts/skill_woodcutting/configs/trees/burnt.loc': `[deadtree_burnt]
+name=Tree
+param=next_loc_stage,deadtree_burnt_stump
+`,
+        'scripts/skill_fishing/configs/fishing.npc': `[spot_a]
+name=Fishing spot
+op1=Lure
+op3=Bait
+category=freshfish
+param=fishing_movement_enum,fishing_movement_gnome_stronghold_enum
+[spot_b]
+name=Fishing spot
+op1=Lure
+op3=Bait
+category=freshfish
+param=fishing_movement_enum,fishing_movement_other_enum
+[lava]
+name=Fishing spot
+op1=Bait
+op3=hidden
+[member_a]
+name=Fishing spot
+op1=Net
+op3=Harpoon
+category=memberfish
+[member_b]
+name=Fishing spot
+op1=Net
+op3=Harpoon
+category=memberfish
+`,
+        'pack/loc.pack': `450=rocks1
+1306=tree
+1342=treestump2
+1356=deadtree_burnt
+3370=achey_tree
+2090=copperrock1
+2091=macro_copperrock1
+2111=gemrock
+2491=blankrunestone
+2704=punishrocks
+3371=achey_tree_stump
+1359=deadtree_burnt_stump
+4027=loc_4027
+4028=loc_4028
+4029=loc_4029
+4030=loc_4030
+4818=kharazi_jungle_tree1
+`,
+        'pack/obj.pack': `436=copper_ore
+973=charcoal
+1436=blankrune
+1511=logs
+1855=thpunishrock
+2862=achey_tree_logs
+3211=limestone
+`,
+        'scripts/_unpack/225/all.loc': `[punishrocks]
+name=Rocks
+param=next_loc_stage_mining,rocks1
+`,
+    };
+    for (const file of gatherTreeLocs) {
+        const relative = `scripts/skill_woodcutting/configs/trees/${file}`;
+        files[relative] ??= '// selected tree loc; no jungle.loc\n';
+    }
+    mutate?.(files);
+    for (const [relative, body] of Object.entries(files)) {
+        const absolute = path.join(rootDir, relative);
+        fs.mkdirSync(path.dirname(absolute), { recursive: true });
+        fs.writeFileSync(absolute, body);
+    }
+}
+function gatherFixture(mutate?: (files: Record<string, string>) => void) {
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gather-methods-'));
+    writeGatherFixture(rootDir, mutate);
+    return rootDir;
+}
+
+const gatherRoot = gatherFixture();
+const gathered = extractGatherMethodsFacts(gatherRoot, 274);
+assert.equal(gathered.mining.length > 0 && gathered.woods.length > 0 && gathered.fishing.length > 0, true, 'extracted rows are required');
+const copper = gathered.mining.find((row) => row.table === 'copper_rock_table');
+assert.equal(copper?.resource_key, 'copper');
+assert.equal(copper?.resource_key === 'Rocks', false);
+assert.deepEqual(copper?.loc_ids.map((loc) => loc.alias), ['copperrock1', 'macro_copperrock1']);
+assert.equal(copper?.loc_ids.find((loc) => loc.alias === 'copperrock1')?.id, 2090);
+assert.equal(copper?.qualification, 'partial');
+assert.ok(copper?.missing_transform.includes('macro_copperrock1'));
+assert.equal(copper?.empty_ids.some((loc) => loc.alias === 'rocks1' && loc.id === 450), true);
+assert.equal(copper?.publication, undefined);
+assert.equal('published_for_placement' in (copper ?? {}), false);
+assert.equal(copper?.output?.alias, 'copper_ore');
+assert.equal('exp' in (copper ?? {}), false);
+const gem = gathered.mining.find((row) => row.table === 'gem_rock');
+assert.equal(gem?.resource_key, 'gems');
+assert.equal(gem?.output, null);
+assert.equal(gem?.qualification, 'partial');
+assert.ok(gem?.partial_sides.includes('output'));
+const limestone = gathered.mining.filter((row) => row.resource_key === 'limestone');
+assert.deepEqual(limestone.map((row) => row.table), ['limestone_rock3', 'limestone_rock2', 'limestone_rock1']);
+assert.equal(new Set(limestone.map((row) => row.loc_ids[0]?.id)).size, 3);
+const essence = gathered.mining.find((row) => row.table === 'rune_essence_table');
+assert.equal(essence?.output?.alias, 'blankrune');
+assert.equal(essence?.output?.id, 1436);
+assert.ok(essence?.missing_transform.includes('blankrunestone'));
+const desert = gathered.mining.find((row) => row.table === 'desertrescue_rock');
+assert.equal(desert?.resource_key, 'rock');
+assert.equal(desert?.empty_ids.length, 0);
+assert.equal(gathered.mining.filter((row) => row.resource_key === 'rock').length, 1);
+const normalWood = gathered.woods.find((row) => row.resource_key === 'normal');
+assert.equal(normalWood?.table, 'normal_tree_table');
+assert.equal(normalWood?.publication, 'published');
+assert.equal(normalWood?.resource_key === 'Tree', false);
+assert.equal(normalWood?.qualification, 'complete');
+const jungle = gathered.woods.find((row) => row.resource_key === 'jungle');
+assert.equal(jungle?.publication, 'unpublished');
+assert.equal(jungle?.empty_ids.length, 0);
+assert.equal(jungle?.loc_ids[0]?.alias, 'kharazi_jungle_tree1');
+assert.equal(jungle?.qualification, 'partial');
+assert.equal(gathered.woods.find((row) => row.resource_key === 'achey')?.publication, 'conditional');
+assert.equal(gathered.woods.find((row) => row.resource_key === 'burnt')?.publication, 'unpublished');
+assert.equal(gathered.coverage.filter((row) => row.class === 'conditional').map((row) => row.resource_key).includes('achey'), true);
+assert.equal(gathered.fishing.length, 3, 'dedupe type plus actions, not one row per npc block');
+assert.equal(gathered.fishing.some((row) => 'loc_ids' in row || 'fishing_movement_enum' in row), false);
+const lavaSpot = gathered.fishing.find((row) => row.primary_op === 'Bait' && row.pair_op === 'hidden');
+assert.equal(lavaSpot?.category, 'unknown');
+assert.equal(lavaSpot?.qualification, 'partial');
+assert.equal(lavaSpot?.level, null);
+assert.equal(lavaSpot?.output, null);
+assert.equal(gathered.coverage.filter((row) => row.class === 'revision-absent').map((row) => row.alias).join(','), 'dungeon_tree_closed,karam_dungeon_exit');
+assert.equal(gathered.coverage.every((row) => row.class !== 'revision-absent' || row.copied === false), true);
+const gatheredIds = [...gathered.mining, ...gathered.woods].flatMap((row) => [...row.loc_ids, ...row.empty_ids].map((loc) => loc.id));
+assert.equal(gatheredIds.includes(5083) || gatheredIds.includes(5084), false);
+
+assert.throws(() => extractGatherMethodsFacts(gatherFixture((files) => { files['scripts/skill_mining/configs/mine.dbrow'] = '// no tables\n'; }), 274), /no extracted/);
+assert.throws(() => extractGatherMethodsFacts(gatherFixture((files) => { delete files['scripts/skill_mining/configs/mine.dbrow']; }), 274), /mine\.dbrow/);
+assert.throws(() => extractGatherMethodsFacts(gatherFixture((files) => { delete files['scripts/skill_woodcutting/configs/trees.dbrow']; }), 274), /trees\.dbrow/);
+assert.throws(() => extractGatherMethodsFacts(gatherFixture((files) => { delete files['pack/loc.pack']; }), 274), /loc\.pack/);
+assert.throws(() => extractGatherMethodsFacts(gatherFixture((files) => { delete files['pack/obj.pack']; }), 274), /obj\.pack/);
+assert.throws(() => extractGatherMethodsFacts(gatherFixture((files) => { delete files['scripts/skill_mining/configs/rocks.loc']; }), 274), /rocks\.loc/);
+assert.throws(() => extractGatherMethodsFacts(gatherFixture((files) => { delete files['scripts/skill_woodcutting/configs/trees/oak.loc']; }), 274), /oak\.loc/);
+assert.throws(() => extractGatherMethodsFacts(gatherFixture((files) => { delete files['scripts/skill_fishing/configs/fishing.npc']; }), 274), /fishing\.npc/);
+assert.throws(() => extractGatherMethodsFacts(gatherFixture((files) => {
+    files['scripts/skill_mining/configs/mine.dbrow'] += 'data=rock,missing_from_pack\n';
+}), 274), /failed join/);
+assert.throws(() => extractGatherMethodsFacts(gatherFixture((files) => {
+    files['scripts/skill_mining/configs/rocks.loc'] = '[copperrock1]\nname=Rocks\ncategory=mining_rock_normal\n';
+}), 274), /next_loc_stage_mining/);
+assert.doesNotThrow(() => extractGatherMethodsFacts(gatherRoot, 274));
+const withoutJungleLoc = extractGatherMethodsFacts(gatherRoot, 274);
+assert.equal(withoutJungleLoc.woods.some((row) => row.resource_key === 'jungle'), true);
+assert.equal(extractGatherMethodsFacts(gatherRoot, 289).coverage.some((row) => row.class === 'revision-absent'), false);
+
+const pin274 = extractGatherMethodsFacts('/Users/acfrazier/experiments/Server/content', 274);
+const pin289 = extractGatherMethodsFacts('/Users/acfrazier/experiments/lostcity-289/content', 289);
+assert.equal(pin274.mining.length, 17);
+assert.equal(pin289.mining.length, 17);
+assert.equal(pin274.woods.length, 10);
+assert.equal(pin289.woods.length, 10);
+assert.equal(pin274.fishing.length, 9);
+assert.equal(pin289.fishing.length, 9);
+assert.deepEqual(pin274.fishing.map((row) => [row.category, row.primary_op, row.pair_op]), pin289.fishing.map((row) => [row.category, row.primary_op, row.pair_op]));
+for (const facts of [pin274, pin289]) {
+    assert.equal(facts.mining.some((row) => row.publication !== undefined || 'published_for_placement' in row), false);
+    assert.equal(facts.mining.some((row) => row.resource_key === 'Rocks' || row.table === 'Rocks'), false);
+    assert.equal(facts.woods.some((row) => row.resource_key === 'Tree'), false);
+    assert.equal(facts.fishing.some((row) => 'loc_ids' in row || row.category === 'Fishing spot' || 'fishing_movement_enum' in row), false);
+    assert.equal(facts.fishing.every((row) => row.level === null && row.output === null && row.qualification === 'partial'), true);
+    const published = facts.woods.filter((row) => row.publication === 'published').map((row) => row.resource_key);
+    assert.deepEqual(published, ['normal', 'oak', 'willow', 'maple', 'yew', 'magic']);
+    assert.deepEqual(facts.woods.filter((row) => row.publication === 'conditional').map((row) => row.resource_key), ['achey', 'hollow']);
+    assert.deepEqual(facts.woods.filter((row) => row.publication === 'unpublished').map((row) => row.resource_key), ['jungle', 'burnt']);
+    assert.equal(facts.mining.filter((row) => row.resource_key === 'limestone').length, 3);
+    const gemRow = facts.mining.find((row) => row.table === 'gem_rock');
+    assert.equal(gemRow?.resource_key, 'gems');
+    assert.equal(gemRow?.output, null);
+    assert.equal(gemRow?.qualification, 'partial');
+    const essenceRow = facts.mining.find((row) => row.table === 'rune_essence_table');
+    assert.equal(essenceRow?.output?.alias, 'blankrune');
+    assert.equal(essenceRow?.output?.id, 1436);
+    const copperRow = facts.mining.find((row) => row.table === 'copper_rock_table');
+    assert.equal(copperRow?.loc_ids.find((loc) => loc.alias === 'copperrock1')?.id, 2090);
+    assert.equal((copperRow?.loc_ids.length ?? 0) > 2, true);
+    const ironRow = facts.mining.find((row) => row.table === 'iron_rock_table');
+    assert.equal(ironRow?.loc_ids.find((loc) => loc.alias === 'ironrock1')?.id, 2092);
+    assert.equal(ironRow?.loc_ids.find((loc) => loc.alias === 'ironrock2')?.id, 2093);
+    const desertRow = facts.mining.find((row) => row.table === 'desertrescue_rock');
+    assert.equal(desertRow?.empty_ids.length, 0);
+    assert.equal(desertRow?.resource_key, 'rock');
+    const lavaRow = facts.fishing.find((row) => row.category === 'unknown');
+    assert.equal(lavaRow?.primary_op, 'Bait');
+    assert.equal(lavaRow?.pair_op, 'hidden');
+    assert.equal(facts.fishing.filter((row) => row.category === 'memberfish').length, 1);
+    assert.equal(facts.coverage.filter((row) => row.class === 'conditional').map((row) => row.resource_key).sort().join(','), 'achey,hollow');
+}
+assert.equal(pin274.coverage.filter((row) => row.class === 'revision-absent').map((row) => `${row.alias}:${row.other_pin_id}`).join(','), 'dungeon_tree_closed:5083,karam_dungeon_exit:5084');
+assert.equal(pin289.coverage.some((row) => row.class === 'revision-absent'), false);
+const pin274Ids = [...pin274.mining, ...pin274.woods].flatMap((row) => [...row.loc_ids, ...row.empty_ids].map((loc) => loc.id));
+assert.equal(pin274Ids.includes(5083) || pin274Ids.includes(5084), false);
+assert.equal(pin274.mining.find((row) => row.table === 'coal_rock_table')?.loc_ids.some((loc) => loc.alias === 'misc_dummy_coalrock1'), false);
+assert.equal(pin289.mining.find((row) => row.table === 'coal_rock_table')?.loc_ids.some((loc) => loc.alias === 'misc_dummy_coalrock1' && loc.id === 4676), true);
+assert.equal(pin289.woods.find((row) => row.resource_key === 'normal')?.loc_ids.some((loc) => loc.alias === 'mm_bush_kharazi_jungle_tree1'), true);
+assert.equal(pin289.woods.find((row) => row.resource_key === 'normal')?.empty_ids.some((loc) => loc.alias.includes('mm_bush')), false);
+assert.equal(pin274.woods.find((row) => row.resource_key === 'normal')?.qualification, 'complete');
+assert.equal(pin289.woods.find((row) => row.resource_key === 'normal')?.qualification, 'partial');
 
 console.log('generate fixture passed');

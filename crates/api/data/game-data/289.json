@@ -201,6 +201,71 @@
         "path": "scripts/drop tables/scripts/shared_droptables.rs2",
         "bytes": 3889,
         "sha256": "11e41ef8c8d701cc035433575157b59e2316444450b73cc94d8b545a1f7ba71b"
+      },
+      {
+        "path": "scripts/skill_mining/configs/mine.dbrow",
+        "bytes": 4326,
+        "sha256": "46f84ab982c07905bce55cca070cce616d14bab8bf7818a68b60c8fe586c4922"
+      },
+      {
+        "path": "scripts/skill_mining/configs/rocks.loc",
+        "bytes": 12369,
+        "sha256": "5398720d36b7b39d5b67b4518b162244ecd03c58ff38145d5c2b04ca487f255e"
+      },
+      {
+        "path": "scripts/skill_woodcutting/configs/trees.dbrow",
+        "bytes": 4593,
+        "sha256": "30492645fb4ed274387d4359ec8dcecfcde809137af442bc54f6bc70597ed37c"
+      },
+      {
+        "path": "scripts/skill_woodcutting/configs/trees/achey.loc",
+        "bytes": 258,
+        "sha256": "2ad207c45a16f8394ef5934585c6bdbf1af3a9e3e8cf204a31389801605d0a4f"
+      },
+      {
+        "path": "scripts/skill_woodcutting/configs/trees/burnt.loc",
+        "bytes": 223,
+        "sha256": "4bee7681180df3b6094f80bad5a9997a299f0d9b85dc852dad19572fe664c760"
+      },
+      {
+        "path": "scripts/skill_woodcutting/configs/trees/hollow.loc",
+        "bytes": 472,
+        "sha256": "54af422782e53091c3171012339cf886499700bb2570e0c0a44607c8b3c52f97"
+      },
+      {
+        "path": "scripts/skill_woodcutting/configs/trees/magic.loc",
+        "bytes": 274,
+        "sha256": "f19623cb010e5bc3f56caa20a4ea40d068ac054f8799102dbc332b19992b34f8"
+      },
+      {
+        "path": "scripts/skill_woodcutting/configs/trees/maple.loc",
+        "bytes": 215,
+        "sha256": "e15449a963557478496adf17bcdac386246ca2b4d19e3f11e1aefd8c7a7f1b5c"
+      },
+      {
+        "path": "scripts/skill_woodcutting/configs/trees/normal.loc",
+        "bytes": 5908,
+        "sha256": "4d21307a293150bcee5767a2465c688dbd9c372fb8413ce0a64b0b715d327fdf"
+      },
+      {
+        "path": "scripts/skill_woodcutting/configs/trees/oak.loc",
+        "bytes": 200,
+        "sha256": "d53e626af1d84be0137371cbc5d1594e5fbbdb68e4478e7692f8fb6eae6d2bf0"
+      },
+      {
+        "path": "scripts/skill_woodcutting/configs/trees/willow.loc",
+        "bytes": 220,
+        "sha256": "44862e7d57a1c9643638bceec11229eab1ae82189ef8966a9ea917c7b7232ce1"
+      },
+      {
+        "path": "scripts/skill_woodcutting/configs/trees/yew.loc",
+        "bytes": 189,
+        "sha256": "42b159b3e562c28460688d9947eccdf032b80fe5cd0890b8c9bebdbcb8769f25"
+      },
+      {
+        "path": "scripts/skill_fishing/configs/fishing.npc",
+        "bytes": 17340,
+        "sha256": "c1c222a2b911f65c833ff83522671eb3e207bd06b67fe9f190b4d2d23f461e40"
       }
     ],
     "decoder_sources": [
@@ -63085,6 +63150,1226 @@
         "id": 1401,
         "wear_position": 3,
         "disambiguation": "exclude_bank_note_prefer_wearable"
+      }
+    ]
+  },
+  "gather_methods": {
+    "woods": [
+      {
+        "table": "normal_tree_table",
+        "resource_key": "normal",
+        "loc_ids": [
+          {
+            "alias": "tree",
+            "id": 1276
+          },
+          {
+            "alias": "lighttree",
+            "id": 1277
+          },
+          {
+            "alias": "tree2",
+            "id": 1278
+          },
+          {
+            "alias": "tree3",
+            "id": 1279
+          },
+          {
+            "alias": "lighttree2",
+            "id": 1280
+          },
+          {
+            "alias": "deadtree1",
+            "id": 1282
+          },
+          {
+            "alias": "deadtree1_large",
+            "id": 1283
+          },
+          {
+            "alias": "deadtree4",
+            "id": 1284
+          },
+          {
+            "alias": "lightdeadtree1",
+            "id": 1285
+          },
+          {
+            "alias": "deadtree2",
+            "id": 1286
+          },
+          {
+            "alias": "deadtree2_dark",
+            "id": 1289
+          },
+          {
+            "alias": "deadtree3",
+            "id": 1290
+          },
+          {
+            "alias": "deadtree2_snowy",
+            "id": 1291
+          },
+          {
+            "alias": "snowtree1",
+            "id": 1330
+          },
+          {
+            "alias": "snowtree2",
+            "id": 1331
+          },
+          {
+            "alias": "snowtree3",
+            "id": 1332
+          },
+          {
+            "alias": "deadtree2_swamp",
+            "id": 1365
+          },
+          {
+            "alias": "deadtree6",
+            "id": 1383
+          },
+          {
+            "alias": "evergreen_snowy_large",
+            "id": 1319
+          },
+          {
+            "alias": "evergreen_vsnowy_large",
+            "id": 1318
+          },
+          {
+            "alias": "evergreen_large",
+            "id": 1316
+          },
+          {
+            "alias": "evergreen",
+            "id": 1315
+          },
+          {
+            "alias": "regicide_tree_large",
+            "id": 3879
+          },
+          {
+            "alias": "regicide_tree_large2",
+            "id": 3881
+          },
+          {
+            "alias": "regicide_tree_large3",
+            "id": 3882
+          },
+          {
+            "alias": "regicide_tree_small",
+            "id": 3883
+          },
+          {
+            "alias": "mm_bush_kharazi_jungle_tree1",
+            "id": 4818
+          },
+          {
+            "alias": "mm_bush_kharazi_jungle_tree2",
+            "id": 4820
+          }
+        ],
+        "empty_ids": [
+          {
+            "alias": "treestump2",
+            "id": 1342
+          },
+          {
+            "alias": "treestump2_light",
+            "id": 1343
+          },
+          {
+            "alias": "treestump2_small",
+            "id": 1345
+          },
+          {
+            "alias": "deadtree1_large_stump",
+            "id": 1347
+          },
+          {
+            "alias": "deadtree1_stump",
+            "id": 1348
+          },
+          {
+            "alias": "deadtree1_light_stump",
+            "id": 1349
+          },
+          {
+            "alias": "deadtree2_stump",
+            "id": 1351
+          },
+          {
+            "alias": "deadtree2_stump_swamp",
+            "id": 1352
+          },
+          {
+            "alias": "deadtree2_stump_dark",
+            "id": 1353
+          },
+          {
+            "alias": "deadtree3_stump",
+            "id": 1354
+          },
+          {
+            "alias": "evergreen_large_stump",
+            "id": 1355
+          },
+          {
+            "alias": "deadtree6_stump",
+            "id": 1358
+          },
+          {
+            "alias": "regicide_tree_stump",
+            "id": 3880
+          },
+          {
+            "alias": "regicide_tree_stump_small",
+            "id": 3884
+          }
+        ],
+        "output": {
+          "alias": "logs",
+          "id": 1511
+        },
+        "level": 0,
+        "qualification": "partial",
+        "partial_sides": [
+          "transform"
+        ],
+        "missing_transform": [
+          "mm_bush_kharazi_jungle_tree1",
+          "mm_bush_kharazi_jungle_tree2"
+        ],
+        "publication": "published"
+      },
+      {
+        "table": "jungle_tree_table",
+        "resource_key": "jungle",
+        "loc_ids": [
+          {
+            "alias": "kharazi_jungle_tree_logs",
+            "id": 2887
+          },
+          {
+            "alias": "kharazi_jungle_tree1",
+            "id": 2889
+          },
+          {
+            "alias": "kharazi_jungle_tree2",
+            "id": 2890
+          },
+          {
+            "alias": "kharazi_jungle_plant1",
+            "id": 2892
+          },
+          {
+            "alias": "kharazi_jungle_plant2",
+            "id": 2893
+          }
+        ],
+        "empty_ids": [],
+        "output": {
+          "alias": "logs",
+          "id": 1511
+        },
+        "level": 0,
+        "qualification": "partial",
+        "partial_sides": [
+          "transform"
+        ],
+        "missing_transform": [
+          "kharazi_jungle_tree_logs",
+          "kharazi_jungle_tree1",
+          "kharazi_jungle_tree2",
+          "kharazi_jungle_plant1",
+          "kharazi_jungle_plant2"
+        ],
+        "publication": "unpublished"
+      },
+      {
+        "table": "burnt_tree_table",
+        "resource_key": "burnt",
+        "loc_ids": [
+          {
+            "alias": "deadtree_burnt",
+            "id": 1384
+          }
+        ],
+        "empty_ids": [
+          {
+            "alias": "deadtree_burnt_stump",
+            "id": 1359
+          }
+        ],
+        "output": {
+          "alias": "charcoal",
+          "id": 973
+        },
+        "level": 0,
+        "qualification": "complete",
+        "partial_sides": [],
+        "missing_transform": [],
+        "publication": "unpublished"
+      },
+      {
+        "table": "achey_tree_table",
+        "resource_key": "achey",
+        "loc_ids": [
+          {
+            "alias": "achey_tree",
+            "id": 2023
+          }
+        ],
+        "empty_ids": [
+          {
+            "alias": "achey_tree_stump",
+            "id": 3371
+          }
+        ],
+        "output": {
+          "alias": "achey_tree_logs",
+          "id": 2862
+        },
+        "level": 0,
+        "qualification": "complete",
+        "partial_sides": [],
+        "missing_transform": [],
+        "publication": "conditional"
+      },
+      {
+        "table": "oak_tree_table",
+        "resource_key": "oak",
+        "loc_ids": [
+          {
+            "alias": "oaktree",
+            "id": 1281
+          }
+        ],
+        "empty_ids": [
+          {
+            "alias": "evergreen_large_stump",
+            "id": 1355
+          }
+        ],
+        "output": {
+          "alias": "oak_logs",
+          "id": 1521
+        },
+        "level": 15,
+        "qualification": "complete",
+        "partial_sides": [],
+        "missing_transform": [],
+        "publication": "published"
+      },
+      {
+        "table": "willow_tree_table",
+        "resource_key": "willow",
+        "loc_ids": [
+          {
+            "alias": "willowtree",
+            "id": 1308
+          }
+        ],
+        "empty_ids": [
+          {
+            "alias": "treestump2_green",
+            "id": 1344
+          }
+        ],
+        "output": {
+          "alias": "willow_logs",
+          "id": 1519
+        },
+        "level": 30,
+        "qualification": "complete",
+        "partial_sides": [],
+        "missing_transform": [],
+        "publication": "published"
+      },
+      {
+        "table": "maple_tree_table",
+        "resource_key": "maple",
+        "loc_ids": [
+          {
+            "alias": "mapletree",
+            "id": 1307
+          }
+        ],
+        "empty_ids": [
+          {
+            "alias": "treestump2_green",
+            "id": 1344
+          }
+        ],
+        "output": {
+          "alias": "maple_logs",
+          "id": 1517
+        },
+        "level": 45,
+        "qualification": "complete",
+        "partial_sides": [],
+        "missing_transform": [],
+        "publication": "published"
+      },
+      {
+        "table": "yew_tree_table",
+        "resource_key": "yew",
+        "loc_ids": [
+          {
+            "alias": "yewtree",
+            "id": 1309
+          }
+        ],
+        "empty_ids": [
+          {
+            "alias": "yewtree_stump",
+            "id": 1357
+          }
+        ],
+        "output": {
+          "alias": "yew_logs",
+          "id": 1515
+        },
+        "level": 60,
+        "qualification": "complete",
+        "partial_sides": [],
+        "missing_transform": [],
+        "publication": "published"
+      },
+      {
+        "table": "magic_tree_table",
+        "resource_key": "magic",
+        "loc_ids": [
+          {
+            "alias": "magictree",
+            "id": 1306
+          }
+        ],
+        "empty_ids": [
+          {
+            "alias": "treestump2",
+            "id": 1342
+          }
+        ],
+        "output": {
+          "alias": "magic_logs",
+          "id": 1513
+        },
+        "level": 75,
+        "qualification": "complete",
+        "partial_sides": [],
+        "missing_transform": [],
+        "publication": "published"
+      },
+      {
+        "table": "hollow_tree_table",
+        "resource_key": "hollow",
+        "loc_ids": [
+          {
+            "alias": "hollow_tree",
+            "id": 2289
+          },
+          {
+            "alias": "hollow_tree_big",
+            "id": 4060
+          }
+        ],
+        "empty_ids": [
+          {
+            "alias": "hollow_tree_stump",
+            "id": 2310
+          },
+          {
+            "alias": "hollow_tree_stump_big",
+            "id": 4061
+          }
+        ],
+        "output": {
+          "alias": "hollow_bark",
+          "id": 3239
+        },
+        "level": 45,
+        "qualification": "complete",
+        "partial_sides": [],
+        "missing_transform": [],
+        "publication": "conditional"
+      }
+    ],
+    "mining": [
+      {
+        "table": "rune_essence_table",
+        "resource_key": "rune stones",
+        "loc_ids": [
+          {
+            "alias": "blankrunestone",
+            "id": 2491
+          }
+        ],
+        "empty_ids": [],
+        "output": {
+          "alias": "blankrune",
+          "id": 1436
+        },
+        "level": 1,
+        "qualification": "partial",
+        "partial_sides": [
+          "transform"
+        ],
+        "missing_transform": [
+          "blankrunestone"
+        ]
+      },
+      {
+        "table": "clay_rock_table",
+        "resource_key": "clay",
+        "loc_ids": [
+          {
+            "alias": "clayrock1",
+            "id": 2108
+          },
+          {
+            "alias": "clayrock2",
+            "id": 2109
+          },
+          {
+            "alias": "macro_clayrock1",
+            "id": 2137
+          },
+          {
+            "alias": "macro_clayrock2",
+            "id": 2138
+          }
+        ],
+        "empty_ids": [
+          {
+            "alias": "rocks1",
+            "id": 450
+          },
+          {
+            "alias": "rocks2",
+            "id": 452
+          }
+        ],
+        "output": {
+          "alias": "clay",
+          "id": 434
+        },
+        "level": 1,
+        "qualification": "partial",
+        "partial_sides": [
+          "transform"
+        ],
+        "missing_transform": [
+          "macro_clayrock1",
+          "macro_clayrock2"
+        ]
+      },
+      {
+        "table": "copper_rock_table",
+        "resource_key": "copper",
+        "loc_ids": [
+          {
+            "alias": "copperrock1",
+            "id": 2090
+          },
+          {
+            "alias": "copperrock2",
+            "id": 2091
+          },
+          {
+            "alias": "macro_copperrock1",
+            "id": 2119
+          },
+          {
+            "alias": "macro_copperrock2",
+            "id": 2120
+          }
+        ],
+        "empty_ids": [
+          {
+            "alias": "rocks1",
+            "id": 450
+          },
+          {
+            "alias": "rocks2",
+            "id": 452
+          }
+        ],
+        "output": {
+          "alias": "copper_ore",
+          "id": 436
+        },
+        "level": 1,
+        "qualification": "partial",
+        "partial_sides": [
+          "transform"
+        ],
+        "missing_transform": [
+          "macro_copperrock1",
+          "macro_copperrock2"
+        ]
+      },
+      {
+        "table": "tin_rock_table",
+        "resource_key": "tin",
+        "loc_ids": [
+          {
+            "alias": "tinrock1",
+            "id": 2094
+          },
+          {
+            "alias": "tinrock2",
+            "id": 2095
+          },
+          {
+            "alias": "macro_tinrock1",
+            "id": 2123
+          },
+          {
+            "alias": "macro_tinrock2",
+            "id": 2124
+          }
+        ],
+        "empty_ids": [
+          {
+            "alias": "rocks1",
+            "id": 450
+          },
+          {
+            "alias": "rocks2",
+            "id": 452
+          }
+        ],
+        "output": {
+          "alias": "tin_ore",
+          "id": 438
+        },
+        "level": 1,
+        "qualification": "partial",
+        "partial_sides": [
+          "transform"
+        ],
+        "missing_transform": [
+          "macro_tinrock1",
+          "macro_tinrock2"
+        ]
+      },
+      {
+        "table": "iron_rock_table",
+        "resource_key": "iron",
+        "loc_ids": [
+          {
+            "alias": "ironrock1",
+            "id": 2092
+          },
+          {
+            "alias": "ironrock2",
+            "id": 2093
+          },
+          {
+            "alias": "macro_ironrock1",
+            "id": 2121
+          },
+          {
+            "alias": "macro_ironrock2",
+            "id": 2122
+          }
+        ],
+        "empty_ids": [
+          {
+            "alias": "rocks1",
+            "id": 450
+          },
+          {
+            "alias": "rocks2",
+            "id": 452
+          }
+        ],
+        "output": {
+          "alias": "iron_ore",
+          "id": 440
+        },
+        "level": 15,
+        "qualification": "partial",
+        "partial_sides": [
+          "transform"
+        ],
+        "missing_transform": [
+          "macro_ironrock1",
+          "macro_ironrock2"
+        ]
+      },
+      {
+        "table": "coal_rock_table",
+        "resource_key": "coal",
+        "loc_ids": [
+          {
+            "alias": "coalrock1",
+            "id": 2096
+          },
+          {
+            "alias": "coalrock2",
+            "id": 2097
+          },
+          {
+            "alias": "macro_coalrock1",
+            "id": 2125
+          },
+          {
+            "alias": "macro_coalrock2",
+            "id": 2126
+          },
+          {
+            "alias": "misc_dummy_coalrock1",
+            "id": 4676
+          }
+        ],
+        "empty_ids": [
+          {
+            "alias": "rocks1",
+            "id": 450
+          },
+          {
+            "alias": "rocks2",
+            "id": 452
+          }
+        ],
+        "output": {
+          "alias": "coal",
+          "id": 453
+        },
+        "level": 30,
+        "qualification": "partial",
+        "partial_sides": [
+          "transform"
+        ],
+        "missing_transform": [
+          "macro_coalrock1",
+          "macro_coalrock2",
+          "misc_dummy_coalrock1"
+        ]
+      },
+      {
+        "table": "gold_rock_table",
+        "resource_key": "gold",
+        "loc_ids": [
+          {
+            "alias": "goldrock1",
+            "id": 2098
+          },
+          {
+            "alias": "goldrock2",
+            "id": 2099
+          },
+          {
+            "alias": "macro_goldrock1",
+            "id": 2127
+          },
+          {
+            "alias": "macro_goldrock2",
+            "id": 2128
+          }
+        ],
+        "empty_ids": [
+          {
+            "alias": "rocks1",
+            "id": 450
+          },
+          {
+            "alias": "rocks2",
+            "id": 452
+          }
+        ],
+        "output": {
+          "alias": "gold_ore",
+          "id": 444
+        },
+        "level": 40,
+        "qualification": "partial",
+        "partial_sides": [
+          "transform"
+        ],
+        "missing_transform": [
+          "macro_goldrock1",
+          "macro_goldrock2"
+        ]
+      },
+      {
+        "table": "silver_rock_table",
+        "resource_key": "silver",
+        "loc_ids": [
+          {
+            "alias": "silverrock1",
+            "id": 2100
+          },
+          {
+            "alias": "silverrock2",
+            "id": 2101
+          },
+          {
+            "alias": "macro_silverrock1",
+            "id": 2129
+          },
+          {
+            "alias": "macro_silverrock2",
+            "id": 2130
+          }
+        ],
+        "empty_ids": [
+          {
+            "alias": "rocks1",
+            "id": 450
+          },
+          {
+            "alias": "rocks2",
+            "id": 452
+          }
+        ],
+        "output": {
+          "alias": "silver_ore",
+          "id": 442
+        },
+        "level": 20,
+        "qualification": "partial",
+        "partial_sides": [
+          "transform"
+        ],
+        "missing_transform": [
+          "macro_silverrock1",
+          "macro_silverrock2"
+        ]
+      },
+      {
+        "table": "mithril_rock_table",
+        "resource_key": "mithril",
+        "loc_ids": [
+          {
+            "alias": "mithrilrock1",
+            "id": 2102
+          },
+          {
+            "alias": "mithrilrock2",
+            "id": 2103
+          },
+          {
+            "alias": "macro_mithrilrock1",
+            "id": 2131
+          },
+          {
+            "alias": "macro_mithrilrock2",
+            "id": 2132
+          }
+        ],
+        "empty_ids": [
+          {
+            "alias": "rocks1",
+            "id": 450
+          },
+          {
+            "alias": "rocks2",
+            "id": 452
+          }
+        ],
+        "output": {
+          "alias": "mithril_ore",
+          "id": 447
+        },
+        "level": 55,
+        "qualification": "partial",
+        "partial_sides": [
+          "transform"
+        ],
+        "missing_transform": [
+          "macro_mithrilrock1",
+          "macro_mithrilrock2"
+        ]
+      },
+      {
+        "table": "adamantite_rock_table",
+        "resource_key": "adamantite",
+        "loc_ids": [
+          {
+            "alias": "adamantiterock1",
+            "id": 2104
+          },
+          {
+            "alias": "adamantiterock2",
+            "id": 2105
+          },
+          {
+            "alias": "macro_adamantiterock1",
+            "id": 2133
+          },
+          {
+            "alias": "macro_adamantiterock2",
+            "id": 2134
+          }
+        ],
+        "empty_ids": [
+          {
+            "alias": "rocks1",
+            "id": 450
+          },
+          {
+            "alias": "rocks2",
+            "id": 452
+          }
+        ],
+        "output": {
+          "alias": "adamantite_ore",
+          "id": 449
+        },
+        "level": 70,
+        "qualification": "partial",
+        "partial_sides": [
+          "transform"
+        ],
+        "missing_transform": [
+          "macro_adamantiterock1",
+          "macro_adamantiterock2"
+        ]
+      },
+      {
+        "table": "runite_rock_table",
+        "resource_key": "runite",
+        "loc_ids": [
+          {
+            "alias": "runiterock1",
+            "id": 2106
+          },
+          {
+            "alias": "runiterock2",
+            "id": 2107
+          },
+          {
+            "alias": "macro_runiterock1",
+            "id": 2135
+          },
+          {
+            "alias": "macro_runiterock2",
+            "id": 2136
+          }
+        ],
+        "empty_ids": [
+          {
+            "alias": "rocks1",
+            "id": 450
+          },
+          {
+            "alias": "rocks2",
+            "id": 452
+          }
+        ],
+        "output": {
+          "alias": "runite_ore",
+          "id": 451
+        },
+        "level": 85,
+        "qualification": "partial",
+        "partial_sides": [
+          "transform"
+        ],
+        "missing_transform": [
+          "macro_runiterock1",
+          "macro_runiterock2"
+        ]
+      },
+      {
+        "table": "blurite_rock",
+        "resource_key": "blurite",
+        "loc_ids": [
+          {
+            "alias": "bluriterock",
+            "id": 2110
+          },
+          {
+            "alias": "macro_bluriterock",
+            "id": 2139
+          }
+        ],
+        "empty_ids": [
+          {
+            "alias": "rocks2",
+            "id": 452
+          }
+        ],
+        "output": {
+          "alias": "blurite_ore",
+          "id": 668
+        },
+        "level": 10,
+        "qualification": "partial",
+        "partial_sides": [
+          "transform"
+        ],
+        "missing_transform": [
+          "macro_bluriterock"
+        ]
+      },
+      {
+        "table": "gem_rock",
+        "resource_key": "gems",
+        "loc_ids": [
+          {
+            "alias": "gemrock",
+            "id": 2111
+          },
+          {
+            "alias": "macro_gemrock",
+            "id": 2140
+          }
+        ],
+        "empty_ids": [
+          {
+            "alias": "rocks2",
+            "id": 452
+          }
+        ],
+        "output": null,
+        "level": 40,
+        "qualification": "partial",
+        "partial_sides": [
+          "transform",
+          "output"
+        ],
+        "missing_transform": [
+          "macro_gemrock"
+        ]
+      },
+      {
+        "table": "desertrescue_rock",
+        "resource_key": "rock",
+        "loc_ids": [
+          {
+            "alias": "punishrocks",
+            "id": 2704
+          }
+        ],
+        "empty_ids": [],
+        "output": {
+          "alias": "thpunishrock",
+          "id": 1855
+        },
+        "level": 1,
+        "qualification": "partial",
+        "partial_sides": [
+          "transform"
+        ],
+        "missing_transform": [
+          "punishrocks"
+        ]
+      },
+      {
+        "table": "limestone_rock3",
+        "resource_key": "limestone",
+        "loc_ids": [
+          {
+            "alias": "loc_4027",
+            "id": 4027
+          }
+        ],
+        "empty_ids": [
+          {
+            "alias": "loc_4028",
+            "id": 4028
+          }
+        ],
+        "output": {
+          "alias": "limestone",
+          "id": 3211
+        },
+        "level": 10,
+        "qualification": "complete",
+        "partial_sides": [],
+        "missing_transform": []
+      },
+      {
+        "table": "limestone_rock2",
+        "resource_key": "limestone",
+        "loc_ids": [
+          {
+            "alias": "loc_4028",
+            "id": 4028
+          }
+        ],
+        "empty_ids": [
+          {
+            "alias": "loc_4029",
+            "id": 4029
+          }
+        ],
+        "output": {
+          "alias": "limestone",
+          "id": 3211
+        },
+        "level": 10,
+        "qualification": "complete",
+        "partial_sides": [],
+        "missing_transform": []
+      },
+      {
+        "table": "limestone_rock1",
+        "resource_key": "limestone",
+        "loc_ids": [
+          {
+            "alias": "loc_4029",
+            "id": 4029
+          }
+        ],
+        "empty_ids": [
+          {
+            "alias": "loc_4030",
+            "id": 4030
+          }
+        ],
+        "output": {
+          "alias": "limestone",
+          "id": 3211
+        },
+        "level": 10,
+        "qualification": "complete",
+        "partial_sides": [],
+        "missing_transform": []
+      }
+    ],
+    "fishing": [
+      {
+        "category": "category_453",
+        "primary_op": "Fish",
+        "pair_op": null,
+        "level": null,
+        "output": null,
+        "qualification": "partial",
+        "partial_sides": [
+          "level",
+          "output"
+        ]
+      },
+      {
+        "category": "freshfish",
+        "primary_op": "Lure",
+        "pair_op": "Bait",
+        "level": null,
+        "output": null,
+        "qualification": "partial",
+        "partial_sides": [
+          "level",
+          "output"
+        ]
+      },
+      {
+        "category": "rarefish",
+        "primary_op": "Cage",
+        "pair_op": "Harpoon",
+        "level": null,
+        "output": null,
+        "qualification": "partial",
+        "partial_sides": [
+          "level",
+          "output"
+        ]
+      },
+      {
+        "category": "memberfish",
+        "primary_op": "Net",
+        "pair_op": "Harpoon",
+        "level": null,
+        "output": null,
+        "qualification": "partial",
+        "partial_sides": [
+          "level",
+          "output"
+        ]
+      },
+      {
+        "category": "saltfish",
+        "primary_op": "Net",
+        "pair_op": "Bait",
+        "level": null,
+        "output": null,
+        "qualification": "partial",
+        "partial_sides": [
+          "level",
+          "output"
+        ]
+      },
+      {
+        "category": "unknown",
+        "primary_op": "Bait",
+        "pair_op": "hidden",
+        "level": null,
+        "output": null,
+        "qualification": "partial",
+        "partial_sides": [
+          "category",
+          "level",
+          "output"
+        ]
+      },
+      {
+        "category": "category_632",
+        "primary_op": "Net",
+        "pair_op": null,
+        "level": null,
+        "output": null,
+        "qualification": "partial",
+        "partial_sides": [
+          "level",
+          "output"
+        ]
+      },
+      {
+        "category": "category_633",
+        "primary_op": "Fish",
+        "pair_op": null,
+        "level": null,
+        "output": null,
+        "qualification": "partial",
+        "partial_sides": [
+          "level",
+          "output"
+        ]
+      },
+      {
+        "category": "slimeyfish",
+        "primary_op": "Bait",
+        "pair_op": "hidden",
+        "level": null,
+        "output": null,
+        "qualification": "partial",
+        "partial_sides": [
+          "level",
+          "output"
+        ]
+      }
+    ],
+    "coverage": [
+      {
+        "class": "unpublished",
+        "table": "jungle_tree_table",
+        "resource_key": "jungle",
+        "reason": "unpublished wood"
+      },
+      {
+        "class": "unpublished",
+        "table": "burnt_tree_table",
+        "resource_key": "burnt",
+        "reason": "unpublished wood"
+      },
+      {
+        "class": "conditional",
+        "table": "achey_tree_table",
+        "resource_key": "achey",
+        "reason": "no supported consumer"
+      },
+      {
+        "class": "conditional",
+        "table": "hollow_tree_table",
+        "resource_key": "hollow",
+        "reason": "no supported consumer"
       }
     ]
   },
