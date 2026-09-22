@@ -10,6 +10,7 @@ pub mod ent;
 pub mod game_data;
 pub mod gather_methods;
 pub mod gather_tools;
+pub mod clue_facts;
 pub mod quest_facts;
 pub mod interact;
 pub mod line_of_sight;

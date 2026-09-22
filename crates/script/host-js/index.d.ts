@@ -568,6 +568,16 @@ export interface QuestIdentityRow {
   requirements: QuestRequirements;
 }
 
+/** One landed trail membership row. `access` is present only on the one bounded inclusion. */
+export interface ClueRow {
+  alias: string;
+  id: number;
+  role: string;
+  /** Raw param lines, in file order. Values are never coerced. */
+  params: Array<{ key: string; value: string }>;
+  access?: 'constrained';
+}
+
 /** Caller-supplied one-level box. Not a plane and not a radius form. */
 export interface SceneRegionInput {
   min_x: number;
@@ -644,6 +654,8 @@ export interface NativeApi {
   questIdentity(input: { name: string } | { id: string }): HelperResult<QuestIdentityRow>;
   /** Sync seed-id requirements read. A name field is not a key. Not a Promise and not a request op. */
   questPrereqs(input: { id: string; name?: string }): HelperResult<QuestRequirements>;
+  /** Sync landed trail-row read. Exactly one of `id` (a real i32) or `alias`, and not a Promise and not a request op. */
+  clue: { row(input: { id: number } | { alias: string }): HelperResult<ClueRow> };
   /** Sync posted-loc copy. Historical copy, not live. Not a Promise and not a request op. */
   sceneLocs(input: { ids: number[]; limit: number; region?: SceneRegionInput }): HelperResult<SceneProjection>;
   /** Sync posted-npc copy. actions is required: omitted is not match-any. Historical copy, not live. Not a Promise and not a request op. */

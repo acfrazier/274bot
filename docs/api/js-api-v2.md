@@ -202,6 +202,55 @@ and `unknown_as_satisfied: false`. Items stay script aliases.
 
 Example: `crates/script/examples/quest_facts_v2.ts`.
 
+## Clue row helper
+
+One sync `HelperResult` method over the selected pin's landed trail membership
+family. It is not a Promise, not a `request()` op, and it does not push
+`h.interact`. It reads `trails()` only: not `items()`, and not the challenge
+answers. `api.clue` holds `row` and nothing else.
+
+| Method | OK | Errors |
+| --- | --- | --- |
+| `clue.row({ id } \| { alias })` | landed membership row | `invalid-args`, `missing-selected-data`, `family-unavailable:trails`, `unknown-id` |
+
+`clue.row` takes exactly one of `id` or `alias`. Neither, both, a non-object, an
+array, or a non-string `alias` is `invalid-args`, and `api.clue.row()` and
+`api.clue.row({})` are `invalid-args`, not a row dump. `id` is the packed
+integer and a real `i32`: `"3554"`, `3554.5`, a bigint, `new Number(3554)`, and
+`2147483648` are `invalid-args`, and nothing is clamped or converted. Negative
+zero is not an `i32` to that check either, so `{ id: -0 }` is `invalid-args`
+rather than a `0` miss. A present `{ id: 0 }` is a pin, not a missing one, so a
+miss is `unknown-id`. `alias` matches the landed alias only (trim, ASCII
+case-insensitive); the wrapper does not trim or fold.
+
+The order is `invalid-args`, then `missing-selected-data`, then
+`family-unavailable:trails`, then `unknown-id`. Family absence is the method
+token, never `{}`, `{ rows: [] }`, or an empty success, and a blank alias does
+not turn that absence into `unknown-id`; a blank alias with no selected data is
+`missing-selected-data`, and a blank alias with a landed family is `unknown-id`.
+One match is the landed row object, not `{ rows }` of length 1. Fields are
+`alias`, `id`, `role`, and `params`; `access` is present only when the landed row
+carries it, and the one bounded inclusion (packed 3554) is
+`access: "constrained"`. A row that omits `access` omits the key: it is never
+`null` and never rewritten to `"open"`.
+
+`params` is the landed list, in file order, raw strings: `^true` and `yes` stay
+strings, an empty list stays present, and `"Speak to Hazelmere."` stays inside
+`params`. Nothing is parsed, coerced, expanded, or joined: no `trail_coord`
+coordinate, no item name, no `npc`, no `supported`, and no answer. Membership is
+not support, so `3533`, `trail_clue_hard_sextant017_casket`,
+`trail_clue_medium_map002`, `trail_clue_hard_sextant026`, and the six challenge
+rows are `unknown-id`, and a challenge answer is never suffix-joined onto its
+parent. Input keys other than the one pin are ignored:
+`api.clue.row({ id: 3554, supported: true, access: "open" })` returns the landed
+3554 row with `access: "constrained"` and no `supported` key.
+
+Not a Promise and not a `request()` op: `api.request({ op: 'clue.row' })` stays
+`not impl`. `heldStep`, `begin`, `next`, `packPlan`, `challengeAnswer`, and
+`deposit` do not exist on `api.clue`.
+
+Example: `crates/script/examples/clue_facts_v2.ts`.
+
 ## Scene projections
 
 Two sync `HelperResult` methods that copy the isolate-posted scene page. They

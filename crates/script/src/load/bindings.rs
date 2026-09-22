@@ -933,6 +933,7 @@ pub(super) fn wire_runtime(
     super::supply_v8::install(runtime).map_err(|e| format!("supply v8: {e}"))?;
     super::gather_methods_v8::install(runtime).map_err(|e| format!("gather methods v8: {e}"))?;
     super::quest_facts_v8::install(runtime).map_err(|e| format!("quest facts v8: {e}"))?;
+    super::clue_facts_v8::install(runtime).map_err(|e| format!("clue facts v8: {e}"))?;
     super::loadout_v8::install(runtime).map_err(|e| format!("loadout v8: {e}"))?;
     super::line_of_sight::install(runtime).map_err(|e| format!("line of sight: {e}"))?;
     super::paint_chrome::install(runtime).map_err(|e| format!("paint chrome: {e}"))?;
@@ -1360,6 +1361,32 @@ api.questPrereqs = function (input) {
   }
   if (typeof input.id !== 'string') return helperErr('invalid-args');
   return questV2('questPrereqs', input);
+};
+function clueV2(op, input) {
+  return globalThis.__rs2b0t_clue_facts_v2(op, input);
+}
+api.clue = {
+  row: function (input) {
+    if (arguments.length === 0) return helperErr('invalid-args');
+    if (input == null || typeof input !== 'object' || Array.isArray(input)) {
+      return helperErr('invalid-args');
+    }
+    const hasId = Object.prototype.hasOwnProperty.call(input, 'id');
+    const hasAlias = Object.prototype.hasOwnProperty.call(input, 'alias');
+    if (hasId === hasAlias) return helperErr('invalid-args');
+    if (hasId) {
+      // The packed id is a real i32: "3554", 3554.5, a bigint, and
+      // new Number(3554) are invalid-args. A present 0 is still a pin.
+      const id = input.id;
+      if (typeof id !== 'number' || !Number.isInteger(id)
+          || id < -2147483648 || id > 2147483647) {
+        return helperErr('invalid-args');
+      }
+    } else if (typeof input.alias !== 'string') {
+      return helperErr('invalid-args');
+    }
+    return clueV2('row', input);
+  },
 };
 const SCENE_LIMIT_MAX = 64;
 function sceneLimitOk(value) {

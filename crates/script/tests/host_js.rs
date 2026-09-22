@@ -95,6 +95,16 @@ fn host_js_dts_includes_required_interfaces() {
     ));
     assert!(!src.contains("questIdentity(input: { name: string } | { id: string }): Promise"));
     assert!(!src.contains("questPrereqs(input: { id: string; name?: string }): Promise"));
+    assert!(src.contains("export interface ClueRow {"));
+    assert!(src.contains("params: Array<{ key: string; value: string }>;"));
+    assert!(src.contains("access?: 'constrained';"));
+    assert!(src.contains(
+        "clue: { row(input: { id: number } | { alias: string }): HelperResult<ClueRow> }"
+    ));
+    assert!(!src.contains(
+        "clue: { row(input: { id: number } | { alias: string }): Promise"
+    ));
+    assert!(!src.contains("clueRow("));
     assert!(src.contains(
         "sceneLocs(input: { ids: number[]; limit: number; region?: SceneRegionInput }): HelperResult<SceneProjection>"
     ));

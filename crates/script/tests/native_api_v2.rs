@@ -1322,6 +1322,73 @@ export function tick(api) {
 }
 
 #[test]
+fn v2_clue_row_is_a_named_sync_helper_result_not_a_request_op() {
+    let bindings = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/load/bindings.rs"));
+    assert!(
+        !bindings.contains("register_function(\"__rs2b0t_clue_facts"),
+        "clue row must not be a rustyscript JSON op"
+    );
+    let ops = bindings
+        .split("const V2_OPS")
+        .nth(1)
+        .unwrap()
+        .split("const OPTIONAL")
+        .next()
+        .unwrap();
+    assert!(!ops.contains("clue"), "{ops}");
+    assert!(!ops.contains("deposit"), "{ops}");
+    let src = r#"
+export const apiVersion = 2;
+export function tick(api) {
+  const row = api.clue.row({ id: 3554 });
+  let requested = null;
+  try { api.request({ op: 'clue.row' }); requested = 'ok'; }
+  catch (e) { requested = String(e && (e.message || e)); }
+  globalThis.__probe = {
+    rowOk: row.ok,
+    rowThen: typeof row.then,
+    alias: row.value && row.value.alias,
+    access: row.value && row.value.access,
+    rows: row.value && row.value.rows,
+    rowType: typeof api.clue.row,
+    keys: api.clue && Object.keys(api.clue),
+    flat: typeof api.clueRow,
+    quest: api.quest,
+    requested,
+  };
+}
+"#;
+    let data = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
+    let iso = LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data)
+        .unwrap();
+    post_base(&iso, 1);
+    iso.on_game_tick(1);
+    let probe = iso.probe("globalThis.__probe").unwrap();
+    assert_eq!(probe["rowOk"], true, "{probe:?}");
+    assert_eq!(probe["rowThen"], "undefined", "{probe:?}");
+    assert_eq!(probe["alias"], "trail_clue_hard_sextant028", "{probe:?}");
+    assert_eq!(probe["access"], "constrained", "{probe:?}");
+    assert!(probe["rows"].is_null(), "{probe:?}");
+    assert_eq!(probe["rowType"], "function", "{probe:?}");
+    assert_eq!(probe["keys"], serde_json::json!(["row"]), "{probe:?}");
+    assert_eq!(probe["flat"], "undefined", "{probe:?}");
+    assert!(probe["quest"].is_null(), "{probe:?}");
+    assert!(
+        probe["requested"]
+            .as_str()
+            .unwrap_or("")
+            .contains("not impl"),
+        "{probe:?}"
+    );
+    let interacts = iso.drain_interacts();
+    iso.join();
+    assert!(
+        interacts.is_empty(),
+        "clue row must not push interact: {interacts:?}"
+    );
+}
+
+#[test]
 fn v2_scene_projections_fail_closed_when_collision_is_unavailable() {
     let bindings = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/load/bindings.rs"));
     let ops = bindings

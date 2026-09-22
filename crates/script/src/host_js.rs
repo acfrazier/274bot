@@ -402,6 +402,15 @@ fn render_native_v2(out: &mut String) {
     out.push_str("  unknown_sides: string[];\n");
     out.push_str("  requirements: QuestRequirements;\n");
     out.push_str("}\n\n");
+    out.push_str("/** One landed trail membership row. `access` is present only on the one bounded inclusion. */\n");
+    out.push_str("export interface ClueRow {\n");
+    out.push_str("  alias: string;\n");
+    out.push_str("  id: number;\n");
+    out.push_str("  role: string;\n");
+    out.push_str("  /** Raw param lines, in file order. Values are never coerced. */\n");
+    out.push_str("  params: Array<{ key: string; value: string }>;\n");
+    out.push_str("  access?: 'constrained';\n");
+    out.push_str("}\n\n");
     out.push_str("/** Caller-supplied one-level box. Not a plane and not a radius form. */\n");
     out.push_str("export interface SceneRegionInput {\n");
     out.push_str("  min_x: number;\n");
@@ -474,6 +483,8 @@ fn render_native_v2(out: &mut String) {
     out.push_str("  questIdentity(input: { name: string } | { id: string }): HelperResult<QuestIdentityRow>;\n");
     out.push_str("  /** Sync seed-id requirements read. A name field is not a key. Not a Promise and not a request op. */\n");
     out.push_str("  questPrereqs(input: { id: string; name?: string }): HelperResult<QuestRequirements>;\n");
+    out.push_str("  /** Sync landed trail-row read. Exactly one of `id` (a real i32) or `alias`, and not a Promise and not a request op. */\n");
+    out.push_str("  clue: { row(input: { id: number } | { alias: string }): HelperResult<ClueRow> };\n");
     out.push_str("  /** Sync posted-loc copy. Historical copy, not live. Not a Promise and not a request op. */\n");
     out.push_str("  sceneLocs(input: { ids: number[]; limit: number; region?: SceneRegionInput }): HelperResult<SceneProjection>;\n");
     out.push_str("  /** Sync posted-npc copy. actions is required: omitted is not match-any. Historical copy, not live. Not a Promise and not a request op. */\n");
