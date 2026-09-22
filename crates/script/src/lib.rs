@@ -127,6 +127,8 @@ pub mod hunt_lair;
 #[cfg(feature = "load")]
 pub mod hunt_leave;
 #[cfg(feature = "load")]
+pub mod hunt_key;
+#[cfg(feature = "load")]
 mod shop;
 #[cfg(feature = "load")]
 mod supply_v2;

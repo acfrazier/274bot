@@ -399,6 +399,9 @@ fn render_native_v2(out: &mut String) {
     out.push_str("  leaveBegin(input?: object): HelperResult<{ token: number }>;\n");
     out.push_str("  /** One effect per call. Yield is status done with kind yield and a boolean value. Aborted is ok false, not FightStep. */\n");
     out.push_str("  leaveNext(input: { token: number; reply?: unknown } & Record<string, unknown>): LeaveStep;\n");
+    out.push_str("  keyBegin(input?: object): HelperResult<{ token: number }>;\n");
+    out.push_str("  /** One effect per call. Yield is status done with kind yield and a boolean value. Aborted is ok false, not FightStep. */\n");
+    out.push_str("  keyNext(input: { token: number; reply?: unknown } & Record<string, unknown>): KeyStep;\n");
     out.push_str("}\n\n");
     out.push_str("export type FightStep =\n");
     out.push_str("  | { ok: true; status: 'continue'; token: number; kind: string }\n");
@@ -426,6 +429,11 @@ fn render_native_v2(out: &mut String) {
     out.push_str("  | { ok: false; error: string; kind: 'aborted'; token: number; status: 'aborted' }\n");
     out.push_str("  | { ok: false; error: string };\n");
     out.push_str("export type LeaveStep =\n");
+    out.push_str("  | { ok: true; status: 'continue'; token: number; kind: string }\n");
+    out.push_str("  | { ok: true; status: 'done'; token: number; kind: 'yield'; value: boolean }\n");
+    out.push_str("  | { ok: false; error: string; kind: 'aborted'; token: number; status: 'aborted' }\n");
+    out.push_str("  | { ok: false; error: string };\n");
+    out.push_str("export type KeyStep =\n");
     out.push_str("  | { ok: true; status: 'continue'; token: number; kind: string }\n");
     out.push_str("  | { ok: true; status: 'done'; token: number; kind: 'yield'; value: boolean }\n");
     out.push_str("  | { ok: false; error: string; kind: 'aborted'; token: number; status: 'aborted' }\n");

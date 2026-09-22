@@ -775,3 +775,128 @@ export async function leaveLair(host, site) {
         }
     }
 }
+
+function keyCall(payload) {
+    const fn = globalThis.rustyscript && globalThis.rustyscript.functions
+        ? globalThis.rustyscript.functions.__rs2b0t_key
+        : undefined;
+    if (typeof fn !== 'function') {
+        throw notImpl('acquireKey');
+    }
+    return fn(payload);
+}
+
+function keyProjection(site) {
+    const item = site.keyItem;
+    const out = {
+        key: site.key,
+        keyItem: item == null ? null : item,
+        boxes: site.boxes || [],
+    };
+    if (site.route) out.route = site.route;
+    if (site.outLever) out.outLever = site.outLever;
+    if (site.upLadder) out.upLadder = site.upLadder;
+    return out;
+}
+
+function beginKeyWalk(step, radius) {
+    const walkFn = globalThis.rustyscript && globalThis.rustyscript.functions
+        ? globalThis.rustyscript.functions.__rs2b0t_walk
+        : undefined;
+    if (typeof walkFn !== 'function') {
+        throw notImpl('walk');
+    }
+    return walkFn({
+        op: 'begin',
+        x: step.x,
+        z: step.z,
+        level: step.level,
+        radius,
+        allow_teleports: false,
+        allow_wilderness: false,
+        allow_bank_fetch: false,
+    });
+}
+
+export async function acquireKey(host, site) {
+    const started = keyCall({ op: 'begin' });
+    if (!started || started.kind === 'aborted' || started.kind === 'notImpl') {
+        return false;
+    }
+    const token = started.token;
+    let reply = null;
+    for (;;) {
+        const step = keyCall({
+            op: 'next',
+            token,
+            reply,
+            ...keyProjection(site),
+        });
+        reply = null;
+        if (!step || step.kind === 'aborted' || step.kind === 'notImpl') {
+            return false;
+        }
+        if (step.kind === 'yield') {
+            return step.value === true;
+        }
+        switch (step.kind) {
+            case 'log':
+                host.log?.(step.message);
+                break;
+            case 'status':
+                host.setStatus?.(step.message);
+                break;
+            case 'leave':
+                reply = { left: (await leaveLair(host, site)) === true };
+                break;
+            case 'walk-near': {
+                const radius = Number(step.radius);
+                const walkToken = beginKeyWalk(step, radius);
+                queue({
+                    op: 'walk-near',
+                    x: step.x,
+                    z: step.z,
+                    level: step.level,
+                    radius,
+                    request_id: walkToken,
+                    allow_teleports: false,
+                    allow_wilderness: false,
+                    allow_bank_fetch: false,
+                });
+                reply = { queued: true, walkToken };
+                break;
+            }
+            case 'npc':
+                queue({
+                    op: 'npc',
+                    name: step.name,
+                    action: step.action,
+                    index: step.index,
+                });
+                reply = { queued: true };
+                break;
+            case 'obj':
+                queue({
+                    op: 'obj',
+                    x: step.x,
+                    z: step.z,
+                    level: step.level,
+                    name: step.name,
+                    action: step.action,
+                });
+                reply = { queued: true };
+                break;
+            case 'sustain':
+                await Sustain.run();
+                break;
+            case 'delay-ticks':
+                await Execution.delayTicks(Number(step.n) || 1);
+                break;
+            case 'wait':
+                await Execution.delayTicks(1);
+                break;
+            default:
+                return false;
+        }
+    }
+}

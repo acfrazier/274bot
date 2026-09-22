@@ -455,6 +455,13 @@ pub(super) fn wire_runtime(
         })
         .map_err(|e| format!("register leave: {e}"))?;
     runtime
+        .register_function("__rs2b0t_key", |args: &[serde_json::Value]| {
+            Ok(crate::hunt_key::dispatch(
+                args.first().unwrap_or(&serde_json::Value::Null),
+            ))
+        })
+        .map_err(|e| format!("register key: {e}"))?;
+    runtime
         .register_function(
             "__rs2b0t_production",
             move |args: &[serde_json::Value]| {
@@ -1497,6 +1504,26 @@ api.leaveBegin = function (input) {
 api.leaveNext = function (input) {
   if (!input || input.token == null) return { ok: false, error: 'invalid-args' };
   const out = leaveCall({ op: 'next', ...input });
+  if (!out) return { ok: false, error: 'aborted' };
+  if (out.kind === 'aborted') {
+    return { ok: false, error: out.reason || 'aborted', kind: 'aborted', token: out.token, status: 'aborted' };
+  }
+  if (out.kind === 'yield') {
+    return { ok: true, status: 'done', token: out.token, kind: 'yield', value: out.value === true };
+  }
+  return { ok: true, status: 'continue', token: out.token, ...out };
+};
+function keyCall(payload) {
+  return globalThis.rustyscript.functions.__rs2b0t_key(payload);
+}
+api.keyBegin = function (input) {
+  const out = keyCall({ op: 'begin', ...(input || {}) });
+  if (!out || out.kind === 'aborted') return helperErr((out && out.reason) || 'aborted');
+  return helperOk({ token: out.token });
+};
+api.keyNext = function (input) {
+  if (!input || input.token == null) return { ok: false, error: 'invalid-args' };
+  const out = keyCall({ op: 'next', ...input });
   if (!out) return { ok: false, error: 'aborted' };
   if (out.kind === 'aborted') {
     return { ok: false, error: out.reason || 'aborted', kind: 'aborted', token: out.token, status: 'aborted' };
