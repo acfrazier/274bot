@@ -1320,3 +1320,116 @@ export function tick(api) {
         "quest query must not push interact: {interacts:?}"
     );
 }
+
+#[test]
+fn v2_scene_projections_fail_closed_when_collision_is_unavailable() {
+    let bindings = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/load/bindings.rs"));
+    let ops = bindings
+        .split("const V2_OPS")
+        .nth(1)
+        .unwrap()
+        .split("const OPTIONAL")
+        .next()
+        .unwrap();
+    assert!(!ops.contains("sceneLocs"), "{ops}");
+    assert!(!ops.contains("sceneNpcs"), "{ops}");
+    let keys = bindings
+        .split("const SNAPSHOT_KEYS = new Set([")
+        .nth(1)
+        .unwrap()
+        .split("]);")
+        .next()
+        .unwrap();
+    assert!(!keys.contains("'locs'"), "{keys}");
+    assert!(!keys.contains("'tick'"), "{keys}");
+    // Legal args on both methods. post_base posts an empty locs array and no
+    // collision, so unavailable collision wins over that empty array: this is
+    // snapshot-unavailable, not { rows: [] } and not a positive loc witness.
+    let src = r#"
+export const apiVersion = 2;
+export function tick(api) {
+  const locs = api.sceneLocs({ ids: [2092, -1], limit: 64 });
+  const npcs = api.sceneNpcs({ types: [-1], actions: ['Attack'], limit: 8 });
+  const host = globalThis.__rs2b0t_host;
+  let requested = null;
+  try { api.request({ op: 'sceneLocs' }); requested = 'ok'; }
+  catch (e) { requested = String(e && (e.message || e)); }
+  globalThis.__probe = {
+    locsOk: locs.ok,
+    locsError: locs.error,
+    locsValue: locs.value,
+    locsThen: typeof locs.then,
+    npcsOk: npcs.ok,
+    npcsError: npcs.error,
+    npcsThen: typeof npcs.then,
+    pageLocsLen: host.snapshot.locs.length,
+    pageCollisionAvailable: host.snapshot.collision.available,
+    requested,
+  };
+}
+"#;
+    let iso = LoadIsolate::spawn(src.into(), LoadShape::NativeTick, vec![]).unwrap();
+    post_base(&iso, 1);
+    iso.on_game_tick(1);
+    let probe = iso.probe("globalThis.__probe").unwrap();
+    assert_eq!(probe["pageLocsLen"], 0, "{probe:?}");
+    assert_eq!(probe["pageCollisionAvailable"], false, "{probe:?}");
+    assert_eq!(probe["locsOk"], false, "{probe:?}");
+    assert_eq!(probe["locsError"], "snapshot-unavailable", "{probe:?}");
+    assert!(probe["locsValue"].is_null(), "{probe:?}");
+    assert_eq!(probe["locsThen"], "undefined", "{probe:?}");
+    assert_eq!(probe["npcsOk"], false, "{probe:?}");
+    assert_eq!(probe["npcsError"], "snapshot-unavailable", "{probe:?}");
+    assert_eq!(probe["npcsThen"], "undefined", "{probe:?}");
+    assert!(
+        probe["requested"]
+            .as_str()
+            .unwrap_or("")
+            .contains("not impl"),
+        "{probe:?}"
+    );
+    let interacts = iso.drain_interacts();
+    iso.join();
+    assert!(
+        interacts.is_empty(),
+        "scene query must not push interact: {interacts:?}"
+    );
+}
+
+#[test]
+fn example_scene_observe_v2_is_read_only_and_fails_closed() {
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("examples")
+        .join("scene_observe_v2.ts");
+    let src = std::fs::read_to_string(&path).expect("example source");
+    assert!(!src.contains("request("));
+    assert!(!src.contains("h.interact"));
+    assert_eq!(src.matches("api.sceneLocs").count(), 1);
+    assert_eq!(src.matches("api.sceneNpcs").count(), 1);
+    let js = script::transpile_ts(&src).expect("transpile scene_observe_v2.ts");
+    let iso = LoadIsolate::spawn(js, LoadShape::NativeTick, vec![]).unwrap();
+    post_base(&iso, 1);
+    iso.on_game_tick(1);
+    let err = iso
+        .probe("globalThis.__rs2b0t_host.lastError || ''")
+        .unwrap();
+    let logs = iso.drain_logs();
+    let interacts = iso.drain_interacts();
+    iso.join();
+    assert_eq!(err.as_str().unwrap_or(""), "", "example lastError: {err:?}");
+    let failed: Vec<serde_json::Value> = logs
+        .iter()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line.trim()).ok())
+        .filter(|row| row["error"] == "snapshot-unavailable")
+        .collect();
+    assert_eq!(failed.len(), 2, "logs={logs:?}");
+    for row in &failed {
+        assert_eq!(row["ok"], false, "{row:?}");
+        assert!(row.get("value").is_none(), "{row:?}");
+        assert!(row.get("rows").is_none(), "{row:?}");
+    }
+    assert!(
+        interacts.is_empty(),
+        "scene example must not push interact: {interacts:?}"
+    );
+}

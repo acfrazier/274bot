@@ -95,6 +95,24 @@ fn host_js_dts_includes_required_interfaces() {
     ));
     assert!(!src.contains("questIdentity(input: { name: string } | { id: string }): Promise"));
     assert!(!src.contains("questPrereqs(input: { id: string; name?: string }): Promise"));
+    assert!(src.contains(
+        "sceneLocs(input: { ids: number[]; limit: number; region?: SceneRegionInput }): HelperResult<SceneProjection>"
+    ));
+    assert!(src.contains(
+        "sceneNpcs(input: { types: number[]; actions: string[]; limit: number; region?: SceneRegionInput }): HelperResult<SceneProjection>"
+    ));
+    assert!(!src.contains(
+        "sceneLocs(input: { ids: number[]; limit: number; region?: SceneRegionInput }): Promise"
+    ));
+    assert!(!src.contains(
+        "sceneNpcs(input: { types: number[]; actions: string[]; limit: number; region?: SceneRegionInput }): Promise"
+    ));
+    assert!(src.contains("export interface SceneRegionInput"));
+    assert!(src.contains("export interface SceneBounds"));
+    assert!(src.contains("export interface SceneProjectionRow"));
+    assert!(src.contains("export interface SceneProjection {"));
+    assert!(src.contains("as_of_sequence: number;"));
+    assert!(src.contains("truncated: boolean;"));
     assert!(src.contains("export interface LoadoutInput"));
     assert!(src.contains("export interface PotionPlan"));
     assert!(src.contains("foodOf(input: { loadout: LoadoutInput | null; fallback: string })"));

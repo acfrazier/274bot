@@ -564,6 +564,42 @@ export interface QuestIdentityRow {
   requirements: QuestRequirements;
 }
 
+/** Caller-supplied one-level box. Not a plane and not a radius form. */
+export interface SceneRegionInput {
+  min_x: number;
+  min_z: number;
+  max_x: number;
+  max_z: number;
+  level: number;
+}
+
+/** Copied collision bounds. Collision flags stay on the snapshot page. */
+export interface SceneBounds {
+  available: boolean;
+  base_x: number;
+  base_z: number;
+  level: number;
+  width: number;
+  height: number;
+}
+
+/** Historical posted row copy. Not the live entity: no index, name, or nested tile. */
+export interface SceneProjectionRow {
+  id: number;
+  x: number;
+  z: number;
+  level: number;
+  actions: string[];
+}
+
+/** One posted scene vector. as_of_sequence is snapshot.tick. */
+export interface SceneProjection {
+  as_of_sequence: number;
+  scene: SceneBounds;
+  rows: SceneProjectionRow[];
+  truncated: boolean;
+}
+
 /** Public JS API v2 handle. Explicit `export const apiVersion = 2` only. */
 export interface NativeApi {
   readonly tick: number;
@@ -604,6 +640,10 @@ export interface NativeApi {
   questIdentity(input: { name: string } | { id: string }): HelperResult<QuestIdentityRow>;
   /** Sync seed-id requirements read. A name field is not a key. Not a Promise and not a request op. */
   questPrereqs(input: { id: string; name?: string }): HelperResult<QuestRequirements>;
+  /** Sync posted-loc copy. Historical copy, not live. Not a Promise and not a request op. */
+  sceneLocs(input: { ids: number[]; limit: number; region?: SceneRegionInput }): HelperResult<SceneProjection>;
+  /** Sync posted-npc copy. actions is required: omitted is not match-any. Historical copy, not live. Not a Promise and not a request op. */
+  sceneNpcs(input: { types: number[]; actions: string[]; limit: number; region?: SceneRegionInput }): HelperResult<SceneProjection>;
   foodOf(input: { loadout: LoadoutInput | null; fallback: string }): HelperResult<string>;
   gearOf(input: { loadout: LoadoutInput | null }): HelperResult<string[]>;
   suppliesOf(input: { loadout: LoadoutInput | null }): HelperResult<Array<{ item: string; qty: number }>>;

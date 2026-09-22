@@ -1354,6 +1354,122 @@ api.questPrereqs = function (input) {
   if (typeof input.id !== 'string') return helperErr('invalid-args');
   return questV2('questPrereqs', input);
 };
+const SCENE_LIMIT_MAX = 64;
+function sceneLimitOk(value) {
+  return Number.isInteger(value) && value >= 1 && value <= SCENE_LIMIT_MAX;
+}
+function sceneRegionValue(value) {
+  if (value == null || typeof value !== 'object' || Array.isArray(value)) return null;
+  for (const key of ['min_x', 'min_z', 'max_x', 'max_z', 'level']) {
+    if (!Number.isInteger(value[key])) return null;
+  }
+  return {
+    min_x: value.min_x, min_z: value.min_z,
+    max_x: value.max_x, max_z: value.max_z, level: value.level,
+  };
+}
+// A present region must be a box on one level. Omitted is undefined, a bad
+// value is null. There is no plane and no { cx, cz, radius } form.
+function sceneRegionArg(input) {
+  if (!Object.prototype.hasOwnProperty.call(input, 'region')) return undefined;
+  return sceneRegionValue(input.region);
+}
+function sceneBounds(collision) {
+  // Bounds only. Collision flags stay on the page and are not this result.
+  return {
+    available: collision.available,
+    base_x: collision.base_x, base_z: collision.base_z,
+    level: collision.level,
+    width: collision.width, height: collision.height,
+  };
+}
+function sceneRowMatched(entity, ids, actions, region) {
+  if (!entity || typeof entity !== 'object') return false;
+  if (ids.indexOf(entity.id) === -1) return false;
+  if (region && !(entity.level === region.level
+      && entity.x >= region.min_x && entity.x <= region.max_x
+      && entity.z >= region.min_z && entity.z <= region.max_z)) return false;
+  if (!actions) return true;
+  const posted = entity.actions;
+  if (!Array.isArray(posted)) return false;
+  for (const action of posted) {
+    if (actions.indexOf(action) !== -1) return true;
+  }
+  return false;
+}
+function sceneProjection(key, ids, actions, limit, region) {
+  // The copy reads host().snapshot. api.snapshot hides locs and tick, and a
+  // missing host page is snapshot-unavailable, not an empty rows list.
+  const snapshot = host().snapshot;
+  if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) {
+    return helperErr('snapshot-unavailable');
+  }
+  const collision = snapshot.collision;
+  if (!collision || typeof collision !== 'object' || Array.isArray(collision)) {
+    return helperErr('snapshot-unavailable');
+  }
+  // Unavailable collision wins over an empty posted array (post_base).
+  if (collision.available !== true) return helperErr('snapshot-unavailable');
+  if (typeof snapshot.tick !== 'number') return helperErr('snapshot-unavailable');
+  const posted = snapshot[key];
+  if (!Array.isArray(posted)) return helperErr('snapshot-unavailable');
+  const rows = [];
+  let truncated = false;
+  for (const entity of posted) {
+    if (!sceneRowMatched(entity, ids, actions, region)) continue;
+    // Posted order. More matches than limit set truncated and drop the rest.
+    if (rows.length >= limit) { truncated = true; break; }
+    rows.push({
+      id: entity.id,
+      x: entity.x, z: entity.z, level: entity.level,
+      actions: Array.isArray(entity.actions) ? entity.actions.slice() : [],
+    });
+  }
+  return helperOk({
+    as_of_sequence: snapshot.tick,
+    scene: sceneBounds(collision),
+    rows: rows,
+    truncated: truncated,
+  });
+}
+api.sceneLocs = function (input) {
+  if (arguments.length === 0) return helperErr('invalid-args');
+  if (input == null || typeof input !== 'object' || Array.isArray(input)) {
+    return helperErr('invalid-args');
+  }
+  const ids = input.ids;
+  if (ids == null) return helperErr('missing-ids');
+  if (!Array.isArray(ids)) return helperErr('invalid-args');
+  if (ids.length === 0) return helperErr('missing-ids');
+  for (const id of ids) {
+    if (!Number.isInteger(id)) return helperErr('invalid-args');
+  }
+  if (!sceneLimitOk(input.limit)) return helperErr('invalid-args');
+  const region = sceneRegionArg(input);
+  if (region === null) return helperErr('invalid-args');
+  return sceneProjection('locs', ids, null, input.limit, region);
+};
+api.sceneNpcs = function (input) {
+  if (arguments.length === 0) return helperErr('invalid-args');
+  if (input == null || typeof input !== 'object' || Array.isArray(input)) {
+    return helperErr('invalid-args');
+  }
+  const types = input.types;
+  if (!Array.isArray(types) || types.length === 0) return helperErr('invalid-args');
+  for (const type of types) {
+    if (!Number.isInteger(type)) return helperErr('invalid-args');
+  }
+  // actions is required. Omitted is not match-any.
+  const actions = input.actions;
+  if (!Array.isArray(actions) || actions.length === 0) return helperErr('invalid-args');
+  for (const action of actions) {
+    if (typeof action !== 'string' || action === '') return helperErr('invalid-args');
+  }
+  if (!sceneLimitOk(input.limit)) return helperErr('invalid-args');
+  const region = sceneRegionArg(input);
+  if (region === null) return helperErr('invalid-args');
+  return sceneProjection('npcs', types, actions, input.limit, region);
+};
 function loadoutV2(op, input) {
   return globalThis.__rs2b0t_loadout_v2(op, input);
 }

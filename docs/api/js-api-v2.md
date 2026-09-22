@@ -202,6 +202,54 @@ and `unknown_as_satisfied: false`. Items stay script aliases.
 
 Example: `crates/script/examples/quest_facts_v2.ts`.
 
+## Scene projections
+
+Two sync `HelperResult` methods that copy the isolate-posted scene page. They
+are not Promises, not `request()` ops, and they do not push `h.interact`. They
+read `host().snapshot` directly: `api.snapshot` hides `locs` and `tick`, and a
+missing host page is `snapshot-unavailable`, not `{ rows: [] }`.
+
+| Method | OK | Errors |
+| --- | --- | --- |
+| `sceneLocs({ ids, limit, region? })` | `{ as_of_sequence, scene, rows, truncated }` | `invalid-args`, `missing-ids`, `snapshot-unavailable` |
+| `sceneNpcs({ types, actions, limit, region? })` | `{ as_of_sequence, scene, rows, truncated }` | `invalid-args`, `snapshot-unavailable` |
+
+Args are checked before the page, so a bad call is never
+`snapshot-unavailable`. `sceneLocs()` and `sceneLocs([])` are `invalid-args`. A
+missing or empty `ids` is `missing-ids` even when `limit` is also bad; a
+non-array `ids` or a non-integer element is `invalid-args`, and `"2092"` is not
+coerced. `sceneNpcs` requires a non-empty integer `types` array and a non-empty
+string `actions` array: missing or empty is `invalid-args`, not `missing-ids`,
+and an omitted `actions` is not match-any. `limit` is required and must be an
+integer in `1..=64`; `65` is `invalid-args` and is not clamped. An omitted
+`region` is no spatial filter (`ids`, or `types` plus `actions`, still bounds
+the query). A present `region` must be a non-array object with integer `min_x`,
+`min_z`, `max_x`, `max_z`, and `level`; `plane`, `null`, and
+`{ cx, cz, radius }` are `invalid-args`. An inverted box is zero matches.
+
+Each row is a new object `{ id, x, z, level, actions }` with a new `actions`
+array. `id` is the posted loc id, or the posted NPC type including `-1`; a
+caller `-1` is legal and matches only a posted `-1` row, not every NPC. A row
+matches when its posted `id` equals any requested entry and its posted actions
+contain any requested action (string equality, no trim and no case-fold,
+any-of not all-of). Posted order is kept, nothing is sorted by distance,
+matches are capped at `limit`, and more matches than `limit` set
+`truncated: true`. An empty posted array with an available scene is zero
+matches: `ok: true` with `rows: []` and `truncated: false`. A missing or
+non-array `locs` / `npcs` key, a missing or non-number tick, and a collision
+that is absent, non-object, or `available !== true` are `snapshot-unavailable`;
+unavailable collision wins over an empty posted array, so `post_base` is not an
+empty success.
+
+`as_of_sequence` is `snapshot.tick`, not `api.tick`. A delta that omits the
+vector keeps the previous array and stamps the current tick; there is no
+per-vector sequence. `scene` copies `{ available, base_x, base_z, level, width,
+height }`; collision flags stay on the page. Copies are historical: a retained
+value stays usable after a later merge, it is not live, and an action needs a
+fresh call.
+
+Example: `crates/script/examples/scene_observe_v2.ts`.
+
 ## Loadout and potion helpers
 
 Eight sync `HelperResult` methods. They recommend food, worn names, carry
