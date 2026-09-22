@@ -802,6 +802,65 @@ export function tick(api) {
 }
 
 #[test]
+fn v2_clue_next_keeps_none_held_when_the_live_session_loses_its_step() {
+    let src = r#"
+export const apiVersion = 2;
+export function tick(api) {
+  globalThis.__tick = (globalThis.__tick || 0) + 1;
+  if (globalThis.__tick === 1) {
+    const begin = api.clue.begin();
+    globalThis.__begin = begin;
+    globalThis.__token = begin.ok ? begin.value.token : null;
+    return;
+  }
+  if (globalThis.__tick === 2) {
+    // The page still holds something, just nothing that is a membership row.
+    globalThis.__dropped = api.clue.next({ token: globalThis.__token });
+    return;
+  }
+  // The membership row is back, but the step's token is already dead.
+  globalThis.__after = api.clue.next({ token: globalThis.__token });
+  globalThis.__probe = JSON.stringify({
+    token: globalThis.__token,
+    begin: globalThis.__begin,
+    dropped: globalThis.__dropped,
+    after: globalThis.__after,
+  });
+}
+"#;
+    let data = api::game_data::for_revision(ClientRevision::R274).unwrap();
+    let iso = LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data)
+        .unwrap();
+    post_page(&iso, 1, &[(3554, 1)]);
+    iso.on_game_tick(1);
+    // A held challenge id is not a membership row: the live step is gone.
+    post_page(&iso, 2, &[(2842, 1)]);
+    iso.on_game_tick(2);
+    post_page(&iso, 3, &[(3554, 1)]);
+    iso.on_game_tick(3);
+    let value: serde_json::Value =
+        serde_json::from_str(iso.probe("globalThis.__probe").unwrap().as_str().unwrap()).unwrap();
+    let interacts = iso.drain_interacts();
+    iso.join();
+
+    assert!(value["token"].is_number(), "{value:?}");
+    assert_eq!(value["begin"]["ok"], true, "{value:?}");
+    assert_eq!(value["begin"]["value"]["token"], value["token"], "{value:?}");
+    // The identify family's own reason survives the wrapper on `next`: not
+    // `stale`, and not a continue step.
+    assert_eq!(value["dropped"]["ok"], false, "{value:?}");
+    assert_eq!(value["dropped"]["error"], "none-held", "{value:?}");
+    assert!(value["dropped"].get("value").is_none(), "{value:?}");
+    // `none-held` aborts: the old token is dead even with the row held again.
+    assert_eq!(value["after"]["ok"], false, "{value:?}");
+    assert_eq!(value["after"]["error"], "stale", "{value:?}");
+    assert!(
+        interacts.is_empty(),
+        "the clue machine pushes no interact: {interacts:?}"
+    );
+}
+
+#[test]
 fn v2_clue_begin_keeps_family_absence_apart_from_none_held() {
     let src = r#"
 export const apiVersion = 2;

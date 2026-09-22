@@ -1421,9 +1421,15 @@ function clueStep(step) {
   return { ok: true, status: 'continue', token: step.token, ...step };
 }
 // A dead token is `stale`; the generation abort the machine reported is
-// `aborted`. Internal reasons are never handed out as an ok kind.
+// `aborted`. The identify family's own tokens — the same three `begin`
+// preserves — survive here too: a live session that loses its held
+// membership reports `none-held`, not `stale`. Internal reasons are never
+// handed out as an ok kind.
 function clueStepError(reason) {
-  return reason === 'aborted' ? 'aborted' : 'stale';
+  if (reason === 'aborted') return 'aborted';
+  if (reason === 'missing-selected-data' || reason === 'family-unavailable:trails'
+      || reason === 'none-held') return reason;
+  return 'stale';
 }
 // The begin refusals are the identify family's own tokens; anything else
 // internal is `stale`.
