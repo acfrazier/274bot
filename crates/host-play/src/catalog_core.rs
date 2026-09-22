@@ -26,7 +26,7 @@ pub use ranging::{
     TARGET_RESULT_MODAL, TICKETS_PER_TRADE, VARP_TARGET_COUNT, VARP_TARGET_HIT, VARP_TARGET_SCORE,
 };
 
-pub const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|chicken_killer_bank|thiever|alcher|alcher_defaults|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|alcher_low|alcher_fire_battlestaff|alcher_swarm_drain|bank_fletcher|bank_fletcher_shafts|bank_fletcher_headless|bank_fletcher_string|bank_fletcher_cut_string|dart_fletcher|dart_fletcher_iron|herb_cleaner|herb_cleaner_named|herb_cleaner_empty_bank|gem_cutter|gem_cutter_named|door_opener|door_opener_gate|gnome_course|gnome_course_radius|wildy_agility|brimhaven_agility|flax_picker|superheater|superheater_steel|superheater_fire_battlestaff|superheater_silver_low_natures|vial_filler|vial_filler_east|potion_maker|potion_maker_named|tanner_bot|tanner_bot_hard|rune_crafter|rune_crafter_earth|mule_crafter|ardy_cakes|ardy_cakes_fight|ardy_thiever|ardy_thiever_fight|ardy_thiever_knight|gnome_chop|gnome_fletch_short|gnome_fletch_long|coal_trucks|cook_bot|cook_bot_lobster|smelter_bot|smelter_bot_steel|flax_spinner|flax_aio|flax_aio_pick|flax_aio_spin|herblore_secondaries|herblore_secondaries_newt|chaos_druid|chaos_druid_tower|chaos_druid_yanille|moss_giant|moss_giant_prepared|moss_giant_dart|hill_giant|auto_fighter|auto_fighter_mage|auto_fighter_range|rock_crab|rock_crab_range|green_dragon|green_dragon_prepared|green_dragon_mage_prepared|green_dragon_special|green_dragon_special_prepared|green_dragon_potions|green_dragon_potions_prepared|fire_giant|fire_giant_prepared|ardy_fighter|auto_fighter_bank|moss_giant_bank|hill_giant_bank|hill_giant_bank_prepared|chaos_druid_bank|ardy_fighter_bank|rock_crab_bank|green_dragon_bank|green_dragon_bank_prepared|green_dragon_bank_default_prepared|green_dragon_tele|green_dragon_tele_prepared|fire_giant_approach|fire_giant_bank|fire_giant_bank_prepared|fire_giant_camelot_prepared|aio_teleport|aio_teleport_falador|aio_teleport_no_staff|shop_buyout|shop_buyout_aubury|shop_buyout_lowe|shop_buyout_hickton|shop_buyout_harry|shop_buyout_betty|shop_buyout_gerrant|smithing_bot|smithing_bot_platebody|leather_crafter|leather_crafter_hard_body|firemaker|firemaker_oak|climbing_boots|climbing_boots_teleport|ranging_guild_round|ranging_guild_redeem|ranging_guild_bank|ranging_guild_full|brimhaven_moss_inspect_v1|route_inspect_brimhaven_v2_ts|prayer_v2_ts|prayer_v1_ts|line_of_sight_v2_ts|actor_observation_v2_ts|fight_field_v2_ts|hold_spot_v2_ts|retreat_spot_v2_ts|walk_spot_v2_ts|enter_lair_v2_ts";
+pub const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|chicken_killer_bank|thiever|alcher|alcher_defaults|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|alcher_low|alcher_fire_battlestaff|alcher_swarm_drain|bank_fletcher|bank_fletcher_shafts|bank_fletcher_headless|bank_fletcher_string|bank_fletcher_cut_string|dart_fletcher|dart_fletcher_iron|herb_cleaner|herb_cleaner_named|herb_cleaner_empty_bank|gem_cutter|gem_cutter_named|door_opener|door_opener_gate|gnome_course|gnome_course_radius|wildy_agility|brimhaven_agility|flax_picker|superheater|superheater_steel|superheater_fire_battlestaff|superheater_silver_low_natures|vial_filler|vial_filler_east|potion_maker|potion_maker_named|tanner_bot|tanner_bot_hard|rune_crafter|rune_crafter_earth|mule_crafter|ardy_cakes|ardy_cakes_fight|ardy_thiever|ardy_thiever_fight|ardy_thiever_knight|gnome_chop|gnome_fletch_short|gnome_fletch_long|coal_trucks|cook_bot|cook_bot_lobster|smelter_bot|smelter_bot_steel|flax_spinner|flax_aio|flax_aio_pick|flax_aio_spin|herblore_secondaries|herblore_secondaries_newt|chaos_druid|chaos_druid_tower|chaos_druid_yanille|moss_giant|moss_giant_prepared|moss_giant_dart|hill_giant|auto_fighter|auto_fighter_mage|auto_fighter_range|rock_crab|rock_crab_range|green_dragon|green_dragon_prepared|green_dragon_mage_prepared|green_dragon_special|green_dragon_special_prepared|green_dragon_potions|green_dragon_potions_prepared|fire_giant|fire_giant_prepared|ardy_fighter|auto_fighter_bank|moss_giant_bank|hill_giant_bank|hill_giant_bank_prepared|chaos_druid_bank|ardy_fighter_bank|rock_crab_bank|green_dragon_bank|green_dragon_bank_prepared|green_dragon_bank_default_prepared|green_dragon_tele|green_dragon_tele_prepared|fire_giant_approach|fire_giant_bank|fire_giant_bank_prepared|fire_giant_camelot_prepared|aio_teleport|aio_teleport_falador|aio_teleport_no_staff|shop_buyout|shop_buyout_aubury|shop_buyout_lowe|shop_buyout_hickton|shop_buyout_harry|shop_buyout_betty|shop_buyout_gerrant|smithing_bot|smithing_bot_platebody|leather_crafter|leather_crafter_hard_body|firemaker|firemaker_oak|climbing_boots|climbing_boots_teleport|ranging_guild_round|ranging_guild_redeem|ranging_guild_bank|ranging_guild_full|brimhaven_moss_inspect_v1|route_inspect_brimhaven_v2_ts|prayer_v2_ts|prayer_v1_ts|line_of_sight_v2_ts|actor_observation_v2_ts|fight_field_v2_ts|hold_spot_v2_ts|retreat_spot_v2_ts|walk_spot_v2_ts|enter_lair_v2_ts|leave_lair_v2_ts";
 pub const CATALOG_COMMIT_A: &str = "100adccc037d9f6898080e1cad58fcfc43364775";
 pub const CATALOG_COMMIT_B: &str = "8e7d965be2071d6ec65c3265e12af797082d720a";
 pub const ADAMANT_SCIMITAR_ID: i32 = 1331;
@@ -615,6 +615,7 @@ pub enum CoreCase {
     RetreatSpotV2,
     WalkSpotV2,
     EnterLairV2,
+    LeaveLairV2,
 }
 
 impl CoreCase {
@@ -756,6 +757,7 @@ impl CoreCase {
             "retreat_spot_v2_ts" => Ok(Self::RetreatSpotV2),
             "walk_spot_v2_ts" => Ok(Self::WalkSpotV2),
             "enter_lair_v2_ts" => Ok(Self::EnterLairV2),
+            "leave_lair_v2_ts" => Ok(Self::LeaveLairV2),
             _ => Err(format!(
                 "unknown CATALOG_SCENARIO {value:?}; expected {CORE_SCENARIOS}"
             )),
@@ -900,6 +902,7 @@ impl CoreCase {
             Self::RetreatSpotV2 => "retreat_spot_v2_ts",
             Self::WalkSpotV2 => "walk_spot_v2_ts",
             Self::EnterLairV2 => "enter_lair_v2_ts",
+            Self::LeaveLairV2 => "leave_lair_v2_ts",
         }
     }
 
@@ -1012,6 +1015,7 @@ impl CoreCase {
             Self::RetreatSpotV2 => "retreat_spot_v2",
             Self::WalkSpotV2 => "walk_spot_v2",
             Self::EnterLairV2 => "enter_lair_v2",
+            Self::LeaveLairV2 => "leave_lair_v2",
         }
     }
 
@@ -1052,6 +1056,10 @@ impl CoreCase {
 
     pub fn copies_enter_lair(self) -> bool {
         matches!(self, Self::EnterLairV2)
+    }
+
+    pub fn copies_leave_lair(self) -> bool {
+        matches!(self, Self::LeaveLairV2)
     }
 
     pub fn prayer_stop_reason(self) -> Option<&'static str> {
@@ -1107,6 +1115,13 @@ impl CoreCase {
     pub fn enter_lair_stop_reason(self) -> Option<&'static str> {
         match self {
             Self::EnterLairV2 => Some(ENTER_LAIR_V2_STOP),
+            _ => None,
+        }
+    }
+
+    pub fn leave_lair_stop_reason(self) -> Option<&'static str> {
+        match self {
+            Self::LeaveLairV2 => Some(LEAVE_LAIR_V2_STOP),
             _ => None,
         }
     }
@@ -1233,6 +1248,9 @@ pub struct Observation {
     /// Compact here/approach/kind enter-lair witness. Empty unless the active
     /// Core case asked for enter lair. Never a world copy.
     pub enter: EnterLairObservation,
+    /// Compact here/walkOut/kind leave-lair witness. Empty unless the active
+    /// Core case asked for leave lair. Never a world copy.
+    pub leave: LeaveLairObservation,
 }
 
 /// Compact hop projection for Core JSON. Only `locName` is copied from the
@@ -1750,6 +1768,7 @@ impl Observation {
             retreat: RetreatSpotObservation::default(),
             walk: WalkSpotObservation::default(),
             enter: EnterLairObservation::default(),
+            leave: LeaveLairObservation::default(),
         }
     }
 
@@ -2103,6 +2122,29 @@ impl Observation {
             allow_wilderness: receipt.as_ref().map(|row| row.allow_wilderness),
             allow_bank_fetch: receipt.as_ref().map(|row| row.allow_bank_fetch),
             area: receipt.as_ref().map(|row| row.area),
+            receipt,
+        };
+    }
+
+    /// Compact host here plus the script paint walkOut/kind receipt. Never
+    /// copies the collision grid or world. The curated box is here ± 2.
+    pub fn attach_leave_lair(
+        &mut self,
+        snapshot: &GameSnapshot,
+        paint: Option<&script::shim::ScriptPaint>,
+    ) {
+        let scene = snapshot.scene();
+        let here = self
+            .tile
+            .map(|(x, z, level)| LineOfSightTile { x, z, level });
+        let receipt = paint.and_then(parse_leave_lair_receipt_from_paint);
+        let walk_out = receipt.as_ref().map(|row| row.walk_out);
+        self.leave = LeaveLairObservation {
+            available: scene.available,
+            here,
+            walk_out,
+            radius: receipt.as_ref().map(|row| row.radius),
+            area: here.map(leave_lair_box),
             receipt,
         };
     }
@@ -3942,6 +3984,289 @@ impl EnterLairDeliveryCycle {
     }
 }
 
+pub const LEAVE_LAIR_V2_STOP: &str = "leave lair qualification complete";
+pub const LEAVE_LAIR_RECEIPT_PREFIX: &str = "leave-lair-receipt:";
+/// Inclusive 8–16. Not Hold's 2-tile walk and not Walk's `> 12` gate.
+pub const LEAVE_LAIR_MIN_CHEB: i32 = 8;
+pub const LEAVE_LAIR_MAX_CHEB: i32 = 16;
+pub const LEAVE_LAIR_RADIUS: i32 = 3;
+const LEAVE_LAIR_BOX_PAD: i32 = 2;
+const LEAVE_LAIR_EDGEVILLE_X: i32 = 3094;
+const LEAVE_LAIR_EDGEVILLE_Z: i32 = 3493;
+const LEAVE_LAIR_VARROCK_X: i32 = 3213;
+const LEAVE_LAIR_VARROCK_Z: i32 = 3424;
+const LEAVE_LAIR_KBD_X: i32 = 3017;
+const LEAVE_LAIR_KBD_Z: i32 = 3849;
+const LEAVE_LAIR_KBD_LOCS: [i32; 4] = [1765, 1766, 1816, 1817];
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct LeaveLairBox {
+    pub min_x: i32,
+    pub max_x: i32,
+    pub min_z: i32,
+    pub max_z: i32,
+    pub level: i32,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LeaveLairScriptReceipt {
+    pub here: LineOfSightTile,
+    pub walk_out: LineOfSightTile,
+    pub kind: String,
+    pub radius: i32,
+    pub discriminator: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct LeaveLairObservation {
+    pub available: bool,
+    pub here: Option<LineOfSightTile>,
+    pub walk_out: Option<LineOfSightTile>,
+    pub radius: Option<i32>,
+    pub area: Option<LeaveLairBox>,
+    pub receipt: Option<LeaveLairScriptReceipt>,
+}
+
+impl Default for LeaveLairObservation {
+    fn default() -> Self {
+        Self {
+            available: false,
+            here: None,
+            walk_out: None,
+            radius: None,
+            area: None,
+            receipt: None,
+        }
+    }
+}
+
+fn leave_lair_value_forbidden(value: &Value) -> bool {
+    match value {
+        Value::Object(map) => {
+            if map.get("key").and_then(Value::as_str) == Some("kbd-lair") {
+                return true;
+            }
+            if map.get("inArea").and_then(Value::as_bool) == Some(false) {
+                return true;
+            }
+            if map.get("left").and_then(Value::as_bool) == Some(true) {
+                return true;
+            }
+            for key in ["locId", "id"] {
+                if map
+                    .get(key)
+                    .and_then(Value::as_i64)
+                    .is_some_and(|n| LEAVE_LAIR_KBD_LOCS.contains(&(n as i32)))
+                {
+                    return true;
+                }
+            }
+            for key in ["route", "exit", "gate", "outLever", "upLadder"] {
+                if map.get(key).is_some_and(|child| !child.is_null()) {
+                    return true;
+                }
+            }
+            for key in ["allow_teleports", "allow_wilderness", "allow_bank_fetch"] {
+                if map.contains_key(key) {
+                    return true;
+                }
+            }
+            map.values().any(leave_lair_value_forbidden)
+        }
+        Value::Array(rows) => rows.iter().any(leave_lair_value_forbidden),
+        _ => false,
+    }
+}
+
+/// Paint-row parser. A `!inArea` claim, KBD loc, or invented allow-flag is not a receipt.
+pub fn parse_leave_lair_receipt_line(line: &str) -> Option<LeaveLairScriptReceipt> {
+    let json = line.strip_prefix(LEAVE_LAIR_RECEIPT_PREFIX)?;
+    if json.contains("!inArea") {
+        return None;
+    }
+    let value: Value = serde_json::from_str(json).ok()?;
+    if leave_lair_value_forbidden(&value) {
+        return None;
+    }
+    serde_json::from_value(value).ok()
+}
+
+fn parse_leave_lair_receipt_from_paint(
+    paint: &script::shim::ScriptPaint,
+) -> Option<LeaveLairScriptReceipt> {
+    paint
+        .lines
+        .iter()
+        .find_map(|line| parse_leave_lair_receipt_line(line))
+}
+
+fn leave_lair_kind_forbidden(kind: &str) -> bool {
+    kind.eq_ignore_ascii_case("walk")
+        || kind.eq_ignore_ascii_case("teleport")
+        || kind.eq_ignore_ascii_case("loc")
+        || kind.eq_ignore_ascii_case("yield")
+        || kind.eq_ignore_ascii_case("aborted")
+        || kind.eq_ignore_ascii_case("kbd")
+        || kind.eq_ignore_ascii_case("kbd-lair")
+}
+
+fn leave_lair_kind_ok(kind: &str) -> bool {
+    kind.eq_ignore_ascii_case("walk-near")
+}
+
+fn leave_lair_chebyshev(here: LineOfSightTile, walk_out: LineOfSightTile) -> i32 {
+    (here.x - walk_out.x).abs().max((here.z - walk_out.z).abs())
+}
+
+fn leave_lair_box(here: LineOfSightTile) -> LeaveLairBox {
+    LeaveLairBox {
+        min_x: here.x - LEAVE_LAIR_BOX_PAD,
+        max_x: here.x + LEAVE_LAIR_BOX_PAD,
+        min_z: here.z - LEAVE_LAIR_BOX_PAD,
+        max_z: here.z + LEAVE_LAIR_BOX_PAD,
+        level: here.level,
+    }
+}
+
+fn leave_lair_in_box(tile: LineOfSightTile, area: LeaveLairBox) -> bool {
+    tile.level == area.level
+        && tile.x >= area.min_x
+        && tile.x <= area.max_x
+        && tile.z >= area.min_z
+        && tile.z <= area.max_z
+}
+
+fn leave_lair_forbidden_tile(tile: LineOfSightTile) -> bool {
+    (tile.x == LEAVE_LAIR_EDGEVILLE_X && tile.z == LEAVE_LAIR_EDGEVILLE_Z)
+        || (tile.x == LEAVE_LAIR_VARROCK_X && tile.z == LEAVE_LAIR_VARROCK_Z)
+        || (tile.x == LEAVE_LAIR_KBD_X && tile.z == LEAVE_LAIR_KBD_Z)
+}
+
+fn leave_lair_walk_out_ok(here: LineOfSightTile, walk_out: LineOfSightTile, area: LeaveLairBox) -> bool {
+    here.level == walk_out.level
+        && area == leave_lair_box(here)
+        && leave_lair_in_box(here, area)
+        && !leave_lair_in_box(walk_out, area)
+        && !leave_lair_forbidden_tile(here)
+        && !leave_lair_forbidden_tile(walk_out)
+        && {
+            let d = leave_lair_chebyshev(here, walk_out);
+            d >= LEAVE_LAIR_MIN_CHEB && d <= LEAVE_LAIR_MAX_CHEB
+        }
+}
+
+pub fn leave_lair_baseline_ready(baseline: &Observation) -> bool {
+    baseline.ingame
+        && baseline.scene_state == 2
+        && baseline.leave.available
+        && baseline.leave.here.is_some()
+}
+
+fn leave_lair_receipt_joined(now: &LeaveLairObservation) -> bool {
+    let (Some(here), Some(walk_out), Some(receipt)) = (now.here, now.walk_out, now.receipt.as_ref())
+    else {
+        return false;
+    };
+    let Some(area) = now.area else {
+        return false;
+    };
+    now.available
+        && receipt.here == here
+        && receipt.walk_out == walk_out
+        && now.radius == Some(receipt.radius)
+        && receipt.discriminator.eq_ignore_ascii_case("gateless")
+        && receipt.radius == LEAVE_LAIR_RADIUS
+        && leave_lair_kind_ok(&receipt.kind)
+        && !leave_lair_kind_forbidden(&receipt.kind)
+        && leave_lair_walk_out_ok(here, walk_out, area)
+}
+
+/// Post-Start witness: joined here/walkOut receipt, gateless walk-near radius 3, named stop.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct LeaveLairDeliveryCycle {
+    pub here: Option<LineOfSightTile>,
+    pub walk_out: Option<LineOfSightTile>,
+    pub kind: Option<String>,
+    pub discriminator: Option<String>,
+    pub radius: Option<i32>,
+    pub area: Option<LeaveLairBox>,
+    pub receipt: Option<LeaveLairScriptReceipt>,
+    pub stopped: Option<script::ScriptLifecycleReceipt>,
+}
+
+impl LeaveLairDeliveryCycle {
+    pub fn observe(&mut self, now: &Observation) {
+        if self.receipt.is_some() {
+            return;
+        }
+        if leave_lair_receipt_joined(&now.leave) {
+            self.here = now.leave.here;
+            self.walk_out = now.leave.walk_out;
+            self.kind = now.leave.receipt.as_ref().map(|row| row.kind.clone());
+            self.discriminator = now
+                .leave
+                .receipt
+                .as_ref()
+                .map(|row| row.discriminator.clone());
+            self.radius = now.leave.radius;
+            self.area = now.leave.area;
+            self.receipt = now.leave.receipt.clone();
+        }
+    }
+
+    pub fn observe_script_lifecycle(
+        &mut self,
+        receipt: script::ScriptLifecycleReceipt,
+        expected: &str,
+    ) {
+        if self.receipt.is_some()
+            && receipt.runtime_generation > 0
+            && receipt.state == script::ScriptTerminalState::Stopped
+            && receipt.reason == expected
+        {
+            self.stopped = Some(receipt);
+        }
+    }
+
+    pub fn qualified(&self) -> bool {
+        if self.stopped.is_none() {
+            return false;
+        }
+        let (
+            Some(here),
+            Some(walk_out),
+            Some(kind),
+            Some(discriminator),
+            Some(radius),
+            Some(area),
+            Some(receipt),
+        ) = (
+            self.here,
+            self.walk_out,
+            self.kind.as_deref(),
+            self.discriminator.as_deref(),
+            self.radius,
+            self.area,
+            self.receipt.as_ref(),
+        )
+        else {
+            return false;
+        };
+        receipt.here == here
+            && receipt.walk_out == walk_out
+            && receipt.kind == kind
+            && receipt.discriminator == discriminator
+            && receipt.radius == radius
+            && radius == LEAVE_LAIR_RADIUS
+            && discriminator.eq_ignore_ascii_case("gateless")
+            && leave_lair_kind_ok(kind)
+            && !leave_lair_kind_forbidden(kind)
+            && leave_lair_walk_out_ok(here, walk_out, area)
+    }
+}
+
 fn empty_worn(observation: &Observation) -> bool {
     observation.equipment_ids.values().copied().sum::<i32>() == 0
 }
@@ -4894,6 +5219,7 @@ pub fn validate_case_baseline_with_preparation(
         CoreCase::RetreatSpotV2 => retreat_spot_baseline_ready(baseline),
         CoreCase::WalkSpotV2 => walk_spot_baseline_ready(baseline),
         CoreCase::EnterLairV2 => enter_lair_baseline_ready(baseline),
+        CoreCase::LeaveLairV2 => leave_lair_baseline_ready(baseline),
     };
     if ready {
         return Ok(());
@@ -5271,6 +5597,9 @@ pub fn validate_case_baseline_with_preparation(
         CoreCase::EnterLairV2 => {
             "ingame && scene_state==2 && SceneView.available, here outside the curated box, approach Chebyshev 8-16"
         }
+        CoreCase::LeaveLairV2 => {
+            "ingame && scene_state==2 && SceneView.available, here inside the curated box, walkOut Chebyshev 8-16 walk-near radius 3"
+        }
     };
     Err(format!(
         "{} Start baseline lacks required preparation ({requirement}): {baseline:?}",
@@ -5348,6 +5677,7 @@ pub struct CoreWitness {
     pub retreat_spot_cycle: RetreatSpotDeliveryCycle,
     pub walk_spot_cycle: WalkSpotDeliveryCycle,
     pub enter_lair_cycle: EnterLairDeliveryCycle,
+    pub leave_lair_cycle: LeaveLairDeliveryCycle,
     pub ordered_first_exhausted: bool,
 }
 
@@ -10655,6 +10985,7 @@ impl CoreWitness {
             retreat_spot_cycle: RetreatSpotDeliveryCycle::default(),
             walk_spot_cycle: WalkSpotDeliveryCycle::default(),
             enter_lair_cycle: EnterLairDeliveryCycle::default(),
+            leave_lair_cycle: LeaveLairDeliveryCycle::default(),
             ordered_first_exhausted: false,
         }
     }
@@ -10903,6 +11234,9 @@ impl CoreWitness {
         }
         if matches!(self.case, CoreCase::EnterLairV2) {
             self.enter_lair_cycle.observe(observation);
+        }
+        if matches!(self.case, CoreCase::LeaveLairV2) {
+            self.leave_lair_cycle.observe(observation);
         }
         if matches!(self.case, CoreCase::Superheater) {
             self.superheater_cycle.observe(
@@ -11182,6 +11516,12 @@ impl CoreWitness {
                         .observe_script_lifecycle(receipt, expected);
                 }
             }
+            CoreCase::LeaveLairV2 => {
+                if let Some(expected) = self.case.leave_lair_stop_reason() {
+                    self.leave_lair_cycle
+                        .observe_script_lifecycle(receipt, expected);
+                }
+            }
             _ => {}
         }
     }
@@ -11404,6 +11744,7 @@ impl CoreWitness {
             CoreCase::RetreatSpotV2 => self.retreat_spot_cycle.qualified(),
             CoreCase::WalkSpotV2 => self.walk_spot_cycle.qualified(),
             CoreCase::EnterLairV2 => self.enter_lair_cycle.qualified(),
+            CoreCase::LeaveLairV2 => self.leave_lair_cycle.qualified(),
             CoreCase::ChaosDruid
             | CoreCase::ChaosDruidTower
             | CoreCase::ChaosDruidYanille
@@ -11507,6 +11848,7 @@ impl CoreWitness {
             "retreat_spot_cycle": self.retreat_spot_cycle,
             "walk_spot_cycle": self.walk_spot_cycle,
             "enter_lair_cycle": self.enter_lair_cycle,
+            "leave_lair_cycle": self.leave_lair_cycle,
             "ordered_first_exhausted": self.ordered_first_exhausted,
         }))
     }
@@ -11858,6 +12200,13 @@ impl CoreWatch {
                 CoreWatchState::Running { witness, .. } => witness.case.copies_enter_lair(),
                 CoreWatchState::Disabled | CoreWatchState::Qualified { .. } => false,
             };
+            let copies_leave = match &*state {
+                CoreWatchState::Ready { case, .. } | CoreWatchState::Failed { case, .. } => {
+                    case.copies_leave_lair()
+                }
+                CoreWatchState::Running { witness, .. } => witness.case.copies_leave_lair(),
+                CoreWatchState::Disabled | CoreWatchState::Qualified { .. } => false,
+            };
             let mut observation = Observation::from_snapshot(snapshot, names);
             observation.script_lifecycle = lifecycle;
             observation.guardian = guardian;
@@ -11887,6 +12236,9 @@ impl CoreWatch {
             }
             if copies_enter {
                 observation.attach_enter_lair(snapshot, paint);
+            }
+            if copies_leave {
+                observation.attach_leave_lair(snapshot, paint);
             }
             Self::observe_locked(&mut state, account, observation, session_boundary);
         }
@@ -12012,6 +12364,21 @@ impl CoreWatch {
                 case.copies_enter_lair()
             }
             CoreWatchState::Running { witness, .. } => witness.case.copies_enter_lair(),
+            CoreWatchState::Disabled | CoreWatchState::Qualified { .. } => false,
+        }
+    }
+
+    /// True only for the leave-lair File card. Callers attach paint and
+    /// compact here/walkOut only then.
+    pub fn copies_leave_lair(&self) -> bool {
+        if !self.active.load(Ordering::Acquire) {
+            return false;
+        }
+        match &*self.inner.lock().unwrap() {
+            CoreWatchState::Ready { case, .. } | CoreWatchState::Failed { case, .. } => {
+                case.copies_leave_lair()
+            }
+            CoreWatchState::Running { witness, .. } => witness.case.copies_leave_lair(),
             CoreWatchState::Disabled | CoreWatchState::Qualified { .. } => false,
         }
     }

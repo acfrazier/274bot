@@ -17,10 +17,12 @@ use host_play::catalog_core::{
     ActorObservationSelfTarget, FightFieldNpc, FightFieldObservation, FightFieldScriptReceipt,
     HoldSpotObservation, HoldSpotScriptReceipt, RetreatSpotObservation, RetreatSpotScriptReceipt,
     WalkSpotObservation, WalkSpotScriptReceipt, ACTOR_OBSERVATION_V2_STOP, ENTER_LAIR_V2_STOP,
-    FIGHT_FIELD_V2_STOP, HOLD_SPOT_V2_STOP, RETREAT_SPOT_V2_STOP, WALK_SPOT_V2_STOP,
+    FIGHT_FIELD_V2_STOP, HOLD_SPOT_V2_STOP, LEAVE_LAIR_RECEIPT_PREFIX, LEAVE_LAIR_V2_STOP,
+    RETREAT_SPOT_V2_STOP, WALK_SPOT_V2_STOP,
 };
 use host_play::catalog_core::{
-    EnterLairBox, EnterLairObservation, EnterLairScriptReceipt,
+    EnterLairBox, EnterLairObservation, EnterLairScriptReceipt, LeaveLairBox, LeaveLairObservation,
+    LeaveLairScriptReceipt, parse_leave_lair_receipt_line,
 };
 
 fn thiever_observation() -> Observation {
@@ -3884,4 +3886,298 @@ fn enter_lair_rejects_unready_scene() {
         watch.begin_start("catalogtest").is_err(),
         "missing SceneView cannot start"
     );
+}
+
+fn leave_here() -> LineOfSightTile {
+    LineOfSightTile {
+        x: 3201,
+        z: 3201,
+        level: 0,
+    }
+}
+
+fn leave_walk_out() -> LineOfSightTile {
+    LineOfSightTile {
+        x: 3209,
+        z: 3201,
+        level: 0,
+    }
+}
+
+fn leave_box() -> LeaveLairBox {
+    LeaveLairBox {
+        min_x: 3199,
+        max_x: 3203,
+        min_z: 3199,
+        max_z: 3203,
+        level: 0,
+    }
+}
+
+fn leave_receipt(
+    here: LineOfSightTile,
+    walk_out: LineOfSightTile,
+    kind: &str,
+) -> LeaveLairScriptReceipt {
+    LeaveLairScriptReceipt {
+        here,
+        walk_out,
+        kind: kind.into(),
+        radius: 3,
+        discriminator: "gateless".into(),
+    }
+}
+
+fn leave_ready() -> Observation {
+    let here = leave_here();
+    let mut observation = Observation {
+        ingame: true,
+        scene_state: 2,
+        player: Some("catalogtest".into()),
+        tile: Some((here.x, here.z, here.level)),
+        ..Observation::default()
+    };
+    observation.leave = LeaveLairObservation {
+        available: true,
+        here: Some(here),
+        area: Some(leave_box()),
+        ..LeaveLairObservation::default()
+    };
+    observation
+}
+
+fn leave_joined(mut observation: Observation) -> Observation {
+    observation.tick += 1;
+    let here = leave_here();
+    let walk_out = leave_walk_out();
+    let receipt = leave_receipt(here, walk_out, "walk-near");
+    observation.leave.here = Some(here);
+    observation.leave.walk_out = Some(walk_out);
+    observation.leave.radius = Some(receipt.radius);
+    observation.leave.area = Some(leave_box());
+    observation.leave.receipt = Some(receipt);
+    observation
+}
+
+fn leave_stop(mut observation: Observation, reason: &str) -> Observation {
+    observation.tick += 1;
+    observation.script_lifecycle = Some(script::ScriptLifecycleReceipt {
+        runtime_generation: 1,
+        state: script::ScriptTerminalState::Stopped,
+        tick: observation.tick as u64,
+        reason: reason.into(),
+    });
+    observation
+}
+
+fn leave_with(
+    observation: Observation,
+    walk_out: LineOfSightTile,
+    area: LeaveLairBox,
+    kind: &str,
+) -> Observation {
+    let mut joined = leave_joined(observation);
+    joined.leave.walk_out = Some(walk_out);
+    joined.leave.area = Some(area);
+    if let Some(receipt) = joined.leave.receipt.as_mut() {
+        receipt.walk_out = walk_out;
+        receipt.kind = kind.into();
+    }
+    joined
+}
+
+#[test]
+fn leave_lair_v2_requires_joined_receipt_and_named_stop() {
+    let case = CoreCase::parse("leave_lair_v2_ts").expect("named leave lair cell");
+    assert!(case.copies_leave_lair());
+    assert!(!case.copies_enter_lair());
+    assert!(!case.copies_walk_spot());
+    assert!(!case.copies_hold_spot());
+    assert!(!case.copies_retreat_spot());
+    assert!(!case.copies_fight_field());
+    let watch = CoreWatch::default();
+    watch.configure(case, "catalogtest");
+    let baseline = leave_ready();
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    watch.observe("catalogtest", baseline.clone(), false);
+    assert!(
+        watch.qualify().unwrap_err().contains("incomplete"),
+        "seed-only scene identity must not qualify"
+    );
+    let joined = leave_joined(baseline);
+    watch.observe("catalogtest", joined.clone(), false);
+    assert!(
+        watch.qualify().is_err(),
+        "joined receipt without the named helper stop is incomplete"
+    );
+    watch.observe("catalogtest", leave_stop(joined, LEAVE_LAIR_V2_STOP), false);
+    watch
+        .qualify()
+        .expect("gateless walk-near radius 3 and named stop");
+}
+
+#[test]
+fn leave_lair_rejects_hold_range_kinds_claim_and_forbidden_paint() {
+    let case = CoreCase::parse("leave_lair_v2_ts").expect("named leave lair cell");
+    let baseline = leave_ready();
+
+    let watch = CoreWatch::default();
+    watch.configure(case, "catalogtest");
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    let hold = leave_with(
+        baseline.clone(),
+        LineOfSightTile {
+            x: 3203,
+            z: 3201,
+            level: 0,
+        },
+        leave_box(),
+        "walk-near",
+    );
+    watch.observe("catalogtest", leave_stop(hold, LEAVE_LAIR_V2_STOP), false);
+    assert!(watch.qualify().is_err(), "Chebyshev 2 cannot pass");
+
+    let watch = CoreWatch::default();
+    watch.configure(case, "catalogtest");
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    let twelve = leave_with(
+        baseline.clone(),
+        LineOfSightTile {
+            x: 3213,
+            z: 3201,
+            level: 0,
+        },
+        leave_box(),
+        "walk-near",
+    );
+    watch.observe("catalogtest", leave_stop(twelve, LEAVE_LAIR_V2_STOP), false);
+    watch
+        .qualify()
+        .expect("Chebyshev 12 must not copy Walk's > 12 gate");
+
+    for kind in ["walk", "teleport", "loc", "yield", "aborted", "kbd"] {
+        let watch = CoreWatch::default();
+        watch.configure(case, "catalogtest");
+        watch.observe("catalogtest", baseline.clone(), false);
+        watch.begin_start("catalogtest").unwrap();
+        let forged = leave_stop(
+            leave_with(baseline.clone(), leave_walk_out(), leave_box(), kind),
+            LEAVE_LAIR_V2_STOP,
+        );
+        watch.observe("catalogtest", forged, false);
+        assert!(watch.qualify().is_err(), "{kind} cannot pass");
+    }
+
+    let watch = CoreWatch::default();
+    watch.configure(case, "catalogtest");
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    watch.observe(
+        "catalogtest",
+        leave_stop(baseline.clone(), LEAVE_LAIR_V2_STOP),
+        false,
+    );
+    assert!(watch.qualify().is_err(), "missing receipt cannot pass");
+
+    let here = leave_here();
+    let walk_out = leave_walk_out();
+    let ok = format!(
+        "{LEAVE_LAIR_RECEIPT_PREFIX}{{\"here\":{{\"x\":{},\"z\":{},\"level\":0}},\"walkOut\":{{\"x\":{},\"z\":{},\"level\":0}},\"kind\":\"walk-near\",\"radius\":3,\"discriminator\":\"gateless\"}}",
+        here.x, here.z, walk_out.x, walk_out.z
+    );
+    assert!(parse_leave_lair_receipt_line(&ok).is_some());
+    assert!(parse_leave_lair_receipt_line(&format!("{ok} !inArea")).is_none());
+    assert!(parse_leave_lair_receipt_line(
+        &ok.replace("\"radius\":3", "\"radius\":3,\"inArea\":false")
+    )
+    .is_none());
+    assert!(parse_leave_lair_receipt_line(
+        &ok.replace("\"radius\":3", "\"radius\":3,\"key\":\"kbd-lair\"")
+    )
+    .is_none());
+    assert!(parse_leave_lair_receipt_line(&ok.replace("\"radius\":3", "\"radius\":3,\"locId\":1765"))
+        .is_none());
+    assert!(parse_leave_lair_receipt_line(
+        &ok.replace("\"radius\":3", "\"radius\":3,\"allow_teleports\":false")
+    )
+    .is_none());
+}
+
+#[test]
+fn leave_lair_rejects_wrong_stop_box_and_forbidden_tiles() {
+    let case = CoreCase::parse("leave_lair_v2_ts").expect("named leave lair cell");
+    let baseline = leave_ready();
+
+    let watch = CoreWatch::default();
+    watch.configure(case, "catalogtest");
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    let joined = leave_joined(baseline.clone());
+    watch.observe("catalogtest", joined.clone(), false);
+    watch.observe("catalogtest", leave_stop(joined, "some other stop"), false);
+    assert!(watch.qualify().is_err(), "wrong named stop cannot pass");
+
+    let watch = CoreWatch::default();
+    watch.configure(case, "catalogtest");
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    let outside_here = LeaveLairBox {
+        min_x: 4000,
+        max_x: 4010,
+        min_z: 4000,
+        max_z: 4010,
+        level: 0,
+    };
+    let outside = leave_with(baseline.clone(), leave_walk_out(), outside_here, "walk-near");
+    watch.observe("catalogtest", leave_stop(outside, LEAVE_LAIR_V2_STOP), false);
+    assert!(watch.qualify().is_err(), "here outside the box cannot pass");
+
+    let watch = CoreWatch::default();
+    watch.configure(case, "catalogtest");
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    let contains_out = LeaveLairBox {
+        min_x: 3100,
+        max_x: 3300,
+        min_z: 3100,
+        max_z: 3300,
+        level: 0,
+    };
+    let inside_out = leave_with(baseline.clone(), leave_walk_out(), contains_out, "walk-near");
+    watch.observe("catalogtest", leave_stop(inside_out, LEAVE_LAIR_V2_STOP), false);
+    assert!(watch.qualify().is_err(), "walkOut inside the box cannot pass");
+
+    let watch = CoreWatch::default();
+    watch.configure(case, "catalogtest");
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    let mut edge = leave_joined(baseline);
+    let edgeville = LineOfSightTile {
+        x: 3094,
+        z: 3493,
+        level: 0,
+    };
+    edge.tile = Some((edgeville.x, edgeville.z, edgeville.level));
+    edge.leave.here = Some(edgeville);
+    edge.leave.area = Some(LeaveLairBox {
+        min_x: edgeville.x - 2,
+        max_x: edgeville.x + 2,
+        min_z: edgeville.z - 2,
+        max_z: edgeville.z + 2,
+        level: 0,
+    });
+    edge.leave.walk_out = Some(LineOfSightTile {
+        x: edgeville.x + 8,
+        z: edgeville.z,
+        level: 0,
+    });
+    if let Some(receipt) = edge.leave.receipt.as_mut() {
+        receipt.here = edgeville;
+        receipt.walk_out = edge.leave.walk_out.unwrap();
+    }
+    watch.observe("catalogtest", leave_stop(edge, LEAVE_LAIR_V2_STOP), false);
+    assert!(watch.qualify().is_err(), "Edgeville cannot pass");
 }

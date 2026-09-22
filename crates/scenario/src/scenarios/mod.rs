@@ -1,5 +1,6 @@
 pub(crate) mod actor_observation;
 pub(crate) mod enter_lair;
+pub(crate) mod leave_lair;
 pub(crate) mod fight_field;
 pub(crate) mod hold_spot;
 pub(crate) mod retreat_spot;
@@ -18,6 +19,7 @@ pub(crate) mod shop;
 
 pub(crate) use actor_observation::actor_observation_v2_scenario;
 pub(crate) use enter_lair::enter_lair_v2_scenario;
+pub(crate) use leave_lair::leave_lair_v2_scenario;
 pub(crate) use fight_field::fight_field_v2_scenario;
 pub(crate) use hold_spot::hold_spot_v2_scenario;
 pub(crate) use retreat_spot::retreat_spot_v2_scenario;

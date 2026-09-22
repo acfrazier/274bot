@@ -85,6 +85,7 @@ const REGISTRY: &[Entry] = &[
     Entry::new("retreat_spot_v2_ts", scenarios::retreat_spot_v2_scenario),
     Entry::new("walk_spot_v2_ts", scenarios::walk_spot_v2_scenario),
     Entry::new("enter_lair_v2_ts", scenarios::enter_lair_v2_scenario),
+    Entry::new("leave_lair_v2_ts", scenarios::leave_lair_v2_scenario),
     Entry::new("bone_burier", scenarios::bone_burier_scenario),
     Entry::new("lamp_redemption", scenarios::lamp_redemption_scenario),
     Entry::new("bone_burier_v2_ts", bone_burier_v2_ts_scenario),

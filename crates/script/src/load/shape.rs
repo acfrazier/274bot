@@ -318,7 +318,8 @@ pub fn live_example_path(file_name: &str) -> Option<PathBuf> {
         | "hold_spot_v2.ts"
         | "retreat_spot_v2.ts"
         | "walk_spot_v2.ts"
-        | "enter_lair_v2.ts" => {
+        | "enter_lair_v2.ts"
+        | "leave_lair_v2.ts" => {
             let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                 .join("examples")
                 .join(file_name);
@@ -910,5 +911,29 @@ mod tests {
         assert!(v2.ends_with("enter_lair_v2.ts"), "{}", v2.display());
         assert!(live_example_path("enter_lair_v2").is_none());
         assert!(live_example_path("EnterLair.ts").is_none());
+    }
+
+    #[test]
+    fn leave_lair_qualification_example_is_an_exact_file_card() {
+        let v2 = live_example_path("leave_lair_v2.ts").expect("checked-in leave lair v2 example");
+        assert!(v2.ends_with("leave_lair_v2.ts"), "{}", v2.display());
+        assert!(live_example_path("leave_lair_v2").is_none());
+        assert!(live_example_path("LeaveLair.ts").is_none());
+        let source = std::fs::read_to_string(&v2).expect("leave lair source");
+        assert!(source.contains("leave lair qualification complete"));
+        assert!(source.contains("leave-lair-receipt:"));
+        assert!(source.contains("leaveBegin"));
+        assert!(source.contains("leaveNext"));
+        assert!(source.contains("walk-near"));
+        assert!(!source.contains("leaveLair"));
+        assert!(!source.contains("scene_state"));
+        assert!(!source.contains("allow_teleports"));
+        assert!(!source.contains("allow_wilderness"));
+        assert!(!source.contains("allow_bank_fetch"));
+        assert!(!source.contains("kbd-lair"));
+        assert!(!source.contains("1765"));
+        assert!(!source.contains("1766"));
+        assert!(!source.contains("1816"));
+        assert!(!source.contains("1817"));
     }
 }
