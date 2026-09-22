@@ -131,6 +131,8 @@ pub mod hunt_key;
 #[cfg(feature = "load")]
 pub mod hunt_cell;
 #[cfg(feature = "load")]
+pub mod hunt_bank;
+#[cfg(feature = "load")]
 mod shop;
 #[cfg(feature = "load")]
 mod supply_v2;

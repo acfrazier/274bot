@@ -1068,3 +1068,217 @@ export async function acquireKey(host, site) {
         }
     }
 }
+
+function bankCall(payload) {
+    const fn = globalThis.rustyscript && globalThis.rustyscript.functions
+        ? globalThis.rustyscript.functions.__rs2b0t_bank
+        : undefined;
+    if (typeof fn !== 'function') {
+        throw notImpl('bank');
+    }
+    return fn(payload);
+}
+
+function bankProjection(host, site, opts) {
+    const item = site.keyItem;
+    const out = {
+        key: site.key,
+        bank: tile(site.bank),
+        keyItem: item == null ? null : item,
+        boxes: site.boxes || [],
+        fireAtRange: site.fireAtRange === true,
+        withdrawFood: !!(opts && opts.withdrawFood === true),
+        wear: (opts && opts.wear) || [],
+        carry: (opts && opts.carry) || [],
+        hasLeave: !!(opts && typeof opts.leave === 'function'),
+        hasPickWeapon: typeof host.pickWeapon === 'function',
+        foodName: typeof host.foodName === 'function' ? host.foodName() : '',
+        foodWant: typeof host.foodWithdraw === 'function' ? host.foodWithdraw() : 0,
+        style: typeof host.style === 'function' ? host.style() : '',
+        weapon: typeof host.weaponName === 'function' ? host.weaponName() : '',
+        ammo: typeof host.ammoName === 'function' ? host.ammoName() : '',
+        spell: typeof host.spellName === 'function' ? host.spellName() : '',
+        keepExtra: typeof host.keepExtra === 'function' ? host.keepExtra() : [],
+        runes: (opts && opts.runes) || [],
+        escapeRunes: (opts && opts.escapeRunes) || [],
+        flasks: (opts && opts.flasks) || [],
+    };
+    if (opts && opts.healTo != null) out.healTo = opts.healTo;
+    if (site.coins != null) out.coins = site.coins;
+    if (opts && opts.ammo != null) out.ammoWant = opts.ammo;
+    if (site.route) out.route = site.route;
+    if (site.outLever) out.outLever = site.outLever;
+    if (site.upLadder) out.upLadder = site.upLadder;
+    return out;
+}
+
+function beginBankWalk(step, radius) {
+    const walkFn = globalThis.rustyscript && globalThis.rustyscript.functions
+        ? globalThis.rustyscript.functions.__rs2b0t_walk
+        : undefined;
+    if (typeof walkFn !== 'function') {
+        throw notImpl('walk');
+    }
+    return walkFn({
+        op: 'begin',
+        x: step.x,
+        z: step.z,
+        level: step.level,
+        radius,
+        allow_teleports: false,
+        allow_wilderness: false,
+        allow_bank_fetch: false,
+    });
+}
+
+async function driveSiteBankOpen() {
+    const fn = globalThis.rustyscript && globalThis.rustyscript.functions
+        ? globalThis.rustyscript.functions.__rs2b0t_bank_open
+        : undefined;
+    if (typeof fn !== 'function') {
+        throw notImpl('bank-open');
+    }
+    let step = fn({
+        op: 'begin',
+        mode: 'open-nearest',
+        stand: null,
+        booth_name: 'Bank booth',
+        booth_action: 'Use-quickly',
+    });
+    const token = step && step.token;
+    while (step && step.kind !== 'done' && step.kind !== 'aborted') {
+        if (step.kind === 'walk-near' || step.kind === 'open-booth') {
+            queue({
+                op: step.kind,
+                x: step.x,
+                z: step.z,
+                level: step.level,
+                radius: step.radius,
+                id: step.id,
+                name: step.name,
+                action: step.action,
+                allow_teleports: step.allow_teleports === true,
+                allow_wilderness: step.allow_wilderness === true,
+                allow_bank_fetch: step.allow_bank_fetch === true,
+            });
+        } else if (step.kind !== 'wait') {
+            return false;
+        }
+        let next = null;
+        await Execution.delayUntil(() => {
+            next = fn({ op: 'next', token });
+            return next?.kind !== 'wait';
+        }, 0);
+        step = next;
+    }
+    return !!(step && step.kind === 'done' && step.ok === true);
+}
+
+export async function bankRoutine(host, site, opts) {
+    const started = bankCall({ op: 'begin' });
+    if (!started || started.kind === 'aborted' || started.kind === 'notImpl') {
+        return false;
+    }
+    const token = started.token;
+    let reply = null;
+    for (;;) {
+        const step = bankCall({
+            op: 'next',
+            token,
+            reply,
+            ...bankProjection(host, site, opts),
+        });
+        reply = null;
+        if (!step || step.kind === 'aborted' || step.kind === 'notImpl') {
+            return false;
+        }
+        if (step.kind === 'yield') {
+            return step.value === true;
+        }
+        switch (step.kind) {
+            case 'log':
+                host.log?.(step.message);
+                break;
+            case 'status':
+                host.setStatus?.(step.message);
+                break;
+            case 'leave': {
+                const leave = opts && typeof opts.leave === 'function' ? opts.leave : leaveLair;
+                reply = { left: (await leave(host, site)) === true };
+                break;
+            }
+            case 'walk-near': {
+                const radius = Number(step.radius);
+                const walkToken = beginBankWalk(step, radius);
+                queue({
+                    op: 'walk-near',
+                    x: step.x,
+                    z: step.z,
+                    level: step.level,
+                    radius,
+                    request_id: walkToken,
+                    allow_teleports: false,
+                    allow_wilderness: false,
+                    allow_bank_fetch: false,
+                });
+                reply = { queued: true, walkToken };
+                break;
+            }
+            case 'bank-open':
+                reply = { opened: await driveSiteBankOpen() };
+                break;
+            case 'pick-weapon':
+                host.pickWeapon?.(step.names || []);
+                break;
+            case 'deposit':
+                queue({ op: 'deposit', name: step.name });
+                reply = { queued: true };
+                break;
+            case 'withdraw':
+                queue({ op: 'withdraw', name: step.name, action: step.action });
+                reply = { queued: true };
+                break;
+            case 'withdraw-x':
+                queue({
+                    op: 'withdraw-x',
+                    name: step.name,
+                    count: step.count,
+                    bank_item_id: step.bank_item_id,
+                    lands_as_id: step.lands_as_id,
+                    action: step.action,
+                    bank_generation: step.bank_generation,
+                });
+                reply = { queued: true };
+                break;
+            case 'wear':
+                queue({ op: 'wear', name: step.name });
+                reply = { queued: true };
+                break;
+            case 'held':
+                queue({ op: 'held', name: step.name, action: step.action });
+                reply = { queued: true };
+                break;
+            case 'close':
+                queue({ op: 'close' });
+                reply = { queued: true };
+                break;
+            case 'park':
+                host.parkFor?.(step.reason);
+                break;
+            case 'count-bank-trip':
+                host.countBankTrip?.();
+                break;
+            case 'sustain':
+                await Sustain.run();
+                break;
+            case 'delay-ticks':
+                await Execution.delayTicks(Number(step.n) || 1);
+                break;
+            case 'wait':
+                await Execution.delayTicks(1);
+                break;
+            default:
+                return false;
+        }
+    }
+}
