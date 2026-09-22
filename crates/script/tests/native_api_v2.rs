@@ -1228,3 +1228,40 @@ export function tick(api) {
     assert_ne!(unexpected["status"], "done");
     iso.join();
 }
+
+#[test]
+fn v2_gather_methods_are_named_sync_helper_results_not_a_namespace() {
+    let src = r#"
+export const apiVersion = 2;
+export function tick(api) {
+  const methods = api.gatherMethods({ skill: 'woodcutting' });
+  const resource = api.gatherResource({ name: 'limestone' });
+  globalThis.__probe = {
+    methodsOk: methods.ok,
+    methodsThen: typeof methods.then,
+    resourceLen: resource.value && resource.value.rows.length,
+    namespace: api.gather,
+    bestAxe: typeof api.bestAxe,
+    bestPickaxe: typeof api.bestPickaxe,
+  };
+}
+"#;
+    let data = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
+    let iso = LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data)
+        .unwrap();
+    post_base(&iso, 1);
+    iso.on_game_tick(1);
+    let probe = iso.probe("globalThis.__probe").unwrap();
+    assert_eq!(probe["methodsOk"], true, "{probe:?}");
+    assert_eq!(probe["methodsThen"], "undefined", "{probe:?}");
+    assert_eq!(probe["resourceLen"], 3, "{probe:?}");
+    assert!(probe["namespace"].is_null(), "{probe:?}");
+    assert_eq!(probe["bestAxe"], "undefined", "{probe:?}");
+    assert_eq!(probe["bestPickaxe"], "undefined", "{probe:?}");
+    let interacts = iso.drain_interacts();
+    iso.join();
+    assert!(
+        interacts.is_empty(),
+        "gather query must not push interact: {interacts:?}"
+    );
+}

@@ -153,6 +153,27 @@ integration; the Rust fact module is shared when that lands.
 
 Example: `crates/script/examples/supply_helpers_v2.ts`.
 
+## Gather query helpers
+
+Two sync `HelperResult` methods over the selected pin's gather-methods family.
+They are not Promises, not `request()` ops, and they do not push `h.interact`.
+`bestAxe` and `bestPickaxe` stay `notImpl`.
+
+| Method | OK | Errors |
+| --- | --- | --- |
+| `gatherMethods(input?)` | `{ rows, coverage }` | `invalid-args`, `missing-selected-data`, `family-unavailable:gather_methods`, `unknown-skill` |
+| `gatherResource({ name })` | `{ rows }` | `invalid-args`, `missing-selected-data`, `family-unavailable:gather_methods`, `unknown-resource` |
+
+`gatherMethods()` and `gatherMethods({})` omit the skill. Accepted skills, after
+trim and ASCII case-fold, are only `woodcutting`, `mining`, and `fishing`. A
+skill filter keeps that bucket's order and does not filter coverage. Coverage
+is the loaded pin's full array, beside `rows`. `gatherResource` matches
+`resource_key` only (trim, ASCII case-insensitive). One match is `rows` of
+length 1. Zero matches is `unknown-resource`, not `{ rows: [] }`. Loc ids stay
+`{ alias, id }`. Fishing rows have no loc ids.
+
+Example: `crates/script/examples/gather_methods_v2.ts`.
+
 ## Loadout and potion helpers
 
 Eight sync `HelperResult` methods. They recommend food, worn names, carry

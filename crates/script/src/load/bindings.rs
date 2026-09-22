@@ -924,6 +924,7 @@ pub(super) fn wire_runtime(
         .map_err(|e| format!("shim: {e}"))?;
     super::buyout_plan::install(runtime).map_err(|e| format!("buyout plan: {e}"))?;
     super::supply_v8::install(runtime).map_err(|e| format!("supply v8: {e}"))?;
+    super::gather_methods_v8::install(runtime).map_err(|e| format!("gather methods v8: {e}"))?;
     super::loadout_v8::install(runtime).map_err(|e| format!("loadout v8: {e}"))?;
     super::line_of_sight::install(runtime).map_err(|e| format!("line of sight: {e}"))?;
     super::paint_chrome::install(runtime).map_err(|e| format!("paint chrome: {e}"))?;
@@ -1309,6 +1310,25 @@ api.escapeRunesFor = function (input) {
     return helperErr('invalid-args');
   }
   return supplyV2('escapeRunesFor', input);
+};
+function gatherV2(op, input) {
+  return globalThis.__rs2b0t_gather_methods_v2(op, input);
+}
+api.gatherMethods = function (input) {
+  if (arguments.length === 0) return gatherV2('gatherMethods', {});
+  if (input == null || typeof input !== 'object' || Array.isArray(input)) {
+    return helperErr('invalid-args');
+  }
+  if (Object.prototype.hasOwnProperty.call(input, 'skill') && typeof input.skill !== 'string') {
+    return helperErr('invalid-args');
+  }
+  return gatherV2('gatherMethods', input);
+};
+api.gatherResource = function (input) {
+  if (input == null || typeof input !== 'object' || typeof input.name !== 'string') {
+    return helperErr('invalid-args');
+  }
+  return gatherV2('gatherResource', input);
 };
 function loadoutV2(op, input) {
   return globalThis.__rs2b0t_loadout_v2(op, input);

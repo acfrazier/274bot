@@ -8,6 +8,7 @@ pub mod cake_stall;
 pub mod content;
 pub mod ent;
 pub mod game_data;
+pub mod gather_methods;
 pub mod gather_tools;
 pub mod interact;
 pub mod line_of_sight;

@@ -485,6 +485,52 @@ export interface RangeLoadout {
   thrown: boolean;
 }
 
+export interface GatherId {
+  alias: string;
+  id: number;
+}
+
+/** Loc-resource method row. publication is null when the landed row has none. */
+export interface GatherLocResourceRow {
+  skill: string;
+  table: string;
+  resource_key: string;
+  loc_ids: GatherId[];
+  empty_ids: GatherId[];
+  output: GatherId | null;
+  level: number;
+  qualification: string;
+  partial_sides: string[];
+  missing_transform: string[];
+  publication: string | null;
+}
+
+/** Fishing method row. No loc ids and no spawn tile. */
+export interface GatherFishingRow {
+  skill: string;
+  category: string;
+  primary_op: string;
+  pair_op: string | null;
+  level: null;
+  output: null;
+  qualification: string;
+  partial_sides: string[];
+}
+
+export type GatherMethodRow = GatherLocResourceRow | GatherFishingRow;
+
+/** Coverage beside method rows. Not a resource hit. */
+export interface GatherCoverageRecord {
+  class: string;
+  table?: string;
+  resource_key?: string;
+  alias?: string;
+  on_revision?: number;
+  other_pin_id?: number;
+  copied?: boolean;
+  reason: string;
+}
+
 /** Public JS API v2 handle. Explicit `export const apiVersion = 2` only. */
 export interface NativeApi {
   readonly tick: number;
@@ -517,6 +563,10 @@ export interface NativeApi {
   combatKeepNames(input: { food: string; style?: string; spell?: string; ammo?: string; weapon?: string; extra?: string[] }): HelperResult<string[]>;
   runesPerCast(input: { spellName: string; wielded: string[] }): HelperResult<Array<{ rune: string; count: number }> | null>;
   escapeRunesFor(input: { id: string }): HelperResult<{ runes: Array<{ rune: string; count: number }>; level: number; label: string }>;
+  /** Sync fact read. Omitted input or `{}` omits the skill. Not a Promise and not a request op. */
+  gatherMethods(input?: { skill?: string }): HelperResult<{ rows: GatherMethodRow[]; coverage: GatherCoverageRecord[] }>;
+  /** Sync resource-key read. Zero matches is unknown-resource, not an empty rows list. */
+  gatherResource(input: { name: string }): HelperResult<{ rows: GatherLocResourceRow[] }>;
   foodOf(input: { loadout: LoadoutInput | null; fallback: string }): HelperResult<string>;
   gearOf(input: { loadout: LoadoutInput | null }): HelperResult<string[]>;
   suppliesOf(input: { loadout: LoadoutInput | null }): HelperResult<Array<{ item: string; qty: number }>>;
@@ -558,6 +608,9 @@ export interface NativeApi {
   cellBegin(input?: object): HelperResult<{ token: number }>;
   /** One effect per call. Yield is status done with kind yield and a boolean value. Aborted is ok false, not FightStep. */
   cellNext(input: { token: number; reply?: unknown } & Record<string, unknown>): CellStep;
+  bankBegin(input?: object): HelperResult<{ token: number }>;
+  /** One effect per call. Yield is status done with kind yield and a boolean value. Aborted is ok false, not FightStep. */
+  bankNext(input: { token: number; reply?: unknown } & Record<string, unknown>): BankStep;
 }
 
 export type FightStep =
@@ -596,6 +649,11 @@ export type KeyStep =
   | { ok: false; error: string; kind: 'aborted'; token: number; status: 'aborted' }
   | { ok: false; error: string };
 export type CellStep =
+  | { ok: true; status: 'continue'; token: number; kind: string }
+  | { ok: true; status: 'done'; token: number; kind: 'yield'; value: boolean }
+  | { ok: false; error: string; kind: 'aborted'; token: number; status: 'aborted' }
+  | { ok: false; error: string };
+export type BankStep =
   | { ok: true; status: 'continue'; token: number; kind: string }
   | { ok: true; status: 'done'; token: number; kind: 'yield'; value: boolean }
   | { ok: false; error: string; kind: 'aborted'; token: number; status: 'aborted' }
