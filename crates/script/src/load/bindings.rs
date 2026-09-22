@@ -925,6 +925,7 @@ pub(super) fn wire_runtime(
     super::buyout_plan::install(runtime).map_err(|e| format!("buyout plan: {e}"))?;
     super::supply_v8::install(runtime).map_err(|e| format!("supply v8: {e}"))?;
     super::gather_methods_v8::install(runtime).map_err(|e| format!("gather methods v8: {e}"))?;
+    super::quest_facts_v8::install(runtime).map_err(|e| format!("quest facts v8: {e}"))?;
     super::loadout_v8::install(runtime).map_err(|e| format!("loadout v8: {e}"))?;
     super::line_of_sight::install(runtime).map_err(|e| format!("line of sight: {e}"))?;
     super::paint_chrome::install(runtime).map_err(|e| format!("paint chrome: {e}"))?;
@@ -1329,6 +1330,29 @@ api.gatherResource = function (input) {
     return helperErr('invalid-args');
   }
   return gatherV2('gatherResource', input);
+};
+function questV2(op, input) {
+  return globalThis.__rs2b0t_quest_facts_v2(op, input);
+}
+api.questIdentity = function (input) {
+  if (arguments.length === 0) return helperErr('invalid-args');
+  if (input == null || typeof input !== 'object' || Array.isArray(input)) {
+    return helperErr('invalid-args');
+  }
+  const hasName = Object.prototype.hasOwnProperty.call(input, 'name');
+  const hasId = Object.prototype.hasOwnProperty.call(input, 'id');
+  if (hasName === hasId) return helperErr('invalid-args');
+  if (hasName && typeof input.name !== 'string') return helperErr('invalid-args');
+  if (hasId && typeof input.id !== 'string') return helperErr('invalid-args');
+  return questV2('questIdentity', input);
+};
+api.questPrereqs = function (input) {
+  if (arguments.length === 0) return helperErr('invalid-args');
+  if (input == null || typeof input !== 'object' || Array.isArray(input)) {
+    return helperErr('invalid-args');
+  }
+  if (typeof input.id !== 'string') return helperErr('invalid-args');
+  return questV2('questPrereqs', input);
 };
 function loadoutV2(op, input) {
   return globalThis.__rs2b0t_loadout_v2(op, input);

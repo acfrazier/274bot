@@ -87,6 +87,14 @@ fn host_js_dts_includes_required_interfaces() {
         "gatherResource(input: { name: string }): HelperResult<{ rows: GatherLocResourceRow[] }>"
     ));
     assert!(!src.contains("gatherMethods(input?: { skill?: string }): Promise"));
+    assert!(src.contains(
+        "questIdentity(input: { name: string } | { id: string }): HelperResult<QuestIdentityRow>"
+    ));
+    assert!(src.contains(
+        "questPrereqs(input: { id: string; name?: string }): HelperResult<QuestRequirements>"
+    ));
+    assert!(!src.contains("questIdentity(input: { name: string } | { id: string }): Promise"));
+    assert!(!src.contains("questPrereqs(input: { id: string; name?: string }): Promise"));
     assert!(src.contains("export interface LoadoutInput"));
     assert!(src.contains("export interface PotionPlan"));
     assert!(src.contains("foodOf(input: { loadout: LoadoutInput | null; fallback: string })"));

@@ -1265,3 +1265,58 @@ export function tick(api) {
         "gather query must not push interact: {interacts:?}"
     );
 }
+
+#[test]
+fn v2_quest_facts_are_named_sync_helper_results_not_request_ops() {
+    let bindings = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/load/bindings.rs"));
+    let ops = bindings
+        .split("const V2_OPS")
+        .nth(1)
+        .unwrap()
+        .split("const OPTIONAL")
+        .next()
+        .unwrap();
+    assert!(!ops.contains("questIdentity"), "{ops}");
+    assert!(!ops.contains("questPrereqs"), "{ops}");
+    let src = r#"
+export const apiVersion = 2;
+export function tick(api) {
+  const row = api.questIdentity({ id: 'death' });
+  let requested = null;
+  try { api.request({ op: 'questIdentity' }); requested = 'ok'; }
+  catch (e) { requested = String(e && (e.message || e)); }
+  globalThis.__probe = {
+    rowOk: row.ok,
+    rowThen: typeof row.then,
+    varp: row.value && row.value.varp,
+    rows: row.value && row.value.rows,
+    namespace: api.quest,
+    requested,
+  };
+}
+"#;
+    let data = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
+    let iso = LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data)
+        .unwrap();
+    post_base(&iso, 1);
+    iso.on_game_tick(1);
+    let probe = iso.probe("globalThis.__probe").unwrap();
+    assert_eq!(probe["rowOk"], true, "{probe:?}");
+    assert_eq!(probe["rowThen"], "undefined", "{probe:?}");
+    assert_eq!(probe["varp"], "death_equiproom", "{probe:?}");
+    assert!(probe["rows"].is_null(), "{probe:?}");
+    assert!(probe["namespace"].is_null(), "{probe:?}");
+    assert!(
+        probe["requested"]
+            .as_str()
+            .unwrap_or("")
+            .contains("not impl"),
+        "{probe:?}"
+    );
+    let interacts = iso.drain_interacts();
+    iso.join();
+    assert!(
+        interacts.is_empty(),
+        "quest query must not push interact: {interacts:?}"
+    );
+}

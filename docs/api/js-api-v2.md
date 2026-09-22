@@ -174,6 +174,34 @@ length 1. Zero matches is `unknown-resource`, not `{ rows: [] }`. Loc ids stay
 
 Example: `crates/script/examples/gather_methods_v2.ts`.
 
+## Quest query helpers
+
+Two sync `HelperResult` methods over the selected pin's quest-identity family.
+They are not Promises, not `request()` ops, and they do not read varp 101.
+Both methods read `quest_identity` only. There is no second writer field.
+
+| Method | OK | Errors |
+| --- | --- | --- |
+| `questIdentity({ name } \| { id })` | landed row | `invalid-args`, `missing-selected-data`, `family-unavailable:quest_identity`, `unknown-quest` |
+| `questPrereqs({ id })` | requirements object | `invalid-args`, `missing-selected-data`, `family-unavailable:quest_prereqs`, `unknown-quest` |
+
+`questIdentity` takes exactly one of `name` or `id`, and it must be a string.
+`questIdentity()` and `questIdentity({})` are `invalid-args`, not a six-row dump.
+Neither, both, a non-object, a non-string, or an array is `invalid-args`. A
+number is `invalid-args`. A blank or whitespace-only string is `unknown-quest`
+after the family check. `id` matches the seed id only (trim, ASCII
+case-insensitive). `name` matches `display` only. One match is the row object,
+not `{ rows }` of length 1. Fields stay `id`, `component`, `display`, `varp`,
+`varp_id`, `complete`, `quest_points`, `unknown_sides`, and `requirements`.
+`complete` is the number. `quest_points` is the static constant.
+
+`questPrereqs` requires a string `id`. A `name` field is not a key. An extra
+`name` is ignored. The value is the requirements object only. All six stay
+`partial`. Empty `mustHave` is still `ok: true` with `qualification: "partial"`
+and `unknown_as_satisfied: false`. Items stay script aliases.
+
+Example: `crates/script/examples/quest_facts_v2.ts`.
+
 ## Loadout and potion helpers
 
 Eight sync `HelperResult` methods. They recommend food, worn names, carry

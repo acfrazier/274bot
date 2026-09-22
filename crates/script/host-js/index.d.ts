@@ -531,6 +531,39 @@ export interface GatherCoverageRecord {
   reason: string;
 }
 
+export interface QuestSkillGate {
+  skill: string;
+  level: number;
+}
+
+export interface QuestItemAlias {
+  alias: string;
+  quantity: number | null;
+  kind: string;
+}
+
+/** Requirements on the identity row. Qualification stays partial. */
+export interface QuestRequirements {
+  qualification: string;
+  skills: QuestSkillGate[];
+  items: QuestItemAlias[];
+  empty_must_have: boolean;
+  unknown_as_satisfied: boolean;
+}
+
+/** Landed identity row. complete is the constant, not a range. */
+export interface QuestIdentityRow {
+  id: string;
+  component: string;
+  display: string;
+  varp: string;
+  varp_id: number;
+  complete: number;
+  quest_points: number;
+  unknown_sides: string[];
+  requirements: QuestRequirements;
+}
+
 /** Public JS API v2 handle. Explicit `export const apiVersion = 2` only. */
 export interface NativeApi {
   readonly tick: number;
@@ -567,6 +600,10 @@ export interface NativeApi {
   gatherMethods(input?: { skill?: string }): HelperResult<{ rows: GatherMethodRow[]; coverage: GatherCoverageRecord[] }>;
   /** Sync resource-key read. Zero matches is unknown-resource, not an empty rows list. */
   gatherResource(input: { name: string }): HelperResult<{ rows: GatherLocResourceRow[] }>;
+  /** Sync fact read. Exactly one of name or id, and it must be a string. Not a Promise and not a request op. */
+  questIdentity(input: { name: string } | { id: string }): HelperResult<QuestIdentityRow>;
+  /** Sync seed-id requirements read. A name field is not a key. Not a Promise and not a request op. */
+  questPrereqs(input: { id: string; name?: string }): HelperResult<QuestRequirements>;
   foodOf(input: { loadout: LoadoutInput | null; fallback: string }): HelperResult<string>;
   gearOf(input: { loadout: LoadoutInput | null }): HelperResult<string[]>;
   suppliesOf(input: { loadout: LoadoutInput | null }): HelperResult<Array<{ item: string; qty: number }>>;
