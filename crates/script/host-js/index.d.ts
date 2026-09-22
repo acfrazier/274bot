@@ -650,6 +650,12 @@ export interface NativeApi {
   sceneNpcs(input: { types: number[]; actions: string[]; limit: number; region?: SceneRegionInput }): HelperResult<SceneProjection>;
   /** Sync posted-tab status copy. A missing page is snapshot-unavailable and a null tab is quest-tab-unbound. Not a Promise and not a request op. */
   questStatus(input: { name: string }): HelperResult<{ status: 'notStarted' | 'inProgress' | 'complete' | 'unknown'; as_of_sequence: number }>;
+  /** Sync owned-root begin. One `if-button` per token on the posted row id, enqueued synchronously after a generation check. Not a Promise and not a request op; a refusal is `{ ok: false, error }`. */
+  questJournalBegin(input: { name: string }): HelperResult<{ token: number }>;
+  /** Sync owned-root next. Not-done is `{ pending: true }` (no `ok` field) — not empty lines. Not a Promise. */
+  questJournalNext(input: { token: number }): HelperResult<{ lines: string[]; root: number; as_of_sequence: number }>;
+  /** Sync owned-root close. One `close-modal` only while the latest pair is still the acquired root and texts. Not-done is `{ pending: true }` (no `ok` field). Not a Promise; never returns journal lines. */
+  questJournalClose(input: { token: number }): HelperResult<{ closed: true; as_of_sequence: number }>;
   foodOf(input: { loadout: LoadoutInput | null; fallback: string }): HelperResult<string>;
   gearOf(input: { loadout: LoadoutInput | null }): HelperResult<string[]>;
   suppliesOf(input: { loadout: LoadoutInput | null }): HelperResult<Array<{ item: string; qty: number }>>;

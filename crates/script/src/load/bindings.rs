@@ -500,6 +500,13 @@ pub(super) fn wire_runtime(
         })
         .map_err(|e| format!("register modals: {e}"))?;
     runtime
+        .register_function("__rs2b0t_quest_journal", |args: &[serde_json::Value]| {
+            Ok(crate::quest_journal::dispatch(
+                args.first().unwrap_or(&serde_json::Value::Null),
+            ))
+        })
+        .map_err(|e| format!("register quest journal: {e}"))?;
+    runtime
         .register_function("__rs2b0t_reach", move |args: &[serde_json::Value]| {
             Ok(crate::reach::dispatch(
                 args.first().unwrap_or(&serde_json::Value::Null),
@@ -1530,6 +1537,182 @@ api.questStatus = function (input) {
     if (status !== null) return helperOk({ status: status, as_of_sequence: sequence });
   }
   return helperErr('not-on-tab');
+};
+// Owned-root quest journal. One token per isolate: Begin clicks the posted
+// row id once, Next returns the acquired pair, Close closes only the root
+// this token opened. The pair is the only occupancy fact, so these read
+// host().snapshot — the page the materializer wrote. api.snapshot hides
+// quest_statuses, main_modal_texts and tick, and it substitutes {} for a
+// missing page. These three are not Promises and never return a verb kind.
+function questJournalCall(payload) {
+  return globalThis.rustyscript.functions.__rs2b0t_quest_journal(payload);
+}
+function enqueueCloseModal() {
+  const h = host();
+  h.interact = h.interact || [];
+  h.interact.push({ op: 'close-modal' });
+}
+function questJournalPage() {
+  const page = host().snapshot;
+  if (!page || typeof page !== 'object' || Array.isArray(page)) {
+    return { error: 'snapshot-unavailable' };
+  }
+  // An omitted pair is not closed and not free: a first post that omits the
+  // slot writes no property at all, and a delta that omits it keeps the last
+  // pair. main_modal_id is not a second closed definition.
+  if (!Object.prototype.hasOwnProperty.call(page, 'main_modal_texts')) {
+    return { error: 'snapshot-unavailable' };
+  }
+  const pair = page.main_modal_texts;
+  if (!pair || typeof pair !== 'object' || Array.isArray(pair)) {
+    return { error: 'snapshot-unavailable' };
+  }
+  if (!Array.isArray(pair.texts) || !Number.isInteger(pair.root)) {
+    return { error: 'snapshot-unavailable' };
+  }
+  for (const line of pair.texts) {
+    if (typeof line !== 'string') return { error: 'snapshot-unavailable' };
+  }
+  // as_of_sequence is the posted tick, never api.tick (which stamps 0).
+  const sequence = page.tick;
+  if (typeof sequence !== 'number' || !Number.isFinite(sequence)) {
+    return { error: 'snapshot-unavailable' };
+  }
+  return { root: pair.root, texts: pair.texts, sequence: sequence };
+}
+function questJournalRow(posted, wanted) {
+  // The same junk predicate questStatus skips. The first legal match wins,
+  // and the scan does not continue past it because its id was omitted.
+  for (const row of posted) {
+    if (questStatusRow(row, wanted) !== null) return row;
+  }
+  return null;
+}
+function questJournalClickTarget(row) {
+  // The click is the row's posted component_id. An omitted slot omits the
+  // property — it is not 0, and a present 0 is a real id that is clicked.
+  if (!Object.prototype.hasOwnProperty.call(row, 'component_id')) return null;
+  return Number.isInteger(row.component_id) ? row.component_id : null;
+}
+function questJournalBeginError(reason) {
+  // A begin refusal is one of the begin errors; an internal aborted step is
+  // never handed out as `aborted`.
+  if (reason === 'busy' || reason === 'main-modal-occupied') return reason;
+  if (reason === 'snapshot-unavailable') return reason;
+  return 'stale';
+}
+function questJournalStepError(reason) {
+  if (reason === 'snapshot-unavailable' || reason === 'modal-timeout') return reason;
+  return 'stale';
+}
+api.questJournalBegin = function (input) {
+  // Args first: a bad call is never snapshot-unavailable, never
+  // quest-tab-unbound and never unknown-quest.
+  if (arguments.length === 0) return helperErr('invalid-args');
+  if (input == null || typeof input !== 'object' || Array.isArray(input)) {
+    return helperErr('invalid-args');
+  }
+  if (typeof input.name !== 'string') return helperErr('invalid-args');
+  // A present id is not a begin key, even beside a legal name.
+  if (Object.prototype.hasOwnProperty.call(input, 'id')) return helperErr('invalid-args');
+  const wanted = questStatusFold(input.name.trim());
+  if (wanted === '') return helperErr('invalid-args');
+  const snapshot = host().snapshot;
+  if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) {
+    return helperErr('snapshot-unavailable');
+  }
+  const posted = snapshot.quest_statuses;
+  // Only a null tab is unbound, and an unbound tab needs no sequence.
+  if (posted === null) return helperErr('quest-tab-unbound');
+  if (!Array.isArray(posted)) return helperErr('snapshot-unavailable');
+  const page = questJournalPage();
+  if (page.error) return helperErr(page.error);
+  const row = questJournalRow(posted, wanted);
+  if (row === null) return helperErr('unknown-quest');
+  const componentId = questJournalClickTarget(row);
+  if (componentId === null) {
+    // No posted target: no click, and never a written 0.
+    return helperErr('snapshot-unavailable');
+  }
+  const generation = lifecycleGeneration;
+  const step = questJournalCall({
+    op: 'begin',
+    name: wanted,
+    component_id: componentId,
+    sequence: page.sequence,
+    generation: generation,
+    root: page.root,
+    texts: page.texts,
+  });
+  if (!step || typeof step !== 'object') return helperErr('stale');
+  if (step.kind === 'if-button') {
+    // Enqueue synchronously, after the generation check.
+    if (generation !== lifecycleGeneration) return helperErr('stale');
+    enqueueIfButton(step.component_id);
+    return helperOk({ token: step.token });
+  }
+  if (step.kind === 'aborted') return helperErr(questJournalBeginError(step.reason));
+  return helperErr('stale');
+};
+api.questJournalNext = function (input) {
+  if (arguments.length === 0) return helperErr('invalid-args');
+  if (input == null || typeof input !== 'object' || Array.isArray(input)) {
+    return helperErr('invalid-args');
+  }
+  if (!Number.isInteger(input.token)) return helperErr('invalid-args');
+  const page = questJournalPage();
+  if (page.error) return helperErr(page.error);
+  const step = questJournalCall({
+    op: 'next',
+    token: input.token,
+    generation: lifecycleGeneration,
+    sequence: page.sequence,
+    root: page.root,
+    texts: page.texts,
+  });
+  if (!step || typeof step !== 'object') return helperErr('stale');
+  // Not-done is { pending: true } with no ok field. It is not empty lines.
+  if (step.kind === 'wait') return { pending: true };
+  if (step.kind === 'done') {
+    return helperOk({
+      lines: step.lines,
+      root: step.root,
+      as_of_sequence: step.as_of_sequence,
+    });
+  }
+  if (step.kind === 'aborted') return helperErr(questJournalStepError(step.reason));
+  return helperErr('stale');
+};
+api.questJournalClose = function (input) {
+  if (arguments.length === 0) return helperErr('invalid-args');
+  if (input == null || typeof input !== 'object' || Array.isArray(input)) {
+    return helperErr('invalid-args');
+  }
+  if (!Number.isInteger(input.token)) return helperErr('invalid-args');
+  const page = questJournalPage();
+  if (page.error) return helperErr(page.error);
+  const generation = lifecycleGeneration;
+  const step = questJournalCall({
+    op: 'close',
+    token: input.token,
+    generation: generation,
+    sequence: page.sequence,
+    root: page.root,
+    texts: page.texts,
+  });
+  if (!step || typeof step !== 'object') return helperErr('stale');
+  if (step.kind === 'close-modal') {
+    if (generation !== lifecycleGeneration) return helperErr('stale');
+    enqueueCloseModal();
+    return { pending: true };
+  }
+  if (step.kind === 'wait') return { pending: true };
+  if (step.kind === 'done') {
+    // Only the explicit closed pair. Close never returns journal lines.
+    return helperOk({ closed: true, as_of_sequence: step.as_of_sequence });
+  }
+  if (step.kind === 'aborted') return helperErr(questJournalStepError(step.reason));
+  return helperErr('stale');
 };
 function loadoutV2(op, input) {
   return globalThis.__rs2b0t_loadout_v2(op, input);

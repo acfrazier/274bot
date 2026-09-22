@@ -480,6 +480,12 @@ fn render_native_v2(out: &mut String) {
     out.push_str("  sceneNpcs(input: { types: number[]; actions: string[]; limit: number; region?: SceneRegionInput }): HelperResult<SceneProjection>;\n");
     out.push_str("  /** Sync posted-tab status copy. A missing page is snapshot-unavailable and a null tab is quest-tab-unbound. Not a Promise and not a request op. */\n");
     out.push_str("  questStatus(input: { name: string }): HelperResult<{ status: 'notStarted' | 'inProgress' | 'complete' | 'unknown'; as_of_sequence: number }>;\n");
+    out.push_str("  /** Sync owned-root begin. One `if-button` per token on the posted row id, enqueued synchronously after a generation check. Not a Promise and not a request op; a refusal is `{ ok: false, error }`. */\n");
+    out.push_str("  questJournalBegin(input: { name: string }): HelperResult<{ token: number }>;\n");
+    out.push_str("  /** Sync owned-root next. Not-done is `{ pending: true }` (no `ok` field) — not empty lines. Not a Promise. */\n");
+    out.push_str("  questJournalNext(input: { token: number }): HelperResult<{ lines: string[]; root: number; as_of_sequence: number }>;\n");
+    out.push_str("  /** Sync owned-root close. One `close-modal` only while the latest pair is still the acquired root and texts. Not-done is `{ pending: true }` (no `ok` field). Not a Promise; never returns journal lines. */\n");
+    out.push_str("  questJournalClose(input: { token: number }): HelperResult<{ closed: true; as_of_sequence: number }>;\n");
     out.push_str("  foodOf(input: { loadout: LoadoutInput | null; fallback: string }): HelperResult<string>;\n");
     out.push_str("  gearOf(input: { loadout: LoadoutInput | null }): HelperResult<string[]>;\n");
     out.push_str("  suppliesOf(input: { loadout: LoadoutInput | null }): HelperResult<Array<{ item: string; qty: number }>>;\n");
