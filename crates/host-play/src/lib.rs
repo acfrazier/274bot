@@ -2570,6 +2570,7 @@ fn spawn_slot_thread(
                                 || obs_catalog_core.copies_leave_lair()
                                 || obs_catalog_core.copies_acquire_key()
                                 || obs_catalog_core.copies_cell()
+                                || obs_catalog_core.copies_bank()
                             {
                                 script_paint_of(&slot_scripts, name)
                             } else {

@@ -26,7 +26,7 @@ pub use ranging::{
     TARGET_RESULT_MODAL, TICKETS_PER_TRADE, VARP_TARGET_COUNT, VARP_TARGET_HIT, VARP_TARGET_SCORE,
 };
 
-pub const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|chicken_killer_bank|thiever|alcher|alcher_defaults|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|alcher_low|alcher_fire_battlestaff|alcher_swarm_drain|bank_fletcher|bank_fletcher_shafts|bank_fletcher_headless|bank_fletcher_string|bank_fletcher_cut_string|dart_fletcher|dart_fletcher_iron|herb_cleaner|herb_cleaner_named|herb_cleaner_empty_bank|gem_cutter|gem_cutter_named|door_opener|door_opener_gate|gnome_course|gnome_course_radius|wildy_agility|brimhaven_agility|flax_picker|superheater|superheater_steel|superheater_fire_battlestaff|superheater_silver_low_natures|vial_filler|vial_filler_east|potion_maker|potion_maker_named|tanner_bot|tanner_bot_hard|rune_crafter|rune_crafter_earth|mule_crafter|ardy_cakes|ardy_cakes_fight|ardy_thiever|ardy_thiever_fight|ardy_thiever_knight|gnome_chop|gnome_fletch_short|gnome_fletch_long|coal_trucks|cook_bot|cook_bot_lobster|smelter_bot|smelter_bot_steel|flax_spinner|flax_aio|flax_aio_pick|flax_aio_spin|herblore_secondaries|herblore_secondaries_newt|chaos_druid|chaos_druid_tower|chaos_druid_yanille|moss_giant|moss_giant_prepared|moss_giant_dart|hill_giant|auto_fighter|auto_fighter_mage|auto_fighter_range|rock_crab|rock_crab_range|green_dragon|green_dragon_prepared|green_dragon_mage_prepared|green_dragon_special|green_dragon_special_prepared|green_dragon_potions|green_dragon_potions_prepared|fire_giant|fire_giant_prepared|ardy_fighter|auto_fighter_bank|moss_giant_bank|hill_giant_bank|hill_giant_bank_prepared|chaos_druid_bank|ardy_fighter_bank|rock_crab_bank|green_dragon_bank|green_dragon_bank_prepared|green_dragon_bank_default_prepared|green_dragon_tele|green_dragon_tele_prepared|fire_giant_approach|fire_giant_bank|fire_giant_bank_prepared|fire_giant_camelot_prepared|aio_teleport|aio_teleport_falador|aio_teleport_no_staff|shop_buyout|shop_buyout_aubury|shop_buyout_lowe|shop_buyout_hickton|shop_buyout_harry|shop_buyout_betty|shop_buyout_gerrant|smithing_bot|smithing_bot_platebody|leather_crafter|leather_crafter_hard_body|firemaker|firemaker_oak|climbing_boots|climbing_boots_teleport|ranging_guild_round|ranging_guild_redeem|ranging_guild_bank|ranging_guild_full|brimhaven_moss_inspect_v1|route_inspect_brimhaven_v2_ts|prayer_v2_ts|prayer_v1_ts|line_of_sight_v2_ts|actor_observation_v2_ts|fight_field_v2_ts|hold_spot_v2_ts|retreat_spot_v2_ts|walk_spot_v2_ts|enter_lair_v2_ts|leave_lair_v2_ts|acquire_key_v2_ts|cell_v2_ts";
+pub const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|chicken_killer_bank|thiever|alcher|alcher_defaults|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|alcher_low|alcher_fire_battlestaff|alcher_swarm_drain|bank_fletcher|bank_fletcher_shafts|bank_fletcher_headless|bank_fletcher_string|bank_fletcher_cut_string|dart_fletcher|dart_fletcher_iron|herb_cleaner|herb_cleaner_named|herb_cleaner_empty_bank|gem_cutter|gem_cutter_named|door_opener|door_opener_gate|gnome_course|gnome_course_radius|wildy_agility|brimhaven_agility|flax_picker|superheater|superheater_steel|superheater_fire_battlestaff|superheater_silver_low_natures|vial_filler|vial_filler_east|potion_maker|potion_maker_named|tanner_bot|tanner_bot_hard|rune_crafter|rune_crafter_earth|mule_crafter|ardy_cakes|ardy_cakes_fight|ardy_thiever|ardy_thiever_fight|ardy_thiever_knight|gnome_chop|gnome_fletch_short|gnome_fletch_long|coal_trucks|cook_bot|cook_bot_lobster|smelter_bot|smelter_bot_steel|flax_spinner|flax_aio|flax_aio_pick|flax_aio_spin|herblore_secondaries|herblore_secondaries_newt|chaos_druid|chaos_druid_tower|chaos_druid_yanille|moss_giant|moss_giant_prepared|moss_giant_dart|hill_giant|auto_fighter|auto_fighter_mage|auto_fighter_range|rock_crab|rock_crab_range|green_dragon|green_dragon_prepared|green_dragon_mage_prepared|green_dragon_special|green_dragon_special_prepared|green_dragon_potions|green_dragon_potions_prepared|fire_giant|fire_giant_prepared|ardy_fighter|auto_fighter_bank|moss_giant_bank|hill_giant_bank|hill_giant_bank_prepared|chaos_druid_bank|ardy_fighter_bank|rock_crab_bank|green_dragon_bank|green_dragon_bank_prepared|green_dragon_bank_default_prepared|green_dragon_tele|green_dragon_tele_prepared|fire_giant_approach|fire_giant_bank|fire_giant_bank_prepared|fire_giant_camelot_prepared|aio_teleport|aio_teleport_falador|aio_teleport_no_staff|shop_buyout|shop_buyout_aubury|shop_buyout_lowe|shop_buyout_hickton|shop_buyout_harry|shop_buyout_betty|shop_buyout_gerrant|smithing_bot|smithing_bot_platebody|leather_crafter|leather_crafter_hard_body|firemaker|firemaker_oak|climbing_boots|climbing_boots_teleport|ranging_guild_round|ranging_guild_redeem|ranging_guild_bank|ranging_guild_full|brimhaven_moss_inspect_v1|route_inspect_brimhaven_v2_ts|prayer_v2_ts|prayer_v1_ts|line_of_sight_v2_ts|actor_observation_v2_ts|fight_field_v2_ts|hold_spot_v2_ts|retreat_spot_v2_ts|walk_spot_v2_ts|enter_lair_v2_ts|leave_lair_v2_ts|acquire_key_v2_ts|cell_v2_ts|bank_v2_ts";
 pub const CATALOG_COMMIT_A: &str = "100adccc037d9f6898080e1cad58fcfc43364775";
 pub const CATALOG_COMMIT_B: &str = "8e7d965be2071d6ec65c3265e12af797082d720a";
 pub const ADAMANT_SCIMITAR_ID: i32 = 1331;
@@ -618,6 +618,7 @@ pub enum CoreCase {
     LeaveLairV2,
     AcquireKeyV2,
     CellV2,
+    BankV2,
 }
 
 impl CoreCase {
@@ -762,6 +763,7 @@ impl CoreCase {
             "leave_lair_v2_ts" => Ok(Self::LeaveLairV2),
             "acquire_key_v2_ts" => Ok(Self::AcquireKeyV2),
             "cell_v2_ts" => Ok(Self::CellV2),
+            "bank_v2_ts" => Ok(Self::BankV2),
             _ => Err(format!(
                 "unknown CATALOG_SCENARIO {value:?}; expected {CORE_SCENARIOS}"
             )),
@@ -909,6 +911,7 @@ impl CoreCase {
             Self::LeaveLairV2 => "leave_lair_v2_ts",
             Self::AcquireKeyV2 => "acquire_key_v2_ts",
             Self::CellV2 => "cell_v2_ts",
+            Self::BankV2 => "bank_v2_ts",
         }
     }
 
@@ -1024,6 +1027,7 @@ impl CoreCase {
             Self::LeaveLairV2 => "leave_lair_v2",
             Self::AcquireKeyV2 => "acquire_key_v2",
             Self::CellV2 => "cell_v2",
+            Self::BankV2 => "bank_v2",
         }
     }
 
@@ -1076,6 +1080,10 @@ impl CoreCase {
 
     pub fn copies_cell(self) -> bool {
         matches!(self, Self::CellV2)
+    }
+
+    pub fn copies_bank(self) -> bool {
+        matches!(self, Self::BankV2)
     }
 
     pub fn prayer_stop_reason(self) -> Option<&'static str> {
@@ -1152,6 +1160,13 @@ impl CoreCase {
     pub fn cell_stop_reason(self) -> Option<&'static str> {
         match self {
             Self::CellV2 => Some(CELL_V2_STOP),
+            _ => None,
+        }
+    }
+
+    pub fn bank_stop_reason(self) -> Option<&'static str> {
+        match self {
+            Self::BankV2 => Some(BANK_V2_STOP),
             _ => None,
         }
     }
@@ -1287,6 +1302,9 @@ pub struct Observation {
     /// Compact here/kind key-call witness. Empty unless the active Core case
     /// asked for cell. Never a world copy.
     pub cell: CellV2Observation,
+    /// Compact here/dest/kind approach witness. Empty unless the active Core
+    /// case asked for bank. Never a world copy.
+    pub bank_v2: BankV2Observation,
 }
 
 /// Compact hop projection for Core JSON. Only `locName` is copied from the
@@ -1807,6 +1825,7 @@ impl Observation {
             leave: LeaveLairObservation::default(),
             acquire: AcquireKeyObservation::default(),
             cell: CellV2Observation::default(),
+            bank_v2: BankV2Observation::default(),
         }
     }
 
@@ -2232,6 +2251,30 @@ impl Observation {
             cell: Some(CELL_V2_CELL),
             boxes: vec![CELL_V2_LAIR],
             door_walk,
+            receipt,
+        };
+    }
+
+    /// Compact host here plus the script paint approach receipt. Never copies
+    /// the collision grid or world. The projected lair box is the File fixture
+    /// so a mainland here cannot emit leave.
+    pub fn attach_bank(
+        &mut self,
+        snapshot: &GameSnapshot,
+        paint: Option<&script::shim::ScriptPaint>,
+    ) {
+        let scene = snapshot.scene();
+        let here = self
+            .tile
+            .map(|(x, z, level)| LineOfSightTile { x, z, level });
+        let forbidden_claim = paint.is_some_and(bank_v2_paint_forbidden);
+        let receipt = paint.and_then(parse_bank_v2_receipt_from_paint);
+        self.bank_v2 = BankV2Observation {
+            available: scene.available,
+            here,
+            dest: Some(BANK_V2_DEST),
+            boxes: vec![BANK_V2_LAIR],
+            forbidden_claim,
             receipt,
         };
     }
@@ -4948,6 +4991,330 @@ impl CellV2DeliveryCycle {
     }
 }
 
+pub const BANK_V2_STOP: &str = "bank qualification complete";
+pub const BANK_V2_RECEIPT_PREFIX: &str = "bank-receipt:";
+pub const BANK_V2_RADIUS: i32 = 3;
+/// Taverley bank tile. The approach effect walks near this tile and does not open it.
+pub const BANK_V2_DEST: LineOfSightTile = LineOfSightTile {
+    x: 2946,
+    z: 3369,
+    level: 0,
+};
+/// File projection fixture. Mainland here must stay outside it so the machine does not emit leave.
+pub const BANK_V2_LAIR: BankV2Box = BankV2Box {
+    min_x: 40,
+    max_x: 60,
+    min_z: 40,
+    max_z: 60,
+    level: 0,
+};
+const BANK_V2_KBD_LOCS: [i32; 4] = [1765, 1766, 1816, 1817];
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct BankV2Box {
+    pub min_x: i32,
+    pub max_x: i32,
+    pub min_z: i32,
+    pub max_z: i32,
+    pub level: i32,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct BankV2Flags {
+    pub allow_teleports: bool,
+    pub allow_wilderness: bool,
+    pub allow_bank_fetch: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct BankV2ScriptReceipt {
+    pub here: LineOfSightTile,
+    pub dest: LineOfSightTile,
+    pub kind: String,
+    pub radius: i32,
+    pub flags: BankV2Flags,
+    pub discriminator: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct BankV2Observation {
+    pub available: bool,
+    pub here: Option<LineOfSightTile>,
+    pub dest: Option<LineOfSightTile>,
+    pub boxes: Vec<BankV2Box>,
+    pub forbidden_claim: bool,
+    pub receipt: Option<BankV2ScriptReceipt>,
+}
+
+impl Default for BankV2Observation {
+    fn default() -> Self {
+        Self {
+            available: false,
+            here: None,
+            dest: None,
+            boxes: Vec::new(),
+            forbidden_claim: false,
+            receipt: None,
+        }
+    }
+}
+
+fn bank_v2_chebyshev(here: LineOfSightTile, dest: LineOfSightTile) -> i32 {
+    if here.level != dest.level {
+        return 1_000_000;
+    }
+    (here.x - dest.x).abs().max((here.z - dest.z).abs())
+}
+
+fn bank_v2_outside_approach(here: LineOfSightTile) -> bool {
+    bank_v2_chebyshev(here, BANK_V2_DEST) > BANK_V2_RADIUS
+}
+
+fn bank_v2_dest_exact(dest: LineOfSightTile) -> bool {
+    dest == BANK_V2_DEST
+}
+
+fn bank_v2_flags_closed(flags: &BankV2Flags) -> bool {
+    !flags.allow_teleports && !flags.allow_wilderness && !flags.allow_bank_fetch
+}
+
+fn bank_v2_kind_ok(kind: &str) -> bool {
+    kind.eq_ignore_ascii_case("walk-near")
+}
+
+fn bank_v2_kind_forbidden(kind: &str) -> bool {
+    matches!(
+        kind.to_ascii_lowercase().as_str(),
+        "leave"
+            | "bank-open"
+            | "deposit"
+            | "withdraw"
+            | "wear"
+            | "held"
+            | "close"
+            | "count-bank-trip"
+            | "yield"
+            | "walk"
+            | "walk-to"
+            | "npc"
+            | "loc"
+            | "teleport"
+            | "kbd"
+            | "kbd-lair"
+    )
+}
+
+fn bank_v2_text_forbidden(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    lower.contains("leave")
+        || lower.contains("bank-open")
+        || lower.contains("bank opened")
+        || lower.contains("pack ready")
+        || lower.contains("pack-ready")
+        || lower.contains("ready pack")
+        || lower.contains("packready")
+        || lower.contains("kbd")
+        || BANK_V2_KBD_LOCS
+            .iter()
+            .any(|id| text.contains(&id.to_string()))
+}
+
+fn bank_v2_value_forbidden(value: &Value) -> bool {
+    match value {
+        Value::Object(map) => {
+            if map
+                .get("kind")
+                .and_then(Value::as_str)
+                .is_some_and(bank_v2_kind_forbidden)
+            {
+                return true;
+            }
+            if map
+                .get("discriminator")
+                .and_then(Value::as_str)
+                .is_some_and(|text| !text.eq_ignore_ascii_case("approach"))
+            {
+                return true;
+            }
+            if map.contains_key("route") || map.contains_key("opened") || map.contains_key("packReady")
+            {
+                return true;
+            }
+            map.values().any(bank_v2_value_forbidden)
+        }
+        Value::Array(rows) => rows.iter().any(bank_v2_value_forbidden),
+        Value::String(text) => bank_v2_text_forbidden(text),
+        Value::Number(n) => n
+            .as_i64()
+            .is_some_and(|id| BANK_V2_KBD_LOCS.contains(&(id as i32))),
+        _ => false,
+    }
+}
+
+fn bank_v2_receipt_shape_ok(receipt: &BankV2ScriptReceipt) -> bool {
+    bank_v2_dest_exact(receipt.dest)
+        && receipt.radius == BANK_V2_RADIUS
+        && bank_v2_flags_closed(&receipt.flags)
+        && receipt.discriminator.eq_ignore_ascii_case("approach")
+        && bank_v2_kind_ok(&receipt.kind)
+        && !bank_v2_kind_forbidden(&receipt.kind)
+        && bank_v2_outside_approach(receipt.here)
+}
+
+/// Paint-row parser. Leave, an open, a pack-ready claim, or KBD is not an approach receipt.
+pub fn parse_bank_v2_receipt_line(line: &str) -> Option<BankV2ScriptReceipt> {
+    let json = line.strip_prefix(BANK_V2_RECEIPT_PREFIX)?;
+    if bank_v2_text_forbidden(json) {
+        return None;
+    }
+    let value: Value = serde_json::from_str(json).ok()?;
+    if bank_v2_value_forbidden(&value) {
+        return None;
+    }
+    let receipt: BankV2ScriptReceipt = serde_json::from_value(value).ok()?;
+    bank_v2_receipt_shape_ok(&receipt).then_some(receipt)
+}
+
+fn parse_bank_v2_receipt_from_paint(
+    paint: &script::shim::ScriptPaint,
+) -> Option<BankV2ScriptReceipt> {
+    paint
+        .lines
+        .iter()
+        .find_map(|line| parse_bank_v2_receipt_line(line))
+}
+
+fn bank_v2_paint_forbidden(paint: &script::shim::ScriptPaint) -> bool {
+    paint.lines.iter().any(|line| bank_v2_text_forbidden(line))
+}
+
+fn bank_v2_in_box(tile: LineOfSightTile, area: BankV2Box) -> bool {
+    tile.level == area.level
+        && tile.x >= area.min_x
+        && tile.x <= area.max_x
+        && tile.z >= area.min_z
+        && tile.z <= area.max_z
+}
+
+fn bank_v2_place_ok(here: LineOfSightTile, boxes: &[BankV2Box]) -> bool {
+    boxes == [BANK_V2_LAIR]
+        && bank_v2_outside_approach(here)
+        && boxes.iter().all(|area| !bank_v2_in_box(here, *area))
+}
+
+pub fn bank_v2_baseline_ready(baseline: &Observation) -> bool {
+    let Some(here) = baseline.bank_v2.here else {
+        return false;
+    };
+    baseline.ingame
+        && baseline.scene_state == 2
+        && baseline.bank_v2.available
+        && !baseline.bank_v2.forbidden_claim
+        && baseline.bank_v2.dest == Some(BANK_V2_DEST)
+        && bank_v2_place_ok(here, &baseline.bank_v2.boxes)
+}
+
+fn bank_v2_receipt_joined(now: &BankV2Observation) -> bool {
+    let (Some(here), Some(receipt)) = (now.here, now.receipt.as_ref()) else {
+        return false;
+    };
+    now.available
+        && !now.forbidden_claim
+        && now.dest == Some(BANK_V2_DEST)
+        && receipt.here == here
+        && bank_v2_receipt_shape_ok(receipt)
+        && bank_v2_place_ok(here, &now.boxes)
+}
+
+/// Post-Start witness: joined approach receipt and the named stop.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct BankV2DeliveryCycle {
+    pub here: Option<LineOfSightTile>,
+    pub dest: Option<LineOfSightTile>,
+    pub kind: Option<String>,
+    pub radius: Option<i32>,
+    pub flags: Option<BankV2Flags>,
+    pub discriminator: Option<String>,
+    pub boxes: Vec<BankV2Box>,
+    pub forbidden_claim: bool,
+    pub receipt: Option<BankV2ScriptReceipt>,
+    pub stopped: Option<script::ScriptLifecycleReceipt>,
+}
+
+impl BankV2DeliveryCycle {
+    pub fn observe(&mut self, now: &Observation) {
+        self.forbidden_claim |= now.bank_v2.forbidden_claim;
+        if self.receipt.is_some() || self.forbidden_claim {
+            return;
+        }
+        if bank_v2_receipt_joined(&now.bank_v2) {
+            self.here = now.bank_v2.here;
+            self.dest = now.bank_v2.receipt.as_ref().map(|row| row.dest);
+            self.kind = now.bank_v2.receipt.as_ref().map(|row| row.kind.clone());
+            self.radius = now.bank_v2.receipt.as_ref().map(|row| row.radius);
+            self.flags = now.bank_v2.receipt.as_ref().map(|row| row.flags);
+            self.discriminator = now
+                .bank_v2
+                .receipt
+                .as_ref()
+                .map(|row| row.discriminator.clone());
+            self.boxes = now.bank_v2.boxes.clone();
+            self.receipt = now.bank_v2.receipt.clone();
+        }
+    }
+
+    pub fn observe_script_lifecycle(
+        &mut self,
+        receipt: script::ScriptLifecycleReceipt,
+        expected: &str,
+    ) {
+        if self.receipt.is_some()
+            && !self.forbidden_claim
+            && receipt.runtime_generation > 0
+            && receipt.state == script::ScriptTerminalState::Stopped
+            && receipt.reason == expected
+        {
+            self.stopped = Some(receipt);
+        }
+    }
+
+    pub fn qualified(&self) -> bool {
+        if self.stopped.is_none() || self.forbidden_claim {
+            return false;
+        }
+        let (
+            Some(here),
+            Some(dest),
+            Some(kind),
+            Some(radius),
+            Some(flags),
+            Some(discriminator),
+            Some(receipt),
+        ) = (
+            self.here,
+            self.dest,
+            self.kind.as_deref(),
+            self.radius,
+            self.flags,
+            self.discriminator.as_deref(),
+            self.receipt.as_ref(),
+        ) else {
+            return false;
+        };
+        receipt.here == here
+            && receipt.dest == dest
+            && receipt.kind == kind
+            && receipt.radius == radius
+            && receipt.flags == flags
+            && receipt.discriminator == discriminator
+            && bank_v2_receipt_shape_ok(receipt)
+            && bank_v2_place_ok(here, &self.boxes)
+    }
+}
+
 fn empty_worn(observation: &Observation) -> bool {
     observation.equipment_ids.values().copied().sum::<i32>() == 0
 }
@@ -5903,6 +6270,7 @@ pub fn validate_case_baseline_with_preparation(
         CoreCase::LeaveLairV2 => leave_lair_baseline_ready(baseline),
         CoreCase::AcquireKeyV2 => acquire_key_baseline_ready(baseline),
         CoreCase::CellV2 => cell_v2_baseline_ready(baseline),
+        CoreCase::BankV2 => bank_v2_baseline_ready(baseline),
     };
     if ready {
         return Ok(());
@@ -6289,6 +6657,9 @@ pub fn validate_case_baseline_with_preparation(
         CoreCase::CellV2 => {
             "ingame && scene_state==2 && SceneView.available, here outside the CELL box and the projected lair box, key-call kind key, not a walk to (2931,9690,0)"
         }
+        CoreCase::BankV2 => {
+            "ingame && scene_state==2 && SceneView.available, here Chebyshev > 3 from (2946,3369,0) and outside the projected lair box, approach walk-near radius 3, flags false"
+        }
     };
     Err(format!(
         "{} Start baseline lacks required preparation ({requirement}): {baseline:?}",
@@ -6369,6 +6740,7 @@ pub struct CoreWitness {
     pub leave_lair_cycle: LeaveLairDeliveryCycle,
     pub acquire_key_cycle: AcquireKeyDeliveryCycle,
     pub cell_v2_cycle: CellV2DeliveryCycle,
+    pub bank_v2_cycle: BankV2DeliveryCycle,
     pub ordered_first_exhausted: bool,
 }
 
@@ -11679,6 +12051,7 @@ impl CoreWitness {
             leave_lair_cycle: LeaveLairDeliveryCycle::default(),
             acquire_key_cycle: AcquireKeyDeliveryCycle::default(),
             cell_v2_cycle: CellV2DeliveryCycle::default(),
+            bank_v2_cycle: BankV2DeliveryCycle::default(),
             ordered_first_exhausted: false,
         }
     }
@@ -11936,6 +12309,9 @@ impl CoreWitness {
         }
         if matches!(self.case, CoreCase::CellV2) {
             self.cell_v2_cycle.observe(observation);
+        }
+        if matches!(self.case, CoreCase::BankV2) {
+            self.bank_v2_cycle.observe(observation);
         }
         if matches!(self.case, CoreCase::Superheater) {
             self.superheater_cycle.observe(
@@ -12233,6 +12609,12 @@ impl CoreWitness {
                         .observe_script_lifecycle(receipt, expected);
                 }
             }
+            CoreCase::BankV2 => {
+                if let Some(expected) = self.case.bank_stop_reason() {
+                    self.bank_v2_cycle
+                        .observe_script_lifecycle(receipt, expected);
+                }
+            }
             _ => {}
         }
     }
@@ -12458,6 +12840,7 @@ impl CoreWitness {
             CoreCase::LeaveLairV2 => self.leave_lair_cycle.qualified(),
             CoreCase::AcquireKeyV2 => self.acquire_key_cycle.qualified(),
             CoreCase::CellV2 => self.cell_v2_cycle.qualified(),
+            CoreCase::BankV2 => self.bank_v2_cycle.qualified(),
             CoreCase::ChaosDruid
             | CoreCase::ChaosDruidTower
             | CoreCase::ChaosDruidYanille
@@ -12564,6 +12947,7 @@ impl CoreWitness {
             "leave_lair_cycle": self.leave_lair_cycle,
             "acquire_key_cycle": self.acquire_key_cycle,
             "cell_v2_cycle": self.cell_v2_cycle,
+            "bank_v2_cycle": self.bank_v2_cycle,
             "ordered_first_exhausted": self.ordered_first_exhausted,
         }))
     }
@@ -12936,6 +13320,13 @@ impl CoreWatch {
                 CoreWatchState::Running { witness, .. } => witness.case.copies_cell(),
                 CoreWatchState::Disabled | CoreWatchState::Qualified { .. } => false,
             };
+            let copies_bank = match &*state {
+                CoreWatchState::Ready { case, .. } | CoreWatchState::Failed { case, .. } => {
+                    case.copies_bank()
+                }
+                CoreWatchState::Running { witness, .. } => witness.case.copies_bank(),
+                CoreWatchState::Disabled | CoreWatchState::Qualified { .. } => false,
+            };
             let mut observation = Observation::from_snapshot(snapshot, names);
             observation.script_lifecycle = lifecycle;
             observation.guardian = guardian;
@@ -12974,6 +13365,9 @@ impl CoreWatch {
             }
             if copies_cell {
                 observation.attach_cell(snapshot, paint);
+            }
+            if copies_bank {
+                observation.attach_bank(snapshot, paint);
             }
             Self::observe_locked(&mut state, account, observation, session_boundary);
         }
@@ -13144,6 +13538,21 @@ impl CoreWatch {
                 case.copies_cell()
             }
             CoreWatchState::Running { witness, .. } => witness.case.copies_cell(),
+            CoreWatchState::Disabled | CoreWatchState::Qualified { .. } => false,
+        }
+    }
+
+    /// True only for the bank File card. Callers attach paint and compact
+    /// here/dest only then.
+    pub fn copies_bank(&self) -> bool {
+        if !self.active.load(Ordering::Acquire) {
+            return false;
+        }
+        match &*self.inner.lock().unwrap() {
+            CoreWatchState::Ready { case, .. } | CoreWatchState::Failed { case, .. } => {
+                case.copies_bank()
+            }
+            CoreWatchState::Running { witness, .. } => witness.case.copies_bank(),
             CoreWatchState::Disabled | CoreWatchState::Qualified { .. } => false,
         }
     }

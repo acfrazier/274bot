@@ -321,7 +321,8 @@ pub fn live_example_path(file_name: &str) -> Option<PathBuf> {
         | "enter_lair_v2.ts"
         | "leave_lair_v2.ts"
         | "acquire_key_v2.ts"
-        | "cell_v2.ts" => {
+        | "cell_v2.ts"
+        | "bank_v2.ts" => {
             let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                 .join("examples")
                 .join(file_name);
@@ -1000,5 +1001,38 @@ mod tests {
         assert!(!source.contains("allow_teleports"));
         assert!(!source.contains("allow_wilderness"));
         assert!(!source.contains("allow_bank_fetch"));
+    }
+
+    #[test]
+    fn bank_qualification_example_is_an_exact_file_card() {
+        let v2 = live_example_path("bank_v2.ts").expect("checked-in bank v2 example");
+        assert!(v2.ends_with("bank_v2.ts"), "{}", v2.display());
+        assert!(live_example_path("bank_v2").is_none());
+        assert!(live_example_path("Bank.ts").is_none());
+        let source = std::fs::read_to_string(&v2).expect("bank source");
+        assert!(source.contains("bank qualification complete"));
+        assert!(source.contains("bank-receipt:"));
+        assert!(source.contains("bankBegin"));
+        assert!(source.contains("bankNext"));
+        assert!(source.contains("approach"));
+        assert!(source.contains("walk-near"));
+        assert!(source.contains("2946"));
+        assert!(source.contains("3369"));
+        assert!(source.contains("allow_teleports"));
+        assert!(source.contains("allow_wilderness"));
+        assert!(source.contains("allow_bank_fetch"));
+        assert!(!source.contains("scene_state"));
+        assert!(!source.contains("bankRoutine"));
+        assert!(!source.contains("kbd-lair"));
+        assert!(!source.contains("1765"));
+        assert!(!source.contains("1766"));
+        assert!(!source.contains("1816"));
+        assert!(!source.contains("1817"));
+        assert!(!source.contains("route"));
+        assert!(!source.contains("walkToken"));
+        assert!(!source.contains("pack ready"));
+        assert!(!source.contains("pack-ready"));
+        assert!(!source.contains("bank opened"));
+        assert!(!source.contains("api.walk"));
     }
 }

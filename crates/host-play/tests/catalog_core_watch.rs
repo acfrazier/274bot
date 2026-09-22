@@ -30,6 +30,10 @@ use host_play::catalog_core::{
     parse_cell_v2_receipt_line, CellV2Observation, CellV2ScriptReceipt, CELL_V2_CELL, CELL_V2_DOOR,
     CELL_V2_LAIR, CELL_V2_RECEIPT_PREFIX, CELL_V2_STOP,
 };
+use host_play::catalog_core::{
+    parse_bank_v2_receipt_line, BankV2Box, BankV2Flags, BankV2Observation, BankV2ScriptReceipt,
+    BANK_V2_DEST, BANK_V2_LAIR, BANK_V2_RADIUS, BANK_V2_RECEIPT_PREFIX, BANK_V2_STOP,
+};
 
 fn thiever_observation() -> Observation {
     let mut observation = Observation {
@@ -4713,4 +4717,260 @@ fn cell_v2_rejects_missing_stop_cell_box_and_projected_lair() {
         watch.qualify().is_err(),
         "CELL projected as boxes cannot pass"
     );
+}
+
+fn bank_here() -> LineOfSightTile {
+    LineOfSightTile {
+        x: 3222,
+        z: 3218,
+        level: 0,
+    }
+}
+
+fn bank_flags(open: bool) -> BankV2Flags {
+    BankV2Flags {
+        allow_teleports: open,
+        allow_wilderness: open,
+        allow_bank_fetch: open,
+    }
+}
+
+fn bank_receipt(here: LineOfSightTile, kind: &str) -> BankV2ScriptReceipt {
+    BankV2ScriptReceipt {
+        here,
+        dest: BANK_V2_DEST,
+        kind: kind.into(),
+        radius: BANK_V2_RADIUS,
+        flags: bank_flags(false),
+        discriminator: "approach".into(),
+    }
+}
+
+fn bank_ready() -> Observation {
+    let here = bank_here();
+    let mut observation = Observation {
+        ingame: true,
+        scene_state: 2,
+        player: Some("catalogtest".into()),
+        tile: Some((here.x, here.z, here.level)),
+        ..Observation::default()
+    };
+    observation.bank_v2 = BankV2Observation {
+        available: true,
+        here: Some(here),
+        dest: Some(BANK_V2_DEST),
+        boxes: vec![BANK_V2_LAIR],
+        ..BankV2Observation::default()
+    };
+    observation
+}
+
+fn bank_joined(mut observation: Observation) -> Observation {
+    observation.tick += 1;
+    let here = bank_here();
+    observation.tile = Some((here.x, here.z, here.level));
+    observation.bank_v2.here = Some(here);
+    observation.bank_v2.dest = Some(BANK_V2_DEST);
+    observation.bank_v2.boxes = vec![BANK_V2_LAIR];
+    observation.bank_v2.forbidden_claim = false;
+    observation.bank_v2.receipt = Some(bank_receipt(here, "walk-near"));
+    observation
+}
+
+fn bank_stop(mut observation: Observation, reason: &str) -> Observation {
+    observation.tick += 1;
+    observation.script_lifecycle = Some(script::ScriptLifecycleReceipt {
+        runtime_generation: 1,
+        state: script::ScriptTerminalState::Stopped,
+        tick: observation.tick as u64,
+        reason: reason.into(),
+    });
+    observation
+}
+
+fn bank_with_kind(observation: Observation, kind: &str) -> Observation {
+    let mut joined = bank_joined(observation);
+    if let Some(receipt) = joined.bank_v2.receipt.as_mut() {
+        receipt.kind = kind.into();
+    }
+    joined
+}
+
+#[test]
+fn bank_v2_requires_approach_receipt_and_named_stop() {
+    let case = CoreCase::parse("bank_v2_ts").expect("named bank");
+    assert!(case.copies_bank());
+    assert!(!case.copies_cell());
+    assert!(!case.copies_acquire_key());
+    assert!(!case.copies_leave_lair());
+    assert!(!case.copies_enter_lair());
+    assert!(!case.copies_walk_spot());
+    assert!(!case.copies_hold_spot());
+    assert!(!case.copies_retreat_spot());
+    assert!(!case.copies_fight_field());
+    assert!(!CoreCase::parse("cell_v2_ts").expect("cell").copies_bank());
+    let watch = CoreWatch::default();
+    watch.configure(case, "catalogtest");
+    let baseline = bank_ready();
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    watch.observe("catalogtest", baseline.clone(), false);
+    assert!(
+        watch.qualify().unwrap_err().contains("incomplete"),
+        "seed-only scene identity must not qualify"
+    );
+    let joined = bank_joined(baseline);
+    watch.observe("catalogtest", joined.clone(), false);
+    assert!(
+        watch.qualify().is_err(),
+        "joined receipt without the named helper stop is incomplete"
+    );
+    watch.observe("catalogtest", bank_stop(joined, BANK_V2_STOP), false);
+    watch
+        .qualify()
+        .expect("approach walk-near radius 3 and named stop");
+}
+
+#[test]
+fn bank_v2_rejects_leave_open_pack_ready_kbd_and_wrong_effects() {
+    let case = CoreCase::parse("bank_v2_ts").expect("named bank");
+    let baseline = bank_ready();
+    for kind in [
+        "leave",
+        "bank-open",
+        "deposit",
+        "withdraw",
+        "wear",
+        "held",
+        "close",
+        "count-bank-trip",
+        "yield",
+        "walk",
+    ] {
+        let watch = CoreWatch::default();
+        watch.configure(case, "catalogtest");
+        watch.observe("catalogtest", baseline.clone(), false);
+        watch.begin_start("catalogtest").unwrap();
+        watch.observe(
+            "catalogtest",
+            bank_stop(bank_with_kind(baseline.clone(), kind), BANK_V2_STOP),
+            false,
+        );
+        assert!(watch.qualify().is_err(), "{kind} cannot pass");
+    }
+
+    let watch = CoreWatch::default();
+    watch.configure(case, "catalogtest");
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    let mut flagged = bank_joined(baseline.clone());
+    if let Some(receipt) = flagged.bank_v2.receipt.as_mut() {
+        receipt.flags = bank_flags(true);
+    }
+    watch.observe("catalogtest", bank_stop(flagged, BANK_V2_STOP), false);
+    assert!(watch.qualify().is_err(), "open allow flags cannot pass");
+
+    let watch = CoreWatch::default();
+    watch.configure(case, "catalogtest");
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    let mut claimed = bank_joined(baseline);
+    claimed.bank_v2.forbidden_claim = true;
+    watch.observe("catalogtest", bank_stop(claimed, BANK_V2_STOP), false);
+    assert!(
+        watch.qualify().is_err(),
+        "a pack-ready or KBD paint claim cannot pass"
+    );
+
+    let here = bank_here();
+    let ok = format!(
+        "{BANK_V2_RECEIPT_PREFIX}{{\"here\":{{\"x\":{},\"z\":{},\"level\":0}},\"dest\":{{\"x\":2946,\"z\":3369,\"level\":0}},\"kind\":\"walk-near\",\"radius\":3,\"flags\":{{\"allow_teleports\":false,\"allow_wilderness\":false,\"allow_bank_fetch\":false}},\"discriminator\":\"approach\"}}",
+        here.x, here.z
+    );
+    assert!(parse_bank_v2_receipt_line(&ok).is_some());
+    assert!(parse_bank_v2_receipt_line(&format!("{ok} pack-ready")).is_none());
+    assert!(parse_bank_v2_receipt_line(&ok.replace("\"kind\":\"walk-near\"", "\"kind\":\"bank-open\""))
+        .is_none());
+    assert!(parse_bank_v2_receipt_line(&ok.replace("\"kind\":\"walk-near\"", "\"kind\":\"leave\""))
+        .is_none());
+    assert!(parse_bank_v2_receipt_line(&ok.replace(
+        "\"discriminator\":\"approach\"",
+        "\"discriminator\":\"approach\",\"key\":\"kbd-lair\""
+    ))
+    .is_none());
+    assert!(parse_bank_v2_receipt_line(&ok.replace("\"radius\":3", "\"radius\":3,\"locId\":1765"))
+        .is_none());
+    assert!(parse_bank_v2_receipt_line(&ok.replace(
+        "\"allow_teleports\":false",
+        "\"allow_teleports\":true"
+    ))
+    .is_none());
+    assert!(parse_bank_v2_receipt_line(&ok.replace("\"radius\":3", "\"radius\":1")).is_none());
+    assert!(parse_bank_v2_receipt_line(&ok.replace("2946", "2612")).is_none());
+}
+
+#[test]
+fn bank_v2_rejects_missing_stop_near_bank_and_projected_lair() {
+    let case = CoreCase::parse("bank_v2_ts").expect("named bank");
+    let baseline = bank_ready();
+
+    let watch = CoreWatch::default();
+    watch.configure(case, "catalogtest");
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    let joined = bank_joined(baseline.clone());
+    watch.observe("catalogtest", joined.clone(), false);
+    watch.observe("catalogtest", bank_stop(joined, "some other stop"), false);
+    assert!(watch.qualify().is_err(), "wrong named stop cannot pass");
+
+    let watch = CoreWatch::default();
+    watch.configure(case, "catalogtest");
+    let mut near_bank = bank_ready();
+    let booth = LineOfSightTile {
+        x: 2947,
+        z: 3369,
+        level: 0,
+    };
+    near_bank.tile = Some((booth.x, booth.z, booth.level));
+    near_bank.bank_v2.here = Some(booth);
+    watch.observe("catalogtest", near_bank, false);
+    assert!(
+        watch.begin_start("catalogtest").is_err(),
+        "here within 3 of the bank tile cannot start"
+    );
+
+    let watch = CoreWatch::default();
+    watch.configure(case, "catalogtest");
+    let mut inside_lair = bank_ready();
+    let lair_here = LineOfSightTile {
+        x: 50,
+        z: 50,
+        level: 0,
+    };
+    inside_lair.tile = Some((lair_here.x, lair_here.z, lair_here.level));
+    inside_lair.bank_v2.here = Some(lair_here);
+    watch.observe("catalogtest", inside_lair, false);
+    assert!(
+        watch.begin_start("catalogtest").is_err(),
+        "here inside the projected lair box cannot start"
+    );
+
+    let watch = CoreWatch::default();
+    watch.configure(case, "catalogtest");
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    let mut wrong_dest = bank_joined(baseline);
+    if let Some(receipt) = wrong_dest.bank_v2.receipt.as_mut() {
+        receipt.dest = LineOfSightTile {
+            x: 2612,
+            z: 3092,
+            level: 0,
+        };
+    }
+    watch.observe("catalogtest", bank_stop(wrong_dest, BANK_V2_STOP), false);
+    assert!(
+        watch.qualify().is_err(),
+        "a dest other than (2946, 3369, 0) cannot pass"
+    );
+    let _ = BankV2Box::default();
 }

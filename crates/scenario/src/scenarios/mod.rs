@@ -1,5 +1,6 @@
 pub(crate) mod actor_observation;
 pub(crate) mod acquire_key;
+pub(crate) mod bank;
 pub(crate) mod cell;
 pub(crate) mod enter_lair;
 pub(crate) mod leave_lair;
@@ -21,6 +22,7 @@ pub(crate) mod shop;
 
 pub(crate) use actor_observation::actor_observation_v2_scenario;
 pub(crate) use acquire_key::acquire_key_v2_scenario;
+pub(crate) use bank::bank_v2_scenario;
 pub(crate) use cell::cell_v2_scenario;
 pub(crate) use enter_lair::enter_lair_v2_scenario;
 pub(crate) use leave_lair::leave_lair_v2_scenario;
