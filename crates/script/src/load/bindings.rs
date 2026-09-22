@@ -1470,6 +1470,67 @@ api.sceneNpcs = function (input) {
   if (region === null) return helperErr('invalid-args');
   return sceneProjection('npcs', types, actions, input.limit, region);
 };
+const QUEST_STATUS_VALUES = ['notStarted', 'inProgress', 'complete', 'unknown'];
+// A-Z fold only. Not String.prototype.toLowerCase, which is Unicode and is
+// v1's own miss path.
+function questStatusFold(text) {
+  let out = '';
+  for (let i = 0; i < text.length; i += 1) {
+    const code = text.charCodeAt(i);
+    out += String.fromCharCode(code >= 97 && code <= 122 ? code - 32 : code);
+  }
+  return out;
+}
+function questStatusRow(row, wanted) {
+  // One junk row does not fail the page: skip a non-object, a non-string
+  // name, and a status outside the four posted strings. The posted status is
+  // copied, never rewritten.
+  if (!row || typeof row !== 'object' || Array.isArray(row)) return null;
+  if (typeof row.name !== 'string') return null;
+  if (QUEST_STATUS_VALUES.indexOf(row.status) === -1) return null;
+  return questStatusFold(row.name.trim()) === wanted ? row.status : null;
+}
+api.questStatus = function (input) {
+  // Args first: a bad call is never snapshot-unavailable and never
+  // quest-tab-unbound.
+  if (arguments.length === 0) return helperErr('invalid-args');
+  if (input == null || typeof input !== 'object' || Array.isArray(input)) {
+    return helperErr('invalid-args');
+  }
+  if (typeof input.name !== 'string') return helperErr('invalid-args');
+  // A present id is not a query key, even beside a legal name.
+  if (Object.prototype.hasOwnProperty.call(input, 'id')) {
+    return helperErr('invalid-args');
+  }
+  const wanted = questStatusFold(input.name.trim());
+  if (wanted === '') return helperErr('invalid-args');
+  // The copy reads host().snapshot. api.snapshot hides quest_statuses and
+  // tick, its getter substitutes {} for a missing page, and host() with no
+  // global is { interact: [], log: [] }: a missing page is
+  // snapshot-unavailable, not an unbound tab.
+  const snapshot = host().snapshot;
+  if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) {
+    return helperErr('snapshot-unavailable');
+  }
+  const posted = snapshot.quest_statuses;
+  // post_base encodes a null tab, and only a null tab is unbound. Strict
+  // equality: a missing key is not null, and neither is a non-array.
+  if (posted === null) return helperErr('quest-tab-unbound');
+  if (!Array.isArray(posted)) return helperErr('snapshot-unavailable');
+  // Null was checked before the tick: an unbound tab needs no sequence. On a
+  // bound tab a tick that is not a finite number is snapshot-unavailable.
+  const sequence = snapshot.tick;
+  if (typeof sequence !== 'number' || !Number.isFinite(sequence)) {
+    return helperErr('snapshot-unavailable');
+  }
+  // Posted order, first legal match. A miss is not-on-tab: do not invent
+  // unknown and do not join the identity table to fill it.
+  for (const row of posted) {
+    const status = questStatusRow(row, wanted);
+    if (status !== null) return helperOk({ status: status, as_of_sequence: sequence });
+  }
+  return helperErr('not-on-tab');
+};
 function loadoutV2(op, input) {
   return globalThis.__rs2b0t_loadout_v2(op, input);
 }

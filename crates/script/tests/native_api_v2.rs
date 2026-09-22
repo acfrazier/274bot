@@ -1433,3 +1433,106 @@ fn example_scene_observe_v2_is_read_only_and_fails_closed() {
         "scene example must not push interact: {interacts:?}"
     );
 }
+
+#[test]
+fn v2_quest_status_fails_closed_without_a_page_and_on_a_null_tab() {
+    let bindings = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/load/bindings.rs"));
+    let ops = bindings
+        .split("const V2_OPS")
+        .nth(1)
+        .unwrap()
+        .split("const OPTIONAL")
+        .next()
+        .unwrap();
+    assert!(!ops.contains("questStatus"), "{ops}");
+    let keys = bindings
+        .split("const SNAPSHOT_KEYS = new Set([")
+        .nth(1)
+        .unwrap()
+        .split("]);")
+        .next()
+        .unwrap();
+    assert!(!keys.contains("'quest_statuses'"), "{keys}");
+    assert!(!keys.contains("'quest_statuses_available'"), "{keys}");
+    assert!(!keys.contains("'locs'"), "{keys}");
+    assert!(!keys.contains("'tick'"), "{keys}");
+    // Arm 1: the example with no posted page. Nothing is posted to this
+    // isolate, so the copy has no snapshot object to read: a legal name is
+    // snapshot-unavailable. That is not quest-tab-unbound, not a miss, and it
+    // is not a colour or status witness.
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("examples")
+        .join("quest_status_v2.ts");
+    let example = std::fs::read_to_string(&path).expect("example source");
+    assert!(!example.contains("request("));
+    assert!(!example.contains("h.interact"));
+    assert_eq!(example.matches("api.questStatus").count(), 1);
+    let js = script::transpile_ts(&example).expect("transpile quest_status_v2.ts");
+    let iso = LoadIsolate::spawn(js, LoadShape::NativeTick, vec![]).unwrap();
+    iso.on_game_tick(1);
+    let err = iso
+        .probe("globalThis.__rs2b0t_host.lastError || ''")
+        .unwrap();
+    let logs = iso.drain_logs();
+    let interacts = iso.drain_interacts();
+    iso.join();
+    assert_eq!(err.as_str().unwrap_or(""), "", "example lastError: {err:?}");
+    let failed: Vec<serde_json::Value> = logs
+        .iter()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line.trim()).ok())
+        .filter(|row| row["error"] == "snapshot-unavailable")
+        .collect();
+    assert_eq!(failed.len(), 1, "logs={logs:?}");
+    assert_eq!(failed[0]["ok"], false, "{:?}", failed[0]);
+    assert!(failed[0].get("value").is_none(), "{:?}", failed[0]);
+    assert!(
+        interacts.is_empty(),
+        "quest status example must not push interact: {interacts:?}"
+    );
+
+    // Arm 2: post_base encodes a null quest tab on a posted page whose tick is
+    // bound. A legal name is quest-tab-unbound, not snapshot-unavailable and
+    // not not-on-tab: the null check runs before the tick and before the scan.
+    let source = r#"
+export const apiVersion = 2;
+export function tick(api) {
+  const row = api.questStatus({ name: 'Death Plateau' });
+  let requested = null;
+  try { api.request({ op: 'questStatus' }); requested = 'ok'; }
+  catch (e) { requested = String(e && (e.message || e)); }
+  const page = globalThis.__rs2b0t_host.snapshot;
+  globalThis.__probe = {
+    ok: row.ok,
+    error: row.error,
+    value: row.value,
+    then: typeof row.then,
+    pageUnbound: page.quest_statuses === null,
+    pageTick: page.tick,
+    requested,
+  };
+}
+"#;
+    let iso = LoadIsolate::spawn(source.into(), LoadShape::NativeTick, vec![]).unwrap();
+    post_base(&iso, 1);
+    iso.on_game_tick(1);
+    let probe = iso.probe("globalThis.__probe").unwrap();
+    assert_eq!(probe["pageUnbound"], true, "{probe:?}");
+    assert_eq!(probe["pageTick"], 1, "{probe:?}");
+    assert_eq!(probe["ok"], false, "{probe:?}");
+    assert_eq!(probe["error"], "quest-tab-unbound", "{probe:?}");
+    assert!(probe["value"].is_null(), "{probe:?}");
+    assert_eq!(probe["then"], "undefined", "{probe:?}");
+    assert!(
+        probe["requested"]
+            .as_str()
+            .unwrap_or("")
+            .contains("not impl"),
+        "{probe:?}"
+    );
+    let interacts = iso.drain_interacts();
+    iso.join();
+    assert!(
+        interacts.is_empty(),
+        "quest status must not push interact: {interacts:?}"
+    );
+}

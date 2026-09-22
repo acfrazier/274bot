@@ -250,6 +250,55 @@ fresh call.
 
 Example: `crates/script/examples/scene_observe_v2.ts`.
 
+## Quest status
+
+One sync `HelperResult` method that copies one posted quest-tab row's already
+resolved status string. It is not a Promise, not a `request()` op, and it does
+not push `h.interact`. It reads `host().snapshot` directly: `api.snapshot`
+hides `quest_statuses` and `tick`, and its getter substitutes `{}` for a
+missing page.
+
+| Method | OK | Errors |
+| --- | --- | --- |
+| `questStatus({ name })` | `{ status, as_of_sequence }` | `invalid-args`, `snapshot-unavailable`, `quest-tab-unbound`, `not-on-tab` |
+
+Args are checked before the page, so a bad call is never
+`snapshot-unavailable` and never `quest-tab-unbound`. `name` is required and
+must be a string: no arguments, a non-object, `null`, an array, a missing
+`name`, a non-string `name`, and a blank or whitespace-only name are all
+`invalid-args`. A present `id` is `invalid-args` even beside a legal `name`;
+other extra fields are ignored. `"death"`, `"314"`, and `"219"` are legal
+names, not keys: this method does not consult `quest_identity()`, and a number
+is `invalid-args`.
+
+Matching is on the posted `name` only: both sides are trimmed and folded A-Z
+only (no `toLowerCase`, and no folding of internal spaces). `Death Plateau` and
+`death plateau` hit a posted row with that text, `  Death Plateau  ` hits, and
+`DeathPlateau` and `death` do not. Posted order is kept and the first legal
+match wins: a row whose `name` is not a string and a row whose `status` is not
+exactly `notStarted`, `inProgress`, `complete`, or `unknown` are skipped, not
+fatal to the page.
+
+A page that was never posted, or whose snapshot is not an object, is
+`snapshot-unavailable`; it does not throw and it is not an unbound tab. On a
+posted page a missing `quest_statuses` key, and a value that is neither `null`
+nor an array, are also `snapshot-unavailable`, while
+`quest_statuses === null` is `quest-tab-unbound` (`post_base` is that null
+tab). The null check runs before the tick check: a null tab with a missing or
+non-finite tick is still `quest-tab-unbound`, and a bound array whose tick is
+not a finite number is `snapshot-unavailable` even when a row would match.
+
+Success is `{ status, as_of_sequence }`, not a bare string and not the live
+row: `status` is the posted string, copied, and `as_of_sequence` is
+`snapshot.tick` (never `api.tick`, and never a stamped `0`). No legal match is
+`not-on-tab`, including on an empty posted array: `unknown` is a posted status,
+not the answer to a miss, and the identity table is not joined to fill one. No
+`component_id` and no colour integer are returned, the quest tab is not opened,
+and no `interact` is queued. Copies are historical: a retained value stays
+usable after a later merge, it is not live, and an action needs a fresh call.
+
+Example: `crates/script/examples/quest_status_v2.ts`.
+
 ## Loadout and potion helpers
 
 Eight sync `HelperResult` methods. They recommend food, worn names, carry

@@ -113,6 +113,11 @@ fn host_js_dts_includes_required_interfaces() {
     assert!(src.contains("export interface SceneProjection {"));
     assert!(src.contains("as_of_sequence: number;"));
     assert!(src.contains("truncated: boolean;"));
+    assert!(src.contains(
+        "questStatus(input: { name: string }): HelperResult<{ status: 'notStarted' | 'inProgress' | 'complete' | 'unknown'; as_of_sequence: number }>"
+    ));
+    assert!(!src.contains("questStatus(input: { name: string }): Promise"));
+    assert!(!src.contains("questStatus(input: { name: string }): HelperResult<QuestStatusRow>"));
     assert!(src.contains("export interface LoadoutInput"));
     assert!(src.contains("export interface PotionPlan"));
     assert!(src.contains("foodOf(input: { loadout: LoadoutInput | null; fallback: string })"));
