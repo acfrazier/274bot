@@ -2,6 +2,8 @@
 //! Not a clue machine and not a solve: the row read is the whole method.
 use api::clue_facts::CluePin;
 use client::io::ClientRevision;
+use script::isolate_fb::{SceneEntityInput, TileInput};
+use script::shim::InteractReq;
 use script::{LoadIsolate, LoadShape};
 
 fn facts(revision: ClientRevision) -> api::game_data::TrailFacts {
@@ -200,6 +202,17 @@ fn query_does_not_open_the_answers_or_the_writer() {
     assert!(!src.contains("parse"));
 }
 
+/// The call-time pages the clue search machine reads on top of the pack page:
+/// the posted `here` tile, the posted loc page, and the posted `hold || ours`
+/// pair.
+#[derive(Default)]
+struct Scene<'a> {
+    here: Option<script::isolate_fb::TileInput>,
+    locs: &'a [script::isolate_fb::SceneEntityInput<'a>],
+    hold: bool,
+    ours: bool,
+}
+
 fn post_base(iso: &LoadIsolate, tick: u64) {
     post_page(iso, tick, &[]);
 }
@@ -207,6 +220,13 @@ fn post_base(iso: &LoadIsolate, tick: u64) {
 /// The same keyframe with a posted pack page: `(obj id, count)` rows in posted
 /// order, the page the isolate packer posts as `snapshot.inv`.
 fn post_page(iso: &LoadIsolate, tick: u64, page: &[(i32, i32)]) {
+    post_scene(iso, tick, page, &Scene::default());
+}
+
+/// The same keyframe with the scene the search machine reads: the posted
+/// `here` tile and the posted loc page, both marshalled into `next` at call
+/// time, plus the posted `hold || ours` pair.
+fn post_scene(iso: &LoadIsolate, tick: u64, page: &[(i32, i32)], scene: &Scene<'_>) {
     let rows: Vec<script::isolate_fb::ItemRowInput<'_>> = page
         .iter()
         .map(|(id, count)| script::isolate_fb::ItemRowInput {
@@ -222,7 +242,7 @@ fn post_page(iso: &LoadIsolate, tick: u64, page: &[(i32, i32)]) {
         .collect();
     let input = script::isolate_fb::SnapshotInput {
         tick,
-        here: None,
+        here: scene.here,
         ingame: true,
         inv: &rows,
         inv_size: 28,
@@ -241,10 +261,10 @@ fn post_page(iso: &LoadIsolate, tick: u64, page: &[(i32, i32)]) {
         withdraw_load_result: false,
         bank_op_result_seq: 0,
         bank_op_result: false,
-        hold: false,
-        ours: false,
+        hold: scene.hold,
+        ours: scene.ours,
         npcs: &[],
-        locs: &[],
+        locs: scene.locs,
         players: &[],
         ground: &[],
         equipment: &[],
@@ -858,6 +878,414 @@ export function tick(api) {
         interacts.is_empty(),
         "the clue machine pushes no interact: {interacts:?}"
     );
+}
+
+/// One posted loc row: the fields the picker reads, and the same defaults the
+/// materializer writes beside them.
+fn scene_loc<'a>(
+    id: i32,
+    x: i32,
+    z: i32,
+    level: i32,
+    actions: &'a [String],
+) -> SceneEntityInput<'a> {
+    SceneEntityInput {
+        index: 7,
+        id,
+        name: None,
+        x,
+        z,
+        level,
+        distance: 1,
+        health: 0,
+        max_health: 0,
+        in_combat: false,
+        animating: false,
+        actions,
+        reachable: true,
+        reachable_adj: true,
+        combat_level: 0,
+        target_kind: 0,
+        target_index: -1,
+        size: 1,
+        nx: x,
+        nz: z,
+    }
+}
+
+/// The public `api.clue.next` path over a posted page plus a posted scene: the
+/// machine's own `walk` / `loc` kinds reach the interact drain as
+/// `InteractReq::Walk` / `InteractReq::Loc`, which no module test can see.
+#[test]
+fn v2_clue_search_row_walks_then_locates_over_the_posted_scene() {
+    let src = r#"
+export const apiVersion = 2;
+export function tick(api) {
+  globalThis.__runs = (globalThis.__runs || 0) + 1;
+  if (globalThis.__runs === 1) {
+    const begin = api.clue.begin();
+    globalThis.__token = begin.ok ? begin.value.token : null;
+    globalThis.__steps = [
+      begin,
+      api.clue.next({ token: globalThis.__token }),
+      api.clue.next({ token: globalThis.__token, resume: true }),
+      api.clue.next({ token: globalThis.__token }),
+      // No posted `here`: the search row waits instead of walking blind.
+      api.clue.next({ token: globalThis.__token }),
+    ];
+    return;
+  }
+  globalThis.__steps.push(api.clue.next({ token: globalThis.__token }));
+  if (globalThis.__steps.length === 10) {
+    let requested = null;
+    try { api.request({ op: 'loc' }); requested = 'ok'; }
+    catch (e) { requested = String(e && (e.message || e)); }
+    globalThis.__probe = JSON.stringify({
+      token: globalThis.__token,
+      runs: globalThis.__runs,
+      steps: globalThis.__steps,
+      locRequest: requested,
+      snapshotLocs: typeof api.snapshot.locs,
+    });
+  }
+}
+"#;
+    let data = api::game_data::for_revision(ClientRevision::R274).unwrap();
+    let iso = LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data)
+        .unwrap();
+    let page = [(2677, 1)];
+
+    // Tick 1: the identified `trail_clue_easy_simple001` search row with no
+    // posted scene at all. Nothing to measure means no verb.
+    post_page(&iso, 1, &page);
+    iso.on_game_tick(1);
+    assert!(iso.probe("true").is_ok());
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "a missing `here` is a wait, not a walk"
+    );
+
+    // Tick 2: `here` far from the decoded 1_50_50_9_18 tile.
+    post_scene(
+        &iso,
+        2,
+        &page,
+        &Scene {
+            here: Some(TileInput {
+                x: 3200,
+                z: 3218,
+                level: 1,
+            }),
+            ..Scene::default()
+        },
+    );
+    iso.on_game_tick(2);
+    // `on_game_tick` is fire-and-forget: the probe is the barrier that proves
+    // the tick ran and its interact batch was forwarded.
+    assert!(iso.probe("true").is_ok());
+    let walk = iso.drain_interacts();
+    assert_eq!(
+        walk,
+        vec![InteractReq::Walk {
+            x: 3209,
+            z: 3218,
+            level: 1,
+            allow_teleports: false,
+            allow_wilderness: false,
+            allow_bank_fetch: false,
+            request_id: 0,
+        }],
+        "the walk is the decoded tile with default flags: {walk:?}"
+    );
+
+    // Tick 3: arrived, with junk rows, a wrong level and a far row ahead of
+    // the row the picker takes. The verb keeps the posted tile and id.
+    let wrong_level = vec!["Search".to_string()];
+    let too_far = vec!["Search".to_string()];
+    let found = vec!["sEaRcH".to_string()];
+    post_scene(
+        &iso,
+        3,
+        &page,
+        &Scene {
+            here: Some(TileInput {
+                x: 3209,
+                z: 3218,
+                level: 1,
+            }),
+            locs: &[
+                scene_loc(20, 3209, 3218, 2, &wrong_level),
+                scene_loc(21, 3211, 3218, 1, &too_far),
+                scene_loc(25, 3210, 3217, 1, &found),
+            ],
+            ..Scene::default()
+        },
+    );
+    iso.on_game_tick(3);
+    assert!(iso.probe("true").is_ok());
+    let picked = iso.drain_interacts();
+    assert_eq!(
+        picked,
+        vec![InteractReq::Loc {
+            x: 3210,
+            z: 3217,
+            level: 1,
+            action: "Search".to_string(),
+            id: Some(25),
+        }],
+        "the pick is the posted row, id included: {picked:?}"
+    );
+
+    // Tick 4: arrived with an empty loc page: a wait, and the token stays
+    // live for the walk tick 7 still gets.
+    post_scene(
+        &iso,
+        4,
+        &page,
+        &Scene {
+            here: Some(TileInput {
+                x: 3209,
+                z: 3218,
+                level: 1,
+            }),
+            ..Scene::default()
+        },
+    );
+    iso.on_game_tick(4);
+    assert!(iso.probe("true").is_ok());
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "no searchable loc is a wait, never abandon"
+    );
+
+    // Tick 5: the posted `ours` interrupt with an unfrozen clock: yield, and
+    // no verb rides along with it.
+    let locs = [scene_loc(25, 3210, 3217, 1, &found)];
+    post_scene(
+        &iso,
+        5,
+        &page,
+        &Scene {
+            here: Some(TileInput {
+                x: 3200,
+                z: 3218,
+                level: 1,
+            }),
+            locs: &locs,
+            ours: true,
+            ..Scene::default()
+        },
+    );
+    iso.on_game_tick(5);
+    assert!(iso.probe("true").is_ok());
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "yield emits no walk and no loc"
+    );
+
+    // Tick 6: the posted `hold` freezes this machine's clock and is a
+    // paint-only tick — the script never runs — so the fully walkable scene
+    // still reaches the drain with nothing.
+    post_scene(
+        &iso,
+        6,
+        &page,
+        &Scene {
+            here: Some(TileInput {
+                x: 3200,
+                z: 3218,
+                level: 1,
+            }),
+            locs: &locs,
+            hold: true,
+            ..Scene::default()
+        },
+    );
+    iso.on_game_tick(6);
+    assert!(iso.probe("true").is_ok());
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "a frozen call emits no walk and no loc"
+    );
+    assert_eq!(
+        iso.probe("String(globalThis.__runs)").unwrap().as_str(),
+        Some("5"),
+        "the posted hold skipped the tick's script, and it skipped no verb"
+    );
+
+    // Tick 7: thawed, the same far `here` walks again.
+    post_scene(
+        &iso,
+        7,
+        &page,
+        &Scene {
+            here: Some(TileInput {
+                x: 3200,
+                z: 3218,
+                level: 1,
+            }),
+            locs: &locs,
+            ..Scene::default()
+        },
+    );
+    iso.on_game_tick(7);
+    assert!(iso.probe("true").is_ok());
+    let walked_again = iso.drain_interacts();
+    assert_eq!(
+        walked_again,
+        vec![InteractReq::Walk {
+            x: 3209,
+            z: 3218,
+            level: 1,
+            allow_teleports: false,
+            allow_wilderness: false,
+            allow_bank_fetch: false,
+            request_id: 0,
+        }],
+        "{walked_again:?}"
+    );
+
+    let probed = iso.probe("globalThis.__probe").unwrap();
+    let value: serde_json::Value = serde_json::from_str(probed.as_str().unwrap()).unwrap();
+    iso.join();
+    assert!(value["token"].is_number(), "{value:?}");
+    // Seven dispatches, six script runs: the `hold` tick is paint-only.
+    assert_eq!(value["runs"], 6, "{value:?}");
+    let steps = value["steps"].as_array().expect("steps");
+    assert_eq!(steps.len(), 10, "{value:?}");
+    let token = &value["token"];
+    // The landed envelope is unchanged ahead of the search verbs.
+    for (index, kind) in [
+        (1, "callback.enabled"),
+        (2, "callback.log"),
+        (3, "callback.setStatus"),
+        (4, "wait"),
+        (5, "walk"),
+        (6, "loc"),
+        (7, "wait"),
+        (8, "yield"),
+        (9, "walk"),
+    ] {
+        assert_eq!(steps[index]["kind"], kind, "{index} {value:?}");
+    }
+    for index in 1..steps.len() {
+        let step = &steps[index];
+        assert_eq!(step["ok"], true, "{index} {step}");
+        assert_eq!(step["status"], "continue", "{index} {step}");
+        assert_eq!(step["token"], *token, "{index} {step}");
+        assert!(step.get("error").is_none(), "{index} {step}");
+    }
+    // The decode pin on the public path: trail_clue_easy_simple001's selected
+    // 1_50_50_9_18 token is (3209, 3218, 1).
+    for index in [5, 9] {
+        assert_eq!(steps[index]["x"], 3209, "{index} {value:?}");
+        assert_eq!(steps[index]["z"], 3218, "{index} {value:?}");
+        assert_eq!(steps[index]["level"], 1, "{index} {value:?}");
+    }
+    assert_eq!(steps[6]["action"], "Search", "{value:?}");
+    assert_eq!(steps[6]["id"], 25, "{value:?}");
+    assert_eq!(steps[6]["x"], 3210, "{value:?}");
+    assert_eq!(steps[6]["z"], 3217, "{value:?}");
+    assert_eq!(steps[6]["level"], 1, "{value:?}");
+    // The message lines stay the landed identity, never an answer.
+    let logged = steps[2]["message"].as_str().unwrap_or("");
+    assert!(logged.contains("trail_clue_easy_simple001"), "{value:?}");
+    assert!(logged.contains("2677"), "{value:?}");
+    // No completion, no abandonment, and no coordinate on the row read.
+    let text = value.to_string();
+    for forbidden in ["clue solved", "abandon", "supplies-needed", "ownsEquipment"] {
+        assert!(!text.contains(forbidden), "{value:?}");
+    }
+    // Loc stays unpublished: not a `request()` op, and not on `api.snapshot`.
+    assert!(
+        value["locRequest"]
+            .as_str()
+            .unwrap_or("")
+            .contains("not impl"),
+        "{value:?}"
+    );
+    assert_eq!(value["snapshotLocs"], "undefined", "{value:?}");
+}
+
+/// The rows that are not search members stay identified then idle even with a
+/// fully walkable posted scene: packed 3554 is `access: "constrained"`, 2831
+/// is a desc-only frozen `keyFrom` riddle, and 2713 is a coord-only map.
+#[test]
+fn v2_clue_idle_rows_never_walk_or_search() {
+    let src = r#"
+export const apiVersion = 2;
+export function tick(api) {
+  globalThis.__tick = (globalThis.__tick || 0) + 1;
+  if (globalThis.__tick === 1) {
+    const begin = api.clue.begin();
+    globalThis.__token = begin.ok ? begin.value.token : null;
+    globalThis.__steps = [
+      begin,
+      api.clue.next({ token: globalThis.__token }),
+      api.clue.next({ token: globalThis.__token, resume: true }),
+      api.clue.next({ token: globalThis.__token }),
+    ];
+    return;
+  }
+  globalThis.__steps.push(api.clue.next({ token: globalThis.__token }));
+  if (globalThis.__tick === 4) {
+    globalThis.__probe = JSON.stringify({ token: globalThis.__token, steps: globalThis.__steps });
+  }
+}
+"#;
+    for id in [3554, 2831, 2713] {
+        let actions = vec!["Search".to_string()];
+        let locs = [scene_loc(25, 3209, 3218, 1, &actions)];
+        let data = api::game_data::for_revision(ClientRevision::R274).unwrap();
+        let iso =
+            LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data)
+                .unwrap();
+        let page = [(id, 1)];
+        for tick in 1..=4 {
+            // Arrived on the first tick and far on the rest: neither is a
+            // verb for a row that is not a search membership.
+            let here = if tick == 1 {
+                TileInput {
+                    x: 3209,
+                    z: 3218,
+                    level: 1,
+                }
+            } else {
+                TileInput {
+                    x: 3100,
+                    z: 3300,
+                    level: 1,
+                }
+            };
+            post_scene(
+                &iso,
+                tick,
+                &page,
+                &Scene {
+                    here: Some(here),
+                    locs: &locs,
+                    ..Scene::default()
+                },
+            );
+            iso.on_game_tick(tick);
+            // The tick is fire-and-forget; the probe is this tick's barrier.
+            assert!(iso.probe("true").is_ok());
+        }
+        let probed = iso.probe("globalThis.__probe").unwrap();
+        let value: serde_json::Value = serde_json::from_str(probed.as_str().unwrap()).unwrap();
+        let interacts = iso.drain_interacts();
+        iso.join();
+        assert!(interacts.is_empty(), "{id} pushed interact: {interacts:?}");
+        let steps = value["steps"].as_array().expect("steps");
+        assert_eq!(steps.len(), 7, "{id} {value:?}");
+        assert_eq!(steps[0]["ok"], true, "{id} {value:?}");
+        for step in &steps[4..] {
+            assert_eq!(step["kind"], "wait", "{id} {step}");
+            assert_eq!(step["token"], value["token"], "{id} {step}");
+            assert!(step.get("x").is_none(), "{id} {step}");
+            assert!(step.get("action").is_none(), "{id} {step}");
+        }
+    }
 }
 
 #[test]

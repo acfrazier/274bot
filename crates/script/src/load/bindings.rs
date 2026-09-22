@@ -1415,6 +1415,44 @@ function cluePending() {
   const h = host();
   return h.hold === true || h.ours === true;
 }
+// The posted player tile, read at call time the same way `clueHeldPage` reads
+// the pack page. A missing, null, or malformed `here` is not sent, and the
+// machine then has no arrival claim to make.
+function clueHereTile() {
+  const snapshot = host().snapshot;
+  if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return null;
+  const here = snapshot.here;
+  if (!here || typeof here !== 'object' || Array.isArray(here)) return null;
+  if (!cluePageI32(here.x) || !cluePageI32(here.z) || !cluePageI32(here.level)) return null;
+  return { x: here.x, z: here.z, level: here.level };
+}
+// The posted loc page, the same call-time class of page. `api.snapshot` hides
+// `locs` (SNAPSHOT_KEYS), so this reads `host().snapshot.locs` directly the
+// way `sceneProjection` does, and never through `api.sceneLocs`. A row that
+// is not the posted `(id, x, z, level, actions)` shape cannot be picked and
+// is dropped here, never a snapshot error.
+function clueLocPage() {
+  const snapshot = host().snapshot;
+  if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return [];
+  const page = snapshot.locs;
+  if (!Array.isArray(page)) return [];
+  const locs = [];
+  for (const row of page) {
+    if (!row || typeof row !== 'object' || Array.isArray(row)) continue;
+    if (!cluePageI32(row.id) || !cluePageI32(row.x) || !cluePageI32(row.z)
+        || !cluePageI32(row.level)) continue;
+    if (!Array.isArray(row.actions)) continue;
+    const actions = [];
+    let ok = true;
+    for (const action of row.actions) {
+      if (typeof action !== 'string') { ok = false; break; }
+      actions.push(action);
+    }
+    if (!ok) continue;
+    locs.push({ id: row.id, x: row.x, z: row.z, level: row.level, actions: actions });
+  }
+  return locs;
+}
 // Every continue step is this envelope. `yield` keeps the token live, so it
 // is not trail completion and never `status: 'done'`.
 function clueStep(step) {
@@ -1437,6 +1475,27 @@ function clueBeginError(reason) {
   if (reason === 'missing-selected-data' || reason === 'family-unavailable:trails'
       || reason === 'none-held') return reason;
   return 'stale';
+}
+// The machine's own walk and loc steps go onto the shared interact drain the
+// way the quest journal enqueues `if-button` / `close-modal`: a generation
+// check, then a push. Loc is not a `V2_OPS` verb, so neither step is an
+// author-facing `api.request` op and `api.request({ op: 'loc' })` stays
+// `not impl`. The loc row always carries the posted id.
+function enqueueClueVerb(step) {
+  const h = host();
+  h.interact = h.interact || [];
+  if (step.kind === 'walk') {
+    h.interact.push({ op: 'walk', x: step.x, z: step.z, level: step.level });
+    return;
+  }
+  h.interact.push({
+    op: 'loc',
+    x: step.x,
+    z: step.z,
+    level: step.level,
+    action: step.action,
+    id: step.id,
+  });
 }
 api.clue = {
   row: function (input) {
@@ -1495,9 +1554,14 @@ api.clue = {
     return helperErr('stale');
   },
   // One step. `resume` is the callback return (hunt's `reply` slot under this
-  // name; both are never read). Kinds are `wait`, `yield`, `callback.enabled`,
-  // `callback.log` and `callback.setStatus` — never `done`. A dead token is
-  // the error object, never `undefined` and never an `aborted` continue kind.
+  // name; both are never read). The wrapper marshals the three call-time
+  // pages — the parked `snapshot.inv` page, the posted `here` tile and the
+  // posted loc page — so the machine never caches a world copy. Kinds are
+  // `wait`, `yield`, `callback.enabled`, `callback.log`, `callback.setStatus`,
+  // `walk` and `loc` — never `done`. A `walk` or `loc` step is enqueued onto
+  // the interact drain like the journal's `if-button`, and the step is still
+  // returned as a continue object. A dead token is the error object, never
+  // `undefined` and never an `aborted` continue kind.
   next: function (input) {
     if (arguments.length === 0) return helperErr('invalid-args');
     if (input == null || typeof input !== 'object' || Array.isArray(input)) {
@@ -1506,17 +1570,28 @@ api.clue = {
     if (!Number.isInteger(input.token)) return helperErr('invalid-args');
     const hasResume = Object.prototype.hasOwnProperty.call(input, 'resume');
     if (hasResume && typeof input.resume !== 'boolean') return helperErr('invalid-args');
+    const generation = lifecycleGeneration;
     const payload = {
       op: 'next',
       token: input.token,
-      generation: lifecycleGeneration,
+      generation: generation,
       held: clueHeldPage(),
       hold: cluePending(),
+      locs: clueLocPage(),
     };
+    const here = clueHereTile();
+    if (here !== null) payload.here = here;
     if (hasResume) payload.resume = input.resume;
     const step = clueCall(payload);
     if (!step || typeof step !== 'object') return helperErr('stale');
     if (step.kind === 'aborted') return helperErr(clueStepError(step.reason));
+    if (step.kind === 'walk' || step.kind === 'loc') {
+      // Enqueue synchronously, after the generation check: a reset or stop
+      // between the call and this push is not a verb for the dead session.
+      if (generation !== lifecycleGeneration) return helperErr('stale');
+      enqueueClueVerb(step);
+      return clueStep(step);
+    }
     if (step.kind === 'wait' || step.kind === 'yield'
         || step.kind === 'callback.enabled' || step.kind === 'callback.log'
         || step.kind === 'callback.setStatus') {

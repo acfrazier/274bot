@@ -411,10 +411,10 @@ Example: `crates/script/examples/clue_facts_v2.ts` (row),
 ### `clue.begin` / `clue.next`
 
 One machine per isolate, over the landed held-step identify. It is sync, it is
-not a Promise, and it is not a `request()` op: it is the envelope for a later
-clue trail, not the dispatcher. This slice emits no game action at all — no
-search, dig, talk, guardian, puzzle, deposit, or retry — and it never emits the
-exact `'clue solved'` string, never restores gear, and never returns a `done`
+not a Promise, and it is not a `request()` op: it is the search slice of a
+later clue trail, not the whole dispatcher. It emits search only — no dig,
+talk, guardian, puzzle, deposit, or retry — and it never emits the exact
+`'clue solved'` string, never restores gear, and never returns a `done`
 status. `ownsEquipment` stays false.
 
 `clue.begin(input?)` takes the optional input and ignores every key: nothing
@@ -439,6 +439,8 @@ a dead token is the error object, never `undefined` and never a continue kind.
 | `callback.enabled` | re-read the script's `enabled()` and answer with `resume` on the next `next` |
 | `callback.log` | perform `log(message)` |
 | `callback.setStatus` | perform `setStatus(message)` — a progress string, never `'clue solved'` |
+| `walk` | a search row that has not arrived: walk to `{ x, z, level }`, the decoded `trail_coord` |
+| `loc` | a search row that has arrived: interact with the picked loc, `{ x, z, level, action, id }` |
 | `yield` | posted `hold \|\| ours`; the token stays live and this is not trail completion |
 
 The precedence on a live token is frozen clock → `wait`, else posted
@@ -452,6 +454,35 @@ bump abort silently; the machine emits no `h.interact` entry and no request op
 for them, and the first thing the caller hears about it is `stale` or
 `aborted`. A held step of any type — the packed 3554 `access: "constrained"`
 clue included — is identified and then idled: no action and no walk.
+
+A held row is a **search row** only when the selected family carries
+`trail_loc=^true` **and** a decodable `trail_coord` on that same row: five
+`_`-separated integers `level_mapX_mapZ_localX_localZ`, level in `0..=3`,
+locals in `0..64`, no extra part, and `x = mapX * 64 + localX` (`z` likewise).
+Coord-only rows (the easy maps), the desc-only riddles, off-contract tokens and
+the packed 3554 clue are not search rows: they stay identified then idle, and
+an off-contract token is never rounded into an invented coordinate.
+`trail_coord` is never published on `clue.row`.
+
+Once the search row has been reported — after its `callback.log` and
+`callback.setStatus` — `walk` and `loc` replace the idle `wait`. The wrapper
+marshals the posted `here` tile and the posted loc page at `next` call time,
+so the machine caches no world copy and `api.snapshot.locs` stays hidden.
+`walk` repeats until `here` is on the decoded tile's level and within Chebyshev
+1 of it; then the picker takes posted loc rows on that level, within Chebyshev
+1 of the decoded tile (not of `here`), whose actions match `Search` then `Open`
+case-insensitively — nearest first, then rank, then posted order. The `loc`
+step carries the picked row's own tile and its posted scene id, always, so the
+host refuses a stale id rather than falling back to a co-located row. Neither
+kind is a `V2_OPS` verb: `next` enqueues them onto the interact drain the way
+the quest journal enqueues its modal clicks, `api.request({ op: 'loc' })` stays
+`not impl`, and the step is still returned as `status: 'continue'`.
+
+Arrived with nothing to search this tick — an unloaded scene, an empty page, or
+a loc id the host refused — is `wait`: the token stays live and the pick is
+re-read next call. There is no `walkLeg` here: no walk timeout, teleport,
+wilderness, bank fetch, detour or `no-searchable-loc` that kills the token, and
+no `abandon`.
 
 ## Scene projections
 

@@ -15,18 +15,27 @@
 //! after the pickup — and a live session that loses its held membership
 //! errors `none-held` and aborts.
 //!
-//! This is the envelope, not the dispatcher: no search, dig, talk, guardian,
-//! puzzle, deposit, retry or return-grind. A held step of any type, the
-//! packed 3554 `access: "constrained"` clue included, is identified and then
-//! idled: no action and no walk. Yield keeps the token live, so it is not
-//! trail completion, and this machine never returns `status: "done"`, never
+//! This is the search slice and nothing else: no dig, talk, guardian, puzzle,
+//! deposit, retry or return-grind. A held row that is a selected search
+//! membership — a selected `trail_loc=^true` **and** a decodable selected
+//! `trail_coord` on the same row — walks to its decoded tile and then
+//! dispatches the Search/Open picker over the posted loc page; both verbs are
+//! enqueued by the wrapper as `InteractReq::Walk` / `InteractReq::Loc`. The
+//! picker is the frozen one, minus its `walkLeg`: nearest then action rank,
+//! always at the row's own posted tile and id. Every other held step, the
+//! packed 3554 `access: "constrained"` clue, the desc-only key-gated riddles
+//! and the coord-only map rows included, is identified and then idled: no
+//! action and no walk. Yield keeps the token live, so it is not trail
+//! completion, and this machine never returns `status: "done"`, never
 //! restores gear, and never emits the exact `'clue solved'` string.
 //!
 //! One token per isolate. A second begin, reset and stop abort the live token
 //! and emit no verb for it. Pause and hold freeze this machine's own clock,
-//! so a frozen call emits no callback and does not advance the session.
-//! `on_snapshot` is fan-out only: begin and next read the page the wrapper
-//! hands in at call time, so nothing is cached here.
+//! so a frozen call emits no callback, no walk and no loc, and does not
+//! advance the session. `on_snapshot` is fan-out only: begin and next read
+//! the pages the wrapper hands in at call time — the parked page, this call's
+//! `here` tile and its posted loc page — so nothing is cached here and there
+//! is no world copy.
 
 use crate::isolate_fb::SnapshotReader;
 use crate::task_clock::InstantTaskClock;
@@ -60,8 +69,9 @@ enum Phase {
     Gate,
     /// Enabled: the progress status line is not posted yet.
     Reporting,
-    /// Progress posted: idle while the same step stays held. No action, no
-    /// walk, and no second callback for this step.
+    /// Progress posted: the same step stays held. A search row walks then
+    /// dispatches the picker from here; every other row idles with no action
+    /// and no walk, and no second callback is emitted for this step.
     Steady,
 }
 
@@ -185,7 +195,59 @@ impl ClueRuntime {
                     "message": status(row),
                 })
             }
-            Phase::Steady => self.emit("wait"),
+            Phase::Steady => self.search(row, input),
+        }
+    }
+
+    /// `Steady` on an identified row: a search membership walks to its
+    /// decoded tile and then dispatches the picker from this call's pages;
+    /// every other row idles exactly as before.
+    ///
+    /// The two pages are the wrapper's call-time marshalling of
+    /// `host().snapshot` — `here` and the posted loc page — and never a
+    /// cached world copy. Emitting `walk` and `loc` repeats while the row
+    /// stays held, because arrival is `here` and a stale loc id is the
+    /// host's own refuse: the session waits the tick out instead of
+    /// abandoning, and the pick is re-read next call.
+    fn search(&self, row: &TrailMembershipRow, input: &Value) -> Value {
+        let Some(tile) = search_tile(row) else {
+            // Not a search membership: the desc-only key-gated riddles, the
+            // coord-only map rows and the constrained 3554 clue, among
+            // everything else, are identified and then idle.
+            return self.emit("wait");
+        };
+        let Some(here) = input.get("here").and_then(posted_tile) else {
+            // No posted tile: there is no arrival claim to make and no walk
+            // to measure, so this tick waits rather than walking blind.
+            return self.emit("wait");
+        };
+        if here.level != tile.level || chebyshev(here, tile) > i64::from(ARRIVE_RADIUS) {
+            return json!({
+                "kind": "walk",
+                "token": self.token,
+                "x": tile.x,
+                "z": tile.z,
+                "level": tile.level,
+            });
+        }
+        match pick_loc(input, tile) {
+            Some(pick) => json!({
+                "kind": "loc",
+                "token": self.token,
+                "x": pick.tile.x,
+                "z": pick.tile.z,
+                "level": pick.tile.level,
+                "action": pick.action,
+                // The posted scene id, always present: the host matches that
+                // identity and refuses a stale one rather than taking a
+                // co-located other row.
+                "id": pick.id,
+            }),
+            // Arrived with nothing to search this tick — a scene that is not
+            // loaded, an empty page, or a loc id the host refused. Wait, keep
+            // the token, and re-pick next call; never abandon and never a
+            // token-killing `no-searchable-loc`.
+            None => self.emit("wait"),
         }
     }
 }
@@ -230,6 +292,174 @@ fn posted_page(input: &Value) -> Vec<(i32, i32)> {
 /// The wrapper writes page numbers as JSON integers.
 fn i32_of(value: &Value) -> Option<i32> {
     i32::try_from(value.as_i64()?).ok()
+}
+
+/// One packed-coord square: `SQUARE` tiles per map square on both axes.
+/// Same packed contract as the landed `nav::canlight::unpack_packed_coord`;
+/// the script crate does not take a `nav` runtime dependency, so the
+/// arithmetic lives here.
+const SQUARE: i32 = 64;
+
+/// Planes `0..=3`.
+const LEVELS: i32 = 4;
+
+/// The frozen picker's `ARRIVE_RADIUS`: the decoded tile itself, and one step
+/// off it on either axis.
+const ARRIVE_RADIUS: i32 = 1;
+
+/// A world tile: the same three fields the posted `here` object and every
+/// posted `SceneEntity` row carry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Tile {
+    x: i32,
+    z: i32,
+    level: i32,
+}
+
+/// Chebyshev distance, widened: `max(|dx|, |dz|)` over the whole `i32` range
+/// so a decoded tile and a posted tile can never overflow the subtraction.
+/// Callers compare levels first, because a level mismatch is not a distance.
+fn chebyshev(a: Tile, b: Tile) -> i64 {
+    let dx = (i64::from(a.x) - i64::from(b.x)).abs();
+    let dz = (i64::from(a.z) - i64::from(b.z)).abs();
+    dx.max(dz)
+}
+
+/// A selected `trail_coord` token → the tile it packs.
+///
+/// The landed `nav::canlight::unpack_packed_coord` contract, copied: five
+/// `_`-separated integers `level_mapX_mapZ_localX_localZ`, level in `0..=3`,
+/// both locals in `0..64`, and `x = mapX * 64 + localX` (`z` likewise). A
+/// missing or extra part, a non-integer, an out-of-range level or local, and
+/// a map that overflows the packed widening are all **not** a tile: the row
+/// idles rather than walking to an invented coordinate.
+fn decode_trail_coord(token: &str) -> Option<Tile> {
+    let mut parts = token.split('_');
+    let mut next = || parts.next()?.parse::<i32>().ok();
+    let level = next()?;
+    let map_x = next()?;
+    let map_z = next()?;
+    let local_x = next()?;
+    let local_z = next()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    if !(0..LEVELS).contains(&level)
+        || !(0..SQUARE).contains(&local_x)
+        || !(0..SQUARE).contains(&local_z)
+    {
+        return None;
+    }
+    Some(Tile {
+        x: map_x.checked_mul(SQUARE)?.checked_add(local_x)?,
+        z: map_z.checked_mul(SQUARE)?.checked_add(local_z)?,
+        level,
+    })
+}
+
+/// The identified row's selected search membership: a selected
+/// `trail_loc=^true` param **and** a decodable selected `trail_coord` on the
+/// same row, in file order for the coord.
+///
+/// The pin is the membership; the coord alone is not. A coord-only row — the
+/// easy maps, the frozen `keyFrom` riddles that carry only `trail_desc`, and
+/// the bounded packed 3554 clue — is not a search step and idles. A pin with
+/// no coord, or an off-contract one, is the same idle: nothing is invented.
+fn search_tile(row: &TrailMembershipRow) -> Option<Tile> {
+    let mut located = false;
+    let mut coord = None;
+    for param in &row.params {
+        if param.key == "trail_loc" && param.value == "^true" {
+            located = true;
+        } else if param.key == "trail_coord" && coord.is_none() {
+            coord = Some(param.value.as_str());
+        }
+    }
+    if !located {
+        return None;
+    }
+    decode_trail_coord(coord?)
+}
+
+/// A posted `{ x, z, level }` value — the wrapper's `here` tile or one posted
+/// loc row. A missing, null, or malformed object is not a tile.
+fn posted_tile(value: &Value) -> Option<Tile> {
+    Some(Tile {
+        x: i32_of(value.get("x")?)?,
+        z: i32_of(value.get("z")?)?,
+        level: i32_of(value.get("level")?)?,
+    })
+}
+
+/// The picker's chosen row: the posted tile and id the verb is dispatched at,
+/// and the canonical action.
+struct Pick {
+    tile: Tile,
+    id: i32,
+    action: &'static str,
+}
+
+/// The frozen `pickSearchLoc` rank: `Search` before `Open`, matched
+/// case-insensitively on the posted action strings and emitted canonically.
+const SEARCH_OPS: [&str; 2] = ["Search", "Open"];
+
+/// Whether a posted loc row lists `wanted`, ignoring ASCII case. A missing or
+/// non-array `actions` matches nothing.
+fn loc_action(row: &Value, wanted: &str) -> bool {
+    let Some(actions) = row.get("actions").and_then(Value::as_array) else {
+        return false;
+    };
+    actions.iter().any(|action| {
+        action
+            .as_str()
+            .is_some_and(|text| text.eq_ignore_ascii_case(wanted))
+    })
+}
+
+/// The frozen picker over this call's posted loc page: posted rows on the
+/// decoded tile's level, within `ARRIVE_RADIUS` Chebyshev **of the decoded
+/// tile** (not of `here`), whose actions carry `Search` then `Open`.
+/// Nearest wins, then the action rank, then posted order — the scan only
+/// replaces the best on a strict improvement. The verb keeps the row's own
+/// tile and posted id, so the host matches the type identity it was posted
+/// with; a row that is not the marshalled `{ id, x, z, level, actions }`
+/// shape is skipped rather than guessed at.
+fn pick_loc(input: &Value, tile: Tile) -> Option<Pick> {
+    let rows = input.get("locs")?.as_array()?;
+    let mut best: Option<(Pick, i64, usize)> = None;
+    for row in rows {
+        let (Some(id), Some(row_tile)) = (row.get("id").and_then(i32_of), posted_tile(row)) else {
+            continue;
+        };
+        if row_tile.level != tile.level {
+            continue;
+        }
+        let distance = chebyshev(row_tile, tile);
+        if distance > i64::from(ARRIVE_RADIUS) {
+            continue;
+        }
+        let Some(rank) = SEARCH_OPS.iter().position(|op| loc_action(row, op)) else {
+            continue;
+        };
+        let closer = match &best {
+            None => true,
+            Some((_, best_distance, best_rank)) => {
+                distance < *best_distance || (distance == *best_distance && rank < *best_rank)
+            }
+        };
+        if closer {
+            best = Some((
+                Pick {
+                    tile: row_tile,
+                    id,
+                    action: SEARCH_OPS[rank],
+                },
+                distance,
+                rank,
+            ));
+        }
+    }
+    best.map(|(pick, _, _)| pick)
 }
 
 /// Progress line for the identified step: landed alias, role and id only.
@@ -288,11 +518,20 @@ pub fn dispatch(selected: Option<&SelectedGameData>, input: &Value) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use api::game_data::TrailParam;
     use client::io::ClientRevision;
     use std::sync::Arc;
 
     const CASKET: i32 = 3531;
     const CLUE: i32 = 3554;
+    /// `trail_clue_easy_simple001`: the selected search membership,
+    /// `trail_loc=^true` with `trail_coord=1_50_50_9_18`.
+    const SEARCH: i32 = 2677;
+    /// `trail_clue_easy_map001`: a selected `trail_coord` with no `trail_loc`.
+    const MAP: i32 = 2713;
+    /// `trail_clue_medium_riddle001`: a frozen `keyFrom` riddle, selected
+    /// `trail_desc` only.
+    const RIDDLE: i32 = 2831;
 
     fn selected() -> Arc<SelectedGameData> {
         api::game_data::for_revision(ClientRevision::R274).expect("selected data")
@@ -330,6 +569,40 @@ mod tests {
 
     fn token_of(step: &Value) -> u64 {
         step["token"].as_u64().expect("token")
+    }
+
+    /// The wrapper's posted `here` tile.
+    fn here(x: i32, z: i32, level: i32) -> Value {
+        json!({ "x": x, "z": z, "level": level })
+    }
+
+    /// One wrapper-marshalled posted loc row.
+    fn loc(id: i32, x: i32, z: i32, level: i32, actions: &[&str]) -> Value {
+        json!({ "id": id, "x": x, "z": z, "level": level, "actions": actions })
+    }
+
+    /// One row of the selected family.
+    fn row(data: &SelectedGameData, id: i32) -> &TrailMembershipRow {
+        data.trails()
+            .expect("trails")
+            .rows
+            .iter()
+            .find(|row| row.id == id)
+            .unwrap_or_else(|| panic!("row {id}"))
+    }
+
+    /// Drive a held row to `Steady`: begin, the gate, the log line, then the
+    /// status line. The search verbs start on the call after this one.
+    fn steady(data: &SelectedGameData, id: i32) -> u64 {
+        let page = json!([[id, 1]]);
+        let token = token_of(&begin(data, page.clone()));
+        let gate = call(data, token, page.clone(), json!({}));
+        assert_eq!(gate["kind"], "callback.enabled", "{gate}");
+        let logged = call(data, token, page.clone(), json!({ "resume": true }));
+        assert_eq!(logged["kind"], "callback.log", "{logged}");
+        let posted = call(data, token, page, json!({}));
+        assert_eq!(posted["kind"], "callback.setStatus", "{posted}");
+        token
     }
 
     #[test]
@@ -583,6 +856,421 @@ mod tests {
                 json!("wait"),
                 json!("yield"),
             ],
+            "{steps:?}"
+        );
+    }
+
+    #[test]
+    fn the_packed_coord_contract_is_copied_and_off_contract_tokens_idle() {
+        // The pinned vector: `trail_clue_easy_simple001`'s selected token.
+        assert_eq!(
+            decode_trail_coord("1_50_50_9_18"),
+            Some(Tile {
+                x: 3209,
+                z: 3218,
+                level: 1
+            })
+        );
+        // The landed `nav::canlight` vector, plus both ends of each bound.
+        assert_eq!(
+            decode_trail_coord("0_50_53_50_24"),
+            Some(Tile {
+                x: 3250,
+                z: 3416,
+                level: 0
+            })
+        );
+        assert_eq!(
+            decode_trail_coord("3_0_0_0_0"),
+            Some(Tile {
+                x: 0,
+                z: 0,
+                level: 3
+            })
+        );
+        assert_eq!(
+            decode_trail_coord("0_0_0_63_63"),
+            Some(Tile {
+                x: 63,
+                z: 63,
+                level: 0
+            })
+        );
+        for token in [
+            "",
+            "1_50_50_9",
+            "1_50_50_9_18_1",
+            "1_50_50_9_x",
+            "one_50_50_9_18",
+            "4_50_50_9_18",
+            "-1_50_50_9_18",
+            "1_50_50_64_18",
+            "1_50_50_9_64",
+            "1_50_50_-1_18",
+            "1_50_50_9_-1",
+            " 1_50_50_9_18",
+            "1_50_50_9_18 ",
+            // A map that would overflow the packed widening is not a tile.
+            "2147483647_50_50_9_18",
+            "1_2147483647_50_9_18",
+        ] {
+            assert_eq!(decode_trail_coord(token), None, "{token:?}");
+        }
+    }
+
+    #[test]
+    fn membership_is_the_loc_pin_plus_a_decodable_coord_on_the_same_row() {
+        let data = selected();
+        assert_eq!(
+            search_tile(row(&data, SEARCH)),
+            Some(Tile {
+                x: 3209,
+                z: 3218,
+                level: 1
+            })
+        );
+        // The coord-only maps, the desc-only frozen `keyFrom` riddles, the
+        // constrained 3554 clue and a paramless casket are not search rows.
+        for id in [MAP, RIDDLE, CLUE, CASKET] {
+            assert_eq!(search_tile(row(&data, id)), None, "{id}");
+        }
+        // The selected pin is the membership, and every pinned row on this
+        // pin carries a decodable coord.
+        let facts = data.trails().expect("trails");
+        let pinned: Vec<&TrailMembershipRow> = facts
+            .rows
+            .iter()
+            .filter(|row| {
+                row.params
+                    .iter()
+                    .any(|param| param.key == "trail_loc" && param.value == "^true")
+            })
+            .collect();
+        assert_eq!(pinned.len(), 58, "selected trail_loc=^true rows");
+        for row in &pinned {
+            assert!(search_tile(row).is_some(), "{}", row.alias);
+        }
+        // Synthetic rows: the pin without a coord, an off-contract coord, and
+        // a bare `true` that is not the `^true` pin all idle.
+        let pin = || TrailParam {
+            key: "trail_loc".into(),
+            value: "^true".into(),
+        };
+        let coord = |value: &str| TrailParam {
+            key: "trail_coord".into(),
+            value: value.into(),
+        };
+        let member = |params: Vec<TrailParam>| TrailMembershipRow {
+            alias: "trail_clue_test".into(),
+            id: 1,
+            role: "clue".into(),
+            params,
+            access: None,
+        };
+        assert_eq!(search_tile(&member(vec![pin()])), None);
+        assert_eq!(search_tile(&member(vec![coord("1_50_50_9_18")])), None);
+        assert_eq!(search_tile(&member(vec![pin(), coord("1_50_50_9")])), None);
+        assert_eq!(
+            search_tile(&member(vec![
+                TrailParam {
+                    key: "trail_loc".into(),
+                    value: "true".into(),
+                },
+                coord("1_50_50_9_18"),
+            ])),
+            None
+        );
+        assert_eq!(
+            search_tile(&member(vec![pin(), coord("1_50_50_9_18")])),
+            Some(Tile {
+                x: 3209,
+                z: 3218,
+                level: 1
+            })
+        );
+    }
+
+    #[test]
+    fn a_search_row_walks_to_the_decoded_tile_and_then_picks_the_loc() {
+        on_reset();
+        let data = selected();
+        let page = json!([[SEARCH, 1]]);
+        let token = steady(&data, SEARCH);
+
+        // Not arrived: the walk is the decoded tile, and it repeats.
+        for _ in 0..2 {
+            let walk = call(
+                &data,
+                token,
+                page.clone(),
+                json!({ "here": here(3200, 3218, 1) }),
+            );
+            assert_eq!(walk["kind"], "walk", "{walk}");
+            assert_eq!(walk["x"], 3209, "{walk}");
+            assert_eq!(walk["z"], 3218, "{walk}");
+            assert_eq!(walk["level"], 1, "{walk}");
+            assert_eq!(token_of(&walk), token, "{walk}");
+        }
+        // Another level is not arrival, even standing on the decoded tile,
+        // and neither is two tiles away on one axis.
+        for far in [here(3209, 3218, 0), here(3211, 3218, 1)] {
+            let walk = call(&data, token, page.clone(), json!({ "here": far }));
+            assert_eq!(walk["kind"], "walk", "{walk}");
+        }
+
+        // Arrived. The nearest row wins over the better rank: the adjacent
+        // `Search` loses to the `Open` on the decoded tile.
+        let nearest = call(
+            &data,
+            token,
+            page.clone(),
+            json!({
+                "here": here(3209, 3218, 1),
+                "locs": [
+                    loc(11, 3210, 3218, 1, &["Search"]),
+                    loc(12, 3209, 3218, 1, &["Open"]),
+                ],
+            }),
+        );
+        assert_eq!(nearest["kind"], "loc", "{nearest}");
+        assert_eq!(nearest["action"], "Open", "{nearest}");
+        assert_eq!(nearest["id"], 12, "{nearest}");
+        assert_eq!(
+            (
+                nearest["x"].clone(),
+                nearest["z"].clone(),
+                nearest["level"].clone()
+            ),
+            (json!(3209), json!(3218), json!(1)),
+            "{nearest}"
+        );
+
+        // Same distance: the rank decides, not the posted order.
+        let ranked = call(
+            &data,
+            token,
+            page.clone(),
+            json!({
+                "here": here(3209, 3218, 1),
+                "locs": [
+                    loc(13, 3209, 3218, 1, &["Open"]),
+                    loc(14, 3209, 3218, 1, &["Search", "Pick"]),
+                ],
+            }),
+        );
+        assert_eq!(ranked["kind"], "loc", "{ranked}");
+        assert_eq!(ranked["action"], "Search", "{ranked}");
+        assert_eq!(ranked["id"], 14, "{ranked}");
+
+        // Same distance and rank: the first posted row wins.
+        let first = call(
+            &data,
+            token,
+            page.clone(),
+            json!({
+                "here": here(3209, 3218, 1),
+                "locs": [
+                    loc(15, 3209, 3218, 1, &["Search"]),
+                    loc(16, 3209, 3218, 1, &["search"]),
+                ],
+            }),
+        );
+        assert_eq!(first["id"], 15, "{first}");
+        assert_eq!(first["action"], "Search", "{first}");
+
+        // Off-contract rows are skipped: another level, distance two, no
+        // searchable action, a non-array action list, and no posted id. The
+        // survivor matches case-insensitively and keeps its own tile.
+        let filtered = call(
+            &data,
+            token,
+            page,
+            json!({
+                "here": here(3209, 3218, 1),
+                "locs": [
+                    loc(20, 3209, 3218, 2, &["Search"]),
+                    loc(21, 3211, 3218, 1, &["Search"]),
+                    loc(22, 3209, 3218, 1, &["Pick", "Use"]),
+                    json!({ "id": 23, "x": 3209, "z": 3218, "level": 1, "actions": "Search" }),
+                    json!({ "x": 3209, "z": 3218, "level": 1, "actions": ["Search"] }),
+                    loc(25, 3210, 3217, 1, &["sEaRcH"]),
+                ],
+            }),
+        );
+        assert_eq!(filtered["kind"], "loc", "{filtered}");
+        assert_eq!(filtered["action"], "Search", "{filtered}");
+        assert_eq!(filtered["id"], 25, "{filtered}");
+        assert_eq!(
+            (
+                filtered["x"].clone(),
+                filtered["z"].clone(),
+                filtered["level"].clone()
+            ),
+            (json!(3210), json!(3217), json!(1)),
+            "the verb keeps the posted row's own tile: {filtered}"
+        );
+    }
+
+    #[test]
+    fn an_arrived_search_row_waits_without_a_loc_and_never_abandons() {
+        on_reset();
+        let data = selected();
+        let page = json!([[SEARCH, 1]]);
+        let token = steady(&data, SEARCH);
+        for locs in [json!([]), json!([loc(11, 3209, 3218, 1, &["Pick"])])] {
+            let idle = call(
+                &data,
+                token,
+                page.clone(),
+                json!({ "here": here(3209, 3218, 1), "locs": locs }),
+            );
+            assert_eq!(idle["kind"], "wait", "{idle}");
+            assert_eq!(token_of(&idle), token, "{idle}");
+            let text = idle.to_string();
+            for forbidden in ["no-searchable-loc", "abandon", "done", "clue solved"] {
+                assert!(!text.contains(forbidden), "{idle}");
+            }
+        }
+        // No posted `here` at all is the same wait: no arrival claim and no
+        // blind walk.
+        let no_tile = call(&data, token, page.clone(), json!({ "locs": [] }));
+        assert_eq!(no_tile["kind"], "wait", "{no_tile}");
+        let malformed = call(
+            &data,
+            token,
+            page.clone(),
+            json!({ "here": json!({ "x": 1 }) }),
+        );
+        assert_eq!(malformed["kind"], "wait", "{malformed}");
+        // And the session is still live for the loc that appears later.
+        let picked = call(
+            &data,
+            token,
+            page,
+            json!({
+                "here": here(3208, 3218, 1),
+                "locs": [loc(42, 3209, 3218, 1, &["Search"])],
+            }),
+        );
+        assert_eq!(picked["kind"], "loc", "{picked}");
+        assert_eq!(picked["id"], 42, "{picked}");
+    }
+
+    #[test]
+    fn freeze_and_yield_beat_the_search_walk() {
+        on_reset();
+        let data = selected();
+        let page = json!([[SEARCH, 1]]);
+        let token = steady(&data, SEARCH);
+        let scene = json!({
+            "here": here(3100, 3300, 1),
+            "locs": [loc(11, 3209, 3218, 1, &["Search"])],
+        });
+        // Frozen: wait, and neither verb rides along with it.
+        on_pause();
+        let paused = call(&data, token, page.clone(), scene.clone());
+        assert_eq!(paused["kind"], "wait", "{paused}");
+        on_resume();
+        on_hold(true);
+        let held_clock = call(&data, token, page.clone(), scene.clone());
+        assert_eq!(held_clock["kind"], "wait", "{held_clock}");
+        on_hold(false);
+        // The posted `hold || ours` interrupt, unfrozen: yield, still no verb.
+        let yielded = call(
+            &data,
+            token,
+            page.clone(),
+            json!({
+                "here": here(3100, 3300, 1),
+                "locs": [loc(11, 3209, 3218, 1, &["Search"])],
+                "hold": true,
+            }),
+        );
+        assert_eq!(yielded["kind"], "yield", "{yielded}");
+        for step in [&paused, &held_clock, &yielded] {
+            assert!(step.get("x").is_none(), "{step}");
+            assert!(step.get("action").is_none(), "{step}");
+            assert!(step.get("id").is_none(), "{step}");
+        }
+        // The walk is still there once the interrupt clears.
+        let walking = call(&data, token, page, scene);
+        assert_eq!(walking["kind"], "walk", "{walking}");
+    }
+
+    #[test]
+    fn non_search_rows_stay_idle_over_a_fully_posted_scene() {
+        on_reset();
+        let data = selected();
+        let scene = json!({
+            "here": here(3209, 3218, 1),
+            "locs": [loc(11, 3209, 3218, 1, &["Search"])],
+        });
+        for id in [CLUE, MAP, RIDDLE, CASKET] {
+            let page = json!([[id, 1]]);
+            let token = steady(&data, id);
+            for _ in 0..2 {
+                let idle = call(&data, token, page.clone(), scene.clone());
+                assert_eq!(idle["kind"], "wait", "{id} {idle}");
+                assert_eq!(token_of(&idle), token, "{id} {idle}");
+                assert!(idle.get("x").is_none(), "{id} {idle}");
+                assert!(idle.get("action").is_none(), "{id} {idle}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_search_row_emits_only_walk_and_loc_and_never_a_completion() {
+        on_reset();
+        let data = selected();
+        let page = json!([[SEARCH, 1]]);
+        let token = steady(&data, SEARCH);
+        let steps = vec![
+            call(
+                &data,
+                token,
+                page.clone(),
+                json!({ "here": here(3200, 3218, 1) }),
+            ),
+            call(
+                &data,
+                token,
+                page.clone(),
+                json!({
+                    "here": here(3209, 3218, 1),
+                    "locs": [loc(11, 3209, 3218, 1, &["Search"])],
+                }),
+            ),
+            call(
+                &data,
+                token,
+                page.clone(),
+                json!({ "here": here(3209, 3218, 1) }),
+            ),
+            call(&data, token, page, json!({ "hold": true })),
+        ];
+        for step in &steps {
+            let text = step.to_string();
+            for forbidden in ["clue solved", "abandon", "supplies-needed", "dead", "done"] {
+                assert!(!text.contains(forbidden), "{step}");
+            }
+            assert!(
+                step["status"].is_null(),
+                "the machine emits kinds, not the public status: {step}"
+            );
+            assert!(
+                matches!(
+                    step["kind"].as_str().unwrap_or(""),
+                    "walk" | "loc" | "wait" | "yield"
+                ),
+                "the search row emits walk, loc, wait or yield only: {step}"
+            );
+        }
+        assert_eq!(
+            steps
+                .iter()
+                .map(|step| step["kind"].clone())
+                .collect::<Vec<_>>(),
+            vec![json!("walk"), json!("loc"), json!("wait"), json!("yield"),],
             "{steps:?}"
         );
     }

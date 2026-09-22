@@ -611,6 +611,8 @@ fn render_native_v2(out: &mut String) {
     out.push_str("export type ClueStep =\n");
     out.push_str("  | { ok: true; status: 'continue'; token: number; kind: 'wait' | 'yield' | 'callback.enabled' }\n");
     out.push_str("  | { ok: true; status: 'continue'; token: number; kind: 'callback.log' | 'callback.setStatus'; message: string }\n");
+    out.push_str("  | { ok: true; status: 'continue'; token: number; kind: 'walk'; x: number; z: number; level: number }\n");
+    out.push_str("  | { ok: true; status: 'continue'; token: number; kind: 'loc'; x: number; z: number; level: number; action: string; id: number }\n");
     out.push_str("  | { ok: false; error: string };\n");
 }
 
