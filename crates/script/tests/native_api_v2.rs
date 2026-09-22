@@ -1370,7 +1370,11 @@ export function tick(api) {
     assert_eq!(probe["access"], "constrained", "{probe:?}");
     assert!(probe["rows"].is_null(), "{probe:?}");
     assert_eq!(probe["rowType"], "function", "{probe:?}");
-    assert_eq!(probe["keys"], serde_json::json!(["row", "heldStep"]), "{probe:?}");
+    assert_eq!(
+        probe["keys"],
+        serde_json::json!(["row", "heldStep", "packPlan"]),
+        "{probe:?}"
+    );
     assert_eq!(probe["flat"], "undefined", "{probe:?}");
     assert!(probe["quest"].is_null(), "{probe:?}");
     assert!(

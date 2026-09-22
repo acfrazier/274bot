@@ -99,13 +99,16 @@ fn host_js_dts_includes_required_interfaces() {
     assert!(src.contains("params: Array<{ key: string; value: string }>;"));
     assert!(src.contains("access?: 'constrained';"));
     assert!(src.contains(
-        "clue: { row(input: { id: number } | { alias: string }): HelperResult<ClueRow>; heldStep(): HelperResult<ClueRow> }"
+        "clue: { row(input: { id: number } | { alias: string }): HelperResult<ClueRow>; heldStep(): HelperResult<ClueRow>; packPlan(input: PackPlanInput): HelperResult<PackPlanTargets> }"
     ));
+    assert!(src.contains("export interface PackPlanInput {"));
+    assert!(src.contains("  rewardSlots?: number;"));
     assert!(!src.contains(
         "clue: { row(input: { id: number } | { alias: string }): Promise"
     ));
     assert!(!src.contains("heldStep(input"));
     assert!(!src.contains("heldStep(): Promise"));
+    assert!(!src.contains("packPlan(input: PackPlanInput): Promise"));
     assert!(!src.contains("clueRow("));
     assert!(src.contains(
         "sceneLocs(input: { ids: number[]; limit: number; region?: SceneRegionInput }): HelperResult<SceneProjection>"

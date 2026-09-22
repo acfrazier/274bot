@@ -12,6 +12,7 @@ pub mod gather_methods;
 pub mod gather_tools;
 pub mod clue_facts;
 pub mod clue_logic;
+pub mod clue_pack;
 pub mod quest_facts;
 pub mod interact;
 pub mod line_of_sight;

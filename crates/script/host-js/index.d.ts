@@ -578,6 +578,29 @@ export interface ClueRow {
   access?: 'constrained';
 }
 
+/** Caller numbers only. Absent fields default; a present wrong type is invalid-args. */
+export interface PackPlanInput {
+  hostWant?: number;
+  heldFood?: number;
+  freeSlots?: number;
+  reserveSlots?: number;
+  perCast?: number;
+  weaponName?: string;
+  weaponInBackpack?: boolean;
+  weaponEquipped?: boolean;
+  casketAlias?: string;
+}
+
+/** `runeTarget`, `weaponNeeded`, and `rewardSlots` only when the caller asked for them. */
+export interface PackPlanTargets {
+  coordToolSlots: 3;
+  teleportCasts: 20;
+  food: number;
+  runeTarget?: number;
+  weaponNeeded?: boolean;
+  rewardSlots?: number;
+}
+
 /** Caller-supplied one-level box. Not a plane and not a radius form. */
 export interface SceneRegionInput {
   min_x: number;
@@ -654,8 +677,8 @@ export interface NativeApi {
   questIdentity(input: { name: string } | { id: string }): HelperResult<QuestIdentityRow>;
   /** Sync seed-id requirements read. A name field is not a key. Not a Promise and not a request op. */
   questPrereqs(input: { id: string; name?: string }): HelperResult<QuestRequirements>;
-  /** Sync landed trail-row read. Exactly one of `id` (a real i32) or `alias`, and not a Promise and not a request op. */
-  clue: { row(input: { id: number } | { alias: string }): HelperResult<ClueRow>; heldStep(): HelperResult<ClueRow> };
+  /** Sync landed trail-row read and pure pack arithmetic over caller numbers. Neither is a Promise and neither is a request op; `packPlan` reads no snapshot, inventory, or family. */
+  clue: { row(input: { id: number } | { alias: string }): HelperResult<ClueRow>; heldStep(): HelperResult<ClueRow>; packPlan(input: PackPlanInput): HelperResult<PackPlanTargets> };
   /** Sync posted-loc copy. Historical copy, not live. Not a Promise and not a request op. */
   sceneLocs(input: { ids: number[]; limit: number; region?: SceneRegionInput }): HelperResult<SceneProjection>;
   /** Sync posted-npc copy. actions is required: omitted is not match-any. Historical copy, not live. Not a Promise and not a request op. */

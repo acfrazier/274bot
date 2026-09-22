@@ -394,16 +394,16 @@ export function tick(api) {
         for key in [
             "begin",
             "next",
-            "packPlan",
             "challengeAnswer",
             "deposit",
         ] {
             assert_eq!(value[key], "undefined", "{key} {value:?}");
         }
+        assert_eq!(value["packPlan"], "function", "{value:?}");
         assert_eq!(value["quest"], "undefined", "{value:?}");
         assert_eq!(
             value["questionNamespace"],
-            serde_json::json!(["row", "heldStep"]),
+            serde_json::json!(["row", "heldStep", "packPlan"]),
             "{value:?}"
         );
     }

@@ -204,15 +204,18 @@ Example: `crates/script/examples/quest_facts_v2.ts`.
 
 ## Clue helpers
 
-Two sync `HelperResult` methods over the selected pin's landed trail membership
-family. They are not Promises, not `request()` ops, and they do not push
-`h.interact`. They read `trails()` only: not `items()`, and not the challenge
-answers. `api.clue` holds `row` and `heldStep`, and nothing else.
+Three sync `HelperResult` methods. `row` and `heldStep` read the selected pin's
+landed trail membership family; `packPlan` is pure slot arithmetic over the
+caller's own numbers and reads nothing at all. None is a Promise, none is a
+`request()` op, and none pushes `h.interact`. `row` and `heldStep` read
+`trails()` only: not `items()`, and not the challenge answers. `api.clue` holds
+`row`, `heldStep`, and `packPlan`, and nothing else.
 
 | Method | OK | Errors |
 | --- | --- | --- |
 | `clue.row({ id } \| { alias })` | landed membership row | `invalid-args`, `missing-selected-data`, `family-unavailable:trails`, `unknown-id` |
 | `clue.heldStep()` | the first held membership row | `missing-selected-data`, `family-unavailable:trails`, `none-held` |
+| `clue.packPlan(input)` | the published pack targets | `invalid-args`, `no-room` |
 
 `clue.row` takes exactly one of `id` or `alias`. Neither, both, a non-object, an
 array, or a non-string `alias` is `invalid-args`, and `api.clue.row()` and
@@ -247,8 +250,8 @@ parent. Input keys other than the one pin are ignored:
 3554 row with `access: "constrained"` and no `supported` key.
 
 Not a Promise and not a `request()` op: `api.request({ op: 'clue.row' })` stays
-`not impl`. `begin`, `next`, `packPlan`, `challengeAnswer`, and `deposit` do not
-exist on `api.clue`.
+`not impl`. `begin`, `next`, `challengeAnswer`, and `deposit` do not exist on
+`api.clue`.
 
 `clue.heldStep()` takes no argument. The page is the already-posted
 `host().snapshot.inv` `(id, count)` sequence and nothing else: an argument is
@@ -270,8 +273,76 @@ order is `missing-selected-data`, then `family-unavailable:trails`, then
 `null` value. It is sync `HelperResult`, not a Promise, and
 `api.request({ op: 'clue.heldStep' })` stays `not impl`.
 
-Example: `crates/script/examples/clue_facts_v2.ts` (row) and
-`crates/script/examples/clue_held_step_v2.ts` (held step).
+`clue.packPlan(input)` is pure slot arithmetic over the caller's own numbers. It
+reads no snapshot, no `snapshot.inv` page, no equipment, no bank, and no trail
+row, so a missing page or family is not one of its errors, and an extra input
+key is neither an inventory override nor a snapshot substitute. It is sync
+`HelperResult`, not a Promise, and `api.request({ op: 'packPlan' })` stays
+`not impl`.
+
+```text
+capped = min(hostWant, 10)
+room   = heldFood + max(0, freeSlots - reserveSlots)
+food   = max(0, min(capped, room))
+```
+
+| Field | If absent | If present |
+| --- | --- | --- |
+| `hostWant` | `0` | non-negative `i32` |
+| `heldFood` | `0` | non-negative `i32` |
+| `freeSlots` | `0` | non-negative `i32` |
+| `reserveSlots` | `0` | non-negative `i32` |
+| `perCast` | no `runeTarget` | non-negative `i32`, including `0` |
+| `weaponName` | no `weaponNeeded` | string, including `""` |
+| `weaponInBackpack` | `false` | boolean |
+| `weaponEquipped` | `false` | boolean |
+| `casketAlias` | no `rewardSlots` | string, including `""` |
+
+Presence is `hasOwnProperty`, not truthiness: a present `null`, a wrong type, a
+fraction, a negative, `-0`, a string number, a bigint, or a boxed `Number` is
+`invalid-args` rather than the omitted default, and nothing is clamped, trimmed,
+case-folded, or coerced. `perCast: 0` is a present field with `runeTarget: 0`;
+`weaponName: ""` is a present field with `weaponNeeded: false`, and because
+nothing is trimmed `" "` is a name; `casketAlias: ""` is a present field with
+`rewardSlots: 4`. `packPlan({})` is `ok` with
+`{ coordToolSlots: 3, teleportCasts: 20, food: 0 }`.
+
+The ok value carries only the fields the caller asked for, plus the two named
+constants and `food`:
+
+| Key | Value |
+| --- | --- |
+| `coordToolSlots` | `3`, always |
+| `teleportCasts` | `20`, always |
+| `food` | `0..=10`, always |
+| `runeTarget` | `perCast * 20`, only when `perCast` is present |
+| `weaponNeeded` | `weaponName !== "" && !weaponInBackpack && !weaponEquipped`, only when `weaponName` is present |
+| `rewardSlots` | `6` when `casketAlias` contains `_hard_`, else `5` for `_medium_`, else `4`; only when `casketAlias` is present |
+
+`_HARD_` is not `_hard_`, and the alias is never looked up: it is not an id, a
+miss is not `unknown-id`, and an unrecognised string (including `""`) still
+reserves the easy-tier `4`. Hard is checked before medium. Runes stack, so
+`food` carries no rune-slot term, and the method does not invent `reserveSlots`:
+the caller passes the slots the coord trio still needs. `trailFoodCap` is not a
+published field.
+
+`no-room` is the whole result, with no value, when `hostWant > 0` and the food
+arithmetic is `0`: the caller asked for food, `heldFood` is `0`, and
+`freeSlots <= reserveSlots`. It is never `ok` food `0`, and `hostWant` `0` or
+omitted with food `0` stays `ok`. A zero rune target is not `no-room`,
+`weaponNeeded: false` is not an error, and `rewardSlots` is never `no-room`. A
+caller who wants runes without food omits `hostWant` and calls again: the method
+is pure and stateless.
+
+The arithmetic widens past `i32`: `perCast: 2147483647` publishes
+`runeTarget: 42949672940`, not a wrapped `-20` and not a saturated
+`2147483647`, and `heldFood` `2147483647` with `freeSlots` `2147483647` is a
+huge room that still caps `food` at `10` rather than wrapping into a false
+`no-room`.
+
+Example: `crates/script/examples/clue_facts_v2.ts` (row),
+`crates/script/examples/clue_held_step_v2.ts` (held step), and
+`crates/script/examples/clue_pack_v2.ts` (pack targets).
 
 ## Scene projections
 
