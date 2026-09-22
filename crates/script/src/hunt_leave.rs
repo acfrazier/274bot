@@ -450,18 +450,18 @@ fn precheck(data: Option<&SelectedGameData>, proj: &LeaveProj, obs: &LeaveObserv
 }
 
 fn start(rt: &mut LeaveRuntime, proj: &LeaveProj, data: Option<&SelectedGameData>) -> Value {
-    if is_kbd(proj) {
-        return rt.aborted("kbd-later");
-    }
-    if proj.leave_by_walk.is_none() {
-        return rt.aborted("missing leaveByWalk");
-    }
     let obs = observation();
     if signal(&obs) || !obs.ingame {
         return rt.yield_value(false);
     }
     if !in_area(proj, &obs) {
         return rt.yield_value(true);
+    }
+    if is_kbd(proj) {
+        return rt.aborted("kbd-later");
+    }
+    if proj.leave_by_walk.is_none() {
+        return rt.aborted("missing leaveByWalk");
     }
     if proj.leave_by_walk == Some(true) {
         return walk_family(rt, proj);

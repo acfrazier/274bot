@@ -148,6 +148,66 @@ fn already_out_yields_true_with_no_ops() {
 }
 
 #[test]
+fn already_out_kbd_key_yields_true_without_abort() {
+    reset();
+    set_observation(obs(Some(outside()), Some(99), vec![]));
+    let token = begin();
+    let step = call(
+        None,
+        token,
+        site(json!({
+            "key": "kbd-lair",
+            "escapeTeleportId": "varrock",
+            "leaveByWalk": true,
+        })),
+        None,
+    );
+    assert_eq!(kind(&step), "yield", "{step}");
+    assert_eq!(step["value"], true);
+    assert_ne!(step["reason"], "kbd-later");
+    assert!(step.get("x").is_none());
+}
+
+#[test]
+fn already_out_kbd_loc_yields_true_without_abort() {
+    reset();
+    set_observation(obs(Some(outside()), Some(99), vec![]));
+    let token = begin();
+    let step = call(
+        None,
+        token,
+        site(json!({
+            "leaveByWalk": true,
+            "exit": {
+                "locId": 1765,
+                "op": "Pull",
+                "stand": { "x": 50, "z": 50, "level": 0 }
+            },
+        })),
+        None,
+    );
+    assert_eq!(kind(&step), "yield", "{step}");
+    assert_eq!(step["value"], true);
+    assert_ne!(step["reason"], "kbd-later");
+    assert!(step.get("x").is_none());
+}
+
+#[test]
+fn already_out_missing_leave_by_walk_yields_true_without_abort() {
+    reset();
+    set_observation(obs(Some(outside()), None, vec![]));
+    let token = begin();
+    let mut p = site(json!({}));
+    p.as_object_mut().unwrap().remove("leaveByWalk");
+    let step = call(None, token, p, None);
+    assert_eq!(kind(&step), "yield", "{step}");
+    assert_eq!(step["value"], true);
+    assert_ne!(step["reason"], "missing leaveByWalk");
+    assert_ne!(kind(&step), "teleport");
+    assert!(step.get("x").is_none());
+}
+
+#[test]
 fn missing_leave_by_walk_aborts_instead_of_casting() {
     reset();
     let data = cache();
