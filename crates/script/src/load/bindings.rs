@@ -1476,16 +1476,25 @@ function clueBeginError(reason) {
       || reason === 'none-held') return reason;
   return 'stale';
 }
-// The machine's own walk and loc steps go onto the shared interact drain the
-// way the quest journal enqueues `if-button` / `close-modal`: a generation
-// check, then a push. Loc is not a `V2_OPS` verb, so neither step is an
-// author-facing `api.request` op and `api.request({ op: 'loc' })` stays
-// `not impl`. The loc row always carries the posted id.
+// The machine's own walk, held and loc steps go onto the shared interact
+// drain the way the quest journal enqueues `if-button` / `close-modal`: a
+// generation check, then a push. Each kind has its own arm, so a held item
+// identity is never enqueued as a loc, and the loc row always carries the
+// posted id. `held` is already an author `V2_OPS` verb, but this machine
+// enqueues its own step directly instead of going through `enqueueRequest`;
+// `loc` is not a `V2_OPS` verb at all, so `api.request({ op: 'loc' })` stays
+// `not impl`.
 function enqueueClueVerb(step) {
   const h = host();
   h.interact = h.interact || [];
   if (step.kind === 'walk') {
     h.interact.push({ op: 'walk', x: step.x, z: step.z, level: step.level });
+    return;
+  }
+  if (step.kind === 'held') {
+    // The selected item display name; the host resolves the first inventory
+    // row with that name. No row id and no tile rides along.
+    h.interact.push({ op: 'held', name: step.name, action: step.action });
     return;
   }
   h.interact.push({
@@ -1558,10 +1567,10 @@ api.clue = {
   // pages — the parked `snapshot.inv` page, the posted `here` tile and the
   // posted loc page — so the machine never caches a world copy. Kinds are
   // `wait`, `yield`, `callback.enabled`, `callback.log`, `callback.setStatus`,
-  // `walk` and `loc` — never `done`. A `walk` or `loc` step is enqueued onto
-  // the interact drain like the journal's `if-button`, and the step is still
-  // returned as a continue object. A dead token is the error object, never
-  // `undefined` and never an `aborted` continue kind.
+  // `held`, `walk` and `loc` — never `done`. A `walk`, `held` or `loc` step is
+  // enqueued onto the interact drain like the journal's `if-button`, and the
+  // step is still returned as a continue object. A dead token is the error
+  // object, never `undefined` and never an `aborted` continue kind.
   next: function (input) {
     if (arguments.length === 0) return helperErr('invalid-args');
     if (input == null || typeof input !== 'object' || Array.isArray(input)) {
@@ -1585,7 +1594,7 @@ api.clue = {
     const step = clueCall(payload);
     if (!step || typeof step !== 'object') return helperErr('stale');
     if (step.kind === 'aborted') return helperErr(clueStepError(step.reason));
-    if (step.kind === 'walk' || step.kind === 'loc') {
+    if (step.kind === 'walk' || step.kind === 'held' || step.kind === 'loc') {
       // Enqueue synchronously, after the generation check: a reset or stop
       // between the call and this push is not a verb for the dead session.
       if (generation !== lifecycleGeneration) return helperErr('stale');

@@ -209,11 +209,12 @@ Four sync `HelperResult` fact reads and one owned-session pump. `row` and
 is pure slot arithmetic over the caller's own numbers and reads nothing at all;
 `hardKit` is a pure hard-clue kit status over the caller's own facts and reads
 nothing at all. `begin` / `next` are the isolate machine: one token per
-isolate, the landed held-step identify over the posted pack page, and no game
-action at all. None is a Promise, none is a `request()` op, and none pushes
-`h.interact`. `row`, `heldStep` and the machine read `trails()` only: not
-`items()`, and not the challenge answers. `api.clue` holds `row`, `heldStep`,
-`packPlan`, `hardKit`, `begin`, and `next`, in that order, and nothing else.
+isolate, the landed held-step identify over the posted pack page, and its own
+search and casket-open steps onto the interact drain. None is a Promise and
+none is a `request()` op; the four fact reads push no `h.interact`. `row`,
+`heldStep` and the machine read `trails()` only: not `items()`, and not the
+challenge answers. `api.clue` holds `row`, `heldStep`, `packPlan`, `hardKit`,
+`begin`, and `next`, in that order, and nothing else.
 
 | Method | OK | Errors |
 | --- | --- | --- |
@@ -411,11 +412,11 @@ Example: `crates/script/examples/clue_facts_v2.ts` (row),
 ### `clue.begin` / `clue.next`
 
 One machine per isolate, over the landed held-step identify. It is sync, it is
-not a Promise, and it is not a `request()` op: it is the search slice of a
-later clue trail, not the whole dispatcher. It emits search only — no dig,
-talk, guardian, puzzle, deposit, or retry — and it never emits the exact
-`'clue solved'` string, never restores gear, and never returns a `done`
-status. `ownsEquipment` stays false.
+not a Promise, and it is not a `request()` op: it is the search and
+casket-open slice of a later clue trail, not the whole dispatcher. It emits
+search and the held Open only — no dig, talk, guardian, puzzle, deposit, or
+retry — and it never emits the exact `'clue solved'` string, never restores
+gear, and never returns a `done` status. `ownsEquipment` stays false.
 
 `clue.begin(input?)` takes the optional input and ignores every key: nothing
 but the token and the wrapper's generation is captured, so `enabled`, the pack
@@ -441,6 +442,7 @@ a dead token is the error object, never `undefined` and never a continue kind.
 | `callback.setStatus` | perform `setStatus(message)` — a progress string, never `'clue solved'` |
 | `walk` | a search row that has not arrived: walk to `{ x, z, level }`, the decoded `trail_coord` |
 | `loc` | a search row that has arrived: interact with the picked loc, `{ x, z, level, action, id }` |
+| `held` | a casket row that has been reported: interact with the held item named `name` with `action`, `{ name, action }` |
 | `yield` | posted `hold \|\| ours`; the token stays live and this is not trail completion |
 
 The precedence on a live token is frozen clock → `wait`, else posted
@@ -452,8 +454,9 @@ replaying that answer. `none-held` on a live session aborts it: the held
 membership went away, so the old token is dead. Reset, stop and a generation
 bump abort silently; the machine emits no `h.interact` entry and no request op
 for them, and the first thing the caller hears about it is `stale` or
-`aborted`. A held step of any type — the packed 3554 `access: "constrained"`
-clue included — is identified and then idled: no action and no walk.
+`aborted`. A held step that is neither a casket nor a search row — the packed
+3554 `access: "constrained"` clue included — is identified and then idled: no
+action and no walk.
 
 A held row is a **search row** only when the selected family carries
 `trail_loc=^true` **and** a decodable `trail_coord` on that same row: five
@@ -483,6 +486,26 @@ a loc id the host refused — is `wait`: the token stays live and the pick is
 re-read next call. There is no `walkLeg` here: no walk timeout, teleport,
 wilderness, bank fetch, detour or `no-searchable-loc` that kills the token, and
 no `abandon`.
+
+A held row whose landed `role` is `casket` is the held casket item, and the
+landed identify is **casket-first**: with a casket and the clue it belongs to
+both held, the casket is the step — the sextant028 casket is the Open and never
+3554 play. Once its own report is posted — after its `callback.log` and
+`callback.setStatus` — the `held` step replaces the idle `wait`. Its `name` is
+the selected item display joined by that row's own id (never the alias, never
+an item id) and its `action` is `Open`, so the host resolves the first held
+inventory row with that name; no tile and no row id ride along. `held` repeats
+while that same casket id stays held, and a different held row re-arms the
+gate. The frozen clock and the posted `hold || ours` interrupt still win: a
+frozen call and a `yield` emit no `held`. When the casket leaves and nothing
+else in the trail family is held, the landed `none-held` still aborts the
+token — that is not completion, not `done`, and not `abandon`.
+
+Unlike `loc`, `held` is already a supported author `request` op (`V2_OPS`), and
+the machine's own step is enqueued onto the interact drain directly rather than
+through `request()`; the step is still returned as `status: 'continue'`.
+Casket collect stays absent: no `close-modal`, no ground Take, no food drop,
+and no `'clue solved'`.
 
 ## Scene projections
 

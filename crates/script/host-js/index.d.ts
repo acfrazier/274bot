@@ -785,6 +785,7 @@ export type BankStep =
 export type ClueStep =
   | { ok: true; status: 'continue'; token: number; kind: 'wait' | 'yield' | 'callback.enabled' }
   | { ok: true; status: 'continue'; token: number; kind: 'callback.log' | 'callback.setStatus'; message: string }
+  | { ok: true; status: 'continue'; token: number; kind: 'held'; name: string; action: string }
   | { ok: true; status: 'continue'; token: number; kind: 'walk'; x: number; z: number; level: number }
   | { ok: true; status: 'continue'; token: number; kind: 'loc'; x: number; z: number; level: number; action: string; id: number }
   | { ok: false; error: string };

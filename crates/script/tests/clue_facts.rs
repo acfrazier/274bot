@@ -1207,9 +1207,209 @@ export function tick(api) {
     assert_eq!(value["snapshotLocs"], "undefined", "{value:?}");
 }
 
+/// One held casket Open as the drain sees it: the selected item display name
+/// the host resolves, and the frozen action. No row id, no tile.
+fn casket_open() -> InteractReq {
+    InteractReq::Held {
+        name: "Casket".to_string(),
+        action: "Open".to_string(),
+    }
+}
+
+/// The public `api.clue.next` path over a posted casket page: the machine's own
+/// `held` kind reaches the interact drain as `InteractReq::Held` — which no
+/// module test can see — and it repeats while the same casket id stays held.
+/// The page is the sextant028 casket held beside its own constrained 3554
+/// clue, so the Open is never 3554 play.
+#[test]
+fn v2_clue_casket_row_opens_the_held_item_over_the_posted_page() {
+    let src = r#"
+export const apiVersion = 2;
+export function tick(api) {
+  globalThis.__runs = (globalThis.__runs || 0) + 1;
+  if (globalThis.__runs === 1) {
+    const begin = api.clue.begin();
+    globalThis.__token = begin.ok ? begin.value.token : null;
+    globalThis.__steps = [
+      begin,
+      api.clue.next({ token: globalThis.__token }),
+      api.clue.next({ token: globalThis.__token, resume: true }),
+      api.clue.next({ token: globalThis.__token }),
+      // The landed report comes first: these two are the casket's own Open,
+      // and they repeat while the same casket id stays in the pack.
+      api.clue.next({ token: globalThis.__token }),
+      api.clue.next({ token: globalThis.__token }),
+    ];
+    return;
+  }
+  globalThis.__steps.push(api.clue.next({ token: globalThis.__token }));
+  if (globalThis.__runs === 5) {
+    globalThis.__probe = JSON.stringify({
+      token: globalThis.__token,
+      runs: globalThis.__runs,
+      steps: globalThis.__steps,
+    });
+  }
+}
+"#;
+    let data = api::game_data::for_revision(ClientRevision::R274).unwrap();
+    let iso = LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data)
+        .unwrap();
+    // The casket and the constrained clue it belongs to both held: identify is
+    // casket-first, so every Open below is the casket's and 3554 is never one.
+    let pair = [(3554, 1), (3555, 1)];
+
+    // Tick 1: the landed report, then Open — twice, because the same casket id
+    // is still held on this call's page.
+    post_page(&iso, 1, &pair);
+    iso.on_game_tick(1);
+    assert!(iso.probe("true").is_ok());
+    let opened = iso.drain_interacts();
+    assert_eq!(
+        opened,
+        vec![casket_open(), casket_open()],
+        "each held call opens the casket: {opened:?}"
+    );
+
+    // Tick 2: the posted `ours` interrupt, unfrozen: yield, and no Open rides
+    // along with it.
+    post_scene(
+        &iso,
+        2,
+        &pair,
+        &Scene {
+            ours: true,
+            ..Scene::default()
+        },
+    );
+    iso.on_game_tick(2);
+    assert!(iso.probe("true").is_ok());
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "yield emits no held Open"
+    );
+
+    // Tick 3: the posted `hold` freezes this machine's clock and is a
+    // paint-only tick — the script never runs — so no Open is re-sent.
+    post_scene(
+        &iso,
+        3,
+        &pair,
+        &Scene {
+            hold: true,
+            ..Scene::default()
+        },
+    );
+    iso.on_game_tick(3);
+    assert!(iso.probe("true").is_ok());
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "a frozen call emits no held Open"
+    );
+    assert_eq!(
+        iso.probe("String(globalThis.__runs)").unwrap().as_str(),
+        Some("2"),
+        "the posted hold skipped the tick's script, and it skipped no verb"
+    );
+
+    // Tick 4: thawed, the casket still held: the Open is back.
+    post_page(&iso, 4, &pair);
+    iso.on_game_tick(4);
+    assert!(iso.probe("true").is_ok());
+    assert_eq!(iso.drain_interacts(), vec![casket_open()], "the Open repeats");
+
+    // Tick 5: the casket gone, the constrained clue left alone. The gate
+    // re-arms for 3554 — a different held row — and the packed clue is not a
+    // held Open.
+    post_page(&iso, 5, &[(3554, 1)]);
+    iso.on_game_tick(5);
+    assert!(iso.probe("true").is_ok());
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "3554 is a clue, not a casket: nothing is opened for it"
+    );
+
+    // Tick 6: the casket and every other membership row are gone. The live
+    // session reports its own identify token and dies — that is not trail
+    // completion, and it is not a collect.
+    post_page(&iso, 6, &[]);
+    iso.on_game_tick(6);
+    assert!(iso.probe("true").is_ok());
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "a lost membership pushes nothing"
+    );
+
+    let probed = iso.probe("globalThis.__probe").unwrap();
+    let value: serde_json::Value = serde_json::from_str(probed.as_str().unwrap()).unwrap();
+    iso.join();
+
+    assert!(value["token"].is_number(), "{value:?}");
+    // Five script runs: the `hold` tick is paint-only, and it ran no step.
+    assert_eq!(value["runs"], 5, "{value:?}");
+    let steps = value["steps"].as_array().expect("steps");
+    assert_eq!(steps.len(), 10, "{value:?}");
+    let token = &value["token"];
+    assert_eq!(steps[0]["ok"], true, "{value:?}");
+    assert_eq!(
+        steps[0]["value"]["token"], *token,
+        "the begin keeps its own token: {value:?}"
+    );
+    for (index, kind) in [
+        (1, "callback.enabled"),
+        (2, "callback.log"),
+        (3, "callback.setStatus"),
+        (4, "held"),
+        (5, "held"),
+        (6, "yield"),
+        (7, "held"),
+        (8, "callback.enabled"),
+    ] {
+        assert_eq!(steps[index]["kind"], kind, "{index} {value:?}");
+    }
+    for index in 1..steps.len() - 1 {
+        let step = &steps[index];
+        assert_eq!(step["ok"], true, "{index} {step}");
+        assert_eq!(step["status"], "continue", "{index} {step}");
+        assert_eq!(step["token"], *token, "{index} {step}");
+        assert!(step.get("error").is_none(), "{index} {step}");
+    }
+    // The empty page after the casket is the identify family's own refusal,
+    // never a continue kind and never a `done`.
+    let lost = &steps[9];
+    assert_eq!(lost["ok"], false, "{value:?}");
+    assert_eq!(lost["error"], "none-held", "{value:?}");
+    assert!(lost.get("value").is_none(), "{value:?}");
+    assert_eq!(lost["status"], serde_json::Value::Null, "{value:?}");
+    for index in [4, 5, 7] {
+        let step = &steps[index];
+        assert_eq!(step["name"], "Casket", "{index} {value:?}");
+        assert_eq!(step["action"], "Open", "{index} {value:?}");
+        // The name is the identity: no bound row id and no tile rides along.
+        for absent in ["id", "x", "z", "level"] {
+            assert!(step.get(absent).is_none(), "{index} {absent} {step}");
+        }
+    }
+    // The report ahead of the Open is the casket row's own, never the clue's.
+    let logged = steps[2]["message"].as_str().unwrap_or("");
+    assert!(
+        logged.contains("trail_clue_hard_sextant028_casket"),
+        "{value:?}"
+    );
+    assert!(logged.contains("3555"), "{value:?}");
+    assert!(!logged.contains("3554"), "{value:?}");
+    assert!(!logged.contains("clue solved"), "{value:?}");
+    let text = value.to_string();
+    for forbidden in ["clue solved", "abandon", "supplies-needed", "ownsEquipment"] {
+        assert!(!text.contains(forbidden), "{value:?}");
+    }
+}
+
 /// The rows that are not search members stay identified then idle even with a
 /// fully walkable posted scene: packed 3554 is `access: "constrained"`, 2831
-/// is a desc-only frozen `keyFrom` riddle, and 2713 is a coord-only map.
+/// is a desc-only frozen `keyFrom` riddle, 2713 is a coord-only map, and 2722
+/// is a clue row with no params at all — and none of them is a held casket,
+/// so none of them opens anything.
 #[test]
 fn v2_clue_idle_rows_never_walk_or_search() {
     let src = r#"
@@ -1233,7 +1433,7 @@ export function tick(api) {
   }
 }
 "#;
-    for id in [3554, 2831, 2713] {
+    for id in [3554, 2722, 2831, 2713] {
         let actions = vec!["Search".to_string()];
         let locs = [scene_loc(25, 3209, 3218, 1, &actions)];
         let data = api::game_data::for_revision(ClientRevision::R274).unwrap();

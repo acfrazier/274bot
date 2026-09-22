@@ -15,27 +15,39 @@
 //! after the pickup — and a live session that loses its held membership
 //! errors `none-held` and aborts.
 //!
-//! This is the search slice and nothing else: no dig, talk, guardian, puzzle,
-//! deposit, retry or return-grind. A held row that is a selected search
-//! membership — a selected `trail_loc=^true` **and** a decodable selected
-//! `trail_coord` on the same row — walks to its decoded tile and then
-//! dispatches the Search/Open picker over the posted loc page; both verbs are
-//! enqueued by the wrapper as `InteractReq::Walk` / `InteractReq::Loc`. The
-//! picker is the frozen one, minus its `walkLeg`: nearest then action rank,
-//! always at the row's own posted tile and id. Every other held step, the
-//! packed 3554 `access: "constrained"` clue, the desc-only key-gated riddles
-//! and the coord-only map rows included, is identified and then idled: no
-//! action and no walk. Yield keeps the token live, so it is not trail
+//! This is the search and casket-open slice and nothing else: no dig, talk,
+//! guardian, puzzle, deposit, retry or return-grind. A held row that is a
+//! selected search membership — a selected `trail_loc=^true` **and** a
+//! decodable selected `trail_coord` on the same row — walks to its decoded
+//! tile and then dispatches the Search/Open picker over the posted loc page;
+//! both verbs are enqueued by the wrapper as `InteractReq::Walk` /
+//! `InteractReq::Loc`. The picker is the frozen one, minus its `walkLeg`:
+//! nearest then action rank, always at the row's own posted tile and id.
+//!
+//! A held `role: "casket"` row is the held casket item: once its own report is
+//! posted it dispatches the generic held step — the selected item display name
+//! joined by the row's own id, and the frozen `Open` — enqueued by the wrapper
+//! as `InteractReq::Held` the way the journal enqueues its modal clicks. It
+//! repeats while that same casket id stays held, and a different held row
+//! re-arms the gate. The name is the identity the host resolves by first name
+//! match: never the row alias, never an item id, and never a scan of the item
+//! table.
+//!
+//! Every other held step, the packed 3554 `access: "constrained"` clue, the
+//! desc-only key-gated riddles, the coord-only map rows and the empty-params
+//! 2722 included, is identified and then idled: no action and no walk.
+//! Identify is casket-first, so a casket held beside its own clue is the Open
+//! and never 3554 play. Yield keeps the token live, so it is not trail
 //! completion, and this machine never returns `status: "done"`, never
 //! restores gear, and never emits the exact `'clue solved'` string.
 //!
 //! One token per isolate. A second begin, reset and stop abort the live token
 //! and emit no verb for it. Pause and hold freeze this machine's own clock,
-//! so a frozen call emits no callback, no walk and no loc, and does not
-//! advance the session. `on_snapshot` is fan-out only: begin and next read
-//! the pages the wrapper hands in at call time — the parked page, this call's
-//! `here` tile and its posted loc page — so nothing is cached here and there
-//! is no world copy.
+//! so a frozen call emits no callback, no walk, no loc and no held, and does
+//! not advance the session. `on_snapshot` is fan-out only: begin and next
+//! read the pages the wrapper hands in at call time — the parked page, this
+//! call's `here` tile and its posted loc page — so nothing is cached here and
+//! there is no world copy.
 
 use crate::isolate_fb::SnapshotReader;
 use crate::task_clock::InstantTaskClock;
@@ -69,9 +81,10 @@ enum Phase {
     Gate,
     /// Enabled: the progress status line is not posted yet.
     Reporting,
-    /// Progress posted: the same step stays held. A search row walks then
-    /// dispatches the picker from here; every other row idles with no action
-    /// and no walk, and no second callback is emitted for this step.
+    /// Progress posted: the same step stays held. A held casket dispatches
+    /// its Open from here and a search row walks then dispatches the picker;
+    /// every other row idles with no action and no walk, and no second
+    /// callback is emitted for this step.
     Steady,
 }
 
@@ -195,12 +208,25 @@ impl ClueRuntime {
                     "message": status(row),
                 })
             }
-            Phase::Steady => self.search(row, input),
+            Phase::Steady => match casket_name(selected, row) {
+                // The held casket's own item, opened by name. Repeats while
+                // this same casket id stays held: the host fails a verb whose
+                // item is already gone, and the next call re-reads the page.
+                Some(name) => json!({
+                    "kind": "held",
+                    "token": self.token,
+                    "name": name,
+                    "action": OPEN,
+                }),
+                // Not a held casket: the landed search dispatch, which idles
+                // when the row is not a search membership either.
+                None => self.search(row, input),
+            },
         }
     }
 
-    /// `Steady` on an identified row: a search membership walks to its
-    /// decoded tile and then dispatches the picker from this call's pages;
+    /// `Steady` on an identified non-casket row: a search membership walks to
+    /// its decoded tile and then dispatches the picker from this call's pages;
     /// every other row idles exactly as before.
     ///
     /// The two pages are the wrapper's call-time marshalling of
@@ -462,6 +488,33 @@ fn pick_loc(input: &Value, tile: Tile) -> Option<Pick> {
     best.map(|(pick, _, _)| pick)
 }
 
+/// The identified row's role for the held casket item. Membership is the
+/// landed identify's; this only reads the role it returned.
+const CASKET_ROLE: &str = "casket";
+
+/// The frozen casket arm's action. The held step's other half is the selected
+/// item display name, so the host resolves the item by name.
+const OPEN: &str = "Open";
+
+/// The identified casket row's held-item identity: the selected item display
+/// name joined by the row's own id, or `None` when this row is not a casket.
+///
+/// The name is what the host's `held` verb resolves by first name match on the
+/// inventory page, so the machine emits no item id and no bound row identity:
+/// the alias is not a display name, and the item table is never scanned. A
+/// casket whose id joins no selected item, or joins one with no display name,
+/// has no identity to dispatch and idles rather than inventing one.
+fn casket_name<'a>(
+    selected: Option<&'a SelectedGameData>,
+    row: &TrailMembershipRow,
+) -> Option<&'a str> {
+    if row.role != CASKET_ROLE {
+        return None;
+    }
+    let name = selected?.item_by_id(row.id)?.name.as_deref()?;
+    (!name.is_empty()).then_some(name)
+}
+
 /// Progress line for the identified step: landed alias, role and id only.
 /// Never an invented coord, npc or answer, and never `'clue solved'`.
 fn progress(row: &TrailMembershipRow) -> String {
@@ -524,11 +577,15 @@ mod tests {
 
     const CASKET: i32 = 3531;
     const CLUE: i32 = 3554;
+    /// `trail_clue_hard_sextant028_casket`: the casket of the held 3554 clue.
+    const SEXTANT_CASKET: i32 = 3555;
     /// `trail_clue_easy_simple001`: the selected search membership,
     /// `trail_loc=^true` with `trail_coord=1_50_50_9_18`.
     const SEARCH: i32 = 2677;
     /// `trail_clue_easy_map001`: a selected `trail_coord` with no `trail_loc`.
     const MAP: i32 = 2713;
+    /// `trail_clue_hard_map001`: a selected clue row with no params at all.
+    const MAP_EMPTY: i32 = 2722;
     /// `trail_clue_medium_riddle001`: a frozen `keyFrom` riddle, selected
     /// `trail_desc` only.
     const RIDDLE: i32 = 2831;
@@ -821,18 +878,15 @@ mod tests {
     fn the_exact_clue_solved_string_is_never_emitted() {
         on_reset();
         let data = selected();
-        let token = token_of(&begin(&data, json!([[CASKET, 1]])));
+        // The packed 3554 clue is not openable: it is identified, reported
+        // and then idled, and never a verb of any kind.
+        let token = token_of(&begin(&data, json!([[CLUE, 1]])));
         let steps = vec![
-            call(&data, token, json!([[CASKET, 1]]), json!({})),
-            call(
-                &data,
-                token,
-                json!([[CASKET, 1]]),
-                json!({ "resume": true }),
-            ),
-            call(&data, token, json!([[CASKET, 1]]), json!({})),
-            call(&data, token, json!([[CASKET, 1]]), json!({})),
-            call(&data, token, json!([[CASKET, 1]]), json!({ "hold": true })),
+            call(&data, token, json!([[CLUE, 1]]), json!({})),
+            call(&data, token, json!([[CLUE, 1]]), json!({ "resume": true })),
+            call(&data, token, json!([[CLUE, 1]]), json!({})),
+            call(&data, token, json!([[CLUE, 1]]), json!({})),
+            call(&data, token, json!([[CLUE, 1]]), json!({ "hold": true })),
         ];
         for step in &steps {
             let text = step.to_string();
@@ -1205,7 +1259,10 @@ mod tests {
             "here": here(3209, 3218, 1),
             "locs": [loc(11, 3209, 3218, 1, &["Search"])],
         });
-        for id in [CLUE, MAP, RIDDLE, CASKET] {
+        // A casket is a held Open, so it is not in this set: 3554 is the
+        // packed constrained clue, 2722 and 2713 are clue rows with no search
+        // pin, and 2831 is a desc-only riddle.
+        for id in [CLUE, MAP_EMPTY, MAP, RIDDLE] {
             let page = json!([[id, 1]]);
             let token = steady(&data, id);
             for _ in 0..2 {
@@ -1215,6 +1272,152 @@ mod tests {
                 assert!(idle.get("x").is_none(), "{id} {idle}");
                 assert!(idle.get("action").is_none(), "{id} {idle}");
             }
+        }
+    }
+
+    #[test]
+    fn a_casket_row_opens_the_held_item_only_after_its_own_report() {
+        on_reset();
+        let data = selected();
+        let page = json!([[CASKET, 1]]);
+        let token = token_of(&begin(&data, page.clone()));
+        // The landed report comes first: no Open rides along with the gate,
+        // the log line or the status line.
+        let steps = vec![
+            call(&data, token, page.clone(), json!({})),
+            call(&data, token, page.clone(), json!({ "resume": true })),
+        ];
+        assert_eq!(steps[0]["kind"], "callback.enabled", "{steps:?}");
+        assert_eq!(steps[1]["kind"], "callback.log", "{steps:?}");
+        let posted = call(&data, token, page.clone(), json!({}));
+        assert_eq!(posted["kind"], "callback.setStatus", "{posted}");
+
+        // Open replaces `Steady` from here, and repeats while the same casket
+        // id stays held — the host refuses a casket it no longer holds.
+        for _ in 0..2 {
+            let open = call(&data, token, page.clone(), json!({}));
+            assert_eq!(open["kind"], "held", "{open}");
+            assert_eq!(open["name"], "Casket", "{open}");
+            assert_eq!(open["action"], "Open", "{open}");
+            assert_eq!(token_of(&open), token, "{open}");
+            // No bound row identity and no scene verb: the host resolves the
+            // first inventory row with this name.
+            assert!(open.get("id").is_none(), "{open}");
+            assert!(open.get("x").is_none(), "{open}");
+            assert!(open.get("z").is_none(), "{open}");
+            assert!(open.get("level").is_none(), "{open}");
+            assert_ne!(open["kind"], "done", "{open}");
+            assert!(!open.to_string().contains("clue solved"), "{open}");
+        }
+
+        // A different held row re-arms the gate: the Open was the casket's,
+        // and the packed clue behind it is not opened.
+        let clue = call(&data, token, json!([[CLUE, 1]]), json!({}));
+        assert_eq!(clue["kind"], "callback.enabled", "{clue}");
+        assert_eq!(token_of(&clue), token, "{clue}");
+    }
+
+    #[test]
+    fn the_sextant_casket_is_the_open_and_not_the_packed_clue() {
+        on_reset();
+        let data = selected();
+        // Identify is casket-first: with the constrained 3554 clue and its
+        // casket both held, the casket row is the step. The landed report is
+        // the casket's own, and the Open is never 3554 play.
+        let both = json!([[CLUE, 1], [SEXTANT_CASKET, 1]]);
+        let token = token_of(&begin(&data, both.clone()));
+        assert_eq!(
+            call(&data, token, both.clone(), json!({}))["kind"],
+            "callback.enabled"
+        );
+        let logged = call(&data, token, both.clone(), json!({ "resume": true }));
+        assert_eq!(logged["kind"], "callback.log", "{logged}");
+        let message = logged["message"].as_str().unwrap_or("");
+        assert!(
+            message.contains("trail_clue_hard_sextant028_casket"),
+            "{logged}"
+        );
+        assert!(message.contains("3555"), "{logged}");
+        assert!(!message.contains("3554"), "{logged}");
+        assert_eq!(
+            call(&data, token, both.clone(), json!({}))["kind"],
+            "callback.setStatus"
+        );
+        let open = call(&data, token, both.clone(), json!({}));
+        assert_eq!(open["kind"], "held", "{open}");
+        assert_eq!(open["name"], "Casket", "{open}");
+        assert_eq!(open["action"], "Open", "{open}");
+        // The clue left on its own re-arms the gate rather than opening it.
+        let clue_only = call(&data, token, json!([[CLUE, 1]]), json!({}));
+        assert_eq!(clue_only["kind"], "callback.enabled", "{clue_only}");
+    }
+
+    #[test]
+    fn freeze_and_yield_beat_the_casket_open() {
+        on_reset();
+        let data = selected();
+        let page = json!([[CASKET, 1]]);
+        let token = steady(&data, CASKET);
+        // Frozen: wait, and no Open rides along with it.
+        on_pause();
+        let paused = call(&data, token, page.clone(), json!({ "hold": true }));
+        assert_eq!(paused["kind"], "wait", "{paused}");
+        on_resume();
+        on_hold(true);
+        let held_clock = call(&data, token, page.clone(), json!({}));
+        assert_eq!(held_clock["kind"], "wait", "{held_clock}");
+        on_hold(false);
+        // The posted `hold || ours` interrupt, unfrozen: yield, still no Open
+        // and the token lives.
+        let yielded = call(&data, token, page.clone(), json!({ "hold": true }));
+        assert_eq!(yielded["kind"], "yield", "{yielded}");
+        assert_eq!(token_of(&yielded), token, "{yielded}");
+        for step in [&paused, &held_clock, &yielded] {
+            assert!(step.get("name").is_none(), "{step}");
+            assert!(step.get("action").is_none(), "{step}");
+        }
+        // Thawed and unheld, the Open is still there.
+        let open = call(&data, token, page, json!({}));
+        assert_eq!(open["kind"], "held", "{open}");
+        assert_eq!(open["name"], "Casket", "{open}");
+        assert_eq!(open["action"], "Open", "{open}");
+    }
+
+    #[test]
+    fn every_selected_casket_row_resolves_the_casket_display_name() {
+        for revision in [ClientRevision::R274, ClientRevision::R289] {
+            let data = api::game_data::for_revision(revision).expect("selected data");
+            let facts = data.trails().expect("trails");
+            let caskets: Vec<&TrailMembershipRow> = facts
+                .rows
+                .iter()
+                .filter(|row| row.role == CASKET_ROLE)
+                .collect();
+            assert_eq!(caskets.len(), 71, "{revision:?}");
+            for casket in &caskets {
+                assert!(casket.params.is_empty(), "{revision:?} {}", casket.alias);
+                assert_eq!(
+                    casket_name(Some(&data), casket),
+                    Some("Casket"),
+                    "{revision:?} {}",
+                    casket.alias
+                );
+            }
+            // The clue rows carry a display name too, and are still not
+            // caskets: the role decides, not the item table.
+            assert_eq!(casket_name(Some(&data), row(&data, CLUE)), None);
+            assert_eq!(casket_name(Some(&data), row(&data, SEARCH)), None);
+            // No selected pin, and a casket id that joins no selected item,
+            // are both no identity to dispatch — never an invented name.
+            let orphan = TrailMembershipRow {
+                alias: "trail_clue_test_casket".into(),
+                id: i32::MAX,
+                role: CASKET_ROLE.into(),
+                params: Vec::new(),
+                access: None,
+            };
+            assert_eq!(casket_name(None, &orphan), None, "{revision:?}");
+            assert_eq!(casket_name(Some(&data), &orphan), None, "{revision:?}");
         }
     }
 
