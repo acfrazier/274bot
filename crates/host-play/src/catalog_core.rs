@@ -26,7 +26,7 @@ pub use ranging::{
     TARGET_RESULT_MODAL, TICKETS_PER_TRADE, VARP_TARGET_COUNT, VARP_TARGET_HIT, VARP_TARGET_SCORE,
 };
 
-pub const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|chicken_killer_bank|thiever|alcher|alcher_defaults|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|alcher_low|alcher_fire_battlestaff|alcher_swarm_drain|bank_fletcher|bank_fletcher_shafts|bank_fletcher_headless|bank_fletcher_string|bank_fletcher_cut_string|dart_fletcher|dart_fletcher_iron|herb_cleaner|herb_cleaner_named|herb_cleaner_empty_bank|gem_cutter|gem_cutter_named|door_opener|door_opener_gate|gnome_course|gnome_course_radius|wildy_agility|brimhaven_agility|flax_picker|superheater|superheater_steel|superheater_fire_battlestaff|superheater_silver_low_natures|vial_filler|vial_filler_east|potion_maker|potion_maker_named|tanner_bot|tanner_bot_hard|rune_crafter|rune_crafter_earth|mule_crafter|ardy_cakes|ardy_cakes_fight|ardy_thiever|ardy_thiever_fight|ardy_thiever_knight|gnome_chop|gnome_fletch_short|gnome_fletch_long|coal_trucks|cook_bot|cook_bot_lobster|smelter_bot|smelter_bot_steel|flax_spinner|flax_aio|flax_aio_pick|flax_aio_spin|herblore_secondaries|herblore_secondaries_newt|chaos_druid|chaos_druid_tower|chaos_druid_yanille|moss_giant|moss_giant_prepared|moss_giant_dart|hill_giant|auto_fighter|auto_fighter_mage|auto_fighter_range|rock_crab|rock_crab_range|green_dragon|green_dragon_prepared|green_dragon_mage_prepared|green_dragon_special|green_dragon_special_prepared|green_dragon_potions|green_dragon_potions_prepared|fire_giant|fire_giant_prepared|ardy_fighter|auto_fighter_bank|moss_giant_bank|hill_giant_bank|hill_giant_bank_prepared|chaos_druid_bank|ardy_fighter_bank|rock_crab_bank|green_dragon_bank|green_dragon_bank_prepared|green_dragon_bank_default_prepared|green_dragon_tele|green_dragon_tele_prepared|fire_giant_approach|fire_giant_bank|fire_giant_bank_prepared|fire_giant_camelot_prepared|aio_teleport|aio_teleport_falador|aio_teleport_no_staff|shop_buyout|shop_buyout_aubury|shop_buyout_lowe|shop_buyout_hickton|shop_buyout_harry|shop_buyout_betty|shop_buyout_gerrant|smithing_bot|smithing_bot_platebody|leather_crafter|leather_crafter_hard_body|firemaker|firemaker_oak|climbing_boots|climbing_boots_teleport|ranging_guild_round|ranging_guild_redeem|ranging_guild_bank|ranging_guild_full|brimhaven_moss_inspect_v1|route_inspect_brimhaven_v2_ts|prayer_v2_ts|prayer_v1_ts|line_of_sight_v2_ts|actor_observation_v2_ts|fight_field_v2_ts|hold_spot_v2_ts|retreat_spot_v2_ts|walk_spot_v2_ts|enter_lair_v2_ts|leave_lair_v2_ts|acquire_key_v2_ts";
+pub const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|chicken_killer_bank|thiever|alcher|alcher_defaults|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|alcher_low|alcher_fire_battlestaff|alcher_swarm_drain|bank_fletcher|bank_fletcher_shafts|bank_fletcher_headless|bank_fletcher_string|bank_fletcher_cut_string|dart_fletcher|dart_fletcher_iron|herb_cleaner|herb_cleaner_named|herb_cleaner_empty_bank|gem_cutter|gem_cutter_named|door_opener|door_opener_gate|gnome_course|gnome_course_radius|wildy_agility|brimhaven_agility|flax_picker|superheater|superheater_steel|superheater_fire_battlestaff|superheater_silver_low_natures|vial_filler|vial_filler_east|potion_maker|potion_maker_named|tanner_bot|tanner_bot_hard|rune_crafter|rune_crafter_earth|mule_crafter|ardy_cakes|ardy_cakes_fight|ardy_thiever|ardy_thiever_fight|ardy_thiever_knight|gnome_chop|gnome_fletch_short|gnome_fletch_long|coal_trucks|cook_bot|cook_bot_lobster|smelter_bot|smelter_bot_steel|flax_spinner|flax_aio|flax_aio_pick|flax_aio_spin|herblore_secondaries|herblore_secondaries_newt|chaos_druid|chaos_druid_tower|chaos_druid_yanille|moss_giant|moss_giant_prepared|moss_giant_dart|hill_giant|auto_fighter|auto_fighter_mage|auto_fighter_range|rock_crab|rock_crab_range|green_dragon|green_dragon_prepared|green_dragon_mage_prepared|green_dragon_special|green_dragon_special_prepared|green_dragon_potions|green_dragon_potions_prepared|fire_giant|fire_giant_prepared|ardy_fighter|auto_fighter_bank|moss_giant_bank|hill_giant_bank|hill_giant_bank_prepared|chaos_druid_bank|ardy_fighter_bank|rock_crab_bank|green_dragon_bank|green_dragon_bank_prepared|green_dragon_bank_default_prepared|green_dragon_tele|green_dragon_tele_prepared|fire_giant_approach|fire_giant_bank|fire_giant_bank_prepared|fire_giant_camelot_prepared|aio_teleport|aio_teleport_falador|aio_teleport_no_staff|shop_buyout|shop_buyout_aubury|shop_buyout_lowe|shop_buyout_hickton|shop_buyout_harry|shop_buyout_betty|shop_buyout_gerrant|smithing_bot|smithing_bot_platebody|leather_crafter|leather_crafter_hard_body|firemaker|firemaker_oak|climbing_boots|climbing_boots_teleport|ranging_guild_round|ranging_guild_redeem|ranging_guild_bank|ranging_guild_full|brimhaven_moss_inspect_v1|route_inspect_brimhaven_v2_ts|prayer_v2_ts|prayer_v1_ts|line_of_sight_v2_ts|actor_observation_v2_ts|fight_field_v2_ts|hold_spot_v2_ts|retreat_spot_v2_ts|walk_spot_v2_ts|enter_lair_v2_ts|leave_lair_v2_ts|acquire_key_v2_ts|cell_v2_ts";
 pub const CATALOG_COMMIT_A: &str = "100adccc037d9f6898080e1cad58fcfc43364775";
 pub const CATALOG_COMMIT_B: &str = "8e7d965be2071d6ec65c3265e12af797082d720a";
 pub const ADAMANT_SCIMITAR_ID: i32 = 1331;
@@ -617,6 +617,7 @@ pub enum CoreCase {
     EnterLairV2,
     LeaveLairV2,
     AcquireKeyV2,
+    CellV2,
 }
 
 impl CoreCase {
@@ -760,6 +761,7 @@ impl CoreCase {
             "enter_lair_v2_ts" => Ok(Self::EnterLairV2),
             "leave_lair_v2_ts" => Ok(Self::LeaveLairV2),
             "acquire_key_v2_ts" => Ok(Self::AcquireKeyV2),
+            "cell_v2_ts" => Ok(Self::CellV2),
             _ => Err(format!(
                 "unknown CATALOG_SCENARIO {value:?}; expected {CORE_SCENARIOS}"
             )),
@@ -906,6 +908,7 @@ impl CoreCase {
             Self::EnterLairV2 => "enter_lair_v2_ts",
             Self::LeaveLairV2 => "leave_lair_v2_ts",
             Self::AcquireKeyV2 => "acquire_key_v2_ts",
+            Self::CellV2 => "cell_v2_ts",
         }
     }
 
@@ -1020,6 +1023,7 @@ impl CoreCase {
             Self::EnterLairV2 => "enter_lair_v2",
             Self::LeaveLairV2 => "leave_lair_v2",
             Self::AcquireKeyV2 => "acquire_key_v2",
+            Self::CellV2 => "cell_v2",
         }
     }
 
@@ -1068,6 +1072,10 @@ impl CoreCase {
 
     pub fn copies_acquire_key(self) -> bool {
         matches!(self, Self::AcquireKeyV2)
+    }
+
+    pub fn copies_cell(self) -> bool {
+        matches!(self, Self::CellV2)
     }
 
     pub fn prayer_stop_reason(self) -> Option<&'static str> {
@@ -1137,6 +1145,13 @@ impl CoreCase {
     pub fn acquire_key_stop_reason(self) -> Option<&'static str> {
         match self {
             Self::AcquireKeyV2 => Some(ACQUIRE_KEY_V2_STOP),
+            _ => None,
+        }
+    }
+
+    pub fn cell_stop_reason(self) -> Option<&'static str> {
+        match self {
+            Self::CellV2 => Some(CELL_V2_STOP),
             _ => None,
         }
     }
@@ -1269,6 +1284,9 @@ pub struct Observation {
     /// Compact here/dest/kind corridor witness. Empty unless the active Core
     /// case asked for acquire key. Never a world copy.
     pub acquire: AcquireKeyObservation,
+    /// Compact here/kind key-call witness. Empty unless the active Core case
+    /// asked for cell. Never a world copy.
+    pub cell: CellV2Observation,
 }
 
 /// Compact hop projection for Core JSON. Only `locName` is copied from the
@@ -1788,6 +1806,7 @@ impl Observation {
             enter: EnterLairObservation::default(),
             leave: LeaveLairObservation::default(),
             acquire: AcquireKeyObservation::default(),
+            cell: CellV2Observation::default(),
         }
     }
 
@@ -2189,6 +2208,30 @@ impl Observation {
             radius: receipt.as_ref().map(|row| row.radius),
             cell: Some(ACQUIRE_KEY_CELL),
             boxes: vec![ACQUIRE_KEY_LAIR],
+            receipt,
+        };
+    }
+
+    /// Compact host here plus the script paint key-call receipt. Never copies
+    /// the collision grid or world. The projected lair box is the File fixture,
+    /// not the CELL box.
+    pub fn attach_cell(
+        &mut self,
+        snapshot: &GameSnapshot,
+        paint: Option<&script::shim::ScriptPaint>,
+    ) {
+        let scene = snapshot.scene();
+        let here = self
+            .tile
+            .map(|(x, z, level)| LineOfSightTile { x, z, level });
+        let receipt = paint.and_then(parse_cell_v2_receipt_from_paint);
+        let door_walk = paint.is_some_and(cell_v2_paint_claims_door_walk);
+        self.cell = CellV2Observation {
+            available: scene.available,
+            here,
+            cell: Some(CELL_V2_CELL),
+            boxes: vec![CELL_V2_LAIR],
+            door_walk,
             receipt,
         };
     }
@@ -4601,6 +4644,310 @@ impl AcquireKeyDeliveryCycle {
     }
 }
 
+pub const CELL_V2_STOP: &str = "cell qualification complete";
+pub const CELL_V2_RECEIPT_PREFIX: &str = "cell-receipt:";
+/// Jail door rectangle. Proof fence, not a walk destination.
+pub const CELL_V2_CELL: CellV2Box = CellV2Box {
+    min_x: 2928,
+    max_x: 2934,
+    min_z: 9683,
+    max_z: 9689,
+    level: 0,
+};
+/// File projection fixture. Mainland here must stay outside it.
+pub const CELL_V2_LAIR: CellV2Box = CellV2Box {
+    min_x: 40,
+    max_x: 60,
+    min_z: 40,
+    max_z: 60,
+    level: 0,
+};
+/// Door stand the machine walks only after a jail key. A key-call must not target it.
+pub const CELL_V2_DOOR: LineOfSightTile = LineOfSightTile {
+    x: 2931,
+    z: 9690,
+    level: 0,
+};
+const CELL_V2_DUSTY_ID: i64 = 1590;
+const CELL_V2_KBD_LOCS: [i32; 4] = [1765, 1766, 1816, 1817];
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CellV2Box {
+    pub min_x: i32,
+    pub max_x: i32,
+    pub min_z: i32,
+    pub max_z: i32,
+    pub level: i32,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CellV2ScriptReceipt {
+    pub here: LineOfSightTile,
+    pub kind: String,
+    pub discriminator: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct CellV2Observation {
+    pub available: bool,
+    pub here: Option<LineOfSightTile>,
+    pub cell: Option<CellV2Box>,
+    pub boxes: Vec<CellV2Box>,
+    pub door_walk: bool,
+    pub receipt: Option<CellV2ScriptReceipt>,
+}
+
+impl Default for CellV2Observation {
+    fn default() -> Self {
+        Self {
+            available: false,
+            here: None,
+            cell: None,
+            boxes: Vec::new(),
+            door_walk: false,
+            receipt: None,
+        }
+    }
+}
+
+fn cell_v2_number_is_dusty(n: i64) -> bool {
+    n == CELL_V2_DUSTY_ID
+}
+
+fn cell_v2_is_door_tile(value: &Value) -> bool {
+    let Value::Object(map) = value else {
+        return false;
+    };
+    map.get("x").and_then(Value::as_i64) == Some(i64::from(CELL_V2_DOOR.x))
+        && map.get("z").and_then(Value::as_i64) == Some(i64::from(CELL_V2_DOOR.z))
+}
+
+fn cell_v2_kind_forbidden(kind: &str) -> bool {
+    matches!(
+        kind.to_ascii_lowercase().as_str(),
+        "walk"
+            | "walk-near"
+            | "walk-to"
+            | "use-on"
+            | "npc"
+            | "loc"
+            | "leave"
+            | "yield"
+            | "aborted"
+            | "kbd"
+            | "kbd-lair"
+    )
+}
+
+fn cell_v2_kind_ok(kind: &str) -> bool {
+    kind.eq_ignore_ascii_case("key")
+}
+
+fn cell_v2_value_forbidden(value: &Value) -> bool {
+    match value {
+        Value::Object(map) => {
+            if map.get("key").and_then(Value::as_str) == Some("kbd-lair") {
+                return true;
+            }
+            if map
+                .get("kind")
+                .and_then(Value::as_str)
+                .is_some_and(cell_v2_kind_forbidden)
+            {
+                return true;
+            }
+            if map.get("dest").is_some_and(cell_v2_is_door_tile) {
+                return true;
+            }
+            if map.contains_key("kind")
+                && map.get("x").and_then(Value::as_i64) == Some(i64::from(CELL_V2_DOOR.x))
+                && map.get("z").and_then(Value::as_i64) == Some(i64::from(CELL_V2_DOOR.z))
+            {
+                return true;
+            }
+            for key in ["locId", "id", "item", "itemId", "held"] {
+                if map
+                    .get(key)
+                    .and_then(Value::as_i64)
+                    .is_some_and(cell_v2_number_is_dusty)
+                    || map
+                        .get(key)
+                        .and_then(Value::as_i64)
+                        .is_some_and(|n| CELL_V2_KBD_LOCS.contains(&(n as i32)))
+                {
+                    return true;
+                }
+            }
+            for key in ["route", "outLever", "upLadder"] {
+                if map.get(key).is_some_and(|child| !child.is_null()) {
+                    return true;
+                }
+            }
+            map.values().any(cell_v2_value_forbidden)
+        }
+        Value::Array(rows) => rows.iter().any(cell_v2_value_forbidden),
+        Value::Number(n) => n.as_i64().is_some_and(cell_v2_number_is_dusty),
+        Value::String(text) => {
+            text.contains("1590")
+                || text.eq_ignore_ascii_case("kbd-lair")
+                || text.eq_ignore_ascii_case("entered")
+        }
+        _ => false,
+    }
+}
+
+fn cell_v2_line_claims_door_walk(line: &str) -> bool {
+    let door = line.contains("2931") && line.contains("9690");
+    if !door {
+        return false;
+    }
+    let lower = line.to_ascii_lowercase();
+    lower.contains("walk") || lower.contains("dest")
+}
+
+/// Paint-row parser. A dusty-key claim, a door walk, or KBD is not a receipt.
+pub fn parse_cell_v2_receipt_line(line: &str) -> Option<CellV2ScriptReceipt> {
+    let json = line.strip_prefix(CELL_V2_RECEIPT_PREFIX)?;
+    if json.contains("1590") || json.contains("kbd-lair") || cell_v2_line_claims_door_walk(json) {
+        return None;
+    }
+    let value: Value = serde_json::from_str(json).ok()?;
+    if cell_v2_value_forbidden(&value) {
+        return None;
+    }
+    serde_json::from_value(value).ok()
+}
+
+fn parse_cell_v2_receipt_from_paint(
+    paint: &script::shim::ScriptPaint,
+) -> Option<CellV2ScriptReceipt> {
+    paint
+        .lines
+        .iter()
+        .find_map(|line| parse_cell_v2_receipt_line(line))
+}
+
+fn cell_v2_paint_claims_door_walk(paint: &script::shim::ScriptPaint) -> bool {
+    paint.lines.iter().any(|line| cell_v2_line_claims_door_walk(line))
+}
+
+fn cell_v2_in_box(tile: LineOfSightTile, area: CellV2Box) -> bool {
+    tile.level == area.level
+        && tile.x >= area.min_x
+        && tile.x <= area.max_x
+        && tile.z >= area.min_z
+        && tile.z <= area.max_z
+}
+
+fn cell_v2_place_ok(here: LineOfSightTile, cell: CellV2Box, boxes: &[CellV2Box]) -> bool {
+    cell == CELL_V2_CELL
+        && boxes == [CELL_V2_LAIR]
+        && !cell_v2_in_box(here, CELL_V2_CELL)
+        && !cell_v2_in_box(here, CELL_V2_LAIR)
+        && boxes.iter().all(|area| !cell_v2_in_box(here, *area))
+}
+
+pub fn cell_v2_baseline_ready(baseline: &Observation) -> bool {
+    let Some(here) = baseline.cell.here else {
+        return false;
+    };
+    baseline.ingame
+        && baseline.scene_state == 2
+        && baseline.cell.available
+        && !baseline.cell.door_walk
+        && !cell_v2_in_box(here, CELL_V2_CELL)
+        && !cell_v2_in_box(here, CELL_V2_LAIR)
+}
+
+fn cell_v2_receipt_joined(now: &CellV2Observation) -> bool {
+    let (Some(here), Some(receipt)) = (now.here, now.receipt.as_ref()) else {
+        return false;
+    };
+    let Some(cell) = now.cell else {
+        return false;
+    };
+    now.available
+        && !now.door_walk
+        && receipt.here == here
+        && receipt.discriminator.eq_ignore_ascii_case("key-call")
+        && cell_v2_kind_ok(&receipt.kind)
+        && !cell_v2_kind_forbidden(&receipt.kind)
+        && cell_v2_place_ok(here, cell, &now.boxes)
+}
+
+/// Post-Start witness: joined key-call receipt and the named stop.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct CellV2DeliveryCycle {
+    pub here: Option<LineOfSightTile>,
+    pub kind: Option<String>,
+    pub discriminator: Option<String>,
+    pub cell: Option<CellV2Box>,
+    pub boxes: Vec<CellV2Box>,
+    pub door_walk: bool,
+    pub receipt: Option<CellV2ScriptReceipt>,
+    pub stopped: Option<script::ScriptLifecycleReceipt>,
+}
+
+impl CellV2DeliveryCycle {
+    pub fn observe(&mut self, now: &Observation) {
+        if self.receipt.is_some() {
+            return;
+        }
+        self.door_walk |= now.cell.door_walk;
+        if cell_v2_receipt_joined(&now.cell) {
+            self.here = now.cell.here;
+            self.kind = now.cell.receipt.as_ref().map(|row| row.kind.clone());
+            self.discriminator = now
+                .cell
+                .receipt
+                .as_ref()
+                .map(|row| row.discriminator.clone());
+            self.cell = now.cell.cell;
+            self.boxes = now.cell.boxes.clone();
+            self.receipt = now.cell.receipt.clone();
+        }
+    }
+
+    pub fn observe_script_lifecycle(
+        &mut self,
+        receipt: script::ScriptLifecycleReceipt,
+        expected: &str,
+    ) {
+        if self.receipt.is_some()
+            && !self.door_walk
+            && receipt.runtime_generation > 0
+            && receipt.state == script::ScriptTerminalState::Stopped
+            && receipt.reason == expected
+        {
+            self.stopped = Some(receipt);
+        }
+    }
+
+    pub fn qualified(&self) -> bool {
+        if self.stopped.is_none() || self.door_walk {
+            return false;
+        }
+        let (Some(here), Some(kind), Some(discriminator), Some(cell), Some(receipt)) = (
+            self.here,
+            self.kind.as_deref(),
+            self.discriminator.as_deref(),
+            self.cell,
+            self.receipt.as_ref(),
+        ) else {
+            return false;
+        };
+        receipt.here == here
+            && receipt.kind == kind
+            && receipt.discriminator == discriminator
+            && discriminator.eq_ignore_ascii_case("key-call")
+            && cell_v2_kind_ok(kind)
+            && !cell_v2_kind_forbidden(kind)
+            && cell_v2_place_ok(here, cell, &self.boxes)
+    }
+}
+
 fn empty_worn(observation: &Observation) -> bool {
     observation.equipment_ids.values().copied().sum::<i32>() == 0
 }
@@ -5555,6 +5902,7 @@ pub fn validate_case_baseline_with_preparation(
         CoreCase::EnterLairV2 => enter_lair_baseline_ready(baseline),
         CoreCase::LeaveLairV2 => leave_lair_baseline_ready(baseline),
         CoreCase::AcquireKeyV2 => acquire_key_baseline_ready(baseline),
+        CoreCase::CellV2 => cell_v2_baseline_ready(baseline),
     };
     if ready {
         return Ok(());
@@ -5938,6 +6286,9 @@ pub fn validate_case_baseline_with_preparation(
         CoreCase::AcquireKeyV2 => {
             "ingame && scene_state==2 && SceneView.available, here outside the CELL box and the projected lair box, corridor walk-near radius 1 to (2931,9690,0)"
         }
+        CoreCase::CellV2 => {
+            "ingame && scene_state==2 && SceneView.available, here outside the CELL box and the projected lair box, key-call kind key, not a walk to (2931,9690,0)"
+        }
     };
     Err(format!(
         "{} Start baseline lacks required preparation ({requirement}): {baseline:?}",
@@ -6017,6 +6368,7 @@ pub struct CoreWitness {
     pub enter_lair_cycle: EnterLairDeliveryCycle,
     pub leave_lair_cycle: LeaveLairDeliveryCycle,
     pub acquire_key_cycle: AcquireKeyDeliveryCycle,
+    pub cell_v2_cycle: CellV2DeliveryCycle,
     pub ordered_first_exhausted: bool,
 }
 
@@ -11326,6 +11678,7 @@ impl CoreWitness {
             enter_lair_cycle: EnterLairDeliveryCycle::default(),
             leave_lair_cycle: LeaveLairDeliveryCycle::default(),
             acquire_key_cycle: AcquireKeyDeliveryCycle::default(),
+            cell_v2_cycle: CellV2DeliveryCycle::default(),
             ordered_first_exhausted: false,
         }
     }
@@ -11580,6 +11933,9 @@ impl CoreWitness {
         }
         if matches!(self.case, CoreCase::AcquireKeyV2) {
             self.acquire_key_cycle.observe(observation);
+        }
+        if matches!(self.case, CoreCase::CellV2) {
+            self.cell_v2_cycle.observe(observation);
         }
         if matches!(self.case, CoreCase::Superheater) {
             self.superheater_cycle.observe(
@@ -11871,6 +12227,12 @@ impl CoreWitness {
                         .observe_script_lifecycle(receipt, expected);
                 }
             }
+            CoreCase::CellV2 => {
+                if let Some(expected) = self.case.cell_stop_reason() {
+                    self.cell_v2_cycle
+                        .observe_script_lifecycle(receipt, expected);
+                }
+            }
             _ => {}
         }
     }
@@ -12095,6 +12457,7 @@ impl CoreWitness {
             CoreCase::EnterLairV2 => self.enter_lair_cycle.qualified(),
             CoreCase::LeaveLairV2 => self.leave_lair_cycle.qualified(),
             CoreCase::AcquireKeyV2 => self.acquire_key_cycle.qualified(),
+            CoreCase::CellV2 => self.cell_v2_cycle.qualified(),
             CoreCase::ChaosDruid
             | CoreCase::ChaosDruidTower
             | CoreCase::ChaosDruidYanille
@@ -12200,6 +12563,7 @@ impl CoreWitness {
             "enter_lair_cycle": self.enter_lair_cycle,
             "leave_lair_cycle": self.leave_lair_cycle,
             "acquire_key_cycle": self.acquire_key_cycle,
+            "cell_v2_cycle": self.cell_v2_cycle,
             "ordered_first_exhausted": self.ordered_first_exhausted,
         }))
     }
@@ -12565,6 +12929,13 @@ impl CoreWatch {
                 CoreWatchState::Running { witness, .. } => witness.case.copies_acquire_key(),
                 CoreWatchState::Disabled | CoreWatchState::Qualified { .. } => false,
             };
+            let copies_cell = match &*state {
+                CoreWatchState::Ready { case, .. } | CoreWatchState::Failed { case, .. } => {
+                    case.copies_cell()
+                }
+                CoreWatchState::Running { witness, .. } => witness.case.copies_cell(),
+                CoreWatchState::Disabled | CoreWatchState::Qualified { .. } => false,
+            };
             let mut observation = Observation::from_snapshot(snapshot, names);
             observation.script_lifecycle = lifecycle;
             observation.guardian = guardian;
@@ -12600,6 +12971,9 @@ impl CoreWatch {
             }
             if copies_acquire {
                 observation.attach_acquire_key(snapshot, paint);
+            }
+            if copies_cell {
+                observation.attach_cell(snapshot, paint);
             }
             Self::observe_locked(&mut state, account, observation, session_boundary);
         }
@@ -12755,6 +13129,21 @@ impl CoreWatch {
                 case.copies_acquire_key()
             }
             CoreWatchState::Running { witness, .. } => witness.case.copies_acquire_key(),
+            CoreWatchState::Disabled | CoreWatchState::Qualified { .. } => false,
+        }
+    }
+
+    /// True only for the cell File card. Callers attach paint and compact
+    /// here/kind only then.
+    pub fn copies_cell(&self) -> bool {
+        if !self.active.load(Ordering::Acquire) {
+            return false;
+        }
+        match &*self.inner.lock().unwrap() {
+            CoreWatchState::Ready { case, .. } | CoreWatchState::Failed { case, .. } => {
+                case.copies_cell()
+            }
+            CoreWatchState::Running { witness, .. } => witness.case.copies_cell(),
             CoreWatchState::Disabled | CoreWatchState::Qualified { .. } => false,
         }
     }

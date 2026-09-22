@@ -320,7 +320,8 @@ pub fn live_example_path(file_name: &str) -> Option<PathBuf> {
         | "walk_spot_v2.ts"
         | "enter_lair_v2.ts"
         | "leave_lair_v2.ts"
-        | "acquire_key_v2.ts" => {
+        | "acquire_key_v2.ts"
+        | "cell_v2.ts" => {
             let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                 .join("examples")
                 .join(file_name);
@@ -967,5 +968,37 @@ mod tests {
         assert!(!source.contains("walkToken"));
         assert!(!source.contains("api.walk"));
         assert!(!source.contains(".queue"));
+    }
+
+    #[test]
+    fn cell_qualification_example_is_an_exact_file_card() {
+        let v2 = live_example_path("cell_v2.ts").expect("checked-in cell v2 example");
+        assert!(v2.ends_with("cell_v2.ts"), "{}", v2.display());
+        assert!(live_example_path("cell_v2").is_none());
+        assert!(live_example_path("Cell.ts").is_none());
+        let source = std::fs::read_to_string(&v2).expect("cell source");
+        assert!(source.contains("cell qualification complete"));
+        assert!(source.contains("cell-receipt:"));
+        assert!(source.contains("cellBegin"));
+        assert!(source.contains("cellNext"));
+        assert!(source.contains("key-call"));
+        assert!(source.contains("taverley-blue"));
+        assert!(!source.contains("scene_state"));
+        assert!(!source.contains("acquireKey"));
+        assert!(!source.contains("api.cell("));
+        assert!(!source.contains("held"));
+        assert!(!source.contains("route"));
+        assert!(!source.contains("kbd-lair"));
+        assert!(!source.contains("1765"));
+        assert!(!source.contains("1766"));
+        assert!(!source.contains("1816"));
+        assert!(!source.contains("1817"));
+        assert!(!source.contains("1590"));
+        assert!(!source.contains("1591"));
+        assert!(!source.contains("2931"));
+        assert!(!source.contains("9690"));
+        assert!(!source.contains("allow_teleports"));
+        assert!(!source.contains("allow_wilderness"));
+        assert!(!source.contains("allow_bank_fetch"));
     }
 }
