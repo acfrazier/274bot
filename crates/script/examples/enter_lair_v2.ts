@@ -5,7 +5,9 @@ type NativeApi = import('../host-js/index.d.ts').NativeApi;
  * Not a lair entry and not inArea success. Curated box does not contain
  * here. One approach tile inside that box, same level, Chebyshev 8–16
  * (greater than the skip of 1, not Hold's 2-tile walk-back, not Walk's
- * > 12 gate). One enterNext must be `walk` radius 0 toward that tile.
+ * > 12 gate). The picker scans that Chebyshev ring and may choose a
+ * diagonal. A missing collision map does not reject the tile. One
+ * enterNext must be `walk` radius 0 toward that tile.
  * The isolate omits radius; the shim would queue it at radius 0 with
  * allow_teleports, allow_wilderness, and allow_bank_fetch all false.
  * Do not ack the walk — acking arms the 120s bound. Do not wait out the
@@ -62,33 +64,20 @@ function forbiddenTile(tile: Tile): boolean {
 }
 
 function walkable(c: NativeApi['snapshot']['collision'], tile: Tile): boolean {
-    if (!c.available) return false;
+    if (!c.available) return true;
     const flag = flagAt(c, tile.x, tile.z);
     if (flag === undefined) return false;
     return (flag & WALK_SCENERY) === 0;
 }
 
-/** Cardinal strip starting at Chebyshev 8 so `here` stays outside the box. */
-function strip(here: Tile, dx: number, dz: number): Box {
-    if (dx !== 0) {
-        const x0 = here.x + dx * MIN_CHEB;
-        const x1 = here.x + dx * MAX_CHEB;
-        return {
-            minX: Math.min(x0, x1),
-            maxX: Math.max(x0, x1),
-            minZ: here.z,
-            maxZ: here.z,
-            level: here.level,
-        };
-    }
-    const z0 = here.z + dz * MIN_CHEB;
-    const z1 = here.z + dz * MAX_CHEB;
+/** Approach tile only. Chebyshev 8–16 keeps `here` outside this box. */
+function approachBox(tile: Tile): Box {
     return {
-        minX: here.x,
-        maxX: here.x,
-        minZ: Math.min(z0, z1),
-        maxZ: Math.max(z0, z1),
-        level: here.level,
+        minX: tile.x,
+        maxX: tile.x,
+        minZ: tile.z,
+        maxZ: tile.z,
+        level: tile.level,
     };
 }
 
@@ -96,29 +85,20 @@ function pickApproach(
     here: Tile,
     c: NativeApi['snapshot']['collision'],
 ): { approach: Tile; box: Box } | null {
-    const dirs = [
-        { dx: 1, dz: 0 },
-        { dx: -1, dz: 0 },
-        { dx: 0, dz: 1 },
-        { dx: 0, dz: -1 },
-    ];
-    for (const dir of dirs) {
-        const area = strip(here, dir.dx, dir.dz);
-        if (contains(area, here)) continue;
-        for (let r = MIN_CHEB; r <= MAX_CHEB; r++) {
-            for (let dx = -r; dx <= r; dx++) {
-                for (let dz = -r; dz <= r; dz++) {
-                    if (Math.max(Math.abs(dx), Math.abs(dz)) !== r) continue;
-                    const cand = { x: here.x + dx, z: here.z + dz, level: here.level };
-                    if (sameTile(cand, here)) continue;
-                    if (forbiddenTile(cand)) continue;
-                    if (!contains(area, cand)) continue;
-                    if (chebyshev(here, cand) < MIN_CHEB || chebyshev(here, cand) > MAX_CHEB) {
-                        continue;
-                    }
-                    if (!walkable(c, cand)) continue;
-                    return { approach: cand, box: area };
+    for (let r = MIN_CHEB; r <= MAX_CHEB; r++) {
+        for (let dx = -r; dx <= r; dx++) {
+            for (let dz = -r; dz <= r; dz++) {
+                if (Math.max(Math.abs(dx), Math.abs(dz)) !== r) continue;
+                const cand = { x: here.x + dx, z: here.z + dz, level: here.level };
+                if (sameTile(cand, here)) continue;
+                if (forbiddenTile(cand)) continue;
+                if (chebyshev(here, cand) < MIN_CHEB || chebyshev(here, cand) > MAX_CHEB) {
+                    continue;
                 }
+                if (!walkable(c, cand)) continue;
+                const area = approachBox(cand);
+                if (contains(area, here) || !contains(area, cand)) continue;
+                return { approach: cand, box: area };
             }
         }
     }
@@ -149,9 +129,6 @@ export function tick(api: NativeApi): void {
     }
     const here = snap.here;
     const c = snap.collision;
-    if (!c.available) {
-        return;
-    }
 
     if (approach && sameTile(approach, here)) {
         approach = null;
