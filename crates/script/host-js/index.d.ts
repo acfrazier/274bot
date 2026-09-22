@@ -678,7 +678,7 @@ export interface NativeApi {
   /** Sync seed-id requirements read. A name field is not a key. Not a Promise and not a request op. */
   questPrereqs(input: { id: string; name?: string }): HelperResult<QuestRequirements>;
   /** Sync landed trail-row read, pure pack arithmetic, and pure hard-kit status over caller numbers. None is a Promise and none is a request op; `packPlan` and `hardKit` read no snapshot, inventory, or family. */
-  clue: { row(input: { id: number } | { alias: string }): HelperResult<ClueRow>; heldStep(): HelperResult<ClueRow>; packPlan(input: PackPlanInput): HelperResult<PackPlanTargets>; hardKit(input: { attack: number; lostCity: boolean; items: { id: number; count: number }[] }): HelperResult<{ status: 'ready' }> };
+  clue: { row(input: { id: number } | { alias: string }): HelperResult<ClueRow>; heldStep(): HelperResult<ClueRow>; packPlan(input: PackPlanInput): HelperResult<PackPlanTargets>; hardKit(input: { attack: number; lostCity: boolean; items: { id: number; count: number }[] }): HelperResult<{ status: 'ready' }>; begin(input?: object): HelperResult<{ token: number }>; next(input: { token: number; resume?: boolean }): ClueStep };
   /** Sync posted-loc copy. Historical copy, not live. Not a Promise and not a request op. */
   sceneLocs(input: { ids: number[]; limit: number; region?: SceneRegionInput }): HelperResult<SceneProjection>;
   /** Sync posted-npc copy. actions is required: omitted is not match-any. Historical copy, not live. Not a Promise and not a request op. */
@@ -781,4 +781,8 @@ export type BankStep =
   | { ok: true; status: 'continue'; token: number; kind: string }
   | { ok: true; status: 'done'; token: number; kind: 'yield'; value: boolean }
   | { ok: false; error: string; kind: 'aborted'; token: number; status: 'aborted' }
+  | { ok: false; error: string };
+export type ClueStep =
+  | { ok: true; status: 'continue'; token: number; kind: 'wait' | 'yield' | 'callback.enabled' }
+  | { ok: true; status: 'continue'; token: number; kind: 'callback.log' | 'callback.setStatus'; message: string }
   | { ok: false; error: string };

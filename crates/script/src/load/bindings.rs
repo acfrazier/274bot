@@ -506,6 +506,15 @@ pub(super) fn wire_runtime(
             ))
         })
         .map_err(|e| format!("register quest journal: {e}"))?;
+    let selected_clue = game_data.clone();
+    runtime
+        .register_function("__rs2b0t_clue", move |args: &[serde_json::Value]| {
+            Ok(crate::clue::dispatch(
+                selected_clue.as_deref(),
+                args.first().unwrap_or(&serde_json::Value::Null),
+            ))
+        })
+        .map_err(|e| format!("register clue: {e}"))?;
     runtime
         .register_function("__rs2b0t_reach", move |args: &[serde_json::Value]| {
             Ok(crate::reach::dispatch(
@@ -1376,6 +1385,53 @@ function cluePackV2(input) {
 function clueHardKitV2(input) {
   return globalThis.__rs2b0t_clue_pack_v2('hardKit', input);
 }
+function clueCall(payload) {
+  return globalThis.rustyscript.functions.__rs2b0t_clue(payload);
+}
+// The page is the already-posted `snapshot.inv` `(id, count)` sequence and
+// nothing else: a missing or empty page is an empty held list, never a
+// second snapshot error token, and a row that is not an i32 pair cannot be
+// held. The pair is marshalled as `[id, count]`.
+function cluePageI32(value) {
+  return typeof value === 'number' && Number.isInteger(value)
+    && value >= -2147483648 && value <= 2147483647;
+}
+function clueHeldPage() {
+  const snapshot = host().snapshot;
+  if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return [];
+  const page = snapshot.inv;
+  if (!Array.isArray(page)) return [];
+  const held = [];
+  for (const row of page) {
+    if (!row || typeof row !== 'object' || Array.isArray(row)) continue;
+    if (!cluePageI32(row.id) || !cluePageI32(row.count)) continue;
+    held.push([row.id, row.count]);
+  }
+  return held;
+}
+// The posted cooperative interrupt, re-read every call: EventSignal.pending()
+// reads the same `hold || ours` pair. Nothing about it is captured at begin.
+function cluePending() {
+  const h = host();
+  return h.hold === true || h.ours === true;
+}
+// Every continue step is this envelope. `yield` keeps the token live, so it
+// is not trail completion and never `status: 'done'`.
+function clueStep(step) {
+  return { ok: true, status: 'continue', token: step.token, ...step };
+}
+// A dead token is `stale`; the generation abort the machine reported is
+// `aborted`. Internal reasons are never handed out as an ok kind.
+function clueStepError(reason) {
+  return reason === 'aborted' ? 'aborted' : 'stale';
+}
+// The begin refusals are the identify family's own tokens; anything else
+// internal is `stale`.
+function clueBeginError(reason) {
+  if (reason === 'missing-selected-data' || reason === 'family-unavailable:trails'
+      || reason === 'none-held') return reason;
+  return 'stale';
+}
 api.clue = {
   row: function (input) {
     if (arguments.length === 0) return helperErr('invalid-args');
@@ -1416,6 +1472,51 @@ api.clue = {
   // failed check is the whole result.
   hardKit: function (input) {
     return clueHardKitV2(input);
+  },
+  // Owned-session begin over the landed held-step identify. Sync
+  // HelperResult: a refused begin — no held membership row, no selected pin,
+  // no trail family — leaves no live token, so a later pickup needs a new
+  // begin. Extra input keys are ignored, not captured.
+  begin: function (input) {
+    const step = clueCall({
+      op: 'begin',
+      generation: lifecycleGeneration,
+      held: clueHeldPage(),
+    });
+    if (!step || typeof step !== 'object') return helperErr('stale');
+    if (step.kind === 'token') return helperOk({ token: step.token });
+    if (step.kind === 'aborted') return helperErr(clueBeginError(step.reason));
+    return helperErr('stale');
+  },
+  // One step. `resume` is the callback return (hunt's `reply` slot under this
+  // name; both are never read). Kinds are `wait`, `yield`, `callback.enabled`,
+  // `callback.log` and `callback.setStatus` — never `done`. A dead token is
+  // the error object, never `undefined` and never an `aborted` continue kind.
+  next: function (input) {
+    if (arguments.length === 0) return helperErr('invalid-args');
+    if (input == null || typeof input !== 'object' || Array.isArray(input)) {
+      return helperErr('invalid-args');
+    }
+    if (!Number.isInteger(input.token)) return helperErr('invalid-args');
+    const hasResume = Object.prototype.hasOwnProperty.call(input, 'resume');
+    if (hasResume && typeof input.resume !== 'boolean') return helperErr('invalid-args');
+    const payload = {
+      op: 'next',
+      token: input.token,
+      generation: lifecycleGeneration,
+      held: clueHeldPage(),
+      hold: cluePending(),
+    };
+    if (hasResume) payload.resume = input.resume;
+    const step = clueCall(payload);
+    if (!step || typeof step !== 'object') return helperErr('stale');
+    if (step.kind === 'aborted') return helperErr(clueStepError(step.reason));
+    if (step.kind === 'wait' || step.kind === 'yield'
+        || step.kind === 'callback.enabled' || step.kind === 'callback.log'
+        || step.kind === 'callback.setStatus') {
+      return clueStep(step);
+    }
+    return helperErr('stale');
   },
 };
 const SCENE_LIMIT_MAX = 64;

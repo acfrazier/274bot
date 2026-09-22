@@ -588,10 +588,13 @@ export function tick(api) {
     assert_eq!(value["kit"]["value"]["status"], "ready", "{value:?}");
     assert_eq!(
         value["keys"],
-        serde_json::json!(["row", "heldStep", "packPlan", "hardKit"]),
+        serde_json::json!(["row", "heldStep", "packPlan", "hardKit", "begin", "next"]),
         "{value:?}"
     );
-    for key in ["begin", "next", "challengeAnswer", "deposit"] {
+    for key in ["begin", "next"] {
+        assert_eq!(value[key], "function", "{key} {value:?}");
+    }
+    for key in ["challengeAnswer", "deposit"] {
         assert_eq!(value[key], "undefined", "{key} {value:?}");
     }
     assert!(

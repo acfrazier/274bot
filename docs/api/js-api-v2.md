@@ -204,13 +204,16 @@ Example: `crates/script/examples/quest_facts_v2.ts`.
 
 ## Clue helpers
 
-Four sync `HelperResult` methods. `row` and `heldStep` read the selected pin's
-landed trail membership family; `packPlan` is pure slot arithmetic over the
-caller's own numbers and reads nothing at all; `hardKit` is a pure hard-clue kit
-status over the caller's own facts and reads nothing at all. None is a Promise,
-none is a `request()` op, and none pushes `h.interact`. `row` and `heldStep` read
-`trails()` only: not `items()`, and not the challenge answers. `api.clue` holds
-`row`, `heldStep`, `packPlan`, and `hardKit`, and nothing else.
+Four sync `HelperResult` fact reads and one owned-session pump. `row` and
+`heldStep` read the selected pin's landed trail membership family; `packPlan`
+is pure slot arithmetic over the caller's own numbers and reads nothing at all;
+`hardKit` is a pure hard-clue kit status over the caller's own facts and reads
+nothing at all. `begin` / `next` are the isolate machine: one token per
+isolate, the landed held-step identify over the posted pack page, and no game
+action at all. None is a Promise, none is a `request()` op, and none pushes
+`h.interact`. `row`, `heldStep` and the machine read `trails()` only: not
+`items()`, and not the challenge answers. `api.clue` holds `row`, `heldStep`,
+`packPlan`, `hardKit`, `begin`, and `next`, in that order, and nothing else.
 
 | Method | OK | Errors |
 | --- | --- | --- |
@@ -218,6 +221,8 @@ none is a `request()` op, and none pushes `h.interact`. `row` and `heldStep` rea
 | `clue.heldStep()` | the first held membership row | `missing-selected-data`, `family-unavailable:trails`, `none-held` |
 | `clue.packPlan(input)` | the published pack targets | `invalid-args`, `no-room` |
 | `clue.hardKit(input)` | `{ status: 'ready' }` | `invalid-args`, `attack`, `lost-city`, `dds`, `superantipoison`, `sharks` |
+| `clue.begin(input?)` | `{ token }` | `missing-selected-data`, `family-unavailable:trails`, `none-held` |
+| `clue.next({ token, resume? })` | one continue step | `invalid-args`, `missing-selected-data`, `family-unavailable:trails`, `none-held`, `stale`, `aborted` |
 
 `clue.row` takes exactly one of `id` or `alias`. Neither, both, a non-object, an
 array, or a non-string `alias` is `invalid-args`, and `api.clue.row()` and
@@ -252,8 +257,8 @@ parent. Input keys other than the one pin are ignored:
 3554 row with `access: "constrained"` and no `supported` key.
 
 Not a Promise and not a `request()` op: `api.request({ op: 'clue.row' })` stays
-`not impl`. `begin`, `next`, `challengeAnswer`, and `deposit` do not exist on
-`api.clue`.
+`not impl`. `challengeAnswer`, `deposit`, `retry`, and `noteDeath` do not exist
+on `api.clue`.
 
 `clue.heldStep()` takes no argument. The page is the already-posted
 `host().snapshot.inv` `(id, count)` sequence and nothing else: an argument is
@@ -402,6 +407,51 @@ Example: `crates/script/examples/clue_facts_v2.ts` (row),
 `crates/script/examples/clue_held_step_v2.ts` (held step),
 `crates/script/examples/clue_pack_v2.ts` (pack targets), and
 `crates/script/examples/clue_hard_kit_v2.ts` (hard-kit status).
+
+### `clue.begin` / `clue.next`
+
+One machine per isolate, over the landed held-step identify. It is sync, it is
+not a Promise, and it is not a `request()` op: it is the envelope for a later
+clue trail, not the dispatcher. This slice emits no game action at all — no
+search, dig, talk, guardian, puzzle, deposit, or retry — and it never emits the
+exact `'clue solved'` string, never restores gear, and never returns a `done`
+status. `ownsEquipment` stays false.
+
+`clue.begin(input?)` takes the optional input and ignores every key: nothing
+but the token and the wrapper's generation is captured, so `enabled`, the pack
+page, food and equipment stay script-owned and are re-read later. It returns
+`{ ok: true, value: { token } }` or a refusal. The identify is the landed
+order: `missing-selected-data`, then `family-unavailable:trails`, then
+`none-held`, then the row. A family absence is not `none-held`, and a refusal
+leaves **no** live token — a later pickup needs a new `begin`. A second `begin`
+aborts the previous token and emits nothing for it.
+
+`clue.next({ token, resume? })` takes an object argument, not
+`(token, resume)`. `resume` is the callback return and is the only answer slot:
+`reply` is not read, and a non-boolean `resume` is `invalid-args` (as is a
+missing or non-integer `token`, or a non-object argument). The step is
+`{ ok: true, status: 'continue', token, kind, … }` or `{ ok: false, error }`;
+a dead token is the error object, never `undefined` and never a continue kind.
+
+| `kind` | Meaning |
+| --- | --- |
+| `wait` | nothing this tick: frozen by pause/hold, or the session idled after `resume: false`, or the identified step was already reported |
+| `callback.enabled` | re-read the script's `enabled()` and answer with `resume` on the next `next` |
+| `callback.log` | perform `log(message)` |
+| `callback.setStatus` | perform `setStatus(message)` — a progress string, never `'clue solved'` |
+| `yield` | posted `hold \|\| ours`; the token stays live and this is not trail completion |
+
+The precedence on a live token is frozen clock → `wait`, else posted
+`hold || ours` → `yield`, else the identify, else `callback.*`. A frozen call
+burns nothing: the pending `enabled` question is still open after the thaw.
+`resume: false` idles the session with its token live — it is not `abandon`,
+not `done`, and not a completion — and the next gate re-reads instead of
+replaying that answer. `none-held` on a live session aborts it: the held
+membership went away, so the old token is dead. Reset, stop and a generation
+bump abort silently; the machine emits no `h.interact` entry and no request op
+for them, and the first thing the caller hears about it is `stale` or
+`aborted`. A held step of any type — the packed 3554 `access: "constrained"`
+clue included — is identified and then idled: no action and no walk.
 
 ## Scene projections
 

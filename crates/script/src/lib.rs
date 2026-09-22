@@ -113,6 +113,8 @@ mod fire;
 #[cfg(feature = "load")]
 mod modals;
 #[cfg(feature = "load")]
+mod clue;
+#[cfg(feature = "load")]
 mod quest_journal;
 #[cfg(feature = "load")]
 mod periodic_bank;

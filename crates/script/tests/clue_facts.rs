@@ -370,6 +370,8 @@ export function tick(api) {
     hardKit: typeof api.clue.hardKit,
     challengeAnswer: typeof api.clue.challengeAnswer,
     deposit: typeof api.clue.deposit,
+    retry: typeof api.clue.retry,
+    noteDeath: typeof api.clue.noteDeath,
     quest: typeof api.quest,
     questionNamespace: api.clue && Object.keys(api.clue),
   });
@@ -395,9 +397,10 @@ export function tick(api) {
         for key in [
             "begin",
             "next",
-            "challengeAnswer",
-            "deposit",
         ] {
+            assert_eq!(value[key], "function", "{key} {value:?}");
+        }
+        for key in ["challengeAnswer", "deposit", "retry", "noteDeath"] {
             assert_eq!(value[key], "undefined", "{key} {value:?}");
         }
         assert_eq!(value["packPlan"], "function", "{value:?}");
@@ -405,7 +408,7 @@ export function tick(api) {
         assert_eq!(value["quest"], "undefined", "{value:?}");
         assert_eq!(
             value["questionNamespace"],
-            serde_json::json!(["row", "heldStep", "packPlan", "hardKit"]),
+            serde_json::json!(["row", "heldStep", "packPlan", "hardKit", "begin", "next"]),
             "{value:?}"
         );
     }
@@ -712,4 +715,124 @@ fn example_clue_held_step_v2_is_one_read_only_held_step_call() {
     assert_eq!(step["ok"], false, "{step:?}");
     assert_eq!(step["error"], "none-held", "{step:?}");
     assert!(step.get("value").is_none(), "{step:?}");
+}
+
+#[test]
+fn v2_clue_begin_and_next_drive_the_machine_over_the_posted_page() {
+    let src = r#"
+export const apiVersion = 2;
+export function tick(api) {
+  // Extra begin keys are ignored and nothing but the token is captured.
+  const begin = api.clue.begin({ name: 'ignored', enabled: false, resume: false });
+  const token = begin.ok ? begin.value.token : null;
+  const gate = begin.ok ? api.clue.next({ token: token }) : null;
+  const denied = begin.ok ? api.clue.next({ token: token, resume: false }) : null;
+  // `reply` is not the answer slot: the gate is still open and re-asks.
+  const replied = begin.ok ? api.clue.next({ token: token, reply: true }) : null;
+  const enabled = begin.ok ? api.clue.next({ token: token, resume: true }) : null;
+  const status = begin.ok ? api.clue.next({ token: token }) : null;
+  const idle = begin.ok ? api.clue.next({ token: token }) : null;
+  const dead = begin.ok ? api.clue.next({ token: token + 7 }) : null;
+  globalThis.__probe = JSON.stringify({
+    beginThen: typeof begin.then,
+    beginKeys: begin.value ? Object.keys(begin.value) : 'no-value',
+    tokenType: typeof token,
+    gate, denied, replied, enabled, status, idle, dead,
+    badResume: api.clue.next({ token: 1, resume: 'yes' }),
+    badToken: api.clue.next({}),
+    positional: api.clue.next(1, true),
+    arrayArg: api.clue.next([]),
+  });
+}
+"#;
+    let data = api::game_data::for_revision(ClientRevision::R274).unwrap();
+    let iso = LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data)
+        .unwrap();
+    post_page(&iso, 1, &[(3554, 1)]);
+    iso.on_game_tick(1);
+    let value: serde_json::Value =
+        serde_json::from_str(iso.probe("globalThis.__probe").unwrap().as_str().unwrap()).unwrap();
+    let interacts = iso.drain_interacts();
+    iso.join();
+
+    assert_eq!(value["beginThen"], "undefined", "{value:?}");
+    assert_eq!(value["beginKeys"], serde_json::json!(["token"]), "{value:?}");
+    assert_eq!(value["tokenType"], "number", "{value:?}");
+    let token = &value["gate"]["token"];
+    assert!(token.is_number(), "{value:?}");
+    for (key, kind) in [
+        ("gate", "callback.enabled"),
+        ("denied", "wait"),
+        ("replied", "callback.enabled"),
+        ("enabled", "callback.log"),
+        ("status", "callback.setStatus"),
+        ("idle", "wait"),
+    ] {
+        assert_eq!(value[key]["ok"], true, "{key} {value:?}");
+        assert_eq!(value[key]["status"], "continue", "{key} {value:?}");
+        assert_eq!(value[key]["kind"], kind, "{key} {value:?}");
+        assert_eq!(&value[key]["token"], token, "{key} {value:?}");
+        assert!(value[key].get("error").is_none(), "{key} {value:?}");
+    }
+    // A false answer idles the session without a message, and the progress
+    // lines carry the landed identity only.
+    assert!(value["denied"].get("message").is_none(), "{value:?}");
+    let message = value["enabled"]["message"].as_str().unwrap_or("");
+    assert!(message.contains("trail_clue_hard_sextant028"), "{value:?}");
+    assert!(message.contains("3554"), "{value:?}");
+    assert!(!message.contains("clue solved"), "{value:?}");
+    assert!(
+        !value["status"]["message"]
+            .as_str()
+            .unwrap_or("")
+            .contains("clue solved"),
+        "{value:?}"
+    );
+    // A token that is not the session's is the error object, never undefined.
+    assert_eq!(value["dead"]["ok"], false, "{value:?}");
+    assert_eq!(value["dead"]["error"], "stale", "{value:?}");
+    assert_eq!(value["dead"]["status"], serde_json::Value::Null, "{value:?}");
+    for key in ["badResume", "badToken", "positional", "arrayArg"] {
+        assert_eq!(value[key]["error"], "invalid-args", "{key} {value:?}");
+    }
+    assert!(
+        interacts.is_empty(),
+        "the clue machine pushes no interact: {interacts:?}"
+    );
+}
+
+#[test]
+fn v2_clue_begin_keeps_family_absence_apart_from_none_held() {
+    let src = r#"
+export const apiVersion = 2;
+export function tick(api) {
+  globalThis.__probe = JSON.stringify({
+    emptyPage: api.clue.begin(),
+    heldPair: api.clue.begin({ held: [[3554, 1]] }),
+  });
+}
+"#;
+    let iso = LoadIsolate::spawn_with_game_data(
+        src.into(),
+        LoadShape::NativeTick,
+        vec![],
+        data_without_trails(),
+    )
+    .unwrap();
+    post_page(&iso, 1, &[(3554, 1)]);
+    iso.on_game_tick(1);
+    let value: serde_json::Value =
+        serde_json::from_str(iso.probe("globalThis.__probe").unwrap().as_str().unwrap()).unwrap();
+    let interacts = iso.drain_interacts();
+    iso.join();
+    // Family absence is the method token: not `none-held`, and no live token.
+    for key in ["emptyPage", "heldPair"] {
+        assert_eq!(value[key]["ok"], false, "{key} {value:?}");
+        assert_eq!(value[key]["error"], "family-unavailable:trails", "{key} {value:?}");
+        assert!(value[key].get("value").is_none(), "{key} {value:?}");
+    }
+    assert!(
+        interacts.is_empty(),
+        "the clue machine pushes no interact: {interacts:?}"
+    );
 }

@@ -1328,6 +1328,25 @@ fn v2_clue_row_is_a_named_sync_helper_result_not_a_request_op() {
         !bindings.contains("register_function(\"__rs2b0t_clue_facts"),
         "clue row must not be a rustyscript JSON op"
     );
+    assert!(
+        bindings.contains("register_function(\"__rs2b0t_clue\""),
+        "the clue machine is its own native, add-only"
+    );
+    // The machine identifies with the landed Rust helper only: it never calls
+    // the JS helper and never reuses the fact/logic/pack natives.
+    let machine = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/clue.rs"));
+    for forbidden in [
+        "heldStep(",
+        "__rs2b0t_clue_facts_v2",
+        "__rs2b0t_clue_logic_v2",
+        "__rs2b0t_clue_pack_v2",
+        "__rs2b0t_modals",
+    ] {
+        assert!(
+            !machine.contains(forbidden),
+            "clue.rs must not reach {forbidden}"
+        );
+    }
     let ops = bindings
         .split("const V2_OPS")
         .nth(1)
@@ -1341,6 +1360,8 @@ fn v2_clue_row_is_a_named_sync_helper_result_not_a_request_op() {
 export const apiVersion = 2;
 export function tick(api) {
   const row = api.clue.row({ id: 3554 });
+  const begin = api.clue.begin();
+  const dead = api.clue.next({ token: 1 });
   let requested = null;
   try { api.request({ op: 'clue.row' }); requested = 'ok'; }
   catch (e) { requested = String(e && (e.message || e)); }
@@ -1352,6 +1373,12 @@ export function tick(api) {
     rows: row.value && row.value.rows,
     rowType: typeof api.clue.row,
     keys: api.clue && Object.keys(api.clue),
+    beginOk: begin.ok,
+    beginError: begin.error,
+    beginThen: typeof begin.then,
+    nextOk: dead.ok,
+    nextError: dead.error,
+    nextThen: typeof dead.then,
     flat: typeof api.clueRow,
     quest: api.quest,
     requested,
@@ -1372,9 +1399,17 @@ export function tick(api) {
     assert_eq!(probe["rowType"], "function", "{probe:?}");
     assert_eq!(
         probe["keys"],
-        serde_json::json!(["row", "heldStep", "packPlan", "hardKit"]),
+        serde_json::json!(["row", "heldStep", "packPlan", "hardKit", "begin", "next"]),
         "{probe:?}"
     );
+    // An empty posted page is `none-held`, and a refused begin leaves no live
+    // token: the dead-token step is a step object, never `undefined`.
+    assert_eq!(probe["beginOk"], false, "{probe:?}");
+    assert_eq!(probe["beginError"], "none-held", "{probe:?}");
+    assert_eq!(probe["beginThen"], "undefined", "{probe:?}");
+    assert_eq!(probe["nextOk"], false, "{probe:?}");
+    assert_eq!(probe["nextError"], "stale", "{probe:?}");
+    assert_eq!(probe["nextThen"], "undefined", "{probe:?}");
     assert_eq!(probe["flat"], "undefined", "{probe:?}");
     assert!(probe["quest"].is_null(), "{probe:?}");
     assert!(

@@ -505,7 +505,7 @@ fn render_native_v2(out: &mut String) {
     out.push_str("  /** Sync seed-id requirements read. A name field is not a key. Not a Promise and not a request op. */\n");
     out.push_str("  questPrereqs(input: { id: string; name?: string }): HelperResult<QuestRequirements>;\n");
     out.push_str("  /** Sync landed trail-row read, pure pack arithmetic, and pure hard-kit status over caller numbers. None is a Promise and none is a request op; `packPlan` and `hardKit` read no snapshot, inventory, or family. */\n");
-    out.push_str("  clue: { row(input: { id: number } | { alias: string }): HelperResult<ClueRow>; heldStep(): HelperResult<ClueRow>; packPlan(input: PackPlanInput): HelperResult<PackPlanTargets>; hardKit(input: { attack: number; lostCity: boolean; items: { id: number; count: number }[] }): HelperResult<{ status: 'ready' }> };\n");
+    out.push_str("  clue: { row(input: { id: number } | { alias: string }): HelperResult<ClueRow>; heldStep(): HelperResult<ClueRow>; packPlan(input: PackPlanInput): HelperResult<PackPlanTargets>; hardKit(input: { attack: number; lostCity: boolean; items: { id: number; count: number }[] }): HelperResult<{ status: 'ready' }>; begin(input?: object): HelperResult<{ token: number }>; next(input: { token: number; resume?: boolean }): ClueStep };\n");
     out.push_str("  /** Sync posted-loc copy. Historical copy, not live. Not a Promise and not a request op. */\n");
     out.push_str("  sceneLocs(input: { ids: number[]; limit: number; region?: SceneRegionInput }): HelperResult<SceneProjection>;\n");
     out.push_str("  /** Sync posted-npc copy. actions is required: omitted is not match-any. Historical copy, not live. Not a Promise and not a request op. */\n");
@@ -607,6 +607,10 @@ fn render_native_v2(out: &mut String) {
     out.push_str("  | { ok: true; status: 'continue'; token: number; kind: string }\n");
     out.push_str("  | { ok: true; status: 'done'; token: number; kind: 'yield'; value: boolean }\n");
     out.push_str("  | { ok: false; error: string; kind: 'aborted'; token: number; status: 'aborted' }\n");
+    out.push_str("  | { ok: false; error: string };\n");
+    out.push_str("export type ClueStep =\n");
+    out.push_str("  | { ok: true; status: 'continue'; token: number; kind: 'wait' | 'yield' | 'callback.enabled' }\n");
+    out.push_str("  | { ok: true; status: 'continue'; token: number; kind: 'callback.log' | 'callback.setStatus'; message: string }\n");
     out.push_str("  | { ok: false; error: string };\n");
 }
 

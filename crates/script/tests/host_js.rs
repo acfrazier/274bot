@@ -99,8 +99,16 @@ fn host_js_dts_includes_required_interfaces() {
     assert!(src.contains("params: Array<{ key: string; value: string }>;"));
     assert!(src.contains("access?: 'constrained';"));
     assert!(src.contains(
-        "clue: { row(input: { id: number } | { alias: string }): HelperResult<ClueRow>; heldStep(): HelperResult<ClueRow>; packPlan(input: PackPlanInput): HelperResult<PackPlanTargets>; hardKit(input: { attack: number; lostCity: boolean; items: { id: number; count: number }[] }): HelperResult<{ status: 'ready' }> }"
+        "clue: { row(input: { id: number } | { alias: string }): HelperResult<ClueRow>; heldStep(): HelperResult<ClueRow>; packPlan(input: PackPlanInput): HelperResult<PackPlanTargets>; hardKit(input: { attack: number; lostCity: boolean; items: { id: number; count: number }[] }): HelperResult<{ status: 'ready' }>; begin(input?: object): HelperResult<{ token: number }>; next(input: { token: number; resume?: boolean }): ClueStep }"
     ));
+    assert!(src.contains("export type ClueStep"));
+    let clue_step = src.split("export type ClueStep").nth(1).expect("ClueStep");
+    assert!(clue_step.contains("kind: 'wait' | 'yield' | 'callback.enabled'"));
+    assert!(clue_step.contains("kind: 'callback.log' | 'callback.setStatus'; message: string"));
+    assert!(
+        !clue_step.contains("status: 'done'"),
+        "ClueStep must not promise a done status: {clue_step}"
+    );
     assert!(src.contains("export interface PackPlanInput {"));
     assert!(src.contains("  rewardSlots?: number;"));
     assert!(!src.contains(
