@@ -12,6 +12,8 @@ type NativeApi = import('../host-js/index.d.ts').NativeApi;
  * allow_teleports, allow_wilderness, and allow_bank_fetch all false.
  * Do not ack the walk — acking arms the 120s bound. Do not wait out the
  * approach or the 300s stand. Do not claim inArea.
+ * Gate is `ingame` and `here` only. NativeSnapshot does not publish
+ * `scene_state`.
  */
 export const apiVersion = 2;
 
@@ -124,7 +126,7 @@ function forbiddenKind(kind: string | undefined): boolean {
 
 export function tick(api: NativeApi): void {
     const snap = api.snapshot;
-    if (!snap.ingame || snap.scene_state !== 2 || !snap.here) {
+    if (!snap.ingame || !snap.here) {
         return;
     }
     const here = snap.here;
