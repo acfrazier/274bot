@@ -1432,6 +1432,7 @@ fn tick_loop(
                         crate::shop::on_snapshot(&snap);
                         crate::hunt_fight::on_snapshot(&snap);
                         crate::hunt_lair::on_snapshot(&snap);
+                        crate::hunt_leave::on_snapshot(&snap);
                         crate::production::on_snapshot(&snap);
                         crate::dialog::on_snapshot(&snap);
                         crate::modals::on_snapshot(&snap);
@@ -1455,6 +1456,7 @@ fn tick_loop(
                             crate::shop::on_hold(host_hold);
                             crate::hunt_fight::on_hold(host_hold);
                             crate::hunt_lair::on_hold(host_hold);
+                            crate::hunt_leave::on_hold(host_hold);
                             crate::production::on_hold(host_hold);
                             crate::dialog::on_hold(host_hold);
                             crate::modals::on_hold(host_hold);
@@ -1807,6 +1809,7 @@ fn tick_loop(
                 crate::shop::on_reset();
                 crate::hunt_fight::on_reset();
                 crate::hunt_lair::on_reset();
+                crate::hunt_leave::on_reset();
                 crate::production::on_reset();
                 crate::dialog::on_reset();
                 crate::modals::on_reset();
@@ -1849,6 +1852,7 @@ fn tick_loop(
                 crate::shop::on_pause();
                 crate::hunt_fight::on_pause();
                 crate::hunt_lair::on_pause();
+                crate::hunt_leave::on_pause();
                 crate::production::on_pause();
                 crate::dialog::on_pause();
                 crate::modals::on_pause();
@@ -1874,6 +1878,7 @@ fn tick_loop(
                 crate::shop::on_resume();
                 crate::hunt_fight::on_resume();
                 crate::hunt_lair::on_resume();
+                crate::hunt_leave::on_resume();
                 crate::production::on_resume();
                 crate::dialog::on_resume();
                 crate::modals::on_resume();

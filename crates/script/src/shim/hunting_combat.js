@@ -594,3 +594,184 @@ export class EnterLair {
         }
     }
 }
+
+function leaveCall(payload) {
+    const fn = globalThis.rustyscript && globalThis.rustyscript.functions
+        ? globalThis.rustyscript.functions.__rs2b0t_leave
+        : undefined;
+    if (typeof fn !== 'function') {
+        throw notImpl('leaveLair');
+    }
+    return fn(payload);
+}
+
+function leaveProjection(host, site) {
+    const exit = site.exit || null;
+    const gate = site.gate || null;
+    const out = {
+        key: site.key,
+        boxes: site.boxes || [],
+        escapeTeleportId: site.escapeTeleportId ?? null,
+        walkOut: tile(site.walkOut),
+        exit: exit ? {
+            locId: exit.locId,
+            op: exit.op,
+            stand: tile(exit.stand),
+        } : null,
+        gate: gate ? {
+            locId: gate.locId,
+            op: gate.op,
+            inside: tile(gate.inside),
+        } : null,
+    };
+    if (typeof host.leaveByWalk === 'function') {
+        out.leaveByWalk = host.leaveByWalk() === true;
+    }
+    if (site.route) out.route = site.route;
+    if (site.outLever) out.outLever = site.outLever;
+    if (site.upLadder) out.upLadder = site.upLadder;
+    return out;
+}
+
+function beginLeaveWalk(step, radius) {
+    const walkFn = globalThis.rustyscript && globalThis.rustyscript.functions
+        ? globalThis.rustyscript.functions.__rs2b0t_walk
+        : undefined;
+    if (typeof walkFn !== 'function') {
+        throw notImpl('walk');
+    }
+    return walkFn({
+        op: 'begin',
+        x: step.x,
+        z: step.z,
+        level: step.level,
+        radius,
+        allow_teleports: false,
+        allow_wilderness: false,
+        allow_bank_fetch: false,
+    });
+}
+
+async function runLeaveTeleport(name) {
+    const fn = globalThis.rustyscript && globalThis.rustyscript.functions
+        ? globalThis.rustyscript.functions.__rs2b0t_teleport
+        : undefined;
+    if (typeof fn !== 'function') {
+        return false;
+    }
+    let current = fn({ op: 'begin', name: String(name ?? '') });
+    if (!current || current.kind === 'unknown' || current.kind === 'notImpl') {
+        return false;
+    }
+    if (current.kind === 'done') {
+        return current.result === true;
+    }
+    const token = current.token;
+    while (current && current.kind !== 'done' && current.kind !== 'aborted' && current.kind !== 'unknown' && current.kind !== 'notImpl') {
+        if (current.kind === 'if-button') {
+            queue({ op: 'if-button', component_id: current.component_id });
+        } else if (current.kind !== 'wait') {
+            return false;
+        }
+        let next = null;
+        await Execution.delayUntil(() => {
+            next = fn({ op: 'next', token });
+            return next?.kind !== 'wait';
+        }, 0);
+        current = next;
+    }
+    if (current && current.kind === 'done') {
+        return current.result === true;
+    }
+    return false;
+}
+
+export async function leaveLair(host, site) {
+    const started = leaveCall({ op: 'begin' });
+    if (!started || started.kind === 'aborted') {
+        return false;
+    }
+    const token = started.token;
+    let reply = null;
+    for (;;) {
+        const step = leaveCall({
+            op: 'next',
+            token,
+            reply,
+            ...leaveProjection(host, site),
+        });
+        reply = null;
+        if (!step || step.kind === 'aborted') {
+            return false;
+        }
+        if (step.kind === 'yield') {
+            return step.value === true;
+        }
+        switch (step.kind) {
+            case 'log':
+                host.log?.(step.message);
+                break;
+            case 'status':
+                host.setStatus?.(step.message);
+                break;
+            case 'walk': {
+                const walkToken = beginLeaveWalk(step, 0);
+                queue({
+                    op: 'walk',
+                    x: step.x,
+                    z: step.z,
+                    level: step.level,
+                    radius: 0,
+                    request_id: walkToken,
+                    allow_teleports: false,
+                    allow_wilderness: false,
+                    allow_bank_fetch: false,
+                });
+                reply = { queued: true, walkToken };
+                break;
+            }
+            case 'walk-near': {
+                const radius = Number(step.radius);
+                const walkToken = beginLeaveWalk(step, radius);
+                queue({
+                    op: 'walk-near',
+                    x: step.x,
+                    z: step.z,
+                    level: step.level,
+                    radius,
+                    request_id: walkToken,
+                    allow_teleports: false,
+                    allow_wilderness: false,
+                    allow_bank_fetch: false,
+                });
+                reply = { queued: true, walkToken };
+                break;
+            }
+            case 'teleport':
+                reply = { teleported: await runLeaveTeleport(step.name) };
+                break;
+            case 'loc':
+                queue({
+                    op: 'loc',
+                    x: step.x,
+                    z: step.z,
+                    level: step.level,
+                    action: step.action,
+                    id: step.id,
+                });
+                reply = { queued: true };
+                break;
+            case 'sustain':
+                await Sustain.run();
+                break;
+            case 'delay-ticks':
+                await Execution.delayTicks(Number(step.n) || 1);
+                break;
+            case 'wait':
+                await Execution.delayTicks(1);
+                break;
+            default:
+                return false;
+        }
+    }
+}

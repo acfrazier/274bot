@@ -445,6 +445,15 @@ pub(super) fn wire_runtime(
             ))
         })
         .map_err(|e| format!("register enter: {e}"))?;
+    let selected_leave = game_data.clone();
+    runtime
+        .register_function("__rs2b0t_leave", move |args: &[serde_json::Value]| {
+            Ok(crate::hunt_leave::dispatch(
+                selected_leave.as_deref(),
+                args.first().unwrap_or(&serde_json::Value::Null),
+            ))
+        })
+        .map_err(|e| format!("register leave: {e}"))?;
     runtime
         .register_function(
             "__rs2b0t_production",
@@ -1468,6 +1477,26 @@ api.enterValidate = function (input) {
 api.enterNext = function (input) {
   if (!input || input.token == null) return { ok: false, error: 'invalid-args' };
   const out = enterCall({ op: 'next', ...input });
+  if (!out) return { ok: false, error: 'aborted' };
+  if (out.kind === 'aborted') {
+    return { ok: false, error: out.reason || 'aborted', kind: 'aborted', token: out.token, status: 'aborted' };
+  }
+  if (out.kind === 'yield') {
+    return { ok: true, status: 'done', token: out.token, kind: 'yield', value: out.value === true };
+  }
+  return { ok: true, status: 'continue', token: out.token, ...out };
+};
+function leaveCall(payload) {
+  return globalThis.rustyscript.functions.__rs2b0t_leave(payload);
+}
+api.leaveBegin = function (input) {
+  const out = leaveCall({ op: 'begin', ...(input || {}) });
+  if (!out || out.kind === 'aborted') return helperErr((out && out.reason) || 'aborted');
+  return helperOk({ token: out.token });
+};
+api.leaveNext = function (input) {
+  if (!input || input.token == null) return { ok: false, error: 'invalid-args' };
+  const out = leaveCall({ op: 'next', ...input });
   if (!out) return { ok: false, error: 'aborted' };
   if (out.kind === 'aborted') {
     return { ok: false, error: out.reason || 'aborted', kind: 'aborted', token: out.token, status: 'aborted' };

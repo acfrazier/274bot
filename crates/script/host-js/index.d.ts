@@ -549,6 +549,9 @@ export interface NativeApi {
   enterValidate(input: { token: number } & Record<string, unknown>): HelperResult<boolean>;
   /** One effect per call. Yield is status done with kind yield and a boolean value. Aborted is ok false, not FightStep. */
   enterNext(input: { token: number; reply?: unknown } & Record<string, unknown>): EnterStep;
+  leaveBegin(input?: object): HelperResult<{ token: number }>;
+  /** One effect per call. Yield is status done with kind yield and a boolean value. Aborted is ok false, not FightStep. */
+  leaveNext(input: { token: number; reply?: unknown } & Record<string, unknown>): LeaveStep;
 }
 
 export type FightStep =
@@ -572,6 +575,11 @@ export type WalkStep =
   | { ok: false; error: string; kind: 'aborted'; token: number; status: 'aborted' }
   | { ok: false; error: string };
 export type EnterStep =
+  | { ok: true; status: 'continue'; token: number; kind: string }
+  | { ok: true; status: 'done'; token: number; kind: 'yield'; value: boolean }
+  | { ok: false; error: string; kind: 'aborted'; token: number; status: 'aborted' }
+  | { ok: false; error: string };
+export type LeaveStep =
   | { ok: true; status: 'continue'; token: number; kind: string }
   | { ok: true; status: 'done'; token: number; kind: 'yield'; value: boolean }
   | { ok: false; error: string; kind: 'aborted'; token: number; status: 'aborted' }
