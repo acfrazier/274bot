@@ -26,7 +26,7 @@ pub use ranging::{
     TARGET_RESULT_MODAL, TICKETS_PER_TRADE, VARP_TARGET_COUNT, VARP_TARGET_HIT, VARP_TARGET_SCORE,
 };
 
-pub const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|chicken_killer_bank|thiever|alcher|alcher_defaults|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|alcher_low|alcher_fire_battlestaff|alcher_swarm_drain|bank_fletcher|bank_fletcher_shafts|bank_fletcher_headless|bank_fletcher_string|bank_fletcher_cut_string|dart_fletcher|dart_fletcher_iron|herb_cleaner|herb_cleaner_named|herb_cleaner_empty_bank|gem_cutter|gem_cutter_named|door_opener|door_opener_gate|gnome_course|gnome_course_radius|wildy_agility|brimhaven_agility|flax_picker|superheater|superheater_steel|superheater_fire_battlestaff|superheater_silver_low_natures|vial_filler|vial_filler_east|potion_maker|potion_maker_named|tanner_bot|tanner_bot_hard|rune_crafter|rune_crafter_earth|mule_crafter|ardy_cakes|ardy_cakes_fight|ardy_thiever|ardy_thiever_fight|ardy_thiever_knight|gnome_chop|gnome_fletch_short|gnome_fletch_long|coal_trucks|cook_bot|cook_bot_lobster|smelter_bot|smelter_bot_steel|flax_spinner|flax_aio|flax_aio_pick|flax_aio_spin|herblore_secondaries|herblore_secondaries_newt|chaos_druid|chaos_druid_tower|chaos_druid_yanille|moss_giant|moss_giant_prepared|moss_giant_dart|hill_giant|auto_fighter|auto_fighter_mage|auto_fighter_range|rock_crab|rock_crab_range|green_dragon|green_dragon_prepared|green_dragon_mage_prepared|green_dragon_special|green_dragon_special_prepared|green_dragon_potions|green_dragon_potions_prepared|fire_giant|fire_giant_prepared|ardy_fighter|auto_fighter_bank|moss_giant_bank|hill_giant_bank|hill_giant_bank_prepared|chaos_druid_bank|ardy_fighter_bank|rock_crab_bank|green_dragon_bank|green_dragon_bank_prepared|green_dragon_bank_default_prepared|green_dragon_tele|green_dragon_tele_prepared|fire_giant_approach|fire_giant_bank|fire_giant_bank_prepared|fire_giant_camelot_prepared|aio_teleport|aio_teleport_falador|aio_teleport_no_staff|shop_buyout|shop_buyout_aubury|shop_buyout_lowe|shop_buyout_hickton|shop_buyout_harry|shop_buyout_betty|shop_buyout_gerrant|smithing_bot|smithing_bot_platebody|leather_crafter|leather_crafter_hard_body|firemaker|firemaker_oak|climbing_boots|climbing_boots_teleport|ranging_guild_round|ranging_guild_redeem|ranging_guild_bank|ranging_guild_full|brimhaven_moss_inspect_v1|route_inspect_brimhaven_v2_ts|prayer_v2_ts|prayer_v1_ts|line_of_sight_v2_ts|actor_observation_v2_ts|fight_field_v2_ts|hold_spot_v2_ts|retreat_spot_v2_ts|walk_spot_v2_ts|enter_lair_v2_ts|leave_lair_v2_ts";
+pub const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|chicken_killer_bank|thiever|alcher|alcher_defaults|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|alcher_low|alcher_fire_battlestaff|alcher_swarm_drain|bank_fletcher|bank_fletcher_shafts|bank_fletcher_headless|bank_fletcher_string|bank_fletcher_cut_string|dart_fletcher|dart_fletcher_iron|herb_cleaner|herb_cleaner_named|herb_cleaner_empty_bank|gem_cutter|gem_cutter_named|door_opener|door_opener_gate|gnome_course|gnome_course_radius|wildy_agility|brimhaven_agility|flax_picker|superheater|superheater_steel|superheater_fire_battlestaff|superheater_silver_low_natures|vial_filler|vial_filler_east|potion_maker|potion_maker_named|tanner_bot|tanner_bot_hard|rune_crafter|rune_crafter_earth|mule_crafter|ardy_cakes|ardy_cakes_fight|ardy_thiever|ardy_thiever_fight|ardy_thiever_knight|gnome_chop|gnome_fletch_short|gnome_fletch_long|coal_trucks|cook_bot|cook_bot_lobster|smelter_bot|smelter_bot_steel|flax_spinner|flax_aio|flax_aio_pick|flax_aio_spin|herblore_secondaries|herblore_secondaries_newt|chaos_druid|chaos_druid_tower|chaos_druid_yanille|moss_giant|moss_giant_prepared|moss_giant_dart|hill_giant|auto_fighter|auto_fighter_mage|auto_fighter_range|rock_crab|rock_crab_range|green_dragon|green_dragon_prepared|green_dragon_mage_prepared|green_dragon_special|green_dragon_special_prepared|green_dragon_potions|green_dragon_potions_prepared|fire_giant|fire_giant_prepared|ardy_fighter|auto_fighter_bank|moss_giant_bank|hill_giant_bank|hill_giant_bank_prepared|chaos_druid_bank|ardy_fighter_bank|rock_crab_bank|green_dragon_bank|green_dragon_bank_prepared|green_dragon_bank_default_prepared|green_dragon_tele|green_dragon_tele_prepared|fire_giant_approach|fire_giant_bank|fire_giant_bank_prepared|fire_giant_camelot_prepared|aio_teleport|aio_teleport_falador|aio_teleport_no_staff|shop_buyout|shop_buyout_aubury|shop_buyout_lowe|shop_buyout_hickton|shop_buyout_harry|shop_buyout_betty|shop_buyout_gerrant|smithing_bot|smithing_bot_platebody|leather_crafter|leather_crafter_hard_body|firemaker|firemaker_oak|climbing_boots|climbing_boots_teleport|ranging_guild_round|ranging_guild_redeem|ranging_guild_bank|ranging_guild_full|brimhaven_moss_inspect_v1|route_inspect_brimhaven_v2_ts|prayer_v2_ts|prayer_v1_ts|line_of_sight_v2_ts|actor_observation_v2_ts|fight_field_v2_ts|hold_spot_v2_ts|retreat_spot_v2_ts|walk_spot_v2_ts|enter_lair_v2_ts|leave_lair_v2_ts|acquire_key_v2_ts";
 pub const CATALOG_COMMIT_A: &str = "100adccc037d9f6898080e1cad58fcfc43364775";
 pub const CATALOG_COMMIT_B: &str = "8e7d965be2071d6ec65c3265e12af797082d720a";
 pub const ADAMANT_SCIMITAR_ID: i32 = 1331;
@@ -616,6 +616,7 @@ pub enum CoreCase {
     WalkSpotV2,
     EnterLairV2,
     LeaveLairV2,
+    AcquireKeyV2,
 }
 
 impl CoreCase {
@@ -758,6 +759,7 @@ impl CoreCase {
             "walk_spot_v2_ts" => Ok(Self::WalkSpotV2),
             "enter_lair_v2_ts" => Ok(Self::EnterLairV2),
             "leave_lair_v2_ts" => Ok(Self::LeaveLairV2),
+            "acquire_key_v2_ts" => Ok(Self::AcquireKeyV2),
             _ => Err(format!(
                 "unknown CATALOG_SCENARIO {value:?}; expected {CORE_SCENARIOS}"
             )),
@@ -903,6 +905,7 @@ impl CoreCase {
             Self::WalkSpotV2 => "walk_spot_v2_ts",
             Self::EnterLairV2 => "enter_lair_v2_ts",
             Self::LeaveLairV2 => "leave_lair_v2_ts",
+            Self::AcquireKeyV2 => "acquire_key_v2_ts",
         }
     }
 
@@ -1016,6 +1019,7 @@ impl CoreCase {
             Self::WalkSpotV2 => "walk_spot_v2",
             Self::EnterLairV2 => "enter_lair_v2",
             Self::LeaveLairV2 => "leave_lair_v2",
+            Self::AcquireKeyV2 => "acquire_key_v2",
         }
     }
 
@@ -1060,6 +1064,10 @@ impl CoreCase {
 
     pub fn copies_leave_lair(self) -> bool {
         matches!(self, Self::LeaveLairV2)
+    }
+
+    pub fn copies_acquire_key(self) -> bool {
+        matches!(self, Self::AcquireKeyV2)
     }
 
     pub fn prayer_stop_reason(self) -> Option<&'static str> {
@@ -1122,6 +1130,13 @@ impl CoreCase {
     pub fn leave_lair_stop_reason(self) -> Option<&'static str> {
         match self {
             Self::LeaveLairV2 => Some(LEAVE_LAIR_V2_STOP),
+            _ => None,
+        }
+    }
+
+    pub fn acquire_key_stop_reason(self) -> Option<&'static str> {
+        match self {
+            Self::AcquireKeyV2 => Some(ACQUIRE_KEY_V2_STOP),
             _ => None,
         }
     }
@@ -1251,6 +1266,9 @@ pub struct Observation {
     /// Compact here/walkOut/kind leave-lair witness. Empty unless the active
     /// Core case asked for leave lair. Never a world copy.
     pub leave: LeaveLairObservation,
+    /// Compact here/dest/kind corridor witness. Empty unless the active Core
+    /// case asked for acquire key. Never a world copy.
+    pub acquire: AcquireKeyObservation,
 }
 
 /// Compact hop projection for Core JSON. Only `locName` is copied from the
@@ -1769,6 +1787,7 @@ impl Observation {
             walk: WalkSpotObservation::default(),
             enter: EnterLairObservation::default(),
             leave: LeaveLairObservation::default(),
+            acquire: AcquireKeyObservation::default(),
         }
     }
 
@@ -2145,6 +2164,31 @@ impl Observation {
             walk_out,
             radius: receipt.as_ref().map(|row| row.radius),
             area: here.map(leave_lair_box),
+            receipt,
+        };
+    }
+
+    /// Compact host here plus the script paint corridor receipt. Never copies
+    /// the collision grid or world. The projected lair box is the File fixture,
+    /// not the CELL box.
+    pub fn attach_acquire_key(
+        &mut self,
+        snapshot: &GameSnapshot,
+        paint: Option<&script::shim::ScriptPaint>,
+    ) {
+        let scene = snapshot.scene();
+        let here = self
+            .tile
+            .map(|(x, z, level)| LineOfSightTile { x, z, level });
+        let receipt = paint.and_then(parse_acquire_key_receipt_from_paint);
+        let dest = receipt.as_ref().map(|row| row.dest);
+        self.acquire = AcquireKeyObservation {
+            available: scene.available,
+            here,
+            dest,
+            radius: receipt.as_ref().map(|row| row.radius),
+            cell: Some(ACQUIRE_KEY_CELL),
+            boxes: vec![ACQUIRE_KEY_LAIR],
             receipt,
         };
     }
@@ -4267,6 +4311,296 @@ impl LeaveLairDeliveryCycle {
     }
 }
 
+pub const ACQUIRE_KEY_V2_STOP: &str = "acquire key qualification complete";
+pub const ACQUIRE_KEY_RECEIPT_PREFIX: &str = "acquire-key-receipt:";
+pub const ACQUIRE_KEY_RADIUS: i32 = 1;
+pub const ACQUIRE_KEY_DEST: LineOfSightTile = LineOfSightTile {
+    x: 2931,
+    z: 9690,
+    level: 0,
+};
+/// Jail door rectangle. Not a projected lair box.
+pub const ACQUIRE_KEY_CELL: AcquireKeyBox = AcquireKeyBox {
+    min_x: 2928,
+    max_x: 2934,
+    min_z: 9683,
+    max_z: 9689,
+    level: 0,
+};
+/// File projection fixture. Mainland here must stay outside it.
+pub const ACQUIRE_KEY_LAIR: AcquireKeyBox = AcquireKeyBox {
+    min_x: 40,
+    max_x: 60,
+    min_z: 40,
+    max_z: 60,
+    level: 0,
+};
+const ACQUIRE_KEY_JAIL_ID: i64 = 1591;
+const ACQUIRE_KEY_KBD_LOCS: [i32; 4] = [1765, 1766, 1816, 1817];
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AcquireKeyBox {
+    pub min_x: i32,
+    pub max_x: i32,
+    pub min_z: i32,
+    pub max_z: i32,
+    pub level: i32,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AcquireKeyScriptReceipt {
+    pub here: LineOfSightTile,
+    pub dest: LineOfSightTile,
+    pub kind: String,
+    pub radius: i32,
+    pub discriminator: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct AcquireKeyObservation {
+    pub available: bool,
+    pub here: Option<LineOfSightTile>,
+    pub dest: Option<LineOfSightTile>,
+    pub radius: Option<i32>,
+    pub cell: Option<AcquireKeyBox>,
+    pub boxes: Vec<AcquireKeyBox>,
+    pub receipt: Option<AcquireKeyScriptReceipt>,
+}
+
+impl Default for AcquireKeyObservation {
+    fn default() -> Self {
+        Self {
+            available: false,
+            here: None,
+            dest: None,
+            radius: None,
+            cell: None,
+            boxes: Vec::new(),
+            receipt: None,
+        }
+    }
+}
+
+fn acquire_key_number_is_jail(n: i64) -> bool {
+    n == ACQUIRE_KEY_JAIL_ID
+}
+
+fn acquire_key_value_forbidden(value: &Value) -> bool {
+    match value {
+        Value::Object(map) => {
+            if map.get("key").and_then(Value::as_str) == Some("kbd-lair") {
+                return true;
+            }
+            if map
+                .get("kind")
+                .and_then(Value::as_str)
+                .is_some_and(acquire_key_kind_forbidden)
+            {
+                return true;
+            }
+            for key in ["locId", "id", "item", "itemId", "held"] {
+                if map
+                    .get(key)
+                    .and_then(Value::as_i64)
+                    .is_some_and(acquire_key_number_is_jail)
+                    || map
+                        .get(key)
+                        .and_then(Value::as_i64)
+                        .is_some_and(|n| ACQUIRE_KEY_KBD_LOCS.contains(&(n as i32)))
+                {
+                    return true;
+                }
+            }
+            for key in ["route", "outLever", "upLadder"] {
+                if map.get(key).is_some_and(|child| !child.is_null()) {
+                    return true;
+                }
+            }
+            for key in ["allow_teleports", "allow_wilderness", "allow_bank_fetch"] {
+                if map.contains_key(key) {
+                    return true;
+                }
+            }
+            map.values().any(acquire_key_value_forbidden)
+        }
+        Value::Array(rows) => rows.iter().any(acquire_key_value_forbidden),
+        Value::Number(n) => n.as_i64().is_some_and(acquire_key_number_is_jail),
+        Value::String(text) => text.contains("1591") || text.eq_ignore_ascii_case("kbd-lair"),
+        _ => false,
+    }
+}
+
+/// Paint-row parser. A 1591 claim, KBD loc, or invented allow-flag is not a receipt.
+pub fn parse_acquire_key_receipt_line(line: &str) -> Option<AcquireKeyScriptReceipt> {
+    let json = line.strip_prefix(ACQUIRE_KEY_RECEIPT_PREFIX)?;
+    if json.contains("1591") || json.contains("kbd-lair") {
+        return None;
+    }
+    let value: Value = serde_json::from_str(json).ok()?;
+    if acquire_key_value_forbidden(&value) {
+        return None;
+    }
+    serde_json::from_value(value).ok()
+}
+
+fn parse_acquire_key_receipt_from_paint(
+    paint: &script::shim::ScriptPaint,
+) -> Option<AcquireKeyScriptReceipt> {
+    paint
+        .lines
+        .iter()
+        .find_map(|line| parse_acquire_key_receipt_line(line))
+}
+
+fn acquire_key_kind_forbidden(kind: &str) -> bool {
+    matches!(
+        kind.to_ascii_lowercase().as_str(),
+        "npc" | "obj" | "leave" | "yield" | "walk" | "aborted" | "kbd" | "kbd-lair"
+    )
+}
+
+fn acquire_key_kind_ok(kind: &str) -> bool {
+    kind.eq_ignore_ascii_case("walk-near")
+}
+
+fn acquire_key_in_box(tile: LineOfSightTile, area: AcquireKeyBox) -> bool {
+    tile.level == area.level
+        && tile.x >= area.min_x
+        && tile.x <= area.max_x
+        && tile.z >= area.min_z
+        && tile.z <= area.max_z
+}
+
+fn acquire_key_place_ok(here: LineOfSightTile, cell: AcquireKeyBox, boxes: &[AcquireKeyBox]) -> bool {
+    cell == ACQUIRE_KEY_CELL
+        && boxes == [ACQUIRE_KEY_LAIR]
+        && !acquire_key_in_box(here, ACQUIRE_KEY_CELL)
+        && !acquire_key_in_box(here, ACQUIRE_KEY_LAIR)
+}
+
+fn acquire_key_dest_ok(dest: LineOfSightTile) -> bool {
+    dest == ACQUIRE_KEY_DEST
+}
+
+pub fn acquire_key_baseline_ready(baseline: &Observation) -> bool {
+    let Some(here) = baseline.acquire.here else {
+        return false;
+    };
+    baseline.ingame
+        && baseline.scene_state == 2
+        && baseline.acquire.available
+        && !acquire_key_in_box(here, ACQUIRE_KEY_CELL)
+        && !acquire_key_in_box(here, ACQUIRE_KEY_LAIR)
+}
+
+fn acquire_key_receipt_joined(now: &AcquireKeyObservation) -> bool {
+    let (Some(here), Some(dest), Some(receipt)) = (now.here, now.dest, now.receipt.as_ref()) else {
+        return false;
+    };
+    let Some(cell) = now.cell else {
+        return false;
+    };
+    now.available
+        && receipt.here == here
+        && receipt.dest == dest
+        && now.radius == Some(receipt.radius)
+        && receipt.discriminator.eq_ignore_ascii_case("corridor")
+        && receipt.radius == ACQUIRE_KEY_RADIUS
+        && acquire_key_kind_ok(&receipt.kind)
+        && !acquire_key_kind_forbidden(&receipt.kind)
+        && acquire_key_dest_ok(dest)
+        && acquire_key_place_ok(here, cell, &now.boxes)
+}
+
+/// Post-Start witness: joined corridor receipt, walk-near radius 1, named stop.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct AcquireKeyDeliveryCycle {
+    pub here: Option<LineOfSightTile>,
+    pub dest: Option<LineOfSightTile>,
+    pub kind: Option<String>,
+    pub discriminator: Option<String>,
+    pub radius: Option<i32>,
+    pub cell: Option<AcquireKeyBox>,
+    pub boxes: Vec<AcquireKeyBox>,
+    pub receipt: Option<AcquireKeyScriptReceipt>,
+    pub stopped: Option<script::ScriptLifecycleReceipt>,
+}
+
+impl AcquireKeyDeliveryCycle {
+    pub fn observe(&mut self, now: &Observation) {
+        if self.receipt.is_some() {
+            return;
+        }
+        if acquire_key_receipt_joined(&now.acquire) {
+            self.here = now.acquire.here;
+            self.dest = now.acquire.dest;
+            self.kind = now.acquire.receipt.as_ref().map(|row| row.kind.clone());
+            self.discriminator = now
+                .acquire
+                .receipt
+                .as_ref()
+                .map(|row| row.discriminator.clone());
+            self.radius = now.acquire.radius;
+            self.cell = now.acquire.cell;
+            self.boxes = now.acquire.boxes.clone();
+            self.receipt = now.acquire.receipt.clone();
+        }
+    }
+
+    pub fn observe_script_lifecycle(
+        &mut self,
+        receipt: script::ScriptLifecycleReceipt,
+        expected: &str,
+    ) {
+        if self.receipt.is_some()
+            && receipt.runtime_generation > 0
+            && receipt.state == script::ScriptTerminalState::Stopped
+            && receipt.reason == expected
+        {
+            self.stopped = Some(receipt);
+        }
+    }
+
+    pub fn qualified(&self) -> bool {
+        if self.stopped.is_none() {
+            return false;
+        }
+        let (
+            Some(here),
+            Some(dest),
+            Some(kind),
+            Some(discriminator),
+            Some(radius),
+            Some(cell),
+            Some(receipt),
+        ) = (
+            self.here,
+            self.dest,
+            self.kind.as_deref(),
+            self.discriminator.as_deref(),
+            self.radius,
+            self.cell,
+            self.receipt.as_ref(),
+        )
+        else {
+            return false;
+        };
+        receipt.here == here
+            && receipt.dest == dest
+            && receipt.kind == kind
+            && receipt.discriminator == discriminator
+            && receipt.radius == radius
+            && radius == ACQUIRE_KEY_RADIUS
+            && discriminator.eq_ignore_ascii_case("corridor")
+            && acquire_key_kind_ok(kind)
+            && !acquire_key_kind_forbidden(kind)
+            && acquire_key_dest_ok(dest)
+            && acquire_key_place_ok(here, cell, &self.boxes)
+    }
+}
+
 fn empty_worn(observation: &Observation) -> bool {
     observation.equipment_ids.values().copied().sum::<i32>() == 0
 }
@@ -5220,6 +5554,7 @@ pub fn validate_case_baseline_with_preparation(
         CoreCase::WalkSpotV2 => walk_spot_baseline_ready(baseline),
         CoreCase::EnterLairV2 => enter_lair_baseline_ready(baseline),
         CoreCase::LeaveLairV2 => leave_lair_baseline_ready(baseline),
+        CoreCase::AcquireKeyV2 => acquire_key_baseline_ready(baseline),
     };
     if ready {
         return Ok(());
@@ -5600,6 +5935,9 @@ pub fn validate_case_baseline_with_preparation(
         CoreCase::LeaveLairV2 => {
             "ingame && scene_state==2 && SceneView.available, here inside the curated box, walkOut Chebyshev 8-16 walk-near radius 3"
         }
+        CoreCase::AcquireKeyV2 => {
+            "ingame && scene_state==2 && SceneView.available, here outside the CELL box and the projected lair box, corridor walk-near radius 1 to (2931,9690,0)"
+        }
     };
     Err(format!(
         "{} Start baseline lacks required preparation ({requirement}): {baseline:?}",
@@ -5678,6 +6016,7 @@ pub struct CoreWitness {
     pub walk_spot_cycle: WalkSpotDeliveryCycle,
     pub enter_lair_cycle: EnterLairDeliveryCycle,
     pub leave_lair_cycle: LeaveLairDeliveryCycle,
+    pub acquire_key_cycle: AcquireKeyDeliveryCycle,
     pub ordered_first_exhausted: bool,
 }
 
@@ -10986,6 +11325,7 @@ impl CoreWitness {
             walk_spot_cycle: WalkSpotDeliveryCycle::default(),
             enter_lair_cycle: EnterLairDeliveryCycle::default(),
             leave_lair_cycle: LeaveLairDeliveryCycle::default(),
+            acquire_key_cycle: AcquireKeyDeliveryCycle::default(),
             ordered_first_exhausted: false,
         }
     }
@@ -11237,6 +11577,9 @@ impl CoreWitness {
         }
         if matches!(self.case, CoreCase::LeaveLairV2) {
             self.leave_lair_cycle.observe(observation);
+        }
+        if matches!(self.case, CoreCase::AcquireKeyV2) {
+            self.acquire_key_cycle.observe(observation);
         }
         if matches!(self.case, CoreCase::Superheater) {
             self.superheater_cycle.observe(
@@ -11522,6 +11865,12 @@ impl CoreWitness {
                         .observe_script_lifecycle(receipt, expected);
                 }
             }
+            CoreCase::AcquireKeyV2 => {
+                if let Some(expected) = self.case.acquire_key_stop_reason() {
+                    self.acquire_key_cycle
+                        .observe_script_lifecycle(receipt, expected);
+                }
+            }
             _ => {}
         }
     }
@@ -11745,6 +12094,7 @@ impl CoreWitness {
             CoreCase::WalkSpotV2 => self.walk_spot_cycle.qualified(),
             CoreCase::EnterLairV2 => self.enter_lair_cycle.qualified(),
             CoreCase::LeaveLairV2 => self.leave_lair_cycle.qualified(),
+            CoreCase::AcquireKeyV2 => self.acquire_key_cycle.qualified(),
             CoreCase::ChaosDruid
             | CoreCase::ChaosDruidTower
             | CoreCase::ChaosDruidYanille
@@ -11849,6 +12199,7 @@ impl CoreWitness {
             "walk_spot_cycle": self.walk_spot_cycle,
             "enter_lair_cycle": self.enter_lair_cycle,
             "leave_lair_cycle": self.leave_lair_cycle,
+            "acquire_key_cycle": self.acquire_key_cycle,
             "ordered_first_exhausted": self.ordered_first_exhausted,
         }))
     }
@@ -12207,6 +12558,13 @@ impl CoreWatch {
                 CoreWatchState::Running { witness, .. } => witness.case.copies_leave_lair(),
                 CoreWatchState::Disabled | CoreWatchState::Qualified { .. } => false,
             };
+            let copies_acquire = match &*state {
+                CoreWatchState::Ready { case, .. } | CoreWatchState::Failed { case, .. } => {
+                    case.copies_acquire_key()
+                }
+                CoreWatchState::Running { witness, .. } => witness.case.copies_acquire_key(),
+                CoreWatchState::Disabled | CoreWatchState::Qualified { .. } => false,
+            };
             let mut observation = Observation::from_snapshot(snapshot, names);
             observation.script_lifecycle = lifecycle;
             observation.guardian = guardian;
@@ -12239,6 +12597,9 @@ impl CoreWatch {
             }
             if copies_leave {
                 observation.attach_leave_lair(snapshot, paint);
+            }
+            if copies_acquire {
+                observation.attach_acquire_key(snapshot, paint);
             }
             Self::observe_locked(&mut state, account, observation, session_boundary);
         }
@@ -12379,6 +12740,21 @@ impl CoreWatch {
                 case.copies_leave_lair()
             }
             CoreWatchState::Running { witness, .. } => witness.case.copies_leave_lair(),
+            CoreWatchState::Disabled | CoreWatchState::Qualified { .. } => false,
+        }
+    }
+
+    /// True only for the acquire-key File card. Callers attach paint and
+    /// compact here/dest only then.
+    pub fn copies_acquire_key(&self) -> bool {
+        if !self.active.load(Ordering::Acquire) {
+            return false;
+        }
+        match &*self.inner.lock().unwrap() {
+            CoreWatchState::Ready { case, .. } | CoreWatchState::Failed { case, .. } => {
+                case.copies_acquire_key()
+            }
+            CoreWatchState::Running { witness, .. } => witness.case.copies_acquire_key(),
             CoreWatchState::Disabled | CoreWatchState::Qualified { .. } => false,
         }
     }

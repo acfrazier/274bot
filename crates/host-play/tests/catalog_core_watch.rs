@@ -18,11 +18,13 @@ use host_play::catalog_core::{
     HoldSpotObservation, HoldSpotScriptReceipt, RetreatSpotObservation, RetreatSpotScriptReceipt,
     WalkSpotObservation, WalkSpotScriptReceipt, ACTOR_OBSERVATION_V2_STOP, ENTER_LAIR_V2_STOP,
     FIGHT_FIELD_V2_STOP, HOLD_SPOT_V2_STOP, LEAVE_LAIR_RECEIPT_PREFIX, LEAVE_LAIR_V2_STOP,
-    RETREAT_SPOT_V2_STOP, WALK_SPOT_V2_STOP,
+    RETREAT_SPOT_V2_STOP, WALK_SPOT_V2_STOP, ACQUIRE_KEY_CELL, ACQUIRE_KEY_DEST, ACQUIRE_KEY_LAIR,
+    ACQUIRE_KEY_RECEIPT_PREFIX, ACQUIRE_KEY_V2_STOP,
 };
 use host_play::catalog_core::{
     EnterLairBox, EnterLairObservation, EnterLairScriptReceipt, LeaveLairBox, LeaveLairObservation,
-    LeaveLairScriptReceipt, parse_leave_lair_receipt_line,
+    LeaveLairScriptReceipt, parse_leave_lair_receipt_line, AcquireKeyObservation,
+    AcquireKeyScriptReceipt, parse_acquire_key_receipt_line,
 };
 
 fn thiever_observation() -> Observation {
@@ -4180,4 +4182,271 @@ fn leave_lair_rejects_wrong_stop_box_and_forbidden_tiles() {
     }
     watch.observe("catalogtest", leave_stop(edge, LEAVE_LAIR_V2_STOP), false);
     assert!(watch.qualify().is_err(), "Edgeville cannot pass");
+}
+
+fn acquire_here() -> LineOfSightTile {
+    LineOfSightTile {
+        x: 3222,
+        z: 3218,
+        level: 0,
+    }
+}
+
+fn acquire_receipt(here: LineOfSightTile, dest: LineOfSightTile, kind: &str) -> AcquireKeyScriptReceipt {
+    AcquireKeyScriptReceipt {
+        here,
+        dest,
+        kind: kind.into(),
+        radius: 1,
+        discriminator: "corridor".into(),
+    }
+}
+
+fn acquire_ready() -> Observation {
+    let here = acquire_here();
+    let mut observation = Observation {
+        ingame: true,
+        scene_state: 2,
+        player: Some("catalogtest".into()),
+        tile: Some((here.x, here.z, here.level)),
+        ..Observation::default()
+    };
+    observation.acquire = AcquireKeyObservation {
+        available: true,
+        here: Some(here),
+        cell: Some(ACQUIRE_KEY_CELL),
+        boxes: vec![ACQUIRE_KEY_LAIR],
+        ..AcquireKeyObservation::default()
+    };
+    observation
+}
+
+fn acquire_joined(mut observation: Observation) -> Observation {
+    observation.tick += 1;
+    let here = acquire_here();
+    let dest = ACQUIRE_KEY_DEST;
+    let receipt = acquire_receipt(here, dest, "walk-near");
+    observation.tile = Some((here.x, here.z, here.level));
+    observation.acquire.here = Some(here);
+    observation.acquire.dest = Some(dest);
+    observation.acquire.radius = Some(receipt.radius);
+    observation.acquire.cell = Some(ACQUIRE_KEY_CELL);
+    observation.acquire.boxes = vec![ACQUIRE_KEY_LAIR];
+    observation.acquire.receipt = Some(receipt);
+    observation
+}
+
+fn acquire_stop(mut observation: Observation, reason: &str) -> Observation {
+    observation.tick += 1;
+    observation.script_lifecycle = Some(script::ScriptLifecycleReceipt {
+        runtime_generation: 1,
+        state: script::ScriptTerminalState::Stopped,
+        tick: observation.tick as u64,
+        reason: reason.into(),
+    });
+    observation
+}
+
+fn acquire_with(observation: Observation, dest: LineOfSightTile, kind: &str) -> Observation {
+    let mut joined = acquire_joined(observation);
+    joined.acquire.dest = Some(dest);
+    if let Some(receipt) = joined.acquire.receipt.as_mut() {
+        receipt.dest = dest;
+        receipt.kind = kind.into();
+    }
+    joined
+}
+
+#[test]
+fn acquire_key_v2_requires_corridor_receipt_and_named_stop() {
+    let case = CoreCase::parse("acquire_key_v2_ts").expect("named acquire key cell");
+    assert!(case.copies_acquire_key());
+    assert!(!case.copies_leave_lair());
+    assert!(!case.copies_enter_lair());
+    assert!(!case.copies_walk_spot());
+    assert!(!case.copies_hold_spot());
+    assert!(!case.copies_retreat_spot());
+    assert!(!case.copies_fight_field());
+    let watch = CoreWatch::default();
+    watch.configure(case, "catalogtest");
+    let baseline = acquire_ready();
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    watch.observe("catalogtest", baseline.clone(), false);
+    assert!(
+        watch.qualify().unwrap_err().contains("incomplete"),
+        "seed-only scene identity must not qualify"
+    );
+    let joined = acquire_joined(baseline);
+    watch.observe("catalogtest", joined.clone(), false);
+    assert!(
+        watch.qualify().is_err(),
+        "joined receipt without the named helper stop is incomplete"
+    );
+    watch.observe("catalogtest", acquire_stop(joined, ACQUIRE_KEY_V2_STOP), false);
+    watch
+        .qualify()
+        .expect("corridor walk-near radius 1 and named stop");
+}
+
+#[test]
+fn acquire_key_rejects_wrong_kinds_dest_radius_and_forbidden_paint() {
+    let case = CoreCase::parse("acquire_key_v2_ts").expect("named acquire key cell");
+    let baseline = acquire_ready();
+
+    for kind in ["npc", "obj", "leave", "yield", "walk", "aborted", "kbd"] {
+        let watch = CoreWatch::default();
+        watch.configure(case, "catalogtest");
+        watch.observe("catalogtest", baseline.clone(), false);
+        watch.begin_start("catalogtest").unwrap();
+        let forged = acquire_stop(
+            acquire_with(baseline.clone(), ACQUIRE_KEY_DEST, kind),
+            ACQUIRE_KEY_V2_STOP,
+        );
+        watch.observe("catalogtest", forged, false);
+        assert!(watch.qualify().is_err(), "{kind} cannot pass");
+    }
+
+    let watch = CoreWatch::default();
+    watch.configure(case, "catalogtest");
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    let wrong_dest = LineOfSightTile {
+        x: 2932,
+        z: 9690,
+        level: 0,
+    };
+    watch.observe(
+        "catalogtest",
+        acquire_stop(
+            acquire_with(baseline.clone(), wrong_dest, "walk-near"),
+            ACQUIRE_KEY_V2_STOP,
+        ),
+        false,
+    );
+    assert!(watch.qualify().is_err(), "dest must be the corridor tile");
+
+    let watch = CoreWatch::default();
+    watch.configure(case, "catalogtest");
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    let mut radius = acquire_joined(baseline.clone());
+    radius.acquire.radius = Some(3);
+    if let Some(receipt) = radius.acquire.receipt.as_mut() {
+        receipt.radius = 3;
+    }
+    watch.observe("catalogtest", acquire_stop(radius, ACQUIRE_KEY_V2_STOP), false);
+    assert!(watch.qualify().is_err(), "radius 3 cannot pass");
+
+    let watch = CoreWatch::default();
+    watch.configure(case, "catalogtest");
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    watch.observe(
+        "catalogtest",
+        acquire_stop(baseline.clone(), ACQUIRE_KEY_V2_STOP),
+        false,
+    );
+    assert!(watch.qualify().is_err(), "missing receipt cannot pass");
+
+    let here = acquire_here();
+    let dest = ACQUIRE_KEY_DEST;
+    let ok = format!(
+        "{ACQUIRE_KEY_RECEIPT_PREFIX}{{\"here\":{{\"x\":{},\"z\":{},\"level\":0}},\"dest\":{{\"x\":{},\"z\":{},\"level\":0}},\"kind\":\"walk-near\",\"radius\":1,\"discriminator\":\"corridor\"}}",
+        here.x, here.z, dest.x, dest.z
+    );
+    assert!(parse_acquire_key_receipt_line(&ok).is_some());
+    assert!(parse_acquire_key_receipt_line(&format!("{ok} 1591")).is_none());
+    assert!(parse_acquire_key_receipt_line(
+        &ok.replace("\"radius\":1", "\"radius\":1,\"held\":1591")
+    )
+    .is_none());
+    assert!(parse_acquire_key_receipt_line(
+        &ok.replace("\"radius\":1", "\"radius\":1,\"key\":\"kbd-lair\"")
+    )
+    .is_none());
+    assert!(parse_acquire_key_receipt_line(
+        &ok.replace("\"radius\":1", "\"radius\":1,\"locId\":1765")
+    )
+    .is_none());
+    assert!(parse_acquire_key_receipt_line(
+        &ok.replace("\"radius\":1", "\"radius\":1,\"allow_teleports\":false")
+    )
+    .is_none());
+    assert!(parse_acquire_key_receipt_line(
+        &ok.replace("\"kind\":\"walk-near\"", "\"kind\":\"npc\"")
+    )
+    .is_none());
+}
+
+#[test]
+fn acquire_key_rejects_wrong_stop_cell_and_projected_lair() {
+    let case = CoreCase::parse("acquire_key_v2_ts").expect("named acquire key cell");
+    let baseline = acquire_ready();
+
+    let watch = CoreWatch::default();
+    watch.configure(case, "catalogtest");
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    let joined = acquire_joined(baseline.clone());
+    watch.observe("catalogtest", joined.clone(), false);
+    watch.observe("catalogtest", acquire_stop(joined, "some other stop"), false);
+    assert!(watch.qualify().is_err(), "wrong named stop cannot pass");
+
+    let watch = CoreWatch::default();
+    watch.configure(case, "catalogtest");
+    let mut inside_cell = acquire_ready();
+    let cell_here = LineOfSightTile {
+        x: 2931,
+        z: 9686,
+        level: 0,
+    };
+    inside_cell.tile = Some((cell_here.x, cell_here.z, cell_here.level));
+    inside_cell.acquire.here = Some(cell_here);
+    watch.observe("catalogtest", inside_cell, false);
+    assert!(
+        watch.begin_start("catalogtest").is_err(),
+        "here inside the CELL box cannot start"
+    );
+
+    let watch = CoreWatch::default();
+    watch.configure(case, "catalogtest");
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    let mut inside_lair = acquire_joined(baseline.clone());
+    let lair_here = LineOfSightTile {
+        x: 50,
+        z: 50,
+        level: 0,
+    };
+    inside_lair.tile = Some((lair_here.x, lair_here.z, lair_here.level));
+    inside_lair.acquire.here = Some(lair_here);
+    if let Some(receipt) = inside_lair.acquire.receipt.as_mut() {
+        receipt.here = lair_here;
+    }
+    watch.observe(
+        "catalogtest",
+        acquire_stop(inside_lair, ACQUIRE_KEY_V2_STOP),
+        false,
+    );
+    assert!(
+        watch.qualify().is_err(),
+        "here inside the projected lair box cannot pass"
+    );
+
+    let watch = CoreWatch::default();
+    watch.configure(case, "catalogtest");
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    let mut cell_as_boxes = acquire_joined(baseline);
+    cell_as_boxes.acquire.boxes = vec![ACQUIRE_KEY_CELL];
+    watch.observe(
+        "catalogtest",
+        acquire_stop(cell_as_boxes, ACQUIRE_KEY_V2_STOP),
+        false,
+    );
+    assert!(
+        watch.qualify().is_err(),
+        "CELL projected as boxes cannot pass"
+    );
 }

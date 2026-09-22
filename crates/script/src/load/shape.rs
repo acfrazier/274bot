@@ -319,7 +319,8 @@ pub fn live_example_path(file_name: &str) -> Option<PathBuf> {
         | "retreat_spot_v2.ts"
         | "walk_spot_v2.ts"
         | "enter_lair_v2.ts"
-        | "leave_lair_v2.ts" => {
+        | "leave_lair_v2.ts"
+        | "acquire_key_v2.ts" => {
             let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                 .join("examples")
                 .join(file_name);
@@ -935,5 +936,36 @@ mod tests {
         assert!(!source.contains("1766"));
         assert!(!source.contains("1816"));
         assert!(!source.contains("1817"));
+    }
+
+    #[test]
+    fn acquire_key_qualification_example_is_an_exact_file_card() {
+        let v2 = live_example_path("acquire_key_v2.ts").expect("checked-in acquire key v2 example");
+        assert!(v2.ends_with("acquire_key_v2.ts"), "{}", v2.display());
+        assert!(live_example_path("acquire_key_v2").is_none());
+        assert!(live_example_path("AcquireKey.ts").is_none());
+        let source = std::fs::read_to_string(&v2).expect("acquire key source");
+        assert!(source.contains("acquire key qualification complete"));
+        assert!(source.contains("acquire-key-receipt:"));
+        assert!(source.contains("keyBegin"));
+        assert!(source.contains("keyNext"));
+        assert!(source.contains("walk-near"));
+        assert!(source.contains("corridor"));
+        assert!(source.contains("2931"));
+        assert!(source.contains("9690"));
+        assert!(!source.contains("acquireKey"));
+        assert!(!source.contains("scene_state"));
+        assert!(!source.contains("allow_teleports"));
+        assert!(!source.contains("allow_wilderness"));
+        assert!(!source.contains("allow_bank_fetch"));
+        assert!(!source.contains("kbd-lair"));
+        assert!(!source.contains("1765"));
+        assert!(!source.contains("1766"));
+        assert!(!source.contains("1816"));
+        assert!(!source.contains("1817"));
+        assert!(!source.contains("1591"));
+        assert!(!source.contains("walkToken"));
+        assert!(!source.contains("api.walk"));
+        assert!(!source.contains(".queue"));
     }
 }

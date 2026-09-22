@@ -2568,6 +2568,7 @@ fn spawn_slot_thread(
                                 || obs_catalog_core.copies_walk_spot()
                                 || obs_catalog_core.copies_enter_lair()
                                 || obs_catalog_core.copies_leave_lair()
+                                || obs_catalog_core.copies_acquire_key()
                             {
                                 script_paint_of(&slot_scripts, name)
                             } else {
