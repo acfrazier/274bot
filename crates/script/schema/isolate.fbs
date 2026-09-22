@@ -179,9 +179,27 @@ table WidgetText {
 }
 
 // One quest-tab text row after Rust resolves its native display colour.
+// `component_id` (slot 8) is the walked TYPE_TEXT id — the row's click
+// target. Appended, never reordered: an old buffer omits the slot (the
+// row has no target), and a present `0` is a real id and is posted. No
+// default: an absent slot is not `0`.
 table QuestStatus {
   name: string;
   status: string;
+  component_id: int;
+}
+
+// The main modal's paired text walk (Snapshot slot 248). ONE table so a
+// delta cannot tear the lines off the root they were walked from: inner
+// slot 4 `root` is the same integer the buffer posts as `main_modal_id`
+// (Snapshot slot 68), inner slot 6 `texts` is the TYPE_TEXT walk of that
+// root in walk order. When the table is present both inner slots are
+// written; `{ root: -1, texts: [] }` is an observed closed modal, and an
+// OMITTED Snapshot slot is not that object (the isolate keeps its last
+// pair). See the Snapshot comment for the delta rules.
+table MainModalTexts {
+  root: int;
+  texts: [string];
 }
 
 // One live NPC's projected overlay-canvas box. `points` is sixteen ints
@@ -358,6 +376,13 @@ table Snapshot {
   // self_target_index default -1 because 0 is a legal NPC index.
   self_target_kind: int = 0;   // 0 none, 1 npc, 2 player
   self_target_index: int = -1;
+  // The main modal's paired TYPE_TEXT walk, slot 248 (next after 246).
+  // Omitted in a delta is keep — it is NOT a clear, and it is not
+  // `{ root: -1, texts: [] }` (that object is an observed closed modal).
+  // A present table writes both inner slots; its `root` is the integer
+  // this buffer posts as `main_modal_id`, so a text-only change co-posts
+  // slot 68 and the page never reads lines under a stale root.
+  main_modal_texts: MainModalTexts;
 }
 
 table Collision {

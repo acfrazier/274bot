@@ -125,6 +125,8 @@ export interface ToggleControls {
 export interface QuestStatusRow {
   name: string;
   status: 'notStarted' | 'inProgress' | 'complete' | 'unknown';
+  /** The row's walked TYPE_TEXT id (its click target). Omitted on an old buffer: the row has no target, and 0 is a real id. */
+  component_id?: number;
 }
 
 /** Compact native coordinate reachability with bounded dequeue metadata. */
@@ -281,6 +283,8 @@ export interface Snapshot {
   in_combat: boolean;
   animating: boolean;
   main_modal_id: number;
+  /** The main modal's paired TYPE_TEXT walk: `root` is the same integer `main_modal_id` carries, `texts` is its walk order with colour tags intact. `{ root: -1, texts: [] }` is an observed closed modal. Omitted: the post did not carry the pair (keep the last one). */
+  main_modal_texts?: { root: number; texts: string[] };
   chat_modal_id: number;
   make_products: MakeProduct[];
   side_tab_ifaces: SideTabIface[];

@@ -749,6 +749,27 @@ pub(super) fn materialize_snapshot(
         let neg = num(&mut scope, -1.0);
         set(&mut scope, obj, "main_modal_id", neg)?;
     }
+    // The main modal's paired text walk. A present table is the walk (empty
+    // `texts` stays `[]`: a closed modal, or an open one with no text). An
+    // omitted slot is NOT a clear and NOT the closed object — it keeps the
+    // page's last pair, and on a first post it writes no property at all.
+    if snap.has_main_modal_texts() {
+        if let Some(pair) = snap.main_modal_texts() {
+            let modal = v8::Object::new(&mut scope);
+            let root = num(&mut scope, pair.root() as f64);
+            set(&mut scope, modal, "root", root)?;
+            let lines = pair.texts();
+            let texts = v8::Array::new(&mut scope, lines.len() as i32);
+            for (i, line) in lines.into_iter().enumerate() {
+                let line = js_string(&mut scope, line)?;
+                texts
+                    .set_index(&mut scope, i as u32, line)
+                    .ok_or_else(|| "v8 array set failed".to_string())?;
+            }
+            set(&mut scope, modal, "texts", texts.into())?;
+            set(&mut scope, obj, "main_modal_texts", modal.into())?;
+        }
+    }
     if snap.has_chat_modal_id() {
         let chat_modal_id = num(&mut scope, snap.chat_modal_id() as f64);
         set(&mut scope, obj, "chat_modal_id", chat_modal_id)?;
@@ -1504,6 +1525,12 @@ fn quest_status_array<'s>(
         set(scope, o, "name", name)?;
         let status = js_string(scope, row.status())?;
         set(scope, o, "status", status)?;
+        // Only a posted id becomes a property. An absent slot is "no click
+        // target" — not `0`, and not a sentinel the page could click.
+        if let Some(component_id) = row.component_id() {
+            let component_id = num(scope, component_id as f64);
+            set(scope, o, "component_id", component_id)?;
+        }
         arr.set_index(scope, i as u32, o.into())
             .ok_or_else(|| "v8 array set failed".to_string())?;
     }

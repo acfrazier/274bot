@@ -993,6 +993,14 @@ const SUPPORTING_INTERFACES: &[TsInterface] = &[
                 optional: false,
                 doc: None,
             },
+            TsField {
+                name: "component_id",
+                ty: "number",
+                optional: true,
+                doc: Some(
+                    "The row's walked TYPE_TEXT id (its click target). Omitted on an old buffer: the row has no target, and 0 is a real id.",
+                ),
+            },
         ],
     },
     TsInterface {
@@ -1581,6 +1589,14 @@ const SNAPSHOT_FIELDS: &[TsField] = &[
         ty: "number",
         optional: false,
         doc: None,
+    },
+    TsField {
+        name: "main_modal_texts",
+        ty: "{ root: number; texts: string[] }",
+        optional: true,
+        doc: Some(
+            "The main modal's paired TYPE_TEXT walk: `root` is the same integer `main_modal_id` carries, `texts` is its walk order with colour tags intact. `{ root: -1, texts: [] }` is an observed closed modal. Omitted: the post did not carry the pair (keep the last one).",
+        ),
     },
     TsField {
         name: "chat_modal_id",

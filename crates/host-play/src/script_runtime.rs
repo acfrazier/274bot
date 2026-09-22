@@ -2209,11 +2209,10 @@ pub(super) fn with_script_snapshot_input<R>(
     ) -> R,
 ) -> R {
     use script::isolate_fb::{
-        BankApproachInput, BankStandInput, ChatLineInput, ChatOptionInput, CombatStyleInput,
-        ItemRowInput, MakeButtonInput, MakeProductInput, NativeFactsInput, NearestBoothInput,
-        CollisionViewInput, QuestStatusInput, ReachViewInput, SceneEntityInput, SideTabIfaceInput,
-        SnapshotInput,
-        StatInput, TileInput, VarpInput, WidgetTextInput,
+        BankApproachInput, BankStandInput, ChatLineInput, ChatOptionInput, CollisionViewInput,
+        CombatStyleInput, ItemRowInput, MainModalTextsInput, MakeButtonInput, MakeProductInput,
+        NativeFactsInput, NearestBoothInput, QuestStatusInput, ReachViewInput, SceneEntityInput,
+        SideTabIfaceInput, SnapshotInput, StatInput, TileInput, VarpInput, WidgetTextInput,
     };
 
     let flood = snapshot.and_then(|s| {
@@ -3101,6 +3100,9 @@ pub(super) fn with_script_snapshot_input<R>(
                 .map(|quest| QuestStatusInput {
                     name: quest.name.as_str(),
                     status: quest.status().as_str(),
+                    // The walked TYPE_TEXT id: the row's click target. The
+                    // host walk always has one on a posted row.
+                    component_id: Some(quest.component_id),
                 })
                 .collect()
         })
@@ -3108,6 +3110,15 @@ pub(super) fn with_script_snapshot_input<R>(
     let quest_statuses = snapshot
         .filter(|s| s.quest_statuses_available())
         .map(|_| quest_statuses.as_slice());
+    // The main modal's paired TYPE_TEXT walk, copied from the same rebuild
+    // that set `modals.main`: this root is the integer `main_modal_id`
+    // already posts, and the lines are that root's walk. `None` (no
+    // snapshot) is "not supplied" — not a closed modal. A closed modal is
+    // `Some` with root -1 and no lines.
+    let main_modal_texts = modals.map(|m| MainModalTextsInput {
+        root: m.main,
+        texts: snapshot.map(|s| s.main_modal_texts()).unwrap_or(&[]),
+    });
     let input = SnapshotInput {
         tick,
         here,
@@ -3283,6 +3294,7 @@ pub(super) fn with_script_snapshot_input<R>(
             .and_then(GameSnapshot::retaliate_controls)
             .map(|controls| (controls.on_component_id, controls.off_component_id)),
         quest_statuses,
+        main_modal_texts,
         npc_boxes,
         shop_player,
         main_make,

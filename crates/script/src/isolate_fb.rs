@@ -227,6 +227,7 @@ const VT_SNAP_ROUTE_INSPECT_UNOBSERVED: VOffsetT = 240;
 const VT_SNAP_COLLISION: VOffsetT = 242;
 const VT_SNAP_SELF_TARGET_KIND: VOffsetT = 244;
 const VT_SNAP_SELF_TARGET_INDEX: VOffsetT = 246;
+const VT_SNAP_MAIN_MODAL_TEXTS: VOffsetT = 248;
 
 const VT_COL_AVAILABLE: VOffsetT = 4;
 const VT_COL_BASE_X: VOffsetT = 6;
@@ -276,9 +277,14 @@ const VT_BA_DEST_LEVEL: VOffsetT = 20;
 const VT_WT_COMPONENT: VOffsetT = 4;
 const VT_WT_TEXT: VOffsetT = 6;
 
-// QuestStatus: { name, status }
+// QuestStatus: { name, status, component_id }
 const VT_QUEST_NAME: VOffsetT = 4;
 const VT_QUEST_STATUS: VOffsetT = 6;
+const VT_QUEST_COMPONENT: VOffsetT = 8;
+
+// MainModalTexts: { root, texts }
+const VT_MMT_ROOT: VOffsetT = 4;
+const VT_MMT_TEXTS: VOffsetT = 6;
 
 // NpcBox: { index, points }
 const VT_NPC_BOX_INDEX: VOffsetT = 4;
@@ -774,6 +780,11 @@ pub struct NativeFactsInput<'a> {
     pub hint_tile: Option<(i32, i32)>,
     pub retaliate_controls: Option<(i32, i32)>,
     pub quest_statuses: Option<&'a [QuestStatusInput<'a>]>,
+    /// The main modal's paired text walk. `None` = not supplied this post
+    /// (omit the slot — the isolate keeps its last pair). `Some` with
+    /// `root: -1, texts: []` = observed closed, a present table. The two
+    /// are not equal, and an empty vector is still a supplied walk.
+    pub main_modal_texts: Option<MainModalTextsInput<'a>>,
     pub npc_boxes: Option<&'a [NpcBoxInput]>,
     /// The shop side interface's player pack rows (`shop_template_side:inv`,
     /// 3823). `None` = that container was not decoded this rebuild: Sell must
@@ -873,6 +884,25 @@ pub struct NpcBoxInput {
 pub struct QuestStatusInput<'a> {
     pub name: &'a str,
     pub status: &'a str,
+    /// The walked TYPE_TEXT id — the row's click target. `None` omits the
+    /// slot (an old buffer / a row the walk had no id for); a present `0`
+    /// is a real id and is posted. Not a sentinel: `-1` is never written
+    /// for an absent id.
+    pub component_id: Option<i32>,
+}
+
+/// The main modal's paired text walk: the root the walk used and its
+/// TYPE_TEXT lines in walk order. Kept off [`SnapshotInput`] (like
+/// [`NativeFactsInput`]) so one-shot callers that post `main_modal_id`
+/// alone do not gain a pair they never walked.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct MainModalTextsInput<'a> {
+    /// The root this walk was taken from — the same integer the buffer
+    /// posts as `main_modal_id`. `-1` is an observed closed modal.
+    pub root: i32,
+    /// TYPE_TEXT lines in walk order, tags intact. Empty is a real walk
+    /// (a closed modal, or an open one whose tree has no text).
+    pub texts: &'a [String],
 }
 
 /// One currently posted widget text row (`reader.ifText`).
@@ -1758,6 +1788,11 @@ impl Verifiable for SnapshotReader<'_> {
             .visit_field::<ForwardsUOffset<CollisionReader>>("collision", VT_SNAP_COLLISION, false)?
             .visit_field::<i32>("self_target_kind", VT_SNAP_SELF_TARGET_KIND, false)?
             .visit_field::<i32>("self_target_index", VT_SNAP_SELF_TARGET_INDEX, false)?
+            .visit_field::<ForwardsUOffset<MainModalTextsReader>>(
+                "main_modal_texts",
+                VT_SNAP_MAIN_MODAL_TEXTS,
+                false,
+            )?
             .finish();
         Ok(())
     }
@@ -2502,6 +2537,22 @@ impl SnapshotReader<'_> {
     pub fn main_modal_id(&self) -> i32 {
         unsafe { self.tab.get::<i32>(VT_SNAP_MAIN_MODAL, None) }.unwrap_or(-1)
     }
+    /// Whether this buffer carries the main modal's paired text walk. An
+    /// omitted slot is NOT an observed close: the page keeps its last pair
+    /// (and an old buffer simply has no pair).
+    pub fn has_main_modal_texts(&self) -> bool {
+        unsafe {
+            self.tab
+                .get::<ForwardsUOffset<MainModalTextsReader>>(VT_SNAP_MAIN_MODAL_TEXTS, None)
+                .is_some()
+        }
+    }
+    pub fn main_modal_texts(&self) -> Option<MainModalTextsReader<'_>> {
+        unsafe {
+            self.tab
+                .get::<ForwardsUOffset<MainModalTextsReader>>(VT_SNAP_MAIN_MODAL_TEXTS, None)
+        }
+    }
     pub fn has_chat_modal_id(&self) -> bool {
         unsafe { self.tab.get::<i32>(VT_SNAP_CHAT_MODAL, None).is_some() }
     }
@@ -2847,7 +2898,13 @@ pub struct SnapshotFingerprint {
     pub self_chat: Option<String>,
     pub hint_tile: Option<(i32, i32)>,
     pub retaliate_controls: Option<(i32, i32)>,
-    pub quest_statuses: Option<Vec<(String, String)>>,
+    /// `(name, status, component_id)` per posted row. The id is part of the
+    /// comparison: a name/status match after a quiet interface rebuild
+    /// would keep a row whose click target is stale or gone.
+    pub quest_statuses: Option<Vec<(String, String, Option<i32>)>>,
+    /// `(root, texts)` — the whole pair or nothing. A missing pair is not
+    /// a closed modal, so the comparison cannot tear lines off the root.
+    pub main_modal_texts: Option<(i32, Vec<String>)>,
     pub npc_boxes: Option<Vec<NpcBoxInput>>,
     pub bank_approaches: Option<Vec<BankApproachInput>>,
     pub walk_outcome_seq: u64,
@@ -3121,9 +3178,12 @@ impl SnapshotFingerprint {
             retaliate_controls: native.retaliate_controls,
             quest_statuses: native.quest_statuses.map(|rows| {
                 rows.iter()
-                    .map(|q| (q.name.to_string(), q.status.to_string()))
+                    .map(|q| (q.name.to_string(), q.status.to_string(), q.component_id))
                     .collect()
             }),
+            main_modal_texts: native
+                .main_modal_texts
+                .map(|pair| (pair.root, pair.texts.to_vec())),
             npc_boxes: native.npc_boxes.map(<[NpcBoxInput]>::to_vec),
             bank_approaches: native.bank_approaches.map(<[BankApproachInput]>::to_vec),
             walk_outcome_seq: native.walk_outcome_seq,
@@ -3274,6 +3334,11 @@ pub struct DeltaMask {
     pub walk_outcome: bool,
     pub route_inspect: bool,
     pub collision: bool,
+    /// One bit for the `MainModalTexts` pair: `(root, texts)` changes
+    /// together so a buffer can never carry lines from one root beside
+    /// another root's id. When set, slot 248 and slot 68 post in the same
+    /// buffer.
+    pub main_modal_texts: bool,
 }
 
 impl DeltaMask {
@@ -3360,6 +3425,7 @@ impl DeltaMask {
             walk_outcome: true,
             route_inspect: true,
             collision: true,
+            main_modal_texts: true,
         }
     }
 
@@ -3465,6 +3531,7 @@ impl DeltaMask {
                 || next.walk_outcome_request_id != last.walk_outcome_request_id,
             route_inspect: next.route_inspect != last.route_inspect,
             collision: next.collision != last.collision,
+            main_modal_texts: next.main_modal_texts != last.main_modal_texts,
         }
     }
 }
@@ -3869,6 +3936,34 @@ fn encode_snapshot_masked_into(
     } else {
         None
     };
+    // The main modal's paired text walk. ONE table: when it is written both
+    // inner slots are written, and an empty `texts` stays `[]` (a supplied
+    // walk of a closed or text-less modal). The table is absent only when
+    // the native fact was not supplied — that omits the slot, which is not
+    // an observed close.
+    let main_modal_texts_off = if mask.main_modal_texts {
+        native
+            .main_modal_texts
+            .map(|pair| main_modal_texts_off(b, &pair))
+    } else {
+        None
+    };
+    // Slot 68 co-posts with the pair (a text-only change still carries the
+    // id those lines belong to). A present table's root wins over
+    // `input.main_modal_id` — the co-posted integer must be the root the
+    // lines were walked from, so the page can never read one root's lines
+    // beside another root's id. Never `-1` merely because `texts` is empty.
+    let main_modal_id_slot = if mask.main_modal_texts {
+        Some(
+            native
+                .main_modal_texts
+                .map_or(input.main_modal_id, |pair| pair.root),
+        )
+    } else if mask.main_modal_id {
+        Some(input.main_modal_id)
+    } else {
+        None
+    };
     let widgets_off = if mask.widgets {
         let offs = input
             .widgets
@@ -4086,8 +4181,8 @@ fn encode_snapshot_masked_into(
     if mask.animating {
         b.push_slot_always(VT_SNAP_ANIMATING, input.animating);
     }
-    if mask.main_modal_id {
-        b.push_slot_always(VT_SNAP_MAIN_MODAL, input.main_modal_id);
+    if let Some(main_modal_id) = main_modal_id_slot {
+        b.push_slot_always(VT_SNAP_MAIN_MODAL, main_modal_id);
     }
     if mask.chat_modal_id {
         b.push_slot_always(VT_SNAP_CHAT_MODAL, input.chat_modal_id);
@@ -4293,6 +4388,11 @@ fn encode_snapshot_masked_into(
     if mask.collision {
         if let Some(off) = collision_table_off {
             b.push_slot_always(VT_SNAP_COLLISION, off);
+        }
+    }
+    if mask.main_modal_texts {
+        if let Some(off) = main_modal_texts_off {
+            b.push_slot_always(VT_SNAP_MAIN_MODAL_TEXTS, off);
         }
     }
     b.push_slot_always(VT_SNAP_CANVAS_WIDTH, SNAPSHOT_CANVAS_W);
@@ -4513,6 +4613,22 @@ fn widget_text_off<'b>(
     WIPOffset::new(b.end_table(tab).value())
 }
 
+fn main_modal_texts_off<'b>(
+    b: &mut FlatBufferBuilder<'b>,
+    pair: &MainModalTextsInput<'_>,
+) -> WIPOffset<MainModalTextsReader<'b>> {
+    let text_offs = pair
+        .texts
+        .iter()
+        .map(|line| b.create_string(line))
+        .collect::<Vec<_>>();
+    let texts_off = b.create_vector(&text_offs);
+    let tab = b.start_table();
+    b.push_slot_always(VT_MMT_ROOT, pair.root);
+    b.push_slot_always(VT_MMT_TEXTS, texts_off);
+    WIPOffset::new(b.end_table(tab).value())
+}
+
 fn quest_status_off<'b>(
     b: &mut FlatBufferBuilder<'b>,
     q: &QuestStatusInput<'_>,
@@ -4522,6 +4638,12 @@ fn quest_status_off<'b>(
     let tab = b.start_table();
     b.push_slot_always(VT_QUEST_NAME, name_off);
     b.push_slot_always(VT_QUEST_STATUS, status_off);
+    // Only a supplied id is written. An absent id omits the slot so the
+    // page can tell "no click target" from a real component `0`; never
+    // write a sentinel for it.
+    if let Some(component_id) = q.component_id {
+        b.push_slot_always(VT_QUEST_COMPONENT, component_id);
+    }
     WIPOffset::new(b.end_table(tab).value())
 }
 
@@ -4911,6 +5033,16 @@ impl QuestStatusReader<'_> {
     pub fn status(&self) -> &str {
         unsafe { self.tab.get::<ForwardsUOffset<&str>>(VT_QUEST_STATUS, None) }.unwrap_or("unknown")
     }
+    /// Whether the row carries its walked TYPE_TEXT id. Absent on an old
+    /// buffer — distinct from a present `0`, which is a real component id.
+    pub fn has_component_id(&self) -> bool {
+        unsafe { self.tab.get::<i32>(VT_QUEST_COMPONENT, None).is_some() }
+    }
+    /// `None` when the buffer omitted the slot: the row has no click
+    /// target. Never materialize this as `0` or `-1`.
+    pub fn component_id(&self) -> Option<i32> {
+        unsafe { self.tab.get::<i32>(VT_QUEST_COMPONENT, None) }
+    }
 }
 
 impl Verifiable for QuestStatusReader<'_> {
@@ -4918,6 +5050,57 @@ impl Verifiable for QuestStatusReader<'_> {
         v.visit_table(pos)?
             .visit_field::<ForwardsUOffset<&str>>("name", VT_QUEST_NAME, false)?
             .visit_field::<ForwardsUOffset<&str>>("status", VT_QUEST_STATUS, false)?
+            .visit_field::<i32>("component_id", VT_QUEST_COMPONENT, false)?
+            .finish();
+        Ok(())
+    }
+}
+
+/// The main modal's paired text walk as decoded: the root the walk used
+/// plus its TYPE_TEXT lines in walk order.
+#[derive(Clone, Copy)]
+pub struct MainModalTextsReader<'a> {
+    tab: Table<'a>,
+}
+
+impl<'a> flatbuffers::Follow<'a> for MainModalTextsReader<'a> {
+    type Inner = MainModalTextsReader<'a>;
+    unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+        Self {
+            tab: Table::new(buf, loc),
+        }
+    }
+}
+
+impl MainModalTextsReader<'_> {
+    /// The root the lines were walked from — the same integer the buffer
+    /// posts as `main_modal_id`. `-1` is a closed modal.
+    pub fn root(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_MMT_ROOT, None) }.unwrap_or(-1)
+    }
+    /// The walk in walk order, colour tags intact. Empty is a real walk
+    /// (closed, or an open root whose tree has no text), not a missing
+    /// table — the table's presence is [`SnapshotReader::main_modal_texts`].
+    pub fn texts(&self) -> Vec<&str> {
+        match unsafe {
+            self.tab
+                .get::<ForwardsUOffset<Vector<ForwardsUOffset<&str>>>>(VT_MMT_TEXTS, None)
+        } {
+            Some(v) => v.iter().collect(),
+            None => Vec::new(),
+        }
+    }
+}
+
+impl Verifiable for MainModalTextsReader<'_> {
+    fn run_verifier(v: &mut Verifier, pos: usize) -> Result<(), InvalidFlatbuffer> {
+        v.visit_table(pos)?
+            .visit_field::<i32>("root", VT_MMT_ROOT, false)?
+            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<&str>>>>(
+                "texts",
+                VT_MMT_TEXTS,
+                false,
+            )?
             .finish();
         Ok(())
     }
