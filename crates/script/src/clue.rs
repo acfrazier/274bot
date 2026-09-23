@@ -15,14 +15,27 @@
 //! after the pickup — and a live session that loses its held membership
 //! errors `none-held` and aborts.
 //!
-//! This is the search and casket-open slice and nothing else: no dig, talk,
-//! guardian, puzzle, deposit, retry or return-grind. A held row that is a
-//! selected search membership — a selected `trail_loc=^true` **and** a
-//! decodable selected `trail_coord` on the same row — walks to its decoded
-//! tile and then dispatches the Search/Open picker over the posted loc page;
-//! both verbs are enqueued by the wrapper as `InteractReq::Walk` /
-//! `InteractReq::Loc`. The picker is the frozen one, minus its `walkLeg`:
-//! nearest then action rank, always at the row's own posted tile and id.
+//! This is the search, casket-open, unguarded-dig and trail-end collect slice
+//! and nothing else: no talk, guardian, puzzle, deposit, retry or
+//! return-grind. A held row that is a selected search membership — a selected
+//! `trail_loc=^true` **and** a decodable selected `trail_coord` on the same
+//! row — walks to its decoded tile and then dispatches the Search/Open picker
+//! over the posted loc page; both verbs are enqueued by the wrapper as
+//! `InteractReq::Walk` / `InteractReq::Loc`. The picker is the frozen one,
+//! minus its `walkLeg`: nearest then action rank, always at the row's own
+//! posted tile and id.
+//!
+//! The sibling of that pin is the unguarded dig: a decodable selected
+//! `trail_coord` on a row with no `trail_loc`, `trail_sextant=yes` and no
+//! `trail_guardian`, whose `access` is not `"constrained"`. It walks the same
+//! way — the same decoder, the same radius, the same posted `here` — and then
+//! dispatches the generic held step with the selected item display `Spade` and
+//! the frozen `Dig`. The Sextant/Watch/Chart trio is membership input only:
+//! never required, never waited for and never acquired. A pack that does not
+//! post the `Spade` is a `wait`, never an `abandon` and never a public
+//! `no-spade` token. Dig repeats while that same clue stays held, a produced
+//! casket Opens instead, and a `none-held` right after a Dig still aborts:
+//! Collecting is the casket Open's alone.
 //!
 //! A held `role: "casket"` row is the held casket item: once its own report is
 //! posted it dispatches the generic held step — the selected item display name
@@ -48,9 +61,10 @@
 //! `'clue solved'`, never `abandon` — and it idles until the frozen reward
 //! window has passed when its pages are still empty.
 //!
-//! Every other held step, the packed 3554 `access: "constrained"` clue, the
-//! desc-only key-gated riddles, the coord-only map rows and the empty-params
-//! 2722 included, is identified and then idled: no action and no walk.
+//! Every other held step — the packed 3554 `access: "constrained"` clue, the
+//! guarded rows whose first Dig would spawn a wizard, the coord-only map
+//! rows, the desc-only key-gated riddles and the empty-params 2722 — is
+//! identified and then idled: no action and no walk.
 //! Identify is casket-first, so a casket held beside its own clue is the Open
 //! and never 3554 play. Yield keeps the token live, so it is not trail
 //! completion, and this machine never returns `status: "done"`, never
@@ -152,9 +166,10 @@ enum Phase {
     /// Enabled: the progress status line is not posted yet.
     Reporting,
     /// Progress posted: the same step stays held. A held casket dispatches
-    /// its Open from here and a search row walks then dispatches the picker;
-    /// every other row idles with no action and no walk, and no second
-    /// callback is emitted for this step.
+    /// its Open from here, a search row walks then dispatches the picker, and
+    /// an unguarded-dig row walks then Digs with the held Spade; every other
+    /// row idles with no action and no walk, and no second callback is
+    /// emitted for this step.
     Steady,
     /// Trail-end collect: `Steady` on the step whose casket Open went out, and
     /// this call's identify is `none-held`. The one phase that survives
@@ -366,15 +381,16 @@ impl ClueRuntime {
                         "action": OPEN,
                     })
                 }
-                // Not a held casket: the landed search dispatch, which idles
-                // when the row is not a search membership either.
-                None => self.search(row, input),
+                // Not a held casket: the landed search dispatch, the sibling
+                // unguarded-dig dispatch, or the idle every other row keeps.
+                None => self.steady(row, input),
             },
             Phase::Collecting => {
                 // Identity still holds a step: the next scroll, or a leftover
                 // casket. The collect is skipped — its own deadline, discard
                 // set and settled-Take watch with it — and the landed gate
-                // re-arms for the row, whose Open or search follows as usual.
+                // re-arms for the row, whose Open, search or dig follows as
+                // usual.
                 self.clear_step();
                 self.phase = Phase::Gate;
                 self.step_id = row.id;
@@ -553,6 +569,59 @@ impl ClueRuntime {
             None => self.emit("wait"),
         }
     }
+
+    /// `Steady` on an identified non-casket row: the landed search dispatch,
+    /// the sibling unguarded-dig dispatch, or the idle every other row keeps.
+    ///
+    /// The search pin decides first: `search_tile` is the `trail_loc=^true`
+    /// membership and the landed dispatch re-reads its own tile from it, so a
+    /// search row can never reach the dig arm and Dig is never a second search
+    /// classify. Every other held type still idles exactly as before.
+    fn steady(&self, row: &TrailMembershipRow, input: &Value) -> Value {
+        if search_tile(row).is_some() {
+            return self.search(row, input);
+        }
+        match dig_tile(row) {
+            Some(tile) => self.dig(tile, input),
+            None => self.emit("wait"),
+        }
+    }
+
+    /// `Steady` on an identified unguarded-dig membership: walk to the decoded
+    /// `trail_coord` tile, then Dig with the held Spade.
+    ///
+    /// The arrival is the landed search arrival — this call's posted `here`,
+    /// same level and Chebyshev `ARRIVE_RADIUS` — and the walk repeats until it
+    /// holds, because arrival is a posted fact and not a walk receipt. A tick
+    /// with no posted `here` has no arrival claim to make. A tick that arrived
+    /// without the `Spade` on the posted pack page is the same `wait`: the
+    /// frozen `no Spade held` refusal is not this machine's token, nothing is
+    /// acquired, and the token stays live for the pack that posts it. Dig
+    /// repeats while this same clue id stays held, the way the casket's Open
+    /// does, and a `none-held` after it still aborts.
+    fn dig(&self, tile: Tile, input: &Value) -> Value {
+        let Some(here) = input.get("here").and_then(posted_tile) else {
+            return self.emit("wait");
+        };
+        if here.level != tile.level || chebyshev(here, tile) > i64::from(ARRIVE_RADIUS) {
+            return json!({
+                "kind": "walk",
+                "token": self.token,
+                "x": tile.x,
+                "z": tile.z,
+                "level": tile.level,
+            });
+        }
+        if !spade_posted(input) {
+            return self.emit("wait");
+        }
+        json!({
+            "kind": "held",
+            "token": self.token,
+            "name": SPADE_NAME,
+            "action": DIG,
+        })
+    }
 }
 
 /// The landed identify over the wrapper's page and the selected family. The
@@ -679,6 +748,48 @@ fn search_tile(row: &TrailMembershipRow) -> Option<Tile> {
         }
     }
     if !located {
+        return None;
+    }
+    decode_trail_coord(coord?)
+}
+
+/// The one selected `access` value that is not playable here: the packed 3554
+/// clue's own bound. Every other access, and a row that was posted with none
+/// at all, is outside this machine's refusals.
+const CONSTRAINED: &str = "constrained";
+
+/// The identified row's unguarded-dig membership: a decodable selected
+/// `trail_coord` **and** no selected `trail_loc` **and** `trail_sextant=yes`
+/// **and** no selected `trail_guardian` **and** an `access` that is not
+/// `"constrained"`.
+///
+/// The sibling of `search_tile`, not a fold into it: the loc pin is the search
+/// membership and this is the selected-param classify that holds without
+/// copying the frozen `type`. `trail_sextant=yes` is membership only — the
+/// Sextant/Watch/Chart trio is never required, never waited for and never
+/// acquired — and it is what keeps the coord-only map rows and the
+/// riddle-with-coord rows out. A guarded row stays out: its first Dig spawns a
+/// wizard this machine cannot fight. The packed constrained 3554 clue stays
+/// out with the desc-only, paramless and off-contract rows: identified, then
+/// idle rather than an invented coordinate.
+fn dig_tile(row: &TrailMembershipRow) -> Option<Tile> {
+    if row.access.as_deref() == Some(CONSTRAINED) {
+        return None;
+    }
+    let mut sextant = false;
+    let mut located = false;
+    let mut guarded = false;
+    let mut coord = None;
+    for param in &row.params {
+        match param.key.as_str() {
+            "trail_loc" => located = true,
+            "trail_sextant" if param.value == "yes" => sextant = true,
+            "trail_guardian" => guarded = true,
+            "trail_coord" if coord.is_none() => coord = Some(param.value.as_str()),
+            _ => {}
+        }
+    }
+    if located || guarded || !sextant {
         return None;
     }
     decode_trail_coord(coord?)
@@ -844,6 +955,42 @@ fn casket_name<'a>(
     }
     let name = selected?.item_by_id(row.id)?.name.as_deref()?;
     (!name.is_empty()).then_some(name)
+}
+
+/// The frozen `SPADE_NAME = 'Spade'`: the Dig verb's item identity. The host
+/// resolves the first inventory row with this display name, so this is the
+/// selected-verified display and never the membership alias, never an item id
+/// and never a scan of the item table.
+const SPADE_NAME: &str = "Spade";
+
+/// The frozen `'dig'` arm's action: the held step's other half beside the
+/// Spade display name.
+const DIG: &str = "Dig";
+
+/// Whether this call's posted pack page carries the Dig verb's item: a row
+/// with a positive count whose posted display name is the frozen `Spade`,
+/// compared the way the landed collect compares a posted droppable name.
+///
+/// The page is the already-marshalled `{ id, name, count }` sequence the
+/// collect arm reads from the same `snapshot.inv`, and it is read at call
+/// time. A page that does not carry the name is a `wait` — never a refusal
+/// token, never `abandon`, and never a reason to fetch from a bank or scan a
+/// ground spawn.
+fn spade_posted(input: &Value) -> bool {
+    input
+        .get("inv")
+        .and_then(Value::as_array)
+        .is_some_and(|rows| {
+            rows.iter().any(|row| {
+                row.get("count")
+                    .and_then(i32_of)
+                    .is_some_and(|count| count > 0)
+                    && row
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .is_some_and(|name| name.eq_ignore_ascii_case(SPADE_NAME))
+            })
+        })
 }
 
 /// Progress line for the identified step: landed alias, role and id only.
@@ -1028,6 +1175,16 @@ mod tests {
     /// `trail_clue_medium_riddle001`: a frozen `keyFrom` riddle, selected
     /// `trail_desc` only.
     const RIDDLE: i32 = 2831;
+    /// `trail_clue_medium_sextant001`: the unguarded-dig membership,
+    /// `trail_coord=0_49_50_24_51` → (3160, 3251, 0).
+    const UNGUARDED: i32 = 2801;
+    /// `trail_clue_hard_sextant001`: the guarded sibling of that membership,
+    /// same `trail_sextant` and a `trail_guardian`.
+    const GUARDED: i32 = 2723;
+    /// The item id the frozen `SPADE_NAME` display belongs to. Posted on the
+    /// test pack pages the way `snapshot.inv` posts it; the machine itself
+    /// never reads an id for the Dig verb.
+    const SPADE_ITEM: i32 = 952;
 
     fn selected() -> Arc<SelectedGameData> {
         api::game_data::for_revision(ClientRevision::R274).expect("selected data")
@@ -1139,6 +1296,25 @@ mod tests {
             .iter()
             .find(|row| row.id == id)
             .unwrap_or_else(|| panic!("row {id}"))
+    }
+
+    /// The casket row the selected family maps to `clue` through the clue's own
+    /// `trail_casket` param — the casket a dig produces.
+    fn casket_of(data: &SelectedGameData, clue: i32) -> i32 {
+        let alias = row(data, clue)
+            .params
+            .iter()
+            .find(|param| param.key == "trail_casket")
+            .expect("trail_casket")
+            .value
+            .clone();
+        data.trails()
+            .expect("trails")
+            .rows
+            .iter()
+            .find(|row| row.alias == alias)
+            .unwrap_or_else(|| panic!("casket row {alias}"))
+            .id
     }
 
     /// Drive a held row to `Steady`: begin, the gate, the log line, then the
@@ -2616,6 +2792,442 @@ mod tests {
                 json!("callback.log"),
                 json!("wait"),
             ],
+            "{steps:?}"
+        );
+    }
+
+    /// The dig membership is the selected-param classify, not the frozen
+    /// `type`: a decodable `trail_coord` on a row with no `trail_loc`,
+    /// `trail_sextant=yes`, no `trail_guardian` and an `access` that is not
+    /// `"constrained"`. Twenty rows on both pins, with no swallow of a search
+    /// row and no leak of a guarded, packed, coord-only or desc-only one.
+    #[test]
+    fn the_unguarded_dig_membership_is_the_selected_param_set() {
+        for revision in [ClientRevision::R274, ClientRevision::R289] {
+            let data = api::game_data::for_revision(revision).expect("selected data");
+            let facts = data.trails().expect("trails");
+            // The pinned decode: 2801's selected token is (3160, 3251, 0).
+            assert_eq!(
+                dig_tile(row(&data, UNGUARDED)),
+                Some(Tile {
+                    x: 3160,
+                    z: 3251,
+                    level: 0
+                }),
+                "{revision:?}"
+            );
+            let members: Vec<i32> = facts
+                .rows
+                .iter()
+                .filter(|row| dig_tile(row).is_some())
+                .map(|row| row.id)
+                .collect();
+            assert_eq!(
+                members,
+                vec![
+                    2801, 2803, 2805, 2807, 2809, 2811, 2813, 2815, 2817, 2819, 2821, 2823, 2825,
+                    3582, 3584, 3586, 3588, 3590, 3592, 3594,
+                ],
+                "{revision:?}"
+            );
+            // No swallow: the 58 search rows are the other classify.
+            let searchable = facts
+                .rows
+                .iter()
+                .filter(|row| search_tile(row).is_some())
+                .collect::<Vec<_>>();
+            assert_eq!(searchable.len(), 58, "{revision:?}");
+            for row in &searchable {
+                assert_eq!(dig_tile(row), None, "{revision:?} {}", row.alias);
+            }
+            assert_eq!(search_tile(row(&data, UNGUARDED)), None, "{revision:?}");
+            // No leak: the guarded rows and the constrained clue are the same
+            // sextant shape, the map and the riddle carry a coord without the
+            // pin, and the paramless 2722 and every casket stay out.
+            for id in [
+                GUARDED,
+                CLUE,
+                MAP,
+                RIDDLE,
+                MAP_EMPTY,
+                CASKET,
+                SEXTANT_CASKET,
+            ] {
+                assert_eq!(dig_tile(row(&data, id)), None, "{revision:?} {id}");
+            }
+            // The guarded 30 are the sextant rows that carry a guardian: the
+            // sextant param alone is never the membership.
+            let guarded = facts
+                .rows
+                .iter()
+                .filter(|row| row.params.iter().any(|param| param.key == "trail_guardian"))
+                .count();
+            assert_eq!(guarded, 30, "{revision:?}");
+        }
+        // Synthetic rows: each half of the pin on its own idles, a loc param of
+        // any value is not this membership, and an off-contract token is never
+        // rounded into an invented coordinate.
+        let param = |key: &str, value: &str| TrailParam {
+            key: key.into(),
+            value: value.into(),
+        };
+        let member = |params: Vec<TrailParam>, access: Option<&str>| TrailMembershipRow {
+            alias: "trail_clue_test".into(),
+            id: 1,
+            role: "clue".into(),
+            params,
+            access: access.map(str::to_string),
+        };
+        let sextant = || param("trail_sextant", "yes");
+        let coord = || param("trail_coord", "0_49_50_24_51");
+        let hit = Some(Tile {
+            x: 3160,
+            z: 3251,
+            level: 0,
+        });
+        assert_eq!(dig_tile(&member(vec![coord()], None)), None);
+        assert_eq!(dig_tile(&member(vec![sextant()], None)), None);
+        assert_eq!(dig_tile(&member(vec![sextant(), coord()], None)), hit);
+        for blocked in [
+            vec![param("trail_loc", "^true"), sextant(), coord()],
+            vec![param("trail_loc", "^false"), sextant(), coord()],
+            vec![param("trail_guardian", "trail_hard"), sextant(), coord()],
+            vec![param("trail_sextant", "no"), coord()],
+            vec![sextant(), param("trail_coord", "0_49_50_24")],
+        ] {
+            assert_eq!(dig_tile(&member(blocked, None)), None);
+        }
+        // `access` is read as the one constrained bound it is: any other value
+        // — and a row that was posted with none — is outside the refusal.
+        assert_eq!(
+            dig_tile(&member(vec![sextant(), coord()], Some("constrained"))),
+            None
+        );
+        assert_eq!(
+            dig_tile(&member(vec![sextant(), coord()], Some("open"))),
+            hit
+        );
+    }
+
+    /// The Dig identity is the selected-verified display the host resolves by
+    /// first name match — not an item id, not the membership alias.
+    #[test]
+    fn the_dig_identity_is_the_selected_spade_display() {
+        for revision in [ClientRevision::R274, ClientRevision::R289] {
+            let data = api::game_data::for_revision(revision).expect("selected data");
+            let spade = data.item_by_id(SPADE_ITEM).expect("spade item");
+            assert_eq!(spade.name.as_deref(), Some(SPADE_NAME), "{revision:?}");
+        }
+    }
+
+    /// `Steady` on an unguarded-dig row: walk to the decoded tile until the
+    /// posted `here` arrives, then Dig with the held Spade — repeating while
+    /// that same clue stays held, and never collecting.
+    #[test]
+    fn an_unguarded_dig_row_walks_to_the_decoded_tile_and_then_digs_the_spade() {
+        on_reset();
+        let data = selected();
+        let page = json!([[UNGUARDED, 1]]);
+        let token = steady(&data, UNGUARDED);
+        // Not arrived: the walk is the decoded tile, and it repeats. Another
+        // level and two tiles along one axis are both not arrival.
+        for far in [
+            here(3100, 3300, 0),
+            here(3160, 3251, 1),
+            here(3162, 3251, 0),
+            here(3160, 3253, 0),
+        ] {
+            let walk = call(&data, token, page.clone(), json!({ "here": far }));
+            assert_eq!(walk["kind"], "walk", "{walk}");
+            assert_eq!(walk["x"], 3160, "{walk}");
+            assert_eq!(walk["z"], 3251, "{walk}");
+            assert_eq!(walk["level"], 0, "{walk}");
+            assert_eq!(token_of(&walk), token, "{walk}");
+        }
+        // No posted `here` at all: no arrival claim and no blind walk, even
+        // with the Spade posted.
+        let no_tile = call(
+            &data,
+            token,
+            page.clone(),
+            json!({ "inv": [inv(SPADE_ITEM, SPADE_NAME, 1)] }),
+        );
+        assert_eq!(no_tile["kind"], "wait", "{no_tile}");
+        // Arrived: the held Spade is the Dig, and it repeats while this same
+        // clue id stays held.
+        for here_tile in [here(3160, 3251, 0), here(3161, 3250, 0)] {
+            let dig = call(
+                &data,
+                token,
+                page.clone(),
+                json!({ "here": here_tile, "inv": [inv(SPADE_ITEM, SPADE_NAME, 1)] }),
+            );
+            assert_eq!(dig["kind"], "held", "{dig}");
+            assert_eq!(dig["name"], "Spade", "{dig}");
+            assert_eq!(dig["action"], "Dig", "{dig}");
+            assert_eq!(token_of(&dig), token, "{dig}");
+            // The verb is the item identity alone: no bound row id and no tile.
+            for absent in ["id", "x", "z", "level", "message"] {
+                assert!(dig.get(absent).is_none(), "{absent} {dig}");
+            }
+        }
+        // The clue left: the landed `none-held` abort, and the collect seam is
+        // never armed by a Dig — Collecting stays the casket Open's alone.
+        let gone = call(&data, token, json!([]), json!({}));
+        assert_eq!(gone["kind"], "aborted", "{gone}");
+        assert_eq!(gone["reason"], "none-held", "{gone}");
+        assert!(!bound_armed(), "a dig row never arms the reward window");
+        let after = call(&data, token, json!([]), json!({}));
+        assert_eq!(after["reason"], "stale", "{after}");
+    }
+
+    /// Arrived without the Spade on this call's posted pack page is a `wait`:
+    /// never `abandon`, never `supplies-needed`, never a public `no-spade`, and
+    /// never a fetch. The token stays live for the page that posts it.
+    #[test]
+    fn an_unguarded_dig_row_without_the_spade_waits_and_keeps_its_token() {
+        on_reset();
+        let data = selected();
+        let page = json!([[UNGUARDED, 1]]);
+        let token = steady(&data, UNGUARDED);
+        let arrived = here(3160, 3251, 0);
+        for pack in [
+            // No page at all, an empty page, another item, a zero count, a
+            // nameless row and a name that is not the display.
+            json!([]),
+            json!([inv(385, "Shark", 5)]),
+            json!([inv(SPADE_ITEM, SPADE_NAME, 0)]),
+            json!([inv(SPADE_ITEM, "", 1)]),
+            json!([inv(SPADE_ITEM, "Spade cert", 1)]),
+            json!([json!({ "id": SPADE_ITEM, "count": 1 })]),
+        ] {
+            let idle = call(
+                &data,
+                token,
+                page.clone(),
+                json!({ "here": arrived.clone(), "inv": pack }),
+            );
+            assert_eq!(idle["kind"], "wait", "{idle}");
+            assert_eq!(token_of(&idle), token, "{idle}");
+            let text = idle.to_string();
+            for forbidden in [
+                "no-spade",
+                "abandon",
+                "supplies-needed",
+                "done",
+                "clue solved",
+            ] {
+                assert!(!text.contains(forbidden), "{idle}");
+            }
+        }
+        // A malformed `here` is the same wait, and the whole `inv` slot may be
+        // omitted: neither is a verb.
+        let malformed = call(
+            &data,
+            token,
+            page.clone(),
+            json!({ "here": json!({ "x": 3160 }), "inv": [inv(SPADE_ITEM, SPADE_NAME, 1)] }),
+        );
+        assert_eq!(malformed["kind"], "wait", "{malformed}");
+        // The page that carries it: the Dig, and the token was live all along.
+        // The identity is the posted display name, matched the way the landed
+        // collect matches one, so the cert id and the case both still Dig.
+        let dig = call(
+            &data,
+            token,
+            page,
+            json!({
+                "here": here(3160, 3251, 0),
+                "inv": [inv(385, "Shark", 5), inv(953, "sPaDe", 1)],
+            }),
+        );
+        assert_eq!(dig["kind"], "held", "{dig}");
+        assert_eq!(dig["name"], "Spade", "{dig}");
+        assert_eq!(dig["action"], "Dig", "{dig}");
+    }
+
+    /// The rows the dig classify leaves out stay identified then idle even over
+    /// a scene the dig arm would walk and Dig from — `here` on the row's own
+    /// selected tile with the Spade posted: the guarded row whose first Dig
+    /// would spawn a wizard, the packed constrained 3554 clue, the coord-only
+    /// map and the paramless 2722.
+    #[test]
+    fn guarded_and_coord_only_rows_stay_idle_over_a_walkable_dig_scene() {
+        on_reset();
+        let data = selected();
+        for id in [GUARDED, CLUE, MAP, MAP_EMPTY] {
+            let here_tile = row(&data, id)
+                .params
+                .iter()
+                .find(|param| param.key == "trail_coord")
+                .and_then(|param| decode_trail_coord(&param.value))
+                .unwrap_or(Tile {
+                    x: 3160,
+                    z: 3251,
+                    level: 0,
+                });
+            let scene = json!({
+                "here": here(here_tile.x, here_tile.z, here_tile.level),
+                "inv": [inv(SPADE_ITEM, SPADE_NAME, 1)],
+            });
+            let page = json!([[id, 1]]);
+            let token = steady(&data, id);
+            for _ in 0..2 {
+                let idle = call(&data, token, page.clone(), scene.clone());
+                assert_eq!(idle["kind"], "wait", "{id} {idle}");
+                assert_eq!(token_of(&idle), token, "{id} {idle}");
+                assert!(idle.get("x").is_none(), "{id} {idle}");
+                assert!(idle.get("action").is_none(), "{id} {idle}");
+            }
+        }
+    }
+
+    /// Freeze and yield beat the dig arm the way they beat the landed verbs: no
+    /// walk and no held ride along, and the token lives for the thaw.
+    #[test]
+    fn freeze_and_yield_beat_the_dig() {
+        on_reset();
+        let data = selected();
+        let page = json!([[UNGUARDED, 1]]);
+        let token = steady(&data, UNGUARDED);
+        let scene = json!({ "here": here(3160, 3251, 0), "inv": [inv(SPADE_ITEM, SPADE_NAME, 1)] });
+        on_pause();
+        let paused = call(&data, token, page.clone(), scene.clone());
+        assert_eq!(paused["kind"], "wait", "{paused}");
+        on_resume();
+        on_hold(true);
+        let held_clock = call(&data, token, page.clone(), scene.clone());
+        assert_eq!(held_clock["kind"], "wait", "{held_clock}");
+        on_hold(false);
+        let mut yield_scene = scene.clone();
+        yield_scene["hold"] = json!(true);
+        let yielded = call(&data, token, page.clone(), yield_scene);
+        assert_eq!(yielded["kind"], "yield", "{yielded}");
+        assert_eq!(token_of(&yielded), token, "{yielded}");
+        for step in [&paused, &held_clock, &yielded] {
+            assert!(step.get("name").is_none(), "{step}");
+            assert!(step.get("action").is_none(), "{step}");
+            assert!(step.get("x").is_none(), "{step}");
+            assert!(step.get("z").is_none(), "{step}");
+        }
+        // Thawed and unheld, the Dig is still there.
+        let dig = call(&data, token, page, scene);
+        assert_eq!(dig["kind"], "held", "{dig}");
+        assert_eq!(dig["action"], "Dig", "{dig}");
+    }
+
+    /// Identify is casket-first, so the casket a dig produced is the step: the
+    /// dig row re-arms the gate for it, the Open follows, and the clue's return
+    /// re-arms again — never a second Dig under the casket.
+    #[test]
+    fn a_produced_casket_opens_and_the_dig_row_re_arms() {
+        on_reset();
+        let data = selected();
+        let clue_page = json!([[UNGUARDED, 1]]);
+        let token = steady(&data, UNGUARDED);
+        let scene = json!({ "here": here(3160, 3251, 0), "inv": [inv(SPADE_ITEM, SPADE_NAME, 1)] });
+        let dig = call(&data, token, clue_page.clone(), scene.clone());
+        assert_eq!(dig["kind"], "held", "{dig}");
+        assert_eq!(dig["action"], "Dig", "{dig}");
+
+        // The casket the dig produced is held beside its own clue.
+        let casket = casket_of(&data, UNGUARDED);
+        let casket_alias = row(&data, casket).alias.clone();
+        let both = json!([[UNGUARDED, 1], [casket, 1]]);
+        let re_armed = call(&data, token, both.clone(), scene.clone());
+        assert_eq!(re_armed["kind"], "callback.enabled", "{re_armed}");
+        assert_eq!(token_of(&re_armed), token, "{re_armed}");
+        let logged = call(&data, token, both.clone(), json!({ "resume": true }));
+        assert_eq!(logged["kind"], "callback.log", "{logged}");
+        let message = logged["message"].as_str().unwrap_or("");
+        assert!(message.contains(&casket_alias), "{logged}");
+        assert!(!message.contains(" [2801]"), "{logged}");
+        assert_eq!(
+            call(&data, token, both.clone(), scene.clone())["kind"],
+            "callback.setStatus"
+        );
+        let open = call(&data, token, both.clone(), scene.clone());
+        assert_eq!(open["kind"], "held", "{open}");
+        assert_eq!(open["name"], "Casket", "{open}");
+        assert_eq!(open["action"], "Open", "{open}");
+
+        // And the clue alone again: the dig row re-arms rather than Digging
+        // under whatever the casket left behind.
+        let back = call(&data, token, clue_page, scene);
+        assert_eq!(back["kind"], "callback.enabled", "{back}");
+    }
+
+    /// The dig row emits walk, held Dig, wait or yield only — never a
+    /// completion, and never a `status` field of its own.
+    #[test]
+    fn the_dig_row_emits_only_walk_held_and_wait_and_never_a_completion() {
+        on_reset();
+        let data = selected();
+        let page = json!([[UNGUARDED, 1]]);
+        let token = steady(&data, UNGUARDED);
+        let steps = vec![
+            call(
+                &data,
+                token,
+                page.clone(),
+                json!({ "here": here(3100, 3300, 0) }),
+            ),
+            call(
+                &data,
+                token,
+                page.clone(),
+                json!({ "here": here(3160, 3251, 0) }),
+            ),
+            call(
+                &data,
+                token,
+                page.clone(),
+                json!({
+                    "here": here(3160, 3251, 0),
+                    "inv": [inv(SPADE_ITEM, SPADE_NAME, 1)],
+                }),
+            ),
+            call(
+                &data,
+                token,
+                page,
+                json!({
+                    "here": here(3160, 3251, 0),
+                    "inv": [inv(SPADE_ITEM, SPADE_NAME, 1)],
+                    "hold": true,
+                }),
+            ),
+        ];
+        for step in &steps {
+            let text = step.to_string();
+            for forbidden in [
+                "clue solved",
+                "done",
+                "abandon",
+                "supplies-needed",
+                "dead",
+                "guardian-lost",
+                "grind-ready",
+                "no-spade",
+                "ownsEquipment",
+            ] {
+                assert!(!text.contains(forbidden), "{forbidden} {step}");
+            }
+            assert!(step["status"].is_null(), "{step}");
+            assert!(
+                matches!(
+                    step["kind"].as_str().unwrap_or(""),
+                    "walk" | "held" | "wait" | "yield"
+                ),
+                "{step}"
+            );
+        }
+        assert_eq!(
+            steps
+                .iter()
+                .map(|step| step["kind"].clone())
+                .collect::<Vec<_>>(),
+            vec![json!("walk"), json!("wait"), json!("held"), json!("yield")],
             "{steps:?}"
         );
     }

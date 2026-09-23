@@ -412,12 +412,12 @@ Example: `crates/script/examples/clue_facts_v2.ts` (row),
 ### `clue.begin` / `clue.next`
 
 One machine per isolate, over the landed held-step identify. It is sync, it is
-not a Promise, and it is not a `request()` op: it is the search, casket-open
-and trail-end collect slice of a later clue trail, not the whole dispatcher. It
-emits search, the held Open and the collect that follows the last casket — no
-dig, talk, guardian, puzzle, deposit, or retry — and it never emits the exact
-`'clue solved'` string, never restores gear, and never returns a `done` status.
-`ownsEquipment` stays false.
+not a Promise, and it is not a `request()` op: it is the search, casket-open,
+unguarded-dig and trail-end collect slice of a later clue trail, not the whole
+dispatcher. It emits search, the held Open, the unguarded Dig and the collect
+that follows the last casket — no talk, guardian, puzzle, deposit, or retry —
+and it never emits the exact `'clue solved'` string, never restores gear, and
+never returns a `done` status. `ownsEquipment` stays false.
 
 `clue.begin(input?)` takes the optional input and ignores every key: nothing
 but the token and the wrapper's generation is captured, so `enabled`, the pack
@@ -437,13 +437,13 @@ a dead token is the error object, never `undefined` and never a continue kind.
 
 | `kind` | Meaning |
 | --- | --- |
-| `wait` | nothing this tick: frozen by pause/hold, or the session idled after `resume: false`, or the identified step was already reported, or — while collecting — the pages are still empty inside the reward window, or the posted pack page carried no `inv_size` |
+| `wait` | nothing this tick: frozen by pause/hold, or the session idled after `resume: false`, or the identified step was already reported, or — while collecting — the pages are still empty inside the reward window, or the posted pack page carried no `inv_size`; a dig row that has not arrived, or has no `Spade` on the posted pack page, waits the same way |
 | `callback.enabled` | re-read the script's `enabled()` and answer with `resume` on the next `next` |
 | `callback.log` | perform `log(message)` |
 | `callback.setStatus` | perform `setStatus(message)` — a progress string, never `'clue solved'` |
-| `walk` | a search row that has not arrived: walk to `{ x, z, level }`, the decoded `trail_coord` |
+| `walk` | a search row, or an unguarded dig row, that has not arrived: walk to `{ x, z, level }`, the decoded `trail_coord` |
 | `loc` | a search row that has arrived: interact with the picked loc, `{ x, z, level, action, id }` |
-| `held` | a casket row that has been reported: interact with the held item named `name` with `action`, `{ name, action }`; the collect's pack-full Drop is the same kind with `action: 'Drop'` |
+| `held` | a casket row that has been reported: interact with the held item named `name` with `action`, `{ name, action }`; an unguarded dig row's `Dig` is the same kind with `name: 'Spade'`, and the collect's pack-full Drop is the same kind with `action: 'Drop'` |
 | `close-modal` | collecting: close the main modal the page posted open. The step carries nothing else — no interface id, no text |
 | `obj` | collecting: interact with the casket overflow on the posted tile, `{ x, z, level, name, action: 'Take' }` |
 | `yield` | posted `hold \|\| ours`; the token stays live and this is not trail completion |
@@ -460,9 +460,9 @@ dispatched survives `none-held` as `Collecting`, and the same `none-held`
 abort is how that collect finishes. Reset, stop and a generation
 bump abort silently; the machine emits no `h.interact` entry and no request op
 for them, and the first thing the caller hears about it is `stale` or
-`aborted`. A held step that is neither a casket nor a search row — the packed
-3554 `access: "constrained"` clue included — is identified and then idled: no
-action and no walk.
+`aborted`. A held step that is neither a casket, a search row nor an unguarded
+dig row — the packed 3554 `access: "constrained"` clue included — is identified
+and then idled: no action and no walk.
 
 A held row is a **search row** only when the selected family carries
 `trail_loc=^true` **and** a decodable `trail_coord` on that same row: five
@@ -510,6 +510,36 @@ token — that is not completion, not `done`, and not `abandon`.
 Unlike `loc`, `held` is already a supported author `request` op (`V2_OPS`), and
 the machine's own step is enqueued onto the interact drain directly rather than
 through `request()`; the step is still returned as `status: 'continue'`.
+
+A held row is an **unguarded dig row** when the selected family carries a
+decodable `trail_coord` on a row with **no** `trail_loc`, `trail_sextant=yes`,
+**no** `trail_guardian` and an `access` that is not `"constrained"`, which is
+the twenty medium sextant rows (`2801`…`2825` odd and `3582`…`3594` even).
+`trail_sextant=yes` is that membership and nothing more: the
+Sextant/Watch/Chart trio is never required, never waited for and never
+acquired, exactly as the search walk never bank-fetched its key. Once such a
+row has been reported — after its `callback.log` and `callback.setStatus` — it
+walks to its decoded tile exactly like a search row (same posted `here`, same
+level, same Chebyshev 1, same repetition until it holds), and then, arrived,
+dispatches the generic `held` step with `name: 'Spade'` and `action: 'Dig'`:
+the selected item display the host resolves by first name match, carrying no
+row id and no tile. `Dig` repeats while that same clue stays held — the host
+refuses an item it no longer holds — a casket the dig produced is the landed
+`Open` that follows, and a `none-held` right after a `Dig` still aborts: only
+the casket `Open` reaches the collect below. Arrived with no `Spade` on the
+posted pack page — or with no posted `here` at all, or still on the way — is
+`wait`: the token stays live and the next call re-reads the page. Nothing is
+acquired and nothing is invented: no `ensureSpade`, no bank fetch, no ground
+scan, no public `no-spade` error and no `abandon`.
+
+The rows that are neither caskets, search rows nor unguarded dig rows stay
+identified then idle: the guarded rows (a first Dig would spawn a wizard this
+machine cannot fight), the packed 3554 `access: "constrained"` clue, the
+coord-only map rows, the desc-only riddles and the empty-params `2722`. The
+guarded and coord-only rows carry a `trail_coord` too, so it is the
+`trail_sextant` / `trail_guardian` / `access` half of the classify that keeps
+them out — no frozen `type` table is copied, and a row that carries the
+`trail_loc` pin at all belongs to the search membership instead.
 
 ### Trail-end collect
 

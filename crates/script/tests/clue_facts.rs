@@ -1243,6 +1243,16 @@ fn casket_open() -> InteractReq {
     }
 }
 
+/// One unguarded Dig as the drain sees it: the selected item display name the
+/// host resolves by first name match, and the frozen action. No row id and no
+/// tile, exactly like the Open and the Drop it shares its kind with.
+fn spade_dig() -> InteractReq {
+    InteractReq::Held {
+        name: "Spade".to_string(),
+        action: "Dig".to_string(),
+    }
+}
+
 /// The public `api.clue.next` path over a posted casket page: the machine's own
 /// `held` kind reaches the interact drain as `InteractReq::Held` — which no
 /// module test can see — and it repeats while the same casket id stays held.
@@ -1511,6 +1521,439 @@ export function tick(api) {
             assert_eq!(step["token"], value["token"], "{id} {step}");
             assert!(step.get("x").is_none(), "{id} {step}");
             assert!(step.get("action").is_none(), "{id} {step}");
+        }
+    }
+}
+
+/// The public unguarded-dig path: the held medium sextant clue walks to its
+/// decoded `trail_coord` tile, then Digs with the Spade the same already-posted
+/// `snapshot.inv` page carries — `InteractReq::Walk` then
+/// `InteractReq::Held { name: "Spade", action: "Dig" }`, which no module test
+/// can see. Dig repeats while the same clue stays held, the frozen/posted
+/// interrupts emit no verb, and the casket the dig produced Opens instead.
+#[test]
+fn v2_clue_unguarded_dig_row_walks_then_digs_the_spade() {
+    let src = r#"
+export const apiVersion = 2;
+export function tick(api) {
+  globalThis.__runs = (globalThis.__runs || 0) + 1;
+  if (globalThis.__runs === 1) {
+    const begin = api.clue.begin();
+    globalThis.__token = begin.ok ? begin.value.token : null;
+    globalThis.__steps = [begin];
+    return;
+  }
+  if (globalThis.__runs === 8) {
+    // The Dig shape is already an author op: `held` is on V2_OPS and the
+    // machine's own step is what goes through the interact drain.
+    try {
+      api.request({ op: 'held', name: 'Spade', action: 'Dig' });
+      globalThis.__heldOp = 'ok';
+    } catch (e) {
+      globalThis.__heldOp = String(e && (e.message || e));
+    }
+  }
+  globalThis.__steps.push(api.clue.next(
+    globalThis.__runs === 3 || globalThis.__runs === 10
+      ? { token: globalThis.__token, resume: true }
+      : { token: globalThis.__token }));
+  if (globalThis.__runs === 12) {
+    globalThis.__probe = JSON.stringify({
+      token: globalThis.__token,
+      runs: globalThis.__runs,
+      steps: globalThis.__steps,
+      heldOp: globalThis.__heldOp,
+      groundType: typeof api.snapshot.ground,
+      locsType: typeof api.snapshot.locs,
+    });
+  }
+}
+"#;
+    let data = api::game_data::for_revision(ClientRevision::R274).unwrap();
+    let iso = LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data)
+        .unwrap();
+    // `trail_clue_medium_sextant001` held beside the item its Dig resolves:
+    // one page, because `snapshot.inv` is both the identify page and the pack
+    // page the Spade is read from.
+    let clue = [(2801, 1), (952, 1)];
+    let produced = [(2801, 1), (2802, 1), (952, 1)];
+    let names = [(952, "Spade")];
+    let far = TileInput {
+        x: 3100,
+        z: 3300,
+        level: 0,
+    };
+    let arrived = TileInput {
+        x: 3160,
+        z: 3251,
+        level: 0,
+    };
+    let scene = |here: TileInput, ours: bool, hold: bool| Scene {
+        here: Some(here),
+        names: &names,
+        ours,
+        hold,
+        ..Scene::default()
+    };
+
+    // Ticks 1-4: the begin and the landed report. Standing on the tile already
+    // changes nothing ahead of `Steady`.
+    for tick in 1..=4 {
+        post_scene(&iso, tick, &clue, &scene(arrived, false, false));
+        iso.on_game_tick(tick);
+        assert!(iso.probe("true").is_ok());
+        assert!(
+            iso.drain_interacts().is_empty(),
+            "tick {tick} pushes no verb"
+        );
+    }
+
+    // Tick 5: not arrived, so the walk to the decoded 0_49_50_24_51 tile.
+    post_scene(&iso, 5, &clue, &scene(far, false, false));
+    iso.on_game_tick(5);
+    assert!(iso.probe("true").is_ok());
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::Walk {
+            x: 3160,
+            z: 3251,
+            level: 0,
+            allow_teleports: false,
+            allow_wilderness: false,
+            allow_bank_fetch: false,
+            request_id: 0,
+        }],
+        "the walk is the decoded pin with the default flags"
+    );
+
+    // Ticks 6-7: arrived with the Spade posted: the generic held Dig, and it
+    // repeats while the same clue stays held.
+    for tick in 6..=7 {
+        post_scene(&iso, tick, &clue, &scene(arrived, false, false));
+        iso.on_game_tick(tick);
+        assert!(iso.probe("true").is_ok());
+        assert_eq!(
+            iso.drain_interacts(),
+            vec![spade_dig()],
+            "tick {tick}: the Dig repeats while the clue is held"
+        );
+    }
+
+    // Tick 8: the posted `hold` freezes this machine's clock and is a
+    // paint-only tick — the script never runs — so the same arrived page with
+    // the Spade reaches the drain with nothing.
+    post_scene(&iso, 8, &clue, &scene(arrived, false, true));
+    iso.on_game_tick(8);
+    assert!(iso.probe("true").is_ok());
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "a frozen call emits no walk and no held"
+    );
+    assert_eq!(
+        iso.probe("String(globalThis.__runs)").unwrap().as_str(),
+        Some("7"),
+        "the posted hold skipped the tick's script, and it skipped no verb"
+    );
+
+    // Tick 9: the posted `ours` interrupt, unfrozen: yield, and the only thing
+    // on the drain is the probe's own `held` author op.
+    post_scene(&iso, 9, &clue, &scene(arrived, true, false));
+    iso.on_game_tick(9);
+    assert!(iso.probe("true").is_ok());
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![spade_dig()],
+        "yield emits no walk and no held of its own"
+    );
+
+    // Ticks 10-13: the dig produced its casket. Identify is casket-first, so
+    // the landed gate re-arms for it and the Open follows — never a second Dig
+    // and never a collect under a held step.
+    for tick in 10..=12 {
+        post_scene(&iso, tick, &produced, &scene(arrived, false, false));
+        iso.on_game_tick(tick);
+        assert!(iso.probe("true").is_ok());
+        assert!(
+            iso.drain_interacts().is_empty(),
+            "tick {tick} pushes no verb"
+        );
+    }
+    post_scene(&iso, 13, &produced, &scene(arrived, false, false));
+    iso.on_game_tick(13);
+    let probed = iso.probe("globalThis.__probe").unwrap();
+    let value: serde_json::Value = serde_json::from_str(probed.as_str().unwrap()).unwrap();
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![casket_open()],
+        "the produced casket is the Open, not 3554 play and not a Dig"
+    );
+    iso.join();
+
+    assert_eq!(value["runs"], 12, "{value:?}");
+    assert!(value["token"].is_number(), "{value:?}");
+    let steps = value["steps"].as_array().expect("steps");
+    assert_eq!(steps.len(), 12, "{value:?}");
+    for (index, kind) in [
+        (1, "callback.enabled"),
+        (2, "callback.log"),
+        (3, "callback.setStatus"),
+        (4, "walk"),
+        (5, "held"),
+        (6, "held"),
+        (7, "yield"),
+        (8, "callback.enabled"),
+        (9, "callback.log"),
+        (10, "callback.setStatus"),
+        (11, "held"),
+    ] {
+        assert_eq!(steps[index]["kind"], kind, "{index} {value:?}");
+    }
+    for index in 1..steps.len() {
+        let step = &steps[index];
+        assert_eq!(step["ok"], true, "{index} {step}");
+        assert_eq!(step["status"], "continue", "{index} {step}");
+        assert_eq!(step["token"], value["token"], "{index} {step}");
+        assert!(step.get("error").is_none(), "{index} {step}");
+    }
+    // The decode pin on the public path: 2801's selected 0_49_50_24_51 token
+    // is (3160, 3251, 0).
+    assert_eq!(steps[4]["x"], 3160, "{value:?}");
+    assert_eq!(steps[4]["z"], 3251, "{value:?}");
+    assert_eq!(steps[4]["level"], 0, "{value:?}");
+    // The Dig is the selected display and the frozen action, with no bound row
+    // id and no tile.
+    for index in [5, 6] {
+        assert_eq!(steps[index]["name"], "Spade", "{index} {value:?}");
+        assert_eq!(steps[index]["action"], "Dig", "{index} {value:?}");
+        for absent in ["id", "x", "z", "level", "message"] {
+            assert!(
+                steps[index].get(absent).is_none(),
+                "{index} {absent} {value:?}"
+            );
+        }
+    }
+    // The produced casket's own report and its own Open.
+    assert_eq!(steps[11]["name"], "Casket", "{value:?}");
+    assert_eq!(steps[11]["action"], "Open", "{value:?}");
+    let report = steps[2]["message"].as_str().unwrap_or("");
+    assert!(report.contains("trail_clue_medium_sextant001"), "{value:?}");
+    assert!(report.contains("2801"), "{value:?}");
+    let casket_report = steps[9]["message"].as_str().unwrap_or("");
+    assert!(
+        casket_report.contains("trail_clue_medium_sextant001_casket"),
+        "{value:?}"
+    );
+    // No completion, no abandonment, and no no-spade token.
+    let text = value.to_string();
+    for forbidden in [
+        "clue solved",
+        "abandon",
+        "supplies-needed",
+        "no-spade",
+        "ownsEquipment",
+        "\"done\"",
+    ] {
+        assert!(!text.contains(forbidden), "{forbidden} {value:?}");
+    }
+    // `held` stays an author op and the unpublished snapshot pages stay hidden.
+    assert_eq!(value["heldOp"], "ok", "{value:?}");
+    for key in ["groundType", "locsType"] {
+        assert_eq!(value[key], "undefined", "{key} {value:?}");
+    }
+}
+
+/// The public no-Spade path: arrived on the decoded tile with a pack that does
+/// not post the Spade is a `wait` — the token stays live, nothing reaches the
+/// drain, and no token-killing `no-spade` error is published. The Dig is still
+/// there once the pack carries it.
+#[test]
+fn v2_clue_unguarded_dig_row_waits_without_the_spade() {
+    let src = r#"
+export const apiVersion = 2;
+export function tick(api) {
+  globalThis.__runs = (globalThis.__runs || 0) + 1;
+  if (globalThis.__runs === 1) {
+    const begin = api.clue.begin();
+    globalThis.__token = begin.ok ? begin.value.token : null;
+    globalThis.__steps = [begin];
+    return;
+  }
+  globalThis.__steps.push(api.clue.next(
+    globalThis.__runs === 3
+      ? { token: globalThis.__token, resume: true }
+      : { token: globalThis.__token }));
+  if (globalThis.__runs === 6) {
+    globalThis.__probe = JSON.stringify({
+      token: globalThis.__token,
+      steps: globalThis.__steps,
+    });
+  }
+}
+"#;
+    let data = api::game_data::for_revision(ClientRevision::R274).unwrap();
+    let iso = LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data)
+        .unwrap();
+    // The held clue alone: the Spade never reached the pack.
+    let bare = [(2801, 1)];
+    let with_spade = [(2801, 1), (952, 1)];
+    let names = [(952, "Spade")];
+    let arrived = TileInput {
+        x: 3160,
+        z: 3251,
+        level: 0,
+    };
+    let scene = |ours: bool| Scene {
+        here: Some(arrived),
+        names: &names,
+        ours,
+        ..Scene::default()
+    };
+
+    for tick in 1..=5 {
+        post_scene(&iso, tick, &bare, &scene(false));
+        iso.on_game_tick(tick);
+        assert!(iso.probe("true").is_ok());
+        assert!(
+            iso.drain_interacts().is_empty(),
+            "tick {tick}: a missing Spade is a wait, not a verb"
+        );
+    }
+    // The same live token, and the pack that posts the Spade is the Dig.
+    post_scene(&iso, 6, &with_spade, &scene(false));
+    iso.on_game_tick(6);
+    assert!(iso.probe("true").is_ok());
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![spade_dig()],
+        "the Spade is the verb"
+    );
+    // The posted `ours` interrupt still beats it, with the Spade in hand.
+    post_scene(&iso, 7, &with_spade, &scene(true));
+    iso.on_game_tick(7);
+    assert!(iso.probe("true").is_ok());
+    assert!(iso.drain_interacts().is_empty(), "yield emits no held Dig");
+
+    let probed = iso.probe("globalThis.__probe").unwrap();
+    let value: serde_json::Value = serde_json::from_str(probed.as_str().unwrap()).unwrap();
+    let steps: serde_json::Value = serde_json::from_str(
+        iso.probe("JSON.stringify(globalThis.__steps)")
+            .unwrap()
+            .as_str()
+            .unwrap(),
+    )
+    .unwrap();
+    iso.join();
+    let steps = steps.as_array().expect("steps");
+    assert_eq!(steps.len(), 7, "{value:?}");
+    // The reported step that arrived without the Spade waited, and the token
+    // was the same one that Digs once the pack posts it.
+    assert_eq!(steps[4]["kind"], "wait", "{value:?}");
+    assert_eq!(steps[5]["kind"], "held", "{value:?}");
+    assert_eq!(steps[5]["token"], value["token"], "{value:?}");
+    let text = value.to_string();
+    for forbidden in [
+        "no-spade",
+        "abandon",
+        "supplies-needed",
+        "\"done\"",
+        "clue solved",
+    ] {
+        assert!(!text.contains(forbidden), "{forbidden} {value:?}");
+    }
+}
+
+/// The guarded row and the coord-only map row stay identified then idle on the
+/// public path too — no walk and no Dig, even standing on their own selected
+/// tile with the Spade in the pack. The guarded first Dig would spawn a wizard
+/// this machine cannot fight, and the map has no `trail_sextant` membership.
+#[test]
+fn v2_clue_guarded_and_coord_only_rows_never_dig() {
+    let src = r#"
+export const apiVersion = 2;
+export function tick(api) {
+  globalThis.__tick = (globalThis.__tick || 0) + 1;
+  if (globalThis.__tick === 1) {
+    const begin = api.clue.begin();
+    globalThis.__token = begin.ok ? begin.value.token : null;
+    globalThis.__steps = [
+      begin,
+      api.clue.next({ token: globalThis.__token }),
+      api.clue.next({ token: globalThis.__token, resume: true }),
+      api.clue.next({ token: globalThis.__token }),
+    ];
+    return;
+  }
+  globalThis.__steps.push(api.clue.next({ token: globalThis.__token }));
+  if (globalThis.__tick === 6) {
+    globalThis.__probe = JSON.stringify({ token: globalThis.__token, steps: globalThis.__steps });
+  }
+}
+"#;
+    // `trail_clue_hard_sextant001` (guarded, `0_47_60_50_44`) and
+    // `trail_clue_easy_map001` (coord only, `0_49_52_41_32`), decoded.
+    for (id, tile) in [
+        (
+            2723,
+            TileInput {
+                x: 3058,
+                z: 3884,
+                level: 0,
+            },
+        ),
+        (
+            2713,
+            TileInput {
+                x: 3177,
+                z: 3360,
+                level: 0,
+            },
+        ),
+    ] {
+        let data = api::game_data::for_revision(ClientRevision::R274).unwrap();
+        let iso =
+            LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data)
+                .unwrap();
+        let page = [(id, 1), (952, 1)];
+        let names = [(952, "Spade")];
+        for tick in 1..=6 {
+            // Standing on the row's own tile, and far from it: neither is a
+            // verb for a row that is not a dig membership.
+            let here = if tick == 6 {
+                TileInput {
+                    x: 3100,
+                    z: 3300,
+                    level: 0,
+                }
+            } else {
+                tile
+            };
+            post_scene(
+                &iso,
+                tick,
+                &page,
+                &Scene {
+                    here: Some(here),
+                    names: &names,
+                    ..Scene::default()
+                },
+            );
+            iso.on_game_tick(tick);
+            // The tick is fire-and-forget; the probe is this tick's barrier.
+            assert!(iso.probe("true").is_ok());
+        }
+        let probed = iso.probe("globalThis.__probe").unwrap();
+        let value: serde_json::Value = serde_json::from_str(probed.as_str().unwrap()).unwrap();
+        let interacts = iso.drain_interacts();
+        iso.join();
+        assert!(interacts.is_empty(), "{id} pushed interact: {interacts:?}");
+        let steps = value["steps"].as_array().expect("steps");
+        assert_eq!(steps.len(), 9, "{id} {value:?}");
+        for step in &steps[4..] {
+            assert_eq!(step["kind"], "wait", "{id} {step}");
+            assert_eq!(step["token"], value["token"], "{id} {step}");
+            assert!(step.get("x").is_none(), "{id} {step}");
+            assert!(step.get("action").is_none(), "{id} {step}");
+            assert!(step.get("name").is_none(), "{id} {step}");
         }
     }
 }
