@@ -20,13 +20,23 @@
 //!   `true` while this card is started (a compiled card ticks only while the
 //!   slot runs it, and there is no settings `enabled` flag); `resume` then
 //!   rides exactly the one following call.
-//! * `callback.log` and `callback.setStatus` are the machine's status lines.
-//!   This slice has no compiled log or status channel (paint/status is W10),
-//!   so those kinds are answered and their message is not forwarded: nothing
-//!   here rewrites them into a verb or a completion.
-//! * `none-held` on a live session is the trail end. The session ends and the
-//!   card's local solved count advances. The machine never emits `clue solved`
-//!   and this module never invents one — no `done`, no completion line.
+//! * `callback.log` and `callback.setStatus` are the machine's status lines —
+//!   the finished collect's own `clue solved` line among them. This slice has
+//!   no compiled log or status channel (paint/status is W10), so those kinds
+//!   are answered and their message is not forwarded: nothing here rewrites
+//!   them into a verb, and the completion string is the machine's to emit —
+//!   this module never invents one and never posts it on.
+//! * `grind-ready` continues this tick's iterate: the live-token handback is
+//!   not a verb and not a delay, so the collect's own completion — the
+//!   pack-full warning, `clue solved`, `grind-ready`, `done` — is reached
+//!   inside the one tick that latched it. `supplies-needed` is the named
+//!   wait-class: the tick ends there, nothing is fetched, and the token lives
+//!   for the pack that posts the tool.
+//! * `done`, `dead`, `abandon` and `guardian-lost` are terminal: the session
+//!   ends, its token is cleared, and only `done` — the abort a finished
+//!   collect dies on — advances the card's local solved count. An `aborted`
+//!   answer ends too, on the machine's own reason: `none-held` is the landed
+//!   abort and not a finished clue, and it counts nothing.
 //!
 //! Every page is read fail-closed from the observed frame
 //! ([`ScriptCtx::snapshot`], [`ScriptCtx::here`], [`ScriptCtx::obj_names`] and
@@ -52,16 +62,17 @@ use crate::shim::InteractReq;
 /// of its own.
 const GENERATION: u64 = 0;
 
-/// The machine's own reason for a session whose held membership is gone: the
-/// refusal a begin with nothing held gets, and the trail end a live session
-/// finishes on.
-const NONE_HELD: &str = "none-held";
+/// The machine's own terminal kind for a finished collect and the one end this
+/// card counts locally — the string the `end` predicate reads.
+const DONE: &str = "done";
 
 /// How many machine calls one tick may make before it waits for the next one.
 /// The machine answers a gate question, a log line and a status line at most
-/// once each before it waits, yields or enqueues, so four handoffs is every
-/// callback path; the bound is what keeps a changed machine from parking the
-/// pump thread on one observed frame.
+/// once each before it waits, yields or enqueues, and a finished collect's own
+/// exit is exactly four handoffs — the pack-full warning, the `clue solved`
+/// status, the live-token `grind-ready` continue and the `done` behind it — so
+/// four is every callback path; the bound is what keeps a changed machine from
+/// parking the pump thread on one observed frame.
 const CALLBACK_HANDOFFS: usize = 4;
 
 /// The compiled solve-clue card.
@@ -69,8 +80,9 @@ const CALLBACK_HANDOFFS: usize = 4;
 pub struct Sherlock {
     /// The live session token; `None` while there is no session to continue.
     token: Option<u64>,
-    /// Clue steps this card finished: the local count only, reported nowhere
-    /// yet (the machine's own status lines are not a completion signal).
+    /// Clue steps this card finished: the local count only, advanced by the
+    /// machine's own terminal `done` and reported nowhere yet (its status
+    /// lines are not a completion signal).
     solved: u32,
 }
 
@@ -144,12 +156,24 @@ impl Sherlock {
                 // The gate question: true while this card is started, and the
                 // answer rides the very next call only.
                 "callback.enabled" => resume = true,
-                // The machine's own progress and status lines: answered, not
-                // a verb, and this slice has no channel for their message.
+                // The machine's own progress and status lines — the finished
+                // collect's `clue solved` line among them: answered, not a
+                // verb, and this slice has no channel for their message.
                 "callback.log" | "callback.setStatus" => {}
-                // Frozen, or the cooperative interrupt. The token lives; the
-                // session resumes on a later tick.
-                "wait" | "yield" => return,
+                // Frozen, the cooperative interrupt, or the named
+                // `supplies-needed` wait-class: the token lives, nothing is
+                // fetched, and the session resumes on a later tick.
+                "wait" | "yield" | "supplies-needed" => return,
+                // The finished collect's live-token handback: not a verb and
+                // not the wrapper's `delayTicks(1)`, so this iterate keeps
+                // going and the `done` behind it lands in the same tick.
+                "grind-ready" => {}
+                // The token's own terminal kinds: the session ends here, the
+                // token is cleared, and only `done` counts the clue locally.
+                "done" | "dead" | "abandon" | "guardian-lost" => {
+                    self.end(kind);
+                    return;
+                }
                 "aborted" => {
                     let reason = answer.get("reason").and_then(Value::as_str).unwrap_or("");
                     self.end(reason);
@@ -158,7 +182,8 @@ impl Sherlock {
                 kind => {
                     // One enqueue per tick, exactly like the wrapper's own
                     // `delayTicks(1)`; an unknown kind is not a verb and is
-                    // not enqueued as one either.
+                    // not enqueued as one either. The token lives: an answer
+                    // this card does not know is not a session end.
                     enqueue(sink, kind, &answer);
                     return;
                 }
@@ -166,13 +191,14 @@ impl Sherlock {
         }
     }
 
-    /// End the live session. `none-held` is the trail end, and the one end
-    /// this card counts locally; every other reason — a token the machine no
-    /// longer has, the abort a stop or a reset left, a pin that went missing —
-    /// just ends it. Nothing is emitted either way: the machine owns
-    /// completion, and this module never posts `clue solved`.
+    /// End the live session and clear its token. The machine's own `done` —
+    /// the abort a finished collect dies on — is the one end this card counts
+    /// locally; a `none-held` abort, a terminal `dead`, `abandon` or
+    /// `guardian-lost`, and the stale token a stop or a reset leaves just end
+    /// it. Nothing is emitted either way: the machine owns completion, and its
+    /// `clue solved` line is answered rather than posted on.
     fn end(&mut self, reason: &str) {
-        if reason == NONE_HELD {
+        if reason == DONE {
             self.solved = self.solved.saturating_add(1);
         }
         self.token = None;
@@ -515,9 +541,11 @@ fn text_of<'a>(step: &'a Value, key: &str) -> Option<&'a str> {
 mod tests {
     use super::*;
     use api::game_data::TrailMembershipRow;
-    use client::client::{Client, ClientConfig};
+    use client::client::{Client, ClientConfig, Skill};
     use client::config::if_type::{ComponentType, IfType, IfTypeMut};
     use client::config::ObjType;
+    use client::dash3d::ClientObj;
+    use client::datastruct::LinkList;
     use client::io::{ClientRevision, ServerProt};
     use std::sync::Arc;
 
@@ -566,21 +594,82 @@ mod tests {
         Some((map_x * 64 + local_x, map_z * 64 + local_z, level))
     }
 
+    /// Whether a selected family names `id`: a membership row, a challenge
+    /// scroll or a talk step. The held ids a frame posts as its own pack are
+    /// none of these.
+    fn named_by_a_family(data: &SelectedGameData, id: i32) -> bool {
+        let trails = data.trails().expect("trails");
+        let talk = data.talk_key().expect("talk_key");
+        trails.rows.iter().any(|row| row.id == id)
+            || trails.challenge_answers.iter().any(|row| row.id == id)
+            || talk.talk.iter().any(|row| row.id == id)
+    }
+
     /// A membership row the selected family never names: a held id no identify
     /// pass reads, no challenge scroll answers and no talk step publishes. The
     /// challenge ids are no longer that exemplar — the machine's own seam joins
     /// a held scroll onto its parent talk step — so the id is searched for
     /// rather than taken from one of the families.
     fn unrelated(data: &SelectedGameData) -> i32 {
-        let trails = data.trails().expect("trails");
-        let talk = data.talk_key().expect("talk_key");
         (1..)
-            .find(|id| {
-                !trails.rows.iter().any(|row| row.id == *id)
-                    && !trails.challenge_answers.iter().any(|row| row.id == *id)
-                    && !talk.talk.iter().any(|row| row.id == *id)
-            })
+            .find(|id| !named_by_a_family(data, *id))
             .expect("a held id no selected family names")
+    }
+
+    /// The pack rows a collect frame posts: two held ids no selected family
+    /// names, so the machine's own identify reads the frame as `none-held`
+    /// while the live token's collect survives it.
+    fn pack_rows(data: &SelectedGameData) -> [(i32, i32); 2] {
+        let mut ids = (1..).filter(|id| !named_by_a_family(data, *id));
+        let first = ids.next().expect("a held id no selected family names");
+        let second = ids
+            .next()
+            .expect("a second held id no selected family names");
+        [(first, 1), (second, 1)]
+    }
+
+    /// The first selected casket row this card's Open dispatch names: a
+    /// `casket` membership whose own id joins a selected item with a display
+    /// name and whose access is not the packed bound — the row the trail-end
+    /// collect's Open goes out for.
+    fn casket_row(data: &SelectedGameData) -> i32 {
+        data.trails()
+            .expect("trails")
+            .rows
+            .iter()
+            .find(|row| {
+                row.role == "casket"
+                    && row.access.as_deref() != Some("constrained")
+                    && data
+                        .item_by_id(row.id)
+                        .and_then(|item| item.name.as_deref())
+                        .is_some_and(|name| !name.is_empty())
+            })
+            .expect("a selected casket row with a display name")
+            .id
+    }
+
+    /// The first selected unguarded-dig membership: a `clue` row with a
+    /// decodable `trail_coord`, no search `trail_loc`, no `trail_guardian` and
+    /// no coordinate-trio `trail_sextant=yes`. The machine's own walk-to-Dig
+    /// arm answers this row with one walk and no other verb.
+    fn dig_row(data: &SelectedGameData) -> i32 {
+        data.trails()
+            .expect("trails")
+            .rows
+            .iter()
+            .find(|row| {
+                row.role == "clue"
+                    && row.access.as_deref() != Some("constrained")
+                    && coord_of(row).is_some()
+                    && !row.params.iter().any(|param| {
+                        param.key == "trail_loc"
+                            || param.key == "trail_guardian"
+                            || (param.key == "trail_sextant" && param.value == "yes")
+                    })
+            })
+            .expect("a selected unguarded dig membership")
+            .id
     }
 
     fn cfg() -> ClientConfig {
@@ -648,12 +737,18 @@ mod tests {
         s
     }
 
-    /// One observed frame: its snapshot, the posted tile and this frame's
-    /// cooperative interrupt.
+    /// The client build base the ground frame plants its scene on, so the
+    /// posted row's tile is the tile the frame posts as `here`.
+    const SCENE_BASE: i32 = 3200;
+
+    /// One observed frame: its snapshot, the posted tile, this frame's
+    /// cooperative interrupt and the obj-id → name table its pages resolve
+    /// against (`None` for the frames whose observed scene posts no name).
     struct Frame {
         snapshot: GameSnapshot,
         here: Option<(i32, i32, i32)>,
         hold: bool,
+        names: Option<api::obj_names::ObjNames>,
     }
 
     impl Frame {
@@ -663,6 +758,7 @@ mod tests {
                 snapshot: snap(&mut c),
                 here,
                 hold: false,
+                names: None,
             }
         }
 
@@ -679,13 +775,74 @@ mod tests {
                 walk_with: None,
                 inv: None,
                 snapshot: Some(&self.snapshot),
-                obj_names: None,
+                obj_names: self.names.as_ref(),
                 compiled: crate::CompiledTick {
                     selected,
                     hold: self.hold,
                     interacts: Some(Vec::new()),
                 },
             }
+        }
+    }
+
+    /// A frame whose observed scene posts one named, takeable ground stack of
+    /// `stack` on `tile`, over the pack rows `held`: the collect's own loot
+    /// row, on the tile the frame posts as `here`.
+    ///
+    /// The ground page resolves its display name through the shared obj table,
+    /// so the stack's definition joins the client's cache and the table is
+    /// built from the cache — a row the page carries never invents a name.
+    fn loot_frame(held: &[(i32, i32)], stack: i32, tile: (i32, i32, i32)) -> Frame {
+        let mut c = client_with(held);
+        c.map_build_base_x = SCENE_BASE;
+        c.map_build_base_z = SCENE_BASE;
+        c.minusedlevel = tile.2;
+        {
+            let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
+            while cache.objs.len() <= stack as usize {
+                cache.objs.push(ObjType::default());
+            }
+            cache.objs[stack as usize] = ObjType {
+                id: stack,
+                name: format!("obj {stack}"),
+                ..Default::default()
+            };
+        }
+        let mut list = LinkList::new();
+        list.push(ClientObj::new(stack, 1));
+        c.ground_obj[tile.2 as usize][(tile.0 - SCENE_BASE) as usize]
+            [(tile.1 - SCENE_BASE) as usize] = Some(Box::new(list));
+        // The scene gen a landed ground row moves, and nothing else: the rest
+        // of this frame's pages are the same observed ones.
+        c.bump_gens(ServerProt::OBJ_ADD);
+        let names = api::obj_names::ObjNames::from_objs(&c.cache.objs);
+        Frame {
+            snapshot: snap(&mut c),
+            here: Some(tile),
+            hold: false,
+            names: Some(names),
+        }
+    }
+
+    /// A frame whose observed stats post hitpoints at `hp` with every other
+    /// skill healthy: the posted effective stat the machine's own dead read is
+    /// made of.
+    fn wounded(held: &[(i32, i32)], hp: i32) -> Frame {
+        let mut c = client_with(held);
+        let slot = Skill::names
+            .iter()
+            .position(|name| *name == "hitpoints")
+            .expect("the selected skill table names hitpoints");
+        for level in c.stat_effective_level.iter_mut() {
+            *level = 10;
+        }
+        c.stat_effective_level[slot] = hp;
+        c.bump_gens(ServerProt::UPDATE_STAT);
+        Frame {
+            snapshot: snap(&mut c),
+            here: Some(far()),
+            hold: false,
+            names: None,
         }
     }
 
@@ -919,7 +1076,7 @@ mod tests {
     }
 
     #[test]
-    fn a_session_end_counts_the_clue_locally_and_starts_fresh_next_frame() {
+    fn a_none_held_abort_clears_the_token_without_counting() {
         let data = selected();
         let (held_id, tile) = search_row(&data);
         let mut script = Sherlock::default();
@@ -931,13 +1088,14 @@ mod tests {
         );
         let token = script.token.expect("a live session");
 
-        // The clue is gone from the pack: the machine's own `none-held` ends
-        // the session. The card counts it locally and emits nothing — no
-        // verb, no completion kind, no `clue solved`.
+        // The clue is gone from the pack: the machine's own `none-held` abort.
+        // The session ends and the token is cleared, but the collect's `done`
+        // is the one end that counts, so this landed abort advances nothing —
+        // and nothing is emitted for it: no verb, no completion line.
         let mut dropped = Frame::new(&[], Some(far()));
         assert!(tick(&mut dropped, &mut script, Some(&data)).is_empty());
         assert!(script.token.is_none(), "the session ended");
-        assert_eq!(script.solved, 1);
+        assert_eq!(script.solved, 0, "a landed abort is not a finished clue");
 
         // A fresh frame starts a fresh session, not the old token.
         let mut again = Frame::new(&[(held_id, 1)], Some(far()));
@@ -951,7 +1109,98 @@ mod tests {
         script.token = Some(0);
         assert!(tick(&mut again, &mut script, Some(&data)).is_empty());
         assert!(script.token.is_none(), "a stale token is not a session");
-        assert_eq!(script.solved, 1, "only the trail end counts");
+        assert_eq!(script.solved, 0, "only the collect's own done counts");
+    }
+
+    #[test]
+    fn the_finished_collect_counts_and_clears_the_token_in_one_iterate() {
+        let data = selected();
+        let casket = casket_row(&data);
+        let mut script = Sherlock::default();
+
+        // The held casket's Open goes out on the first tick: the gate, the
+        // progress line, the status line, then the one verb that is also the
+        // collect's entry permit.
+        let mut held = Frame::new(&[(casket, 1)], Some(far()));
+        let opened = tick(&mut held, &mut script, Some(&data));
+        assert!(
+            matches!(opened.as_slice(), [InteractReq::Held { action, .. }] if action == "Open"),
+            "the casket's Open is the one verb: {opened:?}"
+        );
+        assert!(script.token.is_some(), "the casket opened a live session");
+
+        // The casket has left the pack and the pack is full with nothing
+        // droppable: one iterate runs the machine's whole exit — the pack-full
+        // warning, the `clue solved` status, the live-token `grind-ready`
+        // continue, and the `done` the session dies on — which is exactly the
+        // four handoffs this card allows. The `grind-ready` is a continue and
+        // not an end, so the `done` behind it lands in this same tick.
+        let tile = (SCENE_BASE + 10, SCENE_BASE + 12, 0);
+        let mut loot = loot_frame(&pack_rows(&data), 900, tile);
+        let sank = tick(&mut loot, &mut script, Some(&data));
+        assert!(
+            sank.is_empty(),
+            "the completion is answered, never forwarded as a verb: {sank:?}"
+        );
+        assert_eq!(script.solved, 1, "the collect's own done is the one count");
+        assert!(script.token.is_none(), "done clears the token");
+    }
+
+    #[test]
+    fn a_posted_zero_hitpoint_page_ends_the_session_without_counting() {
+        let data = selected();
+        let (held_id, tile) = search_row(&data);
+        let mut script = Sherlock::default();
+
+        let mut held = Frame::new(&[(held_id, 1)], Some(far()));
+        assert_eq!(
+            tick(&mut held, &mut script, Some(&data)),
+            vec![walk_to(tile)]
+        );
+        assert!(script.token.is_some());
+
+        // The posted effective hitpoints at zero: the token dies with the
+        // player, before anything this call could dispatch. The session ends
+        // with nothing enqueued, and the count stays where the collect's own
+        // `done` left it.
+        let mut dead = wounded(&[(held_id, 1)], 0);
+        assert!(tick(&mut dead, &mut script, Some(&data)).is_empty());
+        assert!(script.token.is_none(), "death ends the session");
+        assert_eq!(script.solved, 0, "death is not a finished clue");
+    }
+
+    #[test]
+    fn a_supplies_needed_tick_keeps_the_token_and_fetches_nothing() {
+        let data = selected();
+        let dig = dig_row(&data);
+        let mut script = Sherlock::default();
+
+        // The dig arm walks to its own decoded tile: the walk is the machine's
+        // answer and its tile is where the arrival is read next tick.
+        let mut walking = Frame::new(&[(dig, 1)], Some(far()));
+        let walked = tick(&mut walking, &mut script, Some(&data));
+        let tile = match walked.as_slice() {
+            [InteractReq::Walk {
+                x,
+                z,
+                level,
+                allow_teleports: false,
+                allow_wilderness: false,
+                allow_bank_fetch: false,
+                request_id: 0,
+            }] => (*x, *z, *level),
+            other => panic!("the dig arm answers with one optionless walk: {other:?}"),
+        };
+        let token = script.token.expect("a live session");
+
+        // Arrived without the Spade on the posted pack: the named
+        // `supplies-needed` wait-class. The tick ends there — nothing is
+        // fetched, nothing is enqueued — and the token lives for the pack that
+        // posts the tool.
+        let mut landed = Frame::new(&[(dig, 1)], Some(tile));
+        assert!(tick(&mut landed, &mut script, Some(&data)).is_empty());
+        assert_eq!(script.token, Some(token), "the wait-class keeps the token");
+        assert_eq!(script.solved, 0);
     }
 
     #[test]
@@ -1095,10 +1344,31 @@ mod tests {
             ]
         );
 
-        // A kind that is not a verb, and a verb missing a field it needs:
-        // neither is enqueued as anything.
+        // A kind that is not a verb — the machine's own callback and wait
+        // kinds, its terminal kinds and its completion line — and a verb
+        // missing a field it needs: none of them is enqueued as anything.
         let mut unknown = Vec::new();
-        enqueue(&mut unknown, "done", &json!({ "kind": "done" }));
+        for kind in [
+            "callback.enabled",
+            "callback.log",
+            "callback.setStatus",
+            "wait",
+            "yield",
+            "grind-ready",
+            "supplies-needed",
+            "done",
+            "dead",
+            "abandon",
+            "guardian-lost",
+            "aborted",
+            "clue solved",
+        ] {
+            enqueue(
+                &mut unknown,
+                kind,
+                &json!({ "kind": kind, "message": kind }),
+            );
+        }
         enqueue(&mut unknown, "walk", &json!({ "kind": "walk", "x": 1 }));
         assert!(
             unknown.is_empty(),
