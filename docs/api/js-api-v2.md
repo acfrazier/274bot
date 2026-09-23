@@ -804,7 +804,8 @@ rows, talk steps nor key-keeper steps stay identified then idle: the desc-only
 riddles that carry no
 decodable `trail_coord` — except the
 nine whose own `_puzzlebox` is the one the posted page holds, which are the
-held puzzle box below, except the talk steps above, and except the two key
+held puzzle box below — and re-talk from the latched fall-through there —
+except the talk steps above, and except the two key
 keepers whose packed type and published spawn the family carries — and the
 empty-params
 `2722`, with the five matcher-keepers the key family publishes no unique spawn
@@ -915,9 +916,27 @@ evidence for those exits and not tokens: this arm publishes no new error, logs
 no new line and never aborts the token for them, so `clue.next` still refuses
 only with the identify family's own errors. The solved-or-attempted latch
 belongs to the step, so a still-held box is never opened or closed twice: after
-the exit the step idles with its token live, and the re-talk that would follow
-is a later card. A different held row, `clear_step`, reset and abort all drop
-the latch with the step. `puzzle-move` is not a `V2_OPS` verb of its author
+the exit the step falls through with its token live, and the re-talk is the
+row's own `Steady` arms below it. A different held row, `clear_step`, reset and
+abort all drop the latch with the step.
+
+The fall-through is the frozen `solveHeld` caller's re-talk, and it is
+either-way: a solved board, a stall, an unreadable board, 600 landed moves and a
+board that never opened all latch the step the same way, so it is never a
+solved-only read. While the latch is unset the held box keeps the arm — the
+3000ms close window included, which is why a call still inside it only `wait`s,
+and the call that ends that window arms the latch and `wait`s itself. Once the
+latch is set this step opens and closes nothing again and takes the landed arms
+below instead: for the nine desc-only puzzle riddles the selected
+`talk_key.talk` family publishes (`riddle014` / `riddle016` / `riddle017` /
+`riddle018` / `riddle019` / `riddle020` / `riddle021` / `riddle025` /
+`riddle026`) that arm is the talk step above — the published tile is walked to
+and the posted npc Talked-to, an identity-only step takes the nearest posted npc
+of its own identity, and no match, no `here` or an open chat is a `wait` — and
+every other latched row idles. The trigger is that latch and never an id list:
+no new kind, no new host op and no new session field. `closing` stays set after
+the close window ends, so it is never what decides the fall-through.
+`puzzle-move` is not a `V2_OPS` verb of its author
 API: `next` enqueues it onto the interact drain the way it enqueues `loc` and
 the others, and `api.request({ op: 'puzzle-move' })` stays the OPHELD send gate
 it already was.

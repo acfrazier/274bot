@@ -117,9 +117,13 @@
 //! re-reads the board and replans, because a sent click is not an observed
 //! move: the frozen engine drops a stale-slot click, and the frozen `want`
 //! board is what the next call compares against. A board the plan has solved
-//! is closed and then idled — the frozen `finally` close — with the re-talk
-//! left to a later card, so a solved box is never opened or closed twice while
-//! the same step stays held.
+//! is closed and then idled — the frozen `finally` close — and the exit is the
+//! same either way: solved, stalled, unreadable, past `MAX_MOVES` or a board
+//! that never opened all latch the step, so a solved box is never opened or
+//! closed twice while the same step stays held. The latch is what re-talks:
+//! the next live call falls through to the `Steady` arms below, where the nine
+//! desc-only puzzle riddles the selected `talk_key.talk` family publishes are
+//! the landed talk step, and every other latched row idles.
 //!
 //! In front of both dig arms sits the coordinate-trio acquire. An identified
 //! row carrying the selected `trail_sextant=yes` needs the Sextant, the Watch
@@ -533,9 +537,10 @@ struct Puzzle {
     /// The one `close-modal` went out. Only the frozen close window is left.
     closing: bool,
     /// The solved-or-attempted latch: after the attempt ends — a solved board,
-    /// a stall, an unreadable board, `MAX_MOVES` — nothing is opened or closed
-    /// again while this step stays held. `clear_step`, a different step or the
-    /// frozen reset is what drops it.
+    /// a stall, an unreadable board, `MAX_MOVES`, or a board that never opened
+    /// — nothing is opened or closed again while this step stays held, and the
+    /// `Steady` dispatch falls through to the row's own arms instead of this
+    /// one. `clear_step`, a different step or the frozen reset is what drops it.
     latch: bool,
     /// The outstanding sent click: the board that click was expected to
     /// produce, re-read next call and never the leftover plan.
@@ -958,16 +963,13 @@ impl ClueRuntime {
                 // or the idle every other row keeps.
                 None => match puzzle_box(selected, row) {
                     // The row's own box on this call's page, or the box this
-                    // token already opened: the frozen `PuzzleBox` run. A held
-                    // box the identified row does not name is not this row's,
-                    // and a desc-only row without one keeps the idle.
-                    Some((id, name))
-                        if holds(input, id)
-                            || self
-                                .puzzle
-                                .as_ref()
-                                .is_some_and(|puzzle| puzzle.id == id && puzzle.opened) =>
-                    {
+                    // token already opened — while this step's solved-or-
+                    // attempted latch is unset. A held box the identified row
+                    // does not name is not this row's, a desc-only row without
+                    // one keeps the idle, and a latched step is done with the
+                    // board: it takes the `Steady` arms below, which is where
+                    // the nine puzzle riddles' talk step lives.
+                    Some((id, name)) if self.puzzle_arm(id, input) => {
                         self.puzzle(id, name, input, selected)
                     }
                     _ => self.steady(row, input, selected),
@@ -1108,6 +1110,26 @@ impl ClueRuntime {
         })
     }
 
+    /// Whether this call runs the held puzzle box's own arm or falls through to
+    /// the `Steady` arms below it: the row's own box is on this call's page — or
+    /// this token already opened that board — and this step's solved-or-
+    /// attempted latch is not set.
+    ///
+    /// The latch is the re-talk. The attempt is over — solved, stalled,
+    /// unreadable, past `MAX_MOVES`, or a board that never opened — so nothing
+    /// is opened or closed again while this step stays held and the row's own
+    /// selected families decide what follows: for the nine desc-only puzzle
+    /// riddles the selected `talk_key.talk` family publishes that is the landed
+    /// talk step, and every other latched row idles. `closing` stays true after
+    /// the frozen close window ends and is never the exclusion here: a call
+    /// still inside that window enters the arm and waits it out.
+    fn puzzle_arm(&self, id: i32, input: &Value) -> bool {
+        match self.puzzle.as_ref().filter(|puzzle| puzzle.id == id) {
+            Some(puzzle) => !puzzle.latch && (holds(input, id) || puzzle.opened),
+            None => holds(input, id),
+        }
+    }
+
     /// `Steady` on an identified row whose own selected `{alias}_puzzlebox` is
     /// held on this call's page — or whose board this token already opened:
     /// the frozen `PuzzleBox.solveHeld` run, one verb per call.
@@ -1128,9 +1150,10 @@ impl ClueRuntime {
         selected: Option<&SelectedGameData>,
     ) -> Value {
         if self.puzzle.as_ref().is_some_and(|puzzle| puzzle.latch) {
-            // Solved or given up: this step is done with the board, and a
-            // later talk card, a different step or the frozen reset is what
-            // moves it on. No verb, so nothing is opened or closed twice.
+            // The arm's own latch guard: the `Steady` dispatch above already
+            // falls through to `steady()` once the latch is set, so this is
+            // never the re-talk — it only keeps this arm from opening or
+            // closing a board it is done with while the step stays held.
             return self.emit("wait");
         }
         let Some(page) = posted_board(input) else {
@@ -1365,6 +1388,11 @@ impl ClueRuntime {
     /// the coordinate-trio acquire intercept, the guarded encounter, the sibling
     /// unguarded-dig dispatch, the talk step, the key-keeper hunt, or the idle
     /// every other row keeps.
+    ///
+    /// A latched puzzle step arrives here as well: its own box is done with, so
+    /// this is where the nine desc-only puzzle riddles the selected
+    /// `talk_key.talk` family publishes re-talk, and where every other latched
+    /// row idles.
     ///
     /// The search pin decides first: `search_tile` is the `trail_loc=^true`
     /// membership and the landed dispatch re-reads its own tile from it, so a
@@ -8146,6 +8174,265 @@ mod tests {
             json!({ "here": here(3100, 3300, 1) }),
         );
         assert_eq!(walked["kind"], "walk", "{walked}");
+    }
+
+    /// `trail_clue_hard_riddle019`: the second puzzle riddle whose own selected
+    /// `trail_clue_hard_riddle019_puzzlebox` item is held, and one of the five
+    /// identity-only talk steps — `Examiner`, packed id 618, with no published
+    /// spawn — so its latched fall-through takes the nearest posted npc of that
+    /// identity.
+    const PUZZLE_RIDDLE_IDENTITY: i32 = 3566;
+    /// That box item, display `Puzzle box`.
+    const PUZZLE_BOX_IDENTITY: i32 = 3567;
+    /// The exemplar riddle014's own talk identity: `Oziach`, packed id 747, at
+    /// the published `(3069, 3517, plane 0)`.
+    const OZIACH_ID: i32 = 747;
+    const OZIACH_NAME: &str = "Oziach";
+    /// riddle019's identity: `Examiner`, packed id 618, no unique spawn.
+    const EXAMINER_ID: i32 = 618;
+    const EXAMINER_NAME: &str = "Examiner";
+
+    /// The published spawn tile one selected talk step's walk carries, read
+    /// from the family rather than copied.
+    fn talk_tile(data: &SelectedGameData, id: i32) -> Tile {
+        let spawn = talk_of(data, id)
+            .spawn
+            .as_ref()
+            .expect("a unique jm2 spawn");
+        Tile {
+            x: spawn.x,
+            z: spawn.z,
+            level: spawn.plane,
+        }
+    }
+
+    /// The latched puzzle riddle re-talks: once the solved-or-attempted latch is
+    /// set, the `Steady` dispatch skips the box's own arm and the row's own
+    /// talk step runs the landed walk-then-Talk-to. The latch-arming call is
+    /// still the puzzle arm's own `wait`; the fall-through is the next live call.
+    #[test]
+    fn a_latched_puzzle_riddle_re_talks_over_the_landed_talk_step() {
+        on_reset();
+        let data = selected();
+        let token = steady(&data, PUZZLE_RIDDLE);
+        let opened = call(&data, token, held_box(), closed_board_page());
+        assert_eq!(opened["kind"], "held", "{opened}");
+        // The board never opened: the frozen open window runs out and latches
+        // the step with no closer verb.
+        force_bound();
+        let latched = call(&data, token, held_box(), closed_board_page());
+        assert_eq!(latched["kind"], "wait", "{latched}");
+        let step = talk_of(&data, PUZZLE_RIDDLE);
+        assert_eq!(step.id, PUZZLE_RIDDLE, "{}", step.alias);
+        assert_eq!((step.npc.id, step.npc.name.as_str()), (OZIACH_ID, OZIACH_NAME));
+        let tile = talk_tile(&data, PUZZLE_RIDDLE);
+        // No posted npc page: no invented target and no walk, with the token
+        // still live.
+        let blind = call(
+            &data,
+            token,
+            held_box(),
+            json!({ "here": here(tile.x, tile.z, tile.level) }),
+        );
+        assert_eq!(blind["kind"], "wait", "{blind}");
+        assert_eq!(token_of(&blind), token, "{blind}");
+        // Posted far from the published tile: the walk is that tile, with the
+        // published `plane` as the verb's `level`.
+        let walked = call(
+            &data,
+            token,
+            held_box(),
+            talk_scene(here(tile.x - 30, tile.z, tile.level), json!([]), json!({})),
+        );
+        assert_eq!(walked["kind"], "walk", "{walked}");
+        assert_eq!(
+            (
+                walked["x"].as_i64(),
+                walked["z"].as_i64(),
+                walked["level"].as_i64()
+            ),
+            (
+                Some(i64::from(tile.x)),
+                Some(i64::from(tile.z)),
+                Some(i64::from(tile.level))
+            ),
+            "{walked}"
+        );
+        // Arrived with the step's own npc posted on the tile: the landed
+        // Talk-to, carrying the posted name and the posted scene index.
+        let npcs = json!([talk_npc(3, OZIACH_ID, OZIACH_NAME, tile, 1, &["Talk-to"])]);
+        let talked = call(
+            &data,
+            token,
+            held_box(),
+            talk_scene(here(tile.x, tile.z, tile.level), npcs.clone(), json!({})),
+        );
+        assert_eq!(talked["kind"], "npc", "{talked}");
+        assert_eq!(talked["name"], OZIACH_NAME, "{talked}");
+        assert_eq!(talked["action"], "Talk-to", "{talked}");
+        assert_eq!(talked["index"], 3, "{talked}");
+        // The still-held solved board is never a second close and the box is
+        // never re-Opened: the latched step takes the talk arm, not the board.
+        let again = call(
+            &data,
+            token,
+            held_box(),
+            talk_scene(
+                here(tile.x, tile.z, tile.level),
+                npcs,
+                board_page(&solved_board(), 7),
+            ),
+        );
+        assert_eq!(again["kind"], "npc", "{again}");
+    }
+
+    /// The fall-through is either-way: a stalled attempt that solved nothing
+    /// re-talks exactly like a solved board, because the trigger is the latch
+    /// and never the solved read.
+    #[test]
+    fn a_stalled_puzzle_riddle_re_talks_the_same_way() {
+        on_reset();
+        let data = selected();
+        let token = steady(&data, PUZZLE_RIDDLE);
+        let opened = call(&data, token, held_box(), closed_board_page());
+        assert_eq!(opened["kind"], "held", "{opened}");
+        // A mixed picture set: the frozen solver has no plan for it, so the
+        // consecutive refusals run out and the exit close goes out.
+        let mut mixed = one_move_board();
+        mixed[6] = Some(5);
+        let page = board_page(&mixed, 7);
+        for struck in 1..STALL_LIMIT {
+            let stalled = call(&data, token, held_box(), page.clone());
+            assert_eq!(stalled["kind"], "wait", "{struck} {stalled}");
+        }
+        let closed = call(&data, token, held_box(), page);
+        assert_eq!(closed["kind"], "close-modal", "{closed}");
+        force_bound();
+        let latched = call(&data, token, held_box(), closed_board_page());
+        assert_eq!(latched["kind"], "wait", "{latched}");
+        let tile = talk_tile(&data, PUZZLE_RIDDLE);
+        let npcs = json!([talk_npc(3, OZIACH_ID, OZIACH_NAME, tile, 1, &["Talk-to"])]);
+        let talked = call(
+            &data,
+            token,
+            held_box(),
+            talk_scene(here(tile.x, tile.z, tile.level), npcs, json!({})),
+        );
+        assert_eq!(talked["kind"], "npc", "{talked}");
+        assert_eq!(talked["index"], 3, "{talked}");
+    }
+
+    /// The frozen close window is not the exclusion: `latch` is unset while the
+    /// one close is out, so a posted talk scene draws nothing until the window
+    /// ends. The call that arms the latch still waits inside the puzzle arm,
+    /// and the next live call talks although `closing` is never cleared.
+    #[test]
+    fn a_latched_puzzle_riddle_never_talks_inside_the_close_window() {
+        on_reset();
+        let data = selected();
+        let token = steady(&data, PUZZLE_RIDDLE);
+        let opened = call(&data, token, held_box(), closed_board_page());
+        assert_eq!(opened["kind"], "held", "{opened}");
+        let moved = call(&data, token, held_box(), board_page(&one_move_board(), 7));
+        assert_eq!(moved["kind"], "puzzle-move", "{moved}");
+        let closed = call(&data, token, held_box(), board_page(&solved_board(), 7));
+        assert_eq!(closed["kind"], "close-modal", "{closed}");
+        let tile = talk_tile(&data, PUZZLE_RIDDLE);
+        let npcs = json!([talk_npc(3, OZIACH_ID, OZIACH_NAME, tile, 1, &["Talk-to"])]);
+        let scene = talk_scene(here(tile.x, tile.z, tile.level), npcs, json!({}));
+        // The close is out and its window is running: no walk and no Talk-to,
+        // whatever the page posts.
+        for waited in 0..2 {
+            let waiting = call(&data, token, held_box(), scene.clone());
+            assert_eq!(waiting["kind"], "wait", "{waited} {waiting}");
+        }
+        // The window ends: this call arms the latch and waits, and the next
+        // live call is the landed talk step.
+        force_bound();
+        let latched = call(&data, token, held_box(), scene.clone());
+        assert_eq!(latched["kind"], "wait", "{latched}");
+        let talked = call(&data, token, held_box(), scene);
+        assert_eq!(talked["kind"], "npc", "{talked}");
+        assert_eq!(talked["index"], 3, "{talked}");
+    }
+
+    /// The identity-only latched riddle re-talks the same landed arm: no
+    /// published spawn, so the posted npc of the step's own identity is what is
+    /// walked to and Talked-to — and a page that posts none of them is a `wait`.
+    /// No Examiner, tile or target is invented for it.
+    #[test]
+    fn a_latched_identity_only_puzzle_riddle_waits_without_its_own_npc() {
+        on_reset();
+        let data = selected();
+        let token = steady(&data, PUZZLE_RIDDLE_IDENTITY);
+        let page = json!([[PUZZLE_RIDDLE_IDENTITY, 1], [PUZZLE_BOX_IDENTITY, 1]]);
+        let opened = call(&data, token, page.clone(), closed_board_page());
+        assert_eq!(opened["kind"], "held", "{opened}");
+        force_bound();
+        let latched = call(&data, token, page.clone(), closed_board_page());
+        assert_eq!(latched["kind"], "wait", "{latched}");
+        let step = talk_of(&data, PUZZLE_RIDDLE_IDENTITY);
+        assert_eq!(step.id, PUZZLE_RIDDLE_IDENTITY, "{}", step.alias);
+        assert!(step.spawn.is_none(), "{}", step.alias);
+        assert_eq!(
+            (step.npc.id, step.npc.name.as_str()),
+            (EXAMINER_ID, EXAMINER_NAME)
+        );
+        let here_tile = Tile {
+            x: 3207,
+            z: 3233,
+            level: 0,
+        };
+        // No posted npc page at all, and an empty one: a wait with the token
+        // live, never an invented Examiner.
+        for scene in [
+            json!({}),
+            talk_scene(here(here_tile.x, here_tile.z, here_tile.level), json!([]), json!({})),
+        ] {
+            let waited = call(&data, token, page.clone(), scene);
+            assert_eq!(waited["kind"], "wait", "{waited}");
+            assert_eq!(token_of(&waited), token, "{waited}");
+        }
+        // Another identity posted on the tile is not this step's npc either.
+        let other = json!([talk_npc(1, 0, "Hans", here_tile, 0, &["Talk-to"])]);
+        let unmatched = call(
+            &data,
+            token,
+            page.clone(),
+            talk_scene(here(here_tile.x, here_tile.z, here_tile.level), other, json!({})),
+        );
+        assert_eq!(unmatched["kind"], "wait", "{unmatched}");
+        // The identity-only rule: a posted Examiner out of reach is walked to
+        // at its own posted tile, which is the only tile this arm has.
+        let posted_tile = Tile {
+            x: 3200,
+            z: 3200,
+            level: 0,
+        };
+        let far = json!([talk_npc(4, EXAMINER_ID, EXAMINER_NAME, posted_tile, 5, &["Talk-to"])]);
+        let walked = call(
+            &data,
+            token,
+            page.clone(),
+            talk_scene(here(here_tile.x, here_tile.z, here_tile.level), far, json!({})),
+        );
+        assert_eq!(walked["kind"], "walk", "{walked}");
+        assert_eq!(
+            (walked["x"].as_i64(), walked["z"].as_i64()),
+            (Some(i64::from(posted_tile.x)), Some(i64::from(posted_tile.z))),
+            "{walked}"
+        );
+        // Arrived there with its own identity posted: the landed Talk-to.
+        let near = json!([talk_npc(4, EXAMINER_ID, EXAMINER_NAME, posted_tile, 0, &["Talk-to"])]);
+        let talked = call(
+            &data,
+            token,
+            page,
+            talk_scene(here(posted_tile.x, posted_tile.z, posted_tile.level), near, json!({})),
+        );
+        assert_eq!(talked["kind"], "npc", "{talked}");
+        assert_eq!(talked["name"], EXAMINER_NAME, "{talked}");
+        assert_eq!(talked["index"], 4, "{talked}");
     }
 
     /// `trail_clue_easy_simple005`: a talk membership whose jm2 spawn is unique

@@ -5045,6 +5045,606 @@ export function tick(api) {
     assert_eq!(steps[4]["kind"], "walk", "{value:?}");
 }
 
+/// `trail_clue_hard_riddle014`: the desc-only hard riddle whose own box is
+/// `PUZZLE_BOX` and whose talk step is the unique-spawn `Oziach`, packed id
+/// 747, at the published `(3069, 3517, plane 0)`.
+const OZIACH_ID: i32 = 747;
+const OZIACH_X: i32 = 3069;
+const OZIACH_Z: i32 = 3517;
+
+/// `trail_clue_hard_riddle019`: the second latched puzzle riddle — box `3567` —
+/// whose talk step is the identity-only `Examiner`, packed id 618, with no
+/// published spawn at all.
+const PUZZLE_RIDDLE_IDENTITY: i32 = 3566;
+const PUZZLE_BOX_IDENTITY: i32 = 3567;
+const EXAMINER_ID: i32 = 618;
+
+/// The re-talk over the public `api.clue.next` path, reached the way the frozen
+/// `solveHeld` reaches it: the board is solved, the one `close-modal` goes out,
+/// and the frozen close window runs out while the box stays held. The next live
+/// call is the row's own talk step — the landed `walk` to the published tile and
+/// then the landed `npc` Talk-to — never a second Open and never a second close,
+/// and the ticks still inside the close window stay idle. The latched step dies
+/// with the player, and the empty page still refuses `clue.begin` with the
+/// landed C3 token.
+#[test]
+fn v2_clue_latched_puzzle_riddle_re_talks_over_the_posted_scene() {
+    let src = r#"
+export const apiVersion = 2;
+export function tick(api) {
+  globalThis.__runs = (globalThis.__runs || 0) + 1;
+  if (globalThis.__runs === 1) {
+    const begin = api.clue.begin();
+    globalThis.__token = begin.ok ? begin.value.token : null;
+    globalThis.__steps = [begin];
+    return;
+  }
+  if (globalThis.__runs === 17) {
+    // The empty pack page: the landed C3 refusal, through the public helper.
+    globalThis.__empty = api.clue.begin();
+    globalThis.__probe = JSON.stringify({
+      token: globalThis.__token,
+      runs: globalThis.__runs,
+      steps: globalThis.__steps,
+      empty: globalThis.__empty,
+    });
+    return;
+  }
+  globalThis.__steps.push(api.clue.next(
+    globalThis.__runs === 3
+      ? { token: globalThis.__token, resume: true }
+      : { token: globalThis.__token }));
+}
+"#;
+    let data = api::game_data::for_revision(ClientRevision::R274).unwrap();
+    let iso =
+        LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data).unwrap();
+    let page = puzzle_page();
+    let talk_to = vec!["Talk-to".to_string()];
+
+    // Tick 1: the begin hands out the token and emits no verb at all.
+    post_scene(&iso, 1, &page, &closed_board_scene());
+    iso.on_game_tick(1);
+    assert!(iso.probe("true").is_ok());
+    assert!(iso.drain_interacts().is_empty(), "the begin has no verb");
+
+    // Ticks 2-4: the landed gate ladder over the held page — `enabled`, the
+    // `resume` log line, the status line. None of them is a verb.
+    post_scene(&iso, 2, &page, &closed_board_scene());
+    iso.on_game_tick(2);
+    assert!(iso.probe("true").is_ok());
+    assert!(iso.drain_interacts().is_empty(), "the gate has no verb");
+    post_scene(&iso, 3, &page, &closed_board_scene());
+    iso.on_game_tick(3);
+    assert!(iso.probe("true").is_ok());
+    assert!(iso.drain_interacts().is_empty(), "the report has no verb");
+    post_scene(&iso, 4, &page, &closed_board_scene());
+    iso.on_game_tick(4);
+    assert!(iso.probe("true").is_ok());
+    assert!(iso.drain_interacts().is_empty(), "the status line has no verb");
+
+    // Tick 5: the report is posted, so this is the box's own Open — over the
+    // closed board SNAP posts beside a box that is not open yet.
+    post_scene(&iso, 5, &page, &closed_board_scene());
+    iso.on_game_tick(5);
+    assert!(iso.probe("true").is_ok());
+    assert_eq!(iso.drain_interacts(), vec![puzzle_open()], "the box's Open");
+
+    // Tick 6: the readable board one slide from solved: the planned click.
+    let one = board_rows(&one_move_board(), BOARD_COMPONENT);
+    post_scene(&iso, 6, &page, &board_scene(&one));
+    iso.on_game_tick(6);
+    assert!(iso.probe("true").is_ok());
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::PuzzleMove {
+            id: PIECE_B + 23,
+            slot: 24,
+            component: BOARD_COMPONENT,
+            generation: 7,
+        }],
+        "the plan's own click"
+    );
+
+    // Tick 7: the click landed on the solved board, so the frozen `finally`
+    // close goes out.
+    let solved = board_rows(&solved_board(), BOARD_COMPONENT);
+    post_scene(&iso, 7, &page, &board_scene(&solved));
+    iso.on_game_tick(7);
+    assert!(iso.probe("true").is_ok());
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::CloseModal],
+        "the solved board is closed once"
+    );
+
+    // The step's own talk scene, posted beside the held box: where the re-talk
+    // walks and Talks-to once the close window has run out.
+    let on_tile = [talk_scene_npc(
+        3,
+        OZIACH_ID,
+        "Oziach",
+        TileInput {
+            x: OZIACH_X,
+            z: OZIACH_Z,
+            level: 0,
+        },
+        1,
+        &talk_to,
+    )];
+    let arrived = Scene {
+        here: Some(TileInput {
+            x: OZIACH_X,
+            z: OZIACH_Z,
+            level: 0,
+        }),
+        npcs: &on_tile,
+        ..Scene::default()
+    };
+
+    // Tick 8: the close is out and its window is running — a posted talk scene
+    // draws no walk and no Talk-to, and the box is not opened again.
+    post_scene(&iso, 8, &page, &arrived);
+    iso.on_game_tick(8);
+    assert!(iso.probe("true").is_ok());
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "the close window is idle, whatever the page posts"
+    );
+
+    // Tick 9: still inside the window, the same page: still no verb.
+    post_scene(&iso, 9, &page, &arrived);
+    iso.on_game_tick(9);
+    assert!(iso.probe("true").is_ok());
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "every close-window tick is idle"
+    );
+
+    std::thread::sleep(std::time::Duration::from_millis(3_100));
+
+    // Tick 10: the window has run out. This call is still the puzzle arm's own
+    // `wait`: it arms the latch, and the fall-through is the call after it.
+    post_scene(&iso, 10, &page, &arrived);
+    iso.on_game_tick(10);
+    assert!(iso.probe("true").is_ok());
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "the latch-arming call waits and talks to nobody"
+    );
+
+    // Tick 11: the fall-through. Posted far from the published tile: the walk
+    // is that tile, and it is never a second Open.
+    post_scene(
+        &iso,
+        11,
+        &page,
+        &Scene {
+            here: Some(TileInput {
+                x: OZIACH_X - 30,
+                z: OZIACH_Z,
+                level: 0,
+            }),
+            npcs: &on_tile,
+            ..Scene::default()
+        },
+    );
+    iso.on_game_tick(11);
+    assert!(iso.probe("true").is_ok());
+    let walked = iso.drain_interacts();
+    assert_eq!(
+        walked,
+        vec![InteractReq::Walk {
+            x: OZIACH_X,
+            z: OZIACH_Z,
+            level: 0,
+            allow_teleports: false,
+            allow_wilderness: false,
+            allow_bank_fetch: false,
+            request_id: 0,
+        }],
+        "the latched riddle walks the published tile: {walked:?}"
+    );
+
+    // Tick 12: arrived with the step's own npc posted on the tile: the landed
+    // Talk-to, carrying the posted name and the posted scene index.
+    post_scene(&iso, 12, &page, &arrived);
+    iso.on_game_tick(12);
+    assert!(iso.probe("true").is_ok());
+    let talked = iso.drain_interacts();
+    assert_eq!(
+        talked,
+        vec![InteractReq::Npc {
+            name: "Oziach".to_string(),
+            action: "Talk-to".to_string(),
+            index: Some(3),
+        }],
+        "the re-talk is the posted identity with the posted index: {talked:?}"
+    );
+
+    // Tick 13: the re-Talk-to opened a chat, and the solved board is posted
+    // again beside the still-held box: no second Talk-to behind the open chat
+    // and no second close.
+    post_scene(
+        &iso,
+        13,
+        &page,
+        &Scene {
+            chat_modal_id: 968,
+            ..board_scene(&solved)
+        },
+    );
+    iso.on_game_tick(13);
+    assert!(iso.probe("true").is_ok());
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "an open chat blocks the Talk-to and the board is never closed twice"
+    );
+
+    // Tick 14: the chat is closed again but the step posts no npc page, and the
+    // solved board is still there: a wait, and the still-held box is never
+    // opened or closed again.
+    post_scene(&iso, 14, &page, &board_scene(&solved));
+    iso.on_game_tick(14);
+    assert!(iso.probe("true").is_ok());
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "a latched step opens and closes nothing"
+    );
+
+    // Tick 15: a posted hitpoints at zero kills the token, latched step and
+    // all — no verb and never `'clue solved'`.
+    let downed = [StatInput {
+        index: 3,
+        name: "hitpoints",
+        xp: 0,
+        base: 40,
+        effective: 0,
+    }];
+    post_scene(
+        &iso,
+        15,
+        &page,
+        &Scene {
+            stats: &downed,
+            ..board_scene(&solved)
+        },
+    );
+    iso.on_game_tick(15);
+    assert!(iso.probe("true").is_ok());
+    assert!(iso.drain_interacts().is_empty(), "a death pushes no verb");
+
+    // Tick 16: the dead token is `stale` and its step is over: nothing was
+    // looted and nothing was solved.
+    post_scene(&iso, 16, &page, &board_scene(&solved));
+    iso.on_game_tick(16);
+    assert!(iso.probe("true").is_ok());
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "a dead token has no verbs"
+    );
+
+    // Tick 17: the empty pack page refuses the begin with the landed C3 token,
+    // and no token is handed out for it.
+    post_page(&iso, 17, &[]);
+    iso.on_game_tick(17);
+    assert!(iso.probe("true").is_ok());
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "a refused begin has no verbs"
+    );
+
+    let probed = iso.probe("globalThis.__probe").unwrap();
+    let value: serde_json::Value = serde_json::from_str(probed.as_str().unwrap()).unwrap();
+    iso.join();
+    assert_eq!(value["runs"], 17, "{value:?}");
+    let steps = value["steps"].as_array().expect("steps");
+    assert_eq!(steps.len(), 16, "{value:?}");
+    assert_eq!(steps[0]["ok"], true, "{value:?}");
+    assert!(steps[0]["value"]["token"].is_number(), "{value:?}");
+    for (index, kind) in [
+        (1, "callback.enabled"),
+        (2, "callback.log"),
+        (3, "callback.setStatus"),
+        (4, "held"),
+        (5, "puzzle-move"),
+        (6, "close-modal"),
+        (7, "wait"),
+        (8, "wait"),
+        (9, "wait"),
+        (10, "walk"),
+        (11, "npc"),
+        (12, "wait"),
+        (13, "wait"),
+        (14, "dead"),
+        (15, "stale"),
+    ] {
+        match kind {
+            "dead" => {
+                assert_eq!(steps[index]["ok"], true, "{index} {value:?}");
+                assert_eq!(steps[index]["kind"], "dead", "{index} {value:?}");
+            }
+            "stale" => {
+                assert_eq!(steps[index]["ok"], false, "{index} {value:?}");
+                assert_eq!(steps[index]["error"], "stale", "{index} {value:?}");
+            }
+            _ => assert_eq!(steps[index]["kind"], kind, "{index} {value:?}"),
+        }
+    }
+    // The empty page is still `none-held`, taken through the public helper.
+    assert_eq!(value["empty"]["ok"], false, "{value:?}");
+    assert_eq!(value["empty"]["error"], "none-held", "{value:?}");
+    // The messages stay the landed identity, and never a completion.
+    let logged = steps[2]["message"].as_str().unwrap_or("");
+    assert!(logged.contains("trail_clue_hard_riddle014"), "{value:?}");
+    let text = value.to_string();
+    for forbidden in [
+        "clue solved",
+        "abandon",
+        "supplies-needed",
+        "ownsEquipment",
+        "\"done\"",
+    ] {
+        assert!(!text.contains(forbidden), "{forbidden} {value:?}");
+    }
+}
+
+/// The latched identity-only puzzle riddle over the public path, reached from
+/// the other half of the either-way exit: the board never opened, so the frozen
+/// open window runs out and latches the step with no close out at all. The
+/// landeds arm's own rule is what follows — a posted npc of another identity is
+/// a `wait`, its own identity out of reach is walked to at its posted tile, and
+/// arrived it is Talked-to — while the still-held box is never opened again,
+/// because no close window is there to hide a re-arm behind.
+#[test]
+fn v2_clue_latched_identity_only_riddle_waits_without_its_own_posted_npc() {
+    let src = r#"
+export const apiVersion = 2;
+export function tick(api) {
+  globalThis.__runs = (globalThis.__runs || 0) + 1;
+  if (globalThis.__runs === 1) {
+    const begin = api.clue.begin();
+    globalThis.__token = begin.ok ? begin.value.token : null;
+    globalThis.__steps = [begin];
+    return;
+  }
+  globalThis.__steps.push(api.clue.next(
+    globalThis.__runs === 3
+      ? { token: globalThis.__token, resume: true }
+      : { token: globalThis.__token }));
+  if (globalThis.__runs === 11) {
+    globalThis.__probe = JSON.stringify({
+      token: globalThis.__token,
+      runs: globalThis.__runs,
+      steps: globalThis.__steps,
+    });
+  }
+}
+"#;
+    let data = api::game_data::for_revision(ClientRevision::R274).unwrap();
+    let iso =
+        LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data).unwrap();
+    let page = [(PUZZLE_RIDDLE_IDENTITY, 1), (PUZZLE_BOX_IDENTITY, 1)];
+    let talk_to = vec!["Talk-to".to_string()];
+
+    // Tick 1: the begin hands out the token and emits no verb at all.
+    post_scene(&iso, 1, &page, &closed_board_scene());
+    iso.on_game_tick(1);
+    assert!(iso.probe("true").is_ok());
+    assert!(iso.drain_interacts().is_empty(), "the begin has no verb");
+
+    // Ticks 2-4: the landed gate ladder over the held page — `enabled`, the
+    // `resume` log line, the status line.
+    post_scene(&iso, 2, &page, &closed_board_scene());
+    iso.on_game_tick(2);
+    assert!(iso.probe("true").is_ok());
+    assert!(iso.drain_interacts().is_empty(), "the gate has no verb");
+    post_scene(&iso, 3, &page, &closed_board_scene());
+    iso.on_game_tick(3);
+    assert!(iso.probe("true").is_ok());
+    assert!(iso.drain_interacts().is_empty(), "the report has no verb");
+    post_scene(&iso, 4, &page, &closed_board_scene());
+    iso.on_game_tick(4);
+    assert!(iso.probe("true").is_ok());
+    assert!(iso.drain_interacts().is_empty(), "the status line has no verb");
+
+    // Tick 5: the report is posted, so this is the box's own Open.
+    post_scene(&iso, 5, &page, &closed_board_scene());
+    iso.on_game_tick(5);
+    assert!(iso.probe("true").is_ok());
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![puzzle_open()],
+        "the held box is opened"
+    );
+
+    // Tick 6: the board never opens, so this call repeats the Open and spends
+    // nothing new: the frozen open window was armed by the first one.
+    post_scene(&iso, 6, &page, &closed_board_scene());
+    iso.on_game_tick(6);
+    assert!(iso.probe("true").is_ok());
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![puzzle_open()],
+        "the Open repeats while the board stays closed"
+    );
+
+    std::thread::sleep(std::time::Duration::from_millis(5_100));
+
+    // Tick 7: the open window has run out, so the attempt ends with no closer
+    // verb at all and the step is latched.
+    post_scene(&iso, 7, &page, &closed_board_scene());
+    iso.on_game_tick(7);
+    assert!(iso.probe("true").is_ok());
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "a board that never opened has nothing to close"
+    );
+
+    // Tick 8: the fall-through. Another identity posted on the tile is not this
+    // step's npc: a wait, and never an invented Examiner.
+    let hans = [talk_scene_npc(
+        1,
+        0,
+        "Hans",
+        TileInput {
+            x: TALK_X,
+            z: TALK_Z,
+            level: 0,
+        },
+        0,
+        &talk_to,
+    )];
+    post_scene(
+        &iso,
+        4,
+        &page,
+        &Scene {
+            here: Some(TileInput {
+                x: TALK_X,
+                z: TALK_Z,
+                level: 0,
+            }),
+            npcs: &hans,
+            ..Scene::default()
+        },
+    );
+    iso.on_game_tick(8);
+    assert!(iso.probe("true").is_ok());
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "no posted match is a wait, never a second target"
+    );
+
+    // Tick 9: the step's own identity posted out of reach: the walk goes to the
+    // only tile this arm has, the posted row's own.
+    let examiner = [talk_scene_npc(
+        4,
+        EXAMINER_ID,
+        "Examiner",
+        TileInput {
+            x: TALK_X - 7,
+            z: TALK_Z - 7,
+            level: 0,
+        },
+        5,
+        &talk_to,
+    )];
+    post_scene(
+        &iso,
+        5,
+        &page,
+        &Scene {
+            here: Some(TileInput {
+                x: TALK_X,
+                z: TALK_Z,
+                level: 0,
+            }),
+            npcs: &examiner,
+            ..Scene::default()
+        },
+    );
+    iso.on_game_tick(9);
+    assert!(iso.probe("true").is_ok());
+    let walked = iso.drain_interacts();
+    assert_eq!(
+        walked,
+        vec![InteractReq::Walk {
+            x: TALK_X - 7,
+            z: TALK_Z - 7,
+            level: 0,
+            allow_teleports: false,
+            allow_wilderness: false,
+            allow_bank_fetch: false,
+            request_id: 0,
+        }],
+        "the identity-only arm walks the posted match's own tile: {walked:?}"
+    );
+
+    // Tick 10: arrived there, with the step's own identity posted: the landed
+    // Talk-to.
+    let arrived = [talk_scene_npc(
+        4,
+        EXAMINER_ID,
+        "Examiner",
+        TileInput {
+            x: TALK_X - 7,
+            z: TALK_Z - 7,
+            level: 0,
+        },
+        1,
+        &talk_to,
+    )];
+    post_scene(
+        &iso,
+        6,
+        &page,
+        &Scene {
+            here: Some(TileInput {
+                x: TALK_X - 7,
+                z: TALK_Z - 7,
+                level: 0,
+            }),
+            npcs: &arrived,
+            ..Scene::default()
+        },
+    );
+    iso.on_game_tick(10);
+    assert!(iso.probe("true").is_ok());
+    let talked = iso.drain_interacts();
+    assert_eq!(
+        talked,
+        vec![InteractReq::Npc {
+            name: "Examiner".to_string(),
+            action: "Talk-to".to_string(),
+            index: Some(4),
+        }],
+        "the identity-only re-talk is the posted identity: {talked:?}"
+    );
+
+    // Tick 11: the box is still held and the board is still closed. With no
+    // close window to hide behind, a re-armed puzzle arm would open the box
+    // again here: the latched step does not.
+    post_scene(&iso, 11, &page, &closed_board_scene());
+    iso.on_game_tick(11);
+    assert!(iso.probe("true").is_ok());
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "a latched box is never opened again"
+    );
+
+    let probed = iso.probe("globalThis.__probe").unwrap();
+    let value: serde_json::Value = serde_json::from_str(probed.as_str().unwrap()).unwrap();
+    iso.join();
+    assert_eq!(value["runs"], 11, "{value:?}");
+    let steps = value["steps"].as_array().expect("steps");
+    assert_eq!(steps.len(), 11, "{value:?}");
+    assert_eq!(steps[0]["ok"], true, "{value:?}");
+    for (index, kind) in [
+        (1, "callback.enabled"),
+        (2, "callback.log"),
+        (3, "callback.setStatus"),
+        (4, "held"),
+        (5, "held"),
+        (6, "wait"),
+        (7, "wait"),
+        (8, "walk"),
+        (9, "npc"),
+        (10, "wait"),
+    ] {
+        assert_eq!(steps[index]["kind"], kind, "{index} {value:?}");
+    }
+    // The wait after the open window carries no verb of its own: the step it
+    // keeps is still the riddle the identify returned.
+    for absent in ["name", "action", "x", "z", "level", "slot"] {
+        assert!(steps[6].get(absent).is_none(), "{absent} {value:?}");
+    }
+    let text = value.to_string();
+    for forbidden in ["clue solved", "abandon", "supplies-needed", "\"done\""] {
+        assert!(!text.contains(forbidden), "{forbidden} {value:?}");
+    }
+}
+
 /// `trail_clue_easy_simple005`: the talk membership whose jm2 spawn is unique —
 /// `hans` at `(3207, 3233, plane 0)`.
 const TALK_ID: i32 = 2681;
