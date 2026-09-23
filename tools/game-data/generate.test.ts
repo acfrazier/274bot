@@ -3,7 +3,8 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { assertPinned, assertTrailPins, extractDropFacts, extractFacts, extractEquipmentNamesFacts, extractFlourSixFacts, extractGatherMethodsFacts, extractGatherPlacementsFacts, extractQuestIdentityFacts, extractTrailFacts, extractHerbFacts, extractMagicFacts, extractAutocastControls, extractDuelControls, extractNurmofEssenceFacts, extractPrayerFacts, extractSpecialControls, extractTeleportSpells, herbKeyFromName, identifiedHerbLevelDefault, joinEquipmentName, loadEquipmentNamesCurated, parseFrozenEquipmentNameArrays, parseFrozenEquipmentSingleQuoted, parseIdentifyHerbPairs, parseTrailEnumAliases, parseTrailObjBlocks, parseInvShopStock, parseJm2LocPlacements, parseMapsquarePath, parseObjSections, parsePack, parseParamDefinitions, parsePrayerInterface, parseQuestEnumEntry, parseRows } from './generate.ts';
+import { assertPinned, assertTalkKeyNpcJoins, assertTalkKeyPins, assertTrailPins, extractDropFacts, extractFacts, extractEquipmentNamesFacts, extractFlourSixFacts, extractGatherMethodsFacts, extractGatherPlacementsFacts, extractQuestIdentityFacts, extractTalkKeyFacts, extractTrailFacts, extractHerbFacts, extractMagicFacts, extractAutocastControls, extractDuelControls, extractNurmofEssenceFacts, extractPrayerFacts, extractSpecialControls, extractTeleportSpells, herbKeyFromName, identifiedHerbLevelDefault, joinEquipmentName, loadEquipmentNamesCurated, parseFrozenEquipmentNameArrays, parseFrozenEquipmentSingleQuoted, parseIdentifyHerbPairs, parseJm2NpcPlacements, parseTalkKeyHandlers, parseTalkKeyKeeperArms, parseTrailEnumAliases, parseTrailObjBlocks, parseInvShopStock, parseJm2LocPlacements, parseMapsquarePath, parseObjSections, parsePack, parseParamDefinitions, parsePrayerInterface, parseQuestEnumEntry, parseRows } from './generate.ts';
+import type { TalkKeyFacts } from './generate.ts';
 
 const repoRoot = path.resolve(import.meta.dirname, '../..');
 
@@ -1627,5 +1628,340 @@ assert.equal(JSON.stringify(pinTrail274).includes('trail_puzzle'), false);
 assert.equal(JSON.stringify(pinTrail274).includes('"npc"'), false);
 assert.equal(JSON.stringify(pinTrail274).includes('regicide'), false);
 assert.equal(JSON.stringify(pinTrail274).includes('legends'), false);
+
+/* ------------------------------------------------------------------ *
+ * talk_key: opnpc1 talk steps, trail_checkmediumdrop keepers, jm2 spawns
+ * ------------------------------------------------------------------ */
+
+// NPC placements are the `==== NPC ====` section only, with exactly one data token
+assert.deepEqual(parseJm2NpcPlacements('==== NPC ====\n0 10 20: 669\n1 20 30: 0\n'), [
+    { plane: 0, lx: 10, lz: 20, npc_id: 669 },
+    { plane: 1, lx: 20, lz: 30, npc_id: 0 },
+]);
+assert.deepEqual(parseJm2NpcPlacements('==== LOC ====\n0 47 62: 2662 10 1\n'), [], 'a LOC row is not an NPC placement');
+assert.deepEqual(parseJm2NpcPlacements('==== OBJ ====\n0 47 62: 2662\n==== NPC ====\n0 1 2: 5\n'), [{ plane: 0, lx: 1, lz: 2, npc_id: 5 }], 'only the NPC section is a placement source');
+assert.deepEqual(parseJm2NpcPlacements('==== NPC ====\n'), []);
+assert.throws(() => parseJm2NpcPlacements('==== NPC ====\n0 10 20: 669 10 1\n'), /extra tokens/, 'a shape and an angle are not NPC row tokens');
+assert.throws(() => parseJm2NpcPlacements('==== NPC ====\n0 10 20: 669 1\n'), /extra tokens/);
+assert.throws(() => parseJm2NpcPlacements('==== NPC ====\n0 10 20:\n'), /missing npc id/);
+assert.throws(() => parseJm2NpcPlacements('==== NPC ====\n4 10 20: 669\n'), /plane out of range/);
+assert.throws(() => parseJm2NpcPlacements('==== NPC ====\n0 64 20: 669\n'), /local coords out of range/);
+assert.throws(() => parseJm2NpcPlacements('==== NPC ====\n0 10 20 669\n'), /malformed row/);
+
+const TALK_KEY_CONFIG = 'scripts/minigames/game_trail/configs';
+const TALK_KEY_MEDIUM = 'scripts/minigames/game_trail/scripts/medium/trail_clue_medium.rs2';
+const TALK_KEY_IDS: Record<string, number> = {
+    trail_clue_easy_simple005: 2681,
+    trail_clue_easy_simple008: 2684,
+    trail_clue_easy_vague012: 3496,
+    trail_clue_hard_riddle012: 2792,
+    trail_clue_medium_anagram001: 2841,
+    trail_clue_medium_riddle001: 2831,
+    trail_clue_medium_riddle001_key: 2832,
+    trail_clue_medium_riddle002: 2833,
+    trail_clue_medium_riddle002_key: 2834,
+    trail_clue_medium_riddle004: 2837,
+    trail_clue_medium_riddle004_key: 2838,
+    trail_clue_medium_riddle005: 2839,
+    trail_clue_medium_riddle005_key: 2840,
+};
+const talkKeyItems = Object.entries(TALK_KEY_IDS).map(([debugname, id]) => ({
+    id,
+    debugname,
+    name: debugname.endsWith('_key') ? 'Key' : 'Clue scroll',
+    cost: 1,
+    stackable: false,
+    members: true,
+    certlink: -1,
+    certtemplate: -1,
+    wearpos: -1,
+    wearpos2: 0,
+    wearpos3: 0,
+}));
+
+function writeTalkKeyFixture(rootDir: string, mutate?: (files: Record<string, string>) => void) {
+    const medium = `[proc,trail_checkmediumdrop]
+if(npc_type = black_heather & inv_total(inv, trail_clue_medium_riddle001) > 0 & ~obj_gettotal(trail_clue_medium_riddle001_key) = 0) {
+    obj_add(npc_coord, trail_clue_medium_riddle001_key, 1, ^lootdrop_duration);
+} else if(npc_type = ardougne_guard & inv_total(inv, trail_clue_medium_riddle002) > 0 & ~obj_gettotal(trail_clue_medium_riddle002_key) = 0) {
+    obj_add(npc_coord, trail_clue_medium_riddle002_key, 1, ^lootdrop_duration);
+} else if(npc_category = chicken & inv_total(inv, trail_clue_medium_riddle004) > 0 & ~obj_gettotal(trail_clue_medium_riddle004_key) = 0) {
+    obj_add(npc_coord, trail_clue_medium_riddle004_key, 1, ^lootdrop_duration);
+} else if(compare(npc_name, "Man") = 0 & inv_total(inv, trail_clue_medium_riddle005) > 0 & ~obj_gettotal(trail_clue_medium_riddle005_key) = 0) {
+    obj_add(npc_coord, trail_clue_medium_riddle005_key, 1, ^lootdrop_duration);
+}
+
+// A loc-search label is not a keeper arm.
+[label,riddle_loc_medium_exp001]
+if(inv_total(inv, trail_clue_medium_riddle001) > 0) {
+    ~mesbox("The chest is locked!|Property of Black Heather.");
+}
+`;
+    const files: Record<string, string> = {
+        'pack/obj.pack': `${Object.entries(TALK_KEY_IDS).map(([alias, id]) => `${id}=${alias}`).join('\n')}\n`,
+        'pack/npc.pack': '0=hans\n32=ardougne_guard\n202=black_heather\n376=captain_tobias\n669=grandtree_hazelmere\n804=tanner\n',
+        [`${TALK_KEY_CONFIG}/trail_easy.enum`]: `[trail_easy_enum]
+val=0,trail_clue_easy_simple005
+val=1,trail_clue_easy_simple008
+val=2,trail_clue_easy_vague012
+`,
+        [`${TALK_KEY_CONFIG}/trail_medium.enum`]: `[trail_medium_enum]
+val=0,trail_clue_medium_anagram001
+val=1,trail_clue_medium_riddle001
+val=2,trail_clue_medium_riddle002
+val=3,trail_clue_medium_riddle004
+val=4,trail_clue_medium_riddle005
+`,
+        [`${TALK_KEY_CONFIG}/trail_hard.enum`]: `[trail_hard_enum]
+val=0,trail_clue_hard_riddle012
+`,
+        [TALK_KEY_MEDIUM]: medium,
+        'scripts/areas/area_gnome/scripts/hazelmere.rs2': `[opnpc1,grandtree_hazelmere]
+if(inv_total(inv, trail_clue_medium_anagram001) > 0) {
+    @trail_hazelmere;
+}
+
+[label,trail_hazelmere]
+if(inv_total(inv, trail_clue_medium_anagram001_challenge) > 0) {
+    ~chatnpc("<p,neutral>Blah, blah?");
+}
+`,
+        'scripts/areas/area_lumbridge/scripts/hans.rs2': `[opnpc1,hans]
+if(inv_total(inv, trail_clue_easy_simple005) > 0) {
+    @trail_hans;
+}
+if(inv_total(inv, trail_clue_hard_riddle012) > 0) {
+    @trail_hans;
+}
+if(inv_total(inv, trail_clue_hard_riddle012_puzzlebox) > 0) {
+    @trail_hans;
+}
+`,
+        'scripts/areas/area_port_sarim/scripts/sailors.rs2': `[opnpc1,_sailor]
+if(map_members = ^true & npc_type = captain_tobias) {
+    if(inv_total(inv, trail_clue_easy_vague012) > 0) {
+        ~chatnpc("<p,happy>Well done, matey! Here you go!");
+        return;
+    }
+}
+@karamja_sailor_dialogue("Karamja", 1_46_49_12_7, ^sail_port_sarim_to_karamja);
+`,
+        'scripts/areas/area_alkharid/scripts/tanner.rs2': `[opnpc1,tanner]
+if(inv_total(inv, trail_clue_easy_simple008) > 0) {
+    @trail_tanner;
+}
+
+// Trade is opnpc3 and is not a talk-to clue anchor.
+[opnpc3,tanner]
+if(inv_total(inv, trail_clue_easy_simple008) > 0) {
+    ~chatnpc("<p,neutral>Greetings.");
+}
+`,
+        'scripts/areas/area_gnome/configs/gnome.npc': `[grandtree_hazelmere]
+name=Hazelmere
+`,
+        'scripts/areas/area_lumbridge/configs/lumbridge.npc': `[hans]
+name=Hans
+`,
+        'scripts/areas/area_port_sarim/configs/port_sarim.npc': `[captain_tobias]
+name=Captain Tobias
+`,
+        'scripts/areas/area_alkharid/configs/alkharid.npc': `[tanner]
+name=Tanner
+[black_heather]
+name=Black Heather
+[ardougne_guard]
+name=Guard
+`,
+        'maps/m41_48.jm2': '==== NPC ====\n1 54 14: 669\n',
+        'maps/m47_50.jm2': '==== NPC ====\n0 20 16: 376\n',
+        'maps/m47_57.jm2': '==== NPC ====\n0 31 52: 202\n',
+        'maps/m50_50.jm2': '==== NPC ====\n0 7 33: 0\n',
+        // 2662 is a LOC row and must stay out; tanner and the guard each spawn twice
+        'maps/m42_55.jm2': '==== LOC ====\n0 47 62: 2662 10 1\n==== NPC ====\n0 10 20: 804\n0 11 20: 804\n0 12 20: 32\n0 13 20: 32\n',
+    };
+    mutate?.(files);
+    for (const [relative, body] of Object.entries(files)) {
+        const absolute = path.join(rootDir, relative);
+        fs.mkdirSync(path.dirname(absolute), { recursive: true });
+        fs.writeFileSync(absolute, body);
+    }
+}
+function talkKeyFixture(mutate?: (files: Record<string, string>) => void) {
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'talk-key-'));
+    writeTalkKeyFixture(rootDir, mutate);
+    execFileSync('git', ['init', '-q'], { cwd: rootDir });
+    execFileSync('git', ['add', '-A'], { cwd: rootDir });
+    return rootDir;
+}
+function talkKeyRow(facts: TalkKeyFacts, alias: string) {
+    const found = facts.talk.find((row) => row.alias === alias);
+    assert.ok(found, `missing talk step ${alias}`);
+    return found;
+}
+function talkKeyKeeper(facts: TalkKeyFacts, alias: string) {
+    const found = facts.keys.find((row) => row.alias === alias);
+    assert.ok(found, `missing key keeper ${alias}`);
+    return found;
+}
+
+const talkKeyExtract = extractTalkKeyFacts(talkKeyFixture(), talkKeyItems);
+const talkKeyFacts = talkKeyExtract.facts;
+
+// opnpc1 only, membership only: one row per step, the puzzlebox and challenge extras dropped
+assert.deepEqual(talkKeyFacts.talk.map((row) => row.alias), [
+    'trail_clue_easy_simple005',
+    'trail_clue_easy_simple008',
+    'trail_clue_easy_vague012',
+    'trail_clue_hard_riddle012',
+    'trail_clue_medium_anagram001',
+]);
+assert.deepEqual(talkKeyFacts.keys.map((row) => row.alias), [
+    'trail_clue_medium_riddle001',
+    'trail_clue_medium_riddle002',
+    'trail_clue_medium_riddle004',
+    'trail_clue_medium_riddle005',
+]);
+assert.equal(talkKeyFacts.talk.some((row) => row.alias.endsWith('_puzzlebox') || row.alias.endsWith('_challenge')), false);
+assert.equal(JSON.stringify(talkKeyFacts).includes('puzzlebox'), false);
+assert.equal(JSON.stringify(talkKeyFacts).includes('_challenge'), false);
+assert.equal(JSON.stringify(talkKeyFacts).includes('_sailor'), false);
+
+// the exemplar: Hazelmere 669 from the jm2 NPC section, not from a frozen table
+assert.deepEqual(talkKeyRow(talkKeyFacts, 'trail_clue_medium_anagram001'), {
+    alias: 'trail_clue_medium_anagram001',
+    id: 2841,
+    npc: { alias: 'grandtree_hazelmere', id: 669, name: 'Hazelmere' },
+    spawn: { x: 2678, z: 3086, plane: 1 },
+});
+// Hans owns two membership clues: two rows, one npc, one spawn
+const hansRows = talkKeyFacts.talk.filter((row) => row.npc.alias === 'hans');
+assert.deepEqual(hansRows, [
+    { alias: 'trail_clue_easy_simple005', id: 2681, npc: { alias: 'hans', id: 0, name: 'Hans' }, spawn: { x: 3207, z: 3233, plane: 0 } },
+    { alias: 'trail_clue_hard_riddle012', id: 2792, npc: { alias: 'hans', id: 0, name: 'Hans' }, spawn: { x: 3207, z: 3233, plane: 0 } },
+]);
+// the `_sailor` header is a trigger: the identity is the inner npc_type
+assert.deepEqual(talkKeyRow(talkKeyFacts, 'trail_clue_easy_vague012'), {
+    alias: 'trail_clue_easy_vague012',
+    id: 3496,
+    npc: { alias: 'captain_tobias', id: 376, name: 'Captain Tobias' },
+    spawn: { x: 3028, z: 3216, plane: 0 },
+});
+// two jm2 hits: the identity row stays, the spawn is omitted, coverage records why
+const tannerRow = talkKeyRow(talkKeyFacts, 'trail_clue_easy_simple008');
+assert.equal('spawn' in tannerRow, false);
+assert.equal(tannerRow.npc.alias, 'tanner');
+assert.deepEqual(talkKeyFacts.coverage, [
+    { class: 'unknown', family: 'keys', alias: 'trail_clue_medium_riddle002', reason: 'non-unique jm2 NPC spawn' },
+    { class: 'unknown', family: 'keys', alias: 'trail_clue_medium_riddle004', reason: 'keeper is a category, not one packed npc id' },
+    { class: 'unknown', family: 'keys', alias: 'trail_clue_medium_riddle005', reason: 'keeper is a name match, not one packed npc id' },
+    { class: 'unknown', family: 'talk', alias: 'trail_clue_easy_simple008', reason: 'non-unique jm2 NPC spawn' },
+]);
+// keeper is a discriminated union: type carries the pack join, category and name never do
+assert.deepEqual(talkKeyKeeper(talkKeyFacts, 'trail_clue_medium_riddle001'), {
+    alias: 'trail_clue_medium_riddle001',
+    id: 2831,
+    key_alias: 'trail_clue_medium_riddle001_key',
+    key_id: 2832,
+    keeper: { kind: 'type', alias: 'black_heather', id: 202, name: 'Black Heather' },
+    spawn: { x: 3039, z: 3700, plane: 0 },
+});
+assert.deepEqual(talkKeyKeeper(talkKeyFacts, 'trail_clue_medium_riddle002'), {
+    alias: 'trail_clue_medium_riddle002',
+    id: 2833,
+    key_alias: 'trail_clue_medium_riddle002_key',
+    key_id: 2834,
+    keeper: { kind: 'type', alias: 'ardougne_guard', id: 32, name: 'Guard' },
+});
+assert.deepEqual(talkKeyKeeper(talkKeyFacts, 'trail_clue_medium_riddle004').keeper, { kind: 'category', category: 'chicken' });
+assert.deepEqual(talkKeyKeeper(talkKeyFacts, 'trail_clue_medium_riddle005').keeper, { kind: 'name', name: 'Man' });
+assert.equal(JSON.stringify(talkKeyFacts).includes('"chicken_id"'), false);
+assert.equal(talkKeyFacts.keys.every((row) => row.keeper.kind !== 'type' || ('id' in row.keeper && 'alias' in row.keeper)), true);
+assert.equal(talkKeyFacts.keys.filter((row) => row.keeper.kind !== 'type').every((row) => !('id' in row.keeper) && !('alias' in row.keeper)), true);
+// every published step is a membership clue, and a key step keeps its own key object
+assert.equal(talkKeyFacts.talk.every((row) => row.id !== row.npc.id), true);
+assert.equal(talkKeyFacts.keys.every((row) => row.id !== row.key_id), true);
+assert.equal(talkKeyFacts.talk.filter((row) => row.npc.alias === 'sailor').length, 0);
+assert.equal(JSON.stringify(talkKeyFacts).includes('2662'), false, 'a LOC row is not an NPC spawn');
+assert.equal(JSON.stringify(talkKeyFacts).includes('3039'), true, 'the black_heather keeper spawn is the NPC section row');
+
+// decode corroboration: the packed id, alias, and .npc name all have to agree with npc.dat
+const talkKeyNpcs = [
+    { id: 0, debugname: 'hans', name: 'Hans' },
+    { id: 32, debugname: 'ardougne_guard', name: 'Guard' },
+    { id: 202, debugname: 'black_heather', name: 'Black Heather' },
+    { id: 376, debugname: 'captain_tobias', name: 'Captain Tobias' },
+    { id: 669, debugname: 'grandtree_hazelmere', name: 'Hazelmere' },
+    { id: 804, debugname: 'tanner', name: 'Tanner' },
+];
+assert.doesNotThrow(() => assertTalkKeyNpcJoins(talkKeyFacts, talkKeyNpcs));
+assert.throws(() => assertTalkKeyNpcJoins(talkKeyFacts, talkKeyNpcs.map((npc) => (npc.debugname === 'grandtree_hazelmere' ? { ...npc, id: 670 } : npc))), /disagrees with decoded npc id/);
+assert.throws(() => assertTalkKeyNpcJoins(talkKeyFacts, talkKeyNpcs.map((npc) => (npc.debugname === 'hans' ? { ...npc, name: 'Hanz' } : npc))), /disagrees with decoded npc name/);
+assert.throws(() => assertTalkKeyNpcJoins(talkKeyFacts, talkKeyNpcs.filter((npc) => npc.debugname !== 'black_heather')), /npc\.dat lacks black_heather/);
+
+// provenance: the scanned trees and the pinned inputs are the family's invalidation identity
+assert.equal(talkKeyExtract.inputs.maps_directory, 'maps');
+assert.equal(talkKeyExtract.inputs.scripts.files, 5);
+assert.equal(talkKeyExtract.inputs.npc_configs.files, 4);
+assert.equal(talkKeyExtract.inputs.npc_pack.path, 'pack/npc.pack');
+assert.equal(talkKeyExtract.inputs.trail_clue_medium.path, TALK_KEY_MEDIUM);
+assert.notEqual(extractTalkKeyFacts(talkKeyFixture((files) => { files['scripts/areas/area_lumbridge/scripts/hans.rs2'] += '\n[label,hans_extra]\n'; }), talkKeyItems).inputs.scripts.sha256, talkKeyExtract.inputs.scripts.sha256, 'the scripts digest must move with a scanned script');
+assert.notEqual(extractTalkKeyFacts(talkKeyFixture((files) => { files['scripts/areas/area_lumbridge/configs/lumbridge.npc'] += '[nobody]\nname=Nobody\n'; }), talkKeyItems).inputs.npc_configs.sha256, talkKeyExtract.inputs.npc_configs.sha256, 'the npc config digest must move with a scanned config');
+assert.notEqual(extractTalkKeyFacts(talkKeyFixture((files) => { files['pack/npc.pack'] += '9999=nobody\n'; }), talkKeyItems).inputs.npc_pack.sha256, talkKeyExtract.inputs.npc_pack.sha256, 'the npc pack digest must move with the pack');
+assert.notEqual(extractTalkKeyFacts(talkKeyFixture((files) => { files['maps/m41_48.jm2'] += '0 1 1: 5\n'; }), talkKeyItems).inputs.maps.sha256, talkKeyExtract.inputs.maps.sha256, 'the maps digest must move with the maps tree');
+assert.equal(talkKeyExtract.inputs.maps.files, 5);
+
+// fail closed: missing joins, missing sections, missing names, malformed arms, truncated trees
+assert.throws(() => extractTalkKeyFacts(talkKeyFixture((files) => { delete files['pack/npc.pack']; }), talkKeyItems), /pack\/npc\.pack/);
+assert.throws(() => extractTalkKeyFacts(talkKeyFixture((files) => { files['pack/npc.pack'] = files['pack/npc.pack'].replace('669=grandtree_hazelmere\n', ''); }), talkKeyItems), /pack\/npc\.pack lacks grandtree_hazelmere/);
+assert.throws(() => extractTalkKeyFacts(talkKeyFixture((files) => { files['scripts/areas/area_gnome/configs/gnome.npc'] = '[somebody_else]\nname=Nobody\n'; }), talkKeyItems), /missing \[grandtree_hazelmere\]/);
+assert.throws(() => extractTalkKeyFacts(talkKeyFixture((files) => { files['scripts/areas/area_gnome/configs/gnome.npc'] = '[grandtree_hazelmere]\nop1=Talk-to\n'; }), talkKeyItems), /has no name/);
+assert.throws(() => extractTalkKeyFacts(talkKeyFixture((files) => { files['pack/obj.pack'] = files['pack/obj.pack'].replace('2832=trail_clue_medium_riddle001_key\n', ''); }), talkKeyItems), /pack\/obj\.pack lacks trail_clue_medium_riddle001_key/);
+assert.throws(() => extractTalkKeyFacts(talkKeyFixture((files) => { files['maps/m41_48.jm2'] = '==== LOC ====\n0 1 1: 2662 10 1\n'; }), talkKeyItems), /npc 669 has no jm2 NPC spawn/, 'a selected identity with no NPC row must fail');
+assert.throws(() => extractTalkKeyFacts(talkKeyFixture((files) => { files['maps/m50_50.jm2'] = '==== NPC ====\n0 7 33: 0 10\n'; }), talkKeyItems), /extra tokens/);
+assert.throws(() => extractTalkKeyFacts(talkKeyFixture((files) => { files['scripts/areas/area_port_sarim/scripts/sailors.rs2'] = '[opnpc1,_sailor]\nif(inv_total(inv, trail_clue_easy_vague012) > 0) {\n    return;\n}\n'; }), talkKeyItems), /exactly one inner npc_type/);
+assert.throws(() => extractTalkKeyFacts(talkKeyFixture((files) => { files[TALK_KEY_MEDIUM] = '[label,riddle_loc_medium_exp001]\n~mesbox("The chest is locked.");\n'; }), talkKeyItems), /missing \[proc,trail_checkmediumdrop\]/);
+assert.throws(() => extractTalkKeyFacts(talkKeyFixture((files) => { files[TALK_KEY_MEDIUM] = files[TALK_KEY_MEDIUM].replace('} else if(npc_category = chicken', '} else if(npc_category2 = chicken'); }), talkKeyItems), /malformed trail_checkmediumdrop arm/);
+assert.throws(() => extractTalkKeyFacts(talkKeyFixture((files) => { files[TALK_KEY_MEDIUM] = files[TALK_KEY_MEDIUM].replace('& ~obj_gettotal(trail_clue_medium_riddle002_key) = 0', ''); }), talkKeyItems), /must guard the key it adds/);
+assert.throws(() => extractTalkKeyFacts(talkKeyFixture((files) => { files[TALK_KEY_MEDIUM] = files[TALK_KEY_MEDIUM].replace('inv_total(inv, trail_clue_medium_riddle004) > 0', 'inv_total(inv, trail_clue_medium_riddle099) > 0'); }), talkKeyItems), /keeper clue trail_clue_medium_riddle099 is not a membership alias/);
+const truncatedTalkKeyMaps = talkKeyFixture();
+fs.rmSync(path.join(truncatedTalkKeyMaps, 'maps/m50_50.jm2'));
+assert.throws(() => extractTalkKeyFacts(truncatedTalkKeyMaps, talkKeyItems), /maps\/m50_50\.jm2: tracked map missing/);
+const truncatedTalkKeyScripts = talkKeyFixture();
+fs.rmSync(path.join(truncatedTalkKeyScripts, 'scripts/areas/area_lumbridge/scripts/hans.rs2'));
+assert.throws(() => extractTalkKeyFacts(truncatedTalkKeyScripts, talkKeyItems), /hans\.rs2: tracked \.rs2 file missing from the content tree/);
+const truncatedTalkKeyConfigs = talkKeyFixture();
+fs.rmSync(path.join(truncatedTalkKeyConfigs, 'scripts/areas/area_lumbridge/configs/lumbridge.npc'));
+assert.throws(() => extractTalkKeyFacts(truncatedTalkKeyConfigs, talkKeyItems), /lumbridge\.npc: tracked \.npc file missing from the content tree/);
+
+// both pins: 289 is the selected source, 274 corroborates identity and spawn
+const pinTalkKey274Root = '/Users/acfrazier/experiments/Server/content';
+const pinTalkKey289Root = '/Users/acfrazier/experiments/lostcity-289/content';
+const pinTalkKey274 = extractTalkKeyFacts(pinTalkKey274Root, pinDecodedItems(274));
+const pinTalkKey289 = extractTalkKeyFacts(pinTalkKey289Root, pinDecodedItems(289));
+assert.deepEqual(pinTalkKey274.facts, pinTalkKey289.facts, '274 must corroborate the selected 289 identities and spawns');
+assert.doesNotThrow(() => assertTalkKeyPins(pinTalkKey274.facts, 274));
+assert.doesNotThrow(() => assertTalkKeyPins(pinTalkKey289.facts, 289));
+assert.equal(pinTalkKey289.facts.talk.length, 47);
+assert.equal(pinTalkKey289.facts.talk.filter((row) => row.spawn !== undefined).length, 42);
+assert.equal(pinTalkKey289.facts.keys.length, 7);
+assert.equal(pinTalkKey289.facts.keys.filter((row) => row.spawn !== undefined).length, 2);
+assert.equal(pinTalkKey289.facts.coverage.length, 10);
+assert.equal(pinTalkKey289.inputs.trail_clue_medium.sha256, 'c2d685a9906ec9396ce191b024cee79dd7d8b47b692b309806ea7c0c12dbc9f6');
+for (const row of pinTalkKey289.facts.coverage) {
+    const published = row.family === 'talk' ? pinTalkKey289.facts.talk.some((entry) => entry.alias === row.alias) : pinTalkKey289.facts.keys.some((entry) => entry.alias === row.alias);
+    assert.equal(published, true, `coverage must belong to a published ${row.family} step`);
+}
+assert.equal(pinTalkKey289.facts.coverage.some((row) => row.alias.endsWith('_challenge') || row.alias.endsWith('_puzzlebox')), false);
+assert.equal(pinTalkKey289.facts.talk.some((row) => row.alias.endsWith('_puzzlebox') || row.alias.endsWith('_challenge')), false);
+assert.equal(pinTalkKey289.facts.keys.filter((row) => row.keeper.kind === 'category').map((row) => row.keeper.category).sort().join(','), 'chicken,pirate');
+assert.equal(pinTalkKey289.facts.keys.filter((row) => row.keeper.kind === 'name').map((row) => row.keeper.name).join(','), 'Man');
+assert.equal(talkKeyRow(pinTalkKey289.facts, 'trail_clue_medium_anagram001').npc.id, 669);
+assert.equal(talkKeyRow(pinTalkKey289.facts, 'trail_clue_easy_vague012').npc.alias, 'captain_tobias');
+assert.equal(pinTalkKey289.facts.talk.filter((row) => row.npc.id === 0).length, 2);
+const pinTalkKeyBlob = JSON.stringify(pinTalkKey289.facts);
+for (const banned of ['TALK_ANCHORS', 'KILL_ANCHORS', 'RIDDLE_KEY_COORDS', 'HARD_SPECIAL_COORDS']) {
+    assert.equal(pinTalkKeyBlob.includes(banned), false, `talk_key must never publish ${banned}`);
+}
 
 console.log('generate fixture passed');

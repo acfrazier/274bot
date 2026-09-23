@@ -444,6 +444,145 @@ fn generated_nurmof_and_flour_facts_join_on_both_revisions() {
 }
 
 #[test]
+fn generated_talk_key_facts_pin_selected_steps_and_spawns() {
+    for revision in [ClientRevision::R274, ClientRevision::R289] {
+        let data = for_revision(revision).expect("selected data");
+        let facts = data.talk_key().expect("talk_key facts");
+        let talk = &facts.talk;
+        assert_eq!(talk.len(), 47, "revision {}", revision.as_i32());
+        assert_eq!(talk.iter().filter(|row| row.spawn.is_some()).count(), 42);
+        assert_eq!(facts.keys.len(), 7);
+        assert_eq!(
+            facts.keys.iter().filter(|row| row.spawn.is_some()).count(),
+            2
+        );
+        assert_eq!(facts.coverage.len(), 10);
+
+        // The exemplar: the talk step's NPC identity and its one jm2 spawn.
+        let hazelmere = talk
+            .iter()
+            .find(|row| row.alias == "trail_clue_medium_anagram001")
+            .expect("anagram001 step");
+        assert_eq!(hazelmere.id, 2841);
+        assert_eq!(hazelmere.npc.alias, "grandtree_hazelmere");
+        assert_eq!(hazelmere.npc.id, 669);
+        assert_eq!(hazelmere.npc.name, "Hazelmere");
+        let spawn = hazelmere.spawn.as_ref().expect("one hazelmere spawn");
+        assert_eq!((spawn.x, spawn.z, spawn.plane), (2678, 3086, 1));
+
+        // Hans owns two membership clues: two rows, one npc, one spawn.
+        let hans: Vec<_> = talk.iter().filter(|row| row.npc.alias == "hans").collect();
+        assert_eq!(hans.len(), 2);
+        assert!(hans
+            .iter()
+            .all(|row| row.npc.id == 0 && row.npc.name == "Hans"));
+        for row in &hans {
+            let spawn = row.spawn.as_ref().expect("one hans spawn");
+            assert_eq!((spawn.x, spawn.z, spawn.plane), (3207, 3233, 0));
+        }
+
+        // A `_sailor` category trigger publishes the inner NPC, not the category.
+        let sailor = talk
+            .iter()
+            .find(|row| row.alias == "trail_clue_easy_vague012")
+            .expect("vague012 step");
+        assert_eq!(sailor.npc.alias, "captain_tobias");
+        assert_eq!(sailor.npc.id, 376);
+        assert!(sailor.spawn.is_some());
+        assert!(talk.iter().all(|row| row.npc.alias != "sailor"));
+
+        // A multi-spawn identity keeps its row and omits the tile instead of picking one.
+        for alias in [
+            "trail_clue_easy_simple008",
+            "trail_clue_hard_riddle019",
+            "trail_clue_hard_riddle021",
+            "trail_clue_hard_riddle026",
+            "trail_clue_medium_anagram003",
+        ] {
+            let row = talk
+                .iter()
+                .find(|entry| entry.alias == alias)
+                .expect("multi-spawn step");
+            assert!(row.spawn.is_none(), "{alias} must omit the spawn");
+        }
+
+        // The keeper union: type joins one packed id, category and name never invent one.
+        let black_heather = facts
+            .keys
+            .iter()
+            .find(|row| row.alias == "trail_clue_medium_riddle001")
+            .expect("riddle001 keeper");
+        assert_eq!(black_heather.keeper.kind, "type");
+        assert_eq!(black_heather.keeper.alias.as_deref(), Some("black_heather"));
+        assert_eq!(black_heather.keeper.id, Some(202));
+        assert_eq!(black_heather.keeper.name.as_deref(), Some("Black Heather"));
+        assert_eq!(black_heather.key_alias, "trail_clue_medium_riddle001_key");
+        assert_eq!(black_heather.key_id, 2832);
+        let keeper_spawn = black_heather.spawn.as_ref().expect("one keeper spawn");
+        assert_eq!(
+            (keeper_spawn.x, keeper_spawn.z, keeper_spawn.plane),
+            (3039, 3700, 0)
+        );
+        let penda = facts
+            .keys
+            .iter()
+            .find(|row| row.alias == "trail_clue_medium_riddle008")
+            .expect("riddle008 keeper");
+        assert_eq!(penda.keeper.alias.as_deref(), Some("death_man_indoors2"));
+        assert_eq!(penda.keeper.id, Some(1087));
+        let penda_spawn = penda.spawn.as_ref().expect("one penda spawn");
+        assert_eq!(
+            (penda_spawn.x, penda_spawn.z, penda_spawn.plane),
+            (2910, 3539, 0)
+        );
+        let chicken = facts
+            .keys
+            .iter()
+            .find(|row| row.alias == "trail_clue_medium_riddle004")
+            .expect("riddle004 keeper");
+        assert_eq!(chicken.keeper.kind, "category");
+        assert_eq!(chicken.keeper.category.as_deref(), Some("chicken"));
+        assert_eq!(chicken.keeper.alias, None);
+        assert_eq!(chicken.keeper.id, None);
+        assert!(chicken.spawn.is_none());
+        let man = facts
+            .keys
+            .iter()
+            .find(|row| row.alias == "trail_clue_medium_riddle005")
+            .expect("riddle005 keeper");
+        assert_eq!(man.keeper.kind, "name");
+        assert_eq!(man.keeper.name.as_deref(), Some("Man"));
+        assert_eq!(man.keeper.alias, None);
+        assert_eq!(man.keeper.id, None);
+        assert_eq!(man.keeper.category, None);
+
+        // Coverage is the steps that lack a unique spawn, never the unanchored membership clues.
+        for record in &facts.coverage {
+            assert_eq!(record.class, "unknown");
+            assert!(!record.reason.is_empty());
+            let published = match record.family.as_str() {
+                "talk" => talk.iter().any(|row| row.alias == record.alias),
+                "keys" => facts.keys.iter().any(|row| row.alias == record.alias),
+                other => panic!("unexpected coverage family {other}"),
+            };
+            assert!(published, "coverage {} must belong to a step", record.alias);
+        }
+        assert!(facts
+            .coverage
+            .iter()
+            .all(|record| !record.alias.ends_with("_challenge")
+                && !record.alias.ends_with("_puzzlebox")));
+        assert!(talk
+            .iter()
+            .all(|row| !row.alias.ends_with("_puzzlebox") && !row.alias.ends_with("_challenge")));
+        assert!(facts
+            .keys
+            .iter()
+            .all(|row| !row.alias.ends_with("_puzzlebox") && !row.alias.ends_with("_challenge")));
+    }
+}
+
+#[test]
 fn generated_equipment_name_facts_join_curated_families_on_both_revisions() {
     for revision in [ClientRevision::R274, ClientRevision::R289] {
         let data = for_revision(revision).expect("selected data");

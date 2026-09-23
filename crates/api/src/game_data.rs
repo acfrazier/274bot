@@ -745,6 +745,100 @@ pub struct TrailFacts {
     pub challenge_answers: Vec<TrailChallengeAnswer>,
 }
 
+/// One jm2 `==== NPC ====` spawn in world coordinates. `plane` is the scene
+/// plane, never the `level` field of a coordinate triple.
+#[derive(Debug, Deserialize, Clone)]
+pub struct TalkKeySpawn {
+    pub x: i32,
+    pub z: i32,
+    pub plane: i32,
+}
+
+/// The named NPC one talk step (or one type keeper) speaks to.
+#[derive(Debug, Deserialize, Clone)]
+pub struct TalkKeyNpcRef {
+    pub alias: String,
+    pub id: i32,
+    pub name: String,
+}
+
+/// One keeper matcher, discriminated on `kind`. `type` is one packed npc id and
+/// carries the `.npc` display name; `category` and `name` match many npcs and
+/// never carry an alias or an id. `decode` refuses any other combination.
+#[derive(Debug, Deserialize, Clone)]
+pub struct TalkKeyKeeper {
+    pub kind: String,
+    #[serde(default)]
+    pub alias: Option<String>,
+    #[serde(default)]
+    pub id: Option<i32>,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub category: Option<String>,
+}
+
+/// One opnpc1 talk step: the membership clue that anchors it and the NPC it names.
+/// `spawn` is omitted when the jm2 spawn is not unique; a present-but-null spawn
+/// is a decode error, not an absent one.
+#[derive(Debug, Deserialize, Clone)]
+pub struct TalkKeyTalkRow {
+    pub alias: String,
+    pub id: i32,
+    pub npc: TalkKeyNpcRef,
+    #[serde(default, deserialize_with = "deserialize_present_spawn")]
+    pub spawn: Option<TalkKeySpawn>,
+}
+
+/// One key-keeper step: the membership clue, its key object, and the matcher.
+#[derive(Debug, Deserialize, Clone)]
+pub struct TalkKeyKeyRow {
+    pub alias: String,
+    pub id: i32,
+    pub key_alias: String,
+    pub key_id: i32,
+    pub keeper: TalkKeyKeeper,
+    #[serde(default, deserialize_with = "deserialize_present_spawn")]
+    pub spawn: Option<TalkKeySpawn>,
+}
+
+/// Why one step publishes no spawn. A coverage record is a sibling, not a row.
+#[derive(Debug, Deserialize, Clone)]
+pub struct TalkKeyCoverageRecord {
+    pub class: String,
+    pub family: String,
+    pub alias: String,
+    pub reason: String,
+}
+
+/// Selected talk steps and key keepers. Absence is `None`, not an empty list.
+/// `talk`, `keys`, and `coverage` have no serde default: a present family that
+/// omits one is a decode error, and so is an empty list. A step whose spawn is
+/// not unique keeps its row and records coverage instead of dropping the row.
+#[derive(Debug, Deserialize, Clone)]
+pub struct TalkKeyFacts {
+    pub talk: Vec<TalkKeyTalkRow>,
+    pub keys: Vec<TalkKeyKeyRow>,
+    pub coverage: Vec<TalkKeyCoverageRecord>,
+}
+
+/// A row either publishes a spawn or omits the key. `null` is neither, so it is
+/// refused instead of silently decoding as an absent spawn.
+fn deserialize_present_spawn<'de, D>(deserializer: D) -> Result<Option<TalkKeySpawn>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    if value.is_null() {
+        return Err(serde::de::Error::custom(
+            "talk_key spawn must be omitted, not null",
+        ));
+    }
+    TalkKeySpawn::deserialize(value)
+        .map(Some)
+        .map_err(serde::de::Error::custom)
+}
+
 /// Generated immutable facts for one client/cache revision.
 #[derive(Debug, Deserialize)]
 pub struct SelectedGameData {
@@ -788,6 +882,8 @@ pub struct SelectedGameData {
     quest_identity: Option<QuestIdentityFacts>,
     #[serde(default)]
     trails: Option<TrailFacts>,
+    #[serde(default)]
+    talk_key: Option<TalkKeyFacts>,
 }
 
 impl SelectedGameData {
@@ -866,6 +962,55 @@ impl SelectedGameData {
             }
             if facts.rows.iter().filter(|row| row.access.is_some()).count() > 1 {
                 return Err("trails access must stay on one bounded row".to_string());
+            }
+        }
+        if let Some(facts) = &data.talk_key {
+            if facts.talk.is_empty() {
+                return Err("talk_key present with no talk steps".to_string());
+            }
+            if facts.keys.is_empty() {
+                return Err("talk_key present with no key keepers".to_string());
+            }
+            if facts.coverage.is_empty() {
+                return Err("talk_key present with no coverage".to_string());
+            }
+            for row in &facts.keys {
+                let keeper = &row.keeper;
+                match keeper.kind.as_str() {
+                    "type" => {
+                        if keeper.alias.is_none()
+                            || keeper.id.is_none()
+                            || keeper.category.is_some()
+                        {
+                            return Err(
+                                "talk_key type keeper must join one packed npc id".to_string()
+                            );
+                        }
+                    }
+                    "category" => {
+                        if keeper.category.is_none()
+                            || keeper.alias.is_some()
+                            || keeper.id.is_some()
+                            || keeper.name.is_some()
+                        {
+                            return Err(
+                                "talk_key category keeper must be the bare category".to_string()
+                            );
+                        }
+                    }
+                    "name" => {
+                        if keeper.name.is_none()
+                            || keeper.alias.is_some()
+                            || keeper.id.is_some()
+                            || keeper.category.is_some()
+                        {
+                            return Err("talk_key name keeper must be the bare name".to_string());
+                        }
+                    }
+                    other => {
+                        return Err(format!("talk_key keeper kind {other} is not a keeper"));
+                    }
+                }
             }
         }
         if data.revision != expected_revision.as_i32() {
@@ -1049,6 +1194,11 @@ impl SelectedGameData {
     /// Trail inventory and challenge answers. `None` is family absence, not an empty extract.
     pub fn trails(&self) -> Option<&TrailFacts> {
         self.trails.as_ref()
+    }
+
+    /// Talk steps and key keepers. `None` is family absence, not an empty extract.
+    pub fn talk_key(&self) -> Option<&TalkKeyFacts> {
+        self.talk_key.as_ref()
     }
 
     /// Resolved equipment family row by frozen display name, when present.
@@ -1740,5 +1890,194 @@ mod tests {
         assert_eq!(facts.rows[2].access.as_deref(), Some("constrained"));
         assert_eq!(facts.challenge_answers[0].id, 2842);
         assert_eq!(facts.challenge_answers[0].answer, "6859");
+    }
+
+    const TALK_KEY_TALK_STEP: &str = r#"{"alias": "trail_clue_medium_anagram001", "id": 2841, "npc": {"alias": "grandtree_hazelmere", "id": 669, "name": "Hazelmere"}, "spawn": {"x": 2678, "z": 3086, "plane": 1}}"#;
+    const TALK_KEY_TYPE_KEEPER: &str = r#"{"alias": "trail_clue_medium_riddle001", "id": 2831, "key_alias": "trail_clue_medium_riddle001_key", "key_id": 2832, "keeper": {"kind": "type", "alias": "black_heather", "id": 202, "name": "Black Heather"}, "spawn": {"x": 3039, "z": 3700, "plane": 0}}"#;
+    const TALK_KEY_COVERAGE_ROW: &str = r#"[{"class": "unknown", "family": "keys", "alias": "trail_clue_medium_riddle004", "reason": "keeper is a category, not one packed npc id"}]"#;
+
+    fn talk_key_tail(talk: &str, keys: &str, coverage: Option<&str>) -> String {
+        let coverage = coverage
+            .map(|rows| format!(r#", "coverage": {rows}"#))
+            .unwrap_or_default();
+        format!(r#", "talk_key": {{"talk": {talk}, "keys": {keys}{coverage}}}"#)
+    }
+
+    #[test]
+    fn missing_talk_key_is_absent_not_an_empty_list() {
+        let data = SelectedGameData::decode(minimal_json("").as_bytes(), ClientRevision::R274)
+            .expect("schema 4 without the field still decodes");
+        assert!(data.talk_key().is_none());
+    }
+
+    #[test]
+    fn bare_talk_key_vec_does_not_decode() {
+        let error = SelectedGameData::decode(
+            minimal_json(r#", "talk_key": []"#).as_bytes(),
+            ClientRevision::R274,
+        )
+        .expect_err("a bare vec must not decode as an empty family");
+        assert!(
+            error.contains("talk_key") || error.contains("decode"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn talk_key_without_talk_steps_does_not_decode() {
+        let tail = talk_key_tail(
+            "[]",
+            &format!("[{TALK_KEY_TYPE_KEEPER}]"),
+            Some(TALK_KEY_COVERAGE_ROW),
+        );
+        let error = SelectedGameData::decode(minimal_json(&tail).as_bytes(), ClientRevision::R274)
+            .expect_err("a present family with no talk steps is not success");
+        assert!(error.contains("no talk steps"), "unexpected error: {error}");
+    }
+
+    #[test]
+    fn talk_key_without_key_keepers_does_not_decode() {
+        let tail = talk_key_tail(
+            &format!("[{TALK_KEY_TALK_STEP}]"),
+            "[]",
+            Some(TALK_KEY_COVERAGE_ROW),
+        );
+        let error = SelectedGameData::decode(minimal_json(&tail).as_bytes(), ClientRevision::R274)
+            .expect_err("a present family with no key keepers is not success");
+        assert!(
+            error.contains("no key keepers"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn talk_key_without_coverage_does_not_decode() {
+        let tail = talk_key_tail(
+            &format!("[{TALK_KEY_TALK_STEP}]"),
+            &format!("[{TALK_KEY_TYPE_KEEPER}]"),
+            None,
+        );
+        let error = SelectedGameData::decode(minimal_json(&tail).as_bytes(), ClientRevision::R274)
+            .expect_err("a present family must record what it does not publish");
+        assert!(
+            error.contains("coverage") || error.contains("decode"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn empty_talk_key_coverage_does_not_decode() {
+        let tail = talk_key_tail(
+            &format!("[{TALK_KEY_TALK_STEP}]"),
+            &format!("[{TALK_KEY_TYPE_KEEPER}]"),
+            Some("[]"),
+        );
+        let error = SelectedGameData::decode(minimal_json(&tail).as_bytes(), ClientRevision::R274)
+            .expect_err("an empty coverage list must not decode as an unknown");
+        assert!(error.contains("no coverage"), "unexpected error: {error}");
+    }
+
+    #[test]
+    fn null_talk_key_spawn_does_not_decode() {
+        let step = TALK_KEY_TALK_STEP.replace(
+            r#", "spawn": {"x": 2678, "z": 3086, "plane": 1}"#,
+            r#", "spawn": null"#,
+        );
+        let tail = talk_key_tail(
+            &format!("[{step}]"),
+            &format!("[{TALK_KEY_TYPE_KEEPER}]"),
+            Some(TALK_KEY_COVERAGE_ROW),
+        );
+        let error = SelectedGameData::decode(minimal_json(&tail).as_bytes(), ClientRevision::R274)
+            .expect_err("a null spawn is neither a tile nor an omission");
+        assert!(
+            error.contains("must be omitted, not null"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn omitted_talk_key_spawn_decodes_as_unknown() {
+        let step =
+            TALK_KEY_TALK_STEP.replace(r#", "spawn": {"x": 2678, "z": 3086, "plane": 1}"#, "");
+        let tail = talk_key_tail(
+            &format!("[{step}]"),
+            &format!("[{TALK_KEY_TYPE_KEEPER}]"),
+            Some(TALK_KEY_COVERAGE_ROW),
+        );
+        let data = SelectedGameData::decode(minimal_json(&tail).as_bytes(), ClientRevision::R274)
+            .expect("a step without a unique spawn keeps its row");
+        let facts = data.talk_key().expect("present family");
+        assert_eq!(facts.talk.len(), 1);
+        assert_eq!(facts.talk[0].npc.id, 669);
+        assert!(facts.talk[0].spawn.is_none());
+        assert_eq!(
+            facts.keys[0].spawn.as_ref().map(|spawn| spawn.plane),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn talk_key_keeper_union_is_exact() {
+        for (keeper, expected) in [
+            (
+                r#"{"kind": "category", "category": "chicken", "id": 3379}"#,
+                "bare category",
+            ),
+            (
+                r#"{"kind": "name", "name": "Man", "alias": "man"}"#,
+                "bare name",
+            ),
+            (
+                r#"{"kind": "type", "alias": "black_heather", "name": "Black Heather"}"#,
+                "packed npc id",
+            ),
+            (
+                r#"{"kind": "type", "alias": "black_heather", "id": 202, "category": "chicken"}"#,
+                "packed npc id",
+            ),
+            (r#"{"kind": "coordinate", "x": 1}"#, "not a keeper"),
+        ] {
+            let key = format!(
+                r#"{{"alias": "trail_clue_medium_riddle004", "id": 2837, "key_alias": "trail_clue_medium_riddle004_key", "key_id": 2838, "keeper": {keeper}}}"#
+            );
+            let tail = talk_key_tail(
+                &format!("[{TALK_KEY_TALK_STEP}]"),
+                &format!("[{key}]"),
+                Some(TALK_KEY_COVERAGE_ROW),
+            );
+            let error =
+                SelectedGameData::decode(minimal_json(&tail).as_bytes(), ClientRevision::R274)
+                    .expect_err("a keeper must be one exact union member");
+            assert!(
+                error.contains(expected),
+                "keeper {keeper}: unexpected error: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn talk_key_with_type_keeper_decodes_with_spawn() {
+        let tail = talk_key_tail(
+            &format!("[{TALK_KEY_TALK_STEP}]"),
+            &format!("[{TALK_KEY_TYPE_KEEPER}]"),
+            Some(TALK_KEY_COVERAGE_ROW),
+        );
+        let data = SelectedGameData::decode(minimal_json(&tail).as_bytes(), ClientRevision::R274)
+            .expect("a type keeper and a unique spawn decode");
+        let facts = data.talk_key().expect("present family");
+        assert_eq!(
+            facts.talk[0]
+                .spawn
+                .as_ref()
+                .map(|spawn| (spawn.x, spawn.z, spawn.plane)),
+            Some((2678, 3086, 1))
+        );
+        assert_eq!(facts.keys[0].keeper.kind, "type");
+        assert_eq!(facts.keys[0].keeper.alias.as_deref(), Some("black_heather"));
+        assert_eq!(facts.keys[0].keeper.id, Some(202));
+        assert_eq!(facts.keys[0].keeper.name.as_deref(), Some("Black Heather"));
+        assert_eq!(facts.keys[0].key_alias, "trail_clue_medium_riddle001_key");
+        assert_eq!(facts.coverage[0].family, "keys");
     }
 }

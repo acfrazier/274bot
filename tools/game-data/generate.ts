@@ -2065,6 +2065,409 @@ export function assertTrailPins(trails: TrailFacts, revision: number) {
     }
 }
 
+/* ------------------------------------------------------------------------- *
+ * talk_key: the selected talk steps and key keepers
+ *
+ * A sibling family of `trails`, never a field on a membership row. Talk steps
+ * are the membership clues an `opnpc1` handler checks; key keepers are the
+ * `trail_checkmediumdrop` arms. Spawns are the static `==== NPC ====` jm2 rows:
+ * one hit publishes a tile, no hit throws for a packed identity, two or more
+ * omit the spawn and record honest coverage. Unique spawn and 0-hit throws are
+ * the only two outcomes; first-in-file is never taken.
+ * ------------------------------------------------------------------------- */
+
+const TALK_KEY_SCRIPTS_DIRECTORY = 'scripts';
+const TALK_KEY_NPC_PACK_RELATIVE = 'pack/npc.pack';
+const TALK_KEY_MEDIUM_RELATIVE = 'scripts/minigames/game_trail/scripts/medium/trail_clue_medium.rs2';
+const TALK_KEY_RS2_SUFFIX = '.rs2';
+const TALK_KEY_NPC_SUFFIX = '.npc';
+
+/** One jm2 `==== NPC ====` spawn in world coordinates. Plane, never scene `level`. */
+export type TalkKeySpawn = { x: number; z: number; plane: number };
+
+/**
+ * Keeper matcher, discriminated on `kind`. `type` is one packed npc id and carries
+ * the `.npc` display name; `category` and `name` match many npcs and never carry
+ * an alias or an id.
+ */
+export type TalkKeyKeeper =
+    | { kind: 'type'; alias: string; id: number; name: string }
+    | { kind: 'category'; category: string }
+    | { kind: 'name'; name: string };
+
+/** One opnpc1 talk step: the membership clue that anchors it and the NPC it names. */
+export type TalkKeyTalkRow = { alias: string; id: number; npc: { alias: string; id: number; name: string }; spawn?: TalkKeySpawn };
+
+/** One key-keeper step: the membership clue, its key object, and the keeper matcher. */
+export type TalkKeyKeyRow = { alias: string; id: number; key_alias: string; key_id: number; keeper: TalkKeyKeeper; spawn?: TalkKeySpawn };
+
+/** Why one step publishes no spawn. A coverage record is a sibling, not a row. */
+export type TalkKeyCoverageRow = { class: string; family: string; alias: string; reason: string };
+
+/** Talk steps and key keepers. A step without a unique spawn keeps its row and omits `spawn`. */
+export type TalkKeyFacts = { talk: TalkKeyTalkRow[]; keys: TalkKeyKeyRow[]; coverage: TalkKeyCoverageRow[] };
+
+/**
+ * Provenance identity for this family: every scanned `scripts` rs2 file as one
+ * digest, every scanned npc config as one digest, the maps inventory the spawns
+ * come from, `pack/npc.pack`, and the pinned medium clue proc.
+ */
+export type TalkKeyInputs = {
+    maps_directory: string;
+    maps: { files: number; bytes: number; sha256: string };
+    npc_pack: { path: string; bytes: number; sha256: string };
+    scripts: { files: number; bytes: number; sha256: string };
+    npc_configs: { files: number; bytes: number; sha256: string };
+    trail_clue_medium: { path: string; bytes: number; sha256: string };
+};
+
+export type TalkKeyExtract = { facts: TalkKeyFacts; inputs: TalkKeyInputs };
+
+/** One keeper matcher as written in the proc, before the pack and `.npc` joins. */
+type TalkKeyKeeperMatch = { kind: 'type'; alias: string } | { kind: 'category'; category: string } | { kind: 'name'; name: string };
+
+/**
+ * NPC placements only — the `==== NPC ====` section of one jm2, mirroring the LOC
+ * parser's fail-closed gating on a different section. Rows are `plane lx lz: npc_id`
+ * with exactly one data token: `==== LOC ====` and `==== OBJ ====` are not placements,
+ * and a shape, angle, or any other extra token throws.
+ */
+export function parseJm2NpcPlacements(text: string) {
+    const placements: { plane: number; lx: number; lz: number; npc_id: number }[] = [];
+    let inNpc = false;
+    for (const raw of text.split(/\r?\n/)) {
+        const line = raw.trim();
+        if (!line) continue;
+        const section = jm2SectionName(line);
+        if (section !== null) {
+            inNpc = section === 'NPC';
+            continue;
+        }
+        if (!inNpc) continue;
+        const colon = line.indexOf(':');
+        if (colon <= 0) throw new Error(`jm2 NPC: malformed row ${line}`);
+        const coordTokens = line.slice(0, colon).trim().split(/\s+/);
+        if (coordTokens.length !== 3) throw new Error(`jm2 NPC: bad coords ${line}`);
+        const plane = integer(coordTokens[0], line);
+        const lx = integer(coordTokens[1], line);
+        const lz = integer(coordTokens[2], line);
+        if (plane < 0 || plane > 3) throw new Error(`jm2 NPC: plane out of range ${line}`);
+        if (lx < 0 || lx > 63 || lz < 0 || lz > 63) throw new Error(`jm2 NPC: local coords out of range ${line}`);
+        const dataTokens = line.slice(colon + 1).trim().split(/\s+/).filter((token) => token.length > 0);
+        if (dataTokens.length === 0) throw new Error(`jm2 NPC: missing npc id ${line}`);
+        if (dataTokens.length > 1) throw new Error(`jm2 NPC: extra tokens ${line}`);
+        placements.push({ plane, lx, lz, npc_id: integer(dataTokens[0], line) });
+    }
+    return placements;
+}
+
+/**
+ * `opnpc1` handlers that check one of the three membership enums, in file order.
+ * Talk-to only: `opnpc2`, `opnpc3`, `opnpcu`, and `apnpc*` are never read. The
+ * identity is the header alias, except on a `_<category>` header, which must
+ * declare exactly one inner `npc_type = <alias>` — the category itself is a
+ * trigger, not an NPC. Clues outside the membership set (challenge scrolls,
+ * puzzle-box extras) are dropped.
+ */
+export function parseTalkKeyHandlers(text: string, membership: ReadonlySet<string>) {
+    const rows: { handler: string; alias: string; clue: string }[] = [];
+    let header: string | null = null;
+    let body: string[] = [];
+    const flush = () => {
+        if (header === null) return;
+        const parts = header.split(',').map((part) => part.trim());
+        const handler = parts[1] ?? '';
+        if (parts[0] === 'opnpc1' && handler) {
+            const block = body.join('\n');
+            const clues = [...new Set([...block.matchAll(/inv_total\(\s*inv\s*,\s*(trail_clue_[A-Za-z0-9_]+)\s*\)/g)].map((match) => match[1]))].filter((clue) => membership.has(clue)).sort();
+            if (clues.length > 0) {
+                let alias = handler;
+                if (handler.startsWith('_')) {
+                    const inner = [...new Set([...block.matchAll(/npc_type\s*=\s*([A-Za-z0-9_]+)/g)].map((match) => match[1]))];
+                    if (inner.length !== 1) throw new Error(`talk_key: ${header} must declare exactly one inner npc_type, got ${inner.length}`);
+                    alias = inner[0];
+                }
+                for (const clue of clues) rows.push({ handler, alias, clue });
+            }
+        }
+        header = null;
+        body = [];
+    };
+    for (const raw of text.split(/\r?\n/)) {
+        const line = raw.trim();
+        if (line.startsWith('[') && line.endsWith(']')) {
+            flush();
+            header = line.slice(1, -1);
+            continue;
+        }
+        if (header !== null) body.push(line);
+    }
+    flush();
+    return rows;
+}
+
+/**
+ * The `[proc,trail_checkmediumdrop]` arms, in file order. Each arm is one keeper
+ * matcher, one membership clue check, and one `obj_add(npc_coord, key, ...)` whose
+ * `obj_gettotal` guard names the same key; a loc-search label is not an arm and a
+ * malformed arm throws. Call sites of the proc are not a second mapping.
+ */
+export function parseTalkKeyKeeperArms(text: string) {
+    let body: string | null = null;
+    let header: string | null = null;
+    let lines: string[] = [];
+    const flush = () => {
+        if (header === 'proc,trail_checkmediumdrop') body = lines.join('\n');
+        header = null;
+        lines = [];
+    };
+    for (const raw of text.split(/\r?\n/)) {
+        const line = raw.trim();
+        if (line.startsWith('[') && line.endsWith(']')) {
+            flush();
+            header = line.slice(1, -1);
+            continue;
+        }
+        if (header !== null) lines.push(line);
+    }
+    flush();
+    if (body === null) throw new Error('talk_key: required content is missing [proc,trail_checkmediumdrop]');
+    const arms: { clue: string; key: string; keeper: TalkKeyKeeperMatch }[] = [];
+    for (const arm of body.split(/else\s+if\(/)) {
+        const types = [...new Set([...arm.matchAll(/npc_type\s*=\s*([A-Za-z0-9_]+)/g)].map((match) => match[1]))];
+        const categories = [...new Set([...arm.matchAll(/npc_category\s*=\s*([A-Za-z0-9_]+)/g)].map((match) => match[1]))];
+        const names = [...new Set([...arm.matchAll(/compare\(\s*npc_name\s*,\s*"([^"]+)"\s*\)\s*=\s*0/g)].map((match) => match[1]))];
+        const clues = [...new Set([...arm.matchAll(/inv_total\(\s*inv\s*,\s*(trail_clue_[A-Za-z0-9_]+)\s*\)\s*>\s*0/g)].map((match) => match[1]))];
+        const added = [...new Set([...arm.matchAll(/obj_add\(\s*npc_coord\s*,\s*([A-Za-z0-9_]+)/g)].map((match) => match[1]))];
+        if (clues.length === 0 && types.length === 0 && categories.length === 0 && names.length === 0 && added.length === 0) continue;
+        const matches = types.length + categories.length + names.length;
+        if (matches !== 1 || clues.length !== 1 || added.length !== 1) throw new Error(`talk_key: malformed trail_checkmediumdrop arm (${matches} keeper matches, ${clues.length} clues, ${added.length} keys)`);
+        const guards = [...new Set([...arm.matchAll(/obj_gettotal\(\s*([A-Za-z0-9_]+)\s*\)\s*=\s*0/g)].map((match) => match[1]))];
+        if (guards.length !== 1 || guards[0] !== added[0]) throw new Error(`talk_key: trail_checkmediumdrop arm for ${clues[0]} must guard the key it adds`);
+        const keeper: TalkKeyKeeperMatch = types.length === 1 ? { kind: 'type', alias: types[0] } : categories.length === 1 ? { kind: 'category', category: categories[0] } : { kind: 'name', name: names[0] };
+        arms.push({ clue: clues[0], key: added[0], keeper });
+    }
+    if (arms.length === 0) throw new Error('talk_key: trail_checkmediumdrop has no keeper arms');
+    return arms;
+}
+
+/** One digest over every inventoried file's digest, in path order. */
+function fileInventoryDigest(entries: { path: string; bytes: number; sha256: string }[]) {
+    return {
+        files: entries.length,
+        bytes: entries.reduce((sum, entry) => sum + entry.bytes, 0),
+        sha256: crypto.createHash('sha256').update(entries.map((entry) => `${entry.sha256}  ${entry.path}`).join('\n')).digest('hex'),
+    };
+}
+
+/**
+ * Required scanned content inventory. The directory must exist and hold at least one
+ * matching file, and every tracked file the content tree names must be on disk, so a
+ * truncated tree fails closed instead of silently under-hashing. Path order.
+ */
+function contentTreeInputs(content: string, directory: string, suffix: string) {
+    const rootDirectory = path.join(content, directory);
+    if (!fs.existsSync(rootDirectory)) throw new Error(`${directory}: required directory missing`);
+    const relativePaths: string[] = [];
+    const walk = (absolute: string) => {
+        for (const entry of fs.readdirSync(absolute, { withFileTypes: true })) {
+            const child = path.join(absolute, entry.name);
+            if (entry.isDirectory()) walk(child);
+            else if (entry.name.endsWith(suffix)) relativePaths.push(path.relative(content, child).split(path.sep).join('/'));
+        }
+    };
+    walk(rootDirectory);
+    if (relativePaths.length === 0) throw new Error(`${directory}: required directory has no ${suffix} files`);
+    relativePaths.sort();
+    const tracked = execFileSync('git', ['-C', content, 'ls-files', '--', `${directory}/*${suffix}`], { encoding: 'utf8' }).split('\n').map((line) => line.trim()).filter(Boolean);
+    if (tracked.length === 0) throw new Error(`${directory}: no tracked ${suffix} files in the content tree`);
+    const onDisk = new Set(relativePaths);
+    for (const relative of tracked) if (!onDisk.has(relative)) throw new Error(`${relative}: tracked ${suffix} file missing from the content tree`);
+    const entries = relativePaths.map((relative) => ({ path: relative, ...sha256(path.join(content, relative)) }));
+    return { files: relativePaths, digest: fileInventoryDigest(entries) };
+}
+
+/**
+ * The selected talk steps and key keepers, from the `opnpc1` membership anchors and
+ * the medium clue proc. `.npc` sections are read with `parseNpcSection`, so a missing
+ * section throws; a section without `name=` throws here. Clue and key aliases join
+ * `pack/obj.pack` and the decoded item table through `trailJoin`. Identity names come
+ * from the `.npc` configs and are corroborated against the decoded `npc.dat` rows by
+ * `assertTalkKeyNpcJoins` in the writer.
+ */
+export function extractTalkKeyFacts(content: string, items: ObjType[]): TalkKeyExtract {
+    const itemIds = new Map(items.filter((item) => item.debugname !== null).map((item) => [item.debugname as string, { id: item.id, name: item.name }]));
+    const objPack = parsePack(requireGatherText(content, 'pack/obj.pack'));
+    if (objPack.size === 0) throw new Error('pack/obj.pack: required file missing ids');
+    const npcPack = parsePack(requireGatherText(content, TALK_KEY_NPC_PACK_RELATIVE));
+    if (npcPack.size === 0) throw new Error(`${TALK_KEY_NPC_PACK_RELATIVE}: required file missing ids`);
+    const membership = new Set(TRAIL_TIERS.flatMap((tier) => parseTrailEnumAliases(requireGatherText(content, `${TRAIL_CONFIG_DIR}/trail_${tier}.enum`))));
+    const scripts = contentTreeInputs(content, TALK_KEY_SCRIPTS_DIRECTORY, TALK_KEY_RS2_SUFFIX);
+    const npcConfigs = contentTreeInputs(content, TALK_KEY_SCRIPTS_DIRECTORY, TALK_KEY_NPC_SUFFIX);
+    const configText = new Map<string, string>();
+    const configSection = (relative: string, alias: string, label: string) => {
+        const text = configText.get(relative) ?? fs.readFileSync(path.join(content, relative), 'utf8');
+        configText.set(relative, text);
+        try {
+            return parseNpcSection(text, alias);
+        } catch (error) {
+            throw new Error(`${label}: ${(error as Error).message}`);
+        }
+    };
+    const configOwners = new Map<string, string>();
+    for (const relative of npcConfigs.files) {
+        const text = fs.readFileSync(path.join(content, relative), 'utf8');
+        configText.set(relative, text);
+        for (const raw of text.split(/\r?\n/)) {
+            const line = raw.trim();
+            if (!line.startsWith('[') || !line.endsWith(']')) continue;
+            const alias = line.slice(1, -1);
+            if (configOwners.has(alias)) throw new Error(`npc config: [${alias}] is declared by more than one .npc file`);
+            configOwners.set(alias, relative);
+        }
+    }
+    const identity = (alias: string, label: string) => {
+        const id = npcPack.get(alias);
+        if (id === undefined) throw new Error(`${label}: pack/npc.pack lacks ${alias}`);
+        const relative = configOwners.get(alias);
+        if (relative === undefined) throw new Error(`${label}: missing [${alias}] in the scanned npc configs`);
+        const name = configSection(relative, alias, label).name;
+        if (!name) throw new Error(`${label}: [${alias}] has no name`);
+        return { alias, id, name };
+    };
+    const maps = placementMapInputs(content);
+    const spawns = new Map<number, TalkKeySpawn[]>();
+    for (const input of maps) {
+        const { mx, mz } = parseMapsquarePath(input.path);
+        for (const placement of parseJm2NpcPlacements(fs.readFileSync(path.join(content, input.path), 'utf8'))) {
+            const world = worldFromMapsquare(mx, mz, placement.lx, placement.lz, placement.plane);
+            const found = spawns.get(placement.npc_id);
+            if (found) found.push(world);
+            else spawns.set(placement.npc_id, [world]);
+        }
+    }
+    const talk: TalkKeyTalkRow[] = [];
+    const keys: TalkKeyKeyRow[] = [];
+    const coverage: TalkKeyCoverageRow[] = [];
+    const uniqueSpawn = (npcId: number, clue: string, family: 'talk' | 'keys') => {
+        const found = spawns.get(npcId) ?? [];
+        if (found.length === 1) return found[0];
+        if (found.length === 0) throw new Error(`talk_key: ${clue} npc ${npcId} has no jm2 NPC spawn`);
+        coverage.push({ class: 'unknown', family, alias: clue, reason: 'non-unique jm2 NPC spawn' });
+        return null;
+    };
+    for (const relative of scripts.files) {
+        for (const handler of parseTalkKeyHandlers(fs.readFileSync(path.join(content, relative), 'utf8'), membership)) {
+            if (talk.some((row) => row.alias === handler.clue)) throw new Error(`talk_key: ${handler.clue} is anchored by more than one opnpc1 handler`);
+            const npc = identity(handler.alias, `talk_key ${handler.clue}`);
+            const joined = trailJoin(objPack, itemIds, handler.clue, `talk_key ${handler.clue}`);
+            const spawn = uniqueSpawn(npc.id, handler.clue, 'talk');
+            talk.push({ alias: joined.alias, id: joined.id, npc, ...(spawn ? { spawn } : {}) });
+        }
+    }
+    for (const arm of parseTalkKeyKeeperArms(requireGatherText(content, TALK_KEY_MEDIUM_RELATIVE))) {
+        if (!membership.has(arm.clue)) throw new Error(`talk_key: keeper clue ${arm.clue} is not a membership alias`);
+        const joined = trailJoin(objPack, itemIds, arm.clue, `talk_key ${arm.clue}`);
+        const key = trailJoin(objPack, itemIds, arm.key, `talk_key ${arm.clue} key`);
+        let keeper: TalkKeyKeeper;
+        let spawn: TalkKeySpawn | null = null;
+        if (arm.keeper.kind === 'type') {
+            const npc = identity(arm.keeper.alias, `talk_key ${arm.clue} keeper`);
+            keeper = { kind: 'type', alias: npc.alias, id: npc.id, name: npc.name };
+            spawn = uniqueSpawn(npc.id, arm.clue, 'keys');
+        } else if (arm.keeper.kind === 'category') {
+            keeper = { kind: 'category', category: arm.keeper.category };
+            coverage.push({ class: 'unknown', family: 'keys', alias: arm.clue, reason: 'keeper is a category, not one packed npc id' });
+        } else {
+            keeper = { kind: 'name', name: arm.keeper.name };
+            coverage.push({ class: 'unknown', family: 'keys', alias: arm.clue, reason: 'keeper is a name match, not one packed npc id' });
+        }
+        keys.push({ alias: joined.alias, id: joined.id, key_alias: key.alias, key_id: key.id, keeper, ...(spawn ? { spawn } : {}) });
+    }
+    talk.sort((a, b) => a.alias.localeCompare(b.alias));
+    keys.sort((a, b) => a.alias.localeCompare(b.alias));
+    coverage.sort((a, b) => a.family.localeCompare(b.family) || a.alias.localeCompare(b.alias));
+    return {
+        facts: { talk, keys, coverage },
+        inputs: {
+            maps_directory: PLACEMENT_MAPS_DIRECTORY,
+            maps: fileInventoryDigest(maps),
+            npc_pack: { path: TALK_KEY_NPC_PACK_RELATIVE, ...sha256(path.join(content, TALK_KEY_NPC_PACK_RELATIVE)) },
+            scripts: scripts.digest,
+            npc_configs: npcConfigs.digest,
+            trail_clue_medium: { path: TALK_KEY_MEDIUM_RELATIVE, ...sha256(path.join(content, TALK_KEY_MEDIUM_RELATIVE)) },
+        },
+    };
+}
+
+/**
+ * Corroborate every published npc identity against the decoded `npc.dat` rows: the
+ * packed alias, the packed id, and the `.npc` display name must all agree with the
+ * decoder. A disagreement throws instead of being published under the selected name.
+ */
+export function assertTalkKeyNpcJoins(facts: TalkKeyFacts, npcs: NpcType[]) {
+    const decoded = new Map(npcs.filter((npc) => npc.debugname != null).map((npc) => [npc.debugname as string, npc]));
+    const check = (alias: string, id: number, name: string, label: string) => {
+        const npc = decoded.get(alias);
+        if (!npc) throw new Error(`${label}: npc.dat lacks ${alias}`);
+        if (npc.id !== id) throw new Error(`${label}: npc.pack ${alias}=${id} disagrees with decoded npc id ${npc.id}`);
+        if (npc.name !== name) throw new Error(`${label}: ${alias} display name ${name} disagrees with decoded npc name ${npc.name}`);
+    };
+    for (const row of facts.talk) check(row.npc.alias, row.npc.id, row.npc.name, row.alias);
+    for (const row of facts.keys) if (row.keeper.kind === 'type') check(row.keeper.alias, row.keeper.id, row.keeper.name, row.alias);
+}
+
+/** Fail-closed pins for the talk_key publication. The counts are never copied from the corpus. */
+export function assertTalkKeyPins(facts: TalkKeyFacts, revision: number) {
+    const talk = (alias: string) => {
+        const found = facts.talk.find((row) => row.alias === alias);
+        if (!found) throw new Error(`${revision}: talk_key is missing talk ${alias}`);
+        return found;
+    };
+    const key = (alias: string) => {
+        const found = facts.keys.find((row) => row.alias === alias);
+        if (!found) throw new Error(`${revision}: talk_key is missing key ${alias}`);
+        return found;
+    };
+    const spawned = facts.talk.filter((row) => row.spawn !== undefined);
+    if (facts.talk.length !== 47 || spawned.length !== 42) throw new Error(`${revision}: talk_key talk must be 47 membership steps with 42 unique spawns, got ${facts.talk.length}/${spawned.length}`);
+    if (facts.keys.length !== 7 || facts.keys.filter((row) => row.spawn !== undefined).length !== 2) throw new Error(`${revision}: talk_key keys must be 7 keepers with 2 unique spawns, got ${facts.keys.length}`);
+    if (facts.coverage.length !== 10 || facts.coverage.filter((row) => row.family === 'talk').length !== 5 || facts.coverage.filter((row) => row.family === 'keys').length !== 5) throw new Error(`${revision}: talk_key coverage must be the ten unknown spawns, got ${facts.coverage.length}`);
+    if (facts.coverage.some((row) => row.class !== 'unknown' || row.reason.length === 0)) throw new Error(`${revision}: talk_key coverage rows must be named unknown with a reason`);
+    const coverage = facts.coverage.map((row) => `${row.family}:${row.alias}`).sort();
+    const noSpawn = [
+        ...facts.talk.filter((row) => row.spawn === undefined).map((row) => `talk:${row.alias}`),
+        ...facts.keys.filter((row) => row.spawn === undefined).map((row) => `keys:${row.alias}`),
+    ].sort();
+    if (JSON.stringify(coverage) !== JSON.stringify(noSpawn)) throw new Error(`${revision}: talk_key coverage must be exactly the steps without a unique spawn`);
+    const hazelmere = talk('trail_clue_medium_anagram001');
+    if (hazelmere.npc.alias !== 'grandtree_hazelmere' || hazelmere.npc.id !== 669 || hazelmere.npc.name !== 'Hazelmere' || JSON.stringify(hazelmere.spawn) !== JSON.stringify({ x: 2678, z: 3086, plane: 1 })) throw new Error(`${revision}: talk_key anagram001 must stay Hazelmere 669 at 2678,3086,1`);
+    const hans = facts.talk.filter((row) => row.npc.id === 0);
+    if (hans.length !== 2 || hans.some((row) => row.npc.name !== 'Hans' || JSON.stringify(row.spawn) !== JSON.stringify({ x: 3207, z: 3233, plane: 0 }))) throw new Error(`${revision}: talk_key Hans must stay two steps on one npc and one spawn`);
+    const tobias = talk('trail_clue_easy_vague012');
+    if (tobias.npc.alias !== 'captain_tobias' || tobias.npc.id !== 376 || tobias.spawn === undefined) throw new Error(`${revision}: talk_key vague012 must stay the inner captain_tobias identity, not the _sailor category`);
+    for (const alias of ['trail_clue_easy_simple008', 'trail_clue_hard_riddle019', 'trail_clue_hard_riddle021', 'trail_clue_hard_riddle026', 'trail_clue_medium_anagram003']) {
+        if (talk(alias).spawn !== undefined) throw new Error(`${revision}: talk_key ${alias} is a multi-spawn step and must omit the spawn`);
+    }
+    const blackHeather = key('trail_clue_medium_riddle001');
+    if (blackHeather.keeper.kind !== 'type' || blackHeather.keeper.alias !== 'black_heather' || blackHeather.keeper.id !== 202 || JSON.stringify(blackHeather.spawn) !== JSON.stringify({ x: 3039, z: 3700, plane: 0 })) throw new Error(`${revision}: talk_key riddle001 must stay the black_heather type keeper at 3039,3700,0`);
+    const penda = key('trail_clue_medium_riddle008');
+    if (penda.keeper.kind !== 'type' || penda.keeper.alias !== 'death_man_indoors2' || penda.keeper.id !== 1087 || JSON.stringify(penda.spawn) !== JSON.stringify({ x: 2910, z: 3539, plane: 0 })) throw new Error(`${revision}: talk_key riddle008 must stay the death_man_indoors2 type keeper at 2910,3539,0`);
+    const chicken = key('trail_clue_medium_riddle004');
+    if (chicken.keeper.kind !== 'category' || chicken.keeper.category !== 'chicken' || 'alias' in chicken.keeper || 'id' in chicken.keeper) throw new Error(`${revision}: talk_key riddle004 must stay a category keeper with no invented npc id`);
+    const man = key('trail_clue_medium_riddle005');
+    if (man.keeper.kind !== 'name' || man.keeper.name !== 'Man' || 'alias' in man.keeper || 'id' in man.keeper) throw new Error(`${revision}: talk_key riddle005 must stay a name keeper with no invented npc id`);
+    const pirate = key('trail_clue_medium_riddle007');
+    if (pirate.keeper.kind !== 'category' || pirate.keeper.category !== 'pirate') throw new Error(`${revision}: talk_key riddle007 must stay a category keeper`);
+    const guarddog = key('trail_clue_medium_riddle002');
+    const guard = key('trail_clue_medium_riddle003');
+    if (guarddog.keeper.kind !== 'type' || guarddog.spawn !== undefined || guard.keeper.kind !== 'type' || guard.spawn !== undefined) throw new Error(`${revision}: talk_key guard keepers are non-unique spawns and must omit the spawn`);
+    const blob = JSON.stringify(facts);
+    for (const banned of ['TALK_ANCHORS', 'KILL_ANCHORS', 'RIDDLE_KEY_COORDS', 'HARD_SPECIAL_COORDS']) {
+        if (blob.includes(banned)) throw new Error(`${revision}: talk_key published ${banned}`);
+    }
+}
+
 export function extractFacts(content: string, items: ObjType[], npcs: NpcType[]) {
     const itemIds = new Map(items.filter((item) => item.debugname !== null).map((item) => [item.debugname as string, { id: item.id, name: item.name }]));
     const npcIds = new Map(npcs.filter((npc) => npc.debugname != null).map((npc) => [npc.debugname as string, { id: npc.id, name: npc.name }]));
@@ -2084,8 +2487,25 @@ async function generate(spec: Revision) {
     process.chdir(spec.engine); const objModule = (await import(pathToFileURL(path.join(spec.engine, 'src/cache/config/ObjType.ts')).href)) as { default: { load(dir: string): void; configs: ObjType[] } }; objModule.default.load('data/pack');
     const npcModule = (await import(pathToFileURL(path.join(spec.engine, 'src/cache/config/NpcType.ts')).href)) as { default: { load(dir: string): void; configs: NpcType[] } }; npcModule.default.load('data/pack');
     const items = objModule.default.configs.map(row); const aliases = items.filter((item) => item.alias !== null).map((item) => item.alias as string); if (new Set(items.map((item) => item.id)).size !== items.length || new Set(aliases).size !== aliases.length) throw new Error(`${spec.revision}: duplicate ids or aliases`);
-    const facts = extractFacts(spec.content, objModule.default.configs, npcModule.default.configs); const drops = extractDropFacts(spec.content, objModule.default.configs, npcModule.default.configs); if (drops.length !== 4) throw new Error(`${spec.revision}: expected four combat drop tables, got ${drops.length}`); const magic = extractMagicFacts(spec.content, objModule.default.configs); if (magic.spells.length !== 16 || magic.spells[15].name !== 'Fire Wave' || magic.staves.length !== 14) throw new Error(`${spec.revision}: expected 16 combat spells and 14 staves, got ${magic.spells.length}/${magic.staves.length}`); const herbs = extractHerbFacts(spec.content, objModule.default.configs); if (herbs.herbs.length < 14) throw new Error(`${spec.revision}: expected a full herb identify table, got ${herbs.herbs.length}`); if (herbs.herb_level_default !== 3) throw new Error(`${spec.revision}: expected identify.param default 3, got ${herbs.herb_level_default}`); const autocast = extractAutocastControls(spec.content); const duel = extractDuelControls(spec.content); const special = extractSpecialControls(spec.content, objModule.default.configs);     const teleports = extractTeleportSpells(spec.content, objModule.default.configs); if (teleports.length !== 7 || teleports[0].name !== 'Varrock' || teleports[6].name !== 'Trollheim' || teleports[0].component_id !== 1164 || teleports[6].component_id !== 7455) throw new Error(`${spec.revision}: expected 7 standard teleports, got ${teleports.map((row) => row.name).join(',')}`);     const prayer = extractPrayerFacts(spec.content); if (prayer.prayers.length !== 15) throw new Error(`${spec.revision}: expected 15 prayers, got ${prayer.prayers.length}`); const nurmofEssence = extractNurmofEssenceFacts(spec.content, objModule.default.configs, npcModule.default.configs); if (nurmofEssence.pickaxes.length !== 6) throw new Error(`${spec.revision}: expected six pickaxes, got ${nurmofEssence.pickaxes.length}`);     const flourSix = extractFlourSixFacts(spec.content, objModule.default.configs); if (flourSix.pot.id !== 1931 || flourSix.flour_barrel.id !== 2662) throw new Error(`${spec.revision}: flour six join mismatch`); const objPackPath = path.join(spec.content, 'pack/obj.pack'); if (!fs.existsSync(objPackPath)) throw new Error(`${spec.revision}: missing pack/obj.pack`); const objPack = parsePack(fs.readFileSync(objPackPath, 'utf8')); if (objPack.size === 0) throw new Error(`${spec.revision}: empty pack/obj.pack`); const equipmentNames = extractEquipmentNamesFacts(items, objPack); const gatherMethods = extractGatherMethodsFacts(spec.content, spec.revision); if (gatherMethods.mining.length !== 17 || gatherMethods.woods.length !== 10 || gatherMethods.fishing.length !== 9) throw new Error(`${spec.revision}: expected 17 mine, 10 wood, and 9 fishing rows, got ${gatherMethods.mining.length}/${gatherMethods.woods.length}/${gatherMethods.fishing.length}`); const gatherPlacements = extractGatherPlacementsFacts(spec.content, gatherMethods.woods); if (gatherPlacements.woods.length !== 6) throw new Error(`${spec.revision}: expected six published woods, got ${gatherPlacements.woods.length}`); if (gatherPlacements.facts.coverage.length !== 1 || gatherPlacements.facts.coverage[0].class !== 'unknown' || gatherPlacements.facts.coverage[0].family !== 'mining') throw new Error(`${spec.revision}: gather placements must record mining as unknown coverage`); const questIdentity = extractQuestIdentityFacts(spec.content, spec.revision); if (questIdentity.rows.length !== 6 || questIdentity.rows[4].id !== 'death' || questIdentity.rows[4].varp !== 'death_equiproom' || questIdentity.rows[4].varp_id !== 314 || questIdentity.rows[4].complete !== 80 || questIdentity.rows.some((row) => row.requirements.qualification !== 'partial')) throw new Error(`${spec.revision}: quest identity join mismatch`); if (spec.revision === 274 && (questIdentity.coverage.length !== 1 || questIdentity.coverage[0].alias !== 'routequest' || questIdentity.coverage[0].other_pin_id !== 387 || questIdentity.coverage[0].copied !== false)) throw new Error(`${spec.revision}: quest coverage mismatch`); if (spec.revision !== 274 && questIdentity.coverage.length !== 0) throw new Error(`${spec.revision}: quest coverage must be empty`); const trails = extractTrailFacts(spec.content, objModule.default.configs); assertTrailPins(trails, spec.revision); const inputs = ['data/pack/server/obj.dat', 'data/pack/server/npc.dat', 'data/pack/client/config'].map((file) => sourceFile(spec.engine, file)); const contentInputs = contentFiles.map((file) => sourceFile(spec.content, file)); const sources = decoderSources.map((file) => sourceFile(spec.engine, file));
-    const payload = { schema_version: 4, revision: spec.revision, provenance: { engine_commit: pinned.engineCommit, content_commit: pinned.contentCommit, inputs, content_inputs: contentInputs, placement_inputs: gatherPlacements.inputs, decoder_sources: sources, cache_identity: spec.cacheIdentity }, items, ...facts, drop_tables: drops, ...magic, ...herbs, ...prayer, nurmof_essence: nurmofEssence, flour_six: flourSix, equipment_names: equipmentNames, gather_methods: gatherMethods, gather_placements: gatherPlacements.facts, quest_identity: questIdentity, trails, autocast, duel, special, teleports }; const bytes = `${JSON.stringify(payload, null, 2)}\n`; fs.mkdirSync(path.dirname(spec.output), { recursive: true }); fs.writeFileSync(spec.output, bytes); return { revision: spec.revision, output: path.relative(root, spec.output), records: items.length, consumption: facts.consumption.length, pickpocket: facts.pickpocket.length, drop_tables: drops.length, spells: magic.spells.length, staves: magic.staves.length, herbs: herbs.herbs.length, prayers: prayer.prayers.length, pickaxes: nurmofEssence.pickaxes.length, flour_six: 6, gather_methods: { mining: gatherMethods.mining.length, woods: gatherMethods.woods.length, fishing: gatherMethods.fishing.length }, gather_placements: { rows: gatherPlacements.facts.rows.length, maps: gatherPlacements.inputs.maps.files, published_loc_ids: gatherPlacements.inputs.published_loc_ids.count, coverage: gatherPlacements.facts.coverage.length, woods: gatherPlacements.woods }, equipment_names: { bows: equipmentNames.bows.length, crossbows: equipmentNames.crossbows.length, darts: equipmentNames.darts.length, arrows: equipmentNames.arrows.length, bolts: equipmentNames.bolts.length, melee_weapons: equipmentNames.melee_weapons.length, staffs: equipmentNames.staffs.length, resolved: EQUIPMENT_FAMILY_ORDER.reduce((sum, family) => sum + equipmentNames[family].filter((row) => row.disposition === 'resolved').length, 0), absent: EQUIPMENT_FAMILY_ORDER.reduce((sum, family) => sum + equipmentNames[family].filter((row) => row.disposition === 'absent').length, 0) }, autocast, duel, special: { energy_varp: special.energy_varp, armed_varp: special.armed_varp, max_energy: special.max_energy, bars: special.bars.length, weapons: special.weapons.length }, teleports: teleports.length, quest_identity: { rows: questIdentity.rows.length, coverage: questIdentity.coverage.length }, trails: { rows: trails.rows.length, clues: trails.rows.filter((row) => row.role === 'clue').length, caskets: trails.rows.filter((row) => row.role === 'casket').length, challenge_answers: trails.challenge_answers.length, access_constrained: trails.rows.filter((row) => row.access !== undefined).length }, bytes: Buffer.byteLength(bytes), sha256: crypto.createHash('sha256').update(bytes).digest('hex'), engine_commit: pinned.engineCommit, content_commit: pinned.contentCommit, inputs, content_inputs: contentInputs, decoder_sources: sources, cache_identity: spec.cacheIdentity };
+    const facts = extractFacts(spec.content, objModule.default.configs, npcModule.default.configs); const drops = extractDropFacts(spec.content, objModule.default.configs, npcModule.default.configs); if (drops.length !== 4) throw new Error(`${spec.revision}: expected four combat drop tables, got ${drops.length}`); const magic = extractMagicFacts(spec.content, objModule.default.configs); if (magic.spells.length !== 16 || magic.spells[15].name !== 'Fire Wave' || magic.staves.length !== 14) throw new Error(`${spec.revision}: expected 16 combat spells and 14 staves, got ${magic.spells.length}/${magic.staves.length}`); const herbs = extractHerbFacts(spec.content, objModule.default.configs); if (herbs.herbs.length < 14) throw new Error(`${spec.revision}: expected a full herb identify table, got ${herbs.herbs.length}`); if (herbs.herb_level_default !== 3) throw new Error(`${spec.revision}: expected identify.param default 3, got ${herbs.herb_level_default}`); const autocast = extractAutocastControls(spec.content); const duel = extractDuelControls(spec.content); const special = extractSpecialControls(spec.content, objModule.default.configs);     const teleports = extractTeleportSpells(spec.content, objModule.default.configs); if (teleports.length !== 7 || teleports[0].name !== 'Varrock' || teleports[6].name !== 'Trollheim' || teleports[0].component_id !== 1164 || teleports[6].component_id !== 7455) throw new Error(`${spec.revision}: expected 7 standard teleports, got ${teleports.map((row) => row.name).join(',')}`);     const prayer = extractPrayerFacts(spec.content); if (prayer.prayers.length !== 15) throw new Error(`${spec.revision}: expected 15 prayers, got ${prayer.prayers.length}`); const nurmofEssence = extractNurmofEssenceFacts(spec.content, objModule.default.configs, npcModule.default.configs); if (nurmofEssence.pickaxes.length !== 6) throw new Error(`${spec.revision}: expected six pickaxes, got ${nurmofEssence.pickaxes.length}`);     const flourSix = extractFlourSixFacts(spec.content, objModule.default.configs); if (flourSix.pot.id !== 1931 || flourSix.flour_barrel.id !== 2662) throw new Error(`${spec.revision}: flour six join mismatch`); const objPackPath = path.join(spec.content, 'pack/obj.pack'); if (!fs.existsSync(objPackPath)) throw new Error(`${spec.revision}: missing pack/obj.pack`); const objPack = parsePack(fs.readFileSync(objPackPath, 'utf8')); if (objPack.size === 0) throw new Error(`${spec.revision}: empty pack/obj.pack`); const equipmentNames = extractEquipmentNamesFacts(items, objPack); const gatherMethods = extractGatherMethodsFacts(spec.content, spec.revision); if (gatherMethods.mining.length !== 17 || gatherMethods.woods.length !== 10 || gatherMethods.fishing.length !== 9) throw new Error(`${spec.revision}: expected 17 mine, 10 wood, and 9 fishing rows, got ${gatherMethods.mining.length}/${gatherMethods.woods.length}/${gatherMethods.fishing.length}`); const gatherPlacements = extractGatherPlacementsFacts(spec.content, gatherMethods.woods); if (gatherPlacements.woods.length !== 6) throw new Error(`${spec.revision}: expected six published woods, got ${gatherPlacements.woods.length}`); if (gatherPlacements.facts.coverage.length !== 1 || gatherPlacements.facts.coverage[0].class !== 'unknown' || gatherPlacements.facts.coverage[0].family !== 'mining') throw new Error(`${spec.revision}: gather placements must record mining as unknown coverage`); const questIdentity = extractQuestIdentityFacts(spec.content, spec.revision); if (questIdentity.rows.length !== 6 || questIdentity.rows[4].id !== 'death' || questIdentity.rows[4].varp !== 'death_equiproom' || questIdentity.rows[4].varp_id !== 314 || questIdentity.rows[4].complete !== 80 || questIdentity.rows.some((row) => row.requirements.qualification !== 'partial')) throw new Error(`${spec.revision}: quest identity join mismatch`); if (spec.revision === 274 && (questIdentity.coverage.length !== 1 || questIdentity.coverage[0].alias !== 'routequest' || questIdentity.coverage[0].other_pin_id !== 387 || questIdentity.coverage[0].copied !== false)) throw new Error(`${spec.revision}: quest coverage mismatch`); if (spec.revision !== 274 && questIdentity.coverage.length !== 0) throw new Error(`${spec.revision}: quest coverage must be empty`); const trails = extractTrailFacts(spec.content, objModule.default.configs); assertTrailPins(trails, spec.revision); const talkKey = extractTalkKeyFacts(spec.content, objModule.default.configs); assertTalkKeyPins(talkKey.facts, spec.revision); assertTalkKeyNpcJoins(talkKey.facts, npcModule.default.configs); const inputs = ['data/pack/server/obj.dat', 'data/pack/server/npc.dat', 'data/pack/client/config'].map((file) => sourceFile(spec.engine, file)); const contentInputs = contentFiles.map((file) => sourceFile(spec.content, file)); const sources = decoderSources.map((file) => sourceFile(spec.engine, file));
+    const payload = { schema_version: 4, revision: spec.revision, provenance: { engine_commit: pinned.engineCommit, content_commit: pinned.contentCommit, inputs, content_inputs: contentInputs, placement_inputs: gatherPlacements.inputs, talk_key_inputs: talkKey.inputs, decoder_sources: sources, cache_identity: spec.cacheIdentity }, items, ...facts, drop_tables: drops, ...magic, ...herbs, ...prayer, nurmof_essence: nurmofEssence, flour_six: flourSix, equipment_names: equipmentNames, gather_methods: gatherMethods, gather_placements: gatherPlacements.facts, quest_identity: questIdentity, trails, talk_key: talkKey.facts, autocast, duel, special, teleports }; const bytes = `${JSON.stringify(payload, null, 2)}\n`; fs.mkdirSync(path.dirname(spec.output), { recursive: true }); fs.writeFileSync(spec.output, bytes); return { revision: spec.revision, output: path.relative(root, spec.output), records: items.length, consumption: facts.consumption.length, pickpocket: facts.pickpocket.length, drop_tables: drops.length, spells: magic.spells.length, staves: magic.staves.length, herbs: herbs.herbs.length, prayers: prayer.prayers.length, pickaxes: nurmofEssence.pickaxes.length, flour_six: 6, gather_methods: { mining: gatherMethods.mining.length, woods: gatherMethods.woods.length, fishing: gatherMethods.fishing.length }, gather_placements: { rows: gatherPlacements.facts.rows.length, maps: gatherPlacements.inputs.maps.files, published_loc_ids: gatherPlacements.inputs.published_loc_ids.count, coverage: gatherPlacements.facts.coverage.length, woods: gatherPlacements.woods }, equipment_names: { bows: equipmentNames.bows.length, crossbows: equipmentNames.crossbows.length, darts: equipmentNames.darts.length, arrows: equipmentNames.arrows.length, bolts: equipmentNames.bolts.length, melee_weapons: equipmentNames.melee_weapons.length, staffs: equipmentNames.staffs.length, resolved: EQUIPMENT_FAMILY_ORDER.reduce((sum, family) => sum + equipmentNames[family].filter((row) => row.disposition === 'resolved').length, 0), absent: EQUIPMENT_FAMILY_ORDER.reduce((sum, family) => sum + equipmentNames[family].filter((row) => row.disposition === 'absent').length, 0) }, autocast, duel, special: { energy_varp: special.energy_varp, armed_varp: special.armed_varp, max_energy: special.max_energy, bars: special.bars.length, weapons: special.weapons.length }, teleports: teleports.length, quest_identity: { rows: questIdentity.rows.length, coverage: questIdentity.coverage.length }, trails: { rows: trails.rows.length, clues: trails.rows.filter((row) => row.role === 'clue').length, caskets: trails.rows.filter((row) => row.role === 'casket').length, challenge_answers: trails.challenge_answers.length, access_constrained: trails.rows.filter((row) => row.access !== undefined).length }, talk_key: { talk: talkKey.facts.talk.length, talk_with_spawn: talkKey.facts.talk.filter((row) => row.spawn !== undefined).length, keys: talkKey.facts.keys.length, keys_with_spawn: talkKey.facts.keys.filter((row) => row.spawn !== undefined).length, coverage: talkKey.facts.coverage.length, maps: talkKey.inputs.maps.files, scripts: talkKey.inputs.scripts.files, npc_configs: talkKey.inputs.npc_configs.files, digest: crypto.createHash('sha256').update(JSON.stringify(talkKey.facts)).digest('hex') }, bytes: Buffer.byteLength(bytes), sha256: crypto.createHash('sha256').update(bytes).digest('hex'), engine_commit: pinned.engineCommit, content_commit: pinned.contentCommit, inputs, content_inputs: contentInputs, decoder_sources: sources, cache_identity: spec.cacheIdentity };
 }
-async function main() { const results = []; for (const spec of revisions) results.push(await generate(spec)); const manifest = { schema_version: 4, generator: 'tools/game-data/generate.ts', revisions: results }; const manifestPath = path.join(root, 'crates/api/data/game-data/manifest.json'); fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`); console.log(JSON.stringify({ manifest: path.relative(root, manifestPath), revisions: results }, null, 2)); }
+
+/**
+ * 289 is the selected content and 274 is corroboration: both extracts are parsed
+ * independently from their own tree, and the two must agree on every selected
+ * identity, name, and unique spawn. Disagreement refuses to publish either.
+ */
+async function main() {
+    const results = [];
+    for (const spec of revisions) results.push(await generate(spec));
+    const digests = new Map(results.map((result) => [result.revision, result.talk_key.digest]));
+    if (new Set(digests.values()).size !== 1) {
+        throw new Error(`talk_key: the two pins disagree on the selected identity (${[...digests].map(([revision, digest]) => `${revision}:${digest}`).join(', ')})`);
+    }
+    const manifest = { schema_version: 4, generator: 'tools/game-data/generate.ts', revisions: results };
+    const manifestPath = path.join(root, 'crates/api/data/game-data/manifest.json');
+    fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+    console.log(JSON.stringify({ manifest: path.relative(root, manifestPath), revisions: results }, null, 2));
+}
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main().catch((error) => { console.error(error); process.exitCode = 1; });

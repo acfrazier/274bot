@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { verifyCacheIdentity } from './cache-identity.ts';
-import { extractGatherMethodsFacts, extractGatherPlacementsFacts, extractQuestIdentityFacts, extractTrailFacts, gatherContentFiles, questIdentityContentFiles, trailContentFiles, loadEquipmentNamesCurated, parseFrozenEquipmentNameArrays, parsePack } from './generate.ts';
+import { extractGatherMethodsFacts, extractGatherPlacementsFacts, extractQuestIdentityFacts, extractTalkKeyFacts, extractTrailFacts, assertTalkKeyPins, gatherContentFiles, questIdentityContentFiles, trailContentFiles, loadEquipmentNamesCurated, parseFrozenEquipmentNameArrays, parsePack } from './generate.ts';
 const root = path.resolve(import.meta.dirname, '../..');
 const expected: Record<number, { engine: string; content: string; engineRoot: string; contentRoot: string; cache: { cache_id: string; content_id: string; nav_sha256: string; flags_sha256: string } }> = {
     274: { engine: '4c95f87efe00b068cadbd229d94736626907bd1a', content: '000c19997e07206131bcb3c884265840efce416d', engineRoot: process.env.GAME_DATA_274_ENGINE || '/Users/acfrazier/experiments/Server/engine', contentRoot: process.env.GAME_DATA_274_CONTENT || '/Users/acfrazier/experiments/Server/content', cache: { cache_id: '4aac9b63312dcb75d5de8f686772d083ba0808c57985438246edf21ef522be1c', content_id: '0d14c891b5727142379c6d8844bd5bb1ff9874d4d996db1dc5ceea0e9062469c', nav_sha256: '05db24743e9f549ced16c1f00b87c30a390d3aaec391815da3f3563130b3bcd4', flags_sha256: '92d5dea05c886ac8720be6b47e47cbc68355a8ff42676c0886f5b7ea8343a4cb' } },
@@ -28,6 +28,20 @@ const expectedDropNames: Record<number, Record<string, string[]>> = {
 function digest(file: string) { const data = fs.readFileSync(file); return { bytes: data.length, sha256: crypto.createHash('sha256').update(data).digest('hex') }; }
 function commit(dir: string) { return execFileSync('git', ['-C', dir, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(); }
 function assertEqual(actual: unknown, expectedValue: unknown, label: string) { if (actual !== expectedValue) throw new Error(`${label}: expected ${expectedValue}, got ${actual}`); }
+/** One published item row, in the writer's decoded shape. Read under the checks below. */
+type PublishedItemRow = { alias: string | null; id: number; name: string | null; cost: number; stackable: boolean; members: boolean; certificate_link: number; certificate_template: number; wear_position: number; wear_position_2: number; wear_position_3: number };
+/** One published talk_key step spawn. `plane` is the scene plane, never `level`. */
+type PublishedTalkKeySpawn = { x: number; z: number; plane: number };
+/** One published talk_key talk step. */
+type PublishedTalkKeyTalk = { alias: string; id: number; npc: { alias: string; id: number; name: string }; spawn?: PublishedTalkKeySpawn };
+/** One published talk_key keeper, read as a union of optional fields and checked by `kind`. */
+type PublishedTalkKeyKeeper = { kind: string; alias?: string; id?: number; name?: string; category?: string };
+/** One published talk_key key-keeper step. */
+type PublishedTalkKeyKey = { alias: string; id: number; key_alias: string; key_id: number; keeper: PublishedTalkKeyKeeper; spawn?: PublishedTalkKeySpawn };
+/** One published talk_key unknown-spawn record. */
+type PublishedTalkKeyCoverage = { class: string; family: string; alias: string; reason: string };
+/** The published talk_key family object. */
+type PublishedTalkKey = { talk: PublishedTalkKeyTalk[]; keys: PublishedTalkKeyKey[]; coverage: PublishedTalkKeyCoverage[] };
 const manifest = JSON.parse(fs.readFileSync(path.join(root, 'crates/api/data/game-data/manifest.json'), 'utf8')) as { schema_version: number; revisions: any[] };
 assertEqual(manifest.schema_version, 4, 'manifest schema');
 const results = [];
@@ -339,6 +353,49 @@ for (const revision of [274, 289]) {
     for (const banned of ['facts-verified-both', 'facts_field_verified_both', 'family-unavailable', 'supported', 'coverage', 'regicide', 'legends', 'curated-unverified', '0_51_54_45_47', '1_42_53_14_17', '1_40_51_14_62', 'HARD_SPECIAL_COORDS', 'RIDDLE_KEY_COORDS', 'VAGUE003']) {
         if (trailBlob.includes(banned)) throw new Error(`${revision}: trails published ${banned}`);
     }
-    results.push({ revision, records: payload.items.length, consumption: payload.consumption.length, pickpocket: payload.pickpocket.length, drop_tables: drops.length, spells: spells.length, staves: staves.length, herbs: herbs.length, prayers: prayers.length, pickaxes: nurmof.pickaxes.length, flour_six: 6, gather_methods: { mining: gather.mining.length, woods: gather.woods.length, fishing: gather.fishing.length }, gather_placements: { rows: placements.rows.length, maps: payload.provenance.placement_inputs.maps.files, published_loc_ids: payload.provenance.placement_inputs.published_loc_ids.count, coverage: placements.coverage.length, woods: extractedPlacements.woods }, quest_identity: { rows: questIdentity.rows.length, coverage: questIdentity.coverage.length }, trails: { rows: trailRows.length, clues: trailRows.filter((row: any) => row.role === 'clue').length, caskets: trailRows.filter((row: any) => row.role === 'casket').length, challenge_answers: trails.challenge_answers.length, access_constrained: constrained.length }, equipment_names: { resolved: resolved.length, absent: absent.length, family_counts: familyCounts }, fire_staff_providers: fireProviders, autocast, duel, special: { energy_varp: special.energy_varp, armed_varp: special.armed_varp, max_energy: special.max_energy, bars: special.bars.length, weapons: special.weapons.length }, teleports: teleports.length, fixed_food_heals: Object.fromEntries(fixed), output_sha256: output.sha256, input_hashes: true, content_hashes: true, source_pins: true, dirty_gate: true, cache_identity: pin.cache });
+    const talkKey: PublishedTalkKey = payload.talk_key;
+    if (!talkKey || Array.isArray(talkKey) || !Array.isArray(talkKey.talk) || !Array.isArray(talkKey.keys) || !Array.isArray(talkKey.coverage)) throw new Error(`${revision}: talk_key must be one family object, not a bare list`);
+    const publishedItems: PublishedItemRow[] = payload.items;
+    const extractedTalkKey = extractTalkKeyFacts(pin.contentRoot, publishedItems.map((item) => ({ id: item.id, debugname: item.alias, name: item.name, cost: item.cost, stackable: item.stackable, members: item.members, certlink: item.certificate_link, certtemplate: item.certificate_template, wearpos: item.wear_position, wearpos2: item.wear_position_2, wearpos3: item.wear_position_3 })));
+    assertEqual(JSON.stringify(talkKey), JSON.stringify(extractedTalkKey.facts), `${revision} talk_key matches the writer extract`);
+    assertEqual(JSON.stringify(payload.provenance.talk_key_inputs), JSON.stringify(extractedTalkKey.inputs), `${revision} talk key inputs match the scanned scripts, npc configs, maps, pack, and medium proc`);
+    assertTalkKeyPins(extractedTalkKey.facts, revision);
+    const talkRows = talkKey.talk;
+    const keyRows = talkKey.keys;
+    assertEqual(talkRows.length, 47, `${revision} talk_key talk steps`);
+    assertEqual(talkRows.filter((row) => row.spawn !== undefined).length, 42, `${revision} talk_key unique talk spawns`);
+    assertEqual(keyRows.length, 7, `${revision} talk_key key keepers`);
+    assertEqual(keyRows.filter((row) => row.spawn !== undefined).length, 2, `${revision} talk_key unique keeper spawns`);
+    assertEqual(talkKey.coverage.length, 10, `${revision} talk_key unknown-spawn coverage`);
+    if (talkRows.some((row) => Object.keys(row).some((key) => !['alias', 'id', 'npc', 'spawn'].includes(key)))) throw new Error(`${revision}: talk_key talk rows must stay alias/id/npc/spawn`);
+    if (keyRows.some((row) => Object.keys(row).some((key) => !['alias', 'id', 'key_alias', 'key_id', 'keeper', 'spawn'].includes(key)))) throw new Error(`${revision}: talk_key key rows must stay alias/id/key_alias/key_id/keeper/spawn`);
+    if (talkRows.some((row) => Object.keys(row.npc).sort().join(',') !== 'alias,id,name' || row.npc.name.length === 0)) throw new Error(`${revision}: talk_key npc identity must be alias/id/name`);
+    if ([...talkRows, ...keyRows].some((row) => row.spawn !== undefined && Object.keys(row.spawn).sort().join(',') !== 'plane,x,z')) throw new Error(`${revision}: talk_key spawns are world x/z/plane only`);
+    if (JSON.stringify({ talk: talkRows, keys: keyRows }).includes('"spawn":null')) throw new Error(`${revision}: a non-unique spawn must omit the key, not publish null`);
+    for (const row of keyRows) {
+        const keeper = row.keeper;
+        const keeperKeys = Object.keys(keeper).sort().join(',');
+        if (keeper.kind === 'type') {
+            if (keeperKeys !== 'alias,id,kind,name' || keeper.id === undefined || keeper.alias === undefined || keeper.name === undefined) throw new Error(`${revision}: talk_key type keeper must be alias/id/name`);
+        } else if (keeper.kind === 'category') {
+            if (keeperKeys !== 'category,kind' || keeper.category === undefined) throw new Error(`${revision}: talk_key category keeper must be the bare category`);
+        } else if (keeper.kind === 'name') {
+            if (keeperKeys !== 'kind,name' || keeper.name === undefined) throw new Error(`${revision}: talk_key name keeper must be the bare name`);
+        } else {
+            throw new Error(`${revision}: talk_key keeper kind ${keeper.kind} is not a keeper`);
+        }
+    }
+    const coveragePairs = talkKey.coverage.map((row) => `${row.family}:${row.alias}`).sort();
+    const missingSpawn = [
+        ...talkRows.filter((row) => row.spawn === undefined).map((row) => `talk:${row.alias}`),
+        ...keyRows.filter((row) => row.spawn === undefined).map((row) => `keys:${row.alias}`),
+    ].sort();
+    assertEqual(JSON.stringify(coveragePairs), JSON.stringify(missingSpawn), `${revision} talk_key coverage is exactly the steps without a unique spawn`);
+    if (talkKey.coverage.some((row) => row.class !== 'unknown' || (row.family !== 'talk' && row.family !== 'keys') || row.reason.length === 0 || Object.keys(row).sort().join(',') !== 'alias,class,family,reason')) throw new Error(`${revision}: talk_key coverage rows must be named unknown talk or keys rows with a reason`);
+    const talkKeyBlob = JSON.stringify(talkKey);
+    for (const banned of ['TALK_ANCHORS', 'KILL_ANCHORS', 'RIDDLE_KEY_COORDS', 'HARD_SPECIAL_COORDS', 'frozen', 'invented', 'family-unavailable']) {
+        if (talkKeyBlob.includes(banned)) throw new Error(`${revision}: talk_key published ${banned}`);
+    }
+    results.push({ revision, records: payload.items.length, consumption: payload.consumption.length, pickpocket: payload.pickpocket.length, drop_tables: drops.length, spells: spells.length, staves: staves.length, herbs: herbs.length, prayers: prayers.length, pickaxes: nurmof.pickaxes.length, flour_six: 6, gather_methods: { mining: gather.mining.length, woods: gather.woods.length, fishing: gather.fishing.length }, gather_placements: { rows: placements.rows.length, maps: payload.provenance.placement_inputs.maps.files, published_loc_ids: payload.provenance.placement_inputs.published_loc_ids.count, coverage: placements.coverage.length, woods: extractedPlacements.woods }, quest_identity: { rows: questIdentity.rows.length, coverage: questIdentity.coverage.length }, trails: { rows: trailRows.length, clues: trailRows.filter((row: any) => row.role === 'clue').length, caskets: trailRows.filter((row: any) => row.role === 'casket').length, challenge_answers: trails.challenge_answers.length, access_constrained: constrained.length }, talk_key: { talk: talkRows.length, talk_with_spawn: talkRows.filter((row) => row.spawn !== undefined).length, keys: keyRows.length, keys_with_spawn: keyRows.filter((row) => row.spawn !== undefined).length, coverage: talkKey.coverage.length, scripts: extractedTalkKey.inputs.scripts.files, npc_configs: extractedTalkKey.inputs.npc_configs.files }, equipment_names: { resolved: resolved.length, absent: absent.length, family_counts: familyCounts }, fire_staff_providers: fireProviders, autocast, duel, special: { energy_varp: special.energy_varp, armed_varp: special.armed_varp, max_energy: special.max_energy, bars: special.bars.length, weapons: special.weapons.length }, teleports: teleports.length, fixed_food_heals: Object.fromEntries(fixed), output_sha256: output.sha256, input_hashes: true, content_hashes: true, source_pins: true, dirty_gate: true, cache_identity: pin.cache });
 }
 const evidence = { schema_version: 4, generator: 'tools/game-data/generate.ts', verification: 'tools/game-data/verify.ts', revisions: results }; const evidencePath = path.join(root, 'docs/compat/evidence/generated-game-data/verification.json'); fs.mkdirSync(path.dirname(evidencePath), { recursive: true }); fs.writeFileSync(evidencePath, `${JSON.stringify(evidence, null, 2)}\n`); console.log(JSON.stringify(evidence));
