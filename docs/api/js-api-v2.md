@@ -525,10 +525,16 @@ the machine's own step is enqueued onto the interact drain directly rather than
 through `request()`; the step is still returned as `status: 'continue'`.
 
 A held row is an **unguarded dig row** when the selected family carries a
-decodable `trail_coord` on a row with **no** `trail_loc`, `trail_sextant=yes`,
-**no** `trail_guardian` and an `access` that is not `"constrained"`, which is
-the twenty medium sextant rows (`2801`…`2825` odd and `3582`…`3594` even).
-`trail_sextant=yes` is that membership and nothing more: the
+decodable `trail_coord` on a row with **no** `trail_loc`, **no**
+`trail_guardian` and an `access` that is not `"constrained"`, which is the
+twenty medium sextant rows (`2801`…`2825` odd and `3582`…`3594` even) beside
+the twenty coord-bearing map, vague and riddle rows that never pinned a
+sextant — the easy maps (`2713`, `2716`, `2719`, `3516`, `3518`), the medium
+maps (`2827`, `3596`, `3599`, `3602`), the hard maps (`3520`, `3522`), the
+vague `3510` and the hard riddle-with-coord rows (`2774`, `2776`, `2780`,
+`2783`, `2786`, `2788`, `2790`, `3580`) — forty rows on both pins. Neither
+`trail_sextant` nor `trail_casket` is that membership:
+`trail_sextant` is not read by this classify at all, so the
 Sextant/Watch/Chart trio is never required, never waited for and never
 acquired, exactly as the search walk never bank-fetched its key. Once such a
 row has been reported — after its `callback.log` and `callback.setStatus` — it
@@ -594,11 +600,12 @@ no completion, no `supplies-needed`, no `dead` and no `guardian-lost`.
 
 The rows that are neither caskets, search rows, unguarded dig rows nor guarded
 dig rows stay identified then idle: the packed 3554 `access: "constrained"`
-clue, the coord-only map rows, the desc-only riddles and the empty-params
-`2722`. The coord-only rows carry a `trail_coord` too, so it is the
-`trail_sextant` / `trail_guardian` / `access` half of the classify that keeps
-them out — no frozen `type` table is copied, and a row that carries the
-`trail_loc` pin at all belongs to the search membership instead.
+clue, the desc-only riddles that carry no decodable `trail_coord` and the
+empty-params `2722`. Every coord-bearing row without the `trail_loc` pin is the
+dig classify's instead, so it is the `trail_guardian` / `access` half of the
+classify — and the coord itself — that keeps these out: no frozen `type` table
+is copied, and a row that carries the `trail_loc` pin at all belongs to the
+search membership instead.
 
 ### Trail-end collect
 

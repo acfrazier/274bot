@@ -26,13 +26,16 @@
 //! row's own posted tile and id.
 //!
 //! The sibling of that pin is the unguarded dig: a decodable selected
-//! `trail_coord` on a row with no `trail_loc`, `trail_sextant=yes` and no
-//! `trail_guardian`, whose `access` is not `"constrained"`. It walks the same
-//! way — the same decoder, the same radius, the same posted `here` — and then
+//! `trail_coord` on a row with no `trail_loc` and no `trail_guardian`, whose
+//! `access` is not `"constrained"`. It reads no `trail_sextant` at all, so the
+//! membership is the twenty medium sextant rows beside the coord-bearing map,
+//! vague and riddle rows: forty rows on both pins, and the `trail_casket`
+//! param is never part of it. It walks the same way — the same decoder, the
+//! same radius, the same posted `here` — and then
 //! dispatches the generic held step with the selected item display `Spade` and
-//! the frozen `Dig`. The Sextant/Watch/Chart trio is membership input only:
-//! never required, never waited for and never acquired. A pack that does not
-//! post the `Spade` is a `wait`, never an `abandon` and never a public
+//! the frozen `Dig`. The Sextant/Watch/Chart trio the guarded sibling's pin
+//! stands for is never required, never waited for and never acquired. A pack
+//! that does not post the `Spade` is a `wait`, never an `abandon` and never a
 //! `no-spade` token. Dig repeats while that same clue stays held, a produced
 //! casket Opens instead, and a `none-held` right after a Dig still aborts:
 //! Collecting is the casket Open's alone.
@@ -86,7 +89,7 @@
 //! window has passed when its pages are still empty.
 //!
 //! Every other held step — the packed 3554 `access: "constrained"` clue, the
-//! coord-only map rows, the desc-only key-gated riddles and the empty-params
+//! desc-only key-gated riddles with no decodable coord and the empty-params
 //! 2722 — is identified and then idled: no action and no walk.
 //! Identify is casket-first, so a casket held beside its own clue is the Open
 //! and never 3554 play. Yield keeps the token live, so it is not trail
@@ -648,9 +651,10 @@ impl ClueRuntime {
     /// abandoning, and the pick is re-read next call.
     fn search(&self, row: &TrailMembershipRow, input: &Value) -> Value {
         let Some(tile) = search_tile(row) else {
-            // Not a search membership: the desc-only key-gated riddles, the
-            // coord-only map rows and the constrained 3554 clue, among
-            // everything else, are identified and then idle.
+            // Not a search membership: the coord-bearing rows without the loc
+            // pin belong to the sibling dig classify, and the desc-only rows
+            // with no decodable coord, the constrained 3554 clue and the rest
+            // are identified and then idle.
             return self.emit("wait");
         };
         let Some(here) = input.get("here").and_then(posted_tile) else {
@@ -1089,8 +1093,10 @@ fn decode_trail_coord(token: &str) -> Option<Tile> {
 ///
 /// The pin is the membership; the coord alone is not. A coord-only row — the
 /// easy maps, the frozen `keyFrom` riddles that carry only `trail_desc`, and
-/// the bounded packed 3554 clue — is not a search step and idles. A pin with
-/// no coord, or an off-contract one, is the same idle: nothing is invented.
+/// the bounded packed 3554 clue — is not a search step: the coord-bearing
+/// ones are the sibling dig classify's, and a row the dig classify leaves out
+/// idles. A pin with no coord, or an off-contract one, is the same idle:
+/// nothing is invented.
 fn search_tile(row: &TrailMembershipRow) -> Option<Tile> {
     let mut located = false;
     let mut coord = None;
@@ -1113,37 +1119,38 @@ fn search_tile(row: &TrailMembershipRow) -> Option<Tile> {
 const CONSTRAINED: &str = "constrained";
 
 /// The identified row's unguarded-dig membership: a decodable selected
-/// `trail_coord` **and** no selected `trail_loc` **and** `trail_sextant=yes`
-/// **and** no selected `trail_guardian` **and** an `access` that is not
-/// `"constrained"`.
+/// `trail_coord` **and** no selected `trail_loc` **and** no selected
+/// `trail_guardian` **and** an `access` that is not `"constrained"`.
 ///
 /// The sibling of `search_tile`, not a fold into it: the loc pin is the search
 /// membership and this is the selected-param classify that holds without
-/// copying the frozen `type`. `trail_sextant=yes` is membership only — the
+/// copying the frozen `type`. It reads no `trail_sextant` — that param stays
+/// the guarded sibling's own pin — so the membership is the twenty medium
+/// sextant rows and every coord-bearing row beside them: the map rows like
+/// `2713`, the vague `3510` and the hard riddle-with-coord rows. Forty rows on
+/// both pins, and the `trail_casket` param is never part of the classify. The
 /// Sextant/Watch/Chart trio is never required, never waited for and never
-/// acquired — and it is what keeps the coord-only map rows and the
-/// riddle-with-coord rows out. A guarded row stays out: its first Dig spawns a
-/// wizard this machine cannot fight. The packed constrained 3554 clue stays
-/// out with the desc-only, paramless and off-contract rows: identified, then
-/// idle rather than an invented coordinate.
+/// acquired. A guarded row stays out: its first Dig is a spawn, and that row
+/// belongs to the guarded encounter rather than this arm. The packed
+/// constrained 3554 clue stays out with the desc-only rows that carry no coord
+/// and the paramless 2722: identified, then idle rather than an invented
+/// coordinate.
 fn dig_tile(row: &TrailMembershipRow) -> Option<Tile> {
     if row.access.as_deref() == Some(CONSTRAINED) {
         return None;
     }
-    let mut sextant = false;
     let mut located = false;
     let mut guarded = false;
     let mut coord = None;
     for param in &row.params {
         match param.key.as_str() {
             "trail_loc" => located = true,
-            "trail_sextant" if param.value == "yes" => sextant = true,
             "trail_guardian" => guarded = true,
             "trail_coord" if coord.is_none() => coord = Some(param.value.as_str()),
             _ => {}
         }
     }
-    if located || guarded || !sextant {
+    if located || guarded {
         return None;
     }
     decode_trail_coord(coord?)
@@ -1704,7 +1711,9 @@ mod tests {
     /// `trail_clue_easy_simple001`: the selected search membership,
     /// `trail_loc=^true` with `trail_coord=1_50_50_9_18`.
     const SEARCH: i32 = 2677;
-    /// `trail_clue_easy_map001`: a selected `trail_coord` with no `trail_loc`.
+    /// `trail_clue_easy_map001`: the coord-only easy map the widened dig
+    /// membership reads, `trail_coord=0_49_52_41_32` → (3177, 3360, 0) with no
+    /// `trail_sextant` at all.
     const MAP: i32 = 2713;
     /// `trail_clue_hard_map001`: a selected clue row with no params at all.
     const MAP_EMPTY: i32 = 2722;
@@ -2633,9 +2642,10 @@ mod tests {
             "locs": [loc(11, 3209, 3218, 1, &["Search"])],
         });
         // A casket is a held Open, so it is not in this set: 3554 is the
-        // packed constrained clue, 2722 and 2713 are clue rows with no search
-        // pin, and 2831 is a desc-only riddle.
-        for id in [CLUE, MAP_EMPTY, MAP, RIDDLE] {
+        // packed constrained clue, 2722 is a paramless clue row and 2831 is a
+        // desc-only riddle. The coord-only map is no longer one of them: the
+        // widened dig arm walks and Digs from its own tile.
+        for id in [CLUE, MAP_EMPTY, RIDDLE] {
             let page = json!([[id, 1]]);
             let token = steady(&data, id);
             for _ in 0..2 {
@@ -3501,21 +3511,33 @@ mod tests {
     }
 
     /// The dig membership is the selected-param classify, not the frozen
-    /// `type`: a decodable `trail_coord` on a row with no `trail_loc`,
-    /// `trail_sextant=yes`, no `trail_guardian` and an `access` that is not
-    /// `"constrained"`. Twenty rows on both pins, with no swallow of a search
-    /// row and no leak of a guarded, packed, coord-only or desc-only one.
+    /// `type`: a decodable `trail_coord` on a row with no `trail_loc`, no
+    /// `trail_guardian` and an `access` that is not `"constrained"`. The
+    /// `trail_sextant` param is not read here, so the forty rows are the twenty
+    /// medium sextant rows plus the coord-bearing easy maps, the vague and the
+    /// riddle-with-coord rows, on both pins — with no swallow of a search row
+    /// and no leak of a guarded, packed, coord-less or casket row.
     #[test]
     fn the_unguarded_dig_membership_is_the_selected_param_set() {
         for revision in [ClientRevision::R274, ClientRevision::R289] {
             let data = api::game_data::for_revision(revision).expect("selected data");
             let facts = data.trails().expect("trails");
-            // The pinned decode: 2801's selected token is (3160, 3251, 0).
+            // The pinned decodes: the medium sextant 2801's selected token is
+            // (3160, 3251, 0), and the easy map 2713's is (3177, 3360, 0).
             assert_eq!(
                 dig_tile(row(&data, UNGUARDED)),
                 Some(Tile {
                     x: 3160,
                     z: 3251,
+                    level: 0
+                }),
+                "{revision:?}"
+            );
+            assert_eq!(
+                dig_tile(row(&data, MAP)),
+                Some(Tile {
+                    x: 3177,
+                    z: 3360,
                     level: 0
                 }),
                 "{revision:?}"
@@ -3529,11 +3551,26 @@ mod tests {
             assert_eq!(
                 members,
                 vec![
-                    2801, 2803, 2805, 2807, 2809, 2811, 2813, 2815, 2817, 2819, 2821, 2823, 2825,
-                    3582, 3584, 3586, 3588, 3590, 3592, 3594,
+                    2713, 2716, 2719, 3510, 3516, 3518, 2827, 2801, 2803, 2805, 2807, 2809, 2811,
+                    2813, 2815, 2817, 2819, 2821, 2823, 2825, 3582, 3584, 3586, 3588, 3590, 3592,
+                    3594, 3596, 3599, 3602, 2774, 2776, 2780, 2783, 2786, 2788, 2790, 3520, 3522,
+                    3580,
                 ],
                 "{revision:?}"
             );
+            assert_eq!(members.len(), 40, "{revision:?}");
+            // Half the forty pin the sextant and half do not: the param is not
+            // the membership, and neither is `trail_casket`.
+            let sextant = members
+                .iter()
+                .filter(|id| {
+                    row(&data, **id)
+                        .params
+                        .iter()
+                        .any(|param| param.key == "trail_sextant" && param.value == "yes")
+                })
+                .count();
+            assert_eq!(sextant, 20, "{revision:?}");
             // No swallow: the 58 search rows are the other classify.
             let searchable = facts
                 .rows
@@ -3545,18 +3582,11 @@ mod tests {
                 assert_eq!(dig_tile(row), None, "{revision:?} {}", row.alias);
             }
             assert_eq!(search_tile(row(&data, UNGUARDED)), None, "{revision:?}");
-            // No leak: the guarded rows and the constrained clue are the same
-            // sextant shape, the map and the riddle carry a coord without the
-            // pin, and the paramless 2722 and every casket stay out.
-            for id in [
-                GUARDED,
-                CLUE,
-                MAP,
-                RIDDLE,
-                MAP_EMPTY,
-                CASKET,
-                SEXTANT_CASKET,
-            ] {
+            // No leak: the guarded rows are the same sextant shape plus a
+            // guardian, the constrained 3554 clue carries a decodable coord
+            // and its own casket, the desc-only 2831 has no coord at all, and
+            // the paramless 2722 and every casket stay out.
+            for id in [GUARDED, CLUE, RIDDLE, MAP_EMPTY, CASKET, SEXTANT_CASKET] {
                 assert_eq!(dig_tile(row(&data, id)), None, "{revision:?} {id}");
             }
             // The guarded 30 are the sextant rows that carry a guardian: the
@@ -3568,8 +3598,9 @@ mod tests {
                 .count();
             assert_eq!(guarded, 30, "{revision:?}");
         }
-        // Synthetic rows: each half of the pin on its own idles, a loc param of
-        // any value is not this membership, and an off-contract token is never
+        // Synthetic rows: the coord alone is the membership the sextant pin
+        // used to gate, either sextant value rides along, a loc param of any
+        // value is not this membership, and an off-contract token is never
         // rounded into an invented coordinate.
         let sextant = || param("trail_sextant", "yes");
         let coord = || param("trail_coord", "0_49_50_24_51");
@@ -3578,28 +3609,33 @@ mod tests {
             z: 3251,
             level: 0,
         });
-        assert_eq!(dig_tile(&member(vec![coord()], None)), None);
-        assert_eq!(dig_tile(&member(vec![sextant()], None)), None);
+        assert_eq!(dig_tile(&member(vec![coord()], None)), hit);
         assert_eq!(dig_tile(&member(vec![sextant(), coord()], None)), hit);
+        assert_eq!(
+            dig_tile(&member(vec![param("trail_sextant", "no"), coord()], None)),
+            hit
+        );
+        assert_eq!(
+            dig_tile(&member(
+                vec![coord(), param("trail_casket", "trail_clue_test_casket")],
+                None
+            )),
+            hit
+        );
+        assert_eq!(dig_tile(&member(vec![sextant()], None)), None);
         for blocked in [
-            vec![param("trail_loc", "^true"), sextant(), coord()],
+            vec![param("trail_loc", "^true"), coord()],
             vec![param("trail_loc", "^false"), sextant(), coord()],
+            vec![param("trail_guardian", "trail_hard"), coord()],
             vec![param("trail_guardian", "trail_hard"), sextant(), coord()],
-            vec![param("trail_sextant", "no"), coord()],
             vec![sextant(), param("trail_coord", "0_49_50_24")],
         ] {
             assert_eq!(dig_tile(&member(blocked, None)), None);
         }
         // `access` is read as the one constrained bound it is: any other value
         // — and a row that was posted with none — is outside the refusal.
-        assert_eq!(
-            dig_tile(&member(vec![sextant(), coord()], Some("constrained"))),
-            None
-        );
-        assert_eq!(
-            dig_tile(&member(vec![sextant(), coord()], Some("open"))),
-            hit
-        );
+        assert_eq!(dig_tile(&member(vec![coord()], Some("constrained"))), None);
+        assert_eq!(dig_tile(&member(vec![coord()], Some("open"))), hit);
     }
 
     /// The Dig identity is the selected-verified display the host resolves by
@@ -3742,13 +3778,14 @@ mod tests {
     /// The rows the dig classify leaves out stay identified then idle even over
     /// a scene the dig arm would walk and Dig from — `here` on the row's own
     /// selected tile with the Spade posted: the packed constrained 3554 clue,
-    /// the coord-only map and the paramless 2722. The guarded row is no longer
-    /// one of them: its own encounter walks and Digs from this same scene.
+    /// the paramless 2722 and the desc-only 2831, which carries no coord at
+    /// all. The guarded row is no longer one of them: its own encounter walks
+    /// and Digs from this same scene.
     #[test]
-    fn coord_only_rows_stay_idle_over_a_walkable_dig_scene() {
+    fn rows_outside_the_dig_classify_stay_idle_over_a_walkable_dig_scene() {
         on_reset();
         let data = selected();
-        for id in [CLUE, MAP, MAP_EMPTY] {
+        for id in [CLUE, MAP_EMPTY, RIDDLE] {
             let here_tile = row(&data, id)
                 .params
                 .iter()
@@ -3773,6 +3810,56 @@ mod tests {
                 assert!(idle.get("action").is_none(), "{id} {idle}");
             }
         }
+    }
+
+    /// `Steady` on a coord-only map row: the widened unguarded dig is the same
+    /// walk-then-Dig the medium sextant rows keep, so `trail_clue_easy_map001`
+    /// walks to its own decoded (3177, 3360, 0) and Digs the Spade with no
+    /// `trail_sextant` on the row at all.
+    #[test]
+    fn a_coord_only_map_row_walks_to_its_decoded_tile_and_digs_the_spade() {
+        on_reset();
+        let data = selected();
+        let page = json!([[MAP, 1]]);
+        let token = steady(&data, MAP);
+        // Not arrived: the walk is the map's own decoded tile, not the
+        // sextant sibling's.
+        let walk = call(
+            &data,
+            token,
+            page.clone(),
+            json!({ "here": here(3100, 3300, 0) }),
+        );
+        assert_eq!(walk["kind"], "walk", "{walk}");
+        assert_eq!(walk["x"], 3177, "{walk}");
+        assert_eq!(walk["z"], 3360, "{walk}");
+        assert_eq!(walk["level"], 0, "{walk}");
+        assert_eq!(token_of(&walk), token, "{walk}");
+        // Arrived without the Spade: the landed wait, never a verb.
+        let bare = call(
+            &data,
+            token,
+            page.clone(),
+            json!({ "here": here(3177, 3360, 0) }),
+        );
+        assert_eq!(bare["kind"], "wait", "{bare}");
+        // Arrived with it: the same held Spade Dig the sibling dispatches.
+        let dig = call(
+            &data,
+            token,
+            page.clone(),
+            json!({ "here": here(3177, 3360, 0), "inv": [inv(SPADE_ITEM, SPADE_NAME, 1)] }),
+        );
+        assert_eq!(dig["kind"], "held", "{dig}");
+        assert_eq!(dig["name"], "Spade", "{dig}");
+        assert_eq!(dig["action"], "Dig", "{dig}");
+        assert_eq!(token_of(&dig), token, "{dig}");
+        // The clue left: still the landed `none-held` abort, and a Dig never
+        // arms the collect seam.
+        let gone = call(&data, token, json!([]), json!({}));
+        assert_eq!(gone["kind"], "aborted", "{gone}");
+        assert_eq!(gone["reason"], "none-held", "{gone}");
+        assert!(!bound_armed(), "a dig row never arms the reward window");
     }
 
     /// Freeze and yield beat the dig arm the way they beat the landed verbs: no
