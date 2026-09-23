@@ -86,6 +86,26 @@ fn host_js_dts_includes_required_interfaces() {
     assert!(src.contains(
         "gatherResource(input: { name: string }): HelperResult<{ rows: GatherLocResourceRow[] }>"
     ));
+    assert!(src.contains(
+        "gatherPlacements(input: { resource: string; region: SceneRegionInput; limit: number }): HelperResult<GatherPlacementResult>"
+    ));
+    assert!(!src.contains(
+        "gatherPlacements(input: { resource: string; region: SceneRegionInput; limit: number }): Promise"
+    ));
+    assert!(src.contains("export interface GatherPlacementRow {"));
+    assert!(src.contains("export interface GatherPlacementResult {"));
+    let placement_result = src
+        .split("export interface GatherPlacementResult {")
+        .nth(1)
+        .expect("GatherPlacementResult");
+    let placement_result = &placement_result[..placement_result.find("\n}\n").expect("closed")];
+    assert!(placement_result.contains("rows: GatherPlacementRow[];"));
+    assert!(placement_result.contains("resource_ids: GatherId[];"));
+    assert!(placement_result.contains("qualification: string;"));
+    assert!(
+        !placement_result.contains("SceneProjection"),
+        "placements must not reuse the posted-scene row type: {placement_result}"
+    );
     assert!(!src.contains("gatherMethods(input?: { skill?: string }): Promise"));
     assert!(src.contains(
         "questIdentity(input: { name: string } | { id: string }): HelperResult<QuestIdentityRow>"

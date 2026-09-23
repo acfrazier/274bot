@@ -375,6 +375,317 @@ fn fishing_rows_keep_ops_and_do_not_invent_locs() {
     assert!(bare["pair_op"].is_null());
 }
 
+fn placements_facts(revision: ClientRevision) -> api::game_data::GatherPlacementsFacts {
+    api::game_data::for_revision(revision)
+        .unwrap()
+        .gather_placements()
+        .expect("landed family")
+        .clone()
+}
+
+fn region(
+    min_x: i32,
+    min_z: i32,
+    max_x: i32,
+    max_z: i32,
+    level: i32,
+) -> api::gather_methods::SceneRegionInput {
+    api::gather_methods::SceneRegionInput {
+        min_x,
+        min_z,
+        max_x,
+        max_z,
+        level,
+    }
+}
+
+fn placements(
+    revision: ClientRevision,
+    resource: &str,
+    region: &api::gather_methods::SceneRegionInput,
+    limit: usize,
+) -> Result<serde_json::Value, &'static str> {
+    let world = placements_facts(revision);
+    let methods = facts(revision);
+    api::gather_methods::gather_placements(Some(&world), Some(&methods), resource, region, limit)
+}
+
+fn placement_rows(value: &serde_json::Value) -> Vec<(i64, i64, i64, i64)> {
+    value["rows"]
+        .as_array()
+        .expect("rows")
+        .iter()
+        .map(|row| {
+            (
+                row["loc_id"].as_i64().unwrap(),
+                row["x"].as_i64().unwrap(),
+                row["z"].as_i64().unwrap(),
+                row["plane"].as_i64().unwrap(),
+            )
+        })
+        .collect()
+}
+
+/// Every returned row appears after the previous one in the extract's own row
+/// order, so the join is family order and not a sort by distance or x.
+fn in_family_order(
+    world: &api::game_data::GatherPlacementsFacts,
+    rows: &[(i64, i64, i64, i64)],
+) -> bool {
+    let mut cursor = 0usize;
+    for (loc_id, x, z, plane) in rows {
+        let found = world.rows[cursor..].iter().position(|row| {
+            i64::from(row.loc_id) == *loc_id
+                && i64::from(row.x) == *x
+                && i64::from(row.z) == *z
+                && i64::from(row.plane) == *plane
+        });
+        match found {
+            Some(offset) => cursor += offset + 1,
+            None => return false,
+        }
+    }
+    true
+}
+
+#[test]
+fn placements_missing_family_is_unavailable_before_the_resource() {
+    let methods = facts(ClientRevision::R274);
+    let oak_box = region(2355, 3412, 2356, 3425, 0);
+    for resource in ["oak", "Iron", "nope", "", "   "] {
+        assert_eq!(
+            api::gather_methods::gather_placements(None, Some(&methods), resource, &oak_box, 64),
+            Err("family-unavailable:gather_placements"),
+            "{resource:?}"
+        );
+    }
+    // Absence is not the ok-empty envelope a published box with no hits has.
+    let miss = placements(
+        ClientRevision::R274,
+        "oak",
+        &region(3000, 3000, 3001, 3001, 0),
+        64,
+    )
+    .unwrap();
+    assert!(placement_rows(&miss).is_empty());
+    assert_ne!(
+        api::gather_methods::gather_placements(None, Some(&methods), "oak", &oak_box, 64),
+        Ok(miss)
+    );
+    // A present placements family without methods cannot identify the key, and
+    // that is not the methods family token.
+    let world = placements_facts(ClientRevision::R274);
+    for resource in ["oak", "Iron", "nope"] {
+        assert_eq!(
+            api::gather_methods::gather_placements(Some(&world), None, resource, &oak_box, 64),
+            Err("unknown-resource"),
+            "{resource:?}"
+        );
+    }
+    assert_ne!(
+        api::gather_methods::gather_placements(Some(&world), None, "oak", &oak_box, 64),
+        Err("family-unavailable:gather_methods")
+    );
+}
+
+#[test]
+fn placements_join_published_woods_in_family_order() {
+    for revision in [ClientRevision::R274, ClientRevision::R289] {
+        let oak = placements(revision, "  OAK  ", &region(2355, 3412, 2356, 3425, 0), 64).unwrap();
+        assert_eq!(
+            placement_rows(&oak),
+            vec![(1281, 2355, 3425, 0), (1281, 2356, 3412, 0)],
+            "{revision:?}"
+        );
+        assert_eq!(oak["truncated"], false, "{revision:?}");
+        assert_eq!(oak["qualification"], "complete", "{revision:?}");
+        assert_eq!(
+            oak["resource_ids"],
+            serde_json::json!([{ "alias": "oaktree", "id": 1281 }])
+        );
+        assert_eq!(oak.as_object().unwrap().len(), 4, "{revision:?}");
+        assert!(oak.get("coverage").is_none(), "{revision:?}");
+
+        let magic = placements(revision, "magic", &region(2696, 3396, 2698, 3424, 0), 64).unwrap();
+        assert_eq!(
+            placement_rows(&magic),
+            vec![
+                (1306, 2696, 3423, 0),
+                (1306, 2698, 3396, 0),
+                (1306, 2698, 3398, 0)
+            ],
+            "{revision:?}"
+        );
+        assert_eq!(magic["truncated"], false);
+        assert_eq!(
+            magic["resource_ids"],
+            serde_json::json!([{ "alias": "magictree", "id": 1306 }])
+        );
+    }
+}
+
+#[test]
+fn placements_resource_ids_are_the_methods_loc_ids_not_stumps() {
+    let methods = facts(ClientRevision::R274);
+    let normal = methods
+        .woods
+        .iter()
+        .find(|row| row.resource_key == "normal")
+        .expect("published normal");
+    let value = placements(
+        ClientRevision::R274,
+        "normal",
+        &region(0, 0, 99999, 99999, 0),
+        64,
+    )
+    .expect("published normal");
+    let ids: Vec<i64> = value["resource_ids"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|id| id["id"].as_i64().unwrap())
+        .collect();
+    assert_eq!(
+        ids,
+        normal
+            .loc_ids
+            .iter()
+            .map(|id| i64::from(id.id))
+            .collect::<Vec<_>>()
+    );
+    assert!(normal
+        .empty_ids
+        .iter()
+        .all(|stump| !ids.contains(&i64::from(stump.id))));
+    assert!(value["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|row| ids.contains(&row["loc_id"].as_i64().unwrap())));
+}
+
+#[test]
+fn placements_published_region_miss_keeps_the_methods_ids() {
+    for revision in [ClientRevision::R274, ClientRevision::R289] {
+        let empty = placements(revision, "oak", &region(3000, 3000, 3001, 3001, 0), 64).unwrap();
+        assert!(placement_rows(&empty).is_empty(), "{revision:?}");
+        assert_eq!(empty["truncated"], false, "{revision:?}");
+        assert_eq!(empty["qualification"], "complete", "{revision:?}");
+        assert_eq!(
+            empty["resource_ids"],
+            serde_json::json!([{ "alias": "oaktree", "id": 1281 }])
+        );
+        // An inverted box is zero matches, and so is a level the rows are not on.
+        let inverted = placements(revision, "oak", &region(2356, 3425, 2355, 3412, 0), 64).unwrap();
+        assert!(placement_rows(&inverted).is_empty(), "{revision:?}");
+        assert_eq!(inverted["resource_ids"], empty["resource_ids"]);
+        let level = placements(revision, "oak", &region(2355, 3412, 2356, 3425, 2), 64).unwrap();
+        assert!(placement_rows(&level).is_empty(), "{revision:?}");
+        assert_eq!(level["truncated"], false);
+        assert_eq!(level["resource_ids"], empty["resource_ids"]);
+    }
+}
+
+#[test]
+fn placements_limit_caps_family_order_and_sets_truncated() {
+    for revision in [ClientRevision::R274, ClientRevision::R289] {
+        let wide = region(0, 0, 99999, 99999, 0);
+        let capped = placements(revision, "normal", &wide, 64).unwrap();
+        let rows = placement_rows(&capped);
+        assert_eq!(rows.len(), 64, "{revision:?}");
+        assert_eq!(capped["truncated"], true, "{revision:?}");
+        assert_eq!(
+            &rows[..4],
+            &[
+                (1276, 2356, 3423, 0),
+                (1276, 2357, 3428, 0),
+                (1276, 2358, 3402, 0),
+                (1276, 2358, 3405, 0)
+            ],
+            "{revision:?}"
+        );
+        assert!(
+            in_family_order(&placements_facts(revision), &rows),
+            "{revision:?}"
+        );
+        assert!(rows.iter().all(|row| row.0 == 1276), "{revision:?}");
+
+        // A tighter limit keeps the same family-order prefix.
+        let one = placements(revision, "normal", &wide, 1).unwrap();
+        assert_eq!(placement_rows(&one), rows[..1].to_vec(), "{revision:?}");
+        assert_eq!(one["truncated"], true);
+        assert_eq!(one["resource_ids"], capped["resource_ids"]);
+
+        // Fewer matches than the limit is not truncated.
+        let small = placements(revision, "magic", &region(2700, 3390, 2710, 3400, 0), 64).unwrap();
+        assert_eq!(small["truncated"], false, "{revision:?}");
+        assert_eq!(placement_rows(&small).len(), 2, "{revision:?}");
+    }
+}
+
+#[test]
+fn placements_mining_keys_are_unknown_marked_empty() {
+    for revision in [ClientRevision::R274, ClientRevision::R289] {
+        let wide = region(0, 0, 99999, 99999, 0);
+        for resource in [
+            "iron",
+            "  Iron  ",
+            "IRON",
+            "rune stones",
+            "limestone",
+            "gems",
+        ] {
+            assert_eq!(
+                placements(revision, resource, &wide, 64),
+                Ok(serde_json::json!({
+                    "rows": [],
+                    "truncated": false,
+                    "resource_ids": [],
+                    "qualification": "unknown",
+                })),
+                "{revision:?} {resource:?}"
+            );
+        }
+        // The identity helper still hits the same key.
+        assert!(resource(revision, "Iron").is_ok(), "{revision:?}");
+    }
+}
+
+#[test]
+fn placements_off_family_and_unpublished_keys_are_unknown_resource() {
+    for revision in [ClientRevision::R274, ClientRevision::R289] {
+        let wide = region(0, 0, 99999, 99999, 0);
+        for resource in [
+            "jungle",
+            "burnt",
+            "achey",
+            "hollow",
+            "freshfish",
+            "rarefish",
+            "category_453",
+            "",
+            "   ",
+            "oak tree",
+            "Oak tree",
+            "oaktree",
+            "1281",
+            "1281.0",
+            "Iron ore",
+            "ironrock1",
+            "logs",
+        ] {
+            assert_eq!(
+                placements(revision, resource, &wide, 64),
+                Err("unknown-resource"),
+                "{revision:?} {resource:?}"
+            );
+        }
+        for key in ["jungle", "burnt", "achey", "hollow"] {
+            assert!(resource(revision, key).is_ok(), "{revision:?} {key:?}");
+        }
+    }
+}
+
 fn post_base(iso: &LoadIsolate, tick: u64) {
     let input = script::isolate_fb::SnapshotInput {
         tick,
@@ -478,6 +789,25 @@ fn data_without_family() -> std::sync::Arc<api::game_data::SelectedGameData> {
         "pickpocket": []
     }"#;
     std::sync::Arc::new(serde_json::from_str(raw).expect("selected data without gather_methods"))
+}
+
+/// The landed 274 pin with one family key removed, so a call can meet that
+/// family's absence token while the other family is still present.
+fn selected_data_without(key: &str) -> std::sync::Arc<api::game_data::SelectedGameData> {
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("api")
+        .join("data")
+        .join("game-data")
+        .join("274.json");
+    let text = std::fs::read_to_string(&path).expect("pin 274");
+    let mut value: serde_json::Value = serde_json::from_str(&text).expect("pin 274 json");
+    value
+        .as_object_mut()
+        .expect("pin object")
+        .remove(key)
+        .unwrap_or_else(|| panic!("pin 274 has no {key}"));
+    std::sync::Arc::new(serde_json::from_value(value).expect("selected data without one family"))
 }
 
 #[test]
@@ -617,6 +947,7 @@ fn v2_install_is_typed_not_a_json_op_or_interact() {
         .unwrap();
     assert!(!ops.contains("gatherMethods"), "{ops}");
     assert!(!ops.contains("gatherResource"), "{ops}");
+    assert!(!ops.contains("gatherPlacements"), "{ops}");
     let declared = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/src/shim/declared_surface.js"
@@ -660,6 +991,228 @@ export function tick(api) {
 }
 
 #[test]
+fn v2_placements_absence_is_family_unavailable_not_empty_rows() {
+    let src = r#"
+export const apiVersion = 2;
+export function tick(api) {
+  const box = { min_x: 2355, min_z: 3412, max_x: 2356, max_z: 3425, level: 0 };
+  globalThis.__probe = JSON.stringify({
+    oak: api.gatherPlacements({ resource: 'oak', region: box, limit: 64 }),
+    iron: api.gatherPlacements({ resource: 'iron', region: box, limit: 64 }),
+  });
+}
+"#;
+    let iso = LoadIsolate::spawn_with_game_data(
+        src.into(),
+        LoadShape::NativeTick,
+        vec![],
+        selected_data_without("gather_placements"),
+    )
+    .unwrap();
+    post_base(&iso, 1);
+    iso.on_game_tick(1);
+    let missing: serde_json::Value =
+        serde_json::from_str(iso.probe("globalThis.__probe").unwrap().as_str().unwrap()).unwrap();
+    iso.join();
+    assert_eq!(
+        missing["oak"]["error"], "family-unavailable:gather_placements",
+        "{missing:?}"
+    );
+    assert_eq!(missing["iron"]["error"], missing["oak"]["error"]);
+    assert!(missing["oak"].get("value").is_none(), "{missing:?}");
+    assert_ne!(missing["oak"]["error"], "family-unavailable:gather_methods");
+
+    let iso = LoadIsolate::spawn_with_game_data(
+        src.into(),
+        LoadShape::NativeTick,
+        vec![],
+        selected_data_without("gather_methods"),
+    )
+    .unwrap();
+    post_base(&iso, 1);
+    iso.on_game_tick(1);
+    let orphan: serde_json::Value =
+        serde_json::from_str(iso.probe("globalThis.__probe").unwrap().as_str().unwrap()).unwrap();
+    iso.join();
+    assert_eq!(orphan["oak"]["error"], "unknown-resource", "{orphan:?}");
+    assert_eq!(orphan["iron"]["error"], "unknown-resource");
+}
+
+#[test]
+fn v2_placements_args_precede_the_selected_pin() {
+    let src = r#"
+export const apiVersion = 2;
+export function tick(api) {
+  const box = { min_x: 1, min_z: 1, max_x: 2, max_z: 2, level: 0 };
+  globalThis.__probe = JSON.stringify({
+    omitted: api.gatherPlacements(),
+    nullArg: api.gatherPlacements(null),
+    arrayArg: api.gatherPlacements([]),
+    stringArg: api.gatherPlacements('oak'),
+    omittedRegion: api.gatherPlacements({ resource: 'oak', limit: 64 }),
+    omittedRegionBadLimit: api.gatherPlacements({ resource: 'oak', limit: 65 }),
+    nullRegion: api.gatherPlacements({ resource: 'oak', region: null, limit: 64 }),
+    shortRegion: api.gatherPlacements({ resource: 'oak', region: { min_x: 1, min_z: 1, max_x: 2, max_z: 2 }, limit: 64 }),
+    planeRegion: api.gatherPlacements({ resource: 'oak', region: { min_x: 1, min_z: 1, max_x: 2, max_z: 2, plane: 0 }, limit: 64 }),
+    radiusRegion: api.gatherPlacements({ resource: 'oak', region: { cx: 1, cz: 1, plane: 0, radius: 4 }, limit: 64 }),
+    numberResource: api.gatherPlacements({ resource: 1281, region: box, limit: 64 }),
+    omittedResource: api.gatherPlacements({ region: box, limit: 64 }),
+    limit65: api.gatherPlacements({ resource: 'oak', region: box, limit: 65 }),
+    limit0: api.gatherPlacements({ resource: 'oak', region: box, limit: 0 }),
+    limitFraction: api.gatherPlacements({ resource: 'oak', region: box, limit: 1.5 }),
+    limitOmitted: api.gatherPlacements({ resource: 'oak', region: box }),
+    levelOmitted: api.gatherPlacements({ resource: 'oak', region: { min_x: 1, min_z: 1, max_x: 2, max_z: 2 }, limit: 64 }),
+    good: api.gatherPlacements({ resource: 'oak', region: box, limit: 64 }),
+  });
+}
+"#;
+    let iso = LoadIsolate::spawn(src.into(), LoadShape::NativeTick, vec![]).unwrap();
+    post_base(&iso, 1);
+    iso.on_game_tick(1);
+    let value: serde_json::Value =
+        serde_json::from_str(iso.probe("globalThis.__probe").unwrap().as_str().unwrap()).unwrap();
+    iso.join();
+    for key in [
+        "omitted",
+        "nullArg",
+        "arrayArg",
+        "stringArg",
+        "nullRegion",
+        "shortRegion",
+        "planeRegion",
+        "radiusRegion",
+        "numberResource",
+        "omittedResource",
+        "limit65",
+        "limit0",
+        "limitFraction",
+        "limitOmitted",
+        "levelOmitted",
+    ] {
+        assert_eq!(value[key]["error"], "invalid-args", "{key}: {value:?}");
+    }
+    // A present object without the region key is missing-region, before the
+    // resource, the limit, and the region shape.
+    assert_eq!(
+        value["omittedRegion"]["error"], "missing-region",
+        "{value:?}"
+    );
+    assert_eq!(
+        value["omittedRegionBadLimit"]["error"], "missing-region",
+        "{value:?}"
+    );
+    // Args first: a well-formed call is the only one that reaches the pin.
+    assert_eq!(value["good"]["error"], "missing-selected-data", "{value:?}");
+}
+
+#[test]
+fn v2_placements_are_sync_helper_results_with_locked_errors() {
+    let src = r#"
+export const apiVersion = 2;
+export function tick(api) {
+  const box = { min_x: 2355, min_z: 3412, max_x: 2356, max_z: 3425, level: 0 };
+  const oak = api.gatherPlacements({ resource: ' Oak ', region: box, limit: 64 });
+  const miss = api.gatherPlacements({ resource: 'oak', region: { min_x: 3000, min_z: 3000, max_x: 3001, max_z: 3001, level: 0 }, limit: 64 });
+  const iron = api.gatherPlacements({ resource: 'iron', region: box, limit: 64 });
+  const jungle = api.gatherPlacements({ resource: 'jungle', region: box, limit: 64 });
+  globalThis.__probe = JSON.stringify({
+    oakOk: oak.ok,
+    oakThen: typeof oak.then,
+    oakRows: oak.value && oak.value.rows,
+    oakIds: oak.value && oak.value.resource_ids,
+    oakTruncated: oak.value && oak.value.truncated,
+    oakQualification: oak.value && oak.value.qualification,
+    missRows: miss.value && miss.value.rows.length,
+    missIds: miss.value && miss.value.resource_ids.length,
+    iron: iron.value,
+    jungle: jungle.error,
+    promise: oak instanceof Promise,
+  });
+}
+"#;
+    let value = probe(src, ClientRevision::R274);
+    assert_eq!(value["oakOk"], true, "{value:?}");
+    assert_eq!(value["oakThen"], "undefined", "{value:?}");
+    assert_eq!(
+        value["oakRows"],
+        serde_json::json!([
+            { "loc_id": 1281, "x": 2355, "z": 3425, "plane": 0 },
+            { "loc_id": 1281, "x": 2356, "z": 3412, "plane": 0 }
+        ]),
+        "{value:?}"
+    );
+    assert_eq!(
+        value["oakIds"],
+        serde_json::json!([{ "alias": "oaktree", "id": 1281 }]),
+        "{value:?}"
+    );
+    assert_eq!(value["oakTruncated"], false, "{value:?}");
+    assert_eq!(value["oakQualification"], "complete", "{value:?}");
+    assert_eq!(value["missRows"], 0, "{value:?}");
+    assert_eq!(value["missIds"], 1, "{value:?}");
+    assert_eq!(
+        value["iron"],
+        serde_json::json!({
+            "rows": [],
+            "truncated": false,
+            "resource_ids": [],
+            "qualification": "unknown",
+        }),
+        "{value:?}"
+    );
+    assert_eq!(value["jungle"], "unknown-resource", "{value:?}");
+    assert_eq!(value["promise"], false, "{value:?}");
+}
+
+#[test]
+fn v2_placements_bridge_gates_its_own_args() {
+    let src = r#"
+export const apiVersion = 2;
+export function tick(api) {
+  const bridge = (input) => globalThis.__rs2b0t_gather_methods_v2('gatherPlacements', input);
+  const box = { min_x: 2355, min_z: 3412, max_x: 2356, max_z: 3425, level: 0 };
+  globalThis.__probe = JSON.stringify({
+    omittedRegion: bridge({ resource: 'oak', limit: 64 }),
+    undefinedRegion: bridge({ resource: 'oak', region: undefined, limit: 64 }),
+    numberRegion: bridge({ resource: 'oak', region: 1, limit: 64 }),
+    arrayRegion: bridge({ resource: 'oak', region: [], limit: 64 }),
+    stringLimit: bridge({ resource: 'oak', region: box, limit: '64' }),
+    fractionLimit: bridge({ resource: 'oak', region: box, limit: 1.5 }),
+    limit65: bridge({ resource: 'oak', region: box, limit: 65 }),
+    fractionLevel: bridge({ resource: 'oak', region: { min_x: 2355, min_z: 3412, max_x: 2356, max_z: 3425, level: 0.5 }, limit: 64 }),
+    numberResource: bridge({ resource: 1281, region: box, limit: 64 }),
+    nullInput: bridge(null),
+    good: bridge({ resource: 'oak', region: box, limit: 64 }),
+  });
+}
+"#;
+    let value = probe(src, ClientRevision::R274);
+    assert_eq!(
+        value["omittedRegion"]["error"], "missing-region",
+        "{value:?}"
+    );
+    for key in [
+        "undefinedRegion",
+        "numberRegion",
+        "arrayRegion",
+        "stringLimit",
+        "fractionLimit",
+        "limit65",
+        "fractionLevel",
+        "numberResource",
+        "nullInput",
+    ] {
+        assert_eq!(value[key]["error"], "invalid-args", "{key}: {value:?}");
+    }
+    assert_eq!(value["good"]["ok"], true, "{value:?}");
+    assert_eq!(
+        value["good"]["value"]["rows"].as_array().map(Vec::len),
+        Some(2),
+        "{value:?}"
+    );
+}
+
+#[test]
 fn example_gather_methods_v2_is_one_read_only_fact_call() {
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("examples")
@@ -689,4 +1242,47 @@ fn example_gather_methods_v2_is_one_read_only_fact_call() {
     assert!(row["value"]["rows"]
         .as_array()
         .is_some_and(|rows| !rows.is_empty()));
+}
+
+#[test]
+fn example_gather_placements_v2_is_one_read_only_fact_call() {
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("examples")
+        .join("gather_placements_v2.ts");
+    let src = std::fs::read_to_string(&path).expect("example source");
+    assert!(!src.contains("request("));
+    assert!(!src.contains("h.interact"));
+    assert_eq!(src.matches("api.gatherPlacements").count(), 1);
+    assert!(
+        !path.with_extension("js").exists(),
+        "the example is a .ts read; no compiled sibling"
+    );
+    let js = script::transpile_ts(&src).expect("transpile gather_placements_v2.ts");
+    let data = api::game_data::for_revision(ClientRevision::R274).unwrap();
+    let iso = LoadIsolate::spawn_with_game_data(js, LoadShape::NativeTick, vec![], data).unwrap();
+    post_base(&iso, 1);
+    iso.on_game_tick(1);
+    let err = iso
+        .probe("globalThis.__rs2b0t_host.lastError || ''")
+        .unwrap();
+    let logs = iso.drain_logs();
+    iso.join();
+    assert_eq!(err.as_str().unwrap_or(""), "", "example lastError: {err:?}");
+    let last = logs
+        .iter()
+        .rev()
+        .find(|line| line.contains("\"resource_ids\""))
+        .unwrap_or_else(|| panic!("example logged a placements call; logs={logs:?}"));
+    let row: serde_json::Value = serde_json::from_str(last).unwrap();
+    assert_eq!(row["ok"], true, "{row:?}");
+    assert_eq!(
+        row["value"]["rows"].as_array().map(Vec::len),
+        Some(2),
+        "{row:?}"
+    );
+    assert_eq!(
+        row["value"]["resource_ids"],
+        serde_json::json!([{ "alias": "oaktree", "id": 1281 }]),
+        "{row:?}"
+    );
 }

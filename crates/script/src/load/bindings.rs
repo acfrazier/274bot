@@ -1353,6 +1353,21 @@ api.gatherResource = function (input) {
   }
   return gatherV2('gatherResource', input);
 };
+// Placement region and limit reuse the scene gates. An omitted region key on
+// a present object is missing-region before resource, limit, or region shape.
+api.gatherPlacements = function (input) {
+  if (arguments.length === 0) return helperErr('invalid-args');
+  if (input == null || typeof input !== 'object' || Array.isArray(input)) {
+    return helperErr('invalid-args');
+  }
+  if (!Object.prototype.hasOwnProperty.call(input, 'region')) {
+    return helperErr('missing-region');
+  }
+  if (typeof input.resource !== 'string') return helperErr('invalid-args');
+  if (!sceneLimitOk(input.limit)) return helperErr('invalid-args');
+  if (sceneRegionValue(input.region) === null) return helperErr('invalid-args');
+  return gatherV2('gatherPlacements', input);
+};
 function questV2(op, input) {
   return globalThis.__rs2b0t_quest_facts_v2(op, input);
 }

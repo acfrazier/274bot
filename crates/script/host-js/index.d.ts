@@ -542,6 +542,22 @@ export interface GatherCoverageRecord {
   reason: string;
 }
 
+/** One published-woods world placement. `plane` is the stored level, not the query's `level`. */
+export interface GatherPlacementRow {
+  loc_id: number;
+  x: number;
+  z: number;
+  plane: number;
+}
+
+/** One level's published-woods placements. `resource_ids` is the methods loc-id set, not the hit list. */
+export interface GatherPlacementResult {
+  rows: GatherPlacementRow[];
+  truncated: boolean;
+  resource_ids: GatherId[];
+  qualification: string;
+}
+
 export interface QuestSkillGate {
   skill: string;
   level: number;
@@ -680,6 +696,8 @@ export interface NativeApi {
   gatherMethods(input?: { skill?: string }): HelperResult<{ rows: GatherMethodRow[]; coverage: GatherCoverageRecord[] }>;
   /** Sync resource-key read. Zero matches is unknown-resource, not an empty rows list. */
   gatherResource(input: { name: string }): HelperResult<{ rows: GatherLocResourceRow[] }>;
+  /** Sync published-woods world placements inside a required one-level region. Omitted `region` is `missing-region`. A mining `resource` is a marked unknown empty, never `family-unavailable:gather_placements`. Not a Promise and not a request op. */
+  gatherPlacements(input: { resource: string; region: SceneRegionInput; limit: number }): HelperResult<GatherPlacementResult>;
   /** Sync fact read. Exactly one of name or id, and it must be a string. Not a Promise and not a request op. */
   questIdentity(input: { name: string } | { id: string }): HelperResult<QuestIdentityRow>;
   /** Sync seed-id requirements read. A name field is not a key. Not a Promise and not a request op. */

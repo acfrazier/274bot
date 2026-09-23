@@ -1292,13 +1292,26 @@ export const apiVersion = 2;
 export function tick(api) {
   const methods = api.gatherMethods({ skill: 'woodcutting' });
   const resource = api.gatherResource({ name: 'limestone' });
+  const placements = api.gatherPlacements({
+    resource: 'oak',
+    region: { min_x: 2355, min_z: 3412, max_x: 2356, max_z: 3425, level: 0 },
+    limit: 64,
+  });
+  let requested = null;
+  try { api.request({ op: 'gatherPlacements' }); requested = 'ok'; }
+  catch (e) { requested = String(e && (e.message || e)); }
   globalThis.__probe = {
     methodsOk: methods.ok,
     methodsThen: typeof methods.then,
     resourceLen: resource.value && resource.value.rows.length,
+    placementsOk: placements.ok,
+    placementsThen: typeof placements.then,
+    placementsRows: placements.value && placements.value.rows.length,
+    placementsId: placements.value && placements.value.resource_ids[0].id,
     namespace: api.gather,
     bestAxe: typeof api.bestAxe,
     bestPickaxe: typeof api.bestPickaxe,
+    requested,
   };
 }
 "#;
@@ -1311,9 +1324,20 @@ export function tick(api) {
     assert_eq!(probe["methodsOk"], true, "{probe:?}");
     assert_eq!(probe["methodsThen"], "undefined", "{probe:?}");
     assert_eq!(probe["resourceLen"], 3, "{probe:?}");
+    assert_eq!(probe["placementsOk"], true, "{probe:?}");
+    assert_eq!(probe["placementsThen"], "undefined", "{probe:?}");
+    assert_eq!(probe["placementsRows"], 2, "{probe:?}");
+    assert_eq!(probe["placementsId"], 1281, "{probe:?}");
     assert!(probe["namespace"].is_null(), "{probe:?}");
     assert_eq!(probe["bestAxe"], "undefined", "{probe:?}");
     assert_eq!(probe["bestPickaxe"], "undefined", "{probe:?}");
+    assert!(
+        probe["requested"]
+            .as_str()
+            .unwrap_or("")
+            .contains("not impl"),
+        "{probe:?}"
+    );
     let interacts = iso.drain_interacts();
     iso.join();
     assert!(

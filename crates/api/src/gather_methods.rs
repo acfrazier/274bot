@@ -1,15 +1,21 @@
 //! Gather-methods query. Takes the family directly so a missing family is not an empty list.
-//! The V8 wrapper is the only production caller of `SelectedGameData::gather_methods`.
+//! The V8 wrapper is the only production caller of `SelectedGameData::gather_methods`
+//! and `SelectedGameData::gather_placements`.
 
 use crate::game_data::{
     GatherCoverageRecord, GatherFishingMethod, GatherLocId, GatherLocResource, GatherMethodsFacts,
-    GatherOutput,
+    GatherOutput, GatherPlacementsFacts,
 };
 use serde_json::{json, Map, Value};
 
 pub const FAMILY_UNAVAILABLE: &str = "family-unavailable:gather_methods";
+pub const FAMILY_UNAVAILABLE_PLACEMENTS: &str = "family-unavailable:gather_placements";
 pub const UNKNOWN_SKILL: &str = "unknown-skill";
 pub const UNKNOWN_RESOURCE: &str = "unknown-resource";
+
+/// The one publication class the placements extract covers. The other stored
+/// classes are `unpublished` and `conditional`, which have no world rows.
+const PUBLISHED: &str = "published";
 
 /// `{ rows, coverage }`. Skill `None` is the omitted-skill call.
 pub fn gather_methods(
@@ -66,6 +72,112 @@ pub fn gather_resource(
         return Err(UNKNOWN_RESOURCE);
     }
     Ok(json!({ "rows": rows }))
+}
+
+/// One level's box, the rust mirror of the v2 `SceneRegionInput` fields.
+/// `level` is compared against the stored row's `plane`; there is no `plane`
+/// key and no radius form.
+#[derive(Debug, Clone, Copy)]
+pub struct SceneRegionInput {
+    pub min_x: i32,
+    pub min_z: i32,
+    pub max_x: i32,
+    pub max_z: i32,
+    pub level: i32,
+}
+
+/// `{ rows, truncated, resource_ids, qualification }` of published-woods world
+/// placements inside `region`. `resource` is a methods `resource_key` and
+/// `limit` caps `rows`; the public wrappers gate both before this call.
+///
+/// Takes both families directly. Absent placements is
+/// `family-unavailable:gather_placements` before `unknown-resource`, never an
+/// empty list; methods absence on a present placements family is
+/// `unknown-resource`, because the key cannot be identified.
+pub fn gather_placements(
+    facts: Option<&GatherPlacementsFacts>,
+    methods: Option<&GatherMethodsFacts>,
+    resource: &str,
+    region: &SceneRegionInput,
+    limit: usize,
+) -> Result<Value, &'static str> {
+    let Some(facts) = facts else {
+        return Err(FAMILY_UNAVAILABLE_PLACEMENTS);
+    };
+    let Some(methods) = methods else {
+        return Err(UNKNOWN_RESOURCE);
+    };
+    // Identity is woods then mining, the same order as `gather_resource`.
+    if let Some(wood) = methods
+        .woods
+        .iter()
+        .find(|row| key_eq(&row.resource_key, resource))
+    {
+        // Unpublished and conditional woods are not placement-queryable, and
+        // their coverage class is not mining's unknown mark.
+        if wood.publication.as_deref() != Some(PUBLISHED) {
+            return Err(UNKNOWN_RESOURCE);
+        }
+        return Ok(published_placements(facts, wood, region, limit));
+    }
+    if methods
+        .mining
+        .iter()
+        .any(|row| key_eq(&row.resource_key, resource))
+    {
+        // Coverage unknown is not an empty extract: short-circuit before the
+        // spatial filter and never copy mining loc ids into `resource_ids`.
+        return Ok(json!({
+            "rows": [],
+            "truncated": false,
+            "resource_ids": [],
+            "qualification": "unknown",
+        }));
+    }
+    Err(UNKNOWN_RESOURCE)
+}
+
+/// The published join: that methods row's `loc_ids` only (never `empty_ids` /
+/// stumps), family order, the box, and `row.plane == region.level`. More
+/// matches than `limit` sets `truncated` and drops the rest. `resource_ids` is
+/// the methods set, so a region miss still carries it.
+fn published_placements(
+    facts: &GatherPlacementsFacts,
+    wood: &GatherLocResource,
+    region: &SceneRegionInput,
+    limit: usize,
+) -> Value {
+    let mut rows = Vec::new();
+    let mut truncated = false;
+    for row in &facts.rows {
+        if !wood.loc_ids.iter().any(|id| id.id == row.loc_id) {
+            continue;
+        }
+        if row.plane != region.level
+            || row.x < region.min_x
+            || row.x > region.max_x
+            || row.z < region.min_z
+            || row.z > region.max_z
+        {
+            continue;
+        }
+        if rows.len() >= limit {
+            truncated = true;
+            break;
+        }
+        rows.push(json!({
+            "loc_id": row.loc_id,
+            "x": row.x,
+            "z": row.z,
+            "plane": row.plane,
+        }));
+    }
+    json!({
+        "rows": rows,
+        "truncated": truncated,
+        "resource_ids": ids(&wood.loc_ids),
+        "qualification": wood.qualification,
+    })
 }
 
 fn accepted_skill(skill: &str) -> Result<&'static str, &'static str> {

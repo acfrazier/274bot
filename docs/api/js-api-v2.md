@@ -176,14 +176,15 @@ Example: `crates/script/examples/supply_helpers_v2.ts`.
 
 ## Gather query helpers
 
-Two sync `HelperResult` methods over the selected pin's gather-methods family.
-They are not Promises, not `request()` ops, and they do not push `h.interact`.
-`bestAxe` and `bestPickaxe` stay `notImpl`.
+Three sync `HelperResult` methods over the selected pin's gather-methods
+family. They are not Promises, not `request()` ops, and they do not push
+`h.interact`. `bestAxe` and `bestPickaxe` stay `notImpl`.
 
 | Method | OK | Errors |
 | --- | --- | --- |
 | `gatherMethods(input?)` | `{ rows, coverage }` | `invalid-args`, `missing-selected-data`, `family-unavailable:gather_methods`, `unknown-skill` |
 | `gatherResource({ name })` | `{ rows }` | `invalid-args`, `missing-selected-data`, `family-unavailable:gather_methods`, `unknown-resource` |
+| `gatherPlacements({ resource, region, limit })` | `{ rows, truncated, resource_ids, qualification }` | `invalid-args`, `missing-region`, `missing-selected-data`, `family-unavailable:gather_placements`, `unknown-resource` |
 
 `gatherMethods()` and `gatherMethods({})` omit the skill. Accepted skills, after
 trim and ASCII case-fold, are only `woodcutting`, `mining`, and `fishing`. A
@@ -194,6 +195,27 @@ length 1. Zero matches is `unknown-resource`, not `{ rows: [] }`. Loc ids stay
 `{ alias, id }`. Fishing rows have no loc ids.
 
 Example: `crates/script/examples/gather_methods_v2.ts`.
+
+`gatherPlacements` joins the `gather_placements` world family to one
+`gather_methods` `resource` row. `region` is the required `SceneRegionInput`
+box on one `level`: no `plane` key and no `{ cx, cz, radius }` form, and an
+omitted key is `missing-region` before any other field. `limit` is 1..=64 and
+is never clamped. The spatial filter is rust over the stored rows: the methods
+row's `loc_ids` only (never `empty_ids` or stumps), then `row.plane ===
+region.level` and `row.x`/`row.z` inside the box, in family order, capped at
+`limit` with `truncated` set when more rows matched. Returned rows keep
+`plane`. `resource_ids` is that methods loc-id set, not the hit list, so a box
+with no hits is `ok: true` with an empty `rows` and still carries the ids.
+`qualification` is the methods row's. Only the six published woods are
+queryable: unpublished and conditional woods (`jungle`, `burnt`, `achey`,
+`hollow`), fishing categories, and loc ids or display names are
+`unknown-resource`, as is a pin whose `gather_methods` family is absent. A
+mining `resource_key` is the marked empty `{ rows: [], truncated: false,
+resource_ids: [], qualification: 'unknown' }`, not world-empty and never
+`family-unavailable:gather_placements`; absent placements is that family token,
+never `{ rows: [] }`.
+
+Example: `crates/script/examples/gather_placements_v2.ts`.
 
 ## Quest query helpers
 
