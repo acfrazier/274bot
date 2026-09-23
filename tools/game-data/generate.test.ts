@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { assertTrailPins, extractDropFacts, extractFacts, extractEquipmentNamesFacts, extractFlourSixFacts, extractGatherMethodsFacts, extractGatherPlacementsFacts, extractQuestIdentityFacts, extractTrailFacts, extractHerbFacts, extractMagicFacts, extractAutocastControls, extractDuelControls, extractNurmofEssenceFacts, extractPrayerFacts, extractSpecialControls, extractTeleportSpells, herbKeyFromName, identifiedHerbLevelDefault, joinEquipmentName, loadEquipmentNamesCurated, parseFrozenEquipmentNameArrays, parseFrozenEquipmentSingleQuoted, parseIdentifyHerbPairs, parseTrailEnumAliases, parseTrailObjBlocks, parseInvShopStock, parseJm2LocPlacements, parseMapsquarePath, parseObjSections, parsePack, parseParamDefinitions, parsePrayerInterface, parseQuestEnumEntry, parseRows } from './generate.ts';
+import { assertPinned, assertTrailPins, extractDropFacts, extractFacts, extractEquipmentNamesFacts, extractFlourSixFacts, extractGatherMethodsFacts, extractGatherPlacementsFacts, extractQuestIdentityFacts, extractTrailFacts, extractHerbFacts, extractMagicFacts, extractAutocastControls, extractDuelControls, extractNurmofEssenceFacts, extractPrayerFacts, extractSpecialControls, extractTeleportSpells, herbKeyFromName, identifiedHerbLevelDefault, joinEquipmentName, loadEquipmentNamesCurated, parseFrozenEquipmentNameArrays, parseFrozenEquipmentSingleQuoted, parseIdentifyHerbPairs, parseTrailEnumAliases, parseTrailObjBlocks, parseInvShopStock, parseJm2LocPlacements, parseMapsquarePath, parseObjSections, parsePack, parseParamDefinitions, parsePrayerInterface, parseQuestEnumEntry, parseRows } from './generate.ts';
 
 const repoRoot = path.resolve(import.meta.dirname, '../..');
 
@@ -1010,6 +1010,28 @@ const truncatedMaps = placementFixture((files) => {
 });
 fs.rmSync(path.join(truncatedMaps, 'maps/m43_55.jm2'));
 assert.throws(() => extractGatherPlacementsFacts(truncatedMaps, placementSource), /maps\/m43_55\.jm2: tracked map missing/, 'a truncated maps tree must fail rather than under-extract');
+
+// write gate: generate refuses the same dirty placement inputs verify does — the whole
+// scanned maps tree, not just the two maps content_files names, plus the published pack
+const gateEngine = fs.mkdtempSync(path.join(os.tmpdir(), 'game-data-pin-engine-'));
+fs.writeFileSync(path.join(gateEngine, 'pin.txt'), 'engine fixture\n');
+execFileSync('git', ['init', '-q'], { cwd: gateEngine });
+execFileSync('git', ['add', '-A'], { cwd: gateEngine });
+const gateContent = placementFixture();
+fs.writeFileSync(path.join(gateContent, 'maps/m43_55.jm2'), '==== LOC ====\n0 1 1: 1306\n');
+execFileSync('git', ['add', '-A'], { cwd: gateContent });
+for (const dir of [gateEngine, gateContent]) execFileSync('git', ['-c', 'user.email=fixture@invalid', '-c', 'user.name=Fixture', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'fixture'], { cwd: dir });
+const gateHead = (dir: string) => execFileSync('git', ['-C', dir, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+const gateSpec = { revision: 274, engine: gateEngine, content: gateContent, expectedEngine: gateHead(gateEngine), expectedContent: gateHead(gateContent) } as Parameters<typeof assertPinned>[0];
+assert.equal(assertPinned(gateSpec).contentCommit, gateSpec.expectedContent, 'a clean pinned tree passes the write gate');
+fs.appendFileSync(path.join(gateContent, 'maps/m43_55.jm2'), '0 2 2: 1306\n');
+assert.throws(() => assertPinned(gateSpec), /relevant content inputs are dirty/, 'a modified map outside content_files fails the write gate');
+execFileSync('git', ['-C', gateContent, 'checkout', '--', 'maps/m43_55.jm2']);
+fs.writeFileSync(path.join(gateContent, 'maps/m44_55.jm2'), '==== LOC ====\n0 1 1: 1306\n');
+assert.throws(() => assertPinned(gateSpec), /relevant content inputs are dirty/, 'an untracked map fails the write gate');
+fs.rmSync(path.join(gateContent, 'maps/m44_55.jm2'));
+fs.appendFileSync(path.join(gateContent, 'pack/loc.pack'), '9999=extra\n');
+assert.throws(() => assertPinned(gateSpec), /relevant content inputs are dirty/, 'a dirty published pack fails the write gate');
 
 // content pins: the six published woods carry world placements and mining stays unknown
 const pinPlacements274 = extractGatherPlacementsFacts('/Users/acfrazier/experiments/Server/content', pin274.woods);

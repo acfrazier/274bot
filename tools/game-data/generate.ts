@@ -82,13 +82,14 @@ const contentFiles = ['scripts/player/configs/consumption/consume.dbtable', 'scr
 function sha256(file: string) { const data = fs.readFileSync(file); return { bytes: data.length, sha256: crypto.createHash('sha256').update(data).digest('hex') }; }
 function commit(dir: string) { return execFileSync('git', ['-C', dir, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(); }
 function sourceFile(dir: string, relative: string) { return { path: relative, ...sha256(path.join(dir, relative)) }; }
-function assertPinned(spec: Revision) {
+export function assertPinned(spec: Revision) {
     const engineCommit = commit(spec.engine); const contentCommit = commit(spec.content);
     if (engineCommit !== spec.expectedEngine || contentCommit !== spec.expectedContent) throw new Error(`${spec.revision}: expected pinned commits, got ${engineCommit}/${contentCommit}`);
     const engineInputs = [...decoderSources, 'data/pack/server/obj.dat', 'data/pack/server/npc.dat', 'data/pack/client/config'];
     const dirtyEngine = execFileSync('git', ['-C', spec.engine, 'status', '--porcelain', '--untracked-files=all', '--', ...engineInputs], { encoding: 'utf8' }).trim();
     if (dirtyEngine) throw new Error(`${spec.revision}: relevant engine inputs are dirty:\n${dirtyEngine}`);
-    const dirtyContent = execFileSync('git', ['-C', spec.content, 'status', '--porcelain', '--untracked-files=all', '--', ...contentFiles], { encoding: 'utf8' }).trim();
+    // the placement family reads every on-disk map and the published pack, so the dirty gate covers both, not only the maps named in contentFiles
+    const dirtyContent = execFileSync('git', ['-C', spec.content, 'status', '--porcelain', '--untracked-files=all', '--', ...contentFiles, PLACEMENT_MAPS_DIRECTORY, 'pack/loc.pack'], { encoding: 'utf8' }).trim();
     if (dirtyContent) throw new Error(`${spec.revision}: relevant content inputs are dirty:\n${dirtyContent}`);
     return { engineCommit, contentCommit };
 }
