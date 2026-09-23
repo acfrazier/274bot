@@ -681,3 +681,51 @@ fn generated_equipment_name_facts_join_curated_families_on_both_revisions() {
         assert!(data.equipment_name("bows", "Not a bow").is_none());
     }
 }
+
+#[test]
+fn generated_trio_giver_facts_pin_the_closed_giver_set() {
+    for revision in [ClientRevision::R274, ClientRevision::R289] {
+        let data = for_revision(revision).expect("selected data");
+        let facts = data.trio_givers().expect("trio givers facts");
+        assert_eq!(facts.rows.len(), 3, "revision {}", revision.as_i32());
+        assert_eq!(
+            facts.rows.iter().filter(|row| row.spawn.is_some()).count(),
+            3
+        );
+        assert!(facts.coverage.is_empty());
+
+        let identities: Vec<(&str, i32, &str)> = facts
+            .rows
+            .iter()
+            .map(|row| (row.alias.as_str(), row.id, row.name.as_str()))
+            .collect();
+        assert_eq!(
+            identities,
+            vec![
+                ("observatory_professor", 488, "Observatory professor"),
+                ("murphy", 463, "Murphy"),
+                ("brother_kojo", 223, "Brother Kojo"),
+            ]
+        );
+
+        // The selected jm2 tiles. No frozen tool-table coordinate is read here.
+        let spawns: Vec<(i32, i32, i32)> = facts
+            .rows
+            .iter()
+            .map(|row| {
+                let spawn = row.spawn.as_ref().expect("one unique giver spawn");
+                (spawn.x, spawn.z, spawn.plane)
+            })
+            .collect();
+        assert_eq!(
+            spawns,
+            vec![(2438, 3186, 0), (2668, 3162, 0), (2569, 3249, 0)]
+        );
+
+        // Display-name lookalikes are not identities.
+        assert!(facts
+            .rows
+            .iter()
+            .all(|row| !row.alias.ends_with("_2") && !row.alias.starts_with("murphy_")));
+    }
+}

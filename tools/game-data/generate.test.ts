@@ -3,8 +3,8 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { assertPinned, assertTalkKeyNpcJoins, assertTalkKeyPins, assertTrailPins, extractDropFacts, extractFacts, extractEquipmentNamesFacts, extractFlourSixFacts, extractGatherMethodsFacts, extractGatherPlacementsFacts, extractQuestIdentityFacts, extractTalkKeyFacts, extractTrailFacts, extractHerbFacts, extractMagicFacts, extractAutocastControls, extractDuelControls, extractNurmofEssenceFacts, extractPrayerFacts, extractSpecialControls, extractTeleportSpells, herbKeyFromName, identifiedHerbLevelDefault, joinEquipmentName, loadEquipmentNamesCurated, parseFrozenEquipmentNameArrays, parseFrozenEquipmentSingleQuoted, parseIdentifyHerbPairs, parseJm2NpcPlacements, parseTalkKeyHandlers, parseTalkKeyKeeperArms, parseTrailEnumAliases, parseTrailObjBlocks, parseInvShopStock, parseJm2LocPlacements, parseMapsquarePath, parseObjSections, parsePack, parseParamDefinitions, parsePrayerInterface, parseQuestEnumEntry, parseRows } from './generate.ts';
-import type { TalkKeyFacts } from './generate.ts';
+import { assertPinned, assertTrioGiverNpcJoins, assertTrioGiverPins, assertTalkKeyNpcJoins, assertTalkKeyPins, assertTrailPins, extractDropFacts, extractFacts, extractEquipmentNamesFacts, extractFlourSixFacts, extractGatherMethodsFacts, extractGatherPlacementsFacts, extractQuestIdentityFacts, extractTalkKeyFacts, extractTrailFacts, extractTrioGiversFacts, extractHerbFacts, extractMagicFacts, extractAutocastControls, extractDuelControls, extractNurmofEssenceFacts, extractPrayerFacts, extractSpecialControls, extractTeleportSpells, herbKeyFromName, identifiedHerbLevelDefault, joinEquipmentName, loadEquipmentNamesCurated, parseFrozenEquipmentNameArrays, parseFrozenEquipmentSingleQuoted, parseIdentifyHerbPairs, parseJm2NpcPlacements, parseTalkKeyHandlers, parseTalkKeyKeeperArms, parseTrailEnumAliases, parseTrailObjBlocks, parseTrioGiverHandlers, parseInvShopStock, parseJm2LocPlacements, parseMapsquarePath, parseObjSections, parsePack, parseParamDefinitions, parsePrayerInterface, parseQuestEnumEntry, parseRows } from './generate.ts';
+import type { TrioGiverFacts, TalkKeyFacts } from './generate.ts';
 
 const repoRoot = path.resolve(import.meta.dirname, '../..');
 
@@ -1962,6 +1962,191 @@ assert.equal(pinTalkKey289.facts.talk.filter((row) => row.npc.id === 0).length, 
 const pinTalkKeyBlob = JSON.stringify(pinTalkKey289.facts);
 for (const banned of ['TALK_ANCHORS', 'KILL_ANCHORS', 'RIDDLE_KEY_COORDS', 'HARD_SPECIAL_COORDS']) {
     assert.equal(pinTalkKeyBlob.includes(banned), false, `talk_key must never publish ${banned}`);
+}
+
+/* ------------------------------------------------------------------ *
+ * trio_givers: the closed giver set, packed ids, owning .npc names, jm2 tiles
+ * ------------------------------------------------------------------ */
+
+// A giver identity is an `opnpc1` header on an exact path: another verb, another
+// part, or a label is not one.
+assert.deepEqual(parseTrioGiverHandlers('[opnpc1,observatory_professor]\n@professor_initial;\n[opnpc1,observatory_professor2]\n'), ['observatory_professor', 'observatory_professor2']);
+assert.deepEqual(parseTrioGiverHandlers('[opnpc2,murphy]\n[apnpc1,brother_kojo]\n[label,professor_glass]\n'), [], 'a trade, approach, or label handler is not the talk-to identity');
+assert.throws(() => parseTrioGiverHandlers('[opnpc1]\n'), /malformed opnpc1 header/);
+assert.throws(() => parseTrioGiverHandlers('[opnpc1,murphy,npc]\n'), /malformed opnpc1 header/);
+
+const TRIO_GIVER_HANDLERS: Record<string, string> = {
+    observatory_professor: 'scripts/quests/quest_itgronigen/scripts/observatory_professor.rs2',
+    murphy: 'scripts/minigames/game_trawler/scripts/murphy.rs2',
+    brother_kojo: 'scripts/areas/area_ardougne_east/scripts/brother_kojo.rs2',
+};
+const TRIO_GIVER_CONFIGS: Record<string, string> = {
+    observatory_professor: 'scripts/quests/quest_itgronigen/configs/quest_itgronigen.npc',
+    murphy: 'scripts/minigames/game_trawler/configs/trawler.npc',
+    brother_kojo: 'scripts/areas/area_ardougne_east/configs/ardougne_east.npc',
+};
+
+function writeTrioGiverFixture(rootDir: string, mutate?: (files: Record<string, string>) => void) {
+    const files: Record<string, string> = {
+        // The lookalikes are packed and configured, and none of them is published.
+        'pack/npc.pack': '223=brother_kojo\n463=murphy\n464=murphy_normal\n465=murphy_halfsunk\n488=observatory_professor\n489=observatory_professor2\n',
+        [TRIO_GIVER_HANDLERS.observatory_professor]: `[opnpc1,observatory_professor]
+@professor_initial;
+
+[label,professor_initial]
+~chatnpc("<p,neutral>Bring me a sextant, a watch and a chart.");
+
+[opnpc1,observatory_professor2]
+@professor_initial;
+`,
+        [TRIO_GIVER_HANDLERS.murphy]: `[opnpc1,murphy]
+@murphy_could_i_help;
+
+[label,murphy_could_i_help]
+~chatnpc("<p,neutral>Do you want to go to the trawler?");
+
+[opnpc2,murphy_normal]
+~chatnpc("<p,neutral>Not the giver.");
+`,
+        [TRIO_GIVER_HANDLERS.brother_kojo]: `[opnpc1,brother_kojo]
+~chatnpc("<p,neutral>Take a watch from the pedestal.");
+`,
+        [TRIO_GIVER_CONFIGS.observatory_professor]: `[observatory_professor]
+name=Observatory professor
+[observatory_professor2]
+name=Observatory professor
+`,
+        [TRIO_GIVER_CONFIGS.murphy]: `[murphy]
+name=Murphy
+[murphy_normal]
+name=Murphy
+`,
+        [TRIO_GIVER_CONFIGS.brother_kojo]: `[brother_kojo]
+name=Brother Kojo
+`,
+        // One tile per giver, derived from the mapsquare name: a LOC row is not a spawn.
+        'maps/m10_20.jm2': '==== LOC ====\n0 6 50: 488 10 1\n==== NPC ====\n0 1 2: 488\n',
+        'maps/m11_21.jm2': '==== NPC ====\n1 3 4: 463\n',
+        'maps/m12_22.jm2': '==== NPC ====\n0 5 6: 223\n',
+    };
+    mutate?.(files);
+    for (const [relative, body] of Object.entries(files)) {
+        const absolute = path.join(rootDir, relative);
+        fs.mkdirSync(path.dirname(absolute), { recursive: true });
+        fs.writeFileSync(absolute, body);
+    }
+}
+function trioGiverFixture(mutate?: (files: Record<string, string>) => void) {
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'trio-givers-'));
+    writeTrioGiverFixture(rootDir, mutate);
+    execFileSync('git', ['init', '-q'], { cwd: rootDir });
+    execFileSync('git', ['add', '-A'], { cwd: rootDir });
+    return rootDir;
+}
+function trioGiverRow(facts: TrioGiverFacts, alias: string) {
+    const found = facts.rows.find((row) => row.alias === alias);
+    assert.ok(found, `missing giver ${alias}`);
+    return found;
+}
+
+const trioGiverExtract = extractTrioGiversFacts(trioGiverFixture());
+const trioGiverFacts = trioGiverExtract.facts;
+
+// The closed set in file order: one row per giver, one packed id, one .npc name,
+// one world tile converted from the mapsquare filename and the local coordinates.
+assert.deepEqual(trioGiverFacts, {
+    rows: [
+        { alias: 'observatory_professor', id: 488, name: 'Observatory professor', spawn: { x: 641, z: 1282, plane: 0 } },
+        { alias: 'murphy', id: 463, name: 'Murphy', spawn: { x: 707, z: 1348, plane: 1 } },
+        { alias: 'brother_kojo', id: 223, name: 'Brother Kojo', spawn: { x: 773, z: 1414, plane: 0 } },
+    ],
+    coverage: [],
+});
+assert.deepEqual(trioGiverRow(trioGiverFacts, 'observatory_professor').spawn, { x: 641, z: 1282, plane: 0 }, 'the tile comes from the jm2 NPC row, not from the LOC row on the same map');
+assert.equal(JSON.stringify(trioGiverFacts).includes('observatory_professor2'), false);
+assert.equal(JSON.stringify(trioGiverFacts).includes('murphy_normal'), false);
+assert.equal(JSON.stringify(trioGiverFacts).includes('489'), false);
+assert.equal(JSON.stringify(trioGiverFacts).includes('464'), false);
+assert.equal(trioGiverFacts.rows.every((row) => Object.keys(row).every((key) => ['alias', 'id', 'name', 'spawn'].includes(key))), true);
+assert.equal(trioGiverFacts.rows.every((row) => Object.keys(row.spawn ?? {}).sort().join(',') === 'plane,x,z'), true, 'a spawn is world x/z/plane, never a level');
+
+// Two jm2 hits keep the row and omit the tile: first-in-file is never taken.
+const multiSpawnTrioGivers = extractTrioGiversFacts(trioGiverFixture((files) => { files['maps/m11_21.jm2'] = '==== NPC ====\n1 3 4: 463\n1 3 9: 463\n'; }));
+assert.deepEqual(multiSpawnTrioGivers.facts.rows[1], { alias: 'murphy', id: 463, name: 'Murphy' });
+assert.deepEqual(multiSpawnTrioGivers.facts.coverage, [{ class: 'unknown', family: 'trio_givers', alias: 'murphy', reason: 'non-unique jm2 NPC spawn' }]);
+assert.equal(JSON.stringify(multiSpawnTrioGivers.facts).includes('"spawn":null'), false);
+assert.throws(() => assertTrioGiverPins(multiSpawnTrioGivers.facts, 289), /three unique jm2 spawns/);
+assert.throws(() => assertTrioGiverPins(trioGiverFacts, 289), /must stay the selected jm2 tile/);
+
+// decode corroboration: the packed alias, id, and .npc name must all agree with npc.dat
+const trioGiverNpcs = [
+    { id: 223, debugname: 'brother_kojo', name: 'Brother Kojo' },
+    { id: 463, debugname: 'murphy', name: 'Murphy' },
+    { id: 488, debugname: 'observatory_professor', name: 'Observatory professor' },
+];
+assert.doesNotThrow(() => assertTrioGiverNpcJoins(trioGiverFacts, trioGiverNpcs));
+assert.throws(() => assertTrioGiverNpcJoins(trioGiverFacts, trioGiverNpcs.map((npc) => (npc.debugname === 'murphy' ? { ...npc, id: 464 } : npc))), /disagrees with decoded npc id/);
+assert.throws(() => assertTrioGiverNpcJoins(trioGiverFacts, trioGiverNpcs.map((npc) => (npc.debugname === 'brother_kojo' ? { ...npc, name: 'Brother Kojo?' } : npc))), /disagrees with decoded npc name/);
+assert.throws(() => assertTrioGiverNpcJoins(trioGiverFacts, trioGiverNpcs.filter((npc) => npc.debugname !== 'observatory_professor')), /npc\.dat lacks observatory_professor/);
+
+// provenance: the closed handler and config set, the pack, and the maps inventory
+assert.equal(trioGiverExtract.inputs.maps_directory, 'maps');
+assert.equal(trioGiverExtract.inputs.maps.files, 3);
+assert.deepEqual(trioGiverExtract.inputs.handlers.map((entry) => entry.path), [TRIO_GIVER_HANDLERS.observatory_professor, TRIO_GIVER_HANDLERS.murphy, TRIO_GIVER_HANDLERS.brother_kojo]);
+assert.deepEqual(trioGiverExtract.inputs.npc_configs.map((entry) => entry.path), [TRIO_GIVER_CONFIGS.observatory_professor, TRIO_GIVER_CONFIGS.murphy, TRIO_GIVER_CONFIGS.brother_kojo]);
+assert.equal(trioGiverExtract.inputs.npc_pack.path, 'pack/npc.pack');
+assert.notEqual(extractTrioGiversFacts(trioGiverFixture((files) => { files[TRIO_GIVER_HANDLERS.murphy] += '\n[label,murphy_extra]\n'; })).inputs.handlers[1].sha256, trioGiverExtract.inputs.handlers[1].sha256, 'the handler digest must move with the scanned script');
+assert.notEqual(extractTrioGiversFacts(trioGiverFixture((files) => { files[TRIO_GIVER_CONFIGS.brother_kojo] += '[nobody]\nname=Nobody\n'; })).inputs.npc_configs[2].sha256, trioGiverExtract.inputs.npc_configs[2].sha256, 'the config digest must move with the scanned config');
+assert.notEqual(extractTrioGiversFacts(trioGiverFixture((files) => { files['pack/npc.pack'] += '9999=nobody\n'; })).inputs.npc_pack.sha256, trioGiverExtract.inputs.npc_pack.sha256, 'the npc pack digest must move with the pack');
+assert.notEqual(extractTrioGiversFacts(trioGiverFixture((files) => { files['maps/m12_22.jm2'] += '0 1 1: 5\n'; })).inputs.maps.sha256, trioGiverExtract.inputs.maps.sha256, 'the maps digest must move with the maps tree');
+
+// fail closed: missing files, missing joins, missing names, a lost header, zero hits, truncated trees
+assert.throws(() => extractTrioGiversFacts(trioGiverFixture((files) => { delete files['pack/npc.pack']; })), /pack\/npc\.pack: required file missing/);
+assert.throws(() => extractTrioGiversFacts(trioGiverFixture((files) => { files['pack/npc.pack'] = files['pack/npc.pack'].replace('463=murphy\n', ''); })), /pack\/npc\.pack lacks murphy/);
+assert.throws(() => extractTrioGiversFacts(trioGiverFixture((files) => { files[TRIO_GIVER_CONFIGS.murphy] = '[murphy_normal]\nname=Murphy\n'; })), /missing \[murphy\]/);
+assert.throws(() => extractTrioGiversFacts(trioGiverFixture((files) => { files[TRIO_GIVER_CONFIGS.murphy] = '[murphy]\nop1=Talk-to\n'; })), /has no name/);
+assert.throws(() => extractTrioGiversFacts(trioGiverFixture((files) => { delete files[TRIO_GIVER_HANDLERS.murphy]; })), /murphy\.rs2: required file missing/);
+assert.throws(() => extractTrioGiversFacts(trioGiverFixture((files) => { delete files[TRIO_GIVER_CONFIGS.brother_kojo]; })), /ardougne_east\.npc: required file missing/);
+assert.throws(() => extractTrioGiversFacts(trioGiverFixture((files) => { files[TRIO_GIVER_HANDLERS.brother_kojo] = '[opnpc1,brother_kojo2]\n@kojo;\n'; })), /does not declare \[opnpc1,brother_kojo\]/);
+assert.throws(() => extractTrioGiversFacts(trioGiverFixture((files) => { files[TRIO_GIVER_HANDLERS.observatory_professor] = '[opnpc1,observatory_professor2]\n@professor_initial;\n'; })), /does not declare \[opnpc1,observatory_professor\]/);
+assert.throws(() => extractTrioGiversFacts(trioGiverFixture((files) => { files[TRIO_GIVER_HANDLERS.murphy] += '\n[opnpc1,brother_kojo]\n@kojo;\n'; })), /also declares \[opnpc1,brother_kojo\]/, 'one giver script must not claim another closed identity');
+assert.throws(() => extractTrioGiversFacts(trioGiverFixture((files) => { files['maps/m11_21.jm2'] = '==== NPC ====\n1 3 4: 999\n'; })), /murphy npc 463 has no jm2 NPC spawn/, 'zero hits is not an unknown tile');
+assert.throws(() => extractTrioGiversFacts(trioGiverFixture((files) => { files['maps/m11_21.jm2'] = '==== LOC ====\n1 3 4: 463\n'; })), /murphy npc 463 has no jm2 NPC spawn/, 'a LOC row is not an NPC spawn');
+assert.throws(() => extractTrioGiversFacts(trioGiverFixture((files) => { files['maps/m11_21.jm2'] = '==== NPC ====\n1 3 4: 463 10\n'; })), /extra tokens/);
+const truncatedTrioGiverMaps = trioGiverFixture();
+fs.rmSync(path.join(truncatedTrioGiverMaps, 'maps/m12_22.jm2'));
+assert.throws(() => extractTrioGiversFacts(truncatedTrioGiverMaps), /maps\/m12_22\.jm2: tracked map missing/);
+
+// both pins: 289 is the selected source, 274 corroborates identity, name, and tile
+const pinTrioGiver274Root = '/Users/acfrazier/experiments/Server/content';
+const pinTrioGiver289Root = '/Users/acfrazier/experiments/lostcity-289/content';
+const pinTrioGiver274 = extractTrioGiversFacts(pinTrioGiver274Root);
+const pinTrioGiver289 = extractTrioGiversFacts(pinTrioGiver289Root);
+assert.deepEqual(pinTrioGiver274.facts, pinTrioGiver289.facts, '274 must corroborate the selected 289 giver identities and tiles');
+assert.doesNotThrow(() => assertTrioGiverPins(pinTrioGiver274.facts, 274));
+assert.doesNotThrow(() => assertTrioGiverPins(pinTrioGiver289.facts, 289));
+assert.deepEqual(pinTrioGiver289.facts.rows.map((row) => [row.alias, row.id, row.name]), [
+    ['observatory_professor', 488, 'Observatory professor'],
+    ['murphy', 463, 'Murphy'],
+    ['brother_kojo', 223, 'Brother Kojo'],
+]);
+assert.deepEqual(pinTrioGiver289.facts.rows.map((row) => row.spawn), [
+    { x: 2438, z: 3186, plane: 0 },
+    { x: 2668, z: 3162, plane: 0 },
+    { x: 2569, z: 3249, plane: 0 },
+]);
+assert.equal(pinTrioGiver289.facts.coverage.length, 0);
+assert.equal(pinTrioGiver289.inputs.handlers.length, 3);
+assert.equal(pinTrioGiver289.inputs.npc_configs.length, 3);
+assert.equal(pinTrioGiver289.inputs.maps.files, 534);
+assert.equal(pinTrioGiver274.inputs.maps.files, 483);
+assert.equal(parseTrioGiverHandlers(fs.readFileSync(path.join(pinTrioGiver289Root, TRIO_GIVER_HANDLERS.observatory_professor), 'utf8')).includes('observatory_professor2'), true, 'the selected professor script declares a lookalike that must never be published');
+assert.equal(JSON.stringify(pinTrioGiver289.facts).includes('observatory_professor2'), false);
+assert.equal(JSON.stringify(pinTrioGiver289.facts).includes('murphy_'), false, 'the trawler states are display states, not giver identities');
+assert.throws(() => assertTrioGiverPins({ rows: [{ alias: 'observatory_professor2', id: 489, name: 'Observatory professor', spawn: { x: 2438, z: 3186, plane: 0 } }], coverage: [] }, 289), /three closed givers/);
+const pinTrioGiverBlob = JSON.stringify(pinTrioGiver289.facts);
+for (const banned of ['TALK_ANCHORS', 'KILL_ANCHORS', 'RIDDLE_KEY_COORDS', 'HARD_SPECIAL_COORDS', 'frozen', 'invented', 'family-unavailable']) {
+    assert.equal(pinTrioGiverBlob.includes(banned), false, `trio_givers must never publish ${banned}`);
 }
 
 console.log('generate fixture passed');

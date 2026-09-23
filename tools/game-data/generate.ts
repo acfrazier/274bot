@@ -2468,6 +2468,181 @@ export function assertTalkKeyPins(facts: TalkKeyFacts, revision: number) {
     }
 }
 
+/* ------------------------------------------------------------------------- *
+ * trio_givers: the three selected givers behind the coordinate-tool trio
+ *
+ * A sibling family of `talk_key`, never a field on a membership row. The
+ * identity set is closed: one exact handler path per alias, joined to
+ * `pack/npc.pack`, the owning `.npc` name, and the unique jm2 `==== NPC ====`
+ * world tile. A lookalike alias (`observatory_professor2`, the `murphy_*`
+ * variants, the quest_cog labels) is never published: a display name is not an
+ * identity. Two or more spawn hits keep the row and record coverage; zero hits
+ * throw for a packed identity, because zero is not an unknown tile.
+ * ------------------------------------------------------------------------- */
+
+const TRIO_GIVERS_NPC_PACK_RELATIVE = 'pack/npc.pack';
+const TRIO_GIVERS_FAMILY = 'trio_givers';
+
+/**
+ * The closed giver set: one alias, the exact script that declares its `opnpc1`
+ * header, and the `.npc` config that owns its display name. Required content
+ * lists the three script names; that listing is inventory evidence, not this join.
+ */
+const TRIO_GIVERS: { alias: string; handler: string; config: string }[] = [
+    { alias: 'observatory_professor', handler: 'scripts/quests/quest_itgronigen/scripts/observatory_professor.rs2', config: 'scripts/quests/quest_itgronigen/configs/quest_itgronigen.npc' },
+    { alias: 'murphy', handler: 'scripts/minigames/game_trawler/scripts/murphy.rs2', config: 'scripts/minigames/game_trawler/configs/trawler.npc' },
+    { alias: 'brother_kojo', handler: 'scripts/areas/area_ardougne_east/scripts/brother_kojo.rs2', config: 'scripts/areas/area_ardougne_east/configs/ardougne_east.npc' },
+];
+
+/** One jm2 `==== NPC ====` spawn in world coordinates. Plane, never scene `level`. */
+export type TrioGiverSpawn = { x: number; z: number; plane: number };
+
+/** One selected giver: the packed NPC identity itself, plus its unique world tile. */
+export type TrioGiverRow = { alias: string; id: number; name: string; spawn?: TrioGiverSpawn };
+
+/** Why one giver publishes no spawn. A coverage record is a sibling, not a row. */
+export type TrioGiverCoverageRow = { class: string; family: string; alias: string; reason: string };
+
+/** The three selected givers. A giver without a unique spawn keeps its row and omits `spawn`. */
+export type TrioGiverFacts = { rows: TrioGiverRow[]; coverage: TrioGiverCoverageRow[] };
+
+/**
+ * Provenance identity for this family: the closed handler and config set, the
+ * pack its ids come from, and the maps inventory its tiles come from.
+ */
+export type TrioGiverInputs = {
+    maps_directory: string;
+    maps: { files: number; bytes: number; sha256: string };
+    npc_pack: { path: string; bytes: number; sha256: string };
+    handlers: { path: string; bytes: number; sha256: string }[];
+    npc_configs: { path: string; bytes: number; sha256: string }[];
+};
+
+export type TrioGiverExtract = { facts: TrioGiverFacts; inputs: TrioGiverInputs };
+
+/**
+ * The `opnpc1` header aliases one exact giver script declares, in file order.
+ * `opnpc2`, `opnpc3`, `opnpcu`, and `apnpc*` are never read, and an inner
+ * `npc_type` is not an identity: the header alias is. A malformed header throws
+ * instead of being skipped.
+ */
+export function parseTrioGiverHandlers(text: string) {
+    const aliases: string[] = [];
+    for (const raw of text.split(/\r?\n/)) {
+        const line = raw.trim();
+        if (!line.startsWith('[') || !line.endsWith(']')) continue;
+        const parts = line.slice(1, -1).split(',').map((part) => part.trim());
+        if (parts[0] !== 'opnpc1') continue;
+        if (parts.length !== 2 || !parts[1]) throw new Error(`trio_givers: malformed opnpc1 header ${line}`);
+        aliases.push(parts[1]);
+    }
+    return aliases;
+}
+
+/**
+ * The three selected givers, from the closed handler set. Each exact script must
+ * declare its `[opnpc1,<alias>]` header, and the alias joins `pack/npc.pack` and
+ * the section `parseNpcSection` reads out of the owning `.npc` config, so a
+ * missing section or a section without `name=` throws. The spawn is the unique
+ * jm2 `==== NPC ====` world tile.
+ */
+export function extractTrioGiversFacts(content: string): TrioGiverExtract {
+    const npcPack = parsePack(requireGatherText(content, TRIO_GIVERS_NPC_PACK_RELATIVE));
+    if (npcPack.size === 0) throw new Error(`${TRIO_GIVERS_NPC_PACK_RELATIVE}: required file missing ids`);
+    const maps = placementMapInputs(content);
+    const spawns = new Map<number, TrioGiverSpawn[]>();
+    for (const input of maps) {
+        const { mx, mz } = parseMapsquarePath(input.path);
+        for (const placement of parseJm2NpcPlacements(fs.readFileSync(path.join(content, input.path), 'utf8'))) {
+            const world = worldFromMapsquare(mx, mz, placement.lx, placement.lz, placement.plane);
+            const found = spawns.get(placement.npc_id);
+            if (found) found.push(world);
+            else spawns.set(placement.npc_id, [world]);
+        }
+    }
+    const rows: TrioGiverRow[] = [];
+    const coverage: TrioGiverCoverageRow[] = [];
+    const handlers: { path: string; bytes: number; sha256: string }[] = [];
+    const npcConfigs: { path: string; bytes: number; sha256: string }[] = [];
+    for (const giver of TRIO_GIVERS) {
+        const aliases = parseTrioGiverHandlers(requireGatherText(content, giver.handler));
+        if (!aliases.includes(giver.alias)) throw new Error(`trio_givers: ${giver.handler} does not declare [opnpc1,${giver.alias}]`);
+        const crossed = aliases.find((alias) => alias !== giver.alias && TRIO_GIVERS.some((entry) => entry.alias === alias));
+        if (crossed) throw new Error(`trio_givers: ${giver.handler} also declares [opnpc1,${crossed}]`);
+        const id = npcPack.get(giver.alias);
+        if (id === undefined) throw new Error(`trio_givers: ${TRIO_GIVERS_NPC_PACK_RELATIVE} lacks ${giver.alias}`);
+        let name: string | undefined;
+        try {
+            name = parseNpcSection(requireGatherText(content, giver.config), giver.alias).name;
+        } catch (error) {
+            throw new Error(`trio_givers ${giver.alias}: ${(error as Error).message}`);
+        }
+        if (!name) throw new Error(`trio_givers: [${giver.alias}] has no name`);
+        const found = spawns.get(id) ?? [];
+        if (found.length === 0) throw new Error(`trio_givers: ${giver.alias} npc ${id} has no jm2 NPC spawn`);
+        if (found.length > 1) coverage.push({ class: 'unknown', family: TRIO_GIVERS_FAMILY, alias: giver.alias, reason: 'non-unique jm2 NPC spawn' });
+        rows.push({ alias: giver.alias, id, name, ...(found.length === 1 ? { spawn: found[0] } : {}) });
+        handlers.push({ path: giver.handler, ...sha256(path.join(content, giver.handler)) });
+        npcConfigs.push({ path: giver.config, ...sha256(path.join(content, giver.config)) });
+    }
+    return {
+        facts: { rows, coverage },
+        inputs: {
+            maps_directory: PLACEMENT_MAPS_DIRECTORY,
+            maps: fileInventoryDigest(maps),
+            npc_pack: { path: TRIO_GIVERS_NPC_PACK_RELATIVE, ...sha256(path.join(content, TRIO_GIVERS_NPC_PACK_RELATIVE)) },
+            handlers,
+            npc_configs: npcConfigs,
+        },
+    };
+}
+
+/**
+ * Corroborate every published giver against the decoded `npc.dat` rows: the
+ * packed alias, the packed id, and the `.npc` display name must all agree with
+ * the decoder. A disagreement throws instead of being published under the
+ * selected name.
+ */
+export function assertTrioGiverNpcJoins(facts: TrioGiverFacts, npcs: NpcType[]) {
+    const decoded = new Map(npcs.filter((npc) => npc.debugname != null).map((npc) => [npc.debugname as string, npc]));
+    for (const row of facts.rows) {
+        const npc = decoded.get(row.alias);
+        if (!npc) throw new Error(`trio_givers: npc.dat lacks ${row.alias}`);
+        if (npc.id !== row.id) throw new Error(`trio_givers: ${TRIO_GIVERS_NPC_PACK_RELATIVE} ${row.alias}=${row.id} disagrees with decoded npc id ${npc.id}`);
+        if (npc.name !== row.name) throw new Error(`trio_givers: ${row.alias} display name ${row.name} disagrees with decoded npc name ${npc.name}`);
+    }
+}
+
+/** Fail-closed pins for the trio_givers publication. The rows are never copied from the corpus. */
+export function assertTrioGiverPins(facts: TrioGiverFacts, revision: number) {
+    const row = (alias: string) => {
+        const found = facts.rows.find((entry) => entry.alias === alias);
+        if (!found) throw new Error(`${revision}: trio_givers is missing ${alias}`);
+        return found;
+    };
+    const identity = [
+        ['observatory_professor', 488, 'Observatory professor'],
+        ['murphy', 463, 'Murphy'],
+        ['brother_kojo', 223, 'Brother Kojo'],
+    ] as const;
+    const published = facts.rows.map((entry) => [entry.alias, entry.id, entry.name]);
+    if (JSON.stringify(published) !== JSON.stringify(identity.map((entry) => [...entry]))) throw new Error(`${revision}: trio_givers must stay the three closed givers, got ${JSON.stringify(published)}`);
+    const spawned = facts.rows.filter((entry) => entry.spawn !== undefined);
+    if (spawned.length !== 3 || facts.coverage.length !== 0) throw new Error(`${revision}: trio_givers must publish three unique jm2 spawns, got ${spawned.length} spawns and ${facts.coverage.length} coverage rows`);
+    const jm2 = [
+        ['observatory_professor', { x: 2438, z: 3186, plane: 0 }],
+        ['murphy', { x: 2668, z: 3162, plane: 0 }],
+        ['brother_kojo', { x: 2569, z: 3249, plane: 0 }],
+    ] as const;
+    for (const [alias, spawn] of jm2) {
+        if (JSON.stringify(row(alias).spawn) !== JSON.stringify(spawn)) throw new Error(`${revision}: trio_givers ${alias} must stay the selected jm2 tile ${JSON.stringify(spawn)}, got ${JSON.stringify(row(alias).spawn)}`);
+    }
+    const blob = JSON.stringify(facts);
+    for (const banned of ['TALK_ANCHORS', 'KILL_ANCHORS', 'RIDDLE_KEY_COORDS', 'HARD_SPECIAL_COORDS', 'frozen', 'invented', 'family-unavailable']) {
+        if (blob.includes(banned)) throw new Error(`${revision}: trio_givers published ${banned}`);
+    }
+}
+
 export function extractFacts(content: string, items: ObjType[], npcs: NpcType[]) {
     const itemIds = new Map(items.filter((item) => item.debugname !== null).map((item) => [item.debugname as string, { id: item.id, name: item.name }]));
     const npcIds = new Map(npcs.filter((npc) => npc.debugname != null).map((npc) => [npc.debugname as string, { id: npc.id, name: npc.name }]));
@@ -2487,8 +2662,8 @@ async function generate(spec: Revision) {
     process.chdir(spec.engine); const objModule = (await import(pathToFileURL(path.join(spec.engine, 'src/cache/config/ObjType.ts')).href)) as { default: { load(dir: string): void; configs: ObjType[] } }; objModule.default.load('data/pack');
     const npcModule = (await import(pathToFileURL(path.join(spec.engine, 'src/cache/config/NpcType.ts')).href)) as { default: { load(dir: string): void; configs: NpcType[] } }; npcModule.default.load('data/pack');
     const items = objModule.default.configs.map(row); const aliases = items.filter((item) => item.alias !== null).map((item) => item.alias as string); if (new Set(items.map((item) => item.id)).size !== items.length || new Set(aliases).size !== aliases.length) throw new Error(`${spec.revision}: duplicate ids or aliases`);
-    const facts = extractFacts(spec.content, objModule.default.configs, npcModule.default.configs); const drops = extractDropFacts(spec.content, objModule.default.configs, npcModule.default.configs); if (drops.length !== 4) throw new Error(`${spec.revision}: expected four combat drop tables, got ${drops.length}`); const magic = extractMagicFacts(spec.content, objModule.default.configs); if (magic.spells.length !== 16 || magic.spells[15].name !== 'Fire Wave' || magic.staves.length !== 14) throw new Error(`${spec.revision}: expected 16 combat spells and 14 staves, got ${magic.spells.length}/${magic.staves.length}`); const herbs = extractHerbFacts(spec.content, objModule.default.configs); if (herbs.herbs.length < 14) throw new Error(`${spec.revision}: expected a full herb identify table, got ${herbs.herbs.length}`); if (herbs.herb_level_default !== 3) throw new Error(`${spec.revision}: expected identify.param default 3, got ${herbs.herb_level_default}`); const autocast = extractAutocastControls(spec.content); const duel = extractDuelControls(spec.content); const special = extractSpecialControls(spec.content, objModule.default.configs);     const teleports = extractTeleportSpells(spec.content, objModule.default.configs); if (teleports.length !== 7 || teleports[0].name !== 'Varrock' || teleports[6].name !== 'Trollheim' || teleports[0].component_id !== 1164 || teleports[6].component_id !== 7455) throw new Error(`${spec.revision}: expected 7 standard teleports, got ${teleports.map((row) => row.name).join(',')}`);     const prayer = extractPrayerFacts(spec.content); if (prayer.prayers.length !== 15) throw new Error(`${spec.revision}: expected 15 prayers, got ${prayer.prayers.length}`); const nurmofEssence = extractNurmofEssenceFacts(spec.content, objModule.default.configs, npcModule.default.configs); if (nurmofEssence.pickaxes.length !== 6) throw new Error(`${spec.revision}: expected six pickaxes, got ${nurmofEssence.pickaxes.length}`);     const flourSix = extractFlourSixFacts(spec.content, objModule.default.configs); if (flourSix.pot.id !== 1931 || flourSix.flour_barrel.id !== 2662) throw new Error(`${spec.revision}: flour six join mismatch`); const objPackPath = path.join(spec.content, 'pack/obj.pack'); if (!fs.existsSync(objPackPath)) throw new Error(`${spec.revision}: missing pack/obj.pack`); const objPack = parsePack(fs.readFileSync(objPackPath, 'utf8')); if (objPack.size === 0) throw new Error(`${spec.revision}: empty pack/obj.pack`); const equipmentNames = extractEquipmentNamesFacts(items, objPack); const gatherMethods = extractGatherMethodsFacts(spec.content, spec.revision); if (gatherMethods.mining.length !== 17 || gatherMethods.woods.length !== 10 || gatherMethods.fishing.length !== 9) throw new Error(`${spec.revision}: expected 17 mine, 10 wood, and 9 fishing rows, got ${gatherMethods.mining.length}/${gatherMethods.woods.length}/${gatherMethods.fishing.length}`); const gatherPlacements = extractGatherPlacementsFacts(spec.content, gatherMethods.woods); if (gatherPlacements.woods.length !== 6) throw new Error(`${spec.revision}: expected six published woods, got ${gatherPlacements.woods.length}`); if (gatherPlacements.facts.coverage.length !== 1 || gatherPlacements.facts.coverage[0].class !== 'unknown' || gatherPlacements.facts.coverage[0].family !== 'mining') throw new Error(`${spec.revision}: gather placements must record mining as unknown coverage`); const questIdentity = extractQuestIdentityFacts(spec.content, spec.revision); if (questIdentity.rows.length !== 6 || questIdentity.rows[4].id !== 'death' || questIdentity.rows[4].varp !== 'death_equiproom' || questIdentity.rows[4].varp_id !== 314 || questIdentity.rows[4].complete !== 80 || questIdentity.rows.some((row) => row.requirements.qualification !== 'partial')) throw new Error(`${spec.revision}: quest identity join mismatch`); if (spec.revision === 274 && (questIdentity.coverage.length !== 1 || questIdentity.coverage[0].alias !== 'routequest' || questIdentity.coverage[0].other_pin_id !== 387 || questIdentity.coverage[0].copied !== false)) throw new Error(`${spec.revision}: quest coverage mismatch`); if (spec.revision !== 274 && questIdentity.coverage.length !== 0) throw new Error(`${spec.revision}: quest coverage must be empty`); const trails = extractTrailFacts(spec.content, objModule.default.configs); assertTrailPins(trails, spec.revision); const talkKey = extractTalkKeyFacts(spec.content, objModule.default.configs); assertTalkKeyPins(talkKey.facts, spec.revision); assertTalkKeyNpcJoins(talkKey.facts, npcModule.default.configs); const inputs = ['data/pack/server/obj.dat', 'data/pack/server/npc.dat', 'data/pack/client/config'].map((file) => sourceFile(spec.engine, file)); const contentInputs = contentFiles.map((file) => sourceFile(spec.content, file)); const sources = decoderSources.map((file) => sourceFile(spec.engine, file));
-    const payload = { schema_version: 4, revision: spec.revision, provenance: { engine_commit: pinned.engineCommit, content_commit: pinned.contentCommit, inputs, content_inputs: contentInputs, placement_inputs: gatherPlacements.inputs, talk_key_inputs: talkKey.inputs, decoder_sources: sources, cache_identity: spec.cacheIdentity }, items, ...facts, drop_tables: drops, ...magic, ...herbs, ...prayer, nurmof_essence: nurmofEssence, flour_six: flourSix, equipment_names: equipmentNames, gather_methods: gatherMethods, gather_placements: gatherPlacements.facts, quest_identity: questIdentity, trails, talk_key: talkKey.facts, autocast, duel, special, teleports }; const bytes = `${JSON.stringify(payload, null, 2)}\n`; fs.mkdirSync(path.dirname(spec.output), { recursive: true }); fs.writeFileSync(spec.output, bytes); return { revision: spec.revision, output: path.relative(root, spec.output), records: items.length, consumption: facts.consumption.length, pickpocket: facts.pickpocket.length, drop_tables: drops.length, spells: magic.spells.length, staves: magic.staves.length, herbs: herbs.herbs.length, prayers: prayer.prayers.length, pickaxes: nurmofEssence.pickaxes.length, flour_six: 6, gather_methods: { mining: gatherMethods.mining.length, woods: gatherMethods.woods.length, fishing: gatherMethods.fishing.length }, gather_placements: { rows: gatherPlacements.facts.rows.length, maps: gatherPlacements.inputs.maps.files, published_loc_ids: gatherPlacements.inputs.published_loc_ids.count, coverage: gatherPlacements.facts.coverage.length, woods: gatherPlacements.woods }, equipment_names: { bows: equipmentNames.bows.length, crossbows: equipmentNames.crossbows.length, darts: equipmentNames.darts.length, arrows: equipmentNames.arrows.length, bolts: equipmentNames.bolts.length, melee_weapons: equipmentNames.melee_weapons.length, staffs: equipmentNames.staffs.length, resolved: EQUIPMENT_FAMILY_ORDER.reduce((sum, family) => sum + equipmentNames[family].filter((row) => row.disposition === 'resolved').length, 0), absent: EQUIPMENT_FAMILY_ORDER.reduce((sum, family) => sum + equipmentNames[family].filter((row) => row.disposition === 'absent').length, 0) }, autocast, duel, special: { energy_varp: special.energy_varp, armed_varp: special.armed_varp, max_energy: special.max_energy, bars: special.bars.length, weapons: special.weapons.length }, teleports: teleports.length, quest_identity: { rows: questIdentity.rows.length, coverage: questIdentity.coverage.length }, trails: { rows: trails.rows.length, clues: trails.rows.filter((row) => row.role === 'clue').length, caskets: trails.rows.filter((row) => row.role === 'casket').length, challenge_answers: trails.challenge_answers.length, access_constrained: trails.rows.filter((row) => row.access !== undefined).length }, talk_key: { talk: talkKey.facts.talk.length, talk_with_spawn: talkKey.facts.talk.filter((row) => row.spawn !== undefined).length, keys: talkKey.facts.keys.length, keys_with_spawn: talkKey.facts.keys.filter((row) => row.spawn !== undefined).length, coverage: talkKey.facts.coverage.length, maps: talkKey.inputs.maps.files, scripts: talkKey.inputs.scripts.files, npc_configs: talkKey.inputs.npc_configs.files, digest: crypto.createHash('sha256').update(JSON.stringify(talkKey.facts)).digest('hex') }, bytes: Buffer.byteLength(bytes), sha256: crypto.createHash('sha256').update(bytes).digest('hex'), engine_commit: pinned.engineCommit, content_commit: pinned.contentCommit, inputs, content_inputs: contentInputs, decoder_sources: sources, cache_identity: spec.cacheIdentity };
+    const facts = extractFacts(spec.content, objModule.default.configs, npcModule.default.configs); const drops = extractDropFacts(spec.content, objModule.default.configs, npcModule.default.configs); if (drops.length !== 4) throw new Error(`${spec.revision}: expected four combat drop tables, got ${drops.length}`); const magic = extractMagicFacts(spec.content, objModule.default.configs); if (magic.spells.length !== 16 || magic.spells[15].name !== 'Fire Wave' || magic.staves.length !== 14) throw new Error(`${spec.revision}: expected 16 combat spells and 14 staves, got ${magic.spells.length}/${magic.staves.length}`); const herbs = extractHerbFacts(spec.content, objModule.default.configs); if (herbs.herbs.length < 14) throw new Error(`${spec.revision}: expected a full herb identify table, got ${herbs.herbs.length}`); if (herbs.herb_level_default !== 3) throw new Error(`${spec.revision}: expected identify.param default 3, got ${herbs.herb_level_default}`); const autocast = extractAutocastControls(spec.content); const duel = extractDuelControls(spec.content); const special = extractSpecialControls(spec.content, objModule.default.configs);     const teleports = extractTeleportSpells(spec.content, objModule.default.configs); if (teleports.length !== 7 || teleports[0].name !== 'Varrock' || teleports[6].name !== 'Trollheim' || teleports[0].component_id !== 1164 || teleports[6].component_id !== 7455) throw new Error(`${spec.revision}: expected 7 standard teleports, got ${teleports.map((row) => row.name).join(',')}`);     const prayer = extractPrayerFacts(spec.content); if (prayer.prayers.length !== 15) throw new Error(`${spec.revision}: expected 15 prayers, got ${prayer.prayers.length}`); const nurmofEssence = extractNurmofEssenceFacts(spec.content, objModule.default.configs, npcModule.default.configs); if (nurmofEssence.pickaxes.length !== 6) throw new Error(`${spec.revision}: expected six pickaxes, got ${nurmofEssence.pickaxes.length}`);     const flourSix = extractFlourSixFacts(spec.content, objModule.default.configs); if (flourSix.pot.id !== 1931 || flourSix.flour_barrel.id !== 2662) throw new Error(`${spec.revision}: flour six join mismatch`); const objPackPath = path.join(spec.content, 'pack/obj.pack'); if (!fs.existsSync(objPackPath)) throw new Error(`${spec.revision}: missing pack/obj.pack`); const objPack = parsePack(fs.readFileSync(objPackPath, 'utf8')); if (objPack.size === 0) throw new Error(`${spec.revision}: empty pack/obj.pack`); const equipmentNames = extractEquipmentNamesFacts(items, objPack); const gatherMethods = extractGatherMethodsFacts(spec.content, spec.revision); if (gatherMethods.mining.length !== 17 || gatherMethods.woods.length !== 10 || gatherMethods.fishing.length !== 9) throw new Error(`${spec.revision}: expected 17 mine, 10 wood, and 9 fishing rows, got ${gatherMethods.mining.length}/${gatherMethods.woods.length}/${gatherMethods.fishing.length}`); const gatherPlacements = extractGatherPlacementsFacts(spec.content, gatherMethods.woods); if (gatherPlacements.woods.length !== 6) throw new Error(`${spec.revision}: expected six published woods, got ${gatherPlacements.woods.length}`); if (gatherPlacements.facts.coverage.length !== 1 || gatherPlacements.facts.coverage[0].class !== 'unknown' || gatherPlacements.facts.coverage[0].family !== 'mining') throw new Error(`${spec.revision}: gather placements must record mining as unknown coverage`); const questIdentity = extractQuestIdentityFacts(spec.content, spec.revision); if (questIdentity.rows.length !== 6 || questIdentity.rows[4].id !== 'death' || questIdentity.rows[4].varp !== 'death_equiproom' || questIdentity.rows[4].varp_id !== 314 || questIdentity.rows[4].complete !== 80 || questIdentity.rows.some((row) => row.requirements.qualification !== 'partial')) throw new Error(`${spec.revision}: quest identity join mismatch`); if (spec.revision === 274 && (questIdentity.coverage.length !== 1 || questIdentity.coverage[0].alias !== 'routequest' || questIdentity.coverage[0].other_pin_id !== 387 || questIdentity.coverage[0].copied !== false)) throw new Error(`${spec.revision}: quest coverage mismatch`); if (spec.revision !== 274 && questIdentity.coverage.length !== 0) throw new Error(`${spec.revision}: quest coverage must be empty`); const trails = extractTrailFacts(spec.content, objModule.default.configs); assertTrailPins(trails, spec.revision); const talkKey = extractTalkKeyFacts(spec.content, objModule.default.configs); assertTalkKeyPins(talkKey.facts, spec.revision); assertTalkKeyNpcJoins(talkKey.facts, npcModule.default.configs); const trioGivers = extractTrioGiversFacts(spec.content); assertTrioGiverPins(trioGivers.facts, spec.revision); assertTrioGiverNpcJoins(trioGivers.facts, npcModule.default.configs); const inputs = ['data/pack/server/obj.dat', 'data/pack/server/npc.dat', 'data/pack/client/config'].map((file) => sourceFile(spec.engine, file)); const contentInputs = contentFiles.map((file) => sourceFile(spec.content, file)); const sources = decoderSources.map((file) => sourceFile(spec.engine, file));
+    const payload = { schema_version: 4, revision: spec.revision, provenance: { engine_commit: pinned.engineCommit, content_commit: pinned.contentCommit, inputs, content_inputs: contentInputs, placement_inputs: gatherPlacements.inputs, talk_key_inputs: talkKey.inputs, trio_givers_inputs: trioGivers.inputs, decoder_sources: sources, cache_identity: spec.cacheIdentity }, items, ...facts, drop_tables: drops, ...magic, ...herbs, ...prayer, nurmof_essence: nurmofEssence, flour_six: flourSix, equipment_names: equipmentNames, gather_methods: gatherMethods, gather_placements: gatherPlacements.facts, quest_identity: questIdentity, trails, talk_key: talkKey.facts, trio_givers: trioGivers.facts, autocast, duel, special, teleports }; const bytes = `${JSON.stringify(payload, null, 2)}\n`; fs.mkdirSync(path.dirname(spec.output), { recursive: true }); fs.writeFileSync(spec.output, bytes); return { revision: spec.revision, output: path.relative(root, spec.output), records: items.length, consumption: facts.consumption.length, pickpocket: facts.pickpocket.length, drop_tables: drops.length, spells: magic.spells.length, staves: magic.staves.length, herbs: herbs.herbs.length, prayers: prayer.prayers.length, pickaxes: nurmofEssence.pickaxes.length, flour_six: 6, gather_methods: { mining: gatherMethods.mining.length, woods: gatherMethods.woods.length, fishing: gatherMethods.fishing.length }, gather_placements: { rows: gatherPlacements.facts.rows.length, maps: gatherPlacements.inputs.maps.files, published_loc_ids: gatherPlacements.inputs.published_loc_ids.count, coverage: gatherPlacements.facts.coverage.length, woods: gatherPlacements.woods }, equipment_names: { bows: equipmentNames.bows.length, crossbows: equipmentNames.crossbows.length, darts: equipmentNames.darts.length, arrows: equipmentNames.arrows.length, bolts: equipmentNames.bolts.length, melee_weapons: equipmentNames.melee_weapons.length, staffs: equipmentNames.staffs.length, resolved: EQUIPMENT_FAMILY_ORDER.reduce((sum, family) => sum + equipmentNames[family].filter((row) => row.disposition === 'resolved').length, 0), absent: EQUIPMENT_FAMILY_ORDER.reduce((sum, family) => sum + equipmentNames[family].filter((row) => row.disposition === 'absent').length, 0) }, autocast, duel, special: { energy_varp: special.energy_varp, armed_varp: special.armed_varp, max_energy: special.max_energy, bars: special.bars.length, weapons: special.weapons.length }, teleports: teleports.length, quest_identity: { rows: questIdentity.rows.length, coverage: questIdentity.coverage.length }, trails: { rows: trails.rows.length, clues: trails.rows.filter((row) => row.role === 'clue').length, caskets: trails.rows.filter((row) => row.role === 'casket').length, challenge_answers: trails.challenge_answers.length, access_constrained: trails.rows.filter((row) => row.access !== undefined).length }, talk_key: { talk: talkKey.facts.talk.length, talk_with_spawn: talkKey.facts.talk.filter((row) => row.spawn !== undefined).length, keys: talkKey.facts.keys.length, keys_with_spawn: talkKey.facts.keys.filter((row) => row.spawn !== undefined).length, coverage: talkKey.facts.coverage.length, maps: talkKey.inputs.maps.files, scripts: talkKey.inputs.scripts.files, npc_configs: talkKey.inputs.npc_configs.files, digest: crypto.createHash('sha256').update(JSON.stringify(talkKey.facts)).digest('hex') }, trio_givers: { rows: trioGivers.facts.rows.length, with_spawn: trioGivers.facts.rows.filter((row) => row.spawn !== undefined).length, coverage: trioGivers.facts.coverage.length, maps: trioGivers.inputs.maps.files, handlers: trioGivers.inputs.handlers.length, npc_configs: trioGivers.inputs.npc_configs.length, digest: crypto.createHash('sha256').update(JSON.stringify(trioGivers.facts)).digest('hex') }, bytes: Buffer.byteLength(bytes), sha256: crypto.createHash('sha256').update(bytes).digest('hex'), engine_commit: pinned.engineCommit, content_commit: pinned.contentCommit, inputs, content_inputs: contentInputs, decoder_sources: sources, cache_identity: spec.cacheIdentity };
 }
 
 /**
@@ -2502,6 +2677,10 @@ async function main() {
     const digests = new Map(results.map((result) => [result.revision, result.talk_key.digest]));
     if (new Set(digests.values()).size !== 1) {
         throw new Error(`talk_key: the two pins disagree on the selected identity (${[...digests].map(([revision, digest]) => `${revision}:${digest}`).join(', ')})`);
+    }
+    const giverDigests = new Map(results.map((result) => [result.revision, result.trio_givers.digest]));
+    if (new Set(giverDigests.values()).size !== 1) {
+        throw new Error(`trio_givers: the two pins disagree on the selected identity, display name, or unique spawn (${[...giverDigests].map(([revision, digest]) => `${revision}:${digest}`).join(', ')})`);
     }
     const manifest = { schema_version: 4, generator: 'tools/game-data/generate.ts', revisions: results };
     const manifestPath = path.join(root, 'crates/api/data/game-data/manifest.json');

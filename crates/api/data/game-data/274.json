@@ -378,6 +378,53 @@
         "sha256": "c2d685a9906ec9396ce191b024cee79dd7d8b47b692b309806ea7c0c12dbc9f6"
       }
     },
+    "trio_givers_inputs": {
+      "maps_directory": "maps",
+      "maps": {
+        "files": 483,
+        "bytes": 48704328,
+        "sha256": "ab7e905e85bf13e10fc78cd635abab1b1881a228268ce5c0182eda698fda35b3"
+      },
+      "npc_pack": {
+        "path": "pack/npc.pack",
+        "bytes": 25984,
+        "sha256": "a19dc299ef62570e3c190029c32719373e3d6d3fc81b875ff1f02877fe75e01d"
+      },
+      "handlers": [
+        {
+          "path": "scripts/quests/quest_itgronigen/scripts/observatory_professor.rs2",
+          "bytes": 16994,
+          "sha256": "48157e194bb000bdfc29582723722547280b5faba796e1df11f58077a582e2f2"
+        },
+        {
+          "path": "scripts/minigames/game_trawler/scripts/murphy.rs2",
+          "bytes": 5320,
+          "sha256": "1e43dc70a308c65be892ebae1e266d914527b15b6496e3d604b3430f00fe8781"
+        },
+        {
+          "path": "scripts/areas/area_ardougne_east/scripts/brother_kojo.rs2",
+          "bytes": 1996,
+          "sha256": "26126cbb28ad6b02812bfb85a276e82e853f79a892348931957f44a3bf4cf0c4"
+        }
+      ],
+      "npc_configs": [
+        {
+          "path": "scripts/quests/quest_itgronigen/configs/quest_itgronigen.npc",
+          "bytes": 2474,
+          "sha256": "977c91810bdb618390ad3a49fb32f4186a743314dce1888957341994f30fe888"
+        },
+        {
+          "path": "scripts/minigames/game_trawler/configs/trawler.npc",
+          "bytes": 4357,
+          "sha256": "a4437be03e239841102e9a31db4e65495c15bddae2c9770b6e20f3d7237a69d5"
+        },
+        {
+          "path": "scripts/areas/area_ardougne_east/configs/ardougne_east.npc",
+          "bytes": 17306,
+          "sha256": "bb992571b8c7c8c4583321dd65148987a18f82f9b8d612bab07e451582a22644"
+        }
+      ]
+    },
     "decoder_sources": [
       {
         "path": "src/cache/config/ObjType.ts",
@@ -151794,6 +151841,41 @@
         "reason": "non-unique jm2 NPC spawn"
       }
     ]
+  },
+  "trio_givers": {
+    "rows": [
+      {
+        "alias": "observatory_professor",
+        "id": 488,
+        "name": "Observatory professor",
+        "spawn": {
+          "x": 2438,
+          "z": 3186,
+          "plane": 0
+        }
+      },
+      {
+        "alias": "murphy",
+        "id": 463,
+        "name": "Murphy",
+        "spawn": {
+          "x": 2668,
+          "z": 3162,
+          "plane": 0
+        }
+      },
+      {
+        "alias": "brother_kojo",
+        "id": 223,
+        "name": "Brother Kojo",
+        "spawn": {
+          "x": 2569,
+          "z": 3249,
+          "plane": 0
+        }
+      }
+    ],
+    "coverage": []
   },
   "autocast": {
     "staff_tab_root": 328,

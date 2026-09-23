@@ -822,19 +822,78 @@ pub struct TalkKeyFacts {
     pub coverage: Vec<TalkKeyCoverageRecord>,
 }
 
+/// One jm2 `==== NPC ====` spawn in world coordinates for a published giver.
+/// `plane` is the scene plane, never the `level` field of a coordinate triple.
+#[derive(Debug, Deserialize, Clone)]
+pub struct TrioGiverSpawn {
+    pub x: i32,
+    pub z: i32,
+    pub plane: i32,
+}
+
+/// One selected coordinate-tool giver: the packed NPC identity itself, plus the
+/// world tile it stands on. `spawn` is omitted when the jm2 spawn is not unique;
+/// a present-but-null spawn is a decode error, not an absent one. The row is the
+/// identity, never a clue alias wrapping a nested npc.
+#[derive(Debug, Deserialize, Clone)]
+pub struct TrioGiverRow {
+    pub alias: String,
+    pub id: i32,
+    pub name: String,
+    #[serde(default, deserialize_with = "deserialize_present_trio_giver_spawn")]
+    pub spawn: Option<TrioGiverSpawn>,
+}
+
+/// Why one giver publishes no spawn. A coverage record is a sibling, not a row.
+#[derive(Debug, Deserialize, Clone)]
+pub struct TrioGiverCoverageRecord {
+    pub class: String,
+    pub family: String,
+    pub alias: String,
+    pub reason: String,
+}
+
+/// Selected givers and their unknown-spawn coverage. Absence is `None`, not an
+/// empty list. Neither `rows` nor `coverage` has a serde default: a present
+/// family that omits either is a decode error. Empty `coverage` is allowed only
+/// when every row published a unique spawn, and then it is required.
+#[derive(Debug, Deserialize, Clone)]
+pub struct TrioGiverFacts {
+    pub rows: Vec<TrioGiverRow>,
+    pub coverage: Vec<TrioGiverCoverageRecord>,
+}
+
 /// A row either publishes a spawn or omits the key. `null` is neither, so it is
 /// refused instead of silently decoding as an absent spawn.
 fn deserialize_present_spawn<'de, D>(deserializer: D) -> Result<Option<TalkKeySpawn>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
+    present_spawn(deserializer, "talk_key")
+}
+
+/// The same rule for the sibling giver family, under its own name.
+fn deserialize_present_trio_giver_spawn<'de, D>(
+    deserializer: D,
+) -> Result<Option<TrioGiverSpawn>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    present_spawn(deserializer, "trio_givers")
+}
+
+fn present_spawn<'de, D, T>(deserializer: D, family: &str) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
     let value = serde_json::Value::deserialize(deserializer)?;
     if value.is_null() {
-        return Err(serde::de::Error::custom(
-            "talk_key spawn must be omitted, not null",
-        ));
+        return Err(serde::de::Error::custom(format!(
+            "{family} spawn must be omitted, not null"
+        )));
     }
-    TalkKeySpawn::deserialize(value)
+    T::deserialize(value)
         .map(Some)
         .map_err(serde::de::Error::custom)
 }
@@ -884,6 +943,8 @@ pub struct SelectedGameData {
     trails: Option<TrailFacts>,
     #[serde(default)]
     talk_key: Option<TalkKeyFacts>,
+    #[serde(default)]
+    trio_givers: Option<TrioGiverFacts>,
 }
 
 impl SelectedGameData {
@@ -1011,6 +1072,37 @@ impl SelectedGameData {
                         return Err(format!("talk_key keeper kind {other} is not a keeper"));
                     }
                 }
+            }
+        }
+        if let Some(facts) = &data.trio_givers {
+            if facts.rows.is_empty() {
+                return Err("trio_givers present with no givers".to_string());
+            }
+            if facts.coverage.iter().any(|record| {
+                record.class != "unknown"
+                    || record.family != "trio_givers"
+                    || record.reason.is_empty()
+            }) {
+                return Err(
+                    "trio_givers coverage must be a named unknown with a reason".to_string()
+                );
+            }
+            if facts.coverage.iter().any(|record| {
+                !facts
+                    .rows
+                    .iter()
+                    .any(|row| row.alias == record.alias && row.spawn.is_none())
+            }) || facts.rows.iter().any(|row| {
+                row.spawn.is_none()
+                    && !facts
+                        .coverage
+                        .iter()
+                        .any(|record| record.alias == row.alias)
+            }) {
+                return Err(
+                    "trio_givers coverage must be exactly the givers without a unique spawn"
+                        .to_string(),
+                );
             }
         }
         if data.revision != expected_revision.as_i32() {
@@ -1199,6 +1291,10 @@ impl SelectedGameData {
     /// Talk steps and key keepers. `None` is family absence, not an empty extract.
     pub fn talk_key(&self) -> Option<&TalkKeyFacts> {
         self.talk_key.as_ref()
+    }
+
+    pub fn trio_givers(&self) -> Option<&TrioGiverFacts> {
+        self.trio_givers.as_ref()
     }
 
     /// Resolved equipment family row by frozen display name, when present.
@@ -2079,5 +2175,150 @@ mod tests {
         assert_eq!(facts.keys[0].keeper.name.as_deref(), Some("Black Heather"));
         assert_eq!(facts.keys[0].key_alias, "trail_clue_medium_riddle001_key");
         assert_eq!(facts.coverage[0].family, "keys");
+    }
+
+    const TRIO_GIVER_SPAWNED: &str = r#"{"alias": "observatory_professor", "id": 488, "name": "Observatory professor", "spawn": {"x": 2438, "z": 3186, "plane": 0}}"#;
+    const TRIO_GIVER_UNSPAWNED: &str = r#"{"alias": "murphy", "id": 463, "name": "Murphy"}"#;
+    const TRIO_GIVER_COVERAGE_ROW: &str = r#"[{"class": "unknown", "family": "trio_givers", "alias": "murphy", "reason": "non-unique jm2 NPC spawn"}]"#;
+
+    fn trio_givers_tail(rows: &str, coverage: Option<&str>) -> String {
+        let coverage = coverage
+            .map(|rows| format!(r#", "coverage": {rows}"#))
+            .unwrap_or_default();
+        format!(r#", "trio_givers": {{"rows": {rows}{coverage}}}"#)
+    }
+
+    #[test]
+    fn missing_trio_givers_is_absent_not_an_empty_list() {
+        let data = SelectedGameData::decode(minimal_json("").as_bytes(), ClientRevision::R274)
+            .expect("schema 4 without the field still decodes");
+        assert!(data.trio_givers().is_none());
+    }
+
+    #[test]
+    fn bare_trio_givers_vec_does_not_decode() {
+        let error = SelectedGameData::decode(
+            minimal_json(r#", "trio_givers": []"#).as_bytes(),
+            ClientRevision::R274,
+        )
+        .expect_err("a bare vec must not decode as an empty family");
+        assert!(
+            error.contains("trio_givers") || error.contains("decode"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn empty_trio_giver_rows_are_not_success() {
+        let tail = trio_givers_tail("[]", Some("[]"));
+        let error = SelectedGameData::decode(minimal_json(&tail).as_bytes(), ClientRevision::R274)
+            .expect_err("a present family with no givers is not success");
+        assert!(error.contains("no givers"), "unexpected error: {error}");
+    }
+
+    #[test]
+    fn coverage_less_trio_givers_does_not_decode() {
+        let tail = trio_givers_tail(
+            &format!("[{TRIO_GIVER_SPAWNED}, {TRIO_GIVER_UNSPAWNED}]"),
+            None,
+        );
+        let error = SelectedGameData::decode(minimal_json(&tail).as_bytes(), ClientRevision::R274)
+            .expect_err("an omitted coverage key is not an empty list");
+        assert!(
+            error.contains("coverage") || error.contains("decode"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn null_trio_giver_spawn_does_not_decode() {
+        let row = TRIO_GIVER_SPAWNED.replace(
+            r#", "spawn": {"x": 2438, "z": 3186, "plane": 0}"#,
+            r#", "spawn": null"#,
+        );
+        let tail = trio_givers_tail(&format!("[{row}]"), Some("[]"));
+        let error = SelectedGameData::decode(minimal_json(&tail).as_bytes(), ClientRevision::R274)
+            .expect_err("a null spawn is neither a tile nor an omission");
+        assert!(
+            error.contains("must be omitted, not null"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn level_trio_giver_spawn_does_not_decode() {
+        let row = TRIO_GIVER_SPAWNED.replace(r#""plane": 0"#, r#""level": 0"#);
+        let tail = trio_givers_tail(&format!("[{row}]"), Some("[]"));
+        let error = SelectedGameData::decode(minimal_json(&tail).as_bytes(), ClientRevision::R274)
+            .expect_err("a scene level is not a plane");
+        assert!(error.contains("plane"), "unexpected error: {error}");
+    }
+
+    #[test]
+    fn trio_giver_coverage_must_match_the_unspawned_rows() {
+        // A spawned row recorded as unknown is not honest coverage.
+        let spawned = trio_givers_tail(
+            &format!("[{TRIO_GIVER_SPAWNED}, {TRIO_GIVER_UNSPAWNED}]"),
+            Some(
+                r#"[{"class": "unknown", "family": "trio_givers", "alias": "observatory_professor", "reason": "non-unique jm2 NPC spawn"}]"#,
+            ),
+        );
+        let error =
+            SelectedGameData::decode(minimal_json(&spawned).as_bytes(), ClientRevision::R274)
+                .expect_err("coverage must name an unspawned giver");
+        assert!(
+            error.contains("exactly the givers without a unique spawn"),
+            "unexpected error: {error}"
+        );
+        // An unspawned row left out of coverage is the same refusal.
+        let uncovered = trio_givers_tail(
+            &format!("[{TRIO_GIVER_SPAWNED}, {TRIO_GIVER_UNSPAWNED}]"),
+            Some("[]"),
+        );
+        let error =
+            SelectedGameData::decode(minimal_json(&uncovered).as_bytes(), ClientRevision::R274)
+                .expect_err("an unspawned giver must be recorded");
+        assert!(
+            error.contains("exactly the givers without a unique spawn"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn trio_giver_rows_decode_with_and_without_a_unique_spawn() {
+        let tail = trio_givers_tail(
+            &format!("[{TRIO_GIVER_SPAWNED}, {TRIO_GIVER_UNSPAWNED}]"),
+            Some(TRIO_GIVER_COVERAGE_ROW),
+        );
+        let data = SelectedGameData::decode(minimal_json(&tail).as_bytes(), ClientRevision::R274)
+            .expect("a unique spawn and an unknown spawn decode together");
+        let facts = data.trio_givers().expect("present family");
+        assert_eq!(facts.rows.len(), 2);
+        assert_eq!(facts.rows[0].alias, "observatory_professor");
+        assert_eq!(facts.rows[0].id, 488);
+        assert_eq!(facts.rows[0].name, "Observatory professor");
+        assert_eq!(
+            facts.rows[0]
+                .spawn
+                .as_ref()
+                .map(|spawn| (spawn.x, spawn.z, spawn.plane)),
+            Some((2438, 3186, 0))
+        );
+        assert!(facts.rows[1].spawn.is_none());
+        assert_eq!(facts.coverage[0].family, "trio_givers");
+        assert_eq!(facts.coverage[0].alias, "murphy");
+    }
+
+    #[test]
+    fn unsupported_trio_giver_coverage_does_not_decode() {
+        let tail = trio_givers_tail(
+            &format!("[{TRIO_GIVER_SPAWNED}, {TRIO_GIVER_UNSPAWNED}]"),
+            Some(
+                r#"[{"class": "supported", "family": "trio_givers", "alias": "murphy", "reason": ""}]"#,
+            ),
+        );
+        let error = SelectedGameData::decode(minimal_json(&tail).as_bytes(), ClientRevision::R274)
+            .expect_err("a support class is not unknown-spawn coverage");
+        assert!(error.contains("unknown"), "unexpected error: {error}");
     }
 }
