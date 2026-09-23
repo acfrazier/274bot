@@ -456,12 +456,13 @@ Example: `crates/script/examples/clue_facts_v2.ts` (row),
 
 One machine per isolate, over the landed held-step identify. It is sync, it is
 not a Promise, and it is not a `request()` op: it is the search, casket-open,
-unguarded-dig, guarded-dig encounter, held-puzzle-box, talk-step and trail-end
-collect slice of a later clue trail, not the whole dispatcher. It emits search,
-the held Open, the unguarded Dig, the guarded walk/Dig/Attack/redig, the held
-puzzle box's own Open, one planned `puzzle-move` and the close that follows a
-solved board, the talk step's walk and Talk-to, the challenge scroll's selected
-count answer, and the collect that follows the last casket — no deposit or
+unguarded-dig, guarded-dig encounter, held-puzzle-box, talk-step, key-keeper
+and trail-end collect slice of a later clue trail, not the whole dispatcher. It
+emits search, the held Open, the unguarded Dig, the guarded walk/Dig/Attack/redig,
+the held puzzle box's own Open, one planned `puzzle-move` and the close that
+follows a solved board, the talk step's walk and Talk-to, the challenge scroll's
+selected count answer, the key-keeper hunt's walk, Attack and key Take, and the
+collect that follows the last casket — no deposit or
 retry — and it finishes that collect on its own completion envelope: the exact
 `'clue solved'` status, then the live-token `grind-ready` continue, then the
 `done` the token dies on. `kind: 'done'` is this machine's own kind and is not
@@ -494,14 +495,14 @@ a dead token is the error object, never `undefined` and never a continue kind.
 | `callback.enabled` | re-read the script's `enabled()` and answer with `resume` on the next `next` |
 | `callback.log` | perform `log(message)` |
 | `callback.setStatus` | perform `setStatus(message)`: the identified step's progress line, and — on a finished collect — the exact `'clue solved'` string, which the machine posts and no adapter invents |
-| `walk` | a search row, an unguarded dig row, a guarded row or a talk step that has not arrived: walk to `{ x, z, level }` — the decoded `trail_coord`, or the talk step's own target tile |
+| `walk` | a search row, an unguarded dig row, a guarded row, a talk step or a key-keeper row that has not arrived: walk to `{ x, z, level }` — the decoded `trail_coord`, the talk step's own target tile, or the key keeper's published spawn with its `plane` as the `level` |
 | `loc` | a search row that has arrived: interact with the picked loc, `{ x, z, level, action, id }` |
-| `npc` | a guarded row that has arrived and Dig its spawn: interact with the posted npc, `{ name, action: 'Attack', index }` — the posted scene index it was observed with. A talk step that has arrived is the same kind with the posted row's own `talk_op` and posted scene index, `{ name, action: 'Talk-to', index }` |
+| `npc` | a guarded row that has arrived and Dig its spawn: interact with the posted npc, `{ name, action: 'Attack', index }` — the posted scene index it was observed with. A talk step that has arrived is the same kind with the posted row's own `talk_op` and posted scene index, `{ name, action: 'Talk-to', index }`, and a key-keeper row that has arrived is the same kind with the frozen `Attack` on a posted npc of the keeper's packed type standing on the published spawn, `{ name, action: 'Attack', index }` |
 | `answer-count` | a talk step whose selected challenge scroll is in hand and whose posted `count_dialog_open` is true: answer that dialog with the selected `challenge_answers` string parsed as a non-negative `i32`, `{ value }`. A posted `false` or an omitted slot is not an open count dialog and nothing is answered |
 | `if-button` | a guarded fight whose posted overlay does not read up: click the selected Protect from Magic component, `{ component_id }` |
 | `held` | a casket row that has been reported: interact with the held item named `name` with `action`, `{ name, action }`; an unguarded or guarded dig row's `Dig` is the same kind with `name: 'Spade'`, and the collect's pack-full Drop is the same kind with `action: 'Drop'` |
 | `close-modal` | collecting: close the main modal the page posted open. The step carries nothing else — no interface id, no text. The held puzzle box's solved board is the same kind: the board is closed once, and never closed again while the step stays held |
-| `obj` | collecting: interact with the casket overflow on the posted tile, `{ x, z, level, name, action: 'Take' }` |
+| `obj` | collecting: interact with the casket overflow on the posted tile, `{ x, z, level, name, action: 'Take' }`. A key-keeper row whose kill was observed is the same kind for the key it dropped on the published spawn |
 | `puzzle-move` | a held puzzle box whose posted board is readable and not solved: click one piece of it, `{ id, slot, component, generation }` — the posted board row's own id and slot, the posted component and this call's `snapshot.puzzle_board_generation`. The host re-resolves that exact row and refuses a closed board, a stale slot and a stale generation; a sent click is not an observed move, so the next call re-reads the board and replans |
 | `supplies-needed` | an arrived dig — unguarded or the guarded first Dig — whose posted pack page carries no `Spade`: a named wait-class, not a terminal. The token stays live, nothing is fetched and no `no-spade` error is published |
 | `grind-ready` | the finished collect's continue: the trail is solved and no gear restore is pending, so the token stays live with no verb and the next call is `done` |
@@ -531,8 +532,10 @@ stop and a generation
 bump abort silently; the machine emits no `h.interact` entry and no request op
 for them, and the first thing the caller hears about it is `stale` or
 `aborted`. A held step that is neither a casket, a search row, an unguarded dig
-row, a guarded dig row nor a talk step — the desc-only riddles, the empty-params
-2722 and the key keepers — is identified and then idled: no action and no walk.
+row, a guarded dig row, a talk step nor a key-keeper step — the desc-only
+riddles no key keeper names, the empty-params 2722 and the five matcher-keepers
+the key family publishes no unique spawn for — is identified and then idled: no
+action and no walk.
 The packed 3554 `access: "constrained"` clue is the one identified row the
 machine refuses
 instead of idling: `aborted` / `constrained`, no verb and no live token, which
@@ -688,12 +691,15 @@ live call posts, and the `supplies-needed` of a first Dig that arrived without
 the `Spade`.
 
 The rows that are neither caskets, search rows, unguarded dig rows, guarded dig
-rows nor talk steps stay identified then idle: the desc-only riddles that carry
-no
+rows, talk steps nor key-keeper steps stay identified then idle: the desc-only
+riddles that carry no
 decodable `trail_coord` — except the
 nine whose own `_puzzlebox` is the one the posted page holds, which are the
-held puzzle box below, and except the talk steps above — and the empty-params
-`2722`. The packed 3554
+held puzzle box below, except the talk steps above, and except the two key
+keepers whose packed type and published spawn the family carries — and the
+empty-params
+`2722`, with the five matcher-keepers the key family publishes no unique spawn
+for. The packed 3554
 `access: "constrained"` clue is not one of them: it is refused with
 `aborted` / `constrained` and no live token, on a held step and on a `begin`
 alike. Every coord-bearing row
@@ -701,6 +707,56 @@ without the `trail_loc` pin is the dig classify's instead, so it is the
 `trail_guardian` / `access` half of the classify — and the coord itself — that
 keeps these out: no frozen `type` table is copied, and a row that carries the
 `trail_loc` pin at all belongs to the search membership instead.
+
+### Key keeper
+
+A held row is a **key-keeper step** only when the selected `talk_key.keys`
+family publishes its id. That family is a sibling of the talk steps and never a
+second identify: the held clue stays the riddle the landed identify returned,
+the key the keeper drops is not membership, and a keeper is never Talked-to.
+Two rows publish the unique jm2 spawn beside the packed npc type their keeper
+is — `trail_clue_medium_riddle001` (`2831`) keys `2832` off Black Heather (type
+`202`) at `(3039, 3700, plane 0)`, and `trail_clue_medium_riddle008` (`3607`)
+keys `3608` off Penda (type `1087`) at `(2910, 3539, plane 0)`. The other five
+`keys` rows publish no unique spawn — two of them beside a packed type the
+family covered for a non-unique jm2 spawn, three a `category` or a bare `name`
+— and stay identified then idle over any scene: a published tile and a packed
+type are the only identities this arm can walk to and match against the posted
+npc page, and neither is invented for them.
+
+The arm is one verb per call, over the pages the wrapper marshals at call time:
+
+| Kind | When |
+| --- | --- |
+| `wait` | the key is already on the posted page the identify reads — the hunt is over and the original riddle idles with its token live, no Attack, no completion kind and no gate re-arm, and a key banked but not held is not observed at all; or no posted `here`; or the keeper's packed type is not posted on the published tile; or the owned keeper is still posted and alive, so the Attack is not issued twice; or the pack is full, or the page posted no `inv_size`, and the Take is held back |
+| `walk` | the posted `here` is not on the published `{ x, z, plane }` tile, whose `plane` is the verb's `level`. The walk repeats until the posted arrival holds, exactly like a search or dig row, and it is never `walkLeg` |
+| `npc` | arrived, with a posted npc of the keeper's packed type standing on that tile and listing `Attack`: `{ name, action: 'Attack', index }` — the posted display name and the posted scene index. The identity join is the selected packed id against the posted `id` first, then the selected display name against the posted `name`; the matcher's script alias is never compared to a posted string, and the posted name is what rides the verb |
+| `obj` | the kill was observed and the key is posted on the spawn's own tile: the landed collect `obj`, `{ x, z, level, name, action: 'Take' }`, for the posted ground row whose own id is the step's `key_id`, whose actions carry `Take`, and whose posted tile is on the spawn's own level inside Chebyshev 1 of it |
+
+The kill is the keeper this token Attacked: that owned index posted at zero
+health beside a posted maximum with the page still showing this token's fight
+on it, or that index leaving the posted npc page inside the same freeze-aware
+6000ms grace the wizard encounter reads — the thaw reclaims the frozen interval
+into the owned last-seen, so a pause longer than the remaining grace still ends
+in the kill. An index this token never Attacked is never a kill, and only a
+kill lets the pickup run: the key on the floor without one is a `wait`. This
+hunt has no `guardian-lost`, no `keeper-lost`, no invented respawn timer and no
+second target — a keeper that leaves the page outside the grace is a `wait`,
+and one wandering off the published tile is not chased. No prayer is raised for
+a keeper, either: the Protect from Magic click and its `varp95` read stay the
+wizard encounter's, so a keeper `npc` step is never preceded by an `if-button`.
+No food is ever Dropped for the key — a full pack is a `wait`, and the frozen
+`DROP_RADIUS` of twelve is the jailer's and not this arm's.
+
+The hunt is over once the posted page holds the step's `key_id`, and that is
+**not** trail completion: the original riddle goes on idling with its token
+live, `step_id` does not change, no gate re-arms, no new kind appears, and
+nothing posts `'clue solved'`, `grind-ready` or `done` — the Collecting
+envelope stays the casket's. A different held row, an abort and a reset drop
+the session's own owned keeper with the step, so the row's next `Steady` walks
+and Attacks from the start. `obj` stays off `V2_OPS`, so
+`api.request({ op: 'obj' })` stays `not impl`, and `api.snapshot.ground` stays
+hidden.
 
 ### Held puzzle box
 

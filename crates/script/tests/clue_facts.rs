@@ -1678,10 +1678,11 @@ export function tick(api) {
 }
 
 /// The rows that are not search members stay identified then idle even with a
-/// fully walkable posted scene: 2831 is a desc-only frozen `keyFrom` riddle and
-/// 2722 is a clue row with no params at all — and neither is a held casket, so
-/// neither opens anything. The packed 3554 `access: "constrained"` clue is not
-/// idled: it is refused, which is the sibling test below.
+/// fully walkable posted scene: 2722 is a clue row with no params at all, and
+/// it is not a held casket, so it opens nothing. 2831 is no longer one of them:
+/// the key-keeper hunt walks to its own published spawn and has its own public
+/// proof below. The packed 3554 `access: "constrained"` clue is not idled: it
+/// is refused, which is the sibling test below.
 #[test]
 fn v2_clue_idle_rows_never_walk_or_search() {
     let src = r#"
@@ -1705,7 +1706,7 @@ export function tick(api) {
   }
 }
 "#;
-    for id in [2722, 2831] {
+    for id in [2722] {
         let actions = vec!["Search".to_string()];
         let locs = [scene_loc(25, 3209, 3218, 1, &actions)];
         let data = api::game_data::for_revision(ClientRevision::R274).unwrap();
@@ -3801,10 +3802,12 @@ export function tick(api) {
   }
 }
 "#;
-    // The next scroll (a desc-only riddle) and a leftover casket: identify
-    // returns a step for both, so collect never runs.
+    // The next scroll (the paramless clue row) and a leftover casket: identify
+    // returns a step for both, so collect never runs. 2831 is not a wait here
+    // any more: the key-keeper hunt walks to its published spawn from this
+    // scene, so the idle `wait` pin is the paramless row's.
     for (id, final_kind, alias) in [
-        (2831, "wait", "trail_clue_medium_riddle001"),
+        (2722, "wait", "trail_clue_hard_map001"),
         (3531, "held", "trail_clue_hard_sextant016_casket"),
     ] {
         let data = api::game_data::for_revision(ClientRevision::R274).unwrap();
@@ -5550,4 +5553,471 @@ export function tick(api) {
         assert_eq!(value[refusal]["error"], "none-held", "{refusal} {value:?}");
     }
     assert!(!value.to_string().contains("clue solved"), "{value:?}");
+}
+
+/// `trail_clue_medium_riddle001`: the key-hunt riddle the selected
+/// `talk_key.keys` family publishes as Black Heather's own step — key `2832`,
+/// packed type `202` at the published `(3039, 3700, plane 0)`.
+const KEEPER_RIDDLE: i32 = 2831;
+const KEEPER_KEY: i32 = 2832;
+const KEEPER_ID: i32 = 202;
+const KEEPER_NAME: &str = "Black Heather";
+const KEEPER_X: i32 = 3039;
+const KEEPER_Z: i32 = 3700;
+/// `trail_clue_medium_riddle008`: the second unique-spawn type keeper — Penda,
+/// packed type `1087` at the published `(2910, 3539, plane 0)` — and the key
+/// `3608` it drops.
+const PENDA_RIDDLE: i32 = 3607;
+const PENDA_KEY: i32 = 3608;
+const PENDA_ID: i32 = 1087;
+const PENDA_NAME: &str = "Penda";
+const PENDA_X: i32 = 2910;
+const PENDA_Z: i32 = 3539;
+/// The five `talk_key.keys` rows that publish no unique spawn: two packed-type
+/// matchers the family covered for a non-unique jm2 NPC spawn, two categories
+/// and one bare name. None of them hunts anything.
+const MATCHER_KEEPERS: [i32; 5] = [2833, 2835, 2837, 2839, 3605];
+/// `trail_clue_hard_map001`: the paramless clue row, which stays idle.
+const PARAMLESS: i32 = 2722;
+
+/// One key-hunt walk as the drain sees it.
+fn key_walk(x: i32, z: i32) -> InteractReq {
+    InteractReq::Walk {
+        x,
+        z,
+        level: 0,
+        allow_teleports: false,
+        allow_wilderness: false,
+        allow_bank_fetch: false,
+        request_id: 0,
+    }
+}
+
+/// One keeper Attack as the drain sees it: the posted display name, the frozen
+/// action and the posted scene index.
+fn keeper_attack(name: &str, index: i32) -> InteractReq {
+    InteractReq::Npc {
+        name: name.to_string(),
+        action: "Attack".to_string(),
+        index: Some(index),
+    }
+}
+
+/// One key Take as the drain sees it: the posted ground row's own tile, the
+/// posted name and the frozen action.
+fn key_take(name: &str, x: i32, z: i32) -> InteractReq {
+    InteractReq::Obj {
+        x,
+        z,
+        level: 0,
+        name: Some(name.to_string()),
+        action: "Take".to_string(),
+    }
+}
+
+/// The public key-hunt path: `api.clue.begin` / `next` over a posted scene must
+/// drain the walk to the published spawn, the one Attack on the posted keeper
+/// of its packed type and the Take of the key it drops — which no module test
+/// can see. The held key leaves the drain empty with the original riddle
+/// idling, no `if-button` ever rides the hunt, and a posted effective hitpoints
+/// at zero is `dead` and never `done`.
+#[test]
+fn v2_clue_key_keeper_hunt_walks_attacks_and_takes_over_the_posted_scene() {
+    let src = r#"
+export const apiVersion = 2;
+export function tick(api) {
+  globalThis.__runs = (globalThis.__runs || 0) + 1;
+  if (globalThis.__runs === 1) {
+    const begin = api.clue.begin();
+    globalThis.__token = begin.ok ? begin.value.token : null;
+    globalThis.__steps = [begin];
+    return;
+  }
+  globalThis.__steps.push(api.clue.next(
+    globalThis.__runs === 3
+      ? { token: globalThis.__token, resume: true }
+      : { token: globalThis.__token }));
+  if (globalThis.__runs === 12) {
+    // The machine's own `obj` step is not an author op: it stays off V2_OPS
+    // while the machine enqueues it onto the drain.
+    let objOp = null;
+    try { api.request({ op: 'obj', name: 'Key', action: 'Take' }); objOp = 'ok'; }
+    catch (e) { objOp = String(e && (e.message || e)); }
+    let ifOp = null;
+    try { api.request({ op: 'if-button', component_id: 5621 }); ifOp = 'ok'; }
+    catch (e) { ifOp = String(e && (e.message || e)); }
+    globalThis.__probe = JSON.stringify({
+      token: globalThis.__token,
+      steps: globalThis.__steps,
+      objOp,
+      ifOp,
+      groundType: typeof api.snapshot.ground,
+      npcsType: typeof api.snapshot.npcs,
+    });
+  }
+}
+"#;
+    for (id, key_id, keeper_id, keeper_name, x, z) in [
+        (
+            KEEPER_RIDDLE,
+            KEEPER_KEY,
+            KEEPER_ID,
+            KEEPER_NAME,
+            KEEPER_X,
+            KEEPER_Z,
+        ),
+        (
+            PENDA_RIDDLE,
+            PENDA_KEY,
+            PENDA_ID,
+            PENDA_NAME,
+            PENDA_X,
+            PENDA_Z,
+        ),
+    ] {
+        let data = api::game_data::for_revision(ClientRevision::R274).unwrap();
+        let iso =
+            LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data)
+                .unwrap();
+        let step = [(id, 1)];
+        let held_key = [(id, 1), (key_id, 1)];
+        let attack = vec!["Attack".to_string()];
+        let take = vec!["Take".to_string()];
+        let downed = [StatInput {
+            index: 3,
+            name: "hitpoints",
+            xp: 0,
+            base: 40,
+            effective: 0,
+        }];
+        let far = TileInput {
+            x: x - 30,
+            z,
+            level: 0,
+        };
+        let arrived = TileInput { x, z, level: 0 };
+        // The posted keeper: the packed type the family names, its display name
+        // and the posted `Attack` on the spawn's own tile.
+        let mut keeper = scene_npc(21, keeper_name, 1, 10, 10, &attack);
+        keeper.id = keeper_id;
+        // The same row at zero health beside a posted maximum, with the posted
+        // target pair that makes the death this token's own kill.
+        let mut dying = keeper;
+        dying.health = 0;
+        dying.target_kind = 2;
+        dying.target_index = 0;
+        // The key the kill drops, on the published spawn's own tile.
+        let dropped = scene_ground(key_id, "Key", x, z, 0, &take);
+
+        // Ticks 1-4: the begin and the landed report. Nothing on the drain.
+        for tick in 1..=4 {
+            post_scene(
+                &iso,
+                tick,
+                &step,
+                &Scene {
+                    here: Some(far),
+                    ..Scene::default()
+                },
+            );
+            iso.on_game_tick(tick);
+            assert!(iso.probe("true").is_ok());
+            assert!(
+                iso.drain_interacts().is_empty(),
+                "{id} tick {tick} pushes no verb"
+            );
+        }
+
+        // Tick 5: not arrived — the walk is the published spawn, `plane` as the
+        // verb's own level.
+        post_scene(
+            &iso,
+            5,
+            &step,
+            &Scene {
+                here: Some(far),
+                ..Scene::default()
+            },
+        );
+        iso.on_game_tick(5);
+        assert!(iso.probe("true").is_ok());
+        assert_eq!(
+            iso.drain_interacts(),
+            vec![key_walk(x, z)],
+            "{id}: the hunt walks to its own published spawn"
+        );
+
+        // Tick 6: arrived with the keeper posted on that tile — the one Attack,
+        // and no prayer click behind it.
+        post_scene(
+            &iso,
+            6,
+            &step,
+            &Scene {
+                here: Some(arrived),
+                npcs: &[keeper],
+                ..Scene::default()
+            },
+        );
+        iso.on_game_tick(6);
+        assert!(iso.probe("true").is_ok());
+        assert_eq!(
+            iso.drain_interacts(),
+            vec![keeper_attack(keeper_name, 21)],
+            "{id}: the posted keeper is Attacked"
+        );
+
+        // Tick 7: posted and alive — the hunt waits, and the Attack is never
+        // re-issued.
+        post_scene(
+            &iso,
+            7,
+            &step,
+            &Scene {
+                here: Some(arrived),
+                npcs: &[keeper],
+                ..Scene::default()
+            },
+        );
+        iso.on_game_tick(7);
+        assert!(iso.probe("true").is_ok());
+        assert!(
+            iso.drain_interacts().is_empty(),
+            "{id}: a posted, living keeper is a wait"
+        );
+
+        // Tick 8: the owned index at zero health with this token's fight on it
+        // is the kill, and nothing is on the floor yet.
+        post_scene(
+            &iso,
+            8,
+            &step,
+            &Scene {
+                here: Some(arrived),
+                npcs: &[dying],
+                ..Scene::default()
+            },
+        );
+        iso.on_game_tick(8);
+        assert!(iso.probe("true").is_ok());
+        assert!(
+            iso.drain_interacts().is_empty(),
+            "{id}: the kill waits for the key it drops"
+        );
+
+        // Tick 9: the key posted on the spawn — the landed `obj` Take.
+        post_scene(
+            &iso,
+            9,
+            &step,
+            &Scene {
+                here: Some(arrived),
+                ground: &[dropped],
+                ..Scene::default()
+            },
+        );
+        iso.on_game_tick(9);
+        assert!(iso.probe("true").is_ok());
+        assert_eq!(
+            iso.drain_interacts(),
+            vec![key_take("Key", x, z)],
+            "{id}: the dropped key is Taken at the spawn"
+        );
+
+        // Ticks 10-11: the key on the posted pack page ends the hunt. The
+        // original riddle idles, the gate does not re-arm, and nothing drains —
+        // not even with the keeper and the key's own ground row posted beside
+        // it.
+        for tick in 10..=11 {
+            post_scene(
+                &iso,
+                tick,
+                &held_key,
+                &Scene {
+                    here: Some(arrived),
+                    npcs: &[keeper],
+                    ground: &[dropped],
+                    ..Scene::default()
+                },
+            );
+            iso.on_game_tick(tick);
+            assert!(iso.probe("true").is_ok());
+            assert!(
+                iso.drain_interacts().is_empty(),
+                "{id} tick {tick}: the held key ends the hunt"
+            );
+        }
+
+        // Tick 12: the posted effective hitpoints read zero — the terminal the
+        // hunt still yields to, never `done`.
+        post_scene(
+            &iso,
+            12,
+            &held_key,
+            &Scene {
+                here: Some(arrived),
+                stats: &downed,
+                ..Scene::default()
+            },
+        );
+        iso.on_game_tick(12);
+        assert!(iso.probe("true").is_ok());
+        assert!(iso.drain_interacts().is_empty(), "{id}: a death pushes nothing");
+
+        let probed = iso.probe("globalThis.__probe").unwrap();
+        let value: serde_json::Value = serde_json::from_str(probed.as_str().unwrap()).unwrap();
+        iso.join();
+        assert_eq!(value["objOp"], "not impl: request.obj", "{id} {value:?}");
+        assert_eq!(value["ifOp"], "not impl: request.if-button", "{id} {value:?}");
+        // The posted ground page the Take reads stays hidden, and the npc page
+        // the keeper identity is matched on stays the public projection the
+        // guarded encounter already exposes.
+        assert_eq!(value["groundType"], "undefined", "{id} {value:?}");
+        assert_eq!(value["npcsType"], "object", "{id} {value:?}");
+        let steps = value["steps"].as_array().expect("steps");
+        assert_eq!(steps.len(), 12, "{id} {value:?}");
+        for (index, kind) in [
+            (1, "callback.enabled"),
+            (2, "callback.log"),
+            (3, "callback.setStatus"),
+            (4, "walk"),
+            (5, "npc"),
+            (6, "wait"),
+            (7, "wait"),
+            (8, "obj"),
+            (9, "wait"),
+            (10, "wait"),
+            (11, "dead"),
+        ] {
+            assert_eq!(steps[index]["kind"], kind, "{id} {index} {value:?}");
+        }
+        for index in 1..steps.len() - 1 {
+            let step = &steps[index];
+            assert_eq!(step["token"], value["token"], "{id} {index} {step}");
+            assert!(step.get("error").is_none(), "{id} {index} {step}");
+            assert_eq!(step["status"], "continue", "{id} {index} {step}");
+        }
+        // The dead step is a bare continue kind carrying the bumped token, the
+        // same one `aborted` reports: a death is never `done`.
+        let dead = &steps[11];
+        assert_eq!(dead["ok"], true, "{id} {value:?}");
+        assert_eq!(dead["status"], "continue", "{id} {value:?}");
+        assert_ne!(dead["token"], value["token"], "{id} {value:?}");
+        for absent in ["action", "name", "x", "z", "level", "message", "id", "error"] {
+            assert!(dead.get(absent).is_none(), "{id} {absent} {value:?}");
+        }
+        // The Attack is the posted name, the frozen action and the posted scene
+        // index; the Take is the posted row's own tile, name and action.
+        assert_eq!(steps[5]["name"], keeper_name, "{id} {value:?}");
+        assert_eq!(steps[5]["action"], "Attack", "{id} {value:?}");
+        assert_eq!(steps[5]["index"], 21, "{id} {value:?}");
+        assert_eq!(steps[8]["x"], x, "{id} {value:?}");
+        assert_eq!(steps[8]["z"], z, "{id} {value:?}");
+        assert_eq!(steps[8]["name"], "Key", "{id} {value:?}");
+        assert_eq!(steps[8]["action"], "Take", "{id} {value:?}");
+        // The report is the riddle's own, and no completion, no lost encounter
+        // and no refusal token ever rides the hunt.
+        let report = steps[2]["message"].as_str().unwrap_or("");
+        assert!(report.contains(&id.to_string()), "{id} {value:?}");
+        assert!(!report.contains("clue solved"), "{id} {value:?}");
+        // The steps alone: the probe's own op attempts above name the verbs
+        // this machine must never enqueue for a keeper.
+        let text = serde_json::Value::Array(steps.clone()).to_string();
+        for forbidden in [
+            "clue solved",
+            "grind-ready",
+            "\"done\"",
+            "if-button",
+            "guardian-lost",
+            "abandon",
+            "supplies-needed",
+        ] {
+            assert!(!text.contains(forbidden), "{id} {forbidden} {value:?}");
+        }
+    }
+}
+
+/// The five matcher-keepers and the paramless row stay identified then idle
+/// over the key hunt's own walkable scene — `here` on the published spawn with
+/// the keeper posted on it and the key's ground row on the same tile — so the
+/// public drain stays empty and no step kind is a hunt verb.
+#[test]
+fn v2_clue_matcher_keepers_and_the_paramless_row_never_drain_over_a_key_scene() {
+    let src = r#"
+export const apiVersion = 2;
+export function tick(api) {
+  globalThis.__runs = (globalThis.__runs || 0) + 1;
+  if (globalThis.__runs === 1) {
+    const begin = api.clue.begin();
+    globalThis.__token = begin.ok ? begin.value.token : null;
+    globalThis.__steps = [
+      begin,
+      api.clue.next({ token: globalThis.__token }),
+      api.clue.next({ token: globalThis.__token, resume: true }),
+      api.clue.next({ token: globalThis.__token }),
+    ];
+    return;
+  }
+  globalThis.__steps.push(api.clue.next({ token: globalThis.__token }));
+  if (globalThis.__runs === 5) {
+    globalThis.__probe = JSON.stringify({
+      token: globalThis.__token,
+      steps: globalThis.__steps,
+    });
+  }
+}
+"#;
+    let attack = vec!["Attack".to_string()];
+    let take = vec!["Take".to_string()];
+    let mut keeper = scene_npc(21, KEEPER_NAME, 1, 10, 10, &attack);
+    keeper.id = KEEPER_ID;
+    let dropped = scene_ground(KEEPER_KEY, "Key", KEEPER_X, KEEPER_Z, 0, &take);
+    let scene = Scene {
+        here: Some(TileInput {
+            x: KEEPER_X,
+            z: KEEPER_Z,
+            level: 0,
+        }),
+        npcs: &[keeper],
+        ground: &[dropped],
+        ..Scene::default()
+    };
+    for id in MATCHER_KEEPERS.into_iter().chain([PARAMLESS]) {
+        let data = api::game_data::for_revision(ClientRevision::R274).unwrap();
+        let iso =
+            LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data)
+                .unwrap();
+        let page = [(id, 1)];
+        for tick in 1..=5 {
+            post_scene(&iso, tick, &page, &scene);
+            iso.on_game_tick(tick);
+            assert!(iso.probe("true").is_ok());
+            assert!(
+                iso.drain_interacts().is_empty(),
+                "{id} tick {tick} pushes no hunt verb"
+            );
+        }
+        let probed = iso.probe("globalThis.__probe").unwrap();
+        let value: serde_json::Value = serde_json::from_str(probed.as_str().unwrap()).unwrap();
+        let interacts = iso.drain_interacts();
+        iso.join();
+        assert!(interacts.is_empty(), "{id} pushed interacts: {interacts:?}");
+        let steps = value["steps"].as_array().expect("steps");
+        assert_eq!(steps.len(), 8, "{id} {value:?}");
+        for (index, kind) in [
+            (1, "callback.enabled"),
+            (2, "callback.log"),
+            (3, "callback.setStatus"),
+            (4, "wait"),
+            (5, "wait"),
+            (6, "wait"),
+            (7, "wait"),
+        ] {
+            assert_eq!(steps[index]["kind"], kind, "{id} {index} {value:?}");
+        }
+        let text = value.to_string();
+        for forbidden in ["clue solved", "\"done\"", "if-button", "guardian-lost"] {
+            assert!(!text.contains(forbidden), "{id} {forbidden} {value:?}");
+        }
+    }
 }

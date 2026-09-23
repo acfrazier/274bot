@@ -16,9 +16,9 @@
 //! errors `none-held` and aborts.
 //!
 //! This is the search, casket-open, unguarded-dig, guarded-dig encounter,
-//! trail-end collect, held-puzzle-box and talk-step slice and nothing else:
-//! no deposit, retry, return-grind, key hunt or puzzle-box extra. A held row
-//! that is a selected search
+//! trail-end collect, held-puzzle-box, talk-step and key-keeper hunt slice and
+//! nothing else: no deposit, retry, return-grind or puzzle-box extra. A held
+//! row that is a selected search
 //! membership — a selected `trail_loc=^true` **and** a decodable selected
 //! `trail_coord` on the same row — walks to its decoded tile and then
 //! dispatches the Search/Open picker over the posted loc page; both verbs are
@@ -93,11 +93,12 @@
 //! once the pack-full WARNING has been logged. The latch is the collect's, so
 //! a latched session never loots again, and a frozen call waits it out.
 //!
-//! Every other held step — the desc-only key-gated riddles with no decodable
-//! coord and the empty-params 2722 — is identified and then idled: no action
-//! and no walk. The packed 3554 `access: "constrained"` clue is the one
-//! identified row this machine refuses instead: `aborted` / `constrained`, no
-//! verb, no token — and a begin that identifies it is refused the same way.
+//! Every other held step — the desc-only riddles with no decodable coord that
+//! no selected key-keeper row names, and the empty-params 2722 — is identified
+//! and then idled: no action and no walk. The packed 3554
+//! `access: "constrained"` clue is the one identified row this machine refuses
+//! instead: `aborted` / `constrained`, no verb, no token — and a begin that
+//! identifies it is refused the same way.
 //!
 //! A posted effective `hitpoints` at or below zero is `dead` on any live
 //! call: the token dies with the player and nothing posts `'clue solved'`. A
@@ -142,6 +143,40 @@
 //! posted count dialog is answered with that selected answer. Empty pages, zero
 //! counts and unselected ids still abort `none-held`.
 //!
+//! The last `Steady` arm is the key-keeper hunt: a held row the selected
+//! `talk_key.keys` family publishes is the one key its keeper drops for this
+//! clue. That family is a sibling of the talk steps and never a second
+//! identify — the held row stays the riddle `identify_step` returned, and a
+//! key keeper is never Talked-to and a talk step is never hunted. Two rows
+//! publish a unique jm2 spawn beside a packed-type keeper; the other five
+//! publish no unique spawn — two of them beside a packed type the family
+//! covered, and three a `category` or a bare `name` — and stay idle over any
+//! scene: a published tile and a packed type are the only identities this arm
+//! can walk to and match against the posted npc page, and neither is invented.
+//!
+//! The hunt is one verb per call over this call's own marshalled pages. The key
+//! already on the posted pack page ends it: the original riddle idles with
+//! `wait`, no Attack, no gate and no completion kind — a key banked but not
+//! held is not observed at all. Otherwise the walk goes to the published
+//! `{x, z, plane}` tile with `plane` as the verb's `level`, repeating until the
+//! posted `here` holds, and only ever to that tile: a keeper wandering off it
+//! is not chased and a page with no posted `here` waits. Arrived, the one
+//! `Attack` is dispatched for a posted npc of the keeper's packed type standing
+//! on that tile — the selected id against the posted `id`, then the display
+//! name against the posted `name`, never the alias — and only a row that lists
+//! the posted `Attack`. No prayer is raised for a keeper: the overlay stays the
+//! wizard encounter's. The kill is the owned index posted at zero health beside
+//! a posted maximum with this token's fight still on it, or that index leaving
+//! the page inside the freeze-aware grace; an index this token never Attacked
+//! is never a kill, and a disappearance outside the grace is a `wait` rather
+//! than the encounter's `guardian-lost`. Only the kill lets the pickup run: the
+//! posted ground row of the key's own id whose actions carry `Take` and whose
+//! tile is on the spawn's own level inside the frozen radius is Taken with the
+//! landed `kind: obj`, one verb per call, and a full pack waits — this arm
+//! Drops no food. The hunt is over when the posted page holds the key, and that
+//! is not trail completion: the original riddle goes on idling, nothing re-arms
+//! the gate, and `'clue solved'`, `grind-ready` and `done` stay the collect's.
+//!
 //! Identify is casket-first, so a casket held beside its own clue is the
 //! Open and never 3554 play. Yield keeps the token live, so it is not trail
 //! completion: the completion kinds are the finished collect's alone, this
@@ -163,7 +198,10 @@ use crate::task_clock::InstantTaskClock;
 use api::clue_logic::{identify_step, NONE_HELD};
 use api::clue_pack::SHARK_ID;
 use api::clue_puzzle::{self, Board, PuzzleRow};
-use api::game_data::{SelectedGameData, TalkKeyNpcRef, TalkKeyTalkRow, TrailMembershipRow};
+use api::game_data::{
+    SelectedGameData, TalkKeyKeeper, TalkKeyKeyRow, TalkKeyNpcRef, TalkKeyTalkRow,
+    TrailMembershipRow,
+};
 use serde_json::{json, Value};
 use std::cell::RefCell;
 use std::time::{Duration, Instant};
@@ -274,6 +312,11 @@ const KILL_GRACE_MS: u64 = 6_000;
 /// action strings the way the landed loc picker matches its own.
 const ATTACK: &str = "Attack";
 
+/// The one `talk_key.keys` keeper matcher kind that carries a packed npc id.
+/// A `category` or a bare `name` matcher matches many npcs and names no single
+/// type, so its row stays idle rather than hunting the nearest anything.
+const KEEPER_TYPE: &str = "type";
+
 /// The one selected `cap.prayer` row this fight raises, looked up in the
 /// selected table the way the landed `api::prayer::lookup` looks one up. Not a
 /// second prayer table: the component id the click carries is that row's own.
@@ -337,11 +380,12 @@ enum Phase {
     Reporting,
     /// Progress posted: the same step stays held. A held casket dispatches
     /// its Open from here, a search row walks then dispatches the picker, an
-    /// unguarded-dig row walks then Digs with the held Spade, and a guarded
+    /// unguarded-dig row walks then Digs with the held Spade, a guarded
     /// row walks, Digs its spawn and then fights the wizard that Dig spawned
-    /// until the kill lets it walk back and Dig again; every other row idles
-    /// with no action and no walk, and no second callback is emitted for this
-    /// step.
+    /// until the kill lets it walk back and Dig again, a talk step walks to
+    /// its npc and Talks-to it, and a key-keeper row walks to its keeper,
+    /// Attacks it and Takes the key it drops; every other row idles with no
+    /// action and no walk, and no second callback is emitted for this step.
     Steady,
     /// Trail-end collect: `Steady` on the step whose casket Open went out, and
     /// this call's identify is `none-held`. The one phase that survives
@@ -376,6 +420,23 @@ struct Guardian {
     owned: Option<Owned>,
     /// The kill was observed: the walk back to the decoded tile and its Dig
     /// replace the fight, and that Dig repeats while the same clue stays held.
+    post_kill: bool,
+}
+
+/// The live key-keeper hunt on the identified clue row: the keeper this token's
+/// `Attack` went out for, and the kill the pickup waits behind. The sibling of
+/// `Guardian` — the same owned index and the same freeze-aware grace — with
+/// that encounter's own halves left out: no spawn Dig, no prayer, no redig
+/// after the kill, and a keeper that leaves the page outside the grace is never
+/// `guardian-lost`. Session state on the live token, like `open`, never a
+/// second scheduler and never a cached npc page.
+struct Keeper {
+    /// The posted index this token enqueued `Attack` for. `None` until that
+    /// Attack goes out, and dropped again on the kill: an index this token
+    /// never Attacked is never a kill.
+    owned: Option<Owned>,
+    /// The kill was observed: the pickup replaces the hunt, and no second
+    /// keeper is Attacked while the one this token killed lies where it fell.
     post_kill: bool,
 }
 
@@ -486,6 +547,11 @@ struct ClueRuntime {
     /// abort or the frozen reset clears it. Like `open`, it is session state
     /// and never a cached board.
     puzzle: Option<Puzzle>,
+    /// The live key-keeper hunt: absent until this token's first keeper
+    /// `Attack` went out, then owned by this token until the kill, a different
+    /// held row, an abort or the frozen reset clears it. Like `open`, it is the
+    /// session's own state and never a cached npc page.
+    keeper: Option<Keeper>,
 }
 
 impl ClueRuntime {
@@ -503,6 +569,7 @@ impl ClueRuntime {
             completion: None,
             guardian: None,
             puzzle: None,
+            keeper: None,
         }
     }
 
@@ -534,11 +601,15 @@ impl ClueRuntime {
         }
     }
 
-    /// The owned wizard's last-seen is the one stamp this machine reads a
-    /// duration from, so it is the one a thaw shifts: the grace then measures
-    /// only the time the session was actually unfrozen and observing.
+    /// The owned wizard's and the owned keeper's last-seen are the two stamps
+    /// this machine reads a duration from, so they are what a thaw shifts: each
+    /// grace then measures only the time the session was actually unfrozen and
+    /// observing.
     fn shift_instants(&mut self, gap: Duration) {
         if let Some(owned) = self.guardian.as_mut().and_then(|g| g.owned.as_mut()) {
+            owned.seen_at += gap;
+        }
+        if let Some(owned) = self.keeper.as_mut().and_then(|k| k.owned.as_mut()) {
             owned.seen_at += gap;
         }
     }
@@ -546,8 +617,9 @@ impl ClueRuntime {
     /// The step-scoped state a re-arm, a leave and an abort all drop: the
     /// dispatched Open with its `hard` capture, the collect deadline, the
     /// discarded ground ids, the settled-Take watch, the completion latch, the
-    /// guarded encounter's owned wizard and post-kill flag, and the live
-    /// puzzle-box attempt with its latch.
+    /// guarded encounter's owned wizard and post-kill flag, the live
+    /// puzzle-box attempt with its latch, and the key hunt's owned keeper with
+    /// its own post-kill flag.
     fn clear_step(&mut self) {
         self.open = None;
         self.clock.deadline = None;
@@ -557,6 +629,7 @@ impl ClueRuntime {
         self.completion = None;
         self.guardian = None;
         self.puzzle = None;
+        self.keeper = None;
     }
 
     /// Whether this token survives an identify `none-held`. Only the collect
@@ -774,7 +847,8 @@ impl ClueRuntime {
                 }
                 // Not a held casket: this row's own held puzzle box, the
                 // landed search dispatch, the guarded encounter, the sibling
-                // unguarded-dig dispatch, or the idle every other row keeps.
+                // unguarded-dig dispatch, the talk step, the key-keeper hunt,
+                // or the idle every other row keeps.
                 None => match puzzle_box(selected, row) {
                     // The row's own box on this call's page, or the box this
                     // token already opened: the frozen `PuzzleBox` run. A held
@@ -1182,17 +1256,19 @@ impl ClueRuntime {
 
     /// `Steady` on an identified non-casket row: the landed search dispatch,
     /// the guarded encounter, the sibling unguarded-dig dispatch, the talk
-    /// step, or the idle every other row keeps.
+    /// step, the key-keeper hunt, or the idle every other row keeps.
     ///
     /// The search pin decides first: `search_tile` is the `trail_loc=^true`
     /// membership and the landed dispatch re-reads its own tile from it, so a
     /// search row can never reach either dig arm and Dig is never a second
     /// search classify. The guarded pin decides next, and the encounter it
     /// picked up — session state on this same token — is what the following
-    /// calls read. The talk step is last, so the casket Open, the row's own
+    /// calls read. The talk step follows, so the casket Open, the row's own
     /// held puzzle box and all three walk arms keep their precedence and no
-    /// talk row is ever a second classify of them. Every other held type still
-    /// idles exactly as before.
+    /// talk row is ever a second classify of them. The key-keeper hunt is last,
+    /// entered on its own selected family alone, and every other held type
+    /// idles exactly as before: a talk step is never hunted for a key, and a
+    /// key keeper is never Talked-to.
     fn steady(
         &mut self,
         row: &TrailMembershipRow,
@@ -1205,10 +1281,13 @@ impl ClueRuntime {
         if let Some(tile) = guarded_tile(row) {
             return self.guarded(row, tile, input, selected);
         }
-        match dig_tile(row) {
-            Some(tile) => self.dig(tile, input),
-            None => self.talk(row, input, selected),
+        if let Some(tile) = dig_tile(row) {
+            return self.dig(tile, input);
         }
+        if let Some(talk) = talk_step(selected, row.id) {
+            return self.talk(talk, input, selected);
+        }
+        self.keys(row, input, selected)
     }
 
     /// `Steady` on an identified guarded row: the first Dig, the fight, or the
@@ -1446,6 +1525,11 @@ impl ClueRuntime {
     /// `talk_key.talk` row this held step owns, walked to and then Talk-to'd,
     /// one verb per call.
     ///
+    /// The membership is the caller's, resolved from the selected `talk_key.talk`
+    /// family alone: a key keeper the family does not publish never reaches this
+    /// arm, so its `wait` is never a key hunt's fallthrough and no keeper is
+    /// ever Talked-to.
+    ///
     /// The arm opens on the posted chat facts, because an open chat is not a
     /// tick to Talk-to again: a posted `count_dialog_open` is answered — with
     /// this step's own selected challenge answer and nothing else — and a
@@ -1459,15 +1543,10 @@ impl ClueRuntime {
     /// nothing is Cleared, and no second target is chased.
     fn talk(
         &self,
-        row: &TrailMembershipRow,
+        talk: &TalkKeyTalkRow,
         input: &Value,
         selected: Option<&SelectedGameData>,
     ) -> Value {
-        let Some(talk) = talk_step(selected, row.id) else {
-            // Not a selected talk membership: the key keepers, the puzzle
-            // extras and every other identified row keep the idle they had.
-            return self.emit("wait");
-        };
         if count_open(input) {
             // The count dialog this step's own challenge scroll opens: the
             // selected answer, never a computed or remembered one. A step the
@@ -1546,6 +1625,183 @@ impl ClueRuntime {
             "action": pick.action,
             "index": pick.index,
         })
+    }
+
+    /// `Steady` on an identified key-keeper row: the one key the keeper the
+    /// selected family names drops for this clue, walked to, Attacked and
+    /// Taken, one verb per call.
+    ///
+    /// The membership is the selected `talk_key.keys` row whose own id is this
+    /// step's, read on this arm alone: a talk step belongs to the arm above and
+    /// a keeper is never Talked-to. The held clue stays the riddle the landed
+    /// identify returned, so this is a sibling family and never a second
+    /// identify — and the key in hand is not trail completion.
+    ///
+    /// Inside the arm the hunt is: the key already on the posted pack page ends
+    /// it with the idle `wait` the original riddle keeps; the keeper this
+    /// token's `Attack` went out for is observed first, and only its kill lets
+    /// the pickup run; the walk goes to the published `{x, z, plane}` tile and
+    /// repeats until this call's posted `here` holds; the one `Attack` is only
+    /// ever a posted npc of the keeper's packed type standing on that tile
+    /// carrying the posted `Attack`; and the Take is only ever a posted ground
+    /// row of the key's own id at that same tile. A page with no posted match,
+    /// no posted `here`, a missing slot count or a full pack waits with the
+    /// token live: nothing is invented, nothing is Dropped, no prayer is raised
+    /// and no completion kind is ever emitted here.
+    fn keys(
+        &mut self,
+        row: &TrailMembershipRow,
+        input: &Value,
+        selected: Option<&SelectedGameData>,
+    ) -> Value {
+        let Some(key) = key_step(selected, row.id) else {
+            // Not a selected key-keeper membership: the desc-only riddles no
+            // keeper names, the empty-params 2722 and every other identified
+            // row keep the idle they had.
+            return self.emit("wait");
+        };
+        if holds(input, key.key_id) {
+            // The key this keeper drops is already on the posted pack page: the
+            // hunt is over and the original riddle idles. No Attack, no gate
+            // and no completion kind — and a key banked but not held is not
+            // observed at all, because the bank is not a posted page.
+            return self.emit("wait");
+        }
+        let Some(spawn) = key.spawn.as_ref() else {
+            // No published spawn: there is no tile this arm may walk to, and no
+            // coordinate is invented for a keeper the family covered instead.
+            return self.emit("wait");
+        };
+        let Some((keeper_id, keeper_name)) = keeper_type(&key.keeper) else {
+            // A `category` or a bare `name` keeper names no packed npc type, so
+            // its row hunts nothing and idles the way it always did.
+            return self.emit("wait");
+        };
+        let tile = Tile {
+            x: spawn.x,
+            z: spawn.z,
+            level: spawn.plane,
+        };
+        let now = self.clock.now();
+        if let Some(index) = self
+            .keeper
+            .as_ref()
+            .and_then(|keeper| keeper.owned.as_ref())
+            .map(|owned| owned.index)
+        {
+            // The keeper this token Attacked, read before anything walks: only
+            // a settled read of that index ends the hunt, and the Attack is
+            // never issued twice for one owned index.
+            let Some(page) = input.get("npcs").and_then(Value::as_array) else {
+                // No posted npc page this call: the owned keeper cannot be
+                // observed at all, so this call waits.
+                return self.emit("wait");
+            };
+            match page
+                .iter()
+                .find(|posted| posted_i32(posted, "index") == Some(index))
+            {
+                Some(posted) => {
+                    // Posted: this call's observation is the last-seen the
+                    // grace reads.
+                    if let Some(owned) = self.keeper.as_mut().and_then(|k| k.owned.as_mut()) {
+                        owned.seen_at = now;
+                    }
+                    if !died_owned(posted, posted_i32(input, "self_slot"), self_target(input)) {
+                        // Posted and alive: the hunt waits for its kill.
+                        return self.emit("wait");
+                    }
+                }
+                None => {
+                    // The owned index left the page. Inside the frozen grace
+                    // that is this token's kill; outside it the keeper is gone
+                    // without ever being seen at zero health, which is this
+                    // hunt's `wait` and never the wizard encounter's
+                    // `guardian-lost`.
+                    let within = self
+                        .keeper
+                        .as_ref()
+                        .and_then(|keeper| keeper.owned.as_ref())
+                        .is_some_and(|owned| {
+                            now.saturating_duration_since(owned.seen_at)
+                                < Duration::from_millis(KILL_GRACE_MS)
+                        });
+                    if !within {
+                        return self.emit("wait");
+                    }
+                }
+            }
+            if let Some(keeper) = self.keeper.as_mut() {
+                keeper.owned = None;
+                keeper.post_kill = true;
+            }
+        }
+        let after_kill = self.keeper.as_ref().is_some_and(|keeper| keeper.post_kill);
+        match arrival(tile, input) {
+            // No posted `here`: there is no arrival claim to make and no walk
+            // to measure, so this tick waits rather than walking blind.
+            Arrival::Unknown => self.emit("wait"),
+            Arrival::Walking => self.walk(tile),
+            Arrival::Arrived if after_kill => {
+                // The kill is observed: the key lies on its own spawn tile, and
+                // the hunt Takes it.
+                match pick_key(input, key.key_id, tile) {
+                    Some(drop) => {
+                        let Some(size) = input.get("inv_size").and_then(i32_of) else {
+                            // No posted slot count: the pack's fullness is not
+                            // invented for it.
+                            return self.emit("wait");
+                        };
+                        if occupied(input) >= i64::from(size) {
+                            // A full pack waits — this arm Drops no food to make
+                            // room, unlike the casket's own Take.
+                            return self.emit("wait");
+                        }
+                        json!({
+                            "kind": "obj",
+                            "token": self.token,
+                            "x": drop.tile.x,
+                            "z": drop.tile.z,
+                            "level": drop.tile.level,
+                            "name": drop.name,
+                            "action": TAKE,
+                        })
+                    }
+                    // Arrived with nothing of the key posted on the tile: wait
+                    // and re-read the page next call.
+                    None => self.emit("wait"),
+                }
+            }
+            Arrival::Arrived => {
+                match input
+                    .get("npcs")
+                    .and_then(Value::as_array)
+                    .and_then(|page| pick_keeper(keeper_id, keeper_name, page, tile))
+                {
+                    Some((index, name)) => {
+                        self.keeper = Some(Keeper {
+                            owned: Some(Owned {
+                                index,
+                                seen_at: now,
+                            }),
+                            post_kill: false,
+                        });
+                        json!({
+                            "kind": "npc",
+                            "token": self.token,
+                            "name": name,
+                            "action": ATTACK,
+                            // The posted scene index, always present: the host
+                            // matches that identity and refuses a stale one.
+                            "index": index,
+                        })
+                    }
+                    // Arrived with no posted row of this keeper's type: stay on
+                    // the tile and wait, never chasing a wanderer.
+                    None => self.emit("wait"),
+                }
+            }
+        }
     }
 }
 
@@ -2060,6 +2316,45 @@ fn pick_ground<'a>(input: &'a Value, here: Tile, discarded: &[i32]) -> Option<Gr
     None
 }
 
+/// The posted ground row this key Take dispatches at: the posted row whose own
+/// id is the key the key-keeper row names, whose actions carry the frozen
+/// `Take`, and whose own posted tile is on the published spawn's level inside
+/// `ARRIVE_RADIUS` of that tile. Posted order decides, so the first such row
+/// wins, and the verb keeps that row's own tile and the name posted beside it.
+///
+/// The collect's own ground scan is not this read and is never reused: the
+/// frozen `DROP_RADIUS` of twelve and the shark id are the jailer's and the
+/// casket's, this row is identified by the key's own id rather than by the tile
+/// the player stands on, and nothing about the pack's food is read. A row that
+/// is not the marshalled shape, that posted no name and every row on another
+/// tile or off the radius are skipped rather than guessed at.
+fn pick_key(input: &Value, key_id: i32, spawn: Tile) -> Option<Ground<'_>> {
+    let rows = input.get("ground")?.as_array()?;
+    for row in rows {
+        let (Some(id), Some(tile)) = (row.get("id").and_then(i32_of), posted_tile(row)) else {
+            continue;
+        };
+        if id != key_id || posted_i32(row, "level") != Some(spawn.level) {
+            continue;
+        }
+        if chebyshev(tile, spawn) > i64::from(ARRIVE_RADIUS) {
+            continue;
+        }
+        let Some(name) = row
+            .get("name")
+            .and_then(Value::as_str)
+            .filter(|name| !name.is_empty())
+        else {
+            continue;
+        };
+        if !posted_action(row, TAKE) {
+            continue;
+        }
+        return Some(Ground { id, name, tile });
+    }
+    None
+}
+
 /// Whether this call's posted ground page still carries `id`: the settlement a
 /// Take is read through, never an inventory count.
 fn ground_posted(input: &Value, id: i32) -> bool {
@@ -2222,6 +2517,33 @@ fn spade_posted(input: &Value) -> bool {
 /// were.
 fn talk_step(selected: Option<&SelectedGameData>, id: i32) -> Option<&TalkKeyTalkRow> {
     selected?.talk_key()?.talk.iter().find(|talk| talk.id == id)
+}
+
+/// The selected key-keeper step an identified membership row owns: the
+/// `talk_key.keys` row whose own id is the row's, or `None` when the row is not
+/// a key-hunt membership.
+///
+/// A sibling of `talk_step` and never a fold into it: the two families publish
+/// different ids, so a talk step is never hunted and a keeper is never
+/// Talked-to. The held clue stays the riddle the landed identify returned — the
+/// key is not membership — and the row's own `key_id`, `keeper` and `spawn` are
+/// what the arm reads.
+fn key_step(selected: Option<&SelectedGameData>, id: i32) -> Option<&TalkKeyKeyRow> {
+    selected?.talk_key()?.keys.iter().find(|key| key.id == id)
+}
+
+/// The packed npc type one key-keeper row names: that keeper's own id and the
+/// display name the posted npc page carries beside it, and nothing else.
+///
+/// Only a `type` matcher is one npc. A `category` or a bare `name` keeper
+/// matches many and carries no packed id, so those rows have no type here and
+/// stay idle rather than hunting the nearest anything. The matcher's own script
+/// alias is never part of this identity — the posted page carries no alias at
+/// all — and it is never substituted for the display name the verb carries.
+fn keeper_type(keeper: &TalkKeyKeeper) -> Option<(i32, &str)> {
+    let id = keeper.id?;
+    let name = keeper.name.as_deref().filter(|name| !name.is_empty())?;
+    (keeper.kind == KEEPER_TYPE).then_some((id, name))
 }
 
 /// The challenge seam: `identify_step` reads no challenge id, so the page the
@@ -2414,6 +2736,60 @@ fn pick_at_spawn<'a>(npc: &TalkKeyNpcRef, page: &'a [Value], spawn: Tile) -> Opt
         }
     }
     best
+}
+
+/// The keeper pick over this call's posted npc page: the posted row whose own
+/// packed id — or, failing that, whose posted display name — is the keeper this
+/// key row names, that lists the posted `Attack`, and that stands on the
+/// published spawn's own level inside the frozen `ARRIVE_RADIUS` of that tile.
+///
+/// The sibling of `pick_at_spawn`, and never a reuse of it: the identity here is
+/// the keeper's packed type and the action is `Attack`, where the talk arm's own
+/// pick reads a `talk_op` over its family's npc. The radius is part of the
+/// membership and not only of the verb, so a keeper further off is not this
+/// tile's and the hunt waits at the published tile instead of chasing it.
+/// Nearest wins and ties keep posted order — the scan only replaces its best on
+/// a strict improvement. A row with no posted index, no posted name, no
+/// `Attack`, another level, no distance and no marshalled tile matches nothing.
+fn pick_keeper<'a>(id: i32, name: &str, page: &'a [Value], spawn: Tile) -> Option<(i32, &'a str)> {
+    let mut best: Option<(i32, &'a str, i64)> = None;
+    for row in page {
+        let Some(index) = posted_i32(row, "index") else {
+            continue;
+        };
+        let Some(posted) = row
+            .get("name")
+            .and_then(Value::as_str)
+            .filter(|name| !name.is_empty())
+        else {
+            continue;
+        };
+        let named = posted_i32(row, "id") == Some(id) || posted.eq_ignore_ascii_case(name);
+        if !named || !posted_action(row, ATTACK) {
+            continue;
+        }
+        if posted_i32(row, "level") != Some(spawn.level) {
+            continue;
+        }
+        let tile = posted_tile(row);
+        let distance = posted_i32(row, "distance").map(i64::from);
+        let near = distance.is_some_and(|distance| distance <= i64::from(ARRIVE_RADIUS))
+            || tile.is_some_and(|tile| chebyshev(tile, spawn) <= i64::from(ARRIVE_RADIUS));
+        if !near {
+            continue;
+        }
+        let Some(distance) = distance.or_else(|| tile.map(|tile| chebyshev(tile, spawn))) else {
+            continue;
+        };
+        let better = match &best {
+            None => true,
+            Some((_, _, best)) => distance < *best,
+        };
+        if better {
+            best = Some((index, posted, distance));
+        }
+    }
+    best.map(|(index, posted, _)| (index, posted))
 }
 
 /// The landed `dialog_ready` over this call's posted chat slots: a posted
@@ -2616,8 +2992,9 @@ mod tests {
     const MAP: i32 = 2713;
     /// `trail_clue_hard_map001`: a selected clue row with no params at all.
     const MAP_EMPTY: i32 = 2722;
-    /// `trail_clue_medium_riddle001`: a frozen `keyFrom` riddle, selected
-    /// `trail_desc` only.
+    /// `trail_clue_medium_riddle001`: the desc-only frozen `keyFrom` riddle the
+    /// selected `talk_key.keys` family publishes as Black Heather's own step —
+    /// key `2832`, packed type `202` at the published `(3039, 3700, plane 0)`.
     const RIDDLE: i32 = 2831;
     /// `trail_clue_medium_sextant001`: the unguarded-dig membership,
     /// `trail_coord=0_49_50_24_51` → (3160, 3251, 0).
@@ -2638,6 +3015,28 @@ mod tests {
     /// `trail_clue_hard_riddle022`: a desc-only hard riddle with **no**
     /// `_puzzlebox` sibling at all, which stays idle.
     const PUZZLE_RIDDLE_NO_BOX: i32 = 3572;
+    /// `2831`'s own key: the ground row its keeper drops on the published
+    /// spawn, and the pack row that ends the hunt.
+    const KEEPER_KEY: i32 = 2832;
+    /// The packed type that riddle's keeper names, and the posted display name
+    /// the page carries beside it. The matcher's script alias (`black_heather`)
+    /// is never compared to a posted string.
+    const KEEPER_ID: i32 = 202;
+    const KEEPER_NAME: &str = "Black Heather";
+    /// `trail_clue_medium_riddle008`: the second unique-spawn type keeper —
+    /// Penda, packed id 1087, at the published `(2910, 3539, plane 0)` — and
+    /// the key `3608` it drops.
+    const PENDA: i32 = 3607;
+    const PENDA_KEY: i32 = 3608;
+    const PENDA_ID: i32 = 1087;
+    const PENDA_NAME: &str = "Penda";
+    /// The five `talk_key.keys` rows that publish no unique spawn:
+    /// `riddle002` and `riddle003` name a packed type the family covered for a
+    /// non-unique jm2 NPC spawn, `riddle004` and `riddle007` a category and
+    /// `riddle005` a bare name. None of them hunts anything — idle over any
+    /// scene — because a packed type is the only identity the posted npc page
+    /// can be matched by.
+    const MATCHER_KEEPERS: [i32; 5] = [2833, 2835, 2837, 2839, 3605];
 
     fn selected() -> Arc<SelectedGameData> {
         api::game_data::for_revision(ClientRevision::R274).expect("selected data")
@@ -3608,9 +4007,12 @@ mod tests {
         });
         // A casket is a held Open and the packed 3554 clue is the constrained
         // refusal, so neither is in this set: 2722 is a paramless clue row and
-        // 2831 is a desc-only riddle. The coord-only map is no longer one of
-        // them either: the widened dig arm walks and Digs from its own tile.
-        for id in [MAP_EMPTY, RIDDLE] {
+        // 2831 is the key-hunt riddle, which walks to its published spawn from
+        // this very scene and has its own proof below. The coord-only map is no
+        // longer one of them either: the widened dig arm walks and Digs from
+        // its own tile. The five matcher-keepers the key family publishes no
+        // packed type for are idled here too.
+        for id in std::iter::once(MAP_EMPTY).chain(MATCHER_KEEPERS) {
             let page = json!([[id, 1]]);
             let token = steady(&data, id);
             for _ in 0..2 {
@@ -4821,15 +5223,18 @@ mod tests {
 
     /// The rows the dig classify leaves out stay identified then idle even over
     /// a scene the dig arm would walk and Dig from — `here` on the row's own
-    /// selected tile with the Spade posted: the paramless 2722 and the
-    /// desc-only 2831, which carries no coord at all. The packed constrained
-    /// 3554 clue is refused instead of idled, and the guarded row is no longer
-    /// one of them: its own encounter walks and Digs from this same scene.
+    /// selected tile with the Spade posted: the paramless 2722, the five
+    /// matcher-keepers the key family publishes no packed type for, and the
+    /// desc-only riddles no key row names. 2831 is no longer one of them: the
+    /// key-keeper hunt walks to its own published spawn from that same tile.
+    /// The packed constrained 3554 clue is refused instead of idled, and the
+    /// guarded row is no longer one of them either: its own encounter walks and
+    /// Digs from this same scene.
     #[test]
     fn rows_outside_the_dig_classify_stay_idle_over_a_walkable_dig_scene() {
         on_reset();
         let data = selected();
-        for id in [MAP_EMPTY, RIDDLE] {
+        for id in std::iter::once(MAP_EMPTY).chain(MATCHER_KEEPERS) {
             let here_tile = row(&data, id)
                 .params
                 .iter()
@@ -7489,6 +7894,815 @@ mod tests {
         );
         assert_eq!(dead["kind"], "dead", "{dead}");
         assert!(!dead.to_string().contains("clue solved"), "{dead}");
+    }
+
+    /// The key-hunt step of one of the two unique-spawn type keepers.
+    fn key_of(data: &SelectedGameData, id: i32) -> &TalkKeyKeyRow {
+        key_step(Some(data), id).unwrap_or_else(|| panic!("key keeper {id}"))
+    }
+
+    /// The published spawn tile a key row's walk carries.
+    fn spawn_of(key: &TalkKeyKeyRow) -> Tile {
+        let spawn = key.spawn.as_ref().expect("a unique jm2 spawn");
+        Tile {
+            x: spawn.x,
+            z: spawn.z,
+            level: spawn.plane,
+        }
+    }
+
+    /// One key-hunt call's pages: the posted `here` tile, the posted npc page,
+    /// the posted ground page, the posted pack rows with their slot count, and
+    /// the posted local-player slot the kill's own `targetsMe` read compares
+    /// with. Everything the hunt does not need this call is left empty, so each
+    /// test names only the page it is about.
+    fn key_scene(here_tile: Value, extra: Value) -> Value {
+        let mut scene = json!({
+            "here": here_tile,
+            "npcs": [],
+            "ground": [],
+            "inv": [],
+            "inv_size": 28,
+            "self_slot": 0,
+        });
+        for (key, value) in extra.as_object().expect("extra") {
+            scene[key] = value.clone();
+        }
+        scene
+    }
+
+    /// One wrapper-marshalled posted npc row as the keeper hunt reads it: the
+    /// posted index the Attack carries, the packed id and posted display name
+    /// the identity join compares, the posted tile and distance the published
+    /// spawn's radius is measured by, the posted health pair the kill is read
+    /// through, and the posted action list the `Attack` is read from.
+    fn keeper_npc(
+        index: i32,
+        id: i32,
+        name: &str,
+        tile: Tile,
+        distance: i32,
+        actions: &[&str],
+    ) -> Value {
+        json!({
+            "index": index,
+            "id": id,
+            "name": name,
+            "x": tile.x,
+            "z": tile.z,
+            "level": tile.level,
+            "distance": distance,
+            "health": 10,
+            "max_health": 10,
+            "in_combat": false,
+            "actions": actions,
+            "target_kind": 0,
+            "target_index": -1,
+        })
+    }
+
+    /// The owned keeper's last-seen aged past the frozen grace: the only way to
+    /// reach the gone-outside-grace read without a six-second test.
+    fn age_keeper_seen(ms: u64) {
+        RUNTIME.with(|rt| {
+            let mut rt = rt.borrow_mut();
+            if let Some(owned) = rt.keeper.as_mut().and_then(|keeper| keeper.owned.as_mut()) {
+                owned.seen_at -= Duration::from_millis(ms);
+            }
+        });
+    }
+
+    /// A freeze that outlasted the remaining keeper grace, without a
+    /// six-second test: the clock's own `frozen_at` and the owned keeper's
+    /// last-seen are both placed at the freeze's start, so the reclaim the thaw
+    /// makes is exactly the frozen interval — the shape a real long freeze
+    /// hands the session.
+    fn froze_across_the_keeper_grace() {
+        on_pause();
+        RUNTIME.with(|rt| {
+            let mut rt = rt.borrow_mut();
+            let frozen_at = Instant::now() - Duration::from_millis(KILL_GRACE_MS + 1);
+            rt.clock.frozen_at = Some(frozen_at);
+            if let Some(owned) = rt.keeper.as_mut().and_then(|keeper| keeper.owned.as_mut()) {
+                owned.seen_at = frozen_at;
+            }
+        });
+        on_resume();
+    }
+
+    /// The key-hunt membership is the selected `talk_key.keys` family and
+    /// nothing else: the two unique-spawn type keepers are the hunt's steps,
+    /// the five matcher-keepers publish no unique spawn and are not, and
+    /// neither family's step is the other's — a key keeper is never a talk step
+    /// and a talk step is never hunted.
+    #[test]
+    fn the_key_membership_is_the_selected_keys_family_and_nothing_else() {
+        on_reset();
+        let data = selected();
+        let talk = data.talk_key().expect("talk_key");
+        assert_eq!(talk.keys.len(), 7, "the landed family");
+        assert_eq!(
+            talk.keys.iter().filter(|key| key.spawn.is_some()).count(),
+            2,
+            "the unique-spawn slice"
+        );
+        for key in &talk.keys {
+            let row = row(&data, key.id);
+            assert_eq!(row.role, "clue", "{}", key.alias);
+            // Every key row is a membership row the landed identify returns,
+            // and none is a second classify of the arms ahead of the hunt.
+            assert_eq!(
+                key_step(Some(&data), key.id).map(|key| key.id),
+                Some(key.id),
+                "{}",
+                key.alias
+            );
+            assert_eq!(search_tile(row), None, "{}", key.alias);
+            assert_eq!(guarded_tile(row), None, "{}", key.alias);
+            assert_eq!(dig_tile(row), None, "{}", key.alias);
+            assert_eq!(casket_name(Some(&data), row), None, "{}", key.alias);
+            assert_eq!(
+                talk_step(Some(&data), key.id).map(|talk| talk.id),
+                None,
+                "{}",
+                key.alias
+            );
+        }
+        // The two slice rows: one packed-type keeper each, on a published
+        // spawn, with the pinned key the arm Takes.
+        for (id, key_id, keeper, name, spawn) in [
+            (
+                RIDDLE,
+                KEEPER_KEY,
+                KEEPER_ID,
+                KEEPER_NAME,
+                Tile {
+                    x: 3039,
+                    z: 3700,
+                    level: 0,
+                },
+            ),
+            (
+                PENDA,
+                PENDA_KEY,
+                PENDA_ID,
+                PENDA_NAME,
+                Tile {
+                    x: 2910,
+                    z: 3539,
+                    level: 0,
+                },
+            ),
+        ] {
+            let step = key_of(&data, id);
+            assert_eq!(step.key_id, key_id, "{}", step.alias);
+            assert_eq!(
+                keeper_type(&step.keeper),
+                Some((keeper, name)),
+                "{}",
+                step.alias
+            );
+            assert_eq!(spawn_of(step), spawn, "{}", step.alias);
+        }
+        // The five matcher-keepers publish no unique spawn, so not one of them
+        // is a hunt: two name a packed type the family covered for a
+        // non-unique jm2 NPC spawn, and three a category or a bare name that
+        // is not one npc at all. No coordinate is invented for the first two
+        // and no type list for the other three.
+        for id in MATCHER_KEEPERS {
+            assert!(key_of(&data, id).spawn.is_none(), "{id}");
+        }
+        for id in [2833, 2835] {
+            assert!(keeper_type(&key_of(&data, id).keeper).is_some(), "{id}");
+        }
+        for id in [2837, 2839, 3605] {
+            assert_eq!(keeper_type(&key_of(&data, id).keeper), None, "{id}");
+        }
+        // No selected pin is no key step, and neither is a talk step or any
+        // other landed membership.
+        assert_eq!(key_step(None, RIDDLE).map(|key| key.id), None);
+        for id in [
+            TALK,
+            TALK_IDENTITY,
+            MAP_EMPTY,
+            SEARCH,
+            UNGUARDED,
+            GUARDED,
+            CLUE,
+            CASKET,
+        ] {
+            assert_eq!(key_step(Some(&data), id).map(|key| key.id), None, "{id}");
+        }
+    }
+
+    /// The two unique-spawn type keepers driven through the whole hunt: the
+    /// walk to the published spawn with its `plane` as the verb's `level`, the
+    /// one Attack on the posted keeper, the kill, the Take of the key it drops,
+    /// and the idle the original riddle keeps once that key is on the posted
+    /// pack page.
+    #[test]
+    fn a_key_keeper_step_walks_attacks_and_takes_the_key_it_drops() {
+        on_reset();
+        let data = selected();
+        for (id, key_id, keeper, name, spawn) in [
+            (
+                RIDDLE,
+                KEEPER_KEY,
+                KEEPER_ID,
+                KEEPER_NAME,
+                Tile {
+                    x: 3039,
+                    z: 3700,
+                    level: 0,
+                },
+            ),
+            (
+                PENDA,
+                PENDA_KEY,
+                PENDA_ID,
+                PENDA_NAME,
+                Tile {
+                    x: 2910,
+                    z: 3539,
+                    level: 0,
+                },
+            ),
+        ] {
+            let page = json!([[id, 1]]);
+            let token = steady(&data, id);
+            let arrived = here(spawn.x, spawn.z, spawn.level);
+            let posted = keeper_npc(21, keeper, name, spawn, 1, &[ATTACK]);
+
+            // Not arrived: the walk is the published spawn itself, repeating
+            // until the posted `here` holds.
+            let walked = call(
+                &data,
+                token,
+                page.clone(),
+                key_scene(here(spawn.x - 30, spawn.z, spawn.level), json!({})),
+            );
+            assert_eq!(walked["kind"], "walk", "{id} {walked}");
+            assert_eq!(walked["x"], spawn.x, "{id} {walked}");
+            assert_eq!(walked["z"], spawn.z, "{id} {walked}");
+            assert_eq!(walked["level"], spawn.level, "{id} {walked}");
+
+            // Arrived with the keeper posted on its own tile: the one Attack,
+            // carrying the posted name, the frozen action and the posted scene
+            // index and nothing else.
+            let attacked = call(
+                &data,
+                token,
+                page.clone(),
+                key_scene(arrived.clone(), json!({ "npcs": [posted.clone()] })),
+            );
+            assert_eq!(attacked["kind"], "npc", "{id} {attacked}");
+            assert_eq!(attacked["name"], name, "{id} {attacked}");
+            assert_eq!(attacked["action"], ATTACK, "{id} {attacked}");
+            assert_eq!(attacked["index"], 21, "{id} {attacked}");
+            for absent in ["component_id", "id", "x", "z", "level", "message"] {
+                assert!(attacked.get(absent).is_none(), "{id} {absent} {attacked}");
+            }
+
+            // Posted and alive: the hunt waits, and the Attack is never issued
+            // twice for one owned index.
+            let alive = call(
+                &data,
+                token,
+                page.clone(),
+                key_scene(arrived.clone(), json!({ "npcs": [posted.clone()] })),
+            );
+            assert_eq!(alive["kind"], "wait", "{id} {alive}");
+            assert_eq!(token_of(&alive), token, "{id} {alive}");
+
+            // The kill: the owned index posted at zero health beside a posted
+            // maximum with this token's own fight on it. The key is already on
+            // the tile, so the kill lets the Take out on this same call.
+            let dying = targeting(field(posted.clone(), "health", json!(0)), 0);
+            let dropped = ground(key_id, "Key", spawn.x, spawn.z, spawn.level, &[TAKE]);
+            let taken = call(
+                &data,
+                token,
+                page.clone(),
+                key_scene(
+                    arrived.clone(),
+                    json!({ "npcs": [dying], "ground": [dropped.clone()] }),
+                ),
+            );
+            assert_eq!(taken["kind"], "obj", "{id} {taken}");
+            assert_eq!(taken["x"], spawn.x, "{id} {taken}");
+            assert_eq!(taken["z"], spawn.z, "{id} {taken}");
+            assert_eq!(taken["level"], spawn.level, "{id} {taken}");
+            assert_eq!(taken["name"], "Key", "{id} {taken}");
+            assert_eq!(taken["action"], TAKE, "{id} {taken}");
+
+            // The key on the posted page ends the hunt: the original riddle
+            // idles, the gate is not re-armed and no completion kind is
+            // emitted — whatever the page still posts beside the key. The key
+            // rides the same `(id, count)` page the identify reads, exactly as
+            // the wrapper posts the pack page it is built from.
+            let keyed = json!([[id, 1], [key_id, 1]]);
+            for extra in [
+                json!({ "npcs": [posted.clone()], "ground": [dropped.clone()] }),
+                json!({}),
+            ] {
+                let mut scene = key_scene(arrived.clone(), extra);
+                scene["inv"] = json!([inv(key_id, "Key", 1)]);
+                let idle = call(&data, token, keyed.clone(), scene);
+                assert_eq!(idle["kind"], "wait", "{id} {idle}");
+                assert_eq!(token_of(&idle), token, "{id} {idle}");
+                let text = idle.to_string();
+                for forbidden in [
+                    "clue solved",
+                    "grind-ready",
+                    "\"done\"",
+                    "guardian-lost",
+                    "abandon",
+                    "supplies-needed",
+                ] {
+                    assert!(!text.contains(forbidden), "{id} {forbidden} {idle}");
+                }
+            }
+        }
+    }
+
+    /// The owned keeper that leaves the posted page inside the frozen grace is
+    /// this token's kill even without a posted zero health — and the kill walks
+    /// back to the published spawn before it Takes anything. A page that posted
+    /// no npc page at all cannot observe the keeper, so the hunt waits.
+    #[test]
+    fn the_owned_keeper_gone_inside_the_grace_is_the_kill_and_walks_back() {
+        on_reset();
+        let data = selected();
+        let page = json!([[RIDDLE, 1]]);
+        let spawn = spawn_of(key_of(&data, RIDDLE));
+        let token = steady(&data, RIDDLE);
+        let arrived = here(spawn.x, spawn.z, spawn.level);
+        let posted = keeper_npc(21, KEEPER_ID, KEEPER_NAME, spawn, 1, &[ATTACK]);
+        let attacked = call(
+            &data,
+            token,
+            page.clone(),
+            key_scene(arrived.clone(), json!({ "npcs": [posted] })),
+        );
+        assert_eq!(attacked["kind"], "npc", "{attacked}");
+
+        // No posted npc page this call: the owned keeper cannot be read, so
+        // nothing walks and nothing is Taken behind it.
+        let blind = call(
+            &data,
+            token,
+            page.clone(),
+            json!({ "here": here(spawn.x - 30, spawn.z, spawn.level) }),
+        );
+        assert_eq!(blind["kind"], "wait", "{blind}");
+
+        // The owned index left the page inside the grace, from thirty tiles
+        // off: the kill, and the walk back to the published spawn.
+        let gone = call(
+            &data,
+            token,
+            page.clone(),
+            key_scene(here(spawn.x - 30, spawn.z, spawn.level), json!({ "npcs": [] })),
+        );
+        assert_eq!(gone["kind"], "walk", "{gone}");
+        assert_eq!(gone["x"], spawn.x, "{gone}");
+        assert_eq!(gone["z"], spawn.z, "{gone}");
+        assert_eq!(gone["level"], spawn.level, "{gone}");
+
+        // Arrived: the key the kill dropped one step off the spawn is Taken
+        // with the landed `obj`, at the row's own posted tile.
+        let dropped = ground(KEEPER_KEY, "Key", spawn.x + 1, spawn.z, spawn.level, &[TAKE]);
+        let taken = call(
+            &data,
+            token,
+            page.clone(),
+            key_scene(arrived, json!({ "ground": [dropped] })),
+        );
+        assert_eq!(taken["kind"], "obj", "{taken}");
+        assert_eq!(taken["x"], spawn.x + 1, "{taken}");
+        assert_eq!(taken["z"], spawn.z, "{taken}");
+        assert_eq!(taken["level"], spawn.level, "{taken}");
+        assert_eq!(taken["action"], TAKE, "{taken}");
+    }
+
+    /// The owned keeper gone outside the frozen grace without ever being seen
+    /// at zero health is not a kill: this hunt has no `guardian-lost`, no
+    /// invented respawn timer and no second kind. The token waits, and a key
+    /// already on the floor is not Taken before the kill it belongs to.
+    #[test]
+    fn a_keeper_gone_outside_the_grace_is_a_wait_and_never_a_lost_encounter() {
+        on_reset();
+        let data = selected();
+        let page = json!([[RIDDLE, 1]]);
+        let spawn = spawn_of(key_of(&data, RIDDLE));
+        let token = steady(&data, RIDDLE);
+        let arrived = here(spawn.x, spawn.z, spawn.level);
+        let posted = keeper_npc(21, KEEPER_ID, KEEPER_NAME, spawn, 1, &[ATTACK]);
+        let attacked = call(
+            &data,
+            token,
+            page.clone(),
+            key_scene(arrived.clone(), json!({ "npcs": [posted] })),
+        );
+        assert_eq!(attacked["kind"], "npc", "{attacked}");
+
+        age_keeper_seen(KILL_GRACE_MS + 1);
+        let dropped = ground(KEEPER_KEY, "Key", spawn.x, spawn.z, spawn.level, &[TAKE]);
+        let idle = call(
+            &data,
+            token,
+            page.clone(),
+            key_scene(arrived.clone(), json!({ "ground": [dropped] })),
+        );
+        assert_eq!(idle["kind"], "wait", "{idle}");
+        assert_eq!(token_of(&idle), token, "{idle}");
+        let text = idle.to_string();
+        for forbidden in ["guardian-lost", "keeper-lost", "obj", "\"done\"", "abandon"] {
+            assert!(!text.contains(forbidden), "{forbidden} {idle}");
+        }
+    }
+
+    /// A freeze that outlasted the remaining keeper grace still ends in the
+    /// kill: the thaw reclaims the frozen interval into the owned last-seen, so
+    /// the disappearance that follows it is read as this token's kill and the
+    /// key it left behind is Taken.
+    #[test]
+    fn a_freeze_across_the_keeper_grace_still_ends_in_the_kill() {
+        on_reset();
+        let data = selected();
+        let page = json!([[RIDDLE, 1]]);
+        let spawn = spawn_of(key_of(&data, RIDDLE));
+        let token = steady(&data, RIDDLE);
+        let arrived = here(spawn.x, spawn.z, spawn.level);
+        let posted = keeper_npc(21, KEEPER_ID, KEEPER_NAME, spawn, 1, &[ATTACK]);
+        let attacked = call(
+            &data,
+            token,
+            page.clone(),
+            key_scene(arrived.clone(), json!({ "npcs": [posted] })),
+        );
+        assert_eq!(attacked["kind"], "npc", "{attacked}");
+
+        froze_across_the_keeper_grace();
+        let kill = call(
+            &data,
+            token,
+            page.clone(),
+            key_scene(arrived.clone(), json!({ "npcs": [] })),
+        );
+        assert_eq!(kill["kind"], "wait", "{kill}");
+        assert!(!kill.to_string().contains("guardian-lost"), "{kill}");
+
+        let dropped = ground(KEEPER_KEY, "Key", spawn.x, spawn.z, spawn.level, &[TAKE]);
+        let taken = call(
+            &data,
+            token,
+            page.clone(),
+            key_scene(arrived, json!({ "ground": [dropped] })),
+        );
+        assert_eq!(taken["kind"], "obj", "{taken}");
+        assert_eq!(taken["action"], TAKE, "{taken}");
+    }
+
+    /// The key Take is the published spawn's own read: the posted ground row
+    /// must carry the key's own id, the posted `Take`, a posted name, the
+    /// spawn's own level and a tile inside `ARRIVE_RADIUS` of that spawn — and
+    /// the pack must have room for it. A full pack waits, because this arm
+    /// Drops no food, and a page that posted no slot count waits too.
+    #[test]
+    fn the_key_take_reads_the_posted_key_row_at_the_spawn() {
+        on_reset();
+        let data = selected();
+        let page = json!([[RIDDLE, 1]]);
+        let spawn = spawn_of(key_of(&data, RIDDLE));
+        let token = steady(&data, RIDDLE);
+        let arrived = here(spawn.x, spawn.z, spawn.level);
+        let posted = keeper_npc(21, KEEPER_ID, KEEPER_NAME, spawn, 1, &[ATTACK]);
+        // The hunt's own Attack first: the pickup is never armed without the
+        // kill this token's Attack went out for.
+        let attacked = call(
+            &data,
+            token,
+            page.clone(),
+            key_scene(arrived.clone(), json!({ "npcs": [posted.clone()] })),
+        );
+        assert_eq!(attacked["kind"], "npc", "{attacked}");
+        let dying = targeting(field(posted, "health", json!(0)), 0);
+        // The kill, with nothing on the floor: the pickup is armed and waits.
+        let kill = call(
+            &data,
+            token,
+            page.clone(),
+            key_scene(arrived.clone(), json!({ "npcs": [dying] })),
+        );
+        assert_eq!(kill["kind"], "wait", "{kill}");
+
+        for (name, row) in [
+            (
+                "no Take",
+                ground(KEEPER_KEY, "Key", spawn.x, spawn.z, spawn.level, &["Examine"]),
+            ),
+            (
+                "another id",
+                ground(KEEPER_KEY + 1, "Key", spawn.x, spawn.z, spawn.level, &[TAKE]),
+            ),
+            (
+                "another level",
+                ground(
+                    KEEPER_KEY,
+                    "Key",
+                    spawn.x,
+                    spawn.z,
+                    spawn.level + 1,
+                    &[TAKE],
+                ),
+            ),
+            (
+                "off the radius",
+                ground(KEEPER_KEY, "Key", spawn.x + 2, spawn.z, spawn.level, &[TAKE]),
+            ),
+            (
+                "no name",
+                ground(KEEPER_KEY, "", spawn.x, spawn.z, spawn.level, &[TAKE]),
+            ),
+        ] {
+            let idle = call(
+                &data,
+                token,
+                page.clone(),
+                key_scene(arrived.clone(), json!({ "ground": [row] })),
+            );
+            assert_eq!(idle["kind"], "wait", "{name} {idle}");
+            assert_eq!(token_of(&idle), token, "{name} {idle}");
+        }
+
+        // A full pack: the Take waits rather than Dropping a food row for it.
+        let dropped = ground(KEEPER_KEY, "Key", spawn.x, spawn.z, spawn.level, &[TAKE]);
+        let full = call(
+            &data,
+            token,
+            page.clone(),
+            key_scene(
+                arrived.clone(),
+                json!({
+                    "ground": [dropped.clone()],
+                    "inv": [inv(SPADE_ITEM, SPADE_NAME, 1)],
+                    "inv_size": 1,
+                }),
+            ),
+        );
+        assert_eq!(full["kind"], "wait", "{full}");
+
+        // No posted slot count: the pack's fullness is not invented for it.
+        let mut unknown = key_scene(arrived.clone(), json!({ "ground": [dropped.clone()] }));
+        unknown.as_object_mut().expect("object").remove("inv_size");
+        let waited = call(&data, token, page.clone(), unknown);
+        assert_eq!(waited["kind"], "wait", "{waited}");
+
+        // Room in the pack and the key on the spawn: the landed Take.
+        let taken = call(
+            &data,
+            token,
+            page.clone(),
+            key_scene(arrived, json!({ "ground": [dropped] })),
+        );
+        assert_eq!(taken["kind"], "obj", "{taken}");
+        assert_eq!(taken["name"], "Key", "{taken}");
+        assert_eq!(taken["action"], TAKE, "{taken}");
+    }
+
+    /// The key this keeper drops is the whole end of the hunt: on the posted
+    /// pack page the original riddle idles — no walk, no Attack, no gate
+    /// re-arm, no new kind, and never `'clue solved'`, `grind-ready` or `done`.
+    #[test]
+    fn a_held_key_ends_the_hunt_with_the_original_riddles_idle() {
+        on_reset();
+        let data = selected();
+        for (id, key_id, keeper, name, spawn) in [
+            (
+                RIDDLE,
+                KEEPER_KEY,
+                KEEPER_ID,
+                KEEPER_NAME,
+                Tile {
+                    x: 3039,
+                    z: 3700,
+                    level: 0,
+                },
+            ),
+            (
+                PENDA,
+                PENDA_KEY,
+                PENDA_ID,
+                PENDA_NAME,
+                Tile {
+                    x: 2910,
+                    z: 3539,
+                    level: 0,
+                },
+            ),
+        ] {
+            let page = json!([[id, 1]]);
+            let token = steady(&data, id);
+            let posted = keeper_npc(21, keeper, name, spawn, 1, &[ATTACK]);
+            // The keeper posted on its own spawn and the key already on the
+            // posted page: no Attack. And a page with no `here` at all: no
+            // walk.
+            let keyed = json!([[id, 1], [key_id, 1]]);
+            for extra in [
+                key_scene(
+                    here(spawn.x, spawn.z, spawn.level),
+                    json!({ "npcs": [posted] }),
+                ),
+                json!({}),
+            ] {
+                let idle = call(&data, token, keyed.clone(), extra);
+                assert_eq!(idle["kind"], "wait", "{id} {idle}");
+                assert_eq!(token_of(&idle), token, "{id} {idle}");
+                assert_eq!(idle["token"], json!(token), "{id} {idle}");
+                for absent in ["x", "z", "level", "name", "action", "index"] {
+                    assert!(idle.get(absent).is_none(), "{id} {absent} {idle}");
+                }
+            }
+        }
+    }
+
+    /// The hunt's own outcome set: the walk, the Attack, the key Take and the
+    /// idle `wait` — plus the yield the posted cooperative interrupt still wins
+    /// with. No Protect from Magic click, no Spade Dig, no collect verb and no
+    /// completion kind is ever this arm's.
+    #[test]
+    fn the_key_hunt_emits_only_walk_npc_obj_wait_and_yield() {
+        on_reset();
+        let data = selected();
+        let page = json!([[RIDDLE, 1]]);
+        let spawn = spawn_of(key_of(&data, RIDDLE));
+        let arrived = here(spawn.x, spawn.z, spawn.level);
+        let posted = keeper_npc(21, KEEPER_ID, KEEPER_NAME, spawn, 1, &[ATTACK]);
+        let dying = targeting(field(posted.clone(), "health", json!(0)), 0);
+        let dropped = ground(KEEPER_KEY, "Key", spawn.x, spawn.z, spawn.level, &[TAKE]);
+        let scenes = [
+            // Not arrived: the walk.
+            key_scene(here(spawn.x - 30, spawn.z, spawn.level), json!({})),
+            // Arrived with the keeper posted: the one Attack.
+            key_scene(arrived.clone(), json!({ "npcs": [posted.clone()] })),
+            // Posted and alive: the wait.
+            key_scene(arrived.clone(), json!({ "npcs": [posted.clone()] })),
+            // The kill and the key it dropped: the Take.
+            key_scene(
+                arrived.clone(),
+                json!({ "npcs": [dying], "ground": [dropped.clone()] }),
+            ),
+            // The key in hand: the original riddle's idle.
+            key_scene(
+                arrived.clone(),
+                json!({ "inv": [inv(KEEPER_KEY, "Key", 1)] }),
+            ),
+        ];
+        let token = steady(&data, RIDDLE);
+        let mut kinds = Vec::new();
+        for scene in scenes {
+            let step = call(&data, token, page.clone(), scene);
+            assert_eq!(token_of(&step), token, "{step}");
+            kinds.push(step["kind"].as_str().unwrap_or("").to_string());
+        }
+        assert_eq!(
+            kinds,
+            vec!["walk", "npc", "wait", "obj", "wait"],
+            "{kinds:?}"
+        );
+        assert_eq!(
+            kinds
+                .iter()
+                .filter(|kind| ![
+                    "walk",
+                    "npc",
+                    "obj",
+                    "wait"
+                ]
+                .contains(&kind.as_str()))
+                .count(),
+            0,
+            "{kinds:?}"
+        );
+
+        // The posted `hold || ours` interrupt still wins over the hunt.
+        let mut interrupt = key_scene(arrived.clone(), json!({ "npcs": [posted] }));
+        interrupt["hold"] = json!(true);
+        let yielded = call(&data, token, page.clone(), interrupt);
+        assert_eq!(yielded["kind"], "yield", "{yielded}");
+        assert_eq!(token_of(&yielded), token, "{yielded}");
+        assert!(!yielded.to_string().contains("clue solved"), "{yielded}");
+    }
+
+    /// The frozen clock, the posted hitpoints and the token's own end keep
+    /// their precedence over the hunt: a frozen call emits no walk and no
+    /// Attack, and a posted effective hitpoints at zero is the `dead` terminal
+    /// — never `done`, and never a completion kind.
+    #[test]
+    fn freeze_yield_and_death_beat_the_key_hunt() {
+        on_reset();
+        let data = selected();
+        let page = json!([[RIDDLE, 1]]);
+        let spawn = spawn_of(key_of(&data, RIDDLE));
+        let token = steady(&data, RIDDLE);
+        let danger = key_scene(here(spawn.x - 30, spawn.z, spawn.level), json!({}));
+        on_pause();
+        let paused = call(&data, token, page.clone(), danger.clone());
+        assert_eq!(paused["kind"], "wait", "{paused}");
+        on_resume();
+        on_hold(true);
+        let held_clock = call(&data, token, page.clone(), danger.clone());
+        assert_eq!(held_clock["kind"], "wait", "{held_clock}");
+        on_hold(false);
+        for step in [&paused, &held_clock] {
+            for absent in ["x", "z", "level", "action", "name", "index"] {
+                assert!(step.get(absent).is_none(), "{absent} {step}");
+            }
+            assert_eq!(token_of(step), token, "{step}");
+        }
+        // Thawed and unheld, the walk is still there.
+        let walked = call(&data, token, page.clone(), danger.clone());
+        assert_eq!(walked["kind"], "walk", "{walked}");
+
+        // The posted effective hitpoints read zero: the terminal wins over the
+        // walk, the Attack and the Take alike.
+        let dead = call(
+            &data,
+            token,
+            page.clone(),
+            key_scene(
+                here(spawn.x, spawn.z, spawn.level),
+                json!({
+                    "npcs": [keeper_npc(21, KEEPER_ID, KEEPER_NAME, spawn, 1, &[ATTACK])],
+                    "inv": [inv(KEEPER_KEY, "Key", 1)],
+                    "hitpoints": 0,
+                }),
+            ),
+        );
+        assert_eq!(dead["kind"], "dead", "{dead}");
+        assert!(!dead.to_string().contains("clue solved"), "{dead}");
+        assert!(!dead.to_string().contains("\"done\""), "{dead}");
+        let after = call(&data, token, page, danger);
+        assert_eq!(after["kind"], "aborted", "{after}");
+        assert_eq!(after["reason"], "stale", "{after}");
+    }
+
+    /// A different held step drops the live hunt with the step: coming back to
+    /// the key riddle walks and Attacks the posted keeper again rather than
+    /// resuming the index the previous session owned.
+    #[test]
+    fn a_different_held_step_drops_the_key_hunt() {
+        on_reset();
+        let data = selected();
+        let page = json!([[RIDDLE, 1]]);
+        let spawn = spawn_of(key_of(&data, RIDDLE));
+        let arrived = here(spawn.x, spawn.z, spawn.level);
+        let posted = keeper_npc(21, KEEPER_ID, KEEPER_NAME, spawn, 1, &[ATTACK]);
+        let token = steady(&data, RIDDLE);
+        let attacked = call(
+            &data,
+            token,
+            page.clone(),
+            key_scene(arrived.clone(), json!({ "npcs": [posted.clone()] })),
+        );
+        assert_eq!(attacked["kind"], "npc", "{attacked}");
+
+        // A different membership row is held: the landed gate re-arms for it.
+        let other = json!([[MAP_EMPTY, 1]]);
+        let re_armed = call(
+            &data,
+            token,
+            other.clone(),
+            key_scene(arrived.clone(), json!({ "npcs": [posted.clone()] })),
+        );
+        assert_eq!(re_armed["kind"], "callback.enabled", "{re_armed}");
+        let logged = call(&data, token, other.clone(), json!({ "resume": true }));
+        assert_eq!(logged["kind"], "callback.log", "{logged}");
+        let _ = call(&data, token, other.clone(), json!({}));
+
+        // Back to the key riddle: the gate re-arms again, and the next steady
+        // call is the hunt's own start — the posted keeper is Attacked again
+        // rather than read as the old session's kill.
+        let back = call(
+            &data,
+            token,
+            page.clone(),
+            key_scene(arrived.clone(), json!({ "npcs": [posted.clone()] })),
+        );
+        assert_eq!(back["kind"], "callback.enabled", "{back}");
+        let logged = call(&data, token, page.clone(), json!({ "resume": true }));
+        assert_eq!(logged["kind"], "callback.log", "{logged}");
+        let _ = call(&data, token, page.clone(), json!({}));
+        let reborn = call(
+            &data,
+            token,
+            page.clone(),
+            key_scene(arrived, json!({ "npcs": [posted] })),
+        );
+        assert_eq!(reborn["kind"], "npc", "{reborn}");
+        assert_eq!(reborn["action"], ATTACK, "{reborn}");
+        assert_eq!(reborn["index"], 21, "{reborn}");
     }
 }
 
