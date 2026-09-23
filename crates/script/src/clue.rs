@@ -15,15 +15,15 @@
 //! after the pickup — and a live session that loses its held membership
 //! errors `none-held` and aborts.
 //!
-//! This is the search, casket-open, unguarded-dig and trail-end collect slice
-//! and nothing else: no talk, guardian, puzzle, deposit, retry or
-//! return-grind. A held row that is a selected search membership — a selected
-//! `trail_loc=^true` **and** a decodable selected `trail_coord` on the same
-//! row — walks to its decoded tile and then dispatches the Search/Open picker
-//! over the posted loc page; both verbs are enqueued by the wrapper as
-//! `InteractReq::Walk` / `InteractReq::Loc`. The picker is the frozen one,
-//! minus its `walkLeg`: nearest then action rank, always at the row's own
-//! posted tile and id.
+//! This is the search, casket-open, unguarded-dig, guarded-dig encounter and
+//! trail-end collect slice and nothing else: no talk, puzzle, deposit, retry
+//! or return-grind. A held row that is a selected search membership — a
+//! selected `trail_loc=^true` **and** a decodable selected `trail_coord` on
+//! the same row — walks to its decoded tile and then dispatches the
+//! Search/Open picker over the posted loc page; both verbs are enqueued by the
+//! wrapper as `InteractReq::Walk` / `InteractReq::Loc`. The picker is the
+//! frozen one, minus its `walkLeg`: nearest then action rank, always at the
+//! row's own posted tile and id.
 //!
 //! The sibling of that pin is the unguarded dig: a decodable selected
 //! `trail_coord` on a row with no `trail_loc`, `trail_sextant=yes` and no
@@ -36,6 +36,24 @@
 //! `no-spade` token. Dig repeats while that same clue stays held, a produced
 //! casket Opens instead, and a `none-held` right after a Dig still aborts:
 //! Collecting is the casket Open's alone.
+//!
+//! The guarded sibling of that pin is the encounter. A decodable selected
+//! `trail_coord` on a row with no `trail_loc`, `trail_sextant=yes`, a
+//! `trail_guardian` and an `access` that is not `"constrained"` is the guarded
+//! membership — the thirty hard sextant rows, `2723` among them. Its first Dig
+//! spawns the family wizard the cap documents (`trail_hard` → Zamorak Wizard,
+//! `trail_hard2` → Saradomin Wizard), so the walk-then-Dig is only the spawn:
+//! after it the machine observes the posted npc page, raises Protect from Magic
+//! with the selected `if-button` while the marshalled overlay varp says the
+//! overlay is not already up, and enqueues one `Attack` for a posted npc from
+//! that family inside the frozen radius — preferring the row that targets the
+//! player, else the nearest match, and never the nearest anything. It then
+//! waits for the kill: that owned index posted at zero health while the page
+//! still shows this token's fight on it, or the owned index leaving the page
+//! inside the frozen grace. Only a kill walks back to the decoded tile and Digs
+//! again, and that Dig repeats while the same clue stays held. An index this
+//! token never Attacked is never a kill: a disappearance without one waits, an
+//! index gone outside the grace waits, and this machine has no `guardian-lost`.
 //!
 //! A held `role: "casket"` row is the held casket item: once its own report is
 //! posted it dispatches the generic held step — the selected item display name
@@ -62,9 +80,8 @@
 //! window has passed when its pages are still empty.
 //!
 //! Every other held step — the packed 3554 `access: "constrained"` clue, the
-//! guarded rows whose first Dig would spawn a wizard, the coord-only map
-//! rows, the desc-only key-gated riddles and the empty-params 2722 — is
-//! identified and then idled: no action and no walk.
+//! coord-only map rows, the desc-only key-gated riddles and the empty-params
+//! 2722 — is identified and then idled: no action and no walk.
 //! Identify is casket-first, so a casket held beside its own clue is the Open
 //! and never 3554 play. Yield keeps the token live, so it is not trail
 //! completion, and this machine never returns `status: "done"`, never
@@ -86,6 +103,7 @@ use api::clue_pack::SHARK_ID;
 use api::game_data::{SelectedGameData, TrailMembershipRow};
 use serde_json::{json, Value};
 use std::cell::RefCell;
+use std::time::{Duration, Instant};
 
 /// No selected pin. The same public token the landed V8 held-step wrapper
 /// publishes: the machine refuses with it rather than calling a page empty.
@@ -117,6 +135,35 @@ const TAKE: &str = "Take";
 /// The frozen `collectReward` pack-full action: one Dropped food row frees the
 /// slot the next Take needs.
 const DROP: &str = "Drop";
+
+/// The frozen `Guardian.ts` spawn radius: a posted npc further than this many
+/// tiles from the player is not a wizard this Dig's spawn can be observed
+/// through, and the encounter waits rather than reaching for it.
+const GUARDIAN_RADIUS: i32 = 12;
+
+/// The frozen `KILL_GRACE_MS` the landed hunt fight reads its engaged index
+/// through: an owned index may leave the posted page inside this window and
+/// still be this token's kill. Read through the freeze-aware clock, so a
+/// paused or held session never spends it.
+const KILL_GRACE_MS: u64 = 6_000;
+
+/// The frozen npc action the wizard is Attacked with, matched on the posted
+/// action strings the way the landed loc picker matches its own.
+const ATTACK: &str = "Attack";
+
+/// The one selected `cap.prayer` row this fight raises, looked up in the
+/// selected table the way the landed `api::prayer::lookup` looks one up. Not a
+/// second prayer table: the component id the click carries is that row's own.
+const PROTECT_FROM_MAGIC: &str = "Protect from Magic";
+
+/// A posted `SceneEntity.target_kind` of `2` is a player, so a row whose
+/// `target_kind` is this and whose `target_index` is this token's `self_slot`
+/// is a row whose own posted target is the local player.
+const PLAYER_KIND: i32 = 2;
+
+/// A posted `self_target_kind` of `1` is an npc, so the local player's own
+/// posted target is an npc whose index can be compared with an owned one.
+const NPC_KIND: i32 = 1;
 
 /// The frozen `food.js` option names, carried as the **keys** handed to the
 /// landed `food_policy::food_forms_for` and for nothing else. Not one of these
@@ -166,16 +213,41 @@ enum Phase {
     /// Enabled: the progress status line is not posted yet.
     Reporting,
     /// Progress posted: the same step stays held. A held casket dispatches
-    /// its Open from here, a search row walks then dispatches the picker, and
-    /// an unguarded-dig row walks then Digs with the held Spade; every other
-    /// row idles with no action and no walk, and no second callback is
-    /// emitted for this step.
+    /// its Open from here, a search row walks then dispatches the picker, an
+    /// unguarded-dig row walks then Digs with the held Spade, and a guarded
+    /// row walks, Digs its spawn and then fights the wizard that Dig spawned
+    /// until the kill lets it walk back and Dig again; every other row idles
+    /// with no action and no walk, and no second callback is emitted for this
+    /// step.
     Steady,
     /// Trail-end collect: `Steady` on the step whose casket Open went out, and
     /// this call's identify is `none-held`. The one phase that survives
     /// `none-held` — the token lives and the loot verbs are dispatched from
     /// here, one per call, until the same `none-held` abort ends the session.
     Collecting,
+}
+
+/// The live guarded encounter on the identified clue row: the wizard this
+/// token's first Dig spawned, and the kill the fight waits to observe. Session
+/// state on the live token, like `open` — never a second scheduler, never a
+/// `Phase::Fighting`, and never a cached npc page.
+struct Guardian {
+    /// The posted index this token enqueued `Attack` for. `None` until that
+    /// Attack goes out, and dropped again on the kill: an index this token
+    /// never Attacked is never a kill.
+    owned: Option<Owned>,
+    /// The kill was observed: the walk back to the decoded tile and its Dig
+    /// replace the fight, and that Dig repeats while the same clue stays held.
+    post_kill: bool,
+}
+
+/// One owned wizard: the posted scene index this token enqueued `Attack` for,
+/// and the last call that index was posted on. The posted name rides the verb
+/// and is never kept — nothing is Attacked twice and no name is ever copied
+/// onto a row.
+struct Owned {
+    index: i32,
+    seen_at: Instant,
 }
 
 struct ClueRuntime {
@@ -205,6 +277,11 @@ struct ClueRuntime {
     /// The frozen `pack-full-no-food` WARNING is logged: the collect is over
     /// (not `done`) and the next Collecting call is the `none-held` abort.
     full_no_food: bool,
+    /// The live guarded encounter: absent until this token's first Dig on a
+    /// guarded row went out, then owned by this token until a different held
+    /// row, an abort or the frozen reset clears it. Like `open`, it is the
+    /// session's own state and never a world copy.
+    guardian: Option<Guardian>,
 }
 
 impl ClueRuntime {
@@ -219,6 +296,7 @@ impl ClueRuntime {
             discarded: Vec::new(),
             pending_take: None,
             full_no_food: false,
+            guardian: None,
         }
     }
 
@@ -234,13 +312,15 @@ impl ClueRuntime {
 
     /// The step-scoped state a re-arm, a leave and an abort all drop: the
     /// dispatched Open with its `hard` capture, the collect deadline, the
-    /// discarded ground ids and the settled-Take watch.
+    /// discarded ground ids, the settled-Take watch and the guarded
+    /// encounter's owned wizard and post-kill flag.
     fn clear_step(&mut self) {
         self.open = None;
         self.clock.deadline = None;
         self.discarded.clear();
         self.pending_take = None;
         self.full_no_food = false;
+        self.guardian = None;
     }
 
     /// Whether this token survives an identify `none-held`. Only the collect
@@ -381,9 +461,10 @@ impl ClueRuntime {
                         "action": OPEN,
                     })
                 }
-                // Not a held casket: the landed search dispatch, the sibling
-                // unguarded-dig dispatch, or the idle every other row keeps.
-                None => self.steady(row, input),
+                // Not a held casket: the landed search dispatch, the guarded
+                // encounter, the sibling unguarded-dig dispatch, or the idle
+                // every other row keeps.
+                None => self.steady(row, input, selected),
             },
             Phase::Collecting => {
                 // Identity still holds a step: the next scroll, or a leftover
@@ -541,13 +622,7 @@ impl ClueRuntime {
             return self.emit("wait");
         };
         if here.level != tile.level || chebyshev(here, tile) > i64::from(ARRIVE_RADIUS) {
-            return json!({
-                "kind": "walk",
-                "token": self.token,
-                "x": tile.x,
-                "z": tile.z,
-                "level": tile.level,
-            });
+            return self.walk(tile);
         }
         match pick_loc(input, tile) {
             Some(pick) => json!({
@@ -571,15 +646,26 @@ impl ClueRuntime {
     }
 
     /// `Steady` on an identified non-casket row: the landed search dispatch,
-    /// the sibling unguarded-dig dispatch, or the idle every other row keeps.
+    /// the guarded encounter, the sibling unguarded-dig dispatch, or the idle
+    /// every other row keeps.
     ///
     /// The search pin decides first: `search_tile` is the `trail_loc=^true`
     /// membership and the landed dispatch re-reads its own tile from it, so a
-    /// search row can never reach the dig arm and Dig is never a second search
-    /// classify. Every other held type still idles exactly as before.
-    fn steady(&self, row: &TrailMembershipRow, input: &Value) -> Value {
+    /// search row can never reach either dig arm and Dig is never a second
+    /// search classify. The guarded pin decides next, and the encounter it
+    /// picked up — session state on this same token — is what the following
+    /// calls read. Every other held type still idles exactly as before.
+    fn steady(
+        &mut self,
+        row: &TrailMembershipRow,
+        input: &Value,
+        selected: Option<&SelectedGameData>,
+    ) -> Value {
         if search_tile(row).is_some() {
             return self.search(row, input);
+        }
+        if let Some(tile) = guarded_tile(row) {
+            return self.guarded(row, tile, input, selected);
         }
         match dig_tile(row) {
             Some(tile) => self.dig(tile, input),
@@ -587,8 +673,180 @@ impl ClueRuntime {
         }
     }
 
-    /// `Steady` on an identified unguarded-dig membership: walk to the decoded
-    /// `trail_coord` tile, then Dig with the held Spade.
+    /// `Steady` on an identified guarded row: the first Dig, the fight, or the
+    /// post-kill redig.
+    ///
+    /// The encounter is this row's own session state: absent until this token's
+    /// first Dig went out, present until a different held row, an abort or the
+    /// reset clears it. Nothing else about it is cached — every call re-reads
+    /// this call's marshalled pages, and the decoded tile is re-read from the
+    /// row's own selected `trail_coord` rather than kept.
+    fn guarded(
+        &mut self,
+        row: &TrailMembershipRow,
+        tile: Tile,
+        input: &Value,
+        selected: Option<&SelectedGameData>,
+    ) -> Value {
+        if self.guardian.is_none() {
+            // No encounter yet: the landed walk-then-Dig, and the Dig that
+            // goes out is the spawn.
+            return self.spawn(tile, input);
+        }
+        if self.guardian.as_ref().is_some_and(|g| g.post_kill) {
+            // The kill was observed: walk back to the decoded tile and Dig
+            // again, repeating while this same clue stays held.
+            return self.dig(tile, input);
+        }
+        self.fight(guardian_names(row), tile, input, selected)
+    }
+
+    /// The guarded row's first Dig: the landed walk-then-Dig of the sibling
+    /// unguarded arm, and the verb that spawns the wizard. The encounter is
+    /// created from that Dig and from nothing else — a call that is still
+    /// walking, has no posted `here`, or has no posted Spade waits without one
+    /// and the fight never starts early.
+    fn spawn(&mut self, tile: Tile, input: &Value) -> Value {
+        match arrival(tile, input) {
+            Arrival::Unknown => self.emit("wait"),
+            Arrival::Walking => self.walk(tile),
+            Arrival::Arrived if !spade_posted(input) => self.emit("wait"),
+            Arrival::Arrived => {
+                self.guardian = Some(Guardian {
+                    owned: None,
+                    post_kill: false,
+                });
+                self.dig_verb()
+            }
+        }
+    }
+
+    /// The fight after the spawn: the frozen mid-fight hitpoints wait, the
+    /// Protect from Magic overlay, and one posted-npc observation per call.
+    ///
+    /// The npc page is this call's own marshalling of `host().snapshot.npcs`,
+    /// so nothing is cached and no scene is scanned. The Attack goes out for a
+    /// posted index of the row family's cap-documented names inside the frozen
+    /// radius, and the encounter then owns that index: the kill is the owned
+    /// row posted at zero health while the page still shows this token's fight
+    /// on it, or the owned index leaving the page inside the frozen grace. An
+    /// index this token never Attacked is never a kill, a disappearance
+    /// outside the grace is a `wait`, and this machine has no `guardian-lost`.
+    fn fight(
+        &mut self,
+        names: &'static [&'static str],
+        tile: Tile,
+        input: &Value,
+        selected: Option<&SelectedGameData>,
+    ) -> Value {
+        if posted_i32(input, "hitpoints").is_some_and(|hp| hp <= 0) {
+            // The posted effective hitpoints at zero: the frozen mid-fight
+            // wait, with no verb at all and never a public `dead`. A page that
+            // posted no stat at all is not a zero.
+            return self.emit("wait");
+        }
+        let Some(prayer) = selected.and_then(|data| api::prayer::lookup(data, PROTECT_FROM_MAGIC))
+        else {
+            // The one selected row this fight raises is not in the pin:
+            // nothing is invented in its place and the fight waits.
+            return self.emit("wait");
+        };
+        if posted_i32(input, "varp95") != Some(1) {
+            // Not a proven on: the landed generic `if-button` raises the
+            // row's own selected component. An overlay already up skips the
+            // click, an unobserved one never Attacks, and nothing here nests
+            // the prayer isolate or waits a toggle out.
+            return json!({
+                "kind": "if-button",
+                "token": self.token,
+                "component_id": prayer.button_com,
+            });
+        }
+        let Some(page) = input.get("npcs").and_then(Value::as_array) else {
+            // No posted npc page this call: nothing to observe, so the spawn
+            // wait and the kill wait are the same `wait`.
+            return self.emit("wait");
+        };
+        let self_slot = posted_i32(input, "self_slot");
+        let now = self.clock.now();
+        let Some(index) = self
+            .guardian
+            .as_ref()
+            .and_then(|g| g.owned.as_ref())
+            .map(|owned| owned.index)
+        else {
+            // Nothing owned yet: the spawn wait. A posted wizard of this row's
+            // family is the Attack; no match at all waits, and the nearest
+            // anything is never Attacked.
+            return match pick_npc(names, page, self_slot) {
+                Some((index, name)) => {
+                    if let Some(guardian) = self.guardian.as_mut() {
+                        guardian.owned = Some(Owned {
+                            index,
+                            seen_at: now,
+                        });
+                    }
+                    json!({
+                        "kind": "npc",
+                        "token": self.token,
+                        "name": name,
+                        "action": ATTACK,
+                        // The posted scene index, always present: the host
+                        // matches that identity and refuses a stale one.
+                        "index": index,
+                    })
+                }
+                None => self.emit("wait"),
+            };
+        };
+        let Some(row) = page
+            .iter()
+            .find(|row| posted_i32(row, "index") == Some(index))
+        else {
+            // The owned index left the page. Inside the frozen grace that is
+            // this token's kill; outside it the fight waits — never a
+            // `guardian-lost`.
+            let within = self
+                .guardian
+                .as_ref()
+                .and_then(|g| g.owned.as_ref())
+                .is_some_and(|owned| {
+                    now.saturating_duration_since(owned.seen_at)
+                        < Duration::from_millis(KILL_GRACE_MS)
+                });
+            if !within {
+                return self.emit("wait");
+            }
+            self.kill();
+            return self.dig(tile, input);
+        };
+        // Posted: this call's observation is the last-seen the grace reads.
+        if let Some(guardian) = self.guardian.as_mut() {
+            if let Some(owned) = guardian.owned.as_mut() {
+                owned.seen_at = now;
+            }
+        }
+        if died_owned(row, self_slot, self_target(input)) {
+            self.kill();
+            return self.dig(tile, input);
+        }
+        // Posted and alive: the fight is on, and the Attack is enqueued once
+        // per owned index — the fight waits for the kill.
+        self.emit("wait")
+    }
+
+    /// The kill was observed: the owned index is dropped and the walk back
+    /// with its Dig replaces the fight. Only an owned, settled read reaches
+    /// here.
+    fn kill(&mut self) {
+        if let Some(guardian) = self.guardian.as_mut() {
+            guardian.owned = None;
+            guardian.post_kill = true;
+        }
+    }
+
+    /// `Steady` on an identified guarded or unguarded-dig membership: walk to
+    /// the decoded `trail_coord` tile, then Dig with the held Spade.
     ///
     /// The arrival is the landed search arrival — this call's posted `here`,
     /// same level and Chebyshev `ARRIVE_RADIUS` — and the walk repeats until it
@@ -600,27 +858,59 @@ impl ClueRuntime {
     /// repeats while this same clue id stays held, the way the casket's Open
     /// does, and a `none-held` after it still aborts.
     fn dig(&self, tile: Tile, input: &Value) -> Value {
-        let Some(here) = input.get("here").and_then(posted_tile) else {
-            return self.emit("wait");
-        };
-        if here.level != tile.level || chebyshev(here, tile) > i64::from(ARRIVE_RADIUS) {
-            return json!({
-                "kind": "walk",
-                "token": self.token,
-                "x": tile.x,
-                "z": tile.z,
-                "level": tile.level,
-            });
+        match arrival(tile, input) {
+            Arrival::Unknown => self.emit("wait"),
+            Arrival::Walking => self.walk(tile),
+            Arrival::Arrived if spade_posted(input) => self.dig_verb(),
+            Arrival::Arrived => self.emit("wait"),
         }
-        if !spade_posted(input) {
-            return self.emit("wait");
-        }
+    }
+
+    /// The landed arrival walk to a tile: the same verb the search arm and both
+    /// dig arms dispatch, so `walk` has one shape on this machine.
+    fn walk(&self, tile: Tile) -> Value {
+        json!({
+            "kind": "walk",
+            "token": self.token,
+            "x": tile.x,
+            "z": tile.z,
+            "level": tile.level,
+        })
+    }
+
+    /// The landed held Dig: the selected Spade display the host resolves by
+    /// first name match, and the frozen action, with no row id and no tile.
+    fn dig_verb(&self) -> Value {
         json!({
             "kind": "held",
             "token": self.token,
             "name": SPADE_NAME,
             "action": DIG,
         })
+    }
+}
+
+/// What this call's posted `here` says about the decoded tile.
+enum Arrival {
+    /// No posted `here`: no arrival claim to make and no walk to measure.
+    Unknown,
+    /// Posted, and not this tile's level or not within `ARRIVE_RADIUS` of it.
+    Walking,
+    /// Posted on the tile's level and within `ARRIVE_RADIUS` of it.
+    Arrived,
+}
+
+/// The landed arrival read over this call's posted `here`: the same level and
+/// Chebyshev `ARRIVE_RADIUS` the search walk uses, so the guarded and unguarded
+/// Dig arrive exactly the way their sibling search row does.
+fn arrival(tile: Tile, input: &Value) -> Arrival {
+    let Some(here) = input.get("here").and_then(posted_tile) else {
+        return Arrival::Unknown;
+    };
+    if here.level == tile.level && chebyshev(here, tile) <= i64::from(ARRIVE_RADIUS) {
+        Arrival::Arrived
+    } else {
+        Arrival::Walking
     }
 }
 
@@ -664,6 +954,14 @@ fn posted_page(input: &Value) -> Vec<(i32, i32)> {
 /// The wrapper writes page numbers as JSON integers.
 fn i32_of(value: &Value) -> Option<i32> {
     i32::try_from(value.as_i64()?).ok()
+}
+
+/// One posted integer field of a marshalled page row — an npc row's health,
+/// distance or target, and the payload's own `self_slot`, `hitpoints` and
+/// overlay varp. A missing, null or non-integer field is `None`: the machine
+/// never rounds a posted value into the number it wants.
+fn posted_i32(row: &Value, key: &str) -> Option<i32> {
+    row.get(key).and_then(i32_of)
 }
 
 /// One packed-coord square: `SQUARE` tiles per map square on both axes.
@@ -793,6 +1091,162 @@ fn dig_tile(row: &TrailMembershipRow) -> Option<Tile> {
         return None;
     }
     decode_trail_coord(coord?)
+}
+
+/// The identified row's guarded-dig membership: a decodable selected
+/// `trail_coord` **and** no selected `trail_loc` **and** `trail_sextant=yes`
+/// **and** a selected `trail_guardian` **and** an `access` that is not
+/// `"constrained"`.
+///
+/// The sibling of `dig_tile`, not a fold into it: the guardian param is what
+/// makes the first Dig a spawn, so the unguarded arm must never reach this
+/// encounter and this arm must never Dig a row without one. The param value is
+/// the family alias the thirty hard sextant rows carry; the wizard name it
+/// stands for lives in `guardian_names` alone and is only ever a posted-name
+/// filter, never a row field.
+fn guarded_tile(row: &TrailMembershipRow) -> Option<Tile> {
+    if row.access.as_deref() == Some(CONSTRAINED) {
+        return None;
+    }
+    let mut sextant = false;
+    let mut located = false;
+    let mut guarded = false;
+    let mut coord = None;
+    for param in &row.params {
+        match param.key.as_str() {
+            "trail_loc" => located = true,
+            "trail_sextant" if param.value == "yes" => sextant = true,
+            "trail_guardian" => guarded = true,
+            "trail_coord" if coord.is_none() => coord = Some(param.value.as_str()),
+            _ => {}
+        }
+    }
+    if located || !sextant || !guarded {
+        return None;
+    }
+    decode_trail_coord(coord?)
+}
+
+/// The cap-documented wizard names the row's own `trail_guardian` family alias
+/// stands for: `trail_hard` is the Zamorak Wizard and `trail_hard2` the
+/// Saradomin Wizard.
+///
+/// The alias is a family and not an npc debugname, so this list is only ever
+/// compared against a posted npc page **after** the first Dig. It is never
+/// written onto the row, never used to invent a scene entity, and an unpinned
+/// family has no list at all — the encounter then waits rather than Attacking
+/// the nearest anything.
+fn guardian_names(row: &TrailMembershipRow) -> &'static [&'static str] {
+    let alias = row
+        .params
+        .iter()
+        .find(|param| param.key == "trail_guardian")
+        .map(|param| param.value.as_str());
+    match alias {
+        Some("trail_hard") => &["Zamorak Wizard"],
+        Some("trail_hard2") => &["Saradomin Wizard"],
+        _ => &[],
+    }
+}
+
+/// The local player's own posted target pair: the posted `self_target_kind`
+/// and `self_target_index`. Both are needed for the read, and a page that
+/// posted neither is not a target at all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SelfTarget {
+    kind: i32,
+    index: i32,
+}
+
+/// This call's posted local-player target, or `None` when the page did not
+/// post the pair.
+fn self_target(input: &Value) -> Option<SelfTarget> {
+    Some(SelfTarget {
+        kind: posted_i32(input, "self_target_kind")?,
+        index: posted_i32(input, "self_target_index")?,
+    })
+}
+
+/// The frozen `targetsMe`: this posted row's own target is the local player.
+/// A page that posted no `self_slot` is never a match — the machine does not
+/// invent the zero slot.
+fn targets_me(row: &Value, self_slot: Option<i32>) -> bool {
+    posted_i32(row, "target_kind") == Some(PLAYER_KIND)
+        && self_slot.is_some_and(|slot| posted_i32(row, "target_index") == Some(slot))
+}
+
+/// The mirror read: the local player's own posted target is this posted row.
+/// A page that posted no pair is never a match.
+fn we_target(row: &Value, target: Option<SelfTarget>) -> bool {
+    target.is_some_and(|target| {
+        target.kind == NPC_KIND && posted_i32(row, "index") == Some(target.index)
+    })
+}
+
+/// The frozen `sawDeath` read: the owned row posted zero health beside a posted
+/// maximum, and this call's page still shows this token's fight on it — the
+/// row's own posted target is the player, or the player's own posted target is
+/// that row. A row that merely died beside another player is not this token's
+/// kill.
+fn died_owned(row: &Value, self_slot: Option<i32>, target: Option<SelfTarget>) -> bool {
+    posted_i32(row, "health") == Some(0)
+        && posted_i32(row, "max_health").is_some_and(|max| max > 0)
+        && (targets_me(row, self_slot) || we_target(row, target))
+}
+
+/// The frozen spawn filter over this call's posted npc page: a row whose
+/// posted display name is one of the row family's cap-documented wizards,
+/// whose posted actions carry `Attack`, and whose posted distance is inside
+/// the frozen radius. The row that targets the player wins, else the nearest,
+/// then posted order — the scan only replaces its best on a strict
+/// improvement, exactly like the landed loc picker.
+///
+/// A row without an index, without a posted name, without a posted distance or
+/// without the action matches nothing, and a page with no match picks nothing:
+/// the encounter waits rather than Attacking the nearest anything. The name
+/// compared is the posted one and the name the verb carries is that same
+/// posted string — no frozen debugname is ever substituted for it.
+fn pick_npc<'a>(
+    names: &[&str],
+    page: &'a [Value],
+    self_slot: Option<i32>,
+) -> Option<(i32, &'a str)> {
+    let mut best: Option<(i32, &'a str, i32, bool)> = None;
+    for row in page {
+        let Some(index) = posted_i32(row, "index") else {
+            continue;
+        };
+        let Some(name) = row
+            .get("name")
+            .and_then(Value::as_str)
+            .filter(|name| !name.is_empty())
+        else {
+            continue;
+        };
+        if !names.iter().any(|wanted| name.eq_ignore_ascii_case(wanted)) {
+            continue;
+        }
+        if !posted_action(row, ATTACK) {
+            continue;
+        }
+        let Some(distance) = posted_i32(row, "distance") else {
+            continue;
+        };
+        if distance > GUARDIAN_RADIUS {
+            continue;
+        }
+        let mine = targets_me(row, self_slot);
+        let better = match &best {
+            None => true,
+            Some((_, _, best_distance, best_mine)) => {
+                (mine && !*best_mine) || (mine == *best_mine && distance < *best_distance)
+            }
+        };
+        if better {
+            best = Some((index, name, distance, mine));
+        }
+    }
+    best.map(|(index, name, _, _)| (index, name))
 }
 
 /// A posted `{ x, z, level }` value — the wrapper's `here` tile or one posted
@@ -1330,6 +1784,125 @@ mod tests {
         assert_eq!(posted["kind"], "callback.setStatus", "{posted}");
         token
     }
+
+    /// One synthetic membership row over the params a test names, so a
+    /// classify can be read without the selected family.
+    fn member(params: Vec<TrailParam>, access: Option<&str>) -> TrailMembershipRow {
+        TrailMembershipRow {
+            alias: "trail_clue_test".into(),
+            id: 1,
+            role: "clue".into(),
+            params,
+            access: access.map(str::to_string),
+        }
+    }
+
+    /// One synthetic selected param on such a row.
+    fn param(key: &str, value: &str) -> TrailParam {
+        TrailParam {
+            key: key.into(),
+            value: value.into(),
+        }
+    }
+
+    /// The decoded tile of the guarded exemplar `2723`: `0_47_60_50_44`.
+    fn guarded_tile_of(data: &SelectedGameData) -> Tile {
+        guarded_tile(row(data, GUARDED)).expect("guarded tile")
+    }
+
+    /// The marshalled scene the guarded encounter walks and Digs over: the
+    /// posted `here` on (or off) the decoded tile and the pack that carries
+    /// the Spade.
+    fn dig_scene(here_tile: Value, spade: bool) -> Value {
+        if spade {
+            json!({ "here": here_tile, "inv": [inv(SPADE_ITEM, SPADE_NAME, 1)] })
+        } else {
+            json!({ "here": here_tile })
+        }
+    }
+
+    /// One wrapper-marshalled posted npc row: the posted index the Attack
+    /// carries, the posted name the family filter matches, the posted health
+    /// pair and target pair the kill is read through, and the posted distance
+    /// the frozen radius filters on.
+    fn npc(index: i32, name: &str, distance: i32, health: i32, max_health: i32) -> Value {
+        json!({
+            "index": index,
+            "id": 100 + index,
+            "name": name,
+            "distance": distance,
+            "health": health,
+            "max_health": max_health,
+            "actions": [ATTACK],
+            "target_kind": 0,
+            "target_index": -1,
+        })
+    }
+
+    /// The same posted row with the npc's own target on the player.
+    fn targeting(mut row: Value, slot: i32) -> Value {
+        row["target_kind"] = json!(PLAYER_KIND);
+        row["target_index"] = json!(slot);
+        row
+    }
+
+    /// One fight call's pages: the posted npc page, the posted local-player
+    /// slot, the Protect from Magic overlay the gate reads, and the posted
+    /// effective hitpoints. The overlay is up and the player is healthy unless
+    /// a test says otherwise, so each test names only the gate it is about.
+    fn fight_scene(npcs: Value, extra: Value) -> Value {
+        let mut scene = json!({
+            "here": here(3058, 3884, 0),
+            "inv": [inv(SPADE_ITEM, SPADE_NAME, 1)],
+            "npcs": npcs,
+            "self_slot": 0,
+            "varp95": 1,
+            "hitpoints": 40,
+        });
+        for (key, value) in extra.as_object().expect("extra") {
+            scene[key] = value.clone();
+        }
+        scene
+    }
+
+    /// Drive the guarded exemplar from `Steady` to its spawn: the walk, then
+    /// the first Dig. The encounter is live after this and the fight pages
+    /// begin.
+    fn spawned(data: &SelectedGameData) -> u64 {
+        let page = json!([[GUARDED, 1]]);
+        let token = steady(data, GUARDED);
+        let tile = guarded_tile_of(data);
+        let walk = call(
+            data,
+            token,
+            page.clone(),
+            dig_scene(here(3100, 3300, 0), true),
+        );
+        assert_eq!(walk["kind"], "walk", "{walk}");
+        let dig = call(
+            data,
+            token,
+            page,
+            dig_scene(here(tile.x, tile.z, tile.level), true),
+        );
+        assert_eq!(dig["kind"], "held", "{dig}");
+        assert_eq!(dig["action"], "Dig", "{dig}");
+        token
+    }
+
+    /// The owned wizard's last-seen aged past the frozen grace: the only way to
+    /// reach the gone-outside-grace read without a six-second test.
+    fn age_owned_seen(ms: u64) {
+        RUNTIME.with(|rt| {
+            let mut rt = rt.borrow_mut();
+            if let Some(owned) = rt.guardian.as_mut().and_then(|g| g.owned.as_mut()) {
+                owned.seen_at -= Duration::from_millis(ms);
+            }
+        });
+    }
+
+    /// The wizard the frozen cap documents for `2723`'s family alias.
+    const WIZARD: &str = "Zamorak Wizard";
 
     #[test]
     fn a_frozen_clock_emits_wait_and_keeps_the_gate_unanswered() {
@@ -2867,17 +3440,6 @@ mod tests {
         // Synthetic rows: each half of the pin on its own idles, a loc param of
         // any value is not this membership, and an off-contract token is never
         // rounded into an invented coordinate.
-        let param = |key: &str, value: &str| TrailParam {
-            key: key.into(),
-            value: value.into(),
-        };
-        let member = |params: Vec<TrailParam>, access: Option<&str>| TrailMembershipRow {
-            alias: "trail_clue_test".into(),
-            id: 1,
-            role: "clue".into(),
-            params,
-            access: access.map(str::to_string),
-        };
         let sextant = || param("trail_sextant", "yes");
         let coord = || param("trail_coord", "0_49_50_24_51");
         let hit = Some(Tile {
@@ -3048,14 +3610,14 @@ mod tests {
 
     /// The rows the dig classify leaves out stay identified then idle even over
     /// a scene the dig arm would walk and Dig from — `here` on the row's own
-    /// selected tile with the Spade posted: the guarded row whose first Dig
-    /// would spawn a wizard, the packed constrained 3554 clue, the coord-only
-    /// map and the paramless 2722.
+    /// selected tile with the Spade posted: the packed constrained 3554 clue,
+    /// the coord-only map and the paramless 2722. The guarded row is no longer
+    /// one of them: its own encounter walks and Digs from this same scene.
     #[test]
-    fn guarded_and_coord_only_rows_stay_idle_over_a_walkable_dig_scene() {
+    fn coord_only_rows_stay_idle_over_a_walkable_dig_scene() {
         on_reset();
         let data = selected();
-        for id in [GUARDED, CLUE, MAP, MAP_EMPTY] {
+        for id in [CLUE, MAP, MAP_EMPTY] {
             let here_tile = row(&data, id)
                 .params
                 .iter()
@@ -3228,6 +3790,940 @@ mod tests {
                 .map(|step| step["kind"].clone())
                 .collect::<Vec<_>>(),
             vec![json!("walk"), json!("wait"), json!("held"), json!("yield")],
+            "{steps:?}"
+        );
+    }
+
+    /// The guarded membership is the selected param set — a decodable coord,
+    /// no loc pin, `trail_sextant=yes`, a `trail_guardian` and an access that
+    /// is not constrained — thirty rows on both pins, the exemplar decode, and
+    /// no swallow of its unguarded sibling. The family alias is a posted-name
+    /// filter and never a row field.
+    #[test]
+    fn the_guarded_dig_membership_is_the_selected_param_set() {
+        for revision in [ClientRevision::R274, ClientRevision::R289] {
+            let data = api::game_data::for_revision(revision).expect("selected data");
+            let facts = data.trails().expect("trails");
+            // The pinned decode: 2723's selected token is (3058, 3884, 0).
+            assert_eq!(
+                guarded_tile(row(&data, GUARDED)),
+                Some(Tile {
+                    x: 3058,
+                    z: 3884,
+                    level: 0
+                }),
+                "{revision:?}"
+            );
+            let members: Vec<i32> = facts
+                .rows
+                .iter()
+                .filter(|row| guarded_tile(row).is_some())
+                .map(|row| row.id)
+                .collect();
+            assert_eq!(members.len(), 30, "{revision:?} {members:?}");
+            for id in &members {
+                let row = row(&data, *id);
+                assert!(!guardian_names(row).is_empty(), "{revision:?} {id}");
+                // No swallow: the search and the unguarded classify are other
+                // memberships, and neither is this one.
+                assert!(dig_tile(row).is_none(), "{revision:?} {id}");
+                assert!(search_tile(row).is_none(), "{revision:?} {id}");
+            }
+            // Every guarded row carries one of the two family aliases the cap
+            // documents, and each maps to its own posted-name filter.
+            let mut families = facts
+                .rows
+                .iter()
+                .filter(|row| guarded_tile(row).is_some())
+                .filter_map(|row| {
+                    row.params
+                        .iter()
+                        .find(|param| param.key == "trail_guardian")
+                        .map(|param| param.value.clone())
+                })
+                .collect::<Vec<_>>();
+            families.sort();
+            families.dedup();
+            assert_eq!(families, vec!["trail_hard", "trail_hard2"], "{revision:?}");
+            assert_eq!(
+                guardian_names(row(&data, GUARDED)).to_vec(),
+                vec!["Zamorak Wizard"],
+                "{revision:?}"
+            );
+            let hard2 = facts
+                .rows
+                .iter()
+                .find(|row| {
+                    row.params
+                        .iter()
+                        .any(|param| param.key == "trail_guardian" && param.value == "trail_hard2")
+                })
+                .expect("trail_hard2 row");
+            assert_eq!(
+                guardian_names(hard2).to_vec(),
+                vec!["Saradomin Wizard"],
+                "{revision:?}"
+            );
+            // No leak: the unguarded sibling, the search rows, the constrained
+            // clue, the coord-only map, the riddle, the paramless row and the
+            // caskets are not this membership and carry no filter.
+            for id in [
+                UNGUARDED,
+                SEARCH,
+                CLUE,
+                MAP,
+                RIDDLE,
+                MAP_EMPTY,
+                CASKET,
+                SEXTANT_CASKET,
+            ] {
+                assert_eq!(guarded_tile(row(&data, id)), None, "{revision:?} {id}");
+                assert!(
+                    guardian_names(row(&data, id)).is_empty(),
+                    "{revision:?} {id}"
+                );
+            }
+        }
+        // Synthetic rows: each half of the pin on its own idles, a loc pin of
+        // any value is never this membership, and an off-contract token is
+        // never rounded into an invented coordinate.
+        let sextant = || param("trail_sextant", "yes");
+        let coord = || param("trail_coord", "0_47_60_50_44");
+        let guardian = || param("trail_guardian", "trail_hard");
+        let hit = Some(Tile {
+            x: 3058,
+            z: 3884,
+            level: 0,
+        });
+        assert_eq!(guarded_tile(&member(vec![coord(), guardian()], None)), None);
+        assert_eq!(
+            guarded_tile(&member(vec![sextant(), guardian()], None)),
+            None
+        );
+        assert_eq!(guarded_tile(&member(vec![sextant(), coord()], None)), None);
+        assert_eq!(
+            guarded_tile(&member(vec![sextant(), coord(), guardian()], None)),
+            hit
+        );
+        for blocked in [
+            vec![param("trail_loc", "^true"), sextant(), coord(), guardian()],
+            vec![param("trail_loc", "^false"), sextant(), coord(), guardian()],
+            vec![param("trail_sextant", "no"), coord(), guardian()],
+            vec![sextant(), param("trail_coord", "0_47_60_50"), guardian()],
+        ] {
+            assert_eq!(guarded_tile(&member(blocked, None)), None);
+        }
+        assert_eq!(
+            guarded_tile(&member(
+                vec![sextant(), coord(), guardian()],
+                Some("constrained")
+            )),
+            None
+        );
+        assert_eq!(
+            guarded_tile(&member(vec![sextant(), coord(), guardian()], Some("open"))),
+            hit
+        );
+        // The alias is a filter and not a name: an unpinned family has none,
+        // and reading one never writes the wizard onto the row.
+        assert_eq!(
+            guardian_names(&member(vec![guardian()], None)).to_vec(),
+            vec!["Zamorak Wizard"]
+        );
+        assert!(
+            guardian_names(&member(vec![param("trail_guardian", "trail_hard9")], None)).is_empty()
+        );
+        assert!(guardian_names(&member(vec![param("trail_guardian", "")], None)).is_empty());
+        let row = member(vec![sextant(), coord(), guardian()], None);
+        let before = row.clone();
+        assert_eq!(guardian_names(&row).to_vec(), vec!["Zamorak Wizard"]);
+        assert_eq!(row.alias, before.alias);
+        assert_eq!(row.params.len(), before.params.len());
+    }
+
+    /// The selected `cap.prayer` row the fight raises: `Protect from Magic`,
+    /// the component the generic `if-button` carries and the overlay varp the
+    /// marshalled `varp95` is read from, on both pins — and never a copy of a
+    /// prayer table in this file.
+    #[test]
+    fn the_selected_protect_from_magic_row_is_the_click_and_the_overlay() {
+        assert_eq!(PROTECT_FROM_MAGIC, "Protect from Magic");
+        for revision in [ClientRevision::R274, ClientRevision::R289] {
+            let data = api::game_data::for_revision(revision).expect("selected data");
+            let row = api::prayer::lookup(&data, PROTECT_FROM_MAGIC).expect("prayer row");
+            assert_eq!(row.button_com, 5621, "{revision:?}");
+            assert_eq!(row.varp, 95, "{revision:?}");
+        }
+    }
+
+    /// `Steady` on a guarded row: walk to the decoded tile, then Dig with the
+    /// held Spade — the landed sibling arrival and the verb that spawns the
+    /// wizard. The fight is what follows, never a second Dig off the same
+    /// scene.
+    #[test]
+    fn a_guarded_row_walks_then_digs_the_spade_and_that_dig_is_the_spawn() {
+        on_reset();
+        let data = selected();
+        let page = json!([[GUARDED, 1]]);
+        let token = steady(&data, GUARDED);
+        let tile = guarded_tile_of(&data);
+        // Not arrived: the walk is the decoded tile, and it repeats.
+        for far in [
+            here(3100, 3300, 0),
+            here(3058, 3884, 1),
+            here(3060, 3884, 0),
+        ] {
+            let walk = call(&data, token, page.clone(), dig_scene(far, true));
+            assert_eq!(walk["kind"], "walk", "{walk}");
+            assert_eq!(walk["x"], 3058, "{walk}");
+            assert_eq!(walk["z"], 3884, "{walk}");
+            assert_eq!(walk["level"], 0, "{walk}");
+            assert_eq!(token_of(&walk), token, "{walk}");
+        }
+        // No posted `here` at all, and arrived without the Spade: both wait,
+        // and neither starts an encounter.
+        let no_tile = call(
+            &data,
+            token,
+            page.clone(),
+            json!({ "inv": [inv(SPADE_ITEM, SPADE_NAME, 1)] }),
+        );
+        assert_eq!(no_tile["kind"], "wait", "{no_tile}");
+        let no_spade = call(
+            &data,
+            token,
+            page.clone(),
+            dig_scene(here(tile.x, tile.z, tile.level), false),
+        );
+        assert_eq!(no_spade["kind"], "wait", "{no_spade}");
+        // Arrived with the Spade: the held Dig, which is the spawn.
+        let dig = call(
+            &data,
+            token,
+            page.clone(),
+            dig_scene(here(tile.x, tile.z, tile.level), true),
+        );
+        assert_eq!(dig["kind"], "held", "{dig}");
+        assert_eq!(dig["name"], SPADE_NAME, "{dig}");
+        assert_eq!(dig["action"], DIG, "{dig}");
+        // The encounter is live: the same row and the same arrived scene are
+        // the fight now, so a page with no wizard waits instead of Digging
+        // again.
+        let idle = call(
+            &data,
+            token,
+            page.clone(),
+            fight_scene(json!([]), json!({})),
+        );
+        assert_eq!(idle["kind"], "wait", "{idle}");
+        assert!(idle.get("action").is_none(), "{idle}");
+        // A frozen call in the spawn stage burned nothing: the encounter is
+        // this token's own and the spawn Dig was the last verb.
+        assert_eq!(token_of(&idle), token, "{idle}");
+    }
+
+    /// The spawn wait: a posted npc page with no wizard of the row family is a
+    /// wait whatever else it carries. The nearest anything is never Attacked.
+    #[test]
+    fn the_spawn_wait_never_attacks_the_nearest_anything() {
+        on_reset();
+        let data = selected();
+        let page = json!([[GUARDED, 1]]);
+        let token = spawned(&data);
+        let mut unposted = fight_scene(json!([]), json!({}));
+        unposted.as_object_mut().expect("object").remove("npcs");
+        for scene in [
+            // No npc page at all, and an empty one.
+            unposted,
+            fight_scene(json!([]), json!({})),
+            // Another name with the Attack action, closest of all.
+            fight_scene(json!([npc(7, "Guard", 1, 10, 10)]), json!({})),
+            // The right name without the Attack action.
+            fight_scene(
+                json!([{
+                    "index": 7, "id": 107, "name": WIZARD, "distance": 3,
+                    "health": 10, "max_health": 10, "actions": ["Talk-to"],
+                    "target_kind": 0, "target_index": -1,
+                }]),
+                json!({}),
+            ),
+            // The right name one tile outside the frozen radius.
+            fight_scene(
+                json!([npc(7, WIZARD, GUARDIAN_RADIUS + 1, 10, 10)]),
+                json!({}),
+            ),
+            // The right name with no posted distance, no posted index, and no
+            // posted name at all.
+            fight_scene(
+                json!([{
+                    "index": 7, "name": WIZARD, "health": 10, "max_health": 10,
+                    "actions": [ATTACK],
+                }]),
+                json!({}),
+            ),
+            fight_scene(
+                json!([{
+                    "name": WIZARD, "distance": 3, "health": 10, "max_health": 10,
+                    "actions": [ATTACK],
+                }]),
+                json!({}),
+            ),
+            fight_scene(json!([npc(7, "", 3, 10, 10)]), json!({})),
+            // A name that only shares the prefix.
+            fight_scene(
+                json!([npc(7, "Zamorak Wizard (hard)", 3, 10, 10)]),
+                json!({}),
+            ),
+        ] {
+            let idle = call(&data, token, page.clone(), scene.clone());
+            assert_eq!(idle["kind"], "wait", "{scene} {idle}");
+            assert!(idle.get("action").is_none(), "{scene} {idle}");
+            assert!(idle.get("index").is_none(), "{scene} {idle}");
+        }
+        // Inside the frozen radius the same row is the Attack.
+        let attack = call(
+            &data,
+            token,
+            page,
+            fight_scene(json!([npc(7, WIZARD, GUARDIAN_RADIUS, 10, 10)]), json!({})),
+        );
+        assert_eq!(attack["kind"], "npc", "{attack}");
+        assert_eq!(attack["name"], WIZARD, "{attack}");
+        assert_eq!(attack["action"], ATTACK, "{attack}");
+        assert_eq!(attack["index"], 7, "{attack}");
+    }
+
+    /// The Attack carries the posted name — the filter folds case and never
+    /// substitutes the frozen spelling — and no row id, tile or health rides
+    /// along: the posted index is the identity the host matches.
+    #[test]
+    fn the_attack_carries_the_posted_name_of_the_posted_row() {
+        on_reset();
+        let data = selected();
+        let page = json!([[GUARDED, 1]]);
+        let token = spawned(&data);
+        let attack = call(
+            &data,
+            token,
+            page,
+            fight_scene(json!([npc(4, "zamorak wizard", 3, 9, 9)]), json!({})),
+        );
+        assert_eq!(attack["kind"], "npc", "{attack}");
+        assert_eq!(attack["name"], "zamorak wizard", "{attack}");
+        assert_eq!(attack["action"], ATTACK, "{attack}");
+        assert_eq!(attack["index"], 4, "{attack}");
+        for absent in ["id", "x", "z", "level", "health", "max_health", "message"] {
+            assert!(attack.get(absent).is_none(), "{absent} {attack}");
+        }
+    }
+
+    /// Among matching wizards the row whose own posted target is the player
+    /// wins; with none of them on the player the nearest posted distance wins,
+    /// then posted order. A page that posted no local-player slot never reads
+    /// a `targetsMe`.
+    #[test]
+    fn the_attack_prefers_the_posted_target_of_the_player() {
+        on_reset();
+        let data = selected();
+        let page = json!([[GUARDED, 1]]);
+        let two = json!([
+            targeting(npc(3, WIZARD, 9, 30, 30), 0),
+            npc(5, WIZARD, 2, 30, 30),
+        ]);
+        let token = spawned(&data);
+        let preferred = call(
+            &data,
+            token,
+            page.clone(),
+            fight_scene(two.clone(), json!({})),
+        );
+        assert_eq!(preferred["kind"], "npc", "{preferred}");
+        assert_eq!(preferred["index"], 3, "{preferred}");
+        // Neither on the player: the nearer posted distance.
+        let token = spawned(&data);
+        let nearest = call(
+            &data,
+            token,
+            page.clone(),
+            fight_scene(
+                json!([npc(6, WIZARD, 7, 30, 30), npc(8, WIZARD, 4, 30, 30)]),
+                json!({}),
+            ),
+        );
+        assert_eq!(nearest["kind"], "npc", "{nearest}");
+        assert_eq!(nearest["index"], 8, "{nearest}");
+        // Neither on the player and both at the same distance: posted order.
+        let token = spawned(&data);
+        let first = call(
+            &data,
+            token,
+            page.clone(),
+            fight_scene(
+                json!([npc(2, WIZARD, 4, 30, 30), npc(9, WIZARD, 4, 30, 30)]),
+                json!({}),
+            ),
+        );
+        assert_eq!(first["kind"], "npc", "{first}");
+        assert_eq!(first["index"], 2, "{first}");
+        // No posted slot: the zero slot is not invented for the preference.
+        let token = spawned(&data);
+        let no_slot = call(
+            &data,
+            token,
+            page,
+            fight_scene(two, json!({ "self_slot": null })),
+        );
+        assert_eq!(no_slot["kind"], "npc", "{no_slot}");
+        assert_eq!(no_slot["index"], 5, "{no_slot}");
+    }
+
+    /// The Protect from Magic overlay gates the Attack: an overlay posted off
+    /// enqueues the generic `if-button` with the selected component id and
+    /// Attacks nothing, an overlay posted on skips the click and Attacks, and
+    /// an overlay that was not posted is not a proven on — the click still
+    /// goes out, no Attack does, and no toggle is waited out.
+    #[test]
+    fn the_protect_from_magic_overlay_gates_the_attack() {
+        on_reset();
+        let data = selected();
+        let page = json!([[GUARDED, 1]]);
+        let wizard = json!([npc(7, WIZARD, 3, 10, 10)]);
+        let token = spawned(&data);
+        let off = call(
+            &data,
+            token,
+            page.clone(),
+            fight_scene(wizard.clone(), json!({ "varp95": 0 })),
+        );
+        assert_eq!(off["kind"], "if-button", "{off}");
+        assert_eq!(off["component_id"], 5621, "{off}");
+        for absent in ["name", "action", "index", "message"] {
+            assert!(off.get(absent).is_none(), "{absent} {off}");
+        }
+        // Still off: the same click, still no Attack.
+        let again = call(
+            &data,
+            token,
+            page.clone(),
+            fight_scene(wizard.clone(), json!({ "varp95": 0 })),
+        );
+        assert_eq!(again["kind"], "if-button", "{again}");
+        assert_eq!(again["component_id"], 5621, "{again}");
+        // Unobserved: not a proven on, so the click goes out and never an
+        // Attack — and no timeout token is invented for it.
+        let mut unobserved = fight_scene(wizard.clone(), json!({}));
+        unobserved.as_object_mut().expect("object").remove("varp95");
+        let unknown = call(&data, token, page.clone(), unobserved);
+        assert_eq!(unknown["kind"], "if-button", "{unknown}");
+        assert_eq!(unknown["component_id"], 5621, "{unknown}");
+        // A posted value that is not the on value is not the on value.
+        let other = call(
+            &data,
+            token,
+            page.clone(),
+            fight_scene(wizard.clone(), json!({ "varp95": 2 })),
+        );
+        assert_eq!(other["kind"], "if-button", "{other}");
+        // Posted on: no click, and the Attack goes out.
+        let on = call(
+            &data,
+            token,
+            page.clone(),
+            fight_scene(wizard.clone(), json!({ "varp95": 1 })),
+        );
+        assert_eq!(on["kind"], "npc", "{on}");
+        assert_eq!(on["index"], 7, "{on}");
+        assert!(on.get("component_id").is_none(), "{on}");
+        // The gate is read on every fight call rather than latched: an overlay
+        // that reads off again mid-fight is clicked again, and only a posted-on
+        // overlay leaves the fight to its kill wait.
+        let dropped = call(
+            &data,
+            token,
+            page.clone(),
+            fight_scene(wizard.clone(), json!({ "varp95": 0 })),
+        );
+        assert_eq!(dropped["kind"], "if-button", "{dropped}");
+        assert_eq!(dropped["component_id"], 5621, "{dropped}");
+        let settled = call(&data, token, page, fight_scene(wizard, json!({})));
+        assert_eq!(settled["kind"], "wait", "{settled}");
+    }
+
+    /// The kill is the owned wizard: zero health beside a posted maximum on the
+    /// page that still shows this token's fight on it, or the owned index
+    /// leaving the page inside the frozen grace. Only that kill walks back to
+    /// the decoded tile and Digs again.
+    #[test]
+    fn the_owned_kill_walks_back_and_digs_again() {
+        on_reset();
+        let data = selected();
+        let page = json!([[GUARDED, 1]]);
+        let tile = guarded_tile_of(&data);
+        let token = spawned(&data);
+        let attack = call(
+            &data,
+            token,
+            page.clone(),
+            fight_scene(json!([npc(7, WIZARD, 3, 10, 10)]), json!({})),
+        );
+        assert_eq!(attack["kind"], "npc", "{attack}");
+        // Posted and alive: the fight waits, and the Attack is not re-issued.
+        let alive = call(
+            &data,
+            token,
+            page.clone(),
+            fight_scene(json!([npc(7, WIZARD, 3, 9, 10)]), json!({})),
+        );
+        assert_eq!(alive["kind"], "wait", "{alive}");
+        assert!(alive.get("action").is_none(), "{alive}");
+        // Killed by health, off the tile: the walk back to the decoded pin.
+        let walked_back = call(
+            &data,
+            token,
+            page.clone(),
+            fight_scene(
+                json!([targeting(npc(7, WIZARD, 3, 0, 10), 0)]),
+                json!({ "here": here(3100, 3300, 0) }),
+            ),
+        );
+        assert_eq!(walked_back["kind"], "walk", "{walked_back}");
+        assert_eq!(walked_back["x"], tile.x, "{walked_back}");
+        // Arrived: the post-kill Dig, repeating while the clue stays held.
+        for _ in 0..2 {
+            let redig = call(
+                &data,
+                token,
+                page.clone(),
+                fight_scene(json!([]), json!({})),
+            );
+            assert_eq!(redig["kind"], "held", "{redig}");
+            assert_eq!(redig["name"], SPADE_NAME, "{redig}");
+            assert_eq!(redig["action"], DIG, "{redig}");
+        }
+        // The same grace path: the owned index leaving the page.
+        let token = spawned(&data);
+        let attack = call(
+            &data,
+            token,
+            page.clone(),
+            fight_scene(json!([npc(7, WIZARD, 3, 10, 10)]), json!({})),
+        );
+        assert_eq!(attack["kind"], "npc", "{attack}");
+        let gone = call(
+            &data,
+            token,
+            page.clone(),
+            fight_scene(json!([]), json!({})),
+        );
+        assert_eq!(gone["kind"], "held", "{gone}");
+        assert_eq!(gone["action"], DIG, "{gone}");
+    }
+
+    /// A fight that has not settled waits: the owned wizard posted and alive, a
+    /// death that is not this token's fight, and an owned index gone only after
+    /// the frozen grace was spent. None of them is a redig and none is a
+    /// `guardian-lost`.
+    #[test]
+    fn an_unsettled_fight_waits_without_reaching_for_guardian_lost() {
+        on_reset();
+        let data = selected();
+        let page = json!([[GUARDED, 1]]);
+        let token = spawned(&data);
+        let attack = call(
+            &data,
+            token,
+            page.clone(),
+            fight_scene(json!([npc(7, WIZARD, 3, 10, 10)]), json!({})),
+        );
+        assert_eq!(attack["kind"], "npc", "{attack}");
+        // Dead beside another player: not this token's kill.
+        let stolen = call(
+            &data,
+            token,
+            page.clone(),
+            fight_scene(json!([targeting(npc(7, WIZARD, 3, 0, 10), 9)]), json!({})),
+        );
+        assert_eq!(stolen["kind"], "wait", "{stolen}");
+        // Gone, but only after the grace was spent: still a wait.
+        age_owned_seen(KILL_GRACE_MS + 1);
+        let late = call(
+            &data,
+            token,
+            page.clone(),
+            fight_scene(json!([]), json!({})),
+        );
+        assert_eq!(late["kind"], "wait", "{late}");
+        for step in [&stolen, &late] {
+            let text = step.to_string();
+            for forbidden in [
+                "guardian-lost",
+                "clue solved",
+                "dead",
+                "done",
+                "abandon",
+                "Dig",
+            ] {
+                assert!(!text.contains(forbidden), "{forbidden} {step}");
+            }
+            assert!(step.get("action").is_none(), "{step}");
+            assert_eq!(token_of(step), token, "{step}");
+        }
+    }
+
+    /// A disappearance this token never Attacked for is a wait, not a redig:
+    /// with the overlay off the click is all that goes out, and the wizard
+    /// coming and going under it never Digs and never walks.
+    #[test]
+    fn a_wizard_that_leaves_without_an_attack_is_a_wait_not_a_redig() {
+        on_reset();
+        let data = selected();
+        let page = json!([[GUARDED, 1]]);
+        let token = spawned(&data);
+        let click = call(
+            &data,
+            token,
+            page.clone(),
+            fight_scene(json!([npc(7, WIZARD, 3, 10, 10)]), json!({ "varp95": 0 })),
+        );
+        assert_eq!(click["kind"], "if-button", "{click}");
+        for scene in [
+            fight_scene(json!([]), json!({ "varp95": 0 })),
+            fight_scene(json!([npc(9, WIZARD, 3, 0, 10)]), json!({ "varp95": 0 })),
+        ] {
+            let idle = call(&data, token, page.clone(), scene.clone());
+            assert_eq!(idle["kind"], "if-button", "{scene} {idle}");
+            let text = idle.to_string();
+            for forbidden in ["guardian-lost", "Dig", "walk", "done", "abandon"] {
+                assert!(!text.contains(forbidden), "{forbidden} {idle}");
+            }
+        }
+    }
+
+    /// The mid-fight hitpoints wait: a posted effective hitpoints at or below
+    /// zero emits nothing at all and never a public `dead`; a page that posted
+    /// no stat is not a zero. After the kill the fight is over, so the redig is
+    /// not gated by it.
+    #[test]
+    fn the_mid_fight_hitpoints_wait_never_emits_dead() {
+        on_reset();
+        let data = selected();
+        let page = json!([[GUARDED, 1]]);
+        let wizard = json!([npc(7, WIZARD, 3, 10, 10)]);
+        let token = spawned(&data);
+        for hp in [0, -1, -20] {
+            let downed = call(
+                &data,
+                token,
+                page.clone(),
+                fight_scene(wizard.clone(), json!({ "hitpoints": hp })),
+            );
+            assert_eq!(downed["kind"], "wait", "{hp} {downed}");
+            for absent in ["action", "index", "component_id", "name"] {
+                assert!(downed.get(absent).is_none(), "{hp} {absent} {downed}");
+            }
+            assert!(!downed.to_string().contains("dead"), "{hp} {downed}");
+        }
+        // No posted stat at all is not a zero: the Attack still goes out.
+        let mut bare = fight_scene(wizard.clone(), json!({}));
+        bare.as_object_mut().expect("object").remove("hitpoints");
+        let attack = call(&data, token, page.clone(), bare);
+        assert_eq!(attack["kind"], "npc", "{attack}");
+        assert_eq!(attack["index"], 7, "{attack}");
+        // The kill, then the post-kill Dig with the same zero posted: the wait
+        // belonged to the fight and not to the encounter.
+        let kill = call(
+            &data,
+            token,
+            page.clone(),
+            fight_scene(json!([]), json!({})),
+        );
+        assert_eq!(kill["kind"], "held", "{kill}");
+        assert_eq!(kill["action"], DIG, "{kill}");
+        let after = call(
+            &data,
+            token,
+            page,
+            fight_scene(json!([]), json!({ "hitpoints": 0 })),
+        );
+        assert_eq!(after["kind"], "held", "{after}");
+        assert_eq!(after["action"], DIG, "{after}");
+    }
+
+    /// Freeze and yield beat the guarded encounter the way they beat the landed
+    /// verbs: no walk, no held, no npc and no if-button ride along, and the
+    /// token lives for the thaw.
+    #[test]
+    fn freeze_and_yield_beat_the_guarded_encounter() {
+        on_reset();
+        let data = selected();
+        let page = json!([[GUARDED, 1]]);
+        let tile = guarded_tile_of(&data);
+        // The ladder over one scene: paused, held, then the posted interrupt.
+        let ladder = |token: u64, scene: &Value| {
+            let mut out = Vec::new();
+            on_pause();
+            out.push(call(&data, token, page.clone(), scene.clone()));
+            on_resume();
+            on_hold(true);
+            out.push(call(&data, token, page.clone(), scene.clone()));
+            on_hold(false);
+            let mut yielded_scene = scene.clone();
+            yielded_scene["hold"] = json!(true);
+            out.push(call(&data, token, page.clone(), yielded_scene));
+            out
+        };
+        // The spawn stage: the walk never goes out under a frozen clock.
+        let token = steady(&data, GUARDED);
+        let spawn_scene = dig_scene(here(3100, 3300, 0), true);
+        let spawn_steps = ladder(token, &spawn_scene);
+        assert_eq!(
+            spawn_steps
+                .iter()
+                .map(|step| step["kind"].clone())
+                .collect::<Vec<_>>(),
+            vec![json!("wait"), json!("wait"), json!("yield")],
+            "{spawn_steps:?}"
+        );
+        for step in &spawn_steps {
+            assert!(step.get("x").is_none(), "{step}");
+            assert!(step.get("action").is_none(), "{step}");
+            assert_eq!(token_of(step), token, "{step}");
+        }
+        // Nothing burned: the thawed call is still the walk.
+        let walk = call(&data, token, page.clone(), spawn_scene);
+        assert_eq!(walk["kind"], "walk", "{walk}");
+        let dig = call(
+            &data,
+            token,
+            page.clone(),
+            dig_scene(here(tile.x, tile.z, tile.level), true),
+        );
+        assert_eq!(dig["kind"], "held", "{dig}");
+        // The fight stage: the same ladder, and the overlay-off click is not
+        // emitted under it either.
+        let fight = fight_scene(json!([npc(7, WIZARD, 3, 10, 10)]), json!({ "varp95": 0 }));
+        let fight_steps = ladder(token, &fight);
+        assert_eq!(
+            fight_steps
+                .iter()
+                .map(|step| step["kind"].clone())
+                .collect::<Vec<_>>(),
+            vec![json!("wait"), json!("wait"), json!("yield")],
+            "{fight_steps:?}"
+        );
+        for step in &fight_steps {
+            assert!(step.get("component_id").is_none(), "{step}");
+            assert!(step.get("action").is_none(), "{step}");
+        }
+        // Thawed and unheld, the click is still there.
+        let click = call(&data, token, page, fight);
+        assert_eq!(click["kind"], "if-button", "{click}");
+        assert_eq!(click["component_id"], 5621, "{click}");
+    }
+
+    /// The encounter is session state on the live step: a different held row
+    /// re-arms the gate and drops it, so coming back to the guarded row walks
+    /// and Digs its spawn again rather than resuming the fight the old token
+    /// already owned.
+    #[test]
+    fn a_different_held_step_drops_the_guarded_encounter() {
+        on_reset();
+        let data = selected();
+        let guard_page = json!([[GUARDED, 1]]);
+        let token = spawned(&data);
+        let attack = call(
+            &data,
+            token,
+            guard_page.clone(),
+            fight_scene(json!([npc(7, WIZARD, 3, 10, 10)]), json!({})),
+        );
+        assert_eq!(attack["kind"], "npc", "{attack}");
+        // A different membership row is held: the landed gate re-arms for it.
+        let other = json!([[RIDDLE, 1]]);
+        let re_armed = call(
+            &data,
+            token,
+            other.clone(),
+            fight_scene(json!([npc(7, WIZARD, 3, 10, 10)]), json!({})),
+        );
+        assert_eq!(re_armed["kind"], "callback.enabled", "{re_armed}");
+        let logged = call(&data, token, other.clone(), json!({ "resume": true }));
+        assert_eq!(logged["kind"], "callback.log", "{logged}");
+        let _ = call(&data, token, other.clone(), json!({}));
+        // Back to the guarded row: the gate re-arms again, and the next steady
+        // call is the spawn again — a walk and a Dig, never the old Attack.
+        let back = call(
+            &data,
+            token,
+            guard_page.clone(),
+            fight_scene(json!([npc(7, WIZARD, 3, 10, 10)]), json!({})),
+        );
+        assert_eq!(back["kind"], "callback.enabled", "{back}");
+        let logged = call(&data, token, guard_page.clone(), json!({ "resume": true }));
+        assert_eq!(logged["kind"], "callback.log", "{logged}");
+        let _ = call(&data, token, guard_page.clone(), json!({}));
+        let reborn = call(
+            &data,
+            token,
+            guard_page.clone(),
+            fight_scene(json!([npc(7, WIZARD, 3, 10, 10)]), json!({})),
+        );
+        assert_eq!(reborn["kind"], "held", "{reborn}");
+        assert_eq!(reborn["action"], DIG, "{reborn}");
+    }
+
+    /// The post-kill Dig is the landed sibling Dig: it repeats while the clue
+    /// stays held, the casket it produces is the landed casket-first Open that
+    /// re-arms the gate, and a `none-held` right after a guarded Dig is still
+    /// the landed abort — the collect is the casket Open's alone.
+    #[test]
+    fn the_guarded_redig_repeats_and_its_casket_opens() {
+        on_reset();
+        let data = selected();
+        let clue_page = json!([[GUARDED, 1]]);
+        let token = spawned(&data);
+        let attack = call(
+            &data,
+            token,
+            clue_page.clone(),
+            fight_scene(json!([npc(7, WIZARD, 3, 10, 10)]), json!({})),
+        );
+        assert_eq!(attack["kind"], "npc", "{attack}");
+        let redig = call(
+            &data,
+            token,
+            clue_page.clone(),
+            fight_scene(json!([]), json!({})),
+        );
+        assert_eq!(redig["kind"], "held", "{redig}");
+        assert_eq!(redig["action"], DIG, "{redig}");
+        // The casket the Dig produced is held beside its own clue: identify is
+        // casket-first, so the gate re-arms for it and its own Open follows.
+        let casket = casket_of(&data, GUARDED);
+        let casket_alias = row(&data, casket).alias.clone();
+        let both = json!([[GUARDED, 1], [casket, 1]]);
+        let scene = fight_scene(json!([]), json!({}));
+        let re_armed = call(&data, token, both.clone(), scene.clone());
+        assert_eq!(re_armed["kind"], "callback.enabled", "{re_armed}");
+        let logged = call(&data, token, both.clone(), json!({ "resume": true }));
+        assert_eq!(logged["kind"], "callback.log", "{logged}");
+        assert!(
+            logged["message"]
+                .as_str()
+                .unwrap_or("")
+                .contains(&casket_alias),
+            "{logged}"
+        );
+        assert_eq!(
+            call(&data, token, both.clone(), scene.clone())["kind"],
+            "callback.setStatus"
+        );
+        let open = call(&data, token, both.clone(), scene.clone());
+        assert_eq!(open["kind"], "held", "{open}");
+        assert_eq!(open["action"], OPEN, "{open}");
+        // A `none-held` right after a guarded Dig is the landed abort, and the
+        // reward window was never armed by it.
+        let token = spawned(&data);
+        let gone = call(&data, token, json!([]), json!({}));
+        assert_eq!(gone["kind"], "aborted", "{gone}");
+        assert_eq!(gone["reason"], NONE_HELD, "{gone}");
+        assert!(!bound_armed(), "a guarded Dig never arms the reward window");
+    }
+
+    /// The guarded encounter emits walk, held Dig, npc Attack, if-button, wait
+    /// or yield only — never a completion, never a hunt kind of its own, and
+    /// never one of the public refusal tokens.
+    #[test]
+    fn the_guarded_encounter_emits_only_walk_held_npc_if_button_and_wait() {
+        on_reset();
+        let data = selected();
+        let page = json!([[GUARDED, 1]]);
+        let tile = guarded_tile_of(&data);
+        let token = steady(&data, GUARDED);
+        let mut yielded = dig_scene(here(tile.x, tile.z, tile.level), true);
+        yielded["hold"] = json!(true);
+        let steps = vec![
+            // The spawn walk, the spawn Dig, the overlay click, the Attack,
+            // the kill wait, the post-kill redig and the interrupt.
+            call(
+                &data,
+                token,
+                page.clone(),
+                dig_scene(here(3100, 3300, 0), true),
+            ),
+            call(
+                &data,
+                token,
+                page.clone(),
+                dig_scene(here(tile.x, tile.z, tile.level), true),
+            ),
+            call(
+                &data,
+                token,
+                page.clone(),
+                fight_scene(json!([npc(7, WIZARD, 3, 10, 10)]), json!({ "varp95": 0 })),
+            ),
+            call(
+                &data,
+                token,
+                page.clone(),
+                fight_scene(json!([npc(7, WIZARD, 3, 10, 10)]), json!({})),
+            ),
+            call(
+                &data,
+                token,
+                page.clone(),
+                fight_scene(json!([npc(7, WIZARD, 3, 10, 10)]), json!({})),
+            ),
+            call(
+                &data,
+                token,
+                page.clone(),
+                fight_scene(json!([targeting(npc(7, WIZARD, 3, 0, 10), 0)]), json!({})),
+            ),
+            call(&data, token, page, yielded),
+        ];
+        for step in &steps {
+            assert!(step["status"].is_null(), "{step}");
+            assert!(
+                matches!(
+                    step["kind"].as_str().unwrap_or(""),
+                    "walk" | "held" | "npc" | "if-button" | "wait" | "yield"
+                ),
+                "{step}"
+            );
+            let text = step.to_string();
+            for forbidden in [
+                "clue solved",
+                "done",
+                "abandon",
+                "supplies-needed",
+                "dead",
+                "guardian-lost",
+                "grind-ready",
+                "no-spade",
+                "ownsEquipment",
+                "sustain",
+                "arm-special",
+                "safespot",
+            ] {
+                assert!(!text.contains(forbidden), "{forbidden} {step}");
+            }
+        }
+        assert_eq!(
+            steps
+                .iter()
+                .map(|step| step["kind"].clone())
+                .collect::<Vec<_>>(),
+            vec![
+                json!("walk"),
+                json!("held"),
+                json!("if-button"),
+                json!("npc"),
+                json!("wait"),
+                json!("held"),
+                json!("yield"),
+            ],
             "{steps:?}"
         );
     }

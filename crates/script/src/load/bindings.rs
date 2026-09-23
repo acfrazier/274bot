@@ -1501,6 +1501,79 @@ function clueInvSize() {
   if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return null;
   return cluePageI32(snapshot.inv_size) ? snapshot.inv_size : null;
 }
+// The posted npc page the guarded encounter observes after its spawn: the
+// posted index the Attack verb carries, the posted display name the row
+// family's cap-documented wizard filter matches, the posted distance the
+// frozen radius reads, and the posted health and target pairs the kill is read
+// through. Read at call time like every other page — `api.snapshot.npcs` is
+// the public projection and this machine never scans it. A row that did not
+// post an index cannot be Attacked and is dropped here; every other absent
+// field is posted as null and matches nothing.
+function clueNpcPage() {
+  const snapshot = host().snapshot;
+  if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return [];
+  const page = snapshot.npcs;
+  if (!Array.isArray(page)) return [];
+  const rows = [];
+  for (const row of page) {
+    if (!row || typeof row !== 'object' || Array.isArray(row)) continue;
+    if (!cluePageI32(row.index)) continue;
+    rows.push({
+      index: row.index,
+      name: typeof row.name === 'string' ? row.name : null,
+      distance: cluePageI32(row.distance) ? row.distance : null,
+      health: cluePageI32(row.health) ? row.health : null,
+      max_health: cluePageI32(row.max_health) ? row.max_health : null,
+      actions: Array.isArray(row.actions)
+        ? row.actions.filter((action) => typeof action === 'string')
+        : [],
+      target_kind: cluePageI32(row.target_kind) ? row.target_kind : null,
+      target_index: cluePageI32(row.target_index) ? row.target_index : null,
+    });
+  }
+  return rows;
+}
+// The posted local-player table slot and its own posted target pair: the
+// encounter's `targetsMe` read and the health-0 ownership read. Posted only
+// when the page carried it, so an absent slot is never read as zero.
+function clueSelfSlot() {
+  const snapshot = host().snapshot;
+  if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return null;
+  return cluePageI32(snapshot.self_slot) ? snapshot.self_slot : null;
+}
+// The local player's own posted target pair — `target_kind` `1` is an npc —
+// which the health-0 kill read compares with the wizard this token owns. Both
+// halves are needed, so a page that posted only one posts no target at all.
+function clueSelfTarget() {
+  const snapshot = host().snapshot;
+  if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return null;
+  if (!cluePageI32(snapshot.self_target_kind) || !cluePageI32(snapshot.self_target_index)) {
+    return null;
+  }
+  return { kind: snapshot.self_target_kind, index: snapshot.self_target_index };
+}
+// The posted Protect from Magic overlay: the selected prayer row's own varp,
+// index 95 on both pins. Posted only when the varp page carried it, so the
+// machine reads a missing overlay as unobserved rather than as off.
+function clueVarp95() {
+  const snapshot = host().snapshot;
+  if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return null;
+  const page = snapshot.varps;
+  if (!Array.isArray(page)) return null;
+  const row = page.find((v) => v && typeof v === 'object' && v.index === 95);
+  return row && cluePageI32(row.value) ? row.value : null;
+}
+// The posted effective hitpoints of the local player, off the posted
+// `snapshot.stats` page: the frozen mid-fight wait. A page that did not post
+// the row is not a zero.
+function clueHitpoints() {
+  const snapshot = host().snapshot;
+  if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return null;
+  const page = snapshot.stats;
+  if (!Array.isArray(page)) return null;
+  const row = page.find((s) => s && typeof s === 'object' && s.name === 'hitpoints');
+  return row && cluePageI32(row.effective) ? row.effective : null;
+}
 // Every continue step is this envelope. `yield` keeps the token live, so it
 // is not trail completion and never `status: 'done'`.
 function clueStep(step) {
@@ -1524,20 +1597,39 @@ function clueBeginError(reason) {
       || reason === 'none-held') return reason;
   return 'stale';
 }
-// The machine's own walk, held and loc steps go onto the shared interact
-// drain the way the quest journal enqueues `if-button` / `close-modal`: a
-// generation check, then a push. Each kind has its own explicit arm before the
-// loc fall-through, so a held item identity is never enqueued as a loc, an
-// `obj` Take is never enqueued as a loc, and the loc row always carries the
-// posted id. `held` is already an author `V2_OPS` verb, but this machine
-// enqueues its own step directly instead of going through `enqueueRequest`;
-// `loc`, `obj` and `close-modal` are not `V2_OPS` verbs at all, so
-// `api.request({ op: 'loc' | 'obj' | 'close-modal' })` stays `not impl`.
+// The machine's own walk, held, npc and if-button steps go onto the shared
+// interact drain the way the quest journal enqueues `if-button` / `close-modal`
+// and the landed npc consumers enqueue `npc`: a generation check, then a push.
+// Each kind has its own explicit arm before the loc fall-through, so a held
+// item identity is never enqueued as a loc, an `obj` Take is never enqueued as
+// a loc, and the loc row always carries the posted id. `held` is already an
+// author `V2_OPS` verb, but this machine enqueues its own step directly instead
+// of going through `enqueueRequest`; `loc`, `obj`, `close-modal`, `npc` and
+// `if-button` are not `V2_OPS` verbs at all, so `api.request({ op: 'npc' })`
+// and `api.request({ op: 'if-button' })` stay `not impl`.
 function enqueueClueVerb(step) {
   const h = host();
   h.interact = h.interact || [];
   if (step.kind === 'walk') {
     h.interact.push({ op: 'walk', x: step.x, z: step.z, level: step.level });
+    return;
+  }
+  if (step.kind === 'if-button') {
+    // The landed generic if-button push the prayer isolate and the quest
+    // journal already use: the selected Protect from Magic component id.
+    h.interact.push({ op: 'if-button', component_id: step.component_id });
+    return;
+  }
+  if (step.kind === 'npc') {
+    // The posted identity the Attack rides: the posted name, the action the
+    // machine dispatched and the posted scene index. The arm is generic, not
+    // Attack-hardcoded — the action is whatever the step carried.
+    h.interact.push({
+      op: 'npc',
+      name: step.name,
+      action: step.action,
+      index: step.index,
+    });
     return;
   }
   if (step.kind === 'close-modal') {
@@ -1637,13 +1729,16 @@ api.clue = {
   // the parked `snapshot.inv` page, the posted `here` tile, the posted loc
   // page, and for the trail-end collect the posted ground page, the posted
   // pack rows with their slot count and the posted main modal — so the
-  // machine never caches a world copy. Kinds are `wait`, `yield`,
-  // `callback.enabled`, `callback.log`, `callback.setStatus`, `held`, `walk`,
-  // `loc`, `close-modal` and `obj` — never `done`. A `walk`, `held`, `loc`,
-  // `close-modal` or `obj` step is enqueued onto the interact drain like the
-  // journal's `if-button`, and the step is still returned as a continue
-  // object. A dead token is the error object, never `undefined` and never an
-  // `aborted` continue kind.
+  // machine never caches a world copy. The guarded encounter adds the posted
+  // npc page, the local-player slot and target pair, the posted Protect from
+  // Magic overlay and the posted effective hitpoints. Kinds are `wait`,
+  // `yield`, `callback.enabled`, `callback.log`, `callback.setStatus`,
+  // `held`, `walk`, `loc`, `close-modal`, `obj`, `npc` and `if-button` —
+  // never `done`. A `walk`, `held`, `loc`, `close-modal`, `obj`, `npc` or
+  // `if-button` step is enqueued onto the interact drain like the journal's
+  // `if-button`, and the step is still returned as a continue object. A dead
+  // token is the error object, never `undefined` and never an `aborted`
+  // continue kind.
   next: function (input) {
     if (arguments.length === 0) return helperErr('invalid-args');
     if (input == null || typeof input !== 'object' || Array.isArray(input)) {
@@ -1662,6 +1757,7 @@ api.clue = {
       locs: clueLocPage(),
       ground: clueGroundPage(),
       inv: clueInvPage(),
+      npcs: clueNpcPage(),
     };
     const here = clueHereTile();
     if (here !== null) payload.here = here;
@@ -1669,12 +1765,24 @@ api.clue = {
     if (main !== null) payload.main_modal_id = main;
     const invSize = clueInvSize();
     if (invSize !== null) payload.inv_size = invSize;
+    const selfSlot = clueSelfSlot();
+    if (selfSlot !== null) payload.self_slot = selfSlot;
+    const selfTarget = clueSelfTarget();
+    if (selfTarget !== null) {
+      payload.self_target_kind = selfTarget.kind;
+      payload.self_target_index = selfTarget.index;
+    }
+    const hitpoints = clueHitpoints();
+    if (hitpoints !== null) payload.hitpoints = hitpoints;
+    const varp95 = clueVarp95();
+    if (varp95 !== null) payload.varp95 = varp95;
     if (hasResume) payload.resume = input.resume;
     const step = clueCall(payload);
     if (!step || typeof step !== 'object') return helperErr('stale');
     if (step.kind === 'aborted') return helperErr(clueStepError(step.reason));
     if (step.kind === 'walk' || step.kind === 'held' || step.kind === 'loc'
-        || step.kind === 'close-modal' || step.kind === 'obj') {
+        || step.kind === 'close-modal' || step.kind === 'obj'
+        || step.kind === 'npc' || step.kind === 'if-button') {
       // Enqueue synchronously, after the generation check: a reset or stop
       // between the call and this push is not a verb for the dead session.
       if (generation !== lifecycleGeneration) return helperErr('stale');
