@@ -1531,6 +1531,27 @@ function clueChatContinue() {
   if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return null;
   return typeof snapshot.chat_continue === 'boolean' ? snapshot.chat_continue : null;
 }
+// The posted chat choices the acquire chain answers, read at call time like the
+// other chat slots. Each row keeps its own 1-based posted slot — the machine
+// answers that slot and never a position it re-derived — so a row that posted
+// no text is dropped without renumbering the rows around it. A page that posted
+// no `chat_options` array hands the machine nothing at all: an unobserved list
+// is not an empty one, and `api.snapshot` hides the key anyway, so this reads
+// `host().snapshot` like every other call-time page here.
+function clueChatOptions() {
+  const snapshot = host().snapshot;
+  if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return null;
+  const page = snapshot.chat_options;
+  if (!Array.isArray(page)) return null;
+  const rows = [];
+  for (let i = 0; i < page.length; i += 1) {
+    const row = page[i];
+    if (!row || typeof row !== 'object' || Array.isArray(row)) continue;
+    if (typeof row.text !== 'string') continue;
+    rows.push({ text: row.text, option: i + 1 });
+  }
+  return rows;
+}
 // The posted count dialog, and only when the page posted the boolean: the talk
 // arm answers a count only behind the posted open fact, and an omitted slot is
 // unobserved rather than closed.
@@ -1687,16 +1708,18 @@ function clueBeginError(reason) {
       || reason === 'none-held') return reason;
   return 'stale';
 }
-// The machine's own walk, held, npc and if-button steps go onto the shared
-// interact drain the way the quest journal enqueues `if-button` / `close-modal`
-// and the landed npc consumers enqueue `npc`: a generation check, then a push.
-// Each kind has its own explicit arm before the loc fall-through, so a held
-// item identity is never enqueued as a loc, an `obj` Take is never enqueued as
-// a loc, and the loc row always carries the posted id. `held` is already an
-// author `V2_OPS` verb, but this machine enqueues its own step directly instead
-// of going through `enqueueRequest`; `loc`, `obj`, `close-modal`, `npc` and
-// `if-button` are not `V2_OPS` verbs at all, so `api.request({ op: 'npc' })`
-// and `api.request({ op: 'if-button' })` stay `not impl`.
+// The machine's own walk, held, npc, if-button and chat steps go onto the
+// shared interact drain the way the quest journal enqueues `if-button` /
+// `close-modal` and the landed npc consumers enqueue `npc`: a generation check,
+// then a push. Each kind has its own explicit arm before the loc fall-through,
+// so a held item identity is never enqueued as a loc, an `obj` Take is never
+// enqueued as a loc, the closed-handler `continue` / `answer` pair is never
+// enqueued as one, and the loc row always carries the posted id. `held` is
+// already an author `V2_OPS` verb, but this machine enqueues its own step
+// directly instead of going through `enqueueRequest`; `loc`, `obj`,
+// `close-modal`, `npc`, `if-button`, `continue` and `answer` are not `V2_OPS`
+// verbs at all, so `api.request({ op: 'npc' })`, `api.request({ op: 'continue' })`
+// and `api.request({ op: 'answer' })` stay `not impl`.
 function enqueueClueVerb(step) {
   const h = host();
   h.interact = h.interact || [];
@@ -1727,6 +1750,20 @@ function enqueueClueVerb(step) {
     // answer the machine parsed, and nothing else. Its own arm, before the loc
     // fall-through, and never a `V2_OPS` request.
     h.interact.push({ op: 'answer-count', value: step.value });
+    return;
+  }
+  if (step.kind === 'continue') {
+    // The open giver chat the acquire chain continues: the landed
+    // `ContinueDialog` step, with no option and no text of its own. Its own arm,
+    // and never a `V2_OPS` request: `continue` is not an author verb.
+    h.interact.push({ op: 'continue' });
+    return;
+  }
+  if (step.kind === 'answer') {
+    // The posted 1-based option slot the acquire chain answers: the machine's
+    // own slot, never a position re-derived here and never the last option of a
+    // list it could not match. Never a `V2_OPS` request either.
+    h.interact.push({ op: 'answer', option: step.option });
     return;
   }
   if (step.kind === 'close-modal') {
@@ -1862,10 +1899,13 @@ api.clue = {
   // machine never caches a world copy. The guarded encounter adds the posted
   // npc page, the local-player slot and target pair, the posted Protect from
   // Magic overlay and the posted effective hitpoints. The talk arm adds the
-  // posted chat modal, its continue flag and the posted count dialog. Kinds
+  // posted chat modal, its continue flag and the posted count dialog, and the
+  // trio acquire chain adds the posted `chat_options` choices, each with its
+  // own 1-based posted slot. Kinds
   // are `wait`, `yield`, `callback.enabled`, `callback.log`,
   // `callback.setStatus`, `held`, `walk`, `loc`, `close-modal`, `obj`, `npc`,
-  // `if-button`, `answer-count` and the completion envelope — `grind-ready`,
+  // `if-button`, `answer-count`, `continue`, `answer` and the completion
+  // envelope — `grind-ready`,
   // `supplies-needed`, `done`, `dead`, `abandon` and `guardian-lost`. The
   // completion kinds ride this same continue shape and are never enqueued;
   // `done` is the finished collect's own kind, not a hunt `status: 'done'`,
@@ -1873,7 +1913,8 @@ api.clue = {
   // `callback.setStatus` message. The puzzle-box
   // arm adds the posted board and its session generation, and its
   // `puzzle-move` kind. A `walk`, `held`, `loc`, `close-modal`, `obj`, `npc`,
-  // `if-button`, `answer-count` or `puzzle-move` step is enqueued onto the
+  // `if-button`, `answer-count`, `puzzle-move`, `continue` or `answer` step is
+  // enqueued onto the
   // interact drain like the journal's `if-button`, and the step is still
   // returned as a continue object. A dead token is the error object, never
   // `undefined` and never an `aborted` continue kind.
@@ -1907,6 +1948,11 @@ api.clue = {
     if (chatModal !== null) payload.chat_modal_id = chatModal;
     const chatContinue = clueChatContinue();
     if (chatContinue !== null) payload.chat_continue = chatContinue;
+    // The acquire chain's own posted choices, posted-only like the slots above:
+    // an unobserved list stays unobserved on the machine rather than becoming
+    // an empty one it could read a close into.
+    const chatOptions = clueChatOptions();
+    if (chatOptions !== null) payload.chat_options = chatOptions;
     const countOpen = clueCountDialogOpen();
     if (countOpen !== null) payload.count_dialog_open = countOpen;
     const invSize = clueInvSize();
@@ -1933,7 +1979,8 @@ api.clue = {
     if (step.kind === 'walk' || step.kind === 'held' || step.kind === 'loc'
         || step.kind === 'close-modal' || step.kind === 'obj'
         || step.kind === 'npc' || step.kind === 'if-button'
-        || step.kind === 'answer-count' || step.kind === 'puzzle-move') {
+        || step.kind === 'answer-count' || step.kind === 'puzzle-move'
+        || step.kind === 'continue' || step.kind === 'answer') {
       // Enqueue synchronously, after the generation check: a reset or stop
       // between the call and this push is not a verb for the dead session.
       if (generation !== lifecycleGeneration) return helperErr('stale');

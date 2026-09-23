@@ -153,6 +153,27 @@ function clueChatContinue() {
     return typeof snapshot.chat_continue === 'boolean' ? snapshot.chat_continue : null;
 }
 
+// The posted chat choices the acquire chain answers, read at call time like the
+// other chat slots. Each row keeps its own 1-based posted slot — the machine
+// answers that slot and never a position it re-derived — so a row that posted
+// no text is dropped without renumbering the rows around it. A page that posted
+// no `chat_options` array hands the machine nothing at all: an unobserved list
+// is not an empty one.
+function clueChatOptions() {
+    const snapshot = host().snapshot;
+    if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return null;
+    const page = snapshot.chat_options;
+    if (!Array.isArray(page)) return null;
+    const rows = [];
+    for (let i = 0; i < page.length; i += 1) {
+        const row = page[i];
+        if (!row || typeof row !== 'object' || Array.isArray(row)) continue;
+        if (typeof row.text !== 'string') continue;
+        rows.push({ text: row.text, option: i + 1 });
+    }
+    return rows;
+}
+
 // The posted count dialog, and only when the page posted the boolean: the talk
 // arm answers a count only behind the posted open fact, and an omitted slot is
 // unobserved rather than closed.
@@ -279,10 +300,11 @@ function cluePuzzleGeneration() {
         : null;
 }
 
-// The machine's own walk, held, npc and if-button steps go onto the shared
-// interact drain the way the journal enqueues `if-button` / `close-modal` and
-// the landed npc consumers enqueue `npc`: the landed field names, one explicit
-// arm per kind, and `loc` last. An unknown kind is never enqueued as a loc.
+// The machine's own walk, held, npc, if-button and chat steps go onto the
+// shared interact drain the way the journal enqueues `if-button` / `close-modal`
+// and the landed npc consumers enqueue `npc`: the landed field names, one
+// explicit arm per kind, and `loc` last. An unknown kind is never enqueued as a
+// loc, and the closed-handler `continue` / `answer` pair is never one either.
 function enqueueClueVerb(step) {
     if (step.kind === 'walk') {
         queue({ op: 'walk', x: step.x, z: step.z, level: step.level });
@@ -303,6 +325,19 @@ function enqueueClueVerb(step) {
         // selected answer the machine parsed, and nothing else. Its own arm,
         // never the loc fall-through.
         queue({ op: 'answer-count', value: step.value });
+        return true;
+    }
+    if (step.kind === 'continue') {
+        // The open giver chat the acquire chain continues: the landed
+        // `ContinueDialog` step, with no option and no text of its own.
+        queue({ op: 'continue' });
+        return true;
+    }
+    if (step.kind === 'answer') {
+        // The posted 1-based option slot the acquire chain answers: the
+        // machine's own slot, never a position re-derived here and never the
+        // last option of a list it could not match.
+        queue({ op: 'answer', option: step.option });
         return true;
     }
     if (step.kind === 'close-modal') {
@@ -359,7 +394,7 @@ function enqueueClueVerb(step) {
 // terminal — and an unknown kind is none of them.
 const ENQUEUED_KINDS = [
     'walk', 'held', 'loc', 'npc', 'answer-count', 'if-button', 'close-modal', 'obj',
-    'puzzle-move',
+    'puzzle-move', 'continue', 'answer',
 ];
 
 // The call-time pages every `next` posts, in the machine's own field names.
@@ -388,6 +423,11 @@ function clueNextPayload(token, resume) {
     if (chatModal !== null) payload.chat_modal_id = chatModal;
     const chatContinue = clueChatContinue();
     if (chatContinue !== null) payload.chat_continue = chatContinue;
+    // The acquire chain's own posted choices, posted-only like the slots above:
+    // an unobserved list stays unobserved on the machine rather than becoming
+    // an empty one it could read a close into.
+    const chatOptions = clueChatOptions();
+    if (chatOptions !== null) payload.chat_options = chatOptions;
     const countOpen = clueCountDialogOpen();
     if (countOpen !== null) payload.count_dialog_open = countOpen;
     const invSize = clueInvSize();

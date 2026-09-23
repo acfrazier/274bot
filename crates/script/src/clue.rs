@@ -16,8 +16,9 @@
 //! errors `none-held` and aborts.
 //!
 //! This is the search, casket-open, unguarded-dig, guarded-dig encounter,
-//! trail-end collect, held-puzzle-box, talk-step and key-keeper hunt slice and
-//! nothing else: no deposit, retry, return-grind or puzzle-box extra. A held
+//! coordinate-trio acquire, trail-end collect, held-puzzle-box, talk-step and
+//! key-keeper hunt slice and nothing else: no deposit, retry, return-grind or
+//! puzzle-box extra. A held
 //! row that is a selected search
 //! membership — a selected `trail_loc=^true` **and** a decodable selected
 //! `trail_coord` on the same row — walks to its decoded tile and then
@@ -120,6 +121,27 @@
 //! left to a later card, so a solved box is never opened or closed twice while
 //! the same step stays held.
 //!
+//! In front of both dig arms sits the coordinate-trio acquire. An identified
+//! row carrying the selected `trail_sextant=yes` needs the Sextant, the Watch
+//! and the Chart, so it only Digs once this call's posted pack holds all three:
+//! `hasAllTrio` is that posted read and the intercept's own completion, and
+//! until it holds the arm is the frozen `nextCoordTool` order over the
+//! published `trio_givers` rows. The sextant is the observatory professor's
+//! teach stop and then Murphy's own, the watch is Brother Kojo's and the chart
+//! is the professor's again. A stop walks to its giver's published
+//! `{x, z, plane}` tile and Talks-to a posted npc of that giver's own packed id
+//! — or, failing that, its posted display name — inside the frozen
+//! `ARRIVE_RADIUS`, which is the talk arm's unique-spawn rule and never a
+//! frozen coordinate table. Behind that giver's open chat the professor's one
+//! posted option whose text folds to a selected closed-handler literal is
+//! answered with its own posted 1-based slot, a posted list with no such row
+//! waits, and Murphy and Kojo are talk-then-continue only. A stop is done when
+//! its own chat has been posted open and then closed; a giver that is not
+//! posted, an item that does not land and a locked door all wait with the token
+//! live. Nothing is fetched, banked, shopped or dropped, the packed 3554 clue
+//! is refused before this machine ever reaches `Steady`, and the fifty rows
+//! that never carry the param are never asked for a trio at all.
+//!
 //! The last `Steady` arm is the talk step: a held row the selected
 //! `talk_key.talk` family publishes is the NPC it names. Forty-two of them
 //! publish the unique jm2 spawn, so the walk goes to the published
@@ -199,8 +221,8 @@ use api::clue_logic::{identify_step, NONE_HELD};
 use api::clue_pack::SHARK_ID;
 use api::clue_puzzle::{self, Board, PuzzleRow};
 use api::game_data::{
-    SelectedGameData, TalkKeyKeeper, TalkKeyKeyRow, TalkKeyNpcRef, TalkKeyTalkRow,
-    TrailMembershipRow,
+    SelectedGameData, TalkKeyKeeper, TalkKeyKeyRow, TalkKeyTalkRow, TrailMembershipRow,
+    TrioGiverRow,
 };
 use serde_json::{json, Value};
 use std::cell::RefCell;
@@ -330,6 +352,53 @@ const PLAYER_KIND: i32 = 2;
 /// A posted `self_target_kind` of `1` is an npc, so the local player's own
 /// posted target is an npc whose index can be compared with an owned one.
 const NPC_KIND: i32 = 1;
+
+/// The selected `trail_sextant` param the coordinate trio's own membership
+/// reads: the 50 playable rows that need the trio carry `yes`, and the packed
+/// 3554 clue is the one constrained row of the 51. A param on the identified
+/// row alone — never a second identify, never a talk-key join, and never the
+/// row's guardian or casket — so the unguarded map, vague and riddle rows that
+/// do not carry it never enter this arm and never grow a trio requirement.
+const TRAIL_SEXTANT: &str = "trail_sextant";
+
+/// The selected param value that reads as "this row needs the coordinate
+/// tools". No other value is one, and a row that posted none is not.
+const SEXTANT_YES: &str = "yes";
+
+/// The three selected item **aliases** the trio's held read joins, in the
+/// frozen `nextCoordTool` order. The ids joined are the selected item table's
+/// own (`2574` / `2575` / `2576` on both pins) and are never copied numbers: a
+/// missing item row is not a held tool.
+const TRIO_ITEMS: [&str; 3] = ["trail_sextant", "trail_watch", "trail_chart"];
+
+/// The three selected giver aliases of the published `trio_givers` family, in
+/// the frozen `nextCoordTool` order per tool: the sextant is the observatory
+/// professor's teach stop and then Murphy's own, the watch is Brother Kojo's
+/// alone, and the chart is the professor's again. Each stop resolves its own
+/// row from that family by alias and walks only the published `{x, z, plane}`
+/// tile — no `PROFESSOR` / `MURPHY` / `KOJO` / `KOJO_EXIT` table is copied,
+/// and the `observatory_professor2` lookalike is never this family.
+const OBSERVATORY_PROFESSOR: &str = "observatory_professor";
+const MURPHY: &str = "murphy";
+const BROTHER_KOJO: &str = "brother_kojo";
+
+/// The two closed-handler professor options this arm answers, ASCII-folded
+/// against a posted `chat_options` text and matched on nothing else. Never a
+/// frozen prefer fragment (`Treasure Trails`, `lost`, `navigation`), never the
+/// trawler's or the Clock Tower quest's choices and never the last posted
+/// option: a list with no such row waits with the token live.
+const PROFESSOR_OPTIONS: [&str; 2] = [
+    "Talk about Treasure Trails.",
+    "I've lost my navigation chart.",
+];
+
+/// The clue-local chat verbs this arm emits: the landed host ops the `Reach`
+/// and `dialog.rs` machines already enqueue. `continue` is the posted
+/// `chat_continue` step and carries nothing, and `answer` carries the posted
+/// option's own 1-based slot. Never the landed dialog sequencer nested into
+/// this machine, never a `talk_key` row and never a `kind: "ops"` envelope.
+const CONTINUE: &str = "continue";
+const ANSWER: &str = "answer";
 
 /// The frozen `food.js` option names, carried as the **keys** handed to the
 /// landed `food_policy::food_forms_for` and for nothing else. Not one of these
@@ -492,6 +561,36 @@ impl Puzzle {
     }
 }
 
+/// The three coordinate tools of the frozen `nextCoordTool` order: the first
+/// one this call's posted pack does not hold is what the intercept acquires.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Tool {
+    Sextant,
+    Watch,
+    Chart,
+}
+
+/// The live trio-acquire intercept on the identified clue row: which tool the
+/// posted pack was short of, which giver of that tool's own chain this token is
+/// working, and whether that stop's chat has been posted open. Session state on
+/// the live token, like `open` and `guardian` — never a second scheduler, never
+/// a `talk_key` join and never a cached page.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Acquire {
+    /// The tool `stop` indexes into: the first of the three the posted pack did
+    /// not hold when this stop was entered. A call whose own first missing tool
+    /// is a later one rebases the state, because the earlier item landed.
+    tool: Tool,
+    /// Which giver of that tool's chain this token works. Index `0` is the
+    /// tool's first stop, and every index past that tool's own list is its last
+    /// one, so a tool whose item never lands keeps working the giver it has
+    /// instead of inventing a fourth stop or abandoning the chain.
+    stop: usize,
+    /// This stop's chat has been posted open: the next call that posts it
+    /// closed is the stop's own completion, and the chain advances from it.
+    open: bool,
+}
+
 /// One `next` call's posted puzzle board: the identified component, the
 /// observed slot count and the sparse rows the wrapper marshalled out of
 /// `snapshot.puzzle_board`, plus the board session generation that rides the
@@ -552,6 +651,12 @@ struct ClueRuntime {
     /// held row, an abort or the frozen reset clears it. Like `open`, it is the
     /// session's own state and never a cached npc page.
     keeper: Option<Keeper>,
+    /// The live trio-acquire intercept: absent until a `Steady` row that needs
+    /// the coordinate tools found the posted pack short of one, then owned by
+    /// this token until the pack holds the trio, a different held row, an abort
+    /// or the frozen reset clears it. Like `open` and `guardian`, it is the
+    /// session's own state and never a cached page.
+    acquire: Option<Acquire>,
 }
 
 impl ClueRuntime {
@@ -570,6 +675,7 @@ impl ClueRuntime {
             guardian: None,
             puzzle: None,
             keeper: None,
+            acquire: None,
         }
     }
 
@@ -618,8 +724,8 @@ impl ClueRuntime {
     /// dispatched Open with its `hard` capture, the collect deadline, the
     /// discarded ground ids, the settled-Take watch, the completion latch, the
     /// guarded encounter's owned wizard and post-kill flag, the live
-    /// puzzle-box attempt with its latch, and the key hunt's owned keeper with
-    /// its own post-kill flag.
+    /// puzzle-box attempt with its latch, the key hunt's owned keeper with its
+    /// own post-kill flag, and the trio-acquire intercept with its own stop.
     fn clear_step(&mut self) {
         self.open = None;
         self.clock.deadline = None;
@@ -630,6 +736,7 @@ impl ClueRuntime {
         self.guardian = None;
         self.puzzle = None;
         self.keeper = None;
+        self.acquire = None;
     }
 
     /// Whether this token survives an identify `none-held`. Only the collect
@@ -1255,20 +1362,27 @@ impl ClueRuntime {
     }
 
     /// `Steady` on an identified non-casket row: the landed search dispatch,
-    /// the guarded encounter, the sibling unguarded-dig dispatch, the talk
-    /// step, the key-keeper hunt, or the idle every other row keeps.
+    /// the coordinate-trio acquire intercept, the guarded encounter, the sibling
+    /// unguarded-dig dispatch, the talk step, the key-keeper hunt, or the idle
+    /// every other row keeps.
     ///
     /// The search pin decides first: `search_tile` is the `trail_loc=^true`
     /// membership and the landed dispatch re-reads its own tile from it, so a
     /// search row can never reach either dig arm and Dig is never a second
-    /// search classify. The guarded pin decides next, and the encounter it
-    /// picked up — session state on this same token — is what the following
-    /// calls read. The talk step follows, so the casket Open, the row's own
-    /// held puzzle box and all three walk arms keep their precedence and no
-    /// talk row is ever a second classify of them. The key-keeper hunt is last,
-    /// entered on its own selected family alone, and every other held type
-    /// idles exactly as before: a talk step is never hunted for a key, and a
-    /// key keeper is never Talked-to.
+    /// search classify. The trio intercept follows, on the row's own selected
+    /// `trail_sextant=yes` and this call's posted pack alone: it is an arrival
+    /// gate in front of both dig arms — a row that needs the coordinate tools
+    /// never Digs before the posted pack holds them — and it is a no-op
+    /// fall-through the moment it does, so the guarded encounter and the
+    /// unguarded-dig dispatch keep their precedence and their rules untouched.
+    /// The guarded pin decides next, and the encounter it picked up — session
+    /// state on this same token — is what the following calls read. The talk
+    /// step follows, so the casket Open, the row's own held puzzle box and all
+    /// three walk arms keep their precedence and no talk row is ever a second
+    /// classify of them. The key-keeper hunt is last, entered on its own
+    /// selected family alone, and every other held type idles exactly as
+    /// before: a talk step is never hunted for a key, and a key keeper is never
+    /// Talked-to.
     fn steady(
         &mut self,
         row: &TrailMembershipRow,
@@ -1277,6 +1391,11 @@ impl ClueRuntime {
     ) -> Value {
         if search_tile(row).is_some() {
             return self.search(row, input);
+        }
+        if needs_trio(row) {
+            if let Some((givers, tool)) = trio_plan(selected, input) {
+                return self.acquire(&givers, tool, input);
+            }
         }
         if let Some(tile) = guarded_tile(row) {
             return self.guarded(row, tile, input, selected);
@@ -1288,6 +1407,123 @@ impl ClueRuntime {
             return self.talk(talk, input, selected);
         }
         self.keys(row, input, selected)
+    }
+
+    /// `Steady` on an identified row that needs the coordinate tools while this
+    /// call's posted pack is short of one or more of them: the acquire chain,
+    /// one verb per call.
+    ///
+    /// The chain is the frozen `nextCoordTool` order over the selected
+    /// `trio_givers` rows and nothing else. The sextant is the observatory
+    /// professor's teach stop and then Murphy's own, the watch is Brother Kojo's
+    /// alone, and the chart is the professor's again; a stop walks to its
+    /// giver's published `{x, z, plane}` tile with `plane` as the verb's `level`
+    /// and never to a frozen coordinate. The Talk-to is the talk arm's
+    /// unique-spawn rule: the posted npc whose own packed id is the giver's, or
+    /// failing that whose posted display name is, standing on that tile inside
+    /// the frozen `ARRIVE_RADIUS` and carrying a posted talk action. A wanderer
+    /// is never chased, nothing is Cleared, a lookalike alias is not this giver,
+    /// and a page with no posted `here`, no posted npc page or no posted match
+    /// waits at the tile with the token live.
+    ///
+    /// Behind that giver's open chat the arm sends what the stop's own giver
+    /// publishes, and only that: at the professor one posted option whose text
+    /// ASCII-folds to a selected closed-handler literal, answered with its own
+    /// posted 1-based slot, and at Murphy and Kojo a posted `chat_continue`.
+    /// A posted option list with no such row waits — never the last option,
+    /// never a frozen fragment and never another quest's choice — and a chat
+    /// with neither an option nor a continue is waited out rather than
+    /// Talked-to again behind it.
+    ///
+    /// A stop is complete when its own chat has been posted open and then
+    /// closed: the chat is the observation, so no deadline, hop or world state
+    /// is invented for it. `hasAllTrio` is the intercept's own completion, read
+    /// off this call's posted pack — only then do the landed guarded and
+    /// unguarded dig arms run. A giver that is not posted, an item that does not
+    /// land, a full pack and a locked door all wait with the token live:
+    /// nothing is fetched, banked, shopped, Dropped or abandoned here, and no
+    /// completion kind is ever emitted from this arm.
+    fn acquire(&mut self, givers: &TrioGivers<'_>, tool: Tool, input: &Value) -> Value {
+        // This tool's own state: a call whose first missing tool is a later one
+        // has watched the earlier tool's item land, so the stop index rebases to
+        // that tool's first giver rather than carrying the old position over.
+        let ready = dialog_ready(input);
+        let mut state = match self.acquire {
+            Some(state) if state.tool == tool => state,
+            _ => Acquire {
+                tool,
+                stop: 0,
+                open: false,
+            },
+        };
+        if state.open && !ready {
+            // The stop's own chat closed after it was posted open: this stop is
+            // done, so the chain moves to that tool's next giver — its own last
+            // one once the list is exhausted.
+            state.stop = (state.stop + 1).min(last_stop(tool));
+        }
+        state.open = ready;
+        self.acquire = Some(state);
+        let stop = stop_of(givers, tool, state.stop);
+        let Some(spawn) = stop.row.spawn.as_ref() else {
+            // The entry filter publishes a spawn for every giver this arm walks;
+            // a selected family that stops doing so waits rather than walking to
+            // an invented tile.
+            return self.emit("wait");
+        };
+        let tile = Tile {
+            x: spawn.x,
+            z: spawn.z,
+            level: spawn.plane,
+        };
+        match arrival(tile, input) {
+            // No posted `here`: no arrival claim to make and no walk to measure.
+            Arrival::Unknown => self.emit("wait"),
+            Arrival::Walking => self.walk(tile),
+            // Arrived behind an open chat: the answer, the continue, or nothing
+            // this arm may send.
+            Arrival::Arrived if ready => self.chat(&stop, input),
+            Arrival::Arrived => match input.get("npcs").and_then(Value::as_array) {
+                Some(page) => match pick_at_spawn(&NpcIdentity::Giver(stop.row), page, tile) {
+                    Some(pick) => self.talk_verb(&pick),
+                    // Arrived with no posted row of this giver's identity on the
+                    // tile: stay there and wait, never chase a wanderer, never
+                    // Clear and never take a second target.
+                    None => self.emit("wait"),
+                },
+                // No posted npc page this call: no giver can be observed, so
+                // there is nothing to Talk-to.
+                None => self.emit("wait"),
+            },
+        }
+    }
+
+    /// The open giver chat this arm may drive: the professor's one selected
+    /// option, then a posted `chat_continue`, then a wait for everything else.
+    ///
+    /// The rule is the stop's own giver and not the text alone — the professor
+    /// is the only giver this chain answers options in, so a posted option list
+    /// at Murphy or Kojo waits. A list the professor's two literals do not match
+    /// waits as well: the last option, a frozen fragment and another quest's
+    /// choice are all nothing this arm may send, and an open chat with neither
+    /// an option nor a continue is waited out rather than Talked-to again.
+    fn chat(&self, stop: &Stop<'_>, input: &Value) -> Value {
+        if stop.professor {
+            if let Some(option) = professor_option(input) {
+                return json!({
+                    "kind": ANSWER,
+                    "token": self.token,
+                    "option": option,
+                });
+            }
+        }
+        if options_posted(input) {
+            return self.emit("wait");
+        }
+        if continue_posted(input) {
+            return self.emit(CONTINUE);
+        }
+        self.emit("wait")
     }
 
     /// `Steady` on an identified guarded row: the first Dig, the fight, or the
@@ -1581,13 +1817,19 @@ impl ClueRuntime {
                 match arrival(tile, input) {
                     Arrival::Unknown => self.emit("wait"),
                     Arrival::Walking => self.walk(tile),
-                    Arrival::Arrived => match pick_at_spawn(&talk.npc, page, tile) {
-                        Some(pick) => self.talk_verb(&pick),
-                        // Arrived with no posted row of this identity on the
-                        // tile: stay there and wait, never chase a wanderer and
-                        // never take a second target.
-                        None => self.emit("wait"),
-                    },
+                    Arrival::Arrived => {
+                        let npc = NpcIdentity::Talk {
+                            id: talk.npc.id,
+                            name: &talk.npc.name,
+                        };
+                        match pick_at_spawn(&npc, page, tile) {
+                            Some(pick) => self.talk_verb(&pick),
+                            // Arrived with no posted row of this identity on the
+                            // tile: stay there and wait, never chase a wanderer and
+                            // never take a second target.
+                            None => self.emit("wait"),
+                        }
+                    }
                 }
             }
             None => {
@@ -1597,7 +1839,11 @@ impl ClueRuntime {
                     // rather than walking blind.
                     return self.emit("wait");
                 };
-                match pick_talk(&talk.npc, page, here) {
+                let npc = NpcIdentity::Talk {
+                    id: talk.npc.id,
+                    name: &talk.npc.name,
+                };
+                match pick_talk(&npc, page, here) {
                     Some(pick) if pick.distance <= i64::from(ARRIVE_RADIUS) => {
                         self.talk_verb(&pick)
                     }
@@ -2510,6 +2756,184 @@ fn spade_posted(input: &Value) -> bool {
         })
 }
 
+/// Whether the identified row needs the coordinate trio: a selected
+/// `trail_sextant=yes` param on the row itself.
+///
+/// The param is the whole of the membership and it is never widened: the
+/// unguarded map, vague and riddle rows that do not carry it never enter this
+/// arm, and no requirement is ever grown for them. The packed constrained 3554
+/// clue carries it too and is refused above, before `Steady` is ever reached.
+fn needs_trio(row: &TrailMembershipRow) -> bool {
+    row.params
+        .iter()
+        .any(|param| param.key == TRAIL_SEXTANT && param.value == SEXTANT_YES)
+}
+
+/// The three selected givers of the published `trio_givers` family, each
+/// resolved by its own alias and only when that row publishes the unique jm2
+/// spawn this arm walks to.
+///
+/// A family that is absent, and one that does not publish all three identities
+/// with a spawn, is not a giver set: the intercept does not fire and the row
+/// keeps the landed guarded or unguarded-dig arm it has, rather than walking to
+/// an invented tile or playing half a chain.
+struct TrioGivers<'a> {
+    professor: &'a TrioGiverRow,
+    murphy: &'a TrioGiverRow,
+    kojo: &'a TrioGiverRow,
+}
+
+fn trio_givers(selected: &SelectedGameData) -> Option<TrioGivers<'_>> {
+    let rows = &selected.trio_givers()?.rows;
+    let spawned = |alias: &str| {
+        rows.iter()
+            .find(|row| row.alias == alias && row.spawn.is_some())
+    };
+    Some(TrioGivers {
+        professor: spawned(OBSERVATORY_PROFESSOR)?,
+        murphy: spawned(MURPHY)?,
+        kojo: spawned(BROTHER_KOJO)?,
+    })
+}
+
+/// This row's own trio-acquire entry: the published givers and the first tool
+/// this call's posted pack is short of, or `None` when this call is not the
+/// intercept's — no selected pin at all, no three unique-spawn givers, or a
+/// pack that already holds the whole trio.
+///
+/// `None` is the fall-through: the landed guarded and unguarded-dig arms run
+/// exactly as they did before this arm existed.
+fn trio_plan<'a>(
+    selected: Option<&'a SelectedGameData>,
+    input: &Value,
+) -> Option<(TrioGivers<'a>, Tool)> {
+    let selected = selected?;
+    Some((trio_givers(selected)?, first_missing_tool(selected, input)?))
+}
+
+/// The first tool of the frozen order this call's posted pack does not hold: a
+/// selected alias joins that item's own selected id — `2574` / `2575` / `2576`
+/// on both pins, never a copied number — a missing item row is not held, and
+/// only a posted positive count holds. `None` is the posted `hasAllTrio`, the
+/// intercept's own completion.
+///
+/// The page is the already-marshalled `inv` sequence the collect arm reads out
+/// of the same posted `snapshot.inv`, read at call time. A page that did not
+/// post it holds nothing, so the tool reads as missing and the arm walks rather
+/// than Digging without it. The display names are corroboration and never a
+/// second identity: the join is the id.
+fn first_missing_tool(selected: &SelectedGameData, input: &Value) -> Option<Tool> {
+    for (tool, alias) in [Tool::Sextant, Tool::Watch, Tool::Chart]
+        .into_iter()
+        .zip(TRIO_ITEMS)
+    {
+        let held = selected
+            .item_by_alias(alias)
+            .is_some_and(|item| pack_holds(input, item.id));
+        if !held {
+            return Some(tool);
+        }
+    }
+    None
+}
+
+/// Whether this call's posted pack page holds `id`: a posted row of the
+/// marshalled `inv` page whose own id is this one and whose count is positive.
+/// A row that posted no count, a zero count and a page that posted no such id
+/// all hold nothing, and the held order is never read — the trio is a set of
+/// three identities, not a position in the pack.
+fn pack_holds(input: &Value, id: i32) -> bool {
+    input
+        .get("inv")
+        .and_then(Value::as_array)
+        .is_some_and(|rows| {
+            rows.iter().any(|row| {
+                row.get("id").and_then(i32_of) == Some(id)
+                    && row
+                        .get("count")
+                        .and_then(i32_of)
+                        .is_some_and(|count| count > 0)
+            })
+        })
+}
+
+/// One stop of a tool's chain: the published giver row this stop walks to, and
+/// whether that giver is the professor — the one giver whose chat this arm
+/// answers options in.
+struct Stop<'a> {
+    row: &'a TrioGiverRow,
+    professor: bool,
+}
+
+/// The stop a tool's own index works: the sextant is the professor's teach stop
+/// and then Murphy's own, the watch is Kojo's alone and the chart is the
+/// professor's again. Any index past a tool's own list is its last stop, so an
+/// item that never lands keeps that giver working rather than inventing a
+/// fourth one.
+fn stop_of<'a>(givers: &TrioGivers<'a>, tool: Tool, stop: usize) -> Stop<'a> {
+    match tool {
+        Tool::Sextant if stop == 0 => Stop {
+            row: givers.professor,
+            professor: true,
+        },
+        Tool::Sextant => Stop {
+            row: givers.murphy,
+            professor: false,
+        },
+        Tool::Watch => Stop {
+            row: givers.kojo,
+            professor: false,
+        },
+        Tool::Chart => Stop {
+            row: givers.professor,
+            professor: true,
+        },
+    }
+}
+
+/// That tool's own last stop index: the sextant's chain is two givers long, and
+/// the watch's and the chart's are one each.
+fn last_stop(tool: Tool) -> usize {
+    match tool {
+        Tool::Sextant => 1,
+        Tool::Watch | Tool::Chart => 0,
+    }
+}
+
+/// This call's posted professor option: the first row — in posted order — whose
+/// text ASCII-folds to one of the two selected closed-handler literals,
+/// carrying that row's own posted 1-based slot.
+///
+/// A row whose text matches but whose slot is not a posted integer is skipped
+/// rather than answered with an invented one, and a page that posted no such
+/// row answers nothing at all.
+fn professor_option(input: &Value) -> Option<i32> {
+    input
+        .get("chat_options")
+        .and_then(Value::as_array)?
+        .iter()
+        .find_map(|row| {
+            let text = row.get("text").and_then(Value::as_str)?;
+            if !PROFESSOR_OPTIONS
+                .iter()
+                .any(|known| text.eq_ignore_ascii_case(known))
+            {
+                return None;
+            }
+            row.get("option").and_then(i32_of)
+        })
+}
+
+/// Whether this call's page posted an option list with at least one row: what a
+/// chat this arm may not answer waits behind. An unmatched list is never a
+/// reason to send the last option, and an omitted list is not an empty one.
+fn options_posted(input: &Value) -> bool {
+    input
+        .get("chat_options")
+        .and_then(Value::as_array)
+        .is_some_and(|rows| !rows.is_empty())
+}
+
 /// The selected talk step an identified membership row owns: the
 /// `talk_key.talk` row whose own id is the row's, or `None` when the row is not
 /// a talk membership. The key keepers, the puzzle-box extras and every other
@@ -2624,27 +3048,56 @@ fn talk_action(row: &Value) -> Option<&str> {
     })
 }
 
-/// One posted npc row that names this talk step's own npc and lists a talk
-/// action, as the pickers read it: the posted scene index the host matches, the
-/// posted display name and the posted talk action the verb carries.
+/// The identity one posted npc page row is joined to. The identity belongs to
+/// the caller's own family — a landed talk step's npc, or one published
+/// `trio_givers` row — and the *rule* around it (the posted scene index, the
+/// posted display name the verb carries, the posted talk action) is this
+/// machine's single read.
+enum NpcIdentity<'a> {
+    /// A landed talk step's own npc: the selected packed type id against the
+    /// posted `id`, or the selected display name against the posted `name`, the
+    /// way that arm has always joined them.
+    Talk { id: i32, name: &'a str },
+    /// A published `trio_givers` row, whose packed id is the identity: the
+    /// posted display name is only the fallback a page that posted no id at all
+    /// leaves. The `observatory_professor2` lookalike posts this giver's own
+    /// display name under another packed id and is never this family.
+    Giver(&'a TrioGiverRow),
+}
+
+impl NpcIdentity<'_> {
+    /// Whether this posted row's own identity is this one, matched exactly the
+    /// way the variant names it.
+    fn names(&self, row: &Value, posted: &str) -> bool {
+        match self {
+            Self::Talk { id, name } => {
+                posted_i32(row, "id") == Some(*id) || posted.eq_ignore_ascii_case(name)
+            }
+            Self::Giver(giver) => match posted_i32(row, "id") {
+                Some(id) => id == giver.id,
+                None => posted.eq_ignore_ascii_case(&giver.name),
+            },
+        }
+    }
+}
+
+/// One posted npc row that names the npc this caller is looking for and lists a
+/// talk action, as the pickers read it: the posted scene index the host matches,
+/// the posted display name and the posted talk action the verb carries.
 ///
-/// The identity join is the selected packed type id first — `npc.id` against
-/// the posted `id` — then the selected display name against the posted `name`,
-/// compared the way the landed spawn filter compares a posted display name. The
-/// script alias is never compared to a posted string: the page carries no alias
-/// at all. A row that posted no index, no name, or no talk action is not a row
-/// this arm can dispatch at.
-fn talk_row<'a>(row: &'a Value, npc: &TalkKeyNpcRef) -> Option<(i32, &'a str, &'a str)> {
+/// The identity join is `NpcIdentity`'s, and the script alias is never compared
+/// to a posted string: the page carries no alias at all. A row that posted no
+/// index, no name, or no talk action is not a row this arm can dispatch at.
+fn talk_row<'a>(row: &'a Value, identity: &NpcIdentity<'_>) -> Option<(i32, &'a str, &'a str)> {
     let index = posted_i32(row, "index")?;
-    let name = row
+    let posted = row
         .get("name")
         .and_then(Value::as_str)
-        .filter(|name| !name.is_empty())?;
-    let named = posted_i32(row, "id") == Some(npc.id) || name.eq_ignore_ascii_case(&npc.name);
-    if !named {
+        .filter(|posted| !posted.is_empty())?;
+    if !identity.names(row, posted) {
         return None;
     }
-    Some((index, name, talk_action(row)?))
+    Some((index, posted, talk_action(row)?))
 }
 
 /// One posted npc row the talk arm has picked: the posted scene index the host
@@ -2667,10 +3120,14 @@ struct TalkPick<'a> {
 /// The five steps whose jm2 spawn is not unique take this read, and it is the
 /// posted page's own answer: no alias, no first-in-file row and no frozen
 /// coordinate is ever picked, and a page with no match picks nothing.
-fn pick_talk<'a>(npc: &TalkKeyNpcRef, page: &'a [Value], here: Tile) -> Option<TalkPick<'a>> {
+fn pick_talk<'a>(
+    identity: &NpcIdentity<'_>,
+    page: &'a [Value],
+    here: Tile,
+) -> Option<TalkPick<'a>> {
     let mut best: Option<TalkPick<'a>> = None;
     for row in page {
-        let Some((index, name, action)) = talk_row(row, npc) else {
+        let Some((index, posted, action)) = talk_row(row, identity) else {
             continue;
         };
         let Some(distance) = npc_distance(row, Some(here)) else {
@@ -2683,7 +3140,7 @@ fn pick_talk<'a>(npc: &TalkKeyNpcRef, page: &'a [Value], here: Tile) -> Option<T
         if better {
             best = Some(TalkPick {
                 index,
-                name,
+                name: posted,
                 action,
                 tile: posted_tile(row),
                 distance,
@@ -2693,32 +3150,40 @@ fn pick_talk<'a>(npc: &TalkKeyNpcRef, page: &'a [Value], here: Tile) -> Option<T
     best
 }
 
-/// The unique-spawn picker: the nearest posted row that names this step's npc,
-/// lists a talk action, stands on the published spawn's own level, and is
-/// inside the frozen `ARRIVE_RADIUS` of that spawn — by the row's own posted
-/// tile, or by the posted `distance` the page carries to this player.
+/// The unique-spawn picker: the nearest posted row that names this npc, lists a
+/// talk action, stands on the published spawn's own level, and is inside the
+/// frozen `ARRIVE_RADIUS` of that spawn — by the row's own posted tile, or by
+/// the posted `distance` the page carries to this player.
 ///
-/// The radius is part of the membership and not only of the verb: a wizard-wanderer
+/// The radius is part of the membership and not only of the verb: a wanderer
 /// outside it is not this step's npc, so the arm keeps the published tile and
 /// waits instead of chasing a second target. Strict improvement only, so ties
 /// keep posted order.
-fn pick_at_spawn<'a>(npc: &TalkKeyNpcRef, page: &'a [Value], spawn: Tile) -> Option<TalkPick<'a>> {
+///
+/// The talk arm's own unique-spawn steps and the trio acquire chain's givers are
+/// both this read, each over its own family's `(id, name)`; neither ever
+/// substitutes an alias for the posted name it dispatches.
+fn pick_at_spawn<'a>(
+    identity: &NpcIdentity<'_>,
+    page: &'a [Value],
+    spawn: Tile,
+) -> Option<TalkPick<'a>> {
     let mut best: Option<TalkPick<'a>> = None;
     for row in page {
-        let Some((index, name, action)) = talk_row(row, npc) else {
+        let Some((index, posted, action)) = talk_row(row, identity) else {
             continue;
         };
         if posted_i32(row, "level") != Some(spawn.level) {
             continue;
         }
         let tile = posted_tile(row);
-        let posted = posted_i32(row, "distance").map(i64::from);
-        let near = posted.is_some_and(|distance| distance <= i64::from(ARRIVE_RADIUS))
+        let distance = posted_i32(row, "distance").map(i64::from);
+        let near = distance.is_some_and(|distance| distance <= i64::from(ARRIVE_RADIUS))
             || tile.is_some_and(|tile| chebyshev(tile, spawn) <= i64::from(ARRIVE_RADIUS));
         if !near {
             continue;
         }
-        let Some(distance) = posted.or_else(|| tile.map(|tile| chebyshev(tile, spawn))) else {
+        let Some(distance) = distance.or_else(|| tile.map(|tile| chebyshev(tile, spawn))) else {
             continue;
         };
         let better = match &best {
@@ -2728,7 +3193,7 @@ fn pick_at_spawn<'a>(npc: &TalkKeyNpcRef, page: &'a [Value], spawn: Tile) -> Opt
         if better {
             best = Some(TalkPick {
                 index,
-                name,
+                name: posted,
                 action,
                 tile,
                 distance,
@@ -2808,6 +3273,13 @@ fn dialog_ready(input: &Value) -> bool {
 /// unobserved, not a close, and a posted `false` is a closed dialog.
 fn count_open(input: &Value) -> bool {
     input.get("count_dialog_open").and_then(Value::as_bool) == Some(true)
+}
+
+/// The posted `chat_continue` slot: only a posted `true` is the frozen continue
+/// step this arm may send. An omitted slot is unobserved and a posted `false` is
+/// not a continue.
+fn continue_posted(input: &Value) -> bool {
+    input.get("chat_continue").and_then(Value::as_bool) == Some(true)
 }
 
 /// Progress line for the identified step: landed alias, role and id only.
@@ -3209,6 +3681,60 @@ mod tests {
         }
     }
 
+    /// The three selected coordinate-tool items the trio acquire chain joins by
+    /// alias: the ids the posted pack rows carry, and the display names the
+    /// pages post beside them. The join the machine makes is the id; the names
+    /// are only corroboration.
+    const SEXTANT_ITEM: i32 = 2574;
+    const WATCH_ITEM: i32 = 2575;
+    const CHART_ITEM: i32 = 2576;
+    const SEXTANT_NAME: &str = "Sextant";
+    const WATCH_NAME: &str = "Watch";
+    const CHART_NAME: &str = "Chart";
+
+    /// The three held trio rows as the posted pack posts them: what a sextant
+    /// row's own acquire chain reads as `hasAllTrio` before it lets either dig
+    /// arm run.
+    fn trio_inv() -> Value {
+        json!([
+            inv(SEXTANT_ITEM, SEXTANT_NAME, 1),
+            inv(WATCH_ITEM, WATCH_NAME, 1),
+            inv(CHART_ITEM, CHART_NAME, 1),
+        ])
+    }
+
+    /// The posted pack a sextant row's non-acquire scene carries: the held trio
+    /// plus the rows a test names. A test that posts no trio at all is a test
+    /// of the intercept itself.
+    fn trio_pack(rows: &[Value]) -> Value {
+        let mut pack = trio_inv();
+        pack.as_array_mut().expect("rows").extend_from_slice(rows);
+        pack
+    }
+
+    /// The tile the selected observatory professor stands on, as the published
+    /// `trio_givers` row posts it — never a copied frozen coordinate.
+    fn professor_tile(data: &SelectedGameData) -> Tile {
+        giver_tile(data, OBSERVATORY_PROFESSOR)
+    }
+
+    /// The published spawn of one selected giver, as this machine reads it.
+    fn giver_tile(data: &SelectedGameData, alias: &str) -> Tile {
+        let row = data
+            .trio_givers()
+            .expect("trio_givers")
+            .rows
+            .iter()
+            .find(|row| row.alias == alias)
+            .unwrap_or_else(|| panic!("giver {alias}"));
+        let spawn = row.spawn.as_ref().expect("published spawn");
+        Tile {
+            x: spawn.x,
+            z: spawn.z,
+            level: spawn.plane,
+        }
+    }
+
     /// The decoded tile of the guarded exemplar `2723`: `0_47_60_50_44`.
     fn guarded_tile_of(data: &SelectedGameData) -> Tile {
         guarded_tile(row(data, GUARDED)).expect("guarded tile")
@@ -3216,13 +3742,40 @@ mod tests {
 
     /// The marshalled scene the guarded encounter walks and Digs over: the
     /// posted `here` on (or off) the decoded tile and the pack that carries
-    /// the Spade.
+    /// the Spade beside the held trio the acquire chain already cleared.
     fn dig_scene(here_tile: Value, spade: bool) -> Value {
+        json!({ "here": here_tile, "inv": dig_inv(spade) })
+    }
+
+    /// The pack a dig or fight scene posts: the held trio, and — when the test
+    /// says so — the Spade the Dig resolves. The Spade is posted as the
+    /// marshalled item row the host resolves by display name.
+    fn dig_inv(spade: bool) -> Value {
         if spade {
-            json!({ "here": here_tile, "inv": [inv(SPADE_ITEM, SPADE_NAME, 1)] })
+            trio_pack(&[inv(SPADE_ITEM, SPADE_NAME, 1)])
         } else {
-            json!({ "here": here_tile })
+            trio_pack(&[])
         }
+    }
+
+    /// One selected giver's own packed id and display name, as the published
+    /// `trio_givers` row carries them — never a copied number and never a
+    /// frozen table.
+    fn giver_identity<'a>(data: &'a SelectedGameData, alias: &str) -> (i32, &'a str) {
+        let row = data
+            .trio_givers()
+            .expect("trio_givers")
+            .rows
+            .iter()
+            .find(|row| row.alias == alias)
+            .unwrap_or_else(|| panic!("giver {alias}"));
+        (row.id, row.name.as_str())
+    }
+
+    /// One posted chat option row: the text the arm folds, and the 1-based
+    /// posted slot it answers with.
+    fn option(text: &str, slot: i32) -> Value {
+        json!({ "text": text, "option": slot })
     }
 
     /// One wrapper-marshalled posted npc row on the decoded `here` tile: the
@@ -3287,7 +3840,7 @@ mod tests {
     fn fight_scene(npcs: Value, extra: Value) -> Value {
         let mut scene = json!({
             "here": here(3058, 3884, 0),
-            "inv": [inv(SPADE_ITEM, SPADE_NAME, 1)],
+            "inv": dig_inv(true),
             "npcs": npcs,
             "self_slot": 0,
             "varp95": 1,
@@ -5114,7 +5667,7 @@ mod tests {
             here(3162, 3251, 0),
             here(3160, 3253, 0),
         ] {
-            let walk = call(&data, token, page.clone(), json!({ "here": far }));
+            let walk = call(&data, token, page.clone(), dig_scene(far, false));
             assert_eq!(walk["kind"], "walk", "{walk}");
             assert_eq!(walk["x"], 3160, "{walk}");
             assert_eq!(walk["z"], 3251, "{walk}");
@@ -5122,23 +5675,13 @@ mod tests {
             assert_eq!(token_of(&walk), token, "{walk}");
         }
         // No posted `here` at all: no arrival claim and no blind walk, even
-        // with the Spade posted.
-        let no_tile = call(
-            &data,
-            token,
-            page.clone(),
-            json!({ "inv": [inv(SPADE_ITEM, SPADE_NAME, 1)] }),
-        );
+        // with the Spade posted beside the held trio.
+        let no_tile = call(&data, token, page.clone(), json!({ "inv": dig_inv(true) }));
         assert_eq!(no_tile["kind"], "wait", "{no_tile}");
         // Arrived: the held Spade is the Dig, and it repeats while this same
         // clue id stays held.
         for here_tile in [here(3160, 3251, 0), here(3161, 3250, 0)] {
-            let dig = call(
-                &data,
-                token,
-                page.clone(),
-                json!({ "here": here_tile, "inv": [inv(SPADE_ITEM, SPADE_NAME, 1)] }),
-            );
+            let dig = call(&data, token, page.clone(), dig_scene(here_tile, true));
             assert_eq!(dig["kind"], "held", "{dig}");
             assert_eq!(dig["name"], "Spade", "{dig}");
             assert_eq!(dig["action"], "Dig", "{dig}");
@@ -5171,13 +5714,15 @@ mod tests {
         let arrived = here(3160, 3251, 0);
         for pack in [
             // No page at all, an empty page, another item, a zero count, a
-            // nameless row and a name that is not the display.
-            json!([]),
-            json!([inv(385, "Shark", 5)]),
-            json!([inv(SPADE_ITEM, SPADE_NAME, 0)]),
-            json!([inv(SPADE_ITEM, "", 1)]),
-            json!([inv(SPADE_ITEM, "Spade cert", 1)]),
-            json!([json!({ "id": SPADE_ITEM, "count": 1 })]),
+            // nameless row and a name that is not the display. Every one of
+            // them holds the trio the acquire chain already cleared: the
+            // Spade is the only thing missing.
+            trio_pack(&[]),
+            trio_pack(&[inv(385, "Shark", 5)]),
+            trio_pack(&[inv(SPADE_ITEM, SPADE_NAME, 0)]),
+            trio_pack(&[inv(SPADE_ITEM, "", 1)]),
+            trio_pack(&[inv(SPADE_ITEM, "Spade cert", 1)]),
+            trio_pack(&[json!({ "id": SPADE_ITEM, "count": 1 })]),
         ] {
             let idle = call(
                 &data,
@@ -5201,7 +5746,7 @@ mod tests {
             &data,
             token,
             page.clone(),
-            json!({ "here": json!({ "x": 3160 }), "inv": [inv(SPADE_ITEM, SPADE_NAME, 1)] }),
+            json!({ "here": json!({ "x": 3160 }), "inv": dig_inv(true) }),
         );
         assert_eq!(malformed["kind"], "wait", "{malformed}");
         // The page that carries it: the Dig, and the token was live all along.
@@ -5213,7 +5758,7 @@ mod tests {
             page,
             json!({
                 "here": here(3160, 3251, 0),
-                "inv": [inv(385, "Shark", 5), inv(953, "sPaDe", 1)],
+                "inv": trio_pack(&[inv(385, "Shark", 5), inv(953, "sPaDe", 1)]),
             }),
         );
         assert_eq!(dig["kind"], "held", "{dig}");
@@ -5334,7 +5879,7 @@ mod tests {
         let data = selected();
         let page = json!([[UNGUARDED, 1]]);
         let token = steady(&data, UNGUARDED);
-        let scene = json!({ "here": here(3160, 3251, 0), "inv": [inv(SPADE_ITEM, SPADE_NAME, 1)] });
+        let scene = dig_scene(here(3160, 3251, 0), true);
         on_pause();
         let paused = call(&data, token, page.clone(), scene.clone());
         assert_eq!(paused["kind"], "wait", "{paused}");
@@ -5369,7 +5914,7 @@ mod tests {
         let data = selected();
         let clue_page = json!([[UNGUARDED, 1]]);
         let token = steady(&data, UNGUARDED);
-        let scene = json!({ "here": here(3160, 3251, 0), "inv": [inv(SPADE_ITEM, SPADE_NAME, 1)] });
+        let scene = dig_scene(here(3160, 3251, 0), true);
         let dig = call(&data, token, clue_page.clone(), scene.clone());
         assert_eq!(dig["kind"], "held", "{dig}");
         assert_eq!(dig["action"], "Dig", "{dig}");
@@ -5420,16 +5965,13 @@ mod tests {
                 &data,
                 token,
                 page.clone(),
-                json!({ "here": here(3160, 3251, 0) }),
+                json!({ "here": here(3160, 3251, 0), "inv": dig_inv(false) }),
             ),
             call(
                 &data,
                 token,
                 page.clone(),
-                json!({
-                    "here": here(3160, 3251, 0),
-                    "inv": [inv(SPADE_ITEM, SPADE_NAME, 1)],
-                }),
+                json!({ "here": here(3160, 3251, 0), "inv": dig_inv(true) }),
             ),
             call(
                 &data,
@@ -5437,7 +5979,7 @@ mod tests {
                 page,
                 json!({
                     "here": here(3160, 3251, 0),
-                    "inv": [inv(SPADE_ITEM, SPADE_NAME, 1)],
+                    "inv": dig_inv(true),
                     "hold": true,
                 }),
             ),
@@ -6677,6 +7219,560 @@ mod tests {
             ],
             "{steps:?}"
         );
+    }
+
+    /// `trail_clue_medium_sextant001`'s own acquire chain, walked end to end
+    /// over the posted pages: the professor's published tile, his Talk-to, the
+    /// one posted option the chain answers, the sextant's second giver, the
+    /// watch's own giver — and then, once the posted pack holds the trio, the
+    /// landed unguarded Dig.
+    ///
+    /// Every tile here is the published `trio_givers` row's own spawn, read
+    /// from the selected family: no frozen `PROFESSOR` / `MURPHY` / `KOJO`
+    /// table and no first-in-file coordinate is ever the destination.
+    #[test]
+    fn a_sextant_row_acquires_the_trio_in_the_frozen_order() {
+        on_reset();
+        let data = selected();
+        let page = json!([[UNGUARDED, 1]]);
+        let token = steady(&data, UNGUARDED);
+        let professor = professor_tile(&data);
+        let murphy = giver_tile(&data, MURPHY);
+        let kojo = giver_tile(&data, BROTHER_KOJO);
+
+        // Not arrived and no trio held: the walk is the professor's own
+        // published tile, not the row's decoded one.
+        let walk = call(
+            &data,
+            token,
+            page.clone(),
+            json!({ "here": here(3160, 3251, 0) }),
+        );
+        assert_eq!(walk["kind"], "walk", "{walk}");
+        assert_eq!(walk["x"], professor.x, "{walk}");
+        assert_eq!(walk["z"], professor.z, "{walk}");
+        assert_eq!(walk["level"], professor.level, "{walk}");
+
+        // Arrived with the professor posted: the talk arm's unique-spawn rule,
+        // over that giver's own packed id and posted display name.
+        let (id, name) = giver_identity(&data, OBSERVATORY_PROFESSOR);
+        let posted = json!([talk_npc(
+            9,
+            id,
+            name,
+            Tile {
+                x: professor.x,
+                z: professor.z,
+                level: professor.level,
+            },
+            1,
+            &["Talk-to"],
+        )]);
+        let arrived = json!({
+            "here": here(professor.x, professor.z, professor.level),
+            "npcs": posted,
+        });
+        let talked = call(&data, token, page.clone(), arrived.clone());
+        assert_eq!(talked["kind"], "npc", "{talked}");
+        assert_eq!(talked["name"], name, "{talked}");
+        assert_eq!(talked["action"], "Talk-to", "{talked}");
+        assert_eq!(talked["index"], 9, "{talked}");
+
+        // The chat opens on the closed handler's own option, posted third: the
+        // answer carries that posted 1-based slot and nothing else.
+        let mut chat = arrived.clone();
+        chat["chat_modal_id"] = json!(968);
+        chat["chat_options"] = json!([
+            option("Can you tell me about Treasure Trails?", 2),
+            option("Talk about Treasure Trails.", 3),
+        ]);
+        let answered = call(&data, token, page.clone(), chat.clone());
+        assert_eq!(answered["kind"], "answer", "{answered}");
+        assert_eq!(answered["option"], 3, "{answered}");
+        assert_eq!(token_of(&answered), token, "{answered}");
+
+        // The same option folds on ASCII case: the literal is matched, never a
+        // fragment of it.
+        chat["chat_options"] = json!([option("i've lost my navigation chart.", 1)]);
+        let folded = call(&data, token, page.clone(), chat);
+        assert_eq!(folded["kind"], "answer", "{folded}");
+        assert_eq!(folded["option"], 1, "{folded}");
+
+        // That chat closed: the sextant's second stop is Murphy's own tile.
+        let closed = call(
+            &data,
+            token,
+            page.clone(),
+            json!({
+                "here": here(professor.x, professor.z, professor.level),
+                "npcs": posted,
+            }),
+        );
+        assert_eq!(closed["kind"], "walk", "{closed}");
+        assert_eq!(closed["x"], murphy.x, "{closed}");
+        assert_eq!(closed["z"], murphy.z, "{closed}");
+
+        // Murphy's chat is linear: a posted `chat_continue` is the step.
+        let (mid, mname) = giver_identity(&data, MURPHY);
+        let continued = call(
+            &data,
+            token,
+            page.clone(),
+            json!({
+                "here": here(murphy.x, murphy.z, murphy.level),
+                "npcs": [talk_npc(
+                    11,
+                    mid,
+                    mname,
+                    Tile {
+                        x: murphy.x,
+                        z: murphy.z,
+                        level: murphy.level,
+                    },
+                    1,
+                    &["Talk-to"],
+                )],
+                "chat_continue": true,
+            }),
+        );
+        assert_eq!(continued["kind"], "continue", "{continued}");
+        assert!(continued.get("option").is_none(), "{continued}");
+
+        // The sextant landed: the chain rebases to the watch, which is Kojo's
+        // alone, and Kojo's own options are none of this arm's business —
+        // never the last one, never another giver's literal.
+        let (kid, kname) = giver_identity(&data, BROTHER_KOJO);
+        let kojo_posted = json!([talk_npc(
+            12,
+            kid,
+            kname,
+            Tile {
+                x: kojo.x,
+                z: kojo.z,
+                level: kojo.level,
+            },
+            1,
+            &["Talk-to"],
+        )]);
+        let watched = call(
+            &data,
+            token,
+            page.clone(),
+            json!({
+                "here": here(murphy.x, murphy.z, murphy.level),
+                "inv": [inv(SEXTANT_ITEM, SEXTANT_NAME, 1)],
+            }),
+        );
+        assert_eq!(watched["kind"], "walk", "{watched}");
+        assert_eq!(watched["x"], kojo.x, "{watched}");
+        let foreign = call(
+            &data,
+            token,
+            page.clone(),
+            json!({
+                "here": here(kojo.x, kojo.z, kojo.level),
+                "npcs": kojo_posted,
+                "inv": [inv(SEXTANT_ITEM, SEXTANT_NAME, 1)],
+                "chat_modal_id": 968,
+                "chat_options": [
+                    option("What is this place?", 1),
+                    option("Talk about Treasure Trails.", 2),
+                ],
+            }),
+        );
+        assert_eq!(foreign["kind"], "wait", "{foreign}");
+        assert_eq!(token_of(&foreign), token, "{foreign}");
+
+        // The watch landed: the chart is the professor's again, and the pack
+        // that finally holds the whole trio falls through to the landed dig
+        // arm — walk to the row's own decoded tile, then the held Dig.
+        let charted = call(
+            &data,
+            token,
+            page.clone(),
+            json!({
+                "here": here(kojo.x, kojo.z, kojo.level),
+                "inv": [
+                    inv(SEXTANT_ITEM, SEXTANT_NAME, 1),
+                    inv(WATCH_ITEM, WATCH_NAME, 1),
+                ],
+            }),
+        );
+        assert_eq!(charted["kind"], "walk", "{charted}");
+        assert_eq!(charted["x"], professor.x, "{charted}");
+        let walked = call(
+            &data,
+            token,
+            page.clone(),
+            dig_scene(here(3100, 3300, 0), true),
+        );
+        assert_eq!(walked["kind"], "walk", "{walked}");
+        assert_eq!(walked["x"], 3160, "{walked}");
+        assert_eq!(walked["z"], 3251, "{walked}");
+        let dig = call(&data, token, page, dig_scene(here(3160, 3251, 0), true));
+        assert_eq!(dig["kind"], "held", "{dig}");
+        assert_eq!(dig["name"], SPADE_NAME, "{dig}");
+        assert_eq!(dig["action"], "Dig", "{dig}");
+    }
+
+    /// The intercept is in front of **both** dig arms: the guarded exemplar
+    /// walks to the professor, never to its decoded tile, until the posted pack
+    /// holds the trio — and only then does its own encounter spawn.
+    #[test]
+    fn the_trio_intercept_is_in_front_of_the_guarded_dig_too() {
+        on_reset();
+        let data = selected();
+        let page = json!([[GUARDED, 1]]);
+        let token = steady(&data, GUARDED);
+        let professor = professor_tile(&data);
+        let walk = call(
+            &data,
+            token,
+            page.clone(),
+            json!({ "here": here(3100, 3300, 0), "inv": [inv(SPADE_ITEM, SPADE_NAME, 1)] }),
+        );
+        assert_eq!(walk["kind"], "walk", "{walk}");
+        assert_eq!(walk["x"], professor.x, "{walk}");
+        assert_eq!(walk["z"], professor.z, "{walk}");
+        // Held trio and Spade: the encounter's own walk-then-Dig, unchanged.
+        let tile = guarded_tile_of(&data);
+        let walked = call(
+            &data,
+            token,
+            page.clone(),
+            dig_scene(here(3100, 3300, 0), true),
+        );
+        assert_eq!(walked["kind"], "walk", "{walked}");
+        assert_eq!(walked["x"], tile.x, "{walked}");
+        let dig = call(
+            &data,
+            token,
+            page,
+            dig_scene(here(tile.x, tile.z, tile.level), true),
+        );
+        assert_eq!(dig["kind"], "held", "{dig}");
+        assert_eq!(dig["action"], "Dig", "{dig}");
+    }
+
+    /// A posted option list the selected literals do not match waits: never the
+    /// last option, never a frozen fragment (`Treasure Trails`, `lost`), never
+    /// the trawler's or the Clock Tower quest's choices, and never a Talk-to
+    /// behind the open chat.
+    #[test]
+    fn the_trio_intercept_waits_on_options_it_may_not_answer() {
+        on_reset();
+        let data = selected();
+        let page = json!([[UNGUARDED, 1]]);
+        let token = steady(&data, UNGUARDED);
+        let professor = professor_tile(&data);
+        let (id, name) = giver_identity(&data, OBSERVATORY_PROFESSOR);
+        let npcs = json!([talk_npc(
+            9,
+            id,
+            name,
+            Tile {
+                x: professor.x,
+                z: professor.z,
+                level: professor.level,
+            },
+            1,
+            &["Talk-to"],
+        )]);
+        let arrived = json!({
+            "here": here(professor.x, professor.z, professor.level),
+            "npcs": npcs,
+        });
+        // An open chat is posted open: even the giver's own row is not
+        // Talked-to again behind it.
+        let bare = call(
+            &data,
+            token,
+            page.clone(),
+            json!({
+                "here": here(professor.x, professor.z, professor.level),
+                "npcs": npcs,
+                "chat_modal_id": 968,
+            }),
+        );
+        assert_eq!(bare["kind"], "wait", "{bare}");
+        for options in [
+            // Frozen fragments, another giver's literal, the last option a
+            // sequencer would fall back to, and a matched text with no slot.
+            json!([
+                option("Treasure Trails", 1),
+                option("I am lost!!!", 2),
+                option("Yes please.", 3),
+            ]),
+            json!([option("I've lost my navigation chart", 1)]),
+            json!([json!({ "text": "Talk about Treasure Trails." })]),
+            json!([]),
+        ] {
+            let mut scene = arrived.clone();
+            scene["chat_modal_id"] = json!(968);
+            scene["chat_options"] = options.clone();
+            let idle = call(&data, token, page.clone(), scene);
+            assert_eq!(idle["kind"], "wait", "{options} {idle}");
+            assert_eq!(token_of(&idle), token, "{options} {idle}");
+            assert!(
+                idle.get("option").is_none() && idle.get("index").is_none(),
+                "{options} {idle}"
+            );
+        }
+    }
+
+    /// The picker is the talk arm's unique-spawn rule: the giver's own packed
+    /// id first, then its posted display name, a posted talk action, and the
+    /// frozen radius around the published tile. A wanderer is not chased, a
+    /// same-name lookalike with another packed id is not this giver, and a page
+    /// with no match waits at the tile.
+    #[test]
+    fn the_trio_pick_is_the_unique_spawn_rule_and_never_a_lookalike() {
+        on_reset();
+        let data = selected();
+        let page = json!([[UNGUARDED, 1]]);
+        let token = steady(&data, UNGUARDED);
+        let professor = professor_tile(&data);
+        let here_tile = here(professor.x, professor.z, professor.level);
+        let (id, name) = giver_identity(&data, OBSERVATORY_PROFESSOR);
+        let tile = Tile {
+            x: professor.x,
+            z: professor.z,
+            level: professor.level,
+        };
+        for npcs in [
+            // No posted npc page at all, an empty page, and another npc.
+            json!([]),
+            json!([talk_npc(1, 541, "Zeke", tile, 1, &["Talk-to"])]),
+            // The `observatory_professor2` lookalike: the same display name and
+            // another packed id, which is not this family's row.
+            json!([talk_npc(2, id + 1, name, tile, 1, &["Talk-to"])]),
+            // This giver's own id, but no posted talk action.
+            json!([talk_npc(3, id, name, tile, 1, &["Attack"])]),
+            // Posted, off the published tile and out of the radius.
+            json!([talk_npc(
+                4,
+                id,
+                name,
+                Tile {
+                    x: tile.x + 8,
+                    z: tile.z,
+                    level: tile.level,
+                },
+                8,
+                &["Talk-to"],
+            )]),
+            // Posted on another level.
+            json!([talk_npc(
+                5,
+                id,
+                name,
+                Tile {
+                    x: tile.x,
+                    z: tile.z,
+                    level: tile.level + 1,
+                },
+                1,
+                &["Talk-to"],
+            )]),
+        ] {
+            let idle = call(
+                &data,
+                token,
+                page.clone(),
+                json!({ "here": here_tile, "npcs": npcs }),
+            );
+            assert_eq!(idle["kind"], "wait", "{npcs} {idle}");
+            assert_eq!(token_of(&idle), token, "{npcs} {idle}");
+        }
+        // The posted name alone is enough when the packed id is not posted: the
+        // verb then carries that posted name and index.
+        let named = call(
+            &data,
+            token,
+            page.clone(),
+            json!({
+                "here": here_tile,
+                "npcs": [unfield(talk_npc(6, id, name, tile, 1, &["Talk-to"]), "id")],
+            }),
+        );
+        assert_eq!(named["kind"], "npc", "{named}");
+        assert_eq!(named["name"], name, "{named}");
+        assert_eq!(named["index"], 6, "{named}");
+    }
+
+    /// Freeze, hold, the posted interrupt and a posted death all beat the
+    /// acquire chain exactly as they beat the landed arms, and the chain itself
+    /// never emits a completion kind.
+    #[test]
+    fn freeze_yield_and_death_beat_the_trio_acquire() {
+        on_reset();
+        let data = selected();
+        let page = json!([[UNGUARDED, 1]]);
+        let token = steady(&data, UNGUARDED);
+        let professor = professor_tile(&data);
+        let here_tile = here(professor.x, professor.z, professor.level);
+        let (id, name) = giver_identity(&data, OBSERVATORY_PROFESSOR);
+        let scene = json!({
+            "here": here_tile,
+            "npcs": [talk_npc(
+                9,
+                id,
+                name,
+                Tile {
+                    x: professor.x,
+                    z: professor.z,
+                    level: professor.level,
+                },
+                1,
+                &["Talk-to"],
+            )],
+        });
+        on_pause();
+        let paused = call(&data, token, page.clone(), scene.clone());
+        assert_eq!(paused["kind"], "wait", "{paused}");
+        on_resume();
+        on_hold(true);
+        let held_clock = call(&data, token, page.clone(), scene.clone());
+        assert_eq!(held_clock["kind"], "wait", "{held_clock}");
+        on_hold(false);
+        let mut yielded_scene = scene.clone();
+        yielded_scene["hold"] = json!(true);
+        let yielded = call(&data, token, page.clone(), yielded_scene);
+        assert_eq!(yielded["kind"], "yield", "{yielded}");
+        let mut dead_scene = scene.clone();
+        dead_scene["hitpoints"] = json!(0);
+        let dead = call(&data, token, page.clone(), dead_scene);
+        assert_eq!(dead["kind"], "dead", "{dead}");
+        for step in [&paused, &held_clock, &yielded, &dead] {
+            let text = step.to_string();
+            for forbidden in ["clue solved", "grind-ready", "cause", "message", "answer"] {
+                assert!(!text.contains(forbidden), "{forbidden} {step}");
+            }
+        }
+        assert_eq!(
+            call(&data, token, page, scene)["kind"],
+            "aborted",
+            "the dead token is gone"
+        );
+    }
+
+    /// The membership and the plan over the selected pins: the param is the
+    /// whole of the row's need, the trio is the posted pack's own read, and the
+    /// order is the frozen `nextCoordTool` one — sextant, then watch, then
+    /// chart. A pack that already holds the whole trio is not this arm's.
+    #[test]
+    fn the_trio_plan_is_the_param_and_the_posted_pack() {
+        on_reset();
+        let data = selected();
+        // The param on the row itself, and nothing else: another value, the
+        // sibling params and a paramless row are all not this arm's.
+        assert!(needs_trio(row(&data, UNGUARDED)));
+        assert!(needs_trio(row(&data, GUARDED)));
+        assert!(needs_trio(&member(vec![param(TRAIL_SEXTANT, "yes")], None)));
+        assert!(!needs_trio(&member(vec![param(TRAIL_SEXTANT, "no")], None)));
+        assert!(!needs_trio(&member(
+            vec![param("trail_casket", "trail_clue_medium_sextant001_casket")],
+            None
+        )));
+        assert!(!needs_trio(row(&data, MAP)));
+        assert!(!needs_trio(row(&data, RIDDLE)));
+        assert!(!needs_trio(&member(vec![], None)));
+        // No selected pin and no published givers: no plan at all.
+        assert!(trio_plan(None, &json!({})).is_none());
+        // The plan is the first tool the posted pack is short of.
+        let empty = json!({});
+        let (givers, tool) = trio_plan(Some(&data), &empty).expect("plan");
+        assert_eq!(tool, Tool::Sextant);
+        assert_eq!(stop_of(&givers, tool, 0).row.alias, OBSERVATORY_PROFESSOR);
+        assert_eq!(stop_of(&givers, tool, 1).row.alias, MURPHY);
+        assert_eq!(last_stop(tool), 1);
+        let sextant = json!({ "inv": [inv(SEXTANT_ITEM, SEXTANT_NAME, 1)] });
+        let (givers, tool) = trio_plan(Some(&data), &sextant).expect("plan");
+        assert_eq!(tool, Tool::Watch);
+        assert_eq!(stop_of(&givers, tool, 0).row.alias, BROTHER_KOJO);
+        assert_eq!(last_stop(tool), 0);
+        let watch = json!({
+            "inv": [
+                inv(SEXTANT_ITEM, SEXTANT_NAME, 1),
+                inv(WATCH_ITEM, WATCH_NAME, 1),
+            ],
+        });
+        let (givers, tool) = trio_plan(Some(&data), &watch).expect("plan");
+        assert_eq!(tool, Tool::Chart);
+        assert_eq!(stop_of(&givers, tool, 0).row.alias, OBSERVATORY_PROFESSOR);
+        // A zero count, a missing count and an unknown id are not held: the
+        // join is the selected id beside a positive posted count, and the
+        // posted display name is never the identity.
+        for pack in [
+            json!({ "inv": [inv(SEXTANT_ITEM, SEXTANT_NAME, 0)] }),
+            json!({ "inv": [json!({ "id": SEXTANT_ITEM, "name": SEXTANT_NAME })] }),
+            json!({ "inv": [inv(999_999, SEXTANT_NAME, 1)] }),
+        ] {
+            let (_, tool) = trio_plan(Some(&data), &pack).expect("plan");
+            assert_eq!(tool, Tool::Sextant, "{pack}");
+        }
+        // The whole trio held: the intercept's own completion, and the landed
+        // dig arms run.
+        assert!(trio_plan(Some(&data), &json!({ "inv": trio_inv() })).is_none());
+    }
+
+    /// The rows this arm is not: a search row, a talk step and a key-keeper
+    /// riddle over the same empty pack walk, Talk-to and idle exactly as they
+    /// did — the intercept never becomes a second classify of them.
+    #[test]
+    fn search_talk_and_key_rows_never_enter_the_trio_acquire() {
+        on_reset();
+        let data = selected();
+        // The search membership: its own decoded walk, not the professor's.
+        let token = steady(&data, SEARCH);
+        let walk = call(
+            &data,
+            token,
+            json!([[SEARCH, 1]]),
+            json!({ "here": here(3100, 3300, 0) }),
+        );
+        assert_eq!(walk["kind"], "walk", "{walk}");
+        assert_eq!(walk["x"], 3209, "{walk}");
+        assert_eq!(walk["z"], 3218, "{walk}");
+        // The talk step: its own published spawn, not the professor's tile.
+        let spawn = data
+            .talk_key()
+            .expect("talk_key")
+            .talk
+            .iter()
+            .find(|talk| talk.id == TALK)
+            .and_then(|talk| talk.spawn.as_ref())
+            .expect("the talk step publishes a spawn");
+        let token = steady(&data, TALK);
+        let talked = call(
+            &data,
+            token,
+            json!([[TALK, 1]]),
+            json!({ "here": here(3100, 3300, 0), "npcs": [] }),
+        );
+        assert_eq!(talked["kind"], "walk", "{talked}");
+        assert_eq!(talked["x"], spawn.x, "{talked}");
+        assert_eq!(talked["z"], spawn.z, "{talked}");
+        // The key-keeper riddle: the sibling hunt's own published spawn, never
+        // the professor's tile and never a trio requirement.
+        let spawn = data
+            .talk_key()
+            .expect("talk_key")
+            .keys
+            .iter()
+            .find(|key| key.id == RIDDLE)
+            .and_then(|key| key.spawn.as_ref())
+            .expect("the keeper publishes a spawn");
+        let token = steady(&data, RIDDLE);
+        let hunted = call(
+            &data,
+            token,
+            json!([[RIDDLE, 1]]),
+            json!({ "here": here(3100, 3300, 0), "npcs": [] }),
+        );
+        assert_eq!(hunted["kind"], "walk", "{hunted}");
+        assert_eq!(hunted["x"], spawn.x, "{hunted}");
+        assert_eq!(hunted["z"], spawn.z, "{hunted}");
     }
 
     /// The b run's first piece: these tests post boards from that run's own

@@ -507,10 +507,12 @@ Example: `crates/script/examples/clue_facts_v2.ts` (row),
 
 One machine per isolate, over the landed held-step identify. It is sync, it is
 not a Promise, and it is not a `request()` op: it is the search, casket-open,
-unguarded-dig, guarded-dig encounter, held-puzzle-box, talk-step, key-keeper
-and trail-end collect slice of a later clue trail, not the whole dispatcher. It
-emits search, the held Open, the unguarded Dig, the guarded walk/Dig/Attack/redig,
-the held puzzle box's own Open, one planned `puzzle-move` and the close that
+unguarded-dig, guarded-dig encounter, coordinate-trio acquire, held-puzzle-box,
+talk-step, key-keeper and trail-end collect slice of a later clue trail, not
+the whole dispatcher. It emits search, the held Open, the unguarded Dig, the
+guarded walk/Dig/Attack/redig, the acquire chain's walk, Talk-to, one selected
+option answer and its continue, the held puzzle box's own Open, one planned
+`puzzle-move` and the close that
 follows a solved board, the talk step's walk and Talk-to, the challenge scroll's
 selected count answer, the key-keeper hunt's walk, Attack and key Take, and the
 collect that follows the last casket — no deposit or
@@ -539,6 +541,11 @@ aborts the previous token and emits nothing for it.
 missing or non-integer `token`, or a non-object argument). The step is
 `{ ok: true, status: 'continue', token, kind, … }` or `{ ok: false, error }`;
 a dead token is the error object, never `undefined` and never a continue kind.
+Every page is read at call time: along with the pack, `here`, loc, ground, npc,
+main-modal, chat and board slots, the acquire chain's own posted
+`chat_options` — each row a text with its 1-based slot — and `chat_continue`
+are posted only when the page carried them, so an unobserved list is not an
+empty one and an unobserved slot is never a close.
 
 | `kind` | Meaning |
 | --- | --- |
@@ -550,6 +557,8 @@ a dead token is the error object, never `undefined` and never a continue kind.
 | `loc` | a search row that has arrived: interact with the picked loc, `{ x, z, level, action, id }` |
 | `npc` | a guarded row that has arrived and Dig its spawn: interact with the posted npc, `{ name, action: 'Attack', index }` — the posted scene index it was observed with. A talk step that has arrived is the same kind with the posted row's own `talk_op` and posted scene index, `{ name, action: 'Talk-to', index }`, and a key-keeper row that has arrived is the same kind with the frozen `Attack` on a posted npc of the keeper's packed type standing on the published spawn, `{ name, action: 'Attack', index }` |
 | `answer-count` | a talk step whose selected challenge scroll is in hand and whose posted `count_dialog_open` is true: answer that dialog with the selected `challenge_answers` string parsed as a non-negative `i32`, `{ value }`. A posted `false` or an omitted slot is not an open count dialog and nothing is answered |
+| `answer` | the acquire chain's professor stop, whose open chat posted a choice whose text ASCII-folds to one of the two closed-handler literals: answer it with that row's own posted 1-based slot, `{ option }`. Never the last option of a list nothing matched, and never at Murphy or Kojo, whose chats are continue-only |
+| `continue` | the acquire chain's open giver chat, whose posted `chat_continue` is the frozen continue step. It carries nothing else — no option and no text — and it is never read from a chat this machine did not open on its own giver |
 | `if-button` | a guarded fight whose posted overlay does not read up: click the selected Protect from Magic component, `{ component_id }` |
 | `held` | a casket row that has been reported: interact with the held item named `name` with `action`, `{ name, action }`; an unguarded or guarded dig row's `Dig` is the same kind with `name: 'Spade'`, and the collect's pack-full Drop is the same kind with `action: 'Drop'` |
 | `close-modal` | collecting: close the main modal the page posted open. The step carries nothing else — no interface id, no text. The held puzzle box's solved board is the same kind: the board is closed once, and never closed again while the step stays held |
@@ -582,11 +591,13 @@ and unselected ids still abort `none-held`, and `Collecting` still wins. Reset,
 stop and a generation
 bump abort silently; the machine emits no `h.interact` entry and no request op
 for them, and the first thing the caller hears about it is `stale` or
-`aborted`. A held step that is neither a casket, a search row, an unguarded dig
-row, a guarded dig row, a talk step nor a key-keeper step — the desc-only
-riddles no key keeper names, the empty-params 2722 and the five matcher-keepers
-the key family publishes no unique spawn for — is identified and then idled: no
-action and no walk.
+`aborted`. A held step that is neither a casket, a search row, a trio row, an
+unguarded dig row, a guarded dig row, a talk step nor a key-keeper step — the
+desc-only riddles no key keeper names, the empty-params 2722 and the five
+matcher-keepers the key family publishes no unique spawn for — is identified
+and then idled: no action and no walk. A trio row is the acquire chain above
+rather than an idle: it walks, Talks-to and answers exactly as far as the
+published givers and the posted pages allow, and waits for the rest.
 The packed 3554 `access: "constrained"` clue is the one identified row the
 machine refuses
 instead of idling: `aborted` / `constrained`, no verb and no live token, which
@@ -660,6 +671,52 @@ Unlike `loc`, `held` is already a supported author `request` op (`V2_OPS`), and
 the machine's own step is enqueued onto the interact drain directly rather than
 through `request()`; the step is still returned as `status: 'continue'`.
 
+Between the search row and the two dig arms sits the **coordinate-trio acquire
+chain**. A held row is a *trio row* when its own selected params carry
+`trail_sextant=yes` — the fifty playable rows of the fifty-one that do, the
+packed 3554 `access: "constrained"` clue being refused before `Steady` is ever
+reached — and that row walks and Digs only once this call's posted pack holds
+the whole trio: the selected `trail_sextant` / `trail_watch` / `trail_chart`
+items (`2574` / `2575` / `2576` on both pins), each joined by its own selected
+id against a posted positive count. That read is `hasAllTrio`, and it is the
+chain's own completion: until the pack holds it, the arm is the frozen
+`nextCoordTool` order over the selected `trio_givers` family. The sextant is
+the observatory professor's teach stop and then Murphy's own, the watch is
+Brother Kojo's and the chart is the professor's again; a stop walks to its
+giver's published `{ x, z, plane }` tile with `plane` as the verb's `level` —
+never a curated tile copied out of the frozen tool table — and Talks-to only a
+posted npc of that giver's own packed id (or, when the page posted no id at
+all, of that posted display name) standing inside `ARRIVE_RADIUS` of it and
+listing a talk action. A same-name lookalike under another packed id, a
+wanderer outside the radius, a page with no posted `here`, no posted npc page
+and no posted match all wait at the tile with the token live.
+
+Behind that giver's open chat the arm sends what the stop's own giver
+publishes. At the professor it is **one** posted option whose text equals — on
+an ASCII fold — one of the closed handler's two literals, `Talk about Treasure
+Trails.` or `I've lost my navigation chart.`, returned as `answer` with that
+row's own posted 1-based `option`. At Murphy and Kojo it is the posted
+`chat_continue`, returned as `continue`. A posted option list the professor's
+literals do not match waits — never the last option, never a frozen fragment
+such as `Treasure Trails` or `lost`, never the trawler's or the Clock Tower
+quest's choices — and a posted option list at Murphy or Kojo waits too, because
+those chats are linear. Both kinds are this machine's own arms onto the
+interact drain: `api.request({ op: 'continue' })` and
+`api.request({ op: 'answer' })` stay `not impl`, and neither kind is ever
+enqueued as a `loc`.
+
+A stop is done when its own chat has been posted open and then posted closed;
+the chain then moves to that tool's next giver, and a tool whose item never
+lands keeps working its last one rather than inventing a further stop. A giver
+that is not posted, an item that does not land, a full pack and a locked door
+all wait with the token live: no `abandon`, no chain deadline and no hop
+policy. The chain owns no bank, shop or food — nothing is fetched, withdrawn or
+Dropped — and the frozen clock, the posted `hold || ours` interrupt and the
+posted `hitpoints <= 0` death still win over it exactly as they win over every
+other arm. The landed guarded and unguarded arms below are unchanged: they are
+simply not reached until the posted pack holds the trio, and the rows that do
+not carry the param never enter this chain at all.
+
 A held row is an **unguarded dig row** when the selected family carries a
 decodable `trail_coord` on a row with **no** `trail_loc`, **no**
 `trail_guardian` and an `access` that is not `"constrained"`, which is the
@@ -670,9 +727,10 @@ maps (`2827`, `3596`, `3599`, `3602`), the hard maps (`3520`, `3522`), the
 vague `3510` and the hard riddle-with-coord rows (`2774`, `2776`, `2780`,
 `2783`, `2786`, `2788`, `2790`, `3580`) — forty rows on both pins. Neither
 `trail_sextant` nor `trail_casket` is that membership:
-`trail_sextant` is not read by this classify at all, so the
-Sextant/Watch/Chart trio is never required, never waited for and never
-acquired, exactly as the search walk never bank-fetched its key. Once such a
+`trail_sextant` is not read by this classify at all — the trio is never part of
+it, exactly as the search walk never bank-fetched its key — while the acquire
+chain above is what requires, waits for and acquires that trio, on the rows
+that carry the param. Once such a
 row has been reported — after its `callback.log` and `callback.setStatus` — it
 walks to its decoded tile exactly like a search row (same posted `here`, same
 level, same Chebyshev 1, same repetition until it holds), and then, arrived,

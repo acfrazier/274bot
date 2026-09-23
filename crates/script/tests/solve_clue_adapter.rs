@@ -24,6 +24,17 @@ const UNGUARDED_ID: i32 = 2801;
 /// The item the frozen `Spade` display belongs to: the pack row the Dig
 /// resolves by posted name.
 const SPADE_ITEM: i32 = 952;
+/// The three selected coordinate-tool items the acquire chain joins by id, and
+/// the display names their posted pack rows carry. A scene that posts no trio
+/// is a scene the acquire chain owns rather than the dig arm the test drives.
+const SEXTANT_ITEM: i32 = 2574;
+const WATCH_ITEM: i32 = 2575;
+const CHART_ITEM: i32 = 2576;
+const TRIO_NAMES: [(i32, &str); 3] = [
+    (SEXTANT_ITEM, "Sextant"),
+    (WATCH_ITEM, "Watch"),
+    (CHART_ITEM, "Chart"),
+];
 /// The decoded tile `SEARCH_ID` walks to.
 const SEARCH_X: i32 = 3209;
 const SEARCH_Z: i32 = 3218;
@@ -52,6 +63,12 @@ struct Scene<'a> {
     chat_continue: bool,
     /// The posted count dialog the challenge step's answer rides.
     count_dialog_open: bool,
+    /// The posted chat choices the trio acquire chain reads, in posted order:
+    /// each row's own 1-based slot is its position here.
+    options: &'a [script::isolate_fb::ChatOptionInput<'a>],
+    /// Whether the posted pack carries the held coordinate trio: a dig-row
+    /// scene needs it, because the acquire chain owns the row until it does.
+    trio: bool,
 }
 
 impl Default for Scene<'_> {
@@ -68,6 +85,8 @@ impl Default for Scene<'_> {
             chat_modal_id: -1,
             chat_continue: false,
             count_dialog_open: false,
+            options: &[],
+            trio: false,
         }
     }
 }
@@ -77,7 +96,11 @@ fn post_page(iso: &LoadIsolate, tick: u64, page: &[(i32, i32)]) {
 }
 
 fn post_scene(iso: &LoadIsolate, tick: u64, page: &[(i32, i32)], scene: &Scene<'_>) {
-    let rows: Vec<ItemRowInput<'_>> = page
+    let mut held: Vec<(i32, i32)> = page.to_vec();
+    if scene.trio {
+        held.extend(TRIO_NAMES.iter().map(|(id, _)| (*id, 1)));
+    }
+    let rows: Vec<ItemRowInput<'_>> = held
         .iter()
         .enumerate()
         .map(|(slot, (id, count))| ItemRowInput {
@@ -85,7 +108,13 @@ fn post_scene(iso: &LoadIsolate, tick: u64, page: &[(i32, i32)], scene: &Scene<'
                 .names
                 .iter()
                 .find(|(item, _)| item == id)
-                .map(|(_, name)| *name),
+                .map(|(_, name)| *name)
+                .or_else(|| {
+                    TRIO_NAMES
+                        .iter()
+                        .find(|(item, _)| item == id)
+                        .map(|(_, name)| *name)
+                }),
             count: *count,
             id: *id,
             ops: &[],
@@ -127,7 +156,7 @@ fn post_scene(iso: &LoadIsolate, tick: u64, page: &[(i32, i32)], scene: &Scene<'
         chat_open: false,
         chat_continue: scene.chat_continue,
         chat_text: None,
-        chat_options: &[],
+        chat_options: scene.options,
         side_tab: -1,
         varps: &[],
         combat_styles: &[],
@@ -1085,6 +1114,7 @@ export default class T extends TaskBot {
         &page,
         &Scene {
             here: Some(arrived),
+            trio: true,
             ..Scene::default()
         },
     );
@@ -1101,6 +1131,7 @@ export default class T extends TaskBot {
         &Scene {
             here: Some(arrived),
             names: &names,
+            trio: true,
             ..Scene::default()
         },
     );
@@ -1374,6 +1405,203 @@ export default class T extends TaskBot {
         value["token"], "null",
         "the refused begin leaves no live token: {value:?}"
     );
+    assert_clean(&logs);
+}
+
+/// The trio acquire chain over the compat adapter's own drain: the machine's
+/// `walk`, `npc`, `answer` and `continue` steps reach the interact drain as
+/// `InteractReq::Walk` / `Npc` / `Answer` / `ContinueDialog` — this adapter's
+/// own arms, never the loc fall-through — and once the pack holds the trio the
+/// same token falls through to the landed Dig.
+#[test]
+fn solve_clue_adapter_drains_the_trio_acquire_over_the_task_loop() {
+    let src = r#"
+import { SolveClue } from '../../api/ai/clues/SolveClue.js';
+export default class T extends TaskBot {
+    onStart() {
+        globalThis.__logs = [];
+        globalThis.__statuses = [];
+        this.solveClue = new SolveClue({
+            enabled: () => true,
+            log: (message) => { globalThis.__logs.push(String(message)); },
+            setStatus: (message) => { globalThis.__statuses.push(String(message)); },
+        });
+        this.add(this.solveClue);
+    }
+}
+"#;
+    let iso = spawn(src);
+    let data = api::game_data::for_revision(ClientRevision::R274).unwrap();
+    let giver = data
+        .trio_givers()
+        .expect("trio_givers")
+        .rows
+        .iter()
+        .find(|row| row.alias == "observatory_professor")
+        .expect("the professor row")
+        .clone();
+    let spawn = giver.spawn.as_ref().expect("published spawn");
+    let page = [(UNGUARDED_ID, 1)];
+    let with_spade = [(UNGUARDED_ID, 1), (SPADE_ITEM, 1)];
+    let names = [(SPADE_ITEM, "Spade")];
+    let far = TileInput {
+        x: 3100,
+        z: 3300,
+        level: 0,
+    };
+    let arrived = TileInput {
+        x: 3160,
+        z: 3251,
+        level: 0,
+    };
+    let professor = TileInput {
+        x: spawn.x,
+        z: spawn.z,
+        level: spawn.plane,
+    };
+    let talk_to = vec!["Talk-to".to_string()];
+    let posted = [scene_npc(
+        9,
+        giver.id,
+        giver.name.as_str(),
+        professor,
+        1,
+        &talk_to,
+    )];
+
+    // Tick 1: no posted `here` at all, and no trio held: no arrival claim and
+    // no blind walk.
+    post_page(&iso, 1, &page);
+    tick(&iso, 1);
+    assert!(iso.drain_interacts().is_empty(), "no `here` is a wait");
+
+    // Tick 2: still no trio: the chain's own walk is the giver's published
+    // tile, never the row's decoded one.
+    post_scene(
+        &iso,
+        2,
+        &page,
+        &Scene {
+            here: Some(far),
+            ..Scene::default()
+        },
+    );
+    tick(&iso, 2);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![walk_to(spawn.x, spawn.z, spawn.plane)],
+        "the acquire chain walks to the published tile"
+    );
+
+    // Tick 3: arrived with the giver posted: the Talk-to.
+    post_scene(
+        &iso,
+        3,
+        &page,
+        &Scene {
+            here: Some(professor),
+            npcs: &posted,
+            ..Scene::default()
+        },
+    );
+    tick(&iso, 3);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::Npc {
+            name: giver.name.clone(),
+            action: "Talk-to".to_string(),
+            index: Some(9),
+        }],
+        "the Talk-to is the posted identity and index"
+    );
+
+    // Tick 4: the closed handler's option, posted second: that posted 1-based
+    // slot is the answer, through the clue adapter's own arm.
+    let options = [
+        script::isolate_fb::ChatOptionInput {
+            text: "Who are you?",
+        },
+        script::isolate_fb::ChatOptionInput {
+            text: "Talk about Treasure Trails.",
+        },
+    ];
+    post_scene(
+        &iso,
+        4,
+        &page,
+        &Scene {
+            here: Some(professor),
+            npcs: &posted,
+            chat_modal_id: 968,
+            options: &options,
+            ..Scene::default()
+        },
+    );
+    tick(&iso, 4);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::Answer { option: 2 }],
+        "the one selected literal is the answer, and it is never a loc"
+    );
+
+    // Tick 5: the linear half: the posted `chat_continue`.
+    post_scene(
+        &iso,
+        5,
+        &page,
+        &Scene {
+            here: Some(professor),
+            npcs: &posted,
+            chat_modal_id: 968,
+            chat_continue: true,
+            ..Scene::default()
+        },
+    );
+    tick(&iso, 5);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::ContinueDialog],
+        "the posted continue is the landed continue step"
+    );
+
+    // Tick 6: the posted pack holds the trio: the same token falls through to
+    // the landed Dig on the row's own decoded tile.
+    post_scene(
+        &iso,
+        6,
+        &with_spade,
+        &Scene {
+            here: Some(arrived),
+            names: &names,
+            trio: true,
+            ..Scene::default()
+        },
+    );
+    tick(&iso, 6);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::Held {
+            name: "Spade".to_string(),
+            action: "Dig".to_string(),
+        }],
+        "the held trio is the fall-through to the Dig"
+    );
+
+    let value = json(
+        &iso,
+        "JSON.stringify({ token: String(globalThis.__rs_bot.solveClue.token), \
+          logs: globalThis.__logs, statuses: globalThis.__statuses })",
+    );
+    let logs = iso.drain_logs();
+    iso.join();
+    assert_ne!(
+        value["token"], "null",
+        "the chain never re-began: {value:?}"
+    );
+    let text = value.to_string();
+    for forbidden in ["clue solved", "supplies-needed", "guardian-lost", "abandon"] {
+        assert!(!text.contains(forbidden), "{forbidden} {value:?}");
+    }
     assert_clean(&logs);
 }
 
