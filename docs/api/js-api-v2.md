@@ -461,8 +461,12 @@ slice of a later clue trail, not the whole dispatcher. It emits search, the
 held Open, the unguarded Dig, the guarded walk/Dig/Attack/redig, the held puzzle
 box's own Open, one planned `puzzle-move` and the close that follows a solved
 board, and the collect that follows the last casket — no talk, deposit, or
-retry — and it never emits the exact `'clue solved'` string, never restores
-gear, and never returns a `done` status. `ownsEquipment` stays false.
+retry — and it finishes that collect on its own completion envelope: the exact
+`'clue solved'` status, then the live-token `grind-ready` continue, then the
+`done` the token dies on. `kind: 'done'` is this machine's own kind and is not
+hunt's `status: 'done'`; `status` stays `'continue'` on every one of them.
+Gear restore is deferred with strip-tracking, so `done` does not wait for it;
+`ownsEquipment` stays false and `retry()` does not exist.
 
 `clue.begin(input?)` takes the optional input and ignores every key: nothing
 but the token and the wrapper's generation is captured, so `enabled`, the pack
@@ -470,7 +474,10 @@ page, food and equipment stay script-owned and are re-read later. It returns
 `{ ok: true, value: { token } }` or a refusal. The identify is the landed
 order: `missing-selected-data`, then `family-unavailable:trails`, then
 `none-held`, then the row. A family absence is not `none-held`, and a refusal
-leaves **no** live token — a later pickup needs a new `begin`. A second `begin`
+leaves **no** live token — a later pickup needs a new `begin`. An identified
+row whose landed `access` is `"constrained"` — the packed 3554 clue, and only
+it — is refused the same way with `constrained`, so a validate that only ever
+meets that row is false and the sibling grind is not stolen. A second `begin`
 aborts the previous token and emits nothing for it.
 
 `clue.next({ token, resume? })` takes an object argument, not
@@ -482,10 +489,10 @@ a dead token is the error object, never `undefined` and never a continue kind.
 
 | `kind` | Meaning |
 | --- | --- |
-| `wait` | nothing this tick: frozen by pause/hold, or the session idled after `resume: false`, or the identified step was already reported, or — while collecting — the pages are still empty inside the reward window, or the posted pack page carried no `inv_size`; a dig row that has not arrived, or has no `Spade` on the posted pack page, waits the same way, and so does the guarded encounter with no wizard of the row family posted on the npc page — no spawn posted is no click and no Attack |
+| `wait` | nothing this tick: frozen by pause/hold, or the session idled after `resume: false`, or the identified step was already reported, or — while collecting — the pages are still empty inside the reward window, or the posted pack page carried no `inv_size`; a dig row that has not arrived waits the same way, and so does the guarded encounter with no wizard of the row family posted on the npc page — no spawn posted is no click and no Attack |
 | `callback.enabled` | re-read the script's `enabled()` and answer with `resume` on the next `next` |
 | `callback.log` | perform `log(message)` |
-| `callback.setStatus` | perform `setStatus(message)` — a progress string, never `'clue solved'` |
+| `callback.setStatus` | perform `setStatus(message)`: the identified step's progress line, and — on a finished collect — the exact `'clue solved'` string, which the machine posts and no adapter invents |
 | `walk` | a search row, an unguarded dig row or a guarded row that has not arrived: walk to `{ x, z, level }`, the decoded `trail_coord` |
 | `loc` | a search row that has arrived: interact with the picked loc, `{ x, z, level, action, id }` |
 | `npc` | a guarded row that has arrived and Dig its spawn: interact with the posted npc, `{ name, action: 'Attack', index }` — the posted scene index it was observed with |
@@ -494,23 +501,33 @@ a dead token is the error object, never `undefined` and never a continue kind.
 | `close-modal` | collecting: close the main modal the page posted open. The step carries nothing else — no interface id, no text. The held puzzle box's solved board is the same kind: the board is closed once, and never closed again while the step stays held |
 | `obj` | collecting: interact with the casket overflow on the posted tile, `{ x, z, level, name, action: 'Take' }` |
 | `puzzle-move` | a held puzzle box whose posted board is readable and not solved: click one piece of it, `{ id, slot, component, generation }` — the posted board row's own id and slot, the posted component and this call's `snapshot.puzzle_board_generation`. The host re-resolves that exact row and refuses a closed board, a stale slot and a stale generation; a sent click is not an observed move, so the next call re-reads the board and replans |
+| `supplies-needed` | an arrived dig — unguarded or the guarded first Dig — whose posted pack page carries no `Spade`: a named wait-class, not a terminal. The token stays live, nothing is fetched and no `no-spade` error is published |
+| `grind-ready` | the finished collect's continue: the trail is solved and no gear restore is pending, so the token stays live with no verb and the next call is `done` |
+| `done` | the finished collect's own end: the token is dead and the next call with it is `stale`. Never a hunt `status: 'done'` |
+| `dead` | any live call whose posted effective `hitpoints` is some and at or below zero: the token dies with the player, nothing posts `'clue solved'`, and a page that posted no stat is not a zero |
+| `abandon` | a terminal kind with **no production trigger** yet: the frozen leave-in-pack latch and its `retry()` are deferred with strip-tracking. When it is emitted the token dies and nothing posts `'clue solved'` |
+| `guardian-lost` | the wizard this token Attacked left the posted npc page outside the freeze-aware grace without ever being seen at zero health: the encounter is lost, the token dies and nothing redigs. A disappearance without an Attack stays `wait` |
 | `yield` | posted `hold \|\| ours`; the token stays live and this is not trail completion |
 
 The precedence on a live token is frozen clock → `wait`, else posted
-`hold || ours` → `yield`, else the identify, else `callback.*`. A frozen call
+`hold || ours` → `yield`, else a posted `hitpoints <= 0` → `dead`, else the
+identify, else `callback.*`. A frozen call
 burns nothing: the pending `enabled` question is still open after the thaw.
 `resume: false` idles the session with its token live — it is not `abandon`,
 not `done`, and not a completion — and the next gate re-reads instead of
 replaying that answer. `none-held` on a live session aborts it: the held
 membership went away, so the old token is dead. The one exception is the
 trail-end collect below: a `Steady` step whose casket `Open` was already
-dispatched survives `none-held` as `Collecting`, and the same `none-held`
-abort is how that collect finishes. Reset, stop and a generation
+dispatched survives `none-held` as `Collecting`, and that collect's own end is
+the `done` above rather than the `none-held` abort. Reset, stop and a generation
 bump abort silently; the machine emits no `h.interact` entry and no request op
 for them, and the first thing the caller hears about it is `stale` or
 `aborted`. A held step that is neither a casket, a search row, an unguarded dig
-row nor a guarded dig row — the packed 3554 `access: "constrained"` clue
-included — is identified and then idled: no action and no walk.
+row nor a guarded dig row — the desc-only riddles and the empty-params 2722 —
+is identified and then idled: no action and no walk. The packed 3554
+`access: "constrained"` clue is the one identified row the machine refuses
+instead of idling: `aborted` / `constrained`, no verb and no live token, which
+is the same refusal a `begin` on that row makes.
 
 A held row is a **search row** only when the selected family carries
 `trail_loc=^true` **and** a decodable `trail_coord` on that same row: five
@@ -551,9 +568,10 @@ an item id) and its `action` is `Open`, so the host resolves the first held
 inventory row with that name; no tile and no row id ride along. `held` repeats
 while that same casket id stays held, and a different held row re-arms the
 gate. The frozen clock and the posted `hold || ours` interrupt still win: a
-frozen call and a `yield` emit no `held`. When the casket leaves and nothing
-else in the trail family is held, the landed `none-held` still aborts the
-token — that is not completion, not `done`, and not `abandon`.
+frozen call and a `yield` emit no `held`. When the casket leaves before its own
+`Open` went out — still at the gate or the report — the landed `none-held`
+aborts the token; once the Open is out, that same `none-held` is the trail-end
+collect's entry below and the collect's own end is the `done`.
 
 Unlike `loc`, `held` is already a supported author `request` op (`V2_OPS`), and
 the machine's own step is enqueued onto the interact drain directly rather than
@@ -581,8 +599,8 @@ row id and no tile. `Dig` repeats while that same clue stays held — the host
 refuses an item it no longer holds — a casket the dig produced is the landed
 `Open` that follows, and a `none-held` right after a `Dig` still aborts: only
 the casket `Open` reaches the collect below. Arrived with no `Spade` on the
-posted pack page — or with no posted `here` at all, or still on the way — is
-`wait`: the token stays live and the next call re-reads the page. Nothing is
+posted pack page is the named `supplies-needed` step: the token stays live and
+the next call re-reads the page. Nothing is
 acquired and nothing is invented: no `ensureSpade`, no bank fetch, no ground
 scan, no public `no-spade` error and no `abandon`.
 
@@ -608,8 +626,10 @@ row family, and only a posted-on overlay leaves the Attack:
 | --- | --- |
 | `if-button` | a wizard of the row family is posted and this call's overlay varp (the selected Protect from Magic row's own varp) does not read `1`, including when the page did not post it: the machine clicks the row's own selected component and waits. An overlay already up skips the click, the click is never raised for a spawn that was not posted, and the fight never Attacks under an overlay that is off or unobserved. Nothing here nests `api.prayerSet`, waits a toggle timeout, or clears the prayer |
 | `npc` | the overlay reads up, a wizard of the row family is posted and this token owns no wizard yet: the posted row must be on the posted `here` level, carry `Attack`, and sit inside the frozen radius 12 — by its own posted `distance` when the page posted one, and by its own posted `x`/`z` tile measured from the posted `here` otherwise. The row targeting the player wins, else the nearest match, then posted order. The verb is `{ name, action: 'Attack', index }` with the posted name and the posted scene index, so the host refuses a stale index instead of taking a co-located row |
-| `wait` | no posted npc page, nothing of the row family posted, no name-and-action match on the `here` level inside the radius, a wizard that is still posted and alive, or an owned index that left the page only after the frozen grace — the nearest anything is never Attacked, the Attack is not re-issued, and there is no `guardian-lost` |
+| `wait` | no posted npc page, nothing of the row family posted, no name-and-action match on the `here` level inside the radius, or a wizard that is still posted and alive — the nearest anything is never Attacked, the Attack is not re-issued, and a posted `hitpoints` at or below zero is the `dead` terminal rather than a wait |
+| `guardian-lost` | the owned index left the page outside the freeze-aware grace without ever being seen at zero health: the encounter is lost, the token dies, and no redig follows. A disappearance without an Attack is not this kind |
 | `held` | the kill was observed: the walk back to the decoded tile and its Dig, which repeats while that same clue stays held, exactly like the unguarded Dig. A casket it produces is the landed casket-first Open |
+| `supplies-needed` | the first Dig has arrived and the posted pack page carries no `Spade`: the token stays live and the encounter never starts |
 
 The kill is the wizard this token Attacked: that owned index leaving the posted
 npc page inside a 6000ms grace the freeze never spends — the thaw reclaims the
@@ -618,9 +638,12 @@ its own stamps, so a pause longer than the remaining grace still ends in the
 kill — or that index posted at zero health beside a posted maximum while the
 page still shows this token's fight on it. An index this token never Attacked
 is never a kill — a disappearance without a prior Attack waits rather than
-Digging again. While the fight is on, a posted effective `hitpoints` at or
-below zero is a `wait` and never a public `dead`, and a page that posted no
-hitpoints is not a zero. The encounter survives `yield` and idle waits on its
+Digging again. That owned index gone outside the grace without ever being seen
+at zero health is `guardian-lost`: the encounter is lost with the token, and
+nothing redigs. While the fight is on, a posted effective `hitpoints` at or
+below zero is the `dead` terminal — the token dies with the player — and a page
+that posted no hitpoints is not a zero. The encounter survives `yield` and idle
+waits on its
 live token the way the casket `Open` does; a different held row, an abort and a
 reset drop it, so the row's next `Steady` walks and Digs its spawn again. All
 of those pages are this call's own marshalling of `host().snapshot` — the
@@ -631,13 +654,18 @@ overlay varp and the posted stat rows — so the machine caches no world copy,
 verbs — `next` enqueues them onto the interact drain directly, so
 `api.request({ op: 'npc' })` and
 `api.request({ op: 'if-button' })` stay `not impl` — and the guarded row emits
-no completion, no `supplies-needed`, no `dead` and no `guardian-lost`.
+no completion of its own: its only ends are `guardian-lost`, the `dead` any
+live call posts, and the `supplies-needed` of a first Dig that arrived without
+the `Spade`.
 
 The rows that are neither caskets, search rows, unguarded dig rows nor guarded
-dig rows stay identified then idle: the packed 3554 `access: "constrained"`
-clue, the desc-only riddles that carry no decodable `trail_coord` — except the
+dig rows stay identified then idle: the desc-only riddles that carry no
+decodable `trail_coord` — except the
 nine whose own `_puzzlebox` is the one the posted page holds, which are the
-held puzzle box below — and the empty-params `2722`. Every coord-bearing row
+held puzzle box below — and the empty-params `2722`. The packed 3554
+`access: "constrained"` clue is not one of them: it is refused with
+`aborted` / `constrained` and no live token, on a held step and on a `begin`
+alike. Every coord-bearing row
 without the `trail_loc` pin is the dig classify's instead, so it is the
 `trail_guardian` / `access` half of the classify — and the coord itself — that
 keeps these out: no frozen `type` table is copied, and a row that carries the
@@ -721,9 +749,25 @@ still held. The pack's fullness is the posted `inv_size` against the occupied
 positive-count rows; a page that did not post it is a `wait`, and the client's
 28 is not invented for it. A process that is full with nothing droppable logs
 the frozen WARNING and then finishes the same way; that is a log line through
-`callback.log`, not a new `HelperResult` error. Finishing is always the landed
-`none-held` abort — never `done`, never `'clue solved'`, never `abandon`.
-`close-modal`, `obj` and `loc` stay off `V2_OPS`, so
+`callback.log`, not a new `HelperResult` error.
+
+Finishing the collect is the machine's own three-step completion, one step per
+call and never the landed `none-held` abort:
+
+1. `callback.setStatus` with the exact `'clue solved'` string. The adapters
+   forward the machine's message; no adapter invents it and none remaps `done`
+   onto it.
+2. `grind-ready`: a continue kind with the token still live, no verb and no
+   delay. It fires because gear restore is not pending — restore is deferred
+   with strip-tracking and `done` does not wait for it.
+3. `done`: the token dies on it, so the next call with that token is `stale`
+   and a fresh `begin` is what a later pickup needs. It is this machine's
+   `kind`, not hunt's `status: 'done'`.
+
+Once the latch is armed nothing loots again — the completion runs before any
+identify — and a frozen call still waits with the latch where it is. A
+different held row and an abort drop the latch with the step. `close-modal`,
+`obj` and `loc` stay off `V2_OPS`, so
 `api.request({ op: 'close-modal' })` and `api.request({ op: 'obj' })` stay
 `not impl`, and `api.snapshot.ground` stays hidden.
 

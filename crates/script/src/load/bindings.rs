@@ -1634,25 +1634,28 @@ function cluePuzzleGeneration() {
     ? generation
     : null;
 }
-// Every continue step is this envelope. `yield` keeps the token live, so it
-// is not trail completion and never `status: 'done'`.
+// Every continue step is this envelope, the completion kinds included: the
+// machine's `kind` is what tells them apart, and `status: 'continue'` is this
+// helper's own slot — never hunt's `status: 'done'`.
 function clueStep(step) {
   return { ok: true, status: 'continue', token: step.token, ...step };
 }
 // A dead token is `stale`; the generation abort the machine reported is
 // `aborted`. The identify family's own tokens — the same three `begin`
 // preserves — survive here too: a live session that loses its held
-// membership reports `none-held`, not `stale`. Internal reasons are never
-// handed out as an ok kind.
+// membership reports `none-held`, not `stale`, and the packed 3554
+// `access: "constrained"` row reports `constrained`. Internal reasons are
+// never handed out as an ok kind.
 function clueStepError(reason) {
-  if (reason === 'aborted') return 'aborted';
+  if (reason === 'aborted' || reason === 'constrained') return reason;
   if (reason === 'missing-selected-data' || reason === 'family-unavailable:trails'
       || reason === 'none-held') return reason;
   return 'stale';
 }
-// The begin refusals are the identify family's own tokens; anything else
-// internal is `stale`.
+// The begin refusals are the identify family's own tokens plus the constrained
+// row's own refusal; anything else internal is `stale`.
 function clueBeginError(reason) {
+  if (reason === 'constrained') return reason;
   if (reason === 'missing-selected-data' || reason === 'family-unavailable:trails'
       || reason === 'none-held') return reason;
   return 'stale';
@@ -1734,6 +1737,15 @@ function enqueueClueVerb(step) {
     h.interact.push({ op: 'held', name: step.name, action: step.action });
     return;
   }
+  // The completion envelope is not a verb: `done`, `grind-ready`, `dead`,
+  // `abandon`, `supplies-needed` and `guardian-lost` are `next` kinds and never
+  // pushed onto the interact drain. The explicit returns keep them off the loc
+  // fall-through, so an unknown kind is never enqueued as a loc either.
+  if (step.kind === 'done' || step.kind === 'grind-ready' || step.kind === 'dead'
+      || step.kind === 'abandon' || step.kind === 'supplies-needed'
+      || step.kind === 'guardian-lost') {
+    return;
+  }
   h.interact.push({
     op: 'loc',
     x: step.x,
@@ -1786,8 +1798,9 @@ api.clue = {
   },
   // Owned-session begin over the landed held-step identify. Sync
   // HelperResult: a refused begin — no held membership row, no selected pin,
-  // no trail family — leaves no live token, so a later pickup needs a new
-  // begin. Extra input keys are ignored, not captured.
+  // no trail family, or the packed `access: "constrained"` row — leaves no
+  // live token, so a later pickup needs a new begin. Extra input keys are
+  // ignored, not captured.
   begin: function (input) {
     const step = clueCall({
       op: 'begin',
@@ -1808,14 +1821,18 @@ api.clue = {
   // npc page, the local-player slot and target pair, the posted Protect from
   // Magic overlay and the posted effective hitpoints. Kinds are `wait`,
   // `yield`, `callback.enabled`, `callback.log`, `callback.setStatus`,
-  // `held`, `walk`, `loc`, `close-modal`, `obj`, `npc` and `if-button` —
-  // never `done`. The puzzle-box arm adds the posted board and its session
-  // generation, and its `puzzle-move` kind. A `walk`, `held`, `loc`,
-  // `close-modal`, `obj`, `npc`, `if-button` or `puzzle-move` step is
-  // enqueued onto the interact drain like the journal's `if-button`, and the
-  // step is still returned as a continue object. A dead
-  // token is the error object, never `undefined` and never an `aborted`
-  // continue kind.
+  // `held`, `walk`, `loc`, `close-modal`, `obj`, `npc`, `if-button` and the
+  // completion envelope — `grind-ready`, `supplies-needed`, `done`, `dead`,
+  // `abandon` and `guardian-lost`. The completion kinds ride this same
+  // continue shape and are never enqueued; `done` is the finished collect's
+  // own kind, not a hunt `status: 'done'`, and the exact `'clue solved'`
+  // string is the machine's own `callback.setStatus` message. The puzzle-box
+  // arm adds the posted board and its session generation, and its
+  // `puzzle-move` kind. A `walk`, `held`, `loc`, `close-modal`, `obj`, `npc`,
+  // `if-button` or `puzzle-move` step is enqueued onto the interact drain like
+  // the journal's `if-button`, and the step is still returned as a continue
+  // object. A dead token is the error object, never `undefined` and never an
+  // `aborted` continue kind.
   next: function (input) {
     if (arguments.length === 0) return helperErr('invalid-args');
     if (input == null || typeof input !== 'object' || Array.isArray(input)) {
@@ -1874,6 +1891,15 @@ api.clue = {
     if (step.kind === 'wait' || step.kind === 'yield'
         || step.kind === 'callback.enabled' || step.kind === 'callback.log'
         || step.kind === 'callback.setStatus') {
+      return clueStep(step);
+    }
+    // The completion envelope rides the same continue shape: `grind-ready` is
+    // a live-token continue, `supplies-needed` the arrived dig's wait-class,
+    // and `done` / `dead` / `abandon` / `guardian-lost` are terminal kinds the
+    // machine emits once. None of them is a verb and none is enqueued.
+    if (step.kind === 'grind-ready' || step.kind === 'supplies-needed'
+        || step.kind === 'done' || step.kind === 'dead'
+        || step.kind === 'abandon' || step.kind === 'guardian-lost') {
       return clueStep(step);
     }
     return helperErr('stale');

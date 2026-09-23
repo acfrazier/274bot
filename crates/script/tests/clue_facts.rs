@@ -843,7 +843,7 @@ export function tick(api) {
     let data = api::game_data::for_revision(ClientRevision::R274).unwrap();
     let iso = LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data)
         .unwrap();
-    post_page(&iso, 1, &[(3554, 1)]);
+    post_page(&iso, 1, &[(2722, 1)]);
     iso.on_game_tick(1);
     let value: serde_json::Value =
         serde_json::from_str(iso.probe("globalThis.__probe").unwrap().as_str().unwrap()).unwrap();
@@ -873,8 +873,8 @@ export function tick(api) {
     // lines carry the landed identity only.
     assert!(value["denied"].get("message").is_none(), "{value:?}");
     let message = value["enabled"]["message"].as_str().unwrap_or("");
-    assert!(message.contains("trail_clue_hard_sextant028"), "{value:?}");
-    assert!(message.contains("3554"), "{value:?}");
+    assert!(message.contains("trail_clue_hard_map001"), "{value:?}");
+    assert!(message.contains("2722"), "{value:?}");
     assert!(!message.contains("clue solved"), "{value:?}");
     assert!(
         !value["status"]["message"]
@@ -926,12 +926,12 @@ export function tick(api) {
     let data = api::game_data::for_revision(ClientRevision::R274).unwrap();
     let iso = LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data)
         .unwrap();
-    post_page(&iso, 1, &[(3554, 1)]);
+    post_page(&iso, 1, &[(2831, 1)]);
     iso.on_game_tick(1);
     // A held challenge id is not a membership row: the live step is gone.
     post_page(&iso, 2, &[(2842, 1)]);
     iso.on_game_tick(2);
-    post_page(&iso, 3, &[(3554, 1)]);
+    post_page(&iso, 3, &[(2831, 1)]);
     iso.on_game_tick(3);
     let value: serde_json::Value =
         serde_json::from_str(iso.probe("globalThis.__probe").unwrap().as_str().unwrap()).unwrap();
@@ -1550,9 +1550,9 @@ export function tick(api) {
     assert!(iso.probe("true").is_ok());
     assert_eq!(iso.drain_interacts(), vec![casket_open()], "the Open repeats");
 
-    // Tick 5: the casket gone, the constrained clue left alone. The gate
-    // re-arms for 3554 — a different held row — and the packed clue is not a
-    // held Open.
+    // Tick 5: the casket gone, the constrained clue left alone. The live
+    // session identifies 3554 and refuses it — `aborted` / `constrained`, no
+    // verb, and the token dies with the refusal.
     post_page(&iso, 5, &[(3554, 1)]);
     iso.on_game_tick(5);
     assert!(iso.probe("true").is_ok());
@@ -1561,15 +1561,13 @@ export function tick(api) {
         "3554 is a clue, not a casket: nothing is opened for it"
     );
 
-    // Tick 6: the casket and every other membership row are gone. The live
-    // session reports its own identify token and dies — that is not trail
-    // completion, and it is not a collect.
+    // Tick 6: the dead token hears `stale`, whatever the page holds.
     post_page(&iso, 6, &[]);
     iso.on_game_tick(6);
     assert!(iso.probe("true").is_ok());
     assert!(
         iso.drain_interacts().is_empty(),
-        "a lost membership pushes nothing"
+        "a dead token pushes nothing"
     );
 
     let probed = iso.probe("globalThis.__probe").unwrap();
@@ -1595,22 +1593,27 @@ export function tick(api) {
         (5, "held"),
         (6, "yield"),
         (7, "held"),
-        (8, "callback.enabled"),
     ] {
         assert_eq!(steps[index]["kind"], kind, "{index} {value:?}");
     }
-    for index in 1..steps.len() - 1 {
+    for index in 1..steps.len() - 2 {
         let step = &steps[index];
         assert_eq!(step["ok"], true, "{index} {step}");
         assert_eq!(step["status"], "continue", "{index} {step}");
         assert_eq!(step["token"], *token, "{index} {step}");
         assert!(step.get("error").is_none(), "{index} {step}");
     }
-    // The empty page after the casket is the identify family's own refusal,
-    // never a continue kind and never a `done`.
+    // The constrained clue is the identify family's own refusal: no verb, no
+    // continue kind, and the token dies with it.
+    let constrained = &steps[8];
+    assert_eq!(constrained["ok"], false, "{value:?}");
+    assert_eq!(constrained["error"], "constrained", "{value:?}");
+    assert!(constrained.get("value").is_none(), "{value:?}");
+    assert_eq!(constrained["status"], serde_json::Value::Null, "{value:?}");
+    // And the dead token hears `stale`, never a resumed step.
     let lost = &steps[9];
     assert_eq!(lost["ok"], false, "{value:?}");
-    assert_eq!(lost["error"], "none-held", "{value:?}");
+    assert_eq!(lost["error"], "stale", "{value:?}");
     assert!(lost.get("value").is_none(), "{value:?}");
     assert_eq!(lost["status"], serde_json::Value::Null, "{value:?}");
     for index in [4, 5, 7] {
@@ -1638,10 +1641,10 @@ export function tick(api) {
 }
 
 /// The rows that are not search members stay identified then idle even with a
-/// fully walkable posted scene: packed 3554 is `access: "constrained"`, 2831
-/// is a desc-only frozen `keyFrom` riddle and 2722 is a clue row with no
-/// params at all — and none of them is a held casket, so none of them opens
-/// anything.
+/// fully walkable posted scene: 2831 is a desc-only frozen `keyFrom` riddle and
+/// 2722 is a clue row with no params at all — and neither is a held casket, so
+/// neither opens anything. The packed 3554 `access: "constrained"` clue is not
+/// idled: it is refused, which is the sibling test below.
 #[test]
 fn v2_clue_idle_rows_never_walk_or_search() {
     let src = r#"
@@ -1665,7 +1668,7 @@ export function tick(api) {
   }
 }
 "#;
-    for id in [3554, 2722, 2831] {
+    for id in [2722, 2831] {
         let actions = vec!["Search".to_string()];
         let locs = [scene_loc(25, 3209, 3218, 1, &actions)];
         let data = api::game_data::for_revision(ClientRevision::R274).unwrap();
@@ -1717,6 +1720,131 @@ export function tick(api) {
             assert!(step.get("x").is_none(), "{id} {step}");
             assert!(step.get("action").is_none(), "{id} {step}");
         }
+    }
+}
+
+/// The packed 3554 `access: "constrained"` clue over the public path: the
+/// machine refuses it — `clue.begin` answers `constrained` and leaves no token,
+/// and a live session that identifies it answers the same and dies — with no
+/// walk, no Dig, no Attack and no interact entry. Nothing invents a duel, a
+/// partner or an arena for it.
+#[test]
+fn v2_clue_constrained_row_is_refused_and_never_played() {
+    let src = r#"
+export const apiVersion = 2;
+export function tick(api) {
+  globalThis.__runs = (globalThis.__runs || 0) + 1;
+  if (globalThis.__runs === 1) {
+    // The packed clue is the only held step: the begin is refused and hands
+    // out no session at all.
+    globalThis.__refused = api.clue.begin();
+    return;
+  }
+  if (globalThis.__runs === 2) {
+    // A paramless row is a real step, so the session below has a token.
+    const begin = api.clue.begin();
+    globalThis.__token = begin.ok ? begin.value.token : null;
+    globalThis.__steps = [begin];
+    return;
+  }
+  globalThis.__steps.push(api.clue.next(
+    globalThis.__runs === 4
+      ? { token: globalThis.__token, resume: true }
+      : { token: globalThis.__token }));
+  if (globalThis.__runs === 6) {
+    globalThis.__probe = JSON.stringify({
+      refused: globalThis.__refused,
+      token: globalThis.__token,
+      steps: globalThis.__steps,
+    });
+  }
+}
+"#;
+    let data = api::game_data::for_revision(ClientRevision::R274).unwrap();
+    let iso = LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data)
+        .unwrap();
+    // A scene the search and dig arms would both play from: `here` on the
+    // picked loc and the Spade in the pack.
+    let actions = vec!["Search".to_string()];
+    let locs = [scene_loc(25, 3209, 3218, 1, &actions)];
+    let names = [(952, "Spade")];
+    let scene = Scene {
+        here: Some(TileInput {
+            x: 3209,
+            z: 3218,
+            level: 1,
+        }),
+        locs: &locs,
+        names: &names,
+        ..Scene::default()
+    };
+    let packed = [(3554, 1), (952, 1)];
+    let paramless = [(2722, 1), (952, 1)];
+
+    post_scene(&iso, 1, &packed, &scene);
+    iso.on_game_tick(1);
+    assert!(iso.probe("true").is_ok());
+    assert!(iso.drain_interacts().is_empty(), "the refusal is not a verb");
+
+    for tick in 2..=4 {
+        post_scene(&iso, tick, &paramless, &scene);
+        iso.on_game_tick(tick);
+        assert!(iso.probe("true").is_ok());
+        assert!(
+            iso.drain_interacts().is_empty(),
+            "tick {tick}: the idle row pushes no verb"
+        );
+    }
+    for tick in 5..=6 {
+        post_scene(&iso, tick, &packed, &scene);
+        iso.on_game_tick(tick);
+        assert!(iso.probe("true").is_ok());
+        assert!(
+            iso.drain_interacts().is_empty(),
+            "tick {tick}: a constrained row pushes no walk and no Dig"
+        );
+    }
+
+    let probed = iso.probe("globalThis.__probe").unwrap();
+    let value: serde_json::Value = serde_json::from_str(probed.as_str().unwrap()).unwrap();
+    let interacts = iso.drain_interacts();
+    iso.join();
+    assert!(interacts.is_empty(), "{interacts:?}");
+
+    // The begin refusal: the identify family's own shape, with no token.
+    assert_eq!(value["refused"]["ok"], false, "{value:?}");
+    assert_eq!(value["refused"]["error"], "constrained", "{value:?}");
+    assert!(value["refused"].get("value").is_none(), "{value:?}");
+    assert_eq!(
+        value["refused"]["status"],
+        serde_json::Value::Null,
+        "{value:?}"
+    );
+
+    let steps = value["steps"].as_array().expect("steps");
+    assert_eq!(steps.len(), 5, "{value:?}");
+    for (index, kind) in [(1, "callback.enabled"), (2, "callback.log")] {
+        assert_eq!(steps[index]["kind"], kind, "{index} {value:?}");
+    }
+    // The live session that identifies the packed clue: the same refusal, and
+    // the token dies with it.
+    assert_eq!(steps[3]["ok"], false, "{value:?}");
+    assert_eq!(steps[3]["error"], "constrained", "{value:?}");
+    assert!(steps[3].get("value").is_none(), "{value:?}");
+    assert_eq!(steps[3]["status"], serde_json::Value::Null, "{value:?}");
+    assert_eq!(steps[4]["ok"], false, "{value:?}");
+    assert_eq!(steps[4]["error"], "stale", "{value:?}");
+    let text = value.to_string();
+    for forbidden in [
+        "clue solved",
+        "\"done\"",
+        "abandon",
+        "supplies-needed",
+        "ownsEquipment",
+        "duel",
+        "arena",
+    ] {
+        assert!(!text.contains(forbidden), "{forbidden} {value:?}");
     }
 }
 
@@ -1958,9 +2086,9 @@ export function tick(api) {
 }
 
 /// The public no-Spade path: arrived on the decoded tile with a pack that does
-/// not post the Spade is a `wait` — the token stays live, nothing reaches the
-/// drain, and no token-killing `no-spade` error is published. The Dig is still
-/// there once the pack carries it.
+/// not post the Spade is the named `supplies-needed` wait-class — the token
+/// stays live, nothing reaches the drain, and no token-killing `no-spade` error
+/// is published. The Dig is still there once the pack carries it.
 #[test]
 fn v2_clue_unguarded_dig_row_waits_without_the_spade() {
     let src = r#"
@@ -2040,19 +2168,20 @@ export function tick(api) {
     iso.join();
     let steps = steps.as_array().expect("steps");
     assert_eq!(steps.len(), 7, "{value:?}");
-    // The reported step that arrived without the Spade waited, and the token
-    // was the same one that Digs once the pack posts it.
-    assert_eq!(steps[4]["kind"], "wait", "{value:?}");
+    // The reported step that arrived without the Spade is the named
+    // wait-class, on the live token that Digs once the pack posts it.
+    assert_eq!(steps[4]["kind"], "supplies-needed", "{value:?}");
+    assert_eq!(steps[4]["ok"], true, "{value:?}");
+    assert_eq!(steps[4]["status"], "continue", "{value:?}");
+    assert_eq!(steps[4]["token"], value["token"], "{value:?}");
+    for absent in ["name", "action", "x", "z", "level", "message", "id", "error"] {
+        assert!(steps[4].get(absent).is_none(), "{absent} {value:?}");
+    }
     assert_eq!(steps[5]["kind"], "held", "{value:?}");
     assert_eq!(steps[5]["token"], value["token"], "{value:?}");
+    assert_eq!(steps[6]["kind"], "yield", "{value:?}");
     let text = value.to_string();
-    for forbidden in [
-        "no-spade",
-        "abandon",
-        "supplies-needed",
-        "\"done\"",
-        "clue solved",
-    ] {
+    for forbidden in ["no-spade", "abandon", "\"done\"", "clue solved", "dead"] {
         assert!(!text.contains(forbidden), "{forbidden} {value:?}");
     }
 }
@@ -2913,6 +3042,335 @@ export function tick(api) {
     }
 }
 
+/// The public `dead` terminal: any live call whose posted effective
+/// `hitpoints` is at or below zero ends the session — no verb, no reason and
+/// never `'clue solved'` — and a page that posted no stat at all is not a
+/// zero.
+#[test]
+fn v2_clue_posted_hitpoints_at_zero_is_dead() {
+    let src = r#"
+export const apiVersion = 2;
+export function tick(api) {
+  globalThis.__runs = (globalThis.__runs || 0) + 1;
+  if (globalThis.__runs === 1) {
+    const begin = api.clue.begin();
+    globalThis.__token = begin.ok ? begin.value.token : null;
+    globalThis.__steps = [
+      begin,
+      api.clue.next({ token: globalThis.__token }),
+      api.clue.next({ token: globalThis.__token, resume: true }),
+      api.clue.next({ token: globalThis.__token }),
+    ];
+    return;
+  }
+  globalThis.__steps.push(api.clue.next({ token: globalThis.__token }));
+  if (globalThis.__runs === 5) {
+    globalThis.__probe = JSON.stringify({
+      token: globalThis.__token,
+      steps: globalThis.__steps,
+    });
+  }
+}
+"#;
+    let data = api::game_data::for_revision(ClientRevision::R274).unwrap();
+    let iso = LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data)
+        .unwrap();
+    let page = [(2677, 1)];
+    let downed = [StatInput {
+        index: 3,
+        name: "hitpoints",
+        xp: 0,
+        base: 40,
+        effective: 0,
+    }];
+    let healthy = [StatInput {
+        index: 3,
+        name: "hitpoints",
+        xp: 0,
+        base: 40,
+        effective: 40,
+    }];
+
+    // Tick 1: the session opens over the held row and idles — no posted
+    // `here`, so there is no arrival claim and no verb.
+    post_page(&iso, 1, &page);
+    iso.on_game_tick(1);
+    assert!(iso.probe("true").is_ok());
+    assert!(iso.drain_interacts().is_empty(), "no posted `here`, no verb");
+
+    // Tick 2: the page posts no stat row at all. That is not a zero.
+    post_scene(&iso, 2, &page, &Scene::default());
+    iso.on_game_tick(2);
+    assert!(iso.probe("true").is_ok());
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "a page with no `hitpoints` is not a death"
+    );
+
+    // Tick 3: a posted stat above zero is not one either.
+    post_scene(
+        &iso,
+        3,
+        &page,
+        &Scene {
+            stats: &healthy,
+            ..Scene::default()
+        },
+    );
+    iso.on_game_tick(3);
+    assert!(iso.probe("true").is_ok());
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "a live player is not a death"
+    );
+
+    // Tick 4: the posted effective hitpoints read zero: the terminal.
+    post_scene(
+        &iso,
+        4,
+        &page,
+        &Scene {
+            stats: &downed,
+            ..Scene::default()
+        },
+    );
+    iso.on_game_tick(4);
+    assert!(iso.probe("true").is_ok());
+    assert!(iso.drain_interacts().is_empty(), "a death pushes nothing");
+
+    // Tick 5: the token died with it.
+    post_scene(&iso, 5, &page, &Scene::default());
+    iso.on_game_tick(5);
+    assert!(iso.probe("true").is_ok());
+
+    let probed = iso.probe("globalThis.__probe").unwrap();
+    let value: serde_json::Value = serde_json::from_str(probed.as_str().unwrap()).unwrap();
+    let interacts = iso.drain_interacts();
+    iso.join();
+    assert!(interacts.is_empty(), "{interacts:?}");
+    let steps = value["steps"].as_array().expect("steps");
+    assert_eq!(steps.len(), 8, "{value:?}");
+    for (index, kind) in [
+        (1, "callback.enabled"),
+        (2, "callback.log"),
+        (3, "callback.setStatus"),
+        (4, "wait"),
+        (5, "wait"),
+        (6, "dead"),
+    ] {
+        assert_eq!(steps[index]["kind"], kind, "{index} {value:?}");
+    }
+    // The dead step is a bare continue kind: no verb, no reason and no solved
+    // mark. The token it carries is the dead one — the session's next call
+    // hears `stale` — which is the same post-bump number `aborted` reports.
+    assert_eq!(steps[6]["ok"], true, "{value:?}");
+    assert_eq!(steps[6]["status"], "continue", "{value:?}");
+    assert_ne!(
+        steps[6]["token"], value["token"],
+        "the death bumps the token it reports: {value:?}"
+    );
+    for absent in ["action", "name", "x", "z", "level", "message", "id", "error"] {
+        assert!(steps[6].get(absent).is_none(), "{absent} {value:?}");
+    }
+    // And the dead token hears `stale`, never a resumed step.
+    assert_eq!(steps[7]["ok"], false, "{value:?}");
+    assert_eq!(steps[7]["error"], "stale", "{value:?}");
+    assert!(
+        !value.to_string().contains("clue solved"),
+        "a death is never a solved mark: {value:?}"
+    );
+}
+
+/// The public `guardian-lost` terminal: the wizard this token Attacked leaves
+/// the posted npc page outside the freeze-aware 6000ms grace without ever
+/// being seen at zero health — the encounter is lost, the token dies and
+/// nothing redigs.
+#[test]
+fn v2_clue_owned_wizard_gone_outside_the_grace_is_guardian_lost() {
+    let src = r#"
+export const apiVersion = 2;
+export function tick(api) {
+  globalThis.__runs = (globalThis.__runs || 0) + 1;
+  if (globalThis.__runs === 1) {
+    const begin = api.clue.begin();
+    globalThis.__token = begin.ok ? begin.value.token : null;
+    globalThis.__steps = [begin];
+    return;
+  }
+  globalThis.__steps.push(api.clue.next(
+    globalThis.__runs === 3
+      ? { token: globalThis.__token, resume: true }
+      : { token: globalThis.__token }));
+  if (globalThis.__runs === 11) {
+    globalThis.__probe = JSON.stringify({
+      token: globalThis.__token,
+      runs: globalThis.__runs,
+      steps: globalThis.__steps,
+    });
+  }
+}
+"#;
+    let data = api::game_data::for_revision(ClientRevision::R274).unwrap();
+    let iso = LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data)
+        .unwrap();
+    let page = [(2723, 1), (952, 1)];
+    let names = [(952, "Spade")];
+    let attack = vec!["Attack".to_string()];
+    let wizard = scene_npc(7, "Zamorak Wizard", 3, 10, 10, &attack);
+    let overlay_off = [VarpInput { index: 95, value: 0 }];
+    let overlay_on = [VarpInput { index: 95, value: 1 }];
+    let far = TileInput {
+        x: 3100,
+        z: 3300,
+        level: 0,
+    };
+    let arrived = TileInput {
+        x: 3058,
+        z: 3884,
+        level: 0,
+    };
+
+    // Ticks 1-4: the begin and the landed report — nothing on the drain.
+    for tick in 1..=4 {
+        post_scene(&iso, tick, &page, &guarded_scene(far, &names, &[], &[], &[], false, false));
+        iso.on_game_tick(tick);
+        assert!(iso.probe("true").is_ok());
+        assert!(
+            iso.drain_interacts().is_empty(),
+            "tick {tick} pushes no verb"
+        );
+    }
+
+    // Tick 5: the walk to the decoded `0_47_60_50_44` tile.
+    post_scene(&iso, 5, &page, &guarded_scene(far, &names, &[], &[], &[], false, false));
+    iso.on_game_tick(5);
+    assert!(iso.probe("true").is_ok());
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::Walk {
+            x: 3058,
+            z: 3884,
+            level: 0,
+            allow_teleports: false,
+            allow_wilderness: false,
+            allow_bank_fetch: false,
+            request_id: 0,
+        }],
+        "the guarded row walks to its own selected pin"
+    );
+
+    // Tick 6: arrived with the Spade: the first Dig, which is the spawn.
+    post_scene(&iso, 6, &page, &guarded_scene(arrived, &names, &[], &overlay_off, &[], false, false));
+    iso.on_game_tick(6);
+    assert!(iso.probe("true").is_ok());
+    assert_eq!(iso.drain_interacts(), vec![spade_dig()], "the spawn Dig");
+
+    // Tick 7: the wizard posted with the overlay off: the landed click.
+    post_scene(
+        &iso,
+        7,
+        &page,
+        &guarded_scene(arrived, &names, &[wizard], &overlay_off, &[], false, false),
+    );
+    iso.on_game_tick(7);
+    assert!(iso.probe("true").is_ok());
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::IfButton { component_id: 5621 }],
+        "the overlay off is the click and never an Attack"
+    );
+
+    // Tick 8: the overlay reads up: the one Attack, at the posted index.
+    post_scene(
+        &iso,
+        8,
+        &page,
+        &guarded_scene(arrived, &names, &[wizard], &overlay_on, &[], false, false),
+    );
+    iso.on_game_tick(8);
+    assert!(iso.probe("true").is_ok());
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::Npc {
+            name: "Zamorak Wizard".to_string(),
+            action: "Attack".to_string(),
+            index: Some(7),
+        }],
+        "the Attack owns the posted index"
+    );
+
+    // Tick 9: the owned wizard is still posted and alive: the fight waits, and
+    // this call is the last-seen the grace is measured from.
+    post_scene(
+        &iso,
+        9,
+        &page,
+        &guarded_scene(arrived, &names, &[wizard], &overlay_on, &[], false, false),
+    );
+    iso.on_game_tick(9);
+    assert!(iso.probe("true").is_ok());
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "the owned wizard is posted and alive"
+    );
+
+    // The grace is real time: past it the owned index leaving the page is no
+    // longer this token's kill.
+    std::thread::sleep(std::time::Duration::from_millis(6_100));
+    post_scene(&iso, 10, &page, &guarded_scene(arrived, &names, &[], &overlay_on, &[], false, false));
+    iso.on_game_tick(10);
+    assert!(iso.probe("true").is_ok());
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "a lost wizard is no walk and no redig"
+    );
+
+    // Tick 11: the token died with the encounter.
+    post_scene(&iso, 11, &page, &guarded_scene(arrived, &names, &[], &overlay_on, &[], false, false));
+    iso.on_game_tick(11);
+    assert!(iso.probe("true").is_ok());
+
+    let probed = iso.probe("globalThis.__probe").unwrap();
+    let value: serde_json::Value = serde_json::from_str(probed.as_str().unwrap()).unwrap();
+    let interacts = iso.drain_interacts();
+    iso.join();
+    assert!(interacts.is_empty(), "{interacts:?}");
+    let steps = value["steps"].as_array().expect("steps");
+    assert_eq!(steps.len(), 11, "{value:?}");
+    for (index, kind) in [
+        (1, "callback.enabled"),
+        (2, "callback.log"),
+        (3, "callback.setStatus"),
+        (4, "walk"),
+        (5, "held"),
+        (6, "if-button"),
+        (7, "npc"),
+        (8, "wait"),
+        (9, "guardian-lost"),
+    ] {
+        assert_eq!(steps[index]["kind"], kind, "{index} {value:?}");
+    }
+    // The loss is a bare continue kind: no verb, no reason, no solved mark,
+    // and no `stale` for the step that carried it. The token it carries is the
+    // dead one, the same post-bump number `aborted` reports.
+    assert_eq!(steps[9]["ok"], true, "{value:?}");
+    assert_eq!(steps[9]["status"], "continue", "{value:?}");
+    assert_ne!(
+        steps[9]["token"], value["token"],
+        "the loss bumps the token it reports: {value:?}"
+    );
+    for absent in ["action", "name", "x", "z", "level", "message", "id", "error"] {
+        assert!(steps[9].get(absent).is_none(), "{absent} {value:?}");
+    }
+    // The encounter ended with the token: the next call is `stale`.
+    assert_eq!(steps[10]["ok"], false, "{value:?}");
+    assert_eq!(steps[10]["error"], "stale", "{value:?}");
+    let text = value.to_string();
+    for forbidden in ["clue solved", "abandon", "supplies-needed", "\"done\""] {
+        assert!(!text.contains(forbidden), "{forbidden} {value:?}");
+    }
+}
+
 /// The guarded encounter's npc page is the locked marshal: `clue.next` is
 /// handed the posted index, id, name, tile, distance, health pair, `in_combat`
 /// flag, actions and target pair and nothing else, so the machine's same-level
@@ -3152,20 +3610,24 @@ export function tick(api) {
         "the drain holds the probe's own `held` request"
     );
 
-    // Past the window the loot is over: the landed `none-held` abort, never
-    // `done` and never `'clue solved'`.
+    // Past the window the collect is over: the machine's own completion, one
+    // step per call — the exact `'clue solved'` status, then the live-token
+    // grind handback, then `done`, which kills the token.
     std::thread::sleep(std::time::Duration::from_millis(2_100));
-    post_scene(
-        &iso,
-        10,
-        &[],
-        &Scene {
-            here: Some(here),
-            main_modal_id: -1,
-            ..Scene::default()
-        },
-    );
-    iso.on_game_tick(10);
+    let empty = Scene {
+        here: Some(here),
+        main_modal_id: -1,
+        ..Scene::default()
+    };
+    for tick in 10..=12 {
+        post_scene(&iso, tick, &[], &empty);
+        iso.on_game_tick(tick);
+        assert!(iso.probe("true").is_ok());
+        assert!(
+            iso.drain_interacts().is_empty(),
+            "tick {tick}: the completion pushes no verb"
+        );
+    }
     let steps: serde_json::Value = serde_json::from_str(
         iso.probe("JSON.stringify(globalThis.__steps)")
             .unwrap()
@@ -3224,14 +3686,33 @@ export function tick(api) {
     }
     assert_eq!(value["invSizeType"], "number", "{value:?}");
 
-    let last = steps.as_array().expect("steps").last().expect("last step");
-    assert_eq!(last["ok"], false, "{last}");
-    assert_eq!(last["error"], "none-held", "{last}");
-    assert!(last.get("value").is_none(), "{last}");
-    assert_eq!(last["status"], serde_json::Value::Null, "{last}");
-    let text = value.to_string();
-    for forbidden in ["clue solved", "ownsEquipment", "\"done\""] {
-        assert!(!text.contains(forbidden), "{forbidden} {value:?}");
+    let collected = steps.as_array().expect("steps");
+    assert_eq!(collected.len(), 12, "{steps:?}");
+    assert_eq!(collected[9]["kind"], "callback.setStatus", "{steps:?}");
+    assert_eq!(collected[9]["message"], "clue solved", "{steps:?}");
+    assert_eq!(collected[9]["token"], value["token"], "{steps:?}");
+    assert_eq!(collected[10]["kind"], "grind-ready", "{steps:?}");
+    assert_eq!(collected[10]["ok"], true, "{steps:?}");
+    assert_eq!(collected[10]["status"], "continue", "{steps:?}");
+    assert_eq!(
+        collected[10]["token"], value["token"],
+        "the grind handback keeps the live token: {steps:?}"
+    );
+    assert_eq!(collected[11]["kind"], "done", "{steps:?}");
+    assert_eq!(collected[11]["ok"], true, "{steps:?}");
+    assert_eq!(collected[11]["status"], "continue", "{steps:?}");
+    for absent in ["action", "name", "x", "z", "level", "message", "id", "error"] {
+        assert!(collected[11].get(absent).is_none(), "{absent} {steps:?}");
+    }
+    let text = steps.to_string();
+    for forbidden in ["abandon", "supplies-needed", "ownsEquipment"] {
+        assert!(!text.contains(forbidden), "{forbidden} {steps:?}");
+    }
+    // The run-9 snapshot is the collect before the finish: it never carried
+    // the solved mark, so the mark is the latch's and nothing else's.
+    let early = value.to_string();
+    for forbidden in ["clue solved", "\"done\"", "grind-ready"] {
+        assert!(!early.contains(forbidden), "{forbidden} {value:?}");
     }
 }
 
@@ -3262,10 +3743,10 @@ export function tick(api) {
   }
 }
 "#;
-    // The next scroll (the packed 3554 clue) and a leftover casket: identify
+    // The next scroll (a desc-only riddle) and a leftover casket: identify
     // returns a step for both, so collect never runs.
     for (id, final_kind, alias) in [
-        (3554, "wait", "trail_clue_hard_sextant028"),
+        (2831, "wait", "trail_clue_medium_riddle001"),
         (3531, "held", "trail_clue_hard_sextant016_casket"),
     ] {
         let data = api::game_data::for_revision(ClientRevision::R274).unwrap();
@@ -3535,11 +4016,27 @@ export function tick(api) {
         "the WARNING is a log line, not a verb"
     );
 
-    // Tick 7: the WARNING ended the collect.
-    post_scene(&iso, 7, &no_food, &scene);
-    iso.on_game_tick(7);
+    // Ticks 7-9: the WARNING ended the collect, so the collect's own
+    // completion follows — the exact `'clue solved'` status, the live-token
+    // grind handback, then `done`, which kills the token.
+    for tick in 7..=9 {
+        post_scene(&iso, tick, &no_food, &scene);
+        iso.on_game_tick(tick);
+        assert!(iso.probe("true").is_ok());
+        assert!(
+            iso.drain_interacts().is_empty(),
+            "tick {tick}: the completion is not a verb"
+        );
+    }
     let probed = iso.probe("globalThis.__probe").unwrap();
     let value: serde_json::Value = serde_json::from_str(probed.as_str().unwrap()).unwrap();
+    let collected: serde_json::Value = serde_json::from_str(
+        iso.probe("JSON.stringify(globalThis.__steps)")
+            .unwrap()
+            .as_str()
+            .unwrap(),
+    )
+    .unwrap();
     let interacts = iso.drain_interacts();
     iso.join();
     assert!(interacts.is_empty(), "{interacts:?}");
@@ -3551,13 +4048,32 @@ export function tick(api) {
         "{value:?}"
     );
     assert_eq!(steps[5]["token"], value["token"], "{value:?}");
-    let last = steps.last().expect("last step");
-    assert_eq!(last["ok"], false, "{last}");
-    assert_eq!(last["error"], "none-held", "{last}");
-    assert!(last.get("value").is_none(), "{last}");
-    let text = value.to_string();
-    for forbidden in ["clue solved", "\"done\"", "abandon", "ownsEquipment"] {
-        assert!(!text.contains(forbidden), "{forbidden} {value:?}");
+    let collected = collected.as_array().expect("steps");
+    assert_eq!(collected.len(), 9, "{collected:?}");
+    assert_eq!(collected[6]["kind"], "callback.setStatus", "{collected:?}");
+    assert_eq!(collected[6]["message"], "clue solved", "{collected:?}");
+    assert_eq!(collected[6]["token"], value["token"], "{collected:?}");
+    assert_eq!(collected[7]["kind"], "grind-ready", "{collected:?}");
+    assert_eq!(collected[7]["ok"], true, "{collected:?}");
+    assert_eq!(collected[7]["status"], "continue", "{collected:?}");
+    assert_eq!(
+        collected[7]["token"], value["token"],
+        "the grind handback keeps the live token: {collected:?}"
+    );
+    assert_eq!(collected[8]["kind"], "done", "{collected:?}");
+    assert_eq!(collected[8]["ok"], true, "{collected:?}");
+    assert_eq!(collected[8]["status"], "continue", "{collected:?}");
+    // The run-7 snapshot ends on the collect's own finish, so the solved mark
+    // is nowhere before it: the Open and the WARNING never carry it.
+    for index in [4, 5] {
+        assert!(
+            !steps[index].to_string().contains("clue solved"),
+            "{index} {value:?}"
+        );
+    }
+    let early = value.to_string();
+    for forbidden in ["abandon", "ownsEquipment"] {
+        assert!(!early.contains(forbidden), "{forbidden} {value:?}");
     }
 }
 

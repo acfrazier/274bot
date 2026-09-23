@@ -35,10 +35,11 @@
 //! dispatches the generic held step with the selected item display `Spade` and
 //! the frozen `Dig`. The Sextant/Watch/Chart trio the guarded sibling's pin
 //! stands for is never required, never waited for and never acquired. A pack
-//! that does not post the `Spade` is a `wait`, never an `abandon` and never a
-//! `no-spade` token. Dig repeats while that same clue stays held, a produced
-//! casket Opens instead, and a `none-held` right after a Dig still aborts:
-//! Collecting is the casket Open's alone.
+//! that does not post the `Spade` on an arrived call is the named
+//! `supplies-needed` wait-class — the token lives, nothing is fetched, and it
+//! is never an `abandon` and never a `no-spade` token. Dig repeats while that
+//! same clue stays held, a produced casket Opens instead, and a `none-held`
+//! right after a Dig still aborts: Collecting is the casket Open's alone.
 //!
 //! The guarded sibling of that pin is the encounter. A decodable selected
 //! `trail_coord` on a row with no `trail_loc`, `trail_sextant=yes`, a
@@ -59,8 +60,9 @@
 //! index leaving the page inside the frozen grace. Only a kill walks back to
 //! the decoded tile and Digs again, and that Dig repeats while the same clue
 //! stays held. An index this token never Attacked is never a kill: a
-//! disappearance without one waits, an index gone outside the grace waits, and
-//! this machine has no `guardian-lost`.
+//! disappearance without one waits. An owned index gone outside the grace —
+//! without ever being seen at zero health — is `guardian-lost`: the encounter
+//! is lost, the token dies with it and nothing redigs.
 //! A freeze reclaims the owned last-seen on the thaw the way the landed hunt
 //! fight shifts its own stamps, so a frozen session never spends the grace.
 //!
@@ -84,13 +86,21 @@
 //! casket — leaves the phase and re-arms the landed gate. Collecting is only
 //! ever reached from `Steady` on a casket whose Open went out, and every other
 //! `none-held` (begin, gate, report, search, idle) still aborts. Collect
-//! finishes with that same `none-held` abort — never `status: "done"`, never
-//! `'clue solved'`, never `abandon` — and it idles until the frozen reward
-//! window has passed when its pages are still empty.
+//! finishes on its own three-step exit — the exact `'clue solved'` status,
+//! then the live-token `grind-ready` continue, then the `done` the token dies
+//! on — armed once the reward window has passed with nothing left to take, or
+//! once the pack-full WARNING has been logged. The latch is the collect's, so
+//! a latched session never loots again, and a frozen call waits it out.
 //!
-//! Every other held step — the packed 3554 `access: "constrained"` clue, the
-//! desc-only key-gated riddles with no decodable coord and the empty-params
-//! 2722 — is identified and then idled: no action and no walk.
+//! Every other held step — the desc-only key-gated riddles with no decodable
+//! coord and the empty-params 2722 — is identified and then idled: no action
+//! and no walk. The packed 3554 `access: "constrained"` clue is the one
+//! identified row this machine refuses instead: `aborted` / `constrained`, no
+//! verb, no token — and a begin that identifies it is refused the same way.
+//!
+//! A posted effective `hitpoints` at or below zero is `dead` on any live
+//! call: the token dies with the player and nothing posts `'clue solved'`. A
+//! page that posted no stat is not a zero.
 //!
 //! The one desc-only exception is the held puzzle box. An identified row whose
 //! own selected `{alias}_puzzlebox` item is held — the nine hard riddles, and
@@ -110,8 +120,10 @@
 //!
 //! Identify is casket-first, so a casket held beside its own clue is the
 //! Open and never 3554 play. Yield keeps the token live, so it is not trail
-//! completion, and this machine never returns `status: "done"`, never
-//! restores gear, and never emits the exact `'clue solved'` string.
+//! completion: the completion kinds are the finished collect's alone, this
+//! machine never returns a hunt `status: "done"`, and it never restores gear —
+//! restore is the deferred strip-tracking slice, so `grind-ready` fires
+//! because nothing is pending.
 //!
 //! One token per isolate. A second begin, reset and stop abort the live token
 //! and emit no verb for it. Pause and hold freeze this machine's own clock,
@@ -142,6 +154,36 @@ const STALE: &str = "stale";
 /// The live session was aborted out from under the token by the generation
 /// bump (reset / stop). The token is dead and nothing is emitted for it.
 const ABORTED: &str = "aborted";
+
+/// The exact completion status a finished collect posts: eleven characters,
+/// lowercase, one space. This is the machine's own seat — the adapters forward
+/// `callback.setStatus` and never remap another kind onto it.
+const CLUE_SOLVED: &str = "clue solved";
+
+/// The live-token continue kind between that status and `done`: the trail is
+/// solved and no gear restore is pending, so the sibling grind may take the
+/// next tick. No verb rides it and the token stays live.
+const GRIND_READY: &str = "grind-ready";
+
+/// The finished collect's own end: the token dies with it, so the next call
+/// with that token is `stale`. Never a hunt `status: "done"` — it is this
+/// machine's own `kind`.
+const DONE: &str = "done";
+
+/// The posted effective hitpoints at or below zero kill the token. A page that
+/// posted no stat at all is not a zero. Amends the mid-fight wait the guarded
+/// encounter used to keep.
+const DEAD: &str = "dead";
+
+/// An arrived dig with no posted `Spade`: a named wait-class and not a
+/// terminal. The token stays live, nothing is fetched, and no `no-spade` token
+/// is ever published.
+const SUPPLIES_NEEDED: &str = "supplies-needed";
+
+/// The wizard this token owned left the posted page outside the freeze-aware
+/// grace without a health-0 kill: the encounter is gone and the token dies
+/// with it. A disappearance without an Attack is not this kind.
+const GUARDIAN_LOST: &str = "guardian-lost";
 
 /// The frozen `REWARD_WAIT_MS`: the window the reward interface and the first
 /// loot row have to appear after the Open. Armed once on Collecting entry and
@@ -280,8 +322,23 @@ enum Phase {
     /// Trail-end collect: `Steady` on the step whose casket Open went out, and
     /// this call's identify is `none-held`. The one phase that survives
     /// `none-held` — the token lives and the loot verbs are dispatched from
-    /// here, one per call, until the same `none-held` abort ends the session.
+    /// here, one per call. Once the collect is over it runs the three-step
+    /// completion below and the token dies.
     Collecting,
+}
+
+/// The finished collect's own exit, latched on the live token: the exact
+/// `'clue solved'` status, then the `grind-ready` continue kind, then `done`.
+/// While the latch is armed nothing loots again — `next` answers the latch
+/// before it identifies — and the frozen clock still wins, so a frozen call
+/// waits with the latch where it is. Step-scoped like `open`: a re-arm, a
+/// different held row and an abort all drop it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Completion {
+    /// The collect is over and the status has not been posted yet.
+    Solved,
+    /// The status went out: `grind-ready` is next, and `done` after it.
+    GrindReady,
 }
 
 /// The live guarded encounter on the identified clue row: the wizard this
@@ -389,8 +446,12 @@ struct ClueRuntime {
     /// observation, one call later.
     pending_take: Option<Take>,
     /// The frozen `pack-full-no-food` WARNING is logged: the collect is over
-    /// (not `done`) and the next Collecting call is the `none-held` abort.
+    /// and the next Collecting call runs the completion latch rather than a
+    /// second warning.
     full_no_food: bool,
+    /// The finished collect's own three-step exit. `None` until the collect is
+    /// over, then the step that has not gone out yet — the completion latch.
+    completion: Option<Completion>,
     /// The live guarded encounter: absent until this token's first Dig on a
     /// guarded row went out, then owned by this token until a different held
     /// row, an abort or the frozen reset clears it. Like `open`, it is the
@@ -415,6 +476,7 @@ impl ClueRuntime {
             discarded: Vec::new(),
             pending_take: None,
             full_no_food: false,
+            completion: None,
             guardian: None,
             puzzle: None,
         }
@@ -459,15 +521,16 @@ impl ClueRuntime {
 
     /// The step-scoped state a re-arm, a leave and an abort all drop: the
     /// dispatched Open with its `hard` capture, the collect deadline, the
-    /// discarded ground ids, the settled-Take watch, the guarded encounter's
-    /// owned wizard and post-kill flag, and the live puzzle-box attempt with
-    /// its latch.
+    /// discarded ground ids, the settled-Take watch, the completion latch, the
+    /// guarded encounter's owned wizard and post-kill flag, and the live
+    /// puzzle-box attempt with its latch.
     fn clear_step(&mut self) {
         self.open = None;
         self.clock.deadline = None;
         self.discarded.clear();
         self.pending_take = None;
         self.full_no_food = false;
+        self.completion = None;
         self.guardian = None;
         self.puzzle = None;
     }
@@ -507,6 +570,44 @@ impl ClueRuntime {
         json!({ "kind": kind, "token": self.token })
     }
 
+    /// One terminal kind the token dies on — `dead`, `guardian-lost` and the
+    /// `done` a finished collect ends on. The latch is the abort: the next call
+    /// with that token is `stale` and the next begin is a fresh session.
+    fn ended(&mut self, kind: &str) -> Value {
+        self.abort();
+        self.emit(kind)
+    }
+
+    /// The posted effective hitpoints at or below zero: the player died, so
+    /// the token dies with them. Freeze and yield still win, and a page that
+    /// posted no stat is not a zero.
+    fn dead(&mut self) -> Value {
+        self.ended(DEAD)
+    }
+
+    /// The finished collect's own exit, one step per call: the exact
+    /// `'clue solved'` status, then the live-token `grind-ready` continue, then
+    /// `done` — the abort the token dies on. The first call also arms the
+    /// latch, so the collect never loots again; nothing about the solved trail
+    /// is looked at beyond it.
+    fn finish(&mut self) -> Value {
+        match self.completion {
+            None => {
+                self.completion = Some(Completion::Solved);
+                json!({
+                    "kind": "callback.setStatus",
+                    "token": self.token,
+                    "message": CLUE_SOLVED,
+                })
+            }
+            Some(Completion::Solved) => {
+                self.completion = Some(Completion::GrindReady);
+                self.emit(GRIND_READY)
+            }
+            Some(Completion::GrindReady) => self.ended(DONE),
+        }
+    }
+
     fn begin(&mut self, selected: Option<&SelectedGameData>, input: &Value) -> Value {
         // A second begin aborts the live token first and emits nothing for
         // it: begin has no continue kind, and a refused begin is still a
@@ -516,6 +617,12 @@ impl ClueRuntime {
             Ok(row) => row,
             Err(reason) => return self.aborted(reason),
         };
+        if row.access.as_deref() == Some(CONSTRAINED) {
+            // The one identified row this machine will not play: the packed
+            // 3554 clue's own selected bound. The refusal is the same one a
+            // live session makes, and no token is handed out for it.
+            return self.aborted(CONSTRAINED);
+        }
         self.token = self.token.wrapping_add(1);
         self.phase = Phase::Gate;
         // Strictly captured: `next` requires the same generation to be
@@ -547,6 +654,18 @@ impl ClueRuntime {
             // lives and the step is not trail completion.
             return self.emit("yield");
         }
+        // The posted effective hitpoints kill the token before anything else
+        // this call could do, whatever phase the session was in. A page that
+        // posted no stat at all is not a zero, and the frozen clock and the
+        // interrupt above still win over it.
+        if posted_i32(input, "hitpoints").is_some_and(|hp| hp <= 0) {
+            return self.dead();
+        }
+        if self.completion.is_some() {
+            // The collect is over and latched: its own exit runs before any
+            // identify, so a latched session never loots and never re-arms.
+            return self.finish();
+        }
         // One identify per call, and the same landed `identify_step` the
         // machine always made: membership is never re-derived here. The only
         // seam is `none-held`, which a Collecting token — or the Steady step
@@ -560,6 +679,11 @@ impl ClueRuntime {
             self.enter_collect();
             return self.collect(selected, input);
         };
+        if row.access.as_deref() == Some(CONSTRAINED) {
+            // The packed 3554 clue's own bound, held by a live session: the
+            // same refusal a begin makes — no verb, no walk and no token left.
+            return self.aborted(CONSTRAINED);
+        }
         if self.step_id != row.id {
             // A different step is held: the previous progress and its
             // `enabled` answer belong to the old row, so this call re-asks
@@ -657,8 +781,10 @@ impl ClueRuntime {
     /// `6960` is not a second open-modal definition.
     fn collect(&mut self, selected: Option<&SelectedGameData>, input: &Value) -> Value {
         if self.full_no_food {
-            // The WARNING was the last thing this collect had to say.
-            return self.aborted(NONE_HELD);
+            // The WARNING was the last thing this collect had to say: the exit
+            // is the machine's own completion, never a second warning and
+            // never the landed `none-held` abort.
+            return self.finish();
         }
         if let Some(take) = self.settled_take(input) {
             return json!({
@@ -721,11 +847,11 @@ impl ClueRuntime {
 
     /// Nothing on this call's page to close and nothing to take. Before the
     /// bound the reward may still be posting — the frozen `REWARD_WAIT_MS`
-    /// window — and after it the loot is over: the finish is the landed
-    /// `none-held` abort, never `done`, never `abandon`.
+    /// window — and after it the collect is over: the exit is the machine's own
+    /// three-step completion, never the landed `none-held` abort.
     fn empty(&mut self) -> Value {
         if self.clock.bound_reached() {
-            return self.aborted(NONE_HELD);
+            return self.finish();
         }
         self.emit("wait")
     }
@@ -1076,12 +1202,13 @@ impl ClueRuntime {
     /// unguarded arm, and the verb that spawns the wizard. The encounter is
     /// created from that Dig and from nothing else — a call that is still
     /// walking, has no posted `here`, or has no posted Spade waits without one
-    /// and the fight never starts early.
+    /// (the arrived no-Spade tick as the named `supplies-needed` class) and the
+    /// fight never starts early.
     fn spawn(&mut self, tile: Tile, input: &Value) -> Value {
         match arrival(tile, input) {
             Arrival::Unknown => self.emit("wait"),
             Arrival::Walking => self.walk(tile),
-            Arrival::Arrived if !spade_posted(input) => self.emit("wait"),
+            Arrival::Arrived if !spade_posted(input) => self.emit(SUPPLIES_NEEDED),
             Arrival::Arrived => {
                 self.guardian = Some(Guardian {
                     owned: None,
@@ -1115,12 +1242,6 @@ impl ClueRuntime {
         input: &Value,
         selected: Option<&SelectedGameData>,
     ) -> Value {
-        if posted_i32(input, "hitpoints").is_some_and(|hp| hp <= 0) {
-            // The posted effective hitpoints at zero: the frozen mid-fight
-            // wait, with no verb at all and never a public `dead`. A page that
-            // posted no stat at all is not a zero.
-            return self.emit("wait");
-        }
         let Some(page) = input.get("npcs").and_then(Value::as_array) else {
             // No posted npc page this call: no spawn is posted, so there is
             // nothing to observe and nothing to raise the overlay for. The
@@ -1143,8 +1264,9 @@ impl ClueRuntime {
                 .find(|row| posted_i32(row, "index") == Some(index))
             else {
                 // The owned index left the page. Inside the frozen grace that
-                // is this token's kill; outside it the fight waits — never a
-                // `guardian-lost`.
+                // is this token's kill; outside it the wizard is gone without
+                // ever being seen at zero health, so the encounter is lost and
+                // the token dies with it — never a redig.
                 let within = self
                     .guardian
                     .as_ref()
@@ -1154,7 +1276,7 @@ impl ClueRuntime {
                             < Duration::from_millis(KILL_GRACE_MS)
                     });
                 if !within {
-                    return self.emit("wait");
+                    return self.ended(GUARDIAN_LOST);
                 }
                 self.kill();
                 return self.dig(tile, input);
@@ -1242,17 +1364,17 @@ impl ClueRuntime {
     /// same level and Chebyshev `ARRIVE_RADIUS` — and the walk repeats until it
     /// holds, because arrival is a posted fact and not a walk receipt. A tick
     /// with no posted `here` has no arrival claim to make. A tick that arrived
-    /// without the `Spade` on the posted pack page is the same `wait`: the
-    /// frozen `no Spade held` refusal is not this machine's token, nothing is
-    /// acquired, and the token stays live for the pack that posts it. Dig
-    /// repeats while this same clue id stays held, the way the casket's Open
-    /// does, and a `none-held` after it still aborts.
+    /// without the `Spade` on the posted pack page is the named
+    /// `supplies-needed` wait-class: the frozen `no Spade held` refusal is not
+    /// this machine's token, nothing is acquired, and the token stays live for
+    /// the pack that posts it. Dig repeats while this same clue id stays held,
+    /// the way the casket's Open does, and a `none-held` after it still aborts.
     fn dig(&self, tile: Tile, input: &Value) -> Value {
         match arrival(tile, input) {
             Arrival::Unknown => self.emit("wait"),
             Arrival::Walking => self.walk(tile),
             Arrival::Arrived if spade_posted(input) => self.dig_verb(),
-            Arrival::Arrived => self.emit("wait"),
+            Arrival::Arrived => self.emit(SUPPLIES_NEEDED),
         }
     }
 
@@ -1941,8 +2063,9 @@ fn progress(row: &TrailMembershipRow) -> String {
     format!("clue step held: {} {} [{}]", row.role, row.alias, row.id)
 }
 
-/// Status line for the identified step. Trail completion — `done`, restore,
-/// then the exact `'clue solved'` string — is a later slice, not this one.
+/// Status line for the identified step: the landed alias only, the progress
+/// string the `Reporting` call posts. The exact `'clue solved'` status is the
+/// finished collect's own, posted by `finish`, and never a progress line.
 fn status(row: &TrailMembershipRow) -> String {
     format!("clue: {}", row.alias)
 }
@@ -2511,7 +2634,7 @@ mod tests {
     fn a_generation_bump_aborts_the_session_without_a_verb() {
         on_reset();
         let data = selected();
-        let opened = begin(&data, json!([[CLUE, 1]]));
+        let opened = begin(&data, json!([[MAP_EMPTY, 1]]));
         let token = token_of(&opened);
 
         let bumped = dispatch(
@@ -2519,7 +2642,7 @@ mod tests {
             &payload(
                 "next",
                 Some(token),
-                json!([[CLUE, 1]]),
+                json!([[MAP_EMPTY, 1]]),
                 json!({ "generation": 5 }),
             ),
         );
@@ -2531,12 +2654,18 @@ mod tests {
             "callback.enabled",
             "callback.log",
             "callback.setStatus",
+            "grind-ready",
+            "done",
+            "dead",
+            "abandon",
+            "supplies-needed",
+            "guardian-lost",
         ] {
             assert_ne!(bumped["kind"], kind, "{bumped}");
         }
         // The token died with the bump: the same call on the old generation
         // is stale, not a resumed session.
-        let after = call(&data, token, json!([[CLUE, 1]]), json!({}));
+        let after = call(&data, token, json!([[MAP_EMPTY, 1]]), json!({}));
         assert_eq!(after["kind"], "aborted", "{after}");
         assert_eq!(after["reason"], "stale", "{after}");
     }
@@ -2552,7 +2681,7 @@ mod tests {
             &payload(
                 "begin",
                 None,
-                json!([[CLUE, 1]]),
+                json!([[MAP_EMPTY, 1]]),
                 json!({ "enabled": false, "resume": false, "hold": true }),
             ),
         );
@@ -2563,34 +2692,44 @@ mod tests {
             "begin never returns a continue kind and never a reason: {opened}"
         );
 
-        let first = call(&data, token, json!([[CLUE, 1]]), json!({}));
+        let first = call(&data, token, json!([[MAP_EMPTY, 1]]), json!({}));
         assert_eq!(first["kind"], "callback.enabled", "{first}");
         // False means do not execute: an idle continue with the token live.
-        let denied = call(&data, token, json!([[CLUE, 1]]), json!({ "resume": false }));
+        let denied = call(
+            &data,
+            token,
+            json!([[MAP_EMPTY, 1]]),
+            json!({ "resume": false }),
+        );
         assert_eq!(denied["kind"], "wait", "{denied}");
         assert_eq!(token_of(&denied), token, "{denied}");
         // The next tick asks again rather than replaying the captured answer.
-        let again = call(&data, token, json!([[CLUE, 1]]), json!({}));
+        let again = call(&data, token, json!([[MAP_EMPTY, 1]]), json!({}));
         assert_eq!(again["kind"], "callback.enabled", "{again}");
         // And a later true is honored, because nothing was captured at begin.
-        let enabled = call(&data, token, json!([[CLUE, 1]]), json!({ "resume": true }));
+        let enabled = call(
+            &data,
+            token,
+            json!([[MAP_EMPTY, 1]]),
+            json!({ "resume": true }),
+        );
         assert_eq!(enabled["kind"], "callback.log", "{enabled}");
         let message = enabled["message"].as_str().unwrap_or("");
-        assert!(message.contains("trail_clue_hard_sextant028"), "{enabled}");
-        assert!(message.contains("3554"), "{enabled}");
+        assert!(message.contains("trail_clue_hard_map001"), "{enabled}");
+        assert!(message.contains("2722"), "{enabled}");
 
-        // The constrained 3554 row keeps the token and then idles.
-        let steady = call(&data, token, json!([[CLUE, 1]]), json!({}));
+        // The paramless 2722 row keeps the token and then idles.
+        let steady = call(&data, token, json!([[MAP_EMPTY, 1]]), json!({}));
         assert_eq!(steady["kind"], "callback.setStatus", "{steady}");
         assert!(
             steady["message"]
                 .as_str()
                 .unwrap_or("")
-                .contains("trail_clue_hard_sextant028"),
+                .contains("trail_clue_hard_map001"),
             "{steady}"
         );
         for _ in 0..2 {
-            let idle = call(&data, token, json!([[CLUE, 1]]), json!({}));
+            let idle = call(&data, token, json!([[MAP_EMPTY, 1]]), json!({}));
             assert_eq!(idle["kind"], "wait", "{idle}");
             assert_eq!(token_of(&idle), token, "{idle}");
         }
@@ -2614,8 +2753,13 @@ mod tests {
             )["kind"],
             "callback.log"
         );
-        // The clue replaces the casket: the enabled read is not reused.
-        let re_armed = call(&data, token, json!([[CLUE, 1]]), json!({ "resume": true }));
+        // Another row replaces the casket: the enabled read is not reused.
+        let re_armed = call(
+            &data,
+            token,
+            json!([[MAP_EMPTY, 1]]),
+            json!({ "resume": true }),
+        );
         assert_eq!(re_armed["kind"], "callback.enabled", "{re_armed}");
         assert_eq!(token_of(&re_armed), token, "{re_armed}");
     }
@@ -2664,30 +2808,28 @@ mod tests {
         assert_eq!(gone["reason"], "missing-selected-data", "{gone}");
     }
 
+    /// The solved mark is eleven characters, lowercase, one space — the exact
+    /// string — and it is the machine's own `callback.setStatus`, posted once a
+    /// collect is over and by no other path on this machine.
     #[test]
-    fn the_exact_clue_solved_string_is_never_emitted() {
+    fn the_exact_clue_solved_string_is_the_finished_collects_alone() {
         on_reset();
         let data = selected();
-        // The packed 3554 clue is not openable: it is identified, reported
-        // and then idled, and never a verb of any kind.
-        let token = token_of(&begin(&data, json!([[CLUE, 1]])));
+        // The paramless 2722 row is identified, reported and then idled, and
+        // never a verb of any kind — and never the solved mark.
+        let token = token_of(&begin(&data, json!([[MAP_EMPTY, 1]])));
         let steps = vec![
-            call(&data, token, json!([[CLUE, 1]]), json!({})),
-            call(&data, token, json!([[CLUE, 1]]), json!({ "resume": true })),
-            call(&data, token, json!([[CLUE, 1]]), json!({})),
-            call(&data, token, json!([[CLUE, 1]]), json!({})),
-            call(&data, token, json!([[CLUE, 1]]), json!({ "hold": true })),
+            call(&data, token, json!([[MAP_EMPTY, 1]]), json!({})),
+            call(
+                &data,
+                token,
+                json!([[MAP_EMPTY, 1]]),
+                json!({ "resume": true }),
+            ),
+            call(&data, token, json!([[MAP_EMPTY, 1]]), json!({})),
+            call(&data, token, json!([[MAP_EMPTY, 1]]), json!({})),
+            call(&data, token, json!([[MAP_EMPTY, 1]]), json!({ "hold": true })),
         ];
-        for step in &steps {
-            let text = step.to_string();
-            assert!(!text.contains("clue solved"), "{step}");
-            assert!(!text.contains("ownsEquipment"), "{step}");
-            assert!(
-                step["status"].is_null(),
-                "the machine emits kinds, not the public status: {step}"
-            );
-            assert_ne!(step["kind"], "done", "{step}");
-        }
         assert_eq!(
             steps
                 .iter()
@@ -2702,6 +2844,38 @@ mod tests {
             ],
             "{steps:?}"
         );
+        for step in &steps {
+            let text = step.to_string();
+            assert!(!text.contains("clue solved"), "{step}");
+            assert!(!text.contains("ownsEquipment"), "{step}");
+            assert!(
+                step["status"].is_null(),
+                "the machine emits kinds, not the public status: {step}"
+            );
+        }
+
+        // The finished collect is that one seat: the status is the exact
+        // string, it rides the live token, and the two completion steps that
+        // follow it are the continue and the end of the session.
+        let token = opened(&data, EASY_CASKET);
+        let scene = pages(json!([]), json!([]), json!(28), json!(-1));
+        let waiting = call(&data, token, json!([]), scene.clone());
+        assert_eq!(waiting["kind"], "wait", "{waiting}");
+        assert!(!waiting.to_string().contains("clue solved"), "{waiting}");
+        force_bound();
+        let solved = call(&data, token, json!([]), scene.clone());
+        assert_eq!(solved["kind"], "callback.setStatus", "{solved}");
+        assert_eq!(solved["message"], "clue solved", "{solved}");
+        assert_eq!(token_of(&solved), token, "{solved}");
+        let ready = call(&data, token, json!([]), scene.clone());
+        assert_eq!(ready["kind"], "grind-ready", "{ready}");
+        assert_eq!(token_of(&ready), token, "the grind handback is live: {ready}");
+        assert!(!ready.to_string().contains("clue solved"), "{ready}");
+        let done = call(&data, token, json!([]), scene.clone());
+        assert_eq!(done["kind"], "done", "{done}");
+        let after = call(&data, token, json!([]), scene);
+        assert_eq!(after["kind"], "aborted", "{after}");
+        assert_eq!(after["reason"], "stale", "{after}");
     }
 
     #[test]
@@ -3049,11 +3223,11 @@ mod tests {
             "here": here(3209, 3218, 1),
             "locs": [loc(11, 3209, 3218, 1, &["Search"])],
         });
-        // A casket is a held Open, so it is not in this set: 3554 is the
-        // packed constrained clue, 2722 is a paramless clue row and 2831 is a
-        // desc-only riddle. The coord-only map is no longer one of them: the
-        // widened dig arm walks and Digs from its own tile.
-        for id in [CLUE, MAP_EMPTY, RIDDLE] {
+        // A casket is a held Open and the packed 3554 clue is the constrained
+        // refusal, so neither is in this set: 2722 is a paramless clue row and
+        // 2831 is a desc-only riddle. The coord-only map is no longer one of
+        // them either: the widened dig arm walks and Digs from its own tile.
+        for id in [MAP_EMPTY, RIDDLE] {
             let page = json!([[id, 1]]);
             let token = steady(&data, id);
             for _ in 0..2 {
@@ -3064,6 +3238,42 @@ mod tests {
                 assert!(idle.get("action").is_none(), "{id} {idle}");
             }
         }
+    }
+
+    /// The packed 3554 `access: "constrained"` clue is not idled: the machine
+    /// refuses it — `aborted` / `constrained`, no verb and no live token — and
+    /// a `begin` that identifies it is refused the same way.
+    #[test]
+    fn a_held_constrained_row_is_refused_and_never_played() {
+        on_reset();
+        let data = selected();
+        let page = json!([[CLUE, 1]]);
+        let refused = begin(&data, page.clone());
+        assert_eq!(refused["kind"], "aborted", "{refused}");
+        assert_eq!(refused["reason"], "constrained", "{refused}");
+        // No live token: the refusal's own number is not a session.
+        let after = call(&data, token_of(&refused), page.clone(), json!({}));
+        assert_eq!(after["reason"], "stale", "{after}");
+
+        // The same row held by a live session, over a scene the dig arms would
+        // walk and Dig from: identified, then refused with no verb at all. The
+        // refusal is not the gate: the constrained check runs before any
+        // re-arm, so the previous step's identity never gets a callback.
+        let scene = json!({
+            "here": here(3209, 3218, 1),
+            "locs": [loc(11, 3209, 3218, 1, &["Search"])],
+            "inv": [inv(SPADE_ITEM, SPADE_NAME, 1)],
+        });
+        let token = token_of(&begin(&data, json!([[CASKET, 1]])));
+        let denied = call(&data, token, page.clone(), scene.clone());
+        assert_eq!(denied["kind"], "aborted", "{denied}");
+        assert_eq!(denied["reason"], "constrained", "{denied}");
+        for absent in ["name", "action", "x", "z", "level", "message", "id"] {
+            assert!(denied.get(absent).is_none(), "{absent} {denied}");
+        }
+        let after = call(&data, token, page, scene);
+        assert_eq!(after["kind"], "aborted", "{after}");
+        assert_eq!(after["reason"], "stale", "{after}");
     }
 
     #[test]
@@ -3102,10 +3312,10 @@ mod tests {
         }
 
         // A different held row re-arms the gate: the Open was the casket's,
-        // and the packed clue behind it is not opened.
-        let clue = call(&data, token, json!([[CLUE, 1]]), json!({}));
-        assert_eq!(clue["kind"], "callback.enabled", "{clue}");
-        assert_eq!(token_of(&clue), token, "{clue}");
+        // and the paramless row behind it is not opened.
+        let other = call(&data, token, json!([[MAP_EMPTY, 1]]), json!({}));
+        assert_eq!(other["kind"], "callback.enabled", "{other}");
+        assert_eq!(token_of(&other), token, "{other}");
     }
 
     #[test]
@@ -3138,9 +3348,13 @@ mod tests {
         assert_eq!(open["kind"], "held", "{open}");
         assert_eq!(open["name"], "Casket", "{open}");
         assert_eq!(open["action"], "Open", "{open}");
-        // The clue left on its own re-arms the gate rather than opening it.
+        // The clue left on its own is the constrained refusal, never 3554
+        // play: casket-first is the precedence that kept it out of the Open.
         let clue_only = call(&data, token, json!([[CLUE, 1]]), json!({}));
-        assert_eq!(clue_only["kind"], "callback.enabled", "{clue_only}");
+        assert_eq!(clue_only["kind"], "aborted", "{clue_only}");
+        assert_eq!(clue_only["reason"], "constrained", "{clue_only}");
+        let after = call(&data, token, json!([[CLUE, 1]]), json!({}));
+        assert_eq!(after["reason"], "stale", "{after}");
     }
 
     #[test]
@@ -3280,9 +3494,10 @@ mod tests {
     /// `Steady` on a casket whose Open went out survives the identify
     /// `none-held` that used to abort: the posted reward interface closes, the
     /// casket's own overflow is Taken, the settled Take logs, and the empty
-    /// page after it finishes with the landed `none-held` abort — never
-    /// `done`, never `'clue solved'`. This is the sextant casket the packed
-    /// 3554 clue belongs to, so the collect is never 3554 play.
+    /// page after it finishes with the machine's own three-step completion —
+    /// the exact `'clue solved'` status, then `grind-ready`, then the `done`
+    /// the token dies on. This is the sextant casket the packed 3554 clue
+    /// belongs to, so the collect is never 3554 play.
     #[test]
     fn collecting_closes_the_posted_reward_then_takes_the_casket_overflow() {
         on_reset();
@@ -3370,34 +3585,52 @@ mod tests {
         assert_eq!(waiting["kind"], "wait", "{waiting}");
         assert_eq!(waiting["token"], json!(token), "{waiting}");
 
-        // Past it the loot is over: the landed abort, and the deadline with it.
+        // Past it the collect is over: the machine's own completion, one step
+        // per call — the exact status, the live-token continue, then the end.
         force_bound();
-        let finished = call(
+        let solved = call(
             &data,
             token,
             json!([]),
             pages(json!([]), json!([]), json!(28), json!(-1)),
         );
-        assert_eq!(finished["kind"], "aborted", "{finished}");
-        assert_eq!(finished["reason"], "none-held", "{finished}");
-        assert!(!bound_armed(), "the finish clears the deadline");
+        assert_eq!(solved["kind"], "callback.setStatus", "{solved}");
+        assert_eq!(solved["message"], "clue solved", "{solved}");
+        assert_eq!(solved["token"], json!(token), "{solved}");
+        assert!(bound_armed(), "the status is not the end of the session");
+
+        // Latched: the same page runs the completion, not the loot again. The
+        // grind handback is a live token and a verbless continue.
+        let ready = call(
+            &data,
+            token,
+            json!([]),
+            pages(json!([]), json!([]), json!(28), json!(-1)),
+        );
+        assert_eq!(ready["kind"], "grind-ready", "{ready}");
+        assert_eq!(ready["token"], json!(token), "{ready}");
+        for absent in ["action", "name", "x", "z", "level", "message", "id"] {
+            assert!(ready.get(absent).is_none(), "{absent} {ready}");
+        }
+        let done = call(
+            &data,
+            token,
+            json!([]),
+            pages(json!([]), json!([]), json!(28), json!(-1)),
+        );
+        assert_eq!(done["kind"], "done", "{done}");
+        assert!(!bound_armed(), "the end clears the deadline");
         let after = call(
             &data,
             token,
             json!([]),
             pages(json!([]), json!([]), json!(28), json!(-1)),
         );
+        assert_eq!(after["kind"], "aborted", "{after}");
         assert_eq!(after["reason"], "stale", "{after}");
 
-        let text = json!([closed, other, took, logged, waiting, finished]).to_string();
-        for forbidden in [
-            "clue solved",
-            "done",
-            "abandon",
-            "ownsEquipment",
-            "supplies-needed",
-            "trail complete",
-        ] {
+        let text = json!([closed, other, took, logged, waiting, solved, ready]).to_string();
+        for forbidden in ["abandon", "ownsEquipment", "supplies-needed", "trail complete"] {
             assert!(!text.contains(forbidden), "{forbidden} {text}");
         }
     }
@@ -3418,7 +3651,7 @@ mod tests {
         );
 
         // The next scroll came back: the collect is skipped.
-        let page = json!([[CLUE, 1]]);
+        let page = json!([[RIDDLE, 1]]);
         let re_armed = call(&data, token, page.clone(), scene.clone());
         assert_eq!(re_armed["kind"], "callback.enabled", "{re_armed}");
         assert_eq!(re_armed["token"], json!(token), "{re_armed}");
@@ -3431,7 +3664,7 @@ mod tests {
         let logged = call(&data, token, page, gate);
         assert_eq!(logged["kind"], "callback.log", "{logged}");
         let message = logged["message"].as_str().unwrap_or("");
-        assert!(message.contains("3554"), "{logged}");
+        assert!(message.contains("2831"), "{logged}");
         assert!(!message.contains("3555"), "{logged}");
     }
 
@@ -3659,10 +3892,11 @@ mod tests {
     }
 
     /// A full pack with nothing droppable logs the frozen WARNING and then
-    /// finishes with the landed `none-held` abort: a log line, not an error
-    /// token, and not a `done`.
+    /// finishes with the machine's own completion: a log line, not an error
+    /// token — and never the landed `none-held` abort, which is for the paths
+    /// that are not a finished collect.
     #[test]
-    fn a_full_pack_with_no_food_warns_and_then_finishes_none_held() {
+    fn a_full_pack_with_no_food_warns_and_then_finishes_done() {
         on_reset();
         let data = selected();
         let token = opened(&data, EASY_CASKET);
@@ -3686,10 +3920,15 @@ mod tests {
         assert!(!warned.to_string().contains("clue solved"), "{warned}");
 
         // The WARNING ended the collect: the same page finishes next call
-        // rather than Taking, and the token dies with the landed abort.
-        let finished = call(&data, token, json!([]), scene.clone());
-        assert_eq!(finished["kind"], "aborted", "{finished}");
-        assert_eq!(finished["reason"], "none-held", "{finished}");
+        // rather than Taking, and the token dies with the `done`.
+        let solved = call(&data, token, json!([]), scene.clone());
+        assert_eq!(solved["kind"], "callback.setStatus", "{solved}");
+        assert_eq!(solved["message"], "clue solved", "{solved}");
+        let ready = call(&data, token, json!([]), scene.clone());
+        assert_eq!(ready["kind"], "grind-ready", "{ready}");
+        assert_eq!(ready["token"], json!(token), "{ready}");
+        let done = call(&data, token, json!([]), scene.clone());
+        assert_eq!(done["kind"], "done", "{done}");
         let after = call(&data, token, json!([]), scene);
         assert_eq!(after["reason"], "stale", "{after}");
     }
@@ -3839,11 +4078,12 @@ mod tests {
         assert_eq!(after["reason"], "stale", "{after}");
     }
 
-    /// The whole collect arm's outcome set: verbs, waits, logs and the landed
-    /// abort, over a fully posted scene. Never `done`, never `'clue solved'`,
-    /// never an abandon token, and never `ownsEquipment`.
+    /// The whole collect arm's outcome set: the landed verbs, the wait inside
+    /// the reward window, and then the machine's own completion — the exact
+    /// `'clue solved'` status, the `grind-ready` handback and the `done` the
+    /// token dies on. Nothing else in the envelope is reachable from this arm.
     #[test]
-    fn the_collect_arm_emits_no_completion() {
+    fn the_collect_arm_outcome_set_is_the_verbs_and_the_completion() {
         on_reset();
         let data = selected();
         let token = opened(&data, EASY_CASKET);
@@ -3881,8 +4121,6 @@ mod tests {
         for step in &steps {
             let text = step.to_string();
             for forbidden in [
-                "clue solved",
-                "done",
                 "abandon",
                 "supplies-needed",
                 "dead",
@@ -3916,6 +4154,23 @@ mod tests {
             ],
             "{steps:?}"
         );
+
+        // Past the reward window the arm finishes, and the finish is the three
+        // completion steps above and nothing else.
+        force_bound();
+        let empty = pages(json!([]), json!([]), json!(28), json!(-1));
+        let solved = call(&data, token, json!([]), empty.clone());
+        assert_eq!(solved["kind"], "callback.setStatus", "{solved}");
+        assert_eq!(solved["message"], "clue solved", "{solved}");
+        assert_eq!(solved["token"], json!(token), "{solved}");
+        let ready = call(&data, token, json!([]), empty.clone());
+        assert_eq!(ready["kind"], "grind-ready", "{ready}");
+        assert_eq!(ready["token"], json!(token), "{ready}");
+        let done = call(&data, token, json!([]), empty.clone());
+        assert_eq!(done["kind"], "done", "{done}");
+        let after = call(&data, token, json!([]), empty);
+        assert_eq!(after["kind"], "aborted", "{after}");
+        assert_eq!(after["reason"], "stale", "{after}");
     }
 
     /// The dig membership is the selected-param classify, not the frozen
@@ -4118,11 +4373,12 @@ mod tests {
         assert_eq!(after["reason"], "stale", "{after}");
     }
 
-    /// Arrived without the Spade on this call's posted pack page is a `wait`:
-    /// never `abandon`, never `supplies-needed`, never a public `no-spade`, and
-    /// never a fetch. The token stays live for the page that posts it.
+    /// Arrived without the Spade on this call's posted pack page is the named
+    /// `supplies-needed` wait-class: never `abandon`, never a public
+    /// `no-spade`, and never a fetch. The token stays live for the page that
+    /// posts it.
     #[test]
-    fn an_unguarded_dig_row_without_the_spade_waits_and_keeps_its_token() {
+    fn an_unguarded_dig_row_without_the_spade_is_supplies_needed_and_live() {
         on_reset();
         let data = selected();
         let page = json!([[UNGUARDED, 1]]);
@@ -4144,20 +4400,17 @@ mod tests {
                 page.clone(),
                 json!({ "here": arrived.clone(), "inv": pack }),
             );
-            assert_eq!(idle["kind"], "wait", "{idle}");
-            assert_eq!(token_of(&idle), token, "{idle}");
+            assert_eq!(idle["kind"], "supplies-needed", "{idle}");
+            assert_eq!(token_of(&idle), token, "the wait-class is live: {idle}");
+            for absent in ["action", "name", "x", "z", "level", "message", "id"] {
+                assert!(idle.get(absent).is_none(), "{absent} {idle}");
+            }
             let text = idle.to_string();
-            for forbidden in [
-                "no-spade",
-                "abandon",
-                "supplies-needed",
-                "done",
-                "clue solved",
-            ] {
+            for forbidden in ["no-spade", "abandon", "done", "clue solved", "dead"] {
                 assert!(!text.contains(forbidden), "{idle}");
             }
         }
-        // A malformed `here` is the same wait, and the whole `inv` slot may be
+        // A malformed `here` is a plain wait, and the whole `inv` slot may be
         // omitted: neither is a verb.
         let malformed = call(
             &data,
@@ -4185,15 +4438,15 @@ mod tests {
 
     /// The rows the dig classify leaves out stay identified then idle even over
     /// a scene the dig arm would walk and Dig from — `here` on the row's own
-    /// selected tile with the Spade posted: the packed constrained 3554 clue,
-    /// the paramless 2722 and the desc-only 2831, which carries no coord at
-    /// all. The guarded row is no longer one of them: its own encounter walks
-    /// and Digs from this same scene.
+    /// selected tile with the Spade posted: the paramless 2722 and the
+    /// desc-only 2831, which carries no coord at all. The packed constrained
+    /// 3554 clue is refused instead of idled, and the guarded row is no longer
+    /// one of them: its own encounter walks and Digs from this same scene.
     #[test]
     fn rows_outside_the_dig_classify_stay_idle_over_a_walkable_dig_scene() {
         on_reset();
         let data = selected();
-        for id in [CLUE, MAP_EMPTY, RIDDLE] {
+        for id in [MAP_EMPTY, RIDDLE] {
             let here_tile = row(&data, id)
                 .params
                 .iter()
@@ -4218,6 +4471,20 @@ mod tests {
                 assert!(idle.get("action").is_none(), "{id} {idle}");
             }
         }
+
+        // The constrained clue is not idled over that scene: it is refused,
+        // with no walk, no Dig and no token left.
+        let scene = json!({
+            "here": here(3160, 3251, 0),
+            "inv": [inv(SPADE_ITEM, SPADE_NAME, 1)],
+        });
+        let page = json!([[CLUE, 1]]);
+        let token = token_of(&begin(&data, json!([[MAP_EMPTY, 1]])));
+        let refused = call(&data, token, page.clone(), scene.clone());
+        assert_eq!(refused["kind"], "aborted", "{refused}");
+        assert_eq!(refused["reason"], "constrained", "{refused}");
+        let after = call(&data, token, page, scene);
+        assert_eq!(after["reason"], "stale", "{after}");
     }
 
     /// `Steady` on a coord-only map row: the widened unguarded dig is the same
@@ -4243,14 +4510,15 @@ mod tests {
         assert_eq!(walk["z"], 3360, "{walk}");
         assert_eq!(walk["level"], 0, "{walk}");
         assert_eq!(token_of(&walk), token, "{walk}");
-        // Arrived without the Spade: the landed wait, never a verb.
+        // Arrived without the Spade: the named wait-class, never a verb.
         let bare = call(
             &data,
             token,
             page.clone(),
             json!({ "here": here(3177, 3360, 0) }),
         );
-        assert_eq!(bare["kind"], "wait", "{bare}");
+        assert_eq!(bare["kind"], "supplies-needed", "{bare}");
+        assert_eq!(token_of(&bare), token, "{bare}");
         // Arrived with it: the same held Spade Dig the sibling dispatches.
         let dig = call(
             &data,
@@ -4345,10 +4613,10 @@ mod tests {
         assert_eq!(back["kind"], "callback.enabled", "{back}");
     }
 
-    /// The dig row emits walk, held Dig, wait or yield only — never a
-    /// completion, and never a `status` field of its own.
+    /// The dig row emits walk, the held Dig, wait, `supplies-needed` or yield
+    /// only — never a completion kind, and never a `status` field of its own.
     #[test]
-    fn the_dig_row_emits_only_walk_held_and_wait_and_never_a_completion() {
+    fn the_dig_row_emits_only_walk_held_wait_supplies_needed_and_yield() {
         on_reset();
         let data = selected();
         let page = json!([[UNGUARDED, 1]]);
@@ -4392,7 +4660,6 @@ mod tests {
                 "clue solved",
                 "done",
                 "abandon",
-                "supplies-needed",
                 "dead",
                 "guardian-lost",
                 "grind-ready",
@@ -4405,7 +4672,7 @@ mod tests {
             assert!(
                 matches!(
                     step["kind"].as_str().unwrap_or(""),
-                    "walk" | "held" | "wait" | "yield"
+                    "walk" | "held" | "wait" | "yield" | "supplies-needed"
                 ),
                 "{step}"
             );
@@ -4415,7 +4682,12 @@ mod tests {
                 .iter()
                 .map(|step| step["kind"].clone())
                 .collect::<Vec<_>>(),
-            vec![json!("walk"), json!("wait"), json!("held"), json!("yield")],
+            vec![
+                json!("walk"),
+                json!("supplies-needed"),
+                json!("held"),
+                json!("yield")
+            ],
             "{steps:?}"
         );
     }
@@ -4606,8 +4878,8 @@ mod tests {
             assert_eq!(walk["level"], 0, "{walk}");
             assert_eq!(token_of(&walk), token, "{walk}");
         }
-        // No posted `here` at all, and arrived without the Spade: both wait,
-        // and neither starts an encounter.
+        // No posted `here` at all waits; arrived without the Spade is the
+        // named wait-class. Neither starts an encounter.
         let no_tile = call(
             &data,
             token,
@@ -4621,7 +4893,8 @@ mod tests {
             page.clone(),
             dig_scene(here(tile.x, tile.z, tile.level), false),
         );
-        assert_eq!(no_spade["kind"], "wait", "{no_spade}");
+        assert_eq!(no_spade["kind"], "supplies-needed", "{no_spade}");
+        assert_eq!(token_of(&no_spade), token, "{no_spade}");
         // Arrived with the Spade: the held Dig, which is the spawn.
         let dig = call(
             &data,
@@ -4945,12 +5218,13 @@ mod tests {
         assert_eq!(gone["action"], DIG, "{gone}");
     }
 
-    /// A fight that has not settled waits: the owned wizard posted and alive, a
-    /// death that is not this token's fight, and an owned index gone only after
-    /// the frozen grace was spent. None of them is a redig and none is a
-    /// `guardian-lost`.
+    /// A fight that has not settled waits: the owned wizard posted and alive,
+    /// and a death beside another player that is not this token's fight. The
+    /// owned index gone only after the frozen grace was spent is the other
+    /// thing entirely: the encounter is lost, so the kind is `guardian-lost`
+    /// and the token dies with it — never a redig, never `'clue solved'`.
     #[test]
-    fn an_unsettled_fight_waits_without_reaching_for_guardian_lost() {
+    fn an_unsettled_fight_waits_and_a_lost_wizard_ends_the_token() {
         on_reset();
         let data = selected();
         let page = json!([[GUARDED, 1]]);
@@ -4962,7 +5236,7 @@ mod tests {
             fight_scene(json!([npc(7, WIZARD, 3, 10, 10)]), json!({})),
         );
         assert_eq!(attack["kind"], "npc", "{attack}");
-        // Dead beside another player: not this token's kill.
+        // Dead beside another player: not this token's kill, and not a loss.
         let stolen = call(
             &data,
             token,
@@ -4970,16 +5244,15 @@ mod tests {
             fight_scene(json!([targeting(npc(7, WIZARD, 3, 0, 10), 9)]), json!({})),
         );
         assert_eq!(stolen["kind"], "wait", "{stolen}");
-        // Gone, but only after the grace was spent: still a wait.
-        age_owned_seen(KILL_GRACE_MS + 1);
-        let late = call(
+        // Owned and still posted: the same wait.
+        let alive = call(
             &data,
             token,
             page.clone(),
-            fight_scene(json!([]), json!({})),
+            fight_scene(json!([npc(7, WIZARD, 3, 10, 10)]), json!({})),
         );
-        assert_eq!(late["kind"], "wait", "{late}");
-        for step in [&stolen, &late] {
+        assert_eq!(alive["kind"], "wait", "{alive}");
+        for step in [&stolen, &alive] {
             let text = step.to_string();
             for forbidden in [
                 "guardian-lost",
@@ -4994,6 +5267,19 @@ mod tests {
             assert!(step.get("action").is_none(), "{step}");
             assert_eq!(token_of(step), token, "{step}");
         }
+
+        // Gone, and only after the grace was spent: the wizard is lost.
+        age_owned_seen(KILL_GRACE_MS + 1);
+        let lost = call(&data, token, page.clone(), fight_scene(json!([]), json!({})));
+        assert_eq!(lost["kind"], "guardian-lost", "{lost}");
+        for absent in ["action", "index", "component_id", "name", "message", "x", "z", "level"] {
+            assert!(lost.get(absent).is_none(), "{absent} {lost}");
+        }
+        assert!(!lost.to_string().contains("clue solved"), "{lost}");
+        // The token died with the encounter: no redig, and no session left.
+        let after = call(&data, token, page, fight_scene(json!([]), json!({})));
+        assert_eq!(after["kind"], "aborted", "{after}");
+        assert_eq!(after["reason"], "stale", "{after}");
     }
 
     /// A disappearance this token never Attacked for is a wait, not a redig:
@@ -5234,38 +5520,60 @@ mod tests {
         assert_eq!(redig["action"], DIG, "{redig}");
     }
 
-    /// The mid-fight hitpoints wait: a posted effective hitpoints at or below
-    /// zero emits nothing at all and never a public `dead`; a page that posted
-    /// no stat is not a zero. After the kill the fight is over, so the redig is
-    /// not gated by it.
+    /// The posted effective hitpoints at or below zero kill the token: the kind
+    /// is `dead` on any live call, the token dies with the player and nothing
+    /// posts `'clue solved'`. A page that posted no stat is not a zero, so the
+    /// fight still Attacks — and after the kill the redig is not gated by a
+    /// player death that has already been posted.
     #[test]
-    fn the_mid_fight_hitpoints_wait_never_emits_dead() {
+    fn a_posted_hitpoints_at_zero_is_dead_and_kills_the_token() {
         on_reset();
         let data = selected();
         let page = json!([[GUARDED, 1]]);
         let wizard = json!([npc(7, WIZARD, 3, 10, 10)]);
+
+        // Missing stat first: the Attack still goes out under a fight that is
+        // posted and alive.
         let token = spawned(&data);
+        let mut bare = fight_scene(wizard.clone(), json!({}));
+        bare.as_object_mut().expect("object").remove("hitpoints");
+        let attack = call(&data, token, page.clone(), bare);
+        assert_eq!(attack["kind"], "npc", "{attack}");
+        assert_eq!(attack["index"], 7, "{attack}");
+
+        // Every posted zero-or-below is the terminal, whatever the page also
+        // carries, and the token dies on it.
         for hp in [0, -1, -20] {
+            on_reset();
+            let token = spawned(&data);
             let downed = call(
                 &data,
                 token,
                 page.clone(),
                 fight_scene(wizard.clone(), json!({ "hitpoints": hp })),
             );
-            assert_eq!(downed["kind"], "wait", "{hp} {downed}");
-            for absent in ["action", "index", "component_id", "name"] {
+            assert_eq!(downed["kind"], "dead", "{hp} {downed}");
+            for absent in ["action", "index", "component_id", "name", "message"] {
                 assert!(downed.get(absent).is_none(), "{hp} {absent} {downed}");
             }
-            assert!(!downed.to_string().contains("dead"), "{hp} {downed}");
+            assert!(!downed.to_string().contains("clue solved"), "{hp} {downed}");
+            let after = call(
+                &data,
+                token,
+                page.clone(),
+                fight_scene(wizard.clone(), json!({})),
+            );
+            assert_eq!(after["kind"], "aborted", "{hp} {after}");
+            assert_eq!(after["reason"], "stale", "{hp} {after}");
         }
-        // No posted stat at all is not a zero: the Attack still goes out.
+
+        // The kill, then a zero posted on the very next call: the death is the
+        // terminal on any live call, the post-kill redig included.
+        let token = spawned(&data);
         let mut bare = fight_scene(wizard.clone(), json!({}));
         bare.as_object_mut().expect("object").remove("hitpoints");
         let attack = call(&data, token, page.clone(), bare);
         assert_eq!(attack["kind"], "npc", "{attack}");
-        assert_eq!(attack["index"], 7, "{attack}");
-        // The kill, then the post-kill Dig with the same zero posted: the wait
-        // belonged to the fight and not to the encounter.
         let kill = call(
             &data,
             token,
@@ -5280,8 +5588,8 @@ mod tests {
             page,
             fight_scene(json!([]), json!({ "hitpoints": 0 })),
         );
-        assert_eq!(after["kind"], "held", "{after}");
-        assert_eq!(after["action"], DIG, "{after}");
+        assert_eq!(after["kind"], "dead", "{after}");
+        assert!(!after.to_string().contains("clue solved"), "{after}");
     }
 
     /// Freeze and yield beat the guarded encounter the way they beat the landed

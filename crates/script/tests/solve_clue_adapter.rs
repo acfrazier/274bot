@@ -13,21 +13,35 @@ use script::{LoadIsolate, LoadShape};
 /// `trail_clue_easy_simple001`: a selected search membership whose
 /// `trail_coord` decodes to `(3209, 3218, 1)`.
 const SEARCH_ID: i32 = 2677;
-/// The packed `access: "constrained"` row: identified, then idle.
+/// The packed `access: "constrained"` row: refused with `aborted` /
+/// `constrained`, never a token and never a verb.
 const CONSTRAINED_ID: i32 = 3554;
 /// The casket the constrained row's own selected `trail_casket` names.
 const CASKET_ID: i32 = 3555;
+/// `trail_clue_medium_sextant001`: the unguarded-dig membership whose
+/// `trail_coord` decodes to `(3160, 3251, 0)`.
+const UNGUARDED_ID: i32 = 2801;
+/// The item the frozen `Spade` display belongs to: the pack row the Dig
+/// resolves by posted name.
+const SPADE_ITEM: i32 = 952;
 /// The decoded tile `SEARCH_ID` walks to.
 const SEARCH_X: i32 = 3209;
 const SEARCH_Z: i32 = 3218;
 const SEARCH_LEVEL: i32 = 1;
 
 /// The posted pages these tests need: the pack page is the `page` argument,
-/// plus this call's `here` tile and loc page and the posted `hold || ours`
-/// pair.
+/// plus this call's `here` tile, its posted loc page, its posted stat page,
+/// the posted display names the pack rows carry, the posted main modal and the
+/// posted `hold || ours` pair.
 struct Scene<'a> {
     here: Option<TileInput>,
     locs: &'a [SceneEntityInput<'a>],
+    /// The display names the posted pack rows carry, by item id: the Drop, the
+    /// Dig and the Open all resolve identity by posted name.
+    names: &'a [(i32, &'a str)],
+    /// The posted stat page the death read comes off.
+    stats: &'a [script::isolate_fb::StatInput<'a>],
+    main_modal_id: i32,
     hold: bool,
     ours: bool,
 }
@@ -37,6 +51,9 @@ impl Default for Scene<'_> {
         Self {
             here: None,
             locs: &[],
+            names: &[],
+            stats: &[],
+            main_modal_id: 0,
             hold: false,
             ours: false,
         }
@@ -52,7 +69,11 @@ fn post_scene(iso: &LoadIsolate, tick: u64, page: &[(i32, i32)], scene: &Scene<'
         .iter()
         .enumerate()
         .map(|(slot, (id, count))| ItemRowInput {
-            name: None,
+            name: scene
+                .names
+                .iter()
+                .find(|(item, _)| item == id)
+                .map(|(_, name)| *name),
             count: *count,
             id: *id,
             ops: &[],
@@ -68,7 +89,7 @@ fn post_scene(iso: &LoadIsolate, tick: u64, page: &[(i32, i32)], scene: &Scene<'
         ingame: true,
         inv: &rows,
         inv_size: 28,
-        stats: &[],
+        stats: scene.stats,
         booths: &[],
         nearest_booth: None,
         banks: &[],
@@ -104,7 +125,7 @@ fn post_scene(iso: &LoadIsolate, tick: u64, page: &[(i32, i32)], scene: &Scene<'
         my_name: None,
         in_combat: false,
         animating: false,
-        main_modal_id: 0,
+        main_modal_id: scene.main_modal_id,
         chat_modal_id: -1,
         make_products: &[],
         side_tab_ifaces: &[],
@@ -807,8 +828,8 @@ export default class T extends TaskBot {
         "the casket Open is a held-item request"
     );
 
-    // The casket gone: the constrained clue is identified and idled, never
-    // enqueued as a loc.
+    // The casket gone: the constrained clue is refused instead — `aborted` /
+    // `constrained` — so it is never a held Open and never enqueued as a loc.
     post_page(&iso, 2, &[(CONSTRAINED_ID, 1)]);
     tick(&iso, 2);
     assert!(
@@ -817,5 +838,287 @@ export default class T extends TaskBot {
     );
     let logs = iso.drain_logs();
     iso.join();
+    assert_clean(&logs);
+}
+
+/// The finished collect over the `TaskBot` loop: the machine's own exact
+/// `'clue solved'` status reaches the embed's `setStatus`, the `grind-ready`
+/// handback and the `done` that follows keep the loop running with no verb,
+/// the token dies with the end, and the sibling grind task takes the next
+/// tick. The mark is the isolate machine's — this adapter never invents it.
+#[test]
+fn solve_clue_adapter_finishes_the_collect_with_the_solved_mark() {
+    let src = r#"
+import { SolveClue } from '../../api/ai/clues/SolveClue.js';
+export default class T extends TaskBot {
+    onStart() {
+        globalThis.__statuses = [];
+        globalThis.__logs = [];
+        this.solveClue = new SolveClue({
+            enabled: () => true,
+            log: (message) => { globalThis.__logs.push(String(message)); },
+            setStatus: (message) => { globalThis.__statuses.push(String(message)); },
+        });
+        this.add(this.solveClue, {
+            validate: () => true,
+            execute: async () => { globalThis.__grind = (globalThis.__grind || 0) + 1; },
+        });
+    }
+}
+"#;
+    let iso = spawn(src);
+    let casket = [(CASKET_ID, 1)];
+    let quiet = Scene {
+        main_modal_id: -1,
+        ..Scene::default()
+    };
+
+    // Tick 1: the begin, the gate, the landed report and the casket's own
+    // Open. The Open is the one step that yields, so it is the tick's verb.
+    post_page(&iso, 1, &casket);
+    tick(&iso, 1);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::Held {
+            name: "Casket".to_string(),
+            action: "Open".to_string(),
+        }],
+        "the casket Open is the landed held step"
+    );
+
+    // Tick 2: the casket left the pack. The reward interface is not posted, so
+    // this call has nothing to close and nothing to take.
+    post_scene(&iso, 2, &[], &quiet);
+    tick(&iso, 2);
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "an empty reward page takes nothing"
+    );
+
+    // The frozen reward window is live time: past it the collect is over, and
+    // the completion is the machine's own three steps — none of them a verb.
+    std::thread::sleep(std::time::Duration::from_millis(2_100));
+    post_scene(&iso, 3, &[], &quiet);
+    tick(&iso, 3);
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "the completion queues no verb"
+    );
+
+    // Tick 4: nothing is held, so the finished clue task gives the tick back.
+    post_scene(&iso, 4, &[], &quiet);
+    tick(&iso, 4);
+
+    let value = json(
+        &iso,
+        "JSON.stringify({ statuses: globalThis.__statuses, logs: globalThis.__logs, \
+          grind: globalThis.__grind, token: globalThis.__rs_bot.solveClue.token, \
+          status: globalThis.__rs_bot.solveClue.clueStatus() })",
+    );
+    let logs = iso.drain_logs();
+    iso.join();
+    assert_eq!(
+        value["statuses"],
+        serde_json::json!(["clue: trail_clue_hard_sextant028_casket", "clue solved"]),
+        "the progress line and then the machine's own solved mark: {value:?}"
+    );
+    assert_eq!(
+        value["status"], "clue solved",
+        "the adapter remembers the machine's message, it does not invent it: {value:?}"
+    );
+    assert_eq!(
+        value["token"],
+        serde_json::Value::Null,
+        "the `done` kills the token: {value:?}"
+    );
+    assert_eq!(
+        value["grind"], 1,
+        "the finished session hands the tick back: {value:?}"
+    );
+    assert!(
+        !value.to_string().contains("ownsEquipment"),
+        "the strip flag stays false and unpromoted: {value:?}"
+    );
+    assert_clean(&logs);
+}
+
+/// The posted death over the `TaskBot` loop: any live call whose posted
+/// effective `hitpoints` is at or below zero ends the session — the adapter
+/// clears the token, queues no verb and marks nothing solved — and the sibling
+/// grind task takes the next tick. A page that posted no stat is not a death.
+#[test]
+fn solve_clue_adapter_ends_the_session_on_a_posted_death() {
+    let src = r#"
+import { SolveClue } from '../../api/ai/clues/SolveClue.js';
+export default class T extends TaskBot {
+    onStart() {
+        globalThis.__statuses = [];
+        globalThis.__logs = [];
+        this.solveClue = new SolveClue({
+            enabled: () => true,
+            log: (message) => { globalThis.__logs.push(String(message)); },
+            setStatus: (message) => { globalThis.__statuses.push(String(message)); },
+        });
+        this.add(this.solveClue, {
+            validate: () => true,
+            execute: async () => { globalThis.__grind = (globalThis.__grind || 0) + 1; },
+        });
+    }
+}
+"#;
+    let iso = spawn(src);
+    let page = [(SEARCH_ID, 1)];
+    let stats = [script::isolate_fb::StatInput {
+        index: 3,
+        name: "hitpoints",
+        xp: 0,
+        base: 40,
+        effective: 0,
+    }];
+
+    // Tick 1: the session opens and idles — no posted `here`, so no verb.
+    post_page(&iso, 1, &page);
+    tick(&iso, 1);
+    assert!(iso.drain_interacts().is_empty(), "no posted `here`, no verb");
+    assert_ne!(
+        probe_text(&iso, "String(globalThis.__rs_bot.solveClue.token)"),
+        "null",
+        "the session is live before the death"
+    );
+
+    // Tick 2: the posted effective hitpoints read zero. The machine's `dead`,
+    // and the adapter clears the token on it.
+    post_scene(
+        &iso,
+        2,
+        &page,
+        &Scene {
+            stats: &stats,
+            ..Scene::default()
+        },
+    );
+    tick(&iso, 2);
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "a death pushes no interact"
+    );
+    assert_eq!(
+        machine_next(&iso, false)["kind"],
+        "aborted",
+        "the token is dead, and the end state is not a continue kind"
+    );
+    assert_eq!(
+        probe_text(&iso, "String(globalThis.__rs_bot.solveClue.token)"),
+        "null",
+        "the adapter cleared the dead token"
+    );
+
+    // Tick 3: the row is gone, so the finished session gives the tick back and
+    // marks nothing solved.
+    post_page(&iso, 3, &[]);
+    tick(&iso, 3);
+    let value = json(
+        &iso,
+        "JSON.stringify({ statuses: globalThis.__statuses, grind: globalThis.__grind })",
+    );
+    let logs = iso.drain_logs();
+    iso.join();
+    assert_eq!(value["grind"], 1, "{value:?}");
+    assert!(
+        !value.to_string().contains("clue solved"),
+        "a death is never a solved mark: {value:?}"
+    );
+    assert_clean(&logs);
+}
+
+/// The arrived dig with no Spade over the `TaskBot` loop: the machine's named
+/// `supplies-needed` wait-class keeps the token live, the adapter delays a
+/// tick exactly like `wait`, fetches nothing and gives the grind task no tick.
+/// The same live token Digs once the pack posts the item.
+#[test]
+fn solve_clue_adapter_keeps_the_token_live_over_a_missing_spade() {
+    let src = r#"
+import { SolveClue } from '../../api/ai/clues/SolveClue.js';
+export default class T extends TaskBot {
+    onStart() {
+        globalThis.__statuses = [];
+        globalThis.__logs = [];
+        this.solveClue = new SolveClue({
+            enabled: () => true,
+            log: (message) => { globalThis.__logs.push(String(message)); },
+            setStatus: (message) => { globalThis.__statuses.push(String(message)); },
+        });
+        this.add(this.solveClue, {
+            validate: () => true,
+            execute: async () => { globalThis.__grind = (globalThis.__grind || 0) + 1; },
+        });
+    }
+}
+"#;
+    let iso = spawn(src);
+    let page = [(UNGUARDED_ID, 1)];
+    let with_spade = [(UNGUARDED_ID, 1), (SPADE_ITEM, 1)];
+    let names = [(SPADE_ITEM, "Spade")];
+    let arrived = TileInput {
+        x: 3160,
+        z: 3251,
+        level: 0,
+    };
+
+    // Tick 1: arrived on the decoded tile with no Spade posted. The machine's
+    // wait-class reaches the adapter, which keeps the token and queues nothing.
+    post_scene(
+        &iso,
+        1,
+        &page,
+        &Scene {
+            here: Some(arrived),
+            ..Scene::default()
+        },
+    );
+    tick(&iso, 1);
+    assert!(iso.drain_interacts().is_empty(), "no Spade, no Dig");
+    let token = probe_text(&iso, "String(globalThis.__rs_bot.solveClue.token)");
+    assert_ne!(token, "null", "the wait-class is a live session");
+
+    // Tick 2: the pack posts the Spade: the same token Digs.
+    post_scene(
+        &iso,
+        2,
+        &with_spade,
+        &Scene {
+            here: Some(arrived),
+            names: &names,
+            ..Scene::default()
+        },
+    );
+    tick(&iso, 2);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::Held {
+            name: "Spade".to_string(),
+            action: "Dig".to_string(),
+        }],
+        "the posted Spade is the Dig"
+    );
+    assert_eq!(
+        probe_text(&iso, "String(globalThis.__rs_bot.solveClue.token)"),
+        token,
+        "the wait-class never re-began the session"
+    );
+    let value = json(
+        &iso,
+        "JSON.stringify({ statuses: globalThis.__statuses, grind: globalThis.__grind })",
+    );
+    let logs = iso.drain_logs();
+    iso.join();
+    assert!(
+        value["grind"].is_null(),
+        "a live wait-class never hands the tick to the grind: {value:?}"
+    );
+    assert!(
+        !value.to_string().contains("clue solved"),
+        "a missing Spade is never a solved mark: {value:?}"
+    );
     assert_clean(&logs);
 }

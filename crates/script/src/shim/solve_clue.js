@@ -2,8 +2,10 @@
 // `begin` / `next`) owns the token, the identify, the phases and the clocks;
 // this file coerces the caller's host, marshals the call-time pages onto the
 // machine payload and dispatches the kinds the machine posts. No sequencing
-// policy lives here: no death latch, no kit / bank-prep / restore, no
-// completion kind, and no solved-clue text.
+// policy lives here: no death latch, no kit / bank-prep / restore, and no
+// solved-clue text this file invents — the completion kinds are the machine's
+// and `'clue solved'` is its own `callback.setStatus` message, forwarded
+// untouched.
 import { Execution } from '../../execution/Execution.js';
 import { host, notImpl, queue } from '../../../shim/_kernel.js';
 
@@ -321,7 +323,8 @@ function enqueueClueVerb(step) {
 }
 
 // The kinds the machine enqueues. Anything else is a callback, a wait, a
-// yield or an abort — and an unknown kind is none of them.
+// yield, the `grind-ready` continue, the `supplies-needed` wait-class or a
+// terminal — and an unknown kind is none of them.
 const ENQUEUED_KINDS = [
     'walk', 'held', 'loc', 'npc', 'if-button', 'close-modal', 'obj', 'puzzle-move',
 ];
@@ -430,11 +433,17 @@ export class SolveClue {
                 this.token = null;
                 return;
             }
-            if (step.kind === 'aborted') {
-                // The session ended: the identify family's own refusals (no
-                // held membership, no selected pin, no trail family), a token
-                // that is not the live one, or the generation bump. Nothing is
-                // emitted for it.
+            if (step.kind === 'aborted' || step.kind === 'done' || step.kind === 'dead'
+                || step.kind === 'abandon' || step.kind === 'guardian-lost') {
+                // The session's terminals. `aborted` is the identify family's
+                // own refusals (no held membership, no selected pin, no trail
+                // family), a token that is not the live one, the generation
+                // bump or the constrained row; `done` is the finished collect,
+                // `dead` the posted hitpoints at or below zero and
+                // `guardian-lost` the owned wizard that left outside the
+                // grace. All of them kill the token, and nothing is emitted
+                // for it. The exact `'clue solved'` status is the machine's
+                // own `callback.setStatus` above — this file never invents it.
                 this.token = null;
                 return;
             }
@@ -442,6 +451,18 @@ export class SolveClue {
                 // The cooperative interrupt. The token stays live and the
                 // session resumes on a later tick.
                 return;
+            }
+            if (step.kind === 'grind-ready') {
+                // The collect's own continue: the token is live, no verb rides
+                // it and the next call is `done`. No enqueue and no delay.
+                continue;
+            }
+            if (step.kind === 'supplies-needed') {
+                // An arrived dig with no `Spade` on the posted pack page: a
+                // wait-class and not a terminal, so the token stays live and
+                // nothing is fetched.
+                await Execution.delayTicks(1);
+                continue;
             }
             if (step.kind === 'wait') {
                 // The same snapshot must not busy-spin a parked loop.
