@@ -322,7 +322,8 @@ pub fn live_example_path(file_name: &str) -> Option<PathBuf> {
         | "leave_lair_v2.ts"
         | "acquire_key_v2.ts"
         | "cell_v2.ts"
-        | "bank_v2.ts" => {
+        | "bank_v2.ts"
+        | "sherlock_v2.ts" => {
             let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                 .join("examples")
                 .join(file_name);
@@ -881,6 +882,16 @@ mod tests {
         assert!(v2.ends_with("fight_field_v2.ts"), "{}", v2.display());
         assert!(live_example_path("fight_field_v2").is_none());
         assert!(live_example_path("FightField.ts").is_none());
+    }
+
+    #[test]
+    fn sherlock_front_example_is_an_exact_file_card() {
+        let card = live_example_path("sherlock_v2.ts").expect("checked-in sherlock v2 example");
+        assert!(card.ends_with("sherlock_v2.ts"), "{}", card.display());
+        assert!(live_example_path("sherlock_v2").is_none());
+        assert!(live_example_path("sherlock").is_none());
+        assert!(live_example_path("ClueSolver").is_none());
+        assert!(live_example_path("ClueSolver.ts").is_none());
     }
 
     #[test]
