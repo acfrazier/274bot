@@ -450,13 +450,13 @@ mod tests {
     #[test]
     fn pause_and_stop_are_not_resumed_by_settlement() {
         let mut paused = SlotScript::new();
-        paused.start_compiled(Box::new(NoopScript)).expect("start");
+        paused.start_compiled(Box::new(NoopScript), None).expect("start");
         assert_eq!(paused.state(), RunState::Running);
         paused.pause();
         assert_eq!(paused.state(), RunState::Paused);
 
         let mut stopped = SlotScript::new();
-        stopped.start_compiled(Box::new(NoopScript)).expect("start");
+        stopped.start_compiled(Box::new(NoopScript), None).expect("start");
         stopped.stop();
         assert_eq!(stopped.state(), RunState::Idle);
 

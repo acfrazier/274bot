@@ -2541,6 +2541,7 @@ export default class NativeStop extends LoopingBot {{
             inv: None,
             snapshot: None,
             obj_names: None,
+            compiled: script::CompiledTick::default(),
         };
         slot.on_game_tick(&mut ctx);
         let deadline = Instant::now() + Duration::from_secs(5);

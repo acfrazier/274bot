@@ -113,6 +113,7 @@ fn idle_has_no_script_and_tick_is_noop() {
         inv: None,
         snapshot: None,
         obj_names: None,
+        compiled: script::CompiledTick::default(),
     };
     s.on_game_tick(&mut ctx);
     assert_eq!(s.state(), RunState::Idle);
@@ -124,7 +125,7 @@ fn start_pause_resume_stop() {
     s.start_compiled(Box::new(Counter {
         n: 0,
         name: "c".into(),
-    }))
+    }), None)
     .unwrap();
     assert_eq!(s.state(), RunState::Running);
     assert!(s.want_run);
@@ -144,13 +145,13 @@ fn start_while_active_refuses() {
     s.start_compiled(Box::new(Counter {
         n: 0,
         name: "a".into(),
-    }))
+    }), None)
     .unwrap();
     let err = s
         .start_compiled(Box::new(Counter {
             n: 0,
             name: "b".into(),
-        }))
+        }), None)
         .unwrap_err();
     assert!(err.contains("active") || err.contains("Stop"));
 }
@@ -161,7 +162,7 @@ fn not_is_up_skips_tick_keeps_instance_auto_resumes() {
     s.start_compiled(Box::new(Counter {
         n: 0,
         name: "c".into(),
-    }))
+    }), None)
     .unwrap();
     s.on_is_up(false);
     assert_eq!(s.state(), RunState::Paused);
@@ -179,6 +180,7 @@ fn not_is_up_skips_tick_keeps_instance_auto_resumes() {
         inv: None,
         snapshot: None,
         obj_names: None,
+        compiled: script::CompiledTick::default(),
     };
     s.on_game_tick(&mut ctx); // must not panic; skip
     s.on_is_up(true);
@@ -191,7 +193,7 @@ fn operator_pause_survives_login() {
     s.start_compiled(Box::new(Counter {
         n: 0,
         name: "c".into(),
-    }))
+    }), None)
     .unwrap();
     s.pause();
     s.on_is_up(false);
@@ -221,7 +223,7 @@ fn game_tick_dispatches_only_while_running() {
     let mut s = SlotScript::new();
     s.start_compiled(Box::new(Probe {
         ticks: ticks.clone(),
-    }))
+    }), None)
     .unwrap();
     let mut d = Rec::default();
 
@@ -234,6 +236,7 @@ fn game_tick_dispatches_only_while_running() {
         inv: None,
         snapshot: None,
         obj_names: None,
+        compiled: script::CompiledTick::default(),
     });
     assert_eq!(ticks.load(std::sync::atomic::Ordering::Relaxed), 1);
 
@@ -248,6 +251,7 @@ fn game_tick_dispatches_only_while_running() {
         inv: None,
         snapshot: None,
         obj_names: None,
+        compiled: script::CompiledTick::default(),
     });
     assert_eq!(ticks.load(std::sync::atomic::Ordering::Relaxed), 1);
 
@@ -262,6 +266,7 @@ fn game_tick_dispatches_only_while_running() {
         inv: None,
         snapshot: None,
         obj_names: None,
+        compiled: script::CompiledTick::default(),
     });
     assert_eq!(ticks.load(std::sync::atomic::Ordering::Relaxed), 2);
 
@@ -276,6 +281,7 @@ fn game_tick_dispatches_only_while_running() {
         inv: None,
         snapshot: None,
         obj_names: None,
+        compiled: script::CompiledTick::default(),
     });
     assert_eq!(ticks.load(std::sync::atomic::Ordering::Relaxed), 2);
 
@@ -299,7 +305,7 @@ fn panicking_tick_sets_error_and_drops_instance() {
     }
 
     let mut s = SlotScript::new();
-    s.start_compiled(Box::new(Panic)).unwrap();
+    s.start_compiled(Box::new(Panic), None).unwrap();
     let mut d = Rec::default();
     let mut ctx = ScriptCtx {
         driver: &mut d,
@@ -310,6 +316,7 @@ fn panicking_tick_sets_error_and_drops_instance() {
         inv: None,
         snapshot: None,
         obj_names: None,
+        compiled: script::CompiledTick::default(),
     };
     s.on_game_tick(&mut ctx);
 
@@ -330,6 +337,7 @@ fn panicking_tick_sets_error_and_drops_instance() {
         inv: None,
         snapshot: None,
         obj_names: None,
+        compiled: script::CompiledTick::default(),
     });
     assert_eq!(s.state(), RunState::Error);
 
@@ -338,7 +346,7 @@ fn panicking_tick_sets_error_and_drops_instance() {
         .start_compiled(Box::new(Counter {
             n: 0,
             name: "c".into()
-        }))
+        }), None)
         .is_ok());
     assert_eq!(s.state(), RunState::Running);
     assert!(s.last_error().is_none());
@@ -366,7 +374,7 @@ fn stop_runs_on_stop_hook() {
     let mut s = SlotScript::new();
     s.start_compiled(Box::new(Teardown {
         calls: calls.clone(),
-    }))
+    }), None)
     .unwrap();
     s.stop();
     assert_eq!(calls.load(std::sync::atomic::Ordering::Relaxed), 1);

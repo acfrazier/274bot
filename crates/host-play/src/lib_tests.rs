@@ -7003,7 +7003,7 @@ fn withdraw_x_expired_dialog_posts_failure_without_answer() {
     snap.rebuild(&c);
     {
         let mut slot = slot.lock().unwrap();
-        slot.start_compiled(Box::new(TickCounter(Arc::new(Mutex::new(0)))))
+        slot.start_compiled(Box::new(TickCounter(Arc::new(Mutex::new(0)))), None)
             .unwrap();
         let mut pending = script::slot::PendingWithdrawX::waiting_dialog(
             2,
@@ -9260,7 +9260,7 @@ fn script_wiring() -> ScriptWiring {
     script_slot_or_insert(&scripts, "alice")
         .lock()
         .unwrap()
-        .start_compiled(Box::new(TickCounter(Arc::clone(&count))))
+        .start_compiled(Box::new(TickCounter(Arc::clone(&count))), None)
         .unwrap();
     cheats
         .lock()
@@ -9374,7 +9374,7 @@ fn script_observe_idle_slot_publishes_nothing_on_tick_edge() {
     script_slot_or_insert(&scripts, "alice")
         .lock()
         .unwrap()
-        .start_compiled(Box::new(TickCounter(Arc::clone(&count))))
+        .start_compiled(Box::new(TickCounter(Arc::clone(&count))), None)
         .unwrap();
     script_slot(&scripts, "alice")
         .unwrap()
@@ -9691,7 +9691,7 @@ fn script_observe_passes_inventory_when_running() {
     script_slot_or_insert(&scripts, "alice")
         .lock()
         .unwrap()
-        .start_compiled(Box::new(InvProbe(Arc::clone(&seen))))
+        .start_compiled(Box::new(InvProbe(Arc::clone(&seen))), None)
         .unwrap();
     let inv: Vec<(i32, i32)> = vec![(1, 3), (0, 0)];
     let mut c = prepare_client(
@@ -9758,7 +9758,7 @@ fn script_observe_passes_the_tick_snapshot_to_the_ctx() {
     script_slot_or_insert(&scripts, "alice")
         .lock()
         .unwrap()
-        .start_compiled(Box::new(SnapProbe(Arc::clone(&seen))))
+        .start_compiled(Box::new(SnapProbe(Arc::clone(&seen))), None)
         .unwrap();
     // A transmitted varp table so the probe's `varp(101)` has a value
     // to read (the snapshot only lists transmitted definitions).
@@ -11595,6 +11595,7 @@ fn inventory_from_ifaces_maps_1_based_ids_to_0_based() {
         inv: Some(&inv),
         snapshot: None,
         obj_names: Some(&names),
+        compiled: script::CompiledTick::default(),
     };
     assert!(ctx.has_item("Bones"));
     assert!(!ctx.has_item("Vial"));
@@ -13122,7 +13123,7 @@ fn handle_claim_keeps_ticks_and_blocks_host_talk() {
     script_slot_or_insert(&scripts, "alice")
         .lock()
         .unwrap()
-        .start_compiled(Box::new(ClaimHandle(Arc::clone(&count))))
+        .start_compiled(Box::new(ClaimHandle(Arc::clone(&count))), None)
         .unwrap();
     // The production knock arm: ask the running slot script.
     let knock_scripts = Arc::clone(&scripts);
@@ -13182,12 +13183,12 @@ fn knock_reaches_peer_slot_while_other_slot_lock_held() {
     script_slot_or_insert(&scripts, "alice")
         .lock()
         .unwrap()
-        .start_compiled(Box::new(TickCounter(Arc::new(Mutex::new(0)))))
+        .start_compiled(Box::new(TickCounter(Arc::new(Mutex::new(0)))), None)
         .unwrap();
     script_slot_or_insert(&scripts, "bob")
         .lock()
         .unwrap()
-        .start_compiled(Box::new(ClaimHandle))
+        .start_compiled(Box::new(ClaimHandle), None)
         .unwrap();
 
     let alice = script_slot(&scripts, "alice").unwrap();
@@ -13505,7 +13506,7 @@ fn nav_rig_with(world: Option<Arc<NavWorld>>) -> NavRig {
         .start_compiled(Box::new(WalkProbe(
             Arc::clone(&walk_ret),
             Arc::clone(&walk_target),
-        )))
+        )), None)
         .unwrap();
     statuses.lock().unwrap().push(SlotStatus {
         username: "alice".into(),

@@ -44,7 +44,7 @@ pub mod targets;
 #[cfg(feature = "load")]
 pub mod watchdog;
 
-pub use ctx::{DetectedRandom, FindOptions, RandomClaim, Script, ScriptCtx};
+pub use ctx::{CompiledTick, DetectedRandom, FindOptions, RandomClaim, Script, ScriptCtx};
 pub use identity::{
     card_assignment, card_identity_id, card_identity_key, claim_legacy_overrides,
     combine_fingerprints, compiled_assignment, compiled_identity_key, file_identity,
@@ -114,6 +114,8 @@ mod fire;
 mod modals;
 #[cfg(feature = "load")]
 mod clue;
+#[cfg(feature = "load")]
+mod sherlock;
 #[cfg(feature = "load")]
 mod quest_journal;
 #[cfg(feature = "load")]

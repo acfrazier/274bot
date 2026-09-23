@@ -153,6 +153,11 @@ pub(super) fn script_observe_cached(
         // Reap a script-requested Stop before advancing host continuations.
         emit_script_debug_logs(&mut slot, name);
         slot.on_is_up(up);
+        // Compiled clue machine: apply the owed abort and this frame's
+        // pause/hold freeze here, on the slot's own thread, whether or not
+        // this frame dispatches a tick. A Load slot's isolate thread runs the
+        // same hooks for its own instance.
+        slot.sync_compiled_clue(hold || ours);
         slot_work_epoch = Some(slot.work_epoch());
         if let Some(pending) = slot.pending_bank_op() {
             if hold || slot.state() == script::RunState::Paused {
@@ -460,6 +465,10 @@ pub(super) fn script_observe_cached(
                         inv,
                         snapshot,
                         obj_names,
+                        compiled: script::CompiledTick {
+                            hold: isolate_hold,
+                            ..Default::default()
+                        },
                     });
                     wrote = true;
                 }
@@ -502,6 +511,7 @@ pub(super) fn script_observe_cached(
                         arm.route(x, z, level, FindOptions::default())
                     }
                 };
+                let selected = slot.compiled_game_data();
                 slot.on_game_tick(&mut ScriptCtx {
                     driver,
                     tick,
@@ -511,6 +521,11 @@ pub(super) fn script_observe_cached(
                     inv,
                     snapshot,
                     obj_names,
+                    compiled: script::CompiledTick {
+                        selected: selected.as_deref(),
+                        hold: hold || ours,
+                        ..Default::default()
+                    },
                 });
                 wrote = true;
             }

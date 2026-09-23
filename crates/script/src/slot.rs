@@ -256,6 +256,22 @@ pub struct SlotScript {
     pub want_run: bool,
     state: RunState,
     compiled: Option<Box<dyn Script>>,
+    /// The compiled card's own interact queue: what its tick enqueued, drained
+    /// by the host on the same frames the isolate's queue is. Never both — a
+    /// slot runs a compiled script XOR a Load isolate.
+    #[cfg(feature = "load")]
+    compiled_interacts: Vec<crate::shim::InteractReq>,
+    /// The selected-revision facts the owning `Play` pinned at this compiled
+    /// Start, read by the ctx the host builds around each tick. Cleared with
+    /// the instance.
+    compiled_selected: Option<Arc<api::game_data::SelectedGameData>>,
+    /// A compiled clue-machine abort is owed to the pump thread. `stop` and
+    /// `reset_session_work` may run on the control thread and must not touch
+    /// the slot thread's TLS machine, so they mark here and
+    /// [`SlotScript::sync_compiled_clue`] applies it on the next observed
+    /// frame.
+    #[cfg(feature = "load")]
+    clue_abort_owed: bool,
     /// JS Load isolate, spawned by `start_load` on Start (not on Load).
     #[cfg(feature = "load")]
     load: Option<LoadIsolate>,
@@ -314,6 +330,11 @@ impl SlotScript {
             state: RunState::Idle,
             compiled: None,
             #[cfg(feature = "load")]
+            compiled_interacts: Vec::new(),
+            compiled_selected: None,
+            #[cfg(feature = "load")]
+            clue_abort_owed: false,
+            #[cfg(feature = "load")]
             load: None,
             #[cfg(feature = "load")]
             last_snapshot: None,
@@ -353,7 +374,16 @@ impl SlotScript {
     /// Install a compiled script and start it. Refuses (no silent replace)
     /// while Running, Paused, or Stopping; allowed from Idle and Error
     /// (a fresh Start clears the previous error).
-    pub fn start_compiled(&mut self, script: Box<dyn Script>) -> Result<(), String> {
+    ///
+    /// `selected` is the owning `Play`'s selected-revision pin — the same
+    /// facts a Load isolate is spawned with. The host hands it to the card on
+    /// every tick (`ScriptCtx::compiled`); a `None` pin is what a compiled
+    /// identify fails closed on.
+    pub fn start_compiled(
+        &mut self,
+        script: Box<dyn Script>,
+        selected: Option<Arc<api::game_data::SelectedGameData>>,
+    ) -> Result<(), String> {
         match self.state {
             RunState::Running | RunState::Paused | RunState::Stopping => {
                 Err("script already active: stop it first".to_string())
@@ -363,6 +393,9 @@ impl SlotScript {
                     return Err("loaded script active: stop it first".to_string());
                 }
                 self.compiled = Some(script);
+                self.compiled_selected = selected;
+                #[cfg(feature = "load")]
+                self.compiled_interacts.clear();
                 self.want_run = true;
                 self.last_error = None;
                 self.lifecycle_receipt = None;
@@ -568,6 +601,14 @@ impl SlotScript {
     pub fn stop(&mut self) {
         self.lifecycle_receipt = None;
         self.revoke_native_input();
+        // The compiled clue machine's abort belongs to the pump thread (its
+        // runtime is thread-local, and Stop may arrive on the control thread):
+        // mark it here, and `sync_compiled_clue` applies it on the slot's next
+        // observed frame. A Load slot's isolate thread owns that machine.
+        #[cfg(feature = "load")]
+        if !self.load_active() {
+            self.clue_abort_owed = true;
+        }
         #[cfg(feature = "load")]
         if let Some(isolate) = self.load.take() {
             let logs = isolate.join();
@@ -576,6 +617,9 @@ impl SlotScript {
         if let Some(mut script) = self.compiled.take() {
             script.on_stop();
         }
+        self.compiled_selected = None;
+        #[cfg(feature = "load")]
+        self.compiled_interacts.clear();
         #[cfg(feature = "load")]
         {
             self.last_snapshot = None;
@@ -628,6 +672,12 @@ impl SlotScript {
     /// deltas at a connection boundary. Operator run intent is retained.
     pub fn reset_session_work(&mut self) {
         self.on_is_up(false);
+        #[cfg(feature = "load")]
+        if !self.load_active() {
+            // Same rule as Stop: the compiled machine's abort lands on the
+            // pump thread, never here.
+            self.clue_abort_owed = true;
+        }
         #[cfg(feature = "load")]
         {
             if let Some(isolate) = &self.load {
@@ -800,6 +850,48 @@ impl SlotScript {
         Arc::clone(&self.native_input)
     }
 
+    /// The selected-revision facts this compiled Start pinned — what the host
+    /// copies into the ctx as `ScriptCtx::compiled.selected`. `None` for a
+    /// Load slot, an idle slot, or a `Play` with no generated facts.
+    pub fn compiled_game_data(&self) -> Option<Arc<api::game_data::SelectedGameData>> {
+        self.compiled_selected.clone()
+    }
+
+    /// Pump-thread sync of the compiled clue machine: the owed abort (Stop, a
+    /// session reset, a panic) and this frame's pause/hold freeze, applied
+    /// whether or not the frame dispatches a tick.
+    ///
+    /// Call it on the slot's own thread, once per observed frame — never from
+    /// the control thread, and never for a Load slot (that slot's isolate
+    /// thread runs the same hooks for its own instance). The machine's
+    /// runtime is thread-local, so the instance this reaches is exactly the
+    /// one this slot's compiled card calls.
+    pub fn sync_compiled_clue(&mut self, held: bool) {
+        #[cfg(feature = "load")]
+        {
+            if self.load_active() {
+                return;
+            }
+            if self.clue_abort_owed {
+                // The abort is about the machine's own session, not the
+                // instance, so it is consumed even when no card is installed.
+                self.clue_abort_owed = false;
+                crate::clue::on_reset();
+            }
+            if self.compiled.is_none() {
+                return;
+            }
+            if self.state == RunState::Running && self.want_run {
+                crate::clue::on_resume();
+            } else {
+                crate::clue::on_pause();
+            }
+            crate::clue::on_hold(held);
+        }
+        #[cfg(not(feature = "load"))]
+        let _ = held;
+    }
+
     /// Share the host SlotInput authority. Call on spawn before Start.
     pub fn bind_native_input(&mut self, authority: Arc<NativeInputAuthority>) {
         self.native_input = authority;
@@ -966,14 +1058,21 @@ impl SlotScript {
         self.last_world_id = id;
     }
 
-    /// Drain the Load isolate's forwarded interact requests (the shim
-    /// Bank/Banking queue), in tick order; empty for a compiled script or
-    /// no isolate. The host dispatches them through the slot Driver.
+    /// Drain the interact requests this slot's script queued, in tick order:
+    /// the Load isolate's forwarded queue (the shim Bank/Banking queue), or
+    /// the compiled card's own queue. The two are exclusive by construction —
+    /// a slot runs a compiled script XOR a Load isolate — and the debug
+    /// assertion is what keeps a future third path from silently merging
+    /// them. Empty for a slot with neither.
     #[cfg(feature = "load")]
-    pub fn drain_interacts(&self) -> Vec<crate::shim::InteractReq> {
+    pub fn drain_interacts(&mut self) -> Vec<crate::shim::InteractReq> {
+        debug_assert!(
+            !(self.compiled.is_some() && self.load.is_some()),
+            "a slot never owns both a compiled script and a Load isolate"
+        );
         match &self.load {
             Some(isolate) => isolate.drain_interacts(),
-            None => Vec::new(),
+            None => std::mem::take(&mut self.compiled_interacts),
         }
     }
 
@@ -1179,6 +1278,12 @@ impl SlotScript {
     /// `on_game_tick` (compiled path) only while Running && want_run. A
     /// compiled panic is caught: the slot goes Error with the message, the
     /// instance is dropped, the run is over.
+    ///
+    /// Around a compiled tick this installs the slot's own interact queue as
+    /// the ctx's enqueue sink, so the verbs the tick dispatches land on the
+    /// same drain the isolate's forwarded requests ride; the queue is taken
+    /// back whatever the tick does. A panic also marks the clue machine's
+    /// abort, which the slot's next observed frame applies.
     pub fn on_game_tick(&mut self, ctx: &mut ScriptCtx<'_>) {
         if self.state != RunState::Running || !self.want_run {
             return;
@@ -1191,13 +1296,34 @@ impl SlotScript {
         let Some(script) = self.compiled.as_mut() else {
             return;
         };
+        // Park this slot's interact queue in the ctx for the tick: the verbs
+        // the card dispatches then land on the same drain the isolate's
+        // forwarded requests ride.
+        #[cfg(feature = "load")]
+        {
+            ctx.compiled.interacts = Some(std::mem::take(&mut self.compiled_interacts));
+        }
         self.ticks += 1;
         let result = catch_unwind(AssertUnwindSafe(|| script.tick(ctx)));
+        #[cfg(feature = "load")]
+        {
+            self.compiled_interacts = ctx.compiled.interacts.take().unwrap_or_default();
+        }
         if let Err(payload) = result {
             self.last_error = Some(format!("script panic: {}", panic_message(&payload)));
             self.state = RunState::Error;
             self.want_run = false;
             self.compiled = None;
+            self.compiled_selected = None;
+            // The card is gone: its machine session must not outlive it, and
+            // the verbs a half-finished tick queued are not this session's to
+            // send. The pump applies the abort on this same thread, next
+            // observed frame.
+            #[cfg(feature = "load")]
+            {
+                self.compiled_interacts.clear();
+                self.clue_abort_owed = true;
+            }
             self.revoke_native_input();
         }
     }
@@ -1478,7 +1604,7 @@ export default class T extends LoopingBot {{
     #[test]
     fn stop_releases_snapshot_storage_and_restart_emits_keyframe() {
         let mut slot = SlotScript::new();
-        slot.start_compiled(Box::new(Noop)).unwrap();
+        slot.start_compiled(Box::new(Noop), None).unwrap();
         let text = "x".repeat(1024 * 1024);
         let mut input = crate::isolate_fb::tests::empty_input(1);
         input.chat_text = Some(&text);
@@ -1499,7 +1625,7 @@ export default class T extends LoopingBot {{
         assert_eq!(std::mem::take(&mut slot.ipc).into_backing_capacity(), 0);
         assert_eq!(slot.last_error.as_deref(), Some("retained diagnostic"));
         assert_eq!(slot.pending_logs, ["retained log"]);
-        slot.start_compiled(Box::new(Noop)).unwrap();
+        slot.start_compiled(Box::new(Noop), None).unwrap();
         assert_eq!(slot.encode_snapshot_delta(&input, false), first);
         // The earlier owned packet remains intact after reuse and Stop.
         assert!(crate::isolate_fb::SnapshotReader::from_bytes(&first).is_ok());
@@ -1529,12 +1655,12 @@ export default class T extends LoopingBot {{
 
         // Default: Host.
         let mut s = SlotScript::new();
-        s.start_compiled(Box::new(Noop)).unwrap();
+        s.start_compiled(Box::new(Noop), None).unwrap();
         assert_eq!(s.on_random(&ev), RandomClaim::Host);
 
         // Override: Handle.
         s.stop();
-        s.start_compiled(Box::new(ClaimHandle)).unwrap();
+        s.start_compiled(Box::new(ClaimHandle), None).unwrap();
         assert_eq!(s.on_random(&ev), RandomClaim::Handle);
 
         // Paused: Host — the knock only fires while Running.
@@ -1549,7 +1675,7 @@ export default class T extends LoopingBot {{
     #[test]
     fn ticks_counts_dispatched_ticks_since_start() {
         let mut s = SlotScript::new();
-        s.start_compiled(Box::new(Noop)).unwrap();
+        s.start_compiled(Box::new(Noop), None).unwrap();
         let mut d = NullDriver::default();
         s.on_game_tick(&mut ScriptCtx {
             driver: &mut d,
@@ -1560,6 +1686,7 @@ export default class T extends LoopingBot {{
             inv: None,
             snapshot: None,
             obj_names: None,
+            compiled: crate::ctx::CompiledTick::default(),
         });
         s.on_game_tick(&mut ScriptCtx {
             driver: &mut d,
@@ -1570,6 +1697,7 @@ export default class T extends LoopingBot {{
             inv: None,
             snapshot: None,
             obj_names: None,
+            compiled: crate::ctx::CompiledTick::default(),
         });
         assert_eq!(s.ticks, 2);
 
@@ -1584,12 +1712,13 @@ export default class T extends LoopingBot {{
             inv: None,
             snapshot: None,
             obj_names: None,
+            compiled: crate::ctx::CompiledTick::default(),
         });
         assert_eq!(s.ticks, 2);
 
         // A fresh Start resets the counter.
         s.stop();
-        s.start_compiled(Box::new(Noop)).unwrap();
+        s.start_compiled(Box::new(Noop), None).unwrap();
         s.on_game_tick(&mut ScriptCtx {
             driver: &mut d,
             tick: 4,
@@ -1599,6 +1728,7 @@ export default class T extends LoopingBot {{
             inv: None,
             snapshot: None,
             obj_names: None,
+            compiled: crate::ctx::CompiledTick::default(),
         });
         assert_eq!(s.ticks, 1);
     }
@@ -1606,7 +1736,7 @@ export default class T extends LoopingBot {{
     #[test]
     fn pending_withdraw_x_pause_freezes_while_stop_and_reconnect_abort() {
         let mut slot = SlotScript::new();
-        slot.start_compiled(Box::new(Noop)).unwrap();
+        slot.start_compiled(Box::new(Noop), None).unwrap();
         slot.set_pending_withdraw_x(Some(PendingWithdrawX::waiting_dialog(2, 7, 0, 7, 3)));
         assert_eq!(
             slot.pending_withdraw_x().unwrap().remaining,
@@ -1630,7 +1760,7 @@ export default class T extends LoopingBot {{
             "Stop aborts pending work"
         );
 
-        slot.start_compiled(Box::new(Noop)).unwrap();
+        slot.start_compiled(Box::new(Noop), None).unwrap();
         slot.set_pending_withdraw_x(Some(PendingWithdrawX::waiting_dialog(2, 7, 0, 7, 3)));
         let before_reset = slot.withdraw_x_result();
         slot.reset_session_work();
@@ -1666,7 +1796,7 @@ export default class T extends LoopingBot {{
     #[test]
     fn pending_bank_op_pause_freezes_while_stop_and_reconnect_abort() {
         let mut slot = SlotScript::new();
-        slot.start_compiled(Box::new(Noop)).unwrap();
+        slot.start_compiled(Box::new(Noop), None).unwrap();
         slot.set_pending_bank_op(Some(PendingBankOp::new(
             PendingBankOpKind::Deposit,
             1,
@@ -1690,7 +1820,7 @@ export default class T extends LoopingBot {{
         slot.stop();
         assert!(slot.pending_bank_op().is_none(), "Stop drops old-slot work");
 
-        slot.start_compiled(Box::new(Noop)).unwrap();
+        slot.start_compiled(Box::new(Noop), None).unwrap();
         slot.set_pending_bank_op(Some(PendingBankOp::new(
             PendingBankOpKind::Withdraw,
             1,
@@ -1712,7 +1842,7 @@ export default class T extends LoopingBot {{
     #[test]
     fn fenced_settings_reject_stale_identity_generation_and_unchanged_bag() {
         let mut slot = SlotScript::new();
-        slot.start_compiled(Box::new(Noop)).unwrap();
+        slot.start_compiled(Box::new(Noop), None).unwrap();
         slot.attach_source_identity("catalog:ChickenKiller");
         let gen = slot.runtime_generation();
         let mut bag = serde_json::Map::new();
@@ -1733,7 +1863,7 @@ export default class T extends LoopingBot {{
     #[test]
     fn stop_clears_identity_and_bumps_runtime_generation() {
         let mut slot = SlotScript::new();
-        slot.start_compiled(Box::new(Noop)).unwrap();
+        slot.start_compiled(Box::new(Noop), None).unwrap();
         slot.attach_source_identity("file:shared.ts");
         let gen = slot.runtime_generation();
         slot.stop();
@@ -1858,5 +1988,206 @@ export default class T extends LoopingBot {
             "{err}"
         );
         slot.stop();
+    }
+
+    /// A compiled card that queues one walk per tick onto the ctx's sink —
+    /// the queue the slot parks there — and nothing else.
+    #[cfg(feature = "load")]
+    #[derive(Default)]
+    struct Walker;
+
+    #[cfg(feature = "load")]
+    impl Script for Walker {
+        fn name(&self) -> &str {
+            "Walker"
+        }
+
+        fn tick(&mut self, ctx: &mut ScriptCtx<'_>) {
+            if let Some(sink) = ctx.compiled.interacts.as_mut() {
+                sink.push(crate::shim::InteractReq::Walk {
+                    x: 3,
+                    z: 4,
+                    level: 0,
+                    allow_teleports: false,
+                    allow_wilderness: false,
+                    allow_bank_fetch: false,
+                    request_id: 0,
+                });
+            }
+        }
+    }
+
+    /// The walk `Walker` queues, for comparing whole requests.
+    #[cfg(feature = "load")]
+    fn walker_walk() -> crate::shim::InteractReq {
+        crate::shim::InteractReq::Walk {
+            x: 3,
+            z: 4,
+            level: 0,
+            allow_teleports: false,
+            allow_wilderness: false,
+            allow_bank_fetch: false,
+            request_id: 0,
+        }
+    }
+
+    /// A ctx with no views wired and nothing parked: a compiled tick over it
+    /// is the slot's own queue, installed by the slot.
+    #[cfg(feature = "load")]
+    fn compiled_ctx<'a>(
+        driver: &'a mut dyn api::interact::Driver,
+        selected: Option<&'a api::game_data::SelectedGameData>,
+    ) -> ScriptCtx<'a> {
+        ScriptCtx {
+            driver,
+            tick: 1,
+            here: None,
+            walk: None,
+            walk_with: None,
+            inv: None,
+            snapshot: None,
+            obj_names: None,
+            compiled: crate::CompiledTick {
+                selected,
+                hold: false,
+                interacts: None,
+            },
+        }
+    }
+
+    #[cfg(feature = "load")]
+    #[test]
+    fn a_compiled_tick_queues_onto_the_slot_and_one_drain_takes_it() {
+        let mut slot = SlotScript::new();
+        slot.start_compiled(Box::new(Walker), None).unwrap();
+        let mut d = NullDriver::default();
+        slot.on_game_tick(&mut compiled_ctx(&mut d, None));
+        assert_eq!(
+            slot.drain_interacts(),
+            vec![walker_walk()],
+            "the compiled card's verbs ride the slot's own drain"
+        );
+        assert!(
+            slot.drain_interacts().is_empty(),
+            "the drain takes the queue, it never replays it"
+        );
+
+        // A paused card is not ticked, so it queues nothing.
+        slot.pause();
+        slot.on_game_tick(&mut compiled_ctx(&mut d, None));
+        assert!(slot.drain_interacts().is_empty());
+
+        // Stop drops the instance and the queue it had not spent.
+        slot.resume();
+        slot.on_game_tick(&mut compiled_ctx(&mut d, None));
+        slot.stop();
+        assert!(
+            slot.drain_interacts().is_empty(),
+            "Stop must not leak a dead card's requests into the next Start"
+        );
+    }
+
+    #[cfg(feature = "load")]
+    #[test]
+    fn a_compiled_start_pins_the_selected_facts_and_stop_clears_them() {
+        let data = api::game_data::for_revision(client::io::ClientRevision::R274)
+            .expect("selected data");
+        let mut slot = SlotScript::new();
+        assert!(slot.compiled_game_data().is_none());
+        slot.start_compiled(Box::new(Noop), Some(Arc::clone(&data)))
+            .unwrap();
+        assert!(
+            slot.compiled_game_data().is_some(),
+            "the Start pin rides out to the ctx"
+        );
+        slot.stop();
+        assert!(
+            slot.compiled_game_data().is_none(),
+            "a stopped card keeps no pin"
+        );
+        slot.start_compiled(Box::new(Noop), None).unwrap();
+        assert!(
+            slot.compiled_game_data().is_none(),
+            "a Start with no pin is what a compiled identify fails closed on"
+        );
+    }
+
+    #[cfg(feature = "load")]
+    #[test]
+    fn the_pump_freezes_and_aborts_the_compiled_clue_machine() {
+        let data = api::game_data::for_revision(client::io::ClientRevision::R274)
+            .expect("selected data");
+        // The machine's own identify decides what is held: a selected
+        // membership row with a positive count.
+        let held_id = data
+            .trails()
+            .expect("trails")
+            .rows
+            .iter()
+            .find(|row| row.role == "clue")
+            .expect("a selected clue row")
+            .id;
+        let mut slot = SlotScript::new();
+        slot.start_compiled(
+            Box::new(crate::sherlock::Sherlock::default()),
+            Some(Arc::clone(&data)),
+        )
+        .unwrap();
+        let begin = crate::clue::dispatch(
+            Some(&data),
+            &serde_json::json!({ "op": "begin", "generation": 0, "held": [[held_id, 1]] }),
+        );
+        assert_eq!(begin["kind"], "token", "{begin}");
+        let token = begin["token"].as_u64().expect("token");
+        let next = || {
+            serde_json::json!({
+                "op": "next",
+                "token": token,
+                "generation": 0,
+                "held": [[held_id, 1]],
+            })
+        };
+
+        // Running and unfrozen: the machine posts its own gate question.
+        slot.sync_compiled_clue(false);
+        assert_eq!(
+            crate::clue::dispatch(Some(&data), &next())["kind"],
+            "callback.enabled"
+        );
+
+        // Operator Pause, on a frame that dispatches no tick at all: the live
+        // token waits instead, so the pause cannot burn the session's clock.
+        slot.pause();
+        slot.sync_compiled_clue(false);
+        assert_eq!(crate::clue::dispatch(Some(&data), &next())["kind"], "wait");
+        slot.resume();
+        slot.sync_compiled_clue(false);
+        assert_eq!(
+            crate::clue::dispatch(Some(&data), &next())["kind"],
+            "callback.enabled",
+            "a thaw resumes the same session"
+        );
+
+        // The guardian's hold freezes the same live session the same way.
+        slot.sync_compiled_clue(true);
+        assert_eq!(crate::clue::dispatch(Some(&data), &next())["kind"], "wait");
+        slot.sync_compiled_clue(false);
+
+        // Stop is marked wherever it ran and applied on this thread: the live
+        // token is gone, and the next Start begins a fresh session.
+        slot.stop();
+        slot.sync_compiled_clue(false);
+        let after = crate::clue::dispatch(Some(&data), &next());
+        assert_eq!(after["kind"], "aborted", "{after}");
+        let again = crate::clue::dispatch(
+            Some(&data),
+            &serde_json::json!({ "op": "begin", "generation": 0, "held": [[held_id, 1]] }),
+        );
+        assert_eq!(again["kind"], "token", "{again}");
+        assert_ne!(
+            again["token"].as_u64(),
+            Some(token),
+            "the aborted session's token is not reused"
+        );
     }
 }

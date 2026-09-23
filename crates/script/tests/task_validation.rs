@@ -192,6 +192,7 @@ export default class T extends TaskBot {
         inv: None,
         snapshot: None,
         obj_names: None,
+        compiled: script::CompiledTick::default(),
     });
     assert_eq!(slot.probe("__validationStarted").unwrap(), true);
     slot.stop();

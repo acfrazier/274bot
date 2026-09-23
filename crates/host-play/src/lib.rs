@@ -1460,6 +1460,9 @@ impl Play {
     /// when no running slot owns that name, `Err("not ported: {id}")` when
     /// the picker id has no ported script yet, or `Err` when the slot
     /// already runs one. The slot thread gates it on `is_up`.
+    ///
+    /// The compiled card is started with this Play's own selected-revision
+    /// pin — the same facts a Load isolate is spawned with.
     pub fn script_start(&self, name: &str, id: script::CompiledId) -> Result<(), String> {
         if !self.slot_active(name) {
             return Err(format!("no slot: {name}"));
@@ -1468,7 +1471,7 @@ impl Play {
         script_slot_or_insert(&self.scripts, name)
             .lock()
             .unwrap()
-            .start_compiled(make())?;
+            .start_compiled(make(), self.game_data.clone())?;
         self.wake(name);
         Ok(())
     }

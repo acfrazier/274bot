@@ -697,6 +697,7 @@ fn slot_start_load_ticks_and_stop_joins() {
         inv: None,
         snapshot: None,
         obj_names: None,
+        compiled: script::CompiledTick::default(),
     });
     slot.on_game_tick(&mut ScriptCtx {
         driver: &mut driver,
@@ -707,6 +708,7 @@ fn slot_start_load_ticks_and_stop_joins() {
         inv: None,
         snapshot: None,
         obj_names: None,
+        compiled: script::CompiledTick::default(),
     });
 
     slot.pause();
@@ -749,10 +751,10 @@ fn slot_load_and_compiled_are_xor() {
     let mut slot = SlotScript::new();
     slot.start_load(NATIVE_TICK.to_string(), LoadShape::NativeTick, vec![])
         .unwrap();
-    assert!(slot.start_compiled(Box::new(Noop)).is_err());
+    assert!(slot.start_compiled(Box::new(Noop), None).is_err());
     slot.stop();
 
-    slot.start_compiled(Box::new(Noop)).unwrap();
+    slot.start_compiled(Box::new(Noop), None).unwrap();
     assert!(slot
         .start_load(NATIVE_TICK.to_string(), LoadShape::NativeTick, vec![])
         .is_err());
