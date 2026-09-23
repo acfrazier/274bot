@@ -842,6 +842,15 @@ fn begin_allocates_a_new_token_and_does_not_abort_the_existing_one() {
     assert_yield(&call(first, unkeyed("heroes-blue"), None), true);
     assert_yield(&call(second, unkeyed("gutanoth-blue"), None), true);
     assert!(cell_token_alive(first));
+
+    let ended = hunt_cell::dispatch(&json!({ "op": "end", "token": first }));
+    assert_eq!(kind(&ended), "ok", "{ended}");
+    assert!(!cell_token_alive(first), "end drops that row: {ended}");
+    assert!(cell_token_alive(second), "end is not a map clear: {ended}");
+    assert_abort(&call(first, unkeyed("heroes-blue"), None), "unknown token");
+    let again = hunt_cell::dispatch(&json!({ "op": "end", "token": first }));
+    assert_eq!(kind(&again), "ok", "an unknown token is a no-op: {again}");
+    assert!(cell_token_alive(second));
 }
 
 #[test]
@@ -1018,6 +1027,11 @@ fn shim_and_bindings_keep_the_yield_shape_and_walk_to_has_no_flags() {
     assert!(!begin.contains("allow_wilderness: true"));
     assert!(cell_fn.contains("beginCellWalk(step, 0)"));
     assert!(cell_fn.contains("radius: 0"));
+    assert_eq!(
+        cell_fn.matches("cellCall({ op: 'end', token })").count(),
+        cell_fn.matches("return ").count() - 1,
+        "every return after the begin ends the Rust row: {cell_fn}"
+    );
 
     let acquire = js.split("export async function acquireKey").nth(1).unwrap();
     let acquire = acquire.split("function cellCall").next().unwrap();
@@ -1106,6 +1120,96 @@ export default class T extends LoopingBot {
         InteractReq::Walk { .. } => false,
         _ => true,
     }));
+}
+
+// The function-style tasks are one-shot: the Rust row must not outlive the
+// invocation, on the yield return included. The shim reads the binding off
+// `rustyscript.functions` per call, so the isolate swaps the global for a
+// spy proxy (same technique as the boost-potions bridge test) and then asks
+// the real binding what the ended token is worth.
+#[test]
+fn cell_ends_its_rust_row_on_the_yield_return() {
+    let src = r#"
+import { cell } from '../../api/combat/hunting/combat.js';
+export default class T extends LoopingBot {
+    loop() {
+        const site = {
+            key: 'taverley-blue',
+            keyItem: { id: 1590, name: 'Dusty key' },
+            boxes: [{ minX: 40, maxX: 60, minZ: 40, maxZ: 60, level: 0 }],
+        };
+        if (!globalThis.__probe) {
+            const original = globalThis.rustyscript;
+            const ops = [];
+            let begun = null;
+            const spy = (payload) => {
+                ops.push(payload && payload.op);
+                const out = original.functions.__rs2b0t_cell(payload);
+                if (payload && payload.op === 'begin') begun = out && out.token;
+                return out;
+            };
+            let installed = false;
+            try {
+                globalThis.rustyscript = {
+                    ...original,
+                    functions: new Proxy({}, {
+                        get(_target, name) {
+                            return name === '__rs2b0t_cell' ? spy : original.functions[name];
+                        },
+                    }),
+                };
+                installed = globalThis.rustyscript !== original;
+            } catch (e) {
+                installed = false;
+            }
+            cell({ log() {}, setStatus() {} }, site);
+            globalThis.rustyscript = original;
+            globalThis.__probe = JSON.stringify({ installed, ops, begun });
+            return;
+        }
+        const probe = JSON.parse(globalThis.__probe);
+        const after = globalThis.rustyscript.functions.__rs2b0t_cell({
+            op: 'next',
+            token: probe.begun,
+        });
+        globalThis.__after = JSON.stringify({
+            kind: after && after.kind,
+            reason: after && after.reason,
+        });
+    }
+}
+"#;
+    let dusty = ItemRowInput {
+        name: Some("Dusty key"),
+        count: 1,
+        id: 1590,
+        ops: &[],
+        noted: false,
+        cert: -1,
+        component_id: -1,
+        slot: 1,
+    };
+    let here = tile(2931, 9690, 0);
+    let iso = LoadIsolate::spawn(src.into(), LoadShape::CompatClass, vec![]).unwrap();
+    iso.post_snapshot(encode_snapshot(&snap_scene(here, &[dusty], &[], &[])));
+    iso.on_game_tick(1);
+    let probe: Value =
+        serde_json::from_str(iso.probe("__probe").unwrap().as_str().unwrap()).unwrap();
+    iso.post_snapshot(encode_snapshot(&snap_scene(here, &[dusty], &[], &[])));
+    iso.on_game_tick(2);
+    let after: Value =
+        serde_json::from_str(iso.probe("__after").unwrap().as_str().unwrap()).unwrap();
+    let logs = iso.drain_logs();
+    iso.join();
+    assert_eq!(probe["installed"], true, "the spy must be live: {probe}");
+    assert_eq!(
+        probe["ops"],
+        json!(["begin", "next", "end"]),
+        "the yield return ends the row: {probe} logs={logs:?}"
+    );
+    assert_ne!(probe["begun"], Value::Null, "{probe}");
+    assert_eq!(after["kind"], "aborted", "{after} logs={logs:?}");
+    assert_eq!(after["reason"], "unknown token", "{after}");
 }
 
 #[test]

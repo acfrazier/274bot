@@ -769,8 +769,17 @@ fn unexpected_reply_and_wrong_token_abort() {
     assert_eq!(kind(&bad), "aborted");
     assert_eq!(bad["reason"], "unknown token");
     assert!(key_token_alive(token));
+    let other = begin();
+    let ended = hunt_key::dispatch(&json!({ "op": "end", "token": token }));
+    assert_eq!(kind(&ended), "ok", "{ended}");
+    assert!(!key_token_alive(token), "end drops that row: {ended}");
+    assert!(key_token_alive(other), "end is not a map clear: {ended}");
+    let again = hunt_key::dispatch(&json!({ "op": "end", "token": token }));
+    assert_eq!(kind(&again), "ok", "an unknown token is a no-op: {again}");
+    assert!(key_token_alive(other));
     hunt_key::on_reset();
     assert!(!key_token_alive(token));
+    assert!(!key_token_alive(other));
 }
 
 #[test]
@@ -900,6 +909,16 @@ fn shim_and_bindings_keep_the_yield_shape_and_flag_falses() {
     assert!(!begin.contains("radius: 0"));
     assert!(begin.contains("allow_wilderness: false"));
     assert!(!begin.contains("allow_wilderness: true"));
+    let acquire_fn = js
+        .split("export async function acquireKey")
+        .nth(1)
+        .expect("acquireKey");
+    let acquire_fn = acquire_fn.split("function bankCall").next().unwrap();
+    assert_eq!(
+        acquire_fn.matches("keyCall({ op: 'end', token })").count(),
+        acquire_fn.matches("return ").count() - 1,
+        "every return after the begin ends the Rust row: {acquire_fn}"
+    );
 
     let iso = include_str!("../src/load/isolate.rs");
     for hook in [

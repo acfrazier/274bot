@@ -2212,6 +2212,14 @@ pub fn dispatch(input: &Value) -> Value {
                 None => json!({ "kind": "aborted", "reason": "unknown token", "token": token }),
             }
         }
+        "end" => {
+            // The invocation is over: drop the row. Unknown token is a no-op —
+            // JS ends on every return, including one after a session reset
+            // already cleared the map.
+            let token = token_of(input);
+            let _ = BANK_RUNTIMES.with(|m| m.borrow_mut().remove(&token));
+            json!({ "kind": "ok", "token": token })
+        }
         _ => json!({ "kind": "notImpl", "reason": "unknown op" }),
     }
 }

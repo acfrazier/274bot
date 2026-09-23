@@ -832,6 +832,16 @@ fn yield_shape_and_shim_flags_are_not_fight_copies() {
     assert!(begin.contains("allow_wilderness: false"));
     assert!(begin.contains("allow_bank_fetch: false"));
     assert!(begin.contains("allow_teleports: false"));
+    let leave_fn = js
+        .split("export async function leaveLair")
+        .nth(1)
+        .expect("leaveLair");
+    let leave_fn = leave_fn.split("function keyCall").next().unwrap();
+    assert_eq!(
+        leave_fn.matches("leaveCall({ op: 'end', token })").count(),
+        leave_fn.matches("return ").count() - 1,
+        "every return after the begin ends the Rust row: {leave_fn}"
+    );
 
     let iso = include_str!("../src/load/isolate.rs");
     for hook in [
@@ -857,8 +867,16 @@ fn wrong_token_aborts_and_reset_drops_the_map() {
     let bad = call(None, token + 9, site(json!({ "leaveByWalk": true })), None);
     assert_eq!(kind(&bad), "aborted");
     assert_eq!(bad["reason"], "unknown token");
+    let other = begin();
+    let ended = hunt_leave::dispatch(None, &json!({ "op": "end", "token": token }));
+    assert_eq!(kind(&ended), "ok", "{ended}");
+    assert!(!leave_token_alive(token), "end drops that row: {ended}");
+    assert!(leave_token_alive(other), "end is not a map clear: {ended}");
+    let again = hunt_leave::dispatch(None, &json!({ "op": "end", "token": token }));
+    assert_eq!(kind(&again), "ok", "an unknown token is a no-op: {again}");
     hunt_leave::on_reset();
     assert!(!leave_token_alive(token));
+    assert!(!leave_token_alive(other));
 }
 
 #[test]

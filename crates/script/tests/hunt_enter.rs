@@ -882,6 +882,8 @@ fn shim_enter_walk_flags_are_false_and_other_classes_stay() {
         .split("export class EnterLair")
         .nth(1)
         .expect("EnterLair");
+    // The class body only: the file keeps the key and bank machines after it.
+    let enter = enter.split("function leaveCall").next().unwrap();
     assert!(enter.contains("enterProjection"));
     assert!(enter.contains("allow_teleports: false"));
     assert!(enter.contains("allow_wilderness: false"));
@@ -979,6 +981,124 @@ export default class T extends LoopingBot {
         )),
         "{drained:?}"
     );
+}
+
+// ResetSession drops the Rust machines while the isolate, the card state and
+// the JS tokens survive: a hunt class that gated on validate before the reset
+// must not stay inert for the life of the isolate. The re-bind keeps the wire
+// (one begin, one retry), so validate reads true again and execute runs on the
+// new token.
+#[test]
+fn session_reset_rebinds_the_class_token_instead_of_going_inert() {
+    let src = r#"
+import { EnterLair, HoldSafespot } from '../../api/combat/hunting/combat.js';
+export default class T extends LoopingBot {
+    loop() {
+        const host = {
+            died: false,
+            parked: false,
+            targetIdx: null,
+            hpFraction: () => 1,
+            panicHp: () => 0.2,
+            retreatHp: () => 0.5,
+            hasFood: () => false,
+            needEat: () => false,
+            style: () => 'range',
+            safespotIndex: () => 0,
+            buryBones: () => false,
+            boneName: () => 'Bones',
+            shieldReady: () => true,
+            log() {},
+            setStatus(m) { globalThis.__status = m; },
+            setSafespotIndex() {},
+        };
+        const site = {
+            key: 'heroes-blue',
+            target: 'Goblin',
+            alsoHunt: [],
+            safespots: [{ x: 2901, z: 9809, level: 0 }],
+            meleeAnchor: { x: 2900, z: 9808, level: 0 },
+            boxes: [{ minX: 40, maxX: 60, minZ: 40, maxZ: 60, level: 0 }],
+            fireAtRange: false,
+            rangedThreat: false,
+            approach: [{ x: 5, z: 5, level: 0 }],
+            talkGate: null,
+            feeGate: null,
+            gate: null,
+            keyItem: null,
+        };
+        const enter = globalThis.__enter || (globalThis.__enter = new EnterLair(host, site));
+        const hold = globalThis.__hold || (globalThis.__hold = new HoldSafespot(host, site));
+        globalThis.__ticks = (globalThis.__ticks || 0) + 1;
+        globalThis.__firstEnter = globalThis.__firstEnter || enter.token;
+        globalThis.__firstHold = globalThis.__firstHold || hold.token;
+        globalThis.__validate = enter.validate();
+        hold.validate();
+        globalThis.__enterToken = enter.token;
+        globalThis.__holdToken = hold.token;
+        // Only the post-reset tick walks: the walk step parks the isolate
+        // until a real host settles it, and the loop must run again after the
+        // reset for the re-bind to be observable.
+        if (globalThis.__validate && globalThis.__ticks > 1) enter.execute();
+    }
+}
+"#;
+    let here = || empty_snapshot(0, TileInput { x: 1, z: 1, level: 0 });
+    let iso = LoadIsolate::spawn(src.into(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut snap = here();
+    snap.tick = 1;
+    iso.post_snapshot(script::isolate_fb::encode_snapshot(&snap));
+    iso.on_game_tick(1);
+    let first_enter = iso.probe("__firstEnter").unwrap();
+    let first_hold = iso.probe("__firstHold").unwrap();
+    let validated = iso.probe("__validate").unwrap();
+    let ticks = iso.probe("__ticks").unwrap();
+    let before = iso.drain_interacts();
+    assert_eq!(validated, true, "the pre-reset token validates");
+    assert_eq!(ticks, 1, "the first tick only validates: {ticks:?}");
+    assert!(
+        before.is_empty(),
+        "the pre-reset tick must not start the walk: {before:?}"
+    );
+    assert_ne!(first_enter, Value::Null, "{first_enter:?}");
+    assert_ne!(first_hold, Value::Null, "{first_hold:?}");
+
+    iso.reset_session_work();
+    let mut snap = here();
+    snap.tick = 2;
+    iso.post_snapshot(script::isolate_fb::encode_snapshot(&snap));
+    iso.on_game_tick(2);
+    let enter_token = iso.probe("__enterToken").unwrap();
+    let hold_token = iso.probe("__holdToken").unwrap();
+    let validated = iso.probe("__validate").unwrap();
+    let ticks = iso.probe("__ticks").unwrap();
+    let after = iso.drain_interacts();
+    let logs = iso.join();
+    assert_eq!(ticks, 2, "the loop runs again after the reset: {logs:?}");
+    assert_eq!(validated, true, "post-reset validate re-binds: {logs:?}");
+    assert_ne!(enter_token, first_enter, "enter mints a new token");
+    assert_ne!(hold_token, first_hold, "hold mints a new token");
+    assert!(
+        approach_walk(&after),
+        "execute runs on the new token: {after:?} logs={logs:?}"
+    );
+}
+
+fn approach_walk(drained: &[InteractReq]) -> bool {
+    drained.iter().any(|req| {
+        matches!(
+            req,
+            InteractReq::Walk {
+                x: 5,
+                z: 5,
+                level: 0,
+                allow_teleports: false,
+                allow_wilderness: false,
+                allow_bank_fetch: false,
+                request_id,
+            } if *request_id != 0
+        )
+    })
 }
 
 #[test]

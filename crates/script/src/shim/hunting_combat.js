@@ -4,6 +4,45 @@ import { notImpl, queue } from '../../../shim/_kernel.js';
 import { Execution } from '../../execution/Execution.js';
 import { Sustain } from '../../sustain/Sustain.js';
 
+// ResetSession drops the Rust machine while the class instance and its token
+// survive; every op then replies aborted "unknown token" and a validated hunt
+// task would stay inert for the life of the isolate. Re-bind those once and
+// retry. A missing envelope counts as dead too, while the machine's own policy
+// aborts (the row is still in the map) are left alone.
+function deadToken(out) {
+    if (!out) return true;
+    if (out.kind === 'unknown') return true;
+    return out.kind === 'aborted' && (out.reason == null || out.reason === 'unknown token');
+}
+
+// Mint the machine again. The dead token is already out of the Rust map, so
+// this never aborts a live one.
+function rebind(self, familyCall) {
+    const started = familyCall({ op: 'begin' });
+    const token = started && started.token;
+    if (token == null) return false;
+    self.token = token;
+    return true;
+}
+
+// One token call, re-bound once when the token is dead or absent.
+function resynced(self, familyCall, op, extra = {}) {
+    const out = self.token == null ? null : familyCall({ op, token: self.token, ...extra });
+    if (!deadToken(out)) return out;
+    if (!rebind(self, familyCall)) return out;
+    return familyCall({ op, token: self.token, ...extra });
+}
+
+// One `next` step. A re-bound machine starts idle and never consumed the reply
+// the dead one was owed, so the retry posts without it.
+function nextStep(self, familyCall, extra, reply) {
+    let step = familyCall({ op: 'next', token: self.token, reply, ...extra });
+    if (deadToken(step) && rebind(self, familyCall)) {
+        step = familyCall({ op: 'next', token: self.token, ...extra });
+    }
+    return step;
+}
+
 function call(payload) {
     const fn = globalThis.rustyscript && globalThis.rustyscript.functions
         ? globalThis.rustyscript.functions.__rs2b0t_fight
@@ -58,21 +97,22 @@ export class Fight {
     }
 
     validate() {
-        const out = call({ op: 'validate', token: this.token, ...projection(this.host, this.site) });
+        const out = resynced(this, call, 'validate', projection(this.host, this.site));
         return out === true || out?.value === true;
     }
 
     async execute() {
         let reply = null;
         for (;;) {
-            const step = call({
-                op: 'next',
-                token: this.token,
-                reply,
-                ...projection(this.host, this.site),
-            });
+            const step = nextStep(this, call, projection(this.host, this.site), reply);
             reply = null;
-            if (!step || step.kind === 'yield' || step.kind === 'aborted') {
+            if (!step || step.kind === 'yield') {
+                return;
+            }
+            if (step.kind === 'aborted') {
+                // The re-bind could not mint, or the retry aborted too: leave
+                // no dead token for the next validate to re-ask about.
+                this.token = null;
                 return;
             }
             switch (step.kind) {
@@ -135,19 +175,15 @@ export class Fight {
     }
 
     reset() {
-        call({ op: 'reset', token: this.token });
+        resynced(this, call, 'reset');
     }
 
     interruptWatch() {
-        call({ op: 'interruptWatch', token: this.token });
+        resynced(this, call, 'interruptWatch');
     }
 
     blocksLoot() {
-        const out = call({
-            op: 'blocksLoot',
-            token: this.token,
-            ...projection(this.host, this.site),
-        });
+        const out = resynced(this, call, 'blocksLoot', projection(this.host, this.site));
         return out === true || out?.value === true;
     }
 }
@@ -161,7 +197,7 @@ export class Retreat {
     }
 
     validate() {
-        const out = retreatCall({ op: 'validate', token: this.token, ...projection(this.host, this.site) });
+        const out = resynced(this, retreatCall, 'validate', projection(this.host, this.site));
         return out === true || out?.value === true;
     }
 
@@ -169,14 +205,15 @@ export class Retreat {
         this.host.fight?.interruptWatch();
         let reply = null;
         for (;;) {
-            const step = retreatCall({
-                op: 'next',
-                token: this.token,
-                reply,
-                ...projection(this.host, this.site),
-            });
+            const step = nextStep(this, retreatCall, projection(this.host, this.site), reply);
             reply = null;
-            if (!step || step.kind === 'yield' || step.kind === 'aborted') {
+            if (!step || step.kind === 'yield') {
+                return;
+            }
+            if (step.kind === 'aborted') {
+                // The re-bind could not mint, or the retry aborted too: leave
+                // no dead token for the next validate to re-ask about.
+                this.token = null;
                 return;
             }
             switch (step.kind) {
@@ -237,7 +274,7 @@ export class HoldSafespot {
     }
 
     validate() {
-        const out = holdCall({ op: 'validate', token: this.token, ...projection(this.host, this.site) });
+        const out = resynced(this, holdCall, 'validate', projection(this.host, this.site));
         return out === true || out?.value === true;
     }
 
@@ -245,14 +282,15 @@ export class HoldSafespot {
         this.host.fight?.interruptWatch();
         let reply = null;
         for (;;) {
-            const step = holdCall({
-                op: 'next',
-                token: this.token,
-                reply,
-                ...projection(this.host, this.site),
-            });
+            const step = nextStep(this, holdCall, projection(this.host, this.site), reply);
             reply = null;
-            if (!step || step.kind === 'yield' || step.kind === 'aborted') {
+            if (!step || step.kind === 'yield') {
+                return;
+            }
+            if (step.kind === 'aborted') {
+                // The re-bind could not mint, or the retry aborted too: leave
+                // no dead token for the next validate to re-ask about.
+                this.token = null;
                 return;
             }
             switch (step.kind) {
@@ -367,6 +405,7 @@ export async function cell(host, site) {
         return false;
     }
     const token = started.token;
+    // JS never resumes this token: every exit below ends the Rust row.
     let reply = null;
     for (;;) {
         const step = cellCall({
@@ -377,9 +416,11 @@ export async function cell(host, site) {
         });
         reply = null;
         if (!step || step.kind === 'aborted' || step.kind === 'notImpl') {
+            cellCall({ op: 'end', token });
             return false;
         }
         if (step.kind === 'yield') {
+            cellCall({ op: 'end', token });
             return step.value === true;
         }
         if (step.kind === 'walk-to') {
@@ -483,6 +524,7 @@ export async function cell(host, site) {
                 await Execution.delayTicks(1);
                 break;
             default:
+                cellCall({ op: 'end', token });
                 return false;
         }
     }
@@ -497,7 +539,7 @@ export class WalkToSpot {
     }
 
     validate() {
-        const out = walkspotCall({ op: 'validate', token: this.token, ...projection(this.host, this.site) });
+        const out = resynced(this, walkspotCall, 'validate', projection(this.host, this.site));
         return out === true || out?.value === true;
     }
 
@@ -505,14 +547,15 @@ export class WalkToSpot {
         this.host.fight?.interruptWatch();
         let reply = null;
         for (;;) {
-            const step = walkspotCall({
-                op: 'next',
-                token: this.token,
-                reply,
-                ...projection(this.host, this.site),
-            });
+            const step = nextStep(this, walkspotCall, projection(this.host, this.site), reply);
             reply = null;
-            if (!step || step.kind === 'yield' || step.kind === 'aborted') {
+            if (!step || step.kind === 'yield') {
+                return;
+            }
+            if (step.kind === 'aborted') {
+                // The re-bind could not mint, or the retry aborted too: leave
+                // no dead token for the next validate to re-ask about.
+                this.token = null;
                 return;
             }
             switch (step.kind) {
@@ -646,25 +689,23 @@ export class EnterLair {
     }
 
     validate() {
-        const out = enterCall({ op: 'validate', token: this.token, ...enterProjection(this.host, this.site) });
+        const out = resynced(this, enterCall, 'validate', enterProjection(this.host, this.site));
         return out === true || out?.value === true;
     }
 
     async execute() {
         let reply = null;
         for (;;) {
-            const step = enterCall({
-                op: 'next',
-                token: this.token,
-                reply,
-                ...enterProjection(this.host, this.site),
-            });
+            const step = nextStep(this, enterCall, enterProjection(this.host, this.site), reply);
             reply = null;
-            if (!step || step.kind === 'aborted') {
-                return false;
+            if (!step || step.kind === 'yield') {
+                return step ? step.value === true : false;
             }
-            if (step.kind === 'yield') {
-                return step.value === true;
+            if (step.kind === 'aborted') {
+                // The re-bind could not mint, or the retry aborted too: leave
+                // no dead token for the next validate to re-ask about.
+                this.token = null;
+                return false;
             }
             switch (step.kind) {
                 case 'log':
@@ -861,6 +902,7 @@ export async function leaveLair(host, site) {
         return false;
     }
     const token = started.token;
+    // JS never resumes this token: every exit below ends the Rust row.
     let reply = null;
     for (;;) {
         const step = leaveCall({
@@ -871,9 +913,11 @@ export async function leaveLair(host, site) {
         });
         reply = null;
         if (!step || step.kind === 'aborted') {
+            leaveCall({ op: 'end', token });
             return false;
         }
         if (step.kind === 'yield') {
+            leaveCall({ op: 'end', token });
             return step.value === true;
         }
         switch (step.kind) {
@@ -940,6 +984,7 @@ export async function leaveLair(host, site) {
                 await Execution.delayTicks(1);
                 break;
             default:
+                leaveCall({ op: 'end', token });
                 return false;
         }
     }
@@ -992,6 +1037,7 @@ export async function acquireKey(host, site) {
         return false;
     }
     const token = started.token;
+    // JS never resumes this token: every exit below ends the Rust row.
     let reply = null;
     for (;;) {
         const step = keyCall({
@@ -1002,9 +1048,11 @@ export async function acquireKey(host, site) {
         });
         reply = null;
         if (!step || step.kind === 'aborted' || step.kind === 'notImpl') {
+            keyCall({ op: 'end', token });
             return false;
         }
         if (step.kind === 'yield') {
+            keyCall({ op: 'end', token });
             return step.value === true;
         }
         switch (step.kind) {
@@ -1064,6 +1112,7 @@ export async function acquireKey(host, site) {
                 await Execution.delayTicks(1);
                 break;
             default:
+                keyCall({ op: 'end', token });
                 return false;
         }
     }
@@ -1180,6 +1229,7 @@ export async function bankRoutine(host, site, opts) {
         return false;
     }
     const token = started.token;
+    // JS never resumes this token: every exit below ends the Rust row.
     let reply = null;
     for (;;) {
         const step = bankCall({
@@ -1190,9 +1240,11 @@ export async function bankRoutine(host, site, opts) {
         });
         reply = null;
         if (!step || step.kind === 'aborted' || step.kind === 'notImpl') {
+            bankCall({ op: 'end', token });
             return false;
         }
         if (step.kind === 'yield') {
+            bankCall({ op: 'end', token });
             return step.value === true;
         }
         switch (step.kind) {
@@ -1278,6 +1330,7 @@ export async function bankRoutine(host, site, opts) {
                 await Execution.delayTicks(1);
                 break;
             default:
+                bankCall({ op: 'end', token });
                 return false;
         }
     }

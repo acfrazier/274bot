@@ -554,8 +554,15 @@ fn begin_allocates_a_new_token_and_pause_emits_wait() {
     assert_eq!(kind(&call(second, proj.clone(), None)), "wait");
     hunt_bank::on_resume();
     assert_eq!(kind(&call(second, proj.clone(), None)), "leave");
+    let ended = hunt_bank::dispatch(&json!({ "op": "end", "token": first }));
+    assert_eq!(kind(&ended), "ok", "{ended}");
+    assert!(!bank_token_alive(first), "end drops that row: {ended}");
+    assert!(bank_token_alive(second), "end is not a map clear: {ended}");
+    let again = hunt_bank::dispatch(&json!({ "op": "end", "token": first }));
+    assert_eq!(kind(&again), "ok", "an unknown token is a no-op: {again}");
     hunt_bank::on_reset();
     assert!(!bank_token_alive(first));
+    assert!(!bank_token_alive(second));
     let aborted = call(first, proj, None);
     assert_eq!(kind(&aborted), "aborted");
     let _ = CLOSE_MS;
@@ -655,6 +662,11 @@ fn shim_and_bindings_keep_the_yield_shape_and_walk_flags() {
     assert!(begin.contains("allow_wilderness: false"));
     assert!(begin.contains("allow_bank_fetch: false"));
     assert!(begin.contains("radius,"));
+    assert_eq!(
+        routine.matches("bankCall({ op: 'end', token })").count(),
+        routine.matches("return ").count() - 1,
+        "every return after the begin ends the Rust row: {routine}"
+    );
 
     let iso = include_str!("../src/load/isolate.rs");
     for hook in [
