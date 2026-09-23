@@ -1012,6 +1012,17 @@ fn isolate_main(
         let _ = setup.send(Err(e));
         return;
     }
+    // The native-event consumer ships only with the compat runner
+    // (`COMPAT_RUNNER` defines `__rs2b0t_flush_native_events`), and
+    // `wire_runtime` has already evaluated the main module, so this read
+    // is final for the isolate's life. Native shapes (`tick(api)` and
+    // every v2 card) have no events API: building and staging a batch
+    // for them would grow a queue nothing drains. A future v2
+    // `api.on(...)` only has to define the flush global; delivery turns
+    // back on here with no other change.
+    let events_consumed = runtime
+        .eval::<bool>("typeof globalThis.__rs2b0t_flush_native_events === 'function'")
+        .unwrap_or(false);
     let v2_native = shape == LoadShape::NativeTick
         && matches!(
             super::shape::parse_declared_api_version(&source),
@@ -1028,6 +1039,7 @@ fn isolate_main(
         teardown,
         proof,
         v2_native,
+        events_consumed,
         #[cfg(feature = "memory-profile")]
         counters,
     );
@@ -1342,6 +1354,10 @@ fn script_stop_reason(runtime: &mut Runtime) -> String {
 /// with a time budget, slow ticks are logged and stale queued ticks are
 /// skipped, and errors never kill the isolate.
 ///
+/// `events_consumed` is false for every native shape: the event producer
+/// is then never observed and no batch is built, so the isolate pays
+/// nothing for events nothing can receive.
+///
 /// The stale-skip drain consumes commands with an explicit match so a
 /// non-Tick command (Pause/Resume/Probe/Stop/PaintClick) that arrives while ticks
 /// are queued is stashed for the next iteration instead of being
@@ -1355,6 +1371,7 @@ fn tick_loop(
     teardown: std::sync::Arc<Mutex<TeardownState>>,
     proof: std::sync::Arc<TeardownProofInner>,
     v2_native: bool,
+    events_consumed: bool,
     #[cfg(feature = "memory-profile")] counters: std::sync::Arc<
         crate::memory_profile::Counters,
     >,
@@ -1477,7 +1494,7 @@ fn tick_loop(
                         }
                         if let Err(e) = materialize_snapshot(&mut runtime, &snap, host_hold) {
                             let _ = out.send(ThreadMsg::Log(format!("snapshot: {e}")));
-                        } else {
+                        } else if events_consumed {
                             let observed = event_producer.observe(&snap);
                             if let Some(diag) = observed.diagnostic {
                                 let _ = out.send(ThreadMsg::Log(diag));
@@ -1512,11 +1529,13 @@ fn tick_loop(
                     continue;
                 }
                 let start = Instant::now();
-                let observed = event_producer.take_eligible();
-                if let Some(diag) = observed.diagnostic {
-                    let _ = out.send(ThreadMsg::Log(diag));
+                if events_consumed {
+                    let observed = event_producer.take_eligible();
+                    if let Some(diag) = observed.diagnostic {
+                        let _ = out.send(ThreadMsg::Log(diag));
+                    }
+                    deliver_native_events(&mut runtime, &observed.events, &out);
                 }
-                deliver_native_events(&mut runtime, &observed.events, &out);
                 // Guardian hold: skip `loop()` AND skip resolving
                 // parked conds (time waits too) — the wait stays parked
                 // until the hold lifts. Still call `onPaint` so status
@@ -1834,6 +1853,14 @@ fn tick_loop(
                 crate::trade::on_reset();
                 crate::drive_partner_trade::on_reset();
                 event_producer.reset();
+                if events_consumed {
+                    // The compat runner's queue is the only holder of
+                    // events that were staged but not yet flushed. A
+                    // reconnect must not replay them into the new
+                    // session, and must not leave the trim window full.
+                    let _ =
+                        runtime.eval::<()>("globalThis.__rs2b0t_pending_native_event_batch = null");
+                }
                 if v2_native {
                     let _ = runtime.eval::<()>(
                         "if (typeof globalThis.__rs_v2_reset_session === 'function') globalThis.__rs_v2_reset_session()",
@@ -2457,6 +2484,176 @@ loop() {
             reqs.iter()
                 .any(|req| matches!(req, crate::shim::InteractReq::Mouse { down: false, .. })),
             "valid center up dropped: {reqs:?}"
+        );
+        iso.join();
+    }
+
+    /// One posted tick whose only event-relevant fact is a prayer xp table:
+    /// an `xp` above the previous tick's value is one `SkillXp` event.
+    fn xp_input(tick: u64, inv_size: i32, xp: i32) -> Vec<u8> {
+        let stats = [crate::isolate_fb::StatInput {
+            index: 5,
+            name: "prayer",
+            xp,
+            base: 2,
+            effective: 2,
+        }];
+        let mut input = crate::isolate_fb::tests::empty_input(tick);
+        input.inv_size = inv_size;
+        input.stats = &stats;
+        crate::isolate_fb::encode_snapshot(&input)
+    }
+
+    fn xp_event(skill: i32) -> crate::events::NativeEvent {
+        crate::events::NativeEvent::SkillXp {
+            skill,
+            name: format!("skill{skill}"),
+            xp: skill,
+            delta: 1,
+        }
+    }
+
+    fn staged_writes(iso: &LoadIsolate) -> serde_json::Value {
+        iso.probe(
+            "({ticks: globalThis.__ticks || 0, invSize: globalThis.__rs2b0t_host.snapshot.inv_size, \
+             staged: typeof globalThis.__staged_writes, \
+             pending: typeof globalThis.__rs2b0t_pending_native_event_batch})",
+        )
+        .unwrap()
+    }
+
+    /// Undelivered events in the compat runner's queue (0 when it is unset).
+    fn queue_length(iso: &LoadIsolate) -> Option<i64> {
+        iso.probe(
+            "(() => { const q = globalThis.__rs2b0t_pending_native_event_batch; return q ? q.length : 0; })()",
+        )
+        .unwrap()
+        .as_i64()
+    }
+
+    /// A shape without an events API must not pay for events: the producer
+    /// never diffs a posted table (no diagnostic either), and the dispatcher
+    /// never builds or stages a batch. `__staged_writes` counts every write
+    /// the dispatcher would make to its staging global — the hand-off, plus
+    /// its own clear.
+    #[test]
+    fn native_tick_shape_builds_and_stages_no_native_events() {
+        let iso = LoadIsolate::spawn(
+            r#"
+let staged = null;
+Object.defineProperty(globalThis, '__rs2b0t_native_event_batch', {
+    configurable: true,
+    get() { return staged; },
+    set(v) {
+        globalThis.__staged_writes = (globalThis.__staged_writes || 0) + 1;
+        staged = v;
+    },
+});
+export function tick(api) { globalThis.__ticks = (globalThis.__ticks || 0) + 1; }
+"#
+            .into(),
+            LoadShape::NativeTick,
+            vec![],
+        )
+        .unwrap();
+        // An invalid inv_size is a producer diagnostic for a consumer; this
+        // shape has none, so not even the diff may run.
+        iso.post_snapshot(xp_input(1, 28, 0));
+        iso.on_game_tick(1);
+        iso.post_snapshot(xp_input(2, 99, 1));
+        iso.on_game_tick(2);
+        let report = staged_writes(&iso);
+        assert_eq!(report["ticks"], 2, "both ticks reached the module");
+        assert_eq!(report["invSize"], 99, "the snapshot materialised");
+        assert_eq!(
+            report["staged"], "undefined",
+            "no event batch may be built for a shape without an events API"
+        );
+        assert_eq!(
+            report["pending"], "undefined",
+            "no event queue may be created for a shape without an events API"
+        );
+        let logs = iso.drain_logs();
+        assert!(
+            !logs.iter().any(|line| line.contains("inventory events")),
+            "an unconsumed shape must not diff posted tables: {logs:?}"
+        );
+        iso.join();
+    }
+
+    /// The compat queue is the only staging buffer between the dispatcher and
+    /// the runner's per-tick drain. It must stay bounded when that drain
+    /// stalls, and the bound must drop the oldest events — the drain delivers
+    /// in order, so the newest are the ones still worth running.
+    #[test]
+    fn compat_event_queue_is_capped_and_keeps_the_newest_events() {
+        ensure_platform();
+        let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
+        let first: Vec<_> = (0..300).map(xp_event).collect();
+        dispatch_native_events(&mut runtime, &first).unwrap();
+        let staged: Option<serde_json::Value> = runtime
+            .eval("globalThis.__rs2b0t_native_event_batch ?? null")
+            .unwrap();
+        assert!(staged.is_none(), "the append consumes the staged batch");
+        let capped: i64 = runtime
+            .eval("globalThis.__rs2b0t_pending_native_event_batch.length")
+            .unwrap();
+        assert_eq!(capped, 256, "one oversized batch is capped at 256");
+
+        let second: Vec<_> = (300..310).map(xp_event).collect();
+        dispatch_native_events(&mut runtime, &second).unwrap();
+        let report: Vec<i64> = runtime
+            .eval("(() => { const q = globalThis.__rs2b0t_pending_native_event_batch; return [q.length, q[0].payload.skill, q[q.length - 1].payload.skill]; })()")
+            .unwrap();
+        assert_eq!(report[0], 256, "a second batch stays capped: {report:?}");
+        assert_eq!(
+            report[1], 54,
+            "the oldest events are trimmed first: {report:?}"
+        );
+        assert_eq!(report[2], 309, "the newest event is retained: {report:?}");
+    }
+
+    /// ResetSession drops the batches the previous connection staged: the
+    /// compat runner must not replay them, and the next session must not
+    /// start with the trim window already full.
+    #[test]
+    fn reset_session_clears_the_pending_native_event_queue() {
+        let iso = LoadIsolate::spawn(
+            r#"
+export default class T extends LoopingBot {
+loop() {
+    // Stall the runner's drain so the queue keeps what Rust staged.
+    globalThis.__rs2b0t_flush_native_events = () => {};
+}
+}
+"#
+            .into(),
+            LoadShape::CompatClass,
+            vec![],
+        )
+        .unwrap();
+        iso.post_snapshot(xp_input(1, 28, 0));
+        iso.on_game_tick(1);
+        assert_eq!(
+            queue_length(&iso),
+            Some(0),
+            "the first table only seeds the producer"
+        );
+        iso.post_snapshot(xp_input(2, 28, 1));
+        iso.on_game_tick(2);
+        assert_eq!(
+            queue_length(&iso),
+            Some(1),
+            "the xp diff reached the compat queue"
+        );
+        iso.reset_session_work();
+        let cleared = iso
+            .probe("globalThis.__rs2b0t_pending_native_event_batch === null")
+            .unwrap();
+        assert_eq!(
+            cleared,
+            serde_json::json!(true),
+            "ResetSession must clear the undelivered queue"
         );
         iso.join();
     }

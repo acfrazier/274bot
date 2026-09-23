@@ -929,9 +929,21 @@ pub(super) fn dispatch_native_events(
             .set(&mut scope, key, arr.into())
             .ok_or_else(|| "v8 set batch failed".to_string())?;
     }
+    // Append in a loop rather than with `q.push(...b)`: a large batch
+    // must not become that many call arguments. The queue is capped at
+    // 256 because its only drain is the compat runner's per-tick flush
+    // — a flush that stalls must not grow the isolate heap without
+    // bound. The oldest entries fall off first, matching the flush's
+    // in-order drain.
     runtime
         .eval::<()>(
-            "(() => { const b = globalThis.__rs2b0t_native_event_batch; globalThis.__rs2b0t_native_event_batch = null; const q = globalThis.__rs2b0t_pending_native_event_batch || (globalThis.__rs2b0t_pending_native_event_batch = []); q.push(...b); })()",
+            "(() => {
+    const b = globalThis.__rs2b0t_native_event_batch;
+    globalThis.__rs2b0t_native_event_batch = null;
+    const q = globalThis.__rs2b0t_pending_native_event_batch || (globalThis.__rs2b0t_pending_native_event_batch = []);
+    for (let i = 0; i < b.length; i++) q.push(b[i]);
+    if (q.length > 256) q.splice(0, q.length - 256);
+})()",
         )
         .map_err(|e| format!("{e}"))
 }
