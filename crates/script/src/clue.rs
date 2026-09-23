@@ -16,8 +16,9 @@
 //! errors `none-held` and aborts.
 //!
 //! This is the search, casket-open, unguarded-dig, guarded-dig encounter,
-//! trail-end collect and held-puzzle-box slice and nothing else: no talk,
-//! deposit, retry or return-grind. A held row that is a selected search
+//! trail-end collect, held-puzzle-box and talk-step slice and nothing else:
+//! no deposit, retry, return-grind, key hunt or puzzle-box extra. A held row
+//! that is a selected search
 //! membership — a selected `trail_loc=^true` **and** a decodable selected
 //! `trail_coord` on the same row — walks to its decoded tile and then
 //! dispatches the Search/Open picker over the posted loc page; both verbs are
@@ -118,6 +119,29 @@
 //! left to a later card, so a solved box is never opened or closed twice while
 //! the same step stays held.
 //!
+//! The last `Steady` arm is the talk step: a held row the selected
+//! `talk_key.talk` family publishes is the NPC it names. Forty-two of them
+//! publish the unique jm2 spawn, so the walk goes to the published
+//! `{x, z, plane}` tile and the Talk-to only ever dispatches at a posted npc of
+//! that identity standing on it — a wanderer outside the fogged radius is not
+//! chased, nothing is Cleared, and a page with no match waits at the tile. The
+//! five steps whose jm2 spawn is not unique take the nearest posted npc of
+//! their own identity instead: the selected `npc.id` against the posted `id`,
+//! then the selected display name against the posted `name`, never the alias
+//! and never first-in-file. Both arms require the row's own posted talk action
+//! and keep the posted name and posted scene index on the verb, and a page that
+//! posts no match, no `here` or no talk action waits with the token live.
+//!
+//! An open chat closes the arm for the tick: the posted `chat_modal_id` beside
+//! `chat_continue` is the landed `dialog_ready`, so no walk and no Talk-to goes
+//! out while it holds, and the posted `count_dialog_open` blocks the same way.
+//! The challenge seam is a `none-held` sibling of Collecting: `identify_step`
+//! reads no challenge id, so a page that holds only a selected
+//! `challenge_answers` scroll joins its parent talk step through the
+//! `_challenge` strip — the parent is the step, never the scroll id — and the
+//! posted count dialog is answered with that selected answer. Empty pages, zero
+//! counts and unselected ids still abort `none-held`.
+//!
 //! Identify is casket-first, so a casket held beside its own clue is the
 //! Open and never 3554 play. Yield keeps the token live, so it is not trail
 //! completion: the completion kinds are the finished collect's alone, this
@@ -139,7 +163,7 @@ use crate::task_clock::InstantTaskClock;
 use api::clue_logic::{identify_step, NONE_HELD};
 use api::clue_pack::SHARK_ID;
 use api::clue_puzzle::{self, Board, PuzzleRow};
-use api::game_data::{SelectedGameData, TrailMembershipRow};
+use api::game_data::{SelectedGameData, TalkKeyNpcRef, TalkKeyTalkRow, TrailMembershipRow};
 use serde_json::{json, Value};
 use std::cell::RefCell;
 use std::time::{Duration, Instant};
@@ -615,6 +639,13 @@ impl ClueRuntime {
         self.abort();
         let row = match identify(selected, input) {
             Ok(row) => row,
+            // A page that holds only a selected challenge scroll is the same
+            // `none-held` identify has always made; the scroll's own parent is
+            // the step the token keeps, exactly as it is for a live session.
+            Err(NONE_HELD) => match challenge_step(selected, input) {
+                Some(parent) => parent,
+                None => return self.aborted(NONE_HELD),
+            },
             Err(reason) => return self.aborted(reason),
         };
         if row.access.as_deref() == Some(CONSTRAINED) {
@@ -667,12 +698,19 @@ impl ClueRuntime {
             return self.finish();
         }
         // One identify per call, and the same landed `identify_step` the
-        // machine always made: membership is never re-derived here. The only
+        // machine always made: membership is never re-derived here. The first
         // seam is `none-held`, which a Collecting token — or the Steady step
-        // whose casket Open already went out — survives.
+        // whose casket Open already went out — survives. The second is the
+        // challenge scroll: `identify_step` reads no challenge id, so a page
+        // that holds only a selected one joins its parent talk step, and the
+        // parent — never the scroll id — is the step this token keeps.
         let row = match identify(selected, input) {
             Ok(row) => Some(row),
             Err(NONE_HELD) if self.collects() => None,
+            Err(NONE_HELD) => match challenge_step(selected, input) {
+                Some(parent) => Some(parent),
+                None => return self.aborted(NONE_HELD),
+            },
             Err(reason) => return self.aborted(reason),
         };
         let Some(row) = row else {
@@ -1143,15 +1181,18 @@ impl ClueRuntime {
     }
 
     /// `Steady` on an identified non-casket row: the landed search dispatch,
-    /// the guarded encounter, the sibling unguarded-dig dispatch, or the idle
-    /// every other row keeps.
+    /// the guarded encounter, the sibling unguarded-dig dispatch, the talk
+    /// step, or the idle every other row keeps.
     ///
     /// The search pin decides first: `search_tile` is the `trail_loc=^true`
     /// membership and the landed dispatch re-reads its own tile from it, so a
     /// search row can never reach either dig arm and Dig is never a second
     /// search classify. The guarded pin decides next, and the encounter it
     /// picked up — session state on this same token — is what the following
-    /// calls read. Every other held type still idles exactly as before.
+    /// calls read. The talk step is last, so the casket Open, the row's own
+    /// held puzzle box and all three walk arms keep their precedence and no
+    /// talk row is ever a second classify of them. Every other held type still
+    /// idles exactly as before.
     fn steady(
         &mut self,
         row: &TrailMembershipRow,
@@ -1166,7 +1207,7 @@ impl ClueRuntime {
         }
         match dig_tile(row) {
             Some(tile) => self.dig(tile, input),
-            None => self.emit("wait"),
+            None => self.talk(row, input, selected),
         }
     }
 
@@ -1398,6 +1439,112 @@ impl ClueRuntime {
             "token": self.token,
             "name": SPADE_NAME,
             "action": DIG,
+        })
+    }
+
+    /// `Steady` on an identified talk membership: the selected
+    /// `talk_key.talk` row this held step owns, walked to and then Talk-to'd,
+    /// one verb per call.
+    ///
+    /// The arm opens on the posted chat facts, because an open chat is not a
+    /// tick to Talk-to again: a posted `count_dialog_open` is answered — with
+    /// this step's own selected challenge answer and nothing else — and a
+    /// landed `dialog_ready` waits the tick out. An unobserved slot is neither.
+    ///
+    /// A step with a published spawn walks to that `{x, z, plane}` tile and
+    /// Talks-to only a posted npc of this step's identity standing on it; the
+    /// steps without one take the nearest posted npc of that identity. Either
+    /// way a page with no posted match, no posted `here`, no talk action or no
+    /// postable identity is a `wait` with the token live: nothing is invented,
+    /// nothing is Cleared, and no second target is chased.
+    fn talk(
+        &self,
+        row: &TrailMembershipRow,
+        input: &Value,
+        selected: Option<&SelectedGameData>,
+    ) -> Value {
+        let Some(talk) = talk_step(selected, row.id) else {
+            // Not a selected talk membership: the key keepers, the puzzle
+            // extras and every other identified row keep the idle they had.
+            return self.emit("wait");
+        };
+        if count_open(input) {
+            // The count dialog this step's own challenge scroll opens: the
+            // selected answer, never a computed or remembered one. A step the
+            // pin answered nothing for waits the tick out.
+            return match challenge_answer(selected, talk) {
+                Some(value) => json!({
+                    "kind": "answer-count",
+                    "token": self.token,
+                    "value": value,
+                }),
+                None => self.emit("wait"),
+            };
+        }
+        if dialog_ready(input) {
+            // Owned open chat: no walk and no Talk-to goes out behind it, the
+            // same way the landed dialog sequencer refuses to press a second
+            // option. The token lives and the next call re-reads the page.
+            return self.emit("wait");
+        }
+        let Some(page) = input.get("npcs").and_then(Value::as_array) else {
+            // No posted npc page this call: no spawn can be observed, so there
+            // is nothing to Talk-to.
+            return self.emit("wait");
+        };
+        match &talk.spawn {
+            Some(spawn) => {
+                let tile = Tile {
+                    x: spawn.x,
+                    z: spawn.z,
+                    level: spawn.plane,
+                };
+                match arrival(tile, input) {
+                    Arrival::Unknown => self.emit("wait"),
+                    Arrival::Walking => self.walk(tile),
+                    Arrival::Arrived => match pick_at_spawn(&talk.npc, page, tile) {
+                        Some(pick) => self.talk_verb(&pick),
+                        // Arrived with no posted row of this identity on the
+                        // tile: stay there and wait, never chase a wanderer and
+                        // never take a second target.
+                        None => self.emit("wait"),
+                    },
+                }
+            }
+            None => {
+                let Some(here) = input.get("here").and_then(posted_tile) else {
+                    // No posted tile: there is no arrival claim to make and no
+                    // distance to measure a posted row by, so this tick waits
+                    // rather than walking blind.
+                    return self.emit("wait");
+                };
+                match pick_talk(&talk.npc, page, here) {
+                    Some(pick) if pick.distance <= i64::from(ARRIVE_RADIUS) => {
+                        self.talk_verb(&pick)
+                    }
+                    // Posted but out of reach: walk to the row's own posted
+                    // tile and re-pick from the arrival. A row that posted no
+                    // tile is unmeasured, so this tick waits.
+                    Some(pick) => match pick.tile {
+                        Some(tile) => self.walk(tile),
+                        None => self.emit("wait"),
+                    },
+                    None => self.emit("wait"),
+                }
+            }
+        }
+    }
+
+    /// The landed Talk-to: the posted display name the host resolves, the
+    /// posted talk action the row listed, and the posted scene index the host
+    /// matches. No row id, no alias and no tile ride along.
+    fn talk_verb(&self, pick: &TalkPick<'_>) -> Value {
+        json!({
+            "kind": "npc",
+            "token": self.token,
+            "name": pick.name,
+            "action": pick.action,
+            "index": pick.index,
         })
     }
 }
@@ -2021,6 +2168,17 @@ fn casket_name<'a>(
     (!name.is_empty()).then_some(name)
 }
 
+/// The frozen `talk_op` prefix: the landed `reach.rs` / `dialog.rs` rule reads
+/// the **first** posted action whose first four characters are `talk`, ignoring
+/// ASCII case, and emits that posted string — `Talk-to` when the page lists it,
+/// `Talk` otherwise. The dash is not part of the rule.
+const TALK_PREFIX: &str = "talk";
+
+/// The frozen `_challenge` suffix the selected `challenge_answers` aliases
+/// carry beside their parent clue's alias: `path_join` strips it onto the
+/// parent talk step, and the scroll id itself is never a step.
+const CHALLENGE_SUFFIX: &str = "_challenge";
+
 /// The frozen `SPADE_NAME = 'Spade'`: the Dig verb's item identity. The host
 /// resolves the first inventory row with this display name, so this is the
 /// selected-verified display and never the membership alias, never an item id
@@ -2055,6 +2213,225 @@ fn spade_posted(input: &Value) -> bool {
                         .is_some_and(|name| name.eq_ignore_ascii_case(SPADE_NAME))
             })
         })
+}
+
+/// The selected talk step an identified membership row owns: the
+/// `talk_key.talk` row whose own id is the row's, or `None` when the row is not
+/// a talk membership. The key keepers, the puzzle-box extras and every other
+/// identified row are not this arm's, and nothing is ever played as if they
+/// were.
+fn talk_step(selected: Option<&SelectedGameData>, id: i32) -> Option<&TalkKeyTalkRow> {
+    selected?.talk_key()?.talk.iter().find(|talk| talk.id == id)
+}
+
+/// The challenge seam: `identify_step` reads no challenge id, so the page the
+/// server leaves once a parent clue swaps for its own challenge scroll is
+/// `none-held`. A selected `challenge_answers` id with a positive posted count
+/// joins its **parent** talk membership row through the `_challenge` strip, and
+/// the parent — never the scroll id — is the step the token keeps.
+///
+/// The first posted selected id wins, so two scrolls joined by one page resolve
+/// in posted order. Nothing else is admitted: an empty page, a zero count, an
+/// id no selected challenge answers, a strip that names no selected row, and a
+/// parent the talk family does not publish are all `none-held`.
+fn challenge_step<'a>(
+    selected: Option<&'a SelectedGameData>,
+    input: &Value,
+) -> Option<&'a TrailMembershipRow> {
+    let facts = selected?.trails()?;
+    for (id, count) in posted_page(input) {
+        if count <= 0 {
+            continue;
+        }
+        let Some(challenge) = facts
+            .challenge_answers
+            .iter()
+            .find(|challenge| challenge.id == id)
+        else {
+            continue;
+        };
+        let Some(alias) = challenge.alias.strip_suffix(CHALLENGE_SUFFIX) else {
+            continue;
+        };
+        let Some(parent) = facts.rows.iter().find(|row| row.alias == alias) else {
+            continue;
+        };
+        if talk_step(selected, parent.id).is_none() {
+            continue;
+        }
+        return Some(parent);
+    }
+    None
+}
+
+/// The selected answer this talk step's own challenge scroll carries: the
+/// `challenge_answers` row whose `_challenge`-stripped alias is the step's own
+/// alias, parsed as the non-negative `i32` the count dialog wants.
+///
+/// `None` when the step has no challenge, and `None` when the selected string
+/// is not one — an unparsed, negative or absent answer never clicks, so no
+/// count is ever invented.
+fn challenge_answer(selected: Option<&SelectedGameData>, talk: &TalkKeyTalkRow) -> Option<i32> {
+    for challenge in &selected?.trails()?.challenge_answers {
+        if challenge.alias.strip_suffix(CHALLENGE_SUFFIX) != Some(talk.alias.as_str()) {
+            continue;
+        }
+        let Ok(value) = challenge.answer.parse::<i32>() else {
+            continue;
+        };
+        if value >= 0 {
+            return Some(value);
+        }
+    }
+    None
+}
+
+/// The landed `talk_op` over one posted row: the first posted action whose
+/// first four bytes are `talk`, ignoring ASCII case, emitted as that posted
+/// string. A row that posted no talk action is not a row this arm dispatches
+/// at, and the action is never canonicalized — the host receives the page's own
+/// `Talk-to` or `Talk`.
+fn talk_action(row: &Value) -> Option<&str> {
+    let actions = row.get("actions")?.as_array()?;
+    actions.iter().find_map(|action| {
+        action.as_str().and_then(|text| {
+            text.get(..TALK_PREFIX.len())
+                .is_some_and(|head| head.eq_ignore_ascii_case(TALK_PREFIX))
+                .then_some(text)
+        })
+    })
+}
+
+/// One posted npc row that names this talk step's own npc and lists a talk
+/// action, as the pickers read it: the posted scene index the host matches, the
+/// posted display name and the posted talk action the verb carries.
+///
+/// The identity join is the selected packed type id first — `npc.id` against
+/// the posted `id` — then the selected display name against the posted `name`,
+/// compared the way the landed spawn filter compares a posted display name. The
+/// script alias is never compared to a posted string: the page carries no alias
+/// at all. A row that posted no index, no name, or no talk action is not a row
+/// this arm can dispatch at.
+fn talk_row<'a>(row: &'a Value, npc: &TalkKeyNpcRef) -> Option<(i32, &'a str, &'a str)> {
+    let index = posted_i32(row, "index")?;
+    let name = row
+        .get("name")
+        .and_then(Value::as_str)
+        .filter(|name| !name.is_empty())?;
+    let named = posted_i32(row, "id") == Some(npc.id) || name.eq_ignore_ascii_case(&npc.name);
+    if !named {
+        return None;
+    }
+    Some((index, name, talk_action(row)?))
+}
+
+/// One posted npc row the talk arm has picked: the posted scene index the host
+/// matches, the posted name and posted talk action the verb carries, the posted
+/// tile a walk would go to, and the measure the pick was ranked by.
+struct TalkPick<'a> {
+    index: i32,
+    name: &'a str,
+    action: &'a str,
+    tile: Option<Tile>,
+    distance: i64,
+}
+
+/// The identity-only picker: the nearest posted row that names this step's npc
+/// and lists a talk action, measured the landed way — the posted `distance`
+/// when the row carried one, else the Chebyshev distance from this call's
+/// posted `here` to the row's own posted tile, on that same level. The scan
+/// only replaces its best on a strict improvement, so ties keep posted order.
+///
+/// The five steps whose jm2 spawn is not unique take this read, and it is the
+/// posted page's own answer: no alias, no first-in-file row and no frozen
+/// coordinate is ever picked, and a page with no match picks nothing.
+fn pick_talk<'a>(npc: &TalkKeyNpcRef, page: &'a [Value], here: Tile) -> Option<TalkPick<'a>> {
+    let mut best: Option<TalkPick<'a>> = None;
+    for row in page {
+        let Some((index, name, action)) = talk_row(row, npc) else {
+            continue;
+        };
+        let Some(distance) = npc_distance(row, Some(here)) else {
+            continue;
+        };
+        let better = match &best {
+            None => true,
+            Some(best) => distance < best.distance,
+        };
+        if better {
+            best = Some(TalkPick {
+                index,
+                name,
+                action,
+                tile: posted_tile(row),
+                distance,
+            });
+        }
+    }
+    best
+}
+
+/// The unique-spawn picker: the nearest posted row that names this step's npc,
+/// lists a talk action, stands on the published spawn's own level, and is
+/// inside the frozen `ARRIVE_RADIUS` of that spawn — by the row's own posted
+/// tile, or by the posted `distance` the page carries to this player.
+///
+/// The radius is part of the membership and not only of the verb: a wizard-wanderer
+/// outside it is not this step's npc, so the arm keeps the published tile and
+/// waits instead of chasing a second target. Strict improvement only, so ties
+/// keep posted order.
+fn pick_at_spawn<'a>(npc: &TalkKeyNpcRef, page: &'a [Value], spawn: Tile) -> Option<TalkPick<'a>> {
+    let mut best: Option<TalkPick<'a>> = None;
+    for row in page {
+        let Some((index, name, action)) = talk_row(row, npc) else {
+            continue;
+        };
+        if posted_i32(row, "level") != Some(spawn.level) {
+            continue;
+        }
+        let tile = posted_tile(row);
+        let posted = posted_i32(row, "distance").map(i64::from);
+        let near = posted.is_some_and(|distance| distance <= i64::from(ARRIVE_RADIUS))
+            || tile.is_some_and(|tile| chebyshev(tile, spawn) <= i64::from(ARRIVE_RADIUS));
+        if !near {
+            continue;
+        }
+        let Some(distance) = posted.or_else(|| tile.map(|tile| chebyshev(tile, spawn))) else {
+            continue;
+        };
+        let better = match &best {
+            None => true,
+            Some(best) => distance < best.distance,
+        };
+        if better {
+            best = Some(TalkPick {
+                index,
+                name,
+                action,
+                tile,
+                distance,
+            });
+        }
+    }
+    best
+}
+
+/// The landed `dialog_ready` over this call's posted chat slots: a posted
+/// `chat_modal_id` that is not the closed `-1`, or a posted `chat_continue`.
+///
+/// Only posted facts count. A page that posted neither slot has not said the
+/// chat is open, so an unobserved slot is neither an open chat nor a close, and
+/// the arm is free to Talk-to.
+fn dialog_ready(input: &Value) -> bool {
+    posted_i32(input, "chat_modal_id").is_some_and(|id| id != -1)
+        || input.get("chat_continue").and_then(Value::as_bool) == Some(true)
+}
+
+/// The posted `count_dialog_open` slot. Only a posted `true` blocks a Talk-to
+/// and only a posted `true` is a dialog to answer: an omitted slot is
+/// unobserved, not a close, and a posted `false` is a closed dialog.
+fn count_open(input: &Value) -> bool {
+    input.get("count_dialog_open").and_then(Value::as_bool) == Some(true)
 }
 
 /// Progress line for the identified step: landed alias, role and id only.
@@ -2266,15 +2643,21 @@ mod tests {
         api::game_data::for_revision(ClientRevision::R274).expect("selected data")
     }
 
-    /// A held id that is not a membership row: a challenge-answer row, which
-    /// stays unread.
+    /// A held id that is none of the selected families' rows: not a membership
+    /// row, not one of the six challenge scrolls — holding one of those is the
+    /// challenge seam's own join onto its parent, not an unrelated page — and
+    /// not a talk step. The C3 exemplar has to be a page no selected family
+    /// names, or it would test a path that no longer exists.
     fn unrelated(data: &SelectedGameData) -> i32 {
-        data.trails()
-            .expect("trails")
-            .challenge_answers
-            .first()
-            .expect("challenge row")
-            .id
+        let trails = data.trails().expect("trails");
+        let talk = data.talk_key().expect("talk_key");
+        (1..)
+            .find(|id| {
+                !trails.rows.iter().any(|row| row.id == *id)
+                    && !trails.challenge_answers.iter().any(|row| row.id == *id)
+                    && !talk.talk.iter().any(|row| row.id == *id)
+            })
+            .expect("a held id no selected family names")
     }
 
     fn payload(op: &str, token: Option<u64>, held: Value, extra: Value) -> Value {
@@ -5419,18 +5802,30 @@ mod tests {
         for scene in [
             // Another level, with a posted distance and with only its own
             // tile to measure.
-            fight_scene(json!([field(npc(7, WIZARD, 3, 10, 10), "level", json!(1))]), json!({})),
+            fight_scene(
+                json!([field(npc(7, WIZARD, 3, 10, 10), "level", json!(1))]),
+                json!({}),
+            ),
             fight_scene(json!([tiled(7, WIZARD, 3058, 3884, 1)]), json!({})),
             // No posted level at all is not the `here` level either, and a
             // row with no posted tile and no posted distance has no measure.
-            fight_scene(json!([unfield(npc(7, WIZARD, 3, 10, 10), "level")]), json!({})),
             fight_scene(
-                json!([unfield(unfield(unfield(npc(7, WIZARD, 3, 10, 10), "distance"), "x"), "z")]),
+                json!([unfield(npc(7, WIZARD, 3, 10, 10), "level")]),
+                json!({}),
+            ),
+            fight_scene(
+                json!([unfield(
+                    unfield(unfield(npc(7, WIZARD, 3, 10, 10), "distance"), "x"),
+                    "z"
+                )]),
                 json!({}),
             ),
             // No posted `here`: no level to compare and no base to measure
             // from, whatever the row posted.
-            fight_scene(json!([tiled(7, WIZARD, 3058, 3884, 0)]), json!({ "here": null })),
+            fight_scene(
+                json!([tiled(7, WIZARD, 3058, 3884, 0)]),
+                json!({ "here": null }),
+            ),
             fight_scene(json!([npc(7, WIZARD, 3, 10, 10)]), json!({ "here": null })),
             // The row's own tile one step outside the frozen radius.
             fight_scene(
@@ -5505,13 +5900,21 @@ mod tests {
             page.clone(),
             fight_scene(json!([]), json!({})),
         );
-        assert_eq!(killed["kind"], "held", "a freeze never spends the grace: {killed}");
+        assert_eq!(
+            killed["kind"], "held",
+            "a freeze never spends the grace: {killed}"
+        );
         assert_eq!(killed["name"], SPADE_NAME, "{killed}");
         assert_eq!(killed["action"], DIG, "{killed}");
         // Frozen again: nothing is read and nothing is emitted, and the thaw
         // after it leaves the post-kill Dig where it was.
         on_pause();
-        let frozen = call(&data, token, page.clone(), fight_scene(json!([]), json!({})));
+        let frozen = call(
+            &data,
+            token,
+            page.clone(),
+            fight_scene(json!([]), json!({})),
+        );
         assert_eq!(frozen["kind"], "wait", "{frozen}");
         assert!(frozen.get("action").is_none(), "{frozen}");
         on_resume();
@@ -6242,6 +6645,850 @@ mod tests {
             json!({ "here": here(3100, 3300, 1) }),
         );
         assert_eq!(walked["kind"], "walk", "{walked}");
+    }
+
+    /// `trail_clue_easy_simple005`: a talk membership whose jm2 spawn is unique
+    /// — `hans` at `(3207, 3233, plane 0)`.
+    const TALK: i32 = 2681;
+    /// `trail_clue_hard_riddle025`: the talk step that publishes a plane-1
+    /// spawn — `Heckel Funch` at `(2493, 3488, plane 1)`. The published plane
+    /// is the walk verb's `level`, and it is the only place a level comes from.
+    const TALK_PLANE: i32 = 3575;
+    /// `trail_clue_easy_simple008`: an identity-only talk step. Its jm2 spawn
+    /// is not unique, so the family publishes no tile and the arm takes the
+    /// nearest posted npc of its own identity — `Tanner`, packed id 804.
+    const TALK_IDENTITY: i32 = 2684;
+    /// `trail_clue_medium_anagram001`: the talk step that is also a challenge
+    /// parent — `Hazelmere`, whose `2842` scroll answers `"6859"`.
+    const TALK_CHALLENGE: i32 = 2841;
+    /// That scroll.
+    const CHALLENGE: i32 = 2842;
+    /// `trail_clue_medium_anagram003`: the identity-only challenge parent —
+    /// Zoo keeper, whose `2846` scroll answers `"40"`.
+    const TALK_CHALLENGE_IDENTITY: i32 = 2845;
+    /// That scroll.
+    const CHALLENGE_IDENTITY: i32 = 2846;
+
+    /// One wrapper-marshalled posted npc row as the talk arm reads it: the
+    /// posted index the Talk-to carries, the packed id and posted display name
+    /// the identity join compares, the posted tile and distance the arrival is
+    /// measured by, and the posted action list the talk action is read from.
+    fn talk_npc(
+        index: i32,
+        id: i32,
+        name: &str,
+        tile: Tile,
+        distance: i32,
+        actions: &[&str],
+    ) -> Value {
+        json!({
+            "index": index,
+            "id": id,
+            "name": name,
+            "x": tile.x,
+            "z": tile.z,
+            "level": tile.level,
+            "distance": distance,
+            "health": 0,
+            "max_health": 0,
+            "in_combat": false,
+            "actions": actions,
+            "target_kind": 0,
+            "target_index": -1,
+        })
+    }
+
+    /// One talk call's pages: the posted `here` tile and the posted npc page,
+    /// plus whatever else the call under test needs — the posted chat slots,
+    /// the posted count dialog, the posted hitpoints.
+    fn talk_scene(here_tile: Value, npcs: Value, extra: Value) -> Value {
+        let mut scene = json!({ "here": here_tile, "npcs": npcs });
+        for (key, value) in extra.as_object().expect("extra") {
+            scene[key] = value.clone();
+        }
+        scene
+    }
+
+    /// The selected talk step these tests read.
+    fn talk_of(data: &SelectedGameData, id: i32) -> &TalkKeyTalkRow {
+        talk_step(Some(data), id).unwrap_or_else(|| panic!("talk step {id}"))
+    }
+
+    /// The held page of one talk step.
+    fn talk_page(id: i32) -> Value {
+        json!([[id, 1]])
+    }
+
+    /// The talk membership is the selected `talk_key.talk` family and nothing
+    /// else, and no talk step is a second classify of the landed arms: the
+    /// seven key keepers, the desc-only rows the family does not publish and
+    /// every search, guarded, dig and casket membership stay out.
+    #[test]
+    fn the_talk_membership_is_the_selected_talk_family_and_nothing_else() {
+        on_reset();
+        let data = selected();
+        let talk = data.talk_key().expect("talk_key");
+        assert_eq!(talk.talk.len(), 47, "the landed family");
+        assert_eq!(
+            talk.talk.iter().filter(|row| row.spawn.is_some()).count(),
+            42,
+            "the unique-spawn slice"
+        );
+        assert_eq!(
+            talk.talk.iter().filter(|row| row.spawn.is_none()).count(),
+            5,
+            "the identity-only slice"
+        );
+        for step in &talk.talk {
+            let row = row(&data, step.id);
+            assert_eq!(
+                talk_step(Some(&data), step.id).map(|talk| talk.id),
+                Some(step.id),
+                "{}",
+                step.alias
+            );
+            // The talk arm is the last `Steady` arm, so a talk step is never
+            // claimed by the search, guarded, unguarded-dig or casket classify.
+            assert_eq!(search_tile(row), None, "{}", step.alias);
+            assert_eq!(guarded_tile(row), None, "{}", step.alias);
+            assert_eq!(dig_tile(row), None, "{}", step.alias);
+            assert_eq!(casket_name(Some(&data), row), None, "{}", step.alias);
+            // Every talk membership is a clue row the landed identify returns.
+            assert_eq!(row.role, "clue", "{}", step.alias);
+        }
+        // The key keepers are not talk membership, and neither is any row the
+        // family does not publish.
+        for key in &talk.keys {
+            assert_eq!(
+                talk_step(Some(&data), key.id).map(|talk| talk.id),
+                None,
+                "{}",
+                key.alias
+            );
+        }
+        for id in [MAP_EMPTY, RIDDLE, SEARCH, UNGUARDED, GUARDED, CLUE, CASKET] {
+            assert_eq!(talk_step(Some(&data), id).map(|talk| talk.id), None, "{id}");
+        }
+        // No selected pin is no talk step at all.
+        assert_eq!(talk_step(None, TALK).map(|talk| talk.id), None);
+    }
+
+    /// The unique-spawn arm: the walk is the published `{x, z, plane}` and the
+    /// Talk-to is only ever a posted npc of this step's identity standing on
+    /// that tile. A wanderer, another identity, a wrong level and a row with no
+    /// talk action all wait at the tile.
+    #[test]
+    fn a_unique_spawn_talk_step_walks_to_the_published_tile_and_then_talks() {
+        on_reset();
+        let data = selected();
+        let step = talk_of(&data, TALK);
+        assert_eq!(step.npc.id, 0, "{}", step.alias);
+        assert_eq!(step.npc.name, "Hans", "{}", step.alias);
+        let spawn = step.spawn.as_ref().expect("a unique jm2 spawn");
+        assert_eq!((spawn.x, spawn.z, spawn.plane), (3207, 3233, 0));
+
+        let page = talk_page(TALK);
+        let token = steady(&data, TALK);
+
+        // No posted `here`: there is no arrival claim to make, so this tick
+        // waits rather than walking blind.
+        let blind = call(&data, token, page.clone(), json!({ "npcs": [] }));
+        assert_eq!(blind["kind"], "wait", "{blind}");
+        assert_eq!(token_of(&blind), token, "{blind}");
+
+        // Posted far from the tile: the walk is the published tile, and the
+        // `plane` is the verb's own `level`.
+        let walked = call(
+            &data,
+            token,
+            page.clone(),
+            talk_scene(here(3200, 3233, 0), json!([]), json!({})),
+        );
+        assert_eq!(walked["kind"], "walk", "{walked}");
+        assert_eq!(walked["x"], spawn.x, "{walked}");
+        assert_eq!(walked["z"], spawn.z, "{walked}");
+        assert_eq!(walked["level"], spawn.plane, "{walked}");
+
+        // Arrived, with the step's own npc posted on the tile: the posted name
+        // and posted action ride the verb with the posted scene index.
+        let on_tile = json!([talk_npc(11, 0, "Hans", Tile { x: 3207, z: 3233, level: 0 }, 1, &["Talk-to"])]);
+        let talked = call(
+            &data,
+            token,
+            page.clone(),
+            talk_scene(here(3207, 3233, 0), on_tile.clone(), json!({})),
+        );
+        assert_eq!(talked["kind"], "npc", "{talked}");
+        assert_eq!(talked["name"], "Hans", "{talked}");
+        assert_eq!(talked["action"], "Talk-to", "{talked}");
+        assert_eq!(talked["index"], 11, "{talked}");
+        assert_eq!(token_of(&talked), token, "{talked}");
+
+        // Identity is the packed id first: a posted row that carries it keeps
+        // the page's own display name on the verb.
+        let by_id = json!([talk_npc(
+            12,
+            0,
+            "Someone Else",
+            Tile {
+                x: 3208,
+                z: 3233,
+                level: 0,
+            },
+            1,
+            &["Talk-to"]
+        )]);
+        let renamed = call(
+            &data,
+            token,
+            page.clone(),
+            talk_scene(here(3207, 3233, 0), by_id, json!({})),
+        );
+        assert_eq!(renamed["kind"], "npc", "{renamed}");
+        assert_eq!(renamed["name"], "Someone Else", "{renamed}");
+        assert_eq!(renamed["index"], 12, "{renamed}");
+
+        // The frozen `talk_op` rule: the first posted action whose first four
+        // characters are `talk`, emitted as the page posted it.
+        let plain = json!([talk_npc(
+            13,
+            0,
+            "Hans",
+            Tile {
+                x: 3207,
+                z: 3233,
+                level: 0,
+            },
+            1,
+            &["Examine", "Talk"]
+        )]);
+        let action = call(
+            &data,
+            token,
+            page.clone(),
+            talk_scene(here(3207, 3233, 0), plain, json!({})),
+        );
+        assert_eq!(action["kind"], "npc", "{action}");
+        assert_eq!(action["action"], "Talk", "{action}");
+
+        // A wanderer four tiles off the published tile is not this step's npc:
+        // the arm keeps the tile and waits — no walk, no npc and no Clear.
+        let wandered = json!([talk_npc(14, 0, "Hans", Tile { x: 3211, z: 3233, level: 0 }, 4, &["Talk-to"])]);
+        let waited = call(
+            &data,
+            token,
+            page.clone(),
+            talk_scene(here(3207, 3233, 0), wandered, json!({})),
+        );
+        assert_eq!(waited["kind"], "wait", "{waited}");
+        assert!(waited.get("x").is_none(), "{waited}");
+
+        // Another identity on the tile is not this step's either, whatever it
+        // is called and however close it stands.
+        let other = json!([talk_npc(15, 541, "Zeke", Tile { x: 3207, z: 3233, level: 0 }, 1, &["Talk-to"])]);
+        let stranger = call(
+            &data,
+            token,
+            page.clone(),
+            talk_scene(here(3207, 3233, 0), other, json!({})),
+        );
+        assert_eq!(stranger["kind"], "wait", "{stranger}");
+
+        // No talk action on the posted row: not a row this arm dispatches at.
+        let silent = json!([talk_npc(16, 0, "Hans", Tile { x: 3207, z: 3233, level: 0 }, 1, &["Examine"])]);
+        let no_action = call(
+            &data,
+            token,
+            page.clone(),
+            talk_scene(here(3207, 3233, 0), silent, json!({})),
+        );
+        assert_eq!(no_action["kind"], "wait", "{no_action}");
+
+        // Same level is part of the membership: the same npc posted one level
+        // up is not the one this Dig-free spawn owns.
+        let above = json!([talk_npc(17, 0, "Hans", Tile { x: 3207, z: 3233, level: 1 }, 1, &["Talk-to"])]);
+        let leveled = call(
+            &data,
+            token,
+            page.clone(),
+            talk_scene(here(3207, 3233, 0), above, json!({})),
+        );
+        assert_eq!(leveled["kind"], "wait", "{leveled}");
+
+        // Posted on another level entirely: arrival is same-level, so the arm
+        // walks again rather than Talking-to anything.
+        let off_level = call(
+            &data,
+            token,
+            page.clone(),
+            talk_scene(here(3207, 3233, 1), on_tile, json!({})),
+        );
+        assert_eq!(off_level["kind"], "walk", "{off_level}");
+        assert_eq!(off_level["level"], 0, "{off_level}");
+
+        // The published plane is the walk's level on the plane-1 sibling too.
+        let plane = talk_of(&data, TALK_PLANE);
+        let spawn = plane.spawn.as_ref().expect("a unique jm2 spawn");
+        assert_eq!(spawn.plane, 1, "{}", plane.alias);
+        let token = steady(&data, TALK_PLANE);
+        let upstairs = call(
+            &data,
+            token,
+            talk_page(TALK_PLANE),
+            talk_scene(here(2485, 3488, 1), json!([]), json!({})),
+        );
+        assert_eq!(upstairs["kind"], "walk", "{upstairs}");
+        assert_eq!(upstairs["level"], 1, "{upstairs}");
+        assert_eq!(upstairs["x"], spawn.x, "{upstairs}");
+        assert_eq!(upstairs["z"], spawn.z, "{upstairs}");
+    }
+
+    /// The identity-only arm: the nearest posted npc of this step's own
+    /// identity, walked to and then Talk-to'd, with no alias, no first-in-file
+    /// row and no frozen tile anywhere in the pick.
+    #[test]
+    fn an_identity_only_talk_step_picks_the_nearest_posted_match() {
+        on_reset();
+        let data = selected();
+        let step = talk_of(&data, TALK_IDENTITY);
+        assert!(step.spawn.is_none(), "{}", step.alias);
+        assert_eq!(step.npc.id, 804, "{}", step.alias);
+        assert_eq!(step.npc.name, "Tanner", "{}", step.alias);
+
+        let page = talk_page(TALK_IDENTITY);
+        let token = steady(&data, TALK_IDENTITY);
+
+        // No posted match at all: a wait, and the token stays live.
+        let none = call(
+            &data,
+            token,
+            page.clone(),
+            talk_scene(here(3200, 3200, 0), json!([]), json!({})),
+        );
+        assert_eq!(none["kind"], "wait", "{none}");
+        assert_eq!(token_of(&none), token, "{none}");
+
+        // No posted `here`: no distance to measure a posted row by, so the arm
+        // waits instead of inventing a base.
+        let unmeasured = call(
+            &data,
+            token,
+            page.clone(),
+            json!({ "npcs": [talk_npc(21, 804, "Tanner", Tile { x: 3200, z: 3204, level: 0 }, 1, &["Talk-to"])] }),
+        );
+        assert_eq!(unmeasured["kind"], "wait", "{unmeasured}");
+
+        // Two rows of this identity, farthest posted first: the nearest wins
+        // and the walk goes to that row's own tile, never the first in file.
+        let near = talk_npc(22, 804, "Tanner", Tile { x: 3200, z: 3205, level: 0 }, 5, &["Talk-to"]);
+        let far = talk_npc(23, 804, "Tanner", Tile { x: 3300, z: 3300, level: 0 }, 30, &["Talk-to"]);
+        let pick = call(
+            &data,
+            token,
+            page.clone(),
+            talk_scene(here(3200, 3200, 0), json!([far, near]), json!({})),
+        );
+        assert_eq!(pick["kind"], "walk", "{pick}");
+        assert_eq!(pick["x"], 3200, "{pick}");
+        assert_eq!(pick["z"], 3205, "{pick}");
+        assert_eq!(pick["level"], 0, "{pick}");
+
+        // Arrived: the nearest posted row is inside the frozen radius, so the
+        // verb is the Talk-to with that row's own posted identity.
+        let arrived = call(
+            &data,
+            token,
+            page.clone(),
+            talk_scene(
+                here(3200, 3205, 0),
+                json!([
+                    talk_npc(24, 999, "Tanner", Tile { x: 3200, z: 3206, level: 0 }, 3, &["Talk-to"]),
+                    talk_npc(25, 804, "Tanner", Tile { x: 3200, z: 3205, level: 0 }, 1, &["Talk-to"]),
+                ]),
+                json!({}),
+            ),
+        );
+        assert_eq!(arrived["kind"], "npc", "{arrived}");
+        assert_eq!(arrived["name"], "Tanner", "{arrived}");
+        assert_eq!(arrived["action"], "Talk-to", "{arrived}");
+        assert_eq!(arrived["index"], 25, "{arrived}");
+
+        // Ties keep posted order: the scan only replaces on a strict
+        // improvement.
+        let tie = call(
+            &data,
+            token,
+            page.clone(),
+            talk_scene(
+                here(3200, 3205, 0),
+                json!([
+                    talk_npc(26, 804, "Tanner", Tile { x: 3201, z: 3205, level: 0 }, 1, &["Talk-to"]),
+                    talk_npc(27, 804, "Tanner", Tile { x: 3200, z: 3206, level: 0 }, 1, &["Talk-to"]),
+                ]),
+                json!({}),
+            ),
+        );
+        assert_eq!(tie["index"], 26, "{tie}");
+
+        // The posted `distance` is what the pick ranks by when the page
+        // carries one: a row that reads near is the one that is Talk-to'd.
+        let posted_near = call(
+            &data,
+            token,
+            page.clone(),
+            talk_scene(
+                here(3200, 3205, 0),
+                json!([
+                    talk_npc(28, 804, "Tanner", Tile { x: 3290, z: 3290, level: 0 }, 1, &["Talk-to"]),
+                    talk_npc(29, 804, "Tanner", Tile { x: 3200, z: 3205, level: 0 }, 4, &["Talk-to"]),
+                ]),
+                json!({}),
+            ),
+        );
+        assert_eq!(posted_near["index"], 28, "{posted_near}");
+
+        // Another step's identity is not this one's, and neither is a row that
+        // carries only this step's script alias — the join is the packed id
+        // and the display name, never the alias and never a nearest anything.
+        let wrong = call(
+            &data,
+            token,
+            page.clone(),
+            talk_scene(
+                here(3200, 3205, 0),
+                json!([
+                    talk_npc(30, 541, "Zeke", Tile { x: 3200, z: 3205, level: 0 }, 1, &["Talk-to"]),
+                    talk_npc(31, 999, "tanner", Tile { x: 3200, z: 3205, level: 0 }, 1, &["Examine"]),
+                ]),
+                json!({}),
+            ),
+        );
+        assert_eq!(wrong["kind"], "wait", "{wrong}");
+
+        // A matching row with no talk action is not a match, and a matching
+        // row the page posted no tile or distance for is unmeasured.
+        let silent = call(
+            &data,
+            token,
+            page.clone(),
+            talk_scene(
+                here(3200, 3205, 0),
+                json!([talk_npc(32, 804, "Tanner", Tile { x: 3200, z: 3205, level: 0 }, 1, &["Examine"])]),
+                json!({}),
+            ),
+        );
+        assert_eq!(silent["kind"], "wait", "{silent}");
+        let mut unmeasured = talk_npc(33, 804, "Tanner", Tile { x: 3200, z: 3205, level: 0 }, 2, &["Talk-to"]);
+        unmeasured.as_object_mut().expect("row").remove("x");
+        unmeasured.as_object_mut().expect("row").remove("z");
+        unmeasured.as_object_mut().expect("row").remove("distance");
+        let blind = call(
+            &data,
+            token,
+            page,
+            talk_scene(here(3200, 3205, 0), json!([unmeasured]), json!({})),
+        );
+        assert_eq!(blind["kind"], "wait", "{blind}");
+    }
+
+    /// The challenge seam: a page that holds only a selected challenge scroll
+    /// joins that scroll's parent talk step, and the posted count dialog is
+    /// answered with the selected answer. Empty, zero and unrelated pages still
+    /// abort `none-held`.
+    #[test]
+    fn a_held_challenge_scroll_joins_the_parent_talk_step_and_answers_the_count() {
+        on_reset();
+        let data = selected();
+        let parent = talk_of(&data, TALK_CHALLENGE);
+        assert_eq!(parent.npc.name, "Hazelmere", "{}", parent.alias);
+
+        // Begin on the scroll alone: the identify is `none-held`, and the seam
+        // hands out the parent's token rather than a refusal.
+        let opened = begin(&data, talk_page(CHALLENGE));
+        assert_eq!(opened["kind"], "token", "{opened}");
+        let token = token_of(&opened);
+        let gate = call(&data, token, talk_page(CHALLENGE), json!({}));
+        assert_eq!(gate["kind"], "callback.enabled", "{gate}");
+        let logged = call(
+            &data,
+            token,
+            talk_page(CHALLENGE),
+            json!({ "resume": true }),
+        );
+        assert_eq!(logged["kind"], "callback.log", "{logged}");
+        let message = logged["message"].as_str().unwrap_or("");
+        assert!(message.contains("trail_clue_medium_anagram001"), "{logged}");
+        assert!(message.contains(&TALK_CHALLENGE.to_string()), "{logged}");
+        assert!(
+            !message.contains(&CHALLENGE.to_string()),
+            "the step is the parent, never the scroll: {logged}"
+        );
+        let posted = call(&data, token, talk_page(CHALLENGE), json!({}));
+        assert_eq!(posted["kind"], "callback.setStatus", "{posted}");
+        assert_eq!(
+            RUNTIME.with(|rt| rt.borrow().step_id),
+            TALK_CHALLENGE,
+            "the scroll id is never the step"
+        );
+
+        // The parent's own talk path: arrived on the published plane-1 tile
+        // with the parent's npc posted.
+        let spawn = parent.spawn.as_ref().expect("a unique jm2 spawn");
+        let hazelmere = json!([talk_npc(
+            41,
+            parent.npc.id,
+            "Hazelmere",
+            Tile {
+                x: 2678,
+                z: 3086,
+                level: 1,
+            },
+            1,
+            &["Talk-to"]
+        )]);
+        let talked = call(
+            &data,
+            token,
+            talk_page(CHALLENGE),
+            talk_scene(
+                here(spawn.x, spawn.z, spawn.plane),
+                hazelmere.clone(),
+                json!({}),
+            ),
+        );
+        assert_eq!(talked["kind"], "npc", "{talked}");
+        assert_eq!(talked["index"], 41, "{talked}");
+
+        // The posted count dialog is answered with the selected string, and
+        // only with it: no Talk-to rides along.
+        let answered = call(
+            &data,
+            token,
+            talk_page(CHALLENGE),
+            talk_scene(
+                here(spawn.x, spawn.z, spawn.plane),
+                hazelmere.clone(),
+                json!({ "count_dialog_open": true }),
+            ),
+        );
+        assert_eq!(answered["kind"], "answer-count", "{answered}");
+        assert_eq!(answered["value"], 6859, "{answered}");
+        assert_eq!(token_of(&answered), token, "{answered}");
+
+        // A posted `false` is a closed dialog: the arm goes back to the talk
+        // path rather than answering anything.
+        let closed = call(
+            &data,
+            token,
+            talk_page(CHALLENGE),
+            talk_scene(
+                here(spawn.x, spawn.z, spawn.plane),
+                hazelmere,
+                json!({ "count_dialog_open": false }),
+            ),
+        );
+        assert_eq!(closed["kind"], "npc", "{closed}");
+
+        // A talk step with no challenge of its own has no answer to give: the
+        // open count dialog is a wait, never an invented number.
+        let other = steady(&data, TALK);
+        let no_answer = call(
+            &data,
+            other,
+            talk_page(TALK),
+            talk_scene(
+                here(3207, 3233, 0),
+                json!([]),
+                json!({ "count_dialog_open": true }),
+            ),
+        );
+        assert_eq!(no_answer["kind"], "wait", "{no_answer}");
+        assert!(no_answer.get("value").is_none(), "{no_answer}");
+
+        // The identity-only challenge parent joins the same way and answers
+        // its own selected string.
+        let zoo = begin(&data, talk_page(CHALLENGE_IDENTITY));
+        assert_eq!(zoo["kind"], "token", "{zoo}");
+        let zoo = token_of(&zoo);
+        assert_eq!(
+            call(&data, zoo, talk_page(CHALLENGE_IDENTITY), json!({}))["kind"],
+            "callback.enabled"
+        );
+        assert_eq!(
+            call(
+                &data,
+                zoo,
+                talk_page(CHALLENGE_IDENTITY),
+                json!({ "resume": true })
+            )["kind"],
+            "callback.log"
+        );
+        assert_eq!(
+            call(&data, zoo, talk_page(CHALLENGE_IDENTITY), json!({}))["kind"],
+            "callback.setStatus"
+        );
+        assert_eq!(
+            RUNTIME.with(|rt| rt.borrow().step_id),
+            TALK_CHALLENGE_IDENTITY
+        );
+        let zoo_answer = call(
+            &data,
+            zoo,
+            talk_page(CHALLENGE_IDENTITY),
+            json!({ "count_dialog_open": true }),
+        );
+        assert_eq!(zoo_answer["kind"], "answer-count", "{zoo_answer}");
+        assert_eq!(zoo_answer["value"], 40, "{zoo_answer}");
+
+        // The first posted selected scroll wins when a page holds two.
+        let two = begin(&data, json!([[CHALLENGE, 1], [CHALLENGE_IDENTITY, 1]]));
+        assert_eq!(two["kind"], "token", "{two}");
+        assert_eq!(
+            call(
+                &data,
+                token_of(&two),
+                json!([[CHALLENGE, 1], [CHALLENGE_IDENTITY, 1]]),
+                json!({})
+            )["kind"],
+            "callback.enabled"
+        );
+        assert_eq!(RUNTIME.with(|rt| rt.borrow().step_id), TALK_CHALLENGE);
+
+        // The seam does not weaken C3: a zero count, an unrelated id and an
+        // empty page are all still `none-held` refusals.
+        let unrelated = unrelated(&data);
+        for held in [
+            json!([]),
+            json!([[CHALLENGE, 0]]),
+            json!([[unrelated, 1]]),
+            json!([[CHALLENGE, -1]]),
+        ] {
+            let refused = begin(&data, held.clone());
+            assert_eq!(refused["kind"], "aborted", "{held} {refused}");
+            assert_eq!(refused["reason"], "none-held", "{held} {refused}");
+        }
+        // And the `one-held` sibling: an unrelated id beside the scroll is the
+        // seam's page, because the membership rows still win first.
+        let mixed = begin(&data, json!([[CASKET, 1], [CHALLENGE, 1]]));
+        assert_eq!(mixed["kind"], "token", "{mixed}");
+    }
+
+    /// The parent clue swapping for its scroll keeps the live token: the
+    /// identify goes `none-held`, the seam returns the same parent step, and
+    /// `Collecting` still wins the page when the token is collecting.
+    #[test]
+    fn the_challenge_seam_keeps_the_live_token_on_the_parent_step() {
+        on_reset();
+        let data = selected();
+        let token = steady(&data, TALK_CHALLENGE);
+        // The server takes the parent clue and leaves the scroll: the token
+        // survives and the step is still the parent's.
+        let swapped = call(&data, token, talk_page(CHALLENGE), json!({ "npcs": [] }));
+        assert_eq!(token_of(&swapped), token, "{swapped}");
+        assert_ne!(swapped["kind"], "aborted", "{swapped}");
+        assert_eq!(RUNTIME.with(|rt| rt.borrow().step_id), TALK_CHALLENGE);
+        // The answer is still the parent's own.
+        let answered = call(
+            &data,
+            token,
+            talk_page(CHALLENGE),
+            json!({ "count_dialog_open": true }),
+        );
+        assert_eq!(answered["kind"], "answer-count", "{answered}");
+        assert_eq!(answered["value"], 6859, "{answered}");
+
+        // Collecting first: a live collect is not a challenge join.
+        let collecting = opened(&data, CASKET);
+        let still = call(&data, collecting, talk_page(CHALLENGE), json!({}));
+        assert_ne!(still["kind"], "aborted", "{still}");
+        assert_eq!(token_of(&still), collecting, "{still}");
+    }
+
+    /// An open chat closes the talk arm for the tick: no Talk-to and no walk
+    /// while the landed `dialog_ready` holds, and no answer behind an
+    /// unobserved count dialog.
+    #[test]
+    fn no_talk_to_while_the_chat_or_the_count_dialog_is_posted_open() {
+        on_reset();
+        let data = selected();
+        let page = talk_page(TALK);
+        let token = steady(&data, TALK);
+        let on_tile = json!([talk_npc(51, 0, "Hans", Tile { x: 3207, z: 3233, level: 0 }, 1, &["Talk-to"])]);
+
+        // The posted chat modal: an open chat is not a tick to Talk-to again,
+        // and it does not walk either.
+        for extra in [
+            json!({ "chat_modal_id": 968 }),
+            json!({ "chat_continue": true }),
+            json!({ "chat_modal_id": 968, "chat_continue": true }),
+        ] {
+            let open = call(
+                &data,
+                token,
+                page.clone(),
+                talk_scene(here(3207, 3233, 0), on_tile.clone(), extra.clone()),
+            );
+            assert_eq!(open["kind"], "wait", "{extra} {open}");
+            let far = call(
+                &data,
+                token,
+                page.clone(),
+                talk_scene(here(3100, 3233, 0), on_tile.clone(), extra.clone()),
+            );
+            assert_eq!(far["kind"], "wait", "{extra} {far}");
+        }
+
+        // The posted closed chat is not an open one, and an omitted slot is
+        // unobserved rather than open: both leave the Talk-to free.
+        for extra in [
+            json!({ "chat_modal_id": -1, "chat_continue": false }),
+            json!({ "chat_continue": false }),
+            json!({}),
+        ] {
+            let free = call(
+                &data,
+                token,
+                page.clone(),
+                talk_scene(here(3207, 3233, 0), on_tile.clone(), extra.clone()),
+            );
+            assert_eq!(free["kind"], "npc", "{extra} {free}");
+        }
+
+        // A posted open count dialog blocks the Talk-to the same way — and for
+        // a step with no challenge of its own there is nothing to answer.
+        let counted = call(
+            &data,
+            token,
+            page.clone(),
+            talk_scene(
+                here(3207, 3233, 0),
+                on_tile.clone(),
+                json!({ "count_dialog_open": true }),
+            ),
+        );
+        assert_eq!(counted["kind"], "wait", "{counted}");
+
+        // The landed precedence is untouched by the talk arm: the posted
+        // interrupt yields, the frozen clock waits, and a posted hitpoints at
+        // or below zero is `dead` — never `done` and never `'clue solved'`.
+        let yielded = call(
+            &data,
+            token,
+            page.clone(),
+            talk_scene(
+                here(3207, 3233, 0),
+                on_tile.clone(),
+                json!({ "hold": true }),
+            ),
+        );
+        assert_eq!(yielded["kind"], "yield", "{yielded}");
+        let dead = call(
+            &data,
+            token,
+            page.clone(),
+            talk_scene(
+                here(3207, 3233, 0),
+                on_tile.clone(),
+                json!({ "hitpoints": 0 }),
+            ),
+        );
+        assert_eq!(dead["kind"], "dead", "{dead}");
+        assert!(dead["token"].is_number(), "{dead}");
+        assert!(!dead.to_string().contains("clue solved"), "{dead}");
+        let after = call(
+            &data,
+            token,
+            page,
+            talk_scene(here(3207, 3233, 0), on_tile, json!({})),
+        );
+        assert_eq!(after["reason"], "stale", "{after}");
+    }
+
+    /// The talk arm's own outcome set: the walk, the Talk-to, the answer and
+    /// the waits, and never a verb or a completion that belongs to another arm.
+    #[test]
+    fn the_talk_arm_emits_only_walk_npc_answer_count_wait_and_yield() {
+        on_reset();
+        let data = selected();
+        let scenes = [
+            (TALK, json!({ "npcs": [] }), "no page"),
+            (
+                TALK,
+                talk_scene(here(3100, 3233, 0), json!([]), json!({})),
+                "far",
+            ),
+            (
+                TALK,
+                talk_scene(
+                    here(3207, 3233, 0),
+                    json!([talk_npc(61, 0, "Hans", Tile { x: 3207, z: 3233, level: 0 }, 1, &["Talk-to"])]),
+                    json!({}),
+                ),
+                "arrived",
+            ),
+            (
+                TALK_IDENTITY,
+                talk_scene(here(3200, 3200, 0), json!([]), json!({})),
+                "no match",
+            ),
+            (
+                TALK_CHALLENGE,
+                talk_scene(
+                    here(2678, 3086, 1),
+                    json!([]),
+                    json!({ "count_dialog_open": true }),
+                ),
+                "count",
+            ),
+        ];
+        let mut kinds = Vec::new();
+        for (id, scene, name) in scenes {
+            let token = steady(&data, id);
+            let step = call(&data, token, talk_page(id), scene.clone());
+            assert_eq!(token_of(&step), token, "{name} {step}");
+            kinds.push(step["kind"].as_str().unwrap_or("").to_string());
+            let text = step.to_string();
+            for forbidden in ["clue solved", "done", "abandon", "supplies-needed"] {
+                assert!(!text.contains(forbidden), "{name} {step}");
+            }
+        }
+        assert_eq!(
+            kinds,
+            vec!["wait", "walk", "npc", "wait", "answer-count"],
+            "{kinds:?}"
+        );
+        // The same step driven through the collect's `'clue solved'` is not
+        // this arm's: a talk step never reaches a completion kind.
+        for kind in &kinds {
+            assert!(
+                ![
+                    "done",
+                    "grind-ready",
+                    "held",
+                    "loc",
+                    "obj",
+                    "if-button",
+                    "close-modal",
+                    "puzzle-move",
+                    "dead",
+                    "guardian-lost",
+                    "aborted"
+                ]
+                .contains(&kind.as_str()),
+                "{kind}"
+            );
+        }
+        // `status` is still the machine's continue shape on every one of them,
+        // and `dead` never posts the solved string.
+        let token = steady(&data, TALK);
+        let dead = call(
+            &data,
+            token,
+            talk_page(TALK),
+            talk_scene(here(3207, 3233, 0), json!([]), json!({ "hitpoints": 0 })),
+        );
+        assert_eq!(dead["kind"], "dead", "{dead}");
+        assert!(!dead.to_string().contains("clue solved"), "{dead}");
     }
 }
 

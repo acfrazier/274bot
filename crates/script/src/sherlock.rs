@@ -566,10 +566,21 @@ mod tests {
         Some((map_x * 64 + local_x, map_z * 64 + local_z, level))
     }
 
-    /// A membership row the selected family never names: a challenge answer
-    /// id, which no identify pass reads.
+    /// A membership row the selected family never names: a held id no identify
+    /// pass reads, no challenge scroll answers and no talk step publishes. The
+    /// challenge ids are no longer that exemplar — the machine's own seam joins
+    /// a held scroll onto its parent talk step — so the id is searched for
+    /// rather than taken from one of the families.
     fn unrelated(data: &SelectedGameData) -> i32 {
-        data.trails().expect("trails").challenge_answers[0].id
+        let trails = data.trails().expect("trails");
+        let talk = data.talk_key().expect("talk_key");
+        (1..)
+            .find(|id| {
+                !trails.rows.iter().any(|row| row.id == *id)
+                    && !trails.challenge_answers.iter().any(|row| row.id == *id)
+                    && !talk.talk.iter().any(|row| row.id == *id)
+            })
+            .expect("a held id no selected family names")
     }
 
     fn cfg() -> ClientConfig {

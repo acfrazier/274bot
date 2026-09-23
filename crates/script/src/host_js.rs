@@ -631,6 +631,7 @@ fn render_native_v2(out: &mut String) {
     out.push_str("  | { ok: true; status: 'continue'; token: number; kind: 'walk'; x: number; z: number; level: number }\n");
     out.push_str("  | { ok: true; status: 'continue'; token: number; kind: 'loc'; x: number; z: number; level: number; action: string; id: number }\n");
     out.push_str("  | { ok: true; status: 'continue'; token: number; kind: 'npc'; name: string; action: string; index: number }\n");
+    out.push_str("  | { ok: true; status: 'continue'; token: number; kind: 'answer-count'; value: number }\n");
     out.push_str("  | { ok: true; status: 'continue'; token: number; kind: 'if-button'; component_id: number }\n");
     out.push_str("  | { ok: true; status: 'continue'; token: number; kind: 'close-modal' }\n");
     out.push_str("  | { ok: true; status: 'continue'; token: number; kind: 'obj'; x: number; z: number; level: number; name: string | null; action: string }\n");

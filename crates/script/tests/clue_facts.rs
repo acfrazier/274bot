@@ -249,6 +249,14 @@ struct Scene<'a> {
     /// generation its click rides. `None` posts no board table at all, so the
     /// isolate keeps its last one.
     puzzle: Option<PostedPuzzle<'a>>,
+    /// The posted chat modal the talk arm reads: `-1` is the closed one the
+    /// page posts itself, and any other id is an open chat no Talk-to may ride.
+    chat_modal_id: i32,
+    /// The posted `chat_continue`: the other half of the landed `dialog_ready`.
+    chat_continue: bool,
+    /// The posted count dialog: the talk arm answers only behind a posted
+    /// `true`, so this is what the challenge step's answer rides.
+    count_dialog_open: bool,
 }
 
 impl Default for Scene<'_> {
@@ -268,6 +276,9 @@ impl Default for Scene<'_> {
             self_target_kind: 0,
             self_target_index: -1,
             puzzle: None,
+            chat_modal_id: -1,
+            chat_continue: false,
+            count_dialog_open: false,
         }
     }
 }
@@ -317,7 +328,7 @@ fn post_scene(iso: &LoadIsolate, tick: u64, page: &[(i32, i32)], scene: &Scene<'
         bank_open: false,
         bank_loaded: false,
         bank_generation: 0,
-        count_dialog_open: false,
+        count_dialog_open: scene.count_dialog_open,
         withdraw_x_result_seq: 0,
         withdraw_x_result: false,
         withdraw_load_result_seq: 0,
@@ -332,7 +343,7 @@ fn post_scene(iso: &LoadIsolate, tick: u64, page: &[(i32, i32)], scene: &Scene<'
         ground: scene.ground,
         equipment: &[],
         chat_open: false,
-        chat_continue: false,
+        chat_continue: scene.chat_continue,
         chat_text: None,
         chat_options: &[],
         side_tab: -1,
@@ -345,7 +356,7 @@ fn post_scene(iso: &LoadIsolate, tick: u64, page: &[(i32, i32)], scene: &Scene<'
         in_combat: false,
         animating: false,
         main_modal_id: scene.main_modal_id,
-        chat_modal_id: -1,
+        chat_modal_id: scene.chat_modal_id,
         make_products: &[],
         side_tab_ifaces: &[],
         spell_buttons: &[],
@@ -896,6 +907,22 @@ export function tick(api) {
     );
 }
 
+/// A held id that is no selected family's row at all: the C3 exemplar has to be
+/// a page the identify, the challenge seam and the talk arm all leave alone, so
+/// it is not a trails membership row, not one of the six challenge scrolls and
+/// not a talk step.
+fn first_unselected_id(data: &api::game_data::SelectedGameData) -> i32 {
+    let trails = data.trails().expect("trails");
+    let talk = data.talk_key().expect("talk_key");
+    (1..)
+        .find(|id| {
+            !trails.rows.iter().any(|row| row.id == *id)
+                && !trails.challenge_answers.iter().any(|row| row.id == *id)
+                && !talk.talk.iter().any(|row| row.id == *id)
+        })
+        .expect("a held id no selected family names")
+}
+
 #[test]
 fn v2_clue_next_keeps_none_held_when_the_live_session_loses_its_step() {
     let src = r#"
@@ -924,12 +951,15 @@ export function tick(api) {
 }
 "#;
     let data = api::game_data::for_revision(ClientRevision::R274).unwrap();
+    // A held id no selected family names is not a membership row: the live step
+    // is gone. It is neither a challenge scroll — the seam joins those onto
+    // their parent talk step — nor a talk step of its own.
+    let unselected = first_unselected_id(&data);
     let iso = LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data)
         .unwrap();
     post_page(&iso, 1, &[(2831, 1)]);
     iso.on_game_tick(1);
-    // A held challenge id is not a membership row: the live step is gone.
-    post_page(&iso, 2, &[(2842, 1)]);
+    post_page(&iso, 2, &[(unselected, 1)]);
     iso.on_game_tick(2);
     post_page(&iso, 3, &[(2831, 1)]);
     iso.on_game_tick(3);
@@ -1107,11 +1137,18 @@ fn board_row(id: i32, slot: i32, component: i32) -> script::isolate_fb::ItemRowI
 /// One posted board as its sparse rows: a row per filled cell, in slot order,
 /// carrying the piece belonging on that cell's target. `PIECE_B` is the first
 /// piece of the `b` run both pins hold, so the rows are the same on both.
-fn board_rows(board: &[Option<u8>; 25], component: i32) -> Vec<script::isolate_fb::ItemRowInput<'static>> {
+fn board_rows(
+    board: &[Option<u8>; 25],
+    component: i32,
+) -> Vec<script::isolate_fb::ItemRowInput<'static>> {
     let mut rows = Vec::new();
     for (slot, cell) in board.iter().enumerate() {
         if let Some(target) = *cell {
-            rows.push(board_row(PIECE_B + i32::from(target), slot as i32, component));
+            rows.push(board_row(
+                PIECE_B + i32::from(target),
+                slot as i32,
+                component,
+            ));
         }
     }
     rows
@@ -2727,21 +2764,36 @@ export function tick(api) {
     };
     // Ticks 1-4: the begin and the landed report.
     for tick in 1..=4 {
-        post_scene(&iso, tick, &page, &guarded_scene(arrived, &names, &[], &overlay_off, &[], false, false));
+        post_scene(
+            &iso,
+            tick,
+            &page,
+            &guarded_scene(arrived, &names, &[], &overlay_off, &[], false, false),
+        );
         iso.on_game_tick(tick);
         assert!(iso.probe("true").is_ok());
         assert!(iso.drain_interacts().is_empty(), "tick {tick}");
     }
 
     // Tick 5: arrived with the Spade: the spawn.
-    post_scene(&iso, 5, &page, &guarded_scene(arrived, &names, &[], &overlay_off, &[], false, false));
+    post_scene(
+        &iso,
+        5,
+        &page,
+        &guarded_scene(arrived, &names, &[], &overlay_off, &[], false, false),
+    );
     iso.on_game_tick(5);
     assert!(iso.probe("true").is_ok());
     assert_eq!(iso.drain_interacts(), vec![spade_dig()]);
 
     // Tick 6: the overlay is up and no wizard is posted at all: the spawn
     // wait, and nothing on the drain.
-    post_scene(&iso, 6, &page, &guarded_scene(arrived, &names, &[], &overlay_on, &[], false, false));
+    post_scene(
+        &iso,
+        6,
+        &page,
+        &guarded_scene(arrived, &names, &[], &overlay_on, &[], false, false),
+    );
     iso.on_game_tick(6);
     assert!(iso.probe("true").is_ok());
     assert!(
@@ -3211,14 +3263,20 @@ export function tick(api) {
 }
 "#;
     let data = api::game_data::for_revision(ClientRevision::R274).unwrap();
-    let iso = LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data)
-        .unwrap();
+    let iso =
+        LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data).unwrap();
     let page = [(2723, 1), (952, 1)];
     let names = [(952, "Spade")];
     let attack = vec!["Attack".to_string()];
     let wizard = scene_npc(7, "Zamorak Wizard", 3, 10, 10, &attack);
-    let overlay_off = [VarpInput { index: 95, value: 0 }];
-    let overlay_on = [VarpInput { index: 95, value: 1 }];
+    let overlay_off = [VarpInput {
+        index: 95,
+        value: 0,
+    }];
+    let overlay_on = [VarpInput {
+        index: 95,
+        value: 1,
+    }];
     let far = TileInput {
         x: 3100,
         z: 3300,
@@ -4691,4 +4749,805 @@ export function tick(api) {
     let steps = value["steps"].as_array().expect("steps");
     assert_eq!(steps.len(), 5, "{value:?}");
     assert_eq!(steps[4]["kind"], "walk", "{value:?}");
+}
+
+/// `trail_clue_easy_simple005`: the talk membership whose jm2 spawn is unique —
+/// `hans` at `(3207, 3233, plane 0)`.
+const TALK_ID: i32 = 2681;
+const TALK_X: i32 = 3207;
+const TALK_Z: i32 = 3233;
+/// `trail_clue_easy_simple008`: the identity-only talk step — `Tanner`, packed
+/// id 804 — whose jm2 spawn is not unique, so the family publishes no tile.
+const TALK_IDENTITY_ID: i32 = 2684;
+const TANNER_ID: i32 = 804;
+/// `trail_clue_medium_anagram001`: the challenge parent `Hazelmere`, whose
+/// `2842` scroll answers `"6859"`.
+const TALK_CHALLENGE_ID: i32 = 2841;
+const CHALLENGE_ID: i32 = 2842;
+const CHALLENGE_ANSWER: i32 = 6859;
+
+/// One posted npc row as SNAP posts it and the talk arm reads it: the posted
+/// index the Talk-to carries, the packed id and posted display name the
+/// identity join compares, the posted tile and distance the arrival is measured
+/// by, and the posted action list the talk action is read from.
+fn talk_scene_npc<'a>(
+    index: i32,
+    id: i32,
+    name: &'a str,
+    tile: TileInput,
+    distance: i32,
+    actions: &'a [String],
+) -> script::isolate_fb::SceneEntityInput<'a> {
+    SceneEntityInput {
+        index,
+        id,
+        name: Some(name),
+        x: tile.x,
+        z: tile.z,
+        level: tile.level,
+        distance,
+        health: 0,
+        max_health: 0,
+        in_combat: false,
+        animating: false,
+        actions,
+        reachable: true,
+        reachable_adj: true,
+        combat_level: 0,
+        target_kind: 0,
+        target_index: -1,
+        size: 1,
+        nx: tile.x,
+        nz: tile.z,
+    }
+}
+
+/// The public `api.clue.next` path over a posted talk scene: the machine's own
+/// `walk` and `npc` kinds reach the interact drain as `InteractReq::Walk` /
+/// `InteractReq::Npc`, and the arm never Talks-to anything but a posted npc of
+/// the step's own identity standing on the published tile.
+#[test]
+fn v2_clue_unique_spawn_talk_step_walks_then_talks_over_the_posted_scene() {
+    let src = r#"
+export const apiVersion = 2;
+export function tick(api) {
+  globalThis.__runs = (globalThis.__runs || 0) + 1;
+  const runs = globalThis.__runs;
+  if (runs === 1) {
+    const begin = api.clue.begin();
+    globalThis.__token = begin.ok ? begin.value.token : null;
+    globalThis.__steps = [
+      begin,
+      api.clue.next({ token: globalThis.__token }),
+      api.clue.next({ token: globalThis.__token, resume: true }),
+      api.clue.next({ token: globalThis.__token }),
+      // No posted `here`: the talk arm waits rather than walking blind.
+      api.clue.next({ token: globalThis.__token }),
+    ];
+    return;
+  }
+  if (runs === 10) {
+    // The empty pack page: the begin is the landed C3 refusal.
+    globalThis.__steps.push(api.clue.begin());
+    globalThis.__probe = JSON.stringify({
+      token: globalThis.__token,
+      runs: runs,
+      steps: globalThis.__steps,
+      challengeAnswer: typeof (globalThis.__rs_api.clue.challengeAnswer),
+    });
+    return;
+  }
+  globalThis.__steps.push(api.clue.next({ token: globalThis.__token }));
+}
+"#;
+    let data = api::game_data::for_revision(ClientRevision::R274).unwrap();
+    let iso =
+        LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data).unwrap();
+    let page = [(TALK_ID, 1)];
+    let talk_to = vec!["Talk-to".to_string()];
+
+    // Tick 1: the held talk step with no posted scene at all.
+    post_page(&iso, 1, &page);
+    iso.on_game_tick(1);
+    assert!(iso.probe("true").is_ok());
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "a missing `here` is a wait, not a walk"
+    );
+
+    // Tick 2: posted far from the published tile: the walk is that tile.
+    post_scene(
+        &iso,
+        2,
+        &page,
+        &Scene {
+            here: Some(TileInput {
+                x: 3100,
+                z: 3233,
+                level: 0,
+            }),
+            ..Scene::default()
+        },
+    );
+    iso.on_game_tick(2);
+    assert!(iso.probe("true").is_ok());
+    let walked = iso.drain_interacts();
+    assert_eq!(
+        walked,
+        vec![InteractReq::Walk {
+            x: TALK_X,
+            z: TALK_Z,
+            level: 0,
+            allow_teleports: false,
+            allow_wilderness: false,
+            allow_bank_fetch: false,
+            request_id: 0,
+        }],
+        "the walk is the published x/z/plane: {walked:?}"
+    );
+
+    // Tick 3: arrived, with the step's own npc posted on the tile.
+    let on_tile = [talk_scene_npc(
+        3,
+        0,
+        "Hans",
+        TileInput {
+            x: TALK_X,
+            z: TALK_Z,
+            level: 0,
+        },
+        1,
+        &talk_to,
+    )];
+    post_scene(
+        &iso,
+        3,
+        &page,
+        &Scene {
+            here: Some(TileInput {
+                x: TALK_X,
+                z: TALK_Z,
+                level: 0,
+            }),
+            npcs: &on_tile,
+            ..Scene::default()
+        },
+    );
+    iso.on_game_tick(3);
+    assert!(iso.probe("true").is_ok());
+    let talked = iso.drain_interacts();
+    assert_eq!(
+        talked,
+        vec![InteractReq::Npc {
+            name: "Hans".to_string(),
+            action: "Talk-to".to_string(),
+            index: Some(3),
+        }],
+        "the Talk-to is the posted identity with the posted index: {talked:?}"
+    );
+
+    // Tick 4: the same npc has wandered four tiles off the published tile. The
+    // arm keeps the tile and waits: no second target, no Clear and no verb.
+    let wandered = [talk_scene_npc(
+        4,
+        0,
+        "Hans",
+        TileInput {
+            x: TALK_X + 4,
+            z: TALK_Z,
+            level: 0,
+        },
+        4,
+        &talk_to,
+    )];
+    post_scene(
+        &iso,
+        4,
+        &page,
+        &Scene {
+            here: Some(TileInput {
+                x: TALK_X,
+                z: TALK_Z,
+                level: 0,
+            }),
+            npcs: &wandered,
+            ..Scene::default()
+        },
+    );
+    iso.on_game_tick(4);
+    assert!(iso.probe("true").is_ok());
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "a wanderer is a wait, never a chase"
+    );
+
+    // Tick 5: the npc is back on the tile but this token owns an open chat:
+    // no Talk-to rides an open chat.
+    post_scene(
+        &iso,
+        5,
+        &page,
+        &Scene {
+            here: Some(TileInput {
+                x: TALK_X,
+                z: TALK_Z,
+                level: 0,
+            }),
+            npcs: &on_tile,
+            chat_modal_id: 968,
+            ..Scene::default()
+        },
+    );
+    iso.on_game_tick(5);
+    assert!(iso.probe("true").is_ok());
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "an open chat blocks the Talk-to"
+    );
+
+    // Tick 6: the posted closed chat — `-1` — is not an open one.
+    post_scene(
+        &iso,
+        6,
+        &page,
+        &Scene {
+            here: Some(TileInput {
+                x: TALK_X,
+                z: TALK_Z,
+                level: 0,
+            }),
+            npcs: &on_tile,
+            chat_modal_id: -1,
+            ..Scene::default()
+        },
+    );
+    iso.on_game_tick(6);
+    assert!(iso.probe("true").is_ok());
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::Npc {
+            name: "Hans".to_string(),
+            action: "Talk-to".to_string(),
+            index: Some(3),
+        }],
+        "a closed chat leaves the Talk-to free"
+    );
+
+    // Tick 7: the posted `hold || ours` interrupt: yield, and no verb with it.
+    post_scene(
+        &iso,
+        7,
+        &page,
+        &Scene {
+            here: Some(TileInput {
+                x: TALK_X,
+                z: TALK_Z,
+                level: 0,
+            }),
+            npcs: &on_tile,
+            ours: true,
+            ..Scene::default()
+        },
+    );
+    iso.on_game_tick(7);
+    assert!(iso.probe("true").is_ok());
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "yield enqueues no Talk-to"
+    );
+
+    // Tick 8: a posted hitpoints at zero kills the token, whatever the step.
+    let dead = [StatInput {
+        index: 3,
+        name: "hitpoints",
+        xp: 0,
+        base: 40,
+        effective: 0,
+    }];
+    post_scene(
+        &iso,
+        8,
+        &page,
+        &Scene {
+            here: Some(TileInput {
+                x: TALK_X,
+                z: TALK_Z,
+                level: 0,
+            }),
+            npcs: &on_tile,
+            stats: &dead,
+            ..Scene::default()
+        },
+    );
+    iso.on_game_tick(8);
+    assert!(iso.probe("true").is_ok());
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "a death pushes no interact"
+    );
+
+    // Tick 9: the dead token is `stale`, and the scene it left behind is still
+    // a page: nothing was looted and nothing was solved.
+    post_scene(
+        &iso,
+        9,
+        &page,
+        &Scene {
+            here: Some(TileInput {
+                x: TALK_X,
+                z: TALK_Z,
+                level: 0,
+            }),
+            npcs: &on_tile,
+            ..Scene::default()
+        },
+    );
+    iso.on_game_tick(9);
+    assert!(iso.probe("true").is_ok());
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "a dead token has no verbs"
+    );
+
+    // Tick 10: the empty pack page refuses the begin with the landed C3 token,
+    // and no token is handed out for it.
+    post_page(&iso, 10, &[]);
+    iso.on_game_tick(10);
+    assert!(iso.probe("true").is_ok());
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "a refused begin has no verbs"
+    );
+
+    let probed = iso.probe("globalThis.__probe").unwrap();
+    let value: serde_json::Value = serde_json::from_str(probed.as_str().unwrap()).unwrap();
+    iso.join();
+    let steps = value["steps"].as_array().expect("steps");
+    assert_eq!(steps.len(), 14, "{value:?}");
+    for (index, kind) in [
+        (1, "callback.enabled"),
+        (2, "callback.log"),
+        (3, "callback.setStatus"),
+        (4, "wait"),
+        (5, "walk"),
+        (6, "npc"),
+        (7, "wait"),
+        (8, "wait"),
+        (9, "npc"),
+        (10, "yield"),
+        (11, "dead"),
+        (12, "stale"),
+    ] {
+        match kind {
+            "dead" => {
+                assert_eq!(steps[index]["ok"], true, "{index} {value:?}");
+                assert_eq!(steps[index]["kind"], "dead", "{index} {value:?}");
+            }
+            "stale" => {
+                assert_eq!(steps[index]["ok"], false, "{index} {value:?}");
+                assert_eq!(steps[index]["error"], "stale", "{index} {value:?}");
+            }
+            _ => assert_eq!(steps[index]["kind"], kind, "{index} {value:?}"),
+        }
+    }
+    // The empty page is still `none-held`, taken through the public helper.
+    assert_eq!(steps[13]["ok"], false, "{value:?}");
+    assert_eq!(steps[13]["error"], "none-held", "{value:?}");
+    // The messages stay the landed identity, and never a completion.
+    let logged = steps[2]["message"].as_str().unwrap_or("");
+    assert!(logged.contains("trail_clue_easy_simple005"), "{value:?}");
+    assert!(logged.contains(&TALK_ID.to_string()), "{value:?}");
+    let text = value.to_string();
+    for forbidden in ["clue solved", "abandon", "supplies-needed", "ownsEquipment"] {
+        assert!(!text.contains(forbidden), "{value:?}");
+    }
+    // The fence holds on the public path: no `challengeAnswer` is published.
+    assert_eq!(value["challengeAnswer"], "undefined", "{value:?}");
+}
+
+/// The public `api.clue.next` path over the identity-only talk step: a page
+/// that posts no npc of the step's own identity is a `wait` with no verb at
+/// all, and the posted match is walked to and then Talk-to'd. The step
+/// publishes no tile, so the walk target is the posted row's own.
+#[test]
+fn v2_clue_identity_only_talk_step_picks_the_posted_match_over_the_scene() {
+    let src = r#"
+export const apiVersion = 2;
+export function tick(api) {
+  globalThis.__runs = (globalThis.__runs || 0) + 1;
+  const runs = globalThis.__runs;
+  if (runs === 1) {
+    const begin = api.clue.begin();
+    globalThis.__token = begin.ok ? begin.value.token : null;
+    globalThis.__steps = [
+      begin,
+      api.clue.next({ token: globalThis.__token }),
+      api.clue.next({ token: globalThis.__token, resume: true }),
+      api.clue.next({ token: globalThis.__token }),
+      // No posted `here`: the identity-only arm has no base to measure by.
+      api.clue.next({ token: globalThis.__token }),
+    ];
+    return;
+  }
+  if (runs === 6) {
+    globalThis.__probe = JSON.stringify({
+      token: globalThis.__token,
+      runs: runs,
+      steps: globalThis.__steps,
+    });
+    return;
+  }
+  globalThis.__steps.push(api.clue.next({ token: globalThis.__token }));
+}
+"#;
+    let data = api::game_data::for_revision(ClientRevision::R274).unwrap();
+    let iso =
+        LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data).unwrap();
+    let page = [(TALK_IDENTITY_ID, 1)];
+    let talk_to = vec!["Talk-to".to_string()];
+
+    // Tick 1: the held identity-only step with no posted scene at all.
+    post_page(&iso, 1, &page);
+    iso.on_game_tick(1);
+    assert!(iso.probe("true").is_ok());
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "a missing `here` is a wait, not a walk"
+    );
+
+    // Tick 2: a posted page with no npc of this step's identity — and one that
+    // belongs to another talk step entirely. Nothing is picked: no walk, no
+    // Talk-to and no nearest anything.
+    let other = [talk_scene_npc(4, 0, "Hans", TileInput { x: 3200, z: 3205, level: 0 }, 1, &talk_to)];
+    post_scene(
+        &iso,
+        2,
+        &page,
+        &Scene {
+            here: Some(TileInput {
+                x: 3200,
+                z: 3200,
+                level: 0,
+            }),
+            npcs: &other,
+            ..Scene::default()
+        },
+    );
+    iso.on_game_tick(2);
+    assert!(iso.probe("true").is_ok());
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "no posted match is a wait, not an invented target"
+    );
+
+    // Tick 3: this step's own npc is posted, five tiles away: the walk goes to
+    // that posted row's own tile.
+    let found = [talk_scene_npc(
+        5,
+        TANNER_ID,
+        "Tanner",
+        TileInput {
+            x: 3200,
+            z: 3205,
+            level: 0,
+        },
+        5,
+        &talk_to,
+    )];
+    post_scene(
+        &iso,
+        3,
+        &page,
+        &Scene {
+            here: Some(TileInput {
+                x: 3200,
+                z: 3200,
+                level: 0,
+            }),
+            npcs: &found,
+            ..Scene::default()
+        },
+    );
+    iso.on_game_tick(3);
+    assert!(iso.probe("true").is_ok());
+    let walked = iso.drain_interacts();
+    assert_eq!(
+        walked,
+        vec![InteractReq::Walk {
+            x: 3200,
+            z: 3205,
+            level: 0,
+            allow_teleports: false,
+            allow_wilderness: false,
+            allow_bank_fetch: false,
+            request_id: 0,
+        }],
+        "the walk goes to the posted match: {walked:?}"
+    );
+
+    // Tick 4: arrived beside it: the Talk-to is that posted row.
+    let near = [talk_scene_npc(
+        6,
+        TANNER_ID,
+        "Tanner",
+        TileInput {
+            x: 3200,
+            z: 3205,
+            level: 0,
+        },
+        1,
+        &talk_to,
+    )];
+    post_scene(
+        &iso,
+        4,
+        &page,
+        &Scene {
+            here: Some(TileInput {
+                x: 3200,
+                z: 3205,
+                level: 0,
+            }),
+            npcs: &near,
+            ..Scene::default()
+        },
+    );
+    iso.on_game_tick(4);
+    assert!(iso.probe("true").is_ok());
+    let talked = iso.drain_interacts();
+    assert_eq!(
+        talked,
+        vec![InteractReq::Npc {
+            name: "Tanner".to_string(),
+            action: "Talk-to".to_string(),
+            index: Some(6),
+        }],
+        "the Talk-to is the posted identity: {talked:?}"
+    );
+
+    // Tick 5: the probe tick — the arm has one posted step per call and no
+    // completion of its own.
+    post_scene(
+        &iso,
+        5,
+        &page,
+        &Scene {
+            here: Some(TileInput {
+                x: 3200,
+                z: 3205,
+                level: 0,
+            }),
+            npcs: &near,
+            ..Scene::default()
+        },
+    );
+    iso.on_game_tick(5);
+    assert!(iso.probe("true").is_ok());
+    let again = iso.drain_interacts();
+    assert_eq!(
+        again,
+        vec![InteractReq::Npc {
+            name: "Tanner".to_string(),
+            action: "Talk-to".to_string(),
+            index: Some(6),
+        }],
+        "the Talk-to repeats while the same step stays held: {again:?}"
+    );
+
+    // Tick 6: the probe tick.
+    post_scene(
+        &iso,
+        6,
+        &page,
+        &Scene {
+            here: Some(TileInput {
+                x: 3200,
+                z: 3205,
+                level: 0,
+            }),
+            npcs: &near,
+            ..Scene::default()
+        },
+    );
+    iso.on_game_tick(6);
+    assert!(iso.probe("true").is_ok());
+
+    let probed = iso.probe("globalThis.__probe").unwrap();
+    let value: serde_json::Value = serde_json::from_str(probed.as_str().unwrap()).unwrap();
+    iso.join();
+    let steps = value["steps"].as_array().expect("steps");
+    assert_eq!(steps.len(), 9, "{value:?}");
+    for (index, kind) in [
+        (1, "callback.enabled"),
+        (2, "callback.log"),
+        (3, "callback.setStatus"),
+        (4, "wait"),
+        (5, "wait"),
+        (6, "walk"),
+        (7, "npc"),
+        (8, "npc"),
+    ] {
+        assert_eq!(steps[index]["kind"], kind, "{index} {value:?}");
+    }
+    assert!(!value.to_string().contains("clue solved"), "{value:?}");
+}
+
+/// The public `api.clue.next` path over a challenge scroll: the page holds only
+/// the selected `2842` scroll, the seam joins its parent talk step, the posted
+/// count dialog is answered with the selected string as
+/// `InteractReq::AnswerCount`, and an empty or zero-count page is still the
+/// landed C3 refusal.
+#[test]
+fn v2_clue_challenge_scroll_joins_the_parent_and_answers_over_the_count_dialog() {
+    let src = r#"
+export const apiVersion = 2;
+export function tick(api) {
+  globalThis.__runs = (globalThis.__runs || 0) + 1;
+  const runs = globalThis.__runs;
+  if (runs === 1) {
+    const begin = api.clue.begin();
+    globalThis.__token = begin.ok ? begin.value.token : null;
+    globalThis.__steps = [
+      begin,
+      api.clue.next({ token: globalThis.__token }),
+      api.clue.next({ token: globalThis.__token, resume: true }),
+      api.clue.next({ token: globalThis.__token }),
+      // The parent's own step, behind the posted count dialog.
+      api.clue.next({ token: globalThis.__token }),
+    ];
+    return;
+  }
+  if (runs === 2) {
+    globalThis.__steps.push(api.clue.next({ token: globalThis.__token }));
+    return;
+  }
+  if (runs === 3) {
+    globalThis.__steps.push(api.clue.next({ token: globalThis.__token }));
+    return;
+  }
+  if (runs === 4) {
+    globalThis.__emptyBegin = api.clue.begin();
+    return;
+  }
+  globalThis.__zeroBegin = api.clue.begin();
+  globalThis.__probe = JSON.stringify({
+    token: globalThis.__token,
+    runs: runs,
+    steps: globalThis.__steps,
+    emptyBegin: globalThis.__emptyBegin,
+    zeroBegin: globalThis.__zeroBegin,
+  });
+}
+"#;
+    let data = api::game_data::for_revision(ClientRevision::R274).unwrap();
+    let iso =
+        LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data).unwrap();
+    let page = [(CHALLENGE_ID, 1)];
+    let talk_to = vec!["Talk-to".to_string()];
+
+    // Tick 1: the scroll alone. The identify is `none-held`, the seam hands out
+    // the parent's token, and the posted count dialog takes the answer.
+    post_scene(
+        &iso,
+        1,
+        &page,
+        &Scene {
+            here: Some(TileInput {
+                x: 2678,
+                z: 3086,
+                level: 1,
+            }),
+            count_dialog_open: true,
+            ..Scene::default()
+        },
+    );
+    iso.on_game_tick(1);
+    assert!(iso.probe("true").is_ok());
+    let answered = iso.drain_interacts();
+    assert_eq!(
+        answered,
+        vec![InteractReq::AnswerCount {
+            value: CHALLENGE_ANSWER,
+        }],
+        "the count dialog takes the selected answer: {answered:?}"
+    );
+
+    // Tick 2: the dialog is closed and the parent's npc is posted on the
+    // published plane-1 tile: the step is still the parent's own talk step.
+    let hazelmere = [talk_scene_npc(
+        7,
+        669,
+        "Hazelmere",
+        TileInput {
+            x: 2678,
+            z: 3086,
+            level: 1,
+        },
+        1,
+        &talk_to,
+    )];
+    post_scene(
+        &iso,
+        2,
+        &page,
+        &Scene {
+            here: Some(TileInput {
+                x: 2678,
+                z: 3086,
+                level: 1,
+            }),
+            npcs: &hazelmere,
+            ..Scene::default()
+        },
+    );
+    iso.on_game_tick(2);
+    assert!(iso.probe("true").is_ok());
+    let talked = iso.drain_interacts();
+    assert_eq!(
+        talked,
+        vec![InteractReq::Npc {
+            name: "Hazelmere".to_string(),
+            action: "Talk-to".to_string(),
+            index: Some(7),
+        }],
+        "the parent's own Talk-to: {talked:?}"
+    );
+
+    // Tick 3: an empty page ends the session with the landed refusal.
+    post_page(&iso, 3, &[]);
+    iso.on_game_tick(3);
+    assert!(iso.probe("true").is_ok());
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "a refused session has no verbs"
+    );
+
+    // Tick 4: a begin on the empty page is refused the same way.
+    post_page(&iso, 4, &[]);
+    iso.on_game_tick(4);
+    assert!(iso.probe("true").is_ok());
+    assert!(iso.drain_interacts().is_empty(), "a refusal pushes nothing");
+
+    // Tick 5: a zero count is not a held scroll: still `none-held`.
+    post_page(&iso, 5, &[(CHALLENGE_ID, 0)]);
+    iso.on_game_tick(5);
+    assert!(iso.probe("true").is_ok());
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "a zero count is no scroll"
+    );
+
+    let probed = iso.probe("globalThis.__probe").unwrap();
+    let value: serde_json::Value = serde_json::from_str(probed.as_str().unwrap()).unwrap();
+    iso.join();
+    let steps = value["steps"].as_array().expect("steps");
+    assert_eq!(steps.len(), 7, "{value:?}");
+    assert_eq!(steps[0]["ok"], true, "{value:?}");
+    assert!(steps[0]["value"]["token"].is_number(), "{value:?}");
+    for (index, kind) in [
+        (1, "callback.enabled"),
+        (2, "callback.log"),
+        (3, "callback.setStatus"),
+        (4, "answer-count"),
+        (5, "npc"),
+    ] {
+        assert_eq!(steps[index]["kind"], kind, "{index} {value:?}");
+    }
+    assert_eq!(steps[4]["value"], CHALLENGE_ANSWER, "{value:?}");
+    // The step is the parent's: the log line names its alias and its id, and
+    // never the scroll id.
+    let logged = steps[2]["message"].as_str().unwrap_or("");
+    assert!(logged.contains("trail_clue_medium_anagram001"), "{value:?}");
+    assert!(
+        logged.contains(&TALK_CHALLENGE_ID.to_string()),
+        "{value:?}"
+    );
+    assert!(!logged.contains(&CHALLENGE_ID.to_string()), "{value:?}");
+    assert_eq!(steps[6]["ok"], false, "{value:?}");
+    assert_eq!(steps[6]["error"], "none-held", "{value:?}");
+    for refusal in ["emptyBegin", "zeroBegin"] {
+        assert_eq!(value[refusal]["ok"], false, "{refusal} {value:?}");
+        assert_eq!(value[refusal]["error"], "none-held", "{refusal} {value:?}");
+    }
+    assert!(!value.to_string().contains("clue solved"), "{value:?}");
 }

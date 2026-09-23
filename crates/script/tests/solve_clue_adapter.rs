@@ -44,6 +44,14 @@ struct Scene<'a> {
     main_modal_id: i32,
     hold: bool,
     ours: bool,
+    /// The posted npc page the talk arm reads.
+    npcs: &'a [SceneEntityInput<'a>],
+    /// The posted chat modal: `-1` is the closed one the page posts itself.
+    chat_modal_id: i32,
+    /// The posted `chat_continue`.
+    chat_continue: bool,
+    /// The posted count dialog the challenge step's answer rides.
+    count_dialog_open: bool,
 }
 
 impl Default for Scene<'_> {
@@ -56,6 +64,10 @@ impl Default for Scene<'_> {
             main_modal_id: 0,
             hold: false,
             ours: false,
+            npcs: &[],
+            chat_modal_id: -1,
+            chat_continue: false,
+            count_dialog_open: false,
         }
     }
 }
@@ -98,7 +110,7 @@ fn post_scene(iso: &LoadIsolate, tick: u64, page: &[(i32, i32)], scene: &Scene<'
         bank_open: false,
         bank_loaded: false,
         bank_generation: 0,
-        count_dialog_open: false,
+        count_dialog_open: scene.count_dialog_open,
         withdraw_x_result_seq: 0,
         withdraw_x_result: false,
         withdraw_load_result_seq: 0,
@@ -107,13 +119,13 @@ fn post_scene(iso: &LoadIsolate, tick: u64, page: &[(i32, i32)], scene: &Scene<'
         bank_op_result: false,
         hold: scene.hold,
         ours: scene.ours,
-        npcs: &[],
+        npcs: scene.npcs,
         locs: scene.locs,
         players: &[],
         ground: &[],
         equipment: &[],
         chat_open: false,
-        chat_continue: false,
+        chat_continue: scene.chat_continue,
         chat_text: None,
         chat_options: &[],
         side_tab: -1,
@@ -126,7 +138,7 @@ fn post_scene(iso: &LoadIsolate, tick: u64, page: &[(i32, i32)], scene: &Scene<'
         in_combat: false,
         animating: false,
         main_modal_id: scene.main_modal_id,
-        chat_modal_id: -1,
+        chat_modal_id: scene.chat_modal_id,
         make_products: &[],
         side_tab_ifaces: &[],
         spell_buttons: &[],
@@ -1120,5 +1132,360 @@ export default class T extends TaskBot {
         !value.to_string().contains("clue solved"),
         "a missing Spade is never a solved mark: {value:?}"
     );
+    assert_clean(&logs);
+}
+/// `trail_clue_easy_simple005`: the talk membership whose jm2 spawn is unique —
+/// `hans` at `(3207, 3233, 0)`.
+const TALK_ID: i32 = 2681;
+const TALK_X: i32 = 3207;
+const TALK_Z: i32 = 3233;
+/// `trail_clue_medium_anagram001`: the challenge parent `Hazelmere`, whose
+/// `2842` scroll answers `"6859"`.
+const TALK_CHALLENGE_ID: i32 = 2841;
+const CHALLENGE_ID: i32 = 2842;
+const CHALLENGE_ANSWER: i32 = 6859;
+
+/// One posted npc row as SNAP posts it and the talk arm reads it.
+fn scene_npc<'a>(
+    index: i32,
+    id: i32,
+    name: &'a str,
+    tile: TileInput,
+    distance: i32,
+    actions: &'a [String],
+) -> SceneEntityInput<'a> {
+    SceneEntityInput {
+        index,
+        id,
+        name: Some(name),
+        x: tile.x,
+        z: tile.z,
+        level: tile.level,
+        distance,
+        health: 0,
+        max_health: 0,
+        in_combat: false,
+        animating: false,
+        actions,
+        reachable: true,
+        reachable_adj: true,
+        combat_level: 0,
+        target_kind: 0,
+        target_index: -1,
+        size: 1,
+        nx: tile.x,
+        nz: tile.z,
+    }
+}
+
+/// The compat adapter's own talk drain: the machine's `walk` and `npc` kinds
+/// reach the interact drain as `InteractReq::Walk` / `InteractReq::Npc`, an
+/// open chat stops the Talk-to, and the empty page ends the session with no
+/// solved mark and no second begin.
+#[test]
+fn solve_clue_adapter_drains_the_talk_step_over_the_task_loop() {
+    let src = r#"
+import { SolveClue } from '../../api/ai/clues/SolveClue.js';
+export default class T extends TaskBot {
+    onStart() {
+        globalThis.__logs = [];
+        globalThis.__statuses = [];
+        this.solveClue = new SolveClue({
+            enabled: () => true,
+            log: (message) => { globalThis.__logs.push(String(message)); },
+            setStatus: (message) => { globalThis.__statuses.push(String(message)); },
+        });
+        this.add(this.solveClue);
+    }
+}
+"#;
+    let iso = spawn(src);
+    let page = [(TALK_ID, 1)];
+    let talk_to = vec!["Talk-to".to_string()];
+    let on_tile = [scene_npc(
+        3,
+        0,
+        "Hans",
+        TileInput {
+            x: TALK_X,
+            z: TALK_Z,
+            level: 0,
+        },
+        1,
+        &talk_to,
+    )];
+
+    // Tick 1: identified and reported. A page with no posted `here` is no
+    // arrival claim, so no verb rides along.
+    post_page(&iso, 1, &page);
+    tick(&iso, 1);
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "a missing `here` is a wait, not a walk"
+    );
+
+    // Tick 2: posted far from the published tile — the machine's own walk.
+    post_scene(
+        &iso,
+        2,
+        &page,
+        &Scene {
+            here: Some(TileInput {
+                x: 3100,
+                z: 3233,
+                level: 0,
+            }),
+            ..Scene::default()
+        },
+    );
+    tick(&iso, 2);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![walk_to(TALK_X, TALK_Z, 0)],
+        "the walk is the published x/z/plane"
+    );
+
+    // Tick 3: arrived with the step's own npc posted: the Talk-to.
+    post_scene(
+        &iso,
+        3,
+        &page,
+        &Scene {
+            here: Some(TileInput {
+                x: TALK_X,
+                z: TALK_Z,
+                level: 0,
+            }),
+            npcs: &on_tile,
+            ..Scene::default()
+        },
+    );
+    tick(&iso, 3);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::Npc {
+            name: "Hans".to_string(),
+            action: "Talk-to".to_string(),
+            index: Some(3),
+        }],
+        "the Talk-to keeps the posted identity and index"
+    );
+
+    // Tick 4: the same scene behind an open chat: no second Talk-to.
+    post_scene(
+        &iso,
+        4,
+        &page,
+        &Scene {
+            here: Some(TileInput {
+                x: TALK_X,
+                z: TALK_Z,
+                level: 0,
+            }),
+            npcs: &on_tile,
+            chat_modal_id: 968,
+            ..Scene::default()
+        },
+    );
+    tick(&iso, 4);
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "an open chat blocks the Talk-to"
+    );
+
+    // Tick 5: the posted `chat_continue` half of the same gate.
+    post_scene(
+        &iso,
+        5,
+        &page,
+        &Scene {
+            here: Some(TileInput {
+                x: TALK_X,
+                z: TALK_Z,
+                level: 0,
+            }),
+            npcs: &on_tile,
+            chat_continue: true,
+            ..Scene::default()
+        },
+    );
+    tick(&iso, 5);
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "a posted continue blocks the Talk-to too"
+    );
+
+    // Tick 6: a posted hitpoints at zero ends the session: the token is gone
+    // and nothing was solved.
+    let dead = [script::isolate_fb::StatInput {
+        index: 3,
+        name: "hitpoints",
+        xp: 0,
+        base: 40,
+        effective: 0,
+    }];
+    post_scene(
+        &iso,
+        6,
+        &page,
+        &Scene {
+            here: Some(TileInput {
+                x: TALK_X,
+                z: TALK_Z,
+                level: 0,
+            }),
+            npcs: &on_tile,
+            stats: &dead,
+            ..Scene::default()
+        },
+    );
+    tick(&iso, 6);
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "a death pushes no interact"
+    );
+    assert_eq!(
+        probe_text(&iso, "String(globalThis.__rs_bot.solveClue.token)"),
+        "null",
+        "the dead token is released, not reused"
+    );
+
+    // Tick 7: the empty page is the landed C3 refusal: the session still has
+    // no token, and nothing was solved.
+    post_page(&iso, 7, &[]);
+    tick(&iso, 7);
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "a refused begin has no verbs"
+    );
+    let value = json(
+        &iso,
+        "JSON.stringify({ token: String(globalThis.__rs_bot.solveClue.token), \
+          status: globalThis.__rs_bot.solveClue.clueStatus(), \
+          logs: globalThis.__logs, statuses: globalThis.__statuses })",
+    );
+    let logs = iso.drain_logs();
+    iso.join();
+    assert!(
+        !value.to_string().contains("clue solved"),
+        "no talk step is ever a solved mark: {value:?}"
+    );
+    assert_eq!(
+        value["token"], "null",
+        "the refused begin leaves no live token: {value:?}"
+    );
+    assert_clean(&logs);
+}
+
+/// The compat adapter's challenge path: a page that holds only the selected
+/// `2842` scroll opens a session on its parent talk step, and the posted count
+/// dialog reaches the drain as `InteractReq::AnswerCount` — the clue adapter's
+/// own arm, never the loc fall-through.
+#[test]
+fn solve_clue_adapter_answers_the_count_dialog_over_the_task_loop() {
+    let src = r#"
+import { SolveClue } from '../../api/ai/clues/SolveClue.js';
+export default class T extends TaskBot {
+    onStart() {
+        globalThis.__logs = [];
+        globalThis.__statuses = [];
+        this.solveClue = new SolveClue({
+            enabled: () => true,
+            log: (message) => { globalThis.__logs.push(String(message)); },
+            setStatus: (message) => { globalThis.__statuses.push(String(message)); },
+        });
+        this.add(this.solveClue);
+    }
+}
+"#;
+    let iso = spawn(src);
+    let page = [(CHALLENGE_ID, 1)];
+    let talk_to = vec!["Talk-to".to_string()];
+
+    // Tick 1: the scroll alone, behind the posted count dialog. The seam joins
+    // the parent, and the answer is the selected string.
+    post_scene(
+        &iso,
+        1,
+        &page,
+        &Scene {
+            here: Some(TileInput {
+                x: 2678,
+                z: 3086,
+                level: 1,
+            }),
+            count_dialog_open: true,
+            ..Scene::default()
+        },
+    );
+    tick(&iso, 1);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::AnswerCount {
+            value: CHALLENGE_ANSWER,
+        }],
+        "the count dialog takes the selected answer"
+    );
+
+    // Tick 2: the dialog is closed and the parent's npc is posted on the
+    // published plane-1 tile: the parent's own Talk-to.
+    let hazelmere = [scene_npc(
+        7,
+        669,
+        "Hazelmere",
+        TileInput {
+            x: 2678,
+            z: 3086,
+            level: 1,
+        },
+        1,
+        &talk_to,
+    )];
+    post_scene(
+        &iso,
+        2,
+        &page,
+        &Scene {
+            here: Some(TileInput {
+                x: 2678,
+                z: 3086,
+                level: 1,
+            }),
+            npcs: &hazelmere,
+            ..Scene::default()
+        },
+    );
+    tick(&iso, 2);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::Npc {
+            name: "Hazelmere".to_string(),
+            action: "Talk-to".to_string(),
+            index: Some(7),
+        }],
+        "the parent's own Talk-to follows the answer"
+    );
+
+    let value = json(
+        &iso,
+        "JSON.stringify({ token: String(globalThis.__rs_bot.solveClue.token), \
+          logs: globalThis.__logs, statuses: globalThis.__statuses })",
+    );
+    let logs = iso.drain_logs();
+    iso.join();
+    let text = value.to_string();
+    assert!(
+        text.contains("trail_clue_medium_anagram001"),
+        "the step is the parent's: {value:?}"
+    );
+    assert!(
+        text.contains(&TALK_CHALLENGE_ID.to_string()),
+        "the parent id is the step: {value:?}"
+    );
+    assert!(
+        !text.contains("2842"),
+        "the scroll id is never the step: {value:?}"
+    );
+    assert!(!text.contains("clue solved"), "{value:?}");
     assert_clean(&logs);
 }

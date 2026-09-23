@@ -456,11 +456,12 @@ Example: `crates/script/examples/clue_facts_v2.ts` (row),
 
 One machine per isolate, over the landed held-step identify. It is sync, it is
 not a Promise, and it is not a `request()` op: it is the search, casket-open,
-unguarded-dig, guarded-dig encounter, held-puzzle-box and trail-end collect
-slice of a later clue trail, not the whole dispatcher. It emits search, the
-held Open, the unguarded Dig, the guarded walk/Dig/Attack/redig, the held puzzle
-box's own Open, one planned `puzzle-move` and the close that follows a solved
-board, and the collect that follows the last casket — no talk, deposit, or
+unguarded-dig, guarded-dig encounter, held-puzzle-box, talk-step and trail-end
+collect slice of a later clue trail, not the whole dispatcher. It emits search,
+the held Open, the unguarded Dig, the guarded walk/Dig/Attack/redig, the held
+puzzle box's own Open, one planned `puzzle-move` and the close that follows a
+solved board, the talk step's walk and Talk-to, the challenge scroll's selected
+count answer, and the collect that follows the last casket — no deposit or
 retry — and it finishes that collect on its own completion envelope: the exact
 `'clue solved'` status, then the live-token `grind-ready` continue, then the
 `done` the token dies on. `kind: 'done'` is this machine's own kind and is not
@@ -493,9 +494,10 @@ a dead token is the error object, never `undefined` and never a continue kind.
 | `callback.enabled` | re-read the script's `enabled()` and answer with `resume` on the next `next` |
 | `callback.log` | perform `log(message)` |
 | `callback.setStatus` | perform `setStatus(message)`: the identified step's progress line, and — on a finished collect — the exact `'clue solved'` string, which the machine posts and no adapter invents |
-| `walk` | a search row, an unguarded dig row or a guarded row that has not arrived: walk to `{ x, z, level }`, the decoded `trail_coord` |
+| `walk` | a search row, an unguarded dig row, a guarded row or a talk step that has not arrived: walk to `{ x, z, level }` — the decoded `trail_coord`, or the talk step's own target tile |
 | `loc` | a search row that has arrived: interact with the picked loc, `{ x, z, level, action, id }` |
-| `npc` | a guarded row that has arrived and Dig its spawn: interact with the posted npc, `{ name, action: 'Attack', index }` — the posted scene index it was observed with |
+| `npc` | a guarded row that has arrived and Dig its spawn: interact with the posted npc, `{ name, action: 'Attack', index }` — the posted scene index it was observed with. A talk step that has arrived is the same kind with the posted row's own `talk_op` and posted scene index, `{ name, action: 'Talk-to', index }` |
+| `answer-count` | a talk step whose selected challenge scroll is in hand and whose posted `count_dialog_open` is true: answer that dialog with the selected `challenge_answers` string parsed as a non-negative `i32`, `{ value }`. A posted `false` or an omitted slot is not an open count dialog and nothing is answered |
 | `if-button` | a guarded fight whose posted overlay does not read up: click the selected Protect from Magic component, `{ component_id }` |
 | `held` | a casket row that has been reported: interact with the held item named `name` with `action`, `{ name, action }`; an unguarded or guarded dig row's `Dig` is the same kind with `name: 'Spade'`, and the collect's pack-full Drop is the same kind with `action: 'Drop'` |
 | `close-modal` | collecting: close the main modal the page posted open. The step carries nothing else — no interface id, no text. The held puzzle box's solved board is the same kind: the board is closed once, and never closed again while the step stays held |
@@ -516,18 +518,45 @@ burns nothing: the pending `enabled` question is still open after the thaw.
 `resume: false` idles the session with its token live — it is not `abandon`,
 not `done`, and not a completion — and the next gate re-reads instead of
 replaying that answer. `none-held` on a live session aborts it: the held
-membership went away, so the old token is dead. The one exception is the
+membership went away, so the old token is dead. There are two exceptions. The
 trail-end collect below: a `Steady` step whose casket `Open` was already
 dispatched survives `none-held` as `Collecting`, and that collect's own end is
-the `done` above rather than the `none-held` abort. Reset, stop and a generation
+the `done` above rather than the `none-held` abort. And the challenge scroll: a
+page that holds only a selected `challenge_answers` id joins that scroll's
+parent talk step — the `_challenge` suffix stripped onto the parent's alias,
+the parent id as the step and the first posted selected id winning — so the
+token it keeps is the parent's and never the scroll's. Empty pages, zero counts
+and unselected ids still abort `none-held`, and `Collecting` still wins. Reset,
+stop and a generation
 bump abort silently; the machine emits no `h.interact` entry and no request op
 for them, and the first thing the caller hears about it is `stale` or
 `aborted`. A held step that is neither a casket, a search row, an unguarded dig
-row nor a guarded dig row — the desc-only riddles and the empty-params 2722 —
-is identified and then idled: no action and no walk. The packed 3554
-`access: "constrained"` clue is the one identified row the machine refuses
+row, a guarded dig row nor a talk step — the desc-only riddles, the empty-params
+2722 and the key keepers — is identified and then idled: no action and no walk.
+The packed 3554 `access: "constrained"` clue is the one identified row the
+machine refuses
 instead of idling: `aborted` / `constrained`, no verb and no live token, which
 is the same refusal a `begin` on that row makes.
+
+A held row is a **talk step** only when the selected `talk_key.talk` family
+publishes its id. Forty-two of those steps publish the unique jm2 spawn: the
+walk goes to that `{ x, z, plane }` tile with `plane` as the verb's `level`, and
+the Talk-to is dispatched only for a posted npc of the step's own identity whose
+posted tile is inside `ARRIVE_RADIUS` Chebyshev of that tile on the same level,
+or whose posted `distance` is inside it. A wanderer outside the radius is not
+chased, nothing is Cleared and no second target is taken; the arm stays at the
+published tile and waits. The five steps whose spawn is not unique take the
+nearest posted npc of their identity instead — the selected `npc.id` against the
+posted `id`, then the selected display name against the posted `name`, never the
+alias — walking to that row's own posted tile when it is out of reach. Both arms
+require the row's own `talk_op` — the first posted action whose first four
+characters are `talk`, ignoring ASCII case — and both keep the posted name and
+posted scene index on the verb. An open chat blocks both: a posted
+`chat_modal_id` other than `-1`, or a posted `chat_continue`, is the landed
+`dialog_ready` and the arm waits the tick out, as it does behind a posted
+`count_dialog_open`. An unobserved chat or count slot is not an open one.
+A page with no posted match, no posted `here`, or no talk action waits with the
+token live: never `done`, never `'clue solved'`, and never `api.clue.challengeAnswer`.
 
 A held row is a **search row** only when the selected family carries
 `trail_loc=^true` **and** a decodable `trail_coord` on that same row: five
@@ -650,19 +679,21 @@ of those pages are this call's own marshalling of `host().snapshot` — the
 posted npc page, the local-player slot and its posted target pair, the posted
 overlay varp and the posted stat rows — so the machine caches no world copy,
 `api.snapshot.npcs` is never scanned, and `api.snapshot.self_slot` and
-`api.snapshot.varps` stay hidden. `npc` and `if-button` are not `V2_OPS`
-verbs — `next` enqueues them onto the interact drain directly, so
-`api.request({ op: 'npc' })` and
+`api.snapshot.varps` stay hidden. `npc`, `answer-count` and `if-button` are not
+`V2_OPS` verbs — `next` enqueues them onto the interact drain directly, so
+`api.request({ op: 'npc' })`, `api.request({ op: 'answer-count' })` and
 `api.request({ op: 'if-button' })` stay `not impl` — and the guarded row emits
 no completion of its own: its only ends are `guardian-lost`, the `dead` any
 live call posts, and the `supplies-needed` of a first Dig that arrived without
 the `Spade`.
 
-The rows that are neither caskets, search rows, unguarded dig rows nor guarded
-dig rows stay identified then idle: the desc-only riddles that carry no
+The rows that are neither caskets, search rows, unguarded dig rows, guarded dig
+rows nor talk steps stay identified then idle: the desc-only riddles that carry
+no
 decodable `trail_coord` — except the
 nine whose own `_puzzlebox` is the one the posted page holds, which are the
-held puzzle box below — and the empty-params `2722`. The packed 3554
+held puzzle box below, and except the talk steps above — and the empty-params
+`2722`. The packed 3554
 `access: "constrained"` clue is not one of them: it is refused with
 `aborted` / `constrained` and no live token, on a held step and on a `begin`
 alike. Every coord-bearing row

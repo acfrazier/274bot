@@ -1512,6 +1512,30 @@ function clueMainModalId() {
   if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return null;
   return cluePageI32(snapshot.main_modal_id) ? snapshot.main_modal_id : null;
 }
+// The posted chat slots the talk arm reads: the open chat modal id — `-1` is
+// the closed one the page posts itself — and the posted `chat_continue`. Both
+// are posted only when the page carried them: an unobserved slot is not an open
+// chat and not a close. Neither key is on `SNAPSHOT_KEYS`, so `api.snapshot`
+// hides both and this reader goes to `host().snapshot` the way every other
+// call-time page here does.
+function clueChatModalId() {
+  const snapshot = host().snapshot;
+  if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return null;
+  return cluePageI32(snapshot.chat_modal_id) ? snapshot.chat_modal_id : null;
+}
+function clueChatContinue() {
+  const snapshot = host().snapshot;
+  if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return null;
+  return typeof snapshot.chat_continue === 'boolean' ? snapshot.chat_continue : null;
+}
+// The posted count dialog, and only when the page posted the boolean: the talk
+// arm answers a count only behind the posted open fact, and an omitted slot is
+// unobserved rather than closed.
+function clueCountDialogOpen() {
+  const snapshot = host().snapshot;
+  if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return null;
+  return typeof snapshot.count_dialog_open === 'boolean' ? snapshot.count_dialog_open : null;
+}
 // The posted inv tab slot count. A page that did not post it hands the machine
 // nothing: 28 is the client default, not this machine's to invent.
 function clueInvSize() {
@@ -1695,6 +1719,13 @@ function enqueueClueVerb(step) {
     });
     return;
   }
+  if (step.kind === 'answer-count') {
+    // The open count dialog the talk arm's challenge step answers: the selected
+    // answer the machine parsed, and nothing else. Its own arm, before the loc
+    // fall-through, and never a `V2_OPS` request.
+    h.interact.push({ op: 'answer-count', value: step.value });
+    return;
+  }
   if (step.kind === 'close-modal') {
     // The journal's own close push: the main modal this machine's Collecting
     // arm saw posted open, and nothing else.
@@ -1819,20 +1850,22 @@ api.clue = {
   // pack rows with their slot count and the posted main modal — so the
   // machine never caches a world copy. The guarded encounter adds the posted
   // npc page, the local-player slot and target pair, the posted Protect from
-  // Magic overlay and the posted effective hitpoints. Kinds are `wait`,
-  // `yield`, `callback.enabled`, `callback.log`, `callback.setStatus`,
-  // `held`, `walk`, `loc`, `close-modal`, `obj`, `npc`, `if-button` and the
-  // completion envelope — `grind-ready`, `supplies-needed`, `done`, `dead`,
-  // `abandon` and `guardian-lost`. The completion kinds ride this same
-  // continue shape and are never enqueued; `done` is the finished collect's
-  // own kind, not a hunt `status: 'done'`, and the exact `'clue solved'`
-  // string is the machine's own `callback.setStatus` message. The puzzle-box
+  // Magic overlay and the posted effective hitpoints. The talk arm adds the
+  // posted chat modal, its continue flag and the posted count dialog. Kinds
+  // are `wait`, `yield`, `callback.enabled`, `callback.log`,
+  // `callback.setStatus`, `held`, `walk`, `loc`, `close-modal`, `obj`, `npc`,
+  // `if-button`, `answer-count` and the completion envelope — `grind-ready`,
+  // `supplies-needed`, `done`, `dead`, `abandon` and `guardian-lost`. The
+  // completion kinds ride this same continue shape and are never enqueued;
+  // `done` is the finished collect's own kind, not a hunt `status: 'done'`,
+  // and the exact `'clue solved'` string is the machine's own
+  // `callback.setStatus` message. The puzzle-box
   // arm adds the posted board and its session generation, and its
   // `puzzle-move` kind. A `walk`, `held`, `loc`, `close-modal`, `obj`, `npc`,
-  // `if-button` or `puzzle-move` step is enqueued onto the interact drain like
-  // the journal's `if-button`, and the step is still returned as a continue
-  // object. A dead token is the error object, never `undefined` and never an
-  // `aborted` continue kind.
+  // `if-button`, `answer-count` or `puzzle-move` step is enqueued onto the
+  // interact drain like the journal's `if-button`, and the step is still
+  // returned as a continue object. A dead token is the error object, never
+  // `undefined` and never an `aborted` continue kind.
   next: function (input) {
     if (arguments.length === 0) return helperErr('invalid-args');
     if (input == null || typeof input !== 'object' || Array.isArray(input)) {
@@ -1857,6 +1890,14 @@ api.clue = {
     if (here !== null) payload.here = here;
     const main = clueMainModalId();
     if (main !== null) payload.main_modal_id = main;
+    // The talk arm's own call-time facts, posted-only like `main_modal_id`: an
+    // omitted chat or count slot is unobserved, never a closed one.
+    const chatModal = clueChatModalId();
+    if (chatModal !== null) payload.chat_modal_id = chatModal;
+    const chatContinue = clueChatContinue();
+    if (chatContinue !== null) payload.chat_continue = chatContinue;
+    const countOpen = clueCountDialogOpen();
+    if (countOpen !== null) payload.count_dialog_open = countOpen;
     const invSize = clueInvSize();
     if (invSize !== null) payload.inv_size = invSize;
     const selfSlot = clueSelfSlot();
@@ -1881,7 +1922,7 @@ api.clue = {
     if (step.kind === 'walk' || step.kind === 'held' || step.kind === 'loc'
         || step.kind === 'close-modal' || step.kind === 'obj'
         || step.kind === 'npc' || step.kind === 'if-button'
-        || step.kind === 'puzzle-move') {
+        || step.kind === 'answer-count' || step.kind === 'puzzle-move') {
       // Enqueue synchronously, after the generation check: a reset or stop
       // between the call and this push is not a verb for the dead session.
       if (generation !== lifecycleGeneration) return helperErr('stale');

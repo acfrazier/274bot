@@ -816,6 +816,7 @@ export type ClueStep =
   | { ok: true; status: 'continue'; token: number; kind: 'walk'; x: number; z: number; level: number }
   | { ok: true; status: 'continue'; token: number; kind: 'loc'; x: number; z: number; level: number; action: string; id: number }
   | { ok: true; status: 'continue'; token: number; kind: 'npc'; name: string; action: string; index: number }
+  | { ok: true; status: 'continue'; token: number; kind: 'answer-count'; value: number }
   | { ok: true; status: 'continue'; token: number; kind: 'if-button'; component_id: number }
   | { ok: true; status: 'continue'; token: number; kind: 'close-modal' }
   | { ok: true; status: 'continue'; token: number; kind: 'obj'; x: number; z: number; level: number; name: string | null; action: string }

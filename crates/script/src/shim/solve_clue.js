@@ -137,6 +137,31 @@ function clueMainModalId() {
     return cluePageI32(snapshot.main_modal_id) ? snapshot.main_modal_id : null;
 }
 
+// The posted chat slots the talk arm reads: the open chat modal id — `-1` is
+// the closed one the page posts itself — and the posted `chat_continue`. Both
+// are posted only when the page carried them, so an unobserved slot is not an
+// open chat and not a close.
+function clueChatModalId() {
+    const snapshot = host().snapshot;
+    if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return null;
+    return cluePageI32(snapshot.chat_modal_id) ? snapshot.chat_modal_id : null;
+}
+
+function clueChatContinue() {
+    const snapshot = host().snapshot;
+    if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return null;
+    return typeof snapshot.chat_continue === 'boolean' ? snapshot.chat_continue : null;
+}
+
+// The posted count dialog, and only when the page posted the boolean: the talk
+// arm answers a count only behind the posted open fact, and an omitted slot is
+// unobserved rather than closed.
+function clueCountDialogOpen() {
+    const snapshot = host().snapshot;
+    if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return null;
+    return typeof snapshot.count_dialog_open === 'boolean' ? snapshot.count_dialog_open : null;
+}
+
 // The posted inv tab slot count. A page that did not post it hands the machine
 // nothing: 28 is the client default, not this adapter's to invent.
 function clueInvSize() {
@@ -273,6 +298,13 @@ function enqueueClueVerb(step) {
         queue({ op: 'npc', name: step.name, action: step.action, index: step.index });
         return true;
     }
+    if (step.kind === 'answer-count') {
+        // The open count dialog the talk arm's challenge step answers: the
+        // selected answer the machine parsed, and nothing else. Its own arm,
+        // never the loc fall-through.
+        queue({ op: 'answer-count', value: step.value });
+        return true;
+    }
     if (step.kind === 'close-modal') {
         queue({ op: 'close-modal' });
         return true;
@@ -326,7 +358,8 @@ function enqueueClueVerb(step) {
 // yield, the `grind-ready` continue, the `supplies-needed` wait-class or a
 // terminal — and an unknown kind is none of them.
 const ENQUEUED_KINDS = [
-    'walk', 'held', 'loc', 'npc', 'if-button', 'close-modal', 'obj', 'puzzle-move',
+    'walk', 'held', 'loc', 'npc', 'answer-count', 'if-button', 'close-modal', 'obj',
+    'puzzle-move',
 ];
 
 // The call-time pages every `next` posts, in the machine's own field names.
@@ -348,6 +381,15 @@ function clueNextPayload(token, resume) {
     if (here !== null) payload.here = here;
     const main = clueMainModalId();
     if (main !== null) payload.main_modal_id = main;
+    // The talk arm's own call-time facts: posted-only, so an omitted slot stays
+    // unobserved on the machine rather than becoming a closed chat or a closed
+    // count dialog.
+    const chatModal = clueChatModalId();
+    if (chatModal !== null) payload.chat_modal_id = chatModal;
+    const chatContinue = clueChatContinue();
+    if (chatContinue !== null) payload.chat_continue = chatContinue;
+    const countOpen = clueCountDialogOpen();
+    if (countOpen !== null) payload.count_dialog_open = countOpen;
     const invSize = clueInvSize();
     if (invSize !== null) payload.inv_size = invSize;
     const selfSlot = clueSelfSlot();
