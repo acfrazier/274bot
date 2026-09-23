@@ -1426,17 +1426,18 @@ function clueHereTile() {
   if (!cluePageI32(here.x) || !cluePageI32(here.z) || !cluePageI32(here.level)) return null;
   return { x: here.x, z: here.z, level: here.level };
 }
-// The posted loc page, the same call-time class of page. `api.snapshot` hides
-// `locs` (SNAPSHOT_KEYS), so this reads `host().snapshot.locs` directly the
-// way `sceneProjection` does, and never through `api.sceneLocs`. A row that
-// is not the posted `(id, x, z, level, actions)` shape cannot be picked and
-// is dropped here, never a snapshot error.
-function clueLocPage() {
+// One posted scene page (`locs` / `ground`), the same call-time class of page.
+// `api.snapshot` hides both (SNAPSHOT_KEYS), so this reads `host().snapshot`
+// directly the way `sceneProjection` does, and never through `api.sceneLocs`.
+// A row that is not the posted `(id, x, z, level, actions)` shape cannot be
+// picked and is dropped here, never a snapshot error. `name` rides along only
+// for the page whose verb resolves identity by name, and it is never invented.
+function clueScenePage(key, withName) {
   const snapshot = host().snapshot;
   if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return [];
-  const page = snapshot.locs;
+  const page = snapshot[key];
   if (!Array.isArray(page)) return [];
-  const locs = [];
+  const rows = [];
   for (const row of page) {
     if (!row || typeof row !== 'object' || Array.isArray(row)) continue;
     if (!cluePageI32(row.id) || !cluePageI32(row.x) || !cluePageI32(row.z)
@@ -1449,9 +1450,56 @@ function clueLocPage() {
       actions.push(action);
     }
     if (!ok) continue;
-    locs.push({ id: row.id, x: row.x, z: row.z, level: row.level, actions: actions });
+    const out = { id: row.id, x: row.x, z: row.z, level: row.level, actions: actions };
+    if (withName) out.name = typeof row.name === 'string' ? row.name : null;
+    rows.push(out);
   }
-  return locs;
+  return rows;
+}
+function clueLocPage() {
+  return clueScenePage('locs', false);
+}
+// The posted ground page the collect arm Takes from: the loc shape plus the
+// display name the host resolves. Read at call time like every other page.
+function clueGroundPage() {
+  return clueScenePage('ground', true);
+}
+// The posted pack page the collect arm reads: the display name the Drop
+// resolves and the positive count that occupies a slot. This is not a second
+// inventory read and not a change to `clueHeldPage` — the identify page stays
+// the `(id, count)` pair, and both come from the one posted `snapshot.inv`.
+function clueInvPage() {
+  const snapshot = host().snapshot;
+  if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return [];
+  const page = snapshot.inv;
+  if (!Array.isArray(page)) return [];
+  const rows = [];
+  for (const row of page) {
+    if (!row || typeof row !== 'object' || Array.isArray(row)) continue;
+    if (!cluePageI32(row.id) || !cluePageI32(row.count)) continue;
+    rows.push({
+      id: row.id,
+      name: typeof row.name === 'string' ? row.name : null,
+      count: row.count,
+    });
+  }
+  return rows;
+}
+// The posted main modal id, and only when the page posted it: an omitted slot
+// is not the closed `-1` and not a second definition of it, so the machine is
+// handed no `main_modal_id` at all. Never `6960`, and never the
+// `__rs2b0t_modals` machine.
+function clueMainModalId() {
+  const snapshot = host().snapshot;
+  if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return null;
+  return cluePageI32(snapshot.main_modal_id) ? snapshot.main_modal_id : null;
+}
+// The posted inv tab slot count. A page that did not post it hands the machine
+// nothing: 28 is the client default, not this machine's to invent.
+function clueInvSize() {
+  const snapshot = host().snapshot;
+  if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return null;
+  return cluePageI32(snapshot.inv_size) ? snapshot.inv_size : null;
 }
 // Every continue step is this envelope. `yield` keeps the token live, so it
 // is not trail completion and never `status: 'done'`.
@@ -1478,12 +1526,13 @@ function clueBeginError(reason) {
 }
 // The machine's own walk, held and loc steps go onto the shared interact
 // drain the way the quest journal enqueues `if-button` / `close-modal`: a
-// generation check, then a push. Each kind has its own arm, so a held item
-// identity is never enqueued as a loc, and the loc row always carries the
+// generation check, then a push. Each kind has its own explicit arm before the
+// loc fall-through, so a held item identity is never enqueued as a loc, an
+// `obj` Take is never enqueued as a loc, and the loc row always carries the
 // posted id. `held` is already an author `V2_OPS` verb, but this machine
 // enqueues its own step directly instead of going through `enqueueRequest`;
-// `loc` is not a `V2_OPS` verb at all, so `api.request({ op: 'loc' })` stays
-// `not impl`.
+// `loc`, `obj` and `close-modal` are not `V2_OPS` verbs at all, so
+// `api.request({ op: 'loc' | 'obj' | 'close-modal' })` stays `not impl`.
 function enqueueClueVerb(step) {
   const h = host();
   h.interact = h.interact || [];
@@ -1491,9 +1540,30 @@ function enqueueClueVerb(step) {
     h.interact.push({ op: 'walk', x: step.x, z: step.z, level: step.level });
     return;
   }
+  if (step.kind === 'close-modal') {
+    // The journal's own close push: the main modal this machine's Collecting
+    // arm saw posted open, and nothing else.
+    h.interact.push({ op: 'close-modal' });
+    return;
+  }
+  if (step.kind === 'obj') {
+    // The casket overflow on the posted tile, by the posted name and action.
+    // The host matches that identity and refuses a stale row rather than
+    // taking another ground row on the same tile.
+    h.interact.push({
+      op: 'obj',
+      x: step.x,
+      z: step.z,
+      level: step.level,
+      name: step.name,
+      action: step.action,
+    });
+    return;
+  }
   if (step.kind === 'held') {
     // The selected item display name; the host resolves the first inventory
-    // row with that name. No row id and no tile rides along.
+    // row with that name. No row id and no tile rides along. The Collecting
+    // Drop reuses this arm with `action: 'Drop'`.
     h.interact.push({ op: 'held', name: step.name, action: step.action });
     return;
   }
@@ -1563,14 +1633,17 @@ api.clue = {
     return helperErr('stale');
   },
   // One step. `resume` is the callback return (hunt's `reply` slot under this
-  // name; both are never read). The wrapper marshals the three call-time
-  // pages — the parked `snapshot.inv` page, the posted `here` tile and the
-  // posted loc page — so the machine never caches a world copy. Kinds are
-  // `wait`, `yield`, `callback.enabled`, `callback.log`, `callback.setStatus`,
-  // `held`, `walk` and `loc` — never `done`. A `walk`, `held` or `loc` step is
-  // enqueued onto the interact drain like the journal's `if-button`, and the
-  // step is still returned as a continue object. A dead token is the error
-  // object, never `undefined` and never an `aborted` continue kind.
+  // name; both are never read). The wrapper marshals the call-time pages —
+  // the parked `snapshot.inv` page, the posted `here` tile, the posted loc
+  // page, and for the trail-end collect the posted ground page, the posted
+  // pack rows with their slot count and the posted main modal — so the
+  // machine never caches a world copy. Kinds are `wait`, `yield`,
+  // `callback.enabled`, `callback.log`, `callback.setStatus`, `held`, `walk`,
+  // `loc`, `close-modal` and `obj` — never `done`. A `walk`, `held`, `loc`,
+  // `close-modal` or `obj` step is enqueued onto the interact drain like the
+  // journal's `if-button`, and the step is still returned as a continue
+  // object. A dead token is the error object, never `undefined` and never an
+  // `aborted` continue kind.
   next: function (input) {
     if (arguments.length === 0) return helperErr('invalid-args');
     if (input == null || typeof input !== 'object' || Array.isArray(input)) {
@@ -1587,14 +1660,21 @@ api.clue = {
       held: clueHeldPage(),
       hold: cluePending(),
       locs: clueLocPage(),
+      ground: clueGroundPage(),
+      inv: clueInvPage(),
     };
     const here = clueHereTile();
     if (here !== null) payload.here = here;
+    const main = clueMainModalId();
+    if (main !== null) payload.main_modal_id = main;
+    const invSize = clueInvSize();
+    if (invSize !== null) payload.inv_size = invSize;
     if (hasResume) payload.resume = input.resume;
     const step = clueCall(payload);
     if (!step || typeof step !== 'object') return helperErr('stale');
     if (step.kind === 'aborted') return helperErr(clueStepError(step.reason));
-    if (step.kind === 'walk' || step.kind === 'held' || step.kind === 'loc') {
+    if (step.kind === 'walk' || step.kind === 'held' || step.kind === 'loc'
+        || step.kind === 'close-modal' || step.kind === 'obj') {
       // Enqueue synchronously, after the generation check: a reset or stop
       // between the call and this push is not a verb for the dead session.
       if (generation !== lifecycleGeneration) return helperErr('stale');

@@ -204,13 +204,21 @@ fn query_does_not_open_the_answers_or_the_writer() {
 
 /// The call-time pages the clue search machine reads on top of the pack page:
 /// the posted `here` tile, the posted loc page, and the posted `hold || ours`
-/// pair.
+/// pair. The collect arm adds the posted ground page, the posted main modal id
+/// and the display names on the pack page the Drop resolves.
 #[derive(Default)]
 struct Scene<'a> {
     here: Option<script::isolate_fb::TileInput>,
     locs: &'a [script::isolate_fb::SceneEntityInput<'a>],
     hold: bool,
     ours: bool,
+    /// The posted ground page: the same `SceneEntity` shape as `locs`.
+    ground: &'a [script::isolate_fb::SceneEntityInput<'a>],
+    /// The posted main modal id on this keyframe.
+    main_modal_id: i32,
+    /// Display names for the page rows, by obj id. The identify page stays the
+    /// `(id, count)` pair; this is the `snapshot.inv` name the Drop resolves.
+    names: &'a [(i32, &'a str)],
 }
 
 fn post_base(iso: &LoadIsolate, tick: u64) {
@@ -230,7 +238,11 @@ fn post_scene(iso: &LoadIsolate, tick: u64, page: &[(i32, i32)], scene: &Scene<'
     let rows: Vec<script::isolate_fb::ItemRowInput<'_>> = page
         .iter()
         .map(|(id, count)| script::isolate_fb::ItemRowInput {
-            name: None,
+            name: scene
+                .names
+                .iter()
+                .find(|(row_id, _)| row_id == id)
+                .map(|(_, name)| *name),
             count: *count,
             id: *id,
             ops: &[],
@@ -266,7 +278,7 @@ fn post_scene(iso: &LoadIsolate, tick: u64, page: &[(i32, i32)], scene: &Scene<'
         npcs: &[],
         locs: scene.locs,
         players: &[],
-        ground: &[],
+        ground: scene.ground,
         equipment: &[],
         chat_open: false,
         chat_continue: false,
@@ -281,7 +293,7 @@ fn post_scene(iso: &LoadIsolate, tick: u64, page: &[(i32, i32)], scene: &Scene<'
         my_name: None,
         in_combat: false,
         animating: false,
-        main_modal_id: -1,
+        main_modal_id: scene.main_modal_id,
         chat_modal_id: -1,
         make_products: &[],
         side_tab_ifaces: &[],
@@ -913,6 +925,21 @@ fn scene_loc<'a>(
     }
 }
 
+/// One posted ground row: the same `SceneEntity` shape as a loc, plus the
+/// display name the collect Take rides along with.
+fn scene_ground<'a>(
+    id: i32,
+    name: &'a str,
+    x: i32,
+    z: i32,
+    level: i32,
+    actions: &'a [String],
+) -> SceneEntityInput<'a> {
+    let mut row = scene_loc(id, x, z, level, actions);
+    row.name = Some(name);
+    row
+}
+
 /// The public `api.clue.next` path over a posted page plus a posted scene: the
 /// machine's own `walk` / `loc` kinds reach the interact drain as
 /// `InteractReq::Walk` / `InteractReq::Loc`, which no module test can see.
@@ -1522,4 +1549,708 @@ export function tick(api) {
         interacts.is_empty(),
         "the clue machine pushes no interact: {interacts:?}"
     );
+}
+
+/// The public TRAIL-END COLLECT path: `Steady` on the held casket whose Open
+/// went out, then the empty page that used to abort. The collect closes the
+/// posted reward interface, Takes the casket's own overflow off the posted
+/// tile — skipping the shark that is posted first — logs the settled Take,
+/// waits the frozen reward window out, and finishes with the landed
+/// `none-held` abort. Schema 4, `close-modal` / `obj` unpublished.
+#[test]
+fn v2_clue_collect_closes_the_reward_then_takes_the_casket_overflow() {
+    let src = r#"
+export const apiVersion = 2;
+export function tick(api) {
+  globalThis.__runs = (globalThis.__runs || 0) + 1;
+  if (globalThis.__runs === 1) {
+    const begin = api.clue.begin();
+    globalThis.__token = begin.ok ? begin.value.token : null;
+    globalThis.__steps = [begin];
+    return;
+  }
+  globalThis.__steps.push(api.clue.next(
+    globalThis.__runs === 3
+      ? { token: globalThis.__token, resume: true }
+      : { token: globalThis.__token }));
+  if (globalThis.__runs === 9) {
+    let objOp = null;
+    let closeOp = null;
+    let heldOp = null;
+    try { api.request({ op: 'obj', x: 1, z: 1, level: 0, action: 'Take' }); objOp = 'ok'; }
+    catch (e) { objOp = String(e && (e.message || e)); }
+    try { api.request({ op: 'close-modal' }); closeOp = 'ok'; }
+    catch (e) { closeOp = String(e && (e.message || e)); }
+    try { api.request({ op: 'held', name: 'Casket', action: 'Open' }); heldOp = 'ok'; }
+    catch (e) { heldOp = String(e && (e.message || e)); }
+    globalThis.__probe = JSON.stringify({
+      token: globalThis.__token,
+      runs: globalThis.__runs,
+      steps: globalThis.__steps,
+      objOp: objOp,
+      closeOp: closeOp,
+      heldOp: heldOp,
+      groundType: typeof api.snapshot.ground,
+      locsType: typeof api.snapshot.locs,
+      mainType: typeof api.snapshot.main_modal_id,
+      invSizeType: typeof api.snapshot.inv_size,
+    });
+  }
+}
+"#;
+    let data = api::game_data::for_revision(ClientRevision::R274).unwrap();
+    let iso = LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data)
+        .unwrap();
+    // The held sextant028 casket, then the page with nothing membership-held:
+    // the Open already went out, so this is the trail-end collect and not an
+    // abort. The packed 3554 clue is never played.
+    let casket = [(3555, 1)];
+    let here = TileInput {
+        x: 3222,
+        z: 3223,
+        level: 1,
+    };
+    let take = vec!["Take".to_string()];
+    let loot = scene_ground(900, "Rune platebody", 3222, 3223, 1, &take);
+    let shark = scene_ground(api::clue_pack::SHARK_ID, "Shark", 3222, 3223, 1, &take);
+    let ground = vec![loot];
+    let both = vec![shark, loot];
+
+    for tick in 1..=5 {
+        post_page(&iso, tick, &casket);
+        iso.on_game_tick(tick);
+        assert!(iso.probe("true").is_ok());
+        if tick < 5 {
+            assert!(
+                iso.drain_interacts().is_empty(),
+                "tick {tick} pushes no interact"
+            );
+        }
+    }
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![casket_open()],
+        "the landed Open is still the only verb while the casket is held"
+    );
+
+    // Tick 6: the casket is gone and the reward interface is posted open.
+    post_scene(
+        &iso,
+        6,
+        &[],
+        &Scene {
+            here: Some(here),
+            ground: &ground,
+            main_modal_id: 6960,
+            ..Scene::default()
+        },
+    );
+    iso.on_game_tick(6);
+    assert!(iso.probe("true").is_ok());
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::CloseModal],
+        "the posted main modal is closed, by its own posted id"
+    );
+
+    // Tick 7: closed, and the shark posted ahead of the casket overflow is
+    // skipped: the Take is the loot row's own tile and name.
+    post_scene(
+        &iso,
+        7,
+        &[],
+        &Scene {
+            here: Some(here),
+            ground: &both,
+            main_modal_id: -1,
+            ..Scene::default()
+        },
+    );
+    iso.on_game_tick(7);
+    assert!(iso.probe("true").is_ok());
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::Obj {
+            x: 3222,
+            z: 3223,
+            level: 1,
+            name: Some("Rune platebody".to_string()),
+            action: "Take".to_string(),
+        }],
+        "the shark is skipped and the loot keeps its posted identity"
+    );
+
+    // Tick 8: only the shark is left, so the Take settled.
+    post_scene(
+        &iso,
+        8,
+        &[],
+        &Scene {
+            here: Some(here),
+            ground: &[shark],
+            main_modal_id: -1,
+            ..Scene::default()
+        },
+    );
+    iso.on_game_tick(8);
+    assert!(iso.probe("true").is_ok());
+    assert!(iso.drain_interacts().is_empty(), "the settle pushes nothing");
+
+    // Tick 9: an empty page still inside the reward window is a wait, and the
+    // unpublished verbs stay unpublished while `held` stays an author op.
+    post_scene(
+        &iso,
+        9,
+        &[],
+        &Scene {
+            here: Some(here),
+            main_modal_id: -1,
+            ..Scene::default()
+        },
+    );
+    iso.on_game_tick(9);
+    let probed = iso.probe("globalThis.__probe").unwrap();
+    let value: serde_json::Value = serde_json::from_str(probed.as_str().unwrap()).unwrap();
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::Held {
+            name: "Casket".to_string(),
+            action: "Open".to_string(),
+        }],
+        "the drain holds the probe's own `held` request"
+    );
+
+    // Past the window the loot is over: the landed `none-held` abort, never
+    // `done` and never `'clue solved'`.
+    std::thread::sleep(std::time::Duration::from_millis(2_100));
+    post_scene(
+        &iso,
+        10,
+        &[],
+        &Scene {
+            here: Some(here),
+            main_modal_id: -1,
+            ..Scene::default()
+        },
+    );
+    iso.on_game_tick(10);
+    let steps: serde_json::Value = serde_json::from_str(
+        iso.probe("JSON.stringify(globalThis.__steps)")
+            .unwrap()
+            .as_str()
+            .unwrap(),
+    )
+    .unwrap();
+    let interacts = iso.drain_interacts();
+    iso.join();
+    assert!(interacts.is_empty(), "the finish pushes nothing: {interacts:?}");
+
+    assert_eq!(value["runs"], 9, "{value:?}");
+    assert!(value["token"].is_number(), "{value:?}");
+    let logged = value["steps"].as_array().expect("steps");
+    for (index, kind) in [
+        (1, "callback.enabled"),
+        (2, "callback.log"),
+        (3, "callback.setStatus"),
+        (4, "held"),
+        (5, "close-modal"),
+        (6, "obj"),
+        (7, "callback.log"),
+        (8, "wait"),
+    ] {
+        assert_eq!(logged[index]["kind"], kind, "{index} {value:?}");
+    }
+    // The Open is the casket's and the Take is the loot row's, each with the
+    // identity the posted page carried.
+    assert_eq!(logged[4]["name"], "Casket", "{value:?}");
+    assert_eq!(logged[4]["action"], "Open", "{value:?}");
+    assert_eq!(logged[6]["name"], "Rune platebody", "{value:?}");
+    assert_eq!(logged[6]["action"], "Take", "{value:?}");
+    assert_eq!(logged[6]["x"], 3222, "{value:?}");
+    assert_eq!(logged[6]["z"], 3223, "{value:?}");
+    assert_eq!(logged[6]["level"], 1, "{value:?}");
+    assert_eq!(
+        logged[7]["message"], "took 'Rune platebody' from the casket",
+        "{value:?}"
+    );
+    // The collect is the casket's: the landed report never named 3554.
+    let report = logged[2]["message"].as_str().unwrap_or("");
+    assert!(report.contains("trail_clue_hard_sextant028_casket"), "{value:?}");
+    assert!(!report.contains("3554"), "{value:?}");
+
+    // Unpublished verbs stay unpublished, `held` stays an author op, and
+    // `ground` / `locs` / `main_modal_id` stay off the public snapshot.
+    for key in ["objOp", "closeOp"] {
+        assert!(
+            value[key].as_str().unwrap_or("").contains("not impl"),
+            "{key} {value:?}"
+        );
+    }
+    assert_eq!(value["heldOp"], "ok", "{value:?}");
+    for key in ["groundType", "locsType", "mainType"] {
+        assert_eq!(value[key], "undefined", "{key} {value:?}");
+    }
+    assert_eq!(value["invSizeType"], "number", "{value:?}");
+
+    let last = steps.as_array().expect("steps").last().expect("last step");
+    assert_eq!(last["ok"], false, "{last}");
+    assert_eq!(last["error"], "none-held", "{last}");
+    assert!(last.get("value").is_none(), "{last}");
+    assert_eq!(last["status"], serde_json::Value::Null, "{last}");
+    let text = value.to_string();
+    for forbidden in ["clue solved", "ownsEquipment", "\"done\""] {
+        assert!(!text.contains(forbidden), "{forbidden} {value:?}");
+    }
+}
+
+/// The collect is skipped whenever identify still holds a step: the landed
+/// gate re-arms, so a next scroll keeps reporting and a leftover casket Opens
+/// — never a close and never a Take under it, even with both posted.
+#[test]
+fn v2_clue_collect_re_arms_for_a_held_step_instead_of_collecting() {
+    let src = r#"
+export const apiVersion = 2;
+export function tick(api) {
+  globalThis.__runs = (globalThis.__runs || 0) + 1;
+  if (globalThis.__runs === 1) {
+    const begin = api.clue.begin();
+    globalThis.__token = begin.ok ? begin.value.token : null;
+    globalThis.__steps = [begin];
+    return;
+  }
+  const resume = globalThis.__runs === 3 || globalThis.__runs === 7;
+  globalThis.__steps.push(api.clue.next(
+    resume ? { token: globalThis.__token, resume: true } : { token: globalThis.__token }));
+  if (globalThis.__runs === 9) {
+    globalThis.__probe = JSON.stringify({
+      token: globalThis.__token,
+      runs: globalThis.__runs,
+      steps: globalThis.__steps,
+    });
+  }
+}
+"#;
+    // The next scroll (the packed 3554 clue) and a leftover casket: identify
+    // returns a step for both, so collect never runs.
+    for (id, final_kind, alias) in [
+        (3554, "wait", "trail_clue_hard_sextant028"),
+        (3531, "held", "trail_clue_hard_sextant016_casket"),
+    ] {
+        let data = api::game_data::for_revision(ClientRevision::R274).unwrap();
+        let iso =
+            LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data)
+                .unwrap();
+        let casket = [(3555, 1)];
+        let next_step = [(id, 1)];
+        let here = TileInput {
+            x: 3222,
+            z: 3223,
+            level: 1,
+        };
+        let take = vec!["Take".to_string()];
+        let loot = [scene_ground(900, "Rune platebody", 3222, 3223, 1, &take)];
+
+        for tick in 1..=5 {
+            post_page(&iso, tick, &casket);
+            iso.on_game_tick(tick);
+            assert!(iso.probe("true").is_ok());
+        }
+        assert_eq!(iso.drain_interacts(), vec![casket_open()], "{id}");
+
+        // The step is still held, with the reward interface and the casket
+        // overflow both posted: neither is touched.
+        for tick in 6..=9 {
+            post_scene(
+                &iso,
+                tick,
+                &next_step,
+                &Scene {
+                    here: Some(here),
+                    ground: &loot,
+                    main_modal_id: 6960,
+                    ..Scene::default()
+                },
+            );
+            iso.on_game_tick(tick);
+            assert!(iso.probe("true").is_ok());
+            let interacts = iso.drain_interacts();
+            match tick {
+                9 if final_kind == "held" => assert_eq!(
+                    interacts,
+                    vec![casket_open()],
+                    "{id}: the leftover casket Opens"
+                ),
+                _ => assert!(
+                    interacts.is_empty(),
+                    "{id} tick {tick} pushes no collect verb: {interacts:?}"
+                ),
+            }
+        }
+
+        let probed = iso.probe("globalThis.__probe").unwrap();
+        let value: serde_json::Value = serde_json::from_str(probed.as_str().unwrap()).unwrap();
+        iso.join();
+        assert_eq!(value["runs"], 9, "{id} {value:?}");
+        let steps = value["steps"].as_array().expect("steps");
+        for (index, kind) in [
+            (1, "callback.enabled"),
+            (2, "callback.log"),
+            (3, "callback.setStatus"),
+            (4, "held"),
+            (5, "callback.enabled"),
+            (6, "callback.log"),
+            (7, "callback.setStatus"),
+            (8, final_kind),
+        ] {
+            assert_eq!(steps[index]["kind"], kind, "{id} {index} {value:?}");
+        }
+        // The re-armed gate reports the row identify returned, never the
+        // casket whose Open already went out.
+        let message = steps[6]["message"].as_str().unwrap_or("");
+        assert!(message.contains(alias), "{id} {value:?}");
+        assert!(!message.contains("sextant028_casket"), "{id} {value:?}");
+        let text = value.to_string();
+        for forbidden in ["clue solved", "\"done\"", "abandon"] {
+            assert!(!text.contains(forbidden), "{id} {forbidden} {value:?}");
+        }
+    }
+}
+
+/// The public pack-full path: one Dropped food row frees the slot, the Take
+/// follows next call, and a pack that is full with nothing to Drop logs the
+/// frozen WARNING and then finishes with the landed `none-held` abort.
+#[test]
+fn v2_clue_collect_drops_food_or_warns_before_the_take() {
+    let take = vec!["Take".to_string()];
+    let here = TileInput {
+        x: 3222,
+        z: 3223,
+        level: 1,
+    };
+    let loot = [scene_ground(900, "Rune platebody", 3222, 3223, 1, &take)];
+    let shark = scene_ground(api::clue_pack::SHARK_ID, "Shark", 3222, 3223, 1, &take);
+
+    // Phase one: 28 occupied slots with the hard casket's own shark in the
+    // pack, so the Drop is the shark and the Take is next call.
+    let src = r#"
+export const apiVersion = 2;
+export function tick(api) {
+  globalThis.__runs = (globalThis.__runs || 0) + 1;
+  if (globalThis.__runs === 1) {
+    const begin = api.clue.begin();
+    globalThis.__token = begin.ok ? begin.value.token : null;
+    globalThis.__steps = [begin];
+    return;
+  }
+  globalThis.__steps.push(api.clue.next(
+    globalThis.__runs === 3
+      ? { token: globalThis.__token, resume: true }
+      : { token: globalThis.__token }));
+  if (globalThis.__runs === 8) {
+    globalThis.__probe = JSON.stringify({
+      token: globalThis.__token,
+      runs: globalThis.__runs,
+      steps: globalThis.__steps,
+    });
+  }
+}
+"#;
+    let data = api::game_data::for_revision(ClientRevision::R274).unwrap();
+    let iso =
+        LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data).unwrap();
+    let casket = [(3555, 1)];
+    let mut full: Vec<(i32, i32)> = vec![(api::clue_pack::SHARK_ID, 1)];
+    for slot in 0..27 {
+        full.push((900_000 + slot, 1));
+    }
+    let names = [(api::clue_pack::SHARK_ID, "Shark")];
+    let full_scene = Scene {
+        here: Some(here),
+        ground: &loot,
+        main_modal_id: -1,
+        names: &names,
+        ..Scene::default()
+    };
+    let take_scene = Scene {
+        here: Some(here),
+        ground: &[shark, loot[0]],
+        main_modal_id: -1,
+        names: &names,
+        ..Scene::default()
+    };
+    let shark_scene = Scene {
+        here: Some(here),
+        ground: &[shark],
+        main_modal_id: -1,
+        names: &names,
+        ..Scene::default()
+    };
+
+    for tick in 1..=5 {
+        post_page(&iso, tick, &casket);
+        iso.on_game_tick(tick);
+        assert!(iso.probe("true").is_ok());
+    }
+    assert_eq!(iso.drain_interacts(), vec![casket_open()]);
+
+    // Tick 6: the pack is full and the loot is on the tile — the Drop.
+    post_scene(&iso, 6, &full, &full_scene);
+    iso.on_game_tick(6);
+    assert!(iso.probe("true").is_ok());
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::Held {
+            name: "Shark".to_string(),
+            action: "Drop".to_string(),
+        }],
+        "the hard casket drops the frozen SHARK_ID row"
+    );
+
+    // Tick 7: one slot freed. The row the Drop put on the floor is not the
+    // row that is taken.
+    let freed: Vec<(i32, i32)> = full[1..].to_vec();
+    post_scene(&iso, 7, &freed, &take_scene);
+    iso.on_game_tick(7);
+    assert!(iso.probe("true").is_ok());
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::Obj {
+            x: 3222,
+            z: 3223,
+            level: 1,
+            name: Some("Rune platebody".to_string()),
+            action: "Take".to_string(),
+        }],
+        "the Take is the loot, not the dropped food"
+    );
+
+    // Tick 8: the loot left the ground: the settled Take line.
+    post_scene(&iso, 8, &freed, &shark_scene);
+    iso.on_game_tick(8);
+    assert!(iso.probe("true").is_ok());
+    let probed = iso.probe("globalThis.__probe").unwrap();
+    let value: serde_json::Value = serde_json::from_str(probed.as_str().unwrap()).unwrap();
+    let interacts = iso.drain_interacts();
+    iso.join();
+    assert!(interacts.is_empty(), "{interacts:?}");
+    let steps = value["steps"].as_array().expect("steps");
+    for (index, kind) in [
+        (1, "callback.enabled"),
+        (2, "callback.log"),
+        (3, "callback.setStatus"),
+        (4, "held"),
+        (5, "held"),
+        (6, "obj"),
+        (7, "callback.log"),
+    ] {
+        assert_eq!(steps[index]["kind"], kind, "{index} {value:?}");
+    }
+    assert_eq!(steps[5]["action"], "Drop", "{value:?}");
+    assert_eq!(steps[5]["name"], "Shark", "{value:?}");
+    assert_eq!(
+        steps[7]["message"], "took 'Rune platebody' from the casket",
+        "{value:?}"
+    );
+
+    // Phase two: the pack is full with nothing droppable, so the frozen
+    // WARNING is logged and the next call is the landed `none-held` abort.
+    let src = r#"
+export const apiVersion = 2;
+export function tick(api) {
+  globalThis.__runs = (globalThis.__runs || 0) + 1;
+  if (globalThis.__runs === 1) {
+    const begin = api.clue.begin();
+    globalThis.__token = begin.ok ? begin.value.token : null;
+    globalThis.__steps = [begin];
+    return;
+  }
+  globalThis.__steps.push(api.clue.next(
+    globalThis.__runs === 3
+      ? { token: globalThis.__token, resume: true }
+      : { token: globalThis.__token }));
+  if (globalThis.__runs === 7) {
+    globalThis.__probe = JSON.stringify({
+      token: globalThis.__token,
+      runs: globalThis.__runs,
+      steps: globalThis.__steps,
+    });
+  }
+}
+"#;
+    let data = api::game_data::for_revision(ClientRevision::R274).unwrap();
+    let iso =
+        LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data).unwrap();
+    let no_food: Vec<(i32, i32)> = (0..28).map(|slot| (900_000 + slot, 1)).collect();
+    for tick in 1..=5 {
+        post_page(&iso, tick, &casket);
+        iso.on_game_tick(tick);
+        assert!(iso.probe("true").is_ok());
+    }
+    assert_eq!(iso.drain_interacts(), vec![casket_open()]);
+
+    // Tick 6: full pack, loot waiting, nothing to Drop.
+    let scene = Scene {
+        here: Some(here),
+        ground: &loot,
+        main_modal_id: -1,
+        ..Scene::default()
+    };
+    post_scene(&iso, 6, &no_food, &scene);
+    iso.on_game_tick(6);
+    assert!(iso.probe("true").is_ok());
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "the WARNING is a log line, not a verb"
+    );
+
+    // Tick 7: the WARNING ended the collect.
+    post_scene(&iso, 7, &no_food, &scene);
+    iso.on_game_tick(7);
+    let probed = iso.probe("globalThis.__probe").unwrap();
+    let value: serde_json::Value = serde_json::from_str(probed.as_str().unwrap()).unwrap();
+    let interacts = iso.drain_interacts();
+    iso.join();
+    assert!(interacts.is_empty(), "{interacts:?}");
+    let steps = value["steps"].as_array().expect("steps");
+    assert_eq!(steps[5]["kind"], "callback.log", "{value:?}");
+    assert_eq!(
+        steps[5]["message"],
+        "WARNING: 'Rune platebody' is left on the ground, the pack is full with no Shark to drop",
+        "{value:?}"
+    );
+    assert_eq!(steps[5]["token"], value["token"], "{value:?}");
+    let last = steps.last().expect("last step");
+    assert_eq!(last["ok"], false, "{last}");
+    assert_eq!(last["error"], "none-held", "{last}");
+    assert!(last.get("value").is_none(), "{last}");
+    let text = value.to_string();
+    for forbidden in ["clue solved", "\"done\"", "abandon", "ownsEquipment"] {
+        assert!(!text.contains(forbidden), "{forbidden} {value:?}");
+    }
+}
+
+/// Freeze and yield beat the public collect arm the way they beat the landed
+/// verbs: a frozen call emits no close, no Take and no Drop, and the collect
+/// picks the page up unchanged afterwards.
+#[test]
+fn v2_clue_freeze_and_yield_beat_the_collect() {
+    let src = r#"
+export const apiVersion = 2;
+export function tick(api) {
+  globalThis.__runs = (globalThis.__runs || 0) + 1;
+  if (globalThis.__runs === 1) {
+    const begin = api.clue.begin();
+    globalThis.__token = begin.ok ? begin.value.token : null;
+    globalThis.__steps = [begin];
+    return;
+  }
+  globalThis.__steps.push(api.clue.next(
+    globalThis.__runs === 3
+      ? { token: globalThis.__token, resume: true }
+      : { token: globalThis.__token }));
+  if (globalThis.__runs === 7) {
+    globalThis.__probe = JSON.stringify({
+      token: globalThis.__token,
+      runs: globalThis.__runs,
+      steps: globalThis.__steps,
+    });
+  }
+}
+"#;
+    let data = api::game_data::for_revision(ClientRevision::R274).unwrap();
+    let iso =
+        LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data).unwrap();
+    let casket = [(3555, 1)];
+    let here = TileInput {
+        x: 3222,
+        z: 3223,
+        level: 1,
+    };
+    let take = vec!["Take".to_string()];
+    let loot = [scene_ground(900, "Rune platebody", 3222, 3223, 1, &take)];
+    let reward = Scene {
+        here: Some(here),
+        ground: &loot,
+        main_modal_id: 6960,
+        ..Scene::default()
+    };
+
+    for tick in 1..=5 {
+        post_page(&iso, tick, &casket);
+        iso.on_game_tick(tick);
+        assert!(iso.probe("true").is_ok());
+    }
+    assert_eq!(iso.drain_interacts(), vec![casket_open()]);
+
+    // Tick 6: the posted `hold` freezes the machine and is a paint-only tick,
+    // so the script never runs and no close is sent for the posted reward.
+    post_scene(
+        &iso,
+        6,
+        &[],
+        &Scene {
+            hold: true,
+            ..reward
+        },
+    );
+    iso.on_game_tick(6);
+    assert!(iso.probe("true").is_ok());
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "a frozen call emits no close and no Take"
+    );
+    assert_eq!(
+        iso.probe("String(globalThis.__runs)").unwrap().as_str(),
+        Some("5"),
+        "the posted hold skipped the tick's script, and it skipped no verb"
+    );
+
+    // Tick 7: the posted `ours` interrupt with an unfrozen clock: yield, and
+    // neither the close nor the Take rides along with it.
+    post_scene(
+        &iso,
+        7,
+        &[],
+        &Scene {
+            ours: true,
+            ..reward
+        },
+    );
+    iso.on_game_tick(7);
+    assert!(iso.probe("true").is_ok());
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "yield emits no close and no Take"
+    );
+
+    // Tick 8: thawed and unheld, the collect picks the same page up.
+    post_scene(&iso, 8, &[], &reward);
+    iso.on_game_tick(8);
+    assert!(iso.probe("true").is_ok());
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::CloseModal],
+        "the posted reward is still there after the interrupt"
+    );
+
+    let probed = iso.probe("globalThis.__probe").unwrap();
+    let value: serde_json::Value = serde_json::from_str(probed.as_str().unwrap()).unwrap();
+    iso.join();
+    assert_eq!(value["runs"], 7, "{value:?}");
+    let steps = value["steps"].as_array().expect("steps");
+    for (index, kind) in [
+        (1, "callback.enabled"),
+        (2, "callback.log"),
+        (3, "callback.setStatus"),
+        (4, "held"),
+        (5, "yield"),
+        (6, "close-modal"),
+    ] {
+        assert_eq!(steps[index]["kind"], kind, "{index} {value:?}");
+    }
+    assert_eq!(steps[6]["token"], value["token"], "{value:?}");
+    let text = value.to_string();
+    for forbidden in ["clue solved", "\"done\"", "ownsEquipment"] {
+        assert!(!text.contains(forbidden), "{forbidden} {value:?}");
+    }
 }

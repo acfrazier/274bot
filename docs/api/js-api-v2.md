@@ -412,11 +412,12 @@ Example: `crates/script/examples/clue_facts_v2.ts` (row),
 ### `clue.begin` / `clue.next`
 
 One machine per isolate, over the landed held-step identify. It is sync, it is
-not a Promise, and it is not a `request()` op: it is the search and
-casket-open slice of a later clue trail, not the whole dispatcher. It emits
-search and the held Open only — no dig, talk, guardian, puzzle, deposit, or
-retry — and it never emits the exact `'clue solved'` string, never restores
-gear, and never returns a `done` status. `ownsEquipment` stays false.
+not a Promise, and it is not a `request()` op: it is the search, casket-open
+and trail-end collect slice of a later clue trail, not the whole dispatcher. It
+emits search, the held Open and the collect that follows the last casket — no
+dig, talk, guardian, puzzle, deposit, or retry — and it never emits the exact
+`'clue solved'` string, never restores gear, and never returns a `done` status.
+`ownsEquipment` stays false.
 
 `clue.begin(input?)` takes the optional input and ignores every key: nothing
 but the token and the wrapper's generation is captured, so `enabled`, the pack
@@ -436,13 +437,15 @@ a dead token is the error object, never `undefined` and never a continue kind.
 
 | `kind` | Meaning |
 | --- | --- |
-| `wait` | nothing this tick: frozen by pause/hold, or the session idled after `resume: false`, or the identified step was already reported |
+| `wait` | nothing this tick: frozen by pause/hold, or the session idled after `resume: false`, or the identified step was already reported, or — while collecting — the pages are still empty inside the reward window, or the posted pack page carried no `inv_size` |
 | `callback.enabled` | re-read the script's `enabled()` and answer with `resume` on the next `next` |
 | `callback.log` | perform `log(message)` |
 | `callback.setStatus` | perform `setStatus(message)` — a progress string, never `'clue solved'` |
 | `walk` | a search row that has not arrived: walk to `{ x, z, level }`, the decoded `trail_coord` |
 | `loc` | a search row that has arrived: interact with the picked loc, `{ x, z, level, action, id }` |
-| `held` | a casket row that has been reported: interact with the held item named `name` with `action`, `{ name, action }` |
+| `held` | a casket row that has been reported: interact with the held item named `name` with `action`, `{ name, action }`; the collect's pack-full Drop is the same kind with `action: 'Drop'` |
+| `close-modal` | collecting: close the main modal the page posted open. The step carries nothing else — no interface id, no text |
+| `obj` | collecting: interact with the casket overflow on the posted tile, `{ x, z, level, name, action: 'Take' }` |
 | `yield` | posted `hold \|\| ours`; the token stays live and this is not trail completion |
 
 The precedence on a live token is frozen clock → `wait`, else posted
@@ -451,7 +454,10 @@ burns nothing: the pending `enabled` question is still open after the thaw.
 `resume: false` idles the session with its token live — it is not `abandon`,
 not `done`, and not a completion — and the next gate re-reads instead of
 replaying that answer. `none-held` on a live session aborts it: the held
-membership went away, so the old token is dead. Reset, stop and a generation
+membership went away, so the old token is dead. The one exception is the
+trail-end collect below: a `Steady` step whose casket `Open` was already
+dispatched survives `none-held` as `Collecting`, and the same `none-held`
+abort is how that collect finishes. Reset, stop and a generation
 bump abort silently; the machine emits no `h.interact` entry and no request op
 for them, and the first thing the caller hears about it is `stale` or
 `aborted`. A held step that is neither a casket nor a search row — the packed
@@ -504,8 +510,35 @@ token — that is not completion, not `done`, and not `abandon`.
 Unlike `loc`, `held` is already a supported author `request` op (`V2_OPS`), and
 the machine's own step is enqueued onto the interact drain directly rather than
 through `request()`; the step is still returned as `status: 'continue'`.
-Casket collect stays absent: no `close-modal`, no ground Take, no food drop,
-and no `'clue solved'`.
+
+### Trail-end collect
+
+The held `Open` is also the trail-end seam. The first call whose identify is
+`none-held` from that same `Steady`-on-casket step is `Collecting`: the token
+stays live and the loot is dispatched one verb per call. The `hard` signal is
+the casket alias' own `_hard_`, captured at the `Open` while the row is still
+in hand — after `none-held` the row is gone. The one 2000ms reward window is
+armed on entry and is freeze-paused; empty pages wait it out and then finish.
+
+| Kind | When |
+| --- | --- |
+| `close-modal` | a posted `main_modal_id` other than `-1`. An omitted slot is not closed, and no interface id is hardcoded in place of the posted one |
+| `obj` | collecting, main closed, a same-tile posted ground row whose actions carry `Take`: `{ x, z, level, name, action: 'Take' }`. The frozen shark id and every id this collect dropped are skipped, posted order decides, and the row's own posted name rides along |
+| `held` | collecting with a full pack: one Drop of a food row, `{ name, action: 'Drop' }`, then the Take next call |
+| `callback.log` | the settled Take line `took '<name>' from the casket`, or the pack-full `WARNING: …` |
+
+Identify is still made on every collecting call, so a next scroll — or a
+leftover casket, which Opens rather than collecting — leaves the collect and
+re-arms the landed gate: no close and no Take ever runs under a step that is
+still held. The pack's fullness is the posted `inv_size` against the occupied
+positive-count rows; a page that did not post it is a `wait`, and the client's
+28 is not invented for it. A process that is full with nothing droppable logs
+the frozen WARNING and then finishes the same way; that is a log line through
+`callback.log`, not a new `HelperResult` error. Finishing is always the landed
+`none-held` abort — never `done`, never `'clue solved'`, never `abandon`.
+`close-modal`, `obj` and `loc` stay off `V2_OPS`, so
+`api.request({ op: 'close-modal' })` and `api.request({ op: 'obj' })` stay
+`not impl`, and `api.snapshot.ground` stays hidden.
 
 ## Scene projections
 
