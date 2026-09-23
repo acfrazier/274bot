@@ -799,4 +799,5 @@ export type ClueStep =
   | { ok: true; status: 'continue'; token: number; kind: 'if-button'; component_id: number }
   | { ok: true; status: 'continue'; token: number; kind: 'close-modal' }
   | { ok: true; status: 'continue'; token: number; kind: 'obj'; x: number; z: number; level: number; name: string | null; action: string }
+  | { ok: true; status: 'continue'; token: number; kind: 'puzzle-move'; id: number; slot: number; component: number; generation: number }
   | { ok: false; error: string };

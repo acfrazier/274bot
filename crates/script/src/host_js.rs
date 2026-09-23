@@ -618,6 +618,7 @@ fn render_native_v2(out: &mut String) {
     out.push_str("  | { ok: true; status: 'continue'; token: number; kind: 'if-button'; component_id: number }\n");
     out.push_str("  | { ok: true; status: 'continue'; token: number; kind: 'close-modal' }\n");
     out.push_str("  | { ok: true; status: 'continue'; token: number; kind: 'obj'; x: number; z: number; level: number; name: string | null; action: string }\n");
+    out.push_str("  | { ok: true; status: 'continue'; token: number; kind: 'puzzle-move'; id: number; slot: number; component: number; generation: number }\n");
     out.push_str("  | { ok: false; error: string };\n");
 }
 

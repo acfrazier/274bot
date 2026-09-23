@@ -1584,6 +1584,41 @@ function clueHitpoints() {
   const row = page.find((s) => s && typeof s === 'object' && s.name === 'hitpoints');
   return row && cluePageI32(row.effective) ? row.effective : null;
 }
+// The posted puzzle board the plan reads and the generation its click rides:
+// the identified component, its observed slot count and its sparse rows, read
+// at call time off `host().snapshot` exactly like every other page here. SNAP
+// owns the observation — a closed board is the present `{-1, 0, []}`, an empty
+// slot contributes no row, and this reader never fills a board to 25. A row
+// that did not post an i32 slot and id is dropped here; the machine's own read
+// rejects a board that is not 24 pieces around one gap, and it rejects a page
+// with no generation rather than clicking on an invented one.
+function cluePuzzleBoard() {
+  const snapshot = host().snapshot;
+  if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return null;
+  const board = snapshot.puzzle_board;
+  if (!board || typeof board !== 'object' || Array.isArray(board)) return null;
+  if (!cluePageI32(board.component_id) || !cluePageI32(board.size)) return null;
+  if (!Array.isArray(board.items)) return null;
+  const items = [];
+  for (const row of board.items) {
+    if (!row || typeof row !== 'object' || Array.isArray(row)) continue;
+    if (!cluePageI32(row.slot) || !cluePageI32(row.id)) continue;
+    items.push({ slot: row.slot, id: row.id });
+  }
+  return { component_id: board.component_id, size: board.size, items: items };
+}
+// The posted board session generation: `puzzle_board_generation` is the page's
+// own session counter, so a non-negative safe integer is the whole of it a
+// double can carry. A page that did not post one hands the machine nothing,
+// and no click is sent on an invented session.
+function cluePuzzleGeneration() {
+  const snapshot = host().snapshot;
+  if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return null;
+  const generation = snapshot.puzzle_board_generation;
+  return typeof generation === 'number' && Number.isSafeInteger(generation) && generation >= 0
+    ? generation
+    : null;
+}
 // Every continue step is this envelope. `yield` keeps the token live, so it
 // is not trail completion and never `status: 'done'`.
 function clueStep(step) {
@@ -1659,6 +1694,21 @@ function enqueueClueVerb(step) {
       level: step.level,
       name: step.name,
       action: step.action,
+    });
+    return;
+  }
+  if (step.kind === 'puzzle-move') {
+    // The exact posted board row: its own id, the slot it sits in, the posted
+    // component and this call's board generation. The host re-resolves that
+    // identity under the board session and refuses a closed board, a stale
+    // slot, a wrong-size board and a stale generation; nothing else rides
+    // along and no reply is expected.
+    h.interact.push({
+      op: 'puzzle-move',
+      id: step.id,
+      slot: step.slot,
+      component: step.component,
+      generation: step.generation,
     });
     return;
   }
@@ -1744,9 +1794,11 @@ api.clue = {
   // Magic overlay and the posted effective hitpoints. Kinds are `wait`,
   // `yield`, `callback.enabled`, `callback.log`, `callback.setStatus`,
   // `held`, `walk`, `loc`, `close-modal`, `obj`, `npc` and `if-button` —
-  // never `done`. A `walk`, `held`, `loc`, `close-modal`, `obj`, `npc` or
-  // `if-button` step is enqueued onto the interact drain like the journal's
-  // `if-button`, and the step is still returned as a continue object. A dead
+  // never `done`. The puzzle-box arm adds the posted board and its session
+  // generation, and its `puzzle-move` kind. A `walk`, `held`, `loc`,
+  // `close-modal`, `obj`, `npc`, `if-button` or `puzzle-move` step is
+  // enqueued onto the interact drain like the journal's `if-button`, and the
+  // step is still returned as a continue object. A dead
   // token is the error object, never `undefined` and never an `aborted`
   // continue kind.
   next: function (input) {
@@ -1786,13 +1838,18 @@ api.clue = {
     if (hitpoints !== null) payload.hitpoints = hitpoints;
     const varp95 = clueVarp95();
     if (varp95 !== null) payload.varp95 = varp95;
+    const puzzleBoard = cluePuzzleBoard();
+    if (puzzleBoard !== null) payload.puzzle_board = puzzleBoard;
+    const puzzleGeneration = cluePuzzleGeneration();
+    if (puzzleGeneration !== null) payload.puzzle_board_generation = puzzleGeneration;
     if (hasResume) payload.resume = input.resume;
     const step = clueCall(payload);
     if (!step || typeof step !== 'object') return helperErr('stale');
     if (step.kind === 'aborted') return helperErr(clueStepError(step.reason));
     if (step.kind === 'walk' || step.kind === 'held' || step.kind === 'loc'
         || step.kind === 'close-modal' || step.kind === 'obj'
-        || step.kind === 'npc' || step.kind === 'if-button') {
+        || step.kind === 'npc' || step.kind === 'if-button'
+        || step.kind === 'puzzle-move') {
       // Enqueue synchronously, after the generation check: a reset or stop
       // between the call and this push is not a verb for the dead session.
       if (generation !== lifecycleGeneration) return helperErr('stale');

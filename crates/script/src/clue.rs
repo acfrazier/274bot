@@ -15,15 +15,15 @@
 //! after the pickup — and a live session that loses its held membership
 //! errors `none-held` and aborts.
 //!
-//! This is the search, casket-open, unguarded-dig, guarded-dig encounter and
-//! trail-end collect slice and nothing else: no talk, puzzle, deposit, retry
-//! or return-grind. A held row that is a selected search membership — a
-//! selected `trail_loc=^true` **and** a decodable selected `trail_coord` on
-//! the same row — walks to its decoded tile and then dispatches the
-//! Search/Open picker over the posted loc page; both verbs are enqueued by the
-//! wrapper as `InteractReq::Walk` / `InteractReq::Loc`. The picker is the
-//! frozen one, minus its `walkLeg`: nearest then action rank, always at the
-//! row's own posted tile and id.
+//! This is the search, casket-open, unguarded-dig, guarded-dig encounter,
+//! trail-end collect and held-puzzle-box slice and nothing else: no talk,
+//! deposit, retry or return-grind. A held row that is a selected search
+//! membership — a selected `trail_loc=^true` **and** a decodable selected
+//! `trail_coord` on the same row — walks to its decoded tile and then
+//! dispatches the Search/Open picker over the posted loc page; both verbs are
+//! enqueued by the wrapper as `InteractReq::Walk` / `InteractReq::Loc`. The
+//! picker is the frozen one, minus its `walkLeg`: nearest then action rank,
+//! always at the row's own posted tile and id.
 //!
 //! The sibling of that pin is the unguarded dig: a decodable selected
 //! `trail_coord` on a row with no `trail_loc` and no `trail_guardian`, whose
@@ -91,8 +91,25 @@
 //! Every other held step — the packed 3554 `access: "constrained"` clue, the
 //! desc-only key-gated riddles with no decodable coord and the empty-params
 //! 2722 — is identified and then idled: no action and no walk.
-//! Identify is casket-first, so a casket held beside its own clue is the Open
-//! and never 3554 play. Yield keeps the token live, so it is not trail
+//!
+//! The one desc-only exception is the held puzzle box. An identified row whose
+//! own selected `{alias}_puzzlebox` item is held — the nine hard riddles, and
+//! only while *that* row's box is the one on the page — is the frozen
+//! `PuzzleBox` run instead of an idle: the box is opened by its own selected
+//! display name the way the casket is, the posted board is planned with the
+//! frozen grouped BFS in `api::clue_puzzle` (`read_puzzle_board` over the
+//! sparse page and the selected piece map, `solve_puzzle` for the leg), and
+//! exactly one `puzzle-move` is dispatched per call — the posted row's own
+//! `id`, `slot` and `component` with this call's board generation. Every call
+//! re-reads the board and replans, because a sent click is not an observed
+//! move: the frozen engine drops a stale-slot click, and the frozen `want`
+//! board is what the next call compares against. A board the plan has solved
+//! is closed and then idled — the frozen `finally` close — with the re-talk
+//! left to a later card, so a solved box is never opened or closed twice while
+//! the same step stays held.
+//!
+//! Identify is casket-first, so a casket held beside its own clue is the
+//! Open and never 3554 play. Yield keeps the token live, so it is not trail
 //! completion, and this machine never returns `status: "done"`, never
 //! restores gear, and never emits the exact `'clue solved'` string.
 //!
@@ -109,6 +126,7 @@ use crate::isolate_fb::SnapshotReader;
 use crate::task_clock::InstantTaskClock;
 use api::clue_logic::{identify_step, NONE_HELD};
 use api::clue_pack::SHARK_ID;
+use api::clue_puzzle::{self, Board, PuzzleRow};
 use api::game_data::{SelectedGameData, TrailMembershipRow};
 use serde_json::{json, Value};
 use std::cell::RefCell;
@@ -151,6 +169,32 @@ const DROP: &str = "Drop";
 /// measure is the posted `distance` when the row carried one and the row's own
 /// posted tile otherwise, always on the posted `here` level.
 const GUARDIAN_RADIUS: i32 = 12;
+
+/// The frozen `PuzzleBox.OPEN_WAIT_MS`: how long the held box's own Open has to
+/// put a readable board up. Armed once, when this attempt's first Open goes
+/// out, and freeze-honored like the collect's own window, so a frozen session
+/// never spends it.
+const OPEN_WAIT_MS: u64 = 5_000;
+
+/// The frozen `PuzzleBox.MOVE_SETTLE_MS`: how long one dispatched
+/// `puzzle-move` has to land. Sent is not observed, so the click is re-read
+/// against the board the move was expected to produce and the bound is what
+/// ends the wait when it never does.
+const MOVE_SETTLE_MS: u64 = 2_000;
+
+/// The frozen `PuzzleBox.CLOSE_WAIT_MS`: how long the one close waits for the
+/// board to go. The close itself is dispatched once — a solved or given-up
+/// step never closes again — and this window is what the wait before the latch
+/// is measured by.
+const CLOSE_WAIT_MS: u64 = 3_000;
+
+/// The frozen `PuzzleBox.STALL_LIMIT`: consecutive refused clicks, settle
+/// bounds that ran out unlanded and boards with no plan at all, before the
+/// attempt gives up and closes.
+const STALL_LIMIT: u32 = 8;
+
+/// The frozen `PuzzleBox.MAX_MOVES`: the landed moves one attempt may spend.
+const MAX_MOVES: u32 = 600;
 
 /// The frozen `KILL_GRACE_MS` the landed hunt fight reads its engaged index
 /// through: an owned index may leave the posted page inside this window and
@@ -263,6 +307,63 @@ struct Owned {
     seen_at: Instant,
 }
 
+/// The live puzzle-box attempt on the identified clue row: the box this token
+/// opened, the move it sent and the frozen counters. Session state on the live
+/// token, like `open` and `guardian` — never a second scheduler, never a
+/// `Phase::Solving`, and never a cached board.
+struct Puzzle {
+    /// The selected `{alias}_puzzlebox` item this attempt belongs to. The step
+    /// already fixes which row is in hand, so this only tells the arm's own
+    /// state apart from a later box.
+    id: i32,
+    /// A readable board has been observed: the Open landed, and this attempt
+    /// never opens again.
+    opened: bool,
+    /// The one `close-modal` went out. Only the frozen close window is left.
+    closing: bool,
+    /// The solved-or-attempted latch: after the attempt ends — a solved board,
+    /// a stall, an unreadable board, `MAX_MOVES` — nothing is opened or closed
+    /// again while this step stays held. `clear_step`, a different step or the
+    /// frozen reset is what drops it.
+    latch: bool,
+    /// The outstanding sent click: the board that click was expected to
+    /// produce, re-read next call and never the leftover plan.
+    want: Option<Board>,
+    /// Landed moves and consecutive refusals, the frozen loop's own counters.
+    moved: u32,
+    stall: u32,
+}
+
+impl Puzzle {
+    /// A fresh attempt on one box: no board opened yet, nothing sent, and the
+    /// counters at zero.
+    const fn new(id: i32) -> Self {
+        Self {
+            id,
+            opened: false,
+            closing: false,
+            latch: false,
+            want: None,
+            moved: 0,
+            stall: 0,
+        }
+    }
+}
+
+/// One `next` call's posted puzzle board: the identified component, the
+/// observed slot count and the sparse rows the wrapper marshalled out of
+/// `snapshot.puzzle_board`, plus the board session generation that rides the
+/// click. The board and its generation are one observation, so they are read
+/// together.
+struct PostedBoard {
+    component_id: i32,
+    size: i32,
+    rows: Vec<PuzzleRow>,
+    /// The posted `puzzle_board_generation`, or `None` when the page did not
+    /// post one — then no click is dispatched on an invented session.
+    generation: Option<u64>,
+}
+
 struct ClueRuntime {
     clock: InstantTaskClock,
     token: u64,
@@ -295,6 +396,11 @@ struct ClueRuntime {
     /// row, an abort or the frozen reset clears it. Like `open`, it is the
     /// session's own state and never a world copy.
     guardian: Option<Guardian>,
+    /// The live puzzle-box attempt: absent until this token's first held box
+    /// Open went out, then owned by this token until a different held row, an
+    /// abort or the frozen reset clears it. Like `open`, it is session state
+    /// and never a cached board.
+    puzzle: Option<Puzzle>,
 }
 
 impl ClueRuntime {
@@ -310,6 +416,7 @@ impl ClueRuntime {
             pending_take: None,
             full_no_food: false,
             guardian: None,
+            puzzle: None,
         }
     }
 
@@ -352,8 +459,9 @@ impl ClueRuntime {
 
     /// The step-scoped state a re-arm, a leave and an abort all drop: the
     /// dispatched Open with its `hard` capture, the collect deadline, the
-    /// discarded ground ids, the settled-Take watch and the guarded
-    /// encounter's owned wizard and post-kill flag.
+    /// discarded ground ids, the settled-Take watch, the guarded encounter's
+    /// owned wizard and post-kill flag, and the live puzzle-box attempt with
+    /// its latch.
     fn clear_step(&mut self) {
         self.open = None;
         self.clock.deadline = None;
@@ -361,6 +469,7 @@ impl ClueRuntime {
         self.pending_take = None;
         self.full_no_food = false;
         self.guardian = None;
+        self.puzzle = None;
     }
 
     /// Whether this token survives an identify `none-held`. Only the collect
@@ -501,10 +610,25 @@ impl ClueRuntime {
                         "action": OPEN,
                     })
                 }
-                // Not a held casket: the landed search dispatch, the guarded
-                // encounter, the sibling unguarded-dig dispatch, or the idle
-                // every other row keeps.
-                None => self.steady(row, input, selected),
+                // Not a held casket: this row's own held puzzle box, the
+                // landed search dispatch, the guarded encounter, the sibling
+                // unguarded-dig dispatch, or the idle every other row keeps.
+                None => match puzzle_box(selected, row) {
+                    // The row's own box on this call's page, or the box this
+                    // token already opened: the frozen `PuzzleBox` run. A held
+                    // box the identified row does not name is not this row's,
+                    // and a desc-only row without one keeps the idle.
+                    Some((id, name))
+                        if holds(input, id)
+                            || self
+                                .puzzle
+                                .as_ref()
+                                .is_some_and(|puzzle| puzzle.id == id && puzzle.opened) =>
+                    {
+                        self.puzzle(id, name, input, selected)
+                    }
+                    _ => self.steady(row, input, selected),
+                },
             },
             Phase::Collecting => {
                 // Identity still holds a step: the next scroll, or a leftover
@@ -637,6 +761,201 @@ impl ClueRuntime {
             "name": row.name,
             "action": TAKE,
         })
+    }
+
+    /// `Steady` on an identified row whose own selected `{alias}_puzzlebox` is
+    /// held on this call's page — or whose board this token already opened:
+    /// the frozen `PuzzleBox.solveHeld` run, one verb per call.
+    ///
+    /// The frozen sequence is followed step for step, with each call its own
+    /// loop iteration: the held box is opened while the board stays closed, a
+    /// readable board is read and planned, one `puzzle-move` goes out for the
+    /// plan's own first slot, and the next call re-reads the board — a sent
+    /// click is not an observed move, so the board the click was expected to
+    /// produce is what the settle reads and the leftover plan is never walked.
+    /// Every board the caller hands in is this call's marshalling of
+    /// `host().snapshot.puzzle_board`; nothing about it is cached.
+    fn puzzle(
+        &mut self,
+        box_id: i32,
+        name: &str,
+        input: &Value,
+        selected: Option<&SelectedGameData>,
+    ) -> Value {
+        if self.puzzle.as_ref().is_some_and(|puzzle| puzzle.latch) {
+            // Solved or given up: this step is done with the board, and a
+            // later talk card, a different step or the frozen reset is what
+            // moves it on. No verb, so nothing is opened or closed twice.
+            return self.emit("wait");
+        }
+        let Some(page) = posted_board(input) else {
+            // No posted board page at all: the frozen `boardNow()` cannot read
+            // one either, so the held box is opened again — or the attempt is
+            // over — exactly as a closed board is.
+            return self.puzzle_closed(box_id, name);
+        };
+        let Some(live) = live_board(selected, &page) else {
+            return self.puzzle_closed(box_id, name);
+        };
+        {
+            let state = self.puzzle.get_or_insert_with(|| Puzzle::new(box_id));
+            state.opened = true;
+        }
+        if self.puzzle.as_ref().is_some_and(|puzzle| puzzle.closing) {
+            // The one close is out and this call's board is still posted: the
+            // frozen close window is running out. No second close is sent, and
+            // the step latches when the window ends.
+            if self.clock.bound_reached() {
+                if let Some(state) = self.puzzle.as_mut() {
+                    state.latch = true;
+                }
+            }
+            return self.emit("wait");
+        }
+        if clue_puzzle::is_puzzle_solved(&live) {
+            // The frozen `isPuzzleSolved` read over the reconstructed board:
+            // never the posted row count and never the board generation, which
+            // only says whether this page is the session in hand.
+            return self.puzzle_close();
+        }
+        let outstanding = self.puzzle.as_ref().and_then(|puzzle| puzzle.want);
+        if let Some(want) = outstanding {
+            if live == want {
+                // Landed: the live board is the one the click was expected to
+                // produce, so the frozen loop's own counters advance and this
+                // call plans again from that board.
+                if let Some(state) = self.puzzle.as_mut() {
+                    state.want = None;
+                    state.moved += 1;
+                    state.stall = 0;
+                }
+            } else if self.clock.bound_reached() {
+                // The settle bound ran out with the board unmoved: the click
+                // was refused or the engine dropped the stale slot.
+                return self.puzzle_stall();
+            } else {
+                // Sent is not observed: wait, and read the board again next
+                // call rather than replaying anything.
+                return self.emit("wait");
+            }
+        }
+        let (moved, stall) = self
+            .puzzle
+            .as_ref()
+            .map(|puzzle| (puzzle.moved, puzzle.stall))
+            .unwrap_or_default();
+        if moved >= MAX_MOVES || stall >= STALL_LIMIT {
+            // The frozen loop's own condition, read before the next plan.
+            return self.puzzle_close();
+        }
+        let Some(plan) = clue_puzzle::solve_puzzle(&live) else {
+            // Unsolvable as read: a mixed picture set, a plan that does not
+            // converge. The frozen branch retries from a fresh read and counts
+            // a refusal.
+            return self.puzzle_stall();
+        };
+        let Some(&slot) = plan.first() else {
+            return self.puzzle_stall();
+        };
+        // The posted row the click rides: its own id, the slot it sits in and
+        // the posted component, with this call's board generation. A slot the
+        // page did not post a piece on is the frozen `clickPiece` refusal.
+        let Some(row) = page.rows.iter().find(|row| row.slot == slot as i32) else {
+            return self.puzzle_stall();
+        };
+        let Some(generation) = page.generation else {
+            // The page did not post the board's session: no click is sent on
+            // an invented one, and the identity the host checks stays whole.
+            return self.emit("wait");
+        };
+        let mut want = live;
+        if !clue_puzzle::apply_puzzle_move(&mut want, slot) {
+            return self.puzzle_stall();
+        }
+        if let Some(state) = self.puzzle.as_mut() {
+            state.want = Some(want);
+        }
+        self.clock.arm(MOVE_SETTLE_MS);
+        json!({
+            "kind": "puzzle-move",
+            "token": self.token,
+            "id": row.id,
+            "slot": row.slot,
+            "component": page.component_id,
+            "generation": generation,
+        })
+    }
+
+    /// This call's page has no readable board, which is the frozen
+    /// `boardNow() === null`.
+    ///
+    /// Either the Open has not landed yet — the held box is opened again,
+    /// repeating while the board stays closed, until the frozen open window
+    /// runs out — or a board this token had already opened went away, which is
+    /// the end of the attempt: the frozen `finally` closes, and a board that is
+    /// already gone leaves nothing to close.
+    fn puzzle_closed(&mut self, box_id: i32, name: &str) -> Value {
+        let (opened, closing) = {
+            let state = self.puzzle.get_or_insert_with(|| Puzzle::new(box_id));
+            (state.opened, state.closing)
+        };
+        if opened || closing {
+            // A live board went unreadable mid-solve, or the close landed.
+            // Either way the attempt is over and nothing is opened again.
+            if let Some(state) = self.puzzle.as_mut() {
+                state.latch = true;
+                state.closing = false;
+            }
+            return self.emit("wait");
+        }
+        if self.clock.deadline.is_none() {
+            // The first Open of this attempt arms the frozen window; the
+            // repeats are page-driven and do not extend it.
+            self.clock.arm(OPEN_WAIT_MS);
+        }
+        if self.clock.bound_reached() {
+            // `puzzle box did not open`: the attempt ends without a close,
+            // because there is no board to close.
+            if let Some(state) = self.puzzle.as_mut() {
+                state.latch = true;
+            }
+            return self.emit("wait");
+        }
+        json!({
+            "kind": "held",
+            "token": self.token,
+            "name": name,
+            "action": OPEN,
+        })
+    }
+
+    /// One refused click, one settle bound that ran out unlanded, one board the
+    /// frozen solver has no plan for: the frozen loop's own `stalled++`, and
+    /// the exit close once it reaches the frozen limit.
+    fn puzzle_stall(&mut self) -> Value {
+        let limit = match self.puzzle.as_mut() {
+            Some(state) => {
+                state.want = None;
+                state.stall += 1;
+                state.stall >= STALL_LIMIT
+            }
+            None => false,
+        };
+        if limit {
+            return self.puzzle_close();
+        }
+        self.emit("wait")
+    }
+
+    /// The close-on-exit of a live board: one `close-modal`, then the frozen
+    /// close window. Solved, stalled, unreadable and past `MAX_MOVES` are all
+    /// this same exit, and this arm never sends a second close for the step.
+    fn puzzle_close(&mut self) -> Value {
+        if let Some(state) = self.puzzle.as_mut() {
+            state.closing = true;
+        }
+        self.clock.arm(CLOSE_WAIT_MS);
+        self.emit("close-modal")
     }
 
     /// `Steady` on an identified non-casket row: a search membership walks to
@@ -1477,6 +1796,75 @@ fn ground_posted(input: &Value, id: i32) -> bool {
 /// landed identify's; this only reads the role it returned.
 const CASKET_ROLE: &str = "casket";
 
+/// The identified row's own puzzle box: the selected `{alias}_puzzlebox` item
+/// the frozen `solveHeld` is handed by id, together with the display name the
+/// Open resolves.
+///
+/// The join is the row's own alias, so a held box this row does not name is
+/// never its box, and a desc-only riddle without such an item has no puzzle
+/// step at all. The name is that item's selected display name (`Puzzle box`)
+/// — what the host resolves by first name match, never the alias and never an
+/// item id.
+fn puzzle_box<'a>(
+    selected: Option<&'a SelectedGameData>,
+    row: &TrailMembershipRow,
+) -> Option<(i32, &'a str)> {
+    let item = selected?.item_by_alias(&format!("{}_puzzlebox", row.alias))?;
+    Some((item.id, item.name.as_deref()?))
+}
+
+/// Whether this call's posted pack page holds `id`: the same `(id, count)`
+/// page the identify reads, and only a positive count holds. The box is held
+/// by its own id, never by a display name and never by a scan of the page.
+fn holds(input: &Value, id: i32) -> bool {
+    posted_page(input)
+        .iter()
+        .any(|(row_id, count)| *row_id == id && *count > 0)
+}
+
+/// This call's posted board, as the wrapper marshalled
+/// `snapshot.puzzle_board` and the generation beside it. `None` when the page
+/// posted no board object at all: the frozen `boardNow()` cannot read one
+/// either, and no board is invented.
+fn posted_board(input: &Value) -> Option<PostedBoard> {
+    let page = input.get("puzzle_board")?;
+    let component_id = page.get("component_id").and_then(i32_of)?;
+    let size = page.get("size").and_then(i32_of)?;
+    let rows = page.get("items")?.as_array()?;
+    let mut pieces = Vec::with_capacity(rows.len());
+    for row in rows {
+        let (Some(slot), Some(id)) = (
+            row.get("slot").and_then(i32_of),
+            row.get("id").and_then(i32_of),
+        ) else {
+            // A row without a posted slot or id is not a piece this page
+            // carries, exactly like a posted `(id, count)` row that is not a
+            // pair: it is skipped, never guessed at.
+            continue;
+        };
+        pieces.push(PuzzleRow { slot, id });
+    }
+    Some(PostedBoard {
+        component_id,
+        size,
+        rows: pieces,
+        generation: input.get("puzzle_board_generation").and_then(Value::as_u64),
+    })
+}
+
+/// The frozen `boardNow()`: this call's board is readable only when the
+/// observed slot count is the frozen 25 and its rows fill the board's 24
+/// pieces around one gap. A closed board posts `component_id -1` with no rows,
+/// and a page whose pieces the selected map cannot place reads as unreadable
+/// rather than as a partial board — SNAP's own observation is never filled to
+/// 25 here.
+fn live_board(selected: Option<&SelectedGameData>, page: &PostedBoard) -> Option<Board> {
+    if page.component_id < 0 || page.size != clue_puzzle::PUZZLE_SIZE as i32 {
+        return None;
+    }
+    clue_puzzle::read_puzzle_board(&page.rows, selected)
+}
+
 /// The frozen casket arm's action. The held step's other half is the selected
 /// item display name, so the host resolves the item by name.
 const OPEN: &str = "Open";
@@ -1730,6 +2118,15 @@ mod tests {
     /// test pack pages the way `snapshot.inv` posts it; the machine itself
     /// never reads an id for the Dig verb.
     const SPADE_ITEM: i32 = 952;
+    /// `trail_clue_hard_riddle014`: a desc-only hard riddle whose own selected
+    /// `trail_clue_hard_riddle014_puzzlebox` item is the box its puzzle step
+    /// joins to.
+    const PUZZLE_RIDDLE: i32 = 2794;
+    /// That box item, display `Puzzle box`.
+    const PUZZLE_BOX: i32 = 2795;
+    /// `trail_clue_hard_riddle022`: a desc-only hard riddle with **no**
+    /// `_puzzlebox` sibling at all, which stays idle.
+    const PUZZLE_RIDDLE_NO_BOX: i32 = 3572;
 
     fn selected() -> Arc<SelectedGameData> {
         api::game_data::for_revision(ClientRevision::R274).expect("selected data")
@@ -5154,4 +5551,341 @@ mod tests {
             "{steps:?}"
         );
     }
+
+    /// The b run's first piece: these tests post boards from that run's own
+    /// numbering, so a cell's posted piece id is `PIECE_B + target`.
+    const PIECE_B: i32 = 2749;
+
+    /// The component the test boards post.
+    const BOARD_COMPONENT: i32 = 6600;
+
+    /// One wrapper-marshalled posted board page plus the session generation
+    /// the click rides: a sparse row per filled cell, in slot order, so the
+    /// machine's own read is what fills the 25.
+    fn board_page(board: &Board, generation: u64) -> Value {
+        let mut rows = Vec::new();
+        for (slot, cell) in board.iter().enumerate() {
+            if let Some(target) = *cell {
+                rows.push(json!({ "slot": slot as i32, "id": PIECE_B + i32::from(target) }));
+            }
+        }
+        json!({
+            "puzzle_board": {
+                "component_id": BOARD_COMPONENT,
+                "size": clue_puzzle::PUZZLE_SIZE as i32,
+                "items": rows,
+            },
+            "puzzle_board_generation": generation,
+        })
+    }
+
+    /// The closed board SNAP posts beside a box that was never opened: a
+    /// present object with no component and no rows.
+    fn closed_board_page() -> Value {
+        json!({
+            "puzzle_board": { "component_id": -1, "size": 0, "items": [] },
+            "puzzle_board_generation": 0,
+        })
+    }
+
+    /// The solved board: every piece on its own slot and the gap on 24.
+    fn solved_board() -> Board {
+        let mut board: Board = [None; clue_puzzle::PUZZLE_SIZE];
+        for (slot, cell) in board.iter_mut().enumerate() {
+            *cell = (slot != clue_puzzle::PUZZLE_BLANK_SLOT).then_some(slot as u8);
+        }
+        board
+    }
+
+    /// One slide from solved: the piece belonging on 23 stands on the blank
+    /// slot, so the frozen plan is the single click on 24.
+    fn one_move_board() -> Board {
+        let mut board = solved_board();
+        board[clue_puzzle::PUZZLE_BLANK_SLOT] = Some(23);
+        board[23] = None;
+        board
+    }
+
+    /// The pack page of a held puzzle step: the desc-only riddle and its own
+    /// selected box.
+    fn held_box() -> Value {
+        json!([[PUZZLE_RIDDLE, 1], [PUZZLE_BOX, 1]])
+    }
+
+    #[test]
+    fn the_puzzle_join_is_the_rows_own_selected_box() {
+        let data = selected();
+        assert_eq!(
+            puzzle_box(Some(&data), row(&data, PUZZLE_RIDDLE)),
+            Some((PUZZLE_BOX, "Puzzle box"))
+        );
+        // No box of its own: the desc-only riddle with no such item, and the
+        // search row whose alias joins to nothing.
+        assert_eq!(puzzle_box(Some(&data), row(&data, PUZZLE_RIDDLE_NO_BOX)), None);
+        assert_eq!(puzzle_box(Some(&data), row(&data, SEARCH)), None);
+        assert_eq!(puzzle_box(None, row(&data, PUZZLE_RIDDLE)), None);
+        // Held means the posted page carries a positive count for that id and
+        // nothing else.
+        assert!(holds(&json!({ "held": held_box() }), PUZZLE_BOX));
+        assert!(!holds(&json!({ "held": [[PUZZLE_BOX, 0]] }), PUZZLE_BOX));
+        assert!(!holds(&json!({ "held": [[PUZZLE_RIDDLE, 1]] }), PUZZLE_BOX));
+        assert!(!holds(&json!({ "held": [] }), PUZZLE_BOX));
+        assert!(!holds(&json!({}), PUZZLE_BOX));
+    }
+
+    #[test]
+    fn a_held_puzzle_box_opens_by_its_selected_name_and_repeats_while_closed() {
+        on_reset();
+        let data = selected();
+        let token = steady(&data, PUZZLE_RIDDLE);
+        let opened = call(&data, token, held_box(), closed_board_page());
+        assert_eq!(opened["kind"], "held", "{opened}");
+        assert_eq!(opened["token"], token, "{opened}");
+        assert_eq!(opened["name"], "Puzzle box", "{opened}");
+        assert_eq!(opened["action"], "Open", "{opened}");
+        // The name is the identity: no row id, no tile and no slot rides along.
+        for absent in ["id", "x", "z", "level", "slot"] {
+            assert!(opened.get(absent).is_none(), "{absent} {opened}");
+        }
+        // The first Open armed the frozen open window, and the repeats are
+        // page-driven rather than a second arm.
+        assert!(bound_armed(), "{opened}");
+        let repeated = call(&data, token, held_box(), closed_board_page());
+        assert_eq!(repeated["kind"], "held", "{repeated}");
+        // The window runs out: the attempt ends with no closer verb, because
+        // there is no board to close.
+        force_bound();
+        let expired = call(&data, token, held_box(), closed_board_page());
+        assert_eq!(expired["kind"], "wait", "{expired}");
+        let latched = call(&data, token, held_box(), closed_board_page());
+        assert_eq!(latched["kind"], "wait", "{latched}");
+    }
+
+    #[test]
+    fn a_readable_board_dispatches_one_puzzle_move_from_the_posted_row() {
+        on_reset();
+        let data = selected();
+        let token = steady(&data, PUZZLE_RIDDLE);
+        let opened = call(&data, token, held_box(), closed_board_page());
+        assert_eq!(opened["kind"], "held", "{opened}");
+        let moved = call(&data, token, held_box(), board_page(&one_move_board(), 7));
+        assert_eq!(moved["kind"], "puzzle-move", "{moved}");
+        assert_eq!(moved["token"], token, "{moved}");
+        // The posted row's own identity and this call's board session: the
+        // piece standing on the plan's slot, that slot, the posted component
+        // and the posted generation.
+        assert_eq!(moved["id"], PIECE_B + 23, "{moved}");
+        assert_eq!(moved["slot"], 24, "{moved}");
+        assert_eq!(moved["component"], BOARD_COMPONENT, "{moved}");
+        assert_eq!(moved["generation"], 7, "{moved}");
+        assert!(moved.get("name").is_none(), "{moved}");
+        assert!(moved.get("action").is_none(), "{moved}");
+    }
+
+    #[test]
+    fn a_landed_move_closes_the_solved_board_and_never_closes_it_twice() {
+        on_reset();
+        let data = selected();
+        let token = steady(&data, PUZZLE_RIDDLE);
+        let opened = call(&data, token, held_box(), closed_board_page());
+        assert_eq!(opened["kind"], "held", "{opened}");
+        let moved = call(&data, token, held_box(), board_page(&one_move_board(), 7));
+        assert_eq!(moved["kind"], "puzzle-move", "{moved}");
+        // The live board is the one that click was expected to produce, and it
+        // is the solved one: the frozen `isPuzzleSolved` read closes it.
+        let closed = call(&data, token, held_box(), board_page(&solved_board(), 7));
+        assert_eq!(closed["kind"], "close-modal", "{closed}");
+        assert_eq!(closed["token"], token, "{closed}");
+        // The close landed: the board left the page and the step idles. A
+        // solved board posted again is not a second close either.
+        let gone = call(&data, token, held_box(), closed_board_page());
+        assert_eq!(gone["kind"], "wait", "{gone}");
+        let reposted = call(&data, token, held_box(), board_page(&solved_board(), 7));
+        assert_eq!(reposted["kind"], "wait", "{reposted}");
+        // A different held row re-arms the step, and `clear_step` drops the
+        // latch with it: back on the riddle the box opens again.
+        let other = call(&data, token, json!([[SEARCH, 1]]), json!({}));
+        assert_eq!(other["kind"], "callback.enabled", "{other}");
+        let gate = call(&data, token, held_box(), json!({}));
+        assert_eq!(gate["kind"], "callback.enabled", "{gate}");
+        let logged = call(&data, token, held_box(), json!({ "resume": true }));
+        assert_eq!(logged["kind"], "callback.log", "{logged}");
+        let posted = call(&data, token, held_box(), json!({}));
+        assert_eq!(posted["kind"], "callback.setStatus", "{posted}");
+        let reopened = call(&data, token, held_box(), closed_board_page());
+        assert_eq!(reopened["kind"], "held", "{reopened}");
+    }
+
+    #[test]
+    fn a_solved_board_the_token_never_opened_is_still_closed() {
+        on_reset();
+        let data = selected();
+        let token = steady(&data, PUZZLE_RIDDLE);
+        // The box is held and the board is already solved: the frozen `puzzle
+        // already solved` path closes it rather than opening anything.
+        let closed = call(&data, token, held_box(), board_page(&solved_board(), 3));
+        assert_eq!(closed["kind"], "close-modal", "{closed}");
+        let gone = call(&data, token, held_box(), closed_board_page());
+        assert_eq!(gone["kind"], "wait", "{gone}");
+    }
+
+    #[test]
+    fn a_board_that_goes_unreadable_mid_solve_ends_without_a_close() {
+        on_reset();
+        let data = selected();
+        let token = steady(&data, PUZZLE_RIDDLE);
+        let opened = call(&data, token, held_box(), closed_board_page());
+        assert_eq!(opened["kind"], "held", "{opened}");
+        let moved = call(&data, token, held_box(), board_page(&one_move_board(), 7));
+        assert_eq!(moved["kind"], "puzzle-move", "{moved}");
+        // The board went away with the click outstanding: the attempt is over
+        // and nothing is closed, because there is no board left to close.
+        let gone = call(&data, token, held_box(), closed_board_page());
+        assert_eq!(gone["kind"], "wait", "{gone}");
+        let again = call(&data, token, held_box(), closed_board_page());
+        assert_eq!(again["kind"], "wait", "{again}");
+    }
+
+    #[test]
+    fn a_settle_bound_that_runs_out_unlanded_replans_from_the_live_board() {
+        on_reset();
+        let data = selected();
+        let token = steady(&data, PUZZLE_RIDDLE);
+        let opened = call(&data, token, held_box(), closed_board_page());
+        assert_eq!(opened["kind"], "held", "{opened}");
+        let moved = call(&data, token, held_box(), board_page(&one_move_board(), 7));
+        assert_eq!(moved["kind"], "puzzle-move", "{moved}");
+        // The click is out and the board has not moved: sent is not observed,
+        // so this call waits the frozen window out.
+        let unsettled = call(&data, token, held_box(), board_page(&one_move_board(), 7));
+        assert_eq!(unsettled["kind"], "wait", "{unsettled}");
+        force_bound();
+        let stalled = call(&data, token, held_box(), board_page(&one_move_board(), 7));
+        assert_eq!(stalled["kind"], "wait", "{stalled}");
+        // The refusal is counted and the next call plans again from the board
+        // it reads — the same one-move board, so the same click.
+        let replanned = call(&data, token, held_box(), board_page(&one_move_board(), 7));
+        assert_eq!(replanned["kind"], "puzzle-move", "{replanned}");
+        assert_eq!(replanned["slot"], 24, "{replanned}");
+        assert_eq!(replanned["id"], PIECE_B + 23, "{replanned}");
+    }
+
+    #[test]
+    fn a_board_no_plan_exists_for_stalls_to_the_close() {
+        on_reset();
+        let data = selected();
+        let token = steady(&data, PUZZLE_RIDDLE);
+        let opened = call(&data, token, held_box(), closed_board_page());
+        assert_eq!(opened["kind"], "held", "{opened}");
+        // A mixed picture set: two pieces for one target and none for another
+        // is not a valid board, so the frozen solver has no plan for it.
+        let mut mixed = one_move_board();
+        mixed[6] = Some(5);
+        let page = board_page(&mixed, 7);
+        for struck in 1..STALL_LIMIT {
+            let stalled = call(&data, token, held_box(), page.clone());
+            assert_eq!(stalled["kind"], "wait", "{struck} {stalled}");
+        }
+        let closed = call(&data, token, held_box(), page);
+        assert_eq!(closed["kind"], "close-modal", "{closed}");
+        let latched = call(&data, token, held_box(), closed_board_page());
+        assert_eq!(latched["kind"], "wait", "{latched}");
+    }
+
+    #[test]
+    fn a_multi_move_board_clicks_one_plan_slot_per_call_until_it_closes() {
+        on_reset();
+        let data = selected();
+        let token = steady(&data, PUZZLE_RIDDLE);
+        let opened = call(&data, token, held_box(), closed_board_page());
+        assert_eq!(opened["kind"], "held", "{opened}");
+        // Two slides from solved: the piece belonging on 18 stands on 23, the
+        // one belonging on 23 on the blank slot, and the gap is on 18.
+        let mut board = solved_board();
+        board[18] = None;
+        board[23] = Some(18);
+        board[clue_puzzle::PUZZLE_BLANK_SLOT] = Some(23);
+        let mut clicked = Vec::new();
+        loop {
+            let step = call(&data, token, held_box(), board_page(&board, 7));
+            if step["kind"] == "close-modal" {
+                break;
+            }
+            assert_eq!(step["kind"], "puzzle-move", "{step}");
+            // The plan's own first slot, applied to the live board: the next
+            // call is handed the page that click produced. One verb per call,
+            // and the click is the posted row standing on that slot.
+            let slot = usize::try_from(step["slot"].as_u64().expect("slot")).expect("slot");
+            assert_eq!(step["id"], PIECE_B + i32::from(board[slot].expect("piece")), "{step}");
+            assert!(clue_puzzle::apply_puzzle_move(&mut board, slot), "{step}");
+            clicked.push(step["slot"].as_i64().expect("slot"));
+            assert!(clicked.len() < STALL_LIMIT as usize, "{step}");
+        }
+        assert_eq!(clicked, vec![23, 24], "the frozen plan, one click per call");
+        assert!(clue_puzzle::is_puzzle_solved(&board));
+        // The close landed: the step idles from here.
+        let gone = call(&data, token, held_box(), closed_board_page());
+        assert_eq!(gone["kind"], "wait", "{gone}");
+    }
+
+    #[test]
+    fn freeze_and_yield_beat_the_puzzle_arm() {
+        on_reset();
+        let data = selected();
+        let token = steady(&data, PUZZLE_RIDDLE);
+        // Frozen: no Open, no click and no close, and the open window is not
+        // spent by the frozen call.
+        on_pause();
+        let paused = call(&data, token, held_box(), closed_board_page());
+        assert_eq!(paused["kind"], "wait", "{paused}");
+        assert!(!bound_armed(), "a frozen call spends nothing: {paused}");
+        on_resume();
+        let opened = call(&data, token, held_box(), closed_board_page());
+        assert_eq!(opened["kind"], "held", "{opened}");
+        // The posted `hold || ours` interrupt, unfrozen: yield, and no verb
+        // rides along with it. The click still goes out on the next call.
+        on_hold(true);
+        let held_clock = call(&data, token, held_box(), board_page(&one_move_board(), 7));
+        assert_eq!(held_clock["kind"], "wait", "{held_clock}");
+        on_hold(false);
+        let mut yield_page = board_page(&one_move_board(), 7);
+        yield_page["hold"] = json!(true);
+        let yielded = call(&data, token, held_box(), yield_page);
+        assert_eq!(yielded["kind"], "yield", "{yielded}");
+        let moved = call(&data, token, held_box(), board_page(&one_move_board(), 7));
+        assert_eq!(moved["kind"], "puzzle-move", "{moved}");
+    }
+
+    #[test]
+    fn rows_without_their_own_held_box_keep_their_own_arm() {
+        on_reset();
+        let data = selected();
+        // A desc-only row with no box of its own, with another row's box in
+        // the pack: identified, then idle.
+        let page = json!([[PUZZLE_RIDDLE_NO_BOX, 1], [PUZZLE_BOX, 1]]);
+        let token = steady(&data, PUZZLE_RIDDLE_NO_BOX);
+        let idle = call(&data, token, page.clone(), board_page(&solved_board(), 7));
+        assert_eq!(idle["kind"], "wait", "{idle}");
+        // The riddle's own box is not on this page: not a puzzle step either,
+        // so the solved board it posts is not closed by this arm.
+        let token = steady(&data, PUZZLE_RIDDLE);
+        let unheld = call(
+            &data,
+            token,
+            json!([[PUZZLE_RIDDLE, 1]]),
+            board_page(&solved_board(), 7),
+        );
+        assert_eq!(unheld["kind"], "wait", "{unheld}");
+        // A search row keeps the search arm with a box sitting in the pack:
+        // the join is the row's own alias, so no box steals it.
+        let token = steady(&data, SEARCH);
+        let walked = call(
+            &data,
+            token,
+            json!([[SEARCH, 1], [PUZZLE_BOX, 1]]),
+            json!({ "here": here(3100, 3300, 1) }),
+        );
+        assert_eq!(walked["kind"], "walk", "{walked}");
+    }
 }
+

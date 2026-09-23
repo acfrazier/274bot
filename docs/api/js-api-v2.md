@@ -434,12 +434,13 @@ Example: `crates/script/examples/clue_facts_v2.ts` (row),
 
 One machine per isolate, over the landed held-step identify. It is sync, it is
 not a Promise, and it is not a `request()` op: it is the search, casket-open,
-unguarded-dig, guarded-dig encounter and trail-end collect slice of a later
-clue trail, not the whole dispatcher. It emits search, the held Open, the
-unguarded Dig, the guarded walk/Dig/Attack/redig and the collect that follows
-the last casket — no talk, puzzle, deposit, or retry — and it never emits the
-exact `'clue solved'` string, never restores gear, and never returns a `done`
-status. `ownsEquipment` stays false.
+unguarded-dig, guarded-dig encounter, held-puzzle-box and trail-end collect
+slice of a later clue trail, not the whole dispatcher. It emits search, the
+held Open, the unguarded Dig, the guarded walk/Dig/Attack/redig, the held puzzle
+box's own Open, one planned `puzzle-move` and the close that follows a solved
+board, and the collect that follows the last casket — no talk, deposit, or
+retry — and it never emits the exact `'clue solved'` string, never restores
+gear, and never returns a `done` status. `ownsEquipment` stays false.
 
 `clue.begin(input?)` takes the optional input and ignores every key: nothing
 but the token and the wrapper's generation is captured, so `enabled`, the pack
@@ -468,8 +469,9 @@ a dead token is the error object, never `undefined` and never a continue kind.
 | `npc` | a guarded row that has arrived and Dig its spawn: interact with the posted npc, `{ name, action: 'Attack', index }` — the posted scene index it was observed with |
 | `if-button` | a guarded fight whose posted overlay does not read up: click the selected Protect from Magic component, `{ component_id }` |
 | `held` | a casket row that has been reported: interact with the held item named `name` with `action`, `{ name, action }`; an unguarded or guarded dig row's `Dig` is the same kind with `name: 'Spade'`, and the collect's pack-full Drop is the same kind with `action: 'Drop'` |
-| `close-modal` | collecting: close the main modal the page posted open. The step carries nothing else — no interface id, no text |
+| `close-modal` | collecting: close the main modal the page posted open. The step carries nothing else — no interface id, no text. The held puzzle box's solved board is the same kind: the board is closed once, and never closed again while the step stays held |
 | `obj` | collecting: interact with the casket overflow on the posted tile, `{ x, z, level, name, action: 'Take' }` |
+| `puzzle-move` | a held puzzle box whose posted board is readable and not solved: click one piece of it, `{ id, slot, component, generation }` — the posted board row's own id and slot, the posted component and this call's `snapshot.puzzle_board_generation`. The host re-resolves that exact row and refuses a closed board, a stale slot and a stale generation; a sent click is not an observed move, so the next call re-reads the board and replans |
 | `yield` | posted `hold \|\| ours`; the token stays live and this is not trail completion |
 
 The precedence on a live token is frozen clock → `wait`, else posted
@@ -611,12 +613,66 @@ no completion, no `supplies-needed`, no `dead` and no `guardian-lost`.
 
 The rows that are neither caskets, search rows, unguarded dig rows nor guarded
 dig rows stay identified then idle: the packed 3554 `access: "constrained"`
-clue, the desc-only riddles that carry no decodable `trail_coord` and the
-empty-params `2722`. Every coord-bearing row without the `trail_loc` pin is the
-dig classify's instead, so it is the `trail_guardian` / `access` half of the
-classify — and the coord itself — that keeps these out: no frozen `type` table
-is copied, and a row that carries the `trail_loc` pin at all belongs to the
-search membership instead.
+clue, the desc-only riddles that carry no decodable `trail_coord` — except the
+nine whose own `_puzzlebox` is the one the posted page holds, which are the
+held puzzle box below — and the empty-params `2722`. Every coord-bearing row
+without the `trail_loc` pin is the dig classify's instead, so it is the
+`trail_guardian` / `access` half of the classify — and the coord itself — that
+keeps these out: no frozen `type` table is copied, and a row that carries the
+`trail_loc` pin at all belongs to the search membership instead.
+
+### Held puzzle box
+
+The other `Steady` arm is the held **puzzle box**, and it is armed by the
+identified row's *own* box, never by "any `Puzzle box`": the row's selected
+alias plus `_puzzlebox` is looked up in the selected items — `trail_clue_hard_riddle014`
+joins `trail_clue_hard_riddle014_puzzlebox` — and that item has to be the one
+the posted `(id, count)` page holds. The join is by alias, so a box the row does
+not name is not its box, and the desc-only riddles with no such sibling
+`riddle013` / `riddle015` / `riddle022` have no puzzle step at all: they stay
+identified then idle exactly as before. A search or dig row keeps its own arm
+with a box sitting in the same pack. The Open's `name` is that item's selected
+display (`Puzzle box`) and its `action` is `Open`, the same first-name-match
+`held` class the casket uses — never the alias and never an item id.
+
+The recalled frozen run is one verb per call, over the board the wrapper
+marshals at call time:
+
+1. while the posted board is not readable — the closed `{ component_id: -1,
+   size: 0, items: [] }` SNAP posts, or any observed size that is not 25, or a
+   page whose pieces the selected sliding-piece map cannot place — the held box
+   is opened again, repeating like the casket's own Open, until the frozen 5000ms
+   window runs out. A box that never opens ends the attempt without a close,
+   because there is no board to close.
+2. a readable board — 24 pieces around one gap, filled from the sparse posted
+   rows and the selected piece map, never padded to 25 in the widget walk — is
+   read against the frozen `isPuzzleSolved` on that reconstructed 25, not the
+   posted row count and not the board generation, which says only whether the
+   page is the session in hand. A solved board is closed.
+3. otherwise the frozen grouped BFS plans it and exactly one `puzzle-move` goes
+   out for the plan's own first slot. The plan is never walked out: the next
+   call re-reads the board, compares it with the board that click was expected
+   to produce, and replans from whatever it reads — the click is not the
+   observation, and the leftover plan is dropped.
+4. a board that goes unreadable mid-solve, a settle window that runs out
+   unlanded, a board the solver has no plan for (a mixed picture set is
+   unsolvable-as-read) and 600 landed moves all end the same way: one
+   `close-modal` for a live board, then idle `wait`s. Eight consecutive
+   refusals reach that exit too. The 2000ms settle window, the 3000ms close
+   window and the 5000ms open window are freeze-honored like the collect's own,
+   so a frozen call emits no click and no close and spends nothing.
+
+The frozen cap names — board unreadable, unsolvable-as-read, stalled — are
+evidence for those exits and not tokens: this arm publishes no new error, logs
+no new line and never aborts the token for them, so `clue.next` still refuses
+only with the identify family's own errors. The solved-or-attempted latch
+belongs to the step, so a still-held box is never opened or closed twice: after
+the exit the step idles with its token live, and the re-talk that would follow
+is a later card. A different held row, `clear_step`, reset and abort all drop
+the latch with the step. `puzzle-move` is not a `V2_OPS` verb of its author
+API: `next` enqueues it onto the interact drain the way it enqueues `loc` and
+the others, and `api.request({ op: 'puzzle-move' })` stays the OPHELD send gate
+it already was.
 
 ### Trail-end collect
 

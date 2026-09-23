@@ -202,6 +202,17 @@ fn query_does_not_open_the_answers_or_the_writer() {
     assert!(!src.contains("parse"));
 }
 
+/// One posted puzzle board on a keyframe: the SNAP-shaped page the plan reads
+/// — the identified component, its observed slot count and its sparse rows —
+/// plus the board session generation the click rides.
+#[derive(Clone, Copy)]
+struct PostedPuzzle<'a> {
+    component_id: i32,
+    size: i32,
+    items: &'a [script::isolate_fb::ItemRowInput<'a>],
+    generation: u64,
+}
+
 /// The call-time pages the clue search machine reads on top of the pack page:
 /// the posted `here` tile, the posted loc page, and the posted `hold || ours`
 /// pair. The collect arm adds the posted ground page, the posted main modal id
@@ -234,6 +245,10 @@ struct Scene<'a> {
     /// `(0, -1)` the way the native page does.
     self_target_kind: i32,
     self_target_index: i32,
+    /// The posted puzzle board: the page the held box's plan reads, and the
+    /// generation its click rides. `None` posts no board table at all, so the
+    /// isolate keeps its last one.
+    puzzle: Option<PostedPuzzle<'a>>,
 }
 
 impl Default for Scene<'_> {
@@ -252,6 +267,7 @@ impl Default for Scene<'_> {
             self_slot: 0,
             self_target_kind: 0,
             self_target_index: -1,
+            puzzle: None,
         }
     }
 }
@@ -360,7 +376,19 @@ fn post_scene(iso: &LoadIsolate, tick: u64, page: &[(i32, i32)], scene: &Scene<'
         self_target_index: scene.self_target_index,
         widgets: &[],
     };
-    iso.post_snapshot(script::isolate_fb::encode_snapshot(&input));
+    let native = script::isolate_fb::NativeFactsInput {
+        puzzle_board: scene
+            .puzzle
+            .as_ref()
+            .map(|puzzle| script::isolate_fb::PuzzleBoardInput {
+                component_id: puzzle.component_id,
+                size: puzzle.size,
+                items: puzzle.items,
+                generation: puzzle.generation,
+            }),
+        ..script::isolate_fb::NativeFactsInput::default()
+    };
+    iso.post_snapshot(script::isolate_fb::encode_snapshot_with_native(&input, native));
 }
 
 fn probe(src: &str, revision: ClientRevision) -> serde_json::Value {
@@ -1035,6 +1063,76 @@ fn guarded_scene<'a>(
         hold,
         ..Scene::default()
     }
+}
+
+/// The `b` run's first piece (`trail_slidingpuzzleb01`), the run both pins
+/// number 2749-2772: a cell's posted piece id is `PIECE_B + target`.
+const PIECE_B: i32 = 2749;
+
+/// `trail_clue_hard_riddle014`: the desc-only hard riddle whose own selected
+/// `trail_clue_hard_riddle014_puzzlebox` item is the box its puzzle step joins
+/// to.
+const PUZZLE_RIDDLE: i32 = 2794;
+
+/// That box item, display `Puzzle box`.
+const PUZZLE_BOX: i32 = 2795;
+
+/// `trail_clue_hard_riddle022`: a desc-only hard riddle with **no**
+/// `_puzzlebox` sibling at all.
+const PUZZLE_RIDDLE_NO_BOX: i32 = 3572;
+
+/// `trail_clue_easy_simple001`: the selected search membership, decoded to
+/// (3209, 3218, 1), which every walk scene below is posted far from.
+const PUZZLE_SEARCH: i32 = 2677;
+
+/// The component the test boards are posted at.
+const BOARD_COMPONENT: i32 = 6600;
+
+/// One posted board row: the piece's own obj id, the widget slot it sits in
+/// and the component the page was identified at — the shape SNAP posts and the
+/// plan reads.
+fn board_row(id: i32, slot: i32, component: i32) -> script::isolate_fb::ItemRowInput<'static> {
+    script::isolate_fb::ItemRowInput {
+        name: Some("Sliding piece"),
+        count: 1,
+        id,
+        ops: &[],
+        noted: false,
+        cert: -1,
+        component_id: component,
+        slot,
+    }
+}
+
+/// One posted board as its sparse rows: a row per filled cell, in slot order,
+/// carrying the piece belonging on that cell's target. `PIECE_B` is the first
+/// piece of the `b` run both pins hold, so the rows are the same on both.
+fn board_rows(board: &[Option<u8>; 25], component: i32) -> Vec<script::isolate_fb::ItemRowInput<'static>> {
+    let mut rows = Vec::new();
+    for (slot, cell) in board.iter().enumerate() {
+        if let Some(target) = *cell {
+            rows.push(board_row(PIECE_B + i32::from(target), slot as i32, component));
+        }
+    }
+    rows
+}
+
+/// The solved board: every piece on its own slot and the gap on 24.
+fn solved_board() -> [Option<u8>; 25] {
+    let mut board = [None; 25];
+    for (slot, cell) in board.iter_mut().enumerate() {
+        *cell = (slot != 24).then_some(slot as u8);
+    }
+    board
+}
+
+/// One slide from solved: the piece belonging on 23 stands on the blank slot,
+/// so the frozen plan is the single click on 24.
+fn one_move_board() -> [Option<u8>; 25] {
+    let mut board = solved_board();
+    board[24] = Some(23);
+    board[23] = None;
+    board
 }
 
 /// The public `api.clue.next` path over a posted page plus a posted scene: the
@@ -3587,4 +3685,350 @@ export function tick(api) {
     for forbidden in ["clue solved", "\"done\"", "ownsEquipment"] {
         assert!(!text.contains(forbidden), "{forbidden} {value:?}");
     }
+}
+
+
+/// One held puzzle step's posted pack page: the desc-only riddle and its own
+/// selected box.
+fn puzzle_page() -> Vec<(i32, i32)> {
+    vec![(PUZZLE_RIDDLE, 1), (PUZZLE_BOX, 1)]
+}
+
+/// One held box Open as the drain sees it: the selected item display name the
+/// host resolves, and the frozen action. No row id and no tile.
+fn puzzle_open() -> InteractReq {
+    InteractReq::Held {
+        name: "Puzzle box".to_string(),
+        action: "Open".to_string(),
+    }
+}
+
+/// One posted board page over a board's rows, at the board session the click
+/// carries.
+fn board_scene<'a>(rows: &'a [script::isolate_fb::ItemRowInput<'a>]) -> Scene<'a> {
+    Scene {
+        puzzle: Some(PostedPuzzle {
+            component_id: BOARD_COMPONENT,
+            size: 25,
+            items: rows,
+            generation: 7,
+        }),
+        ..Scene::default()
+    }
+}
+
+/// The public `api.clue.next` path over a posted puzzle board: the held box's
+/// own `held` Open reaches the drain as `InteractReq::Held`, one planned click
+/// reaches it as `InteractReq::PuzzleMove` — never as a loc and never as an
+/// inventory button — and the solved board reaches it as
+/// `InteractReq::CloseModal`. The step kinds are the machine's own, so a click
+/// that never made it onto the whitelist would surface here as a `stale` error
+/// instead of a verb.
+#[test]
+fn v2_clue_puzzle_box_opens_plans_and_closes_over_the_posted_board() {
+    let src = r#"
+export const apiVersion = 2;
+export function tick(api) {
+  globalThis.__runs = (globalThis.__runs || 0) + 1;
+  if (globalThis.__runs === 1) {
+    const begin = api.clue.begin();
+    globalThis.__token = begin.ok ? begin.value.token : null;
+    globalThis.__steps = [
+      begin,
+      api.clue.next({ token: globalThis.__token }),
+      api.clue.next({ token: globalThis.__token, resume: true }),
+      api.clue.next({ token: globalThis.__token }),
+      // The report is posted: these two are the box's own Open, and they
+      // repeat while the board stays the closed one.
+      api.clue.next({ token: globalThis.__token }),
+      api.clue.next({ token: globalThis.__token }),
+    ];
+    return;
+  }
+  globalThis.__steps.push(api.clue.next({ token: globalThis.__token }));
+  if (globalThis.__steps.length === 10) {
+    globalThis.__probe = JSON.stringify({
+      token: globalThis.__token,
+      runs: globalThis.__runs,
+      steps: globalThis.__steps,
+    });
+  }
+}
+"#;
+    let data = api::game_data::for_revision(ClientRevision::R274).unwrap();
+    let iso =
+        LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data).unwrap();
+    let page = puzzle_page();
+
+    // Tick 1: the report, then the box's own Open — twice, because the board is
+    // still the closed one SNAP posts beside an unopened box.
+    post_scene(&iso, 1, &page, &Scene::default());
+    iso.on_game_tick(1);
+    assert!(iso.probe("true").is_ok());
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![puzzle_open(), puzzle_open()],
+        "each held call opens the box while the board stays closed"
+    );
+
+    // Tick 2: the readable board is one slide from solved, so the plan is the
+    // single click on the piece beside the gap.
+    let rows = board_rows(&one_move_board(), BOARD_COMPONENT);
+    post_scene(&iso, 2, &page, &board_scene(&rows));
+    iso.on_game_tick(2);
+    assert!(iso.probe("true").is_ok());
+    let moved = iso.drain_interacts();
+    assert_eq!(
+        moved,
+        vec![InteractReq::PuzzleMove {
+            id: PIECE_B + 23,
+            slot: 24,
+            component: BOARD_COMPONENT,
+            generation: 7,
+        }],
+        "one planned click, at the posted row's own identity: {moved:?}"
+    );
+
+    // Tick 3: the posted `hold` freezes this machine's clock and is a
+    // paint-only tick — the script never runs — so no click and no close is
+    // re-sent.
+    post_scene(
+        &iso,
+        3,
+        &page,
+        &Scene {
+            hold: true,
+            ..board_scene(&rows)
+        },
+    );
+    iso.on_game_tick(3);
+    assert!(iso.probe("true").is_ok());
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "a frozen call emits no click and no close"
+    );
+
+    // Tick 4: the click landed — the live board is exactly the board that move
+    // was expected to produce — and that board is the solved one.
+    let solved = board_rows(&solved_board(), BOARD_COMPONENT);
+    post_scene(&iso, 4, &page, &board_scene(&solved));
+    iso.on_game_tick(4);
+    assert!(iso.probe("true").is_ok());
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::CloseModal],
+        "the solved board is closed"
+    );
+
+    // Tick 5: the board is gone with the box still held. The step idles.
+    post_scene(&iso, 5, &page, &Scene::default());
+    iso.on_game_tick(5);
+    assert!(iso.probe("true").is_ok());
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "the closed step opens and closes nothing again"
+    );
+
+    // Tick 6: a solved board posted again is not a second close either: the
+    // solved-or-attempted latch belongs to the step, not to the board page.
+    post_scene(&iso, 6, &page, &board_scene(&solved));
+    iso.on_game_tick(6);
+    assert!(iso.probe("true").is_ok());
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "the latch holds while the step stays held"
+    );
+
+    let probed = iso.probe("globalThis.__probe").unwrap();
+    let value: serde_json::Value = serde_json::from_str(probed.as_str().unwrap()).unwrap();
+    iso.join();
+
+    assert!(value["token"].is_number(), "{value:?}");
+    // Five script runs: the `hold` tick is paint-only and ran no step.
+    assert_eq!(value["runs"], 5, "{value:?}");
+    let steps = value["steps"].as_array().expect("steps");
+    assert_eq!(steps.len(), 10, "{value:?}");
+    for (index, kind) in [
+        (1, "callback.enabled"),
+        (2, "callback.log"),
+        (3, "callback.setStatus"),
+        (4, "held"),
+        (5, "held"),
+        (6, "puzzle-move"),
+        (7, "close-modal"),
+        (8, "wait"),
+        (9, "wait"),
+    ] {
+        assert_eq!(steps[index]["kind"], kind, "{index} {value:?}");
+        assert_eq!(steps[index]["ok"], true, "{index} {value:?}");
+        assert_eq!(steps[index]["status"], "continue", "{index} {value:?}");
+        assert_eq!(steps[index]["token"], value["token"], "{index} {value:?}");
+        assert!(steps[index].get("error").is_none(), "{index} {value:?}");
+    }
+    for index in [4, 5] {
+        let step = &steps[index];
+        assert_eq!(step["name"], "Puzzle box", "{index} {value:?}");
+        assert_eq!(step["action"], "Open", "{index} {value:?}");
+        for absent in ["id", "x", "z", "level", "slot", "component"] {
+            assert!(step.get(absent).is_none(), "{index} {absent} {step}");
+        }
+    }
+    let click = &steps[6];
+    assert_eq!(click["id"], PIECE_B + 23, "{value:?}");
+    assert_eq!(click["slot"], 24, "{value:?}");
+    assert_eq!(click["component"], BOARD_COMPONENT, "{value:?}");
+    assert_eq!(click["generation"], 7, "{value:?}");
+    let text = value.to_string();
+    for forbidden in ["clue solved", "abandon", "ownsEquipment", "no-puzzle"] {
+        assert!(!text.contains(forbidden), "{forbidden} {value:?}");
+    }
+}
+
+/// The row's own box is what arms the arm: the same desc-only riddle with its
+/// box absent from the pack keeps the idle it had, even with a solved board
+/// posted.
+#[test]
+fn v2_clue_puzzle_row_without_its_held_box_stays_idle() {
+    let src = r#"
+export const apiVersion = 2;
+export function tick(api) {
+  const begin = api.clue.begin();
+  const token = begin.ok ? begin.value.token : null;
+  globalThis.__steps = [
+    begin,
+    api.clue.next({ token: token }),
+    api.clue.next({ token: token, resume: true }),
+    api.clue.next({ token: token }),
+    // The report is posted: this is the call every other arm acts on.
+    api.clue.next({ token: token }),
+  ];
+  globalThis.__probe = JSON.stringify({ steps: globalThis.__steps });
+}
+"#;
+    let data = api::game_data::for_revision(ClientRevision::R274).unwrap();
+    let iso =
+        LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data).unwrap();
+    let solved = board_rows(&solved_board(), BOARD_COMPONENT);
+    post_scene(&iso, 1, &[(PUZZLE_RIDDLE, 1)], &board_scene(&solved));
+    iso.on_game_tick(1);
+    assert!(iso.probe("true").is_ok());
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "an unheld box is not a puzzle step"
+    );
+
+    let probed = iso.probe("globalThis.__probe").unwrap();
+    let value: serde_json::Value = serde_json::from_str(probed.as_str().unwrap()).unwrap();
+    iso.join();
+    let steps = value["steps"].as_array().expect("steps");
+    assert_eq!(steps.len(), 5, "{value:?}");
+    assert_eq!(steps[4]["kind"], "wait", "{value:?}");
+    assert_eq!(steps[4]["ok"], true, "{value:?}");
+}
+
+/// Another row's box in the pack is never this row's: the desc-only riddle
+/// with no `_puzzlebox` sibling of its own keeps the idle, and a solved board
+/// posted beside it is not closed by this arm.
+#[test]
+fn v2_clue_riddle_without_a_box_keeps_the_idle() {
+    let src = r#"
+export const apiVersion = 2;
+export function tick(api) {
+  const begin = api.clue.begin();
+  const token = begin.ok ? begin.value.token : null;
+  globalThis.__steps = [
+    begin,
+    api.clue.next({ token: token }),
+    api.clue.next({ token: token, resume: true }),
+    api.clue.next({ token: token }),
+    api.clue.next({ token: token }),
+  ];
+  globalThis.__probe = JSON.stringify({ steps: globalThis.__steps });
+}
+"#;
+    let data = api::game_data::for_revision(ClientRevision::R274).unwrap();
+    let iso =
+        LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data).unwrap();
+    let solved = board_rows(&solved_board(), BOARD_COMPONENT);
+    post_scene(
+        &iso,
+        1,
+        &[(PUZZLE_RIDDLE_NO_BOX, 1), (PUZZLE_BOX, 1)],
+        &board_scene(&solved),
+    );
+    iso.on_game_tick(1);
+    assert!(iso.probe("true").is_ok());
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "a row whose own box it is not opens and closes nothing"
+    );
+
+    let probed = iso.probe("globalThis.__probe").unwrap();
+    let value: serde_json::Value = serde_json::from_str(probed.as_str().unwrap()).unwrap();
+    iso.join();
+    let steps = value["steps"].as_array().expect("steps");
+    assert_eq!(steps.len(), 5, "{value:?}");
+    assert_eq!(steps[4]["kind"], "wait", "{value:?}");
+}
+
+/// A search row keeps the search arm with a box sitting in the pack: the join
+/// is the row's own alias, so no box can steal it.
+#[test]
+fn v2_clue_search_row_with_a_box_in_the_pack_still_walks() {
+    let src = r#"
+export const apiVersion = 2;
+export function tick(api) {
+  const begin = api.clue.begin();
+  const token = begin.ok ? begin.value.token : null;
+  globalThis.__steps = [
+    begin,
+    api.clue.next({ token: token }),
+    api.clue.next({ token: token, resume: true }),
+    api.clue.next({ token: token }),
+    // Far from the decoded tile: the search arm's own walk.
+    api.clue.next({ token: token }),
+  ];
+  globalThis.__probe = JSON.stringify({ steps: globalThis.__steps });
+}
+"#;
+    let data = api::game_data::for_revision(ClientRevision::R274).unwrap();
+    let iso =
+        LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data).unwrap();
+    let solved = board_rows(&solved_board(), BOARD_COMPONENT);
+    post_scene(
+        &iso,
+        1,
+        &[(PUZZLE_SEARCH, 1), (PUZZLE_BOX, 1)],
+        &Scene {
+            here: Some(TileInput {
+                x: 3100,
+                z: 3300,
+                level: 1,
+            }),
+            ..board_scene(&solved)
+        },
+    );
+    iso.on_game_tick(1);
+    assert!(iso.probe("true").is_ok());
+    let walked = iso.drain_interacts();
+    assert_eq!(
+        walked,
+        vec![InteractReq::Walk {
+            x: 3209,
+            z: 3218,
+            level: 1,
+            allow_teleports: false,
+            allow_wilderness: false,
+            allow_bank_fetch: false,
+            request_id: 0,
+        }],
+        "the search row still walks: {walked:?}"
+    );
+
+    let probed = iso.probe("globalThis.__probe").unwrap();
+    let value: serde_json::Value = serde_json::from_str(probed.as_str().unwrap()).unwrap();
+    iso.join();
+    let steps = value["steps"].as_array().expect("steps");
+    assert_eq!(steps.len(), 5, "{value:?}");
+    assert_eq!(steps[4]["kind"], "walk", "{value:?}");
 }
