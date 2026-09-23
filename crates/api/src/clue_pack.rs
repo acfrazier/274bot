@@ -1,11 +1,13 @@
-//! Trail pack budgeting and hard-kit status: pure arithmetic over the caller's
-//! own numbers. Nothing here reads `host().snapshot`, `trails()`, `items()`,
+//! Trail pack budgeting, hard-kit status, and the trail bank-stop keep
+//! predicate: pure arithmetic and name matching over the caller's own facts.
+//! Nothing here reads `host().snapshot`, `trails()`, `items()`,
 //! equipment, the bank, `questStatus`, `identify_step`, or `clue_row`, so a
-//! missing page or family is not an error of either method.
+//! missing page or family is not an error of any method.
 //!
 //! Frozen source of truth: `packPlan.ts` (`trailFoodTarget`,
-//! `teleportRuneTarget`, `weaponNeeded`, `casketRewardSlots`) and
-//! `hardClueKit.ts` (`superantiDoses`, `hardClueKit`) in
+//! `teleportRuneTarget`, `weaponNeeded`, `casketRewardSlots`), `hardClueKit.ts`
+//! (`superantiDoses`, `hardClueKit`), and the `isKeep` predicate of
+//! `SolveClue.ts` (`bankFirst`) in
 //! `release-0.1.8/reference/rs2b0t-beecd9126b/`. Where the older preflight
 //! arithmetic disagrees with those files, the files control. The four pack
 //! helpers widen to `i64`: `perCast = i32::MAX` publishes `42949672940`, not a
@@ -212,6 +214,42 @@ pub fn hard_clue_kit(input: &HardKitInput<'_>) -> Result<Value, &'static str> {
         return Err(SHARKS);
     }
     Ok(json!({ "status": READY }))
+}
+
+/// Frozen `isKeep` identities, after the frozen ASCII lower: `SPADE_NAME`
+/// (`Spade`), the ship-fare `Coins`, the Shantay pass, and the `coordItems`
+/// trio. Six names the frozen predicate matches outright, in its own order.
+pub const KEEP_NAMES: [&str; 6] = [
+    "spade",
+    "coins",
+    "shantay pass",
+    "sextant",
+    "watch",
+    "chart",
+];
+
+/// Frozen `isKeep` substrings, matched anywhere in the lowered name. The
+/// breadth is itself frozen: the predicate is the substring, not a scroll, a
+/// casket, or a trail-family membership row.
+pub const KEEP_SUBSTRINGS: [&str; 2] = ["clue", "casket"];
+
+/// The frozen `isKeep` deposit predicate: the six identities, either
+/// substring, or the caller's own additive names by ASCII equality. Nothing is
+/// trimmed, so `" spade"` is not `spade`, and no name is food: `Shark` is
+/// deposited unless the caller asked for it. `extra` cannot un-keep, and a
+/// miss is `{ keep: false }` rather than an error. The Entrana veto and the
+/// caller-gathered sets (`protectedNames`, weapon, teleport kit, jungle, row
+/// items) stay with the caller who resolved them.
+pub fn keep_clue_kit(name: &str, extra: &[String]) -> Value {
+    let lowered = name.to_ascii_lowercase();
+    let keep = KEEP_NAMES.contains(&lowered.as_str())
+        || KEEP_SUBSTRINGS
+            .iter()
+            .any(|substring| lowered.contains(substring))
+        || extra
+            .iter()
+            .any(|entry| entry.eq_ignore_ascii_case(&lowered));
+    json!({ "keep": keep })
 }
 
 #[cfg(test)]
@@ -459,6 +497,139 @@ mod tests {
         assert_eq!(
             kit_status(60, true, &[(1231, 1), (185, 1), (385, i32::MAX), (385, i32::MAX)]),
             ready()
+        );
+    }
+
+    fn keep(name: &str, extra: &[&str]) -> bool {
+        let extra: Vec<String> = extra.iter().map(|entry| (*entry).to_string()).collect();
+        keep_clue_kit(name, &extra)["keep"].as_bool().expect("keep")
+    }
+
+    /// The six frozen identities, matched after the ASCII lower rather than
+    /// folded as Unicode and compared exactly rather than by substring.
+    #[test]
+    fn keep_matches_the_six_frozen_identities() {
+        for name in [
+            "spade",
+            "Spade",
+            "SPADE",
+            "coins",
+            "Coins",
+            "shantay pass",
+            "Shantay pass",
+            "SHANTAY PASS",
+            "sextant",
+            "Sextant",
+            "watch",
+            "Watch",
+            "chart",
+            "Chart",
+        ] {
+            assert_eq!(keep(name, &[]), true, "{name}");
+        }
+        // Identity is equality: a longer name containing one of the six is not
+        // kept by the constant clause.
+        for name in [
+            "Spade handle",
+            "coins pouch",
+            "Ring of coins",
+            "Sextant stand",
+            "Watchtower",
+            "Shanty pass",
+            "chart table",
+            "spades",
+        ] {
+            assert_eq!(keep(name, &[]), false, "{name}");
+        }
+    }
+
+    /// The frozen breadth: either substring, anywhere, whatever else the name
+    /// says. Not an exact scroll, an exact casket, or a membership row.
+    #[test]
+    fn keep_takes_the_frozen_substrings_wherever_they_land() {
+        for name in [
+            "clue",
+            "Clue scroll",
+            "Clue scroll (hard)",
+            "trail_clue_hard_sextant028",
+            "unclued",
+            "casket",
+            "Casket",
+            "Pirate casket",
+            "trail_clue_easy_map001_casket",
+        ] {
+            assert_eq!(keep(name, &[]), true, "{name}");
+        }
+        // Food is never implied, and a scroll-adjacent word is not a scroll.
+        for name in [
+            "Shark",
+            "sharks",
+            "Lobster",
+            "Rune scimitar",
+            "Rope",
+            "Machete",
+            "Radimus notes",
+            "",
+        ] {
+            assert_eq!(keep(name, &[]), false, "{name}");
+        }
+    }
+
+    /// The caller's own names are additive: ASCII equality, never a substring,
+    /// and never able to un-keep a constant or a substring hit. A miss is
+    /// `{ keep: false }`, not an error.
+    #[test]
+    fn keep_extra_is_additive_ascii_equality() {
+        assert_eq!(keep("Rune scimitar", &["Rune scimitar"]), true);
+        assert_eq!(keep("RUNE SCIMITAR", &["rune scimitar"]), true);
+        assert_eq!(keep("rune scimitar", &["RUNE SCIMITAR"]), true);
+        // The frozen Entrana veto is not this helper's: a restricted name the
+        // caller asked for is kept.
+        assert_eq!(keep("Bronze platebody", &["Bronze platebody"]), true);
+        // Equality, not substring, and no widening.
+        assert_eq!(keep("Rune scimitar", &["Rune"]), false);
+        assert_eq!(keep("Super spade", &["spade"]), false);
+        assert_eq!(keep("Bronze platebody", &["platebody"]), false);
+        assert_eq!(keep("Rope", &["Ropes"]), false);
+        // Additive only: extra cannot un-keep a constant or a substring.
+        assert_eq!(keep("Clue scroll", &["Shark"]), true);
+        assert_eq!(keep("spade", &[]), true);
+        // `""` is a present entry, and it matches the empty name exactly.
+        assert_eq!(keep("", &[""]), true);
+        assert_eq!(keep("Shark", &["Shark"]), true);
+        assert_eq!(keep("Shark", &["shark"]), true);
+    }
+
+    /// Nothing is trimmed, and the fold is ASCII, so a Unicode-only case pair
+    /// stays apart.
+    #[test]
+    fn keep_does_not_trim_and_folds_ascii_only() {
+        for name in [
+            " spade",
+            "spade ",
+            " spade ",
+            " coins",
+            "shantay pass ",
+            "Sextant\t",
+        ] {
+            assert_eq!(keep(name, &[]), false, "{name}");
+        }
+        // `İ` (U+0130) folds to `i̇` under Unicode `toLowerCase`, which is not
+        // this lock's fold, and `ı` is not the ASCII `i`.
+        assert_eq!(keep("İ", &["İ"]), true);
+        assert_eq!(keep("İ", &["i̇"]), false);
+        assert_eq!(keep("ı", &["I"]), false);
+    }
+
+    /// The whole published value, and only it: `keep` is a boolean, so a miss
+    /// is `ok` rather than an error.
+    #[test]
+    fn keep_publishes_the_one_boolean_key() {
+        assert_eq!(keep_clue_kit("Spade", &[]), json!({ "keep": true }));
+        assert_eq!(keep_clue_kit("Shark", &[]), json!({ "keep": false }));
+        assert_eq!(
+            keep_clue_kit("", &[]).as_object().map(|value| value.len()),
+            Some(1)
         );
     }
 }

@@ -247,17 +247,18 @@ Example: `crates/script/examples/quest_facts_v2.ts`.
 
 ## Clue helpers
 
-Four sync `HelperResult` fact reads and one owned-session pump. `row` and
+Five sync `HelperResult` fact reads and one owned-session pump. `row` and
 `heldStep` read the selected pin's landed trail membership family; `packPlan`
 is pure slot arithmetic over the caller's own numbers and reads nothing at all;
 `hardKit` is a pure hard-clue kit status over the caller's own facts and reads
-nothing at all. `begin` / `next` are the isolate machine: one token per
-isolate, the landed held-step identify over the posted pack page, and its own
-search and casket-open steps onto the interact drain. None is a Promise and
-none is a `request()` op; the four fact reads push no `h.interact`. `row`,
-`heldStep` and the machine read `trails()` only: not `items()`, and not the
-challenge answers. `api.clue` holds `row`, `heldStep`, `packPlan`, `hardKit`,
-`begin`, and `next`, in that order, and nothing else.
+nothing at all; `keep` is the pure bank-stop keep predicate over the caller's
+own names and reads nothing at all. `begin` / `next` are the isolate machine:
+one token per isolate, the landed held-step identify over the posted pack page,
+and its own search and casket-open steps onto the interact drain. None is a
+Promise and none is a `request()` op; the five fact reads push no `h.interact`.
+`row`, `heldStep` and the machine read `trails()` only: not `items()`, and not
+the challenge answers. `api.clue` holds `row`, `heldStep`, `packPlan`, `hardKit`,
+`keep`, `begin`, and `next`, in that order, and nothing else.
 
 | Method | OK | Errors |
 | --- | --- | --- |
@@ -265,6 +266,7 @@ challenge answers. `api.clue` holds `row`, `heldStep`, `packPlan`, `hardKit`,
 | `clue.heldStep()` | the first held membership row | `missing-selected-data`, `family-unavailable:trails`, `none-held` |
 | `clue.packPlan(input)` | the published pack targets | `invalid-args`, `no-room` |
 | `clue.hardKit(input)` | `{ status: 'ready' }` | `invalid-args`, `attack`, `lost-city`, `dds`, `superantipoison`, `sharks` |
+| `clue.keep(input)` | `{ keep: boolean }` | `invalid-args` |
 | `clue.begin(input?)` | `{ token }` | `missing-selected-data`, `family-unavailable:trails`, `none-held` |
 | `clue.next({ token, resume? })` | one continue step | `invalid-args`, `missing-selected-data`, `family-unavailable:trails`, `none-held`, `stale`, `aborted` |
 
@@ -447,10 +449,59 @@ The dose and shark sums widen past `i32`: `count: 1073741824` of `2448` is
 `hardKitSnapshot` are not published: no `trailFoodCap`, no snapshot gatherer, and
 no bank prep.
 
+`clue.keep(input)` is the pure keep predicate behind one trail bank stop: the
+frozen `isKeep` of `SolveClue.bankFirst`, over the caller's own display names.
+It reads no snapshot, no `snapshot.inv` page, no bank page, no equipment, and no
+`trails()` family, so `snapshot-unavailable`, `missing-selected-data`,
+`family-unavailable:trails`, `none-held`, `unknown-id`, and `no-room` are not its
+errors, and an extra input key is neither an inventory override nor a bank read.
+It is sync `HelperResult`, not a Promise, and `api.request({ op: 'keep' })` stays
+`not impl`. The caller gathers the names — the held clue and casket display
+names, and later the weapon, teleport, jungle, and row-item names — and passes
+them as `extra`; the helper gathers nothing.
+
+`keep` is `true` when the ASCII-lowered `name` is one of the six frozen
+identities, or contains either frozen substring, or equals an `extra` entry:
+
+| Clause | Keeps |
+| --- | --- |
+| identity | `spade`, `coins`, `shantay pass`, `sextant`, `watch`, `chart` |
+| substring | any name containing `clue` or containing `casket` |
+| `extra` | ASCII case-insensitive equality with any entry |
+
+| Field | Rule |
+| --- | --- |
+| `name` | required string, including `""` |
+| `extra` | optional array of strings, including `""` entries; omitted is empty |
+
+Nothing is trimmed, so `" spade"` is not `spade`; the fold is ASCII, so a
+Unicode-only case pair stays apart. The substring breadth is frozen: `Clue
+scroll`, a `trail_clue_hard_…` membership alias, `Casket`, and the pirate
+`Casket` are all kept, and the clause is never narrowed to an exact item name,
+a word boundary, or a trail-family row. Identity is equality rather than
+substring, so `Spade handle`, `Ring of coins`, `Sextant stand`, and `Watchtower`
+are not kept by the constant clause.
+
+`keep: false` is `ok` with `{ keep: false }`, not an error: `Shark`, `Lobster`,
+`Rope`, and `""` are all `false` unless the caller named them. Food is never
+implied, and there is no Entrana veto in this method: a restricted name the
+caller put in `extra` is kept. `extra` is additive only, so it cannot un-keep a
+constant hit or a substring hit, and it is an equality rather than a second
+substring clause: `extra: ["Rune"]` does not keep `Rune scimitar`, while
+`extra: ["rune scimitar"]` does.
+
+`name` is required: `keep({})`, `keep()`, `keep(null)`, and `keep([])` are
+`invalid-args`, and so is a present `name` that is not a string — nothing is
+coerced, and a boxed `String` is not a string. `extra` is optional: omitted is
+empty and not an error, while a present `null`, a non-array, or any non-string
+element (a hole included) is `invalid-args`. An empty array is a present empty
+list, and object keys on the input beyond `name` and `extra` are ignored.
+
 Example: `crates/script/examples/clue_facts_v2.ts` (row),
 `crates/script/examples/clue_held_step_v2.ts` (held step),
-`crates/script/examples/clue_pack_v2.ts` (pack targets), and
-`crates/script/examples/clue_hard_kit_v2.ts` (hard-kit status).
+`crates/script/examples/clue_pack_v2.ts` (pack targets),
+`crates/script/examples/clue_hard_kit_v2.ts` (hard-kit status), and
+`crates/script/examples/clue_keep_v2.ts` (keep predicate).
 
 ### `clue.begin` / `clue.next`
 

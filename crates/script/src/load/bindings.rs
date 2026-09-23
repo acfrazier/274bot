@@ -1403,6 +1403,9 @@ function cluePackV2(input) {
 function clueHardKitV2(input) {
   return globalThis.__rs2b0t_clue_pack_v2('hardKit', input);
 }
+function clueKeepV2(input) {
+  return globalThis.__rs2b0t_clue_pack_v2('keep', input);
+}
 function clueCall(payload) {
   return globalThis.rustyscript.functions.__rs2b0t_clue(payload);
 }
@@ -1826,6 +1829,14 @@ api.clue = {
   // failed check is the whole result.
   hardKit: function (input) {
     return clueHardKitV2(input);
+  },
+  // Pure keep predicate over the caller's own names: no snapshot, no
+  // inventory, no bank page, and no trail family. `name` is required, so
+  // keep({}) is invalid-args rather than a missing name; `extra` is optional,
+  // additive only, and compared by ASCII equality. A miss is ok false, never
+  // an error.
+  keep: function (input) {
+    return clueKeepV2(input);
   },
   // Owned-session begin over the landed held-step identify. Sync
   // HelperResult: a refused begin — no held membership row, no selected pin,

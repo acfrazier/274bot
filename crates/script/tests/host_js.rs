@@ -119,7 +119,7 @@ fn host_js_dts_includes_required_interfaces() {
     assert!(src.contains("params: Array<{ key: string; value: string }>;"));
     assert!(src.contains("access?: 'constrained';"));
     assert!(src.contains(
-        "clue: { row(input: { id: number } | { alias: string }): HelperResult<ClueRow>; heldStep(): HelperResult<ClueRow>; packPlan(input: PackPlanInput): HelperResult<PackPlanTargets>; hardKit(input: { attack: number; lostCity: boolean; items: { id: number; count: number }[] }): HelperResult<{ status: 'ready' }>; begin(input?: object): HelperResult<{ token: number }>; next(input: { token: number; resume?: boolean }): ClueStep }"
+        "clue: { row(input: { id: number } | { alias: string }): HelperResult<ClueRow>; heldStep(): HelperResult<ClueRow>; packPlan(input: PackPlanInput): HelperResult<PackPlanTargets>; hardKit(input: { attack: number; lostCity: boolean; items: { id: number; count: number }[] }): HelperResult<{ status: 'ready' }>; keep(input: { name: string; extra?: string[] }): HelperResult<{ keep: boolean }>; begin(input?: object): HelperResult<{ token: number }>; next(input: { token: number; resume?: boolean }): ClueStep }"
     ));
     assert!(src.contains("export type ClueStep"));
     let clue_step = src.split("export type ClueStep").nth(1).expect("ClueStep");
@@ -140,6 +140,10 @@ fn host_js_dts_includes_required_interfaces() {
     assert!(!src.contains("hardKit(input: { attack: number; lostCity: boolean; items: { id: number; count: number }[] }): Promise"));
     // Hard-kit is a status, not a kit read: no snapshot or inventory page.
     assert!(!src.contains("hardKit(input: { includeBank"));
+    assert!(!src.contains("keep(input: { name: string; extra?: string[] }): Promise"));
+    // Keep is a predicate, not a bank or inventory read.
+    assert!(!src.contains("keep(input: { name: string; extra?: string[]; bank"));
+    assert!(!src.contains("keep(input: { name: string; items"));
     assert!(!src.contains("clueRow("));
     assert!(src.contains(
         "sceneLocs(input: { ids: number[]; limit: number; region?: SceneRegionInput }): HelperResult<SceneProjection>"

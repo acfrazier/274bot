@@ -1,5 +1,6 @@
-//! Typed local V8 marshalling for the trail pack-plan and hard-kit helpers.
-//! Not a rustyscript `register_function` JSON op and not a clue machine.
+//! Typed local V8 marshalling for the trail pack-plan, hard-kit, and keep
+//! helpers. Not a rustyscript `register_function` JSON op and not a clue
+//! machine.
 
 use rustyscript::Runtime;
 use serde_json::Value;
@@ -48,6 +49,7 @@ fn run_clue_pack<'s>(
     match op.as_str() {
         "packPlan" => pack_plan_op(scope, args.get(1)),
         "hardKit" => hard_kit_op(scope, args.get(1)),
+        "keep" => keep_op(scope, args.get(1)),
         _ => Err(INVALID_ARGS.into()),
     }
 }
@@ -117,6 +119,24 @@ fn hard_kit_op<'s>(
     }
 }
 
+/// The caller's own display name, and the caller's own additive names:
+/// nothing else. No snapshot, no `snapshot.inv` page, no bank page, no
+/// equipment, and no trail family. `name` is required, so `keep({})` is
+/// `invalid-args` rather than a missing name; `extra` is optional and only
+/// adds. Extra input keys are ignored, and a kept name is never an error.
+fn keep_op<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    input: v8::Local<v8::Value>,
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    if input.is_null() || input.is_undefined() || input.is_array() || !input.is_object() {
+        return Err(INVALID_ARGS.into());
+    }
+    let name = required_text(scope, input, "name")?;
+    let extra = optional_text_list(scope, input, "extra")?;
+    let value = materialize(scope, &api::clue_pack::keep_clue_kit(&name, &extra))?;
+    helper_ok(scope, value)
+}
+
 /// A required field. Absent is `invalid-args`: the `count()` default of `0`
 /// would turn an omitted `attack` into the status `attack`.
 fn required_count(
@@ -125,6 +145,21 @@ fn required_count(
     name: &str,
 ) -> Result<i32, String> {
     match optional_count(scope, input, name)? {
+        Some(value) => Ok(value),
+        None => Err(INVALID_ARGS.into()),
+    }
+}
+
+/// A required string, including `""`. Absent is `invalid-args`: the
+/// `optional_text` default of `None` would turn an omitted `name` into a
+/// missing name rather than an argument error, and a present non-string is
+/// never coerced.
+fn required_text(
+    scope: &mut v8::HandleScope,
+    input: v8::Local<v8::Value>,
+    name: &str,
+) -> Result<String, String> {
+    match optional_text(scope, input, name)? {
         Some(value) => Ok(value),
         None => Err(INVALID_ARGS.into()),
     }
@@ -269,6 +304,35 @@ fn optional_text(
         return Err(INVALID_ARGS.into());
     }
     Ok(Some(js_to_string(scope, value)?))
+}
+
+/// An optional list of caller names. Absent is empty; a present `null`, a
+/// non-array, or any non-string element (a hole included) is `invalid-args`.
+/// An empty array is a present empty list, and `""` is a present entry.
+fn optional_text_list(
+    scope: &mut v8::HandleScope,
+    input: v8::Local<v8::Value>,
+    name: &str,
+) -> Result<Vec<String>, String> {
+    if !has_own(scope, input, name)? {
+        return Ok(Vec::new());
+    }
+    let value = field(scope, input, name)?;
+    if !value.is_array() {
+        return Err(INVALID_ARGS.into());
+    }
+    let rows = v8::Local::<v8::Array>::try_from(value).map_err(|_| INVALID_ARGS.to_string())?;
+    let mut entries = Vec::with_capacity(rows.length() as usize);
+    for index in 0..rows.length() {
+        let entry = rows
+            .get_index(scope, index)
+            .ok_or_else(|| PENDING.to_string())?;
+        if !entry.is_string() {
+            return Err(INVALID_ARGS.into());
+        }
+        entries.push(js_to_string(scope, entry)?);
+    }
+    Ok(entries)
 }
 
 fn has_own(

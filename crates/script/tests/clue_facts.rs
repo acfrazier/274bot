@@ -474,6 +474,7 @@ export function tick(api) {
     next: typeof api.clue.next,
     packPlan: typeof api.clue.packPlan,
     hardKit: typeof api.clue.hardKit,
+    keep: typeof api.clue.keep,
     challengeAnswer: typeof api.clue.challengeAnswer,
     deposit: typeof api.clue.deposit,
     retry: typeof api.clue.retry,
@@ -511,10 +512,11 @@ export function tick(api) {
         }
         assert_eq!(value["packPlan"], "function", "{value:?}");
         assert_eq!(value["hardKit"], "function", "{value:?}");
+        assert_eq!(value["keep"], "function", "{value:?}");
         assert_eq!(value["quest"], "undefined", "{value:?}");
         assert_eq!(
             value["questionNamespace"],
-            serde_json::json!(["row", "heldStep", "packPlan", "hardKit", "begin", "next"]),
+            serde_json::json!(["row", "heldStep", "packPlan", "hardKit", "keep", "begin", "next"]),
             "{value:?}"
         );
     }

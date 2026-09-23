@@ -588,7 +588,7 @@ export function tick(api) {
     assert_eq!(value["kit"]["value"]["status"], "ready", "{value:?}");
     assert_eq!(
         value["keys"],
-        serde_json::json!(["row", "heldStep", "packPlan", "hardKit", "begin", "next"]),
+        serde_json::json!(["row", "heldStep", "packPlan", "hardKit", "keep", "begin", "next"]),
         "{value:?}"
     );
     for key in ["begin", "next"] {
@@ -642,4 +642,242 @@ fn example_clue_hard_kit_v2_is_one_read_only_kit_call() {
     let kit: serde_json::Value = serde_json::from_str(last).unwrap();
     assert_eq!(kit["ok"], true, "{kit:?}");
     assert_eq!(kit["value"]["status"], "ready", "{kit:?}");
+}
+
+#[test]
+fn v2_clue_keep_is_a_sync_helper_result_over_caller_names() {
+    let src = r#"
+export const apiVersion = 2;
+export function tick(api) {
+  const spade = api.clue.keep({ name: 'Spade' });
+  const shark = api.clue.keep({ name: 'Shark' });
+  globalThis.__probe = JSON.stringify({
+    ok: spade.ok,
+    then: typeof spade.then,
+    keep: spade.value && spade.value.keep,
+    keys: spade.value ? Object.keys(spade.value) : 'no-value',
+    error: spade.error,
+    type: typeof api.clue.keep,
+    // The six frozen identities, after the ASCII lower and with no trim.
+    coins: api.clue.keep({ name: 'COINS' }).value.keep,
+    shantay: api.clue.keep({ name: 'Shantay pass' }).value.keep,
+    trio: api.clue.keep({ name: 'sextant' }).value.keep
+      && api.clue.keep({ name: 'Watch' }).value.keep
+      && api.clue.keep({ name: 'chart' }).value.keep,
+    padded: api.clue.keep({ name: ' spade' }).value.keep,
+    // The frozen substrings, wherever they land, and the frozen pirate
+    // casket with them.
+    scroll: api.clue.keep({ name: 'Clue scroll' }).value.keep,
+    trail: api.clue.keep({ name: 'trail_clue_hard_sextant028' }).value.keep,
+    pirate: api.clue.keep({ name: 'Casket' }).value.keep
+      && api.clue.keep({ name: 'Pirate casket' }).value.keep,
+    // Food is never implied, and a miss is ok false rather than an error.
+    sharkOk: shark.ok,
+    shark: shark.value && shark.value.keep,
+    sharkError: shark.error,
+    blank: api.clue.keep({ name: '' }).value.keep,
+    // Extra is additive and compared by ASCII equality: it cannot widen the
+    // match, and it cannot un-keep a constant or a substring hit.
+    extra: api.clue.keep({ name: 'Rune scimitar', extra: ['rune scimitar'] }).value.keep,
+    extraUpper: api.clue.keep({ name: 'RUNE SCIMITAR', extra: ['rune scimitar'] }).value.keep,
+    extraWide: api.clue.keep({ name: 'Rune scimitar', extra: ['Rune'] }).value.keep,
+    extraMiss: api.clue.keep({ name: 'Rune scimitar', extra: [] }).value.keep,
+    extraCannotUnkeep: api.clue.keep({ name: 'Clue scroll', extra: ['Shark'] }).value.keep,
+    // Extra input keys are ignored: they are not an inventory or bank read.
+    extraKeys: api.clue.keep({
+      name: 'Coins', extra: ['Shark'], snapshot: {}, items: [], bank: { coins: 1 },
+    }).value.keep,
+    blankEntry: api.clue.keep({ name: '', extra: [''] }).value.keep,
+  });
+}
+"#;
+    let value = probe(src);
+    assert_eq!(value["ok"], true, "{value:?}");
+    assert_eq!(value["then"], "undefined", "{value:?}");
+    assert_eq!(value["keep"], true, "{value:?}");
+    assert_eq!(value["keys"], serde_json::json!(["keep"]), "{value:?}");
+    assert!(value.get("error").is_none(), "{value:?}");
+    assert_eq!(value["type"], "function", "{value:?}");
+    for key in ["coins", "shantay", "trio", "scroll", "trail", "pirate"] {
+        assert_eq!(value[key], true, "{key} {value:?}");
+    }
+    // Nothing is trimmed, so the padded name is not the identity.
+    assert_eq!(value["padded"], false, "{value:?}");
+    assert_eq!(value["sharkOk"], true, "{value:?}");
+    assert_eq!(value["shark"], false, "{value:?}");
+    assert!(value.get("sharkError").is_none(), "{value:?}");
+    assert_eq!(value["blank"], false, "{value:?}");
+    for key in [
+        "extra",
+        "extraUpper",
+        "extraCannotUnkeep",
+        "extraKeys",
+        "blankEntry",
+    ] {
+        assert_eq!(value[key], true, "{key} {value:?}");
+    }
+    for key in ["extraWide", "extraMiss"] {
+        assert_eq!(value[key], false, "{key} {value:?}");
+    }
+}
+
+#[test]
+fn v2_clue_keep_requires_a_name_and_an_all_string_extra() {
+    let src = r#"
+export const apiVersion = 2;
+export function tick(api) {
+  globalThis.__probe = JSON.stringify({
+    omitted: api.clue.keep(),
+    undefinedInput: api.clue.keep(undefined),
+    nullArg: api.clue.keep(null),
+    array: api.clue.keep([]),
+    stringArg: api.clue.keep('Spade'),
+    numberArg: api.clue.keep(1),
+    // name is required: a missing, null, or converted one is invalid-args
+    // rather than an empty or stringified name.
+    empty: api.clue.keep({}),
+    nullName: api.clue.keep({ name: null }),
+    undefinedName: api.clue.keep({ name: undefined }),
+    numberName: api.clue.keep({ name: 1 }),
+    boolName: api.clue.keep({ name: true }),
+    boxedName: api.clue.keep({ name: new String('Spade') }),
+    arrayName: api.clue.keep({ name: ['Spade'] }),
+    // extra is optional, but a present null, non-array, or non-string
+    // element is invalid-args.
+    extraNull: api.clue.keep({ name: 'Spade', extra: null }),
+    extraString: api.clue.keep({ name: 'Spade', extra: 'Shark' }),
+    extraNumber: api.clue.keep({ name: 'Spade', extra: 3 }),
+    extraObject: api.clue.keep({ name: 'Spade', extra: {} }),
+    extraBool: api.clue.keep({ name: 'Spade', extra: true }),
+    extraNumberElement: api.clue.keep({ name: 'Spade', extra: [1] }),
+    extraNullElement: api.clue.keep({ name: 'Spade', extra: [null] }),
+    extraUndefinedElement: api.clue.keep({ name: 'Spade', extra: [undefined] }),
+    extraBoxedElement: api.clue.keep({ name: 'Spade', extra: [new String('Shark')] }),
+    extraArrayElement: api.clue.keep({ name: 'Spade', extra: [['Shark']] }),
+    extraObjectElement: api.clue.keep({ name: 'Spade', extra: [{ name: 'Shark' }] }),
+    extraSparse: api.clue.keep({ name: 'Spade', extra: new Array(1) }),
+    // The present shapes that are not errors.
+    blankName: api.clue.keep({ name: '' }),
+    emptyExtra: api.clue.keep({ name: 'spade', extra: [] }),
+    blankEntry: api.clue.keep({ name: '', extra: [''] }),
+    extraOnly: api.clue.keep({ name: 'Rope', extra: ['Rope'] }),
+  });
+}
+"#;
+    let value = probe(src);
+    for key in [
+        "omitted",
+        "undefinedInput",
+        "nullArg",
+        "array",
+        "stringArg",
+        "numberArg",
+        "empty",
+        "nullName",
+        "undefinedName",
+        "numberName",
+        "boolName",
+        "boxedName",
+        "arrayName",
+        "extraNull",
+        "extraString",
+        "extraNumber",
+        "extraObject",
+        "extraBool",
+        "extraNumberElement",
+        "extraNullElement",
+        "extraUndefinedElement",
+        "extraBoxedElement",
+        "extraArrayElement",
+        "extraObjectElement",
+        "extraSparse",
+    ] {
+        assert_eq!(value[key]["error"], "invalid-args", "{key} {value:?}");
+        assert!(value[key].get("value").is_none(), "{key} {value:?}");
+    }
+    assert_eq!(value["blankName"]["ok"], true, "{value:?}");
+    assert_eq!(value["blankName"]["value"]["keep"], false, "{value:?}");
+    for key in ["emptyExtra", "blankEntry", "extraOnly"] {
+        assert_eq!(value[key]["ok"], true, "{key} {value:?}");
+        assert_eq!(value[key]["value"]["keep"], true, "{key} {value:?}");
+    }
+}
+
+#[test]
+fn v2_clue_keep_is_not_a_request_op_and_pushes_no_interact() {
+    let src = r#"
+export const apiVersion = 2;
+export function tick(api) {
+  let requested = null;
+  try { api.request({ op: 'keep' }); requested = 'ok'; }
+  catch (e) { requested = String(e && (e.message || e)); }
+  globalThis.__probe = JSON.stringify({
+    kept: api.clue.keep({ name: 'Clue scroll' }),
+    begin: typeof api.clue.begin,
+    next: typeof api.clue.next,
+    challengeAnswer: typeof api.clue.challengeAnswer,
+    deposit: typeof api.clue.deposit,
+    retry: typeof api.clue.retry,
+    noteDeath: typeof api.clue.noteDeath,
+    requested,
+  });
+}
+"#;
+    let iso = LoadIsolate::spawn(src.into(), LoadShape::NativeTick, vec![]).unwrap();
+    iso.on_game_tick(1);
+    let value: serde_json::Value =
+        serde_json::from_str(iso.probe("globalThis.__probe").unwrap().as_str().unwrap()).unwrap();
+    let interacts = iso.drain_interacts();
+    iso.join();
+    assert_eq!(value["kept"]["ok"], true, "{value:?}");
+    assert_eq!(value["kept"]["value"]["keep"], true, "{value:?}");
+    for key in ["begin", "next"] {
+        assert_eq!(value[key], "function", "{key} {value:?}");
+    }
+    for key in ["challengeAnswer", "deposit", "retry", "noteDeath"] {
+        assert_eq!(value[key], "undefined", "{key} {value:?}");
+    }
+    assert!(
+        value["requested"]
+            .as_str()
+            .unwrap_or("")
+            .contains("not impl"),
+        "{value:?}"
+    );
+    assert!(
+        interacts.is_empty(),
+        "keep must not push interact: {interacts:?}"
+    );
+}
+
+#[test]
+fn example_clue_keep_v2_is_one_read_only_keep_call() {
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("examples")
+        .join("clue_keep_v2.ts");
+    let src = std::fs::read_to_string(&path).expect("example source");
+    assert!(!src.contains("request("));
+    assert!(!src.contains("h.interact"));
+    assert!(!src.contains("api.snapshot"));
+    assert!(!src.contains("deposit"));
+    assert!(!src.contains("challengeAnswer"));
+    assert_eq!(src.matches("api.clue").count(), 1);
+    assert_eq!(src.matches("api.clue.keep(").count(), 1);
+    let js = script::transpile_ts(&src).expect("transpile clue_keep_v2.ts");
+    let iso = LoadIsolate::spawn(js, LoadShape::NativeTick, vec![]).unwrap();
+    iso.on_game_tick(1);
+    let err = iso
+        .probe("globalThis.__rs2b0t_host.lastError || ''")
+        .unwrap();
+    let logs = iso.drain_logs();
+    iso.join();
+    assert_eq!(err.as_str().unwrap_or(""), "", "example lastError: {err:?}");
+    let last = logs
+        .iter()
+        .rev()
+        .find(|line| line.contains("\"keep\""))
+        .unwrap_or_else(|| panic!("example logged a keep result; logs={logs:?}"));
+    let keep: serde_json::Value = serde_json::from_str(last).unwrap();
+    assert_eq!(keep["ok"], true, "{keep:?}");
+    assert_eq!(keep["value"]["keep"], true, "{keep:?}");
 }

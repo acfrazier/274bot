@@ -1482,7 +1482,7 @@ export function tick(api) {
     assert_eq!(probe["rowType"], "function", "{probe:?}");
     assert_eq!(
         probe["keys"],
-        serde_json::json!(["row", "heldStep", "packPlan", "hardKit", "begin", "next"]),
+        serde_json::json!(["row", "heldStep", "packPlan", "hardKit", "keep", "begin", "next"]),
         "{probe:?}"
     );
     // An empty posted page is `none-held`, and a refused begin leaves no live
