@@ -770,6 +770,24 @@ pub(super) fn materialize_snapshot(
             set(&mut scope, obj, "main_modal_texts", modal.into())?;
         }
     }
+    // The open puzzle board. A present table is the observation — including
+    // the closed `{-1, 0, []}` object, which is NOT an omitted slot. An
+    // omitted slot keeps the page's last board (delta keep); on a keyframe
+    // (`had` is false) an absent table fail-closes to the closed board plus
+    // generation 0, the same class as the empty rows above, so a keyframe
+    // can never leave the page without a board. The generation is written
+    // only here, beside the table, and always with it.
+    if snap.has_puzzle_board() {
+        let board = puzzle_board_object(&mut scope, snap.puzzle_board())?;
+        set(&mut scope, obj, "puzzle_board", board)?;
+        let generation = num(&mut scope, snap.puzzle_board_generation() as f64);
+        set(&mut scope, obj, "puzzle_board_generation", generation)?;
+    } else if !had {
+        let board = closed_puzzle_board(&mut scope)?;
+        set(&mut scope, obj, "puzzle_board", board)?;
+        let zero = num(&mut scope, 0.0);
+        set(&mut scope, obj, "puzzle_board_generation", zero)?;
+    }
     if snap.has_chat_modal_id() {
         let chat_modal_id = num(&mut scope, snap.chat_modal_id() as f64);
         set(&mut scope, obj, "chat_modal_id", chat_modal_id)?;
@@ -1497,6 +1515,44 @@ fn chat_line_array<'s>(
     Ok(arr.into())
 }
 
+/// The puzzle board as the page reads it: the identified component, its
+/// `link_obj_type` slot count and its sparse rows. All three keys are always
+/// written — a closed board is `{ component_id: -1, size: 0, items: [] }`,
+/// never a missing property.
+fn puzzle_board_object<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    board: Option<crate::isolate_fb::PuzzleBoardReader<'_>>,
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    match board {
+        Some(board) => board_object(scope, board.component_id(), board.size(), &board.items()),
+        None => closed_puzzle_board(scope),
+    }
+}
+
+/// The observed closed board: `{ component_id: -1, size: 0, items: [] }`.
+/// A present object, not an omitted property.
+fn closed_puzzle_board<'s>(
+    scope: &mut v8::HandleScope<'s>,
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    board_object(scope, -1, 0, &[])
+}
+
+fn board_object<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    component_id: i32,
+    size: i32,
+    rows: &[crate::isolate_fb::RowReader<'_>],
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    let o = v8::Object::new(scope);
+    let component_id = num(scope, component_id as f64);
+    set(scope, o, "component_id", component_id)?;
+    let size = num(scope, size as f64);
+    set(scope, o, "size", size)?;
+    let items = row_array(scope, rows)?;
+    set(scope, o, "items", items)?;
+    Ok(o.into())
+}
+
 fn widget_text_array<'s>(
     scope: &mut v8::HandleScope<'s>,
     rows: &[crate::isolate_fb::WidgetTextReader<'_>],
@@ -1671,4 +1727,131 @@ fn inspect_hop_array<'s>(
             .ok_or_else(|| "v8 array set failed".to_string())?;
     }
     Ok(arr.into())
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::isolate_fb::tests::empty_input;
+    use crate::isolate_fb::{
+        encode_snapshot, encode_snapshot_with_native, ItemRowInput, NativeFactsInput,
+        PuzzleBoardInput,
+    };
+    use crate::load::{LoadIsolate, LoadShape};
+
+    fn spawn_isolate() -> LoadIsolate {
+        LoadIsolate::spawn(
+            "export function tick(api) {}".into(),
+            LoadShape::NativeTick,
+            vec![],
+        )
+        .expect("isolate")
+    }
+
+    fn board(iso: &LoadIsolate) -> serde_json::Value {
+        iso.probe("globalThis.__rs2b0t_host.snapshot.puzzle_board")
+            .expect("board probe")
+    }
+
+    fn generation(iso: &LoadIsolate) -> serde_json::Value {
+        iso.probe("globalThis.__rs2b0t_host.snapshot.puzzle_board_generation")
+            .expect("generation probe")
+    }
+
+    fn piece(ops: &[String], id: i32, slot: i32, component_id: i32) -> ItemRowInput<'_> {
+        ItemRowInput {
+            name: Some("Piece"),
+            count: 1,
+            id,
+            ops,
+            noted: false,
+            cert: -1,
+            component_id,
+            slot,
+        }
+    }
+
+    fn open_board<'a>(
+        rows: &'a [ItemRowInput<'a>],
+        size: i32,
+        generation: u64,
+    ) -> NativeFactsInput<'a> {
+        NativeFactsInput {
+            puzzle_board: Some(PuzzleBoardInput {
+                component_id: 6600,
+                size,
+                items: rows,
+                generation,
+            }),
+            ..NativeFactsInput::default()
+        }
+    }
+
+    /// A keyframe that never carried a board still leaves a closed board on
+    /// the page (`{ -1, 0, [] }` and generation 0) — the shim never reads a
+    /// missing property, and a later delta cannot keep a board that was
+    /// never posted.
+    #[test]
+    fn keyframe_without_a_board_fail_closes_to_a_closed_board() {
+        let iso = spawn_isolate();
+        iso.post_snapshot(encode_snapshot(&empty_input(1)));
+        let board = board(&iso);
+        assert_eq!(board["component_id"], -1);
+        assert_eq!(board["size"], 0);
+        assert_eq!(board["items"], serde_json::json!([]));
+        assert_eq!(generation(&iso), 0);
+        iso.join();
+    }
+
+    /// A present board writes all three keys, and a later post that omits
+    /// the table keeps them (delta omit = keep, not a silent close).
+    #[test]
+    fn delta_without_a_board_keeps_the_last_board() {
+        let iso = spawn_isolate();
+        let rows = [piece(&[], 6975, 3, 6600)];
+        iso.post_snapshot(encode_snapshot_with_native(
+            &empty_input(1),
+            open_board(&rows, 25, 7),
+        ));
+        let posted = board(&iso);
+        assert_eq!(posted["component_id"], 6600);
+        assert_eq!(posted["size"], 25);
+        assert_eq!(posted["items"][0]["slot"], 3);
+        assert_eq!(generation(&iso), 7);
+
+        iso.post_snapshot(encode_snapshot(&empty_input(2)));
+        let kept = board(&iso);
+        assert_eq!(kept["component_id"], 6600, "an omitted table is a keep");
+        assert_eq!(kept["size"], 25);
+        assert_eq!(kept["items"][0]["id"], 6975);
+        assert_eq!(generation(&iso), 7);
+        iso.join();
+    }
+
+    /// A closed session posts the present empty board plus its bumped
+    /// generation, so a close can never be mistaken for a delta keep.
+    #[test]
+    fn closed_board_posts_the_closed_object_with_its_generation() {
+        let iso = spawn_isolate();
+        let rows = [piece(&[], 6975, 3, 6600)];
+        iso.post_snapshot(encode_snapshot_with_native(
+            &empty_input(1),
+            open_board(&rows, 25, 7),
+        ));
+        let closed = NativeFactsInput {
+            puzzle_board: Some(PuzzleBoardInput {
+                component_id: -1,
+                size: 0,
+                items: &[],
+                generation: 8,
+            }),
+            ..NativeFactsInput::default()
+        };
+        iso.post_snapshot(encode_snapshot_with_native(&empty_input(2), closed));
+        let board = board(&iso);
+        assert_eq!(board["component_id"], -1);
+        assert_eq!(board["size"], 0);
+        assert_eq!(board["items"], serde_json::json!([]));
+        assert_eq!(generation(&iso), 8);
+        iso.join();
+    }
 }

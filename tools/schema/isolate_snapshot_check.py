@@ -328,8 +328,8 @@ def run_self_test() -> int:
         extra_fbs = tmp_path / "extra.fbs"
         extra_fbs.write_text(
             text.replace(
-                "  combat_level: int;\n}",
-                "  combat_level: int;\n  phantom_field: int;\n}",
+                "  puzzle_board_generation: ulong;\n}",
+                "  puzzle_board_generation: ulong;\n  phantom_field: int;\n}",
             ),
             encoding="utf-8",
         )

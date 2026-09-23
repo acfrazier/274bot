@@ -351,6 +351,20 @@ pub struct SideTabView {
     pub widgets: Vec<WidgetView>,
 }
 
+/// The open puzzle board observation: the identified piece container (the
+/// first depth-first TYPE_INV with `obj_ops` under the main modal), its
+/// `link_obj_type` slot count and its rows. `component_id` is `-1` for a
+/// closed board (`size` 0, no rows) — a present fact the snapshot posts, not
+/// an omitted slot. `items` borrows the identified widget's own rows: the
+/// board never copies the world onto the isolate.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+pub struct PuzzleBoardView<'a> {
+    pub component_id: i32,
+    pub size: i32,
+    pub generation: u64,
+    pub items: &'a [ItemView],
+}
+
 /// The trade ifaces' state and the four trade containers.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct TradeView {
@@ -700,6 +714,16 @@ pub struct GameSnapshot {
     /// The open main modal's withdraw component (the m8aq
     /// `bankComponentId`); -1 while no bank is open.
     bank_component_id: i32,
+    /// The open puzzle board's identified TYPE_INV component (the first
+    /// depth-first component with `obj_ops` under the main modal); -1 while
+    /// no board is open.
+    puzzle_board_component_id: i32,
+    /// That component's `link_obj_type` slot count, as observed (never the
+    /// row count).
+    puzzle_board_size: i32,
+    /// Puzzle-session identity: bumps when the modal session opens, closes,
+    /// or the board component changes — never on a piece move.
+    puzzle_session_generation: u64,
     /// Snapshot-local identity for the current bank session. This advances
     /// whenever the selected withdraw component opens, closes, or changes.
     bank_session_generation: u64,
@@ -774,6 +798,10 @@ pub struct GameSnapshot {
     make_products_gate: u64,
     #[serde(skip)]
     main_make_gate: InvIfaceGate,
+    /// Whether the main modal was open at the last board refresh (the
+    /// session edge the generation advances on).
+    #[serde(skip)]
+    puzzle_board_open: bool,
     #[serde(skip)]
     quest_statuses_gate: u64,
     #[serde(skip)]
@@ -835,6 +863,9 @@ impl Default for GameSnapshot {
             bank_side: Vec::new(),
             inventory_size: 0,
             bank_component_id: -1,
+            puzzle_board_component_id: -1,
+            puzzle_board_size: 0,
+            puzzle_session_generation: 0,
             bank_session_generation: 0,
             bank_modal_generation_seen: 0,
             bank_loaded: false,
@@ -884,6 +915,7 @@ impl Default for GameSnapshot {
             chat_options_gate: 0,
             make_products_gate: 0,
             main_make_gate: InvIfaceGate::default(),
+            puzzle_board_open: false,
             quest_statuses_gate: 0,
             modals_gate: 0,
             controls_gate: 0,
@@ -1264,6 +1296,25 @@ impl GameSnapshot {
     /// rebuild; -1 while no bank is open.
     pub fn bank_component_id(&self) -> i32 {
         self.bank_component_id
+    }
+
+    /// The open puzzle board: the identified TYPE_INV component (the first
+    /// depth-first component with `obj_ops` under the main modal), its
+    /// `link_obj_type` slot count, its session generation and the rows the
+    /// identified widget already holds. Always present — `component_id` is
+    /// `-1` for a closed board, which is a postable observation, not an
+    /// omitted fact. The rows borrow that widget's own view: no copy.
+    pub fn puzzle_board(&self) -> PuzzleBoardView<'_> {
+        PuzzleBoardView {
+            component_id: self.puzzle_board_component_id,
+            size: self.puzzle_board_size,
+            generation: self.puzzle_session_generation,
+            items: self
+                .widgets
+                .iter()
+                .find(|w| w.component_id == self.puzzle_board_component_id)
+                .map_or(&[], |w| w.items.as_slice()),
+        }
     }
 
     /// Identity of the current bank open/close session.
@@ -2183,6 +2234,42 @@ impl GameSnapshot {
         true
     }
 
+    /// Puzzle-board refresh: the open main modal's first depth-first
+    /// TYPE_INV with `obj_ops` (`find_inv_component` — the same helper the
+    /// bank's withdraw component uses; the hint panel is excluded because it
+    /// has no `obj_ops`). The board's identity and its `link_obj_type` slot
+    /// count are observed here, beside `main_modal_texts` (slot 248: the
+    /// board is slot 250 of the same observation); the rows are read from
+    /// the identified widget the widgets family already walked, never from
+    /// a world copy.
+    ///
+    /// The session generation advances on a session open, a session close or
+    /// a new board component — never on a piece move, so a stale generation
+    /// stays a publishable observation rather than a packet verdict.
+    fn refresh_puzzle_board(&mut self, client: &Client) {
+        let open = client.main_modal_id != -1;
+        let component_id = if open {
+            find_inv_component(client, client.main_modal_id, |com| com.obj_ops).unwrap_or(-1)
+        } else {
+            -1
+        };
+        if open != self.puzzle_board_open {
+            self.puzzle_board_open = open;
+            self.puzzle_session_generation = self.puzzle_session_generation.wrapping_add(1);
+        } else if component_id != self.puzzle_board_component_id {
+            self.puzzle_session_generation = self.puzzle_session_generation.wrapping_add(1);
+        }
+        self.puzzle_board_component_id = component_id;
+        self.puzzle_board_size = if component_id == -1 {
+            0
+        } else {
+            client
+                .if_(component_id as usize)
+                .and_then(|com| com.link_obj_type.as_ref().map(|ids| ids.len() as i32))
+                .unwrap_or(0)
+        };
+    }
+
     /// Controls rebuild: the run/retaliate toggle pairs from the
     /// player-controls overlay (a table scan — the overlay is a side tab,
     /// so its root is not among the widget roots).
@@ -2211,6 +2298,7 @@ impl GameSnapshot {
         self.active_side_tab = client.active_icon;
         self.main_modal_texts = modal_texts(client, client.main_modal_id);
         self.chat_modal_texts = modal_texts(client, client.chat_modal_id);
+        self.refresh_puzzle_board(client);
         moved
     }
 
@@ -2622,6 +2710,12 @@ impl<'a> ReadContext<'a> {
     /// Identity of the current bank open/close session.
     pub fn bank_session_generation(&self) -> u64 {
         self.0.bank_session_generation()
+    }
+
+    /// The open puzzle board (identity, slot count, session generation and
+    /// the identified widget's rows). `component_id` is -1 when closed.
+    pub fn puzzle_board(&self) -> PuzzleBoardView<'_> {
+        self.0.puzzle_board()
     }
 
     /// Whether the current bank component has fresh, transmitting full data.

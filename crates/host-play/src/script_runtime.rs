@@ -2211,8 +2211,9 @@ pub(super) fn with_script_snapshot_input<R>(
     use script::isolate_fb::{
         BankApproachInput, BankStandInput, ChatLineInput, ChatOptionInput, CollisionViewInput,
         CombatStyleInput, ItemRowInput, MainModalTextsInput, MakeButtonInput, MakeProductInput,
-        NativeFactsInput, NearestBoothInput, QuestStatusInput, ReachViewInput, SceneEntityInput,
-        SideTabIfaceInput, SnapshotInput, StatInput, TileInput, VarpInput, WidgetTextInput,
+        NativeFactsInput, NearestBoothInput, PuzzleBoardInput, QuestStatusInput, ReachViewInput,
+        SceneEntityInput, SideTabIfaceInput, SnapshotInput, StatInput, TileInput, VarpInput,
+        WidgetTextInput,
     };
 
     let flood = snapshot.and_then(|s| {
@@ -3093,6 +3094,54 @@ pub(super) fn with_script_snapshot_input<R>(
             text,
         })
         .collect();
+    // The open puzzle board, posted next to the widget-text map: the
+    // identified component, its observed slot count, its rows mapped from
+    // that widget's own `ItemView`s (bounded — one row per stored slot) and
+    // the session generation. `None` only when there is no snapshot at all
+    // (not supplied); a closed board is `Some` with component -1 and no
+    // rows, so a close can never be mistaken for a delta keep.
+    let puzzle_board_ops_store: Vec<Vec<String>>;
+    let puzzle_board_items_store: Vec<ItemRowInput<'_>>;
+    let puzzle_board = if let Some(s) = snapshot {
+        let board = s.puzzle_board();
+        puzzle_board_ops_store = board
+            .items
+            .iter()
+            .map(|it| {
+                it.actions
+                    .iter()
+                    .filter_map(|a| a.as_deref().map(str::to_string))
+                    .collect()
+            })
+            .collect();
+        puzzle_board_items_store = board
+            .items
+            .iter()
+            .enumerate()
+            .map(|(i, it)| ItemRowInput {
+                name: obj_names
+                    .and_then(|names| names.name(it.def.id))
+                    .or(it.def.name.as_deref()),
+                count: it.count,
+                id: it.def.id,
+                ops: &puzzle_board_ops_store[i],
+                noted: it.def.noted,
+                cert: posted_cert(obj_names, &it.def),
+                component_id: it.component_id,
+                slot: it.slot,
+            })
+            .collect();
+        Some(PuzzleBoardInput {
+            component_id: board.component_id,
+            size: board.size,
+            items: &puzzle_board_items_store,
+            generation: board.generation,
+        })
+    } else {
+        puzzle_board_ops_store = Vec::new();
+        puzzle_board_items_store = Vec::new();
+        None
+    };
     let quest_statuses: Vec<QuestStatusInput<'_>> = snapshot
         .map(|s| {
             s.quest_statuses()
@@ -3295,6 +3344,7 @@ pub(super) fn with_script_snapshot_input<R>(
             .map(|controls| (controls.on_component_id, controls.off_component_id)),
         quest_statuses,
         main_modal_texts,
+        puzzle_board,
         npc_boxes,
         shop_player,
         main_make,
@@ -4494,5 +4544,208 @@ pub(super) fn reset_script_nav(navs: &Arc<Mutex<HashMap<String, NavBot>>>, name:
         nav.walk_request_id = 0;
         nav.clear_walk_outcome();
         route_inspect::reset_inspect(nav);
+    }
+}
+
+/// Puzzle-board post tests: the production observe path
+/// ([`with_script_snapshot_input`] via [`script_snapshot_fb`]) over a
+/// client whose main modal holds both a hint panel (a TYPE_INV without
+/// `obj_ops`) and the piece container.
+#[cfg(test)]
+mod tests {
+    use api::snapshot::GameSnapshot;
+    use client::client::{Client, ClientConfig};
+    use client::config::if_type::{ComponentType, IfType, IfTypeMut};
+    use client::io::ServerProt;
+    use script::isolate_fb::decode_snapshot;
+
+    use super::script_snapshot_fb;
+
+    const HINT: usize = 0;
+    const BOARD: usize = 1;
+    const ROOT: usize = 2;
+
+    /// A client whose open main modal walks the hint panel first: the root's
+    /// children are pushed in reverse (the search pops the last child), so
+    /// `HINT` is visited before `BOARD` and must be rejected for its missing
+    /// `obj_ops` rather than picked as the board.
+    fn client_with_hint_and_board() -> Client {
+        let mut c = Client::new(ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            members: true,
+            lowmem: false,
+        });
+        let hint = c.push_iface(IfType {
+            id: HINT as i32,
+            r#type: ComponentType::TYPE_INV,
+            ..IfType::default()
+        });
+        assert_eq!(hint, HINT, "fixture ids");
+        c.set_iface_mut(
+            HINT,
+            IfTypeMut {
+                // A populated hint container: order alone must not make it
+                // the board.
+                link_obj_type: Some(vec![4001, 4002]),
+                link_obj_number: Some(vec![1, 1]),
+                ..IfTypeMut::default()
+            },
+        );
+        let board = c.push_iface(IfType {
+            id: BOARD as i32,
+            r#type: ComponentType::TYPE_INV,
+            obj_ops: true,
+            iop: [Some("Take".into()), None, None, None, None],
+            ..IfType::default()
+        });
+        assert_eq!(board, BOARD, "fixture ids");
+        c.set_iface_mut(
+            BOARD,
+            IfTypeMut {
+                // Slot 1 is empty: the stored rows stay sparse.
+                link_obj_type: Some(vec![2001, 0, 2003]),
+                link_obj_number: Some(vec![1, 0, 1]),
+                ..IfTypeMut::default()
+            },
+        );
+        let root = c.push_iface(IfType {
+            id: ROOT as i32,
+            r#type: 0,
+            children: Some(vec![BOARD as i32, HINT as i32]),
+            ..IfType::default()
+        });
+        assert_eq!(root, ROOT, "fixture ids");
+        c.set_iface_mut(
+            root,
+            IfTypeMut {
+                text: "Puzzle board".into(),
+                ..IfTypeMut::default()
+            },
+        );
+        c.main_modal_id = root as i32;
+        c
+    }
+
+    fn post(snap: &GameSnapshot, tick: u64) -> Vec<u8> {
+        script_snapshot_fb(
+            None,
+            false,
+            tick,
+            None,
+            true,
+            None,
+            Some(snap),
+            None,
+            None,
+            false,
+            false,
+            false,
+        )
+        .0
+    }
+
+    /// The board is the `obj_ops` component (never the hint), its size is
+    /// the observed `link_obj_type` length, its rows are sparse, and it is
+    /// posted in the same buffer as the widget-text map — borrowing the
+    /// identified widget's rows instead of copying the world.
+    #[test]
+    fn observed_board_posts_bounded_rows_beside_the_widget_texts() {
+        let mut c = client_with_hint_and_board();
+        c.bump_gens(ServerProt::IF_OPENMAIN);
+        let mut snap = GameSnapshot::new();
+        snap.rebuild(&c);
+
+        let board = snap.puzzle_board();
+        assert_eq!(board.component_id, BOARD as i32, "the obj_ops TYPE_INV");
+        assert_eq!(board.size, 3, "size is link_obj_type.length");
+        assert_eq!(board.items.len(), 2, "the empty slot yields no row");
+        assert_eq!((board.items[0].def.id, board.items[0].slot), (2000, 0));
+        assert_eq!((board.items[1].def.id, board.items[1].slot), (2002, 2));
+        assert_eq!(
+            board.items[0].actions[0].as_deref(),
+            Some("Take"),
+            "component ops, not held ops"
+        );
+        // No world copy: the board borrows the identified widget's own rows.
+        let widget = snap
+            .widgets()
+            .iter()
+            .find(|w| w.component_id == board.component_id)
+            .expect("the board widget was walked");
+        assert!(std::ptr::eq(board.items.as_ptr(), widget.items.as_ptr()));
+
+        let bytes = post(&snap, 1);
+        let view = decode_snapshot(&bytes).expect("snapshot");
+        let posted = view.puzzle_board().expect("board posted");
+        assert_eq!(posted.component_id(), BOARD as i32);
+        assert_eq!(posted.size(), 3);
+        let rows = posted.items();
+        assert_eq!(rows.len(), 2, "bounded to the stored slots");
+        assert_eq!(rows[0].id(), 2000);
+        assert_eq!(rows[0].slot(), 0);
+        assert_eq!(rows[0].component_id(), BOARD as i32);
+        assert_eq!(rows[0].ops(), vec!["Take"]);
+        assert_eq!(rows[1].id(), 2002);
+        assert_eq!(rows[1].slot(), 2);
+        assert_eq!(
+            view.puzzle_board_generation(),
+            board.generation,
+            "the generation is posted with the table"
+        );
+        // The widget-text map is untouched by the board: same buffer, own rows.
+        let texts = view.widgets();
+        assert_eq!(texts.len(), 1);
+        assert_eq!(texts[0].component_id(), ROOT as i32);
+        assert_eq!(texts[0].text(), "Puzzle board");
+    }
+
+    /// The session generation advances on a session open, a session close
+    /// or a new board component — never on a piece move.
+    #[test]
+    fn generation_bumps_only_on_session_events() {
+        let mut c = client_with_hint_and_board();
+        c.bump_gens(ServerProt::IF_OPENMAIN);
+        let mut snap = GameSnapshot::new();
+        snap.rebuild(&c);
+        let opened = snap.puzzle_board().generation;
+        assert_eq!(opened, 1, "the session open bumps once");
+
+        // A piece move: the inv gen moves (rows change), identity holds.
+        c.set_iface_mut(
+            BOARD,
+            IfTypeMut {
+                link_obj_type: Some(vec![2003, 0, 0]),
+                link_obj_number: Some(vec![1, 0, 0]),
+                ..IfTypeMut::default()
+            },
+        );
+        c.bump_gens(ServerProt::UPDATE_INV_PARTIAL);
+        assert!(snap.rebuild(&c));
+        assert_eq!(snap.puzzle_board().items.len(), 1);
+        assert_eq!(
+            snap.puzzle_board().generation,
+            opened,
+            "a piece move is not a session event"
+        );
+
+        // Close: a present closed board on a bumped generation, so a later
+        // delta keep cannot leak the live board onto this isolate.
+        c.main_modal_id = -1;
+        c.bump_gens(ServerProt::IF_CLOSE);
+        snap.rebuild(&c);
+        let closed = snap.puzzle_board();
+        assert_eq!(closed.component_id, -1);
+        assert_eq!(closed.size, 0);
+        assert!(closed.items.is_empty());
+        assert_eq!(closed.generation, opened + 1, "the close bumps once");
+        let bytes = post(&snap, 2);
+        let view = decode_snapshot(&bytes).expect("snapshot");
+        let posted = view.puzzle_board().expect("closed board is present");
+        assert_eq!(posted.component_id(), -1);
+        assert_eq!(posted.size(), 0);
+        assert!(posted.items().is_empty());
+        assert_eq!(view.puzzle_board_generation(), opened + 1);
     }
 }

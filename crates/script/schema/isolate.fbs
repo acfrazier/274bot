@@ -202,6 +202,17 @@ table MainModalTexts {
   texts: [string];
 }
 
+// One puzzle board observation: the identified piece container's component
+// id, its `link_obj_type` slot count, and its stored rows in slot order
+// (sparse — an empty slot contributes no row). `component_id: -1` with
+// `size: 0` and no rows is the observed closed board. All three fields are
+// written whenever the table is present.
+table PuzzleBoard {
+  component_id: int;
+  size: int;
+  items: [Row];
+}
+
 // One live NPC's projected overlay-canvas box. `points` is sixteen ints
 // (x0,y0, ... x7,y7): ground ring first, then the top ring, same winding.
 table NpcBox {
@@ -383,6 +394,19 @@ table Snapshot {
   // this buffer posts as `main_modal_id`, so a text-only change co-posts
   // slot 68 and the page never reads lines under a stale root.
   main_modal_texts: MainModalTexts;
+  // The open puzzle board's piece container, slot 250 (next after 248): the
+  // first depth-first TYPE_INV with `obj_ops` under the open main modal
+  // (`find_inv_component`; the hint panel has no `obj_ops`). A present table
+  // always writes `component_id`, `size` (the component's `link_obj_type`
+  // length — NOT the row count) and `items` together; `{ component_id: -1,
+  // size: 0, items: [] }` is an observed closed board, and an OMITTED
+  // Snapshot slot is not that object (the isolate keeps its last board).
+  puzzle_board: PuzzleBoard;
+  // The board's session identity (ulong, slot 252). It bumps on session
+  // open, session close, or a new board component id, and never on a piece
+  // move. Posted only together with the table above, in the same buffer as
+  // one delta family.
+  puzzle_board_generation: ulong;
 }
 
 table Collision {

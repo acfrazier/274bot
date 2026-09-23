@@ -228,6 +228,8 @@ const VT_SNAP_COLLISION: VOffsetT = 242;
 const VT_SNAP_SELF_TARGET_KIND: VOffsetT = 244;
 const VT_SNAP_SELF_TARGET_INDEX: VOffsetT = 246;
 const VT_SNAP_MAIN_MODAL_TEXTS: VOffsetT = 248;
+const VT_SNAP_PUZZLE_BOARD: VOffsetT = 250;
+const VT_SNAP_PUZZLE_BOARD_GENERATION: VOffsetT = 252;
 
 const VT_COL_AVAILABLE: VOffsetT = 4;
 const VT_COL_BASE_X: VOffsetT = 6;
@@ -285,6 +287,11 @@ const VT_QUEST_COMPONENT: VOffsetT = 8;
 // MainModalTexts: { root, texts }
 const VT_MMT_ROOT: VOffsetT = 4;
 const VT_MMT_TEXTS: VOffsetT = 6;
+
+// PuzzleBoard: { component_id, size, items }
+const VT_PB_COMPONENT_ID: VOffsetT = 4;
+const VT_PB_SIZE: VOffsetT = 6;
+const VT_PB_ITEMS: VOffsetT = 8;
 
 // NpcBox: { index, points }
 const VT_NPC_BOX_INDEX: VOffsetT = 4;
@@ -785,6 +792,12 @@ pub struct NativeFactsInput<'a> {
     /// `root: -1, texts: []` = observed closed, a present table. The two
     /// are not equal, and an empty vector is still a supplied walk.
     pub main_modal_texts: Option<MainModalTextsInput<'a>>,
+    /// The open puzzle board (rows + session generation). `None` = not
+    /// supplied this post (omit both slots — the isolate keeps its last
+    /// board); `Some` with `component_id: -1` = observed closed, a present
+    /// table. The two are not equal. A present board always posts the
+    /// generation in the same buffer.
+    pub puzzle_board: Option<PuzzleBoardInput<'a>>,
     pub npc_boxes: Option<&'a [NpcBoxInput]>,
     /// The shop side interface's player pack rows (`shop_template_side:inv`,
     /// 3823). `None` = that container was not decoded this rebuild: Sell must
@@ -903,6 +916,31 @@ pub struct MainModalTextsInput<'a> {
     /// TYPE_TEXT lines in walk order, tags intact. Empty is a real walk
     /// (a closed modal, or an open one whose tree has no text).
     pub texts: &'a [String],
+}
+
+/// The open puzzle board's piece container, the rows it stores and its
+/// session generation. ONE value: a present board always writes
+/// `component_id`, `size` and `items` together, and the generation is
+/// written in the same buffer (never without the table), so a buffer can
+/// never carry one session's rows beside another session's generation.
+/// Kept off [`SnapshotInput`] (like [`NativeFactsInput`]) so one-shot
+/// callers that never walked a board do not gain an observation they did
+/// not make.
+#[derive(Clone, Copy)]
+pub struct PuzzleBoardInput<'a> {
+    /// The identified TYPE_INV component, or `-1` for an observed closed
+    /// board (posted as `{ -1, 0, [] }` plus the generation, NOT omitted —
+    /// an omitted slot keeps the isolate's last board).
+    pub component_id: i32,
+    /// The component's `link_obj_type` slot count, not `items.len()`: a
+    /// wrong size is an observation and is posted as observed.
+    pub size: i32,
+    /// The identified widget's stored rows, sparse (an empty slot
+    /// contributes no row). Empty is a real board with no pieces.
+    pub items: &'a [ItemRowInput<'a>],
+    /// Session identity of the board family. Bumps on session open, close
+    /// or a new component id — never on a piece move.
+    pub generation: u64,
 }
 
 /// One currently posted widget text row (`reader.ifText`).
@@ -1793,6 +1831,12 @@ impl Verifiable for SnapshotReader<'_> {
                 VT_SNAP_MAIN_MODAL_TEXTS,
                 false,
             )?
+            .visit_field::<ForwardsUOffset<PuzzleBoardReader>>(
+                "puzzle_board",
+                VT_SNAP_PUZZLE_BOARD,
+                false,
+            )?
+            .visit_field::<u64>("puzzle_board_generation", VT_SNAP_PUZZLE_BOARD_GENERATION, false)?
             .finish();
         Ok(())
     }
@@ -2553,6 +2597,35 @@ impl SnapshotReader<'_> {
                 .get::<ForwardsUOffset<MainModalTextsReader>>(VT_SNAP_MAIN_MODAL_TEXTS, None)
         }
     }
+    /// Whether this buffer carries the puzzle board. An old buffer (or a
+    /// delta where the board did not change) has none, and a delta's absent
+    /// slot is a keep — the materializer fail-closes a keyframe that lacks
+    /// it to a closed board, never to "no property".
+    pub fn has_puzzle_board(&self) -> bool {
+        unsafe {
+            self.tab
+                .get::<ForwardsUOffset<PuzzleBoardReader>>(VT_SNAP_PUZZLE_BOARD, None)
+                .is_some()
+        }
+    }
+    pub fn puzzle_board(&self) -> Option<PuzzleBoardReader<'_>> {
+        unsafe {
+            self.tab
+                .get::<ForwardsUOffset<PuzzleBoardReader>>(VT_SNAP_PUZZLE_BOARD, None)
+        }
+    }
+    /// The board family's session generation. Always posted with the table;
+    /// an old buffer reads 0.
+    pub fn has_puzzle_board_generation(&self) -> bool {
+        unsafe {
+            self.tab
+                .get::<u64>(VT_SNAP_PUZZLE_BOARD_GENERATION, None)
+                .is_some()
+        }
+    }
+    pub fn puzzle_board_generation(&self) -> u64 {
+        unsafe { self.tab.get::<u64>(VT_SNAP_PUZZLE_BOARD_GENERATION, None) }.unwrap_or(0)
+    }
     pub fn has_chat_modal_id(&self) -> bool {
         unsafe { self.tab.get::<i32>(VT_SNAP_CHAT_MODAL, None).is_some() }
     }
@@ -2727,6 +2800,17 @@ pub struct ItemRowFp {
     pub cert: i32,
     pub component_id: i32,
     pub slot: i32,
+}
+
+/// One posted puzzle board as an owned fingerprint row. The generation is a
+/// member, not a sibling: the board and its session generation are ONE delta
+/// family, so a comparison can never move one without the other.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct PuzzleBoardFp {
+    pub component_id: i32,
+    pub size: i32,
+    pub items: Vec<ItemRowFp>,
+    pub generation: u64,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -2905,6 +2989,9 @@ pub struct SnapshotFingerprint {
     /// `(root, texts)` — the whole pair or nothing. A missing pair is not
     /// a closed modal, so the comparison cannot tear lines off the root.
     pub main_modal_texts: Option<(i32, Vec<String>)>,
+    /// The whole board observation (identity, size, rows, generation) or
+    /// nothing — one family, so a delta cannot post one half.
+    pub puzzle_board: Option<PuzzleBoardFp>,
     pub npc_boxes: Option<Vec<NpcBoxInput>>,
     pub bank_approaches: Option<Vec<BankApproachInput>>,
     pub walk_outcome_seq: u64,
@@ -3184,6 +3271,12 @@ impl SnapshotFingerprint {
             main_modal_texts: native
                 .main_modal_texts
                 .map(|pair| (pair.root, pair.texts.to_vec())),
+            puzzle_board: native.puzzle_board.map(|board| PuzzleBoardFp {
+                component_id: board.component_id,
+                size: board.size,
+                items: board.items.iter().map(item_row_fp).collect(),
+                generation: board.generation,
+            }),
             npc_boxes: native.npc_boxes.map(<[NpcBoxInput]>::to_vec),
             bank_approaches: native.bank_approaches.map(<[BankApproachInput]>::to_vec),
             walk_outcome_seq: native.walk_outcome_seq,
@@ -3339,6 +3432,11 @@ pub struct DeltaMask {
     /// another root's id. When set, slot 248 and slot 68 post in the same
     /// buffer.
     pub main_modal_texts: bool,
+    /// One bit for the whole board family (identity, size, rows AND
+    /// generation): when set, slot 250 and slot 252 post in the same
+    /// buffer. Never set for the generation alone — the generation is not
+    /// a field of its own.
+    pub puzzle_board: bool,
 }
 
 impl DeltaMask {
@@ -3426,6 +3524,7 @@ impl DeltaMask {
             route_inspect: true,
             collision: true,
             main_modal_texts: true,
+            puzzle_board: true,
         }
     }
 
@@ -3532,6 +3631,9 @@ impl DeltaMask {
             route_inspect: next.route_inspect != last.route_inspect,
             collision: next.collision != last.collision,
             main_modal_texts: next.main_modal_texts != last.main_modal_texts,
+            // The generation rides inside the board row, so one comparison
+            // covers both slots.
+            puzzle_board: next.puzzle_board != last.puzzle_board,
         }
     }
 }
@@ -3945,6 +4047,18 @@ fn encode_snapshot_masked_into(
         native
             .main_modal_texts
             .map(|pair| main_modal_texts_off(b, &pair))
+    } else {
+        None
+    };
+    // The open puzzle board. ONE table carrying the identity, the slot count
+    // and the rows; all three inner slots are always written, so a present
+    // board can never be half-posted. The table is absent only when the
+    // native fact was not supplied — that omits both Snapshot slots (a delta
+    // keep), which is not an observed close.
+    let puzzle_board_slot = if mask.puzzle_board {
+        native
+            .puzzle_board
+            .map(|board| (puzzle_board_off(b, &board), board.generation))
     } else {
         None
     };
@@ -4395,6 +4509,13 @@ fn encode_snapshot_masked_into(
             b.push_slot_always(VT_SNAP_MAIN_MODAL_TEXTS, off);
         }
     }
+    // Both slots or neither: the generation is pushed only from the same
+    // `Some` that produced the table, so no buffer can carry a generation
+    // without a board (or a board without its generation).
+    if let Some((off, generation)) = puzzle_board_slot {
+        b.push_slot_always(VT_SNAP_PUZZLE_BOARD, off);
+        b.push_slot_always(VT_SNAP_PUZZLE_BOARD_GENERATION, generation);
+    }
     b.push_slot_always(VT_SNAP_CANVAS_WIDTH, SNAPSHOT_CANVAS_W);
     b.push_slot_always(VT_SNAP_CANVAS_HEIGHT, SNAPSHOT_CANVAS_H);
     let root = b.end_table(tab);
@@ -4626,6 +4747,27 @@ fn main_modal_texts_off<'b>(
     let tab = b.start_table();
     b.push_slot_always(VT_MMT_ROOT, pair.root);
     b.push_slot_always(VT_MMT_TEXTS, texts_off);
+    WIPOffset::new(b.end_table(tab).value())
+}
+
+/// The puzzle board table. All three inner slots are written unconditionally
+/// (including a closed `{ -1, 0, [] }`): the table's presence is the
+/// observation, and a half-written board would let the page read rows under
+/// a stale identity.
+fn puzzle_board_off<'b>(
+    b: &mut FlatBufferBuilder<'b>,
+    board: &PuzzleBoardInput<'_>,
+) -> WIPOffset<PuzzleBoardReader<'b>> {
+    let item_offs = board
+        .items
+        .iter()
+        .map(|row| row_off(b, row))
+        .collect::<Vec<_>>();
+    let items_off = b.create_vector(&item_offs);
+    let tab = b.start_table();
+    b.push_slot_always(VT_PB_COMPONENT_ID, board.component_id);
+    b.push_slot_always(VT_PB_SIZE, board.size);
+    b.push_slot_always(VT_PB_ITEMS, items_off);
     WIPOffset::new(b.end_table(tab).value())
 }
 
@@ -5099,6 +5241,57 @@ impl Verifiable for MainModalTextsReader<'_> {
             .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<&str>>>>(
                 "texts",
                 VT_MMT_TEXTS,
+                false,
+            )?
+            .finish();
+        Ok(())
+    }
+}
+
+/// The puzzle board as decoded: the identified component, its slot count and
+/// its stored rows (sparse). Every inner slot is present whenever the table
+/// is; the table's presence is [`SnapshotReader::puzzle_board`].
+#[derive(Clone, Copy)]
+pub struct PuzzleBoardReader<'a> {
+    tab: Table<'a>,
+}
+
+impl<'a> flatbuffers::Follow<'a> for PuzzleBoardReader<'a> {
+    type Inner = PuzzleBoardReader<'a>;
+    unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+        Self {
+            tab: Table::new(buf, loc),
+        }
+    }
+}
+
+impl PuzzleBoardReader<'_> {
+    /// The identified TYPE_INV component, `-1` for an observed closed
+    /// board.
+    pub fn component_id(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_PB_COMPONENT_ID, None) }.unwrap_or(-1)
+    }
+    /// The component's `link_obj_type` slot count as observed — not the row
+    /// count. A wrong size is posted as observed, never filled to a panel
+    /// size.
+    pub fn size(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_PB_SIZE, None) }.unwrap_or(0)
+    }
+    /// The stored rows in slot order. Sparse: an empty slot contributes no
+    /// row.
+    pub fn items(&self) -> Vec<RowReader<'_>> {
+        rows::<RowReader>(&self.tab, VT_PB_ITEMS)
+    }
+}
+
+impl Verifiable for PuzzleBoardReader<'_> {
+    fn run_verifier(v: &mut Verifier, pos: usize) -> Result<(), InvalidFlatbuffer> {
+        v.visit_table(pos)?
+            .visit_field::<i32>("component_id", VT_PB_COMPONENT_ID, false)?
+            .visit_field::<i32>("size", VT_PB_SIZE, false)?
+            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<RowReader>>>>(
+                "items",
+                VT_PB_ITEMS,
                 false,
             )?
             .finish();
@@ -8428,5 +8621,197 @@ pub(crate) mod tests {
         let bytes = encode_snapshot(&input);
         let view = decode_snapshot(&bytes).expect("snapshot");
         assert!(!view.has_collision());
+    }
+
+    fn board_row(ops: &[String], id: i32, slot: i32, component_id: i32) -> ItemRowInput<'_> {
+        ItemRowInput {
+            name: Some("Piece"),
+            count: 1,
+            id,
+            ops,
+            noted: false,
+            cert: -1,
+            component_id,
+            slot,
+        }
+    }
+
+    fn board_native<'a>(
+        rows: &'a [ItemRowInput<'a>],
+        size: i32,
+        generation: u64,
+    ) -> NativeFactsInput<'a> {
+        NativeFactsInput {
+            puzzle_board: Some(PuzzleBoardInput {
+                component_id: 6600,
+                size,
+                items: rows,
+                generation,
+            }),
+            ..NativeFactsInput::default()
+        }
+    }
+
+    #[test]
+    fn omitted_puzzle_board_is_absent_on_an_old_buffer() {
+        // A buffer written before the board slots existed (append-only
+        // schema): both slots are absent and the generation reads 0.
+        let mut b = flatbuffers::FlatBufferBuilder::new();
+        let tab = b.start_table();
+        b.push_slot_always(VT_SNAP_TICK, 7u64);
+        let root = b.end_table(tab);
+        b.finish(root, None);
+        let view = SnapshotReader::from_bytes(b.finished_data()).expect("old snapshot");
+        assert!(!view.has_puzzle_board());
+        assert!(view.puzzle_board().is_none());
+        assert!(!view.has_puzzle_board_generation());
+        assert_eq!(view.puzzle_board_generation(), 0);
+    }
+
+    #[test]
+    fn keyframe_without_a_board_posts_neither_slot() {
+        let bytes = encode_snapshot(&empty_input(1));
+        let view = decode_snapshot(&bytes).expect("keyframe");
+        assert!(!view.has_puzzle_board());
+        assert!(!view.has_puzzle_board_generation());
+    }
+
+    #[test]
+    fn present_puzzle_board_writes_identity_size_and_rows_in_one_table() {
+        let ops = vec!["Take".to_string()];
+        let rows = [
+            board_row(&ops, 2201, 3, 6600),
+            board_row(&[], 2202, 4, 6600),
+        ];
+        let native = board_native(&rows, 25, 4);
+        let (bytes, _) = encode_snapshot_delta_with_native(None, &empty_input(1), native, false);
+        let view = decode_snapshot(&bytes).expect("keyframe");
+        let board = view.puzzle_board().expect("present board");
+        assert_eq!(board.component_id(), 6600);
+        assert_eq!(board.size(), 25);
+        let items = board.items();
+        assert_eq!(items.len(), 2, "one row per stored slot, no gap rows");
+        assert_eq!(items[0].id(), 2201);
+        assert_eq!(items[0].slot(), 3);
+        assert_eq!(items[0].component_id(), 6600);
+        assert_eq!(items[0].ops(), vec!["Take"]);
+        assert_eq!(items[1].id(), 2202);
+        assert_eq!(items[1].slot(), 4);
+        assert!(items[1].ops().is_empty());
+        assert_eq!(view.puzzle_board_generation(), 4);
+    }
+
+    #[test]
+    fn wrong_size_is_posted_as_observed_not_filled() {
+        // Nine slots holding two pieces: the link_obj_type length is the
+        // observation. Not items.len(), and never filled to a panel size.
+        let rows = [board_row(&[], 2201, 0, 6600), board_row(&[], 2202, 7, 6600)];
+        let native = board_native(&rows, 9, 1);
+        let (bytes, _) = encode_snapshot_delta_with_native(None, &empty_input(1), native, false);
+        let view = decode_snapshot(&bytes).expect("keyframe");
+        let board = view.puzzle_board().expect("present board");
+        assert_eq!(board.size(), 9);
+        assert_eq!(board.items().len(), 2, "rows are the stored slots only");
+        assert_eq!(board.items()[1].slot(), 7, "the empty slot 6 is not a row");
+    }
+
+    #[test]
+    fn closed_puzzle_board_is_a_present_empty_observation() {
+        let native = NativeFactsInput {
+            puzzle_board: Some(PuzzleBoardInput {
+                component_id: -1,
+                size: 0,
+                items: &[],
+                generation: 9,
+            }),
+            ..NativeFactsInput::default()
+        };
+        let (bytes, _) = encode_snapshot_delta_with_native(None, &empty_input(1), native, false);
+        let view = decode_snapshot(&bytes).expect("keyframe");
+        let board = view.puzzle_board().expect("a close is a present object");
+        assert_eq!(board.component_id(), -1);
+        assert_eq!(board.size(), 0);
+        assert!(board.items().is_empty());
+        assert_eq!(view.puzzle_board_generation(), 9);
+    }
+
+    #[test]
+    fn unchanged_puzzle_board_omits_both_slots() {
+        let rows = [board_row(&[], 2201, 0, 6600)];
+        let native = board_native(&rows, 25, 1);
+        let (keyframe, fp) =
+            encode_snapshot_delta_with_native(None, &empty_input(1), native, false);
+        assert!(decode_snapshot(&keyframe).expect("keyframe").has_puzzle_board());
+        let (delta, _) =
+            encode_snapshot_delta_with_native(Some(&fp), &empty_input(2), native, false);
+        let view = decode_snapshot(&delta).expect("delta");
+        assert!(!view.has_puzzle_board(), "unchanged board omitted (keep)");
+        assert!(
+            !view.has_puzzle_board_generation(),
+            "the generation never posts without the table"
+        );
+    }
+
+    #[test]
+    fn board_or_generation_change_posts_both_slots_in_one_buffer() {
+        let rows = [board_row(&[], 2201, 0, 6600)];
+        let base = board_native(&rows, 25, 1);
+        let (_, fp) = encode_snapshot_delta_with_native(None, &empty_input(1), base, false);
+
+        // A piece move: the rows change, the session generation holds.
+        let moved = [board_row(&[], 2202, 1, 6600)];
+        let moved_native = board_native(&moved, 25, 1);
+        let (delta, fp2) =
+            encode_snapshot_delta_with_native(Some(&fp), &empty_input(2), moved_native, false);
+        let view = decode_snapshot(&delta).expect("delta");
+        assert!(view.has_puzzle_board());
+        assert!(
+            view.has_puzzle_board_generation(),
+            "a row change co-posts the generation"
+        );
+        assert_eq!(view.puzzle_board_generation(), 1);
+        assert_eq!(view.puzzle_board().expect("board").items()[0].id(), 2202);
+
+        // A session edge: only the generation moves.
+        let bumped = board_native(&moved, 25, 2);
+        let (delta, _) =
+            encode_snapshot_delta_with_native(Some(&fp2), &empty_input(3), bumped, false);
+        let view = decode_snapshot(&delta).expect("delta");
+        assert!(
+            view.has_puzzle_board(),
+            "a generation-only change still carries the table"
+        );
+        assert_eq!(view.puzzle_board_generation(), 2);
+        assert_eq!(view.puzzle_board().expect("board").component_id(), 6600);
+    }
+
+    #[test]
+    fn generation_alone_flips_the_board_delta_bit() {
+        // The fingerprint carries both halves, so a post that changes only
+        // the session identity can never be mistaken for an unchanged board.
+        let rows = [board_row(&[], 2201, 0, 6600)];
+        let (_, fp) = encode_snapshot_delta_with_native(
+            None,
+            &empty_input(1),
+            board_native(&rows, 25, 1),
+            false,
+        );
+        let same = SnapshotFingerprint::from_input_with_native(
+            &empty_input(2),
+            board_native(&rows, 25, 1),
+        );
+        let bumped = SnapshotFingerprint::from_input_with_native(
+            &empty_input(2),
+            board_native(&rows, 25, 2),
+        );
+        assert!(
+            !DeltaMask::changed(&fp, &same, false).puzzle_board,
+            "an unchanged board posts nothing"
+        );
+        assert!(
+            DeltaMask::changed(&fp, &bumped, false).puzzle_board,
+            "a session bump alone re-posts the whole family"
+        );
+        assert_eq!(bumped.puzzle_board.as_ref().expect("board").generation, 2);
     }
 }
