@@ -438,7 +438,7 @@ a dead token is the error object, never `undefined` and never a continue kind.
 
 | `kind` | Meaning |
 | --- | --- |
-| `wait` | nothing this tick: frozen by pause/hold, or the session idled after `resume: false`, or the identified step was already reported, or — while collecting — the pages are still empty inside the reward window, or the posted pack page carried no `inv_size`; a dig row that has not arrived, or has no `Spade` on the posted pack page, waits the same way, and so does the guarded encounter with no wizard of the row family on the posted npc page |
+| `wait` | nothing this tick: frozen by pause/hold, or the session idled after `resume: false`, or the identified step was already reported, or — while collecting — the pages are still empty inside the reward window, or the posted pack page carried no `inv_size`; a dig row that has not arrived, or has no `Spade` on the posted pack page, waits the same way, and so does the guarded encounter with no wizard of the row family posted on the npc page — no spawn posted is no click and no Attack |
 | `callback.enabled` | re-read the script's `enabled()` and answer with `resume` on the next `next` |
 | `callback.log` | perform `log(message)` |
 | `callback.setStatus` | perform `setStatus(message)` — a progress string, never `'clue solved'` |
@@ -549,31 +549,36 @@ reported, the row walks to its decoded tile exactly like the unguarded sibling
 and Digs with the Spade from that same arrived page. From that Dig on the
 machine holds the encounter in its own session state — no second scheduler,
 never a `Phase::Fighting` — and each following call reads the pages the wrapper
-marshals at call time:
+marshals at call time, in that order: the posted npc page is observed first,
+the Protect from Magic click is only ever raised behind a posted wizard of the
+row family, and only a posted-on overlay leaves the Attack:
 
 | Kind | When |
 | --- | --- |
-| `if-button` | the posted overlay varp (the selected Protect from Magic row's own varp) does not read `1`, including when the page did not post it: the machine clicks the row's own selected component and waits. An overlay already up skips the click, and the fight never Attacks under an overlay that is off or unobserved. Nothing here nests `api.prayerSet`, waits a toggle timeout, or clears the prayer |
-| `npc` | the overlay reads up and this token owns no wizard yet: a posted npc whose posted display name is one of that family's wizards, whose posted actions carry `Attack`, and whose posted distance is inside the frozen radius 12. The row targeting the player wins, else the nearest match, then posted order. The verb is `{ name, action: 'Attack', index }` with the posted name and the posted scene index, so the host refuses a stale index instead of taking a co-located row |
-| `wait` | no posted npc page, no name-and-action match inside the radius, a wizard that is still posted and alive, or an owned index that left the page only after the frozen grace — the nearest anything is never Attacked, the Attack is not re-issued, and there is no `guardian-lost` |
+| `if-button` | a wizard of the row family is posted and this call's overlay varp (the selected Protect from Magic row's own varp) does not read `1`, including when the page did not post it: the machine clicks the row's own selected component and waits. An overlay already up skips the click, the click is never raised for a spawn that was not posted, and the fight never Attacks under an overlay that is off or unobserved. Nothing here nests `api.prayerSet`, waits a toggle timeout, or clears the prayer |
+| `npc` | the overlay reads up, a wizard of the row family is posted and this token owns no wizard yet: the posted row must be on the posted `here` level, carry `Attack`, and sit inside the frozen radius 12 — by its own posted `distance` when the page posted one, and by its own posted `x`/`z` tile measured from the posted `here` otherwise. The row targeting the player wins, else the nearest match, then posted order. The verb is `{ name, action: 'Attack', index }` with the posted name and the posted scene index, so the host refuses a stale index instead of taking a co-located row |
+| `wait` | no posted npc page, nothing of the row family posted, no name-and-action match on the `here` level inside the radius, a wizard that is still posted and alive, or an owned index that left the page only after the frozen grace — the nearest anything is never Attacked, the Attack is not re-issued, and there is no `guardian-lost` |
 | `held` | the kill was observed: the walk back to the decoded tile and its Dig, which repeats while that same clue stays held, exactly like the unguarded Dig. A casket it produces is the landed casket-first Open |
 
 The kill is the wizard this token Attacked: that owned index leaving the posted
-npc page inside a freeze-honoured 6000ms grace, or that index posted at zero
-health beside a posted maximum while the page still shows this token's fight on
-it. An index this token never Attacked is never a kill — a disappearance
-without a prior Attack waits rather than Digging again. While the fight is on,
-a posted effective `hitpoints` at or below zero is a `wait` and never a public
-`dead`, and a page that posted no hitpoints is not a zero. The encounter
-survives `yield` and idle waits on its live token the way the casket `Open`
-does; a different held row, an abort and a reset drop it, so the row's next
-`Steady` walks and Digs its spawn again. All of those pages are this call's own
-marshalling of `host().snapshot` — the posted npc page, the local-player slot
-and its posted target pair, the posted overlay varp and the posted stat rows —
-so the machine caches no world copy, `api.snapshot.npcs` is never scanned, and
-`api.snapshot.self_slot` and `api.snapshot.varps` stay hidden. `npc` and
-`if-button` are not `V2_OPS` verbs — `next` enqueues them onto the interact
-drain directly, so `api.request({ op: 'npc' })` and
+npc page inside a 6000ms grace the freeze never spends — the thaw reclaims the
+frozen interval into the owned last-seen the way the landed hunt fight shifts
+its own stamps, so a pause longer than the remaining grace still ends in the
+kill — or that index posted at zero health beside a posted maximum while the
+page still shows this token's fight on it. An index this token never Attacked
+is never a kill — a disappearance without a prior Attack waits rather than
+Digging again. While the fight is on, a posted effective `hitpoints` at or
+below zero is a `wait` and never a public `dead`, and a page that posted no
+hitpoints is not a zero. The encounter survives `yield` and idle waits on its
+live token the way the casket `Open` does; a different held row, an abort and a
+reset drop it, so the row's next `Steady` walks and Digs its spawn again. All
+of those pages are this call's own marshalling of `host().snapshot` — the
+posted npc page, the local-player slot and its posted target pair, the posted
+overlay varp and the posted stat rows — so the machine caches no world copy,
+`api.snapshot.npcs` is never scanned, and `api.snapshot.self_slot` and
+`api.snapshot.varps` stay hidden. `npc` and `if-button` are not `V2_OPS`
+verbs — `next` enqueues them onto the interact drain directly, so
+`api.request({ op: 'npc' })` and
 `api.request({ op: 'if-button' })` stay `not impl` — and the guarded row emits
 no completion, no `supplies-needed`, no `dead` and no `guardian-lost`.
 

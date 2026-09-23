@@ -2345,8 +2345,9 @@ export function tick(api) {
 
 /// The guarded spawn wait and a wizard that leaves before any Attack: a posted
 /// page with no wizard of the row family waits — another name, and the nearest
-/// anything, is never Attacked — and a disappearance under an overlay that is
-/// still off is the same wait, never a redig and never a `guardian-lost`.
+/// anything, is never Attacked, and the overlay is never raised for a spawn
+/// that was not posted — and a disappearance under an overlay that is still
+/// off is the same wait, never a redig and never a `guardian-lost`.
 #[test]
 fn v2_clue_guarded_row_waits_without_an_attacked_wizard() {
     let src = r#"
@@ -2432,26 +2433,25 @@ export function tick(api) {
         vec![InteractReq::IfButton { component_id: 5621 }]
     );
 
-    // Tick 9: the wizard left while nothing was ever Attacked: the same click
-    // and never a redig, a walk or a `guardian-lost`.
+    // Tick 9: the wizard left while nothing was ever Attacked: no spawn is
+    // posted, so the overlay is not raised either — a wait, and never a
+    // redig, a walk or a `guardian-lost`.
     post_scene(&iso, 9, &page, &guarded_scene(arrived, &names, &[], &overlay_off, &[], false, false));
     iso.on_game_tick(9);
     assert!(iso.probe("true").is_ok());
-    assert_eq!(
-        iso.drain_interacts(),
-        vec![InteractReq::IfButton { component_id: 5621 }],
-        "an unowned disappearance is a wait and not a redig"
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "an unowned disappearance is the spawn wait and not a redig"
     );
 
-    // Tick 10: the probe. The token is still live, and every call under the
-    // overlay that still reads off is the same click — never a Dig.
+    // Tick 10: the probe. The token is still live, the encounter never turned
+    // into a Dig, and a page with no wizard of the family never clicks.
     post_scene(&iso, 10, &page, &guarded_scene(arrived, &names, &[], &overlay_off, &[], false, false));
     iso.on_game_tick(10);
     assert!(iso.probe("true").is_ok());
-    assert_eq!(
-        iso.drain_interacts(),
-        vec![InteractReq::IfButton { component_id: 5621 }],
-        "the encounter never turned into a Dig"
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "the encounter never turned into a Dig and never clicked for a spawn it cannot see"
     );
 
     let probed = iso.probe("globalThis.__probe").unwrap();
@@ -2467,8 +2467,8 @@ export function tick(api) {
         (5, "wait"),
         (6, "wait"),
         (7, "if-button"),
-        (8, "if-button"),
-        (9, "if-button"),
+        (8, "wait"),
+        (9, "wait"),
     ] {
         assert_eq!(steps[index]["kind"], kind, "{index} {value:?}");
     }
@@ -2487,6 +2487,257 @@ export function tick(api) {
     ] {
         assert!(!text.contains(forbidden), "{forbidden} {value:?}");
     }
+}
+
+/// The guarded fight's marshalled npc page, driven through the public path: the
+/// wrapper hands the machine the posted index, id, name, tile, distance,
+/// health pair, `in_combat` flag, actions and target pair, and the spawn filter
+/// reads that tile. A wizard of the row family on another level is not this
+/// Dig's spawn; a row that posted no distance at all is measured against the
+/// posted `here` with the landed Chebyshev read, inside the frozen radius 12 —
+/// and the overlay click is only ever raised behind such a posted spawn.
+#[test]
+fn v2_clue_guarded_spawn_reads_the_marshalled_npc_page() {
+    let src = r#"
+export const apiVersion = 2;
+export function tick(api) {
+  globalThis.__runs = (globalThis.__runs || 0) + 1;
+  if (globalThis.__runs === 1) {
+    const begin = api.clue.begin();
+    globalThis.__token = begin.ok ? begin.value.token : null;
+    globalThis.__steps = [begin];
+    return;
+  }
+  globalThis.__steps.push(api.clue.next(
+    globalThis.__runs === 3
+      ? { token: globalThis.__token, resume: true }
+      : { token: globalThis.__token }));
+  if (globalThis.__runs === 10) {
+    globalThis.__probe = JSON.stringify({
+      token: globalThis.__token,
+      steps: globalThis.__steps,
+    });
+  }
+}
+"#;
+    let data = api::game_data::for_revision(ClientRevision::R274).unwrap();
+    let iso = LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data)
+        .unwrap();
+    let page = [(2723, 1), (952, 1)];
+    let names = [(952, "Spade")];
+    let attack = vec!["Attack".to_string()];
+    // The posted wizard one level up: the row's own posted level is part of
+    // the spawn membership.
+    let elsewhere = SceneEntityInput {
+        level: 1,
+        ..scene_npc(7, "Zamorak Wizard", 3, 10, 10, &attack)
+    };
+    let overlay_off = [VarpInput { index: 95, value: 0 }];
+    let overlay_on = [VarpInput { index: 95, value: 1 }];
+    let arrived = TileInput {
+        x: 3058,
+        z: 3884,
+        level: 0,
+    };
+    // The same wrapper marshal over a raw posted page, where the row posts no
+    // distance at all: its own `x`/`z`/`level` tile is the measure, and the
+    // posted `id`/`in_combat` ride along. Two tiles out and thirteen tiles out
+    // are the near and far halves of the frozen radius.
+    let near = "globalThis.__rs2b0t_host.snapshot.npcs = [{ index: 7, id: 107, \
+         name: 'Zamorak Wizard', x: 3058, z: 3886, level: 0, health: 10, \
+         max_health: 10, in_combat: true, actions: ['Attack'], \
+         target_kind: 0, target_index: -1 }]; true";
+    let outside = "globalThis.__rs2b0t_host.snapshot.npcs = [{ index: 7, id: 107, \
+         name: 'Zamorak Wizard', x: 3058, z: 3897, level: 0, health: 10, \
+         max_health: 10, in_combat: true, actions: ['Attack'], \
+         target_kind: 0, target_index: -1 }]; true";
+
+    // Ticks 1-4: the begin and the landed report, already arrived with the
+    // Spade and with no npc page posted at all.
+    for tick in 1..=4 {
+        post_scene(
+            &iso,
+            tick,
+            &page,
+            &guarded_scene(arrived, &names, &[], &overlay_off, &[], false, false),
+        );
+        iso.on_game_tick(tick);
+        assert!(iso.probe("true").is_ok());
+    }
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "the landed report pushes no verb"
+    );
+
+    // Tick 5: arrived with the Spade: the first Dig, which is the spawn.
+    post_scene(
+        &iso,
+        5,
+        &page,
+        &guarded_scene(arrived, &names, &[], &overlay_off, &[], false, false),
+    );
+    iso.on_game_tick(5);
+    assert!(iso.probe("true").is_ok());
+    assert_eq!(iso.drain_interacts(), vec![spade_dig()], "the spawn Dig");
+
+    // Tick 6: the wizard is posted on another level: not this Dig's spawn, so
+    // the fight waits with no click and no Attack.
+    post_scene(
+        &iso,
+        6,
+        &page,
+        &guarded_scene(arrived, &names, &[elsewhere], &overlay_off, &[], false, false),
+    );
+    iso.on_game_tick(6);
+    assert!(iso.probe("true").is_ok());
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "another level is not the spawn this Dig made"
+    );
+
+    // Tick 7: the marshalled row thirteen tiles out with no posted distance:
+    // outside the frozen radius, so the spawn wait and never a click.
+    post_scene(
+        &iso,
+        7,
+        &page,
+        &guarded_scene(arrived, &names, &[], &overlay_off, &[], false, false),
+    );
+    iso.probe(outside).unwrap();
+    iso.on_game_tick(7);
+    assert!(iso.probe("true").is_ok());
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "the Chebyshev radius still refuses the row"
+    );
+
+    // Tick 8: the same row two tiles out with the overlay off: the spawn is
+    // observed, so the click goes out and the Attack does not.
+    post_scene(
+        &iso,
+        8,
+        &page,
+        &guarded_scene(arrived, &names, &[], &overlay_off, &[], false, false),
+    );
+    iso.probe(near).unwrap();
+    iso.on_game_tick(8);
+    assert!(iso.probe("true").is_ok());
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::IfButton { component_id: 5621 }],
+        "the click is only raised behind a posted spawn"
+    );
+
+    // Tick 9: the same row, same tile, overlay on: the Attack at the posted
+    // index.
+    post_scene(
+        &iso,
+        9,
+        &page,
+        &guarded_scene(arrived, &names, &[], &overlay_on, &[], false, false),
+    );
+    iso.probe(near).unwrap();
+    iso.on_game_tick(9);
+    assert!(iso.probe("true").is_ok());
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::Npc {
+            name: "Zamorak Wizard".to_string(),
+            action: "Attack".to_string(),
+            index: Some(7),
+        }],
+        "the tile-measured spawn is the Attack"
+    );
+
+    // Tick 10: the probe. The owned wizard is still posted and alive, so the
+    // fight waits for its kill and the Attack is not re-issued.
+    post_scene(
+        &iso,
+        10,
+        &page,
+        &guarded_scene(arrived, &names, &[], &overlay_on, &[], false, false),
+    );
+    iso.probe(near).unwrap();
+    iso.on_game_tick(10);
+    assert!(iso.probe("true").is_ok());
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "the owned wizard is posted and alive"
+    );
+
+    let probed = iso.probe("globalThis.__probe").unwrap();
+    let value: serde_json::Value = serde_json::from_str(probed.as_str().unwrap()).unwrap();
+    iso.join();
+    let steps = value["steps"].as_array().expect("steps");
+    assert_eq!(steps.len(), 10, "{value:?}");
+    for (index, kind) in [
+        (1, "callback.enabled"),
+        (2, "callback.log"),
+        (3, "callback.setStatus"),
+        (4, "held"),
+        (5, "wait"),
+        (6, "wait"),
+        (7, "if-button"),
+        (8, "npc"),
+        (9, "wait"),
+    ] {
+        assert_eq!(steps[index]["kind"], kind, "{index} {value:?}");
+    }
+    assert_eq!(steps[4]["name"], "Spade", "{value:?}");
+    assert_eq!(steps[4]["action"], "Dig", "{value:?}");
+    assert_eq!(steps[7]["component_id"], 5621, "{value:?}");
+    assert_eq!(steps[8]["name"], "Zamorak Wizard", "{value:?}");
+    assert_eq!(steps[8]["action"], "Attack", "{value:?}");
+    assert_eq!(steps[8]["index"], 7, "{value:?}");
+    for index in 1..steps.len() {
+        assert_eq!(steps[index]["token"], value["token"], "{index} {value:?}");
+        assert!(steps[index].get("error").is_none(), "{index} {value:?}");
+    }
+    let text = value.to_string();
+    for forbidden in [
+        "clue solved",
+        "abandon",
+        "supplies-needed",
+        "dead",
+        "guardian-lost",
+        "\"done\"",
+    ] {
+        assert!(!text.contains(forbidden), "{forbidden} {value:?}");
+    }
+}
+
+/// The guarded encounter's npc page is the locked marshal: `clue.next` is
+/// handed the posted index, id, name, tile, distance, health pair, `in_combat`
+/// flag, actions and target pair and nothing else, so the machine's same-level
+/// filter and its Chebyshev read both have the posted page to work from.
+#[test]
+fn the_guarded_npc_page_marshals_the_locked_field_list() {
+    let bindings = include_str!("../src/load/bindings.rs");
+    let page = bindings
+        .split("function clueNpcPage()")
+        .nth(1)
+        .expect("clueNpcPage");
+    let page = page.split("function clueSelfSlot()").next().expect("page end");
+    for field in [
+        "index: row.index,",
+        "id: cluePageI32(row.id) ? row.id : null,",
+        "name: typeof row.name === 'string' ? row.name : null,",
+        "x: cluePageI32(row.x) ? row.x : null,",
+        "z: cluePageI32(row.z) ? row.z : null,",
+        "level: cluePageI32(row.level) ? row.level : null,",
+        "distance: cluePageI32(row.distance) ? row.distance : null,",
+        "health: cluePageI32(row.health) ? row.health : null,",
+        "max_health: cluePageI32(row.max_health) ? row.max_health : null,",
+        "in_combat: typeof row.in_combat === 'boolean' ? row.in_combat : null,",
+        "actions: Array.isArray(row.actions)",
+        "target_kind: cluePageI32(row.target_kind) ? row.target_kind : null,",
+        "target_index: cluePageI32(row.target_index) ? row.target_index : null,",
+    ] {
+        assert!(page.contains(field), "{field} missing from {page}");
+    }
+    // A row that did not post an index cannot be Attacked and is dropped here:
+    // never a snapshot error and never an invented row.
+    assert!(page.contains("if (!cluePageI32(row.index)) continue;"), "{page}");
 }
 
 #[test]

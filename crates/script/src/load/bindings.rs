@@ -1502,13 +1502,15 @@ function clueInvSize() {
   return cluePageI32(snapshot.inv_size) ? snapshot.inv_size : null;
 }
 // The posted npc page the guarded encounter observes after its spawn: the
-// posted index the Attack verb carries, the posted display name the row
-// family's cap-documented wizard filter matches, the posted distance the
-// frozen radius reads, and the posted health and target pairs the kill is read
-// through. Read at call time like every other page — `api.snapshot.npcs` is
-// the public projection and this machine never scans it. A row that did not
-// post an index cannot be Attacked and is dropped here; every other absent
-// field is posted as null and matches nothing.
+// posted index the Attack verb carries, the posted id and display name the row
+// family's cap-documented wizard filter matches, the posted `x`/`z`/`level`
+// tile the same-level filter and the absent-distance Chebyshev read are made
+// from, the posted distance the frozen radius prefers, the posted health and
+// target pairs the kill is read through and the posted `in_combat` flag. Read
+// at call time like every other page — `api.snapshot.npcs` is the public
+// projection and this machine never scans it. A row that did not post an index
+// cannot be Attacked and is dropped here; every other absent field is posted
+// as null and matches nothing.
 function clueNpcPage() {
   const snapshot = host().snapshot;
   if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return [];
@@ -1520,10 +1522,15 @@ function clueNpcPage() {
     if (!cluePageI32(row.index)) continue;
     rows.push({
       index: row.index,
+      id: cluePageI32(row.id) ? row.id : null,
       name: typeof row.name === 'string' ? row.name : null,
+      x: cluePageI32(row.x) ? row.x : null,
+      z: cluePageI32(row.z) ? row.z : null,
+      level: cluePageI32(row.level) ? row.level : null,
       distance: cluePageI32(row.distance) ? row.distance : null,
       health: cluePageI32(row.health) ? row.health : null,
       max_health: cluePageI32(row.max_health) ? row.max_health : null,
+      in_combat: typeof row.in_combat === 'boolean' ? row.in_combat : null,
       actions: Array.isArray(row.actions)
         ? row.actions.filter((action) => typeof action === 'string')
         : [],

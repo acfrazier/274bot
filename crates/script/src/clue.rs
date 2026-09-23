@@ -43,17 +43,23 @@
 //! membership — the thirty hard sextant rows, `2723` among them. Its first Dig
 //! spawns the family wizard the cap documents (`trail_hard` → Zamorak Wizard,
 //! `trail_hard2` → Saradomin Wizard), so the walk-then-Dig is only the spawn:
-//! after it the machine observes the posted npc page, raises Protect from Magic
-//! with the selected `if-button` while the marshalled overlay varp says the
-//! overlay is not already up, and enqueues one `Attack` for a posted npc from
-//! that family inside the frozen radius — preferring the row that targets the
-//! player, else the nearest match, and never the nearest anything. It then
-//! waits for the kill: that owned index posted at zero health while the page
-//! still shows this token's fight on it, or the owned index leaving the page
-//! inside the frozen grace. Only a kill walks back to the decoded tile and Digs
-//! again, and that Dig repeats while the same clue stays held. An index this
-//! token never Attacked is never a kill: a disappearance without one waits, an
-//! index gone outside the grace waits, and this machine has no `guardian-lost`.
+//! after it the machine observes the posted npc page first and only then
+//! raises Protect from Magic with the selected `if-button` while the
+//! marshalled overlay varp says the overlay is not already up — a call with no
+//! matching spawn posted clicks nothing and Attacks nothing — and enqueues one
+//! `Attack` for a posted npc from that family on the posted `here` level
+//! inside the frozen radius, measured by the posted `distance` when the row
+//! carried one and by the row's own posted tile otherwise — preferring the row
+//! that targets the player, else the nearest match, and never the nearest
+//! anything. It then waits for the kill: that owned index posted at zero
+//! health while the page still shows this token's fight on it, or the owned
+//! index leaving the page inside the frozen grace. Only a kill walks back to
+//! the decoded tile and Digs again, and that Dig repeats while the same clue
+//! stays held. An index this token never Attacked is never a kill: a
+//! disappearance without one waits, an index gone outside the grace waits, and
+//! this machine has no `guardian-lost`.
+//! A freeze reclaims the owned last-seen on the thaw the way the landed hunt
+//! fight shifts its own stamps, so a frozen session never spends the grace.
 //!
 //! A held `role: "casket"` row is the held casket item: once its own report is
 //! posted it dispatches the generic held step — the selected item display name
@@ -137,14 +143,18 @@ const TAKE: &str = "Take";
 const DROP: &str = "Drop";
 
 /// The frozen `Guardian.ts` spawn radius: a posted npc further than this many
-/// tiles from the player is not a wizard this Dig's spawn can be observed
-/// through, and the encounter waits rather than reaching for it.
+/// tiles from the posted `here` is not a wizard this Dig's spawn can be
+/// observed through, and the encounter waits rather than reaching for it. The
+/// measure is the posted `distance` when the row carried one and the row's own
+/// posted tile otherwise, always on the posted `here` level.
 const GUARDIAN_RADIUS: i32 = 12;
 
 /// The frozen `KILL_GRACE_MS` the landed hunt fight reads its engaged index
 /// through: an owned index may leave the posted page inside this window and
-/// still be this token's kill. Read through the freeze-aware clock, so a
-/// paused or held session never spends it.
+/// still be this token's kill. Read against the owned wizard's last-seen,
+/// which the thaw reclaim shifts by the frozen gap, so a paused or held
+/// session never spends it and a freeze longer than the remaining grace still
+/// ends in the kill.
 const KILL_GRACE_MS: u64 = 6_000;
 
 /// The frozen npc action the wizard is Attacked with, matched on the posted
@@ -308,6 +318,33 @@ impl ClueRuntime {
         self.generation = 0;
         self.step_id = 0;
         self.clear_step();
+    }
+
+    /// The hunt reclaim shape, over this session's own stamps: a freeze that
+    /// thaws moves them forward by the frozen gap, so a duration that spans
+    /// the freeze is not spent by it. `InstantTaskClock` reclaims its own
+    /// `deadline` alone, and the guarded grace reads the owned wizard's own
+    /// last-seen — a raw `Instant` — so without this a freeze longer than the
+    /// remaining grace would burn the window and the fight would wait forever.
+    fn apply_freeze(&mut self, paused: bool, held: bool) {
+        let was = self.clock.frozen();
+        let frozen_at = self.clock.frozen_at;
+        self.clock.set_freeze(paused, held);
+        if was && !self.clock.frozen() {
+            if let Some(at) = frozen_at {
+                let gap = Instant::now().saturating_duration_since(at);
+                self.shift_instants(gap);
+            }
+        }
+    }
+
+    /// The owned wizard's last-seen is the one stamp this machine reads a
+    /// duration from, so it is the one a thaw shifts: the grace then measures
+    /// only the time the session was actually unfrozen and observing.
+    fn shift_instants(&mut self, gap: Duration) {
+        if let Some(owned) = self.guardian.as_mut().and_then(|g| g.owned.as_mut()) {
+            owned.seen_at += gap;
+        }
     }
 
     /// The step-scoped state a re-arm, a leave and an abort all drop: the
@@ -721,17 +758,22 @@ impl ClueRuntime {
         }
     }
 
-    /// The fight after the spawn: the frozen mid-fight hitpoints wait, the
-    /// Protect from Magic overlay, and one posted-npc observation per call.
+    /// The fight after the spawn: the frozen mid-fight hitpoints wait, this
+    /// call's posted-npc observation, and only then the Protect from Magic
+    /// overlay and the Attack.
     ///
     /// The npc page is this call's own marshalling of `host().snapshot.npcs`,
-    /// so nothing is cached and no scene is scanned. The Attack goes out for a
-    /// posted index of the row family's cap-documented names inside the frozen
-    /// radius, and the encounter then owns that index: the kill is the owned
-    /// row posted at zero health while the page still shows this token's fight
-    /// on it, or the owned index leaving the page inside the frozen grace. An
-    /// index this token never Attacked is never a kill, a disappearance
-    /// outside the grace is a `wait`, and this machine has no `guardian-lost`.
+    /// so nothing is cached and no scene is scanned. The spawn is observed
+    /// **before** anything is raised: the row this token already owns, or —
+    /// before that Attack — a posted index of the row family's cap-documented
+    /// names inside the frozen radius. A call with neither waits with no click
+    /// and no Attack, so the click is only ever enqueued behind a matching
+    /// spawn and the nearest anything is never Attacked. The encounter then
+    /// owns the Attacked index: the kill is the owned row posted at zero
+    /// health while the page still shows this token's fight on it, or the
+    /// owned index leaving the page inside the frozen grace. An index this
+    /// token never Attacked is never a kill, a disappearance outside the grace
+    /// is a `wait`, and this machine has no `guardian-lost`.
     fn fight(
         &mut self,
         names: &'static [&'static str],
@@ -743,6 +785,67 @@ impl ClueRuntime {
             // The posted effective hitpoints at zero: the frozen mid-fight
             // wait, with no verb at all and never a public `dead`. A page that
             // posted no stat at all is not a zero.
+            return self.emit("wait");
+        }
+        let Some(page) = input.get("npcs").and_then(Value::as_array) else {
+            // No posted npc page this call: no spawn is posted, so there is
+            // nothing to observe and nothing to raise the overlay for. The
+            // spawn wait and the kill wait are the same `wait`.
+            return self.emit("wait");
+        };
+        let self_slot = posted_i32(input, "self_slot");
+        let now = self.clock.now();
+        let owned = self
+            .guardian
+            .as_ref()
+            .and_then(|g| g.owned.as_ref())
+            .map(|owned| owned.index);
+        if let Some(index) = owned {
+            // The wizard this token Attacked, read before the overlay: a kill
+            // never clicks, and a page that no longer posts the spawn is not a
+            // reason to raise the prayer.
+            let Some(row) = page
+                .iter()
+                .find(|row| posted_i32(row, "index") == Some(index))
+            else {
+                // The owned index left the page. Inside the frozen grace that
+                // is this token's kill; outside it the fight waits — never a
+                // `guardian-lost`.
+                let within = self
+                    .guardian
+                    .as_ref()
+                    .and_then(|g| g.owned.as_ref())
+                    .is_some_and(|owned| {
+                        now.saturating_duration_since(owned.seen_at)
+                            < Duration::from_millis(KILL_GRACE_MS)
+                    });
+                if !within {
+                    return self.emit("wait");
+                }
+                self.kill();
+                return self.dig(tile, input);
+            };
+            // Posted: this call's observation is the last-seen the grace reads.
+            if let Some(owned) = self.guardian.as_mut().and_then(|g| g.owned.as_mut()) {
+                owned.seen_at = now;
+            }
+            if died_owned(row, self_slot, self_target(input)) {
+                self.kill();
+                return self.dig(tile, input);
+            }
+            // Posted and alive: the fight is on, and the Attack is enqueued
+            // once per owned index — this call only reads the overlay below
+            // and never re-Attacks.
+        }
+        // The spawn this call raises the overlay for: the owned wizard just
+        // observed, or — before that Attack — the posted family wizard the
+        // Attack is about to own. A call with neither is the spawn wait.
+        let spawn = if owned.is_some() {
+            None
+        } else {
+            pick_npc(names, page, self_slot, input.get("here").and_then(posted_tile))
+        };
+        if owned.is_none() && spawn.is_none() {
             return self.emit("wait");
         }
         let Some(prayer) = selected.and_then(|data| api::prayer::lookup(data, PROTECT_FROM_MAGIC))
@@ -762,77 +865,30 @@ impl ClueRuntime {
                 "component_id": prayer.button_com,
             });
         }
-        let Some(page) = input.get("npcs").and_then(Value::as_array) else {
-            // No posted npc page this call: nothing to observe, so the spawn
-            // wait and the kill wait are the same `wait`.
-            return self.emit("wait");
-        };
-        let self_slot = posted_i32(input, "self_slot");
-        let now = self.clock.now();
-        let Some(index) = self
-            .guardian
-            .as_ref()
-            .and_then(|g| g.owned.as_ref())
-            .map(|owned| owned.index)
-        else {
-            // Nothing owned yet: the spawn wait. A posted wizard of this row's
-            // family is the Attack; no match at all waits, and the nearest
-            // anything is never Attacked.
-            return match pick_npc(names, page, self_slot) {
-                Some((index, name)) => {
-                    if let Some(guardian) = self.guardian.as_mut() {
-                        guardian.owned = Some(Owned {
-                            index,
-                            seen_at: now,
-                        });
-                    }
-                    json!({
-                        "kind": "npc",
-                        "token": self.token,
-                        "name": name,
-                        "action": ATTACK,
-                        // The posted scene index, always present: the host
-                        // matches that identity and refuses a stale one.
-                        "index": index,
-                    })
+        match spawn {
+            // The overlay reads up and the posted spawn is now this token's:
+            // the one Attack for this index, carrying the posted name and the
+            // posted scene index and nothing else.
+            Some((index, name)) => {
+                if let Some(guardian) = self.guardian.as_mut() {
+                    guardian.owned = Some(Owned {
+                        index,
+                        seen_at: now,
+                    });
                 }
-                None => self.emit("wait"),
-            };
-        };
-        let Some(row) = page
-            .iter()
-            .find(|row| posted_i32(row, "index") == Some(index))
-        else {
-            // The owned index left the page. Inside the frozen grace that is
-            // this token's kill; outside it the fight waits — never a
-            // `guardian-lost`.
-            let within = self
-                .guardian
-                .as_ref()
-                .and_then(|g| g.owned.as_ref())
-                .is_some_and(|owned| {
-                    now.saturating_duration_since(owned.seen_at)
-                        < Duration::from_millis(KILL_GRACE_MS)
-                });
-            if !within {
-                return self.emit("wait");
+                json!({
+                    "kind": "npc",
+                    "token": self.token,
+                    "name": name,
+                    "action": ATTACK,
+                    // The posted scene index, always present: the host
+                    // matches that identity and refuses a stale one.
+                    "index": index,
+                })
             }
-            self.kill();
-            return self.dig(tile, input);
-        };
-        // Posted: this call's observation is the last-seen the grace reads.
-        if let Some(guardian) = self.guardian.as_mut() {
-            if let Some(owned) = guardian.owned.as_mut() {
-                owned.seen_at = now;
-            }
+            // Owned and still posted: the fight waits for its kill.
+            None => self.emit("wait"),
         }
-        if died_owned(row, self_slot, self_target(input)) {
-            self.kill();
-            return self.dig(tile, input);
-        }
-        // Posted and alive: the fight is on, and the Attack is enqueued once
-        // per owned index — the fight waits for the kill.
-        self.emit("wait")
     }
 
     /// The kill was observed: the owned index is dropped and the walk back
@@ -1196,22 +1252,25 @@ fn died_owned(row: &Value, self_slot: Option<i32>, target: Option<SelfTarget>) -
 
 /// The frozen spawn filter over this call's posted npc page: a row whose
 /// posted display name is one of the row family's cap-documented wizards,
-/// whose posted actions carry `Attack`, and whose posted distance is inside
-/// the frozen radius. The row that targets the player wins, else the nearest,
-/// then posted order — the scan only replaces its best on a strict
-/// improvement, exactly like the landed loc picker.
+/// whose posted actions carry `Attack`, and whose distance from this call's
+/// posted `here` is inside the frozen radius on that same level. The row that
+/// targets the player wins, else the nearest, then posted order — the scan
+/// only replaces its best on a strict improvement, exactly like the landed
+/// loc picker.
 ///
-/// A row without an index, without a posted name, without a posted distance or
-/// without the action matches nothing, and a page with no match picks nothing:
-/// the encounter waits rather than Attacking the nearest anything. The name
-/// compared is the posted one and the name the verb carries is that same
-/// posted string — no frozen debugname is ever substituted for it.
+/// A row without an index, without a posted name, without the action, or
+/// without the marshalled tile that `npc_distance` needs matches nothing, and
+/// a page with no match picks nothing: the encounter waits rather than
+/// Attacking the nearest anything. The name compared is the posted one and the
+/// name the verb carries is that same posted string — no frozen debugname is
+/// ever substituted for it.
 fn pick_npc<'a>(
     names: &[&str],
     page: &'a [Value],
     self_slot: Option<i32>,
+    here: Option<Tile>,
 ) -> Option<(i32, &'a str)> {
-    let mut best: Option<(i32, &'a str, i32, bool)> = None;
+    let mut best: Option<(i32, &'a str, i64, bool)> = None;
     for row in page {
         let Some(index) = posted_i32(row, "index") else {
             continue;
@@ -1229,10 +1288,10 @@ fn pick_npc<'a>(
         if !posted_action(row, ATTACK) {
             continue;
         }
-        let Some(distance) = posted_i32(row, "distance") else {
+        let Some(distance) = npc_distance(row, here) else {
             continue;
         };
-        if distance > GUARDIAN_RADIUS {
+        if distance > i64::from(GUARDIAN_RADIUS) {
             continue;
         }
         let mine = targets_me(row, self_slot);
@@ -1247,6 +1306,29 @@ fn pick_npc<'a>(
         }
     }
     best.map(|(index, name, _, _)| (index, name))
+}
+
+/// The distance the spawn filter reads for one posted npc row: the posted
+/// `distance` when the row carried one, else the Chebyshev distance from this
+/// call's posted `here` to the row's own posted `x`/`z` tile — the same
+/// level-first `max(|dx|, |dz|)` measure the landed loc picker reads its own
+/// rows with.
+///
+/// The same level is part of the membership whichever half the distance comes
+/// from: a row on another level than the posted `here` is not the wizard this
+/// Dig spawned. A call that posted no `here`, and a row that did not post the
+/// marshalled `x`/`z`/`level` tile, have no distance here at all — `None`, so
+/// the row matches nothing rather than being measured against an invented
+/// base.
+fn npc_distance(row: &Value, here: Option<Tile>) -> Option<i64> {
+    let here = here?;
+    if posted_i32(row, "level") != Some(here.level) {
+        return None;
+    }
+    match posted_i32(row, "distance") {
+        Some(distance) => Some(i64::from(distance)),
+        None => Some(chebyshev(posted_tile(row)?, here)),
+    }
 }
 
 /// A posted `{ x, z, level }` value — the wrapper's `here` tile or one posted
@@ -1572,21 +1654,21 @@ pub fn on_snapshot(_snap: &SnapshotReader<'_>) {}
 pub fn on_pause() {
     RUNTIME.with(|rt| {
         let held = rt.borrow().clock.held;
-        rt.borrow_mut().clock.set_freeze(true, held);
+        rt.borrow_mut().apply_freeze(true, held);
     });
 }
 
 pub fn on_resume() {
     RUNTIME.with(|rt| {
         let held = rt.borrow().clock.held;
-        rt.borrow_mut().clock.set_freeze(false, held);
+        rt.borrow_mut().apply_freeze(false, held);
     });
 }
 
 pub fn on_hold(held: bool) {
     RUNTIME.with(|rt| {
         let paused = rt.borrow().clock.paused;
-        rt.borrow_mut().clock.set_freeze(paused, held);
+        rt.borrow_mut().apply_freeze(paused, held);
     });
 }
 
@@ -1821,22 +1903,52 @@ mod tests {
         }
     }
 
-    /// One wrapper-marshalled posted npc row: the posted index the Attack
-    /// carries, the posted name the family filter matches, the posted health
-    /// pair and target pair the kill is read through, and the posted distance
-    /// the frozen radius filters on.
+    /// One wrapper-marshalled posted npc row on the decoded `here` tile: the
+    /// posted index the Attack carries, the posted id, tile and `in_combat`
+    /// flag the marshalled page always carries, the posted name the family
+    /// filter matches, the posted health pair and target pair the kill is read
+    /// through, and the posted distance the frozen radius prefers.
     fn npc(index: i32, name: &str, distance: i32, health: i32, max_health: i32) -> Value {
         json!({
             "index": index,
             "id": 100 + index,
             "name": name,
+            "x": 3058,
+            "z": 3884,
+            "level": 0,
             "distance": distance,
             "health": health,
             "max_health": max_health,
+            "in_combat": false,
             "actions": [ATTACK],
             "target_kind": 0,
             "target_index": -1,
         })
+    }
+
+    /// The same posted row without a posted distance: the Chebyshev read the
+    /// spawn filter makes from the row's own posted tile and this call's
+    /// `here`.
+    fn tiled(index: i32, name: &str, x: i32, z: i32, level: i32) -> Value {
+        let mut row = npc(index, name, 3, 10, 10);
+        row.as_object_mut().expect("object").remove("distance");
+        row["x"] = json!(x);
+        row["z"] = json!(z);
+        row["level"] = json!(level);
+        row
+    }
+
+    /// One posted field of a marshalled npc row replaced.
+    fn field(mut row: Value, key: &str, value: Value) -> Value {
+        row[key] = value;
+        row
+    }
+
+    /// One posted field of a marshalled npc row dropped: what a page that
+    /// never posted it hands the machine.
+    fn unfield(mut row: Value, key: &str) -> Value {
+        row.as_object_mut().expect("object").remove(key);
+        row
     }
 
     /// The same posted row with the npc's own target on the player.
@@ -1899,6 +2011,25 @@ mod tests {
                 owned.seen_at -= Duration::from_millis(ms);
             }
         });
+    }
+
+    /// A freeze that outlasted the remaining kill grace, without a six-second
+    /// test: the clock's own `frozen_at` and the owned wizard's last-seen are
+    /// both placed at the freeze's start, so the reclaim the thaw makes is
+    /// exactly the frozen interval — the shape a real long freeze hands the
+    /// session, where the pause begins with the stamp it found and the thaw
+    /// lands a whole interval later.
+    fn froze_across_grace() {
+        on_pause();
+        RUNTIME.with(|rt| {
+            let mut rt = rt.borrow_mut();
+            let frozen_at = Instant::now() - Duration::from_millis(KILL_GRACE_MS + 1);
+            rt.clock.frozen_at = Some(frozen_at);
+            if let Some(owned) = rt.guardian.as_mut().and_then(|g| g.owned.as_mut()) {
+                owned.seen_at = frozen_at;
+            }
+        });
+        on_resume();
     }
 
     /// The wizard the frozen cap documents for `2723`'s family alias.
@@ -4371,8 +4502,10 @@ mod tests {
     }
 
     /// A disappearance this token never Attacked for is a wait, not a redig:
-    /// with the overlay off the click is all that goes out, and the wizard
-    /// coming and going under it never Digs and never walks.
+    /// while a wizard of the row family is posted the overlay gate is the
+    /// click, and a page that posts none is the spawn wait — the overlay is
+    /// never raised for a spawn that was not posted, and the wizard coming and
+    /// going under it never Digs and never walks.
     #[test]
     fn a_wizard_that_leaves_without_an_attack_is_a_wait_not_a_redig() {
         on_reset();
@@ -4386,17 +4519,224 @@ mod tests {
             fight_scene(json!([npc(7, WIZARD, 3, 10, 10)]), json!({ "varp95": 0 })),
         );
         assert_eq!(click["kind"], "if-button", "{click}");
-        for scene in [
+        // The wizard left before any Attack: nothing of the family is posted,
+        // so the click is not raised either and the fight waits.
+        let empty = call(
+            &data,
+            token,
+            page.clone(),
             fight_scene(json!([]), json!({ "varp95": 0 })),
+        );
+        assert_eq!(empty["kind"], "wait", "{empty}");
+        assert!(empty.get("component_id").is_none(), "{empty}");
+        // Another wizard of the family posted and still unowned, but dead on
+        // the page: the spawn is observed, so the click goes out and no
+        // Attack or redig follows from a death this token never fought.
+        let posted = call(
+            &data,
+            token,
+            page.clone(),
             fight_scene(json!([npc(9, WIZARD, 3, 0, 10)]), json!({ "varp95": 0 })),
+        );
+        assert_eq!(posted["kind"], "if-button", "{posted}");
+        for step in [&empty, &posted] {
+            let text = step.to_string();
+            for forbidden in ["guardian-lost", "Dig", "walk", "done", "abandon"] {
+                assert!(!text.contains(forbidden), "{forbidden} {step}");
+            }
+            assert_eq!(token_of(step), token, "{step}");
+        }
+    }
+
+    /// The spawn observation runs before the overlay: the Protect from Magic
+    /// click is only ever raised behind a posted wizard of the row family, and
+    /// the Attack only ever follows that click's on read. A page with no such
+    /// wizard waits with no click at all — whatever the overlay reads, and
+    /// whatever else it posted — and the owned wizard's own leave is read
+    /// before the gate too, so a kill never waits on the prayer.
+    #[test]
+    fn the_overlay_is_only_raised_behind_a_posted_spawn() {
+        on_reset();
+        let data = selected();
+        let page = json!([[GUARDED, 1]]);
+        let wizard = json!([npc(7, WIZARD, 3, 10, 10)]);
+        let token = spawned(&data);
+        let mut unobserved = fight_scene(json!([npc(7, "Guard", 1, 10, 10)]), json!({}));
+        unobserved.as_object_mut().expect("object").remove("varp95");
+        for scene in [
+            // No spawn posted with the overlay off, on and unobserved: the
+            // spawn wait, never a click.
+            fight_scene(json!([]), json!({ "varp95": 0 })),
+            fight_scene(json!([]), json!({ "varp95": 1 })),
+            unobserved,
+            // A wizard of the family the frozen radius refuses.
+            fight_scene(
+                json!([npc(7, WIZARD, GUARDIAN_RADIUS + 1, 10, 10)]),
+                json!({ "varp95": 0 }),
+            ),
         ] {
             let idle = call(&data, token, page.clone(), scene.clone());
-            assert_eq!(idle["kind"], "if-button", "{scene} {idle}");
-            let text = idle.to_string();
-            for forbidden in ["guardian-lost", "Dig", "walk", "done", "abandon"] {
-                assert!(!text.contains(forbidden), "{forbidden} {idle}");
-            }
+            assert_eq!(idle["kind"], "wait", "{scene} {idle}");
+            assert!(idle.get("component_id").is_none(), "{scene} {idle}");
+            assert!(idle.get("action").is_none(), "{scene} {idle}");
         }
+        // The spawn posted and the overlay off: the click, and still no
+        // Attack.
+        let click = call(
+            &data,
+            token,
+            page.clone(),
+            fight_scene(wizard.clone(), json!({ "varp95": 0 })),
+        );
+        assert_eq!(click["kind"], "if-button", "{click}");
+        assert_eq!(click["component_id"], 5621, "{click}");
+        assert!(click.get("index").is_none(), "{click}");
+        // The posted-on overlay leaves the Attack, for that posted index.
+        let attack = call(
+            &data,
+            token,
+            page.clone(),
+            fight_scene(wizard.clone(), json!({ "varp95": 1 })),
+        );
+        assert_eq!(attack["kind"], "npc", "{attack}");
+        assert_eq!(attack["index"], 7, "{attack}");
+        // Owned and still posted with the overlay off again: the gate is read
+        // on every fight call rather than latched, so the click goes out again
+        // and the Attack is never re-issued.
+        let owned = call(
+            &data,
+            token,
+            page.clone(),
+            fight_scene(wizard.clone(), json!({ "varp95": 0 })),
+        );
+        assert_eq!(owned["kind"], "if-button", "{owned}");
+        assert!(owned.get("index").is_none(), "{owned}");
+        // The owned wizard gone with nothing of the family posted: the grace
+        // kill, read before the overlay and never a click.
+        let gone = call(
+            &data,
+            token,
+            page,
+            fight_scene(json!([]), json!({ "varp95": 0 })),
+        );
+        assert_eq!(gone["kind"], "held", "{gone}");
+        assert_eq!(gone["name"], SPADE_NAME, "{gone}");
+        assert_eq!(gone["action"], DIG, "{gone}");
+    }
+
+    /// The spawn filter reads the posted tile: the posted row must be on this
+    /// call's posted `here` level, and a row that posted no distance is
+    /// measured from its own posted tile with the landed Chebyshev read — the
+    /// nearer of two such rows wins before posted order, and a tile outside
+    /// the frozen radius is refused exactly like a posted distance outside it.
+    #[test]
+    fn the_spawn_pick_reads_the_posted_level_and_the_posted_tile() {
+        on_reset();
+        let data = selected();
+        let page = json!([[GUARDED, 1]]);
+        let token = spawned(&data);
+        for scene in [
+            // Another level, with a posted distance and with only its own
+            // tile to measure.
+            fight_scene(json!([field(npc(7, WIZARD, 3, 10, 10), "level", json!(1))]), json!({})),
+            fight_scene(json!([tiled(7, WIZARD, 3058, 3884, 1)]), json!({})),
+            // No posted level at all is not the `here` level either, and a
+            // row with no posted tile and no posted distance has no measure.
+            fight_scene(json!([unfield(npc(7, WIZARD, 3, 10, 10), "level")]), json!({})),
+            fight_scene(
+                json!([unfield(unfield(unfield(npc(7, WIZARD, 3, 10, 10), "distance"), "x"), "z")]),
+                json!({}),
+            ),
+            // No posted `here`: no level to compare and no base to measure
+            // from, whatever the row posted.
+            fight_scene(json!([tiled(7, WIZARD, 3058, 3884, 0)]), json!({ "here": null })),
+            fight_scene(json!([npc(7, WIZARD, 3, 10, 10)]), json!({ "here": null })),
+            // The row's own tile one step outside the frozen radius.
+            fight_scene(
+                json!([tiled(7, WIZARD, 3058 + GUARDIAN_RADIUS + 1, 3884, 0)]),
+                json!({}),
+            ),
+        ] {
+            let idle = call(&data, token, page.clone(), scene.clone());
+            assert_eq!(idle["kind"], "wait", "{scene} {idle}");
+            assert!(idle.get("index").is_none(), "{scene} {idle}");
+            assert!(idle.get("component_id").is_none(), "{scene} {idle}");
+        }
+        // Two rows measured by their own tiles: the nearer one wins before
+        // posted order, the way the posted-distance read already does.
+        let near = call(
+            &data,
+            token,
+            page.clone(),
+            fight_scene(
+                json!([
+                    tiled(4, WIZARD, 3058, 3884 - 9, 0),
+                    tiled(6, WIZARD, 3058 + 2, 3884, 0),
+                ]),
+                json!({}),
+            ),
+        );
+        assert_eq!(near["kind"], "npc", "{near}");
+        assert_eq!(near["index"], 6, "{near}");
+        // Exactly on the frozen radius is inside it, and the tile-measured row
+        // is the Attack with no posted distance at all.
+        let token = spawned(&data);
+        let edge = call(
+            &data,
+            token,
+            page,
+            fight_scene(
+                json!([tiled(7, WIZARD, 3058, 3884 + GUARDIAN_RADIUS, 0)]),
+                json!({}),
+            ),
+        );
+        assert_eq!(edge["kind"], "npc", "{edge}");
+        assert_eq!(edge["index"], 7, "{edge}");
+        assert_eq!(edge["name"], WIZARD, "{edge}");
+    }
+
+    /// A freeze that outlasted the remaining kill grace: the owned last-seen
+    /// lives at the freeze's own start and the wizard is gone by the time the
+    /// session thaws. The thaw reclaims the frozen gap into that stamp the way
+    /// the landed hunt fight shifts its own, so the disappearance is still
+    /// this token's kill rather than a grace the pause spent.
+    #[test]
+    fn a_freeze_across_the_kill_grace_still_ends_in_the_kill() {
+        on_reset();
+        let data = selected();
+        let page = json!([[GUARDED, 1]]);
+        let token = spawned(&data);
+        let attack = call(
+            &data,
+            token,
+            page.clone(),
+            fight_scene(json!([npc(7, WIZARD, 3, 10, 10)]), json!({})),
+        );
+        assert_eq!(attack["kind"], "npc", "{attack}");
+        assert_eq!(attack["index"], 7, "{attack}");
+        // The freeze: without the reclaim the next call's own `now` is the
+        // whole frozen interval ahead of the owned stamp, so the grace would
+        // already read as spent and the fight would wait forever.
+        froze_across_grace();
+        let killed = call(
+            &data,
+            token,
+            page.clone(),
+            fight_scene(json!([]), json!({})),
+        );
+        assert_eq!(killed["kind"], "held", "a freeze never spends the grace: {killed}");
+        assert_eq!(killed["name"], SPADE_NAME, "{killed}");
+        assert_eq!(killed["action"], DIG, "{killed}");
+        // Frozen again: nothing is read and nothing is emitted, and the thaw
+        // after it leaves the post-kill Dig where it was.
+        on_pause();
+        let frozen = call(&data, token, page.clone(), fight_scene(json!([]), json!({})));
+        assert_eq!(frozen["kind"], "wait", "{frozen}");
+        assert!(frozen.get("action").is_none(), "{frozen}");
+        on_resume();
+        let redig = call(&data, token, page, fight_scene(json!([]), json!({})));
+        assert_eq!(redig["kind"], "held", "{redig}");
+        assert_eq!(redig["action"], DIG, "{redig}");
     }
 
     /// The mid-fight hitpoints wait: a posted effective hitpoints at or below
