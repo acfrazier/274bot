@@ -3717,6 +3717,20 @@ fn board_scene<'a>(rows: &'a [script::isolate_fb::ItemRowInput<'a>]) -> Scene<'a
     }
 }
 
+/// The closed board SNAP posts beside a box that is not open: the present
+/// empty observation, which is not the same page as no board table at all.
+fn closed_board_scene() -> Scene<'static> {
+    Scene {
+        puzzle: Some(PostedPuzzle {
+            component_id: -1,
+            size: 0,
+            items: &[],
+            generation: 8,
+        }),
+        ..Scene::default()
+    }
+}
+
 /// The public `api.clue.next` path over a posted puzzle board: the held box's
 /// own `held` Open reaches the drain as `InteractReq::Held`, one planned click
 /// reaches it as `InteractReq::PuzzleMove` — never as a loc and never as an
@@ -3881,6 +3895,136 @@ export function tick(api) {
     let text = value.to_string();
     for forbidden in ["clue solved", "abandon", "ownsEquipment", "no-puzzle"] {
         assert!(!text.contains(forbidden), "{forbidden} {value:?}");
+    }
+}
+
+/// The unreadable exit of a live board on the public path: once the box's Open
+/// has landed and a click is outstanding, a page still posting a live size-25
+/// board whose pieces the selected map cannot place reaches the drain as one
+/// `InteractReq::CloseModal` — not a bare latch with the modal open — and the
+/// closed page the landed close leaves is not a second close.
+#[test]
+fn v2_clue_puzzle_unreadable_mid_solve_closes_the_modal_once() {
+    let src = r#"
+export const apiVersion = 2;
+export function tick(api) {
+  globalThis.__runs = (globalThis.__runs || 0) + 1;
+  if (globalThis.__runs === 1) {
+    const begin = api.clue.begin();
+    globalThis.__token = begin.ok ? begin.value.token : null;
+    globalThis.__steps = [
+      begin,
+      api.clue.next({ token: globalThis.__token }),
+      api.clue.next({ token: globalThis.__token, resume: true }),
+      api.clue.next({ token: globalThis.__token }),
+      // The report is posted: the box's own Open, repeating while the board
+      // stays the closed one.
+      api.clue.next({ token: globalThis.__token }),
+      api.clue.next({ token: globalThis.__token }),
+    ];
+    return;
+  }
+  globalThis.__steps.push(api.clue.next({ token: globalThis.__token }));
+  if (globalThis.__steps.length === 10) {
+    globalThis.__probe = JSON.stringify({
+      token: globalThis.__token,
+      runs: globalThis.__runs,
+      steps: globalThis.__steps,
+    });
+  }
+}
+"#;
+    let data = api::game_data::for_revision(ClientRevision::R274).unwrap();
+    let iso =
+        LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data).unwrap();
+    let page = puzzle_page();
+
+    // Tick 1: the box's own Open, twice, over the closed board SNAP posts
+    // beside a box that is not open yet.
+    post_scene(&iso, 1, &page, &closed_board_scene());
+    iso.on_game_tick(1);
+    assert!(iso.probe("true").is_ok());
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![puzzle_open(), puzzle_open()],
+        "each held call opens the box while the board stays closed"
+    );
+
+    // Tick 2: the board is open and one slide from solved, so the plan is the
+    // single click beside the gap.
+    let mut moving = board_rows(&one_move_board(), BOARD_COMPONENT);
+    post_scene(&iso, 2, &page, &board_scene(&moving));
+    iso.on_game_tick(2);
+    assert!(iso.probe("true").is_ok());
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::PuzzleMove {
+            id: PIECE_B + 23,
+            slot: 24,
+            component: BOARD_COMPONENT,
+            generation: 7,
+        }],
+        "one planned click while the board is readable"
+    );
+
+    // Tick 3: the page still posts a live size-25 board, but one piece the
+    // selected map cannot place — an open modal nobody can read. The attempt
+    // exits through the one close rather than idling with the modal up.
+    moving[0].id = PIECE_B + 99;
+    post_scene(&iso, 3, &page, &board_scene(&moving));
+    iso.on_game_tick(3);
+    assert!(iso.probe("true").is_ok());
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::CloseModal],
+        "the unreadable board of an opened box is closed"
+    );
+
+    // Tick 4: the board is gone — the closed page the landed close leaves —
+    // and the step waits the close window out without a second close.
+    post_scene(&iso, 4, &page, &closed_board_scene());
+    iso.on_game_tick(4);
+    assert!(iso.probe("true").is_ok());
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "the landed close is never sent twice"
+    );
+
+    // Tick 5: a readable solved board posted again is not a second attempt
+    // either: the latch belongs to the step, not to the board page.
+    let solved = board_rows(&solved_board(), BOARD_COMPONENT);
+    post_scene(&iso, 5, &page, &board_scene(&solved));
+    iso.on_game_tick(5);
+    assert!(iso.probe("true").is_ok());
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "the latch holds while the step stays held"
+    );
+
+    let probed = iso.probe("globalThis.__probe").unwrap();
+    let value: serde_json::Value = serde_json::from_str(probed.as_str().unwrap()).unwrap();
+    iso.join();
+
+    assert!(value["token"].is_number(), "{value:?}");
+    assert_eq!(value["runs"], 5, "{value:?}");
+    let steps = value["steps"].as_array().expect("steps");
+    assert_eq!(steps.len(), 10, "{value:?}");
+    for (index, kind) in [
+        (1, "callback.enabled"),
+        (2, "callback.log"),
+        (3, "callback.setStatus"),
+        (4, "held"),
+        (5, "held"),
+        (6, "puzzle-move"),
+        (7, "close-modal"),
+        (8, "wait"),
+        (9, "wait"),
+    ] {
+        assert_eq!(steps[index]["kind"], kind, "{index} {value:?}");
+        assert_eq!(steps[index]["ok"], true, "{index} {value:?}");
+        assert_eq!(steps[index]["status"], "continue", "{index} {value:?}");
+        assert_eq!(steps[index]["token"], value["token"], "{index} {value:?}");
+        assert!(steps[index].get("error").is_none(), "{index} {value:?}");
     }
 }
 

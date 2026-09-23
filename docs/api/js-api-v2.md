@@ -657,10 +657,12 @@ marshals at call time:
 4. a board that goes unreadable mid-solve, a settle window that runs out
    unlanded, a board the solver has no plan for (a mixed picture set is
    unsolvable-as-read) and 600 landed moves all end the same way: one
-   `close-modal` for a live board, then idle `wait`s. Eight consecutive
-   refusals reach that exit too. The 2000ms settle window, the 3000ms close
-   window and the 5000ms open window are freeze-honored like the collect's own,
-   so a frozen call emits no click and no close and spends nothing.
+   `close-modal` for a live board, then idle `wait`s — a close this attempt
+   already sent is never sent twice, and the step latches when the close window
+   ends. Eight consecutive refusals reach that exit too. The 2000ms settle
+   window, the 3000ms close window and the 5000ms open window are freeze-honored
+   like the collect's own, so a frozen call emits no click and no close and
+   spends nothing.
 
 The frozen cap names — board unreadable, unsolvable-as-read, stalled — are
 evidence for those exits and not tokens: this arm publishes no new error, logs

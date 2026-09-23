@@ -802,15 +802,8 @@ impl ClueRuntime {
             state.opened = true;
         }
         if self.puzzle.as_ref().is_some_and(|puzzle| puzzle.closing) {
-            // The one close is out and this call's board is still posted: the
-            // frozen close window is running out. No second close is sent, and
-            // the step latches when the window ends.
-            if self.clock.bound_reached() {
-                if let Some(state) = self.puzzle.as_mut() {
-                    state.latch = true;
-                }
-            }
-            return self.emit("wait");
+            // The one close is out and this call's board is still posted.
+            return self.puzzle_closing();
         }
         if clue_puzzle::is_puzzle_solved(&live) {
             // The frozen `isPuzzleSolved` read over the reconstructed board:
@@ -891,22 +884,27 @@ impl ClueRuntime {
     ///
     /// Either the Open has not landed yet — the held box is opened again,
     /// repeating while the board stays closed, until the frozen open window
-    /// runs out — or a board this token had already opened went away, which is
-    /// the end of the attempt: the frozen `finally` closes, and a board that is
-    /// already gone leaves nothing to close.
+    /// runs out — or the attempt is over: this token had already opened a live
+    /// board, and the frozen `finally` closes the modal that Open landed on,
+    /// through the same one close as a stall or `MAX_MOVES`. A close that is
+    /// already out is never sent twice, so the closed `{-1, 0, []}` page a
+    /// landed close leaves only waits the close window out.
     fn puzzle_closed(&mut self, box_id: i32, name: &str) -> Value {
         let (opened, closing) = {
             let state = self.puzzle.get_or_insert_with(|| Puzzle::new(box_id));
             (state.opened, state.closing)
         };
-        if opened || closing {
-            // A live board went unreadable mid-solve, or the close landed.
-            // Either way the attempt is over and nothing is opened again.
-            if let Some(state) = self.puzzle.as_mut() {
-                state.latch = true;
-                state.closing = false;
-            }
-            return self.emit("wait");
+        if closing {
+            // The one close is already out and this call's page posts no
+            // readable board — the shape the landed close itself leaves, or a
+            // board that followed it away.
+            return self.puzzle_closing();
+        }
+        if opened {
+            // A live board went unreadable mid-solve with no close out yet: the
+            // modal the Open landed on may still be up, so the attempt exits
+            // through the close rather than latching with the modal open.
+            return self.puzzle_close();
         }
         if self.clock.deadline.is_none() {
             // The first Open of this attempt arms the frozen window; the
@@ -915,7 +913,7 @@ impl ClueRuntime {
         }
         if self.clock.bound_reached() {
             // `puzzle box did not open`: the attempt ends without a close,
-            // because there is no board to close.
+            // because no board was ever opened.
             if let Some(state) = self.puzzle.as_mut() {
                 state.latch = true;
             }
@@ -956,6 +954,19 @@ impl ClueRuntime {
         }
         self.clock.arm(CLOSE_WAIT_MS);
         self.emit("close-modal")
+    }
+
+    /// The exit close is out and the frozen close window is running out: no
+    /// second close is sent for the step, and the solved-or-attempted latch
+    /// lands when the window ends. Whether this call's page still posts the
+    /// board or none at all is not this window's question.
+    fn puzzle_closing(&mut self) -> Value {
+        if self.clock.bound_reached() {
+            if let Some(state) = self.puzzle.as_mut() {
+                state.latch = true;
+            }
+        }
+        self.emit("wait")
     }
 
     /// `Steady` on an identified non-casket row: a search membership walks to
@@ -5730,7 +5741,7 @@ mod tests {
     }
 
     #[test]
-    fn a_board_that_goes_unreadable_mid_solve_ends_without_a_close() {
+    fn a_board_that_goes_unreadable_mid_solve_closes_and_latches() {
         on_reset();
         let data = selected();
         let token = steady(&data, PUZZLE_RIDDLE);
@@ -5738,12 +5749,49 @@ mod tests {
         assert_eq!(opened["kind"], "held", "{opened}");
         let moved = call(&data, token, held_box(), board_page(&one_move_board(), 7));
         assert_eq!(moved["kind"], "puzzle-move", "{moved}");
-        // The board went away with the click outstanding: the attempt is over
-        // and nothing is closed, because there is no board left to close.
-        let gone = call(&data, token, held_box(), closed_board_page());
-        assert_eq!(gone["kind"], "wait", "{gone}");
-        let again = call(&data, token, held_box(), closed_board_page());
-        assert_eq!(again["kind"], "wait", "{again}");
+        // The board went away with the click outstanding, and the modal the
+        // Open landed on may still be up: the attempt exits through the same
+        // one close as a stall or `MAX_MOVES`.
+        let closed = call(&data, token, held_box(), closed_board_page());
+        assert_eq!(closed["kind"], "close-modal", "{closed}");
+        assert_eq!(closed["token"], token, "{closed}");
+        // The close is out: neither the closed page it leaves nor a board
+        // posted again draws a second close, and the window is what is left of
+        // the exit.
+        for page in [closed_board_page(), board_page(&one_move_board(), 7)] {
+            let waited = call(&data, token, held_box(), page);
+            assert_eq!(waited["kind"], "wait", "{waited}");
+        }
+        force_bound();
+        let latched = call(&data, token, held_box(), closed_board_page());
+        assert_eq!(latched["kind"], "wait", "{latched}");
+        // The solved-or-attempted latch holds: a readable board posted again is
+        // not a second attempt and not a second close.
+        let reposted = call(&data, token, held_box(), board_page(&solved_board(), 7));
+        assert_eq!(reposted["kind"], "wait", "{reposted}");
+    }
+
+    #[test]
+    fn a_still_open_board_the_map_cannot_place_takes_the_same_close() {
+        on_reset();
+        let data = selected();
+        let token = steady(&data, PUZZLE_RIDDLE);
+        let opened = call(&data, token, held_box(), closed_board_page());
+        assert_eq!(opened["kind"], "held", "{opened}");
+        let moved = call(&data, token, held_box(), board_page(&one_move_board(), 7));
+        assert_eq!(moved["kind"], "puzzle-move", "{moved}");
+        // The page still posts a live size-25 board, but one piece the selected
+        // map cannot place: the board is up and unreadable, so the same close
+        // goes out rather than a bare latch with the modal open.
+        let mut unplaceable = board_page(&one_move_board(), 7);
+        unplaceable["puzzle_board"]["items"][0]["id"] = json!(PIECE_B + 99);
+        let closed = call(&data, token, held_box(), unplaceable);
+        assert_eq!(closed["kind"], "close-modal", "{closed}");
+        let waited = call(&data, token, held_box(), closed_board_page());
+        assert_eq!(waited["kind"], "wait", "{waited}");
+        force_bound();
+        let latched = call(&data, token, held_box(), closed_board_page());
+        assert_eq!(latched["kind"], "wait", "{latched}");
     }
 
     #[test]
