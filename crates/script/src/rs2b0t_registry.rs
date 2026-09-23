@@ -836,6 +836,10 @@ pub(crate) fn w1c_equipment_option_families(ident: &str) -> Option<&'static [&'s
 /// Host-owned finite option tables for imported / parent-dir identifiers
 /// whose bodies are not in the same-directory settings blob. Values are
 /// copied from the frozen rs2b0t pin; this is not a JS evaluator.
+///
+/// `BANK_LOCATIONS` / `BANK_LOCATION_OPTIONS` are the exception: a bank name
+/// is only a choice when the selected data publishes an alias the runtime
+/// `BANK_LOCATIONS` can resolve, so those read [`crate::content::BANK_ALIASES`].
 pub(crate) fn catalog_option_table(ident: &str) -> Option<&'static [&'static str]> {
     Some(match ident {
         "COOK_LOCATION_OPTIONS" => &[
@@ -943,53 +947,34 @@ pub(crate) fn catalog_option_table(ident: &str) -> Option<&'static [&'static str
 }
 
 fn bank_location_names(ident: &str) -> &'static [&'static str] {
-    const BANKS: &[&str] = &[
-        "Varrock East",
-        "Varrock West",
-        "Al Kharid",
-        "Draynor",
-        "Falador East",
-        "Falador West",
-        "Edgeville",
-        "Seers",
-        "Catherby",
-        "Yanille",
-        "Ardougne West",
-        "Ardougne East",
-        "Canifis",
-        "Shilo Village",
-        "Fishing Guild",
-        "Shantay Pass",
-        "Mage Arena",
-        "Grand Tree",
-        "Duel Arena",
-    ];
-    const WITH_NEAREST: &[&str] = &[
-        "Nearest",
-        "Varrock East",
-        "Varrock West",
-        "Al Kharid",
-        "Draynor",
-        "Falador East",
-        "Falador West",
-        "Edgeville",
-        "Seers",
-        "Catherby",
-        "Yanille",
-        "Ardougne West",
-        "Ardougne East",
-        "Canifis",
-        "Shilo Village",
-        "Fishing Guild",
-        "Shantay Pass",
-        "Mage Arena",
-        "Grand Tree",
-        "Duel Arena",
-    ];
+    /// The published alias names in `BANK_ALIASES` table order.
+    ///
+    /// Derived at compile time so the dropdown cannot drift from the selected
+    /// data: a frozen foreign bank list offers names the runtime
+    /// `BANK_LOCATIONS` lookup has no row for.
+    const BANKS: [&str; crate::content::BANK_ALIASES.len()] = {
+        let mut names = [""; crate::content::BANK_ALIASES.len()];
+        let mut i = 0;
+        while i < names.len() {
+            names[i] = crate::content::BANK_ALIASES[i].name;
+            i += 1;
+        }
+        names
+    };
+    /// `BANK_LOCATION_OPTIONS` keeps the caller's own `Nearest` head.
+    const WITH_NEAREST: [&str; crate::content::BANK_ALIASES.len() + 1] = {
+        let mut names = ["Nearest"; crate::content::BANK_ALIASES.len() + 1];
+        let mut i = 0;
+        while i < crate::content::BANK_ALIASES.len() {
+            names[i + 1] = crate::content::BANK_ALIASES[i].name;
+            i += 1;
+        }
+        names
+    };
     if ident == "BANK_LOCATION_OPTIONS" {
-        WITH_NEAREST
+        &WITH_NEAREST
     } else {
-        BANKS
+        &BANKS
     }
 }
 
@@ -2579,9 +2564,10 @@ export const SETTINGS = {
         let schema = settings_schema_from_source(src);
         let bank = setting(&schema, "bank");
         assert_eq!(bank.options[0], "Nearest");
-        assert!(
-            bank.options.contains(&"Catherby".into()),
-            "{:?}",
+        assert_eq!(
+            bank.options.len(),
+            crate::content::BANK_ALIASES.len() + 1,
+            "the imported BANK_LOCATIONS spread must resolve every published alias: {:?}",
             bank.options
         );
         assert_eq!(
@@ -3247,5 +3233,26 @@ ScriptRegistry.register({ name: 'ShopBuyout', settingsSchema: SETTINGS, create: 
         );
         assert_eq!(empty, 0, "all 24 audited option rows must recover");
         assert_eq!(recovered, 24);
+    }
+
+    /// The bank dropdown names are the published aliases: the runtime
+    /// `BANK_LOCATIONS` resolves through `content.named_banks` (built from
+    /// `content::BANK_ALIASES`), so a frozen foreign bank list would offer
+    /// names the lookup has no row for.
+    #[test]
+    fn bank_location_options_are_the_published_aliases() {
+        let published: Vec<String> = crate::content::BANK_ALIASES
+            .iter()
+            .map(|alias| alias.name.to_string())
+            .collect();
+        assert!(!published.is_empty());
+        assert_eq!(catalog_option_values("BANK_LOCATIONS").unwrap(), published);
+        let mut with_nearest = vec!["Nearest".to_string()];
+        with_nearest.extend(published);
+        assert_eq!(
+            catalog_option_values("BANK_LOCATION_OPTIONS").unwrap(),
+            with_nearest,
+            "BANK_LOCATION_OPTIONS is the caller's Nearest head plus the aliases"
+        );
     }
 }

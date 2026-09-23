@@ -208,15 +208,62 @@ fn host_js_dts_includes_required_interfaces() {
 }
 
 fn native_snapshot_block(src: &str) -> &str {
-    const START: &str = "export interface NativeSnapshot {";
+    interface_block(src, "NativeSnapshot")
+}
+
+/// One `export interface X { … }` block from the rendered declarations.
+fn interface_block<'a>(src: &'a str, name: &str) -> &'a str {
     let start = src
-        .find(START)
-        .unwrap_or_else(|| panic!("missing NativeSnapshot"));
+        .find(&format!("export interface {name} {{"))
+        .unwrap_or_else(|| panic!("missing {name}"));
     let rest = &src[start..];
     let end = rest
         .find("\n}\n")
-        .unwrap_or_else(|| panic!("unclosed NativeSnapshot"));
+        .unwrap_or_else(|| panic!("unclosed {name}"));
     &rest[..=end]
+}
+
+/// One `export type X = …;` block from the rendered declarations.
+fn type_block<'a>(src: &'a str, name: &str) -> &'a str {
+    let start = src
+        .find(&format!("export type {name} ="))
+        .unwrap_or_else(|| panic!("missing {name}"));
+    let rest = &src[start..];
+    let end = rest
+        .find(";\n")
+        .unwrap_or_else(|| panic!("unclosed {name}"));
+    &rest[..end]
+}
+
+/// `HostHandle.interact` is the queue `Bank`/`Banking` push onto: the bank
+/// shim queues `walk-nearest-bank` to reach a stand and `withdraw-load` to
+/// fill the pack (`bank.js`, `periodic_bank.js`). A union without them types
+/// a queue narrower than the one the isolate drains. `inspect-ack` stays off
+/// it: that ack is the isolate→host reply, never a script request.
+#[test]
+fn interact_union_publishes_the_banked_queue_ops() {
+    let src = render_host_js_dts();
+    let union = type_block(&src, "InteractReq");
+    assert!(union.contains("| { op: 'walk-nearest-bank'}"), "{union}");
+    assert!(
+        union.contains("| { op: 'withdraw-load'; name: string; bank_generation: number}"),
+        "{union}"
+    );
+    assert!(
+        !union.contains("inspect-ack"),
+        "the isolate consume-ack stays off the published queue: {union}"
+    );
+}
+
+/// The declared MakeButton key is the posted one: `make_product_array` posts
+/// `comId` on each button and the ClientAdapter reader maps `b.comId`. A
+/// `com_id` declaration types a field no posted row carries.
+#[test]
+fn make_button_publishes_the_posted_component_key() {
+    let src = render_host_js_dts();
+    let button = interface_block(&src, "MakeButton");
+    assert!(button.contains("comId: number;"), "{button}");
+    assert!(!button.contains("com_id"), "{button}");
 }
 
 /// Writes `host-js/index.d.ts` from the host verb tables.

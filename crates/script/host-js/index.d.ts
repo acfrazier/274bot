@@ -170,7 +170,7 @@ export interface ChatLine {
 
 export interface MakeButton {
   qty: number;
-  com_id: number;
+  comId: number;
 }
 
 export interface MakeProduct {
@@ -310,11 +310,13 @@ export type InteractReq =
   | { op: 'open-stand'; x: number; z: number; level: number; kind: string; name?: string | null; stand_op?: number | null; choose?: string | null}
   | { op: 'walk'; x: number; z: number; level: number; allow_teleports?: boolean; allow_wilderness?: boolean; allow_bank_fetch?: boolean; request_id?: number}
   | { op: 'walk-near'; x: number; z: number; level: number; radius: number; allow_teleports?: boolean; allow_wilderness?: boolean; allow_bank_fetch?: boolean; request_id?: number}
+  | { op: 'walk-nearest-bank'}
   | { op: 'inspect-route'; x: number; z: number; level: number; from_x: number; from_z: number; from_level: number; allow_teleports?: boolean; allow_wilderness?: boolean; allow_bank_fetch?: boolean; avoid?: Array<{ minX: number; maxX: number; minZ: number; maxZ: number; level?: number }>; request_id?: number}
   | { op: 'walk-to'; x: number; z: number; level: number}
   | { op: 'deposit'; name: string}
   | { op: 'withdraw'; name: string; action: string}
   | { op: 'withdraw-x'; name: string; count: number; bank_item_id: number; lands_as_id: number; action: string; bank_generation: number}
+  | { op: 'withdraw-load'; name: string; bank_generation: number}
   | { op: 'held'; name: string; action: string}
   | { op: 'inv-button'; id: number; slot: number; component: number; operation: number; bank_generation?: number}
   | { op: 'puzzle-move'; id: number; slot: number; component: number; generation: number}

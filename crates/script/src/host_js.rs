@@ -1238,7 +1238,7 @@ const SUPPORTING_INTERFACES: &[TsInterface] = &[
                 doc: None,
             },
             TsField {
-                name: "com_id",
+                name: "comId",
                 ty: "number",
                 optional: false,
                 doc: None,
@@ -1886,6 +1886,10 @@ const INTERACT_VARIANTS: &[InteractVariant] = &[
         ],
     },
     InteractVariant {
+        op: "walk-nearest-bank",
+        fields: &[],
+    },
+    InteractVariant {
         op: "inspect-route",
         fields: &[
             TsField { name: "x", ty: "number", optional: false, doc: None },
@@ -1979,6 +1983,23 @@ const INTERACT_VARIANTS: &[InteractVariant] = &[
             },
             TsField {
                 name: "action",
+                ty: "string",
+                optional: false,
+                doc: None,
+            },
+            TsField {
+                name: "bank_generation",
+                ty: "number",
+                optional: false,
+                doc: None,
+            },
+        ],
+    },
+    InteractVariant {
+        op: "withdraw-load",
+        fields: &[
+            TsField {
+                name: "name",
                 ty: "string",
                 optional: false,
                 doc: None,
