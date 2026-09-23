@@ -2642,6 +2642,15 @@ const NATIVE_OP_VARIANTS: &[InteractVariant] = &[
         fields: &[TsField { name: "on", ty: "boolean", optional: false, doc: None }],
     },
     InteractVariant {
+        op: "deposit",
+        fields: &[TsField {
+            name: "name",
+            ty: "string",
+            optional: false,
+            doc: None,
+        }],
+    },
+    InteractVariant {
         op: "withdraw",
         fields: &[
             TsField { name: "name", ty: "string", optional: false, doc: None },

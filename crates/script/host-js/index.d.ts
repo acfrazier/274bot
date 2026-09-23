@@ -442,6 +442,7 @@ export type NativeOp =
   | { op: 'open-stand'; x: number; z: number; level: number; kind: string; name?: string; stand_op?: number; choose?: string}
   | { op: 'close'}
   | { op: 'set-note-mode'; on: boolean}
+  | { op: 'deposit'; name: string}
   | { op: 'withdraw'; name: string; action: string}
   | { op: 'withdraw-load'; name: string; bank_generation: number}
   | { op: 'withdraw-x'; name: string; count: number; bank_item_id: number; lands_as_id: number; action: string; bank_generation: number}

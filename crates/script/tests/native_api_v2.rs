@@ -750,6 +750,62 @@ export function tick(api) {
 }
 
 #[test]
+fn v2_deposit_requests_the_bank_side_name_over_the_public_path() {
+    let bindings = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/load/bindings.rs"));
+    let ops = bindings
+        .split("const V2_OPS")
+        .nth(1)
+        .unwrap()
+        .split("const OPTIONAL")
+        .next()
+        .unwrap();
+    assert!(ops.contains("'deposit': ['name'],"), "{ops}");
+    // The name is the bank-side display name the host matches; the shim never
+    // pre-resolves it and never rewrites the request. `loc` / `obj` / `npc`
+    // stay unpublished: the clue machine's own steps do not publish them.
+    let src = r#"
+export const apiVersion = 2;
+export function tick(api) {
+  api.request({ op: 'deposit', name: 'Bones' });
+  const refused = {};
+  for (const op of ['loc', 'obj', 'npc']) {
+    try { api.request({ op }); refused[op] = 'ok'; }
+    catch (e) { refused[op] = String(e && (e.message || e)); }
+  }
+  try { api.request({ op: 'deposit' }); refused.missing = 'ok'; }
+  catch (e) { refused.missing = String(e && (e.message || e)); }
+  try { api.request({ op: 'deposit', name: null }); refused.null = 'ok'; }
+  catch (e) { refused.null = String(e && (e.message || e)); }
+  globalThis.__probe = refused;
+}
+"#;
+    let iso = LoadIsolate::spawn(src.into(), LoadShape::NativeTick, vec![]).unwrap();
+    post_base(&iso, 1);
+    iso.on_game_tick(1);
+    let probe = iso.probe("globalThis.__probe").unwrap();
+    assert_eq!(probe["loc"], "not impl: request.loc", "{probe:?}");
+    assert_eq!(probe["obj"], "not impl: request.obj", "{probe:?}");
+    assert_eq!(probe["npc"], "not impl: request.npc", "{probe:?}");
+    assert_eq!(
+        probe["missing"], "not impl: request.deposit missing name",
+        "{probe:?}"
+    );
+    assert_eq!(
+        probe["null"], "not impl: request.deposit missing name",
+        "{probe:?}"
+    );
+    let interacts = iso.drain_interacts();
+    iso.join();
+    assert_eq!(
+        interacts,
+        vec![InteractReq::Deposit {
+            name: "Bones".into()
+        }],
+        "a legal deposit request is the one row the host drains"
+    );
+}
+
+#[test]
 fn v2_inspect_route_uses_isolate_token_and_rejects_invented_ids() {
     use script::shim::InspectAvoidWire;
     let src = r#"
@@ -1355,7 +1411,10 @@ fn v2_clue_row_is_a_named_sync_helper_result_not_a_request_op() {
         .next()
         .unwrap();
     assert!(!ops.contains("clue"), "{ops}");
-    assert!(!ops.contains("deposit"), "{ops}");
+    // `deposit` is published (see
+    // `v2_deposit_requests_the_bank_side_name_over_the_public_path`); the clue
+    // row is still a named sync helper and never a request op.
+    assert!(ops.contains("'deposit': ['name'],"), "{ops}");
     let src = r#"
 export const apiVersion = 2;
 export function tick(api) {

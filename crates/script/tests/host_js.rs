@@ -158,6 +158,7 @@ fn host_js_dts_includes_required_interfaces() {
     );
     assert!(src.contains("export type NativeOp"));
     assert!(src.contains("op: 'walk-nearest-bank'"));
+    assert!(src.contains("{ op: 'deposit'; name: string}"));
     assert!(src.contains("op: 'walk'"));
     assert!(src.contains("op: 'walk-near'"));
     assert!(

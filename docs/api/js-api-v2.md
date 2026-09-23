@@ -41,11 +41,21 @@ Do not import rs2b0t modules or touch `__rs2b0t_host`. Unsupported
 
 ### Supported requests
 
-`held`, `open-booth`, `open-stand`, `close`, `set-note-mode`, `withdraw`,
-`withdraw-load`, `withdraw-x`, `walk`, `walk-near`, `walk-nearest-bank`,
-`inspect-route`.
+`held`, `open-booth`, `open-stand`, `close`, `set-note-mode`, `deposit`,
+`withdraw`, `withdraw-load`, `withdraw-x`, `walk`, `walk-near`,
+`walk-nearest-bank`, `inspect-route`.
 
 Completion is the next snapshots' seq/result fields, not a Promise.
+
+- `deposit` takes one required `name`: the **bank-side display name**, never
+  an inventory row rewritten first. `request` does not pre-resolve it; the
+  host matches the first `snapshot.bank_side` row whose resolved obj name
+  equals `name` ignoring ASCII case and sends that row's Deposit-All menu
+  op. A miss, a closed/unloaded bank, an already-armed bank operation, and
+  a changed `bank_generation` never throw out of `request`: they fail
+  closed, and completion is `bank_op_result_seq` / `bank_op_result`
+  (`false` for any of them). `true` requires the matched row's bank-side
+  count to drop within the bounded deposit window.
 
 - Pass `snapshot.bank_generation` into `withdraw-load` / `withdraw-x`. A
   changed generation is stale, not bank exhaustion.

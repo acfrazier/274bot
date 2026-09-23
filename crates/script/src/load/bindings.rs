@@ -1045,6 +1045,7 @@ const V2_OPS = {
   'open-stand': ['x','z','level','kind'],
   'close': [],
   'set-note-mode': ['on'],
+  'deposit': ['name'],
   'withdraw': ['name','action'],
   'withdraw-load': ['name','bank_generation'],
   'withdraw-x': ['name','count','bank_item_id','lands_as_id','action','bank_generation'],
