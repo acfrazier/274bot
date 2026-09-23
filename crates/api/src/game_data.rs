@@ -618,6 +618,33 @@ pub struct GatherMethodsFacts {
     pub coverage: Vec<GatherCoverageRecord>,
 }
 
+/// One world LOC placement of a published resource loc id. `x`/`z` are world
+/// coordinates; no local coords, shape, or angle is stored.
+#[derive(Debug, Deserialize, Clone)]
+pub struct GatherPlacement {
+    pub loc_id: i32,
+    pub x: i32,
+    pub z: i32,
+    pub plane: i32,
+}
+
+/// A gather family with no selected published set. Unknown is not empty rows.
+#[derive(Debug, Deserialize, Clone)]
+pub struct GatherPlacementCoverage {
+    pub class: String,
+    pub family: String,
+    pub reason: String,
+}
+
+/// Published-resource world placements. Absence is `None`, not an empty list.
+/// `coverage` records what this family does not publish, so a present family
+/// that omits it is a decode error and so is an empty row list.
+#[derive(Debug, Deserialize, Clone)]
+pub struct GatherPlacementsFacts {
+    pub rows: Vec<GatherPlacement>,
+    pub coverage: Vec<GatherPlacementCoverage>,
+}
+
 /// Script alias from a selected handler. Not a pack-joined display name.
 /// `quantity` is the `inv_del` count; a use-site check has none.
 #[derive(Debug, Deserialize, Clone)]
@@ -756,6 +783,8 @@ pub struct SelectedGameData {
     #[serde(default)]
     gather_methods: Option<GatherMethodsFacts>,
     #[serde(default)]
+    gather_placements: Option<GatherPlacementsFacts>,
+    #[serde(default)]
     quest_identity: Option<QuestIdentityFacts>,
     #[serde(default)]
     trails: Option<TrailFacts>,
@@ -774,6 +803,14 @@ impl SelectedGameData {
         if let Some(facts) = &data.gather_methods {
             if facts.woods.is_empty() && facts.mining.is_empty() && facts.fishing.is_empty() {
                 return Err("gather_methods present with no extracted rows".to_string());
+            }
+        }
+        if let Some(facts) = &data.gather_placements {
+            if facts.rows.is_empty() {
+                return Err("gather_placements present with no world rows".to_string());
+            }
+            if facts.coverage.is_empty() {
+                return Err("gather_placements present with no coverage".to_string());
             }
         }
         if let Some(facts) = &data.quest_identity {
@@ -997,6 +1034,11 @@ impl SelectedGameData {
     /// Gather methods and loc-resource ids. `None` is family absence, not an empty extract.
     pub fn gather_methods(&self) -> Option<&GatherMethodsFacts> {
         self.gather_methods.as_ref()
+    }
+
+    /// Published-wood world placements. `None` is family absence, not an empty extract.
+    pub fn gather_placements(&self) -> Option<&GatherPlacementsFacts> {
+        self.gather_placements.as_ref()
     }
 
     /// Six-seed quest identity. `None` is family absence, not an empty extract.
@@ -1390,6 +1432,75 @@ mod tests {
         )
         .expect_err("Some with no extracted rows is not success");
         assert!(error.contains("no extracted rows"), "unexpected error: {error}");
+    }
+
+    #[test]
+    fn published_placements_decode() {
+        let data = SelectedGameData::decode(
+            minimal_json(
+                r#", "gather_placements": {"rows": [{"loc_id": 1306, "x": 2735, "z": 3582, "plane": 0}], "coverage": [{"class": "unknown", "family": "mining", "reason": "no selected published-ore set"}]}"#,
+            )
+            .as_bytes(),
+            ClientRevision::R274,
+        )
+        .expect("published placements decode");
+        let facts = data
+            .gather_placements()
+            .expect("a present family is not absence");
+        assert_eq!(facts.rows.len(), 1);
+        assert_eq!(facts.rows[0].loc_id, 1306);
+        assert_eq!(
+            (facts.rows[0].x, facts.rows[0].z, facts.rows[0].plane),
+            (2735, 3582, 0)
+        );
+        assert_eq!(facts.coverage[0].class, "unknown");
+        assert_eq!(facts.coverage[0].family, "mining");
+    }
+
+    #[test]
+    fn missing_gather_placements_is_absent_not_an_empty_list() {
+        let data = SelectedGameData::decode(minimal_json("").as_bytes(), ClientRevision::R274)
+            .expect("schema 4 without the field still decodes");
+        assert!(data.gather_placements().is_none());
+    }
+
+    #[test]
+    fn bare_gather_placements_vec_does_not_decode() {
+        let error = SelectedGameData::decode(
+            minimal_json(r#", "gather_placements": []"#).as_bytes(),
+            ClientRevision::R274,
+        )
+        .expect_err("a bare vec must not decode as an empty family");
+        assert!(
+            error.contains("gather_placements") || error.contains("decode"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn empty_gather_placements_object_is_not_success() {
+        let error = SelectedGameData::decode(
+            minimal_json(
+                r#", "gather_placements": {"rows": [], "coverage": [{"class": "unknown", "family": "mining", "reason": "no selected published-ore set"}]}"#,
+            )
+            .as_bytes(),
+            ClientRevision::R274,
+        )
+        .expect_err("Some with no world rows is not success");
+        assert!(error.contains("no world rows"), "unexpected error: {error}");
+    }
+
+    #[test]
+    fn coverage_less_gather_placements_does_not_decode() {
+        let error = SelectedGameData::decode(
+            minimal_json(
+                r#", "gather_placements": {"rows": [{"loc_id": 1306, "x": 2735, "z": 3582, "plane": 0}], "coverage": []}"#,
+            )
+            .as_bytes(),
+            ClientRevision::R274,
+        )
+        .expect_err("a present family must carry its coverage");
+        assert!(error.contains("no coverage"), "unexpected error: {error}");
     }
 
     #[test]

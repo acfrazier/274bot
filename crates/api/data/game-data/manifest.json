@@ -20,6 +20,44 @@
         "woods": 10,
         "fishing": 9
       },
+      "gather_placements": {
+        "rows": 14183,
+        "maps": 483,
+        "published_loc_ids": 31,
+        "coverage": 1,
+        "woods": [
+          {
+            "resource_key": "normal",
+            "loc_ids": 26,
+            "placements": 12672
+          },
+          {
+            "resource_key": "oak",
+            "loc_ids": 1,
+            "placements": 1068
+          },
+          {
+            "resource_key": "willow",
+            "loc_ids": 1,
+            "placements": 285
+          },
+          {
+            "resource_key": "maple",
+            "loc_ids": 1,
+            "placements": 89
+          },
+          {
+            "resource_key": "yew",
+            "loc_ids": 1,
+            "placements": 56
+          },
+          {
+            "resource_key": "magic",
+            "loc_ids": 1,
+            "placements": 13
+          }
+        ]
+      },
       "equipment_names": {
         "bows": 12,
         "crossbows": 10,
@@ -70,8 +108,8 @@
         "challenge_answers": 6,
         "access_constrained": 1
       },
-      "bytes": 1587549,
-      "sha256": "6cbea9d96d244335ce56c004537b569bb53fae70a88b80516ba0c7ee4beaba54",
+      "bytes": 2978218,
+      "sha256": "171b45572e188d0fc301b9ac227ff385e67f296980bdda6fdb9cb668739eef5c",
       "engine_commit": "4c95f87efe00b068cadbd229d94736626907bd1a",
       "content_commit": "000c19997e07206131bcb3c884265840efce416d",
       "inputs": [
@@ -510,6 +548,44 @@
         "woods": 10,
         "fishing": 9
       },
+      "gather_placements": {
+        "rows": 14480,
+        "maps": 534,
+        "published_loc_ids": 33,
+        "coverage": 1,
+        "woods": [
+          {
+            "resource_key": "normal",
+            "loc_ids": 28,
+            "placements": 12947
+          },
+          {
+            "resource_key": "oak",
+            "loc_ids": 1,
+            "placements": 1078
+          },
+          {
+            "resource_key": "willow",
+            "loc_ids": 1,
+            "placements": 285
+          },
+          {
+            "resource_key": "maple",
+            "loc_ids": 1,
+            "placements": 101
+          },
+          {
+            "resource_key": "yew",
+            "loc_ids": 1,
+            "placements": 56
+          },
+          {
+            "resource_key": "magic",
+            "loc_ids": 1,
+            "placements": 13
+          }
+        ]
+      },
       "equipment_names": {
         "bows": 12,
         "crossbows": 10,
@@ -560,8 +636,8 @@
         "challenge_answers": 6,
         "access_constrained": 1
       },
-      "bytes": 1649811,
-      "sha256": "92fbb0d3a5e5b5dde51ea9dbd71eae51cdc187587f14c850adbff5f37833d5d3",
+      "bytes": 3069586,
+      "sha256": "fbebef75e000ed149fdcfbe503d2f02c61c4a5d4f4517a633ad766a54283965e",
       "engine_commit": "cc359656b4acd216ca452495874b6beba9a0ac75",
       "content_commit": "92649430fcbc83538d8c4367ecb96cee1a67a944",
       "inputs": [

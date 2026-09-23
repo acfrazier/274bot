@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { assertTrailPins, extractDropFacts, extractFacts, extractEquipmentNamesFacts, extractFlourSixFacts, extractGatherMethodsFacts, extractQuestIdentityFacts, extractTrailFacts, extractHerbFacts, extractMagicFacts, extractAutocastControls, extractDuelControls, extractNurmofEssenceFacts, extractPrayerFacts, extractSpecialControls, extractTeleportSpells, herbKeyFromName, identifiedHerbLevelDefault, joinEquipmentName, loadEquipmentNamesCurated, parseFrozenEquipmentNameArrays, parseFrozenEquipmentSingleQuoted, parseIdentifyHerbPairs, parseTrailEnumAliases, parseTrailObjBlocks, parseInvShopStock, parseJm2LocPlacements, parseMapsquarePath, parseObjSections, parsePack, parseParamDefinitions, parsePrayerInterface, parseQuestEnumEntry, parseRows } from './generate.ts';
+import { assertTrailPins, extractDropFacts, extractFacts, extractEquipmentNamesFacts, extractFlourSixFacts, extractGatherMethodsFacts, extractGatherPlacementsFacts, extractQuestIdentityFacts, extractTrailFacts, extractHerbFacts, extractMagicFacts, extractAutocastControls, extractDuelControls, extractNurmofEssenceFacts, extractPrayerFacts, extractSpecialControls, extractTeleportSpells, herbKeyFromName, identifiedHerbLevelDefault, joinEquipmentName, loadEquipmentNamesCurated, parseFrozenEquipmentNameArrays, parseFrozenEquipmentSingleQuoted, parseIdentifyHerbPairs, parseTrailEnumAliases, parseTrailObjBlocks, parseInvShopStock, parseJm2LocPlacements, parseMapsquarePath, parseObjSections, parsePack, parseParamDefinitions, parsePrayerInterface, parseQuestEnumEntry, parseRows } from './generate.ts';
 
 const repoRoot = path.resolve(import.meta.dirname, '../..');
 
@@ -417,12 +418,19 @@ assert.throws(
 assert.deepEqual(parseInvShopStock('[pickaxeshop]\nstock1=bronze_pickaxe,6,50\n', 'pickaxeshop').map((row) => row.alias), ['bronze_pickaxe']);
 assert.throws(() => parseInvShopStock('[other]\nstock1=a,1,1\n', 'pickaxeshop'), /missing stock rows/);
 const locSection = '==== LOC ====\n0 47 62: 2662 10 1\n';
-assert.deepEqual(parseJm2LocPlacements(locSection, 2662), [{ plane: 0, lx: 47, lz: 62, loc_id: 2662, shape: 10, angle: 1 }]);
-assert.deepEqual(parseJm2LocPlacements('==== LOC ====\n', 2662), []);
-assert.equal(parseJm2LocPlacements('==== NPC ====\n0 10 20: 2662\n', 2662).length, 0);
-assert.equal(parseJm2LocPlacements('==== OBJ ====\n0 1 2: 2662 5\n', 2662).length, 0);
-assert.throws(() => parseJm2LocPlacements('==== LOC ====\n0 99 99: 2662 10 1\n', 2662), /out of range/);
-assert.throws(() => parseJm2LocPlacements('==== LOC ====\n0 47 62: 2662 10 1 extra\n', 2662), /extra tokens/);
+assert.deepEqual(parseJm2LocPlacements(locSection, new Set([2662])), [{ plane: 0, lx: 47, lz: 62, loc_id: 2662, shape: 10, angle: 1 }]);
+assert.deepEqual(parseJm2LocPlacements('==== LOC ====\n', new Set([2662])), []);
+assert.equal(parseJm2LocPlacements('==== NPC ====\n0 10 20: 2662\n', new Set([2662])).length, 0);
+assert.equal(parseJm2LocPlacements('==== OBJ ====\n0 1 2: 2662 5\n', new Set([2662])).length, 0);
+assert.throws(() => parseJm2LocPlacements('==== LOC ====\n0 99 99: 2662 10 1\n', new Set([2662])), /out of range/);
+assert.throws(() => parseJm2LocPlacements('==== LOC ====\n0 47 62: 2662 10 1 extra\n', new Set([2662])), /extra tokens/);
+assert.deepEqual(
+    parseJm2LocPlacements('==== LOC ====\n0 47 62: 2662 10 1\n0 5 6: 1306\n1 1 1: 9999\n', new Set([2662, 1306])),
+    [
+        { plane: 0, lx: 47, lz: 62, loc_id: 2662, shape: 10, angle: 1 },
+        { plane: 0, lx: 5, lz: 6, loc_id: 1306, shape: 0, angle: 0 },
+    ],
+);
 assert.throws(
     () => extractFlourSixFacts(
         (() => {
@@ -927,6 +935,106 @@ assert.equal(pin289.woods.find((row) => row.resource_key === 'normal')?.loc_ids.
 assert.equal(pin289.woods.find((row) => row.resource_key === 'normal')?.empty_ids.some((loc) => loc.alias.includes('mm_bush')), false);
 assert.equal(pin274.woods.find((row) => row.resource_key === 'normal')?.qualification, 'complete');
 assert.equal(pin289.woods.find((row) => row.resource_key === 'normal')?.qualification, 'partial');
+
+// --- gather placements: published woods only, LOC-only, world coords, maps as required input ---
+
+/** The published-woods input this family consumes. Not read from a fixture tree. */
+type PlacementSource = Parameters<typeof extractGatherPlacementsFacts>[1];
+
+function placementFixture(mutate?: (files: Record<string, string>) => void) {
+    const rootDir = gatherFixture((files) => {
+        // 1306 is the published normal tree; 1342 is its stump, 3370 a conditional
+        // achey tree, and 2090 a mining rock. The NPC section repeats 1306.
+        files['maps/m42_55.jm2'] = '==== LOC ====\n0 47 62: 1306 10 1\n0 48 62: 1306 10 1\n0 49 62: 1342 10 1\n0 50 62: 3370 10 1\n0 51 62: 2090 10 1\n==== NPC ====\n0 10 20: 1306\n';
+        mutate?.(files);
+    });
+    execFileSync('git', ['init', '-q'], { cwd: rootDir });
+    execFileSync('git', ['add', '-A'], { cwd: rootDir });
+    return rootDir;
+}
+
+const placementSource: PlacementSource = [{ resource_key: 'normal', publication: 'published', loc_ids: [{ alias: 'tree', id: 1306 }] }];
+const placementRoot = placementFixture();
+const placements274 = extractGatherPlacementsFacts(placementRoot, extractGatherMethodsFacts(placementRoot, 274).woods);
+assert.deepEqual(placements274.facts.rows, [
+    { loc_id: 1306, x: 42 * 64 + 47, z: 55 * 64 + 62, plane: 0 },
+    { loc_id: 1306, x: 42 * 64 + 48, z: 55 * 64 + 62, plane: 0 },
+]);
+assert.equal(placements274.facts.rows.every((row) => Object.keys(row).join(',') === 'loc_id,x,z,plane'), true, 'stored rows are world loc_id/x/z/plane only');
+assert.deepEqual(placements274.facts.coverage, [{ class: 'unknown', family: 'mining', reason: 'no selected published-ore set' }]);
+assert.deepEqual(placements274.woods, [{ resource_key: 'normal', loc_ids: 1, placements: 2 }]);
+assert.equal(placements274.inputs.maps_directory, 'maps');
+assert.equal(placements274.inputs.maps.files, 1);
+assert.equal(placements274.inputs.loc_pack.path, 'pack/loc.pack');
+assert.equal(placements274.inputs.published_loc_ids.count, 1);
+assert.equal(placements274.facts.rows.some((row) => [1342, 3370, 2090].includes(row.loc_id)), false, 'stump, conditional wood, and mining ids stay out');
+
+// invalidation: every scanned map, the published pack, and the published id set move the identity
+const mutatedMaps = extractGatherPlacementsFacts(placementFixture((files) => {
+    files['maps/m42_55.jm2'] = files['maps/m42_55.jm2'].replace('==== NPC ====', '0 52 62: 1306\n==== NPC ====');
+}), placementSource);
+assert.equal(mutatedMaps.inputs.maps.files, placements274.inputs.maps.files);
+assert.notEqual(mutatedMaps.inputs.maps.sha256, placements274.inputs.maps.sha256, 'the maps digest must move with the maps tree');
+assert.equal(mutatedMaps.facts.rows.length, placements274.facts.rows.length + 1);
+const repacked = extractGatherPlacementsFacts(placementFixture((files) => {
+    files['pack/loc.pack'] += '9999=extra\n';
+}), placementSource);
+assert.notEqual(repacked.inputs.loc_pack.sha256, placements274.inputs.loc_pack.sha256, 'the published pack digest must move with loc.pack');
+const widerSet: PlacementSource = [...placementSource, { resource_key: 'oak', publication: 'published', loc_ids: [{ alias: 'tree', id: 1306 }] }];
+assert.notEqual(extractGatherPlacementsFacts(placementRoot, widerSet).inputs.published_loc_ids.sha256, placements274.inputs.published_loc_ids.sha256, 'the published id digest must move with the set');
+const zeroHitWood: PlacementSource = [...placementSource, { resource_key: 'oak', publication: 'published', loc_ids: [{ alias: 'oak', id: 1281 }] }];
+assert.throws(() => extractGatherPlacementsFacts(placementRoot, zeroHitWood), /published wood oak has no LOC placements/, 'a published wood with zero hits must fail');
+
+// fail closed: maps/ is a required input, the LOC section is the only placement source,
+// and a published wood with no hits is not an empty extract
+assert.throws(() => extractGatherPlacementsFacts(gatherFixture(), placementSource), /required directory missing/, 'a missing maps directory must fail');
+assert.throws(() => extractGatherPlacementsFacts(placementFixture((files) => {
+    delete files['maps/m42_55.jm2'];
+    files['maps/labels.txt'] = 'not a map\n';
+}), placementSource), /has no maps/, 'a maps directory without a map must fail');
+assert.throws(() => extractGatherPlacementsFacts(placementFixture((files) => {
+    files['maps/m42.jm2'] = '==== LOC ====\n';
+}), placementSource), /mapsquare path/, 'a badly named map must fail');
+assert.throws(() => extractGatherPlacementsFacts(placementFixture((files) => {
+    files['maps/m42_55.jm2'] = '==== LOC ====\n0 47 62: 1306 10 1 extra\n';
+}), placementSource), /extra tokens/, 'a malformed scanned map fails closed instead of skipping');
+assert.throws(() => extractGatherPlacementsFacts(placementFixture((files) => {
+    files['maps/m42_55.jm2'] = '==== NPC ====\n0 47 62: 1306\n';
+}), placementSource), /has no LOC placements/, 'an NPC section is not a placement source');
+assert.throws(() => extractGatherPlacementsFacts(placementFixture((files) => {
+    delete files['pack/loc.pack'];
+}), placementSource), /pack\/loc\.pack/, 'the published pack is a required input');
+assert.throws(() => extractGatherPlacementsFacts(placementRoot, [{ resource_key: 'achey', publication: 'conditional', loc_ids: [{ alias: 'achey_tree', id: 3370 }] }]), /no published woods/, 'a family without a published wood must fail');
+const truncatedMaps = placementFixture((files) => {
+    files['maps/m43_55.jm2'] = '==== LOC ====\n0 1 1: 1306\n';
+});
+fs.rmSync(path.join(truncatedMaps, 'maps/m43_55.jm2'));
+assert.throws(() => extractGatherPlacementsFacts(truncatedMaps, placementSource), /maps\/m43_55\.jm2: tracked map missing/, 'a truncated maps tree must fail rather than under-extract');
+
+// content pins: the six published woods carry world placements and mining stays unknown
+const pinPlacements274 = extractGatherPlacementsFacts('/Users/acfrazier/experiments/Server/content', pin274.woods);
+const pinPlacements289 = extractGatherPlacementsFacts('/Users/acfrazier/experiments/lostcity-289/content', pin289.woods);
+for (const pin of [
+    { revision: 274, root: '/Users/acfrazier/experiments/Server/content', placements: pinPlacements274, methods: pin274 },
+    { revision: 289, root: '/Users/acfrazier/experiments/lostcity-289/content', placements: pinPlacements289, methods: pin289 },
+]) {
+    assert.deepEqual(pin.placements.woods.map((row) => row.resource_key), ['normal', 'oak', 'willow', 'maple', 'yew', 'magic'], `${pin.revision} published wood order`);
+    assert.equal(pin.placements.woods.every((row) => row.placements > 0), true, `${pin.revision} every published wood carries placements`);
+    assert.equal(pin.placements.woods.every((row) => row.loc_ids > 0), true, `${pin.revision} published wood variant counts`);
+    assert.equal(pin.placements.facts.rows.length, pin.placements.woods.reduce((sum, row) => sum + row.placements, 0), `${pin.revision} row total is the per-wood sum`);
+    assert.deepEqual(pin.placements.facts.coverage, [{ class: 'unknown', family: 'mining', reason: 'no selected published-ore set' }], `${pin.revision} mining is unknown coverage`);
+    assert.equal(pin.placements.facts.rows.every((row) => Object.keys(row).join(',') === 'loc_id,x,z,plane'), true, `${pin.revision} placement row shape`);
+    assert.equal(pin.placements.facts.rows.every((row) => row.plane >= 0 && row.plane <= 3 && row.x >= 0 && row.z >= 0), true, `${pin.revision} placement world range`);
+    assert.equal(new Set(pin.placements.facts.rows.map((row) => `${row.loc_id}:${row.x}:${row.z}:${row.plane}`)).size, pin.placements.facts.rows.length, `${pin.revision} placements are unique`);
+    const placementKeys = pin.placements.facts.rows.map((row) => [row.loc_id, row.x, row.z, row.plane]);
+    assert.deepEqual(placementKeys, [...placementKeys].sort((a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2] || a[3] - b[3]), `${pin.revision} placements are sorted by loc_id, x, z, plane`);
+    const publishedIds = new Set(pin.methods.woods.filter((row) => row.publication === 'published').flatMap((row) => row.loc_ids.map((loc) => loc.id)));
+    assert.equal(pin.placements.facts.rows.every((row) => publishedIds.has(row.loc_id)), true, `${pin.revision} rows are published wood ids`);
+    assert.equal(pin.placements.facts.rows.some((row) => row.loc_id === 2662 || row.loc_id === 2492), false, `${pin.revision} flour and essence stay one-off, not this family`);
+    assert.equal(pin.placements.inputs.maps.files, fs.readdirSync(path.join(pin.root, 'maps')).filter((name) => name.endsWith('.jm2')).length, `${pin.revision} scanned map count`);
+    assert.equal(pin.placements.inputs.maps.sha256.length, 64, `${pin.revision} maps digest`);
+    assert.equal(pin.placements.inputs.published_loc_ids.count, publishedIds.size, `${pin.revision} published id set`);
+}
 
 function writeQuestFixture(rootDir: string, mutate?: (files: Record<string, string>) => void) {
     const files: Record<string, string> = {

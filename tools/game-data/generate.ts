@@ -1038,8 +1038,12 @@ export function parseLocSection(text: string, alias: string) {
     return section;
 }
 
-/** LOC placements only — mirrors `crates/nav/src/transport.rs` `parse_jm2_locs` gating. */
-export function parseJm2LocPlacements(text: string, locId: number) {
+/**
+ * LOC placements only — mirrors `crates/nav/src/transport.rs` `parse_jm2_locs` gating.
+ * One jm2 is parsed once against the whole selected loc-id set; a singleton set is
+ * the one-id case. Fail-closed: bad tokens, ranges, and extra tokens throw.
+ */
+export function parseJm2LocPlacements(text: string, locIds: ReadonlySet<number>) {
     const placements: { plane: number; lx: number; lz: number; loc_id: number; shape: number; angle: number }[] = [];
     let inLoc = false;
     for (const raw of text.split(/\r?\n/)) {
@@ -1068,7 +1072,7 @@ export function parseJm2LocPlacements(text: string, locId: number) {
         const id = integer(dataTokens[0], line);
         const shape = dataTokens[1] !== undefined ? integer(dataTokens[1], line) : 0;
         const angle = dataTokens[2] !== undefined ? integer(dataTokens[2], line) : 0;
-        if (id !== locId) continue;
+        if (!locIds.has(id)) continue;
         placements.push({ plane, lx, lz, loc_id: id, shape, angle });
     }
     return placements;
@@ -1142,7 +1146,7 @@ export function extractNurmofEssenceFacts(content: string, items: ObjType[], npc
     const minePortalLocId = 2492;
     const portalPlacements = parseJm2LocPlacements(
         fs.readFileSync(path.join(content, essenceMap), 'utf8'),
-        minePortalLocId,
+        new Set([minePortalLocId]),
     );
     if (portalPlacements.length === 0) {
         throw new Error(`essence mine: no loc ${minePortalLocId} placements in ${essenceMap}`);
@@ -1226,7 +1230,7 @@ export function extractFlourSixFacts(content: string, items: ObjType[]) {
     }
     const mapRelative = 'maps/m42_55.jm2';
     const { mx, mz } = parseMapsquarePath(mapRelative);
-    const placements = parseJm2LocPlacements(fs.readFileSync(path.join(content, mapRelative), 'utf8'), 2662);
+    const placements = parseJm2LocPlacements(fs.readFileSync(path.join(content, mapRelative), 'utf8'), new Set([2662]));
     if (placements.length !== 1) {
         throw new Error(`flourbarrel: expected one ${mapRelative} LOC placement, got ${placements.length}`);
     }
@@ -1567,6 +1571,114 @@ export function extractGatherMethodsFacts(content: string, revision: number) {
         }
     }
     return { woods, mining, fishing, coverage };
+}
+
+/** The `gather_methods.woods` row shape this family consumes. */
+type GatherPlacementSource = { resource_key: string; publication?: 'published' | 'conditional' | 'unpublished'; loc_ids: { alias: string; id: number }[] };
+
+/** One world LOC placement of a published resource loc id. No local coords, shape, or angle. */
+export type GatherPlacement = { loc_id: number; x: number; z: number; plane: number };
+
+/** A gather family with no selected published set. Unknown is not empty rows. */
+export type GatherPlacementCoverage = { class: string; family: string; reason: string };
+
+/** Published-resource world placements. `coverage` records what this family does not publish. */
+export type GatherPlacementsFacts = { rows: GatherPlacement[]; coverage: GatherPlacementCoverage[] };
+
+/** Per-wood placement count. A zero-hit loc_id variant is allowed; a zero-hit wood is not. */
+export type GatherPlacementWood = { resource_key: string; loc_ids: number; placements: number };
+
+/**
+ * Provenance identity for this family: every scanned `maps/*.jm2` as one digest over
+ * their per-file digests, `pack/loc.pack`, and the published loc-id set. Distinct from
+ * `content_inputs` because the maps tree is a directory, not one tracked file per row.
+ */
+export type GatherPlacementInputs = {
+    maps_directory: string;
+    maps: { files: number; bytes: number; sha256: string };
+    loc_pack: { path: string; bytes: number; sha256: string };
+    published_loc_ids: { count: number; sha256: string };
+};
+
+export type GatherPlacementExtract = { facts: GatherPlacementsFacts; inputs: GatherPlacementInputs; woods: GatherPlacementWood[] };
+
+const PLACEMENT_MAPS_DIRECTORY = 'maps';
+
+/**
+ * Required maps inventory (O-NAVINPUT). The directory must exist and hold at least
+ * one map; every on-disk `m*.jm2` must be a readable mapsquare name; and every map
+ * the content tree tracks must be on disk, so a truncated tree fails closed instead
+ * of silently under-extracting. Filename order.
+ */
+function placementMapInputs(content: string) {
+    const directory = path.join(content, PLACEMENT_MAPS_DIRECTORY);
+    if (!fs.existsSync(directory)) throw new Error(`${PLACEMENT_MAPS_DIRECTORY}: required directory missing`);
+    const names = fs.readdirSync(directory).filter((name) => name.endsWith('.jm2')).sort();
+    if (names.length === 0) throw new Error(`${PLACEMENT_MAPS_DIRECTORY}: required directory has no maps`);
+    const inputs = names.map((name) => {
+        const relative = `${PLACEMENT_MAPS_DIRECTORY}/${name}`;
+        parseMapsquarePath(relative);
+        return { path: relative, ...sha256(path.join(content, relative)) };
+    });
+    const onDisk = new Set(inputs.map((input) => input.path));
+    const tracked = execFileSync('git', ['-C', content, 'ls-files', '--', `${PLACEMENT_MAPS_DIRECTORY}/m*.jm2`], { encoding: 'utf8' }).split('\n').map((line) => line.trim()).filter(Boolean);
+    if (tracked.length === 0) throw new Error(`${PLACEMENT_MAPS_DIRECTORY}: no tracked maps in the content tree`);
+    for (const relative of tracked) if (!onDisk.has(relative)) throw new Error(`${relative}: tracked map missing from the content tree`);
+    return inputs;
+}
+
+/**
+ * World LOC placements of the published woods' loc ids, plus the provenance identity
+ * that invalidates them. LOC-only and fail-closed: a malformed row, a missing or
+ * truncated `maps/`, a badly named map, a missing map, or a published wood with no
+ * hits throws. Stored rows are resource loc_ids only, never empty/stump ids; the one
+ * local coordinate pair is converted with `worldFromMapsquare`.
+ */
+export function extractGatherPlacementsFacts(content: string, woods: GatherPlacementSource[]): GatherPlacementExtract {
+    const published = woods.filter((row) => row.publication === 'published');
+    if (published.length === 0) throw new Error('gather_placements: no published woods');
+    const locIds = new Set(published.flatMap((row) => row.loc_ids.map((loc) => loc.id)));
+    const maps = placementMapInputs(content);
+    const rows: GatherPlacement[] = [];
+    const hits = new Map<number, number>();
+    for (const input of maps) {
+        const { mx, mz } = parseMapsquarePath(input.path);
+        for (const placement of parseJm2LocPlacements(fs.readFileSync(path.join(content, input.path), 'utf8'), locIds)) {
+            const world = worldFromMapsquare(mx, mz, placement.lx, placement.lz, placement.plane);
+            rows.push({ loc_id: placement.loc_id, x: world.x, z: world.z, plane: world.plane });
+            hits.set(placement.loc_id, (hits.get(placement.loc_id) ?? 0) + 1);
+        }
+    }
+    rows.sort((a, b) => a.loc_id - b.loc_id || a.x - b.x || a.z - b.z || a.plane - b.plane);
+    const perWood: GatherPlacementWood[] = [];
+    for (const wood of published) {
+        const placements = wood.loc_ids.reduce((sum, loc) => sum + (hits.get(loc.id) ?? 0), 0);
+        if (placements === 0) throw new Error(`gather_placements: published wood ${wood.resource_key} has no LOC placements`);
+        perWood.push({ resource_key: wood.resource_key, loc_ids: wood.loc_ids.length, placements });
+    }
+    const locPack = 'pack/loc.pack';
+    const locPackFile = path.join(content, locPack);
+    if (!fs.existsSync(locPackFile)) throw new Error(`${locPack}: required file missing`);
+    return {
+        facts: {
+            rows,
+            coverage: [{ class: 'unknown', family: 'mining', reason: 'no selected published-ore set' }],
+        },
+        inputs: {
+            maps_directory: PLACEMENT_MAPS_DIRECTORY,
+            maps: {
+                files: maps.length,
+                bytes: maps.reduce((sum, input) => sum + input.bytes, 0),
+                sha256: crypto.createHash('sha256').update(maps.map((input) => `${input.sha256}  ${input.path}`).join('\n')).digest('hex'),
+            },
+            loc_pack: { path: locPack, ...sha256(locPackFile) },
+            published_loc_ids: {
+                count: locIds.size,
+                sha256: crypto.createHash('sha256').update([...new Set(published.flatMap((row) => row.loc_ids.map((loc) => `${row.resource_key}\t${loc.id}`)))].sort().join('\n')).digest('hex'),
+            },
+        },
+        woods: perWood,
+    };
 }
 
 const QUEST_IDENTITY_SEEDS = [
@@ -1971,8 +2083,8 @@ async function generate(spec: Revision) {
     process.chdir(spec.engine); const objModule = (await import(pathToFileURL(path.join(spec.engine, 'src/cache/config/ObjType.ts')).href)) as { default: { load(dir: string): void; configs: ObjType[] } }; objModule.default.load('data/pack');
     const npcModule = (await import(pathToFileURL(path.join(spec.engine, 'src/cache/config/NpcType.ts')).href)) as { default: { load(dir: string): void; configs: NpcType[] } }; npcModule.default.load('data/pack');
     const items = objModule.default.configs.map(row); const aliases = items.filter((item) => item.alias !== null).map((item) => item.alias as string); if (new Set(items.map((item) => item.id)).size !== items.length || new Set(aliases).size !== aliases.length) throw new Error(`${spec.revision}: duplicate ids or aliases`);
-    const facts = extractFacts(spec.content, objModule.default.configs, npcModule.default.configs); const drops = extractDropFacts(spec.content, objModule.default.configs, npcModule.default.configs); if (drops.length !== 4) throw new Error(`${spec.revision}: expected four combat drop tables, got ${drops.length}`); const magic = extractMagicFacts(spec.content, objModule.default.configs); if (magic.spells.length !== 16 || magic.spells[15].name !== 'Fire Wave' || magic.staves.length !== 14) throw new Error(`${spec.revision}: expected 16 combat spells and 14 staves, got ${magic.spells.length}/${magic.staves.length}`); const herbs = extractHerbFacts(spec.content, objModule.default.configs); if (herbs.herbs.length < 14) throw new Error(`${spec.revision}: expected a full herb identify table, got ${herbs.herbs.length}`); if (herbs.herb_level_default !== 3) throw new Error(`${spec.revision}: expected identify.param default 3, got ${herbs.herb_level_default}`); const autocast = extractAutocastControls(spec.content); const duel = extractDuelControls(spec.content); const special = extractSpecialControls(spec.content, objModule.default.configs);     const teleports = extractTeleportSpells(spec.content, objModule.default.configs); if (teleports.length !== 7 || teleports[0].name !== 'Varrock' || teleports[6].name !== 'Trollheim' || teleports[0].component_id !== 1164 || teleports[6].component_id !== 7455) throw new Error(`${spec.revision}: expected 7 standard teleports, got ${teleports.map((row) => row.name).join(',')}`);     const prayer = extractPrayerFacts(spec.content); if (prayer.prayers.length !== 15) throw new Error(`${spec.revision}: expected 15 prayers, got ${prayer.prayers.length}`); const nurmofEssence = extractNurmofEssenceFacts(spec.content, objModule.default.configs, npcModule.default.configs); if (nurmofEssence.pickaxes.length !== 6) throw new Error(`${spec.revision}: expected six pickaxes, got ${nurmofEssence.pickaxes.length}`);     const flourSix = extractFlourSixFacts(spec.content, objModule.default.configs); if (flourSix.pot.id !== 1931 || flourSix.flour_barrel.id !== 2662) throw new Error(`${spec.revision}: flour six join mismatch`); const objPackPath = path.join(spec.content, 'pack/obj.pack'); if (!fs.existsSync(objPackPath)) throw new Error(`${spec.revision}: missing pack/obj.pack`); const objPack = parsePack(fs.readFileSync(objPackPath, 'utf8')); if (objPack.size === 0) throw new Error(`${spec.revision}: empty pack/obj.pack`); const equipmentNames = extractEquipmentNamesFacts(items, objPack); const gatherMethods = extractGatherMethodsFacts(spec.content, spec.revision); if (gatherMethods.mining.length !== 17 || gatherMethods.woods.length !== 10 || gatherMethods.fishing.length !== 9) throw new Error(`${spec.revision}: expected 17 mine, 10 wood, and 9 fishing rows, got ${gatherMethods.mining.length}/${gatherMethods.woods.length}/${gatherMethods.fishing.length}`); const questIdentity = extractQuestIdentityFacts(spec.content, spec.revision); if (questIdentity.rows.length !== 6 || questIdentity.rows[4].id !== 'death' || questIdentity.rows[4].varp !== 'death_equiproom' || questIdentity.rows[4].varp_id !== 314 || questIdentity.rows[4].complete !== 80 || questIdentity.rows.some((row) => row.requirements.qualification !== 'partial')) throw new Error(`${spec.revision}: quest identity join mismatch`); if (spec.revision === 274 && (questIdentity.coverage.length !== 1 || questIdentity.coverage[0].alias !== 'routequest' || questIdentity.coverage[0].other_pin_id !== 387 || questIdentity.coverage[0].copied !== false)) throw new Error(`${spec.revision}: quest coverage mismatch`); if (spec.revision !== 274 && questIdentity.coverage.length !== 0) throw new Error(`${spec.revision}: quest coverage must be empty`); const trails = extractTrailFacts(spec.content, objModule.default.configs); assertTrailPins(trails, spec.revision); const inputs = ['data/pack/server/obj.dat', 'data/pack/server/npc.dat', 'data/pack/client/config'].map((file) => sourceFile(spec.engine, file)); const contentInputs = contentFiles.map((file) => sourceFile(spec.content, file)); const sources = decoderSources.map((file) => sourceFile(spec.engine, file));
-    const payload = { schema_version: 4, revision: spec.revision, provenance: { engine_commit: pinned.engineCommit, content_commit: pinned.contentCommit, inputs, content_inputs: contentInputs, decoder_sources: sources, cache_identity: spec.cacheIdentity }, items, ...facts, drop_tables: drops, ...magic, ...herbs, ...prayer, nurmof_essence: nurmofEssence, flour_six: flourSix, equipment_names: equipmentNames, gather_methods: gatherMethods, quest_identity: questIdentity, trails, autocast, duel, special, teleports }; const bytes = `${JSON.stringify(payload, null, 2)}\n`; fs.mkdirSync(path.dirname(spec.output), { recursive: true }); fs.writeFileSync(spec.output, bytes); return { revision: spec.revision, output: path.relative(root, spec.output), records: items.length, consumption: facts.consumption.length, pickpocket: facts.pickpocket.length, drop_tables: drops.length, spells: magic.spells.length, staves: magic.staves.length, herbs: herbs.herbs.length, prayers: prayer.prayers.length, pickaxes: nurmofEssence.pickaxes.length, flour_six: 6, gather_methods: { mining: gatherMethods.mining.length, woods: gatherMethods.woods.length, fishing: gatherMethods.fishing.length }, equipment_names: { bows: equipmentNames.bows.length, crossbows: equipmentNames.crossbows.length, darts: equipmentNames.darts.length, arrows: equipmentNames.arrows.length, bolts: equipmentNames.bolts.length, melee_weapons: equipmentNames.melee_weapons.length, staffs: equipmentNames.staffs.length, resolved: EQUIPMENT_FAMILY_ORDER.reduce((sum, family) => sum + equipmentNames[family].filter((row) => row.disposition === 'resolved').length, 0), absent: EQUIPMENT_FAMILY_ORDER.reduce((sum, family) => sum + equipmentNames[family].filter((row) => row.disposition === 'absent').length, 0) }, autocast, duel, special: { energy_varp: special.energy_varp, armed_varp: special.armed_varp, max_energy: special.max_energy, bars: special.bars.length, weapons: special.weapons.length }, teleports: teleports.length, quest_identity: { rows: questIdentity.rows.length, coverage: questIdentity.coverage.length }, trails: { rows: trails.rows.length, clues: trails.rows.filter((row) => row.role === 'clue').length, caskets: trails.rows.filter((row) => row.role === 'casket').length, challenge_answers: trails.challenge_answers.length, access_constrained: trails.rows.filter((row) => row.access !== undefined).length }, bytes: Buffer.byteLength(bytes), sha256: crypto.createHash('sha256').update(bytes).digest('hex'), engine_commit: pinned.engineCommit, content_commit: pinned.contentCommit, inputs, content_inputs: contentInputs, decoder_sources: sources, cache_identity: spec.cacheIdentity };
+    const facts = extractFacts(spec.content, objModule.default.configs, npcModule.default.configs); const drops = extractDropFacts(spec.content, objModule.default.configs, npcModule.default.configs); if (drops.length !== 4) throw new Error(`${spec.revision}: expected four combat drop tables, got ${drops.length}`); const magic = extractMagicFacts(spec.content, objModule.default.configs); if (magic.spells.length !== 16 || magic.spells[15].name !== 'Fire Wave' || magic.staves.length !== 14) throw new Error(`${spec.revision}: expected 16 combat spells and 14 staves, got ${magic.spells.length}/${magic.staves.length}`); const herbs = extractHerbFacts(spec.content, objModule.default.configs); if (herbs.herbs.length < 14) throw new Error(`${spec.revision}: expected a full herb identify table, got ${herbs.herbs.length}`); if (herbs.herb_level_default !== 3) throw new Error(`${spec.revision}: expected identify.param default 3, got ${herbs.herb_level_default}`); const autocast = extractAutocastControls(spec.content); const duel = extractDuelControls(spec.content); const special = extractSpecialControls(spec.content, objModule.default.configs);     const teleports = extractTeleportSpells(spec.content, objModule.default.configs); if (teleports.length !== 7 || teleports[0].name !== 'Varrock' || teleports[6].name !== 'Trollheim' || teleports[0].component_id !== 1164 || teleports[6].component_id !== 7455) throw new Error(`${spec.revision}: expected 7 standard teleports, got ${teleports.map((row) => row.name).join(',')}`);     const prayer = extractPrayerFacts(spec.content); if (prayer.prayers.length !== 15) throw new Error(`${spec.revision}: expected 15 prayers, got ${prayer.prayers.length}`); const nurmofEssence = extractNurmofEssenceFacts(spec.content, objModule.default.configs, npcModule.default.configs); if (nurmofEssence.pickaxes.length !== 6) throw new Error(`${spec.revision}: expected six pickaxes, got ${nurmofEssence.pickaxes.length}`);     const flourSix = extractFlourSixFacts(spec.content, objModule.default.configs); if (flourSix.pot.id !== 1931 || flourSix.flour_barrel.id !== 2662) throw new Error(`${spec.revision}: flour six join mismatch`); const objPackPath = path.join(spec.content, 'pack/obj.pack'); if (!fs.existsSync(objPackPath)) throw new Error(`${spec.revision}: missing pack/obj.pack`); const objPack = parsePack(fs.readFileSync(objPackPath, 'utf8')); if (objPack.size === 0) throw new Error(`${spec.revision}: empty pack/obj.pack`); const equipmentNames = extractEquipmentNamesFacts(items, objPack); const gatherMethods = extractGatherMethodsFacts(spec.content, spec.revision); if (gatherMethods.mining.length !== 17 || gatherMethods.woods.length !== 10 || gatherMethods.fishing.length !== 9) throw new Error(`${spec.revision}: expected 17 mine, 10 wood, and 9 fishing rows, got ${gatherMethods.mining.length}/${gatherMethods.woods.length}/${gatherMethods.fishing.length}`); const gatherPlacements = extractGatherPlacementsFacts(spec.content, gatherMethods.woods); if (gatherPlacements.woods.length !== 6) throw new Error(`${spec.revision}: expected six published woods, got ${gatherPlacements.woods.length}`); if (gatherPlacements.facts.coverage.length !== 1 || gatherPlacements.facts.coverage[0].class !== 'unknown' || gatherPlacements.facts.coverage[0].family !== 'mining') throw new Error(`${spec.revision}: gather placements must record mining as unknown coverage`); const questIdentity = extractQuestIdentityFacts(spec.content, spec.revision); if (questIdentity.rows.length !== 6 || questIdentity.rows[4].id !== 'death' || questIdentity.rows[4].varp !== 'death_equiproom' || questIdentity.rows[4].varp_id !== 314 || questIdentity.rows[4].complete !== 80 || questIdentity.rows.some((row) => row.requirements.qualification !== 'partial')) throw new Error(`${spec.revision}: quest identity join mismatch`); if (spec.revision === 274 && (questIdentity.coverage.length !== 1 || questIdentity.coverage[0].alias !== 'routequest' || questIdentity.coverage[0].other_pin_id !== 387 || questIdentity.coverage[0].copied !== false)) throw new Error(`${spec.revision}: quest coverage mismatch`); if (spec.revision !== 274 && questIdentity.coverage.length !== 0) throw new Error(`${spec.revision}: quest coverage must be empty`); const trails = extractTrailFacts(spec.content, objModule.default.configs); assertTrailPins(trails, spec.revision); const inputs = ['data/pack/server/obj.dat', 'data/pack/server/npc.dat', 'data/pack/client/config'].map((file) => sourceFile(spec.engine, file)); const contentInputs = contentFiles.map((file) => sourceFile(spec.content, file)); const sources = decoderSources.map((file) => sourceFile(spec.engine, file));
+    const payload = { schema_version: 4, revision: spec.revision, provenance: { engine_commit: pinned.engineCommit, content_commit: pinned.contentCommit, inputs, content_inputs: contentInputs, placement_inputs: gatherPlacements.inputs, decoder_sources: sources, cache_identity: spec.cacheIdentity }, items, ...facts, drop_tables: drops, ...magic, ...herbs, ...prayer, nurmof_essence: nurmofEssence, flour_six: flourSix, equipment_names: equipmentNames, gather_methods: gatherMethods, gather_placements: gatherPlacements.facts, quest_identity: questIdentity, trails, autocast, duel, special, teleports }; const bytes = `${JSON.stringify(payload, null, 2)}\n`; fs.mkdirSync(path.dirname(spec.output), { recursive: true }); fs.writeFileSync(spec.output, bytes); return { revision: spec.revision, output: path.relative(root, spec.output), records: items.length, consumption: facts.consumption.length, pickpocket: facts.pickpocket.length, drop_tables: drops.length, spells: magic.spells.length, staves: magic.staves.length, herbs: herbs.herbs.length, prayers: prayer.prayers.length, pickaxes: nurmofEssence.pickaxes.length, flour_six: 6, gather_methods: { mining: gatherMethods.mining.length, woods: gatherMethods.woods.length, fishing: gatherMethods.fishing.length }, gather_placements: { rows: gatherPlacements.facts.rows.length, maps: gatherPlacements.inputs.maps.files, published_loc_ids: gatherPlacements.inputs.published_loc_ids.count, coverage: gatherPlacements.facts.coverage.length, woods: gatherPlacements.woods }, equipment_names: { bows: equipmentNames.bows.length, crossbows: equipmentNames.crossbows.length, darts: equipmentNames.darts.length, arrows: equipmentNames.arrows.length, bolts: equipmentNames.bolts.length, melee_weapons: equipmentNames.melee_weapons.length, staffs: equipmentNames.staffs.length, resolved: EQUIPMENT_FAMILY_ORDER.reduce((sum, family) => sum + equipmentNames[family].filter((row) => row.disposition === 'resolved').length, 0), absent: EQUIPMENT_FAMILY_ORDER.reduce((sum, family) => sum + equipmentNames[family].filter((row) => row.disposition === 'absent').length, 0) }, autocast, duel, special: { energy_varp: special.energy_varp, armed_varp: special.armed_varp, max_energy: special.max_energy, bars: special.bars.length, weapons: special.weapons.length }, teleports: teleports.length, quest_identity: { rows: questIdentity.rows.length, coverage: questIdentity.coverage.length }, trails: { rows: trails.rows.length, clues: trails.rows.filter((row) => row.role === 'clue').length, caskets: trails.rows.filter((row) => row.role === 'casket').length, challenge_answers: trails.challenge_answers.length, access_constrained: trails.rows.filter((row) => row.access !== undefined).length }, bytes: Buffer.byteLength(bytes), sha256: crypto.createHash('sha256').update(bytes).digest('hex'), engine_commit: pinned.engineCommit, content_commit: pinned.contentCommit, inputs, content_inputs: contentInputs, decoder_sources: sources, cache_identity: spec.cacheIdentity };
 }
 async function main() { const results = []; for (const spec of revisions) results.push(await generate(spec)); const manifest = { schema_version: 4, generator: 'tools/game-data/generate.ts', revisions: results }; const manifestPath = path.join(root, 'crates/api/data/game-data/manifest.json'); fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`); console.log(JSON.stringify({ manifest: path.relative(root, manifestPath), revisions: results }, null, 2)); }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main().catch((error) => { console.error(error); process.exitCode = 1; });
