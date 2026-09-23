@@ -43,7 +43,7 @@ Do not import rs2b0t modules or touch `__rs2b0t_host`. Unsupported
 
 `held`, `open-booth`, `open-stand`, `close`, `set-note-mode`, `deposit`,
 `withdraw`, `withdraw-load`, `withdraw-x`, `walk`, `walk-near`,
-`walk-nearest-bank`, `inspect-route`.
+`walk-nearest-bank`, `inspect-route`, `puzzle-move`.
 
 Completion is the next snapshots' seq/result fields, not a Promise.
 
@@ -59,6 +59,17 @@ Completion is the next snapshots' seq/result fields, not a Promise.
 
 - Pass `snapshot.bank_generation` into `withdraw-load` / `withdraw-x`. A
   changed generation is stale, not bank exhaustion.
+- `puzzle-move` clicks one piece of the posted board. It takes the posted
+  row's own `id`, `slot` and `component` plus
+  `snapshot.puzzle_board_generation`. The host re-resolves that exact row on
+  `snapshot.puzzle_board.items` and sends the held family's OPHELD op
+  (`Move` where the obj table has it, else op 5) on the board component —
+  never the component-op INV_BUTTON the bank and make panels use. A closed
+  board, an observed size other than 25, a stale generation, a row that has
+  moved or gone, and an obj table with neither `Move` nor a fifth op all
+  fail closed: nothing is sent and nothing is closed. A sent packet is not
+  board progress — there is no move-result field and nothing waits on the
+  board, so re-read `snapshot.puzzle_board` for the pieces' new slots.
 - `!bank_loaded` is unavailable contents, not exhaustion.
 - Generic `walk` / `walk-near` take `x`, `z`, `level` (and `radius` for
   `walk-near`) plus optional host `FindOptions`: `allow_teleports`,
@@ -812,6 +823,21 @@ rows, calls existing `api.lineOfSight` plus imported
 `Npc.size` / `Npc.networkOrigin()` / `reader.selfTarget()` /
 `Reachability.lineOfSight`, then named-stops. No size>=1 row is not
 complete.
+
+## Puzzle board
+
+`snapshot.puzzle_board` is the open main modal's first depth-first TYPE_INV
+with `obj_ops`: `{ component_id, size, items }`. `component_id` is `-1` and
+`size` is `0` for a closed board — a present object, never a missing
+property. `size` is the observed `link_obj_type` length and `items` are that
+widget's own sparse rows (`name`, `count`, `id`, `ops`, `component_id`,
+`slot`), so an empty slot contributes no row. The rows carry the component's
+own `ops`, not the held-item table a click is sent with.
+
+`snapshot.puzzle_board_generation` is the broad session generation: it
+advances on a session open, a session close or a new board component, never
+on a piece move. Pass it into `puzzle-move`; a changed generation is stale,
+not a solved board.
 
 ## Sync and async tick
 

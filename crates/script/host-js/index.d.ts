@@ -317,6 +317,7 @@ export type InteractReq =
   | { op: 'withdraw-x'; name: string; count: number; bank_item_id: number; lands_as_id: number; action: string; bank_generation: number}
   | { op: 'held'; name: string; action: string}
   | { op: 'inv-button'; id: number; slot: number; component: number; operation: number; bank_generation?: number}
+  | { op: 'puzzle-move'; id: number; slot: number; component: number; generation: number}
   | { op: 'shop-button'; kind: string; name: string; id: number; slot: number; component: number; chunk: number}
   | { op: 'make-panel'; id: number; slot: number; component: number; operation: number}
   | { op: 'close'}
@@ -364,6 +365,10 @@ export interface NativeSnapshot {
   nearest_booth: NearestBooth | null;
   bank_approaches: BankApproach[];
   count_dialog_open: boolean;
+  /** The posted piece container. component_id -1 is a closed board, not a missing one. Rows are that widget's own sparse ItemRows. */
+  puzzle_board: { component_id: number; size: number; items: ItemRow[] };
+  /** Pass this into puzzle-move. A changed generation is stale, not a solved board. */
+  puzzle_board_generation: number;
   withdraw_x_result_seq: number;
   withdraw_x_result: boolean;
   withdraw_load_result_seq: number;
@@ -446,6 +451,7 @@ export type NativeOp =
   | { op: 'withdraw'; name: string; action: string}
   | { op: 'withdraw-load'; name: string; bank_generation: number}
   | { op: 'withdraw-x'; name: string; count: number; bank_item_id: number; lands_as_id: number; action: string; bank_generation: number}
+  | { op: 'puzzle-move'; id: number; slot: number; component: number; generation: number}
   | { op: 'walk'; x: number; z: number; level: number; allow_teleports?: boolean; allow_wilderness?: boolean; allow_bank_fetch?: boolean; request_id?: number}
   | { op: 'walk-near'; x: number; z: number; level: number; radius: number; allow_teleports?: boolean; allow_wilderness?: boolean; allow_bank_fetch?: boolean; request_id?: number}
   | { op: 'walk-nearest-bank'}

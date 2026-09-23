@@ -3490,8 +3490,10 @@ fn inv_items(client: &Client, com_id: i32, container: ItemContainer) -> Option<V
 }
 
 /// The held-item ops for obj `id`: the type's `iop` padded to five slots
-/// with a `Drop` default in the fifth (m8aq `heldOps`).
-fn cache_held_ops(cache: &Cache, id: i32) -> Vec<Option<String>> {
+/// with a `Drop` default in the fifth (m8aq `heldOps`). Published for the
+/// send-time Held-family view the puzzle-move dispatch builds: a caller
+/// that cannot read the obj table sends nothing.
+pub fn cache_held_ops(cache: &Cache, id: i32) -> Vec<Option<String>> {
     let mut ops = cache
         .objs
         .get(id as usize)

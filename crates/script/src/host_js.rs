@@ -2027,6 +2027,35 @@ const INTERACT_VARIANTS: &[InteractVariant] = &[
         ],
     },
     InteractVariant {
+        op: "puzzle-move",
+        fields: &[
+            TsField {
+                name: "id",
+                ty: "number",
+                optional: false,
+                doc: None,
+            },
+            TsField {
+                name: "slot",
+                ty: "number",
+                optional: false,
+                doc: None,
+            },
+            TsField {
+                name: "component",
+                ty: "number",
+                optional: false,
+                doc: None,
+            },
+            TsField {
+                name: "generation",
+                ty: "number",
+                optional: false,
+                doc: None,
+            },
+        ],
+    },
+    InteractVariant {
         op: "shop-button",
         fields: &[
             TsField {
@@ -2539,6 +2568,18 @@ const NATIVE_SNAPSHOT_FIELDS: &[TsField] = &[
     TsField { name: "nearest_booth", ty: "NearestBooth | null", optional: false, doc: None },
     TsField { name: "bank_approaches", ty: "BankApproach[]", optional: false, doc: None },
     TsField { name: "count_dialog_open", ty: "boolean", optional: false, doc: None },
+    TsField {
+        name: "puzzle_board",
+        ty: "{ component_id: number; size: number; items: ItemRow[] }",
+        optional: false,
+        doc: Some("The posted piece container. component_id -1 is a closed board, not a missing one. Rows are that widget's own sparse ItemRows."),
+    },
+    TsField {
+        name: "puzzle_board_generation",
+        ty: "number",
+        optional: false,
+        doc: Some("Pass this into puzzle-move. A changed generation is stale, not a solved board."),
+    },
     TsField { name: "withdraw_x_result_seq", ty: "number", optional: false, doc: None },
     TsField { name: "withdraw_x_result", ty: "boolean", optional: false, doc: None },
     TsField { name: "withdraw_load_result_seq", ty: "number", optional: false, doc: None },
@@ -2673,6 +2714,15 @@ const NATIVE_OP_VARIANTS: &[InteractVariant] = &[
             TsField { name: "lands_as_id", ty: "number", optional: false, doc: None },
             TsField { name: "action", ty: "string", optional: false, doc: None },
             TsField { name: "bank_generation", ty: "number", optional: false, doc: None },
+        ],
+    },
+    InteractVariant {
+        op: "puzzle-move",
+        fields: &[
+            TsField { name: "id", ty: "number", optional: false, doc: None },
+            TsField { name: "slot", ty: "number", optional: false, doc: None },
+            TsField { name: "component", ty: "number", optional: false, doc: None },
+            TsField { name: "generation", ty: "number", optional: false, doc: None },
         ],
     },
     InteractVariant {

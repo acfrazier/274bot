@@ -6977,6 +6977,20 @@ pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>
                     .ok_or_else(|| "inv-button has no operation".to_string())?,
                 bank_generation: row.bank_generation().unwrap_or(0),
             }),
+            "puzzle-move" => out.push(crate::shim::InteractReq::PuzzleMove {
+                id: row
+                    .bank_item_id()
+                    .ok_or_else(|| "puzzle-move has no id".to_string())?,
+                slot: row
+                    .source_item_slot()
+                    .ok_or_else(|| "puzzle-move has no slot".to_string())?,
+                component: row
+                    .component_id()
+                    .ok_or_else(|| "puzzle-move has no component".to_string())?,
+                generation: row
+                    .bank_generation()
+                    .ok_or_else(|| "puzzle-move has no generation".to_string())?,
+            }),
             "shop-button" => out.push(crate::shim::InteractReq::ShopButton {
                 kind: row
                     .kind()
@@ -7167,6 +7181,7 @@ fn interact_off<'b>(
         InteractReq::WithdrawLoad { .. } => "withdraw-load",
         InteractReq::Held { .. } => "held",
         InteractReq::InvButton { .. } => "inv-button",
+        InteractReq::PuzzleMove { .. } => "puzzle-move",
         InteractReq::ShopButton { .. } => "shop-button",
         InteractReq::MakePanel { .. } => "make-panel",
         InteractReq::Close => "close",
@@ -7483,6 +7498,17 @@ fn interact_off<'b>(
             b.push_slot_always(VT_IN_SOURCE_ITEM_SLOT, *slot);
             b.push_slot_always(VT_IN_COMPONENT_ID, *component);
             b.push_slot_always(VT_IN_STAND_OP, *operation);
+        }
+        InteractReq::PuzzleMove {
+            id,
+            slot,
+            component,
+            generation,
+        } => {
+            b.push_slot_always(VT_IN_BANK_ITEM_ID, *id);
+            b.push_slot_always(VT_IN_SOURCE_ITEM_SLOT, *slot);
+            b.push_slot_always(VT_IN_COMPONENT_ID, *component);
+            b.push_slot_always(VT_IN_BANK_GENERATION, *generation);
         }
         InteractReq::Close => {}
         InteractReq::Npc { index, .. } => {
@@ -8081,6 +8107,32 @@ pub(crate) mod tests {
         let bytes = encode_interact_batch(&reqs);
         let got = decode_interact_batch(&bytes).expect("interact batch decodes");
         assert_eq!(got, reqs);
+    }
+
+    /// `puzzle-move` round-trips on the reused Interact slots (id / slot /
+    /// component / generation) even when a bank row carries the same four
+    /// numbers: the op string is the discriminator, and the operation slot
+    /// the component family needs stays unset for the board row.
+    #[test]
+    fn encode_decode_interact_puzzle_move_round_trips_beside_a_bank_row() {
+        let reqs = vec![
+            InteractReq::PuzzleMove {
+                id: 2749,
+                slot: 0,
+                component: 6600,
+                generation: 3,
+            },
+            InteractReq::InvButton {
+                id: 2749,
+                slot: 0,
+                component: 6600,
+                operation: 5,
+                bank_generation: 3,
+            },
+        ];
+        let bytes = encode_interact_batch(&reqs);
+        let got = decode_interact_batch(&bytes).expect("interact batch decodes");
+        assert_eq!(got, reqs, "the op string decides the variant, not the slots");
     }
 
     #[test]

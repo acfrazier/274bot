@@ -1109,6 +1109,18 @@ pub enum InteractReq {
         #[serde(default)]
         bank_generation: u64,
     },
+    /// Click one piece on the open puzzle board (the widget `obj_ops`
+    /// menu's held family, not the component `iop`). Host dispatch
+    /// re-resolves the exact posted board row by id/slot/component under
+    /// `generation` and sends the Held opcode (`Move`, else op 5): it
+    /// never sends INV_BUTTON, and a sent packet is not board progress.
+    #[serde(rename = "puzzle-move")]
+    PuzzleMove {
+        id: i32,
+        slot: i32,
+        component: i32,
+        generation: u64,
+    },
     /// Close the open bank modal.
     #[serde(rename = "close")]
     Close,
