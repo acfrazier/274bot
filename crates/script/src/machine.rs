@@ -341,6 +341,7 @@ const fn entry<F: Family>() -> Entry {
 const FAMILIES: &[Entry] = &[
     entry::<crate::teleport::Teleport>(),
     entry::<crate::prayer::Prayer>(),
+    entry::<crate::autocast::Autocast>(),
     #[cfg(test)]
     entry::<tests::Probe>(),
     #[cfg(test)]

@@ -379,6 +379,36 @@ fn pause_and_hold_freeze_mid_arm_without_late_press() {
     iso.join();
 }
 
+// The reason table is Rust's now: every failure line crosses as the
+// settled `message` and is what the caller's `log` receives.
+#[test]
+fn a_timed_out_press_logs_the_frozen_line_from_rust() {
+    let iso = spawn(ARM);
+    let staff = [SideTabIfaceInput { index: 0, id: 328 }];
+    let mut snap = base_snapshot();
+    snap.side_tab_ifaces = &staff;
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 1);
+    assert_eq!(iso.drain_interacts(), vec![if_button(353)]);
+    std::thread::sleep(std::time::Duration::from_millis(3_050));
+    snap.tick = 2;
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 2);
+    assert_eq!(iso.probe("__ok").unwrap(), false);
+    let logs = iso.drain_logs();
+    assert!(
+        logs.iter()
+            .any(|line| line.contains("spell chooser did not open")),
+        "the frozen line must come from Rust: {logs:?}"
+    );
+    assert!(
+        logs.iter()
+            .all(|line| !line.contains("needs posted coms")),
+        "the controls are posted, so the not-impl line must not appear: {logs:?}"
+    );
+    iso.join();
+}
+
 #[test]
 fn melee_resolution_shape_is_unchanged() {
     let src = r#"

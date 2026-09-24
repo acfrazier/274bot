@@ -1,32 +1,22 @@
-//! Selected-world autocast control facts and Rust-owned arm sequencing.
-//! The arm facts are read from the isolate scene at call time. JS keeps the
-//! frozen ABI, dispatches returned buttons and logs the final reason.
+//! Selected-world autocast arm, a [`crate::machine`] family. Rust owns the
+//! chosen controls, the four-press order, the varp waits, the deadlines and
+//! the log line for every way the arm can end; JavaScript starts one arm
+//! with the caller's spell name and maps the settled outcome to the frozen
+//! boolean (or the frozen `not impl` throw).
 
+use crate::machine::{Begin, Cx, Family, Step};
 use crate::observed::{self, Scene};
+use crate::shim::InteractReq;
 use api::game_data::{AutocastControls, SelectedGameData};
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::cell::{Cell, RefCell};
-use std::time::{Duration, Instant};
 
+/// The frozen side-tab index and windows.
 const COMBAT_TAB: i32 = 0;
 const TAB_WAIT_MS: u64 = 2_000;
 const STEP_MS: u64 = 3_000;
 
-thread_local! {
-    static RUNTIME: RefCell<AutocastRuntime> = const { RefCell::new(AutocastRuntime::new()) };
-    /// The selected cache's autocast varp; `-1` when the cache has none.
-    static MAGIC_VARP: Cell<i32> = const { Cell::new(-1) };
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Phase {
-    Idle,
-    WaitTab,
-    WaitPanel,
-    WaitSelected,
-    WaitArmed,
-}
-
+/// The posted facts one arm decides from, read from the isolate scene.
 #[derive(Clone, Copy)]
 struct ArmObservation {
     ingame: bool,
@@ -50,193 +40,198 @@ impl ArmObservation {
             }),
         }
     }
-
-    fn observe() -> Self {
-        let magic_varp = MAGIC_VARP.with(Cell::get);
-        observed::with(|scene| Self::from_scene(scene, magic_varp))
-    }
 }
 
-struct AutocastRuntime {
-    paused: bool,
-    held: bool,
-    frozen_at: Option<Instant>,
-    token: u64,
-    phase: Phase,
-    spell_com: i32,
-    deadline: Option<Instant>,
+#[derive(Deserialize)]
+pub(crate) struct ArmArgs {
+    spell: String,
 }
 
-impl AutocastRuntime {
-    const fn new() -> Self {
-        Self {
-            paused: false,
-            held: false,
-            frozen_at: None,
-            token: 0,
-            phase: Phase::Idle,
-            spell_com: -1,
-            deadline: None,
-        }
-    }
+/// Every way a frozen `Autocast.arm` ends, and the log line it carries.
+/// The reason text is Rust's; the shim only prints what it is handed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Reason {
+    Armed,
+    UnknownSpell,
+    MissingControls,
+    MissingFacts,
+    StaffMissing,
+    OpenTab,
+    Chooser,
+    Select,
+    Toggle,
+    Aborted,
+}
 
-    fn frozen(&self) -> bool {
-        self.paused || self.held
-    }
-
-    fn now(&self) -> Instant {
-        self.frozen_at.unwrap_or_else(Instant::now)
-    }
-
-    fn set_freeze(&mut self, paused: bool, held: bool) {
-        let was_frozen = self.frozen();
-        self.paused = paused;
-        self.held = held;
-        let frozen = self.frozen();
-        if !was_frozen && frozen {
-            self.frozen_at = Some(Instant::now());
-        } else if was_frozen && !frozen {
-            if let Some(at) = self.frozen_at.take() {
-                if let Some(deadline) = self.deadline.as_mut() {
-                    *deadline += Instant::now().saturating_duration_since(at);
-                }
+impl Reason {
+    /// The frozen log line, or `None` where the frozen table logs nothing.
+    fn log(self, spell: &str) -> Option<String> {
+        match self {
+            Self::Armed => Some(format!("autocast armed: {spell}")),
+            Self::UnknownSpell => Some(format!(
+                "'{spell}' is not an autocastable spell — see SPELL_DB (Wind Strike … Fire Wave)"
+            )),
+            Self::MissingControls => Some(format!(
+                "not impl: Autocast.arm needs posted coms for '{spell}'"
+            )),
+            Self::StaffMissing => {
+                Some("combat tab is not the staff layout — is a staff wielded?".into())
             }
+            Self::OpenTab => Some("could not open the combat tab".into()),
+            Self::Chooser => Some("spell chooser did not open".into()),
+            Self::Select => Some(format!(
+                "choosing '{spell}' did not take — magic level too low?"
+            )),
+            Self::Toggle => Some("autocast toggle did not arm".into()),
+            Self::MissingFacts | Self::Aborted => None,
         }
     }
 
-    fn abort(&mut self) {
-        self.token = self.token.wrapping_add(1);
-        self.phase = Phase::Idle;
-        self.spell_com = -1;
-        self.deadline = None;
+    /// The `not impl` reason that makes `arm` throw instead of returning.
+    fn not_impl(self, spell: &str) -> Option<String> {
+        match self {
+            Self::MissingControls => Some(format!("Autocast.arm needs posted coms for '{spell}'")),
+            _ => None,
+        }
     }
+}
 
-    fn command(&mut self, phase: Phase, component_id: i32, timeout_ms: u64) -> Value {
+/// What the shim turns into the declared boolean, the log line and the
+/// frozen `not impl` throw.
+#[derive(Debug, PartialEq, Serialize)]
+pub(crate) struct ArmOutcome {
+    ok: bool,
+    message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    not_impl: Option<String>,
+}
+
+impl ArmOutcome {
+    fn of(reason: Reason, spell: &str) -> Self {
+        Self {
+            ok: reason == Reason::Armed,
+            message: reason.log(spell).unwrap_or_default(),
+            not_impl: reason.not_impl(spell),
+        }
+    }
+}
+
+impl From<ArmOutcome> for Value {
+    fn from(outcome: ArmOutcome) -> Self {
+        serde_json::to_value(outcome).unwrap_or(Value::Null)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Phase {
+    WaitTab,
+    WaitPanel,
+    WaitSelected,
+    WaitArmed,
+}
+
+impl Phase {
+    /// The frozen reason for a press that never showed its effect.
+    fn timeout(self) -> Reason {
+        match self {
+            Self::WaitTab => Reason::OpenTab,
+            Self::WaitPanel => Reason::Chooser,
+            Self::WaitSelected => Reason::Select,
+            Self::WaitArmed => Reason::Toggle,
+        }
+    }
+}
+
+/// One arm: the caller's spell, its grid component and the live phase.
+pub(crate) struct Autocast {
+    spell: String,
+    spell_com: i32,
+    phase: Phase,
+}
+
+impl Autocast {
+    fn press(&mut self, phase: Phase, component_id: i32, cx: &mut Cx<'_>) -> Step<ArmOutcome> {
         self.phase = phase;
-        self.deadline = Some(self.now() + Duration::from_millis(timeout_ms));
-        json!({
-            "kind": "if-button",
-            "token": self.token,
-            "component_id": component_id,
-        })
+        cx.clock().arm(STEP_MS);
+        cx.emit(InteractReq::IfButton { component_id });
+        Step::Wait
     }
+}
 
-    fn done(&mut self, ok: bool, reason: &str) -> Value {
-        self.phase = Phase::Idle;
-        self.deadline = None;
-        json!({
-            "kind": "done",
-            "token": self.token,
-            "ok": ok,
-            "reason": reason,
-        })
-    }
+impl Family for Autocast {
+    const NAME: &'static str = "autocast";
+    /// A newer arm replaces the one in flight, as the frozen token bump did.
+    const EXCLUSIVE: bool = true;
+    type Args = ArmArgs;
+    type Output = ArmOutcome;
 
-    fn begin(
-        &mut self,
-        controls: Option<&AutocastControls>,
-        spell_com: i32,
-        obs: &ArmObservation,
-    ) -> Value {
-        self.abort();
-        let Some(controls) = controls.filter(|controls| controls.available()) else {
-            return self.done(false, "missing-controls");
+    fn begin(args: ArmArgs, cx: &mut Cx<'_>) -> Begin<Self> {
+        let data = crate::supply_v2::selected_data();
+        let Some(controls) = data
+            .as_deref()
+            .and_then(SelectedGameData::autocast_controls)
+        else {
+            return Begin::Done(ArmOutcome::of(Reason::MissingControls, &args.spell));
         };
+        let spell_com = data
+            .as_deref()
+            .map_or(-1, |data| data.spell_button_com(&args.spell));
         if spell_com < 0 {
-            return self.done(false, "unknown-spell");
+            return Begin::Done(ArmOutcome::of(Reason::UnknownSpell, &args.spell));
         }
+        let obs = observed::with(|scene| ArmObservation::from_scene(scene, controls.magic_varp));
         if !obs.ingame {
-            return self.done(false, "missing-facts");
+            return Begin::Done(ArmOutcome::of(Reason::MissingFacts, &args.spell));
         }
         if obs.combat_tab_root != controls.staff_tab_root {
-            return self.done(false, "staff-missing");
+            return Begin::Done(ArmOutcome::of(Reason::StaffMissing, &args.spell));
         }
-        self.spell_com = spell_com;
+        let mut arm = Self {
+            spell: args.spell,
+            spell_com,
+            phase: Phase::WaitPanel,
+        };
         if obs.active_side_tab != COMBAT_TAB {
-            self.phase = Phase::WaitTab;
-            self.deadline = Some(self.now() + Duration::from_millis(TAB_WAIT_MS));
-            return json!({"kind": "side-tab", "token": self.token, "tab": COMBAT_TAB});
+            arm.phase = Phase::WaitTab;
+            cx.clock().arm(TAB_WAIT_MS);
+            cx.emit(InteractReq::SideTab { tab: COMBAT_TAB });
+            return Begin::Run(arm);
         }
-        self.command(Phase::WaitPanel, controls.choose_com, STEP_MS)
+        arm.press(Phase::WaitPanel, controls.choose_com, cx);
+        Begin::Run(arm)
     }
 
-    fn next(
-        &mut self,
-        token: u64,
-        controls: Option<&AutocastControls>,
-        obs: &ArmObservation,
-    ) -> Value {
-        if token != self.token || self.phase == Phase::Idle {
-            return json!({"kind": "aborted", "token": self.token});
-        }
-        if self.frozen() {
-            return json!({"kind": "wait", "token": self.token});
-        }
-        if !obs.ingame {
-            return self.done(false, "aborted");
-        }
-        let Some(controls) = controls.filter(|controls| controls.available()) else {
-            return self.done(false, "missing-controls");
+    fn step(&mut self, cx: &mut Cx<'_>) -> Step<ArmOutcome> {
+        let data = crate::supply_v2::selected_data();
+        let Some(controls) = data
+            .as_deref()
+            .and_then(SelectedGameData::autocast_controls)
+        else {
+            return Step::Done(ArmOutcome::of(Reason::MissingControls, &self.spell));
         };
+        let obs = observed::with(|scene| ArmObservation::from_scene(scene, controls.magic_varp));
+        if !obs.ingame {
+            return Step::Done(ArmOutcome::of(Reason::Aborted, &self.spell));
+        }
         match self.phase {
-            Phase::Idle => json!({"kind": "aborted", "token": self.token}),
             Phase::WaitTab if obs.active_side_tab == COMBAT_TAB => {
-                self.command(Phase::WaitPanel, controls.choose_com, STEP_MS)
+                self.press(Phase::WaitPanel, controls.choose_com, cx)
             }
             Phase::WaitPanel if obs.combat_tab_root == controls.spell_panel_root => {
-                self.command(Phase::WaitSelected, self.spell_com, STEP_MS)
+                self.press(Phase::WaitSelected, self.spell_com, cx)
             }
             Phase::WaitSelected if obs.magic_varp_value == controls.selected_value => {
-                self.command(Phase::WaitArmed, controls.toggle_com, STEP_MS)
+                self.press(Phase::WaitArmed, controls.toggle_com, cx)
             }
             Phase::WaitArmed if obs.magic_varp_value == controls.armed_value => {
-                self.done(true, "armed")
+                Step::Done(ArmOutcome::of(Reason::Armed, &self.spell))
             }
-            phase if self.deadline.is_some_and(|deadline| self.now() >= deadline) => {
-                let reason = match phase {
-                    Phase::WaitTab => "open-tab",
-                    Phase::WaitPanel => "chooser",
-                    Phase::WaitSelected => "select",
-                    Phase::WaitArmed => "toggle",
-                    Phase::Idle => "aborted",
-                };
-                self.done(false, reason)
+            phase if cx.clock().bound_reached() => {
+                Step::Done(ArmOutcome::of(phase.timeout(), &self.spell))
             }
-            _ => json!({"kind": "wait", "token": self.token}),
+            _ => Step::Wait,
         }
     }
-}
-
-pub fn on_pause() {
-    RUNTIME.with(|runtime| {
-        let held = runtime.borrow().held;
-        runtime.borrow_mut().set_freeze(true, held);
-    });
-}
-
-pub fn on_resume() {
-    RUNTIME.with(|runtime| {
-        let held = runtime.borrow().held;
-        runtime.borrow_mut().set_freeze(false, held);
-    });
-}
-
-pub fn on_hold(held: bool) {
-    RUNTIME.with(|runtime| {
-        let paused = runtime.borrow().paused;
-        runtime.borrow_mut().set_freeze(paused, held);
-    });
-}
-
-pub fn on_reset() {
-    RUNTIME.with(|runtime| runtime.borrow_mut().abort());
-}
-
-pub fn configure(data: Option<&SelectedGameData>) {
-    let magic_varp = data
-        .and_then(SelectedGameData::autocast_controls)
-        .map_or(-1, |controls| controls.magic_varp);
-    MAGIC_VARP.with(|slot| slot.set(magic_varp));
 }
 
 pub fn controls_json(data: Option<&SelectedGameData>) -> Value {
@@ -300,29 +295,21 @@ pub fn observe(data: Option<&SelectedGameData>, combat_tab_root: i32, magic_varp
     out
 }
 
+fn arm_observation(data: Option<&SelectedGameData>) -> ArmObservation {
+    let magic_varp = data
+        .and_then(SelectedGameData::autocast_controls)
+        .map_or(-1, |controls| controls.magic_varp);
+    observed::with(|scene| ArmObservation::from_scene(scene, magic_varp))
+}
+
 pub fn dispatch(data: Option<&SelectedGameData>, input: &Value) -> Value {
-    let obs = ArmObservation::observe();
+    let obs = arm_observation(data);
     match input
         .get("op")
         .and_then(Value::as_str)
         .unwrap_or("controls")
     {
         "observe" => observe(data, obs.combat_tab_root, obs.magic_varp_value),
-        "begin" => RUNTIME.with(|runtime| {
-            runtime.borrow_mut().begin(
-                data.and_then(SelectedGameData::autocast_controls),
-                input.get("spell_com").and_then(Value::as_i64).unwrap_or(-1) as i32,
-                &obs,
-            )
-        }),
-        "next" => RUNTIME.with(|runtime| {
-            runtime.borrow_mut().next(
-                input.get("token").and_then(Value::as_u64).unwrap_or(0),
-                data.and_then(SelectedGameData::autocast_controls),
-                &obs,
-            )
-        }),
-        "current_token" => RUNTIME.with(|runtime| json!(runtime.borrow().token)),
         _ => controls_json(data),
     }
 }
@@ -330,14 +317,48 @@ pub fn dispatch(data: Option<&SelectedGameData>, input: &Value) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::machine::{self, Called, Js, Outcome, Pending, Reply, Started, Take};
     use client::io::ClientRevision;
+    use std::sync::Arc;
+    use std::thread;
+    use std::time::Duration;
 
-    fn data(rev: ClientRevision) -> std::sync::Arc<SelectedGameData> {
+    /// The arm family never calls a script callback.
+    struct NoJs;
+
+    impl Js for NoJs {
+        fn queue_len(&mut self) -> usize {
+            0
+        }
+
+        fn call(
+            &mut self,
+            _hook: Option<&crate::load::callback_v8::HeldCallback>,
+            _args: &[Value],
+        ) -> Called {
+            panic!("the autocast family calls no script callback");
+        }
+
+        fn poll(&mut self, _pending: &Pending) -> Option<Reply> {
+            panic!("the autocast family calls no script callback");
+        }
+    }
+
+    fn data(rev: ClientRevision) -> Arc<SelectedGameData> {
         api::game_data::for_revision(rev).expect("selected data")
     }
 
+    fn prepare(rev: ClientRevision) -> Arc<SelectedGameData> {
+        machine::on_reset();
+        observed::on_reset();
+        let data = data(rev);
+        crate::supply_v2::configure(Some(data.clone()));
+        data
+    }
+
+    /// The posted side tab and magic varp the arm decides from.
     fn set_observation(active_side_tab: i32, combat_tab_root: i32, magic_varp_value: i32) {
-        let magic_varp = MAGIC_VARP.with(Cell::get);
+        let magic_varp = 108;
         observed::post(0, |post| {
             post.session(true)
                 .side_tab(active_side_tab)
@@ -347,6 +368,37 @@ mod tests {
                     value: magic_varp_value,
                 }]);
         });
+    }
+
+    fn tick() {
+        machine::step(&mut NoJs);
+    }
+
+    fn drain() -> Vec<InteractReq> {
+        machine::merge_ops(Vec::new())
+    }
+
+    fn start(spell: &str) -> Started {
+        machine::start("autocast", json!({ "spell": spell }), Vec::new(), 0)
+    }
+
+    fn running(started: Started) -> machine::Handle {
+        match started {
+            Started::Running(handle) => handle,
+            other => panic!("expected a running row, got {other:?}"),
+        }
+    }
+
+    /// The settled envelope exactly as JS receives it.
+    fn done(handle: machine::Handle) -> Value {
+        match machine::take(handle) {
+            Take::Settled(Outcome::Done(value)) => value,
+            other => panic!("expected a done outcome, got {other:?}"),
+        }
+    }
+
+    fn press(id: i32) -> InteractReq {
+        InteractReq::IfButton { component_id: id }
     }
 
     #[test]
@@ -393,65 +445,114 @@ mod tests {
     }
 
     #[test]
-    fn missing_arm_observation_fails_closed() {
-        let data = data(ClientRevision::R274);
-        configure(Some(data.as_ref()));
-        let result = dispatch(
-            Some(data.as_ref()),
-            &json!({"op": "begin", "spell_com": 1830}),
+    fn missing_controls_refuse_with_their_own_not_impl_reason() {
+        machine::on_reset();
+        observed::on_reset();
+        crate::supply_v2::configure(None);
+        assert_eq!(
+            start("Wind Strike"),
+            Started::Settled(Outcome::Done(json!({
+                "ok": false,
+                "message": "not impl: Autocast.arm needs posted coms for 'Wind Strike'",
+                "not_impl": "Autocast.arm needs posted coms for 'Wind Strike'",
+            })))
         );
-        assert_eq!(result["kind"], "done");
-        assert_eq!(result["ok"], false);
-        assert_eq!(result["reason"], "missing-facts");
+        assert!(drain().is_empty(), "a refused arm sends nothing");
     }
 
     #[test]
-    fn native_arm_next_owns_choose_spell_toggle_order() {
-        let data = data(ClientRevision::R274);
-        configure(Some(data.as_ref()));
+    fn an_unknown_spell_logs_the_frozen_line_and_presses_nothing() {
+        prepare(ClientRevision::R274);
         set_observation(0, 328, 0);
-        let begin = dispatch(
-            Some(data.as_ref()),
-            &json!({
-                "op": "begin",
-                "spell_com": 1830,
-            }),
+        assert_eq!(
+            start("Not a spell"),
+            Started::Settled(Outcome::Done(json!({
+                "ok": false,
+                "message": "'Not a spell' is not an autocastable spell — see SPELL_DB (Wind Strike … Fire Wave)",
+            })))
         );
-        let token = begin["token"].as_u64().expect("native arm token");
-        assert_eq!(begin["kind"], "if-button");
-        assert_eq!(begin["component_id"], 353);
+        assert!(drain().is_empty());
+    }
+
+    #[test]
+    fn missing_facts_and_a_foreign_tab_refuse_without_pressing() {
+        prepare(ClientRevision::R274);
+        machine::on_reset();
+        observed::on_reset();
+        assert_eq!(
+            start("Wind Strike"),
+            Started::Settled(Outcome::Done(json!({ "ok": false, "message": "" }))),
+            "no posted facts is not a click"
+        );
+        assert!(drain().is_empty());
+
+        set_observation(0, 192, 0);
+        assert_eq!(
+            start("Wind Strike"),
+            Started::Settled(Outcome::Done(json!({
+                "ok": false,
+                "message": "combat tab is not the staff layout — is a staff wielded?",
+            })))
+        );
+        assert!(drain().is_empty());
+    }
+
+    #[test]
+    fn the_four_presses_own_their_order_and_each_deadline() {
+        let selected = prepare(ClientRevision::R274);
+        assert_eq!(selected.spell_button_com("Wind Strike"), 1830);
+        set_observation(1, 328, 0);
+        let handle = running(start("Wind Strike"));
+        assert_eq!(drain(), vec![InteractReq::SideTab { tab: COMBAT_TAB }]);
+
+        set_observation(0, 328, 0);
+        tick();
+        assert_eq!(drain(), vec![press(353)], "choose is the first press");
 
         set_observation(0, 1829, 0);
-        let spell = dispatch(
-            Some(data.as_ref()),
-            &json!({
-                "op": "next",
-                "token": token,
-            }),
-        );
-        assert_eq!(spell["kind"], "if-button");
-        assert_eq!(spell["component_id"], 1830);
+        tick();
+        assert_eq!(drain(), vec![press(1830)]);
 
         set_observation(0, 1829, 2);
-        let toggle = dispatch(
-            Some(data.as_ref()),
-            &json!({
-                "op": "next",
-                "token": token,
-            }),
-        );
-        assert_eq!(toggle["kind"], "if-button");
-        assert_eq!(toggle["component_id"], 349);
+        tick();
+        assert_eq!(drain(), vec![press(349)]);
 
         set_observation(0, 328, 3);
-        let done = dispatch(
-            Some(data.as_ref()),
-            &json!({
-                "op": "next",
-                "token": token,
-            }),
+        tick();
+        assert_eq!(
+            done(handle),
+            json!({ "ok": true, "message": "autocast armed: Wind Strike" })
         );
-        assert_eq!(done["kind"], "done");
-        assert_eq!(done["ok"], true);
+        assert!(drain().is_empty());
+    }
+
+    #[test]
+    fn a_press_that_never_lands_times_out_with_its_own_reason() {
+        prepare(ClientRevision::R289);
+        set_observation(0, 328, 0);
+        let handle = running(start("Wind Strike"));
+        assert_eq!(drain(), vec![press(353)]);
+        thread::sleep(Duration::from_millis(STEP_MS + 50));
+        tick();
+        assert_eq!(
+            done(handle),
+            json!({ "ok": false, "message": "spell chooser did not open" })
+        );
+    }
+
+    #[test]
+    fn a_newer_arm_supersedes_the_one_in_flight() {
+        prepare(ClientRevision::R274);
+        set_observation(0, 328, 0);
+        let old = running(start("Wind Strike"));
+        assert_eq!(drain(), vec![press(353)]);
+        let new = running(start("Wind Bolt"));
+        assert_eq!(
+            machine::take(old),
+            Take::Settled(Outcome::Aborted(machine::AbortReason::Superseded))
+        );
+        assert_eq!(drain(), vec![press(353)], "the newer arm presses choose");
+        tick();
+        assert_eq!(machine::take(new), Take::Pending);
     }
 }

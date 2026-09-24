@@ -289,7 +289,6 @@ pub(super) fn wire_runtime(
             },
         )
         .map_err(|e| format!("register spell button: {e}"))?;
-    crate::autocast::configure(game_data.as_deref());
     crate::shop::configure(game_data.clone());
     crate::supply_v2::configure(game_data.clone());
     let selected_autocast = game_data.clone();
