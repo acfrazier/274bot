@@ -224,10 +224,36 @@
 //!
 //! Identify is casket-first, so a casket held beside its own clue is the
 //! Open and never 3554 play. Yield keeps the token live, so it is not trail
-//! completion: the completion kinds are the finished collect's alone, this
-//! machine never returns a hunt `status: "done"`, and it never restores gear —
-//! restore is the deferred strip-tracking slice, so `grind-ready` fires
-//! because nothing is pending.
+//! completion: the completion kinds are the finished collect's alone and this
+//! machine never returns a hunt `status: "done"`.
+//!
+//! The one gear arm is the Entrana strip and its restore, and it is the
+//! identified row's own selected decode: a row whose `trail_coord` decodes
+//! inside the cap's box on level 0 — the proof row `3579`,
+//! `trail_clue_hard_riddle027`, `0_44_52_2_23` → `(2818, 3351, 0)` — is stripped
+//! before the walk that row would otherwise make. A casket never arms it. The
+//! stripped list is the frozen `strippedGear`: the posted worn rows whose
+//! display name the frozen matcher folds are unequipped and listed, the two
+//! hard-trail dagger ids `1231` / `1215` are unequipped but left off it, and
+//! the listed names the posted pack holds are deposited before the row's own
+//! arms run. The list outlives a step and a dead token; only the restore
+//! empties it, and `ownsEquipment` is that list and nothing else.
+//!
+//! The restore sits in front of the whole three-step finish latch: while the
+//! list is non-empty the collect's exit wears what the pack holds, claims the
+//! rest at the bank — the walk to the nearest stand, the posted booth's own
+//! open, one `Withdraw-1` per missing name, the interface's close — and only an
+//! empty list lets the exact `'clue solved'`, the `grind-ready` continue and
+//! the `done` go out. A name that will not go back on stays listed, is logged
+//! as the named `restore-incomplete` and blocks that latch rather than posting
+//! a completion kind. Freeze, yield and the posted hitpoints still win over
+//! the restore, exactly as they do over the collect.
+//!
+//! The frozen `abandonedClueId` is wired with no production trigger: an
+//! `abandon` this machine emits latches the identified row, a `begin` on that
+//! same row is refused `abandoned` while it stays held, a different held row or
+//! the adapter's own `retry` clears the latch, and `retry` is not `on_reset`:
+//! it never aborts the live token and never touches the stripped list.
 //!
 //! One token per isolate. A second begin, reset and stop abort the live token
 //! and emit no verb for it. Pause and hold freeze this machine's own clock,
@@ -268,8 +294,9 @@ const ABORTED: &str = "aborted";
 const CLUE_SOLVED: &str = "clue solved";
 
 /// The live-token continue kind between that status and `done`: the trail is
-/// solved and no gear restore is pending, so the sibling grind may take the
-/// next tick. No verb rides it and the token stays live.
+/// solved and no gear restore is pending — the Entrana list is empty, or this
+/// kind never rides at all — so the sibling grind may take the next tick. No
+/// verb rides it and the token stays live.
 const GRIND_READY: &str = "grind-ready";
 
 /// The finished collect's own end: the token dies with it, so the next call
@@ -489,13 +516,21 @@ enum Phase {
 
 /// The finished collect's own exit, latched on the live token: the exact
 /// `'clue solved'` status, then the `grind-ready` continue kind, then `done`.
-/// While the latch is armed nothing loots again — `next` answers the latch
-/// before it identifies — and the frozen clock still wins, so a frozen call
-/// waits with the latch where it is. Step-scoped like `open`: a re-arm, a
-/// different held row and an abort all drop it.
+/// The first state is the Entrana restore's: while `strippedGear` is non-empty
+/// the reclaim owns the calls and none of the three kinds goes out. While the
+/// latch is armed nothing loots again — `next` answers the latch before it
+/// identifies — and the frozen clock still wins, so a frozen call waits with
+/// the latch where it is. Step-scoped like `open`: a re-arm, a different held
+/// row and an abort all drop it — the stripped list it may still owe is the
+/// session's and is not dropped with it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Completion {
-    /// The collect is over and the status has not been posted yet.
+    /// The collect is over and the Entrana reclaim is still owed: the restore
+    /// runs before the status, the continue and the end, and none of the three
+    /// goes out while a listed name is unclaimed.
+    Restoring,
+    /// The reclaim is done (or was never owed) and the status has not been
+    /// posted yet.
     Solved,
     /// The status went out: `grind-ready` is next, and `done` after it.
     GrindReady,
@@ -695,6 +730,27 @@ struct ClueRuntime {
     /// trips were entered: the frozen `gateItemsTried`, once per item per token
     /// and never once per step. Cleared only by an abort / reset / a new begin.
     shopped: Vec<i32>,
+    /// The live Entrana strip on this step: absent until an identified box row
+    /// needed one, then owned by this token until the strip settles, a
+    /// different held row, an abort or the frozen reset. Like `open`, it is
+    /// session state and never a second scheduler.
+    strip: Option<Strip>,
+    /// The live Entrana restore on the collect's exit: absent until the collect
+    /// ends with names still listed, then owned by this token until the list
+    /// empties, a different held row, an abort or the frozen reset. The list it
+    /// reads outlives it, so a restore that gives up is retried rather than
+    /// forgotten.
+    restore: Option<Restore>,
+    /// The frozen `strippedGear`: the restricted display names the strip put in
+    /// the pack and has not put back, in the order they were taken off. Session
+    /// state that outlives the step, the trail and the token — it is what the
+    /// adapter's `ownsEquipment` reports — and only the restore empties it.
+    stripped: Vec<String>,
+    /// The frozen `abandonedClueId`: the identified row this machine left in
+    /// the pack. Set when `abandon` is emitted, read by `begin`, cleared by a
+    /// different held id or by `retry` — never by an abort, and never by a
+    /// generation reset.
+    abandoned: Option<i32>,
 }
 
 impl ClueRuntime {
@@ -717,11 +773,21 @@ impl ClueRuntime {
             walk_dest: None,
             shop: None,
             shopped: Vec::new(),
+            strip: None,
+            restore: None,
+            stripped: Vec::new(),
+            abandoned: None,
         }
     }
 
     /// Abort keeps the pause/hold freeze (`InstantTaskClock` contract: abort
     /// clears the deadline only) and emits nothing.
+    ///
+    /// The frozen `strippedGear` and `abandonedClueId` are not the token's and
+    /// are not cleared here: a dead session's list is still what the adapter's
+    /// `ownsEquipment` reports, and the latch is cleared by a different held id
+    /// or by `retry` alone — neither a stop nor the generation reset is a
+    /// `retry`.
     fn abort(&mut self) {
         self.token = self.token.wrapping_add(1);
         self.phase = Phase::Idle;
@@ -773,7 +839,11 @@ impl ClueRuntime {
     /// discarded ground ids, the settled-Take watch, the completion latch, the
     /// guarded encounter's owned wizard and post-kill flag, the live
     /// puzzle-box attempt with its latch, the key hunt's owned keeper with its
-    /// own post-kill flag, and the trio-acquire intercept with its own stop.
+    /// own post-kill flag, the trio-acquire intercept with its own stop, and
+    /// the Entrana strip's and restore's own live attempts.
+    ///
+    /// The stripped list and the abandon latch are not here: they are the
+    /// session's and outlive the step, the token and the reset.
     fn clear_step(&mut self) {
         self.open = None;
         self.clock.deadline = None;
@@ -785,6 +855,8 @@ impl ClueRuntime {
         self.puzzle = None;
         self.keeper = None;
         self.acquire = None;
+        self.strip = None;
+        self.restore = None;
     }
 
     /// Whether this token survives an identify `none-held`. Only the collect
@@ -842,9 +914,28 @@ impl ClueRuntime {
     /// `done` — the abort the token dies on. The first call also arms the
     /// latch, so the collect never loots again; nothing about the solved trail
     /// is looked at beyond it.
-    fn finish(&mut self) -> Value {
+    ///
+    /// The Entrana restore sits in front of all three steps and not only the
+    /// continue: while `strippedGear` is non-empty the reclaim owns the call and
+    /// none of the three kinds goes out, so a latched session puts its gear back
+    /// before it reports the trail solved and a name that will not go back on
+    /// blocks that report rather than racing it. Freeze, yield and the posted
+    /// hitpoints were read before this arm and still win over it.
+    fn finish(&mut self, input: &Value) -> Value {
+        // The latch arms on the first call whatever the gear list says: from
+        // here on the collect never loots, never re-arms and never re-reads the
+        // step it ended on. A session whose reclaim is still owed arms
+        // `Restoring` rather than the status.
+        if self.completion.is_none() {
+            self.completion = Some(Completion::Restoring);
+        }
+        // The reclaim in front of the status, and in front of the continue and
+        // the `done` after it.
+        if let Some(step) = self.restore(input) {
+            return step;
+        }
         match self.completion {
-            None => {
+            Some(Completion::Restoring) => {
                 self.completion = Some(Completion::Solved);
                 json!({
                     "kind": "callback.setStatus",
@@ -856,8 +947,328 @@ impl ClueRuntime {
                 self.completion = Some(Completion::GrindReady);
                 self.emit(GRIND_READY)
             }
-            Some(Completion::GrindReady) => self.ended(DONE),
+            // `GrindReady` — and any state the latch somehow is not — ends the
+            // session.
+            _ => self.ended(DONE),
         }
+    }
+
+    /// The Entrana restore the collect's exit owes while `strippedGear` is
+    /// non-empty: the frozen `restoreStrippedGear`, one verb per call over this
+    /// call's posted pages.
+    ///
+    /// In order: every listed name this call's posted worn page already shows
+    /// is done with; every listed name that page does not show but the posted
+    /// pack holds goes back on (`wear`, the landed equip-from-pack verb); and
+    /// what is left is claimed at the bank — the walk to the nearest stand, the
+    /// posted booth's own `open-booth`, one `Withdraw-1` per missing name, and
+    /// the interface's close — after which the wear pass runs again. The read is
+    /// by display name, the way the frozen `Equipment.contains` and
+    /// `Bank.withdraw` read it, and by nothing else.
+    ///
+    /// `None` is the restore's own completion: the list is empty and the
+    /// caller's next step may go out. One attempt is bounded by this machine's
+    /// own `ENTRANA_WAIT_MS` window; past it the names that are still not back
+    /// on are the named `restore-incomplete` log and the next call starts a
+    /// fresh attempt, so a name that will not go back on stays listed, is never
+    /// a machine kind, and never lets the finish latch report the trail solved.
+    fn restore(&mut self, input: &Value) -> Option<Value> {
+        if self.stripped.is_empty() {
+            return None;
+        }
+        // Every listed name is worn again: the frozen list empties and the
+        // caller's own completion step may go out. Read before the attempt, so
+        // a page that came back on its own needs no verb at all.
+        if self.stripped.iter().all(|name| worn_name(input, name)) {
+            self.stripped.clear();
+            self.restore = None;
+            self.clock.deadline = None;
+            return None;
+        }
+        let mut state = match self.restore.take() {
+            Some(state) => state,
+            None => {
+                // A fresh attempt: the previous one's window is not this one's.
+                self.clock.arm(ENTRANA_WAIT_MS);
+                Restore::default()
+            }
+        };
+        // The wear pass: a listed name the posted worn page does not show but
+        // the posted pack holds goes back on now, one per call — and only after
+        // this attempt's own bank interface is closed, so nothing is equipped
+        // behind an open bank. A wear verb the page never settles is the whole
+        // attempt's window running out: the frozen `could not re-equip … — will
+        // retry` over the names that are still not back on.
+        if let Some(name) = self
+            .stripped
+            .iter()
+            .find(|name| !worn_name(input, name) && pack_holds_name(input, name))
+            .cloned()
+        {
+            if state.bank.opened && bank_open(input) {
+                self.restore = Some(state);
+                return Some(close_verb(self.token));
+            }
+            if self.clock.bound_reached() {
+                return Some(self.incomplete(input));
+            }
+            self.restore = Some(state);
+            return Some(wear_verb(&name, self.token));
+        }
+        // The claims: the names this call's posted pack page does not hold
+        // either. One in flight at a time — a claim this call no longer reads as
+        // missing has landed, and one that is still missing was not observed to
+        // land, so this attempt gives up on that name. The next attempt starts
+        // with an empty tried list and claims it again.
+        let missing = |name: &String| !worn_name(input, name) && !pack_holds_name(input, name);
+        if let Some(sent) = state.sent.clone() {
+            if !missing(&sent) {
+                state.sent = None;
+            } else {
+                state.tried.push(sent);
+                state.sent = None;
+            }
+        }
+        let claim = self
+            .stripped
+            .iter()
+            .find(|name| missing(name) && !state.tried.contains(name))
+            .cloned();
+        match claim {
+            Some(name) => {
+                // The bank this claim needs is the shared approach: the walk to
+                // the nearest stand, the posted booth's own open, and then the
+                // claim itself.
+                if let Some(step) = self.bank_approach(&mut state.bank, input) {
+                    self.restore = Some(state);
+                    return Some(step);
+                }
+                state.sent = Some(name.clone());
+                self.restore = Some(state);
+                Some(withdraw_verb(&name, self.token))
+            }
+            None if bank_open(input) => {
+                // Nothing left to claim and the interface is still up: the close
+                // is this call's verb, and the names that did not come back are
+                // read on the call after it.
+                self.restore = Some(state);
+                Some(close_verb(self.token))
+            }
+            // Nothing left to claim with the interface down: the attempt is
+            // over and the names that are still missing are the named log.
+            None => Some(self.incomplete(input)),
+        }
+    }
+
+    /// The `restore-incomplete` give-up: the frozen `could not re-equip … — will
+    /// retry` over the names this call's posted worn page still does not show,
+    /// with the attempt dropped so the next call starts a fresh one. The list
+    /// keeps them, so the finish latch stays blocked and nothing downstream ever
+    /// reads the reclaim as done. A log through `callback.log` and never a
+    /// machine kind.
+    fn incomplete(&mut self, input: &Value) -> Value {
+        let names: Vec<&str> = self
+            .stripped
+            .iter()
+            .filter(|name| !worn_name(input, name))
+            .map(String::as_str)
+            .collect();
+        self.restore = None;
+        self.clock.deadline = None;
+        json!({
+            "kind": "callback.log",
+            "token": self.token,
+            "message": restore_incomplete(&names.join(", ")),
+        })
+    }
+
+    /// The Entrana strip in front of the identified box row's own arms: the
+    /// frozen `heldClueNeedsEntranaStrip` with `bankFirst`'s own two halves, one
+    /// verb per call.
+    ///
+    /// Membership is this row's own selected `trail_coord`, decoded the landed
+    /// way and inside the cap box — `entrana_coord` — and nothing else: a casket
+    /// never arms it and no copied `CLUE_DB` is consulted. In order: every
+    /// posted worn row whose name the frozen matcher folds is unequipped with
+    /// the landed `wear` verb the shim's own `Equipment.unequip` queues, and
+    /// listed unless it is one of the two hard-trail dagger ids; then every
+    /// listed name the posted pack still holds is deposited at the bank —
+    /// regex-restricted names only, never the ordinary loot deposit — and the
+    /// interface closes before the row's own arms run.
+    ///
+    /// `None` is the fall-through: not a box row, or a strip this step already
+    /// settled. The listed names outlive the step — they are the restore's own
+    /// list — and a strip that cannot finish re-arms and logs rather than
+    /// walking with the gear in hand: the frozen `bankFirst` returns false on
+    /// that same failure and the trail does not run.
+    fn strip(&mut self, row: &TrailMembershipRow, input: &Value) -> Option<Value> {
+        if !entrana_coord(row) {
+            return None;
+        }
+        let mut state = match self.strip.take() {
+            Some(state) => state,
+            None => {
+                self.clock.arm(ENTRANA_WAIT_MS);
+                Strip::default()
+            }
+        };
+        if state.settled {
+            self.strip = Some(state);
+            return None;
+        }
+        // The unequip pass. The verb repeats while the row stays on the posted
+        // page — the host fails closed on an item that is already gone — and a
+        // whole window of that is the frozen `still holding …` line with a
+        // fresh attempt behind it.
+        if let Some(worn) = pick_worn(input) {
+            if self.clock.bound_reached() {
+                self.clock.arm(ENTRANA_WAIT_MS);
+                return Some(json!({
+                    "kind": "callback.log",
+                    "token": self.token,
+                    "message": STILL_HOLDING,
+                }));
+            }
+            self.list(&worn);
+            self.strip = Some(state);
+            return Some(wear_verb(worn.name, self.token));
+        }
+        // The deposit pass: a listed name this call's posted pack page still
+        // holds goes to the bank, one per call.
+        if let Some(name) = self
+            .stripped
+            .iter()
+            .find(|name| pack_holds_name(input, name))
+            .cloned()
+        {
+            if let Some(step) = self.bank_approach(&mut state.bank, input) {
+                self.strip = Some(state);
+                return Some(step);
+            }
+            if self.clock.bound_reached() {
+                self.clock.arm(ENTRANA_WAIT_MS);
+                return Some(json!({
+                    "kind": "callback.log",
+                    "token": self.token,
+                    "message": STILL_HOLDING,
+                }));
+            }
+            self.strip = Some(state);
+            return Some(deposit_verb(&name, self.token));
+        }
+        // The exit: the interface closes once while it is up, and then the row's
+        // own arms run for the rest of the step.
+        if bank_open(input) {
+            self.strip = Some(state);
+            return Some(close_verb(self.token));
+        }
+        state.settled = true;
+        self.strip = Some(state);
+        None
+    }
+
+    /// One step of the shared Entrana bank approach: the walk to the nearest
+    /// stand, then the posted booth's own open, then the interface — which is
+    /// the `None` that lets the caller's own deposit or claim go out.
+    ///
+    /// The approaching half is bounded by this machine's own `ENTRANA_WAIT_MS`
+    /// window, armed when the walk goes out: past it the approach logs the named
+    /// `restore-walk-failed` — the caps' own name for this bank trip — and
+    /// re-arms, so a stand the page never posts is a named failure rather than a
+    /// silent hang. Freeze-honored like every other window here.
+    fn bank_approach(&mut self, bank: &mut BankApproach, input: &Value) -> Option<Value> {
+        if bank_open(input) {
+            bank.opened = true;
+            return None;
+        }
+        if !bank.walked {
+            bank.walked = true;
+            self.clock.arm(ENTRANA_WAIT_MS);
+            return Some(walk_nearest_bank_verb(self.token));
+        }
+        if let Some(booth) = nearest_booth(input) {
+            if booth_arrival(&booth, input) == Arrival::Arrived {
+                return Some(open_booth_verb(&booth, self.token));
+            }
+        }
+        if self.clock.bound_reached() {
+            *bank = BankApproach::default();
+            self.clock.arm(ENTRANA_WAIT_MS);
+            return Some(json!({
+                "kind": "callback.log",
+                "token": self.token,
+                "message": restore_walk_failed(),
+            }));
+        }
+        Some(self.emit("wait"))
+    }
+
+    /// List one stripped name the way the frozen `strippedGear` does: never
+    /// twice under a different case, and never one of the two hard-trail dagger
+    /// ids, which are unequipped like any other match and left off the list.
+    fn list(&mut self, worn: &Worn<'_>) {
+        if worn.id.is_some_and(|id| DDS_IDS.contains(&id)) {
+            return;
+        }
+        if self
+            .stripped
+            .iter()
+            .any(|name| name.eq_ignore_ascii_case(worn.name))
+        {
+            return;
+        }
+        self.stripped.push(worn.name.to_string());
+    }
+
+    /// The adapter's `ownsEquipment` read: the frozen formula's own half that
+    /// exists this slice — `strippedGear` is non-empty. True means
+    /// do-not-grind-equip, it is read off the machine and never off a page, and
+    /// it survives the token the list was made on: a dead session still answers
+    /// true while the names are unclaimed. `bankedThisSolve` is not this slice's
+    /// and is never set.
+    fn owns_equipment(&self) -> Value {
+        json!({
+            "kind": "ownsEquipment",
+            "token": self.token,
+            "owns": !self.stripped.is_empty(),
+        })
+    }
+
+    /// The frozen `retry`'s own clear, and only it: the abandon latch. The live
+    /// token is not aborted, `strippedGear` is not cleared, and no other latch
+    /// exists yet. Distinct from `on_reset`, which is the generation reset and
+    /// kills the token.
+    fn retry(&mut self) -> Value {
+        self.abandoned = None;
+        json!({ "kind": "retry", "token": self.token })
+    }
+
+    /// The abandon latch's own read over one identified row: `true` while the
+    /// same id is still the one this machine left in the pack, and the clear a
+    /// different id — or no identified row at all — makes on the way, exactly
+    /// the frozen `validate`'s own clearing. `None` is a page that holds no
+    /// identified row, which is a different state and not the same id.
+    fn abandon_seen(&mut self, id: Option<i32>) -> bool {
+        if id.is_some() && id == self.abandoned {
+            return true;
+        }
+        self.abandoned = None;
+        false
+    }
+
+    /// The frozen `abandon`: the identified row is left in the pack and the
+    /// latch is what a later begin and `retry` read. The terminal aborts the
+    /// token it ends, the way `done` does, and the frozen reclaim that follows
+    /// an abandon is not this card's — the names stay listed for the next
+    /// session's own restore.
+    ///
+    /// Not a production trigger: the emit is an explicit machine-state write
+    /// (the sibling of `retry`'s clear), the frozen production that reaches it
+    /// on its own — `MAX_STEPS`, the `blockReason` retries, `STEP_ATTEMPTS` —
+    /// is a later card's, and no adapter calls this seat.
+    fn abandoned(&mut self) -> Value {
+        self.abandoned = Some(self.step_id);
+        self.ended(ABANDON)
     }
 
     fn begin(&mut self, selected: Option<&SelectedGameData>, input: &Value) -> Value {
@@ -872,10 +1283,24 @@ impl ClueRuntime {
             // the step the token keeps, exactly as it is for a live session.
             Err(NONE_HELD) => match challenge_step(selected, input) {
                 Some(parent) => parent,
-                None => return self.aborted(NONE_HELD),
+                None => {
+                    self.abandon_seen(None);
+                    return self.aborted(NONE_HELD);
+                }
             },
-            Err(reason) => return self.aborted(reason),
+            Err(reason) => {
+                self.abandon_seen(None);
+                return self.aborted(reason);
+            }
         };
+        if self.abandon_seen(Some(row.id)) {
+            // The row this machine left in the pack is still the one held: the
+            // frozen `validate` is false while the same id remains, so no token
+            // is handed out for it and the sibling grind is not stolen. A
+            // different row — and a page that holds none — cleared the latch
+            // above.
+            return self.aborted(ABANDONED);
+        }
         if row.access.as_deref() == Some(CONSTRAINED) {
             // The one identified row this machine will not play: the packed
             // 3554 clue's own selected bound. The refusal is the same one a
@@ -923,7 +1348,9 @@ impl ClueRuntime {
         if self.completion.is_some() {
             // The collect is over and latched: its own exit runs before any
             // identify, so a latched session never loots and never re-arms.
-            return self.finish();
+            // The Entrana restore, when names are still listed, is the arm that
+            // exit takes first — and the only one that reads this call's pages.
+            return self.finish(input);
         }
         // One identify per call, and the same landed `identify_step` the
         // machine always made: membership is never re-derived here. The first
@@ -941,6 +1368,11 @@ impl ClueRuntime {
             },
             Err(reason) => return self.aborted(reason),
         };
+        // The abandon latch's own clear, the frozen `validate`'s: a different
+        // held row, and a page that holds none, both clear it. The same id can
+        // never be read on a live token — the `abandon` terminal that sets the
+        // latch kills the token it was set on — so this seat only clears.
+        self.abandon_seen(row.as_ref().map(|row| row.id));
         let Some(row) = row else {
             self.enter_collect();
             return self.collect(selected, input);
@@ -1057,8 +1489,9 @@ impl ClueRuntime {
         if self.full_no_food {
             // The WARNING was the last thing this collect had to say: the exit
             // is the machine's own completion, never a second warning and
-            // never the landed `none-held` abort.
-            return self.finish();
+            // never the landed `none-held` abort. The Entrana restore, when
+            // names are listed, is that exit's own first arm.
+            return self.finish(input);
         }
         if let Some(take) = self.settled_take(input) {
             return json!({
@@ -1081,10 +1514,10 @@ impl ClueRuntime {
         let Some(here) = input.get("here").and_then(posted_tile) else {
             // No posted tile: no ground row can be claimed as same-tile, so
             // this call has nothing to close and nothing to take.
-            return self.empty();
+            return self.empty(input);
         };
         let Some(drop) = pick_ground(input, here, &self.discarded) else {
-            return self.empty();
+            return self.empty(input);
         };
         // The pack's own numbers: occupied positive-count rows against the
         // posted slot count. A page that posted no `inv_size` has not said how
@@ -1122,10 +1555,11 @@ impl ClueRuntime {
     /// Nothing on this call's page to close and nothing to take. Before the
     /// bound the reward may still be posting — the frozen `REWARD_WAIT_MS`
     /// window — and after it the collect is over: the exit is the machine's own
-    /// three-step completion, never the landed `none-held` abort.
-    fn empty(&mut self) -> Value {
+    /// three-step completion, never the landed `none-held` abort, and the
+    /// Entrana restore is that exit's own first arm.
+    fn empty(&mut self, input: &Value) -> Value {
         if self.clock.bound_reached() {
-            return self.finish();
+            return self.finish(input);
         }
         self.emit("wait")
     }
@@ -1470,6 +1904,15 @@ impl ClueRuntime {
         input: &Value,
         selected: Option<&SelectedGameData>,
     ) -> Value {
+        // The Entrana strip sits in front of every `Steady` arm this row owns
+        // and with them in front of the walk they would make: an identified row
+        // whose own selected `trail_coord` decodes inside the cap box is stripped
+        // — and its restricted names banked — before the search, dig or talk arm
+        // it belongs to ever runs. Every other row falls straight through, and a
+        // strip this step already settled never re-enters.
+        if let Some(step) = self.strip(row, input) {
+            return step;
+        }
         if search_tile(row).is_some() {
             return self.search(row, input);
         }
@@ -3051,6 +3494,472 @@ const NO_SHOP: &str = "no-shop";
 /// one attempt here, and a frozen session never spends this bound.
 const SHOP_WAIT_MS: u64 = 2_000;
 
+/// The one terminal kind this machine publishes and never triggers on its own:
+/// the frozen `abandon` — the clue is left in the pack. The latch below is what
+/// makes it observable; the frozen production that reaches it (`MAX_STEPS`, the
+/// `blockReason` retries, `STEP_ATTEMPTS`) is a later card's and is not ported.
+const ABANDON: &str = "abandon";
+
+/// The begin refusal for the row this machine left in the pack: the frozen
+/// `validate` is false while the same held id remains, so no token is handed
+/// out for it. A different held row — or the adapter's `retry` — clears it.
+const ABANDONED: &str = "abandoned";
+
+/// The cap's Entrana box: membership is the identified row's own selected
+/// `trail_coord`, decoded the landed way, inside this square on level 0 — the
+/// frozen `isEntranaClueCoord` and never a copied `CLUE_DB`. The one selected
+/// member is `trail_clue_hard_riddle027` (`3579`), whose `0_44_52_2_23`
+/// decodes to `(2818, 3351, 0)`.
+const ENTRANA_X_MIN: i32 = 2_802;
+const ENTRANA_X_MAX: i32 = 2_878;
+const ENTRANA_Z_MIN: i32 = 3_329;
+const ENTRANA_Z_MAX: i32 = 3_393;
+const ENTRANA_LEVEL: i32 = 0;
+
+/// The frozen `DDS_IDS` the strip unequips like any other restricted name but
+/// never lists: the two hard-trail daggers come back with the hard kit, and
+/// nothing here stocks a weapon.
+const DDS_IDS: [i32; 2] = [1231, 1215];
+
+/// The frozen `ENTRANA_RESTRICTED_GEAR_RE` alternatives, ported whole and in
+/// the frozen order — the same class of matcher the landed `keep` predicate is,
+/// over **posted display names** and never a selected item family (schema 4
+/// carries none, and none is invented). The three shapes the plain list cannot
+/// spell are their own reads below: the `two.handed` wildcard, the
+/// `gauntlets?` optional `s` (both spellings listed, which is the same language
+/// under `\b`), and the `body(?!\s+rune\b)` lookahead.
+const ENTRANA_GEAR_WORDS: [&str; 57] = [
+    "sword",
+    "dagger",
+    "scimitar",
+    "longsword",
+    "2h",
+    "mace",
+    "warhammer",
+    "battleaxe",
+    "axe",
+    "pickaxe",
+    "spear",
+    "hasta",
+    "halberd",
+    "maul",
+    "claws",
+    "whip",
+    "bow",
+    "shortbow",
+    "longbow",
+    "crossbow",
+    "javelin",
+    "dart",
+    "thrownaxe",
+    "knife",
+    "staff",
+    "wand",
+    "battlestaff",
+    "cannon",
+    "helmet",
+    "full helm",
+    "med helm",
+    "coif",
+    "platebody",
+    "chainbody",
+    "platelegs",
+    "plateskirt",
+    "skirt of",
+    "kiteshield",
+    "square shield",
+    "sq shield",
+    "dragon square",
+    "god cape",
+    "fire cape",
+    "obsidian cape",
+    "defender",
+    "chaps",
+    "vambraces",
+    "gauntlet",
+    "gauntlets",
+    "gloves",
+    "shield",
+    "cape",
+    "cloak",
+    "snelm",
+    "cowl",
+    "hat",
+    "hood",
+];
+
+/// The frozen `Withdraw-1` label the restore's claim rides; the bank row's own
+/// posted action slots are matched by the host and never by this machine.
+const WITHDRAW_ONE: &str = "Withdraw-1";
+
+/// The caps' own name for a bank approach that did not come up — the frozen
+/// `walk to the bank failed — gear stays banked, will retry` line, logged with
+/// this token and never a machine kind.
+const RESTORE_WALK_FAILED: &str = "restore-walk-failed";
+
+/// The caps' own name for a name that would not go back on — the frozen
+/// `could not re-equip … — will retry` line, logged with this token and never a
+/// machine kind. `supplies-needed` stays the arrived dig's own wait-class.
+const RESTORE_INCOMPLETE: &str = "restore-incomplete";
+
+/// The frozen `still holding Entrana-banned gear after bank prep — will retry`
+/// line: the strip's own give-up, logged while the listed names stay listed and
+/// the row's own arms wait for the next attempt rather than walking with the
+/// gear in hand.
+const STILL_HOLDING: &str = "still holding Entrana-banned gear after bank prep — will retry";
+
+/// The machine's own window for one Entrana bank approach or one strip: how
+/// long the walk to the nearest stand, the posted booth's own open and one
+/// deposit or claim have to settle before the attempt logs its named failure
+/// and re-arms. Armed per attempt, never once per trail, and freeze-honored
+/// like every other window here, so a frozen session never spends it.
+const ENTRANA_WAIT_MS: u64 = 30_000;
+
+/// The frozen `ENTRANA_RESTRICTED_GEAR_RE` match over one posted display name:
+/// the alternatives under their own `\b…\b`, ASCII-folded, exactly as the
+/// frozen regex spells them. The vectors the frozen `entranaGear.test.ts`
+/// binds are the whole of it: `Dragonhide body`, `Coif` and `Dragon dagger(p)`
+/// are refused, and `Amulet of glory`, `Rune arrow`, `Body rune`, `Shark`,
+/// `Clue scroll`, `Spade`, `Sextant` and `Coins` are let through.
+fn entrana_restricted_gear(name: &str) -> bool {
+    let folded = name.to_ascii_lowercase();
+    ENTRANA_GEAR_WORDS
+        .iter()
+        .any(|word| word_hit(&folded, word))
+        || two_handed_hit(&folded)
+        || body_hit(&folded)
+}
+
+/// One frozen alternative under its own `\b…\b`: the word occurs with a
+/// non-word byte — or the name's own start or end — on both sides.
+fn word_hit(name: &str, word: &str) -> bool {
+    let bytes = name.as_bytes();
+    let mut from = 0;
+    while let Some(at) = name[from..].find(word) {
+        let start = from + at;
+        let end = start + word.len();
+        if boundary_before(bytes, start) && boundary_after(bytes, end) {
+            return true;
+        }
+        from = start + 1;
+    }
+    false
+}
+
+/// The frozen `two.handed` alternative: `two`, exactly one byte, `handed`, all
+/// of it under the same word boundaries. `Two-handed` is the spelled form and
+/// `twohanded` is not this alternative — the `.` is one byte and not zero.
+fn two_handed_hit(name: &str) -> bool {
+    let bytes = name.as_bytes();
+    let mut from = 0;
+    while let Some(at) = name[from..].find("two") {
+        let start = from + at;
+        let end = start + 4 + "handed".len();
+        if end <= bytes.len()
+            && &bytes[start + 4..end] == b"handed"
+            && boundary_before(bytes, start)
+            && boundary_after(bytes, end)
+        {
+            return true;
+        }
+        from = start + 1;
+    }
+    false
+}
+
+/// The frozen `body(?!\s+rune\b)` alternative: the word `body` under its own
+/// boundaries and not followed by whitespace and then the word `rune`. `Body
+/// rune` is the composed rune and is let through; `Body runes` and `Rune body`
+/// are not.
+fn body_hit(name: &str) -> bool {
+    let bytes = name.as_bytes();
+    let mut from = 0;
+    while let Some(at) = name[from..].find("body") {
+        let start = from + at;
+        let end = start + "body".len();
+        if boundary_before(bytes, start)
+            && boundary_after(bytes, end)
+            && !rune_word_after(name, end)
+        {
+            return true;
+        }
+        from = start + 1;
+    }
+    false
+}
+
+/// The `(?!\s+rune\b)` lookahead over the rest of the name: whitespace, then
+/// the word `rune`. A rest with no whitespace at all, or with anything but
+/// `rune` after it, is not this lookahead.
+fn rune_word_after(name: &str, at: usize) -> bool {
+    let rest = &name[at..];
+    let trimmed = rest.trim_start();
+    if trimmed.len() == rest.len() {
+        return false;
+    }
+    let Some(tail) = trimmed.strip_prefix("rune") else {
+        return false;
+    };
+    !tail.starts_with(|ch: char| ch.is_ascii_alphanumeric() || ch == '_')
+}
+
+/// The frozen `\b`'s own `\w`: ASCII alphanumerics and the underscore. A byte
+/// that is none of those is a boundary, a non-ASCII byte included — the frozen
+/// regex is a JavaScript one without the `u` flag.
+fn word_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'_'
+}
+
+fn boundary_before(bytes: &[u8], at: usize) -> bool {
+    at == 0 || !word_byte(bytes[at - 1])
+}
+
+fn boundary_after(bytes: &[u8], at: usize) -> bool {
+    at >= bytes.len() || !word_byte(bytes[at])
+}
+
+/// Whether the identified row arms the strip: the row's own selected
+/// `trail_coord`, decoded by the landed decoder, inside the cap's box on level
+/// 0 — and never a casket. The param is the whole membership: no copied
+/// `CLUE_DB` coordinate, no frozen coordinate table and no second classify.
+fn entrana_coord(row: &TrailMembershipRow) -> bool {
+    if row.role == CASKET_ROLE {
+        return false;
+    }
+    let coord = row
+        .params
+        .iter()
+        .find(|param| param.key == "trail_coord")
+        .map(|param| param.value.as_str());
+    let Some(tile) = coord.and_then(decode_trail_coord) else {
+        return false;
+    };
+    tile.level == ENTRANA_LEVEL
+        && (ENTRANA_X_MIN..=ENTRANA_X_MAX).contains(&tile.x)
+        && (ENTRANA_Z_MIN..=ENTRANA_Z_MAX).contains(&tile.z)
+}
+
+/// One posted worn row as this machine reads it: the display name the frozen
+/// matcher folds and the packed id the DDS exclusion joins. A row the page
+/// posted without a name is not a worn row here — the matcher is names, and no
+/// id is ever folded into one.
+struct Worn<'a> {
+    name: &'a str,
+    id: Option<i32>,
+}
+
+/// The first posted worn row this call's page carries whose name the frozen
+/// matcher folds, in posted order. The page is the wrapper's marshalling of
+/// `host().snapshot.equipment`, the raw rows with their own `slot`, and never
+/// `Equipment.items()` — which drops the slot — and never a scan of the item
+/// table.
+fn pick_worn(input: &Value) -> Option<Worn<'_>> {
+    input
+        .get("equipment")
+        .and_then(Value::as_array)?
+        .iter()
+        .find_map(|row| {
+            let name = row.get("name").and_then(Value::as_str)?;
+            entrana_restricted_gear(name).then_some(Worn {
+                name,
+                id: posted_i32(row, "id"),
+            })
+        })
+}
+
+/// Whether this call's posted pack page holds a row with this display name and
+/// a positive count: the observation the strip's deposit and the restore's
+/// claim both read. A page that posted no such row holds nothing.
+fn pack_holds_name(input: &Value, name: &str) -> bool {
+    input
+        .get("inv")
+        .and_then(Value::as_array)
+        .is_some_and(|rows| {
+            rows.iter().any(|row| {
+                row.get("name")
+                    .and_then(Value::as_str)
+                    .is_some_and(|posted| posted.eq_ignore_ascii_case(name))
+                    && posted_i32(row, "count").is_some_and(|count| count > 0)
+            })
+        })
+}
+
+/// Whether this call's posted worn page holds a row with this display name: the
+/// restore's own completion read, one listed name at a time.
+fn worn_name(input: &Value, name: &str) -> bool {
+    input
+        .get("equipment")
+        .and_then(Value::as_array)
+        .is_some_and(|rows| {
+            rows.iter().any(|row| {
+                row.get("name")
+                    .and_then(Value::as_str)
+                    .is_some_and(|posted| posted.eq_ignore_ascii_case(name))
+            })
+        })
+}
+
+/// The posted nearest Use-quickly booth: the identity the strip's and the
+/// restore's own `open-booth` click rides, exactly as the wrapper marshalled
+/// it. A page that posted no booth has nothing to open, and no tile is invented
+/// for one.
+struct Booth<'a> {
+    x: i32,
+    z: i32,
+    level: i32,
+    id: i32,
+    name: Option<&'a str>,
+    action: Option<&'a str>,
+}
+
+fn nearest_booth(input: &Value) -> Option<Booth<'_>> {
+    let row = input.get("nearest_booth")?;
+    Some(Booth {
+        x: posted_i32(row, "x")?,
+        z: posted_i32(row, "z")?,
+        level: posted_i32(row, "level")?,
+        id: posted_i32(row, "id")?,
+        name: row.get("name").and_then(Value::as_str),
+        action: row.get("op").and_then(Value::as_str),
+    })
+}
+
+/// Whether this call's posted `here` stands on the posted booth's own level
+/// inside the frozen `ARRIVE_RADIUS`: the same arrival rule every walk arm here
+/// reads, applied to the booth page rather than to a decoded tile.
+fn booth_arrival(booth: &Booth<'_>, input: &Value) -> Arrival {
+    let Some(here) = input.get("here").and_then(posted_tile) else {
+        return Arrival::Unknown;
+    };
+    let tile = Tile {
+        x: booth.x,
+        z: booth.z,
+        level: booth.level,
+    };
+    if here.level != booth.level || chebyshev(here, tile) > i64::from(ARRIVE_RADIUS) {
+        Arrival::Walking
+    } else {
+        Arrival::Arrived
+    }
+}
+
+/// This call's posted bank interface. Only a posted `true` is an open one: an
+/// omitted slot is unobserved rather than closed, so no deposit or claim is
+/// ever sent on an invented open bank.
+fn bank_open(input: &Value) -> bool {
+    input.get("bank_open").and_then(Value::as_bool) == Some(true)
+}
+
+/// The landed `wear` step: the landed equip-from-pack verb the shim's own
+/// `Equipment.equip`/`unequip` pair queues, and the one the strip's unequip and
+/// the restore's wear-back both ride. No row id and no slot: the host resolves
+/// the name it is handed.
+fn wear_verb(name: &str, token: u64) -> Value {
+    json!({ "kind": "wear", "token": token, "name": name })
+}
+
+/// The landed `deposit` step, one restricted name at a time: the frozen
+/// `Bank.depositAllMatching` cut to the regex-matching names this strip put in
+/// the pack, and never the ordinary loot deposit.
+fn deposit_verb(name: &str, token: u64) -> Value {
+    json!({ "kind": "deposit", "token": token, "name": name })
+}
+
+/// The landed `withdraw` step for one missing listed name: the frozen
+/// `Bank.withdraw(name, 'Withdraw-1')`, one chunk of one.
+fn withdraw_verb(name: &str, token: u64) -> Value {
+    json!({ "kind": "withdraw", "token": token, "name": name, "action": WITHDRAW_ONE })
+}
+
+/// The landed `walk-nearest-bank` step: Rust picks the stand from the packed
+/// world, so this machine sends no tile of its own and never a frozen one.
+fn walk_nearest_bank_verb(token: u64) -> Value {
+    json!({ "kind": "walk-nearest-bank", "token": token })
+}
+
+/// The landed `close` step: the open bank interface's own close, once the
+/// strip's deposit or the restore's claim is done with it.
+fn close_verb(token: u64) -> Value {
+    json!({ "kind": "close", "token": token })
+}
+
+/// The landed `open-booth` step over the posted booth: its own tile, id and —
+/// when the page posted them — name and action, the way the landed bank
+/// helpers enqueue it. Nothing about it is invented and no stand is picked
+/// here.
+fn open_booth_verb(booth: &Booth<'_>, token: u64) -> Value {
+    let mut step = json!({
+        "kind": "open-booth",
+        "token": token,
+        "x": booth.x,
+        "z": booth.z,
+        "level": booth.level,
+        "id": booth.id,
+    });
+    if let Some(name) = booth.name {
+        step["name"] = json!(name);
+    }
+    if let Some(action) = booth.action {
+        step["action"] = json!(action);
+    }
+    step
+}
+
+/// The frozen `could not re-equip … — will retry` line, named the way the caps
+/// do (`restore-incomplete`): a log through `callback.log`, never a machine
+/// kind, and the names it carries stay listed.
+fn restore_incomplete(names: &str) -> String {
+    format!("{RESTORE_INCOMPLETE}: could not re-equip {names} — will retry")
+}
+
+/// The frozen `walk to the bank failed — gear stays banked, will retry` line,
+/// named the way the caps do (`restore-walk-failed`): a log through
+/// `callback.log`, never a machine kind.
+fn restore_walk_failed() -> String {
+    format!("{RESTORE_WALK_FAILED}: the bank did not come up — will retry")
+}
+
+/// One live Entrana bank approach, shared by the strip's deposit and the
+/// restore's claim: whether this attempt's `walk-nearest-bank` has gone out.
+/// Session state on the live token, like `shop` — never a second scheduler and
+/// never a nested bank machine.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct BankApproach {
+    /// This attempt's walk has been sent: the calls after it read the posted
+    /// booth page instead of walking again.
+    walked: bool,
+    /// The interface has been observed open on this attempt: the strip's exit
+    /// and the restore's wear pass both owe it a close before their own verb,
+    /// so nothing is worn back on behind an open bank.
+    opened: bool,
+}
+
+/// The strip's own live state on one step: the bank approach's own half and
+/// whether the strip is settled for this step. Dropped with the step like
+/// `shop`; the listed names it writes are not.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct Strip {
+    bank: BankApproach,
+    /// The unequip and deposit passes are done for this step: the row's own
+    /// arms run and this arm never re-enters for it.
+    settled: bool,
+}
+
+/// The restore's own live state on the collect's exit: the bank approach and
+/// the names whose claim has gone out on this attempt. Dropped when the
+/// attempt ends, never when the list is still full — the list is the latch.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct Restore {
+    bank: BankApproach,
+    /// The name whose own `withdraw` went out on the previous call and has not
+    /// been observed to land: one claim in flight at a time.
+    sent: Option<String>,
+    /// The names this attempt has already claimed: a name whose claim never
+    /// landed is not claimed twice inside one attempt, and the next attempt
+    /// starts with an empty list of them.
+    tried: Vec<String>,
+}
+
 /// Whether this call's posted pack page carries the Dig verb's item: a row
 /// with a positive count whose posted display name is the frozen `Spade`,
 /// compared the way the landed collect compares a posted droppable name.
@@ -3904,7 +4813,18 @@ pub fn on_hold(held: bool) {
 }
 
 pub fn on_reset() {
-    RUNTIME.with(|rt| rt.borrow_mut().abort());
+    RUNTIME.with(|rt| {
+        let mut rt = rt.borrow_mut();
+        // The generation reset is the fresh task instance Stop/Start builds in
+        // the frozen bot, so the strip list and the abandon latch start over
+        // with it. A terminal kind — `dead`, `guardian-lost`, `done`, a refused
+        // begin — is not a reset and keeps both: the list still answers
+        // `ownsEquipment` for a dead token, and the latch still refuses the row
+        // it left in the pack.
+        rt.stripped.clear();
+        rt.abandoned = None;
+        rt.abort();
+    });
 }
 
 /// The machine's only entry point: the selected pin comes from the native
@@ -3914,6 +4834,16 @@ pub fn dispatch(selected: Option<&SelectedGameData>, input: &Value) -> Value {
     match input.get("op").and_then(Value::as_str).unwrap_or("") {
         "begin" => RUNTIME.with(|rt| rt.borrow_mut().begin(selected, input)),
         "next" => RUNTIME.with(|rt| rt.borrow_mut().next(selected, input)),
+        // The machine-state seats. None is a step over a page and none takes a
+        // token: `ownsEquipment` is a read of the stripped list the shim
+        // publishes as `SolveClue.ownsEquipment`, `retry` is the frozen latch
+        // clear the shim's and the v2 seat both call, and `abandon` is the
+        // latch's own write — the machine's terminal an emitting card would
+        // reach, never a verb an adapter sends. None of them is a `request()`
+        // op.
+        "ownsEquipment" => RUNTIME.with(|rt| rt.borrow().owns_equipment()),
+        "retry" => RUNTIME.with(|rt| rt.borrow_mut().retry()),
+        "abandon" => RUNTIME.with(|rt| rt.borrow_mut().abandoned()),
         _ => json!({ "kind": "notImpl", "reason": "unknown clue op" }),
     }
 }
@@ -10840,5 +11770,670 @@ mod tests {
         assert_eq!(reborn["kind"], "npc", "{reborn}");
         assert_eq!(reborn["action"], ATTACK, "{reborn}");
         assert_eq!(reborn["index"], 21, "{reborn}");
+    }
+
+    // ── the Entrana strip, its restore and the abandon latch ──
+
+    /// `trail_clue_hard_riddle027`: the sole selected row whose own decode lands
+    /// in the cap box — `trail_coord=0_44_52_2_23` → `(2818, 3351, 0)`.
+    const ENTRANA: i32 = 3579;
+    const ENTRANA_X: i32 = 2818;
+    const ENTRANA_Z: i32 = 3351;
+    /// The two hard-trail dagger ids the strip unequips but never lists.
+    const DDS_POISONED: i32 = 1231;
+    /// A refused name the frozen vectors bind, and its item id.
+    const HELM: i32 = 1163;
+
+    /// One wrapper-marshalled worn row: the raw `host().snapshot.equipment`
+    /// shape, with the name the matcher folds and the id the DDS exclusion
+    /// joins.
+    fn worn(id: i32, name: &str, slot: i32) -> Value {
+        json!({ "id": id, "name": name, "count": 1, "slot": slot })
+    }
+
+    /// The machine's own stripped list.
+    fn stripped() -> Vec<String> {
+        RUNTIME.with(|rt| rt.borrow().stripped.clone())
+    }
+
+    /// The adapter's own read, straight through the dispatch seat.
+    fn owns() -> bool {
+        dispatch(None, &json!({ "op": "ownsEquipment" }))["owns"] == true
+    }
+
+    /// The posted booth the bank trip opens, as the wrapper marshals
+    /// `nearest_booth`: the tile the player stands on beside it.
+    fn booth_page() -> Value {
+        json!({
+            "x": 2810,
+            "z": 3350,
+            "level": 0,
+            "id": 2213,
+            "name": "Bank booth",
+            "op": "Use-quickly",
+        })
+    }
+
+    /// The completion kinds no step of a strip or a reclaim may carry: the
+    /// three-step latch is the finished collect's own and nothing else's.
+    fn assert_no_completion(step: &Value) {
+        let text = step.to_string();
+        for forbidden in ["clue solved", "grind-ready", "\"done\""] {
+            assert!(!text.contains(forbidden), "{forbidden} {step}");
+        }
+    }
+
+    /// The frozen matcher's own vectors, ported whole: the twelve names the
+    /// frozen `entranaGear.test.ts` binds refused and its ten let through, plus
+    /// the same frozen regex' edges — the `\b` on a longer word, the
+    /// `two.handed` wildcard, the `gauntlets?` optional `s` and the
+    /// `body(?!\s+rune\b)` lookahead beside `Body runes`. Every expectation is
+    /// the frozen regex' own answer.
+    #[test]
+    fn the_frozen_entrana_matcher_folds_the_names_it_was_bound_to() {
+        for name in [
+            "Dragonhide body",
+            "Dragonhide chaps",
+            "Dragon vambraces",
+            "Coif",
+            "Dragonfire shield",
+            "Legends cape",
+            "Leather gloves",
+            "Studded body",
+            "Wizard hat",
+            "Dragon dagger(p)",
+            "Magic shortbow",
+            "Maple longbow",
+            "Rune full helm",
+            "Two-handed sword",
+            "Two handed",
+            "Rune platebody",
+            "Body runes",
+            "Dragon battleaxe",
+            "Rune kiteshield",
+            "Cape of legends",
+            "2h sword",
+            "Battlestaff",
+            "Staff of fire",
+            "Rune plateskirt",
+            "Skirt of silk",
+            "Dragon sq shield",
+            "Dragon square shield",
+            "Snakeskin chaps",
+            "snelm",
+            "Cowl",
+            "Hood",
+            "Dragon gloves",
+            "Rune claws",
+            "Granite maul",
+            "Rune cannon",
+            "Med helm",
+            "Full helm",
+            "Rune chainbody",
+            "Rune platelegs",
+            "Rune defender",
+            "Obsidian cape",
+            "Fire cape",
+            "God cape",
+            "Rune cloak",
+            "Air battlestaff",
+            "Magic longbow",
+            "Rune crossbow",
+            "Rune javelin",
+            "Rune dart",
+            "Rune thrownaxe",
+            "Rune knife",
+            "Rune warhammer",
+            "Rune spear",
+            "Rune hasta",
+            "Rune halberd",
+            "Rune mace",
+            "Rune scimitar",
+            "Rune longsword",
+            "Rune axe",
+            "Rune pickaxe",
+            "Dragon whip",
+            "Bronze dagger",
+            "Rune gloves",
+            "Leather vambraces",
+            "Anti-dragon shield",
+            "Cape",
+            "somebody body",
+        ] {
+            assert!(entrana_restricted_gear(name), "{name}");
+        }
+        for name in [
+            "Amulet of glory",
+            "Leather boots",
+            "Rune arrow",
+            "Body rune",
+            "Shark",
+            "Clue scroll",
+            "Spade",
+            "Sextant",
+            "Superantipoison(4)",
+            "Coins",
+            "twohanded",
+            "Somebody",
+            "Shielded",
+            "Swordfish",
+            "Rune skirt",
+            "Cannonball",
+            "Brown apron",
+            "Amulet of fury",
+            "Zamorak monk top",
+            "Priest gown",
+            "Desert shirt",
+            "Boots of lightness",
+            "Rune boots",
+            "Climbing boots",
+            "Dragonstone",
+            "Rune arrowtips",
+            "Arrow shaft",
+            "Coifed",
+            "Hatchet",
+            "Sharktooth",
+            "Hooded",
+            "Bodyguard",
+        ] {
+            assert!(!entrana_restricted_gear(name), "{name}");
+        }
+    }
+
+    /// The strip's membership is the row's own selected decode and never a
+    /// copied coordinate, a casket row is not a member, and a row whose decode
+    /// is outside the box or off the level is not one either.
+    #[test]
+    fn the_entrana_membership_is_the_rows_own_decoded_coord() {
+        let data = selected();
+        assert_eq!(row(&data, ENTRANA).alias, "trail_clue_hard_riddle027");
+        assert!(entrana_coord(row(&data, ENTRANA)));
+        // The box's own ends are in it and one step outside is not.
+        let inside = member(vec![param("trail_coord", "0_43_52_50_33")], None);
+        assert!(entrana_coord(&inside), "the box's own west edge is in it");
+        for value in [
+            "0_43_52_49_33", // x 2817, one west of the box
+            "0_44_52_63_33", // x 2879, one east
+            "1_43_52_50_33", // the right square on the wrong level
+        ] {
+            assert!(
+                !entrana_coord(&member(vec![param("trail_coord", value)], None)),
+                "{value}"
+            );
+        }
+        // A desc-only row carries no coord at all, and a casket never arms it
+        // even when the id it is posted under is the box row's own.
+        assert!(!entrana_coord(&member(vec![], None)));
+        let mut casket = member(vec![param("trail_coord", "0_44_52_2_23")], None);
+        casket.role = "casket".into();
+        assert!(!entrana_coord(&casket), "a casket never arms the strip");
+    }
+
+    /// The strip's unequip pass: the posted worn rows the frozen matcher folds
+    /// go out as the landed `wear` verb, one per call, the two hard-trail
+    /// dagger ids are unequipped but never listed, and the rows the matcher lets
+    /// through are never a verb at all.
+    #[test]
+    fn the_strip_unequips_the_folded_names_and_never_lists_the_dds() {
+        on_reset();
+        let data = selected();
+        let page = json!([[ENTRANA, 1]]);
+        let token = steady(&data, ENTRANA);
+        // The dagger is first in posted order, then the helm, then the two the
+        // monks let through.
+        let posted = json!([
+            worn(DDS_POISONED, "Dragon dagger(p)", 3),
+            worn(HELM, "Rune full helm", 0),
+            worn(1704, "Amulet of glory", 2),
+            worn(3791, "Leather boots", 10),
+        ]);
+        let dagger = call(&data, token, page.clone(), json!({ "equipment": posted }));
+        assert_eq!(dagger["kind"], "wear", "{dagger}");
+        assert_eq!(dagger["name"], "Dragon dagger(p)", "{dagger}");
+        assert_eq!(dagger["token"], token, "{dagger}");
+        assert!(
+            stripped().is_empty(),
+            "a hard-trail dagger id is never listed: {:?}",
+            stripped()
+        );
+        assert_no_completion(&dagger);
+        // It left the page: the helm is next, and the two non-matches are never
+        // dispatched at.
+        let left = json!([
+            worn(HELM, "Rune full helm", 0),
+            worn(1704, "Amulet of glory", 2),
+            worn(3791, "Leather boots", 10),
+        ]);
+        let helm = call(&data, token, page.clone(), json!({ "equipment": left }));
+        assert_eq!(helm["kind"], "wear", "{helm}");
+        assert_eq!(helm["name"], "Rune full helm", "{helm}");
+        assert_eq!(stripped(), vec!["Rune full helm".to_string()]);
+        // Nothing left to strip and nothing in the pack: the strip settles with
+        // no booth and no bank, and the row's own search arm waits on the
+        // decoded tile with no locs posted.
+        let worn_free = json!([
+            worn(1704, "Amulet of glory", 2),
+            worn(3791, "Leather boots", 10),
+        ]);
+        let settled = call(
+            &data,
+            token,
+            page.clone(),
+            json!({
+                "equipment": worn_free,
+                "here": here(ENTRANA_X, ENTRANA_Z, 0),
+            }),
+        );
+        assert_eq!(settled["kind"], "wait", "{settled}");
+        assert!(
+            !settled.to_string().contains("Amulet"),
+            "a name the frozen matcher lets through is never dispatched at: {settled}"
+        );
+        assert!(owns(), "the helm is listed, so the adapter reads true");
+        on_reset();
+    }
+
+    /// The strip's deposit pass: the listed names the posted pack holds are
+    /// deposited at the posted booth — the walk, the booth's own open, one
+    /// deposit per name, the close — and only then does the row's own arm walk.
+    #[test]
+    fn the_strip_deposits_the_listed_names_at_the_posted_booth() {
+        on_reset();
+        let data = selected();
+        let page = json!([[ENTRANA, 1]]);
+        let token = steady(&data, ENTRANA);
+        let helm = call(
+            &data,
+            token,
+            page.clone(),
+            json!({ "equipment": json!([worn(HELM, "Rune full helm", 0)]) }),
+        );
+        assert_eq!(helm["kind"], "wear", "{helm}");
+        assert_eq!(stripped(), vec!["Rune full helm".to_string()]);
+        // The unequip landed: the worn page is empty and the pack holds it.
+        let pack = json!([inv(HELM, "Rune full helm", 1)]);
+        let banked = json!({
+            "equipment": json!([]),
+            "inv": pack,
+            "here": here(2810, 3350, 0),
+            "nearest_booth": booth_page(),
+        });
+        let walked = call(&data, token, page.clone(), banked.clone());
+        assert_eq!(walked["kind"], "walk-nearest-bank", "{walked}");
+        assert_eq!(walked["token"], token, "{walked}");
+        assert_no_completion(&walked);
+        let opened = call(&data, token, page.clone(), banked.clone());
+        assert_eq!(opened["kind"], "open-booth", "{opened}");
+        assert_eq!(opened["x"], 2810, "{opened}");
+        assert_eq!(opened["z"], 3350, "{opened}");
+        assert_eq!(opened["id"], 2213, "{opened}");
+        assert_eq!(opened["name"], "Bank booth", "{opened}");
+        assert_eq!(opened["action"], "Use-quickly", "{opened}");
+        // The interface is up: the deposit goes out by the name the strip put
+        // in the pack.
+        let deposited = call(
+            &data,
+            token,
+            page.clone(),
+            json!({ "inv": pack, "bank_open": true }),
+        );
+        assert_eq!(deposited["kind"], "deposit", "{deposited}");
+        assert_eq!(deposited["name"], "Rune full helm", "{deposited}");
+        // It landed: the interface closes, and the call after that settles the
+        // strip and runs the row's own search arm — the name stays listed.
+        let closed = call(
+            &data,
+            token,
+            page.clone(),
+            json!({ "inv": json!([]), "bank_open": true }),
+        );
+        assert_eq!(closed["kind"], "close", "{closed}");
+        let walked_on = call(
+            &data,
+            token,
+            page.clone(),
+            json!({
+                "inv": json!([]),
+                "bank_open": false,
+                "here": here(ENTRANA_X, ENTRANA_Z, 0),
+            }),
+        );
+        assert_eq!(walked_on["kind"], "wait", "{walked_on}");
+        assert_eq!(stripped(), vec!["Rune full helm".to_string()]);
+        assert!(owns());
+        on_reset();
+    }
+
+    /// The restore in front of the three-step latch: no `'clue solved'`, no
+    /// `grind-ready` and no `done` while a listed name is unclaimed, the pack's
+    /// own name worn back on first, and the three kinds in order once the list
+    /// empties.
+    #[test]
+    fn the_restore_runs_before_the_whole_three_step_latch() {
+        on_reset();
+        let data = selected();
+        // One strip first, so this session owns a listed name.
+        let page = json!([[ENTRANA, 1]]);
+        let token = steady(&data, ENTRANA);
+        let helm = call(
+            &data,
+            token,
+            page,
+            json!({ "equipment": json!([worn(HELM, "Rune full helm", 0)]) }),
+        );
+        assert_eq!(helm["kind"], "wear", "{helm}");
+        assert_eq!(stripped(), vec!["Rune full helm".to_string()]);
+        assert!(owns());
+        // The casket collect runs to its own bound with the name still listed.
+        let casket = casket_of(&data, CLUE);
+        let token = opened(&data, casket);
+        let pack = json!([inv(HELM, "Rune full helm", 1)]);
+        let scene = pages(json!([]), pack.clone(), json!(28), json!(-1));
+        let waiting = call(&data, token, json!([]), scene.clone());
+        assert_eq!(waiting["kind"], "wait", "{waiting}");
+        assert_no_completion(&waiting);
+        force_bound();
+        // The collect is over and the reclaim owns the token: the pack's own
+        // name goes back on, and no completion kind rides it.
+        let wear_back = call(&data, token, json!([]), scene.clone());
+        assert_eq!(wear_back["kind"], "wear", "{wear_back}");
+        assert_eq!(wear_back["name"], "Rune full helm", "{wear_back}");
+        assert_eq!(wear_back["token"], token, "{wear_back}");
+        assert_no_completion(&wear_back);
+        assert!(owns(), "the name is listed until it is worn again");
+        // The worn page shows it again: the list empties and the latch runs its
+        // three steps on this same live token.
+        let back_on = json!({
+            "here": loot_tile(),
+            "ground": json!([]),
+            "inv": json!([]),
+            "inv_size": 28,
+            "main_modal_id": -1,
+            "equipment": json!([worn(HELM, "Rune full helm", 0)]),
+        });
+        let solved = call(&data, token, json!([]), back_on.clone());
+        assert_eq!(solved["kind"], "callback.setStatus", "{solved}");
+        assert_eq!(solved["message"], "clue solved", "{solved}");
+        assert!(stripped().is_empty(), "the restore empties the list");
+        assert!(!owns(), "and the adapter's own read follows it");
+        let ready = call(&data, token, json!([]), back_on.clone());
+        assert_eq!(ready["kind"], "grind-ready", "{ready}");
+        assert_eq!(ready["token"], token, "{ready}");
+        let done = call(&data, token, json!([]), back_on);
+        assert_eq!(done["kind"], "done", "{done}");
+        on_reset();
+    }
+
+    /// The restore's bank leg: the names the pack does not hold are walked to
+    /// the posted stand for, opened, claimed one `Withdraw-1` at a time, and the
+    /// interface closed before anything is worn back on.
+    #[test]
+    fn the_restore_claims_a_missing_name_at_the_bank() {
+        on_reset();
+        let data = selected();
+        let page = json!([[ENTRANA, 1]]);
+        let token = steady(&data, ENTRANA);
+        let helm = call(
+            &data,
+            token,
+            page,
+            json!({ "equipment": json!([worn(HELM, "Rune full helm", 0)]) }),
+        );
+        assert_eq!(helm["kind"], "wear", "{helm}");
+        assert_eq!(stripped(), vec!["Rune full helm".to_string()]);
+        // The collect ends with nothing in the pack: the walk to the stand.
+        let casket = casket_of(&data, CLUE);
+        let token = opened(&data, casket);
+        let scene = pages(json!([]), json!([]), json!(28), json!(-1));
+        let _ = call(&data, token, json!([]), scene.clone());
+        force_bound();
+        let banked = json!({
+            "here": loot_tile(),
+            "ground": json!([]),
+            "inv": json!([]),
+            "inv_size": 28,
+            "main_modal_id": -1,
+            "equipment": json!([]),
+            "nearest_booth": booth_page(),
+        });
+        let walked = call(&data, token, json!([]), banked.clone());
+        assert_eq!(walked["kind"], "walk-nearest-bank", "{walked}");
+        assert_no_completion(&walked);
+        // Arrived beside the posted booth: its own open, and then the claim.
+        let arrived = json!({
+            "here": here(2810, 3350, 0),
+            "ground": json!([]),
+            "inv": json!([]),
+            "inv_size": 28,
+            "main_modal_id": -1,
+            "equipment": json!([]),
+            "nearest_booth": booth_page(),
+        });
+        let opened_booth = call(&data, token, json!([]), arrived.clone());
+        assert_eq!(opened_booth["kind"], "open-booth", "{opened_booth}");
+        let open = json!({
+            "here": here(2810, 3350, 0),
+            "ground": json!([]),
+            "inv": json!([]),
+            "inv_size": 28,
+            "main_modal_id": -1,
+            "equipment": json!([]),
+            "nearest_booth": booth_page(),
+            "bank_open": true,
+        });
+        let claimed = call(&data, token, json!([]), open.clone());
+        assert_eq!(claimed["kind"], "withdraw", "{claimed}");
+        assert_eq!(claimed["name"], "Rune full helm", "{claimed}");
+        assert_eq!(claimed["action"], "Withdraw-1", "{claimed}");
+        assert_no_completion(&claimed);
+        // The claim landed in the pack: the open interface closes first, and
+        // only then does the wear pass put the name back on.
+        let claimed_open = json!({
+            "here": here(2810, 3350, 0),
+            "ground": json!([]),
+            "inv": json!([inv(HELM, "Rune full helm", 1)]),
+            "inv_size": 28,
+            "main_modal_id": -1,
+            "equipment": json!([]),
+            "nearest_booth": booth_page(),
+            "bank_open": true,
+        });
+        let closed = call(&data, token, json!([]), claimed_open);
+        assert_eq!(closed["kind"], "close", "{closed}");
+        let claimed_closed = json!({
+            "here": here(2810, 3350, 0),
+            "ground": json!([]),
+            "inv": json!([inv(HELM, "Rune full helm", 1)]),
+            "inv_size": 28,
+            "main_modal_id": -1,
+            "equipment": json!([]),
+            "nearest_booth": booth_page(),
+            "bank_open": false,
+        });
+        let wear_back = call(&data, token, json!([]), claimed_closed);
+        assert_eq!(wear_back["kind"], "wear", "{wear_back}");
+        assert_eq!(wear_back["name"], "Rune full helm", "{wear_back}");
+        assert_no_completion(&wear_back);
+        // Worn again: the list empties and the exact status goes out.
+        let back_on = json!({
+            "here": here(2810, 3350, 0),
+            "ground": json!([]),
+            "inv": json!([]),
+            "inv_size": 28,
+            "main_modal_id": -1,
+            "equipment": json!([worn(HELM, "Rune full helm", 0)]),
+        });
+        let solved = call(&data, token, json!([]), back_on);
+        assert_eq!(solved["kind"], "callback.setStatus", "{solved}");
+        assert_eq!(solved["message"], "clue solved", "{solved}");
+        assert!(stripped().is_empty());
+        on_reset();
+    }
+
+    /// A listed name the page never puts back on is the named
+    /// `restore-incomplete` log — never a machine kind and never a completion
+    /// kind — and the list keeps it for the next attempt.
+    #[test]
+    fn a_name_that_will_not_go_back_on_stays_listed_and_logs() {
+        on_reset();
+        let data = selected();
+        let page = json!([[ENTRANA, 1]]);
+        let token = steady(&data, ENTRANA);
+        let helm = call(
+            &data,
+            token,
+            page,
+            json!({ "equipment": json!([worn(HELM, "Rune full helm", 0)]) }),
+        );
+        assert_eq!(helm["kind"], "wear", "{helm}");
+        let casket = casket_of(&data, CLUE);
+        let token = opened(&data, casket);
+        let scene = pages(json!([]), json!([]), json!(28), json!(-1));
+        let _ = call(&data, token, json!([]), scene.clone());
+        force_bound();
+        // The restore attempt: nothing in the pack, no booth posted at all, so
+        // the walk goes out and the window is what ends the attempt.
+        let bare = json!({
+            "here": loot_tile(),
+            "ground": json!([]),
+            "inv": json!([]),
+            "inv_size": 28,
+            "main_modal_id": -1,
+            "equipment": json!([]),
+        });
+        let walked = call(&data, token, json!([]), bare.clone());
+        assert_eq!(walked["kind"], "walk-nearest-bank", "{walked}");
+        force_bound();
+        let failed = call(&data, token, json!([]), bare.clone());
+        assert_eq!(failed["kind"], "callback.log", "{failed}");
+        let message = failed["message"].as_str().unwrap_or("");
+        assert!(
+            message.contains("restore-walk-failed"),
+            "the named bank failure: {failed}"
+        );
+        assert_no_completion(&failed);
+        assert_eq!(stripped(), vec!["Rune full helm".to_string()]);
+        // The next call starts a fresh attempt, and the list is still what the
+        // adapter reads: nothing posts the status while it is non-empty.
+        let again = call(&data, token, json!([]), bare.clone());
+        assert_eq!(again["kind"], "walk-nearest-bank", "{again}");
+        assert!(owns());
+        // A claim the posted bank never lands: the attempt gives up on the
+        // name, the interface closes, and what is still missing is the named
+        // `restore-incomplete` — the list keeps it and the latch stays blocked.
+        let open = json!({
+            "here": loot_tile(),
+            "ground": json!([]),
+            "inv": json!([]),
+            "inv_size": 28,
+            "main_modal_id": -1,
+            "equipment": json!([]),
+            "bank_open": true,
+        });
+        let claimed = call(&data, token, json!([]), open.clone());
+        assert_eq!(claimed["kind"], "withdraw", "{claimed}");
+        assert_eq!(claimed["name"], "Rune full helm", "{claimed}");
+        assert_eq!(claimed["action"], "Withdraw-1", "{claimed}");
+        let closed = call(&data, token, json!([]), open.clone());
+        assert_eq!(closed["kind"], "close", "{closed}");
+        let down = json!({
+            "here": loot_tile(),
+            "ground": json!([]),
+            "inv": json!([]),
+            "inv_size": 28,
+            "main_modal_id": -1,
+            "equipment": json!([]),
+            "bank_open": false,
+        });
+        let incomplete = call(&data, token, json!([]), down.clone());
+        assert_eq!(incomplete["kind"], "callback.log", "{incomplete}");
+        let message = incomplete["message"].as_str().unwrap_or("");
+        assert!(
+            message.contains("restore-incomplete") && message.contains("Rune full helm"),
+            "the named re-equip failure carries the names: {incomplete}"
+        );
+        assert_eq!(incomplete["token"], token, "{incomplete}");
+        assert_no_completion(&incomplete);
+        assert_eq!(stripped(), vec!["Rune full helm".to_string()]);
+        // And the reclaim retries rather than finishing: a fresh attempt walks
+        // again and no completion kind ever rides the still-listed name.
+        let retry_walk = call(&data, token, json!([]), down);
+        assert_eq!(retry_walk["kind"], "walk-nearest-bank", "{retry_walk}");
+        assert_no_completion(&retry_walk);
+        on_reset();
+    }
+
+    /// `ownsEquipment` is the machine's own list and `retry` is the machine's
+    /// own latch clear: retry never aborts the live token and never touches the
+    /// list.
+    #[test]
+    fn owns_equipment_reads_the_list_and_retry_clears_only_the_latch() {
+        on_reset();
+        let data = selected();
+        let page = json!([[ENTRANA, 1]]);
+        assert!(!owns(), "an empty list owns nothing");
+        let token = steady(&data, ENTRANA);
+        let helm = call(
+            &data,
+            token,
+            page.clone(),
+            json!({ "equipment": json!([worn(HELM, "Rune full helm", 0)]) }),
+        );
+        assert_eq!(helm["kind"], "wear", "{helm}");
+        assert!(owns());
+        let retried = dispatch(Some(&data), &json!({ "op": "retry" }));
+        assert_eq!(retried["kind"], "retry", "{retried}");
+        assert_eq!(retried["token"], token, "{retried}");
+        assert!(owns(), "the list is not retry's: {:?}", stripped());
+        // The live token is still the machine's own: its next step answers.
+        let live = call(
+            &data,
+            token,
+            page.clone(),
+            json!({
+                "equipment": json!([]),
+                "inv": json!([inv(HELM, "Rune full helm", 1)]),
+            }),
+        );
+        assert_eq!(live["kind"], "walk-nearest-bank", "{live}");
+        on_reset();
+    }
+
+    /// The abandon latch: an `abandon` this machine emits latches the identified
+    /// row, a begin on that same row is refused `abandoned` with no token, a
+    /// different held row clears it, and `retry` clears it too.
+    #[test]
+    fn the_abandon_latch_refuses_the_same_row_until_retry_or_a_different_one() {
+        on_reset();
+        let data = selected();
+        let page = json!([[ENTRANA, 1]]);
+        let token = token_of(&begin(&data, page.clone()));
+        // The machine's own terminal: no production trigger exists this slice,
+        // so the seat is the latch's own write.
+        let left = dispatch(Some(&data), &json!({ "op": "abandon" }));
+        assert_eq!(left["kind"], "abandon", "{left}");
+        assert_ne!(
+            left["token"], token,
+            "the terminal aborts the token it ends, the way `done` does: {left}"
+        );
+        // The same row, still held: refused, and no token is handed out.
+        let refused = begin(&data, page.clone());
+        assert_eq!(refused["kind"], "aborted", "{refused}");
+        assert_eq!(refused["reason"], "abandoned", "{refused}");
+        // `retry` clears the latch: the same row begins again.
+        let retried = dispatch(Some(&data), &json!({ "op": "retry" }));
+        assert_eq!(retried["kind"], "retry", "{retried}");
+        let again = begin(&data, page.clone());
+        assert_eq!(again["kind"], "token", "{again}");
+        // A different held row clears it on the way past.
+        RUNTIME.with(|rt| rt.borrow_mut().abandoned());
+        let other = begin(&data, json!([[SEARCH, 1]]));
+        assert_eq!(other["kind"], "token", "{other}");
+        let back = begin(&data, page);
+        assert_eq!(
+            back["kind"], "token",
+            "the different row cleared the latch: {back}"
+        );
+        on_reset();
     }
 }

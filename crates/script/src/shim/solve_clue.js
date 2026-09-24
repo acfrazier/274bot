@@ -1,11 +1,13 @@
 // SolveClue Task: marshal only. The isolate clue machine (`__rs2b0t_clue`
-// `begin` / `next`) owns the token, the identify, the phases and the clocks;
-// this file coerces the caller's host, marshals the call-time pages onto the
-// machine payload and dispatches the kinds the machine posts. No sequencing
-// policy lives here: no death latch, no kit / bank-prep / restore, and no
-// solved-clue text this file invents — the completion kinds are the machine's
-// and `'clue solved'` is its own `callback.setStatus` message, forwarded
-// untouched.
+// `begin` / `next`) owns the token, the identify, the phases, the clocks and
+// the Entrana strip / restore sequencing; this file coerces the caller's host,
+// marshals the call-time pages onto the machine payload and dispatches the
+// kinds the machine posts. No sequencing policy lives here: no death latch, no
+// kit / bank-prep / restore policy, and no solved-clue text this file invents —
+// the completion kinds are the machine's and `'clue solved'` is its own
+// `callback.setStatus` message, forwarded untouched. `ownsEquipment` and
+// `retry` are typed reads and clears of the machine's own state, not a second
+// latch and not a second token.
 import { Execution } from '../../execution/Execution.js';
 import { host, notImpl, queue } from '../../../shim/_kernel.js';
 
@@ -126,6 +128,57 @@ function clueInvPage() {
         });
     }
     return rows;
+}
+
+// The posted worn page the Entrana strip reads: the raw rows with their own
+// `slot`, marshal-only and omit-if-absent the way the locs page is — a field
+// the page did not carry is left off rather than defaulted, and a row that
+// posted none of the four is not a row. This is `host().snapshot.equipment`
+// and never `Equipment.items()`, which drops the slot; the machine matches on
+// the posted `name` and reads the id only for its two hard-trail dagger ids.
+function clueEquipmentPage() {
+    const snapshot = host().snapshot;
+    if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return [];
+    const page = snapshot.equipment;
+    if (!Array.isArray(page)) return [];
+    const rows = [];
+    for (const row of page) {
+        if (!row || typeof row !== 'object' || Array.isArray(row)) continue;
+        const out = {};
+        if (typeof row.name === 'string') out.name = row.name;
+        if (cluePageI32(row.id)) out.id = row.id;
+        if (cluePageI32(row.count)) out.count = row.count;
+        if (cluePageI32(row.slot)) out.slot = row.slot;
+        if (Object.keys(out).length > 0) rows.push(out);
+    }
+    return rows;
+}
+
+// The posted nearest Use-quickly booth the strip's and the restore's bank trip
+// opens: the loc's own tile, id and — when the page posted them — display name
+// and action, exactly as the landed bank helpers queue `open-booth`. A page
+// that posted no booth (or no tile or id) hands the machine nothing at all:
+// no booth is invented and no tile is copied.
+function clueNearestBooth() {
+    const snapshot = host().snapshot;
+    if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return null;
+    const row = snapshot.nearest_booth;
+    if (!row || typeof row !== 'object' || Array.isArray(row)) return null;
+    if (!cluePageI32(row.x) || !cluePageI32(row.z) || !cluePageI32(row.level)
+        || !cluePageI32(row.id)) return null;
+    const out = { x: row.x, z: row.z, level: row.level, id: row.id };
+    if (typeof row.name === 'string') out.name = row.name;
+    if (typeof row.op === 'string') out.op = row.op;
+    return out;
+}
+
+// The posted bank interface, and only when the page posted the boolean: the
+// strip's deposit and the restore's claim go out only behind a posted open
+// bank, and an omitted slot is unobserved rather than closed.
+function clueBankOpen() {
+    const snapshot = host().snapshot;
+    if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return null;
+    return typeof snapshot.bank_open === 'boolean' ? snapshot.bank_open : null;
 }
 
 // The posted main modal id, and only when the page posted it: an omitted slot
@@ -450,6 +503,50 @@ function enqueueClueVerb(step) {
         });
         return true;
     }
+    if (step.kind === 'wear') {
+        // The landed equip-from-pack verb the shim's own `Equipment.equip` /
+        // `unequip` pair queues: the display name the Entrana strip takes off
+        // and puts back on. No row id, no slot and no tile.
+        queue({ op: 'wear', name: step.name });
+        return true;
+    }
+    if (step.kind === 'deposit') {
+        // The landed bank-side deposit, by the display name the strip put in
+        // the pack: the restricted names and nothing else.
+        queue({ op: 'deposit', name: step.name });
+        return true;
+    }
+    if (step.kind === 'withdraw') {
+        // The landed bank withdraw for one listed name, with the machine's own
+        // posted action label (`Withdraw-1`) and nothing else.
+        queue({ op: 'withdraw', name: step.name, action: step.action });
+        return true;
+    }
+    if (step.kind === 'walk-nearest-bank') {
+        // The landed Rust-picked stand walk: no tile rides it, because the
+        // machine never invents one.
+        queue({ op: 'walk-nearest-bank' });
+        return true;
+    }
+    if (step.kind === 'open-booth') {
+        // The posted booth's own identity, the way the landed bank helpers
+        // queue it: no stand is picked here and no tile is copied.
+        queue({
+            op: 'open-booth',
+            x: step.x,
+            z: step.z,
+            level: step.level,
+            id: step.id,
+            ...(typeof step.name === 'string' ? { name: step.name } : {}),
+            ...(typeof step.action === 'string' ? { action: step.action } : {}),
+        });
+        return true;
+    }
+    if (step.kind === 'close') {
+        // The open bank interface's own close, after the deposit or the claim.
+        queue({ op: 'close' });
+        return true;
+    }
     if (step.kind === 'loc') {
         queue({
             op: 'loc',
@@ -470,6 +567,7 @@ function enqueueClueVerb(step) {
 const ENQUEUED_KINDS = [
     'walk', 'held', 'loc', 'npc', 'answer-count', 'if-button', 'close-modal', 'obj',
     'puzzle-move', 'continue', 'answer', 'shop-button',
+    'wear', 'deposit', 'withdraw', 'walk-nearest-bank', 'open-booth', 'close',
 ];
 
 // The call-time pages every `next` posts, in the machine's own field names.
@@ -486,9 +584,20 @@ function clueNextPayload(token, resume) {
         ground: clueGroundPage(),
         inv: clueInvPage(),
         npcs: clueNpcPage(),
+        // The worn page the Entrana strip reads, always present the way `inv`
+        // is: a page that posted nothing is an empty list and not a second
+        // `Equipment.items()` read.
+        equipment: clueEquipmentPage(),
     };
     const here = clueHereTile();
     if (here !== null) payload.here = here;
+    // The strip's and the restore's own bank facts, posted-only like the chat
+    // slots: an omitted booth or bank slot stays unobserved on the machine
+    // rather than becoming an invented stand or a closed bank.
+    const nearestBooth = clueNearestBooth();
+    if (nearestBooth !== null) payload.nearest_booth = nearestBooth;
+    const bankOpen = clueBankOpen();
+    if (bankOpen !== null) payload.bank_open = bankOpen;
     const main = clueMainModalId();
     if (main !== null) payload.main_modal_id = main;
     // The talk arm's own call-time facts: posted-only, so an omitted slot stays
@@ -559,8 +668,20 @@ export class SolveClue {
     }
 
     ownsEquipment() {
-        // The strip / hard-trail banked-this-solve flag is not this file's.
-        return false;
+        // The machine's own stripped-gear read, and only that: a read of rust
+        // state and never a policy of this file. True means do-not-grind-equip
+        // (the frozen GearEquip consumers), and it stays true across a dead
+        // token while the names are unclaimed.
+        const answer = clueCall({ op: 'ownsEquipment' });
+        return !!(answer && answer.owns === true);
+    }
+
+    retry() {
+        // The landed `SolveClue.retry()`: the machine's own latch clear, never
+        // `on_reset`. The live token is not aborted and the stripped list is
+        // not touched — only the abandon latch clears.
+        const answer = clueCall({ op: 'retry' });
+        return !!(answer && answer.kind === 'retry');
     }
 
     // The embed's own gate, coerced the way the callers coerce it: absent is

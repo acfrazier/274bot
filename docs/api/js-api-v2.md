@@ -520,8 +520,36 @@ retry — and it finishes that collect on its own completion envelope: the exact
 `'clue solved'` status, then the live-token `grind-ready` continue, then the
 `done` the token dies on. `kind: 'done'` is this machine's own kind and is not
 hunt's `status: 'done'`; `status` stays `'continue'` on every one of them.
-Gear restore is deferred with strip-tracking, so `done` does not wait for it;
-`ownsEquipment` stays false and `retry()` does not exist.
+
+The one gear arm is the Entrana strip and its restore, and it is the identified
+row's own selected decode: a row whose `trail_coord` decodes inside the cap box
+(`2802–2878, 3329–3393`, level 0 — the proof row `3579`,
+`trail_clue_hard_riddle027`, `0_44_52_2_23` → `(2818, 3351, 0)`) is stripped
+before the walk that row would otherwise make, and a casket never arms it. The
+posted worn rows whose display name the frozen `ENTRANA_RESTRICTED_GEAR_RE`
+matcher folds are unequipped with the landed `wear` verb — the two hard-trail
+dagger ids `1231`/`1215` unequipped but never listed — the listed names the
+posted pack still holds are deposited at the posted booth (`walk-nearest-bank`,
+the posted `nearest_booth`'s own `open-booth`, `deposit`, `close`, and no
+ordinary loot), and the list is the machine's own `strippedGear`: it outlives
+the step and a dead token, and only the restore empties it.
+
+That restore sits in front of the **whole** three-step finish latch: while the
+list is non-empty the reclaim owns the call — the pack's own names worn back on,
+the missing ones claimed at the bank with `Withdraw-1`, the interface closed —
+and none of the exact `'clue solved'`, the `grind-ready` continue and the `done`
+goes out. A name that will not go back on stays listed and is logged as the named
+`restore-incomplete` (a bank trip that does not come up is the named
+`restore-walk-failed`): logs, never machine kinds, and never `supplies-needed`.
+Freeze, yield and the posted hitpoints still win over the restore.
+
+`retry()` is the machine's own latch clear and nothing else: it clears the
+frozen `abandonedClueId`, never the stripped list, never the live token, and it
+is not `on_reset`. It is sync `HelperResult`, not a Promise, not a `request()`
+op, and `{ cleared: true }` is the whole value. `ownsEquipment` is not a v2
+seat: the v1 `SolveClue.ownsEquipment()` reads the same rust list and is true
+while it is non-empty — do-not-grind-equip — with no `api.snapshot.equipment`
+and no `SNAPSHOT_KEYS` growth.
 
 `clue.begin(input?)` takes the optional input and ignores every key: nothing
 but the token and the wrapper's generation is captured, so `enabled`, the pack
@@ -532,8 +560,12 @@ order: `missing-selected-data`, then `family-unavailable:trails`, then
 leaves **no** live token — a later pickup needs a new `begin`. An identified
 row whose landed `access` is `"constrained"` — the packed 3554 clue, and only
 it — is refused the same way with `constrained`, so a validate that only ever
-meets that row is false and the sibling grind is not stolen. A second `begin`
-aborts the previous token and emits nothing for it.
+meets that row is false and the sibling grind is not stolen. The row this
+machine left in the pack — the frozen `abandonedClueId`, set by an `abandon`
+the machine emits and cleared by a different held row or by `retry()` — is
+refused with `abandoned` while it is still the one held, so the leave-in-pack
+latch is a false validate and not a stolen tick. A second `begin` aborts the
+previous token and emits nothing for it.
 
 `clue.next({ token, resume? })` takes an object argument, not
 `(token, resume)`. `resume` is the callback return and is the only answer slot:

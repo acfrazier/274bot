@@ -40,6 +40,18 @@ const SEARCH_X: i32 = 3209;
 const SEARCH_Z: i32 = 3218;
 const SEARCH_LEVEL: i32 = 1;
 
+/// `trail_clue_hard_riddle027`: the selected Entrana-box membership, whose
+/// `trail_coord=0_44_52_2_23` decodes to `(2818, 3351, 0)` inside the cap box.
+const ENTRANA_ID: i32 = 3579;
+const ENTRANA_X: i32 = 2818;
+const ENTRANA_Z: i32 = 3351;
+/// The refused worn name the frozen matcher folds, and the hard-trail dagger
+/// id the strip unequips but never lists.
+const HELM_ITEM: i32 = 1163;
+const DDS_ITEM: i32 = 1231;
+/// A worn name the frozen matcher lets through: never a verb, never listed.
+const GLORY_ITEM: i32 = 1704;
+
 /// The posted pages these tests need: the pack page is the `page` argument,
 /// plus this call's `here` tile, its posted loc page, its posted stat page,
 /// the posted display names the pack rows carry, the posted main modal and the
@@ -69,6 +81,15 @@ struct Scene<'a> {
     /// Whether the posted pack carries the held coordinate trio: a dig-row
     /// scene needs it, because the acquire chain owns the row until it does.
     trio: bool,
+    /// The posted worn page the Entrana strip reads: the raw
+    /// `host().snapshot.equipment` rows with their own slot.
+    equipment: &'a [ItemRowInput<'a>],
+    /// The posted nearest Use-quickly booth the strip's and the restore's bank
+    /// trip opens.
+    nearest_booth: Option<&'a script::isolate_fb::NearestBoothInput<'a>>,
+    /// The posted bank interface: the strip's deposit and the restore's claim
+    /// go out only behind a posted open one.
+    bank_open: bool,
 }
 
 impl Default for Scene<'_> {
@@ -87,9 +108,40 @@ impl Default for Scene<'_> {
             count_dialog_open: false,
             options: &[],
             trio: false,
+            equipment: &[],
+            nearest_booth: None,
+            bank_open: false,
         }
     }
 }
+
+/// One posted worn row: the name the frozen matcher folds, the packed id its
+/// two hard-trail dagger ids are joined by, and the slot the raw page carries.
+fn worn_row(id: i32, name: &str, slot: i32) -> ItemRowInput<'_> {
+    ItemRowInput {
+        name: Some(name),
+        count: 1,
+        id,
+        ops: &[],
+        noted: false,
+        cert: -1,
+        component_id: -1,
+        slot,
+    }
+}
+
+/// The posted nearest Use-quickly booth the Entrana bank trip opens: the tile
+/// beside the player, the loc's own id and the two labels the landed bank
+/// helpers queue on `open-booth`.
+const POSTED_BOOTH: script::isolate_fb::NearestBoothInput<'static> =
+    script::isolate_fb::NearestBoothInput {
+        x: 2810,
+        z: 3350,
+        level: 0,
+        id: 2213,
+        name: "Bank booth",
+        op: "Use-quickly",
+    };
 
 fn post_page(iso: &LoadIsolate, tick: u64, page: &[(i32, i32)]) {
     post_scene(iso, tick, page, &Scene::default());
@@ -132,11 +184,20 @@ fn post_scene(iso: &LoadIsolate, tick: u64, page: &[(i32, i32)], scene: &Scene<'
         inv_size: 28,
         stats: scene.stats,
         booths: &[],
-        nearest_booth: None,
+        nearest_booth: scene
+            .nearest_booth
+            .map(|booth| script::isolate_fb::NearestBoothInput {
+                x: booth.x,
+                z: booth.z,
+                level: booth.level,
+                id: booth.id,
+                name: booth.name,
+                op: booth.op,
+            }),
         banks: &[],
         bank: &[],
         bank_side: &[],
-        bank_open: false,
+        bank_open: scene.bank_open,
         bank_loaded: false,
         bank_generation: 0,
         count_dialog_open: scene.count_dialog_open,
@@ -152,7 +213,7 @@ fn post_scene(iso: &LoadIsolate, tick: u64, page: &[(i32, i32)], scene: &Scene<'
         locs: scene.locs,
         players: &[],
         ground: &[],
-        equipment: &[],
+        equipment: scene.equipment,
         chat_open: false,
         chat_continue: scene.chat_continue,
         chat_text: None,
@@ -322,6 +383,7 @@ export default class T extends TaskBot {
                 ? this.solveClue.ownsEquipment()
                 : 'missing',
             retry: typeof this.solveClue.retry,
+            retried: this.solveClue.retry(),
             note: thrown(() => this.solveClue.noteDeath()),
             heldClue: thrown(() => heldClueLikeId()),
             bank: thrown(() => walkToBank()),
@@ -343,7 +405,14 @@ export default class T extends TaskBot {
     iso.join();
     assert_eq!(value["status"], "idle", "{value:?}");
     assert_eq!(value["owns"], false, "{value:?}");
-    assert_eq!(value["retry"], "undefined", "{value:?}");
+    assert_eq!(
+        value["retry"], "function",
+        "the landed `SolveClue.retry()` seat: {value:?}"
+    );
+    assert_eq!(
+        value["retried"], true,
+        "the machine's own latch clear answers on an idle isolate too: {value:?}"
+    );
     assert_eq!(value["note"], "no throw", "{value:?}");
     assert_eq!(
         value["heldClue"], "not impl: SolveClue.heldClueLikeId",
@@ -1728,5 +1797,433 @@ export default class T extends TaskBot {
         "the scroll id is never the step: {value:?}"
     );
     assert!(!text.contains("clue solved"), "{value:?}");
+    assert_clean(&logs);
+}
+
+/// The Entrana strip and its restore over the whole public path: the box row
+/// `3579` is stripped — the frozen matcher's names unequipped with the landed
+/// `wear` verb, the non-matches left worn, the hard-trail dagger id unequipped
+/// and never listed — the listed name is deposited at the posted booth, the
+/// `ownsEquipment()` seat reads the machine's own list from false to true and
+/// back, `retry()` keeps the live token and the list while clearing the
+/// abandon latch, and the collect's exit wears the name back on before the
+/// exact `'clue solved'`, the `grind-ready` and the `done`.
+#[test]
+fn solve_clue_adapter_strips_and_restores_entrana_gear_before_the_solved_mark() {
+    let src = r#"
+import { SolveClue } from '../../api/ai/clues/SolveClue.js';
+export default class T extends TaskBot {
+    onStart() {
+        globalThis.__logs = [];
+        globalThis.__statuses = [];
+        this.solveClue = new SolveClue({
+            enabled: () => true,
+            log: (message) => { globalThis.__logs.push(String(message)); },
+            setStatus: (message) => { globalThis.__statuses.push(String(message)); },
+        });
+        this.add(this.solveClue);
+    }
+}
+"#;
+    let iso = spawn(src);
+    let page = [(ENTRANA_ID, 1)];
+    let booth_tile = TileInput {
+        x: 2810,
+        z: 3350,
+        level: 0,
+    };
+
+    // Tick 1: the gate, and the strip's first unequip. The dagger is first in
+    // posted order, and its id is never listed: the adapter still owns
+    // nothing.
+    let dagger_first = [
+        worn_row(DDS_ITEM, "Dragon dagger(p)", 3),
+        worn_row(HELM_ITEM, "Rune full helm", 0),
+        worn_row(GLORY_ITEM, "Amulet of glory", 2),
+    ];
+    post_scene(
+        &iso,
+        1,
+        &page,
+        &Scene {
+            equipment: &dagger_first,
+            ..Scene::default()
+        },
+    );
+    tick(&iso, 1);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::Wear {
+            name: "Dragon dagger(p)".to_string(),
+        }],
+        "the first folded name is the landed unequip"
+    );
+    assert_eq!(
+        probe_text(
+            &iso,
+            "String(globalThis.__rs_bot.solveClue.ownsEquipment())"
+        ),
+        "false",
+        "a dagger id is never listed"
+    );
+
+    // Tick 2: the dagger gone from the worn page — the helm is next, and the
+    // adapter's own read follows the machine's list. `retry()` in the middle of
+    // the strip is the latch clear and nothing else.
+    let helm_left = [
+        worn_row(HELM_ITEM, "Rune full helm", 0),
+        worn_row(GLORY_ITEM, "Amulet of glory", 2),
+    ];
+    post_scene(
+        &iso,
+        2,
+        &page,
+        &Scene {
+            equipment: &helm_left,
+            ..Scene::default()
+        },
+    );
+    tick(&iso, 2);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::Wear {
+            name: "Rune full helm".to_string(),
+        }],
+        "the next folded name is unequipped"
+    );
+    let probe = json(
+        &iso,
+        "JSON.stringify({ owns: globalThis.__rs_bot.solveClue.ownsEquipment(), \
+          retried: globalThis.__rs_bot.solveClue.retry(), \
+          after: globalThis.__rs_bot.solveClue.ownsEquipment(), \
+          token: String(globalThis.__rs_bot.solveClue.token), \
+          validate: globalThis.__rs_bot.solveClue.validate() })",
+    );
+    assert_eq!(probe["owns"], true, "{probe:?}");
+    assert_eq!(probe["retried"], true, "{probe:?}");
+    assert_eq!(
+        probe["after"], true,
+        "retry never touches the list: {probe:?}"
+    );
+    assert_ne!(probe["token"], "null", "retry never aborts: {probe:?}");
+    assert_eq!(probe["validate"], true, "{probe:?}");
+
+    // Tick 3: the unequip landed in the pack, so the strip owes the bank trip
+    // its walk. The worn page still carries the name the monks let through,
+    // and the pack page is the identify page it always was.
+    let held = [(ENTRANA_ID, 1), (HELM_ITEM, 1)];
+    let names = [(HELM_ITEM, "Rune full helm")];
+    let amulet_only = [worn_row(GLORY_ITEM, "Amulet of glory", 2)];
+    post_scene(
+        &iso,
+        3,
+        &held,
+        &Scene {
+            equipment: &amulet_only,
+            names: &names,
+            here: Some(booth_tile),
+            nearest_booth: Some(&POSTED_BOOTH),
+            ..Scene::default()
+        },
+    );
+    tick(&iso, 3);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::WalkNearestBank],
+        "the deposit's own stand walk, picked in Rust"
+    );
+
+    // Tick 4: beside the posted booth — its own identity, and never a copied
+    // tile.
+    post_scene(
+        &iso,
+        4,
+        &held,
+        &Scene {
+            equipment: &amulet_only,
+            names: &names,
+            here: Some(booth_tile),
+            nearest_booth: Some(&POSTED_BOOTH),
+            ..Scene::default()
+        },
+    );
+    tick(&iso, 4);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::OpenBooth {
+            x: 2810,
+            z: 3350,
+            level: 0,
+            id: 2213,
+            name: Some("Bank booth".to_string()),
+            action: Some("Use-quickly".to_string()),
+        }],
+        "the posted booth's own open, no invented stand"
+    );
+
+    // Tick 5: the interface is up — the listed name is deposited by name.
+    post_scene(
+        &iso,
+        5,
+        &held,
+        &Scene {
+            equipment: &amulet_only,
+            names: &names,
+            here: Some(booth_tile),
+            nearest_booth: Some(&POSTED_BOOTH),
+            bank_open: true,
+            ..Scene::default()
+        },
+    );
+    tick(&iso, 5);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::Deposit {
+            name: "Rune full helm".to_string(),
+        }],
+        "the regex-restricted name and nothing else is deposited"
+    );
+
+    // Tick 6: it landed — the interface closes.
+    post_scene(
+        &iso,
+        6,
+        &page,
+        &Scene {
+            equipment: &amulet_only,
+            here: Some(booth_tile),
+            nearest_booth: Some(&POSTED_BOOTH),
+            bank_open: true,
+            ..Scene::default()
+        },
+    );
+    tick(&iso, 6);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::Close],
+        "the strip's own close before the row's arms run"
+    );
+
+    // Tick 7: the strip is settled and the row's own search arm runs: the walk
+    // to its selected decode, with the name still listed for the restore.
+    post_scene(
+        &iso,
+        7,
+        &page,
+        &Scene {
+            equipment: &amulet_only,
+            here: Some(booth_tile),
+            nearest_booth: Some(&POSTED_BOOTH),
+            ..Scene::default()
+        },
+    );
+    tick(&iso, 7);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![walk_to(ENTRANA_X, ENTRANA_Z, 0)],
+        "the box row's own walk follows the settled strip"
+    );
+    assert_eq!(
+        probe_text(
+            &iso,
+            "String(globalThis.__rs_bot.solveClue.ownsEquipment())"
+        ),
+        "true",
+        "the listed name outlives the strip step"
+    );
+
+    // Tick 8: the machine's own abandon terminal — no production trigger, so
+    // the seat is the latch's write — and the tick that lets the adapter see
+    // the dead token.
+    let left = json(
+        &iso,
+        "JSON.stringify(globalThis.rustyscript.functions.__rs2b0t_clue({ op: 'abandon' }))",
+    );
+    assert_eq!(left["kind"], "abandon", "{left:?}");
+    post_scene(
+        &iso,
+        8,
+        &page,
+        &Scene {
+            equipment: &amulet_only,
+            ..Scene::default()
+        },
+    );
+    tick(&iso, 8);
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "the terminal queues nothing"
+    );
+    assert_eq!(
+        probe_text(&iso, "String(globalThis.__rs_bot.solveClue.token)"),
+        "null",
+        "the abandon terminal kills the token the adapter held"
+    );
+    // The same row, still held: `validate` is false and the begin is refused
+    // with the latch's own token. `retry()` clears it and the same row begins
+    // again.
+    let refused = json(
+        &iso,
+        "JSON.stringify({ validate: globalThis.__rs_bot.solveClue.validate(), \
+          begin: globalThis.rustyscript.functions.__rs2b0t_clue({ \
+            op: 'begin', generation: 0, held: [[3579, 1]] }).reason, \
+          retried: globalThis.__rs_bot.solveClue.retry(), \
+          again: globalThis.__rs_bot.solveClue.validate() })",
+    );
+    assert_eq!(refused["validate"], false, "{refused:?}");
+    assert_eq!(refused["begin"], "abandoned", "{refused:?}");
+    assert_eq!(refused["retried"], true, "{refused:?}");
+    assert_eq!(refused["again"], true, "{refused:?}");
+    assert_eq!(
+        probe_text(
+            &iso,
+            "String(globalThis.__rs_bot.solveClue.ownsEquipment())"
+        ),
+        "true",
+        "the latch clear is not the list's: {refused:?}"
+    );
+
+    // Tick 9: the casket is held instead, so the trail reaches its collect.
+    // The casket is never a strip row.
+    let casket = [(CASKET_ID, 1)];
+    post_page(&iso, 9, &casket);
+    tick(&iso, 9);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::Held {
+            name: "Casket".to_string(),
+            action: "Open".to_string(),
+        }],
+        "the held casket's own Open"
+    );
+
+    // Tick 10: the casket left. The reward window is real time, so the collect
+    // waits it out before its exit.
+    let quiet = Scene {
+        equipment: &amulet_only,
+        main_modal_id: -1,
+        ..Scene::default()
+    };
+    post_scene(&iso, 10, &[], &quiet);
+    tick(&iso, 10);
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "an empty reward page takes nothing"
+    );
+    std::thread::sleep(std::time::Duration::from_millis(2_100));
+
+    // Tick 11: the collect is over and the name is in the pack: the reclaim
+    // wears it back on before any completion kind, and no `'clue solved'` has
+    // gone out with the name still listed.
+    let back = [(HELM_ITEM, 1)];
+    let back_names = [(HELM_ITEM, "Rune full helm")];
+    post_scene(
+        &iso,
+        11,
+        &back,
+        &Scene {
+            names: &back_names,
+            equipment: &amulet_only,
+            main_modal_id: -1,
+            ..Scene::default()
+        },
+    );
+    tick(&iso, 11);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::Wear {
+            name: "Rune full helm".to_string(),
+        }],
+        "the collect's exit wears the listed name back on"
+    );
+    assert_eq!(
+        probe_text(
+            &iso,
+            "String((globalThis.__statuses || []).indexOf('clue solved') === -1)"
+        ),
+        "true",
+        "no solved mark rides the reclaim"
+    );
+    assert_eq!(
+        probe_text(
+            &iso,
+            "String(globalThis.__rs_bot.solveClue.ownsEquipment())"
+        ),
+        "true",
+        "the name is listed until it is worn again"
+    );
+
+    // Tick 12: worn again. The list empties, and the exact status, the
+    // `grind-ready` and the `done` follow — and the adapter's own read is
+    // finally false.
+    post_scene(
+        &iso,
+        12,
+        &[],
+        &Scene {
+            equipment: &[worn_row(HELM_ITEM, "Rune full helm", 0)],
+            main_modal_id: -1,
+            ..Scene::default()
+        },
+    );
+    tick(&iso, 12);
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "the completion queues no verb"
+    );
+    let value = json(
+        &iso,
+        "JSON.stringify({ statuses: globalThis.__statuses, logs: globalThis.__logs, \
+          token: String(globalThis.__rs_bot.solveClue.token), \
+          owns: globalThis.__rs_bot.solveClue.ownsEquipment(), \
+          status: globalThis.__rs_bot.solveClue.clueStatus() })",
+    );
+    let logs = iso.drain_logs();
+    iso.join();
+    let statuses = value["statuses"]
+        .as_array()
+        .expect("status lines")
+        .iter()
+        .filter_map(|line| line.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        statuses.last().copied(),
+        Some("clue solved"),
+        "the machine's own mark is the last status: {value:?}"
+    );
+    assert_eq!(
+        statuses
+            .iter()
+            .filter(|line| line.contains("clue solved"))
+            .count(),
+        1,
+        "exactly one solved mark, and only after the reclaim: {value:?}"
+    );
+    assert!(
+        statuses
+            .iter()
+            .any(|line| line.contains("trail_clue_hard_riddle027")),
+        "the stripped row's own identity was reported: {value:?}"
+    );
+    assert_eq!(value["status"], "clue solved", "{value:?}");
+    assert_eq!(
+        value["token"], "null",
+        "the done kills the token: {value:?}"
+    );
+    assert_eq!(
+        value["owns"], false,
+        "the machine's list is empty and the adapter reads it: {value:?}"
+    );
+    let text = value.to_string();
+    for forbidden in [
+        "restore-incomplete",
+        "restore-walk-failed",
+        "supplies-needed",
+    ] {
+        assert!(
+            !text.contains(forbidden),
+            "the happy path logs no failure: {forbidden} {value:?}"
+        );
+    }
     assert_clean(&logs);
 }

@@ -613,7 +613,9 @@ export function tick(api) {
     assert_eq!(value["kit"]["value"]["status"], "ready", "{value:?}");
     assert_eq!(
         value["keys"],
-        serde_json::json!(["row", "heldStep", "packPlan", "hardKit", "keep", "begin", "next"]),
+        serde_json::json!([
+            "row", "heldStep", "packPlan", "hardKit", "keep", "begin", "next", "retry"
+        ]),
         "{value:?}"
     );
     for key in ["begin", "next"] {
@@ -859,7 +861,11 @@ export function tick(api) {
     for key in ["begin", "next"] {
         assert_eq!(value[key], "function", "{key} {value:?}");
     }
-    for key in ["challengeAnswer", "deposit", "retry", "noteDeath"] {
+    assert_eq!(
+        value["retry"], "function",
+        "the landed latch clear, after `next`: {value:?}"
+    );
+    for key in ["challengeAnswer", "deposit", "noteDeath"] {
         assert_eq!(value[key], "undefined", "{key} {value:?}");
     }
     assert!(

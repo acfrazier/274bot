@@ -1506,6 +1506,55 @@ function clueInvPage() {
   }
   return rows;
 }
+// The posted worn page the Entrana strip reads: the raw rows with their own
+// `slot`, marshal-only and omit-if-absent the way the locs page is — a field
+// the page did not carry is left off rather than defaulted, and a row that
+// posted none of the four is not a row. This reads `host().snapshot` directly
+// the way every call-time page here does (`api.snapshot` hides `equipment`,
+// and `Equipment.items()` drops the slot); the machine matches on the posted
+// `name` and reads the id only for its two hard-trail dagger ids.
+function clueEquipmentPage() {
+  const snapshot = host().snapshot;
+  if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return [];
+  const page = snapshot.equipment;
+  if (!Array.isArray(page)) return [];
+  const rows = [];
+  for (const row of page) {
+    if (!row || typeof row !== 'object' || Array.isArray(row)) continue;
+    const out = {};
+    if (typeof row.name === 'string') out.name = row.name;
+    if (cluePageI32(row.id)) out.id = row.id;
+    if (cluePageI32(row.count)) out.count = row.count;
+    if (cluePageI32(row.slot)) out.slot = row.slot;
+    if (Object.keys(out).length > 0) rows.push(out);
+  }
+  return rows;
+}
+// The posted nearest Use-quickly booth the strip's and the restore's bank trip
+// opens: the loc's own tile, id and — when the page posted them — display name
+// and action, exactly as the landed bank helpers queue `open-booth`. A page
+// that posted no booth (or no tile or id) hands the machine nothing at all: no
+// stand is invented and no tile is copied.
+function clueNearestBooth() {
+  const snapshot = host().snapshot;
+  if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return null;
+  const row = snapshot.nearest_booth;
+  if (!row || typeof row !== 'object' || Array.isArray(row)) return null;
+  if (!cluePageI32(row.x) || !cluePageI32(row.z) || !cluePageI32(row.level)
+      || !cluePageI32(row.id)) return null;
+  const out = { x: row.x, z: row.z, level: row.level, id: row.id };
+  if (typeof row.name === 'string') out.name = row.name;
+  if (typeof row.op === 'string') out.op = row.op;
+  return out;
+}
+// The posted bank interface, and only when the page posted the boolean: the
+// strip's deposit and the restore's claim go out only behind a posted open
+// bank, and an omitted slot is unobserved rather than closed.
+function clueBankOpen() {
+  const snapshot = host().snapshot;
+  if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return null;
+  return typeof snapshot.bank_open === 'boolean' ? snapshot.bank_open : null;
+}
 // The posted main modal id, and only when the page posted it: an omitted slot
 // is not the closed `-1` and not a second definition of it, so the machine is
 // handed no `main_modal_id` at all. Never `6960`, and never the
@@ -1753,10 +1802,12 @@ function clueStepError(reason) {
       || reason === 'none-held') return reason;
   return 'stale';
 }
-// The begin refusals are the identify family's own tokens plus the constrained
-// row's own refusal; anything else internal is `stale`.
+// The begin refusals are the identify family's own tokens, the constrained
+// row's own refusal and the abandon latch's: the row this machine left in the
+// pack is refused while it is still the one held, so a later pickup of it needs
+// a `retry` or a different held row. Anything else internal is `stale`.
 function clueBeginError(reason) {
-  if (reason === 'constrained') return reason;
+  if (reason === 'constrained' || reason === 'abandoned') return reason;
   if (reason === 'missing-selected-data' || reason === 'family-unavailable:trails'
       || reason === 'none-held') return reason;
   return 'stale';
@@ -1876,9 +1927,50 @@ function enqueueClueVerb(step) {
   }
   if (step.kind === 'held') {
     // The selected item display name; the host resolves the first inventory
-    // row with that name. No row id and no tile rides along. The Collecting
+    // row with the name. No row id and no tile rides along. The Collecting
     // Drop reuses this arm with `action: 'Drop'`.
     h.interact.push({ op: 'held', name: step.name, action: step.action });
+    return;
+  }
+  if (step.kind === 'wear') {
+    // The landed equip-from-pack verb the Entrana strip takes a restricted
+    // name off with and puts a listed name back on with: the display name and
+    // nothing else. Not a `V2_OPS` request (`api.request({ op: 'wear' })` is
+    // published, but this machine enqueues its own step directly).
+    h.interact.push({ op: 'wear', name: step.name });
+    return;
+  }
+  if (step.kind === 'deposit') {
+    // The landed bank-side deposit by display name: the restricted names the
+    // strip put in the pack, and never the ordinary loot deposit.
+    h.interact.push({ op: 'deposit', name: step.name });
+    return;
+  }
+  if (step.kind === 'withdraw') {
+    // The landed bank withdraw for one listed name with the machine's own
+    // posted action label (`Withdraw-1`).
+    h.interact.push({ op: 'withdraw', name: step.name, action: step.action });
+    return;
+  }
+  if (step.kind === 'walk-nearest-bank') {
+    // The landed Rust-picked stand walk: no tile rides it, because the machine
+    // never invents one.
+    h.interact.push({ op: 'walk-nearest-bank' });
+    return;
+  }
+  if (step.kind === 'open-booth') {
+    // The posted booth's own identity, the way the landed bank helpers queue
+    // it: no stand is picked here and no tile is copied.
+    const open = { op: 'open-booth', x: step.x, z: step.z, level: step.level, id: step.id };
+    if (typeof step.name === 'string') open.name = step.name;
+    if (typeof step.action === 'string') open.action = step.action;
+    h.interact.push(open);
+    return;
+  }
+  if (step.kind === 'close') {
+    // The open bank interface's own close, after the strip's deposit or the
+    // restore's claim.
+    h.interact.push({ op: 'close' });
     return;
   }
   // The completion envelope is not a verb: `done`, `grind-ready`, `dead`,
@@ -1950,9 +2042,10 @@ api.clue = {
   },
   // Owned-session begin over the landed held-step identify. Sync
   // HelperResult: a refused begin — no held membership row, no selected pin,
-  // no trail family, or the packed `access: "constrained"` row — leaves no
-  // live token, so a later pickup needs a new begin. Extra input keys are
-  // ignored, not captured.
+  // no trail family, the packed `access: "constrained"` row, or the row this
+  // machine left in the pack (`abandoned`, cleared by a different held row or
+  // by `retry`) — leaves no live token, so a later pickup needs a new begin.
+  // Extra input keys are ignored, not captured.
   begin: function (input) {
     const step = clueCall({
       op: 'begin',
@@ -1974,7 +2067,10 @@ api.clue = {
   // Magic overlay and the posted effective hitpoints. The talk arm adds the
   // posted chat modal, its continue flag and the posted count dialog, and the
   // trio acquire chain adds the posted `chat_options` choices, each with its
-  // own 1-based posted slot. Kinds
+  // own 1-based posted slot. The Entrana strip and its restore add the posted
+  // worn `equipment` rows and the posted bank facts — `nearest_booth` and
+  // `bank_open` — and their own `wear`, `deposit`, `withdraw`,
+  // `walk-nearest-bank`, `open-booth` and `close` steps. Kinds
   // are `wait`, `yield`, `callback.enabled`, `callback.log`,
   // `callback.setStatus`, `held`, `walk`, `loc`, `close-modal`, `obj`, `npc`,
   // `if-button`, `answer-count`, `continue`, `answer` and the completion
@@ -2019,9 +2115,20 @@ api.clue = {
       ground: clueGroundPage(),
       inv: clueInvPage(),
       npcs: clueNpcPage(),
+      // The worn page the Entrana strip reads, always present the way `inv` is:
+      // a page that posted nothing is an empty list, and never a second
+      // `Equipment.items()` read.
+      equipment: clueEquipmentPage(),
     };
     const here = clueHereTile();
     if (here !== null) payload.here = here;
+    // The strip's and the restore's own bank facts, posted-only like the chat
+    // slots: an omitted booth or bank slot stays unobserved on the machine
+    // rather than becoming an invented stand or a closed bank.
+    const nearestBooth = clueNearestBooth();
+    if (nearestBooth !== null) payload.nearest_booth = nearestBooth;
+    const bankOpen = clueBankOpen();
+    if (bankOpen !== null) payload.bank_open = bankOpen;
     const main = clueMainModalId();
     if (main !== null) payload.main_modal_id = main;
     // The talk arm's own call-time facts, posted-only like `main_modal_id`: an
@@ -2073,7 +2180,10 @@ api.clue = {
         || step.kind === 'npc' || step.kind === 'if-button'
         || step.kind === 'answer-count' || step.kind === 'puzzle-move'
         || step.kind === 'continue' || step.kind === 'answer'
-        || step.kind === 'shop-button') {
+        || step.kind === 'shop-button' || step.kind === 'wear'
+        || step.kind === 'deposit' || step.kind === 'withdraw'
+        || step.kind === 'walk-nearest-bank' || step.kind === 'open-booth'
+        || step.kind === 'close') {
       // Enqueue synchronously, after the generation check: a reset or stop
       // between the call and this push is not a verb for the dead session.
       if (generation !== lifecycleGeneration) return helperErr('stale');
@@ -2096,6 +2206,18 @@ api.clue = {
       return clueStep(step);
     }
     return helperErr('stale');
+  },
+  // The frozen `retry()` on this machine's own seat: the abandon latch's clear
+  // and nothing else. Sync, not a Promise, not a `request()` op, not a new host
+  // op — and never `on_reset`: the live token is not aborted, `strippedGear` is
+  // not cleared and no other latch exists yet. `{ cleared: true }` is the whole
+  // value.
+  retry: function () {
+    const step = clueCall({ op: 'retry' });
+    if (!step || typeof step !== 'object' || step.kind !== 'retry') {
+      return helperErr('stale');
+    }
+    return helperOk({ cleared: true });
   },
 };
 const SCENE_LIMIT_MAX = 64;
