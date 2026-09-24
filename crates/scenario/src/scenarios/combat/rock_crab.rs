@@ -16,7 +16,7 @@ const ROCK_CRAB_BANK_RET: WorldTile = WorldTile {
     z: 3717,
     level: 0,
 };
-pub(super) const ROCK_CRAB_FIXTURE_LOADOUTS: &[FixtureLoadout] = &[FixtureLoadout {
+const ROCK_CRAB_FIXTURE_LOADOUTS: &[FixtureLoadout] = &[FixtureLoadout {
     name: "Scenario Rock Crab food",
     carry: &[("Lobster", ROCK_CRAB_FOOD as u32)],
 }];

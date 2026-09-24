@@ -12,7 +12,6 @@ pub(crate) use hill_giant::*;
 mod auto_fighter;
 pub(crate) use auto_fighter::*;
 mod rock_crab;
-use rock_crab::ROCK_CRAB_FIXTURE_LOADOUTS;
 pub(crate) use rock_crab::*;
 mod green_dragon;
 pub(crate) use green_dragon::*;
@@ -87,7 +86,6 @@ const FIRE_GIANT_FIXTURE_LOADOUTS: &[FixtureLoadout] = &[FixtureLoadout {
 fn combat_fixture_loadouts(card: &str) -> Option<&'static [FixtureLoadout]> {
     match card {
         "ChaosDruidKiller" => Some(CHAOS_DRUID_FIXTURE_LOADOUTS),
-        "RockCrab" => Some(ROCK_CRAB_FIXTURE_LOADOUTS),
         "MossGiant" => Some(MOSS_GIANT_FIXTURE_LOADOUTS),
         "HillGiant" => Some(HILL_GIANT_FIXTURE_LOADOUTS),
         "GreenDragon" => Some(GREEN_DRAGON_FIXTURE_LOADOUTS),
