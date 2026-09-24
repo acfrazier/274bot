@@ -24,6 +24,7 @@
 
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap, HashSet};
+use std::time::Instant;
 
 use api::snapshot::WorldTile;
 use client::dash3d::CollisionFlag;
@@ -140,6 +141,24 @@ pub enum RouteError {
     NoPath,
     /// The node-expansion budget was exhausted before reaching it.
     BudgetExhausted,
+}
+
+/// Per-target failure of a shared search. Unlike single-target
+/// [`RouteError`], a caller deadline can leave a target unsettled.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TargetError {
+    NoPath,
+    BudgetExhausted,
+    NotSettled,
+}
+
+impl From<RouteError> for TargetError {
+    fn from(error: RouteError) -> Self {
+        match error {
+            RouteError::NoPath => Self::NoPath,
+            RouteError::BudgetExhausted => Self::BudgetExhausted,
+        }
+    }
 }
 
 /// Node-expansion budget bounding a [`find`] search — the m8aq route-cutoff
@@ -267,6 +286,199 @@ pub fn find_with_avoid_bounded(
         false,
         avoid,
     )
+}
+
+/// Native bank-search cap: 500,000 non-goal expansions precede an accepted
+/// goal, which has 1-based settle ordinal 500,001.
+pub const BANK_TARGET_BUDGET: usize = 500_001;
+
+/// A target's exact shortest-path cost and 1-based shared settle ordinal.
+/// An origin shortcut has ordinal zero.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TargetCost {
+    pub ticks: f64,
+    pub settled_at: usize,
+}
+
+/// Allocated entry capacities for this request's Dijkstra scratch at stop.
+/// HashMap/heap capacities never shrink during the flood; these are their
+/// peak allocated entry capacities, not retained per worker or pack bytes.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SearchCapacities {
+    pub distances: usize,
+    pub predecessors: usize,
+    pub settled: usize,
+    pub heap: usize,
+}
+
+/// Per-input results in caller order, with one predecessor tree for lazy
+/// reconstruction. The graph is borrowed, not copied, and the heap/dist/done
+/// scratch is dropped when the search returns.
+pub struct RoutesToTargets<'a> {
+    targets: &'a [WorldTile],
+    results: Vec<Result<TargetCost, TargetError>>,
+    came_from: HashMap<WorldTile, Back>,
+    graph: &'a TransportGraph,
+    essence: Option<EssenceSession>,
+    settled: usize,
+    complete: bool,
+    capacities: SearchCapacities,
+}
+
+impl RoutesToTargets<'_> {
+    pub fn results(&self) -> &[Result<TargetCost, TargetError>] {
+        &self.results
+    }
+
+    pub fn settled(&self) -> usize {
+        self.settled
+    }
+
+    /// False only if the caller's deadline interrupted the all-target flood.
+    pub fn complete(&self) -> bool {
+        self.complete
+    }
+
+    /// Per-request peak scratch entry capacities (the scratch is already
+    /// dropped except for the predecessor tree needed by [`Self::route`]).
+    pub fn scratch_capacities(&self) -> SearchCapacities {
+        self.capacities
+    }
+
+    /// Reconstruct only the chosen target, without cloning paths for the rest.
+    pub fn route(&self, target_index: usize) -> Result<Route, TargetError> {
+        let cost = self.results[target_index]?;
+        let dest = self.targets[target_index];
+        let (legs, ticks) = reconstruct(
+            dest,
+            &self.came_from,
+            self.graph,
+            CostModel::running(),
+            self.essence.as_ref(),
+        );
+        debug_assert_eq!(ticks, cost.ticks);
+        Ok(Route { legs, dest, ticks })
+    }
+}
+
+/// Search all targets with the same native options and 4M cap as [`find_with`].
+pub fn find_many_with<'a>(
+    collision: &WorldCollision,
+    graph: &'a TransportGraph,
+    from: WorldTile,
+    targets: &'a [WorldTile],
+    opts: FindOptions,
+    state: &WorldState,
+) -> RoutesToTargets<'a> {
+    find_many_with_avoid_bounded(
+        collision,
+        graph,
+        from,
+        targets,
+        opts,
+        state,
+        &[],
+        NODE_BUDGET,
+    )
+}
+
+/// Shared bounded search. Duplicate targets retain separate input rows.
+#[allow(clippy::too_many_arguments)]
+pub fn find_many_with_avoid_bounded<'a>(
+    collision: &WorldCollision,
+    graph: &'a TransportGraph,
+    from: WorldTile,
+    targets: &'a [WorldTile],
+    opts: FindOptions,
+    state: &WorldState,
+    avoid: &[AvoidRect],
+    budget: usize,
+) -> RoutesToTargets<'a> {
+    find_many_with_avoid_bounded_until(
+        collision, graph, from, targets, opts, state, avoid, budget, None,
+    )
+}
+
+/// As above, with a caller-supplied completion deadline. A deadline stops
+/// the shared flood without inventing costs for unsettled targets; the caller
+/// decides whether to use partial successes or its own fallback.
+#[allow(clippy::too_many_arguments)]
+pub fn find_many_with_avoid_bounded_until<'a>(
+    collision: &WorldCollision,
+    graph: &'a TransportGraph,
+    from: WorldTile,
+    targets: &'a [WorldTile],
+    opts: FindOptions,
+    state: &WorldState,
+    avoid: &[AvoidRect],
+    budget: usize,
+    deadline: Option<Instant>,
+) -> RoutesToTargets<'a> {
+    let mut unique = HashMap::with_capacity(targets.len());
+    let mut input_indices = Vec::with_capacity(targets.len());
+    let mut costs = Vec::new();
+    for &target in targets {
+        let index = *unique.entry(target).or_insert_with(|| {
+            costs.push(if target == from {
+                Ok(TargetCost {
+                    ticks: 0.0,
+                    settled_at: 0,
+                })
+            } else {
+                Err(TargetError::NotSettled)
+            });
+            costs.len() - 1
+        });
+        input_indices.push(index);
+    }
+    let remaining = costs.iter().filter(|result| result.is_err()).count();
+    let mut goals = Goals::Many {
+        unique: &unique,
+        costs: &mut costs,
+        remaining,
+    };
+    let search = if remaining == 0 {
+        SearchOutcome::empty()
+    } else {
+        search_kernel(
+            collision,
+            graph,
+            from,
+            CostModel::running(),
+            budget,
+            opts.allow_teleports,
+            opts.allow_wilderness,
+            state,
+            opts.essence.as_ref(),
+            false,
+            avoid,
+            &mut goals,
+            deadline,
+        )
+    };
+    let error = match search.stop {
+        SearchStop::Exhausted => TargetError::NoPath,
+        SearchStop::Budget => TargetError::BudgetExhausted,
+        SearchStop::Deadline | SearchStop::Completed => TargetError::NotSettled,
+    };
+    for result in &mut costs {
+        if result.is_err() {
+            *result = Err(error);
+        }
+    }
+    RoutesToTargets {
+        targets,
+        results: input_indices
+            .into_iter()
+            .map(|index| costs[index])
+            .collect(),
+        came_from: search.came_from,
+        graph,
+        essence: opts.essence,
+        settled: search.settled,
+        capacities: search.capacities,
+        complete: search.stop != SearchStop::Deadline,
+    }
 }
 
 /// A missing `item_req`/`worn_req` fact the BankBudget session must
@@ -493,6 +705,100 @@ fn tile_in_any_avoid(tile: WorldTile, avoid: &[AvoidRect]) -> bool {
     avoid.iter().any(|r| r.contains(tile))
 }
 
+enum Goals<'a> {
+    Single {
+        to: WorldTile,
+        cost: Option<TargetCost>,
+    },
+    Many {
+        unique: &'a HashMap<WorldTile, usize>,
+        costs: &'a mut [Result<TargetCost, TargetError>],
+        remaining: usize,
+    },
+}
+
+impl Goals<'_> {
+    fn accept(&mut self, tile: WorldTile, ticks: f64, settled_at: usize) -> bool {
+        let cost = TargetCost { ticks, settled_at };
+        match self {
+            Goals::Single { to, cost: found } => {
+                if *to == tile {
+                    *found = Some(cost);
+                    true
+                } else {
+                    false
+                }
+            }
+            Goals::Many {
+                unique,
+                costs,
+                remaining,
+            } => {
+                if let Some(&index) = unique.get(&tile) {
+                    if costs[index].is_err() {
+                        costs[index] = Ok(cost);
+                        *remaining -= 1;
+                    }
+                }
+                *remaining == 0
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SearchStop {
+    Completed,
+    Exhausted,
+    Budget,
+    Deadline,
+}
+
+struct SearchOutcome {
+    came_from: HashMap<WorldTile, Back>,
+    settled: usize,
+    stop: SearchStop,
+    capacities: SearchCapacities,
+}
+
+impl SearchOutcome {
+    fn empty() -> Self {
+        Self {
+            came_from: HashMap::new(),
+            settled: 0,
+            stop: SearchStop::Completed,
+            capacities: SearchCapacities::default(),
+        }
+    }
+
+    fn finish(
+        came_from: HashMap<WorldTile, Back>,
+        dist: &HashMap<WorldTile, f64>,
+        done: &HashSet<WorldTile>,
+        heap: &BinaryHeap<HeapNode>,
+        settled: usize,
+        stop: SearchStop,
+        record_capacities: bool,
+    ) -> Self {
+        let capacities = if record_capacities {
+            SearchCapacities {
+                distances: dist.capacity(),
+                predecessors: came_from.capacity(),
+                settled: done.capacity(),
+                heap: heap.capacity(),
+            }
+        } else {
+            SearchCapacities::default()
+        };
+        Self {
+            came_from,
+            settled,
+            stop,
+            capacities,
+        }
+    }
+}
+
 /// The shared Dijkstra; `use_teleports` unions the any-tile teleport layer
 /// into the relaxation from every settled node. Transport edges are relaxed
 /// from any standable tile within [`INTERACT_RADIUS`] of their `at` (never
@@ -527,6 +833,56 @@ fn find_bounded_impl(
         });
     }
 
+    let mut goals = Goals::Single { to, cost: None };
+    let search = search_kernel(
+        collision,
+        graph,
+        from,
+        model,
+        budget,
+        use_teleports,
+        allow_wilderness,
+        state,
+        essence,
+        relax_carry_worn,
+        avoid,
+        &mut goals,
+        None,
+    );
+    match goals {
+        Goals::Single {
+            cost: Some(cost), ..
+        } => {
+            let (legs, ticks) = reconstruct(to, &search.came_from, graph, model, essence);
+            debug_assert_eq!(ticks, cost.ticks);
+            Ok(Route {
+                legs,
+                dest: to,
+                ticks,
+            })
+        }
+        _ if search.stop == SearchStop::Budget => Err(RouteError::BudgetExhausted),
+        _ => Err(RouteError::NoPath),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn search_kernel(
+    collision: &WorldCollision,
+    graph: &TransportGraph,
+    from: WorldTile,
+    model: CostModel,
+    budget: usize,
+    use_teleports: bool,
+    allow_wilderness: bool,
+    state: &WorldState,
+    essence: Option<&EssenceSession>,
+    relax_carry_worn: bool,
+    avoid: &[AvoidRect],
+    goals: &mut Goals<'_>,
+    deadline: Option<Instant>,
+) -> SearchOutcome {
+    let record_capacities = matches!(goals, Goals::Many { .. });
     let mut dist: HashMap<WorldTile, f64> = HashMap::new();
     let mut came_from: HashMap<WorldTile, Back> = HashMap::new();
     let mut heap: BinaryHeap<HeapNode> = BinaryHeap::new();
@@ -539,7 +895,19 @@ fn find_bounded_impl(
     });
 
     let mut expanded = 0usize;
-    while let Some(n) = heap.pop() {
+    while !heap.is_empty() {
+        if deadline.is_some_and(|end| Instant::now() >= end) {
+            return SearchOutcome::finish(
+                came_from,
+                &dist,
+                &done,
+                &heap,
+                expanded,
+                SearchStop::Deadline,
+                record_capacities,
+            );
+        }
+        let n = heap.pop().expect("nonempty heap");
         let cur = n.tile;
         // A stale heap entry (a cheaper path was found after the push) is
         // skipped; the first pop at the settled distance settles the tile.
@@ -551,15 +919,26 @@ fn find_bounded_impl(
         }
         expanded += 1;
         if expanded > budget {
-            return Err(RouteError::BudgetExhausted);
+            return SearchOutcome::finish(
+                came_from,
+                &dist,
+                &done,
+                &heap,
+                budget,
+                SearchStop::Budget,
+                record_capacities,
+            );
         }
-        if cur == to {
-            let (legs, ticks) = reconstruct(to, &came_from, graph, model, essence);
-            return Ok(Route {
-                legs,
-                dest: to,
-                ticks,
-            });
+        if goals.accept(cur, n.cost, expanded) {
+            return SearchOutcome::finish(
+                came_from,
+                &dist,
+                &done,
+                &heap,
+                expanded,
+                SearchStop::Completed,
+                record_capacities,
+            );
         }
 
         let escaping = !avoid.is_empty() && tile_in_any_avoid(cur, avoid);
@@ -709,7 +1088,15 @@ fn find_bounded_impl(
             }
         }
     }
-    Err(RouteError::NoPath)
+    SearchOutcome::finish(
+        came_from,
+        &dist,
+        &done,
+        &heap,
+        expanded,
+        SearchStop::Exhausted,
+        record_capacities,
+    )
 }
 
 /// Whether the search may move from `cur` onto `next`: without
