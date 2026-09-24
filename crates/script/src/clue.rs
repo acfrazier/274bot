@@ -146,6 +146,25 @@
 //! is refused before this machine ever reaches `Steady`, and the fifty rows
 //! that never carry the param are never asked for a trio at all.
 //!
+//! The next seam is the gate-toll shop, and it is the walk's and not an
+//! identify's: any live walk this token dispatched that has not arrived, while
+//! the posted page names a `Carry` short for the selected Shantay pass the pack
+//! does not hold, is a walk the navigator could not route. The short is named by
+//! the host's own strict-find diagnosis — `find_missing_item_reqs`, posted on
+//! the walk outcome's own family — so a `NoPath`'s dest geometry is never read
+//! as a shopping list and a page that names no short never shops. The trip walks
+//! to the selected Shantay spawn (the unique jm2 tile, never a frozen stand), the
+//! posted `Trade` click on the posted keeper of the selected type, the buy of one
+//! chunk of the short's own posted stock row, and then the interface's close.
+//! The latch is the frozen `gateItemsTried`: once per item id per token, set
+//! before the first verb, so the Shantay walk never re-enters the intercept, and
+//! the trip's exit walks the original dest back — the second walk — after which
+//! the row's own arm resumes. A step whose own posted fact never appears inside
+//! that step's window ends the trip with the named `no-shop`: the token lives,
+//! nothing is fetched and no third trip starts. The Al Kharid toll's coins, the
+//! extra-item Rope and every other named short are not this item and never shop,
+//! and a pass the posted pack already holds is not shopped for at all.
+//!
 //! The last `Steady` arm is the talk step: a held row the selected
 //! `talk_key.talk` family publishes is the NPC it names. Forty-two of them
 //! publish the unique jm2 spawn, so the walk goes to the published
@@ -662,6 +681,20 @@ struct ClueRuntime {
     /// or the frozen reset clears it. Like `open` and `guardian`, it is the
     /// session's own state and never a cached page.
     acquire: Option<Acquire>,
+    /// The dest of the last walk this machine dispatched. A live walk is this
+    /// token's most recent verb still not arrived, and it is what tells the
+    /// gate-toll intercept apart from a page that merely still names an old
+    /// short: no walk out, no trip. Cleared with the token, never by a step.
+    walk_dest: Option<Tile>,
+    /// The live gate-toll shop trip: absent until an intercepted walk named an
+    /// unlatched short the posted pack did not hold, then owned by this token
+    /// until the trip's exit walk went out, an abort or the frozen reset. The
+    /// latch below outlives it, so the same short never shops twice.
+    shop: Option<Shop>,
+    /// The gate-toll shorts this token has already shopped, in the order the
+    /// trips were entered: the frozen `gateItemsTried`, once per item per token
+    /// and never once per step. Cleared only by an abort / reset / a new begin.
+    shopped: Vec<i32>,
 }
 
 impl ClueRuntime {
@@ -681,6 +714,9 @@ impl ClueRuntime {
             puzzle: None,
             keeper: None,
             acquire: None,
+            walk_dest: None,
+            shop: None,
+            shopped: Vec::new(),
         }
     }
 
@@ -691,6 +727,13 @@ impl ClueRuntime {
         self.phase = Phase::Idle;
         self.generation = 0;
         self.step_id = 0;
+        // The walk memory, the live trip and the gate-toll latch are the
+        // token's own: a reset, a stop and a second begin all clear them, and
+        // nothing else does — not even a different held step, because the
+        // frozen `gateItemsTried` is per item per trail and not per step.
+        self.walk_dest = None;
+        self.shop = None;
+        self.shopped.clear();
         self.clear_step();
     }
 
@@ -942,7 +985,16 @@ impl ClueRuntime {
                     "message": status(row),
                 })
             }
-            Phase::Steady => match casket_name(selected, row) {
+            Phase::Steady => {
+                // The gate-toll walk intercept sits in front of every `Steady`
+                // arm: a live walk that is not arriving while the page names an
+                // unlatched short the posted pack does not hold is the shop's,
+                // whichever arm walked, and a call that is neither of those
+                // falls through untouched.
+                if let Some(step) = self.toll(selected, input) {
+                    return step;
+                }
+                match casket_name(selected, row) {
                 // The held casket's own item, opened by name. Repeats while
                 // this same casket id stays held: the host fails a verb whose
                 // item is already gone, and the next call re-reads the page.
@@ -974,6 +1026,7 @@ impl ClueRuntime {
                     }
                     _ => self.steady(row, input, selected),
                 },
+                }
             },
             Phase::Collecting => {
                 // Identity still holds a step: the next scroll, or a leftover
@@ -1347,7 +1400,7 @@ impl ClueRuntime {
     /// stays held, because arrival is `here` and a stale loc id is the
     /// host's own refuse: the session waits the tick out instead of
     /// abandoning, and the pick is re-read next call.
-    fn search(&self, row: &TrailMembershipRow, input: &Value) -> Value {
+    fn search(&mut self, row: &TrailMembershipRow, input: &Value) -> Value {
         let Some(tile) = search_tile(row) else {
             // Not a search membership: the coord-bearing rows without the loc
             // pin belong to the sibling dig classify, and the desc-only rows
@@ -1513,7 +1566,7 @@ impl ClueRuntime {
             Arrival::Arrived if ready => self.chat(&stop, input),
             Arrival::Arrived => match input.get("npcs").and_then(Value::as_array) {
                 Some(page) => match pick_at_spawn(&NpcIdentity::Giver(stop.row), page, tile) {
-                    Some(pick) => self.talk_verb(&pick),
+                    Some(pick) => self.npc_verb(&pick),
                     // Arrived with no posted row of this giver's identity on the
                     // tile: stay there and wait, never chase a wanderer, never
                     // Clear and never take a second target.
@@ -1753,7 +1806,7 @@ impl ClueRuntime {
     /// this machine's token, nothing is acquired, and the token stays live for
     /// the pack that posts it. Dig repeats while this same clue id stays held,
     /// the way the casket's Open does, and a `none-held` after it still aborts.
-    fn dig(&self, tile: Tile, input: &Value) -> Value {
+    fn dig(&mut self, tile: Tile, input: &Value) -> Value {
         match arrival(tile, input) {
             Arrival::Unknown => self.emit("wait"),
             Arrival::Walking => self.walk(tile),
@@ -1764,7 +1817,14 @@ impl ClueRuntime {
 
     /// The landed arrival walk to a tile: the same verb the search arm and both
     /// dig arms dispatch, so `walk` has one shape on this machine.
-    fn walk(&self, tile: Tile) -> Value {
+    ///
+    /// Every walk the machine dispatches is remembered here and nowhere else,
+    /// including the gate-toll trip's own walk to the selected spawn: that
+    /// memory is what makes a walk live, and the trip is latched before its
+    /// first one goes out, so a shop-phase walk is never read as a new
+    /// intercept.
+    fn walk(&mut self, tile: Tile) -> Value {
+        self.walk_dest = Some(tile);
         json!({
             "kind": "walk",
             "token": self.token,
@@ -1772,6 +1832,194 @@ impl ClueRuntime {
             "z": tile.z,
             "level": tile.level,
         })
+    }
+
+    /// The gate-toll walk intercept: one live walk this token dispatched that
+    /// has not arrived, whose page names a `Carry` short for the selected
+    /// Shantay pass that the posted pack does not hold. `None` is the
+    /// fall-through — the row's own `Steady` arms run exactly as they did
+    /// before this intercept existed.
+    ///
+    /// It is the walk's intercept and not a second identify: the step is the one
+    /// the landed identify already returned, and this reads no membership of its
+    /// own. It sits in front of every arm a walk can come from — the search
+    /// dispatch, both dig arms, the trio acquire chain, the talk step and the
+    /// key hunt — so a failed walk is the same failure whichever arm armed it,
+    /// and it is never an arm *after* the talk step.
+    ///
+    /// The short is the navigator's, never this machine's: a posted `Carry` row
+    /// of the selected pass' own id is the whole nomination, and a `NoPath`'s
+    /// dest geometry is never read as a shopping list. The Al Kharid toll's
+    /// coins, the extra-item Rope and every other named short are not this item
+    /// and never shop.
+    ///
+    /// Once per item id per token: the id is latched before the trip's first
+    /// verb goes out, so the Shantay walk can never re-enter this intercept and
+    /// a second failure of the same walk never starts a third trip.
+    fn toll(&mut self, selected: Option<&SelectedGameData>, input: &Value) -> Option<Value> {
+        if let Some(shop) = self.shop {
+            return self.shop_trip(shop, input);
+        }
+        // The selected pass, by alias: no selected item is no shop at all, and
+        // the id every posted row is joined to is that item's own.
+        let item = selected?.item_by_alias(SHANTAY_PASS)?;
+        if self.shopped.contains(&item.id) || holds(input, item.id) {
+            // Already shopped for this token, or the pass is on this call's
+            // posted pack page: there is nothing to buy.
+            return None;
+        }
+        let dest = self.walk_dest?;
+        if arrival(dest, input) != Arrival::Walking || !carry_names(input, item.id) {
+            // No live walk — an arrived (or unposted) `here` is not the failure
+            // this page is naming — and no posted short for the pass.
+            return None;
+        }
+        self.shopped.push(item.id);
+        self.shop = Some(Shop {
+            id: item.id,
+            dest,
+            step: ShopStep::Stand,
+            failed: false,
+            closed: false,
+        });
+        Some(self.walk(shantay_spawn()))
+    }
+
+    /// One call of the live shop trip, one verb per call: the walk to the
+    /// selected Shantay spawn, the posted keeper's `Trade`, the posted stock
+    /// row's buy, and then the exit.
+    ///
+    /// Nothing is invented on any step. The keeper is the posted npc of the
+    /// selected type — or, failing that, of the selected display name — standing
+    /// on the spawn inside the frozen `ARRIVE_RADIUS` and listing a posted
+    /// `Trade`; the buy rides the posted stock row's own name, id, slot and
+    /// component; and the settle is the posted pack page holding the short's own
+    /// id. A step whose own fact the page never posts waits inside the machine's
+    /// own `SHOP_WAIT_MS` window and then gives up — with the token live and the
+    /// latch kept, so the named `no-shop` is never a second trip.
+    fn shop_trip(&mut self, mut shop: Shop, input: &Value) -> Option<Value> {
+        let spawn = shantay_spawn();
+        match shop.step {
+            // The trip is over: nothing is observed again, and the exit owes at
+            // most one call per step of its own.
+            ShopStep::Exit => self.shop_exit(shop, input),
+            ShopStep::Stand => match arrival(spawn, input) {
+                // No posted `here`: no arrival claim to make and no walk to
+                // measure, so the trip waits where it is.
+                Arrival::Unknown => self.shop_wait(shop, input),
+                Arrival::Walking => {
+                    self.shop = Some(shop);
+                    Some(self.walk(spawn))
+                }
+                Arrival::Arrived => {
+                    // The first arrived call opens this step's own observation
+                    // window; the walk itself is never bounded by it.
+                    if self.clock.deadline.is_none() {
+                        self.clock.arm(SHOP_WAIT_MS);
+                    }
+                    // An open chat is not a tick to click the keeper: the same
+                    // rule the talk arm reads, and the count dialog with it.
+                    let pick = if dialog_ready(input) || count_open(input) {
+                        None
+                    } else {
+                        input
+                            .get("npcs")
+                            .and_then(Value::as_array)
+                            .and_then(|page| pick_at_spawn(&NpcIdentity::Shantay, page, spawn))
+                    };
+                    match pick {
+                        Some(pick) => {
+                            shop.step = ShopStep::Trade;
+                            self.shop = Some(shop);
+                            // The interface's own window starts with the click.
+                            self.clock.arm(SHOP_WAIT_MS);
+                            Some(self.npc_verb(&pick))
+                        }
+                        // Arrived with no posted keeper of this identity on the
+                        // spawn: stay there and wait it out rather than chasing
+                        // a wanderer, and give up when the window ends.
+                        None => self.shop_wait(shop, input),
+                    }
+                }
+            },
+            ShopStep::Trade => {
+                if !shop_open(input) {
+                    // No posted open interface: unobserved is not a closed shop,
+                    // so this waits rather than clicking blind.
+                    return self.shop_wait(shop, input);
+                }
+                match buy_row(input, shop.id) {
+                    Some(row) => {
+                        shop.step = ShopStep::Buy;
+                        self.shop = Some(shop);
+                        // The settle's own window starts with the click.
+                        self.clock.arm(SHOP_WAIT_MS);
+                        Some(buy_verb(&row, self.token))
+                    }
+                    // The interface is up and this short's own stock row is not
+                    // on it: nothing here may be clicked, so the trip gives up
+                    // instead of pressing a row it did not read.
+                    None => {
+                        shop.failed = true;
+                        shop.step = ShopStep::Exit;
+                        self.shop_exit(shop, input)
+                    }
+                }
+            }
+            ShopStep::Buy => {
+                if holds(input, shop.id) {
+                    // The short landed on the posted pack page: the trip is
+                    // over and its interface is what is left.
+                    return self.shop_exit(shop, input);
+                }
+                self.shop_wait(shop, input)
+            }
+        }
+    }
+
+    /// This step's own wait: inside the machine's `SHOP_WAIT_MS` window the call
+    /// is a `wait` with the token live, and past it the short did not land — the
+    /// trip gives up, which is the exit with `failed` set.
+    fn shop_wait(&mut self, mut shop: Shop, input: &Value) -> Option<Value> {
+        if !self.clock.bound_reached() {
+            self.shop = Some(shop);
+            return Some(self.emit("wait"));
+        }
+        // The step's own posted fact never came: the trip gives up — that is the
+        // exit with `failed` set — and this step never waits again on a window
+        // it already spent.
+        shop.failed = true;
+        shop.step = ShopStep::Exit;
+        self.shop_exit(shop, input)
+    }
+
+    /// The trip's exit, one step per call and every one of them a posted fact or
+    /// the trip's own outcome: the posted interface is closed once when it is
+    /// up, a short that did not land exits with the named `no-shop`, and then
+    /// the walk back to the original dest goes out.
+    ///
+    /// `None` is the fall-through the row's own arm takes once that walk is out.
+    /// The latch still has the short, so the arm's next failed walk is never a
+    /// third trip, and the walk back is the same tile that arm was walking to
+    /// before the trip — the second walk, made here so it happens on a page that
+    /// posts no `here` at all.
+    fn shop_exit(&mut self, mut shop: Shop, input: &Value) -> Option<Value> {
+        // No step is waiting any more: the exit is driven by this call's posted
+        // interface, the trip's own outcome and the dest, never by a clock.
+        self.clock.deadline = None;
+        if !shop.closed && shop_open(input) {
+            shop.closed = true;
+            self.shop = Some(shop);
+            return Some(self.emit("close-modal"));
+        }
+        if shop.failed {
+            // The kind goes out once: the walk back is the next call's.
+            shop.failed = false;
+            self.shop = Some(shop);
+            return Some(self.emit(NO_SHOP));
+        }
+        self.shop = None;
+        Some(self.walk(shop.dest))
     }
 
     /// The landed held Dig: the selected Spade display the host resolves by
@@ -1806,7 +2054,7 @@ impl ClueRuntime {
     /// postable identity is a `wait` with the token live: nothing is invented,
     /// nothing is Cleared, and no second target is chased.
     fn talk(
-        &self,
+        &mut self,
         talk: &TalkKeyTalkRow,
         input: &Value,
         selected: Option<&SelectedGameData>,
@@ -1851,7 +2099,7 @@ impl ClueRuntime {
                             name: &talk.npc.name,
                         };
                         match pick_at_spawn(&npc, page, tile) {
-                            Some(pick) => self.talk_verb(&pick),
+                            Some(pick) => self.npc_verb(&pick),
                             // Arrived with no posted row of this identity on the
                             // tile: stay there and wait, never chase a wanderer and
                             // never take a second target.
@@ -1873,7 +2121,7 @@ impl ClueRuntime {
                 };
                 match pick_talk(&npc, page, here) {
                     Some(pick) if pick.distance <= i64::from(ARRIVE_RADIUS) => {
-                        self.talk_verb(&pick)
+                        self.npc_verb(&pick)
                     }
                     // Posted but out of reach: walk to the row's own posted
                     // tile and re-pick from the arrival. A row that posted no
@@ -1888,10 +2136,12 @@ impl ClueRuntime {
         }
     }
 
-    /// The landed Talk-to: the posted display name the host resolves, the
-    /// posted talk action the row listed, and the posted scene index the host
-    /// matches. No row id, no alias and no tile ride along.
-    fn talk_verb(&self, pick: &TalkPick<'_>) -> Value {
+    /// The landed posted-npc verb: the posted display name the host resolves,
+    /// the posted action the row listed (the talk action, or the toll keeper's
+    /// `Trade`) and the posted scene index the host matches. No row id, no alias
+    /// and no tile ride along. One shape for the talk arms and the Shantay
+    /// click, so the host reads the same identity it was posted with.
+    fn npc_verb(&self, pick: &TalkPick<'_>) -> Value {
         json!({
             "kind": "npc",
             "token": self.token,
@@ -2080,6 +2330,7 @@ impl ClueRuntime {
 }
 
 /// What this call's posted `here` says about the decoded tile.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Arrival {
     /// No posted `here`: no arrival claim to make and no walk to measure.
     Unknown,
@@ -2758,6 +3009,45 @@ const SPADE_NAME: &str = "Spade";
 /// Spade display name.
 const DIG: &str = "Dig";
 
+/// The selected item alias the gate-toll short joins: the Shantay pass the
+/// desert toll's `item_req` names. The id this arm compares with a posted
+/// `Carry` row is that selected item's own (`1854` on both pins, never a
+/// copied number), so another named short — the Al Kharid toll's coins among
+/// them — is never this trip's and never shops.
+const SHANTAY_PASS: &str = "shantay_pass";
+
+/// The toll keeper's own identity, selected constants and not a one-row family:
+/// the packed npc type the posted page's `id` is joined to, the display name a
+/// page that posted no id falls back to, the one action the click rides, and the
+/// unique jm2 spawn the arm walks to. The frozen `GATE_ITEM_SHOPS` stand
+/// `(3304, 3122, 0)` is off by one in z and is never ported.
+const SHANTAY_NPC_ID: i32 = 836;
+const SHANTAY_NAME: &str = "Shantay";
+const TRADE: &str = "Trade";
+const SHANTAY_X: i32 = 3304;
+const SHANTAY_Z: i32 = 3123;
+const SHANTAY_LEVEL: i32 = 0;
+
+/// The one shop op the buy click carries. The frozen `Shop.buy(name, 1)`, cut
+/// to the single chunk this arm ever sends: a stack of one pass.
+const BUY: &str = "buy";
+
+/// The named wait-class a trip that did not land the short ends with. The token
+/// **lives** — it is never `supplies-needed`, never `done` and never the exact
+/// `'clue solved'` — and it is neither the arrived dig's missing Spade nor an
+/// `abandon`: the latch has the short, the arm resumes, and the same one never
+/// shops twice.
+const NO_SHOP: &str = "no-shop";
+
+/// The machine's own observation window for one shop step: how long the posted
+/// Trade, the posted interface, the posted stock row or the posted pack settle
+/// has to appear before the trip gives up. The same `2_000` this machine's own
+/// collect window and one sent puzzle move settle by, and armed per step, never
+/// once per trip — the walk to the stand may take as long as it takes. Not the
+/// frozen shop's `OPEN_WAIT_MS` / `OPEN_ATTEMPTS` / `SETTLE_MS` policy: there is
+/// one attempt here, and a frozen session never spends this bound.
+const SHOP_WAIT_MS: u64 = 2_000;
+
 /// Whether this call's posted pack page carries the Dig verb's item: a row
 /// with a positive count whose posted display name is the frozen `Spade`,
 /// compared the way the landed collect compares a posted droppable name.
@@ -2883,6 +3173,140 @@ fn pack_holds(input: &Value, id: i32) -> bool {
                         .is_some_and(|count| count > 0)
             })
         })
+}
+
+/// The selected toll keeper's own spawn: the unique jm2 tile the Shantay arm
+/// walks to. Selected constants and never the frozen `GATE_ITEM_SHOPS` stand —
+/// `(3304, 3122, 0)` is off by one in z, and no frozen tile is ported here.
+fn shantay_spawn() -> Tile {
+    Tile {
+        x: SHANTAY_X,
+        z: SHANTAY_Z,
+        level: SHANTAY_LEVEL,
+    }
+}
+
+/// Whether this call's page names the short: a posted `walk_missing_carry` row
+/// whose own id is the selected item's and whose count is positive. Only that
+/// vector nominates a shop — the walk outcome's fail bit and its dest geometry
+/// are never read as a shopping list, and a page that posted no vector names
+/// nothing.
+///
+/// The row's posted display name is corroboration and never a second identity:
+/// the join is the id, exactly the way the pack's own trio read joins one.
+fn carry_names(input: &Value, id: i32) -> bool {
+    let Some(rows) = input.get("walk_missing_carry").and_then(Value::as_array) else {
+        return false;
+    };
+    rows.iter().any(|row| {
+        posted_i32(row, "id") == Some(id)
+            && posted_i32(row, "count").is_some_and(|count| count >= 1)
+    })
+}
+
+/// This call's posted `shop_open`, and only a posted `true`: an omitted slot is
+/// unobserved — neither a closed interface nor an open one — and a posted
+/// `false` is a closed one.
+fn shop_open(input: &Value) -> bool {
+    input.get("shop_open").and_then(Value::as_bool) == Some(true)
+}
+
+/// One posted stock row the buy click can ride: the short's own id, the posted
+/// display name the host resolves, and the posted slot and component its
+/// presence check matches. No row id and no tile are invented for one.
+struct BuyRow<'a> {
+    name: &'a str,
+    id: i32,
+    slot: i32,
+    component: i32,
+}
+
+/// This call's posted stock row for the short, on the open interface.
+///
+/// The join is the row's own id, and the three fields the host re-resolves it by
+/// — name, slot, component — must all be posted: a row the page posted without
+/// them is not clickable here and is skipped rather than guessed at, and a page
+/// with no such row buys nothing. The count is not a second gate — the click is
+/// the frozen `Shop.buy(name, 1)`, one chunk of one.
+fn buy_row<'a>(input: &'a Value, id: i32) -> Option<BuyRow<'a>> {
+    let rows = input.get("shop_stock").and_then(Value::as_array)?;
+    rows.iter().find_map(|row| {
+        if posted_i32(row, "id") != Some(id) {
+            return None;
+        }
+        let name = row
+            .get("name")
+            .and_then(Value::as_str)
+            .filter(|name| !name.is_empty())?;
+        Some(BuyRow {
+            name,
+            id,
+            slot: posted_i32(row, "slot")?,
+            component: posted_i32(row, "component")?,
+        })
+    })
+}
+
+/// The landed shop click the buy rides: the posted stock row's own identity and
+/// one chunk of one, as `InteractReq::ShopButton` reads it. Its own envelope kind
+/// — the adapters enqueue it as the landed `shop-button` op, never as a
+/// `kind: "ops"` shopping list, never as a loc and never as a `V2_OPS` verb.
+fn buy_verb(row: &BuyRow<'_>, token: u64) -> Value {
+    json!({
+        "kind": "shop-button",
+        "token": token,
+        "shop": BUY,
+        "name": row.name,
+        "id": row.id,
+        "slot": row.slot,
+        "component": row.component,
+        "chunk": 1,
+    })
+}
+
+/// The live gate-toll shop trip on the identified clue row: the short the
+/// intercepted walk was missing, the dest that walk was going to, and how far
+/// the trip has got. Session state on the live token, like `open` and
+/// `guardian` — never a second scheduler, never a `Phase::Shopping`, never a
+/// nested `shop.rs` token and never a cached page.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Shop {
+    /// The selected item id this trip is for: the Shantay pass' own id, joined
+    /// from the alias. The posted stock row and the posted pack settle are both
+    /// read by this id, never by a copied number.
+    id: i32,
+    /// The intercepted walk's own dest. Remembered for two reads: the trip never
+    /// walks anywhere but the selected spawn while it runs, and its exit walks
+    /// this dest back — the second walk — so the row's own arm resumes where the
+    /// failure left off even on a page that posts no `here`.
+    dest: Tile,
+    step: ShopStep,
+    /// The short did not land: the trip's exit owes the named `no-shop`. Set
+    /// when a step's window ends without its own observation, and cleared once
+    /// that kind has gone out.
+    failed: bool,
+    /// The one interface close went out. The close is dispatched once per trip
+    /// and never again, however long the posted interface takes to go.
+    closed: bool,
+}
+
+/// How far one shop trip has got. The steps are the frozen `ensureGateItems`
+/// order — walk to the stand, Trade, buy one, close — and every one of them is
+/// observed on the posted page before the next goes out.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ShopStep {
+    /// Walking to the selected Shantay spawn.
+    Stand,
+    /// At the spawn: picked the keeper and sent the `Trade`.
+    Trade,
+    /// The posted interface is up: sent the buy click for one chunk of the
+    /// short's own posted stock row.
+    Buy,
+    /// The trip is over — the short landed, or a step's window ended without
+    /// its own observation. Its exit is the interface close, the named
+    /// `no-shop` for a short that did not land, and the walk back to the
+    /// original dest, one per call, and never another wait on a spent window.
+    Exit,
 }
 
 /// One stop of a tool's chain: the published giver row this stop walks to, and
@@ -3091,6 +3515,11 @@ enum NpcIdentity<'a> {
     /// leaves. The `observatory_professor2` lookalike posts this giver's own
     /// display name under another packed id and is never this family.
     Giver(&'a TrioGiverRow),
+    /// The toll keeper this token shops at: the selected packed type and
+    /// display name of the Shantay spawn. Its verb is the one this arm
+    /// dispatches — a posted `Trade`, never a talk op — so the action it rides
+    /// is read by [`Self::action`] rather than by the landed `talk_op`.
+    Shantay,
 }
 
 impl NpcIdentity<'_> {
@@ -3105,18 +3534,35 @@ impl NpcIdentity<'_> {
                 Some(id) => id == giver.id,
                 None => posted.eq_ignore_ascii_case(&giver.name),
             },
+            Self::Shantay => match posted_i32(row, "id") {
+                Some(id) => id == SHANTAY_NPC_ID,
+                None => posted.eq_ignore_ascii_case(SHANTAY_NAME),
+            },
+        }
+    }
+
+    /// The posted action this identity's own verb rides: the talk arms read the
+    /// page's own talk action (the landed `talk_op`), and the toll keeper must
+    /// list the frozen `Trade` — a posted row without it is not a keeper this
+    /// arm clicks. Neither arm ever invents an action the page did not post.
+    fn action<'a>(&self, row: &'a Value) -> Option<&'a str> {
+        match self {
+            Self::Shantay => posted_action(row, TRADE).then_some(TRADE),
+            Self::Talk { .. } | Self::Giver(_) => talk_action(row),
         }
     }
 }
 
-/// One posted npc row that names the npc this caller is looking for and lists a
-/// talk action, as the pickers read it: the posted scene index the host matches,
-/// the posted display name and the posted talk action the verb carries.
+/// One posted npc row that names the npc this caller is looking for, as the
+/// pickers read it: the posted scene index the host matches, the posted display
+/// name and the posted action this identity's verb rides — the landed talk
+/// action for a talk step or a giver, the frozen `Trade` for the toll keeper.
 ///
-/// The identity join is `NpcIdentity`'s, and the script alias is never compared
-/// to a posted string: the page carries no alias at all. A row that posted no
-/// index, no name, or no talk action is not a row this arm can dispatch at.
-fn talk_row<'a>(row: &'a Value, identity: &NpcIdentity<'_>) -> Option<(i32, &'a str, &'a str)> {
+/// The identity and its action are `NpcIdentity`'s, and the script alias is
+/// never compared to a posted string: the page carries no alias at all. A row
+/// that posted no index, no name, or no action this identity dispatches at is
+/// not a row this arm can use.
+fn named_row<'a>(row: &'a Value, identity: &NpcIdentity<'_>) -> Option<(i32, &'a str, &'a str)> {
     let index = posted_i32(row, "index")?;
     let posted = row
         .get("name")
@@ -3125,7 +3571,7 @@ fn talk_row<'a>(row: &'a Value, identity: &NpcIdentity<'_>) -> Option<(i32, &'a 
     if !identity.names(row, posted) {
         return None;
     }
-    Some((index, posted, talk_action(row)?))
+    Some((index, posted, identity.action(row)?))
 }
 
 /// One posted npc row the talk arm has picked: the posted scene index the host
@@ -3155,7 +3601,7 @@ fn pick_talk<'a>(
 ) -> Option<TalkPick<'a>> {
     let mut best: Option<TalkPick<'a>> = None;
     for row in page {
-        let Some((index, posted, action)) = talk_row(row, identity) else {
+        let Some((index, posted, action)) = named_row(row, identity) else {
             continue;
         };
         let Some(distance) = npc_distance(row, Some(here)) else {
@@ -3198,7 +3644,7 @@ fn pick_at_spawn<'a>(
 ) -> Option<TalkPick<'a>> {
     let mut best: Option<TalkPick<'a>> = None;
     for row in page {
-        let Some((index, posted, action)) = talk_row(row, identity) else {
+        let Some((index, posted, action)) = named_row(row, identity) else {
             continue;
         };
         if posted_i32(row, "level") != Some(spawn.level) {

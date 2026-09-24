@@ -168,6 +168,8 @@ pub(super) fn materialize_snapshot(
         set(&mut scope, obj, "walk_outcome_allow_teleports", allow.into())?;
         let rid = num(&mut scope, snap.walk_outcome_request_id() as f64);
         set(&mut scope, obj, "walk_outcome_request_id", rid)?;
+        let carry = carry_array(&mut scope, &snap.walk_missing_carry())?;
+        set(&mut scope, obj, "walk_missing_carry", carry)?;
     } else if !had {
         let zero = num(&mut scope, 0.0);
         set(&mut scope, obj, "walk_outcome_seq", zero)?;
@@ -179,6 +181,7 @@ pub(super) fn materialize_snapshot(
         set(&mut scope, obj, "walk_outcome_radius", zero)?;
         set(&mut scope, obj, "walk_outcome_allow_teleports", falsy)?;
         set(&mut scope, obj, "walk_outcome_request_id", zero)?;
+        set(&mut scope, obj, "walk_missing_carry", empty_rows)?;
     }
     if snap.has_route_inspect_seq() {
         let seq = num(&mut scope, snap.route_inspect_seq() as f64);
@@ -1664,6 +1667,36 @@ fn bank_stand_array<'s>(
         }
         let obj = o.into();
         arr.set_index(scope, i as u32, obj)
+            .ok_or_else(|| "v8 array set failed".to_string())?;
+    }
+    Ok(arr.into())
+}
+
+/// The walk outcome's navigator-named gate shorts: the diagnosis' own id and
+/// count, plus the host obj table's display name when it resolved one (`null`
+/// otherwise — the join is the id, and a nameless short is still posted).
+fn carry_array<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    rows: &[crate::isolate_fb::CarryReader<'_>],
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    let arr = v8::Array::new(scope, rows.len() as i32);
+    for (i, row) in rows.iter().enumerate() {
+        let o = v8::Object::new(scope);
+        let id = num(scope, row.id() as f64);
+        set(scope, o, "id", id)?;
+        let count = num(scope, row.count() as f64);
+        set(scope, o, "count", count)?;
+        match row.name() {
+            Some(name) => {
+                let name = js_string(scope, name)?;
+                set(scope, o, "name", name)?;
+            }
+            None => {
+                let none = v8::null(scope);
+                set(scope, o, "name", none.into())?;
+            }
+        }
+        arr.set_index(scope, i as u32, o.into())
             .ok_or_else(|| "v8 array set failed".to_string())?;
     }
     Ok(arr.into())

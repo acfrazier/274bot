@@ -230,6 +230,12 @@ const VT_SNAP_SELF_TARGET_INDEX: VOffsetT = 246;
 const VT_SNAP_MAIN_MODAL_TEXTS: VOffsetT = 248;
 const VT_SNAP_PUZZLE_BOARD: VOffsetT = 250;
 const VT_SNAP_PUZZLE_BOARD_GENERATION: VOffsetT = 252;
+const VT_SNAP_WALK_MISSING_CARRY: VOffsetT = 254;
+
+// Carry: { id, count, name }
+const VT_CARRY_ID: VOffsetT = 4;
+const VT_CARRY_COUNT: VOffsetT = 6;
+const VT_CARRY_NAME: VOffsetT = 8;
 
 const VT_COL_AVAILABLE: VOffsetT = 4;
 const VT_COL_BASE_X: VOffsetT = 6;
@@ -821,6 +827,12 @@ pub struct NativeFactsInput<'a> {
     pub walk_outcome_radius: i32,
     pub walk_outcome_allow_teleports: bool,
     pub walk_outcome_request_id: u64,
+    /// The walk outcome's navigator-named gate shorts. ALWAYS supplied — an
+    /// empty slice is the observed "this outcome names no short", and the pack
+    /// posts it with the family above in the same buffer, so a clear is never
+    /// omitted. One family, not two: the rows ride inside
+    /// [`Self::walk_outcome_seq`]'s delta.
+    pub walk_missing_carry: &'a [CarryInput<'a>],
     pub route_inspect: RouteInspectFactsInput<'a>,
     /// Posted collision family. `None` omits the table (old callers / first
     /// post without Collision). `Some(UNAVAILABLE)` posts a clear.
@@ -941,6 +953,17 @@ pub struct PuzzleBoardInput<'a> {
     /// Session identity of the board family. Bumps on session open, close
     /// or a new component id — never on a piece move.
     pub generation: u64,
+}
+
+/// One navigator-named gate short: an `item_req` stack the strict route
+/// needed and the player's posted pack could not prove. `name` is the host obj
+/// table's display name for `id` and is `None` when that table has none — the
+/// join is always the id, so a row without a name is still posted.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct CarryInput<'a> {
+    pub id: i32,
+    pub count: i32,
+    pub name: Option<&'a str>,
 }
 
 /// One currently posted widget text row (`reader.ifText`).
@@ -1837,6 +1860,11 @@ impl Verifiable for SnapshotReader<'_> {
                 false,
             )?
             .visit_field::<u64>("puzzle_board_generation", VT_SNAP_PUZZLE_BOARD_GENERATION, false)?
+            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<CarryReader>>>>(
+                "walk_missing_carry",
+                VT_SNAP_WALK_MISSING_CARRY,
+                false,
+            )?
             .finish();
         Ok(())
     }
@@ -2614,6 +2642,20 @@ impl SnapshotReader<'_> {
                 .get::<ForwardsUOffset<PuzzleBoardReader>>(VT_SNAP_PUZZLE_BOARD, None)
         }
     }
+    /// Whether this buffer carries the walk outcome's navigator-named gate
+    /// shorts. An old buffer (or a delta where the walk outcome family did not
+    /// change) has none, and an absent slot is a keep — never an empty
+    /// shopping list. A PRESENT empty vector is the observed "this outcome
+    /// names no short".
+    pub fn has_walk_missing_carry(&self) -> bool {
+        rows_present::<CarryReader>(&self.tab, VT_SNAP_WALK_MISSING_CARRY)
+    }
+    /// The named shorts in the host's own order (id, then count). Empty when
+    /// the slot is absent: callers that must tell absent from empty read
+    /// [`Self::has_walk_missing_carry`].
+    pub fn walk_missing_carry(&self) -> Vec<CarryReader<'_>> {
+        rows::<CarryReader>(&self.tab, VT_SNAP_WALK_MISSING_CARRY)
+    }
     /// The board family's session generation. Always posted with the table;
     /// an old buffer reads 0.
     pub fn has_puzzle_board_generation(&self) -> bool {
@@ -2813,6 +2855,16 @@ pub struct PuzzleBoardFp {
     pub generation: u64,
 }
 
+/// One navigator-named gate short as an owned fingerprint row. The name is a
+/// member: the display it resolves is part of the posted observation, and a
+/// row the host obj table stops naming still re-posts its id and count.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct CarryFp {
+    pub id: i32,
+    pub count: i32,
+    pub name: Option<String>,
+}
+
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct CombatStyleFp {
     pub mode: i32,
@@ -3003,6 +3055,10 @@ pub struct SnapshotFingerprint {
     pub walk_outcome_radius: i32,
     pub walk_outcome_allow_teleports: bool,
     pub walk_outcome_request_id: u64,
+    /// The walk outcome's named shorts. Part of that family: a list that moved
+    /// without a scalar moving still re-posts the family, so a clear is never
+    /// left to a stale keep.
+    pub walk_missing_carry: Vec<CarryFp>,
     pub route_inspect: RouteInspectFp,
     pub collision: CollisionViewFp,
 }
@@ -3288,6 +3344,15 @@ impl SnapshotFingerprint {
             walk_outcome_radius: native.walk_outcome_radius,
             walk_outcome_allow_teleports: native.walk_outcome_allow_teleports,
             walk_outcome_request_id: native.walk_outcome_request_id,
+            walk_missing_carry: native
+                .walk_missing_carry
+                .iter()
+                .map(|row| CarryFp {
+                    id: row.id,
+                    count: row.count,
+                    name: row.name.map(str::to_string),
+                })
+                .collect(),
             route_inspect: route_inspect_fp(&native.route_inspect),
             collision: collision_fp(None, native.collision),
         }
@@ -3627,7 +3692,8 @@ impl DeltaMask {
                 || next.walk_outcome_level != last.walk_outcome_level
                 || next.walk_outcome_radius != last.walk_outcome_radius
                 || next.walk_outcome_allow_teleports != last.walk_outcome_allow_teleports
-                || next.walk_outcome_request_id != last.walk_outcome_request_id,
+                || next.walk_outcome_request_id != last.walk_outcome_request_id
+                || next.walk_missing_carry != last.walk_missing_carry,
             route_inspect: next.route_inspect != last.route_inspect,
             collision: next.collision != last.collision,
             main_modal_texts: next.main_modal_texts != last.main_modal_texts,
@@ -4126,6 +4192,19 @@ fn encode_snapshot_masked_into(
     } else {
         None
     };
+    // The walk outcome's own family: the carry vector is built and pushed with
+    // it, never on its own. The rows are always supplied, so an empty vector
+    // posts as a present clear and the family never omits one.
+    let walk_missing_carry_off = if mask.walk_outcome {
+        let offs = native
+            .walk_missing_carry
+            .iter()
+            .map(|row| carry_off(b, row))
+            .collect::<Vec<_>>();
+        Some(b.create_vector(&offs))
+    } else {
+        None
+    };
     let inspect_reason_off = if mask.route_inspect {
         Some(b.create_string(native.route_inspect.latest.reason.unwrap_or("")))
     } else {
@@ -4462,6 +4541,12 @@ fn encode_snapshot_masked_into(
             VT_SNAP_WALK_OUTCOME_REQUEST_ID,
             native.walk_outcome_request_id,
         );
+        // The vector rides every post of the family: a supplied empty one is
+        // the observed "no named short", so a clear is never omitted. Only a
+        // caller that supplied no list at all omits the slot.
+        if let Some(off) = walk_missing_carry_off {
+            b.push_slot_always(VT_SNAP_WALK_MISSING_CARRY, off);
+        }
     }
     if mask.route_inspect {
         let facts = &native.route_inspect;
@@ -4768,6 +4853,20 @@ fn puzzle_board_off<'b>(
     b.push_slot_always(VT_PB_COMPONENT_ID, board.component_id);
     b.push_slot_always(VT_PB_SIZE, board.size);
     b.push_slot_always(VT_PB_ITEMS, items_off);
+    WIPOffset::new(b.end_table(tab).value())
+}
+
+/// One navigator-named gate short. `id` and `count` are always written — the
+/// row's identity is the id — and the name only when the host obj table
+/// resolved one, so a nameless short is never dropped and never invented.
+fn carry_off<'b>(b: &mut FlatBufferBuilder<'b>, row: &CarryInput<'_>) -> WIPOffset<CarryReader<'b>> {
+    let name_off = row.name.map(|name| b.create_string(name));
+    let tab = b.start_table();
+    b.push_slot_always(VT_CARRY_ID, row.id);
+    b.push_slot_always(VT_CARRY_COUNT, row.count);
+    if let Some(off) = name_off {
+        b.push_slot_always(VT_CARRY_NAME, off);
+    }
     WIPOffset::new(b.end_table(tab).value())
 }
 
@@ -5337,6 +5436,54 @@ impl Verifiable for NpcBoxReader<'_> {
         v.visit_table(pos)?
             .visit_field::<i32>("index", VT_NPC_BOX_INDEX, false)?
             .visit_field::<ForwardsUOffset<Vector<i32>>>("points", VT_NPC_BOX_POINTS, false)?
+            .finish();
+        Ok(())
+    }
+}
+
+/// One navigator-named gate short as decoded: the needed stack and the display
+/// name the host obj table resolves for it. The row's presence is the whole of
+/// its observation — `name` is absent when that table had none, and a row
+/// without one is still a named short.
+#[derive(Clone, Copy)]
+pub struct CarryReader<'a> {
+    tab: Table<'a>,
+}
+
+impl<'a> flatbuffers::Follow<'a> for CarryReader<'a> {
+    type Inner = CarryReader<'a>;
+    unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+        Self {
+            tab: Table::new(buf, loc),
+        }
+    }
+}
+
+impl CarryReader<'_> {
+    pub fn id(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_CARRY_ID, None) }.unwrap_or(0)
+    }
+    pub fn count(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_CARRY_COUNT, None) }.unwrap_or(0)
+    }
+    pub fn has_name(&self) -> bool {
+        unsafe {
+            self.tab
+                .get::<ForwardsUOffset<&str>>(VT_CARRY_NAME, None)
+                .is_some()
+        }
+    }
+    pub fn name(&self) -> Option<&str> {
+        unsafe { self.tab.get::<ForwardsUOffset<&str>>(VT_CARRY_NAME, None) }
+    }
+}
+
+impl Verifiable for CarryReader<'_> {
+    fn run_verifier(v: &mut Verifier, pos: usize) -> Result<(), InvalidFlatbuffer> {
+        v.visit_table(pos)?
+            .visit_field::<i32>("id", VT_CARRY_ID, false)?
+            .visit_field::<i32>("count", VT_CARRY_COUNT, false)?
+            .visit_field::<ForwardsUOffset<&str>>("name", VT_CARRY_NAME, false)?
             .finish();
         Ok(())
     }
@@ -8865,5 +9012,141 @@ pub(crate) mod tests {
             "a session bump alone re-posts the whole family"
         );
         assert_eq!(bumped.puzzle_board.as_ref().expect("board").generation, 2);
+    }
+
+    fn carry_native<'a>(rows: &'a [CarryInput<'a>], seq: u64) -> NativeFactsInput<'a> {
+        NativeFactsInput {
+            walk_outcome_seq: seq,
+            walk_missing_carry: rows,
+            ..NativeFactsInput::default()
+        }
+    }
+
+    #[test]
+    fn omitted_walk_missing_carry_is_absent_on_an_old_buffer() {
+        // A buffer written before slot 254 existed (append-only schema): the
+        // slot is absent and the reader reports nothing rather than a clear.
+        let mut b = flatbuffers::FlatBufferBuilder::new();
+        let tab = b.start_table();
+        b.push_slot_always(VT_SNAP_TICK, 7u64);
+        b.push_slot_always(VT_SNAP_WALK_OUTCOME_SEQ, 3u64);
+        let root = b.end_table(tab);
+        b.finish(root, None);
+        let view = SnapshotReader::from_bytes(b.finished_data()).expect("old snapshot");
+        assert!(view.has_walk_outcome_seq());
+        assert!(!view.has_walk_missing_carry());
+        assert!(view.walk_missing_carry().is_empty());
+    }
+
+    #[test]
+    fn walk_outcome_family_posts_named_shorts_with_and_without_a_name() {
+        // The name is corroboration: a row the host obj table has no name for
+        // still posts its id and count.
+        let rows = [
+            CarryInput {
+                id: 1854,
+                count: 1,
+                name: Some("Shantay pass"),
+            },
+            CarryInput {
+                id: 995,
+                count: 10,
+                name: None,
+            },
+        ];
+        let (bytes, _) = encode_snapshot_delta_with_native(
+            None,
+            &empty_input(1),
+            carry_native(&rows, 1),
+            false,
+        );
+        let view = decode_snapshot(&bytes).expect("keyframe");
+        assert!(view.has_walk_missing_carry());
+        let posted = view.walk_missing_carry();
+        assert_eq!(posted.len(), 2, "posted order is the host's");
+        assert_eq!(posted[0].id(), 1854);
+        assert_eq!(posted[0].count(), 1);
+        assert_eq!(posted[0].name(), Some("Shantay pass"));
+        assert_eq!(posted[1].id(), 995);
+        assert_eq!(posted[1].count(), 10);
+        assert!(!posted[1].has_name());
+        assert_eq!(posted[1].name(), None);
+    }
+
+    #[test]
+    fn a_routed_outcome_posts_an_empty_vector_and_never_omits_the_clear() {
+        let rows = [CarryInput {
+            id: 1854,
+            count: 1,
+            name: Some("Shantay pass"),
+        }];
+        let (keyframe, fp) = encode_snapshot_delta_with_native(
+            None,
+            &empty_input(1),
+            carry_native(&rows, 1),
+            false,
+        );
+        assert_eq!(
+            decode_snapshot(&keyframe)
+                .expect("keyframe")
+                .walk_missing_carry()
+                .len(),
+            1
+        );
+        // The next outcome is a route: seq bumped, no named short. The family
+        // posts a PRESENT empty vector — the clear rides it, never omitted.
+        let (delta, _) =
+            encode_snapshot_delta_with_native(Some(&fp), &empty_input(2), carry_native(&[], 2), false);
+        let view = decode_snapshot(&delta).expect("delta");
+        assert!(view.has_walk_outcome_seq(), "the family re-posts");
+        assert!(view.has_walk_missing_carry(), "the clear is never omitted");
+        assert!(view.walk_missing_carry().is_empty());
+    }
+
+    #[test]
+    fn unchanged_walk_outcome_family_omits_the_vector_too() {
+        // A keep: the vector rides the family, so an unchanged family posts
+        // neither the scalars nor a vector a page could read as a fresh clear.
+        let rows = [CarryInput {
+            id: 1854,
+            count: 1,
+            name: None,
+        }];
+        let native = carry_native(&rows, 4);
+        let (keyframe, fp) = encode_snapshot_delta_with_native(None, &empty_input(1), native, false);
+        assert!(decode_snapshot(&keyframe)
+            .expect("keyframe")
+            .has_walk_missing_carry());
+        let (delta, _) = encode_snapshot_delta_with_native(Some(&fp), &empty_input(2), native, false);
+        let view = decode_snapshot(&delta).expect("delta");
+        assert!(!view.has_walk_outcome_seq());
+        assert!(!view.has_walk_missing_carry());
+    }
+
+    #[test]
+    fn a_shopping_list_change_alone_flips_the_walk_outcome_family() {
+        // The vector rides the family, so a post that moved only the named
+        // shorts still carries it: an outcome that failed for a new reason is
+        // not an unchanged outcome.
+        let rows = [CarryInput {
+            id: 1854,
+            count: 1,
+            name: None,
+        }];
+        let (_, fp) =
+            encode_snapshot_delta_with_native(None, &empty_input(1), carry_native(&rows, 1), false);
+        let same = SnapshotFingerprint::from_input_with_native(
+            &empty_input(2),
+            carry_native(&rows, 1),
+        );
+        let other = SnapshotFingerprint::from_input_with_native(
+            &empty_input(2),
+            carry_native(&[], 1),
+        );
+        assert!(!DeltaMask::changed(&fp, &same, false).walk_outcome);
+        assert!(
+            DeltaMask::changed(&fp, &other, false).walk_outcome,
+            "the family bit covers the named shorts"
+        );
     }
 }

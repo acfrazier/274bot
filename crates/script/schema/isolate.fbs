@@ -202,6 +202,17 @@ table MainModalTexts {
   texts: [string];
 }
 
+// One navigator-named gate short (`nav::router::MissingReq::Carry`): an
+// `item_req` stack the strict route needed and the player's posted pack could
+// not prove. `name` is the host obj table's display name for `id`, absent when
+// that table has none — the join is always `id`, never the name, and a missing
+// name never drops the row.
+table Carry {
+  id: int;
+  count: int;
+  name: string;
+}
+
 // One puzzle board observation: the identified piece container's component
 // id, its `link_obj_type` slot count, and its stored rows in slot order
 // (sparse — an empty slot contributes no row). `component_id: -1` with
@@ -407,6 +418,16 @@ table Snapshot {
   // move. Posted only together with the table above, in the same buffer as
   // one delta family.
   puzzle_board_generation: ulong;
+  // The navigator-named gate shorts of the latest published walk outcome
+  // (slot 254, next after 252). Packed with the walk_outcome family and only
+  // with it: the ordering is the walk outcome's own. An EMPTY vector is the
+  // observed "this outcome names no short" — a routed walk, and a failed walk
+  // the relaxed re-run could not diagnose (budget, off-graph, a non-item
+  // gate). An OMITTED slot is not that vector: the isolate keeps its last
+  // rows, so a clear is never omitted. A `worn_req` alternative is never a
+  // short and is never packed here. Dest geometry is not a shopping list:
+  // only this vector names one.
+  walk_missing_carry: [Carry];
 }
 
 table Collision {

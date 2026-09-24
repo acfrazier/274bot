@@ -1,6 +1,7 @@
 //! Per-slot script observe/dispatch/hold transaction and script navigation continuation.
 
 use super::*;
+use nav::router::MissingReq;
 
 #[path = "route_inspect.rs"]
 mod route_inspect;
@@ -372,6 +373,7 @@ pub(super) fn script_observe_cached(
                     walk_level,
                     walk_radius,
                     walk_allow_teleports,
+                    walk_missing_carry,
                     inspect_posted,
                 ) = {
                     let mut all = navs.lock().unwrap();
@@ -388,6 +390,7 @@ pub(super) fn script_observe_cached(
                                 b.walk_outcome_level,
                                 b.walk_outcome_radius,
                                 b.walk_outcome_allow_teleports,
+                                b.walk_missing_carry.clone(),
                                 b.inspect.posted(),
                             );
                             b.mark_walk_outcome_posted();
@@ -404,6 +407,7 @@ pub(super) fn script_observe_cached(
                             0,
                             0,
                             false,
+                            Vec::new(),
                             route_inspect::PostedInspect::default(),
                         ),
                     }
@@ -411,7 +415,20 @@ pub(super) fn script_observe_cached(
                 let (withdraw_x_result_seq, withdraw_x_result) = slot.withdraw_x_result();
                 let (withdraw_load_result_seq, withdraw_load_result) = slot.withdraw_load_result();
                 let (bank_op_result_seq, bank_op_result) = slot.bank_op_result();
-                let bytes = with_script_snapshot_input(
+                // The published failure's shopping list, as the isolate reads
+                // it: the diagnosis' own ids and counts, with the host obj
+                // table's display name beside them when it has one. Always
+                // supplied — an empty list is the observed "no named short",
+                // so a clear is never omitted.
+                let carry_rows: Vec<script::isolate_fb::CarryInput<'_>> = walk_missing_carry
+                    .iter()
+                    .map(|row| script::isolate_fb::CarryInput {
+                        id: row.id,
+                        count: row.count,
+                        name: obj_names.and_then(|names| names.name(row.id)),
+                    })
+                    .collect();
+                let bytes = with_script_snapshot_input_shorts(
                     tick,
                     here,
                     up,
@@ -441,6 +458,7 @@ pub(super) fn script_observe_cached(
                         radius: walk_radius,
                         allow_teleports: walk_allow_teleports,
                     },
+                    &carry_rows,
                     inspect_posted,
                     |input, native| {
                         slot.encode_snapshot_delta_with_native(input, native, force_banks)
@@ -2283,10 +2301,16 @@ pub(super) struct PostedWalkOutcome {
     pub(super) allow_teleports: bool,
 }
 
-/// Build the observed snapshot input and hand it to `f`. The live observe
-/// path encodes through the slot's reusable [`script::isolate_fb::IsolateBuf`];
-/// tests encode through a one-shot builder via [`script_snapshot_fb`].
-#[allow(clippy::too_many_arguments, unused_assignments)]
+/// One navigator-named gate short of a failed walk: the `MissingReq::Carry`
+/// row [`find_missing_item_reqs`] reported for that `NoPath`. It carries only
+/// what the diagnosis itself named — the display name is resolved at pack time
+/// from the host obj table, and a missing one never drops the row.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) struct MissingCarry {
+    pub(super) id: i32,
+    pub(super) count: i32,
+}
+
 pub(super) fn with_script_snapshot_input<R>(
     tick: u64,
     here: Option<(i32, i32, i32)>,
@@ -2307,6 +2331,66 @@ pub(super) fn with_script_snapshot_input<R>(
     bank_op_result: bool,
     canlight: Option<&[u64]>,
     walk_outcome: PostedWalkOutcome,
+    inspect: route_inspect::PostedInspect,
+    f: impl FnOnce(
+        &script::isolate_fb::SnapshotInput<'_>,
+        script::isolate_fb::NativeFactsInput<'_>,
+    ) -> R,
+) -> R {
+    with_script_snapshot_input_shorts(
+        tick,
+        here,
+        ingame,
+        inv,
+        snapshot,
+        obj_names,
+        world,
+        npc_boxes,
+        hold,
+        ours,
+        teleports_enabled,
+        withdraw_x_result_seq,
+        withdraw_x_result,
+        withdraw_load_result_seq,
+        withdraw_load_result,
+        bank_op_result_seq,
+        bank_op_result,
+        canlight,
+        walk_outcome,
+        &[],
+        inspect,
+        f,
+    )
+}
+
+/// The same pack with the walk outcome's navigator-named gate shorts: the live
+/// observe path takes this entry point, and [`with_script_snapshot_input`] is
+/// this one with none. The rows are a borrow of THIS frame and are handed to `f`
+/// inside the facts it already receives, because a caller cannot attach them
+/// through the closure itself: that parameter is higher-ranked, so a borrow of
+/// the caller's frame could never satisfy it.
+#[allow(clippy::too_many_arguments, unused_assignments)]
+pub(super) fn with_script_snapshot_input_shorts<R>(
+    tick: u64,
+    here: Option<(i32, i32, i32)>,
+    ingame: bool,
+    inv: Option<&[(i32, i32)]>,
+    snapshot: Option<&GameSnapshot>,
+    obj_names: Option<&api::obj_names::ObjNames>,
+    world: Option<&NavWorld>,
+    npc_boxes: Option<&[script::isolate_fb::NpcBoxInput]>,
+    hold: bool,
+    ours: bool,
+    teleports_enabled: bool,
+    withdraw_x_result_seq: u64,
+    withdraw_x_result: bool,
+    withdraw_load_result_seq: u64,
+    withdraw_load_result: bool,
+    bank_op_result_seq: u64,
+    bank_op_result: bool,
+    canlight: Option<&[u64]>,
+    walk_outcome: PostedWalkOutcome,
+    walk_missing_carry: &[script::isolate_fb::CarryInput<'_>],
     inspect: route_inspect::PostedInspect,
     f: impl FnOnce(
         &script::isolate_fb::SnapshotInput<'_>,
@@ -3463,6 +3547,7 @@ pub(super) fn with_script_snapshot_input<R>(
         walk_outcome_level: walk_outcome.level,
         walk_outcome_radius: walk_outcome.radius,
         walk_outcome_allow_teleports: walk_outcome.allow_teleports,
+        walk_missing_carry,
         route_inspect: script::isolate_fb::RouteInspectFactsInput {
             latest: latest_in,
             prev: prev_in,
@@ -3590,6 +3675,10 @@ pub(super) struct NavBot {
     pub(super) walk_outcome_level: i32,
     pub(super) walk_outcome_radius: i32,
     pub(super) walk_outcome_allow_teleports: bool,
+    /// The navigator-named gate shorts of that same published outcome: set
+    /// only where a `NoPath` was diagnosed, and cleared wherever the outcome
+    /// is, so a list can never outlive the failure it belongs to.
+    pub(super) walk_missing_carry: Vec<MissingCarry>,
     pub(super) inspect: route_inspect::InspectNav,
 }
 
@@ -3889,12 +3978,18 @@ impl ScriptWalkArm {
                     });
                     return;
                 }
+                let missing = request.missing_carry(&outcome);
                 bot.publish_route(
                     request.generation,
                     request.request_id,
                     request.opts.allow_teleports,
                     outcome,
                 );
+                // The diagnosis lands under the same lock as the outcome it
+                // belongs to, so the packer can never read a list beside
+                // another failure. A discarded publish (stale generation)
+                // leaves the list it did not name cleared.
+                bot.note_missing_carry(request.generation, request.request_id, missing);
             })
             .is_ok();
         if !spawned {
@@ -4438,6 +4533,38 @@ pub(super) struct ScriptRouteRequest {
     pub(super) bank: Vec<(i32, i32)>,
 }
 impl ScriptRouteRequest {
+    /// The navigator-named gate shorts of a failed walk: the strict find's own
+    /// diagnosis, re-run with only the `item_req`/`worn_req` gates ignored.
+    /// A routed outcome names none, and neither does a failure the relaxed
+    /// re-run cannot diagnose (budget, off-graph, a skill/quest/varp gate) —
+    /// a `NoPath` is never read into a shopping list from its dest geometry.
+    /// A `worn_req` any-of alternative is not a carry and is never posted as
+    /// one.
+    fn missing_carry(&self, outcome: &RouteOutcome) -> Vec<MissingCarry> {
+        if !matches!(outcome, RouteOutcome::NoPath) {
+            return Vec::new();
+        }
+        let empty = WorldState::empty();
+        let state = self.state.as_ref().unwrap_or(&empty);
+        let Some(missing) = find_missing_item_reqs(
+            &self.world.collision,
+            &self.world.graph,
+            self.from,
+            self.to,
+            self.opts,
+            state,
+        ) else {
+            return Vec::new();
+        };
+        missing
+            .into_iter()
+            .filter_map(|req| match req {
+                MissingReq::Carry { id, count } => Some(MissingCarry { id, count }),
+                MissingReq::WearAny { .. } => None,
+            })
+            .collect()
+    }
+
     pub(super) fn calculate(&self) -> RouteOutcome {
         let empty = WorldState::empty();
         let state = self.state.as_ref().unwrap_or(&empty);
@@ -4546,6 +4673,9 @@ impl NavBot {
         self.walk_outcome_level = to.level;
         self.walk_outcome_radius = radius;
         self.walk_outcome_allow_teleports = allow_teleports;
+        // A failure raised here names no short: only the strict find's own
+        // diagnosis attaches a shopping list, and it lands after this.
+        self.walk_missing_carry.clear();
         if request_id != 0 && request_id != self.walk_request_id {
             self.walk_live_refusal_id = request_id;
         } else {
@@ -4564,6 +4694,30 @@ impl NavBot {
         self.walk_outcome_radius = 0;
         self.walk_outcome_allow_teleports = false;
         self.walk_live_refusal_id = 0;
+        // The family posts a present empty vector: a routed outcome names no
+        // short, and the clear is never omitted.
+        self.walk_missing_carry.clear();
+    }
+
+    /// Record the shopping list of the failure this attempt published. Only
+    /// the outcome that is live when the diagnosis lands carries one: a
+    /// superseded worker (stale generation) and a refusal `note_failure`
+    /// declined to publish (legacy request id) both leave the list they never
+    /// named cleared rather than attaching it to another failure's page.
+    pub(super) fn note_missing_carry(
+        &mut self,
+        generation: u64,
+        request_id: u64,
+        missing: Vec<MissingCarry>,
+    ) {
+        if self.route_generation != generation
+            || !self.walk_outcome_failed
+            || self.walk_outcome_generation != generation
+            || self.walk_outcome_request_id != request_id
+        {
+            return;
+        }
+        self.walk_missing_carry = missing;
     }
 
     pub(super) fn publish_route(

@@ -264,6 +264,16 @@ struct Scene<'a> {
     /// The posted count dialog: the talk arm answers only behind a posted
     /// `true`, so this is what the challenge step's answer rides.
     count_dialog_open: bool,
+    /// The posted walk outcome's navigator-named gate shorts: the strict
+    /// route's own `Carry` diagnosis. Empty is the observed "this outcome
+    /// names no short" — the vector rides the walk outcome family, whose posted
+    /// seq every keyframe here carries — and a page that names no short is
+    /// never a shopping list.
+    missing_carry: &'a [script::isolate_fb::CarryInput<'a>],
+    /// The posted shop interface the gate-toll trip reads: the interface flag
+    /// and the stock rows the buy click's own identity rides.
+    shop_open: bool,
+    shop_stock: &'a [script::isolate_fb::ItemRowInput<'a>],
 }
 
 impl Default for Scene<'_> {
@@ -288,6 +298,9 @@ impl Default for Scene<'_> {
             chat_options: &[],
             trio: false,
             count_dialog_open: false,
+            missing_carry: &[],
+            shop_open: false,
+            shop_stock: &[],
         }
     }
 }
@@ -398,8 +411,8 @@ fn post_scene(iso: &LoadIsolate, tick: u64, page: &[(i32, i32)], scene: &Scene<'
         trade_side: &[],
         trade_accept_id: -1,
         trade_decline_id: -1,
-        shop_open: false,
-        shop_stock: &[],
+        shop_open: scene.shop_open,
+        shop_stock: scene.shop_stock,
         reach: script::isolate_fb::ReachViewInput::UNAVAILABLE,
         attacked_by_player: false,
         self_target_kind: scene.self_target_kind,
@@ -416,6 +429,11 @@ fn post_scene(iso: &LoadIsolate, tick: u64, page: &[(i32, i32)], scene: &Scene<'
                 items: puzzle.items,
                 generation: puzzle.generation,
             }),
+        // The family's own seq: it is what makes the posted carry vector above
+        // a family post at all, and every keyframe here carries it so a page
+        // that names a short is observed as one.
+        walk_outcome_seq: POSTED_WALK_OUTCOME_SEQ,
+        walk_missing_carry: scene.missing_carry,
         ..script::isolate_fb::NativeFactsInput::default()
     };
     iso.post_snapshot(script::isolate_fb::encode_snapshot_with_native(&input, native));
@@ -6911,4 +6929,900 @@ export function tick(api) {
             assert!(!text.contains(forbidden), "{id} {forbidden} {value:?}");
         }
     }
+}
+
+/// The walk outcome seq every keyframe here posts: the posted carry vector is
+/// written with the family, and a buffer without it is a page whose shorts were
+/// never posted at all (the isolate keeps its last vector).
+const POSTED_WALK_OUTCOME_SEQ: u64 = 1;
+/// The selected `shantay_pass` item every named short joins, by id.
+const SHANTAY_PASS_ITEM: i32 = 1854;
+/// The selected Shantay keeper's packed npc type: the posted page's `id` the
+/// toll arm joins, and the display name its `name` falls back to.
+const SHANTAY_NPC: i32 = 836;
+/// The selected Shantay spawn: the unique jm2 tile, never the frozen stand
+/// `(3304, 3122, 0)` that is off by one in z.
+const SHANTAY_SPAWN: (i32, i32, i32) = (3304, 3123, 0);
+/// The search row's own decoded tile: the dest every intercepted walk below was
+/// going to, and the tile the trip's second walk goes back to.
+const DEST: (i32, i32, i32) = (3209, 3218, 1);
+/// A posted `here` far from `DEST`, so the arm keeps walking: the live walk the
+/// navigator cannot route.
+const AWAY: (i32, i32, i32) = (3200, 3218, 1);
+
+/// One posted walk to a tile with the landed defaults.
+fn walk_verb(x: i32, z: i32, level: i32) -> InteractReq {
+    InteractReq::Walk {
+        x,
+        z,
+        level,
+        allow_teleports: false,
+        allow_wilderness: false,
+        allow_bank_fetch: false,
+        request_id: 0,
+    }
+}
+
+/// One posted `Carry` row: the navigator's own short.
+fn carry(id: i32, count: i32, name: Option<&str>) -> script::isolate_fb::CarryInput<'_> {
+    script::isolate_fb::CarryInput { id, count, name }
+}
+
+/// One posted npc row of the toll keeper: the posted packed type the identity
+/// joins, the posted display name a page that posted no id falls back to, the
+/// posted tile the spawn radius measures from, and the posted `Trade` the click
+/// rides. Not `scene_npc`, whose rows stand on the guarded encounter's own tile.
+fn toll_keeper<'a>(
+    index: i32,
+    id: i32,
+    name: &'a str,
+    tile: TileInput,
+    actions: &'a [String],
+) -> SceneEntityInput<'a> {
+    SceneEntityInput {
+        index,
+        id,
+        name: Some(name),
+        x: tile.x,
+        z: tile.z,
+        level: tile.level,
+        distance: 1,
+        health: 0,
+        max_health: 0,
+        in_combat: false,
+        animating: false,
+        actions,
+        reachable: true,
+        reachable_adj: true,
+        combat_level: 0,
+        target_kind: 0,
+        target_index: -1,
+        size: 1,
+        nx: tile.x,
+        nz: tile.z,
+    }
+}
+
+/// One posted shop stock row: the identity the buy click rides — its own id,
+/// the display name the host resolves, and the slot and component its presence
+/// check matches.
+fn stock_row(id: i32, name: &str, slot: i32, component: i32) -> script::isolate_fb::ItemRowInput<'_> {
+    script::isolate_fb::ItemRowInput {
+        name: Some(name),
+        count: 500,
+        id,
+        ops: &[],
+        noted: false,
+        cert: -1,
+        component_id: component,
+        slot,
+    }
+}
+
+/// The public `api.clue.next` path over the gate-toll slice: the navigator names
+/// the Shantay pass short on a live walk that cannot arrive, so the machine walks
+/// to the selected spawn, Trades, buys one chunk of the posted stock row, closes
+/// the interface, and then walks the original dest back — once per token.
+#[test]
+fn v2_clue_gate_toll_shops_the_named_short_once_and_walks_the_dest_back() {
+    let src = r#"
+export const apiVersion = 2;
+export function tick(api) {
+  globalThis.__runs = (globalThis.__runs || 0) + 1;
+  if (globalThis.__runs === 1) {
+    const begin = api.clue.begin();
+    globalThis.__token = begin.ok ? begin.value.token : null;
+    globalThis.__steps = [begin];
+    // The gate, the report and the arm's own first verb ride this same tick:
+    // only the last of them pushes anything.
+    globalThis.__steps.push(api.clue.next({ token: globalThis.__token }));
+    globalThis.__steps.push(api.clue.next({ token: globalThis.__token, resume: true }));
+    globalThis.__steps.push(api.clue.next({ token: globalThis.__token }));
+    globalThis.__steps.push(api.clue.next({ token: globalThis.__token }));
+    return;
+  }
+  globalThis.__steps.push(api.clue.next({ token: globalThis.__token, resume: true }));
+  if (globalThis.__steps.length === 13) {
+    globalThis.__probe = JSON.stringify({
+      token: globalThis.__token,
+      steps: globalThis.__steps,
+    });
+  }
+}
+"#;
+    let data = api::game_data::for_revision(ClientRevision::R274).unwrap();
+    let iso = LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data)
+        .unwrap();
+    let page = [(PUZZLE_SEARCH, 1)];
+    let packed = [(PUZZLE_SEARCH, 1), (SHANTAY_PASS_ITEM, 1)];
+    let named = [carry(SHANTAY_PASS_ITEM, 1, Some("Shantay pass"))];
+    let stock = [stock_row(SHANTAY_PASS_ITEM, "Shantay pass", 16, 3900)];
+    let pack_names = [(SHANTAY_PASS_ITEM, "Shantay pass")];
+    let trade = vec!["Trade".to_string()];
+    let keeper = [toll_keeper(
+        12,
+        SHANTAY_NPC,
+        "Shantay",
+        TileInput {
+            x: SHANTAY_SPAWN.0,
+            z: SHANTAY_SPAWN.1,
+            level: SHANTAY_SPAWN.2,
+        },
+        &trade,
+    )];
+    let away = TileInput {
+        x: AWAY.0,
+        z: AWAY.1,
+        level: AWAY.2,
+    };
+    let spawn = TileInput {
+        x: SHANTAY_SPAWN.0,
+        z: SHANTAY_SPAWN.1,
+        level: SHANTAY_SPAWN.2,
+    };
+    let walk_away = || walk_verb(DEST.0, DEST.1, DEST.2);
+    let walk_spawn = || walk_verb(SHANTAY_SPAWN.0, SHANTAY_SPAWN.1, SHANTAY_SPAWN.2);
+
+    // Tick 1: the identified search row, the named short, and a `here` far from
+    // the decoded tile. The arm walks its own tile: the walk the navigator could
+    // not route.
+    post_scene(
+        &iso,
+        1,
+        &page,
+        &Scene {
+            here: Some(away),
+            missing_carry: &named,
+            ..Scene::default()
+        },
+    );
+    iso.on_game_tick(1);
+    assert!(iso.probe("true").is_ok());
+    let opening = iso.drain_interacts();
+    assert_eq!(
+        opening,
+        vec![walk_verb(DEST.0, DEST.1, DEST.2)],
+        "the arm walks its own decoded tile: {opening:?}"
+    );
+
+    // Tick 2: the live walk is not arriving and the page names the short, so the
+    // trip starts: its first verb is the walk to the selected spawn.
+    post_scene(
+        &iso,
+        2,
+        &page,
+        &Scene {
+            here: Some(away),
+            missing_carry: &named,
+            ..Scene::default()
+        },
+    );
+    iso.on_game_tick(2);
+    assert!(iso.probe("true").is_ok());
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![walk_spawn()],
+        "the trip's first verb is the selected spawn, never a frozen stand tile"
+    );
+
+    // Tick 3: still not at the spawn: the trip keeps walking it.
+    post_scene(
+        &iso,
+        3,
+        &page,
+        &Scene {
+            here: Some(away),
+            missing_carry: &named,
+            ..Scene::default()
+        },
+    );
+    iso.on_game_tick(3);
+    assert!(iso.probe("true").is_ok());
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![walk_spawn()],
+        "the shop-phase walk is the selected spawn alone"
+    );
+
+    // Tick 4: at the spawn with the posted keeper: the landed `npc` click on the
+    // posted `Trade`, keeping the posted name and scene index.
+    post_scene(
+        &iso,
+        4,
+        &page,
+        &Scene {
+            here: Some(spawn),
+            npcs: &keeper,
+            missing_carry: &named,
+            ..Scene::default()
+        },
+    );
+    iso.on_game_tick(4);
+    assert!(iso.probe("true").is_ok());
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::Npc {
+            name: "Shantay".to_string(),
+            action: "Trade".to_string(),
+            index: Some(12),
+        }],
+        "the Trade rides the posted keeper's own identity"
+    );
+
+    // Tick 5: the posted interface with the short's own stock row: one chunk of
+    // one, on the row's own id, slot and component.
+    post_scene(
+        &iso,
+        5,
+        &page,
+        &Scene {
+            here: Some(spawn),
+            npcs: &keeper,
+            missing_carry: &named,
+            shop_open: true,
+            shop_stock: &stock,
+            ..Scene::default()
+        },
+    );
+    iso.on_game_tick(5);
+    assert!(iso.probe("true").is_ok());
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::ShopButton {
+            kind: "buy".to_string(),
+            name: "Shantay pass".to_string(),
+            id: SHANTAY_PASS_ITEM,
+            slot: 16,
+            component: 3900,
+            chunk: 1,
+        }],
+        "the buy is one posted chunk of one on the posted stock row"
+    );
+
+    // Tick 6: the pass landed on the posted pack page: the interface is closed
+    // once, and that close is the trip's last verb.
+    post_scene(
+        &iso,
+        6,
+        &packed,
+        &Scene {
+            here: Some(spawn),
+            npcs: &keeper,
+            missing_carry: &named,
+            shop_open: true,
+            shop_stock: &stock,
+            names: &pack_names,
+            ..Scene::default()
+        },
+    );
+    iso.on_game_tick(6);
+    assert!(iso.probe("true").is_ok());
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::CloseModal],
+        "the landed close-modal after the posted settle"
+    );
+
+    // Tick 7: the interface is down and the trip is over: the second walk, back
+    // to the dest the intercepted walk was going to.
+    post_scene(
+        &iso,
+        7,
+        &packed,
+        &Scene {
+            here: Some(spawn),
+            missing_carry: &named,
+            names: &pack_names,
+            ..Scene::default()
+        },
+    );
+    iso.on_game_tick(7);
+    assert!(iso.probe("true").is_ok());
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![walk_away()],
+        "the exit walks the original dest back, not the shop"
+    );
+
+    // Tick 8: the page still names the short and the latch holds: the arm walks
+    // its own dest again, and no third trip ever starts.
+    post_scene(
+        &iso,
+        8,
+        &page,
+        &Scene {
+            here: Some(spawn),
+            missing_carry: &named,
+            ..Scene::default()
+        },
+    );
+    iso.on_game_tick(8);
+    assert!(iso.probe("true").is_ok());
+    let latched = iso.drain_interacts();
+    assert_eq!(
+        latched,
+        vec![walk_away()],
+        "one latched arm walk, never a second shop: {latched:?}"
+    );
+
+    // Tick 9: the page keeps naming the short while the posted pack holds the
+    // pass: nothing to shop for even without the latch.
+    post_scene(
+        &iso,
+        9,
+        &packed,
+        &Scene {
+            here: Some(away),
+            missing_carry: &named,
+            names: &pack_names,
+            ..Scene::default()
+        },
+    );
+    iso.on_game_tick(9);
+    assert!(iso.probe("true").is_ok());
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![walk_away()],
+        "a held pass is never shopped for"
+    );
+
+    let probed = iso.probe("globalThis.__probe").unwrap();
+    let value: serde_json::Value = serde_json::from_str(probed.as_str().unwrap()).unwrap();
+    iso.join();
+    assert!(value["token"].is_number(), "{value:?}");
+    let steps = value["steps"].as_array().expect("steps");
+    for step in steps {
+        for terminal in ["done", "dead", "abandon", "no-shop", "guardian-lost"] {
+            assert_ne!(step["kind"], terminal, "{value:?}");
+        }
+    }
+    assert!(
+        steps.iter().any(|step| step["kind"] == "callback.setStatus"),
+        "the machine reported the step first: {value:?}"
+    );
+    assert!(
+        !value.to_string().contains("clue solved"),
+        "the trip never posts the solved mark: {value:?}"
+    );
+    assert_eq!(
+        steps.last().and_then(|step| step["kind"].as_str()),
+        Some("walk"),
+        "the session is live and still walking the original dest: {value:?}"
+    );
+}
+
+/// Every short that is not the selected pass stays unsold: the page that names
+/// no short at all, the Al Kharid toll's coins, and a pass the posted pack
+/// already holds. Each is its own isolate, and each keeps walking its own
+/// decoded tile while the posted keeper, interface and stock row stand beside it.
+#[test]
+fn v2_clue_gate_toll_never_shops_a_short_that_is_not_the_named_pass() {
+    let src = r#"
+export const apiVersion = 2;
+export function tick(api) {
+  globalThis.__runs = (globalThis.__runs || 0) + 1;
+  if (globalThis.__runs === 1) {
+    const begin = api.clue.begin();
+    globalThis.__token = begin.ok ? begin.value.token : null;
+    globalThis.__steps = [begin];
+    globalThis.__steps.push(api.clue.next({ token: globalThis.__token }));
+    globalThis.__steps.push(api.clue.next({ token: globalThis.__token, resume: true }));
+    globalThis.__steps.push(api.clue.next({ token: globalThis.__token }));
+    globalThis.__steps.push(api.clue.next({ token: globalThis.__token }));
+    return;
+  }
+  globalThis.__steps.push(api.clue.next({ token: globalThis.__token, resume: true }));
+  if (globalThis.__steps.length === 9) {
+    globalThis.__probe = JSON.stringify({ steps: globalThis.__steps });
+  }
+}
+"#;
+    let page = [(PUZZLE_SEARCH, 1)];
+    let packed = [(PUZZLE_SEARCH, 1), (SHANTAY_PASS_ITEM, 1)];
+    let pack_names = [(SHANTAY_PASS_ITEM, "Shantay pass")];
+    let trade = vec!["Trade".to_string()];
+    let keeper = [toll_keeper(
+        12,
+        SHANTAY_NPC,
+        "Shantay",
+        TileInput {
+            x: SHANTAY_SPAWN.0,
+            z: SHANTAY_SPAWN.1,
+            level: SHANTAY_SPAWN.2,
+        },
+        &trade,
+    )];
+    let stock = [stock_row(SHANTAY_PASS_ITEM, "Shantay pass", 16, 3900)];
+    let coins = [carry(995, 10, Some("Coins"))];
+    let named = [carry(SHANTAY_PASS_ITEM, 1, Some("Shantay pass"))];
+    let away = TileInput {
+        x: AWAY.0,
+        z: AWAY.1,
+        level: AWAY.2,
+    };
+    let spawn = TileInput {
+        x: SHANTAY_SPAWN.0,
+        z: SHANTAY_SPAWN.1,
+        level: SHANTAY_SPAWN.2,
+    };
+    let walk_dest = walk_verb(DEST.0, DEST.1, DEST.2);
+
+    // The three cases differ only in the posted page: what the walk outcome
+    // names, and what the pack holds.
+    for (case, carries, holds_pass) in [
+        ("unnamed", &[][..], false),
+        ("coins", &coins[..], false),
+        ("held", &named[..], true),
+    ] {
+        let data = api::game_data::for_revision(ClientRevision::R274).unwrap();
+        let iso = LoadIsolate::spawn_with_game_data(
+            src.into(),
+            LoadShape::NativeTick,
+            vec![],
+            data,
+        )
+        .unwrap();
+        for tick in 1..=5 {
+            // From the fourth tick the scene is the shop's own stand: the posted
+            // keeper, the open interface and the short's stock row are all
+            // standing there, and none of them is a reason to shop.
+            post_scene(
+                &iso,
+                tick,
+                if holds_pass { &packed } else { &page },
+                &Scene {
+                    here: Some(if tick >= 4 { spawn } else { away }),
+                    npcs: if tick >= 4 { &keeper } else { &[] },
+                    names: if holds_pass { &pack_names } else { &[] },
+                    missing_carry: carries,
+                    shop_open: tick >= 4,
+                    shop_stock: if tick >= 4 { &stock } else { &[] },
+                    ..Scene::default()
+                },
+            );
+            iso.on_game_tick(tick);
+            assert!(iso.probe("true").is_ok());
+            let steps = iso.drain_interacts();
+            assert_eq!(
+                steps,
+                vec![walk_verb(DEST.0, DEST.1, DEST.2)],
+                "{case} tick {tick} never shops: {steps:?}"
+            );
+        }
+        let probed = iso.probe("globalThis.__probe").unwrap();
+        let value: serde_json::Value =
+            serde_json::from_str(probed.as_str().unwrap()).unwrap();
+        iso.join();
+        let text = value.to_string();
+        for forbidden in ["no-shop", "clue solved", "\"done\""] {
+            assert!(!text.contains(forbidden), "{case} {forbidden}: {value:?}");
+        }
+        let steps = value["steps"].as_array().expect("steps");
+        assert!(
+            steps[0].get("kind").is_none(),
+            "{case} begins with its own token: {value:?}"
+        );
+        assert!(
+            steps[1..].iter().all(|step| step["kind"] == "walk"
+                || step["kind"] == "callback.log"
+                || step["kind"] == "callback.setStatus"
+                || step["kind"] == "callback.enabled"),
+            "{case} pushes no shop kind: {value:?}"
+        );
+        assert_eq!(walk_dest, walk_verb(DEST.0, DEST.1, DEST.2), "{case}");
+    }
+}
+
+/// The envelope wins on a live trip: a posted `ours` is the `yield` and
+/// a posted effective hitpoints at or below zero is `dead`, both before the trip
+/// gets to walk, click or close anything — and neither ever shops.
+#[test]
+fn v2_clue_gate_toll_yields_and_dies_before_it_trades() {
+    let src = r#"
+export const apiVersion = 2;
+export function tick(api) {
+  globalThis.__runs = (globalThis.__runs || 0) + 1;
+  if (globalThis.__runs === 1) {
+    const begin = api.clue.begin();
+    globalThis.__token = begin.ok ? begin.value.token : null;
+    globalThis.__steps = [begin];
+    globalThis.__steps.push(api.clue.next({ token: globalThis.__token }));
+    globalThis.__steps.push(api.clue.next({ token: globalThis.__token, resume: true }));
+    globalThis.__steps.push(api.clue.next({ token: globalThis.__token }));
+    globalThis.__steps.push(api.clue.next({ token: globalThis.__token }));
+    return;
+  }
+  globalThis.__steps.push(api.clue.next({ token: globalThis.__token, resume: true }));
+  if (globalThis.__steps.length === 7) {
+    globalThis.__probe = JSON.stringify({ steps: globalThis.__steps });
+  }
+}
+"#;
+    let page = [(PUZZLE_SEARCH, 1)];
+    let named = [carry(SHANTAY_PASS_ITEM, 1, Some("Shantay pass"))];
+    let away = TileInput {
+        x: AWAY.0,
+        z: AWAY.1,
+        level: AWAY.2,
+    };
+    let spawn = TileInput {
+        x: SHANTAY_SPAWN.0,
+        z: SHANTAY_SPAWN.1,
+        level: SHANTAY_SPAWN.2,
+    };
+
+    // The posted `ours`: the trip is live on its own walk and the call yields.
+    // (`hold` would be a paint-only tick that runs no script at all, so the
+    // interrupt's script-visible half is `ours`.)
+    let held_data = api::game_data::for_revision(ClientRevision::R274).unwrap();
+    let yielded = LoadIsolate::spawn_with_game_data(
+        src.into(),
+        LoadShape::NativeTick,
+        vec![],
+        held_data,
+    )
+    .unwrap();
+    post_scene(
+        &yielded,
+        1,
+        &page,
+        &Scene {
+            here: Some(away),
+            missing_carry: &named,
+            ..Scene::default()
+        },
+    );
+    yielded.on_game_tick(1);
+    assert!(yielded.probe("true").is_ok());
+    assert_eq!(
+        yielded.drain_interacts(),
+        vec![walk_verb(DEST.0, DEST.1, DEST.2)],
+        "the arm's own walk before the trip starts"
+    );
+    post_scene(
+        &yielded,
+        2,
+        &page,
+        &Scene {
+            here: Some(away),
+            ours: true,
+            missing_carry: &named,
+            ..Scene::default()
+        },
+    );
+    yielded.on_game_tick(2);
+    assert!(yielded.probe("true").is_ok());
+    assert!(
+        yielded.drain_interacts().is_empty(),
+        "a posted ours yields instead of shopping"
+    );
+    // The thaw with the same page: the trip starts where it left off.
+    post_scene(
+        &yielded,
+        3,
+        &page,
+        &Scene {
+            here: Some(away),
+            missing_carry: &named,
+            ..Scene::default()
+        },
+    );
+    yielded.on_game_tick(3);
+    assert!(yielded.probe("true").is_ok());
+    assert_eq!(
+        yielded.drain_interacts(),
+        vec![walk_verb(SHANTAY_SPAWN.0, SHANTAY_SPAWN.1, SHANTAY_SPAWN.2)],
+        "the yield did not advance the trip and did not cancel it"
+    );
+    let held_probe = yielded.probe("globalThis.__probe").unwrap();
+    let held_value: serde_json::Value =
+        serde_json::from_str(held_probe.as_str().unwrap()).unwrap();
+    yielded.join();
+    let kinds: Vec<&str> = held_value["steps"]
+        .as_array()
+        .expect("steps")
+        .iter()
+        .map(|step| step["kind"].as_str().unwrap_or(""))
+        .collect();
+    assert!(kinds.contains(&"yield"), "{kinds:?}");
+    for forbidden in ["done", "dead", "abandon", "no-shop", "clue solved"] {
+        assert!(!held_value.to_string().contains(forbidden), "{held_value:?}");
+    }
+
+    // The posted death: the trip is live and the hitpoints are at zero, so the
+    // token dies with the player and nothing shops.
+    let dead_data = api::game_data::for_revision(ClientRevision::R274).unwrap();
+    let dead =
+        LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], dead_data)
+            .unwrap();
+    post_scene(
+        &dead,
+        1,
+        &page,
+        &Scene {
+            here: Some(away),
+            missing_carry: &named,
+            ..Scene::default()
+        },
+    );
+    dead.on_game_tick(1);
+    assert!(dead.probe("true").is_ok());
+    assert_eq!(
+        dead.drain_interacts(),
+        vec![walk_verb(DEST.0, DEST.1, DEST.2)],
+        "the arm's own walk before the trip starts"
+    );
+    post_scene(
+        &dead,
+        2,
+        &page,
+        &Scene {
+            here: Some(spawn),
+            missing_carry: &named,
+            stats: &[script::isolate_fb::StatInput {
+                index: 3,
+                name: "hitpoints",
+                xp: 0,
+                base: 10,
+                effective: 0,
+            }],
+            ..Scene::default()
+        },
+    );
+    dead.on_game_tick(2);
+    assert!(dead.probe("true").is_ok());
+    assert!(
+        dead.drain_interacts().is_empty(),
+        "a dead player pushes no shop verb"
+    );
+    // The same token is dead now: the trip is over with it.
+    post_scene(
+        &dead,
+        3,
+        &page,
+        &Scene {
+            here: Some(spawn),
+            missing_carry: &named,
+            ..Scene::default()
+        },
+    );
+    dead.on_game_tick(3);
+    assert!(dead.probe("true").is_ok());
+    assert!(
+        dead.drain_interacts().is_empty(),
+        "a dead token pushes nothing"
+    );
+    let dead_probe = dead.probe("globalThis.__probe").unwrap();
+    let dead_value: serde_json::Value =
+        serde_json::from_str(dead_probe.as_str().unwrap()).unwrap();
+    dead.join();
+    let dead_kinds: Vec<&str> = dead_value["steps"]
+        .as_array()
+        .expect("steps")
+        .iter()
+        .map(|step| step["kind"].as_str().unwrap_or(""))
+        .collect();
+    assert!(dead_kinds.contains(&"dead"), "{dead_kinds:?}");
+    assert!(
+        !dead_value.to_string().contains("clue solved"),
+        "the death is never the solved mark: {dead_value:?}"
+    );
+}
+
+/// A trip that cannot observe the short's own Trade ends with the named
+/// `no-shop`: the token lives, the frozen window is what ends the step and a
+/// frozen session never spends it, and the exit walks the original dest back
+/// rather than starting a second trip.
+#[test]
+fn v2_clue_gate_toll_no_shop_keeps_the_token_and_the_second_walk() {
+    let src = r#"
+export const apiVersion = 2;
+export function tick(api) {
+  globalThis.__runs = (globalThis.__runs || 0) + 1;
+  if (globalThis.__runs === 1) {
+    const begin = api.clue.begin();
+    globalThis.__token = begin.ok ? begin.value.token : null;
+    globalThis.__steps = [begin];
+    globalThis.__steps.push(api.clue.next({ token: globalThis.__token }));
+    globalThis.__steps.push(api.clue.next({ token: globalThis.__token, resume: true }));
+    globalThis.__steps.push(api.clue.next({ token: globalThis.__token }));
+    globalThis.__steps.push(api.clue.next({ token: globalThis.__token }));
+    return;
+  }
+  globalThis.__steps.push(api.clue.next({ token: globalThis.__token, resume: true }));
+  if (globalThis.__steps.length >= 8) {
+    globalThis.__probe = JSON.stringify({
+      token: globalThis.__token,
+      runs: globalThis.__runs,
+      steps: globalThis.__steps,
+    });
+  }
+}
+"#;
+    let data = api::game_data::for_revision(ClientRevision::R274).unwrap();
+    let iso = LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data)
+        .unwrap();
+    let page = [(PUZZLE_SEARCH, 1)];
+    let named = [carry(SHANTAY_PASS_ITEM, 1, Some("Shantay pass"))];
+    let away = TileInput {
+        x: AWAY.0,
+        z: AWAY.1,
+        level: AWAY.2,
+    };
+    let spawn = TileInput {
+        x: SHANTAY_SPAWN.0,
+        z: SHANTAY_SPAWN.1,
+        level: SHANTAY_SPAWN.2,
+    };
+
+    // Tick 1: the live walk and the named short: the arm walks its own tile,
+    // which is the walk the navigator could not route.
+    post_scene(
+        &iso,
+        1,
+        &page,
+        &Scene {
+            here: Some(away),
+            missing_carry: &named,
+            ..Scene::default()
+        },
+    );
+    iso.on_game_tick(1);
+    assert!(iso.probe("true").is_ok());
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![walk_verb(DEST.0, DEST.1, DEST.2)],
+        "the arm's own walk first"
+    );
+
+    // Tick 2: the trip walks the selected spawn.
+    post_scene(
+        &iso,
+        2,
+        &page,
+        &Scene {
+            here: Some(away),
+            missing_carry: &named,
+            ..Scene::default()
+        },
+    );
+    iso.on_game_tick(2);
+    assert!(iso.probe("true").is_ok());
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![walk_verb(SHANTAY_SPAWN.0, SHANTAY_SPAWN.1, SHANTAY_SPAWN.2)],
+        "the trip's own walk"
+    );
+
+    // Tick 3: at the spawn with no posted npc page at all. The step's own window
+    // opens and the trip waits rather than inventing a keeper.
+    post_scene(
+        &iso,
+        3,
+        &page,
+        &Scene {
+            here: Some(spawn),
+            missing_carry: &named,
+            ..Scene::default()
+        },
+    );
+    iso.on_game_tick(3);
+    assert!(iso.probe("true").is_ok());
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "no posted keeper is a wait, not a click"
+    );
+
+    // A posted `hold` is the paint-only freeze: the script runs no step at all,
+    // and the machine's own clock is frozen with the session. Two and a half
+    // seconds of it do not spend the step's window.
+    let held = |hold: bool| Scene {
+        here: Some(spawn),
+        hold,
+        missing_carry: &named,
+        ..Scene::default()
+    };
+    post_scene(&iso, 4, &page, &held(true));
+    iso.on_game_tick(4);
+    assert!(iso.probe("true").is_ok());
+    std::thread::sleep(std::time::Duration::from_millis(2_500));
+    // The thaw: the same page, still inside the (shifted) window, so the step is
+    // a wait and not the give-up a spent window would post.
+    post_scene(&iso, 5, &page, &held(false));
+    iso.on_game_tick(5);
+    assert!(iso.probe("true").is_ok());
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "the frozen clock did not end the step"
+    );
+
+    // The thaw did not spend the window: the step is still a wait and the named
+    // kind has not gone out.
+    let thawed = iso.probe("globalThis.__probe").unwrap();
+    let thawed_value: serde_json::Value =
+        serde_json::from_str(thawed.as_str().unwrap()).unwrap();
+    let thawed_kinds: Vec<&str> = thawed_value["steps"]
+        .as_array()
+        .expect("steps")
+        .iter()
+        .map(|step| step["kind"].as_str().unwrap_or(""))
+        .collect();
+    assert_eq!(
+        thawed_kinds.last(),
+        Some(&"wait"),
+        "a frozen window is not spent: {thawed_value:?}"
+    );
+    assert!(
+        !thawed_kinds.contains(&"no-shop"),
+        "the freeze kept the trip inside its window: {thawed_value:?}"
+    );
+
+    // A live span well past the window's bound: the step gives up with the named
+    // kind, and then the exit walks the original dest back. Bounded to three
+    // calls, and only the wait/no-shop kinds push nothing along the way.
+    std::thread::sleep(std::time::Duration::from_millis(5_200));
+    let mut exit = Vec::new();
+    for tick in 6..=8 {
+        post_scene(&iso, tick, &page, &held(false));
+        iso.on_game_tick(tick);
+        assert!(iso.probe("true").is_ok());
+        exit.extend(iso.drain_interacts());
+        if exit.contains(&walk_verb(DEST.0, DEST.1, DEST.2)) {
+            break;
+        }
+    }
+    assert_eq!(
+        exit.last(),
+        Some(&walk_verb(DEST.0, DEST.1, DEST.2)),
+        "the exit walks the original dest back and pushes nothing else: {exit:?}"
+    );
+
+    let probed = iso.probe("globalThis.__probe").unwrap();
+    let value: serde_json::Value = serde_json::from_str(probed.as_str().unwrap()).unwrap();
+    iso.join();
+    let steps = value["steps"].as_array().expect("steps");
+    let kinds: Vec<&str> = steps
+        .iter()
+        .map(|step| step["kind"].as_str().unwrap_or(""))
+        .collect();
+    assert!(
+        kinds.contains(&"no-shop"),
+        "the trip's own outcome kind: {kinds:?}"
+    );
+    for terminal in ["done", "dead", "abandon", "supplies-needed", "guardian-lost"] {
+        assert!(!kinds.contains(&terminal), "{kinds:?}");
+    }
+    assert!(
+        !value.to_string().contains("clue solved"),
+        "no-shop is never the solved mark: {value:?}"
+    );
+    assert!(
+        steps[1..].iter().all(|step| step["token"] == value["token"]),
+        "the token is the same one all the way: {value:?}"
+    );
+    assert_eq!(
+        kinds.last(),
+        Some(&"walk"),
+        "the token lives and walks on: {kinds:?}"
+    );
 }

@@ -717,6 +717,43 @@ other arm. The landed guarded and unguarded arms below are unchanged: they are
 simply not reached until the posted pack holds the trio, and the rows that do
 not carry the param never enter this chain at all.
 
+In front of every arm a walk can come from sits the **gate-toll shop**, and it
+is the walk's intercept rather than another classify: a live walk this token
+dispatched that has not arrived — the posted `here` is not on its dest's level
+or not within Chebyshev 1 of it — while this call's page names an unlatched
+`Carry` short for the selected `shantay_pass` item the posted pack does not
+hold. The short is the navigator's own: the host re-runs its strict route with
+only the `item_req`/`worn_req` gates ignored (`find_missing_item_reqs`) and
+posts every `item_req` stack it could not prove on the walk outcome's own
+snapshot family (`walk_missing_carry`, rows of `id`, `count` and the host obj
+table's `name`). A `NoPath`'s dest geometry is never read as a shopping list, a
+page that names no short never shops — the Al Kharid toll's coins and the
+extra-item Rope among them — and a `worn_req` alternative is never a short.
+
+The trip is the frozen `ensureGateItems` order, one verb per call, and it is
+entered at most **once per item id per token** (the frozen `gateItemsTried`),
+latched before its first verb so the Shantay walk cannot re-enter the
+intercept:
+
+| Step | Verds and observation |
+| --- | --- |
+| walk to the stand | `walk` to the selected Shantay spawn `(3304, 3123, 0)` — the unique jm2 tile, never the frozen `GATE_ITEM_SHOPS` stand `(3304, 3122, 0)` that is off by one in `z` — repeated until the posted return to the spawn |
+| `Trade` | an `npc` click on a posted npc of the selected packed type `836` (or, when the page posted no id, of the display name `Shantay`) standing inside `ARRIVE_RADIUS` of that spawn and listing `Trade`; a wanderer is never chased and a page with no such row waits |
+| buy one | a `shop-button` click — `kind: 'buy'`, `chunk: 1` — on the short's own posted stock row: its `id`, the display name the host resolves, and the `slot` and `component` its presence check matches |
+| close | the landed `close-modal` once the posted pack page holds the short, and once per trip |
+
+`shop-button` is the landed host op and never a `V2_OPS` verb: `api.request({ op: 'shop-button' })` stays `not impl`, the step is its own `next` kind and never a `kind: 'ops'` list, and the `shop.rs` module's own batch is not nested here. The posted interface (`shop_open`, `shop_stock`) and the walk outcome's `walk_missing_carry` are marshalled onto the call at call time and only when the page carried them, so an unobserved interface is neither a closed one nor an open one.
+
+After the posted buy — or after the trip gives up — the exit walks the original
+dest back, and that is the end of the slice: the row's own arm resumes, the
+latch has the short, and no third trip for the same item ever starts. A step
+whose own posted fact never appears inside the machine's own `SHOP_WAIT_MS`
+window ends the trip with the named `no-shop`: the token **lives**, nothing is
+fetched or banked, and it is never `supplies-needed`, never `done` and never the
+exact `'clue solved'`. The frozen clock, the posted `hold || ours` interrupt and
+the posted `hitpoints <= 0` death still win on any live call, the shop sequence
+included, and a frozen session never spends the window.
+
 A held row is an **unguarded dig row** when the selected family carries a
 decodable `trail_coord` on a row with **no** `trail_loc`, **no**
 `trail_guardian` and an `access` that is not `"constrained"`, which is the

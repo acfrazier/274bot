@@ -268,6 +268,62 @@ function clueHitpoints() {
     return row && cluePageI32(row.effective) ? row.effective : null;
 }
 
+// The posted walk outcome's navigator-named gate shorts: the strict route's own
+// `Carry` diagnosis, one row per `item_req` the posted pack could not prove. A
+// row that is not the posted `(id, count)` pair cannot be a named short, and
+// `name` rides along only as the string the host obj table resolved — the join
+// is the id. A page that did not post the vector hands the machine nothing at
+// all: an unobserved list is not an empty one, and the fail bit beside it is
+// never a substitute for it.
+function clueWalkMissingCarry() {
+    const snapshot = host().snapshot;
+    if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return null;
+    const page = snapshot.walk_missing_carry;
+    if (!Array.isArray(page)) return null;
+    const rows = [];
+    for (const row of page) {
+        if (!row || typeof row !== 'object' || Array.isArray(row)) continue;
+        if (!cluePageI32(row.id) || !cluePageI32(row.count)) continue;
+        rows.push({
+            id: row.id,
+            count: row.count,
+            name: typeof row.name === 'string' ? row.name : null,
+        });
+    }
+    return rows;
+}
+
+// The posted shop interface the gate-toll trip reads. Both slots are posted
+// only when the page carried them: an omitted `shop_open` is unobserved rather
+// than a closed interface, and a row the page posted without a clickable slot,
+// component or display name is still posted as the observation it is — the
+// machine skips it rather than this file guessing at one.
+function clueShopOpen() {
+    const snapshot = host().snapshot;
+    if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return null;
+    return typeof snapshot.shop_open === 'boolean' ? snapshot.shop_open : null;
+}
+
+function clueShopStock() {
+    const snapshot = host().snapshot;
+    if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return null;
+    const page = snapshot.shop_stock;
+    if (!Array.isArray(page)) return null;
+    const rows = [];
+    for (const row of page) {
+        if (!row || typeof row !== 'object' || Array.isArray(row)) continue;
+        if (!cluePageI32(row.id)) continue;
+        rows.push({
+            id: row.id,
+            name: typeof row.name === 'string' ? row.name : null,
+            count: cluePageI32(row.count) ? row.count : null,
+            slot: cluePageI32(row.slot) ? row.slot : null,
+            component: cluePageI32(row.component_id) ? row.component_id : null,
+        });
+    }
+    return rows;
+}
+
 // The posted puzzle board the plan reads: the identified component, its
 // observed slot count and its sparse rows. A row that did not post an i32 slot
 // and id is dropped here; the machine's own read rejects a board that is not
@@ -300,11 +356,13 @@ function cluePuzzleGeneration() {
         : null;
 }
 
-// The machine's own walk, held, npc, if-button and chat steps go onto the
+// The machine's own walk, held, npc, if-button, chat and shop steps go onto the
 // shared interact drain the way the journal enqueues `if-button` / `close-modal`
 // and the landed npc consumers enqueue `npc`: the landed field names, one
 // explicit arm per kind, and `loc` last. An unknown kind is never enqueued as a
-// loc, and the closed-handler `continue` / `answer` pair is never one either.
+// loc, the closed-handler `continue` / `answer` pair is never one either, and a
+// `shop-button` click is its own landed op — never a loc, never a
+// `kind: 'ops'` shopping list and never a `V2_OPS` author verb.
 function enqueueClueVerb(step) {
     if (step.kind === 'walk') {
         queue({ op: 'walk', x: step.x, z: step.z, level: step.level });
@@ -375,6 +433,23 @@ function enqueueClueVerb(step) {
         queue({ op: 'held', name: step.name, action: step.action });
         return true;
     }
+    if (step.kind === 'shop-button') {
+        // The open shop interface's own click: the posted stock row's identity
+        // and one chunk of one. The landed `shop-button` op and nothing else —
+        // its own explicit arm, never the loc fall-through, never a
+        // `kind: "ops"` shopping list and never a `V2_OPS` author verb (the
+        // shop module's own batch is not nested here).
+        queue({
+            op: 'shop-button',
+            kind: step.shop,
+            name: step.name,
+            id: step.id,
+            slot: step.slot,
+            component: step.component,
+            chunk: step.chunk,
+        });
+        return true;
+    }
     if (step.kind === 'loc') {
         queue({
             op: 'loc',
@@ -394,7 +469,7 @@ function enqueueClueVerb(step) {
 // terminal — and an unknown kind is none of them.
 const ENQUEUED_KINDS = [
     'walk', 'held', 'loc', 'npc', 'answer-count', 'if-button', 'close-modal', 'obj',
-    'puzzle-move', 'continue', 'answer',
+    'puzzle-move', 'continue', 'answer', 'shop-button',
 ];
 
 // The call-time pages every `next` posts, in the machine's own field names.
@@ -447,6 +522,16 @@ function clueNextPayload(token, resume) {
     if (puzzleBoard !== null) payload.puzzle_board = puzzleBoard;
     const puzzleGeneration = cluePuzzleGeneration();
     if (puzzleGeneration !== null) payload.puzzle_board_generation = puzzleGeneration;
+    // The walk outcome's own navigator-named shorts, and the posted shop
+    // interface the gate-toll trip reads: all three are posted-only, so a slot
+    // the page did not carry stays unobserved on the machine rather than
+    // becoming a named short, a closed interface or an empty stock.
+    const missingCarry = clueWalkMissingCarry();
+    if (missingCarry !== null) payload.walk_missing_carry = missingCarry;
+    const shopOpen = clueShopOpen();
+    if (shopOpen !== null) payload.shop_open = shopOpen;
+    const shopStock = clueShopStock();
+    if (shopStock !== null) payload.shop_stock = shopStock;
     // `resume` is the only answer slot, and it is only ever a boolean: the
     // key is omitted on every call that is not answering `callback.enabled`.
     if (typeof resume === 'boolean') payload.resume = resume;
@@ -539,10 +624,13 @@ export class SolveClue {
                 // it and the next call is `done`. No enqueue and no delay.
                 continue;
             }
-            if (step.kind === 'supplies-needed') {
-                // An arrived dig with no `Spade` on the posted pack page: a
-                // wait-class and not a terminal, so the token stays live and
-                // nothing is fetched.
+            if (step.kind === 'supplies-needed' || step.kind === 'no-shop') {
+                // The arrived dig with no `Spade` on the posted pack page, and
+                // the gate-toll trip that could not observe the short's own
+                // Trade, interface or stock row: named wait-classes and not
+                // terminals, so the token lives and nothing is fetched. The
+                // latch has the short, so the arm resumes and the same one
+                // never shops twice.
                 await Execution.delayTicks(1);
                 continue;
             }
