@@ -1687,4 +1687,3 @@ pub fn for_optional_profile(
 #[cfg(test)]
 #[path = "game_data_tests.rs"]
 mod tests;
-

@@ -16,8 +16,6 @@ use decode::{empty_loc_model_stamp, loc_dirty_bits, track, BankInvSession, InvIf
 mod context;
 pub use context::ReadContext;
 
-
-
 /// Generation-stamped read model. `rebuild_family` copies only the family
 /// whose gen moved; `npcs()` returns the last rebuild without allocating.
 /// Serializes to the whole-window shot sidecar JSON (the terminal state).
@@ -877,7 +875,4 @@ impl GameSnapshot {
     pub fn active_side_tab(&self) -> i32 {
         self.active_side_tab
     }
-
 }
-
-

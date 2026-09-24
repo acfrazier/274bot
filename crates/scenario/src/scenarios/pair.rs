@@ -1,7 +1,7 @@
 mod travel;
-pub(super) use travel::{follow_step, nav_kit_steps, tele_step};
 use super::production::*;
 use crate::*;
+pub(super) use travel::{follow_step, nav_kit_steps, tele_step};
 
 /// Lumbridge courtyard stand where the two-bot trade meets.
 const TRADE_COURTYARD: WorldTile = WorldTile {
@@ -854,4 +854,3 @@ pub(crate) fn duel_arena_scenario() -> Scenario {
         settings: pair_watch_settings("duel_arena", "Duel Arena Combat Trainer"),
     }
 }
-

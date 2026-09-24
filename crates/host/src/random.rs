@@ -732,7 +732,6 @@ fn is_trapped(kind: RandomKind) -> bool {
     matches!(kind, RandomKind::Maze | RandomKind::Mime | RandomKind::Box)
 }
 
-
 /// Client-visible identity used to pin a probe to one NPC actor. The client
 /// exposes no owner or spawn generation, so every available structural field
 /// that matters to this interaction is revalidated before each step.
@@ -766,17 +765,12 @@ impl PlantActor {
     }
 }
 
-
-
-
 // ---------------------------------------------------------------------------
 // Maze act machine (rs2b0t `solveMaze` loop body, tick-driven).
 // ---------------------------------------------------------------------------
-
 
 /// Whether NPC slot `index` is in the 45 s wrong-talk bin at `now_ms`
 /// (cooldown map values are expiry timestamps).
 fn binned(index: usize, now_ms: u64, cooldown: &CooldownMap) -> bool {
     cooldown.get(&index).is_some_and(|until| now_ms < *until)
 }
-

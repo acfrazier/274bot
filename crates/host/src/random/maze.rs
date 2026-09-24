@@ -380,7 +380,6 @@ impl MazeSolve {
     }
 }
 
-
 #[cfg(test)]
 #[path = "maze_tests.rs"]
 mod tests;

@@ -19,7 +19,6 @@ pub(super) const VARROCK_ANVIL: WorldTile = WorldTile {
     level: 0,
 };
 
-
 const AIO_TELEPORT_INJECT: &[ScriptSettingInject] = &[];
 const AIO_TELEPORT_FALADOR_INJECT: &[ScriptSettingInject] = &[ScriptSettingInject {
     id: "teleportName",
@@ -234,4 +233,3 @@ fn aio_teleport_variant(plan: AioTeleportPlan) -> Scenario {
         },
     }
 }
-

@@ -39,13 +39,15 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use super::identity;
 use super::identity::BinaryIdentity;
 use super::manifest::{CaseEntry, RunnerKind, SuiteManifest};
 use super::SuiteResult;
-use super::identity;
 
 mod config;
-pub use config::{inherited_deadline_env, validate_deadline_env, NativeConfig, DEADLINE_ENV, MAINLAND_ENV};
+pub use config::{
+    inherited_deadline_env, validate_deadline_env, NativeConfig, DEADLINE_ENV, MAINLAND_ENV,
+};
 #[cfg(test)]
 use config::{supported_arg, typed_env_key};
 
@@ -68,7 +70,6 @@ pub const PIPE_DRAIN: Duration = Duration::from_secs(5);
 pub const PIPE_DRAIN_AFTER_KILL: Duration = Duration::from_secs(2);
 /// Poll interval for the wait loop.
 const POLL: Duration = Duration::from_millis(50);
-
 
 /// Set by the signal handler; checked by the wait loop so an interactive Ctrl-C still
 /// reaps the child tree before the suite exits.
@@ -124,10 +125,6 @@ pub fn install_signal_handler() {
 /// child an interrupt could leave behind.
 #[cfg(not(any(unix, windows)))]
 pub fn install_signal_handler() {}
-
-
-
-
 
 /// A prepared child invocation.
 #[derive(Debug, Clone)]

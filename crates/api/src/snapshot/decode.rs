@@ -1200,7 +1200,6 @@ impl GameSnapshot {
         }
         true
     }
-
 }
 /// The local player's world tile `(x, z)` from the live client (build
 /// base + route head); `None` before the first `PLAYER_INFO`.

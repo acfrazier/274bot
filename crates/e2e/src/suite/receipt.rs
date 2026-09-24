@@ -1029,7 +1029,6 @@ fn capture_verdict(case: &CaseEntry, captures: &[CaptureRecord]) -> Verdict {
     }
 }
 
-
 /// The exit code as a receipt line prints it.
 fn exit_text(exit_code: Option<i32>) -> String {
     exit_code
@@ -1062,8 +1061,6 @@ fn is_sha256(value: &str) -> bool {
             .bytes()
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
-
-
 
 #[cfg(test)]
 #[path = "receipt_tests.rs"]

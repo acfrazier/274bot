@@ -18,11 +18,7 @@ pub(crate) use gem_cutter::*;
 mod door_opener;
 pub(crate) use door_opener::*;
 
-
-
 pub(crate) const STRENGTH_STAT: i32 = 2;
-
-
 
 /// East Ardougne market guard tile (rs2b0t Thiever live gold).
 pub(super) const ARDOUGNE_GUARD: WorldTile = WorldTile {
@@ -30,7 +26,6 @@ pub(super) const ARDOUGNE_GUARD: WorldTile = WorldTile {
     z: 3306,
     level: 0,
 };
-
 
 /// Durable prepare / run-prepared gates for Thiever (not script progress).
 pub(super) const THIEVER_FIXTURE_PREREQS: &[Proof] = &[
@@ -48,7 +43,6 @@ pub(super) const THIEVER_FIXTURE_PREREQS: &[Proof] = &[
     },
 ];
 
-
 /// Varrock West bank stand (Alcher / BankFletcher gold).
 const VARROCK_WEST_BANK: WorldTile = WorldTile {
     x: 3185,
@@ -59,7 +53,6 @@ const VARROCK_WEST_BANK: WorldTile = WorldTile {
 pub(crate) const NATURE_RUNE_ID: i32 = 561;
 pub(crate) const COINS_ID: i32 = 995;
 pub(crate) const STAFF_OF_FIRE_ID: i32 = 1387;
-
 
 pub(crate) const LOGS_ID: i32 = 1511;
 pub(crate) const BOW_STRING_ID: i32 = 1777;
@@ -121,7 +114,6 @@ pub(crate) fn bank_fletcher_close_seed_bank() -> Step {
     }
 }
 
-
 pub(crate) const FEATHER_ID: i32 = 314;
 pub(crate) const UNIDENTIFIED_GUAM_ID: i32 = 199;
 pub(crate) const GUAM_LEAF_ID: i32 = 249;
@@ -129,15 +121,8 @@ pub(crate) const FLETCHING_STAT: i32 = 9;
 pub(crate) const CRAFTING_STAT: i32 = 12;
 pub(crate) const HERBLORE_STAT: i32 = 15;
 
-
-
-
-
-
-
 pub(crate) const AGILITY_STAT: i32 = 16;
 pub(crate) const FLAX_ID: i32 = 1779;
-
 
 const GNOME_START: WorldTile = WorldTile {
     x: 2474,
@@ -238,7 +223,6 @@ pub(super) const DUEL_CHALLENGE: WorldTile = WorldTile {
     level: 0,
 };
 
-
 const GNOME_COURSE_RADIUS_INJECT: &[ScriptSettingInject] = &[ScriptSettingInject {
     id: "searchRadius",
     value: ScriptInjectValue::Num(8.0),
@@ -265,7 +249,6 @@ const BRIMHAVEN_AGILITY_INJECT: &[ScriptSettingInject] = &[
         value: ScriptInjectValue::Num(1000.0),
     },
 ];
-
 
 pub(crate) fn gnome_course_scenario() -> Scenario {
     gnome_course_variant("gnome_course", None)
