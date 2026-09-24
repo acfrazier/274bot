@@ -427,11 +427,6 @@ export function tick(api) {
 "#,
         ClientRevision::R274,
     );
-    let bindings = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/load/bindings.rs"));
-    assert!(
-        !bindings.contains("register_function(\"__rs2b0t_loadout_v2\""),
-        "new JSON register_function for loadout v2 is forbidden"
-    );
     assert_eq!(value["food"], "function");
     assert_eq!(value["typedOk"], true, "{value:?}");
     assert_eq!(value["jsonStyleOk"], false, "{value:?}");

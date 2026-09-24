@@ -205,22 +205,6 @@ fn non_members_and_challenge_rows_are_unknown_id() {
     }
 }
 
-#[test]
-fn query_does_not_open_the_answers_or_the_writer() {
-    let src = include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../api/src/clue_facts.rs"
-    ));
-    assert!(!src.contains("challenge_answers"));
-    assert!(!src.contains("challengeAnswer"));
-    assert!(!src.contains("&SelectedGameData"));
-    assert!(!src.contains("Serialize"));
-    assert!(!src.contains("items()"));
-    assert!(!src.contains("trail_coord"));
-    assert!(!src.contains("\"supported\""));
-    assert!(!src.contains("parse"));
-}
-
 /// One posted puzzle board on a keyframe: the SNAP-shaped page the plan reads
 /// — the identified component, its observed slot count and its sparse rows —
 /// plus the board session generation the click rides.

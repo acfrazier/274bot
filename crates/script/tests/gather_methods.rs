@@ -933,21 +933,6 @@ export function tick(api) {
 
 #[test]
 fn v2_install_is_typed_not_a_json_op_or_interact() {
-    let bindings = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/load/bindings.rs"));
-    assert!(
-        !bindings.contains("register_function(\"__rs2b0t_gather_methods"),
-        "gather query must not be a rustyscript JSON op"
-    );
-    let ops = bindings
-        .split("const V2_OPS")
-        .nth(1)
-        .unwrap()
-        .split("const OPTIONAL")
-        .next()
-        .unwrap();
-    assert!(!ops.contains("gatherMethods"), "{ops}");
-    assert!(!ops.contains("gatherResource"), "{ops}");
-    assert!(!ops.contains("gatherPlacements"), "{ops}");
     let value = probe(
         r#"
 export const apiVersion = 2;

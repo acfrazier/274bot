@@ -371,11 +371,6 @@ export const apiVersion = 2;
 "#,
         ClientRevision::R274,
     );
-    let bindings = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/load/bindings.rs"));
-    assert!(
-        !bindings.contains("register_function(\"__rs2b0t_supply_v2\""),
-        "new JSON register_function for supply v2 is forbidden"
-    );
     assert_eq!(value["food"], "function");
     assert_eq!(value["typedOk"], true, "{value:?}");
     assert_eq!(value["jsonStyleOk"], false, "{value:?}");

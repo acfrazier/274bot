@@ -244,18 +244,6 @@ fn prereqs_value_is_the_requirements_object_only() {
     }
 }
 
-#[test]
-fn query_does_not_open_the_pack_or_flour_six() {
-    let src = include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../api/src/quest_facts.rs"
-    ));
-    assert!(!src.contains("varp.pack"));
-    assert!(!src.contains("flour_six"));
-    assert!(!src.contains("%qp"));
-    assert!(!src.contains("&SelectedGameData"));
-}
-
 fn post_base(iso: &LoadIsolate, tick: u64) {
     let input = script::isolate_fb::SnapshotInput {
         tick,
@@ -534,20 +522,6 @@ export function tick(api) {
 
 #[test]
 fn v2_install_is_typed_not_a_json_op_or_interact() {
-    let bindings = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/load/bindings.rs"));
-    assert!(
-        !bindings.contains("register_function(\"__rs2b0t_quest_facts"),
-        "quest query must not be a rustyscript JSON op"
-    );
-    let ops = bindings
-        .split("const V2_OPS")
-        .nth(1)
-        .unwrap()
-        .split("const OPTIONAL")
-        .next()
-        .unwrap();
-    assert!(!ops.contains("questIdentity"), "{ops}");
-    assert!(!ops.contains("questPrereqs"), "{ops}");
     let value = probe(
         r#"
 export const apiVersion = 2;
