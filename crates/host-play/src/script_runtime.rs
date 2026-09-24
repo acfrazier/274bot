@@ -1410,7 +1410,19 @@ pub(super) fn dispatch_script_interact_cached(
                 );
             }
             // Not a game packet: the follow stops, nothing is written.
-            InteractReq::AbortWalk => abort_script_walk(navs, name),
+            InteractReq::AbortWalk { request_id } => {
+                // Only the walk the machine itself armed; a later walk has
+                // replaced it and is not the machine's to stop.
+                let owned = request_id != 0
+                    && navs
+                        .lock()
+                        .unwrap()
+                        .get(name)
+                        .is_some_and(|bot| bot.walk_request_id == request_id);
+                if owned {
+                    abort_script_walk(navs, name);
+                }
+            }
             InteractReq::WalkNearestBank => {
                 if let (Some((hx, hz, hl)), Some(nav_world)) = (here, world.as_deref()) {
                     if let Some(tile) = nearest_bank_booth(nav_world, (hx, hz, hl)) {

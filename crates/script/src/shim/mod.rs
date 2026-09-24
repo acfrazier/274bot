@@ -1138,8 +1138,13 @@ pub enum InteractReq {
     /// returned has stopped its walker). A Rust machine sends it when its
     /// own walk wait timed out, before a later click the follow's next
     /// walk packet would otherwise cancel.
+    /// `request_id` is the machine's own walk token: the host aborts only
+    /// while that walk is the armed one, so a later script walk survives.
     #[serde(rename = "abort-walk")]
-    AbortWalk,
+    AbortWalk {
+        #[serde(default)]
+        request_id: u64,
+    },
     /// Pure inspect-route preview. `x/z/level` are the destination.
     #[serde(rename = "inspect-route")]
     InspectRoute {

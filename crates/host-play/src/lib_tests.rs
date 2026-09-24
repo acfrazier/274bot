@@ -15239,44 +15239,67 @@ fn observer_pump_session_boundary_skips_guardian_producer_but_keeps_catalog_life
         .contains("session boundary after Start"));
 }
 
-/// A machine's timed-out walk sends `abort-walk`: the armed follow stops
-/// (as after OpenBooth), and no game packet is written.
+/// A machine's timed-out walk sends `abort-walk` with its own walk token:
+/// the armed follow stops only while that walk is the armed one (as after
+/// OpenBooth), and no game packet is written. A script walk armed since
+/// then survives it.
 #[test]
-fn abort_walk_request_stops_the_armed_follow_without_a_packet() {
+fn abort_walk_request_stops_only_the_machines_own_follow() {
     let mut c = bank_client();
     let mut snap = GameSnapshot::new();
     snap.rebuild(&c);
     let (navs, world) = empty_nav();
-    navs.lock().unwrap().insert(
-        "alice".to_string(),
-        NavBot {
-            route_generation: 3,
-            requested_route: Some(native_requested(
-                WorldTile {
-                    x: 3210,
-                    z: 3210,
-                    level: 0,
-                },
-                1,
-                false,
-            )),
-            ..Default::default()
-        },
+    let armed = |walk_request_id| NavBot {
+        route_generation: 3,
+        walk_request_id,
+        requested_route: Some(native_requested(
+            WorldTile {
+                x: 3210,
+                z: 3210,
+                level: 0,
+            },
+            1,
+            false,
+        )),
+        ..Default::default()
+    };
+    let mut abort = |request_id| {
+        let out_before = c.out.pos;
+        assert!(!dispatch_script_interact(
+            &mut c,
+            &snap,
+            None,
+            Some((3205, 3205, 0)),
+            &navs,
+            &world,
+            None,
+            "alice",
+            vec![script::shim::InteractReq::AbortWalk { request_id }],
+        ));
+        assert_eq!(c.out.pos, out_before, "abort-walk writes no packet");
+    };
+
+    // A script walk (token 9) replaced the machine's walk (token 7).
+    navs.lock().unwrap().insert("alice".to_string(), armed(9));
+    abort(7);
+    {
+        let bot = &navs.lock().unwrap()["alice"];
+        assert_eq!(bot.route_generation, 3, "the script's walk survives");
+        assert_eq!(bot.walk_request_id, 9);
+        assert!(bot.requested_route.is_some());
+    }
+    abort(0);
+    assert_eq!(
+        navs.lock().unwrap()["alice"].route_generation,
+        3,
+        "an unscoped abort stops nothing"
     );
-    let out_before = c.out.pos;
-    assert!(!dispatch_script_interact(
-        &mut c,
-        &snap,
-        None,
-        Some((3205, 3205, 0)),
-        &navs,
-        &world,
-        None,
-        "alice",
-        vec![script::shim::InteractReq::AbortWalk],
-    ));
-    assert_eq!(c.out.pos, out_before);
+
+    // The machine's own walk is still armed: it stops.
+    navs.lock().unwrap().insert("alice".to_string(), armed(7));
+    abort(7);
     let bot = &navs.lock().unwrap()["alice"];
     assert_eq!(bot.route_generation, 4, "the follow's route is superseded");
     assert!(bot.route.is_none());
+    assert!(bot.requested_route.is_none());
 }

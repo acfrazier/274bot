@@ -6037,7 +6037,9 @@ pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>
                 request_id: row.request_id(),
             }),
             "walk-nearest-bank" => out.push(crate::shim::InteractReq::WalkNearestBank),
-            "abort-walk" => out.push(crate::shim::InteractReq::AbortWalk),
+            "abort-walk" => out.push(crate::shim::InteractReq::AbortWalk {
+                request_id: row.request_id(),
+            }),
             "inspect-route" => out.push(crate::shim::InteractReq::InspectRoute {
                 x: row.x(),
                 z: row.z(),
@@ -6345,7 +6347,7 @@ fn interact_off<'b>(
         InteractReq::Walk { .. } => "walk",
         InteractReq::WalkNear { .. } => "walk-near",
         InteractReq::WalkNearestBank => "walk-nearest-bank",
-        InteractReq::AbortWalk => "abort-walk",
+        InteractReq::AbortWalk { .. } => "abort-walk",
         InteractReq::InspectRoute { .. } => "inspect-route",
         InteractReq::InspectAck { .. } => "inspect-ack",
         InteractReq::WalkTo { .. } => "walk-to",
@@ -6545,7 +6547,10 @@ fn interact_off<'b>(
                 b.push_slot_always(VT_IN_ALLOW_BANK_FETCH, true);
             }
         }
-        InteractReq::WalkNearestBank | InteractReq::AbortWalk => {}
+        InteractReq::WalkNearestBank => {}
+        InteractReq::AbortWalk { request_id } => {
+            b.push_slot_always(VT_IN_REQUEST_ID, *request_id);
+        }
         InteractReq::InspectRoute {
             x,
             z,
@@ -7307,7 +7312,7 @@ pub(crate) mod tests {
     #[test]
     fn encode_decode_interact_abort_walk_keeps_its_place_in_the_batch() {
         let reqs = vec![
-            InteractReq::AbortWalk,
+            InteractReq::AbortWalk { request_id: 42 },
             InteractReq::Loc {
                 x: 7,
                 z: 5,

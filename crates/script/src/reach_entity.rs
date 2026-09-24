@@ -257,7 +257,9 @@ impl Walk {
         if !cx.clock().bound_reached() {
             return None;
         }
-        cx.emit(InteractReq::AbortWalk);
+        cx.emit(InteractReq::AbortWalk {
+            request_id: self.token,
+        });
         Some(false)
     }
 }
@@ -1018,18 +1020,35 @@ mod tests {
             panic!("walk-hops runs");
         };
         machine::step(&mut NoJs);
-        assert!(matches!(
-            machine::merge_ops(Vec::new()).as_slice(),
-            [InteractReq::Walk { x: 10, z: 0, .. }]
-        ));
+        let walk_token = match machine::merge_ops(Vec::new()).as_slice() {
+            [InteractReq::Walk {
+                x: 10,
+                z: 0,
+                request_id,
+                ..
+            }] => *request_id,
+            other => panic!("expected the walk, got {other:?}"),
+        };
+        assert_ne!(walk_token, 0);
         machine::step(&mut NoJs);
         assert!(machine::merge_ops(Vec::new()).is_empty(), "still walking");
+        // A script walk starts while the machine waits: it takes the wait
+        // slot and the host's armed walk, under its own token.
+        let script_token = walk_wait::dispatch(&json!({
+            "op": "begin", "x": 3, "z": 3, "level": 0, "radius": 0,
+        }))
+        .as_u64()
+        .unwrap();
+        assert_ne!(script_token, walk_token);
         machine::tests::expire_deadlines();
         machine::step(&mut NoJs);
         assert_eq!(
             machine::merge_ops(Vec::new()),
-            vec![InteractReq::AbortWalk],
-            "a timed-out wait stops the follow before anything else is sent"
+            vec![InteractReq::AbortWalk {
+                request_id: walk_token
+            }],
+            "a timed-out wait stops only its own follow (the host keeps the \
+             script's walk, whose token differs)"
         );
         assert_eq!(machine::take(h), Take::Settled(Outcome::Done(json!(false))));
     }
