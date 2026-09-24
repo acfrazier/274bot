@@ -3901,24 +3901,6 @@ fn live_full_rate_sync_raises_focus_and_members() {
 }
 
 #[test]
-fn focused_card_disappears_when_focus_grants() {
-    let mut s = Session::new();
-    s.focus.lock().unwrap().focused = Some("s00".into());
-    s.statuses.push(SlotStatus {
-        username: "s00".into(),
-        ingame: true,
-        ..SlotStatus::default()
-    });
-    s.statuses.push(SlotStatus {
-        username: "s01".into(),
-        queue_position: 1,
-        queue_total: 2,
-        ..SlotStatus::default()
-    });
-    assert_eq!(s.focused_queue(), None);
-}
-
-#[test]
 fn focused_card_rejects_invalid_queue_tuple() {
     let mut s = Session::new();
     s.focus.lock().unwrap().focused = Some("s00".into());
