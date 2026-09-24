@@ -909,10 +909,11 @@ impl<'a> Interactions<'a> {
     }
 
     /// Wear or wield an inventory item by obj id (the BankBudget
-    /// session's arm): resolves the held item, dispatches its `Wear` menu
-    /// op (or `Wield` for weapons), with the same preconditions as
+    /// session's arm): resolves the held item, dispatches its own `Wear`
+    /// (else `Wield`, else `Equip`) menu op — the frozen shim's
+    /// `/wield|wear|equip/i` — with the same preconditions as
     /// [`Interactions::interact`]. Refuses `StaleTarget` when the item is
-    /// not held, `InvalidAction` when its menu has no Wear/Wield slot.
+    /// not held, `InvalidAction` when its menu has none of the three.
     pub fn wear(&mut self, id: i32) -> SendResult<'a> {
         let snapshot = self.snapshot;
         if let Some(reason) = self.precondition(snapshot, false) {
@@ -925,7 +926,9 @@ impl<'a> Interactions<'a> {
         if let Some(reason) = self.check_target(&target, snapshot) {
             return refuse(snapshot, reason);
         }
-        let operation = operation_of(&target, "Wear").or_else(|| operation_of(&target, "Wield"));
+        let operation = operation_of(&target, "Wear")
+            .or_else(|| operation_of(&target, "Wield"))
+            .or_else(|| operation_of(&target, "Equip"));
         let Some(operation) = operation else {
             return refuse(snapshot, SendReason::InvalidAction);
         };

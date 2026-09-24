@@ -4859,6 +4859,34 @@ fn status(row: &TrailMembershipRow) -> String {
     format!("clue: {}", row.alias)
 }
 
+/// The frozen `paintClueProgress` rows this machine can state truthfully:
+/// none when no token is live (the caller prints its own idle line), else the
+/// machine's own phase and its last dispatched walk dest. Never an invented
+/// clue name, leg, attempt, target or distance: this machine models none of
+/// those, so it paints none of them.
+fn paint_rows(rt: &ClueRuntime) -> Value {
+    if matches!(rt.phase, Phase::Idle) {
+        return Value::Array(Vec::new());
+    }
+    let mut rows = vec![json!({ "text": format!("clue: {}", phase_name(&rt.phase)) })];
+    if let Some(dest) = rt.walk_dest {
+        rows.push(json!({
+            "text": format!("walk dest ({},{},{})", dest.x, dest.z, dest.level)
+        }));
+    }
+    Value::Array(rows)
+}
+
+fn phase_name(phase: &Phase) -> &'static str {
+    match phase {
+        Phase::Idle => "idle",
+        Phase::Gate => "gate",
+        Phase::Reporting => "reporting",
+        Phase::Steady => "steady",
+        Phase::Collecting => "collecting",
+    }
+}
+
 /// The ground row a Collecting call dispatched a Take for: the posted id that
 /// tells the row apart, and the name its `took '…' from the casket` line
 /// reports.
@@ -5656,6 +5684,10 @@ pub fn dispatch(selected: Option<&SelectedGameData>, input: &Value) -> Value {
         "ownsEquipment" => RUNTIME.with(|rt| rt.borrow().owns_equipment()),
         "retry" => RUNTIME.with(|rt| rt.borrow_mut().retry()),
         "abandon" => RUNTIME.with(|rt| rt.borrow_mut().abandoned()),
+        // The paint seat: the rows the frozen `paintClueProgress` shows for a
+        // live clue, read by the shim as one crossing. `[]` sends the caller's
+        // own idle line, exactly as the frozen no-clue branch does.
+        "paint" => RUNTIME.with(|rt| paint_rows(&rt.borrow())),
         _ => json!({ "kind": "notImpl", "reason": "unknown clue op" }),
     }
 }

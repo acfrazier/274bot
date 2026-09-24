@@ -7606,6 +7606,83 @@ export default class T extends LoopingBot {
     iso.join();
 }
 
+/// The clue paint line must draw: the idle line while no clue machine is
+/// live, and never a throw that blanks a card's whole paint panel.
+#[test]
+fn isolate_clue_paint_draws_the_idle_line_without_a_clue() {
+    let src = r#"
+import { Paint } from '../../paint/Paint.js';
+import { paintClueProgress } from '../../api/ai/clues/cluePaint.js';
+export default class T extends LoopingBot {
+    loop() {
+        const frame = Paint.begin(globalThis.__rs2b0t_paint_ctx, { dock: 'chatbox' });
+        paintClueProgress(frame, 'watching the pack for clues');
+        frame.end();
+        globalThis.__probe = 'painted';
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    post_snapshot_input(&iso, &base_snapshot());
+    iso.on_game_tick(1);
+    let probe = iso.probe("__probe").unwrap();
+    assert_eq!(probe, "painted", "onPaint must complete with a clue paint");
+    let logs = iso.drain_logs();
+    assert!(
+        logs.iter().all(|l| !l.contains("not impl")),
+        "no clue in progress is the frozen idle line, never a not-impl: {logs:?}"
+    );
+    iso.join();
+}
+
+/// `bot.settings` and the drop/shop tables are cached per posted object, so a
+/// new bag or content post must invalidate the cache, not answer the old one.
+#[test]
+fn isolate_settings_and_content_caches_invalidate_on_a_new_post() {
+    let src = r#"
+import { DROP_DB } from '../../data/dropdb.js';
+import { SHOP_DB } from '../../data/shopdb.js';
+export default class T extends LoopingBot {
+    loop() {
+        const host = globalThis.__rs2b0t_host;
+        const read = (fn) => {
+            try {
+                return String(fn());
+            } catch (e) {
+                return 'throw:' + String(e.message || e);
+            }
+        };
+        const first = { str: this.settings.str('mode', 'none'), drop: read(() => DROP_DB['Goblin']) };
+        host.settingsBag = { mode: 'second' };
+        host.content = { selected_facts: false, drop_db: { Goblin: ['Coins'] } };
+        const second = { str: this.settings.str('mode', 'none'), drop: read(() => DROP_DB['Goblin']) };
+        const shops = read(() => Object.keys(SHOP_DB).length);
+        globalThis.__probe = JSON.stringify({ first, second, shops });
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    post_snapshot_input(&iso, &base_snapshot());
+    iso.on_game_tick(1);
+    let value = iso.probe("__probe").unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(value.as_str().unwrap()).unwrap();
+    assert_eq!(
+        parsed["first"]["str"], "none",
+        "no posted bag reads the fallback: {parsed:?}"
+    );
+    assert!(
+        parsed["first"]["drop"]
+            .as_str()
+            .unwrap_or("")
+            .contains("throw"),
+        "no posted drop table throws: {parsed:?}"
+    );
+    assert_eq!(parsed["second"]["str"], "second", "{parsed:?}");
+    assert_eq!(parsed["second"]["drop"], "Coins", "{parsed:?}");
+    assert_eq!(parsed["shops"], "0", "{parsed:?}");
+    iso.join();
+}
+
 #[test]
 fn isolate_bury_one_in_fight_queues_held_bury_when_idle() {
     let src = r#"

@@ -1,6 +1,6 @@
 // Generated from tests/fixtures/js_declared_abi.json — do not edit by hand.
 // Regen: cargo test -p script --test declared_abi regen_js_declared_abi -- --ignored
-import { notImpl, proxy } from '../../shim/_kernel.js';
+import { notImpl, notImplValue, proxy } from '../../shim/_kernel.js';
 
 export const defineBot = globalThis.defineBot;
 
@@ -35,10 +35,10 @@ export { RUNES, RUNE_OPTIONS, DEFAULT_RUNE } from '../../data/runeCraftLocations
 
 export const NAV_PURE_WALK = { useTeleportCatalog: false, policy: { useTeleports: false } };
 export const NAV_WITH_TELES = { useTeleportCatalog: true, policy: { useTeleports: true } };
-export const ALL_FISHING_GEAR_NAMES = proxy('ALL_FISHING_GEAR_NAMES', {});
-export const AXE_BAR_FOR = proxy('AXE_BAR_FOR', {});
-export const AXE_SHOP_COSTS = proxy('AXE_SHOP_COSTS', {});
-export const AXE_SMITH_LEVEL = proxy('AXE_SMITH_LEVEL', {});
+export const ALL_FISHING_GEAR_NAMES = notImplValue('ALL_FISHING_GEAR_NAMES');
+export const AXE_BAR_FOR = notImplValue('AXE_BAR_FOR');
+export const AXE_SHOP_COSTS = notImplValue('AXE_SHOP_COSTS');
+export const AXE_SMITH_LEVEL = notImplValue('AXE_SMITH_LEVEL');
 export class AcquireTask {
     constructor() {}
     execute() { throw notImpl('AcquireTask.execute'); }
@@ -51,27 +51,27 @@ export class Area {
     static rectangular() { throw notImpl('Area.rectangular'); }
     constructor() {}
 }
-export const BOB_VENDOR = proxy('BOB_VENDOR', {});
-export const BROKEN_AXE = proxy('BROKEN_AXE', {});
+export const BOB_VENDOR = notImplValue('BOB_VENDOR');
+export const BROKEN_AXE = notImplValue('BROKEN_AXE');
 export class BranchTask {
     failure() { throw notImpl('BranchTask.failure'); }
     success() { throw notImpl('BranchTask.success'); }
     validate() { throw notImpl('BranchTask.validate'); }
     constructor() {}
 }
-export const COINS = proxy('COINS', {});
-export const DEFAULT_BOOTH_NAME = proxy('DEFAULT_BOOTH_NAME', {});
-export const DEFAULT_BOOTH_OP = proxy('DEFAULT_BOOTH_OP', {});
-export const FISHING_LOCATIONS = proxy('FISHING_LOCATIONS', {});
-export const FISHING_LOCATION_OPTIONS = proxy('FISHING_LOCATION_OPTIONS', {});
-export const FISHING_METHODS = proxy('FISHING_METHODS', {});
-export const FISHING_METHOD_OPTIONS = proxy('FISHING_METHOD_OPTIONS', {});
-export const FISHING_SHOP_COSTS = proxy('FISHING_SHOP_COSTS', {});
-export const FORGETFUL_BANK_ODDS = proxy('FORGETFUL_BANK_ODDS', {});
-export const FORGETFUL_BANK_SETTING = proxy('FORGETFUL_BANK_SETTING', {});
-export const GERRANT_ONLY_FISHING = proxy('GERRANT_ONLY_FISHING', {});
-export const GERRANT_VENDOR = proxy('GERRANT_VENDOR', {});
-export const HARRY_VENDOR = proxy('HARRY_VENDOR', {});
+export const COINS = notImplValue('COINS');
+export const DEFAULT_BOOTH_NAME = notImplValue('DEFAULT_BOOTH_NAME');
+export const DEFAULT_BOOTH_OP = notImplValue('DEFAULT_BOOTH_OP');
+export const FISHING_LOCATIONS = notImplValue('FISHING_LOCATIONS');
+export const FISHING_LOCATION_OPTIONS = notImplValue('FISHING_LOCATION_OPTIONS');
+export const FISHING_METHODS = notImplValue('FISHING_METHODS');
+export const FISHING_METHOD_OPTIONS = notImplValue('FISHING_METHOD_OPTIONS');
+export const FISHING_SHOP_COSTS = notImplValue('FISHING_SHOP_COSTS');
+export const FORGETFUL_BANK_ODDS = notImplValue('FORGETFUL_BANK_ODDS');
+export const FORGETFUL_BANK_SETTING = notImplValue('FORGETFUL_BANK_SETTING');
+export const GERRANT_ONLY_FISHING = notImplValue('GERRANT_ONLY_FISHING');
+export const GERRANT_VENDOR = notImplValue('GERRANT_VENDOR');
+export const HARRY_VENDOR = notImplValue('HARRY_VENDOR');
 export class InvItem {
     actions() { throw notImpl('InvItem.actions'); }
     count() { throw notImpl('InvItem.count'); }
@@ -86,23 +86,23 @@ export class LeafTask {
     execute() { throw notImpl('LeafTask.execute'); }
     constructor() {}
 }
-export const MAP_SQUARE = proxy('MAP_SQUARE', {});
-export const MINING_LOCATIONS = proxy('MINING_LOCATIONS', {});
-export const MINING_LOCATION_OPTIONS = proxy('MINING_LOCATION_OPTIONS', {});
-export const MINING_LOCATION_OPTION_LABELS = proxy('MINING_LOCATION_OPTION_LABELS', {});
-export const NEARBY_BANK_RADIUS = proxy('NEARBY_BANK_RADIUS', {});
-export const NURMOF_VENDOR = proxy('NURMOF_VENDOR', {});
-export const PICKAXE_SHOP_COSTS = proxy('PICKAXE_SHOP_COSTS', {});
-export const TOLL_COIN_TARGET = proxy('TOLL_COIN_TARGET', {});
-export const TOOL_ACQUIRE_OPTIONS = proxy('TOOL_ACQUIRE_OPTIONS', {});
-export const TOOL_ACQUIRE_SETTING = proxy('TOOL_ACQUIRE_SETTING', {});
-export const VARROCK_ANVIL_BANK = proxy('VARROCK_ANVIL_BANK', {});
-export const VARROCK_ANVIL_STAND = proxy('VARROCK_ANVIL_STAND', {});
-export const WALK_DESTINATIONS = proxy('WALK_DESTINATIONS', {});
-export const WALK_OPTIONS = proxy('WALK_OPTIONS', {});
-export const WHIRLPOOL_IDS = proxy('WHIRLPOOL_IDS', {});
-export const WOODCUTTING_LOCATIONS = proxy('WOODCUTTING_LOCATIONS', {});
-export const WOODCUTTING_LOCATION_OPTIONS = proxy('WOODCUTTING_LOCATION_OPTIONS', {});
+export const MAP_SQUARE = notImplValue('MAP_SQUARE');
+export const MINING_LOCATIONS = notImplValue('MINING_LOCATIONS');
+export const MINING_LOCATION_OPTIONS = notImplValue('MINING_LOCATION_OPTIONS');
+export const MINING_LOCATION_OPTION_LABELS = notImplValue('MINING_LOCATION_OPTION_LABELS');
+export const NEARBY_BANK_RADIUS = notImplValue('NEARBY_BANK_RADIUS');
+export const NURMOF_VENDOR = notImplValue('NURMOF_VENDOR');
+export const PICKAXE_SHOP_COSTS = notImplValue('PICKAXE_SHOP_COSTS');
+export const TOLL_COIN_TARGET = notImplValue('TOLL_COIN_TARGET');
+export const TOOL_ACQUIRE_OPTIONS = notImplValue('TOOL_ACQUIRE_OPTIONS');
+export const TOOL_ACQUIRE_SETTING = notImplValue('TOOL_ACQUIRE_SETTING');
+export const VARROCK_ANVIL_BANK = notImplValue('VARROCK_ANVIL_BANK');
+export const VARROCK_ANVIL_STAND = notImplValue('VARROCK_ANVIL_STAND');
+export const WALK_DESTINATIONS = notImplValue('WALK_DESTINATIONS');
+export const WALK_OPTIONS = notImplValue('WALK_OPTIONS');
+export const WHIRLPOOL_IDS = notImplValue('WHIRLPOOL_IDS');
+export const WOODCUTTING_LOCATIONS = notImplValue('WOODCUTTING_LOCATIONS');
+export const WOODCUTTING_LOCATION_OPTIONS = notImplValue('WOODCUTTING_LOCATION_OPTIONS');
 export function acquireKeepNames() { throw notImpl('acquireKeepNames'); }
 export const apiVersion = 1;
 export function axeShopOffers() { throw notImpl('axeShopOffers'); }

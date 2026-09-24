@@ -575,7 +575,7 @@ pub fn render_declared_surface(exports: &[DeclaredExport]) -> String {
     let mut out = String::from(
         "// Generated from tests/fixtures/js_declared_abi.json — do not edit by hand.\n\
          // Regen: cargo test -p script --test declared_abi regen_js_declared_abi -- --ignored\n\
-         import { notImpl, proxy } from '../../shim/_kernel.js';\n\n",
+         import { notImpl, notImplValue, proxy } from '../../shim/_kernel.js';\n\n",
     );
     out.push_str("export const defineBot = globalThis.defineBot;\n\n");
     covered.insert("defineBot");
@@ -617,7 +617,7 @@ pub fn render_declared_surface(exports: &[DeclaredExport]) -> String {
                     out.push_str("export const apiVersion = 1;\n");
                 } else {
                     out.push_str(&format!(
-                        "export const {} = proxy('{}', {{}});\n",
+                        "export const {} = notImplValue('{}');\n",
                         exp.name, exp.name
                     ));
                 }

@@ -33,6 +33,19 @@ export const proxy = (ns, members) =>
         },
     });
 
+/**
+ * A declared value no shim module owns: any use of it — a member read, a
+ * string conversion, arithmetic, even `Object.prototype.toString` — throws
+ * `not impl`, so a bundle importer sees the honest miss instead of a fake
+ * `[]`/`''`/`-1`, `[object Object]` or `NaN`.
+ */
+export const notImplValue = (ns) =>
+    new Proxy(Object.create(null), {
+        get(_target, prop) {
+            throw notImpl(typeof prop === 'string' ? ns + '.' + prop : ns);
+        },
+    });
+
 export function distanceTo(a, b) {
     if (!a || !b) return Infinity;
     return globalThis.__rs2b0t_distance(a, b);

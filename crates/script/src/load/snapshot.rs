@@ -9,12 +9,17 @@ use rustyscript::Runtime;
 use std::cell::Cell;
 
 thread_local! {
-    /// The previous post's `animating` flag and tick. The swing-start edge
-    /// (`fight_upkeep.swingStartedThisTick`: the tick the local player's
-    /// primary animation began) is the one boolean of cross-post state it
-    /// needs; Rust keeps it here instead of a JS clock. Cleared when the JS
+    /// The previous post's `animating` flag and tick, the only cross-post
+    /// state the swing-start edge needs (`fight_upkeep.swingStartedThisTick`,
+    /// `eat_timing.AttackClock`: true only on the tick the local player's
+    /// primary animation began). Cleared on `ResetSession` and whenever the JS
     /// snapshot object is rebuilt.
     static LAST_ANIMATING: Cell<Option<(bool, u64)>> = const { Cell::new(None) };
+}
+
+/// `ResetSession`: the swing edge starts over with the new session.
+pub(super) fn on_reset() {
+    LAST_ANIMATING.with(|cell| cell.set(None));
 }
 
 /// Materialise the decoded FlatBuffer snapshot as the JS object the
@@ -778,9 +783,12 @@ pub(super) fn materialize_snapshot(
         set(&mut scope, obj, "animating", falsy)?;
         false
     };
-    // The one fact `fight_upkeep` / `eat_timing` read: the tick the local
-    // player's primary animation began. A second post in the same tick keeps
-    // the first post's answer, as a caller-driven clock would.
+    // The one fact `fight_upkeep` / `eat_timing` read: true only on the tick
+    // the local player's primary animation began. The posted flag is a
+    // boolean, so an animation change that keeps it true is invisible here:
+    // the edge is a false->true flip on a new tick, and a second post in the
+    // same tick does not re-arm it (the frozen `AttackClock` answers true only
+    // for the tick it recorded).
     let tick_number = snap.tick();
     let swing_started = LAST_ANIMATING.with(|cell| {
         let previous = cell.replace(Some((animating_now, tick_number)));
