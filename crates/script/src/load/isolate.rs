@@ -251,6 +251,16 @@ impl Drop for TickLoopFinish {
     }
 }
 
+/// Join (or Drop) has claimed the isolate for Stop and armed a terminate
+/// for the running tick. A tick phase must not start after that point: an
+/// earlier call whose error is ignored may already have absorbed the
+/// terminate, and a spinning `loop()` would then never be interrupted.
+/// Join sets the phase before it fires the terminate, so a check made
+/// after any absorbing call sees it.
+fn tick_claimed(teardown: &Mutex<TeardownState>) -> bool {
+    teardown.lock().unwrap().phase != TeardownPhase::Running
+}
+
 /// Record the eligible tick number on the host handle
 /// (`__rs2b0t_host.tick`) before any of the tick's JS runs.
 fn record_tick(runtime: &mut Runtime, n: u64) {
@@ -1474,6 +1484,7 @@ fn run_tick_phases(
     events_consumed: bool,
     out: &Sender<ThreadMsg>,
     loop_settled: &mut bool,
+    teardown: &Mutex<TeardownState>,
 ) -> Result<(), rustyscript::Error> {
     *loop_settled |= runner.poll(runtime, out, n) && compat;
     if let Phase::StartFailed = runner.phase {
@@ -1481,9 +1492,18 @@ fn run_tick_phases(
     }
     // BotHost tick listeners, before any wait settles this tick. Absent
     // when the card never loaded BotHost.
+    if tick_claimed(teardown) {
+        return Ok(());
+    }
     let _ =
         runtime.call_function_immediate::<()>(None, "__rs2b0t_fire_tick_listeners", json_args!());
+    if tick_claimed(teardown) {
+        return Ok(());
+    }
     runtime.call_function_immediate::<()>(None, "__rs2b0t_pump", json_args!(n))?;
+    if tick_claimed(teardown) {
+        return Ok(());
+    }
     match runner.phase {
         // An onStart a listener or a settled wait just finished lets the
         // first `loop()` run on this tick.
@@ -1503,12 +1523,15 @@ fn run_tick_phases(
         }
         Phase::StartFailed | Phase::Idle | Phase::Running(_) => {}
     }
-    if events_consumed && runner.started() {
+    if events_consumed && runner.started() && !tick_claimed(teardown) {
         runtime.call_function_immediate::<()>(
             None,
             "__rs2b0t_flush_native_events",
             json_args!(),
         )?;
+    }
+    if tick_claimed(teardown) {
+        return Ok(());
     }
     if let Phase::Idle = runner.phase {
         if compat {
@@ -1927,6 +1950,12 @@ fn tick_loop(
                 {
                     continue;
                 }
+                // Stop is queued behind this tick and join has armed its
+                // terminate for it: run no script, so that terminate
+                // reaches the hook's cancel instead of an ignored call.
+                if tick_claimed(&teardown) {
+                    continue;
+                }
                 let start = Instant::now();
                 // Every shape records the tick first, so machine callbacks,
                 // listeners and waits all see this tick's number.
@@ -2041,7 +2070,11 @@ fn tick_loop(
                 // runs through the Rust `Runner`. Onward work lands in
                 // the drain below.
                 let mut loop_settled = false;
-                let result: Result<(), rustyscript::Error> = if v2_native {
+                let result: Result<(), rustyscript::Error> = if tick_claimed(&teardown) {
+                    // A machine callback or native event absorbed join's
+                    // terminate: the loop must not start after it.
+                    Ok(())
+                } else if v2_native {
                     let pumped =
                         runtime.call_function_immediate::<()>(None, "__rs2b0t_pump", json_args!(n));
                     // Do not re-enter tick while a previous returned
@@ -2050,7 +2083,7 @@ fn tick_loop(
                     let v2_pending = runtime
                         .eval::<bool>("!!globalThis.__rs_v2_tick_pending")
                         .unwrap_or(false);
-                    let ticked = if v2_pending {
+                    let ticked = if v2_pending || tick_claimed(&teardown) {
                         Ok(())
                     } else {
                         runtime.call_function_immediate(None, "__rs_tick", json_args!(n))
@@ -2065,6 +2098,7 @@ fn tick_loop(
                         events_consumed,
                         &out,
                         &mut loop_settled,
+                        &teardown,
                     )
                 };
                 // Eligible NativeTick only: pause, generation mismatch,
@@ -2093,8 +2127,10 @@ fn tick_loop(
                 // A machine callback whose promise the pump (or the drain)
                 // settled resumes its row in this tick, and a row that ends
                 // here settles its await in this tick too.
-                if let Err(e) = super::machine_v8::resume(&mut runtime) {
-                    let _ = out.send(ThreadMsg::Log(format!("tick {n}: machines: {e}")));
+                if !tick_claimed(&teardown) {
+                    if let Err(e) = super::machine_v8::resume(&mut runtime) {
+                        let _ = out.send(ThreadMsg::Log(format!("tick {n}: machines: {e}")));
+                    }
                 }
                 if !v2_native {
                     // A loop that finished in the drain frees the
