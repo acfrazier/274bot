@@ -752,3 +752,98 @@ export default class T extends LoopingBot {
     assert!(iso.drain_interacts().is_empty(), "no final walk needed");
     iso.join();
 }
+
+#[test]
+fn walk_with_hops_walks_to_the_stand_then_opens_and_waits_the_frozen_ticks_to_climb() {
+    let src = r#"
+import { walkWithHops } from '../../api/ai/quests/exec/primitives.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__did) return;
+        globalThis.__did = true;
+        globalThis.__ok = null;
+        globalThis.__ok = await walkWithHops({ x: 2532, z: 9600, level: 0 }, 2, [
+            { stand: { x: 2532, z: 4712, level: 0 }, locName: 'Trapdoor', op: 'Climb-down',
+              open: 'Open', arrive: { x: 2532, z: 9601, level: 0 } },
+        ], () => {});
+    }
+}
+"#;
+    let iso = spawn(src);
+    let shut = ["Open".to_string()];
+    let opened = ["Climb-down".to_string()];
+    let trapdoor = |ops| {
+        let mut loc = npc("Trapdoor", ops, 0);
+        loc.id = 1570;
+        loc.z = 4713;
+        loc
+    };
+    let closed_locs = [trapdoor(&shut)];
+    let open_locs = [trapdoor(&opened)];
+    let mut snap = base();
+    snap.here = Some(TileInput {
+        x: 2500,
+        z: 4712,
+        level: 0,
+    });
+    snap.locs = &closed_locs;
+    post(&iso, &snap);
+    tick(&iso, 1);
+    assert!(
+        matches!(
+            iso.drain_interacts().as_slice(),
+            [InteractReq::WalkNear {
+                x: 2532,
+                z: 4712,
+                radius: 2,
+                ..
+            }]
+        ),
+        "far from the hop: walk to its stand first"
+    );
+    let loc_op = |action: &str| InteractReq::Loc {
+        x: 2532,
+        z: 4713,
+        level: 0,
+        action: action.into(),
+        id: Some(1570),
+    };
+    snap.tick = 2;
+    snap.here = Some(TileInput {
+        x: 2531,
+        z: 4712,
+        level: 0,
+    });
+    post(&iso, &snap);
+    tick(&iso, 2);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![loc_op("Open")],
+        "no ladder yet: open"
+    );
+    // Frozen: delayTicks(2), re-find, delayTicks(2), re-find.
+    for n in 3..=5 {
+        snap.tick = n;
+        snap.locs = if n == 5 { &open_locs } else { &closed_locs };
+        post(&iso, &snap);
+        tick(&iso, n);
+        assert!(iso.drain_interacts().is_empty(), "tick {n}: still waiting");
+    }
+    snap.tick = 6;
+    post(&iso, &snap);
+    tick(&iso, 6);
+    assert_eq!(iso.drain_interacts(), vec![loc_op("Climb-down")]);
+    assert_eq!(iso.probe("__ok").unwrap(), Value::Null);
+    snap.tick = 7;
+    snap.here = Some(TileInput {
+        x: 2532,
+        z: 9601,
+        level: 0,
+    });
+    snap.locs = &[];
+    post(&iso, &snap);
+    tick(&iso, 7);
+    tick(&iso, 8);
+    assert_eq!(iso.probe("__ok").unwrap(), true);
+    iso.join();
+}

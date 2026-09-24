@@ -604,6 +604,7 @@ export default class T extends LoopingBot {
             op: 'Attack',
             expect: () => globalThis.__ready === true,
             log: (m) => globalThis.__logs.push(String(m)),
+            openWhenUnreachable: globalThis.__probe === true,
         });
     }
 }
@@ -674,5 +675,275 @@ fn entity_op_that_could_not_click_retries_after_one_tick() {
     tick(&iso, 3);
     assert_eq!(iso.probe("__ok").unwrap(), "retry");
     assert_eq!(iso.probe("__clicks").unwrap(), 0);
+    iso.join();
+}
+
+const GRID: i32 = 16;
+
+/// A posted reach view over `0..16 x 0..16` on level 0, flooded from
+/// `here`: `exact` tiles are reachable exactly, `adj` with `adjacentOk`.
+struct Grid {
+    reachable: Vec<u32>,
+    reachable_adj: Vec<u32>,
+    exact_rank: Vec<u16>,
+    adjacent_rank: Vec<u16>,
+    step: Vec<u8>,
+}
+
+fn grid(here: (i32, i32), exact: &[(i32, i32)], adj: &[(i32, i32)]) -> Grid {
+    let n = (GRID * GRID) as usize;
+    let index = |(x, z): (i32, i32)| (x * GRID + z) as usize;
+    let mut g = Grid {
+        reachable: vec![0; n.div_ceil(32)],
+        reachable_adj: vec![0; n.div_ceil(32)],
+        exact_rank: vec![u16::MAX; n],
+        adjacent_rank: vec![u16::MAX; n],
+        step: vec![0; n],
+    };
+    for &tile in exact.iter().chain([&here]) {
+        let i = index(tile);
+        g.reachable[i / 32] |= 1 << (i % 32);
+        g.exact_rank[i] = if tile == here { 0 } else { 1 };
+    }
+    for &tile in adj.iter().chain(exact).chain([&here]) {
+        let i = index(tile);
+        g.reachable_adj[i / 32] |= 1 << (i % 32);
+        g.adjacent_rank[i] = if tile == here { 0 } else { 1 };
+    }
+    g
+}
+
+fn view(g: &Grid) -> ReachViewInput<'_> {
+    ReachViewInput {
+        available: true,
+        base_x: 0,
+        base_z: 0,
+        level: 0,
+        width: GRID,
+        height: GRID,
+        walkable: &g.reachable,
+        reachable: &g.reachable,
+        reachable_adj: &g.reachable_adj,
+        exact_rank: &g.exact_rank,
+        adjacent_rank: &g.adjacent_rank,
+        step: &g.step,
+        canlight: &[],
+        stamp: 0,
+    }
+}
+
+fn barrier<'a>(
+    name: &'a str,
+    actions: &'a [String],
+    id: i32,
+    x: i32,
+    z: i32,
+    distance: i32,
+) -> SceneEntityInput<'a> {
+    let mut loc = npc(name, actions, 0, x, z, distance, false);
+    loc.id = id;
+    loc
+}
+
+fn loc_op(x: i32, z: i32, action: &str, id: i32) -> InteractReq {
+    InteractReq::Loc {
+        x,
+        z,
+        level: 0,
+        action: action.into(),
+        id: Some(id),
+    }
+}
+
+fn cant_reach(seq: i32) -> [ChatLineInput<'static>; 1] {
+    [ChatLineInput {
+        seq,
+        text: "I can't reach that!",
+        type_: 0,
+        username: None,
+    }]
+}
+
+fn logs(iso: &LoadIsolate) -> Vec<String> {
+    serde_json::from_value(iso.probe("__logs").unwrap()).unwrap()
+}
+
+#[test]
+fn entity_op_walks_to_and_opens_the_door_toward_the_target_then_retries() {
+    let iso = spawn(ENTITY_OP);
+    let open = ["Open".to_string()];
+    // (6,5) is reachable, the target (8,5) is not. The decoy is nearer but
+    // lies away from the target (frozen towardDest), so it is not opened.
+    let g = grid((5, 5), &[(6, 5), (1, 1)], &[]);
+    let locs = [
+        barrier("Door", &open, 1530, 7, 5, 2),
+        barrier("Door", &open, 99, 0, 1, 1),
+    ];
+    let mut snap = base(stand());
+    snap.reach = view(&g);
+    snap.locs = &locs;
+    post(&iso, &snap);
+    tick(&iso, 1);
+    assert_eq!(iso.probe("__clicks").unwrap(), 1);
+
+    let lines = cant_reach(3);
+    snap.tick = 2;
+    snap.chat_lines = &lines;
+    post(&iso, &snap);
+    tick(&iso, 2);
+    let walk = iso.drain_interacts();
+    let request_id = match walk.as_slice() {
+        [InteractReq::WalkNear {
+            x: 7,
+            z: 5,
+            radius: 1,
+            request_id,
+            ..
+        }] => *request_id,
+        other => panic!("walk to the blocking door, got {other:?}"),
+    };
+
+    // The walk fails; frozen ignores its result and still opens the door.
+    snap.tick = 3;
+    post_native(&iso, &snap, fail_native(request_id, 7, 5, 1));
+    tick(&iso, 3);
+    assert_eq!(iso.drain_interacts(), vec![loc_op(7, 5, "Open", 1530)]);
+    assert_eq!(iso.probe("__ok").unwrap(), Value::Null);
+
+    let decoy_only = [barrier("Door", &open, 99, 0, 1, 1)];
+    snap.tick = 4;
+    snap.locs = &decoy_only;
+    post(&iso, &snap);
+    tick(&iso, 4);
+    assert_eq!(
+        iso.probe("__clicks").unwrap(),
+        2,
+        "the next round clicks again"
+    );
+
+    iso.probe("globalThis.__ready = true").unwrap();
+    snap.tick = 5;
+    post(&iso, &snap);
+    tick(&iso, 5);
+    tick(&iso, 6);
+    assert_eq!(iso.probe("__ok").unwrap(), "done");
+    assert_eq!(logs(&iso), vec!["reach: opening blocking 'Door' at (7,5)"]);
+    iso.join();
+}
+
+#[test]
+fn entity_op_closes_a_swung_leaf_before_opening_a_door() {
+    let iso = spawn(ENTITY_OP);
+    let close = ["Close".to_string()];
+    let open = ["Open".to_string()];
+    let g = grid((5, 5), &[], &[]);
+    let locs = [
+        barrier("Gate", &open, 1551, 6, 5, 1),
+        barrier("Door", &close, 1531, 8, 4, 3),
+    ];
+    let mut snap = base(stand());
+    snap.reach = view(&g);
+    snap.locs = &locs;
+    post(&iso, &snap);
+    tick(&iso, 1);
+    let lines = cant_reach(3);
+    snap.tick = 2;
+    snap.chat_lines = &lines;
+    post(&iso, &snap);
+    tick(&iso, 2);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![loc_op(8, 4, "Close", 1531)],
+        "the leaf beside the target is closed; the gate is not opened"
+    );
+    assert_eq!(iso.probe("__clicks").unwrap(), 1);
+
+    // Closing the leaf made the target reachable: the next round clicks.
+    let reached = grid((5, 5), &[], &[(8, 5)]);
+    snap.tick = 3;
+    snap.reach = view(&reached);
+    post(&iso, &snap);
+    tick(&iso, 3);
+    assert_eq!(iso.probe("__clicks").unwrap(), 2);
+    assert!(iso.drain_interacts().is_empty());
+    assert_eq!(
+        logs(&iso),
+        vec!["reach: closing 'Door' at (8,4) to reach (8,5)"]
+    );
+    iso.join();
+}
+
+#[test]
+fn open_when_unreachable_probes_and_clears_before_the_first_click() {
+    let iso = spawn(ENTITY_OP);
+    iso.probe("globalThis.__probe = true").unwrap();
+    let close = ["Close".to_string()];
+    let g = grid((5, 5), &[], &[]);
+    let locs = [barrier("Door", &close, 1531, 8, 4, 3)];
+    let mut snap = base(stand());
+    snap.reach = view(&g);
+    snap.locs = &locs;
+    post(&iso, &snap);
+    tick(&iso, 1);
+    assert_eq!(
+        iso.probe("__clicks").unwrap(),
+        0,
+        "the scene probe clears the way before any click"
+    );
+    assert_eq!(iso.drain_interacts(), vec![loc_op(8, 4, "Close", 1531)]);
+
+    let reached = grid((5, 5), &[], &[(8, 5)]);
+    snap.tick = 2;
+    snap.reach = view(&reached);
+    post(&iso, &snap);
+    tick(&iso, 2);
+    assert_eq!(
+        iso.probe("__clicks").unwrap(),
+        1,
+        "reachable now: one click"
+    );
+    assert!(iso.drain_interacts().is_empty(), "no second clear");
+    iso.join();
+}
+
+#[test]
+fn entity_op_gives_up_retry_after_eight_cleared_rounds() {
+    let iso = spawn(ENTITY_OP);
+    let open = ["Open".to_string()];
+    let g = grid((5, 5), &[], &[]);
+    let door = [barrier("Door", &open, 1530, 6, 5, 1)];
+    let mut snap = base(stand());
+    snap.reach = view(&g);
+    snap.locs = &door;
+    post(&iso, &snap);
+    tick(&iso, 1);
+    let lines: Vec<_> = (0..8).map(|round| cant_reach(10 + round)).collect();
+    let mut opens = 0;
+    let mut n = 1;
+    // Each round: a fresh "can't reach" opens the adjacent door; the door
+    // is gone next tick, the clear succeeds and the next round clicks.
+    for lines in &lines {
+        n += 1;
+        snap.tick = n;
+        snap.locs = &door;
+        snap.chat_lines = lines;
+        post(&iso, &snap);
+        tick(&iso, n);
+        if iso.drain_interacts() == vec![loc_op(6, 5, "Open", 1530)] {
+            opens += 1;
+        }
+        n += 1;
+        snap.tick = n;
+        snap.locs = &[];
+        post(&iso, &snap);
+        tick(&iso, n);
+    }
+    assert_eq!(opens, 8);
+    assert_eq!(
+        iso.probe("__clicks").unwrap(),
+        8,
+        "one click per round, none after the eighth clear"
+    );
+    assert_eq!(iso.probe("__ok").unwrap(), "retry");
     iso.join();
 }
