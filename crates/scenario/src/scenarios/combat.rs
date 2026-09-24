@@ -1,5 +1,8 @@
 use super::production::*;
 use crate::*;
+mod chaos_druid;
+use chaos_druid::CHAOS_DRUID_FIXTURE_LOADOUTS;
+pub(crate) use chaos_druid::*;
 
 pub(crate) const TROUT_ID: i32 = 333;
 pub(crate) const COMBAT_SCIMITAR_ID: i32 = 1331;
@@ -11,8 +14,6 @@ const NOTED_LIMPWURT_ROOT_ID: i32 = 226;
 pub(crate) const LAW_RUNE_ID: i32 = 563;
 pub(crate) const BONES_ID: i32 = 526;
 const NOTED_BONES_ID: i32 = 527;
-const NOTED_HERB_ID: i32 = 200;
-pub(crate) const CHAOS_DRUID_FOOD: i32 = 12;
 pub(crate) const MOSS_GIANT_FOOD: i32 = 10;
 pub(crate) const HILL_GIANT_FOOD: i32 = 8;
 pub(crate) const AUTO_FIGHTER_FOOD: i32 = 8;
@@ -21,7 +22,6 @@ pub(crate) const AUTO_FIGHTER_FOOD: i32 = 8;
 /// own `tripPrepared` needs `foodWithdraw` (12) in the field, so 8 forces its
 /// declared `prepare-trip` end.
 const MOSS_GIANT_BANK_FOOD: i32 = 2;
-const CHAOS_DRUID_BANK_FOOD: i32 = 8;
 /// Restock lines the cards themselves withdraw to (MossGiant's declared
 /// `foodWithdraw` default 20, AutoFighter's 10, HillGiant's 12).
 const MOSS_GIANT_BANK_RESTOCK: i32 = 20;
@@ -134,21 +134,6 @@ pub(crate) const GUARD_DROP_IDS: [i32; 6] = [
     NATURE_RUNE_ID,
 ];
 
-const CHAOS_DRUID_FIELD: WorldTile = WorldTile {
-    x: 3110,
-    z: 9936,
-    level: 0,
-};
-const CHAOS_DRUID_TOWER_FIELD: WorldTile = WorldTile {
-    x: 2562,
-    z: 3356,
-    level: 0,
-};
-const CHAOS_DRUID_YANILLE_FIELD: WorldTile = WorldTile {
-    x: 2580,
-    z: 9501,
-    level: 0,
-};
 const MOSS_GIANT_SAFESPOT: WorldTile = WorldTile {
     x: 2553,
     z: 3406,
@@ -229,11 +214,6 @@ const VARROCK_TELE_FIRE: i32 = 3;
 const GREEN_DRAGON_BANK_RESTOCK: i32 = 20;
 const FIRE_GIANT_BANK_RESTOCK: i32 = 20;
 
-// Keep the seeded food independent of the operator's saved first loadout.
-const CHAOS_DRUID_FIXTURE_LOADOUTS: &[FixtureLoadout] = &[FixtureLoadout {
-    name: "Scenario Chaos Druid food",
-    carry: &[("Lobster", 12)],
-}];
 const MOSS_GIANT_FIXTURE_LOADOUTS: &[FixtureLoadout] = &[FixtureLoadout {
     name: "Scenario Moss Giant food",
     carry: &[("Lobster", MOSS_GIANT_FOOD as u32)],
@@ -272,48 +252,6 @@ fn combat_fixture_loadouts(card: &str) -> Option<&'static [FixtureLoadout]> {
     }
 }
 
-const CHAOS_DRUID_INJECT: &[ScriptSettingInject] = &[
-    ScriptSettingInject {
-        id: "loadout",
-        value: ScriptInjectValue::Str("Scenario Chaos Druid food"),
-    },
-    ScriptSettingInject {
-        id: "location",
-        value: ScriptInjectValue::Str("Edgeville Dungeon"),
-    },
-    ScriptSettingInject {
-        id: "combatStyleIndex",
-        value: ScriptInjectValue::Str("1"),
-    },
-];
-const CHAOS_DRUID_TOWER_INJECT: &[ScriptSettingInject] = &[
-    ScriptSettingInject {
-        id: "loadout",
-        value: ScriptInjectValue::Str("Scenario Chaos Druid food"),
-    },
-    ScriptSettingInject {
-        id: "location",
-        value: ScriptInjectValue::Str("Chaos Druid Tower"),
-    },
-    ScriptSettingInject {
-        id: "combatStyleIndex",
-        value: ScriptInjectValue::Str("1"),
-    },
-];
-const CHAOS_DRUID_YANILLE_INJECT: &[ScriptSettingInject] = &[
-    ScriptSettingInject {
-        id: "loadout",
-        value: ScriptInjectValue::Str("Scenario Chaos Druid food"),
-    },
-    ScriptSettingInject {
-        id: "location",
-        value: ScriptInjectValue::Str("Yanille Dungeon"),
-    },
-    ScriptSettingInject {
-        id: "combatStyleIndex",
-        value: ScriptInjectValue::Str("1"),
-    },
-];
 const MOSS_GIANT_INJECT: &[ScriptSettingInject] = &[
     ScriptSettingInject {
         id: "loadout",
@@ -1001,12 +939,6 @@ const ARDY_FIGHTER_INJECT: &[ScriptSettingInject] = &[
         id: "foodTarget",
         value: ScriptInjectValue::Num(1.0),
     },
-];
-const CHAOS_DRUID_LOOT_EMPTY: &[i32] = &[
-    UNIDENTIFIED_GUAM_ID,
-    NATURE_RUNE_ID,
-    LAW_RUNE_ID,
-    NOTED_HERB_ID,
 ];
 const MOSS_GIANT_LOOT_EMPTY: &[i32] = &[BIG_BONES_ID, NOTED_BIG_BONES_ID];
 const HILL_GIANT_LOOT_EMPTY: &[i32] = &[
@@ -1750,76 +1682,6 @@ fn combat_range_scenario(
             ..Default::default()
         },
     }
-}
-
-/// ChaosDruidKiller Edgeville dungeon core. Own bank is not this cell.
-/// Style index 1 on the wielded weapon; lobster x12 so tripPrepared holds.
-pub(crate) fn chaos_druid_scenario() -> Scenario {
-    combat_core_scenario(CombatCorePlan {
-        name: "chaos_druid",
-        card: "ChaosDruidKiller",
-        tele: CHAOS_DRUID_FIELD,
-        radius: 14,
-        food_alias: "lobster",
-        food_id: LOBSTER_ID,
-        food_count: CHAOS_DRUID_FOOD,
-        weapon_alias: "adamant_scimitar",
-        weapon_id: COMBAT_SCIMITAR_ID,
-        extra_give: &[],
-        wear: None,
-        loot_empty: CHAOS_DRUID_LOOT_EMPTY,
-        inject: CHAOS_DRUID_INJECT,
-        complete_quest: None,
-        thieving: 0,
-        agility: 0,
-    })
-}
-
-/// Chaos Druid Tower surface camp. Same Chaos druid identity and Herb/Law/Nature
-/// loot as Edgeville; Thieving 46 is the door/approach prerequisite, prepared and
-/// acknowledged before Start. Banking is not this cell.
-pub(crate) fn chaos_druid_tower_scenario() -> Scenario {
-    combat_core_scenario(CombatCorePlan {
-        name: "chaos_druid_tower",
-        card: "ChaosDruidKiller",
-        tele: CHAOS_DRUID_TOWER_FIELD,
-        radius: 4,
-        food_alias: "lobster",
-        food_id: LOBSTER_ID,
-        food_count: CHAOS_DRUID_FOOD,
-        weapon_alias: "adamant_scimitar",
-        weapon_id: COMBAT_SCIMITAR_ID,
-        extra_give: &[],
-        wear: None,
-        loot_empty: CHAOS_DRUID_LOOT_EMPTY,
-        inject: CHAOS_DRUID_TOWER_INJECT,
-        complete_quest: None,
-        thieving: 46,
-        agility: 0,
-    })
-}
-
-/// Yanille Dungeon warrior room. Target display is Chaos druid warrior; Agility 40
-/// is the room prerequisite. Approach web/ledge is not this cell.
-pub(crate) fn chaos_druid_yanille_scenario() -> Scenario {
-    combat_core_scenario(CombatCorePlan {
-        name: "chaos_druid_yanille",
-        card: "ChaosDruidKiller",
-        tele: CHAOS_DRUID_YANILLE_FIELD,
-        radius: 8,
-        food_alias: "lobster",
-        food_id: LOBSTER_ID,
-        food_count: CHAOS_DRUID_FOOD,
-        weapon_alias: "adamant_scimitar",
-        weapon_id: COMBAT_SCIMITAR_ID,
-        extra_give: &[],
-        wear: None,
-        loot_empty: CHAOS_DRUID_LOOT_EMPTY,
-        inject: CHAOS_DRUID_YANILLE_INJECT,
-        complete_quest: None,
-        thieving: 0,
-        agility: 40,
-    })
 }
 
 /// MossGiant default melee at the safespot. Big bones 532 is catalog loot.
@@ -3923,59 +3785,6 @@ pub(crate) fn hill_giant_loot_deposit_scenario() -> Scenario {
 /// (one kill, a Law rune), the FAIL needed two kills (the first druid's herb
 /// waits until the card's own target dies) and ran out at tick 292. The
 /// shared 300s combat qualification wall leaves ~170s after arrival.
-pub(crate) fn chaos_druid_bank_scenario() -> Scenario {
-    let mut scenario = combat_bank_scenario(
-        "chaos_druid_bank",
-        "ChaosDruidKiller",
-        CHAOS_DRUID_FIELD,
-        14,
-        "lobster",
-        LOBSTER_ID,
-        CHAOS_DRUID_BANK_FOOD,
-        "adamant_scimitar",
-        COMBAT_SCIMITAR_ID,
-        &[],
-        CHAOS_DRUID_LOOT_EMPTY,
-        CHAOS_DRUID_INJECT,
-        0,
-        "lobster",
-        12,
-        &[
-            (
-                "watch the prepare-trip restock of exactly twelve Lobster",
-                Proof::ItemId {
-                    id: LOBSTER_ID,
-                    count: CHAOS_DRUID_FOOD,
-                },
-            ),
-            ("watch the Edgeville bank close", Proof::BankClosed),
-            (
-                "watch return through the trapdoor into the druid field",
-                Proof::ArrivedNear {
-                    x: CHAOS_DRUID_FIELD.x,
-                    z: CHAOS_DRUID_FIELD.z,
-                    level: CHAOS_DRUID_FIELD.level,
-                    // Match the script's WalkNear return radius; broad proximity
-                    // can pass while the final hop is still cancelled.
-                    radius: 4,
-                },
-            ),
-            (
-                "watch fresh Strength XP inside the field after the return",
-                Proof::FreshStatXpGain {
-                    id: STRENGTH_STAT,
-                    min: 1,
-                },
-            ),
-        ],
-    );
-    apply_combat_qualification_budget(
-        &mut scenario,
-        COMBAT_QUALIFICATION_DEADLINE,
-        COMBAT_QUALIFICATION_WATCH_TICKS,
-    );
-    scenario
-}
 
 /// ArdyFighter's `bankStrategy=Loot count` trip: after a Guard drop lands in
 /// the pack the PeriodicBank walks to the East Ardougne booth, deposits the
