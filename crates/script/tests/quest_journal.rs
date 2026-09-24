@@ -669,8 +669,9 @@ fn a_generation_bump_and_on_reset_abort_the_token_and_emit_nothing() {
     assert_eq!(j.next(token)["out"]["ok"], true);
     assert_eq!(j.close(token)["queued"], json!([{ "op": "close-modal" }]));
 
-    // ResetSession aborts the token and clears the isolate scene, so the
-    // page error wins: a live token would have closed the acquired root.
+    // Accepted v2 difference (F13 r2 R2-2): ResetSession clears the Rust
+    // scene, so Next/Close here are snapshot-unavailable rather than stale.
+    // The token is still dead and nothing is queued. Recorded in the changelog.
     j.iso.reset_session_work();
     assert_error(&j.close(token), "snapshot-unavailable");
     assert_error(&j.next(token), "snapshot-unavailable");
@@ -877,5 +878,22 @@ fn a_refused_begin_leaves_the_live_token_closable() {
         json!([{ "op": "close-modal" }]),
         "{closing}"
     );
+    j.iso.join();
+}
+
+#[test]
+fn a_wrong_token_on_an_unusable_pair_is_stale_and_kills_the_live_token() {
+    let mut j = Journal::new();
+    let rows = [row("Cook's Assistant", "notStarted", Some(1234))];
+    j.post(Post::at(1).rows(&rows).closed_pair());
+    let token = assert_if_button(&j.begin("Cook's Assistant"), 1234);
+    let junk = vec!["junk".to_string()];
+    j.post(Post::at(2).pair(-1, &junk));
+    assert_error(&j.next(token + 5), "stale");
+    assert_error(&j.close(token + 5), "stale");
+    assert_error(&j.next(token), "stale");
+    let texts = vec!["@dre@The Cook's Quest".to_string()];
+    j.post(Post::at(3).pair(77, &texts));
+    assert_error(&j.next(token), "stale");
     j.iso.join();
 }

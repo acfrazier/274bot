@@ -184,14 +184,12 @@ impl JournalRuntime {
     }
 
     fn next(&mut self, input: &Value) -> Value {
-        // Page first: a missing pair is snapshot-unavailable and does not
-        // spend the token, even when generation is also wrong.
+        // A missing pair is snapshot-unavailable and does not spend the
+        // token. An unusable pair (root -1 with texts) is checked after
+        // token and generation, matching the base machine.
         let Some((root, texts)) = posted_pair() else {
             return self.refuse("snapshot-unavailable");
         };
-        if root == -1 && !texts.is_empty() {
-            return self.refuse("snapshot-unavailable");
-        }
         let Some(token) = input.get("token").and_then(Value::as_u64) else {
             return self.aborted("stale");
         };
@@ -200,6 +198,9 @@ impl JournalRuntime {
         }
         if input.get("generation").and_then(Value::as_u64) != Some(self.generation) {
             return self.aborted("stale");
+        }
+        if root == -1 && !texts.is_empty() {
+            return self.refuse("snapshot-unavailable");
         }
         if self.frozen() {
             // Frozen: no verb and no burn. `bound_reached` reads the frozen
@@ -258,9 +259,6 @@ impl JournalRuntime {
         let Some((root, texts)) = posted_pair() else {
             return self.refuse("snapshot-unavailable");
         };
-        if root == -1 && !texts.is_empty() {
-            return self.refuse("snapshot-unavailable");
-        }
         let Some(token) = input.get("token").and_then(Value::as_u64) else {
             return self.aborted("stale");
         };
@@ -269,6 +267,9 @@ impl JournalRuntime {
         }
         if input.get("generation").and_then(Value::as_u64) != Some(self.generation) {
             return self.aborted("stale");
+        }
+        if root == -1 && !texts.is_empty() {
+            return self.refuse("snapshot-unavailable");
         }
         if self.frozen() {
             return json!({ "kind": "wait", "token": self.token });
