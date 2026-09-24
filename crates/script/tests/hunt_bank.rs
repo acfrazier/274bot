@@ -629,7 +629,10 @@ fn shim_and_bindings_keep_the_yield_shape_and_walk_flags() {
     assert!(routine.contains("{ left:"));
     assert!(routine.contains("Use-quickly") || js.contains("booth_action: 'Use-quickly'"));
     let driver = js.split("async function driveSiteBankOpen").nth(1).unwrap();
-    let driver = driver.split("export async function bankRoutine").next().unwrap();
+    let driver = driver
+        .split("export async function bankRoutine")
+        .next()
+        .unwrap();
     assert!(driver.contains("open-nearest"));
     assert!(driver.contains("Bank booth"));
     assert!(driver.contains("Use-quickly"));

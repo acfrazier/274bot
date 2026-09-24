@@ -795,8 +795,7 @@ mod tests {
             wait_continue_ack(&mut runtime, &observation)["kind"],
             "wait"
         );
-        runtime.clock.deadline =
-            Some(runtime.clock.now() - Duration::from_millis(1));
+        runtime.clock.deadline = Some(runtime.clock.now() - Duration::from_millis(1));
         let timed = wait_continue_ack(&mut runtime, &observation);
         assert_eq!(timed["kind"], "done");
         assert_eq!(timed["result"], false);

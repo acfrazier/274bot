@@ -240,9 +240,7 @@ impl Proof {
                 level,
                 orbit_yaw,
                 orbit_pitch,
-            } => format!(
-                "render_view_ready({x},{z},{level},yaw={orbit_yaw},pitch={orbit_pitch})"
-            ),
+            } => format!("render_view_ready({x},{z},{level},yaw={orbit_yaw},pitch={orbit_pitch})"),
         }
     }
 
@@ -559,11 +557,7 @@ fn render_view_ready(
                 z: tz,
                 level: tl,
             },
-            Tile {
-                x,
-                z,
-                level,
-            },
+            Tile { x, z, level },
             true,
         )
     })
@@ -902,15 +896,27 @@ mod tests {
             orbit_pitch: 256,
         };
         c.orbit_camera_yaw = 0;
-        assert!(!ready.check(&snap(&mut c), None), "wrong yaw must refuse capture");
+        assert!(
+            !ready.check(&snap(&mut c), None),
+            "wrong yaw must refuse capture"
+        );
         c.orbit_camera_yaw = 512;
         c.orbit_camera_pitch = 128;
-        assert!(!ready.check(&snap(&mut c), None), "wrong pitch must refuse capture");
+        assert!(
+            !ready.check(&snap(&mut c), None),
+            "wrong pitch must refuse capture"
+        );
         c.orbit_camera_pitch = 256;
         c.scene_state = 1;
-        assert!(!ready.check(&snap(&mut c), None), "rebuilding scene must refuse capture");
+        assert!(
+            !ready.check(&snap(&mut c), None),
+            "rebuilding scene must refuse capture"
+        );
         c.scene_state = 2;
-        assert!(ready.check(&snap(&mut c), None), "restored view must be ready");
+        assert!(
+            ready.check(&snap(&mut c), None),
+            "restored view must be ready"
+        );
         c.main_modal_id = 1;
         let s = snap(&mut c);
         assert!(!Proof::RenderViewReady {

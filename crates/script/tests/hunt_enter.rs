@@ -1043,7 +1043,16 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    let here = || empty_snapshot(0, TileInput { x: 1, z: 1, level: 0 });
+    let here = || {
+        empty_snapshot(
+            0,
+            TileInput {
+                x: 1,
+                z: 1,
+                level: 0,
+            },
+        )
+    };
     let iso = LoadIsolate::spawn(src.into(), LoadShape::CompatClass, vec![]).unwrap();
     let mut snap = here();
     snap.tick = 1;

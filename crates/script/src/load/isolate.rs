@@ -2,9 +2,7 @@
 
 use super::bindings::wire_runtime;
 use super::shape::LoadShape;
-use super::snapshot::{
-    dispatch_native_events, materialize_settings_bag, materialize_snapshot,
-};
+use super::snapshot::{dispatch_native_events, materialize_settings_bag, materialize_snapshot};
 use rustyscript::{json_args, Runtime, RuntimeOptions};
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize};
@@ -842,8 +840,7 @@ impl LoadIsolate {
             match msg {
                 ThreadMsg::Log(line) => self.logs.lock().unwrap().push(line),
                 ThreadMsg::ScriptStopped { tick, reason } => {
-                    *self.script_stop.lock().unwrap() =
-                        Some(ScriptStopReceipt { tick, reason });
+                    *self.script_stop.lock().unwrap() = Some(ScriptStopReceipt { tick, reason });
                 }
                 ThreadMsg::Stopped => {
                     self.stopped
@@ -980,9 +977,7 @@ fn isolate_main(
     work_generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
     teardown: std::sync::Arc<Mutex<TeardownState>>,
     proof: std::sync::Arc<TeardownProofInner>,
-    #[cfg(feature = "memory-profile")] counters: std::sync::Arc<
-        crate::memory_profile::Counters,
-    >,
+    #[cfg(feature = "memory-profile")] counters: std::sync::Arc<crate::memory_profile::Counters>,
 ) {
     #[cfg(feature = "memory-profile")]
     let _heap_lifetime = crate::memory_profile::HeapLifetime(counters.clone());
@@ -1044,8 +1039,6 @@ fn isolate_main(
         counters,
     );
 }
-
-
 
 fn deliver_native_events(
     runtime: &mut Runtime,
@@ -1372,9 +1365,7 @@ fn tick_loop(
     proof: std::sync::Arc<TeardownProofInner>,
     v2_native: bool,
     events_consumed: bool,
-    #[cfg(feature = "memory-profile")] counters: std::sync::Arc<
-        crate::memory_profile::Counters,
-    >,
+    #[cfg(feature = "memory-profile")] counters: std::sync::Arc<crate::memory_profile::Counters>,
 ) {
     let _finish = TickLoopFinish(proof.clone());
     #[cfg(feature = "memory-profile")]
@@ -1553,10 +1544,8 @@ fn tick_loop(
                         Some(Duration::from_millis(10)),
                     );
                     if v2_native {
-                        let rows: Result<
-                            Vec<crate::shim::MaybeInteractReq>,
-                            rustyscript::Error,
-                        > = runtime.eval("globalThis.__rs2b0t_host.interact || []");
+                        let rows: Result<Vec<crate::shim::MaybeInteractReq>, rustyscript::Error> =
+                            runtime.eval("globalThis.__rs2b0t_host.interact || []");
                         let lifecycle: Vec<crate::shim::InteractReq> = rows
                             .unwrap_or_default()
                             .into_iter()
@@ -1629,9 +1618,7 @@ fn tick_loop(
                 // event loop, so the resolved wait's continuation (which
                 // may re-park or complete the tick) lands here.
                 let parked = runtime
-                    .eval::<bool>(
-                        "!!(globalThis.__rs2b0t_host && globalThis.__rs2b0t_host.parked)",
-                    )
+                    .eval::<bool>("!!(globalThis.__rs2b0t_host && globalThis.__rs2b0t_host.parked)")
                     .unwrap_or(false);
                 let v2_pending = v2_native
                     && runtime
@@ -1701,8 +1688,7 @@ fn tick_loop(
                 // `LoopingBot.log` / `this.log` push onto the host
                 // handle; fold them into the isolate log so BOT_DEBUG
                 // and the panel can see script-side lines.
-                let bot_log: Result<Vec<String>, rustyscript::Error> =
-                    runtime.eval(DRAIN_BOT_LOG);
+                let bot_log: Result<Vec<String>, rustyscript::Error> = runtime.eval(DRAIN_BOT_LOG);
                 if let Ok(rows) = bot_log {
                     for line in rows {
                         let _ = out.send(ThreadMsg::Log(line));
@@ -1756,12 +1742,7 @@ fn tick_loop(
                 }
                 match compose_forwarded_paint(&mut runtime) {
                     Ok(frame) => {
-                        forward_paint_if_changed(
-                            &mut ipc,
-                            &out,
-                            &mut last_forwarded_paint,
-                            frame,
-                        );
+                        forward_paint_if_changed(&mut ipc, &out, &mut last_forwarded_paint, frame);
                     }
                     Err(e) => {
                         let _ = out.send(ThreadMsg::Log(format!("paint eval: {e}")));
@@ -1810,8 +1791,8 @@ fn tick_loop(
                         }
                     }
                     if latest != n {
-                        let _ = out
-                            .send(ThreadMsg::Log(format!("skipped stale ticks -> {latest}")));
+                        let _ =
+                            out.send(ThreadMsg::Log(format!("skipped stale ticks -> {latest}")));
                     }
                     let _ = out.send(ThreadMsg::Completed {
                         tick: latest,
@@ -1979,9 +1960,7 @@ fn tick_loop(
                 }
                 let start = Instant::now();
                 let req = match eval_recovery_anchor(&mut runtime) {
-                    Some((x, z, level)) => {
-                        crate::shim::InteractReq::RecoveryAnchor { x, z, level }
-                    }
+                    Some((x, z, level)) => crate::shim::InteractReq::RecoveryAnchor { x, z, level },
                     None => crate::shim::InteractReq::RecoveryAnchorNone,
                 };
                 runtime

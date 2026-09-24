@@ -545,11 +545,14 @@ export default class T extends LoopingBot { loop() {} }
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     let actual = iso.probe("__everyResult").unwrap();
     iso.join();
-    assert_eq!(actual, serde_json::json!({
-        "sparse": true, "sparseCalls": ["Tinderbox"],
-        "appended": true, "appendCalls": ["Tinderbox"],
-        "named": true, "reads": 2, "getterCalls": ["Hammer"],
-    }));
+    assert_eq!(
+        actual,
+        serde_json::json!({
+            "sparse": true, "sparseCalls": ["Tinderbox"],
+            "appended": true, "appendCalls": ["Tinderbox"],
+            "named": true, "reads": 2, "getterCalls": ["Hammer"],
+        })
+    );
 }
 
 #[test]

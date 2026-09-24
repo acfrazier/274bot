@@ -980,9 +980,7 @@ mod tests {
     }
 
     fn begin() -> u64 {
-        dispatch(&json!({ "op": "begin" }))
-            .as_u64()
-            .expect("token")
+        dispatch(&json!({ "op": "begin" })).as_u64().expect("token")
     }
 
     fn settled(token: u64) -> bool {
@@ -1374,11 +1372,7 @@ mod tests {
         assert_eq!(value(token)["reason"], "stale");
     }
 
-    fn route(
-        request_id: u64,
-        from: (i32, i32, i32),
-        to: (i32, i32, i32),
-    ) -> InteractReq {
+    fn route(request_id: u64, from: (i32, i32, i32), to: (i32, i32, i32)) -> InteractReq {
         InteractReq::InspectRoute {
             x: to.0,
             z: to.1,

@@ -142,7 +142,9 @@ fn optional_field<'s>(
         return Ok(None);
     };
     let key = v8::String::new(scope, name).ok_or_else(|| "string".to_string())?;
-    let field = obj.get(scope, key.into()).ok_or_else(|| PENDING.to_string())?;
+    let field = obj
+        .get(scope, key.into())
+        .ok_or_else(|| PENDING.to_string())?;
     if field.is_null_or_undefined() {
         return Ok(None);
     }

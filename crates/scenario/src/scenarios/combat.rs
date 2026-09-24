@@ -1902,14 +1902,8 @@ pub(crate) fn moss_giant_dart_scenario() -> Scenario {
                 cheat(c, &format!("setstat ranged {MOSS_GIANT_DART_RANGED}"));
                 cheat(c, &format!("setstat defence {COMBAT_ATTACK_LEVEL}"));
                 cheat(c, &format!("setstat hitpoints {COMBAT_ATTACK_LEVEL}"));
-                cheat(
-                    c,
-                    &format!("givebank bronze_dart {MOSS_GIANT_DART_SUPPLY}"),
-                );
-                cheat(
-                    c,
-                    &format!("givebank lobster {MOSS_GIANT_DART_BANK_FOOD}"),
-                );
+                cheat(c, &format!("givebank bronze_dart {MOSS_GIANT_DART_SUPPLY}"));
+                cheat(c, &format!("givebank lobster {MOSS_GIANT_DART_BANK_FOOD}"));
                 true
             }),
         },
@@ -2031,9 +2025,7 @@ pub(crate) fn moss_giant_dart_scenario() -> Scenario {
     for (name, arm) in [
         (
             "watch the script withdraw and wear Bronze darts",
-            Proof::EquipmentId {
-                id: BRONZE_DART_ID,
-            },
+            Proof::EquipmentId { id: BRONZE_DART_ID },
         ),
         (
             "watch travel to the moss-giant safespot after the dart withdraw",
@@ -2061,7 +2053,10 @@ pub(crate) fn moss_giant_dart_scenario() -> Scenario {
                 min: RAPID_COMBAT_MODE,
             },
         ),
-        ("watch Ranged XP from worn Bronze darts after Start", ranged_xp),
+        (
+            "watch Ranged XP from worn Bronze darts after Start",
+            ranged_xp,
+        ),
         (
             "watch the unused Rune-arrow setting stay absent from the pack",
             Proof::ItemIdAtMost {
@@ -3821,10 +3816,7 @@ pub(crate) fn hill_giant_bank_prepared_scenario() -> Scenario {
                     count: HILL_GIANT_FOOD + HILL_GIANT_BANK_RESTOCK,
                 },
             ),
-            (
-                "watch prepared HillGiant close its bank",
-                Proof::BankClosed,
-            ),
+            ("watch prepared HillGiant close its bank", Proof::BankClosed),
             (
                 "watch prepared return to the giant pit after banking",
                 Proof::ArrivedNear {
@@ -4947,6 +4939,8 @@ fn insert_camelot_escape_stock(scenario: &mut Scenario) {
             },
         ),
     ] {
-        scenario.steps.insert(hostile_teleport + 1, bank_fletcher_watch(name, arm));
+        scenario
+            .steps
+            .insert(hostile_teleport + 1, bank_fletcher_watch(name, arm));
     }
 }

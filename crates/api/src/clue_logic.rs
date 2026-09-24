@@ -100,11 +100,7 @@ mod tests {
         }
         // Noted, cert, alias, and name are not identity: a held id that is not
         // a row is skipped, and the six challenge rows are not membership.
-        let challenge = trails
-            .challenge_answers
-            .first()
-            .expect("challenge row")
-            .id;
+        let challenge = trails.challenge_answers.first().expect("challenge row").id;
         let page = [(challenge, 1), (0, 1), (CASKET, 0), (CLUE, 1)];
         assert_eq!(identify_step(&page, Some(trails)).expect("clue").id, CLUE);
         // Nothing held, nothing held-but-unrelated, and an empty page are all

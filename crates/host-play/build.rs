@@ -285,8 +285,11 @@ fn main() {
         ),
     };
 
-    if source_sha256 != nav::bundle::source_digest(&content_dir, &[&config_jag]).unwrap_or_else(|e| fail(&e))
-        || content_id != nav::bake::decoded_identity(revision, &cache_dir, &snapshot_root).unwrap_or_else(|e| fail(&e))
+    if source_sha256
+        != nav::bundle::source_digest(&content_dir, &[&config_jag]).unwrap_or_else(|e| fail(&e))
+        || content_id
+            != nav::bake::decoded_identity(revision, &cache_dir, &snapshot_root)
+                .unwrap_or_else(|e| fail(&e))
         || manifest != CacheManifest::capture(revision, &cache_dir).unwrap_or_else(|e| fail(&e))
     {
         fail("cache/content inputs changed during navigation preparation");

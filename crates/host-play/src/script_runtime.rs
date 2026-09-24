@@ -93,27 +93,8 @@ pub(super) fn script_observe_with_npc_boxes(
     slot_input: Option<&SlotInput>,
 ) -> bool {
     script_observe_cached(
-        driver,
-        name,
-        up,
-        tick_edge,
-        tick,
-        here,
-        inv,
-        state,
-        snapshot,
-        npc_boxes,
-        obj_names,
-        scripts,
-        cheats,
-        navs,
-        world,
-        hold,
-        ours,
-        canlight,
-        slot_input,
-        None,
-        None,
+        driver, name, up, tick_edge, tick, here, inv, state, snapshot, npc_boxes, obj_names,
+        scripts, cheats, navs, world, hold, ours, canlight, slot_input, None, None,
     )
 }
 
@@ -1147,17 +1128,7 @@ pub(super) fn dispatch_script_interact(
     reqs: Vec<script::shim::InteractReq>,
 ) -> bool {
     dispatch_script_interact_cached(
-        driver,
-        snapshot,
-        obj_names,
-        here,
-        navs,
-        world,
-        state,
-        name,
-        reqs,
-        None,
-        None,
+        driver, snapshot, obj_names, here, navs, world, state, name, reqs, None, None,
     )
 }
 
@@ -1929,9 +1900,11 @@ fn dispatch_puzzle_move(
     if board.generation != generation || board.size != PUZZLE_SIZE {
         return false;
     }
-    let Some(row) = board.items.iter().find(|item| {
-        item.def.id == id && item.slot == slot && item.component_id == component
-    }) else {
+    let Some(row) = board
+        .items
+        .iter()
+        .find(|item| item.def.id == id && item.slot == slot && item.component_id == component)
+    else {
         return false;
     };
     let Some(cache) = cache else {
@@ -3623,19 +3596,22 @@ pub(super) fn script_paint_select_advertised(
         return false;
     }
     if let Some(id) = key.strip_prefix("strip:") {
-        return paint.strip.as_ref().is_some_and(|band| {
-            band.id == id && band.names.iter().any(|n| n == select_name)
-        });
+        return paint
+            .strip
+            .as_ref()
+            .is_some_and(|band| band.id == id && band.names.iter().any(|n| n == select_name));
     }
     if let Some(id) = key.strip_prefix("rail:") {
-        return paint.rail.as_ref().is_some_and(|band| {
-            band.id == id && band.names.iter().any(|n| n == select_name)
-        });
+        return paint
+            .rail
+            .as_ref()
+            .is_some_and(|band| band.id == id && band.names.iter().any(|n| n == select_name));
     }
     if let Some(id) = key.strip_prefix("tabs:") {
-        return paint.tabs.iter().any(|band| {
-            band.id == id && band.names.iter().any(|n| n == select_name)
-        });
+        return paint
+            .tabs
+            .iter()
+            .any(|band| band.id == id && band.names.iter().any(|n| n == select_name));
     }
     false
 }
@@ -3994,9 +3970,7 @@ impl ScriptWalkArm {
             .is_ok();
         if !spawned {
             log_walk_arm(&self.name, || {
-                format!(
-                    "queue_route spawn-failed dest={to:?} r={radius} request_id={request_id}"
-                )
+                format!("queue_route spawn-failed dest={to:?} r={radius} request_id={request_id}")
             });
             if let Some(bot) = self.navs.lock().unwrap().get_mut(&self.name) {
                 if bot
@@ -4233,9 +4207,7 @@ pub(super) fn step_bank_fetch_on_bot<D: Driver>(
                 };
                 match find_with(&w.collision, &w.graph, from, to, opts, &state) {
                     Ok(route) => {
-                        log_walk_arm_bot(|| {
-                            format!("bank_fetch Walk armed sub-route dest={to:?}")
-                        });
+                        log_walk_arm_bot(|| format!("bank_fetch Walk armed sub-route dest={to:?}"));
                         bot.route = Some(route);
                         false
                     }
@@ -4585,7 +4557,9 @@ impl ScriptRouteRequest {
             log_walk_arm(&slot, || {
                 format!(
                     "approach enumerate dest={:?} r={} candidates={}",
-                    self.to, self.radius, candidates.len()
+                    self.to,
+                    self.radius,
+                    candidates.len()
                 )
             });
         }
@@ -5424,7 +5398,13 @@ export function tick(api) {
         );
         assert_eq!(
             rec.menus,
-            vec![(0, MiniMenuAction::OP_HELD5, PIECE_MOVE, 0, MOVE_BOARD as i32)],
+            vec![(
+                0,
+                MiniMenuAction::OP_HELD5,
+                PIECE_MOVE,
+                0,
+                MOVE_BOARD as i32
+            )],
             "one Held-family op 5 on the posted board row"
         );
         assert_ne!(
@@ -5480,7 +5460,13 @@ export function tick(api) {
                 &snap,
                 move_req(piece.def.id, piece.slot, piece.component_id, generation)
             ),
-            vec![(0, MiniMenuAction::OP_HELD5, PIECE_MOVE, 0, MOVE_BOARD as i32)],
+            vec![(
+                0,
+                MiniMenuAction::OP_HELD5,
+                PIECE_MOVE,
+                0,
+                MOVE_BOARD as i32
+            )],
             "the exact posted row is the baseline that must send"
         );
         // A generation that is *not* the puzzle session even though it is the
@@ -5531,9 +5517,20 @@ export function tick(api) {
         assert_eq!(
             dispatch(
                 &bumped,
-                move_req(piece.def.id, piece.slot, piece.component_id, board_generation)
+                move_req(
+                    piece.def.id,
+                    piece.slot,
+                    piece.component_id,
+                    board_generation
+                )
             ),
-            vec![(0, MiniMenuAction::OP_HELD5, PIECE_MOVE, 0, MOVE_BOARD as i32)],
+            vec![(
+                0,
+                MiniMenuAction::OP_HELD5,
+                PIECE_MOVE,
+                0,
+                MOVE_BOARD as i32
+            )],
             "the board's own generation is what sends"
         );
         for (case, req) in [
@@ -5556,17 +5553,19 @@ export function tick(api) {
             ),
             (
                 "wrong component",
-                move_req(piece.def.id, piece.slot, piece.component_id + 50, generation),
+                move_req(
+                    piece.def.id,
+                    piece.slot,
+                    piece.component_id + 50,
+                    generation,
+                ),
             ),
             (
                 "padded Drop only",
                 move_req(PIECE_NO_OPS, 3, piece.component_id, generation),
             ),
         ] {
-            assert!(
-                dispatch(&snap, req).is_empty(),
-                "{case} must send nothing"
-            );
+            assert!(dispatch(&snap, req).is_empty(), "{case} must send nothing");
         }
         // The def's own fifth op is the frozen index-5 path, and it stays the
         // Held family: no label named `Move` is needed for it.
@@ -5712,7 +5711,13 @@ export function tick(api) {
         stage(false, &mut rec);
         assert_eq!(
             rec.menus,
-            vec![(0, MiniMenuAction::OP_HELD5, PIECE_MOVE, 0, MOVE_BOARD as i32)],
+            vec![(
+                0,
+                MiniMenuAction::OP_HELD5,
+                PIECE_MOVE,
+                0,
+                MOVE_BOARD as i32
+            )],
             "the board click sends while the bank gate is closed"
         );
         let slot = script_slot(&scripts, "alice").unwrap();

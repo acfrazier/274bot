@@ -131,9 +131,7 @@ fn host_js_dts_includes_required_interfaces() {
     );
     assert!(src.contains("export interface PackPlanInput {"));
     assert!(src.contains("  rewardSlots?: number;"));
-    assert!(!src.contains(
-        "clue: { row(input: { id: number } | { alias: string }): Promise"
-    ));
+    assert!(!src.contains("clue: { row(input: { id: number } | { alias: string }): Promise"));
     assert!(!src.contains("heldStep(input"));
     assert!(!src.contains("heldStep(): Promise"));
     assert!(!src.contains("packPlan(input: PackPlanInput): Promise"));

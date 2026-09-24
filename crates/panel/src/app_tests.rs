@@ -9,10 +9,10 @@ use super::{
     logout_enabled, manual_shot_label, parse_args, parse_live_args, progress_channel,
     random_status_text, request_clean_stop_capture, request_native_failure_capture, runner_config,
     script_failure_scenario, slot_startup_banner_line, smoke_settled, smoke_should_fire,
-    startup_progress, Boot, CoreGate,
-    LiveBoot, LiveNull, LiveScript, LiveSmoke, LiveStress, PanelState, ProfilePrepareJob,
-    ProgressPhase, RunMode, ShotStatus, SoakCapture, StartupPreparation, BASE_WINDOW_H,
-    BASE_WINDOW_W, LIVE_USAGE, NAV_FULL_SHOT_DRAIN, SMOKE_DEADLINE, SMOKE_SETTLE,
+    startup_progress, Boot, CoreGate, LiveBoot, LiveNull, LiveScript, LiveSmoke, LiveStress,
+    PanelState, ProfilePrepareJob, ProgressPhase, RunMode, ShotStatus, SoakCapture,
+    StartupPreparation, BASE_WINDOW_H, BASE_WINDOW_W, LIVE_USAGE, NAV_FULL_SHOT_DRAIN,
+    SMOKE_DEADLINE, SMOKE_SETTLE,
 };
 use crate::theme::{
     applet_offset, fit_applet, game_window_title, native_applet, panel_split_ratio, PANEL_WIDTH,

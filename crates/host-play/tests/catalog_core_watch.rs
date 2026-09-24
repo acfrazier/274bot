@@ -7,32 +7,32 @@ use host_play::catalog_core::{
     LineOfSightPair, LineOfSightPairResult, LineOfSightScriptReceipt, LineOfSightTile, Observation,
     RouteInspectHopFact, BRIMHAVEN_INSPECT_BANK, BRIMHAVEN_INSPECT_FIELD, BRIMHAVEN_INSPECT_PIER,
     CERT_RUNE_CHAINBODY_ID, COINS_ID, HIGH_ALCH_MAGIC_XP, LOBSTER_ID, LOS_V2_STOP, LOS_VIS_SCENERY,
-    LOS_V_E, LOS_V_W, LOS_WALK_SCENERY, NATURE_RUNE_ID, OAK_LOGS_ID, RUNE_CHAINBODY_HIGH_ALCH_COINS,
-    STAFF_OF_FIRE_ID, TINDERBOX_ID, UNIDENTIFIED_GUAM_ID, UNIDENTIFIED_MARENTILL_ID,
-    VARROCK_EAST_BANK, VARROCK_WEST_BANK,
+    LOS_V_E, LOS_V_W, LOS_WALK_SCENERY, NATURE_RUNE_ID, OAK_LOGS_ID,
+    RUNE_CHAINBODY_HIGH_ALCH_COINS, STAFF_OF_FIRE_ID, TINDERBOX_ID, UNIDENTIFIED_GUAM_ID,
+    UNIDENTIFIED_MARENTILL_ID, VARROCK_EAST_BANK, VARROCK_WEST_BANK,
 };
 use host_play::catalog_core::{
-    ActorObservation, ActorObservationLos, ActorObservationNpc, ActorObservationNpcFact,
-    ActorObservationPacked, ActorObservationPoint, ActorObservationScriptReceipt,
-    ActorObservationSelfTarget, FightFieldNpc, FightFieldObservation, FightFieldScriptReceipt,
-    HoldSpotObservation, HoldSpotScriptReceipt, RetreatSpotObservation, RetreatSpotScriptReceipt,
-    WalkSpotObservation, WalkSpotScriptReceipt, ACTOR_OBSERVATION_V2_STOP, ENTER_LAIR_V2_STOP,
-    FIGHT_FIELD_V2_STOP, HOLD_SPOT_V2_STOP, LEAVE_LAIR_RECEIPT_PREFIX, LEAVE_LAIR_V2_STOP,
-    RETREAT_SPOT_V2_STOP, WALK_SPOT_V2_STOP, ACQUIRE_KEY_CELL, ACQUIRE_KEY_DEST, ACQUIRE_KEY_LAIR,
-    ACQUIRE_KEY_RECEIPT_PREFIX, ACQUIRE_KEY_V2_STOP,
+    parse_acquire_key_receipt_line, parse_leave_lair_receipt_line, AcquireKeyObservation,
+    AcquireKeyScriptReceipt, EnterLairBox, EnterLairObservation, EnterLairScriptReceipt,
+    LeaveLairBox, LeaveLairObservation, LeaveLairScriptReceipt,
 };
 use host_play::catalog_core::{
-    EnterLairBox, EnterLairObservation, EnterLairScriptReceipt, LeaveLairBox, LeaveLairObservation,
-    LeaveLairScriptReceipt, parse_leave_lair_receipt_line, AcquireKeyObservation,
-    AcquireKeyScriptReceipt, parse_acquire_key_receipt_line,
+    parse_bank_v2_receipt_line, BankV2Box, BankV2Flags, BankV2Observation, BankV2ScriptReceipt,
+    BANK_V2_DEST, BANK_V2_LAIR, BANK_V2_RADIUS, BANK_V2_RECEIPT_PREFIX, BANK_V2_STOP,
 };
 use host_play::catalog_core::{
     parse_cell_v2_receipt_line, CellV2Observation, CellV2ScriptReceipt, CELL_V2_CELL, CELL_V2_DOOR,
     CELL_V2_LAIR, CELL_V2_RECEIPT_PREFIX, CELL_V2_STOP,
 };
 use host_play::catalog_core::{
-    parse_bank_v2_receipt_line, BankV2Box, BankV2Flags, BankV2Observation, BankV2ScriptReceipt,
-    BANK_V2_DEST, BANK_V2_LAIR, BANK_V2_RADIUS, BANK_V2_RECEIPT_PREFIX, BANK_V2_STOP,
+    ActorObservation, ActorObservationLos, ActorObservationNpc, ActorObservationNpcFact,
+    ActorObservationPacked, ActorObservationPoint, ActorObservationScriptReceipt,
+    ActorObservationSelfTarget, FightFieldNpc, FightFieldObservation, FightFieldScriptReceipt,
+    HoldSpotObservation, HoldSpotScriptReceipt, RetreatSpotObservation, RetreatSpotScriptReceipt,
+    WalkSpotObservation, WalkSpotScriptReceipt, ACQUIRE_KEY_CELL, ACQUIRE_KEY_DEST,
+    ACQUIRE_KEY_LAIR, ACQUIRE_KEY_RECEIPT_PREFIX, ACQUIRE_KEY_V2_STOP, ACTOR_OBSERVATION_V2_STOP,
+    ENTER_LAIR_V2_STOP, FIGHT_FIELD_V2_STOP, HOLD_SPOT_V2_STOP, LEAVE_LAIR_RECEIPT_PREFIX,
+    LEAVE_LAIR_V2_STOP, RETREAT_SPOT_V2_STOP, WALK_SPOT_V2_STOP,
 };
 
 fn thiever_observation() -> Observation {
@@ -822,8 +822,7 @@ fn ranging_full_earned_tickets(baseline: &Observation) -> Observation {
     let mut now = baseline.clone();
     now.tick += 1;
     now.tile = Some(RANGING_GUILD_STAND);
-    now.item_ids
-        .insert(ARCHERY_TICKET_ID, TICKETS_PER_TRADE);
+    now.item_ids.insert(ARCHERY_TICKET_ID, TICKETS_PER_TRADE);
     now.item_ids.insert(COINS_ID, ENTRY_FEE);
     now
 }
@@ -866,7 +865,8 @@ fn ranging_full_bank_bought(from: &Observation, arrows: i32, item: i32) -> Obser
 }
 
 #[test]
-fn ranging_guild_full_rejects_preseed_wrong_item_no_shop_buy_no_open_modal_and_deadline_only_stop() {
+fn ranging_guild_full_rejects_preseed_wrong_item_no_shop_buy_no_open_modal_and_deadline_only_stop()
+{
     assert_eq!(
         CoreCase::parse("ranging_guild_full").unwrap(),
         CoreCase::RangingGuildFull
@@ -951,7 +951,8 @@ fn ranging_guild_full_rejects_preseed_wrong_item_no_shop_buy_no_open_modal_and_d
     closed_bank.bank_loaded = false;
     closed_bank.bank_generation += 1;
     bank_close_only.observe("catalogtest", closed_bank.clone(), false);
-    let banked_after_close = ranging_full_bank_bought(&closed_bank, RUNE_ARROWS_PER_TRADE, RUNE_ARROW_ID);
+    let banked_after_close =
+        ranging_full_bank_bought(&closed_bank, RUNE_ARROWS_PER_TRADE, RUNE_ARROW_ID);
     bank_close_only.observe("catalogtest", banked_after_close.clone(), false);
     let mut stopped_without_continue = banked_after_close;
     stopped_without_continue.bank_open = false;
@@ -988,8 +989,8 @@ fn ranging_guild_full_rejects_preseed_wrong_item_no_shop_buy_no_open_modal_and_d
 }
 
 #[test]
-fn ranging_guild_full_requires_bought_then_same_arrow_bank_result_modal_close_continue_and_honest_stop()
-{
+fn ranging_guild_full_requires_bought_then_same_arrow_bank_result_modal_close_continue_and_honest_stop(
+) {
     let baseline = ranging_full_baseline();
     let watch = ranging_full_start(baseline.clone());
     let earned = ranging_full_earned_tickets(&baseline);
@@ -1050,7 +1051,13 @@ fn brimhaven_v1_baseline() -> Observation {
     observation
 }
 
-fn with_hop(mut observation: Observation, seq: u64, request_id: u64, ok: bool, loc: &str) -> Observation {
+fn with_hop(
+    mut observation: Observation,
+    seq: u64,
+    request_id: u64,
+    ok: bool,
+    loc: &str,
+) -> Observation {
     observation.route_inspect_seq = seq;
     observation.route_inspect_generation = observation.route_inspect_live_generation;
     observation.route_inspect_has_terminal = true;
@@ -1184,7 +1191,10 @@ fn route_inspect_brimhaven_v2_requires_token_then_id0_then_bank_tile() {
 
     let token = with_hop(baseline.clone(), 2, 11, true, "Captain Barnaby");
     watch.observe("catalogtest", token.clone(), false);
-    assert!(watch.qualify().is_err(), "token inspect alone is incomplete");
+    assert!(
+        watch.qualify().is_err(),
+        "token inspect alone is incomplete"
+    );
 
     let snap0 = with_hop(token.clone(), 3, 0, true, "Captain Barnaby");
     watch.observe("catalogtest", snap0.clone(), false);
@@ -1782,15 +1792,8 @@ fn line_of_sight_rejects_noquery_negative_identity_and_wrong_stop() {
     watch.begin_start("catalogtest").unwrap();
     let joined = los_joined(baseline);
     watch.observe("catalogtest", joined.clone(), false);
-    watch.observe(
-        "catalogtest",
-        los_stop(joined, "some other stop"),
-        false,
-    );
-    assert!(
-        watch.qualify().is_err(),
-        "wrong named stop cannot pass"
-    );
+    watch.observe("catalogtest", los_stop(joined, "some other stop"), false);
+    assert!(watch.qualify().is_err(), "wrong named stop cannot pass");
 }
 
 #[test]
@@ -1901,8 +1904,7 @@ fn line_of_sight_rejects_walk_mask_dest_vis_unready_and_missing() {
     if let Some(receipt) = scenery_src.los.receipt.as_mut() {
         receipt.blocked = los_pair_result(scenery_pair, false, false);
     }
-    scenery_src.script_lifecycle =
-        los_stop(scenery_src.clone(), LOS_V2_STOP).script_lifecycle;
+    scenery_src.script_lifecycle = los_stop(scenery_src.clone(), LOS_V2_STOP).script_lifecycle;
     watch.observe("catalogtest", scenery_src, false);
     assert!(
         watch.qualify().is_err(),
@@ -1972,23 +1974,23 @@ fn line_of_sight_join_then_host_drift_retains_coherent_evidence() {
         .get("line_of_sight_cycle")
         .expect("line_of_sight_cycle in evidence");
     let host_open: LineOfSightPair =
-        serde_json::from_value(cycle.get("host_open").cloned().unwrap())
-            .expect("host_open");
+        serde_json::from_value(cycle.get("host_open").cloned().unwrap()).expect("host_open");
     let host_blocked: LineOfSightPair =
-        serde_json::from_value(cycle.get("host_blocked").cloned().unwrap())
-            .expect("host_blocked");
+        serde_json::from_value(cycle.get("host_blocked").cloned().unwrap()).expect("host_blocked");
     let identity: LineOfSightIdentity =
-        serde_json::from_value(cycle.get("identity").cloned().unwrap())
-            .expect("identity");
+        serde_json::from_value(cycle.get("identity").cloned().unwrap()).expect("identity");
     let receipt: LineOfSightScriptReceipt =
-        serde_json::from_value(cycle.get("receipt").cloned().unwrap())
-            .expect("receipt");
+        serde_json::from_value(cycle.get("receipt").cloned().unwrap()).expect("receipt");
     assert_eq!(host_open, open, "host_open must stay the joined witness");
     assert_eq!(
         host_blocked, blocked,
         "host_blocked must stay the joined witness"
     );
-    assert_eq!(identity, los_identity(), "identity must stay the joined witness");
+    assert_eq!(
+        identity,
+        los_identity(),
+        "identity must stay the joined witness"
+    );
     assert_eq!(receipt.open.pair(), open);
     assert_eq!(receipt.blocked.pair(), blocked);
     assert_eq!(receipt.identity, identity);
@@ -2083,10 +2085,7 @@ fn actor_receipt(npc: &ActorObservationNpc, los: bool) -> ActorObservationScript
             x: npc.tile_x,
             z: npc.tile_z,
         },
-        self_target: ActorObservationSelfTarget {
-            kind: 1,
-            index: 7,
-        },
+        self_target: ActorObservationSelfTarget { kind: 1, index: 7 },
         los: ActorObservationLos { v2: los, v1: los },
     }
 }
@@ -2193,7 +2192,8 @@ fn actor_observation_rejects_noquery_nonpc_identity_and_wrong_stop() {
     let mut no_npc = actor_joined(baseline.clone());
     no_npc.actor.npc = None;
     no_npc.actor.receipt = None;
-    no_npc.script_lifecycle = actor_stop(no_npc.clone(), ACTOR_OBSERVATION_V2_STOP).script_lifecycle;
+    no_npc.script_lifecycle =
+        actor_stop(no_npc.clone(), ACTOR_OBSERVATION_V2_STOP).script_lifecycle;
     watch.observe("catalogtest", no_npc, false);
     assert!(watch.qualify().is_err(), "no-NPC success cannot pass");
 
@@ -2474,8 +2474,7 @@ fn fight_field_rejects_noquery_nonpc_identity_packed_and_wrong_stop() {
     let mut no_npc = fight_joined(baseline.clone());
     no_npc.fight.npc = None;
     no_npc.fight.receipt = None;
-    no_npc.script_lifecycle =
-        fight_stop(no_npc.clone(), FIGHT_FIELD_V2_STOP).script_lifecycle;
+    no_npc.script_lifecycle = fight_stop(no_npc.clone(), FIGHT_FIELD_V2_STOP).script_lifecycle;
     watch.observe("catalogtest", no_npc, false);
     assert!(watch.qualify().is_err(), "no-NPC success cannot pass");
 
@@ -2486,8 +2485,7 @@ fn fight_field_rejects_noquery_nonpc_identity_packed_and_wrong_stop() {
     if let Some(receipt) = mismatch.fight.receipt.as_mut() {
         receipt.network_origin.x = 0;
     }
-    mismatch.script_lifecycle =
-        fight_stop(mismatch.clone(), FIGHT_FIELD_V2_STOP).script_lifecycle;
+    mismatch.script_lifecycle = fight_stop(mismatch.clone(), FIGHT_FIELD_V2_STOP).script_lifecycle;
     watch.observe("catalogtest", mismatch, false);
     assert!(
         watch.qualify().is_err(),
@@ -2501,8 +2499,7 @@ fn fight_field_rejects_noquery_nonpc_identity_packed_and_wrong_stop() {
     if let Some(receipt) = identity.fight.receipt.as_mut() {
         receipt.index = 99;
     }
-    identity.script_lifecycle =
-        fight_stop(identity.clone(), FIGHT_FIELD_V2_STOP).script_lifecycle;
+    identity.script_lifecycle = fight_stop(identity.clone(), FIGHT_FIELD_V2_STOP).script_lifecycle;
     watch.observe("catalogtest", identity, false);
     assert!(
         watch.qualify().is_err(),
@@ -2576,8 +2573,7 @@ fn fight_field_join_agrees_on_nearest_not_array_first() {
     mismatch.fight.host_los_network = Some(true);
     mismatch.fight.host_los_tile = Some(false);
     mismatch.fight.receipt = Some(fight_receipt(&nearest, true, false));
-    mismatch.script_lifecycle =
-        fight_stop(mismatch.clone(), FIGHT_FIELD_V2_STOP).script_lifecycle;
+    mismatch.script_lifecycle = fight_stop(mismatch.clone(), FIGHT_FIELD_V2_STOP).script_lifecycle;
     watch.observe("catalogtest", mismatch, false);
     assert!(
         watch.qualify().is_err(),
@@ -2616,8 +2612,7 @@ fn fight_field_rejects_forged_npc_attack_step() {
     if let Some(receipt) = npc_kind.fight.receipt.as_mut() {
         receipt.kind = Some("npc".into());
     }
-    npc_kind.script_lifecycle =
-        fight_stop(npc_kind.clone(), FIGHT_FIELD_V2_STOP).script_lifecycle;
+    npc_kind.script_lifecycle = fight_stop(npc_kind.clone(), FIGHT_FIELD_V2_STOP).script_lifecycle;
     watch.observe("catalogtest", npc_kind, false);
     assert!(
         watch.qualify().is_err(),
@@ -2633,10 +2628,7 @@ fn fight_field_rejects_forged_npc_attack_step() {
     }
     attack.script_lifecycle = fight_stop(attack.clone(), FIGHT_FIELD_V2_STOP).script_lifecycle;
     watch.observe("catalogtest", attack, false);
-    assert!(
-        watch.qualify().is_err(),
-        "forged Attack effect cannot pass"
-    );
+    assert!(watch.qualify().is_err(), "forged Attack effect cannot pass");
 }
 
 fn hold_here() -> LineOfSightTile {
@@ -3034,8 +3026,7 @@ fn retreat_spot_rejects_noquery_nodest_already_on_dest_and_wrong_stop() {
     let mut no_dest = retreat_joined(baseline.clone());
     no_dest.retreat.dest = None;
     no_dest.retreat.receipt = None;
-    no_dest.script_lifecycle =
-        retreat_stop(no_dest.clone(), RETREAT_SPOT_V2_STOP).script_lifecycle;
+    no_dest.script_lifecycle = retreat_stop(no_dest.clone(), RETREAT_SPOT_V2_STOP).script_lifecycle;
     watch.observe("catalogtest", no_dest, false);
     assert!(watch.qualify().is_err(), "no-dest success cannot pass");
 
@@ -3048,8 +3039,7 @@ fn retreat_spot_rejects_noquery_nodest_already_on_dest_and_wrong_stop() {
     if let Some(receipt) = already.retreat.receipt.as_mut() {
         receipt.dest = here;
     }
-    already.script_lifecycle =
-        retreat_stop(already.clone(), RETREAT_SPOT_V2_STOP).script_lifecycle;
+    already.script_lifecycle = retreat_stop(already.clone(), RETREAT_SPOT_V2_STOP).script_lifecycle;
     watch.observe("catalogtest", already, false);
     assert!(
         watch.qualify().is_err(),
@@ -3190,8 +3180,7 @@ fn retreat_spot_rejects_forged_walk_npc_attack() {
     if let Some(receipt) = attack.retreat.receipt.as_mut() {
         receipt.kind = "Attack".into();
     }
-    attack.script_lifecycle =
-        retreat_stop(attack.clone(), RETREAT_SPOT_V2_STOP).script_lifecycle;
+    attack.script_lifecycle = retreat_stop(attack.clone(), RETREAT_SPOT_V2_STOP).script_lifecycle;
     watch.observe("catalogtest", attack, false);
     assert!(
         watch.qualify().is_err(),
@@ -3482,7 +3471,10 @@ fn walk_spot_rejects_forged_walk_to_walk_near_npc_attack_and_set_safespot() {
         watch.configure(case, "catalogtest");
         watch.observe("catalogtest", baseline.clone(), false);
         watch.begin_start("catalogtest").unwrap();
-        let forged = walk_stop(walk_with_dest(baseline.clone(), walk_dest(), kind), WALK_SPOT_V2_STOP);
+        let forged = walk_stop(
+            walk_with_dest(baseline.clone(), walk_dest(), kind),
+            WALK_SPOT_V2_STOP,
+        );
         watch.observe("catalogtest", forged, false);
         assert!(watch.qualify().is_err(), "{why}");
     }
@@ -3671,7 +3663,11 @@ fn enter_lair_accepts_chebyshev_12_and_rejects_walk_gate_and_hold_back() {
         },
         "walk",
     );
-    watch.observe("catalogtest", enter_stop(hold_back, ENTER_LAIR_V2_STOP), false);
+    watch.observe(
+        "catalogtest",
+        enter_stop(hold_back, ENTER_LAIR_V2_STOP),
+        false,
+    );
     assert!(
         watch.qualify().is_err(),
         "Chebyshev 2 Hold walk-back cannot pass"
@@ -3754,11 +3750,12 @@ fn enter_lair_rejects_in_area_missing_receipt_flags_and_kbd() {
         receipt.allow_teleports = true;
     }
     flagged.enter.allow_teleports = Some(true);
-    watch.observe("catalogtest", enter_stop(flagged, ENTER_LAIR_V2_STOP), false);
-    assert!(
-        watch.qualify().is_err(),
-        "allow_teleports true cannot pass"
+    watch.observe(
+        "catalogtest",
+        enter_stop(flagged, ENTER_LAIR_V2_STOP),
+        false,
     );
+    assert!(watch.qualify().is_err(), "allow_teleports true cannot pass");
 
     let watch = CoreWatch::default();
     watch.configure(case, "catalogtest");
@@ -3817,11 +3814,12 @@ fn enter_lair_rejects_in_area_missing_receipt_flags_and_kbd() {
             level: 0,
         };
     }
-    watch.observe("catalogtest", enter_stop(kbd_tile, ENTER_LAIR_V2_STOP), false);
-    assert!(
-        watch.qualify().is_err(),
-        "(3017, 3849) cannot pass"
+    watch.observe(
+        "catalogtest",
+        enter_stop(kbd_tile, ENTER_LAIR_V2_STOP),
+        false,
     );
+    assert!(watch.qualify().is_err(), "(3017, 3849) cannot pass");
 }
 
 #[test]
@@ -3858,7 +3856,11 @@ fn enter_lair_rejects_forged_kinds_and_disagreement() {
     if let Some(receipt) = mismatch.enter.receipt.as_mut() {
         receipt.approach.x = 3214;
     }
-    watch.observe("catalogtest", enter_stop(mismatch, ENTER_LAIR_V2_STOP), false);
+    watch.observe(
+        "catalogtest",
+        enter_stop(mismatch, ENTER_LAIR_V2_STOP),
+        false,
+    );
     assert!(
         watch.qualify().is_err(),
         "host approach vs File approach disagreement cannot pass"
@@ -4108,8 +4110,10 @@ fn leave_lair_rejects_hold_range_kinds_claim_and_forbidden_paint() {
         &ok.replace("\"radius\":3", "\"radius\":3,\"key\":\"kbd-lair\"")
     )
     .is_none());
-    assert!(parse_leave_lair_receipt_line(&ok.replace("\"radius\":3", "\"radius\":3,\"locId\":1765"))
-        .is_none());
+    assert!(parse_leave_lair_receipt_line(
+        &ok.replace("\"radius\":3", "\"radius\":3,\"locId\":1765")
+    )
+    .is_none());
     assert!(parse_leave_lair_receipt_line(
         &ok.replace("\"radius\":3", "\"radius\":3,\"allow_teleports\":false")
     )
@@ -4141,8 +4145,17 @@ fn leave_lair_rejects_wrong_stop_box_and_forbidden_tiles() {
         max_z: 4010,
         level: 0,
     };
-    let outside = leave_with(baseline.clone(), leave_walk_out(), outside_here, "walk-near");
-    watch.observe("catalogtest", leave_stop(outside, LEAVE_LAIR_V2_STOP), false);
+    let outside = leave_with(
+        baseline.clone(),
+        leave_walk_out(),
+        outside_here,
+        "walk-near",
+    );
+    watch.observe(
+        "catalogtest",
+        leave_stop(outside, LEAVE_LAIR_V2_STOP),
+        false,
+    );
     assert!(watch.qualify().is_err(), "here outside the box cannot pass");
 
     let watch = CoreWatch::default();
@@ -4156,9 +4169,21 @@ fn leave_lair_rejects_wrong_stop_box_and_forbidden_tiles() {
         max_z: 3300,
         level: 0,
     };
-    let inside_out = leave_with(baseline.clone(), leave_walk_out(), contains_out, "walk-near");
-    watch.observe("catalogtest", leave_stop(inside_out, LEAVE_LAIR_V2_STOP), false);
-    assert!(watch.qualify().is_err(), "walkOut inside the box cannot pass");
+    let inside_out = leave_with(
+        baseline.clone(),
+        leave_walk_out(),
+        contains_out,
+        "walk-near",
+    );
+    watch.observe(
+        "catalogtest",
+        leave_stop(inside_out, LEAVE_LAIR_V2_STOP),
+        false,
+    );
+    assert!(
+        watch.qualify().is_err(),
+        "walkOut inside the box cannot pass"
+    );
 
     let watch = CoreWatch::default();
     watch.configure(case, "catalogtest");
@@ -4200,7 +4225,11 @@ fn acquire_here() -> LineOfSightTile {
     }
 }
 
-fn acquire_receipt(here: LineOfSightTile, dest: LineOfSightTile, kind: &str) -> AcquireKeyScriptReceipt {
+fn acquire_receipt(
+    here: LineOfSightTile,
+    dest: LineOfSightTile,
+    kind: &str,
+) -> AcquireKeyScriptReceipt {
     AcquireKeyScriptReceipt {
         here,
         dest,
@@ -4291,7 +4320,11 @@ fn acquire_key_v2_requires_corridor_receipt_and_named_stop() {
         watch.qualify().is_err(),
         "joined receipt without the named helper stop is incomplete"
     );
-    watch.observe("catalogtest", acquire_stop(joined, ACQUIRE_KEY_V2_STOP), false);
+    watch.observe(
+        "catalogtest",
+        acquire_stop(joined, ACQUIRE_KEY_V2_STOP),
+        false,
+    );
     watch
         .qualify()
         .expect("corridor walk-near radius 1 and named stop");
@@ -4343,7 +4376,11 @@ fn acquire_key_rejects_wrong_kinds_dest_radius_and_forbidden_paint() {
     if let Some(receipt) = radius.acquire.receipt.as_mut() {
         receipt.radius = 3;
     }
-    watch.observe("catalogtest", acquire_stop(radius, ACQUIRE_KEY_V2_STOP), false);
+    watch.observe(
+        "catalogtest",
+        acquire_stop(radius, ACQUIRE_KEY_V2_STOP),
+        false,
+    );
     assert!(watch.qualify().is_err(), "radius 3 cannot pass");
 
     let watch = CoreWatch::default();
@@ -4398,7 +4435,11 @@ fn acquire_key_rejects_wrong_stop_cell_and_projected_lair() {
     watch.begin_start("catalogtest").unwrap();
     let joined = acquire_joined(baseline.clone());
     watch.observe("catalogtest", joined.clone(), false);
-    watch.observe("catalogtest", acquire_stop(joined, "some other stop"), false);
+    watch.observe(
+        "catalogtest",
+        acquire_stop(joined, "some other stop"),
+        false,
+    );
     assert!(watch.qualify().is_err(), "wrong named stop cannot pass");
 
     let watch = CoreWatch::default();
@@ -4557,9 +4598,7 @@ fn cell_v2_requires_key_call_receipt_and_named_stop() {
         "joined receipt without the named helper stop is incomplete"
     );
     watch.observe("catalogtest", cell_stop(joined, CELL_V2_STOP), false);
-    watch
-        .qualify()
-        .expect("key-call kind key and named stop");
+    watch.qualify().expect("key-call kind key and named stop");
 }
 
 #[test]
@@ -4602,15 +4641,8 @@ fn cell_v2_rejects_walk_to_door_dusty_claim_kbd_and_wrong_kinds() {
         receipt.here = CELL_V2_DOOR;
         receipt.kind = "walk".into();
     }
-    watch.observe(
-        "catalogtest",
-        cell_stop(door_walk, CELL_V2_STOP),
-        false,
-    );
-    assert!(
-        watch.qualify().is_err(),
-        "walk to (2931, 9690) cannot pass"
-    );
+    watch.observe("catalogtest", cell_stop(door_walk, CELL_V2_STOP), false);
+    assert!(watch.qualify().is_err(), "walk to (2931, 9690) cannot pass");
 
     let here = cell_here();
     let ok = format!(
@@ -4641,10 +4673,9 @@ fn cell_v2_rejects_walk_to_door_dusty_claim_kbd_and_wrong_kinds() {
         &ok.replace("\"kind\":\"key\"", "\"kind\":\"key\",\"locId\":1765")
     )
     .is_none());
-    assert!(parse_cell_v2_receipt_line(
-        &ok.replace("\"kind\":\"key\"", "\"kind\":\"walk\"")
-    )
-    .is_none());
+    assert!(
+        parse_cell_v2_receipt_line(&ok.replace("\"kind\":\"key\"", "\"kind\":\"walk\"")).is_none()
+    );
 }
 
 #[test]
@@ -4692,11 +4723,7 @@ fn cell_v2_rejects_missing_stop_cell_box_and_projected_lair() {
     if let Some(receipt) = inside_lair.cell.receipt.as_mut() {
         receipt.here = lair_here;
     }
-    watch.observe(
-        "catalogtest",
-        cell_stop(inside_lair, CELL_V2_STOP),
-        false,
-    );
+    watch.observe("catalogtest", cell_stop(inside_lair, CELL_V2_STOP), false);
     assert!(
         watch.qualify().is_err(),
         "here inside the projected lair box cannot pass"
@@ -4708,11 +4735,7 @@ fn cell_v2_rejects_missing_stop_cell_box_and_projected_lair() {
     watch.begin_start("catalogtest").unwrap();
     let mut cell_as_boxes = cell_joined(baseline);
     cell_as_boxes.cell.boxes = vec![CELL_V2_CELL];
-    watch.observe(
-        "catalogtest",
-        cell_stop(cell_as_boxes, CELL_V2_STOP),
-        false,
-    );
+    watch.observe("catalogtest", cell_stop(cell_as_boxes, CELL_V2_STOP), false);
     assert!(
         watch.qualify().is_err(),
         "CELL projected as boxes cannot pass"
@@ -4889,21 +4912,26 @@ fn bank_v2_rejects_leave_open_pack_ready_kbd_and_wrong_effects() {
     );
     assert!(parse_bank_v2_receipt_line(&ok).is_some());
     assert!(parse_bank_v2_receipt_line(&format!("{ok} pack-ready")).is_none());
-    assert!(parse_bank_v2_receipt_line(&ok.replace("\"kind\":\"walk-near\"", "\"kind\":\"bank-open\""))
-        .is_none());
-    assert!(parse_bank_v2_receipt_line(&ok.replace("\"kind\":\"walk-near\"", "\"kind\":\"leave\""))
-        .is_none());
+    assert!(parse_bank_v2_receipt_line(
+        &ok.replace("\"kind\":\"walk-near\"", "\"kind\":\"bank-open\"")
+    )
+    .is_none());
+    assert!(parse_bank_v2_receipt_line(
+        &ok.replace("\"kind\":\"walk-near\"", "\"kind\":\"leave\"")
+    )
+    .is_none());
     assert!(parse_bank_v2_receipt_line(&ok.replace(
         "\"discriminator\":\"approach\"",
         "\"discriminator\":\"approach\",\"key\":\"kbd-lair\""
     ))
     .is_none());
-    assert!(parse_bank_v2_receipt_line(&ok.replace("\"radius\":3", "\"radius\":3,\"locId\":1765"))
-        .is_none());
-    assert!(parse_bank_v2_receipt_line(&ok.replace(
-        "\"allow_teleports\":false",
-        "\"allow_teleports\":true"
-    ))
+    assert!(
+        parse_bank_v2_receipt_line(&ok.replace("\"radius\":3", "\"radius\":3,\"locId\":1765"))
+            .is_none()
+    );
+    assert!(parse_bank_v2_receipt_line(
+        &ok.replace("\"allow_teleports\":false", "\"allow_teleports\":true")
+    )
     .is_none());
     assert!(parse_bank_v2_receipt_line(&ok.replace("\"radius\":3", "\"radius\":1")).is_none());
     assert!(parse_bank_v2_receipt_line(&ok.replace("2946", "2612")).is_none());

@@ -165,7 +165,12 @@ pub(super) fn materialize_snapshot(
         let radius = num(&mut scope, snap.walk_outcome_radius() as f64);
         set(&mut scope, obj, "walk_outcome_radius", radius)?;
         let allow = v8::Boolean::new(&mut scope, snap.walk_outcome_allow_teleports());
-        set(&mut scope, obj, "walk_outcome_allow_teleports", allow.into())?;
+        set(
+            &mut scope,
+            obj,
+            "walk_outcome_allow_teleports",
+            allow.into(),
+        )?;
         let rid = num(&mut scope, snap.walk_outcome_request_id() as f64);
         set(&mut scope, obj, "walk_outcome_request_id", rid)?;
         let carry = carry_array(&mut scope, &snap.walk_missing_carry())?;
@@ -211,7 +216,12 @@ pub(super) fn materialize_snapshot(
         let preason = js_string(&mut scope, snap.route_inspect_prev_reason())?;
         set(&mut scope, obj, "route_inspect_prev_reason", preason)?;
         let pbank = v8::Boolean::new(&mut scope, snap.route_inspect_prev_bank_planned());
-        set(&mut scope, obj, "route_inspect_prev_bank_planned", pbank.into())?;
+        set(
+            &mut scope,
+            obj,
+            "route_inspect_prev_bank_planned",
+            pbank.into(),
+        )?;
         let pticks = num(&mut scope, snap.route_inspect_prev_ticks());
         set(&mut scope, obj, "route_inspect_prev_ticks", pticks)?;
         let phops = inspect_hop_array(&mut scope, &snap.route_inspect_prev_hops())?;
@@ -250,7 +260,12 @@ pub(super) fn materialize_snapshot(
         set(&mut scope, obj, "route_inspect_prev_request_id", zero)?;
         set(&mut scope, obj, "route_inspect_prev_ok", falsy)?;
         let empty_prev_reason = js_string(&mut scope, "")?;
-        set(&mut scope, obj, "route_inspect_prev_reason", empty_prev_reason)?;
+        set(
+            &mut scope,
+            obj,
+            "route_inspect_prev_reason",
+            empty_prev_reason,
+        )?;
         set(&mut scope, obj, "route_inspect_prev_bank_planned", falsy)?;
         set(&mut scope, obj, "route_inspect_prev_ticks", zero)?;
         set(&mut scope, obj, "route_inspect_prev_hops", empty_rows)?;
@@ -982,8 +997,7 @@ fn set_readonly<'s>(
     key: &str,
     value: v8::Local<'s, v8::Value>,
 ) -> Result<(), String> {
-    let name =
-        v8::String::new(scope, key).ok_or_else(|| "v8 string alloc failed".to_string())?;
+    let name = v8::String::new(scope, key).ok_or_else(|| "v8 string alloc failed".to_string())?;
     obj.define_own_property(scope, name.into(), value, v8::PropertyAttribute::READ_ONLY)
         .ok_or_else(|| format!("v8 define_own_property failed for {key}"))?;
     Ok(())
@@ -994,8 +1008,7 @@ fn delete_key<'s>(
     obj: v8::Local<'s, v8::Object>,
     key: &str,
 ) -> Result<(), String> {
-    let name =
-        v8::String::new(scope, key).ok_or_else(|| "v8 string alloc failed".to_string())?;
+    let name = v8::String::new(scope, key).ok_or_else(|| "v8 string alloc failed".to_string())?;
     obj.delete(scope, name.into())
         .ok_or_else(|| format!("v8 object delete failed for {key}"))?;
     Ok(())

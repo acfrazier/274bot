@@ -2920,11 +2920,7 @@ fn publish_login_latched_from_arm(
     name: &str,
     arm: &SlotArm,
 ) {
-    publish_login_latched(
-        statuses,
-        name,
-        arm.latch.load(Ordering::Relaxed),
-    );
+    publish_login_latched(statuses, name, arm.latch.load(Ordering::Relaxed));
 }
 
 fn apply_queue_wait(rows: &mut [SlotStatus], name: &str, pos: Option<QueuePos>) {

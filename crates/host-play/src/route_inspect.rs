@@ -8,8 +8,8 @@ use api::snapshot::WorldTile;
 use client::config::Cache;
 use nav::bank_fetch::{plan_bank_fetch, BankStep};
 use nav::router::{
-    find_missing_item_reqs_with_avoid, find_missing_item_reqs_with_avoid_bounded,
-    find_with_avoid, find_with_avoid_bounded, AvoidRect, FindOptions, Leg, Route, RouteError,
+    find_missing_item_reqs_with_avoid, find_missing_item_reqs_with_avoid_bounded, find_with_avoid,
+    find_with_avoid_bounded, AvoidRect, FindOptions, Leg, Route, RouteError,
 };
 use nav::transport::TransportKind;
 use nav::world::NavWorld;
@@ -172,8 +172,10 @@ impl InspectNav {
     }
 
     fn unobserved_count(&self) -> usize {
-        usize::from(Self::slot_unobserved(self.latest.as_ref(), self.observed_seq))
-            + usize::from(Self::slot_unobserved(self.prev.as_ref(), self.observed_seq))
+        usize::from(Self::slot_unobserved(
+            self.latest.as_ref(),
+            self.observed_seq,
+        )) + usize::from(Self::slot_unobserved(self.prev.as_ref(), self.observed_seq))
             + usize::from(self.held.is_some())
     }
 
@@ -549,8 +551,11 @@ fn refuse_locked(bot: &mut NavBot, request_id: u64, reason: &str) {
     if request_id != 0 {
         bot.inspect.accepted_id = request_id;
     }
-    bot.inspect
-        .publish(InspectTerminal::refusal(request_id, bot.inspect.generation, reason));
+    bot.inspect.publish(InspectTerminal::refusal(
+        request_id,
+        bot.inspect.generation,
+        reason,
+    ));
 }
 
 pub(super) fn reset_inspect(bot: &mut NavBot) {
@@ -760,7 +765,9 @@ fn project_hop(
         TransportKind::Boat | TransportKind::Npc | TransportKind::Glider => {
             let npc = cache.and_then(|c| c.npcs.get(edge.loc_id as usize));
             (
-                npc.map(|n| n.name.clone()).filter(|n| !n.is_empty()).unwrap_or_default(),
+                npc.map(|n| n.name.clone())
+                    .filter(|n| !n.is_empty())
+                    .unwrap_or_default(),
                 npc.map(|n| op_at(&n.op, edge.option)).unwrap_or_default(),
             )
         }
@@ -772,7 +779,9 @@ fn project_hop(
         | TransportKind::EssenceExit => {
             let loc = cache.and_then(|c| c.locs.get(edge.loc_id as usize));
             (
-                loc.map(|l| l.name.clone()).filter(|n| !n.is_empty()).unwrap_or_default(),
+                loc.map(|l| l.name.clone())
+                    .filter(|n| !n.is_empty())
+                    .unwrap_or_default(),
                 loc.map(|l| op_at(&l.op, edge.option)).unwrap_or_default(),
             )
         }
@@ -1044,13 +1053,7 @@ mod tests {
         cache.objs[1712] = ObjType {
             id: 1712,
             name: "Glory".into(),
-            op: [
-                None,
-                None,
-                None,
-                Some("Rub".into()),
-                None,
-            ],
+            op: [None, None, None, Some("Rub".into()), None],
             ..Default::default()
         };
         Arc::new(cache)
@@ -1156,26 +1159,50 @@ mod tests {
         let cache = named_cache();
         let names = names(&cache);
         let glider = project_hop(
-            &edge(TransportKind::Glider, tile(1, 1, 0), tile(2, 2, 0), 170, vec![]),
+            &edge(
+                TransportKind::Glider,
+                tile(1, 1, 0),
+                tile(2, 2, 0),
+                170,
+                vec![],
+            ),
             Some(cache.as_ref()),
             Some(names.as_ref()),
         );
         assert_eq!(glider.kind, "glider");
         assert_eq!(glider.loc_name, "Captain Klemfoodle");
         let barnaby = project_hop(
-            &edge(TransportKind::Boat, tile(1, 1, 0), tile(2, 2, 0), 381, vec![]),
+            &edge(
+                TransportKind::Boat,
+                tile(1, 1, 0),
+                tile(2, 2, 0),
+                381,
+                vec![],
+            ),
             Some(cache.as_ref()),
             Some(names.as_ref()),
         );
         assert_eq!(barnaby.loc_name, "Captain Barnaby");
         let thresnor = project_hop(
-            &edge(TransportKind::Boat, tile(1, 1, 0), tile(2, 2, 0), 378, vec![]),
+            &edge(
+                TransportKind::Boat,
+                tile(1, 1, 0),
+                tile(2, 2, 0),
+                378,
+                vec![],
+            ),
             Some(cache.as_ref()),
             Some(names.as_ref()),
         );
         assert_eq!(thresnor.loc_name, "Seaman Thresnor");
         let plank = project_hop(
-            &edge(TransportKind::Ladder, tile(1, 1, 0), tile(2, 2, 0), 2082, vec![]),
+            &edge(
+                TransportKind::Ladder,
+                tile(1, 1, 0),
+                tile(2, 2, 0),
+                2082,
+                vec![],
+            ),
             Some(cache.as_ref()),
             Some(names.as_ref()),
         );
@@ -1186,7 +1213,13 @@ mod tests {
                 option: 4,
                 loc_id: 1712,
                 kind: TransportKind::Teleport,
-                ..edge(TransportKind::Teleport, tile(0, 0, 0), tile(1, 1, 0), 1712, vec![])
+                ..edge(
+                    TransportKind::Teleport,
+                    tile(0, 0, 0),
+                    tile(1, 1, 0),
+                    1712,
+                    vec![],
+                )
             },
             Some(cache.as_ref()),
             Some(names.as_ref()),
@@ -1194,7 +1227,13 @@ mod tests {
         assert_eq!(jewellery.loc_name, "Glory");
         assert_eq!(jewellery.action, "Rub");
         let spell = project_hop(
-            &edge(TransportKind::Teleport, tile(0, 0, 0), tile(1, 1, 0), 0, vec![]),
+            &edge(
+                TransportKind::Teleport,
+                tile(0, 0, 0),
+                tile(1, 1, 0),
+                0,
+                vec![],
+            ),
             Some(cache.as_ref()),
             Some(names.as_ref()),
         );
@@ -1213,13 +1252,9 @@ mod tests {
         let at = tile(0, 0, 0);
         let to = tile(4, 4, 1);
         graph.at.entry(at).or_default().push(0);
-        graph.edges.push(edge(
-            TransportKind::Boat,
-            at,
-            to,
-            381,
-            vec![(995, 30)],
-        ));
+        graph
+            .edges
+            .push(edge(TransportKind::Boat, at, to, 381, vec![(995, 30)]));
         let world = world_with(graph, vec![]);
         let capture = InspectCapture {
             request_id: 1,
@@ -1254,13 +1289,9 @@ mod tests {
         let dest = tile(0, 4, 1);
         let stand = tile(4, 4, 1);
         graph.at.entry(from).or_default().push(0);
-        graph.edges.push(edge(
-            TransportKind::Boat,
-            from,
-            dest,
-            381,
-            vec![(995, 10)],
-        ));
+        graph
+            .edges
+            .push(edge(TransportKind::Boat, from, dest, 381, vec![(995, 10)]));
         graph.at.entry(from).or_default().push(1);
         graph.edges.push(edge(
             TransportKind::Door,
@@ -1310,13 +1341,9 @@ mod tests {
         let from = tile(0, 0, 0);
         let dest = tile(4, 0, 1);
         graph.at.entry(from).or_default().push(0);
-        graph.edges.push(edge(
-            TransportKind::Boat,
-            from,
-            dest,
-            381,
-            vec![(995, 10)],
-        ));
+        graph
+            .edges
+            .push(edge(TransportKind::Boat, from, dest, 381, vec![(995, 10)]));
         let world = world_with(
             graph,
             vec![BankStand {
@@ -1347,7 +1374,11 @@ mod tests {
             search_budget_post: None,
         };
         let term = calculate(&capture);
-        assert!(term.ok, "open walk to stand plus post boat should plan, got {}", term.reason);
+        assert!(
+            term.ok,
+            "open walk to stand plus post boat should plan, got {}",
+            term.reason
+        );
         assert!(term.bank_planned);
         assert!(term.hops.iter().all(|h| h.kind != "bank"));
         assert_eq!(term.hops[0].kind, "boat");
@@ -1525,7 +1556,15 @@ mod tests {
         bad.invalid_args = true;
         queue_inspect(&navs, "p", &None, None, vec![], None, None, bad);
         assert_eq!(
-            navs.lock().unwrap().get("p").unwrap().inspect.latest.as_ref().unwrap().reason,
+            navs.lock()
+                .unwrap()
+                .get("p")
+                .unwrap()
+                .inspect
+                .latest
+                .as_ref()
+                .unwrap()
+                .reason,
             "invalid-args"
         );
         queue_inspect(
@@ -1539,7 +1578,15 @@ mod tests {
             req(tile(0, 0, 0), tile(1, 1, 0), 52),
         );
         assert_eq!(
-            navs.lock().unwrap().get("p").unwrap().inspect.latest.as_ref().unwrap().reason,
+            navs.lock()
+                .unwrap()
+                .get("p")
+                .unwrap()
+                .inspect
+                .latest
+                .as_ref()
+                .unwrap()
+                .reason,
             "missing-graph"
         );
     }
@@ -1647,7 +1694,11 @@ mod tests {
             None,
             None,
         ));
-        assert!(blocked.ok, "unbounded open walk must path, got {}", blocked.reason);
+        assert!(
+            blocked.ok,
+            "unbounded open walk must path, got {}",
+            blocked.reason
+        );
 
         let bank_opts = FindOptions {
             allow_wilderness: true,
@@ -1819,7 +1870,10 @@ mod tests {
         assert_eq!(nav.unobserved_count(), 0);
         assert!(nav.can_admit(false));
         nav.executing = true;
-        assert!(nav.can_admit(false), "acked ring + running still admits pending");
+        assert!(
+            nav.can_admit(false),
+            "acked ring + running still admits pending"
+        );
         nav.executing = true;
         assert!(nav.can_admit(true));
     }
@@ -1968,9 +2022,21 @@ mod tests {
             ..Default::default()
         };
         reset_inspect(&mut bot);
-        bot.inspect.publish(InspectTerminal::refusal(11, bot.inspect.generation, "NoPath"));
-        bot.inspect.publish(InspectTerminal::refusal(12, bot.inspect.generation, "NoPath"));
-        bot.inspect.publish(InspectTerminal::refusal(13, bot.inspect.generation, "NoPath"));
+        bot.inspect.publish(InspectTerminal::refusal(
+            11,
+            bot.inspect.generation,
+            "NoPath",
+        ));
+        bot.inspect.publish(InspectTerminal::refusal(
+            12,
+            bot.inspect.generation,
+            "NoPath",
+        ));
+        bot.inspect.publish(InspectTerminal::refusal(
+            13,
+            bot.inspect.generation,
+            "NoPath",
+        ));
         assert_eq!(bot.inspect.held.as_ref().unwrap().request_id, 13);
         bot.inspect.apply_ack(old_seq, old_gen);
         assert_eq!(
@@ -2219,12 +2285,8 @@ mod tests {
 export const apiVersion = 2;
 export function tick() {}
 "#;
-        let iso = script::LoadIsolate::spawn(
-            src.into(),
-            script::LoadShape::NativeTick,
-            vec![],
-        )
-        .unwrap();
+        let iso =
+            script::LoadIsolate::spawn(src.into(), script::LoadShape::NativeTick, vec![]).unwrap();
         let world = world_with(TransportGraph::default(), vec![]);
         let navs = Arc::new(Mutex::new(HashMap::new()));
 
@@ -2282,10 +2344,16 @@ export function tick() {}
         let _ = iso.probe("true").unwrap();
         assert!(inspect_settled(&iso, b));
         assert_eq!(inspect_value(&iso, b)["reason"], "stale");
-        assert!(!inspect_settled(&iso, a), "A must not stale before own drain");
+        assert!(
+            !inspect_settled(&iso, a),
+            "A must not stale before own drain"
+        );
         assert!(!inspect_settled(&iso, c));
         let acks = drain_inspect_acks(&iso);
-        assert!(!acks.is_empty(), "ACK must flush without a new inspect request");
+        assert!(
+            !acks.is_empty(),
+            "ACK must flush without a new inspect request"
+        );
         {
             let mut all = navs.lock().unwrap();
             let bot = all.get_mut("p").unwrap();
@@ -2307,7 +2375,14 @@ export function tick() {}
         assert_eq!(inspect_value(&iso, a)["request_id"], a);
         assert_eq!(inspect_value(&iso, c)["request_id"], c);
         apply_isolate_acks(&navs, &iso);
-        assert!(navs.lock().unwrap().get("p").unwrap().inspect.worker.is_none());
+        assert!(navs
+            .lock()
+            .unwrap()
+            .get("p")
+            .unwrap()
+            .inspect
+            .worker
+            .is_none());
 
         clear_barrier();
         let sustain = InspectBarrier::new();
@@ -2455,10 +2530,12 @@ export function tick() {}
         )
         .unwrap();
         iso.on_game_tick(7);
-        let leaked = iso
-            .drain_interacts()
-            .into_iter()
-            .any(|req| matches!(req, script::shim::InteractReq::InspectRoute { request_id: 99, .. }));
+        let leaked = iso.drain_interacts().into_iter().any(|req| {
+            matches!(
+                req,
+                script::shim::InteractReq::InspectRoute { request_id: 99, .. }
+            )
+        });
         assert!(!leaked, "invented token must not reach the host queue");
         assert!(inspect_settled(&iso, 99));
         assert_eq!(

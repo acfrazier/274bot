@@ -50,9 +50,9 @@ where
 
 pub fn range_loadout_of_items(items: &[GameItem], weapon: &str, ammo: &str) -> RangeLoadout {
     range_loadout_of(
-        items.iter().filter_map(|item| {
-            Some((item.alias.as_deref()?, item.name.as_deref()?))
-        }),
+        items
+            .iter()
+            .filter_map(|item| Some((item.alias.as_deref()?, item.name.as_deref()?))),
         weapon,
         ammo,
     )
@@ -144,7 +144,10 @@ mod tests {
 
     #[test]
     fn dart_shape_uses_canonical_name_and_unknown_stays_bow() {
-        let items = [("bronze_dart", "Bronze dart"), ("maple_shortbow", "Maple shortbow")];
+        let items = [
+            ("bronze_dart", "Bronze dart"),
+            ("maple_shortbow", "Maple shortbow"),
+        ];
         assert_eq!(
             range_loadout_of(items, "Bronze dart", "Iron arrow"),
             RangeLoadout {

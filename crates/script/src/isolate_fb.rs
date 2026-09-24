@@ -1814,38 +1814,118 @@ impl Verifiable for SnapshotReader<'_> {
             .visit_field::<i32>("canvas_height", VT_SNAP_CANVAS_HEIGHT, false)?
             .visit_field::<i32>("combat_level", VT_SNAP_COMBAT_LEVEL, false)?
             .visit_field::<u64>("route_inspect_seq", VT_SNAP_ROUTE_INSPECT_SEQ, false)?
-            .visit_field::<u64>("route_inspect_generation", VT_SNAP_ROUTE_INSPECT_GENERATION, false)?
-            .visit_field::<u64>("route_inspect_request_id", VT_SNAP_ROUTE_INSPECT_REQUEST_ID, false)?
+            .visit_field::<u64>(
+                "route_inspect_generation",
+                VT_SNAP_ROUTE_INSPECT_GENERATION,
+                false,
+            )?
+            .visit_field::<u64>(
+                "route_inspect_request_id",
+                VT_SNAP_ROUTE_INSPECT_REQUEST_ID,
+                false,
+            )?
             .visit_field::<bool>("route_inspect_ok", VT_SNAP_ROUTE_INSPECT_OK, false)?
-            .visit_field::<ForwardsUOffset<&str>>("route_inspect_reason", VT_SNAP_ROUTE_INSPECT_REASON, false)?
-            .visit_field::<bool>("route_inspect_bank_planned", VT_SNAP_ROUTE_INSPECT_BANK_PLANNED, false)?
+            .visit_field::<ForwardsUOffset<&str>>(
+                "route_inspect_reason",
+                VT_SNAP_ROUTE_INSPECT_REASON,
+                false,
+            )?
+            .visit_field::<bool>(
+                "route_inspect_bank_planned",
+                VT_SNAP_ROUTE_INSPECT_BANK_PLANNED,
+                false,
+            )?
             .visit_field::<f64>("route_inspect_ticks", VT_SNAP_ROUTE_INSPECT_TICKS, false)?
             .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<InspectHopReader>>>>(
                 "route_inspect_hops",
                 VT_SNAP_ROUTE_INSPECT_HOPS,
                 false,
             )?
-            .visit_field::<u64>("route_inspect_prev_seq", VT_SNAP_ROUTE_INSPECT_PREV_SEQ, false)?
-            .visit_field::<u64>("route_inspect_prev_generation", VT_SNAP_ROUTE_INSPECT_PREV_GENERATION, false)?
-            .visit_field::<u64>("route_inspect_prev_request_id", VT_SNAP_ROUTE_INSPECT_PREV_REQUEST_ID, false)?
-            .visit_field::<bool>("route_inspect_prev_ok", VT_SNAP_ROUTE_INSPECT_PREV_OK, false)?
-            .visit_field::<ForwardsUOffset<&str>>("route_inspect_prev_reason", VT_SNAP_ROUTE_INSPECT_PREV_REASON, false)?
-            .visit_field::<bool>("route_inspect_prev_bank_planned", VT_SNAP_ROUTE_INSPECT_PREV_BANK_PLANNED, false)?
-            .visit_field::<f64>("route_inspect_prev_ticks", VT_SNAP_ROUTE_INSPECT_PREV_TICKS, false)?
+            .visit_field::<u64>(
+                "route_inspect_prev_seq",
+                VT_SNAP_ROUTE_INSPECT_PREV_SEQ,
+                false,
+            )?
+            .visit_field::<u64>(
+                "route_inspect_prev_generation",
+                VT_SNAP_ROUTE_INSPECT_PREV_GENERATION,
+                false,
+            )?
+            .visit_field::<u64>(
+                "route_inspect_prev_request_id",
+                VT_SNAP_ROUTE_INSPECT_PREV_REQUEST_ID,
+                false,
+            )?
+            .visit_field::<bool>(
+                "route_inspect_prev_ok",
+                VT_SNAP_ROUTE_INSPECT_PREV_OK,
+                false,
+            )?
+            .visit_field::<ForwardsUOffset<&str>>(
+                "route_inspect_prev_reason",
+                VT_SNAP_ROUTE_INSPECT_PREV_REASON,
+                false,
+            )?
+            .visit_field::<bool>(
+                "route_inspect_prev_bank_planned",
+                VT_SNAP_ROUTE_INSPECT_PREV_BANK_PLANNED,
+                false,
+            )?
+            .visit_field::<f64>(
+                "route_inspect_prev_ticks",
+                VT_SNAP_ROUTE_INSPECT_PREV_TICKS,
+                false,
+            )?
             .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<InspectHopReader>>>>(
                 "route_inspect_prev_hops",
                 VT_SNAP_ROUTE_INSPECT_PREV_HOPS,
                 false,
             )?
-            .visit_field::<u64>("route_inspect_running_id", VT_SNAP_ROUTE_INSPECT_RUNNING_ID, false)?
-            .visit_field::<u64>("route_inspect_pending_id", VT_SNAP_ROUTE_INSPECT_PENDING_ID, false)?
-            .visit_field::<u64>("route_inspect_accepted_id", VT_SNAP_ROUTE_INSPECT_ACCEPTED_ID, false)?
-            .visit_field::<u64>("route_inspect_replaced_id", VT_SNAP_ROUTE_INSPECT_REPLACED_ID, false)?
-            .visit_field::<u64>("route_inspect_replaced_prev_id", VT_SNAP_ROUTE_INSPECT_REPLACED_PREV_ID, false)?
-            .visit_field::<u64>("route_inspect_refused_id", VT_SNAP_ROUTE_INSPECT_REFUSED_ID, false)?
-            .visit_field::<u64>("route_inspect_refused_id_2", VT_SNAP_ROUTE_INSPECT_REFUSED_ID_2, false)?
-            .visit_field::<u64>("route_inspect_refused_id_3", VT_SNAP_ROUTE_INSPECT_REFUSED_ID_3, false)?
-            .visit_field::<u64>("route_inspect_unobserved", VT_SNAP_ROUTE_INSPECT_UNOBSERVED, false)?
+            .visit_field::<u64>(
+                "route_inspect_running_id",
+                VT_SNAP_ROUTE_INSPECT_RUNNING_ID,
+                false,
+            )?
+            .visit_field::<u64>(
+                "route_inspect_pending_id",
+                VT_SNAP_ROUTE_INSPECT_PENDING_ID,
+                false,
+            )?
+            .visit_field::<u64>(
+                "route_inspect_accepted_id",
+                VT_SNAP_ROUTE_INSPECT_ACCEPTED_ID,
+                false,
+            )?
+            .visit_field::<u64>(
+                "route_inspect_replaced_id",
+                VT_SNAP_ROUTE_INSPECT_REPLACED_ID,
+                false,
+            )?
+            .visit_field::<u64>(
+                "route_inspect_replaced_prev_id",
+                VT_SNAP_ROUTE_INSPECT_REPLACED_PREV_ID,
+                false,
+            )?
+            .visit_field::<u64>(
+                "route_inspect_refused_id",
+                VT_SNAP_ROUTE_INSPECT_REFUSED_ID,
+                false,
+            )?
+            .visit_field::<u64>(
+                "route_inspect_refused_id_2",
+                VT_SNAP_ROUTE_INSPECT_REFUSED_ID_2,
+                false,
+            )?
+            .visit_field::<u64>(
+                "route_inspect_refused_id_3",
+                VT_SNAP_ROUTE_INSPECT_REFUSED_ID_3,
+                false,
+            )?
+            .visit_field::<u64>(
+                "route_inspect_unobserved",
+                VT_SNAP_ROUTE_INSPECT_UNOBSERVED,
+                false,
+            )?
             .visit_field::<ForwardsUOffset<CollisionReader>>("collision", VT_SNAP_COLLISION, false)?
             .visit_field::<i32>("self_target_kind", VT_SNAP_SELF_TARGET_KIND, false)?
             .visit_field::<i32>("self_target_index", VT_SNAP_SELF_TARGET_INDEX, false)?
@@ -1859,7 +1939,11 @@ impl Verifiable for SnapshotReader<'_> {
                 VT_SNAP_PUZZLE_BOARD,
                 false,
             )?
-            .visit_field::<u64>("puzzle_board_generation", VT_SNAP_PUZZLE_BOARD_GENERATION, false)?
+            .visit_field::<u64>(
+                "puzzle_board_generation",
+                VT_SNAP_PUZZLE_BOARD_GENERATION,
+                false,
+            )?
             .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<CarryReader>>>>(
                 "walk_missing_carry",
                 VT_SNAP_WALK_MISSING_CARRY,
@@ -2242,7 +2326,11 @@ impl SnapshotReader<'_> {
         unsafe { self.tab.get::<u64>(VT_SNAP_WALK_OUTCOME_REQUEST_ID, None) }.unwrap_or(0)
     }
     pub fn has_route_inspect_seq(&self) -> bool {
-        unsafe { self.tab.get::<u64>(VT_SNAP_ROUTE_INSPECT_SEQ, None).is_some() }
+        unsafe {
+            self.tab
+                .get::<u64>(VT_SNAP_ROUTE_INSPECT_SEQ, None)
+                .is_some()
+        }
     }
     pub fn route_inspect_seq(&self) -> u64 {
         unsafe { self.tab.get::<u64>(VT_SNAP_ROUTE_INSPECT_SEQ, None) }.unwrap_or(0)
@@ -2257,11 +2345,18 @@ impl SnapshotReader<'_> {
         unsafe { self.tab.get::<bool>(VT_SNAP_ROUTE_INSPECT_OK, None) }.unwrap_or(false)
     }
     pub fn route_inspect_reason(&self) -> &str {
-        unsafe { self.tab.get::<ForwardsUOffset<&str>>(VT_SNAP_ROUTE_INSPECT_REASON, None) }
-            .unwrap_or("")
+        unsafe {
+            self.tab
+                .get::<ForwardsUOffset<&str>>(VT_SNAP_ROUTE_INSPECT_REASON, None)
+        }
+        .unwrap_or("")
     }
     pub fn route_inspect_bank_planned(&self) -> bool {
-        unsafe { self.tab.get::<bool>(VT_SNAP_ROUTE_INSPECT_BANK_PLANNED, None) }.unwrap_or(false)
+        unsafe {
+            self.tab
+                .get::<bool>(VT_SNAP_ROUTE_INSPECT_BANK_PLANNED, None)
+        }
+        .unwrap_or(false)
     }
     pub fn route_inspect_ticks(&self) -> f64 {
         unsafe { self.tab.get::<f64>(VT_SNAP_ROUTE_INSPECT_TICKS, None) }.unwrap_or(0.0)
@@ -2273,20 +2368,35 @@ impl SnapshotReader<'_> {
         unsafe { self.tab.get::<u64>(VT_SNAP_ROUTE_INSPECT_PREV_SEQ, None) }.unwrap_or(0)
     }
     pub fn route_inspect_prev_generation(&self) -> u64 {
-        unsafe { self.tab.get::<u64>(VT_SNAP_ROUTE_INSPECT_PREV_GENERATION, None) }.unwrap_or(0)
+        unsafe {
+            self.tab
+                .get::<u64>(VT_SNAP_ROUTE_INSPECT_PREV_GENERATION, None)
+        }
+        .unwrap_or(0)
     }
     pub fn route_inspect_prev_request_id(&self) -> u64 {
-        unsafe { self.tab.get::<u64>(VT_SNAP_ROUTE_INSPECT_PREV_REQUEST_ID, None) }.unwrap_or(0)
+        unsafe {
+            self.tab
+                .get::<u64>(VT_SNAP_ROUTE_INSPECT_PREV_REQUEST_ID, None)
+        }
+        .unwrap_or(0)
     }
     pub fn route_inspect_prev_ok(&self) -> bool {
         unsafe { self.tab.get::<bool>(VT_SNAP_ROUTE_INSPECT_PREV_OK, None) }.unwrap_or(false)
     }
     pub fn route_inspect_prev_reason(&self) -> &str {
-        unsafe { self.tab.get::<ForwardsUOffset<&str>>(VT_SNAP_ROUTE_INSPECT_PREV_REASON, None) }
-            .unwrap_or("")
+        unsafe {
+            self.tab
+                .get::<ForwardsUOffset<&str>>(VT_SNAP_ROUTE_INSPECT_PREV_REASON, None)
+        }
+        .unwrap_or("")
     }
     pub fn route_inspect_prev_bank_planned(&self) -> bool {
-        unsafe { self.tab.get::<bool>(VT_SNAP_ROUTE_INSPECT_PREV_BANK_PLANNED, None) }.unwrap_or(false)
+        unsafe {
+            self.tab
+                .get::<bool>(VT_SNAP_ROUTE_INSPECT_PREV_BANK_PLANNED, None)
+        }
+        .unwrap_or(false)
     }
     pub fn route_inspect_prev_ticks(&self) -> f64 {
         unsafe { self.tab.get::<f64>(VT_SNAP_ROUTE_INSPECT_PREV_TICKS, None) }.unwrap_or(0.0)
@@ -2307,16 +2417,28 @@ impl SnapshotReader<'_> {
         unsafe { self.tab.get::<u64>(VT_SNAP_ROUTE_INSPECT_REPLACED_ID, None) }.unwrap_or(0)
     }
     pub fn route_inspect_replaced_prev_id(&self) -> u64 {
-        unsafe { self.tab.get::<u64>(VT_SNAP_ROUTE_INSPECT_REPLACED_PREV_ID, None) }.unwrap_or(0)
+        unsafe {
+            self.tab
+                .get::<u64>(VT_SNAP_ROUTE_INSPECT_REPLACED_PREV_ID, None)
+        }
+        .unwrap_or(0)
     }
     pub fn route_inspect_refused_id(&self) -> u64 {
         unsafe { self.tab.get::<u64>(VT_SNAP_ROUTE_INSPECT_REFUSED_ID, None) }.unwrap_or(0)
     }
     pub fn route_inspect_refused_id_2(&self) -> u64 {
-        unsafe { self.tab.get::<u64>(VT_SNAP_ROUTE_INSPECT_REFUSED_ID_2, None) }.unwrap_or(0)
+        unsafe {
+            self.tab
+                .get::<u64>(VT_SNAP_ROUTE_INSPECT_REFUSED_ID_2, None)
+        }
+        .unwrap_or(0)
     }
     pub fn route_inspect_refused_id_3(&self) -> u64 {
-        unsafe { self.tab.get::<u64>(VT_SNAP_ROUTE_INSPECT_REFUSED_ID_3, None) }.unwrap_or(0)
+        unsafe {
+            self.tab
+                .get::<u64>(VT_SNAP_ROUTE_INSPECT_REFUSED_ID_3, None)
+        }
+        .unwrap_or(0)
     }
     pub fn route_inspect_unobserved(&self) -> u64 {
         unsafe { self.tab.get::<u64>(VT_SNAP_ROUTE_INSPECT_UNOBSERVED, None) }.unwrap_or(0)
@@ -4557,7 +4679,10 @@ fn encode_snapshot_masked_into(
         if let Some(off) = inspect_reason_off {
             b.push_slot_always(VT_SNAP_ROUTE_INSPECT_REASON, off);
         }
-        b.push_slot_always(VT_SNAP_ROUTE_INSPECT_BANK_PLANNED, facts.latest.bank_planned);
+        b.push_slot_always(
+            VT_SNAP_ROUTE_INSPECT_BANK_PLANNED,
+            facts.latest.bank_planned,
+        );
         b.push_slot_always(VT_SNAP_ROUTE_INSPECT_TICKS, facts.latest.ticks);
         if let Some(off) = inspect_hops_off {
             b.push_slot_always(VT_SNAP_ROUTE_INSPECT_HOPS, off);
@@ -4569,7 +4694,10 @@ fn encode_snapshot_masked_into(
         if let Some(off) = inspect_prev_reason_off {
             b.push_slot_always(VT_SNAP_ROUTE_INSPECT_PREV_REASON, off);
         }
-        b.push_slot_always(VT_SNAP_ROUTE_INSPECT_PREV_BANK_PLANNED, facts.prev.bank_planned);
+        b.push_slot_always(
+            VT_SNAP_ROUTE_INSPECT_PREV_BANK_PLANNED,
+            facts.prev.bank_planned,
+        );
         b.push_slot_always(VT_SNAP_ROUTE_INSPECT_PREV_TICKS, facts.prev.ticks);
         if let Some(off) = inspect_prev_hops_off {
             b.push_slot_always(VT_SNAP_ROUTE_INSPECT_PREV_HOPS, off);
@@ -4578,7 +4706,10 @@ fn encode_snapshot_masked_into(
         b.push_slot_always(VT_SNAP_ROUTE_INSPECT_PENDING_ID, facts.pending_id);
         b.push_slot_always(VT_SNAP_ROUTE_INSPECT_ACCEPTED_ID, facts.accepted_id);
         b.push_slot_always(VT_SNAP_ROUTE_INSPECT_REPLACED_ID, facts.replaced_id);
-        b.push_slot_always(VT_SNAP_ROUTE_INSPECT_REPLACED_PREV_ID, facts.replaced_prev_id);
+        b.push_slot_always(
+            VT_SNAP_ROUTE_INSPECT_REPLACED_PREV_ID,
+            facts.replaced_prev_id,
+        );
         b.push_slot_always(VT_SNAP_ROUTE_INSPECT_REFUSED_ID, facts.refused_id);
         b.push_slot_always(VT_SNAP_ROUTE_INSPECT_REFUSED_ID_2, facts.refused_id_2);
         b.push_slot_always(VT_SNAP_ROUTE_INSPECT_REFUSED_ID_3, facts.refused_id_3);
@@ -4859,7 +4990,10 @@ fn puzzle_board_off<'b>(
 /// One navigator-named gate short. `id` and `count` are always written — the
 /// row's identity is the id — and the name only when the host obj table
 /// resolved one, so a nameless short is never dropped and never invented.
-fn carry_off<'b>(b: &mut FlatBufferBuilder<'b>, row: &CarryInput<'_>) -> WIPOffset<CarryReader<'b>> {
+fn carry_off<'b>(
+    b: &mut FlatBufferBuilder<'b>,
+    row: &CarryInput<'_>,
+) -> WIPOffset<CarryReader<'b>> {
     let name_off = row.name.map(|name| b.create_string(name));
     let tab = b.start_table();
     b.push_slot_always(VT_CARRY_ID, row.id);
@@ -5794,7 +5928,11 @@ impl Verifiable for InteractReader<'_> {
                 false,
             )?
             .visit_field::<u64>("inspect_ack_seq", VT_IN_INSPECT_ACK_SEQ, false)?
-            .visit_field::<u64>("inspect_ack_generation", VT_IN_INSPECT_ACK_GENERATION, false)?
+            .visit_field::<u64>(
+                "inspect_ack_generation",
+                VT_IN_INSPECT_ACK_GENERATION,
+                false,
+            )?
             .finish();
         Ok(())
     }
@@ -8279,7 +8417,10 @@ pub(crate) mod tests {
         ];
         let bytes = encode_interact_batch(&reqs);
         let got = decode_interact_batch(&bytes).expect("interact batch decodes");
-        assert_eq!(got, reqs, "the op string decides the variant, not the slots");
+        assert_eq!(
+            got, reqs,
+            "the op string decides the variant, not the slots"
+        );
     }
 
     #[test]
@@ -8940,7 +9081,9 @@ pub(crate) mod tests {
         let native = board_native(&rows, 25, 1);
         let (keyframe, fp) =
             encode_snapshot_delta_with_native(None, &empty_input(1), native, false);
-        assert!(decode_snapshot(&keyframe).expect("keyframe").has_puzzle_board());
+        assert!(decode_snapshot(&keyframe)
+            .expect("keyframe")
+            .has_puzzle_board());
         let (delta, _) =
             encode_snapshot_delta_with_native(Some(&fp), &empty_input(2), native, false);
         let view = decode_snapshot(&delta).expect("delta");
@@ -9054,12 +9197,8 @@ pub(crate) mod tests {
                 name: None,
             },
         ];
-        let (bytes, _) = encode_snapshot_delta_with_native(
-            None,
-            &empty_input(1),
-            carry_native(&rows, 1),
-            false,
-        );
+        let (bytes, _) =
+            encode_snapshot_delta_with_native(None, &empty_input(1), carry_native(&rows, 1), false);
         let view = decode_snapshot(&bytes).expect("keyframe");
         assert!(view.has_walk_missing_carry());
         let posted = view.walk_missing_carry();
@@ -9080,12 +9219,8 @@ pub(crate) mod tests {
             count: 1,
             name: Some("Shantay pass"),
         }];
-        let (keyframe, fp) = encode_snapshot_delta_with_native(
-            None,
-            &empty_input(1),
-            carry_native(&rows, 1),
-            false,
-        );
+        let (keyframe, fp) =
+            encode_snapshot_delta_with_native(None, &empty_input(1), carry_native(&rows, 1), false);
         assert_eq!(
             decode_snapshot(&keyframe)
                 .expect("keyframe")
@@ -9095,8 +9230,12 @@ pub(crate) mod tests {
         );
         // The next outcome is a route: seq bumped, no named short. The family
         // posts a PRESENT empty vector — the clear rides it, never omitted.
-        let (delta, _) =
-            encode_snapshot_delta_with_native(Some(&fp), &empty_input(2), carry_native(&[], 2), false);
+        let (delta, _) = encode_snapshot_delta_with_native(
+            Some(&fp),
+            &empty_input(2),
+            carry_native(&[], 2),
+            false,
+        );
         let view = decode_snapshot(&delta).expect("delta");
         assert!(view.has_walk_outcome_seq(), "the family re-posts");
         assert!(view.has_walk_missing_carry(), "the clear is never omitted");
@@ -9113,11 +9252,13 @@ pub(crate) mod tests {
             name: None,
         }];
         let native = carry_native(&rows, 4);
-        let (keyframe, fp) = encode_snapshot_delta_with_native(None, &empty_input(1), native, false);
+        let (keyframe, fp) =
+            encode_snapshot_delta_with_native(None, &empty_input(1), native, false);
         assert!(decode_snapshot(&keyframe)
             .expect("keyframe")
             .has_walk_missing_carry());
-        let (delta, _) = encode_snapshot_delta_with_native(Some(&fp), &empty_input(2), native, false);
+        let (delta, _) =
+            encode_snapshot_delta_with_native(Some(&fp), &empty_input(2), native, false);
         let view = decode_snapshot(&delta).expect("delta");
         assert!(!view.has_walk_outcome_seq());
         assert!(!view.has_walk_missing_carry());
@@ -9135,14 +9276,10 @@ pub(crate) mod tests {
         }];
         let (_, fp) =
             encode_snapshot_delta_with_native(None, &empty_input(1), carry_native(&rows, 1), false);
-        let same = SnapshotFingerprint::from_input_with_native(
-            &empty_input(2),
-            carry_native(&rows, 1),
-        );
-        let other = SnapshotFingerprint::from_input_with_native(
-            &empty_input(2),
-            carry_native(&[], 1),
-        );
+        let same =
+            SnapshotFingerprint::from_input_with_native(&empty_input(2), carry_native(&rows, 1));
+        let other =
+            SnapshotFingerprint::from_input_with_native(&empty_input(2), carry_native(&[], 1));
         assert!(!DeltaMask::changed(&fp, &same, false).walk_outcome);
         assert!(
             DeltaMask::changed(&fp, &other, false).walk_outcome,

@@ -433,13 +433,13 @@ fn generated_nurmof_and_flour_facts_join_on_both_revisions() {
         assert_eq!(flour.flour_barrel_object_tile.provenance, "derived");
         assert_eq!(flour.flour_barrel_object_tile.x, 2735);
         assert_eq!(flour.flour_barrel_object_tile.z, 3582);
-        assert_eq!(
-            flour.flour_barrel_approach_tile.provenance,
-            "curated"
-        );
+        assert_eq!(flour.flour_barrel_approach_tile.provenance, "curated");
         assert_eq!(flour.flour_barrel_approach_tile.z, 3581);
         assert_eq!(flour.bank_tile.provenance, "curated");
-        assert_eq!(data.item_by_alias("pot_empty").expect("pot").id, flour.pot.id);
+        assert_eq!(
+            data.item_by_alias("pot_empty").expect("pot").id,
+            flour.pot.id
+        );
     }
 }
 

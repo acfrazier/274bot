@@ -246,12 +246,7 @@ pub(crate) fn paint_layout(view: &ChatView<'_>, state: &ChatState, area: Rect) -
     } else {
         inner.y + inner.height
     };
-    let content = Rect::new(
-        inner.x,
-        y,
-        inner.width,
-        content_bottom.saturating_sub(y),
-    );
+    let content = Rect::new(inner.x, y, inner.width, content_bottom.saturating_sub(y));
     let buttons = if visible_count == 0 {
         Vec::new()
     } else {

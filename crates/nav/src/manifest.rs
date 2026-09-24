@@ -186,9 +186,7 @@ impl NavManifest {
                 return Err("navigation/profile mismatch: decoded content identity differs".into())
             }
         }
-        if content_id.is_some()
-            && !self.source_sha256.as_deref().is_some_and(is_sha256)
-        {
+        if content_id.is_some() && !self.source_sha256.as_deref().is_some_and(is_sha256) {
             return Err("navigation/profile mismatch: missing or malformed source provenance; rebake the pack".into());
         }
         Ok(())
@@ -311,7 +309,8 @@ mod tests {
             "runtime verification must refuse a pack with no decoded identity: {err}"
         );
         manifest.content_id = Some("cdb2f161".into());
-        let err = manifest.verify_pack(revision, &cache, &nav_hash, Some("cdb2f161"))
+        let err = manifest
+            .verify_pack(revision, &cache, &nav_hash, Some("cdb2f161"))
             .expect_err("decoded identity alone must not certify the baker inputs");
         assert!(err.contains("source provenance"), "{err}");
         manifest.source_sha256 = Some("ab".repeat(32));

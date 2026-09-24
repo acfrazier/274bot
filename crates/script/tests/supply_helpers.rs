@@ -99,8 +99,8 @@ fn post_inv(iso: &LoadIsolate, tick: u64, inv: &[ItemRowInput<'_>]) {
 
 fn probe_v2(src: &str, revision: ClientRevision) -> serde_json::Value {
     let data = api::game_data::for_revision(revision).unwrap();
-    let iso = LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data)
-        .unwrap();
+    let iso =
+        LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data).unwrap();
     post_base(&iso, 1);
     iso.on_game_tick(1);
     let value = iso.probe("globalThis.__probe").unwrap();
@@ -210,10 +210,7 @@ export default class T extends LoopingBot {
         assert_eq!(value["bread"], 4);
         assert_eq!(value["anchovies"], 3);
         assert!(
-            value["unknown"]
-                .as_str()
-                .unwrap_or("")
-                .contains("not impl"),
+            value["unknown"].as_str().unwrap_or("").contains("not impl"),
             "{value:?}"
         );
         assert!(
@@ -266,7 +263,10 @@ export function tick(api) {
             serde_json::json!([{ "rune": "Mind rune", "count": 1 }])
         );
         assert!(value["unknownSpell"]["value"].is_null());
-        assert_eq!(value["invRuneNamesIgnored"]["value"], value["staff"]["value"]);
+        assert_eq!(
+            value["invRuneNamesIgnored"]["value"],
+            value["staff"]["value"]
+        );
     }
 }
 
@@ -307,7 +307,12 @@ export function tick(api) {
         assert_eq!(value["unknown"]["error"], "unknown-id");
         assert_eq!(value["badType"]["error"], "invalid-args");
         for id in [
-            "lumbridge", "falador", "camelot", "ardougne", "watchtower", "trollheim",
+            "lumbridge",
+            "falador",
+            "camelot",
+            "ardougne",
+            "watchtower",
+            "trollheim",
         ] {
             assert_eq!(value[id]["ok"], true, "{id}");
         }
@@ -366,10 +371,7 @@ export const apiVersion = 2;
 "#,
         ClientRevision::R274,
     );
-    let bindings = include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/src/load/bindings.rs"
-    ));
+    let bindings = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/load/bindings.rs"));
     assert!(
         !bindings.contains("register_function(\"__rs2b0t_supply_v2\""),
         "new JSON register_function for supply v2 is forbidden"
@@ -466,8 +468,7 @@ export function tick(api) {
         assert_eq!(value["wieldedNum"]["error"], "invalid-args", "{value:?}");
         assert_eq!(value["keepFoodNum"]["error"], "invalid-args", "{value:?}");
         assert_eq!(
-            value["runesMissingWielded"]["error"],
-            "invalid-args",
+            value["runesMissingWielded"]["error"], "invalid-args",
             "{value:?}"
         );
     }
@@ -482,8 +483,9 @@ fn example_supply_helpers_v2_ts_runs_all_five_on_snapshot() {
     let js = script::transpile_ts(&src).expect("transpile supply_helpers_v2.ts");
     for revision in [ClientRevision::R274, ClientRevision::R289] {
         let data = api::game_data::for_revision(revision).unwrap();
-        let iso = LoadIsolate::spawn_with_game_data(js.clone(), LoadShape::NativeTick, vec![], data)
-            .unwrap();
+        let iso =
+            LoadIsolate::spawn_with_game_data(js.clone(), LoadShape::NativeTick, vec![], data)
+                .unwrap();
         let inv = [
             item("Shark", 385, 0),
             item("Shark", 385, 1),
@@ -491,10 +493,16 @@ fn example_supply_helpers_v2_ts_runs_all_five_on_snapshot() {
         ];
         post_inv(&iso, 1, &inv);
         iso.on_game_tick(1);
-        let err = iso.probe("globalThis.__rs2b0t_host.lastError || ''").unwrap();
+        let err = iso
+            .probe("globalThis.__rs2b0t_host.lastError || ''")
+            .unwrap();
         let logs = iso.drain_logs();
         iso.join();
-        assert_eq!(err.as_str().unwrap_or(""), "", "example lastError: {err:?} logs={logs:?}");
+        assert_eq!(
+            err.as_str().unwrap_or(""),
+            "",
+            "example lastError: {err:?} logs={logs:?}"
+        );
         let last = logs
             .iter()
             .rev()
@@ -515,7 +523,10 @@ fn example_supply_helpers_v2_ts_runs_all_five_on_snapshot() {
             serde_json::json!([{ "rune": "Mind rune", "count": 1 }]),
             "{row:?}"
         );
-        assert_eq!(row["escape"]["value"]["label"], "Varrock teleport", "{row:?}");
+        assert_eq!(
+            row["escape"]["value"]["label"], "Varrock teleport",
+            "{row:?}"
+        );
         assert_eq!(row["escape"]["value"]["level"], 25, "{row:?}");
     }
 }

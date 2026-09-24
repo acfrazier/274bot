@@ -251,10 +251,7 @@ fn autofighter_shaped_herbs_import_remaps() {
 fn herb_cleaner_logic_transitive_herbs_scan_is_loadable() {
     use script::load::first_unloadable_for_card;
 
-    let dir = std::env::temp_dir().join(format!(
-        "274bot-herb-logic-scan-{}",
-        std::process::id()
-    ));
+    let dir = std::env::temp_dir().join(format!("274bot-herb-logic-scan-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     let card_dir = dir.join("HerbCleaner");
     std::fs::create_dir_all(&card_dir).unwrap();

@@ -13,8 +13,10 @@ pub mod ctx;
 pub mod declared_abi;
 /// Script-side Ent tile lookup over caller-supplied rows.
 pub mod ent;
+pub mod escape_runes;
 #[cfg(feature = "load")]
 mod events;
+pub mod food_policy;
 /// Native gather-tool selection over the posted `api::gather_tools` rows.
 pub mod gather_tools;
 pub mod host_js;
@@ -25,8 +27,6 @@ pub mod isolated_env;
 #[cfg(feature = "load")]
 pub mod js_cache;
 mod keep_list;
-pub mod escape_runes;
-pub mod food_policy;
 pub mod load;
 pub mod loadout_plan;
 pub mod loadouts_store;
@@ -96,12 +96,12 @@ pub use load::{transpile_ts, LoadIsolate};
 #[cfg(feature = "load")]
 mod autocast;
 #[cfg(feature = "load")]
-mod prayer;
-#[cfg(feature = "load")]
 mod bank_open;
 #[cfg(feature = "load")]
 mod bank_withdraw;
 pub mod cake_stall;
+#[cfg(feature = "load")]
+mod clue;
 #[cfg(feature = "load")]
 mod death_recovery;
 #[cfg(feature = "load")]
@@ -111,39 +111,41 @@ mod drive_partner_trade;
 #[cfg(feature = "load")]
 mod fire;
 #[cfg(feature = "load")]
-mod modals;
+pub mod hunt_bank;
 #[cfg(feature = "load")]
-mod clue;
-#[cfg(feature = "load")]
-mod sherlock;
-#[cfg(feature = "load")]
-mod quest_journal;
-#[cfg(feature = "load")]
-mod periodic_bank;
-#[cfg(feature = "load")]
-mod production;
-#[cfg(feature = "load")]
-mod reach;
-#[cfg(feature = "load")]
-pub mod line_of_sight;
+pub mod hunt_cell;
 #[cfg(feature = "load")]
 pub mod hunt_fight;
+#[cfg(feature = "load")]
+pub mod hunt_key;
 #[cfg(feature = "load")]
 pub mod hunt_lair;
 #[cfg(feature = "load")]
 pub mod hunt_leave;
 #[cfg(feature = "load")]
-pub mod hunt_key;
+mod inspect_wait;
 #[cfg(feature = "load")]
-pub mod hunt_cell;
+pub mod line_of_sight;
 #[cfg(feature = "load")]
-pub mod hunt_bank;
+mod modals;
+#[cfg(feature = "load")]
+mod periodic_bank;
+#[cfg(feature = "load")]
+mod prayer;
+#[cfg(feature = "load")]
+mod production;
+#[cfg(feature = "load")]
+mod quest_journal;
+#[cfg(feature = "load")]
+mod reach;
+#[cfg(feature = "load")]
+mod sherlock;
 #[cfg(feature = "load")]
 mod shop;
 #[cfg(feature = "load")]
-mod supply_v2;
-#[cfg(feature = "load")]
 mod special;
+#[cfg(feature = "load")]
+mod supply_v2;
 #[cfg(feature = "load")]
 mod task_clock;
 #[cfg(feature = "load")]
@@ -152,8 +154,6 @@ mod teleport;
 mod trade;
 #[cfg(feature = "load")]
 mod walk_wait;
-#[cfg(feature = "load")]
-mod inspect_wait;
 
 #[cfg(feature = "memory-profile")]
 pub mod memory_profile;

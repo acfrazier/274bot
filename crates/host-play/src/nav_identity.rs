@@ -131,7 +131,10 @@ pub fn select_nav_origin(
         if identity.revision == revision
             && (identity.cache_id == cache_id
                 || (identity.content_id.as_deref() == Some(cache_id)
-                    && identity.source_sha256.as_deref().is_some_and(nav::manifest::is_sha256)))
+                    && identity
+                        .source_sha256
+                        .as_deref()
+                        .is_some_and(nav::manifest::is_sha256)))
         {
             if matched.is_some() {
                 return Err(format!(

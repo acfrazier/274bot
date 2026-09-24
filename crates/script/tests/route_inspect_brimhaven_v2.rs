@@ -236,10 +236,9 @@ fn actual_example_begins_and_settles_on_published_native_snapshot() {
     post_tick(&iso, 3, PIER, settled_facts);
     let snap0 = inspect_routes(&iso);
     assert!(
-        snap0.iter().any(|req| matches!(
-            req,
-            InteractReq::InspectRoute { request_id: 0, .. }
-        )),
+        snap0
+            .iter()
+            .any(|req| matches!(req, InteractReq::InspectRoute { request_id: 0, .. })),
         "after isolate settle, fixture must send snapshot-only id0: {snap0:?}"
     );
     assert_eq!(

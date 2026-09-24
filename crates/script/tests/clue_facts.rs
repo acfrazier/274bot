@@ -111,7 +111,11 @@ fn the_bounded_row_is_access_constrained_and_not_playable() {
         );
         let by_alias = row(revision, CluePin::Alias("  Trail_Clue_Hard_Sextant028  ")).unwrap();
         assert_eq!(by_alias, sextant);
-        let casket = row(revision, CluePin::Alias("trail_clue_hard_sextant028_casket")).unwrap();
+        let casket = row(
+            revision,
+            CluePin::Alias("trail_clue_hard_sextant028_casket"),
+        )
+        .unwrap();
         assert_eq!(casket["id"], 3555);
         assert_eq!(casket["role"], "casket");
         assert!(casket.get("access").is_none(), "{casket}");
@@ -153,7 +157,19 @@ fn params_stay_raw_strings_in_file_order_and_empty_arrays_stay() {
 #[test]
 fn non_members_and_challenge_rows_are_unknown_id() {
     for revision in [ClientRevision::R274, ClientRevision::R289] {
-        for id in [3533, 2842, 2844, 2846, 2850, 2852, 2854, 6859, 0, -1, i32::MAX] {
+        for id in [
+            3533,
+            2842,
+            2844,
+            2846,
+            2850,
+            2852,
+            2854,
+            6859,
+            0,
+            -1,
+            i32::MAX,
+        ] {
             assert_eq!(
                 row(revision, CluePin::Id(id)),
                 Err("unknown-id"),
@@ -182,7 +198,10 @@ fn non_members_and_challenge_rows_are_unknown_id() {
             );
         }
         assert_eq!(row(revision, CluePin::Alias("3554")), Err("unknown-id"));
-        assert_eq!(row(revision, CluePin::Id(3554)).unwrap()["alias"], "trail_clue_hard_sextant028");
+        assert_eq!(
+            row(revision, CluePin::Id(3554)).unwrap()["alias"],
+            "trail_clue_hard_sextant028"
+        );
     }
 }
 
@@ -436,7 +455,9 @@ fn post_scene(iso: &LoadIsolate, tick: u64, page: &[(i32, i32)], scene: &Scene<'
         walk_missing_carry: scene.missing_carry,
         ..script::isolate_fb::NativeFactsInput::default()
     };
-    iso.post_snapshot(script::isolate_fb::encode_snapshot_with_native(&input, native));
+    iso.post_snapshot(script::isolate_fb::encode_snapshot_with_native(
+        &input, native,
+    ));
 }
 
 fn probe(src: &str, revision: ClientRevision) -> serde_json::Value {
@@ -538,10 +559,7 @@ export function tick(api) {
         assert_eq!(value["rowType"], "function", "{value:?}");
         assert_eq!(value["flat"], "undefined", "{value:?}");
         assert_eq!(value["heldStepType"], "function", "{value:?}");
-        for key in [
-            "begin",
-            "next",
-        ] {
+        for key in ["begin", "next"] {
             assert_eq!(value[key], "function", "{key} {value:?}");
         }
         for key in ["challengeAnswer", "deposit", "retry", "noteDeath"] {
@@ -616,7 +634,10 @@ export function tick(api) {
     }
     assert_eq!(value["stringAlias"]["ok"], true, "{value:?}");
     assert_eq!(value["stringAlias"]["value"]["id"], 3554, "{value:?}");
-    assert_eq!(value["stringAlias"]["value"]["access"], "constrained", "{value:?}");
+    assert_eq!(
+        value["stringAlias"]["value"]["access"], "constrained",
+        "{value:?}"
+    );
 }
 
 #[test]
@@ -647,7 +668,10 @@ export function tick(api) {
         let value = probe_page(src, revision, &[(999_999, 1), (3554, 1), (3531, 1)]);
         assert_eq!(value["ok"], true, "{revision:?} {value:?}");
         assert_eq!(value["then"], "undefined", "{value:?}");
-        assert_eq!(value["alias"], "trail_clue_hard_sextant016_casket", "{value:?}");
+        assert_eq!(
+            value["alias"], "trail_clue_hard_sextant016_casket",
+            "{value:?}"
+        );
         assert_eq!(value["id"], 3531, "{value:?}");
         assert_eq!(value["role"], "casket", "{value:?}");
         assert_eq!(value["params"], serde_json::json!([]), "{value:?}");
@@ -891,8 +915,8 @@ export function tick(api) {
 }
 "#;
     let data = api::game_data::for_revision(ClientRevision::R274).unwrap();
-    let iso = LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data)
-        .unwrap();
+    let iso =
+        LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data).unwrap();
     post_page(&iso, 1, &[(2722, 1)]);
     iso.on_game_tick(1);
     let value: serde_json::Value =
@@ -901,7 +925,11 @@ export function tick(api) {
     iso.join();
 
     assert_eq!(value["beginThen"], "undefined", "{value:?}");
-    assert_eq!(value["beginKeys"], serde_json::json!(["token"]), "{value:?}");
+    assert_eq!(
+        value["beginKeys"],
+        serde_json::json!(["token"]),
+        "{value:?}"
+    );
     assert_eq!(value["tokenType"], "number", "{value:?}");
     let token = &value["gate"]["token"];
     assert!(token.is_number(), "{value:?}");
@@ -936,7 +964,11 @@ export function tick(api) {
     // A token that is not the session's is the error object, never undefined.
     assert_eq!(value["dead"]["ok"], false, "{value:?}");
     assert_eq!(value["dead"]["error"], "stale", "{value:?}");
-    assert_eq!(value["dead"]["status"], serde_json::Value::Null, "{value:?}");
+    assert_eq!(
+        value["dead"]["status"],
+        serde_json::Value::Null,
+        "{value:?}"
+    );
     for key in ["badResume", "badToken", "positional", "arrayArg"] {
         assert_eq!(value[key]["error"], "invalid-args", "{key} {value:?}");
     }
@@ -994,8 +1026,8 @@ export function tick(api) {
     // is gone. It is neither a challenge scroll — the seam joins those onto
     // their parent talk step — nor a talk step of its own.
     let unselected = first_unselected_id(&data);
-    let iso = LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data)
-        .unwrap();
+    let iso =
+        LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data).unwrap();
     post_page(&iso, 1, &[(2831, 1)]);
     iso.on_game_tick(1);
     post_page(&iso, 2, &[(unselected, 1)]);
@@ -1009,7 +1041,10 @@ export function tick(api) {
 
     assert!(value["token"].is_number(), "{value:?}");
     assert_eq!(value["begin"]["ok"], true, "{value:?}");
-    assert_eq!(value["begin"]["value"]["token"], value["token"], "{value:?}");
+    assert_eq!(
+        value["begin"]["value"]["token"], value["token"],
+        "{value:?}"
+    );
     // The identify family's own reason survives the wrapper on `next`: not
     // `stale`, and not a continue step.
     assert_eq!(value["dropped"]["ok"], false, "{value:?}");
@@ -1253,8 +1288,8 @@ export function tick(api) {
 }
 "#;
     let data = api::game_data::for_revision(ClientRevision::R274).unwrap();
-    let iso = LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data)
-        .unwrap();
+    let iso =
+        LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data).unwrap();
     let page = [(2677, 1)];
 
     // Tick 1: the identified `trail_clue_easy_simple001` search row with no
@@ -1570,8 +1605,8 @@ export function tick(api) {
 }
 "#;
     let data = api::game_data::for_revision(ClientRevision::R274).unwrap();
-    let iso = LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data)
-        .unwrap();
+    let iso =
+        LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data).unwrap();
     // The casket and the constrained clue it belongs to both held: identify is
     // casket-first, so every Open below is the casket's and 3554 is never one.
     let pair = [(3554, 1), (3555, 1)];
@@ -1601,10 +1636,7 @@ export function tick(api) {
     );
     iso.on_game_tick(2);
     assert!(iso.probe("true").is_ok());
-    assert!(
-        iso.drain_interacts().is_empty(),
-        "yield emits no held Open"
-    );
+    assert!(iso.drain_interacts().is_empty(), "yield emits no held Open");
 
     // Tick 3: the posted `hold` freezes this machine's clock and is a
     // paint-only tick — the script never runs — so no Open is re-sent.
@@ -1633,7 +1665,11 @@ export function tick(api) {
     post_page(&iso, 4, &pair);
     iso.on_game_tick(4);
     assert!(iso.probe("true").is_ok());
-    assert_eq!(iso.drain_interacts(), vec![casket_open()], "the Open repeats");
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![casket_open()],
+        "the Open repeats"
+    );
 
     // Tick 5: the casket gone, the constrained clue left alone. The live
     // session identifies 3554 and refuses it — `aborted` / `constrained`, no
@@ -2106,8 +2142,8 @@ export function tick(api) {
 }
 "#;
     let data = api::game_data::for_revision(ClientRevision::R274).unwrap();
-    let iso = LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data)
-        .unwrap();
+    let iso =
+        LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data).unwrap();
     // A scene the search and dig arms would both play from: `here` on the
     // picked loc and the Spade in the pack.
     let actions = vec!["Search".to_string()];
@@ -2129,7 +2165,10 @@ export function tick(api) {
     post_scene(&iso, 1, &packed, &scene);
     iso.on_game_tick(1);
     assert!(iso.probe("true").is_ok());
-    assert!(iso.drain_interacts().is_empty(), "the refusal is not a verb");
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "the refusal is not a verb"
+    );
 
     for tick in 2..=4 {
         post_scene(&iso, tick, &paramless, &scene);
@@ -2238,8 +2277,8 @@ export function tick(api) {
 }
 "#;
     let data = api::game_data::for_revision(ClientRevision::R274).unwrap();
-    let iso = LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data)
-        .unwrap();
+    let iso =
+        LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data).unwrap();
     // `trail_clue_medium_sextant001` held beside the item its Dig resolves:
     // one page, because `snapshot.inv` is both the identify page and the pack
     // page the Spade is read from.
@@ -2460,8 +2499,8 @@ export function tick(api) {
 }
 "#;
     let data = api::game_data::for_revision(ClientRevision::R274).unwrap();
-    let iso = LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data)
-        .unwrap();
+    let iso =
+        LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data).unwrap();
     // The held clue alone: the Spade never reached the pack.
     let bare = [(2801, 1)];
     let with_spade = [(2801, 1), (952, 1)];
@@ -2521,7 +2560,9 @@ export function tick(api) {
     assert_eq!(steps[4]["ok"], true, "{value:?}");
     assert_eq!(steps[4]["status"], "continue", "{value:?}");
     assert_eq!(steps[4]["token"], value["token"], "{value:?}");
-    for absent in ["name", "action", "x", "z", "level", "message", "id", "error"] {
+    for absent in [
+        "name", "action", "x", "z", "level", "message", "id", "error",
+    ] {
         assert!(steps[4].get(absent).is_none(), "{absent} {value:?}");
     }
     assert_eq!(steps[5]["kind"], "held", "{value:?}");
@@ -2569,8 +2610,8 @@ export function tick(api) {
 }
 "#;
     let data = api::game_data::for_revision(ClientRevision::R274).unwrap();
-    let iso = LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data)
-        .unwrap();
+    let iso =
+        LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data).unwrap();
     // The map row held beside the Spade its Dig resolves: one page, because
     // `snapshot.inv` is both the identify page and the pack page.
     let clue = [(2713, 1), (952, 1)];
@@ -2777,8 +2818,8 @@ export function tick(api) {
 }
 "#;
     let data = api::game_data::for_revision(ClientRevision::R274).unwrap();
-    let iso = LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data)
-        .unwrap();
+    let iso =
+        LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data).unwrap();
     // `trail_clue_hard_sextant001` beside the item its Dig resolves, and the
     // posted pages the fight reads: the npc page, the overlay varps (the
     // selected Protect from Magic index 95, off then on) and the posted
@@ -2794,8 +2835,14 @@ export function tick(api) {
         base: 40,
         effective: 40,
     }];
-    let overlay_off = [VarpInput { index: 95, value: 0 }];
-    let overlay_on = [VarpInput { index: 95, value: 1 }];
+    let overlay_off = [VarpInput {
+        index: 95,
+        value: 0,
+    }];
+    let overlay_on = [VarpInput {
+        index: 95,
+        value: 1,
+    }];
     let far = TileInput {
         x: 3100,
         z: 3300,
@@ -2808,7 +2855,12 @@ export function tick(api) {
     };
     // Ticks 1-4: the begin and the landed report. Nothing on the drain yet.
     for tick in 1..=4 {
-        post_scene(&iso, tick, &page, &guarded_scene(far, &names, &[], &[], &stats, false, false));
+        post_scene(
+            &iso,
+            tick,
+            &page,
+            &guarded_scene(far, &names, &[], &[], &stats, false, false),
+        );
         iso.on_game_tick(tick);
         assert!(iso.probe("true").is_ok());
         assert!(
@@ -2818,7 +2870,12 @@ export function tick(api) {
     }
 
     // Tick 5: not arrived, so the walk to the decoded `0_47_60_50_44` tile.
-    post_scene(&iso, 5, &page, &guarded_scene(far, &names, &[], &[], &stats, false, false));
+    post_scene(
+        &iso,
+        5,
+        &page,
+        &guarded_scene(far, &names, &[], &[], &stats, false, false),
+    );
     iso.on_game_tick(5);
     assert!(iso.probe("true").is_ok());
     assert_eq!(
@@ -2837,7 +2894,12 @@ export function tick(api) {
 
     // Tick 6: arrived with the Spade: the guarded first Dig, which is the
     // spawn. No npc page and no overlay have been posted yet.
-    post_scene(&iso, 6, &page, &guarded_scene(arrived, &names, &[], &[], &stats, false, false));
+    post_scene(
+        &iso,
+        6,
+        &page,
+        &guarded_scene(arrived, &names, &[], &[], &stats, false, false),
+    );
     iso.on_game_tick(6);
     assert!(iso.probe("true").is_ok());
     assert_eq!(
@@ -2852,7 +2914,15 @@ export function tick(api) {
         &iso,
         7,
         &page,
-        &guarded_scene(arrived, &names, &[wizard], &overlay_off, &stats, false, false),
+        &guarded_scene(
+            arrived,
+            &names,
+            &[wizard],
+            &overlay_off,
+            &stats,
+            false,
+            false,
+        ),
     );
     iso.on_game_tick(7);
     assert!(iso.probe("true").is_ok());
@@ -2867,7 +2937,15 @@ export function tick(api) {
         &iso,
         8,
         &page,
-        &guarded_scene(arrived, &names, &[wizard], &overlay_on, &stats, false, false),
+        &guarded_scene(
+            arrived,
+            &names,
+            &[wizard],
+            &overlay_on,
+            &stats,
+            false,
+            false,
+        ),
     );
     iso.on_game_tick(8);
     assert!(iso.probe("true").is_ok());
@@ -2886,7 +2964,15 @@ export function tick(api) {
         &iso,
         9,
         &page,
-        &guarded_scene(arrived, &names, &[wizard], &overlay_on, &stats, false, false),
+        &guarded_scene(
+            arrived,
+            &names,
+            &[wizard],
+            &overlay_on,
+            &stats,
+            false,
+            false,
+        ),
     );
     iso.on_game_tick(9);
     assert!(iso.probe("true").is_ok());
@@ -2897,7 +2983,12 @@ export function tick(api) {
 
     // Tick 10: the owned index left the page inside the grace — the kill. The
     // player is off the tile here, so the kill walks back.
-    post_scene(&iso, 10, &page, &guarded_scene(far, &names, &[], &overlay_on, &stats, false, false));
+    post_scene(
+        &iso,
+        10,
+        &page,
+        &guarded_scene(far, &names, &[], &overlay_on, &stats, false, false),
+    );
     iso.on_game_tick(10);
     assert!(iso.probe("true").is_ok());
     assert_eq!(
@@ -2915,7 +3006,12 @@ export function tick(api) {
     );
 
     // Tick 11: arrived again: the post-kill redig.
-    post_scene(&iso, 11, &page, &guarded_scene(arrived, &names, &[], &overlay_on, &stats, false, false));
+    post_scene(
+        &iso,
+        11,
+        &page,
+        &guarded_scene(arrived, &names, &[], &overlay_on, &stats, false, false),
+    );
     iso.on_game_tick(11);
     assert!(iso.probe("true").is_ok());
     assert_eq!(
@@ -2927,7 +3023,12 @@ export function tick(api) {
     // Tick 12: the posted `hold` freezes this machine's clock and is a
     // paint-only tick — the script never runs — so the same arrived page with
     // the Spade reaches the drain with nothing.
-    post_scene(&iso, 12, &page, &guarded_scene(arrived, &names, &[], &overlay_on, &stats, false, true));
+    post_scene(
+        &iso,
+        12,
+        &page,
+        &guarded_scene(arrived, &names, &[], &overlay_on, &stats, false, true),
+    );
     iso.on_game_tick(12);
     assert!(iso.probe("true").is_ok());
     assert!(
@@ -2937,7 +3038,12 @@ export function tick(api) {
 
     // Tick 13: the posted `ours` interrupt, unfrozen: yield, and the drain is
     // empty again.
-    post_scene(&iso, 13, &page, &guarded_scene(arrived, &names, &[], &overlay_on, &stats, true, false));
+    post_scene(
+        &iso,
+        13,
+        &page,
+        &guarded_scene(arrived, &names, &[], &overlay_on, &stats, true, false),
+    );
     iso.on_game_tick(13);
     assert!(iso.probe("true").is_ok());
     assert!(
@@ -3056,8 +3162,8 @@ export function tick(api) {
 }
 "#;
     let data = api::game_data::for_revision(ClientRevision::R274).unwrap();
-    let iso = LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data)
-        .unwrap();
+    let iso =
+        LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data).unwrap();
     let page = [(2723, 1), (952, 1)];
     let names = [(952, "Spade")];
     let attack = vec!["Attack".to_string()];
@@ -3065,8 +3171,14 @@ export function tick(api) {
     let guard = scene_npc(7, "Guard", 1, 10, 10, &attack);
     let wizard = scene_npc(9, "Zamorak Wizard", 3, 10, 10, &attack);
     let bystander = scene_npc(11, "Zamorak Wizard", 3, 10, 10, &other);
-    let overlay_off = [VarpInput { index: 95, value: 0 }];
-    let overlay_on = [VarpInput { index: 95, value: 1 }];
+    let overlay_off = [VarpInput {
+        index: 95,
+        value: 0,
+    }];
+    let overlay_on = [VarpInput {
+        index: 95,
+        value: 1,
+    }];
     let arrived = TileInput {
         x: 3058,
         z: 3884,
@@ -3113,7 +3225,20 @@ export function tick(api) {
 
     // Tick 7: another name at distance one, and the right name without the
     // Attack action: neither is the nearest anything.
-    post_scene(&iso, 7, &page, &guarded_scene(arrived, &names, &[guard, bystander], &overlay_on, &[], false, false));
+    post_scene(
+        &iso,
+        7,
+        &page,
+        &guarded_scene(
+            arrived,
+            &names,
+            &[guard, bystander],
+            &overlay_on,
+            &[],
+            false,
+            false,
+        ),
+    );
     iso.on_game_tick(7);
     assert!(iso.probe("true").is_ok());
     assert!(
@@ -3123,7 +3248,12 @@ export function tick(api) {
 
     // Tick 8: the right name and action with the overlay off: the click, and
     // still no Attack.
-    post_scene(&iso, 8, &page, &guarded_scene(arrived, &names, &[wizard], &overlay_off, &[], false, false));
+    post_scene(
+        &iso,
+        8,
+        &page,
+        &guarded_scene(arrived, &names, &[wizard], &overlay_off, &[], false, false),
+    );
     iso.on_game_tick(8);
     assert!(iso.probe("true").is_ok());
     assert_eq!(
@@ -3134,7 +3264,12 @@ export function tick(api) {
     // Tick 9: the wizard left while nothing was ever Attacked: no spawn is
     // posted, so the overlay is not raised either — a wait, and never a
     // redig, a walk or a `guardian-lost`.
-    post_scene(&iso, 9, &page, &guarded_scene(arrived, &names, &[], &overlay_off, &[], false, false));
+    post_scene(
+        &iso,
+        9,
+        &page,
+        &guarded_scene(arrived, &names, &[], &overlay_off, &[], false, false),
+    );
     iso.on_game_tick(9);
     assert!(iso.probe("true").is_ok());
     assert!(
@@ -3144,7 +3279,12 @@ export function tick(api) {
 
     // Tick 10: the probe. The token is still live, the encounter never turned
     // into a Dig, and a page with no wizard of the family never clicks.
-    post_scene(&iso, 10, &page, &guarded_scene(arrived, &names, &[], &overlay_off, &[], false, false));
+    post_scene(
+        &iso,
+        10,
+        &page,
+        &guarded_scene(arrived, &names, &[], &overlay_off, &[], false, false),
+    );
     iso.on_game_tick(10);
     assert!(iso.probe("true").is_ok());
     assert!(
@@ -3219,8 +3359,8 @@ export function tick(api) {
 }
 "#;
     let data = api::game_data::for_revision(ClientRevision::R274).unwrap();
-    let iso = LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data)
-        .unwrap();
+    let iso =
+        LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data).unwrap();
     let page = [(2723, 1), (952, 1)];
     let names = [(952, "Spade")];
     let attack = vec!["Attack".to_string()];
@@ -3230,8 +3370,14 @@ export function tick(api) {
         level: 1,
         ..scene_npc(7, "Zamorak Wizard", 3, 10, 10, &attack)
     };
-    let overlay_off = [VarpInput { index: 95, value: 0 }];
-    let overlay_on = [VarpInput { index: 95, value: 1 }];
+    let overlay_off = [VarpInput {
+        index: 95,
+        value: 0,
+    }];
+    let overlay_on = [VarpInput {
+        index: 95,
+        value: 1,
+    }];
     let arrived = TileInput {
         x: 3058,
         z: 3884,
@@ -3284,7 +3430,15 @@ export function tick(api) {
         &iso,
         6,
         &page,
-        &guarded_scene(arrived, &names, &[elsewhere], &overlay_off, &[], false, false),
+        &guarded_scene(
+            arrived,
+            &names,
+            &[elsewhere],
+            &overlay_off,
+            &[],
+            false,
+            false,
+        ),
     );
     iso.on_game_tick(6);
     assert!(iso.probe("true").is_ok());
@@ -3435,8 +3589,8 @@ export function tick(api) {
 }
 "#;
     let data = api::game_data::for_revision(ClientRevision::R274).unwrap();
-    let iso = LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data)
-        .unwrap();
+    let iso =
+        LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data).unwrap();
     let page = [(2677, 1)];
     let downed = [StatInput {
         index: 3,
@@ -3458,7 +3612,10 @@ export function tick(api) {
     post_page(&iso, 1, &page);
     iso.on_game_tick(1);
     assert!(iso.probe("true").is_ok());
-    assert!(iso.drain_interacts().is_empty(), "no posted `here`, no verb");
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "no posted `here`, no verb"
+    );
 
     // Tick 2: the page posts no stat row at all. That is not a zero.
     post_scene(&iso, 2, &page, &Scene::default());
@@ -3531,7 +3688,9 @@ export function tick(api) {
         steps[6]["token"], value["token"],
         "the death bumps the token it reports: {value:?}"
     );
-    for absent in ["action", "name", "x", "z", "level", "message", "id", "error"] {
+    for absent in [
+        "action", "name", "x", "z", "level", "message", "id", "error",
+    ] {
         assert!(steps[6].get(absent).is_none(), "{absent} {value:?}");
     }
     // And the dead token hears `stale`, never a resumed step.
@@ -3600,7 +3759,12 @@ export function tick(api) {
 
     // Ticks 1-4: the begin and the landed report — nothing on the drain.
     for tick in 1..=4 {
-        post_scene(&iso, tick, &page, &guarded_scene(far, &names, &[], &[], &[], false, false));
+        post_scene(
+            &iso,
+            tick,
+            &page,
+            &guarded_scene(far, &names, &[], &[], &[], false, false),
+        );
         iso.on_game_tick(tick);
         assert!(iso.probe("true").is_ok());
         assert!(
@@ -3610,7 +3774,12 @@ export function tick(api) {
     }
 
     // Tick 5: the walk to the decoded `0_47_60_50_44` tile.
-    post_scene(&iso, 5, &page, &guarded_scene(far, &names, &[], &[], &[], false, false));
+    post_scene(
+        &iso,
+        5,
+        &page,
+        &guarded_scene(far, &names, &[], &[], &[], false, false),
+    );
     iso.on_game_tick(5);
     assert!(iso.probe("true").is_ok());
     assert_eq!(
@@ -3628,7 +3797,12 @@ export function tick(api) {
     );
 
     // Tick 6: arrived with the Spade: the first Dig, which is the spawn.
-    post_scene(&iso, 6, &page, &guarded_scene(arrived, &names, &[], &overlay_off, &[], false, false));
+    post_scene(
+        &iso,
+        6,
+        &page,
+        &guarded_scene(arrived, &names, &[], &overlay_off, &[], false, false),
+    );
     iso.on_game_tick(6);
     assert!(iso.probe("true").is_ok());
     assert_eq!(iso.drain_interacts(), vec![spade_dig()], "the spawn Dig");
@@ -3685,7 +3859,12 @@ export function tick(api) {
     // The grace is real time: past it the owned index leaving the page is no
     // longer this token's kill.
     std::thread::sleep(std::time::Duration::from_millis(6_100));
-    post_scene(&iso, 10, &page, &guarded_scene(arrived, &names, &[], &overlay_on, &[], false, false));
+    post_scene(
+        &iso,
+        10,
+        &page,
+        &guarded_scene(arrived, &names, &[], &overlay_on, &[], false, false),
+    );
     iso.on_game_tick(10);
     assert!(iso.probe("true").is_ok());
     assert!(
@@ -3694,7 +3873,12 @@ export function tick(api) {
     );
 
     // Tick 11: the token died with the encounter.
-    post_scene(&iso, 11, &page, &guarded_scene(arrived, &names, &[], &overlay_on, &[], false, false));
+    post_scene(
+        &iso,
+        11,
+        &page,
+        &guarded_scene(arrived, &names, &[], &overlay_on, &[], false, false),
+    );
     iso.on_game_tick(11);
     assert!(iso.probe("true").is_ok());
 
@@ -3727,7 +3911,9 @@ export function tick(api) {
         steps[9]["token"], value["token"],
         "the loss bumps the token it reports: {value:?}"
     );
-    for absent in ["action", "name", "x", "z", "level", "message", "id", "error"] {
+    for absent in [
+        "action", "name", "x", "z", "level", "message", "id", "error",
+    ] {
         assert!(steps[9].get(absent).is_none(), "{absent} {value:?}");
     }
     // The encounter ended with the token: the next call is `stale`.
@@ -3750,7 +3936,10 @@ fn the_guarded_npc_page_marshals_the_locked_field_list() {
         .split("function clueNpcPage()")
         .nth(1)
         .expect("clueNpcPage");
-    let page = page.split("function clueSelfSlot()").next().expect("page end");
+    let page = page
+        .split("function clueSelfSlot()")
+        .next()
+        .expect("page end");
     for field in [
         "index: row.index,",
         "id: cluePageI32(row.id) ? row.id : null,",
@@ -3770,7 +3959,10 @@ fn the_guarded_npc_page_marshals_the_locked_field_list() {
     }
     // A row that did not post an index cannot be Attacked and is dropped here:
     // never a snapshot error and never an invented row.
-    assert!(page.contains("if (!cluePageI32(row.index)) continue;"), "{page}");
+    assert!(
+        page.contains("if (!cluePageI32(row.index)) continue;"),
+        "{page}"
+    );
 }
 
 #[test]
@@ -3800,7 +3992,10 @@ export function tick(api) {
     // Family absence is the method token: not `none-held`, and no live token.
     for key in ["emptyPage", "heldPair"] {
         assert_eq!(value[key]["ok"], false, "{key} {value:?}");
-        assert_eq!(value[key]["error"], "family-unavailable:trails", "{key} {value:?}");
+        assert_eq!(
+            value[key]["error"], "family-unavailable:trails",
+            "{key} {value:?}"
+        );
         assert!(value[key].get("value").is_none(), "{key} {value:?}");
     }
     assert!(
@@ -3857,8 +4052,8 @@ export function tick(api) {
 }
 "#;
     let data = api::game_data::for_revision(ClientRevision::R274).unwrap();
-    let iso = LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data)
-        .unwrap();
+    let iso =
+        LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data).unwrap();
     // The held sextant028 casket, then the page with nothing membership-held:
     // the Open already went out, so this is the trail-end collect and not an
     // abort. The packed 3554 clue is never played.
@@ -3952,7 +4147,10 @@ export function tick(api) {
     );
     iso.on_game_tick(8);
     assert!(iso.probe("true").is_ok());
-    assert!(iso.drain_interacts().is_empty(), "the settle pushes nothing");
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "the settle pushes nothing"
+    );
 
     // Tick 9: an empty page still inside the reward window is a wait, and the
     // unpublished verbs stay unpublished while `held` stays an author op.
@@ -4005,7 +4203,10 @@ export function tick(api) {
     .unwrap();
     let interacts = iso.drain_interacts();
     iso.join();
-    assert!(interacts.is_empty(), "the finish pushes nothing: {interacts:?}");
+    assert!(
+        interacts.is_empty(),
+        "the finish pushes nothing: {interacts:?}"
+    );
 
     assert_eq!(value["runs"], 9, "{value:?}");
     assert!(value["token"].is_number(), "{value:?}");
@@ -4037,7 +4238,10 @@ export function tick(api) {
     );
     // The collect is the casket's: the landed report never named 3554.
     let report = logged[2]["message"].as_str().unwrap_or("");
-    assert!(report.contains("trail_clue_hard_sextant028_casket"), "{value:?}");
+    assert!(
+        report.contains("trail_clue_hard_sextant028_casket"),
+        "{value:?}"
+    );
     assert!(!report.contains("3554"), "{value:?}");
 
     // Unpublished verbs stay unpublished, `held` stays an author op, and
@@ -4069,7 +4273,9 @@ export function tick(api) {
     assert_eq!(collected[11]["kind"], "done", "{steps:?}");
     assert_eq!(collected[11]["ok"], true, "{steps:?}");
     assert_eq!(collected[11]["status"], "continue", "{steps:?}");
-    for absent in ["action", "name", "x", "z", "level", "message", "id", "error"] {
+    for absent in [
+        "action", "name", "x", "z", "level", "message", "id", "error",
+    ] {
         assert!(collected[11].get(absent).is_none(), "{absent} {steps:?}");
     }
     let text = steps.to_string();
@@ -4572,7 +4778,6 @@ export function tick(api) {
         assert!(!text.contains(forbidden), "{forbidden} {value:?}");
     }
 }
-
 
 /// One held puzzle step's posted pack page: the desc-only riddle and its own
 /// selected box.
@@ -5139,7 +5344,10 @@ export function tick(api) {
     post_scene(&iso, 4, &page, &closed_board_scene());
     iso.on_game_tick(4);
     assert!(iso.probe("true").is_ok());
-    assert!(iso.drain_interacts().is_empty(), "the status line has no verb");
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "the status line has no verb"
+    );
 
     // Tick 5: the report is posted, so this is the box's own Open — over the
     // closed board SNAP posts beside a box that is not open yet.
@@ -5464,7 +5672,10 @@ export function tick(api) {
     post_scene(&iso, 4, &page, &closed_board_scene());
     iso.on_game_tick(4);
     assert!(iso.probe("true").is_ok());
-    assert!(iso.drain_interacts().is_empty(), "the status line has no verb");
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "the status line has no verb"
+    );
 
     // Tick 5: the report is posted, so this is the box's own Open.
     post_scene(&iso, 5, &page, &closed_board_scene());
@@ -6110,7 +6321,18 @@ export function tick(api) {
     // Tick 2: a posted page with no npc of this step's identity — and one that
     // belongs to another talk step entirely. Nothing is picked: no walk, no
     // Talk-to and no nearest anything.
-    let other = [talk_scene_npc(4, 0, "Hans", TileInput { x: 3200, z: 3205, level: 0 }, 1, &talk_to)];
+    let other = [talk_scene_npc(
+        4,
+        0,
+        "Hans",
+        TileInput {
+            x: 3200,
+            z: 3205,
+            level: 0,
+        },
+        1,
+        &talk_to,
+    )];
     post_scene(
         &iso,
         2,
@@ -6450,10 +6672,7 @@ export function tick(api) {
     // never the scroll id.
     let logged = steps[2]["message"].as_str().unwrap_or("");
     assert!(logged.contains("trail_clue_medium_anagram001"), "{value:?}");
-    assert!(
-        logged.contains(&TALK_CHALLENGE_ID.to_string()),
-        "{value:?}"
-    );
+    assert!(logged.contains(&TALK_CHALLENGE_ID.to_string()), "{value:?}");
     assert!(!logged.contains(&CHALLENGE_ID.to_string()), "{value:?}");
     assert_eq!(steps[6]["ok"], false, "{value:?}");
     assert_eq!(steps[6]["error"], "none-held", "{value:?}");
@@ -6771,13 +6990,19 @@ export function tick(api) {
         );
         iso.on_game_tick(12);
         assert!(iso.probe("true").is_ok());
-        assert!(iso.drain_interacts().is_empty(), "{id}: a death pushes nothing");
+        assert!(
+            iso.drain_interacts().is_empty(),
+            "{id}: a death pushes nothing"
+        );
 
         let probed = iso.probe("globalThis.__probe").unwrap();
         let value: serde_json::Value = serde_json::from_str(probed.as_str().unwrap()).unwrap();
         iso.join();
         assert_eq!(value["objOp"], "not impl: request.obj", "{id} {value:?}");
-        assert_eq!(value["ifOp"], "not impl: request.if-button", "{id} {value:?}");
+        assert_eq!(
+            value["ifOp"], "not impl: request.if-button",
+            "{id} {value:?}"
+        );
         // The posted ground page the Take reads stays hidden, and the npc page
         // the keeper identity is matched on stays the public projection the
         // guarded encounter already exposes.
@@ -6812,7 +7037,9 @@ export function tick(api) {
         assert_eq!(dead["ok"], true, "{id} {value:?}");
         assert_eq!(dead["status"], "continue", "{id} {value:?}");
         assert_ne!(dead["token"], value["token"], "{id} {value:?}");
-        for absent in ["action", "name", "x", "z", "level", "message", "id", "error"] {
+        for absent in [
+            "action", "name", "x", "z", "level", "message", "id", "error",
+        ] {
             assert!(dead.get(absent).is_none(), "{id} {absent} {value:?}");
         }
         // The Attack is the posted name, the frozen action and the posted scene
@@ -7006,7 +7233,12 @@ fn toll_keeper<'a>(
 /// One posted shop stock row: the identity the buy click rides — its own id,
 /// the display name the host resolves, and the slot and component its presence
 /// check matches.
-fn stock_row(id: i32, name: &str, slot: i32, component: i32) -> script::isolate_fb::ItemRowInput<'_> {
+fn stock_row(
+    id: i32,
+    name: &str,
+    slot: i32,
+    component: i32,
+) -> script::isolate_fb::ItemRowInput<'_> {
     script::isolate_fb::ItemRowInput {
         name: Some(name),
         count: 500,
@@ -7051,8 +7283,8 @@ export function tick(api) {
 }
 "#;
     let data = api::game_data::for_revision(ClientRevision::R274).unwrap();
-    let iso = LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data)
-        .unwrap();
+    let iso =
+        LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data).unwrap();
     let page = [(PUZZLE_SEARCH, 1)];
     let packed = [(PUZZLE_SEARCH, 1), (SHANTAY_PASS_ITEM, 1)];
     let named = [carry(SHANTAY_PASS_ITEM, 1, Some("Shantay pass"))];
@@ -7297,7 +7529,9 @@ export function tick(api) {
         }
     }
     assert!(
-        steps.iter().any(|step| step["kind"] == "callback.setStatus"),
+        steps
+            .iter()
+            .any(|step| step["kind"] == "callback.setStatus"),
         "the machine reported the step first: {value:?}"
     );
     assert!(
@@ -7375,13 +7609,9 @@ export function tick(api) {
         ("held", &named[..], true),
     ] {
         let data = api::game_data::for_revision(ClientRevision::R274).unwrap();
-        let iso = LoadIsolate::spawn_with_game_data(
-            src.into(),
-            LoadShape::NativeTick,
-            vec![],
-            data,
-        )
-        .unwrap();
+        let iso =
+            LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data)
+                .unwrap();
         for tick in 1..=5 {
             // From the fourth tick the scene is the shop's own stand: the posted
             // keeper, the open interface and the short's stock row are all
@@ -7410,8 +7640,7 @@ export function tick(api) {
             );
         }
         let probed = iso.probe("globalThis.__probe").unwrap();
-        let value: serde_json::Value =
-            serde_json::from_str(probed.as_str().unwrap()).unwrap();
+        let value: serde_json::Value = serde_json::from_str(probed.as_str().unwrap()).unwrap();
         iso.join();
         let text = value.to_string();
         for forbidden in ["no-shop", "clue solved", "\"done\""] {
@@ -7475,13 +7704,9 @@ export function tick(api) {
     // (`hold` would be a paint-only tick that runs no script at all, so the
     // interrupt's script-visible half is `ours`.)
     let held_data = api::game_data::for_revision(ClientRevision::R274).unwrap();
-    let yielded = LoadIsolate::spawn_with_game_data(
-        src.into(),
-        LoadShape::NativeTick,
-        vec![],
-        held_data,
-    )
-    .unwrap();
+    let yielded =
+        LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], held_data)
+            .unwrap();
     post_scene(
         &yielded,
         1,
@@ -7535,8 +7760,7 @@ export function tick(api) {
         "the yield did not advance the trip and did not cancel it"
     );
     let held_probe = yielded.probe("globalThis.__probe").unwrap();
-    let held_value: serde_json::Value =
-        serde_json::from_str(held_probe.as_str().unwrap()).unwrap();
+    let held_value: serde_json::Value = serde_json::from_str(held_probe.as_str().unwrap()).unwrap();
     yielded.join();
     let kinds: Vec<&str> = held_value["steps"]
         .as_array()
@@ -7546,7 +7770,10 @@ export function tick(api) {
         .collect();
     assert!(kinds.contains(&"yield"), "{kinds:?}");
     for forbidden in ["done", "dead", "abandon", "no-shop", "clue solved"] {
-        assert!(!held_value.to_string().contains(forbidden), "{held_value:?}");
+        assert!(
+            !held_value.to_string().contains(forbidden),
+            "{held_value:?}"
+        );
     }
 
     // The posted death: the trip is live and the hitpoints are at zero, so the
@@ -7613,8 +7840,7 @@ export function tick(api) {
         "a dead token pushes nothing"
     );
     let dead_probe = dead.probe("globalThis.__probe").unwrap();
-    let dead_value: serde_json::Value =
-        serde_json::from_str(dead_probe.as_str().unwrap()).unwrap();
+    let dead_value: serde_json::Value = serde_json::from_str(dead_probe.as_str().unwrap()).unwrap();
     dead.join();
     let dead_kinds: Vec<&str> = dead_value["steps"]
         .as_array()
@@ -7660,8 +7886,8 @@ export function tick(api) {
 }
 "#;
     let data = api::game_data::for_revision(ClientRevision::R274).unwrap();
-    let iso = LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data)
-        .unwrap();
+    let iso =
+        LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data).unwrap();
     let page = [(PUZZLE_SEARCH, 1)];
     let named = [carry(SHANTAY_PASS_ITEM, 1, Some("Shantay pass"))];
     let away = TileInput {
@@ -7759,8 +7985,7 @@ export function tick(api) {
     // The thaw did not spend the window: the step is still a wait and the named
     // kind has not gone out.
     let thawed = iso.probe("globalThis.__probe").unwrap();
-    let thawed_value: serde_json::Value =
-        serde_json::from_str(thawed.as_str().unwrap()).unwrap();
+    let thawed_value: serde_json::Value = serde_json::from_str(thawed.as_str().unwrap()).unwrap();
     let thawed_kinds: Vec<&str> = thawed_value["steps"]
         .as_array()
         .expect("steps")
@@ -7809,7 +8034,13 @@ export function tick(api) {
         kinds.contains(&"no-shop"),
         "the trip's own outcome kind: {kinds:?}"
     );
-    for terminal in ["done", "dead", "abandon", "supplies-needed", "guardian-lost"] {
+    for terminal in [
+        "done",
+        "dead",
+        "abandon",
+        "supplies-needed",
+        "guardian-lost",
+    ] {
         assert!(!kinds.contains(&terminal), "{kinds:?}");
     }
     assert!(
@@ -7817,7 +8048,9 @@ export function tick(api) {
         "no-shop is never the solved mark: {value:?}"
     );
     assert!(
-        steps[1..].iter().all(|step| step["token"] == value["token"]),
+        steps[1..]
+            .iter()
+            .all(|step| step["token"] == value["token"]),
         "the token is the same one all the way: {value:?}"
     );
     assert_eq!(

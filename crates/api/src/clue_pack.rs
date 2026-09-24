@@ -371,7 +371,10 @@ mod tests {
     #[test]
     fn reward_slots_check_hard_before_medium_and_never_fold_case() {
         assert_eq!(casket_reward_slots("trail_clue_easy_map001_casket"), 4);
-        assert_eq!(casket_reward_slots("trail_clue_medium_sextant004_casket"), 5);
+        assert_eq!(
+            casket_reward_slots("trail_clue_medium_sextant004_casket"),
+            5
+        );
         assert_eq!(casket_reward_slots("trail_clue_hard_sextant001_casket"), 6);
         assert_eq!(casket_reward_slots("mystery_casket"), 4);
         assert_eq!(casket_reward_slots(""), 4);
@@ -422,7 +425,11 @@ mod tests {
             .collect()
     }
 
-    fn kit_status(attack: i32, lost_city: bool, rows: &[(i32, i32)]) -> Result<Value, &'static str> {
+    fn kit_status(
+        attack: i32,
+        lost_city: bool,
+        rows: &[(i32, i32)],
+    ) -> Result<Value, &'static str> {
         let items = kit_items(rows);
         hard_clue_kit(&HardKitInput {
             attack,
@@ -439,10 +446,16 @@ mod tests {
     /// whole result.
     #[test]
     fn hard_kit_reports_the_first_frozen_failure() {
-        assert_eq!(kit_status(60, true, &[(1231, 1), (185, 1), (385, 15)]), ready());
+        assert_eq!(
+            kit_status(60, true, &[(1231, 1), (185, 1), (385, 15)]),
+            ready()
+        );
         // Attack 60 is enough, `attack: 0` is a number rather than a miss, and
         // attack is decided before Lost City.
-        assert_eq!(kit_status(0, true, &[(1231, 1), (185, 1), (385, 15)]), Err(ATTACK));
+        assert_eq!(
+            kit_status(0, true, &[(1231, 1), (185, 1), (385, 15)]),
+            Err(ATTACK)
+        );
         assert_eq!(kit_status(59, false, &[]), Err(ATTACK));
         assert_eq!(kit_status(60, false, &[]), Err(LOST_CITY));
         // An empty or unrelated pack is `dds`, not an empty success.
@@ -452,7 +465,10 @@ mod tests {
         assert_eq!(kit_status(60, true, &[(1231, 0)]), Err(DDS));
         assert_eq!(kit_status(60, true, &[(1215, 1)]), Err(SUPERANTIPOISON));
         // Ordinary antipoison is not superantipoison.
-        assert_eq!(kit_status(60, true, &[(1231, 1), (2446, 4)]), Err(SUPERANTIPOISON));
+        assert_eq!(
+            kit_status(60, true, &[(1231, 1), (2446, 4)]),
+            Err(SUPERANTIPOISON)
+        );
         // One dose is enough, whatever its size, so every catalogued id is in
         // the table.
         for id in [2448, 181, 183, 185] {
@@ -464,12 +480,18 @@ mod tests {
         }
         // Fourteen sharks fail, fifteen pass however they are split, and other
         // food is not sharks.
-        assert_eq!(kit_status(60, true, &[(1231, 1), (185, 1), (385, 14)]), Err(SHARKS));
+        assert_eq!(
+            kit_status(60, true, &[(1231, 1), (185, 1), (385, 14)]),
+            Err(SHARKS)
+        );
         assert_eq!(
             kit_status(60, true, &[(1231, 1), (185, 1), (385, 7), (385, 8)]),
             ready()
         );
-        assert_eq!(kit_status(60, true, &[(1231, 1), (185, 1), (391, 30)]), Err(SHARKS));
+        assert_eq!(
+            kit_status(60, true, &[(1231, 1), (185, 1), (391, 30)]),
+            Err(SHARKS)
+        );
     }
 
     /// The widening lock on both sums: a wrapped `i32` product of one legal
@@ -495,7 +517,11 @@ mod tests {
             ready()
         );
         assert_eq!(
-            kit_status(60, true, &[(1231, 1), (185, 1), (385, i32::MAX), (385, i32::MAX)]),
+            kit_status(
+                60,
+                true,
+                &[(1231, 1), (185, 1), (385, i32::MAX), (385, i32::MAX)]
+            ),
             ready()
         );
     }

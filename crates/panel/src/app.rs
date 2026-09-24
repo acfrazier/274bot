@@ -1487,20 +1487,14 @@ pub(crate) fn slot_startup_banner_line(status: &host_play::SlotStatus) -> Option
         return Some((error.to_string(), false));
     }
     if status.login_latched && !status.ingame {
-        return Some((
-            "Logged out — select Log in to reconnect".to_string(),
-            false,
-        ));
+        return Some(("Logged out — select Log in to reconnect".to_string(), false));
     }
     let message = match status.startup_phase {
         host_play::StartupPhase::Preparing => {
             if status.startup_progress_message.is_empty() {
                 "Preparing client".to_string()
             } else if let Some(percent) = status.startup_progress_percent {
-                format!(
-                    "{} — {}%",
-                    status.startup_progress_message, percent
-                )
+                format!("{} — {}%", status.startup_progress_message, percent)
             } else {
                 status.startup_progress_message.clone()
             }

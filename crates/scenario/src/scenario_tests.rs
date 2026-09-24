@@ -2378,14 +2378,13 @@ fn bank_cells_register_their_cards_injects_and_watch_chain() {
         );
     }
     for hill_name in ["hill_giant_bank", "hill_giant_loot_deposit"] {
-        let hill = settings_inject_map(
-            get(hill_name)
-                .unwrap()
-                .settings
-                .script_settings_inject,
-        )
-        .unwrap();
-        assert_eq!(hill.get("lootSlots"), Some(&Value::from(1.0)), "{hill_name}");
+        let hill =
+            settings_inject_map(get(hill_name).unwrap().settings.script_settings_inject).unwrap();
+        assert_eq!(
+            hill.get("lootSlots"),
+            Some(&Value::from(1.0)),
+            "{hill_name}"
+        );
         assert_eq!(
             hill.get("buryBones"),
             Some(&Value::Bool(false)),
@@ -2828,7 +2827,10 @@ fn prepared_remaining_combat_cells_use_source_derived_profiles_and_long_budgets(
     }));
     assert!(moss_prepared.steps[..moss_start]
         .iter()
-        .any(|step| step.wait.arm == Proof::EquipmentId { id: RUNE_SCIMITAR_ID }));
+        .any(|step| step.wait.arm
+            == Proof::EquipmentId {
+                id: RUNE_SCIMITAR_ID
+            }));
     for id in [BIG_BONES_ID, 533] {
         assert!(moss_prepared.steps[..moss_start]
             .iter()
@@ -2862,10 +2864,17 @@ fn prepared_remaining_combat_cells_use_source_derived_profiles_and_long_budgets(
     }));
     assert!(hill_prepared.steps[..hill_start]
         .iter()
-        .any(|step| step.wait.arm == Proof::EquipmentId { id: COMBAT_SCIMITAR_ID }));
+        .any(|step| step.wait.arm
+            == Proof::EquipmentId {
+                id: COMBAT_SCIMITAR_ID
+            }));
     assert!(hill_prepared.steps[..hill_start]
         .iter()
-        .any(|step| step.wait.arm == Proof::ItemId { id: BRASS_KEY_ID, count: 1 }));
+        .any(|step| step.wait.arm
+            == Proof::ItemId {
+                id: BRASS_KEY_ID,
+                count: 1
+            }));
     for id in [BIG_BONES_ID, 533, LIMPWURT_ROOT_ID, 226] {
         assert!(hill_prepared.steps[..hill_start]
             .iter()
@@ -3043,8 +3052,7 @@ fn prepared_remaining_combat_cells_use_source_derived_profiles_and_long_budgets(
     );
 
     let camelot = get("fire_giant_camelot_prepared").unwrap();
-    let camelot_inject =
-        settings_inject_map(camelot.settings.script_settings_inject).unwrap();
+    let camelot_inject = settings_inject_map(camelot.settings.script_settings_inject).unwrap();
     assert_eq!(FIRE_GIANT_CAMELOT_PREPARED_RESTOCK, 24);
     assert_eq!(
         camelot_inject.get("foodWithdraw"),
@@ -3282,21 +3290,19 @@ fn moss_giant_bank_start_orders_startup_banking_before_fresh_combat_xp() {
     let bones_bank = watch_arms
         .iter()
         .position(|arm| {
-            *arm
-                == Proof::BankItemId {
-                    id: BIG_BONES_ID,
-                    count: 1,
-                }
+            *arm == Proof::BankItemId {
+                id: BIG_BONES_ID,
+                count: 1,
+            }
         })
         .expect("startup bank watch for seeded Big bones");
     let lobster_restock = watch_arms
         .iter()
         .position(|arm| {
-            *arm
-                == Proof::ItemId {
-                    id: LOBSTER_ID,
-                    count: 20,
-                }
+            *arm == Proof::ItemId {
+                id: LOBSTER_ID,
+                count: 20,
+            }
         })
         .expect("startup restock watch");
     let closed = watch_arms
@@ -3343,44 +3349,39 @@ fn hill_giant_loot_deposit_arms_deposit_only_after_combat_loot() {
     let xp = watch
         .iter()
         .position(|arm| {
-            *arm
-                == Proof::StatXpGain {
-                    id: STRENGTH_STAT,
-                    min: 1,
-                }
+            *arm == Proof::StatXpGain {
+                id: STRENGTH_STAT,
+                min: 1,
+            }
         })
         .expect("combat-first Strength XP");
     let loot = watch
         .iter()
         .position(|arm| {
-            *arm
-                == Proof::ItemId {
-                    id: BIG_BONES_ID,
-                    count: 1,
-                }
+            *arm == Proof::ItemId {
+                id: BIG_BONES_ID,
+                count: 1,
+            }
         })
         .expect("looted Big bones in pack");
     let deposit = watch
         .iter()
         .position(|arm| {
-            *arm
-                == Proof::BankItemId {
-                    id: BIG_BONES_ID,
-                    count: 1,
-                }
+            *arm == Proof::BankItemId {
+                id: BIG_BONES_ID,
+                count: 1,
+            }
         })
         .expect("fresh Varrock West deposit");
     assert!(xp < loot && loot < deposit);
     assert!(!watch.contains(&Proof::BankClosed));
-    assert!(
-        !watch.iter().any(|arm| matches!(
-            arm,
-            Proof::FreshStatXpGain {
-                id: STRENGTH_STAT,
-                min: 1
-            }
-        ))
-    );
+    assert!(!watch.iter().any(|arm| matches!(
+        arm,
+        Proof::FreshStatXpGain {
+            id: STRENGTH_STAT,
+            min: 1
+        }
+    )));
     let full = get("hill_giant_bank").expect("hill_giant_bank registered");
     let full_start = full
         .steps
@@ -3394,11 +3395,10 @@ fn hill_giant_loot_deposit_arms_deposit_only_after_combat_loot() {
     let full_xp = full_watch
         .iter()
         .position(|arm| {
-            *arm
-                == Proof::StatXpGain {
-                    id: STRENGTH_STAT,
-                    min: 1,
-                }
+            *arm == Proof::StatXpGain {
+                id: STRENGTH_STAT,
+                min: 1,
+            }
         })
         .unwrap();
     assert_eq!(
@@ -8407,23 +8407,18 @@ fn enabled_combat_option_cells_keep_explicit_preparation_and_old_failures() {
         dart_inject.get("ammo"),
         Some(&Value::String("Rune arrow".into()))
     );
-    assert_eq!(
-        dart_inject.get("ammoWithdraw"),
-        Some(&Value::from(80.0))
-    );
+    assert_eq!(dart_inject.get("ammoWithdraw"), Some(&Value::from(80.0)));
     let dart_start = dart
         .steps
         .iter()
         .position(|step| matches!(step.kind, StepKind::StartScript))
         .unwrap();
     assert!(
-        dart.steps[..dart_start]
-            .iter()
-            .any(|step| step.wait.arm
-                == Proof::ItemIdAtMost {
-                    id: BRONZE_DART_ID,
-                    count: 0
-                }),
+        dart.steps[..dart_start].iter().any(|step| step.wait.arm
+            == Proof::ItemIdAtMost {
+                id: BRONZE_DART_ID,
+                count: 0
+            }),
         "dart preStart must prove empty pack 806"
     );
     assert!(
@@ -8435,11 +8430,9 @@ fn enabled_combat_option_cells_keep_explicit_preparation_and_old_failures() {
         "dart preStart must prove open-bank 806x80"
     );
     assert!(
-        dart.steps[..dart_start].iter().any(|step| step.wait.arm
-            ==             Proof::BankItemIdAtMost {
-                id: 892,
-                count: 0
-            }),
+        dart.steps[..dart_start]
+            .iter()
+            .any(|step| step.wait.arm == Proof::BankItemIdAtMost { id: 892, count: 0 }),
         "dart preStart must prove unused Rune arrows absent"
     );
     assert!(
@@ -8448,16 +8441,12 @@ fn enabled_combat_option_cells_keep_explicit_preparation_and_old_failures() {
             .any(|step| step.wait.arm == Proof::EquipmentId { id: BRONZE_DART_ID }),
         "bank-only dart Start must not require worn 806"
     );
-    assert!(
-        dart.steps[dart_start + 1..]
-            .iter()
-            .all(|step| step.wait.budget_ticks >= 750)
-    );
-    assert!(
-        dart.steps[dart_start + 1..]
-            .iter()
-            .any(|step| step.wait.arm == Proof::EquipmentId { id: BRONZE_DART_ID })
-    );
+    assert!(dart.steps[dart_start + 1..]
+        .iter()
+        .all(|step| step.wait.budget_ticks >= 750));
+    assert!(dart.steps[dart_start + 1..]
+        .iter()
+        .any(|step| step.wait.arm == Proof::EquipmentId { id: BRONZE_DART_ID }));
     assert!(dart.steps[dart_start + 1..].iter().any(|step| {
         matches!(
             step.wait.arm,
@@ -8503,23 +8492,22 @@ fn enabled_combat_option_cells_keep_explicit_preparation_and_old_failures() {
         .iter()
         .position(|step| matches!(step.kind, StepKind::StartScript))
         .unwrap();
-    assert!(mage.steps[..mage_start].iter().any(|step| {
-        step.wait.arm
-            == Proof::Stat {
-                id: 6,
-                min: 70,
-            }
-    }));
     assert!(mage.steps[..mage_start]
         .iter()
-        .any(|step| step.wait.arm == Proof::EquipmentId { id: STAFF_OF_FIRE_ID }));
-    assert!(mage.steps[..mage_start]
-        .iter()
-        .any(|step| step.wait.arm == Proof::EquipmentId { id: DRAGONFIRE_SHIELD_ID }));
+        .any(|step| { step.wait.arm == Proof::Stat { id: 6, min: 70 } }));
+    assert!(mage.steps[..mage_start].iter().any(|step| step.wait.arm
+        == Proof::EquipmentId {
+            id: STAFF_OF_FIRE_ID
+        }));
+    assert!(mage.steps[..mage_start].iter().any(|step| step.wait.arm
+        == Proof::EquipmentId {
+            id: DRAGONFIRE_SHIELD_ID
+        }));
     assert!(
-        !mage.steps[..mage_start]
-            .iter()
-            .any(|step| step.wait.arm == Proof::EquipmentId { id: RUNE_CHAINBODY_ID }),
+        !mage.steps[..mage_start].iter().any(|step| step.wait.arm
+            == Proof::EquipmentId {
+                id: RUNE_CHAINBODY_ID
+            }),
         "mage prepared must not wear rune armour"
     );
     assert!(mage.steps[..mage_start].iter().any(|step| {
@@ -8575,7 +8563,11 @@ fn enabled_combat_option_cells_keep_explicit_preparation_and_old_failures() {
     );
     assert!(camelot.steps[..camelot_start]
         .iter()
-        .any(|step| step.wait.arm == Proof::ItemIdAtMost { id: BIG_BONES_ID, count: 0 }));
+        .any(|step| step.wait.arm
+            == Proof::ItemIdAtMost {
+                id: BIG_BONES_ID,
+                count: 0
+            }));
     assert!(
         !camelot
             .steps
@@ -8598,9 +8590,7 @@ fn green_dragon_potions_super_attack_boost_arm_tracks_acknowledged_base_level() 
         scenario
             .steps
             .iter()
-            .find(|step| {
-                step.name == "watch the native Super attack boost before further combat"
-            })
+            .find(|step| step.name == "watch the native Super attack boost before further combat")
             .map(|step| step.wait.arm)
             .unwrap_or_else(|| panic!("missing Super attack boost arm on {}", scenario.name))
     }
@@ -8616,8 +8606,7 @@ fn green_dragon_potions_super_attack_boost_arm_tracks_acknowledged_base_level() 
     }
 
     let original = get("green_dragon_potions").expect("green dragon potions");
-    let prepared =
-        get("green_dragon_potions_prepared").expect("prepared green dragon potions");
+    let prepared = get("green_dragon_potions_prepared").expect("prepared green dragon potions");
     let original_arm = super_attack_boost_arm(&original);
     let prepared_arm = super_attack_boost_arm(&prepared);
 
@@ -9836,13 +9825,14 @@ fn combat_card_fixture_food_loadouts_align_with_seeded_inventory() {
         assert_eq!(selected.carry, &[(food_name, carry_qty)]);
     }
     let green = get("green_dragon").expect("green_dragon");
-    let green_loadouts = green.settings.fixture_loadouts.expect("green dragon loadouts");
+    let green_loadouts = green
+        .settings
+        .fixture_loadouts
+        .expect("green dragon loadouts");
     assert_eq!(green_loadouts.len(), 2);
-    assert!(
-        green_loadouts
-            .iter()
-            .any(|row| row.name == "Scenario Green Dragon trip food")
-    );
+    assert!(green_loadouts
+        .iter()
+        .any(|row| row.name == "Scenario Green Dragon trip food"));
 }
 
 // ---- P4 combat fixture repair: quest prerequisite + trip food ----
@@ -11891,9 +11881,13 @@ fn ranging_guild_round_orders_fee_shot_payout_and_further_round() {
         radius: 2,
     }));
     assert!(
-        !seed
-            .iter()
-            .any(|proof| matches!(proof, Proof::ItemId { id: ARCHERY_TICKET, .. })),
+        !seed.iter().any(|proof| matches!(
+            proof,
+            Proof::ItemId {
+                id: ARCHERY_TICKET,
+                ..
+            }
+        )),
         "round must not seed tickets"
     );
 
@@ -11924,7 +11918,10 @@ fn ranging_guild_round_orders_fee_shot_payout_and_further_round() {
                 id: ARCHERY_TICKET,
                 count: 1
             },
-            Proof::ItemIdAtMost { id: COINS, count: 0 },
+            Proof::ItemIdAtMost {
+                id: COINS,
+                count: 0
+            },
             Proof::Varp {
                 id: TARGET_COUNT,
                 min: 1
@@ -12078,15 +12075,22 @@ fn ranging_guild_bank_orders_keep_deposit_coin_withdraw_close_return_and_fee() {
         id: RUNE_ARROW,
         count: 50
     }));
-    assert!(seed.contains(&Proof::ItemIdAtMost { id: COINS, count: 0 }));
+    assert!(seed.contains(&Proof::ItemIdAtMost {
+        id: COINS,
+        count: 0
+    }));
     assert!(seed.contains(&Proof::ItemIdAtMost {
         id: MAGIC_SHORTBOW,
         count: 0
     }));
     assert!(
-        !seed
-            .iter()
-            .any(|proof| matches!(proof, Proof::ItemId { id: ARCHERY_TICKET, count: 2000 })),
+        !seed.iter().any(|proof| matches!(
+            proof,
+            Proof::ItemId {
+                id: ARCHERY_TICKET,
+                count: 2000
+            }
+        )),
         "bank must not seed a redeem stack"
     );
     assert!(
@@ -12204,7 +12208,10 @@ fn ranging_guild_full_orders_bought_banked_continuation_and_empty_coin_rails() {
         id: RUNE_ARROW,
         count: 0
     }));
-    assert!(seed.contains(&Proof::ItemIdAtMost { id: COINS, count: 0 }));
+    assert!(seed.contains(&Proof::ItemIdAtMost {
+        id: COINS,
+        count: 0
+    }));
     assert!(seed.contains(&Proof::ItemIdAtMost {
         id: MAGIC_SHORTBOW,
         count: 0
@@ -12216,9 +12223,13 @@ fn ranging_guild_full_orders_bought_banked_continuation_and_empty_coin_rails() {
         "full must not seed pack rune arrows"
     );
     assert!(
-        !seed
-            .iter()
-            .any(|proof| matches!(proof, Proof::ItemId { id: ARCHERY_TICKET, count: 2000 })),
+        !seed.iter().any(|proof| matches!(
+            proof,
+            Proof::ItemId {
+                id: ARCHERY_TICKET,
+                count: 2000
+            }
+        )),
         "full must not seed a redeem stack"
     );
     assert!(
@@ -12274,7 +12285,10 @@ fn ranging_guild_full_orders_bought_banked_continuation_and_empty_coin_rails() {
                 id: RUNE_ARROW,
                 count: 50
             },
-            Proof::ItemIdAtMost { id: COINS, count: 0 },
+            Proof::ItemIdAtMost {
+                id: COINS,
+                count: 0
+            },
             Proof::Varp {
                 id: TARGET_COUNT,
                 min: 1

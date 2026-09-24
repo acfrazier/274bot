@@ -146,11 +146,7 @@ fn best_from_tiers_export_orders_level_before_available_and_short_circuits() {
 }
 
 fn scratch(name: &str) -> std::path::PathBuf {
-    std::env::temp_dir().join(format!(
-        "274bot-tool-tiers-{}-{}",
-        std::process::id(),
-        name
-    ))
+    std::env::temp_dir().join(format!("274bot-tool-tiers-{}-{}", std::process::id(), name))
 }
 
 #[test]

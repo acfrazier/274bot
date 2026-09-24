@@ -1,8 +1,6 @@
 // Numeric Input.interact* ops use native 1-based slot indices; sparse holes stay empty.
 
-use script::isolate_fb::{
-    ReachViewInput, SceneEntityInput, SnapshotInput, TileInput,
-};
+use script::isolate_fb::{ReachViewInput, SceneEntityInput, SnapshotInput, TileInput};
 use script::shim::InteractReq;
 use script::{LoadIsolate, LoadShape};
 
@@ -90,11 +88,7 @@ fn base_snapshot<'a>() -> SnapshotInput<'a> {
     }
 }
 
-fn player_row<'a>(
-    index: i32,
-    name: &'a str,
-    actions: &'a [String],
-) -> SceneEntityInput<'a> {
+fn player_row<'a>(index: i32, name: &'a str, actions: &'a [String]) -> SceneEntityInput<'a> {
     SceneEntityInput {
         index,
         id: index,
@@ -198,11 +192,7 @@ export default class T extends LoopingBot {
 }
 "#;
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
-    let actions = [
-        "Challenge".into(),
-        "Follow".into(),
-        "Trade with".into(),
-    ];
+    let actions = ["Challenge".into(), "Follow".into(), "Trade with".into()];
     let players = [player_row(2, "rival", &actions)];
     let mut snap = base_snapshot();
     snap.players = &players;
@@ -228,11 +218,7 @@ export default class T extends LoopingBot {
 }
 "#;
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
-    let actions = [
-        String::new(),
-        "Talk-to".into(),
-        "Attack".into(),
-    ];
+    let actions = [String::new(), "Talk-to".into(), "Attack".into()];
     let npcs = [SceneEntityInput {
         index: 5,
         id: 1,
@@ -280,11 +266,7 @@ export default class T extends LoopingBot {
 }
 "#;
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
-    let actions = [
-        String::new(),
-        String::new(),
-        "Open".into(),
-    ];
+    let actions = [String::new(), String::new(), "Open".into()];
     let locs = [SceneEntityInput {
         index: 0,
         id: 100,

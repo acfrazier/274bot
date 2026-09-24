@@ -281,9 +281,15 @@ fn runtime_bind_negotiates_and_freezes_server_identity() {
     }
     assert_eq!(profile.client().expected_crc(), Some(negotiated));
     assert_eq!(profile.cache_id(), expected_identity.content_id_hex());
-    assert!(profile.game_data().is_none(), "an endpoint override has no built-in server facts");
+    assert!(
+        profile.game_data().is_none(),
+        "an endpoint override has no built-in server facts"
+    );
     let second_bot_profile = Arc::clone(&profile);
-    assert!(Arc::ptr_eq(profile.prepared_cache().unwrap(), second_bot_profile.prepared_cache().unwrap()));
+    assert!(Arc::ptr_eq(
+        profile.prepared_cache().unwrap(),
+        second_bot_profile.prepared_cache().unwrap()
+    ));
     drop(second_bot_profile);
     assert!(matches!(
         profile.cache_availability(),
@@ -307,31 +313,68 @@ fn runtime_external_nav_requires_actual_selected_source_provenance() {
     write_packs(&root.join("cache"), &p);
     let retained = snapshot(&root.join("unpack"), &p);
     let cache = host_play::profile::CacheManifest::capture(289, &root.join("cache")).unwrap();
-    std::fs::write(root.join("cache-manifest.json"), serde_json::to_vec(&cache).unwrap()).unwrap();
+    std::fs::write(
+        root.join("cache-manifest.json"),
+        serde_json::to_vec(&cache).unwrap(),
+    )
+    .unwrap();
     let content = root.join("content");
     std::fs::create_dir(&content).unwrap();
     std::fs::write(content.join("world"), b"world-a").unwrap();
     let (walk, blocked) = nav::collision::pack_walk(&[0; 8]);
-    let bytes = nav::pack::encode(&nav::collision::WorldCollision {
-        origin: api::snapshot::WorldTile { x: 3200, z: 3200, level: 0 },
-        width: 2, height: 1, walk, blocked, flags: None,
-    }, &nav::transport::TransportGraph::default(), &[]);
+    let bytes = nav::pack::encode(
+        &nav::collision::WorldCollision {
+            origin: api::snapshot::WorldTile {
+                x: 3200,
+                z: 3200,
+                level: 0,
+            },
+            width: 2,
+            height: 1,
+            walk,
+            blocked,
+            flags: None,
+        },
+        &nav::transport::TransportGraph::default(),
+        &[],
+    );
     let pack = root.join("world.navpack");
     std::fs::write(&pack, &bytes).unwrap();
-    let mut manifest = host_play::profile::NavManifest::capture(289, &cache, &bytes, None, None, None).unwrap();
-    manifest.content_id = Some(compute_decoded_content_identity(289, &retained, &retained).unwrap().content_id_hex());
-    manifest.source_sha256 = Some(nav::bundle::source_digest(&content, &[&root.join("cache/config")]).unwrap());
-    std::fs::write(host_play::profile::nav_manifest_path(&pack), serde_json::to_vec(&manifest).unwrap()).unwrap();
+    let mut manifest =
+        host_play::profile::NavManifest::capture(289, &cache, &bytes, None, None, None).unwrap();
+    manifest.content_id = Some(
+        compute_decoded_content_identity(289, &retained, &retained)
+            .unwrap()
+            .content_id_hex(),
+    );
+    manifest.source_sha256 =
+        Some(nav::bundle::source_digest(&content, &[&root.join("cache/config")]).unwrap());
+    std::fs::write(
+        host_play::profile::nav_manifest_path(&pack),
+        serde_json::to_vec(&manifest).unwrap(),
+    )
+    .unwrap();
     for changed in [false, true] {
-        if changed { std::fs::write(content.join("world"), b"world-b").unwrap(); }
+        if changed {
+            std::fs::write(content.join("world"), b"world-b").unwrap();
+        }
         let (port, server) = serve_packs(p.clone(), 0);
         let options = ProfileOptions {
-            revision: Some("289".into()), cache_dir: Some(root.join("cache")),
-            cache_manifest: Some(root.join("cache-manifest.json")), unpack_dir: Some(root.join("unpack")),
-            nav_pack: Some(pack.clone()), content_dir: Some(content.clone()), http_port: Some(port),
+            revision: Some("289".into()),
+            cache_dir: Some(root.join("cache")),
+            cache_manifest: Some(root.join("cache-manifest.json")),
+            unpack_dir: Some(root.join("unpack")),
+            nav_pack: Some(pack.clone()),
+            content_dir: Some(content.clone()),
+            http_port: Some(port),
             ..Default::default()
         };
-        let env = ProfileEnvironment { home: Some(root.0.clone()), rsa_modulus: Some(client::JAVA_LOGIN_RSAN.into()), rsa_exponent: Some(client::JAVA_LOGIN_RSAE.into()), ..Default::default() };
+        let env = ProfileEnvironment {
+            home: Some(root.0.clone()),
+            rsa_modulus: Some(client::JAVA_LOGIN_RSAN.into()),
+            rsa_exponent: Some(client::JAVA_LOGIN_RSAE.into()),
+            ..Default::default()
+        };
         let result = options.resolve_with_env(None, &env).unwrap().bind_runtime();
         server.join().unwrap();
         if changed {

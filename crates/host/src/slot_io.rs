@@ -762,7 +762,7 @@ mod tests {
     #[test]
     fn take_keeps_production_roi_after_later_live_stamp() {
         use client::render::diagnostics::{
-            stamp_thread_pixel_roi, PixelRoiCam, PixelRoiMeta, PackedHist,
+            stamp_thread_pixel_roi, PackedHist, PixelRoiCam, PixelRoiMeta,
         };
         let first = PixelRoiMeta::produced(
             4,
@@ -777,7 +777,10 @@ mod tests {
                 origin_z: 0,
                 trace_frame: 1,
             },
-            PackedHist { n: 1, ..PackedHist::EMPTY },
+            PackedHist {
+                n: 1,
+                ..PackedHist::EMPTY
+            },
             PackedHist::EMPTY,
         );
         stamp_thread_pixel_roi(first.clone());
@@ -812,7 +815,7 @@ mod tests {
     fn take_keeps_frame_a_roi_when_frame_b_is_stored_before_take_pixel_roi() {
         use client::render::backend::FrameOutput;
         use client::render::diagnostics::{
-            stamp_thread_pixel_roi, PixelRoiCam, PixelRoiMeta, PackedHist,
+            stamp_thread_pixel_roi, PackedHist, PixelRoiCam, PixelRoiMeta,
         };
         fn tagged(id: u64, cycle: i32) -> PixelRoiMeta {
             PixelRoiMeta::produced(
@@ -828,7 +831,10 @@ mod tests {
                     origin_z: 0,
                     trace_frame: id as u32,
                 },
-                PackedHist { n: 1, ..PackedHist::EMPTY },
+                PackedHist {
+                    n: 1,
+                    ..PackedHist::EMPTY
+                },
                 PackedHist::EMPTY,
             )
         }
@@ -848,7 +854,10 @@ mod tests {
             FrameOutput::PixMap(pix) => assert_eq!(pix.pixels[0], 0x00aa, "took frame A pixels"),
             _ => panic!("expected pixmap A"),
         }
-        assert_eq!(roi.frame_id, 4, "roi must stay with frame A, not the interleaved store");
+        assert_eq!(
+            roi.frame_id, 4,
+            "roi must stay with frame A, not the interleaved store"
+        );
         assert_eq!(roi.cam.cycle, 10);
         let frame_b = buf.take().expect("frame B");
         let roi_b = buf.take_pixel_roi().expect("roi B");
@@ -864,7 +873,7 @@ mod tests {
     fn concurrent_store_take_never_pairs_a_frame_with_another_roi() {
         use client::render::backend::FrameOutput;
         use client::render::diagnostics::{
-            stamp_thread_pixel_roi, PixelRoiCam, PixelRoiMeta, PackedHist,
+            stamp_thread_pixel_roi, PackedHist, PixelRoiCam, PixelRoiMeta,
         };
         use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
         use std::sync::Arc;
@@ -883,7 +892,10 @@ mod tests {
                     origin_z: 0,
                     trace_frame: id as u32,
                 },
-                PackedHist { n: 1, ..PackedHist::EMPTY },
+                PackedHist {
+                    n: 1,
+                    ..PackedHist::EMPTY
+                },
                 PackedHist::EMPTY,
             )
         }
@@ -937,7 +949,10 @@ mod tests {
             0,
             "a taken pixmap tag must equal the sidecar frame_id"
         );
-        assert!(seen.load(Ordering::Relaxed) > 0, "consumer must observe stores");
+        assert!(
+            seen.load(Ordering::Relaxed) > 0,
+            "consumer must observe stores"
+        );
     }
 
     #[test]

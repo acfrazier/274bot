@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 
 use crate::boost_potions::{
-    self, PotionLevel, PotionPlan, PotionToSipError, PlannedCarry, BOOST_FLOOR,
+    self, PlannedCarry, PotionLevel, PotionPlan, PotionToSipError, BOOST_FLOOR,
 };
 use crate::loadout_plan::{self, LoadoutCarry, LoadoutInput};
 use crate::ranged;
@@ -288,7 +288,9 @@ fn parse_loadout_carry(
     if !js_array_is_array(scope, value) {
         return Err("invalid-args".into());
     }
-    let obj = value.to_object(scope).ok_or_else(|| "invalid-args".to_string())?;
+    let obj = value
+        .to_object(scope)
+        .ok_or_else(|| "invalid-args".to_string())?;
     let len = array_len(scope, obj)?;
     let mut out = Vec::with_capacity(len as usize);
     for i in 0..len {
@@ -302,7 +304,9 @@ fn parse_loadout_carry(
         let item = field_string(scope, row, "item")?;
         let qty = match optional_number_field(scope, row, "qty")? {
             None => None,
-            Some(n) => Some(loadout_plan::positive_u32(n).ok_or_else(|| "invalid-args".to_string())?),
+            Some(n) => {
+                Some(loadout_plan::positive_u32(n).ok_or_else(|| "invalid-args".to_string())?)
+            }
         };
         out.push(LoadoutCarry { item, qty });
     }
@@ -313,7 +317,9 @@ fn parse_planned_carry(
     scope: &mut v8::HandleScope,
     value: v8::Local<v8::Value>,
 ) -> Result<Vec<PlannedCarry>, String> {
-    let obj = value.to_object(scope).ok_or_else(|| "invalid-args".to_string())?;
+    let obj = value
+        .to_object(scope)
+        .ok_or_else(|| "invalid-args".to_string())?;
     let len = array_len(scope, obj)?;
     let mut out = Vec::with_capacity(len as usize);
     for i in 0..len {
@@ -341,7 +347,9 @@ fn parse_plans(
     scope: &mut v8::HandleScope,
     value: v8::Local<v8::Value>,
 ) -> Result<Vec<PotionPlan>, String> {
-    let obj = value.to_object(scope).ok_or_else(|| "invalid-args".to_string())?;
+    let obj = value
+        .to_object(scope)
+        .ok_or_else(|| "invalid-args".to_string())?;
     let len = array_len(scope, obj)?;
     let mut out = Vec::with_capacity(len as usize);
     for i in 0..len {
@@ -375,8 +383,13 @@ fn parse_plans(
     Ok(out)
 }
 
-fn parse_held(scope: &mut v8::HandleScope, value: v8::Local<v8::Value>) -> Result<Vec<f64>, String> {
-    let obj = value.to_object(scope).ok_or_else(|| "invalid-args".to_string())?;
+fn parse_held(
+    scope: &mut v8::HandleScope,
+    value: v8::Local<v8::Value>,
+) -> Result<Vec<f64>, String> {
+    let obj = value
+        .to_object(scope)
+        .ok_or_else(|| "invalid-args".to_string())?;
     let len = array_len(scope, obj)?;
     let mut out = Vec::with_capacity(len as usize);
     for i in 0..len {
@@ -396,7 +409,9 @@ fn parse_levels(
     scope: &mut v8::HandleScope,
     value: v8::Local<v8::Value>,
 ) -> Result<Vec<PotionLevel>, String> {
-    let obj = value.to_object(scope).ok_or_else(|| "invalid-args".to_string())?;
+    let obj = value
+        .to_object(scope)
+        .ok_or_else(|| "invalid-args".to_string())?;
     let len = array_len(scope, obj)?;
     let mut out = Vec::with_capacity(len as usize);
     for i in 0..len {
@@ -529,7 +544,10 @@ fn is_plain_object(value: v8::Local<v8::Value>) -> bool {
     value.is_object() && !value.is_null() && !value.is_undefined() && !value.is_array()
 }
 
-fn object_keys(scope: &mut v8::HandleScope, value: v8::Local<v8::Value>) -> Result<Vec<String>, String> {
+fn object_keys(
+    scope: &mut v8::HandleScope,
+    value: v8::Local<v8::Value>,
+) -> Result<Vec<String>, String> {
     let context = scope.get_current_context();
     let global = context.global(scope);
     let Some(object_key) = v8::String::new(scope, "Object") else {
@@ -617,7 +635,8 @@ fn field<'s>(
         .to_object(scope)
         .ok_or_else(|| "invalid-args".to_string())?;
     let key = v8::String::new(scope, name).ok_or_else(|| "string".to_string())?;
-    obj.get(scope, key.into()).ok_or_else(|| PENDING.to_string())
+    obj.get(scope, key.into())
+        .ok_or_else(|| PENDING.to_string())
 }
 
 fn field_is_string(scope: &mut v8::HandleScope, value: v8::Local<v8::Value>, name: &str) -> bool {
@@ -637,7 +656,9 @@ fn required_string_array(
     scope: &mut v8::HandleScope,
     value: v8::Local<v8::Value>,
 ) -> Result<Vec<String>, String> {
-    let obj = value.to_object(scope).ok_or_else(|| "invalid-args".to_string())?;
+    let obj = value
+        .to_object(scope)
+        .ok_or_else(|| "invalid-args".to_string())?;
     let len = array_len(scope, obj)?;
     let mut out = Vec::with_capacity(len as usize);
     for i in 0..len {
@@ -650,7 +671,10 @@ fn required_string_array(
     Ok(out)
 }
 
-fn js_to_string(scope: &mut v8::HandleScope, value: v8::Local<v8::Value>) -> Result<String, String> {
+fn js_to_string(
+    scope: &mut v8::HandleScope,
+    value: v8::Local<v8::Value>,
+) -> Result<String, String> {
     if value.is_null() {
         return Ok("null".into());
     }

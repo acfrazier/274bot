@@ -119,10 +119,14 @@ impl FixtureIdentity {
         }
         for (i, a) in self.accounts.iter().enumerate() {
             if a.username.trim().is_empty() || a.password.is_empty() {
-                return Err(format!("fixture identity account {i} has empty credentials"));
+                return Err(format!(
+                    "fixture identity account {i} has empty credentials"
+                ));
             }
             if a.sav_path.trim().is_empty() || a.sav_sha256.trim().is_empty() {
-                return Err(format!("fixture identity account {i} missing sav path/digest"));
+                return Err(format!(
+                    "fixture identity account {i} missing sav path/digest"
+                ));
             }
             let sav = Path::new(&a.sav_path);
             if !sav.is_file() {
@@ -196,13 +200,8 @@ impl FixtureIdentity {
                     dest.display()
                 ));
             }
-            fs::copy(&a.sav_path, &dest).map_err(|e| {
-                format!(
-                    "copy {} -> {}: {e}",
-                    a.sav_path,
-                    dest.display()
-                )
-            })?;
+            fs::copy(&a.sav_path, &dest)
+                .map_err(|e| format!("copy {} -> {}: {e}", a.sav_path, dest.display()))?;
             // Re-check digest after copy.
             let bytes = fs::read(&dest).map_err(|e| format!("read {}: {e}", dest.display()))?;
             let digest = sha256_hex(&bytes);
@@ -402,9 +401,7 @@ pub fn harness_writer_script() -> Result<PathBuf, String> {
     let candidate = manifest
         .join("../..")
         .join("tools/harness/run_write_player_fixture.sh");
-    let candidate = candidate
-        .canonicalize()
-        .unwrap_or(candidate);
+    let candidate = candidate.canonicalize().unwrap_or(candidate);
     if candidate.is_file() {
         return Ok(candidate);
     }
@@ -555,8 +552,7 @@ pub fn prepare_offline_fixture(opts: OfflinePrepareOpts) -> Result<FixtureIdenti
         vault_passphrase: opts.vault_passphrase,
         prepared_at_unix_ms,
         engine_git_head,
-        server_root: server_root_recorded
-            .or_else(|| Some(opts.server_root.display().to_string())),
+        server_root: server_root_recorded.or_else(|| Some(opts.server_root.display().to_string())),
     };
     identity.write_to(&opts.identity_path)?;
     Ok(identity)

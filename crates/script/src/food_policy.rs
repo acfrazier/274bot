@@ -94,7 +94,12 @@ mod tests {
     #[test]
     fn empty_name_matches_empty_form_key() {
         let data = data(ClientRevision::R274);
-        let items = vec![InvItemName { name: None }, InvItemName { name: Some("".into()) }];
+        let items = vec![
+            InvItemName { name: None },
+            InvItemName {
+                name: Some("".into()),
+            },
+        ];
         assert_eq!(food_count(Some(&data), &items, ""), 2);
     }
 }

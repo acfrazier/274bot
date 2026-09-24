@@ -91,11 +91,7 @@ pub fn gear_of_input(loadout: Option<&LoadoutInput>) -> Vec<String> {
     };
     loadouts_store::project_gear(
         |slot| loadout.worn.get(slot).map(String::as_str),
-        loadout
-            .unassigned
-            .iter()
-            .flatten()
-            .map(String::as_str),
+        loadout.unassigned.iter().flatten().map(String::as_str),
     )
 }
 
@@ -116,7 +112,9 @@ pub fn supplies_of_input(loadout: Option<&LoadoutInput>) -> Vec<CarryEntry> {
 }
 
 pub fn weapon_of_input(loadout: Option<&LoadoutInput>, fallback: Option<&str>) -> Option<String> {
-    let righthand = loadout.and_then(|row| row.worn.get("righthand")).map(String::as_str);
+    let righthand = loadout
+        .and_then(|row| row.worn.get("righthand"))
+        .map(String::as_str);
     loadouts_store::project_weapon(righthand, fallback)
 }
 

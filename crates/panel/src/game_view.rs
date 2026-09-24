@@ -361,10 +361,7 @@ mod tests {
         let mut dst = [0u8; 16];
         expand_rgba(&src, &mut dst);
         let h = client::render::diagnostics::rgba_roi_hist(&dst, 4, 1, 0, 0, 3, 0);
-        assert_eq!(
-            (h.n, h.zero, h.palette2, h.rgb2, h.other),
-            (4, 1, 1, 1, 1)
-        );
+        assert_eq!((h.n, h.zero, h.palette2, h.rgb2, h.other), (4, 1, 1, 1, 1));
     }
 
     #[test]

@@ -3857,19 +3857,13 @@ fn script_paint_select_adverts_fixture_chrome() {
         ..Default::default()
     };
     assert!(script_runtime::script_paint_select_advertised(
-        &paint,
-        "strip:k",
-        "Options"
+        &paint, "strip:k", "Options"
     ));
     assert!(!script_runtime::script_paint_select_advertised(
-        &paint,
-        "strip:k",
-        "Nope"
+        &paint, "strip:k", "Nope"
     ));
     assert!(!script_runtime::script_paint_select_advertised(
-        &paint,
-        "tabs:mg",
-        "Loot"
+        &paint, "tabs:mg", "Loot"
     ));
     assert_eq!(paint.generation, 7);
 }
@@ -10397,7 +10391,10 @@ export function tick(api) {
     assert_eq!(value["available"], true);
     assert_eq!(value["length"], serde_json::json!(104 * 104));
     assert_eq!(value["atSelf"], serde_json::json!(CollisionFlag::_OPEN));
-    assert_ne!(value["atVis"].as_i64().unwrap() & CollisionFlag::V_W as i64, 0);
+    assert_ne!(
+        value["atVis"].as_i64().unwrap() & CollisionFlag::V_W as i64,
+        0
+    );
     assert_eq!(value["open"]["ok"], true);
     assert_eq!(value["open"]["value"], true);
     assert_eq!(value["blocked"]["ok"], true);
@@ -13503,10 +13500,10 @@ fn nav_rig_with(world: Option<Arc<NavWorld>>) -> NavRig {
     script_slot_or_insert(&scripts, "alice")
         .lock()
         .unwrap()
-        .start_compiled(Box::new(WalkProbe(
-            Arc::clone(&walk_ret),
-            Arc::clone(&walk_target),
-        )), None)
+        .start_compiled(
+            Box::new(WalkProbe(Arc::clone(&walk_ret), Arc::clone(&walk_target))),
+            None,
+        )
         .unwrap();
     statuses.lock().unwrap().push(SlotStatus {
         username: "alice".into(),
@@ -14517,10 +14514,8 @@ fn observer_pump_session_boundary_skips_guardian_producer_but_keeps_catalog_life
         !guardian_called.get(),
         "session boundary uses a default guardian without prior-frame facts"
     );
-    assert!(
-        catalog
-            .failure()
-            .expect("post-Start session boundary is terminal")
-            .contains("session boundary after Start")
-    );
+    assert!(catalog
+        .failure()
+        .expect("post-Start session boundary is terminal")
+        .contains("session boundary after Start"));
 }

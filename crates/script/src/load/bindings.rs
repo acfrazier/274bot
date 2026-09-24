@@ -196,20 +196,23 @@ pub(super) fn wire_runtime(
         .map_err(|e| format!("register bank open: {e}"))?;
     let bank_unlock_facts = std::sync::Arc::clone(&named_banks);
     runtime
-        .register_function("__rs2b0t_bank_unlocked", move |args: &[serde_json::Value]| {
-            let payload = args.first().unwrap_or(&serde_json::Value::Null);
-            let Some(name) = payload.get("name").and_then(|v| v.as_str()) else {
-                return Ok(serde_json::Value::Bool(false));
-            };
-            let Some(tile) = json_tile(Some(payload)) else {
-                return Ok(serde_json::Value::Bool(false));
-            };
-            Ok(serde_json::Value::Bool(api::named_banks::bank_unlocked(
-                bank_unlock_facts.as_ref(),
-                name,
-                tile,
-            )))
-        })
+        .register_function(
+            "__rs2b0t_bank_unlocked",
+            move |args: &[serde_json::Value]| {
+                let payload = args.first().unwrap_or(&serde_json::Value::Null);
+                let Some(name) = payload.get("name").and_then(|v| v.as_str()) else {
+                    return Ok(serde_json::Value::Bool(false));
+                };
+                let Some(tile) = json_tile(Some(payload)) else {
+                    return Ok(serde_json::Value::Bool(false));
+                };
+                Ok(serde_json::Value::Bool(api::named_banks::bank_unlocked(
+                    bank_unlock_facts.as_ref(),
+                    name,
+                    tile,
+                )))
+            },
+        )
         .map_err(|e| format!("register bank unlocked: {e}"))?;
     runtime
         .register_function("__rs2b0t_walk", |args: &[serde_json::Value]| {
@@ -243,10 +246,9 @@ pub(super) fn wire_runtime(
         .register_function(
             "__rs2b0t_selected_loadout",
             |args: &[serde_json::Value]| {
-                let rows: Vec<crate::loadouts_store::Loadout> = serde_json::from_value(
-                    args.first().cloned().unwrap_or(serde_json::json!([])),
-                )
-                .unwrap_or_default();
+                let rows: Vec<crate::loadouts_store::Loadout> =
+                    serde_json::from_value(args.first().cloned().unwrap_or(serde_json::json!([])))
+                        .unwrap_or_default();
                 Ok(crate::loadouts_store::selected_compat_loadout(
                     &rows,
                     args.get(1).and_then(|v| v.as_str()).unwrap_or(""),
@@ -711,9 +713,7 @@ pub(super) fn wire_runtime(
     runtime
         .register_function(
             "__rs2b0t_canvas_fill_gradient_id",
-            |_args: &[serde_json::Value]| {
-                Ok(serde_json::json!(crate::canvas::fill_gradient_id()))
-            },
+            |_args: &[serde_json::Value]| Ok(serde_json::json!(crate::canvas::fill_gradient_id())),
         )
         .map_err(|e| format!("register canvas fill gradient id: {e}"))?;
     runtime

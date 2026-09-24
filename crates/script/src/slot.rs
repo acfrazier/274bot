@@ -2090,8 +2090,8 @@ export default class T extends LoopingBot {
     #[cfg(feature = "load")]
     #[test]
     fn a_compiled_start_pins_the_selected_facts_and_stop_clears_them() {
-        let data = api::game_data::for_revision(client::io::ClientRevision::R274)
-            .expect("selected data");
+        let data =
+            api::game_data::for_revision(client::io::ClientRevision::R274).expect("selected data");
         let mut slot = SlotScript::new();
         assert!(slot.compiled_game_data().is_none());
         slot.start_compiled(Box::new(Noop), Some(Arc::clone(&data)))
@@ -2115,8 +2115,8 @@ export default class T extends LoopingBot {
     #[cfg(feature = "load")]
     #[test]
     fn the_pump_freezes_and_aborts_the_compiled_clue_machine() {
-        let data = api::game_data::for_revision(client::io::ClientRevision::R274)
-            .expect("selected data");
+        let data =
+            api::game_data::for_revision(client::io::ClientRevision::R274).expect("selected data");
         // The machine's own identify decides what is held: a selected
         // membership row with a positive count.
         let held_id = data

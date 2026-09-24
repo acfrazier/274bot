@@ -741,11 +741,7 @@ impl ScenarioRunner {
         // frames. Bind the continuation to the selected-289 award text and
         // this post-injection held episode instead of requiring an atomic
         // reward/consumption edge. A stale entry dialogue still cannot count.
-        if authentic_award
-            && state.clear_before_dialogue
-            && state.lamp_seen
-            && state.hold_seen
-        {
+        if authentic_award && state.clear_before_dialogue && state.lamp_seen && state.hold_seen {
             state.dialogue_seen = true;
         }
         if state.dialogue_seen && !active_continue {

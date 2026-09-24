@@ -989,7 +989,10 @@ impl ProfileSelection {
                         return Err("navigation source provenance is not a trusted supported-public build; rebuild/package the resources".into());
                     }
                 } else {
-                    let config = nav::bake::config_jag_for(self.revision().as_i32() as u16, &self.cache_dir)?;
+                    let config = nav::bake::config_jag_for(
+                        self.revision().as_i32() as u16,
+                        &self.cache_dir,
+                    )?;
                     let source = nav::bundle::source_digest(&self.content_dir, &[&config])?;
                     if identity.source_sha256.as_deref() != Some(&source) {
                         return Err("navigation source provenance differs from selected content/config; rebake the resources".into());
@@ -1012,13 +1015,20 @@ impl ProfileSelection {
             content_id: cache_id.clone(),
         })?);
         let game_data = if self.supported_server {
-            api::game_data::for_optional_profile(self.revision(), &cache_id)?
-                .filter(|data| self.target() == BotTarget::Prod || data.source_inputs().all(|(content, input)| {
-                    let base = if content { &self.content_dir } else { &self.engine_dir };
-                    let path = base.join(&input.path);
-                    std::fs::metadata(&path).is_ok_and(|m| m.len() == input.bytes)
-                        && nav::manifest::hash_file(&path).is_ok_and(|hash| hash == input.sha256)
-                }))
+            api::game_data::for_optional_profile(self.revision(), &cache_id)?.filter(|data| {
+                self.target() == BotTarget::Prod
+                    || data.source_inputs().all(|(content, input)| {
+                        let base = if content {
+                            &self.content_dir
+                        } else {
+                            &self.engine_dir
+                        };
+                        let path = base.join(&input.path);
+                        std::fs::metadata(&path).is_ok_and(|m| m.len() == input.bytes)
+                            && nav::manifest::hash_file(&path)
+                                .is_ok_and(|hash| hash == input.sha256)
+                    })
+            })
         } else {
             None
         };
@@ -1100,7 +1110,10 @@ impl ProfileSelection {
                     || match content_id {
                         Some(id) => {
                             identity.content_id.as_deref() != Some(id)
-                                || !identity.source_sha256.as_deref().is_some_and(nav::manifest::is_sha256)
+                                || !identity
+                                    .source_sha256
+                                    .as_deref()
+                                    .is_some_and(nav::manifest::is_sha256)
                         }
                         None => identity.cache_id != cache.identity(),
                     }

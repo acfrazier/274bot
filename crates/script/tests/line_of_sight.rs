@@ -212,8 +212,12 @@ export function tick(api) {
         encode_snapshot_delta_with_native(None, &empty_input(1), collision_native(&first), false);
     iso.post_snapshot(a);
     iso.on_game_tick(1);
-    let (b, _) =
-        encode_snapshot_delta_with_native(Some(&fp), &empty_input(2), collision_native(&second), false);
+    let (b, _) = encode_snapshot_delta_with_native(
+        Some(&fp),
+        &empty_input(2),
+        collision_native(&second),
+        false,
+    );
     iso.post_snapshot(b);
     iso.on_game_tick(2);
     let value = iso.probe("globalThis.__probe").unwrap();

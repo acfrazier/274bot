@@ -1213,7 +1213,9 @@ fn deposit(rt: &mut BankRuntime, proj: &BankProj) -> Option<Value> {
             if row.name.is_empty() {
                 return Some(rt.yield_value(false));
             }
-            if !kept(&keep, &row.name) && !names.iter().any(|name: &String| eq_name(name, &row.name)) {
+            if !kept(&keep, &row.name)
+                && !names.iter().any(|name: &String| eq_name(name, &row.name))
+            {
                 names.push(row.name.clone());
             }
         }

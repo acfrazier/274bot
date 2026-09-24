@@ -1,9 +1,7 @@
 // reader.combatLevel and Player.combatLevel mirror posted native local/peer
 // combat levels. Canonical foreign: raw?.localPlayer?.combatLevel ?? 0.
 
-use script::isolate_fb::{
-    ReachViewInput, SceneEntityInput, SnapshotInput, TileInput,
-};
+use script::isolate_fb::{ReachViewInput, SceneEntityInput, SnapshotInput, TileInput};
 use script::{LoadIsolate, LoadShape};
 
 mod common;

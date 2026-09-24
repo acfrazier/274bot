@@ -1099,7 +1099,10 @@ mod tests {
         observe(&snap, fail_native(request_id, 8, 5, 1));
         let step = next_token(&clear);
         assert_eq!(step["status"], "unreachable");
-        assert_ne!(step["kind"], "npc", "correlated Clear fail must not Talk again");
+        assert_ne!(
+            step["kind"], "npc",
+            "correlated Clear fail must not Talk again"
+        );
     }
 
     #[test]

@@ -798,8 +798,7 @@ fn built_example_observes_thirty_three_burials_in_five_plus_twenty_eight_cycle()
     }];
     let bank_supply = [ItemRowInput::nc(Some("Bones"), 28)];
 
-    let (mut tick, mut bury_sends) =
-        simulate_serial_buries(&iso, &facts, &stand, &stats, 1, 5);
+    let (mut tick, mut bury_sends) = simulate_serial_buries(&iso, &facts, &stand, &stats, 1, 5);
     assert_eq!(bury_sends, 5);
 
     tick += 1;

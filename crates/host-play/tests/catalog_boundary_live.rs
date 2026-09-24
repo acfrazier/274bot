@@ -6469,15 +6469,11 @@ export default class NativeStop extends LoopingBot {{
         );
         assert_ne!(camelot_trip.via, Some(FIRE_GIANT_WASH));
         let barrel = combat_bank_spec(CoreCase::FireGiantBankPrepared).unwrap();
-        assert_eq!(
-            barrel.restock_count,
-            Some(FIRE_GIANT_BANK_PREPARED_RESTOCK)
-        );
+        assert_eq!(barrel.restock_count, Some(FIRE_GIANT_BANK_PREPARED_RESTOCK));
         assert_eq!(barrel.via, Some(FIRE_GIANT_WASH));
         assert!(!barrel.via_magic);
         assert_ne!(
-            camelot_trip.restock_count,
-            barrel.restock_count,
+            camelot_trip.restock_count, barrel.restock_count,
             "Camelot observer restock line stays separate from barrel 25"
         );
 
@@ -6583,8 +6579,11 @@ export default class NativeStop extends LoopingBot {{
             validate_case_baseline(CoreCase::GreenDragonBankPrepared, &seeded_dragon_loot).is_err()
         );
         assert!(
-            validate_case_baseline(CoreCase::GreenDragonBankDefaultPrepared, &seeded_dragon_loot)
-                .is_err(),
+            validate_case_baseline(
+                CoreCase::GreenDragonBankDefaultPrepared,
+                &seeded_dragon_loot
+            )
+            .is_err(),
             "default-loot Green rejects seeded bones as earned hide"
         );
         let mut seeded_hide = green_bank.clone();
@@ -6796,19 +6795,28 @@ export default class NativeStop extends LoopingBot {{
         dart_pack.tile = Some(MOSS_GIANT_SAFESPOT);
         dart_pack.bank_open = false;
         dart_pack.bank_loaded = false;
-        dart_pack.item_ids.insert(BRONZE_DART_ID, MOSS_GIANT_DART_SUPPLY);
+        dart_pack
+            .item_ids
+            .insert(BRONZE_DART_ID, MOSS_GIANT_DART_SUPPLY);
         let mut dart_worn = dart_pack.clone();
         dart_worn.item_ids.remove(&BRONZE_DART_ID);
-        dart_worn.equipment_ids.insert(BRONZE_DART_ID, MOSS_GIANT_DART_SUPPLY);
+        dart_worn
+            .equipment_ids
+            .insert(BRONZE_DART_ID, MOSS_GIANT_DART_SUPPLY);
         dart_worn.varps.insert(COMBAT_MODE_VARP, RAPID_COMBAT_MODE);
         let mut dart_field = dart_worn.clone();
-        dart_field.equipment_ids.insert(BRONZE_DART_ID, MOSS_GIANT_DART_SUPPLY - 1);
+        dart_field
+            .equipment_ids
+            .insert(BRONZE_DART_ID, MOSS_GIANT_DART_SUPPLY - 1);
         dart_field.xp.insert("ranged".into(), 12);
         dart_field.npc_facts = vec![combat_npc(4, "Moss giant", 40, true, MOSS_GIANT_SAFESPOT)];
         dart_field.local_in_combat = true;
         dart_field.local_target_npc = Some(4);
-        let dart_ok =
-            witness(dart_case, &dart_baseline, [&dart_pack, &dart_worn, &dart_field]);
+        let dart_ok = witness(
+            dart_case,
+            &dart_baseline,
+            [&dart_pack, &dart_worn, &dart_field],
+        );
         assert!(dart_ok.combat_dart_branch_cycle.qualified());
         assert!(
             !dart_ok.combat_dart_branch_cycle.combat.qualified(dart_spec),
@@ -6820,39 +6828,49 @@ export default class NativeStop extends LoopingBot {{
         dart_bank_pull.tile = Some(MOSS_GIANT_SAFESPOT);
         dart_bank_pull.bank_open = true;
         dart_bank_pull.bank_loaded = true;
-        dart_bank_pull.bank_ids.insert(BRONZE_DART_ID, MOSS_GIANT_DART_SUPPLY - 1);
+        dart_bank_pull
+            .bank_ids
+            .insert(BRONZE_DART_ID, MOSS_GIANT_DART_SUPPLY - 1);
         dart_bank_pull.item_ids.insert(BRONZE_DART_ID, 1);
         let mut dart_worn_from_bank = dart_bank_pull.clone();
         dart_worn_from_bank.bank_open = false;
         dart_worn_from_bank.bank_loaded = false;
         dart_worn_from_bank.bank_ids.clear();
         dart_worn_from_bank.item_ids.remove(&BRONZE_DART_ID);
-        dart_worn_from_bank.equipment_ids.insert(BRONZE_DART_ID, MOSS_GIANT_DART_SUPPLY);
-        dart_worn_from_bank.varps.insert(COMBAT_MODE_VARP, RAPID_COMBAT_MODE);
+        dart_worn_from_bank
+            .equipment_ids
+            .insert(BRONZE_DART_ID, MOSS_GIANT_DART_SUPPLY);
+        dart_worn_from_bank
+            .varps
+            .insert(COMBAT_MODE_VARP, RAPID_COMBAT_MODE);
         let mut dart_field_from_bank = dart_worn_from_bank.clone();
-        dart_field_from_bank.equipment_ids.insert(BRONZE_DART_ID, MOSS_GIANT_DART_SUPPLY - 1);
+        dart_field_from_bank
+            .equipment_ids
+            .insert(BRONZE_DART_ID, MOSS_GIANT_DART_SUPPLY - 1);
         dart_field_from_bank.xp.insert("ranged".into(), 12);
         dart_field_from_bank.npc_facts =
             vec![combat_npc(4, "Moss giant", 40, true, MOSS_GIANT_SAFESPOT)];
         dart_field_from_bank.local_in_combat = true;
         dart_field_from_bank.local_target_npc = Some(4);
-        assert!(
-            witness(
-                dart_case,
-                &dart_baseline,
-                [&dart_bank_pull, &dart_worn_from_bank, &dart_field_from_bank]
-            )
-            .combat_dart_branch_cycle
-            .qualified()
-        );
+        assert!(witness(
+            dart_case,
+            &dart_baseline,
+            [&dart_bank_pull, &dart_worn_from_bank, &dart_field_from_bank]
+        )
+        .combat_dart_branch_cycle
+        .qualified());
 
         let mut dart_worn_only = dart_baseline.clone();
         dart_worn_only.tile = Some(MOSS_GIANT_SAFESPOT);
         dart_worn_only.bank_open = true;
         dart_worn_only.bank_loaded = true;
-        dart_worn_only.equipment_ids.insert(BRONZE_DART_ID, MOSS_GIANT_DART_SUPPLY);
+        dart_worn_only
+            .equipment_ids
+            .insert(BRONZE_DART_ID, MOSS_GIANT_DART_SUPPLY);
         let mut dart_worn_only_field = dart_worn_only.clone();
-        dart_worn_only_field.equipment_ids.insert(BRONZE_DART_ID, MOSS_GIANT_DART_SUPPLY - 1);
+        dart_worn_only_field
+            .equipment_ids
+            .insert(BRONZE_DART_ID, MOSS_GIANT_DART_SUPPLY - 1);
         dart_worn_only_field.xp.insert("ranged".into(), 12);
         dart_worn_only_field.npc_facts =
             vec![combat_npc(4, "Moss giant", 40, true, MOSS_GIANT_SAFESPOT)];
@@ -6874,9 +6892,13 @@ export default class NativeStop extends LoopingBot {{
         dart_closed_bank_worn.bank_open = false;
         dart_closed_bank_worn.bank_loaded = false;
         dart_closed_bank_worn.bank_ids.clear();
-        dart_closed_bank_worn.equipment_ids.insert(BRONZE_DART_ID, MOSS_GIANT_DART_SUPPLY);
+        dart_closed_bank_worn
+            .equipment_ids
+            .insert(BRONZE_DART_ID, MOSS_GIANT_DART_SUPPLY);
         let mut dart_closed_field = dart_closed_bank_worn.clone();
-        dart_closed_field.equipment_ids.insert(BRONZE_DART_ID, MOSS_GIANT_DART_SUPPLY - 1);
+        dart_closed_field
+            .equipment_ids
+            .insert(BRONZE_DART_ID, MOSS_GIANT_DART_SUPPLY - 1);
         dart_closed_field.xp.insert("ranged".into(), 12);
         dart_closed_field.npc_facts =
             vec![combat_npc(4, "Moss giant", 40, true, MOSS_GIANT_SAFESPOT)];
@@ -6992,12 +7014,11 @@ export default class NativeStop extends LoopingBot {{
             "missing then re-equipped must not satisfy shield continuity"
         );
 
-        let continuous = witness(
-            mage_case,
-            &mage_baseline,
-            [&mage_precombat, &mage_hit],
-        );
-        assert!(qualified_mage_branch(&continuous.combat_core_cycle, mage_spec));
+        let continuous = witness(mage_case, &mage_baseline, [&mage_precombat, &mage_hit]);
+        assert!(qualified_mage_branch(
+            &continuous.combat_core_cycle,
+            mage_spec
+        ));
         assert!(continuous.qualify().is_ok());
 
         let camelot_case = CoreCase::FireGiantCamelotPrepared;
@@ -7084,7 +7105,10 @@ export default class NativeStop extends LoopingBot {{
 
         let mut or_cycle = CombatCoreCycle::default();
         or_cycle.observe(or_spec, &baseline, &bones_only);
-        assert!(or_cycle.looted, "accepted bank cell still qualifies on bones");
+        assert!(
+            or_cycle.looted,
+            "accepted bank cell still qualifies on bones"
+        );
 
         let mut and_bones = CombatCoreCycle::default();
         and_bones.observe(and_spec, &baseline, &bones_only);
@@ -7095,8 +7119,14 @@ export default class NativeStop extends LoopingBot {{
 
         let mut and_both = CombatCoreCycle::default();
         and_both.observe(and_spec, &baseline, &both);
-        assert!(and_both.looted, "both earned drops satisfy the default pair");
-        assert_eq!(combat_loot_count(&bones_only, CombatLoot::DragonBonesAndHide), 1);
+        assert!(
+            and_both.looted,
+            "both earned drops satisfy the default pair"
+        );
+        assert_eq!(
+            combat_loot_count(&bones_only, CombatLoot::DragonBonesAndHide),
+            1
+        );
         assert_eq!(combat_loot_count(&both, CombatLoot::DragonBonesAndHide), 2);
     }
 
@@ -7284,7 +7314,10 @@ export default class NativeStop extends LoopingBot {{
     fn prepared_fire_giant_camelot_accepts_exact_24_restock_and_rejects_incomplete_return() {
         let case = CoreCase::FireGiantCamelotPrepared;
         let bank = combat_bank_spec(case).unwrap();
-        assert_eq!(bank.restock_count, Some(FIRE_GIANT_CAMELOT_PREPARED_RESTOCK));
+        assert_eq!(
+            bank.restock_count,
+            Some(FIRE_GIANT_CAMELOT_PREPARED_RESTOCK)
+        );
         assert_eq!(
             combat_bank_spec(CoreCase::FireGiantBankPrepared)
                 .unwrap()
@@ -7437,8 +7470,12 @@ export default class NativeStop extends LoopingBot {{
             deposited.bank_loaded = true;
             deposited.bank_generation = 1;
             let mut restocked = deposited.clone();
-            restocked.item_ids.insert(LOBSTER_ID, FIRE_GIANT_CAMELOT_PREPARED_RESTOCK);
-            restocked.bank_ids.insert(LOBSTER_ID, 50 - FIRE_GIANT_CAMELOT_PREPARED_RESTOCK);
+            restocked
+                .item_ids
+                .insert(LOBSTER_ID, FIRE_GIANT_CAMELOT_PREPARED_RESTOCK);
+            restocked
+                .bank_ids
+                .insert(LOBSTER_ID, 50 - FIRE_GIANT_CAMELOT_PREPARED_RESTOCK);
             let mut closed = restocked.clone();
             closed.bank_open = false;
             closed.bank_loaded = false;

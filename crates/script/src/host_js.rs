@@ -302,12 +302,16 @@ fn render_native_v2(out: &mut String) {
     out.push_str("export type HelperResult<T> =\n");
     out.push_str("  | { ok: true; value: T }\n");
     out.push_str("  | { ok: false; error: string };\n\n");
-    out.push_str("/** prayerClear walk counts. timed_out may be nonzero; that is not all-off success. */\n");
+    out.push_str(
+        "/** prayerClear walk counts. timed_out may be nonzero; that is not all-off success. */\n",
+    );
     out.push_str("export interface PrayerClearCounts {\n");
     out.push_str("  clicked: number;\n");
     out.push_str("  timed_out: number;\n");
     out.push_str("}\n\n");
-    out.push_str("/** Caller-supplied carry row. Omitted qty defaults to 1 on loadout helpers. */\n");
+    out.push_str(
+        "/** Caller-supplied carry row. Omitted qty defaults to 1 on loadout helpers. */\n",
+    );
     out.push_str("export interface LoadoutCarry {\n");
     out.push_str("  item: string;\n");
     out.push_str("  qty?: number;\n");
@@ -336,7 +340,9 @@ fn render_native_v2(out: &mut String) {
     out.push_str("  alias: string;\n");
     out.push_str("  id: number;\n");
     out.push_str("}\n\n");
-    out.push_str("/** Loc-resource method row. publication is null when the landed row has none. */\n");
+    out.push_str(
+        "/** Loc-resource method row. publication is null when the landed row has none. */\n",
+    );
     out.push_str("export interface GatherLocResourceRow {\n");
     out.push_str("  skill: string;\n");
     out.push_str("  table: string;\n");
@@ -463,7 +469,9 @@ fn render_native_v2(out: &mut String) {
     out.push_str("  width: number;\n");
     out.push_str("  height: number;\n");
     out.push_str("}\n\n");
-    out.push_str("/** Historical posted row copy. Not the live entity: no index, name, or nested tile. */\n");
+    out.push_str(
+        "/** Historical posted row copy. Not the live entity: no index, name, or nested tile. */\n",
+    );
     out.push_str("export interface SceneProjectionRow {\n");
     out.push_str("  id: number;\n");
     out.push_str("  x: number;\n");
@@ -481,7 +489,9 @@ fn render_native_v2(out: &mut String) {
     out.push_str("/** Public JS API v2 handle. Explicit `export const apiVersion = 2` only. */\n");
     out.push_str("export interface NativeApi {\n");
     out.push_str("  readonly tick: number;\n");
-    out.push_str("  /** Host-owned, delta-merged. Read only. Do not mutate; copy if retaining. */\n");
+    out.push_str(
+        "  /** Host-owned, delta-merged. Read only. Do not mutate; copy if retaining. */\n",
+    );
     out.push_str("  readonly snapshot: NativeSnapshot;\n");
     out.push_str("  readonly settings: NativeSettings;\n");
     out.push_str("  log(message: string): void;\n");
@@ -502,10 +512,14 @@ fn render_native_v2(out: &mut String) {
     out.push_str("   * Before: a second Set/Clear overwrote the private pump and could hang the first Promise; a sync tick that did not return that Promise did not advance it.\n");
     out.push_str("   * After: a second Set/Clear while one operation is already admitted returns `{ok:false, error:'busy'}` without begin/click. The admitted operation keeps ownership and must settle. Sequential `await` is the preferred example; fire-and-forget still progresses on later eligible NativeTicks. Additional public error: `busy`.\n");
     out.push_str("   */\n");
-    out.push_str("  prayerSet(input: { name: string; on: boolean }): Promise<HelperResult<boolean>>;\n");
+    out.push_str(
+        "  prayerSet(input: { name: string; on: boolean }): Promise<HelperResult<boolean>>;\n",
+    );
     out.push_str("  /** Completes the 15-row walk. timed_out may be nonzero; LIVE later requires all off. Same busy refuse as prayerSet. */\n");
     out.push_str("  prayerClear(): Promise<HelperResult<PrayerClearCounts>>;\n");
-    out.push_str("  foodCount(input: { items: ItemRow[]; foodName: string }): HelperResult<number>;\n");
+    out.push_str(
+        "  foodCount(input: { items: ItemRow[]; foodName: string }): HelperResult<number>;\n",
+    );
     out.push_str("  foodHealAmount(input: { foodName: string }): HelperResult<number>;\n");
     out.push_str("  combatKeepNames(input: { food: string; style?: string; spell?: string; ammo?: string; weapon?: string; extra?: string[] }): HelperResult<string[]>;\n");
     out.push_str("  runesPerCast(input: { spellName: string; wielded: string[] }): HelperResult<Array<{ rune: string; count: number }> | null>;\n");
@@ -519,7 +533,9 @@ fn render_native_v2(out: &mut String) {
     out.push_str("  /** Sync fact read. Exactly one of name or id, and it must be a string. Not a Promise and not a request op. */\n");
     out.push_str("  questIdentity(input: { name: string } | { id: string }): HelperResult<QuestIdentityRow>;\n");
     out.push_str("  /** Sync seed-id requirements read. A name field is not a key. Not a Promise and not a request op. */\n");
-    out.push_str("  questPrereqs(input: { id: string; name?: string }): HelperResult<QuestRequirements>;\n");
+    out.push_str(
+        "  questPrereqs(input: { id: string; name?: string }): HelperResult<QuestRequirements>;\n",
+    );
     out.push_str("  /** Sync landed trail-row read, pure pack arithmetic, pure hard-kit status, and the pure keep predicate over caller facts. None is a Promise and none is a request op; `packPlan`, `hardKit`, and `keep` read no snapshot, inventory, or family. */\n");
     out.push_str("  clue: { row(input: { id: number } | { alias: string }): HelperResult<ClueRow>; heldStep(): HelperResult<ClueRow>; packPlan(input: PackPlanInput): HelperResult<PackPlanTargets>; hardKit(input: { attack: number; lostCity: boolean; items: { id: number; count: number }[] }): HelperResult<{ status: 'ready' }>; keep(input: { name: string; extra?: string[] }): HelperResult<{ keep: boolean }>; begin(input?: object): HelperResult<{ token: number }>; next(input: { token: number; resume?: boolean }): ClueStep };\n");
     out.push_str("  /** Sync posted-loc copy. Historical copy, not live. Not a Promise and not a request op. */\n");
@@ -529,7 +545,9 @@ fn render_native_v2(out: &mut String) {
     out.push_str("  /** Sync posted-tab status copy. A missing page is snapshot-unavailable and a null tab is quest-tab-unbound. Not a Promise and not a request op. */\n");
     out.push_str("  questStatus(input: { name: string }): HelperResult<{ status: 'notStarted' | 'inProgress' | 'complete' | 'unknown'; as_of_sequence: number }>;\n");
     out.push_str("  /** Sync owned-root begin. One `if-button` per token on the posted row id, enqueued synchronously after a generation check. Not a Promise and not a request op; a refusal is `{ ok: false, error }`. */\n");
-    out.push_str("  questJournalBegin(input: { name: string }): HelperResult<{ token: number }>;\n");
+    out.push_str(
+        "  questJournalBegin(input: { name: string }): HelperResult<{ token: number }>;\n",
+    );
     out.push_str("  /** Sync owned-root next. Not-done is `{ pending: true }` (no `ok` field) — not empty lines. Not a Promise. */\n");
     out.push_str("  questJournalNext(input: { token: number }): HelperResult<{ lines: string[]; root: number; as_of_sequence: number }>;\n");
     out.push_str("  /** Sync owned-root close. One `close-modal` only while the latest pair is still the acquired root and texts. Not-done is `{ pending: true }` (no `ok` field). Not a Promise; never returns journal lines. */\n");
@@ -538,7 +556,9 @@ fn render_native_v2(out: &mut String) {
     out.push_str("  gearOf(input: { loadout: LoadoutInput | null }): HelperResult<string[]>;\n");
     out.push_str("  suppliesOf(input: { loadout: LoadoutInput | null }): HelperResult<Array<{ item: string; qty: number }>>;\n");
     out.push_str("  weaponOf(input: { loadout: LoadoutInput | null; fallback?: string | null }): HelperResult<string | null>;\n");
-    out.push_str("  rangeLoadoutOf(input: { weapon: string; ammo: string }): HelperResult<RangeLoadout>;\n");
+    out.push_str(
+        "  rangeLoadoutOf(input: { weapon: string; ammo: string }): HelperResult<RangeLoadout>;\n",
+    );
     out.push_str("  boostFaded(input: { base: number; effective: number; floor?: number }): HelperResult<boolean>;\n");
     out.push_str("  plannedPotions(input: { carry: Array<{ item: string; qty: number }> }): HelperResult<PotionPlan[]>;\n");
     out.push_str("  potionToSip(input: { plans: PotionPlan[]; held: number[]; levels: Array<{ skill: string; base: number; effective: number }> }): HelperResult<PotionPlan | null>;\n");
@@ -587,42 +607,68 @@ fn render_native_v2(out: &mut String) {
     out.push_str("export type HoldStep =\n");
     out.push_str("  | { ok: true; status: 'continue'; token: number; kind: string }\n");
     out.push_str("  | { ok: true; status: 'done'; token: number; kind: 'yield' }\n");
-    out.push_str("  | { ok: false; error: string; kind: 'aborted'; token: number; status: 'aborted' }\n");
+    out.push_str(
+        "  | { ok: false; error: string; kind: 'aborted'; token: number; status: 'aborted' }\n",
+    );
     out.push_str("  | { ok: false; error: string };\n");
     out.push_str("export type RetreatStep =\n");
     out.push_str("  | { ok: true; status: 'continue'; token: number; kind: string }\n");
     out.push_str("  | { ok: true; status: 'done'; token: number; kind: 'yield' }\n");
-    out.push_str("  | { ok: false; error: string; kind: 'aborted'; token: number; status: 'aborted' }\n");
+    out.push_str(
+        "  | { ok: false; error: string; kind: 'aborted'; token: number; status: 'aborted' }\n",
+    );
     out.push_str("  | { ok: false; error: string };\n");
     out.push_str("export type WalkStep =\n");
     out.push_str("  | { ok: true; status: 'continue'; token: number; kind: string }\n");
     out.push_str("  | { ok: true; status: 'done'; token: number; kind: 'yield' }\n");
-    out.push_str("  | { ok: false; error: string; kind: 'aborted'; token: number; status: 'aborted' }\n");
+    out.push_str(
+        "  | { ok: false; error: string; kind: 'aborted'; token: number; status: 'aborted' }\n",
+    );
     out.push_str("  | { ok: false; error: string };\n");
     out.push_str("export type EnterStep =\n");
     out.push_str("  | { ok: true; status: 'continue'; token: number; kind: string }\n");
-    out.push_str("  | { ok: true; status: 'done'; token: number; kind: 'yield'; value: boolean }\n");
-    out.push_str("  | { ok: false; error: string; kind: 'aborted'; token: number; status: 'aborted' }\n");
+    out.push_str(
+        "  | { ok: true; status: 'done'; token: number; kind: 'yield'; value: boolean }\n",
+    );
+    out.push_str(
+        "  | { ok: false; error: string; kind: 'aborted'; token: number; status: 'aborted' }\n",
+    );
     out.push_str("  | { ok: false; error: string };\n");
     out.push_str("export type LeaveStep =\n");
     out.push_str("  | { ok: true; status: 'continue'; token: number; kind: string }\n");
-    out.push_str("  | { ok: true; status: 'done'; token: number; kind: 'yield'; value: boolean }\n");
-    out.push_str("  | { ok: false; error: string; kind: 'aborted'; token: number; status: 'aborted' }\n");
+    out.push_str(
+        "  | { ok: true; status: 'done'; token: number; kind: 'yield'; value: boolean }\n",
+    );
+    out.push_str(
+        "  | { ok: false; error: string; kind: 'aborted'; token: number; status: 'aborted' }\n",
+    );
     out.push_str("  | { ok: false; error: string };\n");
     out.push_str("export type KeyStep =\n");
     out.push_str("  | { ok: true; status: 'continue'; token: number; kind: string }\n");
-    out.push_str("  | { ok: true; status: 'done'; token: number; kind: 'yield'; value: boolean }\n");
-    out.push_str("  | { ok: false; error: string; kind: 'aborted'; token: number; status: 'aborted' }\n");
+    out.push_str(
+        "  | { ok: true; status: 'done'; token: number; kind: 'yield'; value: boolean }\n",
+    );
+    out.push_str(
+        "  | { ok: false; error: string; kind: 'aborted'; token: number; status: 'aborted' }\n",
+    );
     out.push_str("  | { ok: false; error: string };\n");
     out.push_str("export type CellStep =\n");
     out.push_str("  | { ok: true; status: 'continue'; token: number; kind: string }\n");
-    out.push_str("  | { ok: true; status: 'done'; token: number; kind: 'yield'; value: boolean }\n");
-    out.push_str("  | { ok: false; error: string; kind: 'aborted'; token: number; status: 'aborted' }\n");
+    out.push_str(
+        "  | { ok: true; status: 'done'; token: number; kind: 'yield'; value: boolean }\n",
+    );
+    out.push_str(
+        "  | { ok: false; error: string; kind: 'aborted'; token: number; status: 'aborted' }\n",
+    );
     out.push_str("  | { ok: false; error: string };\n");
     out.push_str("export type BankStep =\n");
     out.push_str("  | { ok: true; status: 'continue'; token: number; kind: string }\n");
-    out.push_str("  | { ok: true; status: 'done'; token: number; kind: 'yield'; value: boolean }\n");
-    out.push_str("  | { ok: false; error: string; kind: 'aborted'; token: number; status: 'aborted' }\n");
+    out.push_str(
+        "  | { ok: true; status: 'done'; token: number; kind: 'yield'; value: boolean }\n",
+    );
+    out.push_str(
+        "  | { ok: false; error: string; kind: 'aborted'; token: number; status: 'aborted' }\n",
+    );
     out.push_str("  | { ok: false; error: string };\n");
     out.push_str("export type ClueStep =\n");
     out.push_str("  | { ok: true; status: 'continue'; token: number; kind: 'wait' | 'yield' | 'callback.enabled' }\n");

@@ -151,7 +151,10 @@ mod tests {
                 compiled: crate::ctx::CompiledTick::default(),
             });
         }
-        assert!(factory(CompiledId("WalkTo")).is_none(), "host nav is not a card");
+        assert!(
+            factory(CompiledId("WalkTo")).is_none(),
+            "host nav is not a card"
+        );
         assert!(factory(CompiledId("BoneBurier")).is_none(), "unported");
         assert!(
             factory(CompiledId("ClueSolver")).is_none(),

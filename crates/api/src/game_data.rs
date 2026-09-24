@@ -1298,7 +1298,11 @@ impl SelectedGameData {
     }
 
     /// Resolved equipment family row by frozen display name, when present.
-    pub fn equipment_name(&self, family: &str, requested_name: &str) -> Option<&EquipmentNameEntry> {
+    pub fn equipment_name(
+        &self,
+        family: &str,
+        requested_name: &str,
+    ) -> Option<&EquipmentNameEntry> {
         self.equipment_names()?.entry(family, requested_name)
     }
 
@@ -1646,11 +1650,8 @@ mod tests {
 
     #[test]
     fn missing_gather_methods_is_absent_not_an_empty_list() {
-        let data = SelectedGameData::decode(
-            minimal_json("").as_bytes(),
-            ClientRevision::R274,
-        )
-        .expect("schema 4 without the field still decodes");
+        let data = SelectedGameData::decode(minimal_json("").as_bytes(), ClientRevision::R274)
+            .expect("schema 4 without the field still decodes");
         assert!(data.gather_methods().is_none());
     }
 
@@ -1670,14 +1671,15 @@ mod tests {
     #[test]
     fn empty_gather_methods_object_is_not_success() {
         let error = SelectedGameData::decode(
-            minimal_json(
-                r#", "gather_methods": {"woods": [], "mining": [], "fishing": []}"#,
-            )
-            .as_bytes(),
+            minimal_json(r#", "gather_methods": {"woods": [], "mining": [], "fishing": []}"#)
+                .as_bytes(),
             ClientRevision::R274,
         )
         .expect_err("Some with no extracted rows is not success");
-        assert!(error.contains("no extracted rows"), "unexpected error: {error}");
+        assert!(
+            error.contains("no extracted rows"),
+            "unexpected error: {error}"
+        );
     }
 
     #[test]

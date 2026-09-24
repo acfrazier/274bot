@@ -108,13 +108,17 @@ fn snapshot<'a>(
 }
 
 fn post_base(iso: &LoadIsolate, tick: u64) {
-    iso.post_snapshot(script::isolate_fb::encode_snapshot(&snapshot(tick, &[], &[])));
+    iso.post_snapshot(script::isolate_fb::encode_snapshot(&snapshot(
+        tick,
+        &[],
+        &[],
+    )));
 }
 
 fn probe_v2(src: &str, revision: ClientRevision) -> serde_json::Value {
     let data = api::game_data::for_revision(revision).unwrap();
-    let iso = LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data)
-        .unwrap();
+    let iso =
+        LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data).unwrap();
     post_base(&iso, 1);
     iso.on_game_tick(1);
     let value = iso.probe("globalThis.__probe").unwrap();
@@ -206,7 +210,12 @@ export function tick(api) {
     );
     assert_eq!(
         value["gear"]["value"],
-        serde_json::json!(["Rune full helm", "Rune scimitar", "Rune chainbody", "old helm"])
+        serde_json::json!([
+            "Rune full helm",
+            "Rune scimitar",
+            "Rune chainbody",
+            "old helm"
+        ])
     );
     assert_eq!(value["empty"]["value"], serde_json::json!([]));
     assert_eq!(value["badWorn"]["error"], "invalid-args");
@@ -271,7 +280,10 @@ export function tick(api) {
             "Adamant dart",
             "Rune dart",
         ] {
-            assert_eq!(value["darts"][name]["value"]["thrown"], true, "{name} {value:?}");
+            assert_eq!(
+                value["darts"][name]["value"]["thrown"], true,
+                "{name} {value:?}"
+            );
             assert_eq!(value["darts"][name]["value"]["weapon"], name);
             assert_eq!(value["darts"][name]["value"]["projectile"], name);
         }
@@ -415,10 +427,7 @@ export function tick(api) {
 "#,
         ClientRevision::R274,
     );
-    let bindings = include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/src/load/bindings.rs"
-    ));
+    let bindings = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/load/bindings.rs"));
     assert!(
         !bindings.contains("register_function(\"__rs2b0t_loadout_v2\""),
         "new JSON register_function for loadout v2 is forbidden"
@@ -437,16 +446,18 @@ fn example_loadout_potion_v2_ts_runs_all_eight_on_real_inv_stats() {
     let js = script::transpile_ts(&src).expect("transpile loadout_potion_v2.ts");
     for revision in [ClientRevision::R274, ClientRevision::R289] {
         let data = api::game_data::for_revision(revision).unwrap();
-        let iso = LoadIsolate::spawn_with_game_data(js.clone(), LoadShape::NativeTick, vec![], data)
-            .unwrap();
+        let iso =
+            LoadIsolate::spawn_with_game_data(js.clone(), LoadShape::NativeTick, vec![], data)
+                .unwrap();
         let inv = [item("Super attack(4)", 2436, 0, 1)];
-        let stats = [
-            stat(0, "Attack", 70, 70),
-            stat(2, "Strength", 70, 85),
-        ];
-        iso.post_snapshot(script::isolate_fb::encode_snapshot(&snapshot(1, &inv, &stats)));
+        let stats = [stat(0, "Attack", 70, 70), stat(2, "Strength", 70, 85)];
+        iso.post_snapshot(script::isolate_fb::encode_snapshot(&snapshot(
+            1, &inv, &stats,
+        )));
         iso.on_game_tick(1);
-        let err = iso.probe("globalThis.__rs2b0t_host.lastError || ''").unwrap();
+        let err = iso
+            .probe("globalThis.__rs2b0t_host.lastError || ''")
+            .unwrap();
         let logs = iso.drain_logs();
         iso.join();
         assert_eq!(
@@ -463,14 +474,22 @@ fn example_loadout_potion_v2_ts_runs_all_eight_on_real_inv_stats() {
         assert_eq!(row["food"]["value"], "Lobster", "{row:?}");
         assert_eq!(
             row["gear"]["value"],
-            serde_json::json!(["Rune full helm", "Rune scimitar", "Rune chainbody", "old helm"]),
+            serde_json::json!([
+                "Rune full helm",
+                "Rune scimitar",
+                "Rune chainbody",
+                "old helm"
+            ]),
             "{row:?}"
         );
         assert_eq!(row["supplies"]["value"][0]["item"], "Lobster", "{row:?}");
         assert_eq!(row["weapon"]["value"], "Rune scimitar", "{row:?}");
         assert_eq!(row["range"]["value"]["thrown"], true, "{row:?}");
         assert_eq!(row["faded"]["value"], true, "{row:?}");
-        assert_eq!(row["planned"]["value"][0]["flask"], "Super attack(4)", "{row:?}");
+        assert_eq!(
+            row["planned"]["value"][0]["flask"], "Super attack(4)",
+            "{row:?}"
+        );
         assert_eq!(row["sip"]["value"]["skill"], "attack", "{row:?}");
     }
 }

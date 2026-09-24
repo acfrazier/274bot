@@ -11,7 +11,8 @@ fn main() -> Result<(), String> {
     let snapshot = if snapshot.join("manifest").is_file() {
         snapshot.to_path_buf()
     } else {
-        let bytes = std::fs::read(Path::new(&args[1]).join("versionlist")).map_err(|e| e.to_string())?;
+        let bytes =
+            std::fs::read(Path::new(&args[1]).join("versionlist")).map_err(|e| e.to_string())?;
         snapshot.join(client::unpack::version_hash(&bytes))
     };
     let identity =

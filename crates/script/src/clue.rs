@@ -995,39 +995,39 @@ impl ClueRuntime {
                     return step;
                 }
                 match casket_name(selected, row) {
-                // The held casket's own item, opened by name. Repeats while
-                // this same casket id stays held: the host fails a verb whose
-                // item is already gone, and the next call re-reads the page.
-                // This is also where the collect's `hard` capture happens:
-                // the alias is gone once the server takes the casket.
-                Some(name) => {
-                    self.open = Some(row.alias.contains(HARD_MARKER));
-                    json!({
-                        "kind": "held",
-                        "token": self.token,
-                        "name": name,
-                        "action": OPEN,
-                    })
-                }
-                // Not a held casket: this row's own held puzzle box, the
-                // landed search dispatch, the guarded encounter, the sibling
-                // unguarded-dig dispatch, the talk step, the key-keeper hunt,
-                // or the idle every other row keeps.
-                None => match puzzle_box(selected, row) {
-                    // The row's own box on this call's page, or the box this
-                    // token already opened — while this step's solved-or-
-                    // attempted latch is unset. A held box the identified row
-                    // does not name is not this row's, a desc-only row without
-                    // one keeps the idle, and a latched step is done with the
-                    // board: it takes the `Steady` arms below, which is where
-                    // the nine puzzle riddles' talk step lives.
-                    Some((id, name)) if self.puzzle_arm(id, input) => {
-                        self.puzzle(id, name, input, selected)
+                    // The held casket's own item, opened by name. Repeats while
+                    // this same casket id stays held: the host fails a verb whose
+                    // item is already gone, and the next call re-reads the page.
+                    // This is also where the collect's `hard` capture happens:
+                    // the alias is gone once the server takes the casket.
+                    Some(name) => {
+                        self.open = Some(row.alias.contains(HARD_MARKER));
+                        json!({
+                            "kind": "held",
+                            "token": self.token,
+                            "name": name,
+                            "action": OPEN,
+                        })
                     }
-                    _ => self.steady(row, input, selected),
-                },
+                    // Not a held casket: this row's own held puzzle box, the
+                    // landed search dispatch, the guarded encounter, the sibling
+                    // unguarded-dig dispatch, the talk step, the key-keeper hunt,
+                    // or the idle every other row keeps.
+                    None => match puzzle_box(selected, row) {
+                        // The row's own box on this call's page, or the box this
+                        // token already opened — while this step's solved-or-
+                        // attempted latch is unset. A held box the identified row
+                        // does not name is not this row's, a desc-only row without
+                        // one keeps the idle, and a latched step is done with the
+                        // board: it takes the `Steady` arms below, which is where
+                        // the nine puzzle riddles' talk step lives.
+                        Some((id, name)) if self.puzzle_arm(id, input) => {
+                            self.puzzle(id, name, input, selected)
+                        }
+                        _ => self.steady(row, input, selected),
+                    },
                 }
-            },
+            }
             Phase::Collecting => {
                 // Identity still holds a step: the next scroll, or a leftover
                 // casket. The collect is skipped — its own deadline, discard
@@ -1736,7 +1736,12 @@ impl ClueRuntime {
         let spawn = if owned.is_some() {
             None
         } else {
-            pick_npc(names, page, self_slot, input.get("here").and_then(posted_tile))
+            pick_npc(
+                names,
+                page,
+                self_slot,
+                input.get("here").and_then(posted_tile),
+            )
         };
         if owned.is_none() && spawn.is_none() {
             return self.emit("wait");
@@ -2120,9 +2125,7 @@ impl ClueRuntime {
                     name: &talk.npc.name,
                 };
                 match pick_talk(&npc, page, here) {
-                    Some(pick) if pick.distance <= i64::from(ARRIVE_RADIUS) => {
-                        self.npc_verb(&pick)
-                    }
+                    Some(pick) if pick.distance <= i64::from(ARRIVE_RADIUS) => self.npc_verb(&pick),
                     // Posted but out of reach: walk to the row's own posted
                     // tile and re-pick from the arrival. A row that posted no
                     // tile is unmeasured, so this tick waits.
@@ -4637,7 +4640,12 @@ mod tests {
             ),
             call(&data, token, json!([[MAP_EMPTY, 1]]), json!({})),
             call(&data, token, json!([[MAP_EMPTY, 1]]), json!({})),
-            call(&data, token, json!([[MAP_EMPTY, 1]]), json!({ "hold": true })),
+            call(
+                &data,
+                token,
+                json!([[MAP_EMPTY, 1]]),
+                json!({ "hold": true }),
+            ),
         ];
         assert_eq!(
             steps
@@ -4678,7 +4686,11 @@ mod tests {
         assert_eq!(token_of(&solved), token, "{solved}");
         let ready = call(&data, token, json!([]), scene.clone());
         assert_eq!(ready["kind"], "grind-ready", "{ready}");
-        assert_eq!(token_of(&ready), token, "the grind handback is live: {ready}");
+        assert_eq!(
+            token_of(&ready),
+            token,
+            "the grind handback is live: {ready}"
+        );
         assert!(!ready.to_string().contains("clue solved"), "{ready}");
         let done = call(&data, token, json!([]), scene.clone());
         assert_eq!(done["kind"], "done", "{done}");
@@ -5442,7 +5454,12 @@ mod tests {
         assert_eq!(after["reason"], "stale", "{after}");
 
         let text = json!([closed, other, took, logged, waiting, solved, ready]).to_string();
-        for forbidden in ["abandon", "ownsEquipment", "supplies-needed", "trail complete"] {
+        for forbidden in [
+            "abandon",
+            "ownsEquipment",
+            "supplies-needed",
+            "trail complete",
+        ] {
             assert!(!text.contains(forbidden), "{forbidden} {text}");
         }
     }
@@ -7074,9 +7091,23 @@ mod tests {
 
         // Gone, and only after the grace was spent: the wizard is lost.
         age_owned_seen(KILL_GRACE_MS + 1);
-        let lost = call(&data, token, page.clone(), fight_scene(json!([]), json!({})));
+        let lost = call(
+            &data,
+            token,
+            page.clone(),
+            fight_scene(json!([]), json!({})),
+        );
         assert_eq!(lost["kind"], "guardian-lost", "{lost}");
-        for absent in ["action", "index", "component_id", "name", "message", "x", "z", "level"] {
+        for absent in [
+            "action",
+            "index",
+            "component_id",
+            "name",
+            "message",
+            "x",
+            "z",
+            "level",
+        ] {
             assert!(lost.get(absent).is_none(), "{absent} {lost}");
         }
         assert!(!lost.to_string().contains("clue solved"), "{lost}");
@@ -8318,7 +8349,10 @@ mod tests {
         );
         // No box of its own: the desc-only riddle with no such item, and the
         // search row whose alias joins to nothing.
-        assert_eq!(puzzle_box(Some(&data), row(&data, PUZZLE_RIDDLE_NO_BOX)), None);
+        assert_eq!(
+            puzzle_box(Some(&data), row(&data, PUZZLE_RIDDLE_NO_BOX)),
+            None
+        );
         assert_eq!(puzzle_box(Some(&data), row(&data, SEARCH)), None);
         assert_eq!(puzzle_box(None, row(&data, PUZZLE_RIDDLE)), None);
         // Held means the posted page carries a positive count for that id and
@@ -8550,7 +8584,11 @@ mod tests {
             // call is handed the page that click produced. One verb per call,
             // and the click is the posted row standing on that slot.
             let slot = usize::try_from(step["slot"].as_u64().expect("slot")).expect("slot");
-            assert_eq!(step["id"], PIECE_B + i32::from(board[slot].expect("piece")), "{step}");
+            assert_eq!(
+                step["id"],
+                PIECE_B + i32::from(board[slot].expect("piece")),
+                "{step}"
+            );
             assert!(clue_puzzle::apply_puzzle_move(&mut board, slot), "{step}");
             clicked.push(step["slot"].as_i64().expect("slot"));
             assert!(clicked.len() < STALL_LIMIT as usize, "{step}");
@@ -8670,7 +8708,10 @@ mod tests {
         assert_eq!(latched["kind"], "wait", "{latched}");
         let step = talk_of(&data, PUZZLE_RIDDLE);
         assert_eq!(step.id, PUZZLE_RIDDLE, "{}", step.alias);
-        assert_eq!((step.npc.id, step.npc.name.as_str()), (OZIACH_ID, OZIACH_NAME));
+        assert_eq!(
+            (step.npc.id, step.npc.name.as_str()),
+            (OZIACH_ID, OZIACH_NAME)
+        );
         let tile = talk_tile(&data, PUZZLE_RIDDLE);
         // No posted npc page: no invented target and no walk, with the token
         // still live.
@@ -8833,7 +8874,11 @@ mod tests {
         // live, never an invented Examiner.
         for scene in [
             json!({}),
-            talk_scene(here(here_tile.x, here_tile.z, here_tile.level), json!([]), json!({})),
+            talk_scene(
+                here(here_tile.x, here_tile.z, here_tile.level),
+                json!([]),
+                json!({}),
+            ),
         ] {
             let waited = call(&data, token, page.clone(), scene);
             assert_eq!(waited["kind"], "wait", "{waited}");
@@ -8845,7 +8890,11 @@ mod tests {
             &data,
             token,
             page.clone(),
-            talk_scene(here(here_tile.x, here_tile.z, here_tile.level), other, json!({})),
+            talk_scene(
+                here(here_tile.x, here_tile.z, here_tile.level),
+                other,
+                json!({}),
+            ),
         );
         assert_eq!(unmatched["kind"], "wait", "{unmatched}");
         // The identity-only rule: a posted Examiner out of reach is walked to
@@ -8855,26 +8904,51 @@ mod tests {
             z: 3200,
             level: 0,
         };
-        let far = json!([talk_npc(4, EXAMINER_ID, EXAMINER_NAME, posted_tile, 5, &["Talk-to"])]);
+        let far = json!([talk_npc(
+            4,
+            EXAMINER_ID,
+            EXAMINER_NAME,
+            posted_tile,
+            5,
+            &["Talk-to"]
+        )]);
         let walked = call(
             &data,
             token,
             page.clone(),
-            talk_scene(here(here_tile.x, here_tile.z, here_tile.level), far, json!({})),
+            talk_scene(
+                here(here_tile.x, here_tile.z, here_tile.level),
+                far,
+                json!({}),
+            ),
         );
         assert_eq!(walked["kind"], "walk", "{walked}");
         assert_eq!(
             (walked["x"].as_i64(), walked["z"].as_i64()),
-            (Some(i64::from(posted_tile.x)), Some(i64::from(posted_tile.z))),
+            (
+                Some(i64::from(posted_tile.x)),
+                Some(i64::from(posted_tile.z))
+            ),
             "{walked}"
         );
         // Arrived there with its own identity posted: the landed Talk-to.
-        let near = json!([talk_npc(4, EXAMINER_ID, EXAMINER_NAME, posted_tile, 0, &["Talk-to"])]);
+        let near = json!([talk_npc(
+            4,
+            EXAMINER_ID,
+            EXAMINER_NAME,
+            posted_tile,
+            0,
+            &["Talk-to"]
+        )]);
         let talked = call(
             &data,
             token,
             page,
-            talk_scene(here(posted_tile.x, posted_tile.z, posted_tile.level), near, json!({})),
+            talk_scene(
+                here(posted_tile.x, posted_tile.z, posted_tile.level),
+                near,
+                json!({}),
+            ),
         );
         assert_eq!(talked["kind"], "npc", "{talked}");
         assert_eq!(talked["name"], EXAMINER_NAME, "{talked}");
@@ -9045,7 +9119,18 @@ mod tests {
 
         // Arrived, with the step's own npc posted on the tile: the posted name
         // and posted action ride the verb with the posted scene index.
-        let on_tile = json!([talk_npc(11, 0, "Hans", Tile { x: 3207, z: 3233, level: 0 }, 1, &["Talk-to"])]);
+        let on_tile = json!([talk_npc(
+            11,
+            0,
+            "Hans",
+            Tile {
+                x: 3207,
+                z: 3233,
+                level: 0
+            },
+            1,
+            &["Talk-to"]
+        )]);
         let talked = call(
             &data,
             token,
@@ -9107,7 +9192,18 @@ mod tests {
 
         // A wanderer four tiles off the published tile is not this step's npc:
         // the arm keeps the tile and waits — no walk, no npc and no Clear.
-        let wandered = json!([talk_npc(14, 0, "Hans", Tile { x: 3211, z: 3233, level: 0 }, 4, &["Talk-to"])]);
+        let wandered = json!([talk_npc(
+            14,
+            0,
+            "Hans",
+            Tile {
+                x: 3211,
+                z: 3233,
+                level: 0
+            },
+            4,
+            &["Talk-to"]
+        )]);
         let waited = call(
             &data,
             token,
@@ -9119,7 +9215,18 @@ mod tests {
 
         // Another identity on the tile is not this step's either, whatever it
         // is called and however close it stands.
-        let other = json!([talk_npc(15, 541, "Zeke", Tile { x: 3207, z: 3233, level: 0 }, 1, &["Talk-to"])]);
+        let other = json!([talk_npc(
+            15,
+            541,
+            "Zeke",
+            Tile {
+                x: 3207,
+                z: 3233,
+                level: 0
+            },
+            1,
+            &["Talk-to"]
+        )]);
         let stranger = call(
             &data,
             token,
@@ -9129,7 +9236,18 @@ mod tests {
         assert_eq!(stranger["kind"], "wait", "{stranger}");
 
         // No talk action on the posted row: not a row this arm dispatches at.
-        let silent = json!([talk_npc(16, 0, "Hans", Tile { x: 3207, z: 3233, level: 0 }, 1, &["Examine"])]);
+        let silent = json!([talk_npc(
+            16,
+            0,
+            "Hans",
+            Tile {
+                x: 3207,
+                z: 3233,
+                level: 0
+            },
+            1,
+            &["Examine"]
+        )]);
         let no_action = call(
             &data,
             token,
@@ -9140,7 +9258,18 @@ mod tests {
 
         // Same level is part of the membership: the same npc posted one level
         // up is not the one this Dig-free spawn owns.
-        let above = json!([talk_npc(17, 0, "Hans", Tile { x: 3207, z: 3233, level: 1 }, 1, &["Talk-to"])]);
+        let above = json!([talk_npc(
+            17,
+            0,
+            "Hans",
+            Tile {
+                x: 3207,
+                z: 3233,
+                level: 1
+            },
+            1,
+            &["Talk-to"]
+        )]);
         let leveled = call(
             &data,
             token,
@@ -9214,8 +9343,30 @@ mod tests {
 
         // Two rows of this identity, farthest posted first: the nearest wins
         // and the walk goes to that row's own tile, never the first in file.
-        let near = talk_npc(22, 804, "Tanner", Tile { x: 3200, z: 3205, level: 0 }, 5, &["Talk-to"]);
-        let far = talk_npc(23, 804, "Tanner", Tile { x: 3300, z: 3300, level: 0 }, 30, &["Talk-to"]);
+        let near = talk_npc(
+            22,
+            804,
+            "Tanner",
+            Tile {
+                x: 3200,
+                z: 3205,
+                level: 0,
+            },
+            5,
+            &["Talk-to"],
+        );
+        let far = talk_npc(
+            23,
+            804,
+            "Tanner",
+            Tile {
+                x: 3300,
+                z: 3300,
+                level: 0,
+            },
+            30,
+            &["Talk-to"],
+        );
         let pick = call(
             &data,
             token,
@@ -9236,8 +9387,30 @@ mod tests {
             talk_scene(
                 here(3200, 3205, 0),
                 json!([
-                    talk_npc(24, 999, "Tanner", Tile { x: 3200, z: 3206, level: 0 }, 3, &["Talk-to"]),
-                    talk_npc(25, 804, "Tanner", Tile { x: 3200, z: 3205, level: 0 }, 1, &["Talk-to"]),
+                    talk_npc(
+                        24,
+                        999,
+                        "Tanner",
+                        Tile {
+                            x: 3200,
+                            z: 3206,
+                            level: 0
+                        },
+                        3,
+                        &["Talk-to"]
+                    ),
+                    talk_npc(
+                        25,
+                        804,
+                        "Tanner",
+                        Tile {
+                            x: 3200,
+                            z: 3205,
+                            level: 0
+                        },
+                        1,
+                        &["Talk-to"]
+                    ),
                 ]),
                 json!({}),
             ),
@@ -9256,8 +9429,30 @@ mod tests {
             talk_scene(
                 here(3200, 3205, 0),
                 json!([
-                    talk_npc(26, 804, "Tanner", Tile { x: 3201, z: 3205, level: 0 }, 1, &["Talk-to"]),
-                    talk_npc(27, 804, "Tanner", Tile { x: 3200, z: 3206, level: 0 }, 1, &["Talk-to"]),
+                    talk_npc(
+                        26,
+                        804,
+                        "Tanner",
+                        Tile {
+                            x: 3201,
+                            z: 3205,
+                            level: 0
+                        },
+                        1,
+                        &["Talk-to"]
+                    ),
+                    talk_npc(
+                        27,
+                        804,
+                        "Tanner",
+                        Tile {
+                            x: 3200,
+                            z: 3206,
+                            level: 0
+                        },
+                        1,
+                        &["Talk-to"]
+                    ),
                 ]),
                 json!({}),
             ),
@@ -9273,8 +9468,30 @@ mod tests {
             talk_scene(
                 here(3200, 3205, 0),
                 json!([
-                    talk_npc(28, 804, "Tanner", Tile { x: 3290, z: 3290, level: 0 }, 1, &["Talk-to"]),
-                    talk_npc(29, 804, "Tanner", Tile { x: 3200, z: 3205, level: 0 }, 4, &["Talk-to"]),
+                    talk_npc(
+                        28,
+                        804,
+                        "Tanner",
+                        Tile {
+                            x: 3290,
+                            z: 3290,
+                            level: 0
+                        },
+                        1,
+                        &["Talk-to"]
+                    ),
+                    talk_npc(
+                        29,
+                        804,
+                        "Tanner",
+                        Tile {
+                            x: 3200,
+                            z: 3205,
+                            level: 0
+                        },
+                        4,
+                        &["Talk-to"]
+                    ),
                 ]),
                 json!({}),
             ),
@@ -9291,8 +9508,30 @@ mod tests {
             talk_scene(
                 here(3200, 3205, 0),
                 json!([
-                    talk_npc(30, 541, "Zeke", Tile { x: 3200, z: 3205, level: 0 }, 1, &["Talk-to"]),
-                    talk_npc(31, 999, "tanner", Tile { x: 3200, z: 3205, level: 0 }, 1, &["Examine"]),
+                    talk_npc(
+                        30,
+                        541,
+                        "Zeke",
+                        Tile {
+                            x: 3200,
+                            z: 3205,
+                            level: 0
+                        },
+                        1,
+                        &["Talk-to"]
+                    ),
+                    talk_npc(
+                        31,
+                        999,
+                        "tanner",
+                        Tile {
+                            x: 3200,
+                            z: 3205,
+                            level: 0
+                        },
+                        1,
+                        &["Examine"]
+                    ),
                 ]),
                 json!({}),
             ),
@@ -9307,12 +9546,34 @@ mod tests {
             page.clone(),
             talk_scene(
                 here(3200, 3205, 0),
-                json!([talk_npc(32, 804, "Tanner", Tile { x: 3200, z: 3205, level: 0 }, 1, &["Examine"])]),
+                json!([talk_npc(
+                    32,
+                    804,
+                    "Tanner",
+                    Tile {
+                        x: 3200,
+                        z: 3205,
+                        level: 0
+                    },
+                    1,
+                    &["Examine"]
+                )]),
                 json!({}),
             ),
         );
         assert_eq!(silent["kind"], "wait", "{silent}");
-        let mut unmeasured = talk_npc(33, 804, "Tanner", Tile { x: 3200, z: 3205, level: 0 }, 2, &["Talk-to"]);
+        let mut unmeasured = talk_npc(
+            33,
+            804,
+            "Tanner",
+            Tile {
+                x: 3200,
+                z: 3205,
+                level: 0,
+            },
+            2,
+            &["Talk-to"],
+        );
         unmeasured.as_object_mut().expect("row").remove("x");
         unmeasured.as_object_mut().expect("row").remove("z");
         unmeasured.as_object_mut().expect("row").remove("distance");
@@ -9547,7 +9808,18 @@ mod tests {
         let data = selected();
         let page = talk_page(TALK);
         let token = steady(&data, TALK);
-        let on_tile = json!([talk_npc(51, 0, "Hans", Tile { x: 3207, z: 3233, level: 0 }, 1, &["Talk-to"])]);
+        let on_tile = json!([talk_npc(
+            51,
+            0,
+            "Hans",
+            Tile {
+                x: 3207,
+                z: 3233,
+                level: 0
+            },
+            1,
+            &["Talk-to"]
+        )]);
 
         // The posted chat modal: an open chat is not a tick to Talk-to again,
         // and it does not walk either.
@@ -9655,7 +9927,18 @@ mod tests {
                 TALK,
                 talk_scene(
                     here(3207, 3233, 0),
-                    json!([talk_npc(61, 0, "Hans", Tile { x: 3207, z: 3233, level: 0 }, 1, &["Talk-to"])]),
+                    json!([talk_npc(
+                        61,
+                        0,
+                        "Hans",
+                        Tile {
+                            x: 3207,
+                            z: 3233,
+                            level: 0
+                        },
+                        1,
+                        &["Talk-to"]
+                    )]),
                     json!({}),
                 ),
                 "arrived",
@@ -10091,7 +10374,10 @@ mod tests {
             &data,
             token,
             page.clone(),
-            key_scene(here(spawn.x - 30, spawn.z, spawn.level), json!({ "npcs": [] })),
+            key_scene(
+                here(spawn.x - 30, spawn.z, spawn.level),
+                json!({ "npcs": [] }),
+            ),
         );
         assert_eq!(gone["kind"], "walk", "{gone}");
         assert_eq!(gone["x"], spawn.x, "{gone}");
@@ -10100,7 +10386,14 @@ mod tests {
 
         // Arrived: the key the kill dropped one step off the spawn is Taken
         // with the landed `obj`, at the row's own posted tile.
-        let dropped = ground(KEEPER_KEY, "Key", spawn.x + 1, spawn.z, spawn.level, &[TAKE]);
+        let dropped = ground(
+            KEEPER_KEY,
+            "Key",
+            spawn.x + 1,
+            spawn.z,
+            spawn.level,
+            &[TAKE],
+        );
         let taken = call(
             &data,
             token,
@@ -10229,11 +10522,25 @@ mod tests {
         for (name, row) in [
             (
                 "no Take",
-                ground(KEEPER_KEY, "Key", spawn.x, spawn.z, spawn.level, &["Examine"]),
+                ground(
+                    KEEPER_KEY,
+                    "Key",
+                    spawn.x,
+                    spawn.z,
+                    spawn.level,
+                    &["Examine"],
+                ),
             ),
             (
                 "another id",
-                ground(KEEPER_KEY + 1, "Key", spawn.x, spawn.z, spawn.level, &[TAKE]),
+                ground(
+                    KEEPER_KEY + 1,
+                    "Key",
+                    spawn.x,
+                    spawn.z,
+                    spawn.level,
+                    &[TAKE],
+                ),
             ),
             (
                 "another level",
@@ -10248,7 +10555,14 @@ mod tests {
             ),
             (
                 "off the radius",
-                ground(KEEPER_KEY, "Key", spawn.x + 2, spawn.z, spawn.level, &[TAKE]),
+                ground(
+                    KEEPER_KEY,
+                    "Key",
+                    spawn.x + 2,
+                    spawn.z,
+                    spawn.level,
+                    &[TAKE],
+                ),
             ),
             (
                 "no name",
@@ -10403,13 +10717,7 @@ mod tests {
         assert_eq!(
             kinds
                 .iter()
-                .filter(|kind| ![
-                    "walk",
-                    "npc",
-                    "obj",
-                    "wait"
-                ]
-                .contains(&kind.as_str()))
+                .filter(|kind| !["walk", "npc", "obj", "wait"].contains(&kind.as_str()))
                 .count(),
             0,
             "{kinds:?}"
@@ -10534,4 +10842,3 @@ mod tests {
         assert_eq!(reborn["index"], 21, "{reborn}");
     }
 }
-

@@ -7,11 +7,8 @@ use script::load::{JsLibrary, LoadIsolate, LoadShape};
 use script::{CacheMeta, JsCache, ScriptKind, ScriptSource};
 
 fn scratch(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!(
-        "274bot-herb-data-{}-{}",
-        std::process::id(),
-        name
-    ));
+    let dir =
+        std::env::temp_dir().join(format!("274bot-herb-data-{}-{}", std::process::id(), name));
     std::fs::create_dir_all(&dir).unwrap();
     dir
 }
@@ -56,13 +53,8 @@ fn spawn_from_card_path(
     )
     .expect("canonical siblings resolve");
     let data = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
-    LoadIsolate::spawn_with_game_data(
-        eval_src.to_string(),
-        LoadShape::CompatClass,
-        siblings,
-        data,
-    )
-    .expect("spawn eval isolate")
+    LoadIsolate::spawn_with_game_data(eval_src.to_string(), LoadShape::CompatClass, siblings, data)
+        .expect("spawn eval isolate")
 }
 
 #[test]

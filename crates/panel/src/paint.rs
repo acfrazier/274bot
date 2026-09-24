@@ -65,7 +65,8 @@ pub fn paint_uniform_scale(size: [f32; 2]) -> f32 {
 }
 
 fn text_width(ui: &Ui, font_sz: f32, text: &str) -> f32 {
-    ui.current_font().calc_text_size(font_sz, f32::MAX, 0.0, text)[0]
+    ui.current_font()
+        .calc_text_size(font_sz, f32::MAX, 0.0, text)[0]
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -409,8 +410,7 @@ impl PaintOverlay {
                     None,
                 );
                 let key = format!("strip:{}", strip.id);
-                self.chrome_hits
-                    .push((key.clone(), name.clone(), hit));
+                self.chrome_hits.push((key.clone(), name.clone(), hit));
                 if hovered && ui.is_mouse_clicked(MouseButton::Left) {
                     chrome_click = Some((key, name.clone()));
                 }
@@ -421,11 +421,8 @@ impl PaintOverlay {
                     let clipped = clip_text_to_width(ui, font_sz, status, seg.status.w);
                     let draw_w = text_width(ui, font_sz, &clipped);
                     let status_x = slot_x + (seg.status.w - draw_w).max(0.0);
-                    let _status_clip = dl.push_clip_rect(
-                        [slot_x, y],
-                        [slot_x + seg.status.w, y + header_h],
-                        true,
-                    );
+                    let _status_clip =
+                        dl.push_clip_rect([slot_x, y], [slot_x + seg.status.w, y + header_h], true);
                     dl.add_text_with_font(
                         font,
                         font_sz,
@@ -447,20 +444,9 @@ impl PaintOverlay {
                 let brand_w = text_width(ui, font_sz, brand);
                 // The reserve includes the collapse square; text starts at its left edge.
                 let brand_x = slot_x;
-                let _brand_clip = dl.push_clip_rect(
-                    [slot_x, y],
-                    [slot_x + seg.brand.w, y + header_h],
-                    true,
-                );
-                dl.add_text_with_font(
-                    font,
-                    font_sz,
-                    [brand_x, text_y],
-                    ACCENT,
-                    brand,
-                    0.0,
-                    None,
-                );
+                let _brand_clip =
+                    dl.push_clip_rect([slot_x, y], [slot_x + seg.brand.w, y + header_h], true);
+                dl.add_text_with_font(font, font_sz, [brand_x, text_y], ACCENT, brand, 0.0, None);
                 self.lines.push(brand.to_string());
                 #[cfg(test)]
                 {
@@ -525,8 +511,7 @@ impl PaintOverlay {
                         None,
                     );
                     let key = format!("tabs:{}", band.id);
-                    self.chrome_hits
-                        .push((key.clone(), name.clone(), hit));
+                    self.chrome_hits.push((key.clone(), name.clone(), hit));
                     if hovered && ui.is_mouse_clicked(MouseButton::Left) {
                         chrome_click = Some((key, name.clone()));
                     }
@@ -558,9 +543,13 @@ impl PaintOverlay {
                         let active = rail.selected == *name;
                         let hovered = ui.is_mouse_hovering_rect([hit[0], hit[1]], [hit[2], hit[3]]);
                         if active || hovered {
-                            dl.add_rect([hit[0], hit[1]], [hit[2], hit[3]], [0.28, 0.28, 0.34, 0.95])
-                                .filled(true)
-                                .build();
+                            dl.add_rect(
+                                [hit[0], hit[1]],
+                                [hit[2], hit[3]],
+                                [0.28, 0.28, 0.34, 0.95],
+                            )
+                            .filled(true)
+                            .build();
                         }
                         if active {
                             dl.add_rect([hit[0], hit[1]], [hit[0] + 2.0 * s, hit[3]], ACCENT)
@@ -577,8 +566,7 @@ impl PaintOverlay {
                             None,
                         );
                         let key = format!("rail:{}", rail.id);
-                        self.chrome_hits
-                            .push((key.clone(), name.clone(), hit));
+                        self.chrome_hits.push((key.clone(), name.clone(), hit));
                         if hovered && ui.is_mouse_clicked(MouseButton::Left) {
                             chrome_click = Some((key, name.clone()));
                         }
@@ -630,12 +618,7 @@ impl PaintOverlay {
             }
         }
         if chrome_click.is_some() {
-            chrome_click.map(|(key, name)| {
-                (
-                    PaintFrameHit::Select { key, name },
-                    paint.generation,
-                )
-            })
+            chrome_click.map(|(key, name)| (PaintFrameHit::Select { key, name }, paint.generation))
         } else {
             button_click.map(|id| (PaintFrameHit::Button(id), paint.generation))
         }
@@ -729,9 +712,7 @@ mod tests {
     use dear_imgui_rs::FramePrepareOptions;
     use script::shim::ScriptPaint;
 
-    use super::{
-        chatbox_rect, paint_uniform_scale, PaintFrameHit, PaintOverlay, CHATBOX, PAD_X,
-    };
+    use super::{chatbox_rect, paint_uniform_scale, PaintFrameHit, PaintOverlay, CHATBOX, PAD_X};
 
     fn paint(title: Option<&str>, lines: &[&str]) -> ScriptPaint {
         ScriptPaint {
@@ -942,10 +923,7 @@ mod tests {
         ctx.render();
         assert_eq!(
             clicked,
-            Some((
-                PaintFrameHit::Button("gobank".to_string()),
-                p.generation
-            )),
+            Some((PaintFrameHit::Button("gobank".to_string()), p.generation)),
             "clicking the button dispatches the advertised id with the rendered generation"
         );
         assert!(!overlay.collapsed, "button click is not collapse");
@@ -1355,17 +1333,15 @@ mod tests {
                 let mut overlay = PaintOverlay::new();
                 let p = jive_strip_paint(status);
                 frame_strip_fixture(&mut ctx, &mut overlay, &p, min, size);
-                let status_rect = overlay
-                    .strip_status_label_rect
-                    .expect("status label rect");
+                let status_rect = overlay.strip_status_label_rect.expect("status label rect");
                 let brand_rect = overlay.strip_brand_label_rect.expect("brand label rect");
                 assert!(
                     !label_rects_overlap(status_rect, brand_rect),
                     "status {status:?} overlaps brand at scale {size:?}: {status_rect:?} vs {brand_rect:?}"
                 );
                 let chat = chatbox_rect(min, size);
-                let toggle_left = chat[0] + chat[2]
-                    - (super::TITLE_H_1X * paint_uniform_scale(size)).max(1.0);
+                let toggle_left =
+                    chat[0] + chat[2] - (super::TITLE_H_1X * paint_uniform_scale(size)).max(1.0);
                 assert!(
                     brand_rect[2] <= toggle_left,
                     "brand overlaps collapse control at {size:?}: {brand_rect:?}, toggle starts {toggle_left}"
@@ -1401,7 +1377,10 @@ mod tests {
         }
         ctx.render();
         assert!(
-            overlay.chrome_hits.iter().any(|(k, n, _)| k == "strip:k" && n == "Options"),
+            overlay
+                .chrome_hits
+                .iter()
+                .any(|(k, n, _)| k == "strip:k" && n == "Options"),
             "strip advertises both page targets"
         );
         let hit = overlay

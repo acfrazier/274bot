@@ -133,8 +133,14 @@ export function tick(api) {
         assert_eq!(value[key]["error"], "no-room", "{key} {value:?}");
         assert!(value[key].get("value").is_none(), "{key} {value:?}");
     }
-    assert_eq!(value["noRoomKeys"], serde_json::json!(["error", "ok"]), "{value:?}");
-    for key in ["omitted", "zeroWant", "held", "capped", "less", "room", "full"] {
+    assert_eq!(
+        value["noRoomKeys"],
+        serde_json::json!(["error", "ok"]),
+        "{value:?}"
+    );
+    for key in [
+        "omitted", "zeroWant", "held", "capped", "less", "room", "full",
+    ] {
         assert_eq!(value[key]["ok"], true, "{key} {value:?}");
         assert!(value[key].get("error").is_none(), "{key} {value:?}");
     }
@@ -226,16 +232,31 @@ export function tick(api) {
     // weapon name is still checked.
     assert_eq!(value["empty"]["ok"], true, "{value:?}");
     assert!(value["empty"].get("weaponNeeded").is_none(), "{value:?}");
-    for key in ["emptyWeapon", "blankWeapon", "upperAlias", "blankAlias", "unknownAlias"] {
+    for key in [
+        "emptyWeapon",
+        "blankWeapon",
+        "upperAlias",
+        "blankAlias",
+        "unknownAlias",
+    ] {
         assert_eq!(value[key]["ok"], true, "{key} {value:?}");
     }
-    assert_eq!(value["emptyWeapon"]["value"]["weaponNeeded"], false, "{value:?}");
+    assert_eq!(
+        value["emptyWeapon"]["value"]["weaponNeeded"], false,
+        "{value:?}"
+    );
     // `" "` is not `""`: nothing is trimmed.
-    assert_eq!(value["blankWeapon"]["value"]["weaponNeeded"], true, "{value:?}");
+    assert_eq!(
+        value["blankWeapon"]["value"]["weaponNeeded"], true,
+        "{value:?}"
+    );
     // `_HARD_` is not `_hard_`, and an unrecognised alias is the easy minimum.
     assert_eq!(value["upperAlias"]["value"]["rewardSlots"], 4, "{value:?}");
     assert_eq!(value["blankAlias"]["value"]["rewardSlots"], 4, "{value:?}");
-    assert_eq!(value["unknownAlias"]["value"]["rewardSlots"], 4, "{value:?}");
+    assert_eq!(
+        value["unknownAlias"]["value"]["rewardSlots"], 4,
+        "{value:?}"
+    );
 }
 
 #[test]
@@ -395,7 +416,11 @@ export function tick(api) {
             .map(|row| row.keys().cloned().collect::<Vec<_>>())
             .unwrap_or_default();
         keys.sort();
-        assert_eq!(keys, vec!["error".to_string(), "ok".to_string()], "{key} {value:?}");
+        assert_eq!(
+            keys,
+            vec!["error".to_string(), "ok".to_string()],
+            "{key} {value:?}"
+        );
     }
     for key in [
         "unpoisoned",

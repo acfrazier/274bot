@@ -887,7 +887,10 @@ mod tests {
         );
         assert_eq!(staffs.values.len(), 15);
         assert_eq!(staffs.values[0], "Staff");
-        assert_eq!(staffs.values.last().map(String::as_str), Some("Mystic fire staff"));
+        assert_eq!(
+            staffs.values.last().map(String::as_str),
+            Some("Mystic fire staff")
+        );
         assert_eq!(staffs.label_for("Staff of air"), "Staff of air");
 
         let bows = resolve_setting_options(&equipment_from("BOWS"), &store, Some(r274.as_ref()));
@@ -925,11 +928,16 @@ mod tests {
         assert_eq!(ranged.values.len(), 19, "12 bows + 7 darts");
         assert_eq!(ranged.values[0], "Shortbow");
         assert_eq!(ranged.values[12], "Bronze dart");
-        let rock = resolve_setting_options(&equipment_from("ROCK_CRAB_RANGED_WEAPONS"), &store, Some(r274.as_ref()));
+        let rock = resolve_setting_options(
+            &equipment_from("ROCK_CRAB_RANGED_WEAPONS"),
+            &store,
+            Some(r274.as_ref()),
+        );
         assert_eq!(rock, ranged.values);
 
         assert!(
-            resolve_setting_options(&equipment_from("AXES"), &store, Some(r274.as_ref())).is_empty()
+            resolve_setting_options(&equipment_from("AXES"), &store, Some(r274.as_ref()))
+                .is_empty()
         );
         assert!(
             resolve_setting_options(&equipment_from("DROP_DB"), &store, Some(r274.as_ref()))
@@ -1155,7 +1163,12 @@ mod tests {
         let r289 = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
         let a = resolve_setting_options_with_labels(&def, &store, Some(r274.as_ref()));
         let b = resolve_setting_options_with_labels(&def, &store, Some(r289.as_ref()));
-        let want_keys = ["custom", "dragonhide_body", "maple_longbow", "rune_platebody"];
+        let want_keys = [
+            "custom",
+            "dragonhide_body",
+            "maple_longbow",
+            "rune_platebody",
+        ];
         let want_labels = [
             "custom",
             "Green d'hide body",

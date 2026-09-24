@@ -131,10 +131,7 @@ impl AvoidRect {
                 return false;
             }
         }
-        tile.x >= self.min_x
-            && tile.x <= self.max_x
-            && tile.z >= self.min_z
-            && tile.z <= self.max_z
+        tile.x >= self.min_x && tile.x <= self.max_x && tile.z >= self.min_z && tile.z <= self.max_z
     }
 }
 
@@ -319,7 +316,14 @@ pub fn find_missing_item_reqs_with_avoid(
     avoid: &[AvoidRect],
 ) -> Option<Vec<MissingReq>> {
     find_missing_item_reqs_with_avoid_bounded(
-        collision, graph, from, to, opts, state, avoid, NODE_BUDGET,
+        collision,
+        graph,
+        from,
+        to,
+        opts,
+        state,
+        avoid,
+        NODE_BUDGET,
     )
 }
 
@@ -2444,16 +2448,8 @@ mod tests {
         let opts = FindOptions::default();
         let empty = WorldState::empty();
         // Outside cannot step into the patch; the open grid still routes around it.
-        let r = find_with_avoid(
-            &wc,
-            &g,
-            tile(0, 0, 0),
-            tile(4, 4, 0),
-            opts,
-            &empty,
-            &patch,
-        )
-        .unwrap();
+        let r =
+            find_with_avoid(&wc, &g, tile(0, 0, 0), tile(4, 4, 0), opts, &empty, &patch).unwrap();
         let stepped: Vec<WorldTile> = r
             .legs
             .iter()
@@ -2470,42 +2466,17 @@ mod tests {
         );
         // Destination inside + start outside cannot enter.
         assert!(matches!(
-            find_with_avoid(
-                &wc,
-                &g,
-                tile(0, 0, 0),
-                tile(2, 2, 0),
-                opts,
-                &empty,
-                &patch,
-            ),
+            find_with_avoid(&wc, &g, tile(0, 0, 0), tile(2, 2, 0), opts, &empty, &patch,),
             Err(RouteError::NoPath)
         ));
         // Start already inside the union may leave: two overlapping rects, escape semantics.
         let union = [avoid_box(1, 2, 1, 2), avoid_box(2, 3, 1, 2)];
-        let out = find_with_avoid(
-            &wc,
-            &g,
-            tile(2, 1, 0),
-            tile(4, 4, 0),
-            opts,
-            &empty,
-            &union,
-        )
-        .unwrap();
+        let out =
+            find_with_avoid(&wc, &g, tile(2, 1, 0), tile(4, 4, 0), opts, &empty, &union).unwrap();
         assert_eq!(out.dest, tile(4, 4, 0));
         // Destination inside while start is inside is allowed.
         assert!(
-            find_with_avoid(
-                &wc,
-                &g,
-                tile(2, 2, 0),
-                tile(1, 1, 0),
-                opts,
-                &empty,
-                &patch,
-            )
-            .is_ok()
+            find_with_avoid(&wc, &g, tile(2, 2, 0), tile(1, 1, 0), opts, &empty, &patch,).is_ok()
         );
         // Level-scoped avoid applies only on the matching plane.
         let level0_block = AvoidRect {
@@ -2648,12 +2619,7 @@ mod tests {
         let wc_mine = mine_bake();
         let session = crate::essence::essence_session_for_wizard(553).unwrap();
         let aubury = session.return_tile;
-        let mine_patch = [avoid_box(
-            aubury.x,
-            aubury.x,
-            aubury.z,
-            aubury.z,
-        )];
+        let mine_patch = [avoid_box(aubury.x, aubury.x, aubury.z, aubury.z)];
         assert!(matches!(
             find_with_avoid(
                 &wc_mine,

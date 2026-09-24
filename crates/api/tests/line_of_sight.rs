@@ -33,7 +33,15 @@ fn tile(x: i32, z: i32, level: i32) -> WorldTile {
     WorldTile { x, z, level }
 }
 
-fn query(available: bool, flags: &[i32], base_x: i32, base_z: i32, level: i32, w: i32, h: i32) -> CollisionQuery {
+fn query(
+    available: bool,
+    flags: &[i32],
+    base_x: i32,
+    base_z: i32,
+    level: i32,
+    w: i32,
+    h: i32,
+) -> CollisionQuery {
     CollisionQuery {
         available,
         base_x,
@@ -175,12 +183,7 @@ fn t15_flood_reachable_vis_scenery_is_los_false() {
     let mut g = open_scene(16, 16);
     set(&mut g, 16, 5, 1, CollisionFlag::VIS_SCENERY);
     let q = query(true, &g, 3200, 3200, 0, 16, 16);
-    let got = line_of_sight_v2(
-        Some(&q),
-        tile(3201, 3201, 0),
-        tile(3208, 3201, 0),
-        Some(1),
-    );
+    let got = line_of_sight_v2(Some(&q), tile(3201, 3201, 0), tile(3208, 3201, 0), Some(1));
     assert_eq!(got, Ok(false));
 }
 
@@ -196,7 +199,12 @@ fn v2_invalid_args_independent_of_absence() {
         Err(LineOfSightError::InvalidArgs)
     );
     assert_eq!(
-        line_of_sight_v2(Some(&absent), tile(1, 1, 0), tile(1, 1, 0), Some(SCENE_SIZE + 1)),
+        line_of_sight_v2(
+            Some(&absent),
+            tile(1, 1, 0),
+            tile(1, 1, 0),
+            Some(SCENE_SIZE + 1)
+        ),
         Err(LineOfSightError::InvalidArgs)
     );
     assert_eq!(
@@ -262,10 +270,30 @@ fn v2_self_tile_true_only_after_both_origins_in_scene() {
 fn v1_bounded_compat() {
     let g = open_scene(8, 8);
     let q = query(true, &g, 3200, 3200, 0, 8, 8);
-    assert!(line_of_sight_v1(Some(&q), tile(3201, 3201, 0), tile(3204, 3201, 0), None));
-    assert!(!line_of_sight_v1(Some(&q), tile(3201, 3201, 0), tile(3204, 3201, 0), Some(0)));
-    assert!(!line_of_sight_v1(Some(&q), tile(3201, 3201, 0), tile(3204, 3201, 0), Some(105)));
-    assert!(!line_of_sight_v1(None, tile(3201, 3201, 0), tile(3204, 3201, 0), Some(1)));
+    assert!(line_of_sight_v1(
+        Some(&q),
+        tile(3201, 3201, 0),
+        tile(3204, 3201, 0),
+        None
+    ));
+    assert!(!line_of_sight_v1(
+        Some(&q),
+        tile(3201, 3201, 0),
+        tile(3204, 3201, 0),
+        Some(0)
+    ));
+    assert!(!line_of_sight_v1(
+        Some(&q),
+        tile(3201, 3201, 0),
+        tile(3204, 3201, 0),
+        Some(105)
+    ));
+    assert!(!line_of_sight_v1(
+        None,
+        tile(3201, 3201, 0),
+        tile(3204, 3201, 0),
+        Some(1)
+    ));
     assert!(!line_of_sight_v1(
         Some(&q),
         tile(3201, 3201, 0),

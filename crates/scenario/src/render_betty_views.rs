@@ -405,7 +405,10 @@ mod tests {
                     orbit_yaw,
                     orbit_pitch,
                 } => {
-                    assert_eq!((x, z, level, orbit_yaw, orbit_pitch), (3220, 3224, 0, 0, pitch));
+                    assert_eq!(
+                        (x, z, level, orbit_yaw, orbit_pitch),
+                        (3220, 3224, 0, 0, pitch)
+                    );
                 }
                 other => panic!("{name} expected RenderViewReady, got {other:?}"),
             }

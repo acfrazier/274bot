@@ -22,13 +22,12 @@ pub enum EscapeRunesError {
 }
 
 /// Resolve by exact `id` → `source_row == magic_spell_teleport_{id}`.
-pub fn escape_runes_for(data: &SelectedGameData, id: &str) -> Result<EscapeRunesFact, EscapeRunesError> {
+pub fn escape_runes_for(
+    data: &SelectedGameData,
+    id: &str,
+) -> Result<EscapeRunesFact, EscapeRunesError> {
     let wanted = format!("magic_spell_teleport_{id}");
-    let Some(spell) = data
-        .teleports()
-        .iter()
-        .find(|row| row.source_row == wanted)
-    else {
+    let Some(spell) = data.teleports().iter().find(|row| row.source_row == wanted) else {
         return Err(EscapeRunesError::UnknownId);
     };
     Ok(fact_from_spell(spell))

@@ -274,7 +274,11 @@ pub fn parse_registry_with_sources(
             .and_then(|ident| {
                 let binding = imports.get(ident)?;
                 let src = settings_blob(sources, &binding.rel_path)?;
-                Some(parse_settings_export(&src, &binding.export_name, Some(sources)))
+                Some(parse_settings_export(
+                    &src,
+                    &binding.export_name,
+                    Some(sources),
+                ))
             })
             .unwrap_or_default();
         cards.push(RegistryCard {
@@ -2133,7 +2137,10 @@ pub(crate) fn insert_shop_db_from_root(sources: &mut HashMap<String, String>, ro
     sources.entry(SHOP_DB_SOURCE_KEYS[1].into()).or_insert(text);
 }
 
-fn shop_db_source_text(sources: Option<&HashMap<String, String>>, file_src: &str) -> Option<String> {
+fn shop_db_source_text(
+    sources: Option<&HashMap<String, String>>,
+    file_src: &str,
+) -> Option<String> {
     if let Some(map) = sources {
         for key in SHOP_DB_SOURCE_KEYS {
             if let Some(text) = lookup_source(map, key) {
@@ -2666,7 +2673,10 @@ export const SETTINGS = {
 "#;
         let schema = settings_schema_from_source(src);
         let buy = setting(&schema, "buyItems");
-        assert!(buy.options.is_empty(), "unknown keeper must not fabricate names");
+        assert!(
+            buy.options.is_empty(),
+            "unknown keeper must not fabricate names"
+        );
     }
 
     #[test]
@@ -2980,8 +2990,7 @@ ScriptRegistry.register({ name: 'ShopBuyout', settingsSchema: SETTINGS, create: 
         use crate::loadouts_store::{resolve_setting_options_with_labels, LoadoutsStore};
         use client::io::ClientRevision;
 
-        const FROZEN_SETTINGS: &str =
-            "src/bot/scripts/FireGiant/FireGiant.ts";
+        const FROZEN_SETTINGS: &str = "src/bot/scripts/FireGiant/FireGiant.ts";
         const FROZEN_PIN: &str = "beecd9126b";
 
         let root = PathBuf::from(
@@ -2996,8 +3005,7 @@ ScriptRegistry.register({ name: 'ShopBuyout', settingsSchema: SETTINGS, create: 
         );
 
         let (index, sources) = load_frozen_catalog_index_and_sources(&root);
-        let cards =
-            parse_registry_with_sources(&index, &sources).expect("frozen catalog parses");
+        let cards = parse_registry_with_sources(&index, &sources).expect("frozen catalog parses");
         let fire = cards
             .iter()
             .find(|c| c.name == "FireGiant")
@@ -3027,10 +3035,8 @@ ScriptRegistry.register({ name: 'ShopBuyout', settingsSchema: SETTINGS, create: 
         let r274 = api::game_data::for_revision(ClientRevision::R274).unwrap();
         let r289 = api::game_data::for_revision(ClientRevision::R289).unwrap();
 
-        let staff_274 =
-            resolve_setting_options_with_labels(staff, &store, Some(r274.as_ref()));
-        let staff_289 =
-            resolve_setting_options_with_labels(staff, &store, Some(r289.as_ref()));
+        let staff_274 = resolve_setting_options_with_labels(staff, &store, Some(r274.as_ref()));
+        let staff_289 = resolve_setting_options_with_labels(staff, &store, Some(r289.as_ref()));
         assert_eq!(staff_274, staff_289);
         assert_eq!(staff_274.values.len(), 15);
         assert_eq!(staff_274.values[0], "Staff");
@@ -3211,7 +3217,8 @@ ScriptRegistry.register({ name: 'ShopBuyout', settingsSchema: SETTINGS, create: 
         let mut sorted = buy_sorted.clone();
         sorted.sort();
         assert_eq!(
-            buy_sorted, sorted,
+            buy_sorted,
+            sorted,
             "presetBuyableNames must be alphabetically sorted: first={:?} last={:?}",
             buy_sorted.first(),
             buy_sorted.last()

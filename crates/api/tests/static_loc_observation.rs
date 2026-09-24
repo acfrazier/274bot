@@ -238,11 +238,10 @@ fn queued_loc_after_consumed_gen_refreshes_collision_flags() {
         snap.rebuild_family(&c, Family::Loc),
         "standalone Loc after consumed gen must still dirty"
     );
-    assert!(
-        snap.locs()
-            .iter()
-            .all(|loc| loc.layer != LocLayer::Ground || loc.id != id)
-    );
+    assert!(snap
+        .locs()
+        .iter()
+        .all(|loc| loc.layer != LocLayer::Ground || loc.id != id));
     assert_eq!(
         snap.scene().collision_flags[7 * 104 + 8],
         client::dash3d::CollisionFlag::VIS_SCENERY,

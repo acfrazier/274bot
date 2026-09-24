@@ -43,9 +43,9 @@ fn food_count_v1_callback(
     mut rv: v8::ReturnValue,
 ) {
     match run_food_count_v1(scope, &args) {
-        Ok(count) => rv.set(
-            v8::Integer::new(scope, i32::try_from(count).unwrap_or(i32::MAX)).into(),
-        ),
+        Ok(count) => {
+            rv.set(v8::Integer::new(scope, i32::try_from(count).unwrap_or(i32::MAX)).into())
+        }
         Err(err) if err == PENDING => {}
         Err(err) => throw_error(scope, &err),
     }
@@ -362,7 +362,9 @@ fn array_len(scope: &mut v8::HandleScope, obj: v8::Local<v8::Object>) -> Result<
     let Some(len) = obj.get(scope, key.into()) else {
         return Err(PENDING.into());
     };
-    let n = len.number_value(scope).ok_or_else(|| "invalid-args".to_string())?;
+    let n = len
+        .number_value(scope)
+        .ok_or_else(|| "invalid-args".to_string())?;
     if !n.is_finite() || n < 0.0 {
         return Err("invalid-args".into());
     }
@@ -382,16 +384,23 @@ fn field<'s>(
     value: v8::Local<v8::Value>,
     name: &str,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
-    let obj = value.to_object(scope).ok_or_else(|| "invalid-args".to_string())?;
+    let obj = value
+        .to_object(scope)
+        .ok_or_else(|| "invalid-args".to_string())?;
     let key = v8::String::new(scope, name).ok_or_else(|| "string".to_string())?;
-    obj.get(scope, key.into()).ok_or_else(|| PENDING.to_string())
+    obj.get(scope, key.into())
+        .ok_or_else(|| PENDING.to_string())
 }
 
 fn field_is_string(scope: &mut v8::HandleScope, value: v8::Local<v8::Value>, name: &str) -> bool {
     field(scope, value, name).is_ok_and(|v| v.is_string())
 }
 
-fn field_string(scope: &mut v8::HandleScope, value: v8::Local<v8::Value>, name: &str) -> Result<String, String> {
+fn field_string(
+    scope: &mut v8::HandleScope,
+    value: v8::Local<v8::Value>,
+    name: &str,
+) -> Result<String, String> {
     let v = field(scope, value, name)?;
     js_to_string(scope, v)
 }
@@ -430,7 +439,9 @@ fn required_string_array(
     scope: &mut v8::HandleScope,
     value: v8::Local<v8::Value>,
 ) -> Result<Vec<String>, String> {
-    let obj = value.to_object(scope).ok_or_else(|| "invalid-args".to_string())?;
+    let obj = value
+        .to_object(scope)
+        .ok_or_else(|| "invalid-args".to_string())?;
     let len = array_len(scope, obj)?;
     let mut out = Vec::with_capacity(len as usize);
     for i in 0..len {
@@ -443,7 +454,10 @@ fn required_string_array(
     Ok(out)
 }
 
-fn js_to_string(scope: &mut v8::HandleScope, value: v8::Local<v8::Value>) -> Result<String, String> {
+fn js_to_string(
+    scope: &mut v8::HandleScope,
+    value: v8::Local<v8::Value>,
+) -> Result<String, String> {
     if value.is_null() {
         return Ok("null".into());
     }

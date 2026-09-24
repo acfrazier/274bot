@@ -3191,7 +3191,10 @@ fn track(world: u64, tracked: &mut u64) -> bool {
 /// `model_stamp` (bumped by wall/decor/scenery mutations including door
 /// multilocs). Integer reads only — no loc string clones.
 fn loc_dirty_bits(client: &Client) -> (u64, u64) {
-    (loc_model_stamp(client), client.world.static_loc_generation())
+    (
+        loc_model_stamp(client),
+        client.world.static_loc_generation(),
+    )
 }
 
 fn loc_model_stamp(client: &Client) -> u64 {

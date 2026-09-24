@@ -2026,8 +2026,8 @@ impl Observation {
             .tile
             .map(|(x, z, level)| LineOfSightTile { x, z, level });
         let receipt = paint.and_then(parse_fight_field_receipt_from_paint);
-        let npc = choose_fight_field_npc(snapshot.npcs(), receipt.as_ref()).map(|row| {
-            FightFieldNpc {
+        let npc =
+            choose_fight_field_npc(snapshot.npcs(), receipt.as_ref()).map(|row| FightFieldNpc {
                 index: row.index as i32,
                 size: row.size,
                 tile_x: row.tile.x,
@@ -2035,8 +2035,7 @@ impl Observation {
                 nx: row.network.x,
                 nz: row.network.z,
                 level: row.tile.level,
-            }
-        });
+            });
         let query = if scene.available {
             Some(CollisionQuery {
                 available: scene.available,
@@ -2461,11 +2460,7 @@ fn hop_loc_wrong_boat(hops: &[RouteInspectHopFact]) -> bool {
 /// generation / stale seq / unpublished seq 0 are rejected. v1 also requires
 /// a registered `request_id != 0` at the cycle; v2 token uses `!= 0` then a
 /// later distinct `request_id == 0` snapshot.
-fn fresh_barnaby_inspect(
-    now: &Observation,
-    prior_live_generation: u64,
-    prior_seq: u64,
-) -> bool {
+fn fresh_barnaby_inspect(now: &Observation, prior_live_generation: u64, prior_seq: u64) -> bool {
     if !now.route_inspect_has_terminal
         || now.route_inspect_generation != now.route_inspect_live_generation
         || !now.route_inspect_ok
@@ -2482,8 +2477,11 @@ fn fresh_barnaby_inspect(
 }
 
 pub fn brimhaven_moss_inspect_v1_baseline_ready(baseline: &Observation) -> bool {
-    near(baseline.tile, BRIMHAVEN_INSPECT_BANK, BRIMHAVEN_INSPECT_BANK_RADIUS)
-        && empty_pack(baseline)
+    near(
+        baseline.tile,
+        BRIMHAVEN_INSPECT_BANK,
+        BRIMHAVEN_INSPECT_BANK_RADIUS,
+    ) && empty_pack(baseline)
         && baseline.item_id(LOBSTER_ID) == 0
         && baseline.item_id(COINS_ID) == 0
         && baseline.level("agility") >= 30
@@ -2492,9 +2490,7 @@ pub fn brimhaven_moss_inspect_v1_baseline_ready(baseline: &Observation) -> bool 
 }
 
 pub fn route_inspect_brimhaven_v2_baseline_ready(baseline: &Observation) -> bool {
-    near(baseline.tile, BRIMHAVEN_INSPECT_PIER, 4)
-        && baseline.ingame
-        && baseline.scene_state == 2
+    near(baseline.tile, BRIMHAVEN_INSPECT_PIER, 4) && baseline.ingame && baseline.scene_state == 2
 }
 
 /// Ordered v1 witness: restock after empty-pack Start, then a fresh accepted
@@ -2539,8 +2535,12 @@ impl BrimhavenMossInspectCycle {
         if let (Some(_), Some(from)) = (self.accepted_seq, self.accepted_tile) {
             let later_tile = now.tile.filter(|tile| *tile != from);
             if let Some(tile) = later_tile {
-                self.walk_progress |= near(Some(tile), BRIMHAVEN_INSPECT_PIER, BRIMHAVEN_INSPECT_PIER_RADIUS)
-                    || chebyshev(tile, BRIMHAVEN_INSPECT_PIER) < chebyshev(from, BRIMHAVEN_INSPECT_PIER);
+                self.walk_progress |= near(
+                    Some(tile),
+                    BRIMHAVEN_INSPECT_PIER,
+                    BRIMHAVEN_INSPECT_PIER_RADIUS,
+                ) || chebyshev(tile, BRIMHAVEN_INSPECT_PIER)
+                    < chebyshev(from, BRIMHAVEN_INSPECT_PIER);
             }
         }
     }
@@ -2587,8 +2587,11 @@ impl RouteInspectBrimhavenV2Cycle {
             }
         }
         if self.snap0_seq.is_some() {
-            self.walked |= near(now.tile, BRIMHAVEN_INSPECT_BANK, BRIMHAVEN_INSPECT_BANK_RADIUS)
-                && !near(now.tile, BRIMHAVEN_INSPECT_PIER, 4);
+            self.walked |= near(
+                now.tile,
+                BRIMHAVEN_INSPECT_BANK,
+                BRIMHAVEN_INSPECT_BANK_RADIUS,
+            ) && !near(now.tile, BRIMHAVEN_INSPECT_PIER, 4);
         }
     }
 
@@ -3964,7 +3967,11 @@ fn enter_lair_kbd_tile(tile: LineOfSightTile) -> bool {
     tile.x == ENTER_LAIR_KBD_X && tile.z == ENTER_LAIR_KBD_Z
 }
 
-fn enter_lair_approach_ok(here: LineOfSightTile, approach: LineOfSightTile, area: EnterLairBox) -> bool {
+fn enter_lair_approach_ok(
+    here: LineOfSightTile,
+    approach: LineOfSightTile,
+    area: EnterLairBox,
+) -> bool {
     here.level == approach.level
         && !enter_lair_in_box(here, area)
         && enter_lair_in_box(approach, area)
@@ -3988,7 +3995,8 @@ pub fn enter_lair_baseline_ready(baseline: &Observation) -> bool {
 }
 
 fn enter_lair_receipt_joined(now: &EnterLairObservation) -> bool {
-    let (Some(here), Some(approach), Some(receipt)) = (now.here, now.approach, now.receipt.as_ref())
+    let (Some(here), Some(approach), Some(receipt)) =
+        (now.here, now.approach, now.receipt.as_ref())
     else {
         return false;
     };
@@ -4274,7 +4282,11 @@ fn leave_lair_forbidden_tile(tile: LineOfSightTile) -> bool {
         || (tile.x == LEAVE_LAIR_KBD_X && tile.z == LEAVE_LAIR_KBD_Z)
 }
 
-fn leave_lair_walk_out_ok(here: LineOfSightTile, walk_out: LineOfSightTile, area: LeaveLairBox) -> bool {
+fn leave_lair_walk_out_ok(
+    here: LineOfSightTile,
+    walk_out: LineOfSightTile,
+    area: LeaveLairBox,
+) -> bool {
     here.level == walk_out.level
         && area == leave_lair_box(here)
         && leave_lair_in_box(here, area)
@@ -4295,7 +4307,8 @@ pub fn leave_lair_baseline_ready(baseline: &Observation) -> bool {
 }
 
 fn leave_lair_receipt_joined(now: &LeaveLairObservation) -> bool {
-    let (Some(here), Some(walk_out), Some(receipt)) = (now.here, now.walk_out, now.receipt.as_ref())
+    let (Some(here), Some(walk_out), Some(receipt)) =
+        (now.here, now.walk_out, now.receipt.as_ref())
     else {
         return false;
     };
@@ -4559,7 +4572,11 @@ fn acquire_key_in_box(tile: LineOfSightTile, area: AcquireKeyBox) -> bool {
         && tile.z <= area.max_z
 }
 
-fn acquire_key_place_ok(here: LineOfSightTile, cell: AcquireKeyBox, boxes: &[AcquireKeyBox]) -> bool {
+fn acquire_key_place_ok(
+    here: LineOfSightTile,
+    cell: AcquireKeyBox,
+    boxes: &[AcquireKeyBox],
+) -> bool {
     cell == ACQUIRE_KEY_CELL
         && boxes == [ACQUIRE_KEY_LAIR]
         && !acquire_key_in_box(here, ACQUIRE_KEY_CELL)
@@ -4873,7 +4890,10 @@ fn parse_cell_v2_receipt_from_paint(
 }
 
 fn cell_v2_paint_claims_door_walk(paint: &script::shim::ScriptPaint) -> bool {
-    paint.lines.iter().any(|line| cell_v2_line_claims_door_walk(line))
+    paint
+        .lines
+        .iter()
+        .any(|line| cell_v2_line_claims_door_walk(line))
 }
 
 fn cell_v2_in_box(tile: LineOfSightTile, area: CellV2Box) -> bool {
@@ -5139,7 +5159,9 @@ fn bank_v2_value_forbidden(value: &Value) -> bool {
             {
                 return true;
             }
-            if map.contains_key("route") || map.contains_key("opened") || map.contains_key("packReady")
+            if map.contains_key("route")
+                || map.contains_key("opened")
+                || map.contains_key("packReady")
             {
                 return true;
             }
@@ -5301,7 +5323,8 @@ impl BankV2DeliveryCycle {
             self.flags,
             self.discriminator.as_deref(),
             self.receipt.as_ref(),
-        ) else {
+        )
+        else {
             return false;
         };
         receipt.here == here
@@ -9165,11 +9188,9 @@ fn prepared_combat_baseline_ready(case: CoreCase, baseline: &Observation) -> boo
         CoreCase::GreenDragonBankPrepared
         | CoreCase::GreenDragonBankDefaultPrepared
         | CoreCase::FireGiantBankPrepared
-        | CoreCase::FireGiantCamelotPrepared => {
-            ["attack", "strength", "defence", "hitpoints"]
-                .into_iter()
-                .all(|stat| baseline.level(stat) == BANK_PRESSURE_PREPARED_LEVEL)
-        }
+        | CoreCase::FireGiantCamelotPrepared => ["attack", "strength", "defence", "hitpoints"]
+            .into_iter()
+            .all(|stat| baseline.level(stat) == BANK_PRESSURE_PREPARED_LEVEL),
         CoreCase::MossGiantPrepared | CoreCase::HillGiantBankPrepared => {
             ["attack", "strength", "defence", "hitpoints"]
                 .into_iter()

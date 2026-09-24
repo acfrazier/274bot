@@ -553,7 +553,11 @@ export default class T extends TaskBot {
         text.contains("trail_clue_easy_simple001"),
         "the machine's own progress and status identity reach the host: {value:?}"
     );
-    assert_eq!(value["statuses"].as_array().map(Vec::len), Some(1), "{value:?}");
+    assert_eq!(
+        value["statuses"].as_array().map(Vec::len),
+        Some(1),
+        "{value:?}"
+    );
     assert_eq!(value["logs"].as_array().map(Vec::len), Some(1), "{value:?}");
     assert_eq!(
         value["status"], value["statuses"][0],
@@ -640,7 +644,10 @@ export default class T extends TaskBot {
     );
     tick(&iso, 2);
     let queued = iso.drain_interacts();
-    assert!(queued.is_empty(), "a disabled tick queues nothing: {queued:?}");
+    assert!(
+        queued.is_empty(),
+        "a disabled tick queues nothing: {queued:?}"
+    );
     assert_eq!(
         probe_text(&iso, "String(globalThis.__rs_bot.solveClue.validate())"),
         "false",
@@ -801,7 +808,10 @@ export default class T extends TaskBot {
     // tick instead of a second session.
     post_page(&iso, 3, &[]);
     tick(&iso, 3);
-    assert!(iso.drain_interacts().is_empty(), "nothing to do, nothing queued");
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "nothing to do, nothing queued"
+    );
     assert_eq!(
         probe_text(&iso, "String(globalThis.__grind)"),
         "1",
@@ -1020,7 +1030,10 @@ export default class T extends TaskBot {
     // Tick 1: the session opens and idles — no posted `here`, so no verb.
     post_page(&iso, 1, &page);
     tick(&iso, 1);
-    assert!(iso.drain_interacts().is_empty(), "no posted `here`, no verb");
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "no posted `here`, no verb"
+    );
     assert_ne!(
         probe_text(&iso, "String(globalThis.__rs_bot.solveClue.token)"),
         "null",

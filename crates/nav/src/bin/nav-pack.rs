@@ -177,12 +177,15 @@ fn parse_args(args: impl IntoIterator<Item = impl AsRef<str>>) -> Result<BakeInp
             "--cache-manifest" if cache_manifest.is_none() => {
                 cache_manifest = Some(PathBuf::from(value));
             }
-            "--snapshot-root" if snapshot_root.is_none() => snapshot_root = Some(PathBuf::from(value)),
+            "--snapshot-root" if snapshot_root.is_none() => {
+                snapshot_root = Some(PathBuf::from(value))
+            }
             "--out" if out.is_none() => out = Some(PathBuf::from(value)),
             "--flags-out" if explicit_flags.is_none() => {
                 explicit_flags = Some(PathBuf::from(value));
             }
-            "--content" | "--cache" | "--cache-manifest" | "--snapshot-root" | "--out" | "--flags-out" => {
+            "--content" | "--cache" | "--cache-manifest" | "--snapshot-root" | "--out"
+            | "--flags-out" => {
                 return Err(format!("duplicate explicit option {flag}"));
             }
             _ => return Err(format!("unknown explicit option {flag}")),
@@ -264,8 +267,14 @@ fn bake_world(
     gates: &Path,
     cache: Option<&CacheManifest>,
 ) -> Result<BakedNav, String> {
-    let decoded = match (inputs.revision, inputs.cache_dir.as_deref(), inputs.snapshot_root.as_deref()) {
-        (Some(revision), Some(cache), Some(root)) => Some(bake::decoded_identity(revision, cache, root)?),
+    let decoded = match (
+        inputs.revision,
+        inputs.cache_dir.as_deref(),
+        inputs.snapshot_root.as_deref(),
+    ) {
+        (Some(revision), Some(cache), Some(root)) => {
+            Some(bake::decoded_identity(revision, cache, root)?)
+        }
         _ => None,
     };
     let mut baked = bake::bake_world(&BakeRequest {
@@ -277,9 +286,12 @@ fn bake_world(
         cache,
         require_all_door_configs: false,
     })?;
-    if let (Some(revision), Some(cache_dir), Some(root), Some(id)) =
-        (inputs.revision, inputs.cache_dir.as_deref(), inputs.snapshot_root.as_deref(), decoded.as_deref())
-    {
+    if let (Some(revision), Some(cache_dir), Some(root), Some(id)) = (
+        inputs.revision,
+        inputs.cache_dir.as_deref(),
+        inputs.snapshot_root.as_deref(),
+        decoded.as_deref(),
+    ) {
         if bake::decoded_identity(revision, cache_dir, root)? != id {
             return Err("cache changed during navigation bake".into());
         }

@@ -147,10 +147,8 @@ fn numeric_2_0_equals_2_and_type_annotation_is_accepted() {
 #[test]
 fn comments_and_strings_are_not_declarations() {
     assert_eq!(
-        parse_declared_api_version(
-            "// export const apiVersion = 2\nexport function tick() {}"
-        )
-        .unwrap(),
+        parse_declared_api_version("// export const apiVersion = 2\nexport function tick() {}")
+            .unwrap(),
         None
     );
     assert_eq!(
@@ -174,18 +172,18 @@ fn malformed_and_unsupported_versions() {
     .unwrap_err()
     .code()
     .contains("malformed"));
-    assert!(parse_declared_api_version(
-        "export let apiVersion = 2; export function tick() {}"
-    )
-    .unwrap_err()
-    .code()
-    .contains("malformed"));
-    assert!(parse_declared_api_version(
-        "export const apiVersion = 3; export function tick() {}"
-    )
-    .unwrap_err()
-    .code()
-    .contains("unsupported"));
+    assert!(
+        parse_declared_api_version("export let apiVersion = 2; export function tick() {}")
+            .unwrap_err()
+            .code()
+            .contains("malformed")
+    );
+    assert!(
+        parse_declared_api_version("export const apiVersion = 3; export function tick() {}")
+            .unwrap_err()
+            .code()
+            .contains("unsupported")
+    );
 }
 
 #[test]
@@ -205,8 +203,8 @@ fn resolve_family_precedence() {
     .unwrap_err();
     assert!(err.contains("api-version-conflict"));
 
-    let err = resolve_api_family("export const apiVersion = 1; export function tick() {}")
-        .unwrap_err();
+    let err =
+        resolve_api_family("export const apiVersion = 1; export function tick() {}").unwrap_err();
     assert!(err.contains("api-version-conflict"));
 
     let err = resolve_api_family("export const apiVersion = 2; const x = 1;").unwrap_err();
@@ -260,7 +258,9 @@ fn unversioned_native_still_proxy_only() {
     iso.on_game_tick(1);
     let err = iso.probe("globalThis.__rs_err").unwrap();
     assert!(
-        err.as_str().unwrap_or("").contains("not impl: api.snapshot"),
+        err.as_str()
+            .unwrap_or("")
+            .contains("not impl: api.snapshot"),
         "{err}"
     );
     iso.join();
@@ -452,7 +452,10 @@ export async function tick(api) {
     iso.on_game_tick(2);
     iso.on_game_tick(3);
     assert_eq!(iso.probe("globalThis.__rs_n").unwrap(), 1);
-    assert_eq!(iso.probe("globalThis.__rs_done").unwrap(), serde_json::Value::Null);
+    assert_eq!(
+        iso.probe("globalThis.__rs_done").unwrap(),
+        serde_json::Value::Null
+    );
     assert_eq!(iso.probe("globalThis.__rs_v2_tick_pending").unwrap(), true);
     assert!(
         iso.drain_lifecycle().is_empty(),
@@ -539,8 +542,7 @@ export const apiVersion = 2;
 export async function tick() { throw new Error("async failure"); }
 "#,
     ] {
-        let iso =
-            LoadIsolate::spawn(source.into(), LoadShape::NativeTick, vec![]).unwrap();
+        let iso = LoadIsolate::spawn(source.into(), LoadShape::NativeTick, vec![]).unwrap();
         iso.on_game_tick(1);
         let _ = iso.probe("true");
         assert_eq!(iso.probe("globalThis.__rs_v2_tick_pending").unwrap(), false);
@@ -613,7 +615,9 @@ export function tick(api) {
     let _ = iso.probe("true");
     let before = iso.drain_interacts();
     assert!(
-        before.iter().any(|r| matches!(r, InteractReq::WalkNearestBank)),
+        before
+            .iter()
+            .any(|r| matches!(r, InteractReq::WalkNearestBank)),
         "{before:?}"
     );
     iso.reset_session_work();
@@ -918,8 +922,8 @@ export async function tick(api) {
 }
 "#;
     let data = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
-    let iso = LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data)
-        .unwrap();
+    let iso =
+        LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data).unwrap();
     post_base(&iso, 1);
     iso.on_game_tick(1);
     let _ = iso.probe("true");
@@ -962,8 +966,8 @@ export function tick(api) {
 }
 "#;
     let data = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
-    let iso = LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data)
-        .unwrap();
+    let iso =
+        LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data).unwrap();
     post_base(&iso, 1);
     iso.on_game_tick(1);
     let probe = iso.probe("globalThis.__probe").unwrap();
@@ -1316,8 +1320,8 @@ export function tick(api) {
 }
 "#;
     let data = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
-    let iso = LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data)
-        .unwrap();
+    let iso =
+        LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data).unwrap();
     post_base(&iso, 1);
     iso.on_game_tick(1);
     let probe = iso.probe("globalThis.__probe").unwrap();
@@ -1376,8 +1380,8 @@ export function tick(api) {
 }
 "#;
     let data = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
-    let iso = LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data)
-        .unwrap();
+    let iso =
+        LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data).unwrap();
     post_base(&iso, 1);
     iso.on_game_tick(1);
     let probe = iso.probe("globalThis.__probe").unwrap();
@@ -1469,8 +1473,8 @@ export function tick(api) {
 }
 "#;
     let data = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
-    let iso = LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data)
-        .unwrap();
+    let iso =
+        LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data).unwrap();
     post_base(&iso, 1);
     iso.on_game_tick(1);
     let probe = iso.probe("globalThis.__probe").unwrap();

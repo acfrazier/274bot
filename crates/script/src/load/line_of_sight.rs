@@ -34,8 +34,7 @@ globalThis.__rs2b0t_flags_view = function (u8) {
     let global = context.open(&mut scope).global(&mut scope);
     let name = v8::String::new(&mut scope, "__rs2b0t_line_of_sight")
         .ok_or_else(|| "los name".to_string())?;
-    let func = v8::Function::new(&mut scope, los_callback)
-        .ok_or_else(|| "los fn".to_string())?;
+    let func = v8::Function::new(&mut scope, los_callback).ok_or_else(|| "los fn".to_string())?;
     global
         .set(&mut scope, name.into(), func.into())
         .ok_or_else(|| "los set".to_string())?;
@@ -104,7 +103,9 @@ fn v1<'s>(
     } else if !size.is_number() {
         return bool_val(scope, false);
     } else {
-        let n = size.number_value(scope).ok_or_else(|| PENDING.to_string())?;
+        let n = size
+            .number_value(scope)
+            .ok_or_else(|| PENDING.to_string())?;
         if !n.is_finite() || n.fract() != 0.0 {
             return bool_val(scope, false);
         }
@@ -182,7 +183,10 @@ fn field<'s>(
         .ok_or_else(|| PENDING.to_string())
 }
 
-fn js_to_string(scope: &mut v8::HandleScope, value: v8::Local<v8::Value>) -> Result<String, String> {
+fn js_to_string(
+    scope: &mut v8::HandleScope,
+    value: v8::Local<v8::Value>,
+) -> Result<String, String> {
     match value.to_string(scope) {
         Some(s) => Ok(s.to_rust_string_lossy(scope)),
         None => Err(PENDING.into()),

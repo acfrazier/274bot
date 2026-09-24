@@ -289,7 +289,11 @@ fn search(
         (pieces, key as u8)
     };
     let done = |pieces: &[u8], gap: u8| {
-        !group.contains(&gap) && pieces.iter().zip(group).all(|(piece, target)| piece == target)
+        !group.contains(&gap)
+            && pieces
+                .iter()
+                .zip(group)
+                .all(|(piece, target)| piece == target)
     };
 
     if done(start, start_gap) {
@@ -547,7 +551,10 @@ mod tests {
         edge[18] = None;
         edge[PUZZLE_BLANK_SLOT] = Some(18);
         assert!(!apply_puzzle_move(&mut edge, 20), "20 is not beside 18");
-        assert!(!apply_puzzle_move(&mut edge, PUZZLE_BLANK_SLOT), "24 is not beside 18");
+        assert!(
+            !apply_puzzle_move(&mut edge, PUZZLE_BLANK_SLOT),
+            "24 is not beside 18"
+        );
         assert!(apply_puzzle_move(&mut edge, 23), "23 is beside 18");
         assert_eq!(edge[18], Some(23));
         assert_eq!(edge[23], None);
@@ -601,8 +608,7 @@ mod tests {
             // board with no plan at all.
             let mut mixed_rows = rows;
             mixed_rows[0].id = if base == 2749 { 3619 } else { 2749 } + 5;
-            let mixed =
-                read_puzzle_board(&mixed_rows, Some(&data)).expect("the read itself fills");
+            let mixed = read_puzzle_board(&mixed_rows, Some(&data)).expect("the read itself fills");
             assert_ne!(mixed, board);
             assert!(!is_puzzle_solved(&mixed));
             assert_eq!(solve_puzzle(&mixed), None, "{base} mixed");
