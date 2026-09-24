@@ -3554,8 +3554,11 @@ impl Session {
     /// handshake, then select (spawn if needed).
     pub fn login(&mut self, name: &str) {
         self.wall.clear_latch(name);
-        if let Some(arm) = self.play.as_ref().and_then(|p| p.arm(name)) {
-            arm.arm_explicit_login();
+        if let Some(play) = self.play.as_ref() {
+            play.enqueue_login(name);
+            if let Some(arm) = play.arm(name) {
+                arm.arm_explicit_login();
+            }
         }
         self.select(name);
     }
@@ -3597,8 +3600,13 @@ impl Session {
                 return false;
             }
         }
-        if let Some(arm) = self.play.as_ref().and_then(|p| p.arm(name)) {
-            arm.set_auto_login(on);
+        if let Some(play) = self.play.as_ref() {
+            if on {
+                play.enqueue_login(name);
+            }
+            if let Some(arm) = play.arm(name) {
+                arm.set_auto_login(on);
+            }
         }
         if let Some(play) = self.play.as_ref() {
             play.wake(name);
@@ -3772,12 +3780,19 @@ impl Session {
             .map(|p| p.settings.auto_login)
             .unwrap_or(false);
         let want_login = self.wall.should_auto_login(name, auto_login);
-        if let Some(arm) = self.play.as_ref().and_then(|p| p.arm(name)) {
+        if let Some(play) = self.play.as_ref() {
             // Already running (re-click): re-apply saved auto intent while a
             // latched logout remains parked.
-            arm.set_auto_login(auto_login);
-            if !want_login {
-                arm.withdraw_login();
+            if want_login {
+                play.enqueue_login(name);
+            }
+            if let Some(arm) = play.arm(name) {
+                arm.set_auto_login(auto_login);
+                if !want_login {
+                    arm.withdraw_login();
+                }
+            } else {
+                self.ensure_slot(name, self.arm_for_profile(name));
             }
         } else {
             self.ensure_slot(name, self.arm_for_profile(name));
@@ -3865,8 +3880,11 @@ impl Session {
         }
         for name in names {
             self.wall.clear_latch(&name);
-            if let Some(arm) = self.play.as_ref().and_then(|p| p.arm(&name)) {
-                arm.arm_explicit_login();
+            if let Some(play) = self.play.as_ref() {
+                play.enqueue_login(&name);
+                if let Some(arm) = play.arm(&name) {
+                    arm.arm_explicit_login();
+                }
             }
         }
         if let Some(play) = self.play.as_ref() {
@@ -4419,10 +4437,6 @@ fn fresh_uid(vault: &Vault) -> i32 {
     vault.profiles().map(|p| p.uid).max().unwrap_or(274_000_000) + 1
 }
 
-/// Arm the explicit one-shot intent used by Login all.
-fn arm_login_all(arm: &SlotArm) {
-    arm.arm_explicit_login();
-}
 
 /// Copy a traveller dest into `SlotStatus.walk_*`; −1 when idle.
 fn apply_queued_walk(status: &mut SlotStatus, queued: Option<Tile>) {

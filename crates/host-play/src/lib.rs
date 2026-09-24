@@ -1543,30 +1543,38 @@ impl Play {
         self.profiles.insert(profile.username.clone(), profile);
     }
 
-    /// Move `uid` to the front of the login FIFO so the TV head handshakes
-    /// before slots that already queued. Queue membership and status
-    /// publication are kept under the queue lock so a grant cannot clear the
-    /// row and then be overwritten by an older preferred-place snapshot.
+    /// Give `uid` focused priority. Existing membership moves to the front;
+    /// otherwise only the preference is remembered until Queueing.
     pub fn prefer_login(&self, uid: i32) {
         let name = self
             .arms
             .iter()
             .find(|(_, arm)| arm.uid.load(Ordering::Relaxed) == uid)
             .map(|(n, _)| n.clone());
-        let reserve = name.as_deref().is_some_and(|name| self.slot_can_wait(name));
         let mut q = self.queue.lock().unwrap();
-        if reserve {
-            q.prefer(uid);
-        } else {
-            // Keep the head's precedence without a place: `request_permit`
-            // pushes a preferred uid to the front when it really asks.
-            q.set_preferred(Some(uid));
-            q.leave(uid);
-        }
+        q.prefer(uid);
         if let Some(name) = name {
             let pos = q.status(uid);
             apply_queue_wait(&mut self.statuses.lock().unwrap(), &name, pos);
         }
+    }
+
+    /// Enter a slot into the FIFO on the control thread. Login-all calls this
+    /// in operator order before waking workers, eliminating readiness-lock
+    /// races while the slot still performs configuration before polling.
+    pub fn enqueue_login(&self, name: &str) {
+        let Some(arm) = self.arms.get(name) else {
+            return;
+        };
+        if !self.slot_can_wait(name) {
+            return;
+        }
+        enqueue_queue_place(
+            &self.queue,
+            &self.statuses,
+            name,
+            arm.uid.load(Ordering::Relaxed),
+        );
     }
 
     /// Whether `name`'s slot thread can still enter [`wait_for_permit`]: a
@@ -2587,6 +2595,7 @@ fn spawn_slot_thread(
                             row.error = Some(error);
                         }
                         clear_startup_progress(&slot_statuses, &username);
+                        drop_queue_place(&slot_queue, &slot_statuses, &username, uid);
                         return;
                     }
                 },
@@ -2620,6 +2629,7 @@ fn spawn_slot_thread(
                     row.error = Some(format!("profile asset initialization failed: {}", client.last_progress_message));
                 }
                 clear_startup_progress(&slot_statuses, &username);
+                drop_queue_place(&slot_queue, &slot_statuses, &username, uid);
                 return;
             }
             clear_startup_progress(&slot_statuses, &username);
@@ -2654,6 +2664,7 @@ fn spawn_slot_thread(
                     // arm so an explicit Log in cannot keep a stale TRUE from
                     // the last park publish through queue/connect.
                     publish_login_latched_from_arm(&slot_statuses, &username, &arm);
+                    enqueue_queue_place(&slot_queue, &slot_statuses, &username, uid);
                     if let Some(round) = world_round.as_mut() {
                         let worlds = connection
                             .profile()
@@ -2691,6 +2702,7 @@ fn spawn_slot_thread(
                         let world = &worlds.worlds[round.index];
                         if let Err(error) = configure_slot_world(&mut client, world, refresh_key, &arm.stop) {
                             if arm.stop.load(Ordering::Relaxed) {
+                                drop_queue_place(&slot_queue, &slot_statuses, &username, uid);
                                 return;
                             }
                             if let Some(row) = slot_statuses.lock().unwrap().iter_mut().find(|s| s.username == username) {
@@ -2699,9 +2711,11 @@ fn spawn_slot_thread(
                                 row.error = Some(format!("public world login configuration failed: {error}"));
                             }
                             clear_startup_progress(&slot_statuses, &username);
+                            drop_queue_place(&slot_queue, &slot_statuses, &username, uid);
                             return;
                         }
                         if arm.stop.load(Ordering::Relaxed) {
+                            drop_queue_place(&slot_queue, &slot_statuses, &username, uid);
                             return;
                         }
                         if let Some(row) = slot_statuses.lock().unwrap().iter_mut().find(|s| s.username == username) {
@@ -3293,6 +3307,20 @@ enum PermitWait {
     Cancelled,
 }
 
+/// Enter `uid` once and publish its authoritative place while the queue lock
+/// prevents a concurrent grant/leave from overtaking the row update.
+fn enqueue_queue_place(
+    queue: &Arc<Mutex<LoginQueue>>,
+    statuses: &Arc<Mutex<Vec<SlotStatus>>>,
+    username: &str,
+    uid: i32,
+) {
+    let mut q = queue.lock().unwrap();
+    q.enqueue(uid);
+    let pos = q.status(uid);
+    apply_queue_wait(&mut statuses.lock().unwrap(), username, pos);
+}
+
 /// Drop `uid`'s login-FIFO place and always clear this slot's published
 /// `k of n`. The row belongs to `username`; an already-granted/removed uid
 /// must still clear a stale publication left by an earlier snapshot.
@@ -3318,12 +3346,10 @@ fn permit_wait_cancelled(arm: &SlotArm) -> bool {
             && !arm.auto_login.load(Ordering::Relaxed))
 }
 
-/// Block until the login queue grants `uid` a handshake permit, mirroring
-/// the queue position onto the slot's status row while it waits. Every
-/// withdrawal is observed each poll **before** `request_permit`, so a `leave`
-/// from [`Play::stop_slot`] or a cancelled login intent is never undone by a
-/// re-enqueue; a withdrawn wait also clears `want_login` so the caller's loop
-/// does not re-enter the queue for an intent the operator dropped.
+/// Block until the already-enqueued `uid` receives a handshake permit,
+/// mirroring the queue position onto the slot's status row while it waits.
+/// Withdrawal is observed before every poll, so a dropped place is never
+/// recreated by this waiter.
 fn wait_for_permit(
     queue: &Arc<Mutex<LoginQueue>>,
     statuses: &Arc<Mutex<Vec<SlotStatus>>>,
@@ -3341,27 +3367,22 @@ fn wait_for_permit(
         }
     };
     loop {
-        // Before `request_permit`: it enqueues, so a place dropped by
-        // `stop_slot` (or by a withdrawn intent) must not be recreated.
+        // Poll membership established at the Queueing transition; this path
+        // never changes FIFO order.
         if permit_wait_cancelled(arm) {
             withdraw();
             return PermitWait::Cancelled;
         }
         let wait = {
             let mut q = queue.lock().unwrap();
-            match q.request_permit(uid, Instant::now()) {
+            match q.poll_permit(uid, Instant::now()) {
                 Permit::Grant => {
-                    drop(q);
-                    let mut all = statuses.lock().unwrap();
-                    apply_queue_wait(&mut all, username, None);
+                    apply_queue_wait(&mut statuses.lock().unwrap(), username, None);
                     return PermitWait::Granted;
                 }
                 Permit::Wait(wait) => {
                     let pos = q.status(uid);
-                    drop(q);
-                    let mut all = statuses.lock().unwrap();
-                    apply_queue_wait(&mut all, username, pos);
-                    drop(all);
+                    apply_queue_wait(&mut statuses.lock().unwrap(), username, pos);
                     wait
                 }
             }

@@ -1,6 +1,6 @@
 use super::{
-    arm_login_all, combo_index, debug_dest_cheats, debug_main_buttons_for, debug_maxme_cheats,
-    is_local_engine, live_client_trail, live_or_walk_paint, load_live_example_card,
+    combo_index, debug_dest_cheats, debug_main_buttons_for, debug_maxme_cheats, is_local_engine,
+    live_client_trail, live_or_walk_paint, load_live_example_card,
     nav_snapshot_for_follow, null_raster_live_entries_for_target, parse_getvar_line,
     publish_frontend_slot, publish_nav_debug, reset_frontend_slot_lifetime, script_active,
     script_pause_enabled, script_self_stop_observed, script_status_text, script_stop_enabled,
@@ -4037,7 +4037,7 @@ fn arm_login_all_cancels_pending_logout() {
     let arm = SlotArm::new(7, false);
     arm.latch.store(true, Ordering::Relaxed);
     arm.want_logout.store(true, Ordering::Relaxed);
-    arm_login_all(&arm);
+    arm.arm_explicit_login();
     assert!(arm.want_login.load(Ordering::Relaxed));
     assert!(!arm.want_logout.load(Ordering::Relaxed));
     assert!(!arm.latch.load(Ordering::Relaxed));
