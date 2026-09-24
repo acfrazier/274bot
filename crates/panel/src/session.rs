@@ -3556,7 +3556,6 @@ impl Session {
         self.wall.clear_latch(name);
         if let Some(play) = self.play.as_ref() {
             if let Some(arm) = play.arm(name) {
-                play.hint_login_order(name);
                 arm.arm_explicit_login();
             }
         }
@@ -3602,9 +3601,6 @@ impl Session {
         }
         if let Some(play) = self.play.as_ref() {
             if let Some(arm) = play.arm(name) {
-                if on {
-                    play.hint_login_order(name);
-                }
                 arm.set_auto_login(on);
             }
         }
@@ -3784,9 +3780,6 @@ impl Session {
             // Already running (re-click): re-apply saved auto intent while a
             // latched logout remains parked.
             if let Some(arm) = play.arm(name) {
-                if want_login {
-                    play.hint_login_order(name);
-                }
                 arm.set_auto_login(auto_login);
                 if !want_login {
                     arm.withdraw_login();
@@ -3861,27 +3854,13 @@ impl Session {
     /// Log in every wall member: clear their latches and arm a login so
     /// title-screen slots handshake. One-shot unless the profile's
     /// auto-login is set (which keeps the arm armed after the handshake).
-    /// The focused slot is moved to the front of the login FIFO so it is
-    /// not stuck behind members that queued first.
+    /// Queue membership follows worker arrival at Queueing; the focused slot
+    /// is the sole priority exception.
     pub fn login_all(&mut self) {
-        // Prefer the focused SlotIo (pixels), not the status row: the
-        // focused slot can still be inside `maininit` when Login all runs,
-        // so the status row is missing and prefer would be skipped.
-        let head = self.tv_name();
-        if let (Some(play), Some(h)) = (self.play.as_ref(), head.as_ref()) {
-            play.prefer_login(h);
+        if let (Some(play), Some(head)) = (self.play.as_ref(), self.tv_name()) {
+            play.prefer_login(&head);
         }
-        let mut names = self.wall.members.clone();
-        if let Some(h) = &head {
-            names.retain(|n| n != h);
-            names.insert(0, h.clone());
-        }
-        if let Some(play) = self.play.as_ref() {
-            for name in &names {
-                play.hint_login_order(name);
-            }
-        }
-        for name in names {
+        for name in self.wall.members.clone() {
             self.wall.clear_latch(&name);
             if let Some(arm) = self.play.as_ref().and_then(|play| play.arm(&name)) {
                 arm.arm_explicit_login();
