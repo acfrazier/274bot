@@ -1028,10 +1028,20 @@ impl SlotArm {
         self.retry_wake.notify_all();
     }
 
-    /// Wait to the retry deadline. Notifications only re-check Stop,
-    /// withdrawal, latch, and world selection; generic UI wakes use a
-    /// separate channel and cannot spend another login attempt.
+    /// Wait to a retry deadline. Notifications only re-check Stop,
+    /// withdrawal, latch, and optionally world selection; generic UI wakes
+    /// use a separate channel and cannot spend another login attempt.
     fn wait_for_retry(&self, timeout: Duration) -> bool {
+        self.wait_for_retry_inner(timeout, true)
+    }
+
+    /// Response 21 is tied to the same server-selected world. A profile world
+    /// edit must not turn the transfer cooldown into an early retry/switch.
+    fn wait_for_transfer(&self, timeout: Duration) -> bool {
+        self.wait_for_retry_inner(timeout, false)
+    }
+
+    fn wait_for_retry_inner(&self, timeout: Duration, interrupt_on_world_change: bool) -> bool {
         let mut guard = self.retry_wait.lock();
         let world_generation = self.world_generation.load(Ordering::Relaxed);
         let deadline = Instant::now() + timeout;
@@ -1042,7 +1052,9 @@ impl SlotArm {
             {
                 return false;
             }
-            if self.world_generation.load(Ordering::Relaxed) != world_generation {
+            if interrupt_on_world_change
+                && self.world_generation.load(Ordering::Relaxed) != world_generation
+            {
                 return true;
             }
             let left = deadline.saturating_duration_since(Instant::now());
@@ -2356,6 +2368,51 @@ fn record_login_error(statuses: &Arc<Mutex<Vec<SlotStatus>>>, name: &str, e: &Lo
     }
 }
 
+fn publish_transfer_countdown(
+    statuses: &Arc<Mutex<Vec<SlotStatus>>>,
+    name: &str,
+    remaining: u64,
+) {
+    let mut all = statuses.lock().unwrap();
+    if let Some(s) = all.iter_mut().find(|s| s.username == name) {
+        s.startup_phase = StartupPhase::Connecting;
+        s.startup_phase_started = Instant::now();
+        s.error = None;
+        s.startup_progress_percent = None;
+        s.startup_progress_message =
+            format!("Your profile will be transferred in: {remaining} seconds");
+    }
+}
+
+/// Handle a typed response-21 cooldown before generic world/error policy.
+/// `Some` means the response was consumed and the caller must retry the same
+/// endpoint; `None` leaves non-21 or malformed errors to normal handling.
+fn wait_for_transfer_response(
+    error: &LoginError,
+    arm: &SlotArm,
+    statuses: &Arc<Mutex<Vec<SlotStatus>>>,
+    name: &str,
+) -> Option<bool> {
+    if error.code != 21 {
+        return None;
+    }
+    let delay = error.retry_after?;
+    let mut remaining = delay.as_secs();
+    publish_transfer_countdown(statuses, name, remaining);
+    while remaining > 0 {
+        if !arm.wait_for_transfer(Duration::from_secs(1)) {
+            clear_startup_progress(statuses, name);
+            return Some(false);
+        }
+        remaining -= 1;
+        if remaining > 0 {
+            publish_transfer_countdown(statuses, name, remaining);
+        }
+    }
+    clear_startup_progress(statuses, name);
+    Some(true)
+}
+
 fn refresh_slot_world_preference(
     round: &mut public_worlds::WorldRound,
     worlds: &public_worlds::PublicWorlds,
@@ -2842,6 +2899,16 @@ fn spawn_slot_thread(
                             }
                         }
                         Err(e) => {
+                            if wait_for_transfer_response(
+                                &e,
+                                &arm,
+                                &slot_statuses,
+                                &username,
+                            )
+                            .is_some()
+                            {
+                                continue;
+                            }
                             record_login_error(&slot_statuses, &username, &e);
                             let decision = world_round.as_mut().map(|round| {
                                 let count = connection.profile().and_then(|p| p.public_worlds())
