@@ -349,6 +349,7 @@ const FAMILIES: &[Entry] = &[
     entry::<crate::special::Special>(),
     entry::<crate::modals::Modals>(),
     entry::<crate::bank_open::BankOpen>(),
+    entry::<crate::fire::LightFire>(),
     #[cfg(test)]
     entry::<tests::Probe>(),
     #[cfg(test)]

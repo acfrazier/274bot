@@ -346,6 +346,13 @@ fn start_timeout_without_xp_or_chat_is_stalled() {
     assert_eq!(iso.probe("__ok").unwrap(), Value::Null);
 
     for n in 2..=15 {
+        if n == 15 {
+            assert_eq!(
+                iso.probe("__ok").unwrap(),
+                Value::Null,
+                "the start window is FIRE_START_TICKS (14) steps"
+            );
+        }
         snap.tick = n;
         post(&iso, &snap);
         tick(&iso, n);
@@ -655,7 +662,6 @@ fn tool_restock_plan_is_ordinary_tinderbox_withdraw() {
     assert_eq!(iso.probe("__pick").unwrap(), Value::Null);
     iso.join();
 }
-
 
 // `localFirePlot`, `runInDir` and `NoLightTiles` are one native call each
 // (`__rs2b0t_firemaking`). Expected values are the frozen

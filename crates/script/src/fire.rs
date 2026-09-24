@@ -9,9 +9,12 @@
 //! and the `localFirePlot` half-width live here too; `load::fire_v8` walks the
 //! caller's own `runInDir` callbacks.
 
+use crate::machine::{Begin, Cx, Family, Step};
 use crate::observed::{self, ItemRow, Scene, Text};
+use crate::shim::InteractReq;
 use api::query::ReachQueryView;
 use api::snapshot::WorldTile;
+use serde::Deserialize;
 use serde_json::{json, Value};
 use std::cell::RefCell;
 use std::collections::HashSet;
@@ -26,11 +29,6 @@ const TINDERBOX: &str = "Tinderbox";
 const CANT_LIGHT: &str = "can't light a fire here";
 const FIRE_LOC: &str = "fire";
 const BURN_DIRS: [(i32, i32); 4] = [(-1, 0), (1, 0), (0, -1), (0, 1)];
-
-thread_local! {
-    static RUNTIME: RefCell<FireRuntime> = const { RefCell::new(FireRuntime::new()) };
-    static LAST_TRACE: RefCell<Option<(u64, u64, Phase)>> = const { RefCell::new(None) };
-}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ItemRef {
@@ -230,230 +228,181 @@ fn item_ref(row: &ItemRow) -> Option<ItemRef> {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Phase {
-    Idle,
     /// use-on sent; waiting log drop, cannot-light, or animation.
     WaitStart,
     /// Attempt started; waiting Firemaking XP or cannot-light.
     WaitLight,
 }
 
-struct FireRuntime {
-    paused: bool,
-    held: bool,
-    frozen_tick: Option<u64>,
-    token: u64,
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct LightArgs {
+    log_name: String,
+}
+
+/// One frozen `lightFire`: the use-on went out at begin; each step reads
+/// the scene for the start, the XP or the cannot-light line. Deadlines
+/// count this row's steps (one per eligible tick), so paused and held
+/// ticks never count toward them.
+pub(crate) struct LightFire {
     phase: Phase,
     log_name: String,
-    tinder_id: i32,
-    tinder_slot: i32,
-    log_id: i32,
-    log_slot: i32,
     start_xp: Option<i32>,
     start_logs: i32,
     mark_seq: i32,
-    deadline_tick: Option<u64>,
+    ticks_left: u64,
 }
 
-impl FireRuntime {
-    const fn new() -> Self {
-        Self {
-            paused: false,
-            held: false,
-            frozen_tick: None,
-            token: 0,
-            phase: Phase::Idle,
-            log_name: String::new(),
-            tinder_id: 0,
-            tinder_slot: -1,
-            log_id: 0,
-            log_slot: -1,
-            start_xp: None,
-            start_logs: 0,
-            mark_seq: 0,
-            deadline_tick: None,
+impl Family for LightFire {
+    const NAME: &'static str = "light-fire";
+    /// A new light replaces the one in flight.
+    const EXCLUSIVE: bool = true;
+    type Args = LightArgs;
+    /// The frozen verdict: `lit`, `blocked` or `stalled`.
+    type Output = &'static str;
+
+    fn begin(args: LightArgs, cx: &mut Cx<'_>) -> Begin<Self> {
+        let log_name = args.log_name.trim().to_string();
+        if log_name.is_empty() {
+            trace("begin", "no-match", None);
+            return Begin::Done("stalled");
         }
+        let obs = NativeObservation::observe();
+        if !obs.ingame {
+            return Begin::Done("stalled");
+        }
+        let (Some(tinder), Some(logs)) = (
+            first_named(&obs.inv, TINDERBOX),
+            first_named(&obs.inv, &log_name),
+        ) else {
+            trace("begin", "missing-items", None);
+            return Begin::Done("stalled");
+        };
+        cx.emit(InteractReq::UseOn {
+            name: tinder.name.to_string(),
+            kind: "inv".into(),
+            target_name: Some(logs.name.to_string()),
+            x: 0,
+            z: 0,
+            level: 0,
+            index: None,
+            source_item_id: (tinder.slot >= 0).then_some(tinder.id),
+            source_item_slot: (tinder.slot >= 0).then_some(tinder.slot),
+            target_item_id: (logs.slot >= 0).then_some(logs.id),
+            target_item_slot: (logs.slot >= 0).then_some(logs.slot),
+        });
+        let machine = Self {
+            phase: Phase::WaitStart,
+            start_logs: named_count(&obs.inv, &logs.name),
+            log_name,
+            start_xp: obs.firemaking_xp,
+            mark_seq: obs.chat_max_seq,
+            ticks_left: FIRE_START_TICKS,
+        };
+        trace("begin", "use-on", Some(&machine));
+        Begin::Run(machine)
     }
 
-    fn frozen(&self) -> bool {
-        self.paused || self.held
+    fn step(&mut self, _cx: &mut Cx<'_>) -> Step<&'static str> {
+        let o = NativeObservation::observe();
+        let probe = Probe {
+            ingame: o.ingame,
+            animating: o.animating,
+            firemaking_xp: o.firemaking_xp,
+            inv: &o.inv,
+            cant_light_seq: o.cant_light_seq,
+        };
+        let step = if probe.ingame {
+            self.light_step(&probe)
+        } else {
+            Step::Done("stalled")
+        };
+        if let Step::Done(result) = &step {
+            trace("step", result, Some(self));
+        }
+        step
+    }
+}
+
+impl LightFire {
+    /// Spend one step of the armed window; true once it has run out.
+    fn bound_reached(&mut self) -> bool {
+        self.ticks_left = self.ticks_left.saturating_sub(1);
+        self.ticks_left == 0
     }
 
-    fn set_freeze(&mut self, paused: bool, held: bool, now_tick: u64) {
-        let was_frozen = self.frozen();
-        self.paused = paused;
-        self.held = held;
-        let frozen = self.frozen();
-        if !was_frozen && frozen {
-            self.frozen_tick = Some(now_tick);
-        } else if was_frozen && !frozen {
-            if let Some(at) = self.frozen_tick.take() {
-                if let Some(deadline) = self.deadline_tick.as_mut() {
-                    *deadline = deadline.saturating_add(now_tick.saturating_sub(at));
+    fn started(&self, probe: &Probe<'_>) -> bool {
+        named_count(probe.inv, &self.log_name) < self.start_logs
+            || blocked(probe, self.mark_seq)
+            || probe.animating
+    }
+
+    fn light_step(&mut self, probe: &Probe<'_>) -> Step<&'static str> {
+        if blocked(probe, self.mark_seq) {
+            return Step::Done("blocked");
+        }
+        match self.phase {
+            Phase::WaitStart => {
+                if self.started(probe) {
+                    self.phase = Phase::WaitLight;
+                    self.ticks_left = FIRE_LIGHT_TICKS;
+                    return if lit(probe, self.start_xp) {
+                        Step::Done("lit")
+                    } else {
+                        Step::Wait
+                    };
                 }
+                if self.bound_reached() {
+                    return Step::Done("stalled");
+                }
+                Step::Wait
+            }
+            Phase::WaitLight => {
+                if lit(probe, self.start_xp) {
+                    return Step::Done("lit");
+                }
+                if self.bound_reached() {
+                    return Step::Done("stalled");
+                }
+                Step::Wait
             }
         }
     }
-
-    fn arm_ticks(&mut self, window: u64, now_tick: u64) {
-        self.deadline_tick = Some(now_tick.saturating_add(window));
-    }
-
-    fn bound_reached(&self, now_tick: u64) -> bool {
-        if self.frozen() {
-            return false;
-        }
-        self.deadline_tick
-            .is_some_and(|deadline| now_tick >= deadline)
-    }
-
-    fn abort_runtime(&mut self) {
-        self.token = self.token.wrapping_add(1);
-        self.phase = Phase::Idle;
-        self.log_name.clear();
-        self.tinder_id = 0;
-        self.tinder_slot = -1;
-        self.log_id = 0;
-        self.log_slot = -1;
-        self.start_xp = None;
-        self.start_logs = 0;
-        self.mark_seq = 0;
-        self.deadline_tick = None;
-        self.frozen_tick = None;
-    }
-
-    fn done(&mut self, result: &str, reason: &str) -> Value {
-        let token = self.token;
-        self.phase = Phase::Idle;
-        self.deadline_tick = None;
-        json!({
-            "kind": "done",
-            "token": token,
-            "result": result,
-            "reason": reason,
-        })
-    }
-
-    fn wait(&self) -> Value {
-        json!({ "kind": "wait", "token": self.token })
-    }
-
-    fn use_on(&self, tinder_name: &str, log_name: &str) -> Value {
-        json!({
-            "kind": "ops",
-            "token": self.token,
-            "ops": [{
-                "op": "use-on",
-                "name": tinder_name,
-                "kind": "inv",
-                "target_name": log_name,
-                "x": 0,
-                "z": 0,
-                "level": 0,
-                "index": null,
-                "source_item_id": (self.tinder_slot >= 0).then_some(self.tinder_id),
-                "source_item_slot": (self.tinder_slot >= 0).then_some(self.tinder_slot),
-                "target_item_id": (self.log_slot >= 0).then_some(self.log_id),
-                "target_item_slot": (self.log_slot >= 0).then_some(self.log_slot),
-            }],
-        })
-    }
 }
 
-fn now_tick() -> u64 {
-    observed::with(|scene| scene.tick().unwrap_or(0))
-}
-
-pub fn on_pause() {
-    let tick = now_tick();
-    RUNTIME.with(|rt| {
-        let held = rt.borrow().held;
-        rt.borrow_mut().set_freeze(true, held, tick);
-    });
-}
-
-pub fn on_resume() {
-    let tick = now_tick();
-    RUNTIME.with(|rt| {
-        let held = rt.borrow().held;
-        rt.borrow_mut().set_freeze(false, held, tick);
-    });
-}
-
-pub fn on_hold(held: bool) {
-    let tick = now_tick();
-    RUNTIME.with(|rt| {
-        let paused = rt.borrow().paused;
-        rt.borrow_mut().set_freeze(paused, held, tick);
-    });
-}
-
-pub fn on_reset() {
-    RUNTIME.with(|rt| rt.borrow_mut().abort_runtime());
-    LAST_TRACE.with(|last| *last.borrow_mut() = None);
+/// `BOT_DEBUG=1` diagnostic only: never polls, changes a deadline, or sends
+/// an op.
+fn trace(at: &str, outcome: &str, machine: Option<&LightFire>) {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    if !*ENABLED.get_or_init(|| std::env::var("BOT_DEBUG").as_deref() == Ok("1")) {
+        return;
+    }
+    let obs = NativeObservation::observe();
+    eprintln!(
+        "[fire-trace] at={at} tick={} outcome={outcome} phase={:?} logs={} xp={:?} observed_animating={} tile={:?} ticks_left={:?}",
+        obs.tick,
+        machine.map(|m| m.phase),
+        machine.map_or(0, |m| named_count(&obs.inv, &m.log_name)),
+        obs.firemaking_xp,
+        obs.animating,
+        obs.here,
+        machine.map(|m| m.ticks_left),
+    );
 }
 
 pub fn dispatch(input: &Value) -> Value {
-    let op = input.get("op").and_then(Value::as_str).unwrap_or("");
-    let result = match op {
-        "begin" => begin(input),
-        "next" => next(input.get("token").and_then(Value::as_u64).unwrap_or(0)),
+    match input.get("op").and_then(Value::as_str).unwrap_or("") {
         "next-tile" => next_tile(input),
         "in-fire-plot" => in_fire_plot(input),
         "burn-lane-want" => burn_lane_want(input),
         "is-burn-west" => is_burn_west(input),
         "fire-reaction-ticks" => json!(1),
         _ => json!({ "kind": "notImpl", "reason": "unknown op" }),
-    };
-    if matches!(op, "begin" | "next") {
-        trace_light(op, &result);
     }
-    result
-}
-
-/// Diagnostic observation only: never polls, changes a deadline, or sends an op.
-/// Repeated JS condition checks share one wait line per token/tick/phase.
-fn trace_light(op: &str, result: &Value) {
-    static ENABLED: OnceLock<bool> = OnceLock::new();
-    if !*ENABLED.get_or_init(|| std::env::var("BOT_DEBUG").as_deref() == Ok("1")) {
-        return;
-    }
-    let kind = result.get("kind").and_then(Value::as_str).unwrap_or("");
-    if op == "next" && kind == "aborted" {
-        return;
-    }
-    let obs = NativeObservation::observe();
-    RUNTIME.with(|rt| {
-        let rt = rt.borrow();
-        let key = (rt.token, obs.tick, rt.phase);
-        let duplicate_wait = LAST_TRACE.with(|last| {
-            let mut last = last.borrow_mut();
-            let duplicate = kind == "wait" && *last == Some(key);
-            *last = Some(key);
-            duplicate
-        });
-        if duplicate_wait {
-            return;
-        }
-        eprintln!(
-            "[fire-trace] op={op} token={} tick={} phase={:?} kind={kind} result={} reason={} logs={} xp={:?} observed_animating={} tile={:?} deadline={:?} frozen={}",
-            rt.token,
-            obs.tick,
-            rt.phase,
-            result.get("result").and_then(Value::as_str).unwrap_or("-"),
-            result.get("reason").and_then(Value::as_str).unwrap_or("-"),
-            named_count(&obs.inv, &rt.log_name),
-            obs.firemaking_xp,
-            obs.animating,
-            obs.here,
-            rt.deadline_tick,
-            rt.frozen(),
-        );
-    });
 }
 
 struct Probe<'a> {
     ingame: bool,
-    tick: u64,
     animating: bool,
     firemaking_xp: Option<i32>,
     inv: &'a [ItemRef],
@@ -472,46 +421,6 @@ fn named_count(inv: &[ItemRef], name: &str) -> i32 {
         .sum()
 }
 
-fn begin(input: &Value) -> Value {
-    let log_name = input
-        .get("logName")
-        .or_else(|| input.get("match"))
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .trim()
-        .to_string();
-    if log_name.is_empty() {
-        return json!({ "kind": "done", "result": "stalled", "reason": "no-match" });
-    }
-    let obs = NativeObservation::observe();
-    if !obs.ingame {
-        return json!({ "kind": "aborted", "reason": "not ingame" });
-    }
-    let Some(tinder) = first_named(&obs.inv, TINDERBOX) else {
-        return json!({ "kind": "done", "result": "stalled", "reason": "missing-items" });
-    };
-    let Some(logs) = first_named(&obs.inv, &log_name) else {
-        return json!({ "kind": "done", "result": "stalled", "reason": "missing-items" });
-    };
-    let tinder_name = tinder.name.clone();
-    let log_held = logs.name.clone();
-    RUNTIME.with(|rt| {
-        let mut rt = rt.borrow_mut();
-        rt.abort_runtime();
-        rt.log_name = log_name;
-        rt.tinder_id = tinder.id;
-        rt.tinder_slot = tinder.slot;
-        rt.log_id = logs.id;
-        rt.log_slot = logs.slot;
-        rt.start_xp = obs.firemaking_xp;
-        rt.start_logs = named_count(&obs.inv, &log_held);
-        rt.mark_seq = obs.chat_max_seq;
-        rt.phase = Phase::WaitStart;
-        rt.arm_ticks(FIRE_START_TICKS, obs.tick);
-        rt.use_on(&tinder_name, &log_held)
-    })
-}
-
 fn blocked(probe: &Probe<'_>, mark_seq: i32) -> bool {
     probe.cant_light_seq.is_some_and(|seq| seq > mark_seq)
 }
@@ -520,72 +429,6 @@ fn lit(probe: &Probe<'_>, start_xp: Option<i32>) -> bool {
     match (start_xp, probe.firemaking_xp) {
         (Some(start), Some(now)) => now > start,
         _ => false,
-    }
-}
-
-fn next(token: u64) -> Value {
-    let o = NativeObservation::observe();
-    let probe = Probe {
-        ingame: o.ingame,
-        tick: o.tick,
-        animating: o.animating,
-        firemaking_xp: o.firemaking_xp,
-        inv: &o.inv,
-        cant_light_seq: o.cant_light_seq,
-    };
-    RUNTIME.with(|rt| {
-        let mut rt = rt.borrow_mut();
-        if token != rt.token || rt.phase == Phase::Idle {
-            return json!({ "kind": "aborted", "token": rt.token });
-        }
-        if rt.frozen() {
-            return rt.wait();
-        }
-        if !probe.ingame {
-            return rt.done("stalled", "not-ingame");
-        }
-        light_step(&mut rt, &probe)
-    })
-}
-
-fn started(rt: &FireRuntime, probe: &Probe<'_>) -> bool {
-    named_count(probe.inv, &rt.log_name) < rt.start_logs
-        || blocked(probe, rt.mark_seq)
-        || probe.animating
-}
-
-fn light_step(rt: &mut FireRuntime, probe: &Probe<'_>) -> Value {
-    match rt.phase {
-        Phase::WaitStart => {
-            if blocked(probe, rt.mark_seq) {
-                return rt.done("blocked", "cant-light");
-            }
-            if started(rt, probe) {
-                rt.phase = Phase::WaitLight;
-                rt.arm_ticks(FIRE_LIGHT_TICKS, probe.tick);
-                if lit(probe, rt.start_xp) {
-                    return rt.done("lit", "xp");
-                }
-                return rt.wait();
-            }
-            if rt.bound_reached(probe.tick) {
-                return rt.done("stalled", "start-timeout");
-            }
-            rt.wait()
-        }
-        Phase::WaitLight => {
-            if blocked(probe, rt.mark_seq) {
-                return rt.done("blocked", "cant-light");
-            }
-            if lit(probe, rt.start_xp) {
-                return rt.done("lit", "xp");
-            }
-            if rt.bound_reached(probe.tick) {
-                return rt.done("stalled", "light-timeout");
-            }
-            rt.wait()
-        }
-        Phase::Idle => rt.done("stalled", "idle"),
     }
 }
 
@@ -1111,109 +954,6 @@ mod tests {
         assert_eq!(selected.0.x, 3237);
         assert_eq!(selected.1, (-1, 0));
         assert_eq!(selected.2, 3);
-    }
-
-    #[test]
-    fn start_timeout_is_stalled_without_a_second_use_on() {
-        let mut rt = FireRuntime::new();
-        rt.phase = Phase::WaitStart;
-        rt.log_name = "Logs".into();
-        rt.start_logs = 5;
-        rt.deadline_tick = Some(11);
-        let inv = [ItemRef {
-            name: "Logs".into(),
-            id: 1511,
-            slot: 1,
-            count: 5,
-        }];
-        let probe = Probe {
-            ingame: true,
-            tick: 10,
-            animating: false,
-            firemaking_xp: Some(0),
-            inv: &inv,
-            cant_light_seq: None,
-        };
-        let step = light_step(&mut rt, &probe);
-        assert_eq!(step["kind"], "wait");
-        let probe = Probe { tick: 11, ..probe };
-        let step = light_step(&mut rt, &probe);
-        assert_eq!(step["kind"], "done");
-        assert_eq!(step["result"], "stalled");
-        assert_eq!(step["reason"], "start-timeout");
-        assert_eq!(rt.phase, Phase::Idle);
-    }
-
-    #[test]
-    fn xp_after_start_is_lit() {
-        let mut rt = FireRuntime::new();
-        rt.phase = Phase::WaitLight;
-        rt.start_xp = Some(100);
-        rt.arm_ticks(FIRE_LIGHT_TICKS, 20);
-        let probe = Probe {
-            ingame: true,
-            tick: 21,
-            animating: false,
-            firemaking_xp: Some(140),
-            inv: &[],
-            cant_light_seq: None,
-        };
-        let step = light_step(&mut rt, &probe);
-        assert_eq!(step["result"], "lit");
-        assert_eq!(step["reason"], "xp");
-    }
-
-    #[test]
-    fn cant_light_is_blocked() {
-        let mut rt = FireRuntime::new();
-        rt.phase = Phase::WaitStart;
-        rt.mark_seq = 3;
-        rt.start_logs = 5;
-        rt.log_name = "Logs".into();
-        rt.arm_ticks(FIRE_START_TICKS, 1);
-        let inv = [ItemRef {
-            name: "Logs".into(),
-            id: 1511,
-            slot: 1,
-            count: 5,
-        }];
-        let probe = Probe {
-            ingame: true,
-            tick: 2,
-            animating: false,
-            firemaking_xp: Some(0),
-            inv: &inv,
-            cant_light_seq: Some(4),
-        };
-        let step = light_step(&mut rt, &probe);
-        assert_eq!(step["result"], "blocked");
-    }
-
-    #[test]
-    fn pause_and_hold_freeze_the_tick_deadline() {
-        let mut rt = FireRuntime::new();
-        rt.arm_ticks(FIRE_START_TICKS, 10);
-        let before = rt.deadline_tick.expect("armed");
-        rt.set_freeze(true, false, 10);
-        assert!(rt.frozen());
-        assert!(!rt.bound_reached(100));
-        rt.set_freeze(false, false, 12);
-        assert!(!rt.frozen());
-        assert_eq!(rt.deadline_tick.expect("still armed"), before + 2);
-        rt.set_freeze(false, true, 12);
-        assert!(rt.frozen(), "guardian hold freezes too");
-    }
-
-    #[test]
-    fn abort_runtime_bumps_the_token() {
-        let mut rt = FireRuntime::new();
-        rt.log_name = "Logs".into();
-        rt.phase = Phase::WaitStart;
-        let before = rt.token;
-        rt.abort_runtime();
-        assert_eq!(rt.token, before.wrapping_add(1));
-        assert_eq!(rt.phase, Phase::Idle);
-        assert!(rt.log_name.is_empty());
     }
 
     fn unset_canlight(reach: &mut ReachBits, x: i32, z: i32) {
