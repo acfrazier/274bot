@@ -13,7 +13,8 @@
 use crate::machine::{Begin, Call, Cx, Family, Reply, Step};
 use crate::observed::{self, SceneRow};
 use crate::shim::InteractReq;
-use crate::walk_wait;
+use crate::walk::Walk;
+
 use api::query::SceneReachOptions;
 use api::snapshot::WorldTile;
 use serde::Deserialize;
@@ -184,86 +185,6 @@ fn toward_dest(door: Tile, here: Tile, dest: Tile) -> bool {
     door.cheb(dest) <= here.cheb(dest) + TOWARD_SLACK
 }
 
-/// Frozen `Traversal.walkResilient` as this host maps it: an arrival
-/// check, then one native walk and its settled outcome.
-struct Walk {
-    token: u64,
-}
-
-impl Walk {
-    /// `Err(arrived)` when no walk was needed (or no tile is posted).
-    fn begin(dest: Tile, radius: i32, timeout_ms: u64, cx: &mut Cx<'_>) -> Result<Self, bool> {
-        let Some(here) = here() else {
-            return Err(false);
-        };
-        // Frozen `walkResilient` asks `isArrived` first: the one arrival
-        // rule the walk wait and the host follow share.
-        let arrived = crate::load::reach_query::with_view(|view| {
-            api::query::is_arrived(here.world(), dest.world(), radius, || view)
-        });
-        if arrived {
-            return Err(true);
-        }
-        let token = walk_wait::dispatch(&json!({
-            "op": "begin",
-            "x": dest.x,
-            "z": dest.z,
-            "level": dest.level,
-            "radius": radius,
-            "allow_teleports": false,
-        }))
-        .as_u64()
-        .unwrap_or(0);
-        cx.emit(if radius > 0 {
-            InteractReq::WalkNear {
-                x: dest.x,
-                z: dest.z,
-                level: dest.level,
-                radius,
-                allow_teleports: false,
-                allow_wilderness: true,
-                allow_bank_fetch: true,
-                request_id: token,
-            }
-        } else {
-            InteractReq::Walk {
-                x: dest.x,
-                z: dest.z,
-                level: dest.level,
-                allow_teleports: false,
-                allow_wilderness: true,
-                allow_bank_fetch: true,
-                request_id: token,
-            }
-        });
-        cx.clock().arm(timeout_ms);
-        Ok(Self { token })
-    }
-
-    /// `Some(arrived)` once the walk settled or timed out. A timeout stops
-    /// the host follow (as a returned frozen `walkResilient` has stopped
-    /// its walker), so its next walk packet cannot cancel a later click.
-    fn step(&self, cx: &mut Cx<'_>) -> Option<bool> {
-        let settled = walk_wait::dispatch(&json!({ "op": "settled", "token": self.token }))
-            .as_bool()
-            .unwrap_or(false);
-        if settled {
-            return Some(
-                walk_wait::dispatch(&json!({ "op": "value", "token": self.token }))
-                    .as_bool()
-                    .unwrap_or(false),
-            );
-        }
-        if !cx.clock().bound_reached() {
-            return None;
-        }
-        cx.emit(InteractReq::AbortWalk {
-            request_id: self.token,
-        });
-        Some(false)
-    }
-}
-
 /// Frozen `clearBlockingDoor(toward)`: close a swung leaf that blocks the
 /// last step, else walk to and open the nearest blocking door.
 struct Clear {
@@ -406,11 +327,12 @@ impl Clear {
         let door = loc_tile(&door);
         if here.cheb(door) > 1 {
             // Frozen ignores the walk's result.
-            if let Ok(walk) = Walk::begin(door, 1, DOOR_WALK_MS, cx) {
+            if let Ok(walk) = Walk::begin(door.world(), 1, DOOR_WALK_MS, false, cx) {
                 self.phase = ClearPhase::DoorWalk { door, walk };
                 return Some(None);
             }
         }
+
         self.phase = ClearPhase::DoorOpen { door };
         None
     }
@@ -904,7 +826,7 @@ impl WalkHops {
         let stand = self.hops[hop].stand;
         if stand.distance_to(here) > 2 {
             let to = self.hops[hop].walk.unwrap_or(stand);
-            match Walk::begin(to, 2, WALK_MS, cx) {
+            match Walk::begin(to.world(), 2, WALK_MS, false, cx) {
                 Ok(walk) => {
                     self.phase = HopPhase::HopWalk { hop, walk };
                     return None;
@@ -972,7 +894,7 @@ impl WalkHops {
         if here.level == self.dest.level && self.dest.distance_to(here) <= self.radius {
             return Some(true);
         }
-        match Walk::begin(self.dest, self.radius, WALK_MS, cx) {
+        match Walk::begin(self.dest.world(), self.radius, WALK_MS, false, cx) {
             Ok(walk) => {
                 self.phase = HopPhase::FinalWalk { walk };
                 None
@@ -987,6 +909,8 @@ mod tests {
     use super::*;
     use crate::load::callback_v8::HeldCallback;
     use crate::machine::{self, Called, Outcome, Pending, Started, Take};
+    use crate::walk_wait;
+
 
     /// No script callbacks are held here.
     struct NoJs;

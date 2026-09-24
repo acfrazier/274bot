@@ -1,4 +1,5 @@
-import { snap, queue, proxy, notImpl, arrived } from '../../shim/_kernel.js';
+import { snap, queue, proxy, notImpl, arrived, runMachine } from '../../shim/_kernel.js';
+
 import { Execution } from '../execution/Execution.js';
 
 function allowTeleports(opts) {
@@ -43,39 +44,30 @@ async function walkWorld(tile, opts = {}) {
 
 export const Traversal = proxy('Traversal', {
     walkTo: walkWorld,
-    // Frozen Traversal.walkResilient retries walkTo until arrived, interrupted,
-    // attempts-without-progress, or timeout. A single WalkNear NoPath from a
-    // stale tile (ridge fall exactmove) must not finish the recovery walk.
+    // Frozen Traversal.walkResilient: Rust owns the baked walk, retries,
+    // attempts/no-progress, interrupt and arrival (`walk-resilient`).
     async walkResilient(tile, opts = {}) {
-        const attempts = opts.attempts;
-        if (typeof attempts !== 'number') {
-            return walkWorld(tile, opts);
-        }
-        const radius = opts.radius ?? 0;
-        const timeoutMs = opts.timeoutMs ?? 60_000;
-        const deadline = performance.now() + timeoutMs;
-        const target = { x: tile.x, z: tile.z, level: tile.level ?? 0 };
-        let noProgress = 0;
-        let lastHere = null;
-        while (true) {
-            const here = snap().here;
-            if (!here) return false;
-            if (arrived(target, radius)) return true;
-            const remaining = deadline - performance.now();
-            if (remaining <= 0) return false;
-            const hereKey = here.x + ',' + here.z + ',' + (here.level ?? 0);
-            const ok = await walkWorld(tile, { ...opts, timeoutMs: remaining });
-            if (ok || arrived(target, radius)) return true;
-            if (performance.now() >= deadline) return false;
-            if (lastHere === hereKey) noProgress += 1;
-            else {
-                noProgress = 1;
-                lastHere = hereKey;
-            }
-            if (noProgress >= attempts) return false;
-            await Execution.delayTicks(1);
-        }
+        const out = await runMachine(
+            'walk-resilient',
+            {
+                tile: { x: tile.x, z: tile.z, level: tile.level ?? 0 },
+                opts: {
+                    radius: opts.radius ?? 0,
+                    ...(typeof opts.attempts === 'number'
+                        ? { attempts: Math.floor(opts.attempts) }
+                        : {}),
+                    ...(typeof opts.timeoutMs === 'number'
+                        ? { timeoutMs: Math.floor(opts.timeoutMs) }
+                        : {}),
+                    useTeleportCatalog: allowTeleports(opts),
+                },
+            },
+            { log: typeof opts.log === 'function' ? opts.log : undefined },
+        );
+        if (out.kind === 'refused') return false;
+        return out.kind === 'done' && out.value === true;
     },
+
     preload() {
         // NavWorld already binds at template/Play construction.
     },
