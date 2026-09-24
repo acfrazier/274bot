@@ -15,9 +15,9 @@ pub fn queue_ahead_label(position: u32) -> String {
     }
 }
 
-/// `"{position} of {total}"`, or `None` when either is below 1.
+/// `"{position} of {total}"`, or `None` for an invalid queue place.
 pub fn queue_k_of_n(position: i32, total: i32) -> Option<String> {
-    if position < 1 || total < 1 {
+    if position < 1 || total < 1 || position > total {
         return None;
     }
     Some(format!("{position} of {total}"))
@@ -37,5 +37,7 @@ mod tests {
         assert_eq!(queue_ahead_label(2), "1 bot in front");
         assert_eq!(queue_k_of_n(1, 2).as_deref(), Some("1 of 2"));
         assert_eq!(queue_k_of_n(-1, -1), None);
+        assert_eq!(queue_k_of_n(3, 0), None);
+        assert_eq!(queue_k_of_n(3, 2), None);
     }
 }

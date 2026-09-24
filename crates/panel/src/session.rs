@@ -4128,29 +4128,19 @@ impl Session {
             .map(|s| (s.tile_x, s.tile_z, s.tile_level))
     }
 
-    /// The focused slot's login-FIFO place `(position, total)` while it
-    /// waits for a permit (`position >= 1`), else `None`. The status row
-    /// and the queue card read this; grant clears it to `None`.
+    /// The focused slot's valid login-FIFO place `(position, total)` while
+    /// it waits for a permit, else `None`. A grant or malformed producer
+    /// tuple clears the focused overlay rather than borrowing another slot.
     pub fn focused_queue(&self) -> Option<(i32, i32)> {
         let name = self.focused_name()?;
         self.statuses()
             .iter()
             .find(|s| s.username == name)
-            .filter(|s| s.queue_position >= 1)
-            .map(|s| (s.queue_position, s.queue_total))
-    }
-
-    /// Queue card place: the focused slot if it is waiting, else the FIFO
-    /// head among every waiting wall member. Keeps showing *k of n* once
-    /// the focused slot has granted and later members remain queued.
-    pub fn queue_place(&self) -> Option<(i32, i32)> {
-        if let Some(q) = self.focused_queue() {
-            return Some(q);
-        }
-        self.statuses
-            .iter()
-            .filter(|s| s.queue_position >= 1)
-            .min_by_key(|s| s.queue_position)
+            .filter(|s| {
+                s.queue_position >= 1
+                    && s.queue_total >= 1
+                    && s.queue_position <= s.queue_total
+            })
             .map(|s| (s.queue_position, s.queue_total))
     }
 
