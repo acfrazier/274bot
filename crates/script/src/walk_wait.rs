@@ -204,6 +204,16 @@ impl WalkSlot {
             wait.settled = Some(true);
             return true;
         }
+        // A delta snapshot may omit the walk-outcome family after the
+        // host published. Re-read the merged scene each poll so a
+        // matching note_failure still settles if on_snapshot missed
+        // the one post that carried the field.
+        if wait.matched.is_none() {
+            let outcome = observed::with(HostOutcome::posted);
+            if Self::outcome_matches(outcome, wait) {
+                wait.matched = Some(!outcome.failed);
+            }
+        }
         if let Some(value) = wait.matched {
             wait.settled = Some(value);
             return true;
@@ -451,6 +461,33 @@ mod tests {
         });
         observe(input, fail_native(1, 1, token, 2820, 3556, 0, 1, false));
         assert!(settled(token));
+        assert!(!value(token));
+    }
+
+    #[test]
+    fn nopath_merged_in_scene_without_outcome_family_still_settles() {
+        on_reset();
+        let token = begin(2998, 3916, 0, 1, false);
+        assert!(!settled(token));
+        crate::observed::post(2, |p| {
+            p.walk_outcome(crate::observed::WalkOutcome {
+                seq: 1,
+                generation: 1,
+                request_id: token,
+                failed: true,
+                tile: crate::observed::Tile {
+                    x: 2998,
+                    z: 3916,
+                    level: 0,
+                },
+                radius: 1,
+                allow_teleports: false,
+            });
+        });
+        assert!(
+            settled(token),
+            "note_failure must settle even when the next snapshot omits walk_outcome_seq"
+        );
         assert!(!value(token));
     }
 

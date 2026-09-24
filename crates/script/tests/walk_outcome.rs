@@ -1,8 +1,8 @@
 //! Native walk wait: LoadIsolate + FlatBuffer outcome, not arrival-only timeout.
 
 use script::isolate_fb::{
-    encode_snapshot, encode_snapshot_with_native, NativeFactsInput, ReachViewInput, SnapshotInput,
-    TileInput,
+    encode_snapshot, encode_snapshot_delta_with_native, encode_snapshot_with_native,
+    NativeFactsInput, ReachViewInput, SnapshotInput, TileInput,
 };
 use script::shim::InteractReq;
 use script::{LoadIsolate, LoadShape};
@@ -170,6 +170,44 @@ fn isolate_nopath_outcome_returns_false_promptly() {
         &base_snapshot(2, far()),
         fail_native(1, 0, request_id, 2820, 3556, 1),
     ));
+    iso.on_game_tick(2);
+    assert_eq!(iso.probe("__rs_ok").unwrap(), false);
+    iso.join();
+}
+
+#[test]
+fn isolate_nopath_delta_snapshot_returns_false_promptly() {
+    let iso = LoadIsolate::spawn(walk_src(300_000), LoadShape::CompatClass, vec![]).unwrap();
+    let (keyframe, fp) = encode_snapshot_delta_with_native(
+        None,
+        &base_snapshot(1, far()),
+        NativeFactsInput::default(),
+        false,
+    );
+    iso.post_snapshot(keyframe);
+    iso.on_game_tick(1);
+    assert_eq!(iso.probe("__rs_ok").unwrap(), serde_json::Value::Null);
+    let drained = iso.drain_interacts();
+    let request_id = match &drained[..] {
+        [InteractReq::WalkNear {
+            x: 2820,
+            z: 3556,
+            level: 0,
+            radius: 1,
+            allow_teleports: false,
+            allow_wilderness: true,
+            allow_bank_fetch: true,
+            request_id,
+        }] => *request_id,
+        other => panic!("unexpected interacts: {other:?}"),
+    };
+    let (delta, _) = encode_snapshot_delta_with_native(
+        Some(&fp),
+        &base_snapshot(2, far()),
+        fail_native(1, 0, request_id, 2820, 3556, 1),
+        false,
+    );
+    iso.post_snapshot(delta);
     iso.on_game_tick(2);
     assert_eq!(iso.probe("__rs_ok").unwrap(), false);
     iso.join();
