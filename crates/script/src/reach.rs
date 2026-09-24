@@ -1,16 +1,19 @@
-//! Rust-owned `Reach.npcDialog` sequencing.
+//! Rust-owned `Reach.npcDialog` sequencing, the `reach-npc-dialog`
+//! [`crate::machine`] family.
 //!
-//! JavaScript marshals name/stand/`openMs`/log and dispatches the returned
-//! `walk-near` / `npc` verbs. Matching, clocks, freshness marks, one Clear
+//! JavaScript passes name/stand/`openMs` and awaits the status. The
+//! `walk-near` / `npc` ops, matching, clocks, freshness marks, one Clear
 //! recovery and `done`/`retry`/`unreachable` stay here. Game actions reuse
 //! the existing FlatBuffer walk and npc verbs.
 
 use crate::isolate_fb::SnapshotReader;
+use crate::machine::{Begin, Cx, Family, Step};
 use crate::observed::{self, Ops, Scene, Text};
-use crate::task_clock::InstantTaskClock;
+use crate::shim::InteractReq;
 use crate::walk_wait;
+use serde::Deserialize;
 use serde_json::{json, Value};
-use std::cell::RefCell;
+use std::cell::Cell;
 
 /// Frozen close-in / stand / Clear walk bound.
 pub const WALK_BOUND_MS: u64 = 90_000;
@@ -21,7 +24,8 @@ const STAND_RADIUS: i32 = 1;
 const ADJACENT: i32 = 1;
 
 thread_local! {
-    static RUNTIME: RefCell<ReachRuntime> = const { RefCell::new(ReachRuntime::new()) };
+    /// Posts that carried the `hold || ours` cooperative interrupt.
+    static PENDING_POSTS: Cell<u64> = const { Cell::new(0) };
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -131,7 +135,6 @@ impl Observation {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Phase {
-    Idle,
     CloseIn,
     WalkStand,
     WaitOpen,
@@ -148,9 +151,45 @@ enum WalkSettle {
     Timeout,
 }
 
-struct ReachRuntime {
-    clock: InstantTaskClock,
-    token: u64,
+/// After the isolate applied `snap` to the scene: count a post that carries
+/// the cooperative interrupt, so a live reach or dialogue sees one posted
+/// between its steps.
+pub fn on_snapshot(snap: &SnapshotReader<'_>) {
+    walk_wait::on_snapshot(snap);
+    if observed::with(Observation::pending_in) {
+        PENDING_POSTS.with(|posts| posts.set(posts.get() + 1));
+    }
+}
+
+/// How many posts so far carried the cooperative interrupt.
+pub(crate) fn pending_posts() -> u64 {
+    PENDING_POSTS.with(Cell::get)
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct NpcDialogArgs {
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    near: NearArg,
+    /// A negative, fractional or absent value keeps the frozen 15 s.
+    #[serde(default)]
+    open_ms: Value,
+}
+
+#[derive(Default, Deserialize)]
+struct NearArg {
+    #[serde(default)]
+    x: Value,
+    #[serde(default)]
+    z: Value,
+    #[serde(default)]
+    level: Value,
+}
+
+/// One frozen `Reach.npcDialog`.
+pub(crate) struct NpcDialog {
     phase: Phase,
     npc_name: String,
     near: Tile,
@@ -163,22 +202,42 @@ struct ReachRuntime {
     npc_action: String,
     npc_index: i32,
     npc_tile: Tile,
-    interrupted: bool,
+    /// [`pending_posts`] when the reach began.
+    pending_mark: u64,
 }
 
-impl ReachRuntime {
-    const fn new() -> Self {
-        Self {
-            clock: InstantTaskClock::new(),
-            token: 0,
-            phase: Phase::Idle,
-            npc_name: String::new(),
+impl Family for NpcDialog {
+    const NAME: &'static str = "reach-npc-dialog";
+    /// A new reach replaces the one in flight.
+    const EXCLUSIVE: bool = true;
+    type Args = NpcDialogArgs;
+    /// `done`, `retry` or `unreachable`.
+    type Output = &'static str;
+
+    fn begin(args: NpcDialogArgs, cx: &mut Cx<'_>) -> Begin<Self> {
+        let obs = observed::with(Observation::from_scene);
+        if !obs.ingame || obs.pending() {
+            return Begin::Done("retry");
+        }
+        let open_ms = args
+            .open_ms
+            .as_u64()
+            .or_else(|| {
+                args.open_ms
+                    .as_f64()
+                    .filter(|n| *n >= 0.0)
+                    .map(|n| n as u64)
+            })
+            .unwrap_or(OPEN_MS);
+        let mut reach = Self {
+            phase: Phase::WaitOpen,
+            npc_name: args.name.trim().to_string(),
             near: Tile {
-                x: 0,
-                z: 0,
-                level: 0,
+                x: json_i32(&args.near.x),
+                z: json_i32(&args.near.z),
+                level: json_i32(&args.near.level),
             },
-            open_ms: OPEN_MS,
+            open_ms,
             walk_token: 0,
             armed_modal: -1,
             armed_continue: false,
@@ -191,331 +250,196 @@ impl ReachRuntime {
                 z: 0,
                 level: 0,
             },
-            interrupted: false,
-        }
-    }
-
-    fn frozen(&self) -> bool {
-        self.clock.frozen()
-    }
-
-    fn set_freeze(&mut self, paused: bool, held: bool) {
-        self.clock.set_freeze(paused, held);
-    }
-
-    fn arm(&mut self, window: u64) {
-        self.clock.arm(window);
-    }
-
-    fn bound_reached(&self) -> bool {
-        self.clock.bound_reached()
-    }
-
-    fn abort_runtime(&mut self) {
-        self.token = self.token.wrapping_add(1);
-        if self.token == 0 {
-            self.token = 1;
-        }
-        self.phase = Phase::Idle;
-        self.npc_name.clear();
-        self.near = Tile {
-            x: 0,
-            z: 0,
-            level: 0,
+            pending_mark: pending_posts(),
         };
-        self.open_ms = OPEN_MS;
-        self.walk_token = 0;
-        self.armed_modal = -1;
-        self.armed_continue = false;
-        self.armed_seq = 0;
-        self.cleared = false;
-        self.npc_action.clear();
-        self.npc_index = -1;
-        self.interrupted = false;
-        self.clock.deadline = None;
-    }
-
-    fn finish(&mut self, status: &str, log: Option<String>) -> Value {
-        let token = self.token;
-        self.phase = Phase::Idle;
-        self.clock.deadline = None;
-        with_log(
-            json!({
-                "kind": "done",
-                "token": token,
-                "status": status,
-            }),
-            log,
-        )
-    }
-
-    fn wait(&self) -> Value {
-        json!({ "kind": "wait", "token": self.token })
-    }
-
-    fn npc_verb(&self) -> Value {
-        json!({
-            "kind": "npc",
-            "token": self.token,
-            "name": self.npc_name,
-            "action": self.npc_action,
-            "index": self.npc_index,
-        })
-    }
-}
-
-/// After the isolate applied `snap` to the scene: a live reach notes the
-/// posted cooperative interrupt.
-pub fn on_snapshot(snap: &SnapshotReader<'_>) {
-    walk_wait::on_snapshot(snap);
-    let pending = observed::with(Observation::pending_in);
-    RUNTIME.with(|rt| {
-        let mut rt = rt.borrow_mut();
-        if rt.phase != Phase::Idle && pending {
-            rt.interrupted = true;
+        match reach.start(&obs, cx) {
+            Step::Done(status) => Begin::Done(status),
+            _ => Begin::Run(reach),
         }
-    });
-}
+    }
 
-pub fn on_pause() {
-    RUNTIME.with(|rt| {
-        let held = rt.borrow().clock.held;
-        rt.borrow_mut().set_freeze(true, held);
-    });
-}
-
-pub fn on_resume() {
-    RUNTIME.with(|rt| {
-        let held = rt.borrow().clock.held;
-        rt.borrow_mut().set_freeze(false, held);
-    });
-}
-
-pub fn on_hold(held: bool) {
-    RUNTIME.with(|rt| {
-        let paused = rt.borrow().clock.paused;
-        rt.borrow_mut().set_freeze(paused, held);
-    });
-}
-
-pub fn on_reset() {
-    RUNTIME.with(|rt| rt.borrow_mut().abort_runtime());
-}
-
-pub fn dispatch(input: &Value) -> Value {
-    match input.get("op").and_then(Value::as_str).unwrap_or("") {
-        "begin" => begin(input),
-        "next" => next(input.get("token").and_then(Value::as_u64).unwrap_or(0)),
-        _ => json!({ "kind": "notImpl", "reason": "unknown op" }),
+    fn step(&mut self, cx: &mut Cx<'_>) -> Step<&'static str> {
+        let obs = observed::with(Observation::from_scene);
+        if !obs.ingame || pending_posts() != self.pending_mark || obs.pending() {
+            return Step::Done("retry");
+        }
+        match self.phase {
+            Phase::CloseIn | Phase::WalkStand | Phase::Clear => self.walk_step(&obs, cx),
+            Phase::WaitOpen => self.wait_open(&obs, cx),
+        }
     }
 }
 
-fn begin(input: &Value) -> Value {
-    let npc_name = input
-        .get("name")
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .trim()
-        .to_string();
-    let near = read_tile(input);
-    let open_ms = match input.get("openMs") {
-        Some(value) if value.is_u64() || value.is_i64() => value
-            .as_u64()
-            .or_else(|| value.as_i64().and_then(|n| u64::try_from(n).ok()))
-            .unwrap_or(OPEN_MS),
-        _ => OPEN_MS,
-    };
-    let obs = observed::with(Observation::from_scene);
-    RUNTIME.with(|rt| {
-        let mut rt = rt.borrow_mut();
-        rt.abort_runtime();
-        rt.npc_name = npc_name;
-        rt.near = near;
-        rt.open_ms = open_ms;
-        if !obs.ingame {
-            return json!({ "kind": "aborted", "token": rt.token });
-        }
-        if obs.pending() {
-            rt.interrupted = true;
-            return rt.finish("retry", None);
-        }
-        start(&mut rt, &obs)
-    })
-}
-
-fn start(rt: &mut ReachRuntime, obs: &Observation) -> Value {
-    if obs.is_open() {
-        return if owned_adjacent(obs, &rt.npc_name) {
-            rt.finish("done", None)
-        } else {
-            rt.finish("retry", None)
-        };
-    }
-    match talk_target(&obs.npcs, &rt.npc_name) {
-        None => {
-            if within(obs.here, rt.near, CLOSE_IN_RADIUS) {
-                return rt.finish("retry", None);
-            }
-            emit_walk(rt, Phase::CloseIn, rt.near, CLOSE_IN_RADIUS)
-        }
-        Some(npc) => {
-            remember_npc(rt, npc);
-            if within(obs.here, rt.near, STAND_RADIUS) {
-                emit_talk(rt, obs)
+impl NpcDialog {
+    fn start(&mut self, obs: &Observation, cx: &mut Cx<'_>) -> Step<&'static str> {
+        if obs.is_open() {
+            return Step::Done(if owned_adjacent(obs, &self.npc_name) {
+                "done"
             } else {
-                emit_walk(rt, Phase::WalkStand, rt.near, STAND_RADIUS)
+                "retry"
+            });
+        }
+        match talk_target(&obs.npcs, &self.npc_name) {
+            None => {
+                if within(obs.here, self.near, CLOSE_IN_RADIUS) {
+                    return Step::Done("retry");
+                }
+                self.emit_walk(Phase::CloseIn, self.near, CLOSE_IN_RADIUS, cx)
+            }
+            Some(npc) => {
+                self.remember_npc(npc);
+                if within(obs.here, self.near, STAND_RADIUS) {
+                    self.emit_talk(obs, cx)
+                } else {
+                    self.emit_walk(Phase::WalkStand, self.near, STAND_RADIUS, cx)
+                }
             }
         }
     }
-}
 
-fn next(token: u64) -> Value {
-    let obs = observed::with(Observation::from_scene);
-    RUNTIME.with(|rt| {
-        let mut rt = rt.borrow_mut();
-        if token != rt.token || rt.phase == Phase::Idle {
-            return json!({ "kind": "aborted", "token": rt.token });
-        }
-        if rt.frozen() {
-            return rt.wait();
-        }
-        if !obs.ingame {
-            return json!({ "kind": "aborted", "token": rt.token });
-        }
-        if rt.interrupted || obs.pending() {
-            return rt.finish("retry", None);
-        }
-        match rt.phase {
-            Phase::Idle => json!({ "kind": "aborted", "token": rt.token }),
-            Phase::CloseIn | Phase::WalkStand | Phase::Clear => walk_step(&mut rt, &obs),
-            Phase::WaitOpen => wait_open(&mut rt, &obs),
-        }
-    })
-}
-
-fn walk_step(rt: &mut ReachRuntime, obs: &Observation) -> Value {
-    match walk_settle(rt) {
-        WalkSettle::Pending => rt.wait(),
-        WalkSettle::Failed if rt.phase == Phase::Clear => rt.finish("unreachable", None),
-        WalkSettle::Arrived | WalkSettle::Failed | WalkSettle::Timeout => match rt.phase {
-            Phase::CloseIn => rt.finish("retry", None),
-            Phase::WalkStand | Phase::Clear => match talk_target(&obs.npcs, &rt.npc_name) {
-                Some(npc) => {
-                    remember_npc(rt, npc);
-                    emit_talk(rt, obs)
-                }
-                None => rt.finish("retry", None),
+    fn walk_step(&mut self, obs: &Observation, cx: &mut Cx<'_>) -> Step<&'static str> {
+        match self.walk_settle(cx) {
+            WalkSettle::Pending => Step::Wait,
+            WalkSettle::Failed if self.phase == Phase::Clear => Step::Done("unreachable"),
+            WalkSettle::Arrived | WalkSettle::Failed | WalkSettle::Timeout => match self.phase {
+                Phase::WalkStand | Phase::Clear => match talk_target(&obs.npcs, &self.npc_name) {
+                    Some(npc) => {
+                        self.remember_npc(npc);
+                        self.emit_talk(obs, cx)
+                    }
+                    None => Step::Done("retry"),
+                },
+                Phase::CloseIn | Phase::WaitOpen => Step::Done("retry"),
             },
-            Phase::Idle | Phase::WaitOpen => rt.finish("retry", None),
-        },
-    }
-}
-
-fn wait_open(rt: &mut ReachRuntime, obs: &Observation) -> Value {
-    if fresh_ready(rt, obs) {
-        return rt.finish("done", None);
-    }
-    if fresh_cant_reach(rt, obs) {
-        if rt.cleared {
-            return rt.finish("unreachable", None);
         }
-        let Some(npc) = talk_target(&obs.npcs, &rt.npc_name).or_else(|| {
-            if rt.npc_index >= 0 {
-                Some(Npc {
-                    name: Text::from(rt.npc_name.as_str()),
-                    actions: std::iter::once(Text::from(rt.npc_action.as_str())).collect(),
-                    index: rt.npc_index,
-                    tile: rt.npc_tile,
+    }
+
+    fn wait_open(&mut self, obs: &Observation, cx: &mut Cx<'_>) -> Step<&'static str> {
+        if self.fresh_ready(obs) {
+            return Step::Done("done");
+        }
+        if self.fresh_cant_reach(obs) {
+            if self.cleared {
+                return Step::Done("unreachable");
+            }
+            let Some(npc) = talk_target(&obs.npcs, &self.npc_name).or_else(|| {
+                (self.npc_index >= 0).then(|| Npc {
+                    name: Text::from(self.npc_name.as_str()),
+                    actions: std::iter::once(Text::from(self.npc_action.as_str())).collect(),
+                    index: self.npc_index,
+                    tile: self.npc_tile,
                     distance: 0,
                     reachable_adj: false,
                 })
-            } else {
-                None
+            }) else {
+                return Step::Done("retry");
+            };
+            if npc.reachable_adj {
+                return Step::Done("unreachable");
             }
-        }) else {
-            return rt.finish("retry", None);
-        };
-        if npc.reachable_adj {
-            return rt.finish("unreachable", None);
+            self.remember_npc(npc);
+            self.cleared = true;
+            return self.emit_walk(Phase::Clear, self.npc_tile, STAND_RADIUS, cx);
         }
-        remember_npc(rt, npc);
-        rt.cleared = true;
-        return emit_walk(rt, Phase::Clear, rt.npc_tile, STAND_RADIUS);
+        if cx.clock().bound_reached() {
+            return Step::Done("retry");
+        }
+        Step::Wait
     }
-    if rt.bound_reached() {
-        return rt.finish("retry", None);
+
+    fn emit_talk(&mut self, obs: &Observation, cx: &mut Cx<'_>) -> Step<&'static str> {
+        self.armed_modal = obs.chat_modal_id;
+        self.armed_continue = obs.chat_continue;
+        self.armed_seq = obs.max_chat_seq();
+        self.phase = Phase::WaitOpen;
+        cx.clock().arm(self.open_ms);
+        cx.emit(InteractReq::Npc {
+            name: self.npc_name.clone(),
+            action: self.npc_action.clone(),
+            index: Some(self.npc_index),
+        });
+        Step::Wait
     }
-    rt.wait()
-}
 
-fn emit_talk(rt: &mut ReachRuntime, obs: &Observation) -> Value {
-    rt.armed_modal = obs.chat_modal_id;
-    rt.armed_continue = obs.chat_continue;
-    rt.armed_seq = obs.max_chat_seq();
-    rt.phase = Phase::WaitOpen;
-    rt.arm(rt.open_ms);
-    rt.npc_verb()
-}
+    fn emit_walk(
+        &mut self,
+        phase: Phase,
+        dest: Tile,
+        radius: i32,
+        cx: &mut Cx<'_>,
+    ) -> Step<&'static str> {
+        self.phase = phase;
+        cx.clock().arm(WALK_BOUND_MS);
+        self.walk_token = walk_wait::dispatch(&json!({
+            "op": "begin",
+            "x": dest.x,
+            "z": dest.z,
+            "level": dest.level,
+            "radius": radius,
+            "allow_teleports": false,
+        }))
+        .as_u64()
+        .unwrap_or(0);
+        cx.emit(InteractReq::WalkNear {
+            x: dest.x,
+            z: dest.z,
+            level: dest.level,
+            radius,
+            allow_teleports: false,
+            allow_wilderness: true,
+            allow_bank_fetch: true,
+            request_id: self.walk_token,
+        });
+        Step::Wait
+    }
 
-fn emit_walk(rt: &mut ReachRuntime, phase: Phase, dest: Tile, radius: i32) -> Value {
-    rt.phase = phase;
-    rt.arm(WALK_BOUND_MS);
-    let walk_token = walk_wait::dispatch(&json!({
-        "op": "begin",
-        "x": dest.x,
-        "z": dest.z,
-        "level": dest.level,
-        "radius": radius,
-        "allow_teleports": false,
-    }))
-    .as_u64()
-    .unwrap_or(0);
-    rt.walk_token = walk_token;
-    json!({
-        "kind": "walk-near",
-        "token": rt.token,
-        "x": dest.x,
-        "z": dest.z,
-        "level": dest.level,
-        "radius": radius,
-        "allow_teleports": false,
-        "allow_wilderness": true,
-        "allow_bank_fetch": true,
-        "request_id": walk_token,
-    })
-}
-
-fn walk_settle(rt: &ReachRuntime) -> WalkSettle {
-    let settled = walk_wait::dispatch(&json!({
-        "op": "settled",
-        "token": rt.walk_token,
-    }))
-    .as_bool()
-    .unwrap_or(false);
-    if settled {
-        if walk_wait::dispatch(&json!({
-            "op": "value",
-            "token": rt.walk_token,
+    fn walk_settle(&self, cx: &mut Cx<'_>) -> WalkSettle {
+        let settled = walk_wait::dispatch(&json!({
+            "op": "settled",
+            "token": self.walk_token,
         }))
         .as_bool()
-        .unwrap_or(false)
-        {
-            WalkSettle::Arrived
+        .unwrap_or(false);
+        if settled {
+            if walk_wait::dispatch(&json!({
+                "op": "value",
+                "token": self.walk_token,
+            }))
+            .as_bool()
+            .unwrap_or(false)
+            {
+                WalkSettle::Arrived
+            } else {
+                WalkSettle::Failed
+            }
+        } else if cx.clock().bound_reached() {
+            WalkSettle::Timeout
         } else {
-            WalkSettle::Failed
+            WalkSettle::Pending
         }
-    } else if rt.bound_reached() {
-        WalkSettle::Timeout
-    } else {
-        WalkSettle::Pending
     }
-}
 
-fn remember_npc(rt: &mut ReachRuntime, npc: Npc) {
-    rt.npc_name = npc.name.to_string();
-    rt.npc_action = talk_op(&npc.actions).unwrap_or("Talk-to").to_string();
-    rt.npc_index = npc.index;
-    rt.npc_tile = npc.tile;
+    fn remember_npc(&mut self, npc: Npc) {
+        self.npc_name = npc.name.to_string();
+        self.npc_action = talk_op(&npc.actions).unwrap_or("Talk-to").to_string();
+        self.npc_index = npc.index;
+        self.npc_tile = npc.tile;
+    }
+
+    fn fresh_ready(&self, obs: &Observation) -> bool {
+        if !obs.dialog_ready() {
+            return false;
+        }
+        obs.chat_modal_id != self.armed_modal
+            || (obs.is_open() && self.armed_modal == -1)
+            || (obs.chat_continue && !self.armed_continue)
+    }
+
+    fn fresh_cant_reach(&self, obs: &Observation) -> bool {
+        obs.chat_lines
+            .iter()
+            .any(|(seq, text)| *seq > self.armed_seq && is_cant_reach(text))
+    }
 }
 
 fn owned_adjacent(obs: &Observation, name: &str) -> bool {
@@ -559,21 +483,6 @@ fn talk_op(actions: &[Text]) -> Option<&str> {
     })
 }
 
-fn fresh_ready(rt: &ReachRuntime, obs: &Observation) -> bool {
-    if !obs.dialog_ready() {
-        return false;
-    }
-    obs.chat_modal_id != rt.armed_modal
-        || (obs.is_open() && rt.armed_modal == -1)
-        || (obs.chat_continue && !rt.armed_continue)
-}
-
-fn fresh_cant_reach(rt: &ReachRuntime, obs: &Observation) -> bool {
-    obs.chat_lines
-        .iter()
-        .any(|(seq, text)| *seq > rt.armed_seq && is_cant_reach(text))
-}
-
 fn is_cant_reach(text: &str) -> bool {
     const PREFIX: &[u8] = b"i can't reach that";
     let bytes = text.as_bytes();
@@ -588,41 +497,18 @@ fn chebyshev(a: Tile, b: Tile) -> i32 {
     (a.x - b.x).abs().max((a.z - b.z).abs())
 }
 
-fn read_tile(input: &Value) -> Tile {
-    let src = input.get("near").unwrap_or(input);
-    Tile {
-        x: json_i32(src.get("x")),
-        z: json_i32(src.get("z")),
-        level: json_i32(src.get("level")),
-    }
-}
-
-fn json_i32(value: Option<&Value>) -> i32 {
+/// A whole JS number (a float beyond int32), else 0.
+fn json_i32(value: &Value) -> i32 {
     value
-        .and_then(Value::as_i64)
+        .as_i64()
+        .or_else(|| {
+            value
+                .as_f64()
+                .filter(|n| n.fract() == 0.0)
+                .map(|n| n as i64)
+        })
         .and_then(|n| i32::try_from(n).ok())
         .unwrap_or(0)
-}
-
-fn with_log(mut value: Value, log: Option<String>) -> Value {
-    if let Some(log) = log {
-        value["log"] = json!(log);
-    }
-    value
-}
-
-#[cfg(test)]
-pub(crate) fn expire_deadline_for_test() {
-    use std::time::{Duration, Instant};
-    RUNTIME.with(|rt| {
-        let mut rt = rt.borrow_mut();
-        rt.clock.deadline = Some(
-            rt.clock
-                .now()
-                .checked_sub(Duration::from_millis(1))
-                .unwrap_or_else(Instant::now),
-        );
-    });
 }
 
 #[cfg(test)]
@@ -632,6 +518,7 @@ mod tests {
         encode_snapshot, encode_snapshot_with_native, ChatLineInput, NativeFactsInput,
         ReachViewInput, SceneEntityInput, SnapshotInput, TileInput,
     };
+    use crate::machine::{self, Called, Handle, Outcome, Pending, Reply, Started, Take};
 
     fn npc<'a>(
         name: &'a str,
@@ -753,25 +640,91 @@ mod tests {
         on_snapshot(&snap);
     }
 
-    fn begin_named(name: &str, x: i32, z: i32, open_ms: Option<u64>) -> Value {
-        let mut payload = json!({
-            "op": "begin",
-            "name": name,
-            "x": x,
-            "z": z,
-            "level": 0,
-        });
-        if let Some(open_ms) = open_ms {
-            payload["openMs"] = json!(open_ms);
+    /// No script callbacks: the reach machine calls none.
+    struct NoJs;
+
+    impl machine::Js for NoJs {
+        fn queue_len(&mut self) -> usize {
+            0
         }
-        dispatch(&payload)
+
+        fn call(
+            &mut self,
+            _hook: Option<&crate::load::callback_v8::HeldCallback>,
+            _args: &[Value],
+        ) -> Called {
+            panic!("reach calls no script callback");
+        }
+
+        fn poll(&mut self, _pending: &Pending) -> Option<Reply> {
+            panic!("reach calls no script callback");
+        }
+
+        fn claimed(&mut self) -> bool {
+            false
+        }
     }
 
+    /// What a begin or a step did, as a page: the op it sent (`npc` /
+    /// `walk-near` with the op's fields), `wait`, or its settled `status`.
+    fn page(handle: Option<Handle>, out: Option<Outcome>) -> Value {
+        let ops = machine::merge_ops(Vec::new());
+        let mut page = match (out, ops.first()) {
+            (Some(Outcome::Done(status)), None) => json!({ "kind": "done", "status": status }),
+            (Some(Outcome::Aborted(_)), None) => json!({ "kind": "aborted" }),
+            (
+                None,
+                Some(InteractReq::Npc {
+                    name,
+                    action,
+                    index,
+                }),
+            ) => json!({ "kind": "npc", "name": name, "action": action, "index": index }),
+            (
+                None,
+                Some(InteractReq::WalkNear {
+                    x,
+                    z,
+                    level,
+                    radius,
+                    request_id,
+                    ..
+                }),
+            ) => json!({
+                "kind": "walk-near",
+                "x": x,
+                "z": z,
+                "level": level,
+                "radius": radius,
+                "request_id": request_id,
+            }),
+            (None, None) => json!({ "kind": "wait" }),
+            other => panic!("unexpected reach page {other:?}"),
+        };
+        page["token"] = json!(handle);
+        page
+    }
+
+    fn begin_named(name: &str, x: i32, z: i32, open_ms: Option<u64>) -> Value {
+        let mut args = json!({ "name": name, "near": { "x": x, "z": z, "level": 0 } });
+        if let Some(open_ms) = open_ms {
+            args["openMs"] = json!(open_ms);
+        }
+        match machine::start("reach-npc-dialog", args, Vec::new(), 0) {
+            Started::Running(handle) => page(Some(handle), None),
+            Started::Settled(out) => page(None, Some(out)),
+            Started::Refused(why) => panic!("refused: {why}"),
+        }
+    }
+
+    /// One tick: every live reach steps once.
     fn next_token(step: &Value) -> Value {
-        dispatch(&json!({
-            "op": "next",
-            "token": step["token"].as_u64().unwrap_or(0),
-        }))
+        let handle = step["token"].as_u64().expect("a running reach");
+        machine::step(&mut NoJs);
+        match machine::take(handle) {
+            Take::Settled(out) => page(Some(handle), Some(out)),
+            Take::Pending => page(Some(handle), None),
+        }
     }
 
     fn fail_native(request_id: u64, x: i32, z: i32, radius: i32) -> NativeFactsInput<'static> {
@@ -790,7 +743,7 @@ mod tests {
     }
 
     fn reset() {
-        on_reset();
+        machine::on_reset();
         walk_wait::on_reset();
         observed::on_reset();
         let bytes = encode_snapshot(&base());
@@ -1095,7 +1048,7 @@ mod tests {
         observe(&snap, NativeFactsInput::default());
         let clear = next_token(&talk);
         assert_eq!(clear["kind"], "walk-near");
-        expire_deadline_for_test();
+        machine::tests::expire_deadlines();
         let step = next_token(&clear);
         assert_eq!(step["kind"], "npc");
         assert_ne!(step["status"], "unreachable");
@@ -1126,7 +1079,7 @@ mod tests {
         observe(&snap, NativeFactsInput::default());
         let talk = begin_named("Traiborn", 5, 5, Some(0));
         assert_eq!(talk["kind"], "npc");
-        expire_deadline_for_test();
+        machine::tests::expire_deadlines();
         assert_eq!(next_token(&talk)["status"], "retry");
     }
 
@@ -1139,9 +1092,9 @@ mod tests {
         snap.npcs = &npcs;
         observe(&snap, NativeFactsInput::default());
         let talk = begin_named("Traiborn", 5, 5, None);
-        on_pause();
+        machine::on_pause();
         assert_eq!(next_token(&talk)["kind"], "wait");
-        on_resume();
+        machine::on_resume();
         snap.ours = true;
         observe(&snap, NativeFactsInput::default());
         assert_eq!(next_token(&talk)["status"], "retry");
@@ -1149,19 +1102,26 @@ mod tests {
         snap.ours = false;
         observe(&snap, NativeFactsInput::default());
         let again = begin_named("Traiborn", 5, 5, None);
-        let stale = talk["token"].as_u64().unwrap();
-        on_reset();
-        assert_eq!(
-            dispatch(&json!({ "op": "next", "token": stale }))["kind"],
-            "aborted"
-        );
-        assert_eq!(
-            dispatch(&json!({
-                "op": "next",
-                "token": again["token"].as_u64().unwrap()
-            }))["kind"],
-            "aborted"
-        );
+        assert_eq!(again["kind"], "npc");
+        machine::on_reset();
+        assert_eq!(next_token(&again)["kind"], "aborted");
+        assert!(machine::merge_ops(Vec::new()).is_empty());
+    }
+
+    #[test]
+    fn a_pending_post_between_steps_still_interrupts() {
+        reset();
+        let actions = ["Talk-to".to_string()];
+        let npcs = [npc("Traiborn", &actions, 4, 6, 5, 1, true)];
+        let mut snap = base();
+        snap.npcs = &npcs;
+        observe(&snap, NativeFactsInput::default());
+        let talk = begin_named("Traiborn", 5, 5, None);
+        snap.hold = true;
+        observe(&snap, NativeFactsInput::default());
+        snap.hold = false;
+        observe(&snap, NativeFactsInput::default());
+        assert_eq!(next_token(&talk)["status"], "retry");
     }
 
     #[test]

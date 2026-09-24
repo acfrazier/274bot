@@ -400,13 +400,6 @@ pub(super) fn wire_runtime(
         })
         .map_err(|e| format!("register clue: {e}"))?;
     runtime
-        .register_function("__rs2b0t_reach", move |args: &[serde_json::Value]| {
-            Ok(crate::reach::dispatch(
-                args.first().unwrap_or(&serde_json::Value::Null),
-            ))
-        })
-        .map_err(|e| format!("register reach: {e}"))?;
-    runtime
         .register_function("__rs2b0t_fire", move |args: &[serde_json::Value]| {
             Ok(crate::fire::dispatch(
                 args.first().unwrap_or(&serde_json::Value::Null),

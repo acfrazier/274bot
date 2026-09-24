@@ -1902,7 +1902,6 @@ fn tick_loop(
                             crate::dialog::on_hold(host_hold);
                             crate::quest_journal::on_hold(host_hold);
                             crate::clue::on_hold(host_hold);
-                            crate::reach::on_hold(host_hold);
                             crate::trade::on_hold(host_hold);
                             crate::drive_partner_trade::on_hold(host_hold);
                         }
@@ -2267,7 +2266,6 @@ fn tick_loop(
                 crate::dialog::on_reset();
                 crate::quest_journal::on_reset();
                 crate::clue::on_reset();
-                crate::reach::on_reset();
                 crate::trade::on_reset();
                 crate::drive_partner_trade::on_reset();
                 event_producer.reset();
@@ -2325,7 +2323,6 @@ fn tick_loop(
                 crate::dialog::on_pause();
                 crate::quest_journal::on_pause();
                 crate::clue::on_pause();
-                crate::reach::on_pause();
                 crate::trade::on_pause();
                 crate::drive_partner_trade::on_pause();
                 clear_unconsumed_paint_click(&mut runtime);
@@ -2348,7 +2345,6 @@ fn tick_loop(
                 crate::dialog::on_resume();
                 crate::quest_journal::on_resume();
                 crate::clue::on_resume();
-                crate::reach::on_resume();
                 crate::trade::on_resume();
                 crate::drive_partner_trade::on_resume();
             }

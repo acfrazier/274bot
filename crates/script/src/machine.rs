@@ -369,6 +369,7 @@ const FAMILIES: &[Entry] = &[
     entry::<crate::fire::LightFire>(),
     entry::<crate::shop::Shop>(),
     entry::<crate::production::ChatDialog>(),
+    entry::<crate::reach::NpcDialog>(),
     #[cfg(test)]
     entry::<tests::Probe>(),
     #[cfg(test)]
@@ -1240,6 +1241,17 @@ pub(crate) mod tests {
 
     fn freeze(paused: bool, held: bool) {
         HOST.with(|host| host.borrow_mut().set_freeze(paused, held));
+    }
+
+    /// Every live row's armed deadline has passed (family unit tests).
+    pub(crate) fn expire_deadlines() {
+        HOST.with(|host| {
+            for row in &mut host.borrow_mut().rows {
+                if row.clock.deadline.is_some() {
+                    row.clock.deadline = Some(std::time::Instant::now() - Duration::from_millis(1));
+                }
+            }
+        });
     }
 
     #[test]
