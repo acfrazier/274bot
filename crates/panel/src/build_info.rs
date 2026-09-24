@@ -49,7 +49,7 @@ pub fn build_tooltip() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{git_stamp, line, tooltip, RELEASE, SHORT, VERSION};
+    use super::{git_stamp, line, tooltip, SHORT};
 
     #[test]
     fn git_stamp_is_short_or_short_dirty() {

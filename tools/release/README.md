@@ -24,7 +24,7 @@ Example, after recording the build receipt:
 
 ```sh
 python3 tools/release/package.py --platform macos \
-  --input target/release --output .superpowers/release/274bot-0.1.7-macos-arm64 \
+  --input target/release --output .superpowers/release/274bot-0.1.8-macos-arm64 \
   --build-receipt .superpowers/release/macos-build.json \
   --app-profile public-289 --sign-identity YOUR_DEVELOPER_ID_IDENTITY_SHA1
 ```

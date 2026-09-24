@@ -242,11 +242,45 @@ fn derive_transports_with_skips(
     zanaris_door_edges(content_root, &ids, &positions, &mut graph, &mut skipped);
     teleport_edges(content_root, &mut graph, &mut skipped);
 
+    // The derivers visit hash sets and directory listings whose order varies
+    // per run and per filesystem. A revision's pack must be a fixed point of
+    // its inputs, so edges are put in a canonical order before indexing.
+    graph.edges.sort_by(edge_order);
+    graph.teleports.sort_by(edge_order);
     for (i, e) in graph.edges.iter().enumerate() {
         graph.at.entry(e.at).or_default().push(i);
     }
 
     (graph, skipped)
+}
+
+/// Canonical pack order: by kind, loc and interact tile, then by every other
+/// packed field. Jewellery rubs and spirit-tree destinations are the
+/// exception: their relative order is the script's dialog choice order that
+/// the traveller answers by position (`dest_dialog_choice`), so a sibling
+/// family compares equal and the stable sort keeps the emitted order.
+fn edge_order(a: &TransportEdge, b: &TransportEdge) -> std::cmp::Ordering {
+    fn tile(t: WorldTile) -> (i32, i32, i32) {
+        (t.level, t.x, t.z)
+    }
+    fn rest(e: &TransportEdge) -> impl Ord + '_ {
+        (
+            tile(e.to),
+            (e.option, e.ticks, e.dir.map(|d| d as u8), e.open_loc_id),
+            (&e.skill_req, &e.item_req, &e.quest_req),
+            (&e.varp_req, &e.worn_req, e.members_req),
+        )
+    }
+    let family = (a.kind as u8, a.loc_id, tile(a.at)).cmp(&(b.kind as u8, b.loc_id, tile(b.at)));
+    let dialog_ordered = match a.kind {
+        TransportKind::Teleport => a.loc_id > 0,
+        TransportKind::SpiritTree => true,
+        _ => false,
+    };
+    if family.is_ne() || dialog_ordered {
+        return family;
+    }
+    rest(a).cmp(&rest(b))
 }
 
 // ---------------------------------------------------------------------------
@@ -6768,6 +6802,49 @@ if (inv_total(inv, edgevilledungeonkey) > 0) {
         assert_eq!(graph.at[&n.at].len(), 2);
     }
 
+    /// A revision's pack is a fixed point of its inputs: two derivations of
+    /// the same content encode identically. Door ids come out of a hash set,
+    /// so without a canonical edge order each run packs them differently.
+    #[test]
+    fn derive_transports_packs_identically_across_runs() {
+        let fx = Fixture::new();
+        let ids: Vec<i32> = (1530..1542).collect();
+        let mut pack = String::new();
+        let mut doors = String::new();
+        let mut map = String::from("==== MAP ====\n");
+        let mut locs = String::from("==== LOC ====\n");
+        for (i, id) in ids.iter().enumerate() {
+            let x = 2 * i;
+            pack.push_str(&format!("{id}=loc_{id}\n"));
+            doors.push_str(&format!(
+                "[loc_{id}]\nname=Door\nop1=Open\ncategory=door_closed\n"
+            ));
+            for z in 45..=47 {
+                map.push_str(&format!("0 {x} {z}: h1 o6 u50\n"));
+            }
+            locs.push_str(&format!("0 {x} 46: {id} 0 1\n"));
+        }
+        fx.write("pack/loc.pack", &pack);
+        fx.write("scripts/doors/configs/doors.loc", &doors);
+        fx.write("maps/m44_53.jm2", &(map + &locs));
+        let defs = loc_defs(&ids.iter().map(|&id| (id, 1, 1)).collect::<Vec<_>>());
+        let door_ids: HashSet<i32> = ids.iter().copied().collect();
+        let wc = bake_from_maps(&fx.path().join("maps"), &defs, &door_ids).unwrap();
+
+        let first = derive_transports(fx.path(), &defs, &wc);
+        let door_edges = first
+            .edges
+            .iter()
+            .filter(|e| e.kind == TransportKind::Door)
+            .count();
+        assert_eq!(door_edges, 2 * ids.len());
+        let bytes = crate::pack::encode(&wc, &first, &[]);
+        for _ in 0..4 {
+            let again = derive_transports(fx.path(), &defs, &wc);
+            assert!(crate::pack::encode(&wc, &again, &[]) == bytes);
+        }
+    }
+
     /// The real content must derive at least one `TransportKind::Door`
     /// edge for the Sinclair wooden fence gates (loc 1551 / 1553):
     /// `door_edges` reads `scripts/general_use/configs/gates.loc` into the
@@ -9944,6 +10021,14 @@ p_delay(1);
                 z: 3163,
                 level: 0
             })); // Al Kharid
+                 // Packed sibling order is the dialog's choice order: the traveller
+                 // answers choice N with the N-th same-item rub (`dest_dialog_choice`),
+                 // so canonical ordering must not sort them by destination.
+        let order: Vec<(i32, i32)> = glory.iter().map(|e| (e.to.x, e.to.z)).collect();
+        assert_eq!(
+            order,
+            vec![(3087, 3496), (2918, 3176), (3105, 3251), (3293, 3163)]
+        );
 
         // Dueling: the `_category_136` script applies to every
         // `category=category_136` obj in enchanted_jewelry.obj.

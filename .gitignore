@@ -12,6 +12,7 @@ imgui.ini
 /AGENTS.md
 /docs/execution.md
 /docs/compat/
+/docs/harness-integration/
 /target-*/
 /.check-*/
 /.review-export-*/
