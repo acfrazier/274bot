@@ -346,9 +346,9 @@ pub(crate) trait Js {
     fn call(&mut self, hook: Option<&HeldCallback>, args: &[Value]) -> Called;
     /// Poll a promise a callback returned; `None` while pending.
     fn poll(&mut self, pending: &Pending) -> Option<Reply>;
-    /// Join has claimed this tick for Stop: no more script may run. A
-    /// callback may have absorbed join's terminate, so a later one would
-    /// otherwise spin past it.
+    /// Join has claimed this tick for Stop, or the slow-tick watchdog armed
+    /// a terminate: no more script may run. A callback may have absorbed
+    /// the terminate, so a later one would otherwise spin past it.
     fn claimed(&mut self) -> bool;
 }
 
@@ -714,6 +714,9 @@ pub(crate) fn kick(handle: Handle, js: &mut impl Js) {
     HOST.with(|host| {
         let mut host = host.borrow_mut();
         match outcome {
+            // The termination unwinds the caller's `runMachine` before it
+            // parks an await: nothing would ever take this outcome.
+            Some(Outcome::Aborted(AbortReason::Terminated)) => {}
             Some(outcome) => host.settled.push((handle, outcome)),
             None => host.rows.push(row),
         }
@@ -1630,9 +1633,14 @@ pub(crate) mod tests {
         let mut js = scripted(Some(1));
         kick(h, &mut js);
         assert_eq!(js.calls, 1, "no callback runs after the terminated one");
+        assert_eq!(live_rows(), 0);
+        assert!(
+            !any_settled(),
+            "the unwound caller never awaits it: no orphaned settlement"
+        );
         assert_eq!(
             take(h),
-            Take::Settled(Outcome::Aborted(AbortReason::Terminated))
+            Take::Settled(Outcome::Aborted(AbortReason::Unknown))
         );
     }
 

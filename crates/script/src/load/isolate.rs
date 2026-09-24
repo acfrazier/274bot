@@ -173,6 +173,9 @@ struct TeardownState {
     hook_entry_delay: Option<Duration>,
     /// Isolate-scoped test seam: pretend deadline-thread spawn failed.
     fail_deadline_spawn: bool,
+    /// The slow-tick watchdog armed a terminate the isolate thread has not
+    /// cancelled yet. Set with the terminate, cleared with the cancel.
+    watchdog_fired: bool,
 }
 
 impl TeardownState {
@@ -184,6 +187,7 @@ impl TeardownState {
             cancel: None,
             hook_entry_delay: None,
             fail_deadline_spawn: false,
+            watchdog_fired: false,
         }
     }
 }
@@ -259,6 +263,25 @@ impl Drop for TickLoopFinish {
 /// after any absorbing call sees it.
 fn tick_claimed(teardown: &Mutex<TeardownState>) -> bool {
     teardown.lock().unwrap().phase != TeardownPhase::Running
+}
+
+/// A machine pass must stop driving: join claimed the tick, or the
+/// watchdog armed a terminate. A terminate that ends a callback's microtask
+/// continuation is consumed there and never reported to the caller, so the
+/// armed flag is the only trace of it.
+fn machines_halted(teardown: &Mutex<TeardownState>) -> bool {
+    let st = teardown.lock().unwrap();
+    st.phase != TeardownPhase::Running || st.watchdog_fired
+}
+
+/// Cancel an armed terminate and forget the watchdog's, as one step.
+fn cancel_terminate(runtime: &mut Runtime, teardown: &Mutex<TeardownState>) {
+    let mut st = teardown.lock().unwrap();
+    st.watchdog_fired = false;
+    runtime
+        .deno_runtime()
+        .v8_isolate()
+        .cancel_terminate_execution();
 }
 
 /// Record the eligible tick number on the host handle
@@ -632,7 +655,7 @@ impl LoadIsolate {
             // Leave the terminate armed until the isolate thread has
             // returned from the tick (it cancels there); an immediate
             // cancel would race the interrupt and make this a no-op.
-            self.fire_terminate();
+            self.fire_watchdog();
             // `in_flight` was released before this lock, so the lock
             // order (never `in_flight` -> `logs`) holds everywhere.
             let line = if tick == RECOVERY_ANCHOR_TICK {
@@ -686,7 +709,7 @@ impl LoadIsolate {
         if over {
             // No cancel here: the isolate thread clears the terminate
             // itself once it has returned from the interrupted tick.
-            self.fire_terminate();
+            self.fire_watchdog();
         }
         let _ = self.tx.send(IsolateCmd::Pause);
     }
@@ -752,7 +775,7 @@ impl LoadIsolate {
             over
         };
         if let Some((tick, elapsed)) = interrupted {
-            self.fire_terminate();
+            self.fire_watchdog();
             let line = if tick == RECOVERY_ANCHOR_TICK {
                 format!("interrupted slow recoveryAnchor ({elapsed:?})")
             } else {
@@ -946,6 +969,14 @@ impl LoadIsolate {
         if let Some(handle) = self.terminate.get() {
             handle.terminate_execution();
         }
+    }
+
+    /// The slow-tick watchdog's terminate, marked under the teardown lock
+    /// so the thread's cancel clears both together.
+    fn fire_watchdog(&self) {
+        let mut st = self.teardown.lock().unwrap();
+        st.watchdog_fired = true;
+        self.fire_terminate();
     }
 
     /// Stop without blocking the caller. `join` (onStop hook plus the 2 s
@@ -1951,7 +1982,7 @@ fn tick_loop(
                 // applied; they run before the tick's other JS, and a
                 // completion settles in this tick's pump. Join's claim is
                 // re-checked between callbacks: one may absorb its terminate.
-                super::machine_v8::step(&mut runtime, &|| tick_claimed(&teardown));
+                super::machine_v8::step(&mut runtime, &|| machines_halted(&teardown));
                 if events_consumed {
                     let observed = event_producer.take_eligible();
                     if let Some(diag) = observed.diagnostic {
@@ -1970,18 +2001,23 @@ fn tick_loop(
                     // Paint-only tick: no loop, no pump. The single paint
                     // pass of a held tick. Use `__rs_bot` (global);
                     // module-local `inst` is not visible here.
+                    // Join may have claimed the tick through a machine
+                    // callback that absorbed its terminate: run no more JS.
+                    let claimed = tick_claimed(&teardown);
                     let script_paint = !compat || compat_may_paint(&runner);
-                    if !v2_native && script_paint {
+                    if !v2_native && script_paint && !claimed {
                         let _ = runtime.eval::<()>("globalThis.__rs2b0t_call_on_paint()");
                     }
-                    if events_consumed && runner.started() {
+                    if events_consumed && runner.started() && !claimed {
                         let _ = runtime.call_function_immediate::<()>(
                             None,
                             "__rs2b0t_flush_native_events",
                             json_args!(),
                         );
                     }
-                    drain_event_loop(&mut runtime, &out, n);
+                    if !claimed {
+                        drain_event_loop(&mut runtime, &out, n);
+                    }
                     forward_script_logs(&mut runtime, &out, n);
                     // Work that fulfils under hold is still scheduler
                     // progress; its gameplay is dropped below.
@@ -2023,10 +2059,7 @@ fn tick_loop(
                     // Ownership boundary after callback eval + microtasks:
                     // drop public actions and cancel a terminate armed by
                     // a runaway listener so the next eligible tick recovers.
-                    runtime
-                        .deno_runtime()
-                        .v8_isolate()
-                        .cancel_terminate_execution();
+                    cancel_terminate(&mut runtime, &teardown);
                     let _ = runtime.eval::<()>(
                         "if (globalThis.__rs2b0t_host) globalThis.__rs2b0t_host.interact = []",
                     );
@@ -2096,22 +2129,23 @@ fn tick_loop(
                 // and guardian hold already `continue` above. The step
                 // machines were stepped before this tick's JS; their
                 // awaits settle in the pump below with every other wait.
-                drain_event_loop(&mut runtime, &out, n);
+                // A claimed tick runs no more JS (a phase above may have
+                // absorbed join's terminate).
+                if !tick_claimed(&teardown) {
+                    drain_event_loop(&mut runtime, &out, n);
+                }
                 // The host may have armed `terminate_execution` to
                 // interrupt a slow tick; clear it now that the tick's
                 // JS frames have fully unwound. This is the only cancel
                 // point — canceling from the host would race the
                 // interrupt and make it a no-op.
-                runtime
-                    .deno_runtime()
-                    .v8_isolate()
-                    .cancel_terminate_execution();
+                cancel_terminate(&mut runtime, &teardown);
                 // A machine callback whose promise the pump (or the drain)
                 // settled resumes its row in this tick, and a row that ends
                 // here settles its await in this tick too.
                 if !tick_claimed(&teardown) {
                     if let Err(e) =
-                        super::machine_v8::resume(&mut runtime, &|| tick_claimed(&teardown))
+                        super::machine_v8::resume(&mut runtime, &|| machines_halted(&teardown))
                     {
                         let _ = out.send(ThreadMsg::Log(format!("tick {n}: machines: {e}")));
                     }
@@ -2171,7 +2205,9 @@ fn tick_loop(
                 // ready (`compat_may_paint`), even while `loop()` is
                 // parked; native shapes paint every tick.
                 let script_paint = !compat || compat_may_paint(&runner);
-                if !v2_native && script_paint {
+                // The terminate was just cancelled: once join has claimed
+                // the tick, onPaint must not run past it.
+                if !v2_native && script_paint && !tick_claimed(&teardown) {
                     let _ = runtime.eval::<()>("globalThis.__rs2b0t_call_on_paint()");
                 }
                 // After the paint pass, so a throwing onPaint is logged
@@ -3569,6 +3605,62 @@ loop() {
             "join abandoned the isolate after {:?}",
             t0.elapsed()
         );
+    }
+
+    #[test]
+    fn join_runs_no_paint_after_a_machine_callback_absorbed_its_terminate() {
+        // The callback absorbs join's terminate; the tick then cancels the
+        // terminate. An ungated onPaint after that would spin past join.
+        let src = "import { runMachine } from '../../shim/_kernel.js';\n\
+             export default class T extends LoopingBot {\n\
+             onPaint() { if (globalThis.__spin) for (;;) {} }\n\
+             async loop() {\n\
+             if (globalThis.__did) return;\n\
+             globalThis.__did = true;\n\
+             await runMachine('burst', { calls: 3, keep: true }, {\n\
+                 each() { globalThis.__spin = true; for (;;) {} },\n\
+             });\n\
+             }\n}\n";
+        let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+        let proof = iso.teardown_proof();
+        machine_tick(&iso, 1);
+        iso.on_game_tick(2);
+        std::thread::sleep(Duration::from_millis(200));
+        let t0 = Instant::now();
+        iso.join();
+        assert!(
+            proof.finished() && t0.elapsed() < JOIN_TIMEOUT,
+            "join abandoned the isolate after {:?}",
+            t0.elapsed()
+        );
+    }
+
+    #[test]
+    fn a_watchdog_terminate_in_a_callbacks_microtasks_ends_the_row() {
+        // The continuation, not the callback, spins; the watchdog of the
+        // next dispatch terminates it inside the call's checkpoint. The row
+        // must end there, not call on as if the callback had returned.
+        let iso = spawn_machine_card(
+            "globalThis.__calls = 0;
+             globalThis.__out = await runMachine('burst', { calls: 3, keep: true }, {
+                 each(i) {
+                     globalThis.__calls++;
+                     if (i === 0) Promise.resolve().then(() => { for (;;) {} });
+                     return i;
+                 },
+             });",
+        );
+        machine_tick(&iso, 1);
+        iso.on_game_tick(2);
+        std::thread::sleep(Duration::from_millis(200));
+        machine_tick(&iso, 3);
+        machine_tick(&iso, 4);
+        assert_eq!(iso.probe("globalThis.__calls").unwrap(), 1);
+        assert_eq!(
+            iso.probe("globalThis.__out").unwrap(),
+            serde_json::json!({ "kind": "aborted", "reason": "terminated" })
+        );
+        iso.join();
     }
 
     #[test]

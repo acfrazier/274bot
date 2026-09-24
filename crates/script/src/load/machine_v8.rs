@@ -212,8 +212,18 @@ impl machine::Js for RuntimeJs<'_> {
     }
 
     fn call(&mut self, hook: Option<&HeldCallback>, args: &[Value]) -> Called {
-        let scope = &mut self.runtime.deno_runtime().handle_scope();
-        call_hook(scope, hook, args)
+        let called = {
+            let scope = &mut self.runtime.deno_runtime().handle_scope();
+            call_hook(scope, hook, args)
+        };
+        // `drive` found the pass unhalted just before this call. A
+        // terminate armed since then hit this call's own JS: its
+        // microtasks run as the outermost call returns, and V8 consumes a
+        // termination there without reporting it.
+        match called {
+            Called::Settled(_) | Called::Pending(_) if (self.claimed)() => Called::Terminated,
+            called => called,
+        }
     }
 
     fn poll(&mut self, pending: &Pending) -> Option<Reply> {
@@ -244,14 +254,18 @@ fn call_hook(scope: &mut v8::HandleScope, hook: Option<&HeldCallback>, args: &[V
     let value = match callback.call(scope, &argv) {
         Ok(value) => value,
         Err(Throw::Value(exception)) => {
-            scope.perform_microtask_checkpoint();
+            if checkpoint_terminated(scope) {
+                return Called::Terminated;
+            }
             return Called::Settled(Reply::Threw(thrown(scope, exception)));
         }
         // Rethrown; the host stops driving and no family sees it as a throw.
         Err(Throw::Terminated) => return Called::Terminated,
     };
     let Ok(promise) = v8::Local::<v8::Promise>::try_from(value) else {
-        scope.perform_microtask_checkpoint();
+        if checkpoint_terminated(scope) {
+            return Called::Terminated;
+        }
         return Called::Settled(settled_value(scope, value));
     };
     // The host observes the rejection; it is not an unhandled one.
@@ -263,8 +277,19 @@ fn call_hook(scope: &mut v8::HandleScope, hook: Option<&HeldCallback>, args: &[V
     }
     // An `await` on something already settled resumes here, as it
     // would in the frozen driver's own microtask flush.
-    scope.perform_microtask_checkpoint();
+    if checkpoint_terminated(scope) {
+        return Called::Terminated;
+    }
     Called::Pending(v8::Global::new(scope, promise))
+}
+
+/// Run the callback's microtasks. Inside a kick the caller's JS is still on
+/// the stack, so a continuation's termination stays pending and ends the
+/// call like a terminated callback. At the outermost level V8 consumes it;
+/// [`RuntimeJs`] reports that case from the host's halt flag.
+fn checkpoint_terminated(scope: &mut v8::HandleScope) -> bool {
+    scope.perform_microtask_checkpoint();
+    scope.is_execution_terminating()
 }
 
 fn poll_promise(scope: &mut v8::HandleScope, pending: &Pending) -> Option<Reply> {
