@@ -3470,7 +3470,7 @@ impl Session {
             .store(profile.settings.lamp_auto, Ordering::Relaxed);
         *arm.lamp_skill.lock().unwrap() = profile.settings.lamp_skill.clone();
         if !self.wall.should_auto_login(name, auto_login) {
-            arm.want_login.store(false, Ordering::Relaxed);
+            arm.withdraw_login();
         }
         Some(arm)
     }
@@ -3550,12 +3550,12 @@ impl Session {
             .insert(username.to_string(), SlotIo { input, pixels });
     }
 
-    /// Credentials Log in: clear the logout latch, arm a handshake the same
-    /// way as Login all (`arm_login_all`), then select (spawn if needed).
+    /// Credentials Log in: clear the logout latch, arm an explicit one-shot
+    /// handshake, then select (spawn if needed).
     pub fn login(&mut self, name: &str) {
         self.wall.clear_latch(name);
         if let Some(arm) = self.play.as_ref().and_then(|p| p.arm(name)) {
-            arm_login_all(&arm);
+            arm.arm_explicit_login();
         }
         self.select(name);
     }
@@ -3567,7 +3567,7 @@ impl Session {
     pub fn logout(&mut self, name: &str) {
         self.wall.latch_logout(name);
         if let Some(arm) = self.play.as_ref().and_then(|p| p.arm(name)) {
-            arm.want_login.store(false, Ordering::Relaxed);
+            arm.withdraw_login();
             arm.want_logout.store(true, Ordering::Relaxed);
         }
         // The logout press lives in the probe (per-tick); kick a parked
@@ -3598,7 +3598,10 @@ impl Session {
             }
         }
         if let Some(arm) = self.play.as_ref().and_then(|p| p.arm(name)) {
-            arm.auto_login.store(on, Ordering::Relaxed);
+            arm.set_auto_login(on);
+        }
+        if let Some(play) = self.play.as_ref() {
+            play.wake(name);
         }
         true
     }
@@ -3770,10 +3773,12 @@ impl Session {
             .unwrap_or(false);
         let want_login = self.wall.should_auto_login(name, auto_login);
         if let Some(arm) = self.play.as_ref().and_then(|p| p.arm(name)) {
-            // Already running (re-click): re-apply the login intent so a
-            // latched logout stays on the title.
-            arm.want_login.store(want_login, Ordering::Relaxed);
-            arm.auto_login.store(auto_login, Ordering::Relaxed);
+            // Already running (re-click): re-apply saved auto intent while a
+            // latched logout remains parked.
+            arm.set_auto_login(auto_login);
+            if !want_login {
+                arm.withdraw_login();
+            }
         } else {
             self.ensure_slot(name, self.arm_for_profile(name));
         }
@@ -3861,7 +3866,7 @@ impl Session {
         for name in names {
             self.wall.clear_latch(&name);
             if let Some(arm) = self.play.as_ref().and_then(|p| p.arm(&name)) {
-                arm_login_all(&arm);
+                arm.arm_explicit_login();
             }
         }
         if let Some(play) = self.play.as_ref() {
@@ -3886,7 +3891,7 @@ impl Session {
             self.wall.latch_logout(&name);
             if let Some(arm) = self.play.as_ref().and_then(|p| p.arm(&name)) {
                 arm.want_logout.store(true, Ordering::Relaxed);
-                arm.want_login.store(false, Ordering::Relaxed);
+                arm.withdraw_login();
             }
         }
         if let Some(play) = self.play.as_ref() {
@@ -4414,15 +4419,9 @@ fn fresh_uid(vault: &Vault) -> i32 {
     vault.profiles().map(|p| p.uid).max().unwrap_or(274_000_000) + 1
 }
 
-/// The flags `login_all` applies to a member's arm: clear the logout latch,
-/// arm a login, and cancel any pending logout. `want_logout` only clears
-/// inside the slot body when it observes the member ingame, so a
-/// title-screen member keeps a stale logout that would otherwise fire on
-/// the first ingame frame after Login all handshakes it back in.
+/// Arm the explicit one-shot intent used by Login all.
 fn arm_login_all(arm: &SlotArm) {
-    arm.latch.store(false, Ordering::Relaxed);
-    arm.want_login.store(true, Ordering::Relaxed);
-    arm.want_logout.store(false, Ordering::Relaxed);
+    arm.arm_explicit_login();
 }
 
 /// Copy a traveller dest into `SlotStatus.walk_*`; −1 when idle.
