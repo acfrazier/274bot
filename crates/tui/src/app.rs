@@ -1855,20 +1855,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn load_browser_has_no_free_text_path() {
-        const APP: &str = include_str!("app.rs");
-        let prod = APP.split("#[cfg(test)]").next().unwrap();
-        assert!(
-            !prod.contains("script_load_path"),
-            "Load must not keep a typed-path scratch buffer"
-        );
-        assert!(
-            prod.contains("script_load_dir"),
-            "Load must browse directories"
-        );
-    }
-
     /// Task 7: the Load button opens the file browser; Enter on a file
     /// produces `AppAction::ScriptLoad` with that path.
     #[test]

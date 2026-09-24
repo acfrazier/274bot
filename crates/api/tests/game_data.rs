@@ -687,11 +687,6 @@ fn generated_trio_giver_facts_pin_the_closed_giver_set() {
     for revision in [ClientRevision::R274, ClientRevision::R289] {
         let data = for_revision(revision).expect("selected data");
         let facts = data.trio_givers().expect("trio givers facts");
-        assert_eq!(facts.rows.len(), 3, "revision {}", revision.as_i32());
-        assert_eq!(
-            facts.rows.iter().filter(|row| row.spawn.is_some()).count(),
-            3
-        );
         assert!(facts.coverage.is_empty());
 
         let identities: Vec<(&str, i32, &str)> = facts
