@@ -1015,6 +1015,20 @@ impl LoadIsolate {
                     }
                 }
                 ThreadMsg::Paint(frame) => {
+                    // A frame forwarded before a session reset arrives with the
+                    // generation it was built under; install it under the
+                    // current one, so an overlay from before the reset cannot
+                    // match it (the wire decoder used to re-stamp here too).
+                    let generation = self
+                        .paint_generation
+                        .load(std::sync::atomic::Ordering::Acquire);
+                    let frame = if frame.generation == generation {
+                        frame
+                    } else {
+                        let mut restamped = (*frame).clone();
+                        restamped.generation = generation;
+                        std::sync::Arc::new(restamped)
+                    };
                     *self.paint.lock().unwrap() = Some(frame);
                 }
                 ThreadMsg::IgnoredRandoms(list) => {

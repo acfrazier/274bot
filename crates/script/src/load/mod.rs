@@ -20,6 +20,7 @@ mod boost_potions_v8;
 mod buyout_plan;
 #[cfg(feature = "load")]
 mod callback_v8;
+#[cfg(feature = "load")]
 mod canvas_tape;
 mod clue_facts_v8;
 mod clue_logic_v8;

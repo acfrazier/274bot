@@ -2,15 +2,18 @@
 //! schema/isolate.fbs`. The builder and reader are hand-written against
 //! that schema (operators never need `flatc` at `cargo test` time); keep
 //! the two in sync. The PLAYER_INFO snapshot posted into each JS isolate
-//! and the shim interact / paint frames forwarded back are FlatBuffers,
-//! not JSON: a 50+ isolate wall never stringifies or parses a JSON
-//! document per tick. Each slot's host encode path and each V8 isolate
-//! thread reuse one [`IsolateBuf`] (`reset`, not a fresh builder).
+//! and the shim interact batches forwarded back are FlatBuffers, not JSON:
+//! a 50+ isolate wall never stringifies or parses a JSON document per tick.
+//! Recorded paint frames cross that channel as typed `ScriptPaint` values
+//! (both ends are this crate in this process) and are capped by
+//! [`cap_paint`] before they are shared. Each slot's host encode path and
+//! each V8 isolate thread reuse one [`IsolateBuf`] (`reset`, not a fresh
+//! builder).
 //!
 //! The wire format is produced and consumed only by 274bot code. Host-encoded
-//! snapshots are trusted; isolate→host interact/paint bytes are verified on
-//! decode (`flatbuffers::root_with_opts`) so truncated or malicious buffers
-//! fail closed instead of panicking or reading out of bounds.
+//! snapshots are trusted; isolate→host interact bytes are verified on decode
+//! (`flatbuffers::root_with_opts`) so truncated or malicious buffers fail
+//! closed instead of panicking or reading out of bounds.
 //!
 //! Posts are deltas (schema: `Snapshot`): `tick` is always carried, other
 //! fields only when they changed vs the last post — an omitted vector is
@@ -7460,20 +7463,6 @@ pub(crate) mod tests {
         let snap = SnapshotReader::from_bytes(&bytes).expect("snapshot");
         assert_eq!(snap.tick(), 1);
 
-        let paint = ScriptPaint {
-            title: Some("BoneBurier".into()),
-            accent: Some("#f3e6a2".into()),
-            lines: vec!["Runtime: 1.2m".into(), "".into()],
-            buttons: vec![crate::shim::ScriptPaintButton {
-                id: "gobank".into(),
-                label: "Go bank".into(),
-            }],
-            generation: 0,
-            canvas: Vec::new(),
-            ..Default::default()
-        };
-        let _ = &paint;
-
         let reqs = vec![
             InteractReq::Held {
                 name: "Bones".into(),
@@ -7590,20 +7579,6 @@ pub(crate) mod tests {
     /// Truncated isolate→host buffers must not panic; invalid roots err.
     #[test]
     fn truncated_paint_and_interact_buffers_return_err() {
-        let paint = ScriptPaint {
-            title: Some("t".into()),
-            accent: None,
-            lines: vec!["line".into()],
-            buttons: vec![crate::shim::ScriptPaintButton {
-                id: "gobank".into(),
-                label: "Go bank".into(),
-            }],
-            generation: 0,
-            canvas: Vec::new(),
-            ..Default::default()
-        };
-        let _ = &paint;
-
         let reqs = vec![InteractReq::Close];
         let ibytes = IsolateBuf::new().encode_interact_batch(&reqs);
         for cut in 1..ibytes.len() {

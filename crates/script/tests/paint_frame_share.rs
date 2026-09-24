@@ -132,6 +132,27 @@ fn an_over_cap_frame_is_dropped_and_logged() {
     }
 }
 
+/// A frame forwarded before a reset and not pumped until after it installs
+/// under the post-reset generation: the stale overlay cannot match it.
+#[test]
+fn a_frame_sent_before_a_reset_installs_under_the_new_generation() {
+    let iso = spawn(STEADY, LoadShape::CompatClass);
+    // The tick paints, but nothing reads the frame: the forwarded message
+    // sits in the channel across the reset.
+    iso.on_game_tick(1);
+    let _ = iso.probe("0");
+    iso.reset_session_work();
+    let installed = iso.paint().expect("the pending pre-reset frame installs");
+    tick(&iso, 2);
+    let next = iso.paint().expect("next frame");
+    assert_eq!(
+        installed.generation, next.generation,
+        "the pre-reset frame carries the post-reset generation, not its own"
+    );
+    assert_eq!(installed.lines, vec!["steady".to_string()]);
+    iso.join();
+}
+
 /// A reset re-stamps the held frame with the new generation, so an overlay
 /// that captured the pre-reset generation fails the host click/select check
 /// until the next forwarded frame.
