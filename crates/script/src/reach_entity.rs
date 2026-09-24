@@ -523,6 +523,10 @@ pub(crate) struct EntityOp {
 impl Family for EntityOp {
     const NAME: &'static str = "reach-entity-op";
     const CALLBACKS: &'static [&'static str] = &["expect", "interact", "target", "log"];
+    /// Frozen calls `expect()`, the target closure and `log` without
+    /// `await` (a promise from `expect` is truthy); only
+    /// `await entity.interact(op)` is awaited.
+    const SYNC_HOOKS: &'static [usize] = &[EXPECT, TARGET, LOG];
     /// The first `expect()` and click run in the caller's turn.
     const KICK_ON_START: bool = true;
     type Args = EntityOpArgs;
@@ -764,6 +768,8 @@ impl Family for WalkHops {
     const CALLBACKS: &'static [&'static str] = &["log"];
     /// The first walk or ladder click goes out in the caller's turn.
     const KICK_ON_START: bool = true;
+    /// Frozen `log(...)` is not awaited.
+    const AWAIT_CALLBACKS: bool = false;
     type Args = WalkHopsArgs;
     type Output = bool;
 

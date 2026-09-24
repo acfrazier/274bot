@@ -73,10 +73,11 @@
 //!   continue next tick. A row whose callback superseded it stops at once.
 //!   A callback ended by termination (join's or the watchdog's) is never
 //!   shown to the family: the row is aborted `terminated` and no further
-//!   callback runs in that pass or kick. A [`Family::AWAIT_CALLBACKS`]
-//!   `false` family keeps frozen synchronous-call semantics instead: a
-//!   returned promise is not awaited, and its reply is the promise as a
-//!   value (`{}`: an object with no own properties).
+//!   callback runs in that pass or kick. A hook in [`Family::SYNC_HOOKS`],
+//!   or any hook of a [`Family::AWAIT_CALLBACKS`] `false` family, keeps
+//!   frozen synchronous-call semantics instead: a returned promise is not
+//!   awaited, and its reply is the promise as a value (`{}`: an object with
+//!   no own properties).
 //! - **Completion**: a `Done`/`Fail` row ends at once (no JS `end` op). Its
 //!   outcome waits in the host until the JS await helper — a wait parked
 //!   on the `Execution` park list — takes it, so it settles exactly once:
@@ -138,6 +139,9 @@ pub(crate) trait Family: Sized + 'static {
     /// frozen synchronous-call semantics: the reply is the promise object
     /// itself as a value, and the row steps on at once.
     const AWAIT_CALLBACKS: bool = true;
+    /// [`Family::CALLBACKS`] indexes called synchronously even when the
+    /// family awaits the rest (frozen calls these hooks without `await`).
+    const SYNC_HOOKS: &'static [usize] = &[];
     /// Typed start arguments, decoded from the JS value.
     type Args: DeserializeOwned;
     /// The completion value JS receives as `value`.
@@ -493,6 +497,8 @@ struct Row {
     exclusive: bool,
     /// [`Family::AWAIT_CALLBACKS`].
     awaits: bool,
+    /// [`Family::SYNC_HOOKS`].
+    sync_hooks: &'static [usize],
     clock: InstantTaskClock,
     hooks: Vec<Hook>,
     /// Callbacks run this tick, across both passes.
@@ -663,6 +669,7 @@ fn begin_row<F: Family>(args: Value, hooks: Vec<Hook>, at: usize) -> Started {
                     family: F::NAME,
                     exclusive: F::EXCLUSIVE,
                     awaits: F::AWAIT_CALLBACKS,
+                    sync_hooks: F::SYNC_HOOKS,
                     clock,
                     hooks,
                     calls: 0,
@@ -834,7 +841,11 @@ fn drive(row: &mut Row, js: &mut impl Js, at: &mut usize) -> Option<Outcome> {
                 *at = js.queue_len();
                 match called {
                     Called::Settled(reply) => row.reply = Some(reply),
-                    Called::Pending(pending) if row.awaits => row.pending = Some(pending),
+                    Called::Pending(pending)
+                        if row.awaits && !row.sync_hooks.contains(&call.hook) =>
+                    {
+                        row.pending = Some(pending)
+                    }
                     // A frozen synchronous call sees the promise object.
                     Called::Pending(_) => {
                         row.reply = Some(Reply::Value(Value::Object(Default::default())))

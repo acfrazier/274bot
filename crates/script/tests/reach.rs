@@ -596,13 +596,19 @@ export default class T extends LoopingBot {
         globalThis.__logs = [];
         globalThis.__clicks = 0;
         const entity = {
-            interact: (op) => { globalThis.__clicks++; globalThis.__op = op; return true; },
+            interact: (op) => {
+                globalThis.__clicks++;
+                globalThis.__op = op;
+                return globalThis.__asyncClick ? Promise.resolve(false) : true;
+            },
             tile: () => ({ x: 8, z: 5, level: 0 }),
         };
         globalThis.__ok = await Reach.entityOp({
             find: () => (globalThis.__gone ? null : entity),
             op: 'Attack',
-            expect: () => globalThis.__ready === true,
+            expect: () => (globalThis.__asyncExpect
+                ? Promise.resolve(false)
+                : globalThis.__ready === true),
             log: (m) => globalThis.__logs.push(String(m)),
             openWhenUnreachable: globalThis.__probe === true,
         });
@@ -944,6 +950,33 @@ fn entity_op_gives_up_retry_after_eight_cleared_rounds() {
         8,
         "one click per round, none after the eighth clear"
     );
+    assert_eq!(iso.probe("__ok").unwrap(), "retry");
+    iso.join();
+}
+
+#[test]
+fn entity_op_calls_expect_synchronously_but_awaits_the_click() {
+    // Frozen `if (opts.expect())`: a promise is truthy, so the op counts
+    // as dispatched and done without a click.
+    let iso = spawn(ENTITY_OP);
+    iso.probe("globalThis.__asyncExpect = true").unwrap();
+    post(&iso, &base(stand()));
+    tick(&iso, 1);
+    tick(&iso, 2);
+    tick(&iso, 3);
+    assert_eq!(iso.probe("__ok").unwrap(), "done");
+    assert_eq!(iso.probe("__clicks").unwrap(), 0);
+    iso.join();
+
+    // Frozen `await entity.interact(op)`: a click that resolves false did
+    // not dispatch, so the call retries instead of watching `expect`.
+    let iso = spawn(ENTITY_OP);
+    iso.probe("globalThis.__asyncClick = true").unwrap();
+    post(&iso, &base(stand()));
+    tick(&iso, 1);
+    tick(&iso, 2);
+    tick(&iso, 3);
+    assert_eq!(iso.probe("__clicks").unwrap(), 1);
     assert_eq!(iso.probe("__ok").unwrap(), "retry");
     iso.join();
 }
