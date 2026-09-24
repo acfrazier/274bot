@@ -91,7 +91,7 @@ pub struct GameSnapshot {
     /// (separately from the scene family's own counter).
     #[serde(skip)]
     loc_gen: u64,
-    /// Aggregated tile `model_stamp` from the last loc sweep. Locs can
+    /// Sum of the tiles' loc-layer generations from the last loc sweep. Locs can
     /// change without a scene gen bump (door multiloc, map restamp), so
     /// the cheap stamp gates the 104×104×4 sweep between gen moves.
     #[serde(skip)]

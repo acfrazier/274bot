@@ -997,7 +997,7 @@ impl GameSnapshot {
     /// Loc-family rebuild: sweep the sim world's four layers at
     /// `minusedlevel` (locs sit on scene tiles, so the world tile is
     /// `base + scene` with no pixel conversion). Gated on the scene gen,
-    /// the aggregated tile `model_stamp`, and World's static-scenery
+    /// the summed tile loc-layer generations, and World's static-scenery
     /// mutation generation — typecodes can change after the observer
     /// already consumed that gen (map restamp, a door multiloc, or a
     /// queued LOC_DEL/add applied without another packet), so a gen-only
