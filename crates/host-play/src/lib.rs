@@ -2646,6 +2646,12 @@ fn spawn_slot_thread(
                         if let Some(row) = slot_statuses.lock().unwrap().iter_mut().find(|s| s.username == username) {
                             row.world = Some(world.number);
                         }
+                        if debug_enabled() {
+                            eprintln!(
+                                "[host-play] slot {username}: world w{} {}:{} node {}",
+                                world.number, world.host, world.port, world.node_id
+                            );
+                        }
                         world_dirty = false;
                         refresh_key = false;
                     }
