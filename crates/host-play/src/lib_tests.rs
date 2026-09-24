@@ -14090,6 +14090,118 @@ fn walk_near_follow_does_not_end_through_a_closed_wall() {
     assert_eq!(queued(&navs), None, "reachable in-radius arrival clears");
 }
 
+/// AR-1 / frozen `'closest'` (`WalkExecutor.ts:316-325`): an r=12 WalkNear
+/// in open terrain routes to an approach tile 12 tiles from the dest, where
+/// the BFS rank of the dest is past the 512 arrival budget, so `is_arrived`
+/// is false. When the follow reaches that route end it must publish a
+/// settled (not failed) outcome for the armed request id, or the isolate
+/// wait hangs to the caller timeout.
+#[test]
+fn radius_walk_route_end_publishes_a_settled_outcome() {
+    let world = Arc::new(NavWorld::from_parts(
+        nav::collision::WorldCollision {
+            origin: WorldTile {
+                x: 0,
+                z: 0,
+                level: 0,
+            },
+            width: 40,
+            height: 40,
+            walk: vec![0u8; 1600],
+            blocked: vec![0u64; 1600usize.div_ceil(64)],
+            flags: None,
+        },
+        nav::transport::TransportGraph::default(),
+        Vec::new(),
+    ));
+    let navs: Arc<Mutex<HashMap<String, NavBot>>> = Arc::new(Mutex::new(HashMap::new()));
+    let statuses: Arc<Mutex<Vec<SlotStatus>>> = Arc::new(Mutex::new(vec![SlotStatus {
+        username: "alice".into(),
+        ..SlotStatus::default()
+    }]));
+    let arm = ScriptWalkArm {
+        here: Some((2, 20, 0)),
+        world: Some(Arc::clone(&world)),
+        navs: Arc::clone(&navs),
+        name: "alice".into(),
+        state: None,
+        bank: Vec::new(),
+    };
+    let dest = WorldTile {
+        x: 30,
+        z: 20,
+        level: 0,
+    };
+    assert!(arm.queue_route(dest.x, dest.z, 0, FindOptions::default(), 12, true, 7));
+    assert!(wait_until(500, || queued(&navs).is_some()), "route armed");
+    let approach = queued(&navs).unwrap();
+    assert_eq!(
+        (approach.x - dest.x).abs().max((approach.z - dest.z).abs()),
+        12,
+        "the route ends on the near edge of the radius box"
+    );
+    // Open reach around the approach tile, wide enough that ring 12 is a
+    // full BFS ring: the reach-aware rule says not arrived there.
+    let open_reach = move || {
+        let scene = api::snapshot::SceneView {
+            available: true,
+            base_x: -30,
+            base_z: -30,
+            level: 0,
+            width: 100,
+            height: 100,
+            collision_flags: vec![0; 100 * 100],
+        };
+        let flood = api::query::SceneQuery::new(&scene, Some(approach)).flood_reach();
+        Arc::new(api::query::pack_reach_query(&scene, flood.as_ref()))
+    };
+    assert!(!api::query::is_arrived(approach, dest, 12, open_reach));
+
+    let mut d = NavRec::default();
+    let mut c = nav_client();
+    let mut snap = GameSnapshot::new();
+    let step = |d: &mut NavRec,
+                snap: &GameSnapshot,
+                here: (i32, i32, i32),
+                reach: &dyn Fn() -> Arc<api::query::ReachQueryView>| {
+        step_nav_bot(
+            d,
+            "alice",
+            Some(here),
+            snap,
+            &navs,
+            &statuses,
+            Some(world.as_ref()),
+            false,
+            false,
+            reach,
+        )
+    };
+    nav_snapshot_at(&mut c, &mut snap, 2, 20);
+    step(&mut d, &snap, (2, 20, 0), &no_reach);
+    assert!(d.walked.is_some(), "the follow sends its first hop");
+    assert_eq!(navs.lock().unwrap()["alice"].walk_outcome_seq, 0);
+
+    nav_snapshot_at(&mut c, &mut snap, approach.x, approach.z);
+    step(&mut d, &snap, (approach.x, approach.z, 0), &open_reach);
+    assert_eq!(queued(&navs), None, "the route ended");
+    let all = navs.lock().unwrap();
+    let bot = &all["alice"];
+    assert_eq!(bot.walk_outcome_seq, 1, "the route end is published");
+    assert!(!bot.walk_outcome_failed, "a route end settles true");
+    assert_eq!(bot.walk_outcome_request_id, 7);
+    assert_eq!(
+        (
+            bot.walk_outcome_x,
+            bot.walk_outcome_z,
+            bot.walk_outcome_level
+        ),
+        (dest.x, dest.z, dest.level),
+        "keyed on the requested dest, as the isolate wait matches it"
+    );
+    assert_eq!(bot.walk_outcome_radius, 12);
+}
+
 /// A packed glory-style jewellery edge (obj 1712, `opheld4` Rub): the
 /// shape every dest of the multi-location glory group shares. The
 /// `to` names the landing (default Edgeville, `switch_int($choice)`

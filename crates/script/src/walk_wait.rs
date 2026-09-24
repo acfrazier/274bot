@@ -17,10 +17,12 @@
 //! (old buffers / ctx.walk) never settles a wait.
 //!
 //! Mid-follow Stall / Refused / Blocked / GaveUp publish the armed request
-//! id as failed. Arrival is [`api::query::is_arrived`], the
-//! frozen `isArrived` over the last posted reach view — the rule the host
-//! follow ends on too. Genuinely pending follow (`None`) keeps the caller
-//! timeout.
+//! id as failed. The end of the armed walk's route publishes it as not
+//! failed: frozen `WalkExecutor` returns true at the path terminal even when
+//! `isArrived` is false there (`WalkExecutor.ts:316-325`, `'closest'`).
+//! Arrival is [`api::query::is_arrived`], the frozen `isArrived` over the
+//! last posted reach view — the rule the host follow ends on too. Genuinely
+//! pending follow (`None`) keeps the caller timeout.
 
 use crate::isolate_fb::SnapshotReader;
 use crate::observed::{self, Scene};
@@ -130,7 +132,9 @@ struct Wait {
     key: WalkKey,
     settled: Option<bool>,
     seq_at_begin: u64,
-    matched_failure: bool,
+    /// The host's terminal outcome for this request: `Some(false)` once a
+    /// failure matched (sticky), `Some(true)` for a route end.
+    matched: Option<bool>,
 }
 
 /// The one live wait. The player tile and the host outcome are read from
@@ -148,12 +152,12 @@ impl WalkSlot {
         *self = Self::new();
     }
 
-    /// A post that carried an outcome: a failure for the live request is
-    /// latched now, so a later outcome cannot hide it.
+    /// A post that carried an outcome for the live request is latched now,
+    /// so a later outcome cannot hide it. A failure is never overwritten.
     fn observe_outcome(&mut self, outcome: HostOutcome) {
         if let Some(wait) = self.wait.as_mut() {
-            if Self::fail_matches(outcome, wait) {
-                wait.matched_failure = true;
+            if Self::outcome_matches(outcome, wait) {
+                wait.matched = Some(wait.matched.unwrap_or(true) && !outcome.failed);
             }
         }
     }
@@ -165,7 +169,7 @@ impl WalkSlot {
             key,
             settled: None,
             seq_at_begin: outcome.seq,
-            matched_failure: false,
+            matched: None,
         });
         token
     }
@@ -178,9 +182,8 @@ impl WalkSlot {
         })
     }
 
-    fn fail_matches(outcome: HostOutcome, wait: &Wait) -> bool {
-        outcome.failed
-            && outcome.request_id != 0
+    fn outcome_matches(outcome: HostOutcome, wait: &Wait) -> bool {
+        outcome.request_id != 0
             && outcome.request_id == wait.token
             && outcome.key == wait.key
             && outcome.seq != 0
@@ -201,8 +204,8 @@ impl WalkSlot {
             wait.settled = Some(true);
             return true;
         }
-        if wait.matched_failure {
-            wait.settled = Some(false);
+        if let Some(value) = wait.matched {
+            wait.settled = Some(value);
             return true;
         }
         false
@@ -744,6 +747,15 @@ mod tests {
     }
 
     fn observe_at(tick: u64, here: WorldTile, view: &api::query::ReachQueryView) {
+        observe_at_with(tick, here, view, NativeFactsInput::default());
+    }
+
+    fn observe_at_with(
+        tick: u64,
+        here: WorldTile,
+        view: &api::query::ReachQueryView,
+        native: NativeFactsInput<'_>,
+    ) {
         let mut input = empty_input(tick);
         input.here = Some(TileInput {
             x: here.x,
@@ -766,7 +778,7 @@ mod tests {
             canlight: &view.canlight,
             stamp: tick,
         };
-        observe(input, NativeFactsInput::default());
+        observe(input, native);
     }
 
     #[test]
@@ -803,9 +815,12 @@ mod tests {
             z: 3556,
             level: 0,
         };
+        // Flooded from the dest's own side of the wall: this flood does
+        // reach the dest, so only the origin guard keeps it from answering
+        // for `far`.
         let stale = walled_view(WorldTile {
-            x: 2820,
-            z: 3555,
+            x: 2822,
+            z: 3557,
             level: 0,
         });
         observe_at(2, far, &stale);
@@ -813,5 +828,81 @@ mod tests {
             !settled(token),
             "reach probes run from here; a flood from elsewhere answers nothing"
         );
+    }
+
+    /// Open 64x64 scene at (2790,3530): no walls, so reach is pure BFS rank.
+    fn open_view(here: WorldTile) -> api::query::ReachQueryView {
+        let scene = api::snapshot::SceneView {
+            available: true,
+            base_x: 2790,
+            base_z: 3530,
+            level: 0,
+            width: 64,
+            height: 64,
+            collision_flags: vec![0; 64 * 64],
+        };
+        let flood = api::query::SceneQuery::new(&scene, Some(here)).flood_reach();
+        api::query::pack_reach_query(&scene, flood.as_ref())
+    }
+
+    fn route_end_native(seq: u64, request_id: u64, radius: i32) -> NativeFactsInput<'static> {
+        NativeFactsInput {
+            walk_outcome_seq: seq,
+            walk_outcome_generation: 1,
+            walk_outcome_request_id: request_id,
+            walk_outcome_failed: false,
+            walk_outcome_x: 2820,
+            walk_outcome_z: 3557,
+            walk_outcome_level: 0,
+            walk_outcome_radius: radius,
+            walk_outcome_allow_teleports: false,
+            ..Default::default()
+        }
+    }
+
+    /// AR-1 / frozen `'closest'`: an r=12 walk in open terrain ends on its
+    /// approach tile, 12 tiles out, where every tile has BFS rank >= 529 >
+    /// 512, so `isArrived` is false. The host's route-end outcome settles it.
+    #[test]
+    fn route_end_settles_true_where_is_arrived_is_false() {
+        on_reset();
+        let token = begin(2820, 3557, 0, 12, false);
+        let approach = WorldTile {
+            x: 2808,
+            z: 3557,
+            level: 0,
+        };
+        let view = open_view(approach);
+        observe_at(2, approach, &view);
+        assert!(
+            !settled(token),
+            "ring 12 in open terrain is past the 512 reach budget"
+        );
+        observe_at_with(3, approach, &view, route_end_native(1, token, 12));
+        assert!(settled(token), "the route end settles the wait");
+        assert!(value(token), "frozen 'closest' returns true");
+    }
+
+    #[test]
+    fn route_end_cannot_hide_a_failure_or_settle_another_request() {
+        on_reset();
+        let token = begin(2820, 3557, 0, 12, false);
+        let approach = WorldTile {
+            x: 2808,
+            z: 3557,
+            level: 0,
+        };
+        let view = open_view(approach);
+        observe_at_with(2, approach, &view, route_end_native(1, token + 1, 12));
+        assert!(!settled(token), "another request's route end");
+        observe_at_with(3, approach, &view, route_end_native(2, token, 11));
+        assert!(!settled(token), "same id, another radius");
+
+        let mut failed = route_end_native(3, token, 12);
+        failed.walk_outcome_failed = true;
+        observe_at_with(4, approach, &view, failed);
+        observe_at_with(5, approach, &view, route_end_native(4, token, 12));
+        assert!(settled(token));
+        assert!(!value(token), "a matched failure stays failed");
     }
 }

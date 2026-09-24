@@ -4248,8 +4248,14 @@ impl ScriptWalkArm {
 
 /// Mid-follow Stall / Refused / Blocked / GaveUp publish a failed outcome
 /// with the armed walk's isolate request id so the matching wait returns
-/// false. Arrival still settles from `here`. Only genuinely pending follow
-/// work (None) keeps the caller timeout.
+/// false. A follow that reaches the end of the armed walk's route publishes
+/// a settled (not failed) outcome for that id: frozen `WalkExecutor`
+/// returns true at the path terminal whether or not `isArrived` holds there
+/// (`WalkExecutor.ts:316-325`, `'closest'`), and a radius route ends on its
+/// approach tile, which the reach-aware rule may not call arrival. A bank
+/// fetch's stand sub-route is not the armed walk's end and publishes
+/// nothing. Only genuinely pending follow work (None) keeps the caller
+/// timeout.
 pub(super) fn apply_nav_follow_outcome(
     bot: &mut NavBot,
     outcome: Option<nav::traveller::TravelOutcome>,
@@ -4258,6 +4264,21 @@ pub(super) fn apply_nav_follow_outcome(
     match outcome {
         Some(nav::traveller::TravelOutcome::Arrived { .. }) => {
             bot.route = None;
+            if bot.bank_fetch.is_none() {
+                if let Some((to, radius, allow_teleports, ..)) = bot.requested_route {
+                    if bot.walk_request_id != 0
+                        && bot.armed_outcome_may_publish(bot.walk_request_id)
+                    {
+                        bot.note_route_end(
+                            bot.route_generation,
+                            bot.walk_request_id,
+                            to,
+                            radius,
+                            allow_teleports,
+                        );
+                    }
+                }
+            }
         }
         Some(_) => {
             if let Some((to, radius, allow_teleports, ..)) = bot.requested_route {
@@ -4935,6 +4956,37 @@ impl NavBot {
         } else {
             self.walk_live_refusal_id = 0;
         }
+    }
+
+    /// The armed walk's route reached its end: publish a settled, not
+    /// failed, outcome for `request_id` (frozen `'closest'`,
+    /// `WalkExecutor.ts:316-325`). The matching isolate wait settles true.
+    fn note_route_end(
+        &mut self,
+        generation: u64,
+        request_id: u64,
+        to: WorldTile,
+        radius: i32,
+        allow_teleports: bool,
+    ) {
+        log_walk_arm_bot(|| {
+            format!(
+                "note_route_end generation={generation} request_id={request_id} dest={to:?} \
+                 r={radius} seq={}",
+                self.walk_outcome_seq.wrapping_add(1)
+            )
+        });
+        self.bump_walk_outcome_seq();
+        self.walk_outcome_generation = generation;
+        self.walk_outcome_request_id = request_id;
+        self.walk_outcome_failed = false;
+        self.walk_outcome_x = to.x;
+        self.walk_outcome_z = to.z;
+        self.walk_outcome_level = to.level;
+        self.walk_outcome_radius = radius;
+        self.walk_outcome_allow_teleports = allow_teleports;
+        self.walk_missing_carry.clear();
+        self.walk_live_refusal_id = 0;
     }
 
     pub(super) fn clear_walk_outcome(&mut self) {
