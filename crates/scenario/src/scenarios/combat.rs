@@ -864,6 +864,10 @@ const FIRE_GIANT_CAMELOT_PREPARED_INJECT: &[ScriptSettingInject] = &[
 ];
 const ROCK_CRAB_BANK_INJECT: &[ScriptSettingInject] = &[
     ScriptSettingInject {
+        id: "loadout",
+        value: ScriptInjectValue::Str("Scenario Rock Crab food"),
+    },
+    ScriptSettingInject {
         id: "combatStyle",
         value: ScriptInjectValue::Str("melee"),
     },
@@ -4100,6 +4104,9 @@ fn acknowledge_dormant_rocks_before_start(scenario: &mut Scenario) {
 /// it does not restock food, so this cell seeds no bank stock at all: the
 /// frozen card's `BankRun` (the food-gone withdraw, a different trip) is the
 /// only reader of a bank food window and eight lobster outlast the cell.
+/// The `Scenario Rock Crab food` loadout pins `scriptFood` to those eight
+/// Lobster: unpinned, the card takes the operator's first saved loadout
+/// (Swordfish here), counts zero food and walks to Seers before any fight.
 pub(crate) fn rock_crab_bank_scenario() -> Scenario {
     let mut scenario = combat_bank_scenario(
         "rock_crab_bank",
@@ -4154,6 +4161,7 @@ pub(crate) fn rock_crab_bank_scenario() -> Scenario {
         ],
     );
     acknowledge_dormant_rocks_before_start(&mut scenario);
+    scenario.settings.fixture_loadouts = Some(ROCK_CRAB_FIXTURE_LOADOUTS);
     scenario
 }
 

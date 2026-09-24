@@ -9880,6 +9880,20 @@ fn combat_card_fixture_food_loadouts_align_with_seeded_inventory() {
             "Lobster",
             CHAOS_DRUID_FOOD as u32,
         ),
+        (
+            "rock_crab_bank",
+            "RockCrab",
+            "Scenario Rock Crab food",
+            "Lobster",
+            ROCK_CRAB_FOOD as u32,
+        ),
+        (
+            "rock_crab_range",
+            "RockCrab",
+            "Scenario Rock Crab food",
+            "Lobster",
+            ROCK_CRAB_FOOD as u32,
+        ),
     ] {
         let scenario = get(name).unwrap_or_else(|| panic!("{name} registered"));
         assert_eq!(scenario.settings.start_script, Some(card));
