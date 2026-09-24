@@ -1236,6 +1236,30 @@ blocked pair. It then calls real `api.lineOfSight` and imported
 `Reachability.lineOfSight` on those pairs. Pair selection is qualification
 fixture logic, not API policy.
 
+## Walkable and reach
+
+Posted `snapshot.reach` is window metadata only (`available`, `base_x`,
+`base_z`, `level`, `width`, `height`). Packed walkable / reachable / step
+arrays are not materialized into JS. Use the typed helpers, which read the
+isolate's last posted reach view:
+
+| Method | OK | Errors |
+| --- | --- | --- |
+| `walkable({ tile } \| tile)` | `SQ_BLOCKED` clear | `invalid-args`, `missing-observation` |
+| `canStep({ from, to })` | one adjacent native step | `invalid-args`, `missing-observation` |
+| `canReach({ tile, adjacentOk?, maxSteps? })` | bounded flood rank | `invalid-args`, `missing-observation` |
+
+Unavailable reach is `missing-observation`, not `{ok:true, value:false}`.
+v1 `Reachability.walkable` / `canStep` / `canReach` return `false` for the
+same misses. `maxSteps` defaults to 400.
+
+Examples `walk_spot_v2.ts`, `hold_spot_v2.ts`, `retreat_spot_v2.ts`, and
+`enter_lair_v2.ts` use `api.walkable`. Missing observation does not reject a
+candidate (`!ok` is treated as walkable). `line_of_sight_v2.ts` still reads
+raw `flags.at` for V-direction pair selection; that is fixture logic, not a
+walkable helper.
+
+
 ## Actor observation
 
 `snapshot.npcs` is the packed NPC_INFO array. Each row's `x,z` is rendered

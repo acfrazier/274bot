@@ -1,4 +1,4 @@
-import { queue, proxy, snap, chebyshev } from '../../shim/_kernel.js';
+import { queue, proxy, snap, distanceTo } from '../../shim/_kernel.js';
 import { Execution } from '../../api/execution/Execution.js';
 
 // Same-scene walk click. `walk-to` is the scene packet; Traveller is `walk`.
@@ -22,7 +22,7 @@ export const DirectNavigator = proxy('DirectNavigator', {
         const here = snap().here;
         if (!here) return false;
         const target = { x: dest.x, z: dest.z, level: dest.level ?? 0 };
-        if (chebyshev(here, target) <= radius) return true;
+        if (distanceTo(here, target) <= radius) return true;
         queue({
             op: 'walk-to',
             x: target.x,
@@ -31,7 +31,7 @@ export const DirectNavigator = proxy('DirectNavigator', {
         });
         return Execution.delayUntil(() => {
             const h = snap().here;
-            return h && chebyshev(h, target) <= radius;
+            return h && distanceTo(h, target) <= radius;
         }, timeoutMs);
     },
 });

@@ -111,6 +111,7 @@ fn posted_scene(
         adjacent_rank: &[],
         step: &[],
         canlight: &[],
+        stamp: 0,
     }
 }
 

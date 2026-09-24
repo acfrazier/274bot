@@ -1555,6 +1555,7 @@ fn tick_loop(
                         // Step machines read the scene at call time; the
                         // hooks below are the edge-triggered waits.
                         crate::observed::apply(&snap);
+                        super::reach_query::apply(&snap);
                         crate::walk_wait::on_snapshot(&snap);
                         crate::inspect_wait::on_snapshot(&snap);
                         if let Some((seq, inspect_generation)) =
@@ -1945,6 +1946,7 @@ fn tick_loop(
             }
             IsolateCmd::ResetSession => {
                 crate::observed::on_reset();
+                super::reach_query::on_reset();
                 crate::periodic_bank::on_reset();
                 crate::bank_open::on_reset();
                 crate::cake_stall::on_reset();

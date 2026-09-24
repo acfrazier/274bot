@@ -1389,6 +1389,7 @@ mod tests {
             adjacent_rank: &[],
             step: &steps,
             canlight: &bits,
+            stamp: 0,
         };
         let (keyframe, fp) = encode_snapshot_delta(None, &snap, false);
         apply_bytes(&keyframe);

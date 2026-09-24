@@ -3,7 +3,7 @@
 // owned. needs/AcquireTask is an explicit unsupported boundary.
 import { Execution } from '../execution/Execution.js';
 import { Game } from '../game/Game.js';
-import { chebyshev, notImpl, queue, snap } from '../../shim/_kernel.js';
+import { distanceTo, notImpl, queue, snap } from '../../shim/_kernel.js';
 
 const WALK_MS = 60000;
 const RESPAWN_MS = 20000;
@@ -36,7 +36,7 @@ function obs(opts) {
 
 function adjacent(tile, radius) {
     const here = snap().here;
-    return here && tile && chebyshev(here, tile) <= radius;
+    return here && tile && distanceTo(here, tile) <= radius;
 }
 
 export class DeathRecovery {

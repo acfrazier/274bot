@@ -19,7 +19,6 @@ export const apiVersion = 2;
 
 const STOP_OK = 'enter lair qualification complete';
 const RECEIPT_PREFIX = 'enter-lair-receipt:';
-const WALK_SCENERY = 0x100;
 const MIN_CHEB = 8;
 const MAX_CHEB = 16;
 const SITE_KEY = 'enter-lair';
@@ -50,26 +49,15 @@ function contains(area: Box, tile: Tile): boolean {
     );
 }
 
-function flagAt(
-    c: NativeApi['snapshot']['collision'],
-    x: number,
-    z: number,
-): number | undefined {
-    const lx = x - c.base_x;
-    const lz = z - c.base_z;
-    if (lx < 0 || lz < 0 || lx >= c.width || lz >= c.height) return undefined;
-    return c.flags.at(lx * c.height + lz);
-}
 
 function forbiddenTile(tile: Tile): boolean {
     return tile.x === FORBIDDEN_TILE.x && tile.z === FORBIDDEN_TILE.z;
 }
 
-function walkable(c: NativeApi['snapshot']['collision'], tile: Tile): boolean {
-    if (!c.available) return true;
-    const flag = flagAt(c, tile.x, tile.z);
-    if (flag === undefined) return false;
-    return (flag & WALK_SCENERY) === 0;
+function walkable(api: NativeApi, tile: Tile): boolean {
+    const r = api.walkable({ tile });
+    if (!r.ok) return true;
+    return r.value === true;
 }
 
 /** Approach tile only. Chebyshev 8–16 keeps `here` outside this box. */
@@ -85,7 +73,7 @@ function approachBox(tile: Tile): Box {
 
 function pickApproach(
     here: Tile,
-    c: NativeApi['snapshot']['collision'],
+    api: NativeApi,
 ): { approach: Tile; box: Box } | null {
     for (let r = MIN_CHEB; r <= MAX_CHEB; r++) {
         for (let dx = -r; dx <= r; dx++) {
@@ -97,7 +85,7 @@ function pickApproach(
                 if (chebyshev(here, cand) < MIN_CHEB || chebyshev(here, cand) > MAX_CHEB) {
                     continue;
                 }
-                if (!walkable(c, cand)) continue;
+                if (!walkable(api, cand)) continue;
                 const area = approachBox(cand);
                 if (contains(area, here) || !contains(area, cand)) continue;
                 return { approach: cand, box: area };
@@ -130,14 +118,13 @@ export function tick(api: NativeApi): void {
         return;
     }
     const here = snap.here;
-    const c = snap.collision;
 
     if (approach && sameTile(approach, here)) {
         approach = null;
         box = null;
     }
     if (!approach || !box) {
-        const picked = pickApproach(here, c);
+        const picked = pickApproach(here, api);
         if (!picked) {
             return;
         }

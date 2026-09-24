@@ -563,6 +563,9 @@ fn render_native_v2(out: &mut String) {
     out.push_str("  plannedPotions(input: { carry: Array<{ item: string; qty: number }> }): HelperResult<PotionPlan[]>;\n");
     out.push_str("  potionToSip(input: { plans: PotionPlan[]; held: number[]; levels: Array<{ skill: string; base: number; effective: number }> }): HelperResult<PotionPlan | null>;\n");
     out.push_str("  lineOfSight(input: { from: WorldTile; to: WorldTile; size?: number }): HelperResult<boolean>;\n");
+    out.push_str("  walkable(input: { tile: WorldTile } | WorldTile): HelperResult<boolean>;\n");
+    out.push_str("  canStep(input: { from: WorldTile; to: WorldTile }): HelperResult<boolean>;\n");
+    out.push_str("  canReach(input: { tile: WorldTile; adjacentOk?: boolean; maxSteps?: number }): HelperResult<boolean>;\n");
     out.push_str("  fightBegin(input?: object): HelperResult<{ token: number }>;\n");
     out.push_str("  fightValidate(input: { token: number } & Record<string, unknown>): HelperResult<boolean>;\n");
     out.push_str("  /** One effect per call. Yield is status done with kind yield. Aborted is not anonymous done. */\n");
@@ -1124,7 +1127,7 @@ const SUPPORTING_INTERFACES: &[TsInterface] = &[
     },
     TsInterface {
         name: "ReachQueryView",
-        doc: Some("Compact native coordinate reachability with bounded dequeue metadata."),
+        doc: Some("Posted reach window metadata. Packed bits are not materialized; use api.walkable / canStep / canReach."),
         fields: &[
             TsField {
                 name: "available",
@@ -1159,44 +1162,6 @@ const SUPPORTING_INTERFACES: &[TsInterface] = &[
             TsField {
                 name: "height",
                 ty: "number",
-                optional: false,
-                doc: None,
-            },
-            TsField {
-                name: "walkable",
-                ty: "number[]",
-                optional: false,
-                doc: None,
-            },
-            TsField {
-                name: "reachable",
-                ty: "number[]",
-                optional: false,
-                doc: None,
-            },
-            TsField {
-                name: "reachable_adj",
-                ty: "number[]",
-                optional: false,
-                doc: None,
-            },
-            TsField {
-                name: "exact_rank",
-                ty: "number[]",
-                optional: false,
-                doc: Some("Earliest exact dequeue rank; 65535 means unreachable."),
-            },
-            TsField {
-                name: "adjacent_rank",
-                ty: "number[]",
-                optional: false,
-                doc: Some(
-                    "Earliest exact-or-valid-adjacent dequeue rank; 65535 means unreachable.",
-                ),
-            },
-            TsField {
-                name: "step",
-                ty: "number[]",
                 optional: false,
                 doc: None,
             },

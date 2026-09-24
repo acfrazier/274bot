@@ -26,9 +26,18 @@ fn host_js_dts_includes_required_interfaces() {
     assert!(src.contains("orbit_yaw"));
     assert!(src.contains("export interface ShopStockRow"));
     assert!(src.contains("export interface ReachQueryView"));
-    assert!(src.contains("exact_rank: number[]"));
-    assert!(src.contains("adjacent_rank: number[]"));
+    assert!(!src.contains("exact_rank: number[]"));
+    assert!(!src.contains("adjacent_rank: number[]"));
     assert!(src.contains("reach: ReachQueryView"));
+    assert!(src.contains(
+        "walkable(input: { tile: WorldTile } | WorldTile): HelperResult<boolean>"
+    ));
+    assert!(src.contains(
+        "canStep(input: { from: WorldTile; to: WorldTile }): HelperResult<boolean>"
+    ));
+    assert!(src.contains(
+        "canReach(input: { tile: WorldTile; adjacentOk?: boolean; maxSteps?: number }): HelperResult<boolean>"
+    ));
     assert!(src.contains("export interface CollisionFlagsView"));
     assert!(src.contains("export interface CollisionView"));
     assert!(src.contains("collision: CollisionView"));

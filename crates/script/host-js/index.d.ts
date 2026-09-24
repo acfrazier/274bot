@@ -129,7 +129,7 @@ export interface QuestStatusRow {
   component_id?: number;
 }
 
-/** Compact native coordinate reachability with bounded dequeue metadata. */
+/** Posted reach window metadata. Packed bits are not materialized; use api.walkable / canStep / canReach. */
 export interface ReachQueryView {
   available: boolean;
   base_x: number;
@@ -137,14 +137,6 @@ export interface ReachQueryView {
   level: number;
   width: number;
   height: number;
-  walkable: number[];
-  reachable: number[];
-  reachable_adj: number[];
-  /** Earliest exact dequeue rank; 65535 means unreachable. */
-  exact_rank: number[];
-  /** Earliest exact-or-valid-adjacent dequeue rank; 65535 means unreachable. */
-  adjacent_rank: number[];
-  step: number[];
 }
 
 export interface VarpRow {
@@ -728,6 +720,9 @@ export interface NativeApi {
   plannedPotions(input: { carry: Array<{ item: string; qty: number }> }): HelperResult<PotionPlan[]>;
   potionToSip(input: { plans: PotionPlan[]; held: number[]; levels: Array<{ skill: string; base: number; effective: number }> }): HelperResult<PotionPlan | null>;
   lineOfSight(input: { from: WorldTile; to: WorldTile; size?: number }): HelperResult<boolean>;
+  walkable(input: { tile: WorldTile } | WorldTile): HelperResult<boolean>;
+  canStep(input: { from: WorldTile; to: WorldTile }): HelperResult<boolean>;
+  canReach(input: { tile: WorldTile; adjacentOk?: boolean; maxSteps?: number }): HelperResult<boolean>;
   fightBegin(input?: object): HelperResult<{ token: number }>;
   fightValidate(input: { token: number } & Record<string, unknown>): HelperResult<boolean>;
   /** One effect per call. Yield is status done with kind yield. Aborted is not anonymous done. */

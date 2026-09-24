@@ -972,6 +972,16 @@ impl GameSnapshot {
         self.gens
     }
 
+    /// Scene-family generation this snapshot last rebuilt the collision grid at.
+    pub fn scene_generation(&self) -> u64 {
+        self.gens.scene
+    }
+
+    /// Loc/static-scenery generation that last recopied collision flags.
+    pub fn collision_generation(&self) -> u64 {
+        self.loc_static_gen ^ self.loc_model_stamp
+    }
+
     /// Rebuild `family` from `client` iff its gen moved since the last
     /// rebuild of that family. Returns true iff the gen moved. The npc/
     /// player/stat families rebuild their view caches; the rest track

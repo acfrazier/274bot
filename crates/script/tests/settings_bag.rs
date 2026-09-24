@@ -124,7 +124,7 @@ export default class T extends LoopingBot {
             tileIdentity: tile instanceof Tile,
             distanceToGameTile: tile.distanceTo(Game.tile()),
             crossPlaneDistance: tile.distanceTo(new Tile(3211, 3215, 1)),
-            directNativeDistance: globalThis.rustyscript.functions.__rs2b0t_tile_distance(
+            directNativeDistance: globalThis.__rs2b0t_distance(
                 { x: 3208, z: 3212, level: 2 },
                 { x: 3209, z: 3214, level: 2 },
             ),

@@ -25,6 +25,10 @@ mod isolate;
 mod library;
 #[cfg(feature = "load")]
 mod line_of_sight;
+#[cfg(feature = "load")]
+mod distance;
+#[cfg(feature = "load")]
+mod reach_query;
 mod loadout_v8;
 #[cfg(feature = "load")]
 mod melee_weapons_v8;

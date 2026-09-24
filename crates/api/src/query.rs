@@ -145,6 +145,20 @@ pub fn chebyshev_to(a: WorldTile, b: WorldTile) -> i32 {
     }
 }
 
+/// Frozen `Tile.distanceTo`: Chebyshev on the plane, `1_000_000 + xz`
+/// across planes (`Tile.ts` in the frozen catalog). Computed in `i64` so
+/// any script-supplied `i32` tile cannot overflow.
+pub fn tile_distance_to(a: WorldTile, b: WorldTile) -> i64 {
+    let dx = i64::from(a.x) - i64::from(b.x);
+    let dz = i64::from(a.z) - i64::from(b.z);
+    let xz = dx.abs().max(dz.abs());
+    if a.level != b.level {
+        1_000_000 + xz
+    } else {
+        xz
+    }
+}
+
 // --- view accessors (the trait bounds the extension traits impl over) ----
 
 trait EntityQueryView {
@@ -2410,6 +2424,192 @@ pub fn pack_reach_query_plane(
             flood.height,
             canlight,
         ),
+    }
+}
+
+/// Identity for caching packed reach. Scene-static tables rebuild only when
+/// [`Self::static_eq`] is false; flood ranks rebuild when the full key changes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ReachCacheKey {
+    pub scene_generation: u64,
+    pub collision_generation: u64,
+    pub available: bool,
+    pub base_x: i32,
+    pub base_z: i32,
+    pub level: i32,
+    pub width: i32,
+    pub height: i32,
+    pub here: Option<(i32, i32, i32)>,
+    pub canlight_stamp: u64,
+}
+
+impl ReachCacheKey {
+    pub fn from_parts(
+        scene_generation: u64,
+        collision_generation: u64,
+        scene: &SceneView,
+        here: Option<WorldTile>,
+        canlight: Option<CanlightPlane<'_>>,
+    ) -> Self {
+        Self {
+            scene_generation,
+            collision_generation,
+            available: scene.available,
+            base_x: scene.base_x,
+            base_z: scene.base_z,
+            level: scene.level,
+            width: scene.width,
+            height: scene.height,
+            here: here.map(|t| (t.x, t.z, t.level)),
+            canlight_stamp: canlight_stamp(canlight),
+        }
+    }
+
+    pub fn static_eq(self, other: Self) -> bool {
+        self.scene_generation == other.scene_generation
+            && self.collision_generation == other.collision_generation
+            && self.available == other.available
+            && self.base_x == other.base_x
+            && self.base_z == other.base_z
+            && self.level == other.level
+            && self.width == other.width
+            && self.height == other.height
+            && self.canlight_stamp == other.canlight_stamp
+    }
+
+    /// Non-zero stamp for isolate fingerprinting. `0` is reserved for
+    /// posts that still fingerprint the packed vectors.
+    pub fn stamp(self) -> u64 {
+        let mut h = self.scene_generation.wrapping_add(1);
+        h ^= self.collision_generation.rotate_left(7);
+        h ^= self.canlight_stamp.rotate_left(13);
+        h = h.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        h ^= (self.available as u64) << 1;
+        h ^= (self.base_x as u64).wrapping_mul(0x1000_001);
+        h ^= (self.base_z as u64).rotate_left(11);
+        h ^= (self.level as u64) << 32;
+        h ^= (self.width as u64) << 16;
+        h ^= self.height as u64;
+        if let Some((x, z, level)) = self.here {
+            h ^= (x as u64).wrapping_mul(0x517c_c1b7);
+            h ^= (z as u64).rotate_left(21);
+            h ^= (level as u64) << 40;
+        } else {
+            h ^= 0xA5A5_A5A5_A5A5_A5A5;
+        }
+        h | 1
+    }
+}
+
+fn canlight_stamp(plane: Option<CanlightPlane<'_>>) -> u64 {
+    let Some(p) = plane else {
+        return 0;
+    };
+    let mut h = p.bits.len() as u64;
+    h ^= (p.origin_x as u64).wrapping_mul(0x9E37);
+    h ^= (p.origin_z as u64).rotate_left(11);
+    h ^= (p.width as u64) << 16;
+    h ^= p.height as u64;
+    if let Some(&w) = p.bits.first() {
+        h ^= w;
+    }
+    if let Some(&w) = p.bits.last() {
+        h ^= w.rotate_left(17);
+    }
+    if p.bits.len() > 2 {
+        h ^= p.bits[p.bits.len() / 2];
+    }
+    h | 1
+}
+
+/// Per-slot cache of packed reach. Scene-static walkable/step/canlight
+/// rebuild when the collision/scene generation changes; flood ranks rebuild
+/// when the player tile changes on that same scene.
+#[derive(Debug)]
+pub struct ReachPackCache {
+    key: Option<ReachCacheKey>,
+    view: ReachQueryView,
+    static_rebuilds: u64,
+    flood_packs: u64,
+}
+
+impl Default for ReachPackCache {
+    fn default() -> Self {
+        Self {
+            key: None,
+            view: ReachQueryView::unavailable(),
+            static_rebuilds: 0,
+            flood_packs: 0,
+        }
+    }
+}
+
+impl ReachPackCache {
+    pub fn static_rebuilds(&self) -> u64 {
+        self.static_rebuilds
+    }
+
+    pub fn flood_packs(&self) -> u64 {
+        self.flood_packs
+    }
+
+    pub fn contains(&self, key: &ReachCacheKey) -> bool {
+        self.key.as_ref() == Some(key)
+    }
+
+    pub fn view(&self) -> &ReachQueryView {
+        &self.view
+    }
+
+    pub fn clear(&mut self) {
+        *self = Self::default();
+    }
+
+    pub fn pack(
+        &mut self,
+        key: ReachCacheKey,
+        scene: &SceneView,
+        flood: Option<&ReachFlood>,
+        canlight: Option<CanlightPlane<'_>>,
+    ) -> &ReachQueryView {
+        if self.key.as_ref() == Some(&key) {
+            return &self.view;
+        }
+        let reuse_static = self.key.is_some_and(|k| k.static_eq(key)) && self.view.available;
+        if reuse_static {
+            self.view = overlay_flood(&self.view, flood);
+            self.key = Some(key);
+            self.flood_packs += 1;
+            return &self.view;
+        }
+        self.view = pack_reach_query_plane(scene, flood, canlight);
+        self.key = Some(key);
+        self.static_rebuilds += 1;
+        self.flood_packs += 1;
+        &self.view
+    }
+}
+
+fn overlay_flood(prev: &ReachQueryView, flood: Option<&ReachFlood>) -> ReachQueryView {
+    let Some(flood) = flood else {
+        return ReachQueryView::unavailable();
+    };
+    let (reachable, reachable_adj) = flood.pack_u32();
+    let (exact_rank, adjacent_rank) = flood.ranks();
+    ReachQueryView {
+        available: true,
+        base_x: flood.base_x,
+        base_z: flood.base_z,
+        level: flood.level,
+        width: flood.width,
+        height: flood.height,
+        walkable: prev.walkable.clone(),
+        reachable,
+        reachable_adj,
+        exact_rank: exact_rank.to_vec(),
+        adjacent_rank: adjacent_rank.to_vec(),
+        step: prev.step.clone(),
+        canlight: prev.canlight.clone(),
     }
 }
 

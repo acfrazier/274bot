@@ -18,9 +18,8 @@ export const proxy = (ns, members) =>
         },
     });
 
-export function chebyshev(a, b) {
-    if (!a || !b || (a.level ?? 0) !== (b.level ?? 0)) return Infinity;
-    return Math.max(Math.abs(a.x - b.x), Math.abs(a.z - b.z));
+export function distanceTo(a, b) {
+    return globalThis.__rs2b0t_distance(a, b);
 }
 
 export function presentOps(actions) {

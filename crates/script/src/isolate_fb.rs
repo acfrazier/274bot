@@ -500,6 +500,8 @@ pub struct ReachViewInput<'a> {
     pub adjacent_rank: &'a [u16],
     pub step: &'a [u8],
     pub canlight: &'a [u32],
+    /// Non-zero: fingerprint compares this stamp instead of copying vectors.
+    pub stamp: u64,
 }
 
 impl ReachViewInput<'static> {
@@ -518,6 +520,7 @@ impl ReachViewInput<'static> {
         adjacent_rank: &[],
         step: &[],
         canlight: &[],
+        stamp: 0,
     };
 }
 
@@ -3073,6 +3076,38 @@ pub struct ReachViewFp {
     pub adjacent_rank: Vec<u16>,
     pub step: Vec<u8>,
     pub canlight: Vec<u32>,
+    pub stamp: u64,
+}
+
+fn reach_fp(r: &ReachViewInput<'_>) -> ReachViewFp {
+    if r.stamp != 0 {
+        return ReachViewFp {
+            available: r.available,
+            base_x: r.base_x,
+            base_z: r.base_z,
+            level: r.level,
+            width: r.width,
+            height: r.height,
+            stamp: r.stamp,
+            ..ReachViewFp::default()
+        };
+    }
+    ReachViewFp {
+        available: r.available,
+        base_x: r.base_x,
+        base_z: r.base_z,
+        level: r.level,
+        width: r.width,
+        height: r.height,
+        walkable: r.walkable.to_vec(),
+        reachable: r.reachable.to_vec(),
+        reachable_adj: r.reachable_adj.to_vec(),
+        exact_rank: r.exact_rank.to_vec(),
+        adjacent_rank: r.adjacent_rank.to_vec(),
+        step: r.step.to_vec(),
+        canlight: r.canlight.to_vec(),
+        stamp: 0,
+    }
 }
 
 /// The per-slot last-post fingerprint: an owned copy of the snapshot
@@ -3415,21 +3450,7 @@ impl SnapshotFingerprint {
             main_make: native
                 .main_make
                 .map(|rows| rows.iter().map(item_row_fp).collect()),
-            reach: ReachViewFp {
-                available: input.reach.available,
-                base_x: input.reach.base_x,
-                base_z: input.reach.base_z,
-                level: input.reach.level,
-                width: input.reach.width,
-                height: input.reach.height,
-                walkable: input.reach.walkable.to_vec(),
-                reachable: input.reach.reachable.to_vec(),
-                reachable_adj: input.reach.reachable_adj.to_vec(),
-                exact_rank: input.reach.exact_rank.to_vec(),
-                adjacent_rank: input.reach.adjacent_rank.to_vec(),
-                step: input.reach.step.to_vec(),
-                canlight: input.reach.canlight.to_vec(),
-            },
+            reach: reach_fp(&input.reach),
             attacked_by_player: input.attacked_by_player,
             self_target_kind: input.self_target_kind,
             self_target_index: input.self_target_index,
@@ -8806,6 +8827,7 @@ pub(crate) mod tests {
             adjacent_rank: &adjacent_rank,
             step: &[],
             canlight: &walkable,
+            stamp: 0,
         };
         let bytes = encode_snapshot(&input);
         let view = decode_snapshot(&bytes).expect("snapshot decodes");
@@ -8856,6 +8878,7 @@ pub(crate) mod tests {
             adjacent_rank: &rank,
             step: &step,
             canlight: &[],
+            stamp: 0,
         };
         let (keyframe, fp) = encode_snapshot_delta(None, &input, false);
         let kf = decode_snapshot(&keyframe).expect("keyframe");
@@ -8886,6 +8909,7 @@ pub(crate) mod tests {
             adjacent_rank: &rank,
             step: &[2],
             canlight: &[],
+            stamp: 0,
         };
         let (_keyframe, fp) = encode_snapshot_delta(None, &input, false);
         input.reach = ReachViewInput::UNAVAILABLE;
@@ -8923,6 +8947,7 @@ pub(crate) mod tests {
             adjacent_rank: &rank,
             step: &[2],
             canlight: &lit,
+            stamp: 0,
         };
         let (keyframe, fp) = encode_snapshot_delta(None, &input, false);
         let kf = decode_snapshot(&keyframe).expect("keyframe");

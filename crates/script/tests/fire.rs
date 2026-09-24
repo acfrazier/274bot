@@ -479,6 +479,7 @@ fn find_burn_lane_and_run_use_posted_native_steps_and_validate_start() {
         adjacent_rank: &ranks,
         step: &steps,
         canlight: &words,
+        stamp: 0,
     };
     post(&iso, &snap);
     tick(&iso, 1);
@@ -611,6 +612,7 @@ fn find_burn_lane_without_canlight_is_explicit() {
         adjacent_rank: &ranks,
         step: &steps,
         canlight: &[],
+        stamp: 0,
     };
     post(&iso, &snap);
     tick(&iso, 1);
@@ -677,6 +679,7 @@ fn find_burn_lane_denies_walkable_bank_floor_from_cropped_mask() {
         adjacent_rank: &ranks,
         step: &steps,
         canlight: &canlight,
+        stamp: 0,
     };
     post(&iso, &snap);
     tick(&iso, 1);

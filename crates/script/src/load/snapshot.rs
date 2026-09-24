@@ -1116,44 +1116,6 @@ fn tile_values_object<'s>(
     Ok(o.into())
 }
 
-fn u32_array<'s>(
-    scope: &mut v8::HandleScope<'s>,
-    words: &[u32],
-) -> Result<v8::Local<'s, v8::Value>, String> {
-    let arr = v8::Array::new(scope, words.len() as i32);
-    for (i, word) in words.iter().enumerate() {
-        let n = num(scope, f64::from(*word));
-        arr.set_index(scope, i as u32, n)
-            .ok_or_else(|| "v8 array set failed".to_string())?;
-    }
-    Ok(arr.into())
-}
-
-fn u8_array<'s>(
-    scope: &mut v8::HandleScope<'s>,
-    bytes: &[u8],
-) -> Result<v8::Local<'s, v8::Value>, String> {
-    let arr = v8::Array::new(scope, bytes.len() as i32);
-    for (i, byte) in bytes.iter().enumerate() {
-        let n = num(scope, f64::from(*byte));
-        arr.set_index(scope, i as u32, n)
-            .ok_or_else(|| "v8 array set failed".to_string())?;
-    }
-    Ok(arr.into())
-}
-
-fn u16_array<'s>(
-    scope: &mut v8::HandleScope<'s>,
-    values: &[u16],
-) -> Result<v8::Local<'s, v8::Value>, String> {
-    let arr = v8::Array::new(scope, values.len() as i32);
-    for (i, value) in values.iter().enumerate() {
-        let n = num(scope, f64::from(*value));
-        arr.set_index(scope, i as u32, n)
-            .ok_or_else(|| "v8 array set failed".to_string())?;
-    }
-    Ok(arr.into())
-}
 
 fn unavailable_collision<'s>(
     scope: &mut v8::HandleScope<'s>,
@@ -1256,18 +1218,6 @@ fn unavailable_reach<'s>(
     set(scope, o, "level", zero)?;
     set(scope, o, "width", zero)?;
     set(scope, o, "height", zero)?;
-    let empty = v8::Array::new(scope, 0);
-    set(scope, o, "walkable", empty.into())?;
-    let empty = v8::Array::new(scope, 0);
-    set(scope, o, "reachable", empty.into())?;
-    let empty = v8::Array::new(scope, 0);
-    set(scope, o, "reachable_adj", empty.into())?;
-    let empty = v8::Array::new(scope, 0);
-    set(scope, o, "exact_rank", empty.into())?;
-    let empty = v8::Array::new(scope, 0);
-    set(scope, o, "adjacent_rank", empty.into())?;
-    let empty = v8::Array::new(scope, 0);
-    set(scope, o, "step", empty.into())?;
     Ok(o.into())
 }
 
@@ -1291,18 +1241,6 @@ fn reach_object<'s>(
     set(scope, o, "width", width)?;
     let height = num(scope, r.height() as f64);
     set(scope, o, "height", height)?;
-    let walkable = u32_array(scope, &r.walkable())?;
-    set(scope, o, "walkable", walkable)?;
-    let reachable = u32_array(scope, &r.reachable())?;
-    set(scope, o, "reachable", reachable)?;
-    let reachable_adj = u32_array(scope, &r.reachable_adj())?;
-    set(scope, o, "reachable_adj", reachable_adj)?;
-    let exact_rank = u16_array(scope, &r.exact_rank())?;
-    set(scope, o, "exact_rank", exact_rank)?;
-    let adjacent_rank = u16_array(scope, &r.adjacent_rank())?;
-    set(scope, o, "adjacent_rank", adjacent_rank)?;
-    let step = u8_array(scope, &r.step())?;
-    set(scope, o, "step", step)?;
     Ok(o.into())
 }
 

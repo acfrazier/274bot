@@ -1,4 +1,4 @@
-import { entitySnapView, notImpl } from '../../shim/_kernel.js';
+import { entitySnapView, notImpl, distanceTo } from '../../shim/_kernel.js';
 
 /** Case-insensitive trim compare of posted entity names. */
 export function matchesEntityName(actual, configured) {
@@ -45,7 +45,10 @@ export default class EntityQuery {
         const r = Math.max(0, Math.floor(dist));
         this.snapFilters.push((s) => {
             const t = s.tile;
-            return Math.max(Math.abs(t.x - origin.x), Math.abs(t.z - origin.z)) <= r;
+            return distanceTo(
+                { x: origin.x, z: origin.z, level: 0 },
+                { x: t.x, z: t.z, level: 0 },
+            ) <= r;
         });
         return this;
     }

@@ -9,7 +9,6 @@ export const apiVersion = 2;
 
 const STOP_OK = 'hold spot qualification complete';
 const RECEIPT_PREFIX = 'hold-spot-receipt:';
-const WALK_SCENERY = 0x100;
 const MIN_CHEB = 2;
 const MAX_CHEB = 6;
 
@@ -22,29 +21,20 @@ function chebyshev(a: Tile, b: Tile): number {
     return Math.max(Math.abs(a.x - b.x), Math.abs(a.z - b.z));
 }
 
-function flagAt(
-    c: NativeApi['snapshot']['collision'],
-    x: number,
-    z: number,
-): number | undefined {
-    const lx = x - c.base_x;
-    const lz = z - c.base_z;
-    if (lx < 0 || lz < 0 || lx >= c.width || lz >= c.height) return undefined;
-    return c.flags.at(lx * c.height + lz);
+function tileWalkable(api: NativeApi, tile: Tile): boolean {
+    const r = api.walkable({ tile });
+    if (!r.ok) return true;
+    return r.value === true;
 }
 
-function pickDest(here: Tile, c: NativeApi['snapshot']['collision']): Tile | null {
+function pickDest(here: Tile, api: NativeApi): Tile | null {
     for (let r = MIN_CHEB; r <= MAX_CHEB; r++) {
         for (let dx = -r; dx <= r; dx++) {
             for (let dz = -r; dz <= r; dz++) {
                 if (Math.max(Math.abs(dx), Math.abs(dz)) !== r) continue;
                 const cand = { x: here.x + dx, z: here.z + dz, level: here.level };
                 if (cand.x === here.x && cand.z === here.z) continue;
-                if (c.available) {
-                    const flag = flagAt(c, cand.x, cand.z);
-                    if (flag === undefined) continue;
-                    if ((flag & WALK_SCENERY) !== 0) continue;
-                }
+                if (!tileWalkable(api, cand)) continue;
                 return cand;
             }
         }
@@ -73,7 +63,7 @@ export function tick(api: NativeApi): void {
         dest = null;
     }
     if (!dest) {
-        dest = pickDest(here, c);
+        dest = pickDest(here, api);
     }
     if (!dest) {
         return;

@@ -409,6 +409,13 @@ pub(super) fn script_observe_cached(
                         name: obj_names.and_then(|names| names.name(row.id)),
                     })
                     .collect();
+                let (reach_pack, reach_stamp) = pack_cached_reach(
+                    slot.reach_pack_cache(),
+                    snapshot,
+                    here,
+                    world.as_deref(),
+                    canlight,
+                );
                 let bytes = with_script_snapshot_input_shorts(
                     tick,
                     here,
@@ -441,6 +448,8 @@ pub(super) fn script_observe_cached(
                     },
                     &carry_rows,
                     inspect_posted,
+                    Some(&reach_pack),
+                    reach_stamp,
                     |input, native| {
                         slot.encode_snapshot_delta_with_native(input, native, force_banks)
                     },
@@ -2311,6 +2320,51 @@ pub(super) struct MissingCarry {
     pub(super) count: i32,
 }
 
+fn pack_cached_reach(
+    cache: &mut api::query::ReachPackCache,
+    snapshot: Option<&GameSnapshot>,
+    here: Option<(i32, i32, i32)>,
+    world: Option<&NavWorld>,
+    canlight: Option<&[u64]>,
+) -> (api::query::ReachQueryView, u64) {
+    let Some(s) = snapshot else {
+        return (api::query::ReachQueryView::unavailable(), 0);
+    };
+    let canlight_plane = canlight.and_then(|bits| {
+        world.map(|w| api::query::CanlightPlane {
+            bits,
+            origin_x: w.collision.origin.x,
+            origin_z: w.collision.origin.z,
+            width: w.collision.width as i32,
+            height: w.collision.height as i32,
+        })
+    });
+    let here_tile = here.map(|(x, z, level)| WorldTile { x, z, level });
+    let key = api::query::ReachCacheKey::from_parts(
+        s.scene_generation(),
+        s.collision_generation(),
+        s.scene(),
+        here_tile,
+        canlight_plane,
+    );
+    let stamp = key.stamp();
+    if cache.contains(&key) {
+        return (cache.view().clone(), stamp);
+    }
+    let flood = here_tile.and_then(|tile| {
+        if !s.scene().available {
+            return None;
+        }
+        api::query::SceneQuery::new(s.scene(), Some(tile)).flood_reach()
+    });
+    (
+        cache
+            .pack(key, s.scene(), flood.as_ref(), canlight_plane)
+            .clone(),
+        stamp,
+    )
+}
+
 pub(super) fn with_script_snapshot_input<R>(
     tick: u64,
     here: Option<(i32, i32, i32)>,
@@ -2359,6 +2413,8 @@ pub(super) fn with_script_snapshot_input<R>(
         walk_outcome,
         &[],
         inspect,
+        None,
+        0,
         f,
     )
 }
@@ -2392,6 +2448,8 @@ pub(super) fn with_script_snapshot_input_shorts<R>(
     walk_outcome: PostedWalkOutcome,
     walk_missing_carry: &[script::isolate_fb::CarryInput<'_>],
     inspect: route_inspect::PostedInspect,
+    precomputed_reach: Option<&api::query::ReachQueryView>,
+    reach_stamp: u64,
     f: impl FnOnce(
         &script::isolate_fb::SnapshotInput<'_>,
         script::isolate_fb::NativeFactsInput<'_>,
@@ -2412,18 +2470,26 @@ pub(super) fn with_script_snapshot_input_shorts<R>(
         }
         api::query::SceneQuery::new(s.scene(), Some(WorldTile { x, z, level })).flood_reach()
     });
-    let canlight_plane = canlight.and_then(|bits| {
-        world.map(|w| api::query::CanlightPlane {
-            bits,
-            origin_x: w.collision.origin.x,
-            origin_z: w.collision.origin.z,
-            width: w.collision.width as i32,
-            height: w.collision.height as i32,
-        })
-    });
-    let reach_pack = snapshot
-        .map(|s| api::query::pack_reach_query_plane(s.scene(), flood.as_ref(), canlight_plane))
-        .unwrap_or_else(api::query::ReachQueryView::unavailable);
+    let owned_reach = match precomputed_reach {
+        Some(view) => view.clone(),
+        None => {
+            let canlight_plane = canlight.and_then(|bits| {
+                world.map(|w| api::query::CanlightPlane {
+                    bits,
+                    origin_x: w.collision.origin.x,
+                    origin_z: w.collision.origin.z,
+                    width: w.collision.width as i32,
+                    height: w.collision.height as i32,
+                })
+            });
+            snapshot
+                .map(|s| {
+                    api::query::pack_reach_query_plane(s.scene(), flood.as_ref(), canlight_plane)
+                })
+                .unwrap_or_else(api::query::ReachQueryView::unavailable)
+        }
+    };
+    let reach_pack = &owned_reach;
     let reach = ReachViewInput {
         available: reach_pack.available,
         base_x: reach_pack.base_x,
@@ -2438,13 +2504,31 @@ pub(super) fn with_script_snapshot_input_shorts<R>(
         adjacent_rank: &reach_pack.adjacent_rank,
         step: &reach_pack.step,
         canlight: &reach_pack.canlight,
+        stamp: reach_stamp,
     };
     let here = here.map(|(x, z, level)| TileInput { x, z, level });
     let entity_reach = |x: i32, z: i32, level: i32| -> (bool, bool) {
-        flood
-            .as_ref()
-            .map(|f| f.at(&WorldTile { x, z, level }))
-            .unwrap_or((false, false))
+        let tile = WorldTile { x, z, level };
+        (
+            api::query::ReachQueryView::bit_at(
+                &reach_pack.reachable,
+                reach_pack.width,
+                reach_pack.height,
+                reach_pack.base_x,
+                reach_pack.base_z,
+                reach_pack.level,
+                tile,
+            ),
+            api::query::ReachQueryView::bit_at(
+                &reach_pack.reachable_adj,
+                reach_pack.width,
+                reach_pack.height,
+                reach_pack.base_x,
+                reach_pack.base_z,
+                reach_pack.level,
+                tile,
+            ),
+        )
     };
     let scene_entity_target = |target: Option<&api::snapshot::ActorTargetView>| -> (i32, i32) {
         match target {

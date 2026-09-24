@@ -292,6 +292,8 @@ pub struct SlotScript {
     last_snapshot: Option<SnapshotFingerprint>,
     #[cfg(feature = "load")]
     last_world_id: Option<usize>,
+    #[cfg(feature = "load")]
+    reach_cache: api::query::ReachPackCache,
     /// Reusable FlatBuffer builder for this slot's host→isolate snapshot
     /// posts. One per slot; the V8 isolate thread holds its own for
     /// interact/paint. Never a JSON document on either path.
@@ -351,6 +353,8 @@ impl SlotScript {
             last_snapshot: None,
             #[cfg(feature = "load")]
             last_world_id: None,
+            #[cfg(feature = "load")]
+            reach_cache: api::query::ReachPackCache::default(),
             #[cfg(feature = "load")]
             ipc: IsolateBuf::new(),
             last_error: None,
@@ -542,6 +546,7 @@ impl SlotScript {
                 // Fresh isolate: the first posted snapshot is a keyframe.
                 self.last_snapshot = None;
                 self.last_world_id = None;
+                self.reach_cache.clear();
                 self.state = RunState::Running;
                 self.runtime_generation = self.runtime_generation.wrapping_add(1);
                 self.last_settings_fp = None;
@@ -1084,6 +1089,11 @@ impl SlotScript {
     #[cfg(feature = "load")]
     pub fn store_last_world_id(&mut self, id: Option<usize>) {
         self.last_world_id = id;
+    }
+
+    #[cfg(feature = "load")]
+    pub fn reach_pack_cache(&mut self) -> &mut api::query::ReachPackCache {
+        &mut self.reach_cache
     }
 
     /// Drain the interact requests this slot's script queued, in tick order:

@@ -1,5 +1,6 @@
 import { Execution } from '../execution/Execution.js';
 import { Inventory } from '../inventory/Inventory.js';
+import { distanceTo } from '../../shim/_kernel.js';
 const host = () => globalThis.__rs2b0t_host || {};
 const notImpl = (name, reason) =>
     new Error(reason ? 'not impl: ' + name + ': ' + reason : 'not impl: ' + name);
@@ -428,7 +429,7 @@ export const Bank = new Proxy(
             if (!row) return false;
             const adjacent = () => {
                 const h = snap().here;
-                return h && h.level === (row.level ?? 0) && Math.max(Math.abs(h.x-row.x), Math.abs(h.z-row.z)) <= 1;
+                return h && distanceTo(h, { x: row.x, z: row.z, level: row.level ?? 0 }) <= 1;
             };
             if (!adjacent()) {
                 queue({op:'walk-near',x:row.x,z:row.z,level:row.level ?? 0,radius:1,allow_teleports:false,allow_wilderness:true,allow_bank_fetch:true});

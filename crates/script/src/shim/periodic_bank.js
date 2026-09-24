@@ -5,7 +5,7 @@ import { Bank } from '../bank/Bank.js';
 import { depositMatcher } from '../bank/Banking.js';
 import { Execution } from '../execution/Execution.js';
 import { Game } from '../game/Game.js';
-import { chebyshev, queue, snap } from '../../shim/_kernel.js';
+import { distanceTo, queue, snap } from '../../shim/_kernel.js';
 
 const WALK_MS = 60000;
 const BANK_WAIT_MS = 4000;
@@ -55,7 +55,7 @@ function obs() {
 
 function adjacent(tile, radius) {
     const here = snap().here;
-    return here && tile && chebyshev(here, tile) <= radius;
+    return here && tile && distanceTo(here, tile) <= radius;
 }
 
 export class PeriodicBank {

@@ -1,4 +1,4 @@
-import { snap, queue, proxy, chebyshev, notImpl } from '../../shim/_kernel.js';
+import { snap, queue, proxy, distanceTo, notImpl } from '../../shim/_kernel.js';
 import { Execution } from '../execution/Execution.js';
 
 function allowTeleports(opts) {
@@ -14,7 +14,7 @@ function arrival(tile, opts) {
         here,
         target,
         radius,
-        arrived: chebyshev(here, target) <= radius,
+        arrived: distanceTo(here, target) <= radius,
     };
 }
 
