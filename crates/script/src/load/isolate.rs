@@ -1921,7 +1921,6 @@ fn tick_loop(
                             crate::cake_stall::on_hold(host_hold);
                             crate::walk_wait::on_hold(host_hold);
                             crate::inspect_wait::on_hold(host_hold);
-                            crate::death_recovery::on_hold(host_hold);
                             crate::machine::on_hold(host_hold);
                             crate::hunt_fight::on_hold(host_hold);
                             crate::hunt_lair::on_hold(host_hold);
@@ -2286,7 +2285,6 @@ fn tick_loop(
             IsolateCmd::ResetSession => {
                 crate::observed::on_reset();
                 super::reach_query::on_reset();
-                crate::periodic_bank::on_reset();
                 crate::cake_stall::on_reset();
                 crate::walk_wait::on_reset();
                 crate::inspect_wait::on_reset();
@@ -2344,7 +2342,6 @@ fn tick_loop(
                 crate::cake_stall::on_pause();
                 crate::walk_wait::on_pause();
                 crate::inspect_wait::on_pause();
-                crate::death_recovery::on_pause();
                 crate::machine::on_pause();
                 crate::hunt_fight::on_pause();
                 crate::hunt_lair::on_pause();
@@ -2363,7 +2360,6 @@ fn tick_loop(
                 crate::cake_stall::on_resume();
                 crate::walk_wait::on_resume();
                 crate::inspect_wait::on_resume();
-                crate::death_recovery::on_resume();
                 crate::machine::on_resume();
                 crate::hunt_fight::on_resume();
                 crate::hunt_lair::on_resume();

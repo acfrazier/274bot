@@ -99,13 +99,6 @@ pub(super) fn wire_runtime(
             },
         )
         .map_err(|e| format!("register common bank loot: {e}"))?;
-    runtime
-        .register_function("__rs2b0t_periodic_bank", |args: &[serde_json::Value]| {
-            Ok(crate::periodic_bank::dispatch(
-                args.first().unwrap_or(&serde_json::Value::Null),
-            ))
-        })
-        .map_err(|e| format!("register periodic bank: {e}"))?;
     let bank_unlock_facts = std::sync::Arc::clone(&named_banks);
     runtime
         .register_function(
@@ -147,13 +140,6 @@ pub(super) fn wire_runtime(
             ))
         })
         .map_err(|e| format!("register cake stall: {e}"))?;
-    runtime
-        .register_function("__rs2b0t_death_recovery", |args: &[serde_json::Value]| {
-            Ok(crate::death_recovery::dispatch(
-                args.first().unwrap_or(&serde_json::Value::Null),
-            ))
-        })
-        .map_err(|e| format!("register death recovery: {e}"))?;
     runtime
         .register_function(
             "__rs2b0t_selected_loadout",
@@ -572,6 +558,7 @@ pub(super) fn wire_runtime(
     super::fire_v8::install(runtime).map_err(|e| format!("fire v8: {e}"))?;
     super::combat_style_v8::install(runtime).map_err(|e| format!("combat style v8: {e}"))?;
     super::machine_v8::install(runtime).map_err(|e| format!("machine v8: {e}"))?;
+    super::bank_tasks_v8::install(runtime).map_err(|e| format!("bank tasks v8: {e}"))?;
     super::dialog_v8::install(runtime).map_err(|e| format!("dialog v8: {e}"))?;
     let content = format!(
         "globalThis.__rs2b0t_host.content = {};",

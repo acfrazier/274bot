@@ -289,17 +289,25 @@ fn loot_count_chicken_shape_observes_deposit_afterdeposit_close_and_return() {
         true,
         "afterDeposit runs after observed deposit"
     );
-    assert_eq!(
-        iso.drain_interacts(),
-        vec![InteractReq::Close],
-        "Rust must wait for the script callback before close"
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "frozen bankNearest waits one tick after afterDeposit"
     );
 
     snap.tick = 4;
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 4);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::Close],
+        "the bank closes before the walk back"
+    );
+
+    snap.tick = 5;
     snap.bank_open = false;
     snap.bank_loaded = false;
     post_snapshot_input(&iso, &snap);
-    tick(&iso, 4);
+    tick(&iso, 5);
     assert_eq!(
         iso.drain_interacts(),
         vec![InteractReq::WalkNear {
@@ -314,16 +322,17 @@ fn loot_count_chicken_shape_observes_deposit_afterdeposit_close_and_return() {
         }]
     );
 
-    snap.tick = 5;
+    snap.tick = 6;
     snap.here = Some(TileInput {
         x: 3222,
         z: 3222,
         level: 0,
     });
     post_snapshot_input(&iso, &snap);
-    tick(&iso, 5);
+    tick(&iso, 6);
     assert!(iso.drain_interacts().is_empty());
     assert_eq!(iso.probe("__log").unwrap(), "periodic bank: completed");
+    assert_eq!(iso.probe("__status").unwrap(), "periodic bank run");
     iso.join();
 }
 
@@ -357,6 +366,62 @@ export default class T extends TaskBot {
     post_snapshot_native(&iso, &snap, &[seers_ready_approach()]);
     tick(&iso, 1);
     assert_eq!(iso.probe("__shim").unwrap(), "loot");
+    assert!(matches!(
+        iso.drain_interacts().as_slice(),
+        [InteractReq::OpenBooth { .. }]
+    ));
+    iso.join();
+}
+
+/// `validate` is one pass over the options in the frozen order (strategy
+/// twice, then the counts), and `execute` does not validate again: it reads
+/// status, destination, commonJunk and returnTo, then banks.
+#[test]
+fn validate_and_execute_call_the_options_in_frozen_order() {
+    let src = r#"
+import { PeriodicBank } from '../../api/tasks/PeriodicBank.js';
+export default class T extends TaskBot {
+    onStart() {
+        globalThis.__calls = [];
+        const note = (name, value) => () => { globalThis.__calls.push(name); return value; };
+        this.add(new PeriodicBank({
+            strategy: note('strategy', 'loot'),
+            itemsThreshold: note('itemsThreshold', 15),
+            minutesThreshold: note('minutesThreshold', 10),
+            countLoot: note('countLoot', 15),
+            deposit: () => true,
+            destination: note('destination', null),
+            commonJunk: note('commonJunk', undefined),
+            returnTo: note('returnTo', null),
+            setStatus: note('setStatus'),
+        }));
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.into(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut snap = base_snapshot();
+    snap.here = Some(TileInput {
+        x: 2724,
+        z: 3490,
+        level: 0,
+    });
+    snap.nearest_booth = Some(seers_booth());
+    post_snapshot_native(&iso, &snap, &[seers_ready_approach()]);
+    tick(&iso, 1);
+    assert_eq!(
+        iso.probe("__calls").unwrap(),
+        serde_json::json!([
+            "strategy",
+            "strategy",
+            "countLoot",
+            "itemsThreshold",
+            "minutesThreshold",
+            "setStatus",
+            "destination",
+            "commonJunk",
+            "returnTo",
+        ])
+    );
     assert!(matches!(
         iso.drain_interacts().as_slice(),
         [InteractReq::OpenBooth { .. }]
@@ -712,6 +777,91 @@ fn approach_dest_late_can_operate_opens_without_bank_generation_advance() {
             id: 2213,
             name: Some("Bank booth".into()),
             action: Some("Use-quickly".into()),
+        }]
+    );
+    iso.join();
+}
+
+/// `Banking.bankNearest` with a chest destination (Shantay) walks within 4
+/// of the bank tile, opens the chest through the access opener, and
+/// deposits through the caller's matcher once the list posts.
+#[test]
+fn bank_nearest_chest_destination_opens_through_the_access_row() {
+    let src = r#"
+import { Banking } from '../../api/bank/Banking.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__did) return;
+        globalThis.__did = true;
+        globalThis.__ok = await Banking.bankNearest({
+            deposit: (name) => name === 'Coins',
+            commonJunk: false,
+            destination: {
+                name: 'Shantay Pass',
+                tile: { x: 3308, z: 3120, level: 0 },
+                access: { name: 'Shantay chest', op: 'Open' },
+            },
+        });
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.into(), LoadShape::CompatClass, vec![]).unwrap();
+    let actions = ["Open".to_string()];
+    let chest = script::isolate_fb::SceneEntityInput {
+        index: 0,
+        id: 2693,
+        name: Some("Shantay chest"),
+        x: 3309,
+        z: 3120,
+        level: 0,
+        distance: 1,
+        health: -1,
+        max_health: -1,
+        in_combat: false,
+        animating: false,
+        actions: &actions,
+        reachable: true,
+        reachable_adj: true,
+        combat_level: 0,
+        target_kind: 0,
+        target_index: -1,
+        size: 0,
+        nx: 0,
+        nz: 0,
+    };
+    let locs = [chest];
+    let mut snap = base_snapshot();
+    snap.here = Some(TileInput {
+        x: 3308,
+        z: 3120,
+        level: 0,
+    });
+    snap.locs = &locs;
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 1);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::Loc {
+            x: 3309,
+            z: 3120,
+            level: 0,
+            action: "Open".into(),
+            id: Some(2693),
+        }]
+    );
+
+    let side = [item_row("Coins", 995, 25)];
+    snap.tick = 2;
+    snap.bank_open = true;
+    snap.bank_loaded = true;
+    snap.bank_generation = 1;
+    snap.bank_side = &side;
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 2);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::Deposit {
+            name: "Coins".into()
         }]
     );
     iso.join();

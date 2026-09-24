@@ -3244,6 +3244,7 @@ export default class T extends LoopingBot {
     post_operable_bank_snapshot(&iso, &snap, 2213, 300, 400);
     iso.on_game_tick(2);
     let _ = iso.probe("true");
+    // The run opens the booth the host picked, by its posted name and op.
     assert_eq!(
         iso.drain_interacts(),
         vec![script::shim::InteractReq::OpenBooth {
@@ -3251,8 +3252,8 @@ export default class T extends LoopingBot {
             z: 400,
             level: 0,
             id: 2213,
-            name: None,
-            action: None,
+            name: Some("Bank booth".into()),
+            action: Some("Use-quickly".into()),
         }]
     );
 

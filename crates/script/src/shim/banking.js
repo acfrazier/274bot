@@ -3,7 +3,7 @@
 // stay here. Missing members throw `not impl`. rs2b0t's Banking.ts / webwalk
 // are never executed.
 import { Bank } from './Bank.js';
-import { Execution } from '../execution/Execution.js';
+import { runMachine } from '../../shim/_kernel.js';
 
 const notImpl = (name, reason) =>
     new Error(reason ? 'not impl: ' + name + ': ' + reason : 'not impl: ' + name);
@@ -77,19 +77,25 @@ export const Banking = new Proxy(
             return Bank.openBooth(opts.stand, opts.boothName, opts.boothOp, opts.log);
         },
 
-        async bankNearest({ deposit = false, commonJunk = false } = {}) {
-            if (!(await Bank.openNearestWorld())) {
-                return false;
-            }
-            if (deposit) {
-                if (typeof deposit === 'function') {
-                    await Bank.depositAllMatching(depositMatcher(deposit, commonJunk));
-                } else {
-                    await Bank.depositInventory();
-                }
-            }
-            await Execution.delayTicks(1);
-            return true;
+        // Rust runs the frozen open → deposit → afterDeposit → return trip.
+        async bankNearest(opts = {}) {
+            opts = opts || {};
+            const deposit = opts.deposit;
+            const out = await runMachine(
+                'bank_nearest',
+                {
+                    destination: opts.destination ?? null,
+                    return_to: opts.returnTo ?? null,
+                    deposit_all: !!deposit && typeof deposit !== 'function',
+                    common_junk: !!(opts.commonJunk ?? true),
+                },
+                {
+                    deposit: typeof deposit === 'function' ? deposit : undefined,
+                    afterDeposit: opts.afterDeposit,
+                    log: opts.log,
+                },
+            );
+            return out.kind === 'done' && out.value === true;
         },
     },
     {

@@ -13,6 +13,8 @@
 //! a script tree. 0.1.5 listed TS is an operator `$RS2B0T` path.
 
 #[cfg(feature = "load")]
+mod bank_tasks_v8;
+#[cfg(feature = "load")]
 mod bindings;
 #[cfg(feature = "load")]
 mod boost_potions_v8;

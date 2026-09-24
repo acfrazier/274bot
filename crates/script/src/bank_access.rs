@@ -268,17 +268,19 @@ fn bank_stand(loc: WorldTile) -> Option<WorldTile> {
     reachable.into_iter().next()
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 pub(crate) struct Opener {
     name: String,
     op: String,
 }
 
-#[derive(Deserialize)]
+/// `BankObjectAccess`: the shim passes `open_first`, a bank destination
+/// row carries `openFirst`.
+#[derive(Clone, Deserialize)]
 pub(crate) struct AccessArgs {
     name: String,
     op: String,
-    #[serde(default)]
+    #[serde(default, alias = "openFirst")]
     open_first: Option<Opener>,
 }
 
@@ -315,13 +317,39 @@ pub(crate) struct BankAccess {
     op: String,
     open_first: Option<Opener>,
     phase: Phase,
-    log: Option<String>,
+    /// A log line waiting for the caller's `log` hook.
+    line: Option<String>,
+    log_hook: Option<usize>,
 }
 
 const NEAREST_ATTEMPTS: u32 = 6;
 const OPENER_ATTEMPTS: u32 = 3;
 
 impl BankAccess {
+    /// One `openNearestAccess`; `log_hook` is the caller's `log` hook, if any.
+    pub(crate) fn new(args: AccessArgs, log_hook: Option<usize>) -> Self {
+        Self {
+            name: args.name,
+            op: args.op,
+            open_first: args.open_first,
+            phase: Phase::Start,
+            line: None,
+            log_hook,
+        }
+    }
+
+    /// Drive the opener; it reads its own log calls' replies.
+    pub(crate) fn run(&mut self, cx: &mut Cx<'_>) -> Step<bool> {
+        loop {
+            if let Some(step) = log_first(&mut self.line, self.log_hook, cx) {
+                return step;
+            }
+            if let Some(step) = self.decide(cx) {
+                return step;
+            }
+        }
+    }
+
     fn default_booth(&self) -> bool {
         self.open_first.is_none()
             && self.name.eq_ignore_ascii_case("bank booth")
@@ -329,7 +357,7 @@ impl BankAccess {
     }
 
     fn say(&mut self, line: String, next: Phase) {
-        self.log = Some(line);
+        self.line = Some(line);
         self.phase = next;
     }
 
@@ -626,17 +654,20 @@ fn after_continue(attempt: u32, after: AfterContinue) -> Phase {
 }
 
 /// Write a queued log line (when the caller gave `log`) before deciding.
-fn log_first(log: &mut Option<String>, cx: &mut Cx<'_>) -> Option<Step<bool>> {
+fn log_first(
+    line: &mut Option<String>,
+    hook: Option<usize>,
+    cx: &mut Cx<'_>,
+) -> Option<Step<bool>> {
     if let Some(Reply::Threw(thrown)) = cx.reply() {
         return Some(Step::Fail(thrown));
     }
-    let line = log.take()?;
-    cx.has(LOG).then(|| {
-        Step::Call(Call {
-            hook: LOG,
-            args: vec![json!(line)],
-        })
-    })
+    let line = line.take()?;
+    let hook = hook.filter(|hook| cx.has(*hook))?;
+    Some(Step::Call(Call {
+        hook,
+        args: vec![json!(line)],
+    }))
 }
 
 impl Family for BankAccess {
@@ -648,28 +679,15 @@ impl Family for BankAccess {
     type Output = bool;
 
     fn begin(args: AccessArgs, _cx: &mut Cx<'_>) -> Begin<Self> {
-        Begin::Run(Self {
-            name: args.name,
-            op: args.op,
-            open_first: args.open_first,
-            phase: Phase::Start,
-            log: None,
-        })
+        Begin::Run(Self::new(args, Some(LOG)))
     }
 
     fn step(&mut self, cx: &mut Cx<'_>) -> Step<bool> {
-        loop {
-            if let Some(step) = log_first(&mut self.log, cx) {
-                return step;
-            }
-            if let Some(step) = self.decide(cx) {
-                return step;
-            }
-        }
+        self.run(cx)
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 pub(crate) struct NpcAccessArgs {
     name: String,
     op: String,
@@ -697,7 +715,8 @@ pub(crate) struct NpcAccess {
     op: String,
     choose: String,
     phase: NpcPhase,
-    log: Option<String>,
+    line: Option<String>,
+    log_hook: Option<usize>,
 }
 
 struct Banker {
@@ -740,8 +759,32 @@ fn banker(name: &str, op: &str) -> Option<Banker> {
 }
 
 impl NpcAccess {
+    /// One `openNpcAccess`; `log_hook` is the caller's `log` hook, if any.
+    pub(crate) fn new(args: NpcAccessArgs, log_hook: Option<usize>) -> Self {
+        Self {
+            name: args.name,
+            op: args.op,
+            choose: args.choose,
+            phase: NpcPhase::Attempt(0),
+            line: None,
+            log_hook,
+        }
+    }
+
+    /// Drive the opener; it reads its own log calls' replies.
+    pub(crate) fn run(&mut self, cx: &mut Cx<'_>) -> Step<bool> {
+        loop {
+            if let Some(step) = log_first(&mut self.line, self.log_hook, cx) {
+                return step;
+            }
+            if let Some(step) = self.decide(cx) {
+                return step;
+            }
+        }
+    }
+
     fn say(&mut self, line: String, next: NpcPhase) {
-        self.log = Some(line);
+        self.line = Some(line);
         self.phase = next;
     }
 
@@ -883,23 +926,10 @@ impl Family for NpcAccess {
     type Output = bool;
 
     fn begin(args: NpcAccessArgs, _cx: &mut Cx<'_>) -> Begin<Self> {
-        Begin::Run(Self {
-            name: args.name,
-            op: args.op,
-            choose: args.choose,
-            phase: NpcPhase::Attempt(0),
-            log: None,
-        })
+        Begin::Run(Self::new(args, Some(LOG)))
     }
 
     fn step(&mut self, cx: &mut Cx<'_>) -> Step<bool> {
-        loop {
-            if let Some(step) = log_first(&mut self.log, cx) {
-                return step;
-            }
-            if let Some(step) = self.decide(cx) {
-                return step;
-            }
-        }
+        self.run(cx)
     }
 }
