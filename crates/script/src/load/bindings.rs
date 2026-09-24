@@ -400,23 +400,6 @@ pub(super) fn wire_runtime(
         })
         .map_err(|e| format!("register fire: {e}"))?;
     runtime
-        .register_function("__rs2b0t_trade", move |args: &[serde_json::Value]| {
-            Ok(crate::trade::dispatch(
-                args.first().unwrap_or(&serde_json::Value::Null),
-            ))
-        })
-        .map_err(|e| format!("register trade: {e}"))?;
-    runtime
-        .register_function(
-            "__rs2b0t_drive_partner_trade",
-            move |args: &[serde_json::Value]| {
-                Ok(crate::drive_partner_trade::dispatch(
-                    args.first().unwrap_or(&serde_json::Value::Null),
-                ))
-            },
-        )
-        .map_err(|e| format!("register drive_partner_trade: {e}"))?;
-    runtime
         .register_function(
             "__rs2b0t_is_hostile_attacker",
             |args: &[serde_json::Value]| {

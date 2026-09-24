@@ -552,6 +552,7 @@ scene_pages! {
         bank: Vec<ItemRow>,
         bank_side: Vec<ItemRow>,
         trade_mine: Vec<ItemRow>,
+        trade_theirs: Vec<ItemRow>,
         trade_side: Vec<ItemRow>,
         shop_stock: Vec<ItemRow>,
         /// `None` inside the page: the host posted the shop player pack as
@@ -811,6 +812,9 @@ impl Scene {
         }
         if snap.has_trade_mine() {
             p.trade_mine(items(snap.trade_mine(), strings));
+        }
+        if snap.has_trade_theirs() {
+            p.trade_theirs(items(snap.trade_theirs(), strings));
         }
         if snap.has_trade_side() {
             p.trade_side(items(snap.trade_side(), strings));

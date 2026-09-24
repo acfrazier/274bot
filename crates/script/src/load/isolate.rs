@@ -1900,8 +1900,6 @@ fn tick_loop(
                             crate::hunt_bank::on_hold(host_hold);
                             crate::quest_journal::on_hold(host_hold);
                             crate::clue::on_hold(host_hold);
-                            crate::trade::on_hold(host_hold);
-                            crate::drive_partner_trade::on_hold(host_hold);
                         }
                         if let Err(e) = materialize_snapshot(&mut runtime, &snap, host_hold) {
                             let _ = out.send(ThreadMsg::Log(format!("snapshot: {e}")));
@@ -2263,8 +2261,6 @@ fn tick_loop(
                 crate::hunt_bank::on_reset();
                 crate::quest_journal::on_reset();
                 crate::clue::on_reset();
-                crate::trade::on_reset();
-                crate::drive_partner_trade::on_reset();
                 event_producer.reset();
                 if events_consumed {
                     // The compat runner's queue is the only holder of
@@ -2319,8 +2315,6 @@ fn tick_loop(
                 crate::hunt_bank::on_pause();
                 crate::quest_journal::on_pause();
                 crate::clue::on_pause();
-                crate::trade::on_pause();
-                crate::drive_partner_trade::on_pause();
                 clear_unconsumed_paint_click(&mut runtime);
             }
             IsolateCmd::Resume => {
@@ -2340,8 +2334,6 @@ fn tick_loop(
                 crate::hunt_bank::on_resume();
                 crate::quest_journal::on_resume();
                 crate::clue::on_resume();
-                crate::trade::on_resume();
-                crate::drive_partner_trade::on_resume();
             }
             IsolateCmd::PaintClick { id, generation } => {
                 if paused

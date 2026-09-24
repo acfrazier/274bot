@@ -350,30 +350,53 @@ fn offer_all_refuses_a_noted_selection_and_a_missing_screen() {
 }
 
 #[test]
-fn offer_all_refuses_a_wrong_id_or_slot_projection() {
+fn offer_all_calls_pick_over_same_name_rows_in_order_in_the_callers_tick() {
     let src = r#"
+import { Trade } from '../../api/trade/Trade.js';
 export default class T extends LoopingBot {
-    loop() {
+    async loop() {
         if (globalThis.__did) return;
         globalThis.__did = true;
-        const fn = globalThis.rustyscript.functions.__rs2b0t_trade;
-        const begin = fn({ op: 'begin', kind: 'offerAll', name: 'Rune essence' });
-        globalThis.__ok = fn({ op: 'select', token: begin.token, id: 9999, slot: 9 });
+        globalThis.__seen = [];
+        globalThis.__none = await Trade.offerAll('Rune essence', (i) => {
+            globalThis.__seen.push(i.slot);
+            return false;
+        });
+        globalThis.__ok = await Trade.offerAll('Rune essence', (i) => i.slot === 2);
     }
 }
 "#;
     let iso = spawn(src);
-    let side = [row("Rune essence", 1436, 25, 3322, 1, false)];
+    let side = [
+        row("Rune essence", 1436, 25, 3322, 1, false),
+        row("Rune essence", 1437, 25, 3322, 2, false),
+    ];
     let mut snap = base();
     snap.trade_offer_open = true;
     snap.trade_partner = Some("bob");
     snap.trade_side = &side;
     post(&iso, &snap);
     tick(&iso, 1);
-    let probe = iso.probe("__ok").unwrap();
-    assert_eq!(probe.get("kind").and_then(Value::as_str), Some("done"));
-    assert_eq!(probe.get("result"), Some(&Value::Bool(false)));
-    assert!(iso.drain_interacts().is_empty());
+    assert_eq!(
+        iso.probe("__seen").unwrap(),
+        serde_json::json!([1, 2]),
+        "pick sees each same-name row in order"
+    );
+    assert_eq!(iso.probe("__none").unwrap(), Value::Bool(false));
+    assert!(
+        matches!(
+            iso.drain_interacts().as_slice(),
+            [InteractReq::InvButton {
+                id: 1437,
+                slot: 2,
+                operation: 4,
+                ..
+            }]
+        ),
+        "only the picked row is offered, in the caller's tick"
+    );
+    tick(&iso, 2);
+    assert_eq!(iso.probe("__ok").unwrap(), Value::Bool(true));
     iso.join();
 }
 
