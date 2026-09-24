@@ -44,18 +44,18 @@
 //!   still surfaces as [`Throw::Terminated`]; the tick budget therefore caps
 //!   that growth. F03 step machines follow the same rule.
 //!
-//! # Extension point: callbacks held across ticks (F03)
+//! # Callbacks held across ticks (F03 step machines)
 //!
 //! [`Callback`] is borrowed for one native call: its `Local` handles die with
 //! the call's `HandleScope`. A Rust step machine that must keep a caller hook
-//! across ticks promotes it with `v8::Global::new(scope, func)` (and the
-//! receiver likewise), stores the `Global` in its machine state, and re-opens
-//! it as a `Local` inside the tick's scope before calling. An async hook's
-//! return value is checked with `value.is_promise()`; the machine then keeps
-//! the `v8::Global<v8::Promise>` and polls `Promise::state()` once per tick
-//! (`Pending` → wait, `Fulfilled` → `result()`, `Rejected` → rethrow
-//! `result()` through [`finish`]'s rethrow path). Only the synchronous path is
-//! implemented here because none of the helpers that use it today await.
+//! across ticks promotes it with [`Callback::hold`], stores the
+//! [`HeldCallback`] (two `v8::Global`s) in its row, and re-opens it with
+//! [`HeldCallback::open`] inside a fresh scope for each call. An async hook's
+//! returned promise is kept as a `v8::Global<v8::Promise>` and its
+//! `Promise::state()` polled once per tick (`Pending` → wait, `Fulfilled` →
+//! `result()`, `Rejected` → the rejection value, handed back unchanged to
+//! the script that awaits the machine). The host is `crate::machine`; the V8
+//! side is `load/machine_v8.rs`.
 
 use rustyscript::Runtime;
 use std::cell::Cell;
@@ -272,6 +272,33 @@ impl<'s> Callback<'s> {
     ) -> JsResult<'s, bool> {
         let value = self.call(scope, args)?;
         Ok(truthy(scope, value))
+    }
+
+    /// Keep this callback (function and receiver) past the native call.
+    pub(crate) fn hold(&self, scope: &mut v8::HandleScope<'s>) -> HeldCallback {
+        HeldCallback {
+            func: v8::Global::new(scope, self.func),
+            recv: v8::Global::new(scope, self.recv),
+            label: self.label,
+        }
+    }
+}
+
+/// A [`Callback`] held across ticks. Must be dropped before its isolate.
+pub(crate) struct HeldCallback {
+    func: v8::Global<v8::Value>,
+    recv: v8::Global<v8::Value>,
+    label: &'static str,
+}
+
+impl HeldCallback {
+    /// The callback again, in the current scope.
+    pub(crate) fn open<'s>(&self, scope: &mut v8::HandleScope<'s>) -> Callback<'s> {
+        Callback {
+            func: v8::Local::new(scope, &self.func),
+            recv: v8::Local::new(scope, &self.recv),
+            label: self.label,
+        }
     }
 }
 

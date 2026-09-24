@@ -15,41 +15,62 @@
 //!   first ops through [`Cx::emit`], and return [`Begin::Run`] (a live
 //!   row), [`Begin::Done`] (settled at once, e.g. a refused precondition)
 //!   or [`Begin::Refuse`] (nothing started; ops emitted by a refusing
-//!   begin are discarded).
-//! - [`Family::step`]: one step per eligible tick. Read the scene, emit
-//!   ops, arm/read deadlines on [`Cx::clock`], and return [`Step::Wait`]
-//!   or [`Step::Done`].
+//!   begin are discarded). Begin never calls script callbacks.
+//! - [`Family::step`]: read the scene, emit ops, arm/read deadlines on
+//!   [`Cx::clock`], read the last callback's [`Cx::reply`], and return
+//!   [`Step::Wait`] (done for this tick), [`Step::Call`] (call one script
+//!   callback, then step again), [`Step::Done`] or [`Step::Fail`].
+//! - [`Family::CALLBACKS`]: the script callbacks the family may call, by
+//!   key on the `hooks` object passed to `runMachine`; [`Call::hook`]
+//!   indexes this list.
 //! - [`Family::abort`]: optional cleanup when the host drops a live row
 //!   (ResetSession, a superseding start). It emits nothing.
 //!
 //! # Lifecycle
 //!
-//! - **Start** (`runMachine(family, args)` in `_kernel.js`, native
-//!   `__rs2b0t_machine_start`): runs `begin` synchronously inside the
-//!   caller's JS. Ops it emits join this tick's InteractReq batch at the
-//!   caller's position in the JS queue. A [`Family::EXCLUSIVE`] family
-//!   aborts its older live row as `superseded` when a new one runs.
+//! - **Start** (`runMachine(family, args, hooks)` in `_kernel.js`, native
+//!   `__rs2b0t_machine_start`): holds `hooks[name]` for every
+//!   [`Family::CALLBACKS`] name (receiver `hooks`), then runs `begin`
+//!   synchronously inside the caller's JS. Ops it emits join this tick's
+//!   InteractReq batch at the caller's position in the JS queue. A
+//!   [`Family::EXCLUSIVE`] family aborts its older live row as
+//!   `superseded` when a new one runs.
 //! - **Step**: the isolate thread calls [`step`] once per eligible tick,
 //!   before any of that tick's JS runs (the scene was applied by the
 //!   Snapshot command before the Tick). A row started during tick N is
-//!   first stepped on tick N+1. Step ops lead the tick's batch.
-//! - **Completion**: a `Done` row ends at once (no JS `end` op). Its
+//!   first stepped on tick N+1. Ops a step emits join the batch in emit
+//!   order, after any JS rows its callbacks queued.
+//! - **Callbacks**: a [`Step::Call`] invokes the held script function
+//!   through the one callback path (`load/callback_v8.rs`), in a fresh
+//!   handle scope per call. A plain return value is the [`Reply`] of the
+//!   very next step, in the same tick. A returned promise is held and its
+//!   state polled each tick; the row does not step while it is pending,
+//!   and steps with its settlement. A throw or rejection is
+//!   [`Reply::Threw`] carrying the thrown value itself; a family that
+//!   fails with it ([`Step::Fail`]) rejects the script's `runMachine` await
+//!   with that same value. At most [`CALLS_PER_TICK`] callbacks run per
+//!   row per tick; the rest continue next tick.
+//! - **Completion**: a `Done`/`Fail` row ends at once (no JS `end` op). Its
 //!   outcome waits in the host until the JS await helper — a wait parked
-//!   on the `Execution` park list — takes it in that tick's pump, so it
-//!   settles exactly once, in the Execution phase order.
+//!   on the `Execution` park list — takes it in the pump, so it settles
+//!   exactly once, in the Execution phase order.
 //! - **ResetSession** ([`on_reset`]): every live row is aborted and its
-//!   await settles `{ kind: 'aborted', reason: 'reset' }`; pending ops are
-//!   dropped with the JS queue.
+//!   await settles `{ kind: 'aborted', reason: 'reset' }`; held callbacks
+//!   and pending promises are released; pending ops are dropped with the
+//!   JS queue.
 //! - **Pause / guardian hold** ([`on_pause`], [`on_resume`], [`on_hold`]):
-//!   rows are not stepped and every row's [`InstantTaskClock`] freezes, so
-//!   deadlines resume where they stopped. Ops emitted on a held tick are
-//!   dropped with the JS queue ([`drop_ops`]).
-//! - **Stop** ([`on_stop`]): every row, outcome and op is dropped; the
-//!   isolate is going away and nothing settles.
+//!   rows are not stepped nor promises polled, and every row's
+//!   [`InstantTaskClock`] freezes, so deadlines resume where they stopped.
+//!   Ops emitted on a held tick are dropped with the JS queue
+//!   ([`drop_ops`]).
+//! - **Stop** ([`on_stop`]): every row, outcome and op is dropped before
+//!   the isolate is; nothing settles.
 //!
 //! JS sees one envelope per start: `{ kind: 'done', value }`,
-//! `{ kind: 'refused', reason }` or `{ kind: 'aborted', reason }`.
+//! `{ kind: 'refused', reason }` or `{ kind: 'aborted', reason }`; a
+//! `Fail` outcome rejects the `runMachine` promise with its [`Thrown`].
 
+use crate::load::callback_v8::HeldCallback;
 use crate::shim::{InteractReq, MaybeInteractReq};
 use crate::task_clock::InstantTaskClock;
 use serde::de::DeserializeOwned;
@@ -59,12 +80,17 @@ use std::cell::RefCell;
 /// A started machine's id, unique for the isolate thread's life.
 pub(crate) type Handle = u64;
 
+/// Callbacks one row may run in one tick before it yields to the next.
+pub(crate) const CALLS_PER_TICK: usize = 32;
+
 /// One machine family: a Rust type the host begins, steps and aborts.
 pub(crate) trait Family: Sized + 'static {
     /// The name JS passes to `runMachine`.
     const NAME: &'static str;
     /// At most one live row: a newer running start supersedes the older.
     const EXCLUSIVE: bool = false;
+    /// Script callbacks by `hooks` key; [`Call::hook`] indexes this.
+    const CALLBACKS: &'static [&'static str] = &[];
     /// Typed start arguments, decoded from the JS value.
     type Args: DeserializeOwned;
     /// The completion value JS receives as `value`.
@@ -89,8 +115,83 @@ pub(crate) enum Begin<F: Family> {
 
 /// What one step decided.
 pub(crate) enum Step<T> {
+    /// Nothing more this tick.
     Wait,
+    /// Call one script callback; its [`Reply`] reaches the next step.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "first callback family lands in F06/F07")
+    )]
+    Call(Call),
     Done(T),
+    /// End the row; the `runMachine` promise rejects with this value.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "first callback family lands in F06/F07")
+    )]
+    Fail(Thrown),
+}
+
+/// One script-callback request: `hooks[CALLBACKS[hook]](...args)`.
+pub(crate) struct Call {
+    pub(crate) hook: usize,
+    pub(crate) args: Vec<Value>,
+}
+
+/// A settled script callback.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum Reply {
+    /// The returned (or promise-fulfilled) value.
+    Value(Value),
+    /// The throw or rejection.
+    Threw(Thrown),
+}
+
+/// A thrown JS value (kept as is) or a family's own failure message.
+#[derive(Clone)]
+pub(crate) struct Thrown {
+    message: String,
+    value: Option<v8::Global<v8::Value>>,
+}
+
+impl Thrown {
+    /// A failure the family raises itself; JS sees `new Error(message)`.
+    pub(crate) fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            value: None,
+        }
+    }
+
+    /// What script code threw or rejected with, and its message.
+    pub(crate) fn js(message: String, value: v8::Global<v8::Value>) -> Self {
+        Self {
+            message,
+            value: Some(value),
+        }
+    }
+
+    pub(crate) fn message(&self) -> &str {
+        &self.message
+    }
+
+    /// The thrown value itself, when script code threw it.
+    pub(crate) fn value(&self) -> Option<&v8::Global<v8::Value>> {
+        self.value.as_ref()
+    }
+}
+
+impl std::fmt::Debug for Thrown {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("Thrown").field(&self.message).finish()
+    }
+}
+
+/// By message: V8 handles have no value equality.
+impl PartialEq for Thrown {
+    fn eq(&self, other: &Self) -> bool {
+        self.message == other.message
+    }
 }
 
 /// Why the host ended a live row without its own completion.
@@ -118,6 +219,7 @@ impl AbortReason {
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Outcome {
     Done(Value),
+    Failed(Thrown),
     Aborted(AbortReason),
 }
 
@@ -144,6 +246,7 @@ pub(crate) struct Cx<'a> {
         expect(dead_code, reason = "first deadline family lands in F05")
     )]
     clock: &'a mut InstantTaskClock,
+    reply: Option<Reply>,
 }
 
 impl Cx<'_> {
@@ -160,21 +263,69 @@ impl Cx<'_> {
     pub(crate) fn clock(&mut self) -> &mut InstantTaskClock {
         self.clock
     }
+
+    /// The settlement of the callback the previous step asked for; `None`
+    /// on any other step.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "first callback family lands in F06/F07")
+    )]
+    pub(crate) fn reply(&mut self) -> Option<Reply> {
+        self.reply.take()
+    }
+}
+
+/// The isolate side of a step: script callbacks and the JS queue.
+pub(crate) trait Js {
+    /// `__rs2b0t_host.interact.length` now.
+    fn queue_len(&mut self) -> usize;
+    /// Call `hook` (`None`: the family asked for an undeclared hook).
+    fn call(&mut self, hook: Option<&HeldCallback>, args: &[Value]) -> Called;
+    /// Poll a promise a callback returned; `None` while pending.
+    fn poll(&mut self, pending: &Pending) -> Option<Reply>;
+}
+
+/// A promise a script callback returned, held until it settles.
+pub(crate) type Pending = v8::Global<v8::Promise>;
+
+pub(crate) enum Called {
+    Settled(Reply),
+    Pending(Pending),
+}
+
+/// One registered family.
+struct Entry {
+    name: &'static str,
+    callbacks: &'static [&'static str],
+    begin: fn(&mut Host, Value, Vec<HeldCallback>, usize) -> Started,
+}
+
+const fn entry<F: Family>() -> Entry {
+    Entry {
+        name: F::NAME,
+        callbacks: F::CALLBACKS,
+        begin: begin_row::<F>,
+    }
 }
 
 /// Every registered family, by name. The only machine dispatch table.
-const FAMILIES: &[(&str, StartFn)] = &[
-    (
-        crate::teleport::Teleport::NAME,
-        begin_row::<crate::teleport::Teleport>,
-    ),
+const FAMILIES: &[Entry] = &[
+    entry::<crate::teleport::Teleport>(),
     #[cfg(test)]
-    (tests::Probe::NAME, begin_row::<tests::Probe>),
+    entry::<tests::Probe>(),
     #[cfg(test)]
-    (tests::Solo::NAME, begin_row::<tests::Solo>),
+    entry::<tests::Solo>(),
+    #[cfg(test)]
+    entry::<tests::Hooked>(),
 ];
 
-type StartFn = fn(&mut Host, Value, usize) -> Started;
+/// The callback names `family` holds at start, or `None` if unregistered.
+pub(crate) fn callbacks_of(family: &str) -> Option<&'static [&'static str]> {
+    FAMILIES
+        .iter()
+        .find(|entry| entry.name == family)
+        .map(|entry| entry.callbacks)
+}
 
 /// The type-erased row the host steps.
 trait Machine {
@@ -186,7 +337,9 @@ impl<F: Family> Machine for F {
     fn step(&mut self, cx: &mut Cx<'_>) -> Step<Value> {
         match Family::step(self, cx) {
             Step::Wait => Step::Wait,
+            Step::Call(call) => Step::Call(call),
             Step::Done(out) => Step::Done(out.into()),
+            Step::Fail(reason) => Step::Fail(reason),
         }
     }
 
@@ -200,6 +353,11 @@ struct Row {
     family: &'static str,
     exclusive: bool,
     clock: InstantTaskClock,
+    hooks: Vec<HeldCallback>,
+    /// The settled callback the next step reads.
+    reply: Option<Reply>,
+    /// The callback promise the row waits on.
+    pending: Option<Pending>,
     machine: Box<dyn Machine>,
 }
 
@@ -207,9 +365,11 @@ struct Row {
 /// into the tick batch where they happened.
 type PlacedOp = (usize, InteractReq);
 
-pub(crate) struct Host {
+struct Host {
     next: Handle,
     rows: Vec<Row>,
+    /// The newest running row of each exclusive family.
+    newest: Vec<(&'static str, Handle)>,
     settled: Vec<(Handle, Outcome)>,
     ops: Vec<PlacedOp>,
     paused: bool,
@@ -225,17 +385,11 @@ impl Host {
         Self {
             next: 1,
             rows: Vec::new(),
+            newest: Vec::new(),
             settled: Vec::new(),
             ops: Vec::new(),
             paused: false,
             held: false,
-        }
-    }
-
-    fn start(&mut self, family: &str, args: Value, at: usize) -> Started {
-        match FAMILIES.iter().find(|(name, _)| *name == family) {
-            Some((_, begin)) => begin(self, args, at),
-            None => Started::Refused(format!("unknown machine family {family:?}")),
         }
     }
 
@@ -249,36 +403,22 @@ impl Host {
         self.ops.extend(ops.into_iter().map(|op| (at, op)));
     }
 
-    fn step(&mut self, at: usize) {
-        if self.paused || self.held {
-            return;
-        }
-        let mut ops = Vec::new();
-        let mut i = 0;
-        while i < self.rows.len() {
-            let row = &mut self.rows[i];
-            let step = row.machine.step(&mut Cx {
-                ops: &mut ops,
-                clock: &mut row.clock,
-            });
-            match step {
-                Step::Wait => i += 1,
-                Step::Done(value) => {
-                    let row = self.rows.remove(i);
-                    self.settled.push((row.handle, Outcome::Done(value)));
-                }
-            }
-        }
-        self.place(at, ops);
+    fn superseded(&self, row: &Row) -> bool {
+        row.exclusive
+            && self
+                .newest
+                .iter()
+                .any(|(family, handle)| *family == row.family && *handle != row.handle)
     }
 
-    fn abort_where(&mut self, why: AbortReason, doomed: impl Fn(&Row) -> bool) {
+    fn abort_superseded(&mut self) {
         let mut i = 0;
         while i < self.rows.len() {
-            if doomed(&self.rows[i]) {
+            if self.superseded(&self.rows[i]) {
                 let mut row = self.rows.remove(i);
-                row.machine.abort(why);
-                self.settled.push((row.handle, Outcome::Aborted(why)));
+                row.machine.abort(AbortReason::Superseded);
+                self.settled
+                    .push((row.handle, Outcome::Aborted(AbortReason::Superseded)));
             } else {
                 i += 1;
             }
@@ -304,18 +444,29 @@ impl Host {
     }
 
     fn reset(&mut self) {
-        self.abort_where(AbortReason::Reset, |_| true);
+        for mut row in self.rows.drain(..) {
+            row.machine.abort(AbortReason::Reset);
+            self.settled
+                .push((row.handle, Outcome::Aborted(AbortReason::Reset)));
+        }
+        self.newest.clear();
         self.ops.clear();
     }
 
     fn stop(&mut self) {
         self.rows.clear();
+        self.newest.clear();
         self.settled.clear();
         self.ops.clear();
     }
 }
 
-fn begin_row<F: Family>(host: &mut Host, args: Value, at: usize) -> Started {
+fn begin_row<F: Family>(
+    host: &mut Host,
+    args: Value,
+    hooks: Vec<HeldCallback>,
+    at: usize,
+) -> Started {
     let args: F::Args = match serde_json::from_value(args) {
         Ok(args) => args,
         Err(e) => return Started::Refused(format!("{} arguments: {e}", F::NAME)),
@@ -327,6 +478,7 @@ fn begin_row<F: Family>(host: &mut Host, args: Value, at: usize) -> Started {
         &mut Cx {
             ops: &mut ops,
             clock: &mut clock,
+            reply: None,
         },
     );
     match begun {
@@ -336,19 +488,22 @@ fn begin_row<F: Family>(host: &mut Host, args: Value, at: usize) -> Started {
             Started::Settled(Outcome::Done(out.into()))
         }
         Begin::Run(machine) => {
-            if F::EXCLUSIVE {
-                host.abort_where(AbortReason::Superseded, |row| {
-                    row.exclusive && row.family == F::NAME
-                });
-            }
-            host.place(at, ops);
             let handle = host.next;
             host.next += 1;
+            if F::EXCLUSIVE {
+                host.newest.retain(|(family, _)| *family != F::NAME);
+                host.newest.push((F::NAME, handle));
+                host.abort_superseded();
+            }
+            host.place(at, ops);
             host.rows.push(Row {
                 handle,
                 family: F::NAME,
                 exclusive: F::EXCLUSIVE,
                 clock,
+                hooks,
+                reply: None,
+                pending: None,
                 machine: Box::new(machine),
             });
             Started::Running(handle)
@@ -356,14 +511,87 @@ fn begin_row<F: Family>(host: &mut Host, args: Value, at: usize) -> Started {
     }
 }
 
-/// Start `family` with JS `args`; `at` is the JS interact queue length.
-pub(crate) fn start(family: &str, args: Value, at: usize) -> Started {
-    HOST.with(|host| host.borrow_mut().start(family, args, at))
+/// Start `family` with JS `args` and its held `hooks` (one per
+/// [`Family::CALLBACKS`] name); `at` is the JS interact queue length.
+pub(crate) fn start(family: &str, args: Value, hooks: Vec<HeldCallback>, at: usize) -> Started {
+    let Some(entry) = FAMILIES.iter().find(|entry| entry.name == family) else {
+        return Started::Refused(format!("unknown machine family {family:?}"));
+    };
+    HOST.with(|host| (entry.begin)(&mut host.borrow_mut(), args, hooks, at))
 }
 
 /// Step every live row once. Called at the start of each eligible tick.
-pub(crate) fn step() {
-    HOST.with(|host| host.borrow_mut().step(0));
+///
+/// Rows are taken out of the host while they step, so a callback may
+/// start another machine; the host is borrowed only between JS calls.
+pub(crate) fn step(js: &mut impl Js) {
+    let Some(mut rows) = HOST.with(|host| {
+        let mut host = host.borrow_mut();
+        (!(host.paused || host.held)).then(|| std::mem::take(&mut host.rows))
+    }) else {
+        return;
+    };
+    // The JS queue is empty when a tick starts; callbacks may grow it.
+    let mut at = 0;
+    rows.retain_mut(|row| {
+        if HOST.with(|host| host.borrow().superseded(row)) {
+            row.machine.abort(AbortReason::Superseded);
+            settle(row.handle, Outcome::Aborted(AbortReason::Superseded));
+            return false;
+        }
+        match drive(row, js, &mut at) {
+            Some(outcome) => {
+                settle(row.handle, outcome);
+                false
+            }
+            None => true,
+        }
+    });
+    HOST.with(|host| {
+        let mut host = host.borrow_mut();
+        let started = std::mem::replace(&mut host.rows, rows);
+        host.rows.extend(started);
+        host.abort_superseded();
+    });
+}
+
+fn settle(handle: Handle, outcome: Outcome) {
+    HOST.with(|host| host.borrow_mut().settled.push((handle, outcome)));
+}
+
+/// One row's steps for this tick; `Some` when it ended.
+fn drive(row: &mut Row, js: &mut impl Js, at: &mut usize) -> Option<Outcome> {
+    let mut calls = 0;
+    loop {
+        if let Some(pending) = &row.pending {
+            row.reply = Some(js.poll(pending)?);
+            row.pending = None;
+        }
+        let mut ops = Vec::new();
+        let step = row.machine.step(&mut Cx {
+            ops: &mut ops,
+            clock: &mut row.clock,
+            reply: row.reply.take(),
+        });
+        HOST.with(|host| host.borrow_mut().place(*at, ops));
+        match step {
+            Step::Wait => return None,
+            Step::Done(value) => return Some(Outcome::Done(value)),
+            Step::Fail(reason) => return Some(Outcome::Failed(reason)),
+            Step::Call(call) => {
+                let called = js.call(row.hooks.get(call.hook), &call.args);
+                *at = js.queue_len();
+                match called {
+                    Called::Settled(reply) => row.reply = Some(reply),
+                    Called::Pending(pending) => row.pending = Some(pending),
+                }
+                calls += 1;
+                if calls == CALLS_PER_TICK {
+                    return None;
+                }
+            }
+        }
+    }
 }
 
 /// The JS await helper's poll: an outcome is handed out exactly once.
@@ -437,7 +665,7 @@ pub(crate) mod tests {
     use serde_json::json;
     use std::time::Duration;
 
-    /// Test family: emits `if-button {first}` at begin, one `if-button`
+    /// Test family: emits `if-button {button}` at begin, one `if-button`
     /// per step for `steps` steps, then completes with the step count.
     /// `deadline_ms` arms the clock at begin; a reached bound completes
     /// with `"timeout"`.
@@ -505,11 +733,11 @@ pub(crate) mod tests {
     }
 
     /// [`Probe`] as an exclusive family; records its abort reason.
-    pub(crate) struct Solo(Probe, std::rc::Rc<std::cell::Cell<Option<AbortReason>>>);
+    pub(crate) struct Solo(Probe);
 
     thread_local! {
-        static SOLO_ABORTS: std::rc::Rc<std::cell::Cell<Option<AbortReason>>> =
-            std::rc::Rc::default();
+        static SOLO_ABORTS: std::cell::Cell<Option<AbortReason>> =
+            const { std::cell::Cell::new(None) };
     }
 
     impl Family for Solo {
@@ -520,7 +748,7 @@ pub(crate) mod tests {
 
         fn begin(args: ProbeArgs, cx: &mut Cx<'_>) -> Begin<Self> {
             match Probe::begin(args, cx) {
-                Begin::Run(probe) => Begin::Run(Self(probe, SOLO_ABORTS.with(Clone::clone))),
+                Begin::Run(probe) => Begin::Run(Self(probe)),
                 Begin::Done(out) => Begin::Done(out),
                 Begin::Refuse(reason) => Begin::Refuse(reason),
             }
@@ -531,16 +759,100 @@ pub(crate) mod tests {
         }
 
         fn abort(&mut self, why: AbortReason) {
-            self.1.set(Some(why));
+            SOLO_ABORTS.with(|cell| cell.set(Some(why)));
         }
     }
 
-    fn button(id: i32) -> InteractReq {
-        InteractReq::IfButton { component_id: id }
+    /// Test family over two script callbacks: `sync(1, 'a')`, then
+    /// `later(<sync reply>)` (typically async), then `mark()` once
+    /// `after_ticks` more steps passed, completing with every reply. A
+    /// throwing callback fails the machine with its message.
+    pub(crate) struct Hooked {
+        replies: Vec<Value>,
+        after_ticks: u32,
+        emit: i32,
     }
 
-    fn drain(host: &mut Host) -> Vec<InteractReq> {
-        merge(Vec::new(), &mut host.ops)
+    #[derive(Deserialize)]
+    pub(crate) struct HookedArgs {
+        #[serde(default)]
+        after_ticks: u32,
+        #[serde(default)]
+        emit: i32,
+    }
+
+    impl Family for Hooked {
+        const NAME: &'static str = "hooked";
+        const CALLBACKS: &'static [&'static str] = &["sync", "later", "mark"];
+        type Args = HookedArgs;
+        type Output = Value;
+
+        fn begin(args: HookedArgs, _cx: &mut Cx<'_>) -> Begin<Self> {
+            Begin::Run(Self {
+                replies: Vec::new(),
+                after_ticks: args.after_ticks,
+                emit: args.emit,
+            })
+        }
+
+        fn step(&mut self, cx: &mut Cx<'_>) -> Step<Value> {
+            match cx.reply() {
+                Some(Reply::Threw(message)) => return Step::Fail(message),
+                Some(Reply::Value(value)) => {
+                    self.replies.push(value);
+                    if self.emit != 0 {
+                        cx.emit(InteractReq::IfButton {
+                            component_id: self.emit + self.replies.len() as i32,
+                        });
+                    }
+                }
+                None => {}
+            }
+            match self.replies.len() {
+                0 => Step::Call(Call {
+                    hook: 0,
+                    args: vec![json!(1), json!("a")],
+                }),
+                1 => Step::Call(Call {
+                    hook: 1,
+                    args: vec![self.replies[0].clone()],
+                }),
+                2 if self.after_ticks > 0 => {
+                    self.after_ticks -= 1;
+                    Step::Wait
+                }
+                2 => Step::Call(Call {
+                    hook: 2,
+                    args: Vec::new(),
+                }),
+                _ => Step::Done(Value::Array(std::mem::take(&mut self.replies))),
+            }
+        }
+    }
+
+    /// No script callbacks: a machine that asks for one is a test bug.
+    struct NoJs;
+
+    impl Js for NoJs {
+        fn queue_len(&mut self) -> usize {
+            0
+        }
+
+        fn call(&mut self, _hook: Option<&HeldCallback>, _args: &[Value]) -> Called {
+            panic!("no script callbacks in this test");
+        }
+
+        fn poll(&mut self, _pending: &Pending) -> Option<Reply> {
+            panic!("no script callbacks in this test");
+        }
+    }
+
+    fn tick() {
+        step(&mut NoJs);
+    }
+
+    fn begin(family: &str, args: Value) -> Started {
+        start(family, args, Vec::new(), 0)
     }
 
     fn running(started: Started) -> Handle {
@@ -550,21 +862,36 @@ pub(crate) mod tests {
         }
     }
 
+    fn button(id: i32) -> InteractReq {
+        InteractReq::IfButton { component_id: id }
+    }
+
+    fn drain() -> Vec<InteractReq> {
+        merge_ops(Vec::new())
+    }
+
+    fn live_rows() -> usize {
+        HOST.with(|host| host.borrow().rows.len())
+    }
+
+    fn freeze(paused: bool, held: bool) {
+        HOST.with(|host| host.borrow_mut().set_freeze(paused, held));
+    }
+
     #[test]
     fn a_row_steps_emits_in_order_and_settles_exactly_once() {
-        let mut host = Host::new();
-        let h = running(host.start("probe", json!({ "button": 10, "steps": 2 }), 0));
-        assert_eq!(drain(&mut host), vec![button(10)]);
-        assert_eq!(host.take(h), Take::Pending);
-        host.step(0);
-        host.step(0);
-        assert_eq!(drain(&mut host), vec![button(11), button(12)]);
-        assert_eq!(host.take(h), Take::Pending);
-        host.step(0);
-        assert!(host.rows.is_empty(), "completion ends the row");
-        assert_eq!(host.take(h), Take::Settled(Outcome::Done(json!(2))));
+        let h = running(begin("probe", json!({ "button": 10, "steps": 2 })));
+        assert_eq!(drain(), vec![button(10)]);
+        assert_eq!(take(h), Take::Pending);
+        tick();
+        tick();
+        assert_eq!(drain(), vec![button(11), button(12)]);
+        assert_eq!(take(h), Take::Pending);
+        tick();
+        assert_eq!(live_rows(), 0, "completion ends the row");
+        assert_eq!(take(h), Take::Settled(Outcome::Done(json!(2))));
         assert_eq!(
-            host.take(h),
+            take(h),
             Take::Settled(Outcome::Aborted(AbortReason::Unknown)),
             "an outcome is handed out once"
         );
@@ -572,153 +899,131 @@ pub(crate) mod tests {
 
     #[test]
     fn begin_settles_or_refuses_without_a_row() {
-        let mut host = Host::new();
         assert_eq!(
-            host.start("probe", json!({ "button": 5, "steps": 0 }), 0),
+            begin("probe", json!({ "button": 5, "steps": 0 })),
             Started::Settled(Outcome::Done(json!(0)))
         );
-        assert_eq!(drain(&mut host), vec![button(5)]);
+        assert_eq!(drain(), vec![button(5)]);
         assert_eq!(
-            host.start(
-                "probe",
-                json!({ "button": 6, "steps": 1, "refuse": true }),
-                0
-            ),
+            begin("probe", json!({ "button": 6, "steps": 1, "refuse": true })),
             Started::Refused("probe refused".into())
         );
-        assert!(drain(&mut host).is_empty(), "a refused begin sends nothing");
+        assert!(drain().is_empty(), "a refused begin sends nothing");
         assert!(matches!(
-            host.start("probe", json!({ "steps": 1 }), 0),
+            begin("probe", json!({ "steps": 1 })),
             Started::Refused(reason) if reason.starts_with("probe arguments:")
         ));
-        assert!(matches!(
-            host.start("nowhere", json!({}), 0),
-            Started::Refused(_)
-        ));
-        assert!(host.rows.is_empty());
+        assert!(matches!(begin("nowhere", json!({})), Started::Refused(_)));
+        assert_eq!(live_rows(), 0);
     }
 
     #[test]
     fn reset_aborts_every_row_and_drops_pending_ops() {
-        let mut host = Host::new();
-        let a = running(host.start("probe", json!({ "button": 1, "steps": 5 }), 0));
-        let b = running(host.start("probe", json!({ "button": 2, "steps": 5 }), 0));
-        host.reset();
-        assert!(drain(&mut host).is_empty());
-        assert!(host.rows.is_empty());
-        host.step(0);
-        assert!(drain(&mut host).is_empty(), "an aborted row never steps");
+        let a = running(begin("probe", json!({ "button": 1, "steps": 5 })));
+        let b = running(begin("probe", json!({ "button": 2, "steps": 5 })));
+        on_reset();
+        assert!(drain().is_empty());
+        assert_eq!(live_rows(), 0);
+        tick();
+        assert!(drain().is_empty(), "an aborted row never steps");
         for h in [a, b] {
-            assert_eq!(
-                host.take(h),
-                Take::Settled(Outcome::Aborted(AbortReason::Reset))
-            );
+            assert_eq!(take(h), Take::Settled(Outcome::Aborted(AbortReason::Reset)));
         }
     }
 
     #[test]
     fn stop_drops_rows_and_outcomes() {
-        let mut host = Host::new();
-        let a = running(host.start("probe", json!({ "button": 1, "steps": 1 }), 0));
-        host.step(0);
-        host.step(0);
-        assert!(host.rows.is_empty() && !host.settled.is_empty());
-        let b = running(host.start("probe", json!({ "button": 2, "steps": 5 }), 0));
-        host.stop();
-        assert!(host.rows.is_empty() && host.settled.is_empty() && host.ops.is_empty());
+        let a = running(begin("probe", json!({ "button": 1, "steps": 1 })));
+        tick();
+        tick();
+        let b = running(begin("probe", json!({ "button": 2, "steps": 5 })));
+        on_stop();
+        assert_eq!(live_rows(), 0);
+        assert!(drain().is_empty());
         for h in [a, b] {
             assert_eq!(
-                host.take(h),
-                Take::Settled(Outcome::Aborted(AbortReason::Unknown))
+                take(h),
+                Take::Settled(Outcome::Aborted(AbortReason::Unknown)),
+                "Stop settles nothing"
             );
         }
     }
 
     #[test]
     fn pause_and_hold_skip_steps_and_freeze_deadlines() {
-        let mut host = Host::new();
-        let h = running(host.start(
+        let h = running(begin(
             "probe",
             json!({ "button": 1, "steps": 1, "deadline_ms": 40 }),
-            0,
         ));
-        host.set_freeze(true, false);
+        on_pause();
         std::thread::sleep(Duration::from_millis(60));
-        host.step(0);
-        assert_eq!(host.take(h), Take::Pending, "a paused row is not stepped");
-        host.set_freeze(true, true);
-        host.set_freeze(false, true);
-        host.step(0);
-        assert_eq!(host.take(h), Take::Pending, "a held row is not stepped");
-        host.set_freeze(false, false);
-        host.step(0);
+        tick();
+        assert_eq!(take(h), Take::Pending, "a paused row is not stepped");
+        on_hold(true);
+        on_resume();
+        tick();
+        assert_eq!(take(h), Take::Pending, "a held row is not stepped");
+        on_hold(false);
+        tick();
         assert_eq!(
-            host.take(h),
+            take(h),
             Take::Pending,
             "the frozen span does not count toward the deadline"
         );
         std::thread::sleep(Duration::from_millis(60));
-        host.step(0);
-        assert_eq!(host.take(h), Take::Settled(Outcome::Done(json!("timeout"))));
+        tick();
+        assert_eq!(take(h), Take::Settled(Outcome::Done(json!("timeout"))));
     }
 
     #[test]
     fn a_row_started_while_frozen_starts_frozen() {
-        let mut host = Host::new();
-        host.set_freeze(false, true);
-        let h = running(host.start(
+        freeze(false, true);
+        let h = running(begin(
             "probe",
             json!({ "button": 1, "steps": 1, "deadline_ms": 30 }),
-            0,
         ));
         std::thread::sleep(Duration::from_millis(50));
-        host.set_freeze(false, false);
-        host.step(0);
-        assert_eq!(host.take(h), Take::Pending);
+        freeze(false, false);
+        tick();
+        assert_eq!(take(h), Take::Pending);
     }
 
     #[test]
     fn two_concurrent_rows_step_in_start_order_and_settle_independently() {
-        let mut host = Host::new();
-        let a = running(host.start("probe", json!({ "button": 100, "steps": 1 }), 0));
-        let b = running(host.start("probe", json!({ "button": 200, "steps": 2 }), 0));
-        assert_eq!(drain(&mut host), vec![button(100), button(200)]);
-        host.step(0);
-        assert_eq!(drain(&mut host), vec![button(101), button(201)]);
-        host.step(0);
-        assert_eq!(drain(&mut host), vec![button(202)]);
-        assert_eq!(host.take(a), Take::Settled(Outcome::Done(json!(1))));
-        assert_eq!(host.take(b), Take::Pending);
-        host.step(0);
-        assert_eq!(host.take(b), Take::Settled(Outcome::Done(json!(2))));
+        let a = running(begin("probe", json!({ "button": 100, "steps": 1 })));
+        let b = running(begin("probe", json!({ "button": 200, "steps": 2 })));
+        assert_eq!(drain(), vec![button(100), button(200)]);
+        tick();
+        assert_eq!(drain(), vec![button(101), button(201)]);
+        tick();
+        assert_eq!(drain(), vec![button(202)]);
+        assert_eq!(take(a), Take::Settled(Outcome::Done(json!(1))));
+        assert_eq!(take(b), Take::Pending);
+        tick();
+        assert_eq!(take(b), Take::Settled(Outcome::Done(json!(2))));
     }
 
     #[test]
     fn an_exclusive_start_supersedes_only_its_own_family() {
-        let mut host = Host::new();
-        let other = running(host.start("probe", json!({ "button": 1, "steps": 5 }), 0));
-        let old = running(host.start("solo", json!({ "button": 2, "steps": 5 }), 0));
+        let other = running(begin("probe", json!({ "button": 1, "steps": 5 })));
+        let old = running(begin("solo", json!({ "button": 2, "steps": 5 })));
         assert!(matches!(
-            host.start(
-                "solo",
-                json!({ "button": 3, "steps": 1, "refuse": true }),
-                0
-            ),
+            begin("solo", json!({ "button": 3, "steps": 1, "refuse": true })),
             Started::Refused(_)
         ));
         assert_eq!(
-            host.take(old),
+            take(old),
             Take::Pending,
             "a refused start supersedes nothing"
         );
-        let new = running(host.start("solo", json!({ "button": 4, "steps": 5 }), 0));
+        let new = running(begin("solo", json!({ "button": 4, "steps": 5 })));
         assert_eq!(
-            host.take(old),
+            take(old),
             Take::Settled(Outcome::Aborted(AbortReason::Superseded))
         );
         assert_eq!(SOLO_ABORTS.with(|c| c.get()), Some(AbortReason::Superseded));
-        assert_eq!(host.take(new), Take::Pending);
-        assert_eq!(host.take(other), Take::Pending);
+        assert_eq!(take(new), Take::Pending);
+        assert_eq!(take(other), Take::Pending);
     }
 
     #[test]

@@ -1907,7 +1907,7 @@ fn tick_loop(
                 // Step machines read the scene the Snapshot command just
                 // applied; they run before any of this tick's JS, and a
                 // completion settles in this tick's pump.
-                crate::machine::step();
+                super::machine_v8::step(&mut runtime);
                 if events_consumed {
                     let observed = event_producer.take_eligible();
                     if let Some(diag) = observed.diagnostic {
@@ -3127,6 +3127,7 @@ loop() {
     fn spawn_machine_card(body: &str) -> LoadIsolate {
         let src = format!(
             "import {{ runMachine, queue }} from '../../shim/_kernel.js';\n\
+             import {{ Execution }} from '../../api/execution/Execution.js';\n\
              export default class T extends LoopingBot {{\n\
              async loop() {{\n\
              if (globalThis.__did) return;\n\
@@ -3241,6 +3242,174 @@ loop() {
         assert_eq!(outs[1], serde_json::json!({ "kind": "done", "value": 0 }));
         assert_eq!(outs[2]["kind"], "refused");
         assert_eq!(iso.drain_interacts(), vec![if_button(2)]);
+        iso.join();
+    }
+
+    #[test]
+    fn a_machine_calls_sync_and_async_script_callbacks_in_order() {
+        let iso = spawn_machine_card(
+            "globalThis.__calls = [];
+             const hooks = {
+                 tag: 'H',
+                 sync(n, s) {
+                     globalThis.__calls.push(['sync', n, s, this.tag]);
+                     queue({ op: 'if-button', component_id: 900 });
+                     return n + 1;
+                 },
+                 async later(v) {
+                     globalThis.__calls.push(['later', v]);
+                     await Execution.delayTicks(1);
+                     globalThis.__calls.push(['later-resumed', v]);
+                     return v * 10;
+                 },
+                 mark() {
+                     globalThis.__calls.push(['mark']);
+                     return 'm';
+                 },
+             };
+             globalThis.__out = await runMachine('hooked', { emit: 500 }, hooks);
+             globalThis.__at = globalThis.__rs2b0t_host.tick;",
+        );
+        machine_tick(&iso, 1);
+        assert!(iso.drain_interacts().is_empty());
+        machine_tick(&iso, 2);
+        assert_eq!(
+            iso.drain_interacts(),
+            vec![if_button(900), if_button(501)],
+            "a step's op follows the row its callback queued"
+        );
+        assert_eq!(
+            iso.probe("globalThis.__calls").unwrap(),
+            serde_json::json!([["sync", 1, "a", "H"], ["later", 2], ["later-resumed", 2]]),
+            "the async callback is pending when the tick-2 step yields"
+        );
+        assert_eq!(
+            iso.probe("globalThis.__out ?? null").unwrap(),
+            serde_json::Value::Null
+        );
+        machine_tick(&iso, 3);
+        assert_eq!(iso.drain_interacts(), vec![if_button(502), if_button(503)]);
+        assert_eq!(
+            iso.probe("globalThis.__out").unwrap(),
+            serde_json::json!({ "kind": "done", "value": [2, 20, "m"] })
+        );
+        assert_eq!(iso.probe("globalThis.__at").unwrap(), 3);
+        iso.join();
+    }
+
+    #[test]
+    fn a_throwing_or_rejecting_callback_fails_the_machine() {
+        let iso = spawn_machine_card(
+            "const boom = new Error('boom');
+             const late = { code: 7 };
+             const settle = (p) => p.then(
+                 (out) => ({ ok: out }),
+                 (e) => ({ err: String(e && e.message), same: e === boom || e === late }),
+             );
+             globalThis.__outs = await Promise.all([
+                 settle(runMachine('hooked', {}, { sync() { throw boom; } })),
+                 settle(runMachine('hooked', {}, {
+                     sync: (n) => n,
+                     async later() { throw late; },
+                 })),
+                 settle(runMachine('hooked', {}, { sync: 5 })),
+                 settle(runMachine('hooked', {})),
+             ]);",
+        );
+        machine_tick(&iso, 1);
+        machine_tick(&iso, 2);
+        let outs = iso.probe("globalThis.__outs").unwrap();
+        assert_eq!(
+            outs[0],
+            serde_json::json!({ "err": "boom", "same": true }),
+            "the await rejects with the very value the callback threw"
+        );
+        assert_eq!(
+            outs[1],
+            serde_json::json!({ "err": "undefined", "same": true }),
+            "and with the very value an async callback rejected with"
+        );
+        assert_eq!(
+            outs[2],
+            serde_json::json!({ "err": "sync is not a function", "same": false })
+        );
+        assert!(
+            outs[3]["err"]
+                .as_str()
+                .is_some_and(|e| e.contains("reading 'sync'")),
+            "a missing hooks object throws at start: {outs:?}"
+        );
+        let logs = iso.drain_logs();
+        assert!(
+            logs.iter().all(|l| !l.contains("Uncaught")),
+            "an observed rejection is not unhandled: {logs:?}"
+        );
+        iso.join();
+    }
+
+    #[test]
+    fn reset_and_stop_release_a_machine_waiting_on_a_callback_promise() {
+        let src = "globalThis.__out = await runMachine('hooked', {}, {
+                 sync: (n) => n,
+                 later: () => new Promise(() => {}),
+             });";
+        let iso = spawn_machine_card(src);
+        machine_tick(&iso, 1);
+        machine_tick(&iso, 2);
+        iso.reset_session_work();
+        machine_tick(&iso, 3);
+        assert_eq!(
+            iso.probe("globalThis.__out").unwrap(),
+            serde_json::json!({ "kind": "aborted", "reason": "reset" })
+        );
+        iso.join();
+
+        // Stop with the callback and its promise still held: the rows drop
+        // before the isolate (a V8 handle outliving it would abort here).
+        let iso = spawn_machine_card(src);
+        machine_tick(&iso, 1);
+        machine_tick(&iso, 2);
+        iso.join();
+    }
+
+    #[test]
+    fn a_callback_may_start_another_machine_mid_step() {
+        let iso = spawn_machine_card(
+            "globalThis.__out = await runMachine('hooked', { emit: 500 }, {
+                 sync(n) {
+                     globalThis.__inner = runMachine('probe', { button: 700, steps: 1 });
+                     return n;
+                 },
+                 later: (v) => v,
+                 mark: () => null,
+             });
+             globalThis.__innerOut = await globalThis.__inner;",
+        );
+        machine_tick(&iso, 1);
+        machine_tick(&iso, 2);
+        assert_eq!(
+            iso.drain_interacts(),
+            vec![
+                if_button(700),
+                if_button(501),
+                if_button(502),
+                if_button(503)
+            ],
+            "the inner begin op lands where its callback ran"
+        );
+        for n in 3..=5 {
+            machine_tick(&iso, n);
+        }
+        assert_eq!(
+            iso.drain_interacts(),
+            vec![if_button(701)],
+            "the inner row is first stepped on the next tick"
+        );
+        assert_eq!(iso.probe("globalThis.__out.kind").unwrap(), "done");
+        assert_eq!(
+            iso.probe("globalThis.__innerOut").unwrap(),
+            serde_json::json!({ "kind": "done", "value": 1 })
+        );
         iso.join();
     }
 }

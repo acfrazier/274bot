@@ -166,12 +166,12 @@ mod tests {
     fn missing_controls_do_not_invent_a_button() {
         crate::supply_v2::configure(None);
         assert_eq!(
-            machine::start("teleport", json!({ "name": "Varrock" }), 0),
+            machine::start("teleport", json!({ "name": "Varrock" }), Vec::new(), 0),
             Started::Refused("missing selected teleports".into())
         );
         crate::supply_v2::configure(Some(data(ClientRevision::R274)));
         assert_eq!(
-            machine::start("teleport", json!({ "name": "Nowhere" }), 0),
+            machine::start("teleport", json!({ "name": "Nowhere" }), Vec::new(), 0),
             Started::Settled(Outcome::Done(json!(false)))
         );
         assert!(machine::merge_ops(Vec::new()).is_empty());

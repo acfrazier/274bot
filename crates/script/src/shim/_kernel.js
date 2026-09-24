@@ -11,12 +11,17 @@ export const queue = (req) => {
     h.interact.push(req);
 };
 
-// Start one Rust step machine and await its single completion. Resolves
-// `{ kind: 'done', value }`, `{ kind: 'refused', reason }` (nothing
-// started) or `{ kind: 'aborted', reason }` (ResetSession, superseded).
-export function runMachine(family, args) {
-    const started = globalThis.__rs2b0t_machine_start(family, args);
-    return started.kind === 'running' ? parkMachine(started.handle) : Promise.resolve(started);
+// Start one Rust step machine and await its single completion. `hooks`
+// holds the script callbacks the family declares (called as methods of
+// `hooks`). Resolves `{ kind: 'done', value }`, `{ kind: 'refused', reason }`
+// (nothing started) or `{ kind: 'aborted', reason }` (ResetSession,
+// superseded); rejects with what a script callback threw when the machine
+// failed on it.
+export async function runMachine(family, args, hooks) {
+    const started = globalThis.__rs2b0t_machine_start(family, args, hooks);
+    const out = started.kind === 'running' ? await parkMachine(started.handle) : started;
+    if (out.kind === 'failed') throw out.error;
+    return out;
 }
 
 export const proxy = (ns, members) =>
