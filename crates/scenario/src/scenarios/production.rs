@@ -6335,7 +6335,16 @@ pub(crate) fn ardy_cakes_scenario() -> Scenario {
         ("watch the cake bank close after deposit", Proof::BankClosed),
         ("watch another exact Cake 1891 after return", cake),
     ] {
-        steps.push(bank_fletcher_watch(step_name, arm));
+        let bank_arrival = matches!(
+            arm,
+            Proof::ArrivedNear { x, z, .. } if x == ARDY_BANK.x && z == ARDY_BANK.z
+        );
+        let mut step = bank_fletcher_watch(step_name, arm);
+        // The fill plus the bank walk: see ARDY_CAKES_BANK_WATCH_TICKS.
+        if bank_arrival {
+            step.wait.budget_ticks = ARDY_CAKES_BANK_WATCH_TICKS;
+        }
+        steps.push(step);
     }
     Scenario {
         name: "ardy_cakes",
@@ -6349,7 +6358,7 @@ pub(crate) fn ardy_cakes_scenario() -> Scenario {
         settings: ScenarioSettings {
             full_rate: true,
             require_mainland_base: true,
-            deadline: SCRIPT_GOLD_DEADLINE,
+            deadline: ARDY_CAKES_DEADLINE,
             start_script: Some("ArdyCakes"),
             script_settings_inject: Some(ARDY_CAKES_INJECT),
             terminal_shot: Some("ardy_cakes"),

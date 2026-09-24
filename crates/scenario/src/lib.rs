@@ -530,6 +530,32 @@ const SMITHING_PRODUCT_DEPOSIT_WATCH_TICKS: u32 = 240;
 const HERBLORE_EGG_DEPOSIT_WATCH_TICKS: u32 = 600;
 const HERBLORE_EGG_RETURN_WATCH_TICKS: u32 = 240;
 const HERBLORE_EGG_DEADLINE: Duration = Duration::from_secs(420);
+/// ArdyCakes first cake → Ardougne bank arrival: the Baker stall fill of the
+/// 6 free slots (22 Knife ballast) plus the bank walk.
+///
+/// **Engine model (frozen stealCakes, 289 content):** after the first cake
+/// five more are needed. A success is followed by the stall's
+/// `respawn_ticks` 8 (stealing.dbrow; scaled by player count). A silent
+/// owner refusal costs the 2.4 s resolve plus a pass (~5 ticks), and three
+/// in a row swap stands (~3 ticks). A guard catch costs the Flee kite, the
+/// combat bar, the 10-tick lockout and the walk back (measured 32 ticks,
+/// live 290253afd). The bank walk is ~25 ticks. Per-attempt
+/// success/refusal/catch rates are pooled from the 289 runs of the five
+/// Ardougne cells: 11/5/3 of 19 attempts that did not directly follow a
+/// catch (ardy_cakes alone: 6/5/1 of 12). A Monte Carlo over this model
+/// (200k runs) gives P(arrival ≤150 engine ticks) = 0.79 (0.84 at the
+/// ardy_cakes rates). 95% needs 209 engine ticks (187 at the ardy_cakes
+/// rates).
+///
+/// **Dirty budget:** the failed live step spent 156 dirties in 89.2 s wall,
+/// about 1.05 dirties per 600 ms engine tick, so 209 × 1.05 ≈ **220**.
+/// Every other ArdyCakes watch stays 150.
+const ARDY_CAKES_BANK_WATCH_TICKS: u32 = 220;
+/// ArdyCakes whole-run cap. Seed + Start ~25 s, first cake ~5 s, the
+/// 220-dirty fill/bank watch ~126 s (0.57 s/dirty measured), then deposit,
+/// return, close and a further cake ~30 s: ≈ 186 s at the 95th percentile,
+/// over the 180 s gold cap. Use **240 s**.
+const ARDY_CAKES_DEADLINE: Duration = Duration::from_secs(240);
 
 /// GnomeMagicChopper fletch cells: the first Magic-tree Woodcutting XP arm and
 /// the further Magic logs arm after the deposit return.

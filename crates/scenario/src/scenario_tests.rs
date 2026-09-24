@@ -5845,7 +5845,7 @@ fn rune_crafter_cases_register_altar_conversion_and_bank_cycles() {
 fn ardy_thieving_cases_register_stall_guard_knight_and_bank_cycles() {
     let cakes = get("ardy_cakes").expect("ardy_cakes");
     assert_eq!(cakes.settings.start_script, Some("ArdyCakes"));
-    assert_eq!(cakes.settings.deadline, SCRIPT_GOLD_DEADLINE);
+    assert_eq!(cakes.settings.deadline, ARDY_CAKES_DEADLINE);
     let inject = settings_inject_map(cakes.settings.script_settings_inject).unwrap();
     assert_eq!(
         inject.get("guardResponse"),
@@ -8937,7 +8937,6 @@ fn script_gold_watch_is_a_short_agentic_budget() {
         "rune_crafter",
         "rune_crafter_earth",
         "mule_crafter",
-        "ardy_cakes",
         "ardy_thiever",
         "ardy_thiever_knight",
         "gnome_chop",
