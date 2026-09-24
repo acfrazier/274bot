@@ -1028,6 +1028,12 @@ impl FollowRun {
                                     } else {
                                         0
                                     };
+                                    // A door Open arms the one crossing
+                                    // probe: a scripted door can place the
+                                    // player on `at` and never read open
+                                    // (see `door_step_pending`).
+                                    let open_sent_tick =
+                                        (edge.kind == TransportKind::Door).then(|| snapshot.tick());
                                     self.loc_wait = 0;
                                     self.transport = Some(TransportHop {
                                         leg,
@@ -1036,7 +1042,7 @@ impl FollowRun {
                                         sent_tile: Some(here),
                                         tries,
                                         troll: false,
-                                        open_sent_tick: None,
+                                        open_sent_tick,
                                         chat_seq: chat_seq(snapshot),
                                         dialog_page: None,
                                         approach: None,
@@ -1360,6 +1366,39 @@ impl FollowRun {
                     }
                     self.transport = Some(hop);
                     return Poll::Watching;
+                } else if edge.kind == TransportKind::Door
+                    && hop
+                        .open_sent_tick
+                        .is_some_and(|sent| snapshot.tick() != sent)
+                    && door_step_pending(edge, here)
+                    && SceneQuery::new(snapshot.scene(), None).can_step(here, edge.to)
+                {
+                    // The Open already carried the player through the
+                    // door's wall onto `at` (Tenzing's 3745
+                    // `open_and_close_door2` teleports the entering player
+                    // onto the loc tile, whose wall is on the far edge, and
+                    // swaps in an inviswall for 3 ticks, so the door never
+                    // reads open): take the clear step to `to` now instead
+                    // of sitting out the cheap budget. A step still behind
+                    // the wall is left to the open-door walk above — a walk
+                    // packet there would cancel the queued Open.
+                    hop.open_sent_tick = None;
+                    let mut ix = Interactions::new(snapshot, d);
+                    let result = ix.pending_door_step(edge.to);
+                    report_walk(options, snapshot, here, edge.to, &result);
+                    match result {
+                        SendResult::Sent { .. } => {
+                            if crate::debug_enabled() {
+                                eprintln!("[nav-transport] cheap hop door step to {:?}", edge.to);
+                            }
+                        }
+                        SendResult::Refused { reason, .. } => {
+                            fire_leg(options, &hop.leg, LegPhase::Failed);
+                            return Poll::Terminal(TravelOutcome::Refused { at: here, reason });
+                        }
+                    }
+                    self.transport = Some(hop);
+                    return Poll::Watching;
                 } else if edge.open_loc_id.is_some()
                     && edge.kind != TransportKind::Door
                     && edge_loc_open(snapshot, edge)
@@ -1419,6 +1458,9 @@ impl FollowRun {
                             self.loc_wait = 0;
                             hop.ticks_waited = 0;
                             hop.sent_tile = Some(here);
+                            if edge.kind == TransportKind::Door {
+                                hop.open_sent_tick = Some(snapshot.tick());
+                            }
                             if edge.open_loc_id.is_some()
                                 && edge.kind != TransportKind::Door
                                 && edge_loc_open(snapshot, &edge)
@@ -1736,6 +1778,8 @@ impl FollowRun {
                     if door_leg && !hop.troll {
                         hop.troll = true;
                         hop.ticks_waited = 0;
+                        // The troll arms its own probe when it sends Open.
+                        hop.open_sent_tick = None;
                         self.transport = Some(hop);
                         Poll::Watching
                     } else {
@@ -2007,12 +2051,7 @@ impl FollowRun {
                 hop.open_sent_tick = Some(sent_tick);
                 return None;
             }
-            if here == edge.at
-                && edge.to.level == here.level
-                && here.x.abs_diff(edge.to.x) + here.z.abs_diff(edge.to.z) == 1
-                && edge.dir.is_some()
-                && door_crossed(&edge, edge.to)
-            {
+            if door_step_pending(&edge, here) {
                 let mut ix = Interactions::new(snapshot, d);
                 let result = ix.pending_door_step(edge.to);
                 report_walk(options, snapshot, here, edge.to, &result);
@@ -2215,7 +2254,10 @@ struct TransportHop {
     sent_tile: Option<WorldTile>,
     tries: u32,
     troll: bool,
-    /// One crossing probe on the next delivered tick after Open.
+    /// The tick a door Open was sent: one crossing probe
+    /// ([`door_step_pending`]) on a later delivered tick. The troll spends
+    /// it on the next tick; the cheap hop keeps it until the player stands
+    /// on `at` with a wall-clear step to `to`.
     open_sent_tick: Option<u32>,
     chat_seq: i32,
     /// The chat option-page last answered (joined option texts). A new
@@ -2880,6 +2922,20 @@ fn door_crossed(edge: &TransportEdge, here: WorldTile) -> bool {
         Some(DoorDir::W) => here.x < edge.at.x,
         None => true,
     }
+}
+
+/// Whether an Open left the player on the door's own tile `at` with `to`
+/// one cardinal step away on the crossing side: the post-Open step that
+/// finishes the crossing. `open_and_close_door2` doors (Tenzing's 3745)
+/// teleport the entering player onto `at` and swap in an inviswall for
+/// three ticks, so the loc never reads open; ordinary doors reach the same
+/// state when the player opens from `at`.
+fn door_step_pending(edge: &TransportEdge, here: WorldTile) -> bool {
+    here == edge.at
+        && edge.to.level == here.level
+        && here.x.abs_diff(edge.to.x) + here.z.abs_diff(edge.to.z) == 1
+        && edge.dir.is_some()
+        && door_crossed(edge, edge.to)
 }
 
 /// Door hops without a cardinal `dir` normally settle with
@@ -7474,6 +7530,116 @@ mod tests {
             run.poll_transport(&mut rec, &snap, &mut options, &mut None),
             Poll::LegDone
         ));
+    }
+
+    /// Tenzing-shaped closed door at scene (6,6) — world (3206,3206), clear
+    /// of the collision map's blocked border — with its wall on the east
+    /// edge (3745 is angle 2), crossed along `dir` to `to_x`. Starts the
+    /// cheap hop from scene (`from_x`, 6): one Open, no step.
+    fn tenzing_door_hop(
+        dir: DoorDir,
+        from_x: i32,
+        to_x: i32,
+    ) -> (
+        Client,
+        GameSnapshot,
+        FollowRec,
+        Traveller,
+        Route,
+        TravelOptions<'static>,
+    ) {
+        let mut c = scene_client();
+        plant_door_at(&mut c, false, 6, 6);
+        c.collision[0].add_wall(6, 6, 0, 2, false);
+        let snap = snap_at(&mut c, from_x, 6);
+        let mut edge = door_edge();
+        edge.at = WorldTile {
+            x: 3206,
+            z: 3206,
+            level: 0,
+        };
+        edge.to = WorldTile {
+            x: 3200 + to_x,
+            z: 3206,
+            level: 0,
+        };
+        edge.dir = Some(dir);
+        let route = Route {
+            legs: vec![Leg::Transport { edge: edge.clone() }],
+            dest: edge.to,
+            ticks: 1.0,
+        };
+        let mut options = TravelOptions {
+            budget_ticks_per_hop: 60,
+            close_enough: 0,
+            ..TravelOptions::default()
+        };
+        let mut rec = FollowRec {
+            route: Some((from_x, 6)),
+            ..FollowRec::default()
+        };
+        let mut t = Traveller::new();
+        assert!(t
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none());
+        assert_eq!(rec.loc_ops, 1, "the cheap hop sends Open");
+        assert!(rec.sink.steps.is_empty() && rec.walked.is_empty());
+        (c, snap, rec, t, route, options)
+    }
+
+    /// Tenzing's hut door 3745 (`open_and_close_door2`, wall on the east
+    /// edge of its loc tile): Open from the outside teleports the player
+    /// onto the loc tile `at` and swaps the door for an inviswall for three
+    /// ticks, so the loc never reads open. The cheap hop must take the
+    /// wall-clear step to `to` instead of sitting out its budget until the
+    /// troll (live: 60 idle ticks at (2822,3555) before every entry in the
+    /// ClimbingBoots walk and teleport cells).
+    #[test]
+    fn cheap_door_hop_steps_through_when_open_lands_on_the_door_tile() {
+        let (mut c, mut snap, mut rec, mut t, route, mut options) =
+            tenzing_door_hop(DoorDir::W, 7, 5);
+        // The door script put the player on `at`; the loc still reads closed.
+        plant_player(&mut c, 6, 6);
+        rec.route = Some((6, 6));
+        bump_rebuild(&mut c, &mut snap);
+        assert!(t
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none());
+        assert_eq!(
+            rec.loc_ops, 1,
+            "no second Open: from `at` it sends the player back out"
+        );
+        assert_eq!(
+            rec.sink.steps,
+            vec![client::io::ClientProt::MOVE_GAMECLICK.id, 5, 0, 3205, 3206],
+            "the step to `to` goes out on the tick the player lands on `at`"
+        );
+
+        plant_player(&mut c, 5, 6);
+        bump_rebuild(&mut c, &mut snap);
+        assert!(matches!(
+            t.follow(&mut rec, &snap, route.clone(), &mut options),
+            Some(TravelOutcome::Arrived { at }) if at.x == 3205 && at.z == 3206
+        ));
+    }
+
+    /// The same door left the other way (edge E, `to` across the closed
+    /// wall): the server walks the player onto `at` before the queued Open
+    /// fires. A step packet there would cancel that Open, so the cheap hop
+    /// sends nothing while the wall still blocks `at` → `to`.
+    #[test]
+    fn cheap_door_hop_does_not_step_into_a_closed_wall_from_the_door_tile() {
+        let (mut c, mut snap, mut rec, mut t, route, mut options) =
+            tenzing_door_hop(DoorDir::E, 5, 7);
+        plant_player(&mut c, 6, 6);
+        rec.route = Some((6, 6));
+        bump_rebuild(&mut c, &mut snap);
+        assert!(t
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none());
+        assert_eq!(rec.loc_ops, 1);
+        assert!(rec.sink.steps.is_empty(), "no step into the closed wall");
+        assert!(rec.walked.is_empty());
     }
 
     #[test]

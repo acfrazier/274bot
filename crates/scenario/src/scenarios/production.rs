@@ -9605,6 +9605,34 @@ pub(crate) const CLIMBING_BOOTS_TELE_PACK_COINS: i32 = 25 * CLIMBING_BOOTS_PAIR_
 /// restock, because `runeStock=1` consumes the whole carried stack per cast.
 pub(crate) const CLIMBING_BOOTS_BANK_TRIPS: i32 = 2;
 const CLIMBING_BOOTS_RUNES: &[(&str, i32)] = &[("lawrune", 1), ("airrune", 3), ("waterrune", 1)];
+/// The rest-of-trip arm after the 2-pair spend watch: the walk cell's
+/// return to Falador West and the teleport cell's Falador landing.
+///
+/// **Units:** runner dirty-snapshot increments (`budget_ticks`), not engine
+/// ticks or wall seconds. `readyToBuy` fixes one trip at 28 (walk) / 25
+/// (teleport) pairs, and the frozen card returns only once `tripComplete`
+/// (`ClimbingBoots.ts` loop: `returnToBank` runs only when the pack is
+/// complete). Each pair is seven `death_sherpa.rs2` pause pages (two
+/// `~chatplayer`, two `~chatnpc`, the `~objbox`, `~p_choice2`, the
+/// `~p_choice5` reprompt), and frozen `driveShop` waits for each page to
+/// change, then `delayTicks(1)` per continue and `delayTicks(2)` per choice:
+/// at least 16 engine ticks (9.6s) a pair. Live 290253afd measured ~11s a
+/// pair at ~2.4 dirty increments/s, so the ordinary 150 (~62s) covered
+/// seven pairs of the 28.
+/// Walk: 26 pairs (~290s) plus the ~260-tile hut → Falador West walk
+/// (≤156s at walking pace) ≈ 450s ≈ 1080 dirties → **1200**.
+/// Teleport: 23 pairs (~255s) plus the cast ≈ 615 dirties → **750**.
+pub(crate) const CLIMBING_BOOTS_WALK_RETURN_WATCH_TICKS: u32 = 1200;
+pub(crate) const CLIMBING_BOOTS_TELE_CAST_WATCH_TICKS: u32 = 750;
+/// The further-pair arm (`has_item_id(3105)>=2` after the restock left zero
+/// carried): the walk back to the hut (≤156s), the 3745 entry, the talk and
+/// two pairs (~30s) ≈ 190s ≈ 460 dirties → **600**.
+pub(crate) const CLIMBING_BOOTS_FURTHER_WATCH_TICKS: u32 = 600;
+/// Whole-scenario wall: seed (~50s) + first pairs (~30s) + the arms above at
+/// their wall estimates + bank open/deposit/restock (~25s). Walk ≈ 745s,
+/// teleport ≈ 560s, each with ~20% margin.
+pub(crate) const CLIMBING_BOOTS_WALK_DEADLINE: Duration = Duration::from_secs(900);
+pub(crate) const CLIMBING_BOOTS_TELE_DEADLINE: Duration = Duration::from_secs(720);
 /// The Water rune id for the bank-seed acknowledgement (Law 563 and Air 556
 /// already have crate constants).
 pub(crate) const WATER_RUNE_ID: i32 = 555;
@@ -9884,13 +9912,24 @@ fn climbing_boots_variant(
         tenzing,
     ));
     steps.push(start_catalog_step());
-    let mut watches: Vec<(&'static str, Proof)> = vec![
+    // Serial arms in cycle order: purchase, spend, return (the teleport cell
+    // lands the real Falador cast first, then walks to the bank stand),
+    // deposit, restock close, further pair. The cast lands only after a full
+    // trip, so its arm follows the purchase arms in cycle order and carries
+    // the rest-of-trip budget; a 150-dirty cast arm could never see it.
+    let trip_watch = if use_teleport {
+        CLIMBING_BOOTS_TELE_CAST_WATCH_TICKS
+    } else {
+        CLIMBING_BOOTS_WALK_RETURN_WATCH_TICKS
+    };
+    let mut watches: Vec<(&'static str, Proof, u32)> = vec![
         (
             "watch the real purchase gain a pair of boots",
             Proof::ItemId {
                 id: CLIMBING_BOOTS_ID,
                 count: 1,
             },
+            SCRIPT_GOLD_WATCH_TICKS,
         ),
         (
             "watch the purchase spend 12 coins a pair",
@@ -9898,18 +9937,29 @@ fn climbing_boots_variant(
                 id: COINS_ID,
                 count: pack_coins - CLIMBING_BOOTS_PAIR_COINS * 2,
             },
+            SCRIPT_GOLD_WATCH_TICKS,
         ),
-        ("watch the return to the Falador West bank", returned),
+        (
+            "watch the return to the Falador West bank",
+            returned,
+            if use_teleport {
+                SCRIPT_GOLD_WATCH_TICKS
+            } else {
+                trip_watch
+            },
+        ),
         (
             "watch Falador West bank hold the deposited boots",
             Proof::BankItemId {
                 id: CLIMBING_BOOTS_ID,
                 count: 1,
             },
+            SCRIPT_GOLD_WATCH_TICKS,
         ),
         (
             "watch the bank close after restocking for a further trip",
             Proof::BankClosed,
+            SCRIPT_GOLD_WATCH_TICKS,
         ),
         (
             "watch a further pair for the full cycle",
@@ -9917,11 +9967,12 @@ fn climbing_boots_variant(
                 id: CLIMBING_BOOTS_ID,
                 count: 2,
             },
+            CLIMBING_BOOTS_FURTHER_WATCH_TICKS,
         ),
     ];
     if use_teleport {
         watches.insert(
-            0,
+            2,
             (
                 "watch the real Falador cast land at the bank",
                 Proof::ArrivedNear {
@@ -9930,11 +9981,18 @@ fn climbing_boots_variant(
                     level: FALADOR_TELE_LAND.level,
                     radius: 8,
                 },
+                trip_watch,
             ),
         );
     }
-    for (step_name, arm) in watches {
-        steps.push(bank_fletcher_watch(step_name, arm));
+    for (step_name, arm, budget_ticks) in watches {
+        steps.push(Step {
+            name: step_name,
+            kind: StepKind::Perform {
+                send: Box::new(|_, _| true),
+            },
+            wait: Wait { arm, budget_ticks },
+        });
     }
     let proof = if use_teleport {
         Proof::StatXpGain {
@@ -9959,7 +10017,11 @@ fn climbing_boots_variant(
         settings: ScenarioSettings {
             full_rate: true,
             require_mainland_base: true,
-            deadline: SCRIPT_GOLD_DEADLINE,
+            deadline: if use_teleport {
+                CLIMBING_BOOTS_TELE_DEADLINE
+            } else {
+                CLIMBING_BOOTS_WALK_DEADLINE
+            },
             start_script: Some("ClimbingBoots"),
             script_settings_inject: Some(inject),
             terminal_shot: Some(name),

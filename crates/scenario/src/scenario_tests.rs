@@ -10496,17 +10496,23 @@ fn climbing_boots_variants_seed_complete_death_plateau_map_before_relog_and_star
     // walk/teleport differences. Readbacks are server Chat arms from
     // getvar, proven by the emitted CLIENT_CHEAT stream — not a client
     // varp snapshot (default 315 = 0 does not establish transmission).
-    for (name, use_teleport, pack_coins) in [
-        ("climbing_boots", false, CLIMBING_BOOTS_WALK_PACK_COINS),
+    for (name, use_teleport, pack_coins, deadline) in [
+        (
+            "climbing_boots",
+            false,
+            CLIMBING_BOOTS_WALK_PACK_COINS,
+            CLIMBING_BOOTS_WALK_DEADLINE,
+        ),
         (
             "climbing_boots_teleport",
             true,
             CLIMBING_BOOTS_TELE_PACK_COINS,
+            CLIMBING_BOOTS_TELE_DEADLINE,
         ),
     ] {
         let scenario = get(name).unwrap_or_else(|| panic!("{name} is registered"));
         assert_eq!(scenario.settings.start_script, Some("ClimbingBoots"));
-        assert_eq!(scenario.settings.deadline, SCRIPT_GOLD_DEADLINE);
+        assert_eq!(scenario.settings.deadline, deadline);
         let inject = settings_inject_map(scenario.settings.script_settings_inject).unwrap();
         assert_eq!(inject.get("useTeleport"), Some(&Value::Bool(use_teleport)));
         assert_eq!(inject.get("runeStock"), Some(&Value::from(1.0)));
@@ -10639,10 +10645,37 @@ fn climbing_boots_variants_seed_complete_death_plateau_map_before_relog_and_star
             count: CLIMBING_BOOTS_BANK_TRIPS * pack_coins,
         }));
 
-        let watches: Vec<_> = scenario.steps[start + 1..]
+        let watch_steps = &scenario.steps[start + 1..];
+        let watches: Vec<_> = watch_steps.iter().map(|step| step.wait.arm).collect();
+        let cast = Proof::ArrivedNear {
+            x: FALADOR_TELE_LAND.x,
+            z: FALADOR_TELE_LAND.z,
+            level: FALADOR_TELE_LAND.level,
+            radius: 8,
+        };
+        let position = |arm: &Proof| watches.iter().position(|w| w == arm);
+        let spend = position(&Proof::ItemIdAtMost {
+            id: COINS_ID,
+            count: pack_coins - 24,
+        })
+        .unwrap_or_else(|| panic!("{name}: 2-pair spend arm"));
+        let back = watch_steps
             .iter()
-            .map(|step| step.wait.arm)
-            .collect();
+            .position(|step| step.name == "watch the return to the Falador West bank")
+            .unwrap_or_else(|| panic!("{name}: return arm"));
+        // The frozen card returns only after `tripComplete`, so the arm
+        // after the 2-pair spend spans the rest of the pack. Every sherpa
+        // pair is seven pause pages (`death_sherpa.rs2`), each a new chat
+        // modal and so at least one dirty snapshot: the arm must allow at
+        // least that many before any walking or casting.
+        let pairs = pack_coins / 12;
+        let trip_arm = &watch_steps[spend + 1];
+        assert!(
+            trip_arm.wait.budget_ticks > ((pairs - 2) * 7) as u32,
+            "{name}: `{}` cannot outlast the remaining {} pairs",
+            trip_arm.name,
+            pairs - 2
+        );
         if use_teleport {
             assert!(
                 seed.iter().any(|p| matches!(
@@ -10674,15 +10707,11 @@ fn climbing_boots_variants_seed_complete_death_plateau_map_before_relog_and_star
                 )),
                 "{name}: teleport bank restock Water is acknowledged"
             );
+            let landed = position(&cast).unwrap_or_else(|| panic!("{name}: cast arm"));
             assert_eq!(
-                watches.first(),
-                Some(&Proof::ArrivedNear {
-                    x: FALADOR_TELE_LAND.x,
-                    z: FALADOR_TELE_LAND.z,
-                    level: FALADOR_TELE_LAND.level,
-                    radius: 8,
-                }),
-                "{name}: teleport cell watches the Falador cast first"
+                (spend + 1, landed + 1),
+                (landed, back),
+                "{name}: the cast follows the purchase and precedes the bank return"
             );
             assert_eq!(
                 scenario.proof,
@@ -10708,15 +10737,10 @@ fn climbing_boots_variants_seed_complete_death_plateau_map_before_relog_and_star
                 )),
                 "{name}: walking cell does not seed teleport runes"
             );
-            assert_ne!(
-                watches.first(),
-                Some(&Proof::ArrivedNear {
-                    x: FALADOR_TELE_LAND.x,
-                    z: FALADOR_TELE_LAND.z,
-                    level: FALADOR_TELE_LAND.level,
-                    radius: 8,
-                }),
-                "{name}: walking cell does not require a Falador cast"
+            assert_eq!(
+                (position(&cast), spend + 1),
+                (None, back),
+                "{name}: walking cell returns without a Falador cast"
             );
             assert_eq!(
                 scenario.proof,
