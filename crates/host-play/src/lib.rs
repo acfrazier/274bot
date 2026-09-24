@@ -13,6 +13,7 @@ pub mod nav_identity;
 pub mod paired_core;
 pub mod profile;
 pub mod progress;
+pub mod public_worlds;
 pub use nav_identity::{
     bundled_nav_identities, install_resource_root, BundledNavIdentity, NavFlagsOrigin,
     NavLoadCounters, NavOrigin,
@@ -370,6 +371,8 @@ impl PlayConnection {
 #[derive(Debug, Clone)]
 pub struct SlotStatus {
     pub username: String,
+    /// Active public world number, absent for local profiles.
+    pub world: Option<u16>,
     /// Native lifecycle phase; `ingame` is producer-gated and cannot
     /// distinguish login from a scene rebuild.
     pub startup_phase: StartupPhase,
@@ -756,6 +759,7 @@ impl Default for SlotStatus {
     fn default() -> Self {
         Self {
             username: String::new(),
+            world: None,
             startup_phase: StartupPhase::Preparing,
             startup_phase_started: Instant::now(),
             startup_progress_percent: None,
@@ -1071,6 +1075,7 @@ pub struct Play {
     pub statuses: Arc<Mutex<Vec<SlotStatus>>>,
     handles: HashMap<String, thread::JoinHandle<()>>,
     connection: PlayConnection,
+    auto_world: Option<u16>,
     /// Generated facts only when the profile cache matches a checked-in asset.
     game_data: Option<Arc<api::game_data::SelectedGameData>>,
     /// Bound-world named bank aliases, resolved once with the nav world and
@@ -1278,6 +1283,7 @@ impl Play {
         );
         Play {
             statuses: Arc::new(Mutex::new(Vec::new())),
+            auto_world: None,
             handles: HashMap::new(),
             connection,
             game_data,
@@ -1377,6 +1383,22 @@ impl Play {
         for w in self.wakes.values() {
             w.wake();
         }
+    }
+
+    /// CLI-only preference for accounts whose stored world is auto.
+    pub fn set_auto_world(&mut self, number: u16) -> Result<(), String> {
+        let worlds = self
+            .connection
+            .profile()
+            .and_then(|p| p.public_worlds())
+            .ok_or("--world requires public-289")?;
+        if worlds.by_number(number).is_none() {
+            return Err(format!(
+                "world {number} is not in the configured public worlds"
+            ));
+        }
+        self.auto_world = Some(number);
+        Ok(())
     }
 
     /// Snapshot of every slot's status.
@@ -1883,6 +1905,19 @@ impl Play {
         arm: Option<Arc<SlotArm>>,
     ) -> Result<(), String> {
         self.connection.require_bot_operation()?;
+        let world_round = self
+            .connection
+            .profile()
+            .and_then(|p| p.public_worlds().map(|worlds| (p, worlds)))
+            .map(|(bound, worlds)| {
+                let default = self.auto_world.or_else(|| {
+                    worlds
+                        .by_endpoint(bound.client().game_host(), bound.client().game_port())
+                        .map(|world| world.number)
+                });
+                public_worlds::WorldRound::new(worlds, profile.settings.world, default)
+            })
+            .transpose()?;
         // Keep the vault credentials on the wall for later spawns and
         // DC-reconnect re-handshakes.
         self.profiles
@@ -1908,6 +1943,7 @@ impl Play {
         spawn_slot_thread(
             &self.connection,
             profile,
+            world_round,
             input,
             mailbox,
             Some(park),
@@ -2161,6 +2197,7 @@ fn apply_startup_phase(s: &mut SlotStatus, name: &str, ready: bool, client_ingam
 
 fn record_login_error(statuses: &Arc<Mutex<Vec<SlotStatus>>>, name: &str, e: &LoginError) {
     let msg = format!("code {}: {}", e.code, e.mes2);
+
     if debug_enabled() {
         eprintln!("[host-play] slot {name}: login {msg}");
     }
@@ -2170,6 +2207,16 @@ fn record_login_error(statuses: &Arc<Mutex<Vec<SlotStatus>>>, name: &str, e: &Lo
         s.startup_phase_started = Instant::now();
         s.error = Some(msg);
     }
+}
+fn configure_slot_world(
+    client: &mut Client,
+    world: &public_worlds::PublicWorld,
+    refresh: bool,
+) -> Result<(), String> {
+    let modulus = public_worlds::modulus_for(world, refresh, |host, port| {
+        Client::fetch_login_modulus_for(BotTarget::Prod, host, port)
+    });
+    client.set_public_world(&world.host, world.port, world.node_id, &modulus)
 }
 
 fn login_retry_wait(backoff: &mut LoginBackoff, code: i32) -> Duration {
@@ -2354,6 +2401,7 @@ fn publish_session_boundary_status(
 fn spawn_slot_thread(
     connection: &PlayConnection,
     profile: Profile,
+    mut world_round: Option<public_worlds::WorldRound>,
     slot_input: Option<Arc<SlotInput>>,
     slot_mailbox: Option<Arc<FrameBuf>>,
     park: Option<SlotPark>,
@@ -2396,6 +2444,9 @@ fn spawn_slot_thread(
                 let mut all = slot_statuses.lock().unwrap();
                 all.push(SlotStatus {
                     username: username.clone(),
+                    world: world_round.as_ref().and_then(|round| connection.profile()
+                        .and_then(|p| p.public_worlds())
+                        .map(|worlds| worlds.worlds[round.index].number)),
                     ..SlotStatus::default()
                 });
             }
@@ -2475,6 +2526,9 @@ fn spawn_slot_thread(
             }
 
             let mut backoff = LoginBackoff::new();
+            let mut world_dirty = world_round.is_some();
+            let mut refresh_key = false;
+            let mut key_refreshed = false;
             let mut script_tick: u64 = 0;
             loop {
                 if arm.stop.load(Ordering::Relaxed) {
@@ -2497,6 +2551,24 @@ fn spawn_slot_thread(
                     // arm so an explicit Log in cannot keep a stale TRUE from
                     // the last park publish through queue/connect.
                     publish_login_latched_from_arm(&slot_statuses, &username, &arm);
+                    if world_dirty {
+                        let round = world_round.as_ref().expect("public world round");
+                        let worlds = connection.profile().and_then(|p| p.public_worlds())
+                            .expect("bound public worlds");
+                        let world = &worlds.worlds[round.index];
+                        if let Err(error) = configure_slot_world(&mut client, world, refresh_key) {
+                            if let Some(row) = slot_statuses.lock().unwrap().iter_mut().find(|s| s.username == username) {
+                                row.startup_phase = StartupPhase::Error;
+                                row.error = Some(format!("profile asset initialization failed: {error}"));
+                            }
+                            return;
+                        }
+                        if let Some(row) = slot_statuses.lock().unwrap().iter_mut().find(|s| s.username == username) {
+                            row.world = Some(world.number);
+                        }
+                        world_dirty = false;
+                        refresh_key = false;
+                    }
                     let wait = wait_for_permit(&slot_queue, &slot_statuses, &username, uid, &arm);
                     if wait == PermitWait::Cancelled {
                         if arm.stop.load(Ordering::Relaxed) {
@@ -2532,6 +2604,8 @@ fn spawn_slot_thread(
                     match login {
                         Ok(()) => {
                             backoff.reset();
+                            if let Some(round) = world_round.as_mut() { round.reset(); }
+                            key_refreshed = false;
                             on_login_success(&arm);
                             set_startup_phase(&slot_statuses, &username, StartupPhase::LoadingScene);
                             if debug_enabled() {
@@ -2540,6 +2614,29 @@ fn spawn_slot_thread(
                         }
                         Err(e) => {
                             record_login_error(&slot_statuses, &username, &e);
+                            let decision = world_round.as_mut().map(|round| {
+                                let count = connection.profile().and_then(|p| p.public_worlds())
+                                    .expect("bound public worlds").worlds.len();
+                                round.on_login_error(e.code, count)
+                            });
+                            match decision {
+                                Some(public_worlds::WorldErrorStep::SwitchNow) => {
+                                    world_dirty = true;
+                                    key_refreshed = false;
+                                    continue;
+                                }
+                                Some(public_worlds::WorldErrorStep::SwitchAfterWait) => {
+                                    world_dirty = true;
+                                    key_refreshed = false;
+                                }
+                                _ => {}
+                            }
+                            if world_round.is_some()
+                                && public_worlds::refresh_after_login_error(e.code, &mut key_refreshed)
+                            {
+                                refresh_key = true;
+                                world_dirty = true;
+                            }
                             thread::sleep(login_retry_wait(&mut backoff, e.code));
                             continue;
                         }

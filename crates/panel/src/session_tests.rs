@@ -466,10 +466,15 @@ fn prod_default_ignores_the_saved_local_revision() {
             ..ProfileOptions::default()
         })
         .unwrap();
-    session.profile_environment = Some(ProfileEnvironment::default());
+    let home = std::env::temp_dir().join(format!("274bot-panel-public-{}", std::process::id()));
+    session.profile_environment = Some(ProfileEnvironment {
+        home: Some(home.clone()),
+        ..ProfileEnvironment::default()
+    });
     let selection = session.resolve_profile().unwrap();
     assert_eq!(selection.revision(), client::io::ClientRevision::R289);
     assert_eq!(selection.target(), client::BotTarget::Prod);
+    std::fs::remove_dir_all(home).unwrap();
 }
 
 #[test]
@@ -4071,6 +4076,45 @@ fn save_credentials_upserts_under_username_key_keeping_uid() {
     let p = s.vault.as_ref().unwrap().get("alice").unwrap();
     assert_eq!(p.password, "newpass");
     assert_eq!(p.uid, 42, "save must keep the existing uid");
+}
+
+#[test]
+fn chooser_world_edit_persists_for_next_slot_start() {
+    let path = tmp_vault("world-choice.vault");
+    let mut session = Session::new();
+    session.vault = Some(Vault::create(&path, "bot").unwrap());
+    session
+        .vault
+        .as_mut()
+        .unwrap()
+        .upsert(profile("alice", "pw", 42))
+        .unwrap();
+    session.begin_edit_profile(Some("alice"));
+    assert_eq!(session.cred_settings.world, None);
+    session.cred_settings.world = Some(2);
+    assert!(session.save_credentials());
+    assert_eq!(
+        Vault::unlock(&path, "bot")
+            .unwrap()
+            .get("alice")
+            .unwrap()
+            .settings
+            .world,
+        Some(2)
+    );
+    session.cred_settings.world = None;
+    session.cred_pass = "updated".into();
+    assert!(session.save_credentials());
+    assert_eq!(
+        Vault::unlock(&path, "bot")
+            .unwrap()
+            .get("alice")
+            .unwrap()
+            .settings
+            .world,
+        Some(2),
+        "a credentials save outside the editor must not unpin an account"
+    );
 }
 
 #[test]

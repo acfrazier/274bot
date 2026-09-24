@@ -78,17 +78,20 @@ If you rotated the engine key, login reads the public half from
 `$ENGINE_DIR/data/config/private.pem` (rs2b0t `deploy-local-key.sh`
 layout), or from `LOGIN_RSAN` / `LOGIN_RSAE`.
 
-## Public world (`public-289` / `w1.rs2b2t.com:443`)
+## Public worlds (`public-289`)
 
 `BOT_TARGET=prod` (alias `live`), `host-play --prod`, or
-`--profile public-289` switches the login host to **`w1.rs2b2t.com:443`**
-(WSS game + HTTPS assets on **443**) and uses the **baked public RSA** —
-no `LOGIN_RSAN`/`LOGIN_RSAE`, no `private.pem`. This is a client
-`bot_target.rs` + host profile world switch (Cargo `TARGET` remains the
-rustc triple), not a hosted wall and not public-world CI. Alpha's tested
-path is the local engine for `local-274` / `local-289`; the public world is
-built in for a later bin, and the login FIFO stays under the production
-throttle numbers above either way.
+`--profile public-289` uses the ordered endpoints in `~/.274bot/worlds.json`
+(created with w1 and w2 on port 443 when absent). An invalid file or a
+public endpoint outside that list fails closed. The shared cache is fetched
+from the first reachable configured asset world. Each vault account stores
+an optional world number: auto rotates on response 7, waits after all
+worlds report full, and pinned accounts stay on their chosen world.
+The client uses the selected world's node id and fetches its login RSA
+modulus from `/client/client.js` (once per host, refreshed on response 6);
+the baked public modulus is used if the fetch fails. The local engine
+key path above is unchanged. Login and cache transport remain WSS/HTTPS
+for public worlds; Cargo `TARGET` remains the rustc triple.
 
 `$ENGINE_DIR` defaults depend on revision (274:
 `$HOME/experiments/Server/engine`; 289:

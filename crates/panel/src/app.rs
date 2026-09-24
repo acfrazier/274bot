@@ -1309,8 +1309,15 @@ fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
             true,
             &state.session.ui.rail_preview,
         );
-        let (cap_select, cap_remove, cap_fold) =
-            rail_cap(ui, name, light, focused.as_deref(), cw, preview);
+        let (cap_select, cap_remove, cap_fold) = rail_cap(
+            ui,
+            name,
+            status.and_then(|s| s.world),
+            light,
+            focused.as_deref(),
+            cw,
+            preview,
+        );
         let mut body_clicked = false;
         if preview {
             let after = ui.cursor_pos();
@@ -3198,6 +3205,9 @@ fn status_section(ui: &Ui, session: &mut Session) {
     };
     kv_row(ui, "state", &state);
     kv_row(ui, "player", player);
+    if let Some(world) = s.world {
+        kv_row(ui, "world", &format!("w{world}"));
+    }
     kv_row(ui, "tile", &format!("{} {}", s.tile_x, s.tile_z));
     kv_row(ui, "walk", &session.walk_status_text());
     let queue = queue_k_of_n(s.queue_position, s.queue_total).unwrap_or_else(|| "—".into());
@@ -3492,6 +3502,37 @@ fn slot_capture_section(ui: &Ui, session: &mut Session) {
             session.set_auto_login(&name, auto_cur);
         }
     }
+    if let Some(worlds) = session
+        .server_profile
+        .as_ref()
+        .and_then(|p| p.public_worlds())
+    {
+        let preview = session
+            .cred_settings
+            .world
+            .map_or_else(|| "auto".to_string(), |number| format!("w{number}"));
+        ui.text_disabled("world (next slot start)");
+        ui.set_next_item_width(-1.0);
+        if let Some(_open) = ui.begin_combo("##account-world", &preview) {
+            if ui
+                .selectable_config("auto")
+                .selected(session.cred_settings.world.is_none())
+                .build()
+            {
+                session.cred_settings.world = None;
+            }
+            for world in &worlds.worlds {
+                let label = format!("w{}", world.number);
+                if ui
+                    .selectable_config(&label)
+                    .selected(session.cred_settings.world == Some(world.number))
+                    .build()
+                {
+                    session.cred_settings.world = Some(world.number);
+                }
+            }
+        }
+    }
     ui.text_wrapped("this profile; handshake on spawn unless latched out");
 }
 
@@ -3727,8 +3768,15 @@ fn rail_tiles(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
             false,
             &state.session.ui.rail_preview,
         );
-        let (cap_select, cap_remove, cap_fold) =
-            rail_cap(ui, name, light, focused.as_deref(), avail, preview);
+        let (cap_select, cap_remove, cap_fold) = rail_cap(
+            ui,
+            name,
+            status.and_then(|s| s.world),
+            light,
+            focused.as_deref(),
+            avail,
+            preview,
+        );
         let body_clicked = if preview {
             rail_body(ui, gpu, state, name, draw)
         } else {
@@ -3754,6 +3802,7 @@ fn rail_tiles(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
 fn rail_cap(
     ui: &Ui,
     name: &str,
+    world: Option<u16>,
     light: Light,
     focused: Option<&str>,
     width: f32,
@@ -3766,7 +3815,10 @@ fn rail_cap(
     let selected = focused == Some(name);
     let name_w = (width - BTN * 2.0 - DOT_W - BUTTON_GAP * 3.0).max(10.0);
     let clicked = ui
-        .selectable_config(cap_title(name, light))
+        .selectable_config(match world {
+            Some(number) => format!("{} · w{number}", cap_title(name, light)),
+            None => cap_title(name, light),
+        })
         .selected(selected)
         .size([name_w, 0.0])
         .build();
