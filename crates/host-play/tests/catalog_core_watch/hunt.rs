@@ -118,6 +118,13 @@ impl HuntRun {
         self
     }
 
+    /// The host bank interface this frame.
+    fn bank(&mut self, open: bool) -> &mut Self {
+        self.obs.bank_open = open;
+        self.obs.bank_loaded = open;
+        self.frame()
+    }
+
     /// The example's paint row, parsed as the host parses it.
     fn paint(&mut self, receipt: Value) -> &mut Self {
         let line = format!("{}{receipt}", self.cell.receipt_prefix());
@@ -508,35 +515,90 @@ fn bank_receipt(outcome: Value, from: LineOfSightTile, here: LineOfSightTile) ->
     receipt
 }
 
+/// The `bank-open` child's booth approach as host-play records it: walk-near
+/// radius 0, wilderness and bank fetch on, no walk-wait id.
+fn booth_approach(stand: LineOfSightTile) -> ScriptAct {
+    ScriptAct::Walk {
+        dest: stand,
+        radius: 0,
+        exact: false,
+        allow_teleports: false,
+        allow_wilderness: true,
+        allow_bank_fetch: true,
+        request_id: 0,
+    }
+}
+
 #[test]
 fn bank_passes_only_on_the_hosts_approach_walk_and_a_restock() {
-    let (from, near) = (ht(2949, 3381), ht(2946, 3371));
-    let real = HuntRun::start("bank_v2_ts", from)
-        .act(walk_act(BANK_V2_DEST, false, 3, false))
-        .at(near)
-        .paint(bank_receipt(done(json!(true)), from, near))
-        .stop();
-    assert!(real, "walked near the bank, settled true, named stop");
+    let (from, near, stand) = (ht(2949, 3381), ht(2946, 3371), ht(2946, 3368));
+    let trip = |acts: &[ScriptAct], opened: bool, outcome: Value| {
+        let mut run = HuntRun::start("bank_v2_ts", from);
+        for act in acts {
+            run.act(act.clone());
+        }
+        run.at(near);
+        if opened {
+            run.bank(true).bank(false);
+        }
+        run.paint(bank_receipt(outcome, from, near)).stop()
+    };
+    let approach = walk_act(BANK_V2_DEST, false, 3, false);
+    assert!(
+        trip(&[approach.clone()], true, done(json!(true))),
+        "walked near the bank, the host saw it open and shut, settled true"
+    );
+    assert!(
+        trip(
+            &[approach.clone(), booth_approach(stand)],
+            true,
+            done(json!(true))
+        ),
+        "the bank-open child's own booth approach is part of a real trip"
+    );
+    assert!(
+        !trip(
+            &[approach.clone(), booth_approach(stand), walk_act(ht(2960, 3390), false, 0, false)],
+            true,
+            done(json!(true))
+        ),
+        "an extra unrelated walk cannot pass"
+    );
+    assert!(
+        !trip(
+            &[booth_approach(stand), approach.clone()],
+            true,
+            done(json!(true))
+        ),
+        "a booth approach before the bank walk is not the family's"
+    );
+    assert!(
+        !trip(
+            &[approach.clone(), booth_approach(ht(2960, 3390))],
+            true,
+            done(json!(true))
+        ),
+        "a booth approach far from the site bank cannot pass"
+    );
+    assert!(
+        !trip(&[approach.clone()], false, done(json!(true))),
+        "a restock the host never saw the bank open for cannot pass"
+    );
+    assert!(
+        !trip(&[approach.clone()], true, done(json!(false))),
+        "a trip that settled false did not restock"
+    );
+    assert!(
+        !trip(
+            &[walk_act(BANK_V2_DEST, false, 3, true)],
+            true,
+            done(json!(true))
+        ),
+        "the approach walks with bank fetch and the wilderness off"
+    );
 
     let no_op = HuntRun::start("bank_v2_ts", from)
         .paint(bank_receipt(done(json!(true)), from, from))
         .stop();
     assert!(!no_op, "a no-op run cannot pass");
-
-    let not_restocked = HuntRun::start("bank_v2_ts", from)
-        .act(walk_act(BANK_V2_DEST, false, 3, false))
-        .at(near)
-        .paint(bank_receipt(done(json!(false)), from, near))
-        .stop();
-    assert!(!not_restocked, "a trip that settled false did not restock");
-
-    let fetch = HuntRun::start("bank_v2_ts", from)
-        .act(walk_act(BANK_V2_DEST, false, 3, true))
-        .at(near)
-        .paint(bank_receipt(done(json!(true)), from, near))
-        .stop();
-    assert!(
-        !fetch,
-        "the approach walks with bank fetch and the wilderness off"
-    );
 }

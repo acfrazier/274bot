@@ -13,6 +13,14 @@
 //!
 //! A script that never starts the run sends none of the family's requests
 //! and never moves, so no cell can pass on its paint alone.
+//!
+//! Known limit: the ledger cannot tell a request the run's Rust machine
+//! emitted from one the script queued itself. Both reach host-play merged in
+//! one interact batch, and tagging them would need a new isolate wire. A
+//! script that queues the family's walk itself, with any nonzero request id,
+//! and then walks there can satisfy the walk-only cells (hold, walk spot,
+//! enter, leave, bank) without the run. The gates defend against a missing
+//! or no-op run, not against a script that forges the family's requests.
 
 use std::collections::VecDeque;
 
@@ -72,6 +80,9 @@ pub const BANK_V2_STOP: &str = "bank qualification complete";
 pub const BANK_V2_RECEIPT_PREFIX: &str = "bank-receipt:";
 /// The bank family's approach radius (`hunt_bank.rs` `APPROACH_RADIUS`).
 pub const BANK_V2_RADIUS: i32 = 3;
+/// How far the booth approach's stand may be from the site bank tile: the
+/// approach radius plus the one tile between a booth and its stand.
+pub const BANK_V2_BOOTH_REACH: i32 = BANK_V2_RADIUS + 1;
 /// Falador west bank, the bank File card's site bank.
 pub const BANK_V2_DEST: LineOfSightTile = LineOfSightTile {
     x: 2946,
@@ -396,7 +407,9 @@ pub fn hunt_baseline_ready(cell: HuntCell, baseline: &Observation) -> bool {
                 && baseline.item_id(DUSTY_KEY_ID) == 0
         }
         HuntCell::Bank => {
-            !HUNT_LAIR_FIXTURE.contains(from) && cheb(from, BANK_V2_DEST) > BANK_V2_RADIUS
+            !HUNT_LAIR_FIXTURE.contains(from)
+                && cheb(from, BANK_V2_DEST) > BANK_V2_RADIUS
+                && !baseline.bank_open
         }
     };
     baseline.ingame && baseline.scene_state == 2 && baseline.hunt.available && placed
@@ -419,6 +432,10 @@ pub struct HuntDeliveryCycle {
     /// Key and cell: the host tile reached the walk's destination after the
     /// walk was sent.
     pub arrived: bool,
+    /// Bank: the host saw the bank open and loaded after the approach walk.
+    pub bank_opened: bool,
+    /// Bank: the host bank was still open when the receipt joined.
+    pub bank_open_at_receipt: bool,
     pub receipt: Option<HuntReceipt>,
     /// Host tile when the receipt joined.
     pub here: Option<LineOfSightTile>,
@@ -444,6 +461,13 @@ impl HuntDeliveryCycle {
                 self.arrived = true;
             }
         }
+        if cell == HuntCell::Bank
+            && now.bank_open
+            && now.bank_loaded
+            && self.walked_near(BANK_V2_DEST, BANK_V2_RADIUS).is_some()
+        {
+            self.bank_opened = true;
+        }
         let Some(receipt) = now.hunt.receipt.as_ref() else {
             return;
         };
@@ -451,6 +475,7 @@ impl HuntDeliveryCycle {
             self.receipt = Some(receipt.clone());
             self.here = here;
             self.proof_items = cell.proof_item().map_or(0, |id| now.item_id(id));
+            self.bank_open_at_receipt = now.bank_open;
         }
     }
 
@@ -658,12 +683,24 @@ impl HuntDeliveryCycle {
                     && self.proof_items > 0
                     && !JAIL_CELL.contains(here)
             }
-            // The approach walk-near the bank; within the radius at the end.
+            // The approach walk-near the bank, then (bank_open.rs) at most the
+            // booth approach; the host saw the bank open and shut again;
+            // within the radius at the end.
             HuntCell::Bank => {
+                let Some(walk) = self.walked_near(BANK_V2_DEST, BANK_V2_RADIUS) else {
+                    return false;
+                };
                 dest == BANK_V2_DEST
                     && cheb(here, dest) <= BANK_V2_RADIUS
-                    && self.walked_near(BANK_V2_DEST, BANK_V2_RADIUS).is_some()
-                    && self.all_walks(|act| walk_near_closed(act, BANK_V2_DEST, BANK_V2_RADIUS))
+                    && self.bank_opened
+                    && !self.bank_open_at_receipt
+                    && self.acts.iter().all(|row| match &row.act {
+                        ScriptAct::Walk { .. } => {
+                            walk_near_closed(&row.act, BANK_V2_DEST, BANK_V2_RADIUS)
+                                || (row.seq > walk && booth_approach(&row.act))
+                        }
+                        _ => true,
+                    })
                     && !self.any(|act| walk_to(act) || scene_op(act))
             }
         }
@@ -699,4 +736,20 @@ fn walk_near_closed(act: &ScriptAct, dest: LineOfSightTile, radius: i32) -> bool
         allow_bank_fetch: false,
         request_id,
     } if *d == dest && *r == radius && *request_id != 0)
+}
+
+/// The bank family's booth approach once it stands near the bank: the
+/// `bank-open` child's `walk-near` radius 0 to the booth's stand, which it
+/// emits itself with wilderness and bank fetch on and no walk-wait id
+/// (`bank_open.rs` `walk_near_req`).
+fn booth_approach(act: &ScriptAct) -> bool {
+    matches!(act, ScriptAct::Walk {
+        dest,
+        radius: 0,
+        exact: false,
+        allow_teleports: false,
+        allow_wilderness: true,
+        allow_bank_fetch: true,
+        request_id: 0,
+    } if cheb(*dest, BANK_V2_DEST) <= BANK_V2_BOOTH_REACH)
 }
