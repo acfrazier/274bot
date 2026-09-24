@@ -14,3 +14,7 @@ sha2 = "=0.10.9"
 [[bin]]
 name = "nav-pack"
 path = "src/bin/nav-pack.rs"
+
+[[bin]]
+name = "cache-content-id"
+path = "src/bin/cache-content-id.rs"

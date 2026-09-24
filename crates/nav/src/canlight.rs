@@ -407,7 +407,7 @@ fn stamp_square_active_locs(
         } else {
             loc.level
         };
-        if true_level < 0 || true_level >= LEVELS {
+        if !(0..LEVELS).contains(&true_level) {
             continue;
         }
         let origin_x = square_x * SQUARE + loc.x as i32;

@@ -522,9 +522,9 @@ fn decode_u32le_words(payload: &[u8]) -> Vec<u32> {
     debug_assert!(payload.len().is_multiple_of(4));
     let n = payload.len() / 4;
     let mut flags = Vec::with_capacity(n);
-    for chunk in payload.chunks_exact(4) {
-        // chunks_exact guarantees 4 bytes; avoid Cursor/read_exact per word.
-        flags.push(u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
+    for chunk in payload.as_chunks::<4>().0 {
+        // as_chunks guarantees 4 bytes; avoid Cursor/read_exact per word.
+        flags.push(u32::from_le_bytes(*chunk));
     }
     flags
 }
@@ -559,9 +559,8 @@ pub fn sha256_from_hex(hex: &str) -> Result<[u8; 32], String> {
         return Err("is not a SHA-256 hex digest".into());
     }
     let mut out = [0u8; 32];
-    for (i, chunk) in hex.as_bytes().chunks_exact(2).enumerate() {
-        let slot = [chunk[0], chunk[1]];
-        let text = std::str::from_utf8(&slot).map_err(|_| "is not a SHA-256 hex digest")?;
+    for (i, chunk) in hex.as_bytes().as_chunks::<2>().0.iter().enumerate() {
+        let text = std::str::from_utf8(chunk).map_err(|_| "is not a SHA-256 hex digest")?;
         out[i] = u8::from_str_radix(text, 16).map_err(|_| "is not a SHA-256 hex digest")?;
     }
     Ok(out)
@@ -702,12 +701,10 @@ fn decode_bitset_sidecar(
 fn decode_u64le_words(payload: &[u8]) -> Vec<u64> {
     debug_assert!(payload.len().is_multiple_of(8));
     payload
-        .chunks_exact(8)
-        .map(|chunk| {
-            u64::from_le_bytes([
-                chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5], chunk[6], chunk[7],
-            ])
-        })
+        .as_chunks::<8>()
+        .0
+        .iter()
+        .map(|chunk| u64::from_le_bytes(*chunk))
         .collect()
 }
 

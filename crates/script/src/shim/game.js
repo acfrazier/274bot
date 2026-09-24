@@ -2,40 +2,31 @@
 // throw `not impl` — never a fake value.
 import { reader, actions } from '../../adapter/ClientAdapter.js';
 import { Execution } from '../execution/Execution.js';
-import { host, snap, notImpl, proxy, queue, optionalText } from '../../shim/_kernel.js';
+import { host, snap, notImpl, proxy, queue, optionalText, runMachine } from '../../shim/_kernel.js';
 
 const COM_MODE_VARP = 43;
 const RUN_VARP = 173;
 const RETALIATE_VARP = 172;
 const MAGIC_TAB = 6;
 
-const MELEE_STYLE_LABEL = {
-    attack: 'accurate',
-    strength: 'aggressive',
-    controlled: 'controlled',
-    defence: 'defensive',
-};
-
+/** The posted combat-tab style buttons, or null until the tab has loaded. */
 function offeredCombatModes() {
     const labels = reader.selectButtonLabelsByVarp(-1, COM_MODE_VARP);
     return labels.length > 0 ? labels : null;
 }
 
-function wantedCombatLabel(style) {
-    const key = String(style).toLowerCase();
-    return MELEE_STYLE_LABEL[key] || key;
+/** The isolate's registered Rust functions. */
+function hostFn(name) {
+    return globalThis.rustyscript.functions[name];
 }
 
+/**
+ * One Rust call: the frozen `resolveCombatStyle` over the posted rows (the
+ * style vocabulary, the duplicate-mode rule and the defensive fallback are
+ * Rust's). `null` when the tab offers no usable row.
+ */
 function matchCombatRow(style) {
-    const modes = offeredCombatModes();
-    if (!modes) return null;
-    const wanted = wantedCombatLabel(style);
-    return (
-        modes.find((m) => {
-            const lab = String(m.label).toLowerCase();
-            return lab === wanted || lab.includes(wanted);
-        }) || null
-    );
+    return hostFn('__rs2b0t_combat_style_row')(String(style ?? ''));
 }
 
 function selectCombatMode(mode) {
@@ -43,14 +34,9 @@ function selectCombatMode(mode) {
     return btn !== -1 && actions.ifButton(btn);
 }
 
-function callTeleport(payload) {
-    const fn = globalThis.rustyscript && globalThis.rustyscript.functions
-        ? globalThis.rustyscript.functions.__rs2b0t_teleport
-        : undefined;
-    if (typeof fn !== 'function') {
-        throw notImpl('Game.teleport');
-    }
-    return fn(payload);
+/** One Rust call: the posted magic-tab component for `spell`, else -1. */
+function spellButtonComponent(spell) {
+    return hostFn('__rs2b0t_spell_button_row')(String(spell ?? ''));
 }
 
 export const Game = new Proxy(
@@ -98,7 +84,7 @@ export const Game = new Proxy(
         combatStyleResolution(style) {
             const row = matchCombatRow(style);
             if (!row) return null;
-            return { requested: style, effective: style, mode: row.mode, label: row.label };
+            return { requested: style, effective: row.effective, mode: row.mode, label: row.label };
         },
         setCombatMode(mode) {
             return selectCombatMode(mode);
@@ -132,13 +118,11 @@ export const Game = new Proxy(
             if (!item) return false;
             const name = typeof item === 'string' ? item : item.name;
             if (!name) return false;
-            const wanted = String(spell).toLowerCase();
-            const row = (snap().spell_buttons || []).find(
-                (s) => s && s.label && String(s.label).toLowerCase() === wanted,
-            );
-            if (!row || typeof row.component_id !== 'number') {
-                throw notImpl('Game.castOnItem');
-            }
+            // The magic tab's own component for this spell (one Rust read of
+            // the posted rows); no row is the honest miss, never a silent
+            // false and never a JS row scan.
+            const component = spellButtonComponent(spell);
+            if (component < 0) throw notImpl('Game.castOnItem');
             const held = (snap().inv || []).some(
                 (slot) =>
                     slot &&
@@ -149,7 +133,7 @@ export const Game = new Proxy(
             if (!held) return false;
             queue({
                 op: 'use-widget-on',
-                component_id: row.component_id,
+                component_id: component,
                 kind: 'held',
                 target_name: name,
                 x: 0,
@@ -161,17 +145,13 @@ export const Game = new Proxy(
         },
         async castOnLoc(spell, loc) {
             if (!loc) return false;
-            const wanted = String(spell).toLowerCase();
-            const row = (snap().spell_buttons || []).find(
-                (s) => s && s.label && String(s.label).toLowerCase() === wanted,
-            );
-            if (!row || typeof row.component_id !== 'number') {
-                throw notImpl('Game.castOnLoc');
-            }
+            // Same posted-row read as `castOnItem`.
+            const component = spellButtonComponent(spell);
+            if (component < 0) throw notImpl('Game.castOnLoc');
             const tile = typeof loc.tile === 'function' ? loc.tile() : loc;
             queue({
                 op: 'use-widget-on',
-                component_id: row.component_id,
+                component_id: component,
                 kind: 'loc',
                 target_name: loc.name ?? null,
                 x: tile && typeof tile.x === 'number' ? tile.x : 0,
@@ -181,36 +161,10 @@ export const Game = new Proxy(
             });
             return true;
         },
-        teleport(name) {
-            const step = callTeleport({ op: 'begin', name: String(name ?? '') });
-            if (!step || step.kind === 'unknown') return false;
-            if (step.kind === 'notImpl') {
-                throw notImpl('Game.teleport', step.reason);
-            }
-            if (step.kind === 'done') {
-                return step.result === true;
-            }
-            const token = step.token;
-            let current = step;
-            return (async () => {
-                while (current && current.kind !== 'done' && current.kind !== 'aborted') {
-                    if (current.kind === 'if-button') {
-                        actions.ifButton(current.component_id);
-                    } else if (current.kind !== 'wait') {
-                        return false;
-                    }
-                    let next = null;
-                    await Execution.delayUntil(() => {
-                        next = callTeleport({ op: 'next', token });
-                        return next?.kind !== 'wait';
-                    }, 0);
-                    current = next;
-                }
-                if (current && current.kind === 'done') {
-                    return current.result === true;
-                }
-                return false;
-            })();
+        async teleport(name) {
+            const out = await runMachine('teleport', { name: String(name ?? '') });
+            if (out.kind === 'refused') throw notImpl('Game.teleport', out.reason);
+            return out.kind === 'done' && out.value === true;
         },
         energy() {
             return typeof snap().run_energy === 'number' ? snap().run_energy : 0;

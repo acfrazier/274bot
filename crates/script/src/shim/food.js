@@ -1,4 +1,4 @@
-import { host, notImpl } from '../../shim/_kernel.js';
+import { notImpl } from '../../shim/_kernel.js';
 
 export const FOOD_OPTIONS = [
     'Shark', 'Lobster', 'Swordfish', 'Tuna', 'Salmon', 'Trout', 'Pike', 'Bass', 'Herring', 'Sardine', 'Anchovies', 'Shrimps',
@@ -8,47 +8,27 @@ export const FOOD_OPTIONS = [
 
 export const MIN_EAT_HP = 5;
 
-const FOOD_HEAL = Object.fromEntries(globalThis.__rs2b0t_host?.content?.food_heals || []);
+function foodHealNative() {
+    return globalThis.__rs2b0t_food_heal_amount;
+}
 
 export function foodHealAmount(foodName) {
-    const key = String(foodName || '').trim();
-    if (Object.prototype.hasOwnProperty.call(FOOD_HEAL, key)) {
-        return FOOD_HEAL[key];
-    }
-    const hit = Object.keys(FOOD_HEAL).find((n) => n.toLowerCase() === key.toLowerCase());
-    if (hit) {
-        return FOOD_HEAL[hit];
+    const fn = foodHealNative();
+    if (typeof fn === 'function') {
+        const key = String(foodName || '').trim();
+        const row = fn(key);
+        if (row && row.ok === true && typeof row.value === 'number') {
+            return row.value;
+        }
+        throw notImpl('foodHealAmount');
     }
     throw notImpl('foodHealAmount');
 }
 
-function itemRows() {
-    const rows = host().content?.items;
-    return Array.isArray(rows) ? rows : [];
-}
-
 export function foodForms(foodName) {
-    const key = String(foodName).trim().toLowerCase();
-    const item = itemRows().find(
-        (row) => row && typeof row.name === 'string' && row.name.toLowerCase() === key,
-    );
-    if (!item || typeof item.obj !== 'string') return [key];
-    const obj = item.obj;
-    if (
-        obj.startsWith('partial_') ||
-        obj.startsWith('half_') ||
-        obj.startsWith('half_a_') ||
-        obj.startsWith('half_an_') ||
-        obj.endsWith('_slice') ||
-        obj.startsWith('cert_')
-    ) {
-        return [key];
-    }
-    const aliases = new Set([obj, `partial_${obj}`, `${obj}_slice`]);
-    return itemRows()
-        .filter((row) => row && typeof row.obj === 'string' && aliases.has(row.obj))
-        .map((row) => String(row.name).toLowerCase())
-        .filter((name, index, all) => all.indexOf(name) === index);
+    const fn = globalThis.__rs2b0t_selected_facts;
+    if (typeof fn !== 'function') throw notImpl('foodForms');
+    return fn('food-forms', String(foodName));
 }
 
 export function isFoodItem(name, foodName) {
@@ -57,7 +37,10 @@ export function isFoodItem(name, foodName) {
 
 export function foodCount(items, foodName) {
     if (!Array.isArray(items)) return 0;
-    return items.filter((item) => item && isFoodItem(item.name, foodName)).length;
+    if (items.length === 0) return 0;
+    const fn = globalThis.__rs2b0t_food_count;
+    if (typeof fn !== 'function') throw notImpl('foodCount');
+    return fn(items, foodName);
 }
 
 export function eatAtHpThreshold(_maxHp, _heal, _minHp) {

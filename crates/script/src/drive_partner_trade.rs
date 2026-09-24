@@ -1,907 +1,846 @@
-//! Rust-owned giver/receiver exchange for an already-open trade.
+//! `driveActivePartnerTrade`, the `partner-trade` [`crate::machine`]
+//! family: one frozen `drivePartnerTrade.ts` iteration per call.
 //!
-//! Frozen FlaxRunner calls `driveActivePartnerTrade` after `Trade.request`.
-//! JavaScript invokes caller callbacks and projects their decisions/metrics;
-//! this module owns posted trade identity, offer-then-confirm sequencing,
-//! settlement and cancellation. Sends reuse native trade ops. This is not a
-//! copy of `drivePartnerTrade.ts` or PartnerTrade policy.
+//! Frozen FlaxRunner calls it from a task while `Trade.active()`; each
+//! call handles the current screen once (confirm accept, the receiver's
+//! header / partner / product / gate decision and accept, or the giver's
+//! offer or accept) and returns, and the next call handles what follows.
+//! This module ports that iteration branch for branch: the caller's
+//! callbacks run in the frozen order, `setStatus` gets the frozen label or
+//! `mule: …` default, and `log` gets the frozen lines. Callbacks are
+//! frozen synchronous calls ([`Family::AWAIT_CALLBACKS`] is `false`): a
+//! returned promise is used as a value, not awaited, and a throw rejects
+//! the call. Their offer, my offer, the partner header and the screens are
+//! read from the scene; sends reuse the native trade ops.
 
-use crate::isolate_fb::SnapshotReader;
-use serde_json::{json, Value};
-use std::cell::RefCell;
+use crate::machine::{Begin, Call, Cx, Family, Reply, Step, Thrown};
+use crate::observed;
+use crate::trade::{self, Decline, Declining};
+use serde::Deserialize;
+use serde_json::{json, Map, Value};
+use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
-/// Frozen wall-clock wait for the offer screen to become ready.
+/// Frozen wall-clock wait for the offer screen to settle.
 pub const TRADE_OFFER_WAIT_MS: u64 = 5_000;
 /// Frozen wall-clock wait for confirm / close after accept.
 pub const TRADE_CONFIRM_WAIT_MS: u64 = 8_000;
-/// Frozen continuous-inactive period required before accepting closure.
+/// Frozen `stableClosedPoll` continuous-inactive period.
 pub const TRADE_CLOSE_DEBOUNCE_MS: u64 = 600;
 
-thread_local! {
-    static RUNTIME: RefCell<ExchangeRuntime> = const { RefCell::new(ExchangeRuntime::new()) };
-    static NATIVE_OBSERVATION: RefCell<NativeObservation> =
-        const { RefCell::new(NativeObservation::new()) };
+/// The caller's callbacks, by `hooks` key.
+const NAMES: usize = 0;
+const METRIC: usize = 1;
+const READY: usize = 2;
+const MATCH: usize = 3;
+const SET_STATUS: usize = 4;
+const LOG: usize = 5;
+const ON_MISSING: usize = 6;
+const GATE: usize = 7;
+const ON_COMPLETE: usize = 8;
+const ON_DECLINE: usize = 9;
+const BASELINE: usize = 10;
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct PartnerTradeArgs {
+    #[serde(default)]
+    role: Value,
+    #[serde(default)]
+    partners: Value,
+    #[serde(default)]
+    verify_giver_partner: bool,
+    #[serde(default)]
+    labels: Value,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Role {
-    Giver,
-    Receiver,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Phase {
-    Idle,
-    MissingPartner,
-    Offer,
-    Receive,
-    WaitConfirm,
-    WaitClose,
-    Declining,
-}
-
-struct NativeObservation {
-    ingame: bool,
-    offer_open: bool,
-    confirm_open: bool,
+/// The posted trade facts this iteration reads, since login.
+struct Screen {
+    offer: bool,
+    confirm: bool,
     partner: Option<String>,
-    accept_id: i32,
-    decline_id: i32,
     mine_len: usize,
-    tick: u64,
+    /// Their offer rows that have a name: `(name, count)`.
+    theirs: Vec<(String, i32)>,
+    /// Frozen `Inventory.used()`: named pack rows.
+    used: i32,
 }
 
-impl NativeObservation {
-    const fn new() -> Self {
-        Self {
-            ingame: false,
-            offer_open: false,
-            confirm_open: false,
-            partner: None,
-            accept_id: -1,
-            decline_id: -1,
-            mine_len: 0,
-            tick: 0,
-        }
-    }
-
-    fn update(&mut self, snap: &SnapshotReader<'_>) {
-        if snap.has_ingame() {
-            if !snap.ingame() {
-                *self = Self::new();
-                return;
+impl Screen {
+    fn read() -> Self {
+        observed::with(|scene| {
+            let session = scene.since_login();
+            Self {
+                offer: session.trade_offer_open().unwrap_or(false),
+                confirm: session.trade_confirm_open().unwrap_or(false),
+                partner: session
+                    .trade_partner()
+                    .map(|name| name.trim())
+                    .filter(|name| !name.is_empty())
+                    .map(str::to_string),
+                mine_len: session.trade_mine().map_or(0, Vec::len),
+                theirs: session
+                    .trade_theirs()
+                    .map(|rows| {
+                        rows.iter()
+                            .filter_map(|row| Some((row.name.as_deref()?.to_string(), row.count)))
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+                used: session.inv().map_or(0, |rows| {
+                    rows.iter()
+                        .filter(|row| !row.name_or_empty().is_empty())
+                        .count() as i32
+                }),
             }
-            self.ingame = true;
-        }
-        if snap.has_trade_offer_open() {
-            self.offer_open = snap.trade_offer_open();
-        }
-        if snap.has_trade_confirm_open() {
-            self.confirm_open = snap.trade_confirm_open();
-        }
-        if snap.has_trade_partner() {
-            self.partner = snap
-                .trade_partner()
-                .map(str::trim)
-                .filter(|name| !name.is_empty())
-                .map(str::to_string);
-        }
-        if snap.has_trade_accept_id() {
-            self.accept_id = snap.trade_accept_id();
-        }
-        if snap.has_trade_decline_id() {
-            self.decline_id = snap.trade_decline_id();
-        }
-        if snap.has_trade_mine() {
-            self.mine_len = snap.trade_mine().len();
-        }
-        self.tick = snap.tick();
+        })
     }
-}
 
-struct Probe<'a> {
-    ingame: bool,
-    offer_open: bool,
-    confirm_open: bool,
-    partner: Option<&'a str>,
-    accept_id: i32,
-    mine_len: usize,
-    tick: u64,
-}
-
-impl Probe<'_> {
     fn active(&self) -> bool {
-        self.offer_open || self.confirm_open
+        self.offer || self.confirm
+    }
+
+    /// Frozen `tradeScreen()`.
+    fn name(&self) -> &'static str {
+        if self.offer {
+            "offer"
+        } else if self.confirm {
+            "confirm"
+        } else {
+            "closed"
+        }
     }
 }
 
-#[derive(Clone)]
-struct TheirRow {
-    matched: bool,
-    count: i32,
+/// Frozen `stableClosedPoll()`: closed once the trade stayed inactive for
+/// [`TRADE_CLOSE_DEBOUNCE_MS`] across polls.
+#[derive(Default)]
+struct Stable {
+    inactive_since: Option<Instant>,
 }
 
-struct Projection {
-    names: Vec<String>,
-    metric: Option<i32>,
-    my_offer_ready: Option<bool>,
-    their: Vec<TheirRow>,
+impl Stable {
+    fn poll(&mut self, cx: &mut Cx<'_>) -> bool {
+        if Screen::read().active() {
+            self.inactive_since = None;
+            return false;
+        }
+        let now = cx.clock().now();
+        let since = *self.inactive_since.get_or_insert(now);
+        now.saturating_duration_since(since) >= Duration::from_millis(TRADE_CLOSE_DEBOUNCE_MS)
+    }
 }
 
-struct ExchangeRuntime {
-    paused: bool,
-    held: bool,
-    frozen_at: Option<Instant>,
-    token: u64,
-    phase: Phase,
-    role: Role,
+/// Where a metric value goes once read.
+enum MetricFor {
+    ConfirmBefore,
+    ConfirmDelta {
+        before: f64,
+    },
+    /// `status`: the giver's label, shown after the metric.
+    AcceptBefore {
+        status: Option<Value>,
+    },
+    AcceptAfter {
+        before: f64,
+    },
+}
+
+/// Why the rows are being counted.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Count {
+    /// `decideReceiverOfferScreen`'s `theirProductCount`.
+    Decide,
+    /// `theirN` for the receiver gate.
+    Gate,
+}
+
+enum State {
+    Start,
+    Baseline,
+    Metric(MetricFor),
+    ConfirmAccept {
+        before: f64,
+    },
+    ConfirmWait {
+        before: f64,
+        stable: Stable,
+    },
+    ConfirmSettle {
+        before: f64,
+    },
+    Missing,
+    Counting {
+        why: Count,
+        who: String,
+        next: usize,
+        total: f64,
+    },
+    Gate,
+    AcceptClick {
+        before: f64,
+    },
+    AcceptWait {
+        before: f64,
+        stable: Stable,
+    },
+    Ready,
+    Names,
+    OfferWait {
+        stable: Stable,
+    },
+    Declining {
+        reason: Value,
+        decline: Option<Decline>,
+        begun: bool,
+    },
+    WaitTick,
+}
+
+/// What one advance decided.
+enum Next {
+    /// The state moved on; advance again (after any queued call).
+    Continue,
+    Wait,
+    Done,
+    /// A callback whose value the current state reads.
+    Call(usize, Vec<Value>),
+    Fail(Thrown),
+}
+
+/// One frozen `driveActivePartnerTrade` iteration.
+pub(crate) struct PartnerTrade {
+    receiver: bool,
     partners: Vec<String>,
     verify_giver_partner: bool,
-    seen_partner: Option<String>,
-    metric_before: i32,
-    next_name: usize,
-    deadline: Option<Instant>,
-    decline_reason: String,
-    nested_token: u64,
-    inactive_since: Option<Instant>,
-    settle_after_tick: Option<u64>,
+    labels: Map<String, Value>,
+    state: State,
+    /// Callbacks whose result is ignored (`setStatus`, `log`, `onComplete`,
+    /// `onDecline`), called in order before the state goes on.
+    says: VecDeque<(usize, Value)>,
+    saying: bool,
+    after: Option<Next>,
+    /// `opts.onComplete` was given.
+    has_complete: bool,
 }
 
-impl ExchangeRuntime {
-    const fn new() -> Self {
-        Self {
-            paused: false,
-            held: false,
-            frozen_at: None,
-            token: 0,
-            phase: Phase::Idle,
-            role: Role::Giver,
-            partners: Vec::new(),
-            verify_giver_partner: false,
-            seen_partner: None,
-            metric_before: 0,
-            next_name: 0,
-            deadline: None,
-            decline_reason: String::new(),
-            nested_token: 0,
-            inactive_since: None,
-            settle_after_tick: None,
+impl Family for PartnerTrade {
+    const NAME: &'static str = "partner-trade";
+    /// One trade screen: a new call replaces the one in flight.
+    const EXCLUSIVE: bool = true;
+    const CALLBACKS: &'static [&'static str] = &[
+        "productNamesToOffer",
+        "inventoryMetric",
+        "myOfferReady",
+        "theirProductMatch",
+        "setStatus",
+        "log",
+        "onMissingPartner",
+        "receiverCanAccept",
+        "onComplete",
+        "onDecline",
+        "baseline",
+    ];
+    /// The frozen iteration's synchronous stretch runs in the caller's turn.
+    const KICK_ON_START: bool = true;
+    const AWAIT_CALLBACKS: bool = false;
+    type Args = PartnerTradeArgs;
+    /// Always void: outcomes reach the caller through its callbacks.
+    type Output = Value;
+
+    fn begin(args: PartnerTradeArgs, _cx: &mut Cx<'_>) -> Begin<Self> {
+        let partners = match args.partners {
+            Value::Array(rows) => rows
+                .into_iter()
+                .filter_map(|row| row.as_str().map(str::to_string))
+                .collect(),
+            _ => Vec::new(),
+        };
+        Begin::Run(Self {
+            receiver: args.role.as_str() == Some("receiver"),
+            partners,
+            verify_giver_partner: args.verify_giver_partner,
+            labels: match args.labels {
+                Value::Object(labels) => labels,
+                _ => Map::new(),
+            },
+            state: State::Start,
+            says: VecDeque::new(),
+            saying: false,
+            after: None,
+            has_complete: false,
+        })
+    }
+
+    fn step(&mut self, cx: &mut Cx<'_>) -> Step<Value> {
+        let mut reply = match cx.reply() {
+            Some(Reply::Threw(thrown)) => return Step::Fail(thrown),
+            Some(Reply::Value(value)) => Some(value),
+            None => None,
+        };
+        if std::mem::take(&mut self.saying) {
+            reply = None;
         }
-    }
-
-    fn frozen(&self) -> bool {
-        self.paused || self.held
-    }
-
-    fn now(&self) -> Instant {
-        self.frozen_at.unwrap_or_else(Instant::now)
-    }
-
-    fn set_freeze(&mut self, paused: bool, held: bool) {
-        let was_frozen = self.frozen();
-        self.paused = paused;
-        self.held = held;
-        let frozen = self.frozen();
-        if !was_frozen && frozen {
-            self.frozen_at = Some(Instant::now());
-        } else if was_frozen && !frozen {
-            if let Some(at) = self.frozen_at.take() {
-                if let Some(deadline) = self.deadline.as_mut() {
-                    *deadline += Instant::now().saturating_duration_since(at);
-                }
+        loop {
+            if let Some((hook, arg)) = self.says.pop_front() {
+                self.saying = true;
+                return Step::Call(Call {
+                    hook,
+                    args: vec![arg],
+                });
+            }
+            let next = match self.after.take() {
+                Some(next) => next,
+                None => self.advance(reply.take(), cx),
+            };
+            if !self.says.is_empty() && !matches!(next, Next::Continue) {
+                self.after = Some(next);
+                continue;
+            }
+            match next {
+                Next::Continue => {}
+                Next::Wait => return Step::Wait,
+                Next::Done => return Step::Done(Value::Null),
+                Next::Call(hook, args) => return Step::Call(Call { hook, args }),
+                Next::Fail(thrown) => return Step::Fail(thrown),
             }
         }
     }
+}
 
-    fn arm(&mut self, window: u64) {
-        self.deadline = Some(self.now() + Duration::from_millis(window));
+impl PartnerTrade {
+    fn say(&mut self, hook: usize, arg: Value) {
+        self.says.push_back((hook, arg));
     }
 
-    fn bound_reached(&self) -> bool {
-        self.deadline.is_some_and(|deadline| self.now() >= deadline)
+    fn log(&mut self, line: String) {
+        self.say(LOG, json!(line));
     }
 
-    fn abort_runtime(&mut self) {
-        self.token = self.token.wrapping_add(1);
-        self.phase = Phase::Idle;
-        self.partners.clear();
-        self.verify_giver_partner = false;
-        self.seen_partner = None;
-        self.metric_before = 0;
-        self.next_name = 0;
-        self.deadline = None;
-        self.decline_reason.clear();
-        self.nested_token = 0;
-        self.inactive_since = None;
-        self.settle_after_tick = None;
+    /// `labels[key] ?? default`.
+    fn label(&self, key: &str, default: &str) -> Value {
+        match self.labels.get(key) {
+            Some(Value::Null) | None => json!(default),
+            Some(label) => label.clone(),
+        }
     }
 
-    fn wait(&self) -> Value {
-        json!({ "kind": "wait", "token": self.token })
+    fn advance(&mut self, reply: Option<Value>, cx: &mut Cx<'_>) -> Next {
+        match std::mem::replace(&mut self.state, State::WaitTick) {
+            State::Start => self.start(cx),
+            State::Baseline => match reply {
+                // `baseline?.() ?? metric()`
+                Some(value) if !value.is_null() => self.confirm_click(to_number(&value)),
+                _ => self.metric(MetricFor::ConfirmBefore, cx),
+            },
+            State::Metric(want) => self.got_metric(want, to_number(&reply.unwrap_or(Value::Null))),
+            State::ConfirmAccept { before } => {
+                if let Some(fail) = self.accept(cx) {
+                    return fail;
+                }
+                cx.clock().arm(TRADE_CONFIRM_WAIT_MS);
+                self.state = State::ConfirmWait {
+                    before,
+                    stable: Stable::default(),
+                };
+                Next::Wait
+            }
+            State::ConfirmWait { before, mut stable } => {
+                let closed = stable.poll(cx);
+                if !closed && !cx.clock().bound_reached() {
+                    self.state = State::ConfirmWait { before, stable };
+                    return Next::Wait;
+                }
+                let screen = Screen::read();
+                self.log(format!(
+                    "trade: confirm wait {} after the last click — screen now {}",
+                    if closed { "satisfied" } else { "TIMED OUT" },
+                    screen.name()
+                ));
+                if screen.active() {
+                    self.log(
+                        "mule: confirm still open after wait — partner may not have accepted"
+                            .into(),
+                    );
+                    return Next::Done;
+                }
+                // Settle a beat after the modal reports closed.
+                self.state = State::ConfirmSettle { before };
+                Next::Wait
+            }
+            State::ConfirmSettle { before } => self.metric(MetricFor::ConfirmDelta { before }, cx),
+            State::Missing => {
+                // `onMissingPartner?.() ?? 'wait'`
+                let decline = reply.as_ref().and_then(Value::as_str) == Some("decline");
+                self.missing(decline)
+            }
+            State::Counting {
+                why,
+                who,
+                next,
+                mut total,
+            } => {
+                let theirs = Screen::read().theirs;
+                if let Some(matched) = reply {
+                    if truthy(&matched) {
+                        total += f64::from(theirs.get(next - 1).map_or(1, |row| row.1.max(1)));
+                    }
+                }
+                if let Some((name, _)) = theirs.get(next) {
+                    let name = name.clone();
+                    self.state = State::Counting {
+                        why,
+                        who,
+                        next: next + 1,
+                        total,
+                    };
+                    return Next::Call(MATCH, vec![json!(name)]);
+                }
+                match why {
+                    Count::Decide => self.decide(who, total),
+                    Count::Gate => self.gate(total, cx),
+                }
+            }
+            State::Gate => {
+                let gate = reply.unwrap_or(Value::Null);
+                let ok = gate == Value::Bool(true) || gate.get("ok") == Some(&Value::Bool(true));
+                if ok {
+                    return self.accept_receiver(cx);
+                }
+                let reason = match &gate {
+                    Value::Object(fields) if fields.contains_key("reason") => {
+                        fields["reason"].clone()
+                    }
+                    _ => json!("receiver cannot accept offer"),
+                };
+                let line = format!("trade: declining ({})", js_string(&reason));
+                let status = self.label("declining", "mule: declining trade");
+                self.decline(status, line, reason)
+            }
+            State::AcceptClick { before } => {
+                if let Some(fail) = self.accept(cx) {
+                    return fail;
+                }
+                cx.clock().arm(TRADE_OFFER_WAIT_MS);
+                self.state = State::AcceptWait {
+                    before,
+                    stable: Stable::default(),
+                };
+                Next::Wait
+            }
+            State::AcceptWait { before, mut stable } => {
+                let confirm = Screen::read().confirm;
+                if !confirm && !stable.poll(cx) && !cx.clock().bound_reached() {
+                    self.state = State::AcceptWait { before, stable };
+                    return Next::Wait;
+                }
+                let screen = Screen::read();
+                if screen.confirm {
+                    self.log("trade: offer accepted — confirm screen is up".into());
+                    Next::Done
+                } else if stable.poll(cx) && !screen.active() {
+                    self.metric(MetricFor::AcceptAfter { before }, cx)
+                } else {
+                    self.log(format!(
+                        "trade: offer-accept wait TIMED OUT — screen now {}",
+                        screen.name()
+                    ));
+                    Next::Done
+                }
+            }
+            State::Ready => {
+                // `myOfferReady?.() ?? Trade.myOffer().length > 0`
+                let ready = match reply {
+                    Some(value) if !value.is_null() => truthy(&value),
+                    _ => Screen::read().mine_len > 0,
+                };
+                if ready {
+                    self.metric(
+                        MetricFor::AcceptBefore {
+                            status: Some(self.label("acceptingOffer", "mule: accepting handoff")),
+                        },
+                        cx,
+                    )
+                } else {
+                    self.state = State::Names;
+                    Next::Call(NAMES, Vec::new())
+                }
+            }
+            State::Names => self.offer(reply.unwrap_or(Value::Null), cx),
+            State::OfferWait { mut stable } => {
+                if cx.has(READY) && reply.is_none() {
+                    self.state = State::OfferWait { stable };
+                    return Next::Call(READY, Vec::new());
+                }
+                let ready = match reply {
+                    Some(value) if !value.is_null() => truthy(&value),
+                    _ => Screen::read().mine_len > 0,
+                };
+                let settled = ready || Screen::read().confirm || stable.poll(cx);
+                if !settled && !cx.clock().bound_reached() {
+                    self.state = State::OfferWait { stable };
+                    return Next::Wait;
+                }
+                if stable.poll(cx) && !Screen::read().active() {
+                    self.log(
+                        "trade: window closed while waiting for the offer to register — partner declined, walked or cancelled"
+                            .into(),
+                    );
+                }
+                Next::Done
+            }
+            State::Declining {
+                reason,
+                mut decline,
+                begun,
+            } => {
+                // Frozen `Trade.decline()`: the button now, its wait from the
+                // next tick.
+                let ended = if begun {
+                    decline
+                        .as_mut()
+                        .is_none_or(|decline| matches!(decline.step(cx), Declining::Done(_)))
+                } else {
+                    decline = Decline::begin(cx);
+                    decline.is_none()
+                };
+                if !ended {
+                    self.state = State::Declining {
+                        reason,
+                        decline,
+                        begun: true,
+                    };
+                    return Next::Wait;
+                }
+                let screen = Screen::read();
+                self.log(format!(
+                    "trade: decline clicked — screen now {}",
+                    screen.name()
+                ));
+                if cx.has(ON_DECLINE) {
+                    self.say(ON_DECLINE, reason);
+                }
+                Next::Done
+            }
+            State::WaitTick => Next::Done,
+        }
     }
 
-    fn with_token(&self, mut step: Value) -> Value {
-        step["token"] = json!(self.token);
-        step
+    fn start(&mut self, cx: &mut Cx<'_>) -> Next {
+        self.has_complete = cx.has(ON_COMPLETE);
+        let screen = Screen::read();
+        if screen.confirm {
+            let status = self.label("confirming", "mule: confirming trade");
+            self.say(SET_STATUS, status);
+            if cx.has(BASELINE) {
+                self.state = State::Baseline;
+                return Next::Call(BASELINE, Vec::new());
+            }
+            return self.metric(MetricFor::ConfirmBefore, cx);
+        }
+        if !screen.offer {
+            return Next::Done;
+        }
+        if self.receiver || self.verify_giver_partner {
+            let Some(who) = screen.partner else {
+                if cx.has(ON_MISSING) {
+                    self.state = State::Missing;
+                    return Next::Call(ON_MISSING, Vec::new());
+                }
+                return self.missing(false);
+            };
+            if !self.receiver {
+                // The giver's partner gate: a stranger is declined.
+                if !crate::partner_trade::is_configured_partner(Some(&who), &self.partners) {
+                    return self.decline_stranger(&who);
+                }
+            } else {
+                self.state = State::Counting {
+                    why: Count::Decide,
+                    who,
+                    next: 0,
+                    total: 0.0,
+                };
+                return Next::Continue;
+            }
+        }
+        self.state = State::Ready;
+        if cx.has(READY) {
+            return Next::Call(READY, Vec::new());
+        }
+        Next::Continue
     }
-}
 
-pub fn on_snapshot(snap: &SnapshotReader<'_>) {
-    NATIVE_OBSERVATION.with(|obs| obs.borrow_mut().update(snap));
-}
-
-pub fn on_pause() {
-    RUNTIME.with(|rt| {
-        let held = rt.borrow().held;
-        rt.borrow_mut().set_freeze(true, held);
-    });
-}
-
-pub fn on_resume() {
-    RUNTIME.with(|rt| {
-        let held = rt.borrow().held;
-        rt.borrow_mut().set_freeze(false, held);
-    });
-}
-
-pub fn on_hold(held: bool) {
-    RUNTIME.with(|rt| {
-        let paused = rt.borrow().paused;
-        rt.borrow_mut().set_freeze(paused, held);
-    });
-}
-
-pub fn on_reset() {
-    RUNTIME.with(|rt| rt.borrow_mut().abort_runtime());
-    NATIVE_OBSERVATION.with(|obs| *obs.borrow_mut() = NativeObservation::new());
-}
-
-pub fn dispatch(input: &Value) -> Value {
-    match input.get("op").and_then(Value::as_str).unwrap_or("") {
-        "begin" => begin(input),
-        "next" => next(input),
-        "decision" => decision(input),
-        _ => json!({ "kind": "notImpl", "reason": "unknown op" }),
+    fn missing(&mut self, decline: bool) -> Next {
+        if decline {
+            let status = self.label("declining", "mule: declining trade");
+            return self.decline(
+                status,
+                "trade: declining — partner name never appeared on the modal".into(),
+                json!("partner header timeout"),
+            );
+        }
+        let status = self.label("waitHeader", "mule: reading partner");
+        self.say(SET_STATUS, status);
+        self.state = State::WaitTick;
+        Next::Wait
     }
-}
 
-fn as_i32(value: Option<&Value>) -> Option<i32> {
-    value.and_then(|v| {
-        v.as_i64()
-            .or_else(|| {
-                v.as_f64()
-                    .and_then(|n| (n.is_finite() && n.fract() == 0.0).then_some(n as i64))
-            })
-            .and_then(|n| i32::try_from(n).ok())
-    })
-}
-
-fn parse_names(input: &Value) -> Vec<String> {
-    input
-        .get("names")
-        .and_then(Value::as_array)
-        .map(|rows| {
-            rows.iter()
-                .filter_map(Value::as_str)
-                .map(str::trim)
-                .filter(|name| !name.is_empty())
-                .map(str::to_string)
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-fn parse_partners(input: &Value) -> Vec<String> {
-    input
-        .get("partners")
-        .and_then(Value::as_array)
-        .map(|rows| {
-            rows.iter()
-                .filter_map(Value::as_str)
-                .map(str::trim)
-                .filter(|name| !name.is_empty())
-                .map(str::to_string)
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-fn parse_their(input: &Value) -> Vec<TheirRow> {
-    input
-        .get("their")
-        .and_then(Value::as_array)
-        .map(|rows| {
-            rows.iter()
-                .map(|row| TheirRow {
-                    matched: row.get("matched").and_then(Value::as_bool).unwrap_or(false),
-                    count: as_i32(row.get("count")).unwrap_or(0),
-                })
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-fn parse_projection(input: &Value) -> Projection {
-    Projection {
-        names: parse_names(input),
-        metric: as_i32(input.get("metric")),
-        my_offer_ready: input.get("myOfferReady").and_then(Value::as_bool),
-        their: parse_their(input),
-    }
-}
-
-fn matched_count(their: &[TheirRow]) -> i32 {
-    their
-        .iter()
-        .filter(|row| row.matched)
-        .map(|row| row.count.max(0))
-        .sum()
-}
-
-fn partner_allowed(partners: &[String], name: &str) -> bool {
-    let have = name.trim();
-    if have.is_empty() {
-        return false;
-    }
-    partners
-        .iter()
-        .any(|want| want.trim().eq_ignore_ascii_case(have))
-}
-
-fn observe() -> (bool, bool, bool, Option<String>, i32, usize, u64) {
-    NATIVE_OBSERVATION.with(|o| {
-        let o = o.borrow();
-        (
-            o.ingame,
-            o.offer_open,
-            o.confirm_open,
-            o.partner.clone(),
-            o.accept_id,
-            o.mine_len,
-            o.tick,
+    fn decline_stranger(&mut self, who: &str) -> Next {
+        let reason = format!("not a configured partner ({who})");
+        let status = self.label("declining", "mule: declining trade");
+        self.decline(
+            status,
+            format!("trade: declining ({reason})"),
+            json!(reason),
         )
-    })
-}
-
-fn with_probe<R>(f: impl FnOnce(&Probe<'_>) -> R) -> R {
-    let obs = observe();
-    let probe = Probe {
-        ingame: obs.0,
-        offer_open: obs.1,
-        confirm_open: obs.2,
-        partner: obs.3.as_deref(),
-        accept_id: obs.4,
-        mine_len: obs.5,
-        tick: obs.6,
-    };
-    f(&probe)
-}
-
-fn begin(input: &Value) -> Value {
-    let role = match input.get("role").and_then(Value::as_str).unwrap_or("") {
-        "giver" => Role::Giver,
-        "receiver" => Role::Receiver,
-        _ => return json!({ "kind": "notImpl", "reason": "unknown role" }),
-    };
-    let partners = parse_partners(input);
-    if partners.is_empty() {
-        return json!({ "kind": "notImpl", "reason": "missing partners" });
     }
-    let projection = parse_projection(input);
-    let Some(metric_before) = projection.metric else {
-        return json!({ "kind": "notImpl", "reason": "missing metric" });
-    };
-    with_probe(|probe| {
-        if !probe.ingame {
-            return json!({ "kind": "aborted", "reason": "not ingame" });
-        }
-        if !probe.active() {
-            return json!({ "kind": "aborted", "reason": "not-active" });
-        }
-        RUNTIME.with(|rt| {
-            let mut rt = rt.borrow_mut();
-            rt.abort_runtime();
-            rt.role = role;
-            rt.partners = partners;
-            rt.verify_giver_partner = input
-                .get("verifyGiverPartner")
-                .and_then(Value::as_bool)
-                .unwrap_or(false);
-            rt.metric_before = metric_before;
-            step(&mut rt, probe, &projection)
-        })
-    })
-}
 
-fn next(input: &Value) -> Value {
-    let token = input.get("token").and_then(Value::as_u64).unwrap_or(0);
-    let projection = parse_projection(input);
-    with_probe(|probe| {
-        RUNTIME.with(|rt| {
-            let mut rt = rt.borrow_mut();
-            if token != rt.token || rt.phase == Phase::Idle {
-                return json!({ "kind": "aborted", "token": rt.token });
-            }
-            if rt.frozen() {
-                return rt.wait();
-            }
-            if !probe.ingame {
-                rt.abort_runtime();
-                return json!({ "kind": "aborted", "reason": "not-ingame" });
-            }
-            step(&mut rt, probe, &projection)
-        })
-    })
-}
+    /// Frozen `decideReceiverOfferScreen` with a posted header.
+    fn decide(&mut self, who: String, their_count: f64) -> Next {
+        if !crate::partner_trade::is_configured_partner(Some(&who), &self.partners) {
+            return self.decline_stranger(&who);
+        }
+        if Screen::read().mine_len > 0 {
+            let status = self.label("declining", "mule: declining trade");
+            return self.decline(
+                status,
+                "trade: declining (safety: own offer not empty)".into(),
+                json!("safety: own offer not empty"),
+            );
+        }
+        if their_count <= 0.0 {
+            let status = self.label("waitOffer", "mule: waiting for product offer");
+            self.say(SET_STATUS, status);
+            self.state = State::WaitTick;
+            return Next::Wait;
+        }
+        // `theirN` is counted again for the gate.
+        self.state = State::Counting {
+            why: Count::Gate,
+            who,
+            next: 0,
+            total: 0.0,
+        };
+        Next::Continue
+    }
 
-fn decision(input: &Value) -> Value {
-    let token = input.get("token").and_then(Value::as_u64).unwrap_or(0);
-    let projection = parse_projection(input);
-    with_probe(|probe| {
-        RUNTIME.with(|rt| {
-            let mut rt = rt.borrow_mut();
-            if token != rt.token || rt.phase == Phase::Idle {
-                return json!({ "kind": "aborted", "token": rt.token });
-            }
-            if rt.frozen() {
-                return rt.wait();
-            }
-            if !probe.ingame {
-                rt.abort_runtime();
-                return json!({ "kind": "aborted", "reason": "not-ingame" });
-            }
-            match rt.phase {
-                Phase::MissingPartner => match input.get("missing").and_then(Value::as_str) {
-                    Some("decline") => start_decline(&mut rt, "partner header timeout"),
-                    _ => {
-                        rt.phase = Phase::MissingPartner;
-                        rt.wait()
-                    }
-                },
-                Phase::Receive => {
-                    let gate = input.get("receiverGate");
-                    let ok = gate
-                        .and_then(|v| v.get("ok"))
-                        .and_then(Value::as_bool)
-                        .unwrap_or(false);
-                    if ok {
-                        accept_offer(&mut rt, probe)
-                    } else {
-                        let reason = gate
-                            .and_then(|v| v.get("reason"))
-                            .and_then(Value::as_str)
-                            .unwrap_or("receiver refused");
-                        start_decline(&mut rt, reason)
-                    }
+    fn gate(&mut self, their_n: f64, cx: &mut Cx<'_>) -> Next {
+        if cx.has(GATE) {
+            self.state = State::Gate;
+            return Next::Call(GATE, vec![js_number(their_n)]);
+        }
+        self.accept_receiver(cx)
+    }
+
+    fn accept_receiver(&mut self, cx: &mut Cx<'_>) -> Next {
+        let status = self.label("accepting", "mule: accepting product");
+        self.say(SET_STATUS, status);
+        self.metric(MetricFor::AcceptBefore { status: None }, cx)
+    }
+
+    /// Frozen `metric()`: the caller's `inventoryMetric`, else
+    /// `Inventory.used()`.
+    fn metric(&mut self, want: MetricFor, cx: &mut Cx<'_>) -> Next {
+        if cx.has(METRIC) {
+            self.state = State::Metric(want);
+            return Next::Call(METRIC, Vec::new());
+        }
+        self.got_metric(want, f64::from(Screen::read().used))
+    }
+
+    fn got_metric(&mut self, want: MetricFor, value: f64) -> Next {
+        match want {
+            MetricFor::ConfirmBefore => self.confirm_click(value),
+            MetricFor::ConfirmDelta { before } => {
+                let delta = value - before;
+                // `onComplete` presence was read at start.
+                if self.has_complete {
+                    self.say(ON_COMPLETE, js_number(delta));
+                } else {
+                    self.log(format!("mule: trade complete (inv Δ{})", signed(delta)));
                 }
-                _ => step(&mut rt, probe, &projection),
+                Next::Done
             }
-        })
-    })
-}
-
-fn step(rt: &mut ExchangeRuntime, probe: &Probe<'_>, projection: &Projection) -> Value {
-    if rt.phase == Phase::Declining {
-        return pump_decline(rt, probe);
-    }
-    if let Some(seen) = rt.seen_partner.as_deref() {
-        match probe.partner {
-            Some(have) if !have.eq_ignore_ascii_case(seen) => {
-                return start_decline(rt, "stale-phase");
-            }
-            None if probe.active() => return start_decline(rt, "stale-phase"),
-            Some(_) | None => {}
-        }
-    }
-    if probe.active() {
-        rt.inactive_since = None;
-    } else if rt.inactive_since.is_none() {
-        rt.inactive_since = Some(rt.now());
-    }
-    if rt.phase == Phase::WaitClose {
-        if probe.offer_open && !probe.confirm_open {
-            return start_decline(rt, "stale-phase");
-        }
-        if probe.active() || !stable_closed(rt) {
-            rt.settle_after_tick = None;
-            if rt.bound_reached() {
-                return start_decline(rt, "no-progress");
-            }
-            return rt.wait();
-        }
-        if let Some(after_tick) = rt.settle_after_tick {
-            if rt.bound_reached() {
-                return start_decline(rt, "no-progress");
-            }
-            if probe.tick >= after_tick {
-                return settle_close(rt, projection);
-            }
-            return rt.wait();
-        }
-        if rt.bound_reached() {
-            return start_decline(rt, "no-progress");
-        }
-        rt.settle_after_tick = Some(probe.tick.saturating_add(1));
-        return rt.wait();
-    }
-    if rt.phase == Phase::WaitConfirm {
-        if probe.confirm_open {
-            return accept_confirm(rt, probe);
-        }
-        if probe.active() || !stable_closed(rt) {
-            if rt.bound_reached() {
-                return start_decline(rt, "no-progress");
-            }
-            return rt.wait();
-        }
-        if rt.bound_reached() {
-            return start_decline(rt, "no-progress");
-        }
-        return finish_declined(rt, "no-progress");
-    }
-    if !probe.active() {
-        return finish_declined(rt, "no-progress");
-    }
-    match header_gate(rt, probe) {
-        Header::NeedHook => {
-            rt.phase = Phase::MissingPartner;
-            json!({
-                "kind": "need_missing_partner",
-                "token": rt.token,
-                "status": "waitHeader",
-            })
-        }
-        Header::Stranger => start_decline(rt, "stranger"),
-        Header::Ok => {
-            if probe.confirm_open {
-                on_confirm(rt, probe, projection)
-            } else {
-                on_offer(rt, probe, projection)
-            }
-        }
-    }
-}
-
-fn stable_closed(rt: &ExchangeRuntime) -> bool {
-    rt.inactive_since.is_some_and(|since| {
-        rt.now().saturating_duration_since(since) >= Duration::from_millis(TRADE_CLOSE_DEBOUNCE_MS)
-    })
-}
-
-enum Header {
-    Ok,
-    NeedHook,
-    Stranger,
-}
-
-fn header_gate(rt: &mut ExchangeRuntime, probe: &Probe<'_>) -> Header {
-    match probe.partner {
-        None => {
-            if rt.role == Role::Giver && !rt.verify_giver_partner {
-                Header::Ok
-            } else {
-                Header::NeedHook
-            }
-        }
-        Some(name) => {
-            if !partner_allowed(&rt.partners, name) {
-                Header::Stranger
-            } else {
-                if rt.seen_partner.is_none() {
-                    rt.seen_partner = Some(name.to_string());
+            MetricFor::AcceptBefore { status } => {
+                if let Some(status) = status {
+                    self.say(SET_STATUS, status);
                 }
-                Header::Ok
+                self.log(format!(
+                    "trade: clicking Accept on the offer screen ({})",
+                    Screen::read().name()
+                ));
+                self.state = State::AcceptClick { before: value };
+                Next::Continue
+            }
+            MetricFor::AcceptAfter { before } => {
+                self.log(format!(
+                    "trade: window closed after OUR offer-accept without reaching confirm — partner declined, walked or cancelled (inv Δ{})",
+                    signed(value - before)
+                ));
+                Next::Done
             }
         }
     }
-}
 
-fn on_offer(rt: &mut ExchangeRuntime, probe: &Probe<'_>, projection: &Projection) -> Value {
-    match rt.role {
-        Role::Giver => giver_offer(rt, probe, projection),
-        Role::Receiver => receiver_offer(rt, probe, projection),
+    fn confirm_click(&mut self, before: f64) -> Next {
+        self.log(format!(
+            "trade: clicking Accept on the confirm screen ({})",
+            Screen::read().name()
+        ));
+        self.state = State::ConfirmAccept { before };
+        Next::Continue
     }
-}
 
-fn giver_offer(rt: &mut ExchangeRuntime, probe: &Probe<'_>, projection: &Projection) -> Value {
-    if projection.my_offer_ready == Some(true) {
-        return accept_offer(rt, probe);
-    }
-    if rt.next_name < projection.names.len() {
-        let name = projection.names[rt.next_name].clone();
-        rt.next_name += 1;
-        rt.phase = Phase::Offer;
-        if rt.deadline.is_none() {
-            rt.arm(TRADE_OFFER_WAIT_MS);
+    /// Frozen `Trade.accept()`: the posted accept button. A missing control
+    /// is a host gap and fails closed; no screen sends nothing, as frozen.
+    fn accept(&mut self, cx: &mut Cx<'_>) -> Option<Next> {
+        match trade::accept(cx) {
+            Err("no-accept") => Some(Next::Fail(Thrown::new(
+                "not impl: driveActivePartnerTrade: no-accept",
+            ))),
+            _ => None,
         }
-        return offer_all(rt, &name);
     }
-    if projection.names.is_empty() {
-        return start_decline(rt, "nothing to offer");
-    }
-    rt.phase = Phase::Offer;
-    if rt.deadline.is_none() {
-        rt.arm(TRADE_OFFER_WAIT_MS);
-    }
-    if rt.bound_reached() {
-        return start_decline(rt, "no-progress");
-    }
-    json!({
-        "kind": "wait",
-        "token": rt.token,
-        "status": "offering",
-    })
-}
 
-fn receiver_offer(rt: &mut ExchangeRuntime, probe: &Probe<'_>, projection: &Projection) -> Value {
-    if probe.mine_len > 0 {
-        return start_decline(rt, "unintended own offer");
-    }
-    let count = matched_count(&projection.their);
-    if count <= 0 {
-        rt.phase = Phase::Receive;
-        if rt.deadline.is_none() {
-            rt.arm(TRADE_OFFER_WAIT_MS);
+    /// The giver's offer step over `productNamesToOffer()`.
+    fn offer(&mut self, names: Value, cx: &mut Cx<'_>) -> Next {
+        let Value::Array(names) = names else {
+            return Next::Fail(Thrown::new(
+                "driveActivePartnerTrade: productNamesToOffer() did not return a list",
+            ));
+        };
+        if names.is_empty() {
+            return self.decline(
+                json!("mule: nothing to offer — declining"),
+                "trade: declining (nothing to offer)".into(),
+                json!("nothing to offer"),
+            );
         }
-        if rt.bound_reached() {
-            return start_decline(rt, "no-progress");
-        }
-        return json!({
-            "kind": "wait",
-            "token": rt.token,
-            "status": "waitOffer",
-        });
-    }
-    rt.phase = Phase::Receive;
-    json!({
-        "kind": "need_receiver_gate",
-        "token": rt.token,
-        "theirProductCount": count,
-        "status": "accepting",
-    })
-}
-
-fn on_confirm(rt: &mut ExchangeRuntime, probe: &Probe<'_>, projection: &Projection) -> Value {
-    match rt.role {
-        Role::Giver if projection.my_offer_ready == Some(false) => {
-            rt.phase = Phase::Offer;
-            if rt.deadline.is_none() {
-                rt.arm(TRADE_OFFER_WAIT_MS);
-            }
-            if rt.bound_reached() {
-                return start_decline(rt, "no-progress");
-            }
-            rt.wait()
-        }
-        Role::Receiver
-            if matched_count(&projection.their) <= 0 && rt.phase != Phase::WaitConfirm =>
-        {
-            rt.phase = Phase::Receive;
-            if rt.deadline.is_none() {
-                rt.arm(TRADE_OFFER_WAIT_MS);
-            }
-            if rt.bound_reached() {
-                return start_decline(rt, "no-progress");
-            }
-            rt.wait()
-        }
-        _ => accept_confirm(rt, probe),
-    }
-}
-
-fn offer_all(rt: &mut ExchangeRuntime, name: &str) -> Value {
-    let begin = crate::trade::dispatch(&json!({
-        "op": "begin",
-        "kind": "offerAll",
-        "name": name,
-        "n": 0,
-    }));
-    match begin.get("kind").and_then(Value::as_str) {
-        Some("candidates") => select_unnoted(rt, &begin),
-        Some("notImpl") => {
-            let reason = begin
-                .get("reason")
-                .and_then(Value::as_str)
-                .unwrap_or("Trade.offerAll")
-                .to_string();
-            json!({ "kind": "notImpl", "reason": reason, "token": rt.token })
-        }
-        Some("done") if begin.get("result") == Some(&Value::Bool(false)) => {
-            let reason = begin
-                .get("reason")
-                .and_then(Value::as_str)
-                .unwrap_or("offerAll failed");
-            start_decline(rt, &map_offer_reason(reason))
-        }
-        _ => tagged_ops(rt, begin, "offering"),
-    }
-}
-
-fn map_offer_reason(reason: &str) -> String {
-    match reason {
-        "no-match" | "noted" | "wrong-identity" | "no-identity" | "missing-screen" => {
-            "offerAll failed".into()
-        }
-        other => other.to_string(),
-    }
-}
-
-fn select_unnoted(rt: &mut ExchangeRuntime, begin: &Value) -> Value {
-    let token = begin.get("token").and_then(Value::as_u64).unwrap_or(0);
-    let Some(chosen) = begin
-        .get("candidates")
-        .and_then(Value::as_array)
-        .and_then(|rows| {
-            rows.iter().find(|row| {
-                row.get("noted").and_then(Value::as_bool) != Some(true)
-                    && as_i32(row.get("id")).is_some()
-                    && as_i32(row.get("slot")).is_some()
+        let joined = names
+            .iter()
+            .map(|name| {
+                if name.is_null() {
+                    String::new()
+                } else {
+                    js_string(name)
+                }
             })
-        })
-    else {
-        return start_decline(rt, "offerAll failed");
-    };
-    let selected = crate::trade::dispatch(&json!({
-        "op": "select",
-        "token": token,
-        "id": chosen.get("id"),
-        "slot": chosen.get("slot"),
-    }));
-    if selected.get("kind").and_then(Value::as_str) == Some("done")
-        && selected.get("result") == Some(&Value::Bool(false))
-    {
-        let reason = selected
-            .get("reason")
-            .and_then(Value::as_str)
-            .unwrap_or("offerAll failed");
-        return start_decline(rt, &map_offer_reason(reason));
-    }
-    tagged_ops(rt, selected, "offering")
-}
-
-fn accept_offer(rt: &mut ExchangeRuntime, probe: &Probe<'_>) -> Value {
-    if probe.accept_id < 0 {
-        return json!({
-            "kind": "notImpl",
-            "reason": "no-accept",
-            "token": rt.token,
-        });
-    }
-    let sent = crate::trade::dispatch(&json!({
-        "op": "begin",
-        "kind": "accept",
-        "name": "",
-        "n": 0,
-    }));
-    if sent.get("kind").and_then(Value::as_str) == Some("done")
-        && sent.get("result") == Some(&Value::Bool(false))
-    {
-        return start_decline(rt, "no-accept");
-    }
-    rt.phase = Phase::WaitConfirm;
-    rt.arm(TRADE_CONFIRM_WAIT_MS);
-    tagged_ops(rt, sent, "accepting")
-}
-
-fn accept_confirm(rt: &mut ExchangeRuntime, probe: &Probe<'_>) -> Value {
-    if !probe.confirm_open {
-        return rt.wait();
-    }
-    if probe.accept_id < 0 {
-        return json!({
-            "kind": "notImpl",
-            "reason": "no-accept",
-            "token": rt.token,
-        });
-    }
-    let sent = crate::trade::dispatch(&json!({
-        "op": "begin",
-        "kind": "accept",
-        "name": "",
-        "n": 0,
-    }));
-    if sent.get("kind").and_then(Value::as_str) == Some("done")
-        && sent.get("result") == Some(&Value::Bool(false))
-    {
-        return start_decline(rt, "no-accept");
-    }
-    rt.phase = Phase::WaitClose;
-    rt.arm(TRADE_CONFIRM_WAIT_MS);
-    tagged_ops(rt, sent, "confirming")
-}
-
-fn tagged_ops(rt: &ExchangeRuntime, mut step: Value, status: &str) -> Value {
-    if step.get("ops").is_none() {
-        if step.get("kind").and_then(Value::as_str) == Some("wait") {
-            return rt.with_token(json!({ "kind": "wait", "status": status }));
+            .collect::<Vec<_>>()
+            .join(", ");
+        let status = self.label("offering", &format!("mule: offering {joined}"));
+        self.say(SET_STATUS, status);
+        let mut any = false;
+        for name in &names {
+            let name = js_string(name);
+            if trade::offer_all(&name, cx).is_ok() {
+                any = true;
+            } else {
+                self.log(format!("mule: offerAll failed for {name}"));
+            }
         }
-        return rt.with_token(step);
-    }
-    step["kind"] = json!("ops");
-    step["token"] = json!(rt.token);
-    step["status"] = json!(status);
-    step
-}
-
-fn start_decline(rt: &mut ExchangeRuntime, reason: &str) -> Value {
-    rt.decline_reason = reason.to_string();
-    rt.phase = Phase::Declining;
-    let sent = crate::trade::dispatch(&json!({
-        "op": "begin",
-        "kind": "decline",
-        "name": "",
-        "n": 0,
-    }));
-    match sent.get("kind").and_then(Value::as_str) {
-        Some("ops") => {
-            rt.nested_token = sent.get("token").and_then(Value::as_u64).unwrap_or(0);
-            tagged_ops(rt, sent, "declining")
+        if !any {
+            return self.decline(
+                json!("mule: declining trade"),
+                "trade: declining (offerAll failed for every product)".into(),
+                json!("offerAll failed"),
+            );
         }
-        Some("done") => finish_declined(rt, reason),
-        Some("notImpl") => json!({
-            "kind": "notImpl",
-            "reason": sent.get("reason").and_then(Value::as_str).unwrap_or("Trade.decline"),
-            "token": rt.token,
-        }),
-        _ => finish_declined(rt, reason),
+        cx.clock().arm(TRADE_OFFER_WAIT_MS);
+        self.state = State::OfferWait {
+            stable: Stable::default(),
+        };
+        Next::Wait
+    }
+
+    /// `setStatus(status)`, `log(line)`, `Trade.decline()`, the decline log
+    /// and `onDecline?.(reason)`.
+    fn decline(&mut self, status: Value, line: String, reason: Value) -> Next {
+        self.say(SET_STATUS, status);
+        self.log(line);
+        self.state = State::Declining {
+            reason,
+            decline: None,
+            begun: false,
+        };
+        Next::Continue
     }
 }
 
-fn pump_decline(rt: &mut ExchangeRuntime, probe: &Probe<'_>) -> Value {
-    if !probe.active() {
-        return finish_declined(rt, &rt.decline_reason.clone());
-    }
-    let sent = crate::trade::dispatch(&json!({
-        "op": "next",
-        "token": rt.nested_token,
-    }));
-    match sent.get("kind").and_then(Value::as_str) {
-        Some("ops") => tagged_ops(rt, sent, "declining"),
-        Some("wait") => rt.wait(),
-        Some("done") | Some("aborted") => finish_declined(rt, &rt.decline_reason.clone()),
-        Some("notImpl") => json!({
-            "kind": "notImpl",
-            "reason": sent.get("reason").and_then(Value::as_str).unwrap_or("Trade.decline"),
-            "token": rt.token,
-        }),
-        _ => finish_declined(rt, &rt.decline_reason.clone()),
+/// JS truthiness of a callback's value.
+fn truthy(value: &Value) -> bool {
+    match value {
+        Value::Null => false,
+        Value::Bool(b) => *b,
+        Value::Number(n) => n.as_f64().is_some_and(|n| n != 0.0 && !n.is_nan()),
+        Value::String(s) => !s.is_empty(),
+        Value::Array(_) | Value::Object(_) => true,
     }
 }
 
-fn settle_close(rt: &mut ExchangeRuntime, projection: &Projection) -> Value {
-    let Some(after) = projection.metric else {
-        return finish_declined(rt, "no-progress");
-    };
-    let delta = after.saturating_sub(rt.metric_before);
-    if delta == 0 {
-        return finish_declined(rt, "no-progress");
+/// JS `ToNumber` for the metric values. The shim passes `inventoryMetric`
+/// and `baseline` results as `String(Number(v))` so `NaN` crosses intact.
+fn to_number(value: &Value) -> f64 {
+    match value {
+        Value::Null => 0.0,
+        Value::Bool(b) => f64::from(u8::from(*b)),
+        Value::Number(n) => n.as_f64().unwrap_or(f64::NAN),
+        Value::String(s) if s.trim().is_empty() => 0.0,
+        Value::String(s) => s.trim().parse().unwrap_or(f64::NAN),
+        Value::Array(_) | Value::Object(_) => f64::NAN,
     }
-    let token = rt.token;
-    rt.phase = Phase::Idle;
-    rt.deadline = None;
-    rt.settle_after_tick = None;
-    json!({
-        "kind": "complete",
-        "token": token,
-        "delta": delta,
-        "reason": "transferred",
-    })
 }
 
-fn finish_declined(rt: &mut ExchangeRuntime, reason: &str) -> Value {
-    let token = rt.token;
-    let reason = reason.to_string();
-    rt.phase = Phase::Idle;
-    rt.deadline = None;
-    rt.inactive_since = None;
-    rt.settle_after_tick = None;
-    json!({
-        "kind": "declined",
-        "token": token,
-        "reason": reason,
-        "result": false,
-    })
+/// JS `String(n)` for the numbers these lines print.
+fn js_num(n: f64) -> String {
+    if n.is_nan() {
+        "NaN".into()
+    } else if n.is_infinite() {
+        if n > 0.0 { "Infinity" } else { "-Infinity" }.into()
+    } else if n.fract() == 0.0 && n.abs() < 1e21 {
+        format!("{}", n as i64)
+    } else {
+        n.to_string()
+    }
+}
+
+/// Frozen `${d >= 0 ? '+' : ''}${d}`.
+fn signed(delta: f64) -> String {
+    format!("{}{}", if delta >= 0.0 { "+" } else { "" }, js_num(delta))
+}
+
+/// A number argument; a non-finite one crosses as its JS string, which the
+/// shim turns back with `Number(…)`.
+fn js_number(n: f64) -> Value {
+    if !n.is_finite() {
+        json!(js_num(n))
+    } else if n.fract() == 0.0 && n.abs() < 9e15 {
+        json!(n as i64)
+    } else {
+        json!(n)
+    }
+}
+
+/// JS `String(value)` for template literals.
+fn js_string(value: &Value) -> String {
+    match value {
+        Value::Null => "null".into(),
+        Value::Bool(b) => b.to_string(),
+        Value::Number(n) => js_num(n.as_f64().unwrap_or(f64::NAN)),
+        Value::String(s) => s.clone(),
+        Value::Array(items) => items
+            .iter()
+            .map(|item| {
+                if item.is_null() {
+                    String::new()
+                } else {
+                    js_string(item)
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(","),
+        Value::Object(_) => "[object Object]".into(),
+    }
 }
 
 #[cfg(test)]
@@ -909,65 +848,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn frozen_deadlines_match_the_drive_contract() {
+    fn frozen_waits_match_drive_partner_trade_ts() {
         assert_eq!(TRADE_OFFER_WAIT_MS, 5_000);
         assert_eq!(TRADE_CONFIRM_WAIT_MS, 8_000);
         assert_eq!(TRADE_CLOSE_DEBOUNCE_MS, 600);
     }
 
     #[test]
-    fn exact_counterpart_is_case_insensitive_and_rejects_strangers() {
-        let partners = vec!["Spinner".into()];
-        assert!(partner_allowed(&partners, "spinner"));
-        assert!(partner_allowed(&partners, " Spinner "));
-        assert!(!partner_allowed(&partners, "runner"));
-        assert!(!partner_allowed(&partners, ""));
-        assert!(!partner_allowed(&[], "spinner"));
-    }
-
-    #[test]
-    fn pause_and_hold_freeze_the_offer_deadline() {
-        let mut rt = ExchangeRuntime::new();
-        rt.arm(TRADE_OFFER_WAIT_MS);
-        let before = rt.deadline.expect("armed");
-        rt.set_freeze(true, false);
-        assert!(rt.frozen());
-        std::thread::sleep(Duration::from_millis(5));
-        rt.set_freeze(false, false);
-        assert!(!rt.frozen());
-        assert!(rt.deadline.expect("still armed") > before);
-        rt.set_freeze(false, true);
-        assert!(rt.frozen(), "guardian hold freezes too");
-    }
-
-    #[test]
-    fn abort_runtime_bumps_the_token_and_drops_pending_state() {
-        let mut rt = ExchangeRuntime::new();
-        rt.phase = Phase::WaitClose;
-        rt.metric_before = 24;
-        rt.arm(TRADE_CONFIRM_WAIT_MS);
-        let before = rt.token;
-        rt.abort_runtime();
-        assert_eq!(rt.token, before.wrapping_add(1));
-        assert_eq!(rt.phase, Phase::Idle);
-        assert_eq!(rt.metric_before, 0);
-        assert!(rt.deadline.is_none());
-        assert!(rt.seen_partner.is_none());
-    }
-
-    #[test]
-    fn matched_count_sums_only_projected_matches() {
-        let rows = vec![
-            TheirRow {
-                matched: true,
-                count: 24,
-            },
-            TheirRow {
-                matched: false,
-                count: 5,
-            },
-        ];
-        assert_eq!(matched_count(&rows), 24);
-        assert_eq!(matched_count(&[]), 0);
+    fn metric_values_keep_js_number_coercion() {
+        assert_eq!(to_number(&json!(24)), 24.0);
+        assert_eq!(to_number(&json!("24")), 24.0);
+        assert!(to_number(&json!("NaN")).is_nan(), "undefined - n is NaN");
+        assert_eq!(to_number(&json!("-Infinity")), f64::NEG_INFINITY);
+        assert!(to_number(&json!({})).is_nan(), "a promise is NaN");
+        assert_eq!(signed(3.0), "+3");
+        assert_eq!(signed(0.0), "+0");
+        assert_eq!(signed(-24.0), "-24");
+        assert_eq!(signed(f64::NAN), "NaN");
+        assert_eq!(js_number(f64::NAN), json!("NaN"));
+        assert_eq!(js_number(-24.0), json!(-24));
     }
 }

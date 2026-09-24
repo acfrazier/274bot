@@ -55,6 +55,63 @@ pub struct ClipPath {
 
 impl Eq for ClipPath {}
 
+/// The clip stack a draw is recorded under. Every draw of one clip epoch
+/// shares it, so a draw clones a handle and never the paths. A new list is
+/// built only when `clip()` pushes or `restore()` rewinds.
+#[derive(Clone, Default)]
+pub struct ClipSet(std::sync::Arc<Vec<ClipPath>>);
+
+impl std::fmt::Debug for ClipSet {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl ClipSet {
+    /// The stack with `path` pushed: a fresh list, so draws already recorded
+    /// keep the clip they were drawn under.
+    pub fn with_pushed(&self, path: ClipPath) -> Self {
+        let mut next = self.0.as_ref().clone();
+        next.push(path);
+        Self(std::sync::Arc::new(next))
+    }
+}
+
+impl std::ops::Deref for ClipSet {
+    type Target = [ClipPath];
+
+    fn deref(&self) -> &[ClipPath] {
+        &self.0
+    }
+}
+
+impl From<Vec<ClipPath>> for ClipSet {
+    fn from(paths: Vec<ClipPath>) -> Self {
+        Self(std::sync::Arc::new(paths))
+    }
+}
+
+impl PartialEq for ClipSet {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
+}
+
+impl Eq for ClipSet {}
+
+impl serde::Serialize for ClipSet {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.0.serialize(serializer)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for ClipSet {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let paths = Vec::<ClipPath>::deserialize(deserializer)?;
+        Ok(Self::from(paths))
+    }
+}
+
 /// Gradient color stop. `offset` is in `[0, 1]`; `color` is `0xRRGGBBAA`.
 #[derive(Debug, Clone, Copy, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct GradStop {
@@ -110,7 +167,7 @@ impl Shadow {
 #[derive(Debug, Clone, PartialEq, Default, serde::Deserialize, serde::Serialize)]
 pub struct DrawExtras {
     #[serde(default)]
-    pub clips: Vec<ClipPath>,
+    pub clips: ClipSet,
     #[serde(default)]
     pub shadow: Shadow,
     #[serde(default)]
@@ -211,6 +268,10 @@ pub fn path_bounds(segs: &[PathSeg]) -> Option<(f32, f32, f32, f32)> {
 /// CW full circle iff `end − start ≥ 2π`; CCW full circle iff `start − end ≥ 2π`;
 /// equal angles are a connecting segment only. Zero radius still connects.
 /// Returns `false` if a segment would exceed `max_len` (path stays ≤ `max_len`).
+#[expect(
+    clippy::too_many_arguments,
+    reason = "public HTML-canvas arc primitive: centre, radius, sweep, direction, and path cap stay explicit scalars so callers and tests keep the current signature"
+)]
 pub fn append_arc(
     path: &mut Vec<PathSeg>,
     cx: f32,
@@ -336,6 +397,10 @@ fn append_arc_cubic(
 ///
 /// Circle(t) has centre `C0 + t (C1-C0)` and radius `r0 + t (r1-r0)`.
 /// tiny-skia's `RadialGradient` drops the start radius; this keeps it.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "public two-circle sample: query point plus start/end centre and radius stay explicit scalars matching Radial geometry; grouping would change the published math signature"
+)]
 pub fn conical_t(px: f32, py: f32, x0: f32, y0: f32, r0: f32, x1: f32, y1: f32, r1: f32) -> f32 {
     let dx = x1 - x0;
     let dy = y1 - y0;

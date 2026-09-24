@@ -1,20 +1,18 @@
-//! Rust-owned one-attempt bank approach/open sequencing.
-//! Snapshot deltas feed a compact native projection; JavaScript supplies only
-//! options/tokens and dispatches returned verbs. Rust owns identity and clocks.
+//! Rust-owned one-attempt bank approach/open sequencing, a
+//! [`crate::machine`] family. The facts are read from the isolate scene at
+//! call time; JavaScript starts one open with the caller's mode, stand and
+//! booth names, and awaits the frozen boolean. Rust owns the verbs, the
+//! observed identity and the clocks.
 
-use crate::isolate_fb::{SceneEntityReader, SnapshotReader};
-use serde_json::{json, Value};
-use std::cell::RefCell;
-use std::time::{Duration, Instant};
+use crate::machine::{Begin, Cx, Family, Step};
+use crate::observed::{self, Scene, SceneRow};
+use crate::shim::InteractReq;
+use serde::Deserialize;
+use serde_json::Value;
 
 pub const WALK_BOUND_MS: u64 = 60_000;
 pub const BANK_READY_MS: u64 = 5_000;
 const ACCESS_RADIUS: i32 = 1;
-
-thread_local! {
-    static RUNTIME: RefCell<BankOpenRuntime> = const { RefCell::new(BankOpenRuntime::new()) };
-    static OBSERVATION: RefCell<Observation> = const { RefCell::new(Observation::new()) };
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Tile {
@@ -49,13 +47,20 @@ enum Mode {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(clippy::enum_variant_names)] // Wait* names encode the phase predicate
 enum Phase {
-    Idle,
     WaitStand,
     WaitSelected,
     WaitNearest,
     WaitReady,
     WaitFresh,
+}
+
+/// What one decision left to do: keep the row, or settle with the frozen
+/// boolean.
+enum Decision {
+    Running,
+    Done(bool),
 }
 
 struct Observation {
@@ -72,91 +77,53 @@ struct Observation {
 }
 
 impl Observation {
-    const fn new() -> Self {
+    /// A logout forgets the session: only pages posted since login count.
+    fn from_scene(scene: &Scene) -> Self {
+        let session = scene.since_login();
+        let tile = |t: observed::Tile| Tile {
+            x: t.x,
+            z: t.z,
+            level: t.level,
+        };
         Self {
-            ingame: false,
-            here: None,
-            bank_open: false,
-            bank_loaded: false,
-            bank_generation: 0,
-            nearest_booth: None,
-            locs: Vec::new(),
-            locs_populated: false,
-            has_booth_stands: false,
-            approaches: Vec::new(),
-        }
-    }
-
-    fn update(&mut self, snap: &SnapshotReader<'_>) {
-        if snap.has_ingame() {
-            if !snap.ingame() {
-                *self = Self::new();
-                return;
-            }
-            self.ingame = true;
-        }
-        if snap.has_here() {
-            self.here = snap.here().map(|tile| Tile {
-                x: tile.x(),
-                z: tile.z(),
-                level: tile.level(),
-            });
-        }
-        if snap.has_bank_open() {
-            self.bank_open = snap.bank_open();
-        }
-        if snap.has_bank_loaded() {
-            self.bank_loaded = snap.bank_loaded();
-        }
-        if snap.has_bank_generation() {
-            self.bank_generation = snap.bank_generation();
-        }
-        if snap.has_nearest_booth() {
-            self.nearest_booth = snap.nearest_booth().map(|booth| Booth {
-                tile: Tile {
-                    x: booth.x(),
-                    z: booth.z(),
-                    level: booth.level(),
-                },
-                id: booth.id(),
+            ingame: session.ingame().unwrap_or(false),
+            here: session.here().map(tile),
+            bank_open: session.bank_open().unwrap_or(false),
+            bank_loaded: session.bank_loaded().unwrap_or(false),
+            bank_generation: session.bank_generation().unwrap_or(0),
+            nearest_booth: session.nearest_booth().map(|booth| Booth {
+                tile: tile(booth.tile),
+                id: booth.id,
                 distance: i32::MAX,
                 name: None,
                 action: None,
                 actions: Vec::new(),
-            });
-        }
-        if snap.has_banks() {
-            self.has_booth_stands = snap.banks().iter().any(|stand| stand.kind() == "booth");
-        }
-        if snap.has_locs() {
-            self.locs_populated = true;
-            self.locs = snap.locs().iter().filter_map(bank_candidate).collect();
-        }
-        if snap.has_bank_approaches() {
-            self.approaches = snap
+            }),
+            locs: session
+                .locs()
+                .map(|rows| rows.iter().filter_map(bank_candidate).collect())
+                .unwrap_or_default(),
+            locs_populated: session.locs().is_some(),
+            has_booth_stands: session.has_booth_stands().unwrap_or(false),
+            approaches: session
                 .bank_approaches()
-                .iter()
-                .map(|row| ApproachFact {
-                    loc_id: row.loc_id(),
-                    tile: Tile {
-                        x: row.x(),
-                        z: row.z(),
-                        level: row.level(),
-                    },
-                    can_operate: row.can_operate(),
-                    dest: row.dest_ok().then_some(Tile {
-                        x: row.dest_x(),
-                        z: row.dest_z(),
-                        level: row.dest_level(),
-                    }),
+                .map(|rows| {
+                    rows.iter()
+                        .map(|row| ApproachFact {
+                            loc_id: row.loc_id,
+                            tile: tile(row.tile),
+                            can_operate: row.can_operate,
+                            dest: row.dest.map(tile),
+                        })
+                        .collect()
                 })
-                .collect();
+                .unwrap_or_default(),
         }
     }
 }
 
-fn bank_candidate(row: &SceneEntityReader<'_>) -> Option<Booth> {
-    let name = row.name()?;
+fn bank_candidate(row: &SceneRow) -> Option<Booth> {
+    let name = row.name.as_deref()?;
     if !name
         .as_bytes()
         .windows(4)
@@ -165,214 +132,167 @@ fn bank_candidate(row: &SceneEntityReader<'_>) -> Option<Booth> {
         return None;
     }
     let actions = row
-        .actions()
-        .into_iter()
-        .filter(|action| !action.is_empty() && *action != "hidden")
-        .map(str::to_string)
+        .actions
+        .iter()
+        .filter(|action| !action.is_empty() && &***action != "hidden")
+        .map(|action| action.to_string())
         .collect();
     Some(Booth {
         tile: Tile {
-            x: row.x(),
-            z: row.z(),
-            level: row.level(),
+            x: row.x,
+            z: row.z,
+            level: row.level,
         },
-        id: row.id(),
-        distance: row.distance(),
+        id: row.id,
+        distance: row.distance,
         name: Some(name.to_string()),
         action: None,
         actions,
     })
 }
 
-struct BankOpenRuntime {
-    paused: bool,
-    held: bool,
-    frozen_at: Option<Instant>,
-    token: u64,
-    phase: Phase,
+/// The caller's start: the mode, an optional stand tile and the booth's
+/// name/action. The typed tile is decoded here so an out-of-range one
+/// fails closed as `invalid-stand` instead of a decode error.
+#[derive(Deserialize)]
+pub(crate) struct BankOpenArgs {
+    #[serde(default)]
+    mode: String,
+    #[serde(default)]
+    stand: Option<Value>,
+    #[serde(default)]
+    booth_name: Option<String>,
+    #[serde(default)]
+    booth_action: Option<String>,
+}
+
+impl BankOpenArgs {
+    /// `Bank.openBooth()` with no stand or names: the observed nearest
+    /// booth, for a family that opens as one step of its own sequence.
+    pub(crate) fn nearest_booth() -> Self {
+        Self {
+            mode: "open-booth".into(),
+            stand: None,
+            booth_name: None,
+            booth_action: None,
+        }
+    }
+}
+
+/// One open: the row is the whole attempt's state.
+pub(crate) struct BankOpen {
     mode: Mode,
+    phase: Phase,
     stand: Option<Tile>,
     selected: Option<Booth>,
     wanted_name: Option<String>,
     wanted_action: Option<String>,
     open_generation: u64,
-    deadline: Option<Instant>,
     last_approach_dest: Option<Tile>,
 }
 
-impl BankOpenRuntime {
-    const fn new() -> Self {
+impl BankOpen {
+    fn new(mode: Mode, wanted_name: Option<String>, wanted_action: Option<String>) -> Self {
         Self {
-            paused: false,
-            held: false,
-            frozen_at: None,
-            token: 0,
-            phase: Phase::Idle,
-            mode: Mode::Booth,
+            mode,
+            phase: Phase::WaitReady,
             stand: None,
             selected: None,
-            wanted_name: None,
-            wanted_action: None,
+            wanted_name,
+            wanted_action,
             open_generation: 0,
-            deadline: None,
             last_approach_dest: None,
         }
     }
 
-    fn frozen(&self) -> bool {
-        self.paused || self.held
-    }
-
-    fn now(&self) -> Instant {
-        self.frozen_at.unwrap_or_else(Instant::now)
-    }
-
-    fn set_freeze(&mut self, paused: bool, held: bool) {
-        let was_frozen = self.frozen();
-        self.paused = paused;
-        self.held = held;
-        let frozen = self.frozen();
-        if !was_frozen && frozen {
-            self.frozen_at = Some(Instant::now());
-        } else if was_frozen && !frozen {
-            if let Some(at) = self.frozen_at.take() {
-                if let Some(deadline) = self.deadline.as_mut() {
-                    *deadline += Instant::now().saturating_duration_since(at);
-                }
-            }
-        }
-    }
-
-    fn abort(&mut self) {
-        self.token = self.token.wrapping_add(1);
-        self.phase = Phase::Idle;
-        self.stand = None;
-        self.selected = None;
-        self.wanted_name = None;
-        self.wanted_action = None;
-        self.deadline = None;
-        self.last_approach_dest = None;
-    }
-
-    fn done(&mut self, ok: bool, reason: &str) -> Value {
-        self.phase = Phase::Idle;
-        self.deadline = None;
-        json!({"kind": "done", "token": self.token, "ok": ok, "reason": reason})
-    }
-
-    fn wait_ready(&mut self) -> Value {
+    fn wait_ready(&mut self, cx: &mut Cx<'_>) {
         self.phase = Phase::WaitReady;
-        self.deadline = Some(self.now() + Duration::from_millis(BANK_READY_MS));
-        json!({"kind": "wait", "token": self.token})
+        cx.clock().arm(BANK_READY_MS);
     }
 
-    fn walk_near(&mut self, phase: Phase, tile: Tile, radius: i32) -> Value {
+    fn walk_near(&mut self, phase: Phase, tile: Tile, radius: i32, cx: &mut Cx<'_>) {
         self.phase = phase;
-        self.deadline = Some(self.now() + Duration::from_millis(WALK_BOUND_MS));
-        json!({
-            "kind": "walk-near",
-            "token": self.token,
-            "x": tile.x,
-            "z": tile.z,
-            "level": tile.level,
-            "radius": radius,
-            "allow_teleports": false,
-        })
+        cx.clock().arm(WALK_BOUND_MS);
+        cx.emit(walk_near_req(tile, radius));
     }
 
-    fn walk_approach(&mut self, dest: Tile, start_bound: bool) -> Value {
+    fn walk_approach(&mut self, dest: Tile, start_bound: bool, cx: &mut Cx<'_>) {
         self.phase = Phase::WaitSelected;
-        if start_bound || self.deadline.is_none() {
-            self.deadline = Some(self.now() + Duration::from_millis(WALK_BOUND_MS));
+        // A re-walk inside the same approach keeps its bound: only the
+        // first leg (or the first walk of a new row) arms it.
+        if start_bound || cx.clock().deadline.is_none() {
+            cx.clock().arm(WALK_BOUND_MS);
         }
         self.last_approach_dest = Some(dest);
-        json!({
-            "kind": "walk-near",
-            "token": self.token,
-            "x": dest.x,
-            "z": dest.z,
-            "level": dest.level,
-            "radius": 0,
-            "allow_teleports": false,
-        })
+        cx.emit(walk_near_req(dest, 0));
     }
 
-    fn open(&mut self, booth: Booth, obs: &Observation) -> Value {
+    fn open(&mut self, booth: Booth, obs: &Observation, cx: &mut Cx<'_>) {
         self.open_generation = obs.bank_generation;
         self.phase = Phase::WaitFresh;
-        self.deadline = Some(self.now() + Duration::from_millis(BANK_READY_MS));
-        let mut out = json!({
-            "kind": "open-booth",
-            "token": self.token,
-            "x": booth.tile.x,
-            "z": booth.tile.z,
-            "level": booth.tile.level,
-            "id": booth.id,
+        cx.clock().arm(BANK_READY_MS);
+        cx.emit(InteractReq::OpenBooth {
+            x: booth.tile.x,
+            z: booth.tile.z,
+            level: booth.tile.level,
+            id: booth.id,
+            name: booth.name,
+            action: booth.action,
         });
-        if let Some(name) = booth.name {
-            out["name"] = json!(name);
-        }
-        if let Some(action) = booth.action {
-            out["action"] = json!(action);
-        }
-        out
     }
 
-    fn begin(
+    fn begin_sequence(
         &mut self,
-        mode: Mode,
         stand: Option<Tile>,
         stand_invalid: bool,
-        wanted_name: Option<String>,
-        wanted_action: Option<String>,
         obs: &Observation,
-    ) -> Value {
-        self.abort();
-        self.mode = mode;
+        cx: &mut Cx<'_>,
+    ) -> Decision {
         self.stand = stand;
-        self.wanted_name = wanted_name;
-        self.wanted_action = wanted_action;
         if !obs.ingame {
-            return self.done(false, "missing-facts");
+            return Decision::Done(false);
         }
         if obs.bank_open {
             if obs.bank_loaded {
-                return self.done(true, "ready");
+                return Decision::Done(true);
             }
-            return self.wait_ready();
+            self.wait_ready(cx);
+            return Decision::Running;
         }
         if stand_invalid {
-            return self.done(false, "invalid-stand");
+            return Decision::Done(false);
         }
-        match mode {
+        match self.mode {
             Mode::Booth => {
                 if let Some(stand) = stand {
                     if !near(obs.here, stand) {
-                        return self.walk_near(Phase::WaitStand, stand, ACCESS_RADIUS);
+                        self.walk_near(Phase::WaitStand, stand, ACCESS_RADIUS, cx);
+                        return Decision::Running;
                     }
                 }
-                self.select_and_open(obs)
+                self.select_and_open(obs, cx)
             }
             Mode::Nearest => {
                 let Some(selected) = self.select_named(obs) else {
-                    return self.done(false, "missing-booth");
+                    return Decision::Done(false);
                 };
                 self.selected = Some(selected);
-                self.approach_or_open(obs)
+                self.approach_or_open(obs, cx)
             }
             Mode::NearestWorld => {
                 if let Some(booth) = obs.nearest_booth.clone() {
                     if near(obs.here, booth.tile) {
                         self.selected = Some(unnamed(booth));
-                        return self.approach_or_open(obs);
+                        return self.approach_or_open(obs, cx);
                     }
                 }
                 if obs.here.is_none() || !obs.has_booth_stands {
-                    return self.done(false, "missing-bank");
+                    return Decision::Done(false);
                 }
                 self.phase = Phase::WaitNearest;
-                self.deadline = Some(self.now() + Duration::from_millis(WALK_BOUND_MS));
-                json!({"kind": "walk-nearest-bank", "token": self.token})
+                cx.clock().arm(WALK_BOUND_MS);
+                cx.emit(InteractReq::WalkNearestBank);
+                Decision::Running
             }
         }
     }
@@ -402,17 +322,17 @@ impl BankOpenRuntime {
         Some(selected)
     }
 
-    fn select_and_open(&mut self, obs: &Observation) -> Value {
+    fn select_and_open(&mut self, obs: &Observation, cx: &mut Cx<'_>) -> Decision {
         let selected = if self.wanted_name.is_some() || self.wanted_action.is_some() {
             self.select_named(obs)
         } else {
             obs.nearest_booth.clone().map(unnamed)
         };
         let Some(selected) = selected.filter(|row| row.id >= 0) else {
-            return self.done(false, "missing-booth");
+            return Decision::Done(false);
         };
         self.selected = Some(selected);
-        self.approach_or_open(obs)
+        self.approach_or_open(obs, cx)
     }
 
     fn live_approach<'a>(&self, obs: &'a Observation) -> Option<&'a ApproachFact> {
@@ -422,16 +342,22 @@ impl BankOpenRuntime {
             .find(|row| row.loc_id == selected.id && row.tile == selected.tile)
     }
 
-    fn approach_or_open(&mut self, obs: &Observation) -> Value {
+    fn approach_or_open(&mut self, obs: &Observation, cx: &mut Cx<'_>) -> Decision {
         let Some(selected) = self.selected.clone() else {
-            return self.done(false, "missing-booth");
+            return Decision::Done(false);
         };
         match self.live_approach(obs).cloned() {
-            None => self.done(false, "unreachable"),
-            Some(row) if row.can_operate => self.open(selected, obs),
+            None => Decision::Done(false),
+            Some(row) if row.can_operate => {
+                self.open(selected, obs, cx);
+                Decision::Running
+            }
             Some(row) => match row.dest {
-                Some(dest) => self.walk_approach(dest, true),
-                None => self.done(false, "unreachable"),
+                Some(dest) => {
+                    self.walk_approach(dest, true, cx);
+                    Decision::Running
+                }
+                None => Decision::Done(false),
             },
         }
     }
@@ -464,96 +390,133 @@ impl BankOpenRuntime {
         })
     }
 
-    fn next(&mut self, token: u64, obs: &Observation) -> Value {
-        if token != self.token || self.phase == Phase::Idle {
-            return json!({"kind": "aborted", "token": self.token});
-        }
-        if self.frozen() {
-            return json!({"kind": "wait", "token": self.token});
-        }
+    fn step_phase(&mut self, obs: &Observation, cx: &mut Cx<'_>) -> Decision {
         if !obs.ingame {
-            return self.done(false, "aborted");
+            return Decision::Done(false);
         }
         match self.phase {
-            Phase::Idle => json!({"kind": "aborted", "token": self.token}),
-            Phase::WaitReady if obs.bank_open && obs.bank_loaded => self.done(true, "ready"),
+            Phase::WaitReady if obs.bank_open && obs.bank_loaded => Decision::Done(true),
             Phase::WaitFresh
                 if obs.bank_open
                     && obs.bank_loaded
                     && obs.bank_generation > self.open_generation =>
             {
-                self.done(true, "ready")
+                Decision::Done(true)
             }
             Phase::WaitStand if obs.bank_open => {
                 if obs.bank_loaded {
-                    self.done(true, "ready")
+                    Decision::Done(true)
                 } else {
-                    self.wait_ready()
+                    self.wait_ready(cx);
+                    Decision::Running
                 }
             }
             Phase::WaitStand if self.stand.is_some_and(|stand| near(obs.here, stand)) => {
-                self.select_and_open(obs)
+                self.select_and_open(obs, cx)
             }
             Phase::WaitSelected if obs.bank_open => {
                 if obs.bank_loaded {
-                    self.done(true, "ready")
+                    Decision::Done(true)
                 } else {
-                    self.wait_ready()
+                    self.wait_ready(cx);
+                    Decision::Running
                 }
             }
             Phase::WaitSelected => {
                 if !self.selected_still_present(obs) {
-                    self.done(false, "identity-lost")
-                } else {
-                    match self.live_approach(obs).cloned() {
-                        None => self.done(false, "unreachable"),
-                        Some(row) if row.can_operate => {
-                            let selected = self.selected.take().expect("selected booth");
-                            self.open(selected, obs)
-                        }
-                        Some(_) if self.expired() => self.done(false, "timeout"),
-                        Some(row) => match row.dest {
-                            None => self.done(false, "unreachable"),
-                            Some(dest) if self.last_approach_dest == Some(dest) => {
-                                json!({"kind": "wait", "token": self.token})
-                            }
-                            Some(dest) => self.walk_approach(dest, false),
-                        },
+                    return Decision::Done(false);
+                }
+                match self.live_approach(obs).cloned() {
+                    None => Decision::Done(false),
+                    Some(row) if row.can_operate => {
+                        let selected = self.selected.take().expect("selected booth");
+                        self.open(selected, obs, cx);
+                        Decision::Running
                     }
+                    Some(_) if cx.clock().bound_reached() => Decision::Done(false),
+                    Some(row) => match row.dest {
+                        None => Decision::Done(false),
+                        Some(dest) if self.last_approach_dest == Some(dest) => Decision::Running,
+                        Some(dest) => {
+                            self.walk_approach(dest, false, cx);
+                            Decision::Running
+                        }
+                    },
                 }
             }
             Phase::WaitNearest if obs.bank_open => {
                 if obs.bank_loaded {
-                    self.done(true, "ready")
+                    Decision::Done(true)
                 } else {
-                    self.wait_ready()
+                    self.wait_ready(cx);
+                    Decision::Running
                 }
             }
             Phase::WaitNearest => {
                 if let Some(booth) = obs.nearest_booth.clone() {
                     if near(obs.here, booth.tile) {
                         self.selected = Some(unnamed(booth));
-                        return self.approach_or_open(obs);
+                        return self.approach_or_open(obs, cx);
                     }
                 }
-                if self.expired() {
-                    self.done(false, "walk-timeout")
+                if cx.clock().bound_reached() {
+                    Decision::Done(false)
                 } else {
-                    json!({"kind": "wait", "token": self.token})
+                    Decision::Running
                 }
             }
             Phase::WaitReady | Phase::WaitFresh | Phase::WaitStand => {
-                if self.expired() {
-                    self.done(false, "timeout")
+                if cx.clock().bound_reached() {
+                    Decision::Done(false)
                 } else {
-                    json!({"kind": "wait", "token": self.token})
+                    Decision::Running
                 }
             }
         }
     }
+}
 
-    fn expired(&self) -> bool {
-        self.deadline.is_some_and(|deadline| self.now() >= deadline)
+impl Family for BankOpen {
+    const NAME: &'static str = "bank_open";
+    /// One open at a time: a newer start ends the older row `superseded`
+    /// and its await settles false. The access openers
+    /// ([`crate::bank_access`]) share this group. The frozen surface has no
+    /// guard.
+    const EXCLUSIVE: bool = true;
+    type Args = BankOpenArgs;
+    type Output = bool;
+
+    fn begin(args: BankOpenArgs, cx: &mut Cx<'_>) -> Begin<Self> {
+        let obs = observed::with(Observation::from_scene);
+        let stand = read_tile(args.stand.as_ref());
+        let stand_invalid =
+            args.stand.as_ref().is_some_and(|value| !value.is_null()) && stand.is_none();
+        let mut open = Self::new(parse_mode(&args.mode), args.booth_name, args.booth_action);
+        match open.begin_sequence(stand, stand_invalid, &obs, cx) {
+            Decision::Running => Begin::Run(open),
+            Decision::Done(ok) => Begin::Done(ok),
+        }
+    }
+
+    fn step(&mut self, cx: &mut Cx<'_>) -> Step<bool> {
+        let obs = observed::with(Observation::from_scene);
+        match self.step_phase(&obs, cx) {
+            Decision::Running => Step::Wait,
+            Decision::Done(ok) => Step::Done(ok),
+        }
+    }
+}
+
+fn walk_near_req(tile: Tile, radius: i32) -> InteractReq {
+    InteractReq::WalkNear {
+        x: tile.x,
+        z: tile.z,
+        level: tile.level,
+        radius,
+        allow_teleports: false,
+        allow_wilderness: true,
+        allow_bank_fetch: true,
+        request_id: 0,
     }
 }
 
@@ -585,12 +548,8 @@ fn same_optional_text(a: Option<&str>, b: Option<&str>) -> bool {
     }
 }
 
-fn parse_mode(input: &Value) -> Mode {
-    match input
-        .get("mode")
-        .and_then(Value::as_str)
-        .unwrap_or("open-booth")
-    {
+fn parse_mode(mode: &str) -> Mode {
+    match mode {
         "open-nearest" => Mode::Nearest,
         "open-nearest-world" => Mode::NearestWorld,
         _ => Mode::Booth,
@@ -609,115 +568,157 @@ fn read_tile(value: Option<&Value>) -> Option<Tile> {
     })
 }
 
-pub fn on_pause() {
-    RUNTIME.with(|runtime| {
-        let held = runtime.borrow().held;
-        runtime.borrow_mut().set_freeze(true, held);
-    });
-}
-
-pub fn on_resume() {
-    RUNTIME.with(|runtime| {
-        let held = runtime.borrow().held;
-        runtime.borrow_mut().set_freeze(false, held);
-    });
-}
-
-pub fn on_hold(held: bool) {
-    RUNTIME.with(|runtime| {
-        let paused = runtime.borrow().paused;
-        runtime.borrow_mut().set_freeze(paused, held);
-    });
-}
-
-pub fn on_reset() {
-    RUNTIME.with(|runtime| runtime.borrow_mut().abort());
-    OBSERVATION.with(|observation| *observation.borrow_mut() = Observation::new());
-}
-
-pub fn on_snapshot(snap: &SnapshotReader<'_>) {
-    OBSERVATION.with(|observation| observation.borrow_mut().update(snap));
-}
-
-pub fn dispatch(input: &Value) -> Value {
-    OBSERVATION.with(|observation| {
-        RUNTIME.with(|runtime| {
-            let observation = observation.borrow();
-            let mut runtime = runtime.borrow_mut();
-            match input.get("op").and_then(Value::as_str).unwrap_or("") {
-                "begin" => {
-                    let stand_value = input.get("stand");
-                    let stand = read_tile(stand_value);
-                    runtime.begin(
-                        parse_mode(input),
-                        stand,
-                        stand_value.is_some_and(|value| !value.is_null()) && stand.is_none(),
-                        input
-                            .get("booth_name")
-                            .and_then(Value::as_str)
-                            .map(str::to_string),
-                        input
-                            .get("booth_action")
-                            .and_then(Value::as_str)
-                            .map(str::to_string),
-                        &observation,
-                    )
-                }
-                "next" => runtime.next(
-                    input.get("token").and_then(Value::as_u64).unwrap_or(0),
-                    &observation,
-                ),
-                "current_token" => json!(runtime.token),
-                _ => json!({"kind": "done", "ok": false, "reason": "unknown-op"}),
-            }
-        })
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::machine::{self, Called, Js, Outcome, Pending, Reply, Started, Take};
+    use serde_json::json;
+    use std::rc::Rc;
 
-    fn obs() -> Observation {
-        Observation {
-            ingame: true,
-            here: Some(Tile {
-                x: 3010,
-                z: 3352,
-                level: 0,
-            }),
-            bank_open: false,
-            bank_loaded: false,
-            bank_generation: 7,
-            nearest_booth: None,
-            locs: vec![Booth {
-                tile: Tile {
-                    x: 3011,
-                    z: 3354,
+    /// The bank-open family never calls a script callback.
+    struct NoJs;
+
+    impl Js for NoJs {
+        fn queue_len(&mut self) -> usize {
+            0
+        }
+
+        fn call(
+            &mut self,
+            _hook: Option<&crate::load::callback_v8::HeldCallback>,
+            _args: &[Value],
+        ) -> Called {
+            panic!("the bank-open family calls no script callback");
+        }
+
+        fn poll(&mut self, _pending: &Pending) -> Option<Reply> {
+            panic!("the bank-open family calls no script callback");
+        }
+
+        fn claimed(&mut self) -> bool {
+            false
+        }
+    }
+
+    fn booth_row(id: i32, x: i32, z: i32, distance: i32, name: &str, actions: &[&str]) -> SceneRow {
+        SceneRow {
+            id,
+            name: Some(Rc::from(name)),
+            x,
+            z,
+            level: 0,
+            distance,
+            actions: actions.iter().map(|action| Rc::from(*action)).collect(),
+        }
+    }
+
+    fn approach(
+        loc_id: i32,
+        x: i32,
+        z: i32,
+        can_operate: bool,
+        dest: Option<(i32, i32)>,
+    ) -> observed::BankApproach {
+        observed::BankApproach {
+            loc_id,
+            tile: observed::Tile { x, z, level: 0 },
+            can_operate,
+            dest: dest.map(|(x, z)| observed::Tile { x, z, level: 0 }),
+        }
+    }
+
+    /// The posted scene one attempt decides from: a booth at 3011,3354 and
+    /// the player standing at 3010,3352.
+    fn post_scene(locs: Vec<SceneRow>, approaches: Vec<observed::BankApproach>) {
+        observed::post(0, |post| {
+            post.session(true)
+                .here(observed::Tile {
+                    x: 3010,
+                    z: 3352,
                     level: 0,
-                },
-                id: 2213,
-                distance: 2,
-                name: Some("Bank booth".into()),
-                action: Some("Use-quickly".into()),
-                actions: vec!["Use-quickly".into()],
-            }],
-            locs_populated: true,
-            has_booth_stands: true,
-            approaches: vec![ApproachFact {
-                loc_id: 2213,
-                tile: Tile {
-                    x: 3011,
-                    z: 3354,
-                    level: 0,
-                },
-                can_operate: false,
-                dest: Some(Tile {
-                    x: 3011,
-                    z: 3353,
-                    level: 0,
-                }),
-            }],
+                })
+                .bank_generation(7)
+                .locs(locs)
+                .bank_approaches(approaches);
+        });
+    }
+
+    fn named_booth() -> Vec<SceneRow> {
+        vec![booth_row(
+            2213,
+            3011,
+            3354,
+            2,
+            "Bank booth",
+            &["Use-quickly"],
+        )]
+    }
+
+    fn named_approach(dest: Option<(i32, i32)>) -> Vec<observed::BankApproach> {
+        vec![approach(2213, 3011, 3354, false, dest)]
+    }
+
+    fn reset() {
+        machine::on_reset();
+        observed::on_reset();
+    }
+
+    fn tick() {
+        machine::step(&mut NoJs);
+    }
+
+    fn drain() -> Vec<InteractReq> {
+        machine::merge_ops(Vec::new())
+    }
+
+    fn start(args: Value) -> Started {
+        machine::start("bank_open", args, Vec::new(), 0)
+    }
+
+    fn named_nearest() -> Value {
+        json!({
+            "mode": "open-nearest",
+            "stand": null,
+            "booth_name": "Bank booth",
+            "booth_action": "Use-quickly",
+        })
+    }
+
+    fn running(started: Started) -> machine::Handle {
+        match started {
+            Started::Running(handle) => handle,
+            other => panic!("expected a running row, got {other:?}"),
+        }
+    }
+
+    fn done(handle: machine::Handle) -> Value {
+        match machine::take(handle) {
+            Take::Settled(Outcome::Done(value)) => value,
+            other => panic!("expected a done outcome, got {other:?}"),
+        }
+    }
+
+    fn walk_near_dest() -> InteractReq {
+        InteractReq::WalkNear {
+            x: 3011,
+            z: 3353,
+            level: 0,
+            radius: 0,
+            allow_teleports: false,
+            allow_wilderness: true,
+            allow_bank_fetch: true,
+            request_id: 0,
+        }
+    }
+
+    fn named_open_booth() -> InteractReq {
+        InteractReq::OpenBooth {
+            x: 3011,
+            z: 3354,
+            level: 0,
+            id: 2213,
+            name: Some("Bank booth".into()),
+            action: Some("Use-quickly".into()),
         }
     }
 
@@ -729,192 +730,287 @@ mod tests {
 
     #[test]
     fn out_of_range_stand_fails_closed() {
-        OBSERVATION.with(|observation| *observation.borrow_mut() = obs());
-        let result = dispatch(&json!({
-            "op": "begin",
-            "mode": "open-booth",
-            "stand": {"x": 2_147_483_648_i64, "z": 3355, "level": 0},
-        }));
-        assert_eq!(result["kind"], "done");
-        assert_eq!(result["ok"], false);
-        assert_eq!(result["reason"], "invalid-stand");
-    }
-
-    #[test]
-    fn timeout_and_reset_fail_closed_without_another_command() {
-        let mut runtime = BankOpenRuntime::new();
-        let begin = runtime.begin(
-            Mode::Nearest,
-            None,
-            false,
-            Some("Bank booth".into()),
-            Some("Use-quickly".into()),
-            &obs(),
+        reset();
+        observed::post(0, |post| {
+            post.session(true);
+        });
+        assert_eq!(
+            start(json!({
+                "mode": "open-booth",
+                "stand": {"x": 2_147_483_648_i64, "z": 3355, "level": 0},
+            })),
+            Started::Settled(Outcome::Done(json!(false))),
+            "an unreadable stand is not a walk"
         );
-        let token = begin["token"].as_u64().unwrap();
-        runtime.deadline = Some(Instant::now() - Duration::from_millis(1));
-        assert_eq!(runtime.next(token, &obs())["kind"], "done");
-
-        let begin = runtime.begin(
-            Mode::Nearest,
-            None,
-            false,
-            Some("Bank booth".into()),
-            Some("Use-quickly".into()),
-            &obs(),
-        );
-        let stale = begin["token"].as_u64().unwrap();
-        runtime.abort();
-        assert_eq!(runtime.next(stale, &obs())["kind"], "aborted");
+        assert!(drain().is_empty());
     }
 
     #[test]
     fn named_approach_walks_radius_zero_dest_not_loc_tile() {
-        let mut runtime = BankOpenRuntime::new();
-        let begin = runtime.begin(
-            Mode::Nearest,
-            None,
-            false,
-            Some("Bank booth".into()),
-            Some("Use-quickly".into()),
-            &obs(),
-        );
-        assert_eq!(begin["kind"], "walk-near");
-        assert_eq!(begin["radius"], 0);
-        assert_eq!(begin["x"], 3011);
-        assert_eq!(begin["z"], 3353);
+        reset();
+        post_scene(named_booth(), named_approach(Some((3011, 3353))));
+        let handle = running(start(named_nearest()));
+        assert_eq!(drain(), vec![walk_near_dest()]);
+        assert_eq!(machine::take(handle), Take::Pending);
     }
 
     #[test]
     fn ready_projected_can_operate_opens_without_walk() {
-        let mut observation = obs();
-        observation.here = Some(Tile {
-            x: 3011,
-            z: 3353,
-            level: 0,
+        reset();
+        observed::post(0, |post| {
+            post.session(true)
+                .here(observed::Tile {
+                    x: 3011,
+                    z: 3353,
+                    level: 0,
+                })
+                .bank_generation(7)
+                .locs(named_booth())
+                .bank_approaches(vec![approach(2213, 3011, 3354, true, Some((3011, 3353)))]);
         });
-        observation.approaches[0].can_operate = true;
-        observation.approaches[0].dest = Some(Tile {
-            x: 3011,
-            z: 3353,
-            level: 0,
-        });
-        let mut runtime = BankOpenRuntime::new();
-        let begin = runtime.begin(
-            Mode::Nearest,
-            None,
-            false,
-            Some("Bank booth".into()),
-            Some("Use-quickly".into()),
-            &observation,
+        assert!(
+            matches!(start(named_nearest()), Started::Running(_)),
+            "a projected can_operate opens without walking"
         );
-        assert_eq!(begin["kind"], "open-booth");
-        assert_eq!(begin["id"], 2213);
+        assert_eq!(drain(), vec![named_open_booth()]);
     }
 
     #[test]
-    fn missing_model_and_empty_dest_fail_unreachable() {
-        let mut observation = obs();
-        observation.approaches.clear();
-        let mut runtime = BankOpenRuntime::new();
-        let missing = runtime.begin(
-            Mode::Nearest,
-            None,
-            false,
-            Some("Bank booth".into()),
-            Some("Use-quickly".into()),
-            &observation,
+    fn a_ready_bank_settles_true_without_a_verb() {
+        reset();
+        observed::post(0, |post| {
+            post.session(true)
+                .here(observed::Tile {
+                    x: 3010,
+                    z: 3352,
+                    level: 0,
+                })
+                .bank_open(true)
+                .bank_loaded(true)
+                .bank_generation(7);
+        });
+        assert_eq!(
+            start(named_nearest()),
+            Started::Settled(Outcome::Done(json!(true)))
         );
-        assert_eq!(missing["reason"], "unreachable");
+        assert!(drain().is_empty());
+    }
 
-        observation.approaches = vec![ApproachFact {
-            loc_id: 2213,
-            tile: Tile {
+    #[test]
+    fn missing_model_and_empty_dest_fail_closed() {
+        reset();
+        post_scene(named_booth(), Vec::new());
+        assert_eq!(
+            start(named_nearest()),
+            Started::Settled(Outcome::Done(json!(false))),
+            "no projected approach is unreachable"
+        );
+        assert!(drain().is_empty());
+
+        post_scene(named_booth(), named_approach(None));
+        assert_eq!(
+            start(named_nearest()),
+            Started::Settled(Outcome::Done(json!(false))),
+            "a projected approach without a dest is unreachable"
+        );
+        assert!(drain().is_empty());
+    }
+
+    #[test]
+    fn walk_timeout_and_reset_fail_closed_without_another_command() {
+        reset();
+        post_scene(named_booth(), named_approach(Some((3011, 3353))));
+        let handle = running(start(named_nearest()));
+        assert_eq!(drain(), vec![walk_near_dest()]);
+        machine::age(handle, WALK_BOUND_MS + 1);
+        tick();
+        assert_eq!(done(handle), json!(false));
+        tick();
+        assert!(drain().is_empty(), "a timed-out walk sends nothing more");
+
+        let handle = running(start(named_nearest()));
+        assert_eq!(drain(), vec![walk_near_dest()]);
+        machine::on_reset();
+        assert_eq!(
+            machine::take(handle),
+            Take::Settled(Outcome::Aborted(machine::AbortReason::Reset))
+        );
+        tick();
+        assert!(drain().is_empty(), "an aborted row never walks again");
+    }
+
+    #[test]
+    fn dest_change_rewalks_without_renewing_the_bound() {
+        reset();
+        post_scene(named_booth(), named_approach(Some((3011, 3353))));
+        let handle = running(start(named_nearest()));
+        assert_eq!(drain(), vec![walk_near_dest()]);
+        // The approach's bound is 60s from the begin; spend half of it.
+        machine::age(handle, WALK_BOUND_MS / 2);
+
+        post_scene(named_booth(), named_approach(Some((3013, 3355))));
+        tick();
+        assert_eq!(
+            drain(),
+            vec![InteractReq::WalkNear {
+                x: 3013,
+                z: 3355,
+                level: 0,
+                radius: 0,
+                allow_teleports: false,
+                allow_wilderness: true,
+                allow_bank_fetch: true,
+                request_id: 0,
+            }],
+            "a new dest re-walks inside the same bound"
+        );
+        assert_eq!(
+            machine::take(handle),
+            Take::Pending,
+            "the re-walk keeps the row"
+        );
+
+        // Spend the rest of the original bound: a re-walk that renewed it
+        // would still have half a window left here.
+        machine::age(handle, WALK_BOUND_MS / 2 + 1);
+        tick();
+        assert_eq!(
+            done(handle),
+            json!(false),
+            "the re-walk must not renew the approach bound"
+        );
+    }
+
+    #[test]
+    fn a_dest_change_after_the_bound_times_out_without_another_walk() {
+        reset();
+        post_scene(named_booth(), named_approach(Some((3011, 3353))));
+        let handle = running(start(named_nearest()));
+        assert_eq!(drain(), vec![walk_near_dest()]);
+        machine::age(handle, WALK_BOUND_MS + 1);
+
+        post_scene(named_booth(), named_approach(Some((3013, 3355))));
+        tick();
+        assert_eq!(done(handle), json!(false));
+        assert!(drain().is_empty(), "an expired bound never walks again");
+    }
+
+    #[test]
+    fn identity_lost_after_the_approach_sends_no_click() {
+        reset();
+        post_scene(named_booth(), named_approach(Some((3011, 3353))));
+        let handle = running(start(named_nearest()));
+        assert_eq!(drain(), vec![walk_near_dest()]);
+
+        observed::post(0, |post| {
+            post.here(observed::Tile {
+                x: 3011,
+                z: 3353,
+                level: 0,
+            })
+            .locs(vec![booth_row(
+                999,
+                3011,
+                3354,
+                1,
+                "Bank booth",
+                &["Use-quickly"],
+            )])
+            .bank_approaches(named_approach(Some((3011, 3353))));
+        });
+        tick();
+        assert_eq!(done(handle), json!(false));
+        assert!(drain().is_empty(), "a replaced loc never gets a click");
+    }
+
+    #[test]
+    fn pause_and_hold_freeze_mid_approach() {
+        reset();
+        post_scene(named_booth(), named_approach(Some((3011, 3353))));
+        let handle = running(start(named_nearest()));
+        assert_eq!(drain(), vec![walk_near_dest()]);
+        // Both freezes read the frozen clock, so a row that stepped while
+        // paused or held would find its (already due) bound reached and
+        // settle instead of waiting.
+        machine::age(handle, WALK_BOUND_MS + 1);
+        machine::on_pause();
+        tick();
+        assert_eq!(
+            machine::take(handle),
+            Take::Pending,
+            "paused rows do not step"
+        );
+        machine::on_resume();
+        machine::on_hold(true);
+        tick();
+        assert_eq!(
+            machine::take(handle),
+            Take::Pending,
+            "held rows do not step"
+        );
+        machine::on_hold(false);
+        tick();
+        assert_eq!(
+            done(handle),
+            json!(false),
+            "the row walks its bound out once it runs again"
+        );
+        assert!(drain().is_empty(), "no second walk after the bound");
+    }
+
+    #[test]
+    fn world_mode_walks_through_the_native_verb_then_opens() {
+        reset();
+        observed::post(0, |post| {
+            post.session(true)
+                .here(observed::Tile {
+                    x: 3000,
+                    z: 3000,
+                    level: 0,
+                })
+                .bank_generation(7)
+                .has_booth_stands(true);
+        });
+        let handle = running(start(json!({ "mode": "open-nearest-world" })));
+        assert_eq!(drain(), vec![InteractReq::WalkNearestBank]);
+
+        observed::post(0, |post| {
+            post.here(observed::Tile {
+                x: 3011,
+                z: 3353,
+                level: 0,
+            })
+            .nearest_booth(observed::NearestBooth {
+                tile: observed::Tile {
+                    x: 3011,
+                    z: 3354,
+                    level: 0,
+                },
+                id: 2213,
+                name: None,
+                op: None,
+            })
+            .bank_approaches(vec![approach(
+                2213,
+                3011,
+                3354,
+                true,
+                Some((3011, 3353)),
+            )]);
+        });
+        tick();
+        assert_eq!(
+            drain(),
+            vec![InteractReq::OpenBooth {
                 x: 3011,
                 z: 3354,
                 level: 0,
-            },
-            can_operate: false,
-            dest: None,
-        }];
-        let empty = runtime.begin(
-            Mode::Nearest,
-            None,
-            false,
-            Some("Bank booth".into()),
-            Some("Use-quickly".into()),
-            &observation,
+                id: 2213,
+                name: None,
+                action: None,
+            }],
+            "the world walk opens the unnamed nearest booth"
         );
-        assert_eq!(empty["reason"], "unreachable");
-    }
-
-    #[test]
-    fn dest_change_rewalks_without_renewing_bound() {
-        let mut runtime = BankOpenRuntime::new();
-        let begin = runtime.begin(
-            Mode::Nearest,
-            None,
-            false,
-            Some("Bank booth".into()),
-            Some("Use-quickly".into()),
-            &obs(),
-        );
-        let token = begin["token"].as_u64().unwrap();
-        let original = runtime.deadline;
-        let mut observation = obs();
-        observation.approaches[0].dest = Some(Tile {
-            x: 3011,
-            z: 3355,
-            level: 0,
-        });
-        let again = runtime.next(token, &observation);
-        assert_eq!(again["kind"], "walk-near");
-        assert_eq!(again["radius"], 0);
-        assert_eq!(again["z"], 3355);
-        assert_eq!(runtime.deadline, original);
-    }
-
-    #[test]
-    fn changed_dest_after_approach_deadline_times_out_without_another_walk() {
-        let mut runtime = BankOpenRuntime::new();
-        let begin = runtime.begin(
-            Mode::Nearest,
-            None,
-            false,
-            Some("Bank booth".into()),
-            Some("Use-quickly".into()),
-            &obs(),
-        );
-        let token = begin["token"].as_u64().unwrap();
-        runtime.deadline = Some(runtime.now() - Duration::from_millis(1));
-        let mut observation = obs();
-        observation.approaches[0].dest = Some(Tile {
-            x: 3011,
-            z: 3355,
-            level: 0,
-        });
-        let result = runtime.next(token, &observation);
-        assert_eq!(result["kind"], "done");
-        assert_eq!(result["ok"], false);
-        assert_eq!(result["reason"], "timeout");
-    }
-
-    #[test]
-    fn pause_holds_and_stale_token_aborts() {
-        let mut runtime = BankOpenRuntime::new();
-        let begin = runtime.begin(
-            Mode::Nearest,
-            None,
-            false,
-            Some("Bank booth".into()),
-            Some("Use-quickly".into()),
-            &obs(),
-        );
-        let token = begin["token"].as_u64().unwrap();
-        runtime.set_freeze(true, false);
-        assert_eq!(runtime.next(token, &obs())["kind"], "wait");
-        runtime.set_freeze(false, false);
-        runtime.abort();
-        assert_eq!(runtime.next(token, &obs())["kind"], "aborted");
+        assert_eq!(machine::take(handle), Take::Pending);
     }
 }

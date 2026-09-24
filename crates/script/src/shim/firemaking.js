@@ -1,5 +1,6 @@
 // Catalog Firemaking URL: SETTINGS keys + lightFire. Rust selects and ranks
-// lanes inside the posted host AABB; this shim marshals inputs and results.
+// lanes inside the posted host AABB and walks the caller's lane callbacks;
+// this shim marshals inputs and results.
 import Tile from '../../geometry/Tile.js';
 import { host, snap, notImpl } from '../../shim/_kernel.js';
 
@@ -30,103 +31,43 @@ export const FIRE_SPOTS = fireSpots();
 
 export const FIRE_SPOT_OPTIONS = Object.keys(FIRE_SPOTS);
 
-/**
- * First posted fire plot whose bank level matches `origin` and whose inclusive
- * AABB contains it, else a half-tile box around `origin`.
- *
- * The posted list is walked by the engine's own `for...of`, so a non-array
- * iterable, a customised array `Symbol.iterator`, the live row read, the close
- * on the returning hit and a throwing row keep the frozen `for...of` order.
- * The native `local-plot` step owns the gates: it asks for the level
- * comparison first and only then for the inclusive AABB, names the first
- * containment as the hit and authorises the fallback box only once the
- * caller's list ends. The posted row, the two scalar comparisons, `?? 0`,
- * `typeof`, NaN/Infinity coercion and the `Tile`/box arithmetic stay here at
- * the original expressions.
- */
-export function localFirePlot(origin, half = 4) {
-    const o = origin || snap().here || {};
-    const x = o.x;
-    const z = o.z;
-    const level = o.level ?? 0;
-    if (typeof x !== 'number' || typeof z !== 'number') {
-        throw notImpl('localFirePlot');
-    }
-    const plots = (host().content && host().content.fire_plots) || [];
-    for (const p of plots) {
-        const lv = (p.bank && p.bank.level) ?? 0;
-        const gate = callFire({ op: 'local-plot', level_ok: lv === level }, 'Firemaking.localFirePlot');
-        if (gate.kind === 'contains') {
-            const contained = x >= p.x0 && x <= p.x1 && z >= p.z0 && z <= p.z1;
-            const verdict = callFire({ op: 'local-plot', contained }, 'Firemaking.localFirePlot');
-            if (verdict.kind === 'hit') {
-                return {
-                    bank: new Tile(p.bank.x, p.bank.z, lv),
-                    x0: p.x0,
-                    x1: p.x1,
-                    z0: p.z0,
-                    z1: p.z1,
-                };
-            }
-            if (verdict.kind !== 'plot') throw notImpl('Firemaking.localFirePlot', verdict.reason);
-            continue;
-        }
-        if (gate.kind !== 'plot') throw notImpl('Firemaking.localFirePlot', gate.reason);
-    }
-    const end = callFire({ op: 'local-plot', exhausted: true }, 'Firemaking.localFirePlot');
-    if (end.kind !== 'fallback') throw notImpl('Firemaking.localFirePlot', end.reason);
-    const h = Math.max(0, Math.floor(Number(half) || 4));
-    return {
-        bank: new Tile(x, z, level),
-        x0: x - h,
-        x1: x + h,
-        z0: z - h,
-        z1: z + h,
-    };
+function native(op, ...args) {
+    return globalThis.__rs2b0t_firemaking(op, ...args);
 }
 
-export const LOG_LEVELS = {
-    Logs: 1,
-    'Oak logs': 15,
-    'Willow logs': 30,
-    'Maple logs': 45,
-    'Yew logs': 60,
-    'Magic logs': 75,
-};
+/** Frozen box of `half` tiles (default 8, at least 2) around `origin`. */
+export function localFirePlot(origin, half) {
+    return native('localFirePlot', Tile, origin, half);
+}
+
+export const LOG_LEVELS = Object.fromEntries((host().content && host().content.log_levels) || []);
 
 export function tileKey(t) {
     return `${t.x},${t.z}`;
 }
 
+/** Tiles that answered CANT_LIGHT this session; the set itself is held in Rust. */
 export class NoLightTiles {
-    constructor() {
-        this.refused = new Set();
-    }
+    #slot = native('noLightNew');
 
     add(tile) {
-        this.refused = new Set(callFire({
-            op: 'no-light', action: 'add', keys: [...this.refused], key: tileKey(tile),
-        }));
+        native('noLightAdd', this.#slot, tile);
     }
 
     has(tile) {
-        return !!callFire({
-            op: 'no-light', action: 'has', keys: [...this.refused], key: tileKey(tile),
-        });
+        return native('noLightHas', this.#slot, tile);
     }
 
     get size() {
-        return Number(callFire({ op: 'no-light', action: 'size', keys: [...this.refused] }));
+        return native('noLightSize', this.#slot);
     }
 
     merge(occupied) {
-        return new Set(callFire({
-            op: 'no-light', action: 'merge', keys: [...this.refused], occupied: [...occupied],
-        }));
+        return native('noLightMerge', this.#slot, occupied);
     }
 
     clear() {
-        this.refused = new Set(callFire({ op: 'no-light', action: 'clear', keys: [...this.refused] }));
+        native('noLightClear', this.#slot);
     }
 }
 
@@ -156,18 +97,9 @@ export function fireReactionTicks() {
     return Number(callFire({ op: 'fire-reaction-ticks' }));
 }
 
-/** Native posted-reach run; callback args preserve the frozen signature. */
-export function runInDir(from, plot, dir, occupied, walkable, _canStep, cap) {
-    const step = callFire({
-        op: 'run-in-dir', from, plot, dir,
-        occupied: occupied && typeof occupied.has === 'function' ? [...occupied] : [],
-        hasWalkable: typeof walkable === 'function', cap,
-    });
-    if (step.kind === 'callback') {
-        return callFire({ op: 'run-in-dir-result', walkable: !!walkable(from), from, dir,
-            plot, occupied: occupied && typeof occupied.has === 'function' ? [...occupied] : [], cap }).run;
-    }
-    return step.run || 0;
+/** Frozen lane walk; the caller's `walkable` / `canStep` run once per visited tile. */
+export function runInDir(from, plot, dir, occupied, walkable, canStep, cap) {
+    return native('runInDir', from, plot, dir, occupied, walkable, canStep, cap);
 }
 
 export function findBurnLane(plot, here, occupied, want = 1, _walkable, _canStep, directions = BURN_DIRS) {

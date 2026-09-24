@@ -12,7 +12,7 @@
 //! no native adapter, or one declared unavailable, is recorded with its explicit
 //! reason and is not substituted by anything else.
 
-use super::manifest::{CaseEntry, CaseKind, CaseStatus, RunnerKind, SuiteManifest};
+use super::manifest::{CaseEntry, CaseKind, CaseStatus, SuiteManifest};
 use super::SuiteResult;
 use std::collections::BTreeSet;
 
@@ -371,6 +371,7 @@ fn starts_with_any(path: &str, prefixes: &[String]) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use super::super::manifest::RunnerKind;
     use super::*;
 
     fn manifest() -> SuiteManifest {

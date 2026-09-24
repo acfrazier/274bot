@@ -1,11 +1,25 @@
 use std::sync::Arc;
 
 use host_play::catalog_core::{
-    firemaker_spec, BoundedLoc, CoreCase, CoreWatch, CoreWatchStatus, FiremakerCycle, Observation,
-    CERT_RUNE_CHAINBODY_ID, COINS_ID, HIGH_ALCH_MAGIC_XP, NATURE_RUNE_ID, OAK_LOGS_ID,
+    firemaker_spec, line_of_sight_dest_vis_alone, line_of_sight_pair_is_blocked,
+    line_of_sight_pair_is_open, select_line_of_sight_pairs, BoundedLoc, CoreCase, CoreWatch,
+    CoreWatchStatus, FiremakerCycle, LineOfSightHere, LineOfSightIdentity, LineOfSightObservation,
+    LineOfSightPair, LineOfSightPairResult, LineOfSightScriptReceipt, LineOfSightTile, Observation,
+    RouteInspectHopFact, BRIMHAVEN_INSPECT_BANK, BRIMHAVEN_INSPECT_FIELD, BRIMHAVEN_INSPECT_PIER,
+    CERT_RUNE_CHAINBODY_ID, COINS_ID, HIGH_ALCH_MAGIC_XP, LOBSTER_ID, LOS_V2_STOP, LOS_VIS_SCENERY,
+    LOS_V_E, LOS_V_W, LOS_WALK_SCENERY, NATURE_RUNE_ID, OAK_LOGS_ID,
     RUNE_CHAINBODY_HIGH_ALCH_COINS, STAFF_OF_FIRE_ID, TINDERBOX_ID, UNIDENTIFIED_GUAM_ID,
     UNIDENTIFIED_MARENTILL_ID, VARROCK_EAST_BANK, VARROCK_WEST_BANK,
 };
+use host_play::catalog_core::{
+    ActorObservation, ActorObservationLos, ActorObservationNpc, ActorObservationNpcFact,
+    ActorObservationPacked, ActorObservationPoint, ActorObservationScriptReceipt,
+    ActorObservationSelfTarget, FightFieldNpc, FightFieldObservation, FightFieldScriptReceipt,
+    ACTOR_OBSERVATION_V2_STOP, FIGHT_FIELD_V2_STOP,
+};
+
+#[path = "catalog_core_watch/hunt.rs"]
+mod hunt;
 
 fn thiever_observation() -> Observation {
     let mut observation = Observation {
@@ -379,4 +393,2224 @@ fn alcher_swarm_stop_does_not_fail_a_qualified_recovery() {
         CoreWatchStatus::Qualified,
         "a later Stop must not move a different qualified core"
     );
+}
+
+use host_play::catalog_core::{
+    ARCHERY_TICKET_ID, BRONZE_ARROW_ID, COINS_PER_TRIP, ENTRY_FEE, MAGIC_SHORTBOW_ID,
+    RANGING_GUILD_FULL_STOP_NEEDLE, RANGING_GUILD_MERCHANT_STAND, RANGING_GUILD_SEERS_BANK,
+    RANGING_GUILD_STAND, RUNE_ARROWS_PER_TRADE, RUNE_ARROW_ID, SEED_KEEP_TICKETS,
+    TARGET_RESULT_MODAL, TICKETS_PER_TRADE, VARP_TARGET_COUNT, VARP_TARGET_SCORE,
+};
+
+fn ranging_round_baseline() -> Observation {
+    let mut observation = Observation {
+        ingame: true,
+        scene_state: 2,
+        player: Some("catalogtest".into()),
+        tile: Some(RANGING_GUILD_STAND),
+        ..Observation::default()
+    };
+    observation.levels.insert("ranged".into(), 70);
+    observation.effective_levels.insert("ranged".into(), 70);
+    observation.item_ids.insert(MAGIC_SHORTBOW_ID, 1);
+    observation.item_ids.insert(COINS_ID, ENTRY_FEE * 2);
+    observation.varps.insert(VARP_TARGET_COUNT, 0);
+    observation.varps.insert(VARP_TARGET_SCORE, 0);
+    observation
+}
+
+fn ranging_redeem_baseline() -> Observation {
+    let mut observation = Observation {
+        ingame: true,
+        scene_state: 2,
+        player: Some("catalogtest".into()),
+        tile: Some(RANGING_GUILD_MERCHANT_STAND),
+        ..Observation::default()
+    };
+    observation.levels.insert("ranged".into(), 70);
+    observation.effective_levels.insert("ranged".into(), 70);
+    observation.item_ids.insert(MAGIC_SHORTBOW_ID, 1);
+    observation
+        .item_ids
+        .insert(ARCHERY_TICKET_ID, TICKETS_PER_TRADE);
+    observation
+}
+
+#[test]
+fn ranging_guild_round_rejects_seeded_state_and_requires_ordered_second_enter() {
+    assert_eq!(
+        CoreCase::parse("ranging_guild_round").unwrap(),
+        CoreCase::RangingGuildRound
+    );
+    assert_eq!(CoreCase::RangingGuildRound.card_name(), "RangingGuild");
+
+    let watch = CoreWatch::default();
+    watch.configure(CoreCase::RangingGuildRound, "catalogtest");
+    let baseline = ranging_round_baseline();
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+
+    watch.observe("catalogtest", baseline.clone(), false);
+    assert!(
+        watch.qualify().unwrap_err().contains("incomplete"),
+        "repeating the seeded stand must not qualify"
+    );
+
+    let mut paid = baseline.clone();
+    paid.item_ids.insert(COINS_ID, ENTRY_FEE);
+    paid.varps.insert(VARP_TARGET_COUNT, 1);
+    watch.observe("catalogtest", paid.clone(), false);
+    assert!(watch.qualify().is_err(), "fee alone is not a round");
+
+    let mut shot = paid.clone();
+    shot.varps.insert(VARP_TARGET_COUNT, 2);
+    shot.xp.insert("ranged".into(), 8);
+    watch.observe("catalogtest", shot.clone(), false);
+    assert!(
+        watch.qualify().is_err(),
+        "a shot without payout is incomplete"
+    );
+
+    let mut reset = shot.clone();
+    reset.varps.insert(VARP_TARGET_COUNT, 0);
+    reset.item_ids.insert(ARCHERY_TICKET_ID, 3);
+    watch.observe("catalogtest", reset.clone(), false);
+    assert!(
+        watch.qualify().is_err(),
+        "one payout must not stand in for a further round"
+    );
+
+    let mut second = reset;
+    second.item_ids.insert(COINS_ID, 0);
+    second.varps.insert(VARP_TARGET_COUNT, 1);
+    watch.observe("catalogtest", second, false);
+    watch.qualify().expect("paid shot payout and second enter");
+}
+
+#[test]
+fn ranging_guild_round_does_not_treat_seeded_tickets_as_payout() {
+    let watch = CoreWatch::default();
+    watch.configure(CoreCase::RangingGuildRound, "catalogtest");
+    let mut seeded = ranging_round_baseline();
+    seeded.item_ids.insert(ARCHERY_TICKET_ID, 20);
+    watch.observe("catalogtest", seeded.clone(), false);
+    assert!(
+        watch.begin_start("catalogtest").is_err(),
+        "seeded tickets are not a round baseline"
+    );
+}
+
+#[test]
+fn ranging_guild_redeem_requires_real_ticket_spend_and_arrow_gain() {
+    assert_eq!(
+        CoreCase::parse("ranging_guild_redeem").unwrap(),
+        CoreCase::RangingGuildRedeem
+    );
+    assert_eq!(CoreCase::RangingGuildRedeem.card_name(), "RangingGuild");
+
+    let start = |observation: Observation| {
+        let watch = CoreWatch::default();
+        watch.configure(CoreCase::RangingGuildRedeem, "catalogtest");
+        watch.observe("catalogtest", observation, false);
+        watch.begin_start("catalogtest").unwrap();
+        watch
+    };
+    let baseline = ranging_redeem_baseline();
+    let watch = start(baseline.clone());
+    watch.observe("catalogtest", baseline.clone(), false);
+    assert!(
+        watch.qualify().unwrap_err().contains("incomplete"),
+        "seeded 2000 tickets must not count as a spend"
+    );
+
+    let modal_only = start(baseline.clone());
+    let mut opened = baseline.clone();
+    opened.main_modal = 4461;
+    modal_only.observe("catalogtest", opened, false);
+    assert!(
+        modal_only.qualify().is_err(),
+        "opening the ticket shop without a trade is not redemption"
+    );
+
+    let spent_only = start(baseline.clone());
+    let mut spent = baseline.clone();
+    spent.item_ids.insert(ARCHERY_TICKET_ID, 0);
+    spent_only.observe("catalogtest", spent, false);
+    assert!(
+        spent_only.qualify().is_err(),
+        "ticket loss without rune arrows is not redemption"
+    );
+
+    let arrows_only = start(baseline.clone());
+    let mut arrows = baseline.clone();
+    arrows.item_ids.insert(RUNE_ARROW_ID, RUNE_ARROWS_PER_TRADE);
+    arrows_only.observe("catalogtest", arrows, false);
+    assert!(
+        arrows_only.qualify().is_err(),
+        "arrows without a ticket spend can be a seed, not a buy"
+    );
+
+    let traded = start(baseline.clone());
+    let mut buy = baseline;
+    buy.item_ids.insert(ARCHERY_TICKET_ID, 0);
+    buy.item_ids.insert(RUNE_ARROW_ID, RUNE_ARROWS_PER_TRADE);
+    traded.observe("catalogtest", buy, false);
+    traded
+        .qualify()
+        .expect("2000 seeded tickets spent for 50 rune arrows");
+}
+
+#[test]
+fn ranging_guild_redeem_rejects_already_held_arrows_as_baseline() {
+    let watch = CoreWatch::default();
+    watch.configure(CoreCase::RangingGuildRedeem, "catalogtest");
+    let mut seeded_arrows = ranging_redeem_baseline();
+    seeded_arrows
+        .item_ids
+        .insert(RUNE_ARROW_ID, RUNE_ARROWS_PER_TRADE);
+    watch.observe("catalogtest", seeded_arrows, false);
+    assert!(
+        watch.begin_start("catalogtest").is_err(),
+        "held rune arrows are not a redemption baseline"
+    );
+}
+
+fn ranging_bank_baseline() -> Observation {
+    let mut observation = Observation {
+        ingame: true,
+        scene_state: 2,
+        player: Some("catalogtest".into()),
+        tile: Some(RANGING_GUILD_SEERS_BANK),
+        ..Observation::default()
+    };
+    observation.levels.insert("ranged".into(), 70);
+    observation.effective_levels.insert("ranged".into(), 70);
+    observation
+        .item_ids
+        .insert(ARCHERY_TICKET_ID, SEED_KEEP_TICKETS);
+    observation
+        .item_ids
+        .insert(RUNE_ARROW_ID, RUNE_ARROWS_PER_TRADE);
+    observation.varps.insert(VARP_TARGET_COUNT, 0);
+    observation
+}
+
+fn ranging_bank_open(
+    baseline: &Observation,
+    coins_in_bank: i32,
+    arrows_in_bank: i32,
+) -> Observation {
+    let mut now = baseline.clone();
+    now.tick += 1;
+    now.bank_open = true;
+    now.bank_loaded = true;
+    now.bank_generation = baseline.bank_generation + 1;
+    now.item_ids.insert(RUNE_ARROW_ID, 0);
+    now.bank_ids.insert(RUNE_ARROW_ID, arrows_in_bank);
+    now.bank_ids.insert(COINS_ID, coins_in_bank);
+    now.bank_ids.insert(MAGIC_SHORTBOW_ID, 1);
+    now
+}
+
+#[test]
+fn ranging_guild_bank_rejects_preseed_wrong_bank_and_missing_return() {
+    assert_eq!(
+        CoreCase::parse("ranging_guild_bank").unwrap(),
+        CoreCase::RangingGuildBank
+    );
+    assert_eq!(CoreCase::RangingGuildBank.card_name(), "RangingGuild");
+
+    let start = |observation: Observation| {
+        let watch = CoreWatch::default();
+        watch.configure(CoreCase::RangingGuildBank, "catalogtest");
+        watch.observe("catalogtest", observation, false);
+        watch.begin_start("catalogtest").unwrap();
+        watch
+    };
+    let baseline = ranging_bank_baseline();
+    let watch = start(baseline.clone());
+    watch.observe("catalogtest", baseline.clone(), false);
+    assert!(
+        watch.qualify().unwrap_err().contains("incomplete"),
+        "preseeded Seers KEEP/arrows alone must not qualify"
+    );
+
+    let wrong = start(baseline.clone());
+    let mut varrock = ranging_bank_open(&baseline, COINS_PER_TRIP, RUNE_ARROWS_PER_TRADE);
+    varrock.tile = Some(VARROCK_WEST_BANK);
+    varrock.item_ids.insert(COINS_ID, COINS_PER_TRIP);
+    varrock.bank_ids.insert(COINS_ID, 0);
+    wrong.observe("catalogtest", varrock, false);
+    assert!(
+        wrong.qualify().is_err(),
+        "a loaded booth away from Seers cannot qualify"
+    );
+
+    let no_return = start(baseline.clone());
+    let mut deposited = ranging_bank_open(&baseline, COINS_PER_TRIP, RUNE_ARROWS_PER_TRADE);
+    no_return.observe("catalogtest", deposited.clone(), false);
+    deposited.item_ids.insert(COINS_ID, COINS_PER_TRIP);
+    deposited.bank_ids.insert(COINS_ID, 0);
+    no_return.observe("catalogtest", deposited.clone(), false);
+    let mut closed = deposited;
+    closed.bank_open = false;
+    closed.bank_loaded = false;
+    closed.bank_generation += 1;
+    closed.bank_ids.clear();
+    no_return.observe("catalogtest", closed.clone(), false);
+    assert!(
+        no_return.qualify().is_err(),
+        "deposit, withdraw and close without STAND return is incomplete"
+    );
+
+    let mut fee_at_bank = closed;
+    fee_at_bank.item_ids.insert(COINS_ID, ENTRY_FEE);
+    fee_at_bank.varps.insert(VARP_TARGET_COUNT, 1);
+    no_return.observe("catalogtest", fee_at_bank, false);
+    assert!(
+        no_return.qualify().is_err(),
+        "a fee at Seers is not a STAND return"
+    );
+}
+
+#[test]
+fn ranging_guild_bank_requires_keep_coin_identity_close_return_and_fee() {
+    let start = |observation: Observation| {
+        let watch = CoreWatch::default();
+        watch.configure(CoreCase::RangingGuildBank, "catalogtest");
+        watch.observe("catalogtest", observation, false);
+        watch.begin_start("catalogtest").unwrap();
+        watch
+    };
+    let baseline = ranging_bank_baseline();
+
+    let deposited_tickets = start(baseline.clone());
+    let mut lost_keep = ranging_bank_open(&baseline, COINS_PER_TRIP, RUNE_ARROWS_PER_TRADE);
+    lost_keep.item_ids.insert(ARCHERY_TICKET_ID, 0);
+    deposited_tickets.observe("catalogtest", lost_keep, false);
+    assert!(
+        deposited_tickets.qualify().is_err(),
+        "depositing KEEP tickets is not the rune-arrow KEEP deposit"
+    );
+
+    let coins_without_bank = start(baseline.clone());
+    let mut gifted = baseline.clone();
+    gifted.tick += 1;
+    gifted.item_ids.insert(COINS_ID, COINS_PER_TRIP);
+    gifted.item_ids.insert(RUNE_ARROW_ID, 0);
+    coins_without_bank.observe("catalogtest", gifted, false);
+    assert!(
+        coins_without_bank.qualify().is_err(),
+        "pack coins without a Seers bank session are not withdraw-X"
+    );
+
+    let watch = start(baseline.clone());
+    let mut deposited = ranging_bank_open(&baseline, COINS_PER_TRIP, RUNE_ARROWS_PER_TRADE);
+    watch.observe("catalogtest", deposited.clone(), false);
+    assert!(watch.qualify().is_err(), "deposit alone is incomplete");
+
+    deposited.item_ids.insert(COINS_ID, COINS_PER_TRIP);
+    deposited.bank_ids.insert(COINS_ID, 0);
+    watch.observe("catalogtest", deposited.clone(), false);
+    assert!(
+        watch.qualify().is_err(),
+        "coin withdraw without close and return is incomplete"
+    );
+
+    let mut closed = deposited.clone();
+    closed.bank_open = false;
+    closed.bank_loaded = false;
+    closed.bank_generation += 1;
+    closed.bank_ids.clear();
+    watch.observe("catalogtest", closed.clone(), false);
+    assert!(
+        watch.qualify().is_err(),
+        "close without STAND return is incomplete"
+    );
+
+    let mut returned = closed;
+    returned.tile = Some(RANGING_GUILD_STAND);
+    watch.observe("catalogtest", returned.clone(), false);
+    assert!(
+        watch.qualify().is_err(),
+        "return without a subsequent fee is incomplete"
+    );
+
+    let mut fee = returned;
+    fee.item_ids.insert(COINS_ID, ENTRY_FEE);
+    fee.varps.insert(VARP_TARGET_COUNT, 1);
+    watch.observe("catalogtest", fee, false);
+    watch
+        .qualify()
+        .expect("KEEP deposit, coin withdraw, close, STAND return and fee");
+}
+
+#[test]
+fn ranging_guild_bank_rejects_redeem_stack_and_already_funded_pack() {
+    let watch = CoreWatch::default();
+    watch.configure(CoreCase::RangingGuildBank, "catalogtest");
+    let mut redeem_stack = ranging_bank_baseline();
+    redeem_stack
+        .item_ids
+        .insert(ARCHERY_TICKET_ID, TICKETS_PER_TRADE);
+    watch.observe("catalogtest", redeem_stack, false);
+    assert!(
+        watch.begin_start("catalogtest").is_err(),
+        "2000 tickets would redeem before banking"
+    );
+
+    let funded = CoreWatch::default();
+    funded.configure(CoreCase::RangingGuildBank, "catalogtest");
+    let mut coins = ranging_bank_baseline();
+    coins.item_ids.insert(COINS_ID, COINS_PER_TRIP);
+    funded.observe("catalogtest", coins, false);
+    assert!(
+        funded.begin_start("catalogtest").is_err(),
+        "pack coins at Start are not a Seers withdraw baseline"
+    );
+}
+
+fn ranging_full_baseline() -> Observation {
+    let mut observation = Observation {
+        ingame: true,
+        scene_state: 2,
+        player: Some("catalogtest".into()),
+        tile: Some(RANGING_GUILD_SEERS_BANK),
+        ..Observation::default()
+    };
+    observation.levels.insert("ranged".into(), 70);
+    observation.effective_levels.insert("ranged".into(), 70);
+    observation
+        .item_ids
+        .insert(ARCHERY_TICKET_ID, SEED_KEEP_TICKETS);
+    observation.varps.insert(VARP_TARGET_COUNT, 0);
+    observation
+}
+
+fn ranging_full_stop(reason: &str) -> script::ScriptLifecycleReceipt {
+    script::ScriptLifecycleReceipt {
+        runtime_generation: 1,
+        state: script::ScriptTerminalState::Stopped,
+        tick: 400,
+        reason: reason.into(),
+    }
+}
+
+fn ranging_full_start(observation: Observation) -> CoreWatch {
+    let watch = CoreWatch::default();
+    watch.configure(CoreCase::RangingGuildFull, "catalogtest");
+    watch.observe("catalogtest", observation, false);
+    watch.begin_start("catalogtest").unwrap();
+    watch
+}
+
+fn ranging_full_earned_tickets(baseline: &Observation) -> Observation {
+    let mut now = baseline.clone();
+    now.tick += 1;
+    now.tile = Some(RANGING_GUILD_STAND);
+    now.item_ids.insert(ARCHERY_TICKET_ID, TICKETS_PER_TRADE);
+    now.item_ids.insert(COINS_ID, ENTRY_FEE);
+    now
+}
+
+fn ranging_full_bought(from: &Observation) -> Observation {
+    let mut now = from.clone();
+    now.tick += 1;
+    now.tile = Some(RANGING_GUILD_MERCHANT_STAND);
+    now.item_ids.insert(ARCHERY_TICKET_ID, 0);
+    now.item_ids.insert(RUNE_ARROW_ID, RUNE_ARROWS_PER_TRADE);
+    now.item_ids.insert(COINS_ID, ENTRY_FEE);
+    now
+}
+
+fn ranging_full_result_then_continue(from: &Observation) -> (Observation, Observation) {
+    let mut opened = from.clone();
+    opened.tick += 1;
+    opened.tile = Some(RANGING_GUILD_STAND);
+    opened.main_modal = TARGET_RESULT_MODAL;
+    opened.varps.insert(VARP_TARGET_COUNT, 2);
+    let mut closed = opened.clone();
+    closed.tick += 1;
+    closed.main_modal = -1;
+    closed.varps.insert(VARP_TARGET_COUNT, 3);
+    (opened, closed)
+}
+
+fn ranging_full_bank_bought(from: &Observation, arrows: i32, item: i32) -> Observation {
+    let mut now = from.clone();
+    now.tick += 1;
+    now.tile = Some(RANGING_GUILD_SEERS_BANK);
+    now.bank_open = true;
+    now.bank_loaded = true;
+    now.bank_generation = from.bank_generation + 1;
+    now.item_ids.insert(RUNE_ARROW_ID, 0);
+    now.bank_ids.insert(item, arrows);
+    now.item_ids.insert(COINS_ID, 0);
+    now.item_ids.insert(ARCHERY_TICKET_ID, 50);
+    now
+}
+
+#[test]
+fn ranging_guild_full_rejects_preseed_wrong_item_no_shop_buy_no_open_modal_and_deadline_only_stop()
+{
+    assert_eq!(
+        CoreCase::parse("ranging_guild_full").unwrap(),
+        CoreCase::RangingGuildFull
+    );
+    assert_eq!(CoreCase::RangingGuildFull.card_name(), "RangingGuild");
+
+    let baseline = ranging_full_baseline();
+    let preseed = ranging_full_start(baseline.clone());
+    preseed.observe("catalogtest", baseline.clone(), false);
+    assert!(
+        preseed.qualify().unwrap_err().contains("incomplete"),
+        "preseeded Seers KEEP tickets alone must not qualify"
+    );
+
+    let seeded_arrows = CoreWatch::default();
+    seeded_arrows.configure(CoreCase::RangingGuildFull, "catalogtest");
+    let mut packed = baseline.clone();
+    packed.item_ids.insert(RUNE_ARROW_ID, RUNE_ARROWS_PER_TRADE);
+    seeded_arrows.observe("catalogtest", packed, false);
+    assert!(
+        seeded_arrows.begin_start("catalogtest").is_err(),
+        "seeded pack rune arrows are the bank cell, not fullflow"
+    );
+
+    let no_buy = ranging_full_start(baseline.clone());
+    let mut gifted = baseline.clone();
+    gifted.tick += 1;
+    gifted.item_ids.insert(RUNE_ARROW_ID, RUNE_ARROWS_PER_TRADE);
+    no_buy.observe("catalogtest", gifted.clone(), false);
+    let deposited = ranging_full_bank_bought(&gifted, RUNE_ARROWS_PER_TRADE, RUNE_ARROW_ID);
+    no_buy.observe("catalogtest", deposited, false);
+    assert!(
+        no_buy.qualify().is_err(),
+        "arrow gift plus bank without a 2000-ticket shop spend is not bought-then-banked"
+    );
+
+    let earned = ranging_full_earned_tickets(&baseline);
+    let bought = ranging_full_bought(&earned);
+    let wrong_item = ranging_full_start(baseline.clone());
+    wrong_item.observe("catalogtest", earned.clone(), false);
+    wrong_item.observe("catalogtest", bought.clone(), false);
+    let bronze = ranging_full_bank_bought(&bought, RUNE_ARROWS_PER_TRADE, BRONZE_ARROW_ID);
+    wrong_item.observe("catalogtest", bronze, false);
+    assert!(
+        wrong_item.qualify().is_err(),
+        "banking bronze arrows is not the shop-bought rune-arrow deposit"
+    );
+
+    let no_modal = ranging_full_start(baseline.clone());
+    no_modal.observe("catalogtest", earned.clone(), false);
+    let mut shop_modal = bought.clone();
+    shop_modal.main_modal = 4461;
+    no_modal.observe("catalogtest", shop_modal, false);
+    let banked = ranging_full_bank_bought(&bought, RUNE_ARROWS_PER_TRADE, RUNE_ARROW_ID);
+    no_modal.observe("catalogtest", banked.clone(), false);
+    let mut empty = banked.clone();
+    empty.bank_open = false;
+    empty.bank_loaded = false;
+    empty.bank_generation += 1;
+    empty.item_ids.insert(COINS_ID, 0);
+    empty.script_lifecycle = Some(ranging_full_stop(&format!(
+        "RangingGuild: {RANGING_GUILD_FULL_STOP_NEEDLE}, 50 tickets held, 50 rune arrows bought"
+    )));
+    no_modal.observe("catalogtest", empty, false);
+    assert!(
+        no_modal.qualify().is_err(),
+        "ticket-shop 4461 or never opening result modal 446 cannot qualify"
+    );
+
+    let bank_close_only = ranging_full_start(baseline.clone());
+    bank_close_only.observe("catalogtest", earned.clone(), false);
+    bank_close_only.observe("catalogtest", bought.clone(), false);
+    let mut opened_only = bought.clone();
+    opened_only.tick += 1;
+    opened_only.main_modal = TARGET_RESULT_MODAL;
+    opened_only.varps.insert(VARP_TARGET_COUNT, 2);
+    bank_close_only.observe("catalogtest", opened_only.clone(), false);
+    let mut closed_bank = opened_only;
+    closed_bank.tick += 1;
+    closed_bank.main_modal = -1;
+    closed_bank.bank_open = false;
+    closed_bank.bank_loaded = false;
+    closed_bank.bank_generation += 1;
+    bank_close_only.observe("catalogtest", closed_bank.clone(), false);
+    let banked_after_close =
+        ranging_full_bank_bought(&closed_bank, RUNE_ARROWS_PER_TRADE, RUNE_ARROW_ID);
+    bank_close_only.observe("catalogtest", banked_after_close.clone(), false);
+    let mut stopped_without_continue = banked_after_close;
+    stopped_without_continue.bank_open = false;
+    stopped_without_continue.bank_loaded = false;
+    stopped_without_continue.bank_generation += 1;
+    stopped_without_continue.item_ids.insert(COINS_ID, 0);
+    stopped_without_continue.script_lifecycle = Some(ranging_full_stop(&format!(
+        "RangingGuild: {RANGING_GUILD_FULL_STOP_NEEDLE}, 0 tickets held, 50 rune arrows bought"
+    )));
+    bank_close_only.observe("catalogtest", stopped_without_continue, false);
+    assert!(
+        bank_close_only.qualify().is_err(),
+        "closing the bank after modal 446 is not script continuation"
+    );
+
+    let deadline = ranging_full_start(baseline);
+    deadline.observe("catalogtest", earned, false);
+    deadline.observe("catalogtest", bought.clone(), false);
+    let (opened, continued) = ranging_full_result_then_continue(&bought);
+    deadline.observe("catalogtest", opened, false);
+    deadline.observe("catalogtest", continued.clone(), false);
+    deadline.observe("catalogtest", banked.clone(), false);
+    let mut empty_only = banked;
+    empty_only.bank_open = false;
+    empty_only.bank_loaded = false;
+    empty_only.bank_generation += 1;
+    empty_only.item_ids.insert(COINS_ID, 0);
+    empty_only.script_lifecycle = Some(ranging_full_stop("harness deadline"));
+    deadline.observe("catalogtest", empty_only, false);
+    assert!(
+        deadline.qualify().is_err(),
+        "a deadline/timeout stop is not the source out-of-coins receipt"
+    );
+}
+
+#[test]
+fn ranging_guild_full_requires_bought_then_same_arrow_bank_result_modal_close_continue_and_honest_stop(
+) {
+    let baseline = ranging_full_baseline();
+    let watch = ranging_full_start(baseline.clone());
+    let earned = ranging_full_earned_tickets(&baseline);
+    let bought = ranging_full_bought(&earned);
+    watch.observe("catalogtest", earned, false);
+    watch.observe("catalogtest", bought.clone(), false);
+    assert!(
+        watch.qualify().is_err(),
+        "shop buy without bank, modal, and stop is incomplete"
+    );
+
+    let (opened, continued) = ranging_full_result_then_continue(&bought);
+    watch.observe("catalogtest", opened, false);
+    assert!(
+        watch.qualify().is_err(),
+        "an open result modal without close and continuation is incomplete"
+    );
+    watch.observe("catalogtest", continued.clone(), false);
+    assert!(
+        watch.qualify().is_err(),
+        "modal close plus continuation without bought-then-banked stop is incomplete"
+    );
+
+    let banked = ranging_full_bank_bought(&continued, RUNE_ARROWS_PER_TRADE, RUNE_ARROW_ID);
+    watch.observe("catalogtest", banked.clone(), false);
+    assert!(
+        watch.qualify().is_err(),
+        "bought-then-banked without the script stop is incomplete"
+    );
+
+    let mut stopped = banked;
+    stopped.bank_open = false;
+    stopped.bank_loaded = false;
+    stopped.bank_generation += 1;
+    stopped.item_ids.insert(COINS_ID, 0);
+    stopped.script_lifecycle = Some(ranging_full_stop(&format!(
+        "RangingGuild: {RANGING_GUILD_FULL_STOP_NEEDLE}, 50 tickets held, 50 rune arrows bought"
+    )));
+    watch.observe("catalogtest", stopped, false);
+    watch
+        .qualify()
+        .expect("shop buy, same-arrow bank, modal close+continue, and out-of-coins stop");
+}
+
+fn brimhaven_v1_baseline() -> Observation {
+    let mut observation = Observation {
+        ingame: true,
+        scene_state: 2,
+        player: Some("catalogtest".into()),
+        tile: Some(BRIMHAVEN_INSPECT_BANK),
+        ..Observation::default()
+    };
+    observation.levels.insert("agility".into(), 30);
+    // Session `reset_inspect` already bumped generation and cleared terminals.
+    // Missing-terminal defaults are not the live generation.
+    observation.route_inspect_live_generation = 1;
+    observation.route_inspect_has_terminal = false;
+    observation
+}
+
+fn with_hop(
+    mut observation: Observation,
+    seq: u64,
+    request_id: u64,
+    ok: bool,
+    loc: &str,
+) -> Observation {
+    observation.route_inspect_seq = seq;
+    observation.route_inspect_generation = observation.route_inspect_live_generation;
+    observation.route_inspect_has_terminal = true;
+    observation.route_inspect_request_id = request_id;
+    observation.route_inspect_ok = ok;
+    observation.route_inspect_hops = vec![RouteInspectHopFact {
+        loc_name: loc.into(),
+    }];
+    observation
+}
+
+fn restocked_from(baseline: &Observation) -> Observation {
+    let mut restocked = baseline.clone();
+    restocked.bank_open = true;
+    restocked.bank_loaded = true;
+    restocked.bank_generation = baseline.bank_generation + 1;
+    restocked.item_ids.insert(LOBSTER_ID, 20);
+    restocked.item_ids.insert(COINS_ID, 60);
+    restocked.items.insert("Lobster".into(), 20);
+    restocked.items.insert("Coins".into(), 60);
+    restocked
+}
+
+#[test]
+fn brimhaven_moss_inspect_v1_seed_and_fallback_cannot_pass() {
+    assert_eq!(
+        CoreCase::parse("brimhaven_moss_inspect_v1").unwrap(),
+        CoreCase::BrimhavenMossInspectV1
+    );
+    assert_eq!(
+        CoreCase::BrimhavenMossInspectV1.card_name(),
+        "BrimhavenMossGiants"
+    );
+    assert!(CoreCase::BrimhavenMossInspectV1.copies_route_inspect());
+
+    let watch = CoreWatch::default();
+    watch.configure(CoreCase::BrimhavenMossInspectV1, "catalogtest");
+    let baseline = brimhaven_v1_baseline();
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+
+    watch.observe("catalogtest", baseline.clone(), false);
+    assert!(
+        watch.qualify().unwrap_err().contains("incomplete"),
+        "repeating the empty-pack bank seed must not qualify"
+    );
+
+    let mut field = baseline.clone();
+    field.tile = Some(BRIMHAVEN_INSPECT_FIELD);
+    watch.observe("catalogtest", field, false);
+    assert!(
+        watch.qualify().is_err(),
+        "field arrival without restock or accepted inspect must not qualify"
+    );
+
+    let restocked = restocked_from(&baseline);
+    watch.observe("catalogtest", restocked.clone(), false);
+    assert!(
+        watch.qualify().is_err(),
+        "restock alone is not inspect qualification"
+    );
+
+    let fallback = with_hop(restocked.clone(), 3, 1, false, "");
+    let mut fallback = fallback;
+    fallback.tile = Some(BRIMHAVEN_INSPECT_FIELD);
+    fallback.route_inspect_reason = "route validation exhausted".into();
+    watch.observe("catalogtest", fallback, false);
+    assert!(
+        watch.qualify().is_err(),
+        "frozen fallback without accepted Barnaby inspect must not qualify"
+    );
+
+    let stale = with_hop(restocked.clone(), 0, 0, true, "Captain Barnaby");
+    watch.observe("catalogtest", stale, false);
+    assert!(
+        watch.qualify().is_err(),
+        "a stale or unpublished inspect seq cannot stand in for a fresh result"
+    );
+}
+
+#[test]
+fn brimhaven_moss_inspect_v1_requires_restock_then_fresh_barnaby_then_walk() {
+    let watch = CoreWatch::default();
+    watch.configure(CoreCase::BrimhavenMossInspectV1, "catalogtest");
+    let baseline = brimhaven_v1_baseline();
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+
+    let restocked = restocked_from(&baseline);
+    watch.observe("catalogtest", restocked.clone(), false);
+
+    let accepted = with_hop(restocked.clone(), 4, 7, true, "Captain Barnaby");
+    watch.observe("catalogtest", accepted.clone(), false);
+    assert!(
+        watch.qualify().is_err(),
+        "accepted inspect without ordinary walk progress is incomplete"
+    );
+
+    let mut walked = accepted;
+    walked.tile = Some((2669, 3278, 0));
+    watch.observe("catalogtest", walked, false);
+    watch
+        .qualify()
+        .expect("ordered restock, fresh Barnaby inspect, and pier-ward walk");
+}
+
+#[test]
+fn route_inspect_brimhaven_v2_requires_token_then_id0_then_bank_tile() {
+    assert_eq!(
+        CoreCase::parse("route_inspect_brimhaven_v2_ts").unwrap(),
+        CoreCase::RouteInspectBrimhavenV2
+    );
+    assert!(CoreCase::RouteInspectBrimhavenV2.copies_route_inspect());
+
+    let watch = CoreWatch::default();
+    watch.configure(CoreCase::RouteInspectBrimhavenV2, "catalogtest");
+    let baseline = Observation {
+        ingame: true,
+        scene_state: 2,
+        player: Some("catalogtest".into()),
+        tile: Some(BRIMHAVEN_INSPECT_PIER),
+        ..Observation::default()
+    };
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    watch.observe("catalogtest", baseline.clone(), false);
+    assert!(
+        watch.qualify().unwrap_err().contains("incomplete"),
+        "pier seed must not qualify"
+    );
+
+    let token = with_hop(baseline.clone(), 2, 11, true, "Captain Barnaby");
+    watch.observe("catalogtest", token.clone(), false);
+    assert!(
+        watch.qualify().is_err(),
+        "token inspect alone is incomplete"
+    );
+
+    let snap0 = with_hop(token.clone(), 3, 0, true, "Captain Barnaby");
+    watch.observe("catalogtest", snap0.clone(), false);
+    assert!(
+        watch.qualify().is_err(),
+        "id0 result without distinct-tile walk is incomplete"
+    );
+
+    let mut arrived = snap0;
+    arrived.tile = Some(BRIMHAVEN_INSPECT_BANK);
+    watch.observe("catalogtest", arrived, false);
+    watch
+        .qualify()
+        .expect("token, request_id 0, and actual bank tile");
+}
+
+#[test]
+fn brimhaven_moss_inspect_v1_same_frame_pier_accept_cannot_pass() {
+    let watch = CoreWatch::default();
+    watch.configure(CoreCase::BrimhavenMossInspectV1, "catalogtest");
+    let baseline = brimhaven_v1_baseline();
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    watch.observe("catalogtest", restocked_from(&baseline), false);
+
+    let mut accept_at_pier = with_hop(restocked_from(&baseline), 4, 7, true, "Captain Barnaby");
+    accept_at_pier.tile = Some(BRIMHAVEN_INSPECT_PIER);
+    watch.observe("catalogtest", accept_at_pier.clone(), false);
+    assert!(
+        watch.qualify().is_err(),
+        "same-frame accept already at the pier is not later walk progress"
+    );
+
+    let mut later = accept_at_pier;
+    later.tile = Some((2675, 3275, 0));
+    watch.observe("catalogtest", later, false);
+    watch
+        .qualify()
+        .expect("a later observation with actual tile change can qualify");
+}
+
+#[test]
+fn brimhaven_moss_inspect_v1_wrong_boat_and_old_generation_cannot_pass() {
+    let watch = CoreWatch::default();
+    watch.configure(CoreCase::BrimhavenMossInspectV1, "catalogtest");
+    let baseline = brimhaven_v1_baseline();
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    let restocked = restocked_from(&baseline);
+    watch.observe("catalogtest", restocked.clone(), false);
+
+    let wrong_boat = with_hop(restocked.clone(), 4, 7, true, "Captain Thresnor");
+    watch.observe("catalogtest", wrong_boat.clone(), false);
+    let mut wrong_walk = wrong_boat;
+    wrong_walk.tile = Some((2669, 3278, 0));
+    watch.observe("catalogtest", wrong_walk, false);
+    assert!(
+        watch.qualify().is_err(),
+        "wrong-boat hop cannot stand in for accepted Barnaby"
+    );
+
+    let mut stale_gen = with_hop(restocked.clone(), 9, 7, true, "Captain Barnaby");
+    stale_gen.route_inspect_generation = 0;
+    watch.observe("catalogtest", stale_gen.clone(), false);
+    let mut stale_walk = stale_gen;
+    stale_walk.tile = Some((2669, 3278, 0));
+    watch.observe("catalogtest", stale_walk, false);
+    assert!(
+        watch.qualify().is_err(),
+        "old generation after reset_inspect cannot qualify"
+    );
+
+    let id0 = with_hop(restocked.clone(), 5, 0, true, "Captain Barnaby");
+    watch.observe("catalogtest", id0.clone(), false);
+    let mut id0_walk = id0;
+    id0_walk.tile = Some((2669, 3278, 0));
+    watch.observe("catalogtest", id0_walk, false);
+    assert!(
+        watch.qualify().is_err(),
+        "v1 requires a registered request identity, not request_id 0"
+    );
+}
+
+#[test]
+fn brimhaven_moss_inspect_v1_generation_zero_is_legitimate_before_reset() {
+    let watch = CoreWatch::default();
+    watch.configure(CoreCase::BrimhavenMossInspectV1, "catalogtest");
+    let mut baseline = brimhaven_v1_baseline();
+    baseline.route_inspect_live_generation = 0;
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    watch.observe("catalogtest", restocked_from(&baseline), false);
+
+    let accepted = with_hop(restocked_from(&baseline), 1, 3, true, "Captain Barnaby");
+    watch.observe("catalogtest", accepted.clone(), false);
+    assert!(watch.qualify().is_err(), "accept still needs later walk");
+
+    let mut walked = accepted;
+    walked.tile = Some((2669, 3278, 0));
+    watch.observe("catalogtest", walked, false);
+    watch
+        .qualify()
+        .expect("generation 0 is a real first-session InspectNav generation");
+}
+
+#[test]
+fn brimhaven_moss_inspect_v1_generation_transition_uses_new_ring_seq() {
+    let watch = CoreWatch::default();
+    watch.configure(CoreCase::BrimhavenMossInspectV1, "catalogtest");
+    let mut baseline = brimhaven_v1_baseline();
+    baseline.route_inspect_live_generation = 0;
+    baseline.route_inspect_has_terminal = true;
+    baseline.route_inspect_seq = 8;
+    baseline.route_inspect_generation = 0;
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+
+    let mut restocked = restocked_from(&baseline);
+    restocked.route_inspect_live_generation = 1;
+    restocked.route_inspect_has_terminal = false;
+    restocked.route_inspect_seq = 0;
+    restocked.route_inspect_generation = 0;
+    watch.observe("catalogtest", restocked.clone(), false);
+
+    let accepted = with_hop(restocked, 1, 4, true, "Captain Barnaby");
+    watch.observe("catalogtest", accepted.clone(), false);
+    let mut walked = accepted;
+    walked.tile = Some((2669, 3278, 0));
+    watch.observe("catalogtest", walked, false);
+    watch
+        .qualify()
+        .expect("after reset, seq 1 on the new generation is fresh even if the old ring was 8");
+}
+
+fn prayer_ready() -> Observation {
+    let mut observation = Observation {
+        ingame: true,
+        scene_state: 2,
+        player: Some("catalogtest".into()),
+        tile: Some((3222, 3222, 0)),
+        ..Observation::default()
+    };
+    observation.levels.insert("prayer".into(), 43);
+    observation.effective_levels.insert("prayer".into(), 43);
+    for index in 83..=97 {
+        observation.varps.insert(index, 0);
+    }
+    observation
+}
+
+fn prayer_on(mut observation: Observation) -> Observation {
+    observation.tick += 1;
+    observation.varps.insert(97, 1);
+    observation
+}
+
+fn prayer_all_off(mut observation: Observation) -> Observation {
+    observation.tick += 1;
+    for index in 83..=97 {
+        observation.varps.insert(index, 0);
+    }
+    observation
+}
+
+fn prayer_stop(mut observation: Observation, reason: &str) -> Observation {
+    observation.tick += 1;
+    observation.script_lifecycle = Some(script::ScriptLifecycleReceipt {
+        runtime_generation: 1,
+        state: script::ScriptTerminalState::Stopped,
+        tick: observation.tick as u64,
+        reason: reason.into(),
+    });
+    observation
+}
+
+#[test]
+fn prayer_v2_requires_baseline_off_then_on_then_off_and_named_stop() {
+    let case = CoreCase::parse("prayer_v2_ts").expect("named prayer v2 cell");
+    assert!(case.copies_prayer_varps());
+    let watch = CoreWatch::default();
+    watch.configure(case, "catalogtest");
+    let baseline = prayer_ready();
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    watch.observe("catalogtest", baseline.clone(), false);
+    assert!(
+        watch.qualify().unwrap_err().contains("incomplete"),
+        "seeded all-off must not qualify"
+    );
+
+    let on = prayer_on(baseline.clone());
+    watch.observe("catalogtest", on.clone(), false);
+    assert!(
+        watch.qualify().is_err(),
+        "latched ON without later all-off is incomplete"
+    );
+
+    let off = prayer_all_off(on);
+    watch.observe("catalogtest", off.clone(), false);
+    assert!(
+        watch.qualify().is_err(),
+        "all-off without the exact helper stop is incomplete"
+    );
+
+    watch.observe(
+        "catalogtest",
+        prayer_stop(off, "prayer v2 qualification complete"),
+        false,
+    );
+    watch
+        .qualify()
+        .expect("ordered off, observed ON, later all-off, and named stop");
+}
+
+#[test]
+fn prayer_v1_stop_without_on_and_missing_varps_cannot_pass() {
+    let case = CoreCase::parse("prayer_v1_ts").expect("named prayer v1 cell");
+    let watch = CoreWatch::default();
+    watch.configure(case, "catalogtest");
+    let baseline = prayer_ready();
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+
+    let stopped = prayer_stop(baseline.clone(), "prayer v1 qualification complete");
+    watch.observe("catalogtest", stopped, false);
+    assert!(
+        watch.qualify().is_err(),
+        "clean stop without a latched ON cannot pass"
+    );
+
+    watch.configure(case, "catalogtest");
+    let mut missing = baseline.clone();
+    missing.varps.remove(&90);
+    watch.observe("catalogtest", missing, false);
+    assert!(
+        watch.begin_start("catalogtest").is_err(),
+        "missing prayer varps must not look like all-off"
+    );
+}
+
+#[test]
+fn prayer_unready_and_outoforder_cannot_pass() {
+    let case = CoreCase::parse("prayer_v2_ts").expect("named prayer v2 cell");
+    let watch = CoreWatch::default();
+    watch.configure(case, "catalogtest");
+    let mut unready = prayer_ready();
+    unready.scene_state = 1;
+    watch.observe("catalogtest", unready, false);
+    assert!(
+        watch.begin_start("catalogtest").is_err(),
+        "scene_state!=2 is unready"
+    );
+
+    watch.configure(case, "catalogtest");
+    let mut no_points = prayer_ready();
+    no_points.effective_levels.insert("prayer".into(), 0);
+    watch.observe("catalogtest", no_points, false);
+    assert!(
+        watch.begin_start("catalogtest").is_err(),
+        "zero prayer points cannot start"
+    );
+
+    watch.configure(case, "catalogtest");
+    let mut low_base = prayer_ready();
+    low_base.levels.insert("prayer".into(), 40);
+    watch.observe("catalogtest", low_base, false);
+    assert!(
+        watch.begin_start("catalogtest").is_err(),
+        "base 40 is below Protect from Melee 43"
+    );
+
+    watch.configure(case, "catalogtest");
+    let baseline = prayer_ready();
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    let off = prayer_all_off(baseline.clone());
+    watch.observe("catalogtest", off.clone(), false);
+    watch.observe(
+        "catalogtest",
+        prayer_stop(off, "prayer v2 qualification complete"),
+        false,
+    );
+    assert!(
+        watch.qualify().is_err(),
+        "later all-off+stop without a prior ON latch is out of order"
+    );
+}
+
+fn los_identity() -> LineOfSightIdentity {
+    LineOfSightIdentity {
+        base_x: 3200,
+        base_z: 3200,
+        level: 0,
+        width: 104,
+        height: 104,
+    }
+}
+
+fn los_open_pair() -> LineOfSightPair {
+    LineOfSightPair {
+        from: LineOfSightTile {
+            x: 3201,
+            z: 3201,
+            level: 0,
+        },
+        to: LineOfSightTile {
+            x: 3200,
+            z: 3201,
+            level: 0,
+        },
+        src: 0,
+        dst: 0,
+        mask: 0x1000,
+    }
+}
+
+fn los_blocked_pair() -> LineOfSightPair {
+    LineOfSightPair {
+        from: LineOfSightTile {
+            x: 3201,
+            z: 3201,
+            level: 0,
+        },
+        to: LineOfSightTile {
+            x: 3202,
+            z: 3201,
+            level: 0,
+        },
+        src: 0,
+        dst: LOS_V_W,
+        mask: LOS_V_W,
+    }
+}
+
+fn los_pair_result(pair: LineOfSightPair, v2: bool, v1: bool) -> LineOfSightPairResult {
+    LineOfSightPairResult {
+        from: pair.from,
+        to: pair.to,
+        src: pair.src,
+        dst: pair.dst,
+        mask: pair.mask,
+        v2,
+        v1,
+    }
+}
+
+fn los_ready() -> Observation {
+    let mut observation = Observation {
+        ingame: true,
+        scene_state: 2,
+        player: Some("catalogtest".into()),
+        tile: Some((3201, 3201, 0)),
+        ..Observation::default()
+    };
+    observation.los = LineOfSightObservation {
+        available: true,
+        identity: los_identity(),
+        here: Some(LineOfSightTile {
+            x: 3201,
+            z: 3201,
+            level: 0,
+        }),
+        here_flag: Some(0),
+        ..LineOfSightObservation::default()
+    };
+    observation
+}
+
+fn los_joined(mut observation: Observation) -> Observation {
+    observation.tick += 1;
+    let open = los_open_pair();
+    let blocked = los_blocked_pair();
+    observation.los.host_open = Some(open);
+    observation.los.host_blocked = Some(blocked);
+    observation.los.receipt = Some(LineOfSightScriptReceipt {
+        identity: los_identity(),
+        here: LineOfSightHere {
+            x: 3201,
+            z: 3201,
+            level: 0,
+            flag: 0,
+        },
+        open: los_pair_result(open, true, true),
+        blocked: los_pair_result(blocked, false, false),
+    });
+    observation
+}
+
+fn los_stop(mut observation: Observation, reason: &str) -> Observation {
+    observation.tick += 1;
+    observation.script_lifecycle = Some(script::ScriptLifecycleReceipt {
+        runtime_generation: 1,
+        state: script::ScriptTerminalState::Stopped,
+        tick: observation.tick as u64,
+        reason: reason.into(),
+    });
+    observation
+}
+
+#[test]
+fn line_of_sight_selection_uses_v_mask_not_walk_or_dest_vis() {
+    let here = LineOfSightTile {
+        x: 5,
+        z: 5,
+        level: 0,
+    };
+    let vis_only = |x: i32, z: i32| {
+        if x == 7 && z == 5 {
+            Some(LOS_VIS_SCENERY)
+        } else {
+            Some(0)
+        }
+    };
+    assert!(
+        select_line_of_sight_pairs(here, vis_only).is_err(),
+        "destination VIS_SCENERY alone is not a blocked pair"
+    );
+
+    let walk_dest = |x: i32, z: i32| {
+        if x == 6 && z == 5 {
+            Some(LOS_WALK_SCENERY)
+        } else {
+            Some(0)
+        }
+    };
+    assert!(
+        select_line_of_sight_pairs(here, walk_dest).is_err(),
+        "destination WALK_SCENERY is not an entering V-wall"
+    );
+
+    let flags = |x: i32, z: i32| {
+        if x == 6 && z == 5 {
+            Some(LOS_V_W)
+        } else {
+            Some(0)
+        }
+    };
+    let (open, blocked) = select_line_of_sight_pairs(here, flags).expect("V-wall pair");
+    assert!(line_of_sight_pair_is_open(&open));
+    assert!(line_of_sight_pair_is_blocked(&blocked));
+    assert!(!line_of_sight_dest_vis_alone(&blocked));
+    assert_eq!(blocked.to.x, 6);
+    assert_eq!(blocked.mask, LOS_V_W);
+}
+
+#[test]
+fn line_of_sight_rejects_source_scenery_blocked_despite_entering_v() {
+    // Matches the R2 root disqualification shape: dest carries entering V_E
+    // (and more), but source WALK_SCENERY makes the helper return false before
+    // wall tracing — not a wall-specific negative.
+    let scenery_src = LOS_WALK_SCENERY | 0x210080;
+    let pair = LineOfSightPair {
+        from: LineOfSightTile {
+            x: 3217,
+            z: 3217,
+            level: 0,
+        },
+        to: LineOfSightTile {
+            x: 3216,
+            z: 3217,
+            level: 0,
+        },
+        src: scenery_src,
+        dst: LOS_V_E | 0x8,
+        mask: LOS_V_E,
+    };
+    assert!(
+        !line_of_sight_pair_is_blocked(&pair),
+        "source WALK_SCENERY + entering V is not a wall-specific blocked pair"
+    );
+
+    let here = LineOfSightTile {
+        x: 5,
+        z: 5,
+        level: 0,
+    };
+    // Only candidate: from (6,5) has WALK_SCENERY, dest (7,5) has V_W.
+    let scenery_only = |x: i32, z: i32| {
+        if x == 6 && z == 5 {
+            Some(LOS_WALK_SCENERY)
+        } else if x == 7 && z == 5 {
+            Some(LOS_V_W)
+        } else {
+            Some(0)
+        }
+    };
+    assert!(
+        select_line_of_sight_pairs(here, scenery_only).is_err(),
+        "source-scenery-only negative must fail the fixture honestly"
+    );
+
+    // Earlier scenery+V candidate at r=1, clear-source V-wall at r=2.
+    // Selector must skip the scenery source and latch the clear wall pair.
+    let skip_to_clear = |x: i32, z: i32| {
+        if x == 6 && z == 5 {
+            Some(LOS_WALK_SCENERY)
+        } else if x == 7 && (z == 5 || z == 6) {
+            Some(LOS_V_W)
+        } else {
+            Some(0)
+        }
+    };
+    let (open, blocked) =
+        select_line_of_sight_pairs(here, skip_to_clear).expect("clear-source V-wall pair");
+    assert!(line_of_sight_pair_is_open(&open));
+    assert!(line_of_sight_pair_is_blocked(&blocked));
+    assert_eq!(blocked.src & LOS_WALK_SCENERY, 0);
+    assert_eq!(blocked.from.x, 6);
+    assert_eq!(blocked.from.z, 6);
+    assert_eq!(blocked.to.x, 7);
+    assert_eq!(blocked.to.z, 6);
+    assert_eq!(blocked.mask, LOS_V_W);
+}
+
+#[test]
+fn line_of_sight_v2_requires_joined_receipt_and_named_stop() {
+    let case = CoreCase::parse("line_of_sight_v2_ts").expect("named los cell");
+    assert!(case.copies_line_of_sight());
+    assert!(!case.copies_prayer_varps());
+    assert!(!case.copies_route_inspect());
+    let watch = CoreWatch::default();
+    watch.configure(case, "catalogtest");
+    let baseline = los_ready();
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    watch.observe("catalogtest", baseline.clone(), false);
+    assert!(
+        watch.qualify().unwrap_err().contains("incomplete"),
+        "seed-only scene identity must not qualify"
+    );
+
+    let joined = los_joined(baseline);
+    watch.observe("catalogtest", joined.clone(), false);
+    assert!(
+        watch.qualify().is_err(),
+        "joined receipt without the named helper stop is incomplete"
+    );
+
+    watch.observe("catalogtest", los_stop(joined, LOS_V2_STOP), false);
+    watch
+        .qualify()
+        .expect("host pairs, joined receipt, and named stop");
+}
+
+#[test]
+fn line_of_sight_rejects_noquery_negative_identity_and_wrong_stop() {
+    let case = CoreCase::parse("line_of_sight_v2_ts").expect("named los cell");
+    let watch = CoreWatch::default();
+    watch.configure(case, "catalogtest");
+    let baseline = los_ready();
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    watch.observe(
+        "catalogtest",
+        los_stop(baseline.clone(), LOS_V2_STOP),
+        false,
+    );
+    assert!(
+        watch.qualify().is_err(),
+        "named stop without a post-Start query receipt cannot pass"
+    );
+
+    watch.configure(case, "catalogtest");
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    let mut negative = los_joined(baseline.clone());
+    if let Some(receipt) = negative.los.receipt.as_mut() {
+        receipt.open.v2 = false;
+        receipt.open.v1 = false;
+    }
+    watch.observe("catalogtest", negative, false);
+    assert!(
+        watch.qualify().is_err(),
+        "negative-only answers cannot pass"
+    );
+
+    watch.configure(case, "catalogtest");
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    let mut mismatch = los_joined(baseline.clone());
+    if let Some(receipt) = mismatch.los.receipt.as_mut() {
+        receipt.identity.base_x = 0;
+    }
+    mismatch.script_lifecycle = los_stop(mismatch.clone(), LOS_V2_STOP).script_lifecycle;
+    watch.observe("catalogtest", mismatch, false);
+    assert!(
+        watch.qualify().is_err(),
+        "receipt identity mismatch cannot pass"
+    );
+
+    watch.configure(case, "catalogtest");
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    let joined = los_joined(baseline);
+    watch.observe("catalogtest", joined.clone(), false);
+    watch.observe("catalogtest", los_stop(joined, "some other stop"), false);
+    assert!(watch.qualify().is_err(), "wrong named stop cannot pass");
+}
+
+#[test]
+fn line_of_sight_rejects_walk_mask_dest_vis_unready_and_missing() {
+    let case = CoreCase::parse("line_of_sight_v2_ts").expect("named los cell");
+    let watch = CoreWatch::default();
+    watch.configure(case, "catalogtest");
+    let mut unready = los_ready();
+    unready.scene_state = 1;
+    watch.observe("catalogtest", unready, false);
+    assert!(
+        watch.begin_start("catalogtest").is_err(),
+        "scene_state!=2 is unready"
+    );
+
+    watch.configure(case, "catalogtest");
+    let mut missing = los_ready();
+    missing.los.available = false;
+    missing.los.here_flag = None;
+    watch.observe("catalogtest", missing, false);
+    assert!(
+        watch.begin_start("catalogtest").is_err(),
+        "missing SceneView cannot start"
+    );
+
+    watch.configure(case, "catalogtest");
+    let baseline = los_ready();
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    let mut walk_blocked = los_joined(baseline.clone());
+    let walk_pair = LineOfSightPair {
+        from: LineOfSightTile {
+            x: 3201,
+            z: 3201,
+            level: 0,
+        },
+        to: LineOfSightTile {
+            x: 3202,
+            z: 3201,
+            level: 0,
+        },
+        src: 0,
+        dst: LOS_WALK_SCENERY,
+        mask: LOS_V_W,
+    };
+    walk_blocked.los.host_blocked = Some(walk_pair);
+    if let Some(receipt) = walk_blocked.los.receipt.as_mut() {
+        receipt.blocked = los_pair_result(walk_pair, false, false);
+    }
+    walk_blocked.script_lifecycle = los_stop(walk_blocked.clone(), LOS_V2_STOP).script_lifecycle;
+    watch.observe("catalogtest", walk_blocked, false);
+    assert!(
+        watch.qualify().is_err(),
+        "WALK_SCENERY destination is not an entering V-wall"
+    );
+
+    watch.configure(case, "catalogtest");
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    let mut vis = los_joined(baseline.clone());
+    let vis_pair = LineOfSightPair {
+        from: LineOfSightTile {
+            x: 3201,
+            z: 3201,
+            level: 0,
+        },
+        to: LineOfSightTile {
+            x: 3202,
+            z: 3201,
+            level: 0,
+        },
+        src: 0,
+        dst: LOS_VIS_SCENERY,
+        mask: LOS_V_W,
+    };
+    vis.los.host_blocked = Some(vis_pair);
+    if let Some(receipt) = vis.los.receipt.as_mut() {
+        receipt.blocked = los_pair_result(vis_pair, false, false);
+    }
+    vis.script_lifecycle = los_stop(vis.clone(), LOS_V2_STOP).script_lifecycle;
+    watch.observe("catalogtest", vis, false);
+    assert!(
+        watch.qualify().is_err(),
+        "destination VIS_SCENERY alone is not a blocked pair"
+    );
+
+    watch.configure(case, "catalogtest");
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    let mut scenery_src = los_joined(baseline);
+    let scenery_pair = LineOfSightPair {
+        from: LineOfSightTile {
+            x: 3201,
+            z: 3201,
+            level: 0,
+        },
+        to: LineOfSightTile {
+            x: 3202,
+            z: 3201,
+            level: 0,
+        },
+        // R2 shape: source WALK_SCENERY set, dest still carries entering V.
+        src: LOS_WALK_SCENERY | 0x210080,
+        dst: LOS_V_W | 0x8,
+        mask: LOS_V_W,
+    };
+    scenery_src.los.host_blocked = Some(scenery_pair);
+    if let Some(receipt) = scenery_src.los.receipt.as_mut() {
+        receipt.blocked = los_pair_result(scenery_pair, false, false);
+    }
+    scenery_src.script_lifecycle = los_stop(scenery_src.clone(), LOS_V2_STOP).script_lifecycle;
+    watch.observe("catalogtest", scenery_src, false);
+    assert!(
+        watch.qualify().is_err(),
+        "source WALK_SCENERY blocked pair cannot join Core even with entering V"
+    );
+}
+
+#[test]
+fn line_of_sight_join_then_host_drift_retains_coherent_evidence() {
+    let case = CoreCase::parse("line_of_sight_v2_ts").expect("named los cell");
+    let watch = CoreWatch::default();
+    watch.configure(case, "catalogtest");
+    let baseline = los_ready();
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+
+    let open = los_open_pair();
+    let blocked = los_blocked_pair();
+    let joined = los_joined(baseline.clone());
+    watch.observe("catalogtest", joined.clone(), false);
+
+    // Later host selection / identity drift without a new joined receipt.
+    let mut drifted = joined.clone();
+    drifted.tick += 1;
+    drifted.los.identity.base_x = 3100;
+    drifted.los.host_open = Some(LineOfSightPair {
+        from: LineOfSightTile {
+            x: 3210,
+            z: 3210,
+            level: 0,
+        },
+        to: LineOfSightTile {
+            x: 3209,
+            z: 3210,
+            level: 0,
+        },
+        src: 0,
+        dst: 0,
+        mask: LOS_V_E,
+    });
+    drifted.los.host_blocked = Some(LineOfSightPair {
+        from: LineOfSightTile {
+            x: 3210,
+            z: 3210,
+            level: 0,
+        },
+        to: LineOfSightTile {
+            x: 3211,
+            z: 3210,
+            level: 0,
+        },
+        src: 0,
+        dst: LOS_V_W,
+        mask: LOS_V_W,
+    });
+    // Stale paint receipt no longer joins the drifted host pairs.
+    drifted.los.receipt = joined.los.receipt;
+    watch.observe("catalogtest", drifted.clone(), false);
+
+    // Named stop on a later frame that still carries drifted host selection
+    // (multi-frame post-stop paint retention path). Must not freeze host=P'.
+    watch.observe("catalogtest", los_stop(drifted, LOS_V2_STOP), false);
+    let evidence = watch
+        .qualify()
+        .expect("coherent historical join + named stop must still qualify");
+    let cycle = evidence
+        .get("line_of_sight_cycle")
+        .expect("line_of_sight_cycle in evidence");
+    let host_open: LineOfSightPair =
+        serde_json::from_value(cycle.get("host_open").cloned().unwrap()).expect("host_open");
+    let host_blocked: LineOfSightPair =
+        serde_json::from_value(cycle.get("host_blocked").cloned().unwrap()).expect("host_blocked");
+    let identity: LineOfSightIdentity =
+        serde_json::from_value(cycle.get("identity").cloned().unwrap()).expect("identity");
+    let receipt: LineOfSightScriptReceipt =
+        serde_json::from_value(cycle.get("receipt").cloned().unwrap()).expect("receipt");
+    assert_eq!(host_open, open, "host_open must stay the joined witness");
+    assert_eq!(
+        host_blocked, blocked,
+        "host_blocked must stay the joined witness"
+    );
+    assert_eq!(
+        identity,
+        los_identity(),
+        "identity must stay the joined witness"
+    );
+    assert_eq!(receipt.open.pair(), open);
+    assert_eq!(receipt.blocked.pair(), blocked);
+    assert_eq!(receipt.identity, identity);
+}
+
+#[test]
+fn line_of_sight_rejects_mismatched_here_and_here_flag() {
+    let case = CoreCase::parse("line_of_sight_v2_ts").expect("named los cell");
+    let watch = CoreWatch::default();
+    watch.configure(case, "catalogtest");
+    let baseline = los_ready();
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+
+    let mut bad_here = los_joined(baseline.clone());
+    if let Some(receipt) = bad_here.los.receipt.as_mut() {
+        receipt.here.x = 9999;
+    }
+    bad_here.script_lifecycle = los_stop(bad_here.clone(), LOS_V2_STOP).script_lifecycle;
+    watch.observe("catalogtest", bad_here, false);
+    assert!(
+        watch.qualify().is_err(),
+        "receipt.here tile must join host here"
+    );
+
+    watch.configure(case, "catalogtest");
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    let mut bad_flag = los_joined(baseline);
+    if let Some(receipt) = bad_flag.los.receipt.as_mut() {
+        receipt.here.flag = 0x7f;
+    }
+    bad_flag.script_lifecycle = los_stop(bad_flag.clone(), LOS_V2_STOP).script_lifecycle;
+    watch.observe("catalogtest", bad_flag, false);
+    assert!(
+        watch.qualify().is_err(),
+        "receipt.here.flag must join host here_flag"
+    );
+}
+
+fn actor_identity() -> LineOfSightIdentity {
+    LineOfSightIdentity {
+        base_x: 3200,
+        base_z: 3200,
+        level: 0,
+        width: 104,
+        height: 104,
+    }
+}
+
+fn actor_npc() -> ActorObservationNpc {
+    ActorObservationNpc {
+        index: 7,
+        name: Some("Goblin".into()),
+        size: 4,
+        tile_x: 3201,
+        tile_z: 3205,
+        nx: 3205,
+        nz: 3201,
+        level: 0,
+    }
+}
+
+fn actor_receipt(npc: &ActorObservationNpc, los: bool) -> ActorObservationScriptReceipt {
+    ActorObservationScriptReceipt {
+        identity: actor_identity(),
+        here: LineOfSightTile {
+            x: 3201,
+            z: 3201,
+            level: 0,
+        },
+        npc: ActorObservationNpcFact {
+            index: npc.index,
+            name: npc.name.clone(),
+            size: npc.size,
+            tile: ActorObservationPoint {
+                x: npc.tile_x,
+                z: npc.tile_z,
+            },
+            network: ActorObservationPoint {
+                x: npc.nx,
+                z: npc.nz,
+            },
+            level: npc.level,
+        },
+        packed: ActorObservationPacked {
+            size: npc.size,
+            nx: npc.nx,
+            nz: npc.nz,
+        },
+        rendered: ActorObservationPoint {
+            x: npc.tile_x,
+            z: npc.tile_z,
+        },
+        self_target: ActorObservationSelfTarget { kind: 1, index: 7 },
+        los: ActorObservationLos { v2: los, v1: los },
+    }
+}
+
+fn actor_ready() -> Observation {
+    let mut observation = Observation {
+        ingame: true,
+        scene_state: 2,
+        player: Some("catalogtest".into()),
+        tile: Some((3201, 3201, 0)),
+        ..Observation::default()
+    };
+    observation.actor = ActorObservation {
+        available: true,
+        identity: actor_identity(),
+        here: Some(LineOfSightTile {
+            x: 3201,
+            z: 3201,
+            level: 0,
+        }),
+        ..ActorObservation::default()
+    };
+    observation
+}
+
+fn actor_joined(mut observation: Observation) -> Observation {
+    observation.tick += 1;
+    let npc = actor_npc();
+    observation.actor.npc = Some(npc.clone());
+    observation.actor.host_los = Some(true);
+    observation.actor.self_target_kind = 1;
+    observation.actor.self_target_index = 7;
+    observation.actor.receipt = Some(actor_receipt(&npc, true));
+    observation
+}
+
+fn actor_stop(mut observation: Observation, reason: &str) -> Observation {
+    observation.tick += 1;
+    observation.script_lifecycle = Some(script::ScriptLifecycleReceipt {
+        runtime_generation: 1,
+        state: script::ScriptTerminalState::Stopped,
+        tick: observation.tick as u64,
+        reason: reason.into(),
+    });
+    observation
+}
+
+#[test]
+fn actor_observation_v2_requires_joined_receipt_and_named_stop() {
+    let case = CoreCase::parse("actor_observation_v2_ts").expect("named actor cell");
+    assert!(case.copies_actor_observation());
+    assert!(!case.copies_line_of_sight());
+    assert!(!case.copies_prayer_varps());
+    assert!(!case.copies_route_inspect());
+    let watch = CoreWatch::default();
+    watch.configure(case, "catalogtest");
+    let baseline = actor_ready();
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    watch.observe("catalogtest", baseline.clone(), false);
+    assert!(
+        watch.qualify().unwrap_err().contains("incomplete"),
+        "seed-only scene identity must not qualify"
+    );
+
+    let joined = actor_joined(baseline);
+    watch.observe("catalogtest", joined.clone(), false);
+    assert!(
+        watch.qualify().is_err(),
+        "joined receipt without the named helper stop is incomplete"
+    );
+
+    watch.observe(
+        "catalogtest",
+        actor_stop(joined, ACTOR_OBSERVATION_V2_STOP),
+        false,
+    );
+    watch
+        .qualify()
+        .expect("host npc, joined receipt, and named stop");
+}
+
+#[test]
+fn actor_observation_rejects_noquery_nonpc_identity_and_wrong_stop() {
+    let case = CoreCase::parse("actor_observation_v2_ts").expect("named actor cell");
+    let watch = CoreWatch::default();
+    watch.configure(case, "catalogtest");
+    let baseline = actor_ready();
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    watch.observe(
+        "catalogtest",
+        actor_stop(baseline.clone(), ACTOR_OBSERVATION_V2_STOP),
+        false,
+    );
+    assert!(
+        watch.qualify().is_err(),
+        "named stop without a post-Start query receipt cannot pass"
+    );
+
+    watch.configure(case, "catalogtest");
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    let mut no_npc = actor_joined(baseline.clone());
+    no_npc.actor.npc = None;
+    no_npc.actor.receipt = None;
+    no_npc.script_lifecycle =
+        actor_stop(no_npc.clone(), ACTOR_OBSERVATION_V2_STOP).script_lifecycle;
+    watch.observe("catalogtest", no_npc, false);
+    assert!(watch.qualify().is_err(), "no-NPC success cannot pass");
+
+    watch.configure(case, "catalogtest");
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    let mut mismatch = actor_joined(baseline.clone());
+    if let Some(receipt) = mismatch.actor.receipt.as_mut() {
+        receipt.npc.network.x = 0;
+        receipt.packed.nx = 0;
+    }
+    mismatch.script_lifecycle =
+        actor_stop(mismatch.clone(), ACTOR_OBSERVATION_V2_STOP).script_lifecycle;
+    watch.observe("catalogtest", mismatch, false);
+    assert!(
+        watch.qualify().is_err(),
+        "Core/script packed vs rendered disagreement cannot pass"
+    );
+
+    watch.configure(case, "catalogtest");
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    let mut identity = actor_joined(baseline.clone());
+    if let Some(receipt) = identity.actor.receipt.as_mut() {
+        receipt.identity.base_x = 0;
+    }
+    identity.script_lifecycle =
+        actor_stop(identity.clone(), ACTOR_OBSERVATION_V2_STOP).script_lifecycle;
+    watch.observe("catalogtest", identity, false);
+    assert!(
+        watch.qualify().is_err(),
+        "receipt identity mismatch cannot pass"
+    );
+
+    watch.configure(case, "catalogtest");
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    let joined = actor_joined(baseline);
+    watch.observe("catalogtest", joined.clone(), false);
+    watch.observe("catalogtest", actor_stop(joined, "some other stop"), false);
+    assert!(watch.qualify().is_err(), "wrong named stop cannot pass");
+}
+
+#[test]
+fn actor_observation_rejects_unready_and_missing_scene() {
+    let case = CoreCase::parse("actor_observation_v2_ts").expect("named actor cell");
+    let watch = CoreWatch::default();
+    watch.configure(case, "catalogtest");
+    let mut unready = actor_ready();
+    unready.scene_state = 1;
+    watch.observe("catalogtest", unready, false);
+    assert!(
+        watch.begin_start("catalogtest").is_err(),
+        "scene_state!=2 is unready"
+    );
+
+    watch.configure(case, "catalogtest");
+    let mut missing = actor_ready();
+    missing.actor.available = false;
+    missing.actor.here = None;
+    watch.observe("catalogtest", missing, false);
+    assert!(
+        watch.begin_start("catalogtest").is_err(),
+        "missing SceneView cannot start"
+    );
+}
+
+#[test]
+fn actor_observation_join_agrees_on_nearest_not_array_first() {
+    let case = CoreCase::parse("actor_observation_v2_ts").expect("named actor cell");
+    let watch = CoreWatch::default();
+    watch.configure(case, "catalogtest");
+    let baseline = actor_ready();
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+
+    let array_first = ActorObservationNpc {
+        index: 3,
+        name: Some("Far".into()),
+        size: 1,
+        tile_x: 3208,
+        tile_z: 3208,
+        nx: 3208,
+        nz: 3208,
+        level: 0,
+    };
+    let nearest = ActorObservationNpc {
+        index: 11,
+        name: Some("Near".into()),
+        size: 2,
+        tile_x: 3202,
+        tile_z: 3202,
+        nx: 3203,
+        nz: 3201,
+        level: 0,
+    };
+
+    let mut mismatch = baseline.clone();
+    mismatch.tick += 1;
+    mismatch.actor.npc = Some(array_first);
+    mismatch.actor.host_los = Some(true);
+    mismatch.actor.self_target_kind = 1;
+    mismatch.actor.self_target_index = 7;
+    mismatch.actor.receipt = Some(actor_receipt(&nearest, true));
+    mismatch.script_lifecycle =
+        actor_stop(mismatch.clone(), ACTOR_OBSERVATION_V2_STOP).script_lifecycle;
+    watch.observe("catalogtest", mismatch, false);
+    assert!(
+        watch.qualify().is_err(),
+        "array-first host npc vs nearest File receipt cannot pass"
+    );
+
+    watch.configure(case, "catalogtest");
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    let mut joined = baseline;
+    joined.tick += 1;
+    joined.actor.npc = Some(nearest.clone());
+    joined.actor.host_los = Some(true);
+    joined.actor.self_target_kind = 1;
+    joined.actor.self_target_index = 7;
+    joined.actor.receipt = Some(actor_receipt(&nearest, true));
+    watch.observe("catalogtest", joined.clone(), false);
+    watch.observe(
+        "catalogtest",
+        actor_stop(joined, ACTOR_OBSERVATION_V2_STOP),
+        false,
+    );
+    watch
+        .qualify()
+        .expect("File receipt and Core join agree on nearest index 11");
+}
+
+fn fight_identity() -> LineOfSightIdentity {
+    LineOfSightIdentity {
+        base_x: 3200,
+        base_z: 3200,
+        level: 0,
+        width: 104,
+        height: 104,
+    }
+}
+
+fn fight_npc() -> FightFieldNpc {
+    FightFieldNpc {
+        index: 7,
+        size: 4,
+        tile_x: 3201,
+        tile_z: 3205,
+        nx: 3205,
+        nz: 3201,
+        level: 0,
+    }
+}
+
+fn fight_receipt(
+    npc: &FightFieldNpc,
+    los_network: bool,
+    los_tile: bool,
+) -> FightFieldScriptReceipt {
+    FightFieldScriptReceipt {
+        index: npc.index,
+        size: npc.size,
+        tile: ActorObservationPoint {
+            x: npc.tile_x,
+            z: npc.tile_z,
+        },
+        network_origin: ActorObservationPoint {
+            x: npc.nx,
+            z: npc.nz,
+        },
+        los_network,
+        los_tile,
+        kind: None,
+        effect: None,
+    }
+}
+
+fn fight_ready() -> Observation {
+    let mut observation = Observation {
+        ingame: true,
+        scene_state: 2,
+        player: Some("catalogtest".into()),
+        tile: Some((3201, 3201, 0)),
+        ..Observation::default()
+    };
+    observation.fight = FightFieldObservation {
+        available: true,
+        identity: fight_identity(),
+        here: Some(LineOfSightTile {
+            x: 3201,
+            z: 3201,
+            level: 0,
+        }),
+        ..FightFieldObservation::default()
+    };
+    observation
+}
+
+fn fight_joined(mut observation: Observation) -> Observation {
+    observation.tick += 1;
+    let npc = fight_npc();
+    observation.fight.npc = Some(npc.clone());
+    observation.fight.host_los_network = Some(true);
+    observation.fight.host_los_tile = Some(false);
+    observation.fight.receipt = Some(fight_receipt(&npc, true, false));
+    observation
+}
+
+fn fight_stop(mut observation: Observation, reason: &str) -> Observation {
+    observation.tick += 1;
+    observation.script_lifecycle = Some(script::ScriptLifecycleReceipt {
+        runtime_generation: 1,
+        state: script::ScriptTerminalState::Stopped,
+        tick: observation.tick as u64,
+        reason: reason.into(),
+    });
+    observation
+}
+
+#[test]
+fn fight_field_v2_requires_joined_receipt_and_named_stop() {
+    let case = CoreCase::parse("fight_field_v2_ts").expect("named fight field cell");
+    assert!(case.copies_fight_field());
+    assert!(!case.copies_actor_observation());
+    assert!(!case.copies_line_of_sight());
+    assert!(!case.copies_prayer_varps());
+    assert!(!case.copies_route_inspect());
+    let watch = CoreWatch::default();
+    watch.configure(case, "catalogtest");
+    let baseline = fight_ready();
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    watch.observe("catalogtest", baseline.clone(), false);
+    assert!(
+        watch.qualify().unwrap_err().contains("incomplete"),
+        "seed-only scene identity must not qualify"
+    );
+
+    let joined = fight_joined(baseline);
+    watch.observe("catalogtest", joined.clone(), false);
+    assert!(
+        watch.qualify().is_err(),
+        "joined receipt without the named helper stop is incomplete"
+    );
+
+    watch.observe(
+        "catalogtest",
+        fight_stop(joined, FIGHT_FIELD_V2_STOP),
+        false,
+    );
+    watch
+        .qualify()
+        .expect("host npc, joined receipt, and named stop");
+}
+
+#[test]
+fn fight_field_rejects_noquery_nonpc_identity_packed_and_wrong_stop() {
+    let case = CoreCase::parse("fight_field_v2_ts").expect("named fight field cell");
+    let watch = CoreWatch::default();
+    watch.configure(case, "catalogtest");
+    let baseline = fight_ready();
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    watch.observe(
+        "catalogtest",
+        fight_stop(baseline.clone(), FIGHT_FIELD_V2_STOP),
+        false,
+    );
+    assert!(
+        watch.qualify().is_err(),
+        "named stop without a post-Start query receipt cannot pass"
+    );
+
+    watch.configure(case, "catalogtest");
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    let mut no_npc = fight_joined(baseline.clone());
+    no_npc.fight.npc = None;
+    no_npc.fight.receipt = None;
+    no_npc.script_lifecycle = fight_stop(no_npc.clone(), FIGHT_FIELD_V2_STOP).script_lifecycle;
+    watch.observe("catalogtest", no_npc, false);
+    assert!(watch.qualify().is_err(), "no-NPC success cannot pass");
+
+    watch.configure(case, "catalogtest");
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    let mut mismatch = fight_joined(baseline.clone());
+    if let Some(receipt) = mismatch.fight.receipt.as_mut() {
+        receipt.network_origin.x = 0;
+    }
+    mismatch.script_lifecycle = fight_stop(mismatch.clone(), FIGHT_FIELD_V2_STOP).script_lifecycle;
+    watch.observe("catalogtest", mismatch, false);
+    assert!(
+        watch.qualify().is_err(),
+        "Core/script packed vs rendered disagreement cannot pass"
+    );
+
+    watch.configure(case, "catalogtest");
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    let mut identity = fight_joined(baseline.clone());
+    if let Some(receipt) = identity.fight.receipt.as_mut() {
+        receipt.index = 99;
+    }
+    identity.script_lifecycle = fight_stop(identity.clone(), FIGHT_FIELD_V2_STOP).script_lifecycle;
+    watch.observe("catalogtest", identity, false);
+    assert!(
+        watch.qualify().is_err(),
+        "receipt identity mismatch cannot pass"
+    );
+
+    watch.configure(case, "catalogtest");
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    let joined = fight_joined(baseline);
+    watch.observe("catalogtest", joined.clone(), false);
+    watch.observe("catalogtest", fight_stop(joined, "some other stop"), false);
+    assert!(watch.qualify().is_err(), "wrong named stop cannot pass");
+}
+
+#[test]
+fn fight_field_rejects_unready_and_missing_scene() {
+    let case = CoreCase::parse("fight_field_v2_ts").expect("named fight field cell");
+    let watch = CoreWatch::default();
+    watch.configure(case, "catalogtest");
+    let mut unready = fight_ready();
+    unready.scene_state = 1;
+    watch.observe("catalogtest", unready, false);
+    assert!(
+        watch.begin_start("catalogtest").is_err(),
+        "scene_state!=2 is unready"
+    );
+
+    watch.configure(case, "catalogtest");
+    let mut missing = fight_ready();
+    missing.fight.available = false;
+    missing.fight.here = None;
+    watch.observe("catalogtest", missing, false);
+    assert!(
+        watch.begin_start("catalogtest").is_err(),
+        "missing SceneView cannot start"
+    );
+}
+
+#[test]
+fn fight_field_join_agrees_on_nearest_not_array_first() {
+    let case = CoreCase::parse("fight_field_v2_ts").expect("named fight field cell");
+    let watch = CoreWatch::default();
+    watch.configure(case, "catalogtest");
+    let baseline = fight_ready();
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+
+    let array_first = FightFieldNpc {
+        index: 3,
+        size: 1,
+        tile_x: 3208,
+        tile_z: 3208,
+        nx: 3208,
+        nz: 3208,
+        level: 0,
+    };
+    let nearest = FightFieldNpc {
+        index: 11,
+        size: 2,
+        tile_x: 3202,
+        tile_z: 3202,
+        nx: 3203,
+        nz: 3201,
+        level: 0,
+    };
+
+    let mut mismatch = baseline.clone();
+    mismatch.tick += 1;
+    mismatch.fight.npc = Some(array_first);
+    mismatch.fight.host_los_network = Some(true);
+    mismatch.fight.host_los_tile = Some(false);
+    mismatch.fight.receipt = Some(fight_receipt(&nearest, true, false));
+    mismatch.script_lifecycle = fight_stop(mismatch.clone(), FIGHT_FIELD_V2_STOP).script_lifecycle;
+    watch.observe("catalogtest", mismatch, false);
+    assert!(
+        watch.qualify().is_err(),
+        "array-first host npc vs nearest File receipt cannot pass"
+    );
+
+    watch.configure(case, "catalogtest");
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    let mut joined = baseline;
+    joined.tick += 1;
+    joined.fight.npc = Some(nearest.clone());
+    joined.fight.host_los_network = Some(true);
+    joined.fight.host_los_tile = Some(false);
+    joined.fight.receipt = Some(fight_receipt(&nearest, true, false));
+    watch.observe("catalogtest", joined.clone(), false);
+    watch.observe(
+        "catalogtest",
+        fight_stop(joined, FIGHT_FIELD_V2_STOP),
+        false,
+    );
+    watch
+        .qualify()
+        .expect("File receipt and Core join agree on nearest index 11");
+}
+
+#[test]
+fn fight_field_rejects_forged_npc_attack_step() {
+    let case = CoreCase::parse("fight_field_v2_ts").expect("named fight field cell");
+    let watch = CoreWatch::default();
+    watch.configure(case, "catalogtest");
+    let baseline = fight_ready();
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    let mut npc_kind = fight_joined(baseline.clone());
+    if let Some(receipt) = npc_kind.fight.receipt.as_mut() {
+        receipt.kind = Some("npc".into());
+    }
+    npc_kind.script_lifecycle = fight_stop(npc_kind.clone(), FIGHT_FIELD_V2_STOP).script_lifecycle;
+    watch.observe("catalogtest", npc_kind, false);
+    assert!(
+        watch.qualify().is_err(),
+        "forged npc fightNext step cannot pass"
+    );
+
+    watch.configure(case, "catalogtest");
+    watch.observe("catalogtest", baseline.clone(), false);
+    watch.begin_start("catalogtest").unwrap();
+    let mut attack = fight_joined(baseline);
+    if let Some(receipt) = attack.fight.receipt.as_mut() {
+        receipt.effect = Some("Attack".into());
+    }
+    attack.script_lifecycle = fight_stop(attack.clone(), FIGHT_FIELD_V2_STOP).script_lifecycle;
+    watch.observe("catalogtest", attack, false);
+    assert!(watch.qualify().is_err(), "forged Attack effect cannot pass");
 }

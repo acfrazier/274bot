@@ -17,6 +17,10 @@ Do **not** present this repo as “Lost City Client,” “LC,” “Fairy Ring,
 - **API shape:** snapshot → query → interact → settle is a **borrowed idea** from m8aq-style bot APIs. This is not a file port of m8aq (or any other bot framework).
 - **Product:** a Rust-first **rewrite** of the rs2b0t *idea* (many headless 274 clients, login queue, live harnesses). It is **not** a port of the rs2b0t TypeScript tree. Listed TS for the 0.1.5 shim is loaded from an operator `$RS2B0T` checkout (`src/bot/scripts`), not vendored here.
 
+## Vendored rendering backend
+
+`vendor/dear-imgui-wgpu-0.15.1` is dear-imgui-wgpu 0.15.1, Copyright 2025 Mingzhen Zhuang, distributed under MIT OR Apache-2.0. The pinned shader modification replaces the renderer-wide Gamma22/Auto-on-sRGB power approximation with the IEC 61966-2-1 inverse sRGB transfer; it applies to all Dear ImGui samples on that path, including chrome and game content.
+
 ## Embedded fonts
 
 Pass-2 native Canvas metrics/raster embed Liberation Sans Regular and Liberation Mono Regular 2.1.5 (`crates/script/fonts/`) under the SIL Open Font License 1.1. See that directory’s LICENSE and AUTHORS. Reserved Font Name: Liberation.

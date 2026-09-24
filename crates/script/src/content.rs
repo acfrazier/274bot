@@ -65,6 +65,123 @@ pub const COW_FIELDS: &[CowField] = &[
     },
 ];
 
+pub const AL_KHARID_BANK: WorldTile = WorldTile {
+    x: 3269,
+    z: 3167,
+    level: 0,
+};
+
+pub fn cow_uses_al_kharid_toll(field: &CowField) -> bool {
+    field.name == "Lumbridge cow field"
+}
+
+/// Frozen `Tile.distanceTo` nearest field: Chebyshev xz, different level
+/// is `1_000_000 + xz`. Ties keep the earlier table row. Computed in `i64`
+/// so any script-supplied tile, however far out of range, cannot overflow.
+pub fn nearest_cow_field(from: WorldTile) -> Option<&'static CowField> {
+    COW_FIELDS
+        .iter()
+        .min_by_key(|field| cow_field_distance(field, from))
+}
+
+fn cow_field_distance(field: &CowField, from: WorldTile) -> i64 {
+    let dx = (i64::from(field.x) - i64::from(from.x)).abs();
+    let dz = (i64::from(field.z) - i64::from(from.z)).abs();
+    let xz = dx.max(dz);
+    if field.level != from.level {
+        1_000_000 + xz
+    } else {
+        xz
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RuneRoute {
+    pub rune: &'static str,
+    pub talisman: &'static str,
+    pub level: i32,
+    pub bank: &'static str,
+    pub ruins: WorldTile,
+}
+
+pub const RUNE_ROUTES: &[RuneRoute] = &[
+    RuneRoute {
+        rune: "Air rune",
+        talisman: "Air talisman",
+        level: 1,
+        bank: "Falador East",
+        ruins: WorldTile {
+            x: 2983,
+            z: 3288,
+            level: 0,
+        },
+    },
+    RuneRoute {
+        rune: "Mind rune",
+        talisman: "Mind talisman",
+        level: 2,
+        bank: "Edgeville",
+        ruins: WorldTile {
+            x: 2980,
+            z: 3511,
+            level: 0,
+        },
+    },
+    RuneRoute {
+        rune: "Water rune",
+        talisman: "Water talisman",
+        level: 5,
+        bank: "Draynor",
+        ruins: WorldTile {
+            x: 3182,
+            z: 3162,
+            level: 0,
+        },
+    },
+    RuneRoute {
+        rune: "Earth rune",
+        talisman: "Earth talisman",
+        level: 9,
+        bank: "Varrock East",
+        ruins: WorldTile {
+            x: 3303,
+            z: 3477,
+            level: 0,
+        },
+    },
+    RuneRoute {
+        rune: "Fire rune",
+        talisman: "Fire talisman",
+        level: 14,
+        bank: "Al Kharid",
+        ruins: WorldTile {
+            x: 3310,
+            z: 3252,
+            level: 0,
+        },
+    },
+    RuneRoute {
+        rune: "Body rune",
+        talisman: "Body talisman",
+        level: 20,
+        bank: "Edgeville",
+        ruins: WorldTile {
+            x: 3050,
+            z: 3442,
+            level: 0,
+        },
+    },
+];
+
+pub const LOG_LEVELS: &[(&str, i32)] = &[
+    ("Logs", 1),
+    ("Oak logs", 15),
+    ("Willow logs", 30),
+    ("Maple logs", 45),
+    ("Yew logs", 60),
+    ("Magic logs", 75),
+];
+
 /// Bank tiles from walk pins / alcher stand. AABB is the plaza around the bank,
 /// not a copied burn-lane search.
 pub const FIRE_PLOTS: &[FirePlot] = &[
@@ -189,6 +306,18 @@ pub const PICKPOCKET_SPOTS: &[PickpocketSpot] = &[
     },
 ];
 
+pub fn pickpocket_spot(target: &str) -> Option<&'static PickpocketSpot> {
+    PICKPOCKET_SPOTS
+        .iter()
+        .find(|spot| spot.name.eq_ignore_ascii_case(target))
+        .or_else(|| {
+            PICKPOCKET_SPOTS
+                .iter()
+                .find(|spot| spot.name.eq_ignore_ascii_case("guard"))
+        })
+        .or_else(|| PICKPOCKET_SPOTS.first())
+}
+
 /// Curated tile shortcut for the bank alias cluster tables below.
 const fn t(x: i32, z: i32) -> WorldTile {
     WorldTile { x, z, level: 0 }
@@ -284,6 +413,58 @@ mod tests {
             .find(|f| f.name == "Lumbridge cow field")
             .expect("lumbridge");
         assert_eq!((lum.x, lum.z, lum.level), (3253, 3282, 0));
+    }
+
+    #[test]
+    fn nearest_cow_field_uses_tile_distance() {
+        let falador_east = WorldTile {
+            x: 3013,
+            z: 3355,
+            level: 0,
+        };
+        assert_eq!(
+            nearest_cow_field(falador_east).map(|field| field.name),
+            Some("South of Falador")
+        );
+        let lumbridge = WorldTile {
+            x: 3253,
+            z: 3282,
+            level: 0,
+        };
+        assert_eq!(
+            nearest_cow_field(lumbridge).map(|field| field.name),
+            Some("Lumbridge cow field")
+        );
+        let north_west = WorldTile {
+            x: 3162,
+            z: 3311,
+            level: 0,
+        };
+        assert_eq!(
+            nearest_cow_field(north_west).map(|field| field.name),
+            Some("North-west of Lumbridge")
+        );
+    }
+
+    /// A script can pass any tile. Extreme coordinates must not overflow
+    /// (which would panic inside the V8 callback and abort the process);
+    /// they still resolve to a field by the frozen rule.
+    #[test]
+    fn nearest_cow_field_survives_extreme_tiles() {
+        for from in [
+            WorldTile {
+                x: i32::MAX,
+                z: 0,
+                level: 1,
+            },
+            WorldTile {
+                x: i32::MIN,
+                z: i32::MIN,
+                level: 0,
+            },
+        ] {
+            assert!(nearest_cow_field(from).is_some(), "{from:?}");
+        }
     }
 
     #[test]

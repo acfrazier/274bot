@@ -594,14 +594,10 @@ mod tests {
         let mut v = Vault::create(&file, "bot").unwrap();
         v.upsert(profile("alice", "pw1")).unwrap();
 
-        // Drop write permission so the next atomic write cannot succeed.
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o500)).unwrap();
-        }
-        #[cfg(not(unix))]
-        std::fs::remove_dir_all(&dir).unwrap();
+        // Block the atomic write's `.tmp` path with a directory so the next
+        // write fails on every platform (Windows cannot delete the open
+        // vault's directory, and permission bits do not stop it writing).
+        std::fs::create_dir(file.with_extension("tmp")).unwrap();
         assert!(v.upsert(profile("bob", "pw2")).is_err());
         assert!(
             v.get("bob").is_none(),
@@ -689,13 +685,15 @@ mod tests {
 
     #[test]
     fn assignment_roundtrip_keeps_missing_source_identity() {
-        let mut settings = ProfileSettings::default();
-        settings.script_assignment = Some(super::ScriptAssignment {
-            source_kind: "file".into(),
-            identity: "/tmp/gone/bot.ts".into(),
-            display_name: "bot".into(),
-            unavailable: Some("missing file: /tmp/gone/bot.ts".into()),
-        });
+        let mut settings = ProfileSettings {
+            script_assignment: Some(super::ScriptAssignment {
+                source_kind: "file".into(),
+                identity: "/tmp/gone/bot.ts".into(),
+                display_name: "bot".into(),
+                unavailable: Some("missing file: /tmp/gone/bot.ts".into()),
+            }),
+            ..Default::default()
+        };
         let mut overrides = serde_json::Map::new();
         overrides.insert("buryBones".into(), serde_json::json!(false));
         settings

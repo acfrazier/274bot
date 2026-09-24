@@ -38,20 +38,44 @@ fn generated_revision_data_is_static_distinct_and_fail_closed() {
 }
 
 #[test]
+fn runtime_decoded_content_id_binds_while_deleted_packed_alias_stays_closed() {
+    let data_289 = for_revision(ClientRevision::R289).expect("revision 289 data");
+    assert!(
+        for_profile(
+            ClientRevision::R289,
+            "cdb2f161c35239f09bf5175648e15e7dbbc4bbf9be4419cea41f7053ccf8b044"
+        )
+        .is_ok(),
+        "the pinned decoded 289 content id must bind generated facts"
+    );
+    assert_eq!(
+        data_289.content_id(),
+        Some("cdb2f161c35239f09bf5175648e15e7dbbc4bbf9be4419cea41f7053ccf8b044")
+    );
+    // The deleted packed equivalence id must stay closed: decoded identity,
+    // not a public packed hash allowlist, is the compatibility criterion.
+    assert!(
+        for_optional_profile(ClientRevision::R289, PUBLIC_289_CACHE_ID)
+            .expect("decode")
+            .is_none(),
+        "the packed public alias no longer unlocks facts on its own"
+    );
+}
+
+#[test]
 fn public_289_audited_identity_binds_and_unknown_same_revision_stays_closed() {
     let data_289 = for_revision(ClientRevision::R289).expect("revision 289 data");
     assert_eq!(data_289.cache_id(), LOCAL_289_CACHE_ID);
     assert_ne!(PUBLIC_289_CACHE_ID, LOCAL_289_CACHE_ID);
 
+    // Decoded identity replaced the packed equivalence list: the runtime
+    // binds generated facts by the pinned decoded content id, and a packed
+    // transfer id alone (local or public) no longer unlocks anything.
     assert!(
         for_optional_profile(ClientRevision::R289, PUBLIC_289_CACHE_ID)
             .expect("decode")
-            .is_some(),
-        "audited public identity must bind 289 facts"
-    );
-    assert!(
-        for_profile(ClientRevision::R289, PUBLIC_289_CACHE_ID).is_ok(),
-        "for_profile accepts audited public identity"
+            .is_none(),
+        "the packed public alias must stay closed after decoded identity replaced it"
     );
     assert!(
         for_optional_profile(ClientRevision::R289, LOCAL_289_CACHE_ID)
@@ -119,6 +143,25 @@ fn generated_items_food_and_pickpocket_facts_preserve_selected_content() {
         assert_eq!(data.fixed_food_heal("Not a food"), None);
         assert_eq!(data.required_thieving("Guard"), Some(40));
         assert_eq!(data.required_thieving("Unknown target"), None);
+
+        assert_eq!(data.herb_level_default(), Some(3));
+        let herbs = data.herbs();
+        assert!(
+            herbs.len() >= 14,
+            "revision {} herb row count",
+            revision.as_i32()
+        );
+        let guam = data.herb_by_key("guam").expect("guam");
+        assert_eq!(guam.name, "Guam leaf");
+        assert_eq!(guam.level, 3);
+        assert_eq!(guam.id, 249);
+        assert_eq!(guam.unid_id, 199);
+        let marrentill = data.herb_by_key("marrentill").expect("marrentill");
+        assert_eq!(marrentill.level, 5);
+        let snake = data.herb_by_key("snake weed").expect("snake weed");
+        assert_eq!(snake.level, 3);
+        assert_eq!(snake.unid_id, 1525);
+        assert_eq!(snake.id, 1526);
     }
 }
 
@@ -231,5 +274,458 @@ fn generated_wearpos_maps_to_loadout_slots_without_guessing_names() {
             .iter()
             .any(|hit| hit.id == 1333 && hit.alias == "rune_scimitar"));
         assert!(hits.iter().all(|hit| hit.id != cert.id));
+    }
+}
+
+const GREEN_DISPLAY: &[&str] = &[
+    "Adamant full helm",
+    "Adamantite ore",
+    "Bass",
+    "Chaos talisman",
+    "Coins",
+    "Dragon bones",
+    "Dragon spear",
+    "Dragonhide",
+    "Fire rune",
+    "Half of a key",
+    "Herb",
+    "Law rune",
+    "Mithril axe",
+    "Mithril kiteshield",
+    "Mithril spear",
+    "Nature rune",
+    "Nature talisman",
+    "Rune dagger",
+    "Rune javelin",
+    "Rune spear",
+    "Shield left half",
+    "Steel battleaxe",
+    "Steel platelegs",
+    "Uncut diamond",
+    "Uncut emerald",
+    "Uncut ruby",
+    "Uncut sapphire",
+    "Water rune",
+];
+
+#[test]
+fn generated_drop_tables_publish_four_combat_rows_with_alias_evidence() {
+    for revision in [ClientRevision::R274, ClientRevision::R289] {
+        let data = for_revision(revision).expect("selected data");
+        assert_eq!(
+            data.drop_tables()
+                .iter()
+                .map(|row| row.name.as_str())
+                .collect::<Vec<_>>(),
+            ["Giant", "Moss giant", "Fire giant", "Green dragon"]
+        );
+        assert!(data.drop_table("Hill Giant").is_none());
+
+        let green = data.drop_table("Green dragon").expect("green dragon row");
+        assert_eq!(green.npc_alias, "green_dragon");
+        assert_eq!(green.npc_id, 941);
+        assert_eq!(
+            green
+                .display_names
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            GREEN_DISPLAY
+        );
+        assert!(
+            !green.display_names.iter().any(|name| name == "Bones"),
+            "invented Green Bones must stay absent"
+        );
+        let hide = green
+            .items
+            .iter()
+            .find(|item| item.name == "Dragonhide")
+            .expect("Dragonhide alias/id evidence");
+        assert_eq!(hide.alias, "dragonhide_green");
+        assert_eq!(hide.id, 1753);
+
+        let giant = data.drop_table("Giant").expect("giant row");
+        assert!(giant
+            .display_names
+            .iter()
+            .any(|name| name == "Limpwurt root"));
+        assert!(giant.display_names.iter().any(|name| name == "Big bones"));
+        let bones = giant
+            .items
+            .iter()
+            .find(|item| item.alias == "big_bones")
+            .expect("Giant big_bones join");
+        assert_eq!(bones.id, 532);
+        assert_eq!(bones.name, "Big bones");
+
+        let moss = data.drop_table("Moss giant").expect("moss row");
+        assert!(moss.display_names.iter().any(|name| name == "Spinach roll"));
+        assert!(moss.display_names.iter().any(|name| name == "Big bones"));
+
+        let fire = data.drop_table("Fire giant").expect("fire row");
+        assert!(fire.display_names.iter().any(|name| name == "Big bones"));
+        assert!(fire.display_names.iter().any(|name| name == "Lobster"));
+        assert!(data.drop_table("unknown").is_none());
+    }
+}
+
+#[test]
+fn generated_prayer_facts_join_fifteen_rows_on_both_revisions() {
+    for revision in [ClientRevision::R274, ClientRevision::R289] {
+        let data = for_revision(revision).expect("selected data");
+        let prayers = data.prayers();
+        assert_eq!(prayers.len(), 15, "revision {}", revision.as_i32());
+        assert_eq!(prayers[0].name, "Thick Skin");
+        assert_eq!(prayers[0].level, 1);
+        assert_eq!(prayers[0].button_com, 5609);
+        assert_eq!(prayers[0].varp, 83);
+        assert_eq!(prayers[0].varp_alias, "prayer0");
+        assert_eq!(prayers[14].name, "Protect from Melee");
+        assert_eq!(prayers[14].level, 43);
+        assert_eq!(prayers[14].button_com, 5623);
+        assert_eq!(prayers[14].varp, 97);
+        assert_eq!(prayers[14].varp_alias, "prayer14");
+        for (index, row) in prayers.iter().enumerate() {
+            assert_eq!(row.button_com, 5609 + index as i32);
+            assert_eq!(row.varp, 83 + index as i32);
+        }
+        let burst = data
+            .prayer_by_name("Burst of Strength")
+            .expect("burst of strength");
+        assert_eq!(burst.button_com, 5610);
+        assert_eq!(burst.varp, 84);
+        assert_eq!(burst.level, 4);
+        assert!(data.prayer_by_name("Not a prayer").is_none());
+    }
+}
+
+#[test]
+fn generated_nurmof_and_flour_facts_join_on_both_revisions() {
+    for revision in [ClientRevision::R274, ClientRevision::R289] {
+        let data = for_revision(revision).expect("selected data");
+        let nurmof = data.nurmof_essence().expect("nurmof essence facts");
+        assert_eq!(nurmof.npc_id, 594);
+        assert_eq!(nurmof.npc_alias, "nurmof");
+        assert_eq!(nurmof.shop_inv, "pickaxeshop");
+        assert_eq!(nurmof.pickaxes.len(), 6);
+        let iron = nurmof
+            .pickaxes
+            .iter()
+            .find(|row| row.alias == "iron_pickaxe")
+            .expect("iron pickaxe");
+        assert_eq!(iron.id, 1267);
+        assert_eq!(iron.base_cost, 140);
+        assert_eq!(iron.cost_source, "obj.cost");
+        assert_eq!(nurmof.essence_region.mapsquare_mx, 45);
+        assert_eq!(nurmof.essence_region.mapsquare_mz, 75);
+        assert_eq!(data.in_essence_mine(2880, 4800), Some(true));
+        assert_eq!(data.in_essence_mine(3253, 3402), Some(false));
+        assert!(nurmof.aubury_travel.npc_id == 553);
+        assert_eq!(nurmof.essence_region.mine_portal_loc_id, 2492);
+        assert_eq!(nurmof.curated_vendor_tactics.label, "curated");
+        assert!(nurmof.aubury_travel.already_packed);
+
+        let flour = data.flour_six().expect("flour six facts");
+        assert_eq!(flour.quest_name, "Murder Mystery");
+        assert_eq!(flour.pot.id, 1931);
+        assert_eq!(flour.pot_flour.id, 1933);
+        assert_eq!(flour.flour_barrel.id, 2662);
+        assert_eq!(flour.flour_barrel_object_tile.provenance, "derived");
+        assert_eq!(flour.flour_barrel_object_tile.x, 2735);
+        assert_eq!(flour.flour_barrel_object_tile.z, 3582);
+        assert_eq!(flour.flour_barrel_approach_tile.provenance, "curated");
+        assert_eq!(flour.flour_barrel_approach_tile.z, 3581);
+        assert_eq!(flour.bank_tile.provenance, "curated");
+        assert_eq!(
+            data.item_by_alias("pot_empty").expect("pot").id,
+            flour.pot.id
+        );
+    }
+}
+
+#[test]
+fn generated_talk_key_facts_pin_selected_steps_and_spawns() {
+    for revision in [ClientRevision::R274, ClientRevision::R289] {
+        let data = for_revision(revision).expect("selected data");
+        let facts = data.talk_key().expect("talk_key facts");
+        let talk = &facts.talk;
+        assert_eq!(talk.len(), 47, "revision {}", revision.as_i32());
+        assert_eq!(talk.iter().filter(|row| row.spawn.is_some()).count(), 42);
+        assert_eq!(facts.keys.len(), 7);
+        assert_eq!(
+            facts.keys.iter().filter(|row| row.spawn.is_some()).count(),
+            2
+        );
+        assert_eq!(facts.coverage.len(), 10);
+
+        // The exemplar: the talk step's NPC identity and its one jm2 spawn.
+        let hazelmere = talk
+            .iter()
+            .find(|row| row.alias == "trail_clue_medium_anagram001")
+            .expect("anagram001 step");
+        assert_eq!(hazelmere.id, 2841);
+        assert_eq!(hazelmere.npc.alias, "grandtree_hazelmere");
+        assert_eq!(hazelmere.npc.id, 669);
+        assert_eq!(hazelmere.npc.name, "Hazelmere");
+        let spawn = hazelmere.spawn.as_ref().expect("one hazelmere spawn");
+        assert_eq!((spawn.x, spawn.z, spawn.plane), (2678, 3086, 1));
+
+        // Hans owns two membership clues: two rows, one npc, one spawn.
+        let hans: Vec<_> = talk.iter().filter(|row| row.npc.alias == "hans").collect();
+        assert_eq!(hans.len(), 2);
+        assert!(hans
+            .iter()
+            .all(|row| row.npc.id == 0 && row.npc.name == "Hans"));
+        for row in &hans {
+            let spawn = row.spawn.as_ref().expect("one hans spawn");
+            assert_eq!((spawn.x, spawn.z, spawn.plane), (3207, 3233, 0));
+        }
+
+        // A `_sailor` category trigger publishes the inner NPC, not the category.
+        let sailor = talk
+            .iter()
+            .find(|row| row.alias == "trail_clue_easy_vague012")
+            .expect("vague012 step");
+        assert_eq!(sailor.npc.alias, "captain_tobias");
+        assert_eq!(sailor.npc.id, 376);
+        assert!(sailor.spawn.is_some());
+        assert!(talk.iter().all(|row| row.npc.alias != "sailor"));
+
+        // A multi-spawn identity keeps its row and omits the tile instead of picking one.
+        for alias in [
+            "trail_clue_easy_simple008",
+            "trail_clue_hard_riddle019",
+            "trail_clue_hard_riddle021",
+            "trail_clue_hard_riddle026",
+            "trail_clue_medium_anagram003",
+        ] {
+            let row = talk
+                .iter()
+                .find(|entry| entry.alias == alias)
+                .expect("multi-spawn step");
+            assert!(row.spawn.is_none(), "{alias} must omit the spawn");
+        }
+
+        // The keeper union: type joins one packed id, category and name never invent one.
+        let black_heather = facts
+            .keys
+            .iter()
+            .find(|row| row.alias == "trail_clue_medium_riddle001")
+            .expect("riddle001 keeper");
+        assert_eq!(black_heather.keeper.kind, "type");
+        assert_eq!(black_heather.keeper.alias.as_deref(), Some("black_heather"));
+        assert_eq!(black_heather.keeper.id, Some(202));
+        assert_eq!(black_heather.keeper.name.as_deref(), Some("Black Heather"));
+        assert_eq!(black_heather.key_alias, "trail_clue_medium_riddle001_key");
+        assert_eq!(black_heather.key_id, 2832);
+        let keeper_spawn = black_heather.spawn.as_ref().expect("one keeper spawn");
+        assert_eq!(
+            (keeper_spawn.x, keeper_spawn.z, keeper_spawn.plane),
+            (3039, 3700, 0)
+        );
+        let penda = facts
+            .keys
+            .iter()
+            .find(|row| row.alias == "trail_clue_medium_riddle008")
+            .expect("riddle008 keeper");
+        assert_eq!(penda.keeper.alias.as_deref(), Some("death_man_indoors2"));
+        assert_eq!(penda.keeper.id, Some(1087));
+        let penda_spawn = penda.spawn.as_ref().expect("one penda spawn");
+        assert_eq!(
+            (penda_spawn.x, penda_spawn.z, penda_spawn.plane),
+            (2910, 3539, 0)
+        );
+        let chicken = facts
+            .keys
+            .iter()
+            .find(|row| row.alias == "trail_clue_medium_riddle004")
+            .expect("riddle004 keeper");
+        assert_eq!(chicken.keeper.kind, "category");
+        assert_eq!(chicken.keeper.category.as_deref(), Some("chicken"));
+        assert_eq!(chicken.keeper.alias, None);
+        assert_eq!(chicken.keeper.id, None);
+        assert!(chicken.spawn.is_none());
+        let man = facts
+            .keys
+            .iter()
+            .find(|row| row.alias == "trail_clue_medium_riddle005")
+            .expect("riddle005 keeper");
+        assert_eq!(man.keeper.kind, "name");
+        assert_eq!(man.keeper.name.as_deref(), Some("Man"));
+        assert_eq!(man.keeper.alias, None);
+        assert_eq!(man.keeper.id, None);
+        assert_eq!(man.keeper.category, None);
+
+        // Coverage is the steps that lack a unique spawn, never the unanchored membership clues.
+        for record in &facts.coverage {
+            assert_eq!(record.class, "unknown");
+            assert!(!record.reason.is_empty());
+            let published = match record.family.as_str() {
+                "talk" => talk.iter().any(|row| row.alias == record.alias),
+                "keys" => facts.keys.iter().any(|row| row.alias == record.alias),
+                other => panic!("unexpected coverage family {other}"),
+            };
+            assert!(published, "coverage {} must belong to a step", record.alias);
+        }
+        assert!(facts
+            .coverage
+            .iter()
+            .all(|record| !record.alias.ends_with("_challenge")
+                && !record.alias.ends_with("_puzzlebox")));
+        assert!(talk
+            .iter()
+            .all(|row| !row.alias.ends_with("_puzzlebox") && !row.alias.ends_with("_challenge")));
+        assert!(facts
+            .keys
+            .iter()
+            .all(|row| !row.alias.ends_with("_puzzlebox") && !row.alias.ends_with("_challenge")));
+    }
+}
+
+#[test]
+fn generated_equipment_name_facts_join_curated_families_on_both_revisions() {
+    for revision in [ClientRevision::R274, ClientRevision::R289] {
+        let data = for_revision(revision).expect("selected data");
+        let equipment = data.equipment_names().expect("equipment names facts");
+        assert_eq!(equipment.bows.len(), 12);
+        assert_eq!(equipment.crossbows.len(), 10);
+        assert_eq!(equipment.darts.len(), 7);
+        assert_eq!(equipment.arrows.len(), 7);
+        assert_eq!(equipment.bolts.len(), 9);
+        assert_eq!(equipment.melee_weapons.len(), 33);
+        assert_eq!(equipment.staffs.len(), 15);
+        assert_eq!(
+            equipment.equipment_source.sha256,
+            "ec2ab37311b6373046626f08777ebbbf5f86590e6599c7a3f906acedc79151d3"
+        );
+        let resolved = equipment
+            .bows
+            .iter()
+            .chain(&equipment.crossbows)
+            .chain(&equipment.darts)
+            .chain(&equipment.arrows)
+            .chain(&equipment.bolts)
+            .chain(&equipment.melee_weapons)
+            .chain(&equipment.staffs)
+            .filter(|row| row.disposition == "resolved")
+            .count();
+        let absent = equipment
+            .bows
+            .iter()
+            .chain(&equipment.crossbows)
+            .chain(&equipment.darts)
+            .chain(&equipment.arrows)
+            .chain(&equipment.bolts)
+            .chain(&equipment.melee_weapons)
+            .chain(&equipment.staffs)
+            .filter(|row| row.disposition == "absent")
+            .count();
+        assert_eq!(resolved, 74, "count summary revision {}", revision.as_i32());
+        assert_eq!(absent, 19, "count summary revision {}", revision.as_i32());
+        let shortbow = data
+            .equipment_name("bows", "Shortbow")
+            .expect("shortbow row");
+        assert_eq!(shortbow.disposition, "resolved");
+        assert_eq!(shortbow.alias.as_deref(), Some("shortbow"));
+        assert_eq!(shortbow.id, Some(841));
+        assert_eq!(
+            data.item_by_alias("shortbow").expect("shortbow item").id,
+            841
+        );
+        let black_dagger = data
+            .equipment_name("melee_weapons", "Black dagger")
+            .expect("black dagger row");
+        assert_eq!(black_dagger.alias.as_deref(), Some("black_dagger"));
+        assert_eq!(black_dagger.id, Some(1217));
+        assert_eq!(
+            black_dagger.disambiguation.as_deref(),
+            Some("prefer_standard_pack_alias_black_dagger")
+        );
+        let dragon_arrow = data
+            .equipment_name("arrows", "Dragon arrow")
+            .expect("dragon arrow row");
+        assert_eq!(dragon_arrow.disposition, "absent");
+        assert_eq!(
+            dragon_arrow.absent_class.as_deref(),
+            Some("no_exact_selected_match")
+        );
+        let bronze_bolts = data
+            .equipment_name("bolts", "Bronze bolts")
+            .expect("bronze bolts row");
+        assert_eq!(bronze_bolts.disposition, "absent");
+        assert_eq!(
+            bronze_bolts.absent_class.as_deref(),
+            Some("no_exact_selected_match")
+        );
+        let karil = data
+            .equipment_name("crossbows", "Karil's crossbow")
+            .expect("karil row");
+        assert_eq!(karil.requested_name, "Karil's crossbow");
+        assert_eq!(karil.disposition, "absent");
+        assert_eq!(
+            karil.absent_class.as_deref(),
+            Some("no_exact_selected_match")
+        );
+        let join = equipment.exact_name_join.as_ref().expect("exact join note");
+        assert_eq!(join.matching, "exact_display_name_only");
+        assert!(!join.bolts.generic_is_substitute);
+        assert_eq!(join.bolts.generic_display_name, "Bolts");
+        assert!(equipment
+            .bolts
+            .iter()
+            .all(|row| row.requested_name != "Bolts"));
+        assert!(data
+            .items()
+            .iter()
+            .any(|item| item.name.as_deref() == Some("Bolts")));
+        assert!(data.equipment_name("bows", "Not a bow").is_none());
+    }
+}
+
+#[test]
+fn generated_trio_giver_facts_pin_the_closed_giver_set() {
+    for revision in [ClientRevision::R274, ClientRevision::R289] {
+        let data = for_revision(revision).expect("selected data");
+        let facts = data.trio_givers().expect("trio givers facts");
+        assert_eq!(facts.rows.len(), 3, "revision {}", revision.as_i32());
+        assert_eq!(
+            facts.rows.iter().filter(|row| row.spawn.is_some()).count(),
+            3
+        );
+        assert!(facts.coverage.is_empty());
+
+        let identities: Vec<(&str, i32, &str)> = facts
+            .rows
+            .iter()
+            .map(|row| (row.alias.as_str(), row.id, row.name.as_str()))
+            .collect();
+        assert_eq!(
+            identities,
+            vec![
+                ("observatory_professor", 488, "Observatory professor"),
+                ("murphy", 463, "Murphy"),
+                ("brother_kojo", 223, "Brother Kojo"),
+            ]
+        );
+
+        // The selected jm2 tiles. No frozen tool-table coordinate is read here.
+        let spawns: Vec<(i32, i32, i32)> = facts
+            .rows
+            .iter()
+            .map(|row| {
+                let spawn = row.spawn.as_ref().expect("one unique giver spawn");
+                (spawn.x, spawn.z, spawn.plane)
+            })
+            .collect();
+        assert_eq!(
+            spawns,
+            vec![(2438, 3186, 0), (2668, 3162, 0), (2569, 3249, 0)]
+        );
+
+        // Display-name lookalikes are not identities.
+        assert!(facts
+            .rows
+            .iter()
+            .all(|row| !row.alias.ends_with("_2") && !row.alias.starts_with("murphy_")));
     }
 }

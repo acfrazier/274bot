@@ -1,13 +1,7 @@
-import { snap } from '../../shim/_kernel.js';
+import { notImpl } from '../../shim/_kernel.js';
 
 export function combatKeepNames(o) {
-    const names = [];
-    for (const r of snap().equipment || []) {
-        if (r && r.name) names.push(r.name);
-    }
-    for (const r of snap().inv || []) {
-        if (r && r.name) names.push(r.name);
-    }
-    if (o && Array.isArray(o.extra)) names.push(...o.extra);
-    return names;
+    const fn = globalThis.rustyscript.functions.__rs2b0t_combat_keep_names;
+    if (typeof fn !== 'function') throw notImpl('combatKeepNames');
+    return fn(o && typeof o === 'object' ? o : {});
 }

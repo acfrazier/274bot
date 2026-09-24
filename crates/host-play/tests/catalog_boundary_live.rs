@@ -489,6 +489,7 @@ fn prepare_catalog_card(
             kind: card.kind,
             source: card.source,
             shape: None,
+            api_family: Some(card.api_family.as_str().into()),
         },
     )?;
     let sibling_hashes = siblings
@@ -820,6 +821,7 @@ mod tests {
             shop_open: false,
             shop_stock: Vec::new(),
             main_make_ids: BTreeSet::new(),
+            ..Default::default()
         }
     }
 
@@ -2540,6 +2542,7 @@ export default class NativeStop extends LoopingBot {{
             inv: None,
             snapshot: None,
             obj_names: None,
+            compiled: script::CompiledTick::default(),
         };
         slot.on_game_tick(&mut ctx);
         let deadline = Instant::now() + Duration::from_secs(5);
@@ -6389,6 +6392,1110 @@ export default class NativeStop extends LoopingBot {{
         assert!(validate_case_baseline(CoreCase::HerbloreSecondariesNewt, &seeded_newt).is_err());
     }
 
+    #[test]
+    fn prepared_remaining_combat_cases_keep_branch_specific_strict_specs() {
+        let special = CoreCase::parse("green_dragon_special_prepared").unwrap();
+        assert_eq!(special.card_name(), "GreenDragon");
+        let special_spec = combat_spec(special).unwrap();
+        assert_eq!(special_spec.consumable, CombatConsumable::Special);
+        assert_eq!(special_spec.food_count, 12);
+        assert!(combat_bank_spec(special).is_none());
+
+        let potions = CoreCase::parse("green_dragon_potions_prepared").unwrap();
+        assert_eq!(potions.card_name(), "GreenDragon");
+        let potions_spec = combat_spec(potions).unwrap();
+        assert_eq!(potions_spec.consumable, CombatConsumable::Potions);
+        assert_eq!(potions_spec.food_count, 12);
+        assert!(combat_bank_spec(potions).is_none());
+
+        let green_bank = CoreCase::parse("green_dragon_bank_prepared").unwrap();
+        let green_bank_spec = combat_spec(green_bank).unwrap();
+        assert_eq!(green_bank_spec.food_count, 26);
+        assert_eq!(green_bank_spec.loot, CombatLoot::DragonBonesOrHide);
+        let green_trip = combat_bank_spec(green_bank).unwrap();
+        assert!(green_trip.require_combat);
+        assert_eq!(green_trip.deposit, &[DRAGON_BONES_ID, GREEN_DRAGONHIDE_ID]);
+        assert_eq!(green_trip.restock_count, None);
+
+        let green_default = CoreCase::parse("green_dragon_bank_default_prepared").unwrap();
+        assert_eq!(green_default.card_name(), "GreenDragon");
+        let green_default_spec = combat_spec(green_default).unwrap();
+        assert_eq!(green_default_spec.food_count, 26);
+        assert_eq!(green_default_spec.loot, CombatLoot::DragonBonesAndHide);
+        let green_default_trip = combat_bank_spec(green_default).unwrap();
+        assert!(green_default_trip.require_combat);
+        assert_eq!(green_default_trip.deposit, &[GREEN_DRAGONHIDE_ID]);
+        assert_eq!(
+            green_default_trip.restock_count,
+            Some(GREEN_DRAGON_BANK_PREPARED_RESTOCK)
+        );
+
+        let moss_prepared = CoreCase::parse("moss_giant_prepared").unwrap();
+        assert_eq!(moss_prepared.card_name(), "MossGiant");
+        let moss_spec = combat_spec(moss_prepared).unwrap();
+        assert_eq!(moss_spec.food_count, MOSS_GIANT_FOOD);
+        assert_eq!(moss_spec.weapon_id, RUNE_SCIMITAR_ID);
+        assert_eq!(moss_spec.loot, CombatLoot::BigBones);
+        assert!(combat_bank_spec(moss_prepared).is_none());
+
+        let moss_dart = CoreCase::parse("moss_giant_dart").unwrap();
+        assert_eq!(moss_dart.card_name(), "MossGiant");
+        let dart_spec = combat_spec(moss_dart).unwrap();
+        assert_eq!(dart_spec.weapon_id, BRONZE_DART_ID);
+        assert_eq!(dart_spec.projectile, Some(BRONZE_DART_ID));
+        assert_eq!(dart_spec.style, CombatStyleWitness::Ranged);
+        assert_eq!(dart_spec.loot, CombatLoot::None);
+        assert!(combat_bank_spec(moss_dart).is_none());
+
+        let mage = CoreCase::parse("green_dragon_mage_prepared").unwrap();
+        assert_eq!(mage.card_name(), "GreenDragon");
+        let mage_spec = combat_spec(mage).unwrap();
+        assert_eq!(mage_spec.style, CombatStyleWitness::FireStrike);
+        assert_eq!(mage_spec.weapon_id, STAFF_OF_FIRE_ID);
+        assert_eq!(mage_spec.food_count, GREEN_DRAGON_FOOD);
+        assert_eq!(mage_spec.extra, CombatExtra::WornShield);
+        assert_eq!(mage_spec.loot, CombatLoot::None);
+        assert!(combat_bank_spec(mage).is_none());
+
+        let camelot = CoreCase::parse("fire_giant_camelot_prepared").unwrap();
+        assert_eq!(camelot.card_name(), "FireGiant");
+        let camelot_trip = combat_bank_spec(camelot).unwrap();
+        assert!(camelot_trip.require_combat);
+        assert!(camelot_trip.via_magic);
+        assert_eq!(camelot_trip.via, Some(CAMELOT_TELE_LAND));
+        assert_eq!(camelot_trip.stand, SEERS_BANK);
+        assert_eq!(
+            camelot_trip.restock_count,
+            Some(FIRE_GIANT_CAMELOT_PREPARED_RESTOCK)
+        );
+        assert_ne!(camelot_trip.via, Some(FIRE_GIANT_WASH));
+        let barrel = combat_bank_spec(CoreCase::FireGiantBankPrepared).unwrap();
+        assert_eq!(barrel.restock_count, Some(FIRE_GIANT_BANK_PREPARED_RESTOCK));
+        assert_eq!(barrel.via, Some(FIRE_GIANT_WASH));
+        assert!(!barrel.via_magic);
+        assert_ne!(
+            camelot_trip.restock_count, barrel.restock_count,
+            "Camelot observer restock line stays separate from barrel 25"
+        );
+
+        let hill_prepared = CoreCase::parse("hill_giant_bank_prepared").unwrap();
+        assert_eq!(hill_prepared.card_name(), "HillGiant");
+        let hill_spec = combat_spec(hill_prepared).unwrap();
+        assert_eq!(hill_spec.food_count, HILL_GIANT_FOOD);
+        assert_eq!(hill_spec.weapon_id, ADAMANT_SCIMITAR_ID);
+        assert_eq!(hill_spec.loot, CombatLoot::BigBonesOrLimpwurt);
+        let hill_trip = combat_bank_spec(hill_prepared).unwrap();
+        assert!(hill_trip.require_combat);
+        assert_eq!(hill_trip.deposit, &[BIG_BONES_ID, LIMPWURT_ROOT_ID]);
+        assert_eq!(
+            hill_trip.restock_count,
+            Some(HILL_GIANT_BANK_PREPARED_RESTOCK)
+        );
+
+        let tele = CoreCase::parse("green_dragon_tele_prepared").unwrap();
+        let tele_spec = combat_spec(tele).unwrap();
+        assert_eq!(tele_spec.food_count, 0);
+        assert_eq!(tele_spec.loot, CombatLoot::None);
+        let tele_trip = combat_bank_spec(tele).unwrap();
+        assert!(!tele_trip.require_combat);
+        assert!(tele_trip.via_magic);
+        assert_eq!(tele_trip.via, Some(VARROCK_TELE_LAND));
+
+        let fire_bank = CoreCase::parse("fire_giant_bank_prepared").unwrap();
+        assert_eq!(fire_bank.card_name(), "FireGiant");
+        assert_eq!(FIRE_GIANT_BANK_PREPARED_INITIAL_FOOD, 1);
+        assert_eq!(FIRE_GIANT_BANK_PREPARED_RESTOCK, 25);
+        let fire_spec = combat_spec(fire_bank).unwrap();
+        assert_eq!(fire_spec.food_count, FIRE_GIANT_BANK_PREPARED_INITIAL_FOOD);
+        assert_eq!(fire_spec.loot, CombatLoot::BigBones);
+        let fire_trip = combat_bank_spec(fire_bank).unwrap();
+        assert!(fire_trip.require_combat);
+        assert_eq!(fire_trip.via, Some(FIRE_GIANT_WASH));
+    }
+
+    #[test]
+    fn prepared_remaining_combat_baselines_fail_closed_on_exact_profile_and_branch_trigger() {
+        let armour = [
+            (RUNE_CHAINBODY_ID, 1),
+            (RUNE_PLATELEGS_ID, 1),
+            (RUNE_FULL_HELM_ID, 1),
+        ];
+        let levels = [
+            ("attack", 70),
+            ("strength", 70),
+            ("defence", 70),
+            ("hitpoints", 70),
+        ];
+        let bank_levels = [
+            ("attack", 99),
+            ("strength", 99),
+            ("defence", 99),
+            ("hitpoints", 99),
+        ];
+        let mut potions_gear = armour.to_vec();
+        potions_gear.push((DRAGONFIRE_SHIELD_ID, 1));
+        let potions = branch_obs(
+            GREEN_DRAGON_FIELD,
+            &[
+                (LOBSTER_ID, 12),
+                (RUNE_SCIMITAR_ID, 1),
+                (SUPER_ATTACK_3_ID, 1),
+                (SUPER_STRENGTH_3_ID, 1),
+            ],
+            &potions_gear,
+            &[("strength", 0)],
+            &levels,
+            &[],
+            &[],
+            &[],
+            false,
+            false,
+        );
+        validate_case_baseline(CoreCase::GreenDragonPotionsPrepared, &potions).unwrap();
+        let mut missing_potion = potions.clone();
+        missing_potion.item_ids.remove(&SUPER_ATTACK_3_ID);
+        assert!(
+            validate_case_baseline(CoreCase::GreenDragonPotionsPrepared, &missing_potion).is_err()
+        );
+
+        let mut green_gear = armour.to_vec();
+        green_gear.extend([(RUNE_SCIMITAR_ID, 1), (DRAGONFIRE_SHIELD_ID, 1)]);
+        let green_bank = branch_obs(
+            GREEN_DRAGON_FIELD,
+            &[(LOBSTER_ID, 26)],
+            &green_gear,
+            &[("strength", 0)],
+            &bank_levels,
+            &[],
+            &[],
+            &[],
+            false,
+            false,
+        );
+        validate_case_baseline(CoreCase::GreenDragonBankPrepared, &green_bank).unwrap();
+        validate_case_baseline(CoreCase::GreenDragonBankDefaultPrepared, &green_bank).unwrap();
+        let mut seeded_dragon_loot = green_bank.clone();
+        seeded_dragon_loot.item_ids.insert(DRAGON_BONES_ID, 1);
+        assert!(
+            validate_case_baseline(CoreCase::GreenDragonBankPrepared, &seeded_dragon_loot).is_err()
+        );
+        assert!(
+            validate_case_baseline(
+                CoreCase::GreenDragonBankDefaultPrepared,
+                &seeded_dragon_loot
+            )
+            .is_err(),
+            "default-loot Green rejects seeded bones as earned hide"
+        );
+        let mut seeded_hide = green_bank.clone();
+        seeded_hide.item_ids.insert(GREEN_DRAGONHIDE_ID, 1);
+        assert!(
+            validate_case_baseline(CoreCase::GreenDragonBankDefaultPrepared, &seeded_hide).is_err(),
+            "default-loot Green rejects seeded hide"
+        );
+
+        let mut tele_levels = bank_levels.to_vec();
+        tele_levels.push(("magic", 25));
+        let tele = branch_obs(
+            GREEN_DRAGON_FIELD,
+            &[(LAW_RUNE_ID, 3), (AIR_RUNE_ID, 9), (FIRE_RUNE_ID, 3)],
+            &green_gear,
+            &[("strength", 0), ("magic", 0)],
+            &tele_levels,
+            &[("hitpoints", 70)],
+            &[],
+            &[],
+            false,
+            false,
+        );
+        validate_case_baseline(CoreCase::GreenDragonTelePrepared, &tele).unwrap();
+        let mut fed = tele.clone();
+        fed.item_ids.insert(LOBSTER_ID, 1);
+        assert!(validate_case_baseline(CoreCase::GreenDragonTelePrepared, &fed).is_err());
+        let mut fragile = tele.clone();
+        fragile.effective_levels.insert("hitpoints".into(), 1);
+        assert!(
+            validate_case_baseline(CoreCase::GreenDragonTelePrepared, &fragile).is_err(),
+            "the prepared teleport rejects the death-prone upstream 1-HP regression seed"
+        );
+        let mut outside_configured_panic = tele.clone();
+        outside_configured_panic
+            .effective_levels
+            .insert("hitpoints".into(), 99);
+        assert!(
+            validate_case_baseline(CoreCase::GreenDragonTelePrepared, &outside_configured_panic)
+                .is_err(),
+            "full 99/99 HP would bypass Escape and take the direct BankRun"
+        );
+
+        let mut fire_gear = armour.to_vec();
+        fire_gear.push((RUNE_SCIMITAR_ID, 1));
+        let fire_bank = branch_obs(
+            FIRE_GIANT_ROOM,
+            &[
+                (LOBSTER_ID, FIRE_GIANT_BANK_PREPARED_INITIAL_FOOD),
+                (GLARIALS_AMULET_ID, 1),
+                (ROPE_ID, 1),
+            ],
+            &fire_gear,
+            &[("strength", 0)],
+            &bank_levels,
+            &[],
+            &[],
+            &[],
+            false,
+            false,
+        );
+        validate_case_baseline(CoreCase::FireGiantBankPrepared, &fire_bank).unwrap();
+        let mut seeded_big_bones = fire_bank.clone();
+        seeded_big_bones.item_ids.insert(BIG_BONES_ID, 1);
+        assert!(
+            validate_case_baseline(CoreCase::FireGiantBankPrepared, &seeded_big_bones).is_err()
+        );
+        let mut full_initial_pack = fire_bank.clone();
+        full_initial_pack
+            .item_ids
+            .insert(LOBSTER_ID, FIRE_GIANT_BANK_PREPARED_RESTOCK);
+        assert!(
+            validate_case_baseline(CoreCase::FireGiantBankPrepared, &full_initial_pack).is_err(),
+            "the 25-Lobster restock is not the one-Lobster Start baseline"
+        );
+        let mut no_amulet = fire_bank.clone();
+        no_amulet.item_ids.remove(&GLARIALS_AMULET_ID);
+        assert!(
+            validate_case_baseline(CoreCase::FireGiantBankPrepared, &no_amulet).is_err(),
+            "prepared FireGiant still requires Glarial's amulet"
+        );
+        let mut no_rope = fire_bank.clone();
+        no_rope.item_ids.remove(&ROPE_ID);
+        assert!(
+            validate_case_baseline(CoreCase::FireGiantBankPrepared, &no_rope).is_err(),
+            "prepared FireGiant still requires rope"
+        );
+
+        let moss_levels = [
+            ("attack", 70),
+            ("strength", 70),
+            ("defence", 70),
+            ("hitpoints", 70),
+        ];
+        let moss = branch_obs(
+            MOSS_GIANT_SAFESPOT,
+            &[(LOBSTER_ID, MOSS_GIANT_FOOD)],
+            &[
+                (RUNE_SCIMITAR_ID, 1),
+                (RUNE_CHAINBODY_ID, 1),
+                (RUNE_PLATELEGS_ID, 1),
+                (RUNE_FULL_HELM_ID, 1),
+            ],
+            &[("strength", 0)],
+            &moss_levels,
+            &[],
+            &[],
+            &[],
+            false,
+            false,
+        );
+        validate_case_baseline(CoreCase::MossGiantPrepared, &moss).unwrap();
+        let mut moss_defence1 = moss.clone();
+        moss_defence1.levels.insert("defence".into(), 1);
+        assert!(
+            validate_case_baseline(CoreCase::MossGiantPrepared, &moss_defence1).is_err(),
+            "prepared Moss does not reuse the original Defence-1 fixture"
+        );
+        let mut moss_seeded = moss.clone();
+        moss_seeded.item_ids.insert(BIG_BONES_ID, 1);
+        assert!(validate_case_baseline(CoreCase::MossGiantPrepared, &moss_seeded).is_err());
+
+        let hill = branch_obs(
+            HILL_GIANT_PIT,
+            &[(TROUT_ID, HILL_GIANT_FOOD), (BRASS_KEY_ID, 1)],
+            &[
+                (ADAMANT_SCIMITAR_ID, 1),
+                (RUNE_CHAINBODY_ID, 1),
+                (RUNE_PLATELEGS_ID, 1),
+                (RUNE_FULL_HELM_ID, 1),
+            ],
+            &[("strength", 0)],
+            &moss_levels,
+            &[],
+            &[],
+            &[],
+            false,
+            false,
+        );
+        validate_case_baseline(CoreCase::HillGiantBankPrepared, &hill).unwrap();
+        let mut hill_seeded = hill.clone();
+        hill_seeded.item_ids.insert(BIG_BONES_ID, 1);
+        assert!(validate_case_baseline(CoreCase::HillGiantBankPrepared, &hill_seeded).is_err());
+        let mut hill_limpwurt = hill.clone();
+        hill_limpwurt.item_ids.insert(LIMPWURT_ROOT_ID, 1);
+        assert!(validate_case_baseline(CoreCase::HillGiantBankPrepared, &hill_limpwurt).is_err());
+
+        for (case, baseline) in [
+            (CoreCase::GreenDragonPotionsPrepared, potions),
+            (CoreCase::GreenDragonBankPrepared, green_bank.clone()),
+            (CoreCase::GreenDragonBankDefaultPrepared, green_bank),
+            (CoreCase::GreenDragonTelePrepared, tele),
+            (CoreCase::FireGiantBankPrepared, fire_bank),
+            (CoreCase::MossGiantPrepared, moss),
+            (CoreCase::HillGiantBankPrepared, hill),
+        ] {
+            let mut wrong_level = baseline.clone();
+            wrong_level.levels.insert("defence".into(), 69);
+            assert!(validate_case_baseline(case, &wrong_level).is_err());
+            let mut missing_armour = baseline;
+            missing_armour.equipment_ids.remove(&RUNE_CHAINBODY_ID);
+            assert!(validate_case_baseline(case, &missing_armour).is_err());
+        }
+    }
+
+    #[test]
+    fn enabled_combat_option_observers_reject_false_positive_witnesses() {
+        let dart_case = CoreCase::MossGiantDart;
+        let mut dart_baseline = resource_obs(
+            MOSS_GIANT_BANK,
+            &[],
+            &[
+                (BRONZE_DART_ID, MOSS_GIANT_DART_SUPPLY),
+                (LOBSTER_ID, MOSS_GIANT_DART_BANK_FOOD),
+            ],
+            &[],
+            &[("ranged", 0)],
+            &[
+                ("ranged", MOSS_GIANT_DART_RANGED),
+                ("defence", COMBAT_ATTACK_LEVEL),
+                ("hitpoints", COMBAT_ATTACK_LEVEL),
+            ],
+        );
+        dart_baseline.bank_open = true;
+        dart_baseline.bank_loaded = true;
+        validate_case_baseline(dart_case, &dart_baseline).unwrap();
+
+        let mut worn_start = dart_baseline.clone();
+        worn_start.equipment_ids.insert(BRONZE_DART_ID, 80);
+        worn_start.bank_ids.remove(&BRONZE_DART_ID);
+        assert!(
+            validate_case_baseline(dart_case, &worn_start).is_err(),
+            "worn-gear combat_baseline_ready must not qualify bank-only dart Start"
+        );
+        let mut closed_bank = dart_baseline.clone();
+        closed_bank.bank_open = false;
+        closed_bank.bank_loaded = false;
+        closed_bank.bank_ids.clear();
+        assert!(
+            validate_case_baseline(dart_case, &closed_bank).is_err(),
+            "closed snapshots drop bank_ids and cannot prove the dart fixture"
+        );
+        let mut wrong_ammo_bank = dart_baseline.clone();
+        wrong_ammo_bank.bank_ids.insert(RUNE_ARROW_ID, 1);
+        assert!(validate_case_baseline(dart_case, &wrong_ammo_bank).is_err());
+
+        let dart_spec = combat_spec(dart_case).unwrap();
+        let mut dart_pack = dart_baseline.clone();
+        dart_pack.tile = Some(MOSS_GIANT_SAFESPOT);
+        dart_pack.bank_open = false;
+        dart_pack.bank_loaded = false;
+        dart_pack
+            .item_ids
+            .insert(BRONZE_DART_ID, MOSS_GIANT_DART_SUPPLY);
+        let mut dart_worn = dart_pack.clone();
+        dart_worn.item_ids.remove(&BRONZE_DART_ID);
+        dart_worn
+            .equipment_ids
+            .insert(BRONZE_DART_ID, MOSS_GIANT_DART_SUPPLY);
+        dart_worn.varps.insert(COMBAT_MODE_VARP, RAPID_COMBAT_MODE);
+        let mut dart_field = dart_worn.clone();
+        dart_field
+            .equipment_ids
+            .insert(BRONZE_DART_ID, MOSS_GIANT_DART_SUPPLY - 1);
+        dart_field.xp.insert("ranged".into(), 12);
+        dart_field.npc_facts = vec![combat_npc(4, "Moss giant", 40, true, MOSS_GIANT_SAFESPOT)];
+        dart_field.local_in_combat = true;
+        dart_field.local_target_npc = Some(4);
+        let dart_ok = witness(
+            dart_case,
+            &dart_baseline,
+            [&dart_pack, &dart_worn, &dart_field],
+        );
+        assert!(dart_ok.combat_dart_branch_cycle.qualified());
+        assert!(
+            !dart_ok.combat_dart_branch_cycle.combat.qualified(dart_spec),
+            "one engagement must not satisfy generic qualified()"
+        );
+        assert!(dart_ok.qualify().is_ok());
+
+        let mut dart_bank_pull = dart_baseline.clone();
+        dart_bank_pull.tile = Some(MOSS_GIANT_SAFESPOT);
+        dart_bank_pull.bank_open = true;
+        dart_bank_pull.bank_loaded = true;
+        dart_bank_pull
+            .bank_ids
+            .insert(BRONZE_DART_ID, MOSS_GIANT_DART_SUPPLY - 1);
+        dart_bank_pull.item_ids.insert(BRONZE_DART_ID, 1);
+        let mut dart_worn_from_bank = dart_bank_pull.clone();
+        dart_worn_from_bank.bank_open = false;
+        dart_worn_from_bank.bank_loaded = false;
+        dart_worn_from_bank.bank_ids.clear();
+        dart_worn_from_bank.item_ids.remove(&BRONZE_DART_ID);
+        dart_worn_from_bank
+            .equipment_ids
+            .insert(BRONZE_DART_ID, MOSS_GIANT_DART_SUPPLY);
+        dart_worn_from_bank
+            .varps
+            .insert(COMBAT_MODE_VARP, RAPID_COMBAT_MODE);
+        let mut dart_field_from_bank = dart_worn_from_bank.clone();
+        dart_field_from_bank
+            .equipment_ids
+            .insert(BRONZE_DART_ID, MOSS_GIANT_DART_SUPPLY - 1);
+        dart_field_from_bank.xp.insert("ranged".into(), 12);
+        dart_field_from_bank.npc_facts =
+            vec![combat_npc(4, "Moss giant", 40, true, MOSS_GIANT_SAFESPOT)];
+        dart_field_from_bank.local_in_combat = true;
+        dart_field_from_bank.local_target_npc = Some(4);
+        assert!(witness(
+            dart_case,
+            &dart_baseline,
+            [&dart_bank_pull, &dart_worn_from_bank, &dart_field_from_bank]
+        )
+        .combat_dart_branch_cycle
+        .qualified());
+
+        let mut dart_worn_only = dart_baseline.clone();
+        dart_worn_only.tile = Some(MOSS_GIANT_SAFESPOT);
+        dart_worn_only.bank_open = true;
+        dart_worn_only.bank_loaded = true;
+        dart_worn_only
+            .equipment_ids
+            .insert(BRONZE_DART_ID, MOSS_GIANT_DART_SUPPLY);
+        let mut dart_worn_only_field = dart_worn_only.clone();
+        dart_worn_only_field
+            .equipment_ids
+            .insert(BRONZE_DART_ID, MOSS_GIANT_DART_SUPPLY - 1);
+        dart_worn_only_field.xp.insert("ranged".into(), 12);
+        dart_worn_only_field.npc_facts =
+            vec![combat_npc(4, "Moss giant", 40, true, MOSS_GIANT_SAFESPOT)];
+        dart_worn_only_field.local_in_combat = true;
+        dart_worn_only_field.local_target_npc = Some(4);
+        assert!(
+            !witness(
+                dart_case,
+                &dart_baseline,
+                [&dart_worn_only, &dart_worn_only_field]
+            )
+            .combat_dart_branch_cycle
+            .qualified(),
+            "worn-only with untouched open bank must not prove withdrawal"
+        );
+
+        let mut dart_closed_bank_worn = dart_baseline.clone();
+        dart_closed_bank_worn.tile = Some(MOSS_GIANT_SAFESPOT);
+        dart_closed_bank_worn.bank_open = false;
+        dart_closed_bank_worn.bank_loaded = false;
+        dart_closed_bank_worn.bank_ids.clear();
+        dart_closed_bank_worn
+            .equipment_ids
+            .insert(BRONZE_DART_ID, MOSS_GIANT_DART_SUPPLY);
+        let mut dart_closed_field = dart_closed_bank_worn.clone();
+        dart_closed_field
+            .equipment_ids
+            .insert(BRONZE_DART_ID, MOSS_GIANT_DART_SUPPLY - 1);
+        dart_closed_field.xp.insert("ranged".into(), 12);
+        dart_closed_field.npc_facts =
+            vec![combat_npc(4, "Moss giant", 40, true, MOSS_GIANT_SAFESPOT)];
+        dart_closed_field.local_in_combat = true;
+        dart_closed_field.local_target_npc = Some(4);
+        assert!(
+            !witness(
+                dart_case,
+                &dart_baseline,
+                [&dart_closed_bank_worn, &dart_closed_field]
+            )
+            .combat_dart_branch_cycle
+            .withdrawn,
+            "closed-bank absent snapshot must not count as bank withdraw"
+        );
+
+        let mut no_travel = dart_field.clone();
+        no_travel.tile = Some(MOSS_GIANT_BANK);
+        assert!(witness(dart_case, &dart_baseline, [&dart_pack, &no_travel])
+            .qualify()
+            .is_err());
+        let mut wrong_ammo_live = dart_field.clone();
+        wrong_ammo_live.item_ids.insert(RUNE_ARROW_ID, 1);
+        assert!(witness(
+            dart_case,
+            &dart_baseline,
+            [&dart_pack, &dart_worn, &wrong_ammo_live]
+        )
+        .qualify()
+        .is_err());
+
+        let mage_case = CoreCase::GreenDragonMagePrepared;
+        let mage_baseline = branch_obs(
+            GREEN_DRAGON_FIELD,
+            &[
+                (LOBSTER_ID, GREEN_DRAGON_FOOD),
+                (MIND_RUNE_ID, AUTO_FIGHTER_MAGE_CASTS),
+                (AIR_RUNE_ID, AUTO_FIGHTER_MAGE_AIR_RUNES),
+            ],
+            &[(STAFF_OF_FIRE_ID, 1), (DRAGONFIRE_SHIELD_ID, 1)],
+            &[("magic", 100)],
+            &[
+                ("magic", REMAINING_COMBAT_PREPARED_LEVEL),
+                ("defence", REMAINING_COMBAT_PREPARED_LEVEL),
+                ("hitpoints", REMAINING_COMBAT_PREPARED_LEVEL),
+            ],
+            &[],
+            &[],
+            &[],
+            false,
+            false,
+        );
+        validate_case_baseline(mage_case, &mage_baseline).unwrap();
+        let mut armoured = mage_baseline.clone();
+        armoured.equipment_ids.insert(RUNE_CHAINBODY_ID, 1);
+        assert!(
+            validate_case_baseline(mage_case, &armoured).is_err(),
+            "mage prepared must refuse rune armour"
+        );
+        let mut short_mind = mage_baseline.clone();
+        short_mind.item_ids.insert(MIND_RUNE_ID, 149);
+        assert!(validate_case_baseline(mage_case, &short_mind).is_err());
+
+        let mage_spec = combat_spec(mage_case).unwrap();
+        let mut mage_hit = mage_baseline.clone();
+        mage_hit.item_ids.insert(MIND_RUNE_ID, 149);
+        mage_hit.item_ids.insert(AIR_RUNE_ID, 298);
+        mage_hit.xp.insert("magic".into(), 106);
+        mage_hit.varps.insert(AUTOCAST_MAGIC_VARP, 3);
+        mage_hit.npc_facts = vec![combat_npc(8, "Green dragon", 80, true, GREEN_DRAGON_FIELD)];
+        mage_hit.local_in_combat = true;
+        mage_hit.local_target_npc = Some(8);
+        let mage_ok = witness(mage_case, &mage_baseline, [&mage_hit]);
+        assert!(qualified_mage_branch(&mage_ok.combat_core_cycle, mage_spec));
+        assert!(
+            !mage_ok.combat_core_cycle.qualified(mage_spec),
+            "mage branch must not claim generic 2/1/further_work"
+        );
+        assert!(mage_ok.qualify().is_ok());
+        let mut no_shield = mage_hit.clone();
+        no_shield.equipment_ids.remove(&DRAGONFIRE_SHIELD_ID);
+        assert!(witness(mage_case, &mage_baseline, [&no_shield])
+            .qualify()
+            .is_err());
+
+        let mage_precombat = mage_baseline.clone();
+        let mut mage_cast_bare = mage_hit.clone();
+        mage_cast_bare.equipment_ids.remove(&DRAGONFIRE_SHIELD_ID);
+        let mixed_shield = witness(
+            mage_case,
+            &mage_baseline,
+            [&mage_precombat, &mage_cast_bare],
+        );
+        assert!(
+            mixed_shield.combat_core_cycle.shield_worn,
+            "sticky shield_worn preserves accepted full-kill semantics"
+        );
+        assert!(
+            !qualified_mage_branch(&mixed_shield.combat_core_cycle, mage_spec),
+            "precombat worn then missing during cast must not qualify mage branch"
+        );
+        assert!(mixed_shield.qualify().is_err());
+
+        let mage_re_shield = mage_hit.clone();
+        assert!(
+            witness(
+                mage_case,
+                &mage_baseline,
+                [&mage_cast_bare, &mage_re_shield],
+            )
+            .qualify()
+            .is_err(),
+            "missing then re-equipped must not satisfy shield continuity"
+        );
+
+        let continuous = witness(mage_case, &mage_baseline, [&mage_precombat, &mage_hit]);
+        assert!(qualified_mage_branch(
+            &continuous.combat_core_cycle,
+            mage_spec
+        ));
+        assert!(continuous.qualify().is_ok());
+
+        let camelot_case = CoreCase::FireGiantCamelotPrepared;
+        let camelot_baseline = branch_obs(
+            FIRE_GIANT_ROOM,
+            &[
+                (LOBSTER_ID, FIRE_GIANT_BANK_PREPARED_INITIAL_FOOD),
+                (ROPE_ID, 1),
+                (AIR_RUNE_ID, CAMELOT_AIR_CARRY),
+                (LAW_RUNE_ID, CAMELOT_LAW_CARRY),
+            ],
+            &[
+                (RUNE_SCIMITAR_ID, 1),
+                (RUNE_CHAINBODY_ID, 1),
+                (RUNE_PLATELEGS_ID, 1),
+                (RUNE_FULL_HELM_ID, 1),
+                (GLARIALS_AMULET_ID, 1),
+            ],
+            &[("strength", 0), ("magic", 0)],
+            &[
+                ("attack", BANK_PRESSURE_PREPARED_LEVEL),
+                ("strength", BANK_PRESSURE_PREPARED_LEVEL),
+                ("defence", BANK_PRESSURE_PREPARED_LEVEL),
+                ("hitpoints", BANK_PRESSURE_PREPARED_LEVEL),
+                ("magic", CAMELOT_TELE_MAGIC),
+            ],
+            &[],
+            &[],
+            &[],
+            false,
+            false,
+        );
+        validate_case_baseline(camelot_case, &camelot_baseline).unwrap();
+        let mut seeded_bones = camelot_baseline.clone();
+        seeded_bones.item_ids.insert(BIG_BONES_ID, 1);
+        assert!(validate_case_baseline(camelot_case, &seeded_bones).is_err());
+        let mut no_magic = camelot_baseline.clone();
+        no_magic.levels.insert("magic".into(), 1);
+        no_magic.effective_levels.insert("magic".into(), 1);
+        assert!(validate_case_baseline(camelot_case, &no_magic).is_err());
+        let mut packed_amulet = camelot_baseline.clone();
+        packed_amulet.equipment_ids.remove(&GLARIALS_AMULET_ID);
+        packed_amulet.item_ids.insert(GLARIALS_AMULET_ID, 1);
+        assert!(
+            validate_case_baseline(camelot_case, &packed_amulet).is_err(),
+            "Camelot restock slot math needs the amulet worn"
+        );
+    }
+
+    #[test]
+    fn default_green_loot_requires_both_earned_drops_not_bones_or_hide() {
+        let or_spec = combat_spec(CoreCase::GreenDragonBankPrepared).unwrap();
+        let and_spec = combat_spec(CoreCase::GreenDragonBankDefaultPrepared).unwrap();
+        assert_eq!(or_spec.loot, CombatLoot::DragonBonesOrHide);
+        assert_eq!(and_spec.loot, CombatLoot::DragonBonesAndHide);
+
+        let baseline = branch_obs(
+            GREEN_DRAGON_FIELD,
+            &[(LOBSTER_ID, GREEN_DRAGON_BANK_PREPARED_FOOD)],
+            &[
+                (RUNE_SCIMITAR_ID, 1),
+                (DRAGONFIRE_SHIELD_ID, 1),
+                (RUNE_CHAINBODY_ID, 1),
+                (RUNE_PLATELEGS_ID, 1),
+                (RUNE_FULL_HELM_ID, 1),
+            ],
+            &[("strength", 0)],
+            &[
+                ("attack", 99),
+                ("strength", 99),
+                ("defence", 99),
+                ("hitpoints", 99),
+            ],
+            &[],
+            &[],
+            &[],
+            false,
+            false,
+        );
+        let mut bones_only = baseline.clone();
+        bones_only.item_ids.insert(DRAGON_BONES_ID, 1);
+        let mut both = bones_only.clone();
+        both.item_ids.insert(GREEN_DRAGONHIDE_ID, 1);
+
+        let mut or_cycle = CombatCoreCycle::default();
+        or_cycle.observe(or_spec, &baseline, &bones_only);
+        assert!(
+            or_cycle.looted,
+            "accepted bank cell still qualifies on bones"
+        );
+
+        let mut and_bones = CombatCoreCycle::default();
+        and_bones.observe(and_spec, &baseline, &bones_only);
+        assert!(
+            !and_bones.looted,
+            "default-loot Green must not treat bones-only as the guaranteed pair"
+        );
+
+        let mut and_both = CombatCoreCycle::default();
+        and_both.observe(and_spec, &baseline, &both);
+        assert!(
+            and_both.looted,
+            "both earned drops satisfy the default pair"
+        );
+        assert_eq!(
+            combat_loot_count(&bones_only, CombatLoot::DragonBonesAndHide),
+            1
+        );
+        assert_eq!(combat_loot_count(&both, CombatLoot::DragonBonesAndHide), 2);
+    }
+
+    #[test]
+    fn prepared_green_teleport_rejects_a_death_recovery_cycle() {
+        let case = CoreCase::GreenDragonTelePrepared;
+        let spec = combat_spec(case).unwrap();
+        let bank = combat_bank_spec(case).unwrap();
+        let levels = [
+            ("attack", 99),
+            ("strength", 99),
+            ("defence", 99),
+            ("hitpoints", 99),
+            ("magic", 25),
+        ];
+        let gear = [
+            (RUNE_CHAINBODY_ID, 1),
+            (RUNE_PLATELEGS_ID, 1),
+            (RUNE_FULL_HELM_ID, 1),
+            (RUNE_SCIMITAR_ID, 1),
+            (DRAGONFIRE_SHIELD_ID, 1),
+        ];
+        let baseline = branch_obs(
+            GREEN_DRAGON_FIELD,
+            &[(LAW_RUNE_ID, 3), (AIR_RUNE_ID, 9), (FIRE_RUNE_ID, 3)],
+            &gear,
+            &[("strength", 0), ("magic", 0)],
+            &levels,
+            &[("hitpoints", 70)],
+            &[],
+            &[],
+            false,
+            false,
+        );
+        let mut landed = baseline.clone();
+        landed.tile = Some(VARROCK_TELE_LAND);
+        landed.xp.insert("magic".into(), 35);
+        let mut died = landed.clone();
+        died.chat.push((1, "Oh dear you are dead!".into()));
+        let mut deposited = died.clone();
+        deposited.tile = Some(GREEN_DRAGON_BANK);
+        deposited.bank_open = true;
+        deposited.bank_loaded = true;
+        deposited.bank_generation = 1;
+        deposited.bank_ids.insert(LOBSTER_ID, 40);
+        let mut restocked = deposited.clone();
+        restocked
+            .item_ids
+            .insert(LOBSTER_ID, GREEN_DRAGON_BANK_RESTOCK);
+        restocked.bank_ids.insert(LOBSTER_ID, 20);
+        let mut closed = restocked.clone();
+        closed.bank_open = false;
+        closed.bank_loaded = false;
+        closed.bank_generation = 2;
+        let mut returned = closed.clone();
+        returned.tile = Some(GREEN_DRAGON_FIELD);
+        let mut further = returned.clone();
+        further.xp.insert("strength".into(), 1);
+
+        let mut cycle = CombatBankCycle::default();
+        for observation in [
+            &landed, &died, &deposited, &restocked, &closed, &returned, &further,
+        ] {
+            cycle.observe(spec, bank, &baseline, observation);
+        }
+        assert!(
+            !cycle.qualified(spec, bank),
+            "death recovery must not qualify the prepared teleport cycle"
+        );
+    }
+
+    #[test]
+    fn prepared_fire_giant_keeps_strict_earned_trip_gates_and_exact_restock_space() {
+        let case = CoreCase::FireGiantBankPrepared;
+        let armour_and_weapon = [
+            (RUNE_CHAINBODY_ID, 1),
+            (RUNE_PLATELEGS_ID, 1),
+            (RUNE_FULL_HELM_ID, 1),
+            (RUNE_SCIMITAR_ID, 1),
+        ];
+        let levels = [
+            ("attack", BANK_PRESSURE_PREPARED_LEVEL),
+            ("strength", BANK_PRESSURE_PREPARED_LEVEL),
+            ("defence", BANK_PRESSURE_PREPARED_LEVEL),
+            ("hitpoints", BANK_PRESSURE_PREPARED_LEVEL),
+        ];
+        let baseline = branch_obs(
+            FIRE_GIANT_ROOM,
+            &[
+                (LOBSTER_ID, FIRE_GIANT_BANK_PREPARED_INITIAL_FOOD),
+                (GLARIALS_AMULET_ID, 1),
+                (ROPE_ID, 1),
+            ],
+            &armour_and_weapon,
+            &[("strength", 0)],
+            &levels,
+            &[],
+            &[],
+            &[],
+            false,
+            false,
+        );
+        validate_case_baseline(case, &baseline).unwrap();
+
+        let trace = |restock_count: i32| {
+            let mut first = baseline.clone();
+            first.npc_facts = vec![combat_npc(2, "Fire giant", 50, true, FIRE_GIANT_ROOM)];
+            first.local_in_combat = true;
+            first.local_target_npc = Some(2);
+
+            let mut earned = baseline.clone();
+            earned.item_ids.remove(&LOBSTER_ID);
+            earned.item_ids.insert(BIG_BONES_ID, 1);
+            earned.xp.insert("strength".into(), 10);
+            earned.npc_facts = vec![
+                combat_npc(2, "Fire giant", 0, false, FIRE_GIANT_ROOM),
+                combat_npc(7, "Fire giant", 40, true, FIRE_GIANT_ROOM),
+            ];
+            earned.local_in_combat = true;
+            earned.local_target_npc = Some(7);
+
+            let mut continued = earned.clone();
+            continued.npc_facts = vec![combat_npc(7, "Fire giant", 35, true, FIRE_GIANT_ROOM)];
+
+            let mut washed = continued.clone();
+            washed.tile = Some(FIRE_GIANT_WASH);
+            washed.npc_facts.clear();
+            washed.local_in_combat = false;
+            washed.local_target_npc = None;
+
+            let mut deposited = washed.clone();
+            deposited.tile = Some(FIRE_GIANT_BANK);
+            deposited.item_ids.remove(&BIG_BONES_ID);
+            deposited.bank_ids.insert(BIG_BONES_ID, 1);
+            deposited.bank_ids.insert(LOBSTER_ID, 50);
+            deposited.bank_open = true;
+            deposited.bank_loaded = true;
+            deposited.bank_generation = 1;
+
+            let mut restocked = deposited.clone();
+            restocked.item_ids.insert(LOBSTER_ID, restock_count);
+            restocked.bank_ids.insert(LOBSTER_ID, 50 - restock_count);
+
+            let mut closed = restocked.clone();
+            closed.bank_open = false;
+            closed.bank_loaded = false;
+            closed.bank_generation = 2;
+
+            let mut returned = closed.clone();
+            returned.tile = Some(FIRE_GIANT_ROOM);
+
+            let mut fresh_xp = returned.clone();
+            fresh_xp.xp.insert("strength".into(), 20);
+            fresh_xp.npc_facts = vec![combat_npc(9, "Fire giant", 40, true, FIRE_GIANT_ROOM)];
+            fresh_xp.local_in_combat = true;
+            fresh_xp.local_target_npc = Some(9);
+
+            witness(
+                case,
+                &baseline,
+                [
+                    &first, &earned, &continued, &washed, &deposited, &restocked, &closed,
+                    &returned, &fresh_xp,
+                ],
+            )
+        };
+
+        let exact = trace(FIRE_GIANT_BANK_PREPARED_RESTOCK);
+        assert_eq!(FIRE_GIANT_BANK_PREPARED_RESTOCK + 1 + 1, 27);
+        assert_eq!(exact.combat_bank_cycle.combat.defeats, 1);
+        assert!(exact.combat_bank_cycle.combat.looted);
+        assert!(exact.combat_bank_cycle.banked.is_some());
+        assert!(exact.combat_bank_cycle.restocked);
+        assert!(exact.combat_bank_cycle.closed);
+        assert!(exact.combat_bank_cycle.returned);
+        assert!(exact.combat_bank_cycle.further);
+        assert!(exact.qualify().is_ok());
+
+        let short = trace(FIRE_GIANT_BANK_PREPARED_RESTOCK - 1);
+        assert!(!short.combat_bank_cycle.restocked);
+        assert!(short.qualify().is_err());
+    }
+
+    #[test]
+    fn prepared_fire_giant_camelot_accepts_exact_24_restock_and_rejects_incomplete_return() {
+        let case = CoreCase::FireGiantCamelotPrepared;
+        let bank = combat_bank_spec(case).unwrap();
+        assert_eq!(
+            bank.restock_count,
+            Some(FIRE_GIANT_CAMELOT_PREPARED_RESTOCK)
+        );
+        assert_eq!(
+            combat_bank_spec(CoreCase::FireGiantBankPrepared)
+                .unwrap()
+                .restock_count,
+            Some(FIRE_GIANT_BANK_PREPARED_RESTOCK)
+        );
+
+        let armour_and_weapon = [
+            (RUNE_CHAINBODY_ID, 1),
+            (RUNE_PLATELEGS_ID, 1),
+            (RUNE_FULL_HELM_ID, 1),
+            (RUNE_SCIMITAR_ID, 1),
+            (GLARIALS_AMULET_ID, 1),
+        ];
+        let levels = [
+            ("attack", BANK_PRESSURE_PREPARED_LEVEL),
+            ("strength", BANK_PRESSURE_PREPARED_LEVEL),
+            ("defence", BANK_PRESSURE_PREPARED_LEVEL),
+            ("hitpoints", BANK_PRESSURE_PREPARED_LEVEL),
+            ("magic", CAMELOT_TELE_MAGIC),
+        ];
+        let baseline = branch_obs(
+            FIRE_GIANT_ROOM,
+            &[
+                (LOBSTER_ID, FIRE_GIANT_BANK_PREPARED_INITIAL_FOOD),
+                (ROPE_ID, 1),
+                (AIR_RUNE_ID, CAMELOT_AIR_CARRY),
+                (LAW_RUNE_ID, CAMELOT_LAW_CARRY),
+            ],
+            &armour_and_weapon,
+            &[("strength", 0), ("magic", 0)],
+            &levels,
+            &[],
+            &[],
+            &[],
+            false,
+            false,
+        );
+        validate_case_baseline(case, &baseline).unwrap();
+
+        let trace = |restock_count: i32| {
+            let mut first = baseline.clone();
+            first.npc_facts = vec![combat_npc(2, "Fire giant", 50, true, FIRE_GIANT_ROOM)];
+            first.local_in_combat = true;
+            first.local_target_npc = Some(2);
+
+            let mut earned = baseline.clone();
+            earned.item_ids.remove(&LOBSTER_ID);
+            earned.item_ids.insert(BIG_BONES_ID, 1);
+            earned.xp.insert("strength".into(), 10);
+            earned.npc_facts = vec![
+                combat_npc(2, "Fire giant", 0, false, FIRE_GIANT_ROOM),
+                combat_npc(7, "Fire giant", 40, true, FIRE_GIANT_ROOM),
+            ];
+            earned.local_in_combat = true;
+            earned.local_target_npc = Some(7);
+
+            let mut continued = earned.clone();
+            continued.npc_facts = vec![combat_npc(7, "Fire giant", 35, true, FIRE_GIANT_ROOM)];
+
+            let mut landed = continued.clone();
+            landed.tile = Some(CAMELOT_TELE_LAND);
+            landed.xp.insert("magic".into(), 1);
+            landed.npc_facts.clear();
+            landed.local_in_combat = false;
+            landed.local_target_npc = None;
+
+            let mut deposited = landed.clone();
+            deposited.tile = Some(SEERS_BANK);
+            deposited.item_ids.remove(&BIG_BONES_ID);
+            deposited.bank_ids.insert(BIG_BONES_ID, 1);
+            deposited.bank_ids.insert(LOBSTER_ID, 50);
+            deposited.bank_open = true;
+            deposited.bank_loaded = true;
+            deposited.bank_generation = 1;
+
+            let mut restocked = deposited.clone();
+            restocked.item_ids.insert(LOBSTER_ID, restock_count);
+            restocked.bank_ids.insert(LOBSTER_ID, 50 - restock_count);
+
+            let mut closed = restocked.clone();
+            closed.bank_open = false;
+            closed.bank_loaded = false;
+            closed.bank_generation = 2;
+
+            let mut returned = closed.clone();
+            returned.tile = Some(FIRE_GIANT_ROOM);
+
+            let mut fresh_xp = returned.clone();
+            fresh_xp.xp.insert("strength".into(), 20);
+            fresh_xp.npc_facts = vec![combat_npc(9, "Fire giant", 40, true, FIRE_GIANT_ROOM)];
+            fresh_xp.local_in_combat = true;
+            fresh_xp.local_target_npc = Some(9);
+
+            witness(
+                case,
+                &baseline,
+                [
+                    &first, &earned, &continued, &landed, &deposited, &restocked, &closed,
+                    &returned, &fresh_xp,
+                ],
+            )
+        };
+
+        let exact = trace(FIRE_GIANT_CAMELOT_PREPARED_RESTOCK);
+        assert_eq!(FIRE_GIANT_CAMELOT_PREPARED_RESTOCK + 1 + 1 + 1, 27);
+        assert!(exact.combat_bank_cycle.via_seen);
+        assert!(exact.combat_bank_cycle.via_magic);
+        assert!(exact.combat_bank_cycle.restocked);
+        assert!(exact.combat_bank_cycle.returned);
+        assert!(exact.combat_bank_cycle.further);
+        assert!(exact.qualify().is_ok());
+
+        let barrel_food = trace(FIRE_GIANT_BANK_PREPARED_RESTOCK);
+        assert!(
+            !barrel_food.combat_bank_cycle.restocked,
+            "25-food restock must not satisfy the Camelot 24 observer line"
+        );
+        assert!(barrel_food.qualify().is_err());
+
+        let bank_only_closed = {
+            let mut first = baseline.clone();
+            first.npc_facts = vec![combat_npc(2, "Fire giant", 50, true, FIRE_GIANT_ROOM)];
+            first.local_in_combat = true;
+            first.local_target_npc = Some(2);
+            let mut earned = baseline.clone();
+            earned.item_ids.remove(&LOBSTER_ID);
+            earned.item_ids.insert(BIG_BONES_ID, 1);
+            earned.xp.insert("strength".into(), 10);
+            earned.npc_facts = vec![
+                combat_npc(2, "Fire giant", 0, false, FIRE_GIANT_ROOM),
+                combat_npc(7, "Fire giant", 40, true, FIRE_GIANT_ROOM),
+            ];
+            earned.local_in_combat = true;
+            earned.local_target_npc = Some(7);
+            let mut continued = earned.clone();
+            continued.npc_facts = vec![combat_npc(7, "Fire giant", 35, true, FIRE_GIANT_ROOM)];
+            let mut landed = continued.clone();
+            landed.tile = Some(CAMELOT_TELE_LAND);
+            landed.xp.insert("magic".into(), 1);
+            landed.npc_facts.clear();
+            landed.local_in_combat = false;
+            landed.local_target_npc = None;
+            let mut deposited = landed.clone();
+            deposited.tile = Some(SEERS_BANK);
+            deposited.item_ids.remove(&BIG_BONES_ID);
+            deposited.bank_ids.insert(BIG_BONES_ID, 1);
+            deposited.bank_ids.insert(LOBSTER_ID, 50);
+            deposited.bank_open = true;
+            deposited.bank_loaded = true;
+            deposited.bank_generation = 1;
+            let mut restocked = deposited.clone();
+            restocked
+                .item_ids
+                .insert(LOBSTER_ID, FIRE_GIANT_CAMELOT_PREPARED_RESTOCK);
+            restocked
+                .bank_ids
+                .insert(LOBSTER_ID, 50 - FIRE_GIANT_CAMELOT_PREPARED_RESTOCK);
+            let mut closed = restocked.clone();
+            closed.bank_open = false;
+            closed.bank_loaded = false;
+            closed.bank_generation = 2;
+            witness(
+                case,
+                &baseline,
+                [
+                    &first, &earned, &continued, &landed, &deposited, &restocked, &closed,
+                ],
+            )
+        };
+        assert!(bank_only_closed.combat_bank_cycle.restocked);
+        assert!(bank_only_closed.combat_bank_cycle.closed);
+        assert!(!bank_only_closed.combat_bank_cycle.returned);
+        assert!(!bank_only_closed.combat_bank_cycle.further);
+        assert!(bank_only_closed.qualify().is_err());
+    }
+
     fn combat_npc(
         index: usize,
         name: &str,
@@ -7867,6 +8974,370 @@ export default class NativeStop extends LoopingBot {{
         .is_err());
     }
 
+    fn prepared_combat_baseline(name: &str) -> (CoreCase, Observation) {
+        let case = CoreCase::parse(name).unwrap_or_else(|error| panic!("{name}: {error}"));
+        let (tile, food, items, worn_weapon) = match name {
+            "green_dragon_prepared" => (
+                GREEN_DRAGON_FIELD,
+                GREEN_DRAGON_BASE_FOOD,
+                vec![(LOBSTER_ID, GREEN_DRAGON_BASE_FOOD), (RUNE_SCIMITAR_ID, 1)],
+                false,
+            ),
+            "fire_giant_prepared" => (
+                FIRE_GIANT_ROOM,
+                FIRE_GIANT_FOOD,
+                vec![
+                    (LOBSTER_ID, FIRE_GIANT_FOOD),
+                    (GLARIALS_AMULET_ID, 1),
+                    (ROPE_ID, 1),
+                ],
+                true,
+            ),
+            _ => panic!("unknown prepared combat case {name}"),
+        };
+        let mut baseline = combat_obs(
+            tile,
+            &items,
+            &[("strength", 100)],
+            &[
+                ("attack", 40),
+                ("strength", 40),
+                ("defence", 40),
+                ("hitpoints", 40),
+            ],
+            &[],
+            false,
+            None,
+        );
+        baseline.equipment_ids.clear();
+        for id in [RUNE_CHAINBODY_ID, RUNE_PLATELEGS_ID, RUNE_FULL_HELM_ID] {
+            baseline.equipment_ids.insert(id, 1);
+        }
+        if worn_weapon {
+            baseline.equipment_ids.insert(RUNE_SCIMITAR_ID, 1);
+        } else {
+            baseline.equipment_ids.insert(DRAGONFIRE_SHIELD_ID, 1);
+        }
+        assert_eq!(baseline.item_id(LOBSTER_ID), food);
+        (case, baseline)
+    }
+
+    fn prepared_special_baseline() -> Observation {
+        branch_obs(
+            GREEN_DRAGON_FIELD,
+            &[(LOBSTER_ID, GREEN_DRAGON_FOOD)],
+            &[
+                (DRAGONFIRE_SHIELD_ID, 1),
+                (DRAGON_DAGGER_ID, 1),
+                (RUNE_CHAINBODY_ID, 1),
+                (RUNE_PLATELEGS_ID, 1),
+                (RUNE_FULL_HELM_ID, 1),
+            ],
+            &[("strength", 0)],
+            &[
+                ("attack", 70),
+                ("strength", 70),
+                ("defence", 70),
+                ("hitpoints", 70),
+            ],
+            &[],
+            &[(SA_ARMED_VARP, 0), (SA_ENERGY_VARP, 1000)],
+            &[],
+            false,
+            false,
+        )
+    }
+
+    #[test]
+    fn prepared_combat_baselines_fail_closed_on_defence_food_weapon_and_armour() {
+        for name in ["green_dragon_prepared", "fire_giant_prepared"] {
+            let (case, baseline) = prepared_combat_baseline(name);
+            assert_eq!(case.scenario_name(), name);
+            assert_eq!(
+                case.card_name(),
+                if name.starts_with("green") {
+                    "GreenDragon"
+                } else {
+                    "FireGiant"
+                }
+            );
+            validate_case_baseline(case, &baseline).unwrap();
+
+            for id in [RUNE_CHAINBODY_ID, RUNE_PLATELEGS_ID, RUNE_FULL_HELM_ID] {
+                let mut missing = baseline.clone();
+                missing.equipment_ids.remove(&id);
+                assert!(
+                    validate_case_baseline(case, &missing).is_err(),
+                    "{name} rejects missing worn armour {id}"
+                );
+            }
+            for defence in [39, 41] {
+                let mut wrong = baseline.clone();
+                wrong.levels.insert("defence".into(), defence);
+                assert!(
+                    validate_case_baseline(case, &wrong).is_err(),
+                    "{name} rejects base Defence {defence}"
+                );
+            }
+            for delta in [-1, 1] {
+                let mut wrong = baseline.clone();
+                *wrong.item_ids.get_mut(&LOBSTER_ID).unwrap() += delta;
+                assert!(
+                    validate_case_baseline(case, &wrong).is_err(),
+                    "{name} rejects an inexact food count"
+                );
+            }
+
+            let mut wrong_weapon = baseline.clone();
+            wrong_weapon.item_ids.remove(&RUNE_SCIMITAR_ID);
+            wrong_weapon.equipment_ids.remove(&RUNE_SCIMITAR_ID);
+            wrong_weapon.equipment_ids.insert(ADAMANT_SCIMITAR_ID, 1);
+            assert!(
+                validate_case_baseline(case, &wrong_weapon).is_err(),
+                "{name} requires Rune scimitar 1333 in its declared slot"
+            );
+
+            let mut seeded_loot = baseline.clone();
+            seeded_loot.item_ids.insert(
+                if name.starts_with("green") {
+                    DRAGON_BONES_ID
+                } else {
+                    BIG_BONES_ID
+                },
+                1,
+            );
+            assert!(
+                validate_case_baseline(case, &seeded_loot).is_err(),
+                "{name} retains the empty-loot guard"
+            );
+        }
+    }
+
+    #[test]
+    fn prepared_special_baseline_is_exact_and_preserves_original_special_case() {
+        let case = CoreCase::GreenDragonSpecialPrepared;
+        assert_eq!(
+            CoreCase::parse("green_dragon_special_prepared").unwrap(),
+            case
+        );
+        assert_eq!(case.scenario_name(), "green_dragon_special_prepared");
+        assert_eq!(case.card_name(), "GreenDragon");
+        validate_case_catalog(case, CATALOG_COMMIT_A).unwrap();
+        validate_case_catalog(case, CATALOG_COMMIT_B).unwrap();
+
+        let baseline = prepared_special_baseline();
+        validate_case_baseline(case, &baseline).unwrap();
+
+        for (stat, expected) in [
+            ("attack", 70),
+            ("strength", 70),
+            ("defence", 70),
+            ("hitpoints", 70),
+        ] {
+            for actual in [expected - 1, expected + 1] {
+                let mut wrong = baseline.clone();
+                wrong.levels.insert(stat.into(), actual);
+                assert!(
+                    validate_case_baseline(case, &wrong).is_err(),
+                    "prepared special rejects {stat}={actual}"
+                );
+            }
+        }
+        for count in [GREEN_DRAGON_FOOD - 1, GREEN_DRAGON_FOOD + 1] {
+            let mut wrong = baseline.clone();
+            wrong.item_ids.insert(LOBSTER_ID, count);
+            assert!(
+                validate_case_baseline(case, &wrong).is_err(),
+                "prepared special rejects Lobster count {count}"
+            );
+        }
+        for id in [
+            RUNE_CHAINBODY_ID,
+            RUNE_PLATELEGS_ID,
+            RUNE_FULL_HELM_ID,
+            DRAGON_DAGGER_ID,
+            DRAGONFIRE_SHIELD_ID,
+        ] {
+            let mut missing = baseline.clone();
+            missing.equipment_ids.remove(&id);
+            assert!(
+                validate_case_baseline(case, &missing).is_err(),
+                "prepared special rejects missing worn gear {id}"
+            );
+        }
+        let mut underfunded = baseline.clone();
+        underfunded
+            .varps
+            .insert(SA_ENERGY_VARP, DRAGON_DAGGER_SPECIAL_COST - 1);
+        assert!(validate_case_baseline(case, &underfunded).is_err());
+        let mut armed = baseline.clone();
+        armed.varps.insert(SA_ARMED_VARP, SA_ARMED_VALUE);
+        assert!(validate_case_baseline(case, &armed).is_err());
+
+        let mut original = baseline.clone();
+        original.levels.insert("defence".into(), 1);
+        for id in [RUNE_CHAINBODY_ID, RUNE_PLATELEGS_ID, RUNE_FULL_HELM_ID] {
+            original.equipment_ids.remove(&id);
+        }
+        validate_case_baseline(CoreCase::GreenDragonSpecial, &original).unwrap();
+    }
+
+    #[test]
+    fn prepared_special_reuses_paid_special_defeat_further_work_and_style_gates() {
+        let case = CoreCase::GreenDragonSpecialPrepared;
+        let baseline = prepared_special_baseline();
+        let gear = [
+            (DRAGONFIRE_SHIELD_ID, 1),
+            (DRAGON_DAGGER_ID, 1),
+            (RUNE_CHAINBODY_ID, 1),
+            (RUNE_PLATELEGS_ID, 1),
+            (RUNE_FULL_HELM_ID, 1),
+        ];
+        let levels = [
+            ("attack", 70),
+            ("strength", 70),
+            ("defence", 70),
+            ("hitpoints", 70),
+        ];
+        let engaged = branch_obs(
+            GREEN_DRAGON_FIELD,
+            &[(LOBSTER_ID, GREEN_DRAGON_FOOD)],
+            &gear,
+            &[("strength", 60)],
+            &levels,
+            &[],
+            &[(SA_ARMED_VARP, SA_ARMED_VALUE), (SA_ENERGY_VARP, 1000)],
+            &[combat_npc(4, "Green dragon", 30, true, GREEN_DRAGON_FIELD)],
+            true,
+            false,
+        );
+        let spent = branch_obs(
+            GREEN_DRAGON_FIELD,
+            &[(LOBSTER_ID, GREEN_DRAGON_FOOD)],
+            &gear,
+            &[("strength", 120)],
+            &levels,
+            &[],
+            &[(SA_ARMED_VARP, 0), (SA_ENERGY_VARP, 750)],
+            &[
+                combat_npc(4, "Green dragon", 0, false, GREEN_DRAGON_FIELD),
+                combat_npc(8, "Green dragon", 30, true, GREEN_DRAGON_FIELD),
+            ],
+            true,
+            false,
+        );
+        let mut further = spent.clone();
+        further.npc_facts = vec![combat_npc(8, "Green dragon", 25, true, GREEN_DRAGON_FIELD)];
+
+        assert!(
+            witness(case, &baseline, [&engaged, &spent, &further])
+                .qualify()
+                .is_ok(),
+            "prepared special keeps the no-loot option contract"
+        );
+        assert!(
+            witness(case, &baseline, [&engaged, &spent])
+                .qualify()
+                .is_err(),
+            "defeat without further selected work must fail"
+        );
+
+        let mut unpaid_engaged = engaged.clone();
+        unpaid_engaged.varps.insert(SA_ENERGY_VARP, 1000);
+        let mut unpaid_spent = spent.clone();
+        unpaid_spent.varps.insert(SA_ENERGY_VARP, 1000);
+        let mut unpaid_further = further.clone();
+        unpaid_further.varps.insert(SA_ENERGY_VARP, 1000);
+        assert!(witness(
+            case,
+            &baseline,
+            [&unpaid_engaged, &unpaid_spent, &unpaid_further]
+        )
+        .qualify()
+        .is_err());
+
+        let mut unarmed_engaged = engaged.clone();
+        unarmed_engaged.varps.insert(SA_ARMED_VARP, 0);
+        let mut unarmed_spent = spent.clone();
+        unarmed_spent.varps.insert(SA_ARMED_VARP, 0);
+        let mut unarmed_further = further.clone();
+        unarmed_further.varps.insert(SA_ARMED_VARP, 0);
+        assert!(witness(
+            case,
+            &baseline,
+            [&unarmed_engaged, &unarmed_spent, &unarmed_further]
+        )
+        .qualify()
+        .is_err());
+    }
+
+    #[test]
+    fn prepared_combat_reuses_strict_defeat_loot_and_further_work_qualification() {
+        for (name, target, loot) in [
+            ("green_dragon_prepared", "Green dragon", DRAGON_BONES_ID),
+            ("fire_giant_prepared", "Fire giant", BIG_BONES_ID),
+        ] {
+            let (case, baseline) = prepared_combat_baseline(name);
+            let tile = baseline.tile.unwrap();
+
+            let mut first = baseline.clone();
+            first.npc_facts = vec![combat_npc(2, target, 50, true, tile)];
+            first.local_in_combat = true;
+            first.local_target_npc = Some(2);
+
+            let mut defeated_and_next = baseline.clone();
+            defeated_and_next
+                .xp
+                .insert("strength".into(), baseline.skill_xp("strength") + 10);
+            defeated_and_next.item_ids.insert(loot, 1);
+            defeated_and_next.npc_facts = vec![
+                combat_npc(2, target, 0, false, tile),
+                combat_npc(7, target, 40, true, tile),
+            ];
+            defeated_and_next.local_in_combat = true;
+            defeated_and_next.local_target_npc = Some(7);
+
+            let mut further = defeated_and_next.clone();
+            further.npc_facts = vec![combat_npc(7, target, 35, true, tile)];
+
+            assert!(
+                witness(case, &baseline, [&first, &defeated_and_next, &further])
+                    .qualify()
+                    .is_ok(),
+                "{name} qualifies through the unchanged strict combat observer"
+            );
+            assert!(
+                witness(case, &baseline, [&first, &defeated_and_next])
+                    .qualify()
+                    .is_err(),
+                "{name} rejects defeat and loot without further work"
+            );
+
+            let mut no_loot = defeated_and_next.clone();
+            no_loot.item_ids.remove(&loot);
+            let mut no_loot_further = further.clone();
+            no_loot_further.item_ids.remove(&loot);
+            assert!(
+                witness(case, &baseline, [&first, &no_loot, &no_loot_further])
+                    .qualify()
+                    .is_err(),
+                "{name} rejects defeat without exact loot"
+            );
+
+            let mut no_defeat = further.clone();
+            no_defeat.npc_facts = vec![
+                combat_npc(2, target, 30, true, tile),
+                combat_npc(7, target, 35, true, tile),
+            ];
+            assert!(
+                witness(case, &baseline, [&first, &no_defeat, &no_defeat])
+                    .qualify()
+                    .is_err(),
+                "{name} rejects loot and engagements without a defeat"
+            );
+        }
+    }
+
     #[test]
     fn old_catalog_explicitly_refuses_cut_string_mode() {
         let error =
@@ -7977,6 +9448,11 @@ export default class NativeStop extends LoopingBot {{
             CoreCase::AioTeleportNoStaff,
             CoreCase::ShopBuyout,
             CoreCase::ShopBuyoutAubury,
+            CoreCase::ShopBuyoutLowe,
+            CoreCase::ShopBuyoutHickton,
+            CoreCase::ShopBuyoutHarry,
+            CoreCase::ShopBuyoutBetty,
+            CoreCase::ShopBuyoutGerrant,
             CoreCase::SmithingBot,
             CoreCase::SmithingBotPlatebody,
             CoreCase::LeatherCrafter,
@@ -8602,8 +10078,19 @@ export default class NativeStop extends LoopingBot {{
         .is_err());
     }
 
+    /// The fixtures' `Observation`s overflow the default 2 MiB test-thread
+    /// stack in a debug build, so the checks run on a thread with a larger one.
     #[test]
     fn fight_guard_response_needs_a_kill_and_rejects_the_flee_kite() {
+        std::thread::Builder::new()
+            .stack_size(64 << 20)
+            .spawn(fight_guard_response_checks)
+            .expect("spawn the check thread")
+            .join()
+            .expect("fight guard response checks");
+    }
+
+    fn fight_guard_response_checks() {
         let cakes_base = ardy_fight_obs(
             ARDY_CAKES_STAND,
             &[(KNIFE_ID, ARDY_CAKES_BALLAST_KNIVES)],
@@ -8800,6 +10287,87 @@ export default class NativeStop extends LoopingBot {{
         )
         .qualify()
         .is_err());
+
+        // On 289 the catch comes from the opening stall restock, before any
+        // coins: the kill counts from Start.
+        let stall_fight = ardy_fight_obs(
+            ARDY_CAKES_STAND,
+            &[(CAKE_ID, 1)],
+            &[],
+            16,
+            20,
+            40,
+            &[combat_npc(6, "Guard", 22, true, ARDY_CAKES_STAND)],
+            true,
+            Some(6),
+        );
+        let stall_kill = ardy_fight_obs(
+            ARDY_CAKES_STAND,
+            &[(CAKE_ID, 1)],
+            &[],
+            16,
+            48,
+            40,
+            &[combat_npc(6, "Guard", 0, false, ARDY_CAKES_STAND)],
+            false,
+            None,
+        );
+        let kill_first = [
+            &stall_fight,
+            &stall_kill,
+            &pickpocketed,
+            &deposited,
+            &returned,
+            &further,
+        ];
+        assert!(
+            witness(CoreCase::ArdyThieverFight, &thiever_base, kill_first)
+                .qualify()
+                .is_ok()
+        );
+        // The Flee kite counts from Start too, even before the first coins.
+        let mut fled_early = stall_fight.clone();
+        fled_early.tile = Some(ARDY_FLEE_TILE);
+        assert!(witness(
+            CoreCase::ArdyThieverFight,
+            &thiever_base,
+            [
+                &fled_early,
+                &stall_kill,
+                &pickpocketed,
+                &deposited,
+                &returned,
+                &further
+            ]
+        )
+        .qualify()
+        .is_err());
+        // A kill still has to be followed by coins and their deposit.
+        assert!(witness(
+            CoreCase::ArdyThieverFight,
+            &thiever_base,
+            [&stall_fight, &stall_kill]
+        )
+        .qualify()
+        .is_err());
+        // Coins from the dead Guard's drop, picked up with no Thieving XP, are
+        // not a pickpocket: the bank cycle on them does not qualify.
+        let mut looted = stall_kill.clone();
+        looted.item_ids.insert(COINS_ID, 30);
+        assert!(witness(
+            CoreCase::ArdyThieverFight,
+            &thiever_base,
+            [
+                &stall_fight,
+                &stall_kill,
+                &looted,
+                &deposited,
+                &returned,
+                &further
+            ]
+        )
+        .qualify()
+        .is_err());
     }
 
     /// Camp/Fight option inject keys must be declared by the frozen card
@@ -8957,6 +10525,105 @@ export default class NativeStop extends LoopingBot {{
         observation
     }
 
+    #[test]
+    fn combat_bank_restock_requires_same_session_pack_gain_and_loaded_bank_decrease() {
+        let case = CoreCase::GreenDragonBankPrepared;
+        let spec = combat_spec(case).expect("prepared GreenDragon combat spec");
+        let bank = combat_bank_spec(case).expect("prepared GreenDragon bank spec");
+
+        let observe_candidate = |baseline_bank: &[(i32, i32)],
+                                 candidate_food: i32,
+                                 candidate_bank_food: i32,
+                                 candidate_generation: u64,
+                                 candidate_loaded: bool| {
+            // The live baseline deliberately has no loaded bank rows even
+            // though the native seed has stocked the server-side bank.
+            let baseline = bank_obs(
+                case,
+                GREEN_DRAGON_FIELD,
+                &[(LOBSTER_ID, GREEN_DRAGON_BANK_PREPARED_FOOD)],
+                baseline_bank,
+                &[("strength", 0)],
+                &[],
+                false,
+                None,
+                0,
+                false,
+            );
+            let deposited = bank_obs(
+                case,
+                GREEN_DRAGON_BANK,
+                &[(LOBSTER_ID, 25)],
+                &[
+                    (LOBSTER_ID, 40),
+                    (DRAGON_BONES_ID, 1),
+                    (GREEN_DRAGONHIDE_ID, 2),
+                ],
+                &[("strength", 40)],
+                &[],
+                false,
+                None,
+                1,
+                true,
+            );
+            let mut candidate = bank_obs(
+                case,
+                GREEN_DRAGON_BANK,
+                &[(LOBSTER_ID, candidate_food)],
+                &[
+                    (LOBSTER_ID, candidate_bank_food),
+                    (DRAGON_BONES_ID, 1),
+                    (GREEN_DRAGONHIDE_ID, 2),
+                ],
+                &[("strength", 40)],
+                &[],
+                false,
+                None,
+                candidate_generation,
+                true,
+            );
+            candidate.bank_loaded = candidate_loaded;
+
+            let mut cycle = CombatBankCycle::default();
+            cycle.observe(spec, bank, &baseline, &deposited);
+            assert!(
+                cycle.banked.is_some(),
+                "fresh loaded deposit is captured first"
+            );
+            cycle.observe(spec, bank, &baseline, &candidate);
+            cycle
+        };
+
+        let hidden_seed = observe_candidate(&[], 27, 38, 1, true);
+        assert!(
+            hidden_seed.restocked,
+            "a real withdrawal must qualify when the pre-Start bank was unloaded"
+        );
+
+        let loaded_baseline = observe_candidate(&[(LOBSTER_ID, 40)], 27, 38, 1, true);
+        assert!(
+            loaded_baseline.restocked,
+            "the existing loaded-baseline withdrawal remains accepted"
+        );
+
+        assert!(
+            !observe_candidate(&[], 27, 40, 1, true).restocked,
+            "pack gain without a decrease from the captured bank stock is not a withdrawal"
+        );
+        assert!(
+            !observe_candidate(&[], 25, 38, 1, true).restocked,
+            "bank decrease without a pack gain is not a withdrawal"
+        );
+        assert!(
+            !observe_candidate(&[], 27, 38, 2, true).restocked,
+            "a later bank generation cannot prove the captured session's withdrawal"
+        );
+        assert!(
+            !observe_candidate(&[], 27, 38, 1, false).restocked,
+            "unloaded bank rows cannot prove a withdrawal"
+        );
+    }
+
     /// Every bank cell has to execute its card's own trip: the pack stock that
     /// belongs in the bank actually lands there, the card's restock line is met
     /// from that bank's own stock, the modal closes on a later session, the trip
@@ -8980,14 +10647,11 @@ export default class NativeStop extends LoopingBot {{
             false,
         );
         validate_case_baseline(case, &baseline).unwrap();
-        // The class item has to be a Guard drop: any seeded deposit-class
-        // stock fails the baseline (mirrors moss_giant_bank's seeded bones).
+        // The class item has to be a looted Guard drop: seeded Bones fail the
+        // baseline (mirrors moss_giant_bank's seeded bones).
         let mut seeded_loot = baseline.clone();
-        seeded_loot.item_ids.insert(IRON_ORE_ID, 1);
+        seeded_loot.item_ids.insert(BONES_ID, 1);
         assert!(validate_case_baseline(case, &seeded_loot).is_err());
-        let mut seeded_rune = baseline.clone();
-        seeded_rune.item_ids.insert(BLOOD_RUNE_ID, 1);
-        assert!(validate_case_baseline(case, &seeded_rune).is_err());
         let mut carried_weapon_only = baseline.clone();
         carried_weapon_only.equipment_ids.clear();
         assert!(validate_case_baseline(case, &carried_weapon_only).is_err());
@@ -9022,12 +10686,13 @@ export default class NativeStop extends LoopingBot {{
             0,
             false,
         );
-        // The kill's drop lands in the pack: the class only exists because the
-        // script looted it, and `bankAtLootSlots=1` ends the trip on it.
+        // The kill's guaranteed Bones land in the pack: burial is off, the
+        // class only exists because the script looted it, and
+        // `bankAtLootSlots=1` ends the trip on it.
         let looted = bank_obs(
             case,
             ARDY_THIEVER_STAND,
-            &[(TROUT_ID, AUTO_FIGHTER_FOOD), (IRON_ORE_ID, 1)],
+            &[(TROUT_ID, AUTO_FIGHTER_FOOD), (BONES_ID, 1)],
             &[(TROUT_ID, 20)],
             &[("strength", 40)],
             &[],
@@ -9040,7 +10705,7 @@ export default class NativeStop extends LoopingBot {{
             case,
             ARDOUGNE_EAST_BANK,
             &[(TROUT_ID, AUTO_FIGHTER_FOOD)],
-            &[(TROUT_ID, 20), (IRON_ORE_ID, 1)],
+            &[(TROUT_ID, 20), (BONES_ID, 1)],
             &[("strength", 40)],
             &[],
             false,
@@ -9052,7 +10717,7 @@ export default class NativeStop extends LoopingBot {{
             case,
             ARDOUGNE_EAST_BANK,
             &[(TROUT_ID, AUTO_FIGHTER_BANK_RESTOCK)],
-            &[(TROUT_ID, 18), (IRON_ORE_ID, 1)],
+            &[(TROUT_ID, 18), (BONES_ID, 1)],
             &[("strength", 40)],
             &[],
             false,
@@ -9064,7 +10729,7 @@ export default class NativeStop extends LoopingBot {{
             case,
             ARDOUGNE_EAST_BANK,
             &[(TROUT_ID, AUTO_FIGHTER_BANK_RESTOCK)],
-            &[(TROUT_ID, 18), (IRON_ORE_ID, 1)],
+            &[(TROUT_ID, 18), (BONES_ID, 1)],
             &[("strength", 40)],
             &[],
             false,
@@ -9076,7 +10741,7 @@ export default class NativeStop extends LoopingBot {{
             case,
             ARDY_THIEVER_STAND,
             &[(TROUT_ID, AUTO_FIGHTER_BANK_RESTOCK)],
-            &[(TROUT_ID, 18), (IRON_ORE_ID, 1)],
+            &[(TROUT_ID, 18), (BONES_ID, 1)],
             &[("strength", 40)],
             &[],
             false,
@@ -9088,7 +10753,7 @@ export default class NativeStop extends LoopingBot {{
             case,
             ARDY_THIEVER_STAND,
             &[(TROUT_ID, AUTO_FIGHTER_BANK_RESTOCK)],
-            &[(TROUT_ID, 18), (IRON_ORE_ID, 1)],
+            &[(TROUT_ID, 18), (BONES_ID, 1)],
             &[("strength", 60)],
             &[combat_npc(3, "Guard", 20, true, ARDY_THIEVER_STAND)],
             true,
@@ -9096,16 +10761,19 @@ export default class NativeStop extends LoopingBot {{
             6,
             false,
         );
-        assert!(witness(
+        // The live trip: looted Bones, fresh East Ardougne deposit, trout
+        // restock, close, return and further Strength XP.
+        let trip = witness(
             case,
             &baseline,
             [
                 &first, &defeat, &looted, &deposited, &restocked, &closed, &returned, &further,
-                &further
-            ]
-        )
-        .qualify()
-        .is_ok());
+                &further,
+            ],
+        );
+        if let Err(error) = trip.qualify() {
+            panic!("looted Bones banked at East Ardougne must qualify: {error}");
+        }
         // The bank never took the pack stock: no deposit, nothing to qualify.
         assert!(witness(
             case,
@@ -9120,7 +10788,7 @@ export default class NativeStop extends LoopingBot {{
             case,
             ARDOUGNE_EAST_BANK,
             &[(TROUT_ID, AUTO_FIGHTER_FOOD)],
-            &[(TROUT_ID, 20), (IRON_ORE_ID, 1)],
+            &[(TROUT_ID, 20), (BONES_ID, 1)],
             &[("strength", 40)],
             &[],
             false,
@@ -9148,7 +10816,7 @@ export default class NativeStop extends LoopingBot {{
         let open_only = bank_obs(
             case,
             ARDOUGNE_EAST_BANK,
-            &[(TROUT_ID, AUTO_FIGHTER_FOOD), (IRON_ORE_ID, 1)],
+            &[(TROUT_ID, AUTO_FIGHTER_FOOD), (BONES_ID, 1)],
             &[(TROUT_ID, 20)],
             &[("strength", 40)],
             &[],
@@ -9169,7 +10837,7 @@ export default class NativeStop extends LoopingBot {{
             case,
             ARDY_THIEVER_STAND,
             &[(TROUT_ID, AUTO_FIGHTER_FOOD)],
-            &[(TROUT_ID, 20), (IRON_ORE_ID, 1)],
+            &[(TROUT_ID, 20), (BONES_ID, 1)],
             &[("strength", 40)],
             &[],
             false,
@@ -9201,6 +10869,26 @@ export default class NativeStop extends LoopingBot {{
         )
         .qualify()
         .is_err());
+        // A Guard drop outside the card's injected `loot=[Bones]` is not the
+        // trip's loot: looting and banking iron ore cannot stand in for it.
+        let with_ore = |obs: &Observation| {
+            let mut obs = obs.clone();
+            if let Some(count) = obs.item_ids.remove(&BONES_ID) {
+                obs.item_ids.insert(IRON_ORE_ID, count);
+            }
+            if let Some(count) = obs.bank_ids.remove(&BONES_ID) {
+                obs.bank_ids.insert(IRON_ORE_ID, count);
+            }
+            obs
+        };
+        let ore_trip = [
+            &first, &defeat, &looted, &deposited, &restocked, &closed, &returned, &further,
+            &further,
+        ]
+        .map(with_ore);
+        assert!(witness(case, &baseline, ore_trip.each_ref())
+            .qualify()
+            .is_err());
 
         // --- moss_giant_bank: food-gone trip end, Ardougne West, lobster restock.
         let case = CoreCase::parse("moss_giant_bank").expect("bank case registered");
@@ -9694,8 +11382,8 @@ export default class NativeStop extends LoopingBot {{
         let mut seeded_cake = baseline.clone();
         seeded_cake.item_ids.insert(CAKE_ID, 1);
         assert!(validate_case_baseline(case, &seeded_cake).is_err());
-        // Same class as auto_fighter_bank: a pre-Start Guard drop would fire
-        // `bankEveryItems=1` without a kill-fed pickup.
+        // A pre-Start Guard drop would fire `bankEveryItems=1` without a
+        // kill-fed pickup.
         let mut seeded_loot = baseline.clone();
         seeded_loot.item_ids.insert(IRON_ORE_ID, 1);
         assert!(validate_case_baseline(case, &seeded_loot).is_err());
@@ -9973,7 +11661,7 @@ export default class NativeStop extends LoopingBot {{
                 }
                 // Settings.list only accepts a JSON array; a CSV string falls
                 // back to AutoFighter's DEFAULT_LOOT (gems+clue), which Guards
-                // cannot feed. merge_bag must keep the injected Guard names.
+                // cannot feed. merge_bag must keep the injected Bones list.
                 if name == "auto_fighter_bank" {
                     let schema = script::settings_schema_from_source(&source);
                     let loot = schema
@@ -9987,15 +11675,13 @@ export default class NativeStop extends LoopingBot {{
                     let bag = script::merge_bag(&schema, &Map::new(), Some(&inject));
                     assert_eq!(
                         bag.get("loot"),
-                        Some(&json!([
-                            "iron ore",
-                            "steel arrow",
-                            "body talisman",
-                            "blood rune",
-                            "chaos rune",
-                            "nature rune"
-                        ])),
-                        "{name}: {card} at {commit} must deliver the injected Guard loot array, not DEFAULT_LOOT"
+                        Some(&json!(["Bones"])),
+                        "{name}: {card} at {commit} must deliver the injected Bones loot array, not DEFAULT_LOOT"
+                    );
+                    assert_eq!(
+                        bag.get("buryBones"),
+                        Some(&json!(false)),
+                        "{name}: {card} at {commit} must keep looted Bones for the deposit"
                     );
                 }
             }
@@ -11000,6 +12686,31 @@ export default class NativeStop extends LoopingBot {{
         assert!(validate_case_baseline(aubury, &aemad).is_err());
         let aubury_ok = noncombat_obs(AUBURY_STAND, &[], &[], &[], &[], &[]);
         validate_case_baseline(aubury, &aubury_ok).unwrap();
+
+        let lowe = CoreCase::parse("shop_buyout_lowe").unwrap();
+        assert!(validate_case_baseline(lowe, &aubury_ok).is_err());
+        let lowe_ok = noncombat_obs(LOWE_STAND, &[], &[], &[], &[], &[]);
+        validate_case_baseline(lowe, &lowe_ok).unwrap();
+
+        let hickton = CoreCase::parse("shop_buyout_hickton").unwrap();
+        assert!(validate_case_baseline(hickton, &lowe_ok).is_err());
+        let hickton_ok = noncombat_obs(HICKTON_STAND, &[], &[], &[], &[], &[]);
+        validate_case_baseline(hickton, &hickton_ok).unwrap();
+
+        let harry = CoreCase::parse("shop_buyout_harry").unwrap();
+        assert!(validate_case_baseline(harry, &hickton_ok).is_err());
+        let harry_ok = noncombat_obs(HARRY_STAND, &[], &[], &[], &[], &[]);
+        validate_case_baseline(harry, &harry_ok).unwrap();
+
+        let betty = CoreCase::parse("shop_buyout_betty").unwrap();
+        assert!(validate_case_baseline(betty, &harry_ok).is_err());
+        let betty_ok = noncombat_obs(BETTY_STAND, &[], &[], &[], &[], &[]);
+        validate_case_baseline(betty, &betty_ok).unwrap();
+
+        let gerrant = CoreCase::parse("shop_buyout_gerrant").unwrap();
+        assert!(validate_case_baseline(gerrant, &betty_ok).is_err());
+        let gerrant_ok = noncombat_obs(GERRANT_STAND, &[], &[], &[], &[], &[]);
+        validate_case_baseline(gerrant, &gerrant_ok).unwrap();
     }
 
     #[test]
@@ -11423,6 +13134,31 @@ export default class NativeStop extends LoopingBot {{
             ),
             (
                 "shop_buyout_aubury",
+                "ShopBuyout",
+                "src/bot/scripts/ShopBuyout/ShopBuyout.ts",
+            ),
+            (
+                "shop_buyout_lowe",
+                "ShopBuyout",
+                "src/bot/scripts/ShopBuyout/ShopBuyout.ts",
+            ),
+            (
+                "shop_buyout_hickton",
+                "ShopBuyout",
+                "src/bot/scripts/ShopBuyout/ShopBuyout.ts",
+            ),
+            (
+                "shop_buyout_harry",
+                "ShopBuyout",
+                "src/bot/scripts/ShopBuyout/ShopBuyout.ts",
+            ),
+            (
+                "shop_buyout_betty",
+                "ShopBuyout",
+                "src/bot/scripts/ShopBuyout/ShopBuyout.ts",
+            ),
+            (
+                "shop_buyout_gerrant",
                 "ShopBuyout",
                 "src/bot/scripts/ShopBuyout/ShopBuyout.ts",
             ),

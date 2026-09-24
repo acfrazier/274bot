@@ -110,6 +110,10 @@ pub trait Driver {
     }
     /// Existing single-character chat-branch body, without a frame poll.
     fn consume_chat_key(&mut self, _key: i32) {}
+    /// Zero native GameShell idle after a successfully accepted input-class
+    /// send. Recorders default to no-op; the real client driver writes
+    /// `shell.idle_cycles = 0` the same way mouse/key entrypoints do.
+    fn note_input_activity(&mut self) {}
 }
 
 impl Driver for Client {
@@ -252,18 +256,31 @@ impl Driver for Client {
     fn consume_chat_key(&mut self, key: i32) {
         Client::consume_chat_key(self, key);
     }
+
+    fn note_input_activity(&mut self) {
+        self.shell.idle_cycles = 0;
+    }
+}
+
+fn mark_input_activity<D: Driver + ?Sized>(driver: &mut D, accepted: bool) -> bool {
+    if accepted {
+        driver.note_input_activity();
+    }
+    accepted
 }
 
 /// Dispatch the already-prepared menu option at `slot`.
 pub fn interact<D: Driver + ?Sized>(driver: &mut D, slot: i32) -> bool {
-    driver.do_action(slot)
+    let accepted = driver.do_action(slot);
+    mark_input_activity(driver, accepted)
 }
 
 /// Press an interface button (`IF_BUTTON` on `iface_id`) via the doAction
 /// path, so client-code vetoes (logout, social) still apply.
 pub fn press<D: Driver + ?Sized>(driver: &mut D, iface_id: i32) -> bool {
     driver.set_menu(0, MiniMenuAction::IF_BUTTON, 0, 0, iface_id);
-    driver.do_action(0)
+    let accepted = driver.do_action(0);
+    mark_input_activity(driver, accepted)
 }
 
 /// Set run on (iface 153) or off (iface 152) via the `doAction` IF_BUTTON
@@ -278,11 +295,27 @@ pub fn set_run<D: Driver + ?Sized>(driver: &mut D, on: bool) -> bool {
 /// coordinates — the route head already is, and the absolute target is
 /// translated through [`Driver::build_base`] before `try_move`.
 pub fn walk<D: Driver + ?Sized>(driver: &mut D, x: i32, z: i32) -> bool {
+    walk_with_nearest(driver, x, z, false)
+}
+
+/// Walk toward an absolute world tile, accepting the client's nearest
+/// reachable fallback when the exact tile is blocked.
+pub fn walk_nearest<D: Driver + ?Sized>(driver: &mut D, x: i32, z: i32) -> bool {
+    walk_with_nearest(driver, x, z, true)
+}
+
+fn walk_with_nearest<D: Driver + ?Sized>(
+    driver: &mut D,
+    x: i32,
+    z: i32,
+    try_nearest: bool,
+) -> bool {
     let Some((px, pz)) = driver.local_route() else {
         return false;
     };
     let (bx, bz) = driver.build_base();
-    driver.try_move(px, pz, x - bx, z - bz, false, 0, 0, 0, 0, 0, 0)
+    let accepted = driver.try_move(px, pz, x - bx, z - bz, try_nearest, 0, 0, 0, 0, 0, 0);
+    mark_input_activity(driver, accepted)
 }
 
 /// Interact with a loc via OP_LOC1 through the `doAction` path. The client
@@ -298,13 +331,15 @@ pub fn op_loc<D: Driver + ?Sized>(driver: &mut D, x: i32, z: i32, loc_id: i32) -
     let sz = z - bz;
     let a = driver.loc_typecode(sx, sz).unwrap_or(loc_id);
     driver.set_menu(0, MiniMenuAction::OP_LOC1, a, sx, sz);
-    driver.do_action(0)
+    let accepted = driver.do_action(0);
+    mark_input_activity(driver, accepted)
 }
 
 /// Close the open modal (`CLOSE_MODAL`).
 pub fn close_modal<D: Driver + ?Sized>(driver: &mut D) -> bool {
     let revision = driver.revision();
-    Send::close_modal().write_for_revision(revision, driver.out())
+    let accepted = Send::close_modal().write_for_revision(revision, driver.out());
+    mark_input_activity(driver, accepted)
 }
 
 /// Answer a count dialog with `amount` (`RESUME_P_COUNTDIALOG`).
@@ -314,7 +349,7 @@ pub fn answer_count<D: Driver + ?Sized>(driver: &mut D, amount: i32) -> bool {
         return false;
     }
     driver.count_dialog_submitted();
-    true
+    mark_input_activity(driver, true)
 }
 
 /// Queue a `CLIENT_CHEAT` (`::` command) through the ISAAC sink.
@@ -874,10 +909,11 @@ impl<'a> Interactions<'a> {
     }
 
     /// Wear or wield an inventory item by obj id (the BankBudget
-    /// session's arm): resolves the held item, dispatches its `Wear` menu
-    /// op (or `Wield` for weapons), with the same preconditions as
+    /// session's arm): resolves the held item, dispatches its own `Wear`
+    /// (else `Wield`, else `Equip`) menu op — the frozen shim's
+    /// `/wield|wear|equip/i` — with the same preconditions as
     /// [`Interactions::interact`]. Refuses `StaleTarget` when the item is
-    /// not held, `InvalidAction` when its menu has no Wear/Wield slot.
+    /// not held, `InvalidAction` when its menu has none of the three.
     pub fn wear(&mut self, id: i32) -> SendResult<'a> {
         let snapshot = self.snapshot;
         if let Some(reason) = self.precondition(snapshot, false) {
@@ -890,8 +926,37 @@ impl<'a> Interactions<'a> {
         if let Some(reason) = self.check_target(&target, snapshot) {
             return refuse(snapshot, reason);
         }
-        let operation = operation_of(&target, "Wear").or_else(|| operation_of(&target, "Wield"));
+        let operation = operation_of(&target, "Wear")
+            .or_else(|| operation_of(&target, "Wield"))
+            .or_else(|| operation_of(&target, "Equip"));
         let Some(operation) = operation else {
+            return refuse(snapshot, SendReason::InvalidAction);
+        };
+        self.dispatch(
+            WireCommand::Op { target, operation },
+            snapshot.tick() as u64,
+        )
+    }
+
+    /// Remove a worn item by obj id: resolves the worn-equipment row (the
+    /// worn tab's TYPE_INV component slot) and dispatches that component's
+    /// `Remove` op — an INV_BUTTON at the row's id/slot/component — with
+    /// the same preconditions as [`Interactions::interact`]. Refuses
+    /// `StaleTarget` when the item is not worn, `InvalidAction` when the
+    /// worn row's menu has no Remove slot.
+    pub fn unequip(&mut self, id: i32) -> SendResult<'a> {
+        let snapshot = self.snapshot;
+        if let Some(reason) = self.precondition(snapshot, false) {
+            return refuse(snapshot, reason);
+        }
+        let Some(item) = snapshot.equipment().iter().find(|it| it.def.id == id) else {
+            return refuse(snapshot, SendReason::StaleTarget);
+        };
+        let target = OpTarget::Item(item);
+        if let Some(reason) = self.check_target(&target, snapshot) {
+            return refuse(snapshot, reason);
+        }
+        let Some(operation) = operation_of(&target, "Remove") else {
             return refuse(snapshot, SendReason::InvalidAction);
         };
         self.dispatch(
@@ -1442,6 +1507,9 @@ impl<'a> Interactions<'a> {
     ) -> SendResult<'t> {
         let accepted = self.send_command(&command);
         if accepted {
+            if counts_as_input_activity(&command) {
+                self.driver.note_input_activity();
+            }
             SendResult::Sent { tick, command }
         } else {
             SendResult::Refused {
@@ -1593,6 +1661,24 @@ fn refuse<'t>(snapshot: &GameSnapshot, reason: SendReason) -> SendResult<'t> {
     SendResult::Refused {
         tick: snapshot.tick() as u64,
         reason,
+    }
+}
+
+/// Packet-class user events (OPNPC/walk/button/close/count/etc). Local tab
+/// flips, login handshakes, cheats, keepalives, and refused sends are not.
+fn counts_as_input_activity(command: &WireCommand<'_>) -> bool {
+    match command {
+        WireCommand::Op { .. }
+        | WireCommand::UseItem { .. }
+        | WireCommand::UseWidget { .. }
+        | WireCommand::Button { .. }
+        | WireCommand::Continue { .. }
+        | WireCommand::Close
+        | WireCommand::ClearLocalModal { .. }
+        | WireCommand::Count { .. }
+        | WireCommand::Walk { .. }
+        | WireCommand::DoorStep { .. } => true,
+        WireCommand::SideTab { .. } | WireCommand::Login { .. } => false,
     }
 }
 

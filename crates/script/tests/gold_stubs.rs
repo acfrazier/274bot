@@ -1,7 +1,12 @@
 //! Task 10: gold-script stubs, data tables, and sibling logic imports.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
+use api::named_banks::NamedBankFacts;
+use api::snapshot::WorldTile;
+use nav::named_banks::resolve;
+use script::content::BANK_ALIASES;
 use script::load::{JsLibrary, LoadIsolate, LoadShape};
 use script::{CacheMeta, JsCache, ScriptKind, ScriptSource};
 
@@ -234,6 +239,7 @@ fn alcher_logic_sibling_is_sha_cached_at_start() {
             kind: ScriptKind::Compat,
             source: ScriptSource::File,
             shape: Some("CompatClass".into()),
+            api_family: None,
         },
     )
     .expect("AlcherLogic sibling resolves");
@@ -312,7 +318,98 @@ export default class T extends LoopingBot {
 }
 
 #[test]
-fn item_db_reads_host_content_alcher_gold_row() {
+fn posted_herbs_match_selected_revision_facts() {
+    let src = r#"
+import { HERBS, HERB_OPTIONS } from '../../data/herbs.js';
+export default class T extends LoopingBot {
+    loop() {
+        globalThis.__probe = {
+            count: HERBS.length,
+            guam: HERBS.find(h => h.key === 'guam') || null,
+            snake: HERBS.find(h => h.key === 'snake weed') || null,
+            optionsHasGuam: HERB_OPTIONS.includes('Guam leaf'),
+        };
+    }
+}
+"#;
+    let data = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
+    let iso = LoadIsolate::spawn_with_game_data(
+        src.to_string(),
+        LoadShape::CompatClass,
+        vec![],
+        data.clone(),
+    )
+    .unwrap();
+    iso.on_game_tick(1);
+    let probe = iso.probe("__probe").unwrap();
+    assert!(
+        probe["count"].as_u64().unwrap() >= 14,
+        "expected a full herb table, got {:?}",
+        probe
+    );
+    let guam = &probe["guam"];
+    assert_eq!(guam["id"], 249);
+    assert_eq!(guam["unidId"], 199);
+    assert_eq!(guam["level"], 3);
+    assert_eq!(guam["name"], "Guam leaf");
+    assert_eq!(probe["snake"]["level"], 3);
+    assert!(probe["optionsHasGuam"].as_bool().unwrap());
+    iso.join();
+
+    let offline = LoadIsolate::spawn(
+        r#"
+import { HERBS } from '../../data/herbs.js';
+export default class T extends LoopingBot { loop() { globalThis.__probe = HERBS.length; } }
+"#
+        .into(),
+        LoadShape::CompatClass,
+        vec![],
+    )
+    .unwrap();
+    offline.on_game_tick(1);
+    assert_eq!(offline.probe("__probe").unwrap(), 0);
+    offline.join();
+}
+
+#[test]
+fn empty_herbs_with_selected_facts_fail_at_use_not_import() {
+    let src = r#"
+import { HERBS, HERB_OPTIONS } from '../../data/herbs.js';
+export default class T extends LoopingBot {
+    loop() {
+        let herbsErr = null;
+        let optionsErr = null;
+        try { globalThis.__len = HERBS.length; } catch (e) { herbsErr = String(e.message || e); }
+        try { globalThis.__opts = HERB_OPTIONS.includes('Guam leaf'); } catch (e) { optionsErr = String(e.message || e); }
+        globalThis.__probe = { herbsErr, optionsErr };
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn_with_game_data(
+        src.to_string(),
+        LoadShape::CompatClass,
+        vec![],
+        api::game_data::for_revision(client::io::ClientRevision::R274).unwrap(),
+    )
+    .unwrap();
+    iso.probe(
+        "globalThis.__rs2b0t_host.content.herbs = []; globalThis.__rs2b0t_host.content.selected_facts = true; true",
+    )
+    .unwrap();
+    iso.on_game_tick(1);
+    let probe = iso.probe("__probe").unwrap();
+    for field in ["herbsErr", "optionsErr"] {
+        let msg = probe[field].as_str().unwrap_or("");
+        assert!(
+            msg.contains("herb facts are required"),
+            "{field} must fail closed: {msg:?}"
+        );
+    }
+    iso.join();
+}
+
+#[test]
+fn item_db_reads_selected_alcher_gold_row() {
     let src = r#"
 import { ITEM_DB } from '../../data/itemdb.js';
 export default class T extends LoopingBot {
@@ -409,6 +506,41 @@ export default class T extends LoopingBot {
     offline.join();
 }
 
+/// Frozen `requiredThieving(target)` is the pickpocket level of that NPC
+/// name, `1` for a name no row lists — never the level of the spot table's
+/// Guard fallback. ArdyThiever checks it at Start and on a paint switch.
+#[test]
+fn required_thieving_is_the_selected_level_of_the_named_target() {
+    let source = r#"
+import { requiredThieving } from '../../api/thieving/targets.js';
+import { ARDOUGNE_PICKPOCKET_TARGETS } from '../../data/pickpocketTargets.js';
+export default class T extends LoopingBot {
+    loop() {
+        globalThis.__probe = [...ARDOUGNE_PICKPOCKET_TARGETS, 'Farmer', 'Man', 'Nobody']
+            .map((target) => [target, requiredThieving(target)]);
+    }
+}
+"#;
+    let data = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
+    let iso =
+        LoadIsolate::spawn_with_game_data(source.into(), LoadShape::CompatClass, vec![], data)
+            .unwrap();
+    iso.on_game_tick(1);
+    assert_eq!(
+        iso.probe("__probe").unwrap(),
+        serde_json::json!([
+            ["Guard", 40],
+            ["Knight of Ardougne", 55],
+            ["Paladin", 70],
+            ["Hero", 80],
+            ["Farmer", 10],
+            ["Man", 1],
+            ["Nobody", 1]
+        ])
+    );
+    iso.join();
+}
+
 #[test]
 #[ignore = "requires RS2B0T to name a frozen catalog root"]
 fn selected_game_data_composes_with_frozen_alcher_logic() {
@@ -444,6 +576,7 @@ export default class T extends LoopingBot {
             kind: ScriptKind::Compat,
             source: ScriptSource::File,
             shape: Some("CompatClass".into()),
+            api_family: None,
         },
     )
     .expect("frozen AlcherLogic resolves");
@@ -518,32 +651,113 @@ export default class T extends LoopingBot {
     iso.join();
 }
 
-#[test]
-fn withdraw_x_waits_for_inventory_publication() {
-    let src = r#"
-import { Bank } from '../../api/bank/Bank.js';
+fn packed_bank_booths() -> Vec<WorldTile> {
+    BANK_ALIASES
+        .iter()
+        .flat_map(|alias| alias.booths.iter().copied())
+        .collect()
+}
+
+fn spawn_with_named_banks(src: &str, facts: NamedBankFacts) -> LoadIsolate {
+    LoadIsolate::spawn_with_content(
+        src.to_string(),
+        LoadShape::CompatClass,
+        vec![],
+        None,
+        Arc::new(facts),
+    )
+    .unwrap()
+}
+
+const BANK_UNLOCKED_PROBE: &str = r#"
+import { BANK_LOCATIONS, bankUnlocked, nearestBank } from '../../api/bank/BankLocations.js';
+
+const faladorPosted = BANK_LOCATIONS.find((b) => b.name === 'Falador East') ?? null;
+const faladorShape = { name: 'Falador East', tile: { x: 3013, z: 3355, level: 0 } };
+const falador = faladorPosted ?? faladorShape;
+const canifis = { name: 'Canifis', tile: { x: 3512, z: 3480, level: 0 } };
+const wrongTile = {
+    name: falador.name,
+    tile: { x: falador.tile.x + 1, z: falador.tile.z, level: falador.tile.level },
+};
+
 export default class T extends LoopingBot {
-    async loop() { globalThis.__withdrawResult = await Bank.withdrawX('Lobster', 19); }
+    loop() {
+        globalThis.__unlocked = {
+            falador: bankUnlocked(falador),
+            canifis: bankUnlocked(canifis),
+            wrongTile: bankUnlocked(wrongTile),
+        };
+        const n = nearestBank();
+        globalThis.__nearest = n ? [n.name, n.tile.x, n.tile.z, n.tile.level] : null;
+    }
 }
 "#;
-    let iso = LoadIsolate::spawn(src.into(), LoadShape::CompatClass, vec![]).unwrap();
-    iso.probe("globalThis.__rs2b0t_host.snapshot={bank:[{id:377,name:'Lobster',count:2000,ops:['Withdraw X']}],bank_open:true,bank_loaded:true,bank_generation:1,count_dialog_open:false,inv_size:28,inv:[{name:'Lobster',count:3}]};true").unwrap();
+
+#[test]
+fn bank_unlocked_matches_published_alias_rows_only() {
+    let facts = resolve(BANK_ALIASES, &packed_bank_booths(), |_| true);
+    let iso = spawn_with_named_banks(BANK_UNLOCKED_PROBE, facts);
     iso.on_game_tick(1);
-    iso.probe("true").unwrap();
-    iso.probe("globalThis.__rs2b0t_host.snapshot.count_dialog_open=true;true")
-        .unwrap();
-    for tick in 2..=3 {
-        iso.on_game_tick(tick);
-        iso.probe("true").unwrap();
-    }
+    let unlocked = iso.probe("__unlocked").unwrap();
+    assert_eq!(unlocked["falador"], true);
+    assert_eq!(unlocked["canifis"], false);
+    assert_eq!(unlocked["wrongTile"], false);
+    iso.join();
+}
+
+#[test]
+fn bank_unlocked_empty_facts_fail_closed() {
+    let iso = spawn_with_named_banks(BANK_UNLOCKED_PROBE, NamedBankFacts::empty());
+    iso.on_game_tick(1);
+    let unlocked = iso.probe("__unlocked").unwrap();
+    assert_eq!(unlocked["falador"], false);
+    assert_eq!(unlocked["canifis"], false);
+    iso.join();
+}
+
+#[test]
+fn autofighter_catalog_module_graph_loads_bank_unlocked_export() {
+    let Some(root) = script::rs2b0t_root() else {
+        return;
+    };
+    let dir = temp_dir("autofighter-bank-unlocked");
+    let mut lib = JsLibrary::with_cache(dir.join("js-scripts.json"), dir.join("js-cache"));
+    lib.register_rs2b0t(&root, &dir.join("rs2b0t-path"))
+        .expect("catalog register");
+    lib.ensure_js(ScriptSource::Catalog, "AutoFighter")
+        .expect("AutoFighter transpile");
+    let card = lib
+        .get(ScriptSource::Catalog, "AutoFighter")
+        .cloned()
+        .expect("AutoFighter card");
     assert_eq!(
-        iso.probe("typeof globalThis.__withdrawResult").unwrap(),
-        "undefined",
-        "a sent count is not a completed withdrawal"
+        card.unloadable, None,
+        "AutoFighter must not be import-stamped unloadable"
     );
-    iso.probe("globalThis.__rs2b0t_host.snapshot.inv=[{name:'Lobster',count:22}];globalThis.__rs2b0t_host.snapshot.withdraw_x_result_seq=1;globalThis.__rs2b0t_host.snapshot.withdraw_x_result=true;true")
-        .unwrap();
-    iso.on_game_tick(4);
-    assert_eq!(iso.probe("globalThis.__withdrawResult").unwrap(), true);
+    let siblings = script::resolve_sibling_modules(
+        &card.path,
+        &card.origin,
+        &JsCache::new(dir.join("sib-cache")),
+        CacheMeta {
+            kind: ScriptKind::Compat,
+            source: ScriptSource::Catalog,
+            shape: Some(format!("{:?}", card.shape)),
+            api_family: None,
+        },
+    )
+    .expect("AutoFighter siblings");
+    let facts = Arc::new(resolve(BANK_ALIASES, &packed_bank_booths(), |_| true));
+    let game_data = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
+    let iso =
+        LoadIsolate::spawn_with_content(card.js, card.shape, siblings, Some(game_data), facts)
+            .expect("AutoFighter module graph must load");
+    iso.on_game_tick(1);
+    let logs = iso.drain_logs();
+    assert!(
+        logs.iter()
+            .all(|line| !line.contains("bankUnlocked") && !line.contains("not impl")),
+        "AutoFighter tick must not throw for bankUnlocked: {logs:?}"
+    );
     iso.join();
 }

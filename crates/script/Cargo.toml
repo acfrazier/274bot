@@ -13,14 +13,15 @@ memory-profile = []
 # (they exercise Load) and for panel/host-play; nothing else depends on
 # this crate.
 default = ["load"]
-load = ["dep:rustyscript", "dep:v8", "dep:deno_ast", "dep:flatbuffers", "dep:tiny-skia"]
+load = ["dep:rustyscript", "dep:v8", "deno_ast/transpiling", "dep:flatbuffers", "dep:tiny-skia"]
 
 [dependencies]
 ab_glyph = "=0.2.32"
 api = { path = "../api" }
-# TS -> JS strip for the catalog shape; `transpiling` unifies with the
-# features rustyscript already enables, so no new build graph.
-deno_ast = { version = "=0.49.0", features = ["transpiling"], optional = true }
+# TS parse for import scans (always, V8-free); `load` adds the TS -> JS
+# strip for the catalog shape. `transpiling` unifies with the features
+# rustyscript already enables, so no new build graph.
+deno_ast = { version = "=0.49.0" }
 # Isolate IPC wire format (schema: `crates/script/schema/isolate.fbs`);
 # the builder/reader are hand-written against it, so no `flatc` is needed.
 flatbuffers = { version = "=25.12.19", optional = true }

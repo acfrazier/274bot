@@ -11,7 +11,7 @@ export default class Tile {
     }
 
     distanceTo(other) {
-        return globalThis.rustyscript.functions.__rs2b0t_tile_distance(this, other);
+        return globalThis.__rs2b0t_distance(this, other);
     }
 
     translate(dx, dz) {

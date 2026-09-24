@@ -7,9 +7,8 @@ use script::isolate_fb::{ReachViewInput, SnapshotInput, TileInput};
 use script::shim::InteractReq;
 use script::{LoadIsolate, LoadShape};
 
-fn post_snapshot_input(iso: &LoadIsolate, input: &SnapshotInput<'_>) {
-    iso.post_snapshot(script::isolate_fb::encode_snapshot(input));
-}
+mod common;
+use common::post_snapshot_input;
 
 fn base_snapshot<'a>(here: TileInput) -> SnapshotInput<'a> {
     SnapshotInput {
@@ -64,6 +63,7 @@ fn base_snapshot<'a>(here: TileInput) -> SnapshotInput<'a> {
         bank_note_off: -1,
         scene_state: 2,
         weight: 0,
+        combat_level: 0,
         camera_yaw: 0,
         camera_pitch: 0,
         teleports_enabled: false,
@@ -80,6 +80,8 @@ fn base_snapshot<'a>(here: TileInput) -> SnapshotInput<'a> {
         shop_stock: &[],
         reach: ReachViewInput::UNAVAILABLE,
         attacked_by_player: false,
+        self_target_kind: 0,
+        self_target_index: -1,
         widgets: &[],
     }
 }
@@ -109,6 +111,7 @@ fn posted_scene(
         adjacent_rank: &[],
         step: &[],
         canlight: &[],
+        stamp: 0,
     }
 }
 

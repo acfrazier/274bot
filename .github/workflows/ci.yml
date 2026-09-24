@@ -59,6 +59,19 @@ jobs:
           cargo clippy --workspace --all-targets --no-deps -- -D warnings
           cargo clippy --manifest-path vendor/fr-client-rust/Cargo.toml --workspace --all-targets --no-deps -- -D warnings
 
+  architecture:
+    name: architecture
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check crate architecture
+        run: |
+          python3 --version
+          python3 tools/architecture/check.py
+          python3 tools/architecture/check.py --self-test
+          python3 tools/schema/isolate_snapshot_check.py
+          python3 tools/schema/isolate_snapshot_check.py --self-test
+
   test:
     name: test
     runs-on: ubuntu-latest

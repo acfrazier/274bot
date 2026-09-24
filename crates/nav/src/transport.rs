@@ -1,6 +1,7 @@
 //! Content-derived transport graph: doors, ladders, stairs, agility
 //! shortcuts, boats, gnome gliders, spirit trees, wilderness levers, the
-//! Al Kharid toll / Shantay pass item gates, the Rune Mysteries
+//! Al Kharid toll / Shantay pass item gates, the keyed Edgeville brass-key
+//! door, the Rune Mysteries
 //! essence-mine wizard and Elkoy's Tree Gnome Village maze escort NPC
 //! hops, and magic teleports as directed transport edges built from the
 //! Server's own content — `scripts/{doors, ladders+stairs, interface_boat,
@@ -35,6 +36,12 @@ use api::snapshot::WorldTile;
 
 use crate::collision::WorldCollision;
 use crate::pack::{parse_door_config, parse_door_config_ids, parse_door_open_ids};
+mod condparse;
+use condparse::{
+    arm_opens_directly, body_labels, check_axis_def, check_axis_or_proc, if_head_and_arm,
+    proc_bitfield_varp, proc_bodies, script_blocks, script_header, script_varp_gate,
+    top_level_statements,
+};
 
 /// The kinds of transport edge this graph derives.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -149,6 +156,16 @@ pub fn derive_transports(
     loc_defs: &LocDefs,
     collision: &WorldCollision,
 ) -> TransportGraph {
+    let (graph, skipped) = derive_transports_with_skips(content_root, loc_defs, collision);
+    report(content_root, &graph, &skipped);
+    graph
+}
+
+fn derive_transports_with_skips(
+    content_root: &Path,
+    loc_defs: &LocDefs,
+    collision: &WorldCollision,
+) -> (TransportGraph, HashMap<&'static str, usize>) {
     let mut graph = TransportGraph::default();
     let mut skipped: HashMap<&'static str, usize> = HashMap::new();
 
@@ -156,7 +173,24 @@ pub fn derive_transports(
     let positions = loc_positions(content_root);
 
     door_edges(content_root, &ids, &mut graph, &mut skipped, collision);
+    brass_key_door_edges(
+        content_root,
+        &ids,
+        &positions,
+        &mut graph,
+        &mut skipped,
+        collision,
+    );
     membergate_edges(content_root, &ids, &mut graph, &mut skipped, collision);
+    magicguild_door_edges(
+        content_root,
+        &ids,
+        &positions,
+        &mut graph,
+        collision,
+        &mut skipped,
+    );
+    rangingguild_door_edges(content_root, &ids, &positions, &mut graph, &mut skipped);
     ladder_stair_edges(
         content_root,
         &ids,
@@ -165,7 +199,16 @@ pub fn derive_transports(
         &mut graph,
         &mut skipped,
     );
+    trapdoor_edges(content_root, &ids, &positions, &mut graph, &mut skipped);
     shortcut_edges(
+        content_root,
+        &ids,
+        &positions,
+        loc_defs,
+        &mut graph,
+        &mut skipped,
+    );
+    island_rope_edges(
         content_root,
         &ids,
         &positions,
@@ -187,17 +230,23 @@ pub fn derive_transports(
     elkoy_edges(&mut graph);
     glider_edges(&mut graph);
     spirit_tree_edges(content_root, &ids, &positions, &mut graph, &mut skipped);
-    lever_edges(content_root, &ids, &positions, &mut graph);
-    toll_edges(content_root, &ids, &positions, &mut graph, collision);
-    zanaris_door_edges(content_root, &ids, &positions, &mut graph);
+    lever_edges(content_root, &ids, &positions, &mut graph, &mut skipped);
+    toll_edges(
+        content_root,
+        &ids,
+        &positions,
+        &mut graph,
+        collision,
+        &mut skipped,
+    );
+    zanaris_door_edges(content_root, &ids, &positions, &mut graph, &mut skipped);
     teleport_edges(content_root, &mut graph, &mut skipped);
 
     for (i, e) in graph.edges.iter().enumerate() {
         graph.at.entry(e.at).or_default().push(i);
     }
 
-    report(content_root, &graph, &skipped);
-    graph
+    (graph, skipped)
 }
 
 // ---------------------------------------------------------------------------
@@ -226,6 +275,10 @@ const SKIP_GATE_MEMBER_HANDLER: &str = "closed gate category has no verified gen
 const SKIP_GATE_MEMBER_SHAPE: &str = "closed gate member declares no Open op (unsupported shape)";
 const SKIP_GATE_MEMBER_STAGE: &str =
     "closed gate member's next_loc_stage open leaf is unresolved or mismatched";
+const SKIP_BRASS_KEY_SOURCE: &str =
+    "brass-key door aliases, config, or canonical item-use handler did not match";
+const SKIP_BRASS_KEY_SHAPE: &str = "brass-key door placement is not a level-0 straight wall";
+const SKIP_BRASS_KEY_ENDPOINT: &str = "brass-key door source teleport endpoint is not standable";
 const SKIP_GATE_MEMBER_PAIR: &str =
     "closed gate member has no adjacent paired open-stage placement";
 const SKIP_GATE_MEMBER_CONFLICT: &str = "closed gate member is defined twice with different data";
@@ -235,6 +288,38 @@ const SKIP_MEMBERGATE_CONFLICT: &str = "membergate is defined twice with differe
 const SKIP_MEMBERGATE_STAGE: &str = "membergate open leaf is unresolved or mismatched";
 const SKIP_MEMBERGATE_PAIR: &str = "membergate has no complementary paired placement";
 const SKIP_MEMBERGATE_SHAPE: &str = "membergate declares no Open op or the wrong closed category";
+const SKIP_LEVER_SOURCE: &str = "wilderness lever script or constants did not load";
+const SKIP_LEVER_ROUTE: &str = "wilderness lever oploc1 block did not resolve to a hop";
+const SKIP_TOLL_OBJ_PACK: &str = "toll or shantay item name missing from pack/obj.pack";
+const SKIP_TOLL_CONFIG: &str = "Al Kharid border_gate.loc did not load or parse toll gates";
+const SKIP_TOLL_GATE: &str = "Al Kharid border toll gate placement did not derive crossings";
+const SKIP_TOLL_HENGE: &str = "Shantay henge doorway did not resolve to hops";
+const SKIP_MAGICGUILD_SCRIPT: &str = "magic guild opener script did not load or parse";
+const SKIP_MAGICGUILD_CONFIG: &str = "magic guild door config did not admit named doors";
+const SKIP_MAGICGUILD_DOOR: &str = "magic guild door placement did not derive crossings";
+const SKIP_RANGINGGUILD_CONFIG: &str = "ranging guild ranging.loc did not load or admit Open";
+const SKIP_RANGINGGUILD_PACK: &str = "ranging guild door pack id does not match 2514";
+const SKIP_RANGINGGUILD_SCRIPT: &str = "ranging guild door opener did not parse";
+const SKIP_RANGINGGUILD_PLACEMENT: &str =
+    "ranging guild door placement is not the expected single diagonal";
+const SKIP_ZANARIS_SOURCE: &str = "Zanaris shed door script did not load or declare oploc1";
+const SKIP_ZANARIS_ROUTE: &str = "Zanaris shed door block did not resolve to a hop";
+const SKIP_ISLAND_ROPE_CONFIG: &str = "shortcuts.loc did not load or admit island_rope_swing";
+const SKIP_ISLAND_ROPE_PARAMS: &str = "island_rope_swing block missing start_coord or end_coord";
+const SKIP_ISLAND_ROPE_JOIN: &str = "island_rope_swing placement does not join start_coord";
+/// Category leaf whose handler omits the agility-10 gate (`loc_type ! tree_ropeswing2`).
+const ISLAND_ROPE_RETURN: &str = "tree_ropeswing2";
+const ISLAND_ROPE_CATEGORY: &str = "island_rope_swing";
+
+/// Pack names for wilderness lever `[oploc1,*]` blocks (one skip unit each).
+const WILDERNESS_LEVER_LOC_NAMES: &[&str] = &["wildinlever", "wildoutlever"];
+/// Pack names for Al Kharid border toll gates (one skip unit each).
+const TOLL_GATE_LOC_NAMES: &[&str] = &["border_gate_toll_left", "border_gate_toll_right"];
+const SHANTAY_HENGE_LOC_NAME: &str = "shantay_pass_henge_doorway";
+/// One reciprocal enter/exit pair for ranging guild door 2514.
+const RANGINGGUILD_DECLARED_PAIR: usize = 1;
+/// One Zanaris shed `[oploc1,zanarisdoor]` hop (per level-0 wall placement).
+const ZANARIS_DECLARED_ROUTES: usize = 1;
 
 /// m8aq `types.ts` world box: every reachable 2004 tile. Destinations
 /// outside it are skipped (m8aq's `idxOf` returns -1 there).
@@ -244,11 +329,13 @@ const X1: i32 = 3648;
 const Z0: i32 = 1280;
 const Z1: i32 = 10368;
 /// `ladder_cellar`'s +6400/-6400 z shift (m8aq `CELLAR_SHIFT`).
-const CELLAR_SHIFT: i32 = 6400;
+pub(crate) const CELLAR_SHIFT: i32 = 6400;
 /// Standard RS2 skill id (Server `PlayerStat`).
 const SKILL_AGILITY: i32 = 16;
 /// Standard RS2 skill id for Magic (Server `PlayerStat`).
 const SKILL_MAGIC: i32 = 6;
+/// Standard RS2 skill id for Ranged (Server `PlayerStat`).
+const SKILL_RANGED: i32 = 4;
 /// Teleport edges have no origin tile (cast/rubbed from anywhere); `at` is
 /// a wire-only placeholder that is never indexed into
 /// [`TransportGraph::at`].
@@ -298,6 +385,11 @@ const EXTRA_TICKS: &[(&str, i32)] = &[
     ("ladder_from_cellar", 2),
     ("ladder_from_cellar_directional", 2),
     ("ladder_cellar_inside_down", 2),
+    // trapdoors.rs2: Open then Climb-down / p_telejump z±6400.
+    ("trapdoor", 2),
+    ("trapdoor_open", 2),
+    ("trapdoor_level1", 2),
+    ("trapdoor_open_level1", 2),
     ("phoenixladder", 2),
     ("grandtree_laddermiddle", 2),
     ("laddertop_norim", 2),
@@ -339,6 +431,11 @@ const EXTRA_TICKS: &[(&str, i32)] = &[
     // agility_dungeon.rs2: Walk-across the Yanille balancing ledge
     // (forcemove 8 tiles + p_delay).
     ("balancing_ledge3", 8),
+    // island_rope_swing: curated extra=1 (ticks=2), fullstyle exactmove
+    // analogue. Source does not publish a nav extra; unmeasured.
+    ("tree_ropeswing1", 1),
+    ("tree_ropeswing2", 1),
+    ("tree_ropeswing3", 1),
 ];
 
 fn extra_ticks(name: &str) -> Option<i32> {
@@ -351,6 +448,46 @@ fn extra_ticks(name: &str) -> Option<i32> {
 fn bump(skipped: &mut HashMap<&'static str, usize>, reason: &'static str, n: usize) {
     if n > 0 {
         *skipped.entry(reason).or_default() += n;
+    }
+}
+
+/// How many declared producer loc names are present in the selected pack.
+fn packed_declared_names(ids: &HashMap<String, i32>, names: &[&str]) -> usize {
+    names.iter().filter(|name| ids.contains_key(**name)).count()
+}
+
+fn wilderness_lever_applicable(ids: &HashMap<String, i32>) -> usize {
+    packed_declared_names(ids, WILDERNESS_LEVER_LOC_NAMES)
+}
+
+fn toll_gate_applicable(ids: &HashMap<String, i32>) -> usize {
+    packed_declared_names(ids, TOLL_GATE_LOC_NAMES)
+}
+
+fn toll_applicable_route_count(gate_applicable: usize, henge_applicable: bool) -> usize {
+    gate_applicable + usize::from(henge_applicable)
+}
+
+/// One skip per unique packed declared loc id that is not in `admitted`.
+/// Duplicate pack names for the same id are not counted twice.
+fn bump_unadmitted_packed_ids(
+    skipped: &mut HashMap<&'static str, usize>,
+    reason: &'static str,
+    ids: &HashMap<String, i32>,
+    names: &[&str],
+    admitted: &HashSet<i32>,
+) {
+    let mut seen = HashSet::new();
+    for name in names {
+        let Some(&id) = ids.get(*name) else {
+            continue;
+        };
+        if !seen.insert(id) {
+            continue;
+        }
+        if !admitted.contains(&id) {
+            bump(skipped, reason, 1);
+        }
     }
 }
 
@@ -679,6 +816,236 @@ fn door_edges(
 }
 
 // ---------------------------------------------------------------------------
+// Edgeville brass-key hut door.
+// ---------------------------------------------------------------------------
+
+const BRASS_KEY_DOOR_NAME: &str = "brasskeydoor";
+const BRASS_KEY_NAME: &str = "edgevilledungeonkey";
+const BRASS_KEY_OPEN_LABEL: &str = "open_edgeville_dungeon_door";
+const BRASS_KEY_LOCKED_HANDLER: &str = r#"mes("The door is locked.");"#;
+const BRASS_KEY_USE_HANDLER: &str = r#"
+switch_obj(last_useitem) {
+    case edgevilledungeonkey : @open_edgeville_dungeon_door;
+    case default : ~displaymessage(^dm_default);
+}
+"#;
+const BRASS_KEY_OPEN_HANDLER: &str = r#"
+if (inv_total(inv, edgevilledungeonkey) > 0) {
+    mes("You unlock the door.");
+    sound_synth(locked, 1, 0);
+    def_coord $loc_coord = loc_coord;
+    def_int $angle = loc_angle;
+    def_locshape $shape = loc_shape;
+    def_loc $replacement = loc_param(next_loc_stage);
+    def_int $x;
+    def_int $z;
+    $x, $z = ~door_open($angle, loc_shape);
+    def_boolean $entering = ~check_axis(coord, $loc_coord, $angle);
+    def_coord $dest = $loc_coord;
+    if ($entering = true) {
+        if (coord ! $loc_coord) {
+            p_delay(0);
+            p_teleport($loc_coord);
+            sound_synth(door_open, 1, 0);
+            p_delay(1);
+        } else {
+            p_delay(0);
+            sound_synth(door_open, 1, 0);
+        }
+        $dest = movecoord($loc_coord, $x, 0, $z);
+    } else {
+        p_delay(0);
+        sound_synth(door_open, 1, 0);
+    }
+    p_teleport($dest);
+    loc_add($loc_coord, inviswall, $angle, $shape, 3);
+    loc_add(movecoord($loc_coord, $x, 0, $z), $replacement, modulo(add($angle, 1), 4), $shape, 3);
+} else {
+    mes("The door is locked.");
+}
+"#;
+
+/// The Edgeville surface-hut door is not a generic `Open` door:
+/// `[oploc1,brasskeydoor]` is locked, while the canonical `oplocu` handler
+/// admits only `edgevilledungeonkey`, verifies it is still held, teleports
+/// across, and temporarily replaces the closed leaf with `inviswall` plus
+/// the configured `next_loc_stage` leaf at `door_open(angle, shape)`.
+///
+/// The two edges preserve those source endpoints. Entering starts at the
+/// closed placement and lands on the replacement tile; leaving starts at
+/// that replacement tile and lands on the original placement. This differs
+/// deliberately from the generic-door `at ± 1` pair. Every alias, handler,
+/// config, placement shape, and endpoint must resolve or the family is
+/// omitted.
+fn brass_key_door_edges(
+    content_root: &Path,
+    ids: &HashMap<String, i32>,
+    positions: &HashMap<i32, Vec<Placement>>,
+    graph: &mut TransportGraph,
+    skipped: &mut HashMap<&'static str, usize>,
+    collision: &WorldCollision,
+) {
+    let Some(&door_id) = ids.get(BRASS_KEY_DOOR_NAME) else {
+        bump(skipped, SKIP_BRASS_KEY_SOURCE, 1);
+        return;
+    };
+    let objs = obj_ids_by_name(content_root);
+    let Some(&key_id) = objs.get(BRASS_KEY_NAME) else {
+        bump(skipped, SKIP_BRASS_KEY_SOURCE, 1);
+        return;
+    };
+    let Some(open_id) = brass_key_open_loc_id(content_root, ids, door_id) else {
+        bump(skipped, SKIP_BRASS_KEY_SOURCE, 1);
+        return;
+    };
+    if !brass_key_handler_matches(content_root) {
+        bump(skipped, SKIP_BRASS_KEY_SOURCE, 1);
+        return;
+    }
+    let Some(placements) = positions.get(&door_id) else {
+        return;
+    };
+    for placement in placements {
+        if placement.level != 0 || placement.shape != 0 {
+            bump(skipped, SKIP_BRASS_KEY_SHAPE, 1);
+            continue;
+        }
+        let Some(open_dir) = door_dir(placement.angle) else {
+            bump(skipped, SKIP_BRASS_KEY_SHAPE, 1);
+            continue;
+        };
+        let closed = WorldTile {
+            x: placement.x,
+            z: placement.z,
+            level: placement.level,
+        };
+        let Some(replacement) = door_far_side(closed, open_dir, collision) else {
+            bump(skipped, SKIP_BRASS_KEY_ENDPOINT, 1);
+            continue;
+        };
+        if !collision.standable(closed) {
+            bump(skipped, SKIP_BRASS_KEY_ENDPOINT, 1);
+            continue;
+        }
+        for (at, to, dir) in [
+            (closed, replacement, open_dir),
+            (replacement, closed, opposite(open_dir)),
+        ] {
+            graph.edges.push(TransportEdge {
+                kind: TransportKind::Door,
+                at,
+                to,
+                loc_id: door_id,
+                option: 0,
+                ticks: 1,
+                dir: Some(dir),
+                open_loc_id: Some(open_id),
+                skill_req: vec![],
+                item_req: vec![(key_id, 1)],
+                quest_req: vec![],
+                varp_req: vec![],
+                worn_req: vec![],
+                members_req: false,
+            });
+        }
+    }
+}
+
+/// Resolve the brass-key door's configured replacement leaf. Duplicate
+/// identical declarations are harmless; a conflicting declaration omits the
+/// family.
+fn brass_key_open_loc_id(
+    content_root: &Path,
+    ids: &HashMap<String, i32>,
+    door_id: i32,
+) -> Option<i32> {
+    let mut found = None;
+    let mut conflicted = false;
+    visit_loc_configs(&content_root.join("scripts"), &mut |text| {
+        if !parse_door_config_ids(text, ids).contains(&door_id) {
+            return;
+        }
+        let Some(open) = parse_door_open_ids(text, ids).get(&door_id).copied() else {
+            conflicted = true;
+            return;
+        };
+        if found.is_some_and(|previous| previous != open) {
+            conflicted = true;
+        } else {
+            found = Some(open);
+        }
+    });
+    (!conflicted).then_some(found).flatten()
+}
+
+/// Exact selected-content handler check. Whitespace and comments may move,
+/// but the locked normal op, key-only item-use switch, non-consuming
+/// inventory guard, source teleport, and temporary replacement sequence may
+/// not change silently.
+fn brass_key_handler_matches(content_root: &Path) -> bool {
+    let path = content_root
+        .join("scripts")
+        .join("areas")
+        .join("area_edgeville")
+        .join("scripts")
+        .join("edgeville_dungeon.rs2");
+    let Ok(text) = fs::read_to_string(path) else {
+        return false;
+    };
+    let handler_matches = |op: &str, name: &str, expected: &str| {
+        let bodies = selected_script_bodies(&text, op, name);
+        let mut matching = bodies.iter().map(String::as_str);
+        let Some(body) = matching.next() else {
+            return false;
+        };
+        matching.next().is_none() && normalized_body(body) == normalized_body(expected)
+    };
+    handler_matches("oploc1", BRASS_KEY_DOOR_NAME, BRASS_KEY_LOCKED_HANDLER)
+        && handler_matches("oplocu", BRASS_KEY_DOOR_NAME, BRASS_KEY_USE_HANDLER)
+        && handler_matches("label", BRASS_KEY_OPEN_LABEL, BRASS_KEY_OPEN_HANDLER)
+}
+
+/// Bodies of one selected `[op,name]` block, stopping at the next header
+/// even when that next header has an inline body. `script_blocks` retains
+/// its historical next-line-only behavior; the brass-key source ends with
+/// inline odd-wall handlers that must not be mistaken for label content.
+fn selected_script_bodies(text: &str, selected_op: &str, selected_name: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut selected = false;
+    let mut body = String::new();
+    for raw in text.lines() {
+        let header_line = raw
+            .split_once("//")
+            .map_or(raw, |(before, _)| before)
+            .trim();
+        if let Some(rest) = header_line.strip_prefix('[') {
+            if let Some((header, inline)) = rest.split_once(']') {
+                if selected {
+                    out.push(std::mem::take(&mut body));
+                }
+                let mut parts = header.split(',').map(str::trim);
+                selected = parts.next() == Some(selected_op)
+                    && parts.next() == Some(selected_name)
+                    && parts.next().is_none();
+                if selected && !inline.trim().is_empty() {
+                    body.push_str(inline.trim());
+                    body.push('\n');
+                }
+                continue;
+            }
+        }
+        if selected {
+            body.push_str(raw);
+            body.push('\n');
+        }
+    }
+    if selected {
+        out.push(body);
+    }
+    out
+}
+
+// ---------------------------------------------------------------------------
 // Canonical membergate family (membergatel / membergater).
 // ---------------------------------------------------------------------------
 
@@ -773,7 +1140,8 @@ fn membergate_edges(
         return;
     }
 
-    let mut placed: HashMap<(i32, i32, i32), Vec<(i32, i32, i32)>> = HashMap::new();
+    type Xyz = (i32, i32, i32);
+    let mut placed: HashMap<Xyz, Vec<Xyz>> = HashMap::new();
     for &id in admitted.keys() {
         let Some(ps) = positions.get(&id) else {
             continue;
@@ -2134,661 +2502,6 @@ fn completed_quest_reverse(
     None
 }
 
-/// Comment-stripped top-level statements of a script block, in source
-/// order. An `if (…) { … }` (with any attached `else`) is one statement;
-/// other statements end at a depth-0 `;`. Nested braces stay inside their
-/// statement, so a wrapping `if` is not scanned for an inner free arm.
-fn top_level_statements(block: &str) -> Vec<String> {
-    let mut text = String::new();
-    for raw in block.lines() {
-        let line = match raw.find("//") {
-            Some(i) => &raw[..i],
-            None => raw,
-        };
-        text.push_str(line);
-        text.push('\n');
-    }
-    let mut out = Vec::new();
-    let mut i = 0usize;
-    while i < text.len() {
-        while i < text.len() && text.as_bytes()[i].is_ascii_whitespace() {
-            i += 1;
-        }
-        if i >= text.len() {
-            break;
-        }
-        let start = i;
-        if starts_with_if_kw(&text[i..]) {
-            let Some(end) = if_statement_end(&text, i) else {
-                break;
-            };
-            i = end;
-        } else {
-            let mut depth = 0i32;
-            while i < text.len() {
-                match text.as_bytes()[i] {
-                    b'{' => depth += 1,
-                    b'}' => depth -= 1,
-                    b';' if depth == 0 => {
-                        i += 1;
-                        break;
-                    }
-                    _ => {}
-                }
-                i += 1;
-            }
-        }
-        let stmt = text[start..i].trim();
-        if !stmt.is_empty() {
-            out.push(stmt.to_string());
-        }
-    }
-    out
-}
-
-/// True when `s` starts with the `if` keyword, not `if_settext` / `if_openmain`.
-fn starts_with_if_kw(s: &str) -> bool {
-    let s = s.trim_start();
-    s.starts_with("if")
-        && s[2..]
-            .chars()
-            .next()
-            .is_none_or(|c| c.is_whitespace() || c == '(')
-}
-
-/// Byte index just past an `if (…) { … }` starting at `from`, including an
-/// attached `else` / `else if` chain so a trailing else cannot be mistaken
-/// for a later independent statement.
-fn if_statement_end(text: &str, from: usize) -> Option<usize> {
-    let mut i = skip_ws(text, from);
-    i = parse_if_chunk(text, i)?;
-    loop {
-        let j = skip_ws(text, i);
-        if !text[j..].starts_with("else") {
-            return Some(i);
-        }
-        let after = &text[j + 4..];
-        if after.starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_') {
-            return Some(i);
-        }
-        let k = skip_ws(text, j + 4);
-        if starts_with_if_kw(&text[k..]) {
-            i = parse_if_chunk(text, k)?;
-            continue;
-        }
-        if k < text.len() && text.as_bytes()[k] == b'{' {
-            i = matching_delim(text, k, b'{', b'}')? + 1;
-            continue;
-        }
-        return None;
-    }
-}
-
-fn skip_ws(text: &str, mut i: usize) -> usize {
-    while i < text.len() && text.as_bytes()[i].is_ascii_whitespace() {
-        i += 1;
-    }
-    i
-}
-
-/// `if (…) { … }` starting at `from` (already trimmed) → index past the arm.
-fn parse_if_chunk(text: &str, from: usize) -> Option<usize> {
-    if !starts_with_if_kw(&text[from..]) {
-        return None;
-    }
-    let mut i = from + 2;
-    i = skip_ws(text, i);
-    if i >= text.len() || text.as_bytes()[i] != b'(' {
-        return None;
-    }
-    i = matching_delim(text, i, b'(', b')')? + 1;
-    i = skip_ws(text, i);
-    if i >= text.len() || text.as_bytes()[i] != b'{' {
-        return None;
-    }
-    Some(matching_delim(text, i, b'{', b'}')? + 1)
-}
-
-/// Index of the matching closer for `text[open]` (`open`/`close` pair).
-fn matching_delim(text: &str, open: usize, open_ch: u8, close_ch: u8) -> Option<usize> {
-    let bytes = text.as_bytes();
-    if open >= bytes.len() || bytes[open] != open_ch {
-        return None;
-    }
-    let mut depth = 0i32;
-    for (i, &b) in bytes.iter().enumerate().skip(open) {
-        if b == open_ch {
-            depth += 1;
-        } else if b == close_ch {
-            depth -= 1;
-            if depth == 0 {
-                return Some(i);
-            }
-        }
-    }
-    None
-}
-
-/// `def_boolean $<name> = ~check_axis(coord, loc_coord, loc_angle);` as a
-/// whole statement → `$<name>`. Nested defs inside another statement do
-/// not match.
-fn check_axis_def(stmt: &str) -> Option<String> {
-    let stmt = stmt.trim();
-    let (lhs, rhs) = stmt.split_once('=')?;
-    let mut words = lhs.split_whitespace();
-    let (Some("def_boolean"), Some(name), None) = (words.next(), words.next(), words.next()) else {
-        return None;
-    };
-    if !name.starts_with('$') {
-        return None;
-    }
-    let rhs: String = rhs.chars().filter(|c| !c.is_whitespace()).collect();
-    if rhs == "~check_axis(coord,loc_coord,loc_angle);"
-        || rhs == "~check_axis(coord,loc_coord,loc_angle)"
-    {
-        Some(name.to_string())
-    } else {
-        None
-    }
-}
-
-/// `if (<head>) { <arm> }` as a whole statement → the head and arm. A
-/// trailing `else` or any other remainder fails closed.
-fn if_head_and_arm(stmt: &str) -> Option<(String, String)> {
-    let s = stmt.trim();
-    if !starts_with_if_kw(s) {
-        return None;
-    }
-    let after_if = s[2..].trim_start();
-    let inner = after_if.strip_prefix('(')?;
-    let close = matching_delim(inner, 0, b'(', b')').or_else(|| {
-        // `inner` is already past the opening `(`, so match as if the
-        // opener sat just before index 0 by scanning depth from 1.
-        let mut depth = 1i32;
-        for (i, b) in inner.bytes().enumerate() {
-            if b == b'(' {
-                depth += 1;
-            } else if b == b')' {
-                depth -= 1;
-                if depth == 0 {
-                    return Some(i);
-                }
-            }
-        }
-        None
-    })?;
-    let head = inner[..close].trim().to_string();
-    let after_head = inner[close + 1..].trim_start();
-    if !after_head.starts_with('{') {
-        return None;
-    }
-    let arm_end = matching_delim(after_head, 0, b'{', b'}')?;
-    let arm = after_head[..=arm_end].to_string();
-    if !after_head[arm_end + 1..].trim().is_empty() {
-        return None;
-    }
-    Some((head, arm))
-}
-
-/// True when the `if` arm opens the door directly: the first top-level
-/// statement is the canonical `~open_and_close_door2(<loc>, $<b>, door_open)`
-/// call, any later statements are a bare `return`, and there are no nested
-/// braces. Quoted text, an earlier terminal, `~open_overlay`, and any other
-/// procedure name fail closed. Labels are not followed.
-fn arm_opens_directly(arm: &str, axis_bool: &str) -> bool {
-    let inner = arm.trim();
-    let Some(inner) = inner.strip_prefix('{').and_then(|s| s.strip_suffix('}')) else {
-        return false;
-    };
-    if inner.contains('{') {
-        return false;
-    }
-    let stmts = top_level_statements(inner);
-    let Some((first, rest)) = stmts.split_first() else {
-        return false;
-    };
-    canonical_door_open(first, axis_bool) && rest.iter().all(|s| bare_return(s))
-}
-
-/// `~open_and_close_door2(<loc>, $<axis>, door_open);` as a whole statement.
-/// `<loc>` is `loc_N` or a script identifier; the axis name must be the
-/// check-axis boolean this arm proved. An indiscriminate `~open_` prefix
-/// is not enough.
-fn canonical_door_open(stmt: &str, axis_bool: &str) -> bool {
-    let flat: String = stmt.chars().filter(|c| !c.is_whitespace()).collect();
-    let flat = flat.strip_suffix(';').unwrap_or(flat.as_str());
-    let Some(args) = flat
-        .strip_prefix("~open_and_close_door2(")
-        .and_then(|s| s.strip_suffix(')'))
-    else {
-        return false;
-    };
-    let mut parts = args.split(',');
-    match (parts.next(), parts.next(), parts.next(), parts.next()) {
-        (Some(open_loc), Some(axis), Some("door_open"), None) => {
-            axis == axis_bool && loc_open_arg(open_loc)
-        }
-        _ => false,
-    }
-}
-
-fn loc_open_arg(s: &str) -> bool {
-    if let Some(n) = s.strip_prefix("loc_") {
-        !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit())
-    } else {
-        script_ident(s)
-    }
-}
-
-fn bare_return(stmt: &str) -> bool {
-    let flat: String = stmt.chars().filter(|c| !c.is_whitespace()).collect();
-    flat == "return;" || flat == "return"
-}
-
-/// A door head `$<b> = <true|false> | ~<proc> >= ^<const>` — exactly two
-/// disjuncts, one of each, no nesting and no `&` — → the boolean's value and
-/// the proc comparison's `(proc, const)` names.
-fn check_axis_or_proc(head: &str, axis_bool: &str) -> Option<(bool, String, String)> {
-    if head.contains(|c| c == '(' || c == ')' || c == '&') {
-        return None;
-    }
-    let mut disjuncts = head.split('|');
-    let (first, second) = (disjuncts.next()?.trim(), disjuncts.next()?.trim());
-    if disjuncts.next().is_some() {
-        return None;
-    }
-    let mut boolean = None;
-    let mut compare = None;
-    for disjunct in [first, second] {
-        if let Some(value) = boolean_value_disjunct(disjunct, axis_bool) {
-            if boolean.replace(value).is_some() {
-                return None;
-            }
-        } else if let Some(pair) = proc_const_disjunct(disjunct) {
-            if compare.replace(pair).is_some() {
-                return None;
-            }
-        } else {
-            return None;
-        }
-    }
-    let (proc, cname) = compare?;
-    Some((boolean?, proc, cname))
-}
-
-/// `$<name> = <true|false>` → the value; any other left side is not the
-/// check-axis test.
-fn boolean_value_disjunct(disjunct: &str, name: &str) -> Option<bool> {
-    let (lhs, rhs) = disjunct.split_once('=')?;
-    if lhs.trim() != name {
-        return None;
-    }
-    match rhs.trim() {
-        "true" => Some(true),
-        "false" => Some(false),
-        _ => None,
-    }
-}
-
-/// `~<proc>` (or `~<proc>()`) `>= ^<const>` → the `(proc, const)` names.
-fn proc_const_disjunct(disjunct: &str) -> Option<(String, String)> {
-    let (lhs, rhs) = disjunct.split_once(">=")?;
-    let proc = lhs.trim().strip_prefix('~')?.trim();
-    let proc = proc.strip_suffix("()").unwrap_or(proc).trim_end();
-    let cname = rhs.trim().strip_prefix('^')?;
-    if !script_ident(proc) || !script_ident(cname) {
-        return None;
-    }
-    Some((proc.to_string(), cname.to_string()))
-}
-
-/// A script identifier: `[A-Za-z0-9_]+`.
-fn script_ident(name: &str) -> bool {
-    !name.is_empty() && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
-}
-
-/// The `(varp id, lo, hi)` of a `[proc,<name>](…)(…)` block whose body is
-/// exactly `return (getbit_range(%<varp>, ^<lo>, ^<hi>));` (whitespace-tolerant),
-/// with `<varp>` in `pack/varp.pack` and `<lo>`/`<hi>` in the script
-/// constants. A missing, duplicated, or differently-shaped proc — another
-/// varp, another read, an extra statement — yields `None`.
-fn proc_bitfield_varp(
-    script_text: &str,
-    name: &str,
-    constants: &HashMap<String, i32>,
-    varps: &HashMap<String, i32>,
-) -> Option<(i32, i32, i32)> {
-    let bodies = proc_bodies(script_text, name);
-    let [body] = bodies.as_slice() else {
-        return None;
-    };
-    let flat: String = body.chars().filter(|c| !c.is_whitespace()).collect();
-    let args = flat
-        .strip_prefix("return(getbit_range(")?
-        .strip_suffix("));")?;
-    let mut parts = args.split(',');
-    let (Some(varp), Some(lo), Some(hi)) = (parts.next(), parts.next(), parts.next()) else {
-        return None;
-    };
-    if parts.next().is_some() {
-        return None;
-    }
-    let varp = varp.strip_prefix('%')?;
-    let lo = lo.strip_prefix('^')?;
-    let hi = hi.strip_prefix('^')?;
-    Some((*varps.get(varp)?, *constants.get(lo)?, *constants.get(hi)?))
-}
-
-/// Every `[proc,<name>](…)(…)` body in a script text. [`script_blocks`]
-/// cannot see these headers — a proc header carries its argument list and
-/// return type after the closing bracket — so the body is delimited here,
-/// from the header line to the next `[` line.
-fn proc_bodies(script_text: &str, name: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut cur = false;
-    let mut body = String::new();
-    for raw in script_text.lines() {
-        let line = raw.trim();
-        if let Some(rest) = line.strip_prefix("[proc,") {
-            if cur {
-                out.push(std::mem::take(&mut body));
-            }
-            cur = rest.split_once(']').is_some_and(|(n, _)| n.trim() == name);
-        } else if cur && line.starts_with('[') {
-            out.push(std::mem::take(&mut body));
-            cur = false;
-        } else if cur {
-            body.push_str(line);
-            body.push('\n');
-        }
-    }
-    if cur {
-        out.push(body);
-    }
-    out
-}
-
-/// `[<a>,<b>]` blocks in a script text → `(a, b, body)`; the body is the
-/// raw text until the next header. Headers may carry a trailing `//`
-/// comment (the existing parsers' convention).
-fn script_blocks(text: &str) -> Vec<(String, String, String)> {
-    let mut out = Vec::new();
-    let mut cur: Option<(String, String)> = None;
-    let mut body = String::new();
-    for raw in text.lines() {
-        let line = raw.trim();
-        let header_line = match line.find("//") {
-            Some(i) => line[..i].trim(),
-            None => line,
-        };
-        if let Some((a, b)) = script_header(header_line) {
-            if let Some(prev) = cur.take() {
-                out.push((prev.0, prev.1, std::mem::take(&mut body)));
-            }
-            cur = Some((a.to_string(), b.to_string()));
-        } else if cur.is_some() {
-            body.push_str(line);
-            body.push('\n');
-        }
-    }
-    if let Some((a, b)) = cur.take() {
-        out.push((a, b, body));
-    }
-    out
-}
-
-/// The `(varp name, min value)` gates a door's open script declares: a
-/// `switch_int(%<varp>)` whose opening cases carry the open call, or an
-/// `if (%<varp> (>=|=) ^<const> & …)` whose arm opens (every ANDed varp
-/// condition is carried).
-fn script_varp_gate(
-    block: &str,
-    script_text: &str,
-    constants: &HashMap<String, i32>,
-) -> Option<Vec<(String, i32)>> {
-    if let Some((varp, cases)) = switch_varp_cases(block) {
-        let mut opens = Vec::new();
-        for (keys, body) in cases {
-            if !body_opens(&body, script_text) {
-                continue;
-            }
-            for key in keys {
-                if let Some(v) = case_value(&key, constants) {
-                    opens.push(v);
-                }
-            }
-        }
-        if let Some(min) = opens.into_iter().min() {
-            return Some(vec![(varp, min)]);
-        }
-    }
-    if let Some((gates, arm)) = if_varp_gate(block, constants) {
-        if body_opens(&arm, script_text) {
-            return Some(gates);
-        }
-    }
-    None
-}
-
-/// `^<const>` (resolved through the constants map) or a bare integer.
-fn case_value(key: &str, constants: &HashMap<String, i32>) -> Option<i32> {
-    let key = key.trim();
-    if let Some(name) = key.strip_prefix('^') {
-        constants.get(name).copied()
-    } else {
-        key.parse().ok()
-    }
-}
-
-/// `switch_int (%<varp>) { case … }` from a block: the varp name and every
-/// case's `(keys, body)`. `default` is kept as a key so a gate that only
-/// opens on `default` can never match (it has no numeric keys).
-type SwitchVarpCases = (String, Vec<(Vec<String>, String)>);
-fn switch_varp_cases(block: &str) -> Option<SwitchVarpCases> {
-    let lines: Vec<&str> = block.lines().collect();
-    let mut si = None;
-    for (idx, raw) in lines.iter().enumerate() {
-        let line = raw.trim();
-        let Some(rest) = line.strip_prefix("switch_int") else {
-            continue;
-        };
-        let rest = rest.trim_start().strip_prefix('(')?;
-        let name = rest.split(')').next()?.trim();
-        if let Some(name) = name.strip_prefix('%') {
-            si = Some((idx, name.to_string()));
-            break;
-        }
-    }
-    let (start, varp) = si?;
-    let mut cases: Vec<(Vec<String>, String)> = Vec::new();
-    let mut depth = 0i32;
-    let mut cur: Option<Vec<String>> = None;
-    let mut body = String::new();
-    for raw in lines.iter().skip(start + 1) {
-        let line = raw.trim();
-        if line.is_empty() {
-            continue;
-        }
-        // A `case` at the switch's own brace depth starts a new case; the
-        // switch's closing `}` at that depth ends the parse.
-        if depth == 0 {
-            if let Some((keys, rest)) = switch_case(line) {
-                if let Some(prev) = cur.take() {
-                    cases.push((prev, std::mem::take(&mut body)));
-                }
-                cur = Some(keys);
-                if let Some(rest) = rest {
-                    body.push_str(rest);
-                    body.push('\n');
-                }
-                continue;
-            }
-            if line.starts_with('}') {
-                break;
-            }
-        }
-        if cur.is_some() {
-            body.push_str(line);
-            body.push('\n');
-        }
-        depth += line.matches('{').count() as i32 - line.matches('}').count() as i32;
-    }
-    if let Some(keys) = cur.take() {
-        cases.push((keys, body));
-    }
-    Some((varp, cases))
-}
-
-/// `case <key, key, …> : <body>` → (keys, body). `default` is a key.
-fn switch_case(line: &str) -> Option<(Vec<String>, Option<&str>)> {
-    let rest = line.strip_prefix("case")?;
-    let rest = rest.trim_start();
-    let (keys, body) = rest.split_once(':')?;
-    let keys: Vec<String> = keys
-        .split(',')
-        .map(|k| k.trim().to_string())
-        .filter(|k| !k.is_empty())
-        .collect();
-    if keys.is_empty() {
-        return None;
-    }
-    let body = body.trim();
-    Some((keys, if body.is_empty() { None } else { Some(body) }))
-}
-
-/// `if (%<varp> (>=|=) ^<const> [& …]) { <arm> }` in a block: every
-/// `(varp, const value)` condition and the arm body. The first matching
-/// guard is read.
-fn if_varp_gate(
-    block: &str,
-    constants: &HashMap<String, i32>,
-) -> Option<(Vec<(String, i32)>, String)> {
-    let bytes = block.as_bytes();
-    let mut i = 0usize;
-    while i < bytes.len() {
-        if bytes[i..].starts_with(b"if") {
-            let tail = &block[i + 2..];
-            let rest = tail.trim_start();
-            let ws = tail.len() - rest.len();
-            if let Some(inner) = rest.strip_prefix('(') {
-                if let Some(close) = inner.find(')') {
-                    let head = inner[..close].trim();
-                    let conds = varp_gate_consts(head);
-                    if !conds.is_empty() {
-                        let mut gates = Vec::new();
-                        for (varp, cname) in conds {
-                            if let Some(&value) = constants.get(&cname) {
-                                gates.push((varp.to_string(), value));
-                            }
-                        }
-                        if !gates.is_empty() {
-                            let arm_from = i + 2 + ws + 1 + close + 1;
-                            if let Some(arm) = balanced_arm(block, arm_from) {
-                                return Some((gates, arm));
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        i += 1;
-    }
-    None
-}
-
-/// `%<varp> (>=|=) ^<const>` conditions in an if-head (ANDed together),
-/// whitespace tolerant; clauses that are not varp-gated (e.g. a `|`
-/// leaving-side term) are skipped.
-fn varp_gate_consts(head: &str) -> Vec<(String, String)> {
-    let mut out = Vec::new();
-    for clause in head.split('&') {
-        let clause = clause.trim();
-        let (varp, cmp) = if let Some((a, b)) = clause.split_once(">=") {
-            (a, b)
-        } else if let Some((a, b)) = clause.split_once('=') {
-            (a, b)
-        } else {
-            continue;
-        };
-        let varp = varp.trim();
-        let Some(varp) = varp.strip_prefix('%') else {
-            continue;
-        };
-        let cmp = cmp.trim();
-        let Some(cmp) = cmp.strip_prefix('^') else {
-            continue;
-        };
-        let end = cmp
-            .find(|c: char| c.is_whitespace() || c == '|')
-            .unwrap_or(cmp.len());
-        let cname = &cmp[..end];
-        if !cname.is_empty() {
-            out.push((varp.to_string(), cname.to_string()));
-        }
-    }
-    out
-}
-
-/// The balanced `{ … }` starting at or after `from`.
-fn balanced_arm(block: &str, from: usize) -> Option<String> {
-    let rest = &block[from.min(block.len())..];
-    let start = rest.find('{')?;
-    let mut depth = 1i32;
-    for (off, ch) in rest[start + 1..].char_indices() {
-        match ch {
-            '{' => depth += 1,
-            '}' => {
-                depth -= 1;
-                if depth == 0 {
-                    return Some(rest[start..=start + 1 + off].to_string());
-                }
-            }
-            _ => {}
-        }
-    }
-    None
-}
-
-/// True when a case/if arm opens the door: it calls an `~open*` proc
-/// directly, or calls a `@label` whose own body does.
-fn body_opens(body: &str, script_text: &str) -> bool {
-    if body.contains("open_and_close") || body.contains("~open_") {
-        return true;
-    }
-    for label in body_labels(body) {
-        if let Some(lb) = label_block(script_text, &label) {
-            if body_opens(&lb, script_text) {
-                return true;
-            }
-        }
-    }
-    false
-}
-
-/// `@name` tokens in a body.
-fn body_labels(body: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    for part in body.split('@').skip(1) {
-        let end = part
-            .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
-            .unwrap_or(part.len());
-        if end > 0 {
-            out.push(part[..end].to_string());
-        }
-    }
-    out
-}
-
-/// The body of `[label,<name>]` in a script text.
-fn label_block(script_text: &str, name: &str) -> Option<String> {
-    for (op, n, body) in script_blocks(script_text) {
-        if op == "label" && n == name {
-            return Some(body);
-        }
-    }
-    None
-}
-
 // ---------------------------------------------------------------------------
 // Ladders and stairs (m8aq `resolvePlacements` port).
 // ---------------------------------------------------------------------------
@@ -3156,6 +2869,122 @@ fn ladder_stair_edges(
     }
 }
 
+/// Closed trapdoor placements (`trapdoors.rs2`) plus already-open leaves.
+/// `oploc1,trapdoor` only `loc_change`s to the open loc; `oploc1,trapdoor_open`
+/// `p_telejump`s `coord() ± 6400`. One edge per closed map placement, dest
+/// baked from the loc tile (live landing is the player's tile).
+fn trapdoor_edges(
+    content_root: &Path,
+    ids: &HashMap<String, i32>,
+    positions: &HashMap<i32, Vec<Placement>>,
+    graph: &mut TransportGraph,
+    skipped: &mut HashMap<&'static str, usize>,
+) {
+    let path = content_root
+        .join("scripts")
+        .join("general_use")
+        .join("scripts")
+        .join("trapdoors.rs2");
+    let Ok(text) = fs::read_to_string(&path) else {
+        return;
+    };
+    let mut rules: HashMap<(String, i32), (TransportKind, ScriptRule)> = HashMap::new();
+    parse_script(&text, TransportKind::Ladder, &mut rules);
+    for (closed_name, open_name) in [
+        ("trapdoor", "trapdoor_open"),
+        ("trapdoor_level1", "trapdoor_open_level1"),
+    ] {
+        let Some(&closed_id) = ids.get(closed_name) else {
+            continue;
+        };
+        let open_id = ids.get(open_name).copied();
+        let Some((_, open_rule)) = rules.get(&(open_name.to_string(), 1)) else {
+            continue;
+        };
+        let Some(Outcome::Landing(landing)) = open_rule.fallback.as_ref() else {
+            continue;
+        };
+        let Some(extra) = extra_ticks(closed_name).or_else(|| extra_ticks(open_name)) else {
+            bump(
+                skipped,
+                SKIP_UNPRICED,
+                positions.get(&closed_id).map_or(0, Vec::len),
+            );
+            continue;
+        };
+        let ticks = 1 + extra;
+        let mut seen = HashSet::new();
+        if let Some(placements) = positions.get(&closed_id) {
+            for loc in placements {
+                let at = WorldTile {
+                    x: loc.x,
+                    z: loc.z,
+                    level: loc.level,
+                };
+                let to = landing_tile(landing, loc, &at);
+                if !in_world_box(&to) {
+                    bump(skipped, SKIP_DEST_OUTSIDE, 1);
+                    continue;
+                }
+                seen.insert(at);
+                graph.edges.push(TransportEdge {
+                    kind: TransportKind::Ladder,
+                    at,
+                    to,
+                    loc_id: closed_id,
+                    option: 1,
+                    ticks,
+                    dir: None,
+                    open_loc_id: open_id,
+                    skill_req: vec![],
+                    item_req: vec![],
+                    quest_req: vec![],
+                    varp_req: vec![],
+                    worn_req: vec![],
+                    members_req: false,
+                });
+            }
+        }
+        let Some(open_id) = open_id else {
+            continue;
+        };
+        let Some(placements) = positions.get(&open_id) else {
+            continue;
+        };
+        for loc in placements {
+            let at = WorldTile {
+                x: loc.x,
+                z: loc.z,
+                level: loc.level,
+            };
+            if !seen.insert(at) {
+                continue;
+            }
+            let to = landing_tile(landing, loc, &at);
+            if !in_world_box(&to) {
+                bump(skipped, SKIP_DEST_OUTSIDE, 1);
+                continue;
+            }
+            graph.edges.push(TransportEdge {
+                kind: TransportKind::Ladder,
+                at,
+                to,
+                loc_id: open_id,
+                option: 1,
+                ticks,
+                dir: None,
+                open_loc_id: None,
+                skill_req: vec![],
+                item_req: vec![],
+                quest_req: vec![],
+                varp_req: vec![],
+                worn_req: vec![],
+                members_req: false,
+            });
+        }
+    }
+}
+
 /// The `to` tile for a landing, per placement (m8aq `resolvePlacements`
 /// dest + `landingOf`).
 fn landing_tile(landing: &Landing, loc: &Placement, at: &WorldTile) -> WorldTile {
@@ -3255,6 +3084,193 @@ fn shortcut_edges(
             }
         }
     }
+}
+
+/// Directed `island_rope_swing` hops from `shortcuts.loc` `start_coord` /
+/// `end_coord`. Packed `at` is the standable start, not the loc origin.
+/// Absolute params only emit when a placement footprint joins that start
+/// — a far mapsquare copy cannot invent a remotely usable edge.
+fn island_rope_edges(
+    content_root: &Path,
+    ids: &HashMap<String, i32>,
+    positions: &HashMap<i32, Vec<Placement>>,
+    loc_defs: &LocDefs,
+    graph: &mut TransportGraph,
+    skipped: &mut HashMap<&'static str, usize>,
+) {
+    let path = content_root
+        .join("scripts")
+        .join("skill_agility")
+        .join("configs")
+        .join("shortcuts.loc");
+    let Ok(text) = fs::read_to_string(&path) else {
+        bump(skipped, SKIP_ISLAND_ROPE_CONFIG, 1);
+        return;
+    };
+    for leaf in island_rope_leaves(&text) {
+        emit_island_rope_leaf(&leaf, ids, positions, loc_defs, graph, skipped);
+    }
+}
+
+struct IslandRopeLeaf {
+    name: String,
+    start: Option<WorldTile>,
+    end: Option<WorldTile>,
+    width: i32,
+    length: i32,
+}
+
+fn island_rope_leaves(text: &str) -> Vec<IslandRopeLeaf> {
+    let mut out = Vec::new();
+    let mut cur_name: Option<String> = None;
+    let mut category: Option<String> = None;
+    let mut start = None;
+    let mut end = None;
+    let mut width = 1;
+    let mut length = 1;
+    let mut flush = |name: &str,
+                     category: &Option<String>,
+                     start: Option<WorldTile>,
+                     end: Option<WorldTile>,
+                     width: i32,
+                     length: i32| {
+        if category.as_deref() == Some(ISLAND_ROPE_CATEGORY) {
+            out.push(IslandRopeLeaf {
+                name: name.to_string(),
+                start,
+                end,
+                width,
+                length,
+            });
+        }
+    };
+    for raw in text.lines() {
+        let line = raw.trim();
+        if let Some(name) = config_header(line) {
+            if let Some(prev) = cur_name.take() {
+                flush(&prev, &category, start, end, width, length);
+            }
+            cur_name = Some(name.to_string());
+            category = None;
+            start = None;
+            end = None;
+            width = 1;
+            length = 1;
+            continue;
+        }
+        if cur_name.is_none() {
+            continue;
+        }
+        if let Some(value) = line.strip_prefix("category=") {
+            category = Some(value.trim().to_string());
+        } else if let Some(value) = line.strip_prefix("width=") {
+            if let Ok(n) = value.trim().parse::<i32>() {
+                width = n;
+            }
+        } else if let Some(value) = line.strip_prefix("length=") {
+            if let Ok(n) = value.trim().parse::<i32>() {
+                length = n;
+            }
+        } else if let Some(rest) = line.strip_prefix("param=") {
+            if let Some((key, value)) = rest.split_once(',') {
+                let tile =
+                    coord_literal(value.trim()).map(|(level, x, z)| WorldTile { level, x, z });
+                match key.trim() {
+                    "start_coord" => start = tile,
+                    "end_coord" => end = tile,
+                    _ => {}
+                }
+            }
+        }
+    }
+    if let Some(prev) = cur_name {
+        flush(&prev, &category, start, end, width, length);
+    }
+    out
+}
+
+fn placement_joins(loc: &Placement, start: WorldTile, width: i32, length: i32) -> bool {
+    if loc.level != start.level {
+        return false;
+    }
+    let w = width.max(1);
+    let l = length.max(1);
+    let (fw, fl) = if loc.angle == 1 || loc.angle == 3 {
+        (l, w)
+    } else {
+        (w, l)
+    };
+    let max_x = loc.x + fw - 1;
+    let max_z = loc.z + fl - 1;
+    start.x >= loc.x && start.x <= max_x && start.z >= loc.z && start.z <= max_z
+}
+
+fn emit_island_rope_leaf(
+    leaf: &IslandRopeLeaf,
+    ids: &HashMap<String, i32>,
+    positions: &HashMap<i32, Vec<Placement>>,
+    loc_defs: &LocDefs,
+    graph: &mut TransportGraph,
+    skipped: &mut HashMap<&'static str, usize>,
+) {
+    let Some(&id) = ids.get(&leaf.name) else {
+        return;
+    };
+    let Some(_def) = loc_defs.loc(id) else {
+        return;
+    };
+    let Some(extra) = extra_ticks(&leaf.name) else {
+        bump(
+            skipped,
+            SKIP_UNPRICED,
+            positions.get(&id).map_or(1, Vec::len),
+        );
+        return;
+    };
+    let (Some(start), Some(end)) = (leaf.start, leaf.end) else {
+        bump(skipped, SKIP_ISLAND_ROPE_PARAMS, 1);
+        return;
+    };
+    if !in_world_box(&start) || !in_world_box(&end) {
+        bump(skipped, SKIP_DEST_OUTSIDE, 1);
+        return;
+    }
+    let Some(placements) = positions.get(&id) else {
+        bump(skipped, SKIP_ISLAND_ROPE_JOIN, 1);
+        return;
+    };
+    let mut joined = false;
+    for loc in placements {
+        if placement_joins(loc, start, leaf.width, leaf.length) {
+            joined = true;
+        } else {
+            bump(skipped, SKIP_ISLAND_ROPE_JOIN, 1);
+        }
+    }
+    if !joined {
+        return;
+    }
+    let skill_req = if leaf.name == ISLAND_ROPE_RETURN {
+        vec![]
+    } else {
+        vec![(SKILL_AGILITY, 10)]
+    };
+    graph.edges.push(TransportEdge {
+        kind: TransportKind::AgilityShortcut,
+        at: start,
+        to: end,
+        loc_id: id,
+        option: 1,
+        ticks: 1 + extra,
+        dir: None,
+        open_loc_id: None,
+        skill_req,
+        item_req: vec![],
+        quest_req: vec![],
+        varp_req: vec![],
+        worn_req: vec![],
+        members_req: false,
+    });
 }
 
 fn fullstyle_dests(loc: &Placement) -> Vec<WorldTile> {
@@ -4320,16 +4336,20 @@ fn lever_edges(
     ids: &HashMap<String, i32>,
     positions: &HashMap<i32, Vec<Placement>>,
     graph: &mut TransportGraph,
+    skipped: &mut HashMap<&'static str, usize>,
 ) {
     let dir = content_root
         .join("scripts")
         .join("areas")
         .join("area_ardougne_east");
+    let applicable = wilderness_lever_applicable(ids);
     let Ok(script) = fs::read_to_string(dir.join("scripts").join("wilderness_lever.rs2")) else {
+        bump(skipped, SKIP_LEVER_SOURCE, applicable);
         return;
     };
     let Ok(constants) = fs::read_to_string(dir.join("configs").join("wilderness_lever.constant"))
     else {
+        bump(skipped, SKIP_LEVER_SOURCE, applicable);
         return;
     };
     // `^name` → the teleport tile (`0_mx_mz_lx_lz`, decoded like every
@@ -4351,14 +4371,18 @@ fn lever_edges(
         }
     }
 
+    let mut visited_oploc1 = HashSet::new();
     for (op, name, body) in script_blocks(&script) {
         if op != "oploc1" {
             continue;
         }
+        visited_oploc1.insert(name.clone());
+        let edge_start = graph.edges.len();
         let Some(&loc_id) = ids.get(&name) else {
             continue;
         };
         let Some(placements) = positions.get(&loc_id) else {
+            bump(skipped, SKIP_LEVER_ROUTE, 1);
             continue;
         };
         let mut tos = Vec::new();
@@ -4394,6 +4418,16 @@ fn lever_edges(
                     members_req: false,
                 });
             }
+        }
+        if graph.edges.len() == edge_start {
+            bump(skipped, SKIP_LEVER_ROUTE, 1);
+        }
+    }
+    // Packed declared names whose `[oploc1,name]` block never appeared.
+    // Visited names already used SKIP_LEVER_ROUTE on zero-emission.
+    for name in WILDERNESS_LEVER_LOC_NAMES {
+        if ids.contains_key(*name) && !visited_oploc1.contains(*name) {
+            bump(skipped, SKIP_LEVER_ROUTE, 1);
         }
     }
 }
@@ -4470,15 +4504,20 @@ fn toll_edges(
     positions: &HashMap<i32, Vec<Placement>>,
     graph: &mut TransportGraph,
     collision: &WorldCollision,
+    skipped: &mut HashMap<&'static str, usize>,
 ) {
+    let gate_applicable = toll_gate_applicable(ids);
+    let henge_applicable = ids.contains_key(SHANTAY_HENGE_LOC_NAME);
     // The toll charge and the Shantay pass resolve by name through
     // `pack/obj.pack`; a missing pack skips the family instead of faking
     // an item id.
     let objs = obj_ids_by_name(content_root);
-    let Some(&coins_id) = objs.get("coins") else {
-        return;
-    };
-    let Some(&pass_id) = objs.get("shantay_pass") else {
+    let (Some(&coins_id), Some(&pass_id)) = (objs.get("coins"), objs.get("shantay_pass")) else {
+        bump(
+            skipped,
+            SKIP_TOLL_OBJ_PACK,
+            toll_applicable_route_count(gate_applicable, henge_applicable),
+        );
         return;
     };
 
@@ -4487,12 +4526,31 @@ fn toll_edges(
         .join("areas")
         .join("area_alkharid");
     let Ok(config) = fs::read_to_string(alkharid.join("configs").join("border_gate.loc")) else {
+        if gate_applicable > 0 {
+            bump(skipped, SKIP_TOLL_CONFIG, gate_applicable);
+        }
+        if henge_applicable {
+            bump(skipped, SKIP_TOLL_HENGE, 1);
+        }
         return;
     };
     let toll_ids = parse_door_config_ids(&config, ids);
     let open_ids = parse_door_open_ids(&config, ids);
+    // Packed declared gate ids whose named openable block was not admitted.
+    // Ids that entered `toll_ids` already use SKIP_TOLL_GATE on zero-emission.
+    bump_unadmitted_packed_ids(
+        skipped,
+        SKIP_TOLL_CONFIG,
+        ids,
+        TOLL_GATE_LOC_NAMES,
+        &toll_ids,
+    );
     for id in toll_ids {
+        let edge_start = graph.edges.len();
         let Some(placements) = positions.get(&id) else {
+            if ids.values().any(|&packed| packed == id) {
+                bump(skipped, SKIP_TOLL_GATE, 1);
+            }
             continue;
         };
         for p in placements {
@@ -4529,8 +4587,21 @@ fn toll_edges(
                 });
             }
         }
+        if graph.edges.len() == edge_start && ids.values().any(|&packed| packed == id) {
+            bump(skipped, SKIP_TOLL_GATE, 1);
+        }
     }
 
+    toll_shantay_henge_edges(ids, positions, graph, pass_id, skipped);
+}
+
+fn toll_shantay_henge_edges(
+    ids: &HashMap<String, i32>,
+    positions: &HashMap<i32, Vec<Placement>>,
+    graph: &mut TransportGraph,
+    pass_id: i32,
+    skipped: &mut HashMap<&'static str, usize>,
+) {
     // The Shantay henge: two edges, one per `[oploc1,shantay_pass_
     // henge_doorway]` branch — the gated hop `at` the loc's placement
     // tile (shape 10, unlike the wall doors), and the free desert exit
@@ -4541,8 +4612,10 @@ fn toll_edges(
         return;
     };
     let Some(placements) = positions.get(&henge_id) else {
+        bump(skipped, SKIP_TOLL_HENGE, 1);
         return;
     };
+    let edge_start = graph.edges.len();
     for p in placements {
         if p.level != 0 {
             continue;
@@ -4589,6 +4662,554 @@ fn toll_edges(
             members_req: false,
         });
     }
+    if graph.edges.len() == edge_start {
+        bump(skipped, SKIP_TOLL_HENGE, 1);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Magic Guild doors (`magic_guild.rs2`): named loc-specific openers.
+// ---------------------------------------------------------------------------
+
+/// Named Magic Guild doors (`magicguild_door_l` / `_r`). Not inherited
+/// closed gates — `[oploc1,magicguild_door_*]` in `magic_guild.rs2` is a
+/// loc-specific opener, so [`inherited_closed_gates`] refuses them.
+/// `~check_axis_locactive` + `stat(magic) < N` gates only the entering
+/// crossing (`door_open` / the loc's facing); the exit arm is ungated.
+const MAGICGUILD_DOOR_LEFT: &str = "magicguild_door_l";
+const MAGICGUILD_DOOR_RIGHT: &str = "magicguild_door_r";
+const MAGICGUILD_OPEN_LABEL: &str = "open_mageguild_door";
+
+fn magicguild_door_edges(
+    content_root: &Path,
+    ids: &HashMap<String, i32>,
+    positions: &HashMap<i32, Vec<Placement>>,
+    graph: &mut TransportGraph,
+    collision: &WorldCollision,
+    skipped: &mut HashMap<&'static str, usize>,
+) {
+    let script_path = content_root
+        .join("scripts")
+        .join("areas")
+        .join("area_yanille")
+        .join("scripts")
+        .join("magic_guild.rs2");
+    let applicable = packed_declared_names(ids, &[MAGICGUILD_DOOR_LEFT, MAGICGUILD_DOOR_RIGHT]);
+    if !script_path.is_file() {
+        bump(skipped, SKIP_MAGICGUILD_SCRIPT, applicable);
+        return;
+    }
+    let Some(level) = magicguild_entering_magic_level(content_root) else {
+        bump(skipped, SKIP_MAGICGUILD_SCRIPT, applicable);
+        return;
+    };
+    let admitted = magicguild_door_open_ids(content_root, ids);
+    let admitted_ids: HashSet<i32> = admitted.keys().copied().collect();
+    bump_unadmitted_packed_ids(
+        skipped,
+        SKIP_MAGICGUILD_CONFIG,
+        ids,
+        &[MAGICGUILD_DOOR_LEFT, MAGICGUILD_DOOR_RIGHT],
+        &admitted_ids,
+    );
+    if admitted.is_empty() {
+        return;
+    }
+    for (&id, &open) in &admitted {
+        let edge_start = graph.edges.len();
+        let Some(ps) = positions.get(&id) else {
+            bump(skipped, SKIP_MAGICGUILD_DOOR, 1);
+            continue;
+        };
+        for p in ps {
+            if p.level != 0 || p.shape != 0 {
+                continue;
+            }
+            let Some(angle_dir) = door_dir(p.angle) else {
+                continue;
+            };
+            let at = WorldTile {
+                x: p.x,
+                z: p.z,
+                level: p.level,
+            };
+            for dir in [angle_dir, opposite(angle_dir)] {
+                let Some(to) = door_far_side(at, dir, collision) else {
+                    continue;
+                };
+                graph.edges.push(TransportEdge {
+                    kind: TransportKind::Door,
+                    at,
+                    to,
+                    loc_id: id,
+                    option: 1,
+                    ticks: 1,
+                    dir: Some(dir),
+                    open_loc_id: Some(open),
+                    skill_req: if dir == angle_dir {
+                        vec![(SKILL_MAGIC, level)]
+                    } else {
+                        vec![]
+                    },
+                    item_req: vec![],
+                    quest_req: vec![],
+                    varp_req: vec![],
+                    worn_req: vec![],
+                    members_req: false,
+                });
+            }
+        }
+        if graph.edges.len() == edge_start {
+            bump(skipped, SKIP_MAGICGUILD_DOOR, 1);
+        }
+    }
+}
+
+/// `stat(magic) < N` on the entering arm of `open_mageguild_door`. Both
+/// loc-specific `[oploc1,magicguild_door_*]` handlers must jump there.
+fn magicguild_entering_magic_level(content_root: &Path) -> Option<i32> {
+    let path = content_root
+        .join("scripts")
+        .join("areas")
+        .join("area_yanille")
+        .join("scripts")
+        .join("magic_guild.rs2");
+    let text = fs::read_to_string(path).ok()?;
+    if !magicguild_oploc_jumps_to_opener(&text) {
+        return None;
+    }
+    let body = label_body_raw(&text, MAGICGUILD_OPEN_LABEL)?;
+    let flat: String = body.chars().filter(|c| !c.is_whitespace()).collect();
+    if !flat.contains("~check_axis_locactive(coord)") {
+        return None;
+    }
+    if !flat.contains("~open_and_close_double_door2($entering,") {
+        return None;
+    }
+    let needle = "if($entering=true&stat(magic)<";
+    let rest = flat.split_once(needle)?.1;
+    let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+    let level: i32 = digits.parse().ok()?;
+    (level > 0).then_some(level)
+}
+
+fn magicguild_oploc_jumps_to_opener(text: &str) -> bool {
+    let mut seen_left = false;
+    let mut seen_right = false;
+    for raw in text.lines() {
+        let line = raw.trim();
+        let line = match line.find("//") {
+            Some(i) => line[..i].trim(),
+            None => line,
+        };
+        if let Some(rest) = line.strip_prefix("[oploc1,magicguild_door_l]") {
+            seen_left = magicguild_opener_jump(rest);
+        } else if let Some(rest) = line.strip_prefix("[oploc1,magicguild_door_r]") {
+            seen_right = magicguild_opener_jump(rest);
+        }
+    }
+    seen_left && seen_right
+}
+
+fn magicguild_opener_jump(rest: &str) -> bool {
+    let flat: String = rest.chars().filter(|c| !c.is_whitespace()).collect();
+    flat.starts_with(&format!("@{MAGICGUILD_OPEN_LABEL}(")) && flat.ends_with(");")
+}
+
+/// Named Ranging Guild door (`ranging_guild_door`). Not an inherited
+/// closed gate and not a Magic Guild `door_far_side` copy: the 289 opener
+/// is a shape-9 diagonal wall that `~forcemove`s to a stand then
+/// `p_teleport`s relative to that stand. `at` is the origin stand, `to`
+/// the teleport dest; `dir` and `open_loc_id` stay `None` (the 3-tick
+/// `loc_1532` add is visual, not a swing leaf).
+const RANGINGGUILD_DOOR_NAME: &str = "ranging_guild_door";
+const RANGINGGUILD_DOOR_ID: i32 = 2514;
+const RANGINGGUILD_DOOR_SHAPE: i32 = 9; // LocShape::WALL_DIAGONAL
+const RANGINGGUILD_EXIT_HALFPLANE: &str =
+    "coordx(coord)>coordx(loc_coord)|coordz(coord)<coordz(loc_coord)";
+const RANGINGGUILD_EXIT_FORCE: (i32, i32, i32) = (1, 0, -1);
+const RANGINGGUILD_EXIT_TELE: (i32, i32, i32) = (-2, 0, 2);
+const RANGINGGUILD_ENTER_FORCE: (i32, i32, i32) = (-1, 0, 1);
+const RANGINGGUILD_ENTER_TELE: (i32, i32, i32) = (2, 0, -2);
+
+enum RangingLocResolve {
+    Resolved(i32),
+    NotApplicable,
+    Skip(&'static str),
+}
+
+fn rangingguild_door_edges(
+    content_root: &Path,
+    ids: &HashMap<String, i32>,
+    positions: &HashMap<i32, Vec<Placement>>,
+    graph: &mut TransportGraph,
+    skipped: &mut HashMap<&'static str, usize>,
+) {
+    let loc_id = match rangingguild_resolve_loc_id(content_root, ids) {
+        RangingLocResolve::Resolved(id) => id,
+        RangingLocResolve::NotApplicable => return,
+        RangingLocResolve::Skip(reason) => {
+            bump(skipped, reason, RANGINGGUILD_DECLARED_PAIR);
+            return;
+        }
+    };
+    let Some((exit_force, exit_tele, enter_force, enter_tele)) =
+        rangingguild_parse_opener(content_root)
+    else {
+        bump(
+            skipped,
+            SKIP_RANGINGGUILD_SCRIPT,
+            RANGINGGUILD_DECLARED_PAIR,
+        );
+        return;
+    };
+    let Some(placement) = rangingguild_unique_placement(positions, loc_id) else {
+        bump(
+            skipped,
+            SKIP_RANGINGGUILD_PLACEMENT,
+            RANGINGGUILD_DECLARED_PAIR,
+        );
+        return;
+    };
+    let loc = WorldTile {
+        x: placement.x,
+        z: placement.z,
+        level: placement.level,
+    };
+    let enter_at = rangingguild_apply(loc, enter_force);
+    let enter_to = rangingguild_apply(enter_at, enter_tele);
+    let exit_at = rangingguild_apply(loc, exit_force);
+    let exit_to = rangingguild_apply(exit_at, exit_tele);
+    for (at, to, skill_req) in [
+        (enter_at, enter_to, vec![(SKILL_RANGED, 40)]),
+        (exit_at, exit_to, vec![]),
+    ] {
+        graph.edges.push(TransportEdge {
+            kind: TransportKind::Door,
+            at,
+            to,
+            loc_id,
+            option: 1,
+            ticks: 1,
+            dir: None,
+            open_loc_id: None,
+            skill_req,
+            item_req: vec![],
+            quest_req: vec![],
+            varp_req: vec![],
+            worn_req: vec![],
+            members_req: false,
+        });
+    }
+}
+
+fn rangingguild_resolve_loc_id(
+    content_root: &Path,
+    ids: &HashMap<String, i32>,
+) -> RangingLocResolve {
+    let Some(&id) = ids.get(RANGINGGUILD_DOOR_NAME) else {
+        return RangingLocResolve::NotApplicable;
+    };
+    if id != RANGINGGUILD_DOOR_ID {
+        return RangingLocResolve::Skip(SKIP_RANGINGGUILD_PACK);
+    }
+    let path = content_root
+        .join("scripts")
+        .join("minigames")
+        .join("game_ranging")
+        .join("configs")
+        .join("ranging.loc");
+    let Ok(text) = fs::read_to_string(&path) else {
+        return RangingLocResolve::Skip(SKIP_RANGINGGUILD_CONFIG);
+    };
+    if named_loc_has_open(&text, RANGINGGUILD_DOOR_NAME) {
+        RangingLocResolve::Resolved(id)
+    } else {
+        RangingLocResolve::Skip(SKIP_RANGINGGUILD_CONFIG)
+    }
+}
+
+fn rangingguild_unique_placement(
+    positions: &HashMap<i32, Vec<Placement>>,
+    loc_id: i32,
+) -> Option<&Placement> {
+    let ps = positions.get(&loc_id)?;
+    let [placement] = ps.as_slice() else {
+        return None;
+    };
+    (placement.level == 0 && placement.shape == RANGINGGUILD_DOOR_SHAPE && placement.angle == 0)
+        .then_some(placement)
+}
+
+fn rangingguild_apply(tile: WorldTile, (dx, d_level, dz): (i32, i32, i32)) -> WorldTile {
+    WorldTile {
+        x: tile.x + dx,
+        z: tile.z + dz,
+        level: tile.level + d_level,
+    }
+}
+
+type RangingGuildOpener = (
+    (i32, i32, i32),
+    (i32, i32, i32),
+    (i32, i32, i32),
+    (i32, i32, i32),
+);
+
+fn rangingguild_parse_opener(content_root: &Path) -> Option<RangingGuildOpener> {
+    let script = fs::read_to_string(
+        content_root
+            .join("scripts")
+            .join("minigames")
+            .join("game_ranging")
+            .join("scripts")
+            .join("ranging_guild_door.rs2"),
+    )
+    .ok()?;
+    let mut blocks = script_blocks(&script)
+        .into_iter()
+        .filter(|(op, name, _)| op == "oploc1" && name == RANGINGGUILD_DOOR_NAME);
+    let (_, _, body) = blocks.next()?;
+    if blocks.next().is_some() {
+        return None;
+    }
+    let body = rangingguild_strip_line_comments(&body);
+    let (cond, exit_arm, enter_arm) = rangingguild_split_leading_if(&body)?;
+    if rangingguild_flatten(&cond) != RANGINGGUILD_EXIT_HALFPLANE {
+        return None;
+    }
+    let exit_flat = rangingguild_flatten(&exit_arm);
+    let enter_flat = rangingguild_flatten(&enter_arm);
+    if exit_flat.contains("stat(ranged)") {
+        return None;
+    }
+    if !rangingguild_forcemove_before_teleport(&exit_flat)
+        || !rangingguild_first_return_after_teleport(&exit_flat)
+    {
+        return None;
+    }
+    let exit_force = rangingguild_unique_delta(&exit_arm, "forcemove", "loc_coord")?;
+    let exit_tele = rangingguild_unique_delta(&exit_arm, "p_teleport", "coord")?;
+    if exit_force != RANGINGGUILD_EXIT_FORCE || exit_tele != RANGINGGUILD_EXIT_TELE {
+        return None;
+    }
+    if rangingguild_stat_ranged_lt(&enter_arm) != Some(40)
+        || !rangingguild_enter_gate_before_crossing(&enter_flat)
+    {
+        return None;
+    }
+    let enter_force = rangingguild_unique_delta(&enter_arm, "forcemove", "loc_coord")?;
+    let enter_tele = rangingguild_unique_delta(&enter_arm, "p_teleport", "coord")?;
+    if enter_force != RANGINGGUILD_ENTER_FORCE || enter_tele != RANGINGGUILD_ENTER_TELE {
+        return None;
+    }
+    Some((exit_force, exit_tele, enter_force, enter_tele))
+}
+
+/// Unique deltas do not encode call order. The 289 crossing is forcemove
+/// then teleport; a swapped body is an unsupported form, not a hop.
+fn rangingguild_forcemove_before_teleport(flat: &str) -> bool {
+    let Some(force) = flat.find("forcemove(") else {
+        return false;
+    };
+    let Some(tele) = flat.find("p_teleport(") else {
+        return false;
+    };
+    force < tele
+}
+
+/// Exit `return;` is the arm terminator after the teleport, not an
+/// arbitrary earlier substring.
+fn rangingguild_first_return_after_teleport(flat: &str) -> bool {
+    let Some(ret) = flat.find("return;") else {
+        return false;
+    };
+    let Some(tele) = flat.find("p_teleport(") else {
+        return false;
+    };
+    ret > tele
+}
+
+/// Enter must refuse below 40 before the crossing: `if (stat(ranged) < 40)
+/// { … return; }` then forcemove then teleport. A bare `stat(ranged)<40`
+/// or a return between the two calls is unsupported.
+fn rangingguild_enter_gate_before_crossing(flat: &str) -> bool {
+    let Some(gate) = flat.find("if(stat(ranged)<40){") else {
+        return false;
+    };
+    let Some(force) = flat.find("forcemove(") else {
+        return false;
+    };
+    let Some(tele) = flat.find("p_teleport(") else {
+        return false;
+    };
+    if gate >= force || force >= tele {
+        return false;
+    }
+    flat[gate..force].contains("return;") && !flat[force..tele].contains("return;")
+}
+
+fn rangingguild_strip_line_comments(text: &str) -> String {
+    let mut out = String::new();
+    for raw in text.lines() {
+        let line = match raw.find("//") {
+            Some(i) => raw[..i].trim(),
+            None => raw.trim(),
+        };
+        if !line.is_empty() {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    out
+}
+
+fn rangingguild_flatten(text: &str) -> String {
+    text.chars().filter(|c| !c.is_whitespace()).collect()
+}
+
+fn rangingguild_split_leading_if(text: &str) -> Option<(String, String, String)> {
+    let start = text.find(|c: char| !c.is_whitespace())?;
+    let rest = &text[start..];
+    if !rest.starts_with("if") {
+        return None;
+    }
+    let after_if = start + 2;
+    if let Some(c) = text[after_if..].chars().next() {
+        if c.is_ascii_alphanumeric() || c == '_' {
+            return None;
+        }
+    }
+    let paren = text[after_if..].find('(').map(|i| after_if + i)?;
+    if !text[after_if..paren].chars().all(char::is_whitespace) {
+        return None;
+    }
+    let cond_close = rangingguild_match(text, paren, '(', ')')?;
+    let after_cond = cond_close + 1;
+    let brace = text[after_cond..].find('{').map(|i| after_cond + i)?;
+    if !text[after_cond..brace].chars().all(char::is_whitespace) {
+        return None;
+    }
+    let body_close = rangingguild_match(text, brace, '{', '}')?;
+    Some((
+        text[paren + 1..cond_close].to_string(),
+        text[brace + 1..body_close].to_string(),
+        text[body_close + 1..].to_string(),
+    ))
+}
+
+fn rangingguild_match(text: &str, open_idx: usize, open: char, close: char) -> Option<usize> {
+    let mut depth = 0i32;
+    for (i, ch) in text[open_idx..].char_indices() {
+        if ch == open {
+            depth += 1;
+        } else if ch == close {
+            depth -= 1;
+            if depth == 0 {
+                return Some(open_idx + i);
+            }
+        }
+    }
+    None
+}
+
+fn rangingguild_unique_delta(arm: &str, name: &str, base: &str) -> Option<(i32, i32, i32)> {
+    let calls = call_args_all(arm, name);
+    if calls.len() != 1 {
+        return None;
+    }
+    let args = &calls[0];
+    if args.len() != 1 {
+        return None;
+    }
+    rangingguild_movecoord_delta(&args[0], base)
+}
+
+fn rangingguild_movecoord_delta(expr: &str, base: &str) -> Option<(i32, i32, i32)> {
+    let args = call_args(expr, "movecoord")?;
+    if args.len() != 4 {
+        return None;
+    }
+    let got = args[0].trim();
+    let got = got.strip_suffix("()").unwrap_or(got);
+    if got != base {
+        return None;
+    }
+    Some((
+        int_or_null(&args[1])?,
+        int_or_null(&args[2])?,
+        int_or_null(&args[3])?,
+    ))
+}
+
+fn rangingguild_stat_ranged_lt(arm: &str) -> Option<i32> {
+    let flat = rangingguild_flatten(arm);
+    let mut rest = flat.as_str();
+    let mut found = None;
+    while let Some((_, after)) = rest.split_once("stat(ranged)<") {
+        if after.starts_with('=') {
+            return None;
+        }
+        let digits: String = after.chars().take_while(|c| c.is_ascii_digit()).collect();
+        let level: i32 = digits.parse().ok()?;
+        if found.is_some() {
+            return None;
+        }
+        found = Some(level);
+        rest = after;
+    }
+    if flat.matches("stat(ranged)").count() != 1 {
+        return None;
+    }
+    found
+}
+
+fn magicguild_door_open_ids(content_root: &Path, ids: &HashMap<String, i32>) -> HashMap<i32, i32> {
+    let path = content_root
+        .join("scripts")
+        .join("areas")
+        .join("area_yanille")
+        .join("configs")
+        .join("magic_guild")
+        .join("magic_guild.loc");
+    let Ok(text) = fs::read_to_string(path) else {
+        return HashMap::new();
+    };
+    let opens = parse_door_open_ids(&text, ids);
+    let mut out = HashMap::new();
+    for name in [MAGICGUILD_DOOR_LEFT, MAGICGUILD_DOOR_RIGHT] {
+        let Some(&id) = ids.get(name) else {
+            continue;
+        };
+        if !named_loc_has_open(&text, name) {
+            continue;
+        }
+        let Some(&open) = opens.get(&id) else {
+            continue;
+        };
+        out.insert(id, open);
+    }
+    out
+}
+
+fn named_loc_has_open(text: &str, name: &str) -> bool {
+    let mut in_block = false;
+    let mut open = false;
+    for raw in text.lines() {
+        let line = raw.trim();
+        if let Some(header) = config_header(line) {
+            if in_block {
+                return open;
+            }
+            in_block = header == name;
+            open = false;
+            continue;
+        }
+        if in_block && line == "op1=Open" {
+            open = true;
+        }
+    }
+    in_block && open
 }
 
 // ---------------------------------------------------------------------------
@@ -4620,6 +5241,7 @@ fn zanaris_door_edges(
     ids: &HashMap<String, i32>,
     positions: &HashMap<i32, Vec<Placement>>,
     graph: &mut TransportGraph,
+    skipped: &mut HashMap<&'static str, usize>,
 ) {
     let Ok(script) = fs::read_to_string(
         content_root
@@ -4629,12 +5251,18 @@ fn zanaris_door_edges(
             .join("scripts")
             .join("quest_zanaris.rs2"),
     ) else {
+        if ids.contains_key("zanarisdoor") {
+            bump(skipped, SKIP_ZANARIS_SOURCE, ZANARIS_DECLARED_ROUTES);
+        }
         return;
     };
     let Some((_, name, body)) = script_blocks(&script)
         .into_iter()
         .find(|(op, name, _)| op.as_str() == "oploc1" && name.as_str() == "zanarisdoor")
     else {
+        if ids.contains_key("zanarisdoor") {
+            bump(skipped, SKIP_ZANARIS_SOURCE, ZANARIS_DECLARED_ROUTES);
+        }
         return;
     };
     let Some(&loc_id) = ids.get(&name) else {
@@ -4654,16 +5282,20 @@ fn zanaris_door_edges(
         .and_then(|dest| coord_literal(&dest))
         .map(|(level, x, z)| WorldTile { x, z, level })
     else {
+        bump(skipped, SKIP_ZANARIS_ROUTE, ZANARIS_DECLARED_ROUTES);
         return;
     };
     // The Dramen staff id (`pack/obj.pack`); a missing pack skips the
     // door instead of faking an id.
     let Some(&staff_id) = obj_ids_by_name(content_root).get("dramen_staff") else {
+        bump(skipped, SKIP_ZANARIS_ROUTE, ZANARIS_DECLARED_ROUTES);
         return;
     };
     let Some(placements) = positions.get(&loc_id) else {
+        bump(skipped, SKIP_ZANARIS_ROUTE, ZANARIS_DECLARED_ROUTES);
         return;
     };
+    let edge_start = graph.edges.len();
     for loc in placements {
         if loc.level != 0 || loc.shape != 0 {
             continue;
@@ -4688,6 +5320,9 @@ fn zanaris_door_edges(
             worn_req: vec![staff_id],
             members_req: false,
         });
+    }
+    if graph.edges.len() == edge_start {
+        bump(skipped, SKIP_ZANARIS_ROUTE, ZANARIS_DECLARED_ROUTES);
     }
 }
 
@@ -5067,17 +5702,6 @@ fn visit_rs2(dir: &Path, cb: &mut impl FnMut(&str)) {
 // ---------------------------------------------------------------------------
 // Script text helpers (m8aq regexes ported without a regex dependency).
 // ---------------------------------------------------------------------------
-
-/// `[a,b]` where both parts are identifiers.
-fn script_header(line: &str) -> Option<(&str, &str)> {
-    let inner = line.strip_prefix('[')?.strip_suffix(']')?;
-    let (a, b) = inner.split_once(',')?;
-    let word = |s: &str| !s.is_empty() && s.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_');
-    if !word(a) || !word(b) {
-        return None;
-    }
-    Some((a, b))
-}
 
 /// `oplocN` → `N`.
 fn oploc_option(header: &str) -> Option<i32> {
@@ -5630,7 +6254,8 @@ mod tests {
 
     /// `(at, dir, to)` of every door edge of `loc_id`, sorted, so a
     /// directional door's exact crossings can be asserted.
-    fn door_crossings(graph: &TransportGraph, loc_id: i32) -> Vec<((i32, i32), char, (i32, i32))> {
+    type DoorCrossing = ((i32, i32), char, (i32, i32));
+    fn door_crossings(graph: &TransportGraph, loc_id: i32) -> Vec<DoorCrossing> {
         let mut out: Vec<_> = graph
             .edges
             .iter()
@@ -5648,6 +6273,337 @@ mod tests {
             .collect();
         out.sort();
         out
+    }
+
+    fn write_brass_key_door_source(fx: &Fixture, handler: &str) {
+        fx.write("pack/loc.pack", "1535=loc_1535\n1804=brasskeydoor\n");
+        fx.write("pack/obj.pack", "983=edgevilledungeonkey\n");
+        fx.write(
+            "scripts/_unpack/225/all.loc",
+            "\
+[loc_1535]
+name=Door
+
+[brasskeydoor]
+name=Door
+desc=This door requires a key.
+model=basic_wall
+active=yes
+op1=Open
+param=next_loc_stage,loc_1535
+",
+        );
+        fx.write(
+            "scripts/areas/area_edgeville/scripts/edgeville_dungeon.rs2",
+            handler,
+        );
+        write_blocked_square(
+            fx,
+            48,
+            53,
+            &[(3115, 3448), (3115, 3449), (3115, 3450), (3115, 3451)],
+            "0 43 58: 1804 0 3\n",
+        );
+    }
+
+    fn canonical_brass_key_door_handler() -> &'static str {
+        "\
+[oploc1,brasskeydoor]
+mes(\"The door is locked.\");
+
+[oplocu,brasskeydoor]
+switch_obj(last_useitem) {
+    case edgevilledungeonkey : @open_edgeville_dungeon_door;
+    case default : ~displaymessage(^dm_default);
+}
+
+[label,open_edgeville_dungeon_door]
+if (inv_total(inv, edgevilledungeonkey) > 0) {
+    mes(\"You unlock the door.\");
+    sound_synth(locked, 1, 0);
+    def_coord $loc_coord = loc_coord;
+    def_int $angle = loc_angle;
+    def_locshape $shape = loc_shape;
+    def_loc $replacement = loc_param(next_loc_stage);
+    def_int $x;
+    def_int $z;
+    $x, $z = ~door_open($angle, loc_shape);
+    def_boolean $entering = ~check_axis(coord, $loc_coord, $angle);
+    def_coord $dest = $loc_coord;
+    if ($entering = true) {
+        if (coord ! $loc_coord) {
+            p_delay(0);
+            p_teleport($loc_coord);
+            sound_synth(door_open, 1, 0);
+            p_delay(1);
+        } else {
+            p_delay(0);
+            sound_synth(door_open, 1, 0);
+        }
+        $dest = movecoord($loc_coord, $x, 0, $z);
+    } else {
+        p_delay(0);
+        sound_synth(door_open, 1, 0);
+    }
+    p_teleport($dest);
+    loc_add($loc_coord, inviswall, $angle, $shape, 3);
+    loc_add(movecoord($loc_coord, $x, 0, $z), $replacement, modulo(add($angle, 1), 4), $shape, 3);
+} else {
+    mes(\"The door is locked.\");
+}
+"
+    }
+
+    #[test]
+    fn derive_transports_emits_source_shaped_brass_key_door() {
+        let fx = Fixture::new();
+        write_brass_key_door_source(&fx, canonical_brass_key_door_handler());
+        let defs = loc_defs(&[(1535, 1, 1), (1804, 1, 1)]);
+        let wc = bake_collision(&fx, &defs, &HashSet::from([1804]));
+        let graph = derive_transports(fx.path(), &defs, &wc);
+        let edges: Vec<_> = graph
+            .edges
+            .iter()
+            .filter(|edge| edge.loc_id == 1804)
+            .collect();
+        assert_eq!(
+            edges.len(),
+            2,
+            "one keyed crossing per direction: {edges:?}"
+        );
+        assert_eq!(
+            door_crossings(&graph, 1804),
+            vec![
+                ((3115, 3449), 'N', (3115, 3450)),
+                ((3115, 3450), 'S', (3115, 3449)),
+            ],
+            "reverse starts at the temporary replacement leaf; it is not a generic adjacent-door edge"
+        );
+        for edge in edges {
+            assert_eq!(edge.option, 0, "oplocu, never the locked oploc1");
+            assert_eq!(edge.item_req, vec![(983, 1)]);
+            assert_eq!(edge.open_loc_id, Some(1535));
+            assert!(edge.skill_req.is_empty());
+            assert!(edge.quest_req.is_empty());
+            assert!(edge.varp_req.is_empty());
+            assert!(edge.worn_req.is_empty());
+            assert!(!edge.members_req);
+            assert!(wc.standable(edge.at), "standable take-off: {edge:?}");
+            assert!(wc.standable(edge.to), "standable landing: {edge:?}");
+        }
+    }
+
+    #[test]
+    fn brass_key_door_routes_both_ways_only_with_held_key() {
+        use crate::router::{find_with, FindOptions, Leg, RouteError};
+
+        let fx = Fixture::new();
+        write_brass_key_door_source(&fx, canonical_brass_key_door_handler());
+        let defs = loc_defs(&[(1535, 1, 1), (1804, 1, 1)]);
+        let wc = bake_collision(&fx, &defs, &HashSet::from([1804]));
+        let graph = derive_transports(fx.path(), &defs, &wc);
+        let hut = WorldTile {
+            x: 3115,
+            z: 3451,
+            level: 0,
+        };
+        let outside = WorldTile {
+            x: 3115,
+            z: 3448,
+            level: 0,
+        };
+        let empty = crate::world_state::WorldState::empty();
+        for (from, to) in [(hut, outside), (outside, hut)] {
+            assert!(
+                matches!(
+                    find_with(&wc, &graph, from, to, FindOptions::default(), &empty),
+                    Err(RouteError::NoPath)
+                ),
+                "the locked Open action must not become a free edge"
+            );
+        }
+
+        let keyed = crate::world_state::WorldState {
+            inv: HashMap::from([(983, 1)]),
+            ..crate::world_state::WorldState::empty()
+        };
+        for (from, to, dir) in [(hut, outside, DoorDir::S), (outside, hut, DoorDir::N)] {
+            let route = find_with(&wc, &graph, from, to, FindOptions::default(), &keyed)
+                .expect("held brass key permits the short hut crossing");
+            let hop = route
+                .legs
+                .iter()
+                .find_map(|leg| match leg {
+                    Leg::Transport { edge } if edge.loc_id == 1804 => Some(edge),
+                    _ => None,
+                })
+                .expect("route uses the keyed brass-hut door");
+            assert_eq!(hop.dir, Some(dir));
+            assert_eq!(
+                hop.option, 0,
+                "traveller dispatches existing use-item-on-loc"
+            );
+            assert_eq!(hop.item_req, vec![(983, 1)]);
+        }
+        assert_eq!(
+            keyed.inv.get(&983),
+            Some(&1),
+            "routing proves possession; the source never consumes the key"
+        );
+    }
+
+    #[test]
+    fn brass_key_door_fails_closed_when_alias_or_handler_changes() {
+        let defs = loc_defs(&[(1535, 1, 1), (1804, 1, 1)]);
+        for (label, handler) in [
+            (
+                "wrong use item",
+                canonical_brass_key_door_handler()
+                    .replace("case edgevilledungeonkey :", "case muddy_key :"),
+            ),
+            (
+                "missing inventory guard",
+                canonical_brass_key_door_handler()
+                    .replace("inv_total(inv, edgevilledungeonkey) > 0", "true"),
+            ),
+            (
+                "consumed key",
+                canonical_brass_key_door_handler().replace(
+                    "mes(\"You unlock the door.\");",
+                    "inv_del(inv, edgevilledungeonkey, 1);",
+                ),
+            ),
+        ] {
+            let fx = Fixture::new();
+            write_brass_key_door_source(&fx, &handler);
+            let wc = bake_collision(&fx, &defs, &HashSet::from([1804]));
+            let graph = derive_transports(fx.path(), &defs, &wc);
+            assert!(
+                graph.edges.iter().all(|edge| edge.loc_id != 1804),
+                "{label} must omit the family"
+            );
+        }
+
+        let fx = Fixture::new();
+        write_brass_key_door_source(&fx, canonical_brass_key_door_handler());
+        fx.write("pack/obj.pack", "");
+        let wc = bake_collision(&fx, &defs, &HashSet::from([1804]));
+        let graph = derive_transports(fx.path(), &defs, &wc);
+        assert!(
+            graph.edges.iter().all(|edge| edge.loc_id != 1804),
+            "missing selected key alias must omit the family"
+        );
+    }
+
+    #[test]
+    fn selected_274_and_289_content_derives_the_keyed_hut_crossing() {
+        use crate::router::{find_with, FindOptions, Leg};
+
+        fn assert_selected(label: &str, graph: &TransportGraph, wc: &WorldCollision) {
+            let edges: Vec<_> = graph
+                .edges
+                .iter()
+                .filter(|edge| edge.loc_id == 1804)
+                .collect();
+            assert_eq!(edges.len(), 2, "{label}: {edges:?}");
+            assert_eq!(
+                door_crossings(graph, 1804),
+                vec![
+                    ((3115, 3449), 'N', (3115, 3450)),
+                    ((3115, 3450), 'S', (3115, 3449)),
+                ],
+                "{label}"
+            );
+            assert!(edges.iter().all(|edge| {
+                edge.option == 0
+                    && edge.item_req == [(983, 1)]
+                    && edge.open_loc_id == Some(1535)
+                    && wc.standable(edge.at)
+                    && wc.standable(edge.to)
+            }));
+            assert!(
+                graph
+                    .edges
+                    .iter()
+                    .all(|edge| edge.loc_id != 1804 || edge.option != 1),
+                "{label}: locked Open must not become a free edge"
+            );
+
+            let inside = WorldTile {
+                x: 3116,
+                z: 3450,
+                level: 0,
+            };
+            let outside = WorldTile {
+                x: 3115,
+                z: 3449,
+                level: 0,
+            };
+            let unkeyed = find_with(
+                wc,
+                graph,
+                inside,
+                outside,
+                FindOptions::default(),
+                &crate::world_state::WorldState::empty(),
+            );
+            if let Ok(route) = &unkeyed {
+                assert!(
+                    route.legs.iter().all(|leg| !matches!(
+                        leg,
+                        Leg::Transport { edge } if edge.loc_id == 1804
+                    )),
+                    "{label}: no held key must reject the keyed crossing"
+                );
+            }
+            let keyed = crate::world_state::WorldState {
+                inv: HashMap::from([(983, 1)]),
+                ..crate::world_state::WorldState::empty()
+            };
+            for (from, to, dir) in [(inside, outside, DoorDir::S), (outside, inside, DoorDir::N)] {
+                let route = find_with(wc, graph, from, to, FindOptions::default(), &keyed)
+                    .unwrap_or_else(|error| panic!("{label}: keyed short route: {error:?}"));
+                assert!(
+                    route.ticks < 10.0,
+                    "{label}: keyed crossing must beat the long public-dungeon route: {route:?}"
+                );
+                assert!(route.legs.iter().any(|leg| matches!(
+                    leg,
+                    Leg::Transport { edge }
+                        if edge.loc_id == 1804
+                            && edge.option == 0
+                            && edge.dir == Some(dir)
+                )));
+            }
+            assert_eq!(
+                keyed.inv.get(&983),
+                Some(&1),
+                "{label}: key is not consumed"
+            );
+        }
+
+        if let Some((graph, wc)) = derive_from_real_content() {
+            let root = real_content_root().expect("274 root already selected");
+            let ids = loc_ids_by_name(&root);
+            assert!(brass_key_handler_matches(&root), "274 handler shape");
+            assert_eq!(
+                brass_key_open_loc_id(&root, &ids, ids[BRASS_KEY_DOOR_NAME]),
+                Some(1535),
+                "274 replacement leaf"
+            );
+            assert_selected("274", &graph, &wc);
+        }
+        if let Some((graph, wc)) = derive_from_lostcity_content() {
+            let root = PathBuf::from("/Users/acfrazier/experiments/lostcity-289/content");
+            let ids = loc_ids_by_name(&root);
+            assert!(brass_key_handler_matches(&root), "289 handler shape");
+            assert_eq!(
+                brass_key_open_loc_id(&root, &ids, ids[BRASS_KEY_DOOR_NAME]),
+                Some(1535),
+                "289 replacement leaf"
+            );
+            assert_selected("289", graph, wc);
+        }
     }
 
     #[test]
@@ -6436,6 +7392,65 @@ switch_coord (loc_coord) {
     }
 
     #[test]
+    fn derive_transports_emits_edgeville_trapdoor() {
+        let fx = Fixture::new();
+        fx.write("pack/loc.pack", "1568=trapdoor\n1570=trapdoor_open\n");
+        fx.write(
+            "maps/m48_54.jm2",
+            "\
+==== MAP ====
+0 25 12: h1 o6 u50
+0 24 12: h1 o6 u50
+==== LOC ====
+0 25 12: 1568 22 2
+",
+        );
+        fx.write(
+            "scripts/general_use/scripts/trapdoors.rs2",
+            "\
+[oploc1,trapdoor]
+mes(\"The trapdoor opens...\");
+loc_change(trapdoor_open, 500);
+
+[oploc1,trapdoor_open]
+mes(\"You climb down through the trapdoor...\");
+p_telejump(movecoord(coord(), 0, 0, 6400));
+",
+        );
+        let defs = loc_defs(&[(1568, 1, 1), (1570, 1, 1)]);
+        let wc = bake_collision(&fx, &defs, &HashSet::new());
+        let graph = derive_transports(fx.path(), &defs, &wc);
+        let at = WorldTile {
+            x: 3097,
+            z: 3468,
+            level: 0,
+        };
+        let edges: Vec<_> = graph
+            .at
+            .get(&at)
+            .into_iter()
+            .flatten()
+            .map(|&i| &graph.edges[i])
+            .collect();
+        assert_eq!(edges.len(), 1, "got {edges:?}");
+        let e = edges[0];
+        assert_eq!(e.kind, TransportKind::Ladder);
+        assert_eq!(e.loc_id, 1568);
+        assert_eq!(e.open_loc_id, Some(1570));
+        assert_eq!(e.option, 1);
+        assert_eq!(
+            e.to,
+            WorldTile {
+                x: 3097,
+                z: 9868,
+                level: 0
+            }
+        );
+        assert_eq!(e.ticks, 3);
+        assert!(!e.members_req);
+    }
+
+    #[test]
     fn derive_transports_pins_watchshortcut_agility_req() {
         let fx = Fixture::new();
         fx.write("pack/loc.pack", "2298=watchshortcut\n");
@@ -6490,6 +7505,526 @@ p_telejump(movecoord(loc_coord, 0, 0, 3));
         assert_eq!(e.option, 1);
         assert_eq!(e.ticks, 1); // op base 1 + watchshortcut extra 0
         assert_eq!(e.skill_req, vec![(SKILL_AGILITY, 5)]);
+    }
+
+    const ISLAND_ROPE_LOC: &str = "\
+[tree_ropeswing1]
+name=Ropeswing
+op1=Swing-on
+length=6
+blockwalk=no
+category=island_rope_swing
+param=start_coord,0_42_50_21_9
+param=end_coord,0_42_50_16_9
+param=dir,3
+
+[tree_ropeswing2]
+name=Ropeswing
+op1=Swing-on
+length=6
+blockwalk=no
+category=island_rope_swing
+param=start_coord,0_42_50_17_5
+param=end_coord,0_42_50_21_5
+param=dir,1
+
+[tree_ropeswing3]
+name=Ropeswing
+op1=Swing-on
+length=6
+blockwalk=no
+category=island_rope_swing
+param=start_coord,0_39_48_15_19
+param=end_coord,0_39_48_15_24
+param=dir,0
+
+[zqrockjump1]
+name=Stepping stones
+op1=Cross
+category=karamja_stepping_stone
+";
+
+    fn island_rope_fixture(pack_ids: &[(i32, &str)]) -> Fixture {
+        let fx = Fixture::new();
+        let mut pack = String::new();
+        for (id, name) in pack_ids {
+            pack.push_str(&format!("{id}={name}\n"));
+        }
+        fx.write("pack/loc.pack", &pack);
+        fx.write(
+            "scripts/skill_agility/configs/shortcuts.loc",
+            ISLAND_ROPE_LOC,
+        );
+        fx.write(
+            "maps/m42_50.jm2",
+            "\
+==== MAP ====
+0 17 9: h1 o6 u50
+0 15 5: h1 o6 u50
+==== LOC ====
+0 17 9: 9001 10 1
+0 15 5: 9002 10 3
+",
+        );
+        fx.write(
+            "maps/m39_48.jm2",
+            "\
+==== MAP ====
+0 15 18: h1 o6 u50
+==== LOC ====
+0 15 18: 9003 10 2
+",
+        );
+        fx.write(
+            "maps/m45_73.jm2",
+            "\
+==== MAP ====
+0 15 18: h1 o6 u50
+==== LOC ====
+0 15 18: 9003 10 2
+",
+        );
+        fx.write(
+            "maps/m45_46.jm2",
+            "\
+==== MAP ====
+0 45 4: h1 o6 u50
+==== LOC ====
+0 45 4: 9333 10 0
+",
+        );
+        fx
+    }
+
+    fn island_rope_pack() -> Vec<(i32, &'static str)> {
+        vec![
+            (9001, "tree_ropeswing1"),
+            (9002, "tree_ropeswing2"),
+            (9003, "tree_ropeswing3"),
+            (9333, "zqrockjump1"),
+        ]
+    }
+
+    fn island_rope_defs() -> LocDefs {
+        loc_defs(&[(9001, 1, 6), (9002, 1, 6), (9003, 1, 6), (9333, 1, 1)])
+    }
+
+    fn island_rope_edge(graph: &TransportGraph, loc_id: i32) -> Option<&TransportEdge> {
+        graph
+            .edges
+            .iter()
+            .find(|e| e.kind == TransportKind::AgilityShortcut && e.loc_id == loc_id)
+    }
+
+    #[test]
+    fn derive_transports_emits_island_rope_swing_from_start_end_params() {
+        let fx = island_rope_fixture(&island_rope_pack());
+        let defs = island_rope_defs();
+        let wc = bake_collision(&fx, &defs, &HashSet::new());
+        let (graph, skipped) = derive_transports_with_skips(fx.path(), &defs, &wc);
+
+        let inbound = island_rope_edge(&graph, 9001).expect("tree_ropeswing1");
+        assert_eq!(
+            inbound.at,
+            WorldTile {
+                x: 2709,
+                z: 3209,
+                level: 0
+            }
+        );
+        assert_eq!(
+            inbound.to,
+            WorldTile {
+                x: 2704,
+                z: 3209,
+                level: 0
+            }
+        );
+        assert_eq!(inbound.option, 1);
+        assert_eq!(inbound.dir, None);
+        assert_eq!(inbound.ticks, 2);
+        assert_eq!(inbound.skill_req, vec![(SKILL_AGILITY, 10)]);
+        assert!(inbound.item_req.is_empty());
+        assert!(inbound.quest_req.is_empty());
+        assert!(inbound.varp_req.is_empty());
+        assert!(inbound.worn_req.is_empty());
+        assert!(!inbound.members_req);
+
+        let ret = island_rope_edge(&graph, 9002).expect("tree_ropeswing2");
+        assert_eq!(
+            ret.at,
+            WorldTile {
+                x: 2705,
+                z: 3205,
+                level: 0
+            }
+        );
+        assert_eq!(
+            ret.to,
+            WorldTile {
+                x: 2709,
+                z: 3205,
+                level: 0
+            }
+        );
+        assert!(ret.skill_req.is_empty(), "return has no agility gate");
+        assert_eq!(ret.ticks, 2);
+        assert_eq!(ret.option, 1);
+        assert_eq!(ret.dir, None);
+
+        let ogre = island_rope_edge(&graph, 9003).expect("tree_ropeswing3");
+        assert_eq!(
+            ogre.at,
+            WorldTile {
+                x: 2511,
+                z: 3091,
+                level: 0
+            }
+        );
+        assert_eq!(
+            ogre.to,
+            WorldTile {
+                x: 2511,
+                z: 3096,
+                level: 0
+            }
+        );
+        assert_eq!(ogre.skill_req, vec![(SKILL_AGILITY, 10)]);
+
+        assert!(
+            graph.edges.iter().filter(|e| e.loc_id == 9003).count() == 1,
+            "far m45_73 copy must not invent a second edge"
+        );
+        assert!(
+            graph.edges.iter().all(|e| e.at
+                != WorldTile {
+                    x: 2895,
+                    z: 4690,
+                    level: 0
+                }),
+            "absolute params must not emit from the far copy origin"
+        );
+        assert_eq!(skip_total(&skipped, SKIP_ISLAND_ROPE_JOIN), 1);
+        assert_eq!(skip_total(&skipped, SKIP_UNPRICED), 0);
+        assert!(
+            island_rope_edge(&graph, 9333).is_none(),
+            "zqrockjump1 is not island_rope_swing"
+        );
+
+        let inbound_ok = crate::world_state::WorldState {
+            stats: HashMap::from([(SKILL_AGILITY, 10)]),
+            ..crate::world_state::WorldState::empty()
+        };
+        let inbound_low = crate::world_state::WorldState {
+            stats: HashMap::from([(SKILL_AGILITY, 9)]),
+            ..crate::world_state::WorldState::empty()
+        };
+        assert!(inbound_ok.allows(inbound));
+        assert!(!inbound_low.allows(inbound));
+        assert!(crate::world_state::WorldState {
+            stats: HashMap::from([(SKILL_AGILITY, 1)]),
+            ..crate::world_state::WorldState::empty()
+        }
+        .allows(ret));
+    }
+
+    #[test]
+    fn derive_transports_skips_island_rope_missing_end_coord() {
+        let fx = Fixture::new();
+        fx.write("pack/loc.pack", "9001=tree_ropeswing1\n");
+        fx.write(
+            "scripts/skill_agility/configs/shortcuts.loc",
+            "\
+[tree_ropeswing1]
+category=island_rope_swing
+length=6
+param=start_coord,0_42_50_21_9
+",
+        );
+        fx.write(
+            "maps/m42_50.jm2",
+            "==== MAP ====\n0 17 9: h1 o6 u50\n==== LOC ====\n0 17 9: 9001 10 1\n",
+        );
+        let defs = loc_defs(&[(9001, 1, 6)]);
+        let wc = bake_collision(&fx, &defs, &HashSet::new());
+        let (graph, skipped) = derive_transports_with_skips(fx.path(), &defs, &wc);
+        assert!(island_rope_edge(&graph, 9001).is_none());
+        assert_eq!(skip_total(&skipped, SKIP_ISLAND_ROPE_PARAMS), 1);
+    }
+
+    #[test]
+    fn derive_transports_skips_island_rope_when_shortcuts_loc_missing() {
+        let fx = Fixture::new();
+        fx.write("pack/loc.pack", "9001=tree_ropeswing1\n");
+        fx.write(
+            "maps/m42_50.jm2",
+            "==== MAP ====\n0 17 9: h1 o6 u50\n==== LOC ====\n0 17 9: 9001 10 1\n",
+        );
+        let defs = loc_defs(&[(9001, 1, 6)]);
+        let wc = bake_collision(&fx, &defs, &HashSet::new());
+        let (graph, skipped) = derive_transports_with_skips(fx.path(), &defs, &wc);
+        assert!(island_rope_edge(&graph, 9001).is_none());
+        assert_eq!(skip_total(&skipped, SKIP_ISLAND_ROPE_CONFIG), 1);
+    }
+
+    fn pack_id_by_name(content_root: &Path, name: &str) -> Option<i32> {
+        loc_ids_by_name(content_root).get(name).copied()
+    }
+
+    fn assert_real_island_ropes(graph: &TransportGraph, content_root: &Path) {
+        let id1 = pack_id_by_name(content_root, "tree_ropeswing1").expect("pack tree_ropeswing1");
+        let id2 = pack_id_by_name(content_root, "tree_ropeswing2").expect("pack tree_ropeswing2");
+        let id3 = pack_id_by_name(content_root, "tree_ropeswing3").expect("pack tree_ropeswing3");
+        let inbound = island_rope_edge(graph, id1).expect("inbound island rope");
+        assert_eq!(
+            inbound.at,
+            WorldTile {
+                x: 2709,
+                z: 3209,
+                level: 0
+            }
+        );
+        assert_eq!(
+            inbound.to,
+            WorldTile {
+                x: 2704,
+                z: 3209,
+                level: 0
+            }
+        );
+        assert_eq!(inbound.option, 1);
+        assert_eq!(inbound.dir, None);
+        assert_eq!(inbound.skill_req, vec![(SKILL_AGILITY, 10)]);
+        let ret = island_rope_edge(graph, id2).expect("return island rope");
+        assert_eq!(
+            ret.at,
+            WorldTile {
+                x: 2705,
+                z: 3205,
+                level: 0
+            }
+        );
+        assert_eq!(
+            ret.to,
+            WorldTile {
+                x: 2709,
+                z: 3205,
+                level: 0
+            }
+        );
+        assert!(ret.skill_req.is_empty());
+        let ogre = island_rope_edge(graph, id3).expect("ogre island rope");
+        assert_eq!(
+            ogre.at,
+            WorldTile {
+                x: 2511,
+                z: 3091,
+                level: 0
+            }
+        );
+        assert_eq!(
+            ogre.to,
+            WorldTile {
+                x: 2511,
+                z: 3096,
+                level: 0
+            }
+        );
+        assert_eq!(ogre.skill_req, vec![(SKILL_AGILITY, 10)]);
+        if let Some(zq) = pack_id_by_name(content_root, "zqrockjump1") {
+            assert!(
+                graph
+                    .edges
+                    .iter()
+                    .filter(|e| e.kind == TransportKind::AgilityShortcut && e.loc_id == zq)
+                    .all(|e| e.at.x != 2698 && e.to.x != 2698),
+                "zqrockjump1 must not close FIELD"
+            );
+        }
+    }
+
+    #[test]
+    fn derive_transports_island_ropes_from_real_274_content() {
+        let Some((graph, _)) = derive_from_real_content() else {
+            return;
+        };
+        let root = real_content_root().expect("root present when derive succeeded");
+        assert_real_island_ropes(&graph, &root);
+    }
+
+    #[test]
+    fn derive_transports_island_ropes_from_real_289_content() {
+        let Some((graph, _)) = derive_from_lostcity_content() else {
+            return;
+        };
+        let root = PathBuf::from("/Users/acfrazier/experiments/lostcity-289/content");
+        assert_real_island_ropes(graph, &root);
+    }
+
+    fn staged_289_world() -> Option<crate::world::NavWorld> {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(
+            "../../docs/superpowers/qualification/Inspect Qualification.app/Contents/Resources/nav/289/274bot.navpack",
+        );
+        match crate::world::NavWorld::load_pack(&path) {
+            Ok(world) => Some(world),
+            Err(e) => {
+                eprintln!(
+                    "SKIP: staged 289 navpack missing at {} ({e:?})",
+                    path.display()
+                );
+                None
+            }
+        }
+    }
+
+    fn inspect_avoid() -> [crate::router::AvoidRect; 1] {
+        [crate::router::AvoidRect {
+            min_x: 2780,
+            max_x: 3040,
+            min_z: 3130,
+            max_z: 3330,
+            level: None,
+        }]
+    }
+
+    fn inspect_opts() -> crate::router::FindOptions {
+        crate::router::FindOptions {
+            allow_teleports: false,
+            allow_wilderness: false,
+            allow_bank_fetch: false,
+            essence: None,
+        }
+    }
+
+    fn pier_field_state(coins: i32, agility: i32) -> crate::world_state::WorldState {
+        crate::world_state::WorldState {
+            inv: HashMap::from([(995, coins)]),
+            stats: HashMap::from([(SKILL_AGILITY, agility)]),
+            ..crate::world_state::WorldState::empty()
+        }
+        .with_map_members(true)
+    }
+
+    #[test]
+    fn derived_graph_plus_staged_collision_pier_reaches_field() {
+        let Some(world) = staged_289_world() else {
+            return;
+        };
+        let Some((graph, _)) = derive_from_lostcity_content() else {
+            return;
+        };
+        let root = PathBuf::from("/Users/acfrazier/experiments/lostcity-289/content");
+        let swing1 = pack_id_by_name(&root, "tree_ropeswing1").expect("pack tree_ropeswing1");
+        let inbound = island_rope_edge(graph, swing1).expect("derived inbound swing");
+        assert_eq!(
+            inbound.at,
+            WorldTile {
+                x: 2709,
+                z: 3209,
+                level: 0
+            }
+        );
+        assert!(
+            world
+                .graph
+                .edges
+                .iter()
+                .all(|e| e.kind != TransportKind::AgilityShortcut || e.loc_id != swing1),
+            "staged pack still lacks the swing; proof is the derived graph"
+        );
+
+        let pier = WorldTile {
+            x: 2683,
+            z: 3272,
+            level: 0,
+        };
+        let field = WorldTile {
+            x: 2698,
+            z: 3206,
+            level: 0,
+        };
+        let opts = inspect_opts();
+        let avoid = inspect_avoid();
+        assert!(
+            matches!(
+                crate::router::find_with_avoid(
+                    &world.collision,
+                    graph,
+                    pier,
+                    field,
+                    opts,
+                    &pier_field_state(0, 10),
+                    &avoid,
+                ),
+                Err(crate::router::RouteError::NoPath)
+            ),
+            "missing coins stay NoPath"
+        );
+        assert!(
+            matches!(
+                crate::router::find_with_avoid(
+                    &world.collision,
+                    graph,
+                    pier,
+                    field,
+                    opts,
+                    &pier_field_state(30, 9),
+                    &avoid,
+                ),
+                Err(crate::router::RouteError::NoPath)
+            ),
+            "agility 9 stays NoPath"
+        );
+        let ok = crate::router::find_with_avoid(
+            &world.collision,
+            graph,
+            pier,
+            field,
+            opts,
+            &pier_field_state(30, 10),
+            &avoid,
+        )
+        .unwrap_or_else(|e| panic!("coins30 agility10 must reach FIELD ({e:?})"));
+        assert!(
+            ok.legs.iter().any(|l| matches!(
+                l,
+                crate::router::Leg::Transport { edge } if edge.loc_id == 381
+            )),
+            "Barnaby 381 must be on the route: {ok:?}"
+        );
+        assert!(
+            ok.legs.iter().any(|l| matches!(
+                l,
+                crate::router::Leg::Transport { edge }
+                    if edge.loc_id == swing1
+                        && edge.at
+                            == WorldTile {
+                                x: 2709,
+                                z: 3209,
+                                level: 0
+                            }
+            )),
+            "derived inbound swing must be on the route: {ok:?}"
+        );
+
+        let ret_id = pack_id_by_name(&root, "tree_ropeswing2").expect("pack tree_ropeswing2");
+        let back = crate::router::find_with_avoid(
+            &world.collision,
+            graph,
+            field,
+            pier,
+            opts,
+            &pier_field_state(30, 1),
+            &avoid,
+        )
+        .unwrap_or_else(|e| panic!("return must allow low agility ({e:?})"));
+        assert!(
+            back.legs.iter().any(|l| matches!(
+                l,
+                crate::router::Leg::Transport { edge } if edge.loc_id == ret_id
+            )),
+            "low-agility return uses tree_ropeswing2: {back:?}"
+        );
     }
 
     #[test]
@@ -7402,7 +8937,7 @@ return (getbit_range(%death_map, ^death_map_lower, ^death_map_upper));
             assert_eq!(e.varp_req, vec![(314, 70)]);
             assert!(e.quest_req.is_empty());
             assert!(
-                empty.allows(e) == false,
+                !empty.allows(e),
                 "the castle door still fails closed without varp 314"
             );
             let with_varp = crate::world_state::WorldState {
@@ -10047,6 +11582,1278 @@ category=gate_main_open
             inherited.get(&6031),
             None,
             "a differing loc_N alias permanently conflicts the same open leaf id"
+        );
+    }
+
+    fn write_magicguild_source(fx: &Fixture, script: &str) {
+        fx.write(
+            "pack/loc.pack",
+            "\
+1600=magicguild_door_l
+1601=magicguild_door_r
+1522=loc_1522
+1523=loc_1523
+",
+        );
+        fx.write(
+            "scripts/areas/area_yanille/configs/magic_guild/magic_guild.loc",
+            "\
+[magicguild_door_l]
+name=Magic guild door
+desc=The doors to the Magic Guild.
+model=castle_doubledoorl
+op1=Open
+raiseobject=no
+category=double_door_open_and_close_left
+param=next_loc_stage,loc_1522
+param=open_sound,null
+
+[magicguild_door_r]
+name=Magic guild door
+desc=The doors to the Magic guild.
+model=castle_doubledoorl
+op1=Open
+mirror=yes
+raiseobject=no
+category=double_door_open_and_close_right
+param=next_loc_stage,loc_1523
+param=open_sound,null
+",
+        );
+        fx.write("scripts/areas/area_yanille/scripts/magic_guild.rs2", script);
+    }
+
+    fn magicguild_opener_script() -> &'static str {
+        "\
+[oploc1,magicguild_door_l] @open_mageguild_door(^left);
+[oploc1,magicguild_door_r] @open_mageguild_door(^right);
+
+[label,open_mageguild_door](int $side)
+def_boolean $entering = ~check_axis_locactive(coord);
+if($entering = true & stat(magic) < 66) {
+    if(npc_find(coord, guild_wizard, 14, 0) = true) {
+        ~chatnpc(\"<p,neutral>You need a magic level of 66.|The magical energy in here is unsafe for those below that level.\");
+    }
+    return;
+}
+~open_and_close_double_door2($entering, $side, door_open);
+"
+    }
+
+    fn write_magicguild_yanille_placements(fx: &Fixture) {
+        fx.write(
+            "maps/m40_48.jm2",
+            "\
+==== MAP ====
+0 23 15: h1 o6 u50
+0 23 16: h1 o6 u50
+0 24 15: h1 o6 u50
+0 24 16: h1 o6 u50
+0 25 15: h1 o6 u50
+0 25 16: h1 o6 u50
+0 36 15: h1 o6 u50
+0 36 16: h1 o6 u50
+0 37 15: h1 o6 u50
+0 37 16: h1 o6 u50
+0 38 15: h1 o6 u50
+0 38 16: h1 o6 u50
+
+==== LOC ====
+0 24 15: 1601 0 2
+0 24 16: 1600 0 2
+0 37 15: 1600 0
+0 37 16: 1601 0
+",
+        );
+    }
+
+    fn magic_state(level: i32) -> crate::world_state::WorldState {
+        crate::world_state::WorldState {
+            stats: HashMap::from([(SKILL_MAGIC, level)]),
+            ..crate::world_state::WorldState::empty()
+        }
+    }
+
+    fn derive_from_lostcity_content() -> Option<&'static (TransportGraph, WorldCollision)> {
+        static CELL: std::sync::OnceLock<Option<(TransportGraph, WorldCollision)>> =
+            std::sync::OnceLock::new();
+        CELL.get_or_init(|| {
+            let root = PathBuf::from("/Users/acfrazier/experiments/lostcity-289/content");
+            if !root.join("maps").is_dir() || !root.join("pack").join("loc.pack").is_file() {
+                eprintln!(
+                    "SKIP: lostcity-289 content not found at {} (content-backed tests skipped)",
+                    root.display()
+                );
+                return None;
+            }
+            let defs = real_loc_defs()?;
+            let wc = bake_from_maps(&root.join("maps"), &defs, &HashSet::new())
+                .expect("lostcity-289 content bakes");
+            let graph = derive_transports(&root, &defs, &wc);
+            Some((graph, wc))
+        })
+        .as_ref()
+    }
+
+    /// Wizard Guild stairs from `stairs.rs2` + `m40_48.jm2` must already be
+    /// packed. If this fails, the Magic shop→bank hole is not door-only.
+    #[test]
+    fn yanille_wizard_guild_stair_pairs_exist() {
+        let Some((graph, _)) = derive_from_lostcity_content() else {
+            return;
+        };
+        let down = graph
+            .edges
+            .iter()
+            .find(|e| {
+                e.kind == TransportKind::Stairs
+                    && e.loc_id == 1723
+                    && e.at
+                        == WorldTile {
+                            x: 2590,
+                            z: 3090,
+                            level: 1,
+                        }
+            })
+            .expect("1723 Climb-down at 2590,3090,1");
+        assert_eq!(
+            down.to,
+            WorldTile {
+                x: 2590,
+                z: 3088,
+                level: 0
+            },
+            "0_40_48_30_16 landing"
+        );
+        let up = graph
+            .edges
+            .iter()
+            .find(|e| {
+                e.kind == TransportKind::Stairs
+                    && e.loc_id == 1722
+                    && e.at
+                        == WorldTile {
+                            x: 2590,
+                            z: 3089,
+                            level: 0,
+                        }
+            })
+            .expect("1722 Climb-up at 2590,3089,0");
+        assert_eq!(
+            up.to,
+            WorldTile {
+                x: 2590,
+                z: 3092,
+                level: 1
+            },
+            "1_40_48_30_20 landing"
+        );
+    }
+
+    /// Named-override guild doors are not inherited gates. The opener in
+    /// `magic_guild.rs2` admits `Open` hops at the four map tiles, and
+    /// `stat(magic) < 66` applies only on the entering (`check_axis` /
+    /// `door_open`) crossing.
+    #[test]
+    fn derive_transports_emits_magicguild_door_crossings() {
+        let fx = Fixture::new();
+        write_magicguild_source(&fx, magicguild_opener_script());
+        write_magicguild_yanille_placements(&fx);
+        let defs = loc_defs(&[(1600, 1, 1), (1601, 1, 1), (1522, 1, 1), (1523, 1, 1)]);
+        let wc = bake_collision(&fx, &defs, &HashSet::from([1600, 1601]));
+        let graph = derive_transports(fx.path(), &defs, &wc);
+        assert_eq!(
+            door_crossings(&graph, 1600),
+            vec![
+                ((2584, 3088), 'E', (2585, 3088)),
+                ((2584, 3088), 'W', (2583, 3088)),
+                ((2597, 3087), 'E', (2598, 3087)),
+                ((2597, 3087), 'W', (2596, 3087)),
+            ],
+            "1600 at the west and east guild doors"
+        );
+        assert_eq!(
+            door_crossings(&graph, 1601),
+            vec![
+                ((2584, 3087), 'E', (2585, 3087)),
+                ((2584, 3087), 'W', (2583, 3087)),
+                ((2597, 3088), 'E', (2598, 3088)),
+                ((2597, 3088), 'W', (2596, 3088)),
+            ],
+            "1601 paired with 1600"
+        );
+        for e in graph
+            .edges
+            .iter()
+            .filter(|e| matches!(e.loc_id, 1600 | 1601))
+        {
+            assert_eq!(e.kind, TransportKind::Door, "{e:?}");
+            assert_eq!(e.option, 1, "stock Open {e:?}");
+            assert_eq!(
+                e.open_loc_id,
+                Some(if e.loc_id == 1600 { 1522 } else { 1523 }),
+                "{e:?}"
+            );
+            assert!(
+                e.item_req.is_empty()
+                    && e.quest_req.is_empty()
+                    && e.varp_req.is_empty()
+                    && e.worn_req.is_empty()
+                    && !e.members_req,
+                "{e:?}"
+            );
+            let entering = match (e.at.x, e.dir) {
+                (2584, Some(DoorDir::E)) | (2597, Some(DoorDir::W)) => true,
+                (2584, Some(DoorDir::W)) | (2597, Some(DoorDir::E)) => false,
+                other => panic!("unexpected magicguild crossing {other:?}"),
+            };
+            if entering {
+                assert_eq!(e.skill_req, vec![(SKILL_MAGIC, 66)], "enter {e:?}");
+            } else {
+                assert!(e.skill_req.is_empty(), "exit must stay ungated {e:?}");
+            }
+        }
+    }
+
+    /// A missing named opener must not invent skill-gated hops.
+    #[test]
+    fn derive_transports_omits_magicguild_doors_without_named_opener() {
+        let fx = Fixture::new();
+        write_magicguild_source(&fx, "");
+        write_magicguild_yanille_placements(&fx);
+        let defs = loc_defs(&[(1600, 1, 1), (1601, 1, 1), (1522, 1, 1), (1523, 1, 1)]);
+        let wc = bake_collision(&fx, &defs, &HashSet::from([1600, 1601]));
+        let graph = derive_transports(fx.path(), &defs, &wc);
+        assert!(
+            door_crossings(&graph, 1600).is_empty() && door_crossings(&graph, 1601).is_empty(),
+            "no named override → no magicguild edges"
+        );
+    }
+
+    /// WorldState magic gates entering only. Exiting a sealed corridor is
+    /// free; entering with magic 65 stays NoPath.
+    #[test]
+    fn magicguild_door_eligibility_follows_entering_axis() {
+        use crate::router::{find_with, FindOptions, Leg, RouteError};
+        let fx = Fixture::new();
+        write_magicguild_source(&fx, magicguild_opener_script());
+        let mut walk = Vec::new();
+        for x in 2580..=2583 {
+            walk.push((x, 3088));
+        }
+        for x in 2585..=2588 {
+            walk.push((x, 3088));
+        }
+        write_blocked_square(&fx, 40, 48, &walk, "0 24 16: 1600 0 2\n0 24 15: 1601 0 2\n");
+        let defs = loc_defs(&[(1600, 1, 1), (1601, 1, 1), (1522, 1, 1), (1523, 1, 1)]);
+        let wc = bake_collision(&fx, &defs, &HashSet::from([1600, 1601]));
+        let graph = derive_transports(fx.path(), &defs, &wc);
+        let outside = WorldTile {
+            x: 2583,
+            z: 3088,
+            level: 0,
+        };
+        let inside = WorldTile {
+            x: 2585,
+            z: 3088,
+            level: 0,
+        };
+        let empty = crate::world_state::WorldState::empty();
+        let low = magic_state(65);
+        let ok = magic_state(66);
+        assert!(
+            matches!(
+                find_with(&wc, &graph, outside, inside, FindOptions::default(), &empty),
+                Err(RouteError::NoPath)
+            ),
+            "empty stats cannot enter"
+        );
+        assert!(
+            matches!(
+                find_with(&wc, &graph, outside, inside, FindOptions::default(), &low),
+                Err(RouteError::NoPath)
+            ),
+            "magic 65 cannot enter"
+        );
+        let enter = find_with(&wc, &graph, outside, inside, FindOptions::default(), &ok)
+            .expect("magic 66 enters");
+        assert!(
+            enter.legs.iter().any(|l| matches!(
+                l,
+                Leg::Transport { edge }
+                    if edge.loc_id == 1600
+                        && edge.dir == Some(DoorDir::E)
+                        && edge.skill_req == vec![(SKILL_MAGIC, 66)]
+            )),
+            "enter hops 1600 E with the parsed magic gate: {enter:?}"
+        );
+        let exit = find_with(&wc, &graph, inside, outside, FindOptions::default(), &empty)
+            .expect("exit does not need magic");
+        assert!(
+            exit.legs.iter().any(|l| matches!(
+                l,
+                Leg::Transport { edge }
+                    if edge.loc_id == 1600
+                        && edge.dir == Some(DoorDir::W)
+                        && edge.skill_req.is_empty()
+            )),
+            "exit hops 1600 W ungated: {exit:?}"
+        );
+    }
+
+    /// Live hole: floor-1 shop → Yanille bank is NoPath until the guild
+    /// doors join. After import, exiting stays eligible without magic;
+    /// entering the shop from the bank requires magic 66.
+    #[test]
+    fn magic_guild_shop_bank_route_uses_derived_doors() {
+        use crate::router::{find_with, FindOptions, Leg, RouteError};
+        let Some((graph, wc)) = derive_from_lostcity_content() else {
+            return;
+        };
+        let shop = WorldTile {
+            x: 2594,
+            z: 3090,
+            level: 1,
+        };
+        let bank = WorldTile {
+            x: 2613,
+            z: 3092,
+            level: 0,
+        };
+        let doors: Vec<_> = graph
+            .edges
+            .iter()
+            .filter(|e| e.kind == TransportKind::Door && matches!(e.loc_id, 1600 | 1601))
+            .collect();
+        assert_eq!(
+            doors.len(),
+            8,
+            "four guild door tiles × two crossings, got {doors:?}"
+        );
+        let empty = crate::world_state::WorldState::empty();
+        let low = magic_state(65);
+        let ok = magic_state(66);
+        let leave = find_with(wc, graph, shop, bank, FindOptions::default(), &empty)
+            .unwrap_or_else(|e| panic!("shop → bank must exit without a magic gate ({e:?})"));
+        assert_eq!(leave.dest, bank);
+        assert!(
+            leave.legs.iter().any(|l| matches!(
+                l,
+                Leg::Transport { edge } if edge.loc_id == 1723
+            )),
+            "shop → bank climbs down 1723: {leave:?}"
+        );
+        assert!(
+            leave.legs.iter().any(|l| matches!(
+                l,
+                Leg::Transport { edge }
+                    if matches!(edge.loc_id, 1600 | 1601) && edge.skill_req.is_empty()
+            )),
+            "shop → bank exits an ungated guild door: {leave:?}"
+        );
+        assert!(
+            matches!(
+                find_with(wc, graph, bank, shop, FindOptions::default(), &empty),
+                Err(RouteError::NoPath)
+            ),
+            "empty stats cannot enter the guild"
+        );
+        assert!(
+            matches!(
+                find_with(wc, graph, bank, shop, FindOptions::default(), &low),
+                Err(RouteError::NoPath)
+            ),
+            "magic 65 cannot enter the guild"
+        );
+        let enter = find_with(wc, graph, bank, shop, FindOptions::default(), &ok)
+            .unwrap_or_else(|e| panic!("bank → shop with magic 66 ({e:?})"));
+        assert_eq!(enter.dest, shop);
+        assert!(
+            enter.legs.iter().any(|l| matches!(
+                l,
+                Leg::Transport { edge }
+                    if matches!(edge.loc_id, 1600 | 1601)
+                        && edge.skill_req == vec![(SKILL_MAGIC, 66)]
+            )),
+            "bank → shop enters a magic-gated door: {enter:?}"
+        );
+        assert!(
+            enter.legs.iter().any(|l| matches!(
+                l,
+                Leg::Transport { edge } if edge.loc_id == 1722
+            )),
+            "bank → shop climbs 1722: {enter:?}"
+        );
+    }
+
+    const RANGINGGUILD_OUTSIDE: WorldTile = WorldTile {
+        x: 2657,
+        z: 3439,
+        level: 0,
+    };
+    const RANGINGGUILD_INSIDE: WorldTile = WorldTile {
+        x: 2659,
+        z: 3437,
+        level: 0,
+    };
+    const RANGINGGUILD_LOC: WorldTile = WorldTile {
+        x: 2658,
+        z: 3438,
+        level: 0,
+    };
+
+    fn write_rangingguild_source(fx: &Fixture, script: &str) {
+        fx.write(
+            "pack/loc.pack",
+            "\
+2514=ranging_guild_door
+1532=loc_1532
+",
+        );
+        fx.write(
+            "scripts/minigames/game_ranging/configs/ranging.loc",
+            "\
+[ranging_guild_door]
+name=Guild door
+desc=The door to the Ranging Guild.
+model=basic_wall
+active=yes
+op1=Open
+",
+        );
+        fx.write(
+            "scripts/minigames/game_ranging/scripts/ranging_guild_door.rs2",
+            script,
+        );
+    }
+
+    fn write_rangingguild_placement(fx: &Fixture, loc_lines: &str) {
+        fx.write(
+            "maps/m41_53.jm2",
+            &format!(
+                "\
+==== MAP ====
+0 33 47: h1 u50
+0 34 46: h1 u50
+0 35 45: h1 u50
+
+==== LOC ====
+{loc_lines}
+"
+            ),
+        );
+    }
+
+    fn rangingguild_opener_script() -> &'static str {
+        "\
+[oploc1,ranging_guild_door]
+if(coordx(coord) > coordx(loc_coord) | coordz(coord) < coordz(loc_coord)) {
+    sound_synth(door_open, 1, 0);
+    ~forcemove(movecoord(loc_coord, 1, 0, -1));
+    loc_change(inviswall, 3);
+    loc_add(movecoord($loc_coord, $x, 0, $z), loc_1532, modulo(add($angle, 1), 4), $shape, 3);
+    p_teleport(movecoord(coord, -2, 0, 2));
+    return;
+}
+if(stat(ranged) < 40) {
+    return;
+}
+sound_synth(door_open, 1, 0);
+~forcemove(movecoord(loc_coord, -1, 0, 1));
+loc_change(inviswall, 3);
+loc_add(movecoord($loc_coord, $x, 0, $z), loc_1532, modulo(add($angle, 1), 4), $shape, 3);
+p_teleport(movecoord(coord, 2, 0, -2));
+"
+    }
+
+    fn ranging_state(level: i32) -> crate::world_state::WorldState {
+        crate::world_state::WorldState {
+            stats: HashMap::from([(SKILL_RANGED, level)]),
+            ..crate::world_state::WorldState::empty()
+        }
+    }
+
+    fn rangingguild_doors(graph: &TransportGraph) -> Vec<&TransportEdge> {
+        graph
+            .edges
+            .iter()
+            .filter(|e| e.kind == TransportKind::Door && e.loc_id == 2514)
+            .collect()
+    }
+
+    fn rangingguild_usable_from(graph: &TransportGraph, stand: WorldTile) -> Vec<&TransportEdge> {
+        rangingguild_doors(graph)
+            .into_iter()
+            .filter(|e| {
+                e.at.level == stand.level
+                    && (e.at.x - stand.x).abs().max((e.at.z - stand.z).abs()) <= 1
+            })
+            .collect()
+    }
+
+    fn assert_rangingguild_records(graph: &TransportGraph) {
+        let doors = rangingguild_doors(graph);
+        assert_eq!(doors.len(), 2, "exactly the reciprocal pair: {doors:?}");
+        let enter = doors
+            .iter()
+            .find(|e| e.at == RANGINGGUILD_OUTSIDE && e.to == RANGINGGUILD_INSIDE)
+            .unwrap_or_else(|| panic!("enter stand→landing missing: {doors:?}"));
+        let exit = doors
+            .iter()
+            .find(|e| e.at == RANGINGGUILD_INSIDE && e.to == RANGINGGUILD_OUTSIDE)
+            .unwrap_or_else(|| panic!("exit stand→landing missing: {doors:?}"));
+        for (e, skill) in [
+            (*enter, vec![(SKILL_RANGED, 40)]),
+            (*exit, Vec::<(i32, i32)>::new()),
+        ] {
+            assert_eq!(e.option, 1, "{e:?}");
+            assert_eq!(e.ticks, 1, "{e:?}");
+            assert_eq!(e.dir, None, "{e:?}");
+            assert_eq!(e.open_loc_id, None, "visual loc_1532 is not a leaf {e:?}");
+            assert_eq!(e.skill_req, skill, "{e:?}");
+            assert!(
+                e.item_req.is_empty()
+                    && e.quest_req.is_empty()
+                    && e.varp_req.is_empty()
+                    && e.worn_req.is_empty()
+                    && !e.members_req,
+                "{e:?}"
+            );
+        }
+        assert_ne!(
+            enter.at, RANGINGGUILD_LOC,
+            "at must be the origin stand, not the loc tile"
+        );
+        assert_ne!(exit.at, RANGINGGUILD_LOC);
+    }
+
+    fn derive_rangingguild_fixture(script: &str, loc_lines: &str) -> TransportGraph {
+        let fx = Fixture::new();
+        write_rangingguild_source(&fx, script);
+        write_rangingguild_placement(&fx, loc_lines);
+        let defs = loc_defs(&[(2514, 1, 1), (1532, 1, 1)]);
+        let wc = bake_collision(&fx, &defs, &HashSet::from([2514]));
+        derive_transports(fx.path(), &defs, &wc)
+    }
+
+    /// Named-override diagonal wall: origin stands are the script
+    /// forcemove tiles, landings are the coord-relative teleports, enter
+    /// only carries Ranged 40, and loc_1532 stays a visual.
+    #[test]
+    fn derive_transports_emits_rangingguild_door_stand_teleport_pair() {
+        let graph = derive_rangingguild_fixture(rangingguild_opener_script(), "0 34 46: 2514 9\n");
+        assert_rangingguild_records(&graph);
+    }
+
+    /// Missing opener, missing/moved 40-check, inverted half-plane,
+    /// changed or swapped offset pairs, commented-out required forms,
+    /// extra contradictory calls, swapped forcemove/teleport order,
+    /// early exit return, a bare enter 40-check, a return between the
+    /// enter calls, shape 0, angle drift, or a second level-0 2514 must
+    /// emit nothing. Player-relative `p_teleport` cannot invent a `to`
+    /// the way [`parse_landing`] skips it.
+    #[test]
+    fn derive_transports_omits_unproven_rangingguild_door_forms() {
+        let canonical = rangingguild_opener_script();
+        let placement = "0 34 46: 2514 9\n";
+        let cases = [
+            ("missing opener", "", placement),
+            (
+                "missing ranged gate",
+                &canonical.replace("if(stat(ranged) < 40) {\n    return;\n}\n", ""),
+                placement,
+            ),
+            (
+                "gate on exit",
+                "\
+[oploc1,ranging_guild_door]
+if(coordx(coord) > coordx(loc_coord) | coordz(coord) < coordz(loc_coord)) {
+    if(stat(ranged) < 40) {
+        return;
+    }
+    ~forcemove(movecoord(loc_coord, 1, 0, -1));
+    p_teleport(movecoord(coord, -2, 0, 2));
+    return;
+}
+~forcemove(movecoord(loc_coord, -1, 0, 1));
+p_teleport(movecoord(coord, 2, 0, -2));
+",
+                placement,
+            ),
+            (
+                "inverted half-plane",
+                &canonical.replace(
+                    "coordx(coord) > coordx(loc_coord) | coordz(coord) < coordz(loc_coord)",
+                    "coordx(coord) < coordx(loc_coord) | coordz(coord) > coordz(loc_coord)",
+                ),
+                placement,
+            ),
+            (
+                "swapped forcemove offsets",
+                &canonical
+                    .replace("movecoord(loc_coord, 1, 0, -1)", "TMP_EXIT_FORCEMOVE")
+                    .replace(
+                        "movecoord(loc_coord, -1, 0, 1)",
+                        "movecoord(loc_coord, 1, 0, -1)",
+                    )
+                    .replace("TMP_EXIT_FORCEMOVE", "movecoord(loc_coord, -1, 0, 1)"),
+                placement,
+            ),
+            (
+                "changed teleport offsets",
+                &canonical.replace(
+                    "p_teleport(movecoord(coord, -2, 0, 2))",
+                    "p_teleport(movecoord(coord, 2, 0, -2))",
+                ),
+                placement,
+            ),
+            (
+                "commented forcemove",
+                &canonical.replace(
+                    "~forcemove(movecoord(loc_coord, 1, 0, -1));",
+                    "// ~forcemove(movecoord(loc_coord, 1, 0, -1));",
+                ),
+                placement,
+            ),
+            (
+                "commented ranged gate",
+                &canonical.replace(
+                    "if(stat(ranged) < 40) {\n    return;\n}",
+                    "// if(stat(ranged) < 40) {\n//     return;\n// }",
+                ),
+                placement,
+            ),
+            (
+                "additional contradictory teleport",
+                &canonical.replace(
+                    "p_teleport(movecoord(coord, -2, 0, 2));",
+                    "p_teleport(movecoord(coord, -2, 0, 2));\n    p_teleport(movecoord(coord, 2, 0, -2));",
+                ),
+                placement,
+            ),
+            (
+                "player-relative landing without loc forcemove",
+                "\
+[oploc1,ranging_guild_door]
+if(coordx(coord) > coordx(loc_coord) | coordz(coord) < coordz(loc_coord)) {
+    p_teleport(movecoord(coord, -2, 0, 2));
+    return;
+}
+if(stat(ranged) < 40) {
+    return;
+}
+p_teleport(movecoord(coord, 2, 0, -2));
+",
+                placement,
+            ),
+            (
+                "exit teleport before forcemove",
+                "\
+[oploc1,ranging_guild_door]
+if(coordx(coord) > coordx(loc_coord) | coordz(coord) < coordz(loc_coord)) {
+    p_teleport(movecoord(coord, -2, 0, 2));
+    ~forcemove(movecoord(loc_coord, 1, 0, -1));
+    return;
+}
+if(stat(ranged) < 40) {
+    return;
+}
+~forcemove(movecoord(loc_coord, -1, 0, 1));
+p_teleport(movecoord(coord, 2, 0, -2));
+",
+                placement,
+            ),
+            (
+                "enter teleport before forcemove",
+                "\
+[oploc1,ranging_guild_door]
+if(coordx(coord) > coordx(loc_coord) | coordz(coord) < coordz(loc_coord)) {
+    ~forcemove(movecoord(loc_coord, 1, 0, -1));
+    p_teleport(movecoord(coord, -2, 0, 2));
+    return;
+}
+if(stat(ranged) < 40) {
+    return;
+}
+p_teleport(movecoord(coord, 2, 0, -2));
+~forcemove(movecoord(loc_coord, -1, 0, 1));
+",
+                placement,
+            ),
+            (
+                "exit return before crossing",
+                "\
+[oploc1,ranging_guild_door]
+if(coordx(coord) > coordx(loc_coord) | coordz(coord) < coordz(loc_coord)) {
+    return;
+    ~forcemove(movecoord(loc_coord, 1, 0, -1));
+    p_teleport(movecoord(coord, -2, 0, 2));
+    return;
+}
+if(stat(ranged) < 40) {
+    return;
+}
+~forcemove(movecoord(loc_coord, -1, 0, 1));
+p_teleport(movecoord(coord, 2, 0, -2));
+",
+                placement,
+            ),
+            (
+                "enter ranged check without if-return gate",
+                "\
+[oploc1,ranging_guild_door]
+if(coordx(coord) > coordx(loc_coord) | coordz(coord) < coordz(loc_coord)) {
+    ~forcemove(movecoord(loc_coord, 1, 0, -1));
+    p_teleport(movecoord(coord, -2, 0, 2));
+    return;
+}
+stat(ranged)<40
+~forcemove(movecoord(loc_coord, -1, 0, 1));
+p_teleport(movecoord(coord, 2, 0, -2));
+",
+                placement,
+            ),
+            (
+                "enter return between forcemove and teleport",
+                "\
+[oploc1,ranging_guild_door]
+if(coordx(coord) > coordx(loc_coord) | coordz(coord) < coordz(loc_coord)) {
+    ~forcemove(movecoord(loc_coord, 1, 0, -1));
+    p_teleport(movecoord(coord, -2, 0, 2));
+    return;
+}
+if(stat(ranged) < 40) {
+    return;
+}
+~forcemove(movecoord(loc_coord, -1, 0, 1));
+return;
+p_teleport(movecoord(coord, 2, 0, -2));
+",
+                placement,
+            ),
+            ("shape 0", canonical, "0 34 46: 2514 0\n"),
+            ("angle change", canonical, "0 34 46: 2514 9 1\n"),
+            (
+                "duplicate level-0 placement",
+                canonical,
+                "0 34 46: 2514 9\n0 35 45: 2514 9\n",
+            ),
+        ];
+        for (label, script, loc_lines) in cases {
+            let graph = derive_rangingguild_fixture(script, loc_lines);
+            assert!(
+                rangingguild_doors(&graph).is_empty(),
+                "{label} must omit 2514, got {:?}",
+                rangingguild_doors(&graph)
+            );
+        }
+    }
+
+    /// Reciprocal stands are Chebyshev 2 apart, so radius 1 admits only
+    /// the hop whose `at` is this stand. A shared `at=loc` pair would
+    /// expose both hops from either landing.
+    #[test]
+    fn rangingguild_door_radius1_admits_only_the_reciprocal_stand() {
+        let graph = derive_rangingguild_fixture(rangingguild_opener_script(), "0 34 46: 2514 9\n");
+        assert_rangingguild_records(&graph);
+        let from_outside = rangingguild_usable_from(&graph, RANGINGGUILD_OUTSIDE);
+        assert_eq!(from_outside.len(), 1, "{from_outside:?}");
+        assert_eq!(from_outside[0].at, RANGINGGUILD_OUTSIDE);
+        assert_eq!(from_outside[0].to, RANGINGGUILD_INSIDE);
+        assert_eq!(from_outside[0].skill_req, vec![(SKILL_RANGED, 40)]);
+        let from_inside = rangingguild_usable_from(&graph, RANGINGGUILD_INSIDE);
+        assert_eq!(from_inside.len(), 1, "{from_inside:?}");
+        assert_eq!(from_inside[0].at, RANGINGGUILD_INSIDE);
+        assert_eq!(from_inside[0].to, RANGINGGUILD_OUTSIDE);
+        assert!(from_inside[0].skill_req.is_empty());
+        assert_eq!(
+            (RANGINGGUILD_OUTSIDE.x - RANGINGGUILD_INSIDE.x)
+                .abs()
+                .max((RANGINGGUILD_OUTSIDE.z - RANGINGGUILD_INSIDE.z).abs()),
+            2,
+            "stands must stay outside INTERACT_RADIUS 1 of each other"
+        );
+    }
+
+    #[test]
+    fn derive_transports_rangingguild_door_pair_from_real_content() {
+        let Some((graph, _)) = derive_from_lostcity_content() else {
+            return;
+        };
+        assert_rangingguild_records(graph);
+        let from_outside = rangingguild_usable_from(graph, RANGINGGUILD_OUTSIDE);
+        assert_eq!(from_outside.len(), 1, "{from_outside:?}");
+        assert_eq!(from_outside[0].skill_req, vec![(SKILL_RANGED, 40)]);
+        let from_inside = rangingguild_usable_from(graph, RANGINGGUILD_INSIDE);
+        assert_eq!(from_inside.len(), 1, "{from_inside:?}");
+        assert!(from_inside[0].skill_req.is_empty());
+    }
+
+    /// Graph evidence only: Seers → JUDGE_STAND enters through 2514 at
+    /// the outside stand when Ranged is 70; empty / 39 stay NoPath.
+    #[test]
+    fn ranging_guild_seers_judge_route_uses_derived_door() {
+        use crate::router::{find_with, FindOptions, Leg, RouteError};
+        let Some((graph, wc)) = derive_from_lostcity_content() else {
+            return;
+        };
+        let seers = WorldTile {
+            x: 2722,
+            z: 3493,
+            level: 0,
+        };
+        let judge = WorldTile {
+            x: 2670,
+            z: 3418,
+            level: 0,
+        };
+        let opts = FindOptions {
+            allow_wilderness: true,
+            allow_teleports: false,
+            ..FindOptions::default()
+        };
+        let empty = crate::world_state::WorldState::empty();
+        let low = ranging_state(39);
+        let ok = ranging_state(70);
+        assert!(
+            matches!(
+                find_with(wc, graph, seers, judge, opts, &empty),
+                Err(RouteError::NoPath)
+            ),
+            "empty stats cannot enter"
+        );
+        assert!(
+            matches!(
+                find_with(wc, graph, seers, judge, opts, &low),
+                Err(RouteError::NoPath)
+            ),
+            "ranged 39 cannot enter"
+        );
+        let enter = find_with(wc, graph, seers, judge, opts, &ok)
+            .unwrap_or_else(|e| panic!("ranged 70 Seers → judge ({e:?})"));
+        assert_eq!(enter.dest, judge);
+        assert!(
+            enter.legs.iter().any(|l| matches!(
+                l,
+                Leg::Transport { edge }
+                    if edge.loc_id == 2514
+                        && edge.at == RANGINGGUILD_OUTSIDE
+                        && edge.to == RANGINGGUILD_INSIDE
+                        && edge.skill_req == vec![(SKILL_RANGED, 40)]
+                        && edge.dir.is_none()
+                        && edge.open_loc_id.is_none()
+            )),
+            "enter hops 2514 at the outside stand: {enter:?}"
+        );
+    }
+
+    fn skip_total(skipped: &HashMap<&'static str, usize>, reason: &str) -> usize {
+        *skipped.get(reason).unwrap_or(&0)
+    }
+
+    /// N1: missing required `ranging.loc` must bump, not silently omit 2514.
+    #[test]
+    fn n1_ranging_missing_loc_increments_skip_without_2514_edges() {
+        let fx = Fixture::new();
+        fx.write("pack/loc.pack", "2514=ranging_guild_door\n1532=loc_1532\n");
+        fx.write(
+            "scripts/minigames/game_ranging/scripts/ranging_guild_door.rs2",
+            rangingguild_opener_script(),
+        );
+        write_rangingguild_placement(&fx, "0 34 46: 2514 9\n");
+        let defs = loc_defs(&[(2514, 1, 1), (1532, 1, 1)]);
+        let wc = bake_collision(&fx, &defs, &HashSet::from([2514]));
+        let (graph, skipped) = derive_transports_with_skips(fx.path(), &defs, &wc);
+        assert!(rangingguild_doors(&graph).is_empty());
+        assert_eq!(
+            skip_total(&skipped, SKIP_RANGINGGUILD_CONFIG),
+            RANGINGGUILD_DECLARED_PAIR,
+            "one skip unit is the enter/exit pair: {skipped:?}"
+        );
+    }
+
+    #[test]
+    fn n1_valid_ranging_fixture_has_no_ranging_skip_reasons() {
+        let fx = Fixture::new();
+        write_rangingguild_source(&fx, rangingguild_opener_script());
+        write_rangingguild_placement(&fx, "0 34 46: 2514 9\n");
+        let defs = loc_defs(&[(2514, 1, 1), (1532, 1, 1)]);
+        let wc = bake_collision(&fx, &defs, &HashSet::from([2514]));
+        let (graph, skipped) = derive_transports_with_skips(fx.path(), &defs, &wc);
+        assert_rangingguild_records(&graph);
+        assert_eq!(skip_total(&skipped, SKIP_RANGINGGUILD_CONFIG), 0);
+        assert_eq!(skip_total(&skipped, SKIP_RANGINGGUILD_SCRIPT), 0);
+        assert_eq!(skip_total(&skipped, SKIP_RANGINGGUILD_PLACEMENT), 0);
+        assert_eq!(skip_total(&skipped, SKIP_RANGINGGUILD_PACK), 0);
+    }
+
+    /// Pack-gated applicability: unrelated/empty fixtures must not pollute the
+    /// five-producer skip ledger; partial selection counts only packed names.
+    #[test]
+    fn n1_producer_skips_follow_packed_applicability() {
+        let empty = Fixture::new();
+        let defs = loc_defs(&[]);
+        let wc = bake_collision(&empty, &defs, &HashSet::new());
+        let (_, skipped) = derive_transports_with_skips(empty.path(), &defs, &wc);
+        assert_eq!(skip_total(&skipped, SKIP_LEVER_SOURCE), 0);
+        assert_eq!(skip_total(&skipped, SKIP_TOLL_OBJ_PACK), 0);
+        assert_eq!(skip_total(&skipped, SKIP_TOLL_CONFIG), 0);
+        assert_eq!(skip_total(&skipped, SKIP_MAGICGUILD_SCRIPT), 0);
+
+        let fx = Fixture::new();
+        fx.write("pack/loc.pack", "1814=wildinlever\n");
+        let defs = loc_defs(&[(1814, 1, 1)]);
+        let wc = bake_collision(&fx, &defs, &HashSet::new());
+        let (graph, skipped) = derive_transports_with_skips(fx.path(), &defs, &wc);
+        assert!(graph.edges.iter().all(|e| e.loc_id != 1814));
+        assert_eq!(skip_total(&skipped, SKIP_LEVER_SOURCE), 1);
+
+        let fx = Fixture::new();
+        fx.write("pack/loc.pack", "1814=wildinlever\n1815=wildoutlever\n");
+        let defs = loc_defs(&[(1814, 1, 1), (1815, 1, 1)]);
+        let wc = bake_collision(&fx, &defs, &HashSet::new());
+        let (_, skipped) = derive_transports_with_skips(fx.path(), &defs, &wc);
+        assert_eq!(skip_total(&skipped, SKIP_LEVER_SOURCE), 2);
+
+        let fx = Fixture::new();
+        write_magicguild_source(&fx, "");
+        fx.write(
+            "pack/loc.pack",
+            "1600=magicguild_door_l\n1601=magicguild_door_r\n1522=loc_1522\n1523=loc_1523\n",
+        );
+        fx.write(
+            "scripts/areas/area_yanille/configs/magic_guild/magic_guild.loc",
+            "\
+[magicguild_door_l]
+op1=Open
+param=next_loc_stage,loc_1522
+
+[magicguild_door_r]
+op1=Open
+param=next_loc_stage,loc_1523
+",
+        );
+        write_magicguild_yanille_placements(&fx);
+        let defs = loc_defs(&[(1600, 1, 1), (1601, 1, 1), (1522, 1, 1), (1523, 1, 1)]);
+        let wc = bake_collision(&fx, &defs, &HashSet::from([1600, 1601]));
+        let (graph, skipped) = derive_transports_with_skips(fx.path(), &defs, &wc);
+        assert!(door_crossings(&graph, 1600).is_empty() && door_crossings(&graph, 1601).is_empty());
+        assert_eq!(skip_total(&skipped, SKIP_MAGICGUILD_SCRIPT), 2);
+
+        let fx = Fixture::new();
+        write_magicguild_source(&fx, "");
+        fx.write(
+            "pack/loc.pack",
+            "1600=magicguild_door_l\n1522=loc_1522\n1523=loc_1523\n",
+        );
+        fx.write(
+            "scripts/areas/area_yanille/configs/magic_guild/magic_guild.loc",
+            "\
+[magicguild_door_l]
+op1=Open
+param=next_loc_stage,loc_1522
+",
+        );
+        write_magicguild_yanille_placements(&fx);
+        let defs = loc_defs(&[(1600, 1, 1), (1522, 1, 1), (1523, 1, 1)]);
+        let wc = bake_collision(&fx, &defs, &HashSet::from([1600]));
+        let (_, skipped) = derive_transports_with_skips(fx.path(), &defs, &wc);
+        assert_eq!(skip_total(&skipped, SKIP_MAGICGUILD_SCRIPT), 1);
+    }
+
+    #[test]
+    fn n1_zanaris_missing_script_increments_skip_without_shed_edge() {
+        let fx = Fixture::new();
+        fx.write("pack/loc.pack", "2409=zanarisdoor\n");
+        fx.write("pack/obj.pack", "772=dramen_staff\n");
+        fx.write(
+            "maps/m50_49.jm2",
+            "\
+==== MAP ====
+0 20 56: h1 u50
+==== LOC ====
+0 20 56: 2409 0 0
+",
+        );
+        let defs = loc_defs(&[(2409, 1, 1)]);
+        let wc = bake_collision(&fx, &defs, &HashSet::from([2409]));
+        let (graph, skipped) = derive_transports_with_skips(fx.path(), &defs, &wc);
+        assert!(
+            graph.edges.iter().all(|e| e.worn_req != vec![772]),
+            "no dramen-gated shed hop"
+        );
+        assert_eq!(
+            skip_total(&skipped, SKIP_ZANARIS_SOURCE),
+            ZANARIS_DECLARED_ROUTES
+        );
+    }
+
+    #[test]
+    fn n1_toll_skips_config_henge_and_gate_placements_without_emitting() {
+        let fx = Fixture::new();
+        fx.write("pack/obj.pack", "995=coins\n1854=shantay_pass\n");
+        fx.write("pack/loc.pack", "4031=shantay_pass_henge_doorway\n");
+        fx.write(
+            "maps/m51_48.jm2",
+            "\
+==== MAP ====
+0 38 44: h1 u50
+==== LOC ====
+0 38 44: 4031 10 0
+",
+        );
+        let defs = loc_defs(&[(4031, 1, 1)]);
+        let wc = bake_collision(&fx, &defs, &HashSet::from([4031]));
+        let (graph, skipped) = derive_transports_with_skips(fx.path(), &defs, &wc);
+        assert!(
+            graph
+                .edges
+                .iter()
+                .all(|e| e.loc_id != 4031 && e.item_req != vec![(995, AL_KHARID_TOLL_COINS)]),
+            "no toll or henge hops without border_gate.loc"
+        );
+        assert_eq!(skip_total(&skipped, SKIP_TOLL_CONFIG), 0);
+        assert_eq!(skip_total(&skipped, SKIP_TOLL_HENGE), 1);
+
+        let fx = Fixture::new();
+        fx.write("pack/obj.pack", "995=coins\n1854=shantay_pass\n");
+        fx.write(
+            "pack/loc.pack",
+            "2882=border_gate_toll_left\n2883=border_gate_toll_right\n1562=loc_1562\n1563=loc_1563\n",
+        );
+        fx.write(
+            "scripts/areas/area_alkharid/configs/border_gate.loc",
+            "\
+[border_gate_toll_left]
+name=Gate
+op1=Open
+category=border_gate_toll_left
+param=next_loc_stage,loc_1562
+
+[border_gate_toll_right]
+name=Gate
+op1=Open
+category=border_gate_toll_right
+param=next_loc_stage,loc_1563
+",
+        );
+        let defs = loc_defs(&[(2882, 1, 1), (2883, 1, 1), (1562, 1, 1), (1563, 1, 1)]);
+        let wc = bake_collision(&fx, &defs, &HashSet::from([2882, 2883]));
+        let (graph, skipped) = derive_transports_with_skips(fx.path(), &defs, &wc);
+        assert!(
+            graph.edges.iter().all(|e| !matches!(e.loc_id, 2882 | 2883)),
+            "no toll crossings without jm2 placements"
+        );
+        assert_eq!(skip_total(&skipped, SKIP_TOLL_GATE), 2);
+
+        fx.write(
+            "maps/m51_50.jm2",
+            "\
+==== MAP ====
+0 4 27: h1 u50
+==== LOC ====
+0 4 27: 2882 0 0
+",
+        );
+        let wc = bake_collision(&fx, &defs, &HashSet::from([2882, 2883]));
+        let (graph, skipped) = derive_transports_with_skips(fx.path(), &defs, &wc);
+        assert!(
+            graph.edges.iter().any(|e| e.loc_id == 2882),
+            "left gate emits when placed"
+        );
+        assert_eq!(
+            skip_total(&skipped, SKIP_TOLL_GATE),
+            1,
+            "right gate still missing"
+        );
+    }
+
+    /// Original-base `toll_edges` emits every `parse_door_config_ids` openable
+    /// block, including a packed name that is not in `TOLL_GATE_LOC_NAMES`.
+    /// Applicability must not gate that derivation.
+    #[test]
+    fn n1_toll_emits_openable_alternate_border_gate_name() {
+        let fx = Fixture::new();
+        fx.write("pack/obj.pack", "995=coins\n1854=shantay_pass\n");
+        fx.write("pack/loc.pack", "4242=border_gate_extra\n1564=loc_1564\n");
+        fx.write(
+            "scripts/areas/area_alkharid/configs/border_gate.loc",
+            "\
+[border_gate_extra]
+name=Gate
+op1=Open
+param=next_loc_stage,loc_1564
+",
+        );
+        fx.write(
+            "maps/m51_50.jm2",
+            "\
+==== MAP ====
+0 3 27: h1 u50
+0 4 27: h1 u50
+0 5 27: h1 u50
+==== LOC ====
+0 4 27: 4242 0 0
+",
+        );
+        let defs = loc_defs(&[(4242, 1, 1), (1564, 1, 1)]);
+        let wc = bake_collision(&fx, &defs, &HashSet::from([4242]));
+        let (graph, skipped) = derive_transports_with_skips(fx.path(), &defs, &wc);
+        let extras: Vec<_> = graph
+            .edges
+            .iter()
+            .filter(|e| e.loc_id == 4242)
+            .cloned()
+            .collect();
+        assert_eq!(
+            extras.len(),
+            2,
+            "alternate openable name must emit both crossings: {extras:?}"
+        );
+        assert_eq!(
+            extras[0].at,
+            WorldTile {
+                x: 3268,
+                z: 3227,
+                level: 0,
+            }
+        );
+        assert_eq!(
+            extras[0].to,
+            WorldTile {
+                x: 3267,
+                z: 3227,
+                level: 0
+            }
+        );
+        assert_eq!(extras[0].dir, Some(DoorDir::W));
+        assert_eq!(
+            extras[1].to,
+            WorldTile {
+                x: 3269,
+                z: 3227,
+                level: 0
+            }
+        );
+        assert_eq!(extras[1].dir, Some(DoorDir::E));
+        for e in &extras {
+            assert_eq!(e.kind, TransportKind::Door, "{e:?}");
+            assert_eq!(e.option, 1, "Open {e:?}");
+            assert_eq!(e.ticks, 1, "{e:?}");
+            assert_eq!(e.open_loc_id, Some(1564), "{e:?}");
+            assert_eq!(e.item_req, vec![(995, AL_KHARID_TOLL_COINS)], "{e:?}");
+            assert_eq!(e.at, extras[0].at);
+            assert!(e.skill_req.is_empty() && e.quest_req.is_empty(), "{e:?}");
+        }
+        assert_eq!(skip_total(&skipped, SKIP_TOLL_OBJ_PACK), 0);
+        assert_eq!(skip_total(&skipped, SKIP_TOLL_CONFIG), 0);
+        assert_eq!(skip_total(&skipped, SKIP_TOLL_GATE), 0);
+    }
+
+    /// After source/config load, a packed declared name whose block is absent
+    /// or not admitted counts once. Emitted routes stay off the skip ledger.
+    #[test]
+    fn n1_packed_named_block_omissions_count_declared_routes() {
+        let fx = Fixture::new();
+        fx.write("pack/obj.pack", "995=coins\n1854=shantay_pass\n");
+        fx.write(
+            "pack/loc.pack",
+            "2882=border_gate_toll_left\n2883=border_gate_toll_right\n1562=loc_1562\n1563=loc_1563\n",
+        );
+        fx.write(
+            "scripts/areas/area_alkharid/configs/border_gate.loc",
+            "\
+[border_gate_toll_left]
+name=Gate
+op1=Open
+param=next_loc_stage,loc_1562
+",
+        );
+        fx.write(
+            "maps/m51_50.jm2",
+            "\
+==== MAP ====
+0 3 27: h1 u50
+0 4 27: h1 u50
+0 5 27: h1 u50
+==== LOC ====
+0 4 27: 2882 0 0
+",
+        );
+        let defs = loc_defs(&[(2882, 1, 1), (2883, 1, 1), (1562, 1, 1), (1563, 1, 1)]);
+        let wc = bake_collision(&fx, &defs, &HashSet::from([2882, 2883]));
+        let (graph, skipped) = derive_transports_with_skips(fx.path(), &defs, &wc);
+        let left: Vec<_> = graph
+            .edges
+            .iter()
+            .filter(|e| e.loc_id == 2882)
+            .cloned()
+            .collect();
+        assert_eq!(left.len(), 2, "left gate still emits: {left:?}");
+        assert_eq!(left[0].item_req, vec![(995, AL_KHARID_TOLL_COINS)]);
+        assert_eq!(left[0].dir, Some(DoorDir::W));
+        assert_eq!(left[1].dir, Some(DoorDir::E));
+        assert!(
+            graph.edges.iter().all(|e| e.loc_id != 2883),
+            "omitted right block must not emit"
+        );
+        assert_eq!(skip_total(&skipped, SKIP_TOLL_CONFIG), 1);
+        assert_eq!(
+            skip_total(&skipped, SKIP_TOLL_GATE),
+            0,
+            "emitted left must not also take SKIP_TOLL_GATE: {skipped:?}"
+        );
+
+        let fx = Fixture::new();
+        fx.write("pack/loc.pack", "1814=wildinlever\n");
+        fx.write(
+            "scripts/areas/area_ardougne_east/configs/wilderness_lever.constant",
+            "^ardougne_to_wilderness_coord = 0_49_61_18_20\n",
+        );
+        fx.write(
+            "scripts/areas/area_ardougne_east/scripts/wilderness_lever.rs2",
+            "[oploc1,unrelatedlever]\n~player_teleport_normal(^ardougne_to_wilderness_coord);\n",
+        );
+        let defs = loc_defs(&[(1814, 1, 1)]);
+        let wc = bake_collision(&fx, &defs, &HashSet::new());
+        let (graph, skipped) = derive_transports_with_skips(fx.path(), &defs, &wc);
+        assert!(graph.edges.iter().all(|e| e.loc_id != 1814));
+        assert_eq!(skip_total(&skipped, SKIP_LEVER_SOURCE), 0);
+        assert_eq!(skip_total(&skipped, SKIP_LEVER_ROUTE), 1);
+
+        let fx = Fixture::new();
+        write_magicguild_source(&fx, magicguild_opener_script());
+        fx.write(
+            "scripts/areas/area_yanille/configs/magic_guild/magic_guild.loc",
+            "\
+[magicguild_door_l]
+op1=Open
+param=next_loc_stage,loc_1522
+",
+        );
+        write_magicguild_yanille_placements(&fx);
+        let defs = loc_defs(&[(1600, 1, 1), (1601, 1, 1), (1522, 1, 1), (1523, 1, 1)]);
+        let wc = bake_collision(&fx, &defs, &HashSet::from([1600, 1601]));
+        let (graph, skipped) = derive_transports_with_skips(fx.path(), &defs, &wc);
+        assert_eq!(
+            door_crossings(&graph, 1600),
+            vec![
+                ((2584, 3088), 'E', (2585, 3088)),
+                ((2584, 3088), 'W', (2583, 3088)),
+                ((2597, 3087), 'E', (2598, 3087)),
+                ((2597, 3087), 'W', (2596, 3087)),
+            ],
+            "admitted left door still emits"
+        );
+        assert!(
+            door_crossings(&graph, 1601).is_empty(),
+            "omitted right door must not emit"
+        );
+        assert_eq!(skip_total(&skipped, SKIP_MAGICGUILD_CONFIG), 1);
+        assert_eq!(
+            skip_total(&skipped, SKIP_MAGICGUILD_DOOR),
+            0,
+            "emitted left must not count as a door skip: {skipped:?}"
         );
     }
 }

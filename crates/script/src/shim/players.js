@@ -19,6 +19,11 @@ export class Player {
         return this.snap.in_combat === true;
     }
 
+    get combatLevel() {
+        const level = this.snap.combat_level;
+        return typeof level === 'number' && Number.isInteger(level) ? level : 0;
+    }
+
     /**
      * True when this player's combat target is the local player (`face_entity`),
      * not merely when `Game.inCombat()` is true.

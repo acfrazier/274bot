@@ -1,9 +1,10 @@
-//! Boost potions: isolate export -> native step -> caller callback marshaling.
+//! Boost potions: each export is one native call (`__rs2b0t_boost_potions`)
+//! and Rust calls the caller's `levels` / `held` callbacks.
 //!
-//! The shim exports keep their synchronous signatures; the descriptor rows, the
-//! planning defaults, the boost floor, the positive-held predicate, the
-//! levels-then-held callback order, the first-match exit and the returned-object
-//! identity are decided by `script::boost_potions::dispatch`.
+//! Expected sequences and results are the frozen
+//! `bot/api/combat/boostPotions.ts` bodies: `planFor` re-reads the carried item
+//! per dose, `potionToSip` asks `s.levels` then `s.held` per reached plan and
+//! converts the level operands as `boostFaded` does.
 
 use script::{LoadIsolate, LoadShape};
 
@@ -187,7 +188,8 @@ globalThis.__sipNone = (() => {
 })();
 
 // The pack decides the plan before the captured levels are read as numbers:
-// an empty pack never converts them, a held dose converts each one once.
+// an empty pack never converts them; a held dose converts them where the frozen
+// `boostFaded` expression reads them.
 globalThis.__sipShortCircuit = (() => {
     const log = [];
     const spy = (tag) => ({ valueOf() { log.push('valueOf:' + tag); return 70; } });
@@ -320,68 +322,27 @@ globalThis.__sipReenter = (() => {
     return { outerIsOuter: chosen === outer, innerIsInner: innerResult === inner, log };
 })();
 
-// --- the native step on its own ----------------------------------------------
-globalThis.__wire = (() => {
-    const step = (payload) => globalThis.rustyscript.functions.__rs2b0t_boost_potions_step(payload);
-    const table = step({ op: 'table' });
-    return {
-        tableKind: table.kind,
-        tableFloor: table.floor,
-        tableVial: table.empty_vial,
-        rowCount: table.potions.length,
-        firstFlask: table.potions[0].flask,
-        round: step({ op: 'plan', what: 'round' }),
-        roundAfter: step({ op: 'plan', what: 'round', done_potion: 0 }),
-        roundEnd: step({ op: 'plan', what: 'round', done_potion: 1 }),
-        compare: step({ op: 'plan', what: 'entry', potion: 0 }),
-        compared: step({ op: 'plan', what: 'entry', potion: 1, dose: 0, item: 'super strength(3)' }),
-        accepted: step({ op: 'plan', what: 'entry', potion: 1, dose: 3, item: 'super strength(1)' }),
-        skipped: step({ op: 'plan', what: 'entry', potion: 0, dose: 3, item: 'lobster' }),
-        fallback: step({ op: 'plan', what: 'exhausted', potion: 0 }),
-        sipStart: step({ op: 'sip', reached: true }),
-        sipHeld: step({ op: 'sip', reached: true, held: 1 }),
-        sipEmpty: step({ op: 'sip', reached: true, held: 0 }),
-        sipTagged: step({ op: 'sip', reached: true, held: 'Infinity' }),
-        sipHit: step({ op: 'sip', reached: true, held: 1, base: 70, effective: 77 }),
-        sipNone: step({ op: 'sip', reached: false }),
-        tagged: step({ op: 'faded', base: 70, effective: 'Infinity' }),
-        unknown: step({ op: 'nope' }),
-    };
-})();
-
-// Every decision goes through the binding: no helper answers from JS.
-// `rustyscript` is frozen and its `functions` proxy mints a fresh closure per
-// read, so the spy swaps the global for an equivalent object.
+// --- one native call per export ------------------------------------------------
+// The spy wraps the global helper; each export must cross exactly once however
+// many plans, carry rows or callbacks it walks.
 globalThis.__bridge = (() => {
-    const original = globalThis.rustyscript;
-    let installed = false;
-    let calls = 0;
-    const spy = (payload) => {
-        calls += 1;
-        return original.functions.__rs2b0t_boost_potions_step(payload);
-    };
-    try {
-        globalThis.rustyscript = {
-            ...original,
-            functions: new Proxy({}, {
-                get(_target, name) {
-                    return name === '__rs2b0t_boost_potions_step' ? spy : original.functions[name];
-                },
-            }),
-        };
-        installed = globalThis.rustyscript !== original;
-    } catch (e) {
-        installed = false;
-    }
-    const plans = plannedPotions([]);
-    const chosen = potionToSip({ plans, held: () => 1, levels: () => ({ base: 70, effective: 70 }) });
+    const original = globalThis.__rs2b0t_boost_potions;
+    const ops = [];
+    globalThis.__rs2b0t_boost_potions = (op, ...args) => { ops.push(op); return original(op, ...args); };
+    const plans = plannedPotions([{ item: 'Lobster', qty: 1 }, { item: 'Super strength(2)', qty: 2 }]);
+    const log = [];
+    const chosen = potionToSip({
+        plans,
+        held: (p) => { log.push('held:' + p.potion.short); return p === plans[0] ? 0 : 1; },
+        levels: (skill) => { log.push('levels:' + skill); return { base: 70, effective: 70 }; },
+    });
     const faded = boostFaded(70, 70);
-    if (installed) globalThis.rustyscript = original;
+    globalThis.__rs2b0t_boost_potions = original;
     return {
-        installed,
-        calls,
+        ops,
         flasks: plans.map(p => p.flask),
-        choseTheCallersPlan: chosen === plans[0],
+        choseTheCallersPlan: chosen === plans[1],
+        log,
         faded,
     };
 })();
@@ -571,11 +532,14 @@ fn potion_to_sip_asks_levels_then_held_and_returns_the_callers_plan() {
                 "held:Att",
                 "levels:strength",
                 "held:Str",
+                "valueOf:strength.effective",
                 "valueOf:strength.base",
-                "valueOf:strength.effective"
+                "valueOf:strength.base",
+                "valueOf:strength.base"
             ],
         }),
-        "the empty pack's level numbers are never converted; the held one's are converted once each"
+        "the empty pack's levels are never converted; the held one's follow frozen \
+         `effective - base`, `base > 0`, `floor * base`"
     );
     assert_eq!(
         iso.probe("__sipHeldValues").unwrap(),
@@ -652,56 +616,17 @@ fn potion_to_sip_asks_levels_then_held_and_returns_the_callers_plan() {
 }
 
 #[test]
-fn native_step_wire_contract_is_round_accept_and_sip() {
+fn each_export_is_one_native_call() {
     let iso = spawn();
     assert_eq!(
-        iso.probe("__wire").unwrap(),
+        iso.probe("__bridge").unwrap(),
         serde_json::json!({
-            "tableKind": "table",
-            "tableFloor": 0.1,
-            "tableVial": "Vial",
-            "rowCount": 2,
-            "firstFlask": "Super attack(3)",
-            "round": {"kind": "scan", "potion": 0},
-            "roundAfter": {"kind": "scan", "potion": 1},
-            "roundEnd": {"kind": "done"},
-            "compare": {"kind": "compare", "dose": 0},
-            "compared": {"kind": "compare", "dose": 1},
-            "accepted": {"kind": "accept", "flask": "Super strength(1)"},
-            "skipped": {"kind": "next"},
-            "fallback": {"kind": "fallback", "flask": "Super attack(3)", "want": 1},
-            "sipStart": {"kind": "levels"},
-            "sipHeld": {"kind": "boost"},
-            "sipEmpty": {"kind": "next"},
-            "sipTagged": {"kind": "boost"},
-            "sipHit": {"kind": "hit"},
-            "sipNone": {"kind": "none"},
-            "tagged": {"kind": "value", "value": false},
-            "unknown": {"kind": "error", "feature": "boostPotions"},
+            "ops": ["plannedPotions", "potionToSip", "boostFaded"],
+            "flasks": ["Super attack(3)", "Super strength(2)"],
+            "choseTheCallersPlan": true,
+            "log": ["levels:attack", "held:Att", "levels:strength", "held:Str"],
+            "faded": true,
         })
-    );
-    iso.join();
-}
-
-#[test]
-fn the_helpers_answer_through_the_native_binding() {
-    let iso = spawn();
-    let bridge = iso.probe("__bridge").unwrap();
-    assert_eq!(
-        bridge["flasks"],
-        serde_json::json!(["Super attack(3)", "Super strength(3)"])
-    );
-    assert_eq!(bridge["choseTheCallersPlan"], serde_json::json!(true));
-    assert_eq!(bridge["faded"], serde_json::json!(true));
-    assert_eq!(
-        bridge["installed"],
-        serde_json::json!(true),
-        "the isolate exposes the step binding on `rustyscript.functions`"
-    );
-    assert_eq!(
-        bridge["calls"],
-        serde_json::json!(9),
-        "two default plans (five steps), one three-observation sip walk and one faded comparison: {bridge}"
     );
     iso.join();
 }

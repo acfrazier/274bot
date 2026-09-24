@@ -1,18 +1,14 @@
-// Fight-loop bury/swing onto posted inv + anim. No AttackClock.
+// Fight-loop bury/swing onto the posted inv and anim. No AttackClock and no
+// cross-tick JS state.
 import { snap } from '../../shim/_kernel.js';
 import { Inventory } from '../inventory/Inventory.js';
 
-let prevTick = null;
-let prevAnim = false;
-
+/**
+ * True on the tick our swing animation began. Rust posts `swing_started` from
+ * the local player's primary animation, so no clock is kept here.
+ */
 export function swingStartedThisTick() {
-    const s = snap();
-    const tick = s.tick;
-    const anim = s.animating === true;
-    const started = anim && tick !== prevTick && !prevAnim;
-    prevAnim = anim;
-    prevTick = tick;
-    return started;
+    return snap().swing_started === true;
 }
 
 export function buryOneInFight(boneName) {

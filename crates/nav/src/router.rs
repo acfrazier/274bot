@@ -107,6 +107,34 @@ pub struct FindOptions {
     pub essence: Option<EssenceSession>,
 }
 
+/// Axis-aligned avoidance rectangle for inspect-local routing. Bounds are
+/// inclusive on both axes. When [`AvoidRect::level`] is [`None`], the rect
+/// applies on every plane; otherwise only that level matches.
+///
+/// Callers must supply valid geometry (`min_x <= max_x`, `min_z <= max_z`).
+/// Invalid rects are not validated here and do not produce a router error.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AvoidRect {
+    pub min_x: i32,
+    pub max_x: i32,
+    pub min_z: i32,
+    pub max_z: i32,
+    /// `None` = every level.
+    pub level: Option<i32>,
+}
+
+impl AvoidRect {
+    /// Whether `tile` sits inside this rect (inclusive bounds, optional level).
+    pub fn contains(self, tile: WorldTile) -> bool {
+        if let Some(lvl) = self.level {
+            if tile.level != lvl {
+                return false;
+            }
+        }
+        tile.x >= self.min_x && tile.x <= self.max_x && tile.z >= self.min_z && tile.z <= self.max_z
+    }
+}
+
 /// Why [`find`] failed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RouteError {
@@ -193,18 +221,53 @@ pub fn find_with(
     opts: FindOptions,
     state: &WorldState,
 ) -> Result<Route, RouteError> {
+    find_with_avoid(collision, graph, from, to, opts, state, &[])
+}
+
+/// [`find_with`] with inspect-local avoidance rectangles. Walk steps never
+/// enter a rect from outside; a start already inside any rect stays
+/// searchable until the route leaves the union. Transport, any-tile
+/// teleport, and essence-return landings follow the same outside-in rule;
+/// takeoff `at` tiles are not independently filtered.
+pub fn find_with_avoid(
+    collision: &WorldCollision,
+    graph: &TransportGraph,
+    from: WorldTile,
+    to: WorldTile,
+    opts: FindOptions,
+    state: &WorldState,
+    avoid: &[AvoidRect],
+) -> Result<Route, RouteError> {
+    find_with_avoid_bounded(collision, graph, from, to, opts, state, avoid, NODE_BUDGET)
+}
+
+/// [`find_with_avoid`] with an injectable node-expansion cap. Production
+/// inspect uses [`find_with_avoid`] (the default [`NODE_BUDGET`]); tests
+/// may pass a smaller bound to distinguish `BudgetExhausted` from `NoPath`.
+#[allow(clippy::too_many_arguments)] // collision/graph/tiles/opts/state/avoid/budget surface
+pub fn find_with_avoid_bounded(
+    collision: &WorldCollision,
+    graph: &TransportGraph,
+    from: WorldTile,
+    to: WorldTile,
+    opts: FindOptions,
+    state: &WorldState,
+    avoid: &[AvoidRect],
+    budget: usize,
+) -> Result<Route, RouteError> {
     find_bounded_impl(
         collision,
         graph,
         from,
         to,
         CostModel::running(),
-        NODE_BUDGET,
+        budget,
         opts.allow_teleports,
         opts.allow_wilderness,
         state,
         opts.essence.as_ref(),
         false,
+        avoid,
     )
 }
 
@@ -239,18 +302,58 @@ pub fn find_missing_item_reqs(
     opts: FindOptions,
     state: &WorldState,
 ) -> Option<Vec<MissingReq>> {
+    find_missing_item_reqs_with_avoid(collision, graph, from, to, opts, state, &[])
+}
+
+/// [`find_missing_item_reqs`] with the same avoidance semantics as
+/// [`find_with_avoid`].
+pub fn find_missing_item_reqs_with_avoid(
+    collision: &WorldCollision,
+    graph: &TransportGraph,
+    from: WorldTile,
+    to: WorldTile,
+    opts: FindOptions,
+    state: &WorldState,
+    avoid: &[AvoidRect],
+) -> Option<Vec<MissingReq>> {
+    find_missing_item_reqs_with_avoid_bounded(
+        collision,
+        graph,
+        from,
+        to,
+        opts,
+        state,
+        avoid,
+        NODE_BUDGET,
+    )
+}
+
+/// [`find_missing_item_reqs_with_avoid`] with an injectable node-expansion
+/// cap. Production inspect uses the default-budget form.
+#[allow(clippy::too_many_arguments)] // collision/graph/tiles/opts/state/avoid/budget surface
+pub fn find_missing_item_reqs_with_avoid_bounded(
+    collision: &WorldCollision,
+    graph: &TransportGraph,
+    from: WorldTile,
+    to: WorldTile,
+    opts: FindOptions,
+    state: &WorldState,
+    avoid: &[AvoidRect],
+    budget: usize,
+) -> Option<Vec<MissingReq>> {
     let route = find_bounded_impl(
         collision,
         graph,
         from,
         to,
         CostModel::running(),
-        NODE_BUDGET,
+        budget,
         opts.allow_teleports,
         opts.allow_wilderness,
         state,
         opts.essence.as_ref(),
         true,
+        avoid,
     )
     .ok()?;
     let mut missing = Vec::new();
@@ -300,6 +403,7 @@ pub fn find_with_model(
         &WorldState::empty(),
         None,
         false,
+        &[],
     )
 }
 
@@ -352,6 +456,7 @@ pub fn find_allow_teleports_with_model(
         state,
         None,
         false,
+        &[],
     )
 }
 
@@ -381,7 +486,13 @@ fn find_bounded(
         &WorldState::empty(),
         None,
         false,
+        &[],
     )
+}
+
+/// True when `tile` sits in any avoidance rect.
+fn tile_in_any_avoid(tile: WorldTile, avoid: &[AvoidRect]) -> bool {
+    avoid.iter().any(|r| r.contains(tile))
 }
 
 /// The shared Dijkstra; `use_teleports` unions the any-tile teleport layer
@@ -408,6 +519,7 @@ fn find_bounded_impl(
     state: &WorldState,
     essence: Option<&EssenceSession>,
     relax_carry_worn: bool,
+    avoid: &[AvoidRect],
 ) -> Result<Route, RouteError> {
     if from == to {
         return Ok(Route {
@@ -452,6 +564,8 @@ fn find_bounded_impl(
             });
         }
 
+        let escaping = !avoid.is_empty() && tile_in_any_avoid(cur, avoid);
+
         for d in STEPS {
             if step_ok(collision, cur, d) {
                 let nb = WorldTile {
@@ -459,6 +573,9 @@ fn find_bounded_impl(
                     z: cur.z + d.1,
                     level: cur.level,
                 };
+                if !avoid.is_empty() && !escaping && tile_in_any_avoid(nb, avoid) {
+                    continue;
+                }
                 if !wildy_step_ok(cur, nb, allow_wilderness) {
                     continue;
                 }
@@ -498,6 +615,9 @@ fn find_bounded_impl(
                         if !gate_ok {
                             continue;
                         }
+                        if !avoid.is_empty() && !escaping && tile_in_any_avoid(edge.to, avoid) {
+                            continue;
+                        }
                         if !wildy_step_ok(cur, edge.to, allow_wilderness) {
                             continue;
                         }
@@ -524,6 +644,12 @@ fn find_bounded_impl(
                 for (portal, &at) in ESSENCE_MINE_PORTALS.iter().enumerate() {
                     if cur.level != at.level
                         || (cur.x - at.x).abs().max((cur.z - at.z).abs()) > INTERACT_RADIUS
+                    {
+                        continue;
+                    }
+                    if !avoid.is_empty()
+                        && !escaping
+                        && tile_in_any_avoid(session.return_tile, avoid)
                     {
                         continue;
                     }
@@ -559,6 +685,9 @@ fn find_bounded_impl(
                     state.allows(edge)
                 };
                 if !gate_ok {
+                    continue;
+                }
+                if !avoid.is_empty() && !escaping && tile_in_any_avoid(edge.to, avoid) {
                     continue;
                 }
                 if !wildy_step_ok(cur, edge.to, allow_wilderness) {
@@ -1015,8 +1144,9 @@ impl Ord for GridNode {
 mod tests {
     use api::obj_names::LocDefs;
     use api::snapshot::WorldTile;
-    use client::config::LocType;
+    use client::config::{Cache, LocType};
     use client::dash3d::CollisionFlag;
+    use client::io::JagFile;
     use std::collections::{HashMap, HashSet};
     use std::fs;
     use std::path::PathBuf;
@@ -1024,12 +1154,13 @@ mod tests {
     use crate::collision::{bake_from_maps, WorldCollision};
     use crate::grid::StepGrid;
     use crate::router::{
-        find, find_allow_teleports, find_bounded, find_missing_item_reqs, find_on_grid, find_with,
-        find_with_model, local_step_component, step_ok, CostModel, FindOptions, GridLeg, Leg,
-        MissingReq, RouteError, PER_STEP_WALK,
+        find, find_allow_teleports, find_bounded, find_missing_item_reqs,
+        find_missing_item_reqs_with_avoid, find_on_grid, find_with, find_with_avoid,
+        find_with_model, local_step_component, step_ok, AvoidRect, CostModel, FindOptions, GridLeg,
+        Leg, MissingReq, RouteError, PER_STEP_WALK,
     };
     use crate::tile::Tile;
-    use crate::transport::{TransportEdge, TransportGraph, TransportKind};
+    use crate::transport::{derive_transports, TransportEdge, TransportGraph, TransportKind};
     use crate::world_state::WorldState;
 
     #[test]
@@ -2282,6 +2413,381 @@ mod tests {
         assert!(ok.is_ok());
     }
 
+    // --- AvoidRect / find_with_avoid (inspect slice 1) ---
+
+    fn avoid_box(min_x: i32, max_x: i32, min_z: i32, max_z: i32) -> AvoidRect {
+        AvoidRect {
+            min_x,
+            max_x,
+            min_z,
+            max_z,
+            level: None,
+        }
+    }
+
+    #[test]
+    fn avoid_rect_contains_uses_inclusive_bounds_and_optional_level() {
+        let all_levels = avoid_box(1, 3, 4, 6);
+        assert!(all_levels.contains(tile(1, 4, 0)));
+        assert!(all_levels.contains(tile(3, 6, 2)));
+        assert!(!all_levels.contains(tile(0, 4, 0)));
+        assert!(!all_levels.contains(tile(1, 7, 0)));
+        let lvl1 = AvoidRect {
+            min_x: 0,
+            max_x: 9,
+            min_z: 0,
+            max_z: 9,
+            level: Some(1),
+        };
+        assert!(!lvl1.contains(tile(5, 5, 0)));
+        assert!(lvl1.contains(tile(5, 5, 1)));
+    }
+
+    #[test]
+    fn find_with_avoid_walk_rules_outside_in_start_inside_and_destination() {
+        let wc = bake(5, 5, &[]);
+        let g = TransportGraph::default();
+        let patch = [avoid_box(1, 3, 1, 3)];
+        let opts = FindOptions::default();
+        let empty = WorldState::empty();
+        // Outside cannot step into the patch; the open grid still routes around it.
+        let r =
+            find_with_avoid(&wc, &g, tile(0, 0, 0), tile(4, 4, 0), opts, &empty, &patch).unwrap();
+        let stepped: Vec<WorldTile> = r
+            .legs
+            .iter()
+            .flat_map(|l| match l {
+                Leg::Walk { tiles } => tiles.clone(),
+                Leg::Transport { .. } => vec![],
+            })
+            .collect();
+        assert!(
+            !stepped
+                .windows(2)
+                .any(|w| !patch[0].contains(w[0]) && patch[0].contains(w[1])),
+            "must not enter the avoid patch from outside"
+        );
+        // Destination inside + start outside cannot enter.
+        assert!(matches!(
+            find_with_avoid(&wc, &g, tile(0, 0, 0), tile(2, 2, 0), opts, &empty, &patch,),
+            Err(RouteError::NoPath)
+        ));
+        // Start already inside the union may leave: two overlapping rects, escape semantics.
+        let union = [avoid_box(1, 2, 1, 2), avoid_box(2, 3, 1, 2)];
+        let out =
+            find_with_avoid(&wc, &g, tile(2, 1, 0), tile(4, 4, 0), opts, &empty, &union).unwrap();
+        assert_eq!(out.dest, tile(4, 4, 0));
+        // Destination inside while start is inside is allowed.
+        assert!(
+            find_with_avoid(&wc, &g, tile(2, 2, 0), tile(1, 1, 0), opts, &empty, &patch,).is_ok()
+        );
+        // Level-scoped avoid applies only on the matching plane.
+        let level0_block = AvoidRect {
+            min_x: 2,
+            max_x: 2,
+            min_z: 2,
+            max_z: 2,
+            level: Some(0),
+        };
+        assert!(matches!(
+            find_with_avoid(
+                &wc,
+                &g,
+                tile(0, 0, 0),
+                tile(2, 2, 0),
+                opts,
+                &empty,
+                &[level0_block],
+            ),
+            Err(RouteError::NoPath)
+        ));
+        assert!(
+            find_with_avoid(
+                &wc,
+                &g,
+                tile(0, 0, 1),
+                tile(2, 2, 1),
+                opts,
+                &empty,
+                &[level0_block],
+            )
+            .is_ok(),
+            "level-0 avoid must not block the same x/z on another plane"
+        );
+    }
+
+    #[test]
+    fn find_with_avoid_transport_and_teleport_landings_follow_outside_in_rule() {
+        let wc_wall = walled_5x5();
+        let door_landing_inside = door(tile(1, 2, 0), tile(2, 2, 0), 2);
+        let landing_only = [avoid_box(2, 2, 2, 2)];
+        let opts = FindOptions::default();
+        let empty = WorldState::empty();
+        assert!(
+            find_with(
+                &wc_wall,
+                &door_landing_inside,
+                tile(0, 0, 0),
+                tile(4, 0, 0),
+                opts,
+                &empty
+            )
+            .is_ok(),
+            "sanity: without avoid the door route exists"
+        );
+        // Sealed wall: the only crossing lands on the avoided tile.
+        let door_blocked = find_with_avoid(
+            &wc_wall,
+            &door_landing_inside,
+            tile(0, 0, 0),
+            tile(4, 0, 0),
+            opts,
+            &empty,
+            &landing_only,
+        );
+        assert!(
+            matches!(door_blocked, Err(RouteError::NoPath)),
+            "door landing inside avoid is refused from outside, got {door_blocked:?}"
+        );
+        // Takeoff `at` may sit inside avoid when the landing is outside.
+        let wc_door = blocked_door_fixture();
+        let g_at_inside = door(tile(2, 0, 0), tile(2, 2, 0), 2);
+        let at_only = [avoid_box(2, 0, 2, 0)];
+        let via_door = find_with_avoid(
+            &wc_door,
+            &g_at_inside,
+            tile(1, 0, 0),
+            tile(4, 2, 0),
+            opts,
+            &empty,
+            &at_only,
+        )
+        .unwrap();
+        assert!(
+            via_door
+                .legs
+                .iter()
+                .any(|l| matches!(l, Leg::Transport { .. })),
+            "approach from outside may still use the door when the landing is outside avoid"
+        );
+        // Any-tile teleport landing uses the same rule (wall leaves teleport as the only hop).
+        let wc_tp = walled_5x5();
+        let dest = tile(4, 4, 0);
+        let g_tp = teleport(dest, 2, vec![], vec![(1712, 1)]);
+        let tp_patch = [avoid_box(4, 4, 4, 4)];
+        assert!(
+            matches!(
+                find_with_avoid(
+                    &wc_tp,
+                    &g_tp,
+                    tile(0, 0, 0),
+                    dest,
+                    FindOptions {
+                        allow_teleports: true,
+                        ..FindOptions::default()
+                    },
+                    &spell_state(),
+                    &tp_patch,
+                ),
+                Err(RouteError::NoPath)
+            ),
+            "teleport landing on an avoided tile is refused from outside"
+        );
+        // Nonempty avoid that misses the landing still permits the teleport hop (not a walk-around).
+        let tp_allowed = find_with_avoid(
+            &wc_tp,
+            &g_tp,
+            tile(0, 0, 0),
+            dest,
+            FindOptions {
+                allow_teleports: true,
+                ..FindOptions::default()
+            },
+            &spell_state(),
+            &[avoid_box(1, 1, 1, 1)],
+        )
+        .unwrap();
+        assert_eq!(tp_allowed.dest, dest);
+        let tp_leg = tp_allowed
+            .legs
+            .iter()
+            .find_map(|l| match l {
+                Leg::Transport { edge } => Some(edge),
+                _ => None,
+            })
+            .expect("walled bake requires the teleport leg, not a walk detour");
+        assert_eq!(tp_leg.kind, TransportKind::Teleport);
+        assert_eq!(tp_leg.to, dest);
+        // Essence return landing is gated the same way.
+        let wc_mine = mine_bake();
+        let session = crate::essence::essence_session_for_wizard(553).unwrap();
+        let aubury = session.return_tile;
+        let mine_patch = [avoid_box(aubury.x, aubury.x, aubury.z, aubury.z)];
+        assert!(matches!(
+            find_with_avoid(
+                &wc_mine,
+                &TransportGraph::default(),
+                tile(2912, 4833, 0),
+                aubury,
+                FindOptions {
+                    essence: Some(session),
+                    ..FindOptions::default()
+                },
+                &empty,
+                &mine_patch,
+            ),
+            Err(RouteError::NoPath)
+        ));
+        // Avoid the mine pad only; the return landing stays clear.
+        let pad = tile(2912, 4833, 0);
+        let essence_allowed = find_with_avoid(
+            &wc_mine,
+            &TransportGraph::default(),
+            pad,
+            aubury,
+            FindOptions {
+                essence: Some(session),
+                ..FindOptions::default()
+            },
+            &empty,
+            &[avoid_box(pad.x, pad.x, pad.z, pad.z)],
+        )
+        .unwrap();
+        assert_eq!(essence_allowed.dest, aubury);
+        let return_leg = essence_allowed
+            .legs
+            .iter()
+            .find_map(|l| match l {
+                Leg::Transport { edge } => Some(edge),
+                _ => None,
+            })
+            .expect("mine exit must use the essence return hop");
+        assert_eq!(return_leg.kind, TransportKind::EssenceExit);
+        assert_eq!(return_leg.to, aubury);
+    }
+
+    #[test]
+    fn find_with_avoid_empty_matches_find_with_and_does_not_bypass_gates() {
+        let wc = bake(5, 5, &[]);
+        let g = TransportGraph::default();
+        let from = tile(0, 0, 0);
+        let to = tile(4, 4, 0);
+        let opts = FindOptions::default();
+        let empty = WorldState::empty();
+        let plain = find_with(&wc, &g, from, to, opts, &empty).unwrap();
+        let no_avoid = find_with_avoid(&wc, &g, from, to, opts, &empty, &[]).unwrap();
+        assert_eq!(plain.ticks, no_avoid.ticks);
+        assert_eq!(plain.legs.len(), no_avoid.legs.len());
+        // Subsequent plain find is unchanged after an avoid search.
+        assert_eq!(
+            find_with(&wc, &g, from, to, opts, &empty).unwrap().ticks,
+            plain.ticks
+        );
+        // Wilderness / teleport gates stay fail-closed with avoid present.
+        let wc_w = open_world(
+            WorldTile {
+                x: 3099,
+                z: 3518,
+                level: 0,
+            },
+            5,
+            12,
+        );
+        let wild_to = tile(3100, 3525, 0);
+        assert!(matches!(
+            find_with_avoid(
+                &wc_w,
+                &TransportGraph::default(),
+                tile(3100, 3519, 0),
+                wild_to,
+                opts,
+                &empty,
+                &[avoid_box(0, 9999, 0, 9999)],
+            ),
+            Err(RouteError::NoPath)
+        ));
+        let wc_wall = walled_5x5();
+        let dest = tile(4, 4, 0);
+        let g_tp = teleport(dest, 2, vec![], vec![(1712, 1)]);
+        assert!(matches!(
+            find_with_avoid(
+                &wc_wall,
+                &g_tp,
+                tile(0, 0, 0),
+                dest,
+                FindOptions {
+                    allow_teleports: true,
+                    ..FindOptions::default()
+                },
+                &WorldState::empty(),
+                &[],
+            ),
+            Err(RouteError::NoPath)
+        ));
+    }
+
+    #[test]
+    fn find_missing_item_reqs_with_avoid_and_budget_errors_stay_distinct() {
+        let wc = walled_5x5();
+        let g = toll_graph();
+        let from = tile(0, 0, 0);
+        let to = tile(4, 4, 0);
+        // Block only the door landing tile, not the whole east side destination.
+        let landing_only = [avoid_box(2, 2, 2, 2)];
+        assert_eq!(
+            find_missing_item_reqs_with_avoid(
+                &wc,
+                &g,
+                from,
+                to,
+                FindOptions::default(),
+                &WorldState::empty(),
+                &landing_only,
+            ),
+            None,
+            "avoid blocking the only crossing is not an item gap"
+        );
+        assert_eq!(
+            find_missing_item_reqs_with_avoid(
+                &wc,
+                &g,
+                from,
+                to,
+                FindOptions::default(),
+                &WorldState::empty(),
+                &[],
+            ),
+            Some(vec![MissingReq::Carry { id: 995, count: 10 }])
+        );
+        let open = bake(10, 10, &[]);
+        assert!(matches!(
+            find_bounded(
+                &open,
+                &TransportGraph::default(),
+                tile(0, 0, 0),
+                tile(9, 9, 0),
+                CostModel::running(),
+                8,
+            ),
+            Err(RouteError::BudgetExhausted)
+        ));
+        assert!(
+            matches!(
+                find_with_avoid(
+                    &open,
+                    &TransportGraph::default(),
+                    tile(0, 0, 0),
+                    tile(5, 5, 0),
+                    FindOptions::default(),
+                    &WorldState::empty(),
+                    &[avoid_box(5, 5, 5, 5)],
+                ),
+                Err(RouteError::NoPath)
+            ),
+            "dest inside avoid from outside is NoPath, not budget exhaustion"
+        );
+    }
+
     #[test]
     fn lumbridge_cow_pen_to_varrock_uses_the_south_gate() {
         // (3253,3282) is inside the cow pen. The south gate (loc 1551/1553
@@ -2323,6 +2829,184 @@ mod tests {
             (door.at.x, door.at.z),
             (3241, 3301),
             "must not clip through the north fence to the road gate"
+        );
+    }
+
+    #[test]
+    fn packed_edgeville_bank_return_to_eggs_uses_the_surface_trapdoor() {
+        // Live a5z328_0: WalkNear from 3094,3489 to 3120,9952 radius 3 after
+        // the Edgeville bank cycle produced no nav-follow. Stock maps place
+        // trapdoor 1568 at 3097,3468; derive_transports now emits that hop.
+        // GitHub has no pack — skip, do not panic. A pre-rebake pack still
+        // lacks the edge, so the test inserts the derived hop.
+        let Some(world) = crate::world::NavWorld::load_default_pack_or_skip() else {
+            return;
+        };
+        let from = WorldTile {
+            x: 3094,
+            z: 3489,
+            level: 0,
+        };
+        let eggs = WorldTile {
+            x: 3120,
+            z: 9952,
+            level: 0,
+        };
+        let trapdoor_at = WorldTile {
+            x: 3097,
+            z: 3468,
+            level: 0,
+        };
+        let ladder_at = WorldTile {
+            x: 3096,
+            z: 9867,
+            level: 0,
+        };
+        let trap_edges: Vec<_> = world
+            .graph
+            .at
+            .get(&trapdoor_at)
+            .into_iter()
+            .flatten()
+            .map(|&i| &world.graph.edges[i])
+            .collect();
+        let ladder_edges: Vec<_> = world
+            .graph
+            .at
+            .get(&ladder_at)
+            .into_iter()
+            .flatten()
+            .map(|&i| &world.graph.edges[i])
+            .collect();
+        assert!(
+            ladder_edges.iter().any(|e| e.loc_id == 1755),
+            "packed graph must keep the dungeon exit ladder 1755 at 3096,9867, got {:?}",
+            ladder_edges
+                .iter()
+                .map(|e| (e.loc_id, e.to, e.kind))
+                .collect::<Vec<_>>()
+        );
+        let opts = FindOptions {
+            allow_teleports: false,
+            allow_wilderness: true,
+            allow_bank_fetch: true,
+            ..FindOptions::default()
+        };
+        let mut graph = TransportGraph {
+            edges: world.graph.edges.clone(),
+            at: world.graph.at.clone(),
+            teleports: world.graph.teleports.clone(),
+        };
+        if !trap_edges
+            .iter()
+            .any(|e| e.loc_id == 1568 || e.loc_id == 1570)
+        {
+            let dest = WorldTile {
+                x: trapdoor_at.x,
+                z: trapdoor_at.z + crate::transport::CELLAR_SHIFT,
+                level: trapdoor_at.level,
+            };
+            let idx = graph.edges.len();
+            graph.edges.push(TransportEdge {
+                kind: TransportKind::Ladder,
+                at: trapdoor_at,
+                to: dest,
+                loc_id: 1568,
+                option: 1,
+                ticks: 3,
+                dir: None,
+                open_loc_id: Some(1570),
+                skill_req: vec![],
+                item_req: vec![],
+                quest_req: vec![],
+                varp_req: vec![],
+                worn_req: vec![],
+                members_req: false,
+            });
+            graph.at.entry(trapdoor_at).or_default().push(idx);
+        }
+        let route = find_with(
+            &world.collision,
+            &graph,
+            from,
+            eggs,
+            opts,
+            &WorldState::empty().with_map_members(true),
+        )
+        .unwrap_or_else(|e| panic!("Edgeville bank -> red spider eggs must route: {e:?}"));
+        let used_trap = route.legs.iter().any(|leg| match leg {
+            Leg::Transport { edge } => {
+                (edge.loc_id == 1568 || edge.loc_id == 1570)
+                    && edge.at.x == trapdoor_at.x
+                    && edge.at.z == trapdoor_at.z
+            }
+            _ => false,
+        });
+        assert!(
+            used_trap,
+            "return must use the surface trapdoor, legs={:?}",
+            route
+                .legs
+                .iter()
+                .filter_map(|leg| match leg {
+                    Leg::Transport { edge } => Some((edge.kind, edge.loc_id, edge.at, edge.to)),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn packed_wildy_wolf_pit_reaches_ridge_approach() {
+        let content = PathBuf::from("/Users/acfrazier/experiments/lostcity-289/content");
+        let jag = PathBuf::from("/Users/acfrazier/.274bot/unpack-289/config");
+        if !content.join("maps/m46_61.jm2").is_file() {
+            eprintln!("SKIP: no 289 wilderness mapsquare at {}", content.display());
+            return;
+        }
+        let Ok(bytes) = fs::read(&jag) else {
+            eprintln!("SKIP: no 289 config jag at {}", jag.display());
+            return;
+        };
+        let defs = LocDefs::from_locs(&Cache::unpack(&JagFile::new(bytes)).locs);
+        let tmp = std::env::temp_dir().join(format!("wildy-pit-maps-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp);
+        fs::create_dir_all(&tmp).unwrap();
+        fs::copy(content.join("maps/m46_61.jm2"), tmp.join("m46_61.jm2")).unwrap();
+        let collision = bake_from_maps(&tmp, &defs, &HashSet::new()).expect("bake m46_61");
+        let _ = fs::remove_dir_all(&tmp);
+        let graph = derive_transports(&content, &defs, &collision);
+        let pit = WorldTile {
+            x: 3001,
+            z: 3923,
+            level: 0,
+        };
+        let ridge = WorldTile {
+            x: 2998,
+            z: 3924,
+            level: 0,
+        };
+        let approach = WorldTile {
+            x: 2998,
+            z: 3916,
+            level: 0,
+        };
+        let opts = FindOptions {
+            allow_teleports: false,
+            allow_wilderness: true,
+            allow_bank_fetch: true,
+            ..FindOptions::default()
+        };
+        let state = WorldState::empty().with_map_members(true);
+        find_with(&collision, &graph, pit, approach, opts, &state).unwrap_or_else(|e| {
+            panic!("wolf pit (3001,3923) -> ridge approach (2998,3916) must walk around the east railings: {e:?}")
+        });
+        assert!(
+            matches!(
+                find_with(&collision, &graph, ridge, approach, opts, &state),
+                Err(RouteError::NoPath)
+            ),
+            "the ridge corridor cannot walk south through loc_2309; recovery is from the pit after the fall"
         );
     }
 }

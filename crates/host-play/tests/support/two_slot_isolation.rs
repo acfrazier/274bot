@@ -645,6 +645,7 @@ pub fn prepare_alcher(root: &Path, temp: &Path, row: &CardLedger) -> Result<Prep
             kind: card.kind,
             source: card.source,
             shape: None,
+            api_family: Some(card.api_family.as_str().into()),
         },
     )?;
     let sibling_hashes = siblings

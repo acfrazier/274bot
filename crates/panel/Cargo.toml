@@ -29,6 +29,7 @@ name = "panel-play"
 path = "src/main.rs"
 
 [features]
+render-diagnostics = ["client/render-diagnostics", "host/render-diagnostics"]
 memory-profile = ["host-play/memory-profile"]
 
 # CPU diagnostic: use System directly, report allocator metrics unavailable.

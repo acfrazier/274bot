@@ -116,6 +116,11 @@ impl Widget for StatusPane<'_> {
                     Line::from(format!("modals: {}", s.main_modal_id)),
                     Line::from(format!("mem: {}", self.mem)),
                 ];
+                if let Some(failure) = s.welcome_failure.as_deref() {
+                    lines.push(Line::from(format!("welcome: {failure}")));
+                } else if s.welcome_hold {
+                    lines.push(Line::from("welcome: holding"));
+                }
                 if let Some(random) = random_status_text(s) {
                     lines.push(Line::from(format!("random: {random}")));
                 }

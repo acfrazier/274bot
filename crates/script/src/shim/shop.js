@@ -1,81 +1,21 @@
-// Our Shop module. Open/buy/sell/close are Rust-owned: this shim marshals the
-// call argument, dispatches the verbs the runtime returns and reports the
-// observed quantity. It never batches ops, picks rows or decides a wait.
-import { snap, queue, notImpl } from '../../shim/_kernel.js';
-import { Execution } from '../execution/Execution.js';
+// Our Shop module. Open/buy/sell/close are one `shop` machine await each:
+// Rust presses Trade, batches the Buy/Sell ops, owns every wait and reports
+// the observed quantity. Rust calls `Shop.sell`'s optional pick callback over
+// the same-name shop player rows. Reads shape the posted shop pages.
+import { snap, notImpl, runMachine } from '../../shim/_kernel.js';
 
-function callShop(payload) {
-    const fn = globalThis.rustyscript && globalThis.rustyscript.functions
-        ? globalThis.rustyscript.functions.__rs2b0t_shop
-        : undefined;
-    if (typeof fn !== 'function') {
-        throw notImpl('Shop');
-    }
-    return fn(payload);
-}
+// What a call ended by a reset or a newer shop call resolves to.
+const ABORTED = { open: false, buy: 0, sell: 0, close: undefined };
 
-function dispatchVerb(step) {
-    if (step.kind === 'npc') {
-        queue({ op: 'npc', name: step.name, action: step.action });
-        return true;
-    }
-    if (step.kind === 'close-modal') {
-        queue({ op: 'close-modal' });
-        return true;
-    }
-    if (step.kind === 'ops') {
-        for (const op of step.ops || []) queue(op);
-        return true;
-    }
-    return false;
-}
-
-// The frozen signatures: `open` resolves a boolean, `buy`/`sell` resolve the
-// observed count and `close` resolves void.
-function settle(kind, step) {
-    if (kind === 'open') return step.result === true;
-    if (kind === 'close') return undefined;
-    return typeof step.quantity === 'number' ? step.quantity : 0;
-}
-
-function abortedResult(kind) {
-    if (kind === 'open') return false;
-    if (kind === 'close') return undefined;
-    return 0;
-}
-
-// One call's whole sequence: dispatch every returned verb and park between
-// waits. The runtime owns each deadline, so a stalled call still ends.
 async function run(kind, name, qty, pick) {
-    if (pick !== undefined && pick !== null) {
-        // The frozen signature's same-name pack selector is not mapped: the
-        // Rust runtime resolves rows itself and must not guess a caller row.
-        throw notImpl('Shop.' + kind, 'pick unsupported');
-    }
-    const begin = callShop({ op: 'begin', kind, name: name ?? '', qty: qty ?? 1 });
-    if (!begin) return abortedResult(kind);
-    if (begin.kind === 'notImpl') throw notImpl('Shop.' + kind, begin.reason);
-    if (begin.kind === 'aborted') return abortedResult(kind);
-    if (begin.kind === 'done') return settle(kind, begin);
-    const token = begin.token;
-    let current = begin;
-    while (current) {
-        if (current.kind === 'done') return settle(kind, current);
-        if (current.kind === 'aborted') return abortedResult(kind);
-        if (current.kind === 'notImpl') throw notImpl('Shop.' + kind, current.reason);
-        if (current.kind === 'ops' || current.kind === 'npc' || current.kind === 'close-modal') {
-            dispatchVerb(current);
-        } else if (current.kind !== 'wait') {
-            return abortedResult(kind);
-        }
-        let next = null;
-        await Execution.delayUntil(() => {
-            next = callShop({ op: 'next', token });
-            return next?.kind !== 'wait';
-        }, 0);
-        current = next;
-    }
-    return abortedResult(kind);
+    const out = await runMachine(
+        'shop',
+        { kind, name: name ?? '', qty: qty ?? 1 },
+        { pick: typeof pick === 'function' ? pick : undefined },
+    );
+    if (out.kind === 'refused') throw notImpl('Shop.' + kind, out.reason);
+    if (out.kind !== 'done') return ABORTED[kind];
+    return out.value ?? undefined;
 }
 
 export const Shop = new Proxy(

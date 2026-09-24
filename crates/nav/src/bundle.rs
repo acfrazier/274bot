@@ -18,6 +18,10 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct NavIdentityRow {
+    #[serde(default)]
+    pub content_id: Option<String>,
+    #[serde(default)]
+    pub source_sha256: Option<String>,
     pub revision: u16,
     pub cache_id: String,
     pub format: String,
@@ -83,11 +87,40 @@ pub fn fingerprints(root: &Path, files: &[&Path]) -> Result<Vec<InputFingerprint
     Ok(rows)
 }
 
+/// Content-address the conservative baker input closure. Paths are relative
+/// to the content root; VCS metadata is not a baker input. Explicit inputs
+/// are labelled by argument position so provenance is machine-independent.
+pub fn source_digest(root: &Path, files: &[&Path]) -> Result<String, String> {
+    use sha2::{Digest, Sha256};
+    let mut paths = Vec::new();
+    collect_files(root, &mut paths)?;
+    paths.sort();
+    let mut digest = Sha256::new();
+    digest.update(b"274NAVSOURCE01");
+    for path in paths {
+        let label = path
+            .strip_prefix(root)
+            .map_err(|e| e.to_string())?
+            .to_string_lossy();
+        digest.update((label.len() as u64).to_be_bytes());
+        digest.update(label.as_bytes());
+        digest.update(crate::manifest::hash_file(&path)?.as_bytes());
+    }
+    for (index, path) in files.iter().enumerate() {
+        digest.update((index as u64).to_be_bytes());
+        digest.update(crate::manifest::hash_file(path)?.as_bytes());
+    }
+    Ok(format!("{:x}", digest.finalize()))
+}
+
 fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
     let entries = std::fs::read_dir(dir)
         .map_err(|e| format!("bake input directory {}: {e}", dir.display()))?;
     for entry in entries {
         let entry = entry.map_err(|e| format!("bake input directory {}: {e}", dir.display()))?;
+        if entry.file_name() == ".git" {
+            continue;
+        }
         let path = entry.path();
         let metadata =
             std::fs::metadata(&path).map_err(|e| format!("bake input {}: {e}", path.display()))?;
@@ -289,23 +322,19 @@ pub struct ArtifactLayout {
 }
 
 /// `nav/<revision>/…` keeps revisions side by side: building the other
-/// revision never overwrites the staged artifacts of this one.
+/// revision never overwrites the staged artifacts of this one. The relative
+/// strings are install-relative and written into the stamp, so they use `/`
+/// on every platform (Windows file APIs accept it).
 pub fn artifact_layout(revision: u16) -> ArtifactLayout {
-    let dir = PathBuf::from(format!("nav/{revision}"));
+    let rel = |file: &str| format!("nav/{revision}/{file}");
     ArtifactLayout {
-        relative_pack: dir.join("274bot.navpack").to_string_lossy().into_owned(),
-        relative_flags: dir.join("274bot.navflags").to_string_lossy().into_owned(),
-        relative_reach: dir.join("274bot.navreach").to_string_lossy().into_owned(),
-        relative_canlight: dir
-            .join("274bot.navcanlight")
-            .to_string_lossy()
-            .into_owned(),
-        relative_manifest: dir
-            .join("274bot.navpack.json")
-            .to_string_lossy()
-            .into_owned(),
-        relative_stamp: dir.join("nav-build.json").to_string_lossy().into_owned(),
-        dir,
+        relative_pack: rel("274bot.navpack"),
+        relative_flags: rel("274bot.navflags"),
+        relative_reach: rel("274bot.navreach"),
+        relative_canlight: rel("274bot.navcanlight"),
+        relative_manifest: rel("274bot.navpack.json"),
+        relative_stamp: rel("nav-build.json"),
+        dir: PathBuf::from(format!("nav/{revision}")),
     }
 }
 
@@ -315,6 +344,10 @@ pub fn artifact_layout(revision: u16) -> ArtifactLayout {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BakeStamp {
+    #[serde(default)]
+    pub content_id: Option<String>,
+    #[serde(default)]
+    pub source_sha256: Option<String>,
     /// Generator identity of the bake, from [`crate::bake::generator_identity`].
     pub generator: String,
     /// Pack format identity (`274V9`); a format bump invalidates.
@@ -483,7 +516,7 @@ pub fn resource_root_for_build(
         if dir.as_os_str().is_empty() {
             return Err("BOT_NAV_RESOURCE_DIR is empty".into());
         }
-        return Ok(normalize(dir)?);
+        return normalize(dir);
     }
     let build_dir = out_dir
         .parent()
@@ -531,6 +564,8 @@ mod tests {
 
     fn stamp(generator: &str, format: &str, cache_id: &str, pack_bytes: u64) -> BakeStamp {
         BakeStamp {
+            content_id: None,
+            source_sha256: None,
             generator: generator.into(),
             format: format.into(),
             revision: 289,
@@ -637,6 +672,18 @@ mod tests {
     }
 
     #[test]
+    fn content_digest_detects_same_size_replacement() {
+        let root = std::env::temp_dir().join(format!("nav-source-digest-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let file = root.join("map.jm2");
+        std::fs::write(&file, b"one").unwrap();
+        let first = super::source_digest(&root, &[]).unwrap();
+        std::fs::write(&file, b"two").unwrap();
+        assert_ne!(first, super::source_digest(&root, &[]).unwrap());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn fingerprints_cover_the_tree_and_detect_edits() {
         let root = std::env::temp_dir().join(format!("274bot-bundle-{}", std::process::id()));
         let nested = root.join("maps");
@@ -667,6 +714,8 @@ mod tests {
         let generated = NavIdentityRow {
             revision: 289,
             cache_id: "cache".into(),
+            content_id: None,
+            source_sha256: None,
             format: "274V8".into(),
             nav_sha256: "aa".repeat(32),
             flags_sha256: None,
@@ -682,6 +731,8 @@ mod tests {
         let kept = NavIdentityRow {
             revision: 274,
             cache_id: "other".into(),
+            content_id: None,
+            source_sha256: None,
             format: "274V8".into(),
             nav_sha256: "cc".repeat(32),
             flags_sha256: None,
@@ -730,15 +781,10 @@ mod tests {
             resource_root_for_build(out, None).unwrap(),
             PathBuf::from("/w/target/x86_64-pc-windows-msvc/release")
         );
-        // A macOS bundle stages into Contents/Resources instead.
-        assert_eq!(
-            resource_root_for_build(
-                out,
-                Some(Path::new("/Applications/274bot.app/Contents/Resources"))
-            )
-            .unwrap(),
-            PathBuf::from("/Applications/274bot.app/Contents/Resources")
-        );
+        // A macOS bundle (or installer staging dir) stages into its own
+        // absolute directory instead; an absolute override passes through.
+        let bundle = std::env::temp_dir().join("274bot.app/Contents/Resources");
+        assert_eq!(resource_root_for_build(out, Some(&bundle)).unwrap(), bundle);
         assert!(resource_root_for_build(Path::new("/unexpected/out"), None).is_err());
         assert!(resource_root_for_build(out, Some(Path::new(""))).is_err());
     }
@@ -897,6 +943,7 @@ mod tests {
             "scripts/areas/area_gnome/scripts/spirit_tree.rs2",
             "scripts/areas/area_ardougne_east/scripts/wilderness_lever.rs2",
             "scripts/areas/area_alkharid/configs/border_gate.loc",
+            "scripts/minigames/game_ranging/configs/ranging.loc",
             "scripts/quests/quest_zanaris/scripts/quest_zanaris.rs2",
             "scripts/skill_magic/configs/magic_spells.dbrow",
             "scripts/skill_magic/configs/enchanted_jewelry.obj",
@@ -1100,6 +1147,43 @@ mod tests {
                     .starts_with("scripts/ladders+stairs/scripts/stairs.rs2 (stair edges)")),
             "{missing:?}"
         );
+    }
+
+    #[test]
+    fn a_missing_ranging_loc_is_reported_without_duplicating_scan_owned_rs2() {
+        const RANGING_LOC: &str = "scripts/minigames/game_ranging/configs/ranging.loc";
+        const RANGING_DOOR_RS2: &str =
+            "scripts/minigames/game_ranging/scripts/ranging_guild_door.rs2";
+        for revision in [289u16, 274] {
+            let rows = required_content_inputs(revision).expect("inventory");
+            let loc_rows: Vec<_> = rows.iter().filter(|row| row.path == RANGING_LOC).collect();
+            assert_eq!(
+                loc_rows.len(),
+                1,
+                "revision {revision}: {RANGING_LOC} is one named file row"
+            );
+            assert_eq!(
+                loc_rows[0].kind,
+                RequiredKind::File,
+                "revision {revision}: ranging.loc is outside the loc scan roots"
+            );
+            assert!(
+                rows.iter()
+                    .filter(|row| row.path == RANGING_DOOR_RS2)
+                    .all(|row| row.kind == RequiredKind::Rs2),
+                "revision {revision}: {RANGING_DOOR_RS2} stays scan-owned only"
+            );
+
+            let root = RequiredFixture::new(&format!("ranging-loc-{revision}"));
+            write_inventory_tree(&root.0, revision);
+            std::fs::remove_file(root.0.join(RANGING_LOC)).unwrap();
+            let missing = missing_content_inputs(revision, &root.0).expect("guard");
+            assert_eq!(missing.len(), 1, "revision {revision}: {missing:?}");
+            assert!(
+                missing[0].starts_with(&format!("{RANGING_LOC} (Ranging Guild door edges)")),
+                "revision {revision}: {missing:?}"
+            );
+        }
     }
 
     #[test]

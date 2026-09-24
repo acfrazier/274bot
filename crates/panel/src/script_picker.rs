@@ -890,6 +890,13 @@ mod tests {
             body_fn.contains("queue_transpile_all") && body_fn.contains("Transpile all"),
             "Scripts offers an explicit all-at-once warmup, not a click that burns the catalog"
         );
+        assert!(
+            body_fn.contains("Copy failures")
+                && body_fn.contains("named_failure_output")
+                && card_fn.contains("load_failure")
+                && card_fn.contains("failed {}"),
+            "Scripts shows a copyable failed list and per-card diagnostic detail"
+        );
         let grid = APP.split("fn browse_card_grid").nth(1).unwrap_or("");
         assert!(
             grid.contains("same_line_with_spacing") && grid.contains("CARD_GAP"),

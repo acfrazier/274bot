@@ -1,11 +1,10 @@
-//! `chooseTarget`: the caller's iterator stays in JS; the visit order, the
-//! first hit, the short circuit and the blocked fallback are native
-//! `__rs2b0t_target_step` decisions.
+//! `chooseTarget`: one native call (`__rs2b0t_choose_target`) walks the
+//! caller's own iterable and calls its `reachable` callback.
 //!
-//! Parity here means the shim still produces what the previous `for...of` body
-//! produced: the test drives an inline copy of that body (the reference) and the
-//! native-backed export over the same inputs and compares target/blocked
-//! identity plus the callback sequence.
+//! Parity here means the export produces what the frozen
+//! `bot/api/thieving/targets.ts` `for...of` body produces: the test drives an
+//! inline copy of that body (the reference) and the native export over the same
+//! inputs and compares target/blocked identity plus the callback sequence.
 
 use script::{LoadIsolate, LoadShape};
 
@@ -316,18 +315,6 @@ globalThis.__protocol = {
     ),
 };
 
-// The direct wire contract of `__rs2b0t_target_step`.
-const step = globalThis.rustyscript.functions.__rs2b0t_target_step;
-globalThis.__wire = {
-    start: step({ op: 'choose' }),
-    value: step({ op: 'choose', done: false }),
-    done: step({ op: 'choose', done: true }),
-    hit: step({ op: 'choose', probed: true }),
-    miss: step({ op: 'choose', probed: false }),
-    staleDone: step({ op: 'choose', done: false, probed: true }),
-    unknown: step({ op: 'nope' }),
-};
-
 export default class T extends LoopingBot {
     loop() {}
 }
@@ -535,26 +522,13 @@ fn the_callers_iterator_protocol_and_errors_are_exactly_the_previous_body() {
 }
 
 #[test]
-fn wire_steps_and_frozen_loop_parity_hold() {
+fn the_export_matches_the_frozen_loop_body() {
     let iso = spawn();
-    assert_eq!(
-        iso.probe("__wire").unwrap(),
-        serde_json::json!({
-            "start": { "kind": "next" },
-            "value": { "kind": "probe" },
-            "done": { "kind": "exhausted" },
-            "hit": { "kind": "hit" },
-            "miss": { "kind": "next" },
-            "staleDone": { "kind": "hit" },
-            "unknown": { "kind": "notImpl", "reason": "unknown op" },
-        }),
-        "the step protocol answers the shim without holding state"
-    );
     assert!(
         all_true(&iso.probe("__parity").unwrap(), "targetSame")
             && all_true(&iso.probe("__parity").unwrap(), "blockedSame")
             && all_true(&iso.probe("__parity").unwrap(), "callsSame"),
-        "the native-backed export matches the previous `for...of` body: {:?}",
+        "the native export matches the frozen `for...of` body: {:?}",
         iso.probe("__parity").unwrap()
     );
     iso.join();

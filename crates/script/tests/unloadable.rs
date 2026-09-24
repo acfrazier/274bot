@@ -155,12 +155,26 @@ fn walk_executor_stays_unloadable() {
 }
 
 #[test]
-fn webwalk_navigator_stays_unloadable() {
-    let src = "import x from '../../event/webwalk/Navigator.js'; export default class T extends LoopingBot { loop() {} }";
-    assert_eq!(
-        script::first_unloadable_specifier(src).as_deref(),
-        Some("../../event/webwalk/Navigator.js")
-    );
+fn webwalk_navigator_find_path_is_loadable() {
+    let src = "import { Navigator } from '../../event/webwalk/Navigator.js'; export default class T extends LoopingBot { async loop() { await Navigator.findPath({x:1,z:2,level:0},{x:3,z:4,level:0},{timeoutMs:8000}); } }";
+    assert_eq!(script::first_unloadable_specifier(src), None);
+}
+
+#[test]
+fn webwalk_worker_and_navworker_stay_unloadable() {
+    for spec in [
+        "../../event/webwalk/Worker.js",
+        "../../event/webwalk/navworker.js",
+        "../../event/webwalk/collision.lcnav.gz",
+    ] {
+        let src = format!(
+            "import x from '{spec}'; export default class T extends LoopingBot {{ loop() {{}} }}"
+        );
+        assert_eq!(
+            script::first_unloadable_specifier(&src).as_deref(),
+            Some(spec)
+        );
+    }
 }
 
 #[test]
@@ -211,7 +225,75 @@ fn log_from_who_is_not_an_import_specifier() {
 }
 
 #[test]
+fn type_only_imports_never_block_a_card() {
+    // BrimhavenMossGiants `bank.ts`: the danger-zone type is erased by the transpile.
+    let src = r#"
+import { Navigator } from '../../event/webwalk/Navigator.js';
+import type { DangerZoneRect } from '../../event/webwalk/data/dangerZones.js';
+import { type PathPolicy } from '../../event/webwalk/types.js';
+export type { WorldStateData } from '../../event/webwalk/worldStateData.js';
+const ZONE: DangerZoneRect = { minX: 1, maxX: 2, minZ: 1, maxZ: 2 };
+export default class T extends LoopingBot { loop() {} }
+"#;
+    assert_eq!(script::first_unloadable_specifier(src), None);
+}
+
+#[test]
+fn a_value_binding_beside_a_type_binding_still_blocks() {
+    let src = r#"
+import type { Task } from '../../api/bot/Bot.js';
+import { type DangerZoneRect, resolveDangerZones } from '../../event/webwalk/data/dangerZones.js';
+export * from '../../event/webwalk/WalkExecutor.js';
+export default class T extends LoopingBot { loop() {} }
+"#;
+    assert_eq!(
+        script::first_unloadable_specifier(src).as_deref(),
+        Some("../../event/webwalk/data/dangerZones.js")
+    );
+}
+
+#[test]
 fn herb_cleaner_parent_sibling_remaps() {
     let src = "import { HERBS } from '../HerbCleaner/HerbCleanerLogic.js'; export default class T extends LoopingBot { loop() {} }";
     assert_eq!(script::first_unloadable_specifier(src), None);
+}
+
+#[test]
+fn herbs_data_import_remaps() {
+    let src = r#"
+import { HERBS, HERB_OPTIONS } from '../../data/herbs.js';
+export default class T extends LoopingBot {
+    loop() { globalThis.__probe = [HERBS.length, HERB_OPTIONS.length]; }
+}
+"#;
+    assert_eq!(script::first_unloadable_specifier(src), None);
+}
+
+#[test]
+fn autofighter_shaped_herbs_import_remaps() {
+    let src = "import { HERBS, HERB_OPTIONS } from '../../data/herbs.js'; export default class T extends LoopingBot { loop() {} }";
+    assert_eq!(script::first_unloadable_specifier(src), None);
+}
+
+#[test]
+fn herb_cleaner_logic_transitive_herbs_scan_is_loadable() {
+    use script::load::first_unloadable_for_card;
+
+    let dir = std::env::temp_dir().join(format!("274bot-herb-logic-scan-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let card_dir = dir.join("HerbCleaner");
+    std::fs::create_dir_all(&card_dir).unwrap();
+    std::fs::write(
+        card_dir.join("HerbCleanerLogic.js"),
+        "import { HERBS, HERB_OPTIONS } from '../../data/herbs.js';\nexport { HERBS, HERB_OPTIONS };\n",
+    )
+    .unwrap();
+    let card_path = card_dir.join("HerbCleaner.ts");
+    let origin = "import { HERBS } from './HerbCleanerLogic.js'; export default class T extends LoopingBot { loop() {} }";
+    std::fs::write(&card_path, origin).unwrap();
+    assert_eq!(
+        first_unloadable_for_card(origin, &card_path),
+        None,
+        "transitive ../../data/herbs.js must remap through HerbCleanerLogic"
+    );
 }

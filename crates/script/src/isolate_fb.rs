@@ -2,15 +2,18 @@
 //! schema/isolate.fbs`. The builder and reader are hand-written against
 //! that schema (operators never need `flatc` at `cargo test` time); keep
 //! the two in sync. The PLAYER_INFO snapshot posted into each JS isolate
-//! and the shim interact / paint frames forwarded back are FlatBuffers,
-//! not JSON: a 50+ isolate wall never stringifies or parses a JSON
-//! document per tick. Each slot's host encode path and each V8 isolate
-//! thread reuse one [`IsolateBuf`] (`reset`, not a fresh builder).
+//! and the shim interact batches forwarded back are FlatBuffers, not JSON:
+//! a 50+ isolate wall never stringifies or parses a JSON document per tick.
+//! Recorded paint frames cross that channel as typed `ScriptPaint` values
+//! (both ends are this crate in this process) and are capped by
+//! [`cap_paint`] before they are shared. Each slot's host encode path and
+//! each V8 isolate thread reuse one [`IsolateBuf`] (`reset`, not a fresh
+//! builder).
 //!
 //! The wire format is produced and consumed only by 274bot code. Host-encoded
-//! snapshots are trusted; isolate→host interact/paint bytes are verified on
-//! decode (`flatbuffers::root_with_opts`) so truncated or malicious buffers
-//! fail closed instead of panicking or reading out of bounds.
+//! snapshots are trusted; isolate→host interact bytes are verified on decode
+//! (`flatbuffers::root_with_opts`) so truncated or malicious buffers fail
+//! closed instead of panicking or reading out of bounds.
 //!
 //! Posts are deltas (schema: `Snapshot`): `tick` is always carried, other
 //! fields only when they changed vs the last post — an omitted vector is
@@ -22,6 +25,7 @@ use flatbuffers::{
     root_with_opts, FlatBufferBuilder, Follow, ForwardsUOffset, InvalidFlatbuffer, Table, VOffsetT,
     Vector, Verifiable, Verifier, VerifierOptions, WIPOffset,
 };
+use std::sync::Arc;
 
 /// Max shim interact rows per tick (isolate→host).
 const MAX_INTERACT_REQS: usize = 256;
@@ -29,16 +33,10 @@ const MAX_INTERACT_REQS: usize = 256;
 const MAX_PAINT_LINES: usize = 512;
 /// Max advertised paint buttons per frame (isolate→host).
 const MAX_PAINT_BUTTONS: usize = 32;
-/// Max canvas ops per paint frame (isolate→host).
-const MAX_CANVAS_OPS: usize = crate::canvas::MAX_CANVAS_OPS;
-/// Max UTF-8 bytes per canvas fillText string.
-const MAX_PAINT_TEXT: usize = crate::canvas::MAX_PAINT_TEXT;
-const MAX_PATH_SEGS_PER_OP: usize = crate::canvas::MAX_PATH_SEGS_PER_OP;
-const MAX_PATH_SEGS_PER_FRAME: usize = crate::canvas::MAX_PATH_SEGS_PER_FRAME;
-const MAX_GRADIENT_STOPS: usize = crate::canvas::MAX_GRADIENT_STOPS;
-const MAX_CLIP_PATHS: usize = crate::canvas::MAX_CLIP_PATHS;
-const MAX_LINE_WIDTH: f32 = crate::canvas::MAX_LINE_WIDTH;
-const MAX_SHADOW_BLUR: f32 = crate::canvas::MAX_SHADOW_BLUR;
+/// Max advertised tabs bands per paint frame (isolate→host).
+const MAX_PAINT_TABS: usize = 16;
+/// Max names on one strip/rail/tabs band.
+const MAX_CHROME_NAMES: usize = 32;
 
 fn isolate_verify_opts() -> VerifierOptions {
     VerifierOptions {
@@ -193,6 +191,73 @@ const VT_SNAP_WALK_OUTCOME_ALLOW_TELEPORTS: VOffsetT = 182;
 const VT_SNAP_WALK_OUTCOME_REQUEST_ID: VOffsetT = 184;
 const VT_SNAP_CANVAS_WIDTH: VOffsetT = 186;
 const VT_SNAP_CANVAS_HEIGHT: VOffsetT = 188;
+const VT_SNAP_COMBAT_LEVEL: VOffsetT = 190;
+const VT_SNAP_ROUTE_INSPECT_SEQ: VOffsetT = 192;
+const VT_SNAP_ROUTE_INSPECT_GENERATION: VOffsetT = 194;
+const VT_SNAP_ROUTE_INSPECT_REQUEST_ID: VOffsetT = 196;
+const VT_SNAP_ROUTE_INSPECT_OK: VOffsetT = 198;
+const VT_SNAP_ROUTE_INSPECT_REASON: VOffsetT = 200;
+const VT_SNAP_ROUTE_INSPECT_BANK_PLANNED: VOffsetT = 202;
+const VT_SNAP_ROUTE_INSPECT_TICKS: VOffsetT = 204;
+const VT_SNAP_ROUTE_INSPECT_HOPS: VOffsetT = 206;
+const VT_SNAP_ROUTE_INSPECT_PREV_SEQ: VOffsetT = 208;
+const VT_SNAP_ROUTE_INSPECT_PREV_GENERATION: VOffsetT = 210;
+const VT_SNAP_ROUTE_INSPECT_PREV_REQUEST_ID: VOffsetT = 212;
+const VT_SNAP_ROUTE_INSPECT_PREV_OK: VOffsetT = 214;
+const VT_SNAP_ROUTE_INSPECT_PREV_REASON: VOffsetT = 216;
+const VT_SNAP_ROUTE_INSPECT_PREV_BANK_PLANNED: VOffsetT = 218;
+const VT_SNAP_ROUTE_INSPECT_PREV_TICKS: VOffsetT = 220;
+const VT_SNAP_ROUTE_INSPECT_PREV_HOPS: VOffsetT = 222;
+const VT_SNAP_ROUTE_INSPECT_RUNNING_ID: VOffsetT = 224;
+const VT_SNAP_ROUTE_INSPECT_PENDING_ID: VOffsetT = 226;
+const VT_SNAP_ROUTE_INSPECT_ACCEPTED_ID: VOffsetT = 228;
+const VT_SNAP_ROUTE_INSPECT_REPLACED_ID: VOffsetT = 230;
+const VT_SNAP_ROUTE_INSPECT_REPLACED_PREV_ID: VOffsetT = 232;
+const VT_SNAP_ROUTE_INSPECT_REFUSED_ID: VOffsetT = 234;
+const VT_SNAP_ROUTE_INSPECT_REFUSED_ID_2: VOffsetT = 236;
+const VT_SNAP_ROUTE_INSPECT_REFUSED_ID_3: VOffsetT = 238;
+const VT_SNAP_ROUTE_INSPECT_UNOBSERVED: VOffsetT = 240;
+const VT_SNAP_COLLISION: VOffsetT = 242;
+const VT_SNAP_SELF_TARGET_KIND: VOffsetT = 244;
+const VT_SNAP_SELF_TARGET_INDEX: VOffsetT = 246;
+const VT_SNAP_MAIN_MODAL_TEXTS: VOffsetT = 248;
+const VT_SNAP_PUZZLE_BOARD: VOffsetT = 250;
+const VT_SNAP_PUZZLE_BOARD_GENERATION: VOffsetT = 252;
+const VT_SNAP_WALK_MISSING_CARRY: VOffsetT = 254;
+
+// Carry: { id, count, name }
+const VT_CARRY_ID: VOffsetT = 4;
+const VT_CARRY_COUNT: VOffsetT = 6;
+const VT_CARRY_NAME: VOffsetT = 8;
+
+const VT_COL_AVAILABLE: VOffsetT = 4;
+const VT_COL_BASE_X: VOffsetT = 6;
+const VT_COL_BASE_Z: VOffsetT = 8;
+const VT_COL_LEVEL: VOffsetT = 10;
+const VT_COL_WIDTH: VOffsetT = 12;
+const VT_COL_HEIGHT: VOffsetT = 14;
+const VT_COL_FLAGS: VOffsetT = 16;
+
+// InspectHop
+const VT_IH_KIND: VOffsetT = 4;
+const VT_IH_LOC_ID: VOffsetT = 6;
+const VT_IH_LOC_NAME: VOffsetT = 8;
+const VT_IH_ACTION: VOffsetT = 10;
+const VT_IH_OPTION: VOffsetT = 12;
+const VT_IH_FROM_X: VOffsetT = 14;
+const VT_IH_FROM_Z: VOffsetT = 16;
+const VT_IH_FROM_LEVEL: VOffsetT = 18;
+const VT_IH_TO_X: VOffsetT = 20;
+const VT_IH_TO_Z: VOffsetT = 22;
+const VT_IH_TO_LEVEL: VOffsetT = 24;
+const VT_IH_TICKS: VOffsetT = 26;
+
+// AvoidRect
+const VT_AR_MIN_X: VOffsetT = 4;
+const VT_AR_MAX_X: VOffsetT = 6;
+const VT_AR_MIN_Z: VOffsetT = 8;
+const VT_AR_MAX_Z: VOffsetT = 10;
+const VT_AR_LEVEL: VOffsetT = 12;
 
 /// Logical applet posted as `canvasRect`. Bound to `api::native_input::APPLET_*`.
 pub const SNAPSHOT_CANVAS_W: i32 = api::native_input::APPLET_W;
@@ -213,9 +278,19 @@ const VT_BA_DEST_LEVEL: VOffsetT = 20;
 const VT_WT_COMPONENT: VOffsetT = 4;
 const VT_WT_TEXT: VOffsetT = 6;
 
-// QuestStatus: { name, status }
+// QuestStatus: { name, status, component_id }
 const VT_QUEST_NAME: VOffsetT = 4;
 const VT_QUEST_STATUS: VOffsetT = 6;
+const VT_QUEST_COMPONENT: VOffsetT = 8;
+
+// MainModalTexts: { root, texts }
+const VT_MMT_ROOT: VOffsetT = 4;
+const VT_MMT_TEXTS: VOffsetT = 6;
+
+// PuzzleBoard: { component_id, size, items }
+const VT_PB_COMPONENT_ID: VOffsetT = 4;
+const VT_PB_SIZE: VOffsetT = 6;
+const VT_PB_ITEMS: VOffsetT = 8;
 
 // NpcBox: { index, points }
 const VT_NPC_BOX_INDEX: VOffsetT = 4;
@@ -266,6 +341,9 @@ const VT_ENT_REACHABLE_ADJ: VOffsetT = 30;
 const VT_ENT_COMBAT_LEVEL: VOffsetT = 32;
 const VT_ENT_TARGET_KIND: VOffsetT = 34;
 const VT_ENT_TARGET_INDEX: VOffsetT = 36;
+const VT_ENT_SIZE: VOffsetT = 38;
+const VT_ENT_NX: VOffsetT = 40;
+const VT_ENT_NZ: VOffsetT = 42;
 
 // ChatOption: { text }
 const VT_CHAT_OPT_TEXT: VOffsetT = 4;
@@ -290,7 +368,8 @@ const VT_VARP_VALUE: VOffsetT = 6;
 
 // Interact: { op, x, z, level, kind, name, stand_op, choose, action,
 //             index, component_id, bank_generation, bank_item_id, lands_as_id,
-//             source_item_id, source_item_slot, target_item_id, target_item_slot }
+//             source_item_id, source_item_slot, target_item_id, target_item_slot,
+//             request_id, xf, yf, input_identity, allow_wilderness, allow_bank_fetch }
 const VT_IN_OP: VOffsetT = 4;
 const VT_IN_X: VOffsetT = 6;
 const VT_IN_Z: VOffsetT = 8;
@@ -313,62 +392,18 @@ const VT_IN_REQUEST_ID: VOffsetT = 40;
 const VT_IN_XF: VOffsetT = 42;
 const VT_IN_YF: VOffsetT = 44;
 const VT_IN_INPUT_IDENTITY: VOffsetT = 46;
+const VT_IN_ALLOW_WILDERNESS: VOffsetT = 48;
+const VT_IN_ALLOW_BANK_FETCH: VOffsetT = 50;
+const VT_IN_FROM_X: VOffsetT = 52;
+const VT_IN_FROM_Z: VOffsetT = 54;
+const VT_IN_FROM_LEVEL: VOffsetT = 56;
+const VT_IN_ALLOW_TELEPORTS: VOffsetT = 58;
+const VT_IN_AVOID: VOffsetT = 60;
+const VT_IN_INSPECT_ACK_SEQ: VOffsetT = 62;
+const VT_IN_INSPECT_ACK_GENERATION: VOffsetT = 64;
 
 // InteractBatch: { reqs: [Interact] }
 const VT_REQS: VOffsetT = 4;
-
-// PaintButton: { id: string, label: string }
-const VT_PAINT_BTN_ID: VOffsetT = 4;
-const VT_PAINT_BTN_LABEL: VOffsetT = 6;
-
-// Paint: { title, accent, lines, buttons, canvas }
-const VT_PAINT_TITLE: VOffsetT = 4;
-const VT_PAINT_ACCENT: VOffsetT = 6;
-const VT_PAINT_LINES: VOffsetT = 8;
-const VT_PAINT_BUTTONS: VOffsetT = 10;
-const VT_PAINT_CANVAS: VOffsetT = 12;
-
-// CanvasOp: { kind, x, y, w, h, color, text, font_px, mono, segs, clips, stops, ... }
-const VT_CANVAS_KIND: VOffsetT = 4;
-const VT_CANVAS_X: VOffsetT = 6;
-const VT_CANVAS_Y: VOffsetT = 8;
-const VT_CANVAS_W: VOffsetT = 10;
-const VT_CANVAS_H: VOffsetT = 12;
-const VT_CANVAS_COLOR: VOffsetT = 14;
-const VT_CANVAS_TEXT: VOffsetT = 16;
-const VT_CANVAS_FONT_PX: VOffsetT = 18;
-const VT_CANVAS_MONO: VOffsetT = 20;
-const VT_CANVAS_SEGS: VOffsetT = 22;
-const VT_CANVAS_CLIPS: VOffsetT = 24;
-const VT_CANVAS_STOPS: VOffsetT = 26;
-const VT_CANVAS_GX0: VOffsetT = 28;
-const VT_CANVAS_GY0: VOffsetT = 30;
-const VT_CANVAS_GX1: VOffsetT = 32;
-const VT_CANVAS_GY1: VOffsetT = 34;
-const VT_CANVAS_R0: VOffsetT = 36;
-const VT_CANVAS_R1: VOffsetT = 38;
-const VT_CANVAS_GRAD_KIND: VOffsetT = 40;
-const VT_CANVAS_LINE_WIDTH: VOffsetT = 42;
-const VT_CANVAS_LINE_JOIN: VOffsetT = 44;
-const VT_CANVAS_SHADOW_COLOR: VOffsetT = 46;
-const VT_CANVAS_SHADOW_BLUR: VOffsetT = 48;
-const VT_CANVAS_SHADOW_X: VOffsetT = 50;
-const VT_CANVAS_SHADOW_Y: VOffsetT = 52;
-const VT_CANVAS_ALIGN: VOffsetT = 54;
-const VT_CANVAS_BASELINE: VOffsetT = 56;
-
-const VT_SEG_KIND: VOffsetT = 4;
-const VT_SEG_X: VOffsetT = 6;
-const VT_SEG_Y: VOffsetT = 8;
-const VT_SEG_C1X: VOffsetT = 10;
-const VT_SEG_C1Y: VOffsetT = 12;
-const VT_SEG_C2X: VOffsetT = 14;
-const VT_SEG_C2Y: VOffsetT = 16;
-
-const VT_GSTOP_OFFSET: VOffsetT = 4;
-const VT_GSTOP_COLOR: VOffsetT = 6;
-
-const VT_CLIP_SEGS: VOffsetT = 4;
 
 /// A game tile `{x, z, level}`.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -394,6 +429,8 @@ pub struct ReachViewInput<'a> {
     pub adjacent_rank: &'a [u16],
     pub step: &'a [u8],
     pub canlight: &'a [u32],
+    /// Non-zero: fingerprint compares this stamp instead of copying vectors.
+    pub stamp: u64,
 }
 
 impl ReachViewInput<'static> {
@@ -412,6 +449,31 @@ impl ReachViewInput<'static> {
         adjacent_rank: &[],
         step: &[],
         canlight: &[],
+        stamp: 0,
+    };
+}
+
+/// One current-plane raw i32 collision grid posted on the isolate snapshot.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct CollisionViewInput<'a> {
+    pub available: bool,
+    pub base_x: i32,
+    pub base_z: i32,
+    pub level: i32,
+    pub width: i32,
+    pub height: i32,
+    pub flags: &'a [i32],
+}
+
+impl CollisionViewInput<'static> {
+    pub const UNAVAILABLE: Self = Self {
+        available: false,
+        base_x: 0,
+        base_z: 0,
+        level: 0,
+        width: 0,
+        height: 0,
+        flags: &[],
     };
 }
 
@@ -447,6 +509,12 @@ pub struct SceneEntityInput<'a> {
     pub target_kind: i32,
     /// `-1` when not facing anyone.
     pub target_index: i32,
+    /// NPC packed size in tiles. `0` omits the new slots (loc/player/ground).
+    pub size: i32,
+    /// Path-head network SW x. Packed only with `size >= 1`.
+    pub nx: i32,
+    /// Path-head network SW z. Packed only with `size >= 1`.
+    pub nz: i32,
 }
 
 /// One chat modal BUTTON_OK choice.
@@ -616,6 +684,8 @@ pub struct SnapshotInput<'a> {
     pub scene_state: i32,
     /// Local player run weight from `GameSnapshot::local_player`.
     pub weight: i32,
+    /// Local player combat level from `GameSnapshot::local_player`.
+    pub combat_level: i32,
     /// Orbit camera yaw (`CameraView::orbit_yaw`).
     pub camera_yaw: i32,
     /// Orbit camera pitch (`CameraView::orbit_pitch`).
@@ -639,6 +709,10 @@ pub struct SnapshotInput<'a> {
     pub reach: ReachViewInput<'a>,
     /// Local `Game.attackedByPlayer`: `face_entity >= PLAYER_FACE_BASE`.
     pub attacked_by_player: bool,
+    /// Local decoded face: `0` none, `1` npc, `2` player.
+    pub self_target_kind: i32,
+    /// Local decoded face index. `-1` when kind is none.
+    pub self_target_index: i32,
     /// Selected-world widget text rows. Absent id is not a stale IfType label.
     pub widgets: &'a [WidgetTextInput<'a>],
 }
@@ -651,6 +725,17 @@ pub struct NativeFactsInput<'a> {
     pub hint_tile: Option<(i32, i32)>,
     pub retaliate_controls: Option<(i32, i32)>,
     pub quest_statuses: Option<&'a [QuestStatusInput<'a>]>,
+    /// The main modal's paired text walk. `None` = not supplied this post
+    /// (omit the slot — the isolate keeps its last pair). `Some` with
+    /// `root: -1, texts: []` = observed closed, a present table. The two
+    /// are not equal, and an empty vector is still a supplied walk.
+    pub main_modal_texts: Option<MainModalTextsInput<'a>>,
+    /// The open puzzle board (rows + session generation). `None` = not
+    /// supplied this post (omit both slots — the isolate keeps its last
+    /// board); `Some` with `component_id: -1` = observed closed, a present
+    /// table. The two are not equal. A present board always posts the
+    /// generation in the same buffer.
+    pub puzzle_board: Option<PuzzleBoardInput<'a>>,
     pub npc_boxes: Option<&'a [NpcBoxInput]>,
     /// The shop side interface's player pack rows (`shop_template_side:inv`,
     /// 3823). `None` = that container was not decoded this rebuild: Sell must
@@ -674,6 +759,60 @@ pub struct NativeFactsInput<'a> {
     pub walk_outcome_radius: i32,
     pub walk_outcome_allow_teleports: bool,
     pub walk_outcome_request_id: u64,
+    /// The walk outcome's navigator-named gate shorts. ALWAYS supplied — an
+    /// empty slice is the observed "this outcome names no short", and the pack
+    /// posts it with the family above in the same buffer, so a clear is never
+    /// omitted. One family, not two: the rows ride inside
+    /// [`Self::walk_outcome_seq`]'s delta.
+    pub walk_missing_carry: &'a [CarryInput<'a>],
+    pub route_inspect: RouteInspectFactsInput<'a>,
+    /// Posted collision family. `None` omits the table (old callers / first
+    /// post without Collision). `Some(UNAVAILABLE)` posts a clear.
+    pub collision: Option<CollisionViewInput<'a>>,
+}
+
+/// Host-published inspect family on the snapshot. All-zero is omitted / old buffer.
+#[derive(Clone, Copy, Default)]
+pub struct RouteInspectFactsInput<'a> {
+    pub latest: RouteInspectTerminalInput<'a>,
+    pub prev: RouteInspectTerminalInput<'a>,
+    pub running_id: u64,
+    pub pending_id: u64,
+    pub accepted_id: u64,
+    pub replaced_id: u64,
+    pub replaced_prev_id: u64,
+    pub refused_id: u64,
+    pub refused_id_2: u64,
+    pub refused_id_3: u64,
+    pub unobserved: u64,
+}
+
+#[derive(Clone, Copy, Default)]
+pub struct RouteInspectTerminalInput<'a> {
+    pub seq: u64,
+    pub generation: u64,
+    pub request_id: u64,
+    pub ok: bool,
+    pub reason: Option<&'a str>,
+    pub bank_planned: bool,
+    pub ticks: f64,
+    pub hops: &'a [InspectHopInput<'a>],
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct InspectHopInput<'a> {
+    pub kind: &'a str,
+    pub loc_id: i32,
+    pub loc_name: &'a str,
+    pub action: &'a str,
+    pub option: i32,
+    pub from_x: i32,
+    pub from_z: i32,
+    pub from_level: i32,
+    pub to_x: i32,
+    pub to_z: i32,
+    pub to_level: i32,
+    pub ticks: i32,
 }
 
 /// One native bank-booth dest + readiness row.
@@ -702,6 +841,61 @@ pub struct NpcBoxInput {
 pub struct QuestStatusInput<'a> {
     pub name: &'a str,
     pub status: &'a str,
+    /// The walked TYPE_TEXT id — the row's click target. `None` omits the
+    /// slot (an old buffer / a row the walk had no id for); a present `0`
+    /// is a real id and is posted. Not a sentinel: `-1` is never written
+    /// for an absent id.
+    pub component_id: Option<i32>,
+}
+
+/// The main modal's paired text walk: the root the walk used and its
+/// TYPE_TEXT lines in walk order. Kept off [`SnapshotInput`] (like
+/// [`NativeFactsInput`]) so one-shot callers that post `main_modal_id`
+/// alone do not gain a pair they never walked.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct MainModalTextsInput<'a> {
+    /// The root this walk was taken from — the same integer the buffer
+    /// posts as `main_modal_id`. `-1` is an observed closed modal.
+    pub root: i32,
+    /// TYPE_TEXT lines in walk order, tags intact. Empty is a real walk
+    /// (a closed modal, or an open one whose tree has no text).
+    pub texts: &'a [String],
+}
+
+/// The open puzzle board's piece container, the rows it stores and its
+/// session generation. ONE value: a present board always writes
+/// `component_id`, `size` and `items` together, and the generation is
+/// written in the same buffer (never without the table), so a buffer can
+/// never carry one session's rows beside another session's generation.
+/// Kept off [`SnapshotInput`] (like [`NativeFactsInput`]) so one-shot
+/// callers that never walked a board do not gain an observation they did
+/// not make.
+#[derive(Clone, Copy)]
+pub struct PuzzleBoardInput<'a> {
+    /// The identified TYPE_INV component, or `-1` for an observed closed
+    /// board (posted as `{ -1, 0, [] }` plus the generation, NOT omitted —
+    /// an omitted slot keeps the isolate's last board).
+    pub component_id: i32,
+    /// The component's `link_obj_type` slot count, not `items.len()`: a
+    /// wrong size is an observation and is posted as observed.
+    pub size: i32,
+    /// The identified widget's stored rows, sparse (an empty slot
+    /// contributes no row). Empty is a real board with no pieces.
+    pub items: &'a [ItemRowInput<'a>],
+    /// Session identity of the board family. Bumps on session open, close
+    /// or a new component id — never on a piece move.
+    pub generation: u64,
+}
+
+/// One navigator-named gate short: an `item_req` stack the strict route
+/// needed and the player's posted pack could not prove. `name` is the host obj
+/// table's display name for `id` and is `None` when that table has none — the
+/// join is always the id, so a row without a name is still posted.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct CarryInput<'a> {
+    pub id: i32,
+    pub count: i32,
+    pub name: Option<&'a str>,
 }
 
 /// One currently posted widget text row (`reader.ifText`).
@@ -831,6 +1025,60 @@ impl Verifiable for ReachReader<'_> {
                 false,
             )?
             .visit_field::<ForwardsUOffset<Vector<u32>>>("canlight", VT_REACH_CANLIGHT, false)?
+            .finish();
+        Ok(())
+    }
+}
+
+/// One current-plane collision table as decoded from a buffer.
+#[derive(Clone, Copy)]
+pub struct CollisionReader<'a> {
+    tab: Table<'a>,
+}
+
+impl<'a> Follow<'a> for CollisionReader<'a> {
+    type Inner = CollisionReader<'a>;
+    unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+        Self {
+            tab: Table::new(buf, loc),
+        }
+    }
+}
+
+impl CollisionReader<'_> {
+    pub fn available(&self) -> bool {
+        unsafe { self.tab.get::<bool>(VT_COL_AVAILABLE, None) }.unwrap_or(false)
+    }
+    pub fn base_x(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_COL_BASE_X, None) }.unwrap_or(0)
+    }
+    pub fn base_z(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_COL_BASE_Z, None) }.unwrap_or(0)
+    }
+    pub fn level(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_COL_LEVEL, None) }.unwrap_or(0)
+    }
+    pub fn width(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_COL_WIDTH, None) }.unwrap_or(0)
+    }
+    pub fn height(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_COL_HEIGHT, None) }.unwrap_or(0)
+    }
+    pub fn flags(&self) -> Vec<i32> {
+        i32_vec(&self.tab, VT_COL_FLAGS)
+    }
+}
+
+impl Verifiable for CollisionReader<'_> {
+    fn run_verifier(v: &mut Verifier, pos: usize) -> Result<(), InvalidFlatbuffer> {
+        v.visit_table(pos)?
+            .visit_field::<bool>("available", VT_COL_AVAILABLE, false)?
+            .visit_field::<i32>("base_x", VT_COL_BASE_X, false)?
+            .visit_field::<i32>("base_z", VT_COL_BASE_Z, false)?
+            .visit_field::<i32>("level", VT_COL_LEVEL, false)?
+            .visit_field::<i32>("width", VT_COL_WIDTH, false)?
+            .visit_field::<i32>("height", VT_COL_HEIGHT, false)?
+            .visit_field::<ForwardsUOffset<Vector<i32>>>("flags", VT_COL_FLAGS, false)?
             .finish();
         Ok(())
     }
@@ -1121,6 +1369,126 @@ impl Verifiable for BankApproachReader<'_> {
     }
 }
 
+/// One inspect hop as decoded.
+#[derive(Clone, Copy)]
+pub struct InspectHopReader<'a> {
+    tab: Table<'a>,
+}
+
+impl<'a> flatbuffers::Follow<'a> for InspectHopReader<'a> {
+    type Inner = InspectHopReader<'a>;
+    unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+        Self {
+            tab: Table::new(buf, loc),
+        }
+    }
+}
+
+impl InspectHopReader<'_> {
+    pub fn kind(&self) -> &str {
+        unsafe { self.tab.get::<ForwardsUOffset<&str>>(VT_IH_KIND, None) }.unwrap_or("")
+    }
+    pub fn loc_id(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_IH_LOC_ID, None) }.unwrap_or(0)
+    }
+    pub fn loc_name(&self) -> &str {
+        unsafe { self.tab.get::<ForwardsUOffset<&str>>(VT_IH_LOC_NAME, None) }.unwrap_or("")
+    }
+    pub fn action(&self) -> &str {
+        unsafe { self.tab.get::<ForwardsUOffset<&str>>(VT_IH_ACTION, None) }.unwrap_or("")
+    }
+    pub fn option(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_IH_OPTION, None) }.unwrap_or(0)
+    }
+    pub fn from_x(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_IH_FROM_X, None) }.unwrap_or(0)
+    }
+    pub fn from_z(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_IH_FROM_Z, None) }.unwrap_or(0)
+    }
+    pub fn from_level(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_IH_FROM_LEVEL, None) }.unwrap_or(0)
+    }
+    pub fn to_x(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_IH_TO_X, None) }.unwrap_or(0)
+    }
+    pub fn to_z(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_IH_TO_Z, None) }.unwrap_or(0)
+    }
+    pub fn to_level(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_IH_TO_LEVEL, None) }.unwrap_or(0)
+    }
+    pub fn ticks(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_IH_TICKS, None) }.unwrap_or(0)
+    }
+}
+
+impl Verifiable for InspectHopReader<'_> {
+    fn run_verifier(v: &mut Verifier, pos: usize) -> Result<(), InvalidFlatbuffer> {
+        v.visit_table(pos)?
+            .visit_field::<ForwardsUOffset<&str>>("kind", VT_IH_KIND, false)?
+            .visit_field::<i32>("loc_id", VT_IH_LOC_ID, false)?
+            .visit_field::<ForwardsUOffset<&str>>("loc_name", VT_IH_LOC_NAME, false)?
+            .visit_field::<ForwardsUOffset<&str>>("action", VT_IH_ACTION, false)?
+            .visit_field::<i32>("option", VT_IH_OPTION, false)?
+            .visit_field::<i32>("from_x", VT_IH_FROM_X, false)?
+            .visit_field::<i32>("from_z", VT_IH_FROM_Z, false)?
+            .visit_field::<i32>("from_level", VT_IH_FROM_LEVEL, false)?
+            .visit_field::<i32>("to_x", VT_IH_TO_X, false)?
+            .visit_field::<i32>("to_z", VT_IH_TO_Z, false)?
+            .visit_field::<i32>("to_level", VT_IH_TO_LEVEL, false)?
+            .visit_field::<i32>("ticks", VT_IH_TICKS, false)?
+            .finish();
+        Ok(())
+    }
+}
+
+/// One inspect avoid rectangle as decoded. `level() == -1` means every plane.
+#[derive(Clone, Copy)]
+pub struct AvoidRectReader<'a> {
+    tab: Table<'a>,
+}
+
+impl<'a> flatbuffers::Follow<'a> for AvoidRectReader<'a> {
+    type Inner = AvoidRectReader<'a>;
+    unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+        Self {
+            tab: Table::new(buf, loc),
+        }
+    }
+}
+
+impl AvoidRectReader<'_> {
+    pub fn min_x(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_AR_MIN_X, None) }.unwrap_or(0)
+    }
+    pub fn max_x(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_AR_MAX_X, None) }.unwrap_or(0)
+    }
+    pub fn min_z(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_AR_MIN_Z, None) }.unwrap_or(0)
+    }
+    pub fn max_z(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_AR_MAX_Z, None) }.unwrap_or(0)
+    }
+    pub fn level(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_AR_LEVEL, None) }.unwrap_or(-1)
+    }
+}
+
+impl Verifiable for AvoidRectReader<'_> {
+    fn run_verifier(v: &mut Verifier, pos: usize) -> Result<(), InvalidFlatbuffer> {
+        v.visit_table(pos)?
+            .visit_field::<i32>("min_x", VT_AR_MIN_X, false)?
+            .visit_field::<i32>("max_x", VT_AR_MAX_X, false)?
+            .visit_field::<i32>("min_z", VT_AR_MIN_Z, false)?
+            .visit_field::<i32>("max_z", VT_AR_MAX_Z, false)?
+            .visit_field::<i32>("level", VT_AR_LEVEL, false)?
+            .finish();
+        Ok(())
+    }
+}
+
 /// The PLAYER_INFO snapshot as decoded: read-only access to the same
 /// fields `script_snapshot_fb` encodes.
 pub struct SnapshotReader<'a> {
@@ -1376,6 +1744,143 @@ impl Verifiable for SnapshotReader<'_> {
             )?
             .visit_field::<i32>("canvas_width", VT_SNAP_CANVAS_WIDTH, false)?
             .visit_field::<i32>("canvas_height", VT_SNAP_CANVAS_HEIGHT, false)?
+            .visit_field::<i32>("combat_level", VT_SNAP_COMBAT_LEVEL, false)?
+            .visit_field::<u64>("route_inspect_seq", VT_SNAP_ROUTE_INSPECT_SEQ, false)?
+            .visit_field::<u64>(
+                "route_inspect_generation",
+                VT_SNAP_ROUTE_INSPECT_GENERATION,
+                false,
+            )?
+            .visit_field::<u64>(
+                "route_inspect_request_id",
+                VT_SNAP_ROUTE_INSPECT_REQUEST_ID,
+                false,
+            )?
+            .visit_field::<bool>("route_inspect_ok", VT_SNAP_ROUTE_INSPECT_OK, false)?
+            .visit_field::<ForwardsUOffset<&str>>(
+                "route_inspect_reason",
+                VT_SNAP_ROUTE_INSPECT_REASON,
+                false,
+            )?
+            .visit_field::<bool>(
+                "route_inspect_bank_planned",
+                VT_SNAP_ROUTE_INSPECT_BANK_PLANNED,
+                false,
+            )?
+            .visit_field::<f64>("route_inspect_ticks", VT_SNAP_ROUTE_INSPECT_TICKS, false)?
+            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<InspectHopReader>>>>(
+                "route_inspect_hops",
+                VT_SNAP_ROUTE_INSPECT_HOPS,
+                false,
+            )?
+            .visit_field::<u64>(
+                "route_inspect_prev_seq",
+                VT_SNAP_ROUTE_INSPECT_PREV_SEQ,
+                false,
+            )?
+            .visit_field::<u64>(
+                "route_inspect_prev_generation",
+                VT_SNAP_ROUTE_INSPECT_PREV_GENERATION,
+                false,
+            )?
+            .visit_field::<u64>(
+                "route_inspect_prev_request_id",
+                VT_SNAP_ROUTE_INSPECT_PREV_REQUEST_ID,
+                false,
+            )?
+            .visit_field::<bool>(
+                "route_inspect_prev_ok",
+                VT_SNAP_ROUTE_INSPECT_PREV_OK,
+                false,
+            )?
+            .visit_field::<ForwardsUOffset<&str>>(
+                "route_inspect_prev_reason",
+                VT_SNAP_ROUTE_INSPECT_PREV_REASON,
+                false,
+            )?
+            .visit_field::<bool>(
+                "route_inspect_prev_bank_planned",
+                VT_SNAP_ROUTE_INSPECT_PREV_BANK_PLANNED,
+                false,
+            )?
+            .visit_field::<f64>(
+                "route_inspect_prev_ticks",
+                VT_SNAP_ROUTE_INSPECT_PREV_TICKS,
+                false,
+            )?
+            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<InspectHopReader>>>>(
+                "route_inspect_prev_hops",
+                VT_SNAP_ROUTE_INSPECT_PREV_HOPS,
+                false,
+            )?
+            .visit_field::<u64>(
+                "route_inspect_running_id",
+                VT_SNAP_ROUTE_INSPECT_RUNNING_ID,
+                false,
+            )?
+            .visit_field::<u64>(
+                "route_inspect_pending_id",
+                VT_SNAP_ROUTE_INSPECT_PENDING_ID,
+                false,
+            )?
+            .visit_field::<u64>(
+                "route_inspect_accepted_id",
+                VT_SNAP_ROUTE_INSPECT_ACCEPTED_ID,
+                false,
+            )?
+            .visit_field::<u64>(
+                "route_inspect_replaced_id",
+                VT_SNAP_ROUTE_INSPECT_REPLACED_ID,
+                false,
+            )?
+            .visit_field::<u64>(
+                "route_inspect_replaced_prev_id",
+                VT_SNAP_ROUTE_INSPECT_REPLACED_PREV_ID,
+                false,
+            )?
+            .visit_field::<u64>(
+                "route_inspect_refused_id",
+                VT_SNAP_ROUTE_INSPECT_REFUSED_ID,
+                false,
+            )?
+            .visit_field::<u64>(
+                "route_inspect_refused_id_2",
+                VT_SNAP_ROUTE_INSPECT_REFUSED_ID_2,
+                false,
+            )?
+            .visit_field::<u64>(
+                "route_inspect_refused_id_3",
+                VT_SNAP_ROUTE_INSPECT_REFUSED_ID_3,
+                false,
+            )?
+            .visit_field::<u64>(
+                "route_inspect_unobserved",
+                VT_SNAP_ROUTE_INSPECT_UNOBSERVED,
+                false,
+            )?
+            .visit_field::<ForwardsUOffset<CollisionReader>>("collision", VT_SNAP_COLLISION, false)?
+            .visit_field::<i32>("self_target_kind", VT_SNAP_SELF_TARGET_KIND, false)?
+            .visit_field::<i32>("self_target_index", VT_SNAP_SELF_TARGET_INDEX, false)?
+            .visit_field::<ForwardsUOffset<MainModalTextsReader>>(
+                "main_modal_texts",
+                VT_SNAP_MAIN_MODAL_TEXTS,
+                false,
+            )?
+            .visit_field::<ForwardsUOffset<PuzzleBoardReader>>(
+                "puzzle_board",
+                VT_SNAP_PUZZLE_BOARD,
+                false,
+            )?
+            .visit_field::<u64>(
+                "puzzle_board_generation",
+                VT_SNAP_PUZZLE_BOARD_GENERATION,
+                false,
+            )?
+            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<CarryReader>>>>(
+                "walk_missing_carry",
+                VT_SNAP_WALK_MISSING_CARRY,
+                false,
+            )?
             .finish();
         Ok(())
     }
@@ -1563,6 +2068,12 @@ impl SnapshotReader<'_> {
     pub fn weight(&self) -> i32 {
         unsafe { self.tab.get::<i32>(VT_SNAP_WEIGHT, None) }.unwrap_or(0)
     }
+    pub fn has_combat_level(&self) -> bool {
+        unsafe { self.tab.get::<i32>(VT_SNAP_COMBAT_LEVEL, None).is_some() }
+    }
+    pub fn combat_level(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_SNAP_COMBAT_LEVEL, None) }.unwrap_or(0)
+    }
     pub fn has_camera_yaw(&self) -> bool {
         unsafe { self.tab.get::<i32>(VT_SNAP_CAMERA_YAW, None).is_some() }
     }
@@ -1746,6 +2257,124 @@ impl SnapshotReader<'_> {
     pub fn walk_outcome_request_id(&self) -> u64 {
         unsafe { self.tab.get::<u64>(VT_SNAP_WALK_OUTCOME_REQUEST_ID, None) }.unwrap_or(0)
     }
+    pub fn has_route_inspect_seq(&self) -> bool {
+        unsafe {
+            self.tab
+                .get::<u64>(VT_SNAP_ROUTE_INSPECT_SEQ, None)
+                .is_some()
+        }
+    }
+    pub fn route_inspect_seq(&self) -> u64 {
+        unsafe { self.tab.get::<u64>(VT_SNAP_ROUTE_INSPECT_SEQ, None) }.unwrap_or(0)
+    }
+    pub fn route_inspect_generation(&self) -> u64 {
+        unsafe { self.tab.get::<u64>(VT_SNAP_ROUTE_INSPECT_GENERATION, None) }.unwrap_or(0)
+    }
+    pub fn route_inspect_request_id(&self) -> u64 {
+        unsafe { self.tab.get::<u64>(VT_SNAP_ROUTE_INSPECT_REQUEST_ID, None) }.unwrap_or(0)
+    }
+    pub fn route_inspect_ok(&self) -> bool {
+        unsafe { self.tab.get::<bool>(VT_SNAP_ROUTE_INSPECT_OK, None) }.unwrap_or(false)
+    }
+    pub fn route_inspect_reason(&self) -> &str {
+        unsafe {
+            self.tab
+                .get::<ForwardsUOffset<&str>>(VT_SNAP_ROUTE_INSPECT_REASON, None)
+        }
+        .unwrap_or("")
+    }
+    pub fn route_inspect_bank_planned(&self) -> bool {
+        unsafe {
+            self.tab
+                .get::<bool>(VT_SNAP_ROUTE_INSPECT_BANK_PLANNED, None)
+        }
+        .unwrap_or(false)
+    }
+    pub fn route_inspect_ticks(&self) -> f64 {
+        unsafe { self.tab.get::<f64>(VT_SNAP_ROUTE_INSPECT_TICKS, None) }.unwrap_or(0.0)
+    }
+    pub fn route_inspect_hops(&self) -> Vec<InspectHopReader<'_>> {
+        rows::<InspectHopReader>(&self.tab, VT_SNAP_ROUTE_INSPECT_HOPS)
+    }
+    pub fn route_inspect_prev_seq(&self) -> u64 {
+        unsafe { self.tab.get::<u64>(VT_SNAP_ROUTE_INSPECT_PREV_SEQ, None) }.unwrap_or(0)
+    }
+    pub fn route_inspect_prev_generation(&self) -> u64 {
+        unsafe {
+            self.tab
+                .get::<u64>(VT_SNAP_ROUTE_INSPECT_PREV_GENERATION, None)
+        }
+        .unwrap_or(0)
+    }
+    pub fn route_inspect_prev_request_id(&self) -> u64 {
+        unsafe {
+            self.tab
+                .get::<u64>(VT_SNAP_ROUTE_INSPECT_PREV_REQUEST_ID, None)
+        }
+        .unwrap_or(0)
+    }
+    pub fn route_inspect_prev_ok(&self) -> bool {
+        unsafe { self.tab.get::<bool>(VT_SNAP_ROUTE_INSPECT_PREV_OK, None) }.unwrap_or(false)
+    }
+    pub fn route_inspect_prev_reason(&self) -> &str {
+        unsafe {
+            self.tab
+                .get::<ForwardsUOffset<&str>>(VT_SNAP_ROUTE_INSPECT_PREV_REASON, None)
+        }
+        .unwrap_or("")
+    }
+    pub fn route_inspect_prev_bank_planned(&self) -> bool {
+        unsafe {
+            self.tab
+                .get::<bool>(VT_SNAP_ROUTE_INSPECT_PREV_BANK_PLANNED, None)
+        }
+        .unwrap_or(false)
+    }
+    pub fn route_inspect_prev_ticks(&self) -> f64 {
+        unsafe { self.tab.get::<f64>(VT_SNAP_ROUTE_INSPECT_PREV_TICKS, None) }.unwrap_or(0.0)
+    }
+    pub fn route_inspect_prev_hops(&self) -> Vec<InspectHopReader<'_>> {
+        rows::<InspectHopReader>(&self.tab, VT_SNAP_ROUTE_INSPECT_PREV_HOPS)
+    }
+    pub fn route_inspect_running_id(&self) -> u64 {
+        unsafe { self.tab.get::<u64>(VT_SNAP_ROUTE_INSPECT_RUNNING_ID, None) }.unwrap_or(0)
+    }
+    pub fn route_inspect_pending_id(&self) -> u64 {
+        unsafe { self.tab.get::<u64>(VT_SNAP_ROUTE_INSPECT_PENDING_ID, None) }.unwrap_or(0)
+    }
+    pub fn route_inspect_accepted_id(&self) -> u64 {
+        unsafe { self.tab.get::<u64>(VT_SNAP_ROUTE_INSPECT_ACCEPTED_ID, None) }.unwrap_or(0)
+    }
+    pub fn route_inspect_replaced_id(&self) -> u64 {
+        unsafe { self.tab.get::<u64>(VT_SNAP_ROUTE_INSPECT_REPLACED_ID, None) }.unwrap_or(0)
+    }
+    pub fn route_inspect_replaced_prev_id(&self) -> u64 {
+        unsafe {
+            self.tab
+                .get::<u64>(VT_SNAP_ROUTE_INSPECT_REPLACED_PREV_ID, None)
+        }
+        .unwrap_or(0)
+    }
+    pub fn route_inspect_refused_id(&self) -> u64 {
+        unsafe { self.tab.get::<u64>(VT_SNAP_ROUTE_INSPECT_REFUSED_ID, None) }.unwrap_or(0)
+    }
+    pub fn route_inspect_refused_id_2(&self) -> u64 {
+        unsafe {
+            self.tab
+                .get::<u64>(VT_SNAP_ROUTE_INSPECT_REFUSED_ID_2, None)
+        }
+        .unwrap_or(0)
+    }
+    pub fn route_inspect_refused_id_3(&self) -> u64 {
+        unsafe {
+            self.tab
+                .get::<u64>(VT_SNAP_ROUTE_INSPECT_REFUSED_ID_3, None)
+        }
+        .unwrap_or(0)
+    }
+    pub fn route_inspect_unobserved(&self) -> u64 {
+        unsafe { self.tab.get::<u64>(VT_SNAP_ROUTE_INSPECT_UNOBSERVED, None) }.unwrap_or(0)
+    }
     pub fn has_canvas_width(&self) -> bool {
         unsafe { self.tab.get::<i32>(VT_SNAP_CANVAS_WIDTH, None).is_some() }
     }
@@ -1768,6 +2397,19 @@ impl SnapshotReader<'_> {
                 .get::<ForwardsUOffset<ReachReader>>(VT_SNAP_REACH, None)
         }
     }
+    pub fn has_collision(&self) -> bool {
+        unsafe {
+            self.tab
+                .get::<ForwardsUOffset<CollisionReader>>(VT_SNAP_COLLISION, None)
+                .is_some()
+        }
+    }
+    pub fn collision(&self) -> Option<CollisionReader<'_>> {
+        unsafe {
+            self.tab
+                .get::<ForwardsUOffset<CollisionReader>>(VT_SNAP_COLLISION, None)
+        }
+    }
     pub fn has_attacked_by_player(&self) -> bool {
         unsafe {
             self.tab
@@ -1777,6 +2419,26 @@ impl SnapshotReader<'_> {
     }
     pub fn attacked_by_player(&self) -> bool {
         unsafe { self.tab.get::<bool>(VT_SNAP_ATTACKED_BY_PLAYER, None) }.unwrap_or(false)
+    }
+    pub fn has_self_target_kind(&self) -> bool {
+        unsafe {
+            self.tab
+                .get::<i32>(VT_SNAP_SELF_TARGET_KIND, None)
+                .is_some()
+        }
+    }
+    pub fn self_target_kind(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_SNAP_SELF_TARGET_KIND, None) }.unwrap_or(0)
+    }
+    pub fn has_self_target_index(&self) -> bool {
+        unsafe {
+            self.tab
+                .get::<i32>(VT_SNAP_SELF_TARGET_INDEX, None)
+                .is_some()
+        }
+    }
+    pub fn self_target_index(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_SNAP_SELF_TARGET_INDEX, None) }.unwrap_or(-1)
     }
     pub fn has_widgets(&self) -> bool {
         rows_present::<WidgetTextReader>(&self.tab, VT_SNAP_WIDGETS)
@@ -2001,6 +2663,65 @@ impl SnapshotReader<'_> {
     pub fn main_modal_id(&self) -> i32 {
         unsafe { self.tab.get::<i32>(VT_SNAP_MAIN_MODAL, None) }.unwrap_or(-1)
     }
+    /// Whether this buffer carries the main modal's paired text walk. An
+    /// omitted slot is NOT an observed close: the page keeps its last pair
+    /// (and an old buffer simply has no pair).
+    pub fn has_main_modal_texts(&self) -> bool {
+        unsafe {
+            self.tab
+                .get::<ForwardsUOffset<MainModalTextsReader>>(VT_SNAP_MAIN_MODAL_TEXTS, None)
+                .is_some()
+        }
+    }
+    pub fn main_modal_texts(&self) -> Option<MainModalTextsReader<'_>> {
+        unsafe {
+            self.tab
+                .get::<ForwardsUOffset<MainModalTextsReader>>(VT_SNAP_MAIN_MODAL_TEXTS, None)
+        }
+    }
+    /// Whether this buffer carries the puzzle board. An old buffer (or a
+    /// delta where the board did not change) has none, and a delta's absent
+    /// slot is a keep — the materializer fail-closes a keyframe that lacks
+    /// it to a closed board, never to "no property".
+    pub fn has_puzzle_board(&self) -> bool {
+        unsafe {
+            self.tab
+                .get::<ForwardsUOffset<PuzzleBoardReader>>(VT_SNAP_PUZZLE_BOARD, None)
+                .is_some()
+        }
+    }
+    pub fn puzzle_board(&self) -> Option<PuzzleBoardReader<'_>> {
+        unsafe {
+            self.tab
+                .get::<ForwardsUOffset<PuzzleBoardReader>>(VT_SNAP_PUZZLE_BOARD, None)
+        }
+    }
+    /// Whether this buffer carries the walk outcome's navigator-named gate
+    /// shorts. An old buffer (or a delta where the walk outcome family did not
+    /// change) has none, and an absent slot is a keep — never an empty
+    /// shopping list. A PRESENT empty vector is the observed "this outcome
+    /// names no short".
+    pub fn has_walk_missing_carry(&self) -> bool {
+        rows_present::<CarryReader>(&self.tab, VT_SNAP_WALK_MISSING_CARRY)
+    }
+    /// The named shorts in the host's own order (id, then count). Empty when
+    /// the slot is absent: callers that must tell absent from empty read
+    /// [`Self::has_walk_missing_carry`].
+    pub fn walk_missing_carry(&self) -> Vec<CarryReader<'_>> {
+        rows::<CarryReader>(&self.tab, VT_SNAP_WALK_MISSING_CARRY)
+    }
+    /// The board family's session generation. Always posted with the table;
+    /// an old buffer reads 0.
+    pub fn has_puzzle_board_generation(&self) -> bool {
+        unsafe {
+            self.tab
+                .get::<u64>(VT_SNAP_PUZZLE_BOARD_GENERATION, None)
+                .is_some()
+        }
+    }
+    pub fn puzzle_board_generation(&self) -> u64 {
+        unsafe { self.tab.get::<u64>(VT_SNAP_PUZZLE_BOARD_GENERATION, None) }.unwrap_or(0)
+    }
     pub fn has_chat_modal_id(&self) -> bool {
         unsafe { self.tab.get::<i32>(VT_SNAP_CHAT_MODAL, None).is_some() }
     }
@@ -2059,6 +2780,13 @@ where
 {
     // Safety: the buffer was produced by our encoder (root checked).
     match unsafe { tab.get::<ForwardsUOffset<Vector<'a, ForwardsUOffset<T>>>>(slot, None) } {
+        Some(v) => v.iter().collect(),
+        None => Vec::new(),
+    }
+}
+
+fn i32_vec(tab: &Table<'_>, slot: VOffsetT) -> Vec<i32> {
+    match unsafe { tab.get::<ForwardsUOffset<Vector<i32>>>(slot, None) } {
         Some(v) => v.iter().collect(),
         None => Vec::new(),
     }
@@ -2153,6 +2881,9 @@ pub struct SceneEntityFp {
     pub combat_level: i32,
     pub target_kind: i32,
     pub target_index: i32,
+    pub size: i32,
+    pub nx: i32,
+    pub nz: i32,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -2165,6 +2896,27 @@ pub struct ItemRowFp {
     pub cert: i32,
     pub component_id: i32,
     pub slot: i32,
+}
+
+/// One posted puzzle board as an owned fingerprint row. The generation is a
+/// member, not a sibling: the board and its session generation are ONE delta
+/// family, so a comparison can never move one without the other.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct PuzzleBoardFp {
+    pub component_id: i32,
+    pub size: i32,
+    pub items: Vec<ItemRowFp>,
+    pub generation: u64,
+}
+
+/// One navigator-named gate short as an owned fingerprint row. The name is a
+/// member: the display it resolves is part of the posted observation, and a
+/// row the host obj table stops naming still re-posts its id and count.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct CarryFp {
+    pub id: i32,
+    pub count: i32,
+    pub name: Option<String>,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -2198,6 +2950,47 @@ pub struct NearestBoothFp {
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
+pub struct CollisionViewFp {
+    pub available: bool,
+    pub base_x: i32,
+    pub base_z: i32,
+    pub level: i32,
+    pub width: i32,
+    pub height: i32,
+    pub flags: Arc<[i32]>,
+}
+
+fn collision_fp(
+    last: Option<&CollisionViewFp>,
+    input: Option<CollisionViewInput<'_>>,
+) -> CollisionViewFp {
+    let Some(input) = input else {
+        return last.cloned().unwrap_or_default();
+    };
+    if let Some(prev) = last {
+        if prev.available == input.available
+            && prev.base_x == input.base_x
+            && prev.base_z == input.base_z
+            && prev.level == input.level
+            && prev.width == input.width
+            && prev.height == input.height
+            && prev.flags.as_ref() == input.flags
+        {
+            return prev.clone();
+        }
+    }
+    CollisionViewFp {
+        available: input.available,
+        base_x: input.base_x,
+        base_z: input.base_z,
+        level: input.level,
+        width: input.width,
+        height: input.height,
+        flags: Arc::from(input.flags),
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
 pub struct ReachViewFp {
     pub available: bool,
     pub base_x: i32,
@@ -2212,6 +3005,38 @@ pub struct ReachViewFp {
     pub adjacent_rank: Vec<u16>,
     pub step: Vec<u8>,
     pub canlight: Vec<u32>,
+    pub stamp: u64,
+}
+
+fn reach_fp(r: &ReachViewInput<'_>) -> ReachViewFp {
+    if r.stamp != 0 {
+        return ReachViewFp {
+            available: r.available,
+            base_x: r.base_x,
+            base_z: r.base_z,
+            level: r.level,
+            width: r.width,
+            height: r.height,
+            stamp: r.stamp,
+            ..ReachViewFp::default()
+        };
+    }
+    ReachViewFp {
+        available: r.available,
+        base_x: r.base_x,
+        base_z: r.base_z,
+        level: r.level,
+        width: r.width,
+        height: r.height,
+        walkable: r.walkable.to_vec(),
+        reachable: r.reachable.to_vec(),
+        reachable_adj: r.reachable_adj.to_vec(),
+        exact_rank: r.exact_rank.to_vec(),
+        adjacent_rank: r.adjacent_rank.to_vec(),
+        step: r.step.to_vec(),
+        canlight: r.canlight.to_vec(),
+        stamp: 0,
+    }
 }
 
 /// The per-slot last-post fingerprint: an owned copy of the snapshot
@@ -2270,6 +3095,7 @@ pub struct SnapshotFingerprint {
     pub bank_note_off: i32,
     pub scene_state: i32,
     pub weight: i32,
+    pub combat_level: i32,
     pub camera_yaw: i32,
     pub camera_pitch: i32,
     pub teleports_enabled: bool,
@@ -2288,11 +3114,22 @@ pub struct SnapshotFingerprint {
     pub main_make: Option<Vec<ItemRowFp>>,
     pub reach: ReachViewFp,
     pub attacked_by_player: bool,
+    pub self_target_kind: i32,
+    pub self_target_index: i32,
     pub widgets: Vec<(i32, String)>,
     pub self_chat: Option<String>,
     pub hint_tile: Option<(i32, i32)>,
     pub retaliate_controls: Option<(i32, i32)>,
-    pub quest_statuses: Option<Vec<(String, String)>>,
+    /// `(name, status, component_id)` per posted row. The id is part of the
+    /// comparison: a name/status match after a quiet interface rebuild
+    /// would keep a row whose click target is stale or gone.
+    pub quest_statuses: Option<Vec<(String, String, Option<i32>)>>,
+    /// `(root, texts)` — the whole pair or nothing. A missing pair is not
+    /// a closed modal, so the comparison cannot tear lines off the root.
+    pub main_modal_texts: Option<(i32, Vec<String>)>,
+    /// The whole board observation (identity, size, rows, generation) or
+    /// nothing — one family, so a delta cannot post one half.
+    pub puzzle_board: Option<PuzzleBoardFp>,
     pub npc_boxes: Option<Vec<NpcBoxInput>>,
     pub bank_approaches: Option<Vec<BankApproachInput>>,
     pub walk_outcome_seq: u64,
@@ -2304,6 +3141,55 @@ pub struct SnapshotFingerprint {
     pub walk_outcome_radius: i32,
     pub walk_outcome_allow_teleports: bool,
     pub walk_outcome_request_id: u64,
+    /// The walk outcome's named shorts. Part of that family: a list that moved
+    /// without a scalar moving still re-posts the family, so a clear is never
+    /// left to a stale keep.
+    pub walk_missing_carry: Vec<CarryFp>,
+    pub route_inspect: RouteInspectFp,
+    pub collision: CollisionViewFp,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
+pub struct RouteInspectFp {
+    pub latest: RouteInspectTerminalFp,
+    pub prev: RouteInspectTerminalFp,
+    pub running_id: u64,
+    pub pending_id: u64,
+    pub accepted_id: u64,
+    pub replaced_id: u64,
+    pub replaced_prev_id: u64,
+    pub refused_id: u64,
+    pub refused_id_2: u64,
+    pub refused_id_3: u64,
+    pub unobserved: u64,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
+pub struct RouteInspectTerminalFp {
+    pub seq: u64,
+    pub generation: u64,
+    pub request_id: u64,
+    pub ok: bool,
+    pub reason: String,
+    pub bank_planned: bool,
+    pub ticks_bits: u64,
+    pub hops: Vec<InspectHopFp>,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
+pub struct InspectHopFp {
+    pub kind: String,
+    pub loc_id: i32,
+    pub loc_name: String,
+    pub action: String,
+    pub option: i32,
+    pub from_x: i32,
+    pub from_z: i32,
+    pub from_level: i32,
+    pub to_x: i32,
+    pub to_z: i32,
+    pub to_level: i32,
+    pub ticks: i32,
 }
 
 impl SnapshotFingerprint {
@@ -2347,6 +3233,9 @@ impl SnapshotFingerprint {
                 combat_level: e.combat_level,
                 target_kind: e.target_kind,
                 target_index: e.target_index,
+                size: e.size,
+                nx: e.nx,
+                nz: e.nz,
             }
         }
         SnapshotFingerprint {
@@ -2469,6 +3358,7 @@ impl SnapshotFingerprint {
             bank_note_off: input.bank_note_off,
             scene_state: input.scene_state,
             weight: input.weight,
+            combat_level: input.combat_level,
             camera_yaw: input.camera_yaw,
             camera_pitch: input.camera_pitch,
             teleports_enabled: input.teleports_enabled,
@@ -2489,22 +3379,10 @@ impl SnapshotFingerprint {
             main_make: native
                 .main_make
                 .map(|rows| rows.iter().map(item_row_fp).collect()),
-            reach: ReachViewFp {
-                available: input.reach.available,
-                base_x: input.reach.base_x,
-                base_z: input.reach.base_z,
-                level: input.reach.level,
-                width: input.reach.width,
-                height: input.reach.height,
-                walkable: input.reach.walkable.to_vec(),
-                reachable: input.reach.reachable.to_vec(),
-                reachable_adj: input.reach.reachable_adj.to_vec(),
-                exact_rank: input.reach.exact_rank.to_vec(),
-                adjacent_rank: input.reach.adjacent_rank.to_vec(),
-                step: input.reach.step.to_vec(),
-                canlight: input.reach.canlight.to_vec(),
-            },
+            reach: reach_fp(&input.reach),
             attacked_by_player: input.attacked_by_player,
+            self_target_kind: input.self_target_kind,
+            self_target_index: input.self_target_index,
             widgets: input
                 .widgets
                 .iter()
@@ -2515,8 +3393,17 @@ impl SnapshotFingerprint {
             retaliate_controls: native.retaliate_controls,
             quest_statuses: native.quest_statuses.map(|rows| {
                 rows.iter()
-                    .map(|q| (q.name.to_string(), q.status.to_string()))
+                    .map(|q| (q.name.to_string(), q.status.to_string(), q.component_id))
                     .collect()
+            }),
+            main_modal_texts: native
+                .main_modal_texts
+                .map(|pair| (pair.root, pair.texts.to_vec())),
+            puzzle_board: native.puzzle_board.map(|board| PuzzleBoardFp {
+                component_id: board.component_id,
+                size: board.size,
+                items: board.items.iter().map(item_row_fp).collect(),
+                generation: board.generation,
             }),
             npc_boxes: native.npc_boxes.map(<[NpcBoxInput]>::to_vec),
             bank_approaches: native.bank_approaches.map(<[BankApproachInput]>::to_vec),
@@ -2529,7 +3416,64 @@ impl SnapshotFingerprint {
             walk_outcome_radius: native.walk_outcome_radius,
             walk_outcome_allow_teleports: native.walk_outcome_allow_teleports,
             walk_outcome_request_id: native.walk_outcome_request_id,
+            walk_missing_carry: native
+                .walk_missing_carry
+                .iter()
+                .map(|row| CarryFp {
+                    id: row.id,
+                    count: row.count,
+                    name: row.name.map(str::to_string),
+                })
+                .collect(),
+            route_inspect: route_inspect_fp(&native.route_inspect),
+            collision: collision_fp(None, native.collision),
         }
+    }
+}
+
+fn inspect_hop_fp(h: &InspectHopInput<'_>) -> InspectHopFp {
+    InspectHopFp {
+        kind: h.kind.to_string(),
+        loc_id: h.loc_id,
+        loc_name: h.loc_name.to_string(),
+        action: h.action.to_string(),
+        option: h.option,
+        from_x: h.from_x,
+        from_z: h.from_z,
+        from_level: h.from_level,
+        to_x: h.to_x,
+        to_z: h.to_z,
+        to_level: h.to_level,
+        ticks: h.ticks,
+    }
+}
+
+fn route_inspect_terminal_fp(t: &RouteInspectTerminalInput<'_>) -> RouteInspectTerminalFp {
+    RouteInspectTerminalFp {
+        seq: t.seq,
+        generation: t.generation,
+        request_id: t.request_id,
+        ok: t.ok,
+        reason: t.reason.unwrap_or("").to_string(),
+        bank_planned: t.bank_planned,
+        ticks_bits: t.ticks.to_bits(),
+        hops: t.hops.iter().map(inspect_hop_fp).collect(),
+    }
+}
+
+fn route_inspect_fp(facts: &RouteInspectFactsInput<'_>) -> RouteInspectFp {
+    RouteInspectFp {
+        latest: route_inspect_terminal_fp(&facts.latest),
+        prev: route_inspect_terminal_fp(&facts.prev),
+        running_id: facts.running_id,
+        pending_id: facts.pending_id,
+        accepted_id: facts.accepted_id,
+        replaced_id: facts.replaced_id,
+        replaced_prev_id: facts.replaced_prev_id,
+        refused_id: facts.refused_id,
+        refused_id_2: facts.refused_id_2,
+        refused_id_3: facts.refused_id_3,
+        unobserved: facts.unobserved,
     }
 }
 
@@ -2590,6 +3534,7 @@ pub struct DeltaMask {
     pub bank_note_off: bool,
     pub scene_state: bool,
     pub weight: bool,
+    pub combat_level: bool,
     pub camera_yaw: bool,
     pub camera_pitch: bool,
     pub teleports_enabled: bool,
@@ -2608,6 +3553,7 @@ pub struct DeltaMask {
     pub main_make: bool,
     pub reach: bool,
     pub attacked_by_player: bool,
+    pub self_target: bool,
     pub widgets: bool,
     pub self_chat: bool,
     pub hint_tile: bool,
@@ -2616,6 +3562,18 @@ pub struct DeltaMask {
     pub npc_boxes: bool,
     pub bank_approaches: bool,
     pub walk_outcome: bool,
+    pub route_inspect: bool,
+    pub collision: bool,
+    /// One bit for the `MainModalTexts` pair: `(root, texts)` changes
+    /// together so a buffer can never carry lines from one root beside
+    /// another root's id. When set, slot 248 and slot 68 post in the same
+    /// buffer.
+    pub main_modal_texts: bool,
+    /// One bit for the whole board family (identity, size, rows AND
+    /// generation): when set, slot 250 and slot 252 post in the same
+    /// buffer. Never set for the generation alone — the generation is not
+    /// a field of its own.
+    pub puzzle_board: bool,
 }
 
 impl DeltaMask {
@@ -2672,6 +3630,7 @@ impl DeltaMask {
             bank_note_off: true,
             scene_state: true,
             weight: true,
+            combat_level: true,
             camera_yaw: true,
             camera_pitch: true,
             teleports_enabled: true,
@@ -2690,6 +3649,7 @@ impl DeltaMask {
             main_make: true,
             reach: true,
             attacked_by_player: true,
+            self_target: true,
             widgets: true,
             self_chat: true,
             hint_tile: true,
@@ -2698,6 +3658,10 @@ impl DeltaMask {
             npc_boxes: true,
             bank_approaches: true,
             walk_outcome: true,
+            route_inspect: true,
+            collision: true,
+            main_modal_texts: true,
+            puzzle_board: true,
         }
     }
 
@@ -2764,6 +3728,7 @@ impl DeltaMask {
             bank_note_off: next.bank_note_off != last.bank_note_off,
             scene_state: next.scene_state != last.scene_state,
             weight: next.weight != last.weight,
+            combat_level: next.combat_level != last.combat_level,
             camera_yaw: next.camera_yaw != last.camera_yaw,
             camera_pitch: next.camera_pitch != last.camera_pitch,
             teleports_enabled: next.teleports_enabled != last.teleports_enabled,
@@ -2782,6 +3747,8 @@ impl DeltaMask {
             main_make: next.main_make != last.main_make,
             reach: next.reach != last.reach,
             attacked_by_player: next.attacked_by_player != last.attacked_by_player,
+            self_target: next.self_target_kind != last.self_target_kind
+                || next.self_target_index != last.self_target_index,
             widgets: next.widgets != last.widgets,
             self_chat: next.self_chat != last.self_chat,
             hint_tile: next.hint_tile != last.hint_tile,
@@ -2797,7 +3764,14 @@ impl DeltaMask {
                 || next.walk_outcome_level != last.walk_outcome_level
                 || next.walk_outcome_radius != last.walk_outcome_radius
                 || next.walk_outcome_allow_teleports != last.walk_outcome_allow_teleports
-                || next.walk_outcome_request_id != last.walk_outcome_request_id,
+                || next.walk_outcome_request_id != last.walk_outcome_request_id
+                || next.walk_missing_carry != last.walk_missing_carry,
+            route_inspect: next.route_inspect != last.route_inspect,
+            collision: next.collision != last.collision,
+            main_modal_texts: next.main_modal_texts != last.main_modal_texts,
+            // The generation rides inside the board row, so one comparison
+            // covers both slots.
+            puzzle_board: next.puzzle_board != last.puzzle_board,
         }
     }
 }
@@ -2873,7 +3847,8 @@ impl IsolateBuf {
         native: NativeFactsInput<'_>,
         force_banks: bool,
     ) -> (Vec<u8>, SnapshotFingerprint) {
-        let fp = SnapshotFingerprint::from_input_with_native(input, native);
+        let mut fp = SnapshotFingerprint::from_input_with_native(input, native);
+        fp.collision = collision_fp(last.map(|prev| &prev.collision), native.collision);
         let mask = match last {
             None => DeltaMask::all(),
             Some(prev) => DeltaMask::changed(prev, &fp, force_banks),
@@ -2887,13 +3862,6 @@ impl IsolateBuf {
     pub fn encode_interact_batch(&mut self, reqs: &[crate::shim::InteractReq]) -> Vec<u8> {
         self.builder.reset();
         encode_interact_batch_into(&mut self.builder, reqs);
-        self.copy_finished()
-    }
-
-    /// Encode one recorded paint frame as a root-`Paint` FlatBuffer.
-    pub fn encode_paint(&mut self, paint: &crate::shim::ScriptPaint) -> Vec<u8> {
-        self.builder.reset();
-        encode_paint_into(&mut self.builder, paint);
         self.copy_finished()
     }
 }
@@ -3196,6 +4164,51 @@ fn encode_snapshot_masked_into(
     } else {
         None
     };
+    let collision_table_off = if mask.collision {
+        native.collision.map(|c| collision_off(b, &c))
+    } else {
+        None
+    };
+    // The main modal's paired text walk. ONE table: when it is written both
+    // inner slots are written, and an empty `texts` stays `[]` (a supplied
+    // walk of a closed or text-less modal). The table is absent only when
+    // the native fact was not supplied — that omits the slot, which is not
+    // an observed close.
+    let main_modal_texts_off = if mask.main_modal_texts {
+        native
+            .main_modal_texts
+            .map(|pair| main_modal_texts_off(b, &pair))
+    } else {
+        None
+    };
+    // The open puzzle board. ONE table carrying the identity, the slot count
+    // and the rows; all three inner slots are always written, so a present
+    // board can never be half-posted. The table is absent only when the
+    // native fact was not supplied — that omits both Snapshot slots (a delta
+    // keep), which is not an observed close.
+    let puzzle_board_slot = if mask.puzzle_board {
+        native
+            .puzzle_board
+            .map(|board| (puzzle_board_off(b, &board), board.generation))
+    } else {
+        None
+    };
+    // Slot 68 co-posts with the pair (a text-only change still carries the
+    // id those lines belong to). A present table's root wins over
+    // `input.main_modal_id` — the co-posted integer must be the root the
+    // lines were walked from, so the page can never read one root's lines
+    // beside another root's id. Never `-1` merely because `texts` is empty.
+    let main_modal_id_slot = if mask.main_modal_texts {
+        Some(
+            native
+                .main_modal_texts
+                .map_or(input.main_modal_id, |pair| pair.root),
+        )
+    } else if mask.main_modal_id {
+        Some(input.main_modal_id)
+    } else {
+        None
+    };
     let widgets_off = if mask.widgets {
         let offs = input
             .widgets
@@ -3241,6 +4254,53 @@ fn encode_snapshot_masked_into(
                 .collect::<Vec<_>>();
             b.create_vector(&offs)
         })
+    } else {
+        None
+    };
+    // The walk outcome's own family: the carry vector is built and pushed with
+    // it, never on its own. The rows are always supplied, so an empty vector
+    // posts as a present clear and the family never omits one.
+    let walk_missing_carry_off = if mask.walk_outcome {
+        let offs = native
+            .walk_missing_carry
+            .iter()
+            .map(|row| carry_off(b, row))
+            .collect::<Vec<_>>();
+        Some(b.create_vector(&offs))
+    } else {
+        None
+    };
+    let inspect_reason_off = if mask.route_inspect {
+        Some(b.create_string(native.route_inspect.latest.reason.unwrap_or("")))
+    } else {
+        None
+    };
+    let inspect_prev_reason_off = if mask.route_inspect {
+        Some(b.create_string(native.route_inspect.prev.reason.unwrap_or("")))
+    } else {
+        None
+    };
+    let inspect_hops_off = if mask.route_inspect {
+        let offs = native
+            .route_inspect
+            .latest
+            .hops
+            .iter()
+            .map(|hop| inspect_hop_off(b, hop))
+            .collect::<Vec<_>>();
+        Some(b.create_vector(&offs))
+    } else {
+        None
+    };
+    let inspect_prev_hops_off = if mask.route_inspect {
+        let offs = native
+            .route_inspect
+            .prev
+            .hops
+            .iter()
+            .map(|hop| inspect_hop_off(b, hop))
+            .collect::<Vec<_>>();
+        Some(b.create_vector(&offs))
     } else {
         None
     };
@@ -3379,8 +4439,8 @@ fn encode_snapshot_masked_into(
     if mask.animating {
         b.push_slot_always(VT_SNAP_ANIMATING, input.animating);
     }
-    if mask.main_modal_id {
-        b.push_slot_always(VT_SNAP_MAIN_MODAL, input.main_modal_id);
+    if let Some(main_modal_id) = main_modal_id_slot {
+        b.push_slot_always(VT_SNAP_MAIN_MODAL, main_modal_id);
     }
     if mask.chat_modal_id {
         b.push_slot_always(VT_SNAP_CHAT_MODAL, input.chat_modal_id);
@@ -3417,6 +4477,9 @@ fn encode_snapshot_masked_into(
     }
     if mask.weight {
         b.push_slot_always(VT_SNAP_WEIGHT, input.weight);
+    }
+    if mask.combat_level {
+        b.push_slot_always(VT_SNAP_COMBAT_LEVEL, input.combat_level);
     }
     if mask.camera_yaw {
         b.push_slot_always(VT_SNAP_CAMERA_YAW, input.camera_yaw);
@@ -3484,6 +4547,10 @@ fn encode_snapshot_masked_into(
     if mask.attacked_by_player {
         b.push_slot_always(VT_SNAP_ATTACKED_BY_PLAYER, input.attacked_by_player);
     }
+    if mask.self_target {
+        b.push_slot_always(VT_SNAP_SELF_TARGET_KIND, input.self_target_kind);
+        b.push_slot_always(VT_SNAP_SELF_TARGET_INDEX, input.self_target_index);
+    }
     if mask.widgets {
         b.push_slot_always(VT_SNAP_WIDGETS, widgets_off.expect("mask checked"));
     }
@@ -3539,6 +4606,74 @@ fn encode_snapshot_masked_into(
             VT_SNAP_WALK_OUTCOME_REQUEST_ID,
             native.walk_outcome_request_id,
         );
+        // The vector rides every post of the family: a supplied empty one is
+        // the observed "no named short", so a clear is never omitted. Only a
+        // caller that supplied no list at all omits the slot.
+        if let Some(off) = walk_missing_carry_off {
+            b.push_slot_always(VT_SNAP_WALK_MISSING_CARRY, off);
+        }
+    }
+    if mask.route_inspect {
+        let facts = &native.route_inspect;
+        b.push_slot_always(VT_SNAP_ROUTE_INSPECT_SEQ, facts.latest.seq);
+        b.push_slot_always(VT_SNAP_ROUTE_INSPECT_GENERATION, facts.latest.generation);
+        b.push_slot_always(VT_SNAP_ROUTE_INSPECT_REQUEST_ID, facts.latest.request_id);
+        b.push_slot_always(VT_SNAP_ROUTE_INSPECT_OK, facts.latest.ok);
+        if let Some(off) = inspect_reason_off {
+            b.push_slot_always(VT_SNAP_ROUTE_INSPECT_REASON, off);
+        }
+        b.push_slot_always(
+            VT_SNAP_ROUTE_INSPECT_BANK_PLANNED,
+            facts.latest.bank_planned,
+        );
+        b.push_slot_always(VT_SNAP_ROUTE_INSPECT_TICKS, facts.latest.ticks);
+        if let Some(off) = inspect_hops_off {
+            b.push_slot_always(VT_SNAP_ROUTE_INSPECT_HOPS, off);
+        }
+        b.push_slot_always(VT_SNAP_ROUTE_INSPECT_PREV_SEQ, facts.prev.seq);
+        b.push_slot_always(VT_SNAP_ROUTE_INSPECT_PREV_GENERATION, facts.prev.generation);
+        b.push_slot_always(VT_SNAP_ROUTE_INSPECT_PREV_REQUEST_ID, facts.prev.request_id);
+        b.push_slot_always(VT_SNAP_ROUTE_INSPECT_PREV_OK, facts.prev.ok);
+        if let Some(off) = inspect_prev_reason_off {
+            b.push_slot_always(VT_SNAP_ROUTE_INSPECT_PREV_REASON, off);
+        }
+        b.push_slot_always(
+            VT_SNAP_ROUTE_INSPECT_PREV_BANK_PLANNED,
+            facts.prev.bank_planned,
+        );
+        b.push_slot_always(VT_SNAP_ROUTE_INSPECT_PREV_TICKS, facts.prev.ticks);
+        if let Some(off) = inspect_prev_hops_off {
+            b.push_slot_always(VT_SNAP_ROUTE_INSPECT_PREV_HOPS, off);
+        }
+        b.push_slot_always(VT_SNAP_ROUTE_INSPECT_RUNNING_ID, facts.running_id);
+        b.push_slot_always(VT_SNAP_ROUTE_INSPECT_PENDING_ID, facts.pending_id);
+        b.push_slot_always(VT_SNAP_ROUTE_INSPECT_ACCEPTED_ID, facts.accepted_id);
+        b.push_slot_always(VT_SNAP_ROUTE_INSPECT_REPLACED_ID, facts.replaced_id);
+        b.push_slot_always(
+            VT_SNAP_ROUTE_INSPECT_REPLACED_PREV_ID,
+            facts.replaced_prev_id,
+        );
+        b.push_slot_always(VT_SNAP_ROUTE_INSPECT_REFUSED_ID, facts.refused_id);
+        b.push_slot_always(VT_SNAP_ROUTE_INSPECT_REFUSED_ID_2, facts.refused_id_2);
+        b.push_slot_always(VT_SNAP_ROUTE_INSPECT_REFUSED_ID_3, facts.refused_id_3);
+        b.push_slot_always(VT_SNAP_ROUTE_INSPECT_UNOBSERVED, facts.unobserved);
+    }
+    if mask.collision {
+        if let Some(off) = collision_table_off {
+            b.push_slot_always(VT_SNAP_COLLISION, off);
+        }
+    }
+    if mask.main_modal_texts {
+        if let Some(off) = main_modal_texts_off {
+            b.push_slot_always(VT_SNAP_MAIN_MODAL_TEXTS, off);
+        }
+    }
+    // Both slots or neither: the generation is pushed only from the same
+    // `Some` that produced the table, so no buffer can carry a generation
+    // without a board (or a board without its generation).
+    if let Some((off, generation)) = puzzle_board_slot {
+        b.push_slot_always(VT_SNAP_PUZZLE_BOARD, off);
+        b.push_slot_always(VT_SNAP_PUZZLE_BOARD_GENERATION, generation);
     }
     b.push_slot_always(VT_SNAP_CANVAS_WIDTH, SNAPSHOT_CANVAS_W);
     b.push_slot_always(VT_SNAP_CANVAS_HEIGHT, SNAPSHOT_CANVAS_H);
@@ -3551,6 +4686,46 @@ fn tile_off<'b>(b: &mut FlatBufferBuilder<'b>, t: TileInput) -> WIPOffset<TileRe
     b.push_slot_always(VT_TILE_X, t.x);
     b.push_slot_always(VT_TILE_Z, t.z);
     b.push_slot_always(VT_TILE_LEVEL, t.level);
+    WIPOffset::new(b.end_table(tab).value())
+}
+
+fn avoid_rect_off<'b>(
+    b: &mut FlatBufferBuilder<'b>,
+    min_x: i32,
+    max_x: i32,
+    min_z: i32,
+    max_z: i32,
+    level: Option<i32>,
+) -> WIPOffset<AvoidRectReader<'b>> {
+    let tab = b.start_table();
+    b.push_slot_always(VT_AR_MIN_X, min_x);
+    b.push_slot_always(VT_AR_MAX_X, max_x);
+    b.push_slot_always(VT_AR_MIN_Z, min_z);
+    b.push_slot_always(VT_AR_MAX_Z, max_z);
+    b.push_slot_always(VT_AR_LEVEL, level.unwrap_or(-1));
+    WIPOffset::new(b.end_table(tab).value())
+}
+
+fn inspect_hop_off<'b>(
+    b: &mut FlatBufferBuilder<'b>,
+    hop: &InspectHopInput<'_>,
+) -> WIPOffset<InspectHopReader<'b>> {
+    let kind = b.create_string(hop.kind);
+    let loc_name = b.create_string(hop.loc_name);
+    let action = b.create_string(hop.action);
+    let tab = b.start_table();
+    b.push_slot_always(VT_IH_KIND, kind);
+    b.push_slot_always(VT_IH_LOC_ID, hop.loc_id);
+    b.push_slot_always(VT_IH_LOC_NAME, loc_name);
+    b.push_slot_always(VT_IH_ACTION, action);
+    b.push_slot_always(VT_IH_OPTION, hop.option);
+    b.push_slot_always(VT_IH_FROM_X, hop.from_x);
+    b.push_slot_always(VT_IH_FROM_Z, hop.from_z);
+    b.push_slot_always(VT_IH_FROM_LEVEL, hop.from_level);
+    b.push_slot_always(VT_IH_TO_X, hop.to_x);
+    b.push_slot_always(VT_IH_TO_Z, hop.to_z);
+    b.push_slot_always(VT_IH_TO_LEVEL, hop.to_level);
+    b.push_slot_always(VT_IH_TICKS, hop.ticks);
     WIPOffset::new(b.end_table(tab).value())
 }
 
@@ -3568,6 +4743,22 @@ fn bank_approach_off<'b>(
     b.push_slot_always(VT_BA_DEST_X, row.dest_x);
     b.push_slot_always(VT_BA_DEST_Z, row.dest_z);
     b.push_slot_always(VT_BA_DEST_LEVEL, row.dest_level);
+    WIPOffset::new(b.end_table(tab).value())
+}
+
+fn collision_off<'b>(
+    b: &mut FlatBufferBuilder<'b>,
+    c: &CollisionViewInput<'_>,
+) -> WIPOffset<CollisionReader<'b>> {
+    let flags = b.create_vector(c.flags);
+    let tab = b.start_table();
+    b.push_slot_always(VT_COL_AVAILABLE, c.available);
+    b.push_slot_always(VT_COL_BASE_X, c.base_x);
+    b.push_slot_always(VT_COL_BASE_Z, c.base_z);
+    b.push_slot_always(VT_COL_LEVEL, c.level);
+    b.push_slot_always(VT_COL_WIDTH, c.width);
+    b.push_slot_always(VT_COL_HEIGHT, c.height);
+    b.push_slot_always(VT_COL_FLAGS, flags);
     WIPOffset::new(b.end_table(tab).value())
 }
 
@@ -3657,6 +4848,11 @@ fn scene_entity_off<'b>(
     b.push_slot_always(VT_ENT_COMBAT_LEVEL, e.combat_level);
     b.push_slot_always(VT_ENT_TARGET_KIND, e.target_kind);
     b.push_slot_always(VT_ENT_TARGET_INDEX, e.target_index);
+    if e.size >= 1 {
+        b.push_slot_always(VT_ENT_SIZE, e.size);
+        b.push_slot_always(VT_ENT_NX, e.nx);
+        b.push_slot_always(VT_ENT_NZ, e.nz);
+    }
     WIPOffset::new(b.end_table(tab).value())
 }
 
@@ -3697,6 +4893,60 @@ fn widget_text_off<'b>(
     WIPOffset::new(b.end_table(tab).value())
 }
 
+fn main_modal_texts_off<'b>(
+    b: &mut FlatBufferBuilder<'b>,
+    pair: &MainModalTextsInput<'_>,
+) -> WIPOffset<MainModalTextsReader<'b>> {
+    let text_offs = pair
+        .texts
+        .iter()
+        .map(|line| b.create_string(line))
+        .collect::<Vec<_>>();
+    let texts_off = b.create_vector(&text_offs);
+    let tab = b.start_table();
+    b.push_slot_always(VT_MMT_ROOT, pair.root);
+    b.push_slot_always(VT_MMT_TEXTS, texts_off);
+    WIPOffset::new(b.end_table(tab).value())
+}
+
+/// The puzzle board table. All three inner slots are written unconditionally
+/// (including a closed `{ -1, 0, [] }`): the table's presence is the
+/// observation, and a half-written board would let the page read rows under
+/// a stale identity.
+fn puzzle_board_off<'b>(
+    b: &mut FlatBufferBuilder<'b>,
+    board: &PuzzleBoardInput<'_>,
+) -> WIPOffset<PuzzleBoardReader<'b>> {
+    let item_offs = board
+        .items
+        .iter()
+        .map(|row| row_off(b, row))
+        .collect::<Vec<_>>();
+    let items_off = b.create_vector(&item_offs);
+    let tab = b.start_table();
+    b.push_slot_always(VT_PB_COMPONENT_ID, board.component_id);
+    b.push_slot_always(VT_PB_SIZE, board.size);
+    b.push_slot_always(VT_PB_ITEMS, items_off);
+    WIPOffset::new(b.end_table(tab).value())
+}
+
+/// One navigator-named gate short. `id` and `count` are always written — the
+/// row's identity is the id — and the name only when the host obj table
+/// resolved one, so a nameless short is never dropped and never invented.
+fn carry_off<'b>(
+    b: &mut FlatBufferBuilder<'b>,
+    row: &CarryInput<'_>,
+) -> WIPOffset<CarryReader<'b>> {
+    let name_off = row.name.map(|name| b.create_string(name));
+    let tab = b.start_table();
+    b.push_slot_always(VT_CARRY_ID, row.id);
+    b.push_slot_always(VT_CARRY_COUNT, row.count);
+    if let Some(off) = name_off {
+        b.push_slot_always(VT_CARRY_NAME, off);
+    }
+    WIPOffset::new(b.end_table(tab).value())
+}
+
 fn quest_status_off<'b>(
     b: &mut FlatBufferBuilder<'b>,
     q: &QuestStatusInput<'_>,
@@ -3706,6 +4956,12 @@ fn quest_status_off<'b>(
     let tab = b.start_table();
     b.push_slot_always(VT_QUEST_NAME, name_off);
     b.push_slot_always(VT_QUEST_STATUS, status_off);
+    // Only a supplied id is written. An absent id omits the slot so the
+    // page can tell "no click target" from a real component `0`; never
+    // write a sentinel for it.
+    if let Some(component_id) = q.component_id {
+        b.push_slot_always(VT_QUEST_COMPONENT, component_id);
+    }
     WIPOffset::new(b.end_table(tab).value())
 }
 
@@ -3891,6 +5147,15 @@ impl SceneEntityReader<'_> {
     pub fn target_index(&self) -> i32 {
         unsafe { self.tab.get::<i32>(VT_ENT_TARGET_INDEX, None) }.unwrap_or(-1)
     }
+    pub fn size(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_ENT_SIZE, None) }.unwrap_or(0)
+    }
+    pub fn nx(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_ENT_NX, None) }.unwrap_or(0)
+    }
+    pub fn nz(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_ENT_NZ, None) }.unwrap_or(0)
+    }
 }
 
 impl Verifiable for SceneEntityReader<'_> {
@@ -3917,6 +5182,9 @@ impl Verifiable for SceneEntityReader<'_> {
             .visit_field::<i32>("combat_level", VT_ENT_COMBAT_LEVEL, false)?
             .visit_field::<i32>("target_kind", VT_ENT_TARGET_KIND, false)?
             .visit_field::<i32>("target_index", VT_ENT_TARGET_INDEX, false)?
+            .visit_field::<i32>("size", VT_ENT_SIZE, false)?
+            .visit_field::<i32>("nx", VT_ENT_NX, false)?
+            .visit_field::<i32>("nz", VT_ENT_NZ, false)?
             .finish();
         Ok(())
     }
@@ -4083,6 +5351,16 @@ impl QuestStatusReader<'_> {
     pub fn status(&self) -> &str {
         unsafe { self.tab.get::<ForwardsUOffset<&str>>(VT_QUEST_STATUS, None) }.unwrap_or("unknown")
     }
+    /// Whether the row carries its walked TYPE_TEXT id. Absent on an old
+    /// buffer — distinct from a present `0`, which is a real component id.
+    pub fn has_component_id(&self) -> bool {
+        unsafe { self.tab.get::<i32>(VT_QUEST_COMPONENT, None).is_some() }
+    }
+    /// `None` when the buffer omitted the slot: the row has no click
+    /// target. Never materialize this as `0` or `-1`.
+    pub fn component_id(&self) -> Option<i32> {
+        unsafe { self.tab.get::<i32>(VT_QUEST_COMPONENT, None) }
+    }
 }
 
 impl Verifiable for QuestStatusReader<'_> {
@@ -4090,6 +5368,108 @@ impl Verifiable for QuestStatusReader<'_> {
         v.visit_table(pos)?
             .visit_field::<ForwardsUOffset<&str>>("name", VT_QUEST_NAME, false)?
             .visit_field::<ForwardsUOffset<&str>>("status", VT_QUEST_STATUS, false)?
+            .visit_field::<i32>("component_id", VT_QUEST_COMPONENT, false)?
+            .finish();
+        Ok(())
+    }
+}
+
+/// The main modal's paired text walk as decoded: the root the walk used
+/// plus its TYPE_TEXT lines in walk order.
+#[derive(Clone, Copy)]
+pub struct MainModalTextsReader<'a> {
+    tab: Table<'a>,
+}
+
+impl<'a> flatbuffers::Follow<'a> for MainModalTextsReader<'a> {
+    type Inner = MainModalTextsReader<'a>;
+    unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+        Self {
+            tab: Table::new(buf, loc),
+        }
+    }
+}
+
+impl MainModalTextsReader<'_> {
+    /// The root the lines were walked from — the same integer the buffer
+    /// posts as `main_modal_id`. `-1` is a closed modal.
+    pub fn root(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_MMT_ROOT, None) }.unwrap_or(-1)
+    }
+    /// The walk in walk order, colour tags intact. Empty is a real walk
+    /// (closed, or an open root whose tree has no text), not a missing
+    /// table — the table's presence is [`SnapshotReader::main_modal_texts`].
+    pub fn texts(&self) -> Vec<&str> {
+        match unsafe {
+            self.tab
+                .get::<ForwardsUOffset<Vector<ForwardsUOffset<&str>>>>(VT_MMT_TEXTS, None)
+        } {
+            Some(v) => v.iter().collect(),
+            None => Vec::new(),
+        }
+    }
+}
+
+impl Verifiable for MainModalTextsReader<'_> {
+    fn run_verifier(v: &mut Verifier, pos: usize) -> Result<(), InvalidFlatbuffer> {
+        v.visit_table(pos)?
+            .visit_field::<i32>("root", VT_MMT_ROOT, false)?
+            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<&str>>>>(
+                "texts",
+                VT_MMT_TEXTS,
+                false,
+            )?
+            .finish();
+        Ok(())
+    }
+}
+
+/// The puzzle board as decoded: the identified component, its slot count and
+/// its stored rows (sparse). Every inner slot is present whenever the table
+/// is; the table's presence is [`SnapshotReader::puzzle_board`].
+#[derive(Clone, Copy)]
+pub struct PuzzleBoardReader<'a> {
+    tab: Table<'a>,
+}
+
+impl<'a> flatbuffers::Follow<'a> for PuzzleBoardReader<'a> {
+    type Inner = PuzzleBoardReader<'a>;
+    unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+        Self {
+            tab: Table::new(buf, loc),
+        }
+    }
+}
+
+impl PuzzleBoardReader<'_> {
+    /// The identified TYPE_INV component, `-1` for an observed closed
+    /// board.
+    pub fn component_id(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_PB_COMPONENT_ID, None) }.unwrap_or(-1)
+    }
+    /// The component's `link_obj_type` slot count as observed — not the row
+    /// count. A wrong size is posted as observed, never filled to a panel
+    /// size.
+    pub fn size(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_PB_SIZE, None) }.unwrap_or(0)
+    }
+    /// The stored rows in slot order. Sparse: an empty slot contributes no
+    /// row.
+    pub fn items(&self) -> Vec<RowReader<'_>> {
+        rows::<RowReader>(&self.tab, VT_PB_ITEMS)
+    }
+}
+
+impl Verifiable for PuzzleBoardReader<'_> {
+    fn run_verifier(v: &mut Verifier, pos: usize) -> Result<(), InvalidFlatbuffer> {
+        v.visit_table(pos)?
+            .visit_field::<i32>("component_id", VT_PB_COMPONENT_ID, false)?
+            .visit_field::<i32>("size", VT_PB_SIZE, false)?
+            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<RowReader>>>>(
+                "items",
+                VT_PB_ITEMS,
+                false,
+            )?
             .finish();
         Ok(())
     }
@@ -4133,6 +5513,54 @@ impl Verifiable for NpcBoxReader<'_> {
         v.visit_table(pos)?
             .visit_field::<i32>("index", VT_NPC_BOX_INDEX, false)?
             .visit_field::<ForwardsUOffset<Vector<i32>>>("points", VT_NPC_BOX_POINTS, false)?
+            .finish();
+        Ok(())
+    }
+}
+
+/// One navigator-named gate short as decoded: the needed stack and the display
+/// name the host obj table resolves for it. The row's presence is the whole of
+/// its observation — `name` is absent when that table had none, and a row
+/// without one is still a named short.
+#[derive(Clone, Copy)]
+pub struct CarryReader<'a> {
+    tab: Table<'a>,
+}
+
+impl<'a> flatbuffers::Follow<'a> for CarryReader<'a> {
+    type Inner = CarryReader<'a>;
+    unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+        Self {
+            tab: Table::new(buf, loc),
+        }
+    }
+}
+
+impl CarryReader<'_> {
+    pub fn id(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_CARRY_ID, None) }.unwrap_or(0)
+    }
+    pub fn count(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_CARRY_COUNT, None) }.unwrap_or(0)
+    }
+    pub fn has_name(&self) -> bool {
+        unsafe {
+            self.tab
+                .get::<ForwardsUOffset<&str>>(VT_CARRY_NAME, None)
+                .is_some()
+        }
+    }
+    pub fn name(&self) -> Option<&str> {
+        unsafe { self.tab.get::<ForwardsUOffset<&str>>(VT_CARRY_NAME, None) }
+    }
+}
+
+impl Verifiable for CarryReader<'_> {
+    fn run_verifier(v: &mut Verifier, pos: usize) -> Result<(), InvalidFlatbuffer> {
+        v.visit_table(pos)?
+            .visit_field::<i32>("id", VT_CARRY_ID, false)?
+            .visit_field::<i32>("count", VT_CARRY_COUNT, false)?
+            .visit_field::<ForwardsUOffset<&str>>("name", VT_CARRY_NAME, false)?
             .finish();
         Ok(())
     }
@@ -4377,6 +5805,33 @@ impl InteractReader<'_> {
     pub fn input_identity(&self) -> u64 {
         unsafe { self.tab.get::<u64>(VT_IN_INPUT_IDENTITY, None) }.unwrap_or(0)
     }
+    pub fn allow_wilderness(&self) -> bool {
+        unsafe { self.tab.get::<bool>(VT_IN_ALLOW_WILDERNESS, None) }.unwrap_or(false)
+    }
+    pub fn allow_bank_fetch(&self) -> bool {
+        unsafe { self.tab.get::<bool>(VT_IN_ALLOW_BANK_FETCH, None) }.unwrap_or(false)
+    }
+    pub fn from_x(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_IN_FROM_X, None) }.unwrap_or(0)
+    }
+    pub fn from_z(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_IN_FROM_Z, None) }.unwrap_or(0)
+    }
+    pub fn from_level(&self) -> i32 {
+        unsafe { self.tab.get::<i32>(VT_IN_FROM_LEVEL, None) }.unwrap_or(0)
+    }
+    pub fn allow_teleports_explicit(&self) -> bool {
+        unsafe { self.tab.get::<bool>(VT_IN_ALLOW_TELEPORTS, None) }.unwrap_or(false)
+    }
+    pub fn inspect_ack_seq(&self) -> u64 {
+        unsafe { self.tab.get::<u64>(VT_IN_INSPECT_ACK_SEQ, None) }.unwrap_or(0)
+    }
+    pub fn inspect_ack_generation(&self) -> u64 {
+        unsafe { self.tab.get::<u64>(VT_IN_INSPECT_ACK_GENERATION, None) }.unwrap_or(0)
+    }
+    pub fn avoid(&self) -> Vec<AvoidRectReader<'_>> {
+        rows::<AvoidRectReader>(&self.tab, VT_IN_AVOID)
+    }
 }
 
 impl Verifiable for InteractReader<'_> {
@@ -4404,6 +5859,23 @@ impl Verifiable for InteractReader<'_> {
             .visit_field::<f64>("xf", VT_IN_XF, false)?
             .visit_field::<f64>("yf", VT_IN_YF, false)?
             .visit_field::<u64>("input_identity", VT_IN_INPUT_IDENTITY, false)?
+            .visit_field::<bool>("allow_wilderness", VT_IN_ALLOW_WILDERNESS, false)?
+            .visit_field::<bool>("allow_bank_fetch", VT_IN_ALLOW_BANK_FETCH, false)?
+            .visit_field::<i32>("from_x", VT_IN_FROM_X, false)?
+            .visit_field::<i32>("from_z", VT_IN_FROM_Z, false)?
+            .visit_field::<i32>("from_level", VT_IN_FROM_LEVEL, false)?
+            .visit_field::<bool>("allow_teleports", VT_IN_ALLOW_TELEPORTS, false)?
+            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<AvoidRectReader>>>>(
+                "avoid",
+                VT_IN_AVOID,
+                false,
+            )?
+            .visit_field::<u64>("inspect_ack_seq", VT_IN_INSPECT_ACK_SEQ, false)?
+            .visit_field::<u64>(
+                "inspect_ack_generation",
+                VT_IN_INSPECT_ACK_GENERATION,
+                false,
+            )?
             .finish();
         Ok(())
     }
@@ -4464,945 +5936,45 @@ fn encode_interact_batch_into(b: &mut FlatBufferBuilder<'_>, reqs: &[crate::shim
     b.finish(root, None);
 }
 
-fn paint_button_off<'b>(
-    b: &mut FlatBufferBuilder<'b>,
-    btn: &crate::shim::ScriptPaintButton,
-) -> WIPOffset<PaintButtonReader<'b>> {
-    let id_off = b.create_string(&btn.id);
-    let label_off = b.create_string(&btn.label);
-    let tab = b.start_table();
-    b.push_slot_always(VT_PAINT_BTN_ID, id_off);
-    b.push_slot_always(VT_PAINT_BTN_LABEL, label_off);
-    WIPOffset::new(b.end_table(tab).value())
-}
-
-fn canvas_seg_off<'b>(
-    b: &mut FlatBufferBuilder<'b>,
-    seg: &crate::canvas::PathSeg,
-) -> WIPOffset<CanvasSegReader<'b>> {
-    use crate::canvas::PathSeg;
-    let (kind, x, y, c1x, c1y, c2x, c2y) = match *seg {
-        PathSeg::MoveTo { x, y } => (0i8, x, y, 0.0, 0.0, 0.0, 0.0),
-        PathSeg::LineTo { x, y } => (1i8, x, y, 0.0, 0.0, 0.0, 0.0),
-        PathSeg::QuadTo { cx, cy, x, y } => (2i8, x, y, cx, cy, 0.0, 0.0),
-        PathSeg::CubicTo {
-            c1x,
-            c1y,
-            c2x,
-            c2y,
-            x,
-            y,
-        } => (3i8, x, y, c1x, c1y, c2x, c2y),
-        PathSeg::Close => (4i8, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
-    };
-    let tab = b.start_table();
-    b.push_slot_always(VT_SEG_KIND, kind);
-    b.push_slot_always(VT_SEG_X, x);
-    b.push_slot_always(VT_SEG_Y, y);
-    if c1x != 0.0 {
-        b.push_slot_always(VT_SEG_C1X, c1x);
+/// The isolate→host paint limits for the structured half of a frame: rows,
+/// buttons, tab bands and the names on one chrome band. The frame comes from
+/// the JS-writable `__rs2b0t_host.paint`, so the caps apply where the frame is
+/// built; a frame over a cap is dropped and logged, never forwarded. Their
+/// first failure was the wire decoder's, and this is that check in its new
+/// place. The canvas half is capped by the recorder itself.
+pub fn cap_paint(paint: &crate::shim::ScriptPaint) -> Result<(), String> {
+    if paint.lines.len() > MAX_PAINT_LINES {
+        return Err(format!(
+            "vector length {} exceeds cap {MAX_PAINT_LINES}",
+            paint.lines.len()
+        ));
     }
-    if c1y != 0.0 {
-        b.push_slot_always(VT_SEG_C1Y, c1y);
+    if paint.buttons.len() > MAX_PAINT_BUTTONS {
+        return Err(format!(
+            "vector length {} exceeds cap {MAX_PAINT_BUTTONS}",
+            paint.buttons.len()
+        ));
     }
-    if c2x != 0.0 {
-        b.push_slot_always(VT_SEG_C2X, c2x);
+    if paint.tabs.len() > MAX_PAINT_TABS {
+        return Err(format!(
+            "vector length {} exceeds cap {MAX_PAINT_TABS}",
+            paint.tabs.len()
+        ));
     }
-    if c2y != 0.0 {
-        b.push_slot_always(VT_SEG_C2Y, c2y);
-    }
-    WIPOffset::new(b.end_table(tab).value())
-}
-
-fn canvas_segs_off<'b>(
-    b: &mut FlatBufferBuilder<'b>,
-    segs: &[crate::canvas::PathSeg],
-) -> Option<WIPOffset<flatbuffers::Vector<'b, ForwardsUOffset<CanvasSegReader<'b>>>>> {
-    if segs.is_empty() {
-        return None;
-    }
-    let offs: Vec<_> = segs.iter().map(|s| canvas_seg_off(b, s)).collect();
-    Some(b.create_vector(&offs))
-}
-
-fn clip_path_off<'b>(
-    b: &mut FlatBufferBuilder<'b>,
-    clip: &crate::canvas::ClipPath,
-) -> WIPOffset<ClipPathFbReader<'b>> {
-    let segs = canvas_segs_off(b, &clip.segs);
-    let tab = b.start_table();
-    if let Some(off) = segs {
-        b.push_slot_always(VT_CLIP_SEGS, off);
-    }
-    WIPOffset::new(b.end_table(tab).value())
-}
-
-fn canvas_clips_off<'b>(
-    b: &mut FlatBufferBuilder<'b>,
-    clips: &[crate::canvas::ClipPath],
-) -> Option<WIPOffset<flatbuffers::Vector<'b, ForwardsUOffset<ClipPathFbReader<'b>>>>> {
-    if clips.is_empty() {
-        return None;
-    }
-    let offs: Vec<_> = clips.iter().map(|c| clip_path_off(b, c)).collect();
-    Some(b.create_vector(&offs))
-}
-
-fn grad_stop_off<'b>(
-    b: &mut FlatBufferBuilder<'b>,
-    stop: &crate::canvas::GradStop,
-) -> WIPOffset<GradStopReader<'b>> {
-    let tab = b.start_table();
-    b.push_slot_always(VT_GSTOP_OFFSET, stop.offset);
-    b.push_slot_always(VT_GSTOP_COLOR, stop.color);
-    WIPOffset::new(b.end_table(tab).value())
-}
-
-struct EncodedFill {
-    kind: i8,
-    gx0: f32,
-    gy0: f32,
-    gx1: f32,
-    gy1: f32,
-    r0: f32,
-    r1: f32,
-    stops: Vec<crate::canvas::GradStop>,
-}
-
-fn encode_fill(fill: &crate::canvas::FillPaint) -> EncodedFill {
-    match fill {
-        crate::canvas::FillPaint::Solid => EncodedFill {
-            kind: 0,
-            gx0: 0.0,
-            gy0: 0.0,
-            gx1: 0.0,
-            gy1: 0.0,
-            r0: 0.0,
-            r1: 0.0,
-            stops: Vec::new(),
-        },
-        crate::canvas::FillPaint::Linear {
-            x0,
-            y0,
-            x1,
-            y1,
-            stops,
-        } => EncodedFill {
-            kind: 1,
-            gx0: *x0,
-            gy0: *y0,
-            gx1: *x1,
-            gy1: *y1,
-            r0: 0.0,
-            r1: 0.0,
-            stops: stops.clone(),
-        },
-        crate::canvas::FillPaint::Radial {
-            x0,
-            y0,
-            r0,
-            x1,
-            y1,
-            r1,
-            stops,
-        } => EncodedFill {
-            kind: 2,
-            gx0: *x0,
-            gy0: *y0,
-            gx1: *x1,
-            gy1: *y1,
-            r0: *r0,
-            r1: *r1,
-            stops: stops.clone(),
-        },
-    }
-}
-
-fn canvas_op_off<'b>(
-    b: &mut FlatBufferBuilder<'b>,
-    op: &crate::canvas::CanvasOp,
-) -> WIPOffset<CanvasOpReader<'b>> {
-    use crate::canvas::{CanvasOp, LineJoinKind, TextAlign, TextBaseline};
-    let (
-        kind,
-        x,
-        y,
-        w,
-        h,
-        color,
-        text,
-        font_px,
-        mono,
-        segs,
-        extras,
-        line_width,
-        line_join,
-        align,
-        baseline,
-    ) = match op {
-        CanvasOp::FillRect {
-            x,
-            y,
-            w,
-            h,
-            color,
-            extras,
-        } => (
-            0i8,
-            *x,
-            *y,
-            *w,
-            *h,
-            *color,
-            None,
-            0u16,
-            false,
-            None,
-            extras,
-            0.0f32,
-            LineJoinKind::Miter,
-            TextAlign::Left,
-            TextBaseline::Alphabetic,
-        ),
-        CanvasOp::FillText {
-            text,
-            x,
-            y,
-            color,
-            font_px,
-            mono,
-            align,
-            baseline,
-            extras,
-        } => (
-            1i8,
-            *x,
-            *y,
-            0,
-            0,
-            *color,
-            Some(text.as_str()),
-            *font_px,
-            *mono,
-            None,
-            extras,
-            0.0,
-            LineJoinKind::Miter,
-            *align,
-            *baseline,
-        ),
-        CanvasOp::FillPath {
-            segs,
-            color,
-            extras,
-        } => (
-            2i8,
-            0,
-            0,
-            0,
-            0,
-            *color,
-            None,
-            0,
-            false,
-            Some(segs.as_slice()),
-            extras,
-            0.0,
-            LineJoinKind::Miter,
-            TextAlign::Left,
-            TextBaseline::Alphabetic,
-        ),
-        CanvasOp::StrokePath {
-            segs,
-            color,
-            line_width,
-            line_join,
-            extras,
-        } => (
-            3i8,
-            0,
-            0,
-            0,
-            0,
-            *color,
-            None,
-            0,
-            false,
-            Some(segs.as_slice()),
-            extras,
-            *line_width,
-            *line_join,
-            TextAlign::Left,
-            TextBaseline::Alphabetic,
-        ),
-    };
-    let fill = encode_fill(&extras.fill);
-    let segs_off = segs.and_then(|s| canvas_segs_off(b, s));
-    let clips_off = canvas_clips_off(b, &extras.clips);
-    let stops_off = if fill.stops.is_empty() {
-        None
-    } else {
-        let offs: Vec<_> = fill.stops.iter().map(|s| grad_stop_off(b, s)).collect();
-        Some(b.create_vector(&offs))
-    };
-    let text_off = text.map(|s| b.create_string(s));
-    let tab = b.start_table();
-    b.push_slot_always(VT_CANVAS_KIND, kind);
-    if x != 0 {
-        b.push_slot_always(VT_CANVAS_X, x);
-    }
-    if y != 0 {
-        b.push_slot_always(VT_CANVAS_Y, y);
-    }
-    if w != 0 {
-        b.push_slot_always(VT_CANVAS_W, w);
-    }
-    if h != 0 {
-        b.push_slot_always(VT_CANVAS_H, h);
-    }
-    if color != 0 {
-        b.push_slot_always(VT_CANVAS_COLOR, color);
-    }
-    if let Some(off) = text_off {
-        b.push_slot_always(VT_CANVAS_TEXT, off);
-    }
-    if font_px != 0 {
-        b.push_slot_always(VT_CANVAS_FONT_PX, font_px);
-    }
-    if mono {
-        b.push_slot_always(VT_CANVAS_MONO, mono);
-    }
-    if let Some(off) = segs_off {
-        b.push_slot_always(VT_CANVAS_SEGS, off);
-    }
-    if let Some(off) = clips_off {
-        b.push_slot_always(VT_CANVAS_CLIPS, off);
-    }
-    if let Some(off) = stops_off {
-        b.push_slot_always(VT_CANVAS_STOPS, off);
-    }
-    if fill.gx0 != 0.0 {
-        b.push_slot_always(VT_CANVAS_GX0, fill.gx0);
-    }
-    if fill.gy0 != 0.0 {
-        b.push_slot_always(VT_CANVAS_GY0, fill.gy0);
-    }
-    if fill.gx1 != 0.0 {
-        b.push_slot_always(VT_CANVAS_GX1, fill.gx1);
-    }
-    if fill.gy1 != 0.0 {
-        b.push_slot_always(VT_CANVAS_GY1, fill.gy1);
-    }
-    if fill.r0 != 0.0 {
-        b.push_slot_always(VT_CANVAS_R0, fill.r0);
-    }
-    if fill.r1 != 0.0 {
-        b.push_slot_always(VT_CANVAS_R1, fill.r1);
-    }
-    if fill.kind != 0 {
-        b.push_slot_always(VT_CANVAS_GRAD_KIND, fill.kind);
-    }
-    if line_width != 0.0 {
-        b.push_slot_always(VT_CANVAS_LINE_WIDTH, line_width);
-    }
-    if !matches!(line_join, LineJoinKind::Miter) {
-        b.push_slot_always(VT_CANVAS_LINE_JOIN, line_join as i8);
-    }
-    if extras.shadow.color != 0 {
-        b.push_slot_always(VT_CANVAS_SHADOW_COLOR, extras.shadow.color);
-    }
-    if extras.shadow.blur != 0.0 {
-        b.push_slot_always(VT_CANVAS_SHADOW_BLUR, extras.shadow.blur);
-    }
-    if extras.shadow.offset_x != 0.0 {
-        b.push_slot_always(VT_CANVAS_SHADOW_X, extras.shadow.offset_x);
-    }
-    if extras.shadow.offset_y != 0.0 {
-        b.push_slot_always(VT_CANVAS_SHADOW_Y, extras.shadow.offset_y);
-    }
-    if !matches!(align, TextAlign::Left) {
-        b.push_slot_always(VT_CANVAS_ALIGN, align as i8);
-    }
-    if !matches!(baseline, TextBaseline::Alphabetic) {
-        b.push_slot_always(VT_CANVAS_BASELINE, baseline as i8);
-    }
-    WIPOffset::new(b.end_table(tab).value())
-}
-
-fn encode_paint_into(b: &mut FlatBufferBuilder<'_>, paint: &crate::shim::ScriptPaint) {
-    let title_off = paint.title.as_deref().map(|s| b.create_string(s));
-    let accent_off = paint.accent.as_deref().map(|s| b.create_string(s));
-    let line_offs: Vec<_> = paint.lines.iter().map(|s| b.create_string(s)).collect();
-    let lines_off = b.create_vector(&line_offs);
-    let btn_offs: Vec<_> = paint
-        .buttons
+    for band in paint
+        .strip
         .iter()
-        .map(|btn| paint_button_off(b, btn))
-        .collect();
-    let buttons_off = if btn_offs.is_empty() {
-        None
-    } else {
-        Some(b.create_vector(&btn_offs))
-    };
-    let canvas_offs: Vec<_> = paint.canvas.iter().map(|op| canvas_op_off(b, op)).collect();
-    let canvas_off = if canvas_offs.is_empty() {
-        None
-    } else {
-        Some(b.create_vector(&canvas_offs))
-    };
-    let tab = b.start_table();
-    if let Some(off) = title_off {
-        b.push_slot_always(VT_PAINT_TITLE, off);
-    }
-    if let Some(off) = accent_off {
-        b.push_slot_always(VT_PAINT_ACCENT, off);
-    }
-    b.push_slot_always(VT_PAINT_LINES, lines_off);
-    if let Some(off) = buttons_off {
-        b.push_slot_always(VT_PAINT_BUTTONS, off);
-    }
-    if let Some(off) = canvas_off {
-        b.push_slot_always(VT_PAINT_CANVAS, off);
-    }
-    let root = b.end_table(tab);
-    b.finish(root, None);
-}
-
-/// One recorded paint frame as decoded.
-pub struct PaintReader<'a> {
-    tab: Table<'a>,
-}
-
-impl<'a> Follow<'a> for PaintReader<'a> {
-    type Inner = PaintReader<'a>;
-    unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
-        Self {
-            tab: Table::new(buf, loc),
-        }
-    }
-}
-
-impl Verifiable for PaintReader<'_> {
-    fn run_verifier(v: &mut Verifier, pos: usize) -> Result<(), InvalidFlatbuffer> {
-        v.visit_table(pos)?
-            .visit_field::<ForwardsUOffset<&str>>("title", VT_PAINT_TITLE, false)?
-            .visit_field::<ForwardsUOffset<&str>>("accent", VT_PAINT_ACCENT, false)?
-            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<&str>>>>(
-                "lines",
-                VT_PAINT_LINES,
-                false,
-            )?
-            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<PaintButtonReader>>>>(
-                "buttons",
-                VT_PAINT_BUTTONS,
-                false,
-            )?
-            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<CanvasOpReader>>>>(
-                "canvas",
-                VT_PAINT_CANVAS,
-                false,
-            )?
-            .finish();
-        Ok(())
-    }
-}
-
-/// One advertised `{id,label}` paint control as decoded.
-struct PaintButtonReader<'a> {
-    tab: Table<'a>,
-}
-
-impl<'a> Follow<'a> for PaintButtonReader<'a> {
-    type Inner = PaintButtonReader<'a>;
-    unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
-        Self {
-            tab: Table::new(buf, loc),
-        }
-    }
-}
-
-impl Verifiable for PaintButtonReader<'_> {
-    fn run_verifier(v: &mut Verifier, pos: usize) -> Result<(), InvalidFlatbuffer> {
-        v.visit_table(pos)?
-            .visit_field::<ForwardsUOffset<&str>>("id", VT_PAINT_BTN_ID, false)?
-            .visit_field::<ForwardsUOffset<&str>>("label", VT_PAINT_BTN_LABEL, false)?
-            .finish();
-        Ok(())
-    }
-}
-
-impl PaintButtonReader<'_> {
-    fn id(&self) -> &str {
-        unsafe { self.tab.get::<ForwardsUOffset<&str>>(VT_PAINT_BTN_ID, None) }.unwrap_or("")
-    }
-    fn label(&self) -> &str {
-        unsafe {
-            self.tab
-                .get::<ForwardsUOffset<&str>>(VT_PAINT_BTN_LABEL, None)
-        }
-        .unwrap_or("")
-    }
-}
-
-struct CanvasSegReader<'a> {
-    tab: Table<'a>,
-}
-
-impl<'a> Follow<'a> for CanvasSegReader<'a> {
-    type Inner = CanvasSegReader<'a>;
-    unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
-        Self {
-            tab: Table::new(buf, loc),
-        }
-    }
-}
-
-impl Verifiable for CanvasSegReader<'_> {
-    fn run_verifier(v: &mut Verifier, pos: usize) -> Result<(), InvalidFlatbuffer> {
-        v.visit_table(pos)?
-            .visit_field::<i8>("kind", VT_SEG_KIND, false)?
-            .visit_field::<f32>("x", VT_SEG_X, false)?
-            .visit_field::<f32>("y", VT_SEG_Y, false)?
-            .visit_field::<f32>("c1x", VT_SEG_C1X, false)?
-            .visit_field::<f32>("c1y", VT_SEG_C1Y, false)?
-            .visit_field::<f32>("c2x", VT_SEG_C2X, false)?
-            .visit_field::<f32>("c2y", VT_SEG_C2Y, false)?
-            .finish();
-        Ok(())
-    }
-}
-
-impl CanvasSegReader<'_> {
-    fn into_seg(&self) -> Result<crate::canvas::PathSeg, String> {
-        let kind = unsafe { self.tab.get::<i8>(VT_SEG_KIND, None) }.unwrap_or(0);
-        let x = unsafe { self.tab.get::<f32>(VT_SEG_X, None) }.unwrap_or(0.0);
-        let y = unsafe { self.tab.get::<f32>(VT_SEG_Y, None) }.unwrap_or(0.0);
-        let c1x = unsafe { self.tab.get::<f32>(VT_SEG_C1X, None) }.unwrap_or(0.0);
-        let c1y = unsafe { self.tab.get::<f32>(VT_SEG_C1Y, None) }.unwrap_or(0.0);
-        let c2x = unsafe { self.tab.get::<f32>(VT_SEG_C2X, None) }.unwrap_or(0.0);
-        let c2y = unsafe { self.tab.get::<f32>(VT_SEG_C2Y, None) }.unwrap_or(0.0);
-        match kind {
-            0 => Ok(crate::canvas::PathSeg::MoveTo { x, y }),
-            1 => Ok(crate::canvas::PathSeg::LineTo { x, y }),
-            2 => Ok(crate::canvas::PathSeg::QuadTo {
-                cx: c1x,
-                cy: c1y,
-                x,
-                y,
-            }),
-            3 => Ok(crate::canvas::PathSeg::CubicTo {
-                c1x,
-                c1y,
-                c2x,
-                c2y,
-                x,
-                y,
-            }),
-            4 => Ok(crate::canvas::PathSeg::Close),
-            other => Err(format!("unknown canvas seg kind {other}")),
-        }
-    }
-}
-
-struct GradStopReader<'a> {
-    tab: Table<'a>,
-}
-
-impl<'a> Follow<'a> for GradStopReader<'a> {
-    type Inner = GradStopReader<'a>;
-    unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
-        Self {
-            tab: Table::new(buf, loc),
-        }
-    }
-}
-
-impl Verifiable for GradStopReader<'_> {
-    fn run_verifier(v: &mut Verifier, pos: usize) -> Result<(), InvalidFlatbuffer> {
-        v.visit_table(pos)?
-            .visit_field::<f32>("offset", VT_GSTOP_OFFSET, false)?
-            .visit_field::<u32>("color", VT_GSTOP_COLOR, false)?
-            .finish();
-        Ok(())
-    }
-}
-
-impl GradStopReader<'_> {
-    fn into_stop(&self) -> Result<crate::canvas::GradStop, String> {
-        let offset = unsafe { self.tab.get::<f32>(VT_GSTOP_OFFSET, None) }.unwrap_or(0.0);
-        if !offset.is_finite() || !(0.0..=1.0).contains(&offset) {
-            return Err("canvas gradient stop offset out of range".into());
-        }
-        let color = unsafe { self.tab.get::<u32>(VT_GSTOP_COLOR, None) }.unwrap_or(0);
-        Ok(crate::canvas::GradStop { offset, color })
-    }
-}
-
-struct ClipPathFbReader<'a> {
-    tab: Table<'a>,
-}
-
-impl<'a> Follow<'a> for ClipPathFbReader<'a> {
-    type Inner = ClipPathFbReader<'a>;
-    unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
-        Self {
-            tab: Table::new(buf, loc),
-        }
-    }
-}
-
-impl Verifiable for ClipPathFbReader<'_> {
-    fn run_verifier(v: &mut Verifier, pos: usize) -> Result<(), InvalidFlatbuffer> {
-        v.visit_table(pos)?
-            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<CanvasSegReader>>>>(
-                "segs",
-                VT_CLIP_SEGS,
-                false,
-            )?
-            .finish();
-        Ok(())
-    }
-}
-
-impl ClipPathFbReader<'_> {
-    fn into_clip(&self) -> Result<crate::canvas::ClipPath, String> {
-        let rows = rows_capped::<CanvasSegReader>(&self.tab, VT_CLIP_SEGS, MAX_PATH_SEGS_PER_OP)?;
-        if rows.len() > MAX_PATH_SEGS_PER_OP {
+        .chain(paint.rail.iter())
+        .chain(paint.tabs.iter())
+    {
+        if band.names.len() > MAX_CHROME_NAMES {
             return Err(format!(
-                "canvas clip segs {} exceeds cap {MAX_PATH_SEGS_PER_OP}",
-                rows.len()
+                "vector length {} exceeds cap {MAX_CHROME_NAMES}",
+                band.names.len()
             ));
         }
-        Ok(crate::canvas::ClipPath {
-            segs: rows
-                .into_iter()
-                .map(|r| r.into_seg())
-                .collect::<Result<Vec<_>, _>>()?,
-        })
     }
-}
-
-struct CanvasOpReader<'a> {
-    tab: Table<'a>,
-}
-
-impl<'a> Follow<'a> for CanvasOpReader<'a> {
-    type Inner = CanvasOpReader<'a>;
-    unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
-        Self {
-            tab: Table::new(buf, loc),
-        }
-    }
-}
-
-impl Verifiable for CanvasOpReader<'_> {
-    fn run_verifier(v: &mut Verifier, pos: usize) -> Result<(), InvalidFlatbuffer> {
-        v.visit_table(pos)?
-            .visit_field::<i8>("kind", VT_CANVAS_KIND, false)?
-            .visit_field::<i32>("x", VT_CANVAS_X, false)?
-            .visit_field::<i32>("y", VT_CANVAS_Y, false)?
-            .visit_field::<i32>("w", VT_CANVAS_W, false)?
-            .visit_field::<i32>("h", VT_CANVAS_H, false)?
-            .visit_field::<u32>("color", VT_CANVAS_COLOR, false)?
-            .visit_field::<ForwardsUOffset<&str>>("text", VT_CANVAS_TEXT, false)?
-            .visit_field::<u16>("font_px", VT_CANVAS_FONT_PX, false)?
-            .visit_field::<bool>("mono", VT_CANVAS_MONO, false)?
-            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<CanvasSegReader>>>>(
-                "segs",
-                VT_CANVAS_SEGS,
-                false,
-            )?
-            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<ClipPathFbReader>>>>(
-                "clips",
-                VT_CANVAS_CLIPS,
-                false,
-            )?
-            .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<GradStopReader>>>>(
-                "stops",
-                VT_CANVAS_STOPS,
-                false,
-            )?
-            .visit_field::<f32>("gx0", VT_CANVAS_GX0, false)?
-            .visit_field::<f32>("gy0", VT_CANVAS_GY0, false)?
-            .visit_field::<f32>("gx1", VT_CANVAS_GX1, false)?
-            .visit_field::<f32>("gy1", VT_CANVAS_GY1, false)?
-            .visit_field::<f32>("r0", VT_CANVAS_R0, false)?
-            .visit_field::<f32>("r1", VT_CANVAS_R1, false)?
-            .visit_field::<i8>("grad_kind", VT_CANVAS_GRAD_KIND, false)?
-            .visit_field::<f32>("line_width", VT_CANVAS_LINE_WIDTH, false)?
-            .visit_field::<i8>("line_join", VT_CANVAS_LINE_JOIN, false)?
-            .visit_field::<u32>("shadow_color", VT_CANVAS_SHADOW_COLOR, false)?
-            .visit_field::<f32>("shadow_blur", VT_CANVAS_SHADOW_BLUR, false)?
-            .visit_field::<f32>("shadow_x", VT_CANVAS_SHADOW_X, false)?
-            .visit_field::<f32>("shadow_y", VT_CANVAS_SHADOW_Y, false)?
-            .visit_field::<i8>("align", VT_CANVAS_ALIGN, false)?
-            .visit_field::<i8>("baseline", VT_CANVAS_BASELINE, false)?
-            .finish();
-        Ok(())
-    }
-}
-
-impl CanvasOpReader<'_> {
-    fn decode_segs(&self) -> Result<Vec<crate::canvas::PathSeg>, String> {
-        let rows = rows_capped::<CanvasSegReader>(&self.tab, VT_CANVAS_SEGS, MAX_PATH_SEGS_PER_OP)?;
-        rows.into_iter().map(|r| r.into_seg()).collect()
-    }
-
-    fn decode_extras(&self) -> Result<crate::canvas::DrawExtras, String> {
-        use crate::canvas::{DrawExtras, FillPaint, Shadow};
-        let clip_rows =
-            rows_capped::<ClipPathFbReader>(&self.tab, VT_CANVAS_CLIPS, MAX_CLIP_PATHS)?;
-        if clip_rows.len() > MAX_CLIP_PATHS {
-            return Err(format!(
-                "canvas clips {} exceeds cap {MAX_CLIP_PATHS}",
-                clip_rows.len()
-            ));
-        }
-        let clips = clip_rows
-            .into_iter()
-            .map(|r| r.into_clip())
-            .collect::<Result<Vec<_>, _>>()?;
-        let stop_rows =
-            rows_capped::<GradStopReader>(&self.tab, VT_CANVAS_STOPS, MAX_GRADIENT_STOPS)?;
-        if stop_rows.len() > MAX_GRADIENT_STOPS {
-            return Err(format!(
-                "canvas gradient stops {} exceeds cap {MAX_GRADIENT_STOPS}",
-                stop_rows.len()
-            ));
-        }
-        let stops = stop_rows
-            .into_iter()
-            .map(|r| r.into_stop())
-            .collect::<Result<Vec<_>, _>>()?;
-        let gx0 = unsafe { self.tab.get::<f32>(VT_CANVAS_GX0, None) }.unwrap_or(0.0);
-        let gy0 = unsafe { self.tab.get::<f32>(VT_CANVAS_GY0, None) }.unwrap_or(0.0);
-        let gx1 = unsafe { self.tab.get::<f32>(VT_CANVAS_GX1, None) }.unwrap_or(0.0);
-        let gy1 = unsafe { self.tab.get::<f32>(VT_CANVAS_GY1, None) }.unwrap_or(0.0);
-        let r0 = unsafe { self.tab.get::<f32>(VT_CANVAS_R0, None) }.unwrap_or(0.0);
-        let r1 = unsafe { self.tab.get::<f32>(VT_CANVAS_R1, None) }.unwrap_or(0.0);
-        let grad_kind = unsafe { self.tab.get::<i8>(VT_CANVAS_GRAD_KIND, None) }.unwrap_or(0);
-        let fill = match grad_kind {
-            0 => FillPaint::Solid,
-            1 => FillPaint::Linear {
-                x0: gx0,
-                y0: gy0,
-                x1: gx1,
-                y1: gy1,
-                stops,
-            },
-            2 => FillPaint::Radial {
-                x0: gx0,
-                y0: gy0,
-                r0,
-                x1: gx1,
-                y1: gy1,
-                r1,
-                stops,
-            },
-            other => return Err(format!("unknown canvas grad_kind {other}")),
-        };
-        let blur = unsafe { self.tab.get::<f32>(VT_CANVAS_SHADOW_BLUR, None) }.unwrap_or(0.0);
-        if blur > MAX_SHADOW_BLUR {
-            return Err(format!(
-                "canvas shadow_blur {blur} exceeds cap {MAX_SHADOW_BLUR}"
-            ));
-        }
-        Ok(DrawExtras {
-            clips,
-            shadow: Shadow {
-                color: unsafe { self.tab.get::<u32>(VT_CANVAS_SHADOW_COLOR, None) }.unwrap_or(0),
-                blur,
-                offset_x: unsafe { self.tab.get::<f32>(VT_CANVAS_SHADOW_X, None) }.unwrap_or(0.0),
-                offset_y: unsafe { self.tab.get::<f32>(VT_CANVAS_SHADOW_Y, None) }.unwrap_or(0.0),
-            },
-            fill,
-        })
-    }
-
-    fn into_op(&self) -> Result<crate::canvas::CanvasOp, String> {
-        use crate::canvas::{CanvasOp, LineJoinKind, TextAlign, TextBaseline};
-        let kind = unsafe { self.tab.get::<i8>(VT_CANVAS_KIND, None) }.unwrap_or(0);
-        let x = unsafe { self.tab.get::<i32>(VT_CANVAS_X, None) }.unwrap_or(0);
-        let y = unsafe { self.tab.get::<i32>(VT_CANVAS_Y, None) }.unwrap_or(0);
-        let w = unsafe { self.tab.get::<i32>(VT_CANVAS_W, None) }.unwrap_or(0);
-        let h = unsafe { self.tab.get::<i32>(VT_CANVAS_H, None) }.unwrap_or(0);
-        let color = unsafe { self.tab.get::<u32>(VT_CANVAS_COLOR, None) }.unwrap_or(0);
-        let extras = self.decode_extras()?;
-        match kind {
-            0 => Ok(CanvasOp::FillRect {
-                x,
-                y,
-                w,
-                h,
-                color,
-                extras,
-            }),
-            1 => {
-                let text = unsafe { self.tab.get::<ForwardsUOffset<&str>>(VT_CANVAS_TEXT, None) }
-                    .unwrap_or("");
-                if text.len() > MAX_PAINT_TEXT {
-                    return Err(format!(
-                        "canvas text length {} exceeds cap {MAX_PAINT_TEXT}",
-                        text.len()
-                    ));
-                }
-                let font_px = unsafe { self.tab.get::<u16>(VT_CANVAS_FONT_PX, None) }.unwrap_or(10);
-                if !crate::canvas::font_px_allowed(font_px) {
-                    return Err(format!(
-                        "canvas font_px {font_px} exceeds cap {}",
-                        crate::canvas::MAX_FONT_PX
-                    ));
-                }
-                let mono = unsafe { self.tab.get::<bool>(VT_CANVAS_MONO, None) }.unwrap_or(false);
-                let align = match unsafe { self.tab.get::<i8>(VT_CANVAS_ALIGN, None) }.unwrap_or(0)
-                {
-                    0 => TextAlign::Left,
-                    1 => TextAlign::Center,
-                    2 => TextAlign::Right,
-                    other => return Err(format!("unknown canvas align {other}")),
-                };
-                let baseline =
-                    match unsafe { self.tab.get::<i8>(VT_CANVAS_BASELINE, None) }.unwrap_or(0) {
-                        0 => TextBaseline::Alphabetic,
-                        1 => TextBaseline::Top,
-                        2 => TextBaseline::Middle,
-                        3 => TextBaseline::Bottom,
-                        other => return Err(format!("unknown canvas baseline {other}")),
-                    };
-                Ok(CanvasOp::FillText {
-                    text: text.to_string(),
-                    x,
-                    y,
-                    color,
-                    font_px,
-                    mono,
-                    align,
-                    baseline,
-                    extras,
-                })
-            }
-            2 => {
-                let segs = self.decode_segs()?;
-                if segs.len() > MAX_PATH_SEGS_PER_OP {
-                    return Err(format!(
-                        "canvas path segs {} exceeds cap {MAX_PATH_SEGS_PER_OP}",
-                        segs.len()
-                    ));
-                }
-                Ok(CanvasOp::FillPath {
-                    segs,
-                    color,
-                    extras,
-                })
-            }
-            3 => {
-                let segs = self.decode_segs()?;
-                if segs.len() > MAX_PATH_SEGS_PER_OP {
-                    return Err(format!(
-                        "canvas path segs {} exceeds cap {MAX_PATH_SEGS_PER_OP}",
-                        segs.len()
-                    ));
-                }
-                let line_width =
-                    unsafe { self.tab.get::<f32>(VT_CANVAS_LINE_WIDTH, None) }.unwrap_or(1.0);
-                if line_width > MAX_LINE_WIDTH {
-                    return Err(format!(
-                        "canvas line_width {line_width} exceeds cap {MAX_LINE_WIDTH}"
-                    ));
-                }
-                let line_join =
-                    match unsafe { self.tab.get::<i8>(VT_CANVAS_LINE_JOIN, None) }.unwrap_or(0) {
-                        0 => LineJoinKind::Miter,
-                        1 => LineJoinKind::Round,
-                        2 => LineJoinKind::Bevel,
-                        other => return Err(format!("unknown canvas line_join {other}")),
-                    };
-                Ok(CanvasOp::StrokePath {
-                    segs,
-                    color,
-                    line_width,
-                    line_join,
-                    extras,
-                })
-            }
-            other => Err(format!("unknown canvas op kind {other}")),
-        }
-    }
-}
-
-impl PaintReader<'_> {
-    pub fn title(&self) -> Option<&str> {
-        unsafe { self.tab.get::<ForwardsUOffset<&str>>(VT_PAINT_TITLE, None) }
-    }
-    pub fn accent(&self) -> Option<&str> {
-        unsafe { self.tab.get::<ForwardsUOffset<&str>>(VT_PAINT_ACCENT, None) }
-    }
-    pub fn lines(&self) -> Result<Vec<String>, String> {
-        // Safety: verified before any accessor use.
-        let lines = match unsafe {
-            self.tab
-                .get::<ForwardsUOffset<Vector<ForwardsUOffset<&str>>>>(VT_PAINT_LINES, None)
-        } {
-            Some(v) => {
-                let len = v.len();
-                if len > MAX_PAINT_LINES {
-                    return Err(format!("vector length {len} exceeds cap {MAX_PAINT_LINES}"));
-                }
-                v.iter().map(str::to_string).collect()
-            }
-            None => Vec::new(),
-        };
-        Ok(lines)
-    }
-    fn buttons(&self) -> Result<Vec<crate::shim::ScriptPaintButton>, String> {
-        let rows =
-            rows_capped::<PaintButtonReader>(&self.tab, VT_PAINT_BUTTONS, MAX_PAINT_BUTTONS)?;
-        Ok(rows
-            .into_iter()
-            .map(|row| crate::shim::ScriptPaintButton {
-                id: row.id().to_string(),
-                label: row.label().to_string(),
-            })
-            .collect())
-    }
-    fn canvas(&self) -> Result<Vec<crate::canvas::CanvasOp>, String> {
-        let rows = rows_capped::<CanvasOpReader>(&self.tab, VT_PAINT_CANVAS, MAX_CANVAS_OPS)?;
-        let mut out = Vec::with_capacity(rows.len());
-        let mut segs = 0usize;
-        for row in rows {
-            let op = row.into_op()?;
-            segs = segs.saturating_add(match &op {
-                crate::canvas::CanvasOp::FillPath { segs, extras, .. }
-                | crate::canvas::CanvasOp::StrokePath { segs, extras, .. } => {
-                    segs.len() + extras.clips.iter().map(|c| c.segs.len()).sum::<usize>()
-                }
-                crate::canvas::CanvasOp::FillRect { extras, .. }
-                | crate::canvas::CanvasOp::FillText { extras, .. } => {
-                    extras.clips.iter().map(|c| c.segs.len()).sum::<usize>()
-                }
-            });
-            if segs > MAX_PATH_SEGS_PER_FRAME {
-                return Err(format!(
-                    "canvas path segs {segs} exceeds cap {MAX_PATH_SEGS_PER_FRAME}"
-                ));
-            }
-            out.push(op);
-        }
-        Ok(out)
-    }
-}
-
-/// Decode a root-`Paint` FlatBuffer into the shim's recorded frame.
-pub fn decode_paint(buf: &[u8]) -> Result<crate::shim::ScriptPaint, String> {
-    let paint = verified_root::<PaintReader>(buf)?;
-    Ok(crate::shim::ScriptPaint {
-        title: paint.title().map(str::to_string),
-        accent: paint.accent().map(str::to_string),
-        lines: paint.lines()?,
-        buttons: paint.buttons()?,
-        canvas: paint.canvas()?,
-        generation: 0,
-    })
+    Ok(())
 }
 
 /// Decode a root-`InteractBatch` into the shim's request type. A row with
@@ -5448,6 +6020,8 @@ pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>
                 z: row.z(),
                 level: row.level(),
                 allow_teleports: row.action().is_some_and(|a| a == "tele" || a == "on"),
+                allow_wilderness: row.allow_wilderness(),
+                allow_bank_fetch: row.allow_bank_fetch(),
                 request_id: row.request_id(),
             }),
             "walk-near" => out.push(crate::shim::InteractReq::WalkNear {
@@ -5456,9 +6030,45 @@ pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>
                 level: row.level(),
                 radius: row.index().unwrap_or(0),
                 allow_teleports: row.action().is_some_and(|a| a == "tele" || a == "on"),
+                allow_wilderness: row.allow_wilderness(),
+                allow_bank_fetch: row.allow_bank_fetch(),
                 request_id: row.request_id(),
             }),
             "walk-nearest-bank" => out.push(crate::shim::InteractReq::WalkNearestBank),
+            "abort-walk" => out.push(crate::shim::InteractReq::AbortWalk {
+                request_id: row.request_id(),
+            }),
+            "inspect-route" => out.push(crate::shim::InteractReq::InspectRoute {
+                x: row.x(),
+                z: row.z(),
+                level: row.level(),
+                from_x: row.from_x(),
+                from_z: row.from_z(),
+                from_level: row.from_level(),
+                allow_teleports: row.allow_teleports_explicit(),
+                allow_wilderness: row.allow_wilderness(),
+                allow_bank_fetch: row.allow_bank_fetch(),
+                avoid: row
+                    .avoid()
+                    .into_iter()
+                    .map(|rect| crate::shim::InspectAvoidWire::Rect {
+                        min_x: rect.min_x(),
+                        max_x: rect.max_x(),
+                        min_z: rect.min_z(),
+                        max_z: rect.max_z(),
+                        level: if rect.level() < 0 {
+                            None
+                        } else {
+                            Some(rect.level())
+                        },
+                    })
+                    .collect(),
+                request_id: row.request_id(),
+            }),
+            "inspect-ack" => out.push(crate::shim::InteractReq::InspectAck {
+                seq: row.inspect_ack_seq(),
+                generation: row.inspect_ack_generation(),
+            }),
             "walk-to" => out.push(crate::shim::InteractReq::WalkTo {
                 x: row.x(),
                 z: row.z(),
@@ -5533,6 +6143,20 @@ pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>
                     .stand_op()
                     .ok_or_else(|| "inv-button has no operation".to_string())?,
                 bank_generation: row.bank_generation().unwrap_or(0),
+            }),
+            "puzzle-move" => out.push(crate::shim::InteractReq::PuzzleMove {
+                id: row
+                    .bank_item_id()
+                    .ok_or_else(|| "puzzle-move has no id".to_string())?,
+                slot: row
+                    .source_item_slot()
+                    .ok_or_else(|| "puzzle-move has no slot".to_string())?,
+                component: row
+                    .component_id()
+                    .ok_or_else(|| "puzzle-move has no component".to_string())?,
+                generation: row
+                    .bank_generation()
+                    .ok_or_else(|| "puzzle-move has no generation".to_string())?,
             }),
             "shop-button" => out.push(crate::shim::InteractReq::ShopButton {
                 kind: row
@@ -5663,6 +6287,12 @@ pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>
                     .ok_or_else(|| "wear has no name".to_string())?
                     .to_string(),
             }),
+            "unequip" => out.push(crate::shim::InteractReq::Unequip {
+                name: row
+                    .name()
+                    .ok_or_else(|| "unequip has no name".to_string())?
+                    .to_string(),
+            }),
             "set-run" => out.push(crate::shim::InteractReq::SetRun {
                 on: row.action().is_some_and(|a| a == "on" || a == "true"),
             }),
@@ -5715,6 +6345,9 @@ fn interact_off<'b>(
         InteractReq::Walk { .. } => "walk",
         InteractReq::WalkNear { .. } => "walk-near",
         InteractReq::WalkNearestBank => "walk-nearest-bank",
+        InteractReq::AbortWalk { .. } => "abort-walk",
+        InteractReq::InspectRoute { .. } => "inspect-route",
+        InteractReq::InspectAck { .. } => "inspect-ack",
         InteractReq::WalkTo { .. } => "walk-to",
         InteractReq::Deposit { .. } => "deposit",
         InteractReq::Withdraw { .. } => "withdraw",
@@ -5722,6 +6355,7 @@ fn interact_off<'b>(
         InteractReq::WithdrawLoad { .. } => "withdraw-load",
         InteractReq::Held { .. } => "held",
         InteractReq::InvButton { .. } => "inv-button",
+        InteractReq::PuzzleMove { .. } => "puzzle-move",
         InteractReq::ShopButton { .. } => "shop-button",
         InteractReq::MakePanel { .. } => "make-panel",
         InteractReq::Close => "close",
@@ -5738,6 +6372,7 @@ fn interact_off<'b>(
         InteractReq::CloseModal => "close-modal",
         InteractReq::SideTab { .. } => "side-tab",
         InteractReq::Wear { .. } => "wear",
+        InteractReq::Unequip { .. } => "unequip",
         InteractReq::SetRun { .. } => "set-run",
         InteractReq::SetRetaliate { .. } => "set-retaliate",
         InteractReq::SetNoteMode { .. } => "set-note-mode",
@@ -5772,7 +6407,8 @@ fn interact_off<'b>(
         | InteractReq::Player { name, .. }
         | InteractReq::UseOn { name, .. }
         | InteractReq::ShopButton { name, .. }
-        | InteractReq::Wear { name } => Some(b.create_string(name)),
+        | InteractReq::Wear { name }
+        | InteractReq::Unequip { name } => Some(b.create_string(name)),
         InteractReq::Obj { name, .. } => name.as_deref().map(|n| b.create_string(n)),
         _ => None,
     };
@@ -5806,6 +6442,28 @@ fn interact_off<'b>(
             ..
         } => Some(b.create_string("tele")),
         InteractReq::Key { key, .. } => Some(b.create_string(key)),
+        _ => None,
+    };
+    let avoid_off = match req {
+        InteractReq::InspectRoute { avoid, .. } => {
+            let offs: Vec<_> = avoid
+                .iter()
+                .map(|entry| match entry {
+                    crate::shim::InspectAvoidWire::Rect {
+                        min_x,
+                        max_x,
+                        min_z,
+                        max_z,
+                        level,
+                    } => avoid_rect_off(b, *min_x, *max_x, *min_z, *max_z, *level),
+                    // Inverted sentinel so host validation is invalid-args, not drop.
+                    crate::shim::InspectAvoidWire::Unsupported => {
+                        avoid_rect_off(b, 1, 0, 0, 0, None)
+                    }
+                })
+                .collect();
+            Some(b.create_vector(&offs))
+        }
         _ => None,
     };
     let tab = b.start_table();
@@ -5866,6 +6524,8 @@ fn interact_off<'b>(
             level,
             radius,
             request_id,
+            allow_wilderness,
+            allow_bank_fetch,
             ..
         } => {
             b.push_slot_always(VT_IN_X, *x);
@@ -5878,13 +6538,65 @@ fn interact_off<'b>(
             if let Some(off) = action_off {
                 b.push_slot_always(VT_IN_ACTION, off);
             }
+            if *allow_wilderness {
+                b.push_slot_always(VT_IN_ALLOW_WILDERNESS, true);
+            }
+            if *allow_bank_fetch {
+                b.push_slot_always(VT_IN_ALLOW_BANK_FETCH, true);
+            }
         }
         InteractReq::WalkNearestBank => {}
+        InteractReq::AbortWalk { request_id } => {
+            b.push_slot_always(VT_IN_REQUEST_ID, *request_id);
+        }
+        InteractReq::InspectRoute {
+            x,
+            z,
+            level,
+            from_x,
+            from_z,
+            from_level,
+            allow_teleports,
+            allow_wilderness,
+            allow_bank_fetch,
+            request_id,
+            ..
+        } => {
+            b.push_slot_always(VT_IN_X, *x);
+            b.push_slot_always(VT_IN_Z, *z);
+            b.push_slot_always(VT_IN_LEVEL, *level);
+            b.push_slot_always(VT_IN_FROM_X, *from_x);
+            b.push_slot_always(VT_IN_FROM_Z, *from_z);
+            b.push_slot_always(VT_IN_FROM_LEVEL, *from_level);
+            if *allow_teleports {
+                b.push_slot_always(VT_IN_ALLOW_TELEPORTS, true);
+            }
+            if *allow_wilderness {
+                b.push_slot_always(VT_IN_ALLOW_WILDERNESS, true);
+            }
+            if *allow_bank_fetch {
+                b.push_slot_always(VT_IN_ALLOW_BANK_FETCH, true);
+            }
+            if *request_id != 0 {
+                b.push_slot_always(VT_IN_REQUEST_ID, *request_id);
+            }
+            if let Some(off) = avoid_off {
+                b.push_slot_always(VT_IN_AVOID, off);
+            }
+        }
+        InteractReq::InspectAck { seq, generation } => {
+            if *seq != 0 {
+                b.push_slot_always(VT_IN_INSPECT_ACK_SEQ, *seq);
+            }
+            b.push_slot_always(VT_IN_INSPECT_ACK_GENERATION, *generation);
+        }
         InteractReq::Walk {
             x,
             z,
             level,
             request_id,
+            allow_wilderness,
+            allow_bank_fetch,
             ..
         } => {
             b.push_slot_always(VT_IN_X, *x);
@@ -5895,6 +6607,12 @@ fn interact_off<'b>(
             }
             if let Some(off) = action_off {
                 b.push_slot_always(VT_IN_ACTION, off);
+            }
+            if *allow_wilderness {
+                b.push_slot_always(VT_IN_ALLOW_WILDERNESS, true);
+            }
+            if *allow_bank_fetch {
+                b.push_slot_always(VT_IN_ALLOW_BANK_FETCH, true);
             }
         }
         InteractReq::WalkTo { x, z, level } | InteractReq::RecoveryAnchor { x, z, level } => {
@@ -5959,6 +6677,17 @@ fn interact_off<'b>(
             b.push_slot_always(VT_IN_SOURCE_ITEM_SLOT, *slot);
             b.push_slot_always(VT_IN_COMPONENT_ID, *component);
             b.push_slot_always(VT_IN_STAND_OP, *operation);
+        }
+        InteractReq::PuzzleMove {
+            id,
+            slot,
+            component,
+            generation,
+        } => {
+            b.push_slot_always(VT_IN_BANK_ITEM_ID, *id);
+            b.push_slot_always(VT_IN_SOURCE_ITEM_SLOT, *slot);
+            b.push_slot_always(VT_IN_COMPONENT_ID, *component);
+            b.push_slot_always(VT_IN_BANK_GENERATION, *generation);
         }
         InteractReq::Close => {}
         InteractReq::Npc { index, .. } => {
@@ -6066,7 +6795,7 @@ fn interact_off<'b>(
         InteractReq::SideTab { tab } => {
             b.push_slot_always(VT_IN_STAND_OP, *tab);
         }
-        InteractReq::Wear { .. } => {
+        InteractReq::Wear { .. } | InteractReq::Unequip { .. } => {
             b.push_slot_always(VT_IN_NAME, name_off.unwrap());
         }
         InteractReq::SetRun { .. }
@@ -6106,7 +6835,7 @@ fn interact_off<'b>(
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::shim::{InteractReq, ScriptPaint};
+    use crate::shim::InteractReq;
 
     pub(crate) fn empty_input(tick: u64) -> SnapshotInput<'static> {
         SnapshotInput {
@@ -6161,6 +6890,7 @@ pub(crate) mod tests {
             bank_note_off: -1,
             scene_state: 0,
             weight: 0,
+            combat_level: 0,
             camera_yaw: 0,
             camera_pitch: 0,
             teleports_enabled: false,
@@ -6177,6 +6907,8 @@ pub(crate) mod tests {
             shop_stock: &[],
             reach: ReachViewInput::UNAVAILABLE,
             attacked_by_player: false,
+            self_target_kind: 0,
+            self_target_index: -1,
             widgets: &[],
         }
     }
@@ -6199,6 +6931,25 @@ pub(crate) mod tests {
         assert_eq!(view.walk_outcome_radius(), 0);
         assert!(!view.walk_outcome_allow_teleports());
         assert_eq!(view.walk_outcome_request_id(), 0);
+        assert!(!view.has_route_inspect_seq());
+        assert_eq!(view.route_inspect_seq(), 0);
+        assert_eq!(view.route_inspect_request_id(), 0);
+        assert!(!view.route_inspect_ok());
+        assert_eq!(view.route_inspect_reason(), "");
+        assert!(!view.route_inspect_bank_planned());
+        assert_eq!(view.route_inspect_ticks(), 0.0);
+        assert!(view.route_inspect_hops().is_empty());
+        assert_eq!(view.route_inspect_prev_seq(), 0);
+        assert_eq!(view.route_inspect_prev_request_id(), 0);
+        assert_eq!(view.route_inspect_running_id(), 0);
+        assert_eq!(view.route_inspect_pending_id(), 0);
+        assert_eq!(view.route_inspect_accepted_id(), 0);
+        assert_eq!(view.route_inspect_replaced_id(), 0);
+        assert_eq!(view.route_inspect_replaced_prev_id(), 0);
+        assert_eq!(view.route_inspect_refused_id(), 0);
+        assert_eq!(view.route_inspect_refused_id_2(), 0);
+        assert_eq!(view.route_inspect_refused_id_3(), 0);
+        assert_eq!(view.route_inspect_unobserved(), 0);
     }
 
     /// Stats rows carry base + effective (+ xp/name/index) through the blob.
@@ -6247,6 +6998,9 @@ pub(crate) mod tests {
             combat_level: 1,
             target_kind: 0,
             target_index: -1,
+            size: 4,
+            nx: 2832,
+            nz: 9825,
         };
         let mut input = empty_input(9);
         let npcs = [npc];
@@ -6260,6 +7014,7 @@ pub(crate) mod tests {
         assert_eq!(got[0].id(), 41);
         assert_eq!(got[0].name(), Some("Chicken"));
         assert_eq!((got[0].x(), got[0].z(), got[0].level()), (3222, 3295, 0));
+        assert_eq!((got[0].size(), got[0].nx(), got[0].nz()), (4, 2832, 9825));
         assert_eq!(got[0].actions(), vec!["Attack", "Pick-up"]);
     }
 
@@ -6285,6 +7040,9 @@ pub(crate) mod tests {
             combat_level: 0,
             target_kind: 0,
             target_index: -1,
+            size: 0,
+            nx: 0,
+            nz: 0,
         };
         let mut input = empty_input(1);
         let npcs = [npc];
@@ -6298,6 +7056,225 @@ pub(crate) mod tests {
         assert!(view.npcs().is_empty(), "absent reads as empty vec");
     }
 
+    #[test]
+    fn old_scene_entity_defaults_size_nx_nz_zero() {
+        let mut snap_b = flatbuffers::FlatBufferBuilder::new();
+        let ent_tab = snap_b.start_table();
+        snap_b.push_slot_always(VT_ENT_INDEX, 7i32);
+        snap_b.push_slot_always(VT_ENT_X, 10i32);
+        snap_b.push_slot_always(VT_ENT_Z, 20i32);
+        let ent_off = snap_b.end_table(ent_tab);
+        let vec = snap_b.create_vector(&[flatbuffers::WIPOffset::<SceneEntityReader>::new(
+            ent_off.value(),
+        )]);
+        let tab = snap_b.start_table();
+        snap_b.push_slot_always(VT_SNAP_TICK, 1u64);
+        snap_b.push_slot_always(VT_SNAP_NPCS, vec);
+        let root = snap_b.end_table(tab);
+        snap_b.finish(root, None);
+        let snap = SnapshotReader::from_bytes(snap_b.finished_data()).expect("old snap");
+        let got = snap.npcs();
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].size(), 0);
+        assert_eq!(got[0].nx(), 0);
+        assert_eq!(got[0].nz(), 0);
+        assert_eq!(got[0].target_index(), -1);
+    }
+
+    #[test]
+    fn old_snapshot_self_target_defaults_none() {
+        let mut b = flatbuffers::FlatBufferBuilder::new();
+        let tab = b.start_table();
+        b.push_slot_always(VT_SNAP_TICK, 7u64);
+        let root = b.end_table(tab);
+        b.finish(root, None);
+        let view = SnapshotReader::from_bytes(b.finished_data()).expect("old snapshot");
+        assert!(!view.has_self_target_kind());
+        assert!(!view.has_self_target_index());
+        assert_eq!(view.self_target_kind(), 0);
+        assert_eq!(view.self_target_index(), -1);
+    }
+
+    #[test]
+    fn packed_size_zero_world_is_present_when_size_at_least_one() {
+        let actions: [String; 0] = [];
+        let npc = SceneEntityInput {
+            index: 1,
+            id: 1,
+            name: Some("Man"),
+            x: 0,
+            z: 0,
+            level: 0,
+            distance: 0,
+            health: 1,
+            max_health: 1,
+            in_combat: false,
+            animating: false,
+            actions: &actions,
+            reachable: false,
+            reachable_adj: false,
+            combat_level: 0,
+            target_kind: 0,
+            target_index: -1,
+            size: 1,
+            nx: 0,
+            nz: 0,
+        };
+        let mut input = empty_input(2);
+        let npcs = [npc];
+        input.npcs = &npcs;
+        let bytes = encode_snapshot(&input);
+        let view = decode_snapshot(&bytes).expect("snapshot");
+        assert_eq!(view.npcs()[0].size(), 1);
+        assert_eq!((view.npcs()[0].nx(), view.npcs()[0].nz()), (0, 0));
+    }
+
+    #[test]
+    fn loc_row_omits_size_slots() {
+        let actions: [String; 0] = [];
+        let loc = SceneEntityInput {
+            index: 9,
+            id: 9,
+            name: Some("Tree"),
+            x: 10,
+            z: 10,
+            level: 0,
+            distance: 1,
+            health: -1,
+            max_health: -1,
+            in_combat: false,
+            animating: false,
+            actions: &actions,
+            reachable: false,
+            reachable_adj: false,
+            combat_level: 0,
+            target_kind: 0,
+            target_index: -1,
+            size: 0,
+            nx: 0,
+            nz: 0,
+        };
+        let mut input = empty_input(3);
+        let locs = [loc];
+        input.locs = &locs;
+        let bytes = encode_snapshot(&input);
+        let view = decode_snapshot(&bytes).expect("snapshot");
+        assert_eq!(view.locs()[0].size(), 0);
+        assert_eq!((view.locs()[0].nx(), view.locs()[0].nz()), (0, 0));
+    }
+
+    #[test]
+    fn fingerprint_changes_when_size_or_network_origin_changes() {
+        let actions = ["Attack".to_string()];
+        let mut npc = SceneEntityInput {
+            index: 1,
+            id: 9,
+            name: Some("Goblin"),
+            x: 10,
+            z: 10,
+            level: 0,
+            distance: 1,
+            health: 5,
+            max_health: 5,
+            in_combat: false,
+            animating: false,
+            actions: &actions,
+            reachable: false,
+            reachable_adj: false,
+            combat_level: 2,
+            target_kind: 0,
+            target_index: -1,
+            size: 1,
+            nx: 10,
+            nz: 10,
+        };
+        let mut input = empty_input(4);
+        let npcs = [npc];
+        input.npcs = &npcs;
+        let fp1 = SnapshotFingerprint::from_input(&input);
+        npc.size = 4;
+        let npcs = [npc];
+        input.npcs = &npcs;
+        let fp2 = SnapshotFingerprint::from_input(&input);
+        assert_ne!(fp1.npcs, fp2.npcs);
+        npc.size = 4;
+        npc.nx = 11;
+        let npcs = [npc];
+        input.npcs = &npcs;
+        let fp3 = SnapshotFingerprint::from_input(&input);
+        assert_ne!(fp2.npcs, fp3.npcs);
+        npc.nx = 11;
+        npc.nz = 12;
+        let npcs = [npc];
+        input.npcs = &npcs;
+        let fp4 = SnapshotFingerprint::from_input(&input);
+        assert_ne!(fp3.npcs, fp4.npcs);
+    }
+
+    #[test]
+    fn self_target_delta_omits_when_unchanged_and_posts_on_change() {
+        let mut input = empty_input(5);
+        input.self_target_kind = 1;
+        input.self_target_index = 42;
+        let (kf, fp) = encode_snapshot_delta(None, &input, false);
+        let kf_view = decode_snapshot(&kf).expect("kf");
+        assert_eq!(kf_view.self_target_kind(), 1);
+        assert_eq!(kf_view.self_target_index(), 42);
+        let (delta, _) = encode_snapshot_delta(Some(&fp), &input, false);
+        let d = decode_snapshot(&delta).expect("delta");
+        assert!(!d.has_self_target_kind());
+        assert!(!d.has_self_target_index());
+        input.self_target_kind = 2;
+        input.self_target_index = 7;
+        let (delta2, _) = encode_snapshot_delta(Some(&fp), &input, false);
+        let d2 = decode_snapshot(&delta2).expect("delta2");
+        assert!(d2.has_self_target_kind());
+        assert_eq!(d2.self_target_kind(), 2);
+        assert_eq!(d2.self_target_index(), 7);
+    }
+
+    #[test]
+    fn reset_posts_empty_npcs_and_none_target() {
+        let actions = ["Attack".to_string()];
+        let npc = SceneEntityInput {
+            index: 1,
+            id: 2,
+            name: Some("Goblin"),
+            x: 100,
+            z: 100,
+            level: 0,
+            distance: 1,
+            health: 5,
+            max_health: 5,
+            in_combat: false,
+            animating: false,
+            actions: &actions,
+            reachable: false,
+            reachable_adj: false,
+            combat_level: 0,
+            target_kind: 0,
+            target_index: -1,
+            size: 1,
+            nx: 100,
+            nz: 100,
+        };
+        let mut input = empty_input(6);
+        let npcs = [npc];
+        input.npcs = &npcs;
+        input.self_target_kind = 1;
+        input.self_target_index = 1;
+        let (_, fp) = encode_snapshot_delta(None, &input, false);
+        let mut reset = empty_input(7);
+        reset.self_target_kind = 0;
+        reset.self_target_index = -1;
+        let (delta, _) = encode_snapshot_delta(Some(&fp), &reset, false);
+        let view = decode_snapshot(&delta).expect("reset");
+        assert!(view.has_npcs());
+        assert!(view.npcs().is_empty());
+        assert_eq!(view.self_target_kind(), 0);
+        assert_eq!(view.self_target_index(), -1);
+    }
+
     /// Task 8 — interact `npc` + label round-trips through the batch codec.
     #[test]
     fn encode_decode_interact_npc_pick_round_trips() {
@@ -6309,6 +7286,71 @@ pub(crate) mod tests {
         let bytes = encode_interact_batch(&reqs);
         let got = decode_interact_batch(&bytes).expect("interact batch decodes");
         assert_eq!(got, reqs);
+    }
+
+    /// `wear` and `unequip` share the name slot; the op string keeps a
+    /// removal from decoding as a wear of the same item.
+    #[test]
+    fn encode_decode_interact_wear_and_unequip_round_trip() {
+        let reqs = vec![
+            InteractReq::Wear {
+                name: "Iron chainbody".into(),
+            },
+            InteractReq::Unequip {
+                name: "Iron chainbody".into(),
+            },
+        ];
+        let bytes = encode_interact_batch(&reqs);
+        let got = decode_interact_batch(&bytes).expect("interact batch decodes");
+        assert_eq!(got, reqs);
+    }
+
+    /// `abort-walk` crosses the wire as its own op, in batch order, so the
+    /// host stops the follow before the click queued after it.
+    #[test]
+    fn encode_decode_interact_abort_walk_keeps_its_place_in_the_batch() {
+        let reqs = vec![
+            InteractReq::AbortWalk { request_id: 42 },
+            InteractReq::Loc {
+                x: 7,
+                z: 5,
+                level: 0,
+                action: "Open".into(),
+                id: Some(1530),
+            },
+        ];
+        let bytes = encode_interact_batch(&reqs);
+        let got = decode_interact_batch(&bytes).expect("interact batch decodes");
+        assert_eq!(got, reqs);
+    }
+
+    /// `puzzle-move` round-trips on the reused Interact slots (id / slot /
+    /// component / generation) even when a bank row carries the same four
+    /// numbers: the op string is the discriminator, and the operation slot
+    /// the component family needs stays unset for the board row.
+    #[test]
+    fn encode_decode_interact_puzzle_move_round_trips_beside_a_bank_row() {
+        let reqs = vec![
+            InteractReq::PuzzleMove {
+                id: 2749,
+                slot: 0,
+                component: 6600,
+                generation: 3,
+            },
+            InteractReq::InvButton {
+                id: 2749,
+                slot: 0,
+                component: 6600,
+                operation: 5,
+                bank_generation: 3,
+            },
+        ];
+        let bytes = encode_interact_batch(&reqs);
+        let got = decode_interact_batch(&bytes).expect("interact batch decodes");
+        assert_eq!(
+            got, reqs,
+            "the op string decides the variant, not the slots"
+        );
     }
 
     #[test]
@@ -6445,21 +7487,6 @@ pub(crate) mod tests {
         let snap = SnapshotReader::from_bytes(&bytes).expect("snapshot");
         assert_eq!(snap.tick(), 1);
 
-        let paint = ScriptPaint {
-            title: Some("BoneBurier".into()),
-            accent: Some("#f3e6a2".into()),
-            lines: vec!["Runtime: 1.2m".into(), "".into()],
-            buttons: vec![crate::shim::ScriptPaintButton {
-                id: "gobank".into(),
-                label: "Go bank".into(),
-            }],
-            generation: 0,
-            canvas: Vec::new(),
-        };
-        let pbytes = buf.encode_paint(&paint);
-        let decoded = decode_paint(&pbytes).expect("paint");
-        assert_eq!(decoded, paint);
-
         let reqs = vec![
             InteractReq::Held {
                 name: "Bones".into(),
@@ -6470,6 +7497,8 @@ pub(crate) mod tests {
                 z: 2,
                 level: 0,
                 allow_teleports: true,
+                allow_wilderness: false,
+                allow_bank_fetch: false,
                 request_id: 9,
             },
             InteractReq::WalkNear {
@@ -6478,6 +7507,8 @@ pub(crate) mod tests {
                 level: 0,
                 radius: 3,
                 allow_teleports: false,
+                allow_wilderness: false,
+                allow_bank_fetch: false,
                 request_id: 0,
             },
             InteractReq::WalkTo {
@@ -6501,36 +7532,77 @@ pub(crate) mod tests {
         assert_eq!(got, reqs);
     }
 
+    #[test]
+    fn walk_find_options_roundtrip_through_interact_batch() {
+        let reqs = vec![
+            InteractReq::Walk {
+                x: 3100,
+                z: 3525,
+                level: 1,
+                allow_teleports: false,
+                allow_wilderness: true,
+                allow_bank_fetch: true,
+                request_id: 11,
+            },
+            InteractReq::WalkNear {
+                x: 3222,
+                z: 3222,
+                level: 0,
+                radius: 2,
+                allow_teleports: true,
+                allow_wilderness: false,
+                allow_bank_fetch: true,
+                request_id: 12,
+            },
+        ];
+        let bytes = encode_interact_batch(&reqs);
+        assert_eq!(decode_interact_batch(&bytes).expect("decode"), reqs);
+    }
+
+    #[test]
+    fn inspect_ack_roundtrip_preserves_seq_and_generation() {
+        let reqs = vec![InteractReq::InspectAck {
+            seq: 4,
+            generation: 2,
+        }];
+        let bytes = encode_interact_batch(&reqs);
+        assert_eq!(decode_interact_batch(&bytes).expect("ack"), reqs);
+    }
+
+    #[test]
+    fn old_walk_buffers_default_new_find_options_false() {
+        let mut b = FlatBufferBuilder::new();
+        let op_off = b.create_string("walk");
+        let tab = b.start_table();
+        b.push_slot_always(VT_IN_OP, op_off);
+        b.push_slot_always(VT_IN_X, 1);
+        b.push_slot_always(VT_IN_Z, 2);
+        b.push_slot_always(VT_IN_LEVEL, 0);
+        b.push_slot_always(VT_IN_REQUEST_ID, 7u64);
+        let row = WIPOffset::<InteractReader>::new(b.end_table(tab).value());
+        let reqs = b.create_vector(&[row]);
+        let batch = b.start_table();
+        b.push_slot_always(VT_REQS, reqs);
+        let root = b.end_table(batch);
+        b.finish(root, None);
+        let got = decode_interact_batch(b.finished_data()).expect("old walk");
+        assert_eq!(
+            got,
+            vec![InteractReq::Walk {
+                x: 1,
+                z: 2,
+                level: 0,
+                allow_teleports: false,
+                allow_wilderness: false,
+                allow_bank_fetch: false,
+                request_id: 7,
+            }]
+        );
+    }
+
     /// Truncated isolate→host buffers must not panic; invalid roots err.
     #[test]
     fn truncated_paint_and_interact_buffers_return_err() {
-        let paint = ScriptPaint {
-            title: Some("t".into()),
-            accent: None,
-            lines: vec!["line".into()],
-            buttons: vec![crate::shim::ScriptPaintButton {
-                id: "gobank".into(),
-                label: "Go bank".into(),
-            }],
-            generation: 0,
-            canvas: Vec::new(),
-        };
-        let full = IsolateBuf::new().encode_paint(&paint);
-        for cut in 1..full.len() {
-            let _ = decode_paint(&full[..cut]);
-        }
-        let mid = full.len().saturating_sub(8);
-        assert!(
-            decode_paint(&full[..mid]).is_err(),
-            "paint truncated mid-payload should err"
-        );
-        let mut bad_root = full.clone();
-        bad_root[0..4].copy_from_slice(&u32::MAX.to_le_bytes());
-        assert!(
-            decode_paint(&bad_root).is_err(),
-            "huge paint root offset should err"
-        );
-
         let reqs = vec![InteractReq::Close];
         let ibytes = IsolateBuf::new().encode_interact_batch(&reqs);
         for cut in 1..ibytes.len() {
@@ -6595,6 +7667,7 @@ pub(crate) mod tests {
             adjacent_rank: &adjacent_rank,
             step: &[],
             canlight: &walkable,
+            stamp: 0,
         };
         let bytes = encode_snapshot(&input);
         let view = decode_snapshot(&bytes).expect("snapshot decodes");
@@ -6645,6 +7718,7 @@ pub(crate) mod tests {
             adjacent_rank: &rank,
             step: &step,
             canlight: &[],
+            stamp: 0,
         };
         let (keyframe, fp) = encode_snapshot_delta(None, &input, false);
         let kf = decode_snapshot(&keyframe).expect("keyframe");
@@ -6675,6 +7749,7 @@ pub(crate) mod tests {
             adjacent_rank: &rank,
             step: &[2],
             canlight: &[],
+            stamp: 0,
         };
         let (_keyframe, fp) = encode_snapshot_delta(None, &input, false);
         input.reach = ReachViewInput::UNAVAILABLE;
@@ -6712,6 +7787,7 @@ pub(crate) mod tests {
             adjacent_rank: &rank,
             step: &[2],
             canlight: &lit,
+            stamp: 0,
         };
         let (keyframe, fp) = encode_snapshot_delta(None, &input, false);
         let kf = decode_snapshot(&keyframe).expect("keyframe");
@@ -6728,5 +7804,376 @@ pub(crate) mod tests {
         let view = decode_snapshot(&cleared).expect("cleared");
         assert!(view.has_reach());
         assert!(view.reach().expect("cleared").canlight().is_empty());
+    }
+
+    #[test]
+    fn collision_keyframe_posts_and_unchanged_delta_omits() {
+        let flags = vec![0i32, 1, 2, 3];
+        let mut native = NativeFactsInput {
+            collision: Some(CollisionViewInput {
+                available: true,
+                base_x: 3200,
+                base_z: 3200,
+                level: 0,
+                width: 2,
+                height: 2,
+                flags: &flags,
+            }),
+            ..NativeFactsInput::default()
+        };
+        let input = empty_input(1);
+        let (keyframe, fp) = encode_snapshot_delta_with_native(None, &input, native, false);
+        let kf = decode_snapshot(&keyframe).expect("keyframe");
+        assert!(kf.has_collision());
+        let c = kf.collision().expect("collision");
+        assert!(c.available());
+        assert_eq!(c.flags(), flags);
+        let (delta, fp2) = encode_snapshot_delta_with_native(Some(&fp), &input, native, false);
+        let view = decode_snapshot(&delta).expect("delta");
+        assert!(!view.has_collision(), "unchanged collision omitted");
+        assert!(
+            std::sync::Arc::ptr_eq(&fp.collision.flags, &fp2.collision.flags),
+            "unchanged tick reuses the last flags Arc"
+        );
+
+        native.collision = Some(CollisionViewInput::UNAVAILABLE);
+        let (cleared, _) = encode_snapshot_delta_with_native(Some(&fp2), &input, native, false);
+        let view = decode_snapshot(&cleared).expect("cleared");
+        assert!(view.has_collision(), "available→false must post");
+        let c = view.collision().expect("cleared");
+        assert!(!c.available());
+        assert!(c.flags().is_empty());
+    }
+
+    #[test]
+    fn first_post_without_collision_table_omits_field() {
+        let input = empty_input(1);
+        let bytes = encode_snapshot(&input);
+        let view = decode_snapshot(&bytes).expect("snapshot");
+        assert!(!view.has_collision());
+    }
+
+    fn board_row(ops: &[String], id: i32, slot: i32, component_id: i32) -> ItemRowInput<'_> {
+        ItemRowInput {
+            name: Some("Piece"),
+            count: 1,
+            id,
+            ops,
+            noted: false,
+            cert: -1,
+            component_id,
+            slot,
+        }
+    }
+
+    fn board_native<'a>(
+        rows: &'a [ItemRowInput<'a>],
+        size: i32,
+        generation: u64,
+    ) -> NativeFactsInput<'a> {
+        NativeFactsInput {
+            puzzle_board: Some(PuzzleBoardInput {
+                component_id: 6600,
+                size,
+                items: rows,
+                generation,
+            }),
+            ..NativeFactsInput::default()
+        }
+    }
+
+    #[test]
+    fn omitted_puzzle_board_is_absent_on_an_old_buffer() {
+        // A buffer written before the board slots existed (append-only
+        // schema): both slots are absent and the generation reads 0.
+        let mut b = flatbuffers::FlatBufferBuilder::new();
+        let tab = b.start_table();
+        b.push_slot_always(VT_SNAP_TICK, 7u64);
+        let root = b.end_table(tab);
+        b.finish(root, None);
+        let view = SnapshotReader::from_bytes(b.finished_data()).expect("old snapshot");
+        assert!(!view.has_puzzle_board());
+        assert!(view.puzzle_board().is_none());
+        assert!(!view.has_puzzle_board_generation());
+        assert_eq!(view.puzzle_board_generation(), 0);
+    }
+
+    #[test]
+    fn keyframe_without_a_board_posts_neither_slot() {
+        let bytes = encode_snapshot(&empty_input(1));
+        let view = decode_snapshot(&bytes).expect("keyframe");
+        assert!(!view.has_puzzle_board());
+        assert!(!view.has_puzzle_board_generation());
+    }
+
+    #[test]
+    fn present_puzzle_board_writes_identity_size_and_rows_in_one_table() {
+        let ops = vec!["Take".to_string()];
+        let rows = [
+            board_row(&ops, 2201, 3, 6600),
+            board_row(&[], 2202, 4, 6600),
+        ];
+        let native = board_native(&rows, 25, 4);
+        let (bytes, _) = encode_snapshot_delta_with_native(None, &empty_input(1), native, false);
+        let view = decode_snapshot(&bytes).expect("keyframe");
+        let board = view.puzzle_board().expect("present board");
+        assert_eq!(board.component_id(), 6600);
+        assert_eq!(board.size(), 25);
+        let items = board.items();
+        assert_eq!(items.len(), 2, "one row per stored slot, no gap rows");
+        assert_eq!(items[0].id(), 2201);
+        assert_eq!(items[0].slot(), 3);
+        assert_eq!(items[0].component_id(), 6600);
+        assert_eq!(items[0].ops(), vec!["Take"]);
+        assert_eq!(items[1].id(), 2202);
+        assert_eq!(items[1].slot(), 4);
+        assert!(items[1].ops().is_empty());
+        assert_eq!(view.puzzle_board_generation(), 4);
+    }
+
+    #[test]
+    fn wrong_size_is_posted_as_observed_not_filled() {
+        // Nine slots holding two pieces: the link_obj_type length is the
+        // observation. Not items.len(), and never filled to a panel size.
+        let rows = [board_row(&[], 2201, 0, 6600), board_row(&[], 2202, 7, 6600)];
+        let native = board_native(&rows, 9, 1);
+        let (bytes, _) = encode_snapshot_delta_with_native(None, &empty_input(1), native, false);
+        let view = decode_snapshot(&bytes).expect("keyframe");
+        let board = view.puzzle_board().expect("present board");
+        assert_eq!(board.size(), 9);
+        assert_eq!(board.items().len(), 2, "rows are the stored slots only");
+        assert_eq!(board.items()[1].slot(), 7, "the empty slot 6 is not a row");
+    }
+
+    #[test]
+    fn closed_puzzle_board_is_a_present_empty_observation() {
+        let native = NativeFactsInput {
+            puzzle_board: Some(PuzzleBoardInput {
+                component_id: -1,
+                size: 0,
+                items: &[],
+                generation: 9,
+            }),
+            ..NativeFactsInput::default()
+        };
+        let (bytes, _) = encode_snapshot_delta_with_native(None, &empty_input(1), native, false);
+        let view = decode_snapshot(&bytes).expect("keyframe");
+        let board = view.puzzle_board().expect("a close is a present object");
+        assert_eq!(board.component_id(), -1);
+        assert_eq!(board.size(), 0);
+        assert!(board.items().is_empty());
+        assert_eq!(view.puzzle_board_generation(), 9);
+    }
+
+    #[test]
+    fn unchanged_puzzle_board_omits_both_slots() {
+        let rows = [board_row(&[], 2201, 0, 6600)];
+        let native = board_native(&rows, 25, 1);
+        let (keyframe, fp) =
+            encode_snapshot_delta_with_native(None, &empty_input(1), native, false);
+        assert!(decode_snapshot(&keyframe)
+            .expect("keyframe")
+            .has_puzzle_board());
+        let (delta, _) =
+            encode_snapshot_delta_with_native(Some(&fp), &empty_input(2), native, false);
+        let view = decode_snapshot(&delta).expect("delta");
+        assert!(!view.has_puzzle_board(), "unchanged board omitted (keep)");
+        assert!(
+            !view.has_puzzle_board_generation(),
+            "the generation never posts without the table"
+        );
+    }
+
+    #[test]
+    fn board_or_generation_change_posts_both_slots_in_one_buffer() {
+        let rows = [board_row(&[], 2201, 0, 6600)];
+        let base = board_native(&rows, 25, 1);
+        let (_, fp) = encode_snapshot_delta_with_native(None, &empty_input(1), base, false);
+
+        // A piece move: the rows change, the session generation holds.
+        let moved = [board_row(&[], 2202, 1, 6600)];
+        let moved_native = board_native(&moved, 25, 1);
+        let (delta, fp2) =
+            encode_snapshot_delta_with_native(Some(&fp), &empty_input(2), moved_native, false);
+        let view = decode_snapshot(&delta).expect("delta");
+        assert!(view.has_puzzle_board());
+        assert!(
+            view.has_puzzle_board_generation(),
+            "a row change co-posts the generation"
+        );
+        assert_eq!(view.puzzle_board_generation(), 1);
+        assert_eq!(view.puzzle_board().expect("board").items()[0].id(), 2202);
+
+        // A session edge: only the generation moves.
+        let bumped = board_native(&moved, 25, 2);
+        let (delta, _) =
+            encode_snapshot_delta_with_native(Some(&fp2), &empty_input(3), bumped, false);
+        let view = decode_snapshot(&delta).expect("delta");
+        assert!(
+            view.has_puzzle_board(),
+            "a generation-only change still carries the table"
+        );
+        assert_eq!(view.puzzle_board_generation(), 2);
+        assert_eq!(view.puzzle_board().expect("board").component_id(), 6600);
+    }
+
+    #[test]
+    fn generation_alone_flips_the_board_delta_bit() {
+        // The fingerprint carries both halves, so a post that changes only
+        // the session identity can never be mistaken for an unchanged board.
+        let rows = [board_row(&[], 2201, 0, 6600)];
+        let (_, fp) = encode_snapshot_delta_with_native(
+            None,
+            &empty_input(1),
+            board_native(&rows, 25, 1),
+            false,
+        );
+        let same = SnapshotFingerprint::from_input_with_native(
+            &empty_input(2),
+            board_native(&rows, 25, 1),
+        );
+        let bumped = SnapshotFingerprint::from_input_with_native(
+            &empty_input(2),
+            board_native(&rows, 25, 2),
+        );
+        assert!(
+            !DeltaMask::changed(&fp, &same, false).puzzle_board,
+            "an unchanged board posts nothing"
+        );
+        assert!(
+            DeltaMask::changed(&fp, &bumped, false).puzzle_board,
+            "a session bump alone re-posts the whole family"
+        );
+        assert_eq!(bumped.puzzle_board.as_ref().expect("board").generation, 2);
+    }
+
+    fn carry_native<'a>(rows: &'a [CarryInput<'a>], seq: u64) -> NativeFactsInput<'a> {
+        NativeFactsInput {
+            walk_outcome_seq: seq,
+            walk_missing_carry: rows,
+            ..NativeFactsInput::default()
+        }
+    }
+
+    #[test]
+    fn omitted_walk_missing_carry_is_absent_on_an_old_buffer() {
+        // A buffer written before slot 254 existed (append-only schema): the
+        // slot is absent and the reader reports nothing rather than a clear.
+        let mut b = flatbuffers::FlatBufferBuilder::new();
+        let tab = b.start_table();
+        b.push_slot_always(VT_SNAP_TICK, 7u64);
+        b.push_slot_always(VT_SNAP_WALK_OUTCOME_SEQ, 3u64);
+        let root = b.end_table(tab);
+        b.finish(root, None);
+        let view = SnapshotReader::from_bytes(b.finished_data()).expect("old snapshot");
+        assert!(view.has_walk_outcome_seq());
+        assert!(!view.has_walk_missing_carry());
+        assert!(view.walk_missing_carry().is_empty());
+    }
+
+    #[test]
+    fn walk_outcome_family_posts_named_shorts_with_and_without_a_name() {
+        // The name is corroboration: a row the host obj table has no name for
+        // still posts its id and count.
+        let rows = [
+            CarryInput {
+                id: 1854,
+                count: 1,
+                name: Some("Shantay pass"),
+            },
+            CarryInput {
+                id: 995,
+                count: 10,
+                name: None,
+            },
+        ];
+        let (bytes, _) =
+            encode_snapshot_delta_with_native(None, &empty_input(1), carry_native(&rows, 1), false);
+        let view = decode_snapshot(&bytes).expect("keyframe");
+        assert!(view.has_walk_missing_carry());
+        let posted = view.walk_missing_carry();
+        assert_eq!(posted.len(), 2, "posted order is the host's");
+        assert_eq!(posted[0].id(), 1854);
+        assert_eq!(posted[0].count(), 1);
+        assert_eq!(posted[0].name(), Some("Shantay pass"));
+        assert_eq!(posted[1].id(), 995);
+        assert_eq!(posted[1].count(), 10);
+        assert!(!posted[1].has_name());
+        assert_eq!(posted[1].name(), None);
+    }
+
+    #[test]
+    fn a_routed_outcome_posts_an_empty_vector_and_never_omits_the_clear() {
+        let rows = [CarryInput {
+            id: 1854,
+            count: 1,
+            name: Some("Shantay pass"),
+        }];
+        let (keyframe, fp) =
+            encode_snapshot_delta_with_native(None, &empty_input(1), carry_native(&rows, 1), false);
+        assert_eq!(
+            decode_snapshot(&keyframe)
+                .expect("keyframe")
+                .walk_missing_carry()
+                .len(),
+            1
+        );
+        // The next outcome is a route: seq bumped, no named short. The family
+        // posts a PRESENT empty vector — the clear rides it, never omitted.
+        let (delta, _) = encode_snapshot_delta_with_native(
+            Some(&fp),
+            &empty_input(2),
+            carry_native(&[], 2),
+            false,
+        );
+        let view = decode_snapshot(&delta).expect("delta");
+        assert!(view.has_walk_outcome_seq(), "the family re-posts");
+        assert!(view.has_walk_missing_carry(), "the clear is never omitted");
+        assert!(view.walk_missing_carry().is_empty());
+    }
+
+    #[test]
+    fn unchanged_walk_outcome_family_omits_the_vector_too() {
+        // A keep: the vector rides the family, so an unchanged family posts
+        // neither the scalars nor a vector a page could read as a fresh clear.
+        let rows = [CarryInput {
+            id: 1854,
+            count: 1,
+            name: None,
+        }];
+        let native = carry_native(&rows, 4);
+        let (keyframe, fp) =
+            encode_snapshot_delta_with_native(None, &empty_input(1), native, false);
+        assert!(decode_snapshot(&keyframe)
+            .expect("keyframe")
+            .has_walk_missing_carry());
+        let (delta, _) =
+            encode_snapshot_delta_with_native(Some(&fp), &empty_input(2), native, false);
+        let view = decode_snapshot(&delta).expect("delta");
+        assert!(!view.has_walk_outcome_seq());
+        assert!(!view.has_walk_missing_carry());
+    }
+
+    #[test]
+    fn a_shopping_list_change_alone_flips_the_walk_outcome_family() {
+        // The vector rides the family, so a post that moved only the named
+        // shorts still carries it: an outcome that failed for a new reason is
+        // not an unchanged outcome.
+        let rows = [CarryInput {
+            id: 1854,
+            count: 1,
+            name: None,
+        }];
+        let (_, fp) =
+            encode_snapshot_delta_with_native(None, &empty_input(1), carry_native(&rows, 1), false);
+        let same =
+            SnapshotFingerprint::from_input_with_native(&empty_input(2), carry_native(&rows, 1));
+        let other =
+            SnapshotFingerprint::from_input_with_native(&empty_input(2), carry_native(&[], 1));
+        assert!(!DeltaMask::changed(&fp, &same, false).walk_outcome);
+        assert!(
+            DeltaMask::changed(&fp, &other, false).walk_outcome,
+            "the family bit covers the named shorts"
+        );
     }
 }

@@ -14,9 +14,16 @@ function objRow(x, z) {
 }
 
 function actionAt(row, op) {
-    const ops = presentOps(row && row.actions);
-    const i = Number(op) - 1;
-    return i >= 0 ? ops[i] || null : null;
+    const operation = Number(op);
+    if (!Number.isInteger(operation) || operation < 1) return null;
+    const actions = row && row.actions;
+    if (!Array.isArray(actions)) return null;
+    const i = operation - 1;
+    if (i >= actions.length) return null;
+    const action = actions[i];
+    if (action == null || action === '') return null;
+    if (String(action).toLowerCase() === 'hidden') return null;
+    return action;
 }
 
 export const Input = proxy('Input', {

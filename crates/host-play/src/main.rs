@@ -6,7 +6,7 @@ use std::process::ExitCode;
 
 use host_play::{
     open_vault, parse_profile_args, profile_password_for, run_with_template, set_debug,
-    ProfileOptions, SharedClientTemplate,
+    ProfileOptions,
 };
 use vault::{Profile, ProfileSettings, VaultError};
 
@@ -77,7 +77,7 @@ fn main() -> ExitCode {
         }
     };
 
-    // Resolve, bind and decode before opening or creating a vault. A 289
+    // Resolve, prepare and decode before opening or creating a vault. A 289
     // profile remains constructible, but the host boundary refuses gameplay
     // before any credential or filesystem mutation.
     let selection = match args.profile.resolve(None) {
@@ -87,20 +87,14 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let profile = match selection.bind() {
-        Ok(profile) => profile,
+    let template = match selection.prepare_template() {
+        Ok(template) => template,
         Err(msg) => {
             eprintln!("host-play: server profile: {msg}");
             return ExitCode::FAILURE;
         }
     };
-    let template = match SharedClientTemplate::load(profile.clone()) {
-        Ok(template) => template,
-        Err(msg) => {
-            eprintln!("host-play: client assets: {msg}");
-            return ExitCode::FAILURE;
-        }
-    };
+    let profile = template.profile().clone();
     if let Err(msg) = profile.require_bot_operation() {
         eprintln!("host-play: {msg}");
         return ExitCode::FAILURE;

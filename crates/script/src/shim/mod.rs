@@ -58,7 +58,11 @@ globalThis.LoopingBot = class LoopingBot {
     }
     get settings() {
         const bag = globalThis.__rs2b0t_host.settingsBag || {};
-        return {
+        // One view per bag: the accessors read the bag at call time, so the
+        // view is rebuilt only when the host posts a new bag.
+        const cached = globalThis.__rs2b0t_settings_view;
+        if (cached !== undefined && cached.bag === bag) return cached.view;
+        const view = {
             str(name, fallback = '') {
                 const v = bag[name];
                 return typeof v === 'string' ? v : fallback;
@@ -86,6 +90,8 @@ globalThis.LoopingBot = class LoopingBot {
                 return Array.isArray(v) ? v : fallback;
             },
         };
+        globalThis.__rs2b0t_settings_view = { bag, view };
+        return view;
     }
 };
 globalThis.__rs2b0t_dispatch_native_events = (evs) => {
@@ -132,15 +138,69 @@ globalThis.TreeBot = class TreeBot extends globalThis.LoopingBot {
         throw new Error('not impl: TreeBot.root');
     }
 };
+// Paint ctx: records its calls into a Float64Array op tape plus a
+// deduplicated string table and flushes them in one typed crossing. Op codes
+// and arity mirror `load/canvas_tape.rs`. `measureText` needs recorder state,
+// so it flushes first; style getters answer from the ctx's own state and never
+// cross.
 globalThis.__rs2b0t_make_paint_ctx = () => {
     const fn = globalThis.rustyscript.functions;
     fn.__rs2b0t_canvas_begin();
+    const SET = 1, SET_NUM = 2, FILL_GRADIENT = 3, FILL_RECT = 4, FILL_TEXT = 5,
+        SAVE = 6, RESTORE = 7, BEGIN_PATH = 8, CLOSE_PATH = 9, MOVE_TO = 10,
+        LINE_TO = 11, QUAD_TO = 12, ARC = 13, FILL = 14, STROKE = 15, CLIP = 16,
+        CREATE_LINEAR = 17, CREATE_RADIAL = 18, ADD_STOP = 19;
+    let cap = 256;
+    let tape = new Float64Array(cap);
+    let n = 0;
+    const strs = [];
+    const ids = new Map();
+    const put = (v) => {
+        if (n === cap) {
+            cap *= 2;
+            const grown = new Float64Array(cap);
+            grown.set(tape);
+            tape = grown;
+        }
+        tape[n++] = v;
+    };
+    const s = (v) => {
+        const key = String(v);
+        const seen = ids.get(key);
+        if (seen !== undefined) return seen;
+        const i = strs.length;
+        strs.push(key);
+        ids.set(key, i);
+        return i;
+    };
+    // json_f64 parity: only a finite number crosses; anything else is 0.
+    const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+    const flush = () => {
+        if (n === 0) return;
+        const ops = tape.subarray(0, n);
+        n = 0;
+        const err = globalThis.__rs2b0t_canvas_submit(ops, strs);
+        // The ops in flight reference this table; the next flush sends its own.
+        strs.length = 0;
+        ids.clear();
+        if (typeof err === 'string') throw new Error(err);
+    };
     const grads = Object.create(null);
+    let gradCount = 0;
     const gradObj = (id) => {
         if (!grads[id]) {
             const g = {
                 addColorStop(offset, color) {
-                    fn.__rs2b0t_canvas_add_color_stop(id, Number(offset), String(color));
+                    const at = num(Number(offset));
+                    // Same reason as `arc`: the declared ctx throws this at the
+                    // call site, not at the flush.
+                    if (at < 0 || at > 1) {
+                        throw new Error('IndexSizeError: offset must be in [0, 1]');
+                    }
+                    put(ADD_STOP);
+                    put(id);
+                    put(at);
+                    put(s(color));
                 }
             };
             Object.defineProperty(g, '__rs2b0t_gradient', { value: id });
@@ -148,63 +208,110 @@ globalThis.__rs2b0t_make_paint_ctx = () => {
         }
         return grads[id];
     };
+    // Getters read the recorder, so a value the recorder rejects reads back as
+    // the previous one, as a canvas does. Pending sets land first, which is
+    // what the per-call path did by construction.
     const ctx = {
-        set font(v) { fn.__rs2b0t_canvas_set('font', String(v)); },
-        get font() { return fn.__rs2b0t_canvas_get('font'); },
+        set font(v) { put(SET); put(s('font')); put(s(v)); },
+        get font() { flush(); return fn.__rs2b0t_canvas_get('font'); },
         set fillStyle(v) {
             if (v && typeof v === 'object' && typeof v.__rs2b0t_gradient === 'number') {
-                fn.__rs2b0t_canvas_set_fill_gradient(v.__rs2b0t_gradient);
+                put(FILL_GRADIENT);
+                put(v.__rs2b0t_gradient);
                 return;
             }
-            fn.__rs2b0t_canvas_set('fillStyle', String(v));
+            put(SET);
+            put(s('fillStyle'));
+            put(s(v));
         },
         get fillStyle() {
+            flush();
             const id = fn.__rs2b0t_canvas_fill_gradient_id();
             if (id >= 0) return gradObj(id);
             return fn.__rs2b0t_canvas_get('fillStyle');
         },
-        set strokeStyle(v) { fn.__rs2b0t_canvas_set('strokeStyle', String(v)); },
-        get strokeStyle() { return fn.__rs2b0t_canvas_get('strokeStyle'); },
-        set shadowColor(v) { fn.__rs2b0t_canvas_set('shadowColor', String(v)); },
-        get shadowColor() { return fn.__rs2b0t_canvas_get('shadowColor'); },
-        set lineJoin(v) { fn.__rs2b0t_canvas_set('lineJoin', String(v)); },
-        get lineJoin() { return fn.__rs2b0t_canvas_get('lineJoin'); },
-        set textAlign(v) { fn.__rs2b0t_canvas_set('textAlign', String(v)); },
-        get textAlign() { return fn.__rs2b0t_canvas_get('textAlign'); },
-        set textBaseline(v) { fn.__rs2b0t_canvas_set('textBaseline', String(v)); },
-        get textBaseline() { return fn.__rs2b0t_canvas_get('textBaseline'); },
-        set lineWidth(v) { fn.__rs2b0t_canvas_set_num('lineWidth', Number(v)); },
-        get lineWidth() { return fn.__rs2b0t_canvas_get_num('lineWidth'); },
-        set shadowBlur(v) { fn.__rs2b0t_canvas_set_num('shadowBlur', Number(v)); },
-        get shadowBlur() { return fn.__rs2b0t_canvas_get_num('shadowBlur'); },
-        set shadowOffsetX(v) { fn.__rs2b0t_canvas_set_num('shadowOffsetX', Number(v)); },
-        get shadowOffsetX() { return fn.__rs2b0t_canvas_get_num('shadowOffsetX'); },
-        set shadowOffsetY(v) { fn.__rs2b0t_canvas_set_num('shadowOffsetY', Number(v)); },
-        get shadowOffsetY() { return fn.__rs2b0t_canvas_get_num('shadowOffsetY'); },
-        fillRect(x, y, w, h) { fn.__rs2b0t_canvas_fill_rect(x, y, w, h); },
+        set strokeStyle(v) { put(SET); put(s('strokeStyle')); put(s(v)); },
+        get strokeStyle() { flush(); return fn.__rs2b0t_canvas_get('strokeStyle'); },
+        set shadowColor(v) { put(SET); put(s('shadowColor')); put(s(v)); },
+        get shadowColor() { flush(); return fn.__rs2b0t_canvas_get('shadowColor'); },
+        set lineJoin(v) { put(SET); put(s('lineJoin')); put(s(v)); },
+        get lineJoin() { flush(); return fn.__rs2b0t_canvas_get('lineJoin'); },
+        set textAlign(v) { put(SET); put(s('textAlign')); put(s(v)); },
+        get textAlign() { flush(); return fn.__rs2b0t_canvas_get('textAlign'); },
+        set textBaseline(v) { put(SET); put(s('textBaseline')); put(s(v)); },
+        get textBaseline() { flush(); return fn.__rs2b0t_canvas_get('textBaseline'); },
+        set lineWidth(v) { put(SET_NUM); put(s('lineWidth')); put(num(Number(v))); },
+        get lineWidth() { flush(); return fn.__rs2b0t_canvas_get_num('lineWidth'); },
+        set shadowBlur(v) { put(SET_NUM); put(s('shadowBlur')); put(num(Number(v))); },
+        get shadowBlur() { flush(); return fn.__rs2b0t_canvas_get_num('shadowBlur'); },
+        set shadowOffsetX(v) { put(SET_NUM); put(s('shadowOffsetX')); put(num(Number(v))); },
+        get shadowOffsetX() { flush(); return fn.__rs2b0t_canvas_get_num('shadowOffsetX'); },
+        set shadowOffsetY(v) { put(SET_NUM); put(s('shadowOffsetY')); put(num(Number(v))); },
+        get shadowOffsetY() { flush(); return fn.__rs2b0t_canvas_get_num('shadowOffsetY'); },
+        fillRect(x, y, w, h) { put(FILL_RECT); put(num(x)); put(num(y)); put(num(w)); put(num(h)); },
         fillText(text, x, y) {
             if (arguments.length >= 4) throw new Error('not impl: Canvas.fillText.maxWidth');
-            fn.__rs2b0t_canvas_fill_text(String(text), x, y);
+            put(FILL_TEXT);
+            put(s(text));
+            put(num(x));
+            put(num(y));
         },
         measureText(text) {
+            flush();
             return { width: fn.__rs2b0t_canvas_measure_text(String(text)) };
         },
-        save() { fn.__rs2b0t_canvas_save(); },
-        restore() { fn.__rs2b0t_canvas_restore(); },
-        beginPath() { fn.__rs2b0t_canvas_begin_path(); },
-        closePath() { fn.__rs2b0t_canvas_close_path(); },
-        moveTo(x, y) { fn.__rs2b0t_canvas_move_to(x, y); },
-        lineTo(x, y) { fn.__rs2b0t_canvas_line_to(x, y); },
-        quadraticCurveTo(cpx, cpy, x, y) { fn.__rs2b0t_canvas_quad_to(cpx, cpy, x, y); },
-        arc(x, y, r, a0, a1, ccw) { fn.__rs2b0t_canvas_arc(x, y, r, a0, a1, !!ccw); },
-        fill() { fn.__rs2b0t_canvas_fill(); },
-        stroke() { fn.__rs2b0t_canvas_stroke(); },
-        clip() { fn.__rs2b0t_canvas_clip(); },
+        save() { put(SAVE); },
+        restore() { put(RESTORE); },
+        beginPath() { put(BEGIN_PATH); },
+        closePath() { put(CLOSE_PATH); },
+        moveTo(x, y) { put(MOVE_TO); put(num(x)); put(num(y)); },
+        lineTo(x, y) { put(LINE_TO); put(num(x)); put(num(y)); },
+        quadraticCurveTo(cpx, cpy, x, y) {
+            put(QUAD_TO);
+            put(num(cpx));
+            put(num(cpy));
+            put(num(x));
+            put(num(y));
+        },
+        arc(x, y, r, a0, a1, ccw) {
+            const radius = num(r);
+            // The recorder's IndexSizeError is part of the declared ctx, so it
+            // stays a call-site throw instead of surfacing at the flush.
+            if (radius < 0) throw new Error('IndexSizeError: radius must be non-negative');
+            put(ARC);
+            put(num(x));
+            put(num(y));
+            put(radius);
+            put(num(a0));
+            put(num(a1));
+            put(ccw ? 1 : 0);
+        },
+        fill() { put(FILL); },
+        stroke() { put(STROKE); },
+        clip() { put(CLIP); },
         createLinearGradient(x0, y0, x1, y1) {
-            return gradObj(fn.__rs2b0t_canvas_create_linear(x0, y0, x1, y1));
+            put(CREATE_LINEAR);
+            put(num(x0));
+            put(num(y0));
+            put(num(x1));
+            put(num(y1));
+            return gradObj(gradCount++);
         },
         createRadialGradient(x0, y0, r0, x1, y1, r1) {
-            return gradObj(fn.__rs2b0t_canvas_create_radial(x0, y0, r0, x1, y1, r1));
+            const inner = num(r0);
+            const outer = num(r1);
+            // Same call-site contract as `arc`.
+            if (inner < 0 || outer < 0) {
+                throw new Error('IndexSizeError: radii must be non-negative');
+            }
+            put(CREATE_RADIAL);
+            put(num(x0));
+            put(num(y0));
+            put(inner);
+            put(num(x1));
+            put(num(y1));
+            put(outer);
+            return gradObj(gradCount++);
         },
     };
     const styleProps = {
@@ -212,7 +319,7 @@ globalThis.__rs2b0t_make_paint_ctx = () => {
         textAlign: 1, textBaseline: 1, lineWidth: 1, shadowBlur: 1,
         shadowOffsetX: 1, shadowOffsetY: 1
     };
-    return new Proxy(ctx, {
+    const guarded = new Proxy(ctx, {
         get(target, prop) {
             if (typeof prop === 'symbol') return target[prop];
             if (prop === 'canvas') return undefined;
@@ -231,6 +338,7 @@ globalThis.__rs2b0t_make_paint_ctx = () => {
             return prop in target;
         },
     });
+    return { ctx: guarded, flush };
 };
 globalThis.__rs2b0t_call_on_paint = (bot) => {
     bot = bot || globalThis.__rs_bot;
@@ -241,11 +349,16 @@ globalThis.__rs2b0t_call_on_paint = (bot) => {
         fn.__rs2b0t_canvas_onpaint_done(1);
         return;
     }
-    const ctx = globalThis.__rs2b0t_make_paint_ctx();
+    const paint = globalThis.__rs2b0t_make_paint_ctx();
     try {
-        bot.onPaint(ctx);
+        bot.onPaint(paint.ctx);
+        paint.flush();
         fn.__rs2b0t_canvas_onpaint_done(0);
     } catch (e) {
+        // Ops recorded before the throw land, as the per-call path did; a
+        // failed flush already applies every op before the failing one and
+        // clears the tape, so this retry never re-applies them.
+        try { paint.flush(); } catch (_) {}
         const msg = String((e && e.message) || e);
         h.lastError = msg;
         fn.__rs2b0t_canvas_onpaint_done(2, msg);
@@ -312,13 +425,14 @@ globalThis.document = {
 /// `src/bot/api/...`, and the adapter lives at `src/bot/adapter/`).
 pub(crate) fn shim_modules() -> Vec<Module> {
     vec![
-        Module::new("/rs2b0t/bot/shim/_kernel.js", include_str!("_kernel.js")),
-        Module::new("/rs2b0t/bot/geometry/Tile.js", include_str!("tile.js")),
-        Module::new("/rs2b0t/bot/api/query/Query.js", include_str!("query.js")),
+        // `_kernel.js` imports the Execution park for `runMachine`.
         Module::new(
             "/rs2b0t/bot/api/execution/Execution.js",
             include_str!("execution.js"),
         ),
+        Module::new("/rs2b0t/bot/shim/_kernel.js", include_str!("_kernel.js")),
+        Module::new("/rs2b0t/bot/geometry/Tile.js", include_str!("tile.js")),
+        Module::new("/rs2b0t/bot/api/query/Query.js", include_str!("query.js")),
         Module::new(
             "/rs2b0t/bot/api/execution/EventSignal.js",
             include_str!("event_signal.js"),
@@ -346,6 +460,10 @@ pub(crate) fn shim_modules() -> Vec<Module> {
         Module::new(
             "/rs2b0t/bot/api/skills/Skills.js",
             include_str!("skills.js"),
+        ),
+        Module::new(
+            "/rs2b0t/bot/api/prayer/Prayer.js",
+            include_str!("prayer.js"),
         ),
         Module::new("/rs2b0t/bot/api/bank/Bank.js", include_str!("bank.js")),
         Module::new(
@@ -397,6 +515,10 @@ pub(crate) fn shim_modules() -> Vec<Module> {
             "/rs2b0t/bot/api/trade/drivePartnerTrade.js",
             include_str!("drive_partner_trade.js"),
         ),
+        Module::new(
+            "/rs2b0t/bot/api/trade/PartnerTrade.js",
+            include_str!("partner_trade.js"),
+        ),
         Module::new("/rs2b0t/bot/api/shop/Shop.js", include_str!("shop.js")),
         Module::new(
             "/rs2b0t/bot/api/shop/types.js",
@@ -439,6 +561,7 @@ pub(crate) fn shim_modules() -> Vec<Module> {
             include_str!("data/spelldb.js"),
         ),
         Module::new("/rs2b0t/bot/data/itemdb.js", include_str!("data/itemdb.js")),
+        Module::new("/rs2b0t/bot/data/herbs.js", include_str!("data/herbs.js")),
         Module::new("/rs2b0t/bot/data/dropdb.js", include_str!("dropdb.js")),
         Module::new(
             "/rs2b0t/bot/data/cowKillerLocations.js",
@@ -495,12 +618,36 @@ pub(crate) fn shim_modules() -> Vec<Module> {
             include_str!("combat_equipment.js"),
         ),
         Module::new(
+            "/rs2b0t/bot/api/combat/meleeWeapons.js",
+            include_str!("melee_weapons.js"),
+        ),
+        Module::new(
             "/rs2b0t/bot/api/combat/ranged.js",
             include_str!("ranged.js"),
         ),
         Module::new(
             "/rs2b0t/bot/api/sustain/Sustain.js",
             include_str!("sustain.js"),
+        ),
+        Module::new(
+            "/rs2b0t/bot/api/combat/hunting/combat.js",
+            include_str!("hunting_combat.js"),
+        ),
+        Module::new(
+            "/rs2b0t/bot/api/combat/hunting/sites.js",
+            include_str!("hunting_sites.js"),
+        ),
+        Module::new(
+            "/rs2b0t/bot/api/combat/hunting/logic.js",
+            include_str!("hunting_logic.js"),
+        ),
+        Module::new(
+            "/rs2b0t/bot/api/combat/hunting/guarded.js",
+            include_str!("hunting_guarded.js"),
+        ),
+        Module::new(
+            "/rs2b0t/bot/api/combat/hunting/supply.js",
+            include_str!("hunting_supply.js"),
         ),
         Module::new(
             "/rs2b0t/bot/api/firemaking/LightFire.js",
@@ -521,6 +668,10 @@ pub(crate) fn shim_modules() -> Vec<Module> {
         Module::new(
             "/rs2b0t/bot/runtime/RecoveryHints.js",
             include_str!("recovery_hints.js"),
+        ),
+        Module::new(
+            "/rs2b0t/bot/runtime/Supervisor.js",
+            include_str!("supervisor.js"),
         ),
         Module::new(
             "/rs2b0t/bot/api/bank/BankLocations.js",
@@ -611,9 +762,14 @@ pub(crate) fn shim_modules() -> Vec<Module> {
             "/rs2b0t/bot/event/webwalk/walkOpening.js",
             include_str!("walk_opening.js"),
         ),
+        Module::new(
+            "/rs2b0t/bot/event/webwalk/Navigator.js",
+            include_str!("navigator.js"),
+        ),
         Module::new("/rs2b0t/bot/api/tasks/Anchor.js", include_str!("anchor.js")),
         Module::new("/rs2b0t/bot/api/bot/Bot.js", include_str!("bot.js")),
         Module::new("/rs2b0t/bot/paint/Paint.js", include_str!("paint.js")),
+        Module::new("/rs2b0t/bot/paint/jive.js", include_str!("jive.js")),
         Module::new(
             "/rs2b0t/bot/paint/paintLogic.js",
             include_str!("paintLogic.js"),
@@ -696,24 +852,9 @@ pub(crate) fn content_json(
     game_data: Option<&api::game_data::SelectedGameData>,
     named_banks: &api::named_banks::NamedBankFacts,
 ) -> String {
-    use crate::content::{COOK_STANDS, COW_FIELDS, FIRE_PLOTS, PICKPOCKET_SPOTS};
+    use crate::content::{COOK_STANDS, FIRE_PLOTS, LOG_LEVELS, RUNE_ROUTES};
     use api::cake_stall::{BAKER_STALL, CAKE_ITEM_NAMES};
     use api::content::ROCK_TYPE_NAMES;
-    let items = game_data
-        .map(|data| {
-            data.items()
-                .iter()
-                .filter_map(|item| {
-                    Some(serde_json::json!({
-                        "obj": item.alias.as_deref()?,
-                        "id": item.id,
-                        "name": item.name.as_deref()?,
-                        "cost": item.cost,
-                    }))
-                })
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
     let food_heals = game_data
         .map(|data| {
             data.fixed_food_heals()
@@ -721,22 +862,6 @@ pub(crate) fn content_json(
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
-    let pickpocket_spots = PICKPOCKET_SPOTS
-        .iter()
-        .map(|spot| {
-            let mut row = serde_json::Map::from_iter([
-                ("name".into(), serde_json::json!(spot.name)),
-                ("x".into(), serde_json::json!(spot.x)),
-                ("z".into(), serde_json::json!(spot.z)),
-                ("level".into(), serde_json::json!(spot.level)),
-                ("leash".into(), serde_json::json!(spot.leash)),
-            ]);
-            if let Some(required) = game_data.and_then(|data| data.required_thieving(spot.name)) {
-                row.insert("required_thieving".into(), serde_json::json!(required));
-            }
-            serde_json::Value::Object(row)
-        })
-        .collect::<Vec<_>>();
     let spell_db = game_data
         .map(|data| {
             data.spells()
@@ -776,12 +901,23 @@ pub(crate) fn content_json(
         })
         .unwrap_or_default();
     serde_json::json!({
+        "selected_facts": game_data.is_some(),
         "food_heals": food_heals,
         "common_bank_loot": api::content::COMMON_BANK_LOOT,
         "random_event_casket_id": api::content::RANDOM_EVENT_CASKET_ID,
-        "cow_fields": COW_FIELDS.iter().map(|f| {
-            serde_json::json!({"name": f.name, "x": f.x, "z": f.z, "level": f.level})
+        "rune_routes": RUNE_ROUTES.iter().map(|route| {
+            serde_json::json!({
+                "rune": route.rune,
+                "talisman": route.talisman,
+                "level": route.level,
+                "bank": route.bank,
+                "ruins": {"x": route.ruins.x, "z": route.ruins.z, "level": route.ruins.level}
+            })
         }).collect::<Vec<_>>(),
+        "log_levels": LOG_LEVELS
+            .iter()
+            .map(|(name, level)| serde_json::json!([*name, *level]))
+            .collect::<Vec<_>>(),
         "fire_plots": FIRE_PLOTS.iter().map(|p| {
             serde_json::json!({
                 "name": p.name,
@@ -804,9 +940,7 @@ pub(crate) fn content_json(
                 "level": b.tile.level
             })
         }).collect::<Vec<_>>(),
-        "items": items,
         "rock_type_names": ROCK_TYPE_NAMES,
-        "pickpocket_spots": pickpocket_spots,
         "baker_stall": {
             "loc_id": BAKER_STALL.loc_id,
             "name": BAKER_STALL.name,
@@ -820,6 +954,33 @@ pub(crate) fn content_json(
         "gather_tools": api::gather_tools::content_json_value(),
         "spell_db": spell_db,
         "staff_runes": staff_runes,
+        "herbs": game_data
+            .map(|data| {
+                data.herbs()
+                    .iter()
+                    .map(|herb| {
+                        serde_json::json!({
+                            "key": herb.key,
+                            "name": herb.name,
+                            "id": herb.id,
+                            "unidId": herb.unid_id,
+                            "level": herb.level,
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default(),
+        "drop_db": game_data
+            .map(|data| {
+                data.drop_tables()
+                    .iter()
+                    .map(|row| (row.name.clone(), serde_json::json!(row.display_names.clone())))
+                    .collect::<serde_json::Map<_, _>>()
+            })
+            .unwrap_or_default(),
+        "shops": game_data
+            .map(api::shop_facts::content_json_value)
+            .unwrap_or_else(|| serde_json::json!({})),
         "autocast": game_data.and_then(|data| {
             data.autocast_controls().map(|controls| {
                 serde_json::json!({
@@ -871,11 +1032,28 @@ pub struct ScriptPaintButton {
     pub label: String,
 }
 
+/// Advertised strip, rail, or tabs band on a recorded paint frame.
+/// `selected` is the stored name if it is still in `names`, else the
+/// first advertised name. `status` / `brand` are strip-only.
+#[derive(Debug, Clone, PartialEq, Eq, Default, serde::Deserialize)]
+pub struct PaintChromeBand {
+    pub id: String,
+    #[serde(default)]
+    pub names: Vec<String>,
+    #[serde(default)]
+    pub selected: String,
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default)]
+    pub brand: Option<String>,
+}
+
 /// One recorded paint frame (`Paint.begin(...)` ... `end()`): the title,
 /// the accent colour, the rows (gap rows are empty lines), optional
-/// one-shot buttons, and optional canvas ops. The host reads it off
-/// `__rs2b0t_host.paint` for the script paint views.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+/// one-shot buttons, optional canvas ops, and optional advertised chrome.
+/// The host reads it off `__rs2b0t_host.paint` for the script paint views.
+/// Older objects omit chrome fields; they deserialize empty.
+#[derive(Debug, Clone, PartialEq, Eq, Default, serde::Deserialize)]
 pub struct ScriptPaint {
     pub title: Option<String>,
     pub accent: Option<String>,
@@ -892,6 +1070,18 @@ pub struct ScriptPaint {
     /// later script that advertises the same id.
     #[serde(default)]
     pub generation: u64,
+    /// Brand strip advertised this frame. Absent on older `host.paint`.
+    #[serde(default)]
+    pub strip: Option<PaintChromeBand>,
+    /// Vertical rail advertised this frame. Absent / None when skipped.
+    #[serde(default)]
+    pub rail: Option<PaintChromeBand>,
+    /// Right-aligned byline. Not a `lines` entry.
+    #[serde(default)]
+    pub footer: Option<String>,
+    /// Enabled-script `tabs()` bands in call order.
+    #[serde(default)]
+    pub tabs: Vec<PaintChromeBand>,
 }
 
 /// One interact request the shim `Bank`/`Banking` modules queue on the
@@ -928,8 +1118,9 @@ pub enum InteractReq {
         stand_op: Option<i32>,
         choose: Option<String>,
     },
-    /// Packed nav (`Traveller` / `ScriptWalkArm`). `allow_teleports` is
-    /// the only FindOptions opt-in the catalog forwards (default off).
+    /// Packed nav (`Traveller` / `ScriptWalkArm`). FindOptions bits are
+    /// per-request; serde/old buffers default all three off. v1 world
+    /// walk writers set wilderness and bank-fetch explicitly.
     #[serde(rename = "walk")]
     Walk {
         x: i32,
@@ -937,6 +1128,10 @@ pub enum InteractReq {
         level: i32,
         #[serde(default)]
         allow_teleports: bool,
+        #[serde(default)]
+        allow_wilderness: bool,
+        #[serde(default)]
+        allow_bank_fetch: bool,
         /// Isolate-allocated walk wait token. `0` on old callers.
         #[serde(default)]
         request_id: u64,
@@ -950,6 +1145,10 @@ pub enum InteractReq {
         radius: i32,
         #[serde(default)]
         allow_teleports: bool,
+        #[serde(default)]
+        allow_wilderness: bool,
+        #[serde(default)]
+        allow_bank_fetch: bool,
         /// Isolate-allocated walk wait token. `0` on old callers.
         #[serde(default)]
         request_id: u64,
@@ -957,8 +1156,43 @@ pub enum InteractReq {
     /// Select the nearest packed booth stand in Rust and route within one tile.
     #[serde(rename = "walk-nearest-bank")]
     WalkNearestBank,
-    /// Scene `try_move` packet (`Interactions::walk`). Catalog
-    /// `Traversal.walkTo` — not Traveller.
+    /// Stop the armed scripted walk follow (frozen: a `walkResilient` that
+    /// returned has stopped its walker). A Rust machine sends it when its
+    /// own walk wait timed out, before a later click the follow's next
+    /// walk packet would otherwise cancel.
+    /// `request_id` is the machine's own walk token: the host aborts only
+    /// while that walk is the armed one, so a later script walk survives.
+    #[serde(rename = "abort-walk")]
+    AbortWalk {
+        #[serde(default)]
+        request_id: u64,
+    },
+    /// Pure inspect-route preview. `x/z/level` are the destination.
+    #[serde(rename = "inspect-route")]
+    InspectRoute {
+        x: i32,
+        z: i32,
+        level: i32,
+        from_x: i32,
+        from_z: i32,
+        from_level: i32,
+        #[serde(default)]
+        allow_teleports: bool,
+        #[serde(default)]
+        allow_wilderness: bool,
+        #[serde(default)]
+        allow_bank_fetch: bool,
+        #[serde(default)]
+        avoid: Vec<InspectAvoidWire>,
+        #[serde(default)]
+        request_id: u64,
+    },
+    /// Isolate-applied inspect consume-ack. Not a public JS request.
+    /// Host rejects generation mismatch, seq 0, and seq above the posted ring.
+    #[serde(rename = "inspect-ack")]
+    InspectAck { seq: u64, generation: u64 },
+    /// Scene `try_move` packet (`Interactions::walk`) used by
+    /// `DirectNavigator` and local client actions, not world `Traversal`.
     #[serde(rename = "walk-to")]
     WalkTo { x: i32, z: i32, level: i32 },
     /// Deposit-all the bank-side item named `name`.
@@ -1001,6 +1235,18 @@ pub enum InteractReq {
         operation: i32,
         #[serde(default)]
         bank_generation: u64,
+    },
+    /// Click one piece on the open puzzle board (the widget `obj_ops`
+    /// menu's held family, not the component `iop`). Host dispatch
+    /// re-resolves the exact posted board row by id/slot/component under
+    /// `generation` and sends the Held opcode (`Move`, else op 5): it
+    /// never sends INV_BUTTON, and a sent packet is not board progress.
+    #[serde(rename = "puzzle-move")]
+    PuzzleMove {
+        id: i32,
+        slot: i32,
+        component: i32,
+        generation: u64,
     },
     /// Close the open bank modal.
     #[serde(rename = "close")]
@@ -1109,6 +1355,9 @@ pub enum InteractReq {
     /// Wear/wield an inventory item by resolved name.
     #[serde(rename = "wear")]
     Wear { name: String },
+    /// Remove a worn item by resolved name (the worn component's `Remove`).
+    #[serde(rename = "unequip")]
+    Unequip { name: String },
     /// Toggle run on/off.
     #[serde(rename = "set-run")]
     SetRun { on: bool },
@@ -1165,11 +1414,168 @@ pub enum InteractReq {
     },
 }
 
+/// One inspect avoid entry. Typed rects keep their bounds; anything else
+/// is `Unsupported` so Rust can refuse `invalid-args` instead of dropping
+/// the request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InspectAvoidWire {
+    Rect {
+        min_x: i32,
+        max_x: i32,
+        min_z: i32,
+        max_z: i32,
+        level: Option<i32>,
+    },
+    Unsupported,
+}
+
+impl<'de> serde::Deserialize<'de> for InspectAvoidWire {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let value = serde_json::Value::deserialize(d)?;
+        let Some(obj) = value.as_object() else {
+            return Ok(Self::Unsupported);
+        };
+        let coord = |camel: &str, snake: &str| {
+            obj.get(camel)
+                .or_else(|| obj.get(snake))
+                .and_then(serde_json::Value::as_i64)
+                .and_then(|n| i32::try_from(n).ok())
+        };
+        let (Some(min_x), Some(max_x), Some(min_z), Some(max_z)) = (
+            coord("minX", "min_x"),
+            coord("maxX", "max_x"),
+            coord("minZ", "min_z"),
+            coord("maxZ", "max_z"),
+        ) else {
+            return Ok(Self::Unsupported);
+        };
+        let level = coord("level", "level");
+        Ok(Self::Rect {
+            min_x,
+            max_x,
+            min_z,
+            max_z,
+            level,
+        })
+    }
+}
+
 #[derive(serde::Deserialize)]
 #[serde(untagged)]
 pub(crate) enum MaybeInteractReq {
     Req(InteractReq),
-    Skip(serde::de::IgnoredAny),
+    Skip(RejectedRow),
+}
+
+/// A queued interact row no [`InteractReq`] variant accepts, named by its
+/// `op` so the tick loop can log what it refused instead of dropping it
+/// silently. Accepts every value kind, as the `IgnoredAny` it replaced did.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct RejectedRow(pub(crate) String);
+
+impl<'de> serde::Deserialize<'de> for RejectedRow {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        Ok(RejectedRow(match Shape::deserialize(d)? {
+            Shape::Str(_) => "a string".into(),
+            Shape::Object(Some(op)) => format!("op {op:?}"),
+            Shape::Object(None) => "an object without a string op".into(),
+            Shape::Other(kind) => kind.into(),
+        }))
+    }
+}
+
+/// One queued row, read on its own: a row serde cannot read at all (a
+/// BigInt, say) is refused like any other malformed row instead of failing
+/// every row beside it.
+pub(crate) struct QueuedRow(pub(crate) MaybeInteractReq);
+
+impl<'de> serde::Deserialize<'de> for QueuedRow {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        Ok(QueuedRow(MaybeInteractReq::deserialize(d).unwrap_or_else(
+            |e| MaybeInteractReq::Skip(RejectedRow(format!("unreadable ({e})"))),
+        )))
+    }
+}
+
+/// Any value, as much of it as a log line names: a string's text, an
+/// object's string `op`, or the kind of anything else.
+enum Shape {
+    Str(String),
+    Object(Option<String>),
+    Other(&'static str),
+}
+
+impl<'de> serde::Deserialize<'de> for Shape {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        struct V;
+        impl<'de> serde::de::Visitor<'de> for V {
+            type Value = Shape;
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                write!(f, "any JS value")
+            }
+            fn visit_bool<E: serde::de::Error>(self, _: bool) -> Result<Shape, E> {
+                Ok(Shape::Other("a boolean"))
+            }
+            fn visit_i64<E: serde::de::Error>(self, _: i64) -> Result<Shape, E> {
+                Ok(Shape::Other("a number"))
+            }
+            fn visit_u64<E: serde::de::Error>(self, _: u64) -> Result<Shape, E> {
+                Ok(Shape::Other("a number"))
+            }
+            fn visit_f64<E: serde::de::Error>(self, _: f64) -> Result<Shape, E> {
+                Ok(Shape::Other("a number"))
+            }
+            fn visit_str<E: serde::de::Error>(self, s: &str) -> Result<Shape, E> {
+                Ok(Shape::Str(s.to_string()))
+            }
+            fn visit_bytes<E: serde::de::Error>(self, _: &[u8]) -> Result<Shape, E> {
+                Ok(Shape::Other("bytes"))
+            }
+            fn visit_none<E: serde::de::Error>(self) -> Result<Shape, E> {
+                Ok(Shape::Other("null"))
+            }
+            fn visit_unit<E: serde::de::Error>(self) -> Result<Shape, E> {
+                Ok(Shape::Other("null"))
+            }
+            fn visit_some<D: serde::Deserializer<'de>>(self, d: D) -> Result<Shape, D::Error> {
+                <Shape as serde::Deserialize>::deserialize(d)
+            }
+            fn visit_newtype_struct<D: serde::Deserializer<'de>>(
+                self,
+                d: D,
+            ) -> Result<Shape, D::Error> {
+                <Shape as serde::Deserialize>::deserialize(d)
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(
+                self,
+                mut seq: A,
+            ) -> Result<Shape, A::Error> {
+                while seq.next_element::<serde::de::IgnoredAny>()?.is_some() {}
+                Ok(Shape::Other("an array"))
+            }
+            fn visit_map<A: serde::de::MapAccess<'de>>(
+                self,
+                mut map: A,
+            ) -> Result<Shape, A::Error> {
+                let mut op = None;
+                while let Some(key) = map.next_key::<Shape>()? {
+                    match key {
+                        Shape::Str(key) if key == "op" => {
+                            op = match map.next_value::<Shape>()? {
+                                Shape::Str(op) => Some(op),
+                                _ => None,
+                            };
+                        }
+                        _ => {
+                            map.next_value::<serde::de::IgnoredAny>()?;
+                        }
+                    }
+                }
+                Ok(Shape::Object(op))
+            }
+        }
+        d.deserialize_any(V)
+    }
 }
 
 fn deserialize_js_f64<'de, D: serde::Deserializer<'de>>(d: D) -> Result<f64, D::Error> {

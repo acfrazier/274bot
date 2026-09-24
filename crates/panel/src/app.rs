@@ -6,16 +6,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant, SystemTime};
-
-use crate::window::{self, Gpu, RedrawMode, ShotState, ShotStatus, Theme};
-use dear_imgui_rs::internal::RawWrapper;
-use dear_imgui_rs::{
-    ChildFlags, ColorDisplayMode, ComboBoxOptions, ComboBoxPreviewMode, Condition, DockBuilder,
-    DockNodeFlags, DragDropTargetFlags, Id, Io, Key, MouseButton, SplitDirection, StyleColor,
-    StyleVar, TableColumnFlags, TableFlags, TreeNodeFlags, Ui, WindowClass, WindowFlags,
-};
-use winit::keyboard::{Key as WinitKey, KeyLocation, NamedKey};
+use std::time::{Instant, SystemTime};
 
 use crate::chrome::{
     button_cells, button_cells_min, button_row_layout, equal_button_width, move_heading,
@@ -42,24 +33,36 @@ use crate::script_picker::{
     CARD_GAP, CARD_MIN_W, FILE_DIALOG_FIRST_H, FILE_DIALOG_FIRST_W, GLYPH_CHEVRON, GLYPH_FILE,
     GLYPH_FOLDER, SCRIPTS_FIRST_H, SCRIPTS_FIRST_W,
 };
+use crate::window::{self, Gpu, RedrawMode, ShotStatus, Theme};
+use dear_imgui_rs::internal::RawWrapper;
+use dear_imgui_rs::{
+    ChildFlags, ColorDisplayMode, ComboBoxOptions, ComboBoxPreviewMode, Condition, DockBuilder,
+    DockNodeFlags, DragDropTargetFlags, Id, Key, MouseButton, SplitDirection, StyleColor, StyleVar,
+    TableColumnFlags, TableFlags, TreeNodeFlags, Ui, WindowClass, WindowFlags,
+};
 use host::debug_enabled;
 use host_play::progress::{
     ProfileProgress, ProfileProgressObserver, ProfileProgressStage, ProfileProgressUnit,
 };
 
+use crate::input_capture::{capture_keys, discard_unconsumed_native_capture, stream_capture};
 use crate::resource::{
     cpu_from_delta, format_bots, format_rss_caption, sample_process, traffic_from_samples, Metric,
 };
 use crate::session::{
     debug_dest_cheats, debug_main_buttons_for, debug_maxme_cheats, script_active,
-    script_pause_enabled, script_status_text, script_stop_enabled, stream_capture,
-    ProfilePreparationCompletion, Session, PROCESS,
+    script_pause_enabled, script_status_text, script_stop_enabled, ProfilePreparationCompletion,
+    Session, PROCESS,
 };
 use crate::theme::{
     applet_offset, apply_amber, apply_amber_current, fit_applet, game_window_title,
     integer_ui_scale, native_applet, panel_split_ratio, ACCENT, ACCENT_HOVER, BG, ERROR,
     PANEL_WIDTH, PANEL_WINDOW, RAIL_WINDOW, TEXT, TEXT_DIM,
 };
+
+#[path = "live_harness.rs"]
+mod live_harness;
+use live_harness::*;
 
 /// Runner configuration: docking on, viewports off, amber CRT, 50 fps cap.
 /// `auto_dockspace` is off so we own the split (game left, 330px panel right).
@@ -164,168 +167,6 @@ struct PanelState {
     shot_dir: Option<PathBuf>,
 }
 
-/// Headed live harness: null_raster (2 slots), stress50 / stress50_full
-/// (50 slots), a shared scenario (`script_<name>`), or `--smoke` (one
-/// whole-window shot at scene 2, then exit 0).
-enum LiveHarness {
-    Null(LiveNull),
-    Stress(LiveStress),
-    Script(LiveScript),
-    Smoke(LiveSmoke),
-}
-
-/// Headed `null_raster` harness state. `started` is the 120s login clock.
-struct LiveNull {
-    started: Instant,
-    saw_scene2: bool,
-    passed: bool,
-}
-
-/// Headed `stress50` / `stress50_full` harness. `started` is the 600s
-/// login clock. `name` is the `--live` token used in PASS/FAIL lines.
-struct LiveStress {
-    started: Instant,
-    last_announced: u8,
-    passed: bool,
-    name: &'static str,
-    host: String,
-    port: u16,
-}
-
-/// Headed `script_<name>` watch. The shared `ScenarioRunner` lives on the
-/// `Session` (the slot thread ticks it); this struct only mirrors the
-/// last-reported step for progress lines and latches the terminal state.
-/// PASS → the caller exits 0; FAIL → exit 1. A terminal shot holds either
-/// exit until the capture writes (or [`NAV_FULL_SHOT_DRAIN`] lapses).
-/// `BUDGET_S` soak: print PASS but do not latch `passed` until the budget
-/// elapses, so the window stays up.
-struct LiveScript {
-    name: String,
-    passed: bool,
-    failed: Option<String>,
-    last_step: Option<(usize, usize)>,
-    /// Terminal-shot drain: the instant the runner first reported a
-    /// terminal status while a shot was armed. The watch keeps pumping
-    /// (returning `None`) until the shot writes or [`NAV_FULL_SHOT_DRAIN`]
-    /// lapses, so the screenshot lands before the process exits.
-    drain_started: Option<Instant>,
-    /// `BUDGET_S` set: keep the window after proof PASS until `soak_until`.
-    soak: bool,
-    soak_until: Option<Instant>,
-    announced_pass: bool,
-    /// A native-core terminal decision has issued its one current capture.
-    /// This prevents the write frame from re-arming the same label again.
-    native_failure_capture_requested: bool,
-    /// Separate wall-clock ceiling when scenario PASS arrives before the
-    /// full shared core qualifies. `None` for every ordinary panel run.
-    core_deadline: Option<Instant>,
-}
-
-#[derive(Debug, PartialEq)]
-enum CoreGate {
-    Disabled,
-    Pending,
-    Qualified(Option<Arc<serde_json::Value>>),
-    Failed(String),
-}
-
-fn catalog_core_gate(
-    watch: Option<&host_play::catalog_core::CoreWatch>,
-    deadline: Option<Instant>,
-    now: Instant,
-) -> CoreGate {
-    let Some(watch) = watch else {
-        return CoreGate::Disabled;
-    };
-    use host_play::catalog_core::CoreWatchStatus;
-    match watch.status() {
-        CoreWatchStatus::Disabled => CoreGate::Disabled,
-        CoreWatchStatus::Qualified => CoreGate::Qualified(None),
-        CoreWatchStatus::Failed => CoreGate::Failed(
-            watch
-                .failure()
-                .unwrap_or_else(|| "catalog core failed".into()),
-        ),
-        CoreWatchStatus::Ready | CoreWatchStatus::Running
-            if deadline.is_some_and(|deadline| now >= deadline) =>
-        {
-            match watch.qualify() {
-                Ok(evidence) => CoreGate::Qualified(Some(evidence)),
-                Err(error) => CoreGate::Failed(format!(
-                    "catalog core did not qualify before the headed deadline: {error}"
-                )),
-            }
-        }
-        CoreWatchStatus::Ready | CoreWatchStatus::Running => CoreGate::Pending,
-    }
-}
-
-fn external_core_gate(watch: Option<&host_play::external_loader::ExternalWatch>) -> CoreGate {
-    let Some(watch) = watch else {
-        return CoreGate::Disabled;
-    };
-    use host_play::external_loader::ExternalWatchStatus;
-    match watch.status() {
-        ExternalWatchStatus::Disabled => CoreGate::Disabled,
-        ExternalWatchStatus::Qualified => CoreGate::Qualified(None),
-        ExternalWatchStatus::Failed => CoreGate::Failed(
-            watch
-                .failure()
-                .unwrap_or_else(|| "external loader failed".into()),
-        ),
-        // Inner 180s/10s live on the watch. BUDGET_S must not replace them.
-        ExternalWatchStatus::Ready | ExternalWatchStatus::Running => CoreGate::Pending,
-    }
-}
-
-fn pair_core_gate(
-    watch: Option<&host_play::paired_core::PairWatch>,
-    deadline: Option<Instant>,
-    now: Instant,
-) -> CoreGate {
-    let Some(watch) = watch else {
-        return CoreGate::Disabled;
-    };
-    use host_play::paired_core::PairWatchStatus;
-    match watch.status() {
-        PairWatchStatus::Disabled => CoreGate::Disabled,
-        PairWatchStatus::Qualified => CoreGate::Qualified(None),
-        PairWatchStatus::Failed => {
-            CoreGate::Failed(watch.failure().unwrap_or_else(|| "pair core failed".into()))
-        }
-        PairWatchStatus::Ready | PairWatchStatus::Running
-            if deadline.is_some_and(|deadline| now >= deadline) =>
-        {
-            match watch.qualify() {
-                Ok(evidence) => CoreGate::Qualified(Some(evidence)),
-                Err(error) => CoreGate::Failed(format!(
-                    "pair core did not qualify before the headed deadline: {error}"
-                )),
-            }
-        }
-        PairWatchStatus::Ready | PairWatchStatus::Running => CoreGate::Pending,
-    }
-}
-
-/// Headed `--smoke` watch. The `render_smoke` scenario's shot sink fires
-/// the tick the focused slot reaches scene 2, but the capture is held
-/// [`SMOKE_SETTLE`] so the slot's 1 fps renderer can rasterize the world
-/// first; this watch latches `passed` once `pump_shots` has written the
-/// PNG (the caller exits 0), mirrors the shared runner's failures, and
-/// FAILs when scene 2 never arrives within [`SMOKE_DEADLINE`].
-struct LiveSmoke {
-    started: Instant,
-    last_step: Option<(usize, usize)>,
-    failed: Option<String>,
-    /// The instant the pure trigger first saw the focused slot at scene 2
-    /// (`None` before). The settle gate holds the shot until
-    /// [`SMOKE_SETTLE`] has elapsed; the deadline message distinguishes a
-    /// stuck login from a missing write.
-    saw_scene2_at: Option<Instant>,
-    /// The scene2 PNG landed (`pump_shots` wrote it): the caller exits 0.
-    passed: bool,
-}
-
 /// Deferred boot work for [`run_panel`]. The unlock / live-harness flows
 /// spawn slot threads, and a slot renderer is built lazily at its first
 /// paint — running these before GPU init would let a slot construct its
@@ -422,115 +263,6 @@ fn startup_progress(startup: &StartupPreparation, generation: u64) -> Option<Sta
     Some(StartupProgressView { phase, progress })
 }
 
-/// Which live harness the boot starts.
-#[derive(Debug)]
-enum LiveBoot {
-    NullRaster,
-    Stress50,
-    /// Same 50-head wall as [`LiveBoot::Stress50`], every member painting
-    /// at 50 fps (Game + sidecar).
-    Stress50Full,
-    Script {
-        name: String,
-    },
-    /// `--smoke`: the `render_smoke` scenario with the shot sink armed.
-    /// The scenario's own settings carry the 300 s deadline and the off
-    /// mainland-base gate; `live_smoke_tick` keeps its outer ceiling.
-    Smoke,
-}
-
-impl LiveBoot {
-    /// Prepare the harness session and install the harness state. `Smoke`
-    /// and `Script` arm the whole-window shot sink too.
-    fn run(self, state: &mut PanelState) -> Result<(), String> {
-        match self {
-            LiveBoot::NullRaster => {
-                state.session.live_prepare_null_raster()?;
-                state.live = Some(LiveHarness::Null(LiveNull {
-                    started: Instant::now(),
-                    saw_scene2: false,
-                    passed: false,
-                }));
-            }
-            LiveBoot::Stress50 => {
-                state.session.live_prepare_stress50()?;
-                state.live = Some(LiveHarness::Stress(LiveStress {
-                    started: Instant::now(),
-                    last_announced: 0,
-                    passed: false,
-                    name: "stress50",
-                    host: state.session.play_options().host.clone(),
-                    port: state.session.play_options().port,
-                }));
-            }
-            LiveBoot::Stress50Full => {
-                state.session.live_prepare_stress50_full()?;
-                state.live = Some(LiveHarness::Stress(LiveStress {
-                    started: Instant::now(),
-                    last_announced: 0,
-                    passed: false,
-                    name: "stress50_full",
-                    host: state.session.play_options().host.clone(),
-                    port: state.session.play_options().port,
-                }));
-            }
-            LiveBoot::Script { name } => {
-                let scenario_name = name.strip_prefix("script_").unwrap_or(&name);
-                let scenario = if state.session.external_core_enabled()
-                    && scenario_name == host_play::external_loader::LIVE_SCENARIO
-                {
-                    crate::session::external_loader_fixture()
-                } else {
-                    scenario::get(scenario_name)
-                        .ok_or_else(|| format!("unknown scenario {scenario_name}"))?
-                };
-                let scenario_deadline = scenario.settings.deadline;
-                state.session.live_prepare_script(scenario)?;
-                arm_scenario_shots(state);
-                let budget = scenario::budget_s_from_env();
-                let core_deadline = {
-                    let catalog = state
-                        .session
-                        .catalog_core_watch()
-                        .filter(|watch| watch.configured());
-                    let pair = state
-                        .session
-                        .paired_core_watch()
-                        .filter(|watch| watch.configured());
-                    (catalog.is_some() || pair.is_some())
-                        .then_some(Instant::now() + budget.unwrap_or(scenario_deadline))
-                };
-                state.live = Some(LiveHarness::Script(LiveScript {
-                    name,
-                    passed: false,
-                    failed: None,
-                    last_step: None,
-                    drain_started: None,
-                    soak: budget.is_some(),
-                    soak_until: budget.map(|d| Instant::now() + d),
-                    announced_pass: false,
-                    native_failure_capture_requested: false,
-                    core_deadline,
-                }));
-            }
-            LiveBoot::Smoke => {
-                let scenario = scenario::get("render_smoke")
-                    .ok_or_else(|| "unknown scenario render_smoke".to_string())?;
-                state.session.live_prepare_script(scenario)?;
-                arm_scenario_shots(state);
-                state.live = Some(LiveHarness::Smoke(LiveSmoke {
-                    started: Instant::now(),
-                    last_step: None,
-                    failed: None,
-                    saw_scene2_at: None,
-                    passed: false,
-                }));
-            }
-        }
-        Ok(())
-    }
-}
-
 /// The deferred boot for a [`run_panel`] call, derived from the run mode
 /// and `BOT_VAULT_PASS` — pure, so the mapping is testable (the boot
 /// itself runs after GPU init; nothing here spawns or unlocks).
@@ -577,7 +309,14 @@ fn boot_execute(state: &mut PanelState, boot: Boot) -> Result<(), String> {
             }
             Ok(())
         }
-        Boot::Live(live) => live.run(state),
+        Boot::Live(live) => {
+            state.live = Some(live.start(
+                &mut state.session,
+                Arc::clone(&state.shot_state),
+                &mut state.shot_dir,
+            )?);
+            Ok(())
+        }
     }
 }
 
@@ -880,7 +619,7 @@ impl Default for PanelState {
 }
 
 const LIVE_USAGE: &str =
-    "usage: panel-play [--prod] [--smoke] [--lowmem|--highmem] [--nav-paints on|off] [--live null_raster|stress50|stress50_full|nav_full|script_<name>]\n       BUDGET_S=<seconds>  override scenario deadline (rs2b0t); PASS keeps the window until the budget ends";
+    "usage: panel-play [--prod] [--smoke] [--lowmem|--highmem] [--nav-paints on|off] [--live null_raster|stress50|stress50_full|nav_full|script_<name>] [--prepare-fixture <scenario>] [--run-prepared] [--fixture-path PATH] [--server-root PATH]\n       BUDGET_S=<seconds>  override scenario deadline (rs2b0t); PASS keeps the window until the budget ends\n       --prepare-fixture   offline server-native .sav write (no live boot); --run-prepared reuses identity with zero setup cheats";
 
 /// What `panel-play` should do this run: the normal interactive panel, a
 /// `--live NAME` harness, or `--smoke` (one whole-window shot at scene 2,
@@ -890,6 +629,8 @@ pub enum RunMode {
     Interactive,
     Live(String),
     Smoke,
+    /// Offline prepare only — no GPU/window; writes `.sav` + identity receipt.
+    PrepareFixture(String),
 }
 
 #[derive(Debug, Clone)]
@@ -908,6 +649,12 @@ pub struct PanelArgs {
     pub nav_paints: Option<bool>,
     /// Session-only memory choice; absent preserves the vault profile and UI gate.
     pub memory_override: Option<bool>,
+    /// When set with `--live script_*`, apply run-prepared fixture mode.
+    pub run_prepared: bool,
+    /// Identity receipt path override (`~/.274bot/fixtures/<scenario>.json`).
+    pub fixture_path: Option<std::path::PathBuf>,
+    /// Server engine root for offline prepare (or `BOT_SERVER_ROOT`).
+    pub server_root: Option<std::path::PathBuf>,
 }
 
 pub fn parse_args(
@@ -918,8 +665,30 @@ pub fn parse_args(
     let (profile, rest) =
         host_play::parse_profile_args(args).map_err(|msg| (2, format!("panel-play: {msg}")))?;
     let (nav_paints, rest) = parse_nav_paints(rest)?;
-    let (external_ts, live_args) = parse_external_ts(rest)?;
+    let (external_ts, rest) = parse_external_ts(rest)?;
+    let (fixture_flags, live_args) = parse_fixture_flags(rest)?;
     let mode = parse_live_args(live_args, env_live)?;
+    let mode = match (mode, fixture_flags.prepare_fixture) {
+        (RunMode::Interactive, Some(name)) => RunMode::PrepareFixture(name),
+        (_, Some(_)) => {
+            return Err((
+                2,
+                "panel-play: --prepare-fixture cannot combine with --live/--smoke".into(),
+            ));
+        }
+        (other, None) => other,
+    };
+    if fixture_flags.run_prepared {
+        match &mode {
+            RunMode::Live(name) if name.starts_with("script_") => {}
+            _ => {
+                return Err((
+                    2,
+                    "panel-play: --run-prepared requires --live script_<scenario>".into(),
+                ));
+            }
+        }
+    }
     Ok(PanelArgs {
         mode,
         profile,
@@ -929,7 +698,64 @@ pub fn parse_args(
         external_ts,
         nav_paints,
         memory_override,
+        run_prepared: fixture_flags.run_prepared,
+        fixture_path: fixture_flags.fixture_path,
+        server_root: fixture_flags.server_root,
     })
+}
+
+#[derive(Debug, Default)]
+struct FixtureFlags {
+    prepare_fixture: Option<String>,
+    run_prepared: bool,
+    fixture_path: Option<PathBuf>,
+    server_root: Option<PathBuf>,
+}
+
+fn parse_fixture_flags(args: Vec<String>) -> Result<(FixtureFlags, Vec<String>), (i32, String)> {
+    let mut flags = FixtureFlags::default();
+    let mut rest = Vec::with_capacity(args.len());
+    let mut it = args.into_iter();
+    while let Some(arg) = it.next() {
+        match arg.as_str() {
+            "--prepare-fixture" => {
+                let Some(name) = it.next() else {
+                    return Err((
+                        2,
+                        "panel-play: --prepare-fixture needs a scenario name".into(),
+                    ));
+                };
+                if scenario::get(&name).is_none() {
+                    return Err((
+                        2,
+                        format!("panel-play: unknown prepare-fixture scenario {name}"),
+                    ));
+                }
+                flags.prepare_fixture = Some(name);
+            }
+            "--run-prepared" => flags.run_prepared = true,
+            "--fixture-path" => {
+                let Some(raw) = it.next() else {
+                    return Err((2, "panel-play: --fixture-path needs a path".into()));
+                };
+                flags.fixture_path = Some(PathBuf::from(raw));
+            }
+            "--server-root" => {
+                let Some(raw) = it.next() else {
+                    return Err((2, "panel-play: --server-root needs a path".into()));
+                };
+                flags.server_root = Some(PathBuf::from(raw));
+            }
+            _ => rest.push(arg),
+        }
+    }
+    if flags.prepare_fixture.is_some() && flags.run_prepared {
+        return Err((
+            2,
+            "panel-play: --prepare-fixture and --run-prepared are mutually exclusive".into(),
+        ));
+    }
+    Ok((flags, rest))
 }
 
 fn parse_memory_override(
@@ -1018,49 +844,12 @@ impl RunMode {
     fn is_smoke(&self) -> bool {
         matches!(self, RunMode::Smoke)
     }
-}
 
-/// `--smoke` login+world deadline: the focused slot must reach scene 2
-/// (and the shot write must land) within this window or the run FAILs
-/// with exit 1. Generous — scene 2 usually lands inside the first two
-/// minutes.
-const SMOKE_DEADLINE: Duration = Duration::from_secs(300);
-
-/// `nav_full` FAIL shot drain: after a `Failed` status the panel holds
-/// the exit up to this long so the terminal whole-window capture — asked
-/// for by the slot thread, written by the render readback — lands before
-/// exit 1.
-const NAV_FULL_SHOT_DRAIN: Duration = Duration::from_secs(10);
-
-/// `--smoke` render-settle window: after the focused slot reaches scene 2,
-/// the whole-window shot request waits this long before reaching the render
-/// readback — the slot's renderer rasterizes at 1 fps on the CPU backend
-/// (slower in a debug build), so an immediate capture would still show the
-/// title/loading screen.
-const SMOKE_SETTLE: Duration = Duration::from_secs(3);
-
-/// `--smoke` trigger: fire exactly once, on the frame the focused slot
-/// first reaches `ingame && scene_state == 2`. Pure so the trigger path
-/// is a table test; the smoke watch calls it against the focused slot's
-/// status every frame.
-fn smoke_should_fire(
-    smoke_armed: bool,
-    already_fired: bool,
-    ingame: bool,
-    scene_state: i32,
-) -> bool {
-    smoke_armed && !already_fired && ingame && scene_state == 2
-}
-
-/// `--smoke` render-settle predicate: the scene2 shot request is released
-/// to the render readback only once the focused slot has held scene 2 for
-/// [`SMOKE_SETTLE`] (wall-clock, so the slot's 1 fps renderer has rasterized
-/// the world) and is still ingame. `saw_scene2_at` is `None` until the
-/// trigger latches scene 2.
-fn smoke_settled(saw_scene2_at: Option<Instant>, now: Instant, ingame: bool) -> bool {
-    match saw_scene2_at {
-        Some(t) => ingame && now.saturating_duration_since(t) >= SMOKE_SETTLE,
-        None => false,
+    fn prepare_fixture_name(&self) -> Option<&str> {
+        match self {
+            RunMode::PrepareFixture(name) => Some(name),
+            _ => None,
+        }
     }
 }
 
@@ -1151,607 +940,6 @@ pub fn parse_live_args(
     Ok(live.map(RunMode::Live).unwrap_or(RunMode::Interactive))
 }
 
-/// Headed watch: wait until both slots are scene 2, print RSS/counters, PASS.
-/// Does **not** freeze-assert (operator may click the rail). Null freeze is
-/// the headless `e2e` twin.
-fn live_null_tick(live: &mut LiveNull, statuses: &[host_play::SlotStatus]) -> Option<String> {
-    if live.passed {
-        return None;
-    }
-    let ready = statuses
-        .iter()
-        .filter(|s| s.ingame && s.scene_state == 2)
-        .count();
-    if ready < 2 {
-        if live.started.elapsed() >= Duration::from_secs(120) {
-            return Some(format!(
-                "live null_raster: {ready}/2 slot(s) ingame scene 2 after 120s"
-            ));
-        }
-        return None;
-    }
-    let (rss, _) = sample_process();
-    let Some(test2) = statuses.iter().find(|s| s.username == "test2") else {
-        return Some("live null_raster: missing test2".into());
-    };
-    let Some(test) = statuses.iter().find(|s| s.username == "test") else {
-        return Some("live null_raster: missing test".into());
-    };
-    println!("live null_raster: rss={rss}");
-    println!(
-        "live null_raster test2 bytes={}/{}",
-        test2.bytes_in, test2.bytes_out
-    );
-    println!(
-        "live null_raster test  bytes={}/{}",
-        test.bytes_in, test.bytes_out
-    );
-    println!("PASS: live null_raster");
-    live.saw_scene2 = true;
-    live.passed = true;
-    None
-}
-
-/// Headed watch: count Clients that are up — every slot is a full Client,
-/// so "up" is `ingame && scene_state==2` for all of them. Announce 1, 10,
-/// then 50. At 50 print PASS (with RSS) and stay open. Timeout 600s. Does
-/// **not** freeze-assert (operator may click). Does **not** fail on RSS
-/// magnitude — `stress50` is the release RAM check; `stress50_full` is
-/// the same wall with every renderer at 50 fps.
-fn live_stress_tick(live: &mut LiveStress, statuses: &[host_play::SlotStatus]) -> Option<String> {
-    if live.passed {
-        return None;
-    }
-    let name = live.name;
-    let n = statuses.iter().filter(|s| s.is_up()).count();
-    if n >= 1 && live.last_announced < 1 {
-        println!("live {name}: 1/50 up");
-        live.last_announced = 1;
-    }
-    if n >= 10 && live.last_announced < 10 {
-        println!("live {name}: 10/50 up");
-        live.last_announced = 10;
-    }
-    if n >= 50 {
-        let (rss, _) = sample_process();
-        let workers = client::io::OnDemand::live_workers_for(&live.host, live.port);
-        let tcp = host_play::count_tcp_to(&live.host, live.port);
-        let tcp_s = tcp.map(|c| c.to_string()).unwrap_or_else(|| "?".into());
-        println!("PASS: live {name} rss={rss} up={n}/50 ondemand={workers} tcp={tcp_s}");
-        live.last_announced = 50;
-        live.passed = true;
-        return None;
-    }
-    if live.started.elapsed() >= Duration::from_secs(600) {
-        return Some(format!("live {name}: {n}/50 up after 600s"));
-    }
-    None
-}
-
-fn pair_terminal_actor_names(session: &Session) -> Option<(String, String)> {
-    let runner = session.scenario.lock().unwrap();
-    let runner = runner.as_ref()?;
-    let a = runner.profile_name().to_string();
-    let b = runner.companion_profile_name(0).to_string();
-    if a.is_empty() || b.is_empty() || a == b {
-        None
-    } else {
-        Some((a, b))
-    }
-}
-
-fn pair_shot_labels(base: &str, a: &str, b: &str) -> [String; 2] {
-    [format!("{base}-{a}"), format!("{base}-{b}")]
-}
-
-#[cfg(test)]
-std::thread_local! {
-    static ACTOR_SNAPSHOT_SERIALIZATIONS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-}
-
-fn actor_snapshot_json(
-    actor: &str,
-    snapshot: &api::snapshot::GameSnapshot,
-) -> Result<String, String> {
-    #[cfg(test)]
-    ACTOR_SNAPSHOT_SERIALIZATIONS.with(|count| count.set(count.get() + 1));
-    let mut value = serde_json::to_value(snapshot).map_err(|error| error.to_string())?;
-    if let Some(object) = value.as_object_mut() {
-        object.insert("actor".into(), serde_json::Value::String(actor.to_string()));
-    }
-    serde_json::to_string_pretty(&value).map_err(|error| error.to_string())
-}
-
-fn pair_terminal_shot_status(shots: &ShotState, labels: &[String]) -> ShotStatus {
-    if labels.is_empty() {
-        return ShotStatus::Missing;
-    }
-    let mut pending = ShotStatus::Written;
-    for label in labels {
-        match shots.status(label) {
-            ShotStatus::Failed(error) => return ShotStatus::Failed(error),
-            ShotStatus::Missing => return ShotStatus::Missing,
-            ShotStatus::Written => {}
-            other => pending = other,
-        }
-    }
-    pending
-}
-
-/// Request current scene2 snapshots for each distinct pair actor. Skip
-/// title-screen / missing views so an early snapshot cannot stand in for
-/// terminal world proof. Capture failure stays FAIL.
-fn enqueue_pair_terminal_shots(session: &Session, shots: &Mutex<ShotState>, base_label: &str) {
-    let Some((a, b)) = pair_terminal_actor_names(session) else {
-        return;
-    };
-    let labels = pair_shot_labels(base_label, &a, &b);
-    let requests = {
-        let states = session.nav_states.lock().unwrap();
-        [&a, &b]
-            .into_iter()
-            .zip(labels.iter())
-            .filter_map(|(name, label)| {
-                let (snapshot, _) = states.get(name)?;
-                if !snapshot.ingame() || snapshot.scene_state() != 2 {
-                    return None;
-                }
-                Some((
-                    label.clone(),
-                    name.to_string(),
-                    actor_snapshot_json(name, snapshot).ok()?,
-                ))
-            })
-            .collect::<Vec<_>>()
-    };
-    let mut shots = shots.lock().unwrap();
-    for (label, actor, json) in requests {
-        if matches!(shots.status(&label), ShotStatus::Missing) {
-            shots.enqueue_for_actor(label, json, actor);
-        }
-    }
-}
-
-/// Post-run (or failure) capture of the owned external actor at scene 2.
-/// Prerequisite fixture writes use a distinct label and cannot discharge this.
-fn enqueue_external_terminal_shot(session: &Session, shots: &Mutex<ShotState>, label: &str) {
-    let Some(watch) = session.external_core_watch() else {
-        return;
-    };
-    if !watch.configured() {
-        return;
-    }
-    let name = watch.account();
-    let json = {
-        let states = session.nav_states.lock().unwrap();
-        let Some((snapshot, _)) = states.get(&name) else {
-            return;
-        };
-        if !snapshot.ingame() || snapshot.scene_state() != 2 {
-            return;
-        }
-        actor_snapshot_json(&name, snapshot).ok()
-    };
-    let Some(json) = json else {
-        return;
-    };
-    let mut shots = shots.lock().unwrap();
-    if matches!(shots.status(label), ShotStatus::Missing) {
-        shots.enqueue(label.to_string(), json);
-    }
-}
-
-/// Re-arm a completed single-actor terminal capture for a later native-core
-/// decision, pairing that failure with the current scene instead of the old image.
-fn enqueue_current_terminal_shot(session: &Session, shots: &Mutex<ShotState>, label: &str) {
-    let current = (|| {
-        let actor = session
-            .focused_name()
-            .ok_or_else(|| "native failure capture has no focused actor".to_string())?;
-        let states = session.nav_states.lock().unwrap();
-        let (snapshot, _) = states
-            .get(&actor)
-            .ok_or_else(|| "native failure capture has no current snapshot".to_string())?;
-        if !snapshot.ingame() || snapshot.scene_state() != 2 {
-            return Err("native failure capture requires a current ingame scene-2 snapshot".into());
-        }
-        actor_snapshot_json(&actor, snapshot)
-    })();
-    let mut shots = shots.lock().unwrap();
-    match current {
-        Ok(json) if matches!(shots.status(label), ShotStatus::Written) => {
-            shots.enqueue(label.to_string(), json);
-        }
-        Ok(_) => {}
-        Err(error) => {
-            // The earlier image remains historical evidence on disk, but may
-            // not discharge the current failure capture when its scene is gone.
-            shots.fail_labels(&[label.to_string()], &error);
-        }
-    }
-}
-
-fn request_native_failure_capture(
-    live: &mut LiveScript,
-    session: &Session,
-    shots: Option<&Mutex<ShotState>>,
-    terminal_shot: Option<&str>,
-) {
-    if live.native_failure_capture_requested {
-        return;
-    }
-    // A prerequisite terminal shot may have consumed its drain while the
-    // shared core was still pending. The native terminal decision gets a
-    // fresh bounded window, without extending the gameplay deadline.
-    live.native_failure_capture_requested = true;
-    live.drain_started = None;
-    if let (Some(shots), Some(label)) = (shots, terminal_shot) {
-        enqueue_current_terminal_shot(session, shots, label);
-    }
-}
-
-fn hold_script_terminal_shot(
-    live: &mut LiveScript,
-    session: &Session,
-    terminal_shot: Option<&str>,
-    fallback: &ShotStatus,
-    shots: Option<&Mutex<ShotState>>,
-) -> Result<bool, String> {
-    let owned;
-    let mut pair_labels: Option<[String; 2]> = None;
-    let status = match (
-        shots,
-        terminal_shot,
-        session.paired_core_watch(),
-        session.external_core_watch(),
-    ) {
-        (Some(shots), Some(label), Some(watch), _) if watch.configured() => {
-            enqueue_pair_terminal_shots(session, shots, label);
-            match pair_terminal_actor_names(session) {
-                Some((a, b)) => {
-                    let labels = pair_shot_labels(label, &a, &b);
-                    owned = pair_terminal_shot_status(&shots.lock().unwrap(), &labels);
-                    pair_labels = Some(labels);
-                    &owned
-                }
-                None => fallback,
-            }
-        }
-        (Some(shots), _, _, Some(watch)) if watch.configured() && watch.needs_terminal_hold() => {
-            let label = host_play::external_loader::TERMINAL_SHOT;
-            enqueue_external_terminal_shot(session, shots, label);
-            owned = shots.lock().unwrap().status(label);
-            if !matches!(owned, ShotStatus::Missing) {
-                watch.note_capture_requested();
-            }
-            return hold_terminal_shot(live, Some(label), &owned);
-        }
-        (Some(shots), Some(label), _, _) => {
-            // `ui_frame` snapshots the status before `live_script_tick`. A
-            // native-core failure may re-arm a previously Written shot above,
-            // so the caller's fallback can describe the old capture. Re-read
-            // the ledger after the request to hold for the new capture.
-            owned = shots.lock().unwrap().status(label);
-            &owned
-        }
-        _ => fallback,
-    };
-    let result = hold_terminal_shot(live, terminal_shot, status);
-    if let (Err(error), Some(shots), Some(labels)) = (&result, shots, pair_labels) {
-        shots.lock().unwrap().fail_labels(&labels, error);
-    }
-    result
-}
-
-/// Hold a terminal-shot exit until `pump_shots` writes. The drain remains
-/// bounded, but a terminal PASS may not turn a missing requested pair into
-/// success when the bound lapses.
-fn hold_terminal_shot(
-    live: &mut LiveScript,
-    label: Option<&str>,
-    status: &ShotStatus,
-) -> Result<bool, String> {
-    let Some(label) = label else {
-        return Ok(false);
-    };
-    match status {
-        ShotStatus::Written => return Ok(false),
-        ShotStatus::Failed(error) => {
-            return Err(format!("terminal shot {label} failed: {error}"));
-        }
-        ShotStatus::Missing
-        | ShotStatus::Requested
-        | ShotStatus::ReadbackPending
-        | ShotStatus::WritePending => {}
-    }
-    if live
-        .drain_started
-        .is_some_and(|t0| t0.elapsed() >= NAV_FULL_SHOT_DRAIN)
-    {
-        return Err(format!(
-            "terminal shot {label} was not written within {}s (capture stage: {status:?})",
-            NAV_FULL_SHOT_DRAIN.as_secs(),
-        ));
-    }
-    // The frame the terminal status is first seen: the request may have
-    // landed after `pump_shots` ran, so the write needs another frame.
-    live.drain_started.get_or_insert_with(Instant::now);
-    Ok(true)
-}
-
-fn script_failure_scenario(live_name: &str, evidence: Option<&scenario::Evidence>) -> String {
-    evidence
-        .map(|evidence| evidence.scenario.clone())
-        .unwrap_or_else(|| {
-            live_name
-                .strip_prefix("script_")
-                .unwrap_or(live_name)
-                .to_string()
-        })
-}
-
-/// Headed script watch: mirror the shared `ScenarioRunner` each frame.
-/// PASS prints the JSON evidence record and latches `passed` (the caller
-/// exits 0); FAIL prints the record and returns the message (exit 1).
-/// When the runner armed a terminal shot, either outcome holds until the
-/// capture writes (or [`NAV_FULL_SHOT_DRAIN`] lapses).
-fn live_script_tick(
-    live: &mut LiveScript,
-    session: &mut Session,
-    terminal_shot_status: &ShotStatus,
-    shots: Option<&Mutex<ShotState>>,
-) -> Option<String> {
-    if live.passed || live.failed.is_some() {
-        return None;
-    }
-    let (status, evidence, terminal_shot) = {
-        let guard = session.scenario.lock().unwrap();
-        (
-            guard.as_ref().map(|r| r.status()),
-            guard.as_ref().and_then(|r| r.evidence().cloned()),
-            guard.as_ref().and_then(|r| r.terminal_shot()),
-        )
-    };
-    let core_watch = session.catalog_core_watch();
-    let core_gate = catalog_core_gate(core_watch.as_ref(), live.core_deadline, Instant::now());
-    let pair_watch = session.paired_core_watch();
-    let pair_gate = pair_core_gate(pair_watch.as_ref(), live.core_deadline, Instant::now());
-    if let Some(watch) = session.external_core_watch() {
-        match &status {
-            Some(scenario::RunnerStatus::Passed) => watch.note_prereq_passed(),
-            Some(scenario::RunnerStatus::Failed(msg)) => watch.note_prereq_failed(msg),
-            _ => {}
-        }
-    }
-    session.pump_external_loader();
-    // A failed proof still owns its execution. Stop must reach its bounded
-    // outcome before a terminal capture or scenario failure can exit the host.
-    if session
-        .external_core_watch()
-        .is_some_and(|watch| watch.cleanup_pending())
-    {
-        return None;
-    }
-    if let (Some(watch), Some(shots)) = (session.external_core_watch(), shots) {
-        if watch.needs_terminal_hold() || watch.terminal_capture_due() {
-            let label = host_play::external_loader::TERMINAL_SHOT;
-            enqueue_external_terminal_shot(session, shots, label);
-            let issued = !matches!(shots.lock().unwrap().status(label), ShotStatus::Missing);
-            if issued {
-                watch.note_capture_requested();
-            } else if watch.terminal_capture_due() {
-                watch.fail("external loader terminal capture without ingame && scene_state == 2");
-            }
-        }
-    }
-    let ext_watch = session.external_core_watch();
-    let ext_gate = external_core_gate(ext_watch.as_ref());
-    let record = |evidence: &Option<scenario::Evidence>| {
-        evidence.as_ref().map(|ev| ev.to_json()).unwrap_or_default()
-    };
-    // Compact core evidence is additive: preserve the existing scenario JSON
-    // receipt byte-for-byte and emit the shared witness only at a terminal
-    // decision, off the gameplay observation thread.
-    let record_core = || {
-        core_watch
-            .as_ref()
-            .filter(|watch| watch.configured())
-            .map(|watch| match &core_gate {
-                CoreGate::Qualified(Some(evidence)) => evidence.to_string(),
-                _ => watch
-                    .qualify()
-                    .map(|evidence| evidence.to_string())
-                    .unwrap_or_else(|_| watch.evidence().to_string()),
-            })
-    };
-    let record_pair = || {
-        pair_watch
-            .as_ref()
-            .filter(|watch| watch.configured())
-            .map(|watch| match &pair_gate {
-                CoreGate::Qualified(Some(evidence)) => evidence.to_string(),
-                _ => watch
-                    .qualify()
-                    .map(|evidence| evidence.to_string())
-                    .unwrap_or_else(|_| watch.evidence().to_string()),
-            })
-    };
-    let record_ext = || {
-        ext_watch
-            .as_ref()
-            .filter(|watch| watch.configured())
-            .map(|watch| match &ext_gate {
-                CoreGate::Qualified(Some(evidence)) => evidence.to_string(),
-                _ => watch
-                    .qualify()
-                    .map(|evidence| evidence.to_string())
-                    .unwrap_or_else(|_| watch.evidence().to_string()),
-            })
-    };
-    let live_line = || record_ext().unwrap_or_else(|| record(&evidence));
-    let failure_name = script_failure_scenario(&live.name, evidence.as_ref());
-    let failure_evidence = evidence.clone();
-    let failure_line = |message: &str| {
-        serde_json::json!({
-            "scenario": failure_name,
-            "outcome": "FAIL",
-            "message": message,
-            "prerequisite": failure_evidence,
-        })
-        .to_string()
-    };
-    let proof_name = live.name.clone();
-    let emit_proof = |ok: bool| {
-        if let Some(core) = record_core() {
-            if ok {
-                println!("CATALOG_CORE: {proof_name} {core}");
-            } else {
-                eprintln!("CATALOG_CORE: {proof_name} {core}");
-            }
-        }
-        if let Some(pair) = record_pair() {
-            if ok {
-                println!("PAIRED_CORE: {proof_name} {pair}");
-            } else {
-                eprintln!("PAIRED_CORE: {proof_name} {pair}");
-            }
-        }
-        if let Some(ext) = record_ext() {
-            if ok {
-                println!("EXTERNAL_LOADER: {proof_name} {ext}");
-            } else {
-                eprintln!("EXTERNAL_LOADER: {proof_name} {ext}");
-            }
-        }
-    };
-    if let CoreGate::Failed(message) = &core_gate {
-        request_native_failure_capture(live, session, shots, terminal_shot);
-        match hold_script_terminal_shot(live, session, terminal_shot, terminal_shot_status, shots) {
-            Ok(true) => return None,
-            Err(error) => eprintln!("[panel] {error}"),
-            Ok(false) => {}
-        }
-        emit_proof(false);
-        eprintln!("FAIL: live {} {}", live.name, failure_line(message));
-        live.failed = Some(message.clone());
-        return Some(message.clone());
-    }
-    if let CoreGate::Failed(message) = &pair_gate {
-        match hold_script_terminal_shot(live, session, terminal_shot, terminal_shot_status, shots) {
-            Ok(true) => return None,
-            Err(error) => eprintln!("[panel] {error}"),
-            Ok(false) => {}
-        }
-        emit_proof(false);
-        eprintln!("FAIL: live {} {}", live.name, live_line());
-        live.failed = Some(message.clone());
-        return Some(message.clone());
-    }
-    if let CoreGate::Failed(message) = &ext_gate {
-        match hold_script_terminal_shot(live, session, terminal_shot, terminal_shot_status, shots) {
-            Ok(true) => return None,
-            Err(error) => eprintln!("[panel] {error}"),
-            Ok(false) => {}
-        }
-        emit_proof(false);
-        eprintln!("FAIL: live {} {}", live.name, live_line());
-        live.failed = Some(message.clone());
-        return Some(message.clone());
-    }
-    match status {
-        Some(scenario::RunnerStatus::Passed) => {
-            if matches!(core_gate, CoreGate::Pending)
-                || matches!(pair_gate, CoreGate::Pending)
-                || matches!(ext_gate, CoreGate::Pending)
-            {
-                return None;
-            }
-            if core_watch.as_ref().is_some_and(|watch| watch.configured())
-                && matches!(core_gate, CoreGate::Qualified(_))
-            {
-                request_native_failure_capture(live, session, shots, terminal_shot);
-            }
-            match hold_script_terminal_shot(
-                live,
-                session,
-                terminal_shot,
-                terminal_shot_status,
-                shots,
-            ) {
-                Ok(true) => return None,
-                Err(error) => {
-                    live.failed = Some(error.clone());
-                    return Some(error);
-                }
-                Ok(false) => {}
-            }
-            if !live.announced_pass {
-                emit_proof(true);
-                println!("PASS: live {} {}", live.name, live_line());
-                live.announced_pass = true;
-            }
-            if live.soak {
-                if live.soak_until.is_some_and(|t| Instant::now() >= t) {
-                    live.passed = true;
-                }
-                return None;
-            }
-            live.passed = true;
-            None
-        }
-        Some(scenario::RunnerStatus::Failed(msg)) => {
-            match hold_script_terminal_shot(
-                live,
-                session,
-                terminal_shot,
-                terminal_shot_status,
-                shots,
-            ) {
-                Ok(true) => return None,
-                Err(error) => eprintln!("[panel] {error}"),
-                Ok(false) => {}
-            }
-            if let Some(core) = record_core() {
-                eprintln!("CATALOG_CORE: {} {core}", live.name);
-            }
-            if let Some(pair) = record_pair() {
-                eprintln!("PAIRED_CORE: {} {pair}", live.name);
-            }
-            if let Some(ext) = record_ext() {
-                eprintln!("EXTERNAL_LOADER: {} {ext}", live.name);
-            }
-            eprintln!("FAIL: live {} {}", live.name, live_line());
-            live.failed = Some(msg.clone());
-            Some(msg)
-        }
-        Some(scenario::RunnerStatus::Seeding) => None,
-        Some(scenario::RunnerStatus::Running { step, total }) => {
-            if live.last_step != Some((step, total)) {
-                live.last_step = Some((step, total));
-                if step >= total {
-                    println!("live {}: proving proof predicate", live.name);
-                } else {
-                    println!("live {}: running step {}/{}", live.name, step + 1, total);
-                }
-            }
-            None
-        }
-        None => None,
-    }
-}
-
-/// The focused slot's status row, `None` when nothing is focused or the
-/// focused username has no row this pump.
-fn focused_slot<'a>(
-    session: &Session,
-    statuses: &'a [host_play::SlotStatus],
-) -> Option<&'a host_play::SlotStatus> {
-    let focused = session.focused_name();
-    statuses
-        .iter()
-        .find(|s| focused.as_deref() == Some(s.username.as_str()))
-}
-
 fn overlay_script_paint(
     ui: &Ui,
     gpu: &mut Gpu,
@@ -1762,81 +950,23 @@ fn overlay_script_paint(
 ) {
     match slot {
         Some(slot) => {
-            if let Some((id, generation)) =
+            if let Some((hit, generation)) =
                 state
                     .paint
-                    .frame(ui, Some(gpu), slot.script_paint.as_ref(), min, size)
+                    .frame(ui, Some(gpu), slot.script_paint.as_deref(), min, size)
             {
-                state.session.script_paint_click(&id, generation);
+                match hit {
+                    crate::paint::PaintFrameHit::Button(id) => {
+                        state.session.script_paint_click(&id, generation);
+                    }
+                    crate::paint::PaintFrameHit::Select { key, name } => {
+                        state.session.script_paint_select(&key, &name, generation);
+                    }
+                }
             }
         }
         None => state.paint.release_canvas(gpu),
     }
-}
-
-/// Headed `--smoke` watch. `wrote_shots` is the count `pump_shots` wrote
-/// this frame: the smoke's single scene2 shot landing passes the run (the
-/// caller exits 0). Before that, the pure trigger latches scene 2 on the
-/// focused slot for the render-settle gate and a precise deadline message,
-/// and the shared runner's failures surface unchanged. The 300 s ceiling
-/// is the run's own clock: it also catches a runner that passed but whose
-/// PNG never got written (e.g. a failed render readback).
-fn live_smoke_tick(
-    live: &mut LiveSmoke,
-    session: &mut Session,
-    statuses: &[host_play::SlotStatus],
-    wrote_shots: usize,
-) -> Option<String> {
-    if live.passed || live.failed.is_some() {
-        return None;
-    }
-    if wrote_shots > 0 {
-        println!("PASS: panel-play --smoke (scene2 whole-window shot written)");
-        live.passed = true;
-        return None;
-    }
-    let slot = focused_slot(session, statuses);
-    if smoke_should_fire(
-        true,
-        live.saw_scene2_at.is_some(),
-        slot.is_some_and(|s| s.ingame),
-        slot.map_or(0, |s| s.scene_state),
-    ) {
-        live.saw_scene2_at = Some(Instant::now());
-        println!(
-            "smoke: focused slot at scene 2; waiting for the render to settle before the capture"
-        );
-    }
-    // Mirror the shared runner so a scenario failure is the failure.
-    let status = session
-        .scenario
-        .lock()
-        .unwrap()
-        .as_ref()
-        .map(|r| r.status());
-    match status {
-        Some(scenario::RunnerStatus::Failed(msg)) => {
-            live.failed = Some(msg.clone());
-            return Some(msg);
-        }
-        Some(scenario::RunnerStatus::Running { step, total })
-            if live.last_step != Some((step, total)) =>
-        {
-            live.last_step = Some((step, total));
-            println!("smoke: running step {step}/{total}");
-        }
-        _ => {}
-    }
-    if live.started.elapsed() >= SMOKE_DEADLINE {
-        let msg = if live.saw_scene2_at.is_some() {
-            "panel-play --smoke: scene2 shot never written within 300s".to_string()
-        } else {
-            "panel-play --smoke: focused slot never reached scene 2 within 300s".to_string()
-        };
-        live.failed = Some(msg.clone());
-        return Some(msg);
-    }
-    None
 }
 
 /// Dockspace: no splitter, no extra splits. Tab bar hides on a
@@ -2053,17 +1183,45 @@ fn game_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
         if dirty {
             let took_frame = if let Some(frame) = buf.as_ref().and_then(|p| p.take()) {
                 if let Some(view) = state.game_view.as_mut() {
+                    #[cfg(feature = "render-diagnostics")]
+                    {
+                        let roi = buf.as_ref().and_then(|p| p.take_pixel_roi());
+                        client::render::diagnostics::prepare_present_roi(
+                            roi.map(|r| (r, name.as_str(), gen)),
+                        );
+                        match &frame {
+                            client::render::backend::FrameOutput::PixMap(_) => {
+                                client::render::diagnostics::arm_game_image_cpu_upload();
+                            }
+                            client::render::backend::FrameOutput::Texture(_) => {
+                                client::render::diagnostics::arm_game_image_gpu_present();
+                            }
+                        }
+                    }
                     view.present(gpu, frame);
                 }
                 true
             } else {
                 false
             };
-            record_presented_upload(&mut state.last_upload, name, gen, took_frame);
+            record_presented_upload(&mut state.last_upload, name.clone(), gen, took_frame);
         }
         let view = state.game_view.as_ref().expect("game view initialized");
         ui.image(view.tex_id, size);
         let min = ui.item_rect_min();
+        #[cfg(feature = "render-diagnostics")]
+        {
+            let fb = ui.io().display_framebuffer_scale();
+            client::render::diagnostics::note_game_image_fb(
+                min[0], min[1], size[0], size[1], fb[0], fb[1],
+            );
+            let ctx = state
+                .last_upload
+                .as_ref()
+                .map(|(n, _)| n.as_str())
+                .unwrap_or(name.as_str());
+            client::render::diagnostics::note_readback_context(ctx);
+        }
         // Queue-card overlay: the armed route's remaining tiles are
         // painted by the client's 3D renderer and on the pack map, so the
         // Image only carries the focused slot's queue card.
@@ -2206,302 +1364,6 @@ fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
     }
 }
 
-/// Named GameShell `ch` values (arrows 1–4, ASCII controls, space).
-const CAPTURE_NAMED: &[(Key, i32)] = &[
-    (Key::LeftArrow, 1),
-    (Key::RightArrow, 2),
-    (Key::UpArrow, 3),
-    (Key::DownArrow, 4),
-    (Key::Backspace, 8),
-    (Key::Delete, 8),
-    (Key::Tab, 9),
-    (Key::Enter, 10),
-    (Key::Escape, 27),
-    (Key::Space, 32),
-];
-const CAPTURE_LETTERS: [Key; 26] = [
-    Key::A,
-    Key::B,
-    Key::C,
-    Key::D,
-    Key::E,
-    Key::F,
-    Key::G,
-    Key::H,
-    Key::I,
-    Key::J,
-    Key::K,
-    Key::L,
-    Key::M,
-    Key::N,
-    Key::O,
-    Key::P,
-    Key::Q,
-    Key::R,
-    Key::S,
-    Key::T,
-    Key::U,
-    Key::V,
-    Key::W,
-    Key::X,
-    Key::Y,
-    Key::Z,
-];
-const CAPTURE_DIGITS: [(Key, u8, u8); 10] = [
-    (Key::Key0, b'0', b')'),
-    (Key::Key1, b'1', b'!'),
-    (Key::Key2, b'2', b'@'),
-    (Key::Key3, b'3', b'#'),
-    (Key::Key4, b'4', b'$'),
-    (Key::Key5, b'5', b'%'),
-    (Key::Key6, b'6', b'^'),
-    (Key::Key7, b'7', b'&'),
-    (Key::Key8, b'8', b'*'),
-    (Key::Key9, b'9', b'('),
-];
-/// Punctuation: same `ch` as client-play `key_codes::lookup` / KeyCodes.ts
-/// 48–80. Without this, `::` (`:`) and `~` never reach chat.
-const CAPTURE_PUNCT: [(Key, u8, u8); 11] = [
-    (Key::GraveAccent, b'`', b'~'),
-    (Key::Minus, b'-', b'_'),
-    (Key::Equal, b'=', b'+'),
-    (Key::LeftBracket, b'[', b'{'),
-    (Key::RightBracket, b']', b'}'),
-    (Key::Backslash, b'\\', b'|'),
-    (Key::Semicolon, b';', b':'),
-    (Key::Apostrophe, b'\'', b'"'),
-    (Key::Comma, b',', b'<'),
-    (Key::Period, b'.', b'>'),
-    (Key::Slash, b'/', b'?'),
-];
-
-/// Recover the physical ImGui key for shifted printable characters. Winit's
-/// logical key is the produced character (`:` rather than `;`). Game capture
-/// records that produced character at the native event; this mapping is only
-/// the ImGui key identity plus press-character ownership, not a later Shift
-/// sample. The winit backend already queues `event.text` for text widgets.
-pub(crate) fn shifted_imgui_key(key: &WinitKey) -> Option<Key> {
-    let WinitKey::Character(character) = key else {
-        return None;
-    };
-    match character.as_str() {
-        ")" => Some(Key::Key0),
-        "!" => Some(Key::Key1),
-        "@" => Some(Key::Key2),
-        "#" => Some(Key::Key3),
-        "$" => Some(Key::Key4),
-        "%" => Some(Key::Key5),
-        "^" => Some(Key::Key6),
-        "&" => Some(Key::Key7),
-        "*" => Some(Key::Key8),
-        "(" => Some(Key::Key9),
-        "~" => Some(Key::GraveAccent),
-        "_" => Some(Key::Minus),
-        "+" => Some(Key::Equal),
-        "{" => Some(Key::LeftBracket),
-        "}" => Some(Key::RightBracket),
-        "|" => Some(Key::Backslash),
-        ":" => Some(Key::Semicolon),
-        "\"" => Some(Key::Apostrophe),
-        "<" => Some(Key::Comma),
-        ">" => Some(Key::Period),
-        "?" => Some(Key::Slash),
-        _ => None,
-    }
-}
-
-/// Apply the adapter only where dear-imgui-winit does not already own the
-/// physical key. Its backend maps numpad `+`/`*` to keypad keys; translating
-/// those same logical characters to `Equal`/`Key8` would double-deliver them
-/// to game capture.
-pub(crate) fn shifted_imgui_key_at_location(key: &WinitKey, location: KeyLocation) -> Option<Key> {
-    if location == KeyLocation::Numpad {
-        return None;
-    }
-    shifted_imgui_key(key)
-}
-
-/// Queue the missing ImGui key lifecycle for a logical shifted character,
-/// and record the produced capture character (or named GameShell ch) at
-/// this native event so mixed printable/named order is preserved.
-/// The backend already queues text for widgets; this must not add text.
-pub(crate) fn add_shifted_key_event(
-    io: &mut Io,
-    logical_key: &WinitKey,
-    location: KeyLocation,
-    down: bool,
-) {
-    if let Some(key) = shifted_imgui_key_at_location(logical_key, location) {
-        io.add_key_event(key, down);
-    }
-    note_native_capture_key(logical_key, location, down);
-}
-
-static NATIVE_CAPTURE: Mutex<Vec<(bool, i32)>> = Mutex::new(Vec::new());
-static NATIVE_PRESS_CH: Mutex<Vec<(Key, i32)>> = Mutex::new(Vec::new());
-
-fn physical_capture_key(logical_key: &WinitKey, location: KeyLocation) -> Option<Key> {
-    if let Some(key) = shifted_imgui_key_at_location(logical_key, location) {
-        return Some(key);
-    }
-    let WinitKey::Character(character) = logical_key else {
-        return None;
-    };
-    let mut chars = character.chars();
-    let ch = chars.next()?;
-    if chars.next().is_some() {
-        return None;
-    }
-    if location == KeyLocation::Numpad {
-        if ch.is_ascii_digit() {
-            return Some(CAPTURE_DIGITS[(ch as u8 - b'0') as usize].0);
-        }
-        return None;
-    }
-    if ch.is_ascii_alphabetic() {
-        let i = (ch.to_ascii_uppercase() as u8 - b'A') as usize;
-        return CAPTURE_LETTERS.get(i).copied();
-    }
-    for &(key, unshifted, shifted) in &CAPTURE_DIGITS {
-        if ch == unshifted as char || ch == shifted as char {
-            return Some(key);
-        }
-    }
-    for &(key, unshifted, shifted) in &CAPTURE_PUNCT {
-        if ch == unshifted as char || ch == shifted as char {
-            return Some(key);
-        }
-    }
-    None
-}
-
-fn produced_capture_ch(logical_key: &WinitKey, location: KeyLocation) -> Option<i32> {
-    let WinitKey::Character(character) = logical_key else {
-        return None;
-    };
-    let mut chars = character.chars();
-    let ch = chars.next()?;
-    if chars.next().is_some() || !ch.is_ascii() {
-        return None;
-    }
-    physical_capture_key(logical_key, location)?;
-    Some(ch as i32)
-}
-
-fn imgui_named_capture_key(logical_key: &WinitKey, location: KeyLocation) -> Option<Key> {
-    match logical_key {
-        WinitKey::Character(s) if s.as_str() == " " => Some(Key::Space),
-        WinitKey::Named(named) => match named {
-            NamedKey::ArrowLeft => Some(Key::LeftArrow),
-            NamedKey::ArrowRight => Some(Key::RightArrow),
-            NamedKey::ArrowUp => Some(Key::UpArrow),
-            NamedKey::ArrowDown => Some(Key::DownArrow),
-            NamedKey::Backspace => Some(Key::Backspace),
-            NamedKey::Delete => Some(Key::Delete),
-            NamedKey::Tab => Some(Key::Tab),
-            NamedKey::Enter if location != KeyLocation::Numpad => Some(Key::Enter),
-            NamedKey::Escape => Some(Key::Escape),
-            NamedKey::Space => Some(Key::Space),
-            _ => None,
-        },
-        _ => None,
-    }
-}
-
-fn named_capture_ch(logical_key: &WinitKey, location: KeyLocation) -> Option<i32> {
-    let key = imgui_named_capture_key(logical_key, location)?;
-    CAPTURE_NAMED
-        .iter()
-        .find(|(k, _)| *k == key)
-        .map(|&(_, ch)| ch)
-}
-
-fn note_native_capture_key(logical_key: &WinitKey, location: KeyLocation, down: bool) {
-    let ch = if let Some(produced) = produced_capture_ch(logical_key, location) {
-        match physical_capture_key(logical_key, location) {
-            Some(key) if down => {
-                let mut held = NATIVE_PRESS_CH.lock().expect("native press ch");
-                held.retain(|(k, _)| *k != key);
-                held.push((key, produced));
-                produced
-            }
-            Some(key) => {
-                let mut held = NATIVE_PRESS_CH.lock().expect("native press ch");
-                if let Some(index) = held.iter().position(|(k, _)| *k == key) {
-                    held.remove(index).1
-                } else {
-                    produced
-                }
-            }
-            None => produced,
-        }
-    } else if let Some(ch) = named_capture_ch(logical_key, location) {
-        ch
-    } else {
-        return;
-    };
-    NATIVE_CAPTURE
-        .lock()
-        .expect("native capture")
-        .push((down, ch));
-}
-
-fn take_native_capture() -> Vec<(bool, i32)> {
-    std::mem::take(&mut *NATIVE_CAPTURE.lock().expect("native capture"))
-}
-
-/// Drop unconsumed capture so capture-off / unhovered frames cannot
-/// replay later. Held press-character ownership is cleared only when
-/// events were actually discarded: an empty queue after a drained press
-/// must keep ownership so a later Shift-up release still pairs. Clearing
-/// held on every empty capture-off frame would rewrite `:` into `;` if
-/// the cursor left the pane between press and release.
-fn discard_unconsumed_native_capture() {
-    let mut queued = NATIVE_CAPTURE.lock().expect("native capture");
-    if queued.is_empty() {
-        return;
-    }
-    queued.clear();
-    NATIVE_PRESS_CH.lock().expect("native press ch").clear();
-}
-
-/// GameShell `ch` for one ImGui key, Shift applied the way client-play
-/// maps DOM `KeyboardEvent.key` (`:` is 58, `~` is 126).
-#[cfg_attr(not(test), allow(dead_code))]
-fn capture_key_ch(key: Key, shift: bool) -> Option<i32> {
-    for &(k, ch) in CAPTURE_NAMED {
-        if k == key {
-            return Some(ch);
-        }
-    }
-    for (i, &k) in CAPTURE_LETTERS.iter().enumerate() {
-        if k == key {
-            let base = if shift { b'A' } else { b'a' };
-            return Some((base + i as u8) as i32);
-        }
-    }
-    for &(k, unshifted, shifted) in &CAPTURE_DIGITS {
-        if k == key {
-            return Some(if shift { shifted } else { unshifted } as i32);
-        }
-    }
-    for &(k, unshifted, shifted) in &CAPTURE_PUNCT {
-        if k == key {
-            return Some(if shift { shifted } else { unshifted } as i32);
-        }
-    }
-    None
-}
-
-/// Map hovered keys to GameShell `ch` values (arrows 1–4, ASCII).
-/// Printable and named capture keys share one native event queue so a
-/// same-frame `a`/Space/`b` stays `a b`. Produced printables are the
-/// characters recorded at KeyboardInput so a later Shift sample cannot
-/// rewrite `:` into `;`.
-fn capture_keys(_ui: &Ui) -> Vec<(bool, i32)> {
-    take_native_capture()
-}
-
 /// Right panel: rs2b0t chrome squished into the 330px strip. Vertical scroll
 /// only — wrap/clip, never a horizontal bar.
 fn panel_window(ui: &Ui, session: &mut Session, progress: Option<StartupProgressView>) {
@@ -2618,6 +1480,53 @@ fn loading_text(phase: ProgressPhase, progress: &ProfileProgress) -> LoadingText
     }
 }
 
+/// Startup banner text for one slot row. The second flag is whether to append
+/// an elapsed timer (Preparing and in-flight login phases; not errors/latched).
+pub(crate) fn slot_startup_banner_line(status: &host_play::SlotStatus) -> Option<(String, bool)> {
+    if let Some(error) = status.error.as_deref() {
+        return Some((error.to_string(), false));
+    }
+    if status.login_latched && !status.ingame {
+        return Some(("Logged out — select Log in to reconnect".to_string(), false));
+    }
+    let message = match status.startup_phase {
+        host_play::StartupPhase::Preparing => {
+            if status.startup_progress_message.is_empty() {
+                "Preparing client".to_string()
+            } else if let Some(percent) = status.startup_progress_percent {
+                format!("{} — {}%", status.startup_progress_message, percent)
+            } else {
+                status.startup_progress_message.clone()
+            }
+        }
+        host_play::StartupPhase::Queueing => {
+            if status.queue_position > 0 && status.queue_total > 0 {
+                format!(
+                    "Waiting in login queue ({}/{})",
+                    status.queue_position, status.queue_total
+                )
+            } else {
+                "Waiting to connect".to_string()
+            }
+        }
+        host_play::StartupPhase::Connecting => "Logging in".to_string(),
+        host_play::StartupPhase::LoadingScene => "Loading first scene".to_string(),
+        host_play::StartupPhase::Ready | host_play::StartupPhase::Error => String::new(),
+    };
+    if message.is_empty() {
+        None
+    } else {
+        let show_elapsed = matches!(
+            status.startup_phase,
+            host_play::StartupPhase::Preparing
+                | host_play::StartupPhase::Queueing
+                | host_play::StartupPhase::Connecting
+                | host_play::StartupPhase::LoadingScene
+        );
+        Some((message, show_elapsed))
+    }
+}
+
 fn loading_banner(ui: &Ui, phase: ProgressPhase, progress: &ProfileProgress) {
     let text = loading_text(phase, progress);
     ui.text_colored(ACCENT, &text.description);
@@ -2647,37 +1556,15 @@ fn banner(ui: &Ui, session: &Session, progress: Option<StartupProgressView>) {
             .find(|status| session.focused_name().as_deref() == Some(status.username.as_str()))
             .or_else(|| statuses.first());
         if let Some(status) = status {
-            if let Some(error) = status.error.as_deref() {
-                ui.text_colored(ERROR, error);
-                return;
-            }
-            let message = match status.startup_phase {
-                host_play::StartupPhase::Preparing => {
-                    if status.startup_progress_message.is_empty() {
-                        "Preparing client".to_string()
-                    } else if let Some(percent) = status.startup_progress_percent {
-                        format!("{} — {}%", status.startup_progress_message, percent)
-                    } else {
-                        status.startup_progress_message.clone()
-                    }
+            if let Some((message, show_elapsed)) = slot_startup_banner_line(status) {
+                if status.error.is_some() {
+                    ui.text_colored(ERROR, &message);
+                } else if show_elapsed {
+                    let elapsed = status.startup_phase_started.elapsed().as_secs_f64();
+                    ui.text_colored(ACCENT, format!("{message} — {elapsed:.1}s"));
+                } else {
+                    ui.text_colored(ACCENT, &message);
                 }
-                host_play::StartupPhase::Queueing => {
-                    if status.queue_position > 0 && status.queue_total > 0 {
-                        format!(
-                            "Waiting in login queue ({}/{})",
-                            status.queue_position, status.queue_total
-                        )
-                    } else {
-                        "Waiting to connect".to_string()
-                    }
-                }
-                host_play::StartupPhase::Connecting => "Logging in".to_string(),
-                host_play::StartupPhase::LoadingScene => "Loading first scene".to_string(),
-                host_play::StartupPhase::Ready | host_play::StartupPhase::Error => String::new(),
-            };
-            if !message.is_empty() {
-                let elapsed = status.startup_phase_started.elapsed().as_secs_f64();
-                ui.text_colored(ACCENT, format!("{message} — {elapsed:.1}s"));
             }
         }
     }
@@ -2893,15 +1780,26 @@ fn paint_inverse_combo_arrow(ui: &Ui) {
     .build();
 }
 
+fn logout_enabled(vault_open: bool, focused: bool, ingame: bool, queued: bool) -> bool {
+    vault_open && focused && (ingame || queued)
+}
+
 /// Log in / Logout above WalkTo. Always drawn; disabled while the vault
-/// is locked or no profile is focused. Logout also needs ingame.
+/// is locked or no profile is focused. Logout needs an ingame or genuinely
+/// queued focused slot, so an unloaded profile cannot be latched accidentally.
 fn login_logout_row(ui: &Ui, session: &mut Session) {
     let avail = ui.content_region_avail()[0];
     let cells = button_cells(avail, 2);
     let vault_open = session.vault.is_some();
     let focused = session.focused_name();
     let can_login = vault_open && focused.is_some();
-    let can_logout = can_login && session.focused_ingame();
+    let focused_queued = session.focused_queue().is_some();
+    let can_logout = logout_enabled(
+        vault_open,
+        focused.is_some(),
+        session.focused_ingame(),
+        focused_queued,
+    );
     {
         let _off = (!can_login).then(|| ui.begin_disabled());
         if ui.button_with_size("Log in", [cells[0].0, 0.0]) {
@@ -2931,6 +1829,8 @@ fn login_logout_row(ui: &Ui, session: &mut Session) {
             "unlock the vault first"
         } else if focused.is_none() {
             "pick a profile"
+        } else if focused_queued {
+            "cancel the focused slot's queued login"
         } else {
             "log out the focused slot — it stays in the picker"
         });
@@ -3272,8 +2172,8 @@ fn category_chip_dnd(ui: &Ui, session: &mut Session, cat: &str) {
 
 fn browse_script_card(ui: &Ui, session: &mut Session, card: &script::JsCard, w: f32) {
     let selected =
-        session.script_sel == Some(script::ScriptSel::Loaded(card.source, card.name.clone()));
-    let id = format!("##scard-{:?}-{}", card.source, card.name);
+        session.script_sel == Some(script::ScriptSel::Loaded(card.source, card.identity_id()));
+    let id = format!("##scard-{}", card.identity_key());
     let _border = selected.then(|| ui.push_style_color(StyleColor::Border, ACCENT));
     ui.child_window(&id)
         .size([w, 0.0])
@@ -3342,6 +2242,12 @@ fn browse_script_card(ui: &Ui, session: &mut Session, card: &script::JsCard, w: 
             ) {
                 let _dim = ui.push_style_color(StyleColor::Text, TEXT_DIM);
                 ui.text_disabled(line);
+            }
+            if let Some(failure) = session.js.load_failure(&card.identity_key()) {
+                ui.text_colored(ERROR, format!("failed {}", failure.stage.as_str()));
+                if selected {
+                    ui.text_wrapped(failure.named_line());
+                }
             }
             if !card.description.is_empty() {
                 let _wrap = ui.push_text_wrap_pos(0.0);
@@ -3451,6 +2357,20 @@ fn browse_window_body(ui: &Ui, session: &mut Session) {
                 }
             }
         }
+        ui.spacing();
+    }
+    let named_failures = session.js.named_failure_output();
+    if !named_failures.is_empty() {
+        ui.text_colored(
+            ERROR,
+            format!("{} failed", session.js.load_failures().len()),
+        );
+        if ui.button("Copy failures") {
+            if let Ok(mut clip) = arboard::Clipboard::new() {
+                let _ = clip.set_text(&named_failures);
+            }
+        }
+        ui.text_wrapped(&named_failures);
         ui.spacing();
     }
     ui.child_window("##script-list")
@@ -3748,9 +2668,6 @@ fn file_dialog_body(ui: &Ui, session: &mut Session, mode: DialogMode) {
             }
         });
 }
-
-/// Load window: shared file dialog is drawn from [`browse_window`].
-fn load_window(_ui: &Ui, _session: &mut Session) {}
 
 /// Nav config window: Routing, Display, Path paint (only while the path
 /// is shown), and Debug groups. Every toggle or colour writes
@@ -4269,6 +3186,8 @@ fn status_section(ui: &Ui, session: &mut Session) {
         }
     } else if s.login_started.is_some() {
         "logging in…".to_string()
+    } else if s.login_latched {
+        "logged out".to_string()
     } else {
         "waiting".to_string()
     };
@@ -4284,6 +3203,11 @@ fn status_section(ui: &Ui, session: &mut Session) {
     let queue = queue_k_of_n(s.queue_position, s.queue_total).unwrap_or_else(|| "—".into());
     kv_row(ui, "queue", &queue);
     kv_row(ui, "modals", &format!("{}", s.main_modal_id));
+    if let Some(failure) = s.welcome_failure.as_deref() {
+        kv_row(ui, "welcome", failure);
+    } else if s.welcome_hold {
+        kv_row(ui, "welcome", "holding");
+    }
     if let Some(random) = random_status_text(&s.random) {
         kv_row(ui, "random", &random);
     }
@@ -5264,52 +4188,78 @@ fn chooser_row(ui: &Ui, name: &str, selected: bool) -> (bool, bool, bool) {
     (loaded, removed, edit)
 }
 
-/// Install the whole-window shot plumbing for a headed scenario run: the
-/// per-run shot dir plus the sink bridging the slot-threaded runner to
-/// the window readback — it enqueues `(label, snapshot JSON)`, and
-/// `ui_frame` hands the requests to the render pass, then writes the PNG
-/// and sidecar from the returned bytes. Shared by `--live script_*` and
-/// `--smoke`.
-fn arm_scenario_shots(state: &mut PanelState) {
-    state.shot_dir = scenario::shot::create_run_dir()
-        .map(Some)
-        .unwrap_or_else(|e| {
-            eprintln!("[panel] shot dir: {e}; shots will be skipped");
-            None
-        });
-    let shots = Arc::clone(&state.shot_state);
-    if let Some(runner) = state.session.scenario.lock().unwrap().as_mut() {
-        if std::env::var("BOT_DEBUG").as_deref() == Ok("1") {
-            eprintln!(
-                "[panel] scenario capture armed: {:?}",
-                runner.terminal_shot()
-            );
-        }
-        runner.set_shot_sink(Box::new(
-            move |label: &str, snap: &api::snapshot::GameSnapshot| {
-                if std::env::var("BOT_DEBUG").as_deref() == Ok("1") {
-                    eprintln!("[panel] scenario capture requested: {label}");
-                }
-                match serde_json::to_string_pretty(snap) {
-                    Ok(json) => shots.lock().unwrap().enqueue(label.to_string(), json),
-                    Err(error) => {
-                        eprintln!("[panel] shot {label}: snapshot serialization failed: {error}");
-                        shots
-                            .lock()
-                            .unwrap()
-                            .mark_failed(label, &format!("snapshot serialization failed: {error}"));
-                    }
-                }
-            },
+/// Offline prepare: mint isolated identity, write server-native `.sav` via
+/// `tools/harness`, write durable fixture identity — no live engine/window.
+fn run_offline_prepare_fixture(args: &PanelArgs, scenario: &str) -> Result<(), String> {
+    let sc = scenario::get(scenario).ok_or_else(|| format!("unknown scenario {scenario}"))?;
+    let profile_count = sc.seed.profiles.len();
+    if profile_count == 0 {
+        return Err(format!("scenario {scenario} has zero seed profiles"));
+    }
+    let fixture_preset = scenario::fixture_preset_for(scenario)?;
+    let server_root = args
+        .server_root
+        .clone()
+        .or_else(|| std::env::var_os("BOT_SERVER_ROOT").map(PathBuf::from))
+        .unwrap_or_else(|| PathBuf::from("/Users/acfrazier/experiments/Server/engine"));
+    if !server_root.join("data/pack/server/obj.dat").is_file() {
+        return Err(format!(
+            "server root missing pack data: {} (pass --server-root or BOT_SERVER_ROOT)",
+            server_root.display()
         ));
     }
+    let identity_path = args
+        .fixture_path
+        .clone()
+        .unwrap_or_else(|| scenario::default_fixture_path(scenario));
+    let sav_dir = identity_path
+        .parent()
+        .map(|p| p.join(scenario))
+        .unwrap_or_else(|| scenario::default_fixture_sav_dir(scenario));
+    let target = client::bot_target();
+    let names = host_play::mint_live_names(profile_count);
+    let entries = host_play::mint_live_entries_for_target(&names, target);
+    let pass = host_play::live_vault_passphrase_for(target);
+    let passwords: Vec<String> = entries.iter().map(|(_, p)| p.clone()).collect();
+    let identity = scenario::prepare_offline_fixture(scenario::OfflinePrepareOpts {
+        scenario: scenario.to_string(),
+        fixture_preset: fixture_preset.to_string(),
+        profile: "main".into(),
+        server_root,
+        identity_path: identity_path.clone(),
+        sav_dir,
+        usernames: names,
+        passwords,
+        vault_passphrase: pass,
+        overwrite: true,
+    })?;
+    println!(
+        "[panel] offline fixture prepared: scenario={} identity={} accounts={}",
+        identity.scenario,
+        identity_path.display(),
+        identity.accounts.len()
+    );
+    for a in &identity.accounts {
+        println!(
+            "[panel]   {} sav={} sha256={} bytes={}",
+            a.username, a.sav_path, a.sav_sha256, a.sav_bytes
+        );
+    }
+    println!("PASS: offline prepare fixture {scenario}");
+    Ok(())
 }
 
 /// Open the 274bot panel window. Call after the vault has been started.
 /// `args.mode` selects the normal interactive panel, a `--live NAME` harness,
 /// or `--smoke` (temp `test` vault, one whole-window shot at scene 2,
-/// exit 0).
+/// exit 0). `--prepare-fixture` is offline-only and never opens a window.
 pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
+    if let Some(scenario) = args.mode.prepare_fixture_name() {
+        return run_offline_prepare_fixture(&args, scenario).map_err(|e| {
+            eprintln!("FAIL: {e}");
+            std::process::exit(1);
+        });
+    }
     let scale = Arc::new(AtomicU32::new(1.0f32.to_bits()));
     let frame_scale = Arc::clone(&scale);
     let mut state = PanelState::default();
@@ -5319,6 +4269,14 @@ pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
     state.session.set_pair_core_enabled(args.pair_core);
     state.session.set_external_core_enabled(args.external_core);
     state.session.set_external_ts(args.external_ts);
+    let fixture_mode = if args.run_prepared {
+        scenario::FixtureMode::RunPrepared
+    } else {
+        scenario::FixtureMode::Default
+    };
+    state
+        .session
+        .set_fixture_boot(fixture_mode, args.fixture_path.clone());
     state
         .session
         .configure_profile(args.profile)
@@ -5443,6 +4401,15 @@ fn pump_shots(state: &mut PanelState) -> usize {
             ) {
                 Ok(path) => {
                     println!("[panel] shot {} -> {}", cap.label, path.display());
+                    #[cfg(feature = "render-diagnostics")]
+                    client::render::diagnostics::dump_png_slot(
+                        &cap.rgba,
+                        cap.width as i32,
+                        cap.height as i32,
+                        &cap.label,
+                        true,
+                        cap.pixel_roi.as_ref(),
+                    );
                     state.shot_state.lock().unwrap().mark_written(&cap.label);
                     written += 1;
                 }
@@ -5462,14 +4429,10 @@ fn pump_shots(state: &mut PanelState) -> usize {
     // ingame — the slot's 1 fps renderer needs wall-clock time to
     // rasterize the world, and an early readback captures the title
     // screen. `script_*` and interactive shots drain as before.
-    let hold = match state.live.as_ref() {
-        Some(LiveHarness::Smoke(s)) => !smoke_settled(
-            s.saw_scene2_at,
-            Instant::now(),
-            focused_slot(&state.session, &state.session.statuses()).is_some_and(|slot| slot.ingame),
-        ),
-        _ => false,
-    };
+    let hold = state
+        .live
+        .as_ref()
+        .is_some_and(|h| h.holds_shot_promotion(&state.session, Instant::now()));
     if !hold {
         drive_pair_capture_focus(state);
         let focused = state.session.focused_name();
@@ -5485,7 +4448,7 @@ fn pump_shots(state: &mut PanelState) -> usize {
                 == Some(actor)
         });
         let ready_json = pending_actor_is_focused
-            .then(|| focused.as_deref())
+            .then_some(focused.as_deref())
             .flatten()
             .and_then(|actor| pair_actor_capture_ready(state, actor));
         let presented = ready_json.is_some().then(|| focused.clone()).flatten();
@@ -5627,31 +4590,18 @@ fn ui_frame(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, progress: Option<Sta
             .unwrap_or(ShotStatus::Missing)
     };
     if let Some(live) = state.live.as_mut() {
-        let fail = match live {
-            LiveHarness::Null(n) => live_null_tick(n, &statuses),
-            LiveHarness::Stress(s) => live_stress_tick(s, &statuses),
-            LiveHarness::Script(ls) => live_script_tick(
-                ls,
-                &mut state.session,
-                &terminal_shot_status,
-                Some(&state.shot_state),
-            ),
-            LiveHarness::Smoke(s) => live_smoke_tick(s, &mut state.session, &statuses, wrote_shots),
-        };
-        if let Some(msg) = fail {
+        if let Some(msg) = live.tick(
+            &mut state.session,
+            &statuses,
+            &terminal_shot_status,
+            Some(&state.shot_state),
+            wrote_shots,
+        ) {
             eprintln!("FAIL: {msg}");
             std::process::exit(1);
         }
-        match live {
-            LiveHarness::Smoke(s) if s.passed => {
-                // `pump_shots` wrote the scene2 shot: the render gate is
-                // green, leave with 0.
-                std::process::exit(0);
-            }
-            LiveHarness::Script(s) if s.passed => {
-                std::process::exit(0);
-            }
-            _ => {}
+        if live.exit_pass() {
+            std::process::exit(0);
         }
     }
     // Interactive whole-window capture: F12 enqueues one shot per press
@@ -5678,7 +4628,6 @@ fn ui_frame(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, progress: Option<Sta
     chooser_window(ui, &mut state.session, state.panel_dock_node);
     settings_window(ui, &mut state.session, state.panel_dock_node);
     browse_window(ui, &mut state.session);
-    load_window(ui, &mut state.session);
     nav_settings_window(ui, &mut state.session, state.panel_dock_node);
     script_prefs_window(ui, &mut state.session, state.panel_dock_node);
     crate::loadouts::window(ui, &mut state.session);
@@ -5687,3292 +4636,5 @@ fn ui_frame(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, progress: Option<Sta
 }
 
 #[cfg(test)]
-mod tests {
-    use std::path::PathBuf;
-    use std::time::{Duration, Instant, SystemTime};
-
-    use dear_imgui_rs::{ConfigFlags, Id, Key, WindowFlags};
-    use host_play::profile::ProfileEnvironment;
-    use host_play::SharedClientTemplate;
-    use winit::keyboard::{Key as WinitKey, KeyLocation, NamedKey};
-
-    use super::{
-        add_shifted_key_event, apply_only_render_selected, apply_ui_scale, boot_failure_is_fatal,
-        boot_for, capture_key_ch, capture_keys, catalog_core_gate, chooser_should_open_popup,
-        clamp_hop_label_px, debug_caption, drive_startup, edit_parameters_enabled,
-        game_window_flags, hold_script_terminal_shot, live_null_tick, live_script_tick,
-        live_smoke_tick, live_stress_tick, loading_text, log_follow_bottom, manual_shot_label,
-        parse_args, parse_live_args, progress_channel, random_status_text,
-        request_native_failure_capture, runner_config, script_failure_scenario, shifted_imgui_key,
-        shifted_imgui_key_at_location, smoke_settled, smoke_should_fire, startup_progress, Boot,
-        CoreGate, LiveBoot, LiveNull, LiveScript, LiveSmoke, LiveStress, PanelState,
-        ProfilePrepareJob, ProgressPhase, RunMode, ShotStatus, StartupPreparation, BASE_WINDOW_H,
-        BASE_WINDOW_W, LIVE_USAGE, NAV_FULL_SHOT_DRAIN, SMOKE_DEADLINE, SMOKE_SETTLE,
-    };
-    use crate::theme::{
-        applet_offset, fit_applet, game_window_title, native_applet, panel_split_ratio, PANEL_WIDTH,
-    };
-    use crate::window::RedrawMode;
-
-    #[test]
-    fn headed_core_gate_rejects_scenario_only_pass_and_times_out() {
-        let watch = host_play::catalog_core::CoreWatch::default();
-        watch.configure(host_play::catalog_core::CoreCase::Thiever, "catalogtest");
-        let deadline = Instant::now() + Duration::from_secs(30);
-
-        assert!(matches!(
-            catalog_core_gate(Some(&watch), Some(deadline), Instant::now()),
-            CoreGate::Pending
-        ));
-        assert!(matches!(
-            catalog_core_gate(
-                Some(&watch),
-                Some(deadline),
-                deadline + Duration::from_secs(1)
-            ),
-            CoreGate::Failed(_)
-        ));
-    }
-
-    fn checked_fixture(revision: u16) -> (PathBuf, PathBuf, PathBuf) {
-        let fixture =
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../host-play/tests/fixtures/profile");
-        let root = std::env::temp_dir().join(format!(
-            "274bot-panel-profile-{revision}-{}-{:?}",
-            std::process::id(),
-            std::thread::current().id()
-        ));
-        let _ = std::fs::remove_dir_all(&root);
-        let cache = root.join("cache");
-        std::fs::create_dir_all(&cache).unwrap();
-        for jag in [
-            "title",
-            "config",
-            "interface",
-            "media",
-            "versionlist",
-            "textures",
-            "wordenc",
-            "sounds",
-        ] {
-            std::fs::copy(fixture.join(jag), cache.join(jag)).unwrap();
-        }
-        let manifest = fixture.join(format!("manifest-{revision}.json"));
-        (root, cache, manifest)
-    }
-
-    #[test]
-    fn frontend_parser_prepares_real_clients_for_both_fixture_manifests() {
-        for revision in [274_u16, 289] {
-            let (root, cache, manifest) = checked_fixture(revision);
-            let args = parse_args(
-                [
-                    "--smoke".to_string(),
-                    "--profile".to_string(),
-                    format!("local-{revision}"),
-                    "--cache".to_string(),
-                    cache.display().to_string(),
-                    "--cache-manifest".to_string(),
-                    manifest.display().to_string(),
-                ],
-                None,
-            )
-            .expect("frontend and shared flags parse in either order");
-            let env = ProfileEnvironment {
-                home: Some(root.clone()),
-                working_dir: Some(root.clone()),
-                rsa_modulus: Some(client::JAVA_LOGIN_RSAN.into()),
-                rsa_exponent: Some(client::JAVA_LOGIN_RSAE.into()),
-                ..ProfileEnvironment::default()
-            };
-            let selection = args.profile.resolve_with_env(None, &env).unwrap();
-            assert_eq!(selection.game_host(), "127.0.0.1");
-            let profile = selection.bind().unwrap();
-            let template = SharedClientTemplate::load(profile).unwrap();
-            let client = template.prepare_client(274_000_001, true).unwrap();
-            drop(client);
-            std::fs::remove_dir_all(root).unwrap();
-        }
-    }
-
-    #[test]
-    fn boot_is_deferred_and_maps_live_smoke_and_vault_pass() {
-        // Every slot-spawning path is deferred (returns a Boot to run on
-        // the first frame after GPU init), never executed eagerly: mapping
-        // a mode to a Boot must not unlock or call live_prepare — those
-        // run only in `boot_execute`, after the first frame presents and
-        // `on_gpu_init` injected the panel's device.
-        assert!(matches!(
-            boot_for(&RunMode::Live("null_raster".into()), None),
-            Some(Boot::Live(LiveBoot::NullRaster))
-        ));
-        assert!(matches!(
-            boot_for(&RunMode::Live("stress50".into()), None),
-            Some(Boot::Live(LiveBoot::Stress50))
-        ));
-        assert!(matches!(
-            boot_for(&RunMode::Live("stress50_full".into()), None),
-            Some(Boot::Live(LiveBoot::Stress50Full))
-        ));
-        match boot_for(&RunMode::Live("script_walk".into()), Some("pass")) {
-            Some(Boot::Live(LiveBoot::Script { name })) => assert_eq!(name, "script_walk"),
-            other => panic!("script_<name> must map to a deferred Script boot, got {other:?}"),
-        }
-        match boot_for(&RunMode::Live("nav_full".into()), None) {
-            Some(Boot::Live(LiveBoot::Script { name })) => assert_eq!(name, "nav_full"),
-            other => panic!("nav_full must map to a deferred Script boot, got {other:?}"),
-        }
-        match boot_for(&RunMode::Interactive, Some("hunter2")) {
-            Some(Boot::Unlock { pass }) => assert_eq!(pass, "hunter2"),
-            other => panic!("BOT_VAULT_PASS must map to a deferred Unlock boot, got {other:?}"),
-        }
-        assert!(matches!(
-            boot_for(&RunMode::Smoke, None),
-            Some(Boot::Live(LiveBoot::Smoke))
-        ));
-        assert!(
-            boot_for(&RunMode::Interactive, None).is_none(),
-            "no boot with no live arg and no pass"
-        );
-        assert!(!boot_failure_is_fatal(&Boot::Unlock {
-            pass: "secret".into()
-        }));
-        assert!(boot_failure_is_fatal(&Boot::Live(LiveBoot::Smoke)));
-    }
-
-    fn prepared_startup(boot: Boot) -> (PanelState, StartupPreparation, PathBuf) {
-        let (root, cache, manifest) = checked_fixture(274);
-        let options = host_play::ProfileOptions {
-            profile: Some("local-274".into()),
-            cache_dir: Some(cache),
-            cache_manifest: Some(manifest),
-            vault_path: Some(root.join("startup.vault")),
-            ..host_play::ProfileOptions::default()
-        };
-        let env = ProfileEnvironment {
-            home: Some(root.clone()),
-            working_dir: Some(root.clone()),
-            rsa_modulus: Some(client::JAVA_LOGIN_RSAN.into()),
-            rsa_exponent: Some(client::JAVA_LOGIN_RSAE.into()),
-            ..ProfileEnvironment::default()
-        };
-        let template = options
-            .resolve_with_env(None, &env)
-            .unwrap()
-            .prepare_template()
-            .unwrap();
-        let mut state = PanelState::default();
-        state.session.configure_profile(options).unwrap();
-        let generation = state.session.profile_generation();
-        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
-        sender.send(Ok(template)).unwrap();
-        let (_, progress) = progress_channel(host_play::progress::ProfileProgress::steps(
-            host_play::progress::ProfileProgressStage::LoadingGameData,
-            4,
-            4,
-        ));
-        let startup = StartupPreparation {
-            prepare: Some(ProfilePrepareJob {
-                generation,
-                receiver,
-                progress,
-            }),
-            validate: None,
-            pending_boot: Some(boot),
-            failed_generation: None,
-        };
-        (state, startup, root)
-    }
-
-    #[test]
-    fn normal_unlock_waits_for_worker_validation_then_uses_prepared_profile() {
-        let (mut state, mut startup, root) = prepared_startup(Boot::Unlock {
-            pass: "prepared-pass".into(),
-        });
-        let deadline = Instant::now() + Duration::from_secs(2);
-        while state.session.play.is_none() && Instant::now() < deadline {
-            drive_startup(&mut state, &mut startup);
-            std::thread::sleep(Duration::from_millis(1));
-        }
-        assert!(state.session.profile_bound());
-        assert!(state.session.vault.is_some());
-        assert!(state.session.play.is_some());
-        assert!(state.session.slots.is_empty());
-        assert!(startup_progress(&startup, state.session.profile_generation()).is_none());
-        std::fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn live_boot_stays_deferred_while_final_validation_is_in_flight() {
-        let (mut state, mut startup, root) = prepared_startup(Boot::Live(LiveBoot::Smoke));
-        drive_startup(&mut state, &mut startup);
-        assert!(state.session.profile_bound());
-        let validation = startup.validate.take().expect("final validation worker");
-        assert!(state.session.profile_preparing());
-        assert!(state.session.vault.is_none());
-        assert!(state.session.play.is_none());
-        assert!(state.session.slots.is_empty());
-        assert!(validation
-            .receiver
-            .recv_timeout(Duration::from_secs(2))
-            .unwrap()
-            .is_ok());
-        assert!(matches!(validation.boot, Boot::Live(LiveBoot::Smoke)));
-        std::fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn startup_progress_is_latest_only_and_generation_scoped() {
-        use host_play::progress::{ProfileProgress, ProfileProgressStage};
-
-        let (observer, progress) = progress_channel(ProfileProgress::steps(
-            ProfileProgressStage::CheckingGameFiles,
-            0,
-            8,
-        ));
-        observer.report(ProfileProgress::steps(
-            ProfileProgressStage::CheckingGameFiles,
-            3,
-            8,
-        ));
-        observer.report(ProfileProgress::bytes(
-            ProfileProgressStage::CheckingNavigationFiles,
-            1024,
-            4096,
-        ));
-        let (_sender, receiver) = std::sync::mpsc::sync_channel(1);
-        let mut startup = StartupPreparation::new(None);
-        startup.prepare = Some(ProfilePrepareJob {
-            generation: 7,
-            receiver,
-            progress,
-        });
-
-        let current = startup_progress(&startup, 7).expect("matching generation progress");
-        assert_eq!(current.phase, ProgressPhase::Preparing);
-        assert_eq!(current.progress.completed, 1024);
-        assert_eq!(current.progress.total, 4096);
-        assert!(
-            startup_progress(&startup, 8).is_none(),
-            "stale work is hidden"
-        );
-        startup.prepare = None;
-        assert!(
-            startup_progress(&startup, 7).is_none(),
-            "completion clears it"
-        );
-    }
-
-    #[test]
-    fn preparation_failure_clears_progress_with_partial_session_state_absent() {
-        use host_play::progress::{ProfileProgress, ProfileProgressStage};
-
-        let (root, cache, manifest) = checked_fixture(274);
-        let mut state = PanelState::default();
-        state
-            .session
-            .configure_profile(host_play::ProfileOptions {
-                profile: Some("local-274".into()),
-                cache_dir: Some(cache),
-                cache_manifest: Some(manifest),
-                ..host_play::ProfileOptions::default()
-            })
-            .unwrap();
-        let generation = state.session.profile_generation();
-        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
-        sender
-            .send(Err("fixture preparation failed".into()))
-            .unwrap();
-        let (_, progress) = progress_channel(ProfileProgress::steps(
-            ProfileProgressStage::CheckingGameFiles,
-            3,
-            8,
-        ));
-        let mut startup = StartupPreparation {
-            prepare: Some(ProfilePrepareJob {
-                generation,
-                receiver,
-                progress,
-            }),
-            validate: None,
-            pending_boot: Some(Boot::Unlock {
-                pass: "not-used".into(),
-            }),
-            failed_generation: None,
-        };
-
-        drive_startup(&mut state, &mut startup);
-
-        assert!(startup_progress(&startup, generation).is_none());
-        assert!(!state.session.profile_preparing());
-        assert!(!state.session.profile_bound());
-        assert!(state.session.vault.is_none());
-        assert!(state.session.play.is_none());
-        assert!(state.session.slots.is_empty());
-        assert_eq!(
-            state.session.error.as_deref(),
-            Some("fixture preparation failed")
-        );
-        std::fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn loading_text_fits_the_rail_and_never_rounds_partial_work_to_complete() {
-        use host_play::progress::{ProfileProgress, ProfileProgressStage};
-
-        let partial = loading_text(
-            ProgressPhase::FinalChecks,
-            &ProfileProgress::bytes(ProfileProgressStage::CheckingNavigationFiles, 999, 1000),
-        );
-
-        assert!(partial.description.starts_with("Final checks"));
-        assert_eq!(partial.filled.len() + partial.empty.len(), 20);
-        assert_eq!(partial.percent, 99);
-        assert!(partial.caption.contains("bytes checked"));
-    }
-
-    #[test]
-    fn loading_text_names_bundled_decode_and_custom_verify_passes() {
-        use host_play::progress::{ProfileProgress, ProfileProgressStage};
-
-        let bundled = loading_text(
-            ProgressPhase::Preparing,
-            &ProfileProgress::steps(ProfileProgressStage::PreparingNavigation, 1, 1),
-        );
-        assert_eq!(bundled.description, "Loading navigation");
-        assert_eq!(bundled.percent, 100);
-
-        let custom = loading_text(
-            ProgressPhase::Preparing,
-            &ProfileProgress::bytes(ProfileProgressStage::CheckingNavigationFiles, 10, 100),
-        );
-        assert_eq!(custom.description, "Verifying custom navigation");
-        assert_eq!(custom.percent, 10);
-        assert!(custom.caption.contains("bytes checked"));
-    }
-
-    #[test]
-    fn log_follow_bottom_sticks_at_end_and_releases_when_scrolled_up() {
-        assert!(log_follow_bottom(0.0, 0.0), "empty / first frame follows");
-        assert!(log_follow_bottom(99.0, 100.0), "within 1 px of the bottom");
-        assert!(log_follow_bottom(100.0, 100.0));
-        assert!(!log_follow_bottom(50.0, 100.0), "scrolled up stays put");
-    }
-
-    #[test]
-    fn chooser_should_open_popup_table() {
-        // First open: rising edge opens the popup and latches prev.
-        assert_eq!(chooser_should_open_popup(true, false), (true, true));
-        // Already open: no re-open while want stays true.
-        assert_eq!(chooser_should_open_popup(true, true), (false, true));
-        // Esc closed it: want drops to false and prev must fall so a later
-        // `+ add bot` is a fresh rising edge.
-        assert_eq!(chooser_should_open_popup(false, true), (false, false));
-        assert_eq!(chooser_should_open_popup(false, false), (false, false));
-    }
-
-    #[test]
-    fn chooser_reopens_after_a_close() {
-        let mut prev = false;
-        let (open, np) = chooser_should_open_popup(true, prev);
-        assert!(open, "first + add opens the chooser");
-        prev = np;
-        let (open, np) = chooser_should_open_popup(true, prev);
-        assert!(!open, "already open: no reopen");
-        prev = np;
-        let (open, np) = chooser_should_open_popup(false, prev);
-        assert!(!open);
-        prev = np;
-        assert!(!prev, "prev must track the close so + add can reopen");
-        let (open, _np) = chooser_should_open_popup(true, prev);
-        assert!(open, "the next + add bot reopens the chooser");
-    }
-
-    #[test]
-    fn edit_parameters_enabled_for_operator_bag() {
-        assert!(edit_parameters_enabled(), "parameter editors ship in 0.1.6");
-    }
-
-    #[test]
-    fn loadout_combo_lists_store_names() {
-        use script::{resolve_setting_options, Loadout, LoadoutsStore, SettingDef};
-        use std::sync::atomic::{AtomicUsize, Ordering};
-
-        static COUNTER: AtomicUsize = AtomicUsize::new(0);
-        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!(
-            "274bot-panel-loadout-combo-{n}-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
-        let mut store = LoadoutsStore::at(dir.join("loadouts.json"));
-        store.upsert(Loadout::new("guard"));
-        store.upsert(Loadout::new("stall"));
-        let def = SettingDef {
-            id: "loadout".into(),
-            ty: "string".into(),
-            default: None,
-            label: None,
-            min: None,
-            max: None,
-            step: None,
-            options: Vec::new(),
-            option_labels: Vec::new(),
-            group: None,
-            show_if: None,
-            options_from: Some("loadouts".into()),
-            csv_toggle: None,
-            help: None,
-            item_option_spec: None,
-        };
-        assert_eq!(
-            resolve_setting_options(&def, &store, None),
-            vec!["guard".to_string(), "stall".to_string()]
-        );
-    }
-
-    #[test]
-    fn debug_captions_fit_the_strip() {
-        assert_eq!(debug_caption("DebugPanel"), "Panel");
-        assert_eq!(debug_caption("Lumbridge"), "Lumb");
-        assert_eq!(debug_caption("maxme"), "maxme");
-        assert_eq!(debug_caption("Teles"), "Teles");
-        assert_eq!(debug_caption("TutSkip"), "TutSkip");
-    }
-
-    #[test]
-    fn hop_label_px_writes_clamp_to_8_28() {
-        // The settings UI is the only writer of `hop_label_px`; it must
-        // hold the NavSettings 8..=28 field invariant.
-        assert_eq!(clamp_hop_label_px(0), 8);
-        assert_eq!(clamp_hop_label_px(8), 8);
-        assert_eq!(clamp_hop_label_px(11), 11);
-        assert_eq!(clamp_hop_label_px(28), 28);
-        assert_eq!(clamp_hop_label_px(100), 28);
-    }
-
-    #[test]
-    fn apply_only_render_selected_warns_before_unchecking() {
-        // Checking "only render selected" on is immediate, no dialog.
-        assert_eq!(apply_only_render_selected(false, true), (true, false));
-        // Unchecking does not apply: keeps the safe default, opens the
-        // warning instead.
-        assert_eq!(apply_only_render_selected(true, false), (true, true));
-        // No-op rows: the box already matches the flag.
-        assert_eq!(apply_only_render_selected(true, true), (true, false));
-        assert_eq!(apply_only_render_selected(false, false), (false, false));
-    }
-
-    #[test]
-    fn runner_config_docks_without_viewports() {
-        let c = runner_config();
-        assert!(c.docking.enable);
-        assert!(
-            !c.docking.auto_dockspace,
-            "we own the game-left / panel-right split"
-        );
-        assert!(
-            c.docking
-                .dockspace_flags
-                .contains(dear_imgui_rs::DockNodeFlags::AUTO_HIDE_TAB_BAR),
-            "single-bot hides the game/panel tab strip"
-        );
-        assert!(
-            c.docking
-                .dockspace_flags
-                .contains(dear_imgui_rs::DockNodeFlags::NO_RESIZE),
-            "dock splitters stay off — only grid uses OS-window resize"
-        );
-        assert!(c.ini_filename.is_none(), "no imgui.ini to restore");
-        let flags = c.io_config_flags.expect("flags");
-        assert!(flags.contains(ConfigFlags::DOCKING_ENABLE));
-        assert!(!flags.contains(ConfigFlags::VIEWPORTS_ENABLE));
-        assert!(matches!(c.redraw, RedrawMode::WaitUntil { fps } if (fps - 50.0).abs() < 0.01));
-        assert_eq!(c.window_size, (BASE_WINDOW_W as f64, BASE_WINDOW_H as f64));
-    }
-
-    #[test]
-    fn single_bot_window_class_hides_tab_bar() {
-        let c = super::game_window_class();
-        assert!(c
-            .dock_node_flags_override_set
-            .contains(dear_imgui_rs::DockNodeFlags::AUTO_HIDE_TAB_BAR));
-        assert!(c
-            .dock_node_flags_override_set
-            .contains(dear_imgui_rs::DockNodeFlags::NO_RESIZE));
-        assert!(c
-            .dock_node_flags_override_set
-            .contains(dear_imgui_rs::DockNodeFlags::NO_UNDOCKING));
-        assert!(!c.docking_always_tab_bar);
-    }
-
-    #[test]
-    fn rail_window_class_shows_tab_x() {
-        let c = super::rail_window_class();
-        assert!(
-            !c.dock_node_flags_override_set
-                .contains(dear_imgui_rs::DockNodeFlags::AUTO_HIDE_TAB_BAR),
-            "hidden tab strip has no X"
-        );
-        assert!(c.docking_always_tab_bar, "tab X needs a visible tab bar");
-        assert!(c
-            .dock_node_flags_override_set
-            .contains(dear_imgui_rs::DockNodeFlags::NO_UNDOCKING));
-        assert!(c
-            .dock_node_flags_override_set
-            .contains(dear_imgui_rs::DockNodeFlags::NO_RESIZE));
-        const SRC: &str = include_str!("app.rs");
-        let rail = SRC.split("fn rail_window(").nth(1).unwrap_or("");
-        let rail_fn = rail
-            .split("fn apply_only_render_selected")
-            .next()
-            .unwrap_or("");
-        assert!(
-            rail_fn.contains(".opened(") && rail_fn.contains("set_multibox(false)"),
-            "rail tab X turns MultiBox off so ensure_window_fits can shrink"
-        );
-        assert!(
-            !rail_fn.contains("NO_TITLE_BAR"),
-            "NO_TITLE_BAR hides the tab that carries the X"
-        );
-        let frame = SRC.split("fn ui_frame").nth(1).unwrap_or("");
-        assert!(
-            frame.contains("rail_window_class"),
-            "rail must not reuse the Game class that AUTO_HIDEs the tab bar"
-        );
-    }
-
-    #[test]
-    fn chooser_docks_to_panel_never_rail_or_game() {
-        let panel = Id::from(20u32);
-        assert_eq!(super::chooser_dock_id(Some(panel)), Some(panel));
-        assert_eq!(super::chooser_dock_id(None), None);
-        const SRC: &str = include_str!("app.rs");
-        let chooser = SRC
-            .split("fn chooser_window")
-            .nth(1)
-            .unwrap_or("")
-            .split("fn settings_window")
-            .next()
-            .unwrap_or("");
-        assert!(
-            chooser.contains("panel_window_class"),
-            "Profiles must use the 274bot panel class"
-        );
-        assert!(
-            !chooser.contains("rail_window_class"),
-            "Profiles must never dock to the MultiBox rail"
-        );
-        assert!(
-            chooser.contains("Appearing"),
-            "spawn docks on the hidden→visible edge; rebuild must re-dock by name"
-        );
-    }
-
-    #[test]
-    fn dock_host_redocks_profiles_onto_the_panel_node() {
-        const SRC: &str = include_str!("app.rs");
-        let host = SRC
-            .split("fn dock_host")
-            .nth(1)
-            .unwrap_or("")
-            .split("fn game_window_flags")
-            .next()
-            .unwrap_or("");
-        assert!(
-            host.contains("dock_panel_tabs"),
-            "MultiBox rail / OS resize rebuild must re-dock Profiles onto the 274bot leaf"
-        );
-        let tabs = SRC
-            .split("fn dock_panel_tabs")
-            .nth(1)
-            .unwrap_or("")
-            .split("fn dock_host")
-            .next()
-            .unwrap_or("");
-        for title in ["Profiles", "General config", "Nav config", "Script prefs"] {
-            assert!(
-                tabs.contains(title),
-                "panel tab {title} must be DockBuilder::dock_window'd after a tree rebuild"
-            );
-        }
-        assert!(
-            !tabs.contains("Scripts") && !tabs.contains("Loadouts"),
-            "overlay pickers stay floating over Game"
-        );
-    }
-
-    #[test]
-    fn panel_window_class_allows_config_tabs() {
-        let c = super::panel_window_class();
-        assert!(c
-            .dock_node_flags_override_set
-            .contains(dear_imgui_rs::DockNodeFlags::NO_RESIZE));
-        assert!(c
-            .dock_node_flags_override_set
-            .contains(dear_imgui_rs::DockNodeFlags::NO_DOCKING_SPLIT));
-        assert!(
-            !c.dock_node_flags_override_set
-                .contains(dear_imgui_rs::DockNodeFlags::NO_UNDOCKING),
-            "configs must be able to tab onto 274bot and undock later"
-        );
-        assert!(
-            c.docking_allow_unclassed,
-            "General/Nav are unclassed and must merge with the panel"
-        );
-        assert!(
-            c.docking_always_tab_bar,
-            "panel tab bar is the drop target for configs"
-        );
-    }
-
-    #[test]
-    fn dockspace_does_not_lock_undock_on_every_node() {
-        let f = super::dock_flags();
-        assert!(f.contains(dear_imgui_rs::DockNodeFlags::NO_DOCKING_SPLIT));
-        assert!(f.contains(dear_imgui_rs::DockNodeFlags::NO_RESIZE));
-        assert!(
-            !f.contains(dear_imgui_rs::DockNodeFlags::NO_UNDOCKING),
-            "NO_UNDOCKING on the dockspace would lock the panel against config tabs"
-        );
-    }
-
-    #[test]
-    fn ensure_window_fits_uses_rail_open_falling_edge() {
-        const SRC: &str = include_str!("app.rs");
-        let body = SRC.split("fn ensure_window_fits").nth(1).unwrap_or("");
-        let body = body.split("fn dock_host").next().unwrap_or("");
-        assert!(
-            body.contains("next_os_window_size") && body.contains("DockLayout::Rail"),
-            "MultiBox off must re-shrink via the rail falling edge, not grow-only"
-        );
-    }
-
-    #[test]
-    fn apply_ui_scale_scales_padding_for_retina() {
-        let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
-        let mut ctx = dear_imgui_rs::Context::create();
-        let before = ctx.style().window_padding();
-        apply_ui_scale(ctx.style_mut(), 2.0);
-        let after = ctx.style().window_padding();
-        assert_eq!(before, [8.0, 8.0]);
-        assert_eq!(after, [16.0, 16.0]);
-    }
-
-    #[test]
-    fn fit_applet_keeps_aspect_and_does_not_dpi_double() {
-        assert_eq!(native_applet(), [765.0, 503.0]);
-        assert_eq!(fit_applet([765.0, 503.0]), [765.0, 503.0]);
-        let off = applet_offset([1200.0, 700.0], [765.0, 503.0]);
-        assert!(
-            (off[0] - (1200.0 - 765.0)).abs() < 0.01,
-            "flush to the panel"
-        );
-        assert!((off[1] - (700.0 - 503.0) * 0.5).abs() < 0.01);
-        // Grid cells downscale; the non-grid Game blit stays native_applet.
-        assert_eq!(fit_applet([382.5, 251.5]), [382.5, 251.5]);
-        let wide = fit_applet([2000.0, 503.0]);
-        assert!((wide[1] - 503.0).abs() < 0.01);
-        assert!(wide[0] <= 2000.0);
-    }
-
-    #[test]
-    fn game_window_flags_have_no_scrollbar() {
-        let f = game_window_flags();
-        assert!(f.contains(WindowFlags::NO_SCROLLBAR));
-        assert!(f.contains(WindowFlags::NO_SCROLL_WITH_MOUSE));
-        assert!(f.contains(WindowFlags::NO_RESIZE));
-        assert!(!f.contains(WindowFlags::HORIZONTAL_SCROLLBAR));
-    }
-
-    #[test]
-    fn capture_keys_pass_colon_and_tilde_like_client_play() {
-        // client-play KeyCodes.ts: `:` ch 58, `~` ch 126. Panel capture
-        // used to map only letters+digits, so `::` / `~` never reached chat.
-        assert_eq!(capture_key_ch(Key::Semicolon, true), Some(b':' as i32));
-        assert_eq!(capture_key_ch(Key::Semicolon, false), Some(b';' as i32));
-        assert_eq!(capture_key_ch(Key::GraveAccent, true), Some(b'~' as i32));
-        assert_eq!(capture_key_ch(Key::GraveAccent, false), Some(b'`' as i32));
-        assert_eq!(capture_key_ch(Key::Comma, false), Some(b',' as i32));
-        assert_eq!(capture_key_ch(Key::Minus, true), Some(b'_' as i32));
-    }
-
-    #[test]
-    fn shifted_logical_characters_recover_key_lifecycle() {
-        assert_eq!(
-            shifted_imgui_key(&WinitKey::Character(":".into())),
-            Some(Key::Semicolon)
-        );
-        assert_eq!(
-            shifted_imgui_key(&WinitKey::Character("!".into())),
-            Some(Key::Key1)
-        );
-        assert_eq!(
-            shifted_imgui_key(&WinitKey::Character("?".into())),
-            Some(Key::Slash)
-        );
-        assert_eq!(shifted_imgui_key(&WinitKey::Character("a".into())), None);
-    }
-
-    #[test]
-    fn shifted_event_capture_preserves_two_colons_and_release_pairing() {
-        let press_key =
-            shifted_imgui_key_at_location(&WinitKey::Character(":".into()), KeyLocation::Standard)
-                .expect("shifted colon needs a physical ImGui key");
-        let release_key =
-            shifted_imgui_key_at_location(&WinitKey::Character(":".into()), KeyLocation::Standard)
-                .expect("shifted colon release needs the same physical ImGui key");
-
-        assert_eq!(press_key, release_key);
-        assert_eq!(capture_key_ch(press_key, true), Some(b':' as i32));
-        assert_eq!(capture_key_ch(press_key, true), Some(b':' as i32));
-        assert_eq!(capture_key_ch(release_key, false), Some(b';' as i32));
-    }
-
-    #[test]
-    fn shifted_event_adapter_leaves_numpad_punctuation_to_backend() {
-        assert_eq!(
-            shifted_imgui_key_at_location(&WinitKey::Character("+".into()), KeyLocation::Numpad,),
-            None
-        );
-        assert_eq!(
-            shifted_imgui_key_at_location(&WinitKey::Character("*".into()), KeyLocation::Numpad,),
-            None
-        );
-    }
-
-    #[test]
-    fn shifted_event_reaches_capture_across_two_real_imgui_frames() {
-        let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
-        super::discard_unconsumed_native_capture();
-        let mut ctx = dear_imgui_rs::Context::create();
-        let colon = WinitKey::Character(":".into());
-        let mut captured = Vec::new();
-
-        for _ in 0..2 {
-            ctx.io_mut().add_key_event(Key::LeftShift, true);
-            add_shifted_key_event(ctx.io_mut(), &colon, KeyLocation::Standard, true);
-            ctx.prepare_frame(
-                dear_imgui_rs::FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0)
-                    .renderer_has_textures(),
-            );
-            let frame = ctx.frame();
-            captured.push(capture_keys(frame));
-            ctx.render();
-
-            add_shifted_key_event(ctx.io_mut(), &colon, KeyLocation::Standard, false);
-            ctx.prepare_frame(
-                dear_imgui_rs::FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0)
-                    .renderer_has_textures(),
-            );
-            let frame = ctx.frame();
-            captured.push(capture_keys(frame));
-            ctx.render();
-            ctx.io_mut().add_key_event(Key::LeftShift, false);
-            ctx.prepare_frame(
-                dear_imgui_rs::FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0)
-                    .renderer_has_textures(),
-            );
-            let frame = ctx.frame();
-            let _ = capture_keys(frame);
-            ctx.render();
-        }
-
-        assert_eq!(
-            captured,
-            vec![
-                vec![(true, b':' as i32)],
-                vec![(false, b':' as i32)],
-                vec![(true, b':' as i32)],
-                vec![(false, b':' as i32)],
-            ]
-        );
-    }
-
-    /// Headed 870 failure: CUA typed `::give` faster than an ImGui frame.
-    /// Colon press/release and Shift release all arrive before sampling, so
-    /// reconstructing `ch` from later Shift / coalesced key state drops or
-    /// mutates the prefix. Capture must keep the produced character.
-    #[test]
-    fn native_colon_burst_survives_shift_release_before_imgui_frame() {
-        let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
-        super::discard_unconsumed_native_capture();
-        let mut ctx = dear_imgui_rs::Context::create();
-        let colon = WinitKey::Character(":".into());
-        let g = WinitKey::Character("g".into());
-        let i = WinitKey::Character("i".into());
-        let v = WinitKey::Character("v".into());
-        let e = WinitKey::Character("e".into());
-
-        ctx.io_mut().add_key_event(Key::LeftShift, true);
-        add_shifted_key_event(ctx.io_mut(), &colon, KeyLocation::Standard, true);
-        add_shifted_key_event(ctx.io_mut(), &colon, KeyLocation::Standard, false);
-        add_shifted_key_event(ctx.io_mut(), &colon, KeyLocation::Standard, true);
-        add_shifted_key_event(ctx.io_mut(), &colon, KeyLocation::Standard, false);
-        ctx.io_mut().add_key_event(Key::LeftShift, false);
-        for key in [&g, &i, &v, &e] {
-            add_shifted_key_event(ctx.io_mut(), key, KeyLocation::Standard, true);
-            add_shifted_key_event(ctx.io_mut(), key, KeyLocation::Standard, false);
-        }
-
-        ctx.prepare_frame(
-            dear_imgui_rs::FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0)
-                .renderer_has_textures(),
-        );
-        let frame = ctx.frame();
-        let captured = capture_keys(frame);
-        ctx.render();
-
-        assert_eq!(
-            captured,
-            vec![
-                (true, b':' as i32),
-                (false, b':' as i32),
-                (true, b':' as i32),
-                (false, b':' as i32),
-                (true, b'g' as i32),
-                (false, b'g' as i32),
-                (true, b'i' as i32),
-                (false, b'i' as i32),
-                (true, b'v' as i32),
-                (false, b'v' as i32),
-                (true, b'e' as i32),
-                (false, b'e' as i32),
-            ]
-        );
-
-        ctx.prepare_frame(
-            dear_imgui_rs::FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0)
-                .renderer_has_textures(),
-        );
-        let frame = ctx.frame();
-        assert!(
-            capture_keys(frame).is_empty(),
-            "a consumed burst must not replay on the next frame"
-        );
-        ctx.render();
-    }
-
-    #[test]
-    fn native_capture_release_keeps_press_character_after_shift_up() {
-        let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
-        super::discard_unconsumed_native_capture();
-        let mut ctx = dear_imgui_rs::Context::create();
-        let colon = WinitKey::Character(":".into());
-        let semicolon = WinitKey::Character(";".into());
-        add_shifted_key_event(ctx.io_mut(), &colon, KeyLocation::Standard, true);
-        add_shifted_key_event(ctx.io_mut(), &semicolon, KeyLocation::Standard, false);
-        ctx.prepare_frame(
-            dear_imgui_rs::FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0)
-                .renderer_has_textures(),
-        );
-        let frame = ctx.frame();
-        let captured = capture_keys(frame);
-        ctx.render();
-        assert_eq!(captured, vec![(true, b':' as i32), (false, b':' as i32)]);
-    }
-
-    #[test]
-    fn native_capture_discard_does_not_replay_after_capture_off() {
-        let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
-        super::discard_unconsumed_native_capture();
-        let mut ctx = dear_imgui_rs::Context::create();
-        let colon = WinitKey::Character(":".into());
-        add_shifted_key_event(ctx.io_mut(), &colon, KeyLocation::Standard, true);
-        add_shifted_key_event(ctx.io_mut(), &colon, KeyLocation::Standard, false);
-        super::discard_unconsumed_native_capture();
-        ctx.prepare_frame(
-            dear_imgui_rs::FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0)
-                .renderer_has_textures(),
-        );
-        let frame = ctx.frame();
-        assert!(
-            capture_keys(frame).is_empty(),
-            "capture-off must discard, not delay-replay"
-        );
-        ctx.render();
-    }
-
-    fn tap_character(io: &mut dear_imgui_rs::Io, ch: &str) {
-        let key = WinitKey::Character(ch.into());
-        add_shifted_key_event(io, &key, KeyLocation::Standard, true);
-        add_shifted_key_event(io, &key, KeyLocation::Standard, false);
-    }
-
-    fn tap_named(io: &mut dear_imgui_rs::Io, named: NamedKey) {
-        let key = WinitKey::Named(named);
-        add_shifted_key_event(io, &key, KeyLocation::Standard, true);
-        add_shifted_key_event(io, &key, KeyLocation::Standard, false);
-    }
-
-    fn capture_one_frame(ctx: &mut dear_imgui_rs::Context) -> Vec<(bool, i32)> {
-        ctx.prepare_frame(
-            dear_imgui_rs::FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0)
-                .renderer_has_textures(),
-        );
-        let frame = ctx.frame();
-        let captured = capture_keys(frame);
-        ctx.render();
-        captured
-    }
-
-    fn down_up(ch: u8) -> [(bool, i32); 2] {
-        [(true, ch as i32), (false, ch as i32)]
-    }
-
-    /// Same-frame `a`, Space, `b` must stay `a b`, not `ab ` from native-first
-    /// then named-append streams.
-    #[test]
-    fn native_capture_same_frame_letter_space_letter_keeps_order() {
-        let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
-        super::discard_unconsumed_native_capture();
-        let mut ctx = dear_imgui_rs::Context::create();
-        tap_character(ctx.io_mut(), "a");
-        tap_named(ctx.io_mut(), NamedKey::Space);
-        tap_character(ctx.io_mut(), "b");
-        let captured = capture_one_frame(&mut ctx);
-        let mut expected = Vec::new();
-        expected.extend_from_slice(&down_up(b'a'));
-        expected.extend_from_slice(&down_up(b' '));
-        expected.extend_from_slice(&down_up(b'b'));
-        assert_eq!(captured, expected);
-        assert!(
-            capture_one_frame(&mut ctx).is_empty(),
-            "a consumed mixed burst must not replay"
-        );
-    }
-
-    /// Headed 870 command was `::give bones 25`. Spaces must stay between
-    /// words when the whole burst arrives before the ImGui sample.
-    #[test]
-    fn native_give_bones_25_burst_keeps_spaces_in_order() {
-        let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
-        super::discard_unconsumed_native_capture();
-        let mut ctx = dear_imgui_rs::Context::create();
-        let colon = WinitKey::Character(":".into());
-        ctx.io_mut().add_key_event(Key::LeftShift, true);
-        add_shifted_key_event(ctx.io_mut(), &colon, KeyLocation::Standard, true);
-        add_shifted_key_event(ctx.io_mut(), &colon, KeyLocation::Standard, false);
-        add_shifted_key_event(ctx.io_mut(), &colon, KeyLocation::Standard, true);
-        add_shifted_key_event(ctx.io_mut(), &colon, KeyLocation::Standard, false);
-        ctx.io_mut().add_key_event(Key::LeftShift, false);
-        for ch in ["g", "i", "v", "e"] {
-            tap_character(ctx.io_mut(), ch);
-        }
-        tap_named(ctx.io_mut(), NamedKey::Space);
-        for ch in ["b", "o", "n", "e", "s"] {
-            tap_character(ctx.io_mut(), ch);
-        }
-        tap_named(ctx.io_mut(), NamedKey::Space);
-        tap_character(ctx.io_mut(), "2");
-        tap_character(ctx.io_mut(), "5");
-        tap_named(ctx.io_mut(), NamedKey::Enter);
-
-        let captured = capture_one_frame(&mut ctx);
-        let mut expected = Vec::new();
-        expected.extend_from_slice(&down_up(b':'));
-        expected.extend_from_slice(&down_up(b':'));
-        for ch in b"give" {
-            expected.extend_from_slice(&down_up(*ch));
-        }
-        expected.extend_from_slice(&down_up(b' '));
-        for ch in b"bones" {
-            expected.extend_from_slice(&down_up(*ch));
-        }
-        expected.extend_from_slice(&down_up(b' '));
-        expected.extend_from_slice(&down_up(b'2'));
-        expected.extend_from_slice(&down_up(b'5'));
-        expected.extend_from_slice(&down_up(b'\n'));
-        assert_eq!(captured, expected);
-    }
-
-    /// Backspace and Enter share the named path; they must not be appended
-    /// after printables when the events share a frame.
-    #[test]
-    fn native_capture_same_frame_backspace_and_enter_keep_order() {
-        let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
-        super::discard_unconsumed_native_capture();
-        let mut ctx = dear_imgui_rs::Context::create();
-        tap_character(ctx.io_mut(), "a");
-        tap_named(ctx.io_mut(), NamedKey::Backspace);
-        tap_character(ctx.io_mut(), "b");
-        tap_named(ctx.io_mut(), NamedKey::Enter);
-        let captured = capture_one_frame(&mut ctx);
-        let mut expected = Vec::new();
-        expected.extend_from_slice(&down_up(b'a'));
-        expected.extend_from_slice(&down_up(8));
-        expected.extend_from_slice(&down_up(b'b'));
-        expected.extend_from_slice(&down_up(10));
-        assert_eq!(captured, expected);
-    }
-
-    #[test]
-    fn native_capture_named_enter_uses_native_event_queue() {
-        let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
-        super::discard_unconsumed_native_capture();
-        let mut ctx = dear_imgui_rs::Context::create();
-        let enter = WinitKey::Named(NamedKey::Enter);
-        add_shifted_key_event(ctx.io_mut(), &enter, KeyLocation::Standard, true);
-        assert_eq!(capture_one_frame(&mut ctx), vec![(true, 10)]);
-        add_shifted_key_event(ctx.io_mut(), &enter, KeyLocation::Standard, false);
-        assert_eq!(capture_one_frame(&mut ctx), vec![(false, 10)]);
-    }
-
-    #[test]
-    fn native_capture_space_character_and_named_are_both_space() {
-        let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
-        super::discard_unconsumed_native_capture();
-        let mut ctx = dear_imgui_rs::Context::create();
-        tap_character(ctx.io_mut(), " ");
-        tap_named(ctx.io_mut(), NamedKey::Space);
-        let captured = capture_one_frame(&mut ctx);
-        let mut expected = Vec::new();
-        expected.extend_from_slice(&down_up(b' '));
-        expected.extend_from_slice(&down_up(b' '));
-        assert_eq!(captured, expected);
-    }
-
-    #[test]
-    fn native_capture_leaves_numpad_enter_unqueued() {
-        let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
-        super::discard_unconsumed_native_capture();
-        let mut ctx = dear_imgui_rs::Context::create();
-        let enter = WinitKey::Named(NamedKey::Enter);
-        add_shifted_key_event(ctx.io_mut(), &enter, KeyLocation::Numpad, true);
-        add_shifted_key_event(ctx.io_mut(), &enter, KeyLocation::Numpad, false);
-        assert!(
-            capture_one_frame(&mut ctx).is_empty(),
-            "numpad Enter stays with the backend, not game capture"
-        );
-    }
-
-    /// Capture-off discard of a nonempty queue drops held ownership. An
-    /// empty-queue discard after a drained press must keep it so a later
-    /// Shift-up release still pairs with `:`.
-    #[test]
-    fn native_capture_empty_discard_keeps_drained_press_character() {
-        let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
-        super::discard_unconsumed_native_capture();
-        let mut ctx = dear_imgui_rs::Context::create();
-        let colon = WinitKey::Character(":".into());
-        let semicolon = WinitKey::Character(";".into());
-        add_shifted_key_event(ctx.io_mut(), &colon, KeyLocation::Standard, true);
-        assert_eq!(capture_one_frame(&mut ctx), vec![(true, b':' as i32)]);
-        super::discard_unconsumed_native_capture();
-        add_shifted_key_event(ctx.io_mut(), &semicolon, KeyLocation::Standard, false);
-        assert_eq!(capture_one_frame(&mut ctx), vec![(false, b':' as i32)]);
-    }
-
-    #[test]
-    fn native_capture_discard_clears_held_when_queue_nonempty() {
-        let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
-        super::discard_unconsumed_native_capture();
-        let mut ctx = dear_imgui_rs::Context::create();
-        let colon = WinitKey::Character(":".into());
-        let semicolon = WinitKey::Character(";".into());
-        add_shifted_key_event(ctx.io_mut(), &colon, KeyLocation::Standard, true);
-        super::discard_unconsumed_native_capture();
-        add_shifted_key_event(ctx.io_mut(), &semicolon, KeyLocation::Standard, false);
-        assert_eq!(
-            capture_one_frame(&mut ctx),
-            vec![(false, b';' as i32)],
-            "undrained capture-off must not reconstruct : from discarded press ownership"
-        );
-    }
-
-    #[test]
-    fn native_capture_leaves_numpad_punctuation_unqueued() {
-        let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
-        super::discard_unconsumed_native_capture();
-        let mut ctx = dear_imgui_rs::Context::create();
-        let plus = WinitKey::Character("+".into());
-        add_shifted_key_event(ctx.io_mut(), &plus, KeyLocation::Numpad, true);
-        add_shifted_key_event(ctx.io_mut(), &plus, KeyLocation::Numpad, false);
-        ctx.prepare_frame(
-            dear_imgui_rs::FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0)
-                .renderer_has_textures(),
-        );
-        let frame = ctx.frame();
-        assert!(
-            capture_keys(frame).is_empty(),
-            "numpad + stays with the backend, not game capture"
-        );
-        ctx.render();
-    }
-
-    #[test]
-    fn game_window_title_is_the_profile_name() {
-        assert_eq!(game_window_title(Some("test")), "test");
-        assert_eq!(game_window_title(None), "Game");
-        assert_eq!(game_window_title(Some("")), "Game");
-    }
-
-    #[test]
-    fn panel_split_is_a_thin_right_slice() {
-        let r = panel_split_ratio(1120.0);
-        assert!((r - PANEL_WIDTH / 1120.0).abs() < 0.001);
-        let wide = panel_split_ratio(2000.0);
-        assert!(
-            (wide * 2000.0 - PANEL_WIDTH).abs() < 0.01,
-            "panel stays 330px on a wide host window, got {}",
-            wide * 2000.0
-        );
-    }
-
-    #[test]
-    fn parse_live_args_none_without_flag_or_env() {
-        assert_eq!(
-            parse_live_args([] as [&str; 0], None),
-            Ok(RunMode::Interactive)
-        );
-        assert_eq!(
-            parse_live_args([] as [&str; 0], Some("")),
-            Ok(RunMode::Interactive)
-        );
-    }
-
-    #[test]
-    fn parse_args_accepts_session_nav_paint_choice() {
-        let parsed =
-            parse_args(["--nav-paints", "on", "--live", "script_rock_crab"], None).unwrap();
-        assert_eq!(parsed.nav_paints, Some(true));
-        assert_eq!(parsed.mode, RunMode::Live("script_rock_crab".into()));
-
-        let parsed =
-            parse_args(["--nav-paints", "off", "--live", "script_rock_crab"], None).unwrap();
-        assert_eq!(parsed.nav_paints, Some(false));
-    }
-
-    #[test]
-    fn parse_args_accepts_session_memory_choice_and_rejects_conflicts() {
-        let parsed = parse_args(["--lowmem", "--live", "script_rock_crab"], None).unwrap();
-        assert_eq!(parsed.memory_override, Some(true));
-        let parsed = parse_args(["--highmem", "--live", "script_rock_crab"], None).unwrap();
-        assert_eq!(parsed.memory_override, Some(false));
-        let parsed = parse_args(["--live", "script_rock_crab"], None).unwrap();
-        assert_eq!(parsed.memory_override, None);
-        assert!(matches!(
-            parse_args(["--lowmem", "--highmem"], None),
-            Err((2, message)) if message.contains("conflict")
-        ));
-    }
-
-    #[test]
-    fn parse_args_rejects_malformed_session_nav_paint_choice() {
-        assert!(matches!(
-            parse_args(["--nav-paints", "maybe"], None),
-            Err((2, message)) if message == "panel-play: --nav-paints expects on or off, got maybe"
-        ));
-        assert!(matches!(
-            parse_args(["--nav-paints"], None),
-            Err((2, message)) if message == "panel-play: --nav-paints needs on or off"
-        ));
-    }
-
-    #[test]
-    fn parse_live_args_env_and_flag_null_raster() {
-        assert_eq!(
-            parse_live_args([] as [&str; 0], Some("null_raster")),
-            Ok(RunMode::Live("null_raster".into()))
-        );
-        assert_eq!(
-            parse_live_args(["--live", "null_raster"], None),
-            Ok(RunMode::Live("null_raster".into()))
-        );
-    }
-
-    #[test]
-    fn parse_live_args_env_and_flag_stress50() {
-        assert_eq!(
-            parse_live_args([] as [&str; 0], Some("stress50")),
-            Ok(RunMode::Live("stress50".into()))
-        );
-        assert_eq!(
-            parse_live_args(["--live", "stress50"], None),
-            Ok(RunMode::Live("stress50".into()))
-        );
-        assert_eq!(
-            parse_live_args(["--live", "stress50_full"], None),
-            Ok(RunMode::Live("stress50_full".into()))
-        );
-        assert_eq!(
-            parse_live_args([] as [&str; 0], Some("stress50_full")),
-            Ok(RunMode::Live("stress50_full".into()))
-        );
-    }
-
-    #[test]
-    fn parse_live_args_accepts_nav_full() {
-        assert_eq!(
-            parse_live_args(["--live", "nav_full"], None),
-            Ok(RunMode::Live("nav_full".into()))
-        );
-        assert_eq!(
-            parse_live_args([] as [&str; 0], Some("nav_full")),
-            Ok(RunMode::Live("nav_full".into()))
-        );
-    }
-
-    #[test]
-    fn parse_live_args_flag_wins_over_env() {
-        assert_eq!(
-            parse_live_args(["--live", "null_raster"], Some("other")),
-            Ok(RunMode::Live("null_raster".into()))
-        );
-    }
-
-    #[test]
-    fn parse_live_args_smoke_flag_maps_to_smoke_mode() {
-        assert_eq!(parse_live_args(["--smoke"], None), Ok(RunMode::Smoke));
-        // A stray BOT_LIVE env does not demote --smoke.
-        assert_eq!(
-            parse_live_args(["--smoke"], Some("stress50")),
-            Ok(RunMode::Smoke)
-        );
-        // --smoke wins over --live when both are passed.
-        assert_eq!(
-            parse_live_args(["--smoke", "--live", "null_raster"], None),
-            Ok(RunMode::Smoke)
-        );
-    }
-
-    #[test]
-    fn parse_live_args_unknown_name_is_usage_exit_2() {
-        assert_eq!(
-            parse_live_args(["--live", "nope"], None),
-            Err((2, LIVE_USAGE.into()))
-        );
-        assert_eq!(
-            parse_live_args([] as [&str; 0], Some("other")),
-            Err((2, LIVE_USAGE.into()))
-        );
-    }
-
-    #[test]
-    fn parse_live_args_prod_is_interactive_not_unknown() {
-        assert_eq!(parse_live_args(["--prod"], None), Ok(RunMode::Interactive));
-        assert_eq!(
-            parse_live_args(["--prod", "--live", "script_bone_burier"], None),
-            Ok(RunMode::Live("script_bone_burier".into()))
-        );
-    }
-
-    #[test]
-    fn parse_live_args_unknown_flag_and_missing_name() {
-        assert_eq!(
-            parse_live_args(["--wat"], None),
-            Err((2, "panel-play: unknown --wat".into()))
-        );
-        assert_eq!(
-            parse_live_args(["--live"], None),
-            Err((2, "panel-play: --live needs a name".into()))
-        );
-    }
-
-    #[test]
-    fn parse_live_args_help_is_usage_exit_0() {
-        assert_eq!(
-            parse_live_args(["--help"], None),
-            Err((0, LIVE_USAGE.into()))
-        );
-        assert_eq!(parse_live_args(["-h"], None), Err((0, LIVE_USAGE.into())));
-    }
-
-    #[test]
-    fn parse_live_args_script_walk_accepted() {
-        assert_eq!(
-            parse_live_args(["--live", "script_walk"], None),
-            Ok(RunMode::Live("script_walk".into()))
-        );
-        assert_eq!(
-            parse_live_args([] as [&str; 0], Some("script_walk")),
-            Ok(RunMode::Live("script_walk".into()))
-        );
-        // The smoke scenario is a registered scenario, so the script_
-        // harness can also drive it manually.
-        assert_eq!(
-            parse_live_args(["--live", "script_render_smoke"], None),
-            Ok(RunMode::Live("script_render_smoke".into()))
-        );
-        assert_eq!(
-            parse_live_args(["--live", "script_nav_routes"], None),
-            Ok(RunMode::Live("script_nav_routes".into()))
-        );
-        // The courtyard paint-path scenario is a registered scenario, so
-        // the script_ harness drives it like script_nav_routes.
-        assert_eq!(
-            parse_live_args(["--live", "script_nav_paint_path"], None),
-            Ok(RunMode::Live("script_nav_paint_path".into()))
-        );
-    }
-
-    #[test]
-    fn parse_live_args_unknown_script_rejected() {
-        assert_eq!(
-            parse_live_args(["--live", "script_nope"], None),
-            Err((2, LIVE_USAGE.into()))
-        );
-        assert_eq!(
-            parse_live_args(["--live", "script_"], None),
-            Err((2, LIVE_USAGE.into()))
-        );
-    }
-
-    #[test]
-    fn parse_live_args_accepts_external_loader_without_scenario_catalog() {
-        assert_eq!(
-            parse_live_args(["--live", "script_external_loader"], None),
-            Ok(RunMode::Live("script_external_loader".into()))
-        );
-        assert!(scenario::get("external_loader").is_none());
-    }
-
-    #[test]
-    fn parse_args_external_ts_refuses_relative_and_keeps_ordinary_watchers_off() {
-        let err = parse_args(["--external-ts", "ExampleBot.ts"], None).unwrap_err();
-        assert_eq!(err.0, 2);
-        assert!(err.1.contains("relative"), "{}", err.1);
-        let args = parse_args(["--live", "script_bone_burier"], None).unwrap();
-        assert!(!args.external_core);
-        assert!(args.external_ts.is_none());
-        assert!(!args.catalog_core);
-        assert!(!args.pair_core);
-    }
-
-    #[test]
-    fn pair_watch_cli_cases_resolve_two_prepared_actors_and_shared_start() {
-        use host_play::paired_core::{
-            AirObservation, FlaxObservation, PairCase, PairWatch, StartBarrier, AIR_RUINS,
-            FLAX_FIELD, FLAX_MEET, MULE_TRADE_CAP, TRADE_CAP,
-        };
-        use scenario::StepKind;
-
-        for (cli, case, card, mode_a, mode_b) in [
-            (
-                "script_nature_crafter_air",
-                PairCase::Air,
-                "NatureCrafter",
-                "Master",
-                "Runner",
-            ),
-            (
-                "script_mule_crafter_air",
-                PairCase::Mule,
-                "MuleCrafter",
-                "Crafter",
-                "Mule",
-            ),
-            (
-                "script_flax_runner",
-                PairCase::Flax,
-                "FlaxRunner",
-                "Runner",
-                "Spinner",
-            ),
-        ] {
-            assert_eq!(
-                parse_live_args(["--live", cli], None),
-                Ok(RunMode::Live(cli.into())),
-                "{cli} must resolve as a headed pair_watch live name"
-            );
-            let name = cli.strip_prefix("script_").unwrap();
-            assert_eq!(PairCase::parse(name).unwrap(), case);
-            let scenario = scenario::get(name).unwrap();
-            assert_eq!(scenario.seed.profiles.len(), 2);
-            assert_ne!(scenario.seed.profiles[0].0, scenario.seed.profiles[1].0);
-            assert_eq!(scenario.settings.start_script, Some(card));
-            assert_eq!(scenario.companions.len(), 1);
-            assert_eq!(scenario.companions[0].profile, 1);
-            assert!(scenario
-                .steps
-                .iter()
-                .any(|step| matches!(step.kind, StepKind::StartScript)));
-
-            let a = "alice";
-            let b = "bob";
-            let bag_a = host_play::paired_core::pair_settings(case, &[], 0, a, b).unwrap();
-            let bag_b = host_play::paired_core::pair_settings(case, &[], 1, b, a).unwrap();
-            assert_eq!(bag_a.get("mode").and_then(|v| v.as_str()), Some(mode_a));
-            assert_eq!(bag_b.get("mode").and_then(|v| v.as_str()), Some(mode_b));
-            let screen_a = client::util::JString::to_screen_name(a);
-            let screen_b = client::util::JString::to_screen_name(b);
-            assert_eq!(
-                bag_a.get("partner").and_then(|v| v.as_str()),
-                Some(screen_b.as_str())
-            );
-            assert_eq!(
-                bag_b.get("partner").and_then(|v| v.as_str()),
-                Some(screen_a.as_str())
-            );
-
-            let watch = PairWatch::default();
-            watch.configure(case, a, b);
-            match case {
-                PairCase::Air | PairCase::Mule => {
-                    let first = AirObservation {
-                        ingame: true,
-                        scene_state: 2,
-                        inventory_tab_available: true,
-                        player: Some(a.into()),
-                        tile: Some(AIR_RUINS),
-                        air_talisman: 1,
-                        essence_unnoted: if case == PairCase::Mule {
-                            MULE_TRADE_CAP
-                        } else {
-                            0
-                        },
-                        ..AirObservation::default()
-                    };
-                    let second = AirObservation {
-                        ingame: true,
-                        scene_state: 2,
-                        inventory_tab_available: true,
-                        player: Some(b.into()),
-                        tile: Some(AIR_RUINS),
-                        air_talisman: 0,
-                        essence_unnoted: if case == PairCase::Mule {
-                            MULE_TRADE_CAP
-                        } else {
-                            TRADE_CAP
-                        },
-                        ..AirObservation::default()
-                    };
-                    watch.observe_air(a, first, false);
-                    watch.observe_air(b, second, false);
-                    assert_eq!(watch.barrier(), StartBarrier::StartBoth, "{cli}");
-                    watch.begin_shared_start(a, b).unwrap();
-                }
-                PairCase::Flax => {
-                    let runner = FlaxObservation {
-                        ingame: true,
-                        scene_state: 2,
-                        inventory_tab_available: true,
-                        player: Some(a.into()),
-                        tile: Some(FLAX_FIELD),
-                        crafting: 1,
-                        ..FlaxObservation::default()
-                    };
-                    let mut spinner = FlaxObservation {
-                        ingame: true,
-                        scene_state: 2,
-                        inventory_tab_available: true,
-                        player: Some(b.into()),
-                        tile: Some(FLAX_MEET),
-                        crafting: 1,
-                        ..FlaxObservation::default()
-                    };
-                    watch.observe_flax(a, runner, false);
-                    watch.observe_flax(b, spinner.clone(), false);
-                    assert_eq!(
-                        watch.barrier(),
-                        StartBarrier::Wait,
-                        "Crafting 1 cannot spin flax"
-                    );
-                    spinner.crafting = 10;
-                    watch.observe_flax(b, spinner, false);
-                    assert_eq!(watch.barrier(), StartBarrier::StartBoth, "{cli}");
-                    watch.begin_shared_start(a, b).unwrap();
-                }
-                PairCase::Duel => unreachable!("this table is Air/Mule/Flax role bags"),
-            }
-        }
-
-        let cli = "script_duel_arena";
-        assert_eq!(
-            parse_live_args(["--live", cli], None),
-            Ok(RunMode::Live(cli.into())),
-            "{cli} must resolve as a headed pair_watch live name"
-        );
-        assert_eq!(PairCase::parse("duel_arena").unwrap(), PairCase::Duel);
-        let scenario = scenario::get("duel_arena").unwrap();
-        assert_eq!(scenario.seed.profiles.len(), 2);
-        assert_ne!(scenario.seed.profiles[0].0, scenario.seed.profiles[1].0);
-        assert_eq!(
-            scenario.settings.start_script,
-            Some(PairCase::Duel.card_name())
-        );
-        assert_eq!(scenario.companions.len(), 1);
-        assert!(scenario
-            .steps
-            .iter()
-            .any(|step| matches!(step.kind, StepKind::StartScript)));
-        let bag_a =
-            host_play::paired_core::pair_settings(PairCase::Duel, &[], 0, "alice", "bob").unwrap();
-        let bag_b =
-            host_play::paired_core::pair_settings(PairCase::Duel, &[], 1, "bob", "alice").unwrap();
-        assert!(bag_a.get("partner").is_none());
-        assert!(bag_b.get("partner").is_none());
-        let watch = PairWatch::default();
-        watch.configure(PairCase::Duel, "alice", "bob");
-        let first = host_play::paired_core::DuelObservation {
-            ingame: true,
-            scene_state: 2,
-            inventory_tab_available: true,
-            player: Some("alice".into()),
-            tile: Some(host_play::paired_core::DUEL_CHALLENGE_ANCHOR),
-            tick: 0,
-            attack_xp: 0,
-            strength_xp: 0,
-            defence_xp: 0,
-            hitpoints_xp: 0,
-            in_combat: false,
-            in_challenge_area: true,
-            in_fight_pen: false,
-            main_modal: -1,
-            duel_offer_open: false,
-            duel_confirm_open: false,
-            duel_win_open: false,
-            duel_partner: None,
-            waiting_for_other: false,
-            weapon_equipped: true,
-            peer_visible: true,
-        };
-        let second = host_play::paired_core::DuelObservation {
-            player: Some("bob".into()),
-            ..first.clone()
-        };
-        watch.observe_duel("alice", first, false);
-        watch.observe_duel("bob", second, false);
-        assert_eq!(watch.barrier(), StartBarrier::StartBoth, "{cli}");
-        watch.begin_shared_start("alice", "bob").unwrap();
-    }
-
-    #[test]
-    fn smoke_should_fire_table() {
-        // Fires exactly once, only while armed, only at `ingame && scene 2`.
-        let cases: &[(&str, bool, bool, bool, i32, bool)] = &[
-            ("disarmed never fires", false, false, true, 2, false),
-            ("fires at scene 2", true, false, true, 2, true),
-            ("not before scene 2", true, false, true, 1, false),
-            ("not while logged out", true, false, false, 2, false),
-            ("not after scene 1", true, false, true, 0, false),
-            ("not twice", true, true, true, 2, false),
-            ("not after exit", true, true, true, 1, false),
-        ];
-        for (name, armed, fired, ingame, scene, expect) in cases {
-            assert_eq!(
-                smoke_should_fire(*armed, *fired, *ingame, *scene),
-                *expect,
-                "{name}"
-            );
-        }
-    }
-
-    #[test]
-    fn smoke_settled_table() {
-        // The scene2 shot request reaches the render readback only once
-        // the focused slot has held scene 2 for the full settle window and
-        // is still ingame (the 1 fps renderer needs wall-clock time to
-        // rasterize the world; an early capture is the title screen).
-        let t0 = Instant::now();
-        let cases: &[(&str, Option<Instant>, Instant, bool, bool)] = &[
-            ("no scene 2 yet", None, t0, true, false),
-            (
-                "before the settle window",
-                Some(t0),
-                t0 + Duration::from_secs(1),
-                true,
-                false,
-            ),
-            (
-                "at the settle boundary",
-                Some(t0),
-                t0 + SMOKE_SETTLE,
-                true,
-                true,
-            ),
-            (
-                "after the settle window",
-                Some(t0),
-                t0 + Duration::from_secs(5),
-                true,
-                true,
-            ),
-            (
-                "settled but logged out",
-                Some(t0),
-                t0 + Duration::from_secs(5),
-                false,
-                false,
-            ),
-        ];
-        for (name, at, now, ingame, expect) in cases {
-            assert_eq!(smoke_settled(*at, *now, *ingame), *expect, "{name}");
-        }
-    }
-
-    #[test]
-    fn manual_shot_label_is_stamped_and_stays_normalized() {
-        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_787_616_000);
-        let label = manual_shot_label(now);
-        assert_eq!(label, "manual-2026-08-25T00-00-00");
-        // The label is already in the 377 safe alphabet: the file name
-        // normalizes to itself (the write path applies `safe_label`).
-        assert_eq!(scenario::shot::safe_label(&label), label);
-    }
-
-    #[test]
-    fn manual_shot_without_a_focused_live_snapshot_is_not_enqueued() {
-        let mut state = PanelState::default();
-        super::enqueue_manual_shot(&mut state);
-        assert!(state.shot_state.lock().unwrap().requests.is_empty());
-    }
-
-    #[test]
-    fn manual_shot_rejects_an_empty_published_snapshot() {
-        let mut state = PanelState::default();
-        state.session.focus.lock().unwrap().focused = Some("alice".into());
-        state.session.nav_states.lock().unwrap().insert(
-            "alice".into(),
-            (
-                api::snapshot::GameSnapshot::new(),
-                nav::WorldState::default(),
-            ),
-        );
-        super::enqueue_manual_shot(&mut state);
-        assert!(state.shot_state.lock().unwrap().requests.is_empty());
-    }
-
-    /// A synthetic client that has already seeded: ingame, scene 2, a
-    /// mainland build base, and bumped family gens (same trick as the
-    /// scenario crate's own tests — no live server).
-    fn script_client() -> client::client::Client {
-        let mut c = host::prepare_client(
-            client::client::ClientConfig {
-                host: "127.0.0.1".into(),
-                port: 43594,
-                cache_dir: "/tmp".into(),
-                members: true,
-                lowmem: true,
-            },
-            1,
-            std::sync::Arc::new(client::config::Cache::default()),
-            std::sync::Arc::new(vec![]),
-            Vec::new(),
-        );
-        c.ingame = true;
-        c.scene_state = 2;
-        c.map_build_base_x = 3200;
-        c.map_build_base_z = 3200;
-        c.local_player = Some(client::dash3d::ClientPlayer::at(20, 20));
-        for prot in [
-            client::io::ServerProt::PLAYER_INFO,
-            client::io::ServerProt::REBUILD_NORMAL,
-            client::io::ServerProt::UPDATE_STAT,
-        ] {
-            c.bump_gens(prot);
-        }
-        c
-    }
-
-    /// Headed contract: PASS latches `passed` (the caller exits 0),
-    /// FAIL returns the message the caller turns into exit 1.
-    #[test]
-    fn live_script_tick_latches_pass_and_reports_fail() {
-        use scenario::{
-            Proof, RunnerStatus, Scenario, ScenarioRunner, ScenarioSettings, Seed, Step, StepKind,
-            Wait,
-        };
-
-        let mut s = crate::session::Session::new();
-        // A runnable micro-scenario: the send sets run energy, the arm
-        // waits for it, the proof asserts it.
-        let pass = Scenario {
-            name: "t",
-            seed: Seed {
-                profiles: vec![("test", "test")],
-                mainland: false,
-            },
-            steps: vec![Step {
-                name: "energy",
-                kind: StepKind::Perform {
-                    send: Box::new(|c, _| {
-                        c.runenergy = 5;
-                        true
-                    }),
-                },
-                wait: Wait {
-                    arm: Proof::Stat { id: 16, min: 5 },
-                    budget_ticks: 5,
-                },
-            }],
-            proof: Proof::Stat { id: 16, min: 5 },
-            companions: vec![],
-            settings: ScenarioSettings::default(),
-        };
-        let mut runner = ScenarioRunner::new(pass);
-        runner.set_scene_settle(Duration::ZERO);
-        {
-            let mut c = script_client();
-            runner.tick(&mut c);
-            c.bump_gens(client::io::ServerProt::UPDATE_RUNENERGY);
-            runner.tick(&mut c);
-        }
-        assert_eq!(runner.status(), RunnerStatus::Passed);
-        *s.scenario.lock().unwrap() = Some(runner);
-        let mut live = LiveScript {
-            name: "script_t".into(),
-            passed: false,
-            failed: None,
-            last_step: None,
-            drain_started: None,
-            soak: false,
-            soak_until: None,
-            announced_pass: false,
-            native_failure_capture_requested: false,
-            core_deadline: None,
-        };
-        assert_eq!(
-            live_script_tick(&mut live, &mut s, &ShotStatus::Missing, None),
-            None,
-            "PASS latches; the caller exits 0"
-        );
-        assert!(live.passed);
-
-        // Dedicated catalog_watch: scenario PASS alone waits for the shared
-        // core, and an unqualified core becomes FAIL at its own deadline.
-        let watch = host_play::catalog_core::CoreWatch::default();
-        watch.configure(host_play::catalog_core::CoreCase::Thiever, "catalogtest");
-        s.install_catalog_core_watch(Some(watch.clone()));
-        live.passed = false;
-        live.announced_pass = false;
-        live.core_deadline = Some(Instant::now() + Duration::from_secs(60));
-        assert_eq!(
-            live_script_tick(&mut live, &mut s, &ShotStatus::Missing, None),
-            None
-        );
-        assert!(!live.passed, "scenario-only PASS is not catalog core PASS");
-        live.core_deadline = Some(Instant::now() - Duration::from_secs(1));
-        let error = live_script_tick(&mut live, &mut s, &ShotStatus::Missing, None)
-            .expect("unqualified core times out as FAIL");
-        assert!(error.contains("catalog core did not qualify"), "{error}");
-
-        live.failed = None;
-        live.native_failure_capture_requested = false;
-        live.core_deadline = Some(Instant::now() + Duration::from_secs(60));
-        s.scenario
-            .lock()
-            .unwrap()
-            .as_mut()
-            .unwrap()
-            .set_terminal_shot("core-pass");
-        s.focus.lock().unwrap().focused = Some("catalogtest".into());
-        let mut terminal_snapshot = api::snapshot::GameSnapshot::new();
-        terminal_snapshot.rebuild(&script_client());
-        s.nav_states.lock().unwrap().insert(
-            "catalogtest".into(),
-            (terminal_snapshot, nav::WorldState::default()),
-        );
-        let shots = std::sync::Mutex::new(crate::window::ShotState::default());
-        shots.lock().unwrap().mark_written("core-pass");
-        let mut baseline = host_play::catalog_core::Observation {
-            ingame: true,
-            scene_state: 2,
-            player: Some("catalogtest".into()),
-            tile: Some((2661, 3306, 0)),
-            ..host_play::catalog_core::Observation::default()
-        };
-        baseline.levels.insert("thieving".into(), 50);
-        baseline.levels.insert("hitpoints".into(), 50);
-        baseline.effective_levels.insert("thieving".into(), 50);
-        baseline.effective_levels.insert("hitpoints".into(), 50);
-        baseline.items.insert("Lobster".into(), 10);
-        watch.configure(host_play::catalog_core::CoreCase::Thiever, "catalogtest");
-        watch.observe("catalogtest", baseline.clone(), false);
-        watch.begin_start("catalogtest").unwrap();
-        baseline.xp.insert("thieving".into(), 1);
-        baseline.items.insert("Coins".into(), 1);
-        watch.observe("catalogtest", baseline, false);
-        assert_eq!(
-            live_script_tick(&mut live, &mut s, &ShotStatus::Written, Some(&shots),),
-            None
-        );
-        assert!(!live.passed, "qualified core waits for its current capture");
-        assert_eq!(
-            shots.lock().unwrap().status("core-pass"),
-            ShotStatus::Requested,
-            "the scenario's earlier XP capture cannot discharge the terminal core proof"
-        );
-        shots.lock().unwrap().mark_written("core-pass");
-        assert_eq!(
-            live_script_tick(&mut live, &mut s, &ShotStatus::Requested, Some(&shots),),
-            None
-        );
-        assert!(
-            live.passed,
-            "full shared core and its capture permit headed PASS"
-        );
-        watch.clear();
-
-        live.passed = false;
-        live.announced_pass = false;
-        live.soak = true;
-        live.soak_until = Some(Instant::now() + Duration::from_secs(60));
-        assert_eq!(
-            live_script_tick(&mut live, &mut s, &ShotStatus::Written, None),
-            None,
-            "BUDGET_S soak prints PASS but does not latch exit"
-        );
-        assert!(!live.passed, "window stays open after proof PASS");
-        assert!(live.announced_pass);
-        live.soak_until = Some(Instant::now() - Duration::from_secs(1));
-        assert_eq!(
-            live_script_tick(&mut live, &mut s, &ShotStatus::Written, None),
-            None
-        );
-        assert!(live.passed, "exit 0 only after BUDGET_S elapses");
-
-        // FAIL: a never-satisfiable arm within a 1-tick budget.
-        let fail_scenario = Scenario {
-            name: "f",
-            seed: Seed {
-                profiles: vec![("test", "test")],
-                mainland: false,
-            },
-            steps: vec![Step {
-                name: "never",
-                kind: StepKind::Perform {
-                    send: Box::new(|_, _| true),
-                },
-                wait: Wait {
-                    arm: Proof::Stat { id: 16, min: 999 },
-                    budget_ticks: 1,
-                },
-            }],
-            proof: Proof::Stat { id: 16, min: 999 },
-            companions: vec![],
-            settings: ScenarioSettings::default(),
-        };
-        let mut runner = ScenarioRunner::new(fail_scenario);
-        runner.set_scene_settle(Duration::ZERO);
-        {
-            let mut c = script_client();
-            runner.tick(&mut c);
-        }
-        assert!(matches!(runner.status(), RunnerStatus::Failed(_)));
-        *s.scenario.lock().unwrap() = Some(runner);
-        let mut live = LiveScript {
-            name: "script_f".into(),
-            passed: false,
-            failed: None,
-            last_step: None,
-            drain_started: None,
-            soak: false,
-            soak_until: None,
-            announced_pass: false,
-            native_failure_capture_requested: false,
-            core_deadline: None,
-        };
-        // No terminal shot armed: the FAIL returns immediately.
-        let msg = live_script_tick(&mut live, &mut s, &ShotStatus::Missing, None)
-            .expect("FAIL returns the message");
-        assert!(msg.contains("not seen within 1 ticks"), "msg: {msg}");
-        assert!(live.failed.is_some());
-    }
-
-    /// A terminal-shot FAIL holds the exit until the shot writes (or the
-    /// drain lapses): the first frame returns `None` (the request landed
-    /// after `pump_shots` ran), the write frame returns the message.
-    #[test]
-    fn live_script_tick_holds_a_terminal_shot_fail_until_the_shot_writes() {
-        use scenario::{
-            Proof, RunnerStatus, Scenario, ScenarioRunner, ScenarioSettings, Seed, Step, StepKind,
-            Wait,
-        };
-        let mut s = crate::session::Session::new();
-        let fail_scenario = Scenario {
-            name: "f",
-            seed: Seed {
-                profiles: vec![("test", "test")],
-                mainland: false,
-            },
-            steps: vec![Step {
-                name: "never",
-                kind: StepKind::Perform {
-                    send: Box::new(|_, _| true),
-                },
-                wait: Wait {
-                    arm: Proof::Stat { id: 16, min: 999 },
-                    budget_ticks: 1,
-                },
-            }],
-            proof: Proof::Stat { id: 16, min: 999 },
-            companions: vec![],
-            settings: ScenarioSettings::default(),
-        };
-        let mut runner = ScenarioRunner::new(fail_scenario);
-        runner.set_scene_settle(Duration::ZERO);
-        runner.set_terminal_shot("t-fail");
-        {
-            let mut c = script_client();
-            runner.tick(&mut c);
-        }
-        assert!(matches!(runner.status(), RunnerStatus::Failed(_)));
-        *s.scenario.lock().unwrap() = Some(runner);
-        let mut live = LiveScript {
-            name: "nav_full".into(),
-            passed: false,
-            failed: None,
-            last_step: None,
-            drain_started: None,
-            soak: false,
-            soak_until: None,
-            announced_pass: false,
-            native_failure_capture_requested: false,
-            core_deadline: None,
-        };
-        assert_eq!(
-            live_script_tick(&mut live, &mut s, &ShotStatus::Requested, None),
-            None,
-            "the first FAIL frame holds so the shot can land"
-        );
-        assert!(live.drain_started.is_some());
-        // The shot writes on a later frame: the FAIL is returned.
-        let msg = live_script_tick(&mut live, &mut s, &ShotStatus::Written, None)
-            .expect("FAIL after the shot writes");
-        assert!(live.failed.is_some());
-        assert!(msg.contains("not seen within 1 ticks"), "msg: {msg}");
-    }
-
-    /// A terminal-shot PASS holds the exit until the shot writes, then
-    /// latches `passed` so the caller exits 0.
-    #[test]
-    fn live_script_tick_holds_a_terminal_shot_pass_until_the_shot_writes() {
-        use scenario::{
-            Proof, RunnerStatus, Scenario, ScenarioRunner, ScenarioSettings, Seed, Step, StepKind,
-            Wait,
-        };
-        let mut s = crate::session::Session::new();
-        let pass = Scenario {
-            name: "t",
-            seed: Seed {
-                profiles: vec![("test", "test")],
-                mainland: false,
-            },
-            steps: vec![Step {
-                name: "energy",
-                kind: StepKind::Perform {
-                    send: Box::new(|c, _| {
-                        c.runenergy = 5;
-                        true
-                    }),
-                },
-                wait: Wait {
-                    arm: Proof::Stat { id: 16, min: 5 },
-                    budget_ticks: 5,
-                },
-            }],
-            proof: Proof::Stat { id: 16, min: 5 },
-            companions: vec![],
-            settings: ScenarioSettings::default(),
-        };
-        let mut runner = ScenarioRunner::new(pass);
-        runner.set_scene_settle(Duration::ZERO);
-        runner.set_terminal_shot("t-pass");
-        {
-            let mut c = script_client();
-            runner.tick(&mut c);
-            c.bump_gens(client::io::ServerProt::UPDATE_RUNENERGY);
-            runner.tick(&mut c);
-        }
-        assert_eq!(runner.status(), RunnerStatus::Passed);
-        *s.scenario.lock().unwrap() = Some(runner);
-        let mut live = LiveScript {
-            name: "script_t".into(),
-            passed: false,
-            failed: None,
-            last_step: None,
-            drain_started: None,
-            soak: false,
-            soak_until: None,
-            announced_pass: false,
-            native_failure_capture_requested: false,
-            core_deadline: None,
-        };
-        assert_eq!(
-            live_script_tick(&mut live, &mut s, &ShotStatus::Requested, None),
-            None,
-            "the first PASS frame holds so the shot can land"
-        );
-        assert!(!live.passed);
-        assert!(live.drain_started.is_some());
-        assert_eq!(
-            live_script_tick(&mut live, &mut s, &ShotStatus::Written, None),
-            None
-        );
-        assert!(live.passed, "PASS after the shot writes; caller exits 0");
-
-        live.passed = false;
-        live.failed = None;
-        live.announced_pass = false;
-        live.drain_started = Some(Instant::now() - NAV_FULL_SHOT_DRAIN);
-        let error = live_script_tick(&mut live, &mut s, &ShotStatus::Requested, None)
-            .expect("PASS with a missing terminal shot must fail after the drain bound");
-        assert!(error.contains("terminal shot"), "error: {error}");
-        assert!(error.contains("not written"), "error: {error}");
-        assert!(live.failed.is_some(), "the missing capture latches failure");
-    }
-
-    #[test]
-    fn terminal_shot_drain_accepts_a_write_from_an_earlier_core_pending_frame() {
-        let mut live = LiveScript {
-            name: "script_t".into(),
-            passed: false,
-            failed: None,
-            last_step: None,
-            drain_started: None,
-            soak: false,
-            soak_until: None,
-            announced_pass: false,
-            native_failure_capture_requested: false,
-            core_deadline: None,
-        };
-        assert_eq!(
-            super::hold_terminal_shot(
-                &mut live,
-                Some("t-pass"),
-                &crate::window::ShotStatus::Written,
-            ),
-            Ok(false)
-        );
-        assert!(live.drain_started.is_none());
-    }
-
-    #[test]
-    fn native_failure_rearms_written_shot_and_waits_for_current_capture() {
-        let session = crate::session::Session::new();
-        session.focus.lock().unwrap().focused = Some("alice".into());
-        let client = script_client();
-        let mut snapshot = api::snapshot::GameSnapshot::new();
-        snapshot.rebuild(&client);
-        assert!(snapshot.ingame() && snapshot.scene_state() == 2);
-        session
-            .nav_states
-            .lock()
-            .unwrap()
-            .insert("alice".into(), (snapshot, nav::WorldState::default()));
-
-        let shots = std::sync::Mutex::new(crate::window::ShotState::default());
-        let label = "thiever";
-        shots.lock().unwrap().mark_written(label);
-        let mut live = LiveScript {
-            name: "script_thiever".into(),
-            passed: false,
-            failed: None,
-            last_step: None,
-            drain_started: None,
-            soak: false,
-            soak_until: None,
-            announced_pass: false,
-            native_failure_capture_requested: false,
-            core_deadline: None,
-        };
-
-        live.drain_started = Some(Instant::now() - NAV_FULL_SHOT_DRAIN);
-        request_native_failure_capture(&mut live, &session, Some(&shots), Some(label));
-        assert!(live.native_failure_capture_requested);
-        assert!(live.drain_started.is_none(), "re-arm resets the old drain");
-        assert_eq!(
-            shots.lock().unwrap().status(label),
-            ShotStatus::Requested,
-            "a prior Written capture must be re-armed"
-        );
-        assert_eq!(
-            hold_script_terminal_shot(
-                &mut live,
-                &session,
-                Some(label),
-                &ShotStatus::Written,
-                Some(&shots),
-            ),
-            Ok(true),
-            "the stale pre-tick Written status must not exit before the new shot"
-        );
-        assert!(live.drain_started.is_some());
-
-        shots.lock().unwrap().mark_written(label);
-        request_native_failure_capture(&mut live, &session, Some(&shots), Some(label));
-        assert_eq!(
-            shots.lock().unwrap().status(label),
-            ShotStatus::Written,
-            "a later failure tick must not re-arm the current capture"
-        );
-        assert_eq!(
-            hold_script_terminal_shot(
-                &mut live,
-                &session,
-                Some(label),
-                &ShotStatus::Requested,
-                Some(&shots),
-            ),
-            Ok(false),
-            "exit is released only after the current capture is written"
-        );
-    }
-
-    #[test]
-    fn native_failure_missing_scene_cannot_reuse_prior_written_capture() {
-        let session = crate::session::Session::new();
-        session.focus.lock().unwrap().focused = Some("alice".into());
-        let mut client = script_client();
-        client.scene_state = 1;
-        let mut snapshot = api::snapshot::GameSnapshot::new();
-        snapshot.rebuild(&client);
-        session
-            .nav_states
-            .lock()
-            .unwrap()
-            .insert("alice".into(), (snapshot, nav::WorldState::default()));
-        let shots = std::sync::Mutex::new(crate::window::ShotState::default());
-        shots.lock().unwrap().mark_written("thiever");
-        super::enqueue_current_terminal_shot(&session, &shots, "thiever");
-        assert!(matches!(
-            shots.lock().unwrap().status("thiever"),
-            ShotStatus::Failed(error) if error.contains("scene-2")
-        ));
-        assert!(shots.lock().unwrap().requests.is_empty());
-    }
-
-    #[test]
-    fn native_failure_receipt_uses_inner_scenario_identity() {
-        let evidence = scenario::Evidence {
-            scenario: "thiever".into(),
-            outcome: "PASS",
-            predicate: "stat(16)>=0".into(),
-            ticks: 1,
-            elapsed_ms: 2,
-            message: None,
-            tile: None,
-            inv: Vec::new(),
-            stat: None,
-            chat: Vec::new(),
-            scene: 2,
-        };
-        assert_eq!(
-            script_failure_scenario("script_thiever", Some(&evidence)),
-            "thiever"
-        );
-        assert_eq!(script_failure_scenario("script_thiever", None), "thiever");
-    }
-
-    #[test]
-    fn pair_terminal_decision_requests_scene2_snapshots_for_both_actors() {
-        use std::collections::HashSet;
-
-        let mut s = crate::session::Session::new();
-        let scenario = scenario::get("nature_crafter_air").expect("paired cell");
-        let mut runner = scenario::ScenarioRunner::new(scenario);
-        runner.set_live_names(&["alice".into(), "bob".into()]);
-        *s.scenario.lock().unwrap() = Some(runner);
-
-        let watch = host_play::paired_core::PairWatch::default();
-        watch.configure(host_play::paired_core::PairCase::Air, "alice", "bob");
-        s.install_paired_core_watch(Some(watch));
-
-        let mut alice_client = script_client();
-        let mut alice_player = client::dash3d::ClientPlayer::at(20, 20);
-        alice_player.name = Some("NatureMaster".into());
-        alice_client.local_player = Some(alice_player);
-        let mut snap_a = api::snapshot::GameSnapshot::new();
-        snap_a.rebuild(&alice_client);
-
-        let mut bob_client = script_client();
-        bob_client.local_player = None;
-        let mut snap_b = api::snapshot::GameSnapshot::new();
-        snap_b.rebuild(&bob_client);
-
-        assert!(snap_a.ingame() && snap_a.scene_state() == 2);
-        assert!(snap_b.ingame() && snap_b.scene_state() == 2);
-        s.nav_states
-            .lock()
-            .unwrap()
-            .insert("alice".into(), (snap_a, nav::WorldState::default()));
-        s.nav_states
-            .lock()
-            .unwrap()
-            .insert("bob".into(), (snap_b, nav::WorldState::default()));
-
-        let shots = std::sync::Mutex::new(crate::window::ShotState::default());
-        let mut live = LiveScript {
-            name: "script_nature_crafter_air".into(),
-            passed: false,
-            failed: None,
-            last_step: None,
-            drain_started: None,
-            soak: false,
-            soak_until: None,
-            announced_pass: false,
-            native_failure_capture_requested: false,
-            core_deadline: Some(Instant::now() - Duration::from_secs(1)),
-        };
-        assert_eq!(
-            live_script_tick(&mut live, &mut s, &ShotStatus::Missing, Some(&shots)),
-            None,
-            "pair terminal FAIL holds until both actor shots are requested"
-        );
-        let guard = shots.lock().unwrap();
-        assert_eq!(guard.requests.len(), 2, "both actors must be captured");
-        let mut actors = HashSet::new();
-        let mut payloads = HashSet::new();
-        for request in &guard.requests {
-            let label = &request.label;
-            let json = &request.snapshot_json;
-            let value: serde_json::Value = serde_json::from_str(json).expect("snapshot json");
-            assert_eq!(value.get("ingame"), Some(&serde_json::Value::Bool(true)));
-            assert_eq!(value.get("scene_state"), Some(&serde_json::json!(2)));
-            let actor = value
-                .get("actor")
-                .and_then(|v| v.as_str())
-                .expect("actor label metadata is the profile identity");
-            assert_eq!(
-                request.actor.as_deref(),
-                Some(actor),
-                "queued capture must be bound to the selected actor, not a label clone"
-            );
-            assert!(
-                label.contains(actor),
-                "label {label} must name actor {actor}"
-            );
-            match actor {
-                "alice" => {
-                    assert_eq!(
-                        value.pointer("/player/player/actor/name"),
-                        Some(&serde_json::json!("NatureMaster")),
-                        "observed player name must be retained"
-                    );
-                    assert!(
-                        value
-                            .get("player")
-                            .and_then(|player| player.get("name"))
-                            .is_none(),
-                        "actor metadata must not overwrite or synthesize player.name"
-                    );
-                }
-                "bob" => {
-                    assert_eq!(
-                        value.get("player"),
-                        Some(&serde_json::Value::Null),
-                        "missing-player stays missing"
-                    );
-                }
-                other => panic!("unexpected actor {other}"),
-            }
-            actors.insert(actor.to_string());
-            payloads.insert(json.clone());
-        }
-        assert_eq!(
-            actors.len(),
-            2,
-            "paired headed snapshots must identify two distinct actors"
-        );
-        assert_eq!(
-            payloads.len(),
-            2,
-            "paired headed snapshots must retain distinct observed payloads"
-        );
-    }
-
-    fn dummy_slot() -> crate::session::SlotIo {
-        crate::session::SlotIo {
-            input: host::SlotInput::new(),
-            pixels: host::FrameBuf::new(),
-        }
-    }
-
-    fn insert_named_scene2(session: &crate::session::Session, name: &str, player: Option<&str>) {
-        let mut client = script_client();
-        match player {
-            Some(player_name) => {
-                let mut player = client::dash3d::ClientPlayer::at(20, 20);
-                player.name = Some(player_name.into());
-                client.local_player = Some(player);
-            }
-            None => client.local_player = None,
-        }
-        let mut snap = api::snapshot::GameSnapshot::new();
-        snap.rebuild(&client);
-        assert!(snap.ingame() && snap.scene_state() == 2);
-        session
-            .nav_states
-            .lock()
-            .unwrap()
-            .insert(name.into(), (snap, nav::WorldState::default()));
-    }
-
-    fn sidecar_actor_and_scene(json: &str) -> (String, i64) {
-        let value: serde_json::Value = serde_json::from_str(json).expect("sidecar json");
-        (
-            value
-                .get("actor")
-                .and_then(|v| v.as_str())
-                .expect("actor")
-                .to_string(),
-            value
-                .get("scene_state")
-                .and_then(|v| v.as_i64())
-                .expect("scene_state"),
-        )
-    }
-
-    #[test]
-    fn pump_shots_does_not_promote_two_pair_actors_from_an_unready_buffer() {
-        let mut state = PanelState::default();
-        state.session.slots.insert("alice".into(), dummy_slot());
-        state.session.slots.insert("bob".into(), dummy_slot());
-        state.session.focus.lock().unwrap().focused = Some("alice".into());
-        insert_named_scene2(&state.session, "alice", Some("NatureMaster"));
-        insert_named_scene2(&state.session, "bob", None);
-        {
-            let mut shots = state.shot_state.lock().unwrap();
-            shots.enqueue_for_actor(
-                "air-alice".into(),
-                "{\"actor\":\"alice\"}".into(),
-                "alice".into(),
-            );
-            shots.enqueue_for_actor("air-bob".into(), "{\"actor\":\"bob\"}".into(), "bob".into());
-        }
-
-        assert_eq!(super::pump_shots(&mut state), 0);
-        {
-            let shots = state.shot_state.lock().unwrap();
-            assert!(
-                shots.wanted.is_empty(),
-                "unready selected buffer must not capture"
-            );
-            assert_eq!(shots.requests.len(), 2);
-            assert_eq!(shots.status("air-alice"), ShotStatus::Requested);
-            assert_eq!(shots.status("air-bob"), ShotStatus::Requested);
-        }
-
-        state.last_upload = Some(("alice".into(), 1));
-        assert_eq!(super::pump_shots(&mut state), 0);
-        {
-            let shots = state.shot_state.lock().unwrap();
-            assert_eq!(shots.wanted.len(), 1);
-            assert_eq!(shots.wanted[0].0, "air-alice");
-            assert_eq!(
-                sidecar_actor_and_scene(&shots.wanted[0].1),
-                ("alice".into(), 2),
-                "promoted sidecar must be the current scene2 snapshot, not the enqueue-time clone"
-            );
-            assert_eq!(shots.requests.len(), 1);
-            assert_eq!(shots.requests[0].actor.as_deref(), Some("bob"));
-        }
-
-        state.shot_state.lock().unwrap().wanted.clear();
-        state.shot_state.lock().unwrap().mark_written("air-alice");
-        state.last_upload = Some(("alice".into(), 1));
-        super::pump_shots(&mut state);
-        assert_eq!(
-            state.session.focused_name().as_deref(),
-            Some("bob"),
-            "next queued actor is selected only after the previous capture writes"
-        );
-        assert!(
-            state.shot_state.lock().unwrap().wanted.is_empty(),
-            "bob is focused but not yet presented"
-        );
-
-        state.last_upload = Some(("bob".into(), 2));
-        super::pump_shots(&mut state);
-        {
-            let shots = state.shot_state.lock().unwrap();
-            assert_eq!(shots.wanted.len(), 1);
-            assert_eq!(shots.wanted[0].0, "air-bob");
-            assert_eq!(
-                sidecar_actor_and_scene(&shots.wanted[0].1),
-                ("bob".into(), 2)
-            );
-            assert!(shots.requests.is_empty());
-        }
-    }
-
-    #[test]
-    fn pump_shots_fails_a_missing_pair_actor_without_deadlocking() {
-        let mut state = PanelState::default();
-        state.shot_state.lock().unwrap().enqueue_for_actor(
-            "air-ghost".into(),
-            "{\"actor\":\"ghost\"}".into(),
-            "ghost".into(),
-        );
-        assert_eq!(super::pump_shots(&mut state), 0);
-        let shots = state.shot_state.lock().unwrap();
-        match shots.status("air-ghost") {
-            ShotStatus::Failed(error) => {
-                assert!(
-                    error.contains("not a live slot"),
-                    "missing actor must fail closed: {error}"
-                );
-            }
-            other => panic!("expected Failed, got {other:?}"),
-        }
-        assert!(shots.requests.is_empty());
-        assert!(shots.wanted.is_empty());
-    }
-
-    #[test]
-    fn pump_shots_does_not_promote_a_presented_actor_that_left_scene2() {
-        let mut state = PanelState::default();
-        state.session.slots.insert("alice".into(), dummy_slot());
-        state.session.focus.lock().unwrap().focused = Some("alice".into());
-        state.last_upload = Some(("alice".into(), 1));
-        state.session.nav_states.lock().unwrap().insert(
-            "alice".into(),
-            (
-                api::snapshot::GameSnapshot::new(),
-                nav::WorldState::default(),
-            ),
-        );
-        state.shot_state.lock().unwrap().enqueue_for_actor(
-            "air-alice".into(),
-            "{\"actor\":\"alice\",\"ingame\":true,\"scene_state\":2}".into(),
-            "alice".into(),
-        );
-        assert_eq!(super::pump_shots(&mut state), 0);
-        let shots = state.shot_state.lock().unwrap();
-        assert!(
-            shots.wanted.is_empty(),
-            "stale scene2 sidecar must not prove a currently offworld actor"
-        );
-        assert_eq!(shots.status("air-alice"), ShotStatus::Requested);
-        assert_eq!(
-            shots.requests[0].snapshot_json,
-            "{\"actor\":\"alice\",\"ingame\":true,\"scene_state\":2}"
-        );
-    }
-
-    fn actor_snapshot_serialization_count() -> u64 {
-        super::ACTOR_SNAPSHOT_SERIALIZATIONS.with(|count| count.get())
-    }
-
-    #[test]
-    fn pump_shots_does_not_serialize_sidecar_without_a_pending_actor_capture() {
-        let mut state = PanelState::default();
-        state.session.slots.insert("alice".into(), dummy_slot());
-        state.session.focus.lock().unwrap().focused = Some("alice".into());
-        insert_named_scene2(&state.session, "alice", Some("NatureMaster"));
-        state.last_upload = Some(("alice".into(), 1));
-
-        let before = actor_snapshot_serialization_count();
-        assert_eq!(super::pump_shots(&mut state), 0);
-        assert_eq!(
-            actor_snapshot_serialization_count(),
-            before,
-            "ordinary focused scene2 must not serialize a pair sidecar with no actor-tagged request"
-        );
-        assert!(state.shot_state.lock().unwrap().wanted.is_empty());
-        assert!(state.shot_state.lock().unwrap().requests.is_empty());
-
-        state
-            .shot_state
-            .lock()
-            .unwrap()
-            .enqueue("manual".into(), "{\"untagged\":true}".into());
-        let before = actor_snapshot_serialization_count();
-        assert_eq!(super::pump_shots(&mut state), 0);
-        assert_eq!(
-            actor_snapshot_serialization_count(),
-            before,
-            "untagged promote must not require pair sidecar serialization"
-        );
-        {
-            let shots = state.shot_state.lock().unwrap();
-            assert_eq!(shots.wanted.len(), 1);
-            assert_eq!(shots.wanted[0].0, "manual");
-            assert_eq!(shots.wanted[0].1, "{\"untagged\":true}");
-            assert!(shots.requests.is_empty());
-        }
-    }
-
-    #[test]
-    fn pair_deadline_fails_remaining_queued_actors() {
-        let s = crate::session::Session::new();
-        let scenario = scenario::get("nature_crafter_air").expect("paired cell");
-        let mut runner = scenario::ScenarioRunner::new(scenario);
-        runner.set_live_names(&["alice".into(), "bob".into()]);
-        *s.scenario.lock().unwrap() = Some(runner);
-        let watch = host_play::paired_core::PairWatch::default();
-        watch.configure(host_play::paired_core::PairCase::Air, "alice", "bob");
-        s.install_paired_core_watch(Some(watch));
-
-        let shots = std::sync::Mutex::new(crate::window::ShotState::default());
-        shots.lock().unwrap().enqueue_for_actor(
-            "nature_crafter_air-alice".into(),
-            "{}".into(),
-            "alice".into(),
-        );
-        shots.lock().unwrap().enqueue_for_actor(
-            "nature_crafter_air-bob".into(),
-            "{}".into(),
-            "bob".into(),
-        );
-        let mut live = LiveScript {
-            name: "script_nature_crafter_air".into(),
-            passed: false,
-            failed: None,
-            last_step: None,
-            drain_started: Some(Instant::now() - NAV_FULL_SHOT_DRAIN),
-            soak: false,
-            soak_until: None,
-            announced_pass: false,
-            native_failure_capture_requested: false,
-            core_deadline: None,
-        };
-        let error = super::hold_script_terminal_shot(
-            &mut live,
-            &s,
-            Some("nature_crafter_air"),
-            &ShotStatus::Missing,
-            Some(&shots),
-        )
-        .expect_err("drain lapse is FAIL");
-        assert!(error.contains("not written"), "{error}");
-        let guard = shots.lock().unwrap();
-        assert!(matches!(
-            guard.status("nature_crafter_air-alice"),
-            ShotStatus::Failed(_)
-        ));
-        assert!(matches!(
-            guard.status("nature_crafter_air-bob"),
-            ShotStatus::Failed(_)
-        ));
-        assert!(guard.requests.is_empty());
-        assert!(guard.wanted.is_empty());
-    }
-
-    #[test]
-    fn record_presented_upload_ignores_a_failed_take_after_focus_switch() {
-        let mut last = Some(("alice".into(), 3));
-        super::record_presented_upload(&mut last, "bob".into(), 4, false);
-        assert_eq!(last, Some(("alice".into(), 3)));
-        super::record_presented_upload(&mut last, "bob".into(), 4, true);
-        assert_eq!(last, Some(("bob".into(), 4)));
-    }
-
-    fn passed_prereq_runner() -> scenario::ScenarioRunner {
-        use scenario::{
-            Proof, Scenario, ScenarioRunner, ScenarioSettings, Seed, Step, StepKind, Wait,
-        };
-        let pass = Scenario {
-            name: "t",
-            seed: Seed {
-                profiles: vec![("test", "test")],
-                mainland: false,
-            },
-            steps: vec![Step {
-                name: "energy",
-                kind: StepKind::Perform {
-                    send: Box::new(|c, _| {
-                        c.runenergy = 5;
-                        true
-                    }),
-                },
-                wait: Wait {
-                    arm: Proof::Stat { id: 16, min: 5 },
-                    budget_ticks: 5,
-                },
-            }],
-            proof: Proof::Stat { id: 16, min: 5 },
-            companions: vec![],
-            settings: ScenarioSettings::default(),
-        };
-        let mut runner = ScenarioRunner::new(pass);
-        runner.set_scene_settle(Duration::ZERO);
-        runner.set_terminal_shot(host_play::external_loader::PREREQ_SHOT);
-        {
-            let mut c = script_client();
-            runner.tick(&mut c);
-            c.bump_gens(client::io::ServerProt::UPDATE_RUNENERGY);
-            runner.tick(&mut c);
-        }
-        assert_eq!(runner.status(), scenario::RunnerStatus::Passed);
-        runner
-    }
-
-    fn drive_external_watch_to_capture(watch: &host_play::external_loader::ExternalWatch) {
-        use host_play::external_loader::{
-            BONES_COUNT, FROZEN_SHA256, NOTHING_CHANGED, SCRIPT_NAME,
-        };
-        use std::path::Path;
-        let t0 = Instant::now();
-        watch.configure(
-            "alice",
-            PathBuf::from("/tmp/ExampleBot.ts"),
-            FROZEN_SHA256.into(),
-        );
-        watch.note_scene(true, 2);
-        watch.note_inventory(t0, "alice", BONES_COUNT, 0);
-        watch.note_prereq_passed();
-        watch.note_load(
-            1,
-            SCRIPT_NAME,
-            Path::new("/tmp/ExampleBot.ts"),
-            "file:/tmp/ExampleBot.ts",
-            "compiled-a",
-            true,
-            false,
-        );
-        watch.begin_start(t0).unwrap();
-        let lines: Vec<String> = (1..=10)
-            .map(|i| format!("buried bones (#{i}, +{i} prayer xp total)"))
-            .collect();
-        watch.note_logs(t0, "alice", &lines);
-        watch.note_inventory(t0, "alice", 12, 45);
-        let stop = t0 + Duration::from_millis(8);
-        watch.request_stop(stop);
-        watch.note_logs(
-            stop,
-            "alice",
-            &["BoneBurier stopped — 10 buried, +45 prayer xp".into()],
-        );
-        watch.note_stop(stop + Duration::from_millis(40), true, false);
-        watch.note_reload_unchanged(NOTHING_CHANGED);
-        watch.note_reload_changed(
-            1,
-            true,
-            false,
-            Path::new("/tmp/ExampleBot.ts"),
-            "file:/tmp/ExampleBot.ts",
-            "sha-before",
-            "sha-after",
-            "compiled-a",
-            "compiled-b",
-            true,
-            false,
-        );
-    }
-
-    fn alice_scene2_session() -> crate::session::Session {
-        let s = crate::session::Session::new();
-        *s.scenario.lock().unwrap() = Some(passed_prereq_runner());
-        let mut client = script_client();
-        let mut player = client::dash3d::ClientPlayer::at(20, 20);
-        player.name = Some("Alice".into());
-        client.local_player = Some(player);
-        let mut snap = api::snapshot::GameSnapshot::new();
-        snap.rebuild(&client);
-        assert!(snap.ingame() && snap.scene_state() == 2);
-        s.nav_states
-            .lock()
-            .unwrap()
-            .insert("alice".into(), (snap, nav::WorldState::default()));
-        s
-    }
-
-    #[test]
-    fn earlier_fixture_written_cannot_discharge_external_terminal_hold() {
-        let mut s = alice_scene2_session();
-        let watch = host_play::external_loader::ExternalWatch::default();
-        drive_external_watch_to_capture(&watch);
-        s.install_external_core_watch(Some(watch));
-
-        let shots = std::sync::Mutex::new(crate::window::ShotState::default());
-        shots
-            .lock()
-            .unwrap()
-            .mark_written(host_play::external_loader::PREREQ_SHOT);
-
-        let mut live = LiveScript {
-            name: "script_external_loader".into(),
-            passed: false,
-            failed: None,
-            last_step: None,
-            drain_started: None,
-            soak: false,
-            soak_until: None,
-            announced_pass: false,
-            native_failure_capture_requested: false,
-            core_deadline: None,
-        };
-        assert_eq!(
-            live_script_tick(&mut live, &mut s, &ShotStatus::Written, Some(&shots)),
-            None,
-            "prereq Written must not latch PASS before the post-run shot"
-        );
-        assert!(!live.passed);
-        assert_eq!(
-            shots
-                .lock()
-                .unwrap()
-                .status(host_play::external_loader::TERMINAL_SHOT),
-            ShotStatus::Requested
-        );
-
-        shots
-            .lock()
-            .unwrap()
-            .mark_written(host_play::external_loader::TERMINAL_SHOT);
-        assert_eq!(
-            live_script_tick(&mut live, &mut s, &ShotStatus::Written, Some(&shots)),
-            None
-        );
-        assert!(
-            live.passed,
-            "PASS only after the external terminal shot writes"
-        );
-    }
-
-    #[test]
-    fn missing_external_terminal_shot_fails_after_drain() {
-        let mut s = alice_scene2_session();
-        let watch = host_play::external_loader::ExternalWatch::default();
-        drive_external_watch_to_capture(&watch);
-        s.install_external_core_watch(Some(watch));
-
-        let shots = std::sync::Mutex::new(crate::window::ShotState::default());
-        shots
-            .lock()
-            .unwrap()
-            .mark_written(host_play::external_loader::PREREQ_SHOT);
-
-        let mut live = LiveScript {
-            name: "script_external_loader".into(),
-            passed: false,
-            failed: None,
-            last_step: None,
-            drain_started: None,
-            soak: false,
-            soak_until: None,
-            announced_pass: false,
-            native_failure_capture_requested: false,
-            core_deadline: None,
-        };
-        assert_eq!(
-            live_script_tick(&mut live, &mut s, &ShotStatus::Written, Some(&shots)),
-            None
-        );
-        live.drain_started = Some(Instant::now() - NAV_FULL_SHOT_DRAIN);
-        let error = live_script_tick(&mut live, &mut s, &ShotStatus::Written, Some(&shots))
-            .expect("missing external shot is FAIL");
-        assert!(error.contains("external_loader terminal"), "{error}");
-        assert!(error.contains("not written"), "{error}");
-        assert!(live.failed.is_some());
-        assert!(!live.passed);
-    }
-
-    #[test]
-    fn pump_shots_marks_completion_only_after_the_png_and_snapshot_pair_write() {
-        let dir = std::env::temp_dir().join(format!(
-            "274bot-panel-shot-pump-{}-{:?}",
-            std::process::id(),
-            std::thread::current().id()
-        ));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-
-        let mut state = PanelState {
-            shot_dir: Some(dir.clone()),
-            ..PanelState::default()
-        };
-        state
-            .shot_state
-            .lock()
-            .unwrap()
-            .done
-            .push(crate::window::ShotCapture {
-                label: "gnome_chop".into(),
-                snapshot_json: "{\"scene\":2}".into(),
-                width: 1,
-                height: 1,
-                rgba: vec![0, 0, 0, 255],
-            });
-
-        assert_eq!(super::pump_shots(&mut state), 1);
-        assert_eq!(
-            state.shot_state.lock().unwrap().status("gnome_chop"),
-            ShotStatus::Written
-        );
-        let mut extensions = std::fs::read_dir(&dir)
-            .unwrap()
-            .map(|entry| {
-                entry
-                    .unwrap()
-                    .path()
-                    .extension()
-                    .unwrap()
-                    .to_string_lossy()
-                    .into_owned()
-            })
-            .collect::<Vec<_>>();
-        extensions.sort();
-        assert_eq!(extensions, ["json", "png"]);
-        std::fs::remove_dir_all(dir).unwrap();
-    }
-
-    fn smoke_at(started: Instant) -> LiveSmoke {
-        LiveSmoke {
-            started,
-            last_step: None,
-            failed: None,
-            saw_scene2_at: None,
-            passed: false,
-        }
-    }
-
-    #[test]
-    fn live_smoke_tick_passes_when_the_shot_is_written() {
-        let mut s = crate::session::Session::new();
-        let mut live = smoke_at(Instant::now());
-        let statuses = [st("test", true, 2)];
-        // A written shot (pump_shots drained `done`) exits the smoke: the
-        // tick latches passed and the caller turns it into exit 0.
-        assert_eq!(live_smoke_tick(&mut live, &mut s, &statuses, 1), None);
-        assert!(live.passed, "the written scene2 shot passes the smoke");
-    }
-
-    #[test]
-    fn live_smoke_tick_latches_scene2_once_and_reports_a_missing_write() {
-        let mut s = crate::session::Session::new();
-        s.focus.lock().unwrap().focused = Some("test".into());
-        let mut live = smoke_at(Instant::now());
-        // Before scene 2 nothing latches.
-        assert_eq!(
-            live_smoke_tick(&mut live, &mut s, &[st("test", true, 1)], 0),
-            None
-        );
-        assert!(!live.saw_scene2_at.is_some());
-        // Scene 2 on the focused slot latches exactly once (the pure
-        // trigger), and a late deadline names the missing write.
-        let scene2 = [st("test", true, 2)];
-        assert_eq!(live_smoke_tick(&mut live, &mut s, &scene2, 0), None);
-        assert!(live.saw_scene2_at.is_some());
-        live.started = Instant::now() - SMOKE_DEADLINE;
-        let err = live_smoke_tick(&mut live, &mut s, &scene2, 0).expect("deadline");
-        assert!(err.contains("never written within 300s"), "err: {err}");
-    }
-
-    #[test]
-    fn live_smoke_tick_deadline_reports_scene2_never_reached() {
-        let mut s = crate::session::Session::new();
-        s.focus.lock().unwrap().focused = Some("test".into());
-        let mut live = smoke_at(Instant::now() - SMOKE_DEADLINE);
-        let err = live_smoke_tick(&mut live, &mut s, &[st("test", false, 0)], 0).expect("deadline");
-        assert!(
-            err.contains("never reached scene 2 within 300s"),
-            "err: {err}"
-        );
-        assert!(live.failed.is_some(), "the deadline latches the failure");
-    }
-
-    fn st(name: &str, ingame: bool, scene: i32) -> host_play::SlotStatus {
-        host_play::SlotStatus {
-            username: name.into(),
-            ingame,
-            scene_state: scene,
-            ..Default::default()
-        }
-    }
-
-    fn live_at(started: Instant) -> LiveNull {
-        LiveNull {
-            started,
-            saw_scene2: false,
-            passed: false,
-        }
-    }
-
-    #[test]
-    fn live_null_tick_waits_until_two_scene2() {
-        let mut live = live_at(Instant::now());
-        let statuses = [st("test", true, 1), st("test2", false, 0)];
-        assert_eq!(live_null_tick(&mut live, &statuses), None);
-        assert!(!live.saw_scene2);
-    }
-
-    #[test]
-    fn live_null_tick_timeout_before_scene2() {
-        let mut live = live_at(Instant::now() - Duration::from_secs(120));
-        let statuses = [st("test", true, 2)];
-        let err = live_null_tick(&mut live, &statuses).expect("timeout");
-        assert!(err.contains("1/2"), "{err}");
-        assert!(err.contains("120s"), "{err}");
-    }
-
-    #[test]
-    fn live_null_tick_passes_at_scene2_without_freeze() {
-        let mut live = live_at(Instant::now());
-        let scene2 = [st("test", true, 2), st("test2", true, 2)];
-        assert_eq!(live_null_tick(&mut live, &scene2), None);
-        assert!(live.passed);
-        assert!(live.saw_scene2);
-        assert_eq!(live_null_tick(&mut live, &scene2), None, "stay passed");
-    }
-
-    fn stress_at(started: Instant) -> LiveStress {
-        LiveStress {
-            started,
-            last_announced: 0,
-            passed: false,
-            name: "stress50",
-            host: "127.0.0.1".into(),
-            port: 43594,
-        }
-    }
-
-    fn ready_n(n: usize) -> Vec<host_play::SlotStatus> {
-        (0..n).map(|i| st(&format!("s{i:02}"), true, 2)).collect()
-    }
-
-    #[test]
-    fn live_stress_tick_announces_1_10_50_and_stays_passed() {
-        let mut live = stress_at(Instant::now());
-        assert_eq!(live_stress_tick(&mut live, &[]), None);
-        assert_eq!(live.last_announced, 0);
-        assert!(!live.passed);
-
-        assert_eq!(live_stress_tick(&mut live, &ready_n(1)), None);
-        assert_eq!(live.last_announced, 1);
-        assert!(!live.passed);
-
-        assert_eq!(live_stress_tick(&mut live, &ready_n(10)), None);
-        assert_eq!(live.last_announced, 10);
-        assert!(!live.passed);
-
-        assert_eq!(live_stress_tick(&mut live, &ready_n(50)), None);
-        assert_eq!(live.last_announced, 50);
-        assert!(live.passed);
-        assert_eq!(
-            live_stress_tick(&mut live, &ready_n(50)),
-            None,
-            "stay passed"
-        );
-        assert!(live.passed);
-    }
-
-    #[test]
-    fn live_stress_tick_timeout_before_50() {
-        let mut live = stress_at(Instant::now() - Duration::from_secs(600));
-        let err = live_stress_tick(&mut live, &ready_n(1)).expect("timeout");
-        assert_eq!(err, "live stress50: 1/50 up after 600s");
-        assert!(!live.passed);
-        assert_eq!(live.last_announced, 1);
-    }
-
-    #[test]
-    fn live_stress_tick_full_name_in_timeout() {
-        let mut live = LiveStress {
-            started: Instant::now() - Duration::from_secs(600),
-            last_announced: 0,
-            passed: false,
-            name: "stress50_full",
-            host: "127.0.0.1".into(),
-            port: 43594,
-        };
-        let err = live_stress_tick(&mut live, &ready_n(1)).expect("timeout");
-        assert_eq!(err, "live stress50_full: 1/50 up after 600s");
-    }
-
-    #[test]
-    fn live_stress_tick_counts_full_clients_up() {
-        let mut live = stress_at(Instant::now());
-        // Every member is a full Client: "up" requires scene 2, so loading
-        // slots do not count toward the 50.
-        let mut rows = vec![st("s00", true, 2)];
-        for i in 1..50 {
-            rows.push(st(&format!("s{i:02}"), true, 1));
-        }
-        assert_eq!(live_stress_tick(&mut live, &rows), None);
-        assert!(!live.passed, "49 loading Clients are not 50 up");
-        assert_eq!(live.last_announced, 1);
-        for r in rows.iter_mut() {
-            r.scene_state = 2;
-        }
-        assert_eq!(live_stress_tick(&mut live, &rows), None);
-        assert!(live.passed, "50 scene-2 Clients pass");
-        assert_eq!(live.last_announced, 50);
-    }
-
-    #[test]
-    fn random_status_text_names_kind_hold_and_off() {
-        let r = host::RandomStatus {
-            kind: Some(api::RandomKind::Dialog),
-            name: Some("mysterious old man".into()),
-            toggle: true,
-            hold: true,
-            ..Default::default()
-        };
-        assert_eq!(
-            random_status_text(&r).as_deref(),
-            Some("dialog: mysterious old man (hold)")
-        );
-        let r = host::RandomStatus {
-            kind: Some(api::RandomKind::Dialog),
-            name: Some("mysterious old man".into()),
-            toggle: false,
-            ..Default::default()
-        };
-        assert_eq!(
-            random_status_text(&r).as_deref(),
-            Some("dialog: mysterious old man (off)")
-        );
-        let r = host::RandomStatus {
-            kind: Some(api::RandomKind::Lamp),
-            name: Some("genie".into()),
-            toggle: true,
-            ..Default::default()
-        };
-        assert_eq!(random_status_text(&r).as_deref(), Some("lamp: genie"));
-        let r = host::RandomStatus::default();
-        assert_eq!(random_status_text(&r), None, "no event, no row");
-    }
-
-    #[test]
-    fn random_status_text_kebab_cases_lost_kinds() {
-        let r = host::RandomStatus {
-            kind: Some(api::RandomKind::LostTool),
-            toggle: true,
-            ..Default::default()
-        };
-        assert_eq!(random_status_text(&r).as_deref(), Some("lost-tool: ?"));
-        let r = host::RandomStatus {
-            kind: Some(api::RandomKind::LostGear),
-            toggle: true,
-            ..Default::default()
-        };
-        assert_eq!(random_status_text(&r).as_deref(), Some("lost-gear: ?"));
-    }
-
-    #[test]
-    fn config_section_scopes_accent_to_header_not_body() {
-        const SRC: &str = include_str!("app.rs");
-        let fn_src = SRC.split("fn config_section").nth(1).unwrap_or("");
-        let fn_src = fn_src
-            .split("fn global_capture_section")
-            .next()
-            .unwrap_or("");
-        assert!(
-            fn_src.contains("FrameBorderSize(1.0)"),
-            "header orange border needs a visible frame border"
-        );
-        let after_header = fn_src.split("ui.collapsing_header").nth(1).unwrap_or("");
-        assert!(
-            !after_header.contains("push_style_color(StyleColor::Text, ACCENT)"),
-            "accent text must not wrap the open section body"
-        );
-        assert!(
-            fn_src.contains("body(ui, session)"),
-            "section body runs outside header style scope"
-        );
-    }
-
-    #[test]
-    fn panel_heading_toggle_hides_status_section() {
-        use crate::ui_state::{panel_section_visible, set_panel_section_visible, PanelUiState};
-        let mut ui = PanelUiState::default();
-        assert!(panel_section_visible(&ui, "status"));
-        set_panel_section_visible(&mut ui, "status", false);
-        assert!(!panel_section_visible(&ui, "status"));
-    }
-
-    #[test]
-    fn parameters_and_script_prefs_share_show_parameters_rail() {
-        use crate::ui_state::{panel_section_visible, set_panel_section_visible, PanelUiState};
-        let mut ui = PanelUiState::default();
-        assert!(!ui.show_parameters_rail);
-        set_panel_section_visible(&mut ui, "parameters", true);
-        assert!(ui.show_parameters_rail);
-        assert!(panel_section_visible(&ui, "parameters"));
-        ui.show_parameters_rail = false;
-        assert!(!panel_section_visible(&ui, "parameters"));
-    }
-
-    #[test]
-    fn global_config_slot_name_then_capture_then_focused_50_then_panel() {
-        const SRC: &str = include_str!("app.rs");
-        let g = SRC.split("fn global_config_section").nth(1).unwrap_or("");
-        let g = g.split("\nfn ").next().unwrap_or("");
-        let slot = g.find("\"Slot:\"").expect("Slot: label above capture");
-        let capture = g
-            .find("global_capture_section")
-            .expect("capture stays in Global");
-        let focused_50 = g
-            .find("focused 50 fps")
-            .expect("focused 50 fps lives in Global");
-        let panel = g
-            .find("panel_heading_toggles")
-            .expect("Panel heading toggles stay in Global");
-        assert!(
-            slot < capture,
-            "Slot: sits below the heading, above capture"
-        );
-        assert!(
-            focused_50 < panel,
-            "focused 50 fps sits above the Panel subsection"
-        );
-        assert!(
-            !g.contains("auto-login"),
-            "auto-login belongs on the profile editor, not Global"
-        );
-    }
-
-    #[test]
-    fn settings_window_drops_slot_and_random_rows() {
-        const SRC: &str = include_str!("app.rs");
-        let settings = SRC.split("fn settings_window").nth(1).unwrap_or("");
-        let settings = settings.split("\nfn ").next().unwrap_or("");
-        assert!(
-            settings.contains("config_section(ui, session, \"Global\""),
-            "Global row stays"
-        );
-        assert!(
-            settings.contains("config_section(ui, session, \"render\""),
-            "render (raster/mem) stays in General config"
-        );
-        assert!(
-            !settings.contains("config_section(ui, session, \"slot\""),
-            "slot row is gone; the focused name is a Global label"
-        );
-        assert!(
-            !settings.contains("config_section(ui, session, \"random\""),
-            "random/lamp belong on the profile editor"
-        );
-        assert!(
-            !settings.contains("slot_capture_section"),
-            "auto-login is not a General config control"
-        );
-        assert!(
-            !settings.contains("slot_random_section"),
-            "guardian toggles are not a General config control"
-        );
-    }
-
-    #[test]
-    fn slot_render_section_no_longer_owns_focused_50() {
-        const SRC: &str = include_str!("app.rs");
-        let r = SRC.split("fn slot_render_section").nth(1).unwrap_or("");
-        let r = r.split("\nfn ").next().unwrap_or("");
-        assert!(
-            !r.contains("focused 50 fps"),
-            "focused 50 fps moved to Global, above Panel"
-        );
-        assert!(
-            r.contains("raster_picker"),
-            "Game-pane raster/mem stay under render"
-        );
-    }
-
-    #[test]
-    fn chooser_edit_hosts_per_profile_login_and_random() {
-        const SRC: &str = include_str!("app.rs");
-        let chooser = SRC.split("fn chooser_window").nth(1).unwrap_or("");
-        let chooser = chooser.split("fn settings_window").next().unwrap_or("");
-        assert!(
-            chooser.contains("slot_capture_section"),
-            "auto-login moved onto the profile editor"
-        );
-        assert!(
-            chooser.contains("slot_random_section"),
-            "random/lamp moved onto the profile editor"
-        );
-        const SRC_COPY: &str = include_str!("app.rs");
-        let random = SRC_COPY
-            .split("fn slot_random_section")
-            .nth(1)
-            .unwrap_or("");
-        assert!(
-            random.contains("this profile"),
-            "copy names the edited profile, not a global slot"
-        );
-        assert!(
-            !random.contains("focus a profile to edit"),
-            "edit form is already on this profile"
-        );
-        let save = chooser
-            .find("button_with_size(\"Save\"")
-            .expect("Save stays on the editor");
-        let auto = chooser
-            .find("slot_capture_section")
-            .expect("auto-login in editor");
-        assert!(auto < save, "per-profile settings sit above Save/Cancel");
-    }
-
-    #[test]
-    fn chooser_locked_vault_shows_unlock_not_empty_copy() {
-        const SRC: &str = include_str!("app.rs");
-        let chooser = SRC.split("fn chooser_window").nth(1).unwrap_or("");
-        let chooser = chooser.split("fn settings_window").next().unwrap_or("");
-        let locked = chooser
-            .find("vault.is_none()")
-            .expect("Profiles must branch on a locked vault");
-        let unlock = chooser
-            .find("vault_unlock_prompt")
-            .expect("locked Profiles reuses the panel unlock UI");
-        let empty = chooser
-            .find("vault is empty")
-            .expect("empty copy stays for a truly empty unlocked vault");
-        assert!(
-            locked < unlock && unlock < empty,
-            "unlock UI while locked; empty copy only after the vault is open"
-        );
-        let profile = SRC.split("fn profile_section").nth(1).unwrap_or("");
-        let profile = profile.split("\nfn ").next().unwrap_or("");
-        assert!(
-            profile.contains("vault_unlock_prompt"),
-            "panel profile heading and Profiles share one unlock prompt"
-        );
-        assert!(
-            !profile.contains("##vault-pass"),
-            "pass field lives in the shared prompt, not forked in profile_section"
-        );
-    }
-
-    #[test]
-    fn panel_subsection_exposes_chrome_color_pickers() {
-        const SRC: &str = include_str!("app.rs");
-        let panel = SRC.split("fn panel_heading_toggles").nth(1).unwrap_or("");
-        let panel = panel.split("\nfn ").next().unwrap_or("");
-        assert!(
-            panel.contains("chrome_color_field") || panel.contains("nav_color_field"),
-            "Panel chrome colours use the same hex picker pattern as Nav"
-        );
-        assert!(
-            panel.contains("accent") || panel.contains("ACCENT"),
-            "named theme consts are exposed as pickers"
-        );
-    }
-
-    /// File-loaded cards have empty description/tags. A trailing
-    /// SetCursorScreenPos after the badge used to EndChild past CursorMaxPos
-    /// and abort ErrorCheckUsingSetCursorPosToExtendParentBoundaries
-    /// (panel-play SIGABRT on Browse, window `##scard-File-trade_bot`).
-    #[test]
-    fn browse_file_card_without_desc_does_not_assert_on_endchild() {
-        let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
-        let iso = script::IsolatedEnv::enter("browse-scard-assert");
-        let path = iso.dir.join("trade_bot.js");
-        std::fs::write(
-            &path,
-            "export default class TradeBot extends LoopingBot { loop() {} }\n",
-        )
-        .unwrap();
-        let mut s = crate::session::Session::new();
-        s.js = script::JsLibrary::with_cache(
-            iso.dir.join("js-scripts.json"),
-            iso.dir.join("js-cache"),
-        );
-        s.load_js(&path);
-        assert_eq!(s.error, None, "load: {:?}", s.error);
-        assert_eq!(
-            s.js.cards()[0].description,
-            "",
-            "File cards have no registry description — this is the abort path"
-        );
-        s.script_browse_open = true;
-        let mut ctx = dear_imgui_rs::Context::create();
-        // AUTO_RESIZE_Y measures on frame 1 and applies on frame 2.
-        for _ in 0..3 {
-            ctx.prepare_frame(
-                dear_imgui_rs::FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0)
-                    .renderer_has_textures(),
-            );
-            {
-                let ui = ctx.frame();
-                super::browse_window(ui, &mut s);
-            }
-            ctx.render();
-        }
-    }
-}
+#[path = "app_tests.rs"]
+mod tests;

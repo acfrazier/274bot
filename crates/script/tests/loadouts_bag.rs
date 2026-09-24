@@ -1,6 +1,9 @@
 // Task 6: settings.str('loadout') reads the posted operator bag.
 
+use script::isolate_fb::ItemRowInput;
 use script::{LoadIsolate, LoadShape, SettingDef};
+
+mod common;
 
 const LOADOUT_PROBE: &str = r#"
 export default class T extends LoopingBot {
@@ -107,6 +110,47 @@ export default class T extends LoopingBot {
     iso.join();
 }
 
+// Echo #14: the isolate keeps the posted loadouts in Rust. `selectedLoadout`
+// passes only the setting name; a re-post replaces the rows it selects from.
+#[test]
+fn selected_loadout_reads_the_latest_posted_rows() {
+    use script::Loadout;
+
+    let src = r#"
+import { selectedLoadout } from '../../api/loadout/loadoutSetting.js';
+export default class T extends LoopingBot {
+    loop() {
+        const picked = selectedLoadout(this.settings);
+        (globalThis.__picked ||= []).push(picked ? picked.name : null);
+        globalThis.__worn = picked ? picked.worn : null;
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![])
+        .expect("spawn loadout selection");
+    iso.on_game_tick(1);
+    iso.post_loadouts(&[
+        Loadout::new("Melee").with_slot("righthand", "Rune scimitar"),
+        Loadout::new("Range").with_slot("righthand", "Oak shortbow"),
+    ]);
+    let mut bag = serde_json::Map::new();
+    bag.insert("loadout".into(), serde_json::json!(" range "));
+    iso.post_settings_bag(&bag);
+    iso.on_game_tick(2);
+    assert_eq!(
+        iso.probe("__worn").unwrap(),
+        serde_json::json!({ "righthand": "Oak shortbow" })
+    );
+    iso.post_loadouts(&[Loadout::new("Mage")]);
+    iso.on_game_tick(3);
+    assert_eq!(
+        iso.probe("__picked").unwrap(),
+        serde_json::json!([null, "Range", "Mage"]),
+        "nothing posted, then the named row, then the re-post's first row"
+    );
+    iso.join();
+}
+
 #[test]
 fn isolate_provision_composes_fresh_bank_withdraw_and_wear() {
     use script::Loadout;
@@ -179,11 +223,29 @@ export default class T extends LoopingBot {
         .with_slot("righthand", "Rune scimitar")
         .with_carry("Lobster", 10)]);
     ready.post_settings_bag(&bag);
-    ready
-        .probe(
-            "globalThis.__rs2b0t_host.snapshot = {bank_open:true,bank_loaded:true,bank_generation:4,inv:[{name:'Rune scimitar',count:1,ops:[]}],equipment:[],bank:[{name:'Lobster',count:40,id:379,ops:['Withdraw 10','Withdraw X']}],inv_size:28}; true",
-        )
-        .unwrap();
+    // Rust reads the bank rows from the posted scene: post them, not a JS
+    // snapshot object.
+    let held_ops: [String; 0] = [];
+    let bank_ops = ["Withdraw 10".to_string(), "Withdraw X".to_string()];
+    let row = |name, count, id, ops| ItemRowInput {
+        name: Some(name),
+        count,
+        id,
+        ops,
+        noted: false,
+        cert: -1,
+        component_id: 0,
+        slot: -1,
+    };
+    let inv = [row("Rune scimitar", 1, 1333, &held_ops[..])];
+    let bank_rows = [row("Lobster", 40, 379, &bank_ops[..])];
+    let mut snap = common::ingame_snapshot();
+    snap.bank_open = true;
+    snap.bank_loaded = true;
+    snap.bank_generation = 4;
+    snap.inv = &inv;
+    snap.bank = &bank_rows;
+    common::post_snapshot_input(&ready, &snap);
     ready.on_game_tick(1);
     assert_eq!(ready.probe("__queued").unwrap(), true);
     let reqs = ready.drain_interacts();

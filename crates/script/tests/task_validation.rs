@@ -181,6 +181,8 @@ export default class T extends TaskBot {
     let mut slot = script::SlotScript::new();
     slot.start_load(source.to_string(), LoadShape::CompatClass, vec![])
         .expect("start TaskBot slot");
+    // Start returns before V8 setup; ticks dispatch once the slot is Running.
+    wait_slot_state(&mut slot, script::RunState::Running);
     let mut driver = NullDriver { out: NullOut };
 
     slot.on_game_tick(&mut script::ctx::ScriptCtx {
@@ -192,15 +194,27 @@ export default class T extends TaskBot {
         inv: None,
         snapshot: None,
         obj_names: None,
+        compiled: script::CompiledTick::default(),
     });
     assert_eq!(slot.probe("__validationStarted").unwrap(), true);
     slot.stop();
 
-    assert_eq!(slot.state(), script::RunState::Idle);
+    // Stop returns before the reap; the reap ends Idle.
+    wait_slot_state(&mut slot, script::RunState::Idle);
     assert!(
         slot.drain_interacts().is_empty(),
         "Stop destroys the pending isolate instead of forwarding late gameplay"
     );
+}
+
+/// Pump the slot's lifecycle observe until it reaches `want` (bounded).
+fn wait_slot_state(slot: &mut script::SlotScript, want: script::RunState) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while slot.state() != want && std::time::Instant::now() < deadline {
+        slot.observe_lifecycle();
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    assert_eq!(slot.state(), want, "last_error={:?}", slot.last_error());
 }
 
 struct NullDriver {

@@ -1,59 +1,56 @@
-// notedOf / unnotedOf are built from posted inv+bank cert links (no ITEM_DB).
+// Frozen `api/market/catalog.ts` names over the selected-revision item facts
+// Rust derives from `SelectedGameData::items` (`load/selected_facts_v8.rs`,
+// `market_catalog.rs`). A `cat` argument is the one catalog Rust answers for.
 import { notImpl } from '../../shim/_kernel.js';
 
-const EMPTY = {
-    byId: new Map(),
-    notedOf: new Map(),
-    unnotedOf: new Map(),
-    items: [],
-    aliases: new Map(),
-};
+const facts = (...args) => globalThis.__rs2b0t_selected_facts(...args);
 
-const host = () => globalThis.__rs2b0t_host || {};
-const snap = () => host().snapshot || {};
-
-function certMapsFromSnapshot() {
-    const notedOf = new Map();
-    const unnotedOf = new Map();
-    for (const rows of [snap().inv || [], snap().bank || [], snap().bank_side || []]) {
-        for (const row of rows) {
-            if (!row || typeof row.id !== 'number') continue;
-            const cert = row.cert ?? -1;
-            if (cert >= 0) {
-                if (row.noted === true) {
-                    notedOf.set(cert, row.id);
-                    unnotedOf.set(row.id, cert);
-                } else {
-                    notedOf.set(row.id, cert);
-                    unnotedOf.set(cert, row.id);
-                }
-            }
-        }
-    }
-    return { notedOf, unnotedOf };
+function selected(name, value) {
+    if (value === undefined) throw notImpl(name, 'no selected game data');
+    return value;
 }
+
+let cachedCatalog = null;
 
 export function liveCatalog() {
-    const { notedOf, unnotedOf } = certMapsFromSnapshot();
-    return { ...EMPTY, notedOf, unnotedOf };
+    if (cachedCatalog) return cachedCatalog;
+    const maps = facts('cert-maps');
+    // byId / items / aliases are one Rust build on first read, so a card that
+    // only reads the cert maps never materializes the record rows.
+    let objs = null;
+    const objCatalog = () => (objs ??= facts('obj-catalog'));
+    cachedCatalog = {
+        notedOf: new Map(maps.notedOf),
+        unnotedOf: new Map(maps.unnotedOf),
+        get byId() {
+            return objCatalog().byId;
+        },
+        get items() {
+            return objCatalog().items;
+        },
+        get aliases() {
+            return objCatalog().aliases;
+        },
+    };
+    return cachedCatalog;
 }
 
-export function clientName(_id) {
-    throw notImpl('clientName');
+export function tradeable(id) {
+    return selected('tradeable', facts('item-tradeable', id));
 }
 
-export function displayName(_id) {
-    throw notImpl('displayName');
+export function clientName(_cat, id) {
+    return selected('clientName', facts('item-name', id, 'client')) ?? undefined;
 }
 
-export function notedId(id) {
-    const n = liveCatalog().notedOf.get(id);
-    if (n === undefined) throw notImpl('notedId');
-    return n;
+export function displayName(_cat, id) {
+    return selected('displayName', facts('item-name', id, 'display'));
 }
 
-export function unnotedId(id) {
-    const n = liveCatalog().unnotedOf.get(id);
-    if (n === undefined) throw notImpl('unnotedId');
-    return n;
+export function notedId(_cat, id) {
+    return selected('notedId', facts('cert-link', id, 'noted'));
+}
+
+export function unnotedId(_cat, id) {
+    return selected('unnotedId', facts('cert-link', id, 'unnoted')) ?? id;
 }

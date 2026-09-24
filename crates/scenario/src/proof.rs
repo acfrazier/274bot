@@ -21,6 +21,12 @@ pub enum Proof {
     ItemId { id: i32, count: i32 },
     /// Inventory contains at most `count` of exact object `id`.
     ItemIdAtMost { id: i32, count: i32 },
+    /// Seeded clue `seeded` has left the pack, and a different clue scroll
+    /// or a casket is held. Name-resolved so a random next-step scroll still
+    /// counts; the seed id cannot satisfy this while it remains. Fail-closed
+    /// without obj names and unless `ingame && scene_state == 2`.
+    ClueReplaced { seeded: i32 },
+
     /// An exact object `id` is present in a worn-equipment slot.
     EquipmentId { id: i32 },
     /// A fresh, open bank contains at least `count` of the named item.
@@ -67,6 +73,9 @@ pub enum Proof {
     /// Chat modal is closed (`modals.chat == -1`) — DrainDialogs after
     /// `advancestat` waits here once the level-up IF is gone.
     ChatClosed,
+    /// A native continuation is active: the published continue id, chat
+    /// modal root, or an open-root `BUTTON_CONTINUE` is present.
+    ActiveContinue,
     /// No active chat continue: the published continue id is absent, the
     /// chat modal root is closed, and no open-root widget still publishes
     /// `BUTTON_CONTINUE`. Stronger than [`Proof::ChatClosed`] alone when a
@@ -135,6 +144,20 @@ pub enum Proof {
         action: &'static str,
         present: bool,
     },
+    /// Player is offline (`!ingame`) after a clean IF_BUTTON logout — the
+    /// prepare-fixture save receipt arm. Fail-closed while still ingame.
+    LoggedOut,
+    /// The client is in game with the playable scene fully built.
+    IngameScene2,
+    /// Headed render diagnostic: ingame scene 2, no modals, on tile, fixed
+    /// orbit yaw/pitch (capture gate — not a visual correctness claim).
+    RenderViewReady {
+        x: i32,
+        z: i32,
+        level: i32,
+        orbit_yaw: i32,
+        orbit_pitch: i32,
+    },
 }
 
 impl Proof {
@@ -145,6 +168,8 @@ impl Proof {
             Proof::ItemAtMost { name, count } => format!("has_item({name})<={count}"),
             Proof::ItemId { id, count } => format!("has_item_id({id})>={count}"),
             Proof::ItemIdAtMost { id, count } => format!("has_item_id({id})<={count}"),
+            Proof::ClueReplaced { seeded } => format!("clue_replaced({seeded})"),
+
             Proof::EquipmentId { id } => format!("has_equipment_id({id})"),
             Proof::BankItem { name, count } => format!("fresh_bank_item({name})>={count}"),
             Proof::BankItemAtMost { name, count } => format!("fresh_bank_item({name})<={count}"),
@@ -172,6 +197,7 @@ impl Proof {
             Proof::QuestDone { name } => format!("quest_done({name})"),
             Proof::TutorialClosed => "tutorial_closed".to_string(),
             Proof::ChatClosed => "chat_closed".to_string(),
+            Proof::ActiveContinue => "active_continue".to_string(),
             Proof::NoActiveContinue => "no_active_continue".to_string(),
             Proof::SideTabAvailable { index } => format!("side_tab({index})_available"),
             Proof::Varp { id, min } => format!("varp({id})>={min}"),
@@ -214,6 +240,15 @@ impl Proof {
                 let rel = if *present { "has" } else { "lacks" };
                 format!("loc_id({id})@({x},{z},{level},r{radius})_{rel}_{action}")
             }
+            Proof::LoggedOut => "logged_out".to_string(),
+            Proof::IngameScene2 => "ingame_scene_2".to_string(),
+            Proof::RenderViewReady {
+                x,
+                z,
+                level,
+                orbit_yaw,
+                orbit_pitch,
+            } => format!("render_view_ready({x},{z},{level},yaw={orbit_yaw},pitch={orbit_pitch})"),
         }
     }
 
@@ -277,6 +312,22 @@ impl Proof {
             }
             Proof::ItemId { id, count } => inv_id_count(snap, *id) >= *count,
             Proof::ItemIdAtMost { id, count } => inv_id_count(snap, *id) <= *count,
+            Proof::ClueReplaced { seeded } => {
+                if !snap.ingame() || snap.scene_state() != 2 {
+                    return false;
+                }
+                let Some(names) = names else {
+                    return false;
+                };
+                if inv_id_count(snap, *seeded) > 0 {
+                    return false;
+                }
+                snap.inv().iter().any(|(id, count)| {
+                    *count > 0
+                        && *id != *seeded
+                        && matches!(names.name(*id), Some("Clue scroll") | Some("Casket"))
+                })
+            }
             Proof::EquipmentId { id } => snap.equipment().iter().any(|item| item.def.id == *id),
             Proof::BankItem { name, count } | Proof::BankItemAtMost { name, count } => {
                 if !snap.ingame()
@@ -383,16 +434,8 @@ impl Proof {
             }
             Proof::TutorialClosed => snap.modals().tutorial == -1,
             Proof::ChatClosed => snap.modals().chat == -1,
-            Proof::NoActiveContinue => {
-                // BUTTON_CONTINUE == 6 (client::config::if_type::ButtonType).
-                const BUTTON_CONTINUE: i32 = 6;
-                snap.chat_continue_component_id() == -1
-                    && snap.modals().chat == -1
-                    && !snap
-                        .widgets()
-                        .iter()
-                        .any(|w| w.button_type == BUTTON_CONTINUE)
-            }
+            Proof::ActiveContinue => active_continue(snap),
+            Proof::NoActiveContinue => !active_continue(snap),
             Proof::SideTabAvailable { index } => snap
                 .side_tabs()
                 .iter()
@@ -496,8 +539,52 @@ impl Proof {
                     .is_some_and(|loc| loc_action_matches(loc, action));
                 has == *present
             }
+            Proof::LoggedOut => !snap.ingame(),
+            Proof::IngameScene2 => snap.ingame() && snap.scene_state() == 2,
+            Proof::RenderViewReady {
+                x,
+                z,
+                level,
+                orbit_yaw,
+                orbit_pitch,
+            } => render_view_ready(snap, *x, *z, *level, *orbit_yaw, *orbit_pitch),
         }
     }
+}
+
+fn render_view_ready(
+    snap: &GameSnapshot,
+    x: i32,
+    z: i32,
+    level: i32,
+    orbit_yaw: i32,
+    orbit_pitch: i32,
+) -> bool {
+    if !snap.ingame() || snap.scene_state() != 2 {
+        return false;
+    }
+    let m = snap.modals();
+    if m.main != -1 || m.side != -1 || m.chat != -1 || m.tutorial != -1 {
+        return false;
+    }
+    if snap.chat_continue_component_id() != -1 {
+        return false;
+    }
+    let cam = snap.camera();
+    if (cam.orbit_yaw & 0x7ff) != (orbit_yaw & 0x7ff) || cam.orbit_pitch != orbit_pitch {
+        return false;
+    }
+    snap.tile().is_some_and(|(tx, tz, tl)| {
+        arrived(
+            Tile {
+                x: tx,
+                z: tz,
+                level: tl,
+            },
+            Tile { x, z, level },
+            true,
+        )
+    })
 }
 
 fn inv_id_count(snap: &GameSnapshot, id: i32) -> i32 {
@@ -510,6 +597,19 @@ fn inv_id_count(snap: &GameSnapshot, id: i32) -> i32 {
 
 fn fresh_bank(snap: &GameSnapshot) -> bool {
     snap.ingame() && snap.scene_state() == 2 && snap.bank_component_id() >= 0 && snap.bank_loaded()
+}
+
+/// The single native continuation predicate used by both positive and
+/// settled proofs, so they cannot drift into inconsistent inverses.
+fn active_continue(snap: &GameSnapshot) -> bool {
+    // BUTTON_CONTINUE == 6 (client::config::if_type::ButtonType).
+    const BUTTON_CONTINUE: i32 = 6;
+    snap.chat_continue_component_id() != -1
+        || snap.modals().chat != -1
+        || snap
+            .widgets()
+            .iter()
+            .any(|w| w.button_type == BUTTON_CONTINUE)
 }
 
 /// XP for skill `id` from the snapshot stat table (`None` when absent).
@@ -721,6 +821,94 @@ mod tests {
     }
 
     #[test]
+    fn clue_replaced_requires_scene2_seed_gone_and_a_fresh_trail_item() {
+        let mut c = seeded();
+        if let Some(id) = c.iface_id(|f| f.r#type == ComponentType::TYPE_INV) {
+            let inv = c.iface_mut(id).unwrap();
+            inv.link_obj_type = Some(vec![2682, 953]);
+            inv.link_obj_number = Some(vec![1, 1]);
+        }
+        let s = snap(&mut c);
+        let names = ObjNames::from_objs(&[
+            ObjType {
+                id: 2681,
+                name: "Clue scroll".into(),
+                ..Default::default()
+            },
+            ObjType {
+                id: 2677,
+                name: "Clue scroll".into(),
+                ..Default::default()
+            },
+            ObjType {
+                id: 2824,
+                name: "Casket".into(),
+                ..Default::default()
+            },
+            ObjType {
+                id: 952,
+                name: "Spade".into(),
+                ..Default::default()
+            },
+        ]);
+        let proof = Proof::ClueReplaced { seeded: 2681 };
+        assert_eq!(proof.name(), "clue_replaced(2681)");
+        assert!(
+            !proof.check(&s, Some(&names)),
+            "the seeded scroll still in the pack is not a replacement"
+        );
+
+        if let Some(id) = c.iface_id(|f| f.r#type == ComponentType::TYPE_INV) {
+            let inv = c.iface_mut(id).unwrap();
+            inv.link_obj_type = Some(vec![2678, 953]);
+            inv.link_obj_number = Some(vec![1, 1]);
+        }
+        let s = snap(&mut c);
+        assert!(
+            proof.check(&s, Some(&names)),
+            "a different clue scroll after the seed left is script-caused progress"
+        );
+        assert!(
+            !proof.check(&s, None),
+            "without obj names a Clue scroll cannot be distinguished from tools"
+        );
+
+        if let Some(id) = c.iface_id(|f| f.r#type == ComponentType::TYPE_INV) {
+            let inv = c.iface_mut(id).unwrap();
+            inv.link_obj_type = Some(vec![2825, 953]);
+            inv.link_obj_number = Some(vec![1, 1]);
+        }
+        let s = snap(&mut c);
+        assert!(
+            proof.check(&s, Some(&names)),
+            "a casket after the seed left is also progress"
+        );
+
+        if let Some(id) = c.iface_id(|f| f.r#type == ComponentType::TYPE_INV) {
+            let inv = c.iface_mut(id).unwrap();
+            inv.link_obj_type = Some(vec![953]);
+            inv.link_obj_number = Some(vec![1]);
+        }
+        let s = snap(&mut c);
+        assert!(
+            !proof.check(&s, Some(&names)),
+            "tools left behind after the seed vanished are not a replacement"
+        );
+
+        c.scene_state = 1;
+        if let Some(id) = c.iface_id(|f| f.r#type == ComponentType::TYPE_INV) {
+            let inv = c.iface_mut(id).unwrap();
+            inv.link_obj_type = Some(vec![2678]);
+            inv.link_obj_number = Some(vec![1]);
+        }
+        let s = snap(&mut c);
+        assert!(
+            !proof.check(&s, Some(&names)),
+            "replacement is only observed after Sherlock is ingame scene 2"
+        );
+    }
+
+    #[test]
     fn item_id_predicates_distinguish_same_name_items() {
         let mut c = seeded();
         if let Some(id) = c.iface_id(|f| f.r#type == ComponentType::TYPE_INV) {
@@ -773,6 +961,104 @@ mod tests {
         assert_eq!(
             Proof::BankItemIdAtMost { id: 849, count: 0 }.name(),
             "fresh_bank_item_id(849)<=0"
+        );
+    }
+
+    #[test]
+    fn render_view_ready_requires_scene_tile_modals_and_orbit() {
+        let mut c = seeded();
+        c.scene_state = 2;
+        c.orbit_camera_yaw = 512;
+        c.orbit_camera_pitch = 256;
+        let s = snap(&mut c);
+        assert!(
+            !Proof::RenderViewReady {
+                x: 3012,
+                z: 3258,
+                level: 0,
+                orbit_yaw: 512,
+                orbit_pitch: 256,
+            }
+            .check(&s, None),
+            "seed tile is not Betty"
+        );
+        c.map_build_base_x = 3008;
+        c.map_build_base_z = 3200;
+        c.local_player = Some(ClientPlayer::at(4, 58));
+        c.orbit_camera_yaw = 512;
+        c.orbit_camera_pitch = 256;
+        c.main_modal_id = -1;
+        c.side_modal_id = -1;
+        c.chat_modal_id = -1;
+        c.tut_com_id = -1;
+        let s = snap(&mut c);
+        assert!(Proof::RenderViewReady {
+            x: 3012,
+            z: 3258,
+            level: 0,
+            orbit_yaw: 512,
+            orbit_pitch: 256,
+        }
+        .check(&s, None));
+        let ready = Proof::RenderViewReady {
+            x: 3012,
+            z: 3258,
+            level: 0,
+            orbit_yaw: 512,
+            orbit_pitch: 256,
+        };
+        c.orbit_camera_yaw = 0;
+        assert!(
+            !ready.check(&snap(&mut c), None),
+            "wrong yaw must refuse capture"
+        );
+        c.orbit_camera_yaw = 512;
+        c.orbit_camera_pitch = 128;
+        assert!(
+            !ready.check(&snap(&mut c), None),
+            "wrong pitch must refuse capture"
+        );
+        c.orbit_camera_pitch = 256;
+        c.scene_state = 1;
+        assert!(
+            !ready.check(&snap(&mut c), None),
+            "rebuilding scene must refuse capture"
+        );
+        c.scene_state = 2;
+        assert!(
+            ready.check(&snap(&mut c), None),
+            "restored view must be ready"
+        );
+        c.main_modal_id = 1;
+        let s = snap(&mut c);
+        assert!(!Proof::RenderViewReady {
+            x: 3012,
+            z: 3258,
+            level: 0,
+            orbit_yaw: 512,
+            orbit_pitch: 256,
+        }
+        .check(&s, None));
+    }
+
+    #[test]
+    fn ingame_scene_2_requires_both_session_and_ready_scene() {
+        let mut c = seeded();
+        assert!(Proof::IngameScene2.check(&snap(&mut c), None));
+        assert_eq!(Proof::IngameScene2.name(), "ingame_scene_2");
+
+        c.scene_state = 1;
+        c.bump_gens(ServerProt::REBUILD_NORMAL);
+        assert!(
+            !Proof::IngameScene2.check(&snap(&mut c), None),
+            "an in-game rebuild is not final-capture ready"
+        );
+        c.scene_state = 2;
+        c.ingame = false;
+        c.bump_gens(ServerProt::REBUILD_NORMAL);
+        assert!(
+            !Proof::IngameScene2.check(&snap(&mut c), None),
+            "scene state alone must not pass on the title screen"
         );
     }
 
@@ -890,6 +1176,10 @@ mod tests {
             !Proof::NoActiveContinue.check(&s, None),
             "open level-up continue must not pass drain"
         );
+        assert!(
+            Proof::ActiveContinue.check(&s, None),
+            "the positive predicate must observe the same native continue"
+        );
         assert_ne!(
             s.chat_continue_component_id(),
             -1,
@@ -903,6 +1193,11 @@ mod tests {
             Proof::NoActiveContinue.check(&s, None),
             "settled chat with no continue widgets passes"
         );
+        assert!(
+            !Proof::ActiveContinue.check(&s, None),
+            "active and settled predicates must be exact inverses"
+        );
+        assert_eq!(Proof::ActiveContinue.name(), "active_continue");
     }
 
     #[test]

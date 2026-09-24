@@ -174,9 +174,13 @@ impl GameView {
         let texture = handle.view.texture();
         if matches!(&self.bound, Bound::Client(held) if held == texture) {
             self.present_stats.bind_noop += 1;
+            #[cfg(feature = "render-diagnostics")]
+            client::render::diagnostics::note_gpu_texture_held();
             return;
         }
         self.present_stats.bind_rereg += 1;
+        #[cfg(feature = "render-diagnostics")]
+        client::render::diagnostics::note_gpu_texture_changed();
         gpu.unregister_texture(self.tex_id);
         self.tex_id = gpu.register_texture(texture, &handle.view);
         self.bound = Bound::Client(texture.clone());
@@ -238,7 +242,15 @@ impl GameView {
         }
         let n = (APPLET_W * APPLET_H) as usize;
         let rgba = self.rgba.get_or_insert_with(|| vec![0u8; n * 4]);
-        expand_rgba(&pixels[..n.min(pixels.len())], rgba);
+        let packed = &pixels[..n.min(pixels.len())];
+        expand_rgba(packed, rgba);
+        #[cfg(feature = "render-diagnostics")]
+        client::render::diagnostics::complete_cpu_upload(
+            packed,
+            rgba,
+            APPLET_W as i32,
+            APPLET_H as i32,
+        );
         let texture = &self
             .cpu_owner
             .as_ref()
@@ -340,6 +352,16 @@ mod tests {
         let mut dst = [0u8; 8];
         expand_rgba(&[0x00aa_bbcc, 0x0011_2233], &mut dst);
         assert_eq!(dst, [0xaa, 0xbb, 0xcc, 255, 0x11, 0x22, 0x33, 255]);
+    }
+
+    #[cfg(feature = "render-diagnostics")]
+    #[test]
+    fn expand_rgba_cave_buckets_match_packed_hist() {
+        let src = [0u32, 0x0009_0707, 0x0002_0202, 0x0074_592a];
+        let mut dst = [0u8; 16];
+        expand_rgba(&src, &mut dst);
+        let h = client::render::diagnostics::rgba_roi_hist(&dst, 4, 1, 0, 0, 3, 0);
+        assert_eq!((h.n, h.zero, h.palette2, h.rgb2, h.other), (4, 1, 1, 1, 1));
     }
 
     #[test]

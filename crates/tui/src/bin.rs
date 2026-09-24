@@ -16,7 +16,7 @@
 //! (like the panel) and PASS/FAIL comes from the scenario runner, not a
 //! screenshot.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::env;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -215,6 +215,40 @@ fn publish_frontend_slot(
     publication.session_boundary
 }
 
+/// Claim the one mainland seed for a slot's cold login. Reconnects retain
+/// scenario-owned position, while an ordinary interactive boot stays opt-in.
+fn take_mainland_seed(
+    sent: &Mutex<HashSet<String>>,
+    name: &str,
+    enabled: bool,
+    last_login_reconnect: Option<bool>,
+) -> bool {
+    enabled && last_login_reconnect != Some(true) && sent.lock().unwrap().insert(name.to_string())
+}
+
+fn mainland_seed_options(options: &PlayOptions) -> (bool, PlayOptions) {
+    let enabled = options.mainland;
+    let mut host_options = options.clone();
+    host_options.mainland = false;
+    (enabled, host_options)
+}
+
+fn seed_mainland_on_ready<D: api::interact::Driver>(
+    driver: &mut D,
+    sent: &Mutex<HashSet<String>>,
+    name: &str,
+    enabled: bool,
+    ready: bool,
+    last_login_reconnect: Option<bool>,
+) -> bool {
+    if ready && take_mainland_seed(sent, name, enabled, last_login_reconnect) {
+        api::interact::mainland_hop(driver);
+        true
+    } else {
+        false
+    }
+}
+
 /// Panel-parity walk-arm tick: BankBudget session first, then route follow.
 fn step_walk_arm_follow<D: api::interact::Driver>(
     driver: &mut D,
@@ -275,6 +309,68 @@ struct PendingCatalogStart {
     shape: script::LoadShape,
     bag: Option<serde_json::Map<String, serde_json::Value>>,
     siblings: Vec<(String, String)>,
+    loadouts: Vec<script::Loadout>,
+    compiled: Option<script::CompiledId>,
+}
+
+fn scenario_fixture_loadouts(settings: &scenario::ScenarioSettings) -> Vec<script::Loadout> {
+    settings
+        .fixture_loadouts
+        .unwrap_or(&[])
+        .iter()
+        .map(|row| {
+            row.carry
+                .iter()
+                .fold(script::Loadout::new(row.name), |loadout, &(item, qty)| {
+                    loadout.with_carry(item, qty)
+                })
+        })
+        .collect()
+}
+
+fn start_stashed_catalog_card(
+    handle: &host_play::ScriptStartHandle,
+    card: &PendingCatalogStart,
+) -> Result<(), String> {
+    if let Some(id) = card.compiled {
+        return handle.start_compiled(&card.slot, id);
+    }
+    let result = if card.loadouts.is_empty() {
+        handle.start_load(
+            &card.slot,
+            card.js.clone(),
+            card.shape,
+            card.bag.clone(),
+            card.siblings.clone(),
+        )
+    } else {
+        handle.start_load_with_loadouts(
+            &card.slot,
+            card.js.clone(),
+            card.shape,
+            card.bag.clone(),
+            card.siblings.clone(),
+            &card.loadouts,
+        )
+    };
+    if result.is_ok() && std::env::var_os("BOT_DEBUG").is_some() {
+        let fixture_names = card
+            .loadouts
+            .iter()
+            .map(|loadout| loadout.name.as_str())
+            .collect::<Vec<_>>();
+        let selected_loadout = card
+            .bag
+            .as_ref()
+            .and_then(|bag| bag.get("loadout"))
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("<unset>");
+        eprintln!(
+            "[tui-play] catalog start fixtures={} names={fixture_names:?} loadout={selected_loadout:?}",
+            card.loadouts.len()
+        );
+    }
+    result
 }
 
 /// When the runner is on [`scenario::StepKind::StartScript`], start the
@@ -296,15 +392,7 @@ fn fire_pending_catalog_start(
     let Some(h) = handle.as_ref() else {
         return false;
     };
-    if h.start_load(
-        &card.slot,
-        card.js.clone(),
-        card.shape,
-        card.bag.clone(),
-        card.siblings.clone(),
-    )
-    .is_ok()
-    {
+    if start_stashed_catalog_card(h, card).is_ok() {
         pending.take();
         true
     } else {
@@ -363,6 +451,8 @@ pub struct TuiSession {
     /// `BUDGET_S` soak: keep pumping after proof PASS until this instant.
     live_soak_until: Option<Instant>,
     live_announced_pass: bool,
+    live_wait_script_stop: Option<&'static str>,
+    live_stop_wait_started: Option<Instant>,
     /// The Browse-selected card (catalog Start after seed, or operator Start).
     script_sel: Option<script::ScriptSel>,
     /// The out-of-tree JS library: the Browse picker's cards and the
@@ -385,6 +475,10 @@ pub struct TuiSession {
     script_settings_inject: Option<serde_json::Map<String, serde_json::Value>>,
     /// Last directory visited in the out-of-tree Load file browser.
     script_load_last_dir: Option<PathBuf>,
+    /// Load Starts whose isolate setup has not settled, by profile: Start
+    /// returns before V8 setup, so the card's load diagnostic is recorded
+    /// or cleared when [`TuiSession::settle_script_starts`] observes it.
+    pending_starts: HashMap<String, script::JsCard>,
 }
 
 #[cfg(test)]
@@ -427,6 +521,8 @@ impl TuiSession {
             live_name: None,
             live_soak_until: None,
             live_announced_pass: false,
+            live_wait_script_stop: None,
+            live_stop_wait_started: None,
             script_sel: None,
             js,
             rs2b0t_filled: false,
@@ -437,6 +533,7 @@ impl TuiSession {
             loadouts: script::LoadoutsStore::with_default_path(),
             script_settings_inject: None,
             script_load_last_dir: None,
+            pending_starts: HashMap::new(),
         }
     }
 
@@ -537,6 +634,8 @@ impl TuiSession {
         let pending_script = Arc::clone(&self.pending_script);
         let script_start_handle = Arc::clone(&self.script_start_handle);
         let options = self.options.clone();
+        let (mainland, host_options) = mainland_seed_options(&options);
+        let mainland_sent = Arc::new(Mutex::new(HashSet::new()));
         let map_members = self
             .template
             .as_ref()
@@ -555,6 +654,17 @@ impl TuiSession {
             ) {
                 walk_clear.store(true, Ordering::Relaxed);
             }
+
+            // TUI owns mainland seeding so host-play cannot re-arm it when
+            // an intentional scenario logout starts a new run_client stretch.
+            seed_mainland_on_ready(
+                c,
+                &mainland_sent,
+                name,
+                mainland,
+                c.ingame && c.scene_state == 2 && c.local_player.is_some(),
+                c.last_login_reconnect,
+            );
 
             // The shared `--live script_*` runner: tick the driven
             // slot and its companions before the local-player gate
@@ -607,14 +717,29 @@ impl TuiSession {
         let play = match self.template.clone() {
             Some(template) => run_with_template(
                 template,
-                options.mainland,
+                host_options.mainland,
                 Vec::new(),
                 |_| (None, None),
                 per_frame,
             )?,
-            None => run_with_io(&options, Vec::new(), |_| (None, None), per_frame),
+            None => run_with_io(&host_options, Vec::new(), |_| (None, None), per_frame),
         };
         self.nav_world.lock().unwrap().clone_from(&play.world());
+        if std::env::var_os("BOT_DEBUG").is_some() {
+            let game_data = play.game_data();
+            let lobster_heal = game_data
+                .as_deref()
+                .and_then(|data| data.fixed_food_heal("Lobster"));
+            eprintln!(
+                "[tui-play] script-start handle profile={:?} game_data={} lobster_fixed_heal={lobster_heal:?}",
+                self.profile_label(),
+                if game_data.is_some() {
+                    "attached"
+                } else {
+                    "absent"
+                }
+            );
+        }
         *self.script_start_handle.lock().unwrap() = Some(play.script_start_handle());
         self.play = Some(play);
         self.vault = Some(vault);
@@ -694,13 +819,18 @@ impl TuiSession {
     fn live_prepare_script(&mut self, scenario: scenario::Scenario) -> Result<(), String> {
         let name = scenario.name.to_string();
         let start_script = scenario.settings.start_script;
+        let start_file = scenario.settings.start_file;
+        let wait_script_stop = scenario.settings.wait_script_stop;
         let settings_inject = scenario.settings.script_settings_inject;
+        let fixture_loadouts = scenario_fixture_loadouts(&scenario.settings);
         let names = mint_live_names(scenario.seed.profiles.len());
         let entries = mint_live_entries_for_target(&names, self.target());
         let pass = live_vault_passphrase_for(self.target());
         let path = temp_live_vault(&entries, &pass);
         self.unlock_at(&path, &pass)?;
         self.live_name = Some(name);
+        self.live_wait_script_stop = wait_script_stop;
+        self.live_stop_wait_started = None;
         let world = self.play.as_ref().and_then(|play| play.world());
         let mut runner = scenario::ScenarioRunner::with_world(scenario, world);
         if let Some(budget) = scenario::budget_s_from_env() {
@@ -722,25 +852,27 @@ impl TuiSession {
         // A scenario that names a script card selects the real `$RS2B0T`
         // catalog script on the driven slot (same as the panel): fill the
         // catalog from `$RS2B0T`, then Start on StartScript after seed.
-        if let Some(card_name) = start_script {
-            self.fill_rs2b0t_cards_once();
-            self.js
-                .ensure_js(script::ScriptSource::Catalog, card_name)
-                .map_err(|e| format!("transpile {card_name}: {e}"))?;
+        // Exact example files Load as File cards and select by identity_id.
+        if let Some(file_name) = start_file {
+            let path = script::live_example_path(file_name)
+                .ok_or_else(|| format!("no in-tree example {file_name}"))?;
+            let loaded = self
+                .js
+                .load(&path)
+                .map_err(|e| format!("load {file_name}: {e}"))?;
+            let identity = loaded.identity_id();
             let card = self
                 .js
-                .get(script::ScriptSource::Catalog, card_name)
+                .get(script::ScriptSource::File, &identity)
                 .cloned()
-                .ok_or_else(|| {
-                    format!("$RS2B0T catalog has no {card_name} card (is $RS2B0T set?)")
-                })?;
+                .ok_or_else(|| format!("file example {file_name} missing after identity load"))?;
             self.script_sel = Some(script::ScriptSel::Loaded(
-                script::ScriptSource::Catalog,
-                card_name.to_string(),
+                script::ScriptSource::File,
+                identity.clone(),
             ));
             let bag = self.pending_settings_bag(
-                script::ScriptSource::Catalog,
-                card_name,
+                script::ScriptSource::File,
+                &identity,
                 &card.settings_schema,
             );
             let siblings = script::resolve_sibling_modules(
@@ -751,6 +883,7 @@ impl TuiSession {
                     kind: card.kind,
                     source: card.source,
                     shape: None,
+                    api_family: Some(card.api_family.as_str().into()),
                 },
             )?;
             *self.pending_script.lock().unwrap() = Some(PendingCatalogStart {
@@ -759,8 +892,65 @@ impl TuiSession {
                 shape: card.shape,
                 bag,
                 siblings,
+                loadouts: fixture_loadouts.clone(),
+                compiled: None,
             });
+        } else if let Some(card_name) = start_script {
+            if let Some(id) = script::compiled_id(card_name) {
+                self.script_sel = Some(script::ScriptSel::Compiled(id));
+                *self.pending_script.lock().unwrap() = Some(PendingCatalogStart {
+                    slot: names[0].clone(),
+                    js: String::new(),
+                    shape: script::LoadShape::Reject,
+                    bag: None,
+                    siblings: Vec::new(),
+                    loadouts: Vec::new(),
+                    compiled: Some(id),
+                });
+            } else {
+                self.fill_rs2b0t_cards_once();
+                self.js
+                    .ensure_js(script::ScriptSource::Catalog, card_name)
+                    .map_err(|e| format!("transpile {card_name}: {e}"))?;
+                let card = self
+                    .js
+                    .get(script::ScriptSource::Catalog, card_name)
+                    .cloned()
+                    .ok_or_else(|| {
+                        format!("$RS2B0T catalog has no {card_name} card (is $RS2B0T set?)")
+                    })?;
+                self.script_sel = Some(script::ScriptSel::Loaded(
+                    script::ScriptSource::Catalog,
+                    card_name.to_string(),
+                ));
+                let bag = self.pending_settings_bag(
+                    script::ScriptSource::Catalog,
+                    card_name,
+                    &card.settings_schema,
+                );
+                let siblings = script::resolve_sibling_modules(
+                    &card.path,
+                    &card.origin,
+                    self.js.cache(),
+                    script::CacheMeta {
+                        kind: card.kind,
+                        source: card.source,
+                        shape: None,
+                        api_family: Some(card.api_family.as_str().into()),
+                    },
+                )?;
+                *self.pending_script.lock().unwrap() = Some(PendingCatalogStart {
+                    slot: names[0].clone(),
+                    js: card.js.clone(),
+                    shape: card.shape,
+                    bag,
+                    siblings,
+                    loadouts: fixture_loadouts,
+                    compiled: None,
+                });
+            }
         }
+
         Ok(())
     }
 
@@ -869,6 +1059,14 @@ impl TuiSession {
                         }
                     }
                 }
+                ChatAction::PaintChrome(index) => {
+                    if let Some(paint) = app.chat_data.script_paint.as_ref() {
+                        let rows = super::chat::paint_chrome_rows(paint);
+                        if let Some((key, select_name, _)) = rows.get(index) {
+                            play.script_paint_select(&name, key, select_name, paint.generation);
+                        }
+                    }
+                }
                 ChatAction::None => {}
             }
         }
@@ -959,7 +1157,7 @@ impl TuiSession {
                         )),
                         Some(_) => match self.js.ensure_js(*source, card_name) {
                             Err(e) => Err(e),
-                            Ok(()) => match self.js.get(*source, card_name) {
+                            Ok(()) => match self.js.get(*source, card_name).cloned() {
                                 Some(card) => {
                                     let bag = self.pending_settings_bag(
                                         *source,
@@ -974,15 +1172,22 @@ impl TuiSession {
                                             kind: card.kind,
                                             source: card.source,
                                             shape: None,
+                                            api_family: Some(card.api_family.as_str().into()),
                                         },
                                     ) {
-                                        Ok(siblings) => play.script_start_load(
+                                        Ok(siblings) => match play.script_start_load_typed(
                                             &name,
                                             card.js.clone(),
                                             card.shape,
                                             bag,
                                             siblings,
-                                        ),
+                                        ) {
+                                            Ok(()) => {
+                                                self.pending_starts.insert(name.clone(), card);
+                                                Ok(())
+                                            }
+                                            Err(e) => self.js.record_start_result(&card, Err(e)),
+                                        },
                                         Err(e) => Err(e),
                                     }
                                 }
@@ -997,9 +1202,64 @@ impl TuiSession {
             None => Err("no play".to_string()),
         };
         app.error = match result {
-            Ok(()) => None,
+            Ok(()) => {
+                if self.js.load_failures().is_empty() {
+                    None
+                } else {
+                    Some(self.js.named_failure_output())
+                }
+            }
             Err(e) => Some(format!("script: {e}")),
         };
+    }
+
+    /// Record or clear the load diagnostic of every Start whose isolate
+    /// setup has settled, and show the outcome the way a synchronous Start
+    /// did: a failure is `script: <diagnostic>`, success the remaining
+    /// failure list (or nothing). Called once per pump.
+    fn settle_script_starts(&mut self, app: &mut TuiApp) {
+        if self.pending_starts.is_empty() {
+            return;
+        }
+        let Some(play) = self.play.as_ref() else {
+            return;
+        };
+        let mut settled = Vec::new();
+        for name in self.pending_starts.keys() {
+            match play.script_poll_start(name) {
+                script::StartPoll::Pending => {}
+                script::StartPoll::Settled(outcome) => settled.push((name.clone(), Some(outcome))),
+                // The slot was removed (its Stop cancelled the Start).
+                script::StartPoll::NotOwed => settled.push((name.clone(), None)),
+            }
+        }
+        for (name, outcome) in settled {
+            let Some(card) = self.pending_starts.remove(&name) else {
+                continue;
+            };
+            match outcome {
+                Some(script::StartOutcome::Ready) => {
+                    let _ = self.js.record_start_result(&card, Ok(()));
+                    app.error = if self.js.load_failures().is_empty() {
+                        None
+                    } else {
+                        Some(self.js.named_failure_output())
+                    };
+                }
+                Some(script::StartOutcome::Failed(e)) => {
+                    let diagnostic = self
+                        .js
+                        .record_start_result(
+                            &card,
+                            Err(script::StartLoadError::RuntimeLoad(e.clone())),
+                        )
+                        .err()
+                        .unwrap_or(e);
+                    app.error = Some(format!("script: {diagnostic}"));
+                }
+                Some(script::StartOutcome::Cancelled) | None => {}
+            }
+        }
     }
 
     /// Pause or resume the focused slot's script (toggle like the panel).
@@ -1032,13 +1292,23 @@ impl TuiSession {
         match self.js.load(path) {
             Ok(card) => {
                 app.script_sel = Some(script::ScriptSel::Loaded(card.source, card.name));
-                app.error = None;
+                app.error = if self.js.load_failures().is_empty() {
+                    None
+                } else {
+                    Some(self.js.named_failure_output())
+                };
                 if let Some(parent) = path.parent() {
                     self.script_load_last_dir = Some(parent.to_path_buf());
                     app.script_load_last_dir = self.script_load_last_dir.clone();
                 }
             }
-            Err(e) => app.error = Some(format!("script: {e}")),
+            Err(e) => {
+                app.error = if self.js.load_failures().len() > 1 {
+                    Some(self.js.named_failure_output())
+                } else {
+                    Some(format!("script: {e}"))
+                };
+            }
         }
     }
 
@@ -1091,6 +1361,14 @@ impl TuiSession {
                 }
             }
         }
+
+        // Start/Stop return before the isolate is up or reaped. A slot that
+        // is offline or queued for login has no observe of its own, so the
+        // pump resolves every slot, then commits the Starts that settled.
+        if let Some(play) = &self.play {
+            play.pump_script_lifecycles();
+        }
+        self.settle_script_starts(app);
 
         let statuses = self.play.as_ref().map(|p| p.statuses()).unwrap_or_default();
         // Running slots join the strip even when they are not in the
@@ -1228,13 +1506,56 @@ impl TuiSession {
         }
     }
 
+    fn script_self_stop_observed(&self, needle: &str) -> bool {
+        let Some(name) = self.names.first() else {
+            return false;
+        };
+        let Some(play) = self.play.as_ref() else {
+            return false;
+        };
+        matches!(play.script_state(name), script::RunState::Idle)
+            && play
+                .script_lifecycle_receipt(name)
+                .is_some_and(|receipt| receipt.reason.contains(needle))
+    }
+
     /// The `--live` terminal state: `Some(exit code)` when the runner
     /// passed (0) or failed (1); `None` while it runs. Proof lines are
     /// returned, not printed, so a headed loop can hold them until after
     /// alternate-screen restore.
     fn live_status(&mut self) -> (Option<i32>, Vec<ProofLine>) {
         let name = self.live_name.as_deref().unwrap_or("script");
+        if let Some(message) = self.terminal_startup_failure() {
+            return (
+                Some(1),
+                vec![
+                    ProofLine::Stderr(format!("FAIL: live {name} startup: {message}")),
+                    ProofLine::Stderr(format!("FAIL: {message}")),
+                ],
+            );
+        }
         let status = self.scenario.lock().unwrap().as_ref().map(|r| r.status());
+        if let (Some(scenario::RunnerStatus::Passed), Some(needle)) =
+            (&status, self.live_wait_script_stop)
+        {
+            if !self.script_self_stop_observed(needle) {
+                let started = self.live_stop_wait_started.get_or_insert_with(Instant::now);
+                if started.elapsed() >= Duration::from_secs(45) {
+                    return (
+                        Some(1),
+                        vec![
+                            ProofLine::Stderr(format!(
+                                "FAIL: live {name} timed out waiting for script Idle and clean stop reason {needle:?}"
+                            )),
+                            ProofLine::Stderr(format!(
+                                "FAIL: timed out waiting for script Idle and clean stop reason {needle:?}"
+                            )),
+                        ],
+                    );
+                }
+                return (None, Vec::new());
+            }
+        }
         let evidence = self
             .scenario
             .lock()
@@ -1247,7 +1568,28 @@ impl TuiSession {
         let (code, lines, announced) =
             live_proof(name, status, &evidence, soaking, self.live_announced_pass);
         self.live_announced_pass = announced;
+        let mut lines = lines;
+        if code == Some(1) && std::env::var_os("BOT_DEBUG").is_some() {
+            if let (Some(slot), Some(play)) = (self.names.first(), self.play.as_ref()) {
+                if let Some(receipt) = play.script_lifecycle_receipt(slot) {
+                    lines.push(ProofLine::Stderr(format!(
+                        "[tui-play] script lifecycle slot={slot:?} generation={} state={:?} tick={} reason={:?}",
+                        receipt.runtime_generation, receipt.state, receipt.tick, receipt.reason
+                    )));
+                }
+            }
+        }
         (code, lines)
+    }
+
+    /// Return a producer-marked terminal asset-init failure for a slot owned
+    /// by this scenario. Retryable login errors intentionally remain pending.
+    fn terminal_startup_failure(&self) -> Option<String> {
+        let runner = self.scenario.lock().unwrap();
+        let runner = runner.as_ref()?;
+        let owned = runner.owned_profile_names();
+        let statuses = self.play.as_ref()?.statuses();
+        host_play::owned_terminal_startup_error(&statuses, &owned)
     }
 }
 
@@ -1327,8 +1669,9 @@ fn chat_data_from(s: &api::snapshot::GameSnapshot) -> ChatData {
 /// Run the interactive (or `--live`) TUI: unlock, spawn, event loop.
 fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
     let selection = args.profile.resolve(None)?;
-    let profile = selection.bind()?;
-    let template = SharedClientTemplate::load(profile)?;
+    // Runtime startup must prepare the selected cache before constructing the
+    // shared template; fixture tests intentionally use bind/load below.
+    let template = selection.prepare_template()?;
     let mut session = TuiSession::new_bound(template);
     session
         .server_profile
@@ -1602,7 +1945,16 @@ fn dispatch(session: &mut TuiSession, app: &mut TuiApp, action: AppAction) {
         AppAction::ScriptUseCatalog => {
             let root = app.rs2b0t_catalog_dir.clone();
             session.rs2b0t_catalog_dir = root.clone();
-            app.error = session.import_rs2b0t_catalog(app, &root).err();
+            app.error = match session.import_rs2b0t_catalog(app, &root) {
+                Ok(_) => {
+                    if session.js.load_failures().is_empty() {
+                        None
+                    } else {
+                        Some(session.js.named_failure_output())
+                    }
+                }
+                Err(e) => Some(e),
+            };
         }
         AppAction::ScriptLoad(path) => session.script_load(app, &path),
         AppAction::ScriptParams => app.open_script_params(&session.script_settings),
@@ -1643,6 +1995,16 @@ mod tests {
     use nav::world::NavWorld;
     use script::IsolatedEnv;
     use std::sync::Arc;
+    use std::time::{Duration, Instant};
+
+    fn wait_script_state(play: &host_play::Play, name: &str, want: script::RunState) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while play.script_state(name) != want && Instant::now() < deadline {
+            play.pump_script_lifecycle(name);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(play.script_state(name), want);
+    }
 
     fn dummy_options() -> PlayOptions {
         PlayOptions {
@@ -1652,6 +2014,184 @@ mod tests {
             lowmem: true,
             mainland: false,
         }
+    }
+
+    #[test]
+    fn mainland_seed_is_cold_login_only_and_opt_in() {
+        let sent = Mutex::new(HashSet::new());
+
+        assert!(
+            !take_mainland_seed(&sent, "interactive", false, None),
+            "ordinary interactive boot must not opt into mainland seeding"
+        );
+        assert!(
+            take_mainland_seed(&sent, "live", true, Some(false)),
+            "the enabled cold login seeds once"
+        );
+        assert!(
+            !take_mainland_seed(&sent, "live", true, Some(false)),
+            "later ready frames in the same world do not re-seed"
+        );
+        assert!(
+            !take_mainland_seed(&sent, "relog", true, Some(true)),
+            "an intentional reconnect must retain the scenario's seeded tile"
+        );
+    }
+
+    #[derive(Debug, PartialEq, Eq)]
+    enum RecordedOut {
+        Enc(i32),
+        P1(i32),
+        P2(i32),
+        P4(i32),
+        Jstr(String),
+    }
+
+    #[derive(Default)]
+    struct RecordingOut(Vec<RecordedOut>);
+
+    impl api::prot::Out for RecordingOut {
+        fn p1_enc(&mut self, opcode: i32) {
+            self.0.push(RecordedOut::Enc(opcode));
+        }
+
+        fn p1(&mut self, value: i32) {
+            self.0.push(RecordedOut::P1(value));
+        }
+
+        fn p2(&mut self, value: i32) {
+            self.0.push(RecordedOut::P2(value));
+        }
+
+        fn p4(&mut self, value: i32) {
+            self.0.push(RecordedOut::P4(value));
+        }
+
+        fn pjstr(&mut self, value: &str) {
+            self.0.push(RecordedOut::Jstr(value.to_string()));
+        }
+    }
+
+    #[derive(Default)]
+    struct RecordingDriver {
+        out: RecordingOut,
+    }
+
+    impl api::interact::Driver for RecordingDriver {
+        fn set_menu(&mut self, _slot: i32, _action: i32, _a: i32, _b: i32, _c: i32) {}
+
+        fn do_action(&mut self, _slot: i32) -> bool {
+            false
+        }
+
+        fn try_move(
+            &mut self,
+            _src_x: i32,
+            _src_z: i32,
+            _dx: i32,
+            _dz: i32,
+            _try_nearest: bool,
+            _loc_width: i32,
+            _loc_length: i32,
+            _loc_angle: i32,
+            _loc_shape: i32,
+            _forceapproach: i32,
+            _type: i32,
+        ) -> bool {
+            false
+        }
+
+        fn local_route(&self) -> Option<(i32, i32)> {
+            None
+        }
+
+        fn build_base(&self) -> (i32, i32) {
+            (0, 0)
+        }
+
+        fn loc_typecode(&self, _scene_x: i32, _scene_z: i32) -> Option<i32> {
+            None
+        }
+
+        fn out(&mut self) -> &mut dyn api::prot::Out {
+            &mut self.out
+        }
+
+        fn login(&mut self, _username: &str, _password: &str, _reconnect: bool) -> bool {
+            false
+        }
+    }
+
+    #[test]
+    fn mainland_production_gate_queues_once_without_rearming_host_or_reconnect() {
+        use client::io::ClientProt;
+
+        let mut options = dummy_options();
+        options.mainland = true;
+        let (enabled, host_options) = mainland_seed_options(&options);
+        assert!(enabled, "TUI must retain the opt-in");
+        assert!(
+            !host_options.mainland,
+            "host-play must not own or re-arm mainland seeding"
+        );
+
+        let sent = Mutex::new(HashSet::new());
+        let mut driver = RecordingDriver::default();
+        assert!(!seed_mainland_on_ready(
+            &mut driver,
+            &sent,
+            "not-ready",
+            enabled,
+            false,
+            Some(false),
+        ));
+        assert!(!seed_mainland_on_ready(
+            &mut driver,
+            &sent,
+            "disabled",
+            false,
+            true,
+            Some(false),
+        ));
+        assert!(!seed_mainland_on_ready(
+            &mut driver,
+            &sent,
+            "reconnect",
+            enabled,
+            true,
+            Some(true),
+        ));
+        assert!(driver.out.0.is_empty());
+
+        assert!(seed_mainland_on_ready(
+            &mut driver,
+            &sent,
+            "cold",
+            enabled,
+            true,
+            Some(false),
+        ));
+        assert!(!seed_mainland_on_ready(
+            &mut driver,
+            &sent,
+            "cold",
+            enabled,
+            true,
+            Some(false),
+        ));
+
+        let tele = format!("tele {}", api::interact::OFF_ISLAND_TELE);
+        assert_eq!(
+            driver.out.0,
+            vec![
+                RecordedOut::Enc(ClientProt::CLIENT_CHEAT.id),
+                RecordedOut::P1((tele.len() + 1) as i32),
+                RecordedOut::Jstr(tele),
+                RecordedOut::Enc(ClientProt::CLIENT_CHEAT.id),
+                RecordedOut::P1(("setvar tutorial 1000".len() + 1) as i32),
+                RecordedOut::Jstr("setvar tutorial 1000".into()),
+            ]
+        );
     }
 
     fn response_15_reconnect(c: &mut client::client::Client) {
@@ -2087,6 +2627,20 @@ ScriptRegistry.register({
     }
 
     #[test]
+    fn live_scenario_looks_up_v2_file_ids_and_keeps_v1() {
+        let js = live_scenario("script_bone_burier_v2_js").expect("js");
+        let ts = live_scenario("script_bone_burier_v2_ts").expect("ts");
+        let v1 = live_scenario("script_bone_burier").expect("v1");
+        assert_eq!(js.name, "bone_burier_v2_js");
+        assert_eq!(js.settings.start_file, Some("bone_burier_v2.js"));
+        assert_eq!(ts.name, "bone_burier_v2_ts");
+        assert_eq!(ts.settings.start_file, Some("bone_burier_v2.ts"));
+        assert_eq!(v1.settings.start_script, Some("BoneBurier"));
+        assert_eq!(v1.settings.start_file, None);
+        assert!(live_scenario("script_nope").is_err());
+    }
+
+    #[test]
     fn live_prepare_bone_burier_selects_the_rs2b0t_card_without_starting() {
         let iso = IsolatedEnv::enter("tui-bone-live");
         let root = fake_rs2b0t_tree(&iso.dir);
@@ -2124,6 +2678,80 @@ ScriptRegistry.register({
     }
 
     #[test]
+    fn live_prepare_bone_burier_v2_selects_each_example_by_identity() {
+        let ts = script::live_example_path("bone_burier_v2.ts").expect("ts example");
+        let js = script::live_example_path("bone_burier_v2.js").expect("js example");
+        for (name, path) in [
+            ("bone_burier_v2_ts", ts.as_path()),
+            ("bone_burier_v2_js", js.as_path()),
+        ] {
+            let iso = IsolatedEnv::enter(&format!("tui-bone-v2-{name}"));
+            let mut session = TuiSession::new(dummy_options());
+            session.suppress_slot_spawn = true;
+            session.js = script::JsLibrary::with_cache(
+                iso.dir.join("js-scripts.json"),
+                iso.dir.join("js-cache"),
+            );
+            session.js.load(&ts).expect("preload ts");
+            session.js.load(&js).expect("preload js");
+            session.script_settings.set_str(
+                script::ScriptSource::File,
+                "bone_burier_v2",
+                "boneName",
+                "stem",
+            );
+            let identity = script::file_identity(path);
+            session.script_settings.set_str(
+                script::ScriptSource::File,
+                &identity,
+                "boneName",
+                "identity",
+            );
+            session
+                .live_prepare_script(scenario::get(name).expect("registered"))
+                .expect("prepare");
+            assert_eq!(
+                session.script_sel,
+                Some(script::ScriptSel::Loaded(
+                    script::ScriptSource::File,
+                    identity.clone()
+                )),
+                "{name} must select the canonical-path identity"
+            );
+            assert_ne!(
+                session.script_sel,
+                Some(script::ScriptSel::Loaded(
+                    script::ScriptSource::File,
+                    "bone_burier_v2".into()
+                ))
+            );
+            let bag = session
+                .pending_script
+                .lock()
+                .unwrap()
+                .as_ref()
+                .and_then(|pending| pending.bag.clone())
+                .expect("settings bag");
+            assert_eq!(bag.get("boneName"), Some(&serde_json::json!("identity")));
+            assert!(
+                session
+                    .pending_script
+                    .lock()
+                    .unwrap()
+                    .as_ref()
+                    .expect("file start stashed")
+                    .loadouts
+                    .is_empty(),
+                "native-v2 File starts keep ordinary operator loadout behavior"
+            );
+            assert_eq!(
+                session.live_wait_script_stop,
+                Some("confirmed loaded current-generation bank exhaustion")
+            );
+        }
+    }
+
+    #[test]
     fn live_prepare_thiever_posts_guard_target_when_schema_empty() {
         let iso = IsolatedEnv::enter("tui-thiever-bag");
         let root = iso.dir.join("rs2b0t");
@@ -2148,12 +2776,9 @@ ScriptRegistry.register({ name: 'Thiever', create: () => new ThievingBot() });
         session
             .live_prepare_script(scenario::get("thiever").expect("registered"))
             .expect("prepare");
-        let bag = session
-            .pending_script
-            .lock()
-            .unwrap()
-            .as_ref()
-            .expect("catalog start stashed")
+        let pending = session.pending_script.lock().unwrap();
+        let pending = pending.as_ref().expect("catalog start stashed");
+        let bag = pending
             .bag
             .clone()
             .expect("inject bag is posted even when the card schema is empty");
@@ -2161,6 +2786,11 @@ ScriptRegistry.register({ name: 'Thiever', create: () => new ThievingBot() });
             bag.get("target"),
             Some(&serde_json::json!("Guard")),
             "thiever inject must beat the Man fallback"
+        );
+        assert_eq!(
+            pending.loadouts,
+            vec![script::Loadout::new("Memory food").with_carry("Lobster", 1)],
+            "production live preparation stages scenario loadouts for catalog Start"
         );
     }
 
@@ -2246,6 +2876,126 @@ ScriptRegistry.register({ name: 'Thiever', create: () => new ThievingBot() });
         );
     }
 
+    /// Pump the TUI's Start settle (the public observe path) until every
+    /// pending Start has settled. Start returns before V8 setup.
+    fn settle_starts(session: &mut TuiSession, app: &mut TuiApp) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !session.pending_starts.is_empty() && Instant::now() < deadline {
+            session.settle_script_starts(app);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(
+            session.pending_starts.is_empty(),
+            "script Start did not settle"
+        );
+    }
+
+    #[test]
+    fn initial_runtime_failure_survives_success_and_refusals_in_tui_output() {
+        let iso = IsolatedEnv::enter("tui-initial-load");
+        let mut session = TuiSession::new(dummy_options());
+        let mut play = run_with_io(&dummy_options(), vec![], |_| (None, None), |_, _, _| {});
+        play.attach_arm("alice", SlotArm::new(7, false));
+        play.attach_arm("bob", SlotArm::new(8, false));
+        session.inject_play(play);
+        let mut app = TuiApp::new("initial load proof");
+        app.names = vec!["alice".into(), "bob".into(), "missing".into()];
+        app.focused = Some(0);
+        let path = iso.dir.join("retry.ts");
+        let helper = iso.dir.join("gate.ts");
+        std::fs::write(&helper, "export const fail = true;").unwrap();
+        let src = "import { fail } from './gate.js';\nexport const apiVersion = 2;\nif (fail) throw new Error('tui-initial-load');\nexport function tick(api) {}";
+        std::fs::write(&path, src).unwrap();
+        let card = session.js.load(&path).unwrap();
+        let sel = script::ScriptSel::Loaded(card.source, path.to_string_lossy().into_owned());
+        session.script_start(&mut app, &sel);
+        settle_starts(&mut session, &mut app);
+        // The failure reaches the operator once setup settles, as the
+        // synchronous Start error used to.
+        let shown = app.error.clone().unwrap_or_default();
+        assert!(
+            shown.starts_with("script: ") && shown.contains("tui-initial-load"),
+            "{shown}"
+        );
+        let failure = session
+            .js
+            .load_failure(&card.identity_key())
+            .unwrap()
+            .clone();
+        assert_eq!(failure.identity_key, card.identity_key());
+        assert_eq!(failure.path, path);
+        assert_eq!(failure.stage, script::LoadStage::RuntimeLoad);
+        assert_eq!(failure.api_family, Some(script::ApiFamily::V2));
+        assert_eq!(
+            failure.fingerprint,
+            script::raw_content_fingerprint(&path, src)
+        );
+        assert_eq!(
+            session
+                .play
+                .as_ref()
+                .unwrap()
+                .script_runtime_generation("alice"),
+            Some(0)
+        );
+
+        let good_path = iso.dir.join("good.ts");
+        std::fs::write(
+            &good_path,
+            "export default class T extends LoopingBot { override loop() {} }",
+        )
+        .unwrap();
+        let good = session.js.load(&good_path).unwrap();
+        assert_eq!(good.api_family, script::ApiFamily::V1);
+        app.focused = Some(1);
+        session.script_start(
+            &mut app,
+            &script::ScriptSel::Loaded(good.source, good_path.to_string_lossy().into_owned()),
+        );
+        settle_starts(&mut session, &mut app);
+        assert_eq!(
+            session.play.as_ref().unwrap().script_state("bob"),
+            script::RunState::Running
+        );
+        let output = app.error.as_deref().unwrap();
+        assert!(output.contains("tui-initial-load") && output.contains("runtime-load"));
+        assert!(output.contains(&path.display().to_string()));
+        session.script_start(&mut app, &sel); // active slot refuses before evaluating
+        assert!(app
+            .error
+            .as_deref()
+            .unwrap()
+            .contains("script already active"));
+        assert_eq!(
+            session.js.load_failure(&card.identity_key()),
+            Some(&failure)
+        );
+        app.focused = Some(2);
+        session.script_start(&mut app, &sel);
+        assert_eq!(app.error.as_deref(), Some("script: no slot: missing"));
+        assert_eq!(
+            session.js.load_failure(&card.identity_key()),
+            Some(&failure)
+        );
+
+        std::fs::write(&helper, "export const fail = false;").unwrap();
+        app.focused = Some(0);
+        session.script_start(&mut app, &sel);
+        settle_starts(&mut session, &mut app);
+        assert!(session.js.load_failure(&card.identity_key()).is_none());
+        assert_eq!(app.error, None);
+        assert_eq!(
+            session
+                .play
+                .as_ref()
+                .unwrap()
+                .script_runtime_generation("alice"),
+            Some(1)
+        );
+        session.play.as_ref().unwrap().script_stop("alice");
+        session.play.as_ref().unwrap().script_stop("bob");
+    }
+
     /// Task 13 fix: the paint-as-chat toggle must not stick across a
     /// Stop → new Start. A slot whose script has no paint (stopped, or
     /// not painted yet) resets the toggle, so the fresh paint is visible
@@ -2259,7 +3009,7 @@ ScriptRegistry.register({ name: 'Thiever', create: () => new ThievingBot() });
         let src = "export function tick(api) { api._n = (api._n||0)+1 }".to_string();
         play.script_start_load("alice", src, script::LoadShape::NativeTick, None, vec![])
             .unwrap();
-        assert_eq!(play.script_state("alice"), script::RunState::Running);
+        wait_script_state(&play, "alice", script::RunState::Running);
 
         let mut session = TuiSession::new(dummy_options());
         session.inject_play(play);
@@ -2289,12 +3039,13 @@ ScriptRegistry.register({ name: 'Thiever', create: () => new ThievingBot() });
         let src = "export function tick(api) { api._n = (api._n||0)+1 }".to_string();
         play.script_start_load("alice", src, script::LoadShape::NativeTick, None, vec![])
             .unwrap();
+        wait_script_state(&play, "alice", script::RunState::Running);
         let mut session = TuiSession::new(dummy_options());
         session.inject_play(play);
         let mut app = TuiApp::new("274bot headless");
         app.names = vec!["alice".into()];
         app.focused = Some(0);
-        app.chat_data.script_paint = Some(script::shim::ScriptPaint {
+        app.chat_data.script_paint = Some(std::sync::Arc::new(script::shim::ScriptPaint {
             title: Some("NatureCrafter".into()),
             accent: None,
             lines: vec!["status".into()],
@@ -2304,7 +3055,8 @@ ScriptRegistry.register({ name: 'Thiever', create: () => new ThievingBot() });
             }],
             generation: 0,
             canvas: Vec::new(),
-        });
+            ..Default::default()
+        }));
         dispatch(
             &mut session,
             &mut app,

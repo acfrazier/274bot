@@ -5,8 +5,8 @@
 //! their script consumer in `script::content`; this module keeps the facts a
 //! lower layer must not depend on `script` to read.
 
-/// Posted rock option names. `resolveRockIds` is still empty, so these stay
-/// display names until a real rock-id sidecar exists.
+/// Posted rock option names. No rock-id sidecar is selected, so
+/// `resolveRockIds` throws `not impl` and these stay display names.
 pub const ROCK_TYPE_NAMES: &[&str] = &[
     "Clay",
     "Copper",
@@ -45,7 +45,14 @@ pub fn matches_common_bank_loot(name: &str, id: i32) -> bool {
         || (!name.is_empty()
             && COMMON_BANK_LOOT
                 .iter()
-                .any(|part| name.to_ascii_lowercase().contains(part)))
+                .any(|part| contains_ascii_case_insensitive(name, part)))
+}
+
+fn contains_ascii_case_insensitive(value: &str, needle: &str) -> bool {
+    value
+        .as_bytes()
+        .windows(needle.len())
+        .any(|window| window.eq_ignore_ascii_case(needle.as_bytes()))
 }
 
 #[cfg(test)]

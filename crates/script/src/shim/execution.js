@@ -1,66 +1,58 @@
-// Our Execution module: delay / delayTicks / delayUntil park the loop's
-// await. The isolate does not call `loop()` again while a wait is active —
-// the tick loop settles the wait (`__rs2b0t_pump`) on each posted
-// PLAYER_INFO tick instead. Guardian hold / Pause freezes the cond too:
-// the tick loop skips the pump while held/paused, so even time waits stay
-// parked.
+// Our Execution module: delay / delayTicks / delayUntil park the caller's
+// await until the isolate tick loop settles it (`__rs2b0t_pump`) on a
+// posted PLAYER_INFO tick. Any number of waits may be parked at once —
+// `loop()`, an `on(event)` callback and an un-awaited helper each hold
+// their own — and every wait is settled or rejected, never dropped.
+// Guardian hold / Pause freeze them all: the tick loop skips the pump
+// while held/paused, so even time waits stay parked.
 const host = () => globalThis.__rs2b0t_host || {};
 
-// One parked wait (the bot loop is sequential: one await at a time).
-// Settled by `__rs2b0t_pump` on each posted tick; wall-clock waits use
-// isolate time (performance.now()), like the rs2b0t Scheduler.
+// Mirrors rs2b0t Scheduler.trySettle per wait: cond, then timeout.
+// `undefined` keeps the wait parked; an Error rejects it. A machine wait
+// takes its Rust outcome envelope once the machine has settled.
+function trySettle(wait, tick, now) {
+    if (wait.kind === 'machine') return globalThis.__rs2b0t_machine_take(wait.handle);
+    if (wait.kind === 'tick') return tick >= wait.dueTick ? true : undefined;
+    if (wait.kind === 'time') return now >= wait.dueAt ? true : undefined;
+    try {
+        if (wait.cond()) return true;
+    } catch (err) {
+        return err instanceof Error ? err : new Error(String(err));
+    }
+    if (wait.kind === 'cond-ticks') return tick >= wait.dueTick ? false : undefined;
+    return wait.timeoutAt !== null && now >= wait.timeoutAt ? false : undefined;
+}
+
+// Parked waits in enqueue order; wall-clock waits use isolate time
+// (performance.now()), like the rs2b0t Scheduler.
 const park = {
-    active: null,
+    waits: [],
 
     enqueue(spec) {
         return new Promise((resolve, reject) => {
-            park.active = { ...spec, resolve, reject };
+            park.waits.push({ ...spec, resolve, reject });
             const h = host();
-            h.parked = true;
             h.waitEnqueues = (h.waitEnqueues || 0) + 1;
         });
     },
 
-    // Settle a due wait. Mirrors rs2b0t Scheduler.trySettle order: cond,
-    // then timeout. The wait stays parked until the host pumps again.
-    settle(tick, now) {
-        const wait = park.active;
-        if (!wait) {
-            return;
-        }
-        const done = (value) => {
-            park.active = null;
-            const h = host();
-            h.parked = false;
-            h.waitSettles = (h.waitSettles || 0) + 1;
-            wait.resolve(value);
-        };
-        if (wait.kind === 'tick') {
-            if (tick >= wait.dueTick) done(true);
-            return;
-        }
-        if (wait.kind === 'time') {
-            if (now >= wait.dueAt) done(true);
-            return;
-        }
-        try {
-            if (wait.cond()) {
-                done(true);
-                return;
+    // A wait enqueued by a settled wait's continuation lands on the next
+    // pump: continuations run after this returns, never inside the pass.
+    settle(tick, now, only) {
+        if (park.waits.length === 0) return;
+        const pending = park.waits;
+        park.waits = [];
+        const h = host();
+        for (const wait of pending) {
+            const outcome = only && wait.kind !== only ? undefined : trySettle(wait, tick, now);
+            if (outcome === undefined) {
+                park.waits.push(wait);
+                continue;
             }
-        } catch (err) {
-            park.active = null;
-            const h = host();
-            h.parked = false;
             h.waitSettles = (h.waitSettles || 0) + 1;
-            wait.reject(err instanceof Error ? err : new Error(String(err)));
-            return;
+            if (outcome instanceof Error) wait.reject(outcome);
+            else wait.resolve(outcome);
         }
-        if (wait.kind === 'cond-ticks') {
-            if (tick >= wait.dueTick) done(false);
-            return;
-        }
-        if (wait.timeoutAt !== null && now >= wait.timeoutAt) done(false);
     },
 };
 
@@ -111,16 +103,23 @@ export const Execution = {
     },
 };
 
-// The isolate tick loop calls this (through the rustyscript event loop,
-// so the resolved wait's continuation runs) on every posted tick while a
-// wait is parked: settle due waits, let the loop continuation run one
-// microtask turn, then onPaint — paint must not wait for loop() to return.
-globalThis.__rs2b0t_pump = async (n) => {
-    const state = host();
-    state.tick = n;
-    const fire = globalThis.__rs2b0t_fire_tick_listeners;
-    if (typeof fire === 'function') fire();
+// One Rust step machine's completion (`_kernel.js` `runMachine`), parked
+// like any wait so it settles in the pump's phase order.
+export function parkMachine(handle) {
+    return park.enqueue({ kind: 'machine', handle });
+}
+
+// The isolate tick loop calls this once per eligible posted tick, at the
+// point of its phase order where waits settle (after it recorded the
+// tick and fired tick listeners). It only settles due waits; their
+// continuations run as the call returns.
+globalThis.__rs2b0t_pump = (n) => {
     park.settle(n, performance.now());
-    await Promise.resolve();
-    globalThis.__rs2b0t_call_on_paint();
+};
+
+// After the pump, a machine that resumed on a settled callback promise
+// may have ended: settle only the machine waits, so its await resolves in
+// the tick it ended. Every other wait keeps its once-per-tick pump.
+globalThis.__rs2b0t_settle_machines = () => {
+    park.settle(0, 0, 'machine');
 };

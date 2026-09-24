@@ -13,7 +13,7 @@ use std::sync::OnceLock;
 use ab_glyph::{Font, FontRef, PxScale, ScaleFont};
 
 pub use geom::{
-    ClipPath, DrawExtras, FillPaint, GradStop, LineJoinKind, PathSeg, Shadow, TextAlign,
+    ClipPath, ClipSet, DrawExtras, FillPaint, GradStop, LineJoinKind, PathSeg, Shadow, TextAlign,
     TextBaseline, MAX_CLIP_PATHS, MAX_GRADIENTS, MAX_GRADIENT_STOPS, MAX_LINE_WIDTH,
     MAX_PATH_SEGS_PER_FRAME, MAX_PATH_SEGS_PER_OP, MAX_SAVE_DEPTH, MAX_SHADOW_BLUR,
 };
@@ -213,7 +213,7 @@ struct LiveGradient {
 #[derive(Clone)]
 struct Saved {
     style: Style,
-    clip: Vec<ClipPath>,
+    clip: ClipSet,
 }
 
 /// Why this onPaint call failed closed (typed, not inferred from user text).
@@ -243,7 +243,7 @@ struct Recorder {
     style: Style,
     stack: Vec<Saved>,
     path: Vec<PathSeg>,
-    clip: Vec<ClipPath>,
+    clip: ClipSet,
     gradients: Vec<LiveGradient>,
     ops: Vec<CanvasOp>,
     overflow: bool,
@@ -257,7 +257,7 @@ impl Recorder {
             style: Style::default(),
             stack: Vec::new(),
             path: Vec::new(),
-            clip: Vec::new(),
+            clip: ClipSet::default(),
             gradients: Vec::new(),
             ops: Vec::new(),
             overflow: false,
@@ -399,16 +399,19 @@ pub fn onpaint_done(kind: i64, message: Option<&str>) {
     OUTCOME.with(|o| *o.borrow_mut() = Some(outcome));
 }
 
-/// CSS `font` getter (last accepted string).
+/// CSS `font` getter: the last accepted string.
 pub fn font() -> String {
     RECORDER.with(|r| r.borrow().style.font_css.clone())
 }
 
-/// CSS `fillStyle` getter (last accepted string). Empty when fill is a gradient.
+/// CSS `fillStyle` getter: the last accepted string. Empty once the fill is a
+/// gradient handle, which `fill_gradient_id` reports instead.
 pub fn fill_style() -> String {
     RECORDER.with(|r| r.borrow().style.fill_css.clone())
 }
 
+/// The declared style getter (`get_style` on the paint ctx). Reads the
+/// recorder, so a rejected assignment reads back as the previous value.
 pub fn get_style(prop: &str) -> String {
     RECORDER.with(|r| {
         let rec = r.borrow();
@@ -438,6 +441,7 @@ pub fn get_style(prop: &str) -> String {
     })
 }
 
+/// The declared numeric style getter.
 pub fn get_number(prop: &str) -> f64 {
     RECORDER.with(|r| {
         let rec = r.borrow();
@@ -451,6 +455,7 @@ pub fn get_number(prop: &str) -> f64 {
     })
 }
 
+/// The gradient handle `fillStyle` currently holds, or -1 for a solid paint.
 pub fn fill_gradient_id() -> i32 {
     RECORDER.with(|r| match r.borrow().style.fill {
         FillKind::Gradient(id) => id as i32,
@@ -535,15 +540,11 @@ pub fn set_number(prop: &str, value: f64) {
                     }
                 }
             }
-            "shadowOffsetX" => {
-                if value.is_finite() {
-                    rec.style.shadow_offset_x = value as f32;
-                }
+            "shadowOffsetX" if value.is_finite() => {
+                rec.style.shadow_offset_x = value as f32;
             }
-            "shadowOffsetY" => {
-                if value.is_finite() {
-                    rec.style.shadow_offset_y = value as f32;
-                }
+            "shadowOffsetY" if value.is_finite() => {
+                rec.style.shadow_offset_y = value as f32;
             }
             _ => {}
         }
@@ -608,7 +609,7 @@ pub fn fill_text(text: &str, x: f64, y: f64) {
             return;
         }
         let color = rec.solid_fill();
-        let font_px = rec.style.font_px.min(MAX_FONT_PX).max(1);
+        let font_px = rec.style.font_px.clamp(1, MAX_FONT_PX);
         let mono = rec.style.mono;
         let align = rec.style.text_align;
         let baseline = rec.style.text_baseline;
@@ -801,7 +802,8 @@ pub fn clip() {
             return;
         }
         if rec.path.is_empty() {
-            rec.clip.push(ClipPath { segs: Vec::new() });
+            let clip = rec.clip.with_pushed(ClipPath { segs: Vec::new() });
+            rec.clip = clip;
             return;
         }
         if rec.path.len() > MAX_PATH_SEGS_PER_OP {
@@ -809,7 +811,8 @@ pub fn clip() {
             return;
         }
         let segs = rec.path.clone();
-        rec.clip.push(ClipPath { segs });
+        let clip = rec.clip.with_pushed(ClipPath { segs });
+        rec.clip = clip;
     });
 }
 
@@ -926,7 +929,7 @@ pub fn measure_text(text: &str) -> Result<f64, String> {
 
 /// Same metrics as [`measure_text`] for a concrete face/size (tests / panel).
 pub fn measure_with(font_px: u16, mono: bool, text: &str) -> f64 {
-    let font_px = font_px.min(MAX_FONT_PX).max(1);
+    let font_px = font_px.clamp(1, MAX_FONT_PX);
     let font = font_for(mono);
     let scale = PxScale::from(font_px as f32);
     let scaled = font.as_scaled(scale);
@@ -986,6 +989,7 @@ fn diagnostic_paint(accent: bool, line: &str) -> crate::shim::ScriptPaint {
         buttons: Vec::new(),
         generation: 0,
         canvas: Vec::new(),
+        ..Default::default()
     }
 }
 
@@ -997,6 +1001,7 @@ fn canvas_only(ops: Vec<CanvasOp>) -> crate::shim::ScriptPaint {
         buttons: Vec::new(),
         generation: 0,
         canvas: ops,
+        ..Default::default()
     }
 }
 
@@ -1260,7 +1265,6 @@ mod tests {
         set_style("fillStyle", "#ffb15b");
         set_style("fillStyle", "red");
         set_style("fillStyle", "???");
-        assert_eq!(fill_style(), "#ffb15b");
         fill_rect(0.0, 0.0, 1.0, 1.0);
         match &take().ops[0] {
             CanvasOp::FillRect { color, .. } => {
@@ -1278,7 +1282,13 @@ mod tests {
         reset();
         set_style("font", "12px monospace");
         set_style("font", "nope");
-        assert_eq!(font(), "12px monospace");
+        fill_text("x", 0.0, 0.0);
+        match &take().ops[0] {
+            CanvasOp::FillText { font_px, mono, .. } => {
+                assert_eq!((*font_px, *mono), (12, true), "nope keeps 12px monospace");
+            }
+            _ => panic!("expected fillText"),
+        }
     }
 
     #[test]
@@ -1316,7 +1326,7 @@ mod tests {
         assert!(raster.byte_len() <= (APPLET_W as usize) * (APPLET_H as usize) * 4);
         assert!(raster.x <= 6 && raster.y <= 6);
         let mut opaque = 0usize;
-        for px in raster.rgba.chunks_exact(4) {
+        for px in raster.rgba.as_chunks::<4>().0 {
             if px[3] > 0 {
                 opaque += 1;
             }
@@ -1472,6 +1482,7 @@ mod tests {
             buttons: Vec::new(),
             generation: 0,
             canvas: Vec::new(),
+            ..Default::default()
         };
         let composed = compose_paint(Some(user));
         assert_eq!(composed.title.as_deref(), Some("onPaint"));
@@ -1532,11 +1543,28 @@ mod tests {
         set_number("lineWidth", 0.0);
         set_number("lineWidth", -2.0);
         set_number("lineWidth", f64::NAN);
-        assert!((get_number("lineWidth") - 1.5).abs() < 1e-6);
         set_number("shadowBlur", 10.0);
         set_number("shadowBlur", -1.0);
         set_number("shadowBlur", f64::INFINITY);
-        assert!((get_number("shadowBlur") - 10.0).abs() < 1e-6);
+        set_style("strokeStyle", "#000000");
+        begin_path();
+        move_to(0.0, 0.0);
+        line_to(10.0, 0.0);
+        stroke();
+        fill_rect(0.0, 0.0, 1.0, 1.0);
+        let taken = take();
+        match &taken.ops[0] {
+            CanvasOp::StrokePath { line_width, .. } => {
+                assert!((line_width - 1.5).abs() < 1e-6);
+            }
+            other => panic!("{other:?}"),
+        }
+        match &taken.ops[1] {
+            CanvasOp::FillRect { extras, .. } => {
+                assert!((extras.shadow.blur - 10.0).abs() < 1e-6, "{extras:?}");
+            }
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]
@@ -1695,18 +1723,6 @@ mod tests {
         let taken = take();
         assert!(!taken.overflow, "fail={:?}", taken.fail);
         assert_eq!(taken.ops.len(), ok);
-        let paint = crate::shim::ScriptPaint {
-            title: None,
-            accent: None,
-            lines: Vec::new(),
-            buttons: Vec::new(),
-            generation: 0,
-            canvas: taken.ops.clone(),
-        };
-        let buf = crate::isolate_fb::IsolateBuf::new().encode_paint(&paint);
-        let decoded =
-            crate::isolate_fb::decode_paint(&buf).expect("decoder must accept recorder frame");
-        assert_eq!(decoded.canvas.len(), ok);
 
         reset();
         line_path(MAX_PATH_SEGS_PER_OP);
@@ -1718,43 +1734,6 @@ mod tests {
         assert!(taken.overflow);
         assert_eq!(taken.fail, Some("canvas: exceeded path segments"));
         assert_eq!(taken.ops.len(), ok);
-
-        let mut extras = DrawExtras::default();
-        extras.clips.push(ClipPath {
-            segs: (0..MAX_PATH_SEGS_PER_OP)
-                .map(|i| {
-                    if i == 0 {
-                        PathSeg::MoveTo { x: 0.0, y: 0.0 }
-                    } else {
-                        PathSeg::LineTo {
-                            x: i as f32,
-                            y: 0.0,
-                        }
-                    }
-                })
-                .collect(),
-        });
-        let over: Vec<CanvasOp> = (0..(ok + 1))
-            .map(|_| CanvasOp::FillRect {
-                x: 0,
-                y: 0,
-                w: 1,
-                h: 1,
-                color: pack_rgba(255, 0, 0, 255),
-                extras: extras.clone(),
-            })
-            .collect();
-        let paint = crate::shim::ScriptPaint {
-            title: None,
-            accent: None,
-            lines: Vec::new(),
-            buttons: Vec::new(),
-            generation: 0,
-            canvas: over,
-        };
-        let buf = crate::isolate_fb::IsolateBuf::new().encode_paint(&paint);
-        let err = crate::isolate_fb::decode_paint(&buf).expect_err("decoder frame budget");
-        assert!(err.contains("path segs"), "{err}");
     }
 
     #[test]
@@ -1774,16 +1753,18 @@ mod tests {
             color: pack_rgba(255, 0, 0, 255),
             extras: DrawExtras::default(),
         };
-        let dirty = dirty_bounds(&[op.clone()]);
+        let dirty = dirty_bounds(std::slice::from_ref(&op));
         assert!(dirty.is_some());
         let _ = rasterize(&[op]);
 
-        let mut extras = DrawExtras::default();
-        extras.shadow = Shadow {
-            color: pack_rgba(0, 0, 0, 200),
-            blur: MAX_SHADOW_BLUR,
-            offset_x: f32::MAX,
-            offset_y: -f32::MAX,
+        let extras = DrawExtras {
+            shadow: Shadow {
+                color: pack_rgba(0, 0, 0, 200),
+                blur: MAX_SHADOW_BLUR,
+                offset_x: f32::MAX,
+                offset_y: -f32::MAX,
+            },
+            ..Default::default()
         };
         let shadowed = CanvasOp::FillRect {
             x: 20,
@@ -1793,7 +1774,7 @@ mod tests {
             color: pack_rgba(255, 255, 255, 255),
             extras,
         };
-        let _ = dirty_bounds(&[shadowed.clone()]);
+        let _ = dirty_bounds(std::slice::from_ref(&shadowed));
         let _ = rasterize(&[shadowed]);
     }
 }

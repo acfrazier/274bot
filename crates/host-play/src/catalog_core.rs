@@ -8,12 +8,42 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
+use api::line_of_sight::{line_of_sight_v2, CollisionQuery};
 use api::obj_names::ObjNames;
 use api::snapshot::{ActorKind, GameSnapshot, LocView, NpcView, SceneView, WorldTile};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-pub const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|chicken_killer_bank|thiever|alcher|alcher_defaults|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|alcher_low|alcher_fire_battlestaff|alcher_swarm_drain|bank_fletcher|bank_fletcher_shafts|bank_fletcher_headless|bank_fletcher_string|bank_fletcher_cut_string|dart_fletcher|dart_fletcher_iron|herb_cleaner|herb_cleaner_named|herb_cleaner_empty_bank|gem_cutter|gem_cutter_named|door_opener|door_opener_gate|gnome_course|gnome_course_radius|wildy_agility|brimhaven_agility|flax_picker|superheater|superheater_steel|superheater_fire_battlestaff|vial_filler|vial_filler_east|potion_maker|potion_maker_named|tanner_bot|tanner_bot_hard|rune_crafter|rune_crafter_earth|mule_crafter|ardy_cakes|ardy_cakes_fight|ardy_thiever|ardy_thiever_fight|ardy_thiever_knight|gnome_chop|gnome_fletch_short|gnome_fletch_long|coal_trucks|cook_bot|cook_bot_lobster|smelter_bot|smelter_bot_steel|flax_spinner|flax_aio|flax_aio_pick|flax_aio_spin|herblore_secondaries|herblore_secondaries_newt|chaos_druid|chaos_druid_tower|chaos_druid_yanille|moss_giant|hill_giant|auto_fighter|auto_fighter_mage|auto_fighter_range|rock_crab|rock_crab_range|green_dragon|green_dragon_special|green_dragon_potions|fire_giant|ardy_fighter|auto_fighter_bank|moss_giant_bank|hill_giant_bank|chaos_druid_bank|ardy_fighter_bank|rock_crab_bank|green_dragon_bank|green_dragon_tele|fire_giant_approach|fire_giant_bank|aio_teleport|aio_teleport_falador|aio_teleport_no_staff|shop_buyout|shop_buyout_aubury|smithing_bot|smithing_bot_platebody|leather_crafter|leather_crafter_hard_body|firemaker|firemaker_oak|climbing_boots|climbing_boots_teleport";
+#[path = "catalog_core_ranging.rs"]
+mod ranging;
+pub use ranging::{
+    ranging_guild_bank_baseline_ready, ranging_guild_full_baseline_ready,
+    ranging_guild_redeem_baseline_ready, ranging_guild_round_baseline_ready, RangingGuildBankCycle,
+    RangingGuildFullCycle, RangingGuildRedeemCycle, RangingGuildRoundCycle, ARCHERY_TICKET_ID,
+    COINS_PER_TRIP, ENTRY_FEE, RANGED_LIVE, RANGING_GUILD_FULL_MINUTES,
+    RANGING_GUILD_FULL_STOP_NEEDLE, RANGING_GUILD_MERCHANT_STAND, RANGING_GUILD_SEERS_BANK,
+    RANGING_GUILD_STAND, RUNE_ARROWS_PER_TRADE, SEED_KEEP_TICKETS, SEERS_BANK_RADIUS,
+    TARGET_RESULT_MODAL, TICKETS_PER_TRADE, VARP_TARGET_COUNT, VARP_TARGET_HIT, VARP_TARGET_SCORE,
+};
+#[path = "catalog_core_hunt.rs"]
+mod hunt;
+pub use hunt::{
+    hunt_baseline_ready, leave_lair_box, parse_hunt_receipt_line, HuntBox, HuntCell,
+    HuntDeliveryCycle, HuntObservation, HuntOutcome, HuntReceipt, ScriptAct, ScriptActLedger,
+    ScriptActRow, ScriptActsPublished, ACQUIRE_KEY_DEST, ACQUIRE_KEY_RADIUS,
+    ACQUIRE_KEY_RECEIPT_PREFIX, ACQUIRE_KEY_V2_STOP, BANK_V2_DEST, BANK_V2_RADIUS,
+    BANK_V2_RECEIPT_PREFIX, BANK_V2_STOP, CELL_V2_DOOR, CELL_V2_RADIUS, CELL_V2_RECEIPT_PREFIX,
+    CELL_V2_STOP, DUSTY_KEY_ID, ENTER_LAIR_MAX_CHEB, ENTER_LAIR_MIN_CHEB,
+    ENTER_LAIR_RECEIPT_PREFIX, ENTER_LAIR_V2_STOP, HOLD_SPOT_MAX_CHEB, HOLD_SPOT_MIN_CHEB,
+    HOLD_SPOT_RECEIPT_PREFIX, HOLD_SPOT_V2_STOP, HUNT_ACT_ROWS, HUNT_LAIR_FIXTURE, JAILER,
+    JAIL_CELL, JAIL_DOOR, JAIL_DOOR_LOC, JAIL_KEY_ID, LEAVE_LAIR_BOX_PAD, LEAVE_LAIR_MAX_CHEB,
+    LEAVE_LAIR_MIN_CHEB, LEAVE_LAIR_RADIUS, LEAVE_LAIR_RECEIPT_PREFIX, LEAVE_LAIR_V2_STOP,
+    RETREAT_SPOT_MAX_CHEB, RETREAT_SPOT_MIN_CHEB, RETREAT_SPOT_RECEIPT_PREFIX,
+    RETREAT_SPOT_V2_STOP, VELRAK, WALK_SPOT_MAX_CHEB, WALK_SPOT_MIN_CHEB, WALK_SPOT_RECEIPT_PREFIX,
+    WALK_SPOT_V2_STOP,
+};
+
+pub const CORE_SCENARIOS: &str = "bone_burier|chicken_killer|chicken_killer_bank|thiever|alcher|alcher_defaults|alcher_custom|alcher_custom_alias|alcher_custom_name|alcher_ordered|alcher_large_batch|alcher_low|alcher_fire_battlestaff|alcher_swarm_drain|bank_fletcher|bank_fletcher_shafts|bank_fletcher_headless|bank_fletcher_string|bank_fletcher_cut_string|dart_fletcher|dart_fletcher_iron|herb_cleaner|herb_cleaner_named|herb_cleaner_empty_bank|gem_cutter|gem_cutter_named|door_opener|door_opener_gate|gnome_course|gnome_course_radius|wildy_agility|brimhaven_agility|flax_picker|superheater|superheater_steel|superheater_fire_battlestaff|superheater_silver_low_natures|vial_filler|vial_filler_east|potion_maker|potion_maker_named|tanner_bot|tanner_bot_hard|rune_crafter|rune_crafter_earth|mule_crafter|ardy_cakes|ardy_cakes_fight|ardy_thiever|ardy_thiever_fight|ardy_thiever_knight|gnome_chop|gnome_fletch_short|gnome_fletch_long|coal_trucks|cook_bot|cook_bot_lobster|smelter_bot|smelter_bot_steel|flax_spinner|flax_aio|flax_aio_pick|flax_aio_spin|herblore_secondaries|herblore_secondaries_newt|chaos_druid|chaos_druid_tower|chaos_druid_yanille|moss_giant|moss_giant_prepared|moss_giant_dart|hill_giant|auto_fighter|auto_fighter_mage|auto_fighter_range|rock_crab|rock_crab_range|green_dragon|green_dragon_prepared|green_dragon_mage_prepared|green_dragon_special|green_dragon_special_prepared|green_dragon_potions|green_dragon_potions_prepared|fire_giant|fire_giant_prepared|ardy_fighter|auto_fighter_bank|moss_giant_bank|hill_giant_bank|hill_giant_bank_prepared|chaos_druid_bank|ardy_fighter_bank|rock_crab_bank|green_dragon_bank|green_dragon_bank_prepared|green_dragon_bank_default_prepared|green_dragon_tele|green_dragon_tele_prepared|fire_giant_approach|fire_giant_bank|fire_giant_bank_prepared|fire_giant_camelot_prepared|aio_teleport|aio_teleport_falador|aio_teleport_no_staff|shop_buyout|shop_buyout_aubury|shop_buyout_lowe|shop_buyout_hickton|shop_buyout_harry|shop_buyout_betty|shop_buyout_gerrant|smithing_bot|smithing_bot_platebody|leather_crafter|leather_crafter_hard_body|firemaker|firemaker_oak|climbing_boots|climbing_boots_teleport|ranging_guild_round|ranging_guild_redeem|ranging_guild_bank|ranging_guild_full|brimhaven_moss_inspect_v1|route_inspect_brimhaven_v2_ts|prayer_v2_ts|prayer_v1_ts|line_of_sight_v2_ts|actor_observation_v2_ts|fight_field_v2_ts|hold_spot_v2_ts|retreat_spot_v2_ts|walk_spot_v2_ts|enter_lair_v2_ts|leave_lair_v2_ts|acquire_key_v2_ts|cell_v2_ts|bank_v2_ts";
 pub const CATALOG_COMMIT_A: &str = "100adccc037d9f6898080e1cad58fcfc43364775";
 pub const CATALOG_COMMIT_B: &str = "8e7d965be2071d6ec65c3265e12af797082d720a";
 pub const ADAMANT_SCIMITAR_ID: i32 = 1331;
@@ -25,6 +55,8 @@ pub const MIND_RUNE_ID: i32 = 558;
 pub const COINS_ID: i32 = 995;
 pub const RUNE_CHAINBODY_ID: i32 = 1113;
 pub const CERT_RUNE_CHAINBODY_ID: i32 = 1114;
+pub const RUNE_PLATELEGS_ID: i32 = 1079;
+pub const RUNE_FULL_HELM_ID: i32 = 1163;
 /// High Level Alchemy pays 60% of shop cost: floor(2560 * 0.6) = 1536.
 pub const ADAMANT_SCIMITAR_ALCH_COINS: i32 = 1536;
 pub const YEW_LONGBOW_ALCH_COINS: i32 = 768;
@@ -47,6 +79,13 @@ pub const ARROW_SHAFT_ID: i32 = 52;
 pub const HEADLESS_ARROW_ID: i32 = 53;
 pub const BRONZE_DART_TIP_ID: i32 = 819;
 pub const BRONZE_DART_ID: i32 = 806;
+/// Stock289 `rune_arrow`. MossGiant dart SETTINGS leave this unused on purpose.
+pub const RUNE_ARROW_ID: i32 = 892;
+/// Pinned `e2e/mossgiant-dart-test.ts` bank-only dart stack and food.
+pub const MOSS_GIANT_DART_SUPPLY: i32 = 80;
+pub const MOSS_GIANT_DART_BANK_FOOD: i32 = 15;
+pub const MOSS_GIANT_DART_RANGED: i32 = 50;
+pub const MOSS_GIANT_DART_FIELD_RADIUS: i32 = 12;
 pub const IRON_DART_TIP_ID: i32 = 820;
 pub const IRON_DART_ID: i32 = 807;
 pub const FEATHER_ID: i32 = 314;
@@ -67,12 +106,15 @@ pub const FLAX_ID: i32 = 1779;
 pub const COPPER_ORE_ID: i32 = 436;
 pub const TIN_ORE_ID: i32 = 438;
 pub const IRON_ORE_ID: i32 = 440;
+/// Selected 289 `obj.pack`: silver_ore=442, silver_bar=2355.
+pub const SILVER_ORE_ID: i32 = 442;
 pub const COAL_ID: i32 = 453;
 pub const STAFF_OF_FIRE_ID: i32 = 1387;
 pub const FIRE_BATTLESTAFF_ID: i32 = 1393;
 pub const BRONZE_BAR_ID: i32 = 2349;
 pub const IRON_BAR_ID: i32 = 2351;
 pub const STEEL_BAR_ID: i32 = 2353;
+pub const SILVER_BAR_ID: i32 = 2355;
 pub const LUMBRIDGE_DOOR: (i32, i32, i32) = (3208, 3211, 0);
 pub const LUMBRIDGE_DOOR_STAND: (i32, i32, i32) = (3208, 3212, 0);
 pub const LUMBRIDGE_GATE: (i32, i32, i32) = (3213, 3261, 0);
@@ -241,13 +283,24 @@ pub const AUTO_FIGHTER_BANK_RESTOCK: i32 = 10;
 /// `foodWithdraw` default 20 and HillGiant's 12 (8 carried + 4 withdrawn).
 pub const MOSS_GIANT_BANK_RESTOCK: i32 = 20;
 pub const HILL_GIANT_BANK_RESTOCK: i32 = 4;
+pub const HILL_GIANT_BANK_PREPARED_RESTOCK: i32 = 12;
 pub const ROCK_CRAB_FOOD: i32 = 8;
 /// Base GreenDragon's ordinary trip withdraws twenty Lobsters.
 /// Special, potion, bank, and teleport cells retain their twelve-food inputs.
 pub const GREEN_DRAGON_BASE_FOOD: i32 = 20;
 pub const GREEN_DRAGON_FOOD: i32 = 12;
+pub const GREEN_DRAGON_BANK_PREPARED_FOOD: i32 = 26;
+pub const GREEN_DRAGON_BANK_PREPARED_RESTOCK: i32 = 27;
 pub const FIRE_GIANT_FOOD: i32 = 12;
+pub const FIRE_GIANT_BANK_PREPARED_INITIAL_FOOD: i32 = 1;
+pub const FIRE_GIANT_BANK_PREPARED_RESTOCK: i32 = 25;
+/// Camelot escape restock line; barrel prepared keeps `FIRE_GIANT_BANK_PREPARED_RESTOCK`.
+pub const FIRE_GIANT_CAMELOT_PREPARED_RESTOCK: i32 = 24;
 pub const COMBAT_ATTACK_LEVEL: i32 = 40;
+pub const REMAINING_COMBAT_PREPARED_LEVEL: i32 = 70;
+pub const BANK_PRESSURE_PREPARED_LEVEL: i32 = 99;
+pub const GREEN_DRAGON_TELE_PREPARED_LEVEL: i32 = 99;
+pub const GREEN_DRAGON_TELE_PREPARED_HP: i32 = 70;
 pub const RUNE_SCIMITAR_ID: i32 = 1333;
 pub const DRAGONFIRE_SHIELD_ID: i32 = 1540;
 pub const NOTED_DRAGONFIRE_SHIELD_ID: i32 = 1541;
@@ -319,11 +372,10 @@ pub const STEEL_ARROW_ID: i32 = 886;
 pub const BODY_TALISMAN_ID: i32 = 1446;
 pub const BLOOD_RUNE_ID: i32 = 565;
 pub const CHAOS_RUNE_ID: i32 = 562;
-/// The six verifiable Guard drops: the loot list the AutoFighter bank cell
-/// injects (`loot=[iron ore, steel arrow, body talisman, blood/chaos/nature
-/// rune]`, whose item names resolve to exactly these ids) and the class its
-/// bank trip deposits — the same ArdyFighter already lists. A clue-only or
-/// junk drop is not one of these.
+/// The six verifiable Guard drops ArdyFighter lists in `DEFAULT_LOOT`
+/// (`iron ore, steel arrow, body talisman, blood/chaos/nature rune`, whose
+/// item names resolve to exactly these ids) and the class its bank trip
+/// deposits. A clue-only or junk drop is not one of these.
 pub const GUARD_DROP_IDS: [i32; 6] = [
     IRON_ORE_ID,
     STEEL_ARROW_ID,
@@ -355,6 +407,15 @@ pub const GREEN_DRAGON_BANK: (i32, i32, i32) = (3094, 3493, 0);
 pub const FIRE_GIANT_RAFT: (i32, i32, i32) = (2510, 3493, 0);
 pub const FIRE_GIANT_WASH: (i32, i32, i32) = (2527, 3413, 0);
 pub const FIRE_GIANT_BANK: (i32, i32, i32) = (2616, 3332, 0);
+/// FireGiantLogic `ESCAPE_TELES.Camelot` land and Magic 45 / Air×5+Law×1.
+pub const CAMELOT_TELE_LAND: (i32, i32, i32) = (2757, 3478, 0);
+pub const CAMELOT_TELE_MAGIC: i32 = 45;
+pub const CAMELOT_TELE_AIR: i32 = 5;
+pub const CAMELOT_TELE_LAW: i32 = 1;
+/// Source `teleStock` default 2 spare casts plus the one needed to leave.
+pub const CAMELOT_TELE_STOCK: i32 = 2;
+pub const CAMELOT_AIR_CARRY: i32 = CAMELOT_TELE_AIR * (CAMELOT_TELE_STOCK + 1);
+pub const CAMELOT_LAW_CARRY: i32 = CAMELOT_TELE_LAW * (CAMELOT_TELE_STOCK + 1);
 /// Frozen Varrock teleport land (the same tile FireGiant's Varrock escape uses).
 pub const VARROCK_TELE_LAND: (i32, i32, i32) = (3213, 3424, 0);
 /// Nearest RockCrab `DEFAULT_SPOTS` loc to the safe stand (2712,3707,0) — spot
@@ -372,9 +433,18 @@ pub const WATER_RUNE_ID: i32 = 555;
 pub const AIO_LAW_PACK: i32 = 2;
 pub const AIO_ELEMENT_PACK: i32 = 20;
 pub const AIO_LAW_BANK: i32 = 200;
-/// Frozen ShopBuyout first preset (Aemad) and Aubury Varrock East stand.
+/// Frozen ShopBuyout presets: Aemad, Aubury, Lowe, Hickton, Harry, Betty, Gerrant.
 pub const AEMAD_STAND: (i32, i32, i32) = (2613, 3294, 0);
 pub const AUBURY_STAND: (i32, i32, i32) = (3253, 3401, 0);
+pub const LOWE_STAND: (i32, i32, i32) = (3231, 3421, 0);
+pub const HICKTON_STAND: (i32, i32, i32) = (2821, 3442, 0);
+pub const HARRY_STAND: (i32, i32, i32) = (2833, 3443, 0);
+/// Frozen shopPresets Betty stand (3012,3258) — not herblore BETTY_SHOP 3259.
+pub const BETTY_STAND: (i32, i32, i32) = (3012, 3258, 0);
+pub const GERRANT_STAND: (i32, i32, i32) = (3013, 3224, 0);
+/// Frozen Gerrant bankStand / Draynor operable approach (not canonical 3093,3243).
+pub const DRAYNOR_BANK: (i32, i32, i32) = (3092, 3243, 0);
+pub const FISHING_BAIT_ID: i32 = 313;
 pub const SHOP_COIN_BANK: i32 = 20_000;
 /// Varrock West anvil used by SmithingBot. Bronze platebody is Smithing 18,
 /// not the audit's copied Smithing 1 (dagger) seed.
@@ -461,6 +531,7 @@ pub enum CoreCase {
     Superheater,
     SuperheaterSteel,
     SuperheaterFireBattlestaff,
+    SuperheaterSilverLowNatures,
     VialFiller,
     VialFillerEast,
     PotionMaker,
@@ -493,6 +564,8 @@ pub enum CoreCase {
     ChaosDruidTower,
     ChaosDruidYanille,
     MossGiant,
+    MossGiantPrepared,
+    MossGiantDart,
     HillGiant,
     AutoFighter,
     AutoFighterMage,
@@ -500,25 +573,41 @@ pub enum CoreCase {
     RockCrab,
     RockCrabRange,
     GreenDragon,
+    GreenDragonPrepared,
+    GreenDragonMagePrepared,
     GreenDragonSpecial,
+    GreenDragonSpecialPrepared,
     GreenDragonPotions,
+    GreenDragonPotionsPrepared,
     FireGiant,
+    FireGiantPrepared,
     ArdyFighter,
     AutoFighterBank,
     MossGiantBank,
     HillGiantBank,
+    HillGiantBankPrepared,
     ChaosDruidBank,
     ArdyFighterBank,
     RockCrabBank,
     GreenDragonBank,
+    GreenDragonBankPrepared,
+    GreenDragonBankDefaultPrepared,
     GreenDragonTele,
+    GreenDragonTelePrepared,
     FireGiantApproach,
     FireGiantBank,
+    FireGiantBankPrepared,
+    FireGiantCamelotPrepared,
     AioTeleport,
     AioTeleportFalador,
     AioTeleportNoStaff,
     ShopBuyout,
     ShopBuyoutAubury,
+    ShopBuyoutLowe,
+    ShopBuyoutHickton,
+    ShopBuyoutHarry,
+    ShopBuyoutBetty,
+    ShopBuyoutGerrant,
     SmithingBot,
     SmithingBotPlatebody,
     LeatherCrafter,
@@ -527,6 +616,25 @@ pub enum CoreCase {
     FiremakerOak,
     ClimbingBoots,
     ClimbingBootsTeleport,
+    RangingGuildRound,
+    RangingGuildRedeem,
+    RangingGuildBank,
+    RangingGuildFull,
+    BrimhavenMossInspectV1,
+    RouteInspectBrimhavenV2,
+    PrayerV2,
+    PrayerV1,
+    LineOfSightV2,
+    ActorObservationV2,
+    FightFieldV2,
+    HoldSpotV2,
+    RetreatSpotV2,
+    WalkSpotV2,
+    EnterLairV2,
+    LeaveLairV2,
+    AcquireKeyV2,
+    CellV2,
+    BankV2,
 }
 
 impl CoreCase {
@@ -568,6 +676,7 @@ impl CoreCase {
             "superheater" => Ok(Self::Superheater),
             "superheater_steel" => Ok(Self::SuperheaterSteel),
             "superheater_fire_battlestaff" => Ok(Self::SuperheaterFireBattlestaff),
+            "superheater_silver_low_natures" => Ok(Self::SuperheaterSilverLowNatures),
             "vial_filler" => Ok(Self::VialFiller),
             "vial_filler_east" => Ok(Self::VialFillerEast),
             "potion_maker" => Ok(Self::PotionMaker),
@@ -600,6 +709,8 @@ impl CoreCase {
             "chaos_druid_tower" => Ok(Self::ChaosDruidTower),
             "chaos_druid_yanille" => Ok(Self::ChaosDruidYanille),
             "moss_giant" => Ok(Self::MossGiant),
+            "moss_giant_prepared" => Ok(Self::MossGiantPrepared),
+            "moss_giant_dart" => Ok(Self::MossGiantDart),
             "hill_giant" => Ok(Self::HillGiant),
             "auto_fighter" => Ok(Self::AutoFighter),
             "auto_fighter_mage" => Ok(Self::AutoFighterMage),
@@ -607,25 +718,41 @@ impl CoreCase {
             "rock_crab" => Ok(Self::RockCrab),
             "rock_crab_range" => Ok(Self::RockCrabRange),
             "green_dragon" => Ok(Self::GreenDragon),
+            "green_dragon_prepared" => Ok(Self::GreenDragonPrepared),
+            "green_dragon_mage_prepared" => Ok(Self::GreenDragonMagePrepared),
             "green_dragon_special" => Ok(Self::GreenDragonSpecial),
+            "green_dragon_special_prepared" => Ok(Self::GreenDragonSpecialPrepared),
             "green_dragon_potions" => Ok(Self::GreenDragonPotions),
+            "green_dragon_potions_prepared" => Ok(Self::GreenDragonPotionsPrepared),
             "fire_giant" => Ok(Self::FireGiant),
+            "fire_giant_prepared" => Ok(Self::FireGiantPrepared),
             "ardy_fighter" => Ok(Self::ArdyFighter),
             "auto_fighter_bank" => Ok(Self::AutoFighterBank),
             "moss_giant_bank" => Ok(Self::MossGiantBank),
             "hill_giant_bank" => Ok(Self::HillGiantBank),
+            "hill_giant_bank_prepared" => Ok(Self::HillGiantBankPrepared),
             "chaos_druid_bank" => Ok(Self::ChaosDruidBank),
             "ardy_fighter_bank" => Ok(Self::ArdyFighterBank),
             "rock_crab_bank" => Ok(Self::RockCrabBank),
             "green_dragon_bank" => Ok(Self::GreenDragonBank),
+            "green_dragon_bank_prepared" => Ok(Self::GreenDragonBankPrepared),
+            "green_dragon_bank_default_prepared" => Ok(Self::GreenDragonBankDefaultPrepared),
             "green_dragon_tele" => Ok(Self::GreenDragonTele),
+            "green_dragon_tele_prepared" => Ok(Self::GreenDragonTelePrepared),
             "fire_giant_approach" => Ok(Self::FireGiantApproach),
             "fire_giant_bank" => Ok(Self::FireGiantBank),
+            "fire_giant_bank_prepared" => Ok(Self::FireGiantBankPrepared),
+            "fire_giant_camelot_prepared" => Ok(Self::FireGiantCamelotPrepared),
             "aio_teleport" => Ok(Self::AioTeleport),
             "aio_teleport_falador" => Ok(Self::AioTeleportFalador),
             "aio_teleport_no_staff" => Ok(Self::AioTeleportNoStaff),
             "shop_buyout" => Ok(Self::ShopBuyout),
             "shop_buyout_aubury" => Ok(Self::ShopBuyoutAubury),
+            "shop_buyout_lowe" => Ok(Self::ShopBuyoutLowe),
+            "shop_buyout_hickton" => Ok(Self::ShopBuyoutHickton),
+            "shop_buyout_harry" => Ok(Self::ShopBuyoutHarry),
+            "shop_buyout_betty" => Ok(Self::ShopBuyoutBetty),
+            "shop_buyout_gerrant" => Ok(Self::ShopBuyoutGerrant),
             "smithing_bot" => Ok(Self::SmithingBot),
             "smithing_bot_platebody" => Ok(Self::SmithingBotPlatebody),
             "leather_crafter" => Ok(Self::LeatherCrafter),
@@ -634,6 +761,25 @@ impl CoreCase {
             "firemaker_oak" => Ok(Self::FiremakerOak),
             "climbing_boots" => Ok(Self::ClimbingBoots),
             "climbing_boots_teleport" => Ok(Self::ClimbingBootsTeleport),
+            "ranging_guild_round" => Ok(Self::RangingGuildRound),
+            "ranging_guild_redeem" => Ok(Self::RangingGuildRedeem),
+            "ranging_guild_bank" => Ok(Self::RangingGuildBank),
+            "ranging_guild_full" => Ok(Self::RangingGuildFull),
+            "brimhaven_moss_inspect_v1" => Ok(Self::BrimhavenMossInspectV1),
+            "route_inspect_brimhaven_v2_ts" => Ok(Self::RouteInspectBrimhavenV2),
+            "prayer_v2_ts" => Ok(Self::PrayerV2),
+            "prayer_v1_ts" => Ok(Self::PrayerV1),
+            "line_of_sight_v2_ts" => Ok(Self::LineOfSightV2),
+            "actor_observation_v2_ts" => Ok(Self::ActorObservationV2),
+            "fight_field_v2_ts" => Ok(Self::FightFieldV2),
+            "hold_spot_v2_ts" => Ok(Self::HoldSpotV2),
+            "retreat_spot_v2_ts" => Ok(Self::RetreatSpotV2),
+            "walk_spot_v2_ts" => Ok(Self::WalkSpotV2),
+            "enter_lair_v2_ts" => Ok(Self::EnterLairV2),
+            "leave_lair_v2_ts" => Ok(Self::LeaveLairV2),
+            "acquire_key_v2_ts" => Ok(Self::AcquireKeyV2),
+            "cell_v2_ts" => Ok(Self::CellV2),
+            "bank_v2_ts" => Ok(Self::BankV2),
             _ => Err(format!(
                 "unknown CATALOG_SCENARIO {value:?}; expected {CORE_SCENARIOS}"
             )),
@@ -678,6 +824,7 @@ impl CoreCase {
             Self::Superheater => "superheater",
             Self::SuperheaterSteel => "superheater_steel",
             Self::SuperheaterFireBattlestaff => "superheater_fire_battlestaff",
+            Self::SuperheaterSilverLowNatures => "superheater_silver_low_natures",
             Self::VialFiller => "vial_filler",
             Self::VialFillerEast => "vial_filler_east",
             Self::PotionMaker => "potion_maker",
@@ -710,6 +857,8 @@ impl CoreCase {
             Self::ChaosDruidTower => "chaos_druid_tower",
             Self::ChaosDruidYanille => "chaos_druid_yanille",
             Self::MossGiant => "moss_giant",
+            Self::MossGiantPrepared => "moss_giant_prepared",
+            Self::MossGiantDart => "moss_giant_dart",
             Self::HillGiant => "hill_giant",
             Self::AutoFighter => "auto_fighter",
             Self::AutoFighterMage => "auto_fighter_mage",
@@ -717,25 +866,41 @@ impl CoreCase {
             Self::RockCrab => "rock_crab",
             Self::RockCrabRange => "rock_crab_range",
             Self::GreenDragon => "green_dragon",
+            Self::GreenDragonPrepared => "green_dragon_prepared",
+            Self::GreenDragonMagePrepared => "green_dragon_mage_prepared",
             Self::GreenDragonSpecial => "green_dragon_special",
+            Self::GreenDragonSpecialPrepared => "green_dragon_special_prepared",
             Self::GreenDragonPotions => "green_dragon_potions",
+            Self::GreenDragonPotionsPrepared => "green_dragon_potions_prepared",
             Self::FireGiant => "fire_giant",
+            Self::FireGiantPrepared => "fire_giant_prepared",
             Self::ArdyFighter => "ardy_fighter",
             Self::AutoFighterBank => "auto_fighter_bank",
             Self::MossGiantBank => "moss_giant_bank",
             Self::HillGiantBank => "hill_giant_bank",
+            Self::HillGiantBankPrepared => "hill_giant_bank_prepared",
             Self::ChaosDruidBank => "chaos_druid_bank",
             Self::ArdyFighterBank => "ardy_fighter_bank",
             Self::RockCrabBank => "rock_crab_bank",
             Self::GreenDragonBank => "green_dragon_bank",
+            Self::GreenDragonBankPrepared => "green_dragon_bank_prepared",
+            Self::GreenDragonBankDefaultPrepared => "green_dragon_bank_default_prepared",
             Self::GreenDragonTele => "green_dragon_tele",
+            Self::GreenDragonTelePrepared => "green_dragon_tele_prepared",
             Self::FireGiantApproach => "fire_giant_approach",
             Self::FireGiantBank => "fire_giant_bank",
+            Self::FireGiantBankPrepared => "fire_giant_bank_prepared",
+            Self::FireGiantCamelotPrepared => "fire_giant_camelot_prepared",
             Self::AioTeleport => "aio_teleport",
             Self::AioTeleportFalador => "aio_teleport_falador",
             Self::AioTeleportNoStaff => "aio_teleport_no_staff",
             Self::ShopBuyout => "shop_buyout",
             Self::ShopBuyoutAubury => "shop_buyout_aubury",
+            Self::ShopBuyoutLowe => "shop_buyout_lowe",
+            Self::ShopBuyoutHickton => "shop_buyout_hickton",
+            Self::ShopBuyoutHarry => "shop_buyout_harry",
+            Self::ShopBuyoutBetty => "shop_buyout_betty",
+            Self::ShopBuyoutGerrant => "shop_buyout_gerrant",
             Self::SmithingBot => "smithing_bot",
             Self::SmithingBotPlatebody => "smithing_bot_platebody",
             Self::LeatherCrafter => "leather_crafter",
@@ -744,6 +909,25 @@ impl CoreCase {
             Self::FiremakerOak => "firemaker_oak",
             Self::ClimbingBoots => "climbing_boots",
             Self::ClimbingBootsTeleport => "climbing_boots_teleport",
+            Self::RangingGuildRound => "ranging_guild_round",
+            Self::RangingGuildRedeem => "ranging_guild_redeem",
+            Self::RangingGuildBank => "ranging_guild_bank",
+            Self::RangingGuildFull => "ranging_guild_full",
+            Self::BrimhavenMossInspectV1 => "brimhaven_moss_inspect_v1",
+            Self::RouteInspectBrimhavenV2 => "route_inspect_brimhaven_v2_ts",
+            Self::PrayerV2 => "prayer_v2_ts",
+            Self::PrayerV1 => "prayer_v1_ts",
+            Self::LineOfSightV2 => "line_of_sight_v2_ts",
+            Self::ActorObservationV2 => "actor_observation_v2_ts",
+            Self::FightFieldV2 => "fight_field_v2_ts",
+            Self::HoldSpotV2 => "hold_spot_v2_ts",
+            Self::RetreatSpotV2 => "retreat_spot_v2_ts",
+            Self::WalkSpotV2 => "walk_spot_v2_ts",
+            Self::EnterLairV2 => "enter_lair_v2_ts",
+            Self::LeaveLairV2 => "leave_lair_v2_ts",
+            Self::AcquireKeyV2 => "acquire_key_v2_ts",
+            Self::CellV2 => "cell_v2_ts",
+            Self::BankV2 => "bank_v2_ts",
         }
     }
 
@@ -776,9 +960,10 @@ impl CoreCase {
             Self::WildyAgility => "WildyAgility",
             Self::BrimhavenAgility => "BrimhavenAgility",
             Self::FlaxPicker => "FlaxPicker",
-            Self::Superheater | Self::SuperheaterSteel | Self::SuperheaterFireBattlestaff => {
-                "Superheater"
-            }
+            Self::Superheater
+            | Self::SuperheaterSteel
+            | Self::SuperheaterFireBattlestaff
+            | Self::SuperheaterSilverLowNatures => "Superheater",
             Self::VialFiller | Self::VialFillerEast => "VialFiller",
             Self::PotionMaker | Self::PotionMakerNamed => "PotionMaker",
             Self::TannerBot | Self::TannerBotHard => "TannerBot",
@@ -797,28 +982,136 @@ impl CoreCase {
             | Self::ChaosDruidTower
             | Self::ChaosDruidYanille
             | Self::ChaosDruidBank => "ChaosDruidKiller",
-            Self::MossGiant | Self::MossGiantBank => "MossGiant",
-            Self::HillGiant | Self::HillGiantBank => "HillGiant",
+            Self::MossGiant
+            | Self::MossGiantPrepared
+            | Self::MossGiantDart
+            | Self::MossGiantBank => "MossGiant",
+            Self::HillGiant | Self::HillGiantBank | Self::HillGiantBankPrepared => "HillGiant",
             Self::AutoFighter
             | Self::AutoFighterMage
             | Self::AutoFighterRange
             | Self::AutoFighterBank => "AutoFighter",
             Self::RockCrab | Self::RockCrabRange | Self::RockCrabBank => "RockCrab",
             Self::GreenDragon
+            | Self::GreenDragonPrepared
+            | Self::GreenDragonMagePrepared
             | Self::GreenDragonSpecial
+            | Self::GreenDragonSpecialPrepared
             | Self::GreenDragonPotions
+            | Self::GreenDragonPotionsPrepared
             | Self::GreenDragonBank
-            | Self::GreenDragonTele => "GreenDragon",
-            Self::FireGiant | Self::FireGiantApproach | Self::FireGiantBank => "FireGiant",
+            | Self::GreenDragonBankPrepared
+            | Self::GreenDragonBankDefaultPrepared
+            | Self::GreenDragonTele
+            | Self::GreenDragonTelePrepared => "GreenDragon",
+            Self::FireGiant
+            | Self::FireGiantPrepared
+            | Self::FireGiantApproach
+            | Self::FireGiantBank
+            | Self::FireGiantBankPrepared
+            | Self::FireGiantCamelotPrepared => "FireGiant",
             Self::ArdyFighter | Self::ArdyFighterBank => "ArdyFighter",
             Self::AioTeleport | Self::AioTeleportFalador | Self::AioTeleportNoStaff => {
                 "AIO Teleport"
             }
-            Self::ShopBuyout | Self::ShopBuyoutAubury => "ShopBuyout",
+            Self::ShopBuyout
+            | Self::ShopBuyoutAubury
+            | Self::ShopBuyoutLowe
+            | Self::ShopBuyoutHickton
+            | Self::ShopBuyoutHarry
+            | Self::ShopBuyoutBetty
+            | Self::ShopBuyoutGerrant => "ShopBuyout",
             Self::SmithingBot | Self::SmithingBotPlatebody => "SmithingBot",
             Self::LeatherCrafter | Self::LeatherCrafterHardBody => "LeatherCrafter",
             Self::Firemaker | Self::FiremakerOak => "Firemaker",
             Self::ClimbingBoots | Self::ClimbingBootsTeleport => "ClimbingBoots",
+            Self::RangingGuildRound
+            | Self::RangingGuildRedeem
+            | Self::RangingGuildBank
+            | Self::RangingGuildFull => "RangingGuild",
+            Self::BrimhavenMossInspectV1 => "BrimhavenMossGiants",
+            Self::RouteInspectBrimhavenV2 => "route_inspect_brimhaven_v2",
+            Self::PrayerV2 => "prayer_v2",
+            Self::PrayerV1 => "prayer_v1",
+            Self::LineOfSightV2 => "line_of_sight_v2",
+            Self::ActorObservationV2 => "actor_observation_v2",
+            Self::FightFieldV2 => "fight_field_v2",
+            Self::HoldSpotV2 => "hold_spot_v2",
+            Self::RetreatSpotV2 => "retreat_spot_v2",
+            Self::WalkSpotV2 => "walk_spot_v2",
+            Self::EnterLairV2 => "enter_lair_v2",
+            Self::LeaveLairV2 => "leave_lair_v2",
+            Self::AcquireKeyV2 => "acquire_key_v2",
+            Self::CellV2 => "cell_v2",
+            Self::BankV2 => "bank_v2",
+        }
+    }
+
+    pub fn copies_route_inspect(self) -> bool {
+        matches!(
+            self,
+            Self::BrimhavenMossInspectV1 | Self::RouteInspectBrimhavenV2
+        )
+    }
+
+    pub fn copies_prayer_varps(self) -> bool {
+        matches!(self, Self::PrayerV2 | Self::PrayerV1)
+    }
+
+    pub fn copies_line_of_sight(self) -> bool {
+        matches!(self, Self::LineOfSightV2)
+    }
+
+    pub fn copies_actor_observation(self) -> bool {
+        matches!(self, Self::ActorObservationV2)
+    }
+
+    pub fn copies_fight_field(self) -> bool {
+        matches!(self, Self::FightFieldV2)
+    }
+
+    /// The v2 hunt File cell this case witnesses, if any. Callers attach
+    /// paint and the slot's act ledger only then.
+    pub fn hunt_cell(self) -> Option<HuntCell> {
+        Some(match self {
+            Self::HoldSpotV2 => HuntCell::Hold,
+            Self::RetreatSpotV2 => HuntCell::Retreat,
+            Self::WalkSpotV2 => HuntCell::WalkSpot,
+            Self::EnterLairV2 => HuntCell::Enter,
+            Self::LeaveLairV2 => HuntCell::Leave,
+            Self::AcquireKeyV2 => HuntCell::Key,
+            Self::CellV2 => HuntCell::Cell,
+            Self::BankV2 => HuntCell::Bank,
+            _ => return None,
+        })
+    }
+
+    pub fn prayer_stop_reason(self) -> Option<&'static str> {
+        match self {
+            Self::PrayerV2 => Some(PRAYER_V2_STOP),
+            Self::PrayerV1 => Some(PRAYER_V1_STOP),
+            _ => None,
+        }
+    }
+
+    pub fn los_stop_reason(self) -> Option<&'static str> {
+        match self {
+            Self::LineOfSightV2 => Some(LOS_V2_STOP),
+            _ => None,
+        }
+    }
+
+    pub fn actor_stop_reason(self) -> Option<&'static str> {
+        match self {
+            Self::ActorObservationV2 => Some(ACTOR_OBSERVATION_V2_STOP),
+            _ => None,
+        }
+    }
+
+    pub fn fight_field_stop_reason(self) -> Option<&'static str> {
+        match self {
+            Self::FightFieldV2 => Some(FIGHT_FIELD_V2_STOP),
+            _ => None,
         }
     }
 }
@@ -910,6 +1203,53 @@ pub struct Observation {
     /// Posted anvil/main-skill-multi row ids this frame (empty if the panel
     /// was not decoded). Chat `make_products` does not fill this.
     pub main_make_ids: BTreeSet<i32>,
+    /// Already-published inspect terminal, attached only for inspect Core
+    /// cases. Default empty; `from_snapshot` does not copy hops.
+    pub route_inspect_seq: u64,
+    pub route_inspect_generation: u64,
+    pub route_inspect_request_id: u64,
+    pub route_inspect_ok: bool,
+    pub route_inspect_reason: String,
+    #[serde(rename = "route_inspect_hops")]
+    pub route_inspect_hops: Vec<RouteInspectHopFact>,
+    /// `InspectNav.generation` even when no terminal is published.
+    /// Missing-terminal Observation defaults are 0 and are not this value.
+    pub route_inspect_live_generation: u64,
+    pub route_inspect_has_terminal: bool,
+    /// Compact current-plane identity and selected pair cells. Empty unless
+    /// the active Core case asked for collision. Never a whole-grid dump.
+    pub los: LineOfSightObservation,
+    /// Compact chosen NPC + LOS helper result. Empty unless the active Core
+    /// case asked for actor observation. Never a world or NPC-table copy.
+    pub actor: ActorObservation,
+    /// Compact fight-field NPC + both LOS helper results. Empty unless the
+    /// active Core case asked for fight field. Never a world or NPC-table copy.
+    pub fight: FightFieldObservation,
+    /// Compact hunt witness: the slot's act ledger and the cell's paint
+    /// receipt. Empty unless the active Core case is a hunt cell.
+    pub hunt: HuntObservation,
+}
+
+/// Compact hop projection for Core JSON. Only `locName` is copied from the
+/// already-published host terminal.
+#[derive(Debug, Clone, Default, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RouteInspectHopFact {
+    pub loc_name: String,
+}
+
+/// Identity/freshness/ok/hop names already published by the host inspect
+/// terminal. Copied only when the active Core case asks for it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RouteInspectPublished {
+    pub live_generation: u64,
+    pub has_terminal: bool,
+    pub seq: u64,
+    pub generation: u64,
+    pub request_id: u64,
+    pub ok: bool,
+    pub reason: String,
+    pub hop_loc_names: Vec<String>,
 }
 
 /// Compact proof that this run observed the exact HerbCleaner seed in a
@@ -1219,6 +1559,9 @@ impl Observation {
                         | COMBAT_MODE_VARP
                         | SA_ENERGY_VARP
                         | SA_ARMED_VARP
+                        | VARP_TARGET_COUNT
+                        | VARP_TARGET_SCORE
+                        | VARP_TARGET_HIT
                 )
             })
             .map(|varp| (varp.index, varp.value))
@@ -1387,7 +1730,34 @@ impl Observation {
                 .take(16)
                 .map(|item| item.def.id)
                 .collect(),
+            route_inspect_seq: 0,
+            route_inspect_generation: 0,
+            route_inspect_request_id: 0,
+            route_inspect_ok: false,
+            route_inspect_reason: String::new(),
+            route_inspect_hops: Vec::new(),
+            route_inspect_live_generation: 0,
+            route_inspect_has_terminal: false,
+            los: LineOfSightObservation::default(),
+            actor: ActorObservation::default(),
+            fight: FightFieldObservation::default(),
+            hunt: HuntObservation::default(),
         }
+    }
+
+    pub fn attach_route_inspect(&mut self, published: RouteInspectPublished) {
+        self.route_inspect_live_generation = published.live_generation;
+        self.route_inspect_has_terminal = published.has_terminal;
+        self.route_inspect_seq = published.seq;
+        self.route_inspect_generation = published.generation;
+        self.route_inspect_request_id = published.request_id;
+        self.route_inspect_ok = published.ok;
+        self.route_inspect_reason = published.reason;
+        self.route_inspect_hops = published
+            .hop_loc_names
+            .into_iter()
+            .map(|loc_name| RouteInspectHopFact { loc_name })
+            .collect();
     }
 
     pub fn item(&self, name: &str) -> i32 {
@@ -1420,6 +1790,223 @@ impl Observation {
 
     pub fn varp(&self, index: i32) -> i32 {
         self.varps.get(&index).copied().unwrap_or(0)
+    }
+
+    /// Copy varps 83..=97 only. Absent snapshot rows stay absent (not 0).
+    pub fn attach_prayer_varps(&mut self, snapshot: &GameSnapshot) {
+        let first = api::prayer::PRAYER_VARP0;
+        let last = first + api::prayer::PRAYER_COUNT as i32 - 1;
+        for varp in snapshot.varps() {
+            if (first..=last).contains(&varp.index) {
+                self.varps.insert(varp.index, varp.value);
+            }
+        }
+    }
+
+    /// Compact current-plane identity, independently selected one-step pairs,
+    /// and the script paint receipt. Never copies the collision grid.
+    pub fn attach_line_of_sight(
+        &mut self,
+        snapshot: &GameSnapshot,
+        paint: Option<&script::shim::ScriptPaint>,
+    ) {
+        let scene = snapshot.scene();
+        let identity = LineOfSightIdentity {
+            base_x: scene.base_x,
+            base_z: scene.base_z,
+            level: scene.level,
+            width: scene.width,
+            height: scene.height,
+        };
+        let here = self
+            .tile
+            .map(|(x, z, level)| LineOfSightTile { x, z, level });
+        let here_flag = here.and_then(|tile| collision_flag_at(scene, tile));
+        let (host_open, host_blocked, fixture_failure) = match here {
+            Some(tile) if scene.available => match select_line_of_sight_pairs(tile, |x, z| {
+                collision_flag_at(
+                    scene,
+                    LineOfSightTile {
+                        x,
+                        z,
+                        level: tile.level,
+                    },
+                )
+            }) {
+                Ok((open, blocked)) => (Some(open), Some(blocked), None),
+                Err(msg) => (None, None, Some(msg)),
+            },
+            _ => (None, None, None),
+        };
+        self.los = LineOfSightObservation {
+            available: scene.available,
+            identity,
+            here,
+            here_flag,
+            host_open,
+            host_blocked,
+            fixture_failure,
+            receipt: paint.and_then(parse_los_receipt_from_paint),
+        };
+    }
+
+    /// Compact host identity, one size>=1 NPC, existing LOS helper, and the
+    /// script paint receipt. Never copies the NPC table or collision grid.
+    pub fn attach_actor_observation(
+        &mut self,
+        snapshot: &GameSnapshot,
+        paint: Option<&script::shim::ScriptPaint>,
+    ) {
+        let scene = snapshot.scene();
+        let identity = LineOfSightIdentity {
+            base_x: scene.base_x,
+            base_z: scene.base_z,
+            level: scene.level,
+            width: scene.width,
+            height: scene.height,
+        };
+        let here = self
+            .tile
+            .map(|(x, z, level)| LineOfSightTile { x, z, level });
+        let receipt = paint.and_then(parse_actor_receipt_from_paint);
+        let npc = choose_actor_observation_npc(snapshot.npcs(), receipt.as_ref()).map(|row| {
+            ActorObservationNpc {
+                index: row.index as i32,
+                name: row.name.clone(),
+                size: row.size,
+                tile_x: row.tile.x,
+                tile_z: row.tile.z,
+                nx: row.network.x,
+                nz: row.network.z,
+                level: row.tile.level,
+            }
+        });
+        let (self_target_kind, self_target_index) = packed_self_target(snapshot);
+        let host_los = match (here, npc.as_ref()) {
+            (Some(from), Some(npc)) if scene.available => {
+                let query = CollisionQuery {
+                    available: scene.available,
+                    base_x: scene.base_x,
+                    base_z: scene.base_z,
+                    level: scene.level,
+                    width: scene.width,
+                    height: scene.height,
+                    flags: Arc::from(scene.collision_flags.as_slice()),
+                };
+                line_of_sight_v2(
+                    Some(&query),
+                    WorldTile {
+                        x: from.x,
+                        z: from.z,
+                        level: from.level,
+                    },
+                    WorldTile {
+                        x: npc.nx,
+                        z: npc.nz,
+                        level: npc.level,
+                    },
+                    Some(npc.size),
+                )
+                .ok()
+            }
+            _ => None,
+        };
+        self.actor = ActorObservation {
+            available: scene.available,
+            identity,
+            here,
+            npc,
+            host_los,
+            self_target_kind,
+            self_target_index,
+            receipt,
+        };
+    }
+
+    /// Compact host identity, one size>=1 NPC, both existing LOS helper
+    /// results, and the script paint receipt. Never copies the NPC table.
+    pub fn attach_fight_field(
+        &mut self,
+        snapshot: &GameSnapshot,
+        paint: Option<&script::shim::ScriptPaint>,
+    ) {
+        let scene = snapshot.scene();
+        let identity = LineOfSightIdentity {
+            base_x: scene.base_x,
+            base_z: scene.base_z,
+            level: scene.level,
+            width: scene.width,
+            height: scene.height,
+        };
+        let here = self
+            .tile
+            .map(|(x, z, level)| LineOfSightTile { x, z, level });
+        let receipt = paint.and_then(parse_fight_field_receipt_from_paint);
+        let npc =
+            choose_fight_field_npc(snapshot.npcs(), receipt.as_ref()).map(|row| FightFieldNpc {
+                index: row.index as i32,
+                size: row.size,
+                tile_x: row.tile.x,
+                tile_z: row.tile.z,
+                nx: row.network.x,
+                nz: row.network.z,
+                level: row.tile.level,
+            });
+        let query = if scene.available {
+            Some(CollisionQuery {
+                available: scene.available,
+                base_x: scene.base_x,
+                base_z: scene.base_z,
+                level: scene.level,
+                width: scene.width,
+                height: scene.height,
+                flags: Arc::from(scene.collision_flags.as_slice()),
+            })
+        } else {
+            None
+        };
+        let (host_los_network, host_los_tile) = match (here, npc.as_ref(), query.as_ref()) {
+            (Some(from), Some(npc), Some(query)) => {
+                let from_tile = WorldTile {
+                    x: from.x,
+                    z: from.z,
+                    level: from.level,
+                };
+                let network = line_of_sight_v2(
+                    Some(query),
+                    from_tile,
+                    WorldTile {
+                        x: npc.nx,
+                        z: npc.nz,
+                        level: npc.level,
+                    },
+                    Some(npc.size),
+                )
+                .ok();
+                let tile = line_of_sight_v2(
+                    Some(query),
+                    from_tile,
+                    WorldTile {
+                        x: npc.tile_x,
+                        z: npc.tile_z,
+                        level: npc.level,
+                    },
+                    Some(npc.size),
+                )
+                .ok();
+                (network, tile)
+            }
+            _ => (None, None),
+        };
+        self.fight = FightFieldObservation {
+            available: scene.available,
+            identity,
+            here,
+            npc,
+            host_los_network,
+            host_los_tile,
+            receipt,
+        };
     }
 
     pub fn equipment_id(&self, id: i32) -> i32 {
@@ -1554,6 +2141,1042 @@ pub fn near(tile: Option<(i32, i32, i32)>, target: (i32, i32, i32), radius: i32)
 
 pub fn empty_pack(observation: &Observation) -> bool {
     observation.item_ids.values().copied().sum::<i32>() == 0
+}
+
+/// Frozen `config.ts` @ rs2b0t `beecd912` Ardougne SE bank / Barnaby pier / field.
+pub const BRIMHAVEN_INSPECT_BANK: (i32, i32, i32) = (2655, 3283, 0);
+pub const BRIMHAVEN_INSPECT_PIER: (i32, i32, i32) = (2683, 3272, 0);
+pub const BRIMHAVEN_INSPECT_FIELD: (i32, i32, i32) = (2698, 3206, 0);
+pub const BRIMHAVEN_INSPECT_BANK_RADIUS: i32 = 6;
+pub const BRIMHAVEN_INSPECT_PIER_RADIUS: i32 = 8;
+pub const BRIMHAVEN_INSPECT_FOOD_WITHDRAW: i32 = 20;
+pub const BRIMHAVEN_INSPECT_BOAT_FARE_ROUNDTRIP: i32 = 60;
+
+fn chebyshev(a: (i32, i32, i32), b: (i32, i32, i32)) -> i32 {
+    if a.2 != b.2 {
+        i32::MAX
+    } else {
+        (a.0 - b.0).abs().max((a.1 - b.1).abs())
+    }
+}
+
+fn hop_loc_has(hops: &[RouteInspectHopFact], needle: &str) -> bool {
+    hops.iter()
+        .any(|hop| hop.loc_name.to_ascii_lowercase().contains(needle))
+}
+
+fn hop_loc_wrong_boat(hops: &[RouteInspectHopFact]) -> bool {
+    hops.iter().any(|hop| {
+        let name = hop.loc_name.to_ascii_lowercase();
+        name.contains("thresnor") || name.contains("musa") || name.contains("port sarim")
+    })
+}
+
+/// Authoritative inspect freshness for Core (not a new product policy).
+///
+/// `InspectNav.generation` starts at 0 and is the live generation even when
+/// no terminal is published. `reset_inspect` (session nav reset, not catalog
+/// Start) does `wrapping_add(1)` and `clear_published`; a later publish uses
+/// `next_seq` from an empty latest (seq 1) stamped with the new generation.
+/// `Observation` defaults (`generation`/`seq`/`live_generation` = 0,
+/// `has_terminal` = false) are missing-projection placeholders, not "live
+/// generation is 0". The narrow inspect projection therefore copies
+/// `live_generation` even without a terminal so Start baseline can store the
+/// real ring. Generation 0 is a legitimate first-session value.
+///
+/// Current publish: `has_terminal` and `terminal.generation == live_generation`.
+/// Same live generation as the Start baseline: `seq` must advance past that
+/// baseline seq. After `reset_inspect` the live generation changes; the new
+/// ring's seq 1 is fresh even if the previous ring ended at seq 8. Old
+/// generation / stale seq / unpublished seq 0 are rejected. v1 also requires
+/// a registered `request_id != 0` at the cycle; v2 token uses `!= 0` then a
+/// later distinct `request_id == 0` snapshot.
+fn fresh_barnaby_inspect(now: &Observation, prior_live_generation: u64, prior_seq: u64) -> bool {
+    if !now.route_inspect_has_terminal
+        || now.route_inspect_generation != now.route_inspect_live_generation
+        || !now.route_inspect_ok
+        || !hop_loc_has(&now.route_inspect_hops, "barnaby")
+        || hop_loc_wrong_boat(&now.route_inspect_hops)
+    {
+        return false;
+    }
+    if now.route_inspect_live_generation == prior_live_generation {
+        now.route_inspect_seq > prior_seq
+    } else {
+        now.route_inspect_seq > 0
+    }
+}
+
+pub fn brimhaven_moss_inspect_v1_baseline_ready(baseline: &Observation) -> bool {
+    near(
+        baseline.tile,
+        BRIMHAVEN_INSPECT_BANK,
+        BRIMHAVEN_INSPECT_BANK_RADIUS,
+    ) && empty_pack(baseline)
+        && baseline.item_id(LOBSTER_ID) == 0
+        && baseline.item_id(COINS_ID) == 0
+        && baseline.level("agility") >= 30
+        && baseline.ingame
+        && baseline.scene_state == 2
+}
+
+pub fn route_inspect_brimhaven_v2_baseline_ready(baseline: &Observation) -> bool {
+    near(baseline.tile, BRIMHAVEN_INSPECT_PIER, 4) && baseline.ingame && baseline.scene_state == 2
+}
+
+/// Ordered v1 witness: restock after empty-pack Start, then a fresh accepted
+/// Barnaby inspect (`request_id != 0`), then a later observation with an
+/// actual tile change toward/at the pier. First `accepted_tile` is kept.
+/// Seed, fallback-without-accept, same-frame pier, wrong-boat, and stale
+/// generation cannot qualify.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct BrimhavenMossInspectCycle {
+    pub restocked: bool,
+    pub accepted_seq: Option<u64>,
+    pub accepted_tile: Option<(i32, i32, i32)>,
+    pub walk_progress: bool,
+}
+
+impl BrimhavenMossInspectCycle {
+    pub fn observe(&mut self, baseline: &Observation, now: &Observation) {
+        if !self.restocked
+            && now.bank_open
+            && now.bank_loaded
+            && now.bank_generation > baseline.bank_generation
+            && now.item_id(LOBSTER_ID) >= BRIMHAVEN_INSPECT_FOOD_WITHDRAW
+            && now.item_id(COINS_ID) >= BRIMHAVEN_INSPECT_BOAT_FARE_ROUNDTRIP
+            && baseline.item_id(LOBSTER_ID) == 0
+            && baseline.item_id(COINS_ID) == 0
+        {
+            self.restocked = true;
+        }
+        if self.restocked
+            && self.accepted_seq.is_none()
+            && now.route_inspect_request_id != 0
+            && fresh_barnaby_inspect(
+                now,
+                baseline.route_inspect_live_generation,
+                baseline.route_inspect_seq,
+            )
+        {
+            self.accepted_seq = Some(now.route_inspect_seq);
+            // First accepted tile only; repeated later terminals must not refresh it.
+            self.accepted_tile = now.tile;
+        }
+        if let (Some(_), Some(from)) = (self.accepted_seq, self.accepted_tile) {
+            let later_tile = now.tile.filter(|tile| *tile != from);
+            if let Some(tile) = later_tile {
+                self.walk_progress |= near(
+                    Some(tile),
+                    BRIMHAVEN_INSPECT_PIER,
+                    BRIMHAVEN_INSPECT_PIER_RADIUS,
+                ) || chebyshev(tile, BRIMHAVEN_INSPECT_PIER)
+                    < chebyshev(from, BRIMHAVEN_INSPECT_PIER);
+            }
+        }
+    }
+
+    pub fn qualified(&self) -> bool {
+        self.restocked && self.accepted_seq.is_some() && self.walk_progress
+    }
+}
+
+/// Ordered v2 witness: consumed token result, then a later request_id 0
+/// result, then ordinary arrival on a distinct bank tile.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct RouteInspectBrimhavenV2Cycle {
+    pub token_seq: Option<u64>,
+    pub snap0_seq: Option<u64>,
+    pub walked: bool,
+}
+
+impl RouteInspectBrimhavenV2Cycle {
+    pub fn observe(&mut self, baseline: &Observation, now: &Observation) {
+        if self.token_seq.is_none()
+            && now.route_inspect_request_id != 0
+            && fresh_barnaby_inspect(
+                now,
+                baseline.route_inspect_live_generation,
+                baseline.route_inspect_seq,
+            )
+        {
+            self.token_seq = Some(now.route_inspect_seq);
+        }
+        if let Some(token_seq) = self.token_seq {
+            if self.snap0_seq.is_none()
+                && now.route_inspect_request_id == 0
+                && fresh_barnaby_inspect(
+                    now,
+                    // id0 is a later publish on this same live ring; seq must
+                    // advance past the token. v2 request_id 0 is distinct from
+                    // a v1 registered identity.
+                    now.route_inspect_live_generation,
+                    token_seq,
+                )
+            {
+                self.snap0_seq = Some(now.route_inspect_seq);
+            }
+        }
+        if self.snap0_seq.is_some() {
+            self.walked |= near(
+                now.tile,
+                BRIMHAVEN_INSPECT_BANK,
+                BRIMHAVEN_INSPECT_BANK_RADIUS,
+            ) && !near(now.tile, BRIMHAVEN_INSPECT_PIER, 4);
+        }
+    }
+
+    pub fn qualified(&self) -> bool {
+        self.token_seq.is_some() && self.snap0_seq.is_some() && self.walked
+    }
+}
+
+pub const PRAYER_V2_STOP: &str = "prayer v2 qualification complete";
+pub const PRAYER_V1_STOP: &str = "prayer v1 qualification complete";
+pub const PRAYER_BASE_MIN: i32 = 43;
+pub const PROTECT_FROM_MELEE_VARP: i32 = 97;
+
+pub fn prayer_varp_indexes() -> impl Iterator<Item = i32> {
+    let start = api::prayer::PRAYER_VARP0;
+    (0..api::prayer::PRAYER_COUNT as i32).map(move |i| start + i)
+}
+
+/// All 15 overlay keys present and zero. Missing keys are not off.
+pub fn prayer_varps_all_present_off(observation: &Observation) -> bool {
+    prayer_varp_indexes().all(|index| observation.varps.get(&index) == Some(&0))
+}
+
+pub fn prayer_delivery_baseline_ready(baseline: &Observation) -> bool {
+    baseline.ingame
+        && baseline.scene_state == 2
+        && baseline.level("prayer") >= PRAYER_BASE_MIN
+        && baseline.effective_level("prayer") > 0
+        && prayer_varps_all_present_off(baseline)
+}
+
+/// Ordered witness: seeded all-off, then a latched Protect from Melee ON
+/// (varp 97==1, even if later cleared the same/later tick), then all 15
+/// present-and-off, then the exact File-card stop reason.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct PrayerDeliveryCycle {
+    pub saw_on: bool,
+    pub later_all_off: bool,
+    pub stopped: Option<script::ScriptLifecycleReceipt>,
+}
+
+impl PrayerDeliveryCycle {
+    pub fn observe(&mut self, now: &Observation) {
+        if now.varps.get(&PROTECT_FROM_MELEE_VARP) == Some(&1) {
+            self.saw_on = true;
+        }
+        if self.saw_on && prayer_varps_all_present_off(now) {
+            self.later_all_off = true;
+        }
+    }
+
+    pub fn observe_script_lifecycle(
+        &mut self,
+        receipt: script::ScriptLifecycleReceipt,
+        expected: &str,
+    ) {
+        if self.later_all_off
+            && receipt.runtime_generation > 0
+            && receipt.state == script::ScriptTerminalState::Stopped
+            && receipt.reason == expected
+        {
+            self.stopped = Some(receipt);
+        }
+    }
+
+    pub fn qualified(&self) -> bool {
+        self.saw_on && self.later_all_off && self.stopped.is_some()
+    }
+}
+
+pub const LOS_V2_STOP: &str = "line of sight qualification complete";
+pub const LOS_RECEIPT_PREFIX: &str = "los-receipt:";
+pub const ACTOR_OBSERVATION_V2_STOP: &str = "actor observation qualification complete";
+pub const ACTOR_RECEIPT_PREFIX: &str = "actor-receipt:";
+pub const FIGHT_FIELD_V2_STOP: &str = "fight field qualification complete";
+pub const FIGHT_FIELD_RECEIPT_PREFIX: &str = "fight-field-receipt:";
+pub const LOS_WALK_SCENERY: i32 = 0x100;
+pub const LOS_V_N: i32 = 0x400;
+pub const LOS_V_E: i32 = 0x1000;
+pub const LOS_V_S: i32 = 0x4000;
+pub const LOS_V_W: i32 = 0x10000;
+pub const LOS_VIS_SCENERY: i32 = 0x20000;
+pub const LOS_PAIR_RADIUS: i32 = 8;
+const LOS_DIRS: [(i32, i32, i32); 4] = [
+    (1, 0, LOS_V_W),
+    (-1, 0, LOS_V_E),
+    (0, 1, LOS_V_S),
+    (0, -1, LOS_V_N),
+];
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LineOfSightIdentity {
+    pub base_x: i32,
+    pub base_z: i32,
+    pub level: i32,
+    pub width: i32,
+    pub height: i32,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LineOfSightTile {
+    pub x: i32,
+    pub z: i32,
+    pub level: i32,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LineOfSightPair {
+    pub from: LineOfSightTile,
+    pub to: LineOfSightTile,
+    pub src: i32,
+    pub dst: i32,
+    pub mask: i32,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LineOfSightPairResult {
+    pub from: LineOfSightTile,
+    pub to: LineOfSightTile,
+    pub src: i32,
+    pub dst: i32,
+    pub mask: i32,
+    pub v2: bool,
+    pub v1: bool,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LineOfSightHere {
+    pub x: i32,
+    pub z: i32,
+    pub level: i32,
+    pub flag: i32,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LineOfSightScriptReceipt {
+    pub identity: LineOfSightIdentity,
+    pub here: LineOfSightHere,
+    pub open: LineOfSightPairResult,
+    pub blocked: LineOfSightPairResult,
+}
+
+#[derive(Debug, Clone, Default, Serialize, PartialEq, Eq)]
+pub struct LineOfSightObservation {
+    pub available: bool,
+    pub identity: LineOfSightIdentity,
+    pub here: Option<LineOfSightTile>,
+    pub here_flag: Option<i32>,
+    pub host_open: Option<LineOfSightPair>,
+    pub host_blocked: Option<LineOfSightPair>,
+    pub fixture_failure: Option<String>,
+    pub receipt: Option<LineOfSightScriptReceipt>,
+}
+
+impl LineOfSightPairResult {
+    pub fn pair(self) -> LineOfSightPair {
+        LineOfSightPair {
+            from: self.from,
+            to: self.to,
+            src: self.src,
+            dst: self.dst,
+            mask: self.mask,
+        }
+    }
+}
+
+fn collision_flag_at(scene: &SceneView, tile: LineOfSightTile) -> Option<i32> {
+    if !scene.available || tile.level != scene.level {
+        return None;
+    }
+    let lx = tile.x - scene.base_x;
+    let lz = tile.z - scene.base_z;
+    if lx < 0 || lz < 0 || lx >= scene.width || lz >= scene.height {
+        return None;
+    }
+    scene
+        .collision_flags
+        .get((lx * scene.height + lz) as usize)
+        .copied()
+}
+
+pub fn los_entering_mask(dx: i32, dz: i32) -> Option<i32> {
+    match (dx, dz) {
+        (1, 0) => Some(LOS_V_W),
+        (-1, 0) => Some(LOS_V_E),
+        (0, 1) => Some(LOS_V_S),
+        (0, -1) => Some(LOS_V_N),
+        _ => None,
+    }
+}
+
+pub fn line_of_sight_pair_is_open(pair: &LineOfSightPair) -> bool {
+    let dx = pair.to.x - pair.from.x;
+    let dz = pair.to.z - pair.from.z;
+    pair.from.level == pair.to.level
+        && los_entering_mask(dx, dz) == Some(pair.mask)
+        && pair.src & LOS_WALK_SCENERY == 0
+        && pair.dst & pair.mask == 0
+}
+
+pub fn line_of_sight_pair_is_blocked(pair: &LineOfSightPair) -> bool {
+    let dx = pair.to.x - pair.from.x;
+    let dz = pair.to.z - pair.from.z;
+    // Source WALK_SCENERY must be clear: the LOS helper returns false on
+    // source scenery before ray tracing, so a scenery-sourced negative is
+    // not attributable to the entering V-wall.
+    pair.from.level == pair.to.level
+        && los_entering_mask(dx, dz) == Some(pair.mask)
+        && pair.src & LOS_WALK_SCENERY == 0
+        && pair.dst & pair.mask != 0
+}
+
+pub fn line_of_sight_dest_vis_alone(pair: &LineOfSightPair) -> bool {
+    pair.dst & LOS_VIS_SCENERY != 0 && pair.dst & pair.mask == 0
+}
+
+/// Deterministic Chebyshev 0..=8 cardinal scan. Expected answers come from
+/// one-step raw V-mask facts, not from calling the LOS helper.
+pub fn select_line_of_sight_pairs(
+    here: LineOfSightTile,
+    flag_at: impl Fn(i32, i32) -> Option<i32>,
+) -> Result<(LineOfSightPair, LineOfSightPair), String> {
+    let mut open = None;
+    let mut blocked = None;
+    for r in 0..=LOS_PAIR_RADIUS {
+        for dx in -r..=r {
+            for dz in -r..=r {
+                if dx.abs().max(dz.abs()) != r {
+                    continue;
+                }
+                let from = LineOfSightTile {
+                    x: here.x + dx,
+                    z: here.z + dz,
+                    level: here.level,
+                };
+                if (from.x - here.x).abs().max((from.z - here.z).abs()) > LOS_PAIR_RADIUS {
+                    continue;
+                }
+                let Some(src) = flag_at(from.x, from.z) else {
+                    continue;
+                };
+                for (sx, sz, mask) in LOS_DIRS {
+                    let to = LineOfSightTile {
+                        x: from.x + sx,
+                        z: from.z + sz,
+                        level: here.level,
+                    };
+                    if (to.x - here.x).abs().max((to.z - here.z).abs()) > LOS_PAIR_RADIUS {
+                        continue;
+                    }
+                    let Some(dst) = flag_at(to.x, to.z) else {
+                        continue;
+                    };
+                    let pair = LineOfSightPair {
+                        from,
+                        to,
+                        src,
+                        dst,
+                        mask,
+                    };
+                    if blocked.is_none() && line_of_sight_pair_is_blocked(&pair) {
+                        blocked = Some(pair);
+                    } else if open.is_none() && line_of_sight_pair_is_open(&pair) {
+                        open = Some(pair);
+                    }
+                    if let (Some(open), Some(blocked)) = (open, blocked) {
+                        return Ok((open, blocked));
+                    }
+                }
+            }
+        }
+    }
+    Err("los fixture failure: no cardinal open+blocked V-wall pair within 8".into())
+}
+
+pub fn parse_los_receipt_from_paint(
+    paint: &script::shim::ScriptPaint,
+) -> Option<LineOfSightScriptReceipt> {
+    paint.lines.iter().find_map(|line| {
+        line.strip_prefix(LOS_RECEIPT_PREFIX)
+            .and_then(|json| serde_json::from_str(json).ok())
+    })
+}
+
+pub fn line_of_sight_baseline_ready(baseline: &Observation) -> bool {
+    baseline.ingame
+        && baseline.scene_state == 2
+        && baseline.los.available
+        && baseline.los.here_flag.is_some()
+}
+
+fn los_receipt_joined(now: &LineOfSightObservation) -> bool {
+    let (Some(host_open), Some(host_blocked), Some(receipt), Some(here), Some(here_flag)) = (
+        now.host_open,
+        now.host_blocked,
+        now.receipt.as_ref(),
+        now.here,
+        now.here_flag,
+    ) else {
+        return false;
+    };
+    now.available
+        && now.fixture_failure.is_none()
+        && receipt.identity == now.identity
+        && receipt.here.x == here.x
+        && receipt.here.z == here.z
+        && receipt.here.level == here.level
+        && receipt.here.flag == here_flag
+        && line_of_sight_pair_is_open(&host_open)
+        && line_of_sight_pair_is_blocked(&host_blocked)
+        && !line_of_sight_dest_vis_alone(&host_blocked)
+        && !line_of_sight_dest_vis_alone(&receipt.blocked.pair())
+        && receipt.open.pair() == host_open
+        && receipt.blocked.pair() == host_blocked
+        && receipt.open.v2
+        && !receipt.blocked.v2
+        && receipt.open.v1
+        && !receipt.blocked.v1
+}
+
+/// Post-Start witness: host-selected one-step pairs, user-script receipt
+/// joined to the same SceneView identity/flags, then the named helper stop.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct LineOfSightDeliveryCycle {
+    pub host_open: Option<LineOfSightPair>,
+    pub host_blocked: Option<LineOfSightPair>,
+    pub identity: Option<LineOfSightIdentity>,
+    pub receipt: Option<LineOfSightScriptReceipt>,
+    pub stopped: Option<script::ScriptLifecycleReceipt>,
+    pub fixture_failure: Option<String>,
+}
+
+impl LineOfSightDeliveryCycle {
+    pub fn observe(&mut self, now: &Observation) {
+        if let Some(msg) = now.los.fixture_failure.clone() {
+            self.fixture_failure = Some(msg);
+        }
+        // Once a same-observation host/receipt join is latched, freeze host
+        // pairs and identity with that historical witness. Later host drift
+        // must not overwrite evidence that still backs a valid receipt.
+        if self.receipt.is_some() {
+            return;
+        }
+        if now.los.available {
+            if let (Some(open), Some(blocked)) = (now.los.host_open, now.los.host_blocked) {
+                if line_of_sight_pair_is_open(&open) && line_of_sight_pair_is_blocked(&blocked) {
+                    self.host_open = Some(open);
+                    self.host_blocked = Some(blocked);
+                    self.identity = Some(now.los.identity);
+                }
+            }
+        }
+        if los_receipt_joined(&now.los) {
+            // Latch host + receipt from the same joined observation.
+            self.host_open = now.los.host_open;
+            self.host_blocked = now.los.host_blocked;
+            self.identity = Some(now.los.identity);
+            self.receipt = now.los.receipt;
+        }
+    }
+
+    pub fn observe_script_lifecycle(
+        &mut self,
+        receipt: script::ScriptLifecycleReceipt,
+        expected: &str,
+    ) {
+        if self.receipt.is_some()
+            && receipt.runtime_generation > 0
+            && receipt.state == script::ScriptTerminalState::Stopped
+            && receipt.reason == expected
+        {
+            self.stopped = Some(receipt);
+        }
+    }
+
+    pub fn qualified(&self) -> bool {
+        if self.fixture_failure.is_some() || self.stopped.is_none() {
+            return false;
+        }
+        let (Some(host_open), Some(host_blocked), Some(identity), Some(receipt)) = (
+            self.host_open,
+            self.host_blocked,
+            self.identity,
+            self.receipt.as_ref(),
+        ) else {
+            return false;
+        };
+        // Re-assert stored host still matches the latched receipt (fail-closed).
+        identity == receipt.identity
+            && host_open == receipt.open.pair()
+            && host_blocked == receipt.blocked.pair()
+            && line_of_sight_pair_is_open(&host_open)
+            && line_of_sight_pair_is_blocked(&host_blocked)
+            && !line_of_sight_dest_vis_alone(&host_blocked)
+            && receipt.open.v2
+            && !receipt.blocked.v2
+            && receipt.open.v1
+            && !receipt.blocked.v1
+    }
+}
+
+/// File and Core share this rule: min `(distance, index)` among `size >= 1`.
+/// After the script posts a receipt, look that index up so headed join verifies
+/// the observed row instead of independently picking another NPC.
+fn choose_actor_observation_npc<'a>(
+    npcs: &'a [NpcView],
+    receipt: Option<&ActorObservationScriptReceipt>,
+) -> Option<&'a NpcView> {
+    if let Some(index) = receipt.map(|row| row.npc.index) {
+        return npcs
+            .iter()
+            .find(|row| row.size >= 1 && row.index as i32 == index);
+    }
+    npcs.iter()
+        .filter(|row| row.size >= 1)
+        .min_by_key(|row| (row.distance, row.index))
+}
+
+fn packed_self_target(snapshot: &GameSnapshot) -> (i32, i32) {
+    match snapshot
+        .local_player()
+        .and_then(|player| player.player.actor.target)
+    {
+        None => (0, -1),
+        Some(target) => match target.kind {
+            ActorKind::Npc => (1, target.index as i32),
+            ActorKind::Player => (2, target.index as i32),
+        },
+    }
+}
+
+fn parse_actor_receipt_from_paint(
+    paint: &script::shim::ScriptPaint,
+) -> Option<ActorObservationScriptReceipt> {
+    paint.lines.iter().find_map(|line| {
+        line.strip_prefix(ACTOR_RECEIPT_PREFIX)
+            .and_then(|json| serde_json::from_str(json).ok())
+    })
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ActorObservationPoint {
+    pub x: i32,
+    pub z: i32,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ActorObservationNpcFact {
+    pub index: i32,
+    pub name: Option<String>,
+    pub size: i32,
+    pub tile: ActorObservationPoint,
+    pub network: ActorObservationPoint,
+    pub level: i32,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ActorObservationPacked {
+    pub size: i32,
+    pub nx: i32,
+    pub nz: i32,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ActorObservationSelfTarget {
+    pub kind: i32,
+    pub index: i32,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ActorObservationLos {
+    pub v2: bool,
+    pub v1: bool,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ActorObservationScriptReceipt {
+    pub identity: LineOfSightIdentity,
+    pub here: LineOfSightTile,
+    pub npc: ActorObservationNpcFact,
+    pub packed: ActorObservationPacked,
+    pub rendered: ActorObservationPoint,
+    pub self_target: ActorObservationSelfTarget,
+    pub los: ActorObservationLos,
+}
+
+#[derive(Debug, Clone, Default, Serialize, PartialEq, Eq)]
+pub struct ActorObservationNpc {
+    pub index: i32,
+    pub name: Option<String>,
+    pub size: i32,
+    pub tile_x: i32,
+    pub tile_z: i32,
+    pub nx: i32,
+    pub nz: i32,
+    pub level: i32,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct ActorObservation {
+    pub available: bool,
+    pub identity: LineOfSightIdentity,
+    pub here: Option<LineOfSightTile>,
+    pub npc: Option<ActorObservationNpc>,
+    pub host_los: Option<bool>,
+    pub self_target_kind: i32,
+    pub self_target_index: i32,
+    pub receipt: Option<ActorObservationScriptReceipt>,
+}
+
+impl Default for ActorObservation {
+    fn default() -> Self {
+        Self {
+            available: false,
+            identity: LineOfSightIdentity::default(),
+            here: None,
+            npc: None,
+            host_los: None,
+            self_target_kind: 0,
+            self_target_index: -1,
+            receipt: None,
+        }
+    }
+}
+
+pub fn actor_observation_baseline_ready(baseline: &Observation) -> bool {
+    baseline.ingame
+        && baseline.scene_state == 2
+        && baseline.actor.available
+        && baseline.actor.here.is_some()
+}
+
+fn actor_receipt_joined(now: &ActorObservation) -> bool {
+    let (Some(npc), Some(here), Some(host_los), Some(receipt)) = (
+        now.npc.as_ref(),
+        now.here,
+        now.host_los,
+        now.receipt.as_ref(),
+    ) else {
+        return false;
+    };
+    now.available
+        && npc.size >= 1
+        && receipt.identity == now.identity
+        && receipt.here == here
+        && receipt.npc.index == npc.index
+        && receipt.npc.name == npc.name
+        && receipt.npc.size == npc.size
+        && receipt.npc.level == npc.level
+        && receipt.npc.tile.x == npc.tile_x
+        && receipt.npc.tile.z == npc.tile_z
+        && receipt.npc.network.x == npc.nx
+        && receipt.npc.network.z == npc.nz
+        && receipt.packed.size == npc.size
+        && receipt.packed.nx == npc.nx
+        && receipt.packed.nz == npc.nz
+        && receipt.rendered.x == npc.tile_x
+        && receipt.rendered.z == npc.tile_z
+        && receipt.self_target.kind == now.self_target_kind
+        && receipt.self_target.index == now.self_target_index
+        && receipt.los.v2 == host_los
+        && receipt.los.v1 == host_los
+}
+
+/// Post-Start witness: one packed size>=1 NPC, joined script receipt, named stop.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct ActorObservationDeliveryCycle {
+    pub identity: Option<LineOfSightIdentity>,
+    pub npc: Option<ActorObservationNpc>,
+    pub host_los: Option<bool>,
+    pub receipt: Option<ActorObservationScriptReceipt>,
+    pub stopped: Option<script::ScriptLifecycleReceipt>,
+}
+
+impl ActorObservationDeliveryCycle {
+    pub fn observe(&mut self, now: &Observation) {
+        if self.receipt.is_some() {
+            return;
+        }
+        if now.actor.available {
+            if let Some(npc) = now.actor.npc.clone() {
+                if npc.size >= 1 {
+                    self.identity = Some(now.actor.identity);
+                    self.npc = Some(npc);
+                    self.host_los = now.actor.host_los;
+                }
+            }
+        }
+        if actor_receipt_joined(&now.actor) {
+            self.identity = Some(now.actor.identity);
+            self.npc = now.actor.npc.clone();
+            self.host_los = now.actor.host_los;
+            self.receipt = now.actor.receipt.clone();
+        }
+    }
+
+    pub fn observe_script_lifecycle(
+        &mut self,
+        receipt: script::ScriptLifecycleReceipt,
+        expected: &str,
+    ) {
+        if self.receipt.is_some()
+            && receipt.runtime_generation > 0
+            && receipt.state == script::ScriptTerminalState::Stopped
+            && receipt.reason == expected
+        {
+            self.stopped = Some(receipt);
+        }
+    }
+
+    pub fn qualified(&self) -> bool {
+        if self.stopped.is_none() {
+            return false;
+        }
+        let (Some(identity), Some(npc), Some(host_los), Some(receipt)) = (
+            self.identity,
+            self.npc.as_ref(),
+            self.host_los,
+            self.receipt.as_ref(),
+        ) else {
+            return false;
+        };
+        identity == receipt.identity
+            && npc.size >= 1
+            && npc.index == receipt.npc.index
+            && npc.name == receipt.npc.name
+            && npc.size == receipt.npc.size
+            && npc.level == receipt.npc.level
+            && npc.tile_x == receipt.npc.tile.x
+            && npc.tile_z == receipt.npc.tile.z
+            && npc.nx == receipt.npc.network.x
+            && npc.nz == receipt.npc.network.z
+            && npc.size == receipt.packed.size
+            && npc.nx == receipt.packed.nx
+            && npc.nz == receipt.packed.nz
+            && npc.tile_x == receipt.rendered.x
+            && npc.tile_z == receipt.rendered.z
+            && receipt.los.v2 == host_los
+            && receipt.los.v1 == host_los
+    }
+}
+
+/// File and Core share this rule: min `(distance, index)` among `size >= 1`.
+/// After the script posts a receipt, look that index up so headed join verifies
+/// the observed row instead of independently picking another NPC.
+fn choose_fight_field_npc<'a>(
+    npcs: &'a [NpcView],
+    receipt: Option<&FightFieldScriptReceipt>,
+) -> Option<&'a NpcView> {
+    if let Some(index) = receipt.map(|row| row.index) {
+        return npcs
+            .iter()
+            .find(|row| row.size >= 1 && row.index as i32 == index);
+    }
+    npcs.iter()
+        .filter(|row| row.size >= 1)
+        .min_by_key(|row| (row.distance, row.index))
+}
+
+fn parse_fight_field_receipt_from_paint(
+    paint: &script::shim::ScriptPaint,
+) -> Option<FightFieldScriptReceipt> {
+    paint.lines.iter().find_map(|line| {
+        line.strip_prefix(FIGHT_FIELD_RECEIPT_PREFIX)
+            .and_then(|json| serde_json::from_str(json).ok())
+    })
+}
+
+fn fight_field_effect_is_attack(receipt: &FightFieldScriptReceipt) -> bool {
+    fn is_attack(value: &str) -> bool {
+        value.eq_ignore_ascii_case("npc") || value.eq_ignore_ascii_case("attack")
+    }
+    receipt.kind.as_deref().is_some_and(is_attack)
+        || receipt.effect.as_deref().is_some_and(is_attack)
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FightFieldScriptReceipt {
+    pub index: i32,
+    pub size: i32,
+    pub tile: ActorObservationPoint,
+    pub network_origin: ActorObservationPoint,
+    pub los_network: bool,
+    pub los_tile: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effect: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, PartialEq, Eq)]
+pub struct FightFieldNpc {
+    pub index: i32,
+    pub size: i32,
+    pub tile_x: i32,
+    pub tile_z: i32,
+    pub nx: i32,
+    pub nz: i32,
+    pub level: i32,
+}
+
+#[derive(Debug, Clone, Default, Serialize, PartialEq, Eq)]
+pub struct FightFieldObservation {
+    pub available: bool,
+    pub identity: LineOfSightIdentity,
+    pub here: Option<LineOfSightTile>,
+    pub npc: Option<FightFieldNpc>,
+    pub host_los_network: Option<bool>,
+    pub host_los_tile: Option<bool>,
+    pub receipt: Option<FightFieldScriptReceipt>,
+}
+
+pub fn fight_field_baseline_ready(baseline: &Observation) -> bool {
+    baseline.ingame
+        && baseline.scene_state == 2
+        && baseline.fight.available
+        && baseline.fight.here.is_some()
+}
+
+fn fight_field_receipt_joined(now: &FightFieldObservation) -> bool {
+    let (Some(npc), Some(here), Some(host_los_network), Some(host_los_tile), Some(receipt)) = (
+        now.npc.as_ref(),
+        now.here,
+        now.host_los_network,
+        now.host_los_tile,
+        now.receipt.as_ref(),
+    ) else {
+        return false;
+    };
+    now.available
+        && npc.size >= 1
+        && here.level == npc.level
+        && receipt.index == npc.index
+        && receipt.size == npc.size
+        && receipt.tile.x == npc.tile_x
+        && receipt.tile.z == npc.tile_z
+        && receipt.network_origin.x == npc.nx
+        && receipt.network_origin.z == npc.nz
+        && receipt.los_network == host_los_network
+        && receipt.los_tile == host_los_tile
+        && !fight_field_effect_is_attack(receipt)
+}
+
+/// Post-Start witness: one packed size>=1 NPC, joined script receipt, named stop, no Attack.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct FightFieldDeliveryCycle {
+    pub identity: Option<LineOfSightIdentity>,
+    pub here: Option<LineOfSightTile>,
+    pub npc: Option<FightFieldNpc>,
+    pub host_los_network: Option<bool>,
+    pub host_los_tile: Option<bool>,
+    pub receipt: Option<FightFieldScriptReceipt>,
+    pub stopped: Option<script::ScriptLifecycleReceipt>,
+}
+
+impl FightFieldDeliveryCycle {
+    pub fn observe(&mut self, now: &Observation) {
+        if self.receipt.is_some() {
+            return;
+        }
+        if now.fight.available {
+            if let Some(npc) = now.fight.npc.clone() {
+                if npc.size >= 1 {
+                    self.identity = Some(now.fight.identity);
+                    self.here = now.fight.here;
+                    self.npc = Some(npc);
+                    self.host_los_network = now.fight.host_los_network;
+                    self.host_los_tile = now.fight.host_los_tile;
+                }
+            }
+        }
+        if fight_field_receipt_joined(&now.fight) {
+            self.identity = Some(now.fight.identity);
+            self.here = now.fight.here;
+            self.npc = now.fight.npc.clone();
+            self.host_los_network = now.fight.host_los_network;
+            self.host_los_tile = now.fight.host_los_tile;
+            self.receipt = now.fight.receipt.clone();
+        }
+    }
+
+    pub fn observe_script_lifecycle(
+        &mut self,
+        receipt: script::ScriptLifecycleReceipt,
+        expected: &str,
+    ) {
+        if self.receipt.is_some()
+            && receipt.runtime_generation > 0
+            && receipt.state == script::ScriptTerminalState::Stopped
+            && receipt.reason == expected
+        {
+            self.stopped = Some(receipt);
+        }
+    }
+
+    pub fn qualified(&self) -> bool {
+        if self.stopped.is_none() {
+            return false;
+        }
+        let (
+            Some(identity),
+            Some(here),
+            Some(npc),
+            Some(host_los_network),
+            Some(host_los_tile),
+            Some(receipt),
+        ) = (
+            self.identity,
+            self.here,
+            self.npc.as_ref(),
+            self.host_los_network,
+            self.host_los_tile,
+            self.receipt.as_ref(),
+        )
+        else {
+            return false;
+        };
+        identity.level == here.level
+            && npc.size >= 1
+            && npc.index == receipt.index
+            && npc.size == receipt.size
+            && npc.tile_x == receipt.tile.x
+            && npc.tile_z == receipt.tile.z
+            && npc.nx == receipt.network_origin.x
+            && npc.nz == receipt.network_origin.z
+            && receipt.los_network == host_los_network
+            && receipt.los_tile == host_los_tile
+            && !fight_field_effect_is_attack(receipt)
+    }
+}
+
+fn empty_worn(observation: &Observation) -> bool {
+    observation.equipment_ids.values().copied().sum::<i32>() == 0
+}
+
+/// Bank-only MossGiant dart Start. Worn-gear combat_baseline_ready(Ranged) is
+/// the wrong predicate here: the script has to withdraw and equip 806.
+pub fn moss_giant_dart_baseline_ready(baseline: &Observation) -> bool {
+    let bank_ready = baseline.bank_open
+        && baseline.bank_loaded
+        && baseline.bank_item_id(BRONZE_DART_ID) == MOSS_GIANT_DART_SUPPLY
+        && baseline.bank_item_id(LOBSTER_ID) == MOSS_GIANT_DART_BANK_FOOD;
+    near(baseline.tile, MOSS_GIANT_BANK, 2)
+        && empty_pack(baseline)
+        && empty_worn(baseline)
+        && baseline.level("ranged") >= MOSS_GIANT_DART_RANGED
+        && baseline.level("defence") >= COMBAT_ATTACK_LEVEL
+        && baseline.level("hitpoints") >= COMBAT_ATTACK_LEVEL
+        && held_id(baseline, BRONZE_DART_ID) == 0
+        && held_id(baseline, RUNE_ARROW_ID) == 0
+        && baseline.item_id(LOBSTER_ID) == 0
+        && baseline.bank_item_id(RUNE_ARROW_ID) == 0
+        && bank_ready
 }
 
 pub fn fire_in_varrock_east_plot(observation: &Observation) -> bool {
@@ -2117,6 +3740,14 @@ pub fn validate_case_baseline_with_preparation(
                 && baseline.equipment_id(STAFF_OF_FIRE_ID) == 0
                 && baseline.level("attack") >= 30
         }
+        CoreCase::SuperheaterSilverLowNatures => superheater_baseline_ready(
+            baseline,
+            SILVER_BAR_ID,
+            SILVER_ORE_ID,
+            SILVER_ORE_ID,
+            STAFF_OF_FIRE_ID,
+            20,
+        ),
         CoreCase::VialFiller => {
             near(baseline.tile, FALADOR_WEST_BANK, 6)
                 && baseline.item_id(EMPTY_VIAL_ID) == 0
@@ -2232,10 +3863,14 @@ pub fn validate_case_baseline_with_preparation(
         CoreCase::FlaxAioSpin => flax_aio_spin_baseline_ready(baseline),
         CoreCase::HerbloreSecondaries => herblore_eggs_baseline_ready(baseline),
         CoreCase::HerbloreSecondariesNewt => herblore_newt_baseline_ready(baseline),
+        // Bank-only dart Start is empty pack/worn. Do not route this through
+        // combat_baseline_ready(Ranged), which requires worn weapon+projectile.
+        CoreCase::MossGiantDart => moss_giant_dart_baseline_ready(baseline),
         CoreCase::ChaosDruid
         | CoreCase::ChaosDruidTower
         | CoreCase::ChaosDruidYanille
         | CoreCase::MossGiant
+        | CoreCase::MossGiantPrepared
         | CoreCase::HillGiant
         | CoreCase::AutoFighter
         | CoreCase::AutoFighterMage
@@ -2243,28 +3878,39 @@ pub fn validate_case_baseline_with_preparation(
         | CoreCase::RockCrab
         | CoreCase::RockCrabRange
         | CoreCase::GreenDragon
+        | CoreCase::GreenDragonPrepared
+        | CoreCase::GreenDragonMagePrepared
         | CoreCase::GreenDragonSpecial
+        | CoreCase::GreenDragonSpecialPrepared
         | CoreCase::GreenDragonPotions
+        | CoreCase::GreenDragonPotionsPrepared
         | CoreCase::FireGiant
+        | CoreCase::FireGiantPrepared
         | CoreCase::ArdyFighter
         | CoreCase::AutoFighterBank
         | CoreCase::MossGiantBank
         | CoreCase::HillGiantBank
+        | CoreCase::HillGiantBankPrepared
         | CoreCase::ChaosDruidBank
         | CoreCase::ArdyFighterBank
         | CoreCase::RockCrabBank
         | CoreCase::GreenDragonBank
+        | CoreCase::GreenDragonBankPrepared
+        | CoreCase::GreenDragonBankDefaultPrepared
         | CoreCase::GreenDragonTele
+        | CoreCase::GreenDragonTelePrepared
         | CoreCase::FireGiantApproach
-        | CoreCase::FireGiantBank => combat_spec(case).is_some_and(|spec| {
+        | CoreCase::FireGiantBank
+        | CoreCase::FireGiantBankPrepared
+        | CoreCase::FireGiantCamelotPrepared => combat_spec(case).is_some_and(|spec| {
             combat_baseline_ready(baseline, spec)
                 && match case {
                     CoreCase::ChaosDruidTower => baseline.level("thieving") >= 46,
                     CoreCase::ChaosDruidYanille => baseline.level("agility") >= 40,
                     // Bank cells start from a wielded melee weapon: every one of
                     // these cards deposits (or is told to deposit) the pack, so a
-                    // carried weapon would be stashed instead of used. The Guard
-                    // loot class is refused by `combat_baseline_ready` itself
+                    // carried weapon would be stashed instead of used. Each
+                    // card's loot class is refused by `combat_baseline_ready` itself
                     // (`combat_loot_count == 0`): the cell's deposit class must
                     // not be seeded before Start.
                     CoreCase::AutoFighterBank => baseline.equipment_id(ADAMANT_SCIMITAR_ID) == 1,
@@ -2282,7 +3928,7 @@ pub fn validate_case_baseline_with_preparation(
                     }
                     CoreCase::ArdyFighterBank => {
                         // Guard-drop emptiness is `combat_baseline_ready`'s
-                        // `CombatLoot::GuardDrop` count == 0, same as AutoFighter.
+                        // `CombatLoot::GuardDrop` count == 0.
                         baseline.equipment_id(ADAMANT_SCIMITAR_ID) == 1
                             && baseline.item_id(CAKE_ID) == 0
                             && baseline.item_id(CHOCOLATE_CAKE_ID) == 0
@@ -2296,6 +3942,20 @@ pub fn validate_case_baseline_with_preparation(
                     // fixture, so the cell has to arrive already wearing 1331
                     // (the fixture's own pre-Start wear is the native proof).
                     CoreCase::RockCrab => baseline.equipment_id(ADAMANT_SCIMITAR_ID) == 1,
+                    CoreCase::GreenDragonPrepared
+                    | CoreCase::GreenDragonSpecialPrepared
+                    | CoreCase::GreenDragonPotionsPrepared
+                    | CoreCase::GreenDragonBankPrepared
+                    | CoreCase::GreenDragonBankDefaultPrepared
+                    | CoreCase::GreenDragonTelePrepared
+                    | CoreCase::FireGiantPrepared
+                    | CoreCase::FireGiantBankPrepared
+                    | CoreCase::FireGiantCamelotPrepared
+                    | CoreCase::MossGiantPrepared
+                    | CoreCase::HillGiantBankPrepared
+                    | CoreCase::GreenDragonMagePrepared => {
+                        prepared_combat_baseline_ready(case, baseline)
+                    }
                     CoreCase::GreenDragonBank => baseline.equipment_id(RUNE_SCIMITAR_ID) == 1,
                     CoreCase::GreenDragonTele => {
                         baseline.equipment_id(RUNE_SCIMITAR_ID) == 1
@@ -2343,6 +4003,31 @@ pub fn validate_case_baseline_with_preparation(
             near(baseline.tile, AUBURY_STAND, 6)
                 && empty_pack(baseline)
                 && baseline.item_id(AIR_RUNE_ID) == 0
+        }
+        CoreCase::ShopBuyoutLowe => {
+            near(baseline.tile, LOWE_STAND, 6)
+                && empty_pack(baseline)
+                && baseline.item_id(BRONZE_ARROW_ID) == 0
+        }
+        CoreCase::ShopBuyoutHickton => {
+            near(baseline.tile, HICKTON_STAND, 6)
+                && empty_pack(baseline)
+                && baseline.item_id(BRONZE_ARROW_ID) == 0
+        }
+        CoreCase::ShopBuyoutHarry => {
+            near(baseline.tile, HARRY_STAND, 6)
+                && empty_pack(baseline)
+                && baseline.item_id(FISHING_BAIT_ID) == 0
+        }
+        CoreCase::ShopBuyoutBetty => {
+            near(baseline.tile, BETTY_STAND, 6)
+                && empty_pack(baseline)
+                && baseline.item_id(FIRE_RUNE_ID) == 0
+        }
+        CoreCase::ShopBuyoutGerrant => {
+            near(baseline.tile, GERRANT_STAND, 6)
+                && empty_pack(baseline)
+                && baseline.item_id(FEATHER_ID) == 0
         }
         CoreCase::SmithingBot => {
             near(baseline.tile, VARROCK_WEST_BANK, 8)
@@ -2408,6 +4093,26 @@ pub fn validate_case_baseline_with_preparation(
                 && baseline.item_id(WATER_RUNE_ID) == 1
                 && baseline.level("magic") >= FALADOR_TELE_MAGIC
         }
+        CoreCase::RangingGuildRound => ranging_guild_round_baseline_ready(baseline),
+        CoreCase::RangingGuildRedeem => ranging_guild_redeem_baseline_ready(baseline),
+        CoreCase::RangingGuildBank => ranging_guild_bank_baseline_ready(baseline),
+        CoreCase::RangingGuildFull => ranging_guild_full_baseline_ready(baseline),
+        CoreCase::BrimhavenMossInspectV1 => brimhaven_moss_inspect_v1_baseline_ready(baseline),
+        CoreCase::RouteInspectBrimhavenV2 => route_inspect_brimhaven_v2_baseline_ready(baseline),
+        CoreCase::PrayerV2 | CoreCase::PrayerV1 => prayer_delivery_baseline_ready(baseline),
+        CoreCase::LineOfSightV2 => line_of_sight_baseline_ready(baseline),
+        CoreCase::ActorObservationV2 => actor_observation_baseline_ready(baseline),
+        CoreCase::FightFieldV2 => fight_field_baseline_ready(baseline),
+        CoreCase::HoldSpotV2
+        | CoreCase::RetreatSpotV2
+        | CoreCase::WalkSpotV2
+        | CoreCase::EnterLairV2
+        | CoreCase::LeaveLairV2
+        | CoreCase::AcquireKeyV2
+        | CoreCase::CellV2
+        | CoreCase::BankV2 => case
+            .hunt_cell()
+            .is_some_and(|cell| hunt_baseline_ready(cell, baseline)),
     };
     if ready {
         return Ok(());
@@ -2497,6 +4202,9 @@ pub fn validate_case_baseline_with_preparation(
         CoreCase::SuperheaterFireBattlestaff => {
             "Varrock West bank, Magic 43, Attack 30, empty pack of 1393 and no 1387"
         }
+        CoreCase::SuperheaterSilverLowNatures => {
+            "Varrock West bank, Magic 43, Smithing 20, empty pack of 442/2355/561/1387"
+        }
         CoreCase::VialFiller => "Falador West bank (2946,3369,0) and empty pack of 229/227",
         CoreCase::VialFillerEast => "Falador East bank (3013,3355,0) and empty pack of 229/227",
         CoreCase::PotionMaker => "Varrock West bank, Herblore 3, empty pack of 249/227/221/91/121",
@@ -2584,6 +4292,12 @@ pub fn validate_case_baseline_with_preparation(
         CoreCase::MossGiant => {
             "Moss safespot (2553,3406,0), Attack/Strength/Hitpoints 40, lobster 10, scimitar 1331, empty big bones 532"
         }
+        CoreCase::MossGiantPrepared => {
+            "Moss safespot (2553,3406,0), exact Attack/Strength/Defence/Hitpoints 70, exact lobster 10, worn rune scimitar 1333 and 1113/1079/1163, empty big bones 532"
+        }
+        CoreCase::MossGiantDart => {
+            "Ardougne North bank (2615,3332,0) r2 with the booth still open, empty pack and worn, Ranged 50 / Defence 40 / Hitpoints 40, bank bronze dart 806x80 and lobster 15, no pack/worn/bank rune arrow 892"
+        }
         CoreCase::HillGiant => {
             "Giant pit (3110,9832,0), Attack/Strength/Hitpoints 40, trout 8, scimitar 1331, empty 532/225"
         }
@@ -2602,11 +4316,23 @@ pub fn validate_case_baseline_with_preparation(
         CoreCase::GreenDragon => {
             "Wilderness field (3096,3814,0) z>=3520, Attack/Strength/Hitpoints 40, lobster 20, rune scimitar 1333, worn shield 1540, empty 536/1753"
         }
+        CoreCase::GreenDragonPrepared => {
+            "Wilderness field (3096,3814,0) z>=3520, Attack/Strength/Defence/Hitpoints 40, exact lobster 20, carried rune scimitar 1333, worn 1113/1079/1163/1540, empty 536/1753"
+        }
+        CoreCase::GreenDragonMagePrepared => {
+            "Wilderness field (3096,3814,0) z>=3520, exact Magic/Defence/Hitpoints 70, exact lobster 12, worn Staff of fire 1387 and shield 1540, exact Mind rune 558x150 and Air rune 556x300, no rune armour or scimitar"
+        }
         CoreCase::GreenDragonSpecial => {
             "Wilderness field (3096,3814,0) z>=3520, Attack 60, Hitpoints 40, worn dragon dagger 1215 and shield 1540, unarmed spec bar, lobster 12"
         }
+        CoreCase::GreenDragonSpecialPrepared => {
+            "Wilderness field (3096,3814,0) z>=3520, exact Attack/Strength/Defence/Hitpoints 70, exact lobster 12, worn dragon dagger 1215, shield 1540 and 1113/1079/1163, unarmed spec bar with at least 250 energy"
+        }
         CoreCase::GreenDragonPotions => {
             "Wilderness field (3096,3814,0) z>=3520, Attack/Strength/Hitpoints 40, worn shield 1540, super attack(3) 145 and super strength(3) 157 with no two-dose flask and no live boost, lobster 12"
+        }
+        CoreCase::GreenDragonPotionsPrepared => {
+            "Wilderness field (3096,3814,0) z>=3520, exact Attack/Strength/Defence/Hitpoints 70, exact lobster 12, carried rune scimitar 1333, worn shield 1540 and 1113/1079/1163, fresh 3-dose attack/strength flasks with no two-dose result or live boost"
         }
         CoreCase::RockCrabRange => {
             "safe stand (2712,3707,0), dormant Rocks observed in the supported field, Hitpoints and Ranged 40, Maple shortbow 853 worn, Bronze arrow 882 x200 worn, lobster 8, bank Off"
@@ -2614,17 +4340,23 @@ pub fn validate_case_baseline_with_preparation(
         CoreCase::FireGiant => {
             "Fire giant room (2575,9893,0) z>=9000, Attack/Strength/Hitpoints 40, lobster 12, scimitar 1331, amulet 295, rope 954, empty 532"
         }
+        CoreCase::FireGiantPrepared => {
+            "Fire giant room (2575,9893,0) z>=9000, Attack/Strength/Defence/Hitpoints 40, exact lobster 12, worn rune scimitar 1333 and 1113/1079/1163, amulet 295, rope 954, empty 532"
+        }
         CoreCase::ArdyFighter => {
             "Ardougne Guard (2661,3306,0), Attack/Strength/Hitpoints 40, Thieving 5, scimitar 1331, empty cake/bread/slice, bank Off"
         }
         CoreCase::AutoFighterBank => {
-            "Ardougne Guard (2661,3306,0) r8, Attack/Strength/Hitpoints 40, trout 8, worn scimitar 1331, banking Auto, empty Guard-drop class 440/886/1446/565/562/561"
+            "Ardougne Guard (2661,3306,0) r8, Attack/Strength/Hitpoints 40, trout 8, worn scimitar 1331, banking Auto, loot Bones, buryBones off, empty 526"
         }
         CoreCase::MossGiantBank => {
             "Moss safespot (2553,3406,0) r10, Attack/Strength/Hitpoints 40, worn scimitar 1331, lobster 2 (below its restock line), empty 532/225"
         }
         CoreCase::HillGiantBank => {
             "Giant pit (3110,9832,0) r16, Attack/Strength/Hitpoints 40, worn scimitar 1331, trout 8, brass key 983, lootSlots 1, empty 532/225"
+        }
+        CoreCase::HillGiantBankPrepared => {
+            "Giant pit (3110,9832,0) r16, exact Attack/Strength/Defence/Hitpoints 70, exact trout 8, worn adamant scimitar 1331 and 1113/1079/1163, brass key 983, lootSlots 1, empty 532/225"
         }
         CoreCase::ChaosDruidBank => {
             "Edgeville dungeon (3110,9936,0) r14, Attack/Strength/Hitpoints 40, worn scimitar 1331, lobster 8 (under foodWithdraw 12)"
@@ -2638,14 +4370,29 @@ pub fn validate_case_baseline_with_preparation(
         CoreCase::GreenDragonBank => {
             "Wilderness field (3096,3814,0) z>=3520, Attack/Strength/Hitpoints 40, worn rune scimitar 1333 and shield 1540, lobster 12, empty 536/1753, escape Flee to bank"
         }
+        CoreCase::GreenDragonBankPrepared => {
+            "Wilderness field (3096,3814,0) z>=3520, exact Attack/Strength/Defence/Hitpoints 99, exact lobster 26, worn rune scimitar 1333, shield 1540 and 1113/1079/1163, empty 536/1753, stock-selected inventory-pressure Flee to bank"
+        }
+        CoreCase::GreenDragonBankDefaultPrepared => {
+            "Wilderness field (3096,3814,0) z>=3520, exact Attack/Strength/Defence/Hitpoints 99, exact lobster 26, worn rune scimitar 1333, shield 1540 and 1113/1079/1163, empty 536/1753, source-default loot inventory-pressure Flee to bank"
+        }
         CoreCase::GreenDragonTele => {
             "Wilderness field (3096,3814,0) z>=3520, Attack/Strength/Hitpoints 40, Magic 25, worn rune scimitar 1333 and shield 1540, lobster 12, Law/Air/Fire runes, escape Teleport to Varrock"
+        }
+        CoreCase::GreenDragonTelePrepared => {
+            "Wilderness field (3096,3814,0) z>=3520, exact Attack/Strength/Defence/Hitpoints 99 at exactly 70 current HP, zero lobster, Magic 25, worn rune scimitar 1333, shield 1540 and 1113/1079/1163, Law/Air/Fire runes, panicHp 98, escape Teleport to Varrock, no death recovery"
         }
         CoreCase::FireGiantApproach => {
             "raft stand (2510,3493,0) z<9000, Attack/Strength/Hitpoints 40, lobster 12, scimitar 1331, amulet 295, rope 954, Waterfall Quest"
         }
         CoreCase::FireGiantBank => {
             "Fire giant room (2575,9893,0) z>=9000, Attack/Strength/Hitpoints 40, worn scimitar 1331, lobster 12, amulet 295, rope 954, empty 532, escapeTele Barrel"
+        }
+        CoreCase::FireGiantBankPrepared => {
+            "Fire giant room (2575,9893,0) z>=9000, exact Attack/Strength/Defence/Hitpoints 99, exact initial lobster 1, worn rune scimitar 1333 and 1113/1079/1163, amulet 295, rope 954, empty earned Big bones 532, stock-selected one-food escapeTele Barrel and exact restock 25"
+        }
+        CoreCase::FireGiantCamelotPrepared => {
+            "Fire giant room (2575,9893,0) z>=9000, exact Attack/Strength/Defence/Hitpoints 99, Magic 45, exact initial lobster 1, worn rune scimitar 1333 and 1113/1079/1163, worn amulet 295, rope 954, Air 556x15 and Law 563x3, empty earned Big bones 532, escapeTele Camelot land 2757,3478 then Seers 24-lobster restock"
         }
         CoreCase::AioTeleport => {
             "Lumbridge bank (3092,3245,0) r8, Magic 25, worn staff of air 1381, pack law 563x2 and fire 554, not already at Varrock land"
@@ -2661,6 +4408,21 @@ pub fn validate_case_baseline_with_preparation(
         }
         CoreCase::ShopBuyoutAubury => {
             "Aubury stand (3253,3401,0) r6 and empty pack of coins/stock"
+        }
+        CoreCase::ShopBuyoutLowe => {
+            "Lowe stand (3231,3421,0) r6 and empty pack of coins/stock"
+        }
+        CoreCase::ShopBuyoutHickton => {
+            "Hickton stand (2821,3442,0) r6 and empty pack of coins/stock"
+        }
+        CoreCase::ShopBuyoutHarry => {
+            "Harry stand (2833,3443,0) r6 and empty pack of coins/stock"
+        }
+        CoreCase::ShopBuyoutBetty => {
+            "Betty stand (3012,3258,0) r6 and empty pack of coins/stock"
+        }
+        CoreCase::ShopBuyoutGerrant => {
+            "Gerrant stand (3013,3224,0) r6 and empty pack of coins/stock"
         }
         CoreCase::SmithingBot => {
             "Varrock West bank (3185,3440,0), Smithing 1, empty pack of 2347/2349/1205"
@@ -2685,6 +4447,54 @@ pub fn validate_case_baseline_with_preparation(
         }
         CoreCase::ClimbingBootsTeleport => {
             "Tenzing hut door (2823,3555,0) r12, zero boots 3105 carried and banked, exact carried 300 coins (25 pair), Law 563x1/Air 556x3/Water 555x1, Magic 37, Death Plateau complete"
+        }
+        CoreCase::RangingGuildRound => {
+            "range stand (2672,3419,0) r2, Ranged 70, Magic shortbow 861, 400 coins, no ticket 1464, no rune arrow 892, unpaid targetcount 156"
+        }
+        CoreCase::RangingGuildRedeem => {
+            "merchant stand (2659,3430,0) r3, Ranged 70, Magic shortbow 861, seeded ticket 1464x2000, no rune arrow 892"
+        }
+        CoreCase::RangingGuildBank => {
+            "Seers bank (2725,3491,0) r6, Ranged 70, seeded KEEP ticket 1464x1999, seeded rune arrow 892x50, no pack coins 995, no pack/worn Magic shortbow 861, unpaid targetcount 156"
+        }
+        CoreCase::RangingGuildFull => {
+            "Seers bank (2725,3491,0) r6, Ranged 70, seeded KEEP ticket 1464x1999, no rune arrow 892 packed or banked, no pack coins 995, no pack/worn Magic shortbow 861, unpaid targetcount 156"
+        }
+        CoreCase::BrimhavenMossInspectV1 => {
+            "Ardougne SE bank (2655,3283,0) r6, empty pack, Agility 30, no carried lobster/coins"
+        }
+        CoreCase::RouteInspectBrimhavenV2 => {
+            "Captain Barnaby pier (2683,3272,0) r4, ingame && scene_state==2"
+        }
+        CoreCase::PrayerV2 | CoreCase::PrayerV1 => {
+            "ingame && scene_state==2, prayer base>=43, positive points, varps 83..97 present and 0"
+        }
+        CoreCase::LineOfSightV2 => {
+            "ingame && scene_state==2 && SceneView.available, here in published collision bounds"
+        }
+        CoreCase::ActorObservationV2 => {
+            "ingame && scene_state==2 && SceneView.available, here on the published plane"
+        }
+        CoreCase::FightFieldV2 => {
+            "ingame && scene_state==2 && SceneView.available, here on the published plane"
+        }
+        CoreCase::HoldSpotV2 | CoreCase::RetreatSpotV2 | CoreCase::WalkSpotV2 => {
+            "ingame && scene_state==2 && SceneView.available, host here on the published plane"
+        }
+        CoreCase::EnterLairV2 => {
+            "ingame && scene_state==2 && SceneView.available, host here not the KBD tile"
+        }
+        CoreCase::LeaveLairV2 => {
+            "ingame && scene_state==2 && SceneView.available, host here not the KBD, Edgeville or Varrock tile"
+        }
+        CoreCase::AcquireKeyV2 => {
+            "ingame && scene_state==2 && SceneView.available, host here outside the jail cell and the projected lair box, Chebyshev > 1 from the corridor (2931,9690,0), no Jail key held"
+        }
+        CoreCase::CellV2 => {
+            "ingame && scene_state==2 && SceneView.available, host here outside the jail cell and the projected lair box, Chebyshev > 1 from the jail door (2931,9690,0), no Dusty key held"
+        }
+        CoreCase::BankV2 => {
+            "ingame && scene_state==2 && SceneView.available, host here Chebyshev > 3 from (2946,3369,0) and outside the projected lair box"
         }
     };
     Err(format!(
@@ -2740,6 +4550,7 @@ pub struct CoreWitness {
     pub herblore_eggs_cycle: HerbloreEggsCycle,
     pub herblore_newt_cycle: HerbloreNewtCycle,
     pub combat_core_cycle: CombatCoreCycle,
+    pub combat_dart_branch_cycle: CombatDartBranchCycle,
     pub combat_bank_cycle: CombatBankCycle,
     pub combat_approach_cycle: CombatApproachCycle,
     pub aio_teleport_cycle: AioTeleportCycle,
@@ -2748,6 +4559,17 @@ pub struct CoreWitness {
     pub leather_crafter_cycle: LeatherCrafterCycle,
     pub firemaker_cycle: FiremakerCycle,
     pub climbing_boots_cycle: ClimbingBootsCycle,
+    pub ranging_guild_round_cycle: RangingGuildRoundCycle,
+    pub ranging_guild_redeem_cycle: RangingGuildRedeemCycle,
+    pub ranging_guild_bank_cycle: RangingGuildBankCycle,
+    pub ranging_guild_full_cycle: RangingGuildFullCycle,
+    pub brimhaven_moss_inspect_cycle: BrimhavenMossInspectCycle,
+    pub route_inspect_brimhaven_v2_cycle: RouteInspectBrimhavenV2Cycle,
+    pub prayer_delivery_cycle: PrayerDeliveryCycle,
+    pub line_of_sight_cycle: LineOfSightDeliveryCycle,
+    pub actor_observation_cycle: ActorObservationDeliveryCycle,
+    pub fight_field_cycle: FightFieldDeliveryCycle,
+    pub hunt_cycle: HuntDeliveryCycle,
     pub ordered_first_exhausted: bool,
 }
 
@@ -4238,10 +6060,16 @@ pub enum CombatLoot {
     BigBones,
     BigBonesOrLimpwurt,
     DragonBonesOrHide,
+    /// Both guaranteed Green dragon drops must increase after Start.
+    /// `DragonBonesOrHide` cannot distinguish that pair from two of one id.
+    DragonBonesAndHide,
     /// Guard-drop pack stock: any one of the six verifiable Guard drops
-    /// ([`GUARD_DROP_IDS`]) landing in the pack. AutoFighter bank injects that
-    /// list; ArdyFighter already lists the same names in `DEFAULT_LOOT`.
+    /// ([`GUARD_DROP_IDS`]) landing in the pack. ArdyFighter lists the same
+    /// names in `DEFAULT_LOOT`.
     GuardDrop,
+    /// Plain Bones (526) in the pack: the Guard's guaranteed death drop that
+    /// AutoFighter bank injects as its only `loot` with burial off.
+    Bones,
     /// RockCrab PeriodicBank listed loot the bank cell can verify by id.
     SapphireOrCasket,
     None,
@@ -4315,6 +6143,34 @@ pub fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
             loot: CombatLoot::BigBones,
             extra: CombatExtra::None,
             projectile: None,
+            consumable: CombatConsumable::None,
+        }),
+        CoreCase::MossGiantPrepared => Some(CombatSpec {
+            target: "Moss giant",
+            stand: MOSS_GIANT_SAFESPOT,
+            radius: 10,
+            food_id: LOBSTER_ID,
+            food_count: MOSS_GIANT_FOOD,
+            weapon_id: RUNE_SCIMITAR_ID,
+            style: CombatStyleWitness::Strength,
+            loot: CombatLoot::BigBones,
+            extra: CombatExtra::None,
+            projectile: None,
+            consumable: CombatConsumable::None,
+        }),
+        // Observe reuse only. Bank-only dart Start is empty; do not feed this
+        // spec to combat_baseline_ready(Ranged) or CombatCoreCycle::qualified().
+        CoreCase::MossGiantDart => Some(CombatSpec {
+            target: "Moss giant",
+            stand: MOSS_GIANT_SAFESPOT,
+            radius: MOSS_GIANT_DART_FIELD_RADIUS,
+            food_id: LOBSTER_ID,
+            food_count: 0,
+            weapon_id: BRONZE_DART_ID,
+            style: CombatStyleWitness::Ranged,
+            loot: CombatLoot::None,
+            extra: CombatExtra::None,
+            projectile: Some(BRONZE_DART_ID),
             consumable: CombatConsumable::None,
         }),
         CoreCase::HillGiant => Some(CombatSpec {
@@ -4400,7 +6256,7 @@ pub fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
             projectile: Some(BRONZE_ARROW_ID),
             consumable: CombatConsumable::None,
         }),
-        CoreCase::GreenDragon => Some(CombatSpec {
+        CoreCase::GreenDragon | CoreCase::GreenDragonPrepared => Some(CombatSpec {
             target: "Green dragon",
             stand: GREEN_DRAGON_FIELD,
             radius: 22,
@@ -4413,9 +6269,24 @@ pub fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
             projectile: None,
             consumable: CombatConsumable::None,
         }),
+        // Fire Strike branch on the enabled GreenDragon card. Loot stays None:
+        // this cell does not claim a full kill unless a later hop proves one.
+        CoreCase::GreenDragonMagePrepared => Some(CombatSpec {
+            target: "Green dragon",
+            stand: GREEN_DRAGON_FIELD,
+            radius: 22,
+            food_id: LOBSTER_ID,
+            food_count: GREEN_DRAGON_FOOD,
+            weapon_id: STAFF_OF_FIRE_ID,
+            style: CombatStyleWitness::FireStrike,
+            loot: CombatLoot::None,
+            extra: CombatExtra::WornShield,
+            projectile: None,
+            consumable: CombatConsumable::None,
+        }),
         // `useSpecial=true` with the dragon dagger: the bar arms and `%sa_energy`
         // pays the 250 cost, so a queued-but-unspent arming cannot qualify.
-        CoreCase::GreenDragonSpecial => Some(CombatSpec {
+        CoreCase::GreenDragonSpecial | CoreCase::GreenDragonSpecialPrepared => Some(CombatSpec {
             target: "Green dragon",
             stand: GREEN_DRAGON_FIELD,
             radius: 22,
@@ -4430,7 +6301,7 @@ pub fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
         }),
         // `usePotions=true`: a three-dose flask becomes its two-dose form and the
         // native boost has to land on the matching skill during the fight.
-        CoreCase::GreenDragonPotions => Some(CombatSpec {
+        CoreCase::GreenDragonPotions | CoreCase::GreenDragonPotionsPrepared => Some(CombatSpec {
             target: "Green dragon",
             stand: GREEN_DRAGON_FIELD,
             radius: 22,
@@ -4456,6 +6327,19 @@ pub fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
             projectile: None,
             consumable: CombatConsumable::None,
         }),
+        CoreCase::FireGiantPrepared => Some(CombatSpec {
+            target: "Fire giant",
+            stand: FIRE_GIANT_ROOM,
+            radius: 10,
+            food_id: LOBSTER_ID,
+            food_count: FIRE_GIANT_FOOD,
+            weapon_id: RUNE_SCIMITAR_ID,
+            style: CombatStyleWitness::Strength,
+            loot: CombatLoot::BigBones,
+            extra: CombatExtra::DungeonAmulet,
+            projectile: None,
+            consumable: CombatConsumable::None,
+        }),
         CoreCase::ArdyFighter => Some(CombatSpec {
             target: "Guard",
             stand: ARDY_THIEVER_STAND,
@@ -4475,8 +6359,9 @@ pub fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
         // (MossGiant banks when the pack runs dry, ChaosDruidKiller when the
         // carried food is under `foodWithdraw`). AutoFighter finishes its
         // fights instantly at these levels, so the cell's trip end is the
-        // injected `bankAtLootSlots=1`: the loot class is the card's own
-        // injected Guard list, and the pack starts empty of it.
+        // injected `bankAtLootSlots=1`: the loot class is the card's injected
+        // `loot=[Bones]` (the Guard's guaranteed drop, burial off), and the
+        // pack starts empty of it.
         CoreCase::AutoFighterBank => Some(CombatSpec {
             target: "Guard",
             stand: ARDY_THIEVER_STAND,
@@ -4485,7 +6370,7 @@ pub fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
             food_count: AUTO_FIGHTER_FOOD,
             weapon_id: ADAMANT_SCIMITAR_ID,
             style: CombatStyleWitness::Strength,
-            loot: CombatLoot::GuardDrop,
+            loot: CombatLoot::Bones,
             extra: CombatExtra::None,
             projectile: None,
             consumable: CombatConsumable::None,
@@ -4503,7 +6388,7 @@ pub fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
             projectile: None,
             consumable: CombatConsumable::None,
         }),
-        CoreCase::HillGiantBank => Some(CombatSpec {
+        CoreCase::HillGiantBank | CoreCase::HillGiantBankPrepared => Some(CombatSpec {
             target: "Giant",
             stand: HILL_GIANT_PIT,
             radius: 16,
@@ -4573,6 +6458,32 @@ pub fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
             projectile: None,
             consumable: CombatConsumable::None,
         }),
+        CoreCase::GreenDragonBankPrepared => Some(CombatSpec {
+            target: "Green dragon",
+            stand: GREEN_DRAGON_FIELD,
+            radius: 22,
+            food_id: LOBSTER_ID,
+            food_count: GREEN_DRAGON_BANK_PREPARED_FOOD,
+            weapon_id: RUNE_SCIMITAR_ID,
+            style: CombatStyleWitness::Strength,
+            loot: CombatLoot::DragonBonesOrHide,
+            extra: CombatExtra::WornShield,
+            projectile: None,
+            consumable: CombatConsumable::None,
+        }),
+        CoreCase::GreenDragonBankDefaultPrepared => Some(CombatSpec {
+            target: "Green dragon",
+            stand: GREEN_DRAGON_FIELD,
+            radius: 22,
+            food_id: LOBSTER_ID,
+            food_count: GREEN_DRAGON_BANK_PREPARED_FOOD,
+            weapon_id: RUNE_SCIMITAR_ID,
+            style: CombatStyleWitness::Strength,
+            loot: CombatLoot::DragonBonesAndHide,
+            extra: CombatExtra::WornShield,
+            projectile: None,
+            consumable: CombatConsumable::None,
+        }),
         // Teleport escape is Magic XP + Varrock land, then the Edgeville bank
         // trip. Combat kills are not this cell: a flee-walk to Edgeville
         // without Magic XP / Varrock land fails it.
@@ -4582,6 +6493,19 @@ pub fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
             radius: 22,
             food_id: LOBSTER_ID,
             food_count: GREEN_DRAGON_FOOD,
+            weapon_id: RUNE_SCIMITAR_ID,
+            style: CombatStyleWitness::Strength,
+            loot: CombatLoot::None,
+            extra: CombatExtra::WornShield,
+            projectile: None,
+            consumable: CombatConsumable::None,
+        }),
+        CoreCase::GreenDragonTelePrepared => Some(CombatSpec {
+            target: "Green dragon",
+            stand: GREEN_DRAGON_FIELD,
+            radius: 22,
+            food_id: LOBSTER_ID,
+            food_count: 0,
             weapon_id: RUNE_SCIMITAR_ID,
             style: CombatStyleWitness::Strength,
             loot: CombatLoot::None,
@@ -4615,6 +6539,19 @@ pub fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
             projectile: None,
             consumable: CombatConsumable::None,
         }),
+        CoreCase::FireGiantBankPrepared | CoreCase::FireGiantCamelotPrepared => Some(CombatSpec {
+            target: "Fire giant",
+            stand: FIRE_GIANT_ROOM,
+            radius: 10,
+            food_id: LOBSTER_ID,
+            food_count: FIRE_GIANT_BANK_PREPARED_INITIAL_FOOD,
+            weapon_id: RUNE_SCIMITAR_ID,
+            style: CombatStyleWitness::Strength,
+            loot: CombatLoot::BigBones,
+            extra: CombatExtra::DungeonAmulet,
+            projectile: None,
+            consumable: CombatConsumable::None,
+        }),
         _ => None,
     }
 }
@@ -4634,6 +6571,8 @@ pub struct CombatBankSpec {
     pub stand_radius: i32,
     /// Food the trip withdraws back into the pack, when the card restocks.
     pub restock: Option<i32>,
+    /// Exact post-withdrawal pack count when this fixture selects one.
+    pub restock_count: Option<i32>,
     /// Where the trip returns before further work.
     pub ret: (i32, i32, i32),
     pub ret_radius: i32,
@@ -4646,25 +6585,31 @@ pub struct CombatBankSpec {
     /// When false, the bank trip itself is the cell (tele escape). The
     /// reviewed two-engagement combat core is not required.
     pub require_combat: bool,
+    /// A death/recovery path cannot substitute for this fixture's intended
+    /// escape route.
+    pub forbid_death: bool,
 }
 
 pub fn combat_bank_spec(case: CoreCase) -> Option<CombatBankSpec> {
     match case {
         // `banking=Auto`: BankRun walks to the nearest bank from the anchor and
         // deposits everything its keep-list does not hold, then restocks food.
-        // The deposit class is the card's own injected Guard loot list: the
-        // pack only ever holds it because a Guard dropped it.
+        // The deposit class is the card's own injected `loot=[Bones]`: burial
+        // is off, so the pack only ever holds Bones because a Guard dropped
+        // them and the script looted them.
         CoreCase::AutoFighterBank => Some(CombatBankSpec {
-            deposit: &GUARD_DROP_IDS,
+            deposit: &[BONES_ID],
             stand: ARDOUGNE_EAST_BANK,
             stand_radius: 6,
             restock: Some(TROUT_ID),
+            restock_count: None,
             ret: ARDY_THIEVER_STAND,
             ret_radius: 6,
             via: None,
             via_radius: 0,
             via_magic: false,
             require_combat: true,
+            forbid_death: false,
         }),
         // Script-owned Ardougne West trip: deposits everything but
         // food/runes/ammo/weapon and withdraws lobster back to the safespot.
@@ -4673,12 +6618,14 @@ pub fn combat_bank_spec(case: CoreCase) -> Option<CombatBankSpec> {
             stand: MOSS_GIANT_BANK,
             stand_radius: 6,
             restock: Some(LOBSTER_ID),
+            restock_count: None,
             ret: MOSS_GIANT_SAFESPOT,
             ret_radius: 6,
             via: None,
             via_radius: 0,
             via_magic: false,
             require_combat: true,
+            forbid_death: false,
         }),
         // Always-on trip end: Varrock West keeps only trout and the Brass key.
         CoreCase::HillGiantBank => Some(CombatBankSpec {
@@ -4686,12 +6633,28 @@ pub fn combat_bank_spec(case: CoreCase) -> Option<CombatBankSpec> {
             stand: HILL_GIANT_BANK,
             stand_radius: 6,
             restock: Some(TROUT_ID),
+            restock_count: None,
             ret: HILL_GIANT_PIT,
             ret_radius: 16,
             via: None,
             via_radius: 0,
             via_magic: false,
             require_combat: true,
+            forbid_death: false,
+        }),
+        CoreCase::HillGiantBankPrepared => Some(CombatBankSpec {
+            deposit: &[BIG_BONES_ID, LIMPWURT_ROOT_ID],
+            stand: HILL_GIANT_BANK,
+            stand_radius: 6,
+            restock: Some(TROUT_ID),
+            restock_count: Some(HILL_GIANT_BANK_PREPARED_RESTOCK),
+            ret: HILL_GIANT_PIT,
+            ret_radius: 16,
+            via: None,
+            via_radius: 0,
+            via_magic: false,
+            require_combat: true,
+            forbid_death: false,
         }),
         // Edgeville trip end: `depositInventory` empties the pack, then the
         // card withdraws exactly its food back and returns through the trapdoor.
@@ -4700,12 +6663,14 @@ pub fn combat_bank_spec(case: CoreCase) -> Option<CombatBankSpec> {
             stand: CHAOS_DRUID_BANK,
             stand_radius: 6,
             restock: Some(LOBSTER_ID),
+            restock_count: None,
             ret: CHAOS_DRUID_FIELD,
             ret_radius: 14,
             via: None,
             via_radius: 0,
             via_magic: false,
             require_combat: true,
+            forbid_death: false,
         }),
         // `bankStrategy=Loot count`: PeriodicBank deposits the card's own
         // Guard-reachable loot list and walks back to the market anchor. No
@@ -4716,12 +6681,14 @@ pub fn combat_bank_spec(case: CoreCase) -> Option<CombatBankSpec> {
             stand: ARDY_BANK,
             stand_radius: 6,
             restock: None,
+            restock_count: None,
             ret: ARDY_THIEVER_STAND,
             ret_radius: 6,
             via: None,
             via_radius: 0,
             via_magic: false,
             require_combat: true,
+            forbid_death: false,
         }),
         // RockCrab PeriodicBank Loot-count at Seers. The task deposits listed
         // loot and returns to `currentSpot()`; it does not restock food
@@ -4731,26 +6698,44 @@ pub fn combat_bank_spec(case: CoreCase) -> Option<CombatBankSpec> {
             stand: SEERS_BANK,
             stand_radius: 6,
             restock: None,
+            restock_count: None,
             ret: ROCK_CRAB_BANK_RET,
             ret_radius: 6,
             via: None,
             via_radius: 0,
             via_magic: false,
             require_combat: true,
+            forbid_death: false,
         }),
         // GreenDragon BankRun to Edgeville: deposit except keep-list, withdraw
         // food to `foodWithdraw` 20, walk back past the ditch.
-        CoreCase::GreenDragonBank => Some(CombatBankSpec {
+        CoreCase::GreenDragonBank | CoreCase::GreenDragonBankPrepared => Some(CombatBankSpec {
             deposit: &[DRAGON_BONES_ID, GREEN_DRAGONHIDE_ID],
             stand: GREEN_DRAGON_BANK,
             stand_radius: 8,
             restock: Some(LOBSTER_ID),
+            restock_count: None,
             ret: GREEN_DRAGON_FIELD,
             ret_radius: 22,
             via: None,
             via_radius: 0,
             via_magic: false,
             require_combat: true,
+            forbid_death: false,
+        }),
+        CoreCase::GreenDragonBankDefaultPrepared => Some(CombatBankSpec {
+            deposit: &[GREEN_DRAGONHIDE_ID],
+            stand: GREEN_DRAGON_BANK,
+            stand_radius: 8,
+            restock: Some(LOBSTER_ID),
+            restock_count: Some(GREEN_DRAGON_BANK_PREPARED_RESTOCK),
+            ret: GREEN_DRAGON_FIELD,
+            ret_radius: 22,
+            via: None,
+            via_radius: 0,
+            via_magic: false,
+            require_combat: true,
+            forbid_death: false,
         }),
         // `escape=Teleport to Varrock`: Magic XP and a Varrock land, then the
         // Edgeville booth. A south-walk flee without the teleport fails.
@@ -4759,12 +6744,28 @@ pub fn combat_bank_spec(case: CoreCase) -> Option<CombatBankSpec> {
             stand: GREEN_DRAGON_BANK,
             stand_radius: 8,
             restock: Some(LOBSTER_ID),
+            restock_count: None,
             ret: GREEN_DRAGON_FIELD,
             ret_radius: 22,
             via: Some(VARROCK_TELE_LAND),
             via_radius: 8,
             via_magic: true,
             require_combat: false,
+            forbid_death: false,
+        }),
+        CoreCase::GreenDragonTelePrepared => Some(CombatBankSpec {
+            deposit: &[],
+            stand: GREEN_DRAGON_BANK,
+            stand_radius: 8,
+            restock: Some(LOBSTER_ID),
+            restock_count: None,
+            ret: GREEN_DRAGON_FIELD,
+            ret_radius: 22,
+            via: Some(VARROCK_TELE_LAND),
+            via_radius: 8,
+            via_magic: true,
+            require_combat: false,
+            forbid_death: true,
         }),
         // Barrel exit to (2527,3413,0) then Ardougne West restock and re-entry.
         CoreCase::FireGiantBank => Some(CombatBankSpec {
@@ -4772,12 +6773,44 @@ pub fn combat_bank_spec(case: CoreCase) -> Option<CombatBankSpec> {
             stand: FIRE_GIANT_BANK,
             stand_radius: 6,
             restock: Some(LOBSTER_ID),
+            restock_count: None,
             ret: FIRE_GIANT_ROOM,
             ret_radius: 10,
             via: Some(FIRE_GIANT_WASH),
             via_radius: 6,
             via_magic: false,
             require_combat: true,
+            forbid_death: false,
+        }),
+        CoreCase::FireGiantBankPrepared => Some(CombatBankSpec {
+            deposit: &[BIG_BONES_ID],
+            stand: FIRE_GIANT_BANK,
+            stand_radius: 6,
+            restock: Some(LOBSTER_ID),
+            restock_count: Some(FIRE_GIANT_BANK_PREPARED_RESTOCK),
+            ret: FIRE_GIANT_ROOM,
+            ret_radius: 10,
+            via: Some(FIRE_GIANT_WASH),
+            via_radius: 6,
+            via_magic: false,
+            require_combat: true,
+            forbid_death: false,
+        }),
+        // Source-specific Camelot escape: land + Magic XP, then Seers restock.
+        // The Seers endpoint alone is not this via.
+        CoreCase::FireGiantCamelotPrepared => Some(CombatBankSpec {
+            deposit: &[BIG_BONES_ID],
+            stand: SEERS_BANK,
+            stand_radius: 6,
+            restock: Some(LOBSTER_ID),
+            restock_count: Some(FIRE_GIANT_CAMELOT_PREPARED_RESTOCK),
+            ret: FIRE_GIANT_ROOM,
+            ret_radius: 10,
+            via: Some(CAMELOT_TELE_LAND),
+            via_radius: 8,
+            via_magic: true,
+            require_combat: true,
+            forbid_death: false,
         }),
         _ => None,
     }
@@ -4829,13 +6862,14 @@ pub fn combat_loot_count(observation: &Observation, loot: CombatLoot) -> i32 {
         CombatLoot::BigBonesOrLimpwurt => {
             observation.item_id(BIG_BONES_ID) + observation.item_id(LIMPWURT_ROOT_ID)
         }
-        CombatLoot::DragonBonesOrHide => {
+        CombatLoot::DragonBonesOrHide | CombatLoot::DragonBonesAndHide => {
             observation.item_id(DRAGON_BONES_ID) + observation.item_id(GREEN_DRAGONHIDE_ID)
         }
         CombatLoot::GuardDrop => GUARD_DROP_IDS
             .iter()
             .map(|id| observation.item_id(*id))
             .sum(),
+        CombatLoot::Bones => observation.item_id(BONES_ID),
         CombatLoot::SapphireOrCasket => {
             observation.item_id(UNCUT_SAPPHIRE_ID) + observation.item_id(CASKET_ID)
         }
@@ -4927,6 +6961,137 @@ pub fn combat_baseline_ready(baseline: &Observation, spec: CombatSpec) -> bool {
         && consumable_ok
 }
 
+fn prepared_combat_baseline_ready(case: CoreCase, baseline: &Observation) -> bool {
+    // Mage is 70 Magic/Defence/HP with staff+shield. Rune armour and a
+    // scimitar would falsify this branch; check it before armour_ready.
+    if case == CoreCase::GreenDragonMagePrepared {
+        return ["magic", "defence", "hitpoints"]
+            .into_iter()
+            .all(|stat| baseline.level(stat) == REMAINING_COMBAT_PREPARED_LEVEL)
+            && baseline.item_id(LOBSTER_ID) == GREEN_DRAGON_FOOD
+            && baseline.equipment_id(STAFF_OF_FIRE_ID) == 1
+            && baseline.item_id(STAFF_OF_FIRE_ID) == 0
+            && baseline.equipment_id(DRAGONFIRE_SHIELD_ID) == 1
+            && baseline.item_id(DRAGONFIRE_SHIELD_ID) == 0
+            && baseline.item_id(MIND_RUNE_ID) == AUTO_FIGHTER_MAGE_CASTS
+            && baseline.item_id(AIR_RUNE_ID) == AUTO_FIGHTER_MAGE_AIR_RUNES
+            && baseline.item_id(RUNE_SCIMITAR_ID) == 0
+            && baseline.equipment_id(RUNE_SCIMITAR_ID) == 0
+            && [RUNE_CHAINBODY_ID, RUNE_PLATELEGS_ID, RUNE_FULL_HELM_ID]
+                .into_iter()
+                .all(|id| baseline.equipment_id(id) == 0 && baseline.item_id(id) == 0);
+    }
+    let armour_ready = [RUNE_CHAINBODY_ID, RUNE_PLATELEGS_ID, RUNE_FULL_HELM_ID]
+        .into_iter()
+        .all(|id| baseline.equipment_id(id) == 1);
+    let exact_stats = match case {
+        CoreCase::GreenDragonSpecialPrepared => ["attack", "strength", "defence", "hitpoints"]
+            .into_iter()
+            .all(|stat| baseline.level(stat) == REMAINING_COMBAT_PREPARED_LEVEL),
+        CoreCase::GreenDragonPrepared | CoreCase::FireGiantPrepared => {
+            baseline.level("defence") == COMBAT_ATTACK_LEVEL
+        }
+        CoreCase::GreenDragonPotionsPrepared => ["attack", "strength", "defence", "hitpoints"]
+            .into_iter()
+            .all(|stat| baseline.level(stat) == REMAINING_COMBAT_PREPARED_LEVEL),
+        CoreCase::GreenDragonTelePrepared => ["attack", "strength", "defence", "hitpoints"]
+            .into_iter()
+            .all(|stat| baseline.level(stat) == GREEN_DRAGON_TELE_PREPARED_LEVEL),
+        CoreCase::GreenDragonBankPrepared
+        | CoreCase::GreenDragonBankDefaultPrepared
+        | CoreCase::FireGiantBankPrepared
+        | CoreCase::FireGiantCamelotPrepared => ["attack", "strength", "defence", "hitpoints"]
+            .into_iter()
+            .all(|stat| baseline.level(stat) == BANK_PRESSURE_PREPARED_LEVEL),
+        CoreCase::MossGiantPrepared | CoreCase::HillGiantBankPrepared => {
+            ["attack", "strength", "defence", "hitpoints"]
+                .into_iter()
+                .all(|stat| baseline.level(stat) == REMAINING_COMBAT_PREPARED_LEVEL)
+        }
+        _ => return false,
+    };
+    let exact_food = match case {
+        CoreCase::GreenDragonPrepared => baseline.item_id(LOBSTER_ID) == GREEN_DRAGON_BASE_FOOD,
+        CoreCase::GreenDragonSpecialPrepared | CoreCase::GreenDragonPotionsPrepared => {
+            baseline.item_id(LOBSTER_ID) == GREEN_DRAGON_FOOD
+        }
+        CoreCase::GreenDragonBankPrepared | CoreCase::GreenDragonBankDefaultPrepared => {
+            baseline.item_id(LOBSTER_ID) == GREEN_DRAGON_BANK_PREPARED_FOOD
+        }
+        CoreCase::GreenDragonTelePrepared => baseline.item_id(LOBSTER_ID) == 0,
+        CoreCase::FireGiantPrepared => baseline.item_id(LOBSTER_ID) == FIRE_GIANT_FOOD,
+        CoreCase::FireGiantBankPrepared | CoreCase::FireGiantCamelotPrepared => {
+            baseline.item_id(LOBSTER_ID) == FIRE_GIANT_BANK_PREPARED_INITIAL_FOOD
+        }
+        CoreCase::MossGiantPrepared => baseline.item_id(LOBSTER_ID) == MOSS_GIANT_FOOD,
+        CoreCase::HillGiantBankPrepared => baseline.item_id(TROUT_ID) == HILL_GIANT_FOOD,
+        _ => return false,
+    };
+    let exact_profile = exact_stats && armour_ready && exact_food;
+    exact_profile
+        && match case {
+            CoreCase::GreenDragonPrepared => {
+                baseline.item_id(RUNE_SCIMITAR_ID) == 1
+                    && baseline.equipment_id(RUNE_SCIMITAR_ID) == 0
+            }
+            CoreCase::GreenDragonSpecialPrepared => {
+                baseline.item_id(DRAGON_DAGGER_ID) == 0
+                    && baseline.equipment_id(DRAGON_DAGGER_ID) == 1
+                    && baseline.item_id(DRAGONFIRE_SHIELD_ID) == 0
+                    && baseline.varp(SA_ENERGY_VARP) >= DRAGON_DAGGER_SPECIAL_COST
+            }
+            CoreCase::GreenDragonPotionsPrepared => {
+                baseline.item_id(RUNE_SCIMITAR_ID) == 1
+                    && baseline.equipment_id(RUNE_SCIMITAR_ID) == 0
+            }
+            CoreCase::GreenDragonBankPrepared | CoreCase::GreenDragonBankDefaultPrepared => {
+                baseline.item_id(RUNE_SCIMITAR_ID) == 0
+                    && baseline.equipment_id(RUNE_SCIMITAR_ID) == 1
+                    && baseline.item_id(DRAGONFIRE_SHIELD_ID) == 0
+                    && baseline.equipment_id(DRAGONFIRE_SHIELD_ID) == 1
+            }
+            CoreCase::GreenDragonTelePrepared => {
+                baseline.item_id(RUNE_SCIMITAR_ID) == 0
+                    && baseline.equipment_id(RUNE_SCIMITAR_ID) == 1
+                    && baseline.item_id(DRAGONFIRE_SHIELD_ID) == 0
+                    && baseline.equipment_id(DRAGONFIRE_SHIELD_ID) == 1
+                    && baseline.level("magic") >= VARROCK_TELE_MAGIC
+                    && baseline.item_id(LAW_RUNE_ID) >= 1
+                    && baseline.item_id(AIR_RUNE_ID) >= 3
+                    && baseline.item_id(FIRE_RUNE_ID) >= 1
+                    && baseline.effective_level("hitpoints") == GREEN_DRAGON_TELE_PREPARED_HP
+            }
+            CoreCase::FireGiantPrepared => {
+                baseline.item_id(RUNE_SCIMITAR_ID) == 0
+                    && baseline.equipment_id(RUNE_SCIMITAR_ID) == 1
+            }
+            CoreCase::FireGiantBankPrepared => {
+                baseline.item_id(RUNE_SCIMITAR_ID) == 0
+                    && baseline.equipment_id(RUNE_SCIMITAR_ID) == 1
+            }
+            CoreCase::FireGiantCamelotPrepared => {
+                baseline.item_id(RUNE_SCIMITAR_ID) == 0
+                    && baseline.equipment_id(RUNE_SCIMITAR_ID) == 1
+                    && baseline.equipment_id(GLARIALS_AMULET_ID) == 1
+                    && baseline.item_id(GLARIALS_AMULET_ID) == 0
+                    && baseline.level("magic") >= CAMELOT_TELE_MAGIC
+                    && baseline.effective_level("magic") >= CAMELOT_TELE_MAGIC
+                    && baseline.item_id(AIR_RUNE_ID) >= CAMELOT_AIR_CARRY
+                    && baseline.item_id(LAW_RUNE_ID) >= CAMELOT_LAW_CARRY
+            }
+            CoreCase::MossGiantPrepared => {
+                baseline.item_id(RUNE_SCIMITAR_ID) == 0
+                    && baseline.equipment_id(RUNE_SCIMITAR_ID) == 1
+            }
+            CoreCase::HillGiantBankPrepared => {
+                baseline.item_id(ADAMANT_SCIMITAR_ID) == 0
+                    && baseline.equipment_id(ADAMANT_SCIMITAR_ID) == 1
+                    && baseline.item_id(BRASS_KEY_ID) == 1
+            }
+            _ => false,
+        }
+}
+
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct CombatNpcLast {
     pub name: String,
@@ -5005,6 +7170,9 @@ pub struct CombatCoreCycle {
     pub noted: bool,
     pub activated: bool,
     pub shield_worn: bool,
+    /// Mage-branch only: latched when Start wore 1540 and a later WornShield frame saw it off.
+    /// Re-equipping does not clear this; `qualified()` still uses sticky `shield_worn` only.
+    pub shield_continuity_break: bool,
     pub stolen_food: bool,
     pub wrong_item: bool,
     pub dormant_indexes: BTreeSet<usize>,
@@ -5045,13 +7213,24 @@ impl CombatCoreCycle {
                 }
             }
         }
-        self.looted |= combat_loot_count(now, spec.loot) > combat_loot_count(baseline, spec.loot);
+        self.looted |= match spec.loot {
+            CombatLoot::DragonBonesAndHide => {
+                now.item_id(DRAGON_BONES_ID) > baseline.item_id(DRAGON_BONES_ID)
+                    && now.item_id(GREEN_DRAGONHIDE_ID) > baseline.item_id(GREEN_DRAGONHIDE_ID)
+            }
+            _ => combat_loot_count(now, spec.loot) > combat_loot_count(baseline, spec.loot),
+        };
         self.wrong_item |= now.item_id(BLACK_DRAGONHIDE_ID) > 0
             || now.item_id(RED_DRAGONHIDE_ID) > 0
             || now.item_id(BLUE_DRAGONHIDE_ID) > 0
             || now.item_id(CHOCOLATE_CAKE_ID) > 0;
         if spec.extra == CombatExtra::WornShield {
             self.shield_worn |= now.equipment_id(DRAGONFIRE_SHIELD_ID) >= 1;
+            if baseline.equipment_id(DRAGONFIRE_SHIELD_ID) >= 1
+                && now.equipment_id(DRAGONFIRE_SHIELD_ID) == 0
+            {
+                self.shield_continuity_break = true;
+            }
         }
         if spec.extra == CombatExtra::StolenFood {
             self.stolen_food |= stall_food(now) > stall_food(baseline);
@@ -5290,6 +7469,62 @@ impl CombatCoreCycle {
     }
 }
 
+/// Fire Strike prepared branch: one correct-target engagement, autocast,
+/// Mind+Air spend, and the shield staying worn. Not a full-kill claim.
+pub fn qualified_mage_branch(cycle: &CombatCoreCycle, spec: CombatSpec) -> bool {
+    spec.style == CombatStyleWitness::FireStrike
+        && spec.extra == CombatExtra::WornShield
+        && cycle.engagements >= 1
+        && cycle.style_xp
+        && cycle.autocast_armed
+        && cycle.mind_rune_consumed
+        && cycle.air_runes_consumed
+        && cycle.shield_worn
+        && !cycle.shield_continuity_break
+        && !cycle.noted
+        && !cycle.wrong_item
+}
+
+/// Bank-only dart branch: script withdrawal/equip/travel plus one ranged
+/// engagement. Never CombatCoreCycle::qualified() (2/1/further_work).
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct CombatDartBranchCycle {
+    pub combat: CombatCoreCycle,
+    pub withdrawn: bool,
+    pub worn: bool,
+    pub arrived: bool,
+    pub wrong_ammo: bool,
+}
+
+impl CombatDartBranchCycle {
+    pub fn observe(&mut self, spec: CombatSpec, baseline: &Observation, now: &Observation) {
+        self.combat.observe(spec, baseline, now);
+        let bank_withdraw = baseline.bank_open
+            && baseline.bank_loaded
+            && now.bank_open
+            && now.bank_loaded
+            && baseline.bank_item_id(BRONZE_DART_ID) > 0
+            && now.bank_item_id(BRONZE_DART_ID) < baseline.bank_item_id(BRONZE_DART_ID);
+        self.withdrawn |= now.item_id(BRONZE_DART_ID) > 0 || bank_withdraw;
+        self.worn |= now.equipment_id(BRONZE_DART_ID) >= 1;
+        self.arrived |= near(now.tile, MOSS_GIANT_SAFESPOT, MOSS_GIANT_DART_FIELD_RADIUS);
+        self.wrong_ammo |= held_id(now, RUNE_ARROW_ID) > 0 || now.bank_item_id(RUNE_ARROW_ID) > 0;
+    }
+
+    pub fn qualified(&self) -> bool {
+        self.withdrawn
+            && self.worn
+            && self.arrived
+            && !self.wrong_ammo
+            && self.combat.engagements >= 1
+            && self.combat.style_xp
+            && self.combat.combat_mode
+            && self.combat.projectile_fired
+            && !self.combat.noted
+            && !self.combat.wrong_item
+    }
+}
+
 pub fn combat_loot_id(id: i32, loot: CombatLoot) -> bool {
     match loot {
         CombatLoot::HerbLawNature => {
@@ -5297,8 +7532,11 @@ pub fn combat_loot_id(id: i32, loot: CombatLoot) -> bool {
         }
         CombatLoot::BigBones => id == BIG_BONES_ID,
         CombatLoot::BigBonesOrLimpwurt => id == BIG_BONES_ID || id == LIMPWURT_ROOT_ID,
-        CombatLoot::DragonBonesOrHide => id == DRAGON_BONES_ID || id == GREEN_DRAGONHIDE_ID,
+        CombatLoot::DragonBonesOrHide | CombatLoot::DragonBonesAndHide => {
+            id == DRAGON_BONES_ID || id == GREEN_DRAGONHIDE_ID
+        }
         CombatLoot::GuardDrop => GUARD_DROP_IDS.contains(&id),
+        CombatLoot::Bones => id == BONES_ID,
         CombatLoot::SapphireOrCasket => id == UNCUT_SAPPHIRE_ID || id == CASKET_ID,
         CombatLoot::None => false,
     }
@@ -5306,11 +7544,12 @@ pub fn combat_loot_id(id: i32, loot: CombatLoot) -> bool {
 
 /// Bank/return cycle for the five bank cells: the reviewed combat witness plus
 /// the declared bank trip the card itself has to execute — pack stock moves to
-/// the booth's bank, the card's restock line is met from that bank's own stock,
-/// the modal closes on a later bank session, the trip returns to the card's
-/// tile, and work resumes there. A booth opened away from the card's stand, a
-/// deposit the card never made, a return without further work, or a bank that
-/// only ever opened (seed/readiness) cannot qualify it.
+/// the booth's bank, the card's restock line (and selected exact count) is met
+/// from that bank's own stock, the modal closes on a later bank session, the
+/// trip returns to the card's tile, and work resumes there. A booth opened away
+/// from the card's stand, a deposit the card never made, a return without
+/// further work, or a bank that only ever opened (seed/readiness) cannot
+/// qualify it.
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct CombatBankCycle {
     /// The same reviewed combat witness the plain card core uses.
@@ -5336,6 +7575,8 @@ pub struct CombatBankCycle {
     pub via_seen: bool,
     /// Magic XP landed with the via tile when `via_magic` is set.
     pub via_magic: bool,
+    /// A fresh post-Start player death line was observed.
+    pub death_seen: bool,
 }
 
 impl CombatBankCycle {
@@ -5355,6 +7596,10 @@ impl CombatBankCycle {
         now: &Observation,
     ) {
         self.combat.observe(spec, baseline, now);
+        self.death_seen |= now.chat.iter().any(|line| {
+            !baseline.chat.contains(line)
+                && line.1.to_ascii_lowercase().contains("oh dear you are dead")
+        });
         let open = now.bank_open && now.bank_loaded;
         let at_stand = near(now.tile, bank.stand, bank.stand_radius);
         if open && !at_stand {
@@ -5390,8 +7635,12 @@ impl CombatBankCycle {
         if let Some(banked) = &self.banked {
             if let Some(food) = bank.restock {
                 self.restocked |= open
+                    && now.bank_generation == banked.bank_generation
                     && now.item_id(food) > self.food_at_deposit
-                    && now.bank_item_id(food) < baseline.bank_item_id(food);
+                    && now.bank_item_id(food) < banked.bank_item_id(food)
+                    && bank
+                        .restock_count
+                        .is_none_or(|count| now.item_id(food) == count);
             }
             self.closed |=
                 !now.bank_open && !now.bank_loaded && now.bank_generation > banked.bank_generation;
@@ -5417,6 +7666,7 @@ impl CombatBankCycle {
             && self.returned
             && self.further
             && !self.wrong_bank
+            && (!bank.forbid_death || !self.death_seen)
     }
 }
 
@@ -5470,7 +7720,7 @@ impl SuperheaterCycle {
             staff,
             steel,
         } = spec;
-        let wrong_bars = [IRON_BAR_ID, BRONZE_BAR_ID, STEEL_BAR_ID]
+        let wrong_bars = [IRON_BAR_ID, BRONZE_BAR_ID, STEEL_BAR_ID, SILVER_BAR_ID]
             .into_iter()
             .filter(|id| *id != bar)
             .any(|id| now.item_id(id) > 0 || now.bank_item_id(id) > 0);
@@ -6138,8 +8388,19 @@ impl ArdyThieverCycle {
     }
 }
 
-/// `guardResponse=Fight` on ArdyThiever: the Flee bank-cycle shape plus a
-/// FightBack Guard kill. The Flee kite tile fails this branch.
+/// `guardResponse=Fight` on ArdyThiever: a FightBack Guard kill plus the Flee
+/// bank-cycle shape. The kill and the Flee-kite check count from Start, not
+/// from the first coins: on 289 only a caught stall steal draws a Guard (a
+/// failed pickpocket stuns but never starts combat), and ArdyThiever steals
+/// from the stall only while its food is at `restockAtFood`, so the catch
+/// comes from the opening restock. The deposit still needs both the coins
+/// and the kill. The Flee kite tile fails this branch.
+///
+/// Coins count only as a pickpocket: a coin gain with a Thieving XP rise in
+/// the same or the previous observation (the pickpocket script adds the
+/// coins and the XP in one server tick). A dropped Guard's coins picked up by
+/// `LootDrops` carry no Thieving XP, and neither does the stall steal that
+/// raised it earlier.
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct ArdyThieverFightCycle {
     pub pickpocketed: Option<Observation>,
@@ -6150,20 +8411,29 @@ pub struct ArdyThieverFightCycle {
     pub fled: bool,
     pub engaged_guard: Option<usize>,
     pub style_xp: bool,
+    /// Coins and Thieving XP at the previous observation, and whether the
+    /// XP rose on it.
+    #[serde(skip)]
+    last: Option<(i32, i32, bool)>,
 }
 
 impl ArdyThieverFightCycle {
     pub fn observe(&mut self, baseline: &Observation, now: &Observation) {
         self.style_xp |= now.skill_xp("strength") > baseline.skill_xp("strength")
             || now.skill_xp("attack") > baseline.skill_xp("attack");
-        if self.pickpocketed.is_none()
-            && now.item_id(COINS_ID) >= 1
-            && baseline.item_id(COINS_ID) == 0
-            && now.skill_xp("thieving") > baseline.skill_xp("thieving")
-        {
+        let (coins, thieving) = (now.item_id(COINS_ID), now.skill_xp("thieving"));
+        let (last_coins, last_thieving, xp_rose_before) = self.last.unwrap_or((
+            baseline.item_id(COINS_ID),
+            baseline.skill_xp("thieving"),
+            false,
+        ));
+        let xp_rose = thieving > last_thieving;
+        let picked = coins > last_coins && (xp_rose || xp_rose_before);
+        self.last = Some((coins, thieving, xp_rose));
+        if self.pickpocketed.is_none() && picked && baseline.item_id(COINS_ID) == 0 {
             self.pickpocketed = Some(now.clone());
         }
-        if self.pickpocketed.is_some() && self.killed.is_none() {
+        if self.killed.is_none() {
             self.fled |= near(now.tile, ARDY_FLEE_TILE, 2);
         }
         for npc in &now.npc_facts {
@@ -6178,8 +8448,7 @@ impl ArdyThieverFightCycle {
             if selected {
                 self.engaged_guard = Some(npc.index);
             }
-            if self.pickpocketed.is_some()
-                && self.killed.is_none()
+            if self.killed.is_none()
                 && self.engaged_guard == Some(npc.index)
                 && npc.total_health > 0
                 && npc.health == 0
@@ -6188,8 +8457,7 @@ impl ArdyThieverFightCycle {
                 self.killed = Some(now.clone());
             }
         }
-        if self.pickpocketed.is_some()
-            && self.killed.is_none()
+        if self.killed.is_none()
             && self.style_xp
             && self
                 .engaged_guard
@@ -6215,7 +8483,7 @@ impl ArdyThieverFightCycle {
                 && near(now.tile, ARDY_THIEVER_STAND, 6);
         }
         if self.returned {
-            self.further |= !now.bank_open && now.item_id(COINS_ID) >= 1;
+            self.further |= !now.bank_open && picked;
         }
     }
 
@@ -6798,6 +9066,31 @@ pub fn shop_buyout_spec(case: CoreCase) -> Option<ShopBuyoutSpec> {
             stand: AUBURY_STAND,
             stand_radius: 6,
             restock: VARROCK_EAST_BANK,
+        }),
+        CoreCase::ShopBuyoutLowe => Some(ShopBuyoutSpec {
+            stand: LOWE_STAND,
+            stand_radius: 6,
+            restock: VARROCK_EAST_BANK,
+        }),
+        CoreCase::ShopBuyoutHickton => Some(ShopBuyoutSpec {
+            stand: HICKTON_STAND,
+            stand_radius: 6,
+            restock: CATHERBY_BANK,
+        }),
+        CoreCase::ShopBuyoutHarry => Some(ShopBuyoutSpec {
+            stand: HARRY_STAND,
+            stand_radius: 6,
+            restock: CATHERBY_BANK,
+        }),
+        CoreCase::ShopBuyoutBetty => Some(ShopBuyoutSpec {
+            stand: BETTY_STAND,
+            stand_radius: 6,
+            restock: FALADOR_WEST_BANK,
+        }),
+        CoreCase::ShopBuyoutGerrant => Some(ShopBuyoutSpec {
+            stand: GERRANT_STAND,
+            stand_radius: 6,
+            restock: DRAYNOR_BANK,
         }),
         _ => None,
     }
@@ -7584,6 +9877,7 @@ impl CoreWitness {
             herblore_eggs_cycle: HerbloreEggsCycle::default(),
             herblore_newt_cycle: HerbloreNewtCycle::default(),
             combat_core_cycle: CombatCoreCycle::default(),
+            combat_dart_branch_cycle: CombatDartBranchCycle::default(),
             combat_bank_cycle: CombatBankCycle::default(),
             combat_approach_cycle: CombatApproachCycle::default(),
             aio_teleport_cycle: AioTeleportCycle::default(),
@@ -7592,6 +9886,17 @@ impl CoreWitness {
             leather_crafter_cycle: LeatherCrafterCycle::default(),
             firemaker_cycle: FiremakerCycle::default(),
             climbing_boots_cycle: ClimbingBootsCycle::default(),
+            ranging_guild_round_cycle: RangingGuildRoundCycle::default(),
+            ranging_guild_redeem_cycle: RangingGuildRedeemCycle::default(),
+            ranging_guild_bank_cycle: RangingGuildBankCycle::default(),
+            ranging_guild_full_cycle: RangingGuildFullCycle::default(),
+            brimhaven_moss_inspect_cycle: BrimhavenMossInspectCycle::default(),
+            route_inspect_brimhaven_v2_cycle: RouteInspectBrimhavenV2Cycle::default(),
+            prayer_delivery_cycle: PrayerDeliveryCycle::default(),
+            line_of_sight_cycle: LineOfSightDeliveryCycle::default(),
+            actor_observation_cycle: ActorObservationDeliveryCycle::default(),
+            fight_field_cycle: FightFieldDeliveryCycle::default(),
+            hunt_cycle: HuntDeliveryCycle::default(),
             ordered_first_exhausted: false,
         }
     }
@@ -7750,7 +10055,12 @@ impl CoreWitness {
             self.herblore_newt_cycle
                 .observe(&self.baseline, observation);
         }
-        if let Some(spec) = combat_spec(self.case) {
+        if matches!(self.case, CoreCase::MossGiantDart) {
+            if let Some(spec) = combat_spec(self.case) {
+                self.combat_dart_branch_cycle
+                    .observe(spec, &self.baseline, observation);
+            }
+        } else if let Some(spec) = combat_spec(self.case) {
             self.combat_core_cycle
                 .observe(spec, &self.baseline, observation);
         }
@@ -7788,6 +10098,45 @@ impl CoreWitness {
             self.climbing_boots_cycle
                 .observe(spec, &self.baseline, observation);
         }
+        if matches!(self.case, CoreCase::RangingGuildRound) {
+            self.ranging_guild_round_cycle
+                .observe(&self.baseline, observation);
+        }
+        if matches!(self.case, CoreCase::RangingGuildRedeem) {
+            self.ranging_guild_redeem_cycle
+                .observe(&self.baseline, observation);
+        }
+        if matches!(self.case, CoreCase::RangingGuildBank) {
+            self.ranging_guild_bank_cycle
+                .observe(&self.baseline, observation);
+        }
+        if matches!(self.case, CoreCase::RangingGuildFull) {
+            self.ranging_guild_full_cycle
+                .observe(&self.baseline, observation);
+        }
+        if matches!(self.case, CoreCase::BrimhavenMossInspectV1) {
+            self.brimhaven_moss_inspect_cycle
+                .observe(&self.baseline, observation);
+        }
+        if matches!(self.case, CoreCase::RouteInspectBrimhavenV2) {
+            self.route_inspect_brimhaven_v2_cycle
+                .observe(&self.baseline, observation);
+        }
+        if matches!(self.case, CoreCase::PrayerV2 | CoreCase::PrayerV1) {
+            self.prayer_delivery_cycle.observe(observation);
+        }
+        if matches!(self.case, CoreCase::LineOfSightV2) {
+            self.line_of_sight_cycle.observe(observation);
+        }
+        if matches!(self.case, CoreCase::ActorObservationV2) {
+            self.actor_observation_cycle.observe(observation);
+        }
+        if matches!(self.case, CoreCase::FightFieldV2) {
+            self.fight_field_cycle.observe(observation);
+        }
+        if let Some(cell) = self.case.hunt_cell() {
+            self.hunt_cycle.observe(cell, &self.baseline, observation);
+        }
         if matches!(self.case, CoreCase::Superheater) {
             self.superheater_cycle.observe(
                 SuperheaterSpec {
@@ -7821,6 +10170,20 @@ impl CoreWitness {
                     primary: COPPER_ORE_ID,
                     secondary: TIN_ORE_ID,
                     staff: FIRE_BATTLESTAFF_ID,
+                    steel: false,
+                },
+                &self.baseline,
+                observation,
+            );
+        }
+        if matches!(self.case, CoreCase::SuperheaterSilverLowNatures) {
+            // Single-ore: primary == secondary so the pair-ratio check is a no-op.
+            self.superheater_cycle.observe(
+                SuperheaterSpec {
+                    bar: SILVER_BAR_ID,
+                    primary: SILVER_ORE_ID,
+                    secondary: SILVER_ORE_ID,
+                    staff: STAFF_OF_FIRE_ID,
                     steel: false,
                 },
                 &self.baseline,
@@ -7997,9 +10360,51 @@ impl CoreWitness {
     /// Observe one compact, non-consuming lifecycle value at the same native
     /// publication boundary as the latest snapshot.
     pub fn observe_script_lifecycle(&mut self, receipt: script::ScriptLifecycleReceipt) {
-        if self.case == CoreCase::HerbCleanerEmptyBank {
-            self.herb_cleaner_empty_cycle
-                .observe_script_lifecycle(receipt);
+        match self.case {
+            CoreCase::HerbCleanerEmptyBank => self
+                .herb_cleaner_empty_cycle
+                .observe_script_lifecycle(receipt),
+            CoreCase::RangingGuildFull => self
+                .ranging_guild_full_cycle
+                .observe_script_lifecycle(receipt),
+            CoreCase::PrayerV2 | CoreCase::PrayerV1 => {
+                if let Some(expected) = self.case.prayer_stop_reason() {
+                    self.prayer_delivery_cycle
+                        .observe_script_lifecycle(receipt, expected);
+                }
+            }
+            CoreCase::LineOfSightV2 => {
+                if let Some(expected) = self.case.los_stop_reason() {
+                    self.line_of_sight_cycle
+                        .observe_script_lifecycle(receipt, expected);
+                }
+            }
+            CoreCase::ActorObservationV2 => {
+                if let Some(expected) = self.case.actor_stop_reason() {
+                    self.actor_observation_cycle
+                        .observe_script_lifecycle(receipt, expected);
+                }
+            }
+            CoreCase::FightFieldV2 => {
+                if let Some(expected) = self.case.fight_field_stop_reason() {
+                    self.fight_field_cycle
+                        .observe_script_lifecycle(receipt, expected);
+                }
+            }
+            CoreCase::HoldSpotV2
+            | CoreCase::RetreatSpotV2
+            | CoreCase::WalkSpotV2
+            | CoreCase::EnterLairV2
+            | CoreCase::LeaveLairV2
+            | CoreCase::AcquireKeyV2
+            | CoreCase::CellV2
+            | CoreCase::BankV2 => {
+                if let Some(cell) = self.case.hunt_cell() {
+                    self.hunt_cycle
+                        .observe_script_lifecycle(receipt, cell.stop_reason());
+                }
+            }
+            _ => {}
         }
     }
 
@@ -8132,7 +10537,8 @@ impl CoreWitness {
             CoreCase::FlaxPicker => self.flax_picker_cycle.qualified(),
             CoreCase::Superheater
             | CoreCase::SuperheaterSteel
-            | CoreCase::SuperheaterFireBattlestaff => self.superheater_cycle.qualified(),
+            | CoreCase::SuperheaterFireBattlestaff
+            | CoreCase::SuperheaterSilverLowNatures => self.superheater_cycle.qualified(),
             CoreCase::VialFiller | CoreCase::VialFillerEast => self.vial_filler_cycle.qualified(),
             CoreCase::PotionMaker | CoreCase::PotionMakerNamed => {
                 self.potion_maker_cycle.qualified()
@@ -8165,12 +10571,18 @@ impl CoreWitness {
             CoreCase::AutoFighterBank
             | CoreCase::MossGiantBank
             | CoreCase::HillGiantBank
+            | CoreCase::HillGiantBankPrepared
             | CoreCase::ChaosDruidBank
             | CoreCase::ArdyFighterBank
             | CoreCase::RockCrabBank
             | CoreCase::GreenDragonBank
+            | CoreCase::GreenDragonBankPrepared
+            | CoreCase::GreenDragonBankDefaultPrepared
             | CoreCase::GreenDragonTele
-            | CoreCase::FireGiantBank => {
+            | CoreCase::GreenDragonTelePrepared
+            | CoreCase::FireGiantBank
+            | CoreCase::FireGiantBankPrepared
+            | CoreCase::FireGiantCamelotPrepared => {
                 match (combat_spec(self.case), combat_bank_spec(self.case)) {
                     (Some(spec), Some(bank)) => self.combat_bank_cycle.qualified(spec, bank),
                     _ => false,
@@ -8180,7 +10592,13 @@ impl CoreWitness {
             CoreCase::AioTeleport | CoreCase::AioTeleportFalador | CoreCase::AioTeleportNoStaff => {
                 self.aio_teleport_cycle.qualified()
             }
-            CoreCase::ShopBuyout | CoreCase::ShopBuyoutAubury => self.shop_buyout_cycle.qualified(),
+            CoreCase::ShopBuyout
+            | CoreCase::ShopBuyoutAubury
+            | CoreCase::ShopBuyoutLowe
+            | CoreCase::ShopBuyoutHickton
+            | CoreCase::ShopBuyoutHarry
+            | CoreCase::ShopBuyoutBetty
+            | CoreCase::ShopBuyoutGerrant => self.shop_buyout_cycle.qualified(),
             CoreCase::SmithingBot | CoreCase::SmithingBotPlatebody => {
                 self.smithing_bot_cycle.qualified()
             }
@@ -8194,10 +10612,32 @@ impl CoreWitness {
                     None => false,
                 }
             }
+            CoreCase::RangingGuildRound => self.ranging_guild_round_cycle.qualified(),
+            CoreCase::RangingGuildRedeem => self.ranging_guild_redeem_cycle.qualified(),
+            CoreCase::RangingGuildBank => self.ranging_guild_bank_cycle.qualified(),
+            CoreCase::RangingGuildFull => self.ranging_guild_full_cycle.qualified(),
+            CoreCase::BrimhavenMossInspectV1 => self.brimhaven_moss_inspect_cycle.qualified(),
+            CoreCase::RouteInspectBrimhavenV2 => self.route_inspect_brimhaven_v2_cycle.qualified(),
+            CoreCase::PrayerV2 | CoreCase::PrayerV1 => self.prayer_delivery_cycle.qualified(),
+            CoreCase::LineOfSightV2 => self.line_of_sight_cycle.qualified(),
+            CoreCase::ActorObservationV2 => self.actor_observation_cycle.qualified(),
+            CoreCase::FightFieldV2 => self.fight_field_cycle.qualified(),
+            CoreCase::HoldSpotV2
+            | CoreCase::RetreatSpotV2
+            | CoreCase::WalkSpotV2
+            | CoreCase::EnterLairV2
+            | CoreCase::LeaveLairV2
+            | CoreCase::AcquireKeyV2
+            | CoreCase::CellV2
+            | CoreCase::BankV2 => self
+                .case
+                .hunt_cell()
+                .is_some_and(|cell| self.hunt_cycle.qualified(cell)),
             CoreCase::ChaosDruid
             | CoreCase::ChaosDruidTower
             | CoreCase::ChaosDruidYanille
             | CoreCase::MossGiant
+            | CoreCase::MossGiantPrepared
             | CoreCase::HillGiant
             | CoreCase::AutoFighter
             | CoreCase::AutoFighterMage
@@ -8205,12 +10645,19 @@ impl CoreWitness {
             | CoreCase::RockCrab
             | CoreCase::RockCrabRange
             | CoreCase::GreenDragon
+            | CoreCase::GreenDragonPrepared
             | CoreCase::GreenDragonSpecial
+            | CoreCase::GreenDragonSpecialPrepared
             | CoreCase::GreenDragonPotions
+            | CoreCase::GreenDragonPotionsPrepared
             | CoreCase::FireGiant
+            | CoreCase::FireGiantPrepared
             | CoreCase::ArdyFighter => {
                 combat_spec(self.case).is_some_and(|spec| self.combat_core_cycle.qualified(spec))
             }
+            CoreCase::MossGiantDart => self.combat_dart_branch_cycle.qualified(),
+            CoreCase::GreenDragonMagePrepared => combat_spec(self.case)
+                .is_some_and(|spec| qualified_mage_branch(&self.combat_core_cycle, spec)),
         }
     }
 
@@ -8267,6 +10714,7 @@ impl CoreWitness {
             "herblore_eggs_cycle": self.herblore_eggs_cycle,
             "herblore_newt_cycle": self.herblore_newt_cycle,
             "combat_core_cycle": self.combat_core_cycle,
+            "combat_dart_branch_cycle": self.combat_dart_branch_cycle,
             "combat_bank_cycle": self.combat_bank_cycle,
             "combat_approach_cycle": self.combat_approach_cycle,
             "aio_teleport_cycle": self.aio_teleport_cycle,
@@ -8275,6 +10723,16 @@ impl CoreWitness {
             "leather_crafter_cycle": self.leather_crafter_cycle,
             "firemaker_cycle": self.firemaker_cycle,
             "climbing_boots_cycle": self.climbing_boots_cycle,
+            "ranging_guild_round_cycle": self.ranging_guild_round_cycle,
+            "ranging_guild_redeem_cycle": self.ranging_guild_redeem_cycle,
+            "ranging_guild_bank_cycle": self.ranging_guild_bank_cycle,
+            "ranging_guild_full_cycle": self.ranging_guild_full_cycle,
+            "brimhaven_moss_inspect_cycle": self.brimhaven_moss_inspect_cycle,
+            "route_inspect_brimhaven_v2_cycle": self.route_inspect_brimhaven_v2_cycle,
+            "prayer_delivery_cycle": self.prayer_delivery_cycle,
+            "line_of_sight_cycle": self.line_of_sight_cycle,
+            "fight_field_cycle": self.fight_field_cycle,
+            "hunt_cycle": self.hunt_cycle,
             "ordered_first_exhausted": self.ordered_first_exhausted,
         }))
     }
@@ -8539,12 +10997,17 @@ impl CoreWatch {
             None,
             BoundedGuardian::default(),
             session_boundary,
+            None,
+            None,
+            None,
         );
     }
 
     /// Convert the published snapshot and attach the slot's bounded native
-    /// lifecycle receipt and prior-frame guardian fact without touching the
-    /// panel's pending-log consumer.
+    /// lifecycle receipt, prior-frame guardian fact and (hunt cards only)
+    /// the slot's act ledger without touching the panel's pending-log
+    /// consumer.
+    #[allow(clippy::too_many_arguments)] // watch observe packs account/snapshot/lifecycle/paint fields
     pub fn observe_snapshot_with_lifecycle(
         &self,
         account: &str,
@@ -8553,6 +11016,9 @@ impl CoreWatch {
         lifecycle: Option<script::ScriptLifecycleReceipt>,
         guardian: BoundedGuardian,
         session_boundary: bool,
+        inspect: Option<RouteInspectPublished>,
+        paint: Option<&script::shim::ScriptPaint>,
+        acts: Option<ScriptActsPublished>,
     ) {
         if !self.active.load(Ordering::Acquire) {
             return;
@@ -8566,15 +11032,143 @@ impl CoreWatch {
         ) {
             // Convert while the lifecycle lock is held so a reconfiguration
             // cannot attach this snapshot to a later run of the same account.
+            let copies_prayer = match &*state {
+                CoreWatchState::Ready { case, .. } | CoreWatchState::Failed { case, .. } => {
+                    case.copies_prayer_varps()
+                }
+                CoreWatchState::Running { witness, .. } => witness.case.copies_prayer_varps(),
+                CoreWatchState::Disabled | CoreWatchState::Qualified { .. } => false,
+            };
+            let copies_los = match &*state {
+                CoreWatchState::Ready { case, .. } | CoreWatchState::Failed { case, .. } => {
+                    case.copies_line_of_sight()
+                }
+                CoreWatchState::Running { witness, .. } => witness.case.copies_line_of_sight(),
+                CoreWatchState::Disabled | CoreWatchState::Qualified { .. } => false,
+            };
+            let copies_actor = match &*state {
+                CoreWatchState::Ready { case, .. } | CoreWatchState::Failed { case, .. } => {
+                    case.copies_actor_observation()
+                }
+                CoreWatchState::Running { witness, .. } => witness.case.copies_actor_observation(),
+                CoreWatchState::Disabled | CoreWatchState::Qualified { .. } => false,
+            };
+            let copies_fight = match &*state {
+                CoreWatchState::Ready { case, .. } | CoreWatchState::Failed { case, .. } => {
+                    case.copies_fight_field()
+                }
+                CoreWatchState::Running { witness, .. } => witness.case.copies_fight_field(),
+                CoreWatchState::Disabled | CoreWatchState::Qualified { .. } => false,
+            };
+            let hunt = match &*state {
+                CoreWatchState::Ready { case, .. } | CoreWatchState::Failed { case, .. } => {
+                    case.hunt_cell()
+                }
+                CoreWatchState::Running { witness, .. } => witness.case.hunt_cell(),
+                CoreWatchState::Disabled | CoreWatchState::Qualified { .. } => None,
+            };
             let mut observation = Observation::from_snapshot(snapshot, names);
             observation.script_lifecycle = lifecycle;
             observation.guardian = guardian;
+            if let Some(published) = inspect {
+                observation.attach_route_inspect(published);
+            }
+            if copies_prayer {
+                observation.attach_prayer_varps(snapshot);
+            }
+            if copies_los {
+                observation.attach_line_of_sight(snapshot, paint);
+            }
+            if copies_actor {
+                observation.attach_actor_observation(snapshot, paint);
+            }
+            if copies_fight {
+                observation.attach_fight_field(snapshot, paint);
+            }
+            if let Some(cell) = hunt {
+                observation.attach_hunt(cell, snapshot, paint, acts);
+            }
             Self::observe_locked(&mut state, account, observation, session_boundary);
         }
     }
 
     pub fn configured(&self) -> bool {
         self.active.load(Ordering::Acquire)
+    }
+
+    /// True only for the active inspect cards. Callers copy published hops
+    /// only then; other cases keep the empty default.
+    pub fn copies_route_inspect(&self) -> bool {
+        if !self.active.load(Ordering::Acquire) {
+            return false;
+        }
+        match &*self.inner.lock().unwrap() {
+            CoreWatchState::Ready { case, .. } | CoreWatchState::Failed { case, .. } => {
+                case.copies_route_inspect()
+            }
+            CoreWatchState::Running { witness, .. } => witness.case.copies_route_inspect(),
+            CoreWatchState::Disabled | CoreWatchState::Qualified { .. } => false,
+        }
+    }
+
+    /// True only for the line-of-sight File card. Callers attach paint and
+    /// compact collision identity only then.
+    pub fn copies_line_of_sight(&self) -> bool {
+        if !self.active.load(Ordering::Acquire) {
+            return false;
+        }
+        match &*self.inner.lock().unwrap() {
+            CoreWatchState::Ready { case, .. } | CoreWatchState::Failed { case, .. } => {
+                case.copies_line_of_sight()
+            }
+            CoreWatchState::Running { witness, .. } => witness.case.copies_line_of_sight(),
+            CoreWatchState::Disabled | CoreWatchState::Qualified { .. } => false,
+        }
+    }
+
+    /// True only for the actor-observation File card. Callers attach paint and
+    /// one packed NPC row only then.
+    pub fn copies_actor_observation(&self) -> bool {
+        if !self.active.load(Ordering::Acquire) {
+            return false;
+        }
+        match &*self.inner.lock().unwrap() {
+            CoreWatchState::Ready { case, .. } | CoreWatchState::Failed { case, .. } => {
+                case.copies_actor_observation()
+            }
+            CoreWatchState::Running { witness, .. } => witness.case.copies_actor_observation(),
+            CoreWatchState::Disabled | CoreWatchState::Qualified { .. } => false,
+        }
+    }
+
+    /// True only for the fight-field File card. Callers attach paint and
+    /// one packed NPC row only then.
+    pub fn copies_fight_field(&self) -> bool {
+        if !self.active.load(Ordering::Acquire) {
+            return false;
+        }
+        match &*self.inner.lock().unwrap() {
+            CoreWatchState::Ready { case, .. } | CoreWatchState::Failed { case, .. } => {
+                case.copies_fight_field()
+            }
+            CoreWatchState::Running { witness, .. } => witness.case.copies_fight_field(),
+            CoreWatchState::Disabled | CoreWatchState::Qualified { .. } => false,
+        }
+    }
+
+    /// True only for the v2 hunt File cards. Callers attach paint and the
+    /// slot's act ledger only then.
+    pub fn copies_hunt(&self) -> bool {
+        if !self.active.load(Ordering::Acquire) {
+            return false;
+        }
+        match &*self.inner.lock().unwrap() {
+            CoreWatchState::Ready { case, .. } | CoreWatchState::Failed { case, .. } => {
+                case.hunt_cell().is_some()
+            }
+            CoreWatchState::Running { witness, .. } => witness.case.hunt_cell().is_some(),
+            CoreWatchState::Disabled | CoreWatchState::Qualified { .. } => false,
+        }
     }
 
     /// Allocation-free terminal polling for the headed UI. The full receipt
@@ -8731,4 +11325,160 @@ fn validate_start_baseline(
         ));
     }
     validate_case_baseline_with_preparation(case, observation, start_preparation)
+}
+
+#[cfg(test)]
+mod actor_observation_selection_tests {
+    use super::*;
+    use api::snapshot::{NpcView, WorldTile};
+
+    fn npc(index: usize, distance: i32, size: i32, name: &str) -> NpcView {
+        NpcView {
+            index,
+            r#type: Some(1),
+            name: Some(name.into()),
+            actions: vec![Some("Attack".into())],
+            tile: WorldTile {
+                x: 3201,
+                z: 3205,
+                level: 0,
+            },
+            distance,
+            animation: 0,
+            pose_animation: 0,
+            orientation: 0,
+            target_orientation: 0,
+            overhead_text: None,
+            spot_animation: -1,
+            health: 5,
+            total_health: 5,
+            face_entity: -1,
+            target: None,
+            moving: false,
+            running: false,
+            in_combat: false,
+            level: 2,
+            size,
+            network: WorldTile {
+                x: 3205,
+                z: 3201,
+                level: 0,
+            },
+            x: 3201,
+            z: 3205,
+            yaw: 0,
+        }
+    }
+
+    fn receipt_for(index: i32) -> ActorObservationScriptReceipt {
+        ActorObservationScriptReceipt {
+            npc: ActorObservationNpcFact {
+                index,
+                name: Some("Near".into()),
+                size: 2,
+                ..ActorObservationNpcFact::default()
+            },
+            ..ActorObservationScriptReceipt::default()
+        }
+    }
+
+    #[test]
+    fn chooses_nearest_size_ge_1_not_array_first() {
+        let rows = [
+            npc(1, 0, 0, "Zero"),
+            npc(3, 8, 1, "Far"),
+            npc(11, 1, 2, "Near"),
+        ];
+        let chosen = choose_actor_observation_npc(&rows, None).expect("nearest size>=1");
+        assert_eq!(chosen.index, 11);
+        assert_eq!(chosen.name.as_deref(), Some("Near"));
+        assert_eq!(chosen.size, 2);
+    }
+
+    #[test]
+    fn receipt_index_selects_that_row_not_nearest() {
+        let rows = [
+            npc(1, 0, 0, "Zero"),
+            npc(3, 8, 1, "Far"),
+            npc(11, 1, 2, "Near"),
+        ];
+        let receipt = receipt_for(3);
+        let chosen = choose_actor_observation_npc(&rows, Some(&receipt)).expect("receipt index 3");
+        assert_eq!(chosen.index, 3);
+        assert_eq!(chosen.name.as_deref(), Some("Far"));
+        let nearest = receipt_for(11);
+        let chosen = choose_actor_observation_npc(&rows, Some(&nearest)).expect("receipt index 11");
+        assert_eq!(chosen.index, 11);
+    }
+}
+
+#[cfg(test)]
+mod fight_field_selection_tests {
+    use super::*;
+    use api::snapshot::{NpcView, WorldTile};
+
+    fn npc(index: usize, distance: i32, size: i32) -> NpcView {
+        NpcView {
+            index,
+            r#type: Some(1),
+            name: Some("Npc".into()),
+            actions: vec![Some("Attack".into())],
+            tile: WorldTile {
+                x: 3201,
+                z: 3205,
+                level: 0,
+            },
+            distance,
+            animation: 0,
+            pose_animation: 0,
+            orientation: 0,
+            target_orientation: 0,
+            overhead_text: None,
+            spot_animation: -1,
+            health: 5,
+            total_health: 5,
+            face_entity: -1,
+            target: None,
+            moving: false,
+            running: false,
+            in_combat: false,
+            level: 2,
+            size,
+            network: WorldTile {
+                x: 3205,
+                z: 3201,
+                level: 0,
+            },
+            x: 3201,
+            z: 3205,
+            yaw: 0,
+        }
+    }
+
+    fn receipt_for(index: i32) -> FightFieldScriptReceipt {
+        FightFieldScriptReceipt {
+            index,
+            size: 2,
+            ..FightFieldScriptReceipt::default()
+        }
+    }
+
+    #[test]
+    fn chooses_nearest_size_ge_1_not_array_first() {
+        let rows = [npc(1, 0, 0), npc(3, 8, 1), npc(11, 1, 2)];
+        let chosen = choose_fight_field_npc(&rows, None).expect("nearest size>=1");
+        assert_eq!(chosen.index, 11);
+        assert_eq!(chosen.size, 2);
+    }
+
+    #[test]
+    fn receipt_index_selects_that_row_not_nearest() {
+        let rows = [npc(1, 0, 0), npc(3, 8, 1), npc(11, 1, 2)];
+        let receipt = receipt_for(3);
+        let chosen = choose_fight_field_npc(&rows, Some(&receipt)).expect("receipt index 3");
+        assert_eq!(chosen.index, 3);
+        let nearest = receipt_for(11);
+        let chosen = choose_fight_field_npc(&rows, Some(&nearest)).expect("receipt index 11");
+        assert_eq!(chosen.index, 11);
+    }
 }

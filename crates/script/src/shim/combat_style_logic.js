@@ -7,15 +7,12 @@ function hostFn(name) {
     return globalThis.rustyscript.functions[name];
 }
 
-function remainingCosts(spellName, wielded) {
-    return hostFn('__rs2b0t_runes_per_cast')(
-        String(spellName || ''),
-        Array.isArray(wielded) ? wielded.map((item) => String(item)) : [],
-    );
+function marshalled(wielded) {
+    return Array.isArray(wielded) ? wielded.map((item) => String(item)) : [];
 }
 
 export function runesPerCast(spellName, wielded) {
-    return remainingCosts(spellName, wielded);
+    return hostFn('__rs2b0t_runes_per_cast')(String(spellName || ''), marshalled(wielded));
 }
 
 export function spellButtonCom(spellName) {
@@ -23,23 +20,15 @@ export function spellButtonCom(spellName) {
 }
 
 export function castsAvailable(spellName, wielded, held) {
-    const costs = remainingCosts(spellName, wielded);
-    if (!costs) {
-        return 0;
-    }
-    if (costs.length === 0) {
-        return Number.POSITIVE_INFINITY;
-    }
-    return Math.min(...costs.map((cost) => Math.floor(Number(held(cost.rune)) / cost.count)));
+    return globalThis.__rs2b0t_combat_style(
+        'castsAvailable', String(spellName || ''), marshalled(wielded), held,
+    );
 }
 
 export function runeWithdrawList(spellName, wielded, casts) {
-    const costs = remainingCosts(spellName, wielded);
-    if (!costs) {
-        return [];
-    }
-    const n = Number(casts);
-    return costs.map((cost) => ({ rune: cost.rune, count: cost.count * n }));
+    return globalThis.__rs2b0t_combat_style(
+        'runeWithdrawList', String(spellName || ''), marshalled(wielded), casts,
+    );
 }
 
 export { SPELL_DB };

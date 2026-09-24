@@ -1,4 +1,6 @@
 // Shared helpers for kernel shim facades (snapshot reads + interact queue).
+import { parkMachine } from '../api/execution/Execution.js';
+
 export const host = () => globalThis.__rs2b0t_host || {};
 export const snap = () => host().snapshot || {};
 export const notImpl = (name, reason) =>
@@ -9,6 +11,19 @@ export const queue = (req) => {
     h.interact.push(req);
 };
 
+// Start one Rust step machine and await its single completion. `hooks`
+// holds the script callbacks the family declares (called as methods of
+// `hooks`). Resolves `{ kind: 'done', value }`, `{ kind: 'refused', reason }`
+// (nothing started) or `{ kind: 'aborted', reason }` (ResetSession,
+// superseded); rejects with what a script callback threw when the machine
+// failed on it.
+export async function runMachine(family, args, hooks) {
+    const started = globalThis.__rs2b0t_machine_start(family, args, hooks);
+    const out = started.kind === 'running' ? await parkMachine(started.handle) : started;
+    if (out.kind === 'failed') throw out.error;
+    return out;
+}
+
 export const proxy = (ns, members) =>
     new Proxy(members, {
         get(target, prop) {
@@ -18,9 +33,27 @@ export const proxy = (ns, members) =>
         },
     });
 
-export function chebyshev(a, b) {
-    if (!a || !b || (a.level ?? 0) !== (b.level ?? 0)) return Infinity;
-    return Math.max(Math.abs(a.x - b.x), Math.abs(a.z - b.z));
+/**
+ * A declared value no shim module owns: any use of it — a member read, a
+ * string conversion, arithmetic, even `Object.prototype.toString` — throws
+ * `not impl`, so a bundle importer sees the honest miss instead of a fake
+ * `[]`/`''`/`-1`, `[object Object]` or `NaN`.
+ */
+export const notImplValue = (ns) =>
+    new Proxy(Object.create(null), {
+        get(_target, prop) {
+            throw notImpl(typeof prop === 'string' ? ns + '.' + prop : ns);
+        },
+    });
+
+export function distanceTo(a, b) {
+    if (!a || !b) return Infinity;
+    return globalThis.__rs2b0t_distance(a, b);
+}
+
+// Walk arrival (frozen `isArrived`) from the posted player tile, in Rust.
+export function arrived(dest, radius) {
+    return globalThis.__rs2b0t_reach('arrived', dest, radius) === true;
 }
 
 export function presentOps(actions) {

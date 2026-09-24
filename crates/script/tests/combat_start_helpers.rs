@@ -1,3 +1,4 @@
+use client::io::ClientRevision;
 use script::{LoadIsolate, LoadShape};
 
 fn probe_json(src: &str) -> serde_json::Value {
@@ -76,47 +77,50 @@ export default class T extends LoopingBot {
 
 #[test]
 fn ranged_loadout_is_truthful_and_uses_dart_shape_only() {
-    let value = probe_json(
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let iso = LoadIsolate::spawn_with_game_data(
         r#"
 import { rangeLoadoutOf } from '../../api/combat/ranged.js';
 export default class T extends LoopingBot {
     loop() {
-        globalThis.__rs2b0t_host.content = { items: [
-            { obj: 'bronze_dart', name: 'Bronze dart' },
-            { obj: 'maple_shortbow', name: 'Maple shortbow' },
-        ] };
         globalThis.__probe = JSON.stringify({
             empty: rangeLoadoutOf('', 'Iron arrow'),
             bow: rangeLoadoutOf('Maple shortbow', 'Iron arrow'),
             dart: rangeLoadoutOf('Bronze dart', 'Iron arrow'),
+            missing: rangeLoadoutOf('Dragon dart', 'Rune arrow'),
         });
     }
 }
-"#,
-    );
+"#
+        .to_string(),
+        LoadShape::CompatClass,
+        vec![],
+        data,
+    )
+    .unwrap();
+    iso.on_game_tick(1);
+    let value: serde_json::Value =
+        serde_json::from_str(iso.probe("__probe").unwrap().as_str().unwrap()).unwrap();
+    iso.join();
     assert_eq!(
         value,
         serde_json::json!({
             "empty": {"weapon": "", "projectile": "Iron arrow", "thrown": false},
             "bow": {"weapon": "Maple shortbow", "projectile": "Iron arrow", "thrown": false},
             "dart": {"weapon": "Bronze dart", "projectile": "Bronze dart", "thrown": true},
+            "missing": {"weapon": "Dragon dart", "projectile": "Rune arrow", "thrown": false},
         })
     );
 }
 
 #[test]
 fn food_forms_are_generated_aliases_and_count_slots() {
-    let value = probe_json(
+    let data = api::game_data::for_revision(ClientRevision::R274).unwrap();
+    let iso = LoadIsolate::spawn_with_game_data(
         r#"
 import { foodForms, foodCount, isFoodItem } from '../../api/combat/food.js';
 export default class T extends LoopingBot {
     loop() {
-        globalThis.__rs2b0t_host.content = { items: [
-            { obj: 'cake', name: 'Cake' },
-            { obj: 'partial_cake', name: '2/3 cake' },
-            { obj: 'cake_slice', name: 'Slice of cake' },
-            { obj: 'lobster', name: 'Lobster' },
-        ] };
         const trout = Array.from({ length: 8 }, (_, slot) => ({ name: 'Trout', count: 20, slot }));
         globalThis.__probe = JSON.stringify({
             cake: foodForms('Cake'),
@@ -129,8 +133,17 @@ export default class T extends LoopingBot {
         });
     }
 }
-"#,
-    );
+"#
+        .to_string(),
+        LoadShape::CompatClass,
+        vec![],
+        data,
+    )
+    .unwrap();
+    iso.on_game_tick(1);
+    let value: serde_json::Value =
+        serde_json::from_str(iso.probe("__probe").unwrap().as_str().unwrap()).unwrap();
+    iso.join();
     assert_eq!(
         value["cake"],
         serde_json::json!(["cake", "2/3 cake", "slice of cake"])

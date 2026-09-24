@@ -1351,6 +1351,7 @@ fn expire_runecraft_work(slot: &mut AirSlotRecord) {
     slot.craft_from_exchange = false;
 }
 
+#[allow(clippy::too_many_arguments)] // runecraft observe packs prev counts and partner transfer fields
 fn observe_runecraft_work(
     observation: &AirObservation,
     prev_ess: i32,

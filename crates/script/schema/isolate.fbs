@@ -58,6 +58,11 @@ table SceneEntity {
   combat_level: int;
   target_kind: int;   // 0 none, 1 npc, 2 player
   target_index: int; // -1 when none
+  // NPC-only packed observation. Omitted on loc/player/ground (reader 0).
+  // size < 1 means observation absent; 0,0 with size >= 1 is a valid world tile.
+  size: int;
+  nx: int; // path-head network SW x
+  nz: int; // path-head network SW z
 }
 
 // One chat modal BUTTON_OK choice.
@@ -174,9 +179,49 @@ table WidgetText {
 }
 
 // One quest-tab text row after Rust resolves its native display colour.
+// `component_id` (slot 8) is the walked TYPE_TEXT id — the row's click
+// target. Appended, never reordered: an old buffer omits the slot (the
+// row has no target), and a present `0` is a real id and is posted. No
+// default: an absent slot is not `0`.
 table QuestStatus {
   name: string;
   status: string;
+  component_id: int;
+}
+
+// The main modal's paired text walk (Snapshot slot 248). ONE table so a
+// delta cannot tear the lines off the root they were walked from: inner
+// slot 4 `root` is the same integer the buffer posts as `main_modal_id`
+// (Snapshot slot 68), inner slot 6 `texts` is the TYPE_TEXT walk of that
+// root in walk order. When the table is present both inner slots are
+// written; `{ root: -1, texts: [] }` is an observed closed modal, and an
+// OMITTED Snapshot slot is not that object (the isolate keeps its last
+// pair). See the Snapshot comment for the delta rules.
+table MainModalTexts {
+  root: int;
+  texts: [string];
+}
+
+// One navigator-named gate short (`nav::router::MissingReq::Carry`): an
+// `item_req` stack the strict route needed and the player's posted pack could
+// not prove. `name` is the host obj table's display name for `id`, absent when
+// that table has none — the join is always `id`, never the name, and a missing
+// name never drops the row.
+table Carry {
+  id: int;
+  count: int;
+  name: string;
+}
+
+// One puzzle board observation: the identified piece container's component
+// id, its `link_obj_type` slot count, and its stored rows in slot order
+// (sparse — an empty slot contributes no row). `component_id: -1` with
+// `size: 0` and no rows is the observed closed board. All three fields are
+// written whenever the table is present.
+table PuzzleBoard {
+  component_id: int;
+  size: int;
+  items: [Row];
 }
 
 // One live NPC's projected overlay-canvas box. `points` is sixteen ints
@@ -190,6 +235,11 @@ table NpcBox {
 // fields the shim Game/Inventory/Skills/Bank/Banking/EventSignal read and
 // nothing else (no World clone). `hold`/`ours` are the guardian's status
 // that EventSignal.pending() reads.
+//
+// FIELD ORDER = deployed wire slots in crates/script/src/isolate_fb.rs
+// (VT_SNAP_*). Do not reorder for logical grouping — e.g. nearest_booth
+// follows chat_lines (slot 38), not booths. Regenerating Rust from this file
+// without matching those slots would break on-wire compatibility.
 //
 // Posts are DELTAS: `tick` is always present; every other field is present
 // only when it changed vs the last post (the first post — Start / isolate
@@ -206,7 +256,6 @@ table Snapshot {
   inv_size: int;   // inv-tab slot count (28 bound, 0 tutorial-locked)
   stats: [Stat];
   booths: [Booth];
-  nearest_booth: NearestBooth;
   banks: [BankStand];
   bank: [Row];
   bank_side: [Row];
@@ -238,6 +287,7 @@ table Snapshot {
   side_tab_ifaces: [SideTabIface];
   spell_buttons: [CombatStyle];
   chat_lines: [ChatLine];
+  nearest_booth: NearestBooth;
   bank_note_on: int;
   bank_note_off: int;
   scene_state: int;
@@ -304,6 +354,115 @@ table Snapshot {
   // Logical applet size posted as `__rs2b0t_host.canvasRect`. Origin is 0.
   canvas_width: int;
   canvas_height: int;
+  /// Local player combat level (`GameSnapshot::local_player.player.combat_level`).
+  combat_level: int;
+  // Host-authoritative inspect family. Old buffers omit these (seq 0 / ids 0).
+  // Latest published calc or host refusal, plus the immediately previous
+  // terminal. Membership / accepted / replaced ids are not waiter terminals.
+  route_inspect_seq: ulong = 0;
+  route_inspect_generation: ulong = 0;
+  route_inspect_request_id: ulong = 0;
+  route_inspect_ok: bool = false;
+  route_inspect_reason: string;
+  route_inspect_bank_planned: bool = false;
+  route_inspect_ticks: double = 0.0;
+  route_inspect_hops: [InspectHop];
+  route_inspect_prev_seq: ulong = 0;
+  route_inspect_prev_generation: ulong = 0;
+  route_inspect_prev_request_id: ulong = 0;
+  route_inspect_prev_ok: bool = false;
+  route_inspect_prev_reason: string;
+  route_inspect_prev_bank_planned: bool = false;
+  route_inspect_prev_ticks: double = 0.0;
+  route_inspect_prev_hops: [InspectHop];
+  route_inspect_running_id: ulong = 0;
+  route_inspect_pending_id: ulong = 0;
+  // Last request_id the host drained into running or pending.
+  route_inspect_accepted_id: ulong = 0;
+  // Explicit replace evidence (not inferred from snapshot arrival).
+  route_inspect_replaced_id: ulong = 0;
+  route_inspect_replaced_prev_id: ulong = 0;
+  // Latest host admission refuses for registered tokens that could not
+  // reserve a ring/held slot. Identities only; does not overwrite
+  // unobserved terminals. Old buffers omit these (0).
+  route_inspect_refused_id: ulong = 0;
+  route_inspect_refused_id_2: ulong = 0;
+  route_inspect_refused_id_3: ulong = 0;
+  // Last-seen unobserved obligation count (latest/prev seq>observed + held).
+  // Advisory; isolate authorize can lag the host drain.
+  route_inspect_unobserved: ulong = 0;
+  // One current-plane raw i32 collision grid. Slot 242. Omitted in a delta
+  // is keep; first post without the table materializes unavailable.
+  collision: Collision;
+  // Local decoded face. Slot 244/246. Omitted in a delta is keep.
+  // self_target_index default -1 because 0 is a legal NPC index.
+  self_target_kind: int = 0;   // 0 none, 1 npc, 2 player
+  self_target_index: int = -1;
+  // The main modal's paired TYPE_TEXT walk, slot 248 (next after 246).
+  // Omitted in a delta is keep — it is NOT a clear, and it is not
+  // `{ root: -1, texts: [] }` (that object is an observed closed modal).
+  // A present table writes both inner slots; its `root` is the integer
+  // this buffer posts as `main_modal_id`, so a text-only change co-posts
+  // slot 68 and the page never reads lines under a stale root.
+  main_modal_texts: MainModalTexts;
+  // The open puzzle board's piece container, slot 250 (next after 248): the
+  // first depth-first TYPE_INV with `obj_ops` under the open main modal
+  // (`find_inv_component`; the hint panel has no `obj_ops`). A present table
+  // always writes `component_id`, `size` (the component's `link_obj_type`
+  // length — NOT the row count) and `items` together; `{ component_id: -1,
+  // size: 0, items: [] }` is an observed closed board, and an OMITTED
+  // Snapshot slot is not that object (the isolate keeps its last board).
+  puzzle_board: PuzzleBoard;
+  // The board's session identity (ulong, slot 252). It bumps on session
+  // open, session close, or a new board component id, and never on a piece
+  // move. Posted only together with the table above, in the same buffer as
+  // one delta family.
+  puzzle_board_generation: ulong;
+  // The navigator-named gate shorts of the latest published walk outcome
+  // (slot 254, next after 252). Packed with the walk_outcome family and only
+  // with it: the ordering is the walk outcome's own. An EMPTY vector is the
+  // observed "this outcome names no short" — a routed walk, and a failed walk
+  // the relaxed re-run could not diagnose (budget, off-graph, a non-item
+  // gate). An OMITTED slot is not that vector: the isolate keeps its last
+  // rows, so a clear is never omitted. A `worn_req` alternative is never a
+  // short and is never packed here. Dest geometry is not a shopping list:
+  // only this vector names one.
+  walk_missing_carry: [Carry];
+}
+
+table Collision {
+  available: bool;
+  base_x: int;
+  base_z: int;
+  level: int;
+  width: int;
+  height: int;
+  flags: [int];
+}
+
+// One packed inspect hop (transports only). kind is TransportKind lowercased.
+table InspectHop {
+  kind: string;
+  loc_id: int;
+  loc_name: string;
+  action: string;
+  option: int;
+  from_x: int;
+  from_z: int;
+  from_level: int;
+  to_x: int;
+  to_z: int;
+  to_level: int;
+  ticks: int;
+}
+
+// Inspect-only avoid rectangle. level -1 = every plane.
+table AvoidRect {
+  min_x: int;
+  max_x: int;
+  min_z: int;
+  max_z: int;
+  level: int = -1;
 }
 
 // One shim interact request, tagged by `op`:
@@ -311,9 +470,10 @@ table Snapshot {
 // | "held" | "npc" | "loc" | "obj" | "player" | "use-on" | "use-widget-on"
 // | "continue" | "answer" | "answer-count" | "if-button" | "close-modal" | "side-tab"
 // | "shop-button" | "make-panel"
-// | "wear" | "set-run" | "set-retaliate" | "set-note-mode" | "set-camera-yaw"
+// | "wear" | "unequip" | "set-run" | "set-retaliate" | "set-note-mode" | "set-camera-yaw"
 // | "note-progress" | "loop-settled" | "wait-enqueued" | "wait-settled"
-// | "recovery-anchor" | "recovery-anchor-none" | "key" | "mouse".
+// | "recovery-anchor" | "recovery-anchor-none" | "key" | "mouse"
+// | "inspect-route".
 // "key": action=DOM key, kind=code (optional), index=1 down / 0 up.
 // "mouse": xf/yf=client coordinates as doubles, level=DOM button, index=1 down / 0 up.
 // input_identity is the native permit at production (0 when absent).
@@ -341,81 +501,27 @@ table Interact {
   xf: double;
   yf: double;
   input_identity: ulong = 0;
+  // Packed-nav FindOptions bits. Absent old buffers stay false.
+  allow_wilderness: bool = false;
+  allow_bank_fetch: bool = false;
+  // Inspect-route origin. Walk still uses here from the snapshot.
+  from_x: int = 0;
+  from_z: int = 0;
+  from_level: int = 0;
+  // Explicit inspect FindOptions.allow_teleports. Walk still encodes "tele".
+  allow_teleports: bool = false;
+  avoid: [AvoidRect];
+  // Obsolete on inspect-route (leave default 0; do not renumber). Typed
+  // inspect-ack still uses this slot for the isolate-applied seq.
+  inspect_ack_seq: ulong = 0;
+  // Inspect session generation from the applied snapshot. Required on
+  // inspect-ack so a caller cannot free terminals from another session.
+  inspect_ack_generation: ulong = 0;
 }
 
 // The tick's shim interact queue, forwarded to the host.
 table InteractBatch {
   reqs: [Interact];
-}
-
-// One advertised script-local paint control (`Paint.buttons` descriptor).
-table PaintButton {
-  id: string;
-  label: string;
-}
-
-// One path command. `kind` 0 move, 1 line, 2 quad, 3 cubic, 4 close.
-table CanvasSeg {
-  kind: byte;
-  x: float;
-  y: float;
-  c1x: float;
-  c1y: float;
-  c2x: float;
-  c2y: float;
-}
-
-table GradStop {
-  offset: float;
-  color: uint;
-}
-
-table ClipPath {
-  segs: [CanvasSeg];
-}
-
-// One recorded Canvas op (isolate→host). `kind` 0 = fillRect, 1 = fillText,
-// 2 = fillPath, 3 = strokePath. Additive fields after `mono` are omitted on
-// old buffers and default to no clip/shadow/gradient (fillRect/fillText).
-table CanvasOp {
-  kind: byte;
-  x: int;
-  y: int;
-  w: int;
-  h: int;
-  color: uint;
-  text: string;
-  font_px: ushort;
-  mono: bool;
-  segs: [CanvasSeg];
-  clips: [ClipPath];
-  stops: [GradStop];
-  gx0: float;
-  gy0: float;
-  gx1: float;
-  gy1: float;
-  r0: float;
-  r1: float;
-  grad_kind: byte; // 0 solid, 1 linear, 2 radial
-  line_width: float;
-  line_join: byte;
-  shadow_color: uint;
-  shadow_blur: float;
-  shadow_x: float;
-  shadow_y: float;
-  align: byte;
-  baseline: byte;
-}
-
-// One recorded paint frame (`Paint.begin` … `end()`), isolate→host.
-// Same channel as InteractBatch: a typed buffer, never a JSON value.
-// `buttons` and `canvas` are optional at the end so older buffers decode as empty.
-table Paint {
-  title: string;
-  accent: string;
-  lines: [string];
-  buttons: [PaintButton];
-  canvas: [CanvasOp];
 }
 
 root_type Snapshot;

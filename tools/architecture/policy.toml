@@ -1,0 +1,290 @@
+# Explicit 274bot workspace crate-graph policy.
+#
+# The checker derives the actual graph from Cargo.toml manifests (including
+# workspace aliases, optional/dev/build/target tables, and package renames).
+# A new edge, kind, or workspace member is a deliberate boundary change:
+# edit this file and docs/architecture.md, then get review.
+# This is not a frozen line-count snapshot.
+
+[workspace]
+members = [
+    "api",
+    "e2e",
+    "host",
+    "host-play",
+    "nav",
+    "panel",
+    "scenario",
+    "script",
+    "tui",
+    "vault",
+]
+# Path/workspace packages that participate in ownership but are not members
+# of this Cargo workspace. crates.io and other externals are ignored.
+externals = ["client"]
+
+# --- leaves and host-facing types ---
+
+[[allow]]
+from = "api"
+to = "client"
+kinds = ["normal"]
+reason = "api is the host-facing map onto the vendored client lib (Driver, snapshot types). This is intentional, not a reverse client→api edge."
+
+[[allow]]
+from = "host"
+to = "api"
+kinds = ["normal"]
+reason = "host owns native slot/tick APIs and consumes the read/act/settle surface."
+
+[[allow]]
+from = "host"
+to = "client"
+kinds = ["normal"]
+reason = "host drives one Client per slot; rendering stays in the client, not in host."
+
+[[allow]]
+from = "host"
+to = "vault"
+kinds = ["normal"]
+reason = "host reads vaulted credentials/assignments; vault stays a leaf store."
+
+[[allow]]
+from = "nav"
+to = "api"
+kinds = ["normal"]
+reason = "nav execute uses host-facing types; it does not own panel/script lifecycle."
+
+[[allow]]
+from = "nav"
+to = "client"
+kinds = ["normal"]
+reason = "nav bake/collision reads packed client world data."
+
+# --- script kernel ---
+
+[[allow]]
+from = "script"
+to = "api"
+kinds = ["normal"]
+reason = "compiled cards and isolate bindings sit on the Rust API surface."
+
+[[allow]]
+from = "script"
+to = "vault"
+kinds = ["normal"]
+reason = "script persists assignment/settings through the vault bag."
+
+[[allow]]
+from = "script"
+to = "client"
+kinds = ["dev"]
+reason = "dev-only: ctx unit tests build client ObjType tables. The compiled script crate must stay client-free."
+
+[[allow]]
+from = "script"
+to = "nav"
+kinds = ["dev"]
+reason = "dev-only: named-bank alias tests resolve catalog names against packed geometry. The compiled script crate must stay nav-free."
+
+# --- orchestration and composition ---
+
+[[allow]]
+from = "host-play"
+to = "api"
+kinds = ["normal"]
+reason = "shared Play session exposes host-facing snapshot/interact types to operator fronts."
+
+[[allow]]
+from = "host-play"
+to = "client"
+kinds = ["normal"]
+reason = "Play constructs and pumps Client slots; it does not own GPU/UI."
+
+[[allow]]
+from = "host-play"
+to = "host"
+kinds = ["normal"]
+reason = "Play is the lifecycle owner over host slots (login FIFO, tick, park)."
+
+[[allow]]
+from = "host-play"
+to = "nav"
+kinds = ["normal", "build"]
+reason = "Play drives Traveller/WalkTo; the build script bakes/stages the selected revision nav identity."
+
+[[allow]]
+from = "host-play"
+to = "script"
+kinds = ["normal"]
+reason = "Play owns the per-slot script transaction (start/pause/stop/load) as one cohesive unit."
+
+[[allow]]
+from = "host-play"
+to = "vault"
+kinds = ["normal"]
+reason = "Play unlocks the vault and assigns profiles to slots."
+
+[[allow]]
+from = "host-play"
+to = "scenario"
+kinds = ["optional"]
+reason = "optional: scenario runner is feature-gated (memory-profile / live harness), not a default host-play edge."
+
+[[allow]]
+from = "scenario"
+to = "api"
+kinds = ["normal"]
+reason = "headed/headless scenarios drive the host-facing API, not panel internals."
+
+[[allow]]
+from = "scenario"
+to = "client"
+kinds = ["normal"]
+reason = "scenarios observe client scene/login facts for live gates."
+
+[[allow]]
+from = "scenario"
+to = "nav"
+kinds = ["normal"]
+reason = "nav-family scenarios share the packed world/router, not script isolate internals."
+
+[[allow]]
+from = "panel"
+to = "api"
+kinds = ["normal"]
+reason = "panel UI binds host-facing types; it does not reimplement the client applet UI."
+
+[[allow]]
+from = "panel"
+to = "client"
+kinds = ["normal"]
+reason = "panel blits the client frame and feeds input; GPU 3D stays in the client."
+
+[[allow]]
+from = "panel"
+to = "host"
+kinds = ["normal"]
+reason = "panel reads slot/random status owned by host."
+
+[[allow]]
+from = "panel"
+to = "host-play"
+kinds = ["normal"]
+reason = "panel is a composition front over the shared Play lifecycle, not a second kernel."
+
+[[allow]]
+from = "panel"
+to = "nav"
+kinds = ["normal"]
+reason = "WalkTo picker and nav paints are panel chrome over host nav."
+
+[[allow]]
+from = "panel"
+to = "scenario"
+kinds = ["normal"]
+reason = "panel-play --live hosts the shared scenario runner."
+
+[[allow]]
+from = "panel"
+to = "script"
+kinds = ["normal"]
+reason = "script chrome (browse/start/load) dispatches through the script kernel."
+
+[[allow]]
+from = "panel"
+to = "vault"
+kinds = ["normal"]
+reason = "profile create/edit/unlock is panel UI over the vault leaf."
+
+[[allow]]
+from = "tui"
+to = "api"
+kinds = ["normal"]
+reason = "tui-play is the headless composition front over the same API surface."
+
+[[allow]]
+from = "tui"
+to = "client"
+kinds = ["normal"]
+reason = "tui observes client facts with raster Off; it does not own a GPU loop."
+
+[[allow]]
+from = "tui"
+to = "host-play"
+kinds = ["normal"]
+reason = "tui composes the same Play session as panel; production tui does not depend on host directly."
+
+[[allow]]
+from = "tui"
+to = "nav"
+kinds = ["normal"]
+reason = "tui map pane reads packed collision/pins."
+
+[[allow]]
+from = "tui"
+to = "scenario"
+kinds = ["normal"]
+reason = "tui-play --live uses the shared scenario runner."
+
+[[allow]]
+from = "tui"
+to = "script"
+kinds = ["normal"]
+reason = "tui script pane dispatches the same kernel controls as panel."
+
+[[allow]]
+from = "tui"
+to = "vault"
+kinds = ["normal"]
+reason = "tui unlocks the same vault layout as panel/host-play."
+
+[[allow]]
+from = "tui"
+to = "host"
+kinds = ["dev"]
+reason = "dev-only: tui tests construct host types. Production tui must keep going through host-play."
+
+# --- test orchestration (not production ownership) ---
+
+[[allow]]
+from = "e2e"
+to = "api"
+kinds = ["normal"]
+reason = "e2e is wide test orchestration over host-facing types, not a product UI crate."
+
+[[allow]]
+from = "e2e"
+to = "client"
+kinds = ["normal"]
+reason = "headless twins observe client scene/login facts."
+
+[[allow]]
+from = "e2e"
+to = "host"
+kinds = ["normal"]
+reason = "e2e links host to poll slot state instead of scraping logs."
+
+[[allow]]
+from = "e2e"
+to = "host-play"
+kinds = ["normal"]
+reason = "e2e reuses Play for login/RSS/null-raster twins and suite child launch."
+
+[[allow]]
+from = "e2e"
+to = "nav"
+kinds = ["normal"]
+reason = "nav-family live twins share packed world/router."
+
+[[allow]]
+from = "e2e"
+to = "scenario"
+kinds = ["normal"]
+reason = "headed/headless scenario twins share the scenario runner."
+
+[[allow]]
+from = "e2e"
+to = "vault"
+kinds = ["normal"]
+reason = "live twins mint/unlock vaulted profiles."

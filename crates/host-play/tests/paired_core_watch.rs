@@ -706,6 +706,7 @@ fn flax_slot(role: FlaxRole) -> FlaxSlotRecord {
     )
 }
 
+#[allow(clippy::too_many_arguments)] // trade fixture packs role/tick/item counts
 fn flax_trade(
     role: FlaxRole,
     tick: u32,
@@ -813,6 +814,7 @@ fn mule_slot(role: MuleRole) -> MuleSlotRecord {
     )
 }
 
+#[allow(clippy::too_many_arguments)] // trade fixture packs role/tick/item counts
 fn mule_trade(
     role: MuleRole,
     tick: u32,
@@ -1614,6 +1616,7 @@ fn air_slot(role: AirRole) -> AirSlotRecord {
     )
 }
 
+#[allow(clippy::too_many_arguments)] // trade fixture packs role/tick/item counts
 fn air_trade(
     role: AirRole,
     tick: u32,

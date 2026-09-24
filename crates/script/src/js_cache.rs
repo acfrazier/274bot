@@ -24,6 +24,8 @@ pub struct CacheMeta {
     pub kind: ScriptKind,
     pub source: ScriptSource,
     pub shape: Option<String>,
+    /// Provenance only — not part of the SHA cache key.
+    pub api_family: Option<String>,
 }
 
 /// On-disk manifest entry for one cached object.
@@ -36,6 +38,8 @@ struct ManifestEntry {
     media: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     shape: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    api_family: Option<String>,
 }
 
 #[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
@@ -119,6 +123,7 @@ impl JsCache {
                 source: script_source_label(meta.source),
                 media,
                 shape: meta.shape,
+                api_family: meta.api_family,
             },
         );
         self.write_manifest(&manifest)?;
