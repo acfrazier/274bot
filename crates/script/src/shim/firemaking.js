@@ -85,14 +85,7 @@ export function localFirePlot(origin, half = 4) {
     };
 }
 
-export const LOG_LEVELS = {
-    Logs: 1,
-    'Oak logs': 15,
-    'Willow logs': 30,
-    'Maple logs': 45,
-    'Yew logs': 60,
-    'Magic logs': 75,
-};
+export const LOG_LEVELS = (host().content && host().content.log_levels) || {};
 
 export function tileKey(t) {
     return `${t.x},${t.z}`;

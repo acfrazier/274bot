@@ -65,6 +65,107 @@ pub const COW_FIELDS: &[CowField] = &[
     },
 ];
 
+pub const AL_KHARID_BANK: WorldTile = WorldTile {
+    x: 3269,
+    z: 3167,
+    level: 0,
+};
+
+pub fn cow_uses_al_kharid_toll(field: &CowField) -> bool {
+    field.name == "Lumbridge cow field"
+}
+
+pub fn nearest_cow_field() -> Option<&'static CowField> {
+    COW_FIELDS.first()
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RuneRoute {
+    pub rune: &'static str,
+    pub talisman: &'static str,
+    pub level: i32,
+    pub bank: &'static str,
+    pub ruins: WorldTile,
+}
+
+pub const RUNE_ROUTES: &[RuneRoute] = &[
+    RuneRoute {
+        rune: "Air rune",
+        talisman: "Air talisman",
+        level: 1,
+        bank: "Falador East",
+        ruins: WorldTile {
+            x: 2983,
+            z: 3288,
+            level: 0,
+        },
+    },
+    RuneRoute {
+        rune: "Mind rune",
+        talisman: "Mind talisman",
+        level: 2,
+        bank: "Edgeville",
+        ruins: WorldTile {
+            x: 2980,
+            z: 3511,
+            level: 0,
+        },
+    },
+    RuneRoute {
+        rune: "Water rune",
+        talisman: "Water talisman",
+        level: 5,
+        bank: "Draynor",
+        ruins: WorldTile {
+            x: 3182,
+            z: 3162,
+            level: 0,
+        },
+    },
+    RuneRoute {
+        rune: "Earth rune",
+        talisman: "Earth talisman",
+        level: 9,
+        bank: "Varrock East",
+        ruins: WorldTile {
+            x: 3303,
+            z: 3477,
+            level: 0,
+        },
+    },
+    RuneRoute {
+        rune: "Fire rune",
+        talisman: "Fire talisman",
+        level: 14,
+        bank: "Al Kharid",
+        ruins: WorldTile {
+            x: 3310,
+            z: 3252,
+            level: 0,
+        },
+    },
+    RuneRoute {
+        rune: "Body rune",
+        talisman: "Body talisman",
+        level: 20,
+        bank: "Edgeville",
+        ruins: WorldTile {
+            x: 3050,
+            z: 3442,
+            level: 0,
+        },
+    },
+];
+
+pub const LOG_LEVELS: &[(&str, i32)] = &[
+    ("Logs", 1),
+    ("Oak logs", 15),
+    ("Willow logs", 30),
+    ("Maple logs", 45),
+    ("Yew logs", 60),
+    ("Magic logs", 75),
+];
+
 /// Bank tiles from walk pins / alcher stand. AABB is the plaza around the bank,
 /// not a copied burn-lane search.
 pub const FIRE_PLOTS: &[FirePlot] = &[
@@ -188,6 +289,18 @@ pub const PICKPOCKET_SPOTS: &[PickpocketSpot] = &[
         leash: 19,
     },
 ];
+
+pub fn pickpocket_spot(target: &str) -> Option<&'static PickpocketSpot> {
+    PICKPOCKET_SPOTS
+        .iter()
+        .find(|spot| spot.name.eq_ignore_ascii_case(target))
+        .or_else(|| {
+            PICKPOCKET_SPOTS
+                .iter()
+                .find(|spot| spot.name.eq_ignore_ascii_case("guard"))
+        })
+        .or_else(|| PICKPOCKET_SPOTS.first())
+}
 
 /// Curated tile shortcut for the bank alias cluster tables below.
 const fn t(x: i32, z: i32) -> WorldTile {

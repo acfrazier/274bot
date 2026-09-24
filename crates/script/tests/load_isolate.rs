@@ -4045,7 +4045,7 @@ export default class T extends LoopingBot {
 }
 
 #[test]
-fn isolate_live_catalog_noted_of_from_posted_cert() {
+fn isolate_live_catalog_uses_selected_certificate_links() {
     let src = r#"
 import { liveCatalog, notedId, unnotedId } from '../../api/market/catalog.js';
 export default class T extends LoopingBot {
@@ -4054,82 +4054,37 @@ export default class T extends LoopingBot {
         const tryHit = (fn) => {
             try { hits.push(fn()); } catch (e) { hits.push(String(e.message || e)); }
         };
-        tryHit(() => liveCatalog().notedOf.get(10));
-        tryHit(() => notedId(10));
-        tryHit(() => unnotedId(1234));
-        tryHit(() => notedId(999));
-        tryHit(() => unnotedId(999));
+        tryHit(() => liveCatalog().notedOf.get(1113));
+        tryHit(() => notedId(1113));
+        tryHit(() => unnotedId(1114));
+        tryHit(() => notedId(999999));
+        tryHit(() => unnotedId(999999));
         globalThis.__probe = JSON.stringify(hits);
     }
 }
 "#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
-    let ops = ["Withdraw-1".to_string()];
-    let bank = [item_row(
-        10,
-        Some("Adamant platebody"),
-        1,
-        &ops,
-        false,
-        1234,
-        -1,
-    )];
-    let mut snap = base_snapshot();
-    snap.bank = &bank;
-    post_snapshot_input(&iso, &snap);
+    let data = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
+    let iso = LoadIsolate::spawn_with_game_data(
+        src.to_string(),
+        LoadShape::CompatClass,
+        vec![],
+        data,
+    )
+    .unwrap();
     iso.on_game_tick(1);
     let value = iso.probe("__probe").unwrap();
     let hits: Vec<serde_json::Value> =
         serde_json::from_str(value.as_str().expect("probe string")).expect("json");
     assert_eq!(hits.len(), 5, "catalog cert probes: {hits:?}");
-    assert_eq!(hits[0], 1234, "posted cert on id 10 maps notedOf.get(10)");
-    assert_eq!(hits[1], 1234, "notedId follows the posted cert link");
-    assert_eq!(hits[2], 10, "unnotedId follows the posted cert link");
-    let miss_noted = hits[3].as_str().unwrap_or("");
-    let miss_unnoted = hits[4].as_str().unwrap_or("");
-    assert!(
-        miss_noted.contains("not impl"),
-        "unknown notedId must throw not impl, got {miss_noted:?}"
-    );
-    assert!(
-        miss_unnoted.contains("not impl"),
-        "unknown unnotedId must throw not impl, got {miss_unnoted:?}"
-    );
+    assert_eq!(hits[0], 1114);
+    assert_eq!(hits[1], 1114);
+    assert_eq!(hits[2], 1113);
+    for miss in &hits[3..] {
+        assert!(miss.as_str().unwrap_or("").contains("not impl"));
+    }
     iso.join();
 }
 
-#[test]
-fn isolate_live_catalog_noted_inv_row_maps_unnoted_to_note() {
-    let src = r#"
-import { notedId } from '../../api/market/catalog.js';
-export default class T extends LoopingBot {
-    loop() {
-        globalThis.__probe = notedId(1113);
-    }
-}
-"#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
-    let ops = ["Drop".to_string()];
-    let inv = [item_row(
-        1114,
-        Some("Rune chainbody"),
-        27,
-        &ops,
-        true,
-        1113,
-        -1,
-    )];
-    let mut snap = base_snapshot();
-    snap.inv = &inv;
-    post_snapshot_input(&iso, &snap);
-    iso.on_game_tick(1);
-    let value = iso.probe("__probe").unwrap();
-    assert_eq!(
-        value, 1114,
-        "a posted noted inv row maps notedId(unnoted) to the note id"
-    );
-    iso.join();
-}
 
 // Bounded Reachability fails closed without the native coordinate ranks,
 // even when a colocated entity row still carries legacy unbounded bits.
@@ -6960,14 +6915,25 @@ export default class T extends LoopingBot {
 #[test]
 fn isolate_host_content_posts_rust_coordinate_tables() {
     let src = r#"
+import {
+    AL_KHARID_BANK,
+    COW_LOCATIONS,
+    nearestCowLocation,
+} from '../../data/cowKillerLocations.js';
+import { RUNES } from '../../data/runeCraftLocations.js';
 export default class T extends LoopingBot {
     loop() {
         const c = globalThis.__rs2b0t_host.content || {};
         globalThis.__probe = {
-            cows: (c.cow_fields || []).map((f) => f.name),
+            cows: COW_LOCATIONS.map((row) => row.name),
+            nearestCow: nearestCowLocation()?.name,
+            cowToll: COW_LOCATIONS[0]?.usesAlKharidToll,
+            alBank: { x: AL_KHARID_BANK.x, z: AL_KHARID_BANK.z },
+            air: { bank: RUNES['Air rune']?.bank, x: RUNES['Air rune']?.ruins.x, z: RUNES['Air rune']?.ruins.z },
             fires: (c.fire_plots || []).map((p) => p.name),
             cooks: (c.cook_stands || []).map((s) => s.name),
             rocks: c.rock_type_names || [],
+            hasItems: Object.prototype.hasOwnProperty.call(c, 'items'),
             ve_x: ((c.fire_plots || []).find((p) => p.name === 'Varrock East') || {}).bank?.x,
         };
     }
@@ -6989,8 +6955,13 @@ export default class T extends LoopingBot {
             .and_then(|v| v.as_array())
             .map(|a| { a.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>() }),
         Some(cow_names),
-        "handle.content.cow_fields must be the Rust table: {probe:?}"
+        "COW_LOCATIONS must be materialized from the Rust table: {probe:?}"
     );
+    assert_eq!(probe.get("hasItems").and_then(|value| value.as_bool()), Some(false));
+    assert_eq!(probe["nearestCow"], "Lumbridge cow field");
+    assert_eq!(probe["cowToll"], true);
+    assert_eq!(probe["alBank"], serde_json::json!({"x": 3269, "z": 3167}));
+    assert_eq!(probe["air"], serde_json::json!({"bank": "Falador East", "x": 2983, "z": 3288}));
     assert_eq!(
         probe
             .get("fires")

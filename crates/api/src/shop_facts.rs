@@ -8,6 +8,7 @@
 //! lookups cannot pretend every shop is supported.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::OnceLock;
 
 use serde::Serialize;
 
@@ -95,26 +96,39 @@ struct ParsedKeeper {
     title: String,
 }
 
+struct ParsedShopFacts {
+    invs: Vec<ParsedInv>,
+    keepers: Vec<ParsedKeeper>,
+}
+
+static PARSED_SHOP_FACTS: OnceLock<ParsedShopFacts> = OnceLock::new();
+
+fn parsed_shop_facts() -> &'static ParsedShopFacts {
+    PARSED_SHOP_FACTS.get_or_init(|| ParsedShopFacts {
+        invs: parse_invs(&[
+            ADVENTURER_INV,
+            MAGEARENA_RUNE_INV,
+            MAGIC_INV,
+            RUNE_INV,
+            ARCHERY_INV,
+            ARCHERY2_INV,
+            FISHING_INV,
+            FISHING2_INV,
+            SHILO_FISHING_INV,
+            AXE_INV,
+            PICKAXE_INV,
+            MAGIC_GUILD_INV,
+        ]),
+        keepers: parse_keepers(KEEPERS),
+    })
+}
+
 /// Posted shops for this revision, skipping any inv whose obj aliases are missing.
 pub fn shops_for(data: &SelectedGameData) -> Vec<ShopRecord> {
-    let invs = parse_invs(&[
-        ADVENTURER_INV,
-        MAGEARENA_RUNE_INV,
-        MAGIC_INV,
-        RUNE_INV,
-        ARCHERY_INV,
-        ARCHERY2_INV,
-        FISHING_INV,
-        FISHING2_INV,
-        SHILO_FISHING_INV,
-        AXE_INV,
-        PICKAXE_INV,
-        MAGIC_GUILD_INV,
-    ]);
-    let keepers = parse_keepers(KEEPERS);
+    let parsed = parsed_shop_facts();
     POSTED_INVS
         .iter()
-        .filter_map(|inv_name| join_shop(*inv_name, &invs, &keepers, data))
+        .filter_map(|inv_name| join_shop(*inv_name, &parsed.invs, &parsed.keepers, data))
         .collect()
 }
 

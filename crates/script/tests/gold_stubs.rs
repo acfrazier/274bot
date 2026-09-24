@@ -372,7 +372,7 @@ export default class T extends LoopingBot { loop() { globalThis.__probe = HERBS.
 }
 
 #[test]
-fn empty_herbs_with_posted_item_catalog_fails_at_use_not_import() {
+fn empty_herbs_with_selected_facts_fail_at_use_not_import() {
     let src = r#"
 import { HERBS, HERB_OPTIONS } from '../../data/herbs.js';
 export default class T extends LoopingBot {
@@ -393,7 +393,7 @@ export default class T extends LoopingBot {
     )
     .unwrap();
     iso.probe(
-        "globalThis.__rs2b0t_host.content.herbs = []; globalThis.__rs2b0t_host.content.items = [{obj:'probe',id:1,name:'Probe',cost:1}]; true",
+        "globalThis.__rs2b0t_host.content.herbs = []; globalThis.__rs2b0t_host.content.selected_facts = true; true",
     )
     .unwrap();
     iso.on_game_tick(1);
@@ -409,7 +409,7 @@ export default class T extends LoopingBot {
 }
 
 #[test]
-fn item_db_reads_host_content_alcher_gold_row() {
+fn item_db_reads_selected_alcher_gold_row() {
     let src = r#"
 import { ITEM_DB } from '../../data/itemdb.js';
 export default class T extends LoopingBot {

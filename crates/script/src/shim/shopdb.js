@@ -1,16 +1,15 @@
-// Host-posted shop records (`__rs2b0t_host.content.shops`). Import resolves
-// without touching the catalog; Object.values/lookup throw when a non-empty
-// item catalog was posted but shop facts are missing (fail-closed at use).
-// Only the shops the host posted exist here — unpublished keepers stay absent.
+// Host-posted bounded shop records. Access fails closed when selected facts
+// are active but the supported shop table is missing. Unpublished keepers
+// remain absent.
 const host = () => globalThis.__rs2b0t_host || {};
 
 function shopRows() {
     const content = host().content;
     if (!content) return {};
-    const itemsPosted = Array.isArray(content.items) && content.items.length > 0;
+    const selectedFacts = content.selected_facts === true;
     const shops = content.shops;
     if (!shops || typeof shops !== 'object' || Object.keys(shops).length === 0) {
-        if (itemsPosted) {
+        if (selectedFacts) {
             throw new Error('selected-revision shop facts are required but missing or empty');
         }
         return {};

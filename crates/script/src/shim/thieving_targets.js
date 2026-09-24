@@ -1,36 +1,14 @@
 import Tile from '../../geometry/Tile.js';
 import { host, notImpl } from '../../shim/_kernel.js';
-
-export const PICKPOCKET_TARGET_NAMES = [
-    'Man',
-    'Woman',
-    'Farmer',
-    'Warrior woman',
-    'Al-Kharid warrior',
-    'Rogue',
-    'Guard',
-    'Knight of Ardougne',
-    'Watchman',
-    'Paladin',
-    'Hero',
-];
-export const ARDOUGNE_PICKPOCKET_TARGETS = ['Guard', 'Knight of Ardougne', 'Paladin', 'Hero'];
-
-function pickpocketSpots() {
-    return (host().content && host().content.pickpocket_spots) || [];
-}
+export {
+    PICKPOCKET_TARGET_NAMES,
+    ARDOUGNE_PICKPOCKET_TARGETS,
+} from '../../data/pickpocketTargets.js';
 
 function spotRow(target) {
-    const spots = pickpocketSpots();
-    if (!spots.length) {
-        return null;
-    }
-    const want = String(target || '').trim().toLowerCase();
-    const hit = spots.find((p) => String(p.name).toLowerCase() === want);
-    if (hit) {
-        return hit;
-    }
-    return spots.find((p) => String(p.name).toLowerCase() === 'guard') || spots[0];
+    const fn = globalThis.__rs2b0t_selected_facts;
+    if (typeof fn !== 'function') return null;
+    return fn('pickpocket-spot', String(target || '').trim().toLowerCase());
 }
 
 export function targetSpot(target) {

@@ -722,24 +722,9 @@ pub(crate) fn content_json(
     game_data: Option<&api::game_data::SelectedGameData>,
     named_banks: &api::named_banks::NamedBankFacts,
 ) -> String {
-    use crate::content::{COOK_STANDS, COW_FIELDS, FIRE_PLOTS, PICKPOCKET_SPOTS};
+    use crate::content::{COOK_STANDS, FIRE_PLOTS, LOG_LEVELS, RUNE_ROUTES};
     use api::cake_stall::{BAKER_STALL, CAKE_ITEM_NAMES};
     use api::content::ROCK_TYPE_NAMES;
-    let items = game_data
-        .map(|data| {
-            data.items()
-                .iter()
-                .filter_map(|item| {
-                    Some(serde_json::json!({
-                        "obj": item.alias.as_deref()?,
-                        "id": item.id,
-                        "name": item.name.as_deref()?,
-                        "cost": item.cost,
-                    }))
-                })
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
     let food_heals = game_data
         .map(|data| {
             data.fixed_food_heals()
@@ -747,22 +732,6 @@ pub(crate) fn content_json(
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
-    let pickpocket_spots = PICKPOCKET_SPOTS
-        .iter()
-        .map(|spot| {
-            let mut row = serde_json::Map::from_iter([
-                ("name".into(), serde_json::json!(spot.name)),
-                ("x".into(), serde_json::json!(spot.x)),
-                ("z".into(), serde_json::json!(spot.z)),
-                ("level".into(), serde_json::json!(spot.level)),
-                ("leash".into(), serde_json::json!(spot.leash)),
-            ]);
-            if let Some(required) = game_data.and_then(|data| data.required_thieving(spot.name)) {
-                row.insert("required_thieving".into(), serde_json::json!(required));
-            }
-            serde_json::Value::Object(row)
-        })
-        .collect::<Vec<_>>();
     let spell_db = game_data
         .map(|data| {
             data.spells()
@@ -802,12 +771,22 @@ pub(crate) fn content_json(
         })
         .unwrap_or_default();
     serde_json::json!({
+        "selected_facts": game_data.is_some(),
         "food_heals": food_heals,
         "common_bank_loot": api::content::COMMON_BANK_LOOT,
         "random_event_casket_id": api::content::RANDOM_EVENT_CASKET_ID,
-        "cow_fields": COW_FIELDS.iter().map(|f| {
-            serde_json::json!({"name": f.name, "x": f.x, "z": f.z, "level": f.level})
+        "rune_routes": RUNE_ROUTES.iter().map(|route| {
+            serde_json::json!({
+                "rune": route.rune,
+                "talisman": route.talisman,
+                "level": route.level,
+                "bank": route.bank,
+                "ruins": {"x": route.ruins.x, "z": route.ruins.z, "level": route.ruins.level}
+            })
         }).collect::<Vec<_>>(),
+        "log_levels": LOG_LEVELS.iter().map(|(name, level)| {
+            ((*name).to_string(), serde_json::json!(level))
+        }).collect::<serde_json::Map<_, _>>(),
         "fire_plots": FIRE_PLOTS.iter().map(|p| {
             serde_json::json!({
                 "name": p.name,
@@ -830,9 +809,7 @@ pub(crate) fn content_json(
                 "level": b.tile.level
             })
         }).collect::<Vec<_>>(),
-        "items": items,
         "rock_type_names": ROCK_TYPE_NAMES,
-        "pickpocket_spots": pickpocket_spots,
         "baker_stall": {
             "loc_id": BAKER_STALL.loc_id,
             "name": BAKER_STALL.name,

@@ -1,6 +1,6 @@
 //! Immutable generated game facts selected by the bound client revision.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, OnceLock};
 
 use client::io::ClientRevision;
@@ -85,6 +85,15 @@ impl ConsumptionFact {
             && heal[0].base > 0)
             .then(|| heal[0].base)
     }
+}
+
+fn ascii_fold_hash(value: &str) -> u64 {
+    let mut hash = 0xcbf2_9ce4_8422_2325u64;
+    for byte in value.bytes() {
+        hash ^= u64::from(byte.to_ascii_lowercase());
+        hash = hash.wrapping_mul(0x100_0000_01b3);
+    }
+    hash
 }
 
 #[derive(Debug, Deserialize)]
@@ -945,11 +954,17 @@ pub struct SelectedGameData {
     talk_key: Option<TalkKeyFacts>,
     #[serde(default)]
     trio_givers: Option<TrioGiverFacts>,
+    #[serde(skip)]
+    item_id_index: Vec<Option<usize>>,
+    #[serde(skip)]
+    fixed_food_heals_index: Vec<(String, i32)>,
+    #[serde(skip)]
+    fixed_food_heal_index: HashMap<u64, Vec<usize>>,
 }
 
 impl SelectedGameData {
     fn decode(bytes: &[u8], expected_revision: ClientRevision) -> Result<Arc<Self>, String> {
-        let data: Self = serde_json::from_slice(bytes)
+        let mut data: Self = serde_json::from_slice(bytes)
             .map_err(|error| format!("generated game data decode: {error}"))?;
         if data.schema_version != SCHEMA_VERSION {
             return Err(format!(
@@ -1112,7 +1127,53 @@ impl SelectedGameData {
                 data.revision
             ));
         }
+        data.build_indexes();
         Ok(Arc::new(data))
+    }
+
+    fn build_indexes(&mut self) {
+        let max_id = self
+            .items
+            .iter()
+            .filter_map(|item| usize::try_from(item.id).ok())
+            .max();
+        self.item_id_index = max_id.map_or_else(Vec::new, |max| vec![None; max + 1]);
+        for (index, item) in self.items.iter().enumerate() {
+            let Ok(id) = usize::try_from(item.id) else {
+                continue;
+            };
+            if self.item_id_index[id].is_none() {
+                self.item_id_index[id] = Some(index);
+            }
+        }
+
+        self.fixed_food_heals_index.clear();
+        for (index, fact) in self.consumption.iter().enumerate() {
+            let name = fact.item.name.as_str();
+            if self.consumption[..index]
+                .iter()
+                .any(|prior| prior.item.name.eq_ignore_ascii_case(name))
+            {
+                continue;
+            }
+            let mut matching = self
+                .consumption
+                .iter()
+                .filter(|other| other.item.name.eq_ignore_ascii_case(name));
+            let Some(heal) = matching.next().and_then(ConsumptionFact::fixed_hp_heal) else {
+                continue;
+            };
+            if matching.all(|other| other.fixed_hp_heal() == Some(heal)) {
+                self.fixed_food_heals_index.push((name.to_string(), heal));
+            }
+        }
+        self.fixed_food_heal_index.clear();
+        for (index, (name, _)) in self.fixed_food_heals_index.iter().enumerate() {
+            self.fixed_food_heal_index
+                .entry(ascii_fold_hash(name))
+                .or_default()
+                .push(index);
+        }
     }
 
     pub fn revision(&self) -> i32 {
@@ -1154,31 +1215,19 @@ impl SelectedGameData {
 
     /// Generated consumption rows that are qualified as a fixed hitpoint heal.
     pub fn fixed_food_heals(&self) -> impl Iterator<Item = (&str, i32)> {
-        self.consumption
+        self.fixed_food_heals_index
             .iter()
-            .enumerate()
-            .filter_map(move |(index, fact)| {
-                let name = fact.item.name.as_str();
-                if self.consumption[..index]
-                    .iter()
-                    .any(|prior| prior.item.name.eq_ignore_ascii_case(name))
-                {
-                    return None;
-                }
-                let mut matching = self
-                    .consumption
-                    .iter()
-                    .filter(|other| other.item.name.eq_ignore_ascii_case(name));
-                let heal = matching.next()?.fixed_hp_heal()?;
-                matching
-                    .all(|other| other.fixed_hp_heal() == Some(heal))
-                    .then_some((name, heal))
-            })
+            .map(|(name, heal)| (name.as_str(), *heal))
     }
 
     pub fn fixed_food_heal(&self, name: &str) -> Option<i32> {
-        self.fixed_food_heals()
-            .find_map(|(known, heal)| known.eq_ignore_ascii_case(name).then_some(heal))
+        self.fixed_food_heal_index
+            .get(&ascii_fold_hash(name))?
+            .iter()
+            .find_map(|index| {
+                let (known, heal) = &self.fixed_food_heals_index[*index];
+                known.eq_ignore_ascii_case(name).then_some(*heal)
+            })
     }
 
     /// Required level for a generated pickpocket NPC display name.
@@ -1411,7 +1460,12 @@ impl SelectedGameData {
     }
 
     pub fn item_by_id(&self, id: i32) -> Option<&GameItem> {
-        self.items.iter().find(|item| item.id == id)
+        let index = self
+            .item_id_index
+            .get(usize::try_from(id).ok()?)
+            .copied()
+            .flatten()?;
+        self.items.get(index)
     }
 
     /// Bounded slot search over generated wearpos facts. Empty query still
@@ -1646,6 +1700,43 @@ mod tests {
                 {tail}
             }}"#
         )
+    }
+
+    fn scanned_fixed_food_heal(data: &SelectedGameData, name: &str) -> Option<i32> {
+        let mut matching = data
+            .consumption
+            .iter()
+            .filter(|fact| fact.item.name.eq_ignore_ascii_case(name));
+        let heal = matching.next()?.fixed_hp_heal()?;
+        matching
+            .all(|fact| fact.fixed_hp_heal() == Some(heal))
+            .then_some(heal)
+    }
+
+    #[test]
+    fn selected_lookup_indexes_match_straight_scans() {
+        for revision in [ClientRevision::R274, ClientRevision::R289] {
+            let data = for_revision(revision).expect("selected game data");
+            for item in data.items() {
+                let indexed = data.item_by_id(item.id).expect("indexed selected item");
+                assert_eq!(indexed.id, item.id);
+                assert_eq!(indexed.alias, item.alias);
+            }
+            assert!(data.item_by_id(-1).is_none());
+            assert!(data
+                .item_by_id(data.items().iter().map(|item| item.id).max().unwrap_or(0) + 1)
+                .is_none());
+
+            for fact in &data.consumption {
+                assert_eq!(
+                    data.fixed_food_heal(&fact.item.name),
+                    scanned_fixed_food_heal(&data, &fact.item.name),
+                    "{} on {revision:?}",
+                    fact.item.name
+                );
+            }
+            assert_eq!(data.fixed_food_heal("not a selected food"), None);
+        }
     }
 
     #[test]

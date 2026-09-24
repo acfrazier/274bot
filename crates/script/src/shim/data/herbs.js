@@ -1,15 +1,14 @@
-// Host-posted herb pairs (`__rs2b0t_host.content.herbs`). Import resolves without
-// touching the catalog; accessing HERBS/HERB_OPTIONS throws when a non-empty
-// item catalog was posted but herb facts are missing (fail-closed at use).
+// Host-posted selected herb pairs. Access fails closed when selected facts
+// are active but the bounded herb table is missing.
 const host = () => globalThis.__rs2b0t_host || {};
 
 function herbRows() {
     const content = host().content;
     if (!content) return [];
-    const itemsPosted = Array.isArray(content.items) && content.items.length > 0;
+    const selectedFacts = content.selected_facts === true;
     const herbs = content.herbs;
     if (!Array.isArray(herbs) || herbs.length === 0) {
-        if (itemsPosted) {
+        if (selectedFacts) {
             throw new Error('selected-revision herb facts are required but missing or empty');
         }
         return [];
