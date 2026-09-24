@@ -4,7 +4,7 @@
 //!   destination's booth, object or NPC access, else the nearest booth,
 //!   gated on the host's approach facts), deposit through the caller's
 //!   matcher ([`crate::bank_deposit`]), run `afterDeposit`, wait a tick,
-//!   and walk back to `returnTo` (closing the bank first). It is the
+//!   and walk back to `returnTo` (the bank left open, as frozen). It is the
 //!   `bank_nearest` [`crate::machine`] family, and the body of
 //!   `periodic_bank`.
 //! - `periodic_bank` is frozen `PeriodicBank.execute`: status, the caller's
@@ -20,7 +20,7 @@
 
 use crate::bank_access::{AccessArgs, BankAccess, NpcAccess, NpcAccessArgs};
 use crate::bank_deposit::{truthy, Deposit, Matcher};
-use crate::bank_op::{BankView, Closing};
+use crate::bank_op::BankView;
 use crate::load::reach_query::arrived;
 use crate::machine::{Begin, Call, Cx, Family, Reply, Step};
 use crate::observed::{self, Scene};
@@ -351,7 +351,6 @@ enum RunPhase {
         asked: bool,
     },
     Settle(u64),
-    Close(Closing),
     Return,
     ReturnWalk(Tile),
 }
@@ -639,25 +638,10 @@ impl Run {
                     self.phase = RunPhase::Settle(due);
                     return Next::Wait;
                 }
-                if self.return_to.is_none() {
-                    return Next::Out(Step::Done(true));
-                }
-                // The walk back leaves the bank: close it first.
-                match Closing::begin(&BankView::now(), cx) {
-                    Some(closing) => {
-                        self.phase = RunPhase::Close(closing);
-                        Next::Wait
-                    }
-                    None => self.to(RunPhase::Return),
-                }
+                // Frozen never closes the bank: the walk back (if any) starts
+                // with it open.
+                self.to(RunPhase::Return)
             }
-            RunPhase::Close(closing) => match closing.poll(&BankView::now(), cx) {
-                None => {
-                    self.phase = RunPhase::Close(closing);
-                    Next::Wait
-                }
-                Some(_) => self.to(RunPhase::Return),
-            },
             RunPhase::Return => {
                 let Some(ret) = self.return_to else {
                     return Next::Out(Step::Done(true));

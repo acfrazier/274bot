@@ -77,11 +77,18 @@ pub(crate) fn arrived(dest: WorldTile, radius: i32) -> bool {
     with_view(|view| api::query::is_arrived(here, dest, radius, || view))
 }
 
-/// [`arrived`] for a caller's JS numbers, compared as frozen `isArrived`
-/// compares them: `level !==`, then Chebyshev `> radius` (a NaN radius
-/// never arrives, a fractional one is a plain bound). A dest off the tile
-/// grid is unprobeable, so within the radius it arrives, as frozen's
-/// `!probe.probeable(dest)` does.
+/// [`arrived`] for a caller's JS numbers, with frozen `isArrived`'s
+/// comparisons (`arrival.ts`, `Reachability.ts`, `ClientAdapter.toLocal` /
+/// `collisionFlags`):
+/// - `me.level !== dest.level` is not arrived;
+/// - `dist > radius` is not arrived, so a NaN radius or coordinate passes on
+///   (`NaN > r` is false); `dist === 0` arrives;
+/// - an on-grid dest takes the reach probes ([`api::query::is_arrived`]);
+/// - an off-grid dest (fractional or NaN `x`/`z`): with no scene, or outside
+///   the scene window, `toLocal` is `null` and the dest is unprobeable, so
+///   it arrives; inside (NaN fails every bound check, so it is inside),
+///   `collisionFlags` reads `undefined`, which frozen `walkable` takes as
+///   walkable and unreached, so it does not.
 pub(crate) fn arrived_at(x: f64, z: f64, level: f64, radius: f64) -> bool {
     let Some(here) = posted_here() else {
         return false;
@@ -89,26 +96,41 @@ pub(crate) fn arrived_at(x: f64, z: f64, level: f64, radius: f64) -> bool {
     if f64::from(here.level) != level {
         return false;
     }
-    let dist = (f64::from(here.x) - x)
-        .abs()
-        .max((f64::from(here.z) - z).abs());
-    if !(dist <= radius) {
+    // JS `Math.max(Math.abs(dx), Math.abs(dz))`: NaN in, NaN out.
+    let (dx, dz) = ((f64::from(here.x) - x).abs(), (f64::from(here.z) - z).abs());
+    let dist = if dx.is_nan() || dz.is_nan() {
+        f64::NAN
+    } else {
+        dx.max(dz)
+    };
+    if dist > radius {
         return false;
     }
     if dist == 0.0 {
         return true;
     }
     let on_grid = |n: f64| n.fract() == 0.0 && n >= f64::from(i32::MIN) && n <= f64::from(i32::MAX);
-    if !(on_grid(x) && on_grid(z)) {
-        return true;
+    if on_grid(x) && on_grid(z) {
+        let dest = WorldTile {
+            x: x as i32,
+            z: z as i32,
+            level: here.level,
+        };
+        // `dist > radius` failed: the radius does not bound the probes.
+        let bound =
+            i32::try_from(here.x.abs_diff(dest.x).max(here.z.abs_diff(dest.z))).unwrap_or(i32::MAX);
+        return with_view(|view| api::query::is_arrived(here, dest, bound, || view));
     }
-    let dest = WorldTile {
-        x: x as i32,
-        z: z as i32,
-        level: here.level,
-    };
-    // `dist <= radius` held: the integer distance is the bound.
-    arrived(dest, dist as i32)
+    with_view(|view| {
+        if !view.available {
+            return true;
+        }
+        let lx = x - f64::from(view.base_x);
+        let lz = z - f64::from(view.base_z);
+        let outside =
+            lx < 0.0 || lz < 0.0 || lx >= f64::from(view.width) || lz >= f64::from(view.height);
+        outside
+    })
 }
 
 fn view_from_reader(r: ReachReader<'_>) -> ReachQueryView {
@@ -214,7 +236,8 @@ fn v1_can_reach<'s>(
 }
 
 /// `__rs2b0t_reach('arrived', dest, radius)`: [`arrived_at`] over JS
-/// `ToNumber` of `dest.x`, `dest.z`, `dest.level` (absent: 0) and `radius`.
+/// `ToNumber` of `dest.x`, `dest.z` and `radius`, and a numeric
+/// `dest.level` (absent: 0; any other type is never equal).
 /// A missing dest is not arrived.
 fn v1_arrived<'s>(
     scope: &mut v8::HandleScope<'s>,
@@ -227,21 +250,29 @@ fn v1_arrived<'s>(
     let x = optional_field(scope, dest, "x")?;
     let z = optional_field(scope, dest, "z")?;
     let level = optional_field(scope, dest, "level")?;
-    let x = js_number(scope, x, f64::NAN);
-    let z = js_number(scope, z, f64::NAN);
-    let level = js_number(scope, level, 0.0);
-    let radius = js_number(scope, Some(radius), f64::NAN);
+    let x = to_number(scope, x);
+    let z = to_number(scope, z);
+    // `me.level !== dest.level` is strict: only a number can be equal. An
+    // absent level is the shim's `?? 0`.
+    let level = match level {
+        Some(level) if !level.is_null_or_undefined() => {
+            if level.is_number() {
+                level.number_value(scope).unwrap_or(f64::NAN)
+            } else {
+                f64::NAN
+            }
+        }
+        _ => 0.0,
+    };
+    let radius = to_number(scope, Some(radius));
     bool_val(scope, arrived_at(x, z, level, radius))
 }
 
-/// JS `ToNumber` of a present value; `absent` for `undefined`/`null`.
-fn js_number(scope: &mut v8::HandleScope, value: Option<v8::Local<v8::Value>>, absent: f64) -> f64 {
-    match value {
-        Some(value) if !value.is_null_or_undefined() => {
-            value.number_value(scope).unwrap_or(f64::NAN)
-        }
-        _ => absent,
-    }
+/// JS `ToNumber` (`undefined` → NaN, `null` → 0); a failed read is NaN.
+fn to_number(scope: &mut v8::HandleScope, value: Option<v8::Local<v8::Value>>) -> f64 {
+    value
+        .and_then(|value| value.number_value(scope))
+        .unwrap_or(f64::NAN)
 }
 
 fn v2_walkable<'s>(
@@ -525,5 +556,81 @@ fn set_key<'s>(
 ) {
     if let Some(k) = v8::String::new(scope, key) {
         obj.set(scope, k.into(), value);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::isolate_fb::{encode_snapshot, ReachViewInput, TileInput};
+
+    /// Post the player at (10,10) with a 4x4 scene window from (8,8), or no
+    /// scene at all.
+    fn post(window: bool) {
+        crate::observed::on_reset();
+        on_reset();
+        let mut input = crate::isolate_fb::tests::empty_input(1);
+        input.here = Some(TileInput {
+            x: 10,
+            z: 10,
+            level: 0,
+        });
+        if window {
+            input.reach = ReachViewInput {
+                available: true,
+                base_x: 8,
+                base_z: 8,
+                level: 0,
+                width: 4,
+                height: 4,
+                walkable: &[0xffff],
+                reachable: &[],
+                reachable_adj: &[],
+                exact_rank: &[],
+                adjacent_rank: &[],
+                step: &[],
+                canlight: &[],
+                stamp: 1,
+            };
+        }
+        let bytes = encode_snapshot(&input);
+        let snap = SnapshotReader::from_bytes(&bytes).expect("snapshot");
+        crate::observed::apply(&snap);
+        apply(&snap);
+    }
+
+    /// Frozen `isArrived` over JS numbers: `dist > radius` alone rejects,
+    /// so a NaN radius passes on to the probes, and an off-grid dest is
+    /// arrived only where frozen `toLocal` finds no scene tile.
+    #[test]
+    fn arrival_numbers_compare_as_frozen() {
+        post(false);
+        assert!(arrived_at(10.0, 10.0, 0.0, f64::NAN), "dist 0 arrives");
+        assert!(!arrived_at(10.0, 10.0, 1.0, 2.0), "another level");
+        assert!(!arrived_at(13.0, 10.0, 0.0, 2.5), "dist 3 > 2.5");
+        assert!(arrived_at(12.0, 10.0, 0.0, 2.5), "fractional radius bounds");
+        assert!(
+            arrived_at(13.0, 10.0, 0.0, f64::NAN),
+            "NaN radius: no scene to probe, so arrived"
+        );
+        assert!(arrived_at(11.5, 10.0, 0.0, 2.0), "off grid, no scene");
+
+        post(true);
+        assert!(
+            !arrived_at(11.5, 10.0, 0.0, 2.0),
+            "off grid inside the window: walkable and unreached"
+        );
+        assert!(
+            !arrived_at(f64::NAN, 10.0, 0.0, 2.0),
+            "NaN x passes every window bound: inside"
+        );
+        assert!(
+            arrived_at(7.5, 10.0, 0.0, 3.0),
+            "off grid outside the window: unprobeable"
+        );
+        assert!(
+            !arrived_at(11.0, 10.0, 0.0, f64::NAN),
+            "NaN radius on grid: the walkable, unreached dest is not arrived"
+        );
     }
 }

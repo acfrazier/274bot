@@ -239,7 +239,7 @@ fn new_death_waits_then_walks_and_recovers_once_from_actual_position() {
     post_snapshot_input(&iso, &snap);
     tick(&iso, 7);
     assert!(iso.drain_interacts().is_empty());
-    assert_eq!(number(&iso, "globalThis.__recovered || 0"), 1);
+    // Frozen: recovery is the next validate finding the player near.
 
     snap.tick = 8;
     post_snapshot_input(&iso, &snap);
@@ -250,8 +250,13 @@ fn new_death_waits_then_walks_and_recovers_once_from_actual_position() {
     iso.join();
 }
 
+/// Frozen DeathRecovery: `walkBack`'s result is not read; recovery is a
+/// later `validate` finding the player within `radius` of the anchor. A
+/// walkBack that ends away from the anchor (WildyAgility's failed bank,
+/// HillGiant's missing key) is not recovery, and the next pass runs it
+/// again.
 #[test]
-fn wildy_walk_back_is_invoked_instead_of_default_walk() {
+fn a_walk_back_that_ends_away_is_retried_until_the_anchor() {
     let src = r#"
 import { DeathRecovery } from '../../api/tasks/DeathRecovery.js';
 export default class WildyShaped extends TaskBot {
@@ -261,7 +266,10 @@ export default class WildyShaped extends TaskBot {
             radius: 6,
             onDeath: () => { globalThis.__deaths = (globalThis.__deaths || 0) + 1; },
             onRecovered: () => { globalThis.__recovered = (globalThis.__recovered || 0) + 1; },
-            walkBack: async () => { globalThis.__walkBack = (globalThis.__walkBack || 0) + 1; },
+            walkBack: async () => {
+                globalThis.__walkBack = (globalThis.__walkBack || 0) + 1;
+                return false;
+            },
         }));
     }
 }
@@ -293,7 +301,32 @@ export default class WildyShaped extends TaskBot {
         "WildyAgility walkBack must retain the script-owned sequence"
     );
     assert_eq!(number(&iso, "globalThis.__walkBack || 0"), 1);
+
+    // Still at Lumbridge: not recovered, and the next pass walks back again.
+    let mut n = 7;
+    while number(&iso, "globalThis.__walkBack || 0") < 2 && n < 20 {
+        snap.tick = n;
+        post_snapshot_input(&iso, &snap);
+        tick(&iso, n);
+        n += 1;
+    }
+    assert_eq!(number(&iso, "globalThis.__walkBack || 0"), 2, "retried");
+    assert_eq!(number(&iso, "globalThis.__recovered || 0"), 0);
+
+    // At the anchor: the next validate recovers, and nothing runs again.
+    snap.here = Some(TileInput {
+        x: 3006,
+        z: 3927,
+        level: 0,
+    });
+    for m in n..n + 8 {
+        snap.tick = m;
+        post_snapshot_input(&iso, &snap);
+        tick(&iso, m);
+    }
     assert_eq!(number(&iso, "globalThis.__recovered || 0"), 1);
+    assert_eq!(number(&iso, "globalThis.__walkBack || 0"), 2);
+    assert_eq!(number(&iso, "globalThis.__deaths || 0"), 1);
     iso.join();
 }
 
@@ -402,8 +435,9 @@ fn guardian_hold_does_not_walk() {
     iso.join();
 }
 
-/// Frozen calls `onRecovered` synchronously: a never-settling promise does
-/// not hold the finished run, so the next death recovers again.
+/// Frozen calls `onRecovered` synchronously from `validate`: a
+/// never-settling promise it returns holds nothing, so the next death
+/// recovers again.
 #[test]
 fn a_pending_on_recovered_does_not_hold_the_next_recovery() {
     let src = r#"
@@ -437,16 +471,18 @@ export default class T extends TaskBot {
         tick(&iso, n);
     }
     assert_eq!(iso.drain_interacts(), vec![walk_near_anchor()]);
-    snap.tick = 7;
     snap.here = Some(anchor());
-    post_snapshot_input(&iso, &snap);
-    tick(&iso, 7);
+    for n in 7..=8 {
+        snap.tick = n;
+        post_snapshot_input(&iso, &snap);
+        tick(&iso, n);
+    }
     assert_eq!(number(&iso, "globalThis.__recovered || 0"), 1);
 
     let second = [death(3), death(2), welcome(1)];
     snap.here = Some(lumbridge());
     snap.chat_lines = &second;
-    for n in 8..=12 {
+    for n in 9..=13 {
         snap.tick = n;
         post_snapshot_input(&iso, &snap);
         tick(&iso, n);

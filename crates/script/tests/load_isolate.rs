@@ -3511,6 +3511,48 @@ export default class T extends LoopingBot {
     iso.join();
 }
 
+/// Frozen `closeBankAndConfirmCount` calls `count()` synchronously: a
+/// resolved Promise is not a count, so the confirm keeps waiting where an
+/// awaited 22 would have answered at once.
+#[test]
+fn isolate_close_confirm_count_promise_is_not_awaited() {
+    let src = r#"
+import { closeBankAndConfirmCount } from '../../api/thieving/stealRules.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__did) return;
+        globalThis.__did = true;
+        globalThis.__closed = await closeBankAndConfirmCount(22, () => Promise.resolve(22));
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut snap = base_snapshot();
+    snap.bank_open = true;
+    snap.bank_loaded = true;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let _ = iso.probe("1 + 1");
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![script::shim::InteractReq::Close]
+    );
+    snap.bank_open = false;
+    snap.bank_loaded = false;
+    for n in 2..=4 {
+        snap.tick = n;
+        post_snapshot_input(&iso, &snap);
+        iso.on_game_tick(n);
+        let _ = iso.probe("1 + 1");
+    }
+    assert_eq!(
+        iso.probe("typeof __closed").unwrap(),
+        "undefined",
+        "a Promise count never reaches 22; the 3 s wait runs"
+    );
+    iso.join();
+}
+
 #[test]
 fn isolate_banking_deposit_waits_for_observed_host_result() {
     let src = r#"

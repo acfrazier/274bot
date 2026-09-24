@@ -980,3 +980,53 @@ export default class T extends LoopingBot {
         [InteractReq::OpenBooth { x: 11, z: 10, .. }]
     ));
 }
+
+/// Frozen calls the openers' `log?.()` without awaiting it: a log that
+/// never settles does not hold the chest or banker opener.
+#[test]
+fn opener_log_promises_are_not_awaited() {
+    let src = r#"
+import { Bank } from '../../api/bank/Bank.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__did) return;
+        globalThis.__did = true;
+        const log = (m) => { (globalThis.__lines ||= []).push(m); return new Promise(() => {}); };
+        globalThis.__chest = await Bank.openNearestAccess({ name: 'Shantay chest', op: 'Open' }, log);
+        globalThis.__npc = await Bank.openNpcAccess(
+            { name: 'Banker', op: 'Bank', choose: 'access' }, log);
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut snap = base_snapshot();
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 1);
+    assert_eq!(
+        iso.probe("__chest").unwrap(),
+        false,
+        "no chest: frozen false"
+    );
+    for n in 2..=6 {
+        snap.tick = n;
+        post_snapshot_input(&iso, &snap);
+        tick(&iso, n);
+    }
+    assert_eq!(
+        iso.probe("__npc").unwrap(),
+        false,
+        "three banker attempts, then false"
+    );
+    let lines = iso.probe("__lines").unwrap();
+    assert_eq!(lines[0], "no usable 'Shantay chest' in the scene");
+    assert!(
+        lines
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|line| line == "could not get Banker to open the bank"),
+        "{lines}"
+    );
+    assert!(iso.drain_interacts().is_empty());
+    iso.join();
+}

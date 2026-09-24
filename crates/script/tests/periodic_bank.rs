@@ -224,7 +224,7 @@ fn combat_suppresses_loot_count_trigger() {
 }
 
 #[test]
-fn loot_count_chicken_shape_observes_deposit_afterdeposit_close_and_return() {
+fn loot_count_chicken_shape_observes_deposit_afterdeposit_and_return() {
     let iso = LoadIsolate::spawn(CHICKEN.into(), LoadShape::CompatClass, vec![]).unwrap();
     let mut bag = serde_json::Map::new();
     bag.insert("bankStrategy".into(), serde_json::json!("Loot count"));
@@ -299,17 +299,6 @@ fn loot_count_chicken_shape_observes_deposit_afterdeposit_close_and_return() {
     tick(&iso, 4);
     assert_eq!(
         iso.drain_interacts(),
-        vec![InteractReq::Close],
-        "the bank closes before the walk back"
-    );
-
-    snap.tick = 5;
-    snap.bank_open = false;
-    snap.bank_loaded = false;
-    post_snapshot_input(&iso, &snap);
-    tick(&iso, 5);
-    assert_eq!(
-        iso.drain_interacts(),
         vec![InteractReq::WalkNear {
             x: 3222,
             z: 3222,
@@ -319,17 +308,21 @@ fn loot_count_chicken_shape_observes_deposit_afterdeposit_close_and_return() {
             allow_wilderness: true,
             allow_bank_fetch: true,
             request_id: 0,
-        }]
+        }],
+        "frozen bankNearest never closes the bank: the walk back starts next"
     );
 
-    snap.tick = 6;
+    // The walk leaves the bank; the player arrives at the return tile.
+    snap.tick = 5;
+    snap.bank_open = false;
+    snap.bank_loaded = false;
     snap.here = Some(TileInput {
         x: 3222,
         z: 3222,
         level: 0,
     });
     post_snapshot_input(&iso, &snap);
-    tick(&iso, 6);
+    tick(&iso, 5);
     assert!(iso.drain_interacts().is_empty());
     assert_eq!(iso.probe("__log").unwrap(), "periodic bank: completed");
     assert_eq!(iso.probe("__status").unwrap(), "periodic bank run");

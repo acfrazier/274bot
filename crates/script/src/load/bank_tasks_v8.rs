@@ -9,7 +9,9 @@
 //!   `shouldBankNow`). An absent option keeps the shim's default (`'off'`,
 //!   0, 15, 10).
 //! - `__rs2b0t_death_recovery_validate(opts)`: observe the posted chat,
-//!   call `opts.onDeath()` on a new death, answer due.
+//!   call `opts.onDeath()` on a new death; after a finished run, clear the
+//!   latch and call `opts.onRecovered()` when frozen `near` holds; answer
+//!   due.
 //! - `__rs2b0t_next_withdraw_chunk(need)`: frozen `nextWithdrawChunk`
 //!   ([`crate::bank_withdraw::next_chunk`]), `null` or `{ kind, count }` /
 //!   `{ kind, op }`.
@@ -132,11 +134,44 @@ fn death_due<'s>(
     scope: &mut v8::HandleScope<'s>,
     opts: v8::Local<'s, v8::Value>,
 ) -> JsResult<'s, bool> {
-    let (due, died) = crate::death_recovery::validate();
-    if died {
+    use crate::death_recovery as death;
+    let observed = death::observe();
+    if observed.died {
         call_option(scope, opts, "onDeath")?;
     }
-    Ok(due)
+    if let Some(home) = observed.check_from {
+        // Frozen `near(home, this.opts.anchor, this.opts.radius ?? 6)`:
+        // `a.level === b.level && Math.abs(a.x - b.x) <= r && …`.
+        let anchor = cb::get(scope, opts, "anchor")?;
+        let radius = cb::get(scope, opts, "radius")?;
+        let radius = if radius.is_null_or_undefined() {
+            f64::from(death::DEFAULT_RADIUS)
+        } else {
+            cb::number(scope, radius)?
+        };
+        let level = cb::get(scope, anchor, "level")?;
+        let level = level
+            .is_number()
+            .then(|| level.number_value(scope).unwrap_or(f64::NAN));
+        let near = if level == Some(f64::from(home.level)) {
+            let x = cb::get(scope, anchor, "x")?;
+            let x = cb::number(scope, x)?;
+            if (f64::from(home.x) - x).abs() <= radius {
+                let z = cb::get(scope, anchor, "z")?;
+                let z = cb::number(scope, z)?;
+                death::near(home, level, x, z, radius)
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+        if near {
+            death::recover();
+            call_option(scope, opts, "onRecovered")?;
+        }
+    }
+    Ok(death::due())
 }
 
 fn death_recovery_validate<'s>(

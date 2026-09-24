@@ -1280,4 +1280,39 @@ mod tests {
             Take::Settled(Outcome::Aborted(machine::AbortReason::Superseded))
         );
     }
+
+    /// The other direction: an access opener supersedes a running
+    /// `bank_open`, and the banker opener is in the same group both ways.
+    #[test]
+    fn access_openers_supersede_a_running_bank_open_and_each_other() {
+        reset();
+        observed::post(1, |post| {
+            post.session(true)
+                .here(at(3308, 3120))
+                .bank_open(true)
+                .bank_loaded(false)
+                .npcs(Vec::new());
+        });
+        let superseded = || Take::Settled(Outcome::Aborted(machine::AbortReason::Superseded));
+        let open = start("bank_open", json!({ "mode": "open-booth" }));
+        let access = start(
+            "bank_access",
+            json!({ "name": "Shantay chest", "op": "Open" }),
+        );
+        assert_eq!(
+            machine::take(open),
+            superseded(),
+            "access supersedes bank_open"
+        );
+        let npc = start(
+            "bank_npc_access",
+            json!({ "name": "Banker", "op": "Bank", "choose": "access" }),
+        );
+        assert_eq!(machine::take(access), superseded(), "npc supersedes access");
+        let _again = start(
+            "bank_access",
+            json!({ "name": "Shantay chest", "op": "Open" }),
+        );
+        assert_eq!(machine::take(npc), superseded(), "access supersedes npc");
+    }
 }
