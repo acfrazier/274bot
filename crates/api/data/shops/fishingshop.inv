@@ -1,0 +1,26 @@
+// Pinned content excerpt (274 content 000c19997e07206131bcb3c884265840efce416d
+// and 289 content 92649430fcbc83538d8c4367ecb96cee1a67a944 are identical here).
+// Source: scripts/areas/area_port_sarim/configs/port_sarim.inv [fishingshop]
+[fishingshop]
+scope=shared
+size=40
+restock=yes
+stackall=yes
+allstock=no
+stock1=net,5,100
+stock2=fishing_rod,5,100
+stock3=fly_fishing_rod,5,100
+stock4=harpoon,2,400
+stock5=lobster_pot,2,400
+stock6=fishing_bait,1500,1
+stock7=feather,1000,1
+stock8=raw_shrimp,0,300
+stock9=raw_sardine,200,1
+stock10=raw_herring,0,900
+stock11=raw_anchovies,0,1200
+stock12=raw_trout,0,1500
+stock13=raw_pike,0,1800
+stock14=raw_salmon,0,2100
+stock15=raw_tuna,0,2300
+stock16=raw_lobster,0,2600
+stock17=raw_swordfish,0,2900

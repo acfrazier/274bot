@@ -62,6 +62,7 @@ fn base_snapshot<'a>() -> SnapshotInput<'a> {
         bank_note_off: -1,
         scene_state: 2,
         weight: 0,
+        combat_level: 0,
         camera_yaw: 0,
         camera_pitch: 0,
         teleports_enabled: false,
@@ -78,6 +79,8 @@ fn base_snapshot<'a>() -> SnapshotInput<'a> {
         shop_stock: &[],
         reach: script::isolate_fb::ReachViewInput::UNAVAILABLE,
         attacked_by_player: false,
+        self_target_kind: 0,
+        self_target_index: -1,
         widgets: &[],
     }
 }
@@ -177,6 +180,59 @@ export default class T extends LoopingBot {
     );
     assert_eq!(probe["com"], 1830);
     assert_eq!(probe["missing"], -1);
+    iso.join();
+}
+
+/// Frozen `castsAvailable`: `Math.min(...costs.map(c => Math.floor(held(c.rune) / c.count)))`
+/// — `held` runs for every remaining cost, in cost order, before the minimum;
+/// `runeWithdrawList` converts `casts` once per cost (`c.count * casts`).
+#[test]
+fn casts_available_calls_held_per_remaining_cost_in_order() {
+    let src = r#"
+import { castsAvailable, runeWithdrawList } from '../../api/combat/CombatStyleLogic.js';
+const capture = (fn) => { try { return fn(); } catch (e) { return 'THREW ' + e.name + ': ' + e.message; } };
+const log = [];
+const err = new Error('held boom');
+let caught = null;
+try {
+    castsAvailable('Fire Wave', ['Mystic fire staff'], (rune) => { log.push('boom:' + rune); throw err; });
+} catch (e) {
+    caught = e;
+}
+const casts = [];
+globalThis.__probe = {
+    // A numeric string answer is coerced by the frozen division.
+    casts: castsAvailable('Fire Wave', ['Mystic fire staff'], (rune) => {
+        log.push(rune);
+        return rune === 'Blood rune' ? '4' : 10;
+    }),
+    log,
+    sameError: caught === err,
+    unknownNeverCalls: castsAvailable('Not a spell', [], null),
+    nonFunction: capture(() => castsAvailable('Fire Wave', ['Mystic fire staff'], null)),
+    nanHeld: Number.isNaN(castsAvailable('Fire Wave', ['Mystic fire staff'], () => undefined)),
+    withdraw: runeWithdrawList('Fire Wave', ['Mystic fire staff'], { valueOf() { casts.push('casts'); return 3; } }),
+    castsReads: casts,
+};
+export default class T extends LoopingBot { loop() {} }
+"#;
+    let iso =
+        LoadIsolate::spawn_with_game_data(src.to_string(), LoadShape::CompatClass, vec![], data())
+            .unwrap();
+    let probe = iso.probe("__probe").unwrap();
+    assert_eq!(
+        probe,
+        serde_json::json!({
+            "casts": 2,
+            "log": ["boom:Blood rune", "Blood rune", "Air rune"],
+            "sameError": true,
+            "unknownNeverCalls": 0,
+            "nonFunction": "THREW TypeError: held is not a function",
+            "nanHeld": true,
+            "withdraw": [{"rune": "Blood rune", "count": 3}, {"rune": "Air rune", "count": 15}],
+            "castsReads": ["casts", "casts"],
+        })
+    );
     iso.join();
 }
 

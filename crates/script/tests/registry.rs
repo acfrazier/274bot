@@ -1,7 +1,7 @@
-// Task 2: the rust-first compiled smoke list is abandoned. `compiled_ids()`
-// is empty; `factory` is None for every id until a port is wired. Whales
-// are recognized for picker messages but never reserve Load; WalkTo is host
-// nav, reserved at Load but never a compiled card.
+// R018: the compiled card list. `Sherlock` is the first wired rust-first
+// port; every other smoke id stays unwired. Whales are recognized for
+// picker messages but never reserve Load; WalkTo is host nav, reserved at
+// Load but never a compiled card.
 
 const WHALES: &[&str] = &[
     "GatheringBot",
@@ -29,23 +29,31 @@ const WHALES: &[&str] = &[
 ];
 
 #[test]
-fn compiled_ids_is_empty_no_abandoned_smokes() {
+fn compiled_ids_lists_only_the_wired_card() {
     let names: Vec<_> = script::compiled_ids().iter().map(|i| i.0).collect();
-    assert!(
-        names.is_empty(),
-        "rust-first compiled smokes are abandoned: {names:?}"
-    );
+    // A build without `load` has no clue machine, so it lists no card.
+    #[cfg(feature = "load")]
+    assert_eq!(names, ["Sherlock"], "Sherlock is the only wired card");
+    #[cfg(not(feature = "load"))]
+    assert!(names.is_empty(), "no port without `load`: {names:?}");
     assert!(!names.contains(&"BoneBurier"));
     assert!(!names.contains(&"WalkTo"));
     assert!(!names.contains(&"Counter"));
 }
 
 #[test]
-fn factory_none_for_leftover_ids_until_wired() {
+fn factory_wires_sherlock_and_none_for_leftover_ids() {
     // BoneBurier and WalkTo are not factory cards: the shim catalog is
-    // loaded JS (JsLibrary cards), never a compiled constructor.
+    // loaded JS (JsLibrary cards), never a compiled constructor, and a
+    // whale keeps its own card.
+    #[cfg(feature = "load")]
+    {
+        let make = script::factory(script::CompiledId("Sherlock")).expect("Sherlock is wired");
+        assert_eq!(make().name(), "Sherlock");
+    }
     assert!(script::factory(script::CompiledId("BoneBurier")).is_none());
     assert!(script::factory(script::CompiledId("WalkTo")).is_none());
+    assert!(script::factory(script::CompiledId("ClueSolver")).is_none());
 }
 
 #[test]
@@ -55,17 +63,15 @@ fn is_whale_accepts_all_whales_rejects_unknown() {
     }
     assert!(!script::is_whale("BoneBurier"));
     assert!(!script::is_whale("Counter"));
+    assert!(!script::is_whale("Sherlock"));
     assert!(!script::is_whale("totally-unknown"));
 }
 
 #[test]
-fn is_reserved_is_walk_to_only() {
-    assert!(
-        script::is_reserved("WalkTo"),
-        "WalkTo is host nav and stays reserved at Load"
-    );
-    assert!(!script::is_reserved("BoneBurier"));
-    assert!(!script::is_reserved("SmithingBot"));
-    assert!(!script::is_reserved("GatheringBot"));
-    assert!(!script::is_reserved("totally-unknown"));
+fn a_whale_is_never_a_compiled_card() {
+    let names: Vec<_> = script::compiled_ids().iter().map(|i| i.0).collect();
+    for w in WHALES {
+        assert!(script::is_whale(w));
+        assert!(!names.contains(w), "{w} must not be listed as compiled");
+    }
 }

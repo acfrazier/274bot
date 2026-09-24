@@ -30,6 +30,7 @@ pub fn pause_button_label(state: RunState) -> &'static str {
 pub fn run_state_text(state: RunState) -> &'static str {
     match state {
         RunState::Idle => "idle",
+        RunState::Starting => "starting",
         RunState::Running => "running",
         RunState::Paused => "paused",
         RunState::Stopping => "stopping",

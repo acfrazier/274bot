@@ -132,6 +132,9 @@ pub struct NpcView {
     pub in_combat: bool,
     pub level: i32,
     pub size: i32,
+    /// Path-head network SW: `map_build_base + route[0]`, same level as `tile`.
+    /// Packet-time at `rebuild_npcs`; not an alias of rendered `tile`.
+    pub network: WorldTile,
     /// Legacy position aliases (`query::npcs_at` and older tests read them).
     /// These are the raw entity pixel coords, not the world `tile` above.
     pub x: i32,
@@ -181,6 +184,7 @@ impl NpcView {
             in_combat: actor_in_combat(entity.combat_cycle, loop_cycle),
             level: npc_level,
             size,
+            network: entity_network_tile(entity, base, level),
             x: entity.x,
             z: entity.z,
             yaw: entity.yaw,
@@ -215,6 +219,12 @@ pub struct StatView {
     pub base: i32,
     pub xp: i32,
     pub used: bool,
+}
+
+/// Whether the client's skill table uses stat slot `index`
+/// (`Skill::used`). Unused slots always post base 0.
+pub fn stat_used(index: usize) -> bool {
+    Skill::used.get(index).copied().unwrap_or(false)
 }
 
 /// One varp's value from the client's `var` table (the m8aq
@@ -345,6 +355,20 @@ pub struct SideTabView {
     pub active: bool,
     pub visible: bool,
     pub widgets: Vec<WidgetView>,
+}
+
+/// The open puzzle board observation: the identified piece container (the
+/// first depth-first TYPE_INV with `obj_ops` under the main modal), its
+/// `link_obj_type` slot count and its rows. `component_id` is `-1` for a
+/// closed board (`size` 0, no rows) — a present fact the snapshot posts, not
+/// an omitted slot. `items` borrows the identified widget's own rows: the
+/// board never copies the world onto the isolate.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+pub struct PuzzleBoardView<'a> {
+    pub component_id: i32,
+    pub size: i32,
+    pub generation: u64,
+    pub items: &'a [ItemView],
 }
 
 /// The trade ifaces' state and the four trade containers.
@@ -669,6 +693,10 @@ pub struct GameSnapshot {
     /// gen can be consumed before `loc_change_do_queue` applies.
     #[serde(skip)]
     loc_static_gen: u64,
+    /// One complete-rebuild fold of `loc_dirty_bits`. Standalone Scene/Loc
+    /// compute the pair themselves; this is never a cross-tick cache.
+    #[serde(skip)]
+    loc_bits_prelude: Option<(u64, u64)>,
     /// Local-player tile the cached `LocView.distance` scalars were last
     /// written for. Player ticks refresh those integers in place when this
     /// origin moves, without cloning loc names or re-sweeping the world.
@@ -692,6 +720,16 @@ pub struct GameSnapshot {
     /// The open main modal's withdraw component (the m8aq
     /// `bankComponentId`); -1 while no bank is open.
     bank_component_id: i32,
+    /// The open puzzle board's identified TYPE_INV component (the first
+    /// depth-first component with `obj_ops` under the main modal); -1 while
+    /// no board is open.
+    puzzle_board_component_id: i32,
+    /// That component's `link_obj_type` slot count, as observed (never the
+    /// row count).
+    puzzle_board_size: i32,
+    /// Puzzle-session identity: bumps when the modal session opens, closes,
+    /// or the board component changes — never on a piece move.
+    puzzle_session_generation: u64,
     /// Snapshot-local identity for the current bank session. This advances
     /// whenever the selected withdraw component opens, closes, or changes.
     bank_session_generation: u64,
@@ -766,6 +804,10 @@ pub struct GameSnapshot {
     make_products_gate: u64,
     #[serde(skip)]
     main_make_gate: InvIfaceGate,
+    /// Whether the main modal was open at the last board refresh (the
+    /// session edge the generation advances on).
+    #[serde(skip)]
+    puzzle_board_open: bool,
     #[serde(skip)]
     quest_statuses_gate: u64,
     #[serde(skip)]
@@ -818,6 +860,7 @@ impl Default for GameSnapshot {
             loc_gen: 0,
             loc_model_stamp: empty_loc_model_stamp(),
             loc_static_gen: 0,
+            loc_bits_prelude: None,
             loc_distance_tile: None,
             ground_item_gen: 0,
             inventory: Vec::new(),
@@ -826,6 +869,9 @@ impl Default for GameSnapshot {
             bank_side: Vec::new(),
             inventory_size: 0,
             bank_component_id: -1,
+            puzzle_board_component_id: -1,
+            puzzle_board_size: 0,
+            puzzle_session_generation: 0,
             bank_session_generation: 0,
             bank_modal_generation_seen: 0,
             bank_loaded: false,
@@ -875,6 +921,7 @@ impl Default for GameSnapshot {
             chat_options_gate: 0,
             make_products_gate: 0,
             main_make_gate: InvIfaceGate::default(),
+            puzzle_board_open: false,
             quest_statuses_gate: 0,
             modals_gate: 0,
             controls_gate: 0,
@@ -929,6 +976,22 @@ impl GameSnapshot {
     /// The generation counters this snapshot reflects.
     pub fn gens(&self) -> ClientGens {
         self.gens
+    }
+
+    /// Scene-family generation this snapshot last rebuilt the collision grid at.
+    pub fn scene_generation(&self) -> u64 {
+        self.gens.scene
+    }
+
+    /// Loc/static-scenery generation that last recopied collision flags.
+    pub fn loc_static_generation(&self) -> u64 {
+        self.loc_static_gen
+    }
+
+    /// Loc model stamp mixed into collision identity, stored separately from
+    /// [`Self::loc_static_generation`] so the two cannot XOR-alias.
+    pub fn loc_model_stamp(&self) -> u64 {
+        self.loc_model_stamp
     }
 
     /// Rebuild `family` from `client` iff its gen moved since the last
@@ -1023,6 +1086,7 @@ impl GameSnapshot {
     /// Only a real PLAYER_INFO observation advances the host tick.
     pub fn rebuild_from_drain(&mut self, client: &Client, player_info: bool) -> bool {
         self.refresh_native_facts(client);
+        self.loc_bits_prelude = Some(loc_dirty_bits(client));
         let mut dirty = false;
         dirty |= self.rebuild_family(client, Family::Npc);
         dirty |= self.rebuild_player(client, player_info);
@@ -1032,6 +1096,7 @@ impl GameSnapshot {
         dirty |= self.rebuild_family(client, Family::Chat);
         dirty |= self.rebuild_family(client, Family::Scene);
         dirty |= self.rebuild_family(client, Family::Loc);
+        self.loc_bits_prelude = None;
         dirty |= self.rebuild_family(client, Family::GroundItem);
         dirty |= self.rebuild_family(client, Family::Iface);
         dirty |= self.rebuild_family(client, Family::Camera);
@@ -1253,6 +1318,25 @@ impl GameSnapshot {
     /// rebuild; -1 while no bank is open.
     pub fn bank_component_id(&self) -> i32 {
         self.bank_component_id
+    }
+
+    /// The open puzzle board: the identified TYPE_INV component (the first
+    /// depth-first component with `obj_ops` under the main modal), its
+    /// `link_obj_type` slot count, its session generation and the rows the
+    /// identified widget already holds. Always present — `component_id` is
+    /// `-1` for a closed board, which is a postable observation, not an
+    /// omitted fact. The rows borrow that widget's own view: no copy.
+    pub fn puzzle_board(&self) -> PuzzleBoardView<'_> {
+        PuzzleBoardView {
+            component_id: self.puzzle_board_component_id,
+            size: self.puzzle_board_size,
+            generation: self.puzzle_session_generation,
+            items: self
+                .widgets
+                .iter()
+                .find(|w| w.component_id == self.puzzle_board_component_id)
+                .map_or(&[], |w| w.items.as_slice()),
+        }
     }
 
     /// Identity of the current bank open/close session.
@@ -1769,10 +1853,7 @@ impl GameSnapshot {
                     self.close_bank_inv_session(session.main_com_id, generation);
                 }
             }
-            let needs_open = match self.bank_inventory_session {
-                Some(session) if session.main_com_id == bank_component_id => false,
-                _ => true,
-            };
+            let needs_open = !matches!(self.bank_inventory_session, Some(session) if session.main_com_id == bank_component_id);
             if needs_open {
                 self.open_bank_inv_session(bank_component_id);
             }
@@ -2172,6 +2253,42 @@ impl GameSnapshot {
         true
     }
 
+    /// Puzzle-board refresh: the open main modal's first depth-first
+    /// TYPE_INV with `obj_ops` (`find_inv_component` — the same helper the
+    /// bank's withdraw component uses; the hint panel is excluded because it
+    /// has no `obj_ops`). The board's identity and its `link_obj_type` slot
+    /// count are observed here, beside `main_modal_texts` (slot 248: the
+    /// board is slot 250 of the same observation); the rows are read from
+    /// the identified widget the widgets family already walked, never from
+    /// a world copy.
+    ///
+    /// The session generation advances on a session open, a session close or
+    /// a new board component — never on a piece move, so a stale generation
+    /// stays a publishable observation rather than a packet verdict.
+    fn refresh_puzzle_board(&mut self, client: &Client) {
+        let open = client.main_modal_id != -1;
+        let component_id = if open {
+            find_inv_component(client, client.main_modal_id, |com| com.obj_ops).unwrap_or(-1)
+        } else {
+            -1
+        };
+        if open != self.puzzle_board_open {
+            self.puzzle_board_open = open;
+            self.puzzle_session_generation = self.puzzle_session_generation.wrapping_add(1);
+        } else if component_id != self.puzzle_board_component_id {
+            self.puzzle_session_generation = self.puzzle_session_generation.wrapping_add(1);
+        }
+        self.puzzle_board_component_id = component_id;
+        self.puzzle_board_size = if component_id == -1 {
+            0
+        } else {
+            client
+                .if_(component_id as usize)
+                .and_then(|com| com.link_obj_type.as_ref().map(|ids| ids.len() as i32))
+                .unwrap_or(0)
+        };
+    }
+
     /// Controls rebuild: the run/retaliate toggle pairs from the
     /// player-controls overlay (a table scan — the overlay is a side tab,
     /// so its root is not among the widget roots).
@@ -2200,6 +2317,7 @@ impl GameSnapshot {
         self.active_side_tab = client.active_icon;
         self.main_modal_texts = modal_texts(client, client.main_modal_id);
         self.chat_modal_texts = modal_texts(client, client.chat_modal_id);
+        self.refresh_puzzle_board(client);
         moved
     }
 
@@ -2224,6 +2342,41 @@ impl GameSnapshot {
         moved
     }
 
+    fn loc_bits(&self, client: &Client) -> (u64, u64) {
+        self.loc_bits_prelude
+            .unwrap_or_else(|| loc_dirty_bits(client))
+    }
+
+    fn publish_scene_from_client(&mut self, client: &Client) {
+        if !client.ingame || client.scene_state != 2 {
+            self.scene = SceneView::default();
+            return;
+        }
+        let level = client.minusedlevel;
+        match client.collision.get(level as usize) {
+            Some(cmap) => {
+                self.scene = SceneView {
+                    available: true,
+                    base_x: client.map_build_base_x,
+                    base_z: client.map_build_base_z,
+                    level,
+                    width: cmap.size_x,
+                    height: cmap.size_z,
+                    collision_flags: cmap.flags.iter().flatten().copied().collect(),
+                };
+            }
+            None => {
+                self.scene = SceneView {
+                    available: false,
+                    base_x: client.map_build_base_x,
+                    base_z: client.map_build_base_z,
+                    level,
+                    ..SceneView::default()
+                };
+            }
+        }
+    }
+
     /// Scene-family rebuild: `ingame` + `scene_state`, always fresh —
     /// these flip locally (`check_scene` sets `scene_state = 2` on the SIM
     /// loop with no gen bump), so a gen-gated copy would pin the snapshot
@@ -2239,31 +2392,21 @@ impl GameSnapshot {
         self.ingame = client.ingame;
         self.scene_state = client.scene_state;
         self.attached = client.stream.is_some();
-        let materialize_missing = !self.scene.available && client.ingame && client.scene_state == 2;
-        if moved || materialize_missing {
-            let level = client.minusedlevel;
-            match client.collision.get(level as usize) {
-                Some(cmap) => {
-                    self.scene = SceneView {
-                        available: true,
-                        base_x: client.map_build_base_x,
-                        base_z: client.map_build_base_z,
-                        level,
-                        width: cmap.size_x,
-                        height: cmap.size_z,
-                        collision_flags: cmap.flags.iter().flatten().copied().collect(),
-                    };
-                }
-                None => {
-                    self.scene = SceneView {
-                        available: false,
-                        base_x: client.map_build_base_x,
-                        base_z: client.map_build_base_z,
-                        level,
-                        ..SceneView::default()
-                    };
-                }
+        let (stamp, static_gen) = self.loc_bits(client);
+        let publishable = client.ingame && client.scene_state == 2;
+        if !publishable {
+            if self.scene.available || !self.scene.collision_flags.is_empty() {
+                self.scene = SceneView::default();
             }
+            return moved;
+        }
+        let loc_dirty = stamp != self.loc_model_stamp || static_gen != self.loc_static_gen;
+        let identity_stale = !self.scene.available
+            || self.scene.level != client.minusedlevel
+            || self.scene.base_x != client.map_build_base_x
+            || self.scene.base_z != client.map_build_base_z;
+        if moved || loc_dirty || identity_stale {
+            self.publish_scene_from_client(client);
         }
         moved
     }
@@ -2278,14 +2421,17 @@ impl GameSnapshot {
     /// gate leaves nav reading the previous build's door or flax.
     fn rebuild_loc(&mut self, client: &Client) -> bool {
         let moved = track(client.gens.scene, &mut self.loc_gen);
-        let stamp = loc_model_stamp(client);
-        let static_gen = client.world.static_loc_generation();
+        let standalone = self.loc_bits_prelude.is_none();
+        let (stamp, static_gen) = self.loc_bits(client);
         if !moved && stamp == self.loc_model_stamp && static_gen == self.loc_static_gen {
             return false;
         }
         let dirty = moved || stamp != self.loc_model_stamp || static_gen != self.loc_static_gen;
         self.loc_model_stamp = stamp;
         self.loc_static_gen = static_gen;
+        if standalone && client.ingame && client.scene_state == 2 {
+            self.publish_scene_from_client(client);
+        }
         let base = (client.map_build_base_x, client.map_build_base_z);
         let level = client.minusedlevel;
         let local_tile = local_world_tile(client);
@@ -2585,6 +2731,12 @@ impl<'a> ReadContext<'a> {
         self.0.bank_session_generation()
     }
 
+    /// The open puzzle board (identity, slot count, session generation and
+    /// the identified widget's rows). `component_id` is -1 when closed.
+    pub fn puzzle_board(&self) -> PuzzleBoardView<'_> {
+        self.0.puzzle_board()
+    }
+
     /// Whether the current bank component has fresh, transmitting full data.
     pub fn bank_loaded(&self) -> bool {
         self.0.bank_loaded()
@@ -2818,6 +2970,16 @@ fn entity_world_tile(entity: &ClientEntity, base: (i32, i32), level: i32) -> Wor
     }
 }
 
+/// Path-head network SW: build base plus `route[0]`. Independent of rendered
+/// pixel `x`/`z` (those stay mid-route until rest pose).
+fn entity_network_tile(entity: &ClientEntity, base: (i32, i32), level: i32) -> WorldTile {
+    WorldTile {
+        x: base.0 + entity.route_x[0],
+        z: base.1 + entity.route_z[0],
+        level,
+    }
+}
+
 /// The engine encodes a player face target as slot + 32768.
 pub const PLAYER_FACE_BASE: i32 = 32768;
 
@@ -3047,6 +3209,13 @@ fn track(world: u64, tracked: &mut u64) -> bool {
 /// Cheap dirty bit for loc rebuilds: aggregate every scene tile's
 /// `model_stamp` (bumped by wall/decor/scenery mutations including door
 /// multilocs). Integer reads only — no loc string clones.
+fn loc_dirty_bits(client: &Client) -> (u64, u64) {
+    (
+        loc_model_stamp(client),
+        client.world.static_loc_generation(),
+    )
+}
+
 fn loc_model_stamp(client: &Client) -> u64 {
     let level = client.minusedlevel;
     let mut stamp = 0u64;
@@ -3343,8 +3512,10 @@ fn inv_items(client: &Client, com_id: i32, container: ItemContainer) -> Option<V
 }
 
 /// The held-item ops for obj `id`: the type's `iop` padded to five slots
-/// with a `Drop` default in the fifth (m8aq `heldOps`).
-fn cache_held_ops(cache: &Cache, id: i32) -> Vec<Option<String>> {
+/// with a `Drop` default in the fifth (m8aq `heldOps`). Published for the
+/// send-time Held-family view the puzzle-move dispatch builds: a caller
+/// that cannot read the obj table sends nothing.
+pub fn cache_held_ops(cache: &Cache, id: i32) -> Vec<Option<String>> {
     let mut ops = cache
         .objs
         .get(id as usize)

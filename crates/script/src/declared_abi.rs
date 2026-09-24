@@ -416,6 +416,7 @@ fn match_pair(src: &str, open: usize, open_ch: u8, close_ch: u8) -> Option<usize
 }
 
 /// `crates/script/src/shim/declared_surface.js` — generated from the fixture.
+/// Regen: `cargo test -p script --test declared_abi regen_declared_surface_from_fixture -- --ignored`
 pub fn declared_surface_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/shim/declared_surface.js")
 }
@@ -450,9 +451,18 @@ const REEXPORTS: &[Reexport] = &[
             "depositMatcher",
             "matchesCommonBankLoot",
             "PERIODIC_BANK_SETTINGS",
+            "RANDOM_EVENT_CASKET_ID",
             "parseBankStrategy",
         ],
-        line: "export { Banking, COMMON_BANK_LOOT, depositAllExcept, depositMatcher, matchesCommonBankLoot, PERIODIC_BANK_SETTINGS, parseBankStrategy } from '../../api/bank/Banking.js';",
+        line: "export { Banking, COMMON_BANK_LOOT, depositAllExcept, depositMatcher, matchesCommonBankLoot, PERIODIC_BANK_SETTINGS, RANDOM_EVENT_CASKET_ID, parseBankStrategy } from '../../api/bank/Banking.js';",
+    },
+    Reexport {
+        names: &["reader"],
+        line: "export { reader } from '../../adapter/ClientAdapter.js';",
+    },
+    Reexport {
+        names: &["AXES", "PICKAXES", "TINDERBOX", "HAMMER", "KNIFE", "CHISEL", "NEEDLE", "exactTool", "tinderboxReq", "axeReq", "pickaxeReq", "toolKeepNames", "hasToolReq", "hasAllTools", "bestAxe", "bestPickaxe", "bestFromTiers", "canWieldTool", "toolRestockPlan", "missingToolLabels", "toolKitLabel", "bankHasBetterGatherTool"],
+        line: "export { AXES, PICKAXES, TINDERBOX, HAMMER, KNIFE, CHISEL, NEEDLE, exactTool, tinderboxReq, axeReq, pickaxeReq, toolKeepNames, hasToolReq, hasAllTools, bestAxe, bestPickaxe, bestFromTiers, canWieldTool, toolRestockPlan, missingToolLabels, toolKitLabel, bankHasBetterGatherTool } from '../../api/acquisition/Tools.js';",
     },
     Reexport {
         names: &["EventSignal"],
@@ -527,8 +537,8 @@ const REEXPORTS: &[Reexport] = &[
         line: "export { default as EntityQuery } from '../../api/query/Query.js';",
     },
     Reexport {
-        names: &["nearestBank"],
-        line: "export { nearestBank } from '../../api/bank/BankLocations.js';",
+        names: &["BANK_LOCATIONS", "bankUnlocked", "nearestBank"],
+        line: "export { BANK_LOCATIONS, bankUnlocked, nearestBank } from '../../api/bank/BankLocations.js';",
     },
     Reexport {
         names: &[
@@ -542,9 +552,22 @@ const REEXPORTS: &[Reexport] = &[
         names: &["ENT_NPC_IDS", "ENT_LIFE_TICKS", "isEntNpcId", "entNpcOnTile"],
         line: "export { ENT_NPC_IDS, ENT_LIFE_TICKS, isEntNpcId, entNpcOnTile } from '../../data/woodcuttingLocations.js';",
     },
+    Reexport {
+        names: &["ROCK_OPTIONS", "ROCK_TYPES", "GAS_ROCK_IDS", "GAS_ROCK_TICKS", "BROKEN_PICKAXE", "resolveRockIds"],
+        line: "export { ROCK_OPTIONS, ROCK_TYPES, GAS_ROCK_IDS, GAS_ROCK_TICKS, BROKEN_PICKAXE, resolveRockIds } from '../../data/miningRocks.js';",
+    },
+    Reexport {
+        names: &["COW_LOCATIONS", "COW_LOCATION_OPTIONS", "AL_KHARID_BANK", "resolveCowLocation", "nearestCowLocation"],
+        line: "export { COW_LOCATIONS, COW_LOCATION_OPTIONS, AL_KHARID_BANK, resolveCowLocation, nearestCowLocation } from '../../data/cowKillerLocations.js';",
+    },
+    Reexport {
+        names: &["RUNES", "RUNE_OPTIONS", "DEFAULT_RUNE"],
+        line: "export { RUNES, RUNE_OPTIONS, DEFAULT_RUNE } from '../../data/runeCraftLocations.js';",
+    },
 ];
 
-/// Generate the `@rs2b0t/api` surface: re-export real shims, stub the rest.
+/// Generate the `@rs2b0t/api` surface: re-export the names a shim module
+/// owns, throw `not impl` for the rest. Never a fake value.
 pub fn render_declared_surface(exports: &[DeclaredExport]) -> String {
     use std::collections::HashSet;
     let wanted: HashSet<&str> = exports.iter().map(|e| e.name.as_str()).collect();
@@ -552,7 +575,7 @@ pub fn render_declared_surface(exports: &[DeclaredExport]) -> String {
     let mut out = String::from(
         "// Generated from tests/fixtures/js_declared_abi.json — do not edit by hand.\n\
          // Regen: cargo test -p script --test declared_abi regen_js_declared_abi -- --ignored\n\
-         import { notImpl, proxy } from '../../shim/_kernel.js';\n\n",
+         import { notImpl, notImplValue, proxy } from '../../shim/_kernel.js';\n\n",
     );
     out.push_str("export const defineBot = globalThis.defineBot;\n\n");
     covered.insert("defineBot");
@@ -588,8 +611,16 @@ pub fn render_declared_surface(exports: &[DeclaredExport]) -> String {
         }
         match exp.kind {
             DeclaredKind::Value => {
-                let init = stub_value_init(&exp.name);
-                out.push_str(&format!("export const {} = {};\n", exp.name, init));
+                // No fake value: a declared name no shim module owns throws
+                // `not impl` on any read, the same as an unimplemented member.
+                if exp.name == "apiVersion" {
+                    out.push_str("export const apiVersion = 1;\n");
+                } else {
+                    out.push_str(&format!(
+                        "export const {} = notImplValue('{}');\n",
+                        exp.name, exp.name
+                    ));
+                }
             }
             DeclaredKind::Function => {
                 out.push_str(&format!(
@@ -641,52 +672,6 @@ pub fn render_declared_surface(exports: &[DeclaredExport]) -> String {
         }
     }
     out
-}
-
-fn stub_value_init(name: &str) -> &'static str {
-    if name == "apiVersion" {
-        return "1";
-    }
-    let upper = name.to_ascii_uppercase();
-    if upper.contains("OPTIONS")
-        || upper.contains("LOCATIONS")
-        || upper.contains("TARGETS")
-        || upper.contains("METHODS")
-        || upper.contains("DESTINATIONS")
-        || name.ends_with("_IDS")
-        || name.ends_with("_COSTS")
-        || name.ends_with("_DB")
-        || name.ends_with("_FOR")
-        || name.ends_with("_LEVEL")
-        || name.ends_with("_LOOT")
-        || name.ends_with("_LABELS")
-        || name == "RUNES"
-        || name == "AXES"
-        || name == "PICKAXES"
-        || name == "WHIRLPOOL_IDS"
-        || name == "GERRANT_ONLY_FISHING"
-        || name == "ROCK_TYPES"
-        || name == "AXE_BAR_FOR"
-        || name == "AXE_SMITH_LEVEL"
-        || name == "ALL_FISHING_GEAR_NAMES"
-    {
-        return "[]";
-    }
-    if name.ends_with("_ID")
-        || name.ends_with("_RADIUS")
-        || name.ends_with("_ODDS")
-        || name.ends_with("_TICKS")
-        || name.ends_with("_TARGET")
-        || name == "MAP_SQUARE"
-        || name == "TOLL_COIN_TARGET"
-        || name == "GAS_ROCK_TICKS"
-        || name == "NEARBY_BANK_RADIUS"
-        || name == "RANDOM_EVENT_CASKET_ID"
-        || name == "FORGETFUL_BANK_ODDS"
-    {
-        return "-1";
-    }
-    "''"
 }
 
 pub fn write_declared_surface(exports: &[DeclaredExport]) -> Result<(), String> {

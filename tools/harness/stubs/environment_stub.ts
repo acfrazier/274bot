@@ -1,0 +1,25 @@
+/** Minimal Environment stub so Player constructor does not load world.json. */
+export default {
+  node: {
+    id: 10,
+    port: 43594,
+    members: true,
+    autoSubscribeMembers: true,
+    xpRate: 1,
+    production: false,
+    minimumWealthValueEvent: 10,
+    debug: true,
+    debugProfile: false,
+    clientRoutefinder: true,
+    profile: 'main',
+    maxConnected: 1000,
+    debugProcChar: '~',
+    hopTime: 45000,
+    rateLimitAddressLogin: 30,
+    rateLimitDeviceLogin: 5,
+  },
+  friend: { enabled: false },
+  login: { enabled: false },
+  logger: { enabled: false },
+  easyStartup: false,
+};

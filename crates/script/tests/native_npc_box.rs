@@ -1,17 +1,25 @@
 use script::isolate_fb::{
     decode_snapshot, encode_snapshot_delta_with_native, encode_snapshot_with_native,
-    NativeFactsInput, NpcBoxInput, ReachViewInput, SnapshotInput,
+    NativeFactsInput, NpcBoxInput, ReachViewInput, SnapshotInput, TileInput,
 };
 use script::{LoadIsolate, LoadShape};
 
+mod common;
+
+/// A loaded in-game scene (tile, scene state 2, stats), so the card's
+/// onPaint — where these tests read `reader.npcBox` — runs.
 fn base_snapshot<'a>() -> SnapshotInput<'a> {
     SnapshotInput {
         tick: 1,
-        here: None,
+        here: Some(TileInput {
+            x: 3222,
+            z: 3222,
+            level: 0,
+        }),
         ingame: true,
         inv: &[],
         inv_size: 28,
-        stats: &[],
+        stats: &common::FRESH_STATS,
         booths: &[],
         nearest_booth: None,
         banks: &[],
@@ -57,6 +65,7 @@ fn base_snapshot<'a>() -> SnapshotInput<'a> {
         bank_note_off: -1,
         scene_state: 2,
         weight: 0,
+        combat_level: 0,
         camera_yaw: 0,
         camera_pitch: 0,
         teleports_enabled: false,
@@ -73,6 +82,8 @@ fn base_snapshot<'a>() -> SnapshotInput<'a> {
         shop_stock: &[],
         reach: ReachViewInput::UNAVAILABLE,
         attacked_by_player: false,
+        self_target_kind: 0,
+        self_target_index: -1,
         widgets: &[],
     }
 }

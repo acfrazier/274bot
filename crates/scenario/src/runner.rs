@@ -40,6 +40,73 @@ enum Phase {
     Done,
 }
 
+/// Facts retained only while one [`StepKind::ObserveLampRedemption`] is
+/// current. Every latch begins after the fixture has observed the injected
+/// item, so pre-injection holds/dialogues cannot satisfy the episode.
+#[derive(Debug, Default)]
+struct LampEpisodeObservation {
+    reward_baseline: Option<i32>,
+    lamp_seen: bool,
+    clear_before_dialogue: bool,
+    hold_seen: bool,
+    reward_seen: bool,
+    consumed_seen: bool,
+    dialogue_seen: bool,
+    dialogue_drained: bool,
+    released: bool,
+}
+
+impl LampEpisodeObservation {
+    fn summary(&self) -> String {
+        format!(
+            "lamp redemption episode [lamp={},hold={},reward={},consumed={},dialogue={},drained={},released={}]",
+            self.lamp_seen,
+            self.hold_seen,
+            self.reward_seen,
+            self.consumed_seen,
+            self.dialogue_seen,
+            self.dialogue_drained,
+            self.released,
+        )
+    }
+}
+
+/// Ordered facts for one server-owned Maze episode. The fixture sends no
+/// Maze actions; it only observes the shared guardian's hold and snapshots.
+#[derive(Debug, Default)]
+struct MazeEpisodeObservation {
+    return_tile: Option<WorldTile>,
+    reward_baseline: Option<i32>,
+    entry: Option<WorldTile>,
+    last_maze_tile: Option<WorldTile>,
+    tile_changes: u32,
+    max_progress: i32,
+    progress_seen: bool,
+    shrine_seen: bool,
+    returned: bool,
+    reward_seen: bool,
+    released: bool,
+}
+
+impl MazeEpisodeObservation {
+    fn summary(&self) -> String {
+        format!(
+            "maze completion episode [return={:?},entry={:?},progress={},changes={},max={},shrine={},returned={},reward={},released={}]",
+            self.return_tile,
+            self.entry,
+            self.progress_seen,
+            self.tile_changes,
+            self.max_progress,
+            self.shrine_seen,
+            self.returned,
+            self.reward_seen,
+            self.released,
+        )
+    }
+}
+
+const LAMP_AWARD_MARKER: &str = "Your wish has been granted!";
+
 /// The machine both runners drive. One instance per scenario run.
 pub struct ScenarioRunner {
     scenario: Scenario,
@@ -99,6 +166,11 @@ pub struct ScenarioRunner {
     /// Baseline for the current [`Proof::FreshStatXpGain`] step only. Cleared
     /// at every step and session boundary so prior work cannot satisfy it.
     fresh_xp_baseline: Option<(i32, i32)>,
+    /// Native host-hold + snapshot facts for the current lamp witness step.
+    /// This is deliberately not part of [`GameSnapshot`].
+    lamp_episode: Option<LampEpisodeObservation>,
+    /// Native host-hold + snapshot ordering for the current Maze witness.
+    maze_episode: Option<MazeEpisodeObservation>,
     /// Whole-window shot sink: fired once when a `StepKind::Shot` step's
     /// arm holds, with the label and the terminal snapshot. The headed
     /// panel fills this with its window capture; the headless twin keeps
@@ -172,6 +244,8 @@ impl ScenarioRunner {
             evidence: None,
             xp_baselines: Vec::new(),
             fresh_xp_baseline: None,
+            lamp_episode: None,
+            maze_episode: None,
             shot_sink: None,
         }
     }
@@ -196,6 +270,12 @@ impl ScenarioRunner {
     /// The panel reads it to hold a FAIL exit until the capture drains.
     pub fn terminal_shot(&self) -> Option<&'static str> {
         self.terminal_shot
+    }
+
+    /// Existing isolate self-stop reason the headed/TUI live path waits for
+    /// after game-state proofs, when the scenario asked for a clean stop.
+    pub fn wait_script_stop(&self) -> Option<&'static str> {
+        self.scenario.settings.wait_script_stop
     }
 
     /// The shared obj-id → name table for `Item` predicates and the
@@ -253,6 +333,20 @@ impl ScenarioRunner {
     /// live name when armed); per-frame hooks tick only this slot's client.
     pub fn profile_name(&self) -> &str {
         self.seed_name(0)
+    }
+
+    /// Names of every slot owned by this run, including companion seeds.
+    /// Frontends use this to inspect producer status without matching
+    /// unrelated user slots.
+    pub fn owned_profile_names(&self) -> Vec<String> {
+        let mut names = vec![self.profile_name().to_string()];
+        names.extend(
+            self.scenario
+                .companions
+                .iter()
+                .map(|companion| self.seed_name(companion.profile).to_string()),
+        );
+        names
     }
 
     /// Whether `name` is the slot this runner drives.
@@ -360,6 +454,8 @@ impl ScenarioRunner {
         let dirty = self.snapshot.rebuild(client);
         if !self.snapshot.ingame() {
             self.fresh_xp_baseline = None;
+            self.lamp_episode = None;
+            self.maze_episode = None;
         }
         self.retry_xp_baselines();
         // Scene-settle tracking: the wall-clock instant the scene first
@@ -451,12 +547,16 @@ impl ScenarioRunner {
                 let wait = &self.current_step().wait;
                 (wait.arm, wait.budget_ticks)
             };
-            if arm.check_with_xp_context(
-                &self.snapshot,
-                self.obj_names.as_deref(),
-                Some(&self.xp_baselines),
-                self.fresh_xp_baseline,
-            ) {
+            let native_episode_holds = self.observe_lamp_redemption(hold).unwrap_or(true)
+                && self.observe_maze_completion(hold).unwrap_or(true);
+            if native_episode_holds
+                && arm.check_with_xp_context(
+                    &self.snapshot,
+                    self.obj_names.as_deref(),
+                    Some(&self.xp_baselines),
+                    self.fresh_xp_baseline,
+                )
+            {
                 // A nav step only advances once its follow has
                 // terminated: the arm can hold on a snapshot the
                 // traveller has not polled yet — the essence-mine entry
@@ -483,11 +583,21 @@ impl ScenarioRunner {
                     self.advance_step();
                 }
             } else if self.ticks_waited >= budget {
+                let missing = self
+                    .lamp_episode
+                    .as_ref()
+                    .map(LampEpisodeObservation::summary)
+                    .or_else(|| {
+                        self.maze_episode
+                            .as_ref()
+                            .map(MazeEpisodeObservation::summary)
+                    })
+                    .unwrap_or_else(|| arm.name());
                 self.finish_fail(&format!(
                     "step {} ({}): {} not seen within {} ticks",
                     self.step + 1,
                     self.current_step().name,
-                    arm.name(),
+                    missing,
                     budget
                 ));
             }
@@ -555,7 +665,189 @@ impl ScenarioRunner {
         self.traveller.clear();
         self.route = None;
         self.fresh_xp_baseline = None;
+        self.lamp_episode = match self.current_step().kind {
+            StepKind::ObserveLampRedemption { reward_stat, .. } => Some(LampEpisodeObservation {
+                reward_baseline: self.stat_xp(reward_stat),
+                clear_before_dialogue: !Proof::ActiveContinue
+                    .check(&self.snapshot, self.obj_names.as_deref()),
+                ..LampEpisodeObservation::default()
+            }),
+            _ => None,
+        };
+        self.maze_episode = match self.current_step().kind {
+            StepKind::ObserveMazeCompletion { spawns, .. } => {
+                let ready = self.snapshot.ingame() && self.snapshot.scene_state() == 2;
+                let return_tile = snapshot_tile(&self.snapshot)
+                    .filter(|tile| ready && !on_maze_square(*tile, spawns));
+                Some(MazeEpisodeObservation {
+                    return_tile,
+                    reward_baseline: return_tile.map(|_| inventory_total(&self.snapshot)),
+                    ..MazeEpisodeObservation::default()
+                })
+            }
+            _ => None,
+        };
         self.capture_xp_baseline(self.current_step().wait.arm);
+    }
+
+    /// Update the current lamp episode from the native host hold input and
+    /// this frame's snapshot. Returns `None` for ordinary steps and completion
+    /// for the dedicated observation step.
+    fn observe_lamp_redemption(&mut self, hold: bool) -> Option<bool> {
+        let (lamp_id, reward_stat) = match self.current_step().kind {
+            StepKind::ObserveLampRedemption {
+                lamp_id,
+                reward_stat,
+            } => (lamp_id, reward_stat),
+            _ => return None,
+        };
+        let lamp_here = self
+            .snapshot
+            .inv()
+            .iter()
+            .any(|(id, count)| *id == lamp_id && *count > 0);
+        let reward_xp = self.stat_xp(reward_stat);
+        let active_continue =
+            Proof::ActiveContinue.check(&self.snapshot, self.obj_names.as_deref());
+        let authentic_award = active_continue
+            && self
+                .snapshot
+                .chat_modal_texts()
+                .iter()
+                .any(|line| line.contains(LAMP_AWARD_MARKER));
+        let state = self
+            .lamp_episode
+            .get_or_insert_with(LampEpisodeObservation::default);
+
+        if state.reward_baseline.is_none() {
+            state.reward_baseline = reward_xp;
+        }
+        state.lamp_seen |= lamp_here;
+        state.hold_seen |= lamp_here && hold;
+        if !active_continue && !state.dialogue_seen {
+            state.clear_before_dialogue = true;
+        }
+
+        let reward_now = state
+            .reward_baseline
+            .zip(reward_xp)
+            .is_some_and(|(before, now)| now > before);
+        let consumed_now = state.lamp_seen && !lamp_here;
+        state.reward_seen |= reward_now;
+        state.consumed_seen |= consumed_now;
+
+        // xplamp_confirm emits multiple packets before mesbox, so the client
+        // may publish the durable reward and award continuation on different
+        // frames. Bind the continuation to the selected-289 award text and
+        // this post-injection held episode instead of requiring an atomic
+        // reward/consumption edge. A stale entry dialogue still cannot count.
+        if authentic_award && state.clear_before_dialogue && state.lamp_seen && state.hold_seen {
+            state.dialogue_seen = true;
+        }
+        if state.dialogue_seen && !active_continue {
+            state.dialogue_drained = true;
+        }
+        if state.hold_seen
+            && state.reward_seen
+            && state.consumed_seen
+            && state.dialogue_drained
+            && !hold
+        {
+            state.released = true;
+        }
+        Some(state.released)
+    }
+
+    fn observe_maze_completion(&mut self, hold: bool) -> Option<bool> {
+        let (spawns, shrine, shrine_radius, min_progress, entry_shot) =
+            match self.current_step().kind {
+                StepKind::ObserveMazeCompletion {
+                    spawns,
+                    shrine,
+                    shrine_radius,
+                    min_progress,
+                    entry_shot,
+                    ..
+                } => (spawns, shrine, shrine_radius, min_progress, entry_shot),
+                _ => return None,
+            };
+        let Some(state) = self.maze_episode.as_mut() else {
+            // A disconnect/session boundary clears the episode. Never
+            // recapture a post-event tile as a new return baseline.
+            return Some(false);
+        };
+        let tile = snapshot_tile(&self.snapshot);
+        let ready = self.snapshot.ingame() && self.snapshot.scene_state() == 2;
+        let inv_total = inventory_total(&self.snapshot);
+        let mut entry_capture = None;
+
+        if state.entry.is_none() && ready {
+            if let Some(outside) = tile.filter(|tile| !on_maze_square(*tile, spawns)) {
+                state.return_tile = Some(outside);
+                state.reward_baseline = Some(inv_total);
+            }
+        }
+        if state.entry.is_none() && hold {
+            if let Some(tile) = tile.filter(|tile| spawns.contains(tile)) {
+                state.entry = Some(tile);
+                state.last_maze_tile = Some(tile);
+                entry_capture = Some(tile);
+            }
+        }
+
+        if let (Some(entry), Some(here)) = (state.entry, tile) {
+            if hold && on_maze_square(here, spawns) {
+                let progressed_before = state.progress_seen;
+                if state.last_maze_tile != Some(here) {
+                    state.tile_changes += 1;
+                    state.last_maze_tile = Some(here);
+                }
+                state.max_progress = state.max_progress.max(tile_distance(entry, here));
+                if state.tile_changes >= 2 && state.max_progress >= min_progress {
+                    state.progress_seen = true;
+                }
+                if progressed_before && tile_distance(here, shrine) <= shrine_radius {
+                    state.shrine_seen = true;
+                }
+            }
+        }
+
+        if state.shrine_seen
+            && ready
+            && tile == state.return_tile
+            && tile.is_some_and(|tile| !on_maze_square(tile, spawns))
+        {
+            state.returned = true;
+        }
+        if state.returned {
+            state.reward_seen |= state
+                .reward_baseline
+                .is_some_and(|baseline| inv_total > baseline);
+        }
+        if state.returned && state.reward_seen && ready && !hold {
+            state.released = true;
+        }
+        let released = state.released;
+        let return_tile = state.return_tile;
+
+        if let Some(entry) = entry_capture {
+            println!(
+                "MAZE_START: spawn=({},{},{}) return={:?}",
+                entry.x, entry.z, entry.level, return_tile
+            );
+            if let Some(sink) = self.shot_sink.as_mut() {
+                sink(entry_shot, &self.snapshot);
+            }
+        }
+        Some(released)
+    }
+
+    fn stat_xp(&self, id: i32) -> Option<i32> {
+        self.snapshot
+            .stats()
+            .iter()
+            .find(|stat| stat.index == id)
+            .map(|stat| stat.xp)
     }
 
     fn capture_xp_baseline(&mut self, proof: Proof) {
@@ -677,7 +969,20 @@ impl ScenarioRunner {
                     }
                 }
             }
-            StepKind::Shot { .. } | StepKind::StartScript => Ok(()),
+            StepKind::ObserveMazeCompletion { trigger, .. } => {
+                if let Some(cmd) = trigger {
+                    if cheat(client, cmd) {
+                        Ok(())
+                    } else {
+                        Err("driver rejected the send".into())
+                    }
+                } else {
+                    Ok(())
+                }
+            }
+            StepKind::Shot { .. }
+            | StepKind::StartScript
+            | StepKind::ObserveLampRedemption { .. } => Ok(()),
             StepKind::Relog => {
                 if client.ingame && !self.relog_logout_sent {
                     let ifaces = std::sync::Arc::clone(&client.ifaces);
@@ -866,6 +1171,33 @@ impl ScenarioRunner {
     }
 }
 
+fn snapshot_tile(snapshot: &GameSnapshot) -> Option<WorldTile> {
+    snapshot
+        .tile()
+        .map(|(x, z, level)| WorldTile { x, z, level })
+}
+
+fn inventory_total(snapshot: &GameSnapshot) -> i32 {
+    snapshot
+        .inv()
+        .iter()
+        .map(|(_, count)| (*count).max(0))
+        .sum()
+}
+
+fn on_maze_square(tile: WorldTile, spawns: &[WorldTile]) -> bool {
+    spawns.first().is_some_and(|spawn| {
+        tile.level == spawn.level && (tile.x >> 6, tile.z >> 6) == (spawn.x >> 6, spawn.z >> 6)
+    })
+}
+
+fn tile_distance(a: WorldTile, b: WorldTile) -> i32 {
+    if a.level != b.level {
+        return i32::MAX;
+    }
+    (a.x - b.x).abs().max((a.z - b.z).abs())
+}
+
 /// A `Wait` helper so tests can build steps without importing the field
 /// order.
 #[allow(dead_code)]
@@ -940,6 +1272,17 @@ mod tests {
             companions: vec![],
             settings: ScenarioSettings::default(),
         }
+    }
+
+    #[test]
+    fn wait_script_stop_is_none_unless_the_scenario_sets_it() {
+        let v1 = ScenarioRunner::new(crate::get("bone_burier").expect("v1"));
+        assert_eq!(v1.wait_script_stop(), None);
+        let v2 = ScenarioRunner::new(crate::get("bone_burier_v2_ts").expect("v2"));
+        assert_eq!(
+            v2.wait_script_stop(),
+            Some("confirmed loaded current-generation bank exhaustion")
+        );
     }
 
     #[test]
@@ -2299,5 +2642,706 @@ mod tests {
         c.bump_gens(ServerProt::UPDATE_STAT);
         runner.tick(&mut c);
         assert_eq!(runner.status(), RunnerStatus::Passed);
+    }
+
+    const TEST_LAMP_ID: i32 = 2528;
+    const TEST_STRENGTH_STAT: i32 = 2;
+    const TEST_PRAYER_STAT: i32 = 5;
+    const TEST_LAMP_AWARD: &str = "Your wish has been granted!";
+
+    fn lamp_episode_scenario(budget_ticks: u32) -> Scenario {
+        let fresh_prayer = Proof::FreshStatXpGain {
+            id: TEST_PRAYER_STAT,
+            min: 1,
+        };
+        Scenario {
+            name: "lamp-episode",
+            seed: Seed {
+                profiles: vec![("test", "test")],
+                mainland: false,
+            },
+            steps: vec![
+                Step {
+                    name: "observe one authentic lamp redemption episode",
+                    kind: StepKind::ObserveLampRedemption {
+                        lamp_id: TEST_LAMP_ID,
+                        reward_stat: TEST_STRENGTH_STAT,
+                    },
+                    wait: wait(Proof::NoActiveContinue, budget_ticks),
+                },
+                Step {
+                    name: "watch fresh script work after release",
+                    kind: StepKind::Perform {
+                        send: Box::new(|_, _| true),
+                    },
+                    wait: wait(fresh_prayer, 4),
+                },
+            ],
+            proof: fresh_prayer,
+            companions: vec![],
+            settings: ScenarioSettings::default(),
+        }
+    }
+
+    fn set_continue_text(c: &mut Client, open: bool, text: &str) {
+        use client::config::if_type::ButtonType;
+
+        const ROOT: usize = 6206;
+        const CONTINUE: usize = 6210;
+        c.set_iface(
+            ROOT,
+            IfType {
+                id: ROOT as i32,
+                layer_id: ROOT as i32,
+                r#type: ComponentType::TYPE_LAYER,
+                children: Some(vec![CONTINUE as i32]),
+                ..Default::default()
+            },
+        );
+        c.set_iface(
+            CONTINUE,
+            IfType {
+                id: CONTINUE as i32,
+                layer_id: ROOT as i32,
+                r#type: ComponentType::TYPE_TEXT,
+                ..Default::default()
+            },
+        );
+        c.set_iface_mut(
+            CONTINUE,
+            IfTypeMut {
+                text: text.into(),
+                button_type: ButtonType::BUTTON_CONTINUE,
+                ..Default::default()
+            },
+        );
+        c.chat_modal_id = if open { ROOT as i32 } else { -1 };
+        c.bump_gens(if open {
+            ServerProt::IF_OPENCHAT
+        } else {
+            ServerProt::IF_CLOSE
+        });
+    }
+
+    fn set_continue(c: &mut Client, open: bool) {
+        set_continue_text(c, open, "");
+    }
+
+    #[test]
+    fn lamp_episode_latches_same_frame_reward_then_requires_drain_release_and_fresh_work() {
+        let mut c = seeded_client();
+        c.stat_xp[TEST_STRENGTH_STAT as usize] = 100;
+        c.stat_xp[TEST_PRAYER_STAT as usize] = 200;
+        set_inv(&mut c, &[(TEST_LAMP_ID, 1)]);
+        let mut runner = ScenarioRunner::with_world(lamp_episode_scenario(12), None);
+        runner.set_scene_settle(Duration::ZERO);
+
+        runner.tick_with_hold(&mut c, false);
+        assert_eq!(runner.status(), RunnerStatus::Running { step: 0, total: 2 });
+
+        c.bump_gens(ServerProt::PLAYER_INFO);
+        runner.tick_with_hold(&mut c, true);
+
+        set_inv(&mut c, &[]);
+        c.stat_xp[TEST_STRENGTH_STAT as usize] = 110;
+        c.bump_gens(ServerProt::UPDATE_STAT);
+        set_continue_text(&mut c, true, TEST_LAMP_AWARD);
+        runner.tick_with_hold(&mut c, true);
+        assert_eq!(
+            runner.status(),
+            RunnerStatus::Running { step: 0, total: 2 },
+            "reward, consumption, and active dialogue do not release a held episode"
+        );
+
+        set_continue(&mut c, false);
+        runner.tick_with_hold(&mut c, true);
+        assert_eq!(
+            runner.status(),
+            RunnerStatus::Running { step: 0, total: 2 },
+            "dialogue drain alone does not release a still-held episode"
+        );
+
+        c.bump_gens(ServerProt::PLAYER_INFO);
+        runner.tick_with_hold(&mut c, false);
+        assert_eq!(
+            runner.status(),
+            RunnerStatus::Running { step: 1, total: 2 },
+            "native hold release advances to the post-event work gate"
+        );
+
+        c.bump_gens(ServerProt::UPDATE_STAT);
+        runner.tick_with_hold(&mut c, false);
+        assert_eq!(
+            runner.status(),
+            RunnerStatus::Running { step: 1, total: 2 },
+            "pre-release Prayer XP cannot satisfy the fresh post-release gate"
+        );
+        c.stat_xp[TEST_PRAYER_STAT as usize] = 201;
+        c.bump_gens(ServerProt::UPDATE_STAT);
+        runner.tick_with_hold(&mut c, false);
+        assert_eq!(runner.status(), RunnerStatus::Passed);
+    }
+
+    #[test]
+    fn lamp_episode_accepts_source_named_award_after_split_reward_packets() {
+        let mut c = seeded_client();
+        c.stat_xp[TEST_STRENGTH_STAT as usize] = 100;
+        c.stat_xp[TEST_PRAYER_STAT as usize] = 200;
+        set_inv(&mut c, &[(TEST_LAMP_ID, 1)]);
+        let mut runner = ScenarioRunner::with_world(lamp_episode_scenario(12), None);
+        runner.set_scene_settle(Duration::ZERO);
+
+        runner.tick_with_hold(&mut c, true);
+
+        // xplamp_confirm publishes the durable reward effects before mesbox;
+        // a client frame may therefore observe these without the award IF.
+        set_inv(&mut c, &[]);
+        c.stat_xp[TEST_STRENGTH_STAT as usize] = 110;
+        c.bump_gens(ServerProt::UPDATE_STAT);
+        runner.tick_with_hold(&mut c, true);
+
+        // The authentic award continuation arrives on a later frame, after
+        // the reward/consumption edges have already been retained.
+        set_continue_text(&mut c, true, TEST_LAMP_AWARD);
+        runner.tick_with_hold(&mut c, true);
+        set_continue_text(&mut c, false, "");
+        runner.tick_with_hold(&mut c, true);
+        c.bump_gens(ServerProt::PLAYER_INFO);
+        runner.tick_with_hold(&mut c, false);
+
+        assert_eq!(
+            runner.status(),
+            RunnerStatus::Running { step: 1, total: 2 },
+            "source-identified split award must complete the same held episode"
+        );
+    }
+
+    #[test]
+    fn lamp_episode_rejects_preexisting_and_later_unrelated_dialogues() {
+        let mut c = seeded_client();
+        c.stat_xp[TEST_STRENGTH_STAT as usize] = 100;
+        set_inv(&mut c, &[(TEST_LAMP_ID, 1)]);
+        set_continue_text(&mut c, true, TEST_LAMP_AWARD);
+        let mut runner = ScenarioRunner::with_world(lamp_episode_scenario(7), None);
+        runner.set_scene_settle(Duration::ZERO);
+
+        runner.tick_with_hold(&mut c, true);
+        set_inv(&mut c, &[]);
+        c.stat_xp[TEST_STRENGTH_STAT as usize] = 110;
+        c.bump_gens(ServerProt::UPDATE_STAT);
+        runner.tick_with_hold(&mut c, true);
+        set_continue(&mut c, false);
+        runner.tick_with_hold(&mut c, true);
+        set_continue(&mut c, true);
+        runner.tick_with_hold(&mut c, true);
+        set_continue(&mut c, false);
+        runner.tick_with_hold(&mut c, false);
+
+        for _ in 0..8 {
+            c.bump_gens(ServerProt::PLAYER_INFO);
+            runner.tick_with_hold(&mut c, false);
+        }
+        let RunnerStatus::Failed(message) = runner.status() else {
+            panic!("preexisting and later unrelated dialogues must fail");
+        };
+        assert!(
+            message.contains("lamp redemption episode"),
+            "the failed native episode must be named: {message}"
+        );
+    }
+
+    #[test]
+    fn lamp_episode_rejects_wrong_hold_and_elapsed_only_progress() {
+        let mut c = seeded_client();
+        c.stat_xp[TEST_STRENGTH_STAT as usize] = 100;
+        set_inv(&mut c, &[(TEST_LAMP_ID, 1)]);
+        let mut runner = ScenarioRunner::with_world(lamp_episode_scenario(5), None);
+        runner.set_scene_settle(Duration::ZERO);
+
+        runner.tick_with_hold(&mut c, false);
+        set_inv(&mut c, &[]);
+        c.stat_xp[TEST_STRENGTH_STAT as usize] = 110;
+        c.bump_gens(ServerProt::UPDATE_STAT);
+        set_continue_text(&mut c, true, TEST_LAMP_AWARD);
+        runner.tick_with_hold(&mut c, false);
+        set_continue(&mut c, false);
+        runner.tick_with_hold(&mut c, false);
+
+        for _ in 0..6 {
+            c.bump_gens(ServerProt::PLAYER_INFO);
+            runner.tick_with_hold(&mut c, false);
+        }
+        let RunnerStatus::Failed(message) = runner.status() else {
+            panic!("wrong native hold and elapsed ticks must fail");
+        };
+        assert!(message.contains("hold=false"), "{message}");
+        assert!(
+            message.contains("dialogue=false"),
+            "an award outside a held episode must not bind: {message}"
+        );
+    }
+
+    const TEST_MAZE_SPAWNS: &[WorldTile] = &[
+        WorldTile {
+            x: 2891,
+            z: 4597,
+            level: 0,
+        },
+        WorldTile {
+            x: 2933,
+            z: 4597,
+            level: 0,
+        },
+        WorldTile {
+            x: 2933,
+            z: 4555,
+            level: 0,
+        },
+        WorldTile {
+            x: 2891,
+            z: 4555,
+            level: 0,
+        },
+    ];
+    const TEST_MAZE_SHRINE: WorldTile = WorldTile {
+        x: 2911,
+        z: 4575,
+        level: 0,
+    };
+
+    fn maze_episode_scenario(budget_ticks: u32) -> Scenario {
+        maze_episode_scenario_with(budget_ticks, None)
+    }
+
+    fn maze_episode_scenario_with(budget_ticks: u32, trigger: Option<&'static str>) -> Scenario {
+        Scenario {
+            name: "maze-episode",
+            seed: Seed {
+                profiles: vec![("test", "test")],
+                mainland: false,
+            },
+            steps: vec![Step {
+                name: "observe ordered Maze completion",
+                kind: StepKind::ObserveMazeCompletion {
+                    spawns: TEST_MAZE_SPAWNS,
+                    shrine: TEST_MAZE_SHRINE,
+                    shrine_radius: 4,
+                    min_progress: 8,
+                    entry_shot: "maze entered",
+                    trigger,
+                },
+                wait: wait(Proof::IngameScene2, budget_ticks),
+            }],
+            proof: Proof::IngameScene2,
+            companions: vec![],
+            settings: ScenarioSettings {
+                terminal_shot: Some("maze final"),
+                ..ScenarioSettings::default()
+            },
+        }
+    }
+
+    fn maze_out_contains(c: &Client, needle: &str) -> bool {
+        let bytes = &c.out.data()[..c.out.pos];
+        bytes
+            .windows(needle.len())
+            .any(|window| window == needle.as_bytes())
+    }
+
+    fn maze_out_count(c: &Client, needle: &str) -> usize {
+        let bytes = &c.out.data()[..c.out.pos];
+        bytes
+            .windows(needle.len())
+            .filter(|window| *window == needle.as_bytes())
+            .count()
+    }
+
+    fn set_world_tile(c: &mut Client, tile: WorldTile) {
+        c.map_build_base_x = (tile.x >> 6) << 6;
+        c.map_build_base_z = (tile.z >> 6) << 6;
+        c.minusedlevel = tile.level;
+        c.local_player = Some(ClientPlayer::at(
+            tile.x - c.map_build_base_x,
+            tile.z - c.map_build_base_z,
+        ));
+        c.bump_gens(ServerProt::REBUILD_NORMAL);
+        c.bump_gens(ServerProt::PLAYER_INFO);
+    }
+
+    fn tick_dirty(runner: &mut ScenarioRunner, c: &mut Client, hold: bool) {
+        c.bump_gens(ServerProt::PLAYER_INFO);
+        runner.tick_with_hold(c, hold);
+    }
+
+    fn drive_test_maze_to_shrine(runner: &mut ScenarioRunner, c: &mut Client) {
+        set_world_tile(c, TEST_MAZE_SPAWNS[0]);
+        runner.tick_with_hold(c, true);
+        for tile in [
+            WorldTile {
+                x: 2891,
+                z: 4590,
+                level: 0,
+            },
+            WorldTile {
+                x: 2896,
+                z: 4588,
+                level: 0,
+            },
+            WorldTile {
+                x: 2910,
+                z: 4576,
+                level: 0,
+            },
+        ] {
+            set_world_tile(c, tile);
+            runner.tick_with_hold(c, true);
+        }
+    }
+
+    #[test]
+    fn maze_episode_refreshes_pre_entry_baseline_to_last_ready_outside_snapshot() {
+        const TILE_A: WorldTile = WorldTile {
+            x: 3220,
+            z: 3220,
+            level: 0,
+        };
+        const TILE_B: WorldTile = WorldTile {
+            x: 3221,
+            z: 3220,
+            level: 0,
+        };
+
+        let mut c = seeded_client();
+        set_inv(&mut c, &[(995, 100)]);
+        let mut runner = ScenarioRunner::with_world(maze_episode_scenario(30), None);
+        runner.set_scene_settle(Duration::ZERO);
+        runner.tick_with_hold(&mut c, false);
+
+        set_world_tile(&mut c, TILE_B);
+        set_inv(&mut c, &[(995, 105)]);
+        runner.tick_with_hold(&mut c, false);
+        drive_test_maze_to_shrine(&mut runner, &mut c);
+
+        set_world_tile(&mut c, TILE_A);
+        set_inv(&mut c, &[(995, 101)]);
+        runner.tick_with_hold(&mut c, false);
+        assert_eq!(
+            runner.status(),
+            RunnerStatus::Running { step: 0, total: 1 },
+            "the stale observer-entry tile A must not count as the server return"
+        );
+
+        set_world_tile(&mut c, TILE_B);
+        runner.tick_with_hold(&mut c, false);
+        assert_eq!(
+            runner.status(),
+            RunnerStatus::Running { step: 0, total: 1 },
+            "inventory above A's baseline but below B's must not count as the reward"
+        );
+
+        set_inv(&mut c, &[(995, 106)]);
+        tick_dirty(&mut runner, &mut c, false);
+        assert_eq!(runner.status(), RunnerStatus::Passed);
+    }
+
+    #[test]
+    fn maze_episode_recovers_baseline_after_observer_begins_unready() {
+        const RETURN_TILE: WorldTile = WorldTile {
+            x: 3221,
+            z: 3220,
+            level: 0,
+        };
+
+        let mut c = seeded_client();
+        set_inv(&mut c, &[(995, 100)]);
+        c.scene_state = 1;
+        c.bump_gens(ServerProt::REBUILD_NORMAL);
+        let mut runner = ScenarioRunner::with_world(maze_episode_scenario(30), None);
+        runner.set_scene_settle(Duration::ZERO);
+        runner.snapshot.rebuild(&c);
+        runner.phase = Phase::Running;
+        runner.begin_step();
+        assert_eq!(
+            runner.maze_episode.as_ref().unwrap().return_tile,
+            None,
+            "the unready observer start has no usable baseline"
+        );
+
+        c.scene_state = 2;
+        set_world_tile(&mut c, RETURN_TILE);
+        runner.tick_with_hold(&mut c, false);
+        drive_test_maze_to_shrine(&mut runner, &mut c);
+
+        set_world_tile(&mut c, RETURN_TILE);
+        set_inv(&mut c, &[(995, 101)]);
+        runner.tick_with_hold(&mut c, false);
+        assert_eq!(runner.status(), RunnerStatus::Passed);
+    }
+
+    #[test]
+    fn maze_episode_accepts_immediate_held_entry_without_npc_snapshot() {
+        const RETURN_TILE: WorldTile = WorldTile {
+            x: 3220,
+            z: 3220,
+            level: 0,
+        };
+        const NE_SPAWN: WorldTile = WorldTile {
+            x: 2933,
+            z: 4597,
+            level: 0,
+        };
+
+        let mut c = seeded_client();
+        set_inv(&mut c, &[(995, 100)]);
+        let mut runner = ScenarioRunner::with_world(
+            maze_episode_scenario_with(30, Some("~macro_event 8")),
+            None,
+        );
+        runner.set_scene_settle(Duration::ZERO);
+
+        runner.tick_with_hold(&mut c, false);
+        let episode = runner.maze_episode.as_ref().expect("observer armed");
+        assert_eq!(
+            episode.return_tile,
+            Some(RETURN_TILE),
+            "pre-entry baseline must be captured before the trigger send"
+        );
+        assert_eq!(episode.reward_baseline, Some(100));
+        assert_eq!(
+            maze_out_count(&c, "~macro_event 8"),
+            1,
+            "the armed observer sends the authentic trigger once"
+        );
+        assert!(!maze_out_contains(&c, "mazeend"));
+        assert_eq!(
+            episode.entry, None,
+            "the trigger send must not invent an entry"
+        );
+
+        set_world_tile(&mut c, NE_SPAWN);
+        runner.tick_with_hold(&mut c, true);
+        assert_eq!(
+            runner.maze_episode.as_ref().unwrap().entry,
+            Some(NE_SPAWN),
+            "held canonical NE entry must count without any NPC snapshot"
+        );
+        assert_eq!(
+            runner.maze_episode.as_ref().unwrap().return_tile,
+            Some(RETURN_TILE),
+            "immediate entry must keep the pre-send mainland baseline"
+        );
+
+        for tile in [
+            WorldTile {
+                x: 2933,
+                z: 4590,
+                level: 0,
+            },
+            WorldTile {
+                x: 2925,
+                z: 4585,
+                level: 0,
+            },
+            WorldTile {
+                x: 2911,
+                z: 4576,
+                level: 0,
+            },
+        ] {
+            set_world_tile(&mut c, tile);
+            runner.tick_with_hold(&mut c, true);
+        }
+
+        set_world_tile(&mut c, RETURN_TILE);
+        set_inv(&mut c, &[(995, 101)]);
+        runner.tick_with_hold(&mut c, true);
+        assert_eq!(
+            runner.status(),
+            RunnerStatus::Running { step: 0, total: 1 },
+            "return and reward cannot pass while native hold remains"
+        );
+        tick_dirty(&mut runner, &mut c, false);
+        assert_eq!(runner.status(), RunnerStatus::Passed);
+        assert_eq!(maze_out_count(&c, "~macro_event 8"), 1);
+    }
+
+    #[test]
+    fn maze_episode_requires_held_entry_progress_shrine_return_reward_and_release() {
+        let mut c = seeded_client();
+        set_inv(&mut c, &[(995, 100)]);
+        let mut runner = ScenarioRunner::with_world(maze_episode_scenario(20), None);
+        runner.set_scene_settle(Duration::ZERO);
+        type Captures = Arc<Mutex<Vec<(String, Option<(i32, i32, i32)>)>>>;
+        let captures: Captures = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&captures);
+        runner.set_shot_sink(Box::new(move |label, snap| {
+            sink.lock().unwrap().push((label.to_string(), snap.tile()));
+        }));
+
+        runner.tick_with_hold(&mut c, false);
+        set_world_tile(&mut c, TEST_MAZE_SPAWNS[0]);
+        runner.tick_with_hold(&mut c, true);
+        assert_eq!(
+            captures.lock().unwrap().as_slice(),
+            &[("maze entered".to_string(), Some((2891, 4597, 0)))],
+            "the entry capture reports the server-selected spawn"
+        );
+
+        set_world_tile(
+            &mut c,
+            WorldTile {
+                x: 2891,
+                z: 4590,
+                level: 0,
+            },
+        );
+        runner.tick_with_hold(&mut c, true);
+        set_world_tile(
+            &mut c,
+            WorldTile {
+                x: 2896,
+                z: 4588,
+                level: 0,
+            },
+        );
+        runner.tick_with_hold(&mut c, true);
+        set_world_tile(
+            &mut c,
+            WorldTile {
+                x: 2910,
+                z: 4576,
+                level: 0,
+            },
+        );
+        runner.tick_with_hold(&mut c, true);
+
+        set_world_tile(
+            &mut c,
+            WorldTile {
+                x: 3220,
+                z: 3220,
+                level: 0,
+            },
+        );
+        set_inv(&mut c, &[(995, 101)]);
+        runner.tick_with_hold(&mut c, true);
+        assert_eq!(
+            runner.status(),
+            RunnerStatus::Running { step: 0, total: 1 },
+            "server return and reward cannot pass while native hold remains"
+        );
+        tick_dirty(&mut runner, &mut c, false);
+
+        assert_eq!(runner.status(), RunnerStatus::Passed);
+        assert_eq!(
+            captures.lock().unwrap().as_slice(),
+            &[
+                ("maze entered".to_string(), Some((2891, 4597, 0))),
+                ("maze final".to_string(), Some((3220, 3220, 0))),
+            ]
+        );
+        let evidence = runner.evidence().expect("terminal evidence");
+        assert_eq!(evidence.scene, 2);
+        assert_eq!(evidence.tile, Some([3220, 3220, 0]));
+    }
+
+    #[test]
+    fn maze_episode_rejects_near_shrine_without_canonical_entry() {
+        let mut c = seeded_client();
+        set_inv(&mut c, &[(995, 100)]);
+        let mut runner = ScenarioRunner::with_world(maze_episode_scenario(4), None);
+        runner.set_scene_settle(Duration::ZERO);
+        runner.tick_with_hold(&mut c, false);
+
+        set_world_tile(&mut c, TEST_MAZE_SHRINE);
+        runner.tick_with_hold(&mut c, true);
+        set_world_tile(
+            &mut c,
+            WorldTile {
+                x: 3220,
+                z: 3220,
+                level: 0,
+            },
+        );
+        set_inv(&mut c, &[(995, 101)]);
+        for _ in 0..5 {
+            tick_dirty(&mut runner, &mut c, false);
+        }
+
+        let RunnerStatus::Failed(message) = runner.status() else {
+            panic!("near-shrine and outside planted states must fail");
+        };
+        assert!(message.contains("entry=None"), "{message}");
+        assert!(message.contains("shrine=false"), "{message}");
+    }
+
+    #[test]
+    fn maze_episode_rejects_return_without_real_progress_and_shrine_order() {
+        let mut c = seeded_client();
+        set_inv(&mut c, &[(995, 100)]);
+        let mut runner = ScenarioRunner::with_world(maze_episode_scenario(5), None);
+        runner.set_scene_settle(Duration::ZERO);
+        runner.tick_with_hold(&mut c, false);
+
+        set_world_tile(&mut c, TEST_MAZE_SPAWNS[3]);
+        runner.tick_with_hold(&mut c, true);
+        set_world_tile(
+            &mut c,
+            WorldTile {
+                x: 3220,
+                z: 3220,
+                level: 0,
+            },
+        );
+        set_inv(&mut c, &[(995, 101)]);
+        for _ in 0..6 {
+            tick_dirty(&mut runner, &mut c, false);
+        }
+
+        let RunnerStatus::Failed(message) = runner.status() else {
+            panic!("entry followed by a planted outside state must fail");
+        };
+        assert!(message.contains("progress=false"), "{message}");
+        assert!(message.contains("shrine=false"), "{message}");
+        assert!(message.contains("returned=false"), "{message}");
+    }
+
+    #[test]
+    fn maze_episode_exact_return_rejects_whoops_fallback_when_baseline_is_fountain() {
+        let mut c = seeded_client();
+        set_inv(&mut c, &[(995, 100)]);
+        let mut runner = ScenarioRunner::with_world(maze_episode_scenario(8), None);
+        runner.set_scene_settle(Duration::ZERO);
+        runner.tick_with_hold(&mut c, false);
+        assert_eq!(
+            runner.maze_episode.as_ref().unwrap().return_tile,
+            Some(WorldTile {
+                x: 3220,
+                z: 3220,
+                level: 0,
+            }),
+            "the mainland hop tile is the blocked fountain baseline"
+        );
+
+        drive_test_maze_to_shrine(&mut runner, &mut c);
+        set_world_tile(
+            &mut c,
+            WorldTile {
+                x: 3221,
+                z: 3218,
+                level: 0,
+            },
+        );
+        set_inv(&mut c, &[(995, 101)]);
+        for _ in 0..9 {
+            tick_dirty(&mut runner, &mut c, false);
+        }
+
+        let RunnerStatus::Failed(message) = runner.status() else {
+            panic!("Whoops fallback must not satisfy an exact fountain baseline");
+        };
+        assert!(message.contains("returned=false"), "{message}");
+        assert!(message.contains("entry=Some"), "{message}");
+        assert!(message.contains("shrine=true"), "{message}");
     }
 }

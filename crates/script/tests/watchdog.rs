@@ -7,6 +7,18 @@ use script::isolate_fb::{ReachViewInput, SnapshotInput, TileInput};
 use script::shim::InteractReq;
 use script::{LoadIsolate, LoadShape, SlotScript, WatchdogAction, WatchdogState};
 
+mod common;
+
+/// Pump the slot's lifecycle observe until it reaches `want` (bounded).
+fn wait_slot_state(slot: &mut SlotScript, want: script::RunState) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while slot.state() != want && Instant::now() < deadline {
+        slot.observe_lifecycle();
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert_eq!(slot.state(), want, "last_error={:?}", slot.last_error());
+}
+
 fn post_snapshot_input(iso: &LoadIsolate, input: &SnapshotInput<'_>) {
     iso.post_snapshot(script::isolate_fb::encode_snapshot(input));
 }
@@ -22,7 +34,7 @@ fn base_snapshot<'a>() -> SnapshotInput<'a> {
         ingame: true,
         inv: &[],
         inv_size: 28,
-        stats: &[],
+        stats: &common::FRESH_STATS,
         booths: &[],
         banks: &[],
         bank: &[],
@@ -68,6 +80,7 @@ fn base_snapshot<'a>() -> SnapshotInput<'a> {
         bank_note_off: -1,
         scene_state: 2,
         weight: 0,
+        combat_level: 0,
         camera_yaw: 0,
         camera_pitch: 0,
         teleports_enabled: false,
@@ -84,6 +97,8 @@ fn base_snapshot<'a>() -> SnapshotInput<'a> {
         shop_stock: &[],
         reach: ReachViewInput::UNAVAILABLE,
         attacked_by_player: false,
+        self_target_kind: 0,
+        self_target_index: -1,
         widgets: &[],
     }
 }
@@ -381,6 +396,8 @@ fn slot_restart_preserves_source_settings_and_cooldown() {
         vec![("sib.js".into(), "export const x = 1;".into())],
     )
     .unwrap();
+    // Start returns before V8 setup; recover from a live slot.
+    wait_slot_state(&mut slot, script::RunState::Running);
     let before = slot.load_identity().unwrap().clone();
     assert_eq!(
         before
@@ -418,6 +435,9 @@ fn slot_restart_preserves_source_settings_and_cooldown() {
     assert_eq!(&*after.siblings, &*before.siblings);
     assert_eq!(after.settings_bag, before.settings_bag);
     assert!(slot.watchdog().last_recovery().is_some());
+    // The recreate follows the old isolate's reap; it runs the same identity.
+    wait_slot_state(&mut slot, script::RunState::Running);
+    assert_eq!(&*slot.load_identity().unwrap().source, &*before.source);
     let later = slot.feed_watchdog(
         t + script::watchdog::WEDGE + script::watchdog::WEDGE,
         Some((0, 0, 0)),
@@ -490,7 +510,7 @@ fn explicit_note_progress_is_real_host_effect() {
 }
 
 #[test]
-fn never_resolving_on_start_is_single_flight_and_still_paints_and_fires_listeners() {
+fn never_resolving_on_start_is_single_flight_fires_listeners_and_does_not_paint() {
     let src = r#"
 import { BotHost } from '../../runtime/BotHost.js';
 export default class T extends LoopingBot {
@@ -517,9 +537,9 @@ export default class T extends LoopingBot {
         fires >= 2,
         "tick listeners continue during onStart: fires={fires}"
     );
-    assert!(
-        paints >= 2,
-        "onPaint continues during onStart: paints={paints}"
+    assert_eq!(
+        paints, 0,
+        "no onPaint before onStart completes (rs2b0t ScriptRunner.paintBot)"
     );
     iso.join();
 }

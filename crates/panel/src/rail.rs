@@ -94,9 +94,10 @@ pub fn cap_title(name: &str, light: Light) -> String {
     format!("{name}: {}", light.brief())
 }
 
-/// Whether this rail/grid tile shows its blit. `only_selected` stays
-/// cap-only. Default: grid keeps every blit (the grid *is* the Game pane);
-/// the sidecar folds the focused member (the Game pane already shows it).
+/// Whether this rail/grid tile shows its blit. Sidecar + `only_selected` stays
+/// cap-only; grid + `only_selected` keeps the focused blit only (the grid *is*
+/// the Game pane). Default: grid keeps every blit; the sidecar folds the
+/// focused member (the Game pane already shows it).
 pub fn rail_preview_open(
     name: &str,
     focused: Option<&str>,
@@ -105,7 +106,13 @@ pub fn rail_preview_open(
     preview: &std::collections::HashMap<String, bool>,
 ) -> bool {
     if only_selected {
-        return false;
+        if grid {
+            if focused != Some(name) {
+                return false;
+            }
+        } else {
+            return false;
+        }
     }
     preview
         .get(name)
@@ -162,6 +169,58 @@ mod tests {
         let mut on = std::collections::HashMap::new();
         on.insert("a".into(), true);
         assert!(rail_preview_open("a", Some("a"), false, false, &on));
+    }
+
+    #[test]
+    fn rail_preview_only_selected_grid_keeps_focused_suppresses_others() {
+        let empty = std::collections::HashMap::new();
+        assert!(
+            rail_preview_open("a", Some("a"), true, true, &empty),
+            "grid + only_selected must show the focused cell blit"
+        );
+        assert!(
+            !rail_preview_open("b", Some("a"), true, true, &empty),
+            "grid + only_selected must suppress non-focused cells"
+        );
+        assert!(
+            rail_preview_open("b", Some("b"), true, true, &empty),
+            "focus switch A→B: newly focused cell draws"
+        );
+        assert!(
+            !rail_preview_open("a", Some("b"), true, true, &empty),
+            "focus switch A→B: former focus stays suppressed"
+        );
+        assert!(
+            !rail_preview_open("a", None, true, true, &empty),
+            "grid + only_selected with no focus paints no blits"
+        );
+        assert!(
+            !rail_preview_open("b", Some("a"), true, false, &empty),
+            "sidecar + only_selected stays cap-only for non-focused"
+        );
+        assert!(
+            !rail_preview_open("a", Some("a"), true, false, &empty),
+            "sidecar + only_selected stays cap-only even for focused"
+        );
+        assert!(
+            rail_preview_open("b", Some("a"), false, false, &empty),
+            "sidecar + only_selected off keeps ordinary non-focused preview"
+        );
+        assert!(
+            !rail_preview_open("a", Some("a"), false, false, &empty),
+            "sidecar + only_selected off still folds focused by default"
+        );
+        let mut folded = std::collections::HashMap::new();
+        folded.insert("a".into(), false);
+        assert!(
+            !rail_preview_open("a", Some("a"), true, true, &folded),
+            "manual fold on focused grid cell is honored when only_selected"
+        );
+        folded.insert("a".into(), true);
+        assert!(
+            rail_preview_open("a", Some("a"), true, true, &folded),
+            "manual unfold on focused grid cell is honored when only_selected"
+        );
     }
 
     #[test]

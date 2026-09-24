@@ -11,27 +11,24 @@ export const Equipment = proxy('Equipment', {
             .map((r) => ({
                 name: r.name,
                 count: typeof r.count === 'number' ? r.count : 1,
+                id: typeof r.id === 'number' ? r.id : 0,
             }));
     },
     contains(name) {
         const wanted = String(name).toLowerCase();
         return rows().some((r) => r && typeof r.name === 'string' && r.name.toLowerCase() === wanted);
     },
+    // The host `wear` op owns the menu choice (its own Wear, else Wield,
+    // else refuse); this module never picks an action label by regex.
     async equip(name) {
         if (Equipment.contains(name)) return true;
-        const item = Inventory.first(name);
-        if (!item) return false;
-        const op = item.actions().find((o) => /wield|wear|equip/i.test(o));
-        if (op) {
-            if (!(await item.interact(op))) return false;
-        } else {
-            queue({ op: 'wear', name: String(name) });
-        }
+        if (!Inventory.first(name)) return false;
+        queue({ op: 'wear', name: String(name) });
         return Execution.delayUntil(() => Equipment.contains(name), 3000);
     },
     async unequip(name) {
         if (!Equipment.contains(name)) return true;
-        queue({ op: 'wear', name: String(name) });
+        queue({ op: 'unequip', name: String(name) });
         return Execution.delayUntil(() => !Equipment.contains(name), 3000);
     },
 });

@@ -15,6 +15,7 @@ use client::client::{Client, ClientConfig};
 use client::config::if_type::{ButtonType, ComponentType, IfType, IfTypeMut};
 use client::dash3d::CollisionFlag;
 use client::io::ServerProt;
+use std::sync::Arc;
 
 fn fixture_item(id: i32, count: i32) -> ItemView {
     ItemView {
@@ -69,6 +70,7 @@ fn fixture_npc(
         in_combat: false,
         level: 2,
         size: 1,
+        network: WorldTile { x, z, level: 0 },
         x,
         z,
         yaw: 0,
@@ -1310,6 +1312,141 @@ fn pack_reach_query_matches_bounded_can_reach() {
     }
 }
 
+/// `open_scene` with a closed wall the full width between local rows 52 and
+/// 53 (world z 3252 | 3253), plus a booth-like blocked tile on the near side
+/// and a blocked tile boxed in on the far side (a ladder in a house).
+fn arrival_scene() -> SceneView {
+    let mut scene = open_scene();
+    for lx in 0..104 {
+        scene.collision_flags[lx * 104 + 52] |= CollisionFlag::W_N;
+        scene.collision_flags[lx * 104 + 53] |= CollisionFlag::W_S;
+    }
+    // Booth at (3250,3252): blocked, no wall edge.
+    scene.collision_flags[50 * 104 + 52] |= CollisionFlag::SQ_BLOCKED;
+    // Ladder at (3252,3254): blocked, behind the wall.
+    scene.collision_flags[52 * 104 + 54] |= CollisionFlag::SQ_BLOCKED;
+    scene
+}
+
+fn arrival_view(scene: &SceneView, me: WorldTile) -> ReachQueryView {
+    let flood = SceneQuery::new(scene, Some(me)).flood_reach();
+    pack_reach_query(scene, flood.as_ref())
+}
+
+/// Frozen `isArrived` table (`test/event/webwalk/arrival.test.ts`) over a
+/// posted view instead of a mocked probe.
+#[test]
+fn is_arrived_matches_frozen_is_arrived() {
+    let scene = arrival_scene();
+    let me = WorldTile {
+        x: 3252,
+        z: 3252,
+        level: 0,
+    };
+    let view = arrival_view(&scene, me);
+    let at = |x, z| WorldTile { x, z, level: 0 };
+    let arrived = |dest, radius| is_arrived(me, dest, radius, || &view);
+
+    assert!(arrived(at(3254, 3251), 2), "reachable in radius");
+    assert!(
+        !arrived(at(3252, 3253), 2),
+        "walkable dest through the wall"
+    );
+    assert!(
+        !arrived(at(3253, 3254), 2),
+        "walkable dest two rows past the wall"
+    );
+    assert!(
+        arrived(at(3250, 3252), 2),
+        "unwalkable booth with an open adjacent stand"
+    );
+    assert!(
+        !arrived(at(3252, 3254), 2),
+        "unwalkable ladder boxed behind the wall"
+    );
+    assert!(!arrived(at(3255, 3252), 2), "outside the radius");
+    assert!(!arrived(at(3252, 3252), -1), "negative radius");
+    assert!(arrived(me, 0), "radius 0 on the tile");
+    assert!(!arrived(at(3253, 3252), 0), "radius 0 one tile off");
+    assert!(
+        !is_arrived(
+            me,
+            WorldTile { level: 1, ..me },
+            2,
+            || -> &'static ReachQueryView { panic!("level mismatch asks no probe") }
+        ),
+        "level mismatch on the exact (x, z)"
+    );
+    let unavailable = ReachQueryView::unavailable();
+    assert!(
+        is_arrived(me, me, 0, || -> &'static ReachQueryView {
+            panic!("dist 0 asks no probe")
+        }),
+        "standing on dest"
+    );
+    assert!(
+        is_arrived(me, at(3252, 3253), 2, || &unavailable),
+        "a scene that cannot probe the dest keeps the Chebyshev fallback"
+    );
+
+    // Unprobeable dest: one tile off the west edge of the scene.
+    let edge = at(3200, 3240);
+    let edge_view = arrival_view(&scene, edge);
+    assert!(is_arrived(edge, at(3199, 3240), 2, || &edge_view));
+
+    // A flood from another tile cannot answer reach for `me`.
+    let elsewhere = arrival_view(&scene, at(3252, 3249));
+    assert!(!is_arrived(me, at(3253, 3252), 2, || &elsewhere));
+}
+
+/// Both reach probes use frozen `ARRIVAL_MAX_STEPS` (512): a walkable dest
+/// in radius whose BFS dequeue rank is 512 arrives, rank 513 does not.
+#[test]
+fn is_arrived_reach_budget_is_arrival_max_steps() {
+    // A one-wide serpentine: open rows lz = 0, 2, .., 10 joined at
+    // alternating ends, so BFS rank is path length.
+    let mut scene = open_scene();
+    scene.collision_flags.fill(CollisionFlag::SQ_BLOCKED);
+    for lz in (0..=10).step_by(2) {
+        for lx in 0..104 {
+            scene.collision_flags[lx * 104 + lz] = 0;
+        }
+    }
+    for (lz, lx) in [(1, 103), (3, 0), (5, 103), (7, 0), (9, 103)] {
+        scene.collision_flags[lx * 104 + lz] = 0;
+    }
+    let me = WorldTile {
+        x: 3200,
+        z: 3200,
+        level: 0,
+    };
+    let sq = SceneQuery::new(&scene, Some(me));
+    let flood = sq.flood_reach().expect("serpentine flood");
+    let view = pack_reach_query(&scene, Some(&flood));
+    let ranked = |rank: u16| {
+        let i = flood
+            .ranks()
+            .0
+            .iter()
+            .position(|&r| r == rank)
+            .expect("rank on path");
+        WorldTile {
+            x: 3200 + (i / 104) as i32,
+            z: 3200 + (i % 104) as i32,
+            level: 0,
+        }
+    };
+    let (at_budget, past_budget) = (ranked(512), ranked(513));
+    let budget = SceneReachOptions {
+        max_steps: Some(ARRIVAL_MAX_STEPS),
+        adjacent_ok: false,
+    };
+    assert!(sq.can_reach(at_budget, &budget));
+    assert!(!sq.can_reach(past_budget, &budget));
+    assert!(is_arrived(me, at_budget, 104, || &view));
+    assert!(!is_arrived(me, past_budget, 104, || &view));
+}
+
 #[test]
 fn pack_reach_query_word_boundaries_survive_u32_pack() {
     let mut scene = SceneView {
@@ -1463,6 +1600,191 @@ fn pack_reach_query_step_masks_match_can_step() {
             }
         }
     }
+}
+
+#[test]
+fn reach_pack_cache_invalidates_on_generation_change_only() {
+    let mut scene = open_scene();
+    scene.collision_flags[5 * 104 + 6] = CollisionFlag::SQ_BLOCKED;
+    let player = WorldTile {
+        x: 3205,
+        z: 3205,
+        level: 0,
+    };
+    let flood = SceneQuery::new(&scene, Some(player))
+        .flood_reach()
+        .expect("flood");
+    let mut cache = ReachPackCache::default();
+    let key = ReachCacheKey::from_parts(1, 10, 0, &scene, Some(player), None);
+    let xor_alias = ReachCacheKey::from_parts(1, 0, 10, &scene, Some(player), None);
+    assert_ne!(key, xor_alias, "XOR-equal loc gens must not share a key");
+    assert!(
+        !key.static_eq(xor_alias),
+        "XOR-equal loc gens must rebuild statics"
+    );
+    let first = cache
+        .pack(key, &scene, Some(Arc::new(flood)), None)
+        .as_ref()
+        .clone();
+    assert_eq!(cache.static_rebuilds(), 1);
+    assert_eq!(cache.flood_packs(), 1);
+    assert!(first.available);
+    assert_eq!(first.width, 104);
+    assert_eq!(first.height, 104);
+    assert!(!first.walkable.is_empty());
+    assert!(!first.step.is_empty());
+    let second = cache.pack(key, &scene, None, None).as_ref().clone();
+    assert_eq!(
+        cache.static_rebuilds(),
+        1,
+        "same key must not rebuild statics"
+    );
+    assert_eq!(cache.flood_packs(), 1, "same key must not repack flood");
+    assert_eq!(first, second);
+    assert_eq!(first.walkable, second.walkable);
+    assert_eq!(first.reachable, second.reachable);
+    assert_eq!(first.step, second.step);
+
+    let moved = WorldTile {
+        x: player.x + 1,
+        z: player.z,
+        level: 0,
+    };
+    let moved_flood = SceneQuery::new(&scene, Some(moved))
+        .flood_reach()
+        .expect("moved flood");
+    let moved_key = ReachCacheKey::from_parts(1, 10, 0, &scene, Some(moved), None);
+    let overlay = cache
+        .pack(moved_key, &scene, Some(Arc::new(moved_flood)), None)
+        .as_ref()
+        .clone();
+    assert_eq!(
+        cache.static_rebuilds(),
+        1,
+        "player move must reuse walkable/step"
+    );
+    assert_eq!(
+        cache.flood_packs(),
+        2,
+        "player move must repack flood ranks"
+    );
+    assert_eq!(
+        overlay.walkable, first.walkable,
+        "player move must keep walkable bits"
+    );
+    assert_eq!(overlay.step, first.step, "player move must keep step bytes");
+    assert_ne!(
+        overlay.exact_rank, first.exact_rank,
+        "player move must refresh flood ranks"
+    );
+
+    scene.collision_flags[6 * 104 + 6] = CollisionFlag::SQ_BLOCKED;
+    let dirty_key = ReachCacheKey::from_parts(1, 11, 0, &scene, Some(moved), None);
+    let dirty_flood = SceneQuery::new(&scene, Some(moved))
+        .flood_reach()
+        .expect("dirty flood");
+    let dirty = cache
+        .pack(dirty_key, &scene, Some(Arc::new(dirty_flood.clone())), None)
+        .as_ref()
+        .clone();
+    assert_eq!(
+        cache.static_rebuilds(),
+        2,
+        "loc static generation change must rebuild statics"
+    );
+    assert_ne!(dirty.walkable, overlay.walkable);
+
+    let stamp_key = ReachCacheKey::from_parts(1, 11, 7, &scene, Some(moved), None);
+    let _ = cache.pack(stamp_key, &scene, Some(Arc::new(dirty_flood.clone())), None);
+    assert_eq!(
+        cache.static_rebuilds(),
+        3,
+        "loc model stamp change must rebuild statics"
+    );
+
+    let scene_key = ReachCacheKey::from_parts(2, 11, 7, &scene, Some(moved), None);
+    let _ = cache.pack(scene_key, &scene, Some(Arc::new(dirty_flood)), None);
+    assert_eq!(
+        cache.static_rebuilds(),
+        4,
+        "scene generation change must rebuild statics"
+    );
+}
+
+#[test]
+fn packed_reach_matches_scene_query_predicates_on_104_scene() {
+    let mut scene = open_scene();
+    scene.collision_flags[5 * 104 + 6] = CollisionFlag::SQ_BLOCKED;
+    scene.collision_flags[10 * 104 + 10] = CollisionFlag::W_W;
+    let player = WorldTile {
+        x: 3205,
+        z: 3205,
+        level: 0,
+    };
+    let sq = SceneQuery::new(&scene, Some(player));
+    let flood = sq.flood_reach().expect("flood");
+    let view = pack_reach_query(&scene, Some(&flood));
+    let samples = [
+        WorldTile {
+            x: 3205,
+            z: 3205,
+            level: 0,
+        },
+        WorldTile {
+            x: 3205,
+            z: 3206,
+            level: 0,
+        },
+        WorldTile {
+            x: 3210,
+            z: 3210,
+            level: 0,
+        },
+        WorldTile {
+            x: 3199,
+            z: 3205,
+            level: 0,
+        },
+        WorldTile {
+            x: 3205,
+            z: 3205,
+            level: 1,
+        },
+    ];
+    for tile in samples {
+        let js_walkable = ReachQueryView::bit_at(
+            &view.walkable,
+            view.width,
+            view.height,
+            view.base_x,
+            view.base_z,
+            view.level,
+            tile,
+        );
+        assert_eq!(sq.walkable(tile), js_walkable, "walkable {tile:?}");
+        for adjacent_ok in [false, true] {
+            let options = SceneReachOptions {
+                max_steps: Some(400),
+                adjacent_ok,
+            };
+            assert_eq!(
+                sq.can_reach(tile, &options),
+                view.can_reach(tile, &options),
+                "can_reach {tile:?} adj={adjacent_ok}"
+            );
+        }
+    }
+    let from = WorldTile {
+        x: 3205,
+        z: 3205,
+        level: 0,
+    };
+    let to = WorldTile {
+        x: 3206,
+        z: 3205,
+        level: 0,
+    };
+    assert_eq!(sq.can_step(from, to), view.can_step(from, to));
 }
 
 #[test]

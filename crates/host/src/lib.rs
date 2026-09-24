@@ -396,6 +396,21 @@ impl Host {
         } else {
             client.shell.latch_click();
         }
+        let random_events = slot.random_events.load(Ordering::Relaxed);
+        slot.settings.random_events = random_events;
+        // The 289 timer increments inside `mainloop`, so interrupt it at
+        // the host boundary without manufacturing input or a packet. Only
+        // trust the previous guardian publication while no newer client
+        // generation is waiting for the post-loop drain.
+        if client.revision().is_289()
+            && client.ingame
+            && random_events
+            && slot.guardian_status.hold
+            && slot.guardian_status.claim == RandomClaim::Host
+            && slot.guardian_status_is_current(client)
+        {
+            client.shell.idle_cycles = 0;
+        }
         let t_loop = std::time::Instant::now();
         client.mainloop();
         slot.loop_ns = slot
@@ -516,6 +531,7 @@ impl Host {
         let status = slot
             .guardian
             .tick(client, &slot.snapshot, &slot.settings, now_ms, knock);
+        slot.guardian_status = status.clone();
         if should_emit_tick(result.player_info) {
             slot.tick_n = slot.tick_n.wrapping_add(1);
         }
@@ -825,6 +841,9 @@ struct SlotLoop {
     /// Random-event guardian (act/hold; the trapped-kind hold and the
     /// `on_random` knock live here).
     guardian: Guardian,
+    /// Last status published by the guardian. The 289 idle-timer
+    /// interruption consumes this before the next `mainloop` pass.
+    guardian_status: RandomStatus,
     renderer: Option<Renderer>,
     /// The `prefer_cpu` request the attached head was built with, so a
     /// GPU↔CPU flip on a live slot is a drop+reattach, not a restart.
@@ -872,6 +891,7 @@ impl SlotLoop {
             lamp_auto: Arc::new(AtomicBool::new(true)),
             lamp_skill: Arc::new(Mutex::new("strength".to_string())),
             guardian: Guardian::new(),
+            guardian_status: RandomStatus::default(),
             renderer: None,
             renderer_prefer_cpu: None,
             renderer_lowmem: None,
@@ -895,6 +915,7 @@ impl SlotLoop {
         let result = self.pump.drain_client(client);
         if result.session_changed || (!client.ingame && self.snapshot.ingame()) {
             self.guardian = Guardian::new();
+            self.guardian_status = RandomStatus::default();
             self.run_on = false;
         }
         publish_snapshot(&mut self.snapshot, client, result);
@@ -918,6 +939,14 @@ impl SlotLoop {
             self.run_sends += 1;
         }
         result
+    }
+
+    fn guardian_status_is_current(&self, client: &Client) -> bool {
+        let last = self.pump.last();
+        !self.pump.dirty(client.gens).any()
+            && last.player_info == client.gens.player_info
+            && last.session == client.gens.session
+            && last.invalidations == client.gens.invalidations
     }
 }
 
@@ -997,7 +1026,7 @@ mod tests {
     use super::*;
     use api::interact::RUN_ORB_IFACE;
     use client::dash3d::TerrainOverlayShape;
-    use client::io::ClientProt;
+    use client::io::{ClientProt, ClientProt289};
     use std::sync::OnceLock;
     use std::time::Instant;
 
@@ -1696,31 +1725,34 @@ mod tests {
         let mut snapshot = GameSnapshot::new();
         publish_snapshot(&mut snapshot, &client, pump.drain(client.gens));
         assert_eq!(snapshot.scene_state(), 1);
-        let scene_before = (
-            snapshot.scene().available,
-            snapshot.scene().base_x,
-            snapshot.scene().base_z,
-            snapshot.scene().level,
-            snapshot.scene().collision_flags.clone(),
+        assert!(
+            !snapshot.scene().available,
+            "scene_state 1 must not publish a collision grid"
         );
 
         // check_scene performs this transition locally without moving a
-        // packet-family generation.
+        // packet-family generation. The host copies the scalar every quiet
+        // drain; an unavailable grid is materialized once when the client
+        // becomes scene-ready (retained collision after a session reset).
         client.scene_state = 2;
         let quiet = pump.drain(client.gens);
         assert!(!quiet.dirty.any());
         publish_snapshot(&mut snapshot, &client, quiet);
 
         assert_eq!(snapshot.scene_state(), 2);
+        assert!(
+            snapshot.scene().available,
+            "scene-ready must materialize the missing host collision view once"
+        );
+        let flags_before = snapshot.scene().collision_flags.clone();
+        client.collision[0].flags[0][0] ^= 1;
+        let quiet_again = pump.drain(client.gens);
+        assert!(!quiet_again.dirty.any());
+        publish_snapshot(&mut snapshot, &client, quiet_again);
         assert_eq!(
-            (
-                snapshot.scene().available,
-                snapshot.scene().base_x,
-                snapshot.scene().base_z,
-                snapshot.scene().level,
-                snapshot.scene().collision_flags.clone(),
-            ),
-            scene_before
+            snapshot.scene().collision_flags,
+            flags_before,
+            "a later quiet drain must not copy the grid without a scene gen or identity change"
         );
     }
 
@@ -3235,6 +3267,161 @@ mod tests {
             c.out.pos > 0,
             "the Talk-to went out on the real client driver"
         );
+    }
+
+    fn maze_client(revision: client::client::ClientRevision) -> Client {
+        let mut client = Client::from_shared_with_revision(
+            cfg(),
+            Arc::new(Cache::default()),
+            Arc::new(vec![]),
+            Vec::new(),
+            revision,
+        );
+        ingame_scene2(&mut client);
+        client.map_build_base_x = 45 * 64 - 10;
+        client.map_build_base_z = 71 * 64 - 10;
+        client.gens.scene += 1;
+        client
+    }
+
+    fn establish_maze_hold(client: &mut Client, slot: &mut SlotLoop, sends: &mut u32) {
+        let status = Host::client_frame(client, slot, "maze", None, None, sends, None);
+        assert_eq!(status.kind, Some(RandomKind::Maze));
+        assert_eq!(status.claim, RandomClaim::Host);
+        assert!(status.hold, "enabled host-owned maze must hold");
+        client.out.pos = 0;
+        client.logout_timer = 0;
+    }
+
+    #[test]
+    fn held_host_owned_289_random_event_interrupts_idle_timer_before_threshold() {
+        let mut client = maze_client(client::client::ClientRevision::R289);
+        let mut slot = SlotLoop::new();
+        let mut sends = 0;
+        establish_maze_hold(&mut client, &mut slot, &mut sends);
+
+        client.shell.idle_cycles = 4500;
+        Host::client_frame(&mut client, &mut slot, "maze", None, None, &mut sends, None);
+
+        assert_eq!(client.shell.idle_cycles, 1);
+        assert_eq!(client.logout_timer, 0);
+        assert_eq!(client.out.pos, 0, "held frame must not emit IDLE_TIMER");
+    }
+
+    #[test]
+    fn disabled_released_and_ordinary_289_idle_still_cross_threshold() {
+        fn assert_idle_timer(client: &Client) {
+            assert_eq!(client.shell.idle_cycles, 4001);
+            assert_eq!(client.logout_timer, 250);
+            assert_eq!(client.out.pos, 1);
+            assert_eq!(
+                client.out.data()[0],
+                ClientProt289::IDLE_TIMER.id as u8,
+                "289 IDLE_TIMER opcode"
+            );
+        }
+
+        let mut disabled = maze_client(client::client::ClientRevision::R289);
+        let mut disabled_slot = SlotLoop::new();
+        let mut sends = 0;
+        establish_maze_hold(&mut disabled, &mut disabled_slot, &mut sends);
+        disabled_slot.random_events.store(false, Ordering::Relaxed);
+        disabled.shell.idle_cycles = 4500;
+        Host::client_frame(
+            &mut disabled,
+            &mut disabled_slot,
+            "disabled",
+            None,
+            None,
+            &mut sends,
+            None,
+        );
+        assert_idle_timer(&disabled);
+
+        let mut released = maze_client(client::client::ClientRevision::R289);
+        let mut released_slot = SlotLoop::new();
+        establish_maze_hold(&mut released, &mut released_slot, &mut sends);
+        released.map_build_base_x = 0;
+        released.map_build_base_z = 0;
+        released.gens.player += 1;
+        released.gens.player_info += 1;
+        released.shell.idle_cycles = 4500;
+        let released_status = Host::client_frame(
+            &mut released,
+            &mut released_slot,
+            "released",
+            None,
+            None,
+            &mut sends,
+            None,
+        );
+        assert_idle_timer(&released);
+        assert!(!released_status.hold, "released maze must clear the hold");
+
+        let mut relogged = maze_client(client::client::ClientRevision::R289);
+        let mut relogged_slot = SlotLoop::new();
+        establish_maze_hold(&mut relogged, &mut relogged_slot, &mut sends);
+        relogged.gens.session += 1;
+        relogged.map_build_base_x = 0;
+        relogged.map_build_base_z = 0;
+        relogged.gens.player += 1;
+        relogged.gens.player_info += 1;
+        relogged.shell.idle_cycles = 4500;
+        let relogged_status = Host::client_frame(
+            &mut relogged,
+            &mut relogged_slot,
+            "relogged",
+            None,
+            None,
+            &mut sends,
+            None,
+        );
+        assert_idle_timer(&relogged);
+        assert!(!relogged_status.hold, "a new session must not inherit hold");
+
+        let mut ordinary = Client::from_shared_with_revision(
+            cfg(),
+            Arc::new(Cache::default()),
+            Arc::new(vec![]),
+            Vec::new(),
+            client::client::ClientRevision::R289,
+        );
+        ingame_scene2(&mut ordinary);
+        ordinary.shell.idle_cycles = 4500;
+        let mut ordinary_slot = SlotLoop::new();
+        Host::client_frame(
+            &mut ordinary,
+            &mut ordinary_slot,
+            "ordinary",
+            None,
+            None,
+            &mut sends,
+            None,
+        );
+        assert_idle_timer(&ordinary);
+    }
+
+    #[test]
+    fn held_274_random_event_leaves_native_idle_state_untouched() {
+        let mut client = maze_client(client::client::ClientRevision::R274);
+        let mut slot = SlotLoop::new();
+        let mut sends = 0;
+        establish_maze_hold(&mut client, &mut slot, &mut sends);
+
+        client.shell.idle_cycles = 4500;
+        Host::client_frame(
+            &mut client,
+            &mut slot,
+            "maze-274",
+            None,
+            None,
+            &mut sends,
+            None,
+        );
+
+        assert_eq!(client.shell.idle_cycles, 4500);
+        assert_eq!(client.logout_timer, 0);
+        assert_eq!(client.out.pos, 0);
     }
 
     /// Lamp auto is live-mirrored like `random_events`: spawn with auto

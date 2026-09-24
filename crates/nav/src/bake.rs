@@ -42,7 +42,7 @@ pub const GENERATOR_ID: &str = "nav-bake-1";
 /// bytes. Pack/flags come from bake/collision/pack/transport; reach bits also
 /// depend on `paint.rs` (`bake_reach`) and `router.rs` (`step_ok`). Traveller
 /// and grid-search changes do not decide those bytes.
-pub const GENERATOR_SOURCES: [&str; 7] = [
+pub const GENERATOR_SOURCES: [&str; 8] = [
     "src/bake.rs",
     "src/canlight.rs",
     "src/collision.rs",
@@ -50,6 +50,7 @@ pub const GENERATOR_SOURCES: [&str; 7] = [
     "src/paint.rs",
     "src/router.rs",
     "src/transport.rs",
+    "src/transport/condparse.rs",
 ];
 
 /// Digest of the bake generator: the manual id, the pack format identity and
@@ -129,6 +130,29 @@ pub fn verify_cache_manifest(
     Ok(manifest)
 }
 
+/// Strict read-only decoded identity for offline packaging. The snapshot
+/// must match the selected versionlist; no endpoint is contacted.
+pub fn decoded_identity(
+    revision: u16,
+    cache_dir: &Path,
+    snapshot_root: &Path,
+) -> Result<String, String> {
+    let versionlist = std::fs::read(cache_dir.join("versionlist")).map_err(|e| e.to_string())?;
+    let version = client::unpack::version_hash(&versionlist);
+    let before = CacheManifest::capture(revision, cache_dir)?;
+    let result = client::content_identity::compute_decoded_content_identity(
+        revision,
+        cache_dir,
+        snapshot_root.join(version),
+    )
+    .map_err(|e| e.to_string())?
+    .content_id_hex();
+    if before != CacheManifest::capture(revision, cache_dir)? {
+        return Err("cache changed during offline identity preparation".into());
+    }
+    Ok(result)
+}
+
 /// One bake request: canonical inputs for a single revision.
 pub struct BakeRequest<'a> {
     /// `Some(revision)` binds the pack to a verified cache identity;
@@ -174,6 +198,8 @@ pub struct BakedNav {
 /// Bake the whole world for one request. Every `.jm2` under the maps dir
 /// bakes or the call fails; non-`.jm2` files are metadata and skipped.
 pub fn bake_world(request: &BakeRequest<'_>) -> Result<BakedNav, String> {
+    let content_root = request.maps_dir.parent().unwrap_or(Path::new("."));
+    let source_before = crate::bundle::source_digest(content_root, &[request.config_jag]);
     let mut notes = Vec::new();
 
     // Openable wall door loc ids from the Server door configs.
@@ -287,7 +313,7 @@ pub fn bake_world(request: &BakeRequest<'_>) -> Result<BakedNav, String> {
         &canlight_bits,
         &canlight_binding,
     );
-    let manifest = match (request.revision, request.cache) {
+    let mut manifest = match (request.revision, request.cache) {
         (Some(revision), Some(cache)) => Some(NavManifest::capture(
             revision,
             cache,
@@ -298,6 +324,13 @@ pub fn bake_world(request: &BakeRequest<'_>) -> Result<BakedNav, String> {
         )?),
         (None, None) => None,
         _ => return Err("a bound bake needs both a revision and its cache manifest".into()),
+    };
+    let source_before = source_before?;
+    if source_before != crate::bundle::source_digest(content_root, &[request.config_jag])? {
+        return Err("baker inputs changed during preparation".into());
+    }
+    if let Some(manifest) = &mut manifest {
+        manifest.source_sha256 = Some(source_before);
     };
     Ok(BakedNav {
         pack: bytes,
@@ -404,6 +437,10 @@ mod tests {
             GENERATOR_SOURCES.contains(&"src/canlight.rs"),
             "GENERATOR_SOURCES must include the canlight-owning source"
         );
+        assert!(
+            GENERATOR_SOURCES.contains(&"src/transport/condparse.rs"),
+            "GENERATOR_SOURCES must include the transport condparse-owning source"
+        );
 
         let baseline: Vec<(&str, &str)> = GENERATOR_SOURCES
             .iter()
@@ -437,6 +474,8 @@ mod tests {
             modified_nanos: 5,
         }];
         let baked = crate::bundle::BakeStamp {
+            content_id: None,
+            source_sha256: None,
             generator: warm,
             format: "274V8".into(),
             revision: 289,

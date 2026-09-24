@@ -708,10 +708,185 @@ fn npc_rebuild_reads_full_actor_view() {
     assert!(!v.running, "primary_anim 809 != runanim 810");
     assert_eq!(v.level, 2);
     assert_eq!(v.size, 1);
+    // route defaults to (0,0); pixels (100,200) are not rest-pose, so
+    // rendered SW and network SW already disagree on this fixture.
+    assert_eq!(
+        v.network,
+        WorldTile {
+            x: 3200,
+            z: 3200,
+            level: 1
+        }
+    );
+    assert_ne!(v.tile, v.network);
     // legacy position fields keep the existing consumers working
     assert_eq!(v.x, 100);
     assert_eq!(v.z, 200);
     assert_eq!(v.yaw, 512);
+}
+
+fn rest_pose_pixels(route: i32, size: i32) -> i32 {
+    route * 128 + size * 64
+}
+
+/// Size-1 standing rest pose: rendered SW equals path-head network SW.
+#[test]
+fn npc_size1_standing_tile_equals_network_sw() {
+    let mut c = client_with_npc();
+    c.map_build_base_x = 3200;
+    c.map_build_base_z = 3200;
+    c.minusedlevel = 0;
+    {
+        let e = &mut c.npc[7].as_mut().unwrap().entity;
+        e.size = 1;
+        e.route_x[0] = 10;
+        e.route_z[0] = 20;
+        e.x = rest_pose_pixels(10, 1);
+        e.z = rest_pose_pixels(20, 1);
+        e.route_length = 0;
+    }
+    let mut snap = GameSnapshot::new();
+    c.bump_gens(ServerProt::NPC_INFO);
+    assert!(snap.rebuild_family(&c, Family::Npc));
+    let v = &snap.npcs()[0];
+    assert_eq!(v.size, 1);
+    assert_eq!(
+        v.tile,
+        WorldTile {
+            x: 3210,
+            z: 3220,
+            level: 0
+        }
+    );
+    assert_eq!(v.tile, v.network);
+}
+
+/// Size-4 standing rest pose: tile == network SW == base+route, not frozen centre.
+#[test]
+fn npc_size4_standing_tile_equals_network_not_centre() {
+    let mut c = client_with_npc();
+    c.map_build_base_x = 3200;
+    c.map_build_base_z = 3200;
+    c.minusedlevel = 0;
+    {
+        let npc = c.npc[7].as_mut().unwrap();
+        npc.r#type = None;
+        let e = &mut npc.entity;
+        e.size = 4;
+        e.route_x[0] = 10;
+        e.route_z[0] = 20;
+        e.x = rest_pose_pixels(10, 4);
+        e.z = rest_pose_pixels(20, 4);
+        e.route_length = 0;
+    }
+    let mut snap = GameSnapshot::new();
+    c.bump_gens(ServerProt::NPC_INFO);
+    assert!(snap.rebuild_family(&c, Family::Npc));
+    let v = &snap.npcs()[0];
+    assert_eq!(v.size, 4);
+    let sw = WorldTile {
+        x: 3210,
+        z: 3220,
+        level: 0,
+    };
+    assert_eq!(v.tile, sw);
+    assert_eq!(v.network, sw);
+    assert_ne!(
+        v.network,
+        WorldTile {
+            x: 3212,
+            z: 3222,
+            level: 0
+        },
+        "must not publish frozen centre base+route+(size/2)"
+    );
+}
+
+/// Frozen npc-network-position numbers: size-4 moving rendered SW vs path-head.
+#[test]
+fn npc_size4_moving_rendered_sw_vs_network_sw() {
+    let mut c = client_with_npc();
+    c.map_build_base_x = 0;
+    c.map_build_base_z = 0;
+    c.minusedlevel = 0;
+    {
+        let npc = c.npc[7].as_mut().unwrap();
+        npc.r#type = None;
+        let e = &mut npc.entity;
+        e.size = 4;
+        e.route_x[0] = 2832;
+        e.route_z[0] = 9825;
+        e.x = 2835 * 128;
+        e.z = 9825 * 128;
+        e.route_length = 1;
+    }
+    let mut snap = GameSnapshot::new();
+    c.bump_gens(ServerProt::NPC_INFO);
+    assert!(snap.rebuild_family(&c, Family::Npc));
+    let v = &snap.npcs()[0];
+    assert_eq!(v.size, 4);
+    assert_eq!(
+        v.tile,
+        WorldTile {
+            x: 2833,
+            z: 9823,
+            level: 0
+        }
+    );
+    assert_eq!(
+        v.network,
+        WorldTile {
+            x: 2832,
+            z: 9825,
+            level: 0
+        }
+    );
+    assert_ne!(v.tile, v.network);
+    assert_ne!(
+        (v.tile.x, v.tile.z),
+        (2835, 9825),
+        "rendered SW is not frozen centre"
+    );
+    assert_ne!(
+        (v.network.x, v.network.z),
+        (2834, 9827),
+        "network SW is not frozen centre"
+    );
+}
+
+/// Live row after type size change: next NPC_INFO rebuild follows cache size.
+#[test]
+fn npc_live_row_size_follows_new_type_after_rebuild() {
+    let mut c = client_with_npc();
+    let npc = c.npc[7].as_mut().unwrap();
+    let mut second = None;
+    if let Some(cache) = Arc::get_mut(&mut c.cache) {
+        let first = Some(cache.npcs.len());
+        npc.r#type = first;
+        cache.npcs.push(NpcType {
+            id: 9,
+            name: "Goblin".into(),
+            size: 1,
+            ..Default::default()
+        });
+        second = Some(cache.npcs.len());
+        cache.npcs.push(NpcType {
+            id: 10,
+            name: "Goblin".into(),
+            size: 4,
+            ..Default::default()
+        });
+    }
+    c.npc[7].as_mut().unwrap().entity.size = 1;
+    let mut snap = GameSnapshot::new();
+    c.bump_gens(ServerProt::NPC_INFO);
+    assert!(snap.rebuild_family(&c, Family::Npc));
+    assert_eq!(snap.npcs()[0].size, 1);
+    c.npc[7].as_mut().unwrap().r#type = second;
+    c.npc[7].as_mut().unwrap().entity.size = 4;
+    c.bump_gens(ServerProt::NPC_INFO);
+    assert!(snap.rebuild_family(&c, Family::Npc));
+    assert_eq!(snap.npcs()[0].size, 4);
 }
 
 /// `in_combat` is the health-bar window (`combatCycle > loopCycle`), not
@@ -1207,6 +1382,8 @@ fn ground_item_view_rebuild_reads_ground_obj() {
 #[test]
 fn scene_view_rebuild_reads_collision_flags() {
     let mut c = client_with_npc();
+    c.ingame = true;
+    c.scene_state = 2;
     c.map_build_base_x = 3200;
     c.map_build_base_z = 3200;
     c.minusedlevel = 1;
@@ -4569,4 +4746,117 @@ fn packed_interfaces_include_a_make_type_inv() {
         found > 0,
         "selected cache must contain a Make TYPE_INV for the anvil walk"
     );
+}
+
+fn flag_at(scene: &api::snapshot::SceneView, x: usize, z: usize) -> i32 {
+    scene.collision_flags[x * scene.height as usize + z]
+}
+
+/// T3: highmem plane writes do not bump gens.scene; identity recopy must
+/// still publish the new plane and Scene's return stays gen-only.
+#[test]
+fn highmem_plane_recopies_without_scene_gen() {
+    let mut c = client_with_npc();
+    c.ingame = true;
+    c.scene_state = 2;
+    c.map_build_base_x = 3200;
+    c.map_build_base_z = 3200;
+    c.minusedlevel = 0;
+    c.collision[0].add_wall(5, 6, 0, 0, false);
+    c.collision[1].add_wall(10, 10, 0, 0, false);
+    c.bump_gens(ServerProt::REBUILD_NORMAL);
+    let mut snap = GameSnapshot::new();
+    assert!(snap.rebuild(&c));
+    assert!(snap.scene().available);
+    assert_eq!(snap.scene().level, 0);
+    assert_eq!(flag_at(snap.scene(), 5, 6), CollisionFlag::W_W);
+
+    c.minusedlevel = 1;
+    assert!(
+        !snap.rebuild_family(&c, Family::Scene),
+        "plane write is not a scene gen"
+    );
+    let _ = snap.rebuild(&c);
+    assert!(snap.scene().available);
+    assert_eq!(snap.scene().level, 1);
+    assert_eq!(flag_at(snap.scene(), 10, 10), CollisionFlag::W_W);
+    assert_eq!(
+        flag_at(snap.scene(), 5, 6),
+        CollisionFlag::_OPEN,
+        "old-plane wall is not the current identity"
+    );
+}
+
+/// T4: new base while scene_state==1 must unpublish, not pair new base
+/// with the previous region's flags.
+#[test]
+fn state1_new_base_unpublishes_scene() {
+    let mut c = client_with_npc();
+    c.ingame = true;
+    c.scene_state = 2;
+    c.map_build_base_x = 3200;
+    c.map_build_base_z = 3200;
+    c.collision[0].add_wall(5, 6, 0, 0, false);
+    c.bump_gens(ServerProt::REBUILD_NORMAL);
+    let mut snap = GameSnapshot::new();
+    snap.rebuild(&c);
+    assert!(snap.scene().available);
+    assert_eq!(snap.scene().base_x, 3200);
+
+    c.scene_state = 1;
+    c.map_build_base_x = 3300;
+    assert!(
+        !snap.rebuild_family(&c, Family::Scene),
+        "lowmem loading is not a scene gen"
+    );
+    assert!(!snap.scene().available);
+    assert!(
+        snap.scene().collision_flags.is_empty(),
+        "must not keep the previous region's flags"
+    );
+}
+
+/// T5 / T8: returning to scene_state==2 recopies; Scene return stays gen-only.
+#[test]
+fn map_build_ready_materializes_without_inventing_gen() {
+    let mut c = client_with_npc();
+    c.ingame = true;
+    c.scene_state = 1;
+    c.map_build_base_x = 3200;
+    c.map_build_base_z = 3200;
+    c.collision[0].add_wall(5, 6, 0, 0, false);
+    c.bump_gens(ServerProt::REBUILD_NORMAL);
+    let mut snap = GameSnapshot::new();
+    assert!(snap.rebuild(&c));
+    assert!(!snap.scene().available);
+
+    c.scene_state = 2;
+    assert!(!snap.rebuild(&c), "scene_state 1→2 is not a gen move");
+    assert!(snap.scene().available);
+    assert_eq!(flag_at(snap.scene(), 5, 6), CollisionFlag::W_W);
+
+    c.bump_gens(ServerProt::REBUILD_NORMAL);
+    c.collision[0].add_wall(20, 20, 0, 0, false);
+    assert!(snap.rebuild_family(&c, Family::Scene));
+    assert!(snap.scene().available);
+    assert_eq!(flag_at(snap.scene(), 20, 20), CollisionFlag::W_W);
+}
+
+/// Logout / !ingame clears the published grid even without a later gen.
+#[test]
+fn logout_clears_scene_without_gen() {
+    let mut c = client_with_npc();
+    c.ingame = true;
+    c.scene_state = 2;
+    c.map_build_base_x = 3200;
+    c.map_build_base_z = 3200;
+    c.bump_gens(ServerProt::REBUILD_NORMAL);
+    let mut snap = GameSnapshot::new();
+    snap.rebuild(&c);
+    assert!(snap.scene().available);
+
+    c.ingame = false;
+    assert!(!snap.rebuild_family(&c, Family::Scene));
+    assert!(!snap.scene().available);
+    assert!(snap.scene().collision_flags.is_empty());
 }

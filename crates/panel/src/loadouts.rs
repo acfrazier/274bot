@@ -443,10 +443,10 @@ fn search_popup(ui: &Ui, session: &mut Session) {
             let can_use = !session.loadouts_search.trim().is_empty();
             {
                 let _off = ui.begin_disabled_with_cond(!can_use);
-                if ui.button("Use entered name") {
-                    if apply_manual_item_name(session, &session.loadouts_search.clone()) {
-                        ui.close_current_popup();
-                    }
+                if ui.button("Use entered name")
+                    && apply_manual_item_name(session, &session.loadouts_search.clone())
+                {
+                    ui.close_current_popup();
                 }
             }
         } else if hits.is_empty() {

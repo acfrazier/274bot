@@ -77,6 +77,12 @@ fn expand_bounds(
     let mut x1 = maxx + pad;
     let mut y1 = maxy + pad;
     if shadow.active() {
+        // f32::clamp(NaN) is NaN; max/min ignore NaN and yield 0 here.
+        // Wire decode can still deliver NaN blur; keep the dirty-rect pad finite.
+        #[expect(
+            clippy::manual_clamp,
+            reason = "NaN blur must stay 0 after max/min; clamp would propagate NaN and skip the finite-r expansion"
+        )]
         let r = 3.0 * shadow.blur.max(0.0).min(MAX_SHADOW_BLUR);
         let ox = shadow.offset_x;
         let oy = shadow.offset_y;
@@ -151,6 +157,10 @@ pub(crate) fn text_pen(
     (px, py)
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "private dirty-rect helper lists FillText layout fields plus extras; a one-off layout struct would only rename the same scalars"
+)]
 fn text_dirty(
     x: i32,
     y: i32,
@@ -344,17 +354,24 @@ fn blend_premul(pixmap: &mut Pixmap, i: usize, sr: f32, sg: f32, sb: f32, sa: f3
     }
 }
 
-fn fill_radial_coverage(
-    pixmap: &mut Pixmap,
-    dirty: DirtyRect,
-    coverage: &Mask,
-    clip: Option<&Mask>,
+/// Start/end circles of a recorded radial fill. Copy-only grouping of the
+/// six scalars already stored on `FillPaint::Radial`.
+#[derive(Clone, Copy)]
+struct RadialCircles {
     x0: f32,
     y0: f32,
     r0: f32,
     x1: f32,
     y1: f32,
     r1: f32,
+}
+
+fn fill_radial_coverage(
+    pixmap: &mut Pixmap,
+    dirty: DirtyRect,
+    coverage: &Mask,
+    clip: Option<&Mask>,
+    circles: RadialCircles,
     stops: &[super::geom::GradStop],
 ) {
     let w = dirty.w as usize;
@@ -373,7 +390,9 @@ fn fill_radial_coverage(
             }
             let px = dirty.x as f32 + x as f32 + 0.5;
             let py = dirty.y as f32 + y as f32 + 0.5;
-            let t = conical_t(px, py, x0, y0, r0, x1, y1, r1);
+            let t = conical_t(
+                px, py, circles.x0, circles.y0, circles.r0, circles.x1, circles.y1, circles.r1,
+            );
             let color = sample_stops(stops, t);
             let [sr, sg, sb, sa] = unpack_rgba(color);
             let src_a = (sa as f32 / 255.0) * (a as f32 / 255.0);
@@ -518,10 +537,10 @@ fn draw_coverage_shadow(
     blit_shadow(pixmap, dirty, &alpha, extras.shadow, clip);
 }
 
-fn paint_for_extras<'a>(
+fn paint_for_extras(
     color: u32,
-    extras: &'a DrawExtras,
-) -> Option<(Option<Paint<'static>>, Option<&'a FillPaint>)> {
+    extras: &DrawExtras,
+) -> Option<(Option<Paint<'static>>, Option<&FillPaint>)> {
     match &extras.fill {
         FillPaint::Solid => Some((Some(solid_paint(color)), None)),
         FillPaint::Linear {
@@ -530,10 +549,10 @@ fn paint_for_extras<'a>(
             x1,
             y1,
             stops,
-        } => match linear_paint(*x0, *y0, *x1, *y1, stops) {
-            Some(p) => Some((Some(p), None)),
-            None => None, // zero-length linear: paint nothing
-        },
+        } => {
+            // zero-length linear: paint nothing
+            linear_paint(*x0, *y0, *x1, *y1, stops).map(|p| (Some(p), None))
+        }
         FillPaint::Radial { .. } => Some((None, Some(&extras.fill))),
     }
 }
@@ -571,13 +590,29 @@ fn fill_path_op(
             }),
         )) => {
             fill_radial_coverage(
-                pixmap, dirty, &coverage, clip, *x0, *y0, *r0, *x1, *y1, *r1, stops,
+                pixmap,
+                dirty,
+                &coverage,
+                clip,
+                RadialCircles {
+                    x0: *x0,
+                    y0: *y0,
+                    r0: *r0,
+                    x1: *x1,
+                    y1: *y1,
+                    r1: *r1,
+                },
+                stops,
             );
         }
         _ => {}
     }
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "private stroke raster lists pixmap, dirty, path, width/join, extras, and clip in StrokePath field order"
+)]
 fn stroke_path_op(
     pixmap: &mut Pixmap,
     dirty: DirtyRect,
@@ -604,6 +639,10 @@ fn stroke_path_op(
     pixmap.stroke_path(&path, &paint, &stroke, pixmap_ts(dirty), clip);
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "private rect raster lists pixmap, dirty, i64 x/y/w/h, color, extras, and clip in FillRect field order; grouping would add a one-off rect type"
+)]
 fn fill_rect_op(
     pixmap: &mut Pixmap,
     dirty: DirtyRect,
@@ -646,7 +685,19 @@ fn fill_rect_op(
                 coverage_mask_for_rect(x as f32, y as f32, w as f32, h as f32, dirty)
             {
                 fill_radial_coverage(
-                    pixmap, dirty, &coverage, clip, *x0, *y0, *r0, *x1, *y1, *r1, stops,
+                    pixmap,
+                    dirty,
+                    &coverage,
+                    clip,
+                    RadialCircles {
+                        x0: *x0,
+                        y0: *y0,
+                        r0: *r0,
+                        x1: *x1,
+                        y1: *y1,
+                        r1: *r1,
+                    },
+                    stops,
                 );
             }
         }
@@ -654,6 +705,10 @@ fn fill_rect_op(
     }
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "private text raster lists pixmap, dirty, FillText layout/face/color, extras, and clip; a layout bag would only rename the recorded fields"
+)]
 fn fill_text_op(
     pixmap: &mut Pixmap,
     dirty: DirtyRect,
@@ -723,6 +778,10 @@ fn draw_glyphs_coverage(
     }
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "private glyph blit takes pixmap, dirty, pen, face, color, and clip as the low-level draw inputs"
+)]
 fn draw_glyphs_color(
     pixmap: &mut Pixmap,
     dirty: DirtyRect,

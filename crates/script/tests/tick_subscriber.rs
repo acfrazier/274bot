@@ -6,6 +6,8 @@
 use script::isolate_fb::{ReachViewInput, SnapshotInput, TileInput};
 use script::{LoadIsolate, LoadShape};
 
+mod common;
+
 fn post_snapshot_input(iso: &LoadIsolate, input: &SnapshotInput<'_>) {
     iso.post_snapshot(script::isolate_fb::encode_snapshot(input));
 }
@@ -21,7 +23,7 @@ fn base_snapshot<'a>() -> SnapshotInput<'a> {
         ingame: true,
         inv: &[],
         inv_size: 28,
-        stats: &[],
+        stats: &common::FRESH_STATS,
         booths: &[],
         banks: &[],
         bank: &[],
@@ -67,6 +69,7 @@ fn base_snapshot<'a>() -> SnapshotInput<'a> {
         bank_note_off: -1,
         scene_state: 2,
         weight: 0,
+        combat_level: 0,
         camera_yaw: 0,
         camera_pitch: 0,
         teleports_enabled: false,
@@ -83,6 +86,8 @@ fn base_snapshot<'a>() -> SnapshotInput<'a> {
         shop_stock: &[],
         reach: ReachViewInput::UNAVAILABLE,
         attacked_by_player: false,
+        self_target_kind: 0,
+        self_target_index: -1,
         widgets: &[],
     }
 }

@@ -1,0 +1,115 @@
+// Pinned content excerpts (274 content 000c19997e07206131bcb3c884265840efce416d
+// and 289 content 92649430fcbc83538d8c4367ecb96cee1a67a944 are identical here).
+// Sources (keeper identity + shop coefficients only; models/anims omitted):
+//   scripts/areas/area_ardougne_east/configs/ardougne_east.npc [aemad] [kortan]
+//   scripts/areas/area_mage_arena/configs/mage_arena.npc [magearena_runeshop] (name=Lundail)
+//   scripts/areas/area_port_sarim/configs/port_sarim.npc [betty] [gerrant]
+//   scripts/areas/area_varrock/configs/varrock.npc [aubury] [lowe]
+//   scripts/areas/area_catherby/configs/catherby.npc [hickton] [harry]
+//   scripts/areas/area_shilo/configs/shilo.npc [shilofishowner] (name=Fernahei)
+//   scripts/areas/area_lumbridge/configs/lumbridge.npc [bob]
+//   scripts/areas/area_falador/configs/dwarven_mine.npc [nurmof]
+//   scripts/areas/area_yanille/configs/magic_guild/magic_guild.npc [magic_store_owner]
+[aemad]
+name=Aemad
+param=owned_shop,adventurershop
+param=shop_sell_multiplier,1300
+param=shop_buy_multiplier,400
+param=shop_delta,20
+param=shop_title,Aemad's Adventuring Supplies.
+
+[kortan]
+name=Kortan
+param=owned_shop,adventurershop
+param=shop_sell_multiplier,1300
+param=shop_buy_multiplier,400
+param=shop_delta,20
+param=shop_title,Aemad's Adventuring Supplies.
+
+[magearena_runeshop]
+name=Lundail
+param=owned_shop,magearena_runeshop
+param=shop_sell_multiplier,1000
+param=shop_buy_multiplier,600
+param=shop_delta,30
+param=shop_title,Lundail's Arena-side Rune Shop.
+
+[betty]
+name=Betty
+param=owned_shop,magicshop
+param=shop_sell_multiplier,1000
+param=shop_buy_multiplier,600
+param=shop_delta,10
+param=shop_title,Betty's Magic Emporium.
+
+[aubury]
+name=Aubury
+param=owned_shop,runeshop
+param=shop_sell_multiplier,1000
+param=shop_buy_multiplier,550
+param=shop_delta,10
+param=shop_title,Aubury's Rune Shop.
+
+[lowe]
+name=Lowe
+param=owned_shop,archeryshop
+param=shop_sell_multiplier,1000
+param=shop_buy_multiplier,550
+param=shop_delta,10
+param=shop_title,Lowe's Archery Emporium
+
+[hickton]
+name=Hickton
+param=owned_shop,archeryshop2
+param=shop_sell_multiplier,1000
+param=shop_buy_multiplier,500
+param=shop_delta,10
+param=shop_title,Hicktons Archery Emporium.
+
+[gerrant]
+name=Gerrant
+param=owned_shop,fishingshop
+param=shop_sell_multiplier,1000
+param=shop_buy_multiplier,700
+param=shop_delta,10
+param=shop_title,Gerrant's Fishy Business.
+
+[harry]
+name=Harry
+param=owned_shop,fishingshop2
+param=shop_sell_multiplier,1000
+param=shop_buy_multiplier,700
+param=shop_delta,10
+param=shop_title,Harrys Fishing Shop.
+
+[shilofishowner]
+name=Fernahei
+param=owned_shop,shilofishingshop
+param=shop_sell_multiplier,1000
+param=shop_buy_multiplier,700
+param=shop_delta,20
+param=shop_title,Fernahai's Fishing Hut.
+
+[bob]
+name=Bob
+param=owned_shop,axeshop
+param=shop_sell_multiplier,1000
+param=shop_buy_multiplier,600
+param=shop_delta,20
+param=shop_title,Bob's Brilliant Axes.
+
+[nurmof]
+name=Nurmof
+param=owned_shop,pickaxeshop
+param=shop_sell_multiplier,1000
+param=shop_buy_multiplier,600
+param=shop_delta,20
+param=shop_title,Nurmof's Pickaxe Shop.
+
+[magic_store_owner]
+name=Magic Store owner
+param=owned_shop,magicguildshop
+param=shop_sell_multiplier,1000
+param=shop_buy_multiplier,600
+param=shop_delta,10
+param=shop_title,Magic Guild Store

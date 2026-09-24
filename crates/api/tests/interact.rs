@@ -938,6 +938,7 @@ fn wire_command_kinds_and_reasons_compile_and_match() {
         in_combat: false,
         level: 0,
         size: 0,
+        network: tile,
         x: 0,
         z: 0,
         yaw: 0,
@@ -1442,6 +1443,11 @@ fn fixture_npc(actions: &[&str]) -> NpcView {
         in_combat: false,
         level: 2,
         size: 1,
+        network: WorldTile {
+            x: 3250,
+            z: 3250,
+            level: 0,
+        },
         x: 0,
         z: 0,
         yaw: 0,
@@ -2105,6 +2111,139 @@ fn wear_refuses_non_wearable_and_missing_items() {
             ix.wear(999),
             SendResult::Refused {
                 reason: SendReason::StaleTarget,
+                ..
+            }
+        ));
+    }
+    assert!(rec.actions.is_empty(), "nothing sent");
+    assert!(rec.menus.is_empty());
+}
+
+/// The worn-items tab (side tab 4): a layer (710) wrapping the worn
+/// TYPE_INV component (711) whose own `iop` is `ops`, with obj 5 (stored
+/// 6) worn in slot 3.
+fn plant_worn(c: &mut Client, ops: [Option<String>; 5]) {
+    set_iface(
+        c,
+        710,
+        IfType {
+            id: 710,
+            layer_id: 710,
+            r#type: ComponentType::TYPE_LAYER,
+            children: Some(vec![711]),
+            ..Default::default()
+        },
+    );
+    set_iface(
+        c,
+        711,
+        IfType {
+            id: 711,
+            layer_id: 710,
+            r#type: ComponentType::TYPE_INV,
+            iop: ops,
+            ..Default::default()
+        },
+    );
+    set_iface_mut(
+        c,
+        711,
+        IfTypeMut {
+            link_obj_type: Some(vec![0, 0, 0, 6]),
+            link_obj_number: Some(vec![0, 0, 0, 1]),
+            ..Default::default()
+        },
+    );
+    c.side_icon[4] = 710;
+}
+
+/// `unequip` sends the worn component's `Remove` op — INV_BUTTON at the
+/// worn row's id/slot/component, never the obj's held ops (whose menu is
+/// Wear). An item that is held but not worn is `StaleTarget`, and `wear`
+/// on that held item still sends its held Wear op.
+#[test]
+fn unequip_sends_remove_on_the_worn_component_row() {
+    let mut s = scene();
+    plant_inventory(&mut s.client); // obj 3 held in inv slot 0
+    plant_worn(
+        &mut s.client,
+        [
+            Some("Operate".into()),
+            Some("Remove".into()),
+            None,
+            None,
+            None,
+        ],
+    );
+    {
+        let cache = Arc::get_mut(&mut s.client.cache).expect("sole cache owner");
+        cache.objs.resize(6, ObjType::default());
+        cache.objs[3] = ObjType {
+            id: 3,
+            iop: [Some("Wear".into()), None, None, None, None],
+            ..Default::default()
+        };
+        cache.objs[5] = ObjType {
+            id: 5,
+            iop: [Some("Wear".into()), None, None, None, None],
+            ..Default::default()
+        };
+    }
+    let snap = rebuild(&mut s.client);
+    let worn = snap.equipment();
+    assert_eq!(worn.len(), 1);
+    assert_eq!(
+        (worn[0].def.id, worn[0].slot, worn[0].component_id),
+        (5, 3, 711)
+    );
+    let mut rec = Recorder::default();
+    {
+        let mut ix = Interactions::new(&snap, &mut rec);
+        match ix.unequip(5) {
+            SendResult::Sent { tick, command } => {
+                assert_eq!(tick, snap.tick() as u64);
+                assert!(matches!(command, WireCommand::Op { operation: 2, .. }));
+            }
+            SendResult::Refused { reason, .. } => panic!("refused: {reason:?}"),
+        }
+        assert!(
+            matches!(
+                ix.unequip(3),
+                SendResult::Refused {
+                    reason: SendReason::StaleTarget,
+                    ..
+                }
+            ),
+            "a held item that is not worn is stale"
+        );
+        assert!(matches!(ix.wear(3), SendResult::Sent { .. }));
+    }
+    assert_eq!(rec.actions, vec![0, 0]);
+    assert_eq!(
+        rec.menus,
+        vec![
+            (0, MiniMenuAction::INV_BUTTON2, 5, 3, 711),
+            (0, MiniMenuAction::OP_HELD1, 3, 0, 500),
+        ],
+        "Remove is INV_BUTTON2 on the worn row; Wear stays OP_HELD1 on the held row"
+    );
+}
+
+/// A worn row whose component menu has no Remove slot is `InvalidAction`
+/// and sends nothing.
+#[test]
+fn unequip_refuses_a_worn_row_without_remove() {
+    let mut s = scene();
+    plant_worn(&mut s.client, [None, None, None, None, None]);
+    let snap = rebuild(&mut s.client);
+    assert_eq!(snap.equipment().len(), 1);
+    let mut rec = Recorder::default();
+    {
+        let mut ix = Interactions::new(&snap, &mut rec);
+        assert!(matches!(
+            ix.unequip(5),
+            SendResult::Refused {
+                reason: SendReason::InvalidAction,
                 ..
             }
         ));
@@ -3847,4 +3986,156 @@ fn nearest_booth_real_diagonal_ties_choose_only_an_operable_nearest() {
             );
         }
     }
+}
+
+fn idle_npc_snapshot() -> GameSnapshot {
+    let mut s = scene();
+    plant_npc_type(
+        &mut s.client,
+        9,
+        "Guard",
+        &["Attack", "Pickpocket", "Examine"],
+    );
+    plant_npc(&mut s.client, 7, 9);
+    rebuild(&mut s.client)
+}
+
+fn idle_client(revision: ClientRevision) -> Client {
+    let mut c = Client::new_with_revision(cfg(), revision);
+    c.ingame = true;
+    c.local_player = Some(ClientPlayer::at(5, 5));
+    c.npc[7] = Some(Box::new(ClientNpc::at(5, 5)));
+    c.shell.idle_cycles = 4500;
+    c.no_timeout_timer = 0;
+    c
+}
+
+fn idle_timer_opcode(revision: ClientRevision) -> u8 {
+    client::io::map_client_prot(revision, ClientProt::IDLE_TIMER).id as u8
+}
+
+fn game_loop_wrote_idle_timer(c: &Client) -> bool {
+    c.out.data()[..c.out.pos].contains(&idle_timer_opcode(c.revision()))
+}
+
+/// Successful OPNPC through the real Client driver resets shell idle on
+/// both shared revision bindings.
+#[test]
+fn successful_opnpc_resets_idle_on_real_client_driver() {
+    let snap = idle_npc_snapshot();
+    for revision in [ClientRevision::R274, ClientRevision::R289] {
+        let mut driver = idle_client(revision);
+        assert!(matches!(
+            Interactions::new(&snap, &mut driver).interact(
+                OpTarget::Npc(&snap.npcs()[0]),
+                ActionSpec::Label("Pickpocket".into()),
+            ),
+            SendResult::Sent { .. }
+        ));
+        assert!(driver.out.pos > 0, "{revision:?} must emit OPNPC");
+        assert_eq!(
+            driver.shell.idle_cycles, 0,
+            "{revision:?} accepted OPNPC must count as input"
+        );
+    }
+}
+
+/// Refused/unsupported/noop/local/background writes must not look like input.
+#[test]
+fn rejected_noop_and_background_paths_do_not_reset_idle() {
+    let snap = idle_npc_snapshot();
+    let mut refused = idle_client(ClientRevision::R289);
+    assert!(matches!(
+        Interactions::new(&snap, &mut refused).interact(
+            OpTarget::Npc(&snap.npcs()[0]),
+            ActionSpec::Operation(MAX_OPERATIONS + 1),
+        ),
+        SendResult::Refused {
+            reason: SendReason::InvalidAction,
+            ..
+        }
+    ));
+    assert_eq!(refused.out.pos, 0);
+    assert_eq!(refused.shell.idle_cycles, 4500);
+
+    let mut no_route = idle_client(ClientRevision::R289);
+    no_route.local_player = None;
+    assert!(!walk(&mut no_route, 10, 10));
+    assert_eq!(no_route.shell.idle_cycles, 4500);
+
+    let mut tab = idle_client(ClientRevision::R289);
+    tab.side_icon[5] = 700;
+    assert!(tab.click_side_tab(5));
+    assert_eq!(tab.out.pos, 0);
+    assert_eq!(tab.shell.idle_cycles, 4500);
+
+    let mut cheater = idle_client(ClientRevision::R289);
+    assert!(cheat(&mut cheater, "ping"));
+    assert!(cheater.out.pos > 0, "cheat still writes CLIENT_CHEAT");
+    assert_eq!(cheater.shell.idle_cycles, 4500);
+
+    let mut keepalive = idle_client(ClientRevision::R289);
+    keepalive.shell.idle_cycles = 100;
+    keepalive.no_timeout_timer = 50;
+    keepalive.out.pos = 0;
+    keepalive.game_loop();
+    assert_eq!(keepalive.shell.idle_cycles, 101);
+    assert!(
+        !game_loop_wrote_idle_timer(&keepalive),
+        "NO_TIMEOUT must not reset idle or emit IDLE_TIMER"
+    );
+}
+
+/// Close/walk free functions are input-class when the driver accepts them.
+#[test]
+fn accepted_walk_and_close_reset_idle_on_real_client_driver() {
+    let mut walker = idle_client(ClientRevision::R289);
+    assert!(walk(&mut walker, 6, 6));
+    assert_eq!(walker.shell.idle_cycles, 0);
+
+    let mut closer = idle_client(ClientRevision::R274);
+    assert!(close_modal(&mut closer));
+    assert_eq!(closer.shell.idle_cycles, 0);
+}
+
+/// Near-threshold OPNPC prevents a false IDLE_TIMER; an inactive client
+/// still emits one. Threshold and packet identity stay client-owned.
+#[test]
+fn active_opnpc_avoids_idle_timer_inactive_client_still_emits() {
+    let snap = idle_npc_snapshot();
+    let mut active = idle_client(ClientRevision::R289);
+    assert!(matches!(
+        Interactions::new(&snap, &mut active)
+            .interact(OpTarget::Npc(&snap.npcs()[0]), ActionSpec::Operation(2),),
+        SendResult::Sent { .. }
+    ));
+    assert_eq!(active.shell.idle_cycles, 0);
+    active.out.pos = 0;
+    active.no_timeout_timer = 0;
+    active.game_loop();
+    assert_eq!(active.shell.idle_cycles, 1);
+    assert!(
+        !game_loop_wrote_idle_timer(&active),
+        "accepted OPNPC must not still trip IDLE_TIMER"
+    );
+
+    let mut idle = idle_client(ClientRevision::R289);
+    idle.out.pos = 0;
+    idle.no_timeout_timer = 0;
+    idle.game_loop();
+    assert_eq!(idle.shell.idle_cycles, 4001);
+    assert!(
+        game_loop_wrote_idle_timer(&idle),
+        "inactive 289 client must still reach IDLE_TIMER"
+    );
+
+    let mut legacy = idle_client(ClientRevision::R274);
+    legacy.out.pos = 0;
+    legacy.no_timeout_timer = 0;
+    legacy.game_loop();
+    assert_eq!(legacy.shell.idle_cycles, 4500);
+    assert!(
+        !game_loop_wrote_idle_timer(&legacy),
+        "274 game_loop must not emit IDLE_TIMER"
+    );
 }

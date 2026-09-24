@@ -51,6 +51,42 @@ decoder (`decode_grid`) stays for old boolean-walk files.
 | `BOT_NAV_CONTENT_DIR` | `<engine>/../content` | canonical content tree |
 | `BOT_CACHE_MANIFEST` | checked-in known cache identities | verified cache manifest |
 | `BOT_NAV_RESOURCE_DIR` | cargo profile dir / bundle Resources | staging root |
+| `BOT_NAV_SNAPSHOT_ROOT` | `~/.274bot/unpack[-289]` | complete version-keyed decoded snapshot, read-only bake input |
+
+### Decoded-identity migration
+
+Normal profile preparation negotiates the selected `/crc` before freezing an
+owned cache/snapshot shared by all bots using that profile. Transfer CRCs and
+packed hashes remain exact; compatibility uses revision-bound `274DCI01` decoded
+identity. Offline `ProfileSelection::bind()` retains legacy packed binding;
+application callers use `prepare_template()` or `bind_runtime()`.
+
+New nav manifests, build stamps and compiled bundle rows carry `content_id` and
+`source_sha256`. Source provenance hashes the conservative content-tree closure
+and actual baker config; the build stamp also binds generator source bytes.
+Legacy resources are not relabeled: rebuild the application with the complete
+matching snapshot, or use `nav-pack --revision 274|289 --content CONTENT_DIR
+--cache CACHE_DIR --cache-manifest CACHE_MANIFEST --snapshot-root SNAPSHOT_ROOT
+--out NAV_PACK`. The root contains the 16-hex version-keyed snapshot directory.
+Omitting `--snapshot-root` creates an offline-only legacy pack; runtime binding
+rejects it. Missing required decoded records fail rather than claiming Ready.
+
+Local runtime nav verifies the selected content/config against the bake source
+hash. Supported public profiles trust only compiled build/packager identities;
+users of packaged public applications need no engine/content source checkout.
+These identities attest the supported server-world assumption, not arbitrary
+custom server behavior. Generated facts retain engine/content/decoder input
+hashes and use decoded client identity; explicit endpoint overrides do not
+inherit built-in facts. Local supported facts additionally verify their selected
+source inputs. Unknown client content remains unavailable/rejected, never guessed.
+
+The `tools/game-data` generator and verifier are offline `tsx` tools. Build
+`cargo build -p nav --bin cache-content-id` first; set `GAME_DATA_IDENTITY_BIN`
+(or `CARGO_TARGET_DIR`) and `GAME_DATA_274_SNAPSHOTS` /
+`GAME_DATA_289_SNAPSHOTS` when overriding their defaults. The Rust codec verifies
+actual pinned assets before generation. This does not relax e2e exact resume
+provenance. Neither build nor runtime accepts a persistent decoded-identity
+sidecar solely because input sizes match.
 
 Missing canonical inputs fail the build instead of shipping an app without nav,
 and the guard names the input class: besides `maps/`, the door configs,
@@ -92,8 +128,10 @@ records the cache identity, the pack/flags/reach digests, the generator identity
 `paint.rs`/`router.rs`/`transport.rs`) and a fingerprint (size + mtime) of every canonical input
 (content tree, config jag, cache archives). Any change to those inputs, to the
 pack format identity (`nav::pack::FORMAT_ID`), to the generator, to the cache
-identity, or a missing/replaced staged artifact (including the reach sidecar) rebakes; nothing else re-hashes
-the world at build or runtime. The bundled fast path keeps its cheap
+identity, or a missing/replaced staged artifact (including the reach sidecar) rebakes.
+Build preparation additionally computes source and decoded digests to detect
+same-size replacement; runtime computes decoded identity once per prepared
+profile, not per bot. The bundled fast path keeps its cheap
 revision/cache-identity check, reads + decodes the staged pack once
 (`NavLoadCounters`), and loads the bound reach sidecar with cheap geometry/binding
 checks and zero `bake_reach` calls, while `--nav-pack` / `NAV_PACK` / `--nav-flags` overrides
@@ -172,6 +210,50 @@ on_leg, troll_doors }`.
   so a tick-perfect closer cannot slam it (the `2026-08-22-bot-nav.md`
   same-tick rule). Use only for the live door-troll fixture; ordinary
   routes pay the cheap default.
+
+## Route inspect (preview)
+
+Pure preview is a separate host job from walking. It never arms Traveller,
+never latches a bank session, and never changes ordinary walk policies.
+
+- **v1** `Navigator.findPath(from, to, opts)`: wilderness on, bank-fetch
+  off, teleports only from explicit catalog/policy bits. Default waiter
+  timeout is 20000 ms (Brimhaven passes 8000). Returned hops include
+  `locName`; `expanded` is omitted.
+- **v2** `api.inspectBegin({ from, to, allow_* , avoid })` returns an
+  isolate token. Query `inspectSettled` / `inspectValue`, or observe
+  `snapshot.route_inspect_*`. `api.request({ op: 'inspect-route', from, to,
+  request_id })` with `request_id: 0` is snapshot-only: the host still
+  runs a real preview into `route_inspect_*` and does not create a
+  waiter. Caller-invented nonzero ids are isolate-stale and never reach
+  the host job queue. Token identity is the isolate waiter; admission
+  identity is host unobserved retention plus the running/pending
+  reservation. Begin arguments are registered in Rust; a later
+  `inspect-route` with mismatched opts is `invalid-args` and is not
+  queued.
+- **Bound:** isolate unsettled waiters max 3. Host storage is a 2-deep
+  published ring plus one held slot (CAPACITY=3). Admission counts only
+  unobserved terminals (`seq > observed_seq`, plus `held`) plus the
+  executing job, a pending-replace publish, and the new request.
+  Observed history is not capacity. A registered token that fails
+  `can_admit` is not accepted: its identity is posted in
+  `route_inspect_refused_id{,_2,_3}` (3-deep mailbox, oldest shifts)
+  and the isolate settles that waiter `stale`. The mailbox does not
+  overwrite unobserved ring or held terminals. Last-seen
+  `route_inspect_unobserved` may local-stale begin/authorize when it
+  is already 3; that count can lag the next host drain, so authorize
+  is not a reservation. Snapshot-only `request_id` 0 uses the same
+  admit budget, never occupies the refuse mailbox, and leaves the
+  previous published latest when overload refuses a new preview.
+  Continuous id0 does not disable registered traffic; ACK progress
+  admits either. Held flushes only from typed isolate `inspect-ack`
+  after the snapshot is applied, carrying that terminal's generation.
+  Snapshot send is not observation. Old-session ACK cannot free a new
+  generation. ACK is sent when the isolate applies a terminal even if
+  no later inspect request occurs.
+- Conditional `allow_bank_fetch` preview labels `bank_planned` only after
+  a PRE-state stand proof (or wear-only). Published hops are the post-state
+  from→to transports, never bank steps or Traveller actions.
 
 ## WalkTo picker
 

@@ -5,6 +5,7 @@ pub mod clipboard;
 pub mod focus;
 pub mod game_view;
 pub mod grid;
+mod input_capture;
 pub mod loadouts;
 pub mod nav_settings;
 pub mod overlay;
@@ -16,6 +17,7 @@ pub mod rail;
 pub mod resource;
 pub mod script_picker;
 pub mod session;
+mod session_catalog;
 pub mod theme;
 pub mod ui_state;
 pub mod wall;
@@ -26,6 +28,9 @@ pub use chrome::*;
 pub use focus::*;
 pub use game_view::*;
 pub use theme::*;
+
+#[cfg(test)]
+mod srgb_present;
 
 #[cfg(test)]
 /// Serializes tests that hold a Dear ImGui context: only one can be

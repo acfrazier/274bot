@@ -35,6 +35,32 @@ pub trait Script: Send {
     }
 }
 
+/// The facts a compiled script reads and only the host can supply: the
+/// selected-revision pin its `Start` carried, the frame's cooperative
+/// interrupt, and the queue its verbs go on. One struct so a ctx literal
+/// that needs none of them says so once ([`CompiledTick::default`]); the
+/// isolate path reads none of it (its own post and fan-out carry the same
+/// facts).
+#[derive(Default)]
+pub struct CompiledTick<'a> {
+    /// The selected-revision generated facts `Play` pinned when this
+    /// compiled script was started — the same pin a Load isolate is spawned
+    /// with. `None` when this build/`Play` has no pin: an identify that
+    /// needs it then fails closed (`missing-selected-data`), never a guess.
+    pub selected: Option<&'a api::game_data::SelectedGameData>,
+    /// The frame's cooperative interrupt: the guardian's `hold` or the
+    /// detected-`ours` flag — the same pair `EventSignal.pending()` reads.
+    /// `false` on a frame neither gate fired.
+    pub hold: bool,
+    /// The compiled interact queue for the tick in flight. [`crate::slot::SlotScript`]
+    /// parks its own queue here around the compiled tick and takes it back
+    /// when the tick returns; the isolate path forwards a queue of its own
+    /// instead, and `None` in a bare ctx — a script that enqueues with
+    /// nothing parked sends nothing.
+    #[cfg(feature = "load")]
+    pub interacts: Option<Vec<crate::shim::InteractReq>>,
+}
+
 /// What one observed game-tick gives a script: the send-side driver, the
 /// tick number from the pump's PLAYER_INFO edge, the local player's tile,
 /// the walk hooks, and the thin inventory view. `here`, `walk`,
@@ -72,6 +98,11 @@ pub struct ScriptCtx<'a> {
     /// The shared obj-id → name table (one per `Play`), resolved by
     /// [`ScriptCtx::has_item`].
     pub obj_names: Option<&'a api::obj_names::ObjNames>,
+    /// The compiled-path facts: the `Start` pin, this frame's cooperative
+    /// interrupt, and the slot's enqueue sink. The host fills the first two
+    /// around every observed tick and [`crate::slot::SlotScript`] installs
+    /// the sink around the compiled tick; the isolate path never reads it.
+    pub compiled: CompiledTick<'a>,
 }
 
 impl ScriptCtx<'_> {
@@ -423,6 +454,7 @@ mod tests {
             inv: None,
             snapshot,
             obj_names: None,
+            compiled: CompiledTick::default(),
         }
     }
 
@@ -443,6 +475,7 @@ mod tests {
             inv: Some(&inv),
             snapshot: None,
             obj_names: Some(&names),
+            compiled: CompiledTick::default(),
         };
         assert!(ctx.has_item("Bones"));
         assert!(ctx.has_item("bones")); // case-insensitive

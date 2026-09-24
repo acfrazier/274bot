@@ -10,6 +10,9 @@ client = { workspace = true }
 num-bigint = "0.4"
 vault = { path = "../vault" }
 
+[features]
+render-diagnostics = ["client/render-diagnostics"]
+
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 

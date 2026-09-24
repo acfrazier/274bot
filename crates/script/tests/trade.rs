@@ -52,6 +52,9 @@ fn player<'a>(name: &'a str, distance: i32, actions: &'a [String]) -> SceneEntit
         combat_level: 1,
         target_kind: 0,
         target_index: -1,
+        size: 0,
+        nx: 0,
+        nz: 0,
     }
 }
 
@@ -112,6 +115,7 @@ fn base<'a>() -> SnapshotInput<'a> {
         bank_note_off: -1,
         scene_state: 2,
         weight: 0,
+        combat_level: 0,
         camera_yaw: 0,
         camera_pitch: 0,
         teleports_enabled: false,
@@ -128,6 +132,8 @@ fn base<'a>() -> SnapshotInput<'a> {
         shop_stock: &[],
         reach: ReachViewInput::UNAVAILABLE,
         attacked_by_player: false,
+        self_target_kind: 0,
+        self_target_index: -1,
         widgets: &[],
     }
 }
@@ -344,30 +350,53 @@ fn offer_all_refuses_a_noted_selection_and_a_missing_screen() {
 }
 
 #[test]
-fn offer_all_refuses_a_wrong_id_or_slot_projection() {
+fn offer_all_calls_pick_over_same_name_rows_in_order_in_the_callers_tick() {
     let src = r#"
+import { Trade } from '../../api/trade/Trade.js';
 export default class T extends LoopingBot {
-    loop() {
+    async loop() {
         if (globalThis.__did) return;
         globalThis.__did = true;
-        const fn = globalThis.rustyscript.functions.__rs2b0t_trade;
-        const begin = fn({ op: 'begin', kind: 'offerAll', name: 'Rune essence' });
-        globalThis.__ok = fn({ op: 'select', token: begin.token, id: 9999, slot: 9 });
+        globalThis.__seen = [];
+        globalThis.__none = await Trade.offerAll('Rune essence', (i) => {
+            globalThis.__seen.push(i.slot);
+            return false;
+        });
+        globalThis.__ok = await Trade.offerAll('Rune essence', (i) => i.slot === 2);
     }
 }
 "#;
     let iso = spawn(src);
-    let side = [row("Rune essence", 1436, 25, 3322, 1, false)];
+    let side = [
+        row("Rune essence", 1436, 25, 3322, 1, false),
+        row("Rune essence", 1437, 25, 3322, 2, false),
+    ];
     let mut snap = base();
     snap.trade_offer_open = true;
     snap.trade_partner = Some("bob");
     snap.trade_side = &side;
     post(&iso, &snap);
     tick(&iso, 1);
-    let probe = iso.probe("__ok").unwrap();
-    assert_eq!(probe.get("kind").and_then(Value::as_str), Some("done"));
-    assert_eq!(probe.get("result"), Some(&Value::Bool(false)));
-    assert!(iso.drain_interacts().is_empty());
+    assert_eq!(
+        iso.probe("__seen").unwrap(),
+        serde_json::json!([1, 2]),
+        "pick sees each same-name row in order"
+    );
+    assert_eq!(iso.probe("__none").unwrap(), Value::Bool(false));
+    assert!(
+        matches!(
+            iso.drain_interacts().as_slice(),
+            [InteractReq::InvButton {
+                id: 1437,
+                slot: 2,
+                operation: 4,
+                ..
+            }]
+        ),
+        "only the picked row is offered, in the caller's tick"
+    );
+    tick(&iso, 2);
+    assert_eq!(iso.probe("__ok").unwrap(), Value::Bool(true));
     iso.join();
 }
 
@@ -619,4 +648,216 @@ fn pause_hold_and_session_reset_abort_a_parked_offer() {
     assert_eq!(iso.probe("__ok").unwrap(), Value::Bool(false));
     assert!(iso.drain_interacts().is_empty());
     iso.join();
+}
+
+// A sibling module loaded before the card: each Trade verb the fixture
+// uses stays open for one posted tick after its click, the way a verb
+// that waits on the server would. A verb begun while another is open
+// would abort it (the Rust `begin` aborts the prior session); the wrapper
+// logs that as `abort:<kind>`.
+const ONE_TICK_TRADE: &str = r#"
+import { Trade } from '../../api/trade/Trade.js';
+import { Execution } from '../../api/execution/Execution.js';
+const log = globalThis.__trade_log = [];
+let open = null;
+for (const kind of ['request', 'offerAll', 'accept']) {
+    const real = Trade[kind];
+    Trade[kind] = async (...args) => {
+        if (open) log.push('abort:' + open);
+        open = kind;
+        log.push('begin:' + kind);
+        const result = await real(...args);
+        await Execution.delayTicks(1);
+        if (open !== kind) return false;
+        open = null;
+        log.push('done:' + kind);
+        return result;
+    };
+}
+"#;
+
+// The registered `TradeBot` card awaits each verb, so request → offer →
+// accept run one session at a time: no verb begins while another is
+// still open, and the loop is not re-entered mid-verb.
+#[test]
+fn trade_bot_fixture_sequences_request_offer_accept() {
+    let js = script::transpile_ts(include_str!("fixtures/trade_bot.ts"))
+        .expect("transpile trade_bot.ts");
+    let wrapper = (
+        "/rs2b0t/bot/scripts/bot/one_tick_trade.js".to_string(),
+        ONE_TICK_TRADE.to_string(),
+    );
+    let iso = LoadIsolate::spawn(js, LoadShape::CompatClass, vec![wrapper]).unwrap();
+    iso.probe("globalThis.__rs2b0t_host.settingsBag = { partner: 'bob' }; true")
+        .unwrap();
+    let actions = trade_ops();
+    let players = [player("bob", 2, &actions)];
+    let side = [row("Coins", 995, 100, 3322, 0, false)];
+    let mut snap = base();
+    snap.players = &players;
+    snap.trade_accept_id = 9001;
+
+    // No trade open: request, settled on the next tick.
+    post(&iso, &snap);
+    tick(&iso, 1);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::Player {
+            name: "bob".into(),
+            action: "Trade with".into(),
+        }]
+    );
+    snap.tick = 2;
+    post(&iso, &snap);
+    tick(&iso, 2);
+    let settled = iso.drain_interacts();
+    assert!(
+        settled.is_empty(),
+        "request settles without a packet: {settled:?}"
+    );
+
+    // Offer screen: Offer All, then Accept once the offer settles.
+    snap.trade_offer_open = true;
+    snap.trade_partner = Some("bob");
+    snap.trade_side = &side;
+    snap.tick = 3;
+    post(&iso, &snap);
+    tick(&iso, 3);
+    assert_eq!(iso.drain_interacts(), vec![inv_button(995, 0, 3322, 4)]);
+    snap.tick = 4;
+    post(&iso, &snap);
+    tick(&iso, 4);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::IfButton { component_id: 9001 }]
+    );
+    snap.tick = 5;
+    post(&iso, &snap);
+    tick(&iso, 5);
+    assert!(iso.drain_interacts().is_empty());
+
+    // Confirm screen: Accept.
+    snap.trade_offer_open = false;
+    snap.trade_confirm_open = true;
+    snap.tick = 6;
+    post(&iso, &snap);
+    tick(&iso, 6);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::IfButton { component_id: 9001 }]
+    );
+    snap.tick = 7;
+    post(&iso, &snap);
+    tick(&iso, 7);
+
+    assert_eq!(
+        iso.probe("__trade_log").unwrap(),
+        serde_json::json!([
+            "begin:request",
+            "done:request",
+            "begin:offerAll",
+            "done:offerAll",
+            "begin:accept",
+            "done:accept",
+            "begin:accept",
+            "done:accept",
+        ]),
+        "one verb at a time, none aborted"
+    );
+    let logs = iso.drain_logs();
+    assert!(logs.iter().all(|l| !l.starts_with("tick ")), "{logs:?}");
+    iso.join();
+}
+
+#[test]
+fn an_async_pick_is_truthy_and_takes_the_first_row_as_frozen_find_does() {
+    let src = r#"
+import { Trade } from '../../api/trade/Trade.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__did) return;
+        globalThis.__did = true;
+        globalThis.__seen = [];
+        globalThis.__ok = await Trade.offerAll('Rune essence', async (i) => {
+            globalThis.__seen.push(i.slot);
+            return i.slot === 2;
+        });
+    }
+}
+"#;
+    let iso = spawn(src);
+    let side = [
+        row("Rune essence", 1436, 25, 3322, 1, false),
+        row("Rune essence", 1437, 25, 3322, 2, false),
+    ];
+    let mut snap = base();
+    snap.trade_offer_open = true;
+    snap.trade_partner = Some("bob");
+    snap.trade_side = &side;
+    post(&iso, &snap);
+    tick(&iso, 1);
+    assert_eq!(
+        iso.probe("__seen").unwrap(),
+        serde_json::json!([1]),
+        "the first promise is truthy: find stops there"
+    );
+    assert!(
+        matches!(
+            iso.drain_interacts().as_slice(),
+            [InteractReq::InvButton {
+                id: 1436,
+                slot: 1,
+                operation: 4,
+                ..
+            }]
+        ),
+        "the first row is offered, not the one the promise resolves for"
+    );
+    iso.join();
+}
+
+// The live script_trade cell: TradeBot's partner is a minted account whose
+// login is `live…_1` but whose posted player row shows the screen name
+// `Live… 1`. Frozen `Players.query().name()` matches the shown name only
+// (trimmed, case-folded), so the setting must carry the screen name; the
+// login form finds no player and sends nothing, every tick.
+#[test]
+fn trade_bot_requests_the_partner_by_its_screen_name_not_its_login() {
+    let js = script::transpile_ts(include_str!("fixtures/trade_bot.ts"))
+        .expect("transpile trade_bot.ts");
+    let actions = trade_ops();
+    let players = [player("Livepyom5o 1", 2, &actions)];
+    let mut snap = base();
+    snap.players = &players;
+    let mut request = |partner: &str| {
+        let iso = LoadIsolate::spawn(js.clone(), LoadShape::CompatClass, vec![]).unwrap();
+        iso.probe(&format!(
+            "globalThis.__rs2b0t_host.settingsBag = {{ partner: '{partner}' }}; true"
+        ))
+        .unwrap();
+        let mut sent = Vec::new();
+        for n in 1..=3 {
+            snap.tick = n;
+            post(&iso, &snap);
+            tick(&iso, n);
+            sent.extend(iso.drain_interacts());
+        }
+        iso.join();
+        sent
+    };
+    assert!(
+        request("livepyom5o_1").is_empty(),
+        "the login name is not a posted player: nothing is sent"
+    );
+    assert_eq!(
+        request("Livepyom5o 1"),
+        vec![
+            InteractReq::Player {
+                name: "Livepyom5o 1".into(),
+                action: "Trade with".into(),
+            };
+            3
+        ],
+        "the screen name requests the partner each tick until the screen opens"
+    );
 }

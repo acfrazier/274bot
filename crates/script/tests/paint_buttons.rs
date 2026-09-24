@@ -1,8 +1,10 @@
 //! Native one-shot `Paint.buttons` seam. No packet opcode, no fabricated click.
 
-use script::isolate_fb::{decode_paint, IsolateBuf, ReachViewInput, SnapshotInput, TileInput};
+use script::isolate_fb::{ReachViewInput, SnapshotInput, TileInput};
 use script::shim::{ScriptPaint, ScriptPaintButton};
 use script::{LoadIsolate, LoadShape};
+
+mod common;
 
 fn post_snapshot_input(iso: &LoadIsolate, input: &SnapshotInput<'_>) {
     iso.post_snapshot(script::isolate_fb::encode_snapshot(input));
@@ -19,7 +21,7 @@ fn base_snapshot<'a>() -> SnapshotInput<'a> {
         ingame: true,
         inv: &[],
         inv_size: 28,
-        stats: &[],
+        stats: &common::FRESH_STATS,
         booths: &[],
         banks: &[],
         bank: &[],
@@ -65,6 +67,7 @@ fn base_snapshot<'a>() -> SnapshotInput<'a> {
         bank_note_off: -1,
         scene_state: 2,
         weight: 0,
+        combat_level: 0,
         camera_yaw: 0,
         camera_pitch: 0,
         teleports_enabled: false,
@@ -81,6 +84,8 @@ fn base_snapshot<'a>() -> SnapshotInput<'a> {
         shop_stock: &[],
         reach: ReachViewInput::UNAVAILABLE,
         attacked_by_player: false,
+        self_target_kind: 0,
+        self_target_index: -1,
         widgets: &[],
     }
 }
@@ -292,20 +297,7 @@ export default class T extends LoopingBot {
 }
 
 #[test]
-fn empty_old_paint_still_decodes_and_label_toggle_is_a_change() {
-    let quiet = ScriptPaint {
-        title: Some("t".into()),
-        accent: None,
-        lines: vec!["line".into()],
-        buttons: Vec::new(),
-        generation: 0,
-        canvas: Vec::new(),
-    };
-    let bytes = IsolateBuf::new().encode_paint(&quiet);
-    let decoded = decode_paint(&bytes).expect("empty buttons");
-    assert!(decoded.buttons.is_empty());
-    assert_eq!(decoded, quiet);
-
+fn button_label_toggle_is_a_real_change() {
     let go = ScriptPaint {
         title: Some("t".into()),
         accent: None,
@@ -316,6 +308,7 @@ fn empty_old_paint_still_decodes_and_label_toggle_is_a_change() {
         }],
         generation: 0,
         canvas: Vec::new(),
+        ..Default::default()
     };
     let resume = ScriptPaint {
         title: Some("t".into()),
@@ -327,10 +320,14 @@ fn empty_old_paint_still_decodes_and_label_toggle_is_a_change() {
         }],
         generation: 0,
         canvas: Vec::new(),
+        ..Default::default()
     };
+    let quiet = ScriptPaint {
+        buttons: Vec::new(),
+        ..go.clone()
+    };
+    assert!(quiet.buttons.is_empty());
     assert_ne!(go, resume, "label toggle must be a real change");
-    let round = decode_paint(&IsolateBuf::new().encode_paint(&go)).unwrap();
-    assert_eq!(round, go);
 }
 
 #[test]

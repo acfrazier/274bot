@@ -1,38 +1,25 @@
 // paintLogic helpers the listed scripts import from
-// `../../paint/paintLogic.js`. Only the shapes the live catalog uses are
-// here; a missing named export fails the module load honestly.
+// `../../paint/paintLogic.js`. The formats are the reference rs2b0t ones and
+// live in the Rust helper (`load/paint_jive.rs`), which the Jive level rows
+// use too; this module only marshals the arguments.
+import { notImpl } from '../shim/_kernel.js';
+
+function jive(op, a, b) {
+    const fn = globalThis.__rs2b0t_paint_jive;
+    if (typeof fn !== 'function') {
+        throw notImpl('paintLogic.' + op);
+    }
+    return fn(op, a, b);
+}
+
 export function fmtDuration(minutes) {
-    if (!(minutes >= 0)) {
-        return '0s';
-    }
-    if (minutes < 1) {
-        return Math.round(minutes * 60) + 's';
-    }
-    const h = Math.floor(minutes / 60);
-    const m = Math.round(minutes % 60);
-    return h > 0 ? `${h}h ${m}m` : `${m}m`;
+    return jive('fmtDuration', minutes);
 }
 
 export function fmtXpHr(gained, mins) {
-    if (!(mins > 0) || !(gained >= 0)) {
-        return '0';
-    }
-    return String(Math.round((Number(gained) / Number(mins)) * 60));
+    return jive('fmtXpHr', gained, mins);
 }
 
 export function paintSkillShort(skill) {
-    switch (String(skill)) {
-        case 'woodcutting':
-            return 'WC';
-        case 'firemaking':
-            return 'FM';
-        case 'fishing':
-            return 'Fish';
-        case 'cooking':
-            return 'Cook';
-        case 'mining':
-            return 'Mine';
-        default:
-            return String(skill);
-    }
+    return jive('paintSkillShort', skill);
 }

@@ -63,6 +63,7 @@ fn base_snapshot<'a>() -> SnapshotInput<'a> {
         bank_note_off: -1,
         scene_state: 2,
         weight: 0,
+        combat_level: 0,
         camera_yaw: 0,
         camera_pitch: 0,
         teleports_enabled: false,
@@ -79,6 +80,8 @@ fn base_snapshot<'a>() -> SnapshotInput<'a> {
         shop_stock: &[],
         reach: ReachViewInput::UNAVAILABLE,
         attacked_by_player: false,
+        self_target_kind: 0,
+        self_target_index: -1,
         widgets: &[],
     }
 }
@@ -379,4 +382,47 @@ export default class T extends LoopingBot {
         "session abort must not click again"
     );
     iso.join();
+}
+
+// The declared `Game.teleport` is `async`: a refused name (with teleport
+// facts) and a missing fact (without) both come back as a Promise, never
+// a bare boolean or a sync throw.
+#[test]
+fn every_branch_returns_a_promise() {
+    let src = r#"
+import { Game } from '../../api/game/Game.js';
+export default class T extends LoopingBot {
+    loop() {
+        if (globalThis.__did) return;
+        globalThis.__did = true;
+        const shape = (name) => {
+            try {
+                const r = Game.teleport(name);
+                if (r && typeof r.then === 'function') {
+                    r.catch(() => {});
+                    return 'promise';
+                }
+                return typeof r;
+            } catch (e) {
+                return 'threw';
+            }
+        };
+        globalThis.__shapes = [shape('Nowhere'), shape('Varrock')];
+    }
+}
+"#;
+    let factless = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    for iso in [factless, spawn(src)] {
+        let mut snap = base_snapshot();
+        let stats = [magic(100, 50)];
+        snap.stats = &stats;
+        post_snapshot_input(&iso, &snap);
+        tick(&iso, 1);
+        assert_eq!(
+            iso.probe("__shapes").unwrap(),
+            serde_json::json!(["promise", "promise"]),
+            "every branch returns a Promise"
+        );
+        iso.join();
+    }
 }

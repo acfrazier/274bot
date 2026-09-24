@@ -155,23 +155,12 @@ pub struct SceneGate {
     pub scene_state: i32,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
 pub struct Counters {
     pub bones: i32,
     pub prayer_xp: i32,
     pub burial_logs: usize,
     pub distinct_burial_logs: usize,
-}
-
-impl Default for Counters {
-    fn default() -> Self {
-        Self {
-            bones: 0,
-            prayer_xp: 0,
-            burial_logs: 0,
-            distinct_burial_logs: 0,
-        }
-    }
 }
 
 #[derive(Clone, Default)]
@@ -474,6 +463,7 @@ impl ExternalWatch {
     }
 
     /// Record production load/select without Start.
+    #[allow(clippy::too_many_arguments)] // loader note packs registration/path/identity/sha fields
     pub fn note_load(
         &self,
         registration_count: usize,
@@ -705,6 +695,7 @@ impl ExternalWatch {
         state.stage = Stage::ReloadChanged;
     }
 
+    #[allow(clippy::too_many_arguments)] // reload note packs before/after sha and path fields
     pub fn note_reload_changed(
         &self,
         registration_count: usize,

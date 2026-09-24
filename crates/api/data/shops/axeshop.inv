@@ -1,0 +1,16 @@
+// Pinned content excerpt (274 content 000c19997e07206131bcb3c884265840efce416d
+// and 289 content 92649430fcbc83538d8c4367ecb96cee1a67a944 are identical here).
+// Source: scripts/areas/area_lumbridge/configs/lumbridge.inv [axeshop]
+[axeshop]
+scope=shared
+size=40
+restock=yes
+stackall=yes
+allstock=no
+stock1=bronze_pickaxe,5,100
+stock2=bronze_axe,10,100
+stock3=iron_axe,5,200
+stock4=steel_axe,3,400
+stock5=iron_battleaxe,5,100
+stock6=steel_battleaxe,2,200
+stock7=mithril_battleaxe,1,3000

@@ -5,18 +5,18 @@ export const SETTINGS = {
 };
 
 export default class TradeBot extends LoopingBot {
-    override loop() {
+    override async loop() {
         if (!Trade.active()) {
-            Trade.request(this.settings.str('partner'));
+            await Trade.request(this.settings.str('partner'));
             return;
         }
         if (Trade.onOfferScreen()) {
-            Trade.offerAll('Coins');
-            Trade.accept();
+            await Trade.offerAll('Coins');
+            await Trade.accept();
             return;
         }
         if (Trade.onConfirmScreen()) {
-            Trade.accept();
+            await Trade.accept();
         }
     }
 }

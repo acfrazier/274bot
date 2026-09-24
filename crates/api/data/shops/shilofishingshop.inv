@@ -1,0 +1,16 @@
+// Pinned content excerpt (274 content 000c19997e07206131bcb3c884265840efce416d
+// and 289 content 92649430fcbc83538d8c4367ecb96cee1a67a944 are identical here).
+// Source: scripts/areas/area_shilo/configs/shilo.inv [shilofishingshop]
+[shilofishingshop]
+scope=shared
+size=40
+restock=yes
+stackall=yes
+allstock=no
+stock1=fishing_rod,5,100
+stock2=fly_fishing_rod,5,100
+stock3=fishing_bait,200,1
+stock4=feather,800,1
+stock5=raw_trout,0,1500
+stock6=raw_pike,0,1800
+stock7=raw_salmon,0,2100

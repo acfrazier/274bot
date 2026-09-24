@@ -1,7 +1,7 @@
 // Declared JS catalog ABI (rs2b0t-api index.d.ts names). Not the Rust host ABI.
 use script::declared_abi::{
-    fixture_path, load_fixture, parse_index_dts, write_declared_surface, write_fixture,
-    DeclaredKind,
+    declared_surface_path, fixture_path, load_fixture, parse_index_dts, render_declared_surface,
+    write_declared_surface, write_fixture, DeclaredKind,
 };
 
 const SLICE: &str = r#"
@@ -256,5 +256,76 @@ fn regen_js_declared_abi() {
         exports.len(),
         fixture_path().display(),
         script::declared_abi::declared_surface_path().display()
+    );
+}
+
+/// A declared name no shim module owns must throw `not impl` on any use — a
+/// string conversion, a member read, an iteration — never answer a fake
+/// value or `[object Object]` / `NaN`.
+#[test]
+fn declared_value_stubs_throw_on_use() {
+    use script::load::{LoadIsolate, LoadShape};
+
+    let src = r#"
+import * as api from '@rs2b0t/api';
+export default class T extends LoopingBot {
+    loop() {
+        const use = (fn) => {
+            try {
+                fn();
+                return 'no-throw';
+            } catch (e) {
+                return String(e.message || e);
+            }
+        };
+        globalThis.__probe = [
+            use(() => api.ALL_FISHING_GEAR_NAMES.includes('net')),
+            use(() => String(api.COINS)),
+            use(() => api.FISHING_LOCATIONS.length),
+            use(() => api.MAP_SQUARE + 1),
+            use(() => Object.prototype.toString.call(api.WALK_OPTIONS)),
+            use(() => api.AXE_SHOP_COSTS.map((c) => c)),
+        ];
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![])
+        .expect("declared stub probe must load");
+    iso.on_game_tick(1);
+    let probe = iso.probe("__probe").expect("probe __probe");
+    iso.join();
+    let rows = probe.as_array().cloned().unwrap_or_default();
+    assert_eq!(rows.len(), 6, "every stub use must be probed: {probe:?}");
+    for (i, row) in rows.iter().enumerate() {
+        let text = row.as_str().unwrap_or("");
+        assert!(
+            text.contains("not impl"),
+            "stub use {i} must throw not impl, got {text:?}"
+        );
+    }
+}
+
+/// Writes `src/shim/declared_surface.js` from the checked-in fixture, so the
+/// generated bundle refreshes without the catalog tree.
+#[test]
+#[ignore]
+fn regen_declared_surface_from_fixture() {
+    let exports = load_fixture().expect("js_declared_abi.json");
+    write_declared_surface(&exports).expect("write declared_surface.js");
+}
+
+/// The checked-in bundle is exactly what the generator renders from the
+/// pinned fixture (no hand edit can drift it).
+#[test]
+fn declared_surface_matches_generator() {
+    let exports = load_fixture().expect("js_declared_abi.json");
+    let expected = render_declared_surface(&exports);
+    let path = declared_surface_path();
+    let actual = std::fs::read_to_string(&path).expect("read declared_surface.js");
+    assert!(
+        actual == expected,
+        "{} is stale; run: cargo test -p script --test declared_abi \
+         regen_declared_surface_from_fixture -- --ignored",
+        path.display()
     );
 }

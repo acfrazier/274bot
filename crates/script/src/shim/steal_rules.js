@@ -1,34 +1,26 @@
-import { Bank } from '../bank/Bank.js';
-import { Execution } from '../execution/Execution.js';
-import { Inventory } from '../inventory/Inventory.js';
-import { notImpl } from '../../shim/_kernel.js';
+import { runMachine } from '../../shim/_kernel.js';
 
 export const THIEVER_BANKING_OPTIONS = ['None', 'Auto'];
 export const STUN_COMBAT_TICKS = 9;
 
-export function nextWithdrawChunk(_need) {
-    throw notImpl('nextWithdrawChunk');
+export function nextWithdrawChunk(need) {
+    return globalThis.__rs2b0t_next_withdraw_chunk(need);
 }
 
-export async function withdrawTo(name, target, count = () => Inventory.count(name)) {
-    let state = null, ok = false;
-    for (;;) {
-        const command = globalThis.rustyscript.functions.__rs2b0t_withdraw_step({state, ok, target, count: count(), full: Inventory.isFull()});
-        if (command.kind === 'done') return command.value;
-        state = command.state;
-        if (command.kind === 'x') {
-            ok = await Bank.withdrawX(name, command.count);
-        } else {
-            await Bank.withdraw(name, command.op);
-            ok = await Execution.delayUntil(() => count() > command.before, 2500);
-        }
-    }
+// Rust runs the frozen loop; `count` is called through the callback path
+// (absent: Inventory.count(name) from the posted backpack).
+export async function withdrawTo(name, target, count) {
+    const out = await runMachine(
+        'bank_withdraw_to',
+        { name: String(name), target },
+        { count: typeof count === 'function' ? count : undefined },
+    );
+    return out.kind === 'done' ? out.value : 0;
 }
 
 export async function closeBankAndConfirmCount(expected, count) {
-    if (!(await Bank.close())) return false;
-    await Execution.delayTicks(1);
-    return Execution.delayUntil(() => count() >= expected, 3000);
+    const out = await runMachine('bank_close_confirm', { expected }, { count });
+    return out.kind === 'done' && out.value === true;
 }
 
 export function autoFoodBanking(mode) {

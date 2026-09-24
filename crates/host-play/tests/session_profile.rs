@@ -272,6 +272,8 @@ fn cache_and_nav_mismatch_are_rejected_before_creating_resources() {
     let manifest = NavManifest {
         revision: 274,
         cache_id: "wrong".into(),
+        content_id: None,
+        source_sha256: None,
         nav_sha256: "wrong".into(),
         flags_sha256: None,
         reach_sha256: None,
@@ -588,6 +590,8 @@ fn navigation_and_scatter_use_the_selected_shared_world_and_keep_it_after_disk_e
     let manifest = NavManifest {
         revision: 289,
         cache_id: CacheManifest::capture(289, &fixture.0).unwrap().identity(),
+        content_id: None,
+        source_sha256: None,
         nav_sha256: format!("{:x}", Sha256::digest(&bytes)),
         flags_sha256: Some(format!("{:x}", Sha256::digest(&flags))),
         reach_sha256: None,
@@ -761,6 +765,8 @@ fn write_nav_sidecar(pack: &std::path::Path, revision: u16, cache_id: String, by
     let manifest = NavManifest {
         revision,
         cache_id,
+        content_id: None,
+        source_sha256: None,
         nav_sha256: nav::manifest::hash_bytes(bytes),
         flags_sha256: None,
         reach_sha256: None,
@@ -787,6 +793,8 @@ fn bundled_identity_decodes_once_without_hashing_and_shares_the_world() {
     let table = [BundledNavIdentity {
         revision: 289,
         cache_id: cache_id.clone(),
+        content_id: None,
+        source_sha256: None,
         format: nav::pack::FORMAT_ID.into(),
         nav_sha256: nav::manifest::hash_bytes(&bytes),
         flags_sha256: None,
@@ -858,6 +866,8 @@ fn nav_pack_override_defeats_bundle_selection_and_hashes_once() {
     let table = [BundledNavIdentity {
         revision: 289,
         cache_id,
+        content_id: None,
+        source_sha256: None,
         format: nav::pack::FORMAT_ID.into(),
         nav_sha256: nav::manifest::hash_bytes(&bytes),
         flags_sha256: None,
@@ -899,6 +909,8 @@ fn nav_flags_override_keeps_external_provenance_even_on_bundle_sibling_path() {
     let table = [BundledNavIdentity {
         revision: 289,
         cache_id: cache_id.clone(),
+        content_id: None,
+        source_sha256: None,
         format: nav::pack::FORMAT_ID.into(),
         nav_sha256: nav::manifest::hash_bytes(&bytes),
         flags_sha256: Some(nav::manifest::hash_bytes(b"bundle-sibling-flags")),
@@ -968,6 +980,8 @@ fn external_wrong_hash_revision_or_corrupt_bytes_are_rejected() {
     let mut wrong = NavManifest {
         revision: 289,
         cache_id: cache_id.clone(),
+        content_id: None,
+        source_sha256: None,
         nav_sha256: "00".repeat(32),
         flags_sha256: None,
         reach_sha256: None,
@@ -1074,6 +1088,8 @@ fn bundled_missing_or_unbound_reach_is_a_prepare_error() {
     let missing_identity = [BundledNavIdentity {
         revision: 289,
         cache_id: cache_id.clone(),
+        content_id: None,
+        source_sha256: None,
         format: nav::pack::FORMAT_ID.into(),
         nav_sha256: nav::manifest::hash_bytes(&bytes),
         flags_sha256: None,
@@ -1150,6 +1166,8 @@ fn bundled_stale_same_sized_canlight_rejects_new_bank_policy() {
     let table = [BundledNavIdentity {
         revision: 289,
         cache_id,
+        content_id: None,
+        source_sha256: None,
         format: nav::pack::FORMAT_ID.into(),
         nav_sha256: nav::manifest::hash_bytes(&bytes),
         flags_sha256: None,
@@ -1218,12 +1236,25 @@ fn external_pack_does_not_load_a_sibling_reach_sidecar() {
 }
 
 fn write_world_json(engine: &Path, revision: u64, port: u64, members: &str) {
+    write_world_json_with_web(engine, revision, port, None, members);
+}
+
+fn write_world_json_with_web(
+    engine: &Path,
+    revision: u64,
+    port: u64,
+    web_port: Option<u64>,
+    members: &str,
+) {
     let dir = engine.join("data/config");
     std::fs::create_dir_all(&dir).unwrap();
+    let web = web_port
+        .map(|port| format!(r#","web":{{"port":{port}}}"#))
+        .unwrap_or_default();
     std::fs::write(
         dir.join("world.json"),
         format!(
-            r#"{{"engine":{{"revision":{revision}}},"node":{{"port":{port},"members":{members}}}}}"#
+            r#"{{"engine":{{"revision":{revision}}},"node":{{"port":{port},"members":{members}}}{web}}}"#
         ),
     )
     .unwrap();
@@ -1363,5 +1394,302 @@ fn missing_world_json_is_unknown_not_default_true() {
     assert_eq!(
         selected.world_members(),
         &host_play::WorldMembersFact::Unknown
+    );
+}
+
+fn resolve_named_local_289(
+    fixture: &Fixture,
+    engine: &Path,
+    game_port: u16,
+    http_port: u16,
+    extra: &[&str],
+) -> Result<host_play::ProfileSelection, String> {
+    let engine = engine.to_str().unwrap().to_owned();
+    let cache = fixture.0.to_str().unwrap().to_owned();
+    let manifest = fixture.0.join("manifest-289.json");
+    let manifest = manifest.to_str().unwrap().to_owned();
+    let nav = fixture.0.join("missing.navpack");
+    let nav = nav.to_str().unwrap().to_owned();
+    let game_port = game_port.to_string();
+    let http_port = http_port.to_string();
+    let mut args = vec![
+        "--profile",
+        "local-289",
+        "--engine",
+        &engine,
+        "--host",
+        "127.0.0.1",
+        "--port",
+        &game_port,
+        "--asset-host",
+        "127.0.0.1",
+        "--http-port",
+        &http_port,
+        "--cache",
+        &cache,
+        "--cache-manifest",
+        &manifest,
+        "--nav-pack",
+        &nav,
+    ];
+    args.extend_from_slice(extra);
+    let (options, _) = parse_profile_args(args)?;
+    options.resolve_with_env(None, &fixture.env())
+}
+
+#[test]
+fn default_profiles_without_endpoint_flags_remain_supported() {
+    let fixture = Fixture::new();
+    let local = ProfileOptions::default()
+        .resolve_with_env(None, &fixture.env())
+        .unwrap();
+    assert!(local.supported_server());
+    let (public, _) = parse_profile_args(["--profile", "public-289"]).unwrap();
+    assert!(public
+        .resolve_with_env(None, &fixture.env())
+        .unwrap()
+        .supported_server());
+}
+
+#[test]
+fn named_local_matching_loopback_ports_qualify_and_keep_identity_closed() {
+    let fixture = Fixture::new();
+    let engine = fixture.0.join("engine");
+    write_world_json_with_web(&engine, 289, 45594, Some(1180), "true");
+    let selected = resolve_named_local_289(&fixture, &engine, 45594, 1180, &[]).unwrap();
+    assert!(selected.supported_server());
+    assert!(matches!(
+        selected.world_members(),
+        host_play::WorldMembersFact::Known {
+            members: true,
+            source: host_play::WorldMembersSource::LocalWorldJson { .. }
+        }
+    ));
+    let profile = selected.bind().unwrap();
+    assert!(
+        profile.game_data().is_none(),
+        "synthetic cache must still fail identity/source qualification"
+    );
+}
+
+#[test]
+fn named_local_changed_port_or_missing_web_does_not_qualify() {
+    let fixture = Fixture::new();
+    let engine = fixture.0.join("engine");
+    write_world_json_with_web(&engine, 289, 45594, Some(1180), "true");
+    let changed = resolve_named_local_289(&fixture, &engine, 44594, 1180, &[]).unwrap();
+    assert!(!changed.supported_server());
+    assert_eq!(
+        changed.world_members(),
+        &host_play::WorldMembersFact::Unknown
+    );
+    assert!(changed.bind().unwrap().game_data().is_none());
+
+    write_world_json(&engine, 289, 45594, "true");
+    let missing_web = resolve_named_local_289(&fixture, &engine, 45594, 1180, &[]).unwrap();
+    assert!(matches!(
+        missing_web.world_members(),
+        host_play::WorldMembersFact::Known {
+            source: host_play::WorldMembersSource::LocalWorldJson { .. },
+            ..
+        }
+    ));
+    assert!(!missing_web.supported_server());
+    assert!(missing_web.bind().unwrap().game_data().is_none());
+}
+
+#[test]
+fn named_local_nonlocal_host_stays_fail_closed() {
+    let fixture = Fixture::new();
+    let engine = fixture.0.join("engine");
+    write_world_json_with_web(&engine, 289, 45594, Some(1180), "true");
+    let error = parse_profile_args([
+        "--profile",
+        "local-289",
+        "--engine",
+        engine.to_str().unwrap(),
+        "--host",
+        "8.8.8.8",
+        "--port",
+        "45594",
+        "--http-port",
+        "1180",
+    ])
+    .unwrap()
+    .0
+    .resolve_with_env(None, &fixture.env())
+    .unwrap_err();
+    assert!(error.contains("non-loopback"), "{error}");
+}
+
+#[test]
+fn public_endpoint_overrides_do_not_inherit_local_world_facts() {
+    let fixture = Fixture::new();
+    let engine = fixture.0.join("engine");
+    write_world_json_with_web(&engine, 289, 443, Some(443), "true");
+    let (options, _) = parse_profile_args([
+        "--profile",
+        "public-289",
+        "--engine",
+        engine.to_str().unwrap(),
+        "--host",
+        "w1.rs2b2t.com",
+        "--port",
+        "443",
+        "--asset-host",
+        "w1.rs2b2t.com",
+        "--http-port",
+        "443",
+        "--cache",
+        fixture.0.to_str().unwrap(),
+        "--cache-manifest",
+        fixture.0.join("manifest-289.json").to_str().unwrap(),
+        "--nav-pack",
+        fixture.0.join("missing.navpack").to_str().unwrap(),
+    ])
+    .unwrap();
+    let selected = options.resolve_with_env(None, &fixture.env()).unwrap();
+    assert!(!selected.supported_server());
+    assert_eq!(
+        selected.world_members(),
+        &host_play::WorldMembersFact::Unknown
+    );
+    assert!(selected.bind().unwrap().game_data().is_none());
+}
+
+#[test]
+fn missing_world_json_with_port_overrides_does_not_qualify() {
+    let fixture = Fixture::new();
+    let engine = fixture.0.join("empty-engine");
+    std::fs::create_dir_all(&engine).unwrap();
+    let selected = resolve_named_local_289(&fixture, &engine, 45594, 1180, &[]).unwrap();
+    assert!(!selected.supported_server());
+    assert_eq!(
+        selected.world_members(),
+        &host_play::WorldMembersFact::Unknown
+    );
+    assert!(selected.bind().unwrap().game_data().is_none());
+}
+
+#[test]
+fn explicit_world_members_does_not_manufacture_override_trust() {
+    let fixture = Fixture::new();
+    let engine = fixture.0.join("engine");
+    write_world_json_with_web(&engine, 289, 45594, Some(1180), "true");
+    let selected =
+        resolve_named_local_289(&fixture, &engine, 45594, 1180, &["--world-members", "true"])
+            .unwrap();
+    assert!(matches!(
+        selected.world_members(),
+        host_play::WorldMembersFact::Known {
+            members: true,
+            source: host_play::WorldMembersSource::ExplicitOverride
+        }
+    ));
+    assert!(!selected.supported_server());
+    assert!(selected.bind().unwrap().game_data().is_none());
+
+    let (options, _) = parse_profile_args([
+        "--profile",
+        "local-289",
+        "--engine",
+        engine.to_str().unwrap(),
+        "--world-members",
+        "false",
+    ])
+    .unwrap();
+    let no_endpoint = options.resolve_with_env(None, &fixture.env()).unwrap();
+    assert!(no_endpoint.supported_server());
+}
+
+#[test]
+fn malformed_web_port_does_not_qualify_facts() {
+    let fixture = Fixture::new();
+    let engine = fixture.0.join("engine");
+    let dir = engine.join("data/config");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("world.json"),
+        r#"{"engine":{"revision":289},"node":{"port":45594,"members":true},"web":{"port":"1180"}}"#,
+    )
+    .unwrap();
+    let selected = resolve_named_local_289(&fixture, &engine, 45594, 1180, &[]).unwrap();
+    assert!(matches!(
+        selected.world_members(),
+        host_play::WorldMembersFact::Known {
+            source: host_play::WorldMembersSource::LocalWorldJson { .. },
+            ..
+        }
+    ));
+    assert!(!selected.supported_server());
+}
+
+fn isolated_local_289_tree() -> Option<(PathBuf, PathBuf)> {
+    let engine = PathBuf::from("/tmp/274bot-r018-engine.aYl8li");
+    let content = PathBuf::from("/Users/acfrazier/experiments/lostcity-289/content");
+    let ready = engine.join("data/config/world.json").is_file()
+        && engine.join("data/pack/client/config").is_file()
+        && content
+            .join("scripts/player/configs/consumption/consume.dbtable")
+            .is_file();
+    ready.then_some((engine, content))
+}
+
+/// Bind-only: matching isolated 45594/1180 must attach packed Lobster heal 12.
+#[test]
+fn named_local_matching_isolated_ports_attach_lobster_heal12() {
+    let Some((engine, content)) = isolated_local_289_tree() else {
+        eprintln!("skip: isolated local-289 engine/content unavailable");
+        return;
+    };
+    let fixture = Fixture::new();
+    let cache = engine.join("data/pack/client");
+    let manifest = CacheManifest::capture(289, &cache).unwrap();
+    let manifest_path = fixture.0.join("isolated-289-manifest.json");
+    std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    let (options, _) = parse_profile_args([
+        "--profile",
+        "local-289",
+        "--engine",
+        engine.to_str().unwrap(),
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "45594",
+        "--asset-host",
+        "127.0.0.1",
+        "--http-port",
+        "1180",
+        "--cache",
+        cache.to_str().unwrap(),
+        "--content",
+        content.to_str().unwrap(),
+        "--cache-manifest",
+        manifest_path.to_str().unwrap(),
+        "--nav-pack",
+        fixture.0.join("missing.navpack").to_str().unwrap(),
+        "--unpack",
+        fixture.0.join("unpack").to_str().unwrap(),
+    ])
+    .unwrap();
+    let selected = options.resolve_with_env(None, &fixture.env()).unwrap();
+    assert!(selected.supported_server());
+    let profile = selected.bind().unwrap();
+    let data = profile
+        .game_data()
+        .expect("matching isolated local-289 must attach generated facts");
+    assert_eq!(data.fixed_food_heal("Lobster"), Some(12));
+
+    let mut wrong_content = options.clone();
+    wrong_content.content_dir = Some(fixture.0.join("empty-content"));
+    std::fs::create_dir_all(fixture.0.join("empty-content")).unwrap();
+    let mismatch = wrong_content
+        .resolve_with_env(None, &fixture.env())
+        .unwrap()
+        .bind()
+        .unwrap();
+    assert!(
+        mismatch.game_data().is_none(),
+        "source mismatch must keep facts closed"
     );
 }

@@ -28,6 +28,48 @@ fn locked_unloadable(spec: &str) -> bool {
 }
 
 #[test]
+fn autofighter_and_herb_cleaner_import_herbs_without_unloadable_stamp() {
+    let Some(root) = script::rs2b0t_root() else {
+        return;
+    };
+    let dir = scratch("herb-cards");
+    let mut lib = JsLibrary::with_cache(dir.join("js-scripts.json"), dir.join("js-cache"));
+    lib.register_rs2b0t(&root, &dir.join("rs2b0t-path"))
+        .expect("catalog register");
+    for name in ["AutoFighter", "HerbCleaner"] {
+        let card = lib
+            .get(ScriptSource::Catalog, name)
+            .unwrap_or_else(|| panic!("{name} listed"));
+        assert_eq!(
+            card.unloadable, None,
+            "{name} must load after herbs.js remap (not gameplay-qualified)"
+        );
+    }
+}
+
+#[test]
+fn melee_partner_trade_and_type_only_imports_resolve() {
+    let Some(root) = script::rs2b0t_root() else {
+        return;
+    };
+    let dir = scratch("blocked-cards");
+    let mut lib = JsLibrary::with_cache(dir.join("js-scripts.json"), dir.join("js-cache"));
+    lib.register_rs2b0t(&root, &dir.join("rs2b0t-path"))
+        .expect("catalog register");
+    let unloadable = |name: &str| {
+        lib.get(ScriptSource::Catalog, name)
+            .unwrap_or_else(|| panic!("{name} listed"))
+            .unloadable
+            .clone()
+    };
+    // BrimhavenMossGiants names dangerZones.js only in `import type`.
+    assert_eq!(unloadable("BrimhavenMossGiants"), None);
+    assert_eq!(unloadable("JiveMarketDumper"), None);
+    let dragons = unloadable("JiveDragons").unwrap_or_default();
+    assert!(!dragons.contains("meleeWeapons.js"), "{dragons}");
+}
+
+#[test]
 fn catalog_cards_except_dim_set_remap() {
     let Some(root) = script::rs2b0t_root() else {
         return;

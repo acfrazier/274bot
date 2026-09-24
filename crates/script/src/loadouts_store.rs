@@ -410,7 +410,9 @@ impl ResolvedSettingOptions {
 
 /// Combo options for a setting: inline `options` win; `optionsFrom: 'loadouts'`
 /// pulls names from the store; a high-alchemy item spec is resolved from
-/// borrowed selected facts without mutating the schema.
+/// borrowed selected facts without mutating the schema. Recognized imported
+/// catalog tables are a last-resort host metadata lookup. W1c equipment idents
+/// resolve from borrowed `equipment_names` facts; `AXES` / `DROP_DB` stay empty.
 pub fn resolve_setting_options(
     def: &crate::rs2b0t_registry::SettingDef,
     loadouts: &LoadoutsStore,
@@ -434,7 +436,63 @@ pub fn resolve_setting_options_with_labels(
     if let Some(spec) = def.item_option_spec.as_ref() {
         return resolve_item_option_spec(spec, game_data);
     }
+    if let Some(from) = def.options_from.as_deref() {
+        if crate::rs2b0t_registry::is_revision_fact_option_ident(from) {
+            return resolve_w1c_equipment_options(from, game_data);
+        }
+        if let Some(table) = crate::rs2b0t_registry::catalog_option_table(from) {
+            return ResolvedSettingOptions::from_values(
+                table.iter().map(|s| (*s).to_string()).collect(),
+            );
+        }
+    }
     ResolvedSettingOptions::default()
+}
+
+fn equipment_row_is_selectable(row: &api::game_data::EquipmentNameEntry) -> bool {
+    row.disposition == "resolved"
+        && row.id.is_some()
+        && row
+            .alias
+            .as_ref()
+            .is_some_and(|alias| !alias.trim().is_empty())
+}
+
+fn resolve_w1c_equipment_options(
+    ident: &str,
+    game_data: Option<&api::game_data::SelectedGameData>,
+) -> ResolvedSettingOptions {
+    let Some(families) = crate::rs2b0t_registry::w1c_equipment_option_families(ident) else {
+        return ResolvedSettingOptions::default();
+    };
+    let Some(data) = game_data else {
+        return ResolvedSettingOptions::default();
+    };
+    let Some(facts) = data.equipment_names() else {
+        return ResolvedSettingOptions::default();
+    };
+    let mut values = Vec::new();
+    let mut labels = Vec::new();
+    for family in families {
+        let Some(rows) = facts.family(family) else {
+            continue;
+        };
+        for row in rows {
+            if !equipment_row_is_selectable(row) {
+                continue;
+            }
+            let key = row.requested_name.clone();
+            let label = row
+                .selected_name
+                .as_deref()
+                .filter(|name| !name.is_empty())
+                .unwrap_or(&key)
+                .to_string();
+            values.push(key);
+            labels.push(label);
+        }
+    }
+    ResolvedSettingOptions { values, labels }
 }
 
 fn resolve_item_option_spec(
@@ -472,7 +530,11 @@ fn resolve_item_option_spec(
             alch,
         });
     }
-    rows.sort_by(|a, b| b.alch.cmp(&a.alch).then_with(|| a.label.cmp(&b.label)));
+    if spec.sort_keys_by_label {
+        rows.sort_by(|a, b| a.label.cmp(&b.label).then_with(|| a.key.cmp(&b.key)));
+    } else {
+        rows.sort_by(|a, b| b.alch.cmp(&a.alch).then_with(|| a.label.cmp(&b.label)));
+    }
     for row in rows {
         values.push(row.key);
         labels.push(row.label);
@@ -480,61 +542,68 @@ fn resolve_item_option_spec(
     ResolvedSettingOptions { values, labels }
 }
 
-/// Adapt the host's persisted loadout shape for script accessors.
-pub fn selected_compat_loadout(rows: &[Loadout], wanted: &str) -> serde_json::Value {
-    let Some(row) = rows
-        .iter()
+/// The loadout a compat script's `loadout` setting names (trimmed,
+/// case-insensitive), else the first one. Its serialized shape
+/// (`{ name, worn, carry, unassigned? }`) is what the script reads.
+pub fn selected_compat_loadout<'a>(rows: &'a [Loadout], wanted: &str) -> Option<&'a Loadout> {
+    rows.iter()
         .find(|r| r.name.eq_ignore_ascii_case(wanted.trim()))
         .or_else(|| rows.first())
-    else {
-        return serde_json::Value::Null;
-    };
-    loadout_to_compat(row)
 }
 
-pub fn loadout_to_compat(row: &Loadout) -> serde_json::Value {
-    let mut worn = serde_json::Map::new();
-    for (slot, item) in &row.worn {
-        worn.insert(slot.clone(), serde_json::Value::String(item.clone()));
+/// Hat-first worn names, then unassigned, after trim and empty filter.
+pub fn project_gear<'a, I>(worn: impl Fn(&str) -> Option<&'a str>, unassigned: I) -> Vec<String>
+where
+    I: IntoIterator<Item = &'a str>,
+{
+    let mut out = Vec::new();
+    for slot in WORN_SLOTS {
+        if let Some(item) = worn(slot).map(str::trim).filter(|item| !item.is_empty()) {
+            out.push(item.to_string());
+        }
     }
-    let mut out = serde_json::Map::new();
-    out.insert("name".into(), serde_json::Value::String(row.name.clone()));
-    out.insert("worn".into(), serde_json::Value::Object(worn));
-    out.insert(
-        "carry".into(),
-        serde_json::to_value(&row.carry).unwrap_or_else(|_| serde_json::json!([])),
-    );
-    if !row.unassigned.is_empty() {
-        out.insert(
-            "unassigned".into(),
-            serde_json::to_value(&row.unassigned).unwrap_or_else(|_| serde_json::json!([])),
-        );
+    for item in unassigned {
+        let item = item.trim();
+        if !item.is_empty() {
+            out.push(item.to_string());
+        }
     }
-    serde_json::Value::Object(out)
+    out
+}
+
+/// Trimmed righthand, otherwise the caller fallback (including empty).
+pub fn project_weapon(righthand: Option<&str>, fallback: Option<&str>) -> Option<String> {
+    if let Some(name) = righthand.map(str::trim).filter(|name| !name.is_empty()) {
+        return Some(name.to_string());
+    }
+    fallback.map(str::to_string)
+}
+
+/// One carry row after trim. Empty item names are dropped.
+pub fn carry_entry(item: &str, qty: u32) -> Option<CarryEntry> {
+    let item = item.trim();
+    if item.is_empty() {
+        None
+    } else {
+        Some(CarryEntry::new(item, qty))
+    }
 }
 
 pub fn gear_of(loadout: &serde_json::Value) -> Vec<String> {
     if loadout.is_null() {
         return Vec::new();
     }
-    let mut out = Vec::new();
-    if let Some(worn) = loadout.get("worn").and_then(|v| v.as_object()) {
-        for slot in WORN_SLOTS {
-            if let Some(item) = worn.get(slot).and_then(|v| v.as_str()).map(str::trim) {
-                if !item.is_empty() {
-                    out.push(item.to_string());
-                }
-            }
-        }
-    }
-    if let Some(rows) = loadout.get("unassigned").and_then(|v| v.as_array()) {
-        for row in rows {
-            if let Some(item) = row.as_str().map(str::trim).filter(|s| !s.is_empty()) {
-                out.push(item.to_string());
-            }
-        }
-    }
-    out
+    let worn = loadout.get("worn").and_then(|v| v.as_object());
+    let unassigned = loadout
+        .get("unassigned")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|row| row.as_str());
+    project_gear(
+        |slot| worn.and_then(|map| map.get(slot).and_then(|v| v.as_str())),
+        unassigned,
+    )
 }
 
 pub fn supplies_of(loadout: &serde_json::Value) -> Vec<CarryEntry> {
@@ -547,33 +616,26 @@ pub fn supplies_of(loadout: &serde_json::Value) -> Vec<CarryEntry> {
         .into_iter()
         .flatten()
         .filter_map(|row| {
-            let item = row
-                .get("item")
-                .and_then(|v| v.as_str())
-                .map(str::trim)
-                .filter(|s| !s.is_empty())?;
+            let item = row.get("item").and_then(|v| v.as_str())?;
             let qty = row
                 .get("qty")
                 .and_then(|v| v.as_u64())
                 .filter(|n| *n > 0)
                 .unwrap_or(1) as u32;
-            Some(CarryEntry::new(item, qty))
+            carry_entry(item, qty)
         })
         .collect()
 }
 
 pub fn weapon_of(loadout: &serde_json::Value, fallback: Option<&str>) -> serde_json::Value {
-    if let Some(name) = loadout
-        .get("worn")
-        .and_then(|v| v.get("righthand"))
-        .and_then(|v| v.as_str())
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-    {
-        return serde_json::Value::String(name.to_string());
-    }
-    match fallback {
-        Some(name) => serde_json::Value::String(name.to_string()),
+    match project_weapon(
+        loadout
+            .get("worn")
+            .and_then(|v| v.get("righthand"))
+            .and_then(|v| v.as_str()),
+        fallback,
+    ) {
+        Some(name) => serde_json::Value::String(name),
         None => serde_json::Value::Null,
     }
 }
@@ -718,6 +780,175 @@ mod tests {
     }
 
     #[test]
+    fn catalog_metadata_options_when_schema_empty() {
+        let path = tmp_path();
+        let store = LoadoutsStore::at(path);
+        let def = SettingDef {
+            id: "location".into(),
+            ty: "string".into(),
+            default: Some("Catherby".into()),
+            label: None,
+            min: None,
+            max: None,
+            step: None,
+            options: Vec::new(),
+            option_labels: Vec::new(),
+            group: None,
+            show_if: None,
+            options_from: Some("COOK_LOCATION_OPTIONS".into()),
+            csv_toggle: None,
+            help: None,
+            item_option_spec: None,
+        };
+        let opts = resolve_setting_options(&def, &store, None);
+        assert!(opts.contains(&"Catherby".into()), "{opts:?}");
+        assert!(opts.contains(&"Auto".into()), "{opts:?}");
+        assert!(opts.contains(&"Custom".into()), "{opts:?}");
+    }
+
+    fn equipment_from(ident: &str) -> SettingDef {
+        SettingDef {
+            id: ident.to_ascii_lowercase(),
+            ty: "string".into(),
+            default: None,
+            label: None,
+            min: None,
+            max: None,
+            step: None,
+            options: Vec::new(),
+            option_labels: Vec::new(),
+            group: None,
+            show_if: None,
+            options_from: Some(ident.into()),
+            csv_toggle: None,
+            help: None,
+            item_option_spec: None,
+        }
+    }
+
+    #[test]
+    fn w1c_equipment_options_closed_without_game_data() {
+        let path = tmp_path();
+        let store = LoadoutsStore::at(path);
+        let def = equipment_from("STAFFS");
+        assert!(resolve_setting_options(&def, &store, None).is_empty());
+        assert!(resolve_setting_options(&equipment_from("AXES"), &store, None).is_empty());
+    }
+
+    #[test]
+    fn w1c_equipment_options_match_curated_families_on_both_pins() {
+        let path = tmp_path();
+        let store = LoadoutsStore::at(path);
+        let r274 = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
+        let r289 = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
+        for ident in [
+            "STAFFS",
+            "BOWS",
+            "CROSSBOWS",
+            "DARTS",
+            "ARROWS",
+            "MELEE_WEAPONS",
+        ] {
+            let def = equipment_from(ident);
+            let a = resolve_setting_options_with_labels(&def, &store, Some(r274.as_ref()));
+            let b = resolve_setting_options_with_labels(&def, &store, Some(r289.as_ref()));
+            assert_eq!(a, b, "{ident} must match across pins");
+            assert_eq!(a.values.len(), a.labels.len());
+            assert!(!a.values.is_empty(), "{ident} must have resolved rows");
+        }
+        let staffs = resolve_setting_options_with_labels(
+            &equipment_from("STAFFS"),
+            &store,
+            Some(r274.as_ref()),
+        );
+        assert_eq!(staffs.values.len(), 15);
+        assert_eq!(staffs.values[0], "Staff");
+        assert_eq!(
+            staffs.values.last().map(String::as_str),
+            Some("Mystic fire staff")
+        );
+        assert_eq!(staffs.label_for("Staff of air"), "Staff of air");
+
+        let bows = resolve_setting_options(&equipment_from("BOWS"), &store, Some(r274.as_ref()));
+        assert_eq!(bows.len(), 12);
+        assert_eq!(bows[0], "Shortbow");
+        assert_eq!(bows.last().map(String::as_str), Some("Magic longbow"));
+
+        let crossbows =
+            resolve_setting_options(&equipment_from("CROSSBOWS"), &store, Some(r274.as_ref()));
+        assert_eq!(crossbows, vec!["Crossbow".to_string()]);
+        assert!(
+            !crossbows.iter().any(|n| n.contains("Karil")),
+            "absent crossbow tiers must not appear: {crossbows:?}"
+        );
+
+        let arrows =
+            resolve_setting_options(&equipment_from("ARROWS"), &store, Some(r274.as_ref()));
+        assert_eq!(arrows.len(), 6);
+        assert!(
+            !arrows.iter().any(|n| n == "Dragon arrow"),
+            "Dragon arrow is absent under exact join: {arrows:?}"
+        );
+
+        let bolts = resolve_setting_options(&equipment_from("BOLTS"), &store, Some(r274.as_ref()));
+        assert!(
+            bolts.is_empty(),
+            "bolt tiers stay absent; generic Bolts must not be invented: {bolts:?}"
+        );
+
+        let ranged = resolve_setting_options_with_labels(
+            &equipment_from("RANGED_WEAPONS"),
+            &store,
+            Some(r274.as_ref()),
+        );
+        assert_eq!(ranged.values.len(), 19, "12 bows + 7 darts");
+        assert_eq!(ranged.values[0], "Shortbow");
+        assert_eq!(ranged.values[12], "Bronze dart");
+        let rock = resolve_setting_options(
+            &equipment_from("ROCK_CRAB_RANGED_WEAPONS"),
+            &store,
+            Some(r274.as_ref()),
+        );
+        assert_eq!(rock, ranged.values);
+
+        assert!(
+            resolve_setting_options(&equipment_from("AXES"), &store, Some(r274.as_ref()))
+                .is_empty()
+        );
+        assert!(
+            resolve_setting_options(&equipment_from("DROP_DB"), &store, Some(r274.as_ref()))
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn recovered_inline_options_still_win_over_metadata() {
+        let path = tmp_path();
+        let store = LoadoutsStore::at(path);
+        let def = SettingDef {
+            id: "surface".into(),
+            ty: "string".into(),
+            default: Some("Range".into()),
+            label: None,
+            min: None,
+            max: None,
+            step: None,
+            options: vec!["Range".into(), "Fire".into()],
+            option_labels: Vec::new(),
+            group: None,
+            show_if: None,
+            options_from: Some("COOK_LOCATION_OPTIONS".into()),
+            csv_toggle: None,
+            help: None,
+            item_option_spec: None,
+        };
+        assert_eq!(
+            resolve_setting_options(&def, &store, None),
+            vec!["Range".to_string(), "Fire".to_string()]
+        );
+    }
+
+    #[test]
     fn resolve_setting_options_lists_loadout_names() {
         let path = tmp_path();
         let mut store = LoadoutsStore::at(path);
@@ -794,6 +1025,7 @@ mod tests {
         ItemOptionSpec {
             prefix: vec!["custom".into()],
             candidates,
+            sort_keys_by_label: false,
         }
     }
 
@@ -885,6 +1117,56 @@ mod tests {
         assert!(!a.values.iter().any(|k| k == "castlewars_armour_body"));
         assert!(!b.values.iter().any(|k| k == "castlewars_armour_body"));
         assert!(def.options.is_empty());
+        assert!(!def.item_option_spec.as_ref().unwrap().sort_keys_by_label);
+    }
+
+    #[test]
+    fn resolve_item_options_label_sort_orders_prefix_then_keys_on_both_pins() {
+        let path = tmp_path();
+        let store = LoadoutsStore::at(path);
+        let spec = ItemOptionSpec {
+            prefix: vec!["custom".into()],
+            candidates: vec![
+                cand("maple_longbow", None),
+                cand("rune_platebody", None),
+                cand("dragonhide_body", Some("Green d'hide body")),
+                cand("not_a_real_selected_item", None),
+            ],
+            sort_keys_by_label: true,
+        };
+        let def = item_def(spec);
+        let r274 = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
+        let r289 = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
+        let a = resolve_setting_options_with_labels(&def, &store, Some(r274.as_ref()));
+        let b = resolve_setting_options_with_labels(&def, &store, Some(r289.as_ref()));
+        let want_keys = [
+            "custom",
+            "dragonhide_body",
+            "maple_longbow",
+            "rune_platebody",
+        ];
+        let want_labels = [
+            "custom",
+            "Green d'hide body",
+            "Maple longbow",
+            "Rune platebody",
+        ];
+        assert_eq!(
+            a.values.iter().map(String::as_str).collect::<Vec<_>>(),
+            want_keys
+        );
+        assert_eq!(
+            a.labels.iter().map(String::as_str).collect::<Vec<_>>(),
+            want_labels
+        );
+        assert_eq!(b.values, a.values);
+        assert_eq!(b.labels, a.labels);
+        assert!(!a.values.iter().any(|k| k == "not_a_real_selected_item"));
+        assert!(!b.values.iter().any(|k| k == "not_a_real_selected_item"));
+        assert_ne!(
+            a.values[1], "rune_platebody",
+            "label sort must not use richest-first"
+        );
     }
 
     #[test]
@@ -1023,16 +1305,10 @@ mod compatibility_tests {
                 .with_carry("Lobster", 1),
             Loadout::new("Second").with_carry("Shark", 1),
         ];
-        assert_eq!(selected_compat_loadout(&rows, " SECOND ")["name"], "Second");
-        assert_eq!(
-            selected_compat_loadout(&rows, "missing")["carry"][1]["item"],
-            "Lobster"
-        );
-        assert_eq!(
-            selected_compat_loadout(&rows, "missing")["carry"][1]["qty"],
-            1
-        );
-        assert!(selected_compat_loadout(&[], "").is_null());
+        let pick = |wanted: &str| selected_compat_loadout(&rows, wanted).map(|r| r.name.as_str());
+        assert_eq!(pick(" SECOND "), Some("Second"));
+        assert_eq!(pick("missing"), Some("First"));
+        assert!(selected_compat_loadout(&[], "").is_none());
     }
 
     #[test]
@@ -1043,7 +1319,7 @@ mod compatibility_tests {
             .with_carry("Lobster", 10);
         let mut row = row;
         row.unassigned.push("old helm".into());
-        let json = loadout_to_compat(&row);
+        let json = serde_json::to_value(&row).unwrap();
         assert_eq!(weapon_of(&json, Some("Bronze sword")), "Rune scimitar");
         assert_eq!(supplies_of(&json), vec![CarryEntry::new("Lobster", 10)]);
         assert_eq!(

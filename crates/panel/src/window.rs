@@ -60,6 +60,9 @@ pub struct ShotCapture {
     pub width: u32,
     pub height: u32,
     pub rgba: Vec<u8>,
+    /// Copied from the readback job; never the current LIVE camera.
+    #[cfg(feature = "render-diagnostics")]
+    pub pixel_roi: Option<client::render::diagnostics::PixelRoiShotBind>,
 }
 
 /// Observable ownership stage for one labeled capture. Terminal harnesses
@@ -756,6 +759,8 @@ struct ShotReadback {
     buffer: wgpu::Buffer,
     width: u32,
     height: u32,
+    #[cfg(feature = "render-diagnostics")]
+    pixel_roi: Option<client::render::diagnostics::PixelRoiShotBind>,
 }
 
 fn record_readback_outcomes(
@@ -812,6 +817,7 @@ enum FrameSubmission {
 /// present image, never blits, and never presents; with nothing promoted it
 /// returns [`FrameSubmission::Skipped`] before any allocation, draw, or
 /// readback.
+#[allow(clippy::too_many_arguments)] // frame submit packs device/queue/renderer/shot handles
 fn submit_acquired_frame(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -868,6 +874,7 @@ fn submit_acquired_frame(
 /// encoder, optionally blit `target` onto a presentable destination, and
 /// submit. Returns the staged readbacks for [`complete_readbacks`] and
 /// never blocks on the mapped bytes.
+#[allow(clippy::too_many_arguments)] // ui frame submit packs device/queue/renderer/shot handles
 fn submit_ui_frame(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -985,6 +992,8 @@ fn readback(
     let height = source.height();
     let bytes_per_row = 4 * width;
     let padded = align_up(bytes_per_row, wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
+    #[cfg(feature = "render-diagnostics")]
+    let pixel_roi = client::render::diagnostics::snapshot_shot_bind();
     jobs.iter()
         .map(|(label, snapshot_json)| {
             let buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -1020,6 +1029,8 @@ fn readback(
                 buffer,
                 width,
                 height,
+                #[cfg(feature = "render-diagnostics")]
+                pixel_roi: pixel_roi.clone(),
             }
         })
         .collect()
@@ -1071,6 +1082,8 @@ fn map_readbacks(
                 width: rb.width,
                 height: rb.height,
                 rgba: to_rgba(&rgba, format),
+                #[cfg(feature = "render-diagnostics")]
+                pixel_roi: rb.pixel_roi,
             })
         })
         .collect()
@@ -1344,7 +1357,7 @@ where
                     // not be queued a second time, and key-repeat must not
                     // extra-deliver.
                     if !event.repeat {
-                        crate::app::add_shifted_key_event(
+                        crate::input_capture::add_shifted_key_event(
                             window.imgui.context.io_mut(),
                             &event.logical_key,
                             event.location,
@@ -1599,6 +1612,8 @@ mod tests {
             width: 1,
             height: 1,
             rgba: vec![0, 0, 0, 255],
+            #[cfg(feature = "render-diagnostics")]
+            pixel_roi: None,
         });
         assert_eq!(shots.status("gnome_chop"), ShotStatus::WritePending);
 
@@ -1751,7 +1766,7 @@ mod tests {
         let width = texture.width();
         let height = texture.height();
         let mut data = vec![0u8; (width * height * 4) as usize];
-        for chunk in data.chunks_exact_mut(4) {
+        for chunk in data.as_chunks_mut::<4>().0 {
             chunk.copy_from_slice(&px);
         }
         queue.write_texture(
@@ -1984,7 +1999,7 @@ mod tests {
         }
         let reused = read_texture_rgba(&device, &queue, &persistent, format);
         assert!(
-            !reused.chunks_exact(4).any(|px| px == MAGENTA),
+            !reused.as_chunks::<4>().0.iter().any(|px| px == &MAGENTA),
             "the reused target holds this frame, not the stale prefill"
         );
     }
@@ -2067,7 +2082,7 @@ mod tests {
         assert!(matches!(submission, FrameSubmission::Skipped));
         let prefilled = read_texture_rgba(&device, &queue, &target, format);
         assert!(
-            prefilled.chunks_exact(4).all(|px| px == MAGENTA),
+            prefilled.as_chunks::<4>().0.iter().all(|px| px == &MAGENTA),
             "no render pass ran over the caller's target"
         );
 
@@ -2188,7 +2203,7 @@ mod tests {
         assert_eq!(pixel(&drawn, OCCLUDED_TEST_PX, x0 + 4, y0 + 4), RED);
         assert_eq!(pixel(&drawn, OCCLUDED_TEST_PX, x1 + 8, y1 + 8), GREEN);
         assert!(
-            !drawn.chunks_exact(4).any(|px| px == MAGENTA),
+            !drawn.as_chunks::<4>().0.iter().any(|px| px == &MAGENTA),
             "the acquired image holds this frame, not the stale prefill"
         );
     }

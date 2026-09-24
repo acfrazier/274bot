@@ -53,6 +53,9 @@ fn npc<'a>(name: &'a str, actions: &'a [String]) -> SceneEntityInput<'a> {
         combat_level: 0,
         target_kind: 1,
         target_index: -1,
+        size: 0,
+        nx: 0,
+        nz: 0,
     }
 }
 
@@ -113,6 +116,7 @@ fn base<'a>() -> SnapshotInput<'a> {
         bank_note_off: -1,
         scene_state: 2,
         weight: 0,
+        combat_level: 0,
         camera_yaw: 0,
         camera_pitch: 0,
         teleports_enabled: false,
@@ -129,6 +133,8 @@ fn base<'a>() -> SnapshotInput<'a> {
         shop_stock: &[],
         reach: ReachViewInput::UNAVAILABLE,
         attacked_by_player: false,
+        self_target_kind: 0,
+        self_target_index: -1,
         widgets: &[],
     }
 }
@@ -360,33 +366,125 @@ fn sell_without_a_decoded_player_pack_fails_closed() {
     iso.join();
 }
 
-#[test]
-fn a_pick_callback_is_not_mapped_and_has_no_packet() {
-    let src = r#"
+/// Frozen NatureCrafter un-note store: `Shop.sell(ESSENCE, n, i => i.id !==
+/// ESSENCE_ID)` sells the noted stack, never the unnoted essence of the same
+/// name, and asks `pick` again before every batch.
+const SELL_PICK: &str = r#"
 import { Shop } from '../../api/shop/Shop.js';
 export default class T extends LoopingBot {
     async loop() {
         if (globalThis.__did) return;
         globalThis.__did = true;
         globalThis.__ok = null;
+        globalThis.__asked = [];
         try {
-            globalThis.__ok = await Shop.sell('Shark', 1, (i) => i.id !== 385);
+            globalThis.__ok = await Shop.sell('Rune essence', globalThis.__qty, (i) => {
+                globalThis.__asked.push(i);
+                if (globalThis.__throw) throw new Error('pick broke');
+                return i.id !== 1436;
+            });
         } catch (e) {
             globalThis.__ok = String(e.message || e);
         }
     }
 }
 "#;
-    let iso = spawn(src);
-    let player = [row("Shark", 385, 4, 3823, 2)];
+
+#[test]
+fn sell_with_pick_sells_the_row_pick_accepts_and_asks_again_per_batch() {
+    let iso = spawn(SELL_PICK);
+    let player = [
+        row("Rune essence", 1436, 1, 3823, 0),
+        row("Rune essence", 1437, 60, 3823, 3),
+    ];
+    let held = [
+        row("Rune essence", 1436, 1, 0, 0),
+        row("Rune essence", 1437, 60, 0, 3),
+    ];
+    let first = [
+        row("Rune essence", 1436, 1, 0, 0),
+        row("Rune essence", 1437, 10, 0, 3),
+    ];
+    let rest = [
+        row("Rune essence", 1436, 1, 0, 0),
+        row("Rune essence", 1437, 5, 0, 3),
+    ];
     let mut snap = base();
     snap.shop_open = true;
+    snap.inv = &held;
+    let _ = iso.probe("globalThis.__qty = 55");
     post(&iso, &snap, Some(&player));
     tick(&iso, 1);
-    let probe = iso.probe("__ok").unwrap();
-    assert!(
-        probe.as_str().unwrap_or("").contains("not impl"),
-        "the caller-row selector stays an explicit failure, got {probe:?}"
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![shop_button("sell", "Rune essence", 1437, 3, 3823, 10); 5],
+        "the batch sells the noted row pick accepted, in the caller's tick"
+    );
+    let asked = iso.probe("__asked").unwrap();
+    assert_eq!(
+        asked,
+        serde_json::json!([
+            { "id": 1436, "name": "Rune essence", "count": 1, "slot": 0, "comId": 3823 },
+            { "id": 1437, "name": "Rune essence", "count": 60, "slot": 3, "comId": 3823 }
+        ]),
+        "pick sees each same-name row in order until one is accepted"
+    );
+
+    snap.tick = 2;
+    snap.inv = &first;
+    post(&iso, &snap, Some(&player));
+    tick(&iso, 2);
+    snap.tick = 3;
+    post(&iso, &snap, Some(&player));
+    tick(&iso, 3);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![shop_button("sell", "Rune essence", 1437, 3, 3823, 5)],
+        "the remaining five go from the row pick accepts again"
+    );
+    assert_eq!(
+        iso.probe("__asked.length").unwrap(),
+        4,
+        "pick is asked again before the second batch"
+    );
+
+    snap.tick = 4;
+    snap.inv = &rest;
+    post(&iso, &snap, Some(&player));
+    tick(&iso, 4);
+    snap.tick = 5;
+    post(&iso, &snap, Some(&player));
+    tick(&iso, 5);
+    assert_eq!(iso.probe("__ok").unwrap(), Value::from(55));
+    iso.join();
+}
+
+#[test]
+fn sell_with_a_refusing_or_throwing_pick_sends_nothing() {
+    let iso = spawn(SELL_PICK);
+    let player = [row("Rune essence", 1436, 4, 3823, 0)];
+    let mut snap = base();
+    snap.shop_open = true;
+    snap.inv = &player;
+    let _ = iso.probe("globalThis.__qty = 4");
+    post(&iso, &snap, Some(&player));
+    tick(&iso, 1);
+    assert_eq!(
+        iso.probe("__ok").unwrap(),
+        Value::from(0),
+        "no accepted row sells nothing"
+    );
+    assert!(iso.drain_interacts().is_empty());
+    iso.join();
+
+    let iso = spawn(SELL_PICK);
+    let _ = iso.probe("globalThis.__qty = 4; globalThis.__throw = true");
+    post(&iso, &snap, Some(&player));
+    tick(&iso, 1);
+    assert_eq!(
+        iso.probe("__ok").unwrap(),
+        "pick broke",
+        "what pick throws rejects the sale"
     );
     assert!(iso.drain_interacts().is_empty());
     iso.join();

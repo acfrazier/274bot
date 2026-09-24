@@ -29,7 +29,7 @@ use crate::essence::{
 };
 use crate::router::{GridLeg, GridRoute, Leg, Route};
 use crate::tile::{chebyshev, Tile};
-use crate::transport::{DoorDir, TransportEdge, TransportKind, SHANTAY_HENGE_LOC_ID};
+use crate::transport::{DoorDir, TransportEdge, TransportKind, CELLAR_SHIFT, SHANTAY_HENGE_LOC_ID};
 
 /// The magic side-tab index (the 2004 icon order: combat 0, stats 1,
 /// quests 2, inventory 3, equipment 4, prayer 5, magic 6).
@@ -41,6 +41,11 @@ const MAGIC_TAB: usize = 6;
 /// teleport hop's arrive arm (and a scenario's dest proof) must accept
 /// this radius, independent of the runner's exact `close_enough`.
 const TELEPORT_ARRIVE_RADIUS: i32 = 2;
+/// `movecoord(coord(), 0, 0, ±6400)` cellar hops land on the player's
+/// tile. Taken from an adjacent stand that is Chebyshev 1 off the loc,
+/// so the baked dest (loc ± 6400) is one tile beside the live landing.
+/// Independent of host WalkNear `close_enough` 0 — not a global radius.
+const CELLAR_ARRIVE_RADIUS: i32 = 1;
 /// Gnome glider landing scatter: `p_teleport(map_findsquare($dest, 0, 1,
 /// lineofwalk))` in `gnome_glider.rs2` — chebyshev 1, never the pad
 /// exactly when a loc/NPC occupies it.
@@ -649,6 +654,14 @@ impl Default for Traveller {
 // before the lock. One window/recovery per route bounds this inference.
 const THIEVING_STUN_WINDOW: u32 = 11;
 
+/// Distinct game ticks a sent walk may sit without tile progress, with
+/// no map flag and no movement, before one same-aim recovery reissue.
+/// Counts at the latest observed position (partial-hop progress still
+/// recovers once the player stops). Covers the short engine freeze
+/// window (Bind ~3 ticks); matches the canonical WalkExecutor stallTicks
+/// default of 5. Not a second hop budget.
+const WALK_STALL_RECOVER_IDLE_TICKS: u32 = 5;
+
 /// The legs still to work and current hop state. Budgets are captured at
 /// start; callbacks stay with the caller's options.
 struct FollowRun {
@@ -800,6 +813,10 @@ impl FollowRun {
                         sent_tile: None,
                         sent_tick: snapshot.tick(),
                         tries: 0,
+                        stall_idle_ticks: 0,
+                        stall_idle_last_tick: None,
+                        stall_idle_at: None,
+                        stall_recovered: false,
                     };
                     match self.send_walk_hop(d, snapshot, options, hop, here) {
                         Poll::Watching => return None,
@@ -1000,15 +1017,32 @@ impl FollowRun {
                             let mut ix = Interactions::new(snapshot, d);
                             match interact_transport(snapshot, &mut ix, target, edge, options) {
                                 SendResult::Sent { .. } => {
+                                    // Already-open trapdoor: this interact is
+                                    // Climb-down. Mark tries so poll_transport
+                                    // does not send it a second time.
+                                    let tries = if edge.open_loc_id.is_some()
+                                        && edge.kind != TransportKind::Door
+                                        && edge_loc_open(snapshot, edge)
+                                    {
+                                        1
+                                    } else {
+                                        0
+                                    };
+                                    // A door Open arms the one crossing
+                                    // probe: a scripted door can place the
+                                    // player on `at` and never read open
+                                    // (see `door_step_pending`).
+                                    let open_sent_tick =
+                                        (edge.kind == TransportKind::Door).then(|| snapshot.tick());
                                     self.loc_wait = 0;
                                     self.transport = Some(TransportHop {
                                         leg,
                                         to,
                                         ticks_waited: 0,
                                         sent_tile: Some(here),
-                                        tries: 0,
+                                        tries,
                                         troll: false,
-                                        open_sent_tick: None,
+                                        open_sent_tick,
                                         chat_seq: chat_seq(snapshot),
                                         dialog_page: None,
                                         approach: None,
@@ -1079,8 +1113,10 @@ impl FollowRun {
         let arms = [("arrived", arrived(hop.aim, radius))];
         if crate::debug_enabled() {
             eprintln!(
-                "[nav-walk] here={here:?} aim={:?} radius={radius} ticks_waited={} sent_tile={:?}",
-                hop.aim, hop.ticks_waited, hop.sent_tile
+                "[nav-walk] tick={} here={here:?} aim={:?} radius={radius} ticks_waited={} sent_tile={:?} actor={:?} map_flag={:?}",
+                snapshot.tick(), hop.aim, hop.ticks_waited, hop.sent_tile,
+                snapshot.local_player().map(|p| (p.player.actor.moving, p.player.actor.running, p.player.actor.in_combat, &p.player.actor.target)),
+                snapshot.map_flag()
             );
         }
         let mut settle = Settle::new(
@@ -1139,10 +1175,130 @@ impl FollowRun {
                         why,
                         tries: hop.tries.max(1),
                     })
+                } else if self.should_recover_cancelled_walk(&hop, snapshot, here) {
+                    self.recover_cancelled_walk(d, snapshot, options, hop, here)
                 } else {
+                    self.note_walk_stall_idle(&mut hop, snapshot, here);
                     self.walk = Some(hop);
                     Poll::Watching
                 }
+            }
+        }
+    }
+
+    /// True when a sent walk has been cancelled long enough to warrant
+    /// one same-aim recovery: no map flag, not moving, recovery not yet
+    /// spent, and enough *distinct* game ticks with no tile progress at
+    /// the latest observed position (duplicate snapshot polls do not
+    /// count). Progress away from the original `sent_tile` still qualifies
+    /// once the player stops; `sent_tile` remains only for Dropped/Expired.
+    fn should_recover_cancelled_walk(
+        &self,
+        hop: &WalkHop,
+        snapshot: &GameSnapshot,
+        here: WorldTile,
+    ) -> bool {
+        if hop.stall_recovered || hop.sent_tile.is_none() {
+            return false;
+        }
+        if snapshot.map_flag().is_some() {
+            return false;
+        }
+        if snapshot
+            .local_player()
+            .is_some_and(|p| p.player.actor.moving)
+        {
+            return false;
+        }
+        let idle = if hop.stall_idle_at != Some(here) {
+            // First observation at this tile after movement (or start).
+            1
+        } else {
+            match hop.stall_idle_last_tick {
+                Some(t) if t == snapshot.tick() => hop.stall_idle_ticks,
+                _ => hop.stall_idle_ticks.saturating_add(1),
+            }
+        };
+        idle >= WALK_STALL_RECOVER_IDLE_TICKS
+    }
+
+    /// Advance or clear the cancelled-walk idle counter. Only distinct
+    /// snapshot ticks count; active map flag, actor movement, or an
+    /// actual tile change resets the window so a live hop is never
+    /// spuriously reissued. Idle is tracked at the latest observed tile
+    /// so partial-hop progress can still recover once movement stops.
+    fn note_walk_stall_idle(&self, hop: &mut WalkHop, snapshot: &GameSnapshot, here: WorldTile) {
+        let active = snapshot.map_flag().is_some()
+            || snapshot
+                .local_player()
+                .is_some_and(|p| p.player.actor.moving);
+        if hop.sent_tile.is_none() || active || hop.stall_recovered {
+            hop.stall_idle_ticks = 0;
+            hop.stall_idle_last_tick = None;
+            hop.stall_idle_at = None;
+            return;
+        }
+        if hop.stall_idle_at != Some(here) {
+            hop.stall_idle_at = Some(here);
+            hop.stall_idle_ticks = 0;
+            hop.stall_idle_last_tick = None;
+        }
+        let tick = snapshot.tick();
+        if hop.stall_idle_last_tick == Some(tick) {
+            return;
+        }
+        hop.stall_idle_last_tick = Some(tick);
+        hop.stall_idle_ticks = hop.stall_idle_ticks.saturating_add(1);
+    }
+
+    /// One same-aim walk reissue after a cancelled hop. Does not reset
+    /// `ticks_waited` (hop budget stays finite), does not consume another
+    /// `max_hops` slot, and does not re-pick aim. At most one recovery per
+    /// stalled hop; further cancellation exhausts the original bound.
+    fn recover_cancelled_walk<D: Driver>(
+        &mut self,
+        d: &mut D,
+        snapshot: &GameSnapshot,
+        options: &mut TravelOptions<'_>,
+        mut hop: WalkHop,
+        here: WorldTile,
+    ) -> Poll {
+        let aim = hop.aim;
+        let mut ix = Interactions::new(snapshot, d);
+        let result = ix.walk(aim);
+        report_walk(options, snapshot, here, aim, &result);
+        match result {
+            SendResult::Sent { .. } => {
+                hop.sent = true;
+                hop.sent_tick = snapshot.tick();
+                hop.sent_tile = Some(here);
+                hop.tries = hop.tries.max(1) + 1;
+                hop.stall_recovered = true;
+                hop.stall_idle_ticks = 0;
+                hop.stall_idle_last_tick = None;
+                hop.stall_idle_at = None;
+                // Keep ticks_waited: recovery is not a fresh hop budget.
+                self.walk = Some(hop);
+                Poll::Watching
+            }
+            SendResult::Refused {
+                reason:
+                    SendReason::OffScene | SendReason::Unreachable | SendReason::SceneUnavailable,
+                ..
+            } => {
+                // Spend the recovery slot so we do not re-send every poll
+                // while the scene is unavailable; the original tick budget
+                // still bounds the hop.
+                hop.stall_recovered = true;
+                hop.stall_idle_ticks = 0;
+                hop.stall_idle_last_tick = None;
+                hop.stall_idle_at = None;
+                self.walk = Some(hop);
+                Poll::Watching
+            }
+            SendResult::Refused { reason, .. } => {
+                fire_leg(options, &hop.leg(), LegPhase::Failed);
+                Poll::Terminal(TravelOutcome::Refused { at: here, reason })
             }
         }
     }
@@ -1210,6 +1366,67 @@ impl FollowRun {
                     }
                     self.transport = Some(hop);
                     return Poll::Watching;
+                } else if edge.kind == TransportKind::Door
+                    && hop
+                        .open_sent_tick
+                        .is_some_and(|sent| snapshot.tick() != sent)
+                    && door_step_pending(edge, here)
+                    && SceneQuery::new(snapshot.scene(), None).can_step(here, edge.to)
+                {
+                    // The Open already carried the player through the
+                    // door's wall onto `at` (Tenzing's 3745
+                    // `open_and_close_door2` teleports the entering player
+                    // onto the loc tile, whose wall is on the far edge, and
+                    // swaps in an inviswall for 3 ticks, so the door never
+                    // reads open): take the clear step to `to` now instead
+                    // of sitting out the cheap budget. A step still behind
+                    // the wall is left to the open-door walk above — a walk
+                    // packet there would cancel the queued Open.
+                    hop.open_sent_tick = None;
+                    let mut ix = Interactions::new(snapshot, d);
+                    let result = ix.pending_door_step(edge.to);
+                    report_walk(options, snapshot, here, edge.to, &result);
+                    match result {
+                        SendResult::Sent { .. } => {
+                            if crate::debug_enabled() {
+                                eprintln!("[nav-transport] cheap hop door step to {:?}", edge.to);
+                            }
+                        }
+                        SendResult::Refused { reason, .. } => {
+                            fire_leg(options, &hop.leg, LegPhase::Failed);
+                            return Poll::Terminal(TravelOutcome::Refused { at: here, reason });
+                        }
+                    }
+                    self.transport = Some(hop);
+                    return Poll::Watching;
+                } else if edge.open_loc_id.is_some()
+                    && edge.kind != TransportKind::Door
+                    && edge_loc_open(snapshot, edge)
+                    && hop.tries == 0
+                {
+                    return match find_transport_target(snapshot, edge) {
+                        Some(target) => {
+                            let mut ix = Interactions::new(snapshot, d);
+                            match interact_transport(snapshot, &mut ix, target, edge, options) {
+                                SendResult::Sent { .. } => {
+                                    hop.tries = 1;
+                                    hop.ticks_waited = 0;
+                                    hop.sent_tile = Some(here);
+                                    self.loc_wait = 0;
+                                    self.transport = Some(hop);
+                                    Poll::Watching
+                                }
+                                SendResult::Refused { reason, .. } => {
+                                    fire_leg(options, &hop.leg, LegPhase::Failed);
+                                    Poll::Terminal(TravelOutcome::Refused { at: here, reason })
+                                }
+                            }
+                        }
+                        None => {
+                            self.transport = Some(hop);
+                            Poll::Watching
+                        }
+                    };
                 }
             }
         }
@@ -1241,6 +1458,15 @@ impl FollowRun {
                             self.loc_wait = 0;
                             hop.ticks_waited = 0;
                             hop.sent_tile = Some(here);
+                            if edge.kind == TransportKind::Door {
+                                hop.open_sent_tick = Some(snapshot.tick());
+                            }
+                            if edge.open_loc_id.is_some()
+                                && edge.kind != TransportKind::Door
+                                && edge_loc_open(snapshot, &edge)
+                            {
+                                hop.tries = 1;
+                            }
                             self.transport = Some(hop);
                             Poll::Watching
                         }
@@ -1408,6 +1634,11 @@ impl FollowRun {
                 door_crossed(&edge, here)
                     && (here.x - edge.to.x).abs().max((here.z - edge.to.z).abs()) <= close_enough
             })
+        } else if edge.kind == TransportKind::Door && edge.dir.is_none() {
+            Box::new(move |now: &ReadContext<'_>, _before: &ReadContext<'_>| {
+                now.world_tile()
+                    .is_some_and(|here| door_dir_none_arrived(&edge, here, close_enough))
+            })
         } else if is_essence_entry_edge(&edge) {
             // The entry teleport lands at a random `essence_mine_teleports`
             // coord — never the pad exactly — so any tile inside the
@@ -1436,6 +1667,11 @@ impl FollowRun {
             arrived(edge.to, TELEPORT_ARRIVE_RADIUS)
         } else if edge.kind == TransportKind::Glider {
             arrived(edge.to, GLIDER_ARRIVE_RADIUS)
+        } else if (edge.to.z - edge.at.z).abs() == CELLAR_SHIFT && edge.to.level == edge.at.level {
+            // `movecoord(coord(), 0, 0, ±6400)` lands on the player's tile,
+            // one Chebyshev off the loc-baked dest when the hop is taken
+            // from an adjacent stand. Host WalkNear uses close_enough 0.
+            arrived(edge.to, CELLAR_ARRIVE_RADIUS.max(close_enough))
         } else {
             arrived(edge.to, close_enough)
         };
@@ -1542,6 +1778,8 @@ impl FollowRun {
                     if door_leg && !hop.troll {
                         hop.troll = true;
                         hop.ticks_waited = 0;
+                        // The troll arms its own probe when it sends Open.
+                        hop.open_sent_tick = None;
                         self.transport = Some(hop);
                         Poll::Watching
                     } else {
@@ -1574,6 +1812,15 @@ impl FollowRun {
         mut hop: WalkHop,
         here: WorldTile,
     ) -> Poll {
+        // A preceding transport may land directly on this walk's final
+        // tile (cellar shifts can land one tile off their packed `to`).
+        // Complete only on full endpoint equality, including level: an
+        // intermediate/clipped self-aim still has route left to follow.
+        if hop.tiles().last().copied() == Some(here) {
+            fire_leg(options, &hop.leg(), LegPhase::Done);
+            self.leg_index += 1;
+            return Poll::LegDone;
+        }
         if self.hops >= self.max_hops {
             fire_leg(options, &hop.leg(), LegPhase::Failed);
             return Poll::Terminal(TravelOutcome::GaveUp {
@@ -1605,6 +1852,10 @@ impl FollowRun {
                     hop.sent_tick = snapshot.tick();
                     hop.ticks_waited = 0;
                     hop.sent_tile = Some(here);
+                    hop.stall_idle_ticks = 0;
+                    hop.stall_idle_last_tick = None;
+                    hop.stall_idle_at = None;
+                    hop.stall_recovered = false;
                     self.walk = Some(hop);
                     return Poll::Watching;
                 }
@@ -1800,12 +2051,7 @@ impl FollowRun {
                 hop.open_sent_tick = Some(sent_tick);
                 return None;
             }
-            if here == edge.at
-                && edge.to.level == here.level
-                && here.x.abs_diff(edge.to.x) + here.z.abs_diff(edge.to.z) == 1
-                && edge.dir.is_some()
-                && door_crossed(&edge, edge.to)
-            {
+            if door_step_pending(&edge, here) {
                 let mut ix = Interactions::new(snapshot, d);
                 let result = ix.pending_door_step(edge.to);
                 report_walk(options, snapshot, here, edge.to, &result);
@@ -1955,9 +2201,25 @@ struct WalkHop {
     sent: bool,
     sent_tick: u32,
     ticks_waited: u32,
-    /// The player's tile when the hop's walk was sent (stall detection).
+    /// The player's tile when the hop's walk was sent. Used for
+    /// Dropped vs Expired stall classification (`here == sent_tile` →
+    /// Dropped). Cancelled-walk recovery idle is tracked separately at
+    /// the latest observed position (`stall_idle_at`).
     sent_tile: Option<WorldTile>,
     tries: u32,
+    /// Distinct game ticks observed idle at `stall_idle_at` with no map
+    /// flag and no movement — the cancelled-walk recovery window.
+    /// Separate from `ticks_waited` (poll budget); duplicate snapshot
+    /// polls do not count. Tile movement resets this counter.
+    stall_idle_ticks: u32,
+    /// Snapshot tick last credited to `stall_idle_ticks`.
+    stall_idle_last_tick: Option<u32>,
+    /// Latest observed tile while counting cancelled-walk idle. A change
+    /// of tile (partial hop progress) clears the idle window and starts
+    /// a new one at the new position.
+    stall_idle_at: Option<WorldTile>,
+    /// A cancelled-walk recovery already reissued this hop's aim once.
+    stall_recovered: bool,
 }
 
 impl WalkHop {
@@ -1992,7 +2254,10 @@ struct TransportHop {
     sent_tile: Option<WorldTile>,
     tries: u32,
     troll: bool,
-    /// One crossing probe on the next delivered tick after Open.
+    /// The tick a door Open was sent: one crossing probe
+    /// ([`door_step_pending`]) on a later delivered tick. The troll spends
+    /// it on the next tick; the cheap hop keeps it until the player stands
+    /// on `at` with a wall-clear step to `to`.
     open_sent_tick: Option<u32>,
     chat_seq: i32,
     /// The chat option-page last answered (joined option texts). A new
@@ -2024,6 +2289,18 @@ fn report_walk(
     aim: WorldTile,
     result: &SendResult<'_>,
 ) {
+    if crate::debug_enabled() {
+        let refusal = match result {
+            SendResult::Sent { .. } => None,
+            SendResult::Refused { reason, .. } => Some(*reason),
+        };
+        eprintln!(
+            "[nav-walk-send] tick={} at={at:?} aim={aim:?} sent={} refusal={refusal:?} actor={:?} map_flag={:?}",
+            snapshot.tick(), refusal.is_none(),
+            snapshot.local_player().map(|p| (p.player.actor.moving, p.player.actor.running, p.player.actor.in_combat, &p.player.actor.target)),
+            snapshot.map_flag()
+        );
+    }
     if let Some(cb) = options.on_event.as_mut() {
         let refusal = match result {
             SendResult::Sent { .. } => None,
@@ -2157,15 +2434,48 @@ fn scene_standable(snapshot: &GameSnapshot, tile: WorldTile) -> bool {
         })
 }
 
-/// The snapshot loc for a transport edge: the edge's `loc_id` on the
-/// edge's level within 3 tiles of `edge.at` (the m8aq `gap <= 3`),
-/// nearest first.
+/// Chebyshev distance from `at` to the closest tile of `loc`'s rotated
+/// footprint. A 1×1 loc equals origin distance; a length-6 ropeswing
+/// whose origin is 4 tiles from `at` still matches when `at` sits on the
+/// footprint. Does not widen the 3-tile search radius.
+fn loc_chebyshev_to_footprint(loc: &LocView, at: WorldTile) -> i32 {
+    let fw = loc.footprint_width.max(1);
+    let fl = loc.footprint_length.max(1);
+    let min_x = loc.tile.x;
+    let max_x = loc.tile.x + fw - 1;
+    let min_z = loc.tile.z;
+    let max_z = loc.tile.z + fl - 1;
+    let dx = if at.x < min_x {
+        min_x - at.x
+    } else if at.x > max_x {
+        at.x - max_x
+    } else {
+        0
+    };
+    let dz = if at.z < min_z {
+        min_z - at.z
+    } else if at.z > max_z {
+        at.z - max_z
+    } else {
+        0
+    };
+    dx.max(dz)
+}
+
+/// The snapshot loc for a transport edge: the edge's closed `loc_id` or
+/// `open_loc_id` on the edge's level within 3 tiles of `edge.at` measured
+/// to the rotated footprint (the m8aq `gap <= 3`), nearest first.
+/// Trapdoors `loc_change` closed→open (1568→1570); matching only the
+/// closed id leaves Climb-down unarmed.
 fn find_transport_loc<'s>(snapshot: &'s GameSnapshot, edge: &TransportEdge) -> Option<&'s LocView> {
     snapshot
         .locs()
         .iter()
-        .filter(|loc| loc.id == edge.loc_id && loc.tile.level == edge.at.level)
-        .map(|loc| (loc, cheb(loc.tile, edge.at)))
+        .filter(|loc| {
+            loc.tile.level == edge.at.level
+                && (loc.id == edge.loc_id || edge.open_loc_id == Some(loc.id))
+        })
+        .map(|loc| (loc, loc_chebyshev_to_footprint(loc, edge.at)))
         .filter(|(_, gap)| *gap <= 3)
         .min_by_key(|(_, gap)| *gap)
         .map(|(loc, _)| loc)
@@ -2545,17 +2855,7 @@ fn npc_backed(edge: &TransportEdge) -> bool {
 /// Closed or open leaf within chebyshev 3 of `edge.at` (live Catherby
 /// open 1531 sits a tile off the derived `at`).
 fn find_door_loc<'s>(snapshot: &'s GameSnapshot, edge: &TransportEdge) -> Option<&'s LocView> {
-    snapshot
-        .locs()
-        .iter()
-        .filter(|loc| {
-            loc.tile.level == edge.at.level
-                && (loc.id == edge.loc_id || edge.open_loc_id == Some(loc.id))
-        })
-        .map(|loc| (loc, cheb(loc.tile, edge.at)))
-        .filter(|(_, gap)| *gap <= 3)
-        .min_by_key(|(_, gap)| *gap)
-        .map(|(loc, _)| loc)
+    find_transport_loc(snapshot, edge)
 }
 
 /// Whether a transport hop drives the script's chat dialogs itself: an
@@ -2575,16 +2875,19 @@ fn drives_hop_dialogs(edge: &TransportEdge) -> bool {
         || (edge.kind == TransportKind::Door && edge.loc_id == SHANTAY_HENGE_LOC_ID)
 }
 
-/// Whether the live loc family already reads **open**. Searches closed
-/// and open ids within 3 of `at` — an exact-tile check misses the
-/// Catherby open leaf at (2816,3439) while `at` is (2816,3438).
+/// Whether the live loc family already reads **open**. Packed closed/open
+/// ids are resolved by [`find_door_loc`] within chebyshev 3 of `at` (the
+/// Catherby open leaf at (2816,3439) while `at` is (2816,3438)). When
+/// that misses, an unpacked swing door with no `open_loc_id` may still
+/// read open if the closed id is gone and a loc **on `edge.at`** offers
+/// Close — not a nearby unrelated Close loc (sealed `dir=None` stand
+/// hops such as ranging 2514 sit a tile off the door loc).
 fn edge_loc_open(snapshot: &GameSnapshot, edge: &TransportEdge) -> bool {
     if let Some(loc) = find_door_loc(snapshot, edge) {
         return loc.id != edge.loc_id;
     }
     snapshot.locs().iter().any(|loc| {
-        cheb(loc.tile, edge.at) <= 3
-            && loc.tile.level == edge.at.level
+        loc.tile == edge.at
             && loc
                 .actions
                 .iter()
@@ -2621,6 +2924,47 @@ fn door_crossed(edge: &TransportEdge, here: WorldTile) -> bool {
     }
 }
 
+/// Whether an Open left the player on the door's own tile `at` with `to`
+/// one cardinal step away on the crossing side: the post-Open step that
+/// finishes the crossing. `open_and_close_door2` doors (Tenzing's 3745)
+/// teleport the entering player onto `at` and swap in an inviswall for
+/// three ticks, so the loc never reads open; ordinary doors reach the same
+/// state when the player opens from `at`.
+fn door_step_pending(edge: &TransportEdge, here: WorldTile) -> bool {
+    here == edge.at
+        && edge.to.level == here.level
+        && here.x.abs_diff(edge.to.x) + here.z.abs_diff(edge.to.z) == 1
+        && edge.dir.is_some()
+        && door_crossed(edge, edge.to)
+}
+
+/// Door hops without a cardinal `dir` normally settle with
+/// `arrived(to, close_enough)`. When the origin stand sits inside that
+/// radius (`Cheb(at, to) <= close_enough` on the same level), the
+/// tolerance is geometrically invalid: standing on `at` — including after
+/// a script `~forcemove` and before `p_teleport` — looks like arrival.
+/// Those short hops require the exact landing. Far dir=None doors
+/// (Zanaris, levers, Shantay south) keep the runner's radius. Cardinal
+/// `dir=Some` doors stay on [`door_crossed`].
+fn door_dir_none_arrived(edge: &TransportEdge, here: WorldTile, close_enough: i32) -> bool {
+    if here.level != edge.to.level {
+        return false;
+    }
+    let to_gap = (here.x - edge.to.x).abs().max((here.z - edge.to.z).abs());
+    let hop_span = if edge.at.level == edge.to.level {
+        (edge.at.x - edge.to.x)
+            .abs()
+            .max((edge.at.z - edge.to.z).abs())
+    } else {
+        i32::MAX
+    };
+    if hop_span <= close_enough {
+        here == edge.to
+    } else {
+        to_gap <= close_enough
+    }
+}
+
 /// Fire the `on_leg` callback for a phase transition, using the `options`
 /// of the poll in which the transition happened.
 fn fire_leg(options: &mut TravelOptions<'_>, leg: &Leg, phase: LegPhase) {
@@ -2646,7 +2990,9 @@ mod tests {
     use crate::grid::StepGrid;
     use crate::router::{find_on_grid, Leg, Route};
     use crate::tile::Tile;
-    use crate::transport::{DoorDir, TransportEdge, TransportKind, SHANTAY_HENGE_LOC_ID};
+    use crate::transport::{
+        DoorDir, TransportEdge, TransportKind, CELLAR_SHIFT, SHANTAY_HENGE_LOC_ID,
+    };
     use crate::traveller::{
         door_tile, FollowRun, HopFailure, LegPhase, NavStatus, Poll, TransportHop, TravelOptions,
         TravelOutcome, Traveller,
@@ -3529,6 +3875,21 @@ mod tests {
     /// A wall loc at scene (`scene_x`, `scene_z`) with `id`/`name`/`op1`:
     /// the generic wall-planting shape (the essence exit portal, …).
     fn plant_loc(c: &mut Client, id: i32, name: &str, op1: &str, scene_x: i32, scene_z: i32) {
+        plant_loc_sized(c, id, name, op1, scene_x, scene_z, 1, 1, 1);
+    }
+
+    #[allow(clippy::too_many_arguments)] // test helper plants loc geometry fields together
+    fn plant_loc_sized(
+        c: &mut Client,
+        id: i32,
+        name: &str,
+        op1: &str,
+        scene_x: i32,
+        scene_z: i32,
+        width: i32,
+        length: i32,
+        angle: i32,
+    ) {
         {
             let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
             while cache.locs.len() <= id as usize {
@@ -3538,12 +3899,26 @@ mod tests {
                 id,
                 name: name.into(),
                 op: vec![Some(op1.into()), None, None, None, None],
+                width,
+                length,
                 ..Default::default()
             };
         }
         let typecode = 0x4000_0000 + (id << 14) + scene_x + (scene_z << 7);
-        c.world
-            .set_wall(0, scene_x, scene_z, 0, 0, 0, typecode, 1 << 6, 0, 0, 0, 0);
+        c.world.set_wall(
+            0,
+            scene_x,
+            scene_z,
+            0,
+            0,
+            0,
+            typecode,
+            angle << 6,
+            0,
+            0,
+            0,
+            0,
+        );
     }
 
     /// A level-0 walk leg over the given (x, z) world tiles.
@@ -3610,6 +3985,140 @@ mod tests {
             ticks: 2,
             dir: None,
             open_loc_id: None,
+            skill_req: vec![],
+            item_req: vec![],
+            quest_req: vec![],
+            varp_req: vec![],
+            worn_req: vec![],
+            members_req: false,
+        }
+    }
+
+    fn agility_at(loc_id: i32, at: WorldTile) -> TransportEdge {
+        TransportEdge {
+            kind: TransportKind::AgilityShortcut,
+            at,
+            to: WorldTile {
+                x: at.x - 5,
+                z: at.z,
+                level: at.level,
+            },
+            loc_id,
+            option: 1,
+            ticks: 2,
+            dir: None,
+            open_loc_id: None,
+            skill_req: vec![],
+            item_req: vec![],
+            quest_req: vec![],
+            varp_req: vec![],
+            worn_req: vec![],
+            members_req: false,
+        }
+    }
+
+    #[test]
+    fn find_transport_loc_matches_inbound_swing_on_rotated_footprint() {
+        let mut c = scene_client();
+        // Origin (3205,3209), start at (3209,3209): Chebyshev 4 to origin,
+        // on the length-6 angle-1 footprint (x=3205..3210).
+        plant_loc_sized(&mut c, 2322, "Ropeswing", "Swing-on", 5, 9, 1, 6, 1);
+        let snap = snap_at(&mut c, 9, 9);
+        let loc = snap.locs().iter().find(|l| l.id == 2322).expect("planted");
+        assert_eq!(
+            loc.tile,
+            WorldTile {
+                x: 3205,
+                z: 3209,
+                level: 0
+            }
+        );
+        assert_eq!(loc.footprint_width, 6);
+        assert_eq!(loc.footprint_length, 1);
+        let edge = agility_at(
+            2322,
+            WorldTile {
+                x: 3209,
+                z: 3209,
+                level: 0,
+            },
+        );
+        let found = super::find_transport_loc(&snap, &edge).expect("footprint covers start");
+        assert_eq!(found.id, 2322);
+        assert_eq!(found.tile, loc.tile);
+    }
+
+    #[test]
+    fn find_transport_loc_rejects_unrelated_or_far_candidate_at_gap_4() {
+        let mut c = scene_client();
+        // 1×1 loc four tiles west of at: origin gap 4, footprint does not reach.
+        plant_loc_sized(&mut c, 2322, "Ropeswing", "Swing-on", 5, 9, 1, 1, 0);
+        plant_loc_sized(&mut c, 1, "Door", "Open", 1, 1, 1, 1, 0);
+        let snap = snap_at(&mut c, 9, 9);
+        let at = WorldTile {
+            x: 3209,
+            z: 3209,
+            level: 0,
+        };
+        assert!(
+            super::find_transport_loc(&snap, &agility_at(2322, at)).is_none(),
+            "1×1 origin 4 away must not match; radius stays 3"
+        );
+        assert!(
+            super::find_transport_loc(&snap, &agility_at(1, at)).is_none(),
+            "unrelated far loc must not match"
+        );
+        let closed = TransportEdge {
+            kind: TransportKind::Door,
+            at: WorldTile {
+                x: 3201,
+                z: 3200,
+                level: 0,
+            },
+            to: WorldTile {
+                x: 3203,
+                z: 3200,
+                level: 0,
+            },
+            loc_id: 1530,
+            option: 1,
+            ticks: 1,
+            dir: None,
+            open_loc_id: Some(1531),
+            skill_req: vec![],
+            item_req: vec![],
+            quest_req: vec![],
+            varp_req: vec![],
+            worn_req: vec![],
+            members_req: false,
+        };
+        assert!(
+            super::find_transport_loc(&snap, &closed).is_none(),
+            "closed-door id still required; 1×1 decoy is not 1530"
+        );
+    }
+
+    /// Edgeville trapdoor: closed 1568 / open 1570, dest loc-baked +6400.
+    /// Live `p_telejump(movecoord(coord(), 0, 0, 6400))` lands on the
+    /// adjacent stand, Chebyshev 1 off that dest.
+    fn trapdoor_edge() -> TransportEdge {
+        TransportEdge {
+            kind: TransportKind::Ladder,
+            at: WorldTile {
+                x: 3202,
+                z: 3204,
+                level: 0,
+            },
+            to: WorldTile {
+                x: 3202,
+                z: 3204 + CELLAR_SHIFT,
+                level: 0,
+            },
+            loc_id: 1568,
+            option: 1,
+            ticks: 3,
+            dir: None,
+            open_loc_id: Some(1570),
             skill_req: vec![],
             item_req: vec![],
             quest_req: vec![],
@@ -4052,6 +4561,280 @@ mod tests {
             TravelOutcome::Arrived { at } if at == WorldTile { x: 3202, z: 3205, level: 0 }
         ));
         assert_eq!(rec.loc_ops, 1, "one OP_LOC1 interact sent");
+    }
+
+    /// Closed trapdoor 1568 Open then loc_change to 1570: Climb-down must
+    /// target the open leaf. Landing is the player's tile +6400 (offset 1
+    /// from the loc-baked dest). Host WalkNear close_enough 0 still arrives.
+    #[test]
+    fn follow_trapdoor_open_then_climb_arrives_cellar_offset() {
+        let mut c = scene_client();
+        plant_loc(&mut c, 1568, "Trapdoor", "Open", 2, 4);
+        let mut snap = snap_at(&mut c, 2, 3);
+        let mut rec = FollowRec {
+            route: Some((2, 3)),
+            ..FollowRec::default()
+        };
+        let mut t = Traveller::new();
+        let edge = trapdoor_edge();
+        let dest = edge.to;
+        let landing = WorldTile {
+            x: 3202,
+            z: 3203 + CELLAR_SHIFT,
+            level: 0,
+        };
+        let route = Route {
+            legs: vec![Leg::Transport { edge }],
+            dest,
+            ticks: 3.0,
+        };
+        let attempts = std::cell::RefCell::new(Vec::new());
+        let mut options = TravelOptions {
+            close_enough: 0,
+            on_event: Some(Box::new(|e| {
+                if let TravelEvent::TransportAttempt { actual_id, .. } = e {
+                    attempts.borrow_mut().push(actual_id);
+                }
+            })),
+            ..TravelOptions::default()
+        };
+        assert!(
+            t.follow(&mut rec, &snap, route.clone(), &mut options)
+                .is_none(),
+            "Open on closed 1568"
+        );
+        assert_eq!(rec.loc_ops, 1, "Open");
+        assert_eq!(*attempts.borrow(), vec![1568]);
+        plant_loc(&mut c, 1570, "Trapdoor", "Climb-down", 2, 4);
+        bump_rebuild(&mut c, &mut snap);
+        assert!(
+            t.follow(&mut rec, &snap, route.clone(), &mut options)
+                .is_none(),
+            "Climb-down on open 1570"
+        );
+        assert_eq!(rec.loc_ops, 2, "Open then Climb-down");
+        assert_eq!(*attempts.borrow(), vec![1568, 1570]);
+        plant_player(&mut c, 2, 3 + CELLAR_SHIFT);
+        bump_rebuild(&mut c, &mut snap);
+        match t.follow(&mut rec, &snap, route.clone(), &mut options) {
+            Some(TravelOutcome::Arrived { at }) => {
+                assert_eq!(at, landing, "player-tile cellar landing, not loc dest");
+                assert_ne!(at, dest);
+            }
+            other => panic!("expected Arrived at cellar offset, got {other:?}"),
+        }
+        assert_eq!(rec.loc_ops, 2, "no extra interact after climb");
+    }
+
+    /// Already-open leaf 1570 only: first interact is Climb-down, same
+    /// cellar offset-1 arrive under close_enough 0.
+    #[test]
+    fn follow_trapdoor_already_open_climb_arrives_cellar_offset() {
+        let mut c = scene_client();
+        plant_loc(&mut c, 1570, "Trapdoor", "Climb-down", 2, 4);
+        let mut snap = snap_at(&mut c, 2, 3);
+        let mut rec = FollowRec {
+            route: Some((2, 3)),
+            ..FollowRec::default()
+        };
+        let mut t = Traveller::new();
+        let edge = trapdoor_edge();
+        let dest = edge.to;
+        let landing = WorldTile {
+            x: 3202,
+            z: 3203 + CELLAR_SHIFT,
+            level: 0,
+        };
+        let route = Route {
+            legs: vec![Leg::Transport { edge }],
+            dest,
+            ticks: 3.0,
+        };
+        let attempts = std::cell::RefCell::new(Vec::new());
+        let mut options = TravelOptions {
+            close_enough: 0,
+            on_event: Some(Box::new(|e| {
+                if let TravelEvent::TransportAttempt { actual_id, .. } = e {
+                    attempts.borrow_mut().push(actual_id);
+                }
+            })),
+            ..TravelOptions::default()
+        };
+        assert!(
+            t.follow(&mut rec, &snap, route.clone(), &mut options)
+                .is_none(),
+            "Climb-down on already-open 1570"
+        );
+        assert_eq!(rec.loc_ops, 1, "one Climb-down, not Open");
+        assert_eq!(*attempts.borrow(), vec![1570]);
+        plant_player(&mut c, 2, 3 + CELLAR_SHIFT);
+        bump_rebuild(&mut c, &mut snap);
+        match t.follow(&mut rec, &snap, route.clone(), &mut options) {
+            Some(TravelOutcome::Arrived { at }) => {
+                assert_eq!(at, landing, "player-tile cellar landing, not loc dest");
+                assert_ne!(at, dest);
+            }
+            other => panic!("expected Arrived at cellar offset, got {other:?}"),
+        }
+        assert_eq!(rec.loc_ops, 1, "already-open must not re-click");
+    }
+
+    #[test]
+    fn follow_cellar_offset_completes_finished_walk_then_uses_keyed_door() {
+        let mut c = scene_client();
+        c.map_build_base_x = 3114;
+        c.map_build_base_z = 9848;
+        plant_loc(&mut c, 1755, "Ladder", "Climb-up", 2, 4);
+        plant_inv_item(&mut c, 983);
+        let mut snap = snap_at(&mut c, 2, 3);
+        let mut rec = FollowRec {
+            route: Some((2, 3)),
+            build_base: Some((3114, 9848)),
+            ..FollowRec::default()
+        };
+        let mut t = Traveller::new();
+        let packed_landing = WorldTile {
+            x: 3116,
+            z: 3452,
+            level: 0,
+        };
+        let offset_landing = WorldTile {
+            x: 3116,
+            z: 3451,
+            level: 0,
+        };
+        let mut ladder = trapdoor_edge();
+        ladder.at = WorldTile {
+            x: 3116,
+            z: 9852,
+            level: 0,
+        };
+        ladder.to = packed_landing;
+        ladder.loc_id = 1755;
+        ladder.open_loc_id = None;
+        let door_to = WorldTile {
+            x: 3115,
+            z: 3449,
+            level: 0,
+        };
+        let mut door = door_edge();
+        door.at = WorldTile {
+            x: 3115,
+            z: 3450,
+            level: 0,
+        };
+        door.to = door_to;
+        door.loc_id = 1804;
+        door.option = 0;
+        door.dir = Some(DoorDir::S);
+        door.open_loc_id = Some(1535);
+        door.item_req = vec![(983, 1)];
+        let route = Route {
+            legs: vec![
+                Leg::Transport { edge: ladder },
+                Leg::Walk {
+                    tiles: vec![packed_landing, offset_landing],
+                },
+                Leg::Transport { edge: door },
+            ],
+            dest: door_to,
+            ticks: 4.5,
+        };
+        let mut phases = Vec::new();
+        let mut options = TravelOptions {
+            close_enough: 0,
+            on_leg: Some(Box::new(|leg: &Leg, phase: LegPhase| {
+                phases.push((leg.clone(), phase));
+            })),
+            ..TravelOptions::default()
+        };
+
+        let first = t.follow(&mut rec, &snap, route.clone(), &mut options);
+        assert_eq!(
+            first,
+            None,
+            "Climb-up on cellar ladder; scene={:?} driver_base={:?} loc_ops={}",
+            (snap.scene().base_x, snap.scene().base_z),
+            rec.build_base,
+            rec.loc_ops,
+        );
+        assert_eq!(rec.loc_ops, 1, "one ladder interact");
+
+        c.map_build_base_z = 3448;
+        rec.build_base = Some((3114, 3448));
+        plant_loc(&mut c, 1804, "Door", "Open", 1, 2);
+        plant_player(&mut c, 2, 3);
+        bump_rebuild(&mut c, &mut snap);
+        assert!(
+            t.follow(&mut rec, &snap, route.clone(), &mut options)
+                .is_none(),
+            "the offset landing must continue into the keyed door hop"
+        );
+        let run = t.follow.as_ref().expect("follow still settling the door");
+        assert_eq!(run.leg_index, 2, "ladder and completed walk are done");
+        assert_eq!(run.hops, 0, "the completed walk consumes no hop");
+        assert_eq!(rec.walked, Vec::<(i32, i32)>::new(), "no bogus walk send");
+        assert_eq!(rec.loc_uses, 1, "use brass key 983 on door 1804");
+
+        plant_player(&mut c, 1, 1);
+        bump_rebuild(&mut c, &mut snap);
+        let outcome = t.follow(&mut rec, &snap, route, &mut options);
+        assert_eq!(outcome, Some(TravelOutcome::Arrived { at: door_to }));
+        drop(options);
+        assert_eq!(phases.len(), 6, "start/done for all three legs");
+        assert!(matches!(
+            &phases[0],
+            (Leg::Transport { .. }, LegPhase::Start)
+        ));
+        assert!(matches!(
+            &phases[1],
+            (Leg::Transport { .. }, LegPhase::Done)
+        ));
+        assert!(matches!(&phases[2], (Leg::Walk { .. }, LegPhase::Start)));
+        assert!(matches!(&phases[3], (Leg::Walk { .. }, LegPhase::Done)));
+        assert!(matches!(
+            &phases[4],
+            (Leg::Transport { .. }, LegPhase::Start)
+        ));
+        assert!(matches!(
+            &phases[5],
+            (Leg::Transport { .. }, LegPhase::Done)
+        ));
+    }
+
+    #[test]
+    fn follow_does_not_complete_unsent_walk_at_endpoint_on_other_level() {
+        let mut c = scene_client();
+        let snap = snap_at(&mut c, 0, 0);
+        let mut rec = FollowRec {
+            route: Some((0, 0)),
+            ..FollowRec::default()
+        };
+        let mut t = Traveller::new();
+        let here = WorldTile {
+            x: 3200,
+            z: 3200,
+            level: 0,
+        };
+        let off_level = WorldTile { level: 1, ..here };
+        let route = Route {
+            legs: vec![Leg::Walk {
+                tiles: vec![here, off_level],
+            }],
+            dest: off_level,
+            ticks: 0.5,
+        };
+        let mut options = TravelOptions::default();
+
+        assert_eq!(
+            t.follow(&mut rec, &snap, route, &mut options),
+            Some(TravelOutcome::Refused {
+                at: here,
+                reason: SendReason::LevelMismatch,
+            }),
+            "matching endpoint coordinates on another level are not complete"
+        );
+        assert!(rec.walked.is_empty(), "no off-level walk is sent");
     }
 
     /// Agility forcemove holds the player after they land on `to`. Completing
@@ -4861,6 +5644,101 @@ mod tests {
         assert_eq!(rec.loc_ops, 0, "an Npc edge never sends OP_LOC1");
     }
 
+    /// Scene origin that places the real Ranging Guild stands inside the
+    /// 104-tile fixture scene without inventing hop offsets.
+    const RANGING_SCENE_BASE: (i32, i32) = (2650, 3430);
+    const RANGING_OUTSIDE: WorldTile = WorldTile {
+        x: 2657,
+        z: 3439,
+        level: 0,
+    };
+    const RANGING_INSIDE: WorldTile = WorldTile {
+        x: 2659,
+        z: 3437,
+        level: 0,
+    };
+    const RANGING_LOC: WorldTile = WorldTile {
+        x: 2658,
+        z: 3438,
+        level: 0,
+    };
+    const SHANTAY_NORTH_SCENE_BASE: (i32, i32) = (3296, 3104);
+    const SHANTAY_NORTH_AT: WorldTile = WorldTile {
+        x: 3302,
+        z: 3116,
+        level: 0,
+    };
+    const SHANTAY_NORTH_TO: WorldTile = WorldTile {
+        x: 3304,
+        z: 3115,
+        level: 0,
+    };
+
+    fn scene_of(base: (i32, i32), tile: WorldTile) -> (i32, i32) {
+        (tile.x - base.0, tile.z - base.1)
+    }
+
+    fn rangingguild_enter_edge() -> TransportEdge {
+        TransportEdge {
+            kind: TransportKind::Door,
+            at: RANGING_OUTSIDE,
+            to: RANGING_INSIDE,
+            loc_id: 2514,
+            option: 1,
+            ticks: 1,
+            dir: None,
+            open_loc_id: None,
+            skill_req: vec![(4, 40)],
+            item_req: vec![],
+            quest_req: vec![],
+            varp_req: vec![],
+            worn_req: vec![],
+            members_req: false,
+        }
+    }
+
+    fn rangingguild_exit_edge() -> TransportEdge {
+        TransportEdge {
+            skill_req: vec![],
+            at: RANGING_INSIDE,
+            to: RANGING_OUTSIDE,
+            ..rangingguild_enter_edge()
+        }
+    }
+
+    fn shantay_north_short_edge() -> TransportEdge {
+        TransportEdge {
+            kind: TransportKind::Door,
+            at: SHANTAY_NORTH_AT,
+            to: SHANTAY_NORTH_TO,
+            loc_id: SHANTAY_HENGE_LOC_ID,
+            option: 1,
+            ticks: 3,
+            dir: None,
+            open_loc_id: None,
+            skill_req: vec![],
+            item_req: vec![(1854, 1)],
+            quest_req: vec![],
+            varp_req: vec![],
+            worn_req: vec![],
+            members_req: false,
+        }
+    }
+
+    fn follow_still_pending<D: Driver>(
+        t: &mut Traveller,
+        d: &mut D,
+        snap: &GameSnapshot,
+        route: &Route,
+        options: &mut TravelOptions<'_>,
+        label: &str,
+    ) {
+        assert!(
+            t.follow(d, snap, route.clone(), options).is_none(),
+            "{label} must stay pending"
+        );
+    }
+
     /// The Shantay henge gated hop on the fixture scene: loc 4031 at the
     /// edge's `at` (3201, 3201) — the live target the `op_loc` resolves
     /// through — `to` the `[queue,shantay_pass_enter]` landing.
@@ -4981,6 +5859,401 @@ mod tests {
             rec.pause_buttons, 3,
             "the three handover pages were pressed"
         );
+    }
+
+    /// Reciprocal stand→teleport Door hops (Ranging 2514) are Chebyshev 2.
+    /// Default `close_enough` 2 must not complete from the origin stand,
+    /// a forcemove wait, or an adjacent/wrong-side tile; only the packed
+    /// landing finishes. WalkNear's explicit 0 must stay exact-`to` too.
+    #[test]
+    fn follow_rangingguild_dir_none_completes_only_on_the_teleport_landing() {
+        assert_eq!(TravelOptions::default().close_enough, 2);
+        let loc = scene_of(RANGING_SCENE_BASE, RANGING_LOC);
+        for (label, mut options, edge, origin, dest) in [
+            (
+                "default enter",
+                TravelOptions::default(),
+                rangingguild_enter_edge(),
+                RANGING_OUTSIDE,
+                RANGING_INSIDE,
+            ),
+            (
+                "explicit0 enter",
+                TravelOptions {
+                    close_enough: 0,
+                    ..TravelOptions::default()
+                },
+                rangingguild_enter_edge(),
+                RANGING_OUTSIDE,
+                RANGING_INSIDE,
+            ),
+            (
+                "default exit",
+                TravelOptions::default(),
+                rangingguild_exit_edge(),
+                RANGING_INSIDE,
+                RANGING_OUTSIDE,
+            ),
+            (
+                "explicit0 exit",
+                TravelOptions {
+                    close_enough: 0,
+                    ..TravelOptions::default()
+                },
+                rangingguild_exit_edge(),
+                RANGING_INSIDE,
+                RANGING_OUTSIDE,
+            ),
+        ] {
+            let mut c = scene_client();
+            c.map_build_base_x = RANGING_SCENE_BASE.0;
+            c.map_build_base_z = RANGING_SCENE_BASE.1;
+            plant_loc(&mut c, 2514, "Guild door", "Open", loc.0, loc.1);
+            let start = scene_of(RANGING_SCENE_BASE, origin);
+            let mut snap = snap_at(&mut c, start.0, start.1);
+            let mut rec = FollowRec {
+                route: Some(start),
+                build_base: Some(RANGING_SCENE_BASE),
+                ..FollowRec::default()
+            };
+            let mut t = Traveller::new();
+            let route = Route {
+                legs: vec![Leg::Transport { edge: edge.clone() }],
+                dest,
+                ticks: 1.0,
+            };
+
+            follow_still_pending(
+                &mut t,
+                &mut rec,
+                &snap,
+                &route,
+                &mut options,
+                &format!("{label} first poll"),
+            );
+            assert_eq!(
+                rec.loc_ops, 1,
+                "{label} must send Open from the origin stand"
+            );
+
+            bump_rebuild(&mut c, &mut snap);
+            follow_still_pending(
+                &mut t,
+                &mut rec,
+                &snap,
+                &route,
+                &mut options,
+                &format!("{label} origin wait"),
+            );
+
+            let force = scene_of(RANGING_SCENE_BASE, origin);
+            plant_player(&mut c, force.0, force.1);
+            bump_rebuild(&mut c, &mut snap);
+            follow_still_pending(
+                &mut t,
+                &mut rec,
+                &snap,
+                &route,
+                &mut options,
+                &format!("{label} forcemove still on at"),
+            );
+
+            for (tile, why) in [
+                (
+                    WorldTile {
+                        x: origin.x + 1,
+                        z: origin.z,
+                        level: 0,
+                    },
+                    "adjacent +x",
+                ),
+                (
+                    WorldTile {
+                        x: origin.x,
+                        z: origin.z - 1,
+                        level: 0,
+                    },
+                    "adjacent -z",
+                ),
+                (
+                    WorldTile {
+                        x: dest.x,
+                        z: origin.z,
+                        level: 0,
+                    },
+                    "wrong-side dest x / origin z",
+                ),
+            ] {
+                let (sx, sz) = scene_of(RANGING_SCENE_BASE, tile);
+                plant_player(&mut c, sx, sz);
+                bump_rebuild(&mut c, &mut snap);
+                follow_still_pending(
+                    &mut t,
+                    &mut rec,
+                    &snap,
+                    &route,
+                    &mut options,
+                    &format!("{label} {why} {tile:?}"),
+                );
+            }
+
+            let (dx, dz) = scene_of(RANGING_SCENE_BASE, dest);
+            plant_player(&mut c, dx, dz);
+            bump_rebuild(&mut c, &mut snap);
+            match t.follow(&mut rec, &snap, route, &mut options) {
+                Some(TravelOutcome::Arrived { at }) => {
+                    assert_eq!(at, dest, "{label} landing");
+                }
+                other => panic!("{label} expected Arrived on exact to, got {other:?}"),
+            }
+            assert_eq!(rec.loc_ops, 1, "{label} one Open");
+        }
+    }
+
+    /// Sealed ranging 2514 hop with the door loc absent: a nearby unrelated
+    /// Close-action loc must not satisfy [`edge_loc_open`] and skip Open.
+    #[test]
+    fn follow_rangingguild_missing_loc_nearby_close_does_not_skip_open() {
+        let mut c = scene_client();
+        c.map_build_base_x = RANGING_SCENE_BASE.0;
+        c.map_build_base_z = RANGING_SCENE_BASE.1;
+        // 2514 not planted — only an unrelated swing door one tile off `at`.
+        let nearby = scene_of(RANGING_SCENE_BASE, RANGING_LOC);
+        plant_loc(&mut c, 1531, "Unrelated door", "Close", nearby.0, nearby.1);
+        let start = scene_of(RANGING_SCENE_BASE, RANGING_OUTSIDE);
+        let mut snap = snap_at(&mut c, start.0, start.1);
+        let mut rec = FollowRec {
+            route: Some(start),
+            build_base: Some(RANGING_SCENE_BASE),
+            ..FollowRec::default()
+        };
+        let mut t = Traveller::new();
+        let route = Route {
+            legs: vec![Leg::Transport {
+                edge: rangingguild_enter_edge(),
+            }],
+            dest: RANGING_INSIDE,
+            ticks: 1.0,
+        };
+        let mut options = TravelOptions {
+            budget_ticks_per_hop: 3,
+            ..TravelOptions::default()
+        };
+        assert!(
+            t.follow(&mut rec, &snap, route.clone(), &mut options)
+                .is_none(),
+            "first poll must stay pending, not walk through on a nearby Close"
+        );
+        assert_eq!(
+            rec.loc_ops, 0,
+            "must not OP_LOC1 Open when 2514 is missing (no skip-open fallback)"
+        );
+        assert!(
+            rec.walked.is_empty(),
+            "must not walk toward `to` on a nearby Close misread"
+        );
+
+        let mut outcome = None;
+        for _ in 0..8 {
+            if let Some(o) = t.follow(&mut rec, &snap, route.clone(), &mut options) {
+                outcome = Some(o);
+                break;
+            }
+            bump_rebuild(&mut c, &mut snap);
+        }
+        match outcome {
+            Some(TravelOutcome::Blocked { detail, .. }) => {
+                assert!(
+                    detail.contains("2514"),
+                    "blocked waiting for the packed door loc, got: {detail}"
+                );
+            }
+            other => panic!("expected Blocked for missing 2514, got {other:?}"),
+        }
+        assert_eq!(
+            rec.loc_ops, 0,
+            "never sent Open — nearby Close is not the ranging door"
+        );
+    }
+
+    /// Shantay north is another Door+dir=None Cheb-2 teleport. Default-2
+    /// must not finish at the origin loc; only (3304,3115) completes.
+    #[test]
+    fn follow_shantay_north_dir_none_does_not_complete_from_origin() {
+        let mut c = scene_client();
+        c.map_build_base_x = SHANTAY_NORTH_SCENE_BASE.0;
+        c.map_build_base_z = SHANTAY_NORTH_SCENE_BASE.1;
+        let at = scene_of(SHANTAY_NORTH_SCENE_BASE, SHANTAY_NORTH_AT);
+        plant_loc(
+            &mut c,
+            SHANTAY_HENGE_LOC_ID,
+            "Shantay pass henge doorway",
+            "Go-through",
+            at.0,
+            at.1,
+        );
+        let mut snap = snap_at(&mut c, at.0, at.1);
+        let mut rec = FollowRec {
+            route: Some(at),
+            build_base: Some(SHANTAY_NORTH_SCENE_BASE),
+            ..FollowRec::default()
+        };
+        let mut t = Traveller::new();
+        let route = Route {
+            legs: vec![Leg::Transport {
+                edge: shantay_north_short_edge(),
+            }],
+            dest: SHANTAY_NORTH_TO,
+            ticks: 1.0,
+        };
+        let mut options = TravelOptions::default();
+        follow_still_pending(&mut t, &mut rec, &snap, &route, &mut options, "open");
+        assert_eq!(rec.loc_ops, 1);
+        bump_rebuild(&mut c, &mut snap);
+        follow_still_pending(&mut t, &mut rec, &snap, &route, &mut options, "origin");
+        let adj = scene_of(
+            SHANTAY_NORTH_SCENE_BASE,
+            WorldTile {
+                x: 3303,
+                z: 3116,
+                level: 0,
+            },
+        );
+        plant_player(&mut c, adj.0, adj.1);
+        bump_rebuild(&mut c, &mut snap);
+        follow_still_pending(
+            &mut t,
+            &mut rec,
+            &snap,
+            &route,
+            &mut options,
+            "adjacent origin",
+        );
+        let to = scene_of(SHANTAY_NORTH_SCENE_BASE, SHANTAY_NORTH_TO);
+        plant_player(&mut c, to.0, to.1);
+        bump_rebuild(&mut c, &mut snap);
+        match t.follow(&mut rec, &snap, route, &mut options) {
+            Some(TravelOutcome::Arrived { at }) => assert_eq!(at, SHANTAY_NORTH_TO),
+            other => panic!("expected Arrived at north landing, got {other:?}"),
+        }
+    }
+
+    /// Far Door+dir=None teleports (Zanaris / wilderness levers) must keep
+    /// runner close_enough: a Cheb-1 landing still completes under default 2.
+    #[test]
+    fn follow_far_dir_none_door_keeps_close_enough_tolerance() {
+        let mut c = scene_client();
+        plant_loc(&mut c, 2409, "Door", "Open", 1, 1);
+        let mut snap = snap_at(&mut c, 1, 1);
+        let mut rec = FollowRec {
+            route: Some((1, 1)),
+            ..FollowRec::default()
+        };
+        let dest = WorldTile {
+            x: 3200,
+            z: 3300,
+            level: 0,
+        };
+        let edge = TransportEdge {
+            kind: TransportKind::Door,
+            at: WorldTile {
+                x: 3201,
+                z: 3201,
+                level: 0,
+            },
+            to: dest,
+            loc_id: 2409,
+            option: 1,
+            ticks: 4,
+            dir: None,
+            open_loc_id: None,
+            skill_req: vec![],
+            item_req: vec![],
+            quest_req: vec![],
+            varp_req: vec![],
+            worn_req: vec![],
+            members_req: false,
+        };
+        let mut t = Traveller::new();
+        let route = Route {
+            legs: vec![Leg::Transport { edge }],
+            dest,
+            ticks: 1.0,
+        };
+        let mut options = TravelOptions::default();
+        follow_still_pending(
+            &mut t,
+            &mut rec,
+            &snap,
+            &route,
+            &mut options,
+            "zanaris-style open",
+        );
+        assert_eq!(rec.loc_ops, 1);
+        plant_player(&mut c, 1, 100);
+        bump_rebuild(&mut c, &mut snap);
+        match t.follow(&mut rec, &snap, route, &mut options) {
+            Some(TravelOutcome::Arrived { at }) => {
+                assert_eq!(
+                    at,
+                    WorldTile {
+                        x: 3201,
+                        z: 3300,
+                        level: 0
+                    }
+                );
+            }
+            other => panic!("far dir=None must accept close_enough 2, got {other:?}"),
+        }
+    }
+
+    /// Cardinal doors keep tolerant dest-adjacent completion under default 2.
+    #[test]
+    fn follow_cardinal_door_still_arrives_adjacent_to_to_under_default_close_enough() {
+        let mut c = scene_client();
+        plant_door(&mut c, false, 1);
+        let mut snap = snap_at(&mut c, 0, 0);
+        let mut rec = FollowRec {
+            route: Some((0, 0)),
+            ..FollowRec::default()
+        };
+        let mut edge = door_edge();
+        edge.dir = Some(DoorDir::E);
+        edge.open_loc_id = Some(1531);
+        let dest = edge.to;
+        let mut t = Traveller::new();
+        let route = Route {
+            legs: vec![Leg::Transport { edge }],
+            dest,
+            ticks: 1.0,
+        };
+        let mut options = TravelOptions::default();
+        follow_still_pending(
+            &mut t,
+            &mut rec,
+            &snap,
+            &route,
+            &mut options,
+            "cardinal open",
+        );
+        assert_eq!(rec.loc_ops, 1);
+        plant_player(&mut c, 3, 1);
+        bump_rebuild(&mut c, &mut snap);
+        match t.follow(&mut rec, &snap, route, &mut options) {
+            Some(TravelOutcome::Arrived { at }) => {
+                assert_eq!(
+                    at,
+                    WorldTile {
+                        x: 3203,
+                        z: 3201,
+                        level: 0
+                    }
+                );
+            }
+            other => {
+                panic!("cardinal Door must keep tolerant dest-adjacent arrival, got {other:?}")
+            }
+        }
     }
 
     #[test]
@@ -6260,6 +7533,116 @@ mod tests {
         ));
     }
 
+    /// Tenzing-shaped closed door at scene (6,6) — world (3206,3206), clear
+    /// of the collision map's blocked border — with its wall on the east
+    /// edge (3745 is angle 2), crossed along `dir` to `to_x`. Starts the
+    /// cheap hop from scene (`from_x`, 6): one Open, no step.
+    fn tenzing_door_hop(
+        dir: DoorDir,
+        from_x: i32,
+        to_x: i32,
+    ) -> (
+        Client,
+        GameSnapshot,
+        FollowRec,
+        Traveller,
+        Route,
+        TravelOptions<'static>,
+    ) {
+        let mut c = scene_client();
+        plant_door_at(&mut c, false, 6, 6);
+        c.collision[0].add_wall(6, 6, 0, 2, false);
+        let snap = snap_at(&mut c, from_x, 6);
+        let mut edge = door_edge();
+        edge.at = WorldTile {
+            x: 3206,
+            z: 3206,
+            level: 0,
+        };
+        edge.to = WorldTile {
+            x: 3200 + to_x,
+            z: 3206,
+            level: 0,
+        };
+        edge.dir = Some(dir);
+        let route = Route {
+            legs: vec![Leg::Transport { edge: edge.clone() }],
+            dest: edge.to,
+            ticks: 1.0,
+        };
+        let mut options = TravelOptions {
+            budget_ticks_per_hop: 60,
+            close_enough: 0,
+            ..TravelOptions::default()
+        };
+        let mut rec = FollowRec {
+            route: Some((from_x, 6)),
+            ..FollowRec::default()
+        };
+        let mut t = Traveller::new();
+        assert!(t
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none());
+        assert_eq!(rec.loc_ops, 1, "the cheap hop sends Open");
+        assert!(rec.sink.steps.is_empty() && rec.walked.is_empty());
+        (c, snap, rec, t, route, options)
+    }
+
+    /// Tenzing's hut door 3745 (`open_and_close_door2`, wall on the east
+    /// edge of its loc tile): Open from the outside teleports the player
+    /// onto the loc tile `at` and swaps the door for an inviswall for three
+    /// ticks, so the loc never reads open. The cheap hop must take the
+    /// wall-clear step to `to` instead of sitting out its budget until the
+    /// troll (live: 60 idle ticks at (2822,3555) before every entry in the
+    /// ClimbingBoots walk and teleport cells).
+    #[test]
+    fn cheap_door_hop_steps_through_when_open_lands_on_the_door_tile() {
+        let (mut c, mut snap, mut rec, mut t, route, mut options) =
+            tenzing_door_hop(DoorDir::W, 7, 5);
+        // The door script put the player on `at`; the loc still reads closed.
+        plant_player(&mut c, 6, 6);
+        rec.route = Some((6, 6));
+        bump_rebuild(&mut c, &mut snap);
+        assert!(t
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none());
+        assert_eq!(
+            rec.loc_ops, 1,
+            "no second Open: from `at` it sends the player back out"
+        );
+        assert_eq!(
+            rec.sink.steps,
+            vec![client::io::ClientProt::MOVE_GAMECLICK.id, 5, 0, 3205, 3206],
+            "the step to `to` goes out on the tick the player lands on `at`"
+        );
+
+        plant_player(&mut c, 5, 6);
+        bump_rebuild(&mut c, &mut snap);
+        assert!(matches!(
+            t.follow(&mut rec, &snap, route.clone(), &mut options),
+            Some(TravelOutcome::Arrived { at }) if at.x == 3205 && at.z == 3206
+        ));
+    }
+
+    /// The same door left the other way (edge E, `to` across the closed
+    /// wall): the server walks the player onto `at` before the queued Open
+    /// fires. A step packet there would cancel that Open, so the cheap hop
+    /// sends nothing while the wall still blocks `at` → `to`.
+    #[test]
+    fn cheap_door_hop_does_not_step_into_a_closed_wall_from_the_door_tile() {
+        let (mut c, mut snap, mut rec, mut t, route, mut options) =
+            tenzing_door_hop(DoorDir::E, 5, 7);
+        plant_player(&mut c, 6, 6);
+        rec.route = Some((6, 6));
+        bump_rebuild(&mut c, &mut snap);
+        assert!(t
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none());
+        assert_eq!(rec.loc_ops, 1);
+        assert!(rec.sink.steps.is_empty(), "no step into the closed wall");
+        assert!(rec.walked.is_empty());
+    }
+
     #[test]
     fn troll_does_not_reopen_a_door_behind_the_walker() {
         for (dir, player, target) in [
@@ -6656,6 +8039,8 @@ mod tests {
             ..TravelOptions::default()
         };
         // The player never leaves the send tile: the hop lapses as Dropped.
+        // Budget 3 is below the cancelled-walk recovery window, so the
+        // original bound still exhausts without an unbounded retry loop.
         let outcome = drive(
             &mut t,
             &mut rec,
@@ -6671,6 +8056,464 @@ mod tests {
                 if at == WorldTile { x: 3200, z: 3200, level: 0 }
                     && aiming == WorldTile { x: 3200, z: 3204, level: 0 }
         ));
+    }
+
+    #[test]
+    fn follow_recovers_cancelled_walk_once_with_same_aim() {
+        // Sent hop cancelled in place (no map flag, still on sent_tile):
+        // after five distinct idle game ticks, reissue the same aim once.
+        let mut c = scene_client();
+        let mut snap = snap_at(&mut c, 0, 0);
+        let mut rec = FollowRec {
+            route: Some((0, 0)),
+            ..FollowRec::default()
+        };
+        let mut t = Traveller::new();
+        let route = Route {
+            legs: vec![walk_leg(&[
+                (3200, 3200),
+                (3200, 3201),
+                (3200, 3202),
+                (3200, 3203),
+                (3200, 3204),
+            ])],
+            dest: WorldTile {
+                x: 3200,
+                z: 3204,
+                level: 0,
+            },
+            ticks: 2.0,
+        };
+        let attempts = std::cell::RefCell::new(Vec::new());
+        let mut options = TravelOptions {
+            budget_ticks_per_hop: 20,
+            on_event: Some(Box::new(|ev| {
+                if let TravelEvent::WalkAttempt { aim, refusal, .. } = ev {
+                    attempts.borrow_mut().push((aim, refusal));
+                }
+            })),
+            ..TravelOptions::default()
+        };
+        assert!(t
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none());
+        assert_eq!(rec.walked.len(), 1, "first send");
+        let first_aim = attempts.borrow()[0].0;
+        // Four more idle ticks: still one send.
+        for _ in 0..4 {
+            bump_rebuild(&mut c, &mut snap);
+            assert!(t
+                .follow(&mut rec, &snap, route.clone(), &mut options)
+                .is_none());
+        }
+        assert_eq!(rec.walked.len(), 1, "recovery waits the idle window");
+        // Fifth idle tick: same-aim recovery.
+        bump_rebuild(&mut c, &mut snap);
+        assert!(t
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none());
+        assert_eq!(rec.walked.len(), 2, "one recovery reissue");
+        assert_eq!(attempts.borrow().len(), 2);
+        assert_eq!(
+            attempts.borrow()[1].0,
+            first_aim,
+            "recovery preserves sent aim"
+        );
+        assert_eq!(attempts.borrow()[1].1, None);
+        // Further cancellation does not spam another recovery.
+        for _ in 0..6 {
+            bump_rebuild(&mut c, &mut snap);
+            assert!(t
+                .follow(&mut rec, &snap, route.clone(), &mut options)
+                .is_none());
+        }
+        assert_eq!(rec.walked.len(), 2, "at most one recovery per hop");
+        // Arrival after recovery still completes.
+        plant_player(&mut c, 0, 4);
+        bump_rebuild(&mut c, &mut snap);
+        assert!(matches!(
+            t.follow(&mut rec, &snap, route, &mut options),
+            Some(TravelOutcome::Arrived { .. })
+        ));
+    }
+
+    #[test]
+    fn follow_does_not_recover_cancelled_walk_while_map_flag_or_moving() {
+        let mut c = scene_client();
+        let mut snap = snap_at(&mut c, 0, 0);
+        let mut rec = FollowRec {
+            route: Some((0, 0)),
+            ..FollowRec::default()
+        };
+        let mut t = Traveller::new();
+        let route = Route {
+            legs: vec![walk_leg(&[
+                (3200, 3200),
+                (3200, 3201),
+                (3200, 3202),
+                (3200, 3203),
+                (3200, 3204),
+            ])],
+            dest: WorldTile {
+                x: 3200,
+                z: 3204,
+                level: 0,
+            },
+            ticks: 2.0,
+        };
+        let mut options = TravelOptions {
+            budget_ticks_per_hop: 20,
+            ..TravelOptions::default()
+        };
+        assert!(t
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none());
+        assert_eq!(rec.walked.len(), 1);
+        // Active map flag: idle window must not accumulate toward recovery.
+        c.minimap_flag_x = 12;
+        c.minimap_flag_z = 34;
+        for _ in 0..8 {
+            bump_rebuild(&mut c, &mut snap);
+            assert!(t
+                .follow(&mut rec, &snap, route.clone(), &mut options)
+                .is_none());
+        }
+        assert_eq!(rec.walked.len(), 1, "map flag must not spuriously retry");
+        // Flag clears but actor is moving: still no recovery.
+        c.minimap_flag_x = 0;
+        c.minimap_flag_z = 0;
+        c.local_player.as_mut().unwrap().entity.route_length = 3;
+        for _ in 0..8 {
+            bump_rebuild(&mut c, &mut snap);
+            assert!(t
+                .follow(&mut rec, &snap, route.clone(), &mut options)
+                .is_none());
+        }
+        assert_eq!(rec.walked.len(), 1, "moving must not spuriously retry");
+    }
+
+    #[test]
+    fn follow_cancelled_walk_idle_ignores_duplicate_snapshot_ticks() {
+        let mut c = scene_client();
+        let mut snap = snap_at(&mut c, 0, 0);
+        let mut rec = FollowRec {
+            route: Some((0, 0)),
+            ..FollowRec::default()
+        };
+        let mut t = Traveller::new();
+        let route = Route {
+            legs: vec![walk_leg(&[
+                (3200, 3200),
+                (3200, 3201),
+                (3200, 3202),
+                (3200, 3203),
+                (3200, 3204),
+            ])],
+            dest: WorldTile {
+                x: 3200,
+                z: 3204,
+                level: 0,
+            },
+            ticks: 2.0,
+        };
+        let mut options = TravelOptions {
+            budget_ticks_per_hop: 30,
+            ..TravelOptions::default()
+        };
+        assert!(t
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none());
+        assert_eq!(rec.walked.len(), 1);
+        // Many polls on the same snapshot tick must not count as idle ticks.
+        for _ in 0..20 {
+            assert!(t
+                .follow(&mut rec, &snap, route.clone(), &mut options)
+                .is_none());
+        }
+        assert_eq!(
+            rec.walked.len(),
+            1,
+            "duplicate snapshot polls must not trigger recovery"
+        );
+        // The send-tick polls already credited one distinct idle tick.
+        // Three fresh ticks → idle 4; still under the threshold of 5.
+        for _ in 0..3 {
+            bump_rebuild(&mut c, &mut snap);
+            assert!(t
+                .follow(&mut rec, &snap, route.clone(), &mut options)
+                .is_none());
+        }
+        assert_eq!(rec.walked.len(), 1);
+        bump_rebuild(&mut c, &mut snap);
+        assert!(t
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none());
+        assert_eq!(rec.walked.len(), 2, "fifth distinct idle tick recovers");
+    }
+
+    #[test]
+    fn follow_persistent_cancel_after_recovery_exhausts_original_budget() {
+        // One recovery is spent; continued cancellation must still Drop
+        // under the original hop budget (ticks_waited is not reset).
+        let mut c = scene_client();
+        let mut snap = snap_at(&mut c, 0, 0);
+        let mut rec = FollowRec {
+            route: Some((0, 0)),
+            ..FollowRec::default()
+        };
+        let mut t = Traveller::new();
+        let route = Route {
+            legs: vec![walk_leg(&[
+                (3200, 3200),
+                (3200, 3201),
+                (3200, 3202),
+                (3200, 3203),
+                (3200, 3204),
+            ])],
+            dest: WorldTile {
+                x: 3200,
+                z: 3204,
+                level: 0,
+            },
+            ticks: 2.0,
+        };
+        let mut options = TravelOptions {
+            budget_ticks_per_hop: 8,
+            max_hops: 1,
+            ..TravelOptions::default()
+        };
+        let outcome = drive(
+            &mut t,
+            &mut rec,
+            &mut c,
+            &mut snap,
+            &route,
+            &mut options,
+            |_| {},
+        );
+        assert!(matches!(
+            outcome,
+            TravelOutcome::Stalled {
+                why: HopFailure::Dropped,
+                tries,
+                ..
+            } if tries >= 2
+        ));
+        // First send + one recovery only; max_hops is not expanded by retry.
+        assert_eq!(rec.walked.len(), 2);
+    }
+
+    #[test]
+    fn follow_recovers_cancelled_walk_after_partial_progress() {
+        // Chaos-style: hop progresses partway, map flag clears, player
+        // idles off the original sent_tile — one same-aim recovery after
+        // five distinct idle ticks at the new position.
+        let mut c = scene_client();
+        let mut snap = snap_at(&mut c, 0, 0);
+        let mut rec = FollowRec {
+            route: Some((0, 0)),
+            ..FollowRec::default()
+        };
+        let mut t = Traveller::new();
+        let route = Route {
+            legs: vec![walk_leg(&[
+                (3200, 3200),
+                (3200, 3201),
+                (3200, 3202),
+                (3200, 3203),
+                (3200, 3204),
+                (3200, 3205),
+                (3200, 3206),
+                (3200, 3207),
+            ])],
+            dest: WorldTile {
+                x: 3200,
+                z: 3207,
+                level: 0,
+            },
+            ticks: 3.5,
+        };
+        let attempts = std::cell::RefCell::new(Vec::new());
+        let mut options = TravelOptions {
+            budget_ticks_per_hop: 30,
+            on_event: Some(Box::new(|ev| {
+                if let TravelEvent::WalkAttempt { aim, refusal, .. } = ev {
+                    attempts.borrow_mut().push((aim, refusal));
+                }
+            })),
+            ..TravelOptions::default()
+        };
+        assert!(t
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none());
+        assert_eq!(rec.walked.len(), 1, "first send");
+        let first_aim = attempts.borrow()[0].0;
+        // Partial progress away from sent_tile, then stop (no map flag).
+        plant_player(&mut c, 0, 2);
+        c.minimap_flag_x = 0;
+        c.minimap_flag_z = 0;
+        c.local_player.as_mut().unwrap().entity.route_length = 0;
+        // Four distinct idle ticks at the midway tile: still one send.
+        for _ in 0..4 {
+            bump_rebuild(&mut c, &mut snap);
+            assert!(t
+                .follow(&mut rec, &snap, route.clone(), &mut options)
+                .is_none());
+        }
+        assert_eq!(
+            rec.walked.len(),
+            1,
+            "partial-progress idle waits the full window"
+        );
+        // Fifth idle tick at midway tile: same-aim recovery.
+        bump_rebuild(&mut c, &mut snap);
+        assert!(t
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none());
+        assert_eq!(rec.walked.len(), 2, "one recovery after partial progress");
+        assert_eq!(attempts.borrow().len(), 2);
+        assert_eq!(
+            attempts.borrow()[1].0,
+            first_aim,
+            "recovery preserves sent aim"
+        );
+        assert_eq!(attempts.borrow()[1].1, None);
+        // Further idle does not spam another recovery.
+        for _ in 0..6 {
+            bump_rebuild(&mut c, &mut snap);
+            assert!(t
+                .follow(&mut rec, &snap, route.clone(), &mut options)
+                .is_none());
+        }
+        assert_eq!(rec.walked.len(), 2, "at most one recovery per hop");
+    }
+
+    #[test]
+    fn follow_partial_progress_tile_change_resets_stall_idle() {
+        let mut c = scene_client();
+        let mut snap = snap_at(&mut c, 0, 0);
+        let mut rec = FollowRec {
+            route: Some((0, 0)),
+            ..FollowRec::default()
+        };
+        let mut t = Traveller::new();
+        let route = Route {
+            legs: vec![walk_leg(&[
+                (3200, 3200),
+                (3200, 3201),
+                (3200, 3202),
+                (3200, 3203),
+                (3200, 3204),
+                (3200, 3205),
+                (3200, 3206),
+                (3200, 3207),
+            ])],
+            dest: WorldTile {
+                x: 3200,
+                z: 3207,
+                level: 0,
+            },
+            ticks: 3.5,
+        };
+        let mut options = TravelOptions {
+            budget_ticks_per_hop: 40,
+            ..TravelOptions::default()
+        };
+        assert!(t
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none());
+        assert_eq!(rec.walked.len(), 1);
+        // Idle three ticks at z=2, then move to z=3 — idle window resets.
+        plant_player(&mut c, 0, 2);
+        for _ in 0..3 {
+            bump_rebuild(&mut c, &mut snap);
+            assert!(t
+                .follow(&mut rec, &snap, route.clone(), &mut options)
+                .is_none());
+        }
+        assert_eq!(rec.walked.len(), 1);
+        plant_player(&mut c, 0, 3);
+        for _ in 0..4 {
+            bump_rebuild(&mut c, &mut snap);
+            assert!(t
+                .follow(&mut rec, &snap, route.clone(), &mut options)
+                .is_none());
+        }
+        assert_eq!(
+            rec.walked.len(),
+            1,
+            "tile change must clear prior idle credits"
+        );
+        bump_rebuild(&mut c, &mut snap);
+        assert!(t
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none());
+        assert_eq!(
+            rec.walked.len(),
+            2,
+            "fifth distinct idle tick at new tile recovers"
+        );
+    }
+
+    #[test]
+    fn follow_partial_progress_cancel_still_exhausts_original_budget() {
+        // Progress off sent_tile, one recovery spent, continued cancel
+        // still Drop/Expire under the original hop budget.
+        let mut c = scene_client();
+        let mut snap = snap_at(&mut c, 0, 0);
+        let mut rec = FollowRec {
+            route: Some((0, 0)),
+            ..FollowRec::default()
+        };
+        let mut t = Traveller::new();
+        let route = Route {
+            legs: vec![walk_leg(&[
+                (3200, 3200),
+                (3200, 3201),
+                (3200, 3202),
+                (3200, 3203),
+                (3200, 3204),
+                (3200, 3205),
+                (3200, 3206),
+                (3200, 3207),
+            ])],
+            dest: WorldTile {
+                x: 3200,
+                z: 3207,
+                level: 0,
+            },
+            ticks: 3.5,
+        };
+        let mut options = TravelOptions {
+            budget_ticks_per_hop: 12,
+            max_hops: 1,
+            ..TravelOptions::default()
+        };
+        assert!(t
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none());
+        assert_eq!(rec.walked.len(), 1);
+        // Move partway and stay put until budget + recovery settle.
+        plant_player(&mut c, 0, 2);
+        let outcome = drive(
+            &mut t,
+            &mut rec,
+            &mut c,
+            &mut snap,
+            &route,
+            &mut options,
+            |c| {
+                plant_player(c, 0, 2);
+            },
+        );
+        assert!(matches!(
+            outcome,
+            TravelOutcome::Stalled {
+                tries,
+                ..
+            } if tries >= 2
+        ));
+        assert_eq!(rec.walked.len(), 2, "first send + one recovery only");
     }
 
     #[test]
@@ -6994,6 +8837,7 @@ mod tests {
         pause_buttons: usize,
         reject_far: bool,
         route: Option<(i32, i32)>,
+        build_base: Option<(i32, i32)>,
         sink: Sink,
     }
 
@@ -7051,7 +8895,7 @@ mod tests {
         }
 
         fn build_base(&self) -> (i32, i32) {
-            (3200, 3200)
+            self.build_base.unwrap_or((3200, 3200))
         }
 
         fn loc_typecode(&self, _scene_x: i32, _scene_z: i32) -> Option<i32> {

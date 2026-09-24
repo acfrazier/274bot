@@ -1,0 +1,18 @@
+// Pinned content excerpt (274 content 000c19997e07206131bcb3c884265840efce416d
+// and 289 content 92649430fcbc83538d8c4367ecb96cee1a67a944 are identical here).
+// Source: scripts/areas/area_varrock/configs/varrock.inv [archeryshop]
+[archeryshop]
+scope=shared
+size=40
+restock=yes
+stackall=yes
+allstock=no
+stock1=bronze_arrow,2000,10
+stock2=iron_arrow,1500,15
+stock3=steel_arrow,1000,20
+stock4=bolt,1500,10
+stock5=shortbow,4,100
+stock6=longbow,4,100
+stock7=oak_shortbow,2,200
+stock8=oak_longbow,2,200
+stock9=crossbow,2,400

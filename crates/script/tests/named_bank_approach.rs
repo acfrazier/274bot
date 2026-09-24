@@ -2,9 +2,9 @@
 //! then posts the same named OpenBooth identity when `can_operate`.
 
 use script::isolate_fb::{
-    encode_snapshot_with_native, BankApproachInput, BankStandInput, IsolateBuf, NativeFactsInput,
-    NearestBoothInput, ReachViewInput, SceneEntityInput, SnapshotFingerprint, SnapshotInput,
-    TileInput,
+    encode_snapshot_with_native, BankApproachInput, BankStandInput, ChatOptionInput, IsolateBuf,
+    NativeFactsInput, NearestBoothInput, ReachViewInput, SceneEntityInput, SnapshotFingerprint,
+    SnapshotInput, TileInput,
 };
 use script::shim::InteractReq;
 use script::{LoadIsolate, LoadShape};
@@ -124,6 +124,7 @@ fn base_snapshot<'a>() -> SnapshotInput<'a> {
         bank_note_off: -1,
         scene_state: 2,
         weight: 0,
+        combat_level: 0,
         camera_yaw: 0,
         camera_pitch: 0,
         teleports_enabled: false,
@@ -140,6 +141,8 @@ fn base_snapshot<'a>() -> SnapshotInput<'a> {
         shop_stock: &[],
         reach: ReachViewInput::UNAVAILABLE,
         attacked_by_player: false,
+        self_target_kind: 0,
+        self_target_index: -1,
         widgets: &[],
     }
 }
@@ -170,6 +173,9 @@ fn loc_row<'a>(
         combat_level: 0,
         target_kind: 0,
         target_index: -1,
+        size: 0,
+        nx: 0,
+        nz: 0,
     }
 }
 
@@ -254,6 +260,8 @@ fn walk_near_dest() -> InteractReq {
         level: 0,
         radius: 0,
         allow_teleports: false,
+        allow_wilderness: true,
+        allow_bank_fetch: true,
         request_id: 0,
     }
 }
@@ -427,6 +435,8 @@ fn unnamed_banking_open_from_distance_walks_producer_dest() {
             level: 0,
             radius: 0,
             allow_teleports: false,
+            allow_wilderness: true,
+            allow_bank_fetch: true,
             request_id: 0,
         }],
         "unnamed Banking.open walks producer dest radius 0"
@@ -493,6 +503,67 @@ fn unnamed_banking_open_continues_through_omitted_locs_to_fresh_bank() {
     iso.join();
 }
 
+// One bank-open row per isolate: a second `openNearest` in the same tick
+// supersedes the first (its await settles false) and the newer open is the
+// one that walks, clicks and reports the fresh bank.
+#[test]
+fn a_second_open_supersedes_the_first() {
+    let src = r#"
+import { Bank } from '../../api/bank/Bank.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__did) return;
+        globalThis.__did = true;
+        const first = Bank.openNearest('Bank booth', 'Use-quickly');
+        const second = Bank.openNearest('Bank booth', 'Use-quickly');
+        first.then((r) => { globalThis.__first = r; });
+        second.then((r) => { globalThis.__second = r; });
+        await Promise.all([first, second]);
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let use_quickly = ["Use-quickly".to_string()];
+    let locs = [east_booth(&use_quickly)];
+    let mut snap = base_snapshot();
+    snap.locs = &locs;
+    let approaching = [east_approach(false, Some((3011, 3353)))];
+    post_snapshot_native(&iso, &snap, &approaching);
+    tick(&iso, 1);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![walk_near_dest(), walk_near_dest()],
+        "each open asks for its own approach"
+    );
+    assert_eq!(
+        iso.probe("globalThis.__first").unwrap(),
+        serde_json::Value::Bool(false),
+        "the superseded open settles false"
+    );
+    assert_eq!(
+        iso.probe("globalThis.__second ?? null").unwrap(),
+        serde_json::Value::Null
+    );
+
+    snap.tick = 2;
+    snap.here = Some(tile(3011, 3353));
+    let ready = [east_approach(true, Some((3011, 3353)))];
+    post_snapshot_native(&iso, &snap, &ready);
+    tick(&iso, 2);
+    assert_eq!(iso.drain_interacts(), vec![named_open_booth()]);
+
+    snap.tick = 3;
+    snap.bank_open = true;
+    snap.bank_loaded = true;
+    snap.bank_generation = 1;
+    post_snapshot_native(&iso, &snap, &ready);
+    tick(&iso, 3);
+    assert_eq!(iso.probe("globalThis.__second").unwrap(), true);
+    assert_eq!(iso.probe("globalThis.__first").unwrap(), false);
+    assert!(iso.drain_interacts().is_empty());
+    iso.join();
+}
+
 #[test]
 fn named_open_nearest_completes_on_fresh_generation_not_queued_click() {
     let iso = LoadIsolate::spawn(OPEN_NEAREST.to_string(), LoadShape::CompatClass, vec![]).unwrap();
@@ -552,6 +623,8 @@ fn supplied_stand_walks_then_delivers_fresh_bank_result() {
             level: 0,
             radius: 1,
             allow_teleports: false,
+            allow_wilderness: true,
+            allow_bank_fetch: true,
             request_id: 0,
         }]
     );
@@ -630,44 +703,129 @@ fn world_open_walks_with_native_verb_then_opens_observed_booth() {
     iso.join();
 }
 
+/// A chest access row (Shantay: `Shantay chest` / `Open`) interacts with the
+/// named loc, then answers the frozen `openedReady` once the list posts.
 #[test]
-fn open_nearest_access_non_default_still_throws_unsupported() {
+fn open_nearest_access_chest_row_interacts_with_the_named_loc() {
     let src = r#"
 import { Bank } from '../../api/bank/Bank.js';
 export default class T extends LoopingBot {
     async loop() {
         if (globalThis.__did) return;
         globalThis.__did = true;
-        try {
-            await Bank.openNearestAccess({ name: 'Bank chest', op: 'Use' });
-            globalThis.__err = null;
-        } catch (e) {
-            globalThis.__err = String(e.message || e);
-        }
+        globalThis.__ok = await Bank.openNearestAccess({ name: 'Shantay chest', op: 'Open' });
     }
 }
 "#;
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
-    let snap = base_snapshot();
+    let actions = ["Open".to_string()];
+    let locs = [loc_row(
+        2693,
+        Some("Shantay chest"),
+        3309,
+        3120,
+        1,
+        &actions,
+    )];
+    let mut snap = base_snapshot();
+    snap.here = Some(tile(3308, 3120));
+    snap.locs = &locs;
     post_snapshot_input(&iso, &snap);
     tick(&iso, 1);
-    let err = iso.probe("__err").unwrap();
     assert_eq!(
-        err,
-        "not impl: Bank.openNearestAccess: unsupported bank access"
+        iso.drain_interacts(),
+        vec![InteractReq::Loc {
+            x: 3309,
+            z: 3120,
+            level: 0,
+            action: "Open".into(),
+            id: Some(2693),
+        }]
     );
+    assert_eq!(iso.probe("typeof __ok").unwrap(), "undefined");
+
+    snap.tick = 2;
+    snap.bank_open = true;
+    snap.bank_loaded = true;
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 2);
+    assert_eq!(iso.probe("__ok").unwrap(), true);
+    assert!(iso.drain_interacts().is_empty());
+    iso.join();
+}
+
+/// An NPC access row (Shilo `Banker` / `Bank`) talks to the banker, answers
+/// the access option, and settles true once the bank posts open.
+#[test]
+fn open_npc_access_row_talks_then_answers_the_access_option() {
+    let src = r#"
+import { Bank } from '../../api/bank/Bank.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__did) return;
+        globalThis.__did = true;
+        globalThis.__ok = await Bank.openNpcAccess(
+            { name: 'Banker', op: 'Bank', choose: "I'd like to access my bank account" },
+        );
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let actions = ["Talk-to".to_string(), "Bank".to_string()];
+    let mut banker = loc_row(2127, Some("Banker"), 2852, 2954, 2, &actions);
+    banker.index = 17;
+    let npcs = [banker];
+    let mut snap = base_snapshot();
+    snap.npcs = &npcs;
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 1);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::Npc {
+            name: "Banker".into(),
+            action: "Bank".into(),
+            index: Some(17),
+        }]
+    );
+
+    let options = [
+        ChatOptionInput {
+            text: "Nothing thanks",
+        },
+        ChatOptionInput {
+            text: "I'd like to access my bank account, please.",
+        },
+    ];
+    snap.tick = 2;
+    snap.chat_modal_id = 2492;
+    snap.chat_open = true;
+    snap.chat_options = &options;
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 2);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::Answer { option: 2 }],
+        "the option containing `choose`, 1-based"
+    );
+
+    snap.chat_modal_id = -1;
+    snap.chat_open = false;
+    snap.chat_options = &[];
+    snap.bank_open = true;
+    snap.bank_loaded = true;
+    for n in 3..=6 {
+        snap.tick = n;
+        post_snapshot_input(&iso, &snap);
+        tick(&iso, n);
+    }
+    assert_eq!(iso.probe("__ok").unwrap(), true);
     assert!(iso.drain_interacts().is_empty());
     iso.join();
 }
 
 #[test]
-fn native_bank_owner_preserves_selected_identity_across_omitted_locs_delta() {
-    let iso = LoadIsolate::spawn(
-        "export default class T extends LoopingBot { loop() {} }".to_string(),
-        LoadShape::CompatClass,
-        vec![],
-    )
-    .unwrap();
+fn a_named_approach_opens_the_same_identity_across_an_omitted_locs_delta() {
+    let iso = LoadIsolate::spawn(OPEN_NEAREST.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     let quick = ["Use-quickly".to_string()];
     let examine_quick = ["Examine".to_string(), "Use-quickly".to_string()];
     let initial_locs = [
@@ -681,70 +839,40 @@ fn native_bank_owner_preserves_selected_identity_across_omitted_locs_delta() {
     let mut last = None;
     let approaching = [east_approach(false, Some((3011, 3353)))];
     post_snapshot_delta_native(&iso, &mut encoder, &mut last, &snap, &approaching);
-    iso.probe("true").unwrap();
+    tick(&iso, 1);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![walk_near_dest()],
+        "the nearest named booth is the walk's target"
+    );
 
-    let begin = iso
-        .probe(
-            r#"rustyscript.functions.__rs2b0t_bank_open({
-                op: 'begin',
-                mode: 'open-nearest',
-                booth_name: 'Bank booth',
-                booth_action: 'Use-quickly',
-            })"#,
-        )
-        .unwrap();
-    let token = begin["token"].as_u64().expect("bank-open token");
-    assert_eq!(begin["kind"], "walk-near");
-    assert_eq!(begin["x"], 3011);
-    assert_eq!(begin["z"], 3353);
-    assert_eq!(begin["radius"], 0);
-
+    // The delta omits the locs page: the scene keeps the identity the walk
+    // aimed at, and the click reuses it rather than a later nearest.
     snap.tick = 2;
     snap.here = Some(tile(3011, 3353));
     let ready = [east_approach(true, Some((3011, 3353)))];
     post_snapshot_delta_native(&iso, &mut encoder, &mut last, &snap, &ready);
-    iso.probe("true").unwrap();
-
-    let open = iso
-        .probe(&format!(
-            r#"rustyscript.functions.__rs2b0t_bank_open({{
-                op: 'next', token: {token},
-            }})"#
-        ))
-        .unwrap();
-    assert_eq!(open["kind"], "open-booth");
-    assert_eq!(open["id"], 2213);
-    assert_eq!(open["name"], "Bank booth");
-    assert_eq!(open["action"], "Use-quickly");
+    tick(&iso, 2);
+    assert_eq!(iso.drain_interacts(), vec![named_open_booth()]);
     iso.join();
 }
 
 #[test]
-fn session_reset_clears_native_bank_observation() {
-    let iso = LoadIsolate::spawn(
-        "export default class T extends LoopingBot { loop() {} }".to_string(),
-        LoadShape::CompatClass,
-        vec![],
-    )
-    .unwrap();
+fn session_reset_clears_the_native_bank_observation() {
+    let iso = LoadIsolate::spawn(OPEN_NEAREST.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     let quick = ["Use-quickly".to_string()];
     let locs = [east_booth(&quick)];
     let mut snap = base_snapshot();
     snap.locs = &locs;
     post_snapshot_input(&iso, &snap);
-    iso.probe("true").unwrap();
     iso.reset_session_work();
 
-    let begin = iso
-        .probe(
-            r#"rustyscript.functions.__rs2b0t_bank_open({
-                op: 'begin', mode: 'open-nearest',
-                booth_name: 'Bank booth', booth_action: 'Use-quickly',
-            })"#,
-        )
-        .unwrap();
-    assert_eq!(begin["kind"], "done");
-    assert_eq!(begin["reason"], "missing-facts");
+    tick(&iso, 1);
+    assert_eq!(
+        iso.probe("__ok").unwrap(),
+        serde_json::Value::Bool(false),
+        "a forgotten scene has no booth to open"
+    );
     assert!(iso.drain_interacts().is_empty());
     iso.join();
 }
@@ -780,5 +908,125 @@ export default class T extends LoopingBot {
         requests[0],
         script::shim::InteractReq::OpenBooth { .. }
     ));
+    iso.join();
+}
+
+/// The default booth's pre-check is frozen `isArrived`: a booth one tile
+/// away across a wall edge (no adjacent reach) is not arrived, so the
+/// access walks beside it instead of pressing it; with the edge open it is
+/// arrived and the booth is opened at once.
+#[test]
+fn bank_access_default_booth_across_a_wall_edge_walks_first() {
+    let src = r#"
+import { Bank } from '../../api/bank/Bank.js';
+export default class T extends LoopingBot {
+    async loop() { await Bank.openNearestAccess({name:'Bank booth',op:'Use-quickly'}); }
+}
+"#;
+    // A 2x1 window: the player at (10,10), the booth at (11,10).
+    let view = |reachable_adj: &'static [u32], adjacent_rank: &'static [u16]| ReachViewInput {
+        available: true,
+        base_x: 10,
+        base_z: 10,
+        level: 0,
+        width: 2,
+        height: 1,
+        walkable: &[0b01],
+        reachable: &[0b01],
+        reachable_adj,
+        exact_rank: &[0, u16::MAX],
+        adjacent_rank,
+        step: &[0, 0],
+        canlight: &[],
+        stamp: 0,
+    };
+    let run = |reach: ReachViewInput<'static>| {
+        let iso = LoadIsolate::spawn(src.into(), LoadShape::CompatClass, vec![]).unwrap();
+        let mut snap = base_snapshot();
+        snap.here = Some(tile(10, 10));
+        snap.nearest_booth = Some(NearestBoothInput {
+            x: 11,
+            z: 10,
+            level: 0,
+            id: 2213,
+            name: "Bank booth",
+            op: "Use-quickly",
+        });
+        snap.reach = reach;
+        let ready = [approach_row(2213, 11, 10, true, Some((10, 10)))];
+        post_snapshot_native(&iso, &snap, &ready);
+        iso.on_game_tick(1);
+        iso.probe("true").unwrap();
+        let requests = iso.drain_interacts();
+        iso.join();
+        requests
+    };
+    assert_eq!(
+        run(view(&[0b01], &[0, u16::MAX])),
+        vec![InteractReq::WalkNear {
+            x: 11,
+            z: 10,
+            level: 0,
+            radius: 1,
+            allow_teleports: false,
+            allow_wilderness: true,
+            allow_bank_fetch: true,
+            request_id: 0,
+        }],
+        "Chebyshev 1 across a wall is not arrived"
+    );
+    assert!(matches!(
+        run(view(&[0b11], &[0, 1])).as_slice(),
+        [InteractReq::OpenBooth { x: 11, z: 10, .. }]
+    ));
+}
+
+/// Frozen calls the openers' `log?.()` without awaiting it: a log that
+/// never settles does not hold the chest or banker opener.
+#[test]
+fn opener_log_promises_are_not_awaited() {
+    let src = r#"
+import { Bank } from '../../api/bank/Bank.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__did) return;
+        globalThis.__did = true;
+        const log = (m) => { (globalThis.__lines ||= []).push(m); return new Promise(() => {}); };
+        globalThis.__chest = await Bank.openNearestAccess({ name: 'Shantay chest', op: 'Open' }, log);
+        globalThis.__npc = await Bank.openNpcAccess(
+            { name: 'Banker', op: 'Bank', choose: 'access' }, log);
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut snap = base_snapshot();
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 1);
+    assert_eq!(
+        iso.probe("__chest").unwrap(),
+        false,
+        "no chest: frozen false"
+    );
+    for n in 2..=6 {
+        snap.tick = n;
+        post_snapshot_input(&iso, &snap);
+        tick(&iso, n);
+    }
+    assert_eq!(
+        iso.probe("__npc").unwrap(),
+        false,
+        "three banker attempts, then false"
+    );
+    let lines = iso.probe("__lines").unwrap();
+    assert_eq!(lines[0], "no usable 'Shantay chest' in the scene");
+    assert!(
+        lines
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|line| line == "could not get Banker to open the bank"),
+        "{lines}"
+    );
+    assert!(iso.drain_interacts().is_empty());
     iso.join();
 }
