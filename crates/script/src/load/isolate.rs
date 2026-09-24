@@ -2,7 +2,9 @@
 
 use super::bindings::wire_runtime;
 use super::shape::LoadShape;
-use super::snapshot::{dispatch_native_events, materialize_settings_bag, materialize_snapshot};
+use super::snapshot::{
+    dispatch_native_events, key_string, materialize_settings_bag, materialize_snapshot,
+};
 use rustyscript::{json_args, Runtime, RuntimeOptions};
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize};
@@ -328,10 +330,8 @@ enum HostValue<'a> {
 fn set_host_field(runtime: &mut Runtime, key: &str, value: HostValue<'_>) -> bool {
     let scope = &mut runtime.deno_runtime().handle_scope();
     let global = scope.get_current_context().global(scope);
-    let (Some(host_key), Some(field)) = (
-        v8::String::new(scope, "__rs2b0t_host"),
-        v8::String::new(scope, key),
-    ) else {
+    let (Ok(host_key), Ok(field)) = (key_string(scope, "__rs2b0t_host"), key_string(scope, key))
+    else {
         return false;
     };
     let Some(host) = global
@@ -361,7 +361,7 @@ fn record_tick(runtime: &mut Runtime, n: u64) {
 fn global_flag(runtime: &mut Runtime, name: &str) -> bool {
     let scope = &mut runtime.deno_runtime().handle_scope();
     let global = scope.get_current_context().global(scope);
-    let Some(key) = v8::String::new(scope, name) else {
+    let Ok(key) = key_string(scope, name) else {
         return false;
     };
     global

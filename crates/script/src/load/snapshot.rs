@@ -1028,14 +1028,26 @@ fn num<'s>(scope: &mut v8::HandleScope<'s>, n: f64) -> v8::Local<'s, v8::Value> 
     v8::Number::new(scope, n).into()
 }
 
+/// A property key as an internalized V8 string. Every key the materializers
+/// write is a fixed name; V8 internalizes a property key before the store
+/// anyway, so asking for the internalized string up front finds the one in
+/// the string table instead of allocating a fresh heap string per write.
+pub(super) fn key_string<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    key: &str,
+) -> Result<v8::Local<'s, v8::String>, String> {
+    v8::String::new_from_utf8(scope, key.as_bytes(), v8::NewStringType::Internalized)
+        .ok_or_else(|| "v8 string alloc failed".to_string())
+}
+
 fn set<'s>(
     scope: &mut v8::HandleScope<'s>,
     obj: v8::Local<'s, v8::Object>,
     key: &str,
     value: v8::Local<'s, v8::Value>,
 ) -> Result<(), String> {
-    let key = js_string(scope, key)?;
-    obj.set(scope, key, value)
+    let name = key_string(scope, key)?;
+    obj.set(scope, name.into(), value)
         .ok_or_else(|| format!("v8 object set failed for {key:?}"))?;
     Ok(())
 }
@@ -1046,7 +1058,7 @@ fn set_readonly<'s>(
     key: &str,
     value: v8::Local<'s, v8::Value>,
 ) -> Result<(), String> {
-    let name = v8::String::new(scope, key).ok_or_else(|| "v8 string alloc failed".to_string())?;
+    let name = key_string(scope, key)?;
     obj.define_own_property(scope, name.into(), value, v8::PropertyAttribute::READ_ONLY)
         .ok_or_else(|| format!("v8 define_own_property failed for {key}"))?;
     Ok(())
@@ -1057,7 +1069,7 @@ fn delete_key<'s>(
     obj: v8::Local<'s, v8::Object>,
     key: &str,
 ) -> Result<(), String> {
-    let name = v8::String::new(scope, key).ok_or_else(|| "v8 string alloc failed".to_string())?;
+    let name = key_string(scope, key)?;
     obj.delete(scope, name.into())
         .ok_or_else(|| format!("v8 object delete failed for {key}"))?;
     Ok(())
