@@ -909,16 +909,11 @@ function enqueueIfButton(component_id) {
   h.interact = h.interact || [];
   h.interact.push({ op: 'if-button', component_id: component_id });
 }
-// One Rust step machine per Set/Clear: Rust owns the click, the wait and
-// the clock. This surface admits one prayer operation at a time, so a
-// second call settles `busy` before Rust begins or clicks anything.
-function prayerBusy() {
-  return globalThis.__rs2b0t_machine_live('prayer') === true;
-}
+// One Rust step machine per Set/Clear: Rust owns the click, the wait, the
+// clock and the admission. This surface admits one prayer operation at a
+// time, so a second call settles `busy` from Rust before it begins or
+// clicks anything.
 async function prayerMachine(payload) {
-  if (prayerBusy()) {
-    return helperErr('busy');
-  }
   const out = await runMachine('prayer', payload);
   if (out.kind === 'done') {
     const settled = out.value;
@@ -956,11 +951,12 @@ api.prayerSet = function (input) {
     op: 'set',
     name: input.name,
     on: { kind: 'boolean', value: input.on },
+    admit: 'refuse-busy',
   });
 };
 api.prayerClear = function () {
   // Same admission rule as prayerSet: busy while one operation runs.
-  return prayerMachine({ op: 'clear' });
+  return prayerMachine({ op: 'clear', admit: 'refuse-busy' });
 };
 function supplyV2(op, input) {
   return globalThis.__rs2b0t_supply_v2(op, input);

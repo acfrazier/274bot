@@ -5,7 +5,7 @@
 //! `points|max|full|known|available|active` queries stay one native call
 //! each over the same selected rows.
 
-use crate::machine::{Begin, Cx, Family, Step};
+use crate::machine::{self, Begin, Cx, Family, Step};
 use crate::observed::{self, Scene};
 use crate::shim::InteractReq;
 use api::game_data::SelectedGameData;
@@ -64,6 +64,17 @@ enum Op {
     Clear,
 }
 
+/// What a second start of this family does. The two declared surfaces
+/// differ and Rust keeps both: v1 has no guard, so a newer set supersedes
+/// the older row; v2 admits one operation and refuses the next `busy`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum Admit {
+    #[default]
+    Supersede,
+    RefuseBusy,
+}
+
 #[derive(Deserialize)]
 pub(crate) struct PrayerArgs {
     op: Op,
@@ -71,6 +82,8 @@ pub(crate) struct PrayerArgs {
     name: String,
     #[serde(default)]
     on: OnInput,
+    #[serde(default)]
+    admit: Admit,
 }
 
 /// One settlement: the frozen `ok`/`reason` pair plus the value the
@@ -214,14 +227,18 @@ pub(crate) enum Prayer {
 
 impl Family for Prayer {
     const NAME: &'static str = "prayer";
-    /// One row per isolate: a newer start ends the older one. The v2
-    /// surface refuses a second Set/Clear `busy` before it starts; v1 has
-    /// no such guard and the newer set wins.
+    /// One row per isolate: a newer start ends the older one. `admit`
+    /// decides what a start while this row runs does: `refuse-busy` (the
+    /// v2 surface) refuses before anything is emitted; `supersede` (v1,
+    /// which has no guard) lets the newer start end the older row.
     const EXCLUSIVE: bool = true;
     type Args = PrayerArgs;
     type Output = PrayerDone;
 
     fn begin(args: PrayerArgs, cx: &mut Cx<'_>) -> Begin<Self> {
+        if args.admit == Admit::RefuseBusy && machine::live(Self::NAME) {
+            return Begin::Refuse("busy".into());
+        }
         let data = crate::supply_v2::selected_data();
         let obs = observed::with(prayer_observation);
         match args.op {
@@ -502,6 +519,32 @@ mod tests {
             json!({ "ok": true, "reason": "toggled", "value": true })
         );
         assert!(!machine::live("prayer"), "a settled row is not live");
+    }
+
+    #[test]
+    fn a_v2_admit_refuses_busy_before_anything_is_emitted() {
+        prepare(ClientRevision::R289);
+        set_obs(43, 43, 97, 0);
+        let admitted = running(start(set(on(true))));
+        assert_eq!(drain(), vec![InteractReq::IfButton { component_id: 5623 }]);
+        let mut refusing = set(on(false));
+        refusing["admit"] = json!("refuse-busy");
+        assert_eq!(
+            start(refusing),
+            Started::Refused("busy".into()),
+            "the admitted row keeps the click"
+        );
+        assert!(drain().is_empty(), "a refused start emits nothing");
+        set_obs(43, 43, 97, 1);
+        tick();
+        assert_eq!(
+            done(admitted),
+            json!({ "ok": true, "reason": "toggled", "value": true })
+        );
+        // The row is gone: the same start is admitted now.
+        let mut next = set(on(false));
+        next["admit"] = json!("refuse-busy");
+        assert!(matches!(start(next), Started::Running(_)));
     }
 
     #[test]
