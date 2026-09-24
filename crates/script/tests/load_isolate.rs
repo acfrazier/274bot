@@ -6905,6 +6905,33 @@ export default class T extends LoopingBot {
 }
 
 #[test]
+fn isolate_quest_points_read_posted_qp_varp() {
+    let src = r#"
+import { Quests } from '../../api/ui/questlog/Quests.js';
+export default class T extends LoopingBot {
+    loop() { globalThis.__probe = Quests.points(); }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let varps = [
+        script::isolate_fb::VarpInput {
+            index: 100,
+            value: 7,
+        },
+        script::isolate_fb::VarpInput {
+            index: 101,
+            value: 12,
+        },
+    ];
+    let mut snap = base_snapshot();
+    snap.varps = &varps;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    assert_eq!(iso.probe("__probe").unwrap(), 12);
+    iso.join();
+}
+
+#[test]
 fn isolate_input_held_op_throws_without_posted_ids() {
     let src = r#"
 import { Input } from '../../input/Input.js';

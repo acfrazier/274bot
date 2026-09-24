@@ -11204,8 +11204,8 @@ fn posted_varp(view: &script::isolate_fb::SnapshotReader<'_>, index: i32) -> Opt
 }
 
 /// Production `script_snapshot_fb` → FlatBuffer → helper must carry the
-/// selected 15 prayer overlays including 0, even when take(29) extras
-/// would otherwise evict them.
+/// selected 15 prayer overlays including 0, and every other nonzero varp,
+/// however many there are.
 #[test]
 fn script_snapshot_posts_prayer_overlay_zeros_through_isolate_under_extra_pressure() {
     let extras = 40;
@@ -11240,8 +11240,8 @@ fn script_snapshot_posts_prayer_overlay_zeros_through_isolate_under_extra_pressu
         })
         .count();
     assert_eq!(
-        extra_rows, 29,
-        "non-prayer nonzero extras keep take(29) capacity"
+        extra_rows, extras,
+        "every non-prayer nonzero varp is posted, not a capped subset"
     );
 
     let game_data = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
