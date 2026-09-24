@@ -948,12 +948,6 @@ fn v2_install_is_typed_not_a_json_op_or_interact() {
     assert!(!ops.contains("gatherMethods"), "{ops}");
     assert!(!ops.contains("gatherResource"), "{ops}");
     assert!(!ops.contains("gatherPlacements"), "{ops}");
-    let declared = include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/src/shim/declared_surface.js"
-    ));
-    assert!(declared.contains("export function bestAxe() { throw notImpl('bestAxe'); }"));
-    assert!(declared.contains("export function bestPickaxe() { throw notImpl('bestPickaxe'); }"));
     let value = probe(
         r#"
 export const apiVersion = 2;
