@@ -842,6 +842,49 @@ export default class T extends LoopingBot {
 }
 
 #[test]
+fn wait_fed_pumps_sustain_every_tick_it_waits() {
+    let iso = LoadIsolate::spawn(
+        r#"
+import { waitFed } from '../../api/combat/hunting/supply.js';
+import { Sustain } from '../../api/sustain/Sustain.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__ran) return;
+        globalThis.__ran = true;
+        globalThis.__fed = 0;
+        globalThis.__polls = 0;
+        Sustain.set(() => { globalThis.__fed += 1; });
+        globalThis.__out = await waitFed(() => ++globalThis.__polls >= 4, 60000);
+    }
+}
+"#
+        .to_string(),
+        LoadShape::CompatClass,
+        vec![],
+    )
+    .unwrap();
+    for tick in 1..=6 {
+        iso.post_snapshot(script::isolate_fb::encode_snapshot(&empty_snapshot(
+            tick,
+            TileInput {
+                x: 3200,
+                z: 3200,
+                level: 0,
+            },
+        )));
+        iso.on_game_tick(tick);
+    }
+    let out = iso.probe("globalThis.__out").unwrap();
+    let fed = iso.probe("globalThis.__fed").unwrap();
+    let polls = iso.probe("globalThis.__polls").unwrap();
+    iso.join();
+    assert_eq!(out, true, "{out:?}");
+    assert_eq!(polls, 4, "cond once per tick: {polls:?}");
+    // Frozen `waitFed`: `await Sustain.run()` after every false `cond`.
+    assert_eq!(fed, 3, "fed between each failed poll: {fed:?}");
+}
+
+#[test]
 fn teleport_out_reports_escape_shortfall() {
     let data = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
     let iso = LoadIsolate::spawn_with_game_data(
@@ -944,7 +987,7 @@ export default class T extends LoopingBot {
 }
 
 #[test]
-fn acquire_key_state_is_fetch_when_the_key_is_missing() {
+fn acquire_key_stops_when_the_bank_stop_fails() {
     let iso = LoadIsolate::spawn(
         r#"
 import { acquireKey } from '../../api/combat/hunting/supply.js';
@@ -952,10 +995,18 @@ export default class T extends LoopingBot {
     async loop() {
         if (globalThis.__ran) return;
         globalThis.__ran = true;
-        const host = { log() {}, setStatus(m) { globalThis.__status = m; } };
-        acquireKey(host, { key: 't', keyItem: { name: 'Dusty key', id: 1590 } }).then((v) => {
-            globalThis.__state = v;
-        });
+        globalThis.__logs = [];
+        globalThis.__statuses = [];
+        const host = {
+            log(m) { globalThis.__logs.push(m); },
+            setStatus(m) { globalThis.__statuses.push(m); },
+        };
+        acquireKey(host, {
+            key: 't',
+            keyItem: { name: 'Dusty key', id: 1590 },
+            bank: { x: 3201, z: 3200, level: 0 },
+            inArea: () => false,
+        }).then((v) => { globalThis.__state = v; });
     }
 }
 "#
@@ -964,22 +1015,38 @@ export default class T extends LoopingBot {
         vec![],
     )
     .unwrap();
-    iso.post_snapshot(script::isolate_fb::encode_snapshot(&empty_snapshot(
-        1,
-        TileInput {
-            x: 3200,
-            z: 3200,
-            level: 0,
-        },
-    )));
-    iso.on_game_tick(1);
-    let status = iso.probe("globalThis.__status").unwrap();
+    let mut drained = Vec::new();
+    for tick in 1..=4 {
+        iso.post_snapshot(script::isolate_fb::encode_snapshot(&empty_snapshot(
+            tick,
+            TileInput {
+                x: 3200,
+                z: 3200,
+                level: 0,
+            },
+        )));
+        iso.on_game_tick(tick);
+        drained.extend(iso.drain_interacts());
+    }
+    let state = iso.probe("globalThis.__state").unwrap();
+    let logs = iso.probe("globalThis.__logs").unwrap();
+    let statuses = iso.probe("globalThis.__statuses").unwrap();
     iso.join();
+    // No booth in the scene: the bank never opens, and frozen `acquireKey`
+    // returns the state rather than pressing on to Velrak.
+    assert_eq!(state, "fetch", "{state:?}");
+    assert_eq!(
+        logs,
+        json!(["could not open the bank. Will retry."]),
+        "{logs:?}"
+    );
+    assert_eq!(statuses, json!(["fetching the Dusty key"]), "{statuses:?}");
     assert!(
-        status
-            .as_str()
-            .unwrap_or("")
-            .contains("fetching the Dusty key"),
-        "missing key banks then Velrak: {status:?}"
+        !drained.iter().any(|req| matches!(
+            req,
+            script::shim::InteractReq::WalkNear { x: 2931, z: 9690, .. }
+                | script::shim::InteractReq::Npc { .. }
+        )),
+        "no corridor walk or Jailer after a failed bank stop: {drained:?}"
     );
 }

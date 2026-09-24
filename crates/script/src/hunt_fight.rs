@@ -392,6 +392,9 @@ struct FightRuntime {
     walk_attempts_left: u32,
     walk_after_walk: bool,
     walk_after_sustain: bool,
+    /// Frozen host calls (`countKill`, `log`) delivered ahead of the next
+    /// effect.
+    notes: Vec<Value>,
 }
 
 impl FightRuntime {
@@ -426,6 +429,7 @@ impl FightRuntime {
             walk_attempts_left: 0,
             walk_after_walk: false,
             walk_after_sustain: false,
+            notes: Vec::new(),
         }
     }
 
@@ -467,8 +471,11 @@ impl FightRuntime {
         }
     }
 
-    fn emit(&self, mut v: Value) -> Value {
+    fn emit(&mut self, mut v: Value) -> Value {
         v["token"] = json!(self.token);
+        if !self.notes.is_empty() {
+            v["notes"] = Value::Array(std::mem::take(&mut self.notes));
+        }
         v
     }
 
@@ -1506,10 +1513,15 @@ impl FightRuntime {
         let killed = self.now().saturating_duration_since(self.seen_at)
             < Duration::from_millis(KILL_GRACE_MS);
         if killed {
-            // count-kill is an effect; settling yield still happens this pass.
-            // Emit is handled by caller if we returned a Value; keep kill as yield
-            // after an implicit count. Tests do not require count-kill before yield.
-            let _ = killed;
+            // Frozen `host.countKill(); host.log(`${name} ${idx} down`)`.
+            let name = if self.engaged_name.is_empty() {
+                proj.site.target.to_lowercase()
+            } else {
+                self.engaged_name.clone()
+            };
+            self.notes.push(json!({ "kind": "count-kill" }));
+            self.notes
+                .push(json!({ "kind": "log", "message": format!("{name} {idx} down") }));
         }
         self.reset_task();
         true

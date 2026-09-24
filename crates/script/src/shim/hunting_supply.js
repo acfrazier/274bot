@@ -1,10 +1,10 @@
 // Hunting supply: a name map over the Rust hunt families (`crate::hunt`)
 // and the hunting helpers (`crate::hunt_catalog`). Rust owns the loops,
-// walks, ops and waits; the flask plans are declared data.
+// walks, ops, waits and the bank-trip policy; the flask plans are declared
+// data.
 import { runMachine } from '../../../shim/_kernel.js';
-import { Equipment } from '../../equipment/Equipment.js';
-import { runeWithdrawList } from '../CombatStyleLogic.js';
-import { EnterLair, bankRoutine as huntBank, cell, hooksOf, leaveLair, siteArgs } from './combat.js';
+import { Sustain } from '../../sustain/Sustain.js';
+import { EnterLair, bankRoutine as huntBank, hooksOf, leaveLair, siteArgs } from './combat.js';
 
 const logic = (name, ...args) => globalThis.__rs2b0t_hunt_logic(name, ...args);
 
@@ -29,8 +29,7 @@ export function doseToDrink(count, doses = ANTIPOISON_DOSES) {
 export const escapeRunesFor = (teleportId) => logic('escapeRunesFor', teleportId);
 export const inCell = () => logic('inCell');
 
-// One EnterLair session per site key: the frozen module-level fee proof
-// lives on its token.
+// One EnterLair session per site key.
 const enters = new Map();
 function enterFor(h, site) {
     let enter = enters.get(site.key);
@@ -38,7 +37,6 @@ function enterFor(h, site) {
         enter = new EnterLair(h, site);
         enters.set(site.key, enter);
     }
-    enter.host = h;
     return enter;
 }
 
@@ -46,9 +44,9 @@ export async function enterLair(h, site) {
     return enterFor(h, site).execute();
 }
 
+// Frozen module-level `feePaidFor`, kept by Rust across ResetSession.
 export function feePrepaid(site) {
-    const enter = enters.get(site.key);
-    return !!enter && globalThis.__rs2b0t_hunt('feePrepaid', 'hunt-enter', enter.token, site.key) === true;
+    return globalThis.__rs2b0t_hunt('feePrepaid', 'hunt-enter', String(site?.key ?? '')) === true;
 }
 
 export { leaveLair };
@@ -58,12 +56,10 @@ export async function acquireKey(h, site) {
     return out.kind === 'done' ? out.value : logic('keyState', site.keyItem?.id ?? null);
 }
 
-// Frozen leaveCell only opens the door from inside.
-export function leaveCell(h) {
-    const site = { key: 'taverley-blue', keyItem: { name: 'Dusty key', id: 1590 } };
-    return runMachine('hunt-cell', { site: siteArgs(site, { leaveOnly: true }) }, hooksOf(h, site)).then(
-        (out) => out.kind === 'done' && out.value === true,
-    );
+// Frozen `leaveCell` only opens the cell door from inside.
+export async function leaveCell(h) {
+    const out = await runMachine('hunt-cell', { site: siteArgs({ key: 'leave-cell' }, { leaveOnly: true }) }, hooksOf(h, null));
+    return out.kind === 'done' && out.value === true;
 }
 
 export async function teleportOut(h, site) {
@@ -71,34 +67,15 @@ export async function teleportOut(h, site) {
     return out.kind === 'done' ? out.value : 'the cast never landed';
 }
 
+// Frozen `waitFed`: `cond` each tick, pumping Sustain between polls.
 export async function waitFed(cond, ms) {
-    const out = await runMachine('hunt-wait-fed', { ms: Number(ms) }, { cond });
+    const out = await runMachine('hunt-wait-fed', { ms: Number(ms) }, { cond, sustain: () => Sustain.run() });
     return out.kind === 'done' && out.value === true;
 }
 
-const asFlask = (plan) => ({ flask: plan.flask, doses: plan.potion.doses, want: plan.want });
-
-// Frozen BankOpts coerced to the bank family's loadout.
+// Frozen `BankOpts` cross as they are; Rust owns the defaults and the math.
 export async function bankRoutine(h, site, opts) {
-    const o = opts || {};
-    const style = typeof h.style === 'function' ? h.style() : '';
-    const wielded = Equipment.items().map((i) => i.name ?? '');
-    const runes = style === 'mage'
-        ? runeWithdrawList(h.spellName(), wielded, o.runeCasts ?? 150).map((r) => ({ name: r.rune, count: r.count + (o.runeBuffer ?? 300) }))
-        : [];
-    const escape = escapeRunesFor(site.escapeTeleportId).runes
-        .map((r) => ({ name: r.rune, count: r.count * ((o.escapeStock ?? 2) + 1) }));
-    await huntBank(h, site, {
-        withdrawFood: o.withdrawFood === true,
-        wear: o.wear,
-        carry: o.carry,
-        runes,
-        escapeRunes: escape,
-        flasks: [...(o.potions ?? []).map(asFlask), ...(o.flasks ?? [])],
-        healTo: o.healTo,
-        ammo: style === 'range' ? (o.ammo ?? 500) : undefined,
-        leave: o.leave,
-    });
+    await huntBank(h, site, opts);
 }
 
 export function walkApproach() {

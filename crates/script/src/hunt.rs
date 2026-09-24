@@ -72,6 +72,7 @@ pub(crate) const HOOKS: &[&str] = &[
     "keepExtra",
     "inArea",
     "cond",
+    "countKill",
 ];
 
 /// Indices into [`HOOKS`].
@@ -111,6 +112,7 @@ pub(crate) mod hook {
     pub(crate) const KEEP_EXTRA: usize = 32;
     pub(crate) const IN_AREA: usize = 33;
     pub(crate) const COND: usize = 34;
+    pub(crate) const COUNT_KILL: usize = 35;
 }
 
 /// Effects one step may take before it yields the tick.
@@ -274,9 +276,10 @@ fn put_site<K: Kind>(token: u64, proj: K::Proj) {
     SITES.with(|sites| sites.borrow_mut().insert((K::NAME, token), proj));
 }
 
-/// Stop: the sites go with the isolate thread's scripts.
+/// Stop: the sites and the fee proof go with the isolate thread's scripts.
 pub(crate) fn on_stop() {
     SITES.with(|sites| sites.borrow_mut().clear());
+    crate::hunt_lair::on_stop();
 }
 
 /// A session's synchronous read (`validate`, `blocksLoot`): refresh the
@@ -546,6 +549,7 @@ impl<K: Kind> Hunt<K> {
 
     /// Carry out one effect; `Some` ends this step.
     fn apply(&mut self, effect: &Value, cx: &mut Cx<'_>) -> Result<Option<Step<Value>>, Ended> {
+        notes(effect, cx)?;
         let kind = effect.get("kind").and_then(Value::as_str).unwrap_or("");
         let ack = json!({ "queued": true });
         match kind {
@@ -731,6 +735,23 @@ fn map_bool(step: Step<bool>) -> Step<Value> {
 fn notify(cx: &mut Cx<'_>, hook: usize, args: &[Value]) -> Result<(), Ended> {
     if cx.has(hook) {
         cx.ask(hook, args)?;
+    }
+    Ok(())
+}
+
+/// The host calls a stepper queued ahead of `effect` (status and log
+/// lines, `countKill`), in order.
+fn notes(effect: &Value, cx: &mut Cx<'_>) -> Result<(), Ended> {
+    let Some(notes) = effect.get("notes").and_then(Value::as_array) else {
+        return Ok(());
+    };
+    for note in notes {
+        match note.get("kind").and_then(Value::as_str) {
+            Some("count-kill") => notify(cx, hook::COUNT_KILL, &[])?,
+            Some("status") => notify(cx, hook::SET_STATUS, &[message(note)])?,
+            Some("vlog") => notify(cx, hook::VLOG, &[message(note)])?,
+            _ => notify(cx, hook::LOG, &[message(note)])?,
+        }
     }
     Ok(())
 }
@@ -1026,50 +1047,8 @@ impl TeleportOut {
         cx.ask(hook::IN_AREA, &[point]).map(|v| truthy(&v))
     }
 
-    /// Frozen `escapeShortfall`.
     fn shortfall(&self) -> Option<String> {
-        let (magic, held) = observed::with(|scene| {
-            let session = scene.since_login();
-            let magic = session
-                .stats()
-                .and_then(|skills| skills.magic)
-                .map_or(0, |skill| skill.base);
-            let held: Vec<(String, i32)> = self
-                .runes
-                .iter()
-                .map(|(rune, _)| {
-                    let count = session
-                        .inv()
-                        .map(|rows| {
-                            rows.iter()
-                                .filter(|row| {
-                                    row.name
-                                        .as_deref()
-                                        .is_some_and(|name| name.eq_ignore_ascii_case(rune))
-                                })
-                                .map(|row| row.count.max(0))
-                                .sum()
-                        })
-                        .unwrap_or(0);
-                    (rune.clone(), count)
-                })
-                .collect();
-            (magic, held)
-        });
-        if magic < self.level {
-            return Some(format!(
-                "magic {magic} is below the {} it needs",
-                self.level
-            ));
-        }
-        let short: Vec<&str> = self
-            .runes
-            .iter()
-            .zip(&held)
-            .filter(|((_, need), (_, have))| have < need)
-            .map(|((rune, _), _)| rune.as_str())
-            .collect();
-        (!short.is_empty()).then(|| format!("no {}", short.join(" and ")))
+        escape_shortfall(self.level, &self.runes)
     }
 
     fn decide(&mut self, cx: &mut Cx<'_>) -> Step<Value> {
@@ -1112,23 +1091,72 @@ impl TeleportOut {
     }
 }
 
-/// Frozen `acquireKey(h, site)`: leave if inside, then always bank
-/// (deposit, withdraw gear, equip) before Velrak; settles the frozen
+/// Frozen `escapeShortfall`: why the escape cannot be cast from the posted
+/// magic level and pack, or `None`. `runes` are the per-cast counts.
+pub(crate) fn escape_shortfall(level: i32, runes: &[(String, i32)]) -> Option<String> {
+    let (magic, held) = observed::with(|scene| {
+        let session = scene.since_login();
+        let magic = session
+            .stats()
+            .and_then(|skills| skills.magic)
+            .map_or(0, |skill| skill.base);
+        let held: Vec<i32> = runes
+            .iter()
+            .map(|(rune, _)| {
+                session
+                    .inv()
+                    .map(|rows| {
+                        rows.iter()
+                            .filter(|row| {
+                                row.name
+                                    .as_deref()
+                                    .is_some_and(|name| name.eq_ignore_ascii_case(rune))
+                            })
+                            .map(|row| row.count.max(0))
+                            .sum()
+                    })
+                    .unwrap_or(0)
+            })
+            .collect();
+        (magic, held)
+    });
+    if magic < level {
+        return Some(format!("magic {magic} is below the {level} it needs"));
+    }
+    let short: Vec<&str> = runes
+        .iter()
+        .zip(&held)
+        .filter(|((_, need), have)| *have < need)
+        .map(|((rune, _), _)| rune.as_str())
+        .collect();
+    (!short.is_empty()).then(|| format!("no {}", short.join(" and ")))
+}
+
+/// Frozen `acquireKey(h, site)`: leave the lair if inside; open the site's
+/// bank, deposit, take the key out (or food for the fetch), withdraw and
+/// wear the gear (`hunt-bank` with `acquire`); a bank stop that fails ends
+/// the run. With no key in the bank, up to three `fetchFromVelrak`
+/// attempts (`hunt-cell` with `maxAttempts: 1`). Settles the frozen
 /// `KeyState` off the posted pages.
 pub(crate) struct Acquire {
     site: Value,
     key: i32,
+    name: String,
     phase: AcquirePhase,
+    fetches: u32,
     child: Option<Child>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum AcquirePhase {
     Start,
-    Left,
-    Banked,
-    Fetched,
+    Leaving,
+    Banking,
+    Fetching,
 }
+
+/// Frozen `for (let attempt = 0; attempt < 3 …)` around `fetchFromVelrak`.
+const VELRAK_FETCHES: u32 = 3;
 
 impl Family for Acquire {
     const NAME: &'static str = "hunt-acquire";
@@ -1147,10 +1175,16 @@ impl Family for Acquire {
         let Some(key) = key else {
             return Begin::Done(json!("held"));
         };
+        let name = site["keyItem"]["name"]
+            .as_str()
+            .unwrap_or("key")
+            .to_string();
         Begin::Run(Self {
             site,
             key,
+            name,
             phase: AcquirePhase::Start,
+            fetches: 0,
             child: None,
         })
     }
@@ -1181,72 +1215,98 @@ impl Acquire {
         crate::hunt_catalog::call("keyState", &[json!(self.key)]).unwrap_or_else(|_| json!("fetch"))
     }
 
-    fn drive(&mut self, cx: &mut Cx<'_>) -> Result<Step<Value>, Ended> {
-        if let Some(child) = self.child.as_mut() {
-            let step = match child {
-                Child::Leave(hunt) => hunt.drive(cx)?,
-                Child::Bank(hunt) => hunt.drive(cx)?,
-                Child::Cell(hunt) => hunt.drive(cx)?,
-                _ => Step::Done(Value::Null),
-            };
-            match step {
-                Step::Done(value) => {
-                    self.child = None;
-                    if self.phase == AcquirePhase::Left && value != Value::Bool(true) {
-                        return Ok(Step::Done(self.state()));
-                    }
-                    if self.phase == AcquirePhase::Fetched {
-                        return Ok(Step::Done(self.state()));
-                    }
-                }
-                other => return Ok(other),
-            }
+    fn held(&self) -> bool {
+        self.state() == "held"
+    }
+
+    /// The site with `extra` merged over it, for a child run.
+    fn site_with(&self, extra: Value) -> Value {
+        let mut site = self.site.clone();
+        if let (Some(site), Some(extra)) = (site.as_object_mut(), extra.as_object()) {
+            site.extend(extra.clone());
         }
-        let state = self.state();
+        site
+    }
+
+    /// Frozen `site.inArea(Game.tile())`: the site's own predicate, else
+    /// its boxes.
+    fn inside(&self, cx: &mut Cx<'_>) -> Result<bool, Ended> {
+        let Some(here) = observed::with(|scene| scene.since_login().here().map(Tile::from)) else {
+            return Ok(false);
+        };
+        if cx.has(hook::IN_AREA) {
+            let point = json!({ "x": here.x, "z": here.z, "level": here.level });
+            return cx.ask(hook::IN_AREA, &[point]).map(|v| truthy(&v));
+        }
+        let mut proj = <crate::hunt_leave::Leave as Kind>::parse(&self.site);
+        Ok(<crate::hunt_leave::Leave as Kind>::area(&mut proj).contains(here, 1))
+    }
+
+    fn bank(&mut self, cx: &mut Cx<'_>) -> Result<Step<Value>, Ended> {
+        self.phase = AcquirePhase::Banking;
+        notify(cx, hook::SET_STATUS, &[json!(format!("fetching the {}", self.name))])?;
+        let site = self.site_with(json!({ "acquire": true }));
+        self.child = Some(Child::Bank(Box::new(Hunt::run(site))));
+        self.drive(cx)
+    }
+
+    fn fetch(&mut self, cx: &mut Cx<'_>) -> Result<Step<Value>, Ended> {
+        self.phase = AcquirePhase::Fetching;
+        self.fetches += 1;
+        let site = self.site_with(json!({ "maxAttempts": 1 }));
+        self.child = Some(Child::Cell(Box::new(Hunt::run(site))));
+        self.drive(cx)
+    }
+
+    fn drive(&mut self, cx: &mut Cx<'_>) -> Result<Step<Value>, Ended> {
+        let Some(child) = self.child.as_mut() else {
+            // Start.
+            if self.held() {
+                return Ok(Step::Done(self.state()));
+            }
+            if self.inside(cx)? {
+                self.phase = AcquirePhase::Leaving;
+                self.child = Some(Child::Leave(Box::new(Hunt::run(self.site.clone()))));
+                return self.drive(cx);
+            }
+            return self.bank(cx);
+        };
+        let step = match child {
+            Child::Leave(hunt) => hunt.drive(cx)?,
+            Child::Bank(hunt) => hunt.drive(cx)?,
+            Child::Cell(hunt) => hunt.drive(cx)?,
+            _ => Step::Done(Value::Null),
+        };
+        let Step::Done(value) = step else {
+            return Ok(step);
+        };
+        self.child = None;
+        let ok = value == Value::Bool(true);
         match self.phase {
-            AcquirePhase::Start => {
-                if state == "held" {
-                    return Ok(Step::Done(state));
-                }
-                self.phase = AcquirePhase::Left;
-                let here = observed::with(|scene| scene.since_login().here().map(Tile::from));
-                let inside = match here {
-                    Some(t) if cx.has(hook::IN_AREA) => truthy(&cx.ask(
-                        hook::IN_AREA,
-                        &[json!({ "x": t.x, "z": t.z, "level": t.level })],
-                    )?),
-                    _ => false,
-                };
-                if inside {
-                    self.child = Some(Child::Leave(Box::new(Hunt::run(self.site.clone()))));
-                    return self.drive(cx);
-                }
-                self.drive(cx)
+            AcquirePhase::Start => Ok(Step::Done(self.state())),
+            // A leave or a bank stop that never happened is a reason to
+            // stop rather than press on into the Jailer fight.
+            AcquirePhase::Leaving if !ok => Ok(Step::Done(self.state())),
+            AcquirePhase::Leaving => self.bank(cx),
+            AcquirePhase::Banking if !ok => Ok(Step::Done(self.state())),
+            AcquirePhase::Banking if self.held() => {
+                notify(cx, hook::LOG, &[json!(format!("took the {} out of the bank", self.name))])?;
+                Ok(Step::Done(self.state()))
             }
-            AcquirePhase::Left => {
-                self.phase = AcquirePhase::Banked;
-                let notify_status = json!(format!(
-                    "fetching the {}",
-                    self.site["keyItem"]["name"].as_str().unwrap_or("key")
-                ));
-                notify(cx, hook::SET_STATUS, &[notify_status])?;
-                self.child = Some(Child::Bank(Box::new(Hunt::run(self.site.clone()))));
-                self.drive(cx)
+            AcquirePhase::Banking => {
+                let status = json!(format!("fetching the {} from Velrak", self.name));
+                notify(cx, hook::SET_STATUS, &[status])?;
+                self.fetch(cx)
             }
-            AcquirePhase::Banked => {
-                if state == "held" {
-                    return Ok(Step::Done(state));
+            AcquirePhase::Fetching => {
+                if ok {
+                    notify(cx, hook::LOG, &[json!(format!("Velrak handed over the {}", self.name))])?;
                 }
-                self.phase = AcquirePhase::Fetched;
-                let notify_status = json!(format!(
-                    "fetching the {} from Velrak",
-                    self.site["keyItem"]["name"].as_str().unwrap_or("key")
-                ));
-                notify(cx, hook::SET_STATUS, &[notify_status])?;
-                self.child = Some(Child::Cell(Box::new(Hunt::run(self.site.clone()))));
-                self.drive(cx)
+                if self.fetches < VELRAK_FETCHES && !self.held() {
+                    return self.fetch(cx);
+                }
+                Ok(Step::Done(self.state()))
             }
-            AcquirePhase::Fetched => Ok(Step::Done(state)),
         }
     }
 }

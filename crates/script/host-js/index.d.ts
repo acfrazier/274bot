@@ -745,9 +745,9 @@ export interface NativeApi {
   enterRun(input: HuntToken, hooks?: HuntHooks): Promise<HuntOutcome<boolean>>;
   /** One awaited run; `value`: out of the lair. */
   leaveRun(site: HuntSite, hooks?: HuntHooks): Promise<HuntOutcome<boolean>>;
-  /** One awaited run; `value`: the key is held. */
+  /** One awaited run of the Jailer leg alone (corridor walk, kill, take the jail key); `value`: the jail key is held. Not v1 `acquireKey`, which composes leave, the bank stop and up to three Velrak fetches and settles a `KeyState`; v2 composes those legs from `leaveRun`, `bankRun` and `cellRun` itself. */
   keyRun(site: HuntSite, hooks?: HuntHooks): Promise<HuntOutcome<boolean>>;
-  /** One awaited run through the jail cell; `value`: done. */
+  /** One awaited run through the jail cell (jail key, unlock, Velrak, back out); `value`: the site's key is held outside the cell. */
   cellRun(site: HuntSite, hooks?: HuntHooks): Promise<HuntOutcome<boolean>>;
   /** One awaited bank trip; `value`: restocked. */
   bankRun(site: HuntSite, opts?: HuntBankOptions, hooks?: HuntHooks): Promise<HuntOutcome<boolean>>;
@@ -776,16 +776,18 @@ export interface HuntSite {
   gate?: { locId: number; op: string; outside?: WorldTile | null; inside?: WorldTile | null } | null;
   exit?: { locId: number; op: string; stand: WorldTile } | null;
 }
-/** Bank-trip loadout, merged over the site. */
+/** Bank-trip loadout (the frozen `BankOpts`), merged over the site. Rust owns the defaults: `runeCasts` 150, `runeBuffer` 300, `escapeStock` 2, `ammo` 500, `healTo` 0.9. */
 export interface HuntBankOptions {
   withdrawFood?: boolean;
   wear?: string[];
   carry?: string[];
-  runes?: Array<{ name: string; count: number }>;
-  escapeRunes?: Array<{ name: string; count: number }>;
+  runeCasts?: number;
+  runeBuffer?: number;
+  escapeStock?: number;
+  ammo?: number;
+  potions?: Array<{ flask: string; potion: { doses: string[] }; want: number }>;
   flasks?: Array<{ flask: string; doses: string[]; want: number }>;
-  healTo?: number | null;
-  ammoWant?: number | null;
+  healTo?: number;
 }
 /** The caller's own hooks, all optional. Getters and notifications are called synchronously by Rust when a decision reads them (a returned promise is `not impl`); `eatOnce`, `armSpecial`, `sustain` and `leave` are awaited. An absent getter reads as its default. */
 export interface HuntHooks {
@@ -798,6 +800,7 @@ export interface HuntHooks {
   /** Replaces the leave run inside `bankRun` / `keyRun` / `cellRun`; `true` when out. */
   leave?(): boolean | Promise<boolean>;
   countBurial?(): void;
+  countKill?(): void;
   setSafespotIndex?(index: number): void;
   setTarget?(index: number | null): void;
   pickWeapon?(names: string[]): void;
@@ -826,7 +829,7 @@ export interface HuntHooks {
   /** The site's area test; replaces `boxes` when present. */
   inArea?(tile: WorldTile): boolean;
 }
-/** One run's settlement. A hook that throws rejects the promise with that value. */
+/** One run's settlement. A hook that throws rejects the promise with that value. `aborted` reasons are the host's. A run the Rust stepper itself gives up on (a KBD site, an unexpected reply, a lost walk) settles `done` with `false` (boolean runs) or `null` (fight/hold/retreat/walkspot), the same as a run that did not get there: treat anything but `done` with `true` as failure, and for the `null` runs prove the result from the scene (the player's tile). */
 export type HuntOutcome<T> =
   | { kind: 'done'; value: T }
   | { kind: 'refused'; reason: string }

@@ -95,11 +95,10 @@ fn hunt_callback<'s>(
     let result = match op.as_str() {
         "begin" => begin(scope, &family, args.get(2)),
         "validate" | "blocksLoot" => read(scope, &op, &family, args.get(2), args.get(3)),
-        // Frozen `feePrepaid(site)`: the enter session's own paid-for key.
+        // Frozen `feePrepaid(site)`: the script's module-level paid-for key.
         "feePrepaid" => {
-            let token = token(scope, args.get(2));
-            let key = args.get(3).to_rust_string_lossy(scope);
-            Ok(v8::Boolean::new(scope, crate::hunt_lair::fee_paid_for(token, &key)).into())
+            let key = args.get(2).to_rust_string_lossy(scope);
+            Ok(v8::Boolean::new(scope, crate::hunt_lair::fee_paid_for(&key)).into())
         }
         "reset" | "interruptWatch" if family == FightKind::NAME => {
             let token = token(scope, args.get(2));

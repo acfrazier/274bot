@@ -600,9 +600,9 @@ fn render_native_v2(out: &mut String) {
     );
     out.push_str("  /** One awaited run; `value`: out of the lair. */\n");
     out.push_str("  leaveRun(site: HuntSite, hooks?: HuntHooks): Promise<HuntOutcome<boolean>>;\n");
-    out.push_str("  /** One awaited run; `value`: the key is held. */\n");
+    out.push_str("  /** One awaited run of the Jailer leg alone (corridor walk, kill, take the jail key); `value`: the jail key is held. Not v1 `acquireKey`, which composes leave, the bank stop and up to three Velrak fetches and settles a `KeyState`; v2 composes those legs from `leaveRun`, `bankRun` and `cellRun` itself. */\n");
     out.push_str("  keyRun(site: HuntSite, hooks?: HuntHooks): Promise<HuntOutcome<boolean>>;\n");
-    out.push_str("  /** One awaited run through the jail cell; `value`: done. */\n");
+    out.push_str("  /** One awaited run through the jail cell (jail key, unlock, Velrak, back out); `value`: the site's key is held outside the cell. */\n");
     out.push_str("  cellRun(site: HuntSite, hooks?: HuntHooks): Promise<HuntOutcome<boolean>>;\n");
     out.push_str("  /** One awaited bank trip; `value`: restocked. */\n");
     out.push_str("  bankRun(site: HuntSite, opts?: HuntBankOptions, hooks?: HuntHooks): Promise<HuntOutcome<boolean>>;\n");
@@ -632,16 +632,18 @@ fn render_native_v2(out: &mut String) {
     out.push_str("  gate?: { locId: number; op: string; outside?: WorldTile | null; inside?: WorldTile | null } | null;\n");
     out.push_str("  exit?: { locId: number; op: string; stand: WorldTile } | null;\n");
     out.push_str("}\n");
-    out.push_str("/** Bank-trip loadout, merged over the site. */\n");
+    out.push_str("/** Bank-trip loadout (the frozen `BankOpts`), merged over the site. Rust owns the defaults: `runeCasts` 150, `runeBuffer` 300, `escapeStock` 2, `ammo` 500, `healTo` 0.9. */\n");
     out.push_str("export interface HuntBankOptions {\n");
     out.push_str("  withdrawFood?: boolean;\n");
     out.push_str("  wear?: string[];\n");
     out.push_str("  carry?: string[];\n");
-    out.push_str("  runes?: Array<{ name: string; count: number }>;\n");
-    out.push_str("  escapeRunes?: Array<{ name: string; count: number }>;\n");
+    out.push_str("  runeCasts?: number;\n");
+    out.push_str("  runeBuffer?: number;\n");
+    out.push_str("  escapeStock?: number;\n");
+    out.push_str("  ammo?: number;\n");
+    out.push_str("  potions?: Array<{ flask: string; potion: { doses: string[] }; want: number }>;\n");
     out.push_str("  flasks?: Array<{ flask: string; doses: string[]; want: number }>;\n");
-    out.push_str("  healTo?: number | null;\n");
-    out.push_str("  ammoWant?: number | null;\n");
+    out.push_str("  healTo?: number;\n");
     out.push_str("}\n");
     out.push_str("/** The caller's own hooks, all optional. Getters and notifications are called synchronously by Rust when a decision reads them (a returned promise is `not impl`); `eatOnce`, `armSpecial`, `sustain` and `leave` are awaited. An absent getter reads as its default. */\n");
     out.push_str("export interface HuntHooks {\n");
@@ -654,6 +656,7 @@ fn render_native_v2(out: &mut String) {
     out.push_str("  /** Replaces the leave run inside `bankRun` / `keyRun` / `cellRun`; `true` when out. */\n");
     out.push_str("  leave?(): boolean | Promise<boolean>;\n");
     out.push_str("  countBurial?(): void;\n");
+    out.push_str("  countKill?(): void;\n");
     out.push_str("  setSafespotIndex?(index: number): void;\n");
     out.push_str("  setTarget?(index: number | null): void;\n");
     out.push_str("  pickWeapon?(names: string[]): void;\n");
@@ -683,7 +686,7 @@ fn render_native_v2(out: &mut String) {
     out.push_str("  inArea?(tile: WorldTile): boolean;\n");
     out.push_str("}\n");
     out.push_str(
-        "/** One run's settlement. A hook that throws rejects the promise with that value. */\n",
+        "/** One run's settlement. A hook that throws rejects the promise with that value. `aborted` reasons are the host's. A run the Rust stepper itself gives up on (a KBD site, an unexpected reply, a lost walk) settles `done` with `false` (boolean runs) or `null` (fight/hold/retreat/walkspot), the same as a run that did not get there: treat anything but `done` with `true` as failure, and for the `null` runs prove the result from the scene (the player's tile). */\n",
     );
     out.push_str("export type HuntOutcome<T> =\n");
     out.push_str("  | { kind: 'done'; value: T }\n");

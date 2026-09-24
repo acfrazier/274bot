@@ -23,6 +23,14 @@ const TALK_ATTEMPTS: u32 = 3;
 thread_local! {
     static ENTER_RUNTIMES: RefCell<HashMap<u64, EnterRuntime>> = RefCell::new(HashMap::new());
     static NEXT_TOKEN: RefCell<u64> = const { RefCell::new(1) };
+    /// Frozen module-level `feePaidFor`: the site whose fee was paid on an
+    /// attempt the entrance did not follow. It lives with the script, not
+    /// with a session, so ResetSession keeps it; Stop drops it.
+    static FEE_PAID_FOR: RefCell<Option<String>> = const { RefCell::new(None) };
+}
+
+fn set_fee_paid(key: Option<String>) {
+    FEE_PAID_FOR.with(|paid| *paid.borrow_mut() = key);
 }
 
 #[derive(Clone, Debug)]
@@ -303,7 +311,8 @@ struct EnterRuntime {
     token: u64,
     phase: Phase,
     kind: Kind,
-    fee_paid_key: Option<String>,
+    /// The walk wait the current leg polls; its ack carries it once.
+    walk_token: Option<u64>,
     stand: Option<Tile>,
     stand_radius: i32,
     leg: Option<Tile>,
@@ -324,7 +333,7 @@ impl EnterRuntime {
             token,
             phase: Phase::Start,
             kind: Kind::Undecided,
-            fee_paid_key: None,
+            walk_token: None,
             stand: None,
             stand_radius: 0,
             leg: None,
@@ -416,8 +425,8 @@ fn has_item(obs: &EnterObservation, id: i32) -> bool {
     obs.inv.iter().any(|row| row.id == id && row.count > 0)
 }
 
-fn prepaid(rt: &EnterRuntime, proj: &EnterProj) -> bool {
-    rt.fee_paid_key.as_deref() == Some(proj.key.as_str())
+fn prepaid(_rt: &EnterRuntime, proj: &EnterProj) -> bool {
+    fee_paid_for(&proj.key)
 }
 
 fn need_coins(rt: &EnterRuntime, proj: &EnterProj, obs: &EnterObservation) -> bool {
@@ -810,6 +819,7 @@ fn emit_stand(rt: &mut EnterRuntime, proj: &EnterProj) -> Value {
         return rt.aborted("no stand");
     };
     rt.stand = Some(tile);
+    rt.walk_token = None;
     rt.stand_radius = radius;
     rt.clock.arm(STAND_MS);
     rt.phase = Phase::AckStand;
@@ -836,10 +846,12 @@ fn arrived(here: Option<Tile>, dest: Tile, radius: i32) -> bool {
 }
 
 fn ack_stand(rt: &mut EnterRuntime, proj: &EnterProj, reply: Option<&Value>) -> Value {
-    let Some(walk_token) = reply_u64(reply, "walkToken") else {
+    if let Some(token) = reply_u64(reply, "walkToken") {
+        rt.walk_token = Some(token);
+    }
+    let Some(walk_token) = rt.walk_token else {
         return rt.aborted("missing walkToken");
     };
-    let _ = walk_token;
     let obs = observation();
     if signal(&obs) {
         return rt.yield_value(false);
@@ -985,7 +997,7 @@ fn pay_step(rt: &mut EnterRuntime, proj: &EnterProj) -> Value {
         return rt.yield_value(false);
     }
     if paid_now(rt, proj, &obs) {
-        rt.fee_paid_key = Some(proj.key.clone());
+        set_fee_paid(Some(proj.key.clone()));
         rt.phase = Phase::Settle;
         rt.quiet = 0;
         rt.settle_i = 0;
@@ -1150,7 +1162,7 @@ fn proof_failed(rt: &mut EnterRuntime, proj: &EnterProj) -> Value {
 fn proved(rt: &mut EnterRuntime, proj: &EnterProj) -> Value {
     rt.proved = true;
     if rt.kind == Kind::Fee {
-        rt.fee_paid_key = None;
+        set_fee_paid(None);
     }
     let message = match rt.kind {
         Kind::Talk => {
@@ -1197,6 +1209,7 @@ fn approach_pick(rt: &mut EnterRuntime, proj: &EnterProj) -> Value {
             continue;
         }
         rt.leg = Some(stop);
+        rt.walk_token = None;
         rt.clock.arm(APPROACH_LEG_MS);
         rt.phase = Phase::AckApproach;
         return rt.emit(json!({
@@ -1210,7 +1223,10 @@ fn approach_pick(rt: &mut EnterRuntime, proj: &EnterProj) -> Value {
 }
 
 fn ack_approach(rt: &mut EnterRuntime, proj: &EnterProj, reply: Option<&Value>) -> Value {
-    let Some(walk_token) = reply_u64(reply, "walkToken") else {
+    if let Some(token) = reply_u64(reply, "walkToken") {
+        rt.walk_token = Some(token);
+    }
+    let Some(walk_token) = rt.walk_token else {
         return rt.aborted("missing walkToken");
     };
     let obs = observation();
@@ -1379,8 +1395,14 @@ pub fn dispatch(input: &Value) -> Value {
     }
 }
 
-pub fn fee_paid_for(token: u64, key: &str) -> bool {
-    with_enter(token, |rt| rt.fee_paid_key.as_deref() == Some(key)).unwrap_or(false)
+/// Frozen `feePrepaid(site)`.
+pub fn fee_paid_for(key: &str) -> bool {
+    FEE_PAID_FOR.with(|paid| paid.borrow().as_deref() == Some(key))
+}
+
+/// Stop: the fee proof goes with the script.
+pub fn on_stop() {
+    set_fee_paid(None);
 }
 
 pub fn enter_token_alive(token: u64) -> bool {

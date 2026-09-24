@@ -234,6 +234,8 @@ struct LeaveRuntime {
     casts: u32,
     saw_sustain: bool,
     walk_dest: Option<Tile>,
+    /// The walk wait the current leg polls; its ack carries it once.
+    walk_token: Option<u64>,
     walk_radius: i32,
     pending_loc: Option<(i32, String)>,
 }
@@ -251,6 +253,7 @@ impl LeaveRuntime {
             casts: 0,
             saw_sustain: false,
             walk_dest: None,
+            walk_token: None,
             walk_radius: 0,
             pending_loc: None,
         }
@@ -683,6 +686,7 @@ fn emit_walk(
     purpose: WalkPurpose,
 ) -> Value {
     rt.walk_dest = Some(tile);
+    rt.walk_token = None;
     rt.walk_radius = radius;
     rt.walk_purpose = purpose;
     rt.clock.arm(WALK_LEG_MS);
@@ -706,7 +710,10 @@ fn emit_walk(
 }
 
 fn ack_walk(rt: &mut LeaveRuntime, proj: &LeaveProj, reply: Option<&Value>) -> Value {
-    let Some(walk_token) = reply_u64(reply, "walkToken") else {
+    if let Some(token) = reply_u64(reply, "walkToken") {
+        rt.walk_token = Some(token);
+    }
+    let Some(walk_token) = rt.walk_token else {
         return rt.aborted("missing walkToken");
     };
     let obs = observation();

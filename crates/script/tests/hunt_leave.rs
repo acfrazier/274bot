@@ -898,6 +898,52 @@ export async function tick(api) {
     iso.join();
 }
 
+#[test]
+fn v2_leave_run_waits_out_its_walk_and_settles_out_on_arrival() {
+    let src = r#"
+export const apiVersion = 2;
+let started = false;
+export async function tick(api) {
+  if (started) return;
+  started = true;
+  globalThis.__done = await api.leaveRun({
+    key: 'heroes-blue',
+    boxes: [{ minX: 40, maxX: 60, minZ: 40, maxZ: 60, level: 0 }],
+    walkOut: { x: 70, z: 50, level: 0 },
+  }, { leaveByWalk: () => true });
+}
+"#;
+    let iso = LoadIsolate::spawn(src.into(), LoadShape::NativeTick, vec![]).unwrap();
+    let at = |tick: u64, x: i32| {
+        iso.post_snapshot(encode_snapshot(&empty_snapshot(
+            tick,
+            TileInput { x, z: 50, level: 0 },
+        )));
+        iso.on_game_tick(tick);
+    };
+    at(1, 50);
+    at(2, 55);
+    at(3, 58);
+    // Still inside and walking: the walk leg keeps its token across ticks
+    // (it used to abort `missing walkToken` and settle false on tick 2).
+    assert_eq!(
+        iso.probe("globalThis.__done").unwrap_or(Value::Null),
+        Value::Null
+    );
+    at(4, 68);
+    assert_eq!(
+        iso.probe("globalThis.__done").unwrap(),
+        json!({ "kind": "done", "value": true })
+    );
+    let walks = iso
+        .drain_interacts()
+        .into_iter()
+        .filter(|req| matches!(req, InteractReq::WalkNear { .. }))
+        .count();
+    iso.join();
+    assert_eq!(walks, 1, "one walk-out, not re-queued");
+}
+
 fn gate_site(x: i32, z: i32) -> Value {
     site(json!({
         "leaveByWalk": true,

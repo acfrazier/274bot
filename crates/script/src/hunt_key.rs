@@ -233,10 +233,14 @@ struct KeyRuntime {
     phase: Phase,
     walk_purpose: WalkPurpose,
     walk_dest: Option<Tile>,
+    /// The walk wait the current walk leg polls; its ack carries it once.
+    walk_token: Option<u64>,
     jailer_index: Option<i32>,
     take_attempts: u32,
     corridor_done: bool,
     saw_sustain: bool,
+    /// Frozen status and log lines, delivered ahead of the next effect.
+    notes: Vec<Value>,
     yielded: Option<bool>,
 }
 
@@ -248,17 +252,27 @@ impl KeyRuntime {
             phase: Phase::Decide,
             walk_purpose: WalkPurpose::Corridor,
             walk_dest: None,
+            walk_token: None,
             jailer_index: None,
             take_attempts: 0,
             corridor_done: false,
             saw_sustain: false,
+            notes: Vec::new(),
             yielded: None,
         }
     }
 
-    fn emit(&self, mut v: Value) -> Value {
+    fn emit(&mut self, mut v: Value) -> Value {
         v["token"] = json!(self.token);
+        if !self.notes.is_empty() {
+            v["notes"] = Value::Array(std::mem::take(&mut self.notes));
+        }
         v
+    }
+
+    fn note(&mut self, kind: &str, message: &str) {
+        self.notes
+            .push(json!({ "kind": kind, "message": message }));
     }
 
     fn yield_value(&mut self, value: bool) -> Value {
@@ -526,6 +540,7 @@ fn poll(rt: &mut KeyRuntime) -> Value {
 fn emit_walk(rt: &mut KeyRuntime, tile: Tile, purpose: WalkPurpose) -> Value {
     rt.walk_dest = Some(tile);
     rt.walk_purpose = purpose;
+    rt.walk_token = None;
     rt.phase = Phase::AckWalk;
     rt.clock.arm(WALK_LEG_MS);
     rt.emit(json!({
@@ -563,9 +578,18 @@ fn begin_take(rt: &mut KeyRuntime, obs: &KeyObservation, drop: &KeyGround) -> Va
         return emit_walk(rt, drop.tile, WalkPurpose::Drop);
     }
     if rt.take_attempts >= TAKE_CAP {
-        return rt.yield_value(false);
+        return take_lost(rt);
     }
     emit_obj(rt, drop)
+}
+
+/// Frozen `takeJailKey`'s give-up line.
+fn take_lost(rt: &mut KeyRuntime) -> Value {
+    rt.note(
+        "log",
+        "the jail key was gone before it was picked up. Killing the Jailer again.",
+    );
+    rt.yield_value(false)
 }
 
 fn begin_attack(rt: &mut KeyRuntime, npc: &KeyNpc) -> Value {
@@ -573,6 +597,7 @@ fn begin_attack(rt: &mut KeyRuntime, npc: &KeyNpc) -> Value {
     rt.phase = Phase::AckAttack;
     rt.saw_sustain = false;
     rt.clock.arm(KILL_MS);
+    rt.note("status", "fighting the Jailer for his key");
     rt.emit(json!({
         "kind": "npc",
         "name": "Jailer",
@@ -585,6 +610,11 @@ fn begin_respawn(rt: &mut KeyRuntime) -> Value {
     rt.phase = Phase::Respawn;
     rt.saw_sustain = false;
     rt.clock.arm(JAILER_RESPAWN_MS);
+    rt.note("status", "waiting for the Jailer to respawn");
+    rt.note(
+        "log",
+        "no Jailer in the prison corridor. Waiting out his respawn where we stand.",
+    );
     poll(rt)
 }
 
@@ -633,7 +663,10 @@ fn ack_walk(rt: &mut KeyRuntime, proj: &KeyProj, reply: Option<&Value>) -> Value
     if let Some(stop) = gate(rt, proj, &obs) {
         return stop;
     }
-    let Some(walk_token) = reply_u64(reply, "walkToken") else {
+    if let Some(token) = reply_u64(reply, "walkToken") {
+        rt.walk_token = Some(token);
+    }
+    let Some(walk_token) = rt.walk_token else {
         return rt.aborted("missing walkToken");
     };
     let dest = rt.walk_dest.unwrap_or(CORRIDOR);
@@ -661,7 +694,7 @@ fn ack_take(rt: &mut KeyRuntime, proj: &KeyProj) -> Value {
     }
     if rt.clock.bound_reached() {
         if rt.take_attempts >= TAKE_CAP {
-            return rt.yield_value(false);
+            return take_lost(rt);
         }
         rt.phase = Phase::Decide;
         return decide(rt, proj);
@@ -681,6 +714,10 @@ fn ack_attack(rt: &mut KeyRuntime, proj: &KeyProj) -> Value {
         return decide(rt, proj);
     }
     if rt.clock.bound_reached() {
+        rt.note(
+            "log",
+            &format!("the Jailer outlived {}s of combat.", KILL_MS / 1000),
+        );
         return rt.yield_value(false);
     }
     poll(rt)

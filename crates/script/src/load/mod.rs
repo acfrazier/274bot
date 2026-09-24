@@ -44,6 +44,7 @@ mod library;
 #[cfg(feature = "load")]
 mod line_of_sight;
 mod loadout_v8;
+#[cfg(feature = "load")]
 mod machine_v8;
 #[cfg(feature = "load")]
 mod melee_weapons_v8;

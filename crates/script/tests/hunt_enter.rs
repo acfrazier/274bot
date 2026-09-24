@@ -12,6 +12,7 @@ use serde_json::{json, Value};
 
 fn reset() {
     hunt_lair::on_reset();
+    hunt_lair::on_stop();
 }
 
 fn tile(x: i32, z: i32, level: i32) -> Tile {
@@ -435,7 +436,7 @@ fn fee_proof_is_not_the_walk_and_sets_prepaid_before_loc() {
     set_observation(seen);
     let proved = call("next", token, p.clone(), Some(json!({ "queued": true })));
     assert_eq!(proved["kind"], "log");
-    assert!(fee_paid_for(token, "brimhaven-iron"));
+    assert!(fee_paid_for("brimhaven-iron"));
     let mut saw_loc = false;
     let mut reply = None;
     for _ in 0..12 {
@@ -487,7 +488,7 @@ fn fee_modal_is_close_modal_not_answer() {
 }
 
 #[test]
-fn prepaid_survives_yield_and_drops_on_reset() {
+fn prepaid_survives_yield_and_reset_and_drops_on_stop() {
     reset();
     let mut seen = obs(Some(tile(12, 12, 0)));
     seen.npcs = vec![EnterNpc {
@@ -516,7 +517,7 @@ fn prepaid_survives_yield_and_drops_on_reset() {
     set_observation(seen);
     let proved = call("next", token, p.clone(), Some(json!({ "queued": true })));
     assert_eq!(proved["kind"], "log");
-    assert!(fee_paid_for(token, "brimhaven-iron"));
+    assert!(fee_paid_for("brimhaven-iron"));
     let mut yielded = false;
     for _ in 0..16 {
         let step = call("next", token, p.clone(), None);
@@ -528,7 +529,7 @@ fn prepaid_survives_yield_and_drops_on_reset() {
     }
     assert!(yielded);
     assert!(
-        fee_paid_for(token, "brimhaven-iron"),
+        fee_paid_for("brimhaven-iron"),
         "yield does not clear prepaid"
     );
     assert!(enter_token_alive(token));
@@ -539,9 +540,15 @@ fn prepaid_survives_yield_and_drops_on_reset() {
     );
     hunt_lair::on_reset();
     assert!(!enter_token_alive(token));
-    set_observation(obs(Some(outside())));
-    let again = begin();
-    assert!(!fee_paid_for(again, "brimhaven-iron"));
+    // Frozen `feePaidFor` is module state: a reconnect keeps the payment,
+    // so the next attempt goes to the tree, not to the bank for coins.
+    assert!(
+        fee_paid_for("brimhaven-iron"),
+        "ResetSession keeps the fee proof"
+    );
+    assert!(!fee_paid_for("taverley-blue"), "only the paid site");
+    hunt_lair::on_stop();
+    assert!(!fee_paid_for("brimhaven-iron"), "Stop drops it");
 }
 
 #[test]
@@ -768,7 +775,7 @@ fn hold_yields_false_and_leaves_prepaid_unchanged() {
     set_observation(seen.clone());
     let proved = call("next", token, p.clone(), Some(json!({ "queued": true })));
     assert_eq!(proved["kind"], "log");
-    assert!(fee_paid_for(token, "brimhaven-iron"));
+    assert!(fee_paid_for("brimhaven-iron"));
     seen.hold = true;
     set_observation(seen);
     let mut value = None;
@@ -780,7 +787,7 @@ fn hold_yields_false_and_leaves_prepaid_unchanged() {
         }
     }
     assert_eq!(value, Some(false));
-    assert!(fee_paid_for(token, "brimhaven-iron"));
+    assert!(fee_paid_for("brimhaven-iron"));
 }
 
 #[test]

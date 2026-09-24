@@ -65,7 +65,7 @@ export function hooksOf(host, site, leave) {
     const h = host || {};
     const hooks = { leave, sustain: () => Sustain.run() };
     for (const name of [
-        'log', 'vlog', 'setStatus', 'eatOnce', 'armSpecial', 'countBurial', 'setSafespotIndex',
+        'log', 'vlog', 'setStatus', 'eatOnce', 'armSpecial', 'countBurial', 'countKill', 'setSafespotIndex',
         'pickWeapon', 'parkFor', 'countBankTrip', 'hpFraction', 'panicHp', 'retreatHp', 'hasFood',
         'needEat', 'style', 'safespotIndex', 'buryBones', 'boneName', 'shieldReady', 'leaveByWalk',
         'foodName', 'foodWithdraw', 'weaponName', 'ammoName', 'spellName', 'keepExtra',
@@ -186,22 +186,21 @@ export function leaveLair(host, site) {
     return run('hunt-leave', host, site);
 }
 
-export async function acquireKey(host, site) {
-    const out = await runMachine('hunt-acquire', { site: siteArgs(site) }, hooksOf(host, site));
-    return out.kind === 'done' ? out.value : undefined;
-}
-
+// Frozen `BankOpts` cross as data; Rust owns the defaults (rune casts and
+// buffer, escape stock, ammo) and every count. `leave` stays the caller's.
 export function bankRoutine(host, site, opts) {
     const o = opts || {};
     const extra = {
         withdrawFood: o.withdrawFood === true,
         wear: o.wear || [],
         carry: o.carry || [],
-        runes: o.runes || [],
-        escapeRunes: o.escapeRunes || [],
+        runeCasts: o.runeCasts ?? null,
+        runeBuffer: o.runeBuffer ?? null,
+        escapeStock: o.escapeStock ?? null,
+        ammo: o.ammo ?? null,
+        potions: o.potions || [],
         flasks: o.flasks || [],
         healTo: o.healTo ?? null,
-        ammoWant: o.ammo ?? null,
     };
     const leave = typeof o.leave === 'function' ? () => o.leave(host, site) : undefined;
     return run('hunt-bank', host, site, extra, leave);

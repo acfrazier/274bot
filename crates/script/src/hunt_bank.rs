@@ -23,6 +23,11 @@ const SHIELD: &str = "Dragonfire shield";
 const HEAL_BITES: u32 = 24;
 const HEAL_MISSES: u32 = 3;
 const FOOD_GUARD: u32 = 12;
+/// Frozen `BankOpts` defaults (`supply.ts` `RUNE_CASTS` … `ESCAPE_STOCK`).
+const RUNE_CASTS: i32 = 150;
+const RUNE_BUFFER: i32 = 300;
+const AMMO_WITHDRAW: i32 = 500;
+const ESCAPE_STOCK: i32 = 2;
 
 thread_local! {
     static BANK_RUNTIMES: RefCell<HashMap<u64, BankRuntime>> = RefCell::new(HashMap::new());
@@ -198,10 +203,17 @@ pub(crate) struct BankProj {
     ammo_want: i32,
     spell: String,
     keep_extra: Vec<String>,
-    runes: Vec<NamedCount>,
-    escape_runes: Vec<NamedCount>,
+    /// Frozen `BankOpts.runeCasts` / `runeBuffer` / `escapeStock`.
+    rune_casts: i32,
+    rune_buffer: i32,
+    escape_stock: i32,
+    escape_id: String,
     flasks: Vec<FlaskPlan>,
     target: String,
+    /// Frozen `acquireKey`'s bank stop: deposit, the key, the gear, food
+    /// only for a Velrak fetch, close, wear. No pick, supplies, heal or
+    /// trip count.
+    acquire: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -291,6 +303,17 @@ struct Pending {
     generation: u64,
 }
 
+/// One supply being withdrawn: frozen `withdrawTo` logs how many arrived.
+#[derive(Clone, Debug)]
+struct Item {
+    name: String,
+    /// Held when its withdraws began.
+    start: i32,
+    /// Held before the last withdraw (a withdraw that moved nothing ends it).
+    last: i32,
+    target: i32,
+}
+
 struct BankRuntime {
     clock: InstantTaskClock,
     token: u64,
@@ -339,6 +362,15 @@ struct BankRuntime {
     yielded: Option<bool>,
     eat_name: String,
     eat_id: i32,
+    /// Frozen status and log lines, delivered ahead of the next effect.
+    notes: Vec<Value>,
+    /// The supply whose withdraws are in flight, for its `withdrew …` line.
+    item: Option<Item>,
+    food_announced: bool,
+    style_announced: bool,
+    style_checked: bool,
+    escape_checked: bool,
+    heal_from: Option<i32>,
 }
 
 impl BankRuntime {
@@ -391,12 +423,32 @@ impl BankRuntime {
             yielded: None,
             eat_name: String::new(),
             eat_id: 0,
+            notes: Vec::new(),
+            item: None,
+            food_announced: false,
+            style_announced: false,
+            style_checked: false,
+            escape_checked: false,
+            heal_from: None,
         }
     }
 
-    fn emit(&self, mut v: Value) -> Value {
+    fn emit(&mut self, mut v: Value) -> Value {
         v["token"] = json!(self.token);
+        if !self.notes.is_empty() {
+            v["notes"] = Value::Array(std::mem::take(&mut self.notes));
+        }
         v
+    }
+
+    fn log(&mut self, message: String) {
+        self.notes
+            .push(json!({ "kind": "log", "message": message }));
+    }
+
+    fn status(&mut self, message: String) {
+        self.notes
+            .push(json!({ "kind": "status", "message": message }));
     }
 
     fn yield_value(&mut self, value: bool) -> Value {
@@ -579,57 +631,44 @@ fn strings(input: &Value, key: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
-fn named_counts(input: &Value, key: &str) -> Vec<NamedCount> {
+fn opt_i32(input: &Value, key: &str) -> Option<i32> {
     input
         .get(key)
-        .and_then(Value::as_array)
-        .map(|rows| {
-            rows.iter()
-                .filter_map(|row| {
-                    let name = row
-                        .get("name")
-                        .and_then(Value::as_str)
-                        .or_else(|| row.get("rune").and_then(Value::as_str))?;
-                    let count = row
-                        .get("count")
-                        .and_then(Value::as_i64)
-                        .and_then(|n| i32::try_from(n).ok())
-                        .unwrap_or(0);
-                    Some(NamedCount {
-                        name: name.to_string(),
-                        count,
-                    })
-                })
-                .collect()
-        })
-        .unwrap_or_default()
+        .and_then(Value::as_i64)
+        .and_then(|n| i32::try_from(n).ok())
 }
 
+/// Frozen `[...(opts.potions ?? []).map(asFlask), ...(opts.flasks ?? [])]`.
 fn parse_flasks(input: &Value) -> Vec<FlaskPlan> {
-    input
-        .get("flasks")
-        .and_then(Value::as_array)
-        .map(|rows| {
-            rows.iter()
-                .filter_map(|row| {
-                    let name = row
-                        .get("name")
-                        .and_then(Value::as_str)
-                        .or_else(|| row.get("flask").and_then(Value::as_str))?;
-                    let want = row
-                        .get("want")
-                        .and_then(Value::as_i64)
-                        .and_then(|n| i32::try_from(n).ok())
-                        .unwrap_or(0);
-                    Some(FlaskPlan {
-                        name: name.to_string(),
-                        want,
-                        doses: strings(row, "doses"),
-                    })
-                })
-                .collect()
-        })
-        .unwrap_or_default()
+    let rows = |key: &str| {
+        input
+            .get(key)
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default()
+    };
+    let potions = rows("potions").into_iter().map(|plan| FlaskPlan {
+        name: plan
+            .get("flask")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string(),
+        want: opt_i32(&plan, "want").unwrap_or(0),
+        doses: plan.get("potion").map(|p| strings(p, "doses")).unwrap_or_default(),
+    });
+    let flasks = rows("flasks").into_iter().map(|plan| FlaskPlan {
+        name: plan
+            .get("flask")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string(),
+        want: opt_i32(&plan, "want").unwrap_or(0),
+        doses: strings(&plan, "doses"),
+    });
+    potions
+        .chain(flasks)
+        .filter(|plan| !plan.name.is_empty())
+        .collect()
 }
 
 fn parse_boxes(input: &Value) -> Vec<SiteBox> {
@@ -711,26 +750,106 @@ fn parse_proj(input: &Value) -> BankProj {
             .and_then(Value::as_str)
             .unwrap_or("")
             .to_string(),
-        ammo_want: input
-            .get("ammoWant")
-            .and_then(Value::as_i64)
-            .and_then(|n| i32::try_from(n).ok())
-            .unwrap_or(500),
+        // Frozen `BankOpts.ammo` is the withdraw count; the ammo's name is
+        // the host's `ammoName()`.
+        ammo_want: opt_i32(input, "ammo").unwrap_or(AMMO_WITHDRAW),
         spell: input
             .get("spell")
             .and_then(Value::as_str)
             .unwrap_or("")
             .to_string(),
         keep_extra: strings(input, "keepExtra"),
-        runes: named_counts(input, "runes"),
-        escape_runes: named_counts(input, "escapeRunes"),
+        rune_casts: opt_i32(input, "runeCasts").unwrap_or(RUNE_CASTS),
+        rune_buffer: opt_i32(input, "runeBuffer").unwrap_or(RUNE_BUFFER),
+        escape_stock: opt_i32(input, "escapeStock").unwrap_or(ESCAPE_STOCK),
+        escape_id: input
+            .get("escapeTeleportId")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string(),
         flasks: parse_flasks(input),
         target: input
             .get("target")
             .and_then(Value::as_str)
             .unwrap_or("")
             .to_string(),
+        acquire: input.get("acquire").and_then(Value::as_bool) == Some(true),
     }
+}
+
+/// Names of the worn items (frozen `wieldedNames()`).
+fn wielded(obs: &BankObservation) -> Vec<String> {
+    obs.equipment
+        .iter()
+        .filter(|row| row.count > 0)
+        .map(|row| row.name.clone())
+        .collect()
+}
+
+/// The spell's remaining per-cast rune costs with the worn staves.
+fn cast_costs(proj: &BankProj, obs: &BankObservation) -> Option<Vec<NamedCount>> {
+    let costs = crate::supply_v2::selected_data()?.runes_per_cast(&proj.spell, &wielded(obs))?;
+    Some(
+        costs
+            .into_iter()
+            .map(|cost| NamedCount {
+                name: cost.rune,
+                count: cost.count,
+            })
+            .collect(),
+    )
+}
+
+/// Frozen `runeWithdrawList(spell, wielded, runeCasts)` each topped by the
+/// buffer: the targets a mage trip withdraws to.
+fn rune_targets(proj: &BankProj, obs: &BankObservation) -> Vec<NamedCount> {
+    if !proj.style.eq_ignore_ascii_case("mage") {
+        return Vec::new();
+    }
+    cast_costs(proj, obs)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|cost| NamedCount {
+            name: cost.name,
+            count: cost.count.saturating_mul(proj.rune_casts) + proj.rune_buffer,
+        })
+        .collect()
+}
+
+/// Frozen `castsLeft(h)`.
+fn casts_left(proj: &BankProj, obs: &BankObservation) -> f64 {
+    let Some(costs) = cast_costs(proj, obs) else {
+        return 0.0;
+    };
+    let held = slotted(obs).cloned().collect::<Vec<_>>();
+    costs
+        .iter()
+        .map(|cost| (name_count(&held, &cost.name) as f64 / cost.count as f64).floor())
+        .fold(f64::INFINITY, f64::min)
+}
+
+/// The site's escape teleport: its label, level and per-cast runes.
+fn escape_fact(proj: &BankProj) -> Option<crate::escape_runes::EscapeRunesFact> {
+    crate::escape_runes::escape_runes_for_optional(
+        crate::supply_v2::selected_data().as_deref(),
+        &proj.escape_id,
+    )
+    .ok()
+}
+
+/// Frozen `count * (escapeStock + 1)` per escape rune.
+fn escape_targets(proj: &BankProj) -> Vec<NamedCount> {
+    escape_fact(proj)
+        .map(|esc| {
+            esc.runes
+                .into_iter()
+                .map(|rune| NamedCount {
+                    name: rune.rune,
+                    count: rune.count.saturating_mul(proj.escape_stock + 1),
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn token_of(input: &Value) -> u64 {
@@ -859,13 +978,11 @@ fn keep_names(proj: &BankProj, obs: &BankObservation) -> Vec<String> {
     if proj.style.eq_ignore_ascii_case("range") && !proj.ammo.is_empty() {
         keep.push(proj.ammo.clone());
     }
-    if proj.style.eq_ignore_ascii_case("mage") {
-        for rune in &proj.runes {
-            keep.push(rune.name.clone());
-        }
+    for rune in rune_targets(proj, obs) {
+        keep.push(rune.name);
     }
-    for rune in &proj.escape_runes {
-        keep.push(rune.name.clone());
+    for rune in escape_targets(proj) {
+        keep.push(rune.name);
     }
     keep.extend(proj.keep_extra.iter().cloned());
     for name in proj.wear.iter().chain(proj.carry.iter()) {
@@ -1167,6 +1284,7 @@ fn ack_walk(rt: &mut BankRuntime, proj: &BankProj, reply: Option<&Value>) -> Val
         return emit_open(rt, false);
     }
     if rt.clock.bound_reached() || walk_wait_settled(walk_token) {
+        rt.log("walk to the bank failed. Will retry.".into());
         return rt.yield_value(false);
     }
     rt.emit(json!({ "kind": "delay-ticks", "n": 1 }))
@@ -1180,7 +1298,10 @@ fn ack_open(rt: &mut BankRuntime, proj: &BankProj, reply: Option<&Value>) -> Val
     if !rt.open_acked {
         match reply.and_then(|r| r.get("opened")).and_then(Value::as_bool) {
             Some(true) => rt.open_acked = true,
-            _ => return rt.yield_value(false),
+            _ => {
+                rt.log("could not open the bank. Will retry.".into());
+                return rt.yield_value(false);
+            }
         }
     }
     if obs.bank_open && obs.bank_loaded {
@@ -1189,13 +1310,19 @@ fn ack_open(rt: &mut BankRuntime, proj: &BankProj, reply: Option<&Value>) -> Val
             rt.in_topup = true;
             rt.food_done = false;
             rt.food_rounds = 0;
+            rt.food_announced = false;
+            rt.item = None;
             rt.stage = Stage::Food;
             rt.phase = Phase::Work;
             return continue_work(rt, proj);
         }
         if rt.plan.is_none() {
             rt.plan = Some(capture_plan(proj, &obs));
-            rt.stage = Stage::Pick;
+            rt.stage = if proj.acquire {
+                Stage::Deposit
+            } else {
+                Stage::Pick
+            };
         }
         rt.phase = Phase::Work;
         return continue_work(rt, proj);
@@ -1234,7 +1361,7 @@ fn step_stage(rt: &mut BankRuntime, proj: &BankProj) -> Option<Value> {
         Stage::Wear => wear(rt, proj),
         Stage::Heal => heal(rt, proj),
         Stage::Topup => topup(rt, proj),
-        Stage::Close => close_stage(rt),
+        Stage::Close => close_stage(rt, proj),
         Stage::Count => count_stage(rt, proj),
     }
 }
@@ -1300,7 +1427,7 @@ fn deposit(rt: &mut BankRuntime, proj: &BankProj) -> Option<Value> {
 
 fn slot_free(rt: &mut BankRuntime, proj: &BankProj) -> Option<Value> {
     if rt.slot_free_done {
-        rt.stage = Stage::Food;
+        rt.stage = after_slot_free(proj);
         return None;
     }
     rt.slot_free_done = true;
@@ -1318,7 +1445,7 @@ fn slot_free(rt: &mut BankRuntime, proj: &BankProj) -> Option<Value> {
             .any(|row| row.count > 0 && eq_name(&row.name, SHIELD))
         && !slotted_has_name(&obs, SHIELD);
     if !(needs && shield_only_bank && pack_full(&obs)) {
-        rt.stage = Stage::Food;
+        rt.stage = after_slot_free(proj);
         return None;
     }
     let forms = food_forms(&proj.food_name);
@@ -1335,29 +1462,50 @@ fn slot_free(rt: &mut BankRuntime, proj: &BankProj) -> Option<Value> {
     Some(emit_deposit(rt, &name, OpKind::SlotFree))
 }
 
+/// The deposit makes room first; the acquire stop takes the key next.
+fn after_slot_free(proj: &BankProj) -> Stage {
+    if proj.acquire {
+        Stage::Key
+    } else {
+        Stage::Food
+    }
+}
+
+/// Frozen `withdrawFoodTo` ends the top-up leg and the acquire stop's
+/// withdrawals; the trip goes on to the key.
+fn after_food(rt: &BankRuntime, proj: &BankProj) -> Stage {
+    if rt.in_topup || proj.acquire {
+        Stage::Close
+    } else {
+        Stage::Key
+    }
+}
+
+/// A trip withdraws food when asked; the acquire stop only for a fetch
+/// from Velrak (frozen `if (!fromBank) withdrawFoodTo(h)`).
+fn wants_food(rt: &BankRuntime, proj: &BankProj) -> bool {
+    if proj.acquire {
+        return rt.plan.as_ref().is_some_and(|plan| plan.key == KeyArm::Fetch);
+    }
+    proj.withdraw_food
+}
+
 fn food(rt: &mut BankRuntime, proj: &BankProj) -> Option<Value> {
-    if rt.food_done {
-        rt.stage = if rt.in_topup {
-            Stage::Close
-        } else {
-            Stage::Key
-        };
+    if rt.food_done || !wants_food(rt, proj) {
+        rt.food_done = true;
+        rt.stage = after_food(rt, proj);
         return None;
     }
-    if !proj.withdraw_food {
-        rt.food_done = true;
-        rt.stage = if rt.in_topup {
-            Stage::Close
-        } else {
-            Stage::Key
-        };
-        return None;
+    if !rt.food_announced {
+        rt.food_announced = true;
+        rt.status(format!("withdrawing {}", proj.food_name));
     }
     let obs = observation();
     let forms = food_forms(&proj.food_name);
     let have = food_count(&obs, &forms);
     let plan = rt.plan.as_ref();
-    if have == 0 && plan.is_some_and(|plan| !plan.food_seen) && !rt.food_warned {
+    let seen = plan.is_none_or(|plan| plan.food_seen);
+    if have == 0 && !seen && !rt.food_warned {
         rt.food_warned = true;
         rt.food_done = true;
         return Some(emit_log(
@@ -1370,11 +1518,7 @@ fn food(rt: &mut BankRuntime, proj: &BankProj) -> Option<Value> {
     }
     if have >= proj.food_want || rt.food_rounds >= FOOD_GUARD || pack_full(&obs) {
         rt.food_done = true;
-        rt.stage = if rt.in_topup {
-            Stage::Close
-        } else {
-            Stage::Key
-        };
+        rt.stage = after_food(rt, proj);
         return None;
     }
     let row = obs
@@ -1393,11 +1537,7 @@ fn food(rt: &mut BankRuntime, proj: &BankProj) -> Option<Value> {
                 ),
             ));
         }
-        rt.stage = if rt.in_topup {
-            Stage::Close
-        } else {
-            Stage::Key
-        };
+        rt.stage = after_food(rt, proj);
         return None;
     };
     Some(emit_named_withdraw(rt, &row, have, proj.food_want, false))
@@ -1449,6 +1589,12 @@ fn key_arm(rt: &mut BankRuntime, proj: &BankProj) -> Option<Value> {
             if row.name.trim().is_empty() {
                 return Some(rt.yield_value(false));
             }
+            let name = if plan.key_name.is_empty() {
+                row.name.clone()
+            } else {
+                plan.key_name.clone()
+            };
+            rt.status(format!("withdrawing the {name}"));
             Some(emit_withdraw(
                 rt,
                 &row,
@@ -1506,11 +1652,44 @@ fn gear(rt: &mut BankRuntime, proj: &BankProj) -> Option<Value> {
         };
         return Some(emit_withdraw(rt, &row, "Withdraw-1", false, 0));
     }
-    rt.stage = Stage::Coins;
+    rt.stage = if proj.acquire {
+        Stage::Food
+    } else {
+        Stage::Coins
+    };
     None
 }
 
+fn held(obs: &BankObservation, name: &str) -> i32 {
+    name_count(&slotted(obs).cloned().collect::<Vec<_>>(), name)
+}
+
+/// Start (or continue) withdrawing `name` toward `target`, remembering
+/// where it began for its `withdrew …` line.
+fn begin_item(rt: &mut BankRuntime, name: &str, have: i32, target: i32) {
+    match rt.item.as_mut() {
+        Some(item) if eq_name(&item.name, name) => item.last = have,
+        _ => {
+            rt.item = Some(Item {
+                name: name.to_string(),
+                start: have,
+                last: have,
+                target,
+            })
+        }
+    }
+}
+
 fn coins(rt: &mut BankRuntime, proj: &BankProj) -> Option<Value> {
+    if let Some(item) = rt.item.take() {
+        let have = held(&observation(), "Coins");
+        let got = have - item.start;
+        if got > 0 {
+            rt.log(format!("withdrew {got} coins ({have}/{})", item.target));
+        } else {
+            rt.log(format!("WARNING: the bank cannot cover the {} coins the way in costs. Deposit coins to resume.", item.target));
+        }
+    }
     if rt.coins_done || rt.in_topup {
         rt.stage = Stage::Style;
         return None;
@@ -1521,27 +1700,23 @@ fn coins(rt: &mut BankRuntime, proj: &BankProj) -> Option<Value> {
         return None;
     };
     let obs = observation();
-    let have = name_count(
-        &obs.inv
-            .iter()
-            .filter(|row| real_slot(row))
-            .cloned()
-            .collect::<Vec<_>>(),
-        "Coins",
-    );
+    let have = held(&obs, "Coins");
     if have >= target {
         rt.stage = Stage::Style;
         return None;
     }
+    rt.status("withdrawing coins".into());
     let Some(row) = find_named(&obs.bank, "Coins").cloned() else {
         return Some(emit_log(
             rt,
             format!("WARNING: the bank cannot cover the {target} coins the way in costs. Deposit coins to resume."),
         ));
     };
+    begin_item(rt, "Coins", have, target);
     Some(emit_named_withdraw(rt, &row, have, target, false))
 }
 
+/// Frozen `withdrawStyleSupplies`.
 fn style_supplies(rt: &mut BankRuntime, proj: &BankProj) -> Option<Value> {
     if rt.in_topup {
         rt.stage = Stage::Escape;
@@ -1553,38 +1728,73 @@ fn style_supplies(rt: &mut BankRuntime, proj: &BankProj) -> Option<Value> {
     }
     let obs = observation();
     if proj.style.eq_ignore_ascii_case("mage") {
-        while rt.style_i < proj.runes.len() {
-            let rune = proj.runes[rt.style_i].clone();
+        if !rt.style_announced {
+            rt.style_announced = true;
+            rt.status("withdrawing runes".into());
+        }
+        if let Some(item) = rt.item.take() {
+            let have = held(&obs, &item.name);
+            rt.log(format!(
+                "withdrew {} {} ({have}/{})",
+                have - item.start,
+                item.name,
+                item.target
+            ));
+        }
+        let runes = rune_targets(proj, &obs);
+        while rt.style_i < runes.len() {
+            let rune = runes[rt.style_i].clone();
             rt.style_i += 1;
-            let have = name_count(&slotted(&obs).cloned().collect::<Vec<_>>(), &rune.name);
+            let have = held(&obs, &rune.name);
             if have >= rune.count {
                 continue;
             }
             let Some(row) = find_named(&obs.bank, &rune.name).cloned() else {
-                return Some(emit_log(
-                    rt,
-                    format!(
-                        "WARNING: the bank cannot supply a single '{}' cast. Deposit runes to resume.",
-                        proj.spell
-                    ),
-                ));
+                rt.log(format!("withdrew 0 {} ({have}/{})", rune.name, rune.count));
+                continue;
             };
+            begin_item(rt, &rune.name, have, rune.count);
             return Some(emit_named_withdraw(rt, &row, have, rune.count, false));
+        }
+        if !rt.style_checked {
+            rt.style_checked = true;
+            if casts_left(proj, &obs) < 1.0 {
+                rt.log(format!(
+                    "WARNING: the bank cannot supply a single '{}' cast. Deposit runes to resume.",
+                    proj.spell
+                ));
+            }
         }
     } else if proj.style.eq_ignore_ascii_case("range") && !proj.ammo.is_empty() {
         if rt.style_i == 0 {
             rt.style_i = 1;
-            let have = name_count(&slotted(&obs).cloned().collect::<Vec<_>>(), &proj.ammo);
+            rt.status(format!("withdrawing {}", proj.ammo));
+            let have = held(&obs, &proj.ammo);
             if have < proj.ammo_want {
                 if let Some(row) = find_named(&obs.bank, &proj.ammo).cloned() {
+                    begin_item(rt, &proj.ammo, have, proj.ammo_want);
                     return Some(emit_named_withdraw(rt, &row, have, proj.ammo_want, false));
                 }
-                return Some(emit_log(
-                    rt,
-                    format!(
-                        "WARNING: no '{}' in the bank. Deposit ammo to resume.",
-                        proj.ammo
-                    ),
+            }
+        }
+        if !rt.style_checked {
+            rt.style_checked = true;
+            let got = rt
+                .item
+                .take()
+                .map_or(0, |item| held(&obs, &item.name) - item.start);
+            let worn: i32 = obs
+                .equipment
+                .iter()
+                .filter(|row| eq_name(&row.name, &proj.ammo))
+                .map(|row| row.count.max(0))
+                .sum();
+            if got > 0 {
+                rt.log(format!("withdrew {got} {}", proj.ammo));
+            } else if held(&obs, &proj.ammo) + worn == 0 {
+                rt.log(format!(
+                    "WARNING: no '{}' in the bank. Deposit ammo to resume.",
+                    proj.ammo
                 ));
             }
         }
@@ -1593,6 +1803,8 @@ fn style_supplies(rt: &mut BankRuntime, proj: &BankProj) -> Option<Value> {
     None
 }
 
+/// Frozen `withdrawEscapeRunes`: stock the escape, then warn once when it
+/// still cannot be cast.
 fn escape_runes(rt: &mut BankRuntime, proj: &BankProj) -> Option<Value> {
     if rt.in_topup {
         rt.stage = Stage::Flasks;
@@ -1603,28 +1815,37 @@ fn escape_runes(rt: &mut BankRuntime, proj: &BankProj) -> Option<Value> {
         rt.escape_i = 0;
     }
     let obs = observation();
-    while rt.escape_i < proj.escape_runes.len() {
-        let rune = proj.escape_runes[rt.escape_i].clone();
+    let runes = escape_targets(proj);
+    while rt.escape_i < runes.len() {
+        let rune = runes[rt.escape_i].clone();
         rt.escape_i += 1;
-        let have = name_count(&slotted(&obs).cloned().collect::<Vec<_>>(), &rune.name);
+        let have = held(&obs, &rune.name);
         if have >= rune.count {
             continue;
         }
         let Some(row) = find_named(&obs.bank, &rune.name).cloned() else {
-            return Some(emit_log(
-                rt,
-                format!(
-                    "WARNING: the escape cannot be cast (no {}). The next trip walks out through the gate.",
-                    rune.name
-                ),
-            ));
+            continue;
         };
         return Some(emit_named_withdraw(rt, &row, have, rune.count, false));
+    }
+    if !rt.escape_checked {
+        rt.escape_checked = true;
+        if let Some(esc) = escape_fact(proj) {
+            let per_cast: Vec<(String, i32)> =
+                esc.runes.iter().map(|r| (r.rune.clone(), r.count)).collect();
+            if let Some(why) = crate::hunt::escape_shortfall(esc.level, &per_cast) {
+                rt.log(format!(
+                    "WARNING: the {} cannot be cast ({why}). The next trip walks out through the gate.",
+                    esc.label
+                ));
+            }
+        }
     }
     rt.stage = Stage::Flasks;
     None
 }
 
+/// Frozen `withdrawFlasks`: each plan topped up across its dose forms.
 fn flasks(rt: &mut BankRuntime, proj: &BankProj) -> Option<Value> {
     if rt.in_topup {
         rt.stage = Stage::Wear;
@@ -1642,24 +1863,30 @@ fn flasks(rt: &mut BankRuntime, proj: &BankProj) -> Option<Value> {
         } else {
             plan.doses.clone()
         };
-        let have = doses
-            .iter()
-            .map(|dose| name_count(&slotted(&obs).cloned().collect::<Vec<_>>(), dose))
-            .sum::<i32>();
-        if have >= plan.want || pack_full(&obs) {
+        let have = doses.iter().map(|dose| held(&obs, dose)).sum::<i32>();
+        let stalled = rt
+            .item
+            .as_ref()
+            .is_some_and(|item| eq_name(&item.name, &plan.name) && have <= item.last);
+        let row = find_named(&obs.bank, &plan.name).cloned();
+        let Some(row) = row.filter(|_| have < plan.want && !pack_full(&obs) && !stalled) else {
             rt.flask_i += 1;
-            continue;
-        }
-        let Some(row) = find_named(&obs.bank, &plan.name).cloned() else {
-            rt.flask_i += 1;
-            return Some(emit_log(
-                rt,
-                format!(
+            let start = rt
+                .item
+                .take()
+                .filter(|item| eq_name(&item.name, &plan.name))
+                .map_or(have, |item| item.start);
+            if have > start {
+                rt.log(format!("withdrew {} {}", have - start, plan.name));
+            } else if have == 0 {
+                rt.log(format!(
                     "WARNING: no '{}' in the bank. The trip goes without.",
                     plan.name
-                ),
-            ));
+                ));
+            }
+            continue;
         };
+        begin_item(rt, &plan.name, have, plan.want);
         return Some(emit_withdraw(rt, &row, "Withdraw-1", false, have));
     }
     rt.stage = Stage::Wear;
@@ -1682,7 +1909,9 @@ fn wear(rt: &mut BankRuntime, proj: &BankProj) -> Option<Value> {
         if proj.style.eq_ignore_ascii_case("range") && !proj.ammo.is_empty() {
             names.push(proj.ammo.clone());
         }
-        names.extend(proj.wear.iter().filter(|name| !name.is_empty()).cloned());
+        if !proj.acquire {
+            names.extend(proj.wear.iter().filter(|name| !name.is_empty()).cloned());
+        }
         rt.wear_names = names;
         rt.wear_i = 0;
         rt.wear_ready = true;
@@ -1715,7 +1944,11 @@ fn wear(rt: &mut BankRuntime, proj: &BankProj) -> Option<Value> {
         }
         rt.wear_i += 1;
     }
-    rt.stage = Stage::Heal;
+    rt.stage = if proj.acquire {
+        Stage::Count
+    } else {
+        Stage::Heal
+    };
     None
 }
 
@@ -1741,6 +1974,28 @@ fn emit_wear(rt: &mut BankRuntime, name: &str) -> Value {
     rt.emit(json!({ "kind": "wear", "name": name }))
 }
 
+/// Frozen `healUp`'s closing line, once a heal has started.
+fn heal_finished(rt: &mut BankRuntime, obs: &BankObservation) {
+    if let Some(from) = rt.heal_from.take() {
+        rt.log(format!(
+            "healed {from}% to {}% before heading back",
+            hp_percent(obs)
+        ));
+    }
+}
+
+fn hp_fraction(obs: &BankObservation) -> f64 {
+    if obs.hp_base > 0 {
+        obs.hp_effective as f64 / obs.hp_base as f64
+    } else {
+        1.0
+    }
+}
+
+fn hp_percent(obs: &BankObservation) -> i32 {
+    (hp_fraction(obs) * 100.0).round() as i32
+}
+
 fn heal(rt: &mut BankRuntime, proj: &BankProj) -> Option<Value> {
     if rt.heal_done {
         rt.stage = Stage::Topup;
@@ -1748,11 +2003,7 @@ fn heal(rt: &mut BankRuntime, proj: &BankProj) -> Option<Value> {
     }
     let obs = observation();
     let forms = food_forms(&proj.food_name);
-    let fraction = if obs.hp_base > 0 {
-        obs.hp_effective as f64 / obs.hp_base as f64
-    } else {
-        1.0
-    };
+    let fraction = hp_fraction(&obs);
     let food_here = obs
         .bank_side
         .iter()
@@ -1761,7 +2012,12 @@ fn heal(rt: &mut BankRuntime, proj: &BankProj) -> Option<Value> {
     if fraction >= proj.heal_to || !food_here && rt.heal_attempts == 0 {
         rt.heal_done = true;
         rt.stage = Stage::Topup;
+        heal_finished(rt, &obs);
         return None;
+    }
+    if rt.heal_from.is_none() && rt.heal_attempts == 0 {
+        rt.heal_from = Some(hp_percent(&obs));
+        rt.status("eating up before the trip back".into());
     }
     if obs.bank_open {
         return Some(emit_close(rt, OpKind::CloseHeal));
@@ -1769,6 +2025,7 @@ fn heal(rt: &mut BankRuntime, proj: &BankProj) -> Option<Value> {
     if rt.heal_attempts >= HEAL_BITES || rt.heal_misses >= HEAL_MISSES {
         rt.heal_done = true;
         rt.stage = Stage::Topup;
+        heal_finished(rt, &obs);
         return None;
     }
     let Some(row) = slotted(&obs)
@@ -1777,6 +2034,7 @@ fn heal(rt: &mut BankRuntime, proj: &BankProj) -> Option<Value> {
     else {
         rt.heal_done = true;
         rt.stage = Stage::Topup;
+        heal_finished(rt, &obs);
         return None;
     };
     rt.eat_name = row.name.clone();
@@ -1811,12 +2069,22 @@ fn topup(rt: &mut BankRuntime, proj: &BankProj) -> Option<Value> {
     Some(start_topup(rt, proj))
 }
 
-fn close_stage(rt: &mut BankRuntime) -> Option<Value> {
+/// After the final close: a trip counts itself; the acquire stop wears
+/// its gear (frozen `Bank.close()` then `equipGear`).
+fn after_close(proj: &BankProj) -> Stage {
+    if proj.acquire {
+        Stage::Wear
+    } else {
+        Stage::Count
+    }
+}
+
+fn close_stage(rt: &mut BankRuntime, proj: &BankProj) -> Option<Value> {
     let obs = observation();
     if obs.bank_open {
         return Some(emit_close(rt, OpKind::CloseFinal));
     }
-    rt.stage = Stage::Count;
+    rt.stage = after_close(proj);
     None
 }
 
@@ -1827,6 +2095,11 @@ fn count_stage(rt: &mut BankRuntime, proj: &BankProj) -> Option<Value> {
     }
     if !ready_with(rt, proj, &obs) {
         return Some(rt.yield_value(false));
+    }
+    // The acquire stop is not a trip: frozen `acquireKey` neither counts
+    // it nor heads back.
+    if proj.acquire {
+        return Some(rt.yield_value(true));
     }
     if !rt.counted {
         rt.counted = true;
@@ -1967,14 +2240,20 @@ fn finish_op(rt: &mut BankRuntime, proj: &BankProj) -> Value {
                     rt.food_rounds += 1;
                 }
             }
+            // Frozen `needOne`.
+            if rt.stage == Stage::Gear {
+                rt.log(format!("withdrew {name}"));
+            }
         }
-        Some(OpKind::Wear) => rt.wear_i += 1,
+        Some(OpKind::Wear) => {
+            rt.wear_i += 1;
+            rt.log(format!("wearing {name}"));
+        }
         Some(OpKind::CloseWear) => {}
         Some(OpKind::CloseHeal) => {}
-        Some(OpKind::CloseFinal) => rt.stage = Stage::Count,
+        Some(OpKind::CloseFinal) => rt.stage = after_close(proj),
         None => {}
     }
-    let _ = name;
     rt.pending = None;
     rt.phase = Phase::Work;
     continue_work(rt, proj)
@@ -2012,6 +2291,11 @@ fn timeout_op(rt: &mut BankRuntime, proj: &BankProj) -> Value {
         Some(OpKind::Withdraw) | Some(OpKind::WithdrawX) => {
             if rt.stage == Stage::Food {
                 rt.food_done = true;
+            }
+            if rt.stage == Stage::Gear {
+                rt.log(format!(
+                    "WARNING: no '{name}' in the bank. Carrying on with the gear already worn."
+                ));
             }
         }
         _ => {}
@@ -2100,6 +2384,7 @@ fn ack_heal(rt: &mut BankRuntime, proj: &BankProj, reply: Option<&Value>) -> Val
         }
         rt.heal_done = true;
         rt.stage = Stage::Topup;
+        heal_finished(rt, &obs);
         return start_topup(rt, proj);
     }
     rt.heal_ticks += 1;
@@ -2111,6 +2396,7 @@ fn ack_heal(rt: &mut BankRuntime, proj: &BankProj, reply: Option<&Value>) -> Val
             rt.heal_done = true;
             rt.phase = Phase::Work;
             rt.stage = Stage::Topup;
+            heal_finished(rt, &obs);
             return start_topup(rt, proj);
         }
     }

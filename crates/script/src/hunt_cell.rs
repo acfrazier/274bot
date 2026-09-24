@@ -222,6 +222,9 @@ pub(crate) struct CellProj {
     route_present: bool,
     loc_ids: Vec<i32>,
     leave_only: bool,
+    /// Attempts at the Velrak leg; frozen `acquireKey` runs one
+    /// `fetchFromVelrak` per attempt (`maxAttempts: 1`).
+    max_attempts: u32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -261,6 +264,9 @@ enum LeaveContext {
     Pump,
     Attempt,
     Only,
+    /// The attempts are spent: back out to the corridor, then `false`
+    /// (frozen `fetchFromVelrak` always ends with `leaveCell`).
+    Spent,
 }
 
 struct CellRuntime {
@@ -280,6 +286,10 @@ struct CellRuntime {
     velrak_reclick: u32,
     dialog_steps: u32,
     click_acked: bool,
+    /// The last wait tick pumped the sustain hook (frozen `waitFed`).
+    saw_sustain: bool,
+    /// Frozen status and log lines, delivered ahead of the next effect.
+    notes: Vec<Value>,
     yielded: Option<bool>,
 }
 
@@ -302,13 +312,38 @@ impl CellRuntime {
             velrak_reclick: 0,
             dialog_steps: 0,
             click_acked: false,
+            saw_sustain: false,
+            notes: Vec::new(),
             yielded: None,
         }
     }
 
-    fn emit(&self, mut v: Value) -> Value {
+    fn emit(&mut self, mut v: Value) -> Value {
         v["token"] = json!(self.token);
+        if !self.notes.is_empty() {
+            v["notes"] = Value::Array(std::mem::take(&mut self.notes));
+        }
         v
+    }
+
+    fn log(&mut self, message: &str) {
+        self.notes
+            .push(json!({ "kind": "log", "message": message }));
+    }
+
+    fn status(&mut self, message: &str) {
+        self.notes
+            .push(json!({ "kind": "status", "message": message }));
+    }
+
+    /// One fed wait tick: the sustain hook, then a tick.
+    fn poll(&mut self) -> Value {
+        if !self.saw_sustain {
+            self.saw_sustain = true;
+            return self.emit(json!({ "kind": "sustain" }));
+        }
+        self.saw_sustain = false;
+        self.emit(json!({ "kind": "delay-ticks", "n": 1 }))
     }
 
     fn yield_value(&mut self, value: bool) -> Value {
@@ -512,6 +547,12 @@ fn parse_proj(input: &Value) -> CellProj {
             || present(input.get("upLadder")),
         loc_ids,
         leave_only: input.get("leaveOnly").and_then(Value::as_bool) == Some(true),
+        max_attempts: input
+            .get("maxAttempts")
+            .and_then(Value::as_u64)
+            .and_then(|n| u32::try_from(n).ok())
+            .filter(|n| *n >= 1)
+            .unwrap_or(MAX_ATTEMPTS),
     }
 }
 
@@ -560,6 +601,10 @@ fn gate(rt: &mut CellRuntime, proj: &CellProj, obs: &CellObservation) -> Option<
     }
     if obs.hold || obs.ours || !obs.ingame {
         return Some(rt.yield_value(false));
+    }
+    // Frozen `leaveCell(h)` takes no site: only the door matters.
+    if proj.leave_only {
+        return None;
     }
     if !proj.key_item_present {
         return Some(rt.yield_value(true));
@@ -621,7 +666,14 @@ fn emit_walk_to(rt: &mut CellRuntime, tile: Tile, reclick: bool) -> Value {
 }
 
 fn fail_attempt(rt: &mut CellRuntime, proj: &CellProj) -> Value {
-    if rt.failing || rt.attempts >= MAX_ATTEMPTS {
+    if rt.failing || rt.attempts >= proj.max_attempts {
+        // Frozen `fetchFromVelrak` ends every attempt back in the corridor.
+        if rt.leave_context != LeaveContext::Spent && in_cell(&observation()) {
+            rt.clock.deadline = None;
+            rt.walk_token = None;
+            rt.click_acked = false;
+            return begin_cell_leave(rt, proj, LeaveContext::Spent);
+        }
         return rt.yield_value(false);
     }
     rt.failing = true;
@@ -637,7 +689,9 @@ fn fail_attempt(rt: &mut CellRuntime, proj: &CellProj) -> Value {
 
 fn leave_failed(rt: &mut CellRuntime, proj: &CellProj) -> Value {
     match rt.leave_context {
-        LeaveContext::Pump | LeaveContext::Only => rt.yield_value(false),
+        LeaveContext::Pump | LeaveContext::Only | LeaveContext::Spent => rt.yield_value(false),
+        // The leave was this attempt's last leg: no second door try.
+        LeaveContext::Attempt if rt.attempts >= proj.max_attempts => rt.yield_value(false),
         LeaveContext::Attempt => fail_attempt(rt, proj),
     }
 }
@@ -657,15 +711,15 @@ fn leave_done(rt: &mut CellRuntime, proj: &CellProj) -> Value {
             decide(rt, proj)
         }
         LeaveContext::Attempt => fail_attempt(rt, proj),
-        LeaveContext::Only => rt.yield_value(!in_cell(&obs)),
+        LeaveContext::Only | LeaveContext::Spent => rt.yield_value(false),
     }
 }
 
-fn ensure_attempt(rt: &mut CellRuntime) -> Option<Value> {
+fn ensure_attempt(rt: &mut CellRuntime, proj: &CellProj) -> Option<Value> {
     if rt.attempt_open {
         return None;
     }
-    if rt.attempts >= MAX_ATTEMPTS {
+    if rt.attempts >= proj.max_attempts {
         return Some(rt.yield_value(false));
     }
     rt.attempts += 1;
@@ -691,7 +745,7 @@ fn decide(rt: &mut CellRuntime, proj: &CellProj) -> Value {
             return begin_cell_leave(rt, proj, LeaveContext::Pump);
         }
     }
-    if let Some(stop) = ensure_attempt(rt) {
+    if let Some(stop) = ensure_attempt(rt, proj) {
         return stop;
     }
     if in_cell(&obs) && holds(&obs, DUSTY_KEY_ID) {
@@ -737,6 +791,7 @@ fn begin_cell_leave(rt: &mut CellRuntime, proj: &CellProj, ctx: LeaveContext) ->
     let Some(here) = obs.here else {
         return leave_failed(rt, proj);
     };
+    rt.status("walking back to the cell door");
     if here != JAIL_DOOR_INSIDE {
         return emit_walk(rt, JAIL_DOOR_INSIDE, 0, false, WalkPurpose::LeaveExact);
     }
@@ -808,6 +863,7 @@ fn ack_walk(rt: &mut CellRuntime, proj: &CellProj, reply: Option<&Value>) -> Val
                 return emit_delay(rt, 2, AfterDelay::Unlock);
             }
             if settled {
+                rt.log("could not stand at the cell door. Retrying.");
                 return fail_attempt(rt, proj);
             }
             rt.emit(json!({ "kind": "delay-ticks", "n": 1 }))
@@ -817,6 +873,7 @@ fn ack_walk(rt: &mut CellRuntime, proj: &CellProj, reply: Option<&Value>) -> Val
                 return emit_delay(rt, 2, AfterDelay::LeaveOpen);
             }
             if settled {
+                rt.log("the inside of the cell door is occupied. Opening it from wherever the walk stopped.");
                 return emit_walk(rt, JAIL_DOOR_INSIDE, 2, true, WalkPurpose::LeaveNear);
             }
             rt.emit(json!({ "kind": "delay-ticks", "n": 1 }))
@@ -845,15 +902,14 @@ fn unlock(rt: &mut CellRuntime, proj: &CellProj) -> Value {
     if obs.here != Some(JAIL_DOOR) {
         return fail_attempt(rt, proj);
     }
-    let Some(door) = nearest_door(&obs) else {
-        return fail_attempt(rt, proj);
-    };
-    let Some(key) = usable_jail_key(&obs) else {
+    let (Some(door), Some(key)) = (nearest_door(&obs), usable_jail_key(&obs)) else {
+        rt.log("no cell door in reach, or the jail key is gone. Retrying.");
         return fail_attempt(rt, proj);
     };
     rt.click_acked = false;
     rt.phase = Phase::AckUnlock;
     rt.clock.arm(DOOR_MS);
+    rt.status("unlocking the cell");
     rt.emit(json!({
         "kind": "use-on",
         "name": key.name,
@@ -892,9 +948,18 @@ fn ack_unlock(rt: &mut CellRuntime, proj: &CellProj, reply: Option<&Value>) -> V
         return proved_inside(rt, proj);
     }
     if rt.clock.bound_reached() {
+        rt.log("the cell door did not let us in. Retrying.");
         return fail_attempt(rt, proj);
     }
-    rt.emit(json!({ "kind": "delay-ticks", "n": 1 }))
+    rt.poll()
+}
+
+/// A failed talk leg: frozen `talkInCell` logs why, then `fetchFromVelrak`
+/// logs the missing key.
+fn talk_failed(rt: &mut CellRuntime, proj: &CellProj, why: &str) -> Value {
+    rt.log(why);
+    rt.log("Velrak handed over no key. Retrying.");
+    fail_attempt(rt, proj)
 }
 
 fn velrak_find(rt: &mut CellRuntime, proj: &CellProj) -> Value {
@@ -910,7 +975,7 @@ fn velrak_find(rt: &mut CellRuntime, proj: &CellProj) -> Value {
         return decide(rt, proj);
     }
     let Some(npc) = nearest_velrak(&obs) else {
-        return fail_attempt(rt, proj);
+        return talk_failed(rt, proj, &format!("no {VELRAK_NAME} in the cell. Retrying."));
     };
     let dist = obs
         .here
@@ -928,7 +993,7 @@ fn ack_velrak_walk(rt: &mut CellRuntime, proj: &CellProj) -> Value {
         return stop;
     }
     let Some(npc) = nearest_velrak(&obs) else {
-        return fail_attempt(rt, proj);
+        return talk_failed(rt, proj, &format!("{VELRAK_NAME} refused the talk. Retrying."));
     };
     let dist = obs
         .here
@@ -942,14 +1007,14 @@ fn ack_velrak_walk(rt: &mut CellRuntime, proj: &CellProj) -> Value {
             rt.velrak_reclick = 1;
             return emit_walk_to(rt, npc.tile, true);
         }
-        return fail_attempt(rt, proj);
+        return talk_failed(rt, proj, &format!("{VELRAK_NAME} refused the talk. Retrying."));
     }
     rt.emit(json!({ "kind": "delay-ticks", "n": 1 }))
 }
 
 fn emit_talk(rt: &mut CellRuntime, proj: &CellProj, npc: &CellNpc) -> Value {
     let Some(action) = talk_action(&npc.actions) else {
-        return fail_attempt(rt, proj);
+        return talk_failed(rt, proj, &format!("{VELRAK_NAME} refused the talk. Retrying."));
     };
     rt.click_acked = false;
     rt.phase = Phase::AckTalk;
@@ -969,7 +1034,7 @@ fn ack_talk(rt: &mut CellRuntime, proj: &CellProj, reply: Option<&Value>) -> Val
     }
     if !rt.click_acked {
         if !reply_flag(reply, "queued") {
-            return fail_attempt(rt, proj);
+            return talk_failed(rt, proj, &format!("{VELRAK_NAME} refused the talk. Retrying."));
         }
         rt.click_acked = true;
     }
@@ -980,9 +1045,13 @@ fn ack_talk(rt: &mut CellRuntime, proj: &CellProj, reply: Option<&Value>) -> Val
         return dialog_step(rt, proj);
     }
     if rt.clock.bound_reached() {
-        return fail_attempt(rt, proj);
+        return talk_failed(
+            rt,
+            proj,
+            &format!("{VELRAK_NAME} never opened a dialogue. Retrying."),
+        );
     }
-    rt.emit(json!({ "kind": "delay-ticks", "n": 1 }))
+    rt.poll()
 }
 
 fn begin_handoff(rt: &mut CellRuntime, proj: &CellProj) -> Value {
@@ -1022,6 +1091,7 @@ fn handoff_step(rt: &mut CellRuntime, proj: &CellProj) -> Value {
         return begin_cell_leave(rt, proj, LeaveContext::Attempt);
     }
     if rt.clock.bound_reached() {
+        rt.log("Velrak handed over no key. Retrying.");
         return fail_attempt(rt, proj);
     }
     rt.emit(json!({ "kind": "delay-ticks", "n": 1 }))
@@ -1036,6 +1106,7 @@ fn leave_open(rt: &mut CellRuntime, proj: &CellProj) -> Value {
         return leave_done(rt, proj);
     }
     let Some(door) = nearest_door(&obs) else {
+        rt.log("no cell door to open from the inside. Retrying.");
         return leave_failed(rt, proj);
     };
     rt.click_acked = false;
@@ -1058,6 +1129,7 @@ fn ack_open(rt: &mut CellRuntime, proj: &CellProj, reply: Option<&Value>) -> Val
     }
     if !rt.click_acked {
         if !reply_flag(reply, "queued") {
+            rt.log("no cell door to open from the inside. Retrying.");
             return leave_failed(rt, proj);
         }
         rt.click_acked = true;
@@ -1066,9 +1138,10 @@ fn ack_open(rt: &mut CellRuntime, proj: &CellProj, reply: Option<&Value>) -> Val
         return leave_done(rt, proj);
     }
     if rt.clock.bound_reached() {
+        rt.log("the cell door did not let us out. Retrying.");
         return leave_failed(rt, proj);
     }
-    rt.emit(json!({ "kind": "delay-ticks", "n": 1 }))
+    rt.poll()
 }
 
 fn next_effect(rt: &mut CellRuntime, proj: &CellProj, reply: Option<&Value>) -> Value {

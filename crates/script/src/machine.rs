@@ -542,6 +542,8 @@ const FAMILIES: &[Entry] = &[
     entry::<tests::Ask>(),
     #[cfg(test)]
     entry::<tests::Inline>(),
+    #[cfg(test)]
+    entry::<tests::SoloAsker>(),
 ];
 
 /// The callback names `family` holds at start, or `None` if unregistered.
@@ -961,6 +963,7 @@ fn drive(row: &mut Row, js: &mut impl Js, at: &mut usize) -> Option<Outcome> {
             ending: None,
         };
         let step = row.machine.step(&mut cx);
+        let asked = cx.asks > 0;
         // An ask that failed ends the row whatever the step returned; the
         // ops of that step are dropped with it.
         match cx.ending.take() {
@@ -970,6 +973,12 @@ fn drive(row: &mut Row, js: &mut impl Js, at: &mut usize) -> Option<Outcome> {
             }
             Some(Ending::Failed(thrown)) => return Some(Outcome::Failed(thrown)),
             None => {}
+        }
+        // An ask started a newer row of this exclusive family: that row
+        // owns the tick, so this step's decision and ops are dropped.
+        if asked && HOST.with(|host| host.borrow().superseded(row)) {
+            row.machine.abort(AbortReason::Superseded);
+            return Some(Outcome::Aborted(AbortReason::Superseded));
         }
         HOST.with(|host| host.borrow_mut().place(*at, ops));
         match step {
@@ -1413,6 +1422,29 @@ pub(crate) mod tests {
         }
     }
 
+    /// Exclusive: asks `get()` once per step, then emits `if-button 5`.
+    pub(crate) struct SoloAsker;
+
+    impl Family for SoloAsker {
+        const NAME: &'static str = "solo-asker";
+        const EXCLUSIVE: bool = true;
+        const CALLBACKS: &'static [&'static str] = &["get"];
+        type Args = Value;
+        type Output = Value;
+
+        fn begin(_args: Value, _cx: &mut Cx<'_>) -> Begin<Self> {
+            Begin::Run(Self)
+        }
+
+        fn step(&mut self, cx: &mut Cx<'_>) -> Step<Value> {
+            if cx.ask(0, &[json!(0)]).is_err() {
+                return Step::Wait;
+            }
+            cx.emit(InteractReq::IfButton { component_id: 5 });
+            Step::Wait
+        }
+    }
+
     /// Calls `ask()` once and completes with its reply. Used to start
     /// another machine from inside a callback.
     pub(crate) struct Ask;
@@ -1808,14 +1840,52 @@ pub(crate) mod tests {
         let h = running(begin("inline", json!({ "asks": 4 })));
         let mut js = Inliner::new();
         js.claim_at = Some(1);
-        // The pass checks the claim first; drive the row as a kick would.
-        kick(h, &mut js);
+        // The pass sees no claim before the step; the first ask's call
+        // claims the tick, and the pass settles the row `terminated`.
+        step(&mut js);
         assert_eq!(js.calls, 1, "no ask runs once the tick is claimed");
         assert_eq!(
             take(h),
             Take::Settled(Outcome::Aborted(AbortReason::Terminated))
         );
         assert!(drain().is_empty());
+    }
+
+    #[test]
+    fn an_ask_that_starts_a_newer_exclusive_row_supersedes_the_asker() {
+        /// The first call starts a newer `solo-asker` row.
+        struct Starter {
+            calls: usize,
+        }
+        impl Js for Starter {
+            fn queue_len(&mut self) -> usize {
+                0
+            }
+            fn call(&mut self, _hook: Option<&HeldCallback>, _args: &[Value]) -> Called {
+                self.calls += 1;
+                if self.calls == 1 {
+                    running(begin("solo-asker", json!({})));
+                }
+                Called::Settled(Reply::Value(json!(true)))
+            }
+            fn poll(&mut self, _pending: &Pending) -> Option<Reply> {
+                unreachable!("Starter never returns a promise");
+            }
+            fn claimed(&mut self) -> bool {
+                false
+            }
+        }
+        let old = running(begin("solo-asker", json!({})));
+        let mut js = Starter { calls: 0 };
+        step(&mut js);
+        assert_eq!(
+            take(old),
+            Take::Settled(Outcome::Aborted(AbortReason::Superseded))
+        );
+        assert!(
+            drain().is_empty(),
+            "the superseded step's ops are dropped; the new row has not stepped"
+        );
     }
 
     #[test]
