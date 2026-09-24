@@ -46,13 +46,27 @@ or per-uid constraint. There is no separate hint wait.
 
 ## Backoff
 
-`LoginBackoff` delays retries after response 16 (“Login attempts exceeded”):
-first retry 20 s, then 65 s, 110 s, … (`20 + 45·hits`). A response-16 hold
-is also published to the shared queue so sibling slots pause. Retry waits run
-to their deadline and exit early only for Stop, login withdrawal, an
-intentional-logout latch, or a changed world selection. Generic focus, render,
-script, and panel wakes do not shorten them. Any successful login resets the
-slot's escalation.
+`LoginBackoff` delays generic retries after response 16 (“Login attempts
+exceeded”): first retry 20 s, then 65 s, 110 s, … (`20 + 45·hits`). A
+response-16 hold is also published to the shared queue so sibling slots pause.
+These generic retry waits run to their deadline and exit early only for Stop,
+login withdrawal, an intentional-logout latch, or a changed world selection.
+Generic focus, render, script, and panel wakes do not shorten them. Any
+successful login resets the slot's escalation.
+
+## Response 21 transfer cooldown
+
+Response 21 carries a countdown truncated to a single unsigned seconds byte.
+For a byte `N`, Java-compatible behavior displays `N, N-1, …, 0` and waits one
+second after every display, so the next attempt begins after **N + 1 seconds**;
+even a zero byte waits one second. The retry uses the same endpoint and bypasses
+generic world-error switching, key refresh, and escalating backoff.
+
+The completed handshake attempt is acknowledged before this wait. The worker
+holds neither a FIFO place nor a pending reservation during the countdown, so a
+later worker may be granted. Stop, login withdrawal, or an intentional-logout
+latch interrupts the countdown. World-selection edits and their wakeups do not;
+the selected world is reconsidered only after the server-owned delay expires.
 
 ## Queue position and leaving
 
@@ -62,10 +76,11 @@ returns its place as `Option<QueuePos { position: u32, total: u32 }>` — the
 present). Two slots with the same UID therefore keep independent places while
 sharing conservative device-attempt accounting. host-play publishes both
 fields atomically with owner membership; an absent owner always clears its
-own row. Each game view renders only its displayed slot's valid
-`1 <= position <= total` tuple, so connected and neighboring slots never
-inherit another slot's card. Withdrawal, terminal startup failure, worker
-unwind, rail removal, and Stop clear both owner membership and status.
+own row. Each visible Game image renders only its displayed slot's valid
+`1 <= position <= total` tuple, so connected and neighboring previews never
+inherit another slot's card. Rail tiles do not draw queue cards. Withdrawal,
+terminal startup failure, worker unwind, rail removal, and Stop clear both
+owner membership and status.
 
 ## Mainland hop (tutorial skip)
 
