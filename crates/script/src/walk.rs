@@ -31,7 +31,7 @@ use crate::shim::InteractReq;
 use crate::walk_wait;
 use api::snapshot::WorldTile;
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::json;
 use std::collections::VecDeque;
 
 /// Frozen `opts.timeoutMs ?? 90000` (`Traversal.ts:107`).
@@ -479,6 +479,7 @@ mod tests {
     use crate::machine::{self, Called, Outcome, Pending, Started, Take};
     use crate::observed::{self, WalkOutcome};
     use crate::walk_wait;
+    use serde_json::Value;
 
     struct NoJs;
 
@@ -608,12 +609,10 @@ mod tests {
         reset();
         post_here(0, 0);
         let h = start(None);
-        let mut seq = 1;
-        for pass in 0..UNREACHABLE_PASSES {
+        for (seq, pass) in (1..).zip(0..UNREACHABLE_PASSES) {
             machine::step(&mut NoJs);
             let token = walk_token();
             fail_walk(seq, token, 0, 0, true);
-            seq += 1;
             machine::step(&mut NoJs);
             if pass + 1 < UNREACHABLE_PASSES {
                 let ticks = backoff_ticks(pass + 1);

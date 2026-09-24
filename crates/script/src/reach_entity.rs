@@ -944,7 +944,7 @@ impl WalkHops {
 mod tests {
     use super::*;
     use crate::load::callback_v8::HeldCallback;
-    use crate::machine::{self, Called, Outcome, Pending, Started, Take};
+    use crate::machine::{self, Called, Pending, Started, Take};
     use crate::walk_wait;
 
     /// No script callbacks are held here.
