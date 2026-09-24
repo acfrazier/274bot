@@ -514,9 +514,10 @@ guarded walk/Dig/Attack/redig, the acquire chain's walk, Talk-to, one selected
 option answer and its continue, the held puzzle box's own Open, one planned
 `puzzle-move` and the close that
 follows a solved board, the talk step's walk and Talk-to, the challenge scroll's
-selected count answer, the key-keeper hunt's walk, Attack and key Take, and the
-collect that follows the last casket — no deposit or
-retry — and it finishes that collect on its own completion envelope: the exact
+selected count answer, the key-keeper hunt's walk, Attack and key Take, the
+collect that follows the last casket, the Entrana strip's unequip, deposit and
+restore verbs, and the machine's own `retry()` latch clear — and it finishes
+that collect on its own completion envelope: the exact
 `'clue solved'` status, then the live-token `grind-ready` continue, then the
 `done` the token dies on. `kind: 'done'` is this machine's own kind and is not
 hunt's `status: 'done'`; `status` stays `'continue'` on every one of them.
@@ -527,21 +528,30 @@ row's own selected decode: a row whose `trail_coord` decodes inside the cap box
 `trail_clue_hard_riddle027`, `0_44_52_2_23` → `(2818, 3351, 0)`) is stripped
 before the walk that row would otherwise make, and a casket never arms it. The
 posted worn rows whose display name the frozen `ENTRANA_RESTRICTED_GEAR_RE`
-matcher folds are unequipped with the landed `wear` verb — the two hard-trail
-dagger ids `1231`/`1215` unequipped but never listed — the listed names the
-posted pack still holds are deposited at the posted booth (`walk-nearest-bank`,
-the posted `nearest_booth`'s own `open-booth`, `deposit`, `close`, and no
-ordinary loot), and the list is the machine's own `strippedGear`: it outlives
-the step and a dead token, and only the restore empties it.
+matcher folds are unequipped with the landed `unequip` verb — the worn row's
+own `Remove`, because `wear` resolves inventory rows alone — and the two
+hard-trail dagger ids `1231`/`1215` are unequipped but never listed. Every
+posted pack row the matcher folds is then deposited at the posted booth
+(`walk-nearest-bank`, the posted `nearest_booth`'s own `open-booth`, `deposit`,
+`close`, and no ordinary loot): the names the unequip put in the pack, the
+dagger ids that were never listed, and a restricted item the player was carrying
+rather than wearing. The list is the machine's own `strippedGear`: it outlives
+the step and a dead token — a connection-boundary reset drops the step alone —
+and only the restore or a fresh task instance (Stop/Start) empties it.
 
 That restore sits in front of the **whole** three-step finish latch: while the
 list is non-empty the reclaim owns the call — the pack's own names worn back on,
 the missing ones claimed at the bank with `Withdraw-1`, the interface closed —
 and none of the exact `'clue solved'`, the `grind-ready` continue and the `done`
-goes out. A name that will not go back on stays listed and is logged as the named
-`restore-incomplete` (a bank trip that does not come up is the named
-`restore-walk-failed`): logs, never machine kinds, and never `supplies-needed`.
-Freeze, yield and the posted hitpoints still win over the restore.
+goes out. When the pack has fewer free slots than the names it is missing, the
+frozen `restoreStrippedGear`'s make-room deposit runs first: one posted pack row
+that is not a listed name and whose id is not a selected trail item (a clue
+scroll, a casket or a challenge scroll) goes to the bank, food included, so the
+claim has somewhere to land. A name that will not go back on stays listed and is
+logged as the named `restore-incomplete` (a bank trip that does not come up is
+the named `restore-walk-failed`): logs, never machine kinds, and never
+`supplies-needed`. Freeze, yield and the posted hitpoints still win over the
+restore.
 
 `retry()` is the machine's own latch clear and nothing else: it clears the
 frozen `abandonedClueId`, never the stripped list, never the live token, and it
@@ -550,6 +560,13 @@ op, and `{ cleared: true }` is the whole value. `ownsEquipment` is not a v2
 seat: the v1 `SolveClue.ownsEquipment()` reads the same rust list and is true
 while it is non-empty — do-not-grind-equip — with no `api.snapshot.equipment`
 and no `SNAPSHOT_KEYS` growth.
+
+Two different resets exist and neither is `retry()`. A **connection boundary** —
+a reconnect, a relog, `reset_session_work` — aborts the live step and its token
+and keeps the rest of the session: the strip list still answers
+`ownsEquipment()` and still owes its reclaim, and the leave-in-pack latch still
+refuses its row. Operator **Stop** is a fresh task instance: the step, the strip
+list and the latch all start over, so a later Start begins clean.
 
 `clue.begin(input?)` takes the optional input and ignores every key: nothing
 but the token and the wrapper's generation is captured, so `enabled`, the pack
@@ -596,11 +613,18 @@ empty one and an unobserved slot is never a close.
 | `close-modal` | collecting: close the main modal the page posted open. The step carries nothing else — no interface id, no text. The held puzzle box's solved board is the same kind: the board is closed once, and never closed again while the step stays held |
 | `obj` | collecting: interact with the casket overflow on the posted tile, `{ x, z, level, name, action: 'Take' }`. A key-keeper row whose kill was observed is the same kind for the key it dropped on the published spawn |
 | `puzzle-move` | a held puzzle box whose posted board is readable and not solved: click one piece of it, `{ id, slot, component, generation }` — the posted board row's own id and slot, the posted component and this call's `snapshot.puzzle_board_generation`. The host re-resolves that exact row and refuses a closed board, a stale slot and a stale generation; a sent click is not an observed move, so the next call re-reads the board and replans |
+| `unequip` | the Entrana strip's unequip pass: take the worn row named `name` off, `{ name }`. It is the host's worn-row `Remove` op, resolved by display name — `wear` resolves inventory rows alone and cannot take a worn row off, so the strip never rides it. Not a `V2_OPS` author verb: `api.request({ op: 'unequip' })` stays `not impl` |
+| `wear` | the Entrana restore's wear pass: equip the pack row named `name`, `{ name }`. The landed equip-from-pack verb, one listed name per call, and never the strip's unequip. Not a `V2_OPS` author verb either: `api.request({ op: 'wear' })` stays `not impl` |
+| `deposit` | the Entrana strip's deposit pass: bank the pack row named `name`, `{ name }` — the frozen `depositAllMatching` cut to the rows the `ENTRANA_RESTRICTED_GEAR_RE` matcher folds, whether or not the strip listed them. The restore's make-room deposit rides the same kind |
+| `withdraw` | the Entrana restore's claim: withdraw one listed name with the machine's own posted action label, `{ name, action: 'Withdraw-1' }`. One claim in flight at a time |
+| `walk-nearest-bank` | the Entrana strip's and the restore's bank trip: walk to the nearest stand the host picks from the packed world. No tile rides it, because the machine never invents one |
+| `open-booth` | the bank trip's `open-booth`: the posted `nearest_booth`'s own identity, `{ x, z, level, id, name?, action? }`, exactly as the landed bank helpers queue it |
+| `close` | the bank interface's own close, after the strip's deposit or the restore's claim |
 | `supplies-needed` | an arrived dig — unguarded or the guarded first Dig — whose posted pack page carries no `Spade`: a named wait-class, not a terminal. The token stays live, nothing is fetched and no `no-spade` error is published |
 | `grind-ready` | the finished collect's continue: the trail is solved and no gear restore is pending, so the token stays live with no verb and the next call is `done` |
 | `done` | the finished collect's own end: the token is dead and the next call with it is `stale`. Never a hunt `status: 'done'` |
 | `dead` | any live call whose posted effective `hitpoints` is some and at or below zero: the token dies with the player, nothing posts `'clue solved'`, and a page that posted no stat is not a zero |
-| `abandon` | a terminal kind with **no production trigger** yet: the frozen leave-in-pack latch and its `retry()` are deferred with strip-tracking. When it is emitted the token dies and nothing posts `'clue solved'` |
+| `abandon` | a terminal kind with **no production trigger** yet: the machine emits it nowhere on its own, and the latch it sets — the frozen leave-in-pack `abandonedClueId`, with its `retry()` clear — is wired and observable. When it is emitted the token dies and nothing posts `'clue solved'` |
 | `guardian-lost` | the wizard this token Attacked left the posted npc page outside the freeze-aware grace without ever being seen at zero health: the encounter is lost, the token dies and nothing redigs. A disappearance without an Attack stays `wait` |
 | `yield` | posted `hold \|\| ours`; the token stays live and this is not trail completion |
 
@@ -1042,8 +1066,9 @@ call and never the landed `none-held` abort:
    forward the machine's message; no adapter invents it and none remaps `done`
    onto it.
 2. `grind-ready`: a continue kind with the token still live, no verb and no
-   delay. It fires because gear restore is not pending — restore is deferred
-   with strip-tracking and `done` does not wait for it.
+   delay. It fires because no gear restore is pending: the Entrana list is
+   empty, so the reclaim in front of this step has already run and `done` is the
+   only step left.
 3. `done`: the token dies on it, so the next call with that token is `stale`
    and a fresh `begin` is what a later pickup needs. It is this machine's
    `kind`, not hunt's `status: 'done'`.

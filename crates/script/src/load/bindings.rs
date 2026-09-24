@@ -1932,11 +1932,20 @@ function enqueueClueVerb(step) {
     h.interact.push({ op: 'held', name: step.name, action: step.action });
     return;
   }
+  if (step.kind === 'unequip') {
+    // The landed worn-row verb the shim's `Equipment.unequip` queues: the
+    // worn component's own `Remove` for the display name the Entrana strip
+    // takes off. `wear` resolves inventory rows alone, so the strip never
+    // rides that one. Not a `V2_OPS` author verb — `api.request({ op:
+    // 'unequip' })` is `not impl` — and only the display name rides it.
+    h.interact.push({ op: 'unequip', name: step.name });
+    return;
+  }
   if (step.kind === 'wear') {
-    // The landed equip-from-pack verb the Entrana strip takes a restricted
-    // name off with and puts a listed name back on with: the display name and
-    // nothing else. Not a `V2_OPS` request (`api.request({ op: 'wear' })` is
-    // published, but this machine enqueues its own step directly).
+    // The landed equip-from-pack verb the Entrana restore puts a listed name
+    // back on with: the display name and nothing else. Not a `V2_OPS` author
+    // verb either — `api.request({ op: 'wear' })` is `not impl`, and this
+    // machine enqueues its own step directly.
     h.interact.push({ op: 'wear', name: step.name });
     return;
   }
@@ -2069,7 +2078,7 @@ api.clue = {
   // trio acquire chain adds the posted `chat_options` choices, each with its
   // own 1-based posted slot. The Entrana strip and its restore add the posted
   // worn `equipment` rows and the posted bank facts — `nearest_booth` and
-  // `bank_open` — and their own `wear`, `deposit`, `withdraw`,
+  // `bank_open` — and their own `unequip`, `wear`, `deposit`, `withdraw`,
   // `walk-nearest-bank`, `open-booth` and `close` steps. Kinds
   // are `wait`, `yield`, `callback.enabled`, `callback.log`,
   // `callback.setStatus`, `held`, `walk`, `loc`, `close-modal`, `obj`, `npc`,
@@ -2181,6 +2190,7 @@ api.clue = {
         || step.kind === 'answer-count' || step.kind === 'puzzle-move'
         || step.kind === 'continue' || step.kind === 'answer'
         || step.kind === 'shop-button' || step.kind === 'wear'
+        || step.kind === 'unequip'
         || step.kind === 'deposit' || step.kind === 'withdraw'
         || step.kind === 'walk-nearest-bank' || step.kind === 'open-booth'
         || step.kind === 'close') {

@@ -1076,22 +1076,23 @@ export function tick(api) {
   if (t === 2) { globalThis.__helm = one(); return; }
   if (t === 3) { globalThis.__walk = one(); return; }
   if (t === 4) { globalThis.__booth = one(); return; }
-  if (t === 5) { globalThis.__deposit = one(); return; }
-  if (t === 6) { globalThis.__close = one(); return; }
-  if (t === 7) {
+  if (t === 5) { globalThis.__depositDagger = one(); return; }
+  if (t === 6) { globalThis.__deposit = one(); return; }
+  if (t === 7) { globalThis.__close = one(); return; }
+  if (t === 8) {
     globalThis.__rowWalk = one();
     globalThis.__retry = api.clue.retry();
     return;
   }
-  if (t === 8) {
+  if (t === 9) {
     globalThis.__casketGate = one();
     globalThis.__casketLog = resumed();
     globalThis.__casketStatus = one();
     globalThis.__open = one();
     return;
   }
-  if (t === 9) { globalThis.__empty = one(); return; }
-  if (t === 10) { globalThis.__wearBack = one(); return; }
+  if (t === 10) { globalThis.__empty = one(); return; }
+  if (t === 11) { globalThis.__wearBack = one(); return; }
   const solved = one();
   const ready = one();
   const done = one();
@@ -1099,7 +1100,8 @@ export function tick(api) {
     token: globalThis.__token,
     gate: globalThis.__gate, log: globalThis.__log, status: globalThis.__status,
     dagger: globalThis.__dagger, helm: globalThis.__helm, walk: globalThis.__walk,
-    booth: globalThis.__booth, deposit: globalThis.__deposit, close: globalThis.__close,
+    booth: globalThis.__booth, depositDagger: globalThis.__depositDagger,
+    deposit: globalThis.__deposit, close: globalThis.__close,
     rowWalk: globalThis.__rowWalk, retry: globalThis.__retry,
     casketGate: globalThis.__casketGate, casketLog: globalThis.__casketLog,
     casketStatus: globalThis.__casketStatus, open: globalThis.__open,
@@ -1135,10 +1137,10 @@ export function tick(api) {
     assert!(iso.probe("true").is_ok());
     assert_eq!(
         iso.drain_interacts(),
-        vec![InteractReq::Wear {
+        vec![InteractReq::Unequip {
             name: "Dragon dagger(p)".to_string(),
         }],
-        "the first folded worn name is the landed unequip"
+        "the first folded worn name is the landed unequip — the worn row's Remove"
     );
 
     // Tick 2: it left the page — the helm is next, and the amulet is never a
@@ -1159,16 +1161,17 @@ export function tick(api) {
     assert!(iso.probe("true").is_ok());
     assert_eq!(
         iso.drain_interacts(),
-        vec![InteractReq::Wear {
+        vec![InteractReq::Unequip {
             name: "Rune full helm".to_string(),
         }],
         "the next folded name is the landed unequip"
     );
 
-    // Tick 3: the name is in the pack now, so the strip owes the bank its walk.
+    // Tick 3: both names are in the pack now — the dagger the machine never
+    // listed and the helm it did — so the strip owes the bank its walk.
     let strip_scene = Scene {
         equipment: &[worn_row(1704, "Amulet of glory", 2)],
-        names: &[(1163, "Rune full helm")],
+        names: &[(1231, "Dragon dagger(p)"), (1163, "Rune full helm")],
         here: Some(script::isolate_fb::TileInput {
             x: 2810,
             z: 3350,
@@ -1177,7 +1180,7 @@ export function tick(api) {
         nearest_booth: Some(&POSTED_BOOTH),
         ..Scene::default()
     };
-    post_scene(&iso, 3, &[(3579, 1), (1163, 1)], &strip_scene);
+    post_scene(&iso, 3, &[(3579, 1), (1231, 1), (1163, 1)], &strip_scene);
     iso.on_game_tick(3);
     assert!(iso.probe("true").is_ok());
     assert_eq!(
@@ -1187,7 +1190,7 @@ export function tick(api) {
     );
 
     // Tick 4: beside the posted booth — its own identity.
-    post_scene(&iso, 4, &[(3579, 1), (1163, 1)], &strip_scene);
+    post_scene(&iso, 4, &[(3579, 1), (1231, 1), (1163, 1)], &strip_scene);
     iso.on_game_tick(4);
     assert!(iso.probe("true").is_ok());
     assert_eq!(
@@ -1203,11 +1206,13 @@ export function tick(api) {
         "the posted booth's own open"
     );
 
-    // Tick 5: the interface is up — the listed name is deposited by name.
+    // Tick 5: the interface is up, and the pack's own regex match goes first in
+    // posted order: the dagger id the machine never listed is banked like any
+    // other restricted row.
     post_scene(
         &iso,
         5,
-        &[(3579, 1), (1163, 1)],
+        &[(3579, 1), (1231, 1), (1163, 1)],
         &Scene {
             bank_open: true,
             ..strip_scene
@@ -1218,16 +1223,16 @@ export function tick(api) {
     assert_eq!(
         iso.drain_interacts(),
         vec![InteractReq::Deposit {
-            name: "Rune full helm".to_string(),
+            name: "Dragon dagger(p)".to_string(),
         }],
-        "the regex-restricted name and nothing else"
+        "an unlisted dagger id is deposited too: the matcher is the predicate"
     );
 
-    // Tick 6: it landed — the interface closes.
+    // Tick 6: it landed — the listed helm's own deposit follows.
     post_scene(
         &iso,
         6,
-        &[(3579, 1)],
+        &[(3579, 1), (1163, 1)],
         &Scene {
             bank_open: true,
             ..strip_scene
@@ -1237,15 +1242,35 @@ export function tick(api) {
     assert!(iso.probe("true").is_ok());
     assert_eq!(
         iso.drain_interacts(),
+        vec![InteractReq::Deposit {
+            name: "Rune full helm".to_string(),
+        }],
+        "the regex-restricted name and nothing else"
+    );
+
+    // Tick 7: it landed — the interface closes.
+    post_scene(
+        &iso,
+        7,
+        &[(3579, 1)],
+        &Scene {
+            bank_open: true,
+            ..strip_scene
+        },
+    );
+    iso.on_game_tick(7);
+    assert!(iso.probe("true").is_ok());
+    assert_eq!(
+        iso.drain_interacts(),
         vec![InteractReq::Close],
         "the strip's own close"
     );
 
-    // Tick 7: the strip is settled and the row's own search arm walks its
+    // Tick 8: the strip is settled and the row's own search arm walks its
     // selected decode — and `retry()` is the machine's latch clear, not a token
     // abort.
-    post_scene(&iso, 7, &[(3579, 1)], &strip_scene);
-    iso.on_game_tick(7);
+    post_scene(&iso, 8, &[(3579, 1)], &strip_scene);
+    iso.on_game_tick(8);
     assert!(iso.probe("true").is_ok());
     assert_eq!(
         iso.drain_interacts(),
@@ -1253,10 +1278,10 @@ export function tick(api) {
         "the box row's own walk follows the settled strip"
     );
 
-    // Tick 8: the casket is held instead, so the trail reaches its collect. The
+    // Tick 9: the casket is held instead, so the trail reaches its collect. The
     // casket is never a strip row.
-    post_page(&iso, 8, &[(3555, 1)]);
-    iso.on_game_tick(8);
+    post_page(&iso, 9, &[(3555, 1)]);
+    iso.on_game_tick(9);
     assert!(iso.probe("true").is_ok());
     assert_eq!(
         iso.drain_interacts(),
@@ -1267,17 +1292,17 @@ export function tick(api) {
         "the held casket's own Open"
     );
 
-    // Tick 9: the casket left; the reward window is real time.
+    // Tick 10: the casket left; the reward window is real time.
     post_scene(
         &iso,
-        9,
+        10,
         &[],
         &Scene {
             main_modal_id: -1,
             ..Scene::default()
         },
     );
-    iso.on_game_tick(9);
+    iso.on_game_tick(10);
     assert!(iso.probe("true").is_ok());
     assert!(
         iso.drain_interacts().is_empty(),
@@ -1285,15 +1310,15 @@ export function tick(api) {
     );
     std::thread::sleep(std::time::Duration::from_millis(2_100));
 
-    // Tick 10: the collect is over and the name is in the pack: the reclaim
+    // Tick 11: the collect is over and the name is in the pack: the reclaim
     // wears it back on before any completion kind can go out.
     let reclaim = Scene {
         names: &[(1163, "Rune full helm")],
         main_modal_id: -1,
         ..Scene::default()
     };
-    post_scene(&iso, 10, &[(1163, 1)], &reclaim);
-    iso.on_game_tick(10);
+    post_scene(&iso, 11, &[(1163, 1)], &reclaim);
+    iso.on_game_tick(11);
     assert!(iso.probe("true").is_ok());
     assert_eq!(
         iso.drain_interacts(),
@@ -1303,11 +1328,11 @@ export function tick(api) {
         "the collect's exit wears the listed name back on"
     );
 
-    // Tick 11: worn again — the list empties and the three steps go out on the
+    // Tick 12: worn again — the list empties and the three steps go out on the
     // same live token.
     post_scene(
         &iso,
-        11,
+        12,
         &[],
         &Scene {
             equipment: &[worn_row(1163, "Rune full helm", 0)],
@@ -1315,7 +1340,7 @@ export function tick(api) {
             ..Scene::default()
         },
     );
-    iso.on_game_tick(11);
+    iso.on_game_tick(12);
     assert!(iso.probe("true").is_ok());
     let interacts = iso.drain_interacts();
     let value: serde_json::Value =
@@ -1333,13 +1358,18 @@ export function tick(api) {
         "the stripped row's own status line: {value:?}"
     );
     for key in ["dagger", "helm"] {
-        assert_eq!(value[key]["kind"], "wear", "{key} {value:?}");
+        assert_eq!(value[key]["kind"], "unequip", "{key} {value:?}");
         assert_eq!(&value[key]["token"], token, "{key} {value:?}");
     }
     assert_eq!(value["dagger"]["name"], "Dragon dagger(p)", "{value:?}");
     assert_eq!(value["helm"]["name"], "Rune full helm", "{value:?}");
     assert_eq!(value["walk"]["kind"], "walk-nearest-bank", "{value:?}");
     assert_eq!(value["booth"]["kind"], "open-booth", "{value:?}");
+    assert_eq!(value["depositDagger"]["kind"], "deposit", "{value:?}");
+    assert_eq!(
+        value["depositDagger"]["name"], "Dragon dagger(p)",
+        "{value:?}"
+    );
     assert_eq!(value["deposit"]["kind"], "deposit", "{value:?}");
     assert_eq!(value["deposit"]["name"], "Rune full helm", "{value:?}");
     assert_eq!(value["close"]["kind"], "close", "{value:?}");
@@ -8452,5 +8482,432 @@ export function tick(api) {
         kinds.last(),
         Some(&"walk"),
         "the token lives and walks on: {kinds:?}"
+    );
+}
+
+/// The restore's make-room deposit on the v2 seat: a pack that filled up over
+/// the trail cannot take the withdrawn name, so the frozen
+/// `restoreStrippedGear` banks one posted row that is neither a listed name nor
+/// a selected trail item before the claim goes out — and the trail then reaches
+/// its own three-step completion instead of retrying against a full pack.
+#[test]
+fn v2_clue_next_makes_room_in_a_full_pack_before_the_reclaim() {
+    let src = r#"
+export const apiVersion = 2;
+export function tick(api) {
+  globalThis.__tick = (globalThis.__tick || 0) + 1;
+  const t = globalThis.__tick;
+  const one = () => api.clue.next({ token: globalThis.__token });
+  const resumed = () => api.clue.next({ token: globalThis.__token, resume: true });
+  if (t === 1) {
+    const begin = api.clue.begin();
+    globalThis.__token = begin.ok ? begin.value.token : null;
+    globalThis.__gate = one();
+    globalThis.__log = resumed();
+    globalThis.__status = one();
+    globalThis.__unequip = one();
+    return;
+  }
+  if (t === 2) {
+    globalThis.__casketGate = one();
+    globalThis.__casketLog = resumed();
+    globalThis.__casketStatus = one();
+    globalThis.__open = one();
+    return;
+  }
+  if (t === 3) { globalThis.__empty = one(); return; }
+  if (t === 4) { globalThis.__walk = one(); return; }
+  if (t === 5) { globalThis.__booth = one(); return; }
+  if (t === 6) { globalThis.__room = one(); return; }
+  if (t === 7) { globalThis.__claim = one(); return; }
+  if (t === 8) { globalThis.__close = one(); return; }
+  if (t === 9) { globalThis.__wearBack = one(); return; }
+  const solved = one();
+  const ready = one();
+  const done = one();
+  globalThis.__probe = JSON.stringify({
+    token: globalThis.__token,
+    gate: globalThis.__gate, log: globalThis.__log, status: globalThis.__status,
+    unequip: globalThis.__unequip, casketGate: globalThis.__casketGate,
+    open: globalThis.__open, empty: globalThis.__empty,
+    walk: globalThis.__walk, booth: globalThis.__booth, room: globalThis.__room,
+    claim: globalThis.__claim, close: globalThis.__close,
+    wearBack: globalThis.__wearBack, solved: solved, ready: ready, done: done,
+  });
+}
+"#;
+    let data = api::game_data::for_revision(ClientRevision::R274).unwrap();
+    let iso =
+        LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data).unwrap();
+    let booth_tile = script::isolate_fb::TileInput {
+        x: 2810,
+        z: 3350,
+        level: 0,
+    };
+    // A full pack: the posted `inv_size` rows, and only the first carries a
+    // display name — the one the make-room deposit resolves by.
+    let full: Vec<(i32, i32)> = (0..28).map(|slot| (526 + slot, 1)).collect();
+    let freed: Vec<(i32, i32)> = (1..28).map(|slot| (526 + slot, 1)).collect();
+    let full_names = [(526, "Big bones")];
+
+    // Tick 1: the strip unequips the helm, which the machine lists for the
+    // reclaim.
+    post_scene(
+        &iso,
+        1,
+        &[(3579, 1)],
+        &Scene {
+            equipment: &[worn_row(1163, "Rune full helm", 0)],
+            ..Scene::default()
+        },
+    );
+    iso.on_game_tick(1);
+    assert!(iso.probe("true").is_ok());
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::Unequip {
+            name: "Rune full helm".to_string(),
+        }],
+        "the strip's own unequip"
+    );
+
+    // Tick 2: the casket is held instead — the strip step is dropped, the list
+    // is not.
+    post_page(&iso, 2, &[(3555, 1)]);
+    iso.on_game_tick(2);
+    assert!(iso.probe("true").is_ok());
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::Held {
+            name: "Casket".to_string(),
+            action: "Open".to_string(),
+        }],
+        "the held casket's own Open"
+    );
+
+    // Tick 3: the reward window is real time.
+    post_scene(
+        &iso,
+        3,
+        &[],
+        &Scene {
+            main_modal_id: -1,
+            ..Scene::default()
+        },
+    );
+    iso.on_game_tick(3);
+    assert!(iso.probe("true").is_ok());
+    std::thread::sleep(std::time::Duration::from_millis(2_100));
+
+    // Tick 4: the collect is over and the pack is full of loot the strip never
+    // listed — the reclaim walks to the bank the name was left at.
+    post_scene(
+        &iso,
+        4,
+        &full,
+        &Scene {
+            names: &full_names,
+            main_modal_id: -1,
+            ..Scene::default()
+        },
+    );
+    iso.on_game_tick(4);
+    assert!(iso.probe("true").is_ok());
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::WalkNearestBank],
+        "the reclaim's own stand walk"
+    );
+
+    // Tick 5: beside the posted booth.
+    post_scene(
+        &iso,
+        5,
+        &full,
+        &Scene {
+            names: &full_names,
+            here: Some(booth_tile),
+            nearest_booth: Some(&POSTED_BOOTH),
+            main_modal_id: -1,
+            ..Scene::default()
+        },
+    );
+    iso.on_game_tick(5);
+    assert!(iso.probe("true").is_ok());
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::OpenBooth {
+            x: 2810,
+            z: 3350,
+            level: 0,
+            id: 2213,
+            name: Some("Bank booth".to_string()),
+            action: Some("Use-quickly".to_string()),
+        }],
+        "the posted booth's own open"
+    );
+
+    // Tick 6: the interface is up and the pack has no free slot for the name
+    // about to be claimed: the frozen make-room deposit banks the first row
+    // that is no listed name and no selected trail item.
+    post_scene(
+        &iso,
+        6,
+        &full,
+        &Scene {
+            names: &full_names,
+            here: Some(booth_tile),
+            nearest_booth: Some(&POSTED_BOOTH),
+            bank_open: true,
+            main_modal_id: -1,
+            ..Scene::default()
+        },
+    );
+    iso.on_game_tick(6);
+    assert!(iso.probe("true").is_ok());
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::Deposit {
+            name: "Big bones".to_string(),
+        }],
+        "room is made before the claim, never after a failed one"
+    );
+
+    // Tick 7: it landed — one slot free, and the claim goes out.
+    post_scene(
+        &iso,
+        7,
+        &freed,
+        &Scene {
+            names: &full_names,
+            here: Some(booth_tile),
+            nearest_booth: Some(&POSTED_BOOTH),
+            bank_open: true,
+            main_modal_id: -1,
+            ..Scene::default()
+        },
+    );
+    iso.on_game_tick(7);
+    assert!(iso.probe("true").is_ok());
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::Withdraw {
+            name: "Rune full helm".to_string(),
+            action: "Withdraw-1".to_string(),
+        }],
+        "the claim follows the room that was made for it"
+    );
+
+    // Tick 8: the name is in the pack — the interface closes before anything is
+    // worn back on.
+    let claimed: Vec<(i32, i32)> = freed
+        .iter()
+        .copied()
+        .chain(std::iter::once((1163, 1)))
+        .collect();
+    let claimed_names = [(526, "Big bones"), (1163, "Rune full helm")];
+    post_scene(
+        &iso,
+        8,
+        &claimed,
+        &Scene {
+            names: &claimed_names,
+            here: Some(booth_tile),
+            nearest_booth: Some(&POSTED_BOOTH),
+            bank_open: true,
+            main_modal_id: -1,
+            ..Scene::default()
+        },
+    );
+    iso.on_game_tick(8);
+    assert!(iso.probe("true").is_ok());
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::Close],
+        "the claim's own close"
+    );
+
+    // Tick 9: the interface is down — the name goes back on.
+    post_scene(
+        &iso,
+        9,
+        &claimed,
+        &Scene {
+            names: &claimed_names,
+            here: Some(booth_tile),
+            main_modal_id: -1,
+            ..Scene::default()
+        },
+    );
+    iso.on_game_tick(9);
+    assert!(iso.probe("true").is_ok());
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::Wear {
+            name: "Rune full helm".to_string(),
+        }],
+        "the reclaim's wear goes out only behind a closed bank"
+    );
+
+    // Tick 10: worn again — the pack no longer holds it, the list empties and
+    // the three steps go out.
+    post_scene(
+        &iso,
+        10,
+        &freed,
+        &Scene {
+            names: &claimed_names,
+            equipment: &[worn_row(1163, "Rune full helm", 0)],
+            main_modal_id: -1,
+            ..Scene::default()
+        },
+    );
+    iso.on_game_tick(10);
+    assert!(iso.probe("true").is_ok());
+    let interacts = iso.drain_interacts();
+    let value: serde_json::Value =
+        serde_json::from_str(iso.probe("globalThis.__probe").unwrap().as_str().unwrap()).unwrap();
+    iso.join();
+    assert!(interacts.is_empty(), "the completion queues no verb");
+
+    let token = &value["token"];
+    assert!(token.is_number(), "{value:?}");
+    assert_eq!(value["gate"]["kind"], "callback.enabled", "{value:?}");
+    assert_eq!(value["unequip"]["kind"], "unequip", "{value:?}");
+    assert_eq!(&value["unequip"]["token"], token, "{value:?}");
+    assert_eq!(value["casketGate"]["kind"], "callback.enabled", "{value:?}");
+    assert_eq!(value["open"]["kind"], "held", "{value:?}");
+    assert_eq!(value["empty"]["kind"], "wait", "{value:?}");
+    assert_eq!(value["walk"]["kind"], "walk-nearest-bank", "{value:?}");
+    assert_eq!(value["booth"]["kind"], "open-booth", "{value:?}");
+    assert_eq!(value["room"]["kind"], "deposit", "{value:?}");
+    assert_eq!(value["room"]["name"], "Big bones", "{value:?}");
+    assert_eq!(&value["room"]["token"], token, "{value:?}");
+    assert_eq!(value["claim"]["kind"], "withdraw", "{value:?}");
+    assert_eq!(value["claim"]["name"], "Rune full helm", "{value:?}");
+    assert_eq!(value["claim"]["action"], "Withdraw-1", "{value:?}");
+    assert_eq!(value["close"]["kind"], "close", "{value:?}");
+    assert_eq!(value["wearBack"]["kind"], "wear", "{value:?}");
+    assert_eq!(&value["wearBack"]["token"], token, "{value:?}");
+    assert_eq!(value["solved"]["kind"], "callback.setStatus", "{value:?}");
+    assert_eq!(value["solved"]["message"], "clue solved", "{value:?}");
+    assert_eq!(value["ready"]["kind"], "grind-ready", "{value:?}");
+    assert_eq!(value["done"]["kind"], "done", "{value:?}");
+    assert_ne!(&value["done"]["token"], token, "the end kills the token");
+}
+
+/// The abandon latch on the v2 seat: the row this machine left in the pack
+/// refuses `api.clue.begin` with the machine's own `abandoned` reason and hands
+/// out no token, the refusal survives a second attempt, `api.clue.retry()`
+/// clears it, and a different held row clears it on the way past — the frozen
+/// `validate`'s own clearing, on the public seat.
+#[test]
+fn v2_clue_begin_refuses_the_abandoned_row_until_retry_or_a_different_one() {
+    let src = r#"
+export const apiVersion = 2;
+export function tick(api) {
+  globalThis.__tick = (globalThis.__tick || 0) + 1;
+  const t = globalThis.__tick;
+  const one = () => api.clue.next({ token: globalThis.__token });
+  const abandon = () => globalThis.rustyscript.functions.__rs2b0t_clue({ op: 'abandon' });
+  if (t === 1) {
+    const begin = api.clue.begin();
+    globalThis.__token = begin.ok ? begin.value.token : null;
+    globalThis.__gate = one();
+    // The machine's own terminal on its own seat: no production trigger
+    // exists, so no page and no adapter can reach it.
+    globalThis.__left = abandon();
+    globalThis.__refused = api.clue.begin();
+    return;
+  }
+  if (t === 2) {
+    globalThis.__stillRefused = api.clue.begin();
+    globalThis.__retry = api.clue.retry();
+    globalThis.__cleared = api.clue.begin();
+    return;
+  }
+  if (t === 3) {
+    globalThis.__leftAgain = abandon();
+    return;
+  }
+  if (t === 4) {
+    // A different held row: the latch clears on the way past.
+    globalThis.__other = api.clue.begin();
+    return;
+  }
+  globalThis.__back = api.clue.begin();
+  globalThis.__probe = JSON.stringify({
+    token: globalThis.__token,
+    gate: globalThis.__gate, left: globalThis.__left,
+    refused: globalThis.__refused, stillRefused: globalThis.__stillRefused,
+    retry: globalThis.__retry, cleared: globalThis.__cleared,
+    leftAgain: globalThis.__leftAgain, other: globalThis.__other,
+    back: globalThis.__back,
+  });
+}
+"#;
+    let data = api::game_data::for_revision(ClientRevision::R274).unwrap();
+    let iso =
+        LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data).unwrap();
+
+    // Tick 1: the held box row is identified and left in the pack.
+    post_page(&iso, 1, &[(3579, 1)]);
+    iso.on_game_tick(1);
+    assert!(iso.probe("true").is_ok());
+    assert!(iso.drain_interacts().is_empty(), "no verb rides the latch");
+
+    // Tick 2: still the same row, still refused; `retry()` clears it and the
+    // same row begins again with a live token.
+    post_page(&iso, 2, &[(3579, 1)]);
+    iso.on_game_tick(2);
+    assert!(iso.probe("true").is_ok());
+
+    // Tick 3: the same row latches again on the machine's own seat.
+    post_page(&iso, 3, &[(3579, 1)]);
+    iso.on_game_tick(3);
+    assert!(iso.probe("true").is_ok());
+
+    // Tick 4: a different selected membership row is held: `begin` is accepted
+    // and clears the latch with it.
+    post_page(&iso, 4, &[(2677, 1)]);
+    iso.on_game_tick(4);
+    assert!(iso.probe("true").is_ok());
+
+    // Tick 5: the latched row is held again, and it is no longer refused.
+    post_page(&iso, 5, &[(3579, 1)]);
+    iso.on_game_tick(5);
+    assert!(iso.probe("true").is_ok());
+    let value: serde_json::Value =
+        serde_json::from_str(iso.probe("globalThis.__probe").unwrap().as_str().unwrap()).unwrap();
+    iso.join();
+
+    assert_eq!(value["gate"]["kind"], "callback.enabled", "{value:?}");
+    assert_eq!(value["left"]["kind"], "abandon", "{value:?}");
+    assert_ne!(
+        &value["left"]["token"], &value["token"],
+        "the terminal aborts the token it ends: {value:?}"
+    );
+    assert_eq!(value["refused"]["ok"], false, "{value:?}");
+    assert_eq!(value["refused"]["error"], "abandoned", "{value:?}");
+    assert_eq!(
+        value["stillRefused"]["error"], "abandoned",
+        "the latch is not a one-shot: {value:?}"
+    );
+    assert_eq!(value["retry"]["ok"], true, "{value:?}");
+    assert_eq!(value["retry"]["value"]["cleared"], true, "{value:?}");
+    assert_eq!(value["cleared"]["ok"], true, "{value:?}");
+    assert!(value["cleared"]["value"]["token"].is_number(), "{value:?}");
+    assert_eq!(value["leftAgain"]["kind"], "abandon", "{value:?}");
+    assert_eq!(
+        value["other"]["ok"], true,
+        "a different held row clears the latch: {value:?}"
+    );
+    assert_ne!(
+        value["other"]["value"]["token"], value["cleared"]["value"]["token"],
+        "and its own session is a fresh token: {value:?}"
+    );
+    assert_eq!(
+        value["back"]["ok"], true,
+        "the latched row begins again after the different row cleared it: {value:?}"
     );
 }

@@ -503,10 +503,18 @@ function enqueueClueVerb(step) {
         });
         return true;
     }
+    if (step.kind === 'unequip') {
+        // The landed worn-row verb the shim's own `Equipment.unequip` queues:
+        // the worn component's own `Remove` for the display name the Entrana
+        // strip takes off. `wear` cannot do it — it resolves inventory rows
+        // alone — so the strip never rides that one. No row id and no slot.
+        queue({ op: 'unequip', name: step.name });
+        return true;
+    }
     if (step.kind === 'wear') {
-        // The landed equip-from-pack verb the shim's own `Equipment.equip` /
-        // `unequip` pair queues: the display name the Entrana strip takes off
-        // and puts back on. No row id, no slot and no tile.
+        // The landed equip-from-pack verb the shim's own `Equipment.equip`
+        // queues: the display name the Entrana restore puts back on. No row
+        // id, no slot and no tile.
         queue({ op: 'wear', name: step.name });
         return true;
     }
@@ -567,7 +575,7 @@ function enqueueClueVerb(step) {
 const ENQUEUED_KINDS = [
     'walk', 'held', 'loc', 'npc', 'answer-count', 'if-button', 'close-modal', 'obj',
     'puzzle-move', 'continue', 'answer', 'shop-button',
-    'wear', 'deposit', 'withdraw', 'walk-nearest-bank', 'open-booth', 'close',
+    'wear', 'unequip', 'deposit', 'withdraw', 'walk-nearest-bank', 'open-booth', 'close',
 ];
 
 // The call-time pages every `next` posts, in the machine's own field names.

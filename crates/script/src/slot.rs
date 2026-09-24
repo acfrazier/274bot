@@ -265,13 +265,22 @@ pub struct SlotScript {
     /// Start, read by the ctx the host builds around each tick. Cleared with
     /// the instance.
     compiled_selected: Option<Arc<api::game_data::SelectedGameData>>,
-    /// A compiled clue-machine abort is owed to the pump thread. `stop` and
+    /// A compiled clue-machine session abort is owed to the pump thread.
     /// `reset_session_work` may run on the control thread and must not touch
-    /// the slot thread's TLS machine, so they mark here and
+    /// the slot thread's TLS machine, so it marks here and
     /// [`SlotScript::sync_compiled_clue`] applies it on the next observed
-    /// frame.
+    /// frame. It drops the machine's live step and its token alone: the strip
+    /// list and the abandon latch are the session's own and survive a
+    /// connection boundary.
     #[cfg(feature = "load")]
     clue_abort_owed: bool,
+    /// A whole clue-machine instance reset is owed to the pump thread:
+    /// operator Stop is a fresh task instance, so the machine's step, its
+    /// strip list and its abandon latch all start over. Marked by `stop` and
+    /// applied by [`SlotScript::sync_compiled_clue`] the way the abort is; it
+    /// subsumes [`Self::clue_abort_owed`].
+    #[cfg(feature = "load")]
+    clue_stop_owed: bool,
     /// JS Load isolate, spawned by `start_load` on Start (not on Load).
     #[cfg(feature = "load")]
     load: Option<LoadIsolate>,
@@ -334,6 +343,8 @@ impl SlotScript {
             compiled_selected: None,
             #[cfg(feature = "load")]
             clue_abort_owed: false,
+            #[cfg(feature = "load")]
+            clue_stop_owed: false,
             #[cfg(feature = "load")]
             load: None,
             #[cfg(feature = "load")]
@@ -605,9 +616,14 @@ impl SlotScript {
         // runtime is thread-local, and Stop may arrive on the control thread):
         // mark it here, and `sync_compiled_clue` applies it on the slot's next
         // observed frame. A Load slot's isolate thread owns that machine.
+        // Stop is a fresh task instance — the machine's step, its strip list
+        // and its abandon latch all start over — which is the marker
+        // `reset_session_work` must not make: that one is a connection
+        // boundary and drops the step alone.
         #[cfg(feature = "load")]
         if !self.load_active() {
-            self.clue_abort_owed = true;
+            self.clue_stop_owed = true;
+            self.clue_abort_owed = false;
         }
         #[cfg(feature = "load")]
         if let Some(isolate) = self.load.take() {
@@ -675,7 +691,10 @@ impl SlotScript {
         #[cfg(feature = "load")]
         if !self.load_active() {
             // Same rule as Stop: the compiled machine's abort lands on the
-            // pump thread, never here.
+            // pump thread, never here. A connection boundary aborts the live
+            // step and its token and keeps the rest of the session — the
+            // Entrana strip list and the abandon latch survive a relog — so
+            // this is the weaker marker and never `clue_stop_owed`.
             self.clue_abort_owed = true;
         }
         #[cfg(feature = "load")]
@@ -857,9 +876,9 @@ impl SlotScript {
         self.compiled_selected.clone()
     }
 
-    /// Pump-thread sync of the compiled clue machine: the owed abort (Stop, a
-    /// session reset, a panic) and this frame's pause/hold freeze, applied
-    /// whether or not the frame dispatches a tick.
+    /// Pump-thread sync of the compiled clue machine: the owed abort or
+    /// instance reset (Stop, a session reset, a panic) and this frame's
+    /// pause/hold freeze, applied whether or not the frame dispatches a tick.
     ///
     /// Call it on the slot's own thread, once per observed frame — never from
     /// the control thread, and never for a Load slot (that slot's isolate
@@ -872,9 +891,18 @@ impl SlotScript {
             if self.load_active() {
                 return;
             }
-            if self.clue_abort_owed {
+            if self.clue_stop_owed {
+                // Stop is a fresh task instance: the whole session starts
+                // over, strip list and abandon latch included. It subsumes
+                // any session abort marked before it.
+                self.clue_stop_owed = false;
+                self.clue_abort_owed = false;
+                crate::clue::on_stop();
+            } else if self.clue_abort_owed {
                 // The abort is about the machine's own session, not the
-                // instance, so it is consumed even when no card is installed.
+                // instance, so it is consumed even when no card is installed —
+                // and it keeps the strip list the session still owes a reclaim
+                // for.
                 self.clue_abort_owed = false;
                 crate::clue::on_reset();
             }
@@ -1318,7 +1346,10 @@ impl SlotScript {
             // The card is gone: its machine session must not outlive it, and
             // the verbs a half-finished tick queued are not this session's to
             // send. The pump applies the abort on this same thread, next
-            // observed frame.
+            // observed frame. It is the session abort and not
+            // `clue_stop_owed`: a dead card is not a fresh task instance, and
+            // the strip list it may still owe a reclaim for outlives it —
+            // Stop is what clears that.
             #[cfg(feature = "load")]
             {
                 self.compiled_interacts.clear();
@@ -2189,5 +2220,85 @@ export default class T extends LoopingBot {
             Some(token),
             "the aborted session's token is not reused"
         );
+    }
+
+    /// The two resets are not each other. A connection boundary
+    /// (`reset_session_work`) aborts the compiled clue machine's live step and
+    /// its token and keeps what the session still owes — the Entrana strip list
+    /// the reclaim reads — while operator Stop is a fresh task instance and
+    /// clears it with the step.
+    #[cfg(feature = "load")]
+    #[test]
+    fn a_session_reset_keeps_the_clue_strip_list_and_a_stop_clears_it() {
+        let data =
+            api::game_data::for_revision(client::io::ClientRevision::R274).expect("selected data");
+        // The Entrana-box proof row, and a worn name the frozen matcher folds.
+        const ENTRANA: i32 = 3579;
+        const HELM: i32 = 1163;
+        let mut slot = SlotScript::new();
+        slot.start_compiled(
+            Box::new(crate::sherlock::Sherlock::default()),
+            Some(Arc::clone(&data)),
+        )
+        .unwrap();
+        let begin = crate::clue::dispatch(
+            Some(&data),
+            &serde_json::json!({ "op": "begin", "generation": 0, "held": [[ENTRANA, 1]] }),
+        );
+        assert_eq!(begin["kind"], "token", "{begin}");
+        let token = begin["token"].as_u64().expect("token");
+        // The landed gate first: enabled, the report, the row's own status.
+        let next = |extra: serde_json::Value| {
+            let mut call = serde_json::json!({
+                "op": "next",
+                "token": token,
+                "generation": 0,
+                "held": [[ENTRANA, 1]],
+            });
+            for (key, value) in extra.as_object().expect("extra") {
+                call[key] = value.clone();
+            }
+            crate::clue::dispatch(Some(&data), &call)
+        };
+        assert_eq!(next(serde_json::json!({}))["kind"], "callback.enabled");
+        assert_eq!(
+            next(serde_json::json!({ "resume": true }))["kind"],
+            "callback.log"
+        );
+        assert_eq!(next(serde_json::json!({}))["kind"], "callback.setStatus");
+        // One strip step: the worn restricted row goes off, and the name is
+        // listed for the reclaim.
+        let strip = next(serde_json::json!({
+            "equipment": [{ "id": HELM, "name": "Rune full helm", "count": 1, "slot": 0 }],
+        }));
+        assert_eq!(strip["kind"], "unequip", "{strip}");
+        let owns = |data: &Arc<api::game_data::SelectedGameData>| {
+            crate::clue::dispatch(Some(data), &serde_json::json!({ "op": "ownsEquipment" }))["owns"]
+                == true
+        };
+        assert!(owns(&data), "the strip listed the name");
+
+        // The connection boundary, applied the way the pump applies it.
+        slot.reset_session_work();
+        slot.sync_compiled_clue(false);
+        let dead = crate::clue::dispatch(
+            Some(&data),
+            &serde_json::json!({
+                "op": "next",
+                "token": token,
+                "generation": 0,
+                "held": [[ENTRANA, 1]],
+            }),
+        );
+        assert_eq!(dead["kind"], "aborted", "the boundary kills the step");
+        assert!(
+            owns(&data),
+            "and keeps the list the reclaim still owes after a relog"
+        );
+
+        // Operator Stop: the fresh instance starts the session over.
+        slot.stop();
+        slot.sync_compiled_clue(false);
+        assert!(!owns(&data), "Stop clears the strip list with the step");
     }
 }

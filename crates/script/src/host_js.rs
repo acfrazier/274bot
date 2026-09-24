@@ -536,7 +536,7 @@ fn render_native_v2(out: &mut String) {
     out.push_str(
         "  questPrereqs(input: { id: string; name?: string }): HelperResult<QuestRequirements>;\n",
     );
-    out.push_str("  /** Sync landed trail-row read, pure pack arithmetic, pure hard-kit status, the pure keep predicate over caller facts, and the clue machine's own begin / next / retry. None is a Promise and none is a request op; `packPlan`, `hardKit`, and `keep` read no snapshot, inventory, or family, and `retry` is the machine's latch clear — never the generation reset and never a token abort. */\n");
+    out.push_str("  /** Sync landed trail-row read, pure pack arithmetic, pure hard-kit status, the pure keep predicate over caller facts, and the clue machine's own begin / next / retry. None is a Promise and none is a request op; `packPlan`, `hardKit`, and `keep` read no snapshot, inventory, or family, and `retry` is the machine's latch clear — never a connection-boundary reset and never a token abort. */\n");
     out.push_str("  clue: { row(input: { id: number } | { alias: string }): HelperResult<ClueRow>; heldStep(): HelperResult<ClueRow>; packPlan(input: PackPlanInput): HelperResult<PackPlanTargets>; hardKit(input: { attack: number; lostCity: boolean; items: { id: number; count: number }[] }): HelperResult<{ status: 'ready' }>; keep(input: { name: string; extra?: string[] }): HelperResult<{ keep: boolean }>; begin(input?: object): HelperResult<{ token: number }>; next(input: { token: number; resume?: boolean }): ClueStep; retry(): HelperResult<{ cleared: true }> };\n");
     out.push_str("  /** Sync posted-loc copy. Historical copy, not live. Not a Promise and not a request op. */\n");
     out.push_str("  sceneLocs(input: { ids: number[]; limit: number; region?: SceneRegionInput }): HelperResult<SceneProjection>;\n");
@@ -682,6 +682,12 @@ fn render_native_v2(out: &mut String) {
     out.push_str("  | { ok: true; status: 'continue'; token: number; kind: 'close-modal' }\n");
     out.push_str("  | { ok: true; status: 'continue'; token: number; kind: 'obj'; x: number; z: number; level: number; name: string | null; action: string }\n");
     out.push_str("  | { ok: true; status: 'continue'; token: number; kind: 'puzzle-move'; id: number; slot: number; component: number; generation: number }\n");
+    out.push_str("  | { ok: true; status: 'continue'; token: number; kind: 'continue' | 'answer'; option?: number }\n");
+    out.push_str("  | { ok: true; status: 'continue'; token: number; kind: 'shop-button'; name: string; id: number; slot: number; component: number; chunk: number }\n");
+    out.push_str("  | { ok: true; status: 'continue'; token: number; kind: 'unequip' | 'wear' | 'deposit'; name: string }\n");
+    out.push_str("  | { ok: true; status: 'continue'; token: number; kind: 'withdraw'; name: string; action: string }\n");
+    out.push_str("  | { ok: true; status: 'continue'; token: number; kind: 'walk-nearest-bank' | 'close' }\n");
+    out.push_str("  | { ok: true; status: 'continue'; token: number; kind: 'open-booth'; x: number; z: number; level: number; id: number; name?: string; action?: string }\n");
     out.push_str("  | { ok: false; error: string };\n");
 }
 

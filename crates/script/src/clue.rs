@@ -233,21 +233,27 @@
 //! `trail_clue_hard_riddle027`, `0_44_52_2_23` → `(2818, 3351, 0)` — is stripped
 //! before the walk that row would otherwise make. A casket never arms it. The
 //! stripped list is the frozen `strippedGear`: the posted worn rows whose
-//! display name the frozen matcher folds are unequipped and listed, the two
-//! hard-trail dagger ids `1231` / `1215` are unequipped but left off it, and
-//! the listed names the posted pack holds are deposited before the row's own
-//! arms run. The list outlives a step and a dead token; only the restore
-//! empties it, and `ownsEquipment` is that list and nothing else.
+//! display name the frozen matcher folds are unequipped with the landed
+//! `unequip` verb — the worn row's own `Remove`, because `wear` resolves
+//! inventory rows alone — and listed, the two hard-trail dagger ids `1231` /
+//! `1215` are unequipped but left off it, and every posted pack row whose name
+//! the matcher folds is deposited before the row's own arms run: the names the
+//! unequip put in the pack, the dagger ids that are never listed, and a
+//! restricted item the player carried without wearing it. The list outlives a
+//! step, a dead token and the connection-boundary reset; only the restore or a
+//! fresh task instance (Stop/Start) empties it, and `ownsEquipment` is that
+//! list and nothing else.
 //!
 //! The restore sits in front of the whole three-step finish latch: while the
 //! list is non-empty the collect's exit wears what the pack holds, claims the
 //! rest at the bank — the walk to the nearest stand, the posted booth's own
-//! open, one `Withdraw-1` per missing name, the interface's close — and only an
-//! empty list lets the exact `'clue solved'`, the `grind-ready` continue and
-//! the `done` go out. A name that will not go back on stays listed, is logged
-//! as the named `restore-incomplete` and blocks that latch rather than posting
-//! a completion kind. Freeze, yield and the posted hitpoints still win over
-//! the restore, exactly as they do over the collect.
+//! open, the frozen make-room deposit while the pack has fewer free slots than
+//! the names it is missing, one `Withdraw-1` per missing name, the interface's
+//! close — and only an empty list lets the exact `'clue solved'`, the
+//! `grind-ready` continue and the `done` go out. A name that will not go back
+//! on stays listed, is logged as the named `restore-incomplete` and blocks that
+//! latch rather than posting a completion kind. Freeze, yield and the posted
+//! hitpoints still win over the restore, exactly as they do over the collect.
 //!
 //! The frozen `abandonedClueId` is wired with no production trigger: an
 //! `abandon` this machine emits latches the identified row, a `begin` on that
@@ -256,7 +262,11 @@
 //! it never aborts the live token and never touches the stripped list.
 //!
 //! One token per isolate. A second begin, reset and stop abort the live token
-//! and emit no verb for it. Pause and hold freeze this machine's own clock,
+//! and emit no verb for it. `on_reset` is the connection boundary: it drops the
+//! step and its token alone, so a strip whose gear is already banked still owes
+//! its reclaim after a relog. `on_stop` is the fresh task instance — operator
+//! Stop, a new Start — and clears the stripped list and the abandon latch with
+//! the step. Pause and hold freeze this machine's own clock,
 //! so a frozen call emits no callback, no walk, no loc and no held, and does
 //! not advance the session. `on_snapshot` is fan-out only: begin and next
 //! read the pages the wrapper hands in at call time — the parked page, this
@@ -744,12 +754,15 @@ struct ClueRuntime {
     /// The frozen `strippedGear`: the restricted display names the strip put in
     /// the pack and has not put back, in the order they were taken off. Session
     /// state that outlives the step, the trail and the token — it is what the
-    /// adapter's `ownsEquipment` reports — and only the restore empties it.
+    /// adapter's `ownsEquipment` reports — and neither the reclaim nor `retry`
+    /// clears it: only an emptied list, or the fresh instance [`on_stop`]
+    /// builds, does.
     stripped: Vec<String>,
     /// The frozen `abandonedClueId`: the identified row this machine left in
     /// the pack. Set when `abandon` is emitted, read by `begin`, cleared by a
-    /// different held id or by `retry` — never by an abort, and never by a
-    /// generation reset.
+    /// different held id or by `retry` — never by an abort, and never by the
+    /// connection-boundary reset. Only the fresh instance [`on_stop`] builds
+    /// clears it without a held row of its own.
     abandoned: Option<i32>,
 }
 
@@ -786,8 +799,9 @@ impl ClueRuntime {
     /// The frozen `strippedGear` and `abandonedClueId` are not the token's and
     /// are not cleared here: a dead session's list is still what the adapter's
     /// `ownsEquipment` reports, and the latch is cleared by a different held id
-    /// or by `retry` alone — neither a stop nor the generation reset is a
-    /// `retry`.
+    /// or by `retry`. Only the fresh task instance [`on_stop`] clears the list
+    /// and the latch: this abort and the connection boundary [`on_reset`] both
+    /// keep them, and neither is a `retry`.
     fn abort(&mut self) {
         self.token = self.token.wrapping_add(1);
         self.phase = Phase::Idle;
@@ -843,7 +857,8 @@ impl ClueRuntime {
     /// the Entrana strip's and restore's own live attempts.
     ///
     /// The stripped list and the abandon latch are not here: they are the
-    /// session's and outlive the step, the token and the reset.
+    /// session's and outlive the step, the token and the connection-boundary
+    /// reset — only [`on_stop`], the fresh instance, clears them.
     fn clear_step(&mut self) {
         self.open = None;
         self.clock.deadline = None;
@@ -921,7 +936,7 @@ impl ClueRuntime {
     /// before it reports the trail solved and a name that will not go back on
     /// blocks that report rather than racing it. Freeze, yield and the posted
     /// hitpoints were read before this arm and still win over it.
-    fn finish(&mut self, input: &Value) -> Value {
+    fn finish(&mut self, selected: Option<&SelectedGameData>, input: &Value) -> Value {
         // The latch arms on the first call whatever the gear list says: from
         // here on the collect never loots, never re-arms and never re-reads the
         // step it ended on. A session whose reclaim is still owed arms
@@ -931,7 +946,7 @@ impl ClueRuntime {
         }
         // The reclaim in front of the status, and in front of the continue and
         // the `done` after it.
-        if let Some(step) = self.restore(input) {
+        if let Some(step) = self.restore(selected, input) {
             return step;
         }
         match self.completion {
@@ -961,9 +976,10 @@ impl ClueRuntime {
     /// is done with; every listed name that page does not show but the posted
     /// pack holds goes back on (`wear`, the landed equip-from-pack verb); and
     /// what is left is claimed at the bank — the walk to the nearest stand, the
-    /// posted booth's own `open-booth`, one `Withdraw-1` per missing name, and
-    /// the interface's close — after which the wear pass runs again. The read is
-    /// by display name, the way the frozen `Equipment.contains` and
+    /// posted booth's own `open-booth`, the frozen make-room deposit while the
+    /// pack is too full to take the claim, one `Withdraw-1` per missing name,
+    /// and the interface's close — after which the wear pass runs again. The
+    /// read is by display name, the way the frozen `Equipment.contains` and
     /// `Bank.withdraw` read it, and by nothing else.
     ///
     /// `None` is the restore's own completion: the list is empty and the
@@ -972,7 +988,7 @@ impl ClueRuntime {
     /// on are the named `restore-incomplete` log and the next call starts a
     /// fresh attempt, so a name that will not go back on stays listed, is never
     /// a machine kind, and never lets the finish latch report the trail solved.
-    fn restore(&mut self, input: &Value) -> Option<Value> {
+    fn restore(&mut self, selected: Option<&SelectedGameData>, input: &Value) -> Option<Value> {
         if self.stripped.is_empty() {
             return None;
         }
@@ -1043,6 +1059,14 @@ impl ClueRuntime {
                     self.restore = Some(state);
                     return Some(step);
                 }
+                // The frozen make-room deposit, between the open bank and the
+                // claim: a pack that cannot take the withdrawn name banks what
+                // the frozen predicate takes first, so a pack that filled up
+                // over the trail does not make the reclaim wait forever.
+                if let Some(step) = self.make_room(selected, &mut state, input) {
+                    self.restore = Some(state);
+                    return Some(step);
+                }
                 state.sent = Some(name.clone());
                 self.restore = Some(state);
                 Some(withdraw_verb(&name, self.token))
@@ -1058,6 +1082,55 @@ impl ClueRuntime {
             // over and the names that are still missing are the named log.
             None => Some(self.incomplete(input)),
         }
+    }
+
+    /// The frozen `restoreStrippedGear`'s own make-room deposit, between the
+    /// open bank and the claim: while this call's posted pack has fewer free
+    /// slots than the listed names its pages do not hold, one posted pack row
+    /// the frozen predicate takes goes to the bank, so the gear about to be
+    /// claimed has somewhere to land. Without it a pack that filled up over the
+    /// trail never takes a claim: the recoverable path that reaches the exit
+    /// with a full pack is a real one — the casket reward fills it — and the
+    /// reclaim would retry against the same full pack forever, holding the
+    /// finish latch and starving the sibling grind.
+    ///
+    /// The predicate is the frozen `!want.includes(name) && CLUE_DB[id] ===
+    /// undefined && CASKET_IDS[id] === undefined`: a listed name is never
+    /// banked here, and a posted row whose id the selected trail facts name — a
+    /// clue scroll, a casket, a challenge scroll — is left alone. Everything
+    /// else in the pack, food included, is the frozen deposit's to take.
+    ///
+    /// The frozen `depositAllMatching` banks every match in one action; this
+    /// machine banks one row per call and never the same row twice inside one
+    /// attempt, so a bank that refuses the deposit ends the attempt — the
+    /// claim it was making room for goes out as usual — rather than repeating
+    /// the same verb forever. A page that posted no `inv_size` has not said how
+    /// full the pack is, and no room is made on an invented one.
+    fn make_room(
+        &self,
+        selected: Option<&SelectedGameData>,
+        state: &mut Restore,
+        input: &Value,
+    ) -> Option<Value> {
+        // The row this attempt's deposit went out for: a page that still holds
+        // it did not observe it land, so this attempt does not send it again.
+        if let Some(sent) = state.room_sent.take() {
+            if pack_holds_name(input, &sent) {
+                state.room_tried.push(sent);
+            }
+        }
+        let free = i64::from(input.get("inv_size").and_then(i32_of)?) - occupied(input);
+        let missing = self
+            .stripped
+            .iter()
+            .filter(|name| !worn_name(input, name) && !pack_holds_name(input, name))
+            .count();
+        if free >= missing as i64 {
+            return None;
+        }
+        let name = make_room_row(selected, input, &self.stripped, &state.room_tried)?;
+        state.room_sent = Some(name.clone());
+        Some(deposit_verb(&name, self.token))
     }
 
     /// The `restore-incomplete` give-up: the frozen `could not re-equip … — will
@@ -1090,11 +1163,17 @@ impl ClueRuntime {
     /// way and inside the cap box — `entrana_coord` — and nothing else: a casket
     /// never arms it and no copied `CLUE_DB` is consulted. In order: every
     /// posted worn row whose name the frozen matcher folds is unequipped with
-    /// the landed `wear` verb the shim's own `Equipment.unequip` queues, and
-    /// listed unless it is one of the two hard-trail dagger ids; then every
-    /// listed name the posted pack still holds is deposited at the bank —
-    /// regex-restricted names only, never the ordinary loot deposit — and the
-    /// interface closes before the row's own arms run.
+    /// the landed `unequip` verb — the worn row's own `Remove`, because the
+    /// host's `wear` resolves inventory rows alone — and listed unless it is one
+    /// of the two hard-trail dagger ids; then every posted pack row the matcher
+    /// folds goes to the bank, one per call — the names the unequip put there,
+    /// the dagger ids that were never listed, and a restricted item that was
+    /// carried rather than worn — and the interface closes before the row's own
+    /// arms run.
+    ///
+    /// The deposit is the frozen `depositAllMatching(name => !isKeep(name))` cut
+    /// to the matcher's own rows: every regex-matching name in the pack, listed
+    /// or not, and never the ordinary loot deposit.
     ///
     /// `None` is the fall-through: not a box row, or a strip this step already
     /// settled. The listed names outlive the step — they are the restore's own
@@ -1131,16 +1210,13 @@ impl ClueRuntime {
             }
             self.list(&worn);
             self.strip = Some(state);
-            return Some(wear_verb(worn.name, self.token));
+            return Some(unequip_verb(worn.name, self.token));
         }
-        // The deposit pass: a listed name this call's posted pack page still
-        // holds goes to the bank, one per call.
-        if let Some(name) = self
-            .stripped
-            .iter()
-            .find(|name| pack_holds_name(input, name))
-            .cloned()
-        {
+        // The deposit pass: a posted pack row the frozen matcher folds goes to
+        // the bank, one per call and whatever put it there — the unequip above,
+        // a dagger id that is never listed, or a restricted item the player was
+        // carrying rather than wearing.
+        if let Some(name) = pick_pack_restricted(input) {
             if let Some(step) = self.bank_approach(&mut state.bank, input) {
                 self.strip = Some(state);
                 return Some(step);
@@ -1236,8 +1312,9 @@ impl ClueRuntime {
 
     /// The frozen `retry`'s own clear, and only it: the abandon latch. The live
     /// token is not aborted, `strippedGear` is not cleared, and no other latch
-    /// exists yet. Distinct from `on_reset`, which is the generation reset and
-    /// kills the token.
+    /// exists yet. Distinct from `on_reset`, the connection boundary that kills
+    /// the token and keeps this list, and from `on_stop`, the fresh instance
+    /// that clears the list too.
     fn retry(&mut self) -> Value {
         self.abandoned = None;
         json!({ "kind": "retry", "token": self.token })
@@ -1350,7 +1427,7 @@ impl ClueRuntime {
             // identify, so a latched session never loots and never re-arms.
             // The Entrana restore, when names are still listed, is the arm that
             // exit takes first — and the only one that reads this call's pages.
-            return self.finish(input);
+            return self.finish(selected, input);
         }
         // One identify per call, and the same landed `identify_step` the
         // machine always made: membership is never re-derived here. The first
@@ -1491,7 +1568,7 @@ impl ClueRuntime {
             // is the machine's own completion, never a second warning and
             // never the landed `none-held` abort. The Entrana restore, when
             // names are listed, is that exit's own first arm.
-            return self.finish(input);
+            return self.finish(selected, input);
         }
         if let Some(take) = self.settled_take(input) {
             return json!({
@@ -1514,10 +1591,10 @@ impl ClueRuntime {
         let Some(here) = input.get("here").and_then(posted_tile) else {
             // No posted tile: no ground row can be claimed as same-tile, so
             // this call has nothing to close and nothing to take.
-            return self.empty(input);
+            return self.empty(selected, input);
         };
         let Some(drop) = pick_ground(input, here, &self.discarded) else {
-            return self.empty(input);
+            return self.empty(selected, input);
         };
         // The pack's own numbers: occupied positive-count rows against the
         // posted slot count. A page that posted no `inv_size` has not said how
@@ -1557,9 +1634,9 @@ impl ClueRuntime {
     /// window — and after it the collect is over: the exit is the machine's own
     /// three-step completion, never the landed `none-held` abort, and the
     /// Entrana restore is that exit's own first arm.
-    fn empty(&mut self, input: &Value) -> Value {
+    fn empty(&mut self, selected: Option<&SelectedGameData>, input: &Value) -> Value {
         if self.clock.bound_reached() {
-            return self.finish(input);
+            return self.finish(selected, input);
         }
         self.emit("wait")
     }
@@ -3767,6 +3844,73 @@ fn pick_worn(input: &Value) -> Option<Worn<'_>> {
         })
 }
 
+/// The first posted pack row whose display name the frozen matcher folds: the
+/// strip's deposit candidate, listed or not. The row is the frozen
+/// `depositAllMatching`'s own read of the pack — a positive count and the
+/// display name — and nothing about which pass put it there is consulted, so
+/// an unequipped helm, a dagger id that is never listed and a restricted item
+/// the player was carrying are all the same candidate.
+fn pick_pack_restricted(input: &Value) -> Option<String> {
+    input
+        .get("inv")
+        .and_then(Value::as_array)?
+        .iter()
+        .find_map(|row| {
+            let name = row.get("name").and_then(Value::as_str)?;
+            let count = posted_i32(row, "count")?;
+            (count > 0 && entrana_restricted_gear(name)).then(|| name.to_string())
+        })
+}
+
+/// The frozen make-room deposit's own row pick over this call's posted pack
+/// page: the first row with a posted non-zero count, a posted name and a posted
+/// id the selected trail facts do not name, that is not one of the restore's
+/// own listed names and not a row this attempt has already tried.
+///
+/// The identity the frozen predicate protects is `CLUE_DB[id]` and
+/// `CASKET_IDS[id]`: the selected `trails` facts are this revision's own answer
+/// to both — the membership rows are the clue scrolls, the caskets and the
+/// probes, and the `challenge_answers` rows are the challenge scrolls — so a
+/// clue the trail still owns is never banked here. A row the page posted no id
+/// for is not a row this deposit can identify, and it is skipped rather than
+/// banked blind. No selected data at all is the same refusal: this machine
+/// makes no room it cannot check.
+fn make_room_row(
+    selected: Option<&SelectedGameData>,
+    input: &Value,
+    listed: &[String],
+    tried: &[String],
+) -> Option<String> {
+    let facts = selected?.trails()?;
+    input
+        .get("inv")
+        .and_then(Value::as_array)?
+        .iter()
+        .find_map(|row| {
+            let name = row.get("name").and_then(Value::as_str)?;
+            let id = posted_i32(row, "id")?;
+            if posted_i32(row, "count")? <= 0 {
+                return None;
+            }
+            if listed
+                .iter()
+                .any(|listed| listed.eq_ignore_ascii_case(name))
+            {
+                return None;
+            }
+            if tried.iter().any(|tried| tried.eq_ignore_ascii_case(name)) {
+                return None;
+            }
+            if facts.rows.iter().any(|row| row.id == id) {
+                return None;
+            }
+            if facts.challenge_answers.iter().any(|row| row.id == id) {
+                return None;
+            }
+            Some(name.to_string())
+        })
+}
+
 /// Whether this call's posted pack page holds a row with this display name and
 /// a positive count: the observation the strip's deposit and the restore's
 /// claim both read. A page that posted no such row holds nothing.
@@ -3850,17 +3994,26 @@ fn bank_open(input: &Value) -> bool {
     input.get("bank_open").and_then(Value::as_bool) == Some(true)
 }
 
+/// The landed `unequip` step: the host's worn-row `Remove` by resolved display
+/// name, which is the only verb that can take a worn restricted row off. The
+/// landed `wear` resolves inventory rows alone, so it can put a name back on
+/// and can never take one off. No row id and no slot: the host resolves the
+/// name it is handed.
+fn unequip_verb(name: &str, token: u64) -> Value {
+    json!({ "kind": "unequip", "token": token, "name": name })
+}
+
 /// The landed `wear` step: the landed equip-from-pack verb the shim's own
-/// `Equipment.equip`/`unequip` pair queues, and the one the strip's unequip and
-/// the restore's wear-back both ride. No row id and no slot: the host resolves
-/// the name it is handed.
+/// `Equipment.equip` queues, and the one the restore's wear-back rides. No row
+/// id and no slot: the host resolves the name it is handed.
 fn wear_verb(name: &str, token: u64) -> Value {
     json!({ "kind": "wear", "token": token, "name": name })
 }
 
 /// The landed `deposit` step, one restricted name at a time: the frozen
 /// `Bank.depositAllMatching` cut to the regex-matching names this strip put in
-/// the pack, and never the ordinary loot deposit.
+/// the pack — and to any other regex-matching row the pack holds — and never
+/// the ordinary loot deposit.
 fn deposit_verb(name: &str, token: u64) -> Value {
     json!({ "kind": "deposit", "token": token, "name": name })
 }
@@ -3958,6 +4111,13 @@ struct Restore {
     /// landed is not claimed twice inside one attempt, and the next attempt
     /// starts with an empty list of them.
     tried: Vec<String>,
+    /// The pack row whose own make-room `deposit` went out on the previous call
+    /// and has not been observed to land.
+    room_sent: Option<String>,
+    /// The rows this attempt has already tried to bank to make room: a deposit
+    /// the page never showed landing is not sent twice inside one attempt, so a
+    /// bank that refuses them ends the attempt instead of repeating itself.
+    room_tried: Vec<String>,
 }
 
 /// Whether this call's posted pack page carries the Dig verb's item: a row
@@ -4812,15 +4972,26 @@ pub fn on_hold(held: bool) {
     });
 }
 
+/// The connection boundary — a reconnect, a relog, `reset_session_work` — and
+/// the token abort only: the live step and its token are dropped and nothing
+/// else is. The strip list and the abandon latch are the session's own and
+/// outlive it — the frozen `strippedGear` is what the reclaim owes after the
+/// gear is already banked, and losing it here would leave the armour in the
+/// bank with `ownsEquipment()` false, while the frozen `validate` keeps its
+/// leave-in-pack latch across a relog too. Operator Stop is
+/// [`on_stop`], not this.
 pub fn on_reset() {
+    RUNTIME.with(|rt| rt.borrow_mut().abort());
+}
+
+/// Operator Stop, and the fresh task instance a later Start builds: the whole
+/// session starts over, so the strip list and the abandon latch go with the
+/// step. A Load isolate reaches this by dying with its own thread — its
+/// `RUNTIME` is thread-local — and the compiled slot reaches it through the
+/// pump's owed Stop.
+pub fn on_stop() {
     RUNTIME.with(|rt| {
         let mut rt = rt.borrow_mut();
-        // The generation reset is the fresh task instance Stop/Start builds in
-        // the frozen bot, so the strip list and the abandon latch start over
-        // with it. A terminal kind — `dead`, `guardian-lost`, `done`, a refused
-        // begin — is not a reset and keeps both: the list still answers
-        // `ownsEquipment` for a dead token, and the latch still refuses the row
-        // it left in the pack.
         rt.stripped.clear();
         rt.abandoned = None;
         rt.abort();
@@ -4980,6 +5151,29 @@ mod tests {
     /// One wrapper-marshalled posted pack row.
     fn inv(id: i32, name: &str, count: i32) -> Value {
         json!({ "id": id, "name": name, "count": count })
+    }
+
+    /// A full pack page: the posted `inv_size` rows, none of them a listed name
+    /// and none a selected trail item, so the frozen make-room deposit takes
+    /// them. The first row is the one a fresh attempt's first deposit names.
+    fn full_pack() -> Value {
+        Value::Array(
+            (0..28)
+                .map(|slot| {
+                    let name = if slot == 0 {
+                        "Big bones".to_string()
+                    } else {
+                        format!("Loot {slot}")
+                    };
+                    inv(526 + slot, &name, 1)
+                })
+                .collect(),
+        )
+    }
+
+    /// That page with its first row gone: the make-room deposit landed.
+    fn full_minus_one() -> Value {
+        Value::Array(full_pack().as_array().expect("rows")[1..].to_vec())
     }
 
     /// The tile the casket's overflow lands on, as the wrapper posts it.
@@ -11970,9 +12164,11 @@ mod tests {
     }
 
     /// The strip's unequip pass: the posted worn rows the frozen matcher folds
-    /// go out as the landed `wear` verb, one per call, the two hard-trail
-    /// dagger ids are unequipped but never listed, and the rows the matcher lets
-    /// through are never a verb at all.
+    /// go out as the landed `unequip` verb — the worn row's own `Remove`, which
+    /// the host's `wear` cannot do — one per call, the two hard-trail dagger
+    /// ids are unequipped but never listed, and the rows the matcher lets
+    /// through are never a verb at all. The deposit pass that follows takes
+    /// every regex-matching pack row, listed or not.
     #[test]
     fn the_strip_unequips_the_folded_names_and_never_lists_the_dds() {
         on_reset();
@@ -11988,7 +12184,7 @@ mod tests {
             worn(3791, "Leather boots", 10),
         ]);
         let dagger = call(&data, token, page.clone(), json!({ "equipment": posted }));
-        assert_eq!(dagger["kind"], "wear", "{dagger}");
+        assert_eq!(dagger["kind"], "unequip", "{dagger}");
         assert_eq!(dagger["name"], "Dragon dagger(p)", "{dagger}");
         assert_eq!(dagger["token"], token, "{dagger}");
         assert!(
@@ -12005,16 +12201,89 @@ mod tests {
             worn(3791, "Leather boots", 10),
         ]);
         let helm = call(&data, token, page.clone(), json!({ "equipment": left }));
-        assert_eq!(helm["kind"], "wear", "{helm}");
+        assert_eq!(helm["kind"], "unequip", "{helm}");
         assert_eq!(helm["name"], "Rune full helm", "{helm}");
         assert_eq!(stripped(), vec!["Rune full helm".to_string()]);
-        // Nothing left to strip and nothing in the pack: the strip settles with
-        // no booth and no bank, and the row's own search arm waits on the
-        // decoded tile with no locs posted.
+        // Both landed in the pack. The deposit pass is the matcher over the
+        // posted pack page and never the listed names: the dagger id that was
+        // never listed is first, because it is first in posted order — and it
+        // is still not listed after it is deposited.
         let worn_free = json!([
             worn(1704, "Amulet of glory", 2),
             worn(3791, "Leather boots", 10),
         ]);
+        let both = json!([
+            inv(DDS_POISONED, "Dragon dagger(p)", 1),
+            inv(HELM, "Rune full helm", 1),
+        ]);
+        let bank_ready = json!({
+            "equipment": worn_free,
+            "inv": both,
+            "here": here(2810, 3350, 0),
+            "nearest_booth": booth_page(),
+        });
+        let walked = call(&data, token, page.clone(), bank_ready.clone());
+        assert_eq!(walked["kind"], "walk-nearest-bank", "{walked}");
+        let opened = call(&data, token, page.clone(), bank_ready.clone());
+        assert_eq!(opened["kind"], "open-booth", "{opened}");
+        let banked = call(
+            &data,
+            token,
+            page.clone(),
+            json!({ "equipment": worn_free, "inv": both, "bank_open": true }),
+        );
+        assert_eq!(banked["kind"], "deposit", "{banked}");
+        assert_eq!(
+            banked["name"], "Dragon dagger(p)",
+            "the pack's own regex match is the candidate, listed or not: {banked}"
+        );
+        assert_eq!(
+            stripped(),
+            vec!["Rune full helm".to_string()],
+            "and the dagger stays off the list"
+        );
+        // The helm's own deposit follows in posted order.
+        let helm_pack = json!([inv(HELM, "Rune full helm", 1)]);
+        let banked = call(
+            &data,
+            token,
+            page.clone(),
+            json!({ "equipment": worn_free, "inv": helm_pack, "bank_open": true }),
+        );
+        assert_eq!(banked["kind"], "deposit", "{banked}");
+        assert_eq!(banked["name"], "Rune full helm", "{banked}");
+        // A restricted name the player carried and never wore is the same
+        // candidate: the predicate is the matcher over the pack page, so a
+        // spare weapon that was never on the worn page is banked too — and it
+        // is not listed either, because the list is the worn rows'.
+        let carried = json!([inv(1181, "Rune platebody", 1)]);
+        let banked = call(
+            &data,
+            token,
+            page.clone(),
+            json!({ "equipment": worn_free, "inv": carried, "bank_open": true }),
+        );
+        assert_eq!(banked["kind"], "deposit", "{banked}");
+        assert_eq!(banked["name"], "Rune platebody", "{banked}");
+        assert_eq!(
+            stripped(),
+            vec!["Rune full helm".to_string()],
+            "a carried name is deposited but never listed"
+        );
+        assert!(owns());
+        // Nothing restricted left in the pack: the interface closes and the
+        // row's own search arm waits on the decoded tile with no locs posted.
+        let settled = call(
+            &data,
+            token,
+            page.clone(),
+            json!({
+                "equipment": worn_free,
+                "here": here(ENTRANA_X, ENTRANA_Z, 0),
+                "bank_open": true,
+            }),
+        );
+        assert_eq!(settled["kind"], "close", "{settled}");
         let settled = call(
             &data,
             token,
@@ -12048,7 +12317,7 @@ mod tests {
             page.clone(),
             json!({ "equipment": json!([worn(HELM, "Rune full helm", 0)]) }),
         );
-        assert_eq!(helm["kind"], "wear", "{helm}");
+        assert_eq!(helm["kind"], "unequip", "{helm}");
         assert_eq!(stripped(), vec!["Rune full helm".to_string()]);
         // The unequip landed: the worn page is empty and the pack holds it.
         let pack = json!([inv(HELM, "Rune full helm", 1)]);
@@ -12121,7 +12390,7 @@ mod tests {
             page,
             json!({ "equipment": json!([worn(HELM, "Rune full helm", 0)]) }),
         );
-        assert_eq!(helm["kind"], "wear", "{helm}");
+        assert_eq!(helm["kind"], "unequip", "{helm}");
         assert_eq!(stripped(), vec!["Rune full helm".to_string()]);
         assert!(owns());
         // The casket collect runs to its own bound with the name still listed.
@@ -12179,7 +12448,7 @@ mod tests {
             page,
             json!({ "equipment": json!([worn(HELM, "Rune full helm", 0)]) }),
         );
-        assert_eq!(helm["kind"], "wear", "{helm}");
+        assert_eq!(helm["kind"], "unequip", "{helm}");
         assert_eq!(stripped(), vec!["Rune full helm".to_string()]);
         // The collect ends with nothing in the pack: the walk to the stand.
         let casket = casket_of(&data, CLUE);
@@ -12285,7 +12554,7 @@ mod tests {
             page,
             json!({ "equipment": json!([worn(HELM, "Rune full helm", 0)]) }),
         );
-        assert_eq!(helm["kind"], "wear", "{helm}");
+        assert_eq!(helm["kind"], "unequip", "{helm}");
         let casket = casket_of(&data, CLUE);
         let token = opened(&data, casket);
         let scene = pages(json!([]), json!([]), json!(28), json!(-1));
@@ -12379,7 +12648,7 @@ mod tests {
             page.clone(),
             json!({ "equipment": json!([worn(HELM, "Rune full helm", 0)]) }),
         );
-        assert_eq!(helm["kind"], "wear", "{helm}");
+        assert_eq!(helm["kind"], "unequip", "{helm}");
         assert!(owns());
         let retried = dispatch(Some(&data), &json!({ "op": "retry" }));
         assert_eq!(retried["kind"], "retry", "{retried}");
@@ -12399,41 +12668,164 @@ mod tests {
         on_reset();
     }
 
-    /// The abandon latch: an `abandon` this machine emits latches the identified
-    /// row, a begin on that same row is refused `abandoned` with no token, a
-    /// different held row clears it, and `retry` clears it too.
+    /// A connection boundary keeps the session's own strip list: `on_reset`
+    /// drops the live step and its token and nothing else, so the reclaim the
+    /// strip already owes survives a relog and `ownsEquipment` still reads
+    /// true. The fresh instance `on_stop` is what clears it.
     #[test]
-    fn the_abandon_latch_refuses_the_same_row_until_retry_or_a_different_one() {
+    fn a_connection_boundary_keeps_the_stripped_list_and_a_stop_clears_it() {
         on_reset();
         let data = selected();
         let page = json!([[ENTRANA, 1]]);
-        let token = token_of(&begin(&data, page.clone()));
-        // The machine's own terminal: no production trigger exists this slice,
-        // so the seat is the latch's own write.
-        let left = dispatch(Some(&data), &json!({ "op": "abandon" }));
-        assert_eq!(left["kind"], "abandon", "{left}");
-        assert_ne!(
-            left["token"], token,
-            "the terminal aborts the token it ends, the way `done` does: {left}"
+        let token = steady(&data, ENTRANA);
+        let helm = call(
+            &data,
+            token,
+            page.clone(),
+            json!({ "equipment": json!([worn(HELM, "Rune full helm", 0)]) }),
         );
-        // The same row, still held: refused, and no token is handed out.
-        let refused = begin(&data, page.clone());
-        assert_eq!(refused["kind"], "aborted", "{refused}");
-        assert_eq!(refused["reason"], "abandoned", "{refused}");
-        // `retry` clears the latch: the same row begins again.
-        let retried = dispatch(Some(&data), &json!({ "op": "retry" }));
-        assert_eq!(retried["kind"], "retry", "{retried}");
-        let again = begin(&data, page.clone());
-        assert_eq!(again["kind"], "token", "{again}");
-        // A different held row clears it on the way past.
-        RUNTIME.with(|rt| rt.borrow_mut().abandoned());
-        let other = begin(&data, json!([[SEARCH, 1]]));
-        assert_eq!(other["kind"], "token", "{other}");
-        let back = begin(&data, page);
+        assert_eq!(helm["kind"], "unequip", "{helm}");
+        assert_eq!(stripped(), vec!["Rune full helm".to_string()]);
+        assert!(owns());
+        // The connection boundary: the live step and its token are gone.
+        on_reset();
         assert_eq!(
-            back["kind"], "token",
-            "the different row cleared the latch: {back}"
+            dispatch(Some(&data), &json!({ "op": "next", "token": token }))["kind"],
+            "aborted",
+            "the boundary kills the live token"
         );
+        assert_eq!(
+            stripped(),
+            vec!["Rune full helm".to_string()],
+            "the list the reclaim still owes outlives it"
+        );
+        assert!(owns(), "and the adapter still reads it");
+        // A fresh session on the live machine still owes that reclaim: a begin
+        // on the casket row reaches the collect, and its exit walks to the bank
+        // for the name the earlier session banked, because the list outlived
+        // the boundary.
+        let casket = casket_of(&data, CLUE);
+        let again = opened(&data, casket);
+        let quiet = pages(json!([]), json!([]), json!(28), json!(-1));
+        let _ = call(&data, again, json!([]), quiet.clone());
+        force_bound();
+        let walk = call(&data, again, json!([]), quiet);
+        assert_eq!(walk["kind"], "walk-nearest-bank", "{walk}");
+        // The fresh task instance clears the list with the step.
+        on_stop();
+        assert!(
+            stripped().is_empty(),
+            "Stop starts the session over: {:?}",
+            stripped()
+        );
+        assert!(!owns(), "and the adapter reads an empty list");
+        on_reset();
+    }
+
+    /// The restore's make-room deposit: a full pack at the trail's end banks
+    /// what the frozen predicate takes before the claim goes out, so the
+    /// withdrawn name has a slot to land in — and a bank that never lands the
+    /// deposit does not spin the same verb.
+    #[test]
+    fn a_full_pack_is_made_room_for_before_the_reclaim_claim() {
+        on_reset();
+        let data = selected();
+        let page = json!([[ENTRANA, 1]]);
+        let token = steady(&data, ENTRANA);
+        let helm = call(
+            &data,
+            token,
+            page.clone(),
+            json!({ "equipment": json!([worn(HELM, "Rune full helm", 0)]) }),
+        );
+        assert_eq!(helm["kind"], "unequip", "{helm}");
+        // The strip banks the helm, so the reclaim has to fetch it back.
+        let banked = json!({
+            "equipment": json!([]),
+            "inv": json!([inv(HELM, "Rune full helm", 1)]),
+            "here": here(2810, 3350, 0),
+            "nearest_booth": booth_page(),
+            "bank_open": true,
+        });
+        let _ = call(&data, token, page.clone(), banked.clone());
+        let deposited = call(&data, token, page.clone(), banked.clone());
+        assert_eq!(deposited["kind"], "deposit", "{deposited}");
+        let _ = call(
+            &data,
+            token,
+            page.clone(),
+            json!({ "inv": json!([]), "bank_open": true, "nearest_booth": booth_page() }),
+        );
+        // The collect runs to its bound with the pack full of loot: 28 posted
+        // rows and no room for the helm.
+        let casket = casket_of(&data, CLUE);
+        let token = opened(&data, casket);
+        let full = full_pack();
+        let scene = json!({
+            "here": loot_tile(),
+            "ground": json!([]),
+            "inv": full,
+            "inv_size": 28,
+            "main_modal_id": -1,
+            "equipment": json!([]),
+        });
+        let _ = call(&data, token, json!([]), scene.clone());
+        force_bound();
+        // The bank trip first, then the make-room deposit, and only then the
+        // claim: the frozen `restoreStrippedGear` order.
+        let open = json!({
+            "here": here(2810, 3350, 0),
+            "ground": json!([]),
+            "inv": full,
+            "inv_size": 28,
+            "main_modal_id": -1,
+            "equipment": json!([]),
+            "nearest_booth": booth_page(),
+            "bank_open": true,
+        });
+        let room = call(&data, token, json!([]), open.clone());
+        assert_eq!(room["kind"], "deposit", "{room}");
+        assert_eq!(
+            room["name"], "Big bones",
+            "a non-want row the trail facts do not name is banked to make room: {room}"
+        );
+        assert_no_completion(&room);
+        // It landed: one slot free and the claim goes out.
+        let freed = json!({
+            "here": here(2810, 3350, 0),
+            "ground": json!([]),
+            "inv": full_minus_one(),
+            "inv_size": 28,
+            "main_modal_id": -1,
+            "equipment": json!([]),
+            "nearest_booth": booth_page(),
+            "bank_open": true,
+        });
+        let claimed = call(&data, token, json!([]), freed.clone());
+        assert_eq!(claimed["kind"], "withdraw", "{claimed}");
+        assert_eq!(claimed["name"], "Rune full helm", "{claimed}");
+        assert_eq!(claimed["action"], "Withdraw-1", "{claimed}");
+        // The claim did not land inside one more call: `tried` ends the deposit
+        // pass, the interface closes, and what is still missing is the named
+        // log — the list keeps it, so the latch stays blocked. No second
+        // deposit of the same row and no unbounded loop.
+        let stuck = call(&data, token, json!([]), freed.clone());
+        assert_eq!(stuck["kind"], "close", "{stuck}");
+        let down = json!({
+            "here": here(2810, 3350, 0),
+            "ground": json!([]),
+            "inv": full_minus_one(),
+            "inv_size": 28,
+            "main_modal_id": -1,
+            "equipment": json!([]),
+            "nearest_booth": booth_page(),
+            "bank_open": false,
+        });
+        let incomplete = call(&data, token, json!([]), down);
+        assert_eq!(incomplete["kind"], "callback.log", "{incomplete}");
+        let message = incomplete["message"].as_str().unwrap_or("");
+        assert!(message.contains("restore-incomplete"), "{incomplete}");
+        assert_eq!(stripped(), vec!["Rune full helm".to_string()]);
         on_reset();
     }
 }
