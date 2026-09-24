@@ -720,6 +720,14 @@ fn resolve_setting_ident(file_src: &str, ident: &str) -> Option<String> {
     if ident == "PERIODIC_BANK_SETTINGS" {
         return setting_object_body(include_str!("shim/banking.js"), "PERIODIC_BANK_SETTINGS");
     }
+    // Frozen `src/bot/api/combat/rangedSettings.ts:3-6`: the imported
+    // static settings spread is shared with the shim's name map.
+    if ident == "CUSTOM_RANGED_SETTINGS" {
+        return setting_object_body(
+            include_str!("shim/ranged_settings.js"),
+            "CUSTOM_RANGED_SETTINGS",
+        );
+    }
     setting_object_body(file_src, ident)
 }
 
@@ -1579,13 +1587,19 @@ fn parse_setting_def(
     file_src: &str,
     sources: Option<&HashMap<String, String>>,
 ) -> SettingDef {
-    let options = scan_key_options(obj, "options", file_src, sources);
-    let item_option_spec = if options.is_empty() {
+    let mixed = revision_fact_spread_options(obj);
+    let options = mixed
+        .as_ref()
+        .map(|(_, v)| v.clone())
+        .unwrap_or_else(|| scan_key_options(obj, "options", file_src, sources));
+    let item_option_spec = if options.is_empty() && mixed.is_none() {
         scan_item_option_spec(obj, file_src)
     } else {
         None
     };
-    let options_from = scan_key_quoted(obj, "optionsFrom")
+    let options_from = mixed
+        .map(|(from, _)| from)
+        .or_else(|| scan_key_quoted(obj, "optionsFrom"))
         .or_else(|| scan_key_ident(obj, "optionsFrom"))
         .or_else(|| inferred_options_from(obj, &options, item_option_spec.as_ref()));
     SettingDef {
@@ -1654,6 +1668,39 @@ fn scan_key_literal(block: &str, key: &str, file_src: Option<&str>) -> Option<St
 
 fn scan_key_number(block: &str, key: &str) -> Option<String> {
     scan_key_literal(block, key, None)
+}
+
+/// Frozen `FireGiant.ts:78-81` and the other ranged cards combine selected
+/// equipment families with a literal `Other`. Keep source order and fail
+/// closed on an unknown spread rather than publishing only the literal tail.
+fn revision_fact_spread_options(obj: &str) -> Option<(String, Vec<String>)> {
+    let raw = scan_key_raw_value(obj, "options")?;
+    let inner = raw.strip_prefix('[')?.strip_suffix(']')?;
+    if !inner.contains("...") {
+        return None;
+    }
+    let mut families = Vec::new();
+    let mut literals = Vec::new();
+    for item in inner.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+        if let Some(ident) = item.strip_prefix("...") {
+            w1c_equipment_option_families(ident)?;
+            families.push(ident);
+            if !literals.is_empty() {
+                return None;
+            }
+        } else if let Some((value, n)) = scan_quoted(item) {
+            if n != item.len() {
+                return None;
+            }
+            literals.push(value);
+        } else {
+            return None;
+        }
+    }
+    if families.is_empty() {
+        return None;
+    }
+    Some((families.join(","), literals))
 }
 
 fn inferred_options_from(
@@ -2950,12 +2997,18 @@ ScriptRegistry.register({ name: 'ShopBuyout', settingsSchema: SETTINGS, create: 
             staff.options
         );
         assert_eq!(staff.options_from.as_deref(), Some("STAFFS"));
-        assert!(
-            bow.options.is_empty(),
-            "parse-time BOWS must stay empty: {:?}",
-            bow.options
-        );
-        assert_eq!(bow.options_from.as_deref(), Some("BOWS"));
+        assert_eq!(bow.options, vec!["Other"]);
+        assert_eq!(bow.options_from.as_deref(), Some("RANGED_WEAPONS"));
+        let ammo = setting(&fire.settings_schema, "ammo");
+        assert_eq!(ammo.options.last().map(String::as_str), Some("Other"));
+        for (id, parent) in [("customBow", "bow"), ("customAmmo", "ammo")] {
+            let custom = setting(&fire.settings_schema, id);
+            assert_eq!(custom.default.as_deref(), Some(""));
+            assert!(custom
+                .show_if
+                .as_deref()
+                .is_some_and(|v| v.contains(&format!("key: '{parent}'")) && v.contains("'Other'")));
+        }
 
         let store = LoadoutsStore::at(std::env::temp_dir().join("274bot-w1c-firegiant-resolve"));
         let r274 = api::game_data::for_revision(ClientRevision::R274).unwrap();
@@ -2973,11 +3026,44 @@ ScriptRegistry.register({ name: 'ShopBuyout', settingsSchema: SETTINGS, create: 
         let bow_274 = resolve_setting_options_with_labels(bow, &store, Some(r274.as_ref()));
         let bow_289 = resolve_setting_options_with_labels(bow, &store, Some(r289.as_ref()));
         assert_eq!(bow_274, bow_289);
-        assert_eq!(bow_274.values.len(), 12);
+        assert_eq!(bow_274.values.len(), 20, "12 bows + 7 darts + Other");
         assert_eq!(bow_274.values[0], "Shortbow");
         assert!(bow_274.values.contains(&"Maple shortbow".to_string()));
+        assert_eq!(bow_274.values[12], "Bronze dart");
+        assert_eq!(bow_274.values.last().map(String::as_str), Some("Other"));
         assert_eq!(bow_274.label_for("Maple shortbow"), "Maple shortbow");
         assert_eq!(bow_274.values.len(), bow_274.labels.len());
+        for (card_name, family_count) in [
+            ("MossGiant", 19),
+            ("RockCrab", 19),
+            ("BrimhavenMossGiants", 20),
+        ] {
+            let card = cards
+                .iter()
+                .find(|c| c.name == card_name)
+                .unwrap_or_else(|| panic!("missing frozen {card_name}"));
+            let bow = setting(&card.settings_schema, "bow");
+            let resolved = resolve_setting_options_with_labels(bow, &store, Some(r289.as_ref()));
+            assert_eq!(
+                resolved.values.len(),
+                family_count + 1,
+                "{card_name} ranged choices"
+            );
+            assert_eq!(resolved.values.last().map(String::as_str), Some("Other"));
+            let ammo = setting(&card.settings_schema, "ammo");
+            let resolved_ammo =
+                resolve_setting_options_with_labels(ammo, &store, Some(r289.as_ref()));
+            assert_eq!(
+                resolved_ammo.values.last().map(String::as_str),
+                Some("Other")
+            );
+            for id in ["customBow", "customAmmo"] {
+                assert!(
+                    card.settings_schema.iter().any(|def| def.id == id),
+                    "{card_name} missing {id}"
+                );
+            }
+        }
 
         eprintln!(
             "frozen FireGiant pin={FROZEN_PIN} settings={FROZEN_SETTINGS} staff={} bow={}",
