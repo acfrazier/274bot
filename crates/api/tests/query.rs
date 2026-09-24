@@ -17,7 +17,6 @@ use client::dash3d::CollisionFlag;
 use client::io::ServerProt;
 use std::sync::Arc;
 
-
 fn fixture_item(id: i32, count: i32) -> ItemView {
     ItemView {
         def: ItemDefView {
@@ -1469,39 +1468,6 @@ fn pack_reach_query_step_masks_match_can_step() {
 }
 
 #[test]
-fn tile_distance_to_matches_frozen_tile_rules() {
-    let a = WorldTile {
-        x: 3208,
-        z: 3212,
-        level: 0,
-    };
-    let same = WorldTile {
-        x: 3211,
-        z: 3215,
-        level: 0,
-    };
-    assert_eq!(tile_distance_to(a, same), 3);
-    let cross = WorldTile {
-        x: 3211,
-        z: 3215,
-        level: 1,
-    };
-    assert_eq!(tile_distance_to(a, cross), 1_000_003);
-    let extreme = WorldTile {
-        x: i32::MIN,
-        z: i32::MAX,
-        level: 0,
-    };
-    let other = WorldTile {
-        x: i32::MAX,
-        z: i32::MIN,
-        level: 3,
-    };
-    let planar = i64::from(i32::MAX) - i64::from(i32::MIN);
-    assert_eq!(tile_distance_to(extreme, other), 1_000_000 + planar);
-}
-
-#[test]
 fn reach_pack_cache_invalidates_on_generation_change_only() {
     let mut scene = open_scene();
     scene.collision_flags[5 * 104 + 6] = CollisionFlag::SQ_BLOCKED;
@@ -1532,11 +1498,12 @@ fn reach_pack_cache_invalidates_on_generation_change_only() {
     assert_eq!(first.height, 104);
     assert!(!first.walkable.is_empty());
     assert!(!first.step.is_empty());
-    let second = cache
-        .pack(key, &scene, None, None)
-        .as_ref()
-        .clone();
-    assert_eq!(cache.static_rebuilds(), 1, "same key must not rebuild statics");
+    let second = cache.pack(key, &scene, None, None).as_ref().clone();
+    assert_eq!(
+        cache.static_rebuilds(),
+        1,
+        "same key must not rebuild statics"
+    );
     assert_eq!(cache.flood_packs(), 1, "same key must not repack flood");
     assert_eq!(first, second);
     assert_eq!(first.walkable, second.walkable);
@@ -1561,7 +1528,11 @@ fn reach_pack_cache_invalidates_on_generation_change_only() {
         1,
         "player move must reuse walkable/step"
     );
-    assert_eq!(cache.flood_packs(), 2, "player move must repack flood ranks");
+    assert_eq!(
+        cache.flood_packs(),
+        2,
+        "player move must repack flood ranks"
+    );
     assert_eq!(
         overlay.walkable, first.walkable,
         "player move must keep walkable bits"
@@ -1578,12 +1549,7 @@ fn reach_pack_cache_invalidates_on_generation_change_only() {
         .flood_reach()
         .expect("dirty flood");
     let dirty = cache
-        .pack(
-            dirty_key,
-            &scene,
-            Some(Arc::new(dirty_flood.clone())),
-            None,
-        )
+        .pack(dirty_key, &scene, Some(Arc::new(dirty_flood.clone())), None)
         .as_ref()
         .clone();
     assert_eq!(
@@ -1612,7 +1578,6 @@ fn reach_pack_cache_invalidates_on_generation_change_only() {
 
 #[test]
 fn packed_reach_matches_scene_query_predicates_on_104_scene() {
-
     let mut scene = open_scene();
     scene.collision_flags[5 * 104 + 6] = CollisionFlag::SQ_BLOCKED;
     scene.collision_flags[10 * 104 + 10] = CollisionFlag::W_W;
@@ -1686,7 +1651,6 @@ fn packed_reach_matches_scene_query_predicates_on_104_scene() {
     };
     assert_eq!(sq.can_step(from, to), view.can_step(from, to));
 }
-
 
 #[test]
 fn loc_approach_operability() {

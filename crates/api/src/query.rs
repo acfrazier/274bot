@@ -147,20 +147,6 @@ pub fn chebyshev_to(a: WorldTile, b: WorldTile) -> i32 {
     }
 }
 
-/// Frozen `Tile.distanceTo`: Chebyshev on the plane, `1_000_000 + xz`
-/// across planes (`Tile.ts` in the frozen catalog). Computed in `i64` so
-/// any script-supplied `i32` tile cannot overflow.
-pub fn tile_distance_to(a: WorldTile, b: WorldTile) -> i64 {
-    let dx = i64::from(a.x) - i64::from(b.x);
-    let dz = i64::from(a.z) - i64::from(b.z);
-    let xz = dx.abs().max(dz.abs());
-    if a.level != b.level {
-        1_000_000 + xz
-    } else {
-        xz
-    }
-}
-
 // --- view accessors (the trait bounds the extension traits impl over) ----
 
 trait EntityQueryView {

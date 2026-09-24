@@ -169,6 +169,7 @@ export default class T extends LoopingBot {
             extreme: new Tile(-2147483648, 2147483647, 0).distanceTo(
                 new Tile(2147483647, -2147483648, 3),
             ),
+            nan: Number.isNaN(a.distanceTo(new Tile(NaN, 3215, 0))),
         };
     }
 }
@@ -182,6 +183,7 @@ export default class T extends LoopingBot {
     assert_eq!(value["cross"], 1_000_003);
     let planar = i64::from(i32::MAX) - i64::from(i32::MIN);
     assert_eq!(value["extreme"].as_f64(), Some((1_000_000 + planar) as f64));
+    assert_eq!(value["nan"], true);
     iso.join();
 }
 
@@ -330,7 +332,10 @@ export default class T extends LoopingBot {
     iso.on_game_tick(3);
     let replaced = iso.probe("__probe").unwrap();
     assert_eq!(replaced["open"], true);
-    assert_eq!(replaced["other"], false, "re-post must replace walkable bits");
+    assert_eq!(
+        replaced["other"], false,
+        "re-post must replace walkable bits"
+    );
     assert_eq!(replaced["step"], false, "re-post must replace step bytes");
     iso.join();
 }
@@ -377,4 +382,3 @@ export default class T extends LoopingBot {
     assert_eq!(value["tileFractional"], 0.25);
     iso.join();
 }
-

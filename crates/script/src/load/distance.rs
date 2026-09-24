@@ -6,7 +6,6 @@
 
 use rustyscript::Runtime;
 
-
 pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
     let context = runtime.deno_runtime().main_context();
     let mut scope = runtime.deno_runtime().handle_scope();
@@ -59,7 +58,13 @@ struct JsTile {
 }
 
 fn js_tile_distance(from: JsTile, to: JsTile) -> f64 {
-    let planar = (from.x - to.x).abs().max((from.z - to.z).abs());
+    let (dx, dz) = ((from.x - to.x).abs(), (from.z - to.z).abs());
+    // `Math.max` propagates NaN; `f64::max` would drop it.
+    let planar = if dx.is_nan() || dz.is_nan() {
+        f64::NAN
+    } else {
+        dx.max(dz)
+    };
     if from.level != to.level {
         1_000_000.0 + planar
     } else {
@@ -122,8 +127,7 @@ fn required_number(
             "invalid tile distance: {side}.{field} must be a number"
         ));
     }
-    value.number_value(scope).ok_or_else(|| {
-        format!("invalid tile distance: {side}.{field} must be a number")
-    })
+    value
+        .number_value(scope)
+        .ok_or_else(|| format!("invalid tile distance: {side}.{field} must be a number"))
 }
-
