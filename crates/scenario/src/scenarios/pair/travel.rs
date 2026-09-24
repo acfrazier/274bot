@@ -18,7 +18,7 @@ const TRANSPORT_QUEST_SETVARS: &[&str] = &[
 /// Live nav kit. Mainland hop, stick `tutorial=1000`, quest `setvar`s,
 /// clean Relog (side tab 3 bound), then rs2b0t `seedTeleKit`: knife, coins,
 /// runes, charged jewellery. Auto-run is host bothost.
-pub(super) fn nav_kit_steps() -> Vec<Step> {
+pub(crate) fn nav_kit_steps() -> Vec<Step> {
     vec![
         Step {
             name: "stick tutorial skip",
@@ -153,7 +153,7 @@ fn seed_give(
     }
 }
 
-pub(super) fn tele_step(note: &'static str, tile: WorldTile) -> Step {
+pub(crate) fn tele_step(note: &'static str, tile: WorldTile) -> Step {
     Step {
         name: note,
         kind: StepKind::Perform {
@@ -170,7 +170,7 @@ pub(super) fn tele_step(note: &'static str, tile: WorldTile) -> Step {
     }
 }
 
-pub(super) fn follow_step(note: &'static str, dest: WorldTile) -> Step {
+pub(crate) fn follow_step(note: &'static str, dest: WorldTile) -> Step {
     let arm = if glider_landing(dest) {
         // `map_findsquare($dest, 0, 1, lineofwalk)` — live Kar-Hewo
         // landed (3285,3211) for packed (3284,3211).
