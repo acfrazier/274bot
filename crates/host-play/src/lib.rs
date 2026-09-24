@@ -1223,9 +1223,9 @@ impl ScriptStartHandle {
         result
     }
 
-    /// How `name`'s latest Start settled (see [`Play::script_take_start_outcome`]).
-    pub fn take_start_outcome(&self, name: &str) -> Option<script::StartOutcome> {
-        take_start_outcome(&self.scripts, name)
+    /// `name`'s latest Start, read atomically (see [`Play::script_poll_start`]).
+    pub fn poll_start(&self, name: &str) -> script::StartPoll {
+        poll_start(&self.scripts, name)
     }
 }
 
@@ -1702,12 +1702,14 @@ impl Play {
         }
     }
 
-    /// How `name`'s latest operator Load Start settled, once it has: Start
-    /// returns before V8 setup, so the assignment and the load diagnostic
-    /// are committed from this, not from Start's `Ok`. `None` while setup
-    /// runs or when nothing is owed.
-    pub fn script_take_start_outcome(&self, name: &str) -> Option<script::StartOutcome> {
-        take_start_outcome(&self.scripts, name)
+    /// `name`'s latest operator Load Start: Start returns before V8 setup,
+    /// so the assignment and the load diagnostic are committed from the
+    /// settled outcome, not from Start's `Ok`. The lifecycle observe, the
+    /// outcome take and the in-flight check happen under one slot lock, so
+    /// the slot thread's own observe can never settle it unseen between
+    /// them. A removed slot owes nothing.
+    pub fn script_poll_start(&self, name: &str) -> script::StartPoll {
+        poll_start(&self.scripts, name)
     }
 
     #[cfg(feature = "memory-profile")]

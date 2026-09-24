@@ -9,6 +9,16 @@ use script::{LoadIsolate, LoadShape, SlotScript, WatchdogAction, WatchdogState};
 
 mod common;
 
+/// Pump the slot's lifecycle observe until it reaches `want` (bounded).
+fn wait_slot_state(slot: &mut SlotScript, want: script::RunState) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while slot.state() != want && Instant::now() < deadline {
+        slot.observe_lifecycle();
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert_eq!(slot.state(), want, "last_error={:?}", slot.last_error());
+}
+
 fn post_snapshot_input(iso: &LoadIsolate, input: &SnapshotInput<'_>) {
     iso.post_snapshot(script::isolate_fb::encode_snapshot(input));
 }
@@ -386,6 +396,8 @@ fn slot_restart_preserves_source_settings_and_cooldown() {
         vec![("sib.js".into(), "export const x = 1;".into())],
     )
     .unwrap();
+    // Start returns before V8 setup; recover from a live slot.
+    wait_slot_state(&mut slot, script::RunState::Running);
     let before = slot.load_identity().unwrap().clone();
     assert_eq!(
         before
@@ -423,6 +435,9 @@ fn slot_restart_preserves_source_settings_and_cooldown() {
     assert_eq!(&*after.siblings, &*before.siblings);
     assert_eq!(after.settings_bag, before.settings_bag);
     assert!(slot.watchdog().last_recovery().is_some());
+    // The recreate follows the old isolate's reap; it runs the same identity.
+    wait_slot_state(&mut slot, script::RunState::Running);
+    assert_eq!(&*slot.load_identity().unwrap().source, &*before.source);
     let later = slot.feed_watchdog(
         t + script::watchdog::WEDGE + script::watchdog::WEDGE,
         Some((0, 0, 0)),

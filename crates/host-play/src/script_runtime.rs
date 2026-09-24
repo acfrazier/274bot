@@ -25,12 +25,13 @@ pub(super) fn script_slot_or_insert(wall: &ScriptWall, name: &str) -> ScriptSlot
         .clone()
 }
 
-/// Resolve `name`'s lifecycle, then take how its latest Start settled.
-pub(super) fn take_start_outcome(wall: &ScriptWall, name: &str) -> Option<script::StartOutcome> {
-    let slot = script_slot(wall, name)?;
-    let mut slot = slot.lock().unwrap();
-    slot.observe_lifecycle();
-    slot.take_start_outcome()
+/// Resolve `name`'s lifecycle and read its latest Start under one lock; a
+/// slot that no longer exists owes nothing.
+pub(super) fn poll_start(wall: &ScriptWall, name: &str) -> script::StartPoll {
+    match script_slot(wall, name) {
+        Some(slot) => slot.lock().unwrap().poll_start(),
+        None => script::StartPoll::NotOwed,
+    }
 }
 
 /// Test-only Start that waits (bounded) for the isolate to settle through
@@ -58,13 +59,17 @@ pub(super) trait SettledStart {
 fn settle_start(slot: &mut SlotScript) -> Result<(), String> {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
-        slot.observe_lifecycle();
-        match slot.take_start_outcome() {
-            Some(script::StartOutcome::Ready) => return Ok(()),
-            Some(script::StartOutcome::Failed(e)) => return Err(e),
-            Some(script::StartOutcome::Cancelled) => return Err("start cancelled".into()),
-            None if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(2)),
-            None => panic!("script setup did not settle: {:?}", slot.state()),
+        match slot.poll_start() {
+            script::StartPoll::Settled(script::StartOutcome::Ready) => return Ok(()),
+            script::StartPoll::Settled(script::StartOutcome::Failed(e)) => return Err(e),
+            script::StartPoll::Settled(script::StartOutcome::Cancelled) => {
+                return Err("start cancelled".into())
+            }
+            script::StartPoll::NotOwed => panic!("no Start is pending"),
+            script::StartPoll::Pending if Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(2))
+            }
+            script::StartPoll::Pending => panic!("script setup did not settle: {:?}", slot.state()),
         }
     }
 }

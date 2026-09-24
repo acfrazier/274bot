@@ -278,6 +278,19 @@ pub enum StartOutcome {
     Cancelled,
 }
 
+/// One atomic read of a pending operator Load Start ([`SlotScript::poll_start`]).
+#[cfg(feature = "load")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StartPoll {
+    /// Setup (or the reap a queued Start waits for) is still running.
+    Pending,
+    /// Settled since the last poll; returned exactly once.
+    Settled(StartOutcome),
+    /// Nothing owed: no Start was made, or its outcome was already taken
+    /// (or the slot is gone).
+    NotOwed,
+}
+
 /// Per-uid runner. Compiled XOR Load (a JS isolate) — never both.
 pub struct SlotScript {
     pub want_run: bool,
@@ -649,12 +662,17 @@ impl SlotScript {
         }
     }
 
-    /// Take how the latest operator Load Start settled; `None` while it is
-    /// still setting up (or when nothing is owed). Call after
-    /// [`Self::observe_lifecycle`].
+    /// Resolve the lifecycle and read the latest operator Load Start in one
+    /// step, so no observe can settle it between the outcome read and the
+    /// in-flight check (the slot thread observes every frame).
     #[cfg(feature = "load")]
-    pub fn take_start_outcome(&mut self) -> Option<StartOutcome> {
-        self.start_outcome.take()
+    pub fn poll_start(&mut self) -> StartPoll {
+        self.observe_lifecycle();
+        match self.start_outcome.take() {
+            Some(outcome) => StartPoll::Settled(outcome),
+            None if self.start_pending => StartPoll::Pending,
+            None => StartPoll::NotOwed,
+        }
     }
 
     /// Spawn the isolate for `identity` and enter Starting. `bump` moves
@@ -811,11 +829,13 @@ impl SlotScript {
                 self.state = RunState::Idle;
             }
             AfterStop::Fail(e) => self.fail_setup(e),
+            // The cooldown was stamped when the restart was decided.
             AfterStop::Restart => match self.load_identity.clone() {
-                Some(identity) => match self.spawn_isolate(identity, true) {
-                    Ok(()) => self.watchdog.on_restart_applied(Instant::now()),
-                    Err(e) => self.fail_setup(e),
-                },
+                Some(identity) => {
+                    if let Err(e) = self.spawn_isolate(identity, true) {
+                        self.fail_setup(e);
+                    }
+                }
                 None => self.fail_setup("watchdog restart: no retained identity".into()),
             },
             AfterStop::Start => match self.load_identity.clone() {
@@ -1528,6 +1548,9 @@ impl SlotScript {
         }
         self.revoke_native_input();
         if self.begin_async_stop(AfterStop::Restart) {
+            // Stamp the recovery and its cooldown at the decision, as the
+            // synchronous restart did; the respawn follows the reap.
+            self.watchdog.on_restart_applied(now);
             return Ok(());
         }
         self.spawn_isolate(identity, true)?;
@@ -2396,11 +2419,18 @@ export default class T extends LoopingBot {
         )
         .expect("Start returns before setup");
         slot.attach_source_identity("file:bad.ts");
-        assert_eq!(slot.take_start_outcome(), None, "setup has not settled");
+        assert_eq!(
+            slot.poll_start(),
+            StartPoll::Pending,
+            "setup has not settled"
+        );
         wait_state(&mut slot, RunState::Idle);
         let err = slot.last_error().unwrap_or("").to_string();
         assert!(err.contains("zz-setup-proof"), "{err}");
-        assert_eq!(slot.take_start_outcome(), Some(StartOutcome::Failed(err)));
+        assert_eq!(
+            slot.poll_start(),
+            StartPoll::Settled(StartOutcome::Failed(err))
+        );
         assert_eq!(slot.source_identity(), None);
         assert!(slot.load_identity.is_none());
         assert_eq!(
@@ -2424,7 +2454,10 @@ export default class T extends LoopingBot {
         slot.stop();
         assert_eq!(slot.state(), RunState::Stopping);
         wait_state(&mut slot, RunState::Idle);
-        assert_eq!(slot.take_start_outcome(), Some(StartOutcome::Cancelled));
+        assert_eq!(
+            slot.poll_start(),
+            StartPoll::Settled(StartOutcome::Cancelled)
+        );
         assert_eq!(slot.last_error(), None);
     }
 
@@ -2480,7 +2513,7 @@ export default class T extends LoopingBot {
         );
         wait_state(&mut slot, RunState::Starting);
         wait_state(&mut slot, RunState::Running);
-        assert_eq!(slot.take_start_outcome(), Some(StartOutcome::Ready));
+        assert_eq!(slot.poll_start(), StartPoll::Settled(StartOutcome::Ready));
         assert_eq!(
             slot.runtime_generation(),
             generation,

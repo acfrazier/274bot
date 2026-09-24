@@ -255,13 +255,16 @@ fn settle_started_catalog_cards(
         if !card.started {
             return true;
         }
-        match handle.take_start_outcome(&card.slot) {
-            None => true,
-            Some(script::StartOutcome::Failed(error)) => {
+        match handle.poll_start(&card.slot) {
+            script::StartPoll::Pending => true,
+            script::StartPoll::Settled(script::StartOutcome::Failed(error)) => {
                 failed.push((card.slot.clone(), error));
                 false
             }
-            Some(script::StartOutcome::Ready | script::StartOutcome::Cancelled) => false,
+            script::StartPoll::Settled(
+                script::StartOutcome::Ready | script::StartOutcome::Cancelled,
+            )
+            | script::StartPoll::NotOwed => false,
         }
     });
     for (slot, error) in failed {

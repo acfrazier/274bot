@@ -83,7 +83,7 @@ pub use settings_store::{
 };
 pub use slot::{RunState, ScriptLifecycleReceipt, ScriptTerminalState, SlotScript};
 #[cfg(feature = "load")]
-pub use slot::{StartLoadError, StartOutcome};
+pub use slot::{StartLoadError, StartOutcome, StartPoll};
 #[cfg(feature = "load")]
 pub use watchdog::{
     ProgressWatchdog, RestartReason, Tile as WatchdogTile, WatchdogAction, WatchdogState,

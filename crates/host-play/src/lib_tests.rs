@@ -3803,6 +3803,78 @@ fn script_start_returns_before_setup_and_stop_before_reap() {
     wait_script_state(&play, "alice", script::RunState::Idle);
 }
 
+/// The slot thread observes every frame while the UI polls its Starts. A
+/// poll that read the outcome and the in-flight state under two locks lost
+/// the outcome whenever the slot thread settled it in between; every Start
+/// here must be reported exactly once, Ready or Failed, never "not owed".
+#[test]
+fn script_poll_start_never_loses_an_outcome_to_the_slot_threads_observe() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let mut play = run_with_io(
+        &PlayOptions {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            lowmem: true,
+            mainland: false,
+        },
+        vec![],
+        |_| (None, None),
+        |_, _, _| {},
+    );
+    play.attach_arm("alice", SlotArm::new(7, false));
+    let done = Arc::new(AtomicBool::new(false));
+    let observer = {
+        let scripts = Arc::clone(&play.scripts);
+        let done = Arc::clone(&done);
+        std::thread::spawn(move || {
+            while !done.load(Ordering::Relaxed) {
+                if let Some(slot) = script_slot(&scripts, "alice") {
+                    slot.lock().unwrap().observe_lifecycle();
+                }
+            }
+        })
+    };
+    let good = "export function tick(api) {}";
+    let bad = "throw new Error('race-proof');\nexport function tick(api) {}";
+    let (mut ready, mut failed) = (0, 0);
+    for i in 0..100 {
+        let src = if i % 2 == 0 { good } else { bad };
+        play.script_start_load(
+            "alice",
+            src.into(),
+            script::LoadShape::NativeTick,
+            None,
+            vec![],
+        )
+        .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            match play.script_poll_start("alice") {
+                script::StartPoll::Pending => assert!(Instant::now() < deadline, "Start {i}"),
+                script::StartPoll::Settled(script::StartOutcome::Ready) => {
+                    ready += 1;
+                    break;
+                }
+                script::StartPoll::Settled(script::StartOutcome::Failed(e)) => {
+                    assert!(e.contains("race-proof"), "{e}");
+                    failed += 1;
+                    break;
+                }
+                other => panic!(
+                    "Start {i}: outcome lost ({other:?}) in state {:?}",
+                    play.script_state("alice")
+                ),
+            }
+        }
+        play.script_stop("alice");
+        wait_script_state(&play, "alice", script::RunState::Idle);
+    }
+    done.store(true, Ordering::Relaxed);
+    observer.join().unwrap();
+    assert_eq!((ready, failed), (50, 50));
+}
+
 #[test]
 fn script_start_handle_explicit_loadouts_starts() {
     let mut play = run_with_io(

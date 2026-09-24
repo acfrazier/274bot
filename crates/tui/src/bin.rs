@@ -1229,17 +1229,11 @@ impl TuiSession {
         };
         let mut settled = Vec::new();
         for name in self.pending_starts.keys() {
-            match play.script_take_start_outcome(name) {
-                Some(outcome) => settled.push((name.clone(), Some(outcome))),
-                // No outcome and no setup in flight: the slot was removed.
-                None if !matches!(
-                    play.script_state(name),
-                    script::RunState::Starting | script::RunState::Stopping
-                ) =>
-                {
-                    settled.push((name.clone(), None))
-                }
-                None => {}
+            match play.script_poll_start(name) {
+                script::StartPoll::Pending => {}
+                script::StartPoll::Settled(outcome) => settled.push((name.clone(), Some(outcome))),
+                // The slot was removed (its Stop cancelled the Start).
+                script::StartPoll::NotOwed => settled.push((name.clone(), None)),
             }
         }
         for (name, outcome) in settled {
