@@ -2374,16 +2374,16 @@ fn wait_for_transfer_response(
     }
     let delay = error.retry_after?;
     let mut remaining = delay.as_secs();
-    publish_transfer_countdown(statuses, name, remaining);
-    while remaining > 0 {
+    loop {
+        publish_transfer_countdown(statuses, name, remaining);
         if !arm.wait_for_transfer(Duration::from_secs(1)) {
             clear_startup_progress(statuses, name);
             return Some(false);
         }
-        remaining -= 1;
-        if remaining > 0 {
-            publish_transfer_countdown(statuses, name, remaining);
+        if remaining == 0 {
+            break;
         }
+        remaining -= 1;
     }
     clear_startup_progress(statuses, name);
     Some(true)

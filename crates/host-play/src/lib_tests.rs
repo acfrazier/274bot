@@ -601,10 +601,129 @@ fn response_21_ignores_world_change_until_server_delay_expires() {
     *arm.world.lock() = Some(2);
     arm.world_generation.fetch_add(1, Ordering::Relaxed);
     arm.notify_retry_wait();
+    assert!(wait_until(1_500, || {
+        statuses.lock().unwrap()[0]
+            .startup_progress_message
+            .contains("transferred in: 0 seconds")
+    }));
 
     assert_eq!(waiter.join().unwrap(), Some(true));
-    assert!(started.elapsed() >= Duration::from_millis(900));
+    assert!(started.elapsed() >= Duration::from_millis(1_900));
     assert_eq!(*arm.world.lock(), Some(2));
+}
+
+#[test]
+fn spawned_worker_response_21_retries_same_endpoint_without_fifo_ownership() {
+    use std::sync::mpsc;
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = listener.local_addr().unwrap();
+    let (attempt_tx, attempt_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let server = thread::spawn(move || {
+        let mut login_attempt = 0;
+        loop {
+            let (mut socket, _) = listener.accept().unwrap();
+            socket
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            let mut preface = [0; 2];
+            if socket.read_exact(&mut preface).is_err() || preface[0] != 14 {
+                continue;
+            }
+            login_attempt += 1;
+            let accepted = Instant::now();
+            match login_attempt {
+                1 => socket.write_all(&[0, 0, 0, 0, 0, 0, 0, 0, 21, 0]).unwrap(),
+                2 => socket
+                    .write_all(&[0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0])
+                    .unwrap(),
+                attempt => panic!("unexpected login attempt {attempt}"),
+            }
+            socket.flush().unwrap();
+            attempt_tx
+                .send((login_attempt, accepted, socket.local_addr().unwrap()))
+                .unwrap();
+            if login_attempt == 2 {
+                release_rx.recv().unwrap();
+                return;
+            }
+        }
+    });
+
+    let mut play = run_with_io(
+        &PlayOptions {
+            host: endpoint.ip().to_string(),
+            port: endpoint.port(),
+            cache_dir: "/tmp".into(),
+            lowmem: true,
+            mainland: false,
+        },
+        vec![],
+        |_| (None, None),
+        |_, _, _| {},
+    );
+    let arm = SlotArm::new(42, true);
+    play.spawn_slot(profile("alice", 42), None, None, Some(Arc::clone(&arm)));
+
+    let (first_number, first_attempt, first_endpoint) =
+        attempt_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+    assert_eq!(first_number, 1);
+    assert_eq!(first_endpoint, endpoint);
+    assert!(wait_until(500, || {
+        let statuses = play.statuses.lock().unwrap();
+        let row = statuses
+            .iter()
+            .find(|status| status.username == "alice")
+            .unwrap();
+        row.startup_progress_message
+            .contains("transferred in: 0 seconds")
+            && row.startup_phase == StartupPhase::Connecting
+            && row.error.is_none()
+    }));
+    assert!(
+        play.queue.lock().status_owner(arm.queue_owner).is_none(),
+        "the transfer countdown must hold no FIFO place"
+    );
+    assert!(
+        !play.queue.lock().abandon_permit(42),
+        "the transfer countdown must hold no handshake reservation"
+    );
+    assert_eq!(
+        request_shared(&play.queue, 43, Instant::now()),
+        Permit::Grant,
+        "a follower can enter while the transfer countdown runs"
+    );
+    assert!(play
+        .queue
+        .lock()
+        .acknowledge_login_return(43, Instant::now()));
+
+    let (second_number, second_attempt, second_endpoint) =
+        attempt_rx.recv_timeout(Duration::from_secs(4)).unwrap();
+    assert_eq!(second_number, 2);
+    assert_eq!(second_endpoint, endpoint);
+    assert!(
+        second_attempt.duration_since(first_attempt) >= Duration::from_millis(900),
+        "response 21 with a zero byte still waits one full second"
+    );
+    assert!(
+        second_attempt.duration_since(first_attempt) < Duration::from_secs(4),
+        "response 21 must not enter generic retry backoff"
+    );
+    assert!(wait_until(1_000, || {
+        let statuses = play.statuses.lock().unwrap();
+        let row = statuses
+            .iter()
+            .find(|status| status.username == "alice")
+            .unwrap();
+        row.startup_phase == StartupPhase::LoadingScene && row.error.is_none()
+    }));
+
+    arm.stop.store(true, Ordering::Relaxed);
+    release_tx.send(()).unwrap();
+    play.stop_slot("alice");
+    server.join().unwrap();
 }
 
 #[test]
@@ -1750,36 +1869,68 @@ fn login_queue_mutex_survives_panicking_owner() {
 }
 
 #[test]
-fn panicking_worker_retires_its_place_and_unblocks_follower() {
-    let queue = Arc::new(QueueMutex::new(LoginQueue::default()));
-    let statuses = rows(&["dead", "follower"]);
+fn panicking_spawned_worker_retires_its_place_and_unblocks_follower() {
+    let mut play = run_with_io(
+        &PlayOptions {
+            host: "127.0.0.1".into(),
+            port: 1,
+            cache_dir: "/tmp".into(),
+            lowmem: true,
+            mainland: false,
+        },
+        vec![],
+        |_| (None, None),
+        |_, _, _| {},
+    );
+    let window_started = fill_address_window(&play.queue);
     let dead = SlotArm::new(7, true);
     let dead_owner = dead.queue_owner;
-    let panicked = {
-        let queue = Arc::clone(&queue);
-        let statuses = Arc::clone(&statuses);
-        let dead = Arc::clone(&dead);
-        thread::spawn(move || {
-            let _retirement = QueuePlaceRetirement {
-                queue: &queue,
-                statuses: &statuses,
-                username: "dead",
-                arm: &dead,
-            };
-            enqueue_queue_place(&queue, &statuses, "dead", 7, &dead);
-            panic!("synthetic worker panic after enqueue");
-        })
-    };
-    assert!(panicked.join().is_err());
-    assert!(queue.lock().status_owner(dead_owner).is_none());
-    assert_eq!(row_queue(&statuses, "dead"), (-1, -1));
-
-    let follower = SlotArm::new(8, true);
-    assert_eq!(
-        wait_for_permit_bounded(&queue, &statuses, "follower", 8, &follower),
-        PermitWait::Granted
+    play.spawn_slot(profile("dead", 7), None, None, Some(Arc::clone(&dead)));
+    assert!(
+        wait_until(5_000, || play
+            .queue
+            .lock()
+            .status_owner(dead_owner)
+            .is_some()),
+        "the spawned worker must reach its blocked FIFO wait"
     );
-    assert!(queue.lock().acknowledge_login_return(8, Instant::now()));
+
+    let statuses = Arc::clone(&play.statuses);
+    let poisoner = thread::spawn(move || {
+        let _statuses = statuses.lock().unwrap();
+        panic!("synthetic status publisher panic");
+    });
+    assert!(poisoner.join().is_err());
+    assert!(
+        wait_until(2_000, || play
+            .handles
+            .get("dead")
+            .is_some_and(thread::JoinHandle::is_finished)),
+        "the real worker must unwind through its retirement guard"
+    );
+    assert!(play.handles.remove("dead").unwrap().join().is_err());
+    assert!(play.queue.lock().status_owner(dead_owner).is_none());
+    {
+        let rows = play
+            .statuses
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let dead_row = rows.iter().find(|row| row.username == "dead").unwrap();
+        assert_eq!((dead_row.queue_position, dead_row.queue_total), (-1, -1));
+    }
+    assert_eq!(
+        request_shared(&play.queue, 8, window_started + Duration::from_secs(61)),
+        Permit::Grant
+    );
+    assert!(play
+        .queue
+        .lock()
+        .acknowledge_login_return(8, window_started + Duration::from_secs(61)));
+
+    play.statuses.clear_poison();
+
+    play.stop_slot("dead");
+    assert!(play.queue.lock().status_owner(dead_owner).is_none());
 }
 
 #[test]
