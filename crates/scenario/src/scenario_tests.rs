@@ -6655,6 +6655,65 @@ fn resource_world_cases_register_gnome_log_bank_fletch_and_coal_truck() {
 }
 
 #[test]
+fn gnome_fletch_magic_chop_watches_cover_the_roll_tail() {
+    // selected289 woodcut.rs2: Rune axe on a Magic tree is successchance
+    // 7,21; stat_random at WC 75 gives 17/256. One roll per 4 engine ticks,
+    // first at +3. The first arm also carries the card's gear bank trip.
+    let p = 17.0_f64 / 256.0;
+    let dirties_per_engine_tick = 1.25;
+    let gear_trip_ticks = 50.0;
+    let chop_ticks =
+        f64::from(MAGIC_TREE_CHOP_WATCH_TICKS) / dirties_per_engine_tick - gear_trip_ticks - 3.0;
+    let rolls = (chop_ticks / 4.0).floor() + 1.0;
+    let miss = (1.0 - p).powf(rolls);
+    assert!(
+        miss <= 0.01,
+        "first Magic log must land inside the watch for >=99% of correct runs, miss={miss}"
+    );
+
+    for name in ["gnome_fletch_short", "gnome_fletch_long"] {
+        let s = get(name).unwrap_or_else(|| panic!("{name} registered"));
+        assert_eq!(s.settings.deadline, MAGIC_TREE_CHOP_DEADLINE, "{name}");
+        let start = s
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .unwrap();
+        let watch = &s.steps[start + 1..];
+        let logs = Proof::ItemId {
+            id: MAGIC_LOGS_ID,
+            count: 1,
+        };
+        let first_wc = &watch[0];
+        assert_eq!(
+            first_wc.wait.arm,
+            Proof::StatXpGain {
+                id: WOODCUTTING_STAT,
+                min: 1
+            },
+            "{name}"
+        );
+        let further = watch
+            .iter()
+            .rposition(|step| step.wait.arm == logs)
+            .unwrap();
+        assert_eq!(further, watch.len() - 1, "{name}: further chop is last");
+        for (i, step) in watch.iter().enumerate() {
+            let expected = if i == 0 || i == further {
+                MAGIC_TREE_CHOP_WATCH_TICKS
+            } else {
+                SCRIPT_GOLD_WATCH_TICKS
+            };
+            assert_eq!(
+                step.wait.budget_ticks, expected,
+                "{name}: {} budget; only Magic roll arms are widened",
+                step.name
+            );
+        }
+    }
+}
+
+#[test]
 fn station_production_cases_register_cook_smelt_and_spin_cycles() {
     let cook = get("cook_bot").expect("cook_bot");
     assert_eq!(cook.settings.start_script, Some("CookBot"));
@@ -8877,8 +8936,6 @@ fn script_gold_watch_is_a_short_agentic_budget() {
         "ardy_thiever",
         "ardy_thiever_knight",
         "gnome_chop",
-        "gnome_fletch_short",
-        "gnome_fletch_long",
         "coal_trucks",
         "cook_bot",
         "cook_bot_lobster",

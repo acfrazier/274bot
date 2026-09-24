@@ -7280,16 +7280,27 @@ fn gnome_fletch_variant(spec: GnomeFletchSpec) -> Scenario {
         steps.push(bank_fletcher_watch(step_name, arm));
     }
     steps.push(start_catalog_step());
-    for (step_name, arm) in [
+    // The two Magic-tree roll arms get MAGIC_TREE_CHOP_WATCH_TICKS (dirty
+    // increments sized to the 17/256-per-4-ticks roll, not 150×600ms).
+    // Other arms keep the ordinary gold watch.
+    let chop = MAGIC_TREE_CHOP_WATCH_TICKS;
+    let gold = SCRIPT_GOLD_WATCH_TICKS;
+    for (step_name, arm, budget_ticks) in [
         (
             "watch Woodcutting XP from a Magic tree after Start",
             first_wc,
+            chop,
         ),
-        ("watch exact Magic logs 1513 chopped after Start", logs),
-        ("watch Fletching XP after Start", first_fletch),
+        (
+            "watch exact Magic logs 1513 chopped after Start",
+            logs,
+            gold,
+        ),
+        ("watch Fletching XP after Start", first_fletch, gold),
         (
             "watch exact unstrung magic bow after logs are consumed",
             product,
+            gold,
         ),
         (
             "watch script-fletched bows enter a fresh gnome bank",
@@ -7297,6 +7308,7 @@ fn gnome_fletch_variant(spec: GnomeFletchSpec) -> Scenario {
                 id: product_id,
                 count: 1,
             },
+            gold,
         ),
         (
             "watch the pack empty of unstrung bows after deposit",
@@ -7304,6 +7316,7 @@ fn gnome_fletch_variant(spec: GnomeFletchSpec) -> Scenario {
                 id: product_id,
                 count: 0,
             },
+            gold,
         ),
         (
             "watch ground return at the gnome bank stairs after deposit",
@@ -7313,14 +7326,26 @@ fn gnome_fletch_variant(spec: GnomeFletchSpec) -> Scenario {
                 level: GNOME_BANK_STAIR_SOUTH.level,
                 radius: 30,
             },
+            gold,
         ),
         (
             "watch the gnome fletch bank close after deposit",
             Proof::BankClosed,
+            gold,
         ),
-        ("watch another exact Magic logs 1513 after return", logs),
+        (
+            "watch another exact Magic logs 1513 after return",
+            logs,
+            chop,
+        ),
     ] {
-        steps.push(bank_fletcher_watch(step_name, arm));
+        steps.push(Step {
+            name: step_name,
+            kind: StepKind::Perform {
+                send: Box::new(|_, _| true),
+            },
+            wait: Wait { arm, budget_ticks },
+        });
     }
     Scenario {
         name,
@@ -7334,7 +7359,7 @@ fn gnome_fletch_variant(spec: GnomeFletchSpec) -> Scenario {
         settings: ScenarioSettings {
             full_rate: true,
             require_mainland_base: true,
-            deadline: SCRIPT_GOLD_DEADLINE,
+            deadline: MAGIC_TREE_CHOP_DEADLINE,
             start_script: Some("GnomeMagicChopper"),
             script_settings_inject: Some(GNOME_FLETCH_INJECT),
             terminal_shot: Some(name),

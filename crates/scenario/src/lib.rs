@@ -531,6 +531,44 @@ const HERBLORE_EGG_DEPOSIT_WATCH_TICKS: u32 = 600;
 const HERBLORE_EGG_RETURN_WATCH_TICKS: u32 = 240;
 const HERBLORE_EGG_DEADLINE: Duration = Duration::from_secs(420);
 
+/// GnomeMagicChopper fletch cells: the first Magic-tree Woodcutting XP arm and
+/// the further Magic logs arm after the deposit return.
+///
+/// **Units:** `budget_ticks` are runner dirty-snapshot increments, not
+/// engine ticks or wall time. `gnome_fletch_short` at `290253af` failed
+/// step 17 after 150 dirties, about 120 engine ticks, so about 1.25 dirties
+/// per engine tick.
+///
+/// **Engine odds (selected289 `skill_woodcutting`, justification only):**
+/// Magic tree with a Rune axe has `successchance` 7,21. At Woodcutting 75,
+/// `stat_random` gives floor(7*24/98)+floor(21*74/98)+1 = 17, so a roll
+/// succeeds with p = 17/256 (about 6.6%). `%action_delay = clock+3` and the
+/// roll lands on `%action_delay = clock`, so the first roll is 3 engine ticks
+/// after the op, then one roll every 4 ticks. The mean wait for the first
+/// log is about 59 engine ticks. The 99th percentile is 68 rolls, about
+/// 271 engine ticks.
+///
+/// **Why 150 is wrong for this arm:** the first arm also covers the
+/// card's own gear bank trip (upstairs booth and back), about 50 engine
+/// ticks. That left about 68 engine ticks, or 17 rolls, of steady chopping.
+/// There was one click, one swing message, rune-axe animation 867 held and
+/// no re-click. With a correct product the chance of no log in 17 rolls is
+/// (239/256)^17, about 31%.
+///
+/// **Budget:** 450 dirties is about 360 engine ticks. Take off about 53 for
+/// the gear trip and the first-roll delay. That leaves about 77 rolls, so
+/// P(no log) is about 0.5%. The further-log arm covers the stair walk (or a
+/// walk to another Magic tree after the 1/8 depletion) plus the same roll
+/// tail. Other arms keep 150.
+///
+/// **Deadline:** pre-Start about 12s. Gear trip about 30s. Fletch about 5s.
+/// Deposit trip and return about 35s. Two geometric chops at 2.4s a roll.
+/// 420s leaves about 140 rolls for two logs, so P(fewer than 2) < 0.1%.
+/// The per-arm budgets are the binding limit. Same 420s pattern as
+/// [`HERBLORE_EGG_DEADLINE`].
+const MAGIC_TREE_CHOP_WATCH_TICKS: u32 = 450;
+const MAGIC_TREE_CHOP_DEADLINE: Duration = Duration::from_secs(420);
+
 /// Janitor after `advancestat`: click the level-up continue until the chat IF is gone.
 fn drain_advancestat() -> Step {
     Step {
