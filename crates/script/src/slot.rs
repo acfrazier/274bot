@@ -709,6 +709,8 @@ impl SlotScript {
             }
             self.last_snapshot = None;
             self.last_world_id = None;
+            self.reach_cache.clear();
+
             let abort = self.watchdog.abort_owned_recovery();
             let reset = self.watchdog.on_session_reset(Instant::now());
             let _ = (abort, reset);

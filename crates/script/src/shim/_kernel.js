@@ -19,8 +19,10 @@ export const proxy = (ns, members) =>
     });
 
 export function distanceTo(a, b) {
+    if (!a || !b) return Infinity;
     return globalThis.__rs2b0t_distance(a, b);
 }
+
 
 export function presentOps(actions) {
     return (actions || []).filter((a) => a && a !== 'hidden');

@@ -14,6 +14,8 @@ use crate::snapshot::{
     WidgetView, WorldTile,
 };
 use client::dash3d::CollisionFlag;
+use std::sync::Arc;
+
 
 /// Where the candidate values live: a borrowed snapshot slice, or an
 /// owned copy for derived sub-queries (`WidgetQueryExt::items`,
@@ -2429,10 +2431,14 @@ pub fn pack_reach_query_plane(
 
 /// Identity for caching packed reach. Scene-static tables rebuild only when
 /// [`Self::static_eq`] is false; flood ranks rebuild when the full key changes.
+///
+/// Loc static generation and the loc model stamp stay as separate fields so a
+/// door toggle cannot XOR-alias a scenery bump (and vice versa).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ReachCacheKey {
     pub scene_generation: u64,
-    pub collision_generation: u64,
+    pub loc_static_generation: u64,
+    pub loc_model_stamp: u64,
     pub available: bool,
     pub base_x: i32,
     pub base_z: i32,
@@ -2446,14 +2452,16 @@ pub struct ReachCacheKey {
 impl ReachCacheKey {
     pub fn from_parts(
         scene_generation: u64,
-        collision_generation: u64,
+        loc_static_generation: u64,
+        loc_model_stamp: u64,
         scene: &SceneView,
         here: Option<WorldTile>,
         canlight: Option<CanlightPlane<'_>>,
     ) -> Self {
         Self {
             scene_generation,
-            collision_generation,
+            loc_static_generation,
+            loc_model_stamp,
             available: scene.available,
             base_x: scene.base_x,
             base_z: scene.base_z,
@@ -2467,7 +2475,8 @@ impl ReachCacheKey {
 
     pub fn static_eq(self, other: Self) -> bool {
         self.scene_generation == other.scene_generation
-            && self.collision_generation == other.collision_generation
+            && self.loc_static_generation == other.loc_static_generation
+            && self.loc_model_stamp == other.loc_model_stamp
             && self.available == other.available
             && self.base_x == other.base_x
             && self.base_z == other.base_z
@@ -2481,7 +2490,8 @@ impl ReachCacheKey {
     /// posts that still fingerprint the packed vectors.
     pub fn stamp(self) -> u64 {
         let mut h = self.scene_generation.wrapping_add(1);
-        h ^= self.collision_generation.rotate_left(7);
+        h ^= self.loc_static_generation.rotate_left(7);
+        h ^= self.loc_model_stamp.rotate_left(17);
         h ^= self.canlight_stamp.rotate_left(13);
         h = h.wrapping_mul(0x9E37_79B9_7F4A_7C15);
         h ^= (self.available as u64) << 1;
@@ -2522,13 +2532,18 @@ fn canlight_stamp(plane: Option<CanlightPlane<'_>>) -> u64 {
     h | 1
 }
 
+
 /// Per-slot cache of packed reach. Scene-static walkable/step/canlight
 /// rebuild when the collision/scene generation changes; flood ranks rebuild
 /// when the player tile changes on that same scene.
+///
+/// The packed view is `Arc` so a cache hit is a refcount bump, not a deep
+/// clone. The flood is stored beside it so bank approaches reuse the BFS.
 #[derive(Debug)]
 pub struct ReachPackCache {
     key: Option<ReachCacheKey>,
-    view: ReachQueryView,
+    view: Arc<ReachQueryView>,
+    flood: Option<Arc<ReachFlood>>,
     static_rebuilds: u64,
     flood_packs: u64,
 }
@@ -2537,7 +2552,8 @@ impl Default for ReachPackCache {
     fn default() -> Self {
         Self {
             key: None,
-            view: ReachQueryView::unavailable(),
+            view: Arc::new(ReachQueryView::unavailable()),
+            flood: None,
             static_rebuilds: 0,
             flood_packs: 0,
         }
@@ -2558,7 +2574,15 @@ impl ReachPackCache {
     }
 
     pub fn view(&self) -> &ReachQueryView {
-        &self.view
+        self.view.as_ref()
+    }
+
+    pub fn view_arc(&self) -> Arc<ReachQueryView> {
+        Arc::clone(&self.view)
+    }
+
+    pub fn flood_arc(&self) -> Option<Arc<ReachFlood>> {
+        self.flood.clone()
     }
 
     pub fn clear(&mut self) {
@@ -2569,28 +2593,35 @@ impl ReachPackCache {
         &mut self,
         key: ReachCacheKey,
         scene: &SceneView,
-        flood: Option<&ReachFlood>,
+        flood: Option<Arc<ReachFlood>>,
         canlight: Option<CanlightPlane<'_>>,
-    ) -> &ReachQueryView {
+    ) -> Arc<ReachQueryView> {
         if self.key.as_ref() == Some(&key) {
-            return &self.view;
+            return Arc::clone(&self.view);
         }
         let reuse_static = self.key.is_some_and(|k| k.static_eq(key)) && self.view.available;
         if reuse_static {
-            self.view = overlay_flood(&self.view, flood);
+            let current = std::mem::replace(&mut self.view, Arc::new(ReachQueryView::unavailable()));
+            let mut prev = match Arc::try_unwrap(current) {
+                Ok(view) => view,
+                Err(shared) => (*shared).clone(),
+            };
+            self.view = Arc::new(overlay_flood(&mut prev, flood.as_deref()));
+            self.flood = flood;
             self.key = Some(key);
             self.flood_packs += 1;
-            return &self.view;
+            return Arc::clone(&self.view);
         }
-        self.view = pack_reach_query_plane(scene, flood, canlight);
+        self.view = Arc::new(pack_reach_query_plane(scene, flood.as_deref(), canlight));
+        self.flood = flood;
         self.key = Some(key);
         self.static_rebuilds += 1;
         self.flood_packs += 1;
-        &self.view
+        Arc::clone(&self.view)
     }
 }
 
-fn overlay_flood(prev: &ReachQueryView, flood: Option<&ReachFlood>) -> ReachQueryView {
+fn overlay_flood(prev: &mut ReachQueryView, flood: Option<&ReachFlood>) -> ReachQueryView {
     let Some(flood) = flood else {
         return ReachQueryView::unavailable();
     };
@@ -2603,15 +2634,16 @@ fn overlay_flood(prev: &ReachQueryView, flood: Option<&ReachFlood>) -> ReachQuer
         level: flood.level,
         width: flood.width,
         height: flood.height,
-        walkable: prev.walkable.clone(),
+        walkable: std::mem::take(&mut prev.walkable),
         reachable,
         reachable_adj,
         exact_rank: exact_rank.to_vec(),
         adjacent_rank: adjacent_rank.to_vec(),
-        step: prev.step.clone(),
-        canlight: prev.canlight.clone(),
+        step: std::mem::take(&mut prev.step),
+        canlight: std::mem::take(&mut prev.canlight),
     }
 }
+
 
 fn pack_u64_bitset_to_u32(words: &[u64], nbits: usize) -> Vec<u32> {
     let nwords = nbits.div_ceil(32);

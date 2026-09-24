@@ -1,12 +1,11 @@
 //! Typed V8 marshalling for `Tile.distanceTo` and shim distance callers.
 //!
 //! Frozen `Tile.distanceTo` (`Tile.ts`): Chebyshev on the plane,
-//! `1_000_000 + xz` across planes. Computed in `i64` so any script-supplied
-//! `i32` tile cannot overflow.
+//! `1_000_000 + xz` across planes. Script-supplied coordinates are JS
+//! numbers, computed in `f64` the same way `Math.abs` would.
 
-use api::query::tile_distance_to;
-use api::snapshot::WorldTile;
 use rustyscript::Runtime;
+
 
 pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
     let context = runtime.deno_runtime().main_context();
@@ -49,27 +48,42 @@ fn run_distance<'s>(
 ) -> Result<v8::Local<'s, v8::Value>, String> {
     let from = required_tile(scope, args.get(0), "from")?;
     let to = required_tile(scope, args.get(1), "to")?;
-    let distance = tile_distance_to(from, to);
-    Ok(v8::Number::new(scope, distance as f64).into())
+    Ok(v8::Number::new(scope, js_tile_distance(from, to)).into())
+}
+
+#[derive(Clone, Copy)]
+struct JsTile {
+    x: f64,
+    z: f64,
+    level: f64,
+}
+
+fn js_tile_distance(from: JsTile, to: JsTile) -> f64 {
+    let planar = (from.x - to.x).abs().max((from.z - to.z).abs());
+    if from.level != to.level {
+        1_000_000.0 + planar
+    } else {
+        planar
+    }
 }
 
 fn required_tile(
     scope: &mut v8::HandleScope,
     value: v8::Local<v8::Value>,
     side: &str,
-) -> Result<WorldTile, String> {
+) -> Result<JsTile, String> {
     if value.is_null() || value.is_undefined() || !value.is_object() {
         return Err(format!(
             "invalid tile distance: {side} must be a Tile-like object"
         ));
     }
-    Ok(WorldTile {
-        x: required_i32_field(scope, value, side, "x")?,
-        z: required_i32_field(scope, value, side, "z")?,
+    Ok(JsTile {
+        x: required_number_field(scope, value, side, "x")?,
+        z: required_number_field(scope, value, side, "z")?,
         level: match optional_field(scope, value, "level")? {
-            None => 0,
-            Some(v) if v.is_null() || v.is_undefined() => 0,
-            Some(v) => required_i32(scope, v, side, "level")?,
+            None => 0.0,
+            Some(v) if v.is_null() || v.is_undefined() => 0.0,
+            Some(v) => required_number(scope, v, side, "level")?,
         },
     })
 }
@@ -86,42 +100,30 @@ fn optional_field<'s>(
     Ok(obj.get(scope, key.into()))
 }
 
-fn required_i32_field(
+fn required_number_field(
     scope: &mut v8::HandleScope,
     value: v8::Local<v8::Value>,
     side: &str,
     field: &str,
-) -> Result<i32, String> {
+) -> Result<f64, String> {
     let v = optional_field(scope, value, field)?
-        .ok_or_else(|| format!("invalid tile distance: {side}.{field} must be an integer"))?;
-    required_i32(scope, v, side, field)
+        .ok_or_else(|| format!("invalid tile distance: {side}.{field} must be a number"))?;
+    required_number(scope, v, side, field)
 }
 
-fn required_i32(
+fn required_number(
     scope: &mut v8::HandleScope,
     value: v8::Local<v8::Value>,
     side: &str,
     field: &str,
-) -> Result<i32, String> {
+) -> Result<f64, String> {
     if !value.is_number() {
         return Err(format!(
-            "invalid tile distance: {side}.{field} must be an integer"
+            "invalid tile distance: {side}.{field} must be a number"
         ));
     }
-    let n = value.number_value(scope).ok_or_else(|| {
-        format!("invalid tile distance: {side}.{field} must be an integer")
-    })?;
-    if !n.is_finite() || n.fract() != 0.0 {
-        return Err(format!(
-            "invalid tile distance: {side}.{field} must be an integer"
-        ));
-    }
-    if n < (i32::MIN as f64) || n > (i32::MAX as f64) {
-        return Err(format!(
-            "invalid tile distance: {side}.{field} must be an integer in {}..={}",
-            i32::MIN,
-            i32::MAX
-        ));
-    }
-    Ok(n as i32)
+    value.number_value(scope).ok_or_else(|| {
+        format!("invalid tile distance: {side}.{field} must be a number")
+    })
 }
+

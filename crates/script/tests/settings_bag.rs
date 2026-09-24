@@ -130,12 +130,19 @@ export default class T extends LoopingBot {
             ),
             invalidDistanceRejected: (() => {
                 try {
-                    tile.distanceTo({ x: Number.MAX_SAFE_INTEGER, z: 3212, level: 2 });
+                    tile.distanceTo({ x: 'nope', z: 3212, level: 2 });
                     return false;
                 } catch (error) {
                     return String(error).includes('invalid tile distance');
                 }
             })(),
+            hugeSafeIntegerDistance: tile.distanceTo({
+                x: Number.MAX_SAFE_INTEGER,
+                z: 3212,
+                level: 2,
+            }),
+            fractionalDistance: tile.distanceTo({ x: 3208.5, z: 3212, level: 2 }),
+
             translated,
             translatedIdentity: translated instanceof Tile,
             translatedEquals: translated.equals(new Tile(3210, 3211, 2)),
@@ -234,8 +241,16 @@ fn tile_and_list_schema_defaults_round_trip_through_prelude() {
     );
     assert_eq!(
         value["invalidDistanceRejected"], true,
-        "out-of-world coordinates must fail without truncation or overflow"
+        "non-numeric coordinates must fail"
     );
+    assert_eq!(
+        value["hugeSafeIntegerDistance"].as_f64(),
+        Some(9_007_199_254_737_783.0),
+        "MAX_SAFE_INTEGER is a frozen-computable number"
+    );
+
+    assert_eq!(value["fractionalDistance"], 0.5);
+
     assert_eq!(
         value["translated"],
         serde_json::json!({ "x": 3210, "z": 3211, "level": 2 })

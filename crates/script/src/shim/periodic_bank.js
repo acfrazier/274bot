@@ -55,7 +55,8 @@ function obs() {
 
 function adjacent(tile, radius) {
     const here = snap().here;
-    return here && tile && distanceTo(here, tile) <= radius;
+    return here && tile && (here.level ?? 0) === (tile.level ?? 0) && distanceTo(here, tile) <= radius;
+
 }
 
 export class PeriodicBank {

@@ -15,6 +15,8 @@ use client::client::{Client, ClientConfig};
 use client::config::if_type::{ButtonType, ComponentType, IfType, IfTypeMut};
 use client::dash3d::CollisionFlag;
 use client::io::ServerProt;
+use std::sync::Arc;
+
 
 fn fixture_item(id: i32, count: i32) -> ItemView {
     ItemView {
@@ -1512,14 +1514,34 @@ fn reach_pack_cache_invalidates_on_generation_change_only() {
         .flood_reach()
         .expect("flood");
     let mut cache = ReachPackCache::default();
-    let key = ReachCacheKey::from_parts(1, 10, &scene, Some(player), None);
-    let first = cache.pack(key, &scene, Some(&flood), None).clone();
+    let key = ReachCacheKey::from_parts(1, 10, 0, &scene, Some(player), None);
+    let xor_alias = ReachCacheKey::from_parts(1, 0, 10, &scene, Some(player), None);
+    assert_ne!(key, xor_alias, "XOR-equal loc gens must not share a key");
+    assert!(
+        !key.static_eq(xor_alias),
+        "XOR-equal loc gens must rebuild statics"
+    );
+    let first = cache
+        .pack(key, &scene, Some(Arc::new(flood)), None)
+        .as_ref()
+        .clone();
     assert_eq!(cache.static_rebuilds(), 1);
     assert_eq!(cache.flood_packs(), 1);
-    let second = cache.pack(key, &scene, Some(&flood), None).clone();
+    assert!(first.available);
+    assert_eq!(first.width, 104);
+    assert_eq!(first.height, 104);
+    assert!(!first.walkable.is_empty());
+    assert!(!first.step.is_empty());
+    let second = cache
+        .pack(key, &scene, None, None)
+        .as_ref()
+        .clone();
     assert_eq!(cache.static_rebuilds(), 1, "same key must not rebuild statics");
     assert_eq!(cache.flood_packs(), 1, "same key must not repack flood");
     assert_eq!(first, second);
+    assert_eq!(first.walkable, second.walkable);
+    assert_eq!(first.reachable, second.reachable);
+    assert_eq!(first.step, second.step);
 
     let moved = WorldTile {
         x: player.x + 1,
@@ -1529,38 +1551,68 @@ fn reach_pack_cache_invalidates_on_generation_change_only() {
     let moved_flood = SceneQuery::new(&scene, Some(moved))
         .flood_reach()
         .expect("moved flood");
-    let moved_key = ReachCacheKey::from_parts(1, 10, &scene, Some(moved), None);
-    let _ = cache.pack(moved_key, &scene, Some(&moved_flood), None);
+    let moved_key = ReachCacheKey::from_parts(1, 10, 0, &scene, Some(moved), None);
+    let overlay = cache
+        .pack(moved_key, &scene, Some(Arc::new(moved_flood)), None)
+        .as_ref()
+        .clone();
     assert_eq!(
         cache.static_rebuilds(),
         1,
         "player move must reuse walkable/step"
     );
     assert_eq!(cache.flood_packs(), 2, "player move must repack flood ranks");
+    assert_eq!(
+        overlay.walkable, first.walkable,
+        "player move must keep walkable bits"
+    );
+    assert_eq!(overlay.step, first.step, "player move must keep step bytes");
+    assert_ne!(
+        overlay.exact_rank, first.exact_rank,
+        "player move must refresh flood ranks"
+    );
 
     scene.collision_flags[6 * 104 + 6] = CollisionFlag::SQ_BLOCKED;
-    let dirty_key = ReachCacheKey::from_parts(1, 11, &scene, Some(moved), None);
+    let dirty_key = ReachCacheKey::from_parts(1, 11, 0, &scene, Some(moved), None);
     let dirty_flood = SceneQuery::new(&scene, Some(moved))
         .flood_reach()
         .expect("dirty flood");
-    let _ = cache.pack(dirty_key, &scene, Some(&dirty_flood), None);
+    let dirty = cache
+        .pack(
+            dirty_key,
+            &scene,
+            Some(Arc::new(dirty_flood.clone())),
+            None,
+        )
+        .as_ref()
+        .clone();
     assert_eq!(
         cache.static_rebuilds(),
         2,
-        "collision generation change must rebuild statics"
+        "loc static generation change must rebuild statics"
     );
+    assert_ne!(dirty.walkable, overlay.walkable);
 
-    let scene_key = ReachCacheKey::from_parts(2, 11, &scene, Some(moved), None);
-    let _ = cache.pack(scene_key, &scene, Some(&dirty_flood), None);
+    let stamp_key = ReachCacheKey::from_parts(1, 11, 7, &scene, Some(moved), None);
+    let _ = cache.pack(stamp_key, &scene, Some(Arc::new(dirty_flood.clone())), None);
     assert_eq!(
         cache.static_rebuilds(),
         3,
+        "loc model stamp change must rebuild statics"
+    );
+
+    let scene_key = ReachCacheKey::from_parts(2, 11, 7, &scene, Some(moved), None);
+    let _ = cache.pack(scene_key, &scene, Some(Arc::new(dirty_flood)), None);
+    assert_eq!(
+        cache.static_rebuilds(),
+        4,
         "scene generation change must rebuild statics"
     );
 }
 
 #[test]
-fn packed_reach_matches_js_predicates_on_104_scene() {
+fn packed_reach_matches_scene_query_predicates_on_104_scene() {
+
     let mut scene = open_scene();
     scene.collision_flags[5 * 104 + 6] = CollisionFlag::SQ_BLOCKED;
     scene.collision_flags[10 * 104 + 10] = CollisionFlag::W_W;

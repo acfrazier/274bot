@@ -978,9 +978,16 @@ impl GameSnapshot {
     }
 
     /// Loc/static-scenery generation that last recopied collision flags.
-    pub fn collision_generation(&self) -> u64 {
-        self.loc_static_gen ^ self.loc_model_stamp
+    pub fn loc_static_generation(&self) -> u64 {
+        self.loc_static_gen
     }
+
+    /// Loc model stamp mixed into collision identity, stored separately from
+    /// [`Self::loc_static_generation`] so the two cannot XOR-alias.
+    pub fn loc_model_stamp(&self) -> u64 {
+        self.loc_model_stamp
+    }
+
 
     /// Rebuild `family` from `client` iff its gen moved since the last
     /// rebuild of that family. Returns true iff the gen moved. The npc/

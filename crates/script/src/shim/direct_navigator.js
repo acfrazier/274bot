@@ -22,7 +22,8 @@ export const DirectNavigator = proxy('DirectNavigator', {
         const here = snap().here;
         if (!here) return false;
         const target = { x: dest.x, z: dest.z, level: dest.level ?? 0 };
-        if (distanceTo(here, target) <= radius) return true;
+        if (here.level === target.level && distanceTo(here, target) <= radius) return true;
+
         queue({
             op: 'walk-to',
             x: target.x,
@@ -31,7 +32,8 @@ export const DirectNavigator = proxy('DirectNavigator', {
         });
         return Execution.delayUntil(() => {
             const h = snap().here;
-            return h && distanceTo(h, target) <= radius;
+            return h && h.level === target.level && distanceTo(h, target) <= radius;
+
         }, timeoutMs);
     },
 });

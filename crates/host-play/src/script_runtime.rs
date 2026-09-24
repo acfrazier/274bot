@@ -409,13 +409,14 @@ pub(super) fn script_observe_cached(
                         name: obj_names.and_then(|names| names.name(row.id)),
                     })
                     .collect();
-                let (reach_pack, reach_stamp) = pack_cached_reach(
+                let packed = pack_cached_reach(
                     slot.reach_pack_cache(),
                     snapshot,
                     here,
                     world.as_deref(),
                     canlight,
                 );
+
                 let bytes = with_script_snapshot_input_shorts(
                     tick,
                     here,
@@ -448,8 +449,11 @@ pub(super) fn script_observe_cached(
                     },
                     &carry_rows,
                     inspect_posted,
-                    Some(&reach_pack),
-                    reach_stamp,
+                    Some(packed.view.as_ref()),
+                    packed.flood.as_deref(),
+                    packed.stamp,
+
+
                     |input, native| {
                         slot.encode_snapshot_delta_with_native(input, native, force_banks)
                     },
@@ -2320,15 +2324,25 @@ pub(super) struct MissingCarry {
     pub(super) count: i32,
 }
 
+struct PackedReach {
+    view: Arc<api::query::ReachQueryView>,
+    flood: Option<Arc<api::query::ReachFlood>>,
+    stamp: u64,
+}
+
 fn pack_cached_reach(
     cache: &mut api::query::ReachPackCache,
     snapshot: Option<&GameSnapshot>,
     here: Option<(i32, i32, i32)>,
     world: Option<&NavWorld>,
     canlight: Option<&[u64]>,
-) -> (api::query::ReachQueryView, u64) {
+) -> PackedReach {
     let Some(s) = snapshot else {
-        return (api::query::ReachQueryView::unavailable(), 0);
+        return PackedReach {
+            view: Arc::new(api::query::ReachQueryView::unavailable()),
+            flood: None,
+            stamp: 0,
+        };
     };
     let canlight_plane = canlight.and_then(|bits| {
         world.map(|w| api::query::CanlightPlane {
@@ -2342,28 +2356,35 @@ fn pack_cached_reach(
     let here_tile = here.map(|(x, z, level)| WorldTile { x, z, level });
     let key = api::query::ReachCacheKey::from_parts(
         s.scene_generation(),
-        s.collision_generation(),
+        s.loc_static_generation(),
+        s.loc_model_stamp(),
         s.scene(),
         here_tile,
         canlight_plane,
     );
     let stamp = key.stamp();
     if cache.contains(&key) {
-        return (cache.view().clone(), stamp);
+        return PackedReach {
+            view: cache.view_arc(),
+            flood: cache.flood_arc(),
+            stamp,
+        };
     }
-    let flood = here_tile.and_then(|tile| {
-        if !s.scene().available {
-            return None;
-        }
-        api::query::SceneQuery::new(s.scene(), Some(tile)).flood_reach()
-    });
-    (
-        cache
-            .pack(key, s.scene(), flood.as_ref(), canlight_plane)
-            .clone(),
+    let flood = here_tile
+        .and_then(|tile| {
+            if !s.scene().available {
+                return None;
+            }
+            api::query::SceneQuery::new(s.scene(), Some(tile)).flood_reach()
+        })
+        .map(Arc::new);
+    PackedReach {
+        view: cache.pack(key, s.scene(), flood.clone(), canlight_plane),
+        flood,
         stamp,
-    )
+    }
 }
+
 
 pub(super) fn with_script_snapshot_input<R>(
     tick: u64,
@@ -2414,8 +2435,10 @@ pub(super) fn with_script_snapshot_input<R>(
         &[],
         inspect,
         None,
+        None,
         0,
         f,
+
     )
 }
 
@@ -2449,7 +2472,9 @@ pub(super) fn with_script_snapshot_input_shorts<R>(
     walk_missing_carry: &[script::isolate_fb::CarryInput<'_>],
     inspect: route_inspect::PostedInspect,
     precomputed_reach: Option<&api::query::ReachQueryView>,
+    precomputed_flood: Option<&api::query::ReachFlood>,
     reach_stamp: u64,
+
     f: impl FnOnce(
         &script::isolate_fb::SnapshotInput<'_>,
         script::isolate_fb::NativeFactsInput<'_>,
@@ -2463,15 +2488,26 @@ pub(super) fn with_script_snapshot_input_shorts<R>(
         WidgetTextInput,
     };
 
-    let flood = snapshot.and_then(|s| {
-        let (x, z, level) = here?;
-        if !s.scene().available {
-            return None;
+    let owned_flood: Option<api::query::ReachFlood>;
+    let flood: Option<&api::query::ReachFlood> = if precomputed_reach.is_some() {
+        owned_flood = None;
+        precomputed_flood
+    } else {
+        owned_flood = snapshot.and_then(|s| {
+            let (x, z, level) = here?;
+            if !s.scene().available {
+                return None;
+            }
+            api::query::SceneQuery::new(s.scene(), Some(WorldTile { x, z, level })).flood_reach()
+        });
+        owned_flood.as_ref()
+    };
+    let owned_reach: Option<api::query::ReachQueryView>;
+    let reach_pack: &api::query::ReachQueryView = match precomputed_reach {
+        Some(view) => {
+            owned_reach = None;
+            view
         }
-        api::query::SceneQuery::new(s.scene(), Some(WorldTile { x, z, level })).flood_reach()
-    });
-    let owned_reach = match precomputed_reach {
-        Some(view) => view.clone(),
         None => {
             let canlight_plane = canlight.and_then(|bits| {
                 world.map(|w| api::query::CanlightPlane {
@@ -2482,14 +2518,17 @@ pub(super) fn with_script_snapshot_input_shorts<R>(
                     height: w.collision.height as i32,
                 })
             });
-            snapshot
-                .map(|s| {
-                    api::query::pack_reach_query_plane(s.scene(), flood.as_ref(), canlight_plane)
-                })
-                .unwrap_or_else(api::query::ReachQueryView::unavailable)
+            owned_reach = Some(
+                snapshot
+                    .map(|s| {
+                        api::query::pack_reach_query_plane(s.scene(), flood, canlight_plane)
+                    })
+                    .unwrap_or_else(api::query::ReachQueryView::unavailable),
+            );
+            owned_reach.as_ref().unwrap()
         }
     };
-    let reach_pack = &owned_reach;
+
     let reach = ReachViewInput {
         available: reach_pack.available,
         base_x: reach_pack.base_x,

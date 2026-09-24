@@ -14,7 +14,8 @@ function arrival(tile, opts) {
         here,
         target,
         radius,
-        arrived: distanceTo(here, target) <= radius,
+        arrived: here.level === target.level && distanceTo(here, target) <= radius,
+
     };
 }
 

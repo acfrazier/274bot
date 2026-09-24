@@ -1,6 +1,7 @@
 //! F11: typed reach/distance helpers over the isolate reach cache.
 
-use script::isolate_fb::{ReachViewInput, SnapshotInput, TileInput};
+use script::isolate_fb::{encode_snapshot_delta, ReachViewInput, SnapshotInput, TileInput};
+
 use script::load::{LoadIsolate, LoadShape};
 
 mod common;
@@ -183,3 +184,197 @@ export default class T extends LoopingBot {
     assert_eq!(value["extreme"].as_f64(), Some((1_000_000 + planar) as f64));
     iso.join();
 }
+
+#[test]
+fn v2_reach_helpers_match_posted_view() {
+    let src = r#"
+export const apiVersion = 2;
+export function tick(api) {
+    const t = (x, z, level) => ({ x, z, level });
+    globalThis.__probe = {
+        walkable: api.walkable({ tile: t(3200, 3200, 0) }),
+        blocked: api.walkable({ tile: t(3203, 3207, 0) }),
+        step: api.canStep({ from: t(3200, 3200, 0), to: t(3201, 3200, 0) }),
+        reach: api.canReach({ tile: t(3204, 3200, 0), maxSteps: 20 }),
+        missing: api.walkable({ tile: t(3200, 3200, 1) }),
+    };
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::NativeTick, vec![]).unwrap();
+    let walkable = reach_words(&[0, 32]);
+    let reachable = reach_words(&[0, 32]);
+    let adj = reach_words(&[0, 1, 32]);
+    let exact_rank = reach_ranks(&[(0, 0), (32, 6)]);
+    let adjacent_rank = reach_ranks(&[(0, 0), (1, 0), (32, 5)]);
+    let mut step = vec![0u8; 9 * 8];
+    step[0] = 1 << 1;
+    let mut snap = base_snapshot();
+    snap.reach = ReachViewInput {
+        available: true,
+        base_x: 3200,
+        base_z: 3200,
+        level: 0,
+        width: 9,
+        height: 8,
+        walkable: &walkable,
+        reachable: &reachable,
+        reachable_adj: &adj,
+        exact_rank: &exact_rank,
+        adjacent_rank: &adjacent_rank,
+        step: &step,
+        canlight: &[],
+        stamp: 11,
+    };
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let value = iso.probe("__probe").unwrap();
+    assert_eq!(value["walkable"]["ok"], true);
+    assert_eq!(value["walkable"]["value"], true);
+    assert_eq!(value["blocked"]["ok"], true);
+    assert_eq!(value["blocked"]["value"], false);
+    assert_eq!(value["step"]["ok"], true);
+    assert_eq!(value["step"]["value"], true);
+    assert_eq!(value["reach"]["ok"], true);
+    assert_eq!(value["reach"]["value"], true);
+    assert_eq!(value["missing"]["ok"], true);
+    assert_eq!(value["missing"]["value"], false);
+    iso.join();
+}
+
+#[test]
+fn stamped_reach_omit_keeps_view_and_repost_replaces_it() {
+    let src = r#"
+import { Reachability } from '../../event/webwalk/geometry/Reachability.js';
+export default class T extends LoopingBot {
+    loop() {
+        const t = (x, z, level) => ({ x, z, level });
+        globalThis.__probe = {
+            open: Reachability.walkable(t(3200, 3200, 0)),
+            other: Reachability.walkable(t(3204, 3200, 0)),
+            step: Reachability.canStep(t(3200, 3200, 0), t(3201, 3200, 0)),
+        };
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let walkable = reach_words(&[0, 32]);
+    let reachable = reach_words(&[0, 32]);
+    let adj = reach_words(&[0, 1, 32]);
+    let exact_rank = reach_ranks(&[(0, 0), (32, 6)]);
+    let adjacent_rank = reach_ranks(&[(0, 0), (1, 0), (32, 5)]);
+    let mut step = vec![0u8; 9 * 8];
+    step[0] = 1 << 1;
+    let mut snap = base_snapshot();
+    snap.reach = ReachViewInput {
+        available: true,
+        base_x: 3200,
+        base_z: 3200,
+        level: 0,
+        width: 9,
+        height: 8,
+        walkable: &walkable,
+        reachable: &reachable,
+        reachable_adj: &adj,
+        exact_rank: &exact_rank,
+        adjacent_rank: &adjacent_rank,
+        step: &step,
+        canlight: &[],
+        stamp: 11,
+    };
+    let (keyframe, fp) = encode_snapshot_delta(None, &snap, false);
+    iso.post_snapshot(keyframe);
+    iso.on_game_tick(1);
+    let first = iso.probe("__probe").unwrap();
+    assert_eq!(first["open"], true);
+    assert_eq!(first["other"], true);
+    assert_eq!(first["step"], true);
+
+    snap.tick = 2;
+    let (delta, fp2) = encode_snapshot_delta(Some(&fp), &snap, false);
+    let omitted = script::isolate_fb::decode_snapshot(&delta).expect("delta");
+    assert!(!omitted.has_reach(), "unchanged stamp must omit reach");
+    iso.post_snapshot(delta);
+    iso.on_game_tick(2);
+    let kept = iso.probe("__probe").unwrap();
+    assert_eq!(kept["open"], true, "omitted delta keeps last walkable bits");
+    assert_eq!(kept["other"], true);
+    assert_eq!(kept["step"], true, "omitted delta keeps last step bytes");
+
+    let walkable2 = reach_words(&[0]);
+    let reachable2 = reach_words(&[0]);
+    let adj2 = reach_words(&[0, 1]);
+    let exact2 = reach_ranks(&[(0, 0)]);
+    let adj_rank2 = reach_ranks(&[(0, 0), (1, 0)]);
+    let step2 = vec![0u8; 9 * 8];
+    snap.tick = 3;
+    snap.reach = ReachViewInput {
+        available: true,
+        base_x: 3200,
+        base_z: 3200,
+        level: 0,
+        width: 9,
+        height: 8,
+        walkable: &walkable2,
+        reachable: &reachable2,
+        reachable_adj: &adj2,
+        exact_rank: &exact2,
+        adjacent_rank: &adj_rank2,
+        step: &step2,
+        canlight: &[],
+        stamp: 12,
+    };
+    let (moved, _) = encode_snapshot_delta(Some(&fp2), &snap, false);
+    let posted = script::isolate_fb::decode_snapshot(&moved).expect("repost");
+    assert!(posted.has_reach(), "stamp move must re-post reach");
+    iso.post_snapshot(moved);
+    iso.on_game_tick(3);
+    let replaced = iso.probe("__probe").unwrap();
+    assert_eq!(replaced["open"], true);
+    assert_eq!(replaced["other"], false, "re-post must replace walkable bits");
+    assert_eq!(replaced["step"], false, "re-post must replace step bytes");
+    iso.join();
+}
+
+#[test]
+fn distance_helper_accepts_js_numbers_and_same_plane_arrival() {
+    let src = r#"
+import { distanceTo } from '../../shim/_kernel.js';
+import Tile from '../../geometry/Tile.js';
+export default class T extends LoopingBot {
+    loop() {
+        const here = { x: 3208, z: 3212, level: 0 };
+        const dest = { x: 3208, z: 3212, level: 1 };
+        const radius = 2000000;
+        const arrived = (a, b, r) => a.level === b.level && distanceTo(a, b) <= r;
+        globalThis.__probe = {
+            fractional: distanceTo({ x: 3208.5, z: 3212, level: 0 }, here),
+            nullTile: distanceTo(null, here) === Infinity,
+
+            hugeCross: arrived(here, dest, radius),
+            hugeSame: arrived(here, { x: 3208, z: 3212, level: 0 }, radius),
+            tileFractional: new Tile(3208, 3212, 0).distanceTo({
+                x: 3208.25,
+                z: 3212,
+                level: 0,
+            }),
+        };
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let snap = base_snapshot();
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let value = iso.probe("__probe").unwrap();
+    assert_eq!(value["fractional"], 0.5);
+    assert_eq!(value["nullTile"], true);
+
+    assert_eq!(
+        value["hugeCross"], false,
+        "cross-plane huge radius is not arrived"
+    );
+    assert_eq!(value["hugeSame"], true);
+    assert_eq!(value["tileFractional"], 0.25);
+    iso.join();
+}
+
