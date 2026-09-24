@@ -26,7 +26,7 @@ pub use profile::{
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::panic::AssertUnwindSafe;
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -947,6 +947,7 @@ pub struct SlotArm {
     /// automatic fallback; panel profile saves update this shared value
     /// without disturbing an online connection.
     pub world: Arc<parking_lot::Mutex<Option<u16>>>,
+    world_generation: AtomicU64,
     /// Next handshake is opcode 18 (lost_con reconnect). First-ever online
     /// is 16; after a grant this is true.
     pub reconnect: Arc<AtomicBool>,
@@ -968,6 +969,7 @@ impl SlotArm {
             lamp_auto: Arc::new(AtomicBool::new(true)),
             lamp_skill: Arc::new(Mutex::new("strength".to_string())),
             world: Arc::new(parking_lot::Mutex::new(None)),
+            world_generation: AtomicU64::new(0),
             reconnect: Arc::new(AtomicBool::new(false)),
             retry_wait: parking_lot::Mutex::new(()),
             retry_wake: parking_lot::Condvar::new(),
@@ -1015,20 +1017,29 @@ impl SlotArm {
         self.retry_wake.notify_all();
     }
 
-    /// Wait for a retry deadline while remaining interruptible by Stop,
-    /// logout/withdrawal, or an intentional-logout latch.
+    /// Wait to the retry deadline. Notifications only re-check Stop,
+    /// withdrawal, latch, and world selection; generic UI wakes use a
+    /// separate channel and cannot spend another login attempt.
     fn wait_for_retry(&self, timeout: Duration) -> bool {
         let mut guard = self.retry_wait.lock();
-        if self.stop.load(Ordering::Relaxed)
-            || !self.want_login.load(Ordering::Relaxed)
-            || self.latch.load(Ordering::Relaxed)
-        {
-            return false;
+        let world_generation = self.world_generation.load(Ordering::Relaxed);
+        let deadline = Instant::now() + timeout;
+        loop {
+            if self.stop.load(Ordering::Relaxed)
+                || !self.want_login.load(Ordering::Relaxed)
+                || self.latch.load(Ordering::Relaxed)
+            {
+                return false;
+            }
+            if self.world_generation.load(Ordering::Relaxed) != world_generation {
+                return true;
+            }
+            let left = deadline.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                return true;
+            }
+            self.retry_wake.wait_for(&mut guard, left);
         }
-        self.retry_wake.wait_for(&mut guard, timeout);
-        !self.stop.load(Ordering::Relaxed)
-            && self.want_login.load(Ordering::Relaxed)
-            && !self.latch.load(Ordering::Relaxed)
     }
 }
 
@@ -1039,7 +1050,16 @@ fn sync_profile_arm(arm: &SlotArm, profile: &Profile) {
     arm.lamp_auto
         .store(profile.settings.lamp_auto, Ordering::Relaxed);
     *arm.lamp_skill.lock().unwrap() = profile.settings.lamp_skill.clone();
-    *arm.world.lock() = profile.settings.world;
+    let world_changed = {
+        let mut world = arm.world.lock();
+        let changed = *world != profile.settings.world;
+        *world = profile.settings.world;
+        changed
+    };
+    if world_changed {
+        arm.world_generation.fetch_add(1, Ordering::Relaxed);
+        arm.notify_retry_wait();
+    }
 }
 
 /// Whether the slot may start a login handshake: on the title (not ingame)
@@ -1508,11 +1528,9 @@ impl Play {
         }
     }
 
-    /// Kick one slot's parked thread and any login retry/backoff wait.
+    /// Kick one slot's parked frame loop. Generic UI/script wakes do not
+    /// shorten protocol retry deadlines.
     pub fn wake(&self, name: &str) {
-        if let Some(arm) = self.arms.get(name) {
-            arm.notify_retry_wait();
-        }
         if let Some(w) = self.wakes.get(name) {
             w.wake();
         }
@@ -1521,9 +1539,6 @@ impl Play {
     /// Kick every running slot (wall-policy changes like
     /// `only_render_selected` affect every member's draw state).
     pub fn wake_all(&self) {
-        for arm in self.arms.values() {
-            arm.notify_retry_wait();
-        }
         for w in self.wakes.values() {
             w.wake();
         }

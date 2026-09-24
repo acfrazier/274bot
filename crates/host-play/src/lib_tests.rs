@@ -957,6 +957,34 @@ fn stop_slot_interrupts_login_backoff() {
 }
 
 #[test]
+fn generic_wake_does_not_shorten_login_backoff() {
+    let mut play = run_with_io(
+        &PlayOptions {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            lowmem: true,
+            mainland: false,
+        },
+        vec![],
+        |_| (None, None),
+        |_, _, _| {},
+    );
+    let arm = SlotArm::new(9, true);
+    play.attach_arm("bob", Arc::clone(&arm));
+    let started = Instant::now();
+    let waiter = thread::spawn(move || arm.wait_for_retry(Duration::from_millis(120)));
+    thread::sleep(Duration::from_millis(20));
+    play.wake("bob");
+
+    assert!(waiter.join().unwrap());
+    assert!(
+        started.elapsed() >= Duration::from_millis(100),
+        "focus/UI wakes must not spend another login attempt early"
+    );
+}
+
+#[test]
 fn stop_slot_during_unresponsive_public_key_fetch_is_bounded() {
     use std::sync::mpsc;
 
