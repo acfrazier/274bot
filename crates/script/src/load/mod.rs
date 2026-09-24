@@ -40,7 +40,7 @@ mod distance;
 #[cfg(feature = "load")]
 mod dialog_v8;
 #[cfg(feature = "load")]
-mod reach_query;
+pub(crate) mod reach_query;
 mod loadout_v8;
 #[cfg(feature = "load")]
 mod machine_v8;

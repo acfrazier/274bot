@@ -27,7 +27,7 @@ thread_local! {
 
 /// Refresh the cached view when [`crate::observed::Lens::reach_stamp`] moves.
 /// An omitted delta keeps the last stamp and the last view.
-pub(super) fn apply(snap: &SnapshotReader<'_>) {
+pub(crate) fn apply(snap: &SnapshotReader<'_>) {
     let stamp = crate::observed::with(|scene| scene.latest().reach_stamp());
     REACH.with(|slot| {
         let mut cached = slot.borrow_mut();
@@ -42,7 +42,7 @@ pub(super) fn apply(snap: &SnapshotReader<'_>) {
     });
 }
 
-pub(super) fn on_reset() {
+pub(crate) fn on_reset() {
     REACH.with(|slot| {
         *slot.borrow_mut() = CachedReach {
             stamp: None,
@@ -51,7 +51,7 @@ pub(super) fn on_reset() {
     });
 }
 
-fn with_view<R>(f: impl FnOnce(&ReachQueryView) -> R) -> R {
+pub(crate) fn with_view<R>(f: impl FnOnce(&ReachQueryView) -> R) -> R {
     REACH.with(|slot| f(&slot.borrow().view))
 }
 
@@ -125,19 +125,7 @@ fn v1_walkable<'s>(
     let Some(tile) = tile_or_none(scope, tile)? else {
         return bool_val(scope, false);
     };
-    let hit = with_view(|view| {
-        view.available
-            && ReachQueryView::bit_at(
-                &view.walkable,
-                view.width,
-                view.height,
-                view.base_x,
-                view.base_z,
-                view.level,
-                tile,
-            )
-    });
-    bool_val(scope, hit)
+    bool_val(scope, with_view(|view| view.walkable(tile)))
 }
 
 fn v1_can_step<'s>(
@@ -380,7 +368,10 @@ fn required_i32(scope: &mut v8::HandleScope, value: v8::Local<v8::Value>) -> Res
     Ok(n as i32)
 }
 
-fn optional_u32(scope: &mut v8::HandleScope, value: v8::Local<v8::Value>) -> Result<Option<u32>, String> {
+fn optional_u32(
+    scope: &mut v8::HandleScope,
+    value: v8::Local<v8::Value>,
+) -> Result<Option<u32>, String> {
     if !value.is_number() {
         return Ok(None);
     }
@@ -397,7 +388,10 @@ fn required_u32(scope: &mut v8::HandleScope, value: v8::Local<v8::Value>) -> Res
     optional_u32(scope, value)?.ok_or_else(|| "invalid-args".to_string())
 }
 
-fn js_to_string(scope: &mut v8::HandleScope, value: v8::Local<v8::Value>) -> Result<String, String> {
+fn js_to_string(
+    scope: &mut v8::HandleScope,
+    value: v8::Local<v8::Value>,
+) -> Result<String, String> {
     match value.to_string(scope) {
         Some(s) => Ok(s.to_rust_string_lossy(scope)),
         None => Err(PENDING.into()),

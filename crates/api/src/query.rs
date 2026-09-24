@@ -16,7 +16,6 @@ use crate::snapshot::{
 use client::dash3d::CollisionFlag;
 use std::sync::Arc;
 
-
 /// Where the candidate values live: a borrowed snapshot slice, or an
 /// owned copy for derived sub-queries (`WidgetQueryExt::items`,
 /// `SideTabQueryExt::widgets`).
@@ -2078,6 +2077,10 @@ impl ReachFlood {
     }
 }
 
+/// Frozen `ARRIVAL_MAX_STEPS` (`geometry/Reachability.ts:8`): the BFS
+/// budget of both arrival reach probes.
+pub const ARRIVAL_MAX_STEPS: u32 = 512;
+
 /// Compact derived reach query posted on the isolate snapshot. Not a
 /// scene retain and not a second flood: walkable bits come from the same
 /// borrowed [`SceneView`] the flood already used.
@@ -2238,6 +2241,95 @@ impl ReachQueryView {
         let rank = ranks.get(i).copied().unwrap_or(u16::MAX);
         bit && rank != u16::MAX && u32::from(rank) <= options.max_steps.unwrap_or(400)
     }
+
+    /// Posted `walkable`: the tile is in the window on this level and its
+    /// flags carry no `SQ_BLOCKED` bit (frozen `Reachability.walkable`).
+    pub fn walkable(&self, tile: WorldTile) -> bool {
+        self.available
+            && Self::bit_at(
+                &self.walkable,
+                self.width,
+                self.height,
+                self.base_x,
+                self.base_z,
+                self.level,
+                tile,
+            )
+    }
+
+    /// Posted `probeable`: the tile lies in the flooded window on this
+    /// level, so its collision flags were read (frozen
+    /// `Reachability.probeable`, `collisionFlags !== null`).
+    pub fn probeable(&self, tile: WorldTile) -> bool {
+        self.available && tile.level == self.level && self.local_index(tile).is_some()
+    }
+
+    /// Whether the posted flood started at `tile`: the flood gives its
+    /// origin, and only its origin, dequeue rank 0.
+    fn flooded_from(&self, tile: WorldTile) -> bool {
+        self.available
+            && tile.level == self.level
+            && self.local_index(tile).and_then(|i| self.exact_rank.get(i)) == Some(&0)
+    }
+
+    fn local_index(&self, tile: WorldTile) -> Option<usize> {
+        let lx = tile.x - self.base_x;
+        let lz = tile.z - self.base_z;
+        (lx >= 0 && lz >= 0 && lx < self.width && lz < self.height)
+            .then(|| (lx as usize) * (self.height as usize) + (lz as usize))
+    }
+}
+
+/// Walk arrival, the one rule the isolate walk wait and the host follow
+/// share: frozen `isArrived` (`geometry/arrival.ts:18-35`) over
+/// `Reachability.arrivalProbe()` (`geometry/Reachability.ts:74-81`).
+///
+/// Same level, then Chebyshev `<= radius`; standing on `dest` arrives.
+/// Otherwise, in order: `canReach(dest)` within [`ARRIVAL_MAX_STEPS`]
+/// arrives; a walkable dest that is not reached does not; an unwalkable
+/// dest arrives when the scene cannot probe it, or when the bounded
+/// adjacent reach (`adjacentOk`) touches it through an open wall edge.
+///
+/// `view` is asked only when a probe is needed (`0 < dist <= radius`), so a
+/// caller whose reach view sits behind a cache or a lock pays for it only
+/// then. Reach reads the view's flood ranks: O(1), no BFS. The probes run
+/// from `me`, so a flood posted from another tile cannot answer them; both
+/// reach probes read false until a flood from `me` is posted.
+pub fn is_arrived<V: std::ops::Deref<Target = ReachQueryView>>(
+    me: WorldTile,
+    dest: WorldTile,
+    radius: i32,
+    view: impl FnOnce() -> V,
+) -> bool {
+    if me.level != dest.level {
+        return false;
+    }
+    let dist = me.x.abs_diff(dest.x).max(me.z.abs_diff(dest.z));
+    if !u32::try_from(radius).is_ok_and(|radius| dist <= radius) {
+        return false;
+    }
+    if dist == 0 {
+        return true;
+    }
+    let view = view();
+    let from_me = view.flooded_from(me);
+    let reach = |adjacent_ok| {
+        from_me
+            && view.can_reach(
+                dest,
+                &SceneReachOptions {
+                    max_steps: Some(ARRIVAL_MAX_STEPS),
+                    adjacent_ok,
+                },
+            )
+    };
+    if reach(false) {
+        return true;
+    }
+    if view.walkable(dest) {
+        return false;
+    }
+    !view.probeable(dest) || reach(true)
 }
 
 /// Pack walkable bits from a borrowed scene (`SQ_BLOCKED == 0`, same
@@ -2518,7 +2610,6 @@ fn canlight_stamp(plane: Option<CanlightPlane<'_>>) -> u64 {
     h | 1
 }
 
-
 /// Per-slot cache of packed reach. Scene-static walkable/step/canlight
 /// rebuild when the collision/scene generation changes; flood ranks rebuild
 /// when the player tile changes on that same scene.
@@ -2587,7 +2678,8 @@ impl ReachPackCache {
         }
         let reuse_static = self.key.is_some_and(|k| k.static_eq(key)) && self.view.available;
         if reuse_static {
-            let current = std::mem::replace(&mut self.view, Arc::new(ReachQueryView::unavailable()));
+            let current =
+                std::mem::replace(&mut self.view, Arc::new(ReachQueryView::unavailable()));
             let mut prev = match Arc::try_unwrap(current) {
                 Ok(view) => view,
                 Err(shared) => (*shared).clone(),
@@ -2629,7 +2721,6 @@ fn overlay_flood(prev: &mut ReachQueryView, flood: Option<&ReachFlood>) -> Reach
         canlight: std::mem::take(&mut prev.canlight),
     }
 }
-
 
 fn pack_u64_bitset_to_u32(words: &[u64], nbits: usize) -> Vec<u32> {
     let nwords = nbits.div_ceil(32);

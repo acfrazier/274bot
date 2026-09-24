@@ -17,11 +17,14 @@
 //! (old buffers / ctx.walk) never settles a wait.
 //!
 //! Mid-follow Stall / Refused / Blocked / GaveUp publish the armed request
-//! id as failed. Arrival still requires Chebyshev ≤ radius and same level.
-//! Genuinely pending follow (`None`) keeps the caller timeout.
+//! id as failed. Arrival is [`api::query::is_arrived`], the
+//! frozen `isArrived` over the last posted reach view — the rule the host
+//! follow ends on too. Genuinely pending follow (`None`) keeps the caller
+//! timeout.
 
 use crate::isolate_fb::SnapshotReader;
 use crate::observed::{self, Scene};
+use api::snapshot::WorldTile;
 use serde_json::{json, Value};
 use std::cell::RefCell;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -56,15 +59,8 @@ thread_local! {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct Tile {
-    x: i32,
-    z: i32,
-    level: i32,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct WalkKey {
-    tile: Tile,
+    tile: WorldTile,
     radius: i32,
     allow_teleports: bool,
 }
@@ -86,7 +82,7 @@ impl HostOutcome {
             request_id: 0,
             failed: false,
             key: WalkKey {
-                tile: Tile {
+                tile: WorldTile {
                     x: 0,
                     z: 0,
                     level: 0,
@@ -108,7 +104,7 @@ impl HostOutcome {
                 request_id: o.request_id,
                 failed: o.failed,
                 key: WalkKey {
-                    tile: Tile {
+                    tile: WorldTile {
                         x: o.tile.x,
                         z: o.tile.z,
                         level: o.tile.level,
@@ -121,8 +117,8 @@ impl HostOutcome {
 }
 
 /// The last posted player tile.
-fn posted_here(scene: &Scene) -> Option<Tile> {
-    scene.latest().here().map(|tile| Tile {
+fn posted_here(scene: &Scene) -> Option<WorldTile> {
+    scene.latest().here().map(|tile| WorldTile {
         x: tile.x,
         z: tile.z,
         level: tile.level,
@@ -174,12 +170,12 @@ impl WalkSlot {
         token
     }
 
-    fn arrived(here: Tile, key: WalkKey) -> bool {
-        if here.level != key.tile.level {
-            return false;
-        }
-        let dist = (here.x - key.tile.x).abs().max((here.z - key.tile.z).abs());
-        dist <= key.radius
+    /// Frozen `isArrived` over the isolate's cached reach view (the same
+    /// view the V8 reach helpers read; no copy, no flood).
+    fn arrived(here: WorldTile, key: WalkKey) -> bool {
+        crate::load::reach_query::with_view(|view| {
+            api::query::is_arrived(here, key.tile, key.radius, || view)
+        })
     }
 
     fn fail_matches(outcome: HostOutcome, wait: &Wait) -> bool {
@@ -191,7 +187,7 @@ impl WalkSlot {
             && outcome.seq != wait.seq_at_begin
     }
 
-    fn poll(&mut self, token: u64, here: Option<Tile>) -> bool {
+    fn poll(&mut self, token: u64, here: Option<WorldTile>) -> bool {
         let Some(wait) = self.wait.as_mut() else {
             return false;
         };
@@ -245,7 +241,7 @@ pub(crate) fn dispatch(input: &Value) -> Value {
         match op {
             "begin" => {
                 let key = WalkKey {
-                    tile: Tile {
+                    tile: WorldTile {
                         x: json_i32(input.get("x")),
                         z: json_i32(input.get("z")),
                         level: json_i32(input.get("level")),
@@ -297,12 +293,14 @@ mod tests {
     /// `ResetSession` as the isolate runs it: the scene and the wait.
     fn on_reset() {
         crate::observed::on_reset();
+        crate::load::reach_query::on_reset();
         super::on_reset();
     }
 
     /// One decoded post, applied the way the isolate applies it.
     fn post(snap: &SnapshotReader<'_>) {
         crate::observed::apply(snap);
+        crate::load::reach_query::apply(snap);
         on_snapshot(snap);
     }
 
@@ -722,5 +720,98 @@ mod tests {
         });
         observe(input, NativeFactsInput::default());
         assert!(!settled(token));
+    }
+
+    /// The host's packed reach for `here` on a 20x20 scene at (2810,3546)
+    /// split by a closed wall between world rows z=3555 and z=3556.
+    fn walled_view(here: WorldTile) -> api::query::ReachQueryView {
+        use client::dash3d::CollisionFlag;
+        let mut scene = api::snapshot::SceneView {
+            available: true,
+            base_x: 2810,
+            base_z: 3546,
+            level: 0,
+            width: 20,
+            height: 20,
+            collision_flags: vec![0; 400],
+        };
+        for lx in 0..20 {
+            scene.collision_flags[lx * 20 + 9] |= CollisionFlag::W_N;
+            scene.collision_flags[lx * 20 + 10] |= CollisionFlag::W_S;
+        }
+        let flood = api::query::SceneQuery::new(&scene, Some(here)).flood_reach();
+        api::query::pack_reach_query(&scene, flood.as_ref())
+    }
+
+    fn observe_at(tick: u64, here: WorldTile, view: &api::query::ReachQueryView) {
+        let mut input = empty_input(tick);
+        input.here = Some(TileInput {
+            x: here.x,
+            z: here.z,
+            level: here.level,
+        });
+        input.reach = ReachViewInput {
+            available: view.available,
+            base_x: view.base_x,
+            base_z: view.base_z,
+            level: view.level,
+            width: view.width,
+            height: view.height,
+            walkable: &view.walkable,
+            reachable: &view.reachable,
+            reachable_adj: &view.reachable_adj,
+            exact_rank: &view.exact_rank,
+            adjacent_rank: &view.adjacent_rank,
+            step: &view.step,
+            canlight: &view.canlight,
+            stamp: tick,
+        };
+        observe(input, NativeFactsInput::default());
+    }
+
+    #[test]
+    fn radius_through_a_closed_wall_does_not_settle_until_the_far_side() {
+        on_reset();
+        let token = begin(2820, 3557, 0, 2, false);
+        let near = WorldTile {
+            x: 2820,
+            z: 3555,
+            level: 0,
+        };
+        observe_at(2, near, &walled_view(near));
+        assert!(
+            !settled(token),
+            "Chebyshev 2 through the wall is not arrival (frozen isArrived)"
+        );
+
+        let far = WorldTile {
+            x: 2821,
+            z: 3556,
+            level: 0,
+        };
+        observe_at(3, far, &walled_view(far));
+        assert!(settled(token), "reachable in-radius tile settles");
+        assert!(value(token));
+    }
+
+    #[test]
+    fn a_flood_from_another_tile_cannot_settle_a_reach_probe() {
+        on_reset();
+        let token = begin(2820, 3557, 0, 2, false);
+        let far = WorldTile {
+            x: 2821,
+            z: 3556,
+            level: 0,
+        };
+        let stale = walled_view(WorldTile {
+            x: 2820,
+            z: 3555,
+            level: 0,
+        });
+        observe_at(2, far, &stale);
+        assert!(
+            !settled(token),
+            "reach probes run from here; a flood from elsewhere answers nothing"
+        );
     }
 }

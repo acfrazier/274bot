@@ -14,6 +14,11 @@ fn native_requested(
     (to, radius, allow_teleports, false, false)
 }
 
+/// No script slot: the follow's arrival probe reads an unavailable view.
+fn no_reach() -> Arc<api::query::ReachQueryView> {
+    Arc::new(api::query::ReachQueryView::unavailable())
+}
+
 fn wait_script_state(play: &Play, name: &str, want: script::RunState) {
     let deadline = Instant::now() + Duration::from_secs(5);
     while play.script_state(name) != want && Instant::now() < deadline {
@@ -9414,6 +9419,7 @@ fn allow_bank_fetch_off_stand_walk_follows_stand_sub_route() {
         Some(world.as_ref()),
         false,
         false,
+        no_reach,
     );
     let all = navs.lock().unwrap();
     let bot = all.get("alice").expect("nav bot");
@@ -13295,6 +13301,7 @@ fn hold_freezes_follow_and_keeps_the_armed_route() {
         world.as_deref(),
         true,
         false,
+        no_reach,
     );
     assert_eq!(d.walked, None, "hold freezes the follow");
     assert!(
@@ -13313,6 +13320,7 @@ fn hold_freezes_follow_and_keeps_the_armed_route() {
         world.as_deref(),
         false,
         false,
+        no_reach,
     );
     assert_eq!(d.walked, Some((4, 0)), "the hop resumes after the hold");
 }
@@ -13853,6 +13861,7 @@ fn script_observe_walk_arms_route_and_pump_steps_follow() {
         world.as_deref(),
         false,
         false,
+        no_reach,
     );
     assert_eq!(d.walked, Some((4, 0)), "the hop targets the dest tile");
     {
@@ -13875,6 +13884,7 @@ fn script_observe_walk_arms_route_and_pump_steps_follow() {
         world.as_deref(),
         false,
         false,
+        no_reach,
     );
     assert_eq!(queued(&navs), None, "arrival clears the armed route");
     {
@@ -13946,6 +13956,7 @@ fn walk_near_follow_ends_when_here_is_within_the_requested_radius() {
             Some(world.as_ref()),
             false,
             false,
+            no_reach,
         )
     };
     nav_snapshot_at(&mut c, &mut snap, 10, 0);
@@ -13973,6 +13984,110 @@ fn walk_near_follow_ends_when_here_is_within_the_requested_radius() {
         (-1, -1),
         "status reports idle"
     );
+}
+
+/// The slot's reach view for `here` on a 20x20 scene split by a closed
+/// wall between rows z=12 and z=13 (a shut door the full width across).
+fn walled_reach(x: i32, z: i32) -> Arc<api::query::ReachQueryView> {
+    use client::dash3d::CollisionFlag;
+    let mut scene = api::snapshot::SceneView {
+        available: true,
+        base_x: 0,
+        base_z: 0,
+        level: 0,
+        width: 20,
+        height: 20,
+        collision_flags: vec![0; 400],
+    };
+    for lx in 0..20 {
+        scene.collision_flags[lx * 20 + 12] |= CollisionFlag::W_N;
+        scene.collision_flags[lx * 20 + 13] |= CollisionFlag::W_S;
+    }
+    let here = WorldTile { x, z, level: 0 };
+    let flood = api::query::SceneQuery::new(&scene, Some(here)).flood_reach();
+    Arc::new(api::query::pack_reach_query(&scene, flood.as_ref()))
+}
+
+/// Frozen `isArrived` (WF-2): a radius that reaches through a closed wall
+/// is not arrival, so the follow keeps the route on the wrong side; the
+/// same radius from the dest's side of the wall ends it.
+#[test]
+fn walk_near_follow_does_not_end_through_a_closed_wall() {
+    let world = Arc::new(NavWorld::from_parts(
+        nav::collision::WorldCollision {
+            origin: WorldTile {
+                x: 0,
+                z: 0,
+                level: 0,
+            },
+            width: 20,
+            height: 20,
+            walk: vec![0u8; 400],
+            blocked: vec![0u64; 400usize.div_ceil(64)],
+            flags: None,
+        },
+        nav::transport::TransportGraph::default(),
+        Vec::new(),
+    ));
+    let navs: Arc<Mutex<HashMap<String, NavBot>>> = Arc::new(Mutex::new(HashMap::new()));
+    let statuses: Arc<Mutex<Vec<SlotStatus>>> = Arc::new(Mutex::new(vec![SlotStatus {
+        username: "alice".into(),
+        ..SlotStatus::default()
+    }]));
+    let arm = ScriptWalkArm {
+        here: Some((10, 0, 0)),
+        world: Some(Arc::clone(&world)),
+        navs: Arc::clone(&navs),
+        name: "alice".into(),
+        state: None,
+        bank: Vec::new(),
+    };
+    assert!(arm.route_with_radius(10, 16, 0, FindOptions::default(), 4));
+    assert!(wait_until(500, || queued(&navs).is_some()), "route armed");
+    let armed = queued(&navs);
+    let mut d = NavRec::default();
+    let mut c = nav_client();
+    let mut snap = GameSnapshot::new();
+    let step = |d: &mut NavRec,
+                snap: &GameSnapshot,
+                here: (i32, i32, i32),
+                reach: &dyn Fn() -> Arc<api::query::ReachQueryView>| {
+        step_nav_bot(
+            d,
+            "alice",
+            Some(here),
+            snap,
+            &navs,
+            &statuses,
+            Some(world.as_ref()),
+            false,
+            false,
+            reach,
+        )
+    };
+
+    // Outside the radius the rule needs no probe: the view is never asked.
+    nav_snapshot_at(&mut c, &mut snap, 10, 11);
+    step(&mut d, &snap, (10, 11, 0), &|| {
+        panic!("out-of-radius arrival must not read reach")
+    });
+    assert_eq!(queued(&navs), armed);
+
+    // Chebyshev 4 <= radius 4, but the dest is behind the shut wall.
+    nav_snapshot_at(&mut c, &mut snap, 10, 12);
+    step(&mut d, &snap, (10, 12, 0), &|| walled_reach(10, 12));
+    assert_eq!(
+        queued(&navs),
+        armed,
+        "a radius through a closed wall is not arrival"
+    );
+
+    // Same radius from the dest's side of the wall: arrived.
+    d.walked = None;
+    nav_snapshot_at(&mut c, &mut snap, 10, 13);
+    step(&mut d, &snap, (10, 13, 0), &|| walled_reach(10, 13));
+    assert_eq!(d.walked, None, "no hop after arrival");
+    assert_eq!(queued(&navs), None, "reachable in-radius arrival clears");
 }
 
 /// A packed glory-style jewellery edge (obj 1712, `opheld4` Rub): the
@@ -14184,6 +14299,7 @@ fn step_nav_bot_passes_graph_teleports_for_a_multi_dest_jewellery_rub() {
         world.as_deref(),
         false,
         false,
+        no_reach,
     );
     assert_eq!(d.held_ops, 1, "one OP_HELD4 rub sent");
     assert!(queued(&navs).is_some(), "the route stays armed");
@@ -14202,6 +14318,7 @@ fn step_nav_bot_passes_graph_teleports_for_a_multi_dest_jewellery_rub() {
         world.as_deref(),
         false,
         false,
+        no_reach,
     );
     assert_eq!(
         d.if_button_components,

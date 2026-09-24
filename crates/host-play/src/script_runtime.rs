@@ -526,8 +526,6 @@ pub(super) fn script_observe_cached(
                     Some(packed.view.as_ref()),
                     packed.flood.as_deref(),
                     packed.stamp,
-
-
                     |input, native| {
                         slot.encode_snapshot_delta_with_native(input, native, force_banks)
                     },
@@ -2459,6 +2457,33 @@ fn pack_cached_reach(
     }
 }
 
+/// The slot's cached reach view for `here`: the follow's arrival probe.
+/// Same cache and key as the isolate post, so a frame that already posted
+/// is a hit; otherwise this one flood is the one the next post reuses.
+/// No script slot (no script walk to settle) reads as an unavailable view.
+pub(super) fn slot_arrival_reach(
+    scripts: &ScriptWall,
+    name: &str,
+    snapshot: &GameSnapshot,
+    here: Option<(i32, i32, i32)>,
+    world: Option<&NavWorld>,
+    canlight: Option<&[u64]>,
+) -> Arc<api::query::ReachQueryView> {
+    match script_slot(scripts, name) {
+        Some(slot) => {
+            let mut slot = slot.lock().unwrap();
+            pack_cached_reach(
+                slot.reach_pack_cache(),
+                Some(snapshot),
+                here,
+                world,
+                canlight,
+            )
+            .view
+        }
+        None => Arc::new(api::query::ReachQueryView::unavailable()),
+    }
+}
 
 pub(super) fn with_script_snapshot_input<R>(
     tick: u64,
@@ -2512,7 +2537,6 @@ pub(super) fn with_script_snapshot_input<R>(
         None,
         0,
         f,
-
     )
 }
 
@@ -2594,9 +2618,7 @@ pub(super) fn with_script_snapshot_input_shorts<R>(
             });
             owned_reach = Some(
                 snapshot
-                    .map(|s| {
-                        api::query::pack_reach_query_plane(s.scene(), flood, canlight_plane)
-                    })
+                    .map(|s| api::query::pack_reach_query_plane(s.scene(), flood, canlight_plane))
                     .unwrap_or_else(api::query::ReachQueryView::unavailable),
             );
             owned_reach.as_ref().unwrap()
@@ -4281,9 +4303,12 @@ pub(super) fn apply_nav_follow_outcome(
 /// — so the status flips back to idle and a script may arm a fresh walk.
 /// Mid-follow Stall / Refused / Blocked / GaveUp publish the armed walk's
 /// isolate request id as a failed outcome. Arrival still settles from `here`,
-/// and the same arrival ends the follow: once `here` is within the requested
-/// radius the route clears without another hop, even short of the approach
-/// tile the route aimed at.
+/// and the same arrival ends the follow: once [`api::query::is_arrived`]
+/// (frozen `isArrived`, the rule `walk_wait` settles on) holds for the
+/// requested dest and radius, the route clears without another hop, even
+/// short of the approach tile the route aimed at. `reach` yields the slot's
+/// cached reach view for `here`; it is asked only when that rule needs a
+/// probe (`0 < dist <= radius` on the dest's level).
 // Shared handles threaded like `script_observe`; the arg count is allowed.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn step_nav_bot<D: Driver>(
@@ -4296,6 +4321,7 @@ pub(super) fn step_nav_bot<D: Driver>(
     world: Option<&NavWorld>,
     hold: bool,
     map_members: bool,
+    reach: impl FnOnce() -> Arc<api::query::ReachQueryView>,
 ) {
     // The random-event freeze: the follow is not stepped while the
     // guardian holds the slot, and the armed route stays latched so it
@@ -4334,6 +4360,19 @@ pub(super) fn step_nav_bot<D: Driver>(
             }
         }
     }
+    // Resolve arrival before the follow lock: the reach view lives behind
+    // the script slot, and the slot locks before navs, never after.
+    let armed = {
+        let all = navs.lock().unwrap();
+        all.get(name)
+            .filter(|bot| bot.route.is_some() && bot.bank_fetch.is_none())
+            .and_then(|bot| bot.requested_route)
+    };
+    let arrived = here
+        .zip(armed)
+        .is_some_and(|((x, z, level), (to, radius, ..))| {
+            api::query::is_arrived(WorldTile { x, z, level }, to, radius, reach)
+        });
     let mut options = TravelOptions {
         // Exact arrival: the armed dest must be stood on before the route
         // clears (the v1 traveller arrived the same way).
@@ -4350,12 +4389,13 @@ pub(super) fn step_nav_bot<D: Driver>(
         if bot.route.is_none() {
             return;
         }
-        if bot.bank_fetch.is_none() && here.is_some_and(|here| bot.reached_requested(here)) {
-            // The isolate settles the walk wait as soon as `here` is within
-            // the requested radius (walk_wait.rs), so the card has already
-            // moved on. Every further hop would be a click the card never
-            // sent; a stall re-send walks the player out of the fight the
-            // card started at the edge of the radius.
+        // `requested_route == armed`: the arrival above is for this walk.
+        if arrived && bot.bank_fetch.is_none() && bot.requested_route == armed {
+            // The isolate settles the walk wait on this same arrival rule
+            // (walk_wait.rs), so the card has already moved on. Every
+            // further hop would be a click the card never sent; a stall
+            // re-send walks the player out of the fight the card started at
+            // the edge of the radius.
             bot.traveller.clear();
             bot.route = None;
         } else if let Some(route) = bot.route.clone() {
@@ -4838,14 +4878,6 @@ impl NavBot {
         if self.walk_outcome_seq == 0 {
             self.walk_outcome_seq = 1;
         }
-    }
-
-    /// The isolate's walk-wait arrival rule for the requested walk: same
-    /// level and Chebyshev distance to the requested dest within its radius.
-    fn reached_requested(&self, (x, z, level): (i32, i32, i32)) -> bool {
-        self.requested_route.is_some_and(|(to, radius, ..)| {
-            level == to.level && (x - to.x).abs().max((z - to.z).abs()) <= radius
-        })
     }
 
     /// Older armed-route results may publish only after the current wait

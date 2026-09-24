@@ -2822,6 +2822,16 @@ fn spawn_slot_thread(
                                         slot_world.as_deref(),
                                         hold,
                                         map_members,
+                                        || {
+                                            slot_arrival_reach(
+                                                &slot_scripts,
+                                                name,
+                                                &nav_snapshot,
+                                                here,
+                                                slot_world.as_deref(),
+                                                slot_canlight.as_deref(),
+                                            )
+                                        },
                                     );
                                 }
                             }
