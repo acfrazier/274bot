@@ -1464,9 +1464,9 @@ pub(super) fn track(world: u64, tracked: &mut u64) -> bool {
     true
 }
 
-/// Cheap dirty bit for loc rebuilds: aggregate every scene tile's
-/// `model_stamp` (bumped by wall/decor/scenery mutations including door
-/// multilocs). Integer reads only — no loc string clones.
+/// Cheap dirty bit for loc rebuilds: aggregate every scene tile's loc-layer
+/// generations (including door multilocs). Integer reads only — no loc
+/// string clones. Scene sprites have a separate static-loc generation.
 pub(super) fn loc_dirty_bits(client: &Client) -> (u64, u64) {
     (
         loc_model_stamp(client),
@@ -1479,9 +1479,12 @@ fn loc_model_stamp(client: &Client) -> u64 {
     let mut stamp = 0u64;
     for sx in 0..104 {
         for sz in 0..104 {
-            stamp = stamp
-                .wrapping_mul(31)
-                .wrapping_add(client.world.tile_model_stamp(level, sx, sz) as u64);
+            let generation = client.world.square(level, sx, sz).map_or(i32::MIN, |tile| {
+                tile.wall_model_stamp
+                    .wrapping_add(tile.decor_model_stamp)
+                    .wrapping_add(tile.gd_model_stamp)
+            });
+            stamp = stamp.wrapping_mul(31).wrapping_add(generation as u64);
         }
     }
     stamp
