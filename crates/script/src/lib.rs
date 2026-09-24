@@ -115,8 +115,13 @@ mod dialog;
 mod drive_partner_trade;
 #[cfg(feature = "load")]
 mod fire;
+/// The hunt step machines on the machine host (fence F09).
+#[cfg(feature = "load")]
+mod hunt;
 #[cfg(feature = "load")]
 pub mod hunt_bank;
+#[cfg(feature = "load")]
+mod hunt_catalog;
 #[cfg(feature = "load")]
 pub mod hunt_cell;
 #[cfg(feature = "load")]

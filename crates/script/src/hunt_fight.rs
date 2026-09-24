@@ -4,6 +4,8 @@
 //! field pick and Taverley `site.key` branches stay here. One effect per
 //! `next()`. Tokens are per Task instance; session reset drops the map.
 
+use crate::hunt::{flag, hook, index, number, strict_true, text, Host, Kind as HuntKind};
+use crate::machine::Ended;
 use crate::observed::{self, EntityRow, ItemRow, Scene, Skill, Skills};
 use crate::task_clock::InstantTaskClock;
 use api::snapshot::WorldTile;
@@ -110,7 +112,7 @@ pub struct Site {
     pub also_hunt: Vec<String>,
     pub safespots: Vec<Tile>,
     pub melee_anchor: Tile,
-    pub boxes: Vec<SiteBox>,
+    pub area: Area,
     pub fire_at_range: bool,
     pub ranged_threat: bool,
     /// WalkToSpot stops. Default empty. Fight, Hold, and Retreat ignore it.
@@ -518,7 +520,7 @@ impl FightRuntime {
 }
 
 #[derive(Clone, Debug)]
-struct Projection {
+pub(crate) struct Projection {
     died: bool,
     /// Chase-gate field. Fight validate_inner / next_effect must not read
     /// this. Hold validate and Walk validate read it for the chase gate only.
@@ -561,6 +563,31 @@ pub fn in_area_body(origin: Tile, size: i32, boxes: &[SiteBox]) -> bool {
             && origin.z <= b.max_z
             && z1 >= b.min_z
     })
+}
+
+/// A site's area: its boxes (v2 and data sites), or, when the script's
+/// own `site.inArea(t)` predicate is held, that predicate's answers for
+/// the tiles a decision reads (`crate::hunt` asks for new tiles before
+/// each step).
+#[derive(Clone, Debug, Default)]
+pub struct Area {
+    pub boxes: Vec<SiteBox>,
+    pub known: Option<HashMap<Tile, bool>>,
+}
+
+impl Area {
+    pub fn of(boxes: Vec<SiteBox>) -> Self {
+        Self { boxes, known: None }
+    }
+
+    /// With the predicate: the frozen point test on `origin` (a tile not
+    /// asked about is outside). With boxes: any body tile overlaps.
+    pub fn contains(&self, origin: Tile, size: i32) -> bool {
+        match &self.known {
+            Some(known) => known.get(&origin).copied().unwrap_or(false),
+            None => in_area_body(origin, size, &self.boxes),
+        }
+    }
 }
 
 fn uses_safespot(style: Style) -> bool {
@@ -740,7 +767,7 @@ fn parse_projection(input: &Value) -> Projection {
             also_hunt,
             safespots,
             melee_anchor: parse_tile(input.get("meleeAnchor"), origin),
-            boxes,
+            area: Area::of(boxes),
             fire_at_range: input
                 .get("fireAtRange")
                 .and_then(Value::as_bool)
@@ -809,7 +836,7 @@ fn retreat_due(proj: &Projection, obs: &FightObservation) -> bool {
     let Some(here) = obs.here else {
         return false;
     };
-    let in_lair = in_area_body(here, 1, &proj.site.boxes);
+    let in_lair = proj.site.area.contains(here, 1);
     if !in_lair
         || proj.site.safespots.is_empty()
         || on_any_safespot(obs, &proj.site)
@@ -897,12 +924,10 @@ fn huntable_near<'a>(
                 && n.has_attack()
                 && !taken_by_another(n, ours, obs.self_slot)
                 && match from {
-                    None => {
-                        n.distance <= radius && in_area_body(n.tile(), n.size.max(1), &site.boxes)
-                    }
+                    None => n.distance <= radius && site.area.contains(n.tile(), n.size.max(1)),
                     Some(spot) => {
                         gap_sw(spot, n.network(), n.size) <= radius
-                            && in_area_body(n.network(), n.size.max(1), &site.boxes)
+                            && site.area.contains(n.network(), n.size.max(1))
                             && sighted_from(spot, n, obs)
                     }
                 }
@@ -1052,7 +1077,7 @@ fn validate_inner(rt: &mut FightRuntime, proj: &Projection, obs: &FightObservati
         Some(h) => h,
         None => return false,
     };
-    if !in_area_body(here, 1, &proj.site.boxes) || proj.hp_fraction < proj.panic_hp {
+    if !proj.site.area.contains(here, 1) || proj.hp_fraction < proj.panic_hp {
         return false;
     }
     if holds_anchor(proj.style, proj.site.fire_at_range) && !on_spot {
@@ -2012,7 +2037,7 @@ fn hold_validate_inner(proj: &Projection, obs: &FightObservation) -> bool {
     let Some(here) = obs.here else {
         return false;
     };
-    if !in_area_body(here, 1, &proj.site.boxes) {
+    if !proj.site.area.contains(here, 1) {
         return false;
     }
     if chase_mode(proj.style, proj.site.fire_at_range) && proj.target_idx.is_some() {
@@ -2653,7 +2678,7 @@ fn walk_validate_inner(proj: &Projection, obs: &FightObservation) -> bool {
     let Some(here) = obs.here else {
         return false;
     };
-    if !in_area_body(here, 1, &proj.site.boxes) {
+    if !proj.site.area.contains(here, 1) {
         return false;
     }
     if chase_mode(proj.style, proj.site.fire_at_range) && proj.target_idx.is_some() {
@@ -2896,4 +2921,240 @@ pub fn walk_force_bound_reached(token: u64) -> bool {
         true
     })
     .unwrap_or(false)
+}
+
+fn unknown_token() -> Value {
+    json!({ "kind": "aborted", "reason": "unknown token" })
+}
+
+/// The CombatHost values a Fight / Hold / Retreat / WalkToSpot decision
+/// reads, from the script's own getters (the order the old projection
+/// read them in). An absent hook reads as the old projection's default.
+fn refresh_projection(proj: &mut Projection, host: &mut dyn Host) -> Result<(), Ended> {
+    proj.died = flag(host, hook::DIED, false)?;
+    proj.target_idx = index(host, hook::TARGET_IDX)?;
+    proj.hp_fraction = number(host, hook::HP_FRACTION, 1.0)?;
+    proj.panic_hp = number(host, hook::PANIC_HP, 0.0)?;
+    proj.retreat_hp = number(host, hook::RETREAT_HP, 0.0)?;
+    proj.has_food = flag(host, hook::HAS_FOOD, false)?;
+    proj.need_eat = flag(host, hook::NEED_EAT, false)?;
+    proj.style = parse_style(&json!({ "style": text(host, hook::STYLE, "melee")? }));
+    proj.safespot_index = index(host, hook::SAFESPOT_INDEX)?.unwrap_or(0);
+    proj.bury_bones = flag(host, hook::BURY_BONES, false)?;
+    proj.bone_name = text(host, hook::BONE_NAME, "")?;
+    proj.has_vlog = host.has(hook::VLOG);
+    proj.has_arm_special = host.has(hook::ARM_SPECIAL);
+    proj.has_shield_ready = host.has(hook::SHIELD_READY);
+    proj.shield_ready = strict_true(host, hook::SHIELD_READY)?;
+    Ok(())
+}
+
+/// `Fight`: the frozen Task class.
+pub(crate) struct FightKind;
+
+impl HuntKind for FightKind {
+    const NAME: &'static str = "hunt-fight";
+    const SESSION: bool = true;
+    const BOOLEAN: bool = false;
+    const NPC_AREA: bool = true;
+    type Proj = Projection;
+
+    fn parse(site: &Value) -> Projection {
+        parse_projection(site)
+    }
+
+    fn area(proj: &mut Projection) -> &mut Area {
+        &mut proj.site.area
+    }
+
+    fn refresh(proj: &mut Projection, host: &mut dyn Host) -> Result<(), Ended> {
+        refresh_projection(proj, host)
+    }
+
+    fn mint() -> u64 {
+        token_of(&begin())
+    }
+
+    fn ensure(token: u64) {
+        RUNTIMES.with(|m| {
+            m.borrow_mut()
+                .entry(token)
+                .or_insert_with(|| FightRuntime::new(token, Instant::now()));
+        });
+    }
+
+    fn renew(token: u64) {
+        RUNTIMES.with(|m| {
+            m.borrow_mut()
+                .insert(token, FightRuntime::new(token, Instant::now()));
+        });
+    }
+
+    fn next(token: u64, proj: &Projection, reply: Option<&Value>) -> Value {
+        with_runtime(token, |rt| next_effect(rt, proj, reply)).unwrap_or_else(unknown_token)
+    }
+
+    fn validate(token: u64, proj: &Projection) -> bool {
+        let obs = observation();
+        with_runtime(token, |rt| validate_inner(rt, proj, &obs)).unwrap_or(false)
+    }
+}
+
+/// `Fight.blocksLoot()`.
+pub(crate) fn blocks_loot(token: u64, proj: &Projection) -> bool {
+    let obs = observation();
+    with_runtime(token, |rt| blocks_loot_inner(rt, proj, &obs)).unwrap_or(false)
+}
+
+/// `Fight.reset()`.
+pub(crate) fn reset(token: u64) {
+    FightKind::ensure(token);
+    with_runtime(token, FightRuntime::reset_task);
+}
+
+/// `Fight.interruptWatch()`.
+pub(crate) fn interrupt_watch(token: u64) {
+    FightKind::ensure(token);
+    with_runtime(token, FightRuntime::interrupt_watch);
+}
+
+/// `HoldSafespot`.
+pub(crate) struct HoldKind;
+
+impl HuntKind for HoldKind {
+    const NAME: &'static str = "hunt-hold";
+    const SESSION: bool = true;
+    const BOOLEAN: bool = false;
+    const WORLD_WALK: bool = true;
+    type Proj = Projection;
+
+    fn parse(site: &Value) -> Projection {
+        parse_projection(site)
+    }
+
+    fn area(proj: &mut Projection) -> &mut Area {
+        &mut proj.site.area
+    }
+
+    fn refresh(proj: &mut Projection, host: &mut dyn Host) -> Result<(), Ended> {
+        refresh_projection(proj, host)
+    }
+
+    fn mint() -> u64 {
+        token_of(&hold_begin())
+    }
+
+    fn ensure(token: u64) {
+        HOLD_RUNTIMES.with(|m| {
+            m.borrow_mut()
+                .entry(token)
+                .or_insert_with(|| HoldRuntime::new(token));
+        });
+    }
+
+    fn renew(token: u64) {
+        HOLD_RUNTIMES.with(|m| m.borrow_mut().insert(token, HoldRuntime::new(token)));
+    }
+
+    fn next(token: u64, proj: &Projection, reply: Option<&Value>) -> Value {
+        with_hold(token, |rt| hold_next_effect(rt, proj, reply)).unwrap_or_else(unknown_token)
+    }
+
+    fn validate(_token: u64, proj: &Projection) -> bool {
+        hold_validate_inner(proj, &observation())
+    }
+}
+
+/// `Retreat`.
+pub(crate) struct RetreatKind;
+
+impl HuntKind for RetreatKind {
+    const NAME: &'static str = "hunt-retreat";
+    const SESSION: bool = true;
+    const BOOLEAN: bool = false;
+    type Proj = Projection;
+
+    fn parse(site: &Value) -> Projection {
+        parse_projection(site)
+    }
+
+    fn area(proj: &mut Projection) -> &mut Area {
+        &mut proj.site.area
+    }
+
+    fn refresh(proj: &mut Projection, host: &mut dyn Host) -> Result<(), Ended> {
+        refresh_projection(proj, host)
+    }
+
+    fn mint() -> u64 {
+        token_of(&retreat_begin())
+    }
+
+    fn ensure(token: u64) {
+        RETREAT_RUNTIMES.with(|m| {
+            m.borrow_mut()
+                .entry(token)
+                .or_insert_with(|| RetreatRuntime::new(token));
+        });
+    }
+
+    fn renew(token: u64) {
+        RETREAT_RUNTIMES.with(|m| m.borrow_mut().insert(token, RetreatRuntime::new(token)));
+    }
+
+    fn next(token: u64, proj: &Projection, reply: Option<&Value>) -> Value {
+        with_retreat(token, |rt| retreat_next_effect(rt, proj, reply)).unwrap_or_else(unknown_token)
+    }
+
+    fn validate(token: u64, proj: &Projection) -> bool {
+        let obs = observation();
+        with_retreat(token, |rt| retreat_validate_inner(rt, proj, &obs)).unwrap_or(false)
+    }
+}
+
+/// `WalkToSpot`.
+pub(crate) struct WalkSpotKind;
+
+impl HuntKind for WalkSpotKind {
+    const NAME: &'static str = "hunt-walkspot";
+    const SESSION: bool = true;
+    const BOOLEAN: bool = false;
+    const WORLD_WALK: bool = true;
+    type Proj = Projection;
+
+    fn parse(site: &Value) -> Projection {
+        parse_projection(site)
+    }
+
+    fn area(proj: &mut Projection) -> &mut Area {
+        &mut proj.site.area
+    }
+
+    fn refresh(proj: &mut Projection, host: &mut dyn Host) -> Result<(), Ended> {
+        refresh_projection(proj, host)
+    }
+
+    fn mint() -> u64 {
+        token_of(&walk_begin())
+    }
+
+    fn ensure(token: u64) {
+        WALK_RUNTIMES.with(|m| {
+            m.borrow_mut()
+                .entry(token)
+                .or_insert_with(|| WalkRuntime::new(token));
+        });
+    }
+
+    fn renew(token: u64) {
+        WALK_RUNTIMES.with(|m| m.borrow_mut().insert(token, WalkRuntime::new(token)));
+    }
+
+    fn next(token: u64, proj: &Projection, reply: Option<&Value>) -> Value {
+        with_walk(token, |rt| walk_next_effect(rt, proj, reply)).unwrap_or_else(unknown_token)
+    }
+
+    fn validate(_token: u64, proj: &Projection) -> bool {
+        walk_validate_inner(proj, &observation())
+    }
 }

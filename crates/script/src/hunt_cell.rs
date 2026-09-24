@@ -6,7 +6,8 @@
 //! Fight, or dialog dispatch. Inside the cell is pump-start leave or Velrak,
 //! not an abort copied from the key machine.
 
-use crate::hunt_fight::{in_area_body, SiteBox, Tile};
+use crate::hunt::Kind as HuntKind;
+use crate::hunt_fight::{in_area_body, Area, SiteBox, Tile};
 use crate::observed::{self, EntityRow, ItemRow, Scene, SceneRow};
 use crate::task_clock::InstantTaskClock;
 use serde_json::{json, Value};
@@ -214,10 +215,10 @@ impl CellObservation {
 }
 
 #[derive(Clone, Debug)]
-struct CellProj {
+pub(crate) struct CellProj {
     key: String,
     key_item_present: bool,
-    boxes: Vec<SiteBox>,
+    area: Area,
     route_present: bool,
     loc_ids: Vec<i32>,
 }
@@ -342,7 +343,7 @@ fn in_lair(proj: &CellProj, obs: &CellObservation) -> bool {
     let Some(here) = obs.here else {
         return false;
     };
-    in_area_body(here, 1, &proj.boxes)
+    proj.area.contains(here, 1)
 }
 
 fn in_cell(obs: &CellObservation) -> bool {
@@ -503,7 +504,7 @@ fn parse_proj(input: &Value) -> CellProj {
             None | Some(Value::Null) => false,
             Some(_) => true,
         },
-        boxes: parse_boxes(input),
+        area: Area::of(parse_boxes(input)),
         route_present: present(input.get("route"))
             || present(input.get("outLever"))
             || present(input.get("upLadder")),
@@ -1177,4 +1178,50 @@ pub fn cell_force_bound_reached(token: u64) -> bool {
         true
     })
     .unwrap_or(false)
+}
+
+/// `cell`: the jail cell.
+pub(crate) struct Cell;
+
+impl HuntKind for Cell {
+    const NAME: &'static str = "hunt-cell";
+    const SESSION: bool = false;
+    const BOOLEAN: bool = true;
+    const WALK_TO_ACK: bool = true;
+    type Proj = CellProj;
+
+    fn parse(site: &Value) -> CellProj {
+        parse_proj(site)
+    }
+
+    fn area(proj: &mut CellProj) -> &mut Area {
+        &mut proj.area
+    }
+
+    fn mint() -> u64 {
+        let token = alloc_token();
+        CELL_RUNTIMES.with(|m| m.borrow_mut().insert(token, CellRuntime::new(token)));
+        token
+    }
+
+    fn ensure(token: u64) {
+        CELL_RUNTIMES.with(|m| {
+            m.borrow_mut()
+                .entry(token)
+                .or_insert_with(|| CellRuntime::new(token));
+        });
+    }
+
+    fn renew(token: u64) {
+        CELL_RUNTIMES.with(|m| m.borrow_mut().insert(token, CellRuntime::new(token)));
+    }
+
+    fn next(token: u64, proj: &CellProj, reply: Option<&Value>) -> Value {
+        with_cell(token, |rt| next_effect(rt, proj, reply))
+            .unwrap_or_else(|| json!({ "kind": "aborted", "reason": "unknown token" }))
+    }
+
+    fn end(token: u64) {
+        CELL_RUNTIMES.with(|m| m.borrow_mut().remove(&token));
+    }
 }

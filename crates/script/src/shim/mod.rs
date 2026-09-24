@@ -634,6 +634,22 @@ pub(crate) fn shim_modules() -> Vec<Module> {
             include_str!("hunting_combat.js"),
         ),
         Module::new(
+            "/rs2b0t/bot/api/combat/hunting/sites.js",
+            include_str!("hunting_sites.js"),
+        ),
+        Module::new(
+            "/rs2b0t/bot/api/combat/hunting/logic.js",
+            include_str!("hunting_logic.js"),
+        ),
+        Module::new(
+            "/rs2b0t/bot/api/combat/hunting/guarded.js",
+            include_str!("hunting_guarded.js"),
+        ),
+        Module::new(
+            "/rs2b0t/bot/api/combat/hunting/supply.js",
+            include_str!("hunting_supply.js"),
+        ),
+        Module::new(
             "/rs2b0t/bot/api/firemaking/LightFire.js",
             include_str!("light_fire.js"),
         ),

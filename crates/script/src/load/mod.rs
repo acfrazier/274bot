@@ -30,21 +30,20 @@ mod clue_pack_v8;
 #[cfg(feature = "load")]
 mod combat_style_v8;
 #[cfg(feature = "load")]
+mod dialog_v8;
+#[cfg(feature = "load")]
+mod distance;
+#[cfg(feature = "load")]
 mod fire_v8;
 mod gather_methods_v8;
+#[cfg(feature = "load")]
+mod hunt_v8;
 #[cfg(feature = "load")]
 mod isolate;
 mod library;
 #[cfg(feature = "load")]
 mod line_of_sight;
-#[cfg(feature = "load")]
-mod distance;
-#[cfg(feature = "load")]
-mod dialog_v8;
-#[cfg(feature = "load")]
-pub(crate) mod reach_query;
 mod loadout_v8;
-#[cfg(feature = "load")]
 mod machine_v8;
 #[cfg(feature = "load")]
 mod melee_weapons_v8;
@@ -55,6 +54,8 @@ mod paint_jive;
 #[cfg(feature = "load")]
 mod partner_trade_v8;
 mod quest_facts_v8;
+#[cfg(feature = "load")]
+pub(crate) mod reach_query;
 #[cfg(feature = "load")]
 mod scene_v8;
 mod selected_facts_v8;

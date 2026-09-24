@@ -4,7 +4,9 @@
 //! key arm, and completion stay here. Own map and token counter. Do not call
 //! the other hunt machines. A supplied leave is a continuation, not lever ops.
 
-use crate::hunt_fight::{in_area_body, SiteBox, Tile};
+use crate::hunt::{hook, names, number, text, Host, Kind as HuntKind};
+use crate::hunt_fight::{Area, SiteBox, Tile};
+use crate::machine::Ended;
 use crate::observed::{self, ItemRow, Scene, Skill, Skills};
 use crate::task_clock::InstantTaskClock;
 use serde_json::{json, Value};
@@ -177,10 +179,10 @@ struct FlaskPlan {
 }
 
 #[derive(Clone, Debug)]
-struct BankProj {
+pub(crate) struct BankProj {
     bank: Option<Tile>,
     key_item: Option<KeyItem>,
-    boxes: Vec<SiteBox>,
+    area: Area,
     coins: Option<i32>,
     fire_at_range: bool,
     withdraw_food: bool,
@@ -462,7 +464,7 @@ fn in_lair(proj: &BankProj, obs: &BankObservation) -> bool {
     let Some(here) = obs.here else {
         return false;
     };
-    in_area_body(here, 1, &proj.boxes)
+    proj.area.contains(here, 1)
 }
 
 fn near_bank(obs: &BankObservation, bank: Tile) -> bool {
@@ -678,7 +680,7 @@ fn parse_proj(input: &Value) -> BankProj {
     BankProj {
         bank: parse_tile(input.get("bank")),
         key_item,
-        boxes: parse_boxes(input),
+        area: Area::of(parse_boxes(input)),
         coins,
         fire_at_range: input.get("fireAtRange").and_then(Value::as_bool) == Some(true),
         withdraw_food: input.get("withdrawFood").and_then(Value::as_bool) == Some(true),
@@ -2251,4 +2253,62 @@ pub fn bank_force_bound_reached(token: u64) -> bool {
         true
     })
     .unwrap_or(false)
+}
+
+/// `bankRoutine`.
+pub(crate) struct Bank;
+
+impl HuntKind for Bank {
+    const NAME: &'static str = "hunt-bank";
+    const SESSION: bool = false;
+    const BOOLEAN: bool = true;
+    type Proj = BankProj;
+
+    fn parse(site: &Value) -> BankProj {
+        parse_proj(site)
+    }
+
+    fn area(proj: &mut BankProj) -> &mut Area {
+        &mut proj.area
+    }
+
+    /// The JiveHost loadout reads the old projection made each step.
+    fn refresh(proj: &mut BankProj, host: &mut dyn Host) -> Result<(), Ended> {
+        proj.has_pick_weapon = host.has(hook::PICK_WEAPON);
+        proj.food_name = text(host, hook::FOOD_NAME, "")?;
+        proj.food_want = number(host, hook::FOOD_WITHDRAW, 0.0)? as i32;
+        proj.style = text(host, hook::STYLE, "")?;
+        proj.weapon = text(host, hook::WEAPON_NAME, "")?;
+        proj.ammo = text(host, hook::AMMO_NAME, "")?;
+        proj.spell = text(host, hook::SPELL_NAME, "")?;
+        proj.keep_extra = names(host, hook::KEEP_EXTRA)?;
+        Ok(())
+    }
+
+    fn mint() -> u64 {
+        let token = alloc_token();
+        BANK_RUNTIMES.with(|m| m.borrow_mut().insert(token, BankRuntime::new(token)));
+        token
+    }
+
+    fn ensure(token: u64) {
+        BANK_RUNTIMES.with(|m| {
+            m.borrow_mut()
+                .entry(token)
+                .or_insert_with(|| BankRuntime::new(token));
+        });
+    }
+
+    fn renew(token: u64) {
+        BANK_RUNTIMES.with(|m| m.borrow_mut().insert(token, BankRuntime::new(token)));
+    }
+
+    fn next(token: u64, proj: &BankProj, reply: Option<&Value>) -> Value {
+        with_bank(token, |rt| next_effect(rt, proj, reply))
+            .unwrap_or_else(|| json!({ "kind": "aborted", "reason": "unknown token" }))
+    }
+
+    fn end(token: u64) {
+        BANK_RUNTIMES.with(|m| m.borrow_mut().remove(&token));
+    }
 }

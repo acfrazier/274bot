@@ -989,307 +989,151 @@ export function tick(api) {
     iso.join();
 }
 
+const HUNT_SITE: &str = "const site = {
+  key: 't',
+  target: 'Goblin',
+  safespots: [{ x: 1, z: 1, level: 0 }],
+  meleeAnchor: { x: 1, z: 1, level: 0 },
+  boxes: [{ minX: 0, maxX: 10, minZ: 0, maxZ: 10, level: 0 }],
+};";
+
+fn run_hunt_card(body: &str, ticks: u64) -> LoadIsolate {
+    let src = format!(
+        "export const apiVersion = 2;\n{HUNT_SITE}\nlet started = false;\nexport async function tick(api) {{\n  if (started) return;\n  started = true;\n  globalThis.__statuses = [];\n  const status = (m) => globalThis.__statuses.push(m);\n{body}\n}}\n"
+    );
+    let iso = LoadIsolate::spawn(src, LoadShape::NativeTick, vec![]).unwrap();
+    for tick in 1..=ticks {
+        post_base(&iso, tick);
+        iso.on_game_tick(tick);
+    }
+    iso
+}
+
+/// Fight is begin + one awaited run: the run settles once, the script's
+/// hooks are called by Rust, and a throwing getter rejects the await
+/// with the thrown value.
 #[test]
-fn v2_fight_next_names_yield_and_does_not_map_aborted_to_anonymous_done() {
-    let src = r#"
-export const apiVersion = 2;
-export function tick(api) {
-  const began = api.fightBegin();
+fn v2_fight_run_settles_once_and_rejects_with_a_hook_throw() {
+    let iso = run_hunt_card(
+        "  const began = api.fightBegin(site);
   globalThis.__begin = began;
   const token = began.value.token;
-  const bad = api.fightNext({ token: token + 1 });
-  globalThis.__bad = bad;
-  const first = api.fightNext({
-    token,
-    died: false,
-    hpFraction: 1,
-    panicHp: 0.1,
-    retreatHp: 0,
-    hasFood: true,
-    needEat: false,
-    style: 'melee',
-    safespotIndex: 0,
-    buryBones: false,
-    boneName: 'Bones',
-    hasArmSpecial: false,
-    hasShieldReady: false,
-    key: 't',
-    target: 'Goblin',
-    alsoHunt: [],
-    safespots: [{x:1,z:1,level:0}],
-    meleeAnchor: {x:1,z:1,level:0},
-    boxes: [{minX:0,maxX:10,minZ:0,maxZ:10,level:0}],
-  });
-  globalThis.__first = first;
-  const unexpected = api.fightNext({
-    token,
-    reply: { eatOk: true },
-    died: false,
-    hpFraction: 1,
-    panicHp: 0.1,
-    retreatHp: 0,
-    hasFood: true,
-    needEat: false,
-    style: 'melee',
-    safespotIndex: 0,
-    buryBones: false,
-    boneName: 'Bones',
-    hasArmSpecial: false,
-    hasShieldReady: false,
-    key: 't',
-    target: 'Goblin',
-    alsoHunt: [],
-    safespots: [{x:1,z:1,level:0}],
-    meleeAnchor: {x:1,z:1,level:0},
-    boxes: [{minX:0,maxX:10,minZ:0,maxZ:10,level:0}],
-  });
-  globalThis.__unexpected = unexpected;
-}
-"#;
-    let iso = LoadIsolate::spawn(src.into(), LoadShape::NativeTick, vec![]).unwrap();
-    post_base(&iso, 1);
-    iso.on_game_tick(1);
-    let begin = iso.probe("globalThis.__begin").unwrap();
-    assert_eq!(begin["ok"], true, "{begin:?}");
-    let bad = iso.probe("globalThis.__bad").unwrap();
-    assert_eq!(bad["ok"], false, "{bad:?}");
-    assert_ne!(bad["status"], "done");
-    assert_ne!(bad["kind"], "yield");
-    let first = iso.probe("globalThis.__first").unwrap();
-    assert_eq!(first["ok"], true, "{first:?}");
-    if first["status"] == "done" {
-        assert_eq!(first["kind"], "yield", "{first:?}");
-    }
-    let unexpected = iso.probe("globalThis.__unexpected").unwrap();
-    assert_eq!(unexpected["ok"], false, "{unexpected:?}");
-    assert_ne!(unexpected["kind"], "yield");
-    assert_ne!(unexpected["status"], "done");
+  globalThis.__validate = api.fightValidate({ token }, { hpFraction: () => 1 });
+  globalThis.__done = await api.fightRun({ token }, { died: () => true, setStatus: status });
+  try {
+    await api.fightRun({ token }, { hpFraction() { throw new Error('boom'); } });
+    globalThis.__threw = null;
+  } catch (e) {
+    globalThis.__threw = String(e && e.message);
+  }
+  globalThis.__missing = await api.fightRun({ token: token + 100 }, {});",
+        3,
+    );
+    assert_eq!(iso.probe("globalThis.__begin").unwrap()["ok"], true);
+    // No posted tile: not in the area.
+    assert_eq!(
+        iso.probe("globalThis.__validate").unwrap(),
+        serde_json::json!({ "ok": true, "value": false })
+    );
+    // A dead host ends the pass after the status.
+    assert_eq!(
+        iso.probe("globalThis.__done").unwrap(),
+        serde_json::json!({ "kind": "done", "value": null })
+    );
+    assert_eq!(
+        iso.probe("globalThis.__statuses").unwrap(),
+        serde_json::json!(["fighting goblins"])
+    );
+    assert_eq!(iso.probe("globalThis.__threw").unwrap(), "boom");
+    assert_eq!(
+        iso.probe("globalThis.__missing").unwrap(),
+        serde_json::json!({ "kind": "refused", "reason": "unknown token" })
+    );
     iso.join();
 }
 
+/// Hold walks the world itself: status through the hook, then one world
+/// walk with the wilderness and bank fetch allowed and a wait token.
 #[test]
-fn v2_hold_next_names_yield_and_does_not_map_aborted_to_anonymous_done() {
-    let src = r#"
-export const apiVersion = 2;
-export function tick(api) {
-  const began = api.holdBegin();
-  globalThis.__begin = began;
-  const token = began.value.token;
-  const bad = api.holdNext({ token: token + 1 });
-  globalThis.__bad = bad;
-  const first = api.holdNext({
-    token,
-    died: false,
-    targetIdx: null,
-    hpFraction: 1,
-    panicHp: 0.1,
-    hasFood: true,
-    style: 'melee',
-    safespotIndex: 0,
-    key: 't',
-    target: 'Goblin',
-    alsoHunt: [],
-    safespots: [{x:1,z:1,level:0}],
-    meleeAnchor: {x:2,z:2,level:0},
-    boxes: [{minX:0,maxX:10,minZ:0,maxZ:10,level:0}],
-  });
-  globalThis.__first = first;
-  const unexpected = api.holdNext({
-    token,
-    reply: { eatOk: true },
-    died: false,
-    targetIdx: null,
-    hpFraction: 1,
-    panicHp: 0.1,
-    hasFood: true,
-    style: 'melee',
-    safespotIndex: 0,
-    key: 't',
-    target: 'Goblin',
-    alsoHunt: [],
-    safespots: [{x:1,z:1,level:0}],
-    meleeAnchor: {x:2,z:2,level:0},
-    boxes: [{minX:0,maxX:10,minZ:0,maxZ:10,level:0}],
-  });
-  globalThis.__unexpected = unexpected;
-}
-"#;
-    let iso = LoadIsolate::spawn(src.into(), LoadShape::NativeTick, vec![]).unwrap();
-    post_base(&iso, 1);
-    iso.on_game_tick(1);
-    let begin = iso.probe("globalThis.__begin").unwrap();
-    assert_eq!(begin["ok"], true, "{begin:?}");
-    let bad = iso.probe("globalThis.__bad").unwrap();
-    assert_eq!(bad["ok"], false, "{bad:?}");
-    assert_eq!(bad["kind"], "aborted", "{bad:?}");
-    assert_eq!(bad["status"], "aborted", "{bad:?}");
-    assert_ne!(bad["status"], "done");
-    assert_ne!(bad["kind"], "yield");
-    let first = iso.probe("globalThis.__first").unwrap();
-    assert_eq!(first["ok"], true, "{first:?}");
-    if first["status"] == "done" {
-        assert_eq!(first["kind"], "yield", "{first:?}");
-    } else {
-        assert_eq!(first["status"], "continue", "{first:?}");
-        assert_eq!(first["kind"], "status", "{first:?}");
-    }
-    let unexpected = iso.probe("globalThis.__unexpected").unwrap();
-    assert_eq!(unexpected["ok"], false, "{unexpected:?}");
-    assert_eq!(unexpected["kind"], "aborted", "{unexpected:?}");
-    assert_ne!(unexpected["kind"], "yield");
-    assert_ne!(unexpected["status"], "done");
+fn v2_hold_run_sets_status_and_emits_the_world_walk() {
+    let iso = run_hunt_card(
+        "  const token = api.holdBegin(site).value.token;
+  globalThis.__run = api.holdRun({ token }, { setStatus: status });",
+        1,
+    );
+    assert_eq!(
+        iso.probe("globalThis.__statuses").unwrap(),
+        serde_json::json!(["returning to the melee anchor"])
+    );
+    let drained = iso.drain_interacts();
+    assert!(
+        drained.iter().any(|req| matches!(
+            req,
+            InteractReq::Walk {
+                x: 1,
+                z: 1,
+                level: 0,
+                allow_teleports: false,
+                allow_wilderness: true,
+                allow_bank_fetch: true,
+                request_id,
+            } if *request_id != 0
+        )),
+        "{drained:?}"
+    );
     iso.join();
 }
 
+/// Retreat with no posted tile settles at once without a move; WalkToSpot
+/// walks the world to its anchor itself.
 #[test]
-fn v2_retreat_next_names_yield_and_does_not_map_aborted_to_anonymous_done() {
-    let src = r#"
-export const apiVersion = 2;
-export function tick(api) {
-  const began = api.retreatBegin();
-  globalThis.__begin = began;
-  const token = began.value.token;
-  const bad = api.retreatNext({ token: token + 1 });
-  globalThis.__bad = bad;
-  const first = api.retreatNext({
-    token,
-    died: false,
-    targetIdx: null,
-    hpFraction: 0.4,
-    panicHp: 0.1,
-    retreatHp: 0.5,
-    hasFood: false,
-    style: 'melee',
-    safespotIndex: 0,
-    key: 't',
-    target: 'Goblin',
-    alsoHunt: [],
-    safespots: [{x:1,z:1,level:0}],
-    meleeAnchor: {x:2,z:2,level:0},
-    boxes: [{minX:0,maxX:10,minZ:0,maxZ:10,level:0}],
-  });
-  globalThis.__first = first;
-  const unexpected = api.retreatNext({
-    token,
-    reply: { eatOk: true },
-    died: false,
-    targetIdx: null,
-    hpFraction: 0.4,
-    panicHp: 0.1,
-    retreatHp: 0.5,
-    hasFood: false,
-    style: 'melee',
-    safespotIndex: 0,
-    key: 't',
-    target: 'Goblin',
-    alsoHunt: [],
-    safespots: [{x:1,z:1,level:0}],
-    meleeAnchor: {x:2,z:2,level:0},
-    boxes: [{minX:0,maxX:10,minZ:0,maxZ:10,level:0}],
-  });
-  globalThis.__unexpected = unexpected;
-}
-"#;
-    let iso = LoadIsolate::spawn(src.into(), LoadShape::NativeTick, vec![]).unwrap();
-    post_base(&iso, 1);
-    iso.on_game_tick(1);
-    let begin = iso.probe("globalThis.__begin").unwrap();
-    assert_eq!(begin["ok"], true, "{begin:?}");
-    let bad = iso.probe("globalThis.__bad").unwrap();
-    assert_eq!(bad["ok"], false, "{bad:?}");
-    assert_eq!(bad["kind"], "aborted", "{bad:?}");
-    assert_eq!(bad["status"], "aborted", "{bad:?}");
-    assert_ne!(bad["status"], "done");
-    assert_ne!(bad["kind"], "yield");
-    let first = iso.probe("globalThis.__first").unwrap();
-    assert_eq!(first["ok"], true, "{first:?}");
-    if first["status"] == "done" {
-        assert_eq!(first["kind"], "yield", "{first:?}");
-    } else {
-        assert_eq!(first["status"], "continue", "{first:?}");
-    }
-    let unexpected = iso.probe("globalThis.__unexpected").unwrap();
-    assert_eq!(unexpected["ok"], false, "{unexpected:?}");
-    assert_eq!(unexpected["kind"], "aborted", "{unexpected:?}");
-    assert_ne!(unexpected["kind"], "yield");
-    assert_ne!(unexpected["status"], "done");
-    iso.join();
-}
-
-#[test]
-fn v2_walkspot_next_names_yield_and_does_not_map_aborted_to_anonymous_done() {
-    let src = r#"
-export const apiVersion = 2;
-export function tick(api) {
-  const began = api.walkspotBegin();
-  globalThis.__begin = began;
-  const token = began.value.token;
-  const bad = api.walkspotNext({ token: token + 1 });
-  globalThis.__bad = bad;
-  const first = api.walkspotNext({
-    token,
-    died: false,
-    targetIdx: null,
-    hpFraction: 1,
-    panicHp: 0.1,
-    hasFood: false,
-    style: 'range',
-    safespotIndex: 0,
-    key: 't',
-    target: 'Goblin',
-    alsoHunt: [],
-    safespots: [{x:1,z:1,level:0}],
-    meleeAnchor: {x:2,z:2,level:0},
-    boxes: [{minX:0,maxX:10,minZ:0,maxZ:10,level:0}],
-    approach: [],
-  });
-  globalThis.__first = first;
-  const unexpected = api.walkspotNext({
-    token,
-    reply: { eatOk: true },
-    died: false,
-    targetIdx: null,
-    hpFraction: 1,
-    panicHp: 0.1,
-    hasFood: false,
-    style: 'range',
-    safespotIndex: 0,
-    key: 't',
-    target: 'Goblin',
-    alsoHunt: [],
-    safespots: [{x:1,z:1,level:0}],
-    meleeAnchor: {x:2,z:2,level:0},
-    boxes: [{minX:0,maxX:10,minZ:0,maxZ:10,level:0}],
-    approach: [],
-  });
-  globalThis.__unexpected = unexpected;
-}
-"#;
-    let iso = LoadIsolate::spawn(src.into(), LoadShape::NativeTick, vec![]).unwrap();
-    post_base(&iso, 1);
-    iso.on_game_tick(1);
-    let begin = iso.probe("globalThis.__begin").unwrap();
-    assert_eq!(begin["ok"], true, "{begin:?}");
-    let bad = iso.probe("globalThis.__bad").unwrap();
-    assert_eq!(bad["ok"], false, "{bad:?}");
-    assert_eq!(bad["kind"], "aborted", "{bad:?}");
-    assert_eq!(bad["status"], "aborted", "{bad:?}");
-    assert_ne!(bad["status"], "done");
-    assert_ne!(bad["kind"], "yield");
-    let first = iso.probe("globalThis.__first").unwrap();
-    assert_eq!(first["ok"], true, "{first:?}");
-    if first["status"] == "done" {
-        assert_eq!(first["kind"], "yield", "{first:?}");
-    } else {
-        assert_eq!(first["status"], "continue", "{first:?}");
-        assert_eq!(first["kind"], "status", "{first:?}");
-    }
-    let unexpected = iso.probe("globalThis.__unexpected").unwrap();
-    assert_eq!(unexpected["ok"], false, "{unexpected:?}");
-    assert_eq!(unexpected["kind"], "aborted", "{unexpected:?}");
-    assert_eq!(unexpected["status"], "aborted", "{unexpected:?}");
-    assert_ne!(unexpected["kind"], "yield");
-    assert_ne!(unexpected["status"], "done");
+fn v2_retreat_settles_without_a_tile_and_walkspot_walks_the_world() {
+    let iso = run_hunt_card(
+        "  const retreat = api.retreatBegin(site).value.token;
+  const walk = api.walkspotBegin(site).value.token;
+  globalThis.__validates = [
+    api.retreatValidate({ token: retreat }, {}),
+    api.walkspotValidate({ token: walk }, {}),
+  ];
+  globalThis.__retreat = await api.retreatRun({ token: retreat }, { setStatus: status });
+  globalThis.__walk = api.walkspotRun({ token: walk }, { setStatus: status });
+  globalThis.__bad = api.retreatValidate({}, {});",
+        2,
+    );
+    assert_eq!(
+        iso.probe("globalThis.__validates").unwrap(),
+        serde_json::json!([{ "ok": true, "value": false }, { "ok": true, "value": false }])
+    );
+    assert_eq!(
+        iso.probe("globalThis.__retreat").unwrap(),
+        serde_json::json!({ "kind": "done", "value": null })
+    );
+    assert_eq!(
+        iso.probe("globalThis.__statuses").unwrap(),
+        serde_json::json!(["walking to the fight spot"])
+    );
+    assert_eq!(
+        iso.probe("globalThis.__bad").unwrap(),
+        serde_json::json!({ "ok": false, "error": "invalid-args" })
+    );
+    let drained = iso.drain_interacts();
+    assert!(!drained
+        .iter()
+        .any(|req| matches!(req, InteractReq::WalkTo { .. })));
+    assert!(
+        drained.iter().any(|req| matches!(
+            req,
+            InteractReq::Walk {
+                x: 1,
+                z: 1,
+                allow_wilderness: true,
+                allow_bank_fetch: true,
+                request_id,
+                ..
+            } if *request_id != 0
+        )),
+        "{drained:?}"
+    );
     iso.join();
 }
 

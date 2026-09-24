@@ -4,7 +4,8 @@
 //! inv proof, and the kept order stay here. Own map and token counter.
 //! Call `hunt_fight::in_area_body` only. Do not call Leave or Fight dispatch.
 
-use crate::hunt_fight::{in_area_body, SiteBox, Tile};
+use crate::hunt::Kind as HuntKind;
+use crate::hunt_fight::{in_area_body, Area, SiteBox, Tile};
 use crate::observed::{self, EntityRow, ItemRow, Scene, SceneRow};
 use crate::task_clock::InstantTaskClock;
 use serde_json::{json, Value};
@@ -200,10 +201,10 @@ impl KeyObservation {
 }
 
 #[derive(Clone, Debug)]
-struct KeyProj {
+pub(crate) struct KeyProj {
     key: String,
     key_item_present: bool,
-    boxes: Vec<SiteBox>,
+    area: Area,
     route_present: bool,
     loc_ids: Vec<i32>,
 }
@@ -294,7 +295,7 @@ fn in_lair(proj: &KeyProj, obs: &KeyObservation) -> bool {
     let Some(here) = obs.here else {
         return false;
     };
-    in_area_body(here, 1, &proj.boxes)
+    proj.area.contains(here, 1)
 }
 
 fn in_cell(obs: &KeyObservation) -> bool {
@@ -419,7 +420,7 @@ fn parse_proj(input: &Value) -> KeyProj {
             None | Some(Value::Null) => false,
             Some(_) => true,
         },
-        boxes: parse_boxes(input),
+        area: Area::of(parse_boxes(input)),
         route_present: present(input.get("route"))
             || present(input.get("outLever"))
             || present(input.get("upLadder")),
@@ -815,4 +816,49 @@ pub fn key_force_bound_reached(token: u64) -> bool {
         true
     })
     .unwrap_or(false)
+}
+
+/// `acquireKey`.
+pub(crate) struct Key;
+
+impl HuntKind for Key {
+    const NAME: &'static str = "hunt-key";
+    const SESSION: bool = false;
+    const BOOLEAN: bool = true;
+    type Proj = KeyProj;
+
+    fn parse(site: &Value) -> KeyProj {
+        parse_proj(site)
+    }
+
+    fn area(proj: &mut KeyProj) -> &mut Area {
+        &mut proj.area
+    }
+
+    fn mint() -> u64 {
+        let token = alloc_token();
+        KEY_RUNTIMES.with(|m| m.borrow_mut().insert(token, KeyRuntime::new(token)));
+        token
+    }
+
+    fn ensure(token: u64) {
+        KEY_RUNTIMES.with(|m| {
+            m.borrow_mut()
+                .entry(token)
+                .or_insert_with(|| KeyRuntime::new(token));
+        });
+    }
+
+    fn renew(token: u64) {
+        KEY_RUNTIMES.with(|m| m.borrow_mut().insert(token, KeyRuntime::new(token)));
+    }
+
+    fn next(token: u64, proj: &KeyProj, reply: Option<&Value>) -> Value {
+        with_key(token, |rt| next_effect(rt, proj, reply))
+            .unwrap_or_else(|| json!({ "kind": "aborted", "reason": "unknown token" }))
+    }
+
+    fn end(token: u64) {
+        KEY_RUNTIMES.with(|m| m.borrow_mut().remove(&token));
+    }
 }

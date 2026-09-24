@@ -401,71 +401,6 @@ pub(super) fn wire_runtime(
         })
         .map_err(|e| format!("register special: {e}"))?;
     runtime
-        .register_function("__rs2b0t_fight", |args: &[serde_json::Value]| {
-            Ok(crate::hunt_fight::dispatch(
-                args.first().unwrap_or(&serde_json::Value::Null),
-            ))
-        })
-        .map_err(|e| format!("register fight: {e}"))?;
-    runtime
-        .register_function("__rs2b0t_hold", |args: &[serde_json::Value]| {
-            Ok(crate::hunt_fight::hold_dispatch(
-                args.first().unwrap_or(&serde_json::Value::Null),
-            ))
-        })
-        .map_err(|e| format!("register hold: {e}"))?;
-    runtime
-        .register_function("__rs2b0t_retreat", |args: &[serde_json::Value]| {
-            Ok(crate::hunt_fight::retreat_dispatch(
-                args.first().unwrap_or(&serde_json::Value::Null),
-            ))
-        })
-        .map_err(|e| format!("register retreat: {e}"))?;
-    runtime
-        .register_function("__rs2b0t_walkspot", |args: &[serde_json::Value]| {
-            Ok(crate::hunt_fight::walk_dispatch(
-                args.first().unwrap_or(&serde_json::Value::Null),
-            ))
-        })
-        .map_err(|e| format!("register walkspot: {e}"))?;
-    runtime
-        .register_function("__rs2b0t_enter", |args: &[serde_json::Value]| {
-            Ok(crate::hunt_lair::dispatch(
-                args.first().unwrap_or(&serde_json::Value::Null),
-            ))
-        })
-        .map_err(|e| format!("register enter: {e}"))?;
-    let selected_leave = game_data.clone();
-    runtime
-        .register_function("__rs2b0t_leave", move |args: &[serde_json::Value]| {
-            Ok(crate::hunt_leave::dispatch(
-                selected_leave.as_deref(),
-                args.first().unwrap_or(&serde_json::Value::Null),
-            ))
-        })
-        .map_err(|e| format!("register leave: {e}"))?;
-    runtime
-        .register_function("__rs2b0t_key", |args: &[serde_json::Value]| {
-            Ok(crate::hunt_key::dispatch(
-                args.first().unwrap_or(&serde_json::Value::Null),
-            ))
-        })
-        .map_err(|e| format!("register key: {e}"))?;
-    runtime
-        .register_function("__rs2b0t_cell", |args: &[serde_json::Value]| {
-            Ok(crate::hunt_cell::dispatch(
-                args.first().unwrap_or(&serde_json::Value::Null),
-            ))
-        })
-        .map_err(|e| format!("register cell: {e}"))?;
-    runtime
-        .register_function("__rs2b0t_bank", |args: &[serde_json::Value]| {
-            Ok(crate::hunt_bank::dispatch(
-                args.first().unwrap_or(&serde_json::Value::Null),
-            ))
-        })
-        .map_err(|e| format!("register bank: {e}"))?;
-    runtime
         .register_function("__rs2b0t_quest_journal", |args: &[serde_json::Value]| {
             Ok(crate::quest_journal::dispatch(
                 args.first().unwrap_or(&serde_json::Value::Null),
@@ -683,6 +618,7 @@ pub(super) fn wire_runtime(
     super::combat_style_v8::install(runtime).map_err(|e| format!("combat style v8: {e}"))?;
     super::machine_v8::install(runtime).map_err(|e| format!("machine v8: {e}"))?;
     super::bank_tasks_v8::install(runtime).map_err(|e| format!("bank tasks v8: {e}"))?;
+    super::hunt_v8::install(runtime).map_err(|e| format!("hunt v8: {e}"))?;
     super::dialog_v8::install(runtime).map_err(|e| format!("dialog v8: {e}"))?;
     let content = format!(
         "globalThis.__rs2b0t_host.content = {};",
@@ -1431,234 +1367,46 @@ api.canStep = function (input) {
 api.canReach = function (input) {
   return globalThis.__rs2b0t_reach('v2-canReach', input);
 };
-function fightCall(payload) {
-  return globalThis.rustyscript.functions.__rs2b0t_fight(payload);
+// Hunt families: a Task-class session is `*Begin(site)` (the site crosses
+// once), `*Validate({ token }, hooks)` and `*Run({ token }, hooks)`, one
+// awaited machine run; the one-shot runs take the site with the hooks.
+// Rust owns every loop, walk, op and wait; hooks are the caller's own.
+function huntBegin(family, site) {
+  if (!site || typeof site !== 'object') return helperErr('invalid-args');
+  return helperOk({ token: globalThis.__rs2b0t_hunt('begin', family, site) });
 }
-api.fightBegin = function (input) {
-  const out = fightCall({ op: 'begin', ...(input || {}) });
-  if (!out || out.kind === 'aborted') return helperErr((out && out.reason) || 'aborted');
-  return helperOk({ token: out.token });
-};
-api.fightValidate = function (input) {
-  if (!input || input.token == null) return helperErr('invalid-args');
-  const out = fightCall({ op: 'validate', ...input });
-  if (out && out.kind === 'aborted') return helperErr(out.reason || 'aborted');
-  return helperOk(out === true || out?.value === true);
-};
-api.fightNext = function (input) {
-  if (!input || input.token == null) return { ok: false, error: 'invalid-args' };
-  const out = fightCall({ op: 'next', ...input });
-  if (!out) return { ok: false, error: 'aborted' };
-  if (out.kind === 'aborted') {
-    return { ok: false, error: out.reason || 'aborted', kind: 'aborted', token: out.token, status: 'aborted' };
-  }
-  if (out.kind === 'yield') {
-    return { ok: true, status: 'done', token: out.token, kind: 'yield' };
-  }
-  return { ok: true, status: 'continue', token: out.token, ...out };
-};
-api.fightReset = function (input) {
-  if (!input || input.token == null) return helperErr('invalid-args');
-  const out = fightCall({ op: 'reset', ...input });
-  if (out && out.kind === 'aborted') return helperErr(out.reason || 'aborted');
+function huntRead(op, family, input, hooks) {
+  if (!input || typeof input.token !== 'number') return helperErr('invalid-args');
+  return helperOk(globalThis.__rs2b0t_hunt(op, family, input.token, hooks || {}) === true);
+}
+function huntToken(op, input) {
+  if (!input || typeof input.token !== 'number') return helperErr('invalid-args');
+  globalThis.__rs2b0t_hunt(op, 'hunt-fight', input.token);
   return helperOk(null);
-};
-api.fightInterruptWatch = function (input) {
-  if (!input || input.token == null) return helperErr('invalid-args');
-  const out = fightCall({ op: 'interruptWatch', ...input });
-  if (out && out.kind === 'aborted') return helperErr(out.reason || 'aborted');
-  return helperOk(null);
-};
-api.fightBlocksLoot = function (input) {
-  if (!input || input.token == null) return helperErr('invalid-args');
-  const out = fightCall({ op: 'blocksLoot', ...input });
-  if (out && out.kind === 'aborted') return helperErr(out.reason || 'aborted');
-  return helperOk(out === true || out?.value === true);
-};
-function holdCall(payload) {
-  return globalThis.rustyscript.functions.__rs2b0t_hold(payload);
 }
-api.holdBegin = function (input) {
-  const out = holdCall({ op: 'begin', ...(input || {}) });
-  if (!out || out.kind === 'aborted') return helperErr((out && out.reason) || 'aborted');
-  return helperOk({ token: out.token });
-};
-api.holdValidate = function (input) {
-  if (!input || input.token == null) return helperErr('invalid-args');
-  const out = holdCall({ op: 'validate', ...input });
-  if (out && out.kind === 'aborted') return helperErr(out.reason || 'aborted');
-  return helperOk(out === true || out?.value === true);
-};
-api.holdNext = function (input) {
-  if (!input || input.token == null) return { ok: false, error: 'invalid-args' };
-  const out = holdCall({ op: 'next', ...input });
-  if (!out) return { ok: false, error: 'aborted' };
-  if (out.kind === 'aborted') {
-    return { ok: false, error: out.reason || 'aborted', kind: 'aborted', token: out.token, status: 'aborted' };
-  }
-  if (out.kind === 'yield') {
-    return { ok: true, status: 'done', token: out.token, kind: 'yield' };
-  }
-  return { ok: true, status: 'continue', token: out.token, ...out };
-};
-function retreatCall(payload) {
-  return globalThis.rustyscript.functions.__rs2b0t_retreat(payload);
+function huntSession(family, input, hooks) {
+  if (!input || typeof input.token !== 'number') return Promise.resolve({ kind: 'refused', reason: 'invalid-args' });
+  return runMachine(family, { token: input.token }, hooks || {});
 }
-api.retreatBegin = function (input) {
-  const out = retreatCall({ op: 'begin', ...(input || {}) });
-  if (!out || out.kind === 'aborted') return helperErr((out && out.reason) || 'aborted');
-  return helperOk({ token: out.token });
-};
-api.retreatValidate = function (input) {
-  if (!input || input.token == null) return helperErr('invalid-args');
-  const out = retreatCall({ op: 'validate', ...input });
-  if (out && out.kind === 'aborted') return helperErr(out.reason || 'aborted');
-  return helperOk(out === true || out?.value === true);
-};
-api.retreatNext = function (input) {
-  if (!input || input.token == null) return { ok: false, error: 'invalid-args' };
-  const out = retreatCall({ op: 'next', ...input });
-  if (!out) return { ok: false, error: 'aborted' };
-  if (out.kind === 'aborted') {
-    return { ok: false, error: out.reason || 'aborted', kind: 'aborted', token: out.token, status: 'aborted' };
-  }
-  if (out.kind === 'yield') {
-    return { ok: true, status: 'done', token: out.token, kind: 'yield' };
-  }
-  return { ok: true, status: 'continue', token: out.token, ...out };
-};
-function walkspotCall(payload) {
-  return globalThis.rustyscript.functions.__rs2b0t_walkspot(payload);
+function huntRun(family, site, hooks) {
+  if (!site || typeof site !== 'object') return Promise.resolve({ kind: 'refused', reason: 'invalid-args' });
+  return runMachine(family, { site }, hooks || {});
 }
-api.walkspotBegin = function (input) {
-  const out = walkspotCall({ op: 'begin', ...(input || {}) });
-  if (!out || out.kind === 'aborted') return helperErr((out && out.reason) || 'aborted');
-  return helperOk({ token: out.token });
-};
-api.walkspotValidate = function (input) {
-  if (!input || input.token == null) return helperErr('invalid-args');
-  const out = walkspotCall({ op: 'validate', ...input });
-  if (out && out.kind === 'aborted') return helperErr(out.reason || 'aborted');
-  return helperOk(out === true || out?.value === true);
-};
-api.walkspotNext = function (input) {
-  if (!input || input.token == null) return { ok: false, error: 'invalid-args' };
-  const out = walkspotCall({ op: 'next', ...input });
-  if (!out) return { ok: false, error: 'aborted' };
-  if (out.kind === 'aborted') {
-    return { ok: false, error: out.reason || 'aborted', kind: 'aborted', token: out.token, status: 'aborted' };
-  }
-  if (out.kind === 'yield') {
-    return { ok: true, status: 'done', token: out.token, kind: 'yield' };
-  }
-  return { ok: true, status: 'continue', token: out.token, ...out };
-};
-function enterCall(payload) {
-  return globalThis.rustyscript.functions.__rs2b0t_enter(payload);
+for (const [name, family] of [
+  ['fight', 'hunt-fight'], ['hold', 'hunt-hold'], ['retreat', 'hunt-retreat'],
+  ['walkspot', 'hunt-walkspot'], ['enter', 'hunt-enter'],
+]) {
+  api[name + 'Begin'] = (site) => huntBegin(family, site);
+  api[name + 'Validate'] = (input, hooks) => huntRead('validate', family, input, hooks);
+  api[name + 'Run'] = (input, hooks) => huntSession(family, input, hooks);
 }
-api.enterBegin = function (input) {
-  const out = enterCall({ op: 'begin', ...(input || {}) });
-  if (!out || out.kind === 'aborted') return helperErr((out && out.reason) || 'aborted');
-  return helperOk({ token: out.token });
-};
-api.enterValidate = function (input) {
-  if (!input || input.token == null) return helperErr('invalid-args');
-  const out = enterCall({ op: 'validate', ...input });
-  if (out && out.kind === 'aborted') return helperErr(out.reason || 'aborted');
-  return helperOk(out === true || out?.value === true);
-};
-api.enterNext = function (input) {
-  if (!input || input.token == null) return { ok: false, error: 'invalid-args' };
-  const out = enterCall({ op: 'next', ...input });
-  if (!out) return { ok: false, error: 'aborted' };
-  if (out.kind === 'aborted') {
-    return { ok: false, error: out.reason || 'aborted', kind: 'aborted', token: out.token, status: 'aborted' };
-  }
-  if (out.kind === 'yield') {
-    return { ok: true, status: 'done', token: out.token, kind: 'yield', value: out.value === true };
-  }
-  return { ok: true, status: 'continue', token: out.token, ...out };
-};
-function leaveCall(payload) {
-  return globalThis.rustyscript.functions.__rs2b0t_leave(payload);
-}
-api.leaveBegin = function (input) {
-  const out = leaveCall({ op: 'begin', ...(input || {}) });
-  if (!out || out.kind === 'aborted') return helperErr((out && out.reason) || 'aborted');
-  return helperOk({ token: out.token });
-};
-api.leaveNext = function (input) {
-  if (!input || input.token == null) return { ok: false, error: 'invalid-args' };
-  const out = leaveCall({ op: 'next', ...input });
-  if (!out) return { ok: false, error: 'aborted' };
-  if (out.kind === 'aborted') {
-    return { ok: false, error: out.reason || 'aborted', kind: 'aborted', token: out.token, status: 'aborted' };
-  }
-  if (out.kind === 'yield') {
-    return { ok: true, status: 'done', token: out.token, kind: 'yield', value: out.value === true };
-  }
-  return { ok: true, status: 'continue', token: out.token, ...out };
-};
-function keyCall(payload) {
-  return globalThis.rustyscript.functions.__rs2b0t_key(payload);
-}
-api.keyBegin = function (input) {
-  const out = keyCall({ op: 'begin', ...(input || {}) });
-  if (!out || out.kind === 'aborted') return helperErr((out && out.reason) || 'aborted');
-  return helperOk({ token: out.token });
-};
-api.keyNext = function (input) {
-  if (!input || input.token == null) return { ok: false, error: 'invalid-args' };
-  const out = keyCall({ op: 'next', ...input });
-  if (!out) return { ok: false, error: 'aborted' };
-  if (out.kind === 'aborted') {
-    return { ok: false, error: out.reason || 'aborted', kind: 'aborted', token: out.token, status: 'aborted' };
-  }
-  if (out.kind === 'yield') {
-    return { ok: true, status: 'done', token: out.token, kind: 'yield', value: out.value === true };
-  }
-  return { ok: true, status: 'continue', token: out.token, ...out };
-};
-function cellCall(payload) {
-  return globalThis.rustyscript.functions.__rs2b0t_cell(payload);
-}
-api.cellBegin = function (input) {
-  const out = cellCall({ op: 'begin', ...(input || {}) });
-  if (!out || out.kind === 'aborted') return helperErr((out && out.reason) || 'aborted');
-  return helperOk({ token: out.token });
-};
-api.cellNext = function (input) {
-  if (!input || input.token == null) return { ok: false, error: 'invalid-args' };
-  const out = cellCall({ op: 'next', ...input });
-  if (!out) return { ok: false, error: 'aborted' };
-  if (out.kind === 'aborted') {
-    return { ok: false, error: out.reason || 'aborted', kind: 'aborted', token: out.token, status: 'aborted' };
-  }
-  if (out.kind === 'yield') {
-    return { ok: true, status: 'done', token: out.token, kind: 'yield', value: out.value === true };
-  }
-  return { ok: true, status: 'continue', token: out.token, ...out };
-};
-function bankCall(payload) {
-  return globalThis.rustyscript.functions.__rs2b0t_bank(payload);
-}
-api.bankBegin = function (input) {
-  const out = bankCall({ op: 'begin', ...(input || {}) });
-  if (!out || out.kind === 'aborted') return helperErr((out && out.reason) || 'aborted');
-  return helperOk({ token: out.token });
-};
-api.bankNext = function (input) {
-  if (!input || input.token == null) return { ok: false, error: 'invalid-args' };
-  const out = bankCall({ op: 'next', ...input });
-  if (!out) return { ok: false, error: 'aborted' };
-  if (out.kind === 'aborted') {
-    return { ok: false, error: out.reason || 'aborted', kind: 'aborted', token: out.token, status: 'aborted' };
-  }
-  if (out.kind === 'yield') {
-    return { ok: true, status: 'done', token: out.token, kind: 'yield', value: out.value === true };
-  }
-  return { ok: true, status: 'continue', token: out.token, ...out };
-};
+api.fightBlocksLoot = (input, hooks) => huntRead('blocksLoot', 'hunt-fight', input, hooks);
+api.fightReset = (input) => huntToken('reset', input);
+api.fightInterruptWatch = (input) => huntToken('interruptWatch', input);
+api.leaveRun = (site, hooks) => huntRun('hunt-leave', site, hooks);
+api.keyRun = (site, hooks) => huntRun('hunt-key', site, hooks);
+api.cellRun = (site, hooks) => huntRun('hunt-cell', site, hooks);
+api.bankRun = (site, opts, hooks) => huntRun('hunt-bank', site && { ...site, ...(opts || {}) }, hooks);
 function recordSettlement(generation) {
   if (generation !== lifecycleGeneration) return;
   const h = host();

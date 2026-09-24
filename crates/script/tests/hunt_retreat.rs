@@ -655,68 +655,6 @@ fn leftover_walk_token_does_not_settle_retreat() {
 }
 
 #[test]
-fn class_switches_stay_split_and_walk_to_spot_is_live() {
-    let src = include_str!("../src/shim/hunting_combat.js");
-    assert!(!src.contains("retreatDue"));
-    assert!(!src.contains("retreatAim"));
-    assert!(!src.contains("nearestSpot"));
-    let fight = src
-        .split("export class Retreat")
-        .next()
-        .expect("fight class");
-    assert!(fight.contains("case 'walk-to':"));
-    assert!(!fight.contains("case 'walk':"));
-    let retreat = src
-        .split("export class Retreat")
-        .nth(1)
-        .unwrap()
-        .split("export class HoldSafespot")
-        .next()
-        .expect("retreat class");
-    assert!(retreat.contains("case 'walk-to':"));
-    assert!(!retreat.contains("case 'walk':"));
-    assert!(retreat.contains("this.host.fight?.interruptWatch()"));
-    let hold = src
-        .split("export class HoldSafespot")
-        .nth(1)
-        .unwrap()
-        .split("export class WalkToSpot")
-        .next()
-        .expect("hold class");
-    assert!(hold.contains("case 'walk':"));
-    assert!(!hold.contains("case 'walk-to':"));
-
-    let iso = LoadIsolate::spawn(
-        r#"
-import { Retreat, WalkToSpot } from '../../api/combat/hunting/combat.js';
-export default class T extends LoopingBot {
-    loop() {
-        const probe = { walkToSpot: null };
-        try { new WalkToSpot(); } catch (e) { probe.walkToSpot = String(e && e.message || e); }
-        globalThis.__probe = JSON.stringify(probe);
-    }
-}
-"#
-        .to_string(),
-        LoadShape::CompatClass,
-        vec![],
-    )
-    .unwrap();
-    iso.on_game_tick(1);
-    let probe: Value =
-        serde_json::from_str(iso.probe("__probe").unwrap().as_str().unwrap()).unwrap();
-    iso.join();
-    assert!(
-        probe["walkToSpot"].is_null()
-            || !probe["walkToSpot"]
-                .as_str()
-                .unwrap_or("")
-                .contains("not impl"),
-        "WalkToSpot isolate is live: {probe:?}"
-    );
-}
-
-#[test]
 fn retreat_next_never_emits_walk_and_siblings_keep_verbs() {
     reset();
     hunt_fight::set_observation(obs_at(off_spot()));

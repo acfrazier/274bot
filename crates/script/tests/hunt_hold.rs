@@ -627,19 +627,7 @@ fn timeout_at_tile_yields_without_rotate() {
 }
 
 #[test]
-fn shim_has_no_js_hold_due_and_named_exports_stay_not_impl() {
-    let src = include_str!("../src/shim/hunting_combat.js");
-    assert!(!src.contains("holdDue"), "Hold policy must stay in Rust");
-    assert!(src.contains("this.host.fight?.interruptWatch()"));
-    assert!(src.contains("op: 'walk'"));
-    assert!(!src.contains("walk-to") || src.contains("case 'walk-to':"));
-    let fight = src
-        .split("export class HoldSafespot")
-        .next()
-        .expect("fight class");
-    assert!(fight.contains("case 'walk-to':"));
-    assert!(!fight.contains("case 'walk':"));
-
+fn retreat_and_walk_to_spot_classes_are_live() {
     let iso = LoadIsolate::spawn(
         r#"
 import { HoldSafespot, Retreat, WalkToSpot } from '../../api/combat/hunting/combat.js';

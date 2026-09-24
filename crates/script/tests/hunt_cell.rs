@@ -971,83 +971,6 @@ fn source_does_not_copy_the_forbidden_machines() {
 }
 
 #[test]
-fn shim_and_bindings_keep_the_yield_shape_and_walk_to_has_no_flags() {
-    let bindings = include_str!("../src/load/bindings.rs");
-    let cell = bindings.split("api.cellNext").nth(1).expect("cellNext");
-    let cell = cell.split("function recordSettlement").next().unwrap();
-    assert!(cell.contains("kind: 'yield', value:"));
-    assert!(cell.contains("ok: false, error:"));
-    assert!(cell.contains("kind: 'aborted'"));
-    assert!(cell.contains("status: 'aborted'"));
-    assert!(!cell.contains("ok: true, status: 'aborted'"));
-    assert!(!bindings.contains("api.cellValidate"));
-    let reg = bindings.split("__rs2b0t_cell").nth(1).unwrap();
-    let reg = reg.split("register bank:").next().unwrap();
-    assert!(!reg.contains("SelectedGameData"));
-    assert!(!reg.contains("selected_"));
-
-    let dts = include_str!("../src/host_js.rs");
-    let step = dts.split("export type CellStep").nth(1).expect("CellStep");
-    assert!(step.contains("kind: 'yield'; value: boolean"));
-    assert!(step.contains("ok: false; error: string; kind: 'aborted'"));
-    assert!(!dts.contains("cellValidate"));
-
-    let js = include_str!("../src/shim/hunting_combat.js");
-    let cell_fn = js.split("export async function cell").nth(1).expect("cell");
-    let cell_fn = cell_fn.split("export class WalkToSpot").next().unwrap();
-    assert!(cell_fn.contains("leaveLair"));
-    assert!(cell_fn.contains("acquireKey"));
-    assert!(cell_fn.contains("{ left:"));
-    assert!(cell_fn.contains("{ held:"));
-    assert!(!cell_fn.contains("1590"));
-    assert!(!cell_fn.contains("1591"));
-    assert!(!cell_fn.contains("2631"));
-    assert!(!cell_fn.contains("Inventory"));
-    assert!(!cell_fn.contains("close-modal"));
-    assert!(!cell_fn.contains("case 'obj'"));
-    assert!(!cell_fn.contains("Yes please"));
-    let walk_to = cell_fn.split("step.kind === 'walk-to'").nth(1).unwrap();
-    let walk_to = walk_to.split("continue;").next().unwrap();
-    assert!(walk_to.contains("op: 'walk-to'"));
-    assert!(!walk_to.contains("allow_"));
-    assert!(!walk_to.contains("radius"));
-    assert!(!walk_to.contains("request_id"));
-    assert!(!walk_to.contains("__rs2b0t_walk"));
-    assert!(!walk_to.contains("beginCellWalk"));
-    let use_on = cell_fn.split("case 'use-on':").nth(1).unwrap();
-    let use_on = use_on.split("break;").next().unwrap();
-    assert!(use_on.contains("kind: 'loc'"));
-    assert!(use_on.contains("source_item_id"));
-    assert!(!use_on.contains("locId"));
-    let begin = js.split("function beginCellWalk").nth(1).unwrap();
-    let begin = begin.split("export async function cell").next().unwrap();
-    assert!(begin.contains("allow_teleports: false"));
-    assert!(begin.contains("allow_wilderness: false"));
-    assert!(begin.contains("allow_bank_fetch: false"));
-    assert!(!begin.contains("allow_wilderness: true"));
-    assert!(cell_fn.contains("beginCellWalk(step, 0)"));
-    assert!(cell_fn.contains("radius: 0"));
-    assert_eq!(
-        cell_fn.matches("cellCall({ op: 'end', token })").count(),
-        cell_fn.matches("return ").count() - 1,
-        "every return after the begin ends the Rust row: {cell_fn}"
-    );
-
-    let acquire = js.split("export async function acquireKey").nth(1).unwrap();
-    let acquire = acquire.split("function cellCall").next().unwrap();
-    assert!(!acquire.contains("__rs2b0t_cell"));
-
-    let iso = include_str!("../src/load/isolate.rs");
-    for hook in ["on_pause", "on_hold", "on_resume", "on_reset"] {
-        assert!(
-            iso.contains(&format!("hunt_cell::{hook}")),
-            "missing {hook}"
-        );
-        assert!(iso.contains(&format!("hunt_key::{hook}")));
-    }
-}
-
-#[test]
 fn queued_cell_walk_flags_are_false_and_radius_matches() {
     let src = r#"
 import { cell } from '../../api/combat/hunting/combat.js';
@@ -1122,155 +1045,37 @@ export default class T extends LoopingBot {
 // spy proxy (same technique as the boost-potions bridge test) and then asks
 // the real binding what the ended token is worth.
 #[test]
-fn cell_ends_its_rust_row_on_the_yield_return() {
-    let src = r#"
-import { cell } from '../../api/combat/hunting/combat.js';
-export default class T extends LoopingBot {
-    loop() {
-        const site = {
-            key: 'taverley-blue',
-            keyItem: { id: 1590, name: 'Dusty key' },
-            boxes: [{ minX: 40, maxX: 60, minZ: 40, maxZ: 60, level: 0 }],
-        };
-        if (!globalThis.__probe) {
-            const original = globalThis.rustyscript;
-            const ops = [];
-            let begun = null;
-            const spy = (payload) => {
-                ops.push(payload && payload.op);
-                const out = original.functions.__rs2b0t_cell(payload);
-                if (payload && payload.op === 'begin') begun = out && out.token;
-                return out;
-            };
-            let installed = false;
-            try {
-                globalThis.rustyscript = {
-                    ...original,
-                    functions: new Proxy({}, {
-                        get(_target, name) {
-                            return name === '__rs2b0t_cell' ? spy : original.functions[name];
-                        },
-                    }),
-                };
-                installed = globalThis.rustyscript !== original;
-            } catch (e) {
-                installed = false;
-            }
-            cell({ log() {}, setStatus() {} }, site);
-            globalThis.rustyscript = original;
-            globalThis.__probe = JSON.stringify({ installed, ops, begun });
-            return;
-        }
-        const probe = JSON.parse(globalThis.__probe);
-        const after = globalThis.rustyscript.functions.__rs2b0t_cell({
-            op: 'next',
-            token: probe.begun,
-        });
-        globalThis.__after = JSON.stringify({
-            kind: after && after.kind,
-            reason: after && after.reason,
-        });
-    }
-}
-"#;
-    let dusty = ItemRowInput {
-        name: Some("Dusty key"),
-        count: 1,
-        id: 1590,
-        ops: &[],
-        noted: false,
-        cert: -1,
-        component_id: -1,
-        slot: 1,
-    };
-    let here = tile(2931, 9690, 0);
-    let iso = LoadIsolate::spawn(src.into(), LoadShape::CompatClass, vec![]).unwrap();
-    iso.post_snapshot(encode_snapshot(&snap_scene(here, &[dusty], &[], &[])));
-    iso.on_game_tick(1);
-    let probe: Value =
-        serde_json::from_str(iso.probe("__probe").unwrap().as_str().unwrap()).unwrap();
-    iso.post_snapshot(encode_snapshot(&snap_scene(here, &[dusty], &[], &[])));
-    iso.on_game_tick(2);
-    let after: Value =
-        serde_json::from_str(iso.probe("__after").unwrap().as_str().unwrap()).unwrap();
-    let logs = iso.drain_logs();
-    iso.join();
-    assert_eq!(probe["installed"], true, "the spy must be live: {probe}");
-    assert_eq!(
-        probe["ops"],
-        json!(["begin", "next", "end"]),
-        "the yield return ends the row: {probe} logs={logs:?}"
-    );
-    assert_ne!(probe["begun"], Value::Null, "{probe}");
-    assert_eq!(after["kind"], "aborted", "{after} logs={logs:?}");
-    assert_eq!(after["reason"], "unknown token", "{after}");
-}
-
-#[test]
-fn v2_cell_next_keeps_abort_distinct_from_yield_false() {
+fn v2_cell_run_settles_true_for_a_keyless_site_and_false_for_kbd() {
     let src = r#"
 export const apiVersion = 2;
-export function tick(api) {
-  const began = api.cellBegin();
-  globalThis.__begin = began;
-  const token = began.value.token;
-  const bad = api.cellNext({
-    token: token + 1,
-    key: 'heroes-blue',
-    keyItem: null,
-  });
-  globalThis.__bad = bad;
-  const aborted = api.cellNext({
-    token,
-    key: 'kbd-lair',
-    keyItem: null,
-  });
-  globalThis.__aborted = aborted;
-  const again = api.cellBegin();
-  const done = api.cellNext({
-    token: again.value.token,
-    key: 'brimhaven-iron',
-    keyItem: null,
-  });
-  globalThis.__done = done;
-  const still = api.cellNext({
-    token,
-    key: 'heroes-blue',
-    keyItem: null,
-  });
-  globalThis.__still = still;
+let started = false;
+export async function tick(api) {
+  if (started) return;
+  started = true;
+  globalThis.__kbd = await api.cellRun({ key: 'kbd-lair', keyItem: null }, {});
+  globalThis.__done = await api.cellRun({ key: 'brimhaven-iron', keyItem: null }, {});
 }
 "#;
     let iso = LoadIsolate::spawn(src.into(), LoadShape::NativeTick, vec![]).unwrap();
-    iso.post_snapshot(encode_snapshot(&empty_snapshot(
-        1,
-        TileInput {
-            x: 1,
-            z: 1,
-            level: 0,
-        },
-    )));
-    iso.on_game_tick(1);
-    let begin = iso.probe("globalThis.__begin").unwrap();
-    assert_eq!(begin["ok"], true, "{begin:?}");
-    let bad = iso.probe("globalThis.__bad").unwrap();
-    assert_eq!(bad["ok"], false, "{bad:?}");
-    assert_eq!(bad["kind"], "aborted");
-    assert_eq!(bad["status"], "aborted");
-    let aborted = iso.probe("globalThis.__aborted").unwrap();
-    assert_eq!(aborted["ok"], false, "{aborted:?}");
-    assert_eq!(aborted["error"], "kbd-later");
-    assert_eq!(aborted["kind"], "aborted");
-    assert_ne!(aborted["status"], "done");
-    assert!(aborted.get("value").is_none());
-    let done = iso.probe("globalThis.__done").unwrap();
-    assert_eq!(done["ok"], true, "{done:?}");
-    assert_eq!(done["status"], "done");
-    assert_eq!(done["kind"], "yield");
-    assert_eq!(done["value"], true);
-    let still = iso.probe("globalThis.__still").unwrap();
-    assert_eq!(still["ok"], false, "first token stays aborted: {still:?}");
-    assert_eq!(still["kind"], "aborted");
+    for tick in 1..=3 {
+        iso.post_snapshot(script::isolate_fb::encode_snapshot(&empty_snapshot(
+            tick,
+            TileInput {
+                x: 1,
+                z: 1,
+                level: 0,
+            },
+        )));
+        iso.on_game_tick(tick);
+    }
+    assert_eq!(
+        iso.probe("globalThis.__kbd").unwrap(),
+        json!({ "kind": "done", "value": false })
+    );
+    assert_eq!(
+        iso.probe("globalThis.__done").unwrap(),
+        json!({ "kind": "done", "value": true })
+    );
     iso.join();
 }
 

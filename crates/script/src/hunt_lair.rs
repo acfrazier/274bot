@@ -4,7 +4,9 @@
 //! fee proof, choose match, and `in_area_body` completion stay here. Own map
 //! and token counter. Call `hunt_fight::in_area_body` only.
 
-use crate::hunt_fight::{in_area_body, SiteBox, Tile};
+use crate::hunt::{hook, number, strict_true, Host, Kind as HuntKind};
+use crate::hunt_fight::{Area, SiteBox, Tile};
+use crate::machine::Ended;
 use crate::observed::{self, EntityRow, ItemRow, Scene, SceneRow};
 use crate::task_clock::InstantTaskClock;
 use serde_json::{json, Value};
@@ -251,13 +253,13 @@ struct Gate {
 }
 
 #[derive(Clone, Debug)]
-struct EnterProj {
+pub(crate) struct EnterProj {
     parked: bool,
     shield_ready: bool,
     hp_fraction: f64,
     panic_hp: f64,
     key: String,
-    boxes: Vec<SiteBox>,
+    area: Area,
     approach: Vec<Tile>,
     talk: Option<TalkGate>,
     fee: Option<FeeGate>,
@@ -399,8 +401,7 @@ fn nearest_spot(from: Tile, spots: &[Tile]) -> i32 {
 }
 
 fn in_area(proj: &EnterProj, obs: &EnterObservation) -> bool {
-    obs.here
-        .is_some_and(|here| in_area_body(here, 1, &proj.boxes))
+    obs.here.is_some_and(|here| proj.area.contains(here, 1))
 }
 
 fn coin_count(obs: &EnterObservation) -> i32 {
@@ -634,7 +635,7 @@ fn parse_proj(input: &Value) -> EnterProj {
             .and_then(Value::as_str)
             .unwrap_or("")
             .to_string(),
-        boxes: parse_boxes(input),
+        area: Area::of(parse_boxes(input)),
         approach,
         talk,
         fee,
@@ -1405,4 +1406,63 @@ pub fn enter_force_bound_reached(token: u64) -> bool {
         true
     })
     .unwrap_or(false)
+}
+
+/// `EnterLair` / `enterLair`.
+pub(crate) struct Enter;
+
+impl HuntKind for Enter {
+    const NAME: &'static str = "hunt-enter";
+    const SESSION: bool = true;
+    const BOOLEAN: bool = true;
+    type Proj = EnterProj;
+
+    fn parse(site: &Value) -> EnterProj {
+        parse_proj(site)
+    }
+
+    fn area(proj: &mut EnterProj) -> &mut Area {
+        &mut proj.area
+    }
+
+    /// The old projection's reads; absent hooks keep its defaults.
+    fn refresh(proj: &mut EnterProj, host: &mut dyn Host) -> Result<(), Ended> {
+        proj.parked = strict_true(host, hook::PARKED)?;
+        proj.shield_ready = strict_true(host, hook::SHIELD_READY)?;
+        proj.hp_fraction = number(host, hook::HP_FRACTION, 1.0)?;
+        proj.panic_hp = number(host, hook::PANIC_HP, 0.2)?;
+        Ok(())
+    }
+
+    fn mint() -> u64 {
+        let token = alloc_token();
+        ENTER_RUNTIMES.with(|m| m.borrow_mut().insert(token, EnterRuntime::new(token)));
+        token
+    }
+
+    fn ensure(token: u64) {
+        ENTER_RUNTIMES.with(|m| {
+            m.borrow_mut()
+                .entry(token)
+                .or_insert_with(|| EnterRuntime::new(token));
+        });
+    }
+
+    fn renew(token: u64) {
+        ENTER_RUNTIMES.with(|m| m.borrow_mut().insert(token, EnterRuntime::new(token)));
+    }
+
+    fn next(token: u64, proj: &EnterProj, reply: Option<&Value>) -> Value {
+        with_enter(token, |rt| next_effect(rt, proj, reply))
+            .unwrap_or_else(|| json!({ "kind": "aborted", "reason": "unknown token" }))
+    }
+
+    fn end(token: u64) {
+        ENTER_RUNTIMES.with(|m| m.borrow_mut().remove(&token));
+    }
+
+    fn validate(token: u64, proj: &EnterProj) -> bool {
+        let obs = observation();
+        with_enter(token, |rt| validate_inner(rt, proj, &obs)).unwrap_or(false)
+    }
 }

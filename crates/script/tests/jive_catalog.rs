@@ -147,18 +147,38 @@ fn first_unloadable_jive_crafting_and_enchanter_none() {
     );
 }
 
+/// The four hunt cards load as full modules on the hunting name maps
+/// (every named import links) and tick without a load or loop error.
 #[test]
 #[ignore = "requires an external rs2b0t checkout via absolute RS2B0T"]
-fn jive_chests_first_leftover_is_not_jive_js() {
-    let root = frozen_root();
-    let chests = card_path(&root, "JiveChests", "JiveChests.ts");
-    let origin = std::fs::read_to_string(&chests).expect("JiveChests.ts");
-    let leftover = first_unloadable_for_card(&origin, &chests);
-    assert_eq!(
-        leftover.as_deref(),
-        Some("../../api/combat/hunting/supply.js"),
-        "Chests leftover after jive remap is G7a escapeRunesFor, not jive.js"
-    );
+fn jive_hunt_cards_full_module_load_and_tick() {
+    for name in ["JiveDragons", "JiveDemons", "JiveKBD", "JiveChests"] {
+        let (iso, bag) = spawn_frozen_card(name);
+        iso.post_settings_bag(&bag);
+        let stats = [StatInput {
+            index: 6,
+            name: "magic",
+            xp: 0,
+            base: 40,
+            effective: 40,
+        }];
+        post_snapshot_input(&iso, &jive_snapshot(&stats, None));
+        tick(&iso, 1);
+        tick(&iso, 2);
+        let logs = iso.drain_logs();
+        let last_error = iso.probe("globalThis.__rs2b0t_host.lastError").ok();
+        iso.join();
+        assert!(
+            !logs
+                .iter()
+                .any(|l| l.contains("SyntaxError") || l.contains("does not provide an export")),
+            "{name}: {logs:?}"
+        );
+        assert!(
+            last_error.as_ref().is_none_or(|e| e.is_null()),
+            "{name} loop error: {last_error:?} logs={logs:?}"
+        );
+    }
 }
 
 fn spawn_frozen_card(name: &str) -> (LoadIsolate, serde_json::Map<String, serde_json::Value>) {

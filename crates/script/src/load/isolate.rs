@@ -310,6 +310,7 @@ struct MachinesStop;
 impl Drop for MachinesStop {
     fn drop(&mut self) {
         crate::machine::on_stop();
+        crate::hunt::on_stop();
     }
 }
 

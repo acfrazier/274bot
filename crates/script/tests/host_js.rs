@@ -29,12 +29,10 @@ fn host_js_dts_includes_required_interfaces() {
     assert!(!src.contains("exact_rank: number[]"));
     assert!(!src.contains("adjacent_rank: number[]"));
     assert!(src.contains("reach: ReachQueryView"));
-    assert!(src.contains(
-        "walkable(input: { tile: WorldTile } | WorldTile): HelperResult<boolean>"
-    ));
-    assert!(src.contains(
-        "canStep(input: { from: WorldTile; to: WorldTile }): HelperResult<boolean>"
-    ));
+    assert!(src.contains("walkable(input: { tile: WorldTile } | WorldTile): HelperResult<boolean>"));
+    assert!(
+        src.contains("canStep(input: { from: WorldTile; to: WorldTile }): HelperResult<boolean>")
+    );
     assert!(src.contains(
         "canReach(input: { tile: WorldTile; adjacentOk?: boolean; maxSteps?: number }): HelperResult<boolean>"
     ));
@@ -44,30 +42,28 @@ fn host_js_dts_includes_required_interfaces() {
     assert!(src.contains(
         "lineOfSight(input: { from: WorldTile; to: WorldTile; size?: number }): HelperResult<boolean>"
     ));
-    assert!(src.contains("fightBegin(input?: object): HelperResult<{ token: number }>"));
-    assert!(src.contains(
-        "fightNext(input: { token: number; reply?: unknown } & Record<string, unknown>): FightStep"
-    ));
-    assert!(src.contains("holdBegin(input?: object): HelperResult<{ token: number }>"));
-    assert!(src.contains(
-        "holdNext(input: { token: number; reply?: unknown } & Record<string, unknown>): HoldStep"
-    ));
-    assert!(src.contains("export type FightStep"));
-    assert!(src.contains("export type HoldStep"));
-    assert!(src.contains("export type RetreatStep"));
-    assert!(src.contains("walkspotBegin(input?: object): HelperResult<{ token: number }>"));
-    assert!(src.contains(
-        "walkspotNext(input: { token: number; reply?: unknown } & Record<string, unknown>): WalkStep"
-    ));
-    assert!(src.contains("export type WalkStep"));
-    let walk_step = src.split("export type WalkStep").nth(1).expect("WalkStep");
-    assert!(walk_step.contains("kind: 'yield'"));
-    assert!(walk_step.contains("kind: 'aborted'"));
+    // Hunt families are begin + await with typed inputs: no effect
+    // stepping and no `Record<string, unknown>` projection bags.
+    assert!(src.contains("fightBegin(site: HuntSite): HelperResult<{ token: number }>"));
     assert!(
-        !walk_step.contains("status: 'aborted'; token: number; kind: 'aborted'"),
-        "WalkStep must not copy FightStep ok:true aborted"
+        src.contains("fightRun(input: HuntToken, hooks?: HuntHooks): Promise<HuntOutcome<null>>")
     );
-    assert!(src.contains("kind: 'yield'"));
+    assert!(src.contains(
+        "bankRun(site: HuntSite, opts?: HuntBankOptions, hooks?: HuntHooks): Promise<HuntOutcome<boolean>>"
+    ));
+    assert!(src.contains("export interface HuntSite {"));
+    assert!(src.contains("export interface HuntHooks {"));
+    assert!(interface_block(&src, "HuntHooks").contains("inArea?(tile: WorldTile): boolean;"));
+    for gone in [
+        "fightNext",
+        "bankNext",
+        "cellNext",
+        "Record<string, unknown>",
+        "FightStep",
+        "BankStep",
+    ] {
+        assert!(!src.contains(gone), "hunt effect stepping is gone: {gone}");
+    }
     assert!(src.contains("export interface QuestStatusRow"));
     assert!(src.contains("quest_statuses: QuestStatusRow[] | null"));
     assert!(src.contains("slot?: number"));

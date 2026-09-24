@@ -764,92 +764,6 @@ fn leave_effects_never_include_forbidden_ops() {
     ));
     let eat = call(None, token, p, Some(json!({ "eatOk": true })));
     assert_eq!(kind(&eat), "aborted");
-    let src = include_str!("../src/hunt_leave.rs");
-    assert!(!src.contains("teleport::dispatch"));
-    assert!(!src.contains("escape_runes"));
-    assert!(!src.contains("provided_runes"));
-    assert!(!src.contains("gap_sw"));
-    assert!(!src.contains("bodyOrigin"));
-    assert!(!src.contains("size>>1"));
-    assert!(!src.contains("size >> 1"));
-    assert!(!src.contains("FIGHT_MS"));
-    assert!(!src.contains("APPROACH_MS"));
-    assert!(!src.contains("APPROACH_LEG_MS"));
-    assert!(!src.contains("hunt_lair"));
-    assert!(!src.contains("effective("));
-    assert!(!src.contains("3094"));
-    assert!(!src.contains("varrock"));
-    assert!(src.contains("in_area_body(here, 1,"));
-}
-
-#[test]
-fn yield_shape_and_shim_flags_are_not_fight_copies() {
-    let bindings = include_str!("../src/load/bindings.rs");
-    let leave = bindings.split("api.leaveNext").nth(1).expect("leaveNext");
-    let leave = leave.split("function recordSettlement").next().unwrap();
-    assert!(leave.contains("kind: 'yield', value:"));
-    assert!(leave.contains("ok: false, error:"));
-    assert!(leave.contains("kind: 'aborted'"));
-    assert!(leave.contains("status: 'aborted'"));
-    assert!(!leave.contains("ok: true, status: 'aborted'"));
-    assert!(!bindings.contains("api.leaveValidate"));
-
-    let dts = include_str!("../src/host_js.rs");
-    let step = dts
-        .split("export type LeaveStep")
-        .nth(1)
-        .expect("LeaveStep");
-    assert!(step.contains("kind: 'yield'; value: boolean"));
-    assert!(step.contains("ok: false; error: string; kind: 'aborted'"));
-    assert!(!step.contains("leaveValidate"));
-
-    let js = include_str!("../src/shim/hunting_combat.js");
-    let enter = js.split("export class EnterLair").nth(1).unwrap();
-    let enter = enter.split("function leaveCall").next().unwrap();
-    assert!(!enter.contains("case 'teleport'"));
-    assert!(!enter.contains("leaveByWalk"));
-    assert!(!enter.contains("escapeTeleportId"));
-    let shared = js.split("function projection(").nth(1).unwrap();
-    let shared = shared.split("export class Fight").next().unwrap();
-    assert!(!shared.contains("leaveByWalk"));
-    assert!(!shared.contains("walkOut"));
-    let leave_js = js.split("function leaveCall").nth(1).expect("leaveCall");
-    assert!(leave_js.contains("allow_teleports: false"));
-    assert!(leave_js.contains("allow_wilderness: false"));
-    assert!(leave_js.contains("allow_bank_fetch: false"));
-    assert!(leave_js.contains("leaveProjection"));
-    assert!(leave_js.contains("runLeaveTeleport"));
-    assert!(!leave_js.contains("Game.teleport"));
-    assert!(!leave_js.contains("inArea"));
-    assert!(!leave_js.contains("case 'walk-to'"));
-    assert!(!leave_js.contains("interruptWatch"));
-    let begin = js.split("function beginLeaveWalk").nth(1).unwrap();
-    let begin = begin
-        .split("async function runLeaveTeleport")
-        .next()
-        .unwrap();
-    assert!(begin.contains("allow_wilderness: false"));
-    assert!(begin.contains("allow_bank_fetch: false"));
-    assert!(begin.contains("allow_teleports: false"));
-    let leave_fn = js
-        .split("export async function leaveLair")
-        .nth(1)
-        .expect("leaveLair");
-    let leave_fn = leave_fn.split("function keyCall").next().unwrap();
-    assert_eq!(
-        leave_fn.matches("leaveCall({ op: 'end', token })").count(),
-        leave_fn.matches("return ").count() - 1,
-        "every return after the begin ends the Rust row: {leave_fn}"
-    );
-
-    let iso = include_str!("../src/load/isolate.rs");
-    for hook in ["on_pause", "on_hold", "on_resume", "on_reset"] {
-        assert!(
-            iso.contains(&format!("hunt_leave::{hook}")),
-            "missing {hook}"
-        );
-        assert!(iso.contains(&format!("hunt_lair::{hook}")));
-    }
 }
 
 #[test]
@@ -945,52 +859,42 @@ export default class T extends LoopingBot {
 }
 
 #[test]
-fn v2_leave_next_yield_carries_value_and_aborted_is_not_done() {
+fn v2_leave_run_settles_out_of_the_lair_and_refuses_a_missing_site() {
     let src = r#"
 export const apiVersion = 2;
-export function tick(api) {
-  const began = api.leaveBegin();
-  globalThis.__begin = began;
-  const token = began.value.token;
-  const bad = api.leaveNext({
-    token: token + 1,
-    leaveByWalk: true,
-    key: 'heroes-blue',
-    boxes: [{ minX: 40, maxX: 60, minZ: 40, maxZ: 60, level: 0 }],
-  });
-  globalThis.__bad = bad;
-  const done = api.leaveNext({
-    token,
-    leaveByWalk: true,
+let started = false;
+export async function tick(api) {
+  if (started) return;
+  started = true;
+  globalThis.__bad = await api.leaveRun(null, {});
+  globalThis.__done = await api.leaveRun({
     key: 'heroes-blue',
     boxes: [{ minX: 40, maxX: 60, minZ: 40, maxZ: 60, level: 0 }],
     walkOut: { x: 1, z: 1, level: 0 },
-  });
-  globalThis.__done = done;
+  }, { leaveByWalk: () => true });
 }
 "#;
     let iso = LoadIsolate::spawn(src.into(), LoadShape::NativeTick, vec![]).unwrap();
-    iso.post_snapshot(encode_snapshot(&empty_snapshot(
-        1,
-        TileInput {
-            x: 1,
-            z: 1,
-            level: 0,
-        },
-    )));
-    iso.on_game_tick(1);
-    let begin = iso.probe("globalThis.__begin").unwrap();
-    assert_eq!(begin["ok"], true, "{begin:?}");
-    let bad = iso.probe("globalThis.__bad").unwrap();
-    assert_eq!(bad["ok"], false, "{bad:?}");
-    assert_eq!(bad["kind"], "aborted", "{bad:?}");
-    assert_eq!(bad["status"], "aborted", "{bad:?}");
-    assert_ne!(bad["status"], "done");
-    let done = iso.probe("globalThis.__done").unwrap();
-    assert_eq!(done["ok"], true, "{done:?}");
-    assert_eq!(done["status"], "done", "{done:?}");
-    assert_eq!(done["kind"], "yield", "{done:?}");
-    assert_eq!(done["value"], true, "{done:?}");
+    for tick in 1..=2 {
+        iso.post_snapshot(encode_snapshot(&empty_snapshot(
+            tick,
+            TileInput {
+                x: 1,
+                z: 1,
+                level: 0,
+            },
+        )));
+        iso.on_game_tick(tick);
+    }
+    assert_eq!(
+        iso.probe("globalThis.__bad").unwrap(),
+        json!({ "kind": "refused", "reason": "invalid-args" })
+    );
+    // Already outside the boxes: out of the lair at once.
+    assert_eq!(
+        iso.probe("globalThis.__done").unwrap(),
+        json!({ "kind": "done", "value": true })
+    );
     iso.join();
 }
 

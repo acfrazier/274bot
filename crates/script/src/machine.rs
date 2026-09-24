@@ -80,6 +80,17 @@
 //!   frozen synchronous-call semantics instead: a returned promise is not
 //!   awaited, and its reply is the promise as a value (`{}`: an object with
 //!   no own properties).
+//! - **Synchronous asks** ([`Cx::ask`]): a step may call a held hook
+//!   inline, through the same path, for a script getter or predicate its
+//!   decision reads where it stands (frozen `host.hpFraction()`,
+//!   `site.inArea(t)`) or a synchronous notification (`host.log(m)`).
+//!   Join's claim is checked before and after each ask. An ask never
+//!   waits: a returned promise is `not impl`. It cannot be absorbed: a
+//!   throw fails the row with the thrown value, a terminate or claim
+//!   aborts it `terminated` (the flag above is set), and more than
+//!   [`ASKS_PER_STEP`] asks in one step fail it; the host enforces that
+//!   after the step returns and drops that step's ops. Asks do not count
+//!   toward [`CALLS_PER_TICK`]. Begin has no script side.
 //! - **Completion**: a `Done`/`Fail` row ends at once (no JS `end` op). Its
 //!   outcome waits in the host until the JS await helper — a wait parked
 //!   on the `Execution` park list — takes it, so it settles exactly once:
@@ -296,6 +307,11 @@ pub(crate) struct Cx<'a> {
     clock: &'a mut InstantTaskClock,
     reply: Option<Reply>,
     hooks: &'a [Hook],
+    /// The script side while a row steps; `None` in begin.
+    js: Option<&'a mut (dyn Js + 'a)>,
+    /// Asks this step made, and how the first failing one ended the row.
+    asks: usize,
+    ending: Option<Ending>,
 }
 
 impl<'a> Cx<'a> {
@@ -311,6 +327,9 @@ impl<'a> Cx<'a> {
             clock,
             reply,
             hooks: &[],
+            js: None,
+            asks: 0,
+            ending: None,
         }
     }
 }
@@ -337,6 +356,81 @@ impl Cx<'_> {
     pub(crate) fn has(&self, hook: usize) -> bool {
         self.hooks.get(hook).is_some_and(|hook| hook.present)
     }
+
+    /// Call `hooks[CALLBACKS[hook]](...args)` now, inside this step: a
+    /// script getter or predicate a decision reads where it stands
+    /// (frozen `host.hpFraction()`, `site.inArea(t)`), or a synchronous
+    /// notification (`host.log(m)`). Same callback path as [`Step::Call`]
+    /// (microtask checkpoint included), but synchronous only and outside
+    /// [`CALLS_PER_TICK`]; async hooks go through [`Step::Call`].
+    ///
+    /// `Err(Ended)` ends the row whatever the step then returns, and the
+    /// family should return at once: join claimed the tick for Stop
+    /// (before or during the call) or the call was terminated (the row is
+    /// aborted `terminated`, as a terminated [`Step::Call`] is), the hook
+    /// threw (the `runMachine` await rejects with that value), it returned
+    /// a promise (never awaited here: `not impl`), or the step made more
+    /// than [`ASKS_PER_STEP`] asks. Begin has no script side, so an ask
+    /// there is `Err` and ends nothing.
+    pub(crate) fn ask(&mut self, hook: usize, args: &[Value]) -> Result<Value, Ended> {
+        if self.ending.is_some() {
+            return Err(Ended);
+        }
+        let Some(js) = self.js.as_deref_mut() else {
+            return Err(Ended);
+        };
+        if js.claimed() {
+            self.ending = Some(Ending::Stopped);
+            return Err(Ended);
+        }
+        self.asks += 1;
+        if self.asks > ASKS_PER_STEP {
+            self.ending = Some(Ending::Failed(Thrown::new(format!(
+                "not impl: more than {ASKS_PER_STEP} synchronous callbacks in one step"
+            ))));
+            return Err(Ended);
+        }
+        let callback = self.hooks.get(hook).map(|hook| &hook.callback);
+        let called = js.call(callback, args);
+        if matches!(called, Called::Terminated) {
+            TERMINATED.with(|flag| flag.set(true));
+            self.ending = Some(Ending::Stopped);
+            return Err(Ended);
+        }
+        if js.claimed() {
+            self.ending = Some(Ending::Stopped);
+            return Err(Ended);
+        }
+        match called {
+            Called::Settled(Reply::Value(value)) => Ok(value),
+            Called::Settled(Reply::Threw(thrown)) => {
+                self.ending = Some(Ending::Failed(thrown));
+                Err(Ended)
+            }
+            Called::Pending(_) | Called::Terminated => {
+                self.ending = Some(Ending::Failed(Thrown::new(
+                    "not impl: a synchronous machine callback returned a promise",
+                )));
+                Err(Ended)
+            }
+        }
+    }
+}
+
+/// An [`Cx::ask`] that ended its row; the family returns at once.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Ended;
+
+/// Synchronous callbacks one step may make ([`Cx::ask`]).
+pub(crate) const ASKS_PER_STEP: usize = 512;
+
+/// How an ask ended its row.
+enum Ending {
+    /// Join claimed the tick or terminated the call: the row is aborted
+    /// `terminated`; the family has already seen a missing answer.
+    Stopped,
+    /// The row fails with this value.
+    Failed(Thrown),
 }
 
 /// One declared script callback, held from start.
@@ -404,6 +498,18 @@ const FAMILIES: &[Entry] = &[
     entry::<crate::dialog::Dialog>(),
     entry::<crate::trade::Trade>(),
     entry::<crate::drive_partner_trade::PartnerTrade>(),
+    entry::<crate::hunt::Hunt<crate::hunt_fight::FightKind>>(),
+    entry::<crate::hunt::Hunt<crate::hunt_fight::HoldKind>>(),
+    entry::<crate::hunt::Hunt<crate::hunt_fight::RetreatKind>>(),
+    entry::<crate::hunt::Hunt<crate::hunt_fight::WalkSpotKind>>(),
+    entry::<crate::hunt::Hunt<crate::hunt_lair::Enter>>(),
+    entry::<crate::hunt::Hunt<crate::hunt_leave::Leave>>(),
+    entry::<crate::hunt::Hunt<crate::hunt_key::Key>>(),
+    entry::<crate::hunt::Hunt<crate::hunt_cell::Cell>>(),
+    entry::<crate::hunt::Hunt<crate::hunt_bank::Bank>>(),
+    entry::<crate::hunt::WaitFed>(),
+    entry::<crate::hunt::TeleportOut>(),
+    entry::<crate::hunt::Acquire>(),
     entry::<crate::clue::Clue>(),
     entry::<crate::reach_entity::EntityOp>(),
     entry::<crate::reach_entity::WalkHops>(),
@@ -434,6 +540,8 @@ const FAMILIES: &[Entry] = &[
     entry::<tests::Kicked>(),
     #[cfg(test)]
     entry::<tests::Ask>(),
+    #[cfg(test)]
+    entry::<tests::Inline>(),
 ];
 
 /// The callback names `family` holds at start, or `None` if unregistered.
@@ -660,6 +768,9 @@ fn begin_row<F: Family>(args: Value, hooks: Vec<Hook>, at: usize) -> Started {
             clock: &mut clock,
             reply: None,
             hooks: &hooks,
+            js: None,
+            asks: 0,
+            ending: None,
         },
     );
     drop(_begun);
@@ -840,12 +951,26 @@ fn drive(row: &mut Row, js: &mut impl Js, at: &mut usize) -> Option<Outcome> {
             return None;
         }
         let mut ops = Vec::new();
-        let step = row.machine.step(&mut Cx {
+        let mut cx = Cx {
             ops: &mut ops,
             clock: &mut row.clock,
             reply: row.reply.take(),
             hooks: &row.hooks,
-        });
+            js: Some(&mut *js),
+            asks: 0,
+            ending: None,
+        };
+        let step = row.machine.step(&mut cx);
+        // An ask that failed ends the row whatever the step returned; the
+        // ops of that step are dropped with it.
+        match cx.ending.take() {
+            Some(Ending::Stopped) => {
+                row.machine.abort(AbortReason::Terminated);
+                return Some(Outcome::Aborted(AbortReason::Terminated));
+            }
+            Some(Ending::Failed(thrown)) => return Some(Outcome::Failed(thrown)),
+            None => {}
+        }
         HOST.with(|host| host.borrow_mut().place(*at, ops));
         match step {
             Step::Wait => return None,
@@ -1247,6 +1372,47 @@ pub(crate) mod tests {
         }
     }
 
+    /// Asks `hooks.get(i)` inline `asks` times in one step, emitting
+    /// `if-button i` after each answer, then completes with the answers.
+    /// Keeps stepping after a failed ask, to prove the host ends the row.
+    pub(crate) struct Inline {
+        asks: usize,
+    }
+
+    #[derive(Deserialize)]
+    pub(crate) struct InlineArgs {
+        asks: usize,
+    }
+
+    impl Family for Inline {
+        const NAME: &'static str = "inline";
+        const CALLBACKS: &'static [&'static str] = &["get"];
+        type Args = InlineArgs;
+        type Output = Value;
+
+        fn begin(args: InlineArgs, cx: &mut Cx<'_>) -> Begin<Self> {
+            assert_eq!(
+                cx.ask(0, &[json!(0)]),
+                Err(Ended),
+                "begin has no script side"
+            );
+            Begin::Run(Self { asks: args.asks })
+        }
+
+        fn step(&mut self, cx: &mut Cx<'_>) -> Step<Value> {
+            let mut answers = Vec::new();
+            for i in 0..self.asks {
+                if let Ok(value) = cx.ask(0, &[json!(i)]) {
+                    answers.push(value);
+                }
+                cx.emit(InteractReq::IfButton {
+                    component_id: i as i32,
+                });
+            }
+            Step::Done(Value::Array(answers))
+        }
+    }
+
     /// Calls `ask()` once and completes with its reply. Used to start
     /// another machine from inside a callback.
     pub(crate) struct Ask;
@@ -1553,6 +1719,118 @@ pub(crate) mod tests {
         assert_eq!(SOLO_ABORTS.with(|c| c.get()), Some(AbortReason::Superseded));
         assert_eq!(take(new), Take::Pending);
         assert_eq!(take(other), Take::Pending);
+    }
+
+    /// Answers each call with its argument; call `throw_at` throws, call
+    /// `terminate_at` is terminated, and from call `claim_at` on join has
+    /// claimed the tick.
+    struct Inliner {
+        calls: usize,
+        throw_at: Option<usize>,
+        terminate_at: Option<usize>,
+        claim_at: Option<usize>,
+    }
+
+    impl Inliner {
+        fn new() -> Self {
+            Self {
+                calls: 0,
+                throw_at: None,
+                terminate_at: None,
+                claim_at: None,
+            }
+        }
+    }
+
+    impl Js for Inliner {
+        fn queue_len(&mut self) -> usize {
+            0
+        }
+
+        fn call(&mut self, _hook: Option<&HeldCallback>, args: &[Value]) -> Called {
+            self.calls += 1;
+            if self.terminate_at == Some(self.calls) {
+                return Called::Terminated;
+            }
+            if self.throw_at == Some(self.calls) {
+                return Called::Settled(Reply::Threw(Thrown::new("boom")));
+            }
+            Called::Settled(Reply::Value(args[0].clone()))
+        }
+
+        fn poll(&mut self, _pending: &Pending) -> Option<Reply> {
+            unreachable!("Inliner never returns a promise");
+        }
+
+        fn claimed(&mut self) -> bool {
+            self.claim_at.is_some_and(|at| self.calls >= at)
+        }
+    }
+
+    #[test]
+    fn asks_answer_inside_one_step_outside_the_callback_budget() {
+        let asks = CALLS_PER_TICK + 3;
+        let h = running(begin("inline", json!({ "asks": asks })));
+        let mut js = Inliner::new();
+        step(&mut js);
+        assert_eq!(js.calls, asks);
+        assert_eq!(
+            take(h),
+            Take::Settled(Outcome::Done(json!((0..asks).collect::<Vec<_>>())))
+        );
+        assert_eq!(drain().len(), asks, "the step's ops are kept");
+    }
+
+    #[test]
+    fn a_throwing_ask_fails_the_row_with_the_throw_and_drops_its_ops() {
+        let h = running(begin("inline", json!({ "asks": 4 })));
+        let mut js = Inliner::new();
+        js.throw_at = Some(2);
+        step(&mut js);
+        assert_eq!(js.calls, 2, "no ask runs after the throw");
+        assert_eq!(take(h), Take::Settled(Outcome::Failed(Thrown::new("boom"))));
+        assert!(drain().is_empty());
+    }
+
+    #[test]
+    fn a_terminated_or_claimed_ask_aborts_the_row() {
+        let h = running(begin("inline", json!({ "asks": 4 })));
+        let mut js = Inliner::new();
+        js.terminate_at = Some(1);
+        step(&mut js);
+        assert_eq!(js.calls, 1);
+        assert_eq!(
+            take(h),
+            Take::Settled(Outcome::Aborted(AbortReason::Terminated))
+        );
+        assert!(drain().is_empty());
+
+        let h = running(begin("inline", json!({ "asks": 4 })));
+        let mut js = Inliner::new();
+        js.claim_at = Some(1);
+        // The pass checks the claim first; drive the row as a kick would.
+        kick(h, &mut js);
+        assert_eq!(js.calls, 1, "no ask runs once the tick is claimed");
+        assert_eq!(
+            take(h),
+            Take::Settled(Outcome::Aborted(AbortReason::Terminated))
+        );
+        assert!(drain().is_empty());
+    }
+
+    #[test]
+    fn a_runaway_step_is_bounded() {
+        let h = running(begin("inline", json!({ "asks": ASKS_PER_STEP + 10 })));
+        let mut js = Inliner::new();
+        step(&mut js);
+        assert_eq!(js.calls, ASKS_PER_STEP);
+        let Take::Settled(Outcome::Failed(thrown)) = take(h) else {
+            panic!("the bound fails the row");
+        };
+        assert!(
+            thrown.message().contains("synchronous callbacks"),
+            "{thrown:?}"
+        );
     }
 
     #[test]

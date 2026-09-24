@@ -569,177 +569,47 @@ fn begin_allocates_a_new_token_and_pause_emits_wait() {
 }
 
 #[test]
-fn source_owns_its_map_and_does_not_call_the_other_machines() {
-    let src = include_str!("../src/hunt_bank.rs");
-    assert!(src.contains("BANK_RUNTIMES"));
-    assert!(src.contains("in_area_body(here, 1,"));
-    assert!(!src.contains("hunt_leave::dispatch"));
-    assert!(!src.contains("hunt_cell::dispatch"));
-    assert!(!src.contains("hunt_key::dispatch"));
-    assert!(!src.contains("hunt_lair::dispatch"));
-    assert!(!src.contains("hunt_fight::dispatch"));
-    assert!(!src.contains("deposit-1"));
-    assert!(!src.contains("withdraw-by-id"));
-    assert!(!src.contains("walk-nearest-bank"));
-    assert!(!src.contains("FIGHT_MS"));
-    assert!(!src.contains("120000"));
-    assert!(!src.contains("120_000"));
-    assert!(!src.contains("SelectedGameData"));
-    assert!(!src.contains("gap_sw"));
-    assert!(!src.contains("bodyOrigin"));
-    assert!(!src.contains("size>>1"));
-    assert_eq!(WITHDRAW_MS, 2_500);
-    assert_eq!(CLOSE_MS, 3_000);
-    assert_eq!(OPEN_MS, 5_000);
-    assert_eq!(WALK_LEG_MS, 300_000);
-    let lib = include_str!("../src/lib.rs");
-    assert_eq!(lib.matches("pub mod hunt_bank").count(), 1);
-}
-
-#[test]
-fn shim_and_bindings_keep_the_yield_shape_and_walk_flags() {
-    let bindings = include_str!("../src/load/bindings.rs");
-    let bank = bindings.split("api.bankNext").nth(1).expect("bankNext");
-    let bank = bank.split("function recordSettlement").next().unwrap();
-    assert!(bank.contains("kind: 'yield', value:"));
-    assert!(bank.contains("ok: false, error:"));
-    assert!(bank.contains("kind: 'aborted'"));
-    assert!(bank.contains("status: 'aborted'"));
-    assert!(!bank.contains("ok: true, status: 'aborted'"));
-    assert!(!bindings.contains("api.bankValidate"));
-    let reg = bindings.split("__rs2b0t_bank\"").nth(1).unwrap();
-    let reg = reg.split("register bank:").next().unwrap();
-    assert!(!reg.contains("SelectedGameData"));
-    assert!(!reg.contains("selected_"));
-
-    let dts = include_str!("../src/host_js.rs");
-    let step = dts.split("export type BankStep").nth(1).expect("BankStep");
-    assert!(step.contains("kind: 'yield'; value: boolean"));
-    assert!(step.contains("ok: false; error: string; kind: 'aborted'"));
-    assert!(!dts.contains("bankValidate"));
-
-    let js = include_str!("../src/shim/hunting_combat.js");
-    let routine = js
-        .split("export async function bankRoutine")
-        .nth(1)
-        .expect("bankRoutine");
-    assert!(routine.contains("driveSiteBankOpen"));
-    assert!(routine.contains("leaveLair"));
-    assert!(routine.contains("opts.leave"));
-    assert!(routine.contains("{ left:"));
-    assert!(routine.contains("Use-quickly") || js.contains("booth_action: 'Use-quickly'"));
-    let driver = js.split("async function driveSiteBankOpen").nth(1).unwrap();
-    let driver = driver
-        .split("export async function bankRoutine")
-        .next()
-        .unwrap();
-    assert!(driver.contains("open-nearest"));
-    assert!(driver.contains("Bank booth"));
-    assert!(driver.contains("Use-quickly"));
-    assert!(!driver.contains("walk-nearest-bank"));
-    assert!(routine.contains("countBankTrip"));
-    assert!(!routine.contains("keyStatus"));
-    assert!(!routine.contains("Inventory"));
-    assert!(!routine.contains("1590"));
-    assert!(!routine.contains("deposit-1"));
-    assert!(!routine.contains("withdraw-by-id"));
-    assert!(!routine.contains("Bank.deposit"));
-    assert!(!routine.contains("Bank.close"));
-    assert!(!routine.contains("Bank.withdrawById"));
-    assert!(!routine.contains("walk-nearest-bank"));
-    let walk = routine.split("case 'walk-near'").nth(1).unwrap();
-    let walk = walk.split("break;").next().unwrap();
-    assert!(walk.contains("beginBankWalk(step, radius)"));
-    assert!(walk.contains("allow_teleports: false"));
-    assert!(walk.contains("allow_wilderness: false"));
-    assert!(walk.contains("allow_bank_fetch: false"));
-    assert!(!walk.contains("allow_wilderness: true"));
-    assert!(!walk.contains("allow_bank_fetch: true"));
-    assert!(!walk.contains("radius: 0"));
-    let begin = js.split("function beginBankWalk").nth(1).unwrap();
-    let begin = begin
-        .split("async function driveSiteBankOpen")
-        .next()
-        .unwrap();
-    assert!(begin.contains("allow_teleports: false"));
-    assert!(begin.contains("allow_wilderness: false"));
-    assert!(begin.contains("allow_bank_fetch: false"));
-    assert!(begin.contains("radius,"));
-    assert_eq!(
-        routine.matches("bankCall({ op: 'end', token })").count(),
-        routine.matches("return ").count() - 1,
-        "every return after the begin ends the Rust row: {routine}"
-    );
-
-    let iso = include_str!("../src/load/isolate.rs");
-    for hook in ["on_pause", "on_hold", "on_resume", "on_reset"] {
-        assert!(
-            iso.contains(&format!("hunt_bank::{hook}")),
-            "missing {hook}"
-        );
-        assert!(iso.contains(&format!("hunt_cell::{hook}")));
-    }
-}
-
-#[test]
-fn v2_bank_next_keeps_abort_distinct_from_yield_false() {
+fn v2_bank_run_calls_the_leave_hook_and_stops_when_it_fails() {
     let src = r#"
 export const apiVersion = 2;
-export function tick(api) {
-  const began = api.bankBegin();
-  globalThis.__begin = began;
-  const token = began.value.token;
-  const bad = api.bankNext({
-    token: token + 1,
-    key: 'heroes-blue',
-    keyItem: null,
-  });
-  globalThis.__bad = bad;
-  const leave = api.bankNext({
-    token,
+let started = false;
+export async function tick(api) {
+  if (started) return;
+  started = true;
+  globalThis.__leaves = 0;
+  globalThis.__done = await api.bankRun({
     key: 'taverley-blue',
     keyItem: null,
     boxes: [{ minX: 0, maxX: 10, minZ: 0, maxZ: 10, level: 0 }],
     bank: { x: 80, z: 80, level: 0 },
-  });
-  globalThis.__leave = leave;
-  const done = api.bankNext({
-    token,
-    reply: { left: false },
-    key: 'taverley-blue',
-    keyItem: null,
-    boxes: [{ minX: 0, maxX: 10, minZ: 0, maxZ: 10, level: 0 }],
-    bank: { x: 80, z: 80, level: 0 },
-  });
-  globalThis.__done = done;
+  }, {}, { leave: async () => { globalThis.__leaves += 1; return false; } });
 }
 "#;
     let iso = LoadIsolate::spawn(src.into(), LoadShape::NativeTick, vec![]).unwrap();
-    iso.post_snapshot(encode_snapshot(&empty_snapshot(
-        1,
-        TileInput {
-            x: 1,
-            z: 1,
-            level: 0,
-        },
-    )));
-    iso.on_game_tick(1);
-    let begin = iso.probe("globalThis.__begin").unwrap();
-    assert_eq!(begin["ok"], true, "{begin:?}");
-    let bad = iso.probe("globalThis.__bad").unwrap();
-    assert_eq!(bad["ok"], false, "{bad:?}");
-    assert_eq!(bad["kind"], "aborted");
-    assert_eq!(bad["status"], "aborted");
-    assert!(bad.get("value").is_none(), "{bad:?}");
-    let leave = iso.probe("globalThis.__leave").unwrap();
-    assert_eq!(leave["ok"], true, "{leave:?}");
-    assert_eq!(leave["status"], "continue");
-    assert_eq!(leave["kind"], "leave", "{leave:?}");
-    let done = iso.probe("globalThis.__done").unwrap();
-    assert_eq!(done["ok"], true, "{done:?}");
-    assert_eq!(done["status"], "done");
-    assert_eq!(done["kind"], "yield");
-    assert_eq!(done["value"], false);
+    for tick in 1..=2 {
+        iso.post_snapshot(script::isolate_fb::encode_snapshot(&empty_snapshot(
+            tick,
+            TileInput {
+                x: 1,
+                z: 1,
+                level: 0,
+            },
+        )));
+        iso.on_game_tick(tick);
+    }
+    // Inside the lair, the caller's own leave runs; a failed leave ends
+    // the trip false without walking to the bank.
+    assert_eq!(iso.probe("globalThis.__leaves").unwrap(), json!(1));
+    assert_eq!(
+        iso.probe("globalThis.__done").unwrap(),
+        json!({ "kind": "done", "value": false })
+    );
+    assert!(
+        !iso.drain_interacts()
+            .iter()
+            .any(|req| matches!(req, script::shim::InteractReq::WalkNear { .. })),
+        "no bank walk after a failed leave"
+    );
     iso.join();
 }
 

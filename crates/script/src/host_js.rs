@@ -566,113 +566,131 @@ fn render_native_v2(out: &mut String) {
     out.push_str("  walkable(input: { tile: WorldTile } | WorldTile): HelperResult<boolean>;\n");
     out.push_str("  canStep(input: { from: WorldTile; to: WorldTile }): HelperResult<boolean>;\n");
     out.push_str("  canReach(input: { tile: WorldTile; adjacentOk?: boolean; maxSteps?: number }): HelperResult<boolean>;\n");
-    out.push_str("  fightBegin(input?: object): HelperResult<{ token: number }>;\n");
-    out.push_str("  fightValidate(input: { token: number } & Record<string, unknown>): HelperResult<boolean>;\n");
-    out.push_str("  /** One effect per call. Yield is status done with kind yield. Aborted is not anonymous done. */\n");
-    out.push_str("  fightNext(input: { token: number; reply?: unknown } & Record<string, unknown>): FightStep;\n");
-    out.push_str("  fightReset(input: { token: number }): HelperResult<null>;\n");
-    out.push_str("  fightInterruptWatch(input: { token: number }): HelperResult<null>;\n");
-    out.push_str("  fightBlocksLoot(input: { token: number } & Record<string, unknown>): HelperResult<boolean>;\n");
-    out.push_str("  holdBegin(input?: object): HelperResult<{ token: number }>;\n");
-    out.push_str("  holdValidate(input: { token: number } & Record<string, unknown>): HelperResult<boolean>;\n");
-    out.push_str("  /** One effect per call. Yield is status done with kind yield. Aborted is not anonymous done. */\n");
-    out.push_str("  holdNext(input: { token: number; reply?: unknown } & Record<string, unknown>): HoldStep;\n");
-    out.push_str("  retreatBegin(input?: object): HelperResult<{ token: number }>;\n");
-    out.push_str("  retreatValidate(input: { token: number } & Record<string, unknown>): HelperResult<boolean>;\n");
-    out.push_str("  /** One effect per call. Yield is status done with kind yield. Aborted is not anonymous done. */\n");
-    out.push_str("  retreatNext(input: { token: number; reply?: unknown } & Record<string, unknown>): RetreatStep;\n");
-    out.push_str("  walkspotBegin(input?: object): HelperResult<{ token: number }>;\n");
-    out.push_str("  walkspotValidate(input: { token: number } & Record<string, unknown>): HelperResult<boolean>;\n");
-    out.push_str("  /** One effect per call. Yield is status done with kind yield. Aborted is not anonymous done. */\n");
-    out.push_str("  walkspotNext(input: { token: number; reply?: unknown } & Record<string, unknown>): WalkStep;\n");
-    out.push_str("  enterBegin(input?: object): HelperResult<{ token: number }>;\n");
-    out.push_str("  enterValidate(input: { token: number } & Record<string, unknown>): HelperResult<boolean>;\n");
-    out.push_str("  /** One effect per call. Yield is status done with kind yield and a boolean value. Aborted is ok false, not FightStep. */\n");
-    out.push_str("  enterNext(input: { token: number; reply?: unknown } & Record<string, unknown>): EnterStep;\n");
-    out.push_str("  leaveBegin(input?: object): HelperResult<{ token: number }>;\n");
-    out.push_str("  /** One effect per call. Yield is status done with kind yield and a boolean value. Aborted is ok false, not FightStep. */\n");
-    out.push_str("  leaveNext(input: { token: number; reply?: unknown } & Record<string, unknown>): LeaveStep;\n");
-    out.push_str("  keyBegin(input?: object): HelperResult<{ token: number }>;\n");
-    out.push_str("  /** One effect per call. Yield is status done with kind yield and a boolean value. Aborted is ok false, not FightStep. */\n");
-    out.push_str("  keyNext(input: { token: number; reply?: unknown } & Record<string, unknown>): KeyStep;\n");
-    out.push_str("  cellBegin(input?: object): HelperResult<{ token: number }>;\n");
-    out.push_str("  /** One effect per call. Yield is status done with kind yield and a boolean value. Aborted is ok false, not FightStep. */\n");
-    out.push_str("  cellNext(input: { token: number; reply?: unknown } & Record<string, unknown>): CellStep;\n");
-    out.push_str("  bankBegin(input?: object): HelperResult<{ token: number }>;\n");
-    out.push_str("  /** One effect per call. Yield is status done with kind yield and a boolean value. Aborted is ok false, not FightStep. */\n");
-    out.push_str("  bankNext(input: { token: number; reply?: unknown } & Record<string, unknown>): BankStep;\n");
+    out.push_str("  /** Hunt Task sessions: `*Begin(site)` keeps the site with a token; `*Validate` is one synchronous read (Rust calls the hook getters and `inArea`); `*Run` awaits one Rust run (walks, ops, waits and retries are the host's). */\n");
+    out.push_str("  fightBegin(site: HuntSite): HelperResult<{ token: number }>;\n");
+    out.push_str("  fightValidate(input: HuntToken, hooks?: HuntHooks): HelperResult<boolean>;\n");
+    out.push_str("  fightRun(input: HuntToken, hooks?: HuntHooks): Promise<HuntOutcome<null>>;\n");
+    out.push_str("  fightReset(input: HuntToken): HelperResult<null>;\n");
+    out.push_str("  fightInterruptWatch(input: HuntToken): HelperResult<null>;\n");
+    out.push_str(
+        "  fightBlocksLoot(input: HuntToken, hooks?: HuntHooks): HelperResult<boolean>;\n",
+    );
+    out.push_str("  holdBegin(site: HuntSite): HelperResult<{ token: number }>;\n");
+    out.push_str("  holdValidate(input: HuntToken, hooks?: HuntHooks): HelperResult<boolean>;\n");
+    out.push_str("  holdRun(input: HuntToken, hooks?: HuntHooks): Promise<HuntOutcome<null>>;\n");
+    out.push_str("  retreatBegin(site: HuntSite): HelperResult<{ token: number }>;\n");
+    out.push_str(
+        "  retreatValidate(input: HuntToken, hooks?: HuntHooks): HelperResult<boolean>;\n",
+    );
+    out.push_str(
+        "  retreatRun(input: HuntToken, hooks?: HuntHooks): Promise<HuntOutcome<null>>;\n",
+    );
+    out.push_str("  walkspotBegin(site: HuntSite): HelperResult<{ token: number }>;\n");
+    out.push_str(
+        "  walkspotValidate(input: HuntToken, hooks?: HuntHooks): HelperResult<boolean>;\n",
+    );
+    out.push_str(
+        "  walkspotRun(input: HuntToken, hooks?: HuntHooks): Promise<HuntOutcome<null>>;\n",
+    );
+    out.push_str("  enterBegin(site: HuntSite): HelperResult<{ token: number }>;\n");
+    out.push_str("  enterValidate(input: HuntToken, hooks?: HuntHooks): HelperResult<boolean>;\n");
+    out.push_str("  /** `value`: inside the lair. */\n");
+    out.push_str(
+        "  enterRun(input: HuntToken, hooks?: HuntHooks): Promise<HuntOutcome<boolean>>;\n",
+    );
+    out.push_str("  /** One awaited run; `value`: out of the lair. */\n");
+    out.push_str("  leaveRun(site: HuntSite, hooks?: HuntHooks): Promise<HuntOutcome<boolean>>;\n");
+    out.push_str("  /** One awaited run; `value`: the key is held. */\n");
+    out.push_str("  keyRun(site: HuntSite, hooks?: HuntHooks): Promise<HuntOutcome<boolean>>;\n");
+    out.push_str("  /** One awaited run through the jail cell; `value`: done. */\n");
+    out.push_str("  cellRun(site: HuntSite, hooks?: HuntHooks): Promise<HuntOutcome<boolean>>;\n");
+    out.push_str("  /** One awaited bank trip; `value`: restocked. */\n");
+    out.push_str("  bankRun(site: HuntSite, opts?: HuntBankOptions, hooks?: HuntHooks): Promise<HuntOutcome<boolean>>;\n");
     out.push_str("}\n\n");
-    out.push_str("export type FightStep =\n");
-    out.push_str("  | { ok: true; status: 'continue'; token: number; kind: string }\n");
-    out.push_str("  | { ok: true; status: 'done'; token: number; kind: 'yield' }\n");
-    out.push_str("  | { ok: true; status: 'aborted'; token: number; kind: 'aborted' }\n");
-    out.push_str("  | { ok: false; error: string };\n");
-    out.push_str("export type HoldStep =\n");
-    out.push_str("  | { ok: true; status: 'continue'; token: number; kind: string }\n");
-    out.push_str("  | { ok: true; status: 'done'; token: number; kind: 'yield' }\n");
+    out.push_str("export type HuntToken = { token: number };\n");
+    out.push_str("export type HuntBox = { minX: number; maxX: number; minZ: number; maxZ: number; level: number };\n");
+    out.push_str("/** Plain site data. Its area is `boxes`, unless `hooks.inArea` answers. */\n");
+    out.push_str("export interface HuntSite {\n");
+    out.push_str("  key: string;\n");
+    out.push_str("  boxes?: HuntBox[];\n");
+    out.push_str("  target?: string;\n");
+    out.push_str("  alsoHunt?: string[];\n");
+    out.push_str("  safespots?: WorldTile[];\n");
+    out.push_str("  meleeAnchor?: WorldTile;\n");
+    out.push_str("  approach?: WorldTile[];\n");
+    out.push_str("  fireAtRange?: boolean;\n");
+    out.push_str("  rangedThreat?: boolean;\n");
+    out.push_str("  bank?: WorldTile | null;\n");
+    out.push_str("  keyItem?: { name: string; id: number } | null;\n");
+    out.push_str("  coins?: number | null;\n");
+    out.push_str("  escapeTeleportId?: string | null;\n");
+    out.push_str("  walkOut?: WorldTile | null;\n");
     out.push_str(
-        "  | { ok: false; error: string; kind: 'aborted'; token: number; status: 'aborted' }\n",
+        "  talkGate?: { npc: string; op: string; choose: string; stand: WorldTile } | null;\n",
     );
-    out.push_str("  | { ok: false; error: string };\n");
-    out.push_str("export type RetreatStep =\n");
-    out.push_str("  | { ok: true; status: 'continue'; token: number; kind: string }\n");
-    out.push_str("  | { ok: true; status: 'done'; token: number; kind: 'yield' }\n");
+    out.push_str("  feeGate?: { npc: string; op: string; coins: number; stand: WorldTile; entrance?: { locId: number; op: string } | null; paidLine: string; prepaidLine: string } | null;\n");
+    out.push_str("  gate?: { locId: number; op: string; outside?: WorldTile | null; inside?: WorldTile | null } | null;\n");
+    out.push_str("  exit?: { locId: number; op: string; stand: WorldTile } | null;\n");
+    out.push_str("}\n");
+    out.push_str("/** Bank-trip loadout, merged over the site. */\n");
+    out.push_str("export interface HuntBankOptions {\n");
+    out.push_str("  withdrawFood?: boolean;\n");
+    out.push_str("  wear?: string[];\n");
+    out.push_str("  carry?: string[];\n");
+    out.push_str("  runes?: Array<{ name: string; count: number }>;\n");
+    out.push_str("  escapeRunes?: Array<{ name: string; count: number }>;\n");
+    out.push_str("  flasks?: Array<{ flask: string; doses: string[]; want: number }>;\n");
+    out.push_str("  healTo?: number | null;\n");
+    out.push_str("  ammoWant?: number | null;\n");
+    out.push_str("}\n");
+    out.push_str("/** The caller's own hooks, all optional. Getters and notifications are called synchronously by Rust when a decision reads them (a returned promise is `not impl`); `eatOnce`, `armSpecial`, `sustain` and `leave` are awaited. An absent getter reads as its default. */\n");
+    out.push_str("export interface HuntHooks {\n");
+    out.push_str("  log?(message: string): void;\n");
+    out.push_str("  vlog?(message: string): void;\n");
+    out.push_str("  setStatus?(message: string): void;\n");
+    out.push_str("  eatOnce?(): boolean | Promise<boolean>;\n");
+    out.push_str("  armSpecial?(): void | Promise<void>;\n");
+    out.push_str("  sustain?(): void | Promise<void>;\n");
+    out.push_str("  /** Replaces the leave run inside `bankRun` / `keyRun` / `cellRun`; `true` when out. */\n");
+    out.push_str("  leave?(): boolean | Promise<boolean>;\n");
+    out.push_str("  countBurial?(): void;\n");
+    out.push_str("  setSafespotIndex?(index: number): void;\n");
+    out.push_str("  setTarget?(index: number | null): void;\n");
+    out.push_str("  pickWeapon?(names: string[]): void;\n");
+    out.push_str("  parkFor?(reason: string): void;\n");
+    out.push_str("  countBankTrip?(): void;\n");
+    out.push_str("  died?(): boolean;\n");
+    out.push_str("  targetIdx?(): number | null;\n");
+    out.push_str("  hpFraction?(): number;\n");
+    out.push_str("  panicHp?(): number;\n");
+    out.push_str("  retreatHp?(): number;\n");
+    out.push_str("  hasFood?(): boolean;\n");
+    out.push_str("  needEat?(): boolean;\n");
+    out.push_str("  style?(): 'melee' | 'range' | 'mage';\n");
+    out.push_str("  safespotIndex?(): number;\n");
+    out.push_str("  buryBones?(): boolean;\n");
+    out.push_str("  boneName?(): string;\n");
+    out.push_str("  shieldReady?(): boolean;\n");
+    out.push_str("  parked?(): boolean;\n");
+    out.push_str("  leaveByWalk?(): boolean;\n");
+    out.push_str("  foodName?(): string;\n");
+    out.push_str("  foodWithdraw?(): number;\n");
+    out.push_str("  weaponName?(): string;\n");
+    out.push_str("  ammoName?(): string;\n");
+    out.push_str("  spellName?(): string;\n");
+    out.push_str("  keepExtra?(): string[];\n");
+    out.push_str("  /** The site's area test; replaces `boxes` when present. */\n");
+    out.push_str("  inArea?(tile: WorldTile): boolean;\n");
+    out.push_str("}\n");
     out.push_str(
-        "  | { ok: false; error: string; kind: 'aborted'; token: number; status: 'aborted' }\n",
+        "/** One run's settlement. A hook that throws rejects the promise with that value. */\n",
     );
-    out.push_str("  | { ok: false; error: string };\n");
-    out.push_str("export type WalkStep =\n");
-    out.push_str("  | { ok: true; status: 'continue'; token: number; kind: string }\n");
-    out.push_str("  | { ok: true; status: 'done'; token: number; kind: 'yield' }\n");
+    out.push_str("export type HuntOutcome<T> =\n");
+    out.push_str("  | { kind: 'done'; value: T }\n");
+    out.push_str("  | { kind: 'refused'; reason: string }\n");
     out.push_str(
-        "  | { ok: false; error: string; kind: 'aborted'; token: number; status: 'aborted' }\n",
+        "  | { kind: 'aborted'; reason: 'reset' | 'superseded' | 'terminated' | 'unknown' };\n",
     );
-    out.push_str("  | { ok: false; error: string };\n");
-    out.push_str("export type EnterStep =\n");
-    out.push_str("  | { ok: true; status: 'continue'; token: number; kind: string }\n");
-    out.push_str(
-        "  | { ok: true; status: 'done'; token: number; kind: 'yield'; value: boolean }\n",
-    );
-    out.push_str(
-        "  | { ok: false; error: string; kind: 'aborted'; token: number; status: 'aborted' }\n",
-    );
-    out.push_str("  | { ok: false; error: string };\n");
-    out.push_str("export type LeaveStep =\n");
-    out.push_str("  | { ok: true; status: 'continue'; token: number; kind: string }\n");
-    out.push_str(
-        "  | { ok: true; status: 'done'; token: number; kind: 'yield'; value: boolean }\n",
-    );
-    out.push_str(
-        "  | { ok: false; error: string; kind: 'aborted'; token: number; status: 'aborted' }\n",
-    );
-    out.push_str("  | { ok: false; error: string };\n");
-    out.push_str("export type KeyStep =\n");
-    out.push_str("  | { ok: true; status: 'continue'; token: number; kind: string }\n");
-    out.push_str(
-        "  | { ok: true; status: 'done'; token: number; kind: 'yield'; value: boolean }\n",
-    );
-    out.push_str(
-        "  | { ok: false; error: string; kind: 'aborted'; token: number; status: 'aborted' }\n",
-    );
-    out.push_str("  | { ok: false; error: string };\n");
-    out.push_str("export type CellStep =\n");
-    out.push_str("  | { ok: true; status: 'continue'; token: number; kind: string }\n");
-    out.push_str(
-        "  | { ok: true; status: 'done'; token: number; kind: 'yield'; value: boolean }\n",
-    );
-    out.push_str(
-        "  | { ok: false; error: string; kind: 'aborted'; token: number; status: 'aborted' }\n",
-    );
-    out.push_str("  | { ok: false; error: string };\n");
-    out.push_str("export type BankStep =\n");
-    out.push_str("  | { ok: true; status: 'continue'; token: number; kind: string }\n");
-    out.push_str(
-        "  | { ok: true; status: 'done'; token: number; kind: 'yield'; value: boolean }\n",
-    );
-    out.push_str(
-        "  | { ok: false; error: string; kind: 'aborted'; token: number; status: 'aborted' }\n",
-    );
-    out.push_str("  | { ok: false; error: string };\n");
     out.push_str("export type ClueStep =\n");
     out.push_str("  | { ok: true; status: 'continue'; token: number; kind: 'wait' | 'yield' | 'callback.enabled' }\n");
     out.push_str("  | { ok: true; status: 'continue'; token: number; kind: 'callback.log' | 'callback.setStatus'; message: string }\n");

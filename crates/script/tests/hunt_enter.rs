@@ -843,70 +843,10 @@ fn yield_value_and_aborted_shapes_are_not_fight_or_walkspot() {
     assert_eq!(aborted["kind"], "aborted");
     assert!(aborted.get("value").is_none() || aborted["value"].is_null());
     assert_ne!(aborted["kind"], "yield");
-
-    let bindings = include_str!("../src/load/bindings.rs");
-    let enter = bindings
-        .split("api.enterNext")
-        .nth(1)
-        .expect("enterNext binding");
-    let enter = enter.split("function recordSettlement").next().unwrap();
-    assert!(
-        enter.contains("kind: 'yield', value:"),
-        "enterNext yield must carry value"
-    );
-    assert!(enter.contains("ok: false, error:"));
-    assert!(enter.contains("kind: 'aborted'"));
-    assert!(
-        !enter.contains("ok: true, status: 'aborted'"),
-        "do not copy FightStep aborted"
-    );
-
-    let dts = include_str!("../src/host_js.rs");
-    let step = dts
-        .split("export type EnterStep")
-        .nth(1)
-        .expect("EnterStep");
-    assert!(step.contains("kind: 'yield'; value: boolean"));
-    assert!(step.contains("ok: false; error: string; kind: 'aborted'"));
-    assert!(!step
-        .split("export type ")
-        .nth(1)
-        .unwrap_or(step)
-        .contains("ok: true; status: 'aborted'"));
 }
 
 #[test]
-fn shim_enter_walk_flags_are_false_and_other_classes_stay() {
-    let src = include_str!("../src/shim/hunting_combat.js");
-    let enter = src
-        .split("export class EnterLair")
-        .nth(1)
-        .expect("EnterLair");
-    // The class body only: the file keeps the key and bank machines after it.
-    let enter = enter.split("function leaveCall").next().unwrap();
-    assert!(enter.contains("enterProjection"));
-    assert!(enter.contains("allow_teleports: false"));
-    assert!(enter.contains("allow_wilderness: false"));
-    assert!(enter.contains("allow_bank_fetch: false"));
-    assert!(enter.contains("radius: 0"));
-    assert!(enter.contains("radius: Number(step.radius)"));
-    assert!(!enter.contains("interruptWatch"));
-    assert!(!enter.contains("host.fight = this"));
-    assert!(!enter.contains("walk-to"));
-    assert!(!enter.contains("bank-open"));
-    assert!(!enter.contains("dialog::dispatch"));
-    let projection = src.split("function projection(").nth(1).unwrap();
-    let projection = projection.split("export class Fight").next().unwrap();
-    assert!(!projection.contains("talkGate"));
-    assert!(!projection.contains("feeGate"));
-    assert!(!projection.contains("keyItem"));
-    assert!(!projection.contains("parked"));
-    let walk = src.split("export class WalkToSpot").nth(1).unwrap();
-    assert!(walk.contains("allow_wilderness: true"));
-    assert!(walk.contains("allow_bank_fetch: true"));
-    let fight = src.split("export class HoldSafespot").next().unwrap();
-    assert!(fight.contains("case 'walk-to':"));
-
+fn enter_lair_class_walks_with_flags_false_and_leaves_host_fight_alone() {
     let iso = LoadIsolate::spawn(
         r#"
 import { EnterLair } from '../../api/combat/hunting/combat.js';
@@ -983,13 +923,12 @@ export default class T extends LoopingBot {
     );
 }
 
-// ResetSession drops the Rust machines while the isolate, the card state and
-// the JS tokens survive: a hunt class that gated on validate before the reset
-// must not stay inert for the life of the isolate. The re-bind keeps the wire
-// (one begin, one retry), so validate reads true again and execute runs on the
-// new token.
+// ResetSession drops the Rust policy state while the isolate, the card state
+// and the JS tokens survive: a hunt class that gated on validate before the
+// reset must not stay inert. Rust starts the token's state fresh on its next
+// use (no JS re-bind), so validate reads true again and execute walks.
 #[test]
-fn session_reset_rebinds_the_class_token_instead_of_going_inert() {
+fn session_reset_keeps_the_class_token_live_on_fresh_state() {
     let src = r#"
 import { EnterLair, HoldSafespot } from '../../api/combat/hunting/combat.js';
 export default class T extends LoopingBot {
@@ -1084,9 +1023,12 @@ export default class T extends LoopingBot {
     let after = iso.drain_interacts();
     let logs = iso.join();
     assert_eq!(ticks, 2, "the loop runs again after the reset: {logs:?}");
-    assert_eq!(validated, true, "post-reset validate re-binds: {logs:?}");
-    assert_ne!(enter_token, first_enter, "enter mints a new token");
-    assert_ne!(hold_token, first_hold, "hold mints a new token");
+    assert_eq!(
+        validated, true,
+        "post-reset validate reads the fresh state: {logs:?}"
+    );
+    assert_eq!(enter_token, first_enter, "the class keeps its token");
+    assert_eq!(hold_token, first_hold, "the class keeps its token");
     assert!(
         approach_walk(&after),
         "execute runs on the new token: {after:?} logs={logs:?}"
@@ -1111,67 +1053,47 @@ fn approach_walk(drained: &[InteractReq]) -> bool {
 }
 
 #[test]
-fn v2_enter_next_yield_carries_value_and_aborted_is_not_done() {
+fn v2_enter_run_settles_the_yield_value_and_refuses_an_unknown_token() {
     let src = r#"
 export const apiVersion = 2;
-export function tick(api) {
-  const began = api.enterBegin();
+const site = {
+  key: 'heroes-blue',
+  boxes: [{ minX: 0, maxX: 10, minZ: 0, maxZ: 10, level: 0 }],
+  approach: [],
+};
+let token = null;
+export async function tick(api) {
+  if (token !== null) return;
+  const began = api.enterBegin(site);
   globalThis.__begin = began;
-  const token = began.value.token;
-  const bad = api.enterNext({
-    token: token + 1,
-    parked: false,
-    shieldReady: true,
-    hpFraction: 1,
-    panicHp: 0.2,
-    key: 'heroes-blue',
-    boxes: [{minX: 0, maxX: 10, minZ: 0, maxZ: 10, level: 0}],
-    approach: [],
-    talkGate: null,
-    feeGate: null,
-    gate: null,
-    keyItem: null,
-  });
-  globalThis.__bad = bad;
-  const done = api.enterNext({
-    token,
-    parked: false,
-    shieldReady: false,
-    hpFraction: 0.1,
-    panicHp: 0.2,
-    key: 'heroes-blue',
-    boxes: [{minX: 0, maxX: 10, minZ: 0, maxZ: 10, level: 0}],
-    approach: [],
-    talkGate: null,
-    feeGate: null,
-    gate: null,
-    keyItem: null,
-  });
-  globalThis.__done = done;
+  token = began.value.token;
+  globalThis.__validate = api.enterValidate({ token }, { shieldReady: () => true });
+  globalThis.__bad = await api.enterRun({ token: token + 1 }, {});
+  globalThis.__done = await api.enterRun({ token }, {});
 }
 "#;
     let iso = LoadIsolate::spawn(src.into(), LoadShape::NativeTick, vec![]).unwrap();
-    iso.post_snapshot(script::isolate_fb::encode_snapshot(&empty_snapshot(
-        1,
-        TileInput {
-            x: 1,
-            z: 1,
-            level: 0,
-        },
-    )));
-    iso.on_game_tick(1);
+    for tick in 1..=3 {
+        iso.post_snapshot(script::isolate_fb::encode_snapshot(&empty_snapshot(
+            tick,
+            TileInput {
+                x: 1,
+                z: 1,
+                level: 0,
+            },
+        )));
+        iso.on_game_tick(tick);
+    }
     let begin = iso.probe("globalThis.__begin").unwrap();
     assert_eq!(begin["ok"], true, "{begin:?}");
+    // Already inside the area: validate is false (the old projection read).
+    let validate = iso.probe("globalThis.__validate").unwrap();
+    assert_eq!(validate, json!({ "ok": true, "value": false }));
     let bad = iso.probe("globalThis.__bad").unwrap();
-    assert_eq!(bad["ok"], false, "{bad:?}");
-    assert_eq!(bad["kind"], "aborted", "{bad:?}");
-    assert_eq!(bad["status"], "aborted", "{bad:?}");
-    assert_ne!(bad["status"], "done");
+    assert_eq!(bad, json!({ "kind": "refused", "reason": "unknown token" }));
+    // Inside the boxes: the run settles done with the yield's value.
     let done = iso.probe("globalThis.__done").unwrap();
-    assert_eq!(done["ok"], true, "{done:?}");
-    assert_eq!(done["status"], "done", "{done:?}");
-    assert_eq!(done["kind"], "yield", "{done:?}");
-    assert_eq!(done["value"], true, "{done:?}");
+    assert_eq!(done, json!({ "kind": "done", "value": true }));
     iso.join();
 }
 

@@ -863,71 +863,6 @@ fn key_effects_never_include_forbidden_ops() {
 }
 
 #[test]
-fn shim_and_bindings_keep_the_yield_shape_and_flag_falses() {
-    let bindings = include_str!("../src/load/bindings.rs");
-    let key = bindings.split("api.keyNext").nth(1).expect("keyNext");
-    let key = key.split("function recordSettlement").next().unwrap();
-    assert!(key.contains("kind: 'yield', value:"));
-    assert!(key.contains("ok: false, error:"));
-    assert!(key.contains("kind: 'aborted'"));
-    assert!(key.contains("status: 'aborted'"));
-    assert!(!key.contains("ok: true, status: 'aborted'"));
-    assert!(!bindings.contains("api.keyValidate"));
-    let reg = bindings.split("__rs2b0t_key").nth(1).unwrap();
-    let reg = reg.split("register bank:").next().unwrap();
-    assert!(!reg.contains("SelectedGameData"));
-    assert!(!reg.contains("selected_"));
-
-    let dts = include_str!("../src/host_js.rs");
-    let step = dts.split("export type KeyStep").nth(1).expect("KeyStep");
-    assert!(step.contains("kind: 'yield'; value: boolean"));
-    assert!(step.contains("ok: false; error: string; kind: 'aborted'"));
-    assert!(!dts.contains("keyValidate"));
-
-    let js = include_str!("../src/shim/hunting_combat.js");
-    let acquire = js
-        .split("export async function acquireKey")
-        .nth(1)
-        .expect("acquireKey");
-    assert!(acquire.contains("leaveLair"));
-    assert!(acquire.contains("allow_teleports: false"));
-    assert!(acquire.contains("allow_wilderness: false"));
-    assert!(acquire.contains("allow_bank_fetch: false"));
-    assert!(!acquire.contains("1591"));
-    assert!(!acquire.contains("Jailer"));
-    assert!(!acquire.contains("walk-to"));
-    assert!(!acquire.contains("case 'loc'"));
-    assert!(!acquire.contains("use-on"));
-    assert!(!acquire.contains("inArea"));
-    assert!(!acquire.contains("host.fight"));
-    let begin = js.split("function beginKeyWalk").nth(1).unwrap();
-    let begin = begin
-        .split("export async function acquireKey")
-        .next()
-        .unwrap();
-    assert!(begin.contains("radius,"));
-    assert!(!begin.contains("radius: 0"));
-    assert!(begin.contains("allow_wilderness: false"));
-    assert!(!begin.contains("allow_wilderness: true"));
-    let acquire_fn = js
-        .split("export async function acquireKey")
-        .nth(1)
-        .expect("acquireKey");
-    let acquire_fn = acquire_fn.split("function bankCall").next().unwrap();
-    assert_eq!(
-        acquire_fn.matches("keyCall({ op: 'end', token })").count(),
-        acquire_fn.matches("return ").count() - 1,
-        "every return after the begin ends the Rust row: {acquire_fn}"
-    );
-
-    let iso = include_str!("../src/load/isolate.rs");
-    for hook in ["on_pause", "on_hold", "on_resume", "on_reset"] {
-        assert!(iso.contains(&format!("hunt_key::{hook}")), "missing {hook}");
-        assert!(iso.contains(&format!("hunt_leave::{hook}")));
-    }
-}
-
-#[test]
 fn queued_key_walk_flags_are_false_and_radius_is_one() {
     let src = r#"
 import { acquireKey } from '../../api/combat/hunting/combat.js';
@@ -992,62 +927,39 @@ export default class T extends LoopingBot {
 }
 
 #[test]
-fn v2_key_next_keeps_abort_distinct_from_yield_false() {
+fn v2_key_run_settles_held_and_a_kbd_site_is_false() {
     let src = r#"
 export const apiVersion = 2;
-export function tick(api) {
-  const began = api.keyBegin();
-  globalThis.__begin = began;
-  const token = began.value.token;
-  const bad = api.keyNext({
-    token: token + 1,
-    key: 'heroes-blue',
-    keyItem: null,
-  });
-  globalThis.__bad = bad;
-  const aborted = api.keyNext({
-    token,
-    key: 'kbd-lair',
-    keyItem: null,
-  });
-  globalThis.__aborted = aborted;
-  const again = api.keyBegin();
-  const done = api.keyNext({
-    token: again.value.token,
-    key: 'heroes-blue',
-    keyItem: null,
-  });
-  globalThis.__done = done;
+let started = false;
+export async function tick(api) {
+  if (started) return;
+  started = true;
+  globalThis.__kbd = await api.keyRun({ key: 'kbd-lair', keyItem: null }, {});
+  globalThis.__done = await api.keyRun({ key: 'heroes-blue', keyItem: null }, {});
 }
 "#;
     let iso = LoadIsolate::spawn(src.into(), LoadShape::NativeTick, vec![]).unwrap();
-    iso.post_snapshot(encode_snapshot(&empty_snapshot(
-        1,
-        TileInput {
-            x: 1,
-            z: 1,
-            level: 0,
-        },
-    )));
-    iso.on_game_tick(1);
-    let begin = iso.probe("globalThis.__begin").unwrap();
-    assert_eq!(begin["ok"], true, "{begin:?}");
-    let bad = iso.probe("globalThis.__bad").unwrap();
-    assert_eq!(bad["ok"], false, "{bad:?}");
-    assert_eq!(bad["kind"], "aborted");
-    assert_eq!(bad["status"], "aborted");
-    assert_ne!(bad["status"], "done");
-    let aborted = iso.probe("globalThis.__aborted").unwrap();
-    assert_eq!(aborted["ok"], false, "{aborted:?}");
-    assert_eq!(aborted["kind"], "aborted");
-    assert_eq!(aborted["status"], "aborted");
-    assert_eq!(aborted["error"], "kbd-later");
-    assert_ne!(aborted["status"], "done");
-    let done = iso.probe("globalThis.__done").unwrap();
-    assert_eq!(done["ok"], true, "{done:?}");
-    assert_eq!(done["status"], "done");
-    assert_eq!(done["kind"], "yield");
-    assert_eq!(done["value"], true);
+    for tick in 1..=3 {
+        iso.post_snapshot(script::isolate_fb::encode_snapshot(&empty_snapshot(
+            tick,
+            TileInput {
+                x: 1,
+                z: 1,
+                level: 0,
+            },
+        )));
+        iso.on_game_tick(tick);
+    }
+    // A KBD site is not fetched here: false, not a throw.
+    assert_eq!(
+        iso.probe("globalThis.__kbd").unwrap(),
+        json!({ "kind": "done", "value": false })
+    );
+    // No key to fetch: held.
+    assert_eq!(
+        iso.probe("globalThis.__done").unwrap(),
+        json!({ "kind": "done", "value": true })
+    );
     iso.join();
 }
 

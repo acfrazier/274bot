@@ -545,31 +545,7 @@ fn unexpected_replies_abort_and_unknown_op_is_not_invented() {
 }
 
 #[test]
-fn shim_dispatches_walk_and_calls_interrupt_watch() {
-    let src = include_str!("../src/shim/hunting_combat.js");
-    let walk = src
-        .split("export class WalkToSpot")
-        .nth(1)
-        .expect("WalkToSpot");
-    assert!(walk.contains("this.host.fight?.interruptWatch()"));
-    assert!(walk.contains("op: 'walk'"));
-    assert!(walk.contains("radius: 0"));
-    assert!(walk.contains("walkspotCall"));
-    assert!(src.contains("__rs2b0t_walkspot"));
-    assert!(!walk.contains("walk-to"));
-    assert!(!walk.contains("set-safespot"));
-    assert!(!walk.contains("setSafespot"));
-    assert!(!walk.contains("holdDue"));
-    assert!(!walk.contains("anchorFor"));
-    assert!(!walk.contains("Traversal"));
-    assert!(!walk.contains("walkResilient"));
-    assert!(!walk.contains("walkWorld"));
-    assert!(!walk.contains("wait-fed-done"));
-    assert!(src.contains("approach: (site.approach || []).map(tile)"));
-    let fight = src.split("export class HoldSafespot").next().unwrap();
-    assert!(fight.contains("case 'walk-to':"));
-    assert!(!fight.contains("case 'walk':"));
-
+fn walk_to_spot_execute_calls_interrupt_watch_and_walks_the_world() {
     let iso = LoadIsolate::spawn(
         r#"
 import { WalkToSpot } from '../../api/combat/hunting/combat.js';

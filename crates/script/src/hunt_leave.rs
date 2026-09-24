@@ -4,7 +4,9 @@
 //! rune/level precheck, and `!in_area_body` completion stay here. Own map
 //! and token counter. Call `hunt_fight::in_area_body` only.
 
-use crate::hunt_fight::{in_area_body, SiteBox, Tile};
+use crate::hunt::{hook, strict_true, Host, Kind as HuntKind};
+use crate::hunt_fight::{Area, SiteBox, Tile};
+use crate::machine::Ended;
 use crate::observed::{self, ItemRow, Scene, SceneRow};
 use crate::task_clock::InstantTaskClock;
 use api::game_data::SelectedGameData;
@@ -170,10 +172,10 @@ struct Gate {
 }
 
 #[derive(Clone, Debug)]
-struct LeaveProj {
+pub(crate) struct LeaveProj {
     leave_by_walk: Option<bool>,
     key: String,
-    boxes: Vec<SiteBox>,
+    area: Area,
     escape_id: String,
     walk_out: Option<Tile>,
     exit: Option<ExitLoc>,
@@ -304,7 +306,7 @@ fn in_area(proj: &LeaveProj, obs: &LeaveObservation) -> bool {
     let Some(here) = obs.here else {
         return false;
     };
-    in_area_body(here, 1, &proj.boxes)
+    proj.area.contains(here, 1)
 }
 
 fn signal(obs: &LeaveObservation) -> bool {
@@ -414,7 +416,7 @@ fn parse_proj(input: &Value) -> LeaveProj {
             .and_then(Value::as_str)
             .unwrap_or("")
             .to_string(),
-        boxes: parse_boxes(input),
+        area: Area::of(parse_boxes(input)),
         escape_id: input
             .get("escapeTeleportId")
             .and_then(Value::as_str)
@@ -939,4 +941,66 @@ pub fn leave_force_bound_reached(token: u64) -> bool {
         true
     })
     .unwrap_or(false)
+}
+
+/// `leaveLair`.
+pub(crate) struct Leave;
+
+impl HuntKind for Leave {
+    const NAME: &'static str = "hunt-leave";
+    const SESSION: bool = false;
+    const BOOLEAN: bool = true;
+    type Proj = LeaveProj;
+
+    fn parse(site: &Value) -> LeaveProj {
+        parse_proj(site)
+    }
+
+    fn area(proj: &mut LeaveProj) -> &mut Area {
+        &mut proj.area
+    }
+
+    /// `leaveByWalk() === true` when the host has one.
+    fn refresh(proj: &mut LeaveProj, host: &mut dyn Host) -> Result<(), Ended> {
+        proj.leave_by_walk = if host.has(hook::LEAVE_BY_WALK) {
+            Some(strict_true(host, hook::LEAVE_BY_WALK)?)
+        } else {
+            None
+        };
+        Ok(())
+    }
+
+    fn mint() -> u64 {
+        let token = alloc_token();
+        LEAVE_RUNTIMES.with(|m| m.borrow_mut().insert(token, LeaveRuntime::new(token)));
+        token
+    }
+
+    fn ensure(token: u64) {
+        LEAVE_RUNTIMES.with(|m| {
+            m.borrow_mut()
+                .entry(token)
+                .or_insert_with(|| LeaveRuntime::new(token));
+        });
+    }
+
+    fn renew(token: u64) {
+        LEAVE_RUNTIMES.with(|m| m.borrow_mut().insert(token, LeaveRuntime::new(token)));
+    }
+
+    fn next(token: u64, proj: &LeaveProj, reply: Option<&Value>) -> Value {
+        with_leave(token, |rt| {
+            next_effect(
+                rt,
+                proj,
+                crate::supply_v2::selected_data().as_deref(),
+                reply,
+            )
+        })
+        .unwrap_or_else(|| json!({ "kind": "aborted", "reason": "unknown token" }))
+    }
+
+    fn end(token: u64) {
+        LEAVE_RUNTIMES.with(|m| m.borrow_mut().remove(&token));
+    }
 }
