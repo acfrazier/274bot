@@ -57,6 +57,12 @@ pub fn compiled_ids() -> &'static [CompiledId] {
     COMPILED_IDS
 }
 
+/// The wired compiled card whose picker id is `name`.
+pub fn compiled_id(name: &str) -> Option<CompiledId> {
+    compiled_ids().iter().copied().find(|id| id.0 == name)
+}
+
+
 /// True when `name` is a known whale script (listed in the 274 client but
 /// out of scope for this host).
 pub fn is_whale(name: &str) -> bool {
@@ -119,6 +125,11 @@ mod tests {
             names.is_empty(),
             "no clue machine without `load`: {names:?}"
         );
+        #[cfg(feature = "load")]
+        assert_eq!(compiled_id("Sherlock"), Some(CompiledId("Sherlock")));
+        assert_eq!(compiled_id("BoneBurier"), None);
+        assert_eq!(compiled_id("ClueSolver"), None);
+
         // Host nav, unported ports, whales and the Load catalog are never
         // compiled rows.
         for name in ["WalkTo", "BoneBurier", "Counter", "ClueSolver", "Load"] {

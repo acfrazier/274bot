@@ -94,12 +94,12 @@ pub struct ScenarioSettings {
     /// Background cheats the runner fires while the scenario is running
     /// (377 sustain: energy, HP, stats). Empty for most scenarios.
     pub sustains: Vec<Sustain>,
-    /// A JS/TS card (a `$RS2B0T` catalog name) the host **selects** when
-    /// the live runner is installed, then Starts on [`StepKind::StartScript`]
-    /// after the last seed wait — the scenario's later steps observe the
-    /// running script's evidence. The host fills the catalog from `$RS2B0T`
-    /// (register/Load) and dispatches `script_start_load` on that step.
-    /// `None` for host-driven scenarios.
+    /// A picker card the host **selects** when the live runner is installed,
+    /// then Starts on [`StepKind::StartScript`] after the last seed wait —
+    /// the scenario's later steps observe the running script's evidence.
+    /// Catalog / TradeBot fixture names load JS; a compiled registry id
+    /// (currently `Sherlock`) starts that port. `None` for host-driven
+    /// scenarios.
     pub start_script: Option<&'static str>,
     /// Exact in-tree example file name (`bone_burier_v2.ts` / `.js`). When
     /// set, live prepare Loads that path as a File card and selects it by

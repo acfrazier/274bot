@@ -62,7 +62,10 @@ struct PendingCatalogStart {
     siblings: Vec<(String, String)>,
     /// Scenario-owned loadouts for harness Start; empty uses operator store.
     loadouts: Vec<script::Loadout>,
+    /// Compiled registry card; when set, Start uses `start_compiled`.
+    compiled: Option<script::CompiledId>,
 }
+
 
 /// Freeze the already-published prepared observation immediately before the
 /// actual isolate Start call. A successful Start cannot overtake its baseline.
@@ -101,6 +104,9 @@ fn start_stashed_catalog_card(
     handle: &host_play::ScriptStartHandle,
     card: &PendingCatalogStart,
 ) -> Result<(), String> {
+    if let Some(id) = card.compiled {
+        return handle.start_compiled(&card.slot, id);
+    }
     if card.loadouts.is_empty() {
         handle.start_load(
             &card.slot,
@@ -120,6 +126,7 @@ fn start_stashed_catalog_card(
         )
     }
 }
+
 
 /// Owned inputs captured on the UI thread and consumed by the sequential
 /// profile/template preparation worker.
@@ -272,6 +279,7 @@ fn stash_pending_starts(
         bag: bag.clone(),
         siblings: siblings.clone(),
         loadouts: loadouts.clone(),
+        compiled: None,
     }];
     if let Some(key) = inject_companion_as {
         if names.len() > 1 {
@@ -284,10 +292,27 @@ fn stash_pending_starts(
                 bag: Some(companion_bag),
                 siblings,
                 loadouts,
+                compiled: None,
             });
         }
     }
     *pending.lock().unwrap() = starts;
+}
+
+fn stash_compiled_start(
+    pending: &Mutex<Vec<PendingCatalogStart>>,
+    names: &[String],
+    id: script::CompiledId,
+) {
+    *pending.lock().unwrap() = vec![PendingCatalogStart {
+        slot: names[0].clone(),
+        js: String::new(),
+        shape: script::LoadShape::Reject,
+        bag: None,
+        siblings: Vec::new(),
+        loadouts: Vec::new(),
+        compiled: Some(id),
+    }];
 }
 
 fn stash_pair_starts(
@@ -314,6 +339,7 @@ fn stash_pair_starts(
             bag: Some(a_bag),
             siblings: siblings.clone(),
             loadouts: Vec::new(),
+            compiled: None,
         },
         PendingCatalogStart {
             slot: names[1].clone(),
@@ -322,10 +348,12 @@ fn stash_pair_starts(
             bag: Some(b_bag),
             siblings,
             loadouts: Vec::new(),
+            compiled: None,
         },
     ];
     Ok(())
 }
+
 
 /// Scatter / mainland hop only on a cold world, not after a `lostCon`
 /// reconnect (that would tele the re-handshaked slot on every DC).
@@ -2387,10 +2415,12 @@ impl Session {
         // A scenario that names a script card (`start_script`) selects
         // the script; Start waits for [`scenario::StepKind::StartScript`]
         // after seed. With `inject_companion_as` on a fleet, the same JS
-        // Starts on slot 1 too (reciprocal partner). Catalog cards come
+        // Starts on slot 1 too (reciprocal partner). Compiled registry
+        // ids (currently `Sherlock`) start that port; catalog cards come
         // from `$RS2B0T`; in-tree file fixtures load from
         // `crates/script/tests/fixtures/`. Exact example files (`start_file`)
         // Load through normal File provenance and select by identity_id.
+
         if let Some(file_name) = view.start_file {
             let card = load_live_example_card(&mut self.js, file_name)?;
             let identity = card.identity_id();
@@ -2415,7 +2445,11 @@ impl Session {
                 scenario_fixture_loadouts(&view),
             );
         } else if let Some(card_name) = view.start_script {
-            if let Some(fixture) = script::live_file_fixture_path(card_name) {
+            if let Some(id) = script::compiled_id(card_name) {
+                self.script_sel = Some(script::ScriptSel::Compiled(id));
+                stash_compiled_start(&self.pending_script, &names, id);
+            } else if let Some(fixture) = script::live_file_fixture_path(card_name) {
+
                 let stem = script::live_file_fixture_stem(card_name)
                     .ok_or_else(|| format!("no file stem for live fixture {card_name}"))?;
                 self.js

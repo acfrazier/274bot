@@ -21,6 +21,12 @@ pub enum Proof {
     ItemId { id: i32, count: i32 },
     /// Inventory contains at most `count` of exact object `id`.
     ItemIdAtMost { id: i32, count: i32 },
+    /// Seeded clue `seeded` has left the pack, and a different clue scroll
+    /// or a casket is held. Name-resolved so a random next-step scroll still
+    /// counts; the seed id cannot satisfy this while it remains. Fail-closed
+    /// without obj names and unless `ingame && scene_state == 2`.
+    ClueReplaced { seeded: i32 },
+
     /// An exact object `id` is present in a worn-equipment slot.
     EquipmentId { id: i32 },
     /// A fresh, open bank contains at least `count` of the named item.
@@ -162,6 +168,8 @@ impl Proof {
             Proof::ItemAtMost { name, count } => format!("has_item({name})<={count}"),
             Proof::ItemId { id, count } => format!("has_item_id({id})>={count}"),
             Proof::ItemIdAtMost { id, count } => format!("has_item_id({id})<={count}"),
+            Proof::ClueReplaced { seeded } => format!("clue_replaced({seeded})"),
+
             Proof::EquipmentId { id } => format!("has_equipment_id({id})"),
             Proof::BankItem { name, count } => format!("fresh_bank_item({name})>={count}"),
             Proof::BankItemAtMost { name, count } => format!("fresh_bank_item({name})<={count}"),
@@ -304,6 +312,22 @@ impl Proof {
             }
             Proof::ItemId { id, count } => inv_id_count(snap, *id) >= *count,
             Proof::ItemIdAtMost { id, count } => inv_id_count(snap, *id) <= *count,
+            Proof::ClueReplaced { seeded } => {
+                if !snap.ingame() || snap.scene_state() != 2 {
+                    return false;
+                }
+                let Some(names) = names else {
+                    return false;
+                };
+                if inv_id_count(snap, *seeded) > 0 {
+                    return false;
+                }
+                snap.inv().iter().any(|(id, count)| {
+                    *count > 0
+                        && *id != *seeded
+                        && matches!(names.name(*id), Some("Clue scroll") | Some("Casket"))
+                })
+            }
             Proof::EquipmentId { id } => snap.equipment().iter().any(|item| item.def.id == *id),
             Proof::BankItem { name, count } | Proof::BankItemAtMost { name, count } => {
                 if !snap.ingame()
@@ -793,6 +817,95 @@ mod tests {
             }
             .check(&s, Some(&names)),
             "must not use by_name's first id (1) when the stack is 995"
+        );
+    }
+
+
+    #[test]
+    fn clue_replaced_requires_scene2_seed_gone_and_a_fresh_trail_item() {
+        let mut c = seeded();
+        if let Some(id) = c.iface_id(|f| f.r#type == ComponentType::TYPE_INV) {
+            let inv = c.iface_mut(id).unwrap();
+            inv.link_obj_type = Some(vec![2682, 953]);
+            inv.link_obj_number = Some(vec![1, 1]);
+        }
+        let s = snap(&mut c);
+        let names = ObjNames::from_objs(&[
+            ObjType {
+                id: 2681,
+                name: "Clue scroll".into(),
+                ..Default::default()
+            },
+            ObjType {
+                id: 2677,
+                name: "Clue scroll".into(),
+                ..Default::default()
+            },
+            ObjType {
+                id: 2824,
+                name: "Casket".into(),
+                ..Default::default()
+            },
+            ObjType {
+                id: 952,
+                name: "Spade".into(),
+                ..Default::default()
+            },
+        ]);
+        let proof = Proof::ClueReplaced { seeded: 2681 };
+        assert_eq!(proof.name(), "clue_replaced(2681)");
+        assert!(
+            !proof.check(&s, Some(&names)),
+            "the seeded scroll still in the pack is not a replacement"
+        );
+
+        if let Some(id) = c.iface_id(|f| f.r#type == ComponentType::TYPE_INV) {
+            let inv = c.iface_mut(id).unwrap();
+            inv.link_obj_type = Some(vec![2678, 953]);
+            inv.link_obj_number = Some(vec![1, 1]);
+        }
+        let s = snap(&mut c);
+        assert!(
+            proof.check(&s, Some(&names)),
+            "a different clue scroll after the seed left is script-caused progress"
+        );
+        assert!(
+            !proof.check(&s, None),
+            "without obj names a Clue scroll cannot be distinguished from tools"
+        );
+
+        if let Some(id) = c.iface_id(|f| f.r#type == ComponentType::TYPE_INV) {
+            let inv = c.iface_mut(id).unwrap();
+            inv.link_obj_type = Some(vec![2825, 953]);
+            inv.link_obj_number = Some(vec![1, 1]);
+        }
+        let s = snap(&mut c);
+        assert!(
+            proof.check(&s, Some(&names)),
+            "a casket after the seed left is also progress"
+        );
+
+        if let Some(id) = c.iface_id(|f| f.r#type == ComponentType::TYPE_INV) {
+            let inv = c.iface_mut(id).unwrap();
+            inv.link_obj_type = Some(vec![953]);
+            inv.link_obj_number = Some(vec![1]);
+        }
+        let s = snap(&mut c);
+        assert!(
+            !proof.check(&s, Some(&names)),
+            "tools left behind after the seed vanished are not a replacement"
+        );
+
+        c.scene_state = 1;
+        if let Some(id) = c.iface_id(|f| f.r#type == ComponentType::TYPE_INV) {
+            let inv = c.iface_mut(id).unwrap();
+            inv.link_obj_type = Some(vec![2678]);
+            inv.link_obj_number = Some(vec![1]);
+        }
+        let s = snap(&mut c);
+        assert!(
+            !proof.check(&s, Some(&names)),
+            "replacement is only observed after Sherlock is ingame scene 2"
         );
     }
 

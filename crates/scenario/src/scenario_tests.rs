@@ -1468,6 +1468,7 @@ fn nav_full_is_a_mainland_follow_to_a_cross_square_destination() {
             "cell_v2_ts",
             "bank_v2_ts",
             "bone_burier",
+
             "lamp_redemption",
             "bone_burier_v2_ts",
             "bone_burier_v2_js",
@@ -1614,7 +1615,12 @@ fn nav_full_is_a_mainland_follow_to_a_cross_square_destination() {
             "nature_crafter_air",
             "mule_crafter_air",
             "flax_runner",
+            "sherlock_talk",
+            "sherlock_search",
+            "sherlock_dig",
+            "sherlock_coord",
             "duel_arena",
+
         ]
     );
 }
@@ -12331,3 +12337,105 @@ fn ranging_guild_full_orders_bought_banked_continuation_and_empty_coin_rails() {
     );
     assert!(names().contains(&"ranging_guild_full"));
 }
+
+#[test]
+fn sherlock_scenarios_start_the_compiled_card_with_one_seeded_clue() {
+    let cases: [(&str, i32, &str, &[&str]); 4] = [
+        (
+            "sherlock_talk",
+            2681,
+            "trail_clue_easy_simple005",
+            &[],
+        ),
+        (
+            "sherlock_search",
+            2679,
+            "trail_clue_easy_simple003",
+            &[],
+        ),
+        (
+            "sherlock_dig",
+            2827,
+            "trail_clue_medium_map001",
+            &["give spade 1"],
+        ),
+        (
+            "sherlock_coord",
+            2823,
+            "trail_clue_medium_sextant012",
+            &[
+                "give spade 1",
+                "give trail_sextant 1",
+                "give trail_watch 1",
+                "give trail_chart 1",
+            ],
+        ),
+    ];
+    for (name, clue_id, clue_alias, tools) in cases {
+        let scenario = get(name).unwrap_or_else(|| panic!("{name} is registered"));
+        assert_eq!(scenario.name, name);
+        assert_eq!(
+            scenario.settings.start_script,
+            Some("Sherlock"),
+            "{name} must start the compiled Sherlock card"
+        );
+        assert!(scenario.settings.start_file.is_none());
+        assert_eq!(scenario.settings.terminal_shot, Some(name));
+        assert_eq!(
+            scenario.proof,
+            Proof::ClueReplaced { seeded: clue_id },
+            "{name} proof must name the seeded clue id"
+        );
+        assert!(
+            scenario
+                .steps
+                .iter()
+                .any(|step| matches!(step.kind, StepKind::StartScript)),
+            "{name} starts Sherlock after seed"
+        );
+        let seed = scenario
+            .steps
+            .iter()
+            .find(|step| {
+                matches!(
+                    step.wait.arm,
+                    Proof::ItemId {
+                        id,
+                        count: 1
+                    } if id == clue_id
+                )
+            })
+            .unwrap_or_else(|| panic!("{name} must wait for the seeded clue"));
+        let StepKind::Perform { send } = &seed.kind else {
+            panic!("{name} clue seed must be a Perform give");
+        };
+        let mut client = native_seed_client();
+        let snapshot = GameSnapshot::new();
+        let before = client.out.pos;
+        assert!(send(&mut client, &snapshot), "{name} seed send");
+        let written =
+            String::from_utf8_lossy(&client.out.data()[before..client.out.pos]).into_owned();
+        let clue_give = format!("give {clue_alias} 1");
+        assert!(
+            written.contains(&clue_give),
+            "{name} must seed {clue_give}: {written}"
+        );
+        for tool in tools {
+            assert!(
+                written.contains(tool),
+                "{name} must seed {tool}: {written}"
+            );
+        }
+        assert!(
+            scenario.steps.iter().any(|step| {
+                matches!(
+                    step.wait.arm,
+                    Proof::ClueReplaced { seeded } if seeded == clue_id
+                )
+            }),
+            "{name} watches the seeded clue leave after Start"
+        );
+        assert!(names().contains(&name));
+    }
+}
+

@@ -3528,6 +3528,29 @@ fn live_prepare_script_sets_script_sel_for_catalog_start_script() {
 }
 
 #[test]
+fn live_prepare_sherlock_starts_the_compiled_card_without_catalog() {
+    let iso = IsolatedEnv::enter("sherlock-live");
+    crate::ui_state::save(&crate::ui_state::PanelUiState {
+        last_focus: None,
+        ..Default::default()
+    });
+    let mut s = Session::new();
+    s.live_prepare_script(scenario::get("sherlock_talk").expect("registered"))
+        .expect("prepare compiled Sherlock without $RS2B0T");
+    assert_eq!(
+        s.script_sel,
+        Some(script::ScriptSel::Compiled(script::CompiledId("Sherlock"))),
+        "live_prepare must select the compiled registry card"
+    );
+    let pending = s.pending_script.lock().unwrap();
+    let card = pending.first().expect("compiled start stashed");
+    assert_eq!(card.compiled, Some(script::CompiledId("Sherlock")));
+    assert!(card.js.is_empty(), "compiled Start must not stash catalog JS");
+    let _ = iso;
+}
+
+
+#[test]
 fn live_prepare_script_enables_multibox_for_a_fleet_only() {
     crate::ui_state::save(&crate::ui_state::PanelUiState {
         last_focus: None,

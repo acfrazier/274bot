@@ -71,7 +71,7 @@ pub use loadouts_store::{
     LoadoutsStore, ResolvedSettingOptions, WORN_SLOTS, WORN_SLOT_LAYOUT,
 };
 pub use params::defaults;
-pub use registry::{compiled_ids, factory, is_whale, CompiledId};
+pub use registry::{compiled_id, compiled_ids, factory, is_whale, CompiledId};
 pub use rs2b0t_registry::{
     clear_rs2b0t_import_at, default_rs2b0t_import_file, default_rs2b0t_path_file, parse_registry,
     parse_registry_with_sources, persist_rs2b0t_root, persist_rs2b0t_root_at, registry_index_path,

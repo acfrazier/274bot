@@ -1204,6 +1204,25 @@ impl ScriptStartHandle {
         }
         result
     }
+
+    /// Start a compiled registry card on `name`'s slot. Same constructor as
+    /// [`Play::script_start`], without the control-thread wake (the slot
+    /// thread is already pumping).
+    pub fn start_compiled(&self, name: &str, id: script::CompiledId) -> Result<(), String> {
+        if debug_enabled() {
+            eprintln!("[script {name}] start compiled {}", id.0);
+        }
+        let make = script::factory(id).ok_or_else(|| format!("not ported: {}", id.0))?;
+        let result = script_slot_or_insert(&self.scripts, name)
+            .lock()
+            .unwrap()
+            .start_compiled(make(), self.game_data.clone());
+        if let Err(e) = &result {
+            eprintln!("[script {name}] start failed: {e}");
+        }
+        result
+    }
+
 }
 
 impl Play {

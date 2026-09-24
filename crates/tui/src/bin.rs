@@ -310,7 +310,9 @@ struct PendingCatalogStart {
     bag: Option<serde_json::Map<String, serde_json::Value>>,
     siblings: Vec<(String, String)>,
     loadouts: Vec<script::Loadout>,
+    compiled: Option<script::CompiledId>,
 }
+
 
 fn scenario_fixture_loadouts(settings: &scenario::ScenarioSettings) -> Vec<script::Loadout> {
     settings
@@ -331,6 +333,9 @@ fn start_stashed_catalog_card(
     handle: &host_play::ScriptStartHandle,
     card: &PendingCatalogStart,
 ) -> Result<(), String> {
+    if let Some(id) = card.compiled {
+        return handle.start_compiled(&card.slot, id);
+    }
     let result = if card.loadouts.is_empty() {
         handle.start_load(
             &card.slot,
@@ -368,6 +373,7 @@ fn start_stashed_catalog_card(
     }
     result
 }
+
 
 /// When the runner is on [`scenario::StepKind::StartScript`], start the
 /// stashed catalog isolate once. Returns false when Start was attempted
@@ -884,48 +890,65 @@ impl TuiSession {
                 bag,
                 siblings,
                 loadouts: fixture_loadouts.clone(),
+                compiled: None,
             });
+
         } else if let Some(card_name) = start_script {
-            self.fill_rs2b0t_cards_once();
-            self.js
-                .ensure_js(script::ScriptSource::Catalog, card_name)
-                .map_err(|e| format!("transpile {card_name}: {e}"))?;
-            let card = self
-                .js
-                .get(script::ScriptSource::Catalog, card_name)
-                .cloned()
-                .ok_or_else(|| {
-                    format!("$RS2B0T catalog has no {card_name} card (is $RS2B0T set?)")
-                })?;
-            self.script_sel = Some(script::ScriptSel::Loaded(
-                script::ScriptSource::Catalog,
-                card_name.to_string(),
-            ));
-            let bag = self.pending_settings_bag(
-                script::ScriptSource::Catalog,
-                card_name,
-                &card.settings_schema,
-            );
-            let siblings = script::resolve_sibling_modules(
-                &card.path,
-                &card.origin,
-                self.js.cache(),
-                script::CacheMeta {
-                    kind: card.kind,
-                    source: card.source,
-                    shape: None,
-                    api_family: Some(card.api_family.as_str().into()),
-                },
-            )?;
-            *self.pending_script.lock().unwrap() = Some(PendingCatalogStart {
-                slot: names[0].clone(),
-                js: card.js.clone(),
-                shape: card.shape,
-                bag,
-                siblings,
-                loadouts: fixture_loadouts,
-            });
+            if let Some(id) = script::compiled_id(card_name) {
+                self.script_sel = Some(script::ScriptSel::Compiled(id));
+                *self.pending_script.lock().unwrap() = Some(PendingCatalogStart {
+                    slot: names[0].clone(),
+                    js: String::new(),
+                    shape: script::LoadShape::Reject,
+                    bag: None,
+                    siblings: Vec::new(),
+                    loadouts: Vec::new(),
+                    compiled: Some(id),
+                });
+            } else {
+                self.fill_rs2b0t_cards_once();
+                self.js
+                    .ensure_js(script::ScriptSource::Catalog, card_name)
+                    .map_err(|e| format!("transpile {card_name}: {e}"))?;
+                let card = self
+                    .js
+                    .get(script::ScriptSource::Catalog, card_name)
+                    .cloned()
+                    .ok_or_else(|| {
+                        format!("$RS2B0T catalog has no {card_name} card (is $RS2B0T set?)")
+                    })?;
+                self.script_sel = Some(script::ScriptSel::Loaded(
+                    script::ScriptSource::Catalog,
+                    card_name.to_string(),
+                ));
+                let bag = self.pending_settings_bag(
+                    script::ScriptSource::Catalog,
+                    card_name,
+                    &card.settings_schema,
+                );
+                let siblings = script::resolve_sibling_modules(
+                    &card.path,
+                    &card.origin,
+                    self.js.cache(),
+                    script::CacheMeta {
+                        kind: card.kind,
+                        source: card.source,
+                        shape: None,
+                        api_family: Some(card.api_family.as_str().into()),
+                    },
+                )?;
+                *self.pending_script.lock().unwrap() = Some(PendingCatalogStart {
+                    slot: names[0].clone(),
+                    js: card.js.clone(),
+                    shape: card.shape,
+                    bag,
+                    siblings,
+                    loadouts: fixture_loadouts,
+                    compiled: None,
+                });
+            }
         }
+
         Ok(())
     }
 
