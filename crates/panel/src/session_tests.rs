@@ -3068,7 +3068,7 @@ fn logout_all_arms_every_wall_member() {
 }
 
 #[test]
-fn headed_stress_spawns_every_member_and_focuses_s00() {
+fn headed_stress_spawns_every_member_prefers_and_arms_s00() {
     crate::ui_state::save(&crate::ui_state::PanelUiState {
         last_focus: Some("s02".into()),
         ..Default::default()
@@ -3089,11 +3089,9 @@ fn headed_stress_spawns_every_member_and_focuses_s00() {
         "focused slot must be s00, not last_focus s02"
     );
     assert_eq!(s.tv_name().as_deref(), Some("s00"));
-    let front = s.play.as_ref().unwrap().login_queue_uids();
-    assert_eq!(
-        front.first().copied(),
-        Some(274_000_100),
-        "s00 uid must be FIFO head, got {front:?}"
+    assert!(
+        s.play.as_ref().unwrap().login_queue_uids().is_empty(),
+        "focus and login intent do not create control-thread membership"
     );
     assert!(
         s.play

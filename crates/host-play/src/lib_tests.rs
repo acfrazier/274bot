@@ -18,6 +18,41 @@ fn wait_for_permit(
     super::wait_for_permit(queue, statuses, username, uid, arm)
 }
 
+const TEST_QUEUE_OWNER_NAMESPACE: u64 = 1 << 63;
+
+fn test_queue_owner(uid: i32) -> u64 {
+    TEST_QUEUE_OWNER_NAMESPACE | u64::from(uid as u32)
+}
+
+fn request_test_owner(queue: &mut LoginQueue, uid: i32, now: Instant) -> Permit {
+    let owner = test_queue_owner(uid);
+    queue.enqueue_owner(owner, uid);
+    queue.poll_owner(owner, uid, now)
+}
+
+fn request_shared(queue: &SharedLoginQueue, uid: i32, now: Instant) -> Permit {
+    request_test_owner(&mut queue.lock(), uid, now)
+}
+
+fn wait_for_permit_bounded(
+    queue: &SharedLoginQueue,
+    statuses: &Arc<Mutex<Vec<SlotStatus>>>,
+    username: &str,
+    uid: i32,
+    arm: &Arc<SlotArm>,
+) -> PermitWait {
+    let queue = Arc::clone(queue);
+    let statuses = Arc::clone(statuses);
+    let username = username.to_string();
+    let arm = Arc::clone(arm);
+    let (tx, rx) = std::sync::mpsc::channel();
+    thread::spawn(move || {
+        let _ = tx.send(wait_for_permit(&queue, &statuses, &username, uid, &arm));
+    });
+    rx.recv_timeout(Duration::from_secs(2))
+        .expect("permit waiter exceeded bounded timeout")
+}
+
 fn native_requested(
     to: WorldTile,
     radius: i32,
@@ -668,7 +703,7 @@ fn running_slot_profile_world_change_reseats_next_login_handshake() {
         "editing a live slot must not relabel its current connection"
     );
     assert!(matches!(
-        play.queue.lock().request_permit(42, Instant::now()),
+        request_shared(&play.queue, 42, Instant::now()),
         Permit::Grant
     ));
     assert!(
@@ -678,7 +713,7 @@ fn running_slot_profile_world_change_reseats_next_login_handshake() {
     {
         let mut queue = play.queue.lock();
         assert!(matches!(
-            queue.request_permit(43, Instant::now()),
+            request_test_owner(&mut queue, 43, Instant::now()),
             Permit::Grant
         ));
         assert!(queue.abandon_permit(43), "the stale grant was released");
@@ -887,7 +922,10 @@ fn stop_slot_sets_stop_and_forgets_name() {
         let mut q = play.queue.lock();
         let now = Instant::now();
         for i in 0..29 {
-            assert!(matches!(q.request_permit(1000 + i, now), Permit::Grant));
+            assert!(matches!(
+                request_test_owner(&mut q, 1000 + i, now),
+                Permit::Grant
+            ));
             assert!(q.acknowledge_login_return(1000 + i, now));
         }
         q.enqueue_owner(arm.queue_owner, 7);
@@ -1111,7 +1149,10 @@ fn stop_slot_leaves_profile_uid_when_arm_shared_at_spawn() {
         let mut q = play.queue.lock();
         let now = Instant::now();
         for i in 0..29 {
-            assert!(matches!(q.request_permit(1000 + i, now), Permit::Grant));
+            assert!(matches!(
+                request_test_owner(&mut q, 1000 + i, now),
+                Permit::Grant
+            ));
             assert!(q.acknowledge_login_return(1000 + i, now));
         }
         q.enqueue_owner(arm.queue_owner, 42);
@@ -1507,7 +1548,10 @@ fn fill_address_window(queue: &SharedLoginQueue) -> Instant {
     let now = Instant::now();
     let mut q = queue.lock();
     for i in 0..29 {
-        assert!(matches!(q.request_permit(1000 + i, now), Permit::Grant));
+        assert!(matches!(
+            request_test_owner(&mut q, 1000 + i, now),
+            Permit::Grant
+        ));
         assert!(q.acknowledge_login_return(1000 + i, now));
     }
     now
@@ -1542,21 +1586,23 @@ fn wait_for_permit_returns_without_reenqueue_when_stop_set() {
     // Fill the 29-grant address TTL so alice waits on the FIFO.
     {
         let now = fill_address_window(&queue);
+        let mut queue = queue.lock();
+        queue.enqueue_owner(arm.queue_owner, 7);
         assert!(matches!(
-            queue.lock().request_permit(7, now),
+            queue.poll_owner(arm.queue_owner, 7, now),
             Permit::Wait(_)
         ));
     }
-    // Simulate stop_slot: leave then set stop; the waiter must not
-    // request_permit again (which would Grant or re-queue uid 7).
-    queue.lock().leave(7);
+    // Simulate stop_slot: leave then set stop; the waiter must not recreate
+    // the worker owner's place.
+    queue.lock().leave_owner(arm.queue_owner);
     arm.stop.store(true, Ordering::Relaxed);
     assert_eq!(
         wait_for_permit(&queue, &statuses, "alice", 7, &arm),
         PermitWait::Cancelled
     );
     assert!(
-        queue.lock().status(7).is_none(),
+        queue.lock().status_owner(arm.queue_owner).is_none(),
         "stop must not re-enqueue after leave"
     );
 }
@@ -1573,7 +1619,7 @@ fn wait_for_permit_grant_clears_the_published_place() {
         PermitWait::Granted
     );
     assert!(queue.lock().acknowledge_login_return(7, Instant::now()));
-    assert!(queue.lock().status(7).is_none());
+    assert!(queue.lock().status_owner(arm.queue_owner).is_none());
     assert_eq!(row_queue(&statuses, "alice"), (-1, -1));
 }
 
@@ -1583,16 +1629,13 @@ fn late_prefer_snapshot_cannot_survive_title_cleanup() {
     let statuses = rows(&["alice"]);
     let stale = {
         let mut q = queue.lock();
-        q.prefer(7);
-        q.status(7)
+        q.prefer_owner(test_queue_owner(7));
+        q.status_owner(test_queue_owner(7))
     };
-    assert_eq!(
-        queue.lock().request_permit(7, Instant::now()),
-        Permit::Grant
-    );
+    assert_eq!(request_shared(&queue, 7, Instant::now()), Permit::Grant);
     apply_queue_wait(&mut statuses.lock().unwrap(), "alice", None);
     apply_queue_wait(&mut statuses.lock().unwrap(), "alice", stale);
-    drop_queue_place(&queue, &statuses, "alice", 7);
+    drop_queue_place(&queue, &statuses, "alice", test_queue_owner(7));
     assert_eq!(row_queue(&statuses, "alice"), (-1, -1));
 }
 
@@ -1613,7 +1656,7 @@ fn cancellation_after_grant_before_login_abandons_the_unused_permit() {
     arm.want_login.store(false, Ordering::Relaxed);
     assert!(!granted_permit_may_start_login(&queue, 7, &arm, false));
     assert_eq!(
-        queue.lock().request_permit(8, Instant::now()),
+        request_shared(&queue, 8, Instant::now()),
         Permit::Grant,
         "an unused grant must not spend the address attempt"
     );
@@ -1636,7 +1679,7 @@ fn stop_after_grant_before_login_abandons_the_unused_permit() {
     arm.stop.store(true, Ordering::Relaxed);
     assert!(!granted_permit_may_start_login(&queue, 7, &arm, false));
     assert_eq!(
-        queue.lock().request_permit(8, Instant::now()),
+        request_shared(&queue, 8, Instant::now()),
         Permit::Grant,
         "a stopped slot must release a grant it never used"
     );
@@ -1650,7 +1693,7 @@ fn login_error_return_acknowledges_the_reserved_attempt() {
         1,
         Duration::from_secs(60),
     )));
-    assert_eq!(queue.lock().request_permit(7, base), Permit::Grant);
+    assert_eq!(request_shared(&queue, 7, base), Permit::Grant);
     let mut permit = GrantedReservation::new(&queue, 7);
     let login: Result<(), &str> =
         login_and_acknowledge_permit(&mut permit, || Err("connect failed"));
@@ -1660,9 +1703,7 @@ fn login_error_return_acknowledges_the_reserved_attempt() {
         "an error return spent and acknowledged the permit"
     );
     assert_eq!(
-        queue
-            .lock()
-            .request_permit(8, base + Duration::from_secs(61)),
+        request_shared(&queue, 8, base + Duration::from_secs(61)),
         Permit::Grant,
         "the conservative completion clock eventually expires"
     );
@@ -1676,7 +1717,7 @@ fn panic_in_login_attempt_resolves_the_reservation() {
         1,
         Duration::from_secs(60),
     )));
-    assert_eq!(queue.lock().request_permit(7, base), Permit::Grant);
+    assert_eq!(request_shared(&queue, 7, base), Permit::Grant);
 
     let unwind = std::panic::catch_unwind(AssertUnwindSafe(|| {
         let mut permit = GrantedReservation::new(&queue, 7);
@@ -1689,9 +1730,7 @@ fn panic_in_login_attempt_resolves_the_reservation() {
         "the unwind guard resolved the pending reservation"
     );
     assert_eq!(
-        queue
-            .lock()
-            .request_permit(8, base + Duration::from_secs(61)),
+        request_shared(&queue, 8, base + Duration::from_secs(61)),
         Permit::Grant
     );
 }
@@ -1707,10 +1746,40 @@ fn login_queue_mutex_survives_panicking_owner() {
         }
     }));
     assert!(unwind.is_err());
+    assert_eq!(request_shared(&queue, 7, Instant::now()), Permit::Grant);
+}
+
+#[test]
+fn panicking_worker_retires_its_place_and_unblocks_follower() {
+    let queue = Arc::new(QueueMutex::new(LoginQueue::default()));
+    let statuses = rows(&["dead", "follower"]);
+    let dead = SlotArm::new(7, true);
+    let dead_owner = dead.queue_owner;
+    let panicked = {
+        let queue = Arc::clone(&queue);
+        let statuses = Arc::clone(&statuses);
+        let dead = Arc::clone(&dead);
+        thread::spawn(move || {
+            let _retirement = QueuePlaceRetirement {
+                queue: &queue,
+                statuses: &statuses,
+                username: "dead",
+                arm: &dead,
+            };
+            enqueue_queue_place(&queue, &statuses, "dead", 7, &dead);
+            panic!("synthetic worker panic after enqueue");
+        })
+    };
+    assert!(panicked.join().is_err());
+    assert!(queue.lock().status_owner(dead_owner).is_none());
+    assert_eq!(row_queue(&statuses, "dead"), (-1, -1));
+
+    let follower = SlotArm::new(8, true);
     assert_eq!(
-        queue.lock().request_permit(7, Instant::now()),
-        Permit::Grant
+        wait_for_permit_bounded(&queue, &statuses, "follower", 8, &follower),
+        PermitWait::Granted
     );
+    assert!(queue.lock().acknowledge_login_return(8, Instant::now()));
 }
 
 #[test]
@@ -1753,7 +1822,7 @@ fn waiting_slot_withdraws_when_auto_login_is_cleared() {
     arm.auto_login.store(false, Ordering::Relaxed);
 
     assert_eq!(waiter.join().unwrap(), PermitWait::Cancelled);
-    assert!(queue.lock().status(7).is_none());
+    assert!(queue.lock().status_owner(arm.queue_owner).is_none());
     assert!(
         !arm.want_login.load(Ordering::Relaxed),
         "a withdrawn intent must not handshake on the next loop"
@@ -1802,7 +1871,7 @@ fn waiting_slot_withdraws_on_intentional_logout_and_frees_the_head() {
     );
     // bob asks while she waits, so he lands behind her.
     assert!(matches!(
-        queue.lock().request_permit(8, Instant::now()),
+        request_shared(&queue, 8, Instant::now()),
         Permit::Wait(_)
     ));
     assert!(
@@ -1817,14 +1886,17 @@ fn waiting_slot_withdraws_on_intentional_logout_and_frees_the_head() {
     alice.want_logout.store(true, Ordering::Relaxed);
 
     assert_eq!(waiter.join().unwrap(), PermitWait::Cancelled);
-    assert!(queue.lock().status(7).is_none());
+    assert!(queue.lock().status_owner(alice.queue_owner).is_none());
     assert_eq!(row_queue(&statuses, "alice"), (-1, -1));
-    let bob = queue.lock().status(8).expect("bob keeps his place");
+    let bob = queue
+        .lock()
+        .status_owner(test_queue_owner(8))
+        .expect("bob keeps his place");
     assert_eq!((bob.position, bob.total), (1, 1));
     // The withdrawn request must not have spent a grant: once the 60 s
     // window elapses, bob's handshake is next.
     let later = now + Duration::from_secs(61);
-    assert_eq!(queue.lock().request_permit(8, later), Permit::Grant);
+    assert_eq!(request_shared(&queue, 8, later), Permit::Grant);
 }
 
 #[test]
@@ -1845,17 +1917,14 @@ fn retried_login_re_enters_at_the_fifo_tail() {
     );
     assert!(queue.lock().acknowledge_login_return(7, Instant::now()));
     assert!(
-        queue.lock().status(7).is_none(),
+        queue.lock().status_owner(alice.queue_owner).is_none(),
         "a granted login holds no place while it backs off"
     );
     assert_eq!(row_queue(&statuses, "alice"), (-1, -1));
 
     // bob asks first; alice's retry must land behind him.
     let now = Instant::now();
-    assert!(matches!(
-        queue.lock().request_permit(8, now),
-        Permit::Wait(_)
-    ));
+    assert!(matches!(request_shared(&queue, 8, now), Permit::Wait(_)));
     let retry = {
         let queue = Arc::clone(&queue);
         let statuses = Arc::clone(&statuses);
@@ -1871,7 +1940,7 @@ fn retried_login_re_enters_at_the_fifo_tail() {
 
     alice.stop.store(true, Ordering::Relaxed);
     assert_eq!(retry.join().unwrap(), PermitWait::Cancelled);
-    queue.lock().leave(8);
+    queue.lock().leave_owner(test_queue_owner(8));
 }
 
 #[test]
@@ -1929,20 +1998,17 @@ fn login_all_during_loading_scene_grants_every_parked_owner() {
     set_startup_phase(&play.statuses, "alice", StartupPhase::LoadingScene);
 
     play.prefer_login("alice");
-    for name in ["alice", "bob", "carol"] {
-        play.hint_login_order(name);
-    }
     for arm in [&alice, &bob, &carol] {
         arm.arm_explicit_login();
     }
     assert!(
         play.login_queue_uids().is_empty(),
-        "Login all may publish order hints, never membership"
+        "arming intent never creates control-thread membership"
     );
     assert_eq!(row_queue(&play.statuses, "alice"), (-1, -1));
 
     assert_eq!(
-        wait_for_permit(&play.queue, &play.statuses, "bob", 2, &bob),
+        wait_for_permit_bounded(&play.queue, &play.statuses, "bob", 2, &bob),
         PermitWait::Granted
     );
     assert!(play
@@ -1950,7 +2016,7 @@ fn login_all_during_loading_scene_grants_every_parked_owner() {
         .lock()
         .acknowledge_login_return(2, Instant::now()));
     assert_eq!(
-        wait_for_permit(&play.queue, &play.statuses, "carol", 2, &carol),
+        wait_for_permit_bounded(&play.queue, &play.statuses, "carol", 2, &carol),
         PermitWait::Granted
     );
     assert!(play
@@ -1958,14 +2024,6 @@ fn login_all_during_loading_scene_grants_every_parked_owner() {
         .lock()
         .acknowledge_login_return(2, Instant::now()));
     assert!(play.login_queue_uids().is_empty());
-
-    let mut rows = play.statuses.lock().unwrap();
-    let alice_row = rows
-        .iter_mut()
-        .find(|row| row.username == "alice")
-        .expect("alice row");
-    alice_row.ingame = true;
-    alice_row.startup_phase = StartupPhase::Ready;
 }
 
 #[test]
