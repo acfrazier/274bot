@@ -42,7 +42,7 @@ pub const GENERATOR_ID: &str = "nav-bake-1";
 /// bytes. Pack/flags come from bake/collision/pack/transport; reach bits also
 /// depend on `paint.rs` (`bake_reach`) and `router.rs` (`step_ok`). Traveller
 /// and grid-search changes do not decide those bytes.
-pub const GENERATOR_SOURCES: [&str; 25] = [
+pub const GENERATOR_SOURCES: [&str; 28] = [
     "src/bake.rs",
     "src/canlight.rs",
     "src/collision.rs",
@@ -68,6 +68,9 @@ pub const GENERATOR_SOURCES: [&str; 25] = [
     "src/transport/static_routes.rs",
     "src/transport/npc_hops.rs",
     "src/transport/gliders.rs",
+    "src/transport/spirit_trees.rs",
+    "src/transport/levers.rs",
+    "src/transport/toll.rs",
 ];
 
 /// Digest of the bake generator: the manual id, the pack format identity and
