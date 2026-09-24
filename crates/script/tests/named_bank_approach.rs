@@ -503,6 +503,67 @@ fn unnamed_banking_open_continues_through_omitted_locs_to_fresh_bank() {
     iso.join();
 }
 
+// One bank-open row per isolate: a second `openNearest` in the same tick
+// supersedes the first (its await settles false) and the newer open is the
+// one that walks, clicks and reports the fresh bank.
+#[test]
+fn a_second_open_supersedes_the_first() {
+    let src = r#"
+import { Bank } from '../../api/bank/Bank.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__did) return;
+        globalThis.__did = true;
+        const first = Bank.openNearest('Bank booth', 'Use-quickly');
+        const second = Bank.openNearest('Bank booth', 'Use-quickly');
+        first.then((r) => { globalThis.__first = r; });
+        second.then((r) => { globalThis.__second = r; });
+        await Promise.all([first, second]);
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let use_quickly = ["Use-quickly".to_string()];
+    let locs = [east_booth(&use_quickly)];
+    let mut snap = base_snapshot();
+    snap.locs = &locs;
+    let approaching = [east_approach(false, Some((3011, 3353)))];
+    post_snapshot_native(&iso, &snap, &approaching);
+    tick(&iso, 1);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![walk_near_dest(), walk_near_dest()],
+        "each open asks for its own approach"
+    );
+    assert_eq!(
+        iso.probe("globalThis.__first").unwrap(),
+        serde_json::Value::Bool(false),
+        "the superseded open settles false"
+    );
+    assert_eq!(
+        iso.probe("globalThis.__second ?? null").unwrap(),
+        serde_json::Value::Null
+    );
+
+    snap.tick = 2;
+    snap.here = Some(tile(3011, 3353));
+    let ready = [east_approach(true, Some((3011, 3353)))];
+    post_snapshot_native(&iso, &snap, &ready);
+    tick(&iso, 2);
+    assert_eq!(iso.drain_interacts(), vec![named_open_booth()]);
+
+    snap.tick = 3;
+    snap.bank_open = true;
+    snap.bank_loaded = true;
+    snap.bank_generation = 1;
+    post_snapshot_native(&iso, &snap, &ready);
+    tick(&iso, 3);
+    assert_eq!(iso.probe("globalThis.__second").unwrap(), true);
+    assert_eq!(iso.probe("globalThis.__first").unwrap(), false);
+    assert!(iso.drain_interacts().is_empty());
+    iso.join();
+}
+
 #[test]
 fn named_open_nearest_completes_on_fresh_generation_not_queued_click() {
     let iso = LoadIsolate::spawn(OPEN_NEAREST.to_string(), LoadShape::CompatClass, vec![]).unwrap();
@@ -673,13 +734,8 @@ export default class T extends LoopingBot {
 }
 
 #[test]
-fn native_bank_owner_preserves_selected_identity_across_omitted_locs_delta() {
-    let iso = LoadIsolate::spawn(
-        "export default class T extends LoopingBot { loop() {} }".to_string(),
-        LoadShape::CompatClass,
-        vec![],
-    )
-    .unwrap();
+fn a_named_approach_opens_the_same_identity_across_an_omitted_locs_delta() {
+    let iso = LoadIsolate::spawn(OPEN_NEAREST.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     let quick = ["Use-quickly".to_string()];
     let examine_quick = ["Examine".to_string(), "Use-quickly".to_string()];
     let initial_locs = [
@@ -693,70 +749,40 @@ fn native_bank_owner_preserves_selected_identity_across_omitted_locs_delta() {
     let mut last = None;
     let approaching = [east_approach(false, Some((3011, 3353)))];
     post_snapshot_delta_native(&iso, &mut encoder, &mut last, &snap, &approaching);
-    iso.probe("true").unwrap();
+    tick(&iso, 1);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![walk_near_dest()],
+        "the nearest named booth is the walk's target"
+    );
 
-    let begin = iso
-        .probe(
-            r#"rustyscript.functions.__rs2b0t_bank_open({
-                op: 'begin',
-                mode: 'open-nearest',
-                booth_name: 'Bank booth',
-                booth_action: 'Use-quickly',
-            })"#,
-        )
-        .unwrap();
-    let token = begin["token"].as_u64().expect("bank-open token");
-    assert_eq!(begin["kind"], "walk-near");
-    assert_eq!(begin["x"], 3011);
-    assert_eq!(begin["z"], 3353);
-    assert_eq!(begin["radius"], 0);
-
+    // The delta omits the locs page: the scene keeps the identity the walk
+    // aimed at, and the click reuses it rather than a later nearest.
     snap.tick = 2;
     snap.here = Some(tile(3011, 3353));
     let ready = [east_approach(true, Some((3011, 3353)))];
     post_snapshot_delta_native(&iso, &mut encoder, &mut last, &snap, &ready);
-    iso.probe("true").unwrap();
-
-    let open = iso
-        .probe(&format!(
-            r#"rustyscript.functions.__rs2b0t_bank_open({{
-                op: 'next', token: {token},
-            }})"#
-        ))
-        .unwrap();
-    assert_eq!(open["kind"], "open-booth");
-    assert_eq!(open["id"], 2213);
-    assert_eq!(open["name"], "Bank booth");
-    assert_eq!(open["action"], "Use-quickly");
+    tick(&iso, 2);
+    assert_eq!(iso.drain_interacts(), vec![named_open_booth()]);
     iso.join();
 }
 
 #[test]
-fn session_reset_clears_native_bank_observation() {
-    let iso = LoadIsolate::spawn(
-        "export default class T extends LoopingBot { loop() {} }".to_string(),
-        LoadShape::CompatClass,
-        vec![],
-    )
-    .unwrap();
+fn session_reset_clears_the_native_bank_observation() {
+    let iso = LoadIsolate::spawn(OPEN_NEAREST.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     let quick = ["Use-quickly".to_string()];
     let locs = [east_booth(&quick)];
     let mut snap = base_snapshot();
     snap.locs = &locs;
     post_snapshot_input(&iso, &snap);
-    iso.probe("true").unwrap();
     iso.reset_session_work();
 
-    let begin = iso
-        .probe(
-            r#"rustyscript.functions.__rs2b0t_bank_open({
-                op: 'begin', mode: 'open-nearest',
-                booth_name: 'Bank booth', booth_action: 'Use-quickly',
-            })"#,
-        )
-        .unwrap();
-    assert_eq!(begin["kind"], "done");
-    assert_eq!(begin["reason"], "missing-facts");
+    tick(&iso, 1);
+    assert_eq!(
+        iso.probe("__ok").unwrap(),
+        serde_json::Value::Bool(false),
+        "a forgotten scene has no booth to open"
+    );
     assert!(iso.drain_interacts().is_empty());
     iso.join();
 }

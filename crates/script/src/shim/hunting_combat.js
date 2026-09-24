@@ -1151,47 +1151,16 @@ function beginBankWalk(step, radius) {
     });
 }
 
+// The site's bank is the nearest named booth: one bank-open family start,
+// awaited for its frozen boolean.
 async function driveSiteBankOpen() {
-    const fn = globalThis.rustyscript && globalThis.rustyscript.functions
-        ? globalThis.rustyscript.functions.__rs2b0t_bank_open
-        : undefined;
-    if (typeof fn !== 'function') {
-        throw notImpl('bank-open');
-    }
-    let step = fn({
-        op: 'begin',
+    const out = await runMachine('bank_open', {
         mode: 'open-nearest',
         stand: null,
         booth_name: 'Bank booth',
         booth_action: 'Use-quickly',
     });
-    const token = step && step.token;
-    while (step && step.kind !== 'done' && step.kind !== 'aborted') {
-        if (step.kind === 'walk-near' || step.kind === 'open-booth') {
-            queue({
-                op: step.kind,
-                x: step.x,
-                z: step.z,
-                level: step.level,
-                radius: step.radius,
-                id: step.id,
-                name: step.name,
-                action: step.action,
-                allow_teleports: step.allow_teleports === true,
-                allow_wilderness: step.allow_wilderness === true,
-                allow_bank_fetch: step.allow_bank_fetch === true,
-            });
-        } else if (step.kind !== 'wait') {
-            return false;
-        }
-        let next = null;
-        await Execution.delayUntil(() => {
-            next = fn({ op: 'next', token });
-            return next?.kind !== 'wait';
-        }, 0);
-        step = next;
-    }
-    return !!(step && step.kind === 'done' && step.ok === true);
+    return out.kind === 'done' && out.value === true;
 }
 
 export async function bankRoutine(host, site, opts) {

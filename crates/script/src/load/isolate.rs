@@ -1888,7 +1888,6 @@ fn tick_loop(
                         if snap.has_hold() {
                             host_hold = snap.hold();
                             crate::periodic_bank::on_hold(host_hold);
-                            crate::bank_open::on_hold(host_hold);
                             crate::cake_stall::on_hold(host_hold);
                             crate::walk_wait::on_hold(host_hold);
                             crate::inspect_wait::on_hold(host_hold);
@@ -2254,7 +2253,6 @@ fn tick_loop(
                 crate::observed::on_reset();
                 super::reach_query::on_reset();
                 crate::periodic_bank::on_reset();
-                crate::bank_open::on_reset();
                 crate::cake_stall::on_reset();
                 crate::walk_wait::on_reset();
                 crate::inspect_wait::on_reset();
@@ -2316,7 +2314,6 @@ fn tick_loop(
                 paused = true;
                 let _ = event_producer.set_paused(true);
                 crate::periodic_bank::on_pause();
-                crate::bank_open::on_pause();
                 crate::cake_stall::on_pause();
                 crate::walk_wait::on_pause();
                 crate::inspect_wait::on_pause();
@@ -2343,7 +2340,6 @@ fn tick_loop(
                 paused = false;
                 let _ = event_producer.set_paused(false);
                 crate::periodic_bank::on_resume();
-                crate::bank_open::on_resume();
                 crate::cake_stall::on_resume();
                 crate::walk_wait::on_resume();
                 crate::inspect_wait::on_resume();

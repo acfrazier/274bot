@@ -344,6 +344,7 @@ const FAMILIES: &[Entry] = &[
     entry::<crate::autocast::Autocast>(),
     entry::<crate::special::Special>(),
     entry::<crate::modals::Modals>(),
+    entry::<crate::bank_open::BankOpen>(),
     #[cfg(test)]
     entry::<tests::Probe>(),
     #[cfg(test)]
@@ -376,6 +377,23 @@ pub(crate) fn callbacks_of(family: &str) -> Option<&'static [&'static str]> {
 /// this way supersedes nothing, so the admitted row keeps its await.
 pub(crate) fn live(family: &str) -> bool {
     HOST.with(|host| host.borrow().rows.iter().any(|row| row.family == family))
+}
+
+/// Test seam: pull a live row's deadline `millis` closer to now, so a
+/// family's own window is exercised without sleeping the bound out. A
+/// deadline the row never armed stays unarmed.
+#[cfg(test)]
+pub(crate) fn age(handle: Handle, millis: u64) {
+    use std::time::Duration;
+    HOST.with(|host| {
+        let mut host = host.borrow_mut();
+        if let Some(row) = host.rows.iter_mut().find(|row| row.handle == handle) {
+            row.clock.deadline = row
+                .clock
+                .deadline
+                .and_then(|deadline| deadline.checked_sub(Duration::from_millis(millis)));
+        }
+    });
 }
 
 /// The type-erased row the host steps.

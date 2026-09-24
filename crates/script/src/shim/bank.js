@@ -1,6 +1,6 @@
 import { Execution } from '../execution/Execution.js';
 import { Inventory } from '../inventory/Inventory.js';
-import { distanceTo } from '../../shim/_kernel.js';
+import { distanceTo, runMachine } from '../../shim/_kernel.js';
 const host = () => globalThis.__rs2b0t_host || {};
 const notImpl = (name, reason) =>
     new Error(reason ? 'not impl: ' + name + ': ' + reason : 'not impl: ' + name);
@@ -13,51 +13,16 @@ const queue = (req) => {
 let withdrawXPending = false;
 let bankOpPending = false;
 
-function bankOpenCall(payload) {
-    return globalThis.rustyscript.functions.__rs2b0t_bank_open(payload);
-}
-
+// One try: Rust walks, presses the booth it observed and waits for the
+// fresh item list, then the caller's await answers the frozen boolean.
 async function driveBankOpen(input) {
-    let step = bankOpenCall({ op: 'begin', ...input });
-    const token = step?.token;
-    while (step && step.kind !== 'done' && step.kind !== 'aborted') {
-        if (step.kind === 'walk-near') {
-            queue({
-                op: 'walk-near',
-                x: step.x,
-                z: step.z,
-                level: step.level,
-                radius: step.radius,
-                allow_teleports: step.allow_teleports === true,
-                allow_wilderness: true,
-                allow_bank_fetch: true,
-            });
-        } else if (step.kind === 'walk-nearest-bank') {
-            queue({ op: 'walk-nearest-bank' });
-        } else if (step.kind === 'open-booth') {
-            queue({
-                op: 'open-booth',
-                x: step.x,
-                z: step.z,
-                level: step.level,
-                id: step.id,
-                ...(typeof step.name === 'string' ? { name: step.name } : {}),
-                ...(typeof step.action === 'string' ? { action: step.action } : {}),
-            });
-        } else if (step.kind !== 'wait') {
-            return false;
-        }
-        let next = null;
-        await Execution.delayUntil(() => {
-            next = bankOpenCall({
-                op: 'next',
-                token,
-            });
-            return next?.kind !== 'wait';
-        }, 0);
-        step = next;
-    }
-    return step?.kind === 'done' && step.ok === true;
+    const out = await runMachine('bank_open', {
+        mode: input.mode,
+        stand: input.stand ?? null,
+        booth_name: input.booth_name ?? null,
+        booth_action: input.booth_action ?? null,
+    });
+    return out.kind === 'done' && out.value === true;
 }
 
 function bankOp(req) {

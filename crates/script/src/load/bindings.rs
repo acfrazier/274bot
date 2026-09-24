@@ -113,13 +113,6 @@ pub(super) fn wire_runtime(
             ))
         })
         .map_err(|e| format!("register periodic bank: {e}"))?;
-    runtime
-        .register_function("__rs2b0t_bank_open", |args: &[serde_json::Value]| {
-            Ok(crate::bank_open::dispatch(
-                args.first().unwrap_or(&serde_json::Value::Null),
-            ))
-        })
-        .map_err(|e| format!("register bank open: {e}"))?;
     let bank_unlock_facts = std::sync::Arc::clone(&named_banks);
     runtime
         .register_function(
