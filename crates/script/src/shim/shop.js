@@ -1,18 +1,18 @@
 // Our Shop module. Open/buy/sell/close are one `shop` machine await each:
 // Rust presses Trade, batches the Buy/Sell ops, owns every wait and reports
-// the observed quantity. Reads shape the posted shop pages.
+// the observed quantity. Rust calls `Shop.sell`'s optional pick callback over
+// the same-name shop player rows. Reads shape the posted shop pages.
 import { snap, notImpl, runMachine } from '../../shim/_kernel.js';
 
 // What a call ended by a reset or a newer shop call resolves to.
 const ABORTED = { open: false, buy: 0, sell: 0, close: undefined };
 
 async function run(kind, name, qty, pick) {
-    if (pick !== undefined && pick !== null) {
-        // The frozen signature's same-name pack selector is not mapped: the
-        // Rust machine resolves rows itself and must not guess a caller row.
-        throw notImpl('Shop.' + kind, 'pick unsupported');
-    }
-    const out = await runMachine('shop', { kind, name: name ?? '', qty: qty ?? 1 });
+    const out = await runMachine(
+        'shop',
+        { kind, name: name ?? '', qty: qty ?? 1 },
+        { pick: typeof pick === 'function' ? pick : undefined },
+    );
     if (out.kind === 'refused') throw notImpl('Shop.' + kind, out.reason);
     if (out.kind !== 'done') return ABORTED[kind];
     return out.value ?? undefined;

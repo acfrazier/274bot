@@ -536,7 +536,7 @@ impl Family for Trade {
 }
 
 /// JS truthiness of a callback's settled value.
-fn truthy(value: &Value) -> bool {
+pub(crate) fn truthy(value: &Value) -> bool {
     match value {
         Value::Null => false,
         Value::Bool(b) => *b,

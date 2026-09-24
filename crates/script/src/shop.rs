@@ -7,10 +7,12 @@
 //! compact snapshot seam owns where those containers currently are and what
 //! they hold. JavaScript starts one machine per call and awaits the frozen
 //! result — the 10/5/1 batching, the packet-per-tick bound, the waits and
-//! the held-count settlement policy stay here. A queued click is not a
-//! transfer: a batch is only counted once the posted container counts moved.
+//! the held-count settlement policy stay here. `Shop.sell`'s optional `pick`
+//! callback is called from here over the same-name shop player rows in order
+//! before every batch (the frozen `matches.find(pick)`). A queued click is not
+//! a transfer: a batch is only counted once the posted container counts moved.
 
-use crate::machine::{Begin, Cx, Family, Step};
+use crate::machine::{Begin, Call, Cx, Family, Reply, Step};
 use crate::observed::{self, ItemRow, Scene, Text};
 use crate::shim::InteractReq;
 use serde::Deserialize;
@@ -147,12 +149,17 @@ impl Kind {
 enum Phase {
     /// Waiting for the posted open/close boundary.
     WaitBoundary,
+    /// Calling `pick` on each same-name candidate in order.
+    Pick,
     /// A batch of Buy/Sell ops is outstanding.
     WaitBatch,
     /// Settle one poll after a batch: the frozen `delayTicks(1)` that lets the
     /// batch's own server tick land before the recount.
     SettleTick,
 }
+
+/// The caller's `Shop.sell` `pick` hook.
+const PICK: usize = 0;
 
 #[derive(Deserialize)]
 pub(crate) struct ShopArgs {
@@ -174,6 +181,12 @@ pub(crate) struct Shop {
     npc_action: String,
     /// Requested amount (`Buy`/`Sell`; 0 for open/close).
     requested: i32,
+    /// `qty: "all"` under `pick`: the picked row's count is the request.
+    all: bool,
+    /// `Shop.sell` was given a `pick`: every batch sells the row it picks.
+    pick: bool,
+    /// Same-name shop player rows `pick` has not answered yet, in order.
+    candidates: Vec<Row>,
     /// Amount observed to have moved so far.
     transferred: i32,
     /// Observed amount of the outstanding batch (settled after one tick).
@@ -193,6 +206,9 @@ impl Family for Shop {
     const NAME: &'static str = "shop";
     /// A new shop call replaces the one in flight.
     const EXCLUSIVE: bool = true;
+    const CALLBACKS: &'static [&'static str] = &["pick"];
+    /// `pick` runs in the caller's tick, like the frozen `find(pick)`.
+    const KICK_ON_START: bool = true;
     type Args = ShopArgs;
     type Output = Value;
 
@@ -249,6 +265,30 @@ impl Family for Shop {
                         None => return Begin::Refuse("missing shop player pack".into()),
                     },
                 };
+                if kind == Kind::Sell && cx.has(PICK) {
+                    let candidates: Vec<Row> = container
+                        .iter()
+                        .filter(|row| row.name.eq_ignore_ascii_case(&name))
+                        .cloned()
+                        .collect();
+                    let Some(first) = candidates.first() else {
+                        return refused;
+                    };
+                    shop.all = args.qty == Value::String("all".into());
+                    shop.requested = if shop.all {
+                        0
+                    } else {
+                        match requested(&args.qty) {
+                            Some(qty) => qty,
+                            None => return refused,
+                        }
+                    };
+                    shop.name = first.name.to_string();
+                    shop.pick = true;
+                    shop.candidates = candidates;
+                    shop.phase = Phase::Pick;
+                    return Begin::Run(shop);
+                }
                 let Some(row) = find_row(container, &name).cloned() else {
                     return refused;
                 };
@@ -258,13 +298,9 @@ impl Family for Shop {
                 }
                 let requested = match &args.qty {
                     Value::String(all) if all == "all" => row.count,
-                    // A JS number beyond int32 reaches Rust as a float.
-                    qty => match qty
-                        .as_i64()
-                        .or_else(|| qty.as_f64().filter(|n| n.fract() == 0.0).map(|n| n as i64))
-                    {
-                        Some(qty) if qty >= 1 => qty as i32,
-                        _ => return refused,
+                    qty => match requested(qty) {
+                        Some(qty) => qty,
+                        None => return refused,
                     },
                 };
                 if requested < 1 {
@@ -282,10 +318,17 @@ impl Family for Shop {
     }
 
     fn step(&mut self, cx: &mut Cx<'_>) -> Step<Value> {
+        let reply = cx.reply();
+        if let Some(Reply::Threw(thrown)) = reply {
+            return Step::Fail(thrown);
+        }
         let obs = observed::with(|scene| NativeObservation::from_scene(scene, false));
         let probe = obs.probe();
         if !probe.ingame {
             return Step::Done(self.kind.value(false, 0));
+        }
+        if self.phase == Phase::Pick {
+            return self.pick_step(&probe, reply, cx);
         }
         match self.kind {
             Kind::Open => self.open_step(&probe, cx),
@@ -303,6 +346,9 @@ impl Shop {
             name: String::new(),
             npc_action: String::new(),
             requested: 0,
+            all: false,
+            pick: false,
+            candidates: Vec::new(),
             transferred: 0,
             batch_delta: 0,
             batch_baseline: 0,
@@ -310,6 +356,45 @@ impl Shop {
             pressed: false,
             attempts_left: 0,
         }
+    }
+
+    /// Ask `pick` about the next candidate; the first truthy answer is the
+    /// row this batch sells from. No row accepted ends the sale.
+    fn pick_step(
+        &mut self,
+        probe: &Probe<'_>,
+        reply: Option<Reply>,
+        cx: &mut Cx<'_>,
+    ) -> Step<Value> {
+        if let Some(Reply::Value(picked)) = reply {
+            if crate::trade::truthy(&picked) {
+                let row = self.candidates.remove(0);
+                self.candidates.clear();
+                if self.all {
+                    self.all = false;
+                    self.requested = row.count;
+                }
+                self.held_now = count_of(probe.inv, &self.name);
+                return self.send_batch(&row, cx);
+            }
+            self.candidates.remove(0);
+        }
+        if !probe.shop_open {
+            return self.done(false);
+        }
+        let Some(row) = self.candidates.first() else {
+            return self.done(false);
+        };
+        Step::Call(Call {
+            hook: PICK,
+            args: vec![json!({
+                "id": row.id,
+                "name": row.name.as_ref(),
+                "count": row.count,
+                "slot": row.slot,
+                "comId": row.component,
+            })],
+        })
     }
 
     fn done(&self, result: bool) -> Step<Value> {
@@ -430,9 +515,19 @@ impl Shop {
                     // Nothing moved across the settle window and its one tick.
                     return self.done(false);
                 }
+                if self.pick {
+                    // The frozen loop asks `pick` again before every batch.
+                    self.candidates = container
+                        .iter()
+                        .filter(|row| row.name.eq_ignore_ascii_case(&self.name))
+                        .cloned()
+                        .collect();
+                    self.phase = Phase::Pick;
+                    return self.pick_step(probe, None, cx);
+                }
                 self.send_batch(&row, cx)
             }
-            Phase::WaitBoundary => self.done(false),
+            Phase::WaitBoundary | Phase::Pick => self.done(false),
         }
     }
 
@@ -566,6 +661,14 @@ fn count_of(rows: &[Row], name: &str) -> i32 {
         .filter(|row| row.name.eq_ignore_ascii_case(name))
         .map(|row| row.count)
         .sum()
+}
+
+/// A positive whole count; a JS number beyond int32 reaches Rust as a float.
+fn requested(qty: &Value) -> Option<i32> {
+    qty.as_i64()
+        .or_else(|| qty.as_f64().filter(|n| n.fract() == 0.0).map(|n| n as i64))
+        .filter(|qty| *qty >= 1)
+        .map(|qty| qty as i32)
 }
 
 /// The frozen 10/5/1 decomposition, capped at one tick's packet bound.
