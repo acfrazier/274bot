@@ -1675,6 +1675,17 @@ impl Play {
             .unwrap_or(script::RunState::Idle)
     }
 
+    /// Resolve non-blocking isolate Start/Stop. The slot thread calls this
+    /// every observe; tests and the panel pump call it when there is no
+    /// live game thread.
+    pub fn pump_script_lifecycle(&self, name: &str) {
+        if let Some(slot) = script_slot(&self.scripts, name) {
+            if let Ok(mut slot) = slot.lock() {
+                slot.observe_lifecycle();
+            }
+        }
+    }
+
     #[cfg(feature = "memory-profile")]
     pub fn memory_script_metrics(&self, name: &str) -> Option<serde_json::Value> {
         script_slot(&self.scripts, name).and_then(|slot| slot.lock().unwrap().memory_metrics())
@@ -1701,9 +1712,13 @@ impl Play {
 
     /// Isolate log lines staged since the last take (panel log pane).
     pub fn script_take_pending_logs(&self, name: &str) -> Vec<String> {
-        script_slot(&self.scripts, name)
-            .map(|slot| slot.lock().unwrap().take_pending_logs())
-            .unwrap_or_default()
+        let Some(slot) = script_slot(&self.scripts, name) else {
+            return Vec::new();
+        };
+        let Ok(mut slot) = slot.try_lock() else {
+            return Vec::new();
+        };
+        slot.take_pending_logs()
     }
 
     /// Queue `cmd` (the `::` part only) for `user`'s slot: its own thread
@@ -1768,7 +1783,9 @@ impl Play {
         self.spawned.remove(name);
         self.statuses.lock().unwrap().retain(|s| s.username != name);
         self.arms.remove(name);
-        self.scripts.lock().unwrap().remove(name);
+        if let Some(slot) = self.scripts.lock().unwrap().remove(name) {
+            slot.lock().unwrap().stop();
+        }
         self.cheats.lock().unwrap().remove(name);
         self.wires.lock().unwrap().remove(name);
         if self.focused.as_deref() == Some(name) {

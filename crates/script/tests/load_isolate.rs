@@ -20,6 +20,15 @@ use script::{CompiledId, ScriptSource, SlotScript};
 
 mod common;
 
+fn wait_slot_state(slot: &mut SlotScript, want: script::RunState) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while slot.state() != want && Instant::now() < deadline {
+        slot.observe_lifecycle();
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(slot.state(), want, "last_error={:?}", slot.last_error());
+}
+
 // The brief's native fixture: exported `tick` that counts on its own
 // global (the `api` object is host-owned: `api.tick` is the only member,
 // every other read/set throws `not impl`).
@@ -703,7 +712,7 @@ fn slot_start_load_ticks_and_stop_joins() {
     let mut slot = SlotScript::new();
     slot.start_load(NATIVE_TICK.to_string(), LoadShape::NativeTick, vec![])
         .expect("start_load spawns the isolate");
-    assert_eq!(slot.state(), script::RunState::Running);
+    wait_slot_state(&mut slot, script::RunState::Running);
 
     let mut driver = NullDriver::default();
     slot.on_game_tick(&mut ScriptCtx {
@@ -735,7 +744,7 @@ fn slot_start_load_ticks_and_stop_joins() {
     assert_eq!(slot.state(), script::RunState::Running);
 
     slot.stop();
-    assert_eq!(slot.state(), script::RunState::Idle);
+    wait_slot_state(&mut slot, script::RunState::Idle);
 }
 
 // (6b) Start helper refuses while a script is already active.
@@ -749,10 +758,12 @@ fn slot_start_load_refuses_while_active() {
         .expect_err("already active");
     assert!(err.contains("active"), "{err}");
     slot.stop();
+    wait_slot_state(&mut slot, script::RunState::Idle);
     assert!(slot
         .start_load(NATIVE_TICK.to_string(), LoadShape::NativeTick, vec![])
         .is_ok());
     slot.stop();
+    wait_slot_state(&mut slot, script::RunState::Idle);
 }
 
 // (6c) Compiled and Load are XOR: start_compiled is refused while a load
@@ -771,6 +782,7 @@ fn slot_load_and_compiled_are_xor() {
         .unwrap();
     assert!(slot.start_compiled(Box::new(Noop), None).is_err());
     slot.stop();
+    wait_slot_state(&mut slot, script::RunState::Idle);
 
     slot.start_compiled(Box::new(Noop), None).unwrap();
     assert!(slot

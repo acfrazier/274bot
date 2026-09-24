@@ -4888,6 +4888,7 @@ fn chooser_vault_remove_keeps_wall_member_and_slot() {
 
 #[test]
 fn script_active_matches_rs2b0t() {
+    assert!(script_active(script::RunState::Starting));
     assert!(script_active(script::RunState::Running));
     assert!(script_active(script::RunState::Paused));
     assert!(script_active(script::RunState::Stopping));
@@ -4897,11 +4898,13 @@ fn script_active_matches_rs2b0t() {
 
 #[test]
 fn script_pause_resume_stop_enable_rules() {
+    assert!(script_pause_enabled(script::RunState::Starting));
     assert!(script_pause_enabled(script::RunState::Running));
     assert!(script_pause_enabled(script::RunState::Paused));
     assert!(!script_pause_enabled(script::RunState::Idle));
     assert!(!script_pause_enabled(script::RunState::Stopping));
     assert!(!script_pause_enabled(script::RunState::Error));
+    assert!(script_stop_enabled(script::RunState::Starting));
     assert!(script_stop_enabled(script::RunState::Running));
     assert!(script_stop_enabled(script::RunState::Paused));
     assert!(!script_stop_enabled(script::RunState::Stopping));
@@ -4912,6 +4915,7 @@ fn script_pause_resume_stop_enable_rules() {
 #[test]
 fn script_status_text_matches_rs2b0t_labels() {
     assert_eq!(script_status_text(script::RunState::Idle), "idle");
+    assert_eq!(script_status_text(script::RunState::Starting), "starting");
     assert_eq!(script_status_text(script::RunState::Running), "running");
     assert_eq!(script_status_text(script::RunState::Paused), "paused");
     assert_eq!(script_status_text(script::RunState::Stopping), "stopping");

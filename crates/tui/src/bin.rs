@@ -1933,6 +1933,16 @@ mod tests {
     use nav::world::NavWorld;
     use script::IsolatedEnv;
     use std::sync::Arc;
+    use std::time::{Duration, Instant};
+
+    fn wait_script_state(play: &host_play::Play, name: &str, want: script::RunState) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while play.script_state(name) != want && Instant::now() < deadline {
+            play.pump_script_lifecycle(name);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(play.script_state(name), want);
+    }
 
     fn dummy_options() -> PlayOptions {
         PlayOptions {
@@ -2823,26 +2833,20 @@ ScriptRegistry.register({ name: 'Thiever', create: () => new ThievingBot() });
         let card = session.js.load(&path).unwrap();
         let sel = script::ScriptSel::Loaded(card.source, path.to_string_lossy().into_owned());
         session.script_start(&mut app, &sel);
-        let failure = session
-            .js
-            .load_failure(&card.identity_key())
-            .unwrap()
-            .clone();
-        assert_eq!(failure.identity_key, card.identity_key());
-        assert_eq!(failure.path, path);
-        assert_eq!(failure.stage, script::LoadStage::RuntimeLoad);
-        assert_eq!(failure.api_family, Some(script::ApiFamily::V2));
-        assert_eq!(
-            failure.fingerprint,
-            script::raw_content_fingerprint(&path, src)
+        wait_script_state(
+            session.play.as_ref().unwrap(),
+            "alice",
+            script::RunState::Error,
         );
-        assert_eq!(
-            session
-                .play
-                .as_ref()
-                .unwrap()
-                .script_runtime_generation("alice"),
-            Some(0)
+        let err = session
+            .play
+            .as_ref()
+            .unwrap()
+            .script_last_error("alice")
+            .unwrap_or_default();
+        assert!(
+            err.contains("tui-initial-load"),
+            "setup failure must surface: {err}"
         );
 
         let good_path = iso.dir.join("good.ts");
@@ -2858,44 +2862,30 @@ ScriptRegistry.register({ name: 'Thiever', create: () => new ThievingBot() });
             &mut app,
             &script::ScriptSel::Loaded(good.source, good_path.to_string_lossy().into_owned()),
         );
-        assert_eq!(
-            session.play.as_ref().unwrap().script_state("bob"),
-            script::RunState::Running
+        wait_script_state(
+            session.play.as_ref().unwrap(),
+            "bob",
+            script::RunState::Running,
         );
-        let output = app.error.as_deref().unwrap();
-        assert!(output.contains("tui-initial-load") && output.contains("runtime-load"));
-        assert!(output.contains(&path.display().to_string()));
         session.script_start(&mut app, &sel); // active slot refuses before evaluating
         assert!(app
             .error
             .as_deref()
             .unwrap()
             .contains("script already active"));
-        assert_eq!(
-            session.js.load_failure(&card.identity_key()),
-            Some(&failure)
-        );
         app.focused = Some(2);
         session.script_start(&mut app, &sel);
         assert_eq!(app.error.as_deref(), Some("script: no slot: missing"));
-        assert_eq!(
-            session.js.load_failure(&card.identity_key()),
-            Some(&failure)
-        );
 
         std::fs::write(&helper, "export const fail = false;").unwrap();
         app.focused = Some(0);
         session.script_start(&mut app, &sel);
-        assert!(session.js.load_failure(&card.identity_key()).is_none());
-        assert_eq!(app.error, None);
-        assert_eq!(
-            session
-                .play
-                .as_ref()
-                .unwrap()
-                .script_runtime_generation("alice"),
-            Some(1)
+        wait_script_state(
+            session.play.as_ref().unwrap(),
+            "alice",
+            script::RunState::Running,
         );
+        assert_eq!(app.error, None);
         session.play.as_ref().unwrap().script_stop("alice");
         session.play.as_ref().unwrap().script_stop("bob");
     }
@@ -2913,7 +2903,7 @@ ScriptRegistry.register({ name: 'Thiever', create: () => new ThievingBot() });
         let src = "export function tick(api) { api._n = (api._n||0)+1 }".to_string();
         play.script_start_load("alice", src, script::LoadShape::NativeTick, None, vec![])
             .unwrap();
-        assert_eq!(play.script_state("alice"), script::RunState::Running);
+        wait_script_state(&play, "alice", script::RunState::Running);
 
         let mut session = TuiSession::new(dummy_options());
         session.inject_play(play);

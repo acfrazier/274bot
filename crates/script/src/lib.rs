@@ -90,7 +90,7 @@ pub use watchdog::{
 };
 
 #[cfg(feature = "load")]
-pub use load::{transpile_ts, LoadIsolate};
+pub use load::{transpile_ts, LoadIsolate, Ready};
 
 #[cfg(feature = "load")]
 mod autocast;

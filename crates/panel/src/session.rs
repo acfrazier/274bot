@@ -567,14 +567,20 @@ pub use crate::input_capture::{maybe_send_click, stream_capture};
 pub fn script_active(state: script::RunState) -> bool {
     matches!(
         state,
-        script::RunState::Running | script::RunState::Paused | script::RunState::Stopping
+        script::RunState::Starting
+            | script::RunState::Running
+            | script::RunState::Paused
+            | script::RunState::Stopping
     )
 }
 
 /// Pause/Resume enable rule: enabled only while Running (Pause) or Paused
 /// (Resume); the button label switches to "Resume" when paused.
 pub fn script_pause_enabled(state: script::RunState) -> bool {
-    matches!(state, script::RunState::Running | script::RunState::Paused)
+    matches!(
+        state,
+        script::RunState::Starting | script::RunState::Running | script::RunState::Paused
+    )
 }
 
 /// Stop enable rule: enabled while active, but not while already Stopping.
@@ -586,6 +592,7 @@ pub fn script_stop_enabled(state: script::RunState) -> bool {
 pub fn script_status_text(state: script::RunState) -> &'static str {
     match state {
         script::RunState::Idle => "idle",
+        script::RunState::Starting => "starting",
         script::RunState::Running => "running",
         script::RunState::Paused => "paused",
         script::RunState::Stopping => "stopping",

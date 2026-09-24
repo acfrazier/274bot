@@ -132,6 +132,7 @@ pub(super) fn script_observe_cached(
     let mut slot_work_epoch = None;
     if let Some(slot) = script_slot(scripts, name) {
         let mut slot = slot.lock().unwrap();
+        slot.observe_lifecycle();
         // Reap a script-requested Stop before advancing host continuations.
         emit_script_debug_logs(&mut slot, name);
         slot.on_is_up(up);

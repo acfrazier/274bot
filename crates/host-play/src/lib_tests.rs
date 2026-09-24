@@ -4,6 +4,7 @@ use host::Guardian;
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 fn native_requested(
     to: WorldTile,
@@ -11,6 +12,15 @@ fn native_requested(
     allow_teleports: bool,
 ) -> (WorldTile, i32, bool, bool, bool) {
     (to, radius, allow_teleports, false, false)
+}
+
+fn wait_script_state(play: &Play, name: &str, want: script::RunState) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while play.script_state(name) != want && Instant::now() < deadline {
+        play.pump_script_lifecycle(name);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(play.script_state(name), want);
 }
 
 #[test]
@@ -3723,7 +3733,7 @@ fn script_start_load_spawns_isolate_only_on_start_and_refuses_when_active() {
         vec![],
     )
     .unwrap();
-    assert_eq!(play.script_state("alice"), script::RunState::Running);
+    wait_script_state(&play, "alice", script::RunState::Running);
 
     let err = play
         .script_start_load(
@@ -3737,7 +3747,7 @@ fn script_start_load_spawns_isolate_only_on_start_and_refuses_when_active() {
     assert!(err.contains("active"), "err was {err}");
 
     play.script_stop("alice");
-    assert_eq!(play.script_state("alice"), script::RunState::Idle);
+    wait_script_state(&play, "alice", script::RunState::Idle);
 
     // Unknown slot: never creates an entry, and never a V8 runtime.
     let err = play
@@ -3748,6 +3758,49 @@ fn script_start_load_spawns_isolate_only_on_start_and_refuses_when_active() {
         !play.scripts.lock().unwrap().contains_key("ghost"),
         "an unknown uid must never get a SlotScript entry"
     );
+}
+
+#[test]
+fn script_start_returns_before_setup_and_stop_before_reap() {
+    let mut play = run_with_io(
+        &PlayOptions {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            lowmem: true,
+            mainland: false,
+        },
+        vec![],
+        |_| (None, None),
+        |_, _, _| {},
+    );
+    play.attach_arm("alice", SlotArm::new(7, false));
+    let src = "export function tick(api) { api._n = (api._n||0)+1 }".to_string();
+    let t0 = Instant::now();
+    play.script_start_load(
+        "alice",
+        src.clone(),
+        script::LoadShape::NativeTick,
+        None,
+        vec![],
+    )
+    .unwrap();
+    assert!(
+        t0.elapsed() < Duration::from_millis(500),
+        "Start blocked: {:?}",
+        t0.elapsed()
+    );
+    assert_eq!(play.script_state("alice"), script::RunState::Starting);
+    wait_script_state(&play, "alice", script::RunState::Running);
+    let t1 = Instant::now();
+    play.script_stop("alice");
+    assert!(
+        t1.elapsed() < Duration::from_millis(200),
+        "Stop blocked: {:?}",
+        t1.elapsed()
+    );
+    assert_eq!(play.script_state("alice"), script::RunState::Stopping);
+    wait_script_state(&play, "alice", script::RunState::Idle);
 }
 
 #[test]
@@ -3779,9 +3832,9 @@ fn script_start_handle_explicit_loadouts_starts() {
             &[script::Loadout::new("Memory food").with_carry("Lobster", 1)],
         )
         .unwrap();
-    assert_eq!(play.script_state("alice"), script::RunState::Running);
+    wait_script_state(&play, "alice", script::RunState::Running);
     play.script_stop("alice");
-    assert_eq!(play.script_state("alice"), script::RunState::Idle);
+    wait_script_state(&play, "alice", script::RunState::Idle);
 }
 
 #[test]
@@ -3810,7 +3863,7 @@ fn script_paint_click_is_noop_when_idle_paused_or_unadvertised() {
     assert_eq!(play.script_state("alice"), script::RunState::Paused);
     play.script_stop("alice");
     play.script_paint_click("alice", "gobank", 0);
-    assert_eq!(play.script_state("alice"), script::RunState::Idle);
+    wait_script_state(&play, "alice", script::RunState::Idle);
 }
 
 #[test]
@@ -3840,7 +3893,7 @@ fn script_paint_select_is_noop_when_idle_paused_or_unadvertised() {
     assert_eq!(play.script_state("alice"), script::RunState::Paused);
     play.script_stop("alice");
     play.script_paint_select("alice", "strip:k", "Options", 0);
-    assert_eq!(play.script_state("alice"), script::RunState::Idle);
+    wait_script_state(&play, "alice", script::RunState::Idle);
 }
 
 #[test]

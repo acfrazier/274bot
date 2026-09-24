@@ -7,11 +7,39 @@ use rustyscript::{json_args, Runtime, RuntimeOptions};
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize};
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::sync::{Mutex, Once};
+use std::sync::{Mutex, Once, OnceLock};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 static NEXT_PAINT_GENERATION: AtomicU64 = AtomicU64::new(1);
+static ABANDONED_ISOLATES: Mutex<Vec<JoinHandle<()>>> = Mutex::new(Vec::new());
+
+fn reap_finished_abandoned(list: &mut Vec<JoinHandle<()>>) {
+    let mut i = 0;
+    while i < list.len() {
+        if list[i].is_finished() {
+            let handle = list.remove(i);
+            let _ = handle.join();
+        } else {
+            i += 1;
+        }
+    }
+}
+
+fn retain_abandoned_thread(handle: JoinHandle<()>) {
+    let mut list = ABANDONED_ISOLATES.lock().unwrap();
+    reap_finished_abandoned(&mut list);
+    list.push(handle);
+}
+
+/// Isolates whose `join` hit [`JOIN_TIMEOUT`] and were not dropped silently.
+#[doc(hidden)]
+#[allow(dead_code)]
+pub fn abandoned_isolate_count() -> usize {
+    let mut list = ABANDONED_ISOLATES.lock().unwrap();
+    reap_finished_abandoned(&mut list);
+    list.len()
+}
 
 /// Per-tick budget: ticks taking longer than this are interrupted and
 /// logged, and stale ticks are skipped.
@@ -23,6 +51,9 @@ const RUNTIME_TIMEOUT: Duration = Duration::from_millis(50);
 /// How long `join` waits for the isolate thread after Stop + terminate
 /// before abandoning it: a stuck isolate must never freeze the caller.
 const JOIN_TIMEOUT: Duration = Duration::from_secs(2);
+/// How long `poll_ready` waits for V8 creation, prelude, content eval
+/// and module load before reporting the same timeout spawn used to.
+const SETUP_TIMEOUT: Duration = Duration::from_secs(10);
 /// Heap cap for the isolate (~64 MB, the brief's number).
 const MAX_HEAP: usize = 64 * 1024 * 1024;
 /// Bounded native pairing metadata for mouse gestures produced by one
@@ -294,10 +325,13 @@ pub struct LoadIsolate {
     ignored_randoms: Mutex<Vec<String>>,
     handle: Option<JoinHandle<()>>,
     /// Thread-safe handle used to terminate a runaway tick from this
-    /// side of the channel. The terminate stays armed until the isolate
-    /// thread has returned from the tick and clears it there (a cancel
-    /// from this side would race the interrupt and make it a no-op).
-    terminate: v8::IsolateHandle,
+    /// side of the channel. Empty until [`LoadIsolate::poll_ready`] sees
+    /// setup finish. The terminate stays armed until the isolate thread
+    /// has returned from the tick and clears it there (a cancel from this
+    /// side would race the interrupt and make it a no-op).
+    terminate: OnceLock<v8::IsolateHandle>,
+    /// Setup receiver plus deadline; resolved from the slot observe.
+    setup: Mutex<SetupState>,
     /// The tick currently being dispatched and when it was sent; the
     /// thread clears it when the tick completes.
     in_flight: Mutex<Option<(u64, u64, Instant)>>,
@@ -316,9 +350,29 @@ pub struct ScriptStopReceipt {
     pub reason: String,
 }
 
+/// Non-blocking isolate boot result. Commands already queue until setup
+/// finishes, so the host never waits on V8 creation on the caller thread.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Ready {
+    Pending,
+    Ready,
+    Failed(String),
+}
+
+enum SetupState {
+    Pending {
+        rx: Receiver<Result<v8::IsolateHandle, String>>,
+        deadline: Instant,
+    },
+    Ready,
+    Failed(String),
+}
+
 impl LoadIsolate {
     /// Spawn the isolate thread with already-cached JS (no transpile).
-    /// Fails with a message when the source cannot be wired.
+    /// Returns as soon as the thread is created; V8 setup is resolved by
+    /// [`LoadIsolate::poll_ready`]. Thread-create failure is the only
+    /// synchronous error.
     pub fn spawn(
         js: String,
         shape: LoadShape,
@@ -431,11 +485,6 @@ impl LoadIsolate {
                 )
             })
             .map_err(|e| format!("isolate thread: {e}"))?;
-        let terminate = match setup_rx.recv_timeout(Duration::from_secs(10)) {
-            Ok(Ok(handle)) => handle,
-            Ok(Err(e)) => return Err(e),
-            Err(e) => return Err(format!("isolate init: {e}")),
-        };
         Ok(LoadIsolate {
             #[cfg(feature = "memory-profile")]
             counters,
@@ -455,7 +504,11 @@ impl LoadIsolate {
             paint: Mutex::new(None),
             ignored_randoms: Mutex::new(Vec::new()),
             handle: Some(handle),
-            terminate,
+            terminate: OnceLock::new(),
+            setup: Mutex::new(SetupState::Pending {
+                rx: setup_rx,
+                deadline: Instant::now() + SETUP_TIMEOUT,
+            }),
             in_flight: Mutex::new(None),
             teardown,
             proof,
@@ -510,6 +563,7 @@ impl LoadIsolate {
     /// Dispatch one observed game tick, tagging produced mouse rows with
     /// the native permit identity that was live at production.
     pub fn on_game_tick_at(&self, snap_tick: u64, input_identity: u64) {
+        let _ = self.poll_ready();
         self.pump_logs();
         if self.stopped.load(std::sync::atomic::Ordering::Acquire)
             || self.teardown_blocks_dispatch()
@@ -537,7 +591,7 @@ impl LoadIsolate {
             // Leave the terminate armed until the isolate thread has
             // returned from the tick (it cancels there); an immediate
             // cancel would race the interrupt and make this a no-op.
-            self.terminate.terminate_execution();
+            self.fire_terminate();
             // `in_flight` was released before this lock, so the lock
             // order (never `in_flight` -> `logs`) holds everywhere.
             let line = if tick == RECOVERY_ANCHOR_TICK {
@@ -576,6 +630,7 @@ impl LoadIsolate {
     /// Park tick dispatch. A runaway tick is interrupted first so the
     /// thread returns to the command loop.
     pub fn pause(&self) {
+        let _ = self.poll_ready();
         self.pump_logs();
         if self.teardown_blocks_dispatch() {
             let _ = self.tx.send(IsolateCmd::Pause);
@@ -590,7 +645,7 @@ impl LoadIsolate {
         if over {
             // No cancel here: the isolate thread clears the terminate
             // itself once it has returned from the interrupted tick.
-            self.terminate.terminate_execution();
+            self.fire_terminate();
         }
         let _ = self.tx.send(IsolateCmd::Pause);
     }
@@ -637,6 +692,7 @@ impl LoadIsolate {
     /// this work generation. Non-blocking: the reply arrives as a
     /// generation-tagged interact (`recovery-anchor` / `recovery-anchor-none`).
     pub fn request_recovery_anchor(&self) {
+        let _ = self.poll_ready();
         if self.stopped.load(std::sync::atomic::Ordering::Acquire)
             || self.teardown_blocks_dispatch()
         {
@@ -655,7 +711,7 @@ impl LoadIsolate {
             over
         };
         if let Some((tick, elapsed)) = interrupted {
-            self.terminate.terminate_execution();
+            self.fire_terminate();
             let line = if tick == RECOVERY_ANCHOR_TICK {
                 format!("interrupted slow recoveryAnchor ({elapsed:?})")
             } else {
@@ -781,23 +837,78 @@ impl LoadIsolate {
         self.paint.lock().unwrap().clone()
     }
 
+    /// Resolve setup without blocking. Called from the slot's per-frame
+    /// observe. Commands already queue until this returns [`Ready::Ready`].
+    pub fn poll_ready(&self) -> Ready {
+        let mut setup = self.setup.lock().unwrap();
+        match &*setup {
+            SetupState::Ready => return Ready::Ready,
+            SetupState::Failed(e) => return Ready::Failed(e.clone()),
+            SetupState::Pending { .. } => {}
+        }
+        let SetupState::Pending { rx, deadline } = &*setup else {
+            unreachable!("setup is Pending");
+        };
+        let outcome = match rx.try_recv() {
+            Ok(Ok(handle)) => {
+                let _ = self.terminate.set(handle);
+                Ready::Ready
+            }
+            Ok(Err(e)) => Ready::Failed(e),
+            Err(mpsc::TryRecvError::Disconnected) => Ready::Failed(format!(
+                "isolate init: {}",
+                mpsc::RecvTimeoutError::Disconnected
+            )),
+            Err(mpsc::TryRecvError::Empty) if Instant::now() < *deadline => {
+                return Ready::Pending;
+            }
+            Err(mpsc::TryRecvError::Empty) => Ready::Failed(format!(
+                "isolate init: {}",
+                mpsc::RecvTimeoutError::Timeout
+            )),
+        };
+        *setup = match &outcome {
+            Ready::Ready => SetupState::Ready,
+            Ready::Failed(e) => SetupState::Failed(e.clone()),
+            Ready::Pending => unreachable!("pending returns above"),
+        };
+        outcome
+    }
+
+    fn fire_terminate(&self) {
+        if let Some(handle) = self.terminate.get() {
+            handle.terminate_execution();
+        }
+    }
+
+    /// Stop without blocking the caller. `join` (onStop hook plus the 2 s
+    /// cap) runs on a reaper thread that reports leftover logs.
+    pub fn join_detached(self, done: Sender<Vec<String>>) {
+        let _ = std::thread::Builder::new()
+            .name("isolate-reaper".into())
+            .spawn(move || {
+                let _ = done.send(self.join());
+            });
+    }
+
     /// Stop the isolate: tell the thread to exit, interrupt a live tick
     /// so Stop can be processed, and wait for the thread (the Runtime
-    /// is dropped there). The wait is bounded by [`Self::JOIN_TIMEOUT`]:
-    /// a stuck isolate is abandoned (thread detached) so Stop can never
-    /// freeze the panel. Returns leftover log lines (including `onStop`
-    /// / `this.log` drained during teardown) after `pump_logs`.
+    /// is dropped there). The wait is bounded by [`JOIN_TIMEOUT`]:
+    /// a stuck isolate is abandoned (thread tracked, not dropped) so Stop
+    /// can never freeze the panel. Returns leftover log lines (including
+    /// `onStop` / `this.log` drained during teardown) after `pump_logs`.
     ///
     /// Tick interruption is claimed only while phase is `Running`. Once
     /// the isolate has entered the hook, only that hook's 50 ms
     /// one-shot may terminate; join never samples `in_flight` to decide.
     pub fn join(mut self) -> Vec<String> {
+        let _ = self.poll_ready();
         let _ = self.tx.send(IsolateCmd::Stop { invoke_hook: true });
         {
             let mut st = self.teardown.lock().unwrap();
             if st.phase == TeardownPhase::Running {
                 st.phase = TeardownPhase::UnwindingTick;
-                self.terminate.terminate_execution();
+                self.fire_terminate();
             }
         }
         if let Some(handle) = self.handle.take() {
@@ -808,9 +919,9 @@ impl LoadIsolate {
             }
             if handle.is_finished() {
                 let _ = handle.join();
+            } else {
+                retain_abandoned_thread(handle);
             }
-            // else: abandoned — dropping the handle detaches the thread,
-            // which exits on its own once the interrupt lands.
         }
         self.pump_logs();
         std::mem::take(&mut *self.logs.lock().unwrap())
@@ -931,6 +1042,7 @@ impl Drop for LoadIsolate {
         // and no cancel — the thread clears the terminate once the tick
         // has returned). After a successful join the hook is Done: do
         // not re-interrupt a completed teardown.
+        let _ = self.poll_ready();
         let _ = self.tx.send(IsolateCmd::Stop { invoke_hook: false });
         let mut st = self.teardown.lock().unwrap();
         match st.phase {
@@ -938,7 +1050,15 @@ impl Drop for LoadIsolate {
             TeardownPhase::Running | TeardownPhase::UnwindingTick | TeardownPhase::Hook => {
                 st.phase = TeardownPhase::Done;
                 st.cancel.take();
-                self.terminate.terminate_execution();
+                self.fire_terminate();
+            }
+        }
+        drop(st);
+        if let Some(handle) = self.handle.take() {
+            if handle.is_finished() {
+                let _ = handle.join();
+            } else {
+                retain_abandoned_thread(handle);
             }
         }
     }
@@ -2840,5 +2960,92 @@ loop() {
             "ResetSession must clear the undelivered queue"
         );
         iso.join();
+    }
+
+    fn wait_ready(iso: &LoadIsolate) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            match iso.poll_ready() {
+                Ready::Ready => return,
+                Ready::Failed(e) => panic!("setup failed: {e}"),
+                Ready::Pending if Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                Ready::Pending => panic!("setup timed out"),
+            }
+        }
+    }
+
+    #[test]
+    fn spawn_returns_before_setup_and_poll_ready_becomes_ready() {
+        let t0 = Instant::now();
+        let iso = LoadIsolate::spawn(
+            "export function tick(api) {}".into(),
+            LoadShape::NativeTick,
+            vec![],
+        )
+        .unwrap();
+        assert!(
+            t0.elapsed() < Duration::from_millis(500),
+            "spawn must not wait on V8: {:?}",
+            t0.elapsed()
+        );
+        wait_ready(&iso);
+        assert_eq!(iso.poll_ready(), Ready::Ready);
+        iso.join();
+    }
+
+    #[test]
+    fn poll_ready_surfaces_a_wire_failure() {
+        let iso = LoadIsolate::spawn(
+            "not valid javascript!!!!".into(),
+            LoadShape::NativeTick,
+            vec![],
+        )
+        .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let err = loop {
+            match iso.poll_ready() {
+                Ready::Failed(e) => break e,
+                Ready::Ready => panic!("invalid source must not become Ready"),
+                Ready::Pending if Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                Ready::Pending => panic!("setup neither failed nor finished"),
+            }
+        };
+        assert!(!err.is_empty(), "{err}");
+        iso.join();
+    }
+
+    #[test]
+    fn join_detached_returns_immediately_and_delivers_onstop_logs() {
+        let iso = LoadIsolate::spawn(
+            "export default class T extends LoopingBot {
+            loop() {}
+            onStop() { this.log('stopped-ok'); }
+        }"
+            .into(),
+            LoadShape::CompatClass,
+            vec![],
+        )
+        .unwrap();
+        wait_ready(&iso);
+        iso.on_game_tick(1);
+        let _ = iso.probe("1");
+        let (tx, rx) = mpsc::channel();
+        let t0 = Instant::now();
+        iso.join_detached(tx);
+        assert!(
+            t0.elapsed() < Duration::from_millis(200),
+            "join_detached blocked: {:?}",
+            t0.elapsed()
+        );
+        let logs = rx.recv_timeout(Duration::from_secs(5)).expect("reaper logs");
+        assert!(
+            logs.iter().any(|l| l.contains("stopped-ok")),
+            "onStop log missing: {logs:?}"
+        );
+        let _ = abandoned_isolate_count();
     }
 }

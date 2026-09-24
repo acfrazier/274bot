@@ -76,4 +76,4 @@ pub use library::{
 };
 
 #[cfg(feature = "load")]
-pub use isolate::{LoadIsolate, ScriptStopReceipt, TeardownProof};
+pub use isolate::{LoadIsolate, Ready, ScriptStopReceipt, TeardownProof};

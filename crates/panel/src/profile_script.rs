@@ -371,7 +371,8 @@ impl Session {
             match state {
                 script::RunState::Running
                 | script::RunState::Paused
-                | script::RunState::Stopping => {
+                | script::RunState::Stopping
+                | script::RunState::Starting => {
                     skipped += 1;
                     continue;
                 }
@@ -403,7 +404,12 @@ impl Session {
         let mut stopped = 0usize;
         for name in names {
             let state = play.script_state(&name);
-            if matches!(state, script::RunState::Running | script::RunState::Paused) {
+            if matches!(
+                state,
+                script::RunState::Running
+                    | script::RunState::Paused
+                    | script::RunState::Starting
+            ) {
                 play.script_stop(&name);
                 stopped += 1;
             }
@@ -758,7 +764,7 @@ impl Session {
             }
             let state = play.script_state(&slot_name);
             match state {
-                script::RunState::Running => {
+                script::RunState::Running | script::RunState::Starting => {
                     play.script_stop(&slot_name);
                     match self.script_start_prepared(&slot_name, prepared_card) {
                         Ok(()) => restarted += 1,
@@ -799,7 +805,7 @@ impl Session {
                 continue;
             }
             match play.script_state(&name) {
-                script::RunState::Running => running.push(name),
+                script::RunState::Running | script::RunState::Starting => running.push(name),
                 script::RunState::Paused => paused.push(name),
                 _ => {}
             }
@@ -1150,7 +1156,10 @@ fn script_active_name(session: &Session, name: &str) -> bool {
             .as_ref()
             .map(|p| p.script_state(name))
             .unwrap_or(script::RunState::Idle),
-        script::RunState::Running | script::RunState::Paused | script::RunState::Stopping
+        script::RunState::Starting
+            | script::RunState::Running
+            | script::RunState::Paused
+            | script::RunState::Stopping
     )
 }
 
