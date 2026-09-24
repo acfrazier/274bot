@@ -560,9 +560,9 @@ impl AppWindow {
         // The rail draws U+2059 (⁙) and U+2717 (✗) as text, which the
         // default Latin-1 font cannot render: merge an embedded DejaVu
         // Sans so they rasterize. Fail loudly rather than draw '?' again.
-        let (quincunx, ballot_x, folds, fa, worlds) = add_glyph_font(&mut context);
+        let (quincunx, ballot_x, folds, fa) = add_glyph_font(&mut context);
         assert!(
-            quincunx && ballot_x && folds && fa && worlds,
+            quincunx && ballot_x && folds && fa,
             "merged glyph font must cover rail DejaVu and file-dialog FA codepoints"
         );
 
@@ -1140,13 +1140,10 @@ const GLYPH_FONT_BYTES: &[u8] = include_bytes!("../assets/DejaVuSans.ttf");
 /// glyphs stay on DejaVu. Same `merge_mode` path as [`GLYPH_FONT_BYTES`].
 const FA_FONT_BYTES: &[u8] = include_bytes!("../assets/fa-solid-900.ttf");
 
-/// The codepoints the rail draws beyond the default font's Latin-1, as a
-/// Dear ImGui `(start, end)` pair list: `U+2059` (status quincunx),
-/// `U+2582..U+2585` (fold/unfold), `U+2717` (remove) and `U+2776..U+277F`
-/// (filled circled digits for the public world marker), NUL-terminated.
-const GLYPH_FONT_RANGES: [u32; 9] = [
-    0x2059, 0x2059, 0x2582, 0x2585, 0x2717, 0x2717, 0x2776, 0x277F, 0,
-];
+/// The two codepoints the rail draws beyond the default font's Latin-1,
+/// as a Dear ImGui `(start, end)` pair list: `U+2059` (status quincunx)
+/// and `U+2717` (remove), NUL-terminated.
+const GLYPH_FONT_RANGES: [u32; 7] = [0x2059, 0x2059, 0x2582, 0x2585, 0x2717, 0x2717, 0];
 
 /// FA PUA for Scripts file-dialog buttons (home, download, chevron,
 /// folder, file/file-lines, desktop). Tiny pairs, NUL-terminated.
@@ -1161,8 +1158,8 @@ const FA_FONT_RANGES: [u32; 13] = [
 /// font — only the ranged codepoints fall through to DejaVu, at the
 /// default font's reference size (`size_pixels: 0.0`; an explicit size
 /// would trip imgui's merge/implicit-reference-size assert). Returns the
-/// ranged codepoints' presence in the merged font; the unit test pins it.
-fn add_glyph_font(ctx: &mut imgui::Context) -> (bool, bool, bool, bool, bool) {
+/// two codepoints' presence in the merged font; the unit test pins it.
+fn add_glyph_font(ctx: &mut imgui::Context) -> (bool, bool, bool, bool) {
     let mut fonts = ctx.fonts();
     fonts.add_font_default(None);
     let _dejavu = fonts
@@ -1195,7 +1192,6 @@ fn add_glyph_font(ctx: &mut imgui::Context) -> (bool, bool, bool, bool, bool) {
         merged.is_glyph_in_font('\u{2717}'),
         merged.is_glyph_in_font('\u{2582}') && merged.is_glyph_in_font('\u{2585}'),
         fa,
-        ('\u{2776}'..='\u{277F}').all(|c| merged.is_glyph_in_font(c)),
     )
 }
 
@@ -2212,14 +2208,14 @@ mod tests {
         );
     }
 
-    /// The merged glyph font must cover the non-Latin-1 codepoints the rail
-    /// draws as text (status dot, fold, remove, world markers). Without them
-    /// the panel would render `?` again.
+    /// The merged glyph font must cover the two non-Latin-1 codepoints
+    /// the rail draws as text: U+2059 (⁙ status dot) and U+2717 (✗
+    /// remove). Without them the panel would render `?` again.
     #[test]
     fn glyph_font_merges_status_and_remove_codepoints() {
         let _guard = IMGUI_CTX_TEST_GUARD.lock().unwrap();
         let mut ctx = imgui::Context::create();
-        let (quincunx, ballot_x, folds, fa, worlds) = add_glyph_font(&mut ctx);
+        let (quincunx, ballot_x, folds, fa) = add_glyph_font(&mut ctx);
         assert!(
             quincunx,
             "U+2059 (status dot) must resolve in the merged font"
@@ -2230,6 +2226,5 @@ mod tests {
             fa,
             "FA Free Solid PUA (home/desktop/docs/downloads/folder/file/chevron) must resolve"
         );
-        assert!(worlds, "U+2776..U+277F (world markers) must resolve");
     }
 }

@@ -3813,7 +3813,7 @@ fn rail_cap(
     let marker_x = ui.cursor_pos_x();
     match world {
         Some(number) => {
-            ui.text_colored(light.rgb(), world_marker(number));
+            world_marker(ui, number, light, DOT_W);
             ui.set_item_tooltip(format!("w{number} · {}", light.brief()));
         }
         None => ui.text_colored(light.rgb(), STATUS_GLYPH),
@@ -3842,14 +3842,34 @@ fn rail_cap(
     (clicked, removed, folded)
 }
 
-/// Filled circled digit (`❶`..`❿`, U+2776..U+277F, merged from DejaVu Sans)
-/// for public worlds 1-10, the plain number beyond that.
-fn world_marker(number: u16) -> String {
-    match number {
-        1..=10 => char::from_u32(0x2775 + u32::from(number))
-            .map_or_else(|| number.to_string(), String::from),
-        _ => number.to_string(),
-    }
+/// Public world marker: a disc in the status colour, centred in the
+/// `width`-wide status cell and on the text line, with the world number
+/// knocked out in the background colour. Drawn as geometry so the digit is
+/// the rail's own font and the disc size does not depend on glyph metrics.
+/// Occupies one text line, like the status glyph it replaces.
+fn world_marker(ui: &Ui, number: u16, light: Light, width: f32) {
+    let line_h = ui.text_line_height();
+    let [x, y] = ui.cursor_screen_pos();
+    let center = [x + width * 0.5, y + line_h * 0.5];
+    let radius = (line_h * 0.5 + 1.5).min(width * 0.5);
+    let label = number.to_string();
+    let [text_w, text_h] =
+        ui.current_font()
+            .calc_text_size(ui.current_font_size(), f32::MAX, 0.0, &label);
+    let dl = ui.get_window_draw_list();
+    dl.add_circle(center, radius, light.rgb())
+        .filled(true)
+        .build();
+    dl.add_text(
+        [
+            (center[0] - text_w * 0.5).round(),
+            (center[1] - text_h * 0.5).round(),
+        ],
+        crate::theme::BG,
+        &label,
+    );
+    drop(dl);
+    ui.dummy([width, line_h]);
 }
 
 /// Tile body: the member's `FrameBuf` blitted into a `size` box via a
