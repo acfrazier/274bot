@@ -69,7 +69,6 @@ struct PendingCatalogStart {
     started: bool,
 }
 
-
 /// Freeze the already-published prepared observation immediately before the
 /// actual isolate Start call. A successful Start cannot overtake its baseline.
 fn start_catalog_with_core<F>(
@@ -129,7 +128,6 @@ fn start_stashed_catalog_card(
         )
     }
 }
-
 
 /// Owned inputs captured on the UI thread and consumed by the sequential
 /// profile/template preparation worker.
@@ -416,7 +414,6 @@ fn stash_pair_starts(
     ];
     Ok(())
 }
-
 
 /// Scatter / mainland hop only on a cold world, not after a `lostCon`
 /// reconnect (that would tele the re-handshaked slot on every DC).
@@ -2528,7 +2525,6 @@ impl Session {
                 self.script_sel = Some(script::ScriptSel::Compiled(id));
                 stash_compiled_start(&self.pending_script, &names, id);
             } else if let Some(fixture) = script::live_file_fixture_path(card_name) {
-
                 let stem = script::live_file_fixture_stem(card_name)
                     .ok_or_else(|| format!("no file stem for live fixture {card_name}"))?;
                 self.js

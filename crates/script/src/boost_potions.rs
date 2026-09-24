@@ -318,7 +318,10 @@ mod tests {
             (faded, log)
         };
         use FadedOperand::{Base, Effective, Floor};
-        assert_eq!(reads(70.0, 70.0), (true, vec![Effective, Base, Base, Floor, Base]));
+        assert_eq!(
+            reads(70.0, 70.0),
+            (true, vec![Effective, Base, Base, Floor, Base])
+        );
         assert_eq!(
             reads(0.0, 0.0),
             (false, vec![Effective, Base, Base]),

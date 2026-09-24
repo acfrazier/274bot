@@ -402,8 +402,7 @@ fn a_timed_out_press_logs_the_frozen_line_from_rust() {
         "the frozen line must come from Rust: {logs:?}"
     );
     assert!(
-        logs.iter()
-            .all(|line| !line.contains("needs posted coms")),
+        logs.iter().all(|line| !line.contains("needs posted coms")),
         "the controls are posted, so the not-impl line must not appear: {logs:?}"
     );
     iso.join();

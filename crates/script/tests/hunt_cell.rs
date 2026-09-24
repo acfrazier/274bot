@@ -803,7 +803,11 @@ fn dialog_drive_stops_at_120_steps_not_120_seconds() {
     for _ in 0..260 {
         let step = call(token, proj.clone(), None);
         // Every click waits a tick before the page is read again.
-        assert_eq!(kind(&step), "delay-ticks", "after continue {continues}: {step}");
+        assert_eq!(
+            kind(&step),
+            "delay-ticks",
+            "after continue {continues}: {step}"
+        );
         assert_eq!(step["n"], 1, "{step}");
         let step = call(token, proj.clone(), None);
         if kind(&step) == "continue" {

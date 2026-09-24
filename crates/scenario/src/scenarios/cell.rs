@@ -65,9 +65,13 @@ mod tests {
             .position(|st| st.name == "start the catalog card")
             .expect("catalog Start");
         assert!(
-            s.steps[..start]
-                .iter()
-                .any(|st| matches!(st.wait.arm, Proof::Item { name: "Jail key", count: 1 })),
+            s.steps[..start].iter().any(|st| matches!(
+                st.wait.arm,
+                Proof::Item {
+                    name: "Jail key",
+                    count: 1
+                }
+            )),
             "the jail key is seeded and seen before Start"
         );
         assert_eq!(s.settings.start_file.as_deref(), Some("cell_v2.ts"));

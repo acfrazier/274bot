@@ -1244,7 +1244,11 @@ impl Acquire {
 
     fn bank(&mut self, cx: &mut Cx<'_>) -> Result<Step<Value>, Ended> {
         self.phase = AcquirePhase::Banking;
-        notify(cx, hook::SET_STATUS, &[json!(format!("fetching the {}", self.name))])?;
+        notify(
+            cx,
+            hook::SET_STATUS,
+            &[json!(format!("fetching the {}", self.name))],
+        )?;
         let site = self.site_with(json!({ "acquire": true }));
         self.child = Some(Child::Bank(Box::new(Hunt::run(site))));
         self.drive(cx)
@@ -1290,7 +1294,11 @@ impl Acquire {
             AcquirePhase::Leaving => self.bank(cx),
             AcquirePhase::Banking if !ok => Ok(Step::Done(self.state())),
             AcquirePhase::Banking if self.held() => {
-                notify(cx, hook::LOG, &[json!(format!("took the {} out of the bank", self.name))])?;
+                notify(
+                    cx,
+                    hook::LOG,
+                    &[json!(format!("took the {} out of the bank", self.name))],
+                )?;
                 Ok(Step::Done(self.state()))
             }
             AcquirePhase::Banking => {
@@ -1300,7 +1308,11 @@ impl Acquire {
             }
             AcquirePhase::Fetching => {
                 if ok {
-                    notify(cx, hook::LOG, &[json!(format!("Velrak handed over the {}", self.name))])?;
+                    notify(
+                        cx,
+                        hook::LOG,
+                        &[json!(format!("Velrak handed over the {}", self.name))],
+                    )?;
                 }
                 if self.fetches < VELRAK_FETCHES && !self.held() {
                     return self.fetch(cx);

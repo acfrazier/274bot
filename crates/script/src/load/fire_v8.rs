@@ -9,7 +9,9 @@
 //! - `noLight*`: the `NoLightTiles` set held in Rust ([`crate::fire`]); the JS
 //!   instance passes only its slot.
 
-use super::callback_v8::{self as cb, get, not_impl, number, Callback, Flow, ForOf, JsResult, Poll};
+use super::callback_v8::{
+    self as cb, get, not_impl, number, Callback, Flow, ForOf, JsResult, Poll,
+};
 use crate::fire;
 use rustyscript::Runtime;
 
@@ -111,7 +113,13 @@ fn local_fire_plot<'s>(
     let z1 = cb::add(scope, z, h)?;
     cb::object(
         scope,
-        &[("bank", bank), ("x0", x0), ("x1", x1), ("z0", z0), ("z1", z1)],
+        &[
+            ("bank", bank),
+            ("x0", x0),
+            ("x1", x1),
+            ("z0", z0),
+            ("z1", z1),
+        ],
     )
 }
 
@@ -195,7 +203,12 @@ fn in_fire_plot<'s>(
     t: v8::Local<'s, v8::Value>,
     plot: v8::Local<'s, v8::Value>,
 ) -> JsResult<'s, bool> {
-    for (axis, bound, inclusive_low) in [("x", "x0", true), ("x", "x1", false), ("z", "z0", true), ("z", "z1", false)] {
+    for (axis, bound, inclusive_low) in [
+        ("x", "x0", true),
+        ("x", "x1", false),
+        ("z", "z0", true),
+        ("z", "z1", false),
+    ] {
         let value = get(scope, t, axis)?;
         let edge = get(scope, plot, bound)?;
         let inside = if inclusive_low {
@@ -228,12 +241,18 @@ fn tile_key<'s>(
 }
 
 /// The registry key for a tile (the frozen `Set<string>` key).
-fn registry_key<'s>(scope: &mut v8::HandleScope<'s>, t: v8::Local<'s, v8::Value>) -> JsResult<'s, String> {
+fn registry_key<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    t: v8::Local<'s, v8::Value>,
+) -> JsResult<'s, String> {
     let key = tile_key(scope, t)?;
     Ok(key.to_rust_string_lossy(scope))
 }
 
-fn slot<'s>(scope: &mut v8::HandleScope<'s>, value: v8::Local<'s, v8::Value>) -> JsResult<'s, usize> {
+fn slot<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    value: v8::Local<'s, v8::Value>,
+) -> JsResult<'s, usize> {
     let slot = number(scope, value)?;
     if slot.is_finite() && slot >= 0.0 && slot.fract() == 0.0 {
         Ok(slot as usize)

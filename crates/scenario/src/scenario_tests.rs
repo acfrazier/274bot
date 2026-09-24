@@ -1468,7 +1468,6 @@ fn nav_full_is_a_mainland_follow_to_a_cross_square_destination() {
             "cell_v2_ts",
             "bank_v2_ts",
             "bone_burier",
-
             "lamp_redemption",
             "bone_burier_v2_ts",
             "bone_burier_v2_js",
@@ -1620,7 +1619,6 @@ fn nav_full_is_a_mainland_follow_to_a_cross_square_destination() {
             "sherlock_dig",
             "sherlock_coord",
             "duel_arena",
-
         ]
     );
 }
@@ -12467,18 +12465,8 @@ fn ranging_guild_full_orders_bought_banked_continuation_and_empty_coin_rails() {
 #[test]
 fn sherlock_scenarios_start_the_compiled_card_with_one_seeded_clue() {
     let cases: [(&str, i32, &str, &[&str]); 4] = [
-        (
-            "sherlock_talk",
-            2681,
-            "trail_clue_easy_simple005",
-            &[],
-        ),
-        (
-            "sherlock_search",
-            2679,
-            "trail_clue_easy_simple003",
-            &[],
-        ),
+        ("sherlock_talk", 2681, "trail_clue_easy_simple005", &[]),
+        ("sherlock_search", 2679, "trail_clue_easy_simple003", &[]),
         (
             "sherlock_dig",
             2827,
@@ -12547,10 +12535,7 @@ fn sherlock_scenarios_start_the_compiled_card_with_one_seeded_clue() {
             "{name} must seed {clue_give}: {written}"
         );
         for tool in tools {
-            assert!(
-                written.contains(tool),
-                "{name} must seed {tool}: {written}"
-            );
+            assert!(written.contains(tool), "{name} must seed {tool}: {written}");
         }
         assert!(
             scenario.steps.iter().any(|step| {
@@ -12564,4 +12549,3 @@ fn sherlock_scenarios_start_the_compiled_card_with_one_seeded_clue() {
         assert!(names().contains(&name));
     }
 }
-

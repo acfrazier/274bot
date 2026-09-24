@@ -62,7 +62,6 @@ pub fn compiled_id(name: &str) -> Option<CompiledId> {
     compiled_ids().iter().copied().find(|id| id.0 == name)
 }
 
-
 /// True when `name` is a known whale script (listed in the 274 client but
 /// out of scope for this host).
 pub fn is_whale(name: &str) -> bool {

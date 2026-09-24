@@ -47,7 +47,11 @@ fn run<'s>(
         return cb::object(scope, &[("target", target), ("blocked", null)]);
     }
     let first = cb::get_index(scope, candidates, 0)?;
-    let blocked = if first.is_null_or_undefined() { null } else { first };
+    let blocked = if first.is_null_or_undefined() {
+        null
+    } else {
+        first
+    };
     cb::object(scope, &[("target", null), ("blocked", blocked)])
 }
 

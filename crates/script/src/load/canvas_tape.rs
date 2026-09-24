@@ -59,8 +59,8 @@ pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
     let global = context.open(&mut scope).global(&mut scope);
     let name = v8::String::new(&mut scope, "__rs2b0t_canvas_submit")
         .ok_or_else(|| "canvas tape name".to_string())?;
-    let func =
-        v8::Function::new(&mut scope, submit_callback).ok_or_else(|| "canvas tape fn".to_string())?;
+    let func = v8::Function::new(&mut scope, submit_callback)
+        .ok_or_else(|| "canvas tape fn".to_string())?;
     global
         .set(&mut scope, name.into(), func.into())
         .ok_or_else(|| "canvas tape set".to_string())?;
@@ -108,7 +108,10 @@ fn run(scope: &mut v8::HandleScope, args: &v8::FunctionCallbackArguments) -> Res
 }
 
 /// The ctx's deduplicated string table: prop names, text and colors.
-fn string_table(scope: &mut v8::HandleScope, value: v8::Local<v8::Value>) -> Result<Vec<String>, String> {
+fn string_table(
+    scope: &mut v8::HandleScope,
+    value: v8::Local<v8::Value>,
+) -> Result<Vec<String>, String> {
     let arr = v8::Local::<v8::Array>::try_from(value)
         .map_err(|_| "canvas tape: expected a string table".to_string())?;
     let len = arr.length();
@@ -150,9 +153,7 @@ fn replay(tape: &[f64], strs: &[String]) -> Result<(), String> {
             MOVE_TO => crate::canvas::move_to(args[0], args[1]),
             LINE_TO => crate::canvas::line_to(args[0], args[1]),
             QUAD_TO => crate::canvas::quadratic_curve_to(args[0], args[1], args[2], args[3]),
-            ARC => {
-                crate::canvas::arc(args[0], args[1], args[2], args[3], args[4], args[5] != 0.0)?
-            }
+            ARC => crate::canvas::arc(args[0], args[1], args[2], args[3], args[4], args[5] != 0.0)?,
             FILL => crate::canvas::fill(),
             STROKE => crate::canvas::stroke(),
             CLIP => crate::canvas::clip(),

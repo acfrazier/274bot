@@ -988,7 +988,11 @@ fn velrak_find(rt: &mut CellRuntime, proj: &CellProj) -> Value {
         return decide(rt, proj);
     }
     let Some(npc) = nearest_velrak(&obs) else {
-        return talk_failed(rt, proj, &format!("no {VELRAK_NAME} in the cell. Retrying."));
+        return talk_failed(
+            rt,
+            proj,
+            &format!("no {VELRAK_NAME} in the cell. Retrying."),
+        );
     };
     let dist = obs
         .here
@@ -1006,7 +1010,11 @@ fn ack_velrak_walk(rt: &mut CellRuntime, proj: &CellProj) -> Value {
         return stop;
     }
     let Some(npc) = nearest_velrak(&obs) else {
-        return talk_failed(rt, proj, &format!("{VELRAK_NAME} refused the talk. Retrying."));
+        return talk_failed(
+            rt,
+            proj,
+            &format!("{VELRAK_NAME} refused the talk. Retrying."),
+        );
     };
     let dist = obs
         .here
@@ -1020,14 +1028,22 @@ fn ack_velrak_walk(rt: &mut CellRuntime, proj: &CellProj) -> Value {
             rt.velrak_reclick = 1;
             return emit_walk_to(rt, npc.tile, true);
         }
-        return talk_failed(rt, proj, &format!("{VELRAK_NAME} refused the talk. Retrying."));
+        return talk_failed(
+            rt,
+            proj,
+            &format!("{VELRAK_NAME} refused the talk. Retrying."),
+        );
     }
     rt.emit(json!({ "kind": "delay-ticks", "n": 1 }))
 }
 
 fn emit_talk(rt: &mut CellRuntime, proj: &CellProj, npc: &CellNpc) -> Value {
     let Some(action) = talk_action(&npc.actions) else {
-        return talk_failed(rt, proj, &format!("{VELRAK_NAME} refused the talk. Retrying."));
+        return talk_failed(
+            rt,
+            proj,
+            &format!("{VELRAK_NAME} refused the talk. Retrying."),
+        );
     };
     rt.click_acked = false;
     rt.phase = Phase::AckTalk;
@@ -1047,7 +1063,11 @@ fn ack_talk(rt: &mut CellRuntime, proj: &CellProj, reply: Option<&Value>) -> Val
     }
     if !rt.click_acked {
         if !reply_flag(reply, "queued") {
-            return talk_failed(rt, proj, &format!("{VELRAK_NAME} refused the talk. Retrying."));
+            return talk_failed(
+                rt,
+                proj,
+                &format!("{VELRAK_NAME} refused the talk. Retrying."),
+            );
         }
         rt.click_acked = true;
     }

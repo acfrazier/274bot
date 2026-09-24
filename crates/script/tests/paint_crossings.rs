@@ -104,7 +104,10 @@ fn examplebot_paint_pass_stays_within_the_tape_budget() {
         "ExampleBot canvas crossings per paint pass: {calls} (begin + measure + flush + done)"
     );
     let steady = pass_crossings(&iso, 3);
-    assert_eq!(steady, calls, "a later pass costs the same: {steady} vs {calls}");
+    assert_eq!(
+        steady, calls,
+        "a later pass costs the same: {steady} vs {calls}"
+    );
     iso.join();
 }
 

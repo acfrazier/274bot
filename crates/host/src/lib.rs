@@ -1750,7 +1750,8 @@ mod tests {
         assert!(!quiet_again.dirty.any());
         publish_snapshot(&mut snapshot, &client, quiet_again);
         assert_eq!(
-            snapshot.scene().collision_flags, flags_before,
+            snapshot.scene().collision_flags,
+            flags_before,
             "a later quiet drain must not copy the grid without a scene gen or identity change"
         );
     }

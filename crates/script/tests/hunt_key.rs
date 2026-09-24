@@ -935,7 +935,9 @@ export async function tick(api) {
         .filter(|req| {
             matches!(
                 req,
-                InteractReq::Walk { .. } | InteractReq::WalkNear { .. } | InteractReq::WalkTo { .. }
+                InteractReq::Walk { .. }
+                    | InteractReq::WalkNear { .. }
+                    | InteractReq::WalkTo { .. }
             )
         })
         .collect();

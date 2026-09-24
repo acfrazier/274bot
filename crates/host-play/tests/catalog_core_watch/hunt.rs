@@ -298,8 +298,7 @@ fn walk_spot_passes_only_on_the_hosts_long_walk_and_arrival() {
 
 fn enter_receipt(outcome: Value, from: LineOfSightTile, here: LineOfSightTile) -> Value {
     let mut receipt = hunt_receipt(outcome, from, here, ht(3210, 3201));
-    receipt["box"] =
-        json!({ "minX": 3209, "maxX": 3211, "minZ": 3200, "maxZ": 3202, "level": 0 });
+    receipt["box"] = json!({ "minX": 3209, "maxX": 3211, "minZ": 3200, "maxZ": 3202, "level": 0 });
     receipt["key"] = json!("enter-lair");
     receipt
 }
@@ -351,7 +350,10 @@ fn leave_lair_passes_only_on_the_hosts_walk_out_of_the_start_box() {
         .at(out)
         .paint(leave_receipt(done(json!(true)), from, out))
         .stop();
-    assert!(real, "walked out of the Start box, settled true, named stop");
+    assert!(
+        real,
+        "walked out of the Start box, settled true, named stop"
+    );
 
     let no_op = HuntRun::start("leave_lair_v2_ts", from)
         .paint(leave_receipt(done(json!(true)), from, from))
@@ -558,7 +560,11 @@ fn bank_passes_only_on_the_hosts_approach_walk_and_a_restock() {
     );
     assert!(
         !trip(
-            &[approach.clone(), booth_approach(stand), walk_act(ht(2960, 3390), false, 0, false)],
+            &[
+                approach.clone(),
+                booth_approach(stand),
+                walk_act(ht(2960, 3390), false, 0, false)
+            ],
             true,
             done(json!(true))
         ),

@@ -641,7 +641,9 @@ fn render_native_v2(out: &mut String) {
     out.push_str("  runeBuffer?: number;\n");
     out.push_str("  escapeStock?: number;\n");
     out.push_str("  ammo?: number;\n");
-    out.push_str("  potions?: Array<{ flask: string; potion: { doses: string[] }; want: number }>;\n");
+    out.push_str(
+        "  potions?: Array<{ flask: string; potion: { doses: string[] }; want: number }>;\n",
+    );
     out.push_str("  flasks?: Array<{ flask: string; doses: string[]; want: number }>;\n");
     out.push_str("  healTo?: number;\n");
     out.push_str("}\n");

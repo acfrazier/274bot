@@ -994,7 +994,6 @@ impl GameSnapshot {
         self.loc_model_stamp
     }
 
-
     /// Rebuild `family` from `client` iff its gen moved since the last
     /// rebuild of that family. Returns true iff the gen moved. The npc/
     /// player/stat families rebuild their view caches; the rest track

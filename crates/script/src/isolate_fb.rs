@@ -405,7 +405,6 @@ const VT_IN_INSPECT_ACK_GENERATION: VOffsetT = 64;
 // InteractBatch: { reqs: [Interact] }
 const VT_REQS: VOffsetT = 4;
 
-
 /// A game tile `{x, z, level}`.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct TileInput {
@@ -3865,7 +3864,6 @@ impl IsolateBuf {
         encode_interact_batch_into(&mut self.builder, reqs);
         self.copy_finished()
     }
-
 }
 
 /// Encode `input` as a root-`Snapshot` FlatBuffer carrying every field —

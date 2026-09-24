@@ -654,7 +654,10 @@ fn parse_flasks(input: &Value) -> Vec<FlaskPlan> {
             .unwrap_or("")
             .to_string(),
         want: opt_i32(&plan, "want").unwrap_or(0),
-        doses: plan.get("potion").map(|p| strings(p, "doses")).unwrap_or_default(),
+        doses: plan
+            .get("potion")
+            .map(|p| strings(p, "doses"))
+            .unwrap_or_default(),
     });
     let flasks = rows("flasks").into_iter().map(|plan| FlaskPlan {
         name: plan
@@ -1485,7 +1488,10 @@ fn after_food(rt: &BankRuntime, proj: &BankProj) -> Stage {
 /// from Velrak (frozen `if (!fromBank) withdrawFoodTo(h)`).
 fn wants_food(rt: &BankRuntime, proj: &BankProj) -> bool {
     if proj.acquire {
-        return rt.plan.as_ref().is_some_and(|plan| plan.key == KeyArm::Fetch);
+        return rt
+            .plan
+            .as_ref()
+            .is_some_and(|plan| plan.key == KeyArm::Fetch);
     }
     proj.withdraw_food
 }
@@ -1831,8 +1837,11 @@ fn escape_runes(rt: &mut BankRuntime, proj: &BankProj) -> Option<Value> {
     if !rt.escape_checked {
         rt.escape_checked = true;
         if let Some(esc) = escape_fact(proj) {
-            let per_cast: Vec<(String, i32)> =
-                esc.runes.iter().map(|r| (r.rune.clone(), r.count)).collect();
+            let per_cast: Vec<(String, i32)> = esc
+                .runes
+                .iter()
+                .map(|r| (r.rune.clone(), r.count))
+                .collect();
             if let Some(why) = crate::hunt::escape_shortfall(esc.level, &per_cast) {
                 rt.log(format!(
                     "WARNING: the {} cannot be cast ({why}). The next trip walks out through the gate.",

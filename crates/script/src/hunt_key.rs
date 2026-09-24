@@ -271,8 +271,7 @@ impl KeyRuntime {
     }
 
     fn note(&mut self, kind: &str, message: &str) {
-        self.notes
-            .push(json!({ "kind": kind, "message": message }));
+        self.notes.push(json!({ "kind": kind, "message": message }));
     }
 
     fn yield_value(&mut self, value: bool) -> Value {

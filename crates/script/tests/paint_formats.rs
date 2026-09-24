@@ -244,62 +244,277 @@ const ETA: &[(&str, &str, &str)] = &[
 
 /// `levelRow(gain, mins)` as `label|fraction|perHour|toGo|eta`.
 const LEVEL_ROW: &[(&str, &str, &str)] = &[
-    ("{skill:'crafting',level:1,xp:0,gained:0}", "0", "Craft 1|0|xp/hr n/a|83 to go|eta n/a"),
-    ("{skill:'crafting',level:1,xp:0,gained:0}", "0.4", "Craft 1|0|xp/hr n/a|83 to go|eta n/a"),
-    ("{skill:'crafting',level:1,xp:0,gained:0}", "0.5", "Craft 1|0|xp/hr n/a|83 to go|eta n/a"),
-    ("{skill:'crafting',level:1,xp:0,gained:0}", "0.6", "Craft 1|0|0.0k/hr|83 to go|eta n/a"),
-    ("{skill:'crafting',level:1,xp:0,gained:0}", "1", "Craft 1|0|0.0k/hr|83 to go|eta n/a"),
-    ("{skill:'crafting',level:1,xp:0,gained:0}", "10", "Craft 1|0|0.0k/hr|83 to go|eta n/a"),
-    ("{skill:'crafting',level:1,xp:0,gained:0}", "59.9", "Craft 1|0|0.0k/hr|83 to go|eta n/a"),
-    ("{skill:'crafting',level:1,xp:0,gained:0}", "1440", "Craft 1|0|0.0k/hr|83 to go|eta n/a"),
-    ("{skill:'crafting',level:1,xp:0,gained:0}", "NaN", "Craft 1|0|xp/hr n/a|83 to go|eta n/a"),
-    ("{skill:'magic',level:1,xp:0,gained:4000}", "0", "Mage 1|0|xp/hr n/a|83 to go|eta n/a"),
-    ("{skill:'magic',level:1,xp:0,gained:4000}", "0.4", "Mage 1|0|xp/hr n/a|83 to go|eta n/a"),
-    ("{skill:'magic',level:1,xp:0,gained:4000}", "0.5", "Mage 1|0|xp/hr n/a|83 to go|eta n/a"),
-    ("{skill:'magic',level:1,xp:0,gained:4000}", "0.6", "Mage 1|0|400.0k/hr|83 to go|eta 0:00:00"),
-    ("{skill:'magic',level:1,xp:0,gained:4000}", "1", "Mage 1|0|240.0k/hr|83 to go|eta 0:00:01"),
-    ("{skill:'magic',level:1,xp:0,gained:4000}", "10", "Mage 1|0|24.0k/hr|83 to go|eta 0:00:12"),
-    ("{skill:'magic',level:1,xp:0,gained:4000}", "59.9", "Mage 1|0|4.0k/hr|83 to go|eta 0:01:14"),
-    ("{skill:'magic',level:1,xp:0,gained:4000}", "1440", "Mage 1|0|0.2k/hr|83 to go|eta 0:29:52"),
-    ("{skill:'magic',level:1,xp:0,gained:4000}", "NaN", "Mage 1|0|xp/hr n/a|83 to go|eta n/a"),
-    ("{skill:'attack',level:70,xp:737627,gained:7000}", "0", "Att 70|0|xp/hr n/a|76,818 to go|eta n/a"),
-    ("{skill:'attack',level:70,xp:737627,gained:7000}", "0.4", "Att 70|0|xp/hr n/a|76,818 to go|eta n/a"),
-    ("{skill:'attack',level:70,xp:737627,gained:7000}", "0.5", "Att 70|0|xp/hr n/a|76,818 to go|eta n/a"),
-    ("{skill:'attack',level:70,xp:737627,gained:7000}", "0.6", "Att 70|0|700.0k/hr|76,818 to go|eta 0:06:35"),
-    ("{skill:'attack',level:70,xp:737627,gained:7000}", "1", "Att 70|0|420.0k/hr|76,818 to go|eta 0:10:58"),
-    ("{skill:'attack',level:70,xp:737627,gained:7000}", "10", "Att 70|0|42.0k/hr|76,818 to go|eta 1:49:44"),
-    ("{skill:'attack',level:70,xp:737627,gained:7000}", "59.9", "Att 70|0|7.0k/hr|76,818 to go|eta 10:57:20"),
-    ("{skill:'attack',level:70,xp:737627,gained:7000}", "1440", "Att 70|0|0.3k/hr|76,818 to go|eta 263:22:33"),
-    ("{skill:'attack',level:70,xp:737627,gained:7000}", "NaN", "Att 70|0|xp/hr n/a|76,818 to go|eta n/a"),
-    ("{skill:'hitpoints',level:99,xp:13034431,gained:1000}", "0", "HP 99|1|xp/hr n/a|maxed|"),
-    ("{skill:'hitpoints',level:99,xp:13034431,gained:1000}", "0.4", "HP 99|1|xp/hr n/a|maxed|"),
-    ("{skill:'hitpoints',level:99,xp:13034431,gained:1000}", "0.5", "HP 99|1|xp/hr n/a|maxed|"),
-    ("{skill:'hitpoints',level:99,xp:13034431,gained:1000}", "0.6", "HP 99|1|100.0k/hr|maxed|"),
-    ("{skill:'hitpoints',level:99,xp:13034431,gained:1000}", "1", "HP 99|1|60.0k/hr|maxed|"),
-    ("{skill:'hitpoints',level:99,xp:13034431,gained:1000}", "10", "HP 99|1|6.0k/hr|maxed|"),
-    ("{skill:'hitpoints',level:99,xp:13034431,gained:1000}", "59.9", "HP 99|1|1.0k/hr|maxed|"),
-    ("{skill:'hitpoints',level:99,xp:13034431,gained:1000}", "1440", "HP 99|1|0.0k/hr|maxed|"),
-    ("{skill:'hitpoints',level:99,xp:13034431,gained:1000}", "NaN", "HP 99|1|xp/hr n/a|maxed|"),
-    ("{skill:'ranged',level:98,xp:12000000,gained:0}", "0", "Range 98|0.15819502370150346|xp/hr n/a|1,034,431 to go|eta n/a"),
-    ("{skill:'ranged',level:98,xp:12000000,gained:0}", "0.4", "Range 98|0.15819502370150346|xp/hr n/a|1,034,431 to go|eta n/a"),
-    ("{skill:'ranged',level:98,xp:12000000,gained:0}", "0.5", "Range 98|0.15819502370150346|xp/hr n/a|1,034,431 to go|eta n/a"),
-    ("{skill:'ranged',level:98,xp:12000000,gained:0}", "0.6", "Range 98|0.15819502370150346|0.0k/hr|1,034,431 to go|eta n/a"),
-    ("{skill:'ranged',level:98,xp:12000000,gained:0}", "1", "Range 98|0.15819502370150346|0.0k/hr|1,034,431 to go|eta n/a"),
-    ("{skill:'ranged',level:98,xp:12000000,gained:0}", "10", "Range 98|0.15819502370150346|0.0k/hr|1,034,431 to go|eta n/a"),
-    ("{skill:'ranged',level:98,xp:12000000,gained:0}", "59.9", "Range 98|0.15819502370150346|0.0k/hr|1,034,431 to go|eta n/a"),
-    ("{skill:'ranged',level:98,xp:12000000,gained:0}", "1440", "Range 98|0.15819502370150346|0.0k/hr|1,034,431 to go|eta n/a"),
-    ("{skill:'ranged',level:98,xp:12000000,gained:0}", "NaN", "Range 98|0.15819502370150346|xp/hr n/a|1,034,431 to go|eta n/a"),
-    ("{skill:'slayer',level:45,xp:61512,gained:20}", "0", "slayer 45|0|xp/hr n/a|6,471 to go|eta n/a"),
-    ("{skill:'slayer',level:45,xp:61512,gained:20}", "0.4", "slayer 45|0|xp/hr n/a|6,471 to go|eta n/a"),
-    ("{skill:'slayer',level:45,xp:61512,gained:20}", "0.5", "slayer 45|0|xp/hr n/a|6,471 to go|eta n/a"),
-    ("{skill:'slayer',level:45,xp:61512,gained:20}", "0.6", "slayer 45|0|2.0k/hr|6,471 to go|eta 3:14:07"),
-    ("{skill:'slayer',level:45,xp:61512,gained:20}", "1", "slayer 45|0|1.2k/hr|6,471 to go|eta 5:23:33"),
-    ("{skill:'slayer',level:45,xp:61512,gained:20}", "10", "slayer 45|0|0.1k/hr|6,471 to go|eta 53:55:30"),
-    ("{skill:'slayer',level:45,xp:61512,gained:20}", "59.9", "slayer 45|0|0.0k/hr|6,471 to go|eta 323:00:38"),
-    ("{skill:'slayer',level:45,xp:61512,gained:20}", "1440", "slayer 45|0|0.0k/hr|6,471 to go|eta 7765:12:00"),
-    ("{skill:'slayer',level:45,xp:61512,gained:20}", "NaN", "slayer 45|0|xp/hr n/a|6,471 to go|eta n/a"),
+    (
+        "{skill:'crafting',level:1,xp:0,gained:0}",
+        "0",
+        "Craft 1|0|xp/hr n/a|83 to go|eta n/a",
+    ),
+    (
+        "{skill:'crafting',level:1,xp:0,gained:0}",
+        "0.4",
+        "Craft 1|0|xp/hr n/a|83 to go|eta n/a",
+    ),
+    (
+        "{skill:'crafting',level:1,xp:0,gained:0}",
+        "0.5",
+        "Craft 1|0|xp/hr n/a|83 to go|eta n/a",
+    ),
+    (
+        "{skill:'crafting',level:1,xp:0,gained:0}",
+        "0.6",
+        "Craft 1|0|0.0k/hr|83 to go|eta n/a",
+    ),
+    (
+        "{skill:'crafting',level:1,xp:0,gained:0}",
+        "1",
+        "Craft 1|0|0.0k/hr|83 to go|eta n/a",
+    ),
+    (
+        "{skill:'crafting',level:1,xp:0,gained:0}",
+        "10",
+        "Craft 1|0|0.0k/hr|83 to go|eta n/a",
+    ),
+    (
+        "{skill:'crafting',level:1,xp:0,gained:0}",
+        "59.9",
+        "Craft 1|0|0.0k/hr|83 to go|eta n/a",
+    ),
+    (
+        "{skill:'crafting',level:1,xp:0,gained:0}",
+        "1440",
+        "Craft 1|0|0.0k/hr|83 to go|eta n/a",
+    ),
+    (
+        "{skill:'crafting',level:1,xp:0,gained:0}",
+        "NaN",
+        "Craft 1|0|xp/hr n/a|83 to go|eta n/a",
+    ),
+    (
+        "{skill:'magic',level:1,xp:0,gained:4000}",
+        "0",
+        "Mage 1|0|xp/hr n/a|83 to go|eta n/a",
+    ),
+    (
+        "{skill:'magic',level:1,xp:0,gained:4000}",
+        "0.4",
+        "Mage 1|0|xp/hr n/a|83 to go|eta n/a",
+    ),
+    (
+        "{skill:'magic',level:1,xp:0,gained:4000}",
+        "0.5",
+        "Mage 1|0|xp/hr n/a|83 to go|eta n/a",
+    ),
+    (
+        "{skill:'magic',level:1,xp:0,gained:4000}",
+        "0.6",
+        "Mage 1|0|400.0k/hr|83 to go|eta 0:00:00",
+    ),
+    (
+        "{skill:'magic',level:1,xp:0,gained:4000}",
+        "1",
+        "Mage 1|0|240.0k/hr|83 to go|eta 0:00:01",
+    ),
+    (
+        "{skill:'magic',level:1,xp:0,gained:4000}",
+        "10",
+        "Mage 1|0|24.0k/hr|83 to go|eta 0:00:12",
+    ),
+    (
+        "{skill:'magic',level:1,xp:0,gained:4000}",
+        "59.9",
+        "Mage 1|0|4.0k/hr|83 to go|eta 0:01:14",
+    ),
+    (
+        "{skill:'magic',level:1,xp:0,gained:4000}",
+        "1440",
+        "Mage 1|0|0.2k/hr|83 to go|eta 0:29:52",
+    ),
+    (
+        "{skill:'magic',level:1,xp:0,gained:4000}",
+        "NaN",
+        "Mage 1|0|xp/hr n/a|83 to go|eta n/a",
+    ),
+    (
+        "{skill:'attack',level:70,xp:737627,gained:7000}",
+        "0",
+        "Att 70|0|xp/hr n/a|76,818 to go|eta n/a",
+    ),
+    (
+        "{skill:'attack',level:70,xp:737627,gained:7000}",
+        "0.4",
+        "Att 70|0|xp/hr n/a|76,818 to go|eta n/a",
+    ),
+    (
+        "{skill:'attack',level:70,xp:737627,gained:7000}",
+        "0.5",
+        "Att 70|0|xp/hr n/a|76,818 to go|eta n/a",
+    ),
+    (
+        "{skill:'attack',level:70,xp:737627,gained:7000}",
+        "0.6",
+        "Att 70|0|700.0k/hr|76,818 to go|eta 0:06:35",
+    ),
+    (
+        "{skill:'attack',level:70,xp:737627,gained:7000}",
+        "1",
+        "Att 70|0|420.0k/hr|76,818 to go|eta 0:10:58",
+    ),
+    (
+        "{skill:'attack',level:70,xp:737627,gained:7000}",
+        "10",
+        "Att 70|0|42.0k/hr|76,818 to go|eta 1:49:44",
+    ),
+    (
+        "{skill:'attack',level:70,xp:737627,gained:7000}",
+        "59.9",
+        "Att 70|0|7.0k/hr|76,818 to go|eta 10:57:20",
+    ),
+    (
+        "{skill:'attack',level:70,xp:737627,gained:7000}",
+        "1440",
+        "Att 70|0|0.3k/hr|76,818 to go|eta 263:22:33",
+    ),
+    (
+        "{skill:'attack',level:70,xp:737627,gained:7000}",
+        "NaN",
+        "Att 70|0|xp/hr n/a|76,818 to go|eta n/a",
+    ),
+    (
+        "{skill:'hitpoints',level:99,xp:13034431,gained:1000}",
+        "0",
+        "HP 99|1|xp/hr n/a|maxed|",
+    ),
+    (
+        "{skill:'hitpoints',level:99,xp:13034431,gained:1000}",
+        "0.4",
+        "HP 99|1|xp/hr n/a|maxed|",
+    ),
+    (
+        "{skill:'hitpoints',level:99,xp:13034431,gained:1000}",
+        "0.5",
+        "HP 99|1|xp/hr n/a|maxed|",
+    ),
+    (
+        "{skill:'hitpoints',level:99,xp:13034431,gained:1000}",
+        "0.6",
+        "HP 99|1|100.0k/hr|maxed|",
+    ),
+    (
+        "{skill:'hitpoints',level:99,xp:13034431,gained:1000}",
+        "1",
+        "HP 99|1|60.0k/hr|maxed|",
+    ),
+    (
+        "{skill:'hitpoints',level:99,xp:13034431,gained:1000}",
+        "10",
+        "HP 99|1|6.0k/hr|maxed|",
+    ),
+    (
+        "{skill:'hitpoints',level:99,xp:13034431,gained:1000}",
+        "59.9",
+        "HP 99|1|1.0k/hr|maxed|",
+    ),
+    (
+        "{skill:'hitpoints',level:99,xp:13034431,gained:1000}",
+        "1440",
+        "HP 99|1|0.0k/hr|maxed|",
+    ),
+    (
+        "{skill:'hitpoints',level:99,xp:13034431,gained:1000}",
+        "NaN",
+        "HP 99|1|xp/hr n/a|maxed|",
+    ),
+    (
+        "{skill:'ranged',level:98,xp:12000000,gained:0}",
+        "0",
+        "Range 98|0.15819502370150346|xp/hr n/a|1,034,431 to go|eta n/a",
+    ),
+    (
+        "{skill:'ranged',level:98,xp:12000000,gained:0}",
+        "0.4",
+        "Range 98|0.15819502370150346|xp/hr n/a|1,034,431 to go|eta n/a",
+    ),
+    (
+        "{skill:'ranged',level:98,xp:12000000,gained:0}",
+        "0.5",
+        "Range 98|0.15819502370150346|xp/hr n/a|1,034,431 to go|eta n/a",
+    ),
+    (
+        "{skill:'ranged',level:98,xp:12000000,gained:0}",
+        "0.6",
+        "Range 98|0.15819502370150346|0.0k/hr|1,034,431 to go|eta n/a",
+    ),
+    (
+        "{skill:'ranged',level:98,xp:12000000,gained:0}",
+        "1",
+        "Range 98|0.15819502370150346|0.0k/hr|1,034,431 to go|eta n/a",
+    ),
+    (
+        "{skill:'ranged',level:98,xp:12000000,gained:0}",
+        "10",
+        "Range 98|0.15819502370150346|0.0k/hr|1,034,431 to go|eta n/a",
+    ),
+    (
+        "{skill:'ranged',level:98,xp:12000000,gained:0}",
+        "59.9",
+        "Range 98|0.15819502370150346|0.0k/hr|1,034,431 to go|eta n/a",
+    ),
+    (
+        "{skill:'ranged',level:98,xp:12000000,gained:0}",
+        "1440",
+        "Range 98|0.15819502370150346|0.0k/hr|1,034,431 to go|eta n/a",
+    ),
+    (
+        "{skill:'ranged',level:98,xp:12000000,gained:0}",
+        "NaN",
+        "Range 98|0.15819502370150346|xp/hr n/a|1,034,431 to go|eta n/a",
+    ),
+    (
+        "{skill:'slayer',level:45,xp:61512,gained:20}",
+        "0",
+        "slayer 45|0|xp/hr n/a|6,471 to go|eta n/a",
+    ),
+    (
+        "{skill:'slayer',level:45,xp:61512,gained:20}",
+        "0.4",
+        "slayer 45|0|xp/hr n/a|6,471 to go|eta n/a",
+    ),
+    (
+        "{skill:'slayer',level:45,xp:61512,gained:20}",
+        "0.5",
+        "slayer 45|0|xp/hr n/a|6,471 to go|eta n/a",
+    ),
+    (
+        "{skill:'slayer',level:45,xp:61512,gained:20}",
+        "0.6",
+        "slayer 45|0|2.0k/hr|6,471 to go|eta 3:14:07",
+    ),
+    (
+        "{skill:'slayer',level:45,xp:61512,gained:20}",
+        "1",
+        "slayer 45|0|1.2k/hr|6,471 to go|eta 5:23:33",
+    ),
+    (
+        "{skill:'slayer',level:45,xp:61512,gained:20}",
+        "10",
+        "slayer 45|0|0.1k/hr|6,471 to go|eta 53:55:30",
+    ),
+    (
+        "{skill:'slayer',level:45,xp:61512,gained:20}",
+        "59.9",
+        "slayer 45|0|0.0k/hr|6,471 to go|eta 323:00:38",
+    ),
+    (
+        "{skill:'slayer',level:45,xp:61512,gained:20}",
+        "1440",
+        "slayer 45|0|0.0k/hr|6,471 to go|eta 7765:12:00",
+    ),
+    (
+        "{skill:'slayer',level:45,xp:61512,gained:20}",
+        "NaN",
+        "slayer 45|0|xp/hr n/a|6,471 to go|eta n/a",
+    ),
 ];
-
 
 #[test]
 fn fmt_duration_matches_the_frozen_reference() {
@@ -358,7 +573,10 @@ fn level_progress_matches_the_frozen_reference() {
 fn eta_hours_matches_the_frozen_reference() {
     let iso = spawn();
     for (remaining, rate, want) in ETA {
-        let got = probe_str(&iso, &format!("String(__f12.etaHours({remaining}, {rate}))"));
+        let got = probe_str(
+            &iso,
+            &format!("String(__f12.etaHours({remaining}, {rate}))"),
+        );
         assert_eq!(got, *want, "etaHours({remaining}, {rate})");
     }
     iso.join();

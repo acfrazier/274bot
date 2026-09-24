@@ -387,7 +387,6 @@ const REGISTRY: &[Entry] = &[
     Entry::new("sherlock_search", scenarios::sherlock_search_scenario),
     Entry::new("sherlock_dig", scenarios::sherlock_dig_scenario),
     Entry::new("sherlock_coord", scenarios::sherlock_coord_scenario),
-
     Entry::new("duel_arena", scenarios::duel_arena_scenario),
 ];
 

@@ -672,7 +672,9 @@ export default class T extends LoopingBot {{
         vec![],
     )
     .unwrap();
-    iso.post_snapshot(script::isolate_fb::encode_snapshot(&empty_snapshot(1, here)));
+    iso.post_snapshot(script::isolate_fb::encode_snapshot(&empty_snapshot(
+        1, here,
+    )));
     iso.on_game_tick(1);
     let status = iso.probe("globalThis.__status").unwrap_or(Value::Null);
     let drained = iso.drain_interacts();
@@ -727,7 +729,9 @@ fn retreat_and_walk_to_spot_classes_are_live() {
         "{walk:?}"
     );
     assert!(
-        !walk.iter().any(|req| matches!(req, InteractReq::WalkTo { .. })),
+        !walk
+            .iter()
+            .any(|req| matches!(req, InteractReq::WalkTo { .. })),
         "{walk:?}"
     );
 }
@@ -1123,8 +1127,11 @@ export default class T extends LoopingBot {
     assert!(
         !drained.iter().any(|req| matches!(
             req,
-            script::shim::InteractReq::WalkNear { x: 2931, z: 9690, .. }
-                | script::shim::InteractReq::Npc { .. }
+            script::shim::InteractReq::WalkNear {
+                x: 2931,
+                z: 9690,
+                ..
+            } | script::shim::InteractReq::Npc { .. }
         )),
         "no corridor walk or Jailer after a failed bank stop: {drained:?}"
     );

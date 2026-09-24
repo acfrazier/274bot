@@ -313,7 +313,6 @@ struct PendingCatalogStart {
     compiled: Option<script::CompiledId>,
 }
 
-
 fn scenario_fixture_loadouts(settings: &scenario::ScenarioSettings) -> Vec<script::Loadout> {
     settings
         .fixture_loadouts
@@ -373,7 +372,6 @@ fn start_stashed_catalog_card(
     }
     result
 }
-
 
 /// When the runner is on [`scenario::StepKind::StartScript`], start the
 /// stashed catalog isolate once. Returns false when Start was attempted
@@ -897,7 +895,6 @@ impl TuiSession {
                 loadouts: fixture_loadouts.clone(),
                 compiled: None,
             });
-
         } else if let Some(card_name) = start_script {
             if let Some(id) = script::compiled_id(card_name) {
                 self.script_sel = Some(script::ScriptSel::Compiled(id));

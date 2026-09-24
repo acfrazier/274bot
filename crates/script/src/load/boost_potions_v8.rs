@@ -10,8 +10,7 @@ use super::callback_v8::{
     self as cb, call, call_method, get, not_impl, number, Callback, Flow, ForOf, JsResult,
 };
 use crate::boost_potions::{
-    boost_faded_by, BoostPotion, FadedOperand, BOOST_FLOOR, BOOST_POTIONS, DEFAULT_WANT,
-    EMPTY_VIAL,
+    boost_faded_by, BoostPotion, FadedOperand, BOOST_FLOOR, BOOST_POTIONS, DEFAULT_WANT, EMPTY_VIAL,
 };
 use rustyscript::Runtime;
 
@@ -60,7 +59,12 @@ fn table<'s>(scope: &mut v8::HandleScope<'s>) -> JsResult<'s, v8::Local<'s, v8::
         let doses = strings(scope, &potion.doses());
         rows.push(cb::object(
             scope,
-            &[("skill", skill), ("short", short), ("flask", flask), ("doses", doses)],
+            &[
+                ("skill", skill),
+                ("short", short),
+                ("flask", flask),
+                ("doses", doses),
+            ],
         )?);
     }
     let potions = v8::Array::new_with_elements(scope, &rows).into();
@@ -171,7 +175,13 @@ fn matching_dose<'s>(
     for dose in potion.doses() {
         let item = get(scope, entry, "item")?;
         let trimmed = call_method(scope, item, "trim", &[], "entry.item.trim")?;
-        let key = call_method(scope, trimmed, "toLowerCase", &[], "entry.item.trim(...).toLowerCase")?;
+        let key = call_method(
+            scope,
+            trimmed,
+            "toLowerCase",
+            &[],
+            "entry.item.trim(...).toLowerCase",
+        )?;
         let wanted = cb::string(scope, &dose.to_lowercase());
         if wanted.strict_equals(key) {
             return Ok(Some(dose));

@@ -624,7 +624,10 @@ impl<'s> ForOf<'s> {
             } else {
                 to_string(scope, method).unwrap_or_default()
             };
-            return Err(type_error(scope, &format!("{kind} {shown} is not a function")));
+            return Err(type_error(
+                scope,
+                &format!("{kind} {shown} is not a function"),
+            ));
         }
         call(scope, method, self.iterator, &[], "iterator method")
     }

@@ -540,9 +540,12 @@ impl HuntDeliveryCycle {
     }
 
     pub fn qualified(&self, cell: HuntCell) -> bool {
-        let (Some(from), Some(receipt), Some(here), Some(_)) =
-            (self.from, self.receipt.as_ref(), self.here, self.stopped.as_ref())
-        else {
+        let (Some(from), Some(receipt), Some(here), Some(_)) = (
+            self.from,
+            self.receipt.as_ref(),
+            self.here,
+            self.stopped.as_ref(),
+        ) else {
             return false;
         };
         let dest = receipt.dest;
@@ -589,7 +592,8 @@ impl HuntDeliveryCycle {
             HuntCell::Retreat => {
                 in_ring(from, dest, RETREAT_SPOT_MIN_CHEB, RETREAT_SPOT_MAX_CHEB)
                     && here == dest
-                    && self.first(|act| matches!(act, ScriptAct::WalkTo { dest: d } if *d == dest))
+                    && self
+                        .first(|act| matches!(act, ScriptAct::WalkTo { dest: d } if *d == dest))
                         .is_some()
                     && !self.any(|act| {
                         matches!(act, ScriptAct::Walk { .. })

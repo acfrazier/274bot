@@ -21,10 +21,10 @@ use crate::theme::{
     applet_offset, fit_applet, game_window_title, native_applet, panel_split_ratio, PANEL_WIDTH,
 };
 use crate::window::RedrawMode;
+use client::io::Packet;
 use dear_imgui_rs::{ConfigFlags, Id, WindowFlags};
 use host_play::profile::ProfileEnvironment;
 use host_play::SharedClientTemplate;
-use client::io::Packet;
 
 #[test]
 fn logout_is_enabled_only_for_a_loaded_ingame_or_queued_focus() {

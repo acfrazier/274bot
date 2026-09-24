@@ -820,7 +820,6 @@ mod tests {
         );
     }
 
-
     #[test]
     fn clue_replaced_requires_scene2_seed_gone_and_a_fresh_trail_item() {
         let mut c = seeded();

@@ -10886,7 +10886,9 @@ export default class NativeStop extends LoopingBot {{
             &further,
         ]
         .map(with_ore);
-        assert!(witness(case, &baseline, ore_trip.each_ref()).qualify().is_err());
+        assert!(witness(case, &baseline, ore_trip.each_ref())
+            .qualify()
+            .is_err());
 
         // --- moss_giant_bank: food-gone trip end, Ardougne West, lobster restock.
         let case = CoreCase::parse("moss_giant_bank").expect("bank case registered");

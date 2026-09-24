@@ -245,8 +245,10 @@ fn frame_cfg<'s>(
         ("pages", js_obj_string_array(scope, opts, "pages")?),
         ("sections", js_obj_string_array(scope, opts, "sections")?),
     ] {
-        let value =
-            js_string_array_value(scope, &values.iter().map(String::as_str).collect::<Vec<_>>())?;
+        let value = js_string_array_value(
+            scope,
+            &values.iter().map(String::as_str).collect::<Vec<_>>(),
+        )?;
         set(scope, obj, name, value)?;
     }
     Ok(obj.into())
@@ -290,7 +292,13 @@ fn frame_plan<'s>(
         ops,
         0,
         "strip",
-        vec![key_value, pages_value, status_value, script_value, page_value],
+        vec![
+            key_value,
+            pages_value,
+            status_value,
+            script_value,
+            page_value,
+        ],
     )?;
     let mut next = 1u32;
     if rail_on {

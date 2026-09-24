@@ -307,7 +307,10 @@ globalThis.__out = cases.map(([have, min]) => {
     }
     assert_eq!(rows[0]["native"], true, "'5' >= '10' compares strings");
     assert_eq!(rows[4]["native"], true, "5n >= 1 is a BigInt comparison");
-    assert_eq!(rows[5]["native"], false, "a lone surrogate compares by UTF-16 code unit, below U+FFFD");
+    assert_eq!(
+        rows[5]["native"], false,
+        "a lone surrogate compares by UTF-16 code unit, below U+FFFD"
+    );
 }
 
 /// A `hasAllTools` walk over 2^27 holes runs no JS at all; the watchdog's
@@ -334,7 +337,10 @@ fn a_native_loop_over_holes_is_interrupted_by_the_tick_budget() {
         // `spawn` returns before V8 setup; time the loop from Ready, not setup.
         let setup = std::time::Instant::now() + std::time::Duration::from_secs(10);
         while matches!(iso.poll_ready(), script::Ready::Pending) {
-            assert!(std::time::Instant::now() < setup, "isolate setup did not finish");
+            assert!(
+                std::time::Instant::now() < setup,
+                "isolate setup did not finish"
+            );
             std::thread::sleep(std::time::Duration::from_millis(2));
         }
         iso.on_game_tick(1);

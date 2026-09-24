@@ -114,7 +114,10 @@ pub(super) mod tests {
 
     /// Start comes after the account stands at `landing`, and nothing after
     /// Start changes the world.
-    pub(in crate::scenarios) fn starts_at_the_landing_after_its_seed(s: &Scenario, landing: WorldTile) {
+    pub(in crate::scenarios) fn starts_at_the_landing_after_its_seed(
+        s: &Scenario,
+        landing: WorldTile,
+    ) {
         let start = s
             .steps
             .iter()
@@ -159,7 +162,13 @@ pub(super) mod tests {
             .find(|st| st.name.starts_with("seed melee levels"))
             .expect("the jail seed");
         assert!(
-            !matches!(seed.wait.arm, Proof::Item { name: "Jail key", .. }),
+            !matches!(
+                seed.wait.arm,
+                Proof::Item {
+                    name: "Jail key",
+                    ..
+                }
+            ),
             "the key card must earn the jail key itself"
         );
         assert_eq!(s.settings.start_file.as_deref(), Some("acquire_key_v2.ts"));
