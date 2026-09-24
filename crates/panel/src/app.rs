@@ -1516,7 +1516,13 @@ pub(crate) fn slot_startup_banner_line(status: &host_play::SlotStatus) -> Option
                 "Waiting to connect".to_string()
             }
         }
-        host_play::StartupPhase::Connecting => "Logging in".to_string(),
+        host_play::StartupPhase::Connecting => {
+            if status.startup_progress_message.is_empty() {
+                "Logging in".to_string()
+            } else {
+                status.startup_progress_message.clone()
+            }
+        }
         host_play::StartupPhase::LoadingScene => "Loading first scene".to_string(),
         host_play::StartupPhase::Ready | host_play::StartupPhase::Error => String::new(),
     };

@@ -3009,6 +3009,23 @@ fn login_rearm_clears_latched_display_for_connect_wait() {
 }
 
 #[test]
+fn transfer_cooldown_is_a_connecting_banner_not_an_error() {
+    let status = host_play::SlotStatus {
+        username: "alice".into(),
+        startup_phase: host_play::StartupPhase::Connecting,
+        startup_progress_message: "Your profile will be transferred in: 3 seconds".into(),
+        error: None,
+        ..Default::default()
+    };
+    let (message, show_elapsed) = slot_startup_banner_line(&status).expect("transfer banner");
+    assert_eq!(
+        message,
+        "Your profile will be transferred in: 3 seconds"
+    );
+    assert!(show_elapsed);
+}
+
+#[test]
 fn preparing_startup_banner_keeps_elapsed_timer() {
     let status = host_play::SlotStatus {
         username: "alice".into(),

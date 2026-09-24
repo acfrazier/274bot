@@ -145,6 +145,7 @@ fn startup_progress_is_latest_only_and_clears_on_completion() {
             code: 16,
             mes1: "busy".into(),
             mes2: "busy".into(),
+            retry_after: None,
         },
     );
     let rows = statuses.lock().unwrap();
@@ -290,6 +291,7 @@ fn startup_observe_keeps_loading_scene_across_initial_session_generation() {
             code: 5,
             mes1: "invalid".into(),
             mes2: "invalid".into(),
+            retry_after: None,
         },
     );
     client.ingame = false;
@@ -520,11 +522,60 @@ fn response_one_returns_to_fifo_without_publishing_error() {
             code: 1,
             mes1: "retry".into(),
             mes2: "retry".into(),
+            retry_after: None,
         },
     );
     let rows = statuses.lock().unwrap();
     assert_eq!(rows[0].startup_phase, StartupPhase::Connecting);
     assert!(rows[0].error.is_none());
+}
+
+#[test]
+fn response_21_waits_server_delay_and_retries_same_world() {
+    let statuses = rows(&["alice"]);
+    set_startup_phase(&statuses, "alice", StartupPhase::Connecting);
+    let arm = SlotArm::new(7, true);
+    let worlds = public_worlds::PublicWorlds::default();
+    let round = public_worlds::WorldRound::new(&worlds, None, None).unwrap();
+    let world_before = round.index;
+    let started = Instant::now();
+    let waiter = {
+        let statuses = Arc::clone(&statuses);
+        let arm = Arc::clone(&arm);
+        thread::spawn(move || {
+            wait_for_transfer_response(
+                &LoginError {
+                    code: 21,
+                    mes1: "You have only just left another world".into(),
+                    mes2: "Your profile will be transferred in: 1 seconds".into(),
+                    retry_after: Some(Duration::from_secs(1)),
+                },
+                &arm,
+                &statuses,
+                "alice",
+            )
+        })
+    };
+    assert!(wait_until(500, || {
+        statuses.lock().unwrap()[0]
+            .startup_progress_message
+            .contains("transferred in: 1 seconds")
+    }));
+    {
+        let rows = statuses.lock().unwrap();
+        assert_eq!(rows[0].startup_phase, StartupPhase::Connecting);
+        assert!(rows[0].error.is_none());
+    }
+
+    assert_eq!(waiter.join().unwrap(), Some(true));
+    assert!(started.elapsed() >= Duration::from_millis(900));
+    assert_eq!(round.index, world_before, "response 21 stays on this world");
+    let mut backoff = LoginBackoff::new();
+    assert_eq!(
+        backoff.delay(),
+        Duration::from_secs(20),
+        "transfer waits do not spend response-16 escalation"
+    );
 }
 
 #[test]
