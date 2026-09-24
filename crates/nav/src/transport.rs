@@ -46,6 +46,7 @@ mod levers;
 mod magic_guild;
 mod membergate;
 mod npc_hops;
+mod observable;
 mod quest_doors;
 mod ranging_guild;
 mod script_text;
@@ -73,6 +74,8 @@ use levers::*;
 use magic_guild::*;
 use membergate::*;
 use npc_hops::*;
+pub(crate) use observable::bind_observable_varp_gates;
+use observable::JournalLinks;
 use quest_doors::*;
 use ranging_guild::*;
 use script_text::*;
@@ -270,7 +273,7 @@ fn derive_transports_with_skips(
     cart_edges(&mut graph);
     essence_mine_edges(&mut graph);
     elkoy_edges(&mut graph);
-    glider_edges(&mut graph);
+    glider_edges(content_root, &mut graph);
     spirit_tree_edges(content_root, &ids, &positions, &mut graph, &mut skipped);
     lever_edges(content_root, &ids, &positions, &mut graph, &mut skipped);
     toll_edges(

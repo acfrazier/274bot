@@ -11,10 +11,10 @@ use super::*;
 /// call for the young tree's single destination). One directed edge per
 /// tree loc placement per destination: `at` the tree loc tile (jm2
 /// placement, like every loc-backed edge), `to` the destination constant's
-/// tile, `Talk-to` op 1, one tick. `varp_req` carries the quest gate the
-/// block checks (`%grandtree` / `%treequest` complete values, the same
-/// varps the gliders gate on); the members check in `spirit_tree_tele` is
-/// not a varp and is left off until WorldState.
+/// tile, `Talk-to` op 1, one tick. Raw derivation records the script's
+/// `%grandtree` / `%treequest` requirement; the pack binder replaces those
+/// non-transmitted varps with their completed journal names. The members
+/// check in `spirit_tree_tele` is not a varp and is left off until WorldState.
 pub(super) fn spirit_tree_edges(
     content_root: &Path,
     ids: &HashMap<String, i32>,

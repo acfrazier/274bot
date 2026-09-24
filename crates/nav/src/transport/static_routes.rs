@@ -33,7 +33,8 @@ pub(super) struct BoatRoute {
     ticks: i32,
     /// `(obj id, count)` fare the journey charges, if any.
     fare: Option<(i32, i32)>,
-    /// `(varp id, min value)` quest gate, if any.
+    /// Raw `(varp id, min value)` quest gate. The pack binder replaces
+    /// non-transmitted varps with proven completed journal names.
     varp_req: Option<(i32, i32)>,
 }
 

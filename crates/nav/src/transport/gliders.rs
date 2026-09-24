@@ -55,37 +55,52 @@ pub(super) const GLIDER_PADS: &[(WorldTile, bool)] = &[
 /// Gnome pilot (npc.pack 170): the `Talk-to` target at every platform.
 pub(super) const GNOME_PILOT: i32 = 170;
 
-/// The glider quest gate: the pilot offers Gnome Air only once the Grand
-/// Tree quest is complete (`%grandtree >= ^grandtree_complete`, varp 150
-/// = 160 in `scripts/areas/area_gnome/scripts/gnome_glider.rs2`'s
-/// `[opnpc1,gnomepilot]` block). Live `WorldState` may prove that as the
-/// varp **or** as the green journal row (the kit waits `QuestDone`);
-/// missing varps fail closed, so each flight packs both proofs.
-pub(super) const GLIDER_QUEST_REQ: (i32, i32) = (150, 160);
-pub(super) const GLIDER_QUEST_NAME: &str = "The Grand Tree";
-
 /// Glider edges from the fixed platform table: the hub to every pad, and
-/// back from the round-trip pads. `calc_glidervar` in `gnome_glider.rs2`
-/// allows only hub↔pad flights (pad↔pad shows "You can't go there at the
-/// moment."), and has no lemanto_andra → hub pair, so Lemanto Andra is
-/// one-way. The flight is a `p_delay(3)` + teleport on top of the
-/// `Talk-to` op.
-pub(super) fn glider_edges(graph: &mut TransportGraph) {
+/// back from the round-trip pads. `calc_glidervar` permits only hub↔pad
+/// flights; Lemanto Andra is one-way. The pilot's completed Grand Tree gate
+/// is linked to its observable quest journal row. `%grandtree` is not
+/// transmitted, so no varp-only alternative is emitted.
+pub(super) fn glider_edges(content_root: &Path, graph: &mut TransportGraph) {
+    let Ok(script) =
+        fs::read_to_string(content_root.join("scripts/areas/area_gnome/scripts/gnome_glider.rs2"))
+    else {
+        return;
+    };
+    let Some((_, _, body)) = script_blocks(&script)
+        .into_iter()
+        .find(|(op, name, _)| op == "opnpc1" && name == "gnomepilot")
+    else {
+        return;
+    };
+    if !body
+        .lines()
+        .any(|line| line.trim() == "if(%grandtree = ^grandtree_complete & map_members = ^true) {")
+        || !body.lines().any(|line| line.contains("gnome_pilot_glider"))
+    {
+        return;
+    }
+    let journal = JournalLinks::from_content(content_root);
+    let Some(complete) = journal.constant("grandtree_complete") else {
+        return;
+    };
+    let Some(quest) = journal.completed_name("grandtree", complete) else {
+        return;
+    };
     for (pad, round_trip) in GLIDER_PADS {
-        push_glider_flight(graph, GLIDER_HUB, *pad);
+        push_glider_flight(graph, GLIDER_HUB, *pad, quest);
         if *round_trip {
-            push_glider_flight(graph, *pad, GLIDER_HUB);
+            push_glider_flight(graph, *pad, GLIDER_HUB, quest);
         }
     }
 }
 
-pub(super) fn push_glider_flight(graph: &mut TransportGraph, at: WorldTile, to: WorldTile) {
-    graph.edges.push(glider_edge(at, to, true));
-    graph.edges.push(glider_edge(at, to, false));
-}
-
-pub(super) fn glider_edge(at: WorldTile, to: WorldTile, varp_gate: bool) -> TransportEdge {
-    TransportEdge {
+pub(super) fn push_glider_flight(
+    graph: &mut TransportGraph,
+    at: WorldTile,
+    to: WorldTile,
+    quest: &str,
+) {
+    graph.edges.push(TransportEdge {
         kind: TransportKind::Glider,
         at,
         to,
@@ -96,17 +111,9 @@ pub(super) fn glider_edge(at: WorldTile, to: WorldTile, varp_gate: bool) -> Tran
         open_loc_id: None,
         skill_req: vec![],
         item_req: vec![],
-        quest_req: if varp_gate {
-            vec![]
-        } else {
-            vec![GLIDER_QUEST_NAME.to_string()]
-        },
-        varp_req: if varp_gate {
-            vec![GLIDER_QUEST_REQ]
-        } else {
-            vec![]
-        },
+        quest_req: vec![quest.to_string()],
+        varp_req: vec![],
         worn_req: vec![],
         members_req: false,
-    }
+    });
 }

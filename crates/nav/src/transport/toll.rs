@@ -192,38 +192,9 @@ fn toll_waiver_gate(content_root: &Path, alkharid: &Path) -> Option<String> {
         return None;
     }
     varp_ids_by_name(content_root).get(varp)?;
-    let constants = script_constants(content_root);
-    let saved = *constants.get(threshold)?;
-    let journal =
-        fs::read_to_string(content_root.join("scripts/general/scripts/quests.rs2")).ok()?;
-    let (row, complete) = journal.lines().find_map(|line| {
-        let args = line
-            .trim()
-            .strip_prefix("~send_quest_progress_colour(")?
-            .strip_suffix(");")?;
-        let mut args = args.split(',').map(str::trim);
-        let row = args.next()?.strip_prefix("questlist:")?;
-        let linked_varp = args.next()?.strip_prefix('%')?;
-        let complete = args.next()?.strip_prefix('^')?;
-        (linked_varp == varp && args.next().is_none()).then_some((row, complete))
-    })?;
-    if *constants.get(complete)? < saved {
-        return None;
-    }
-    let interface =
-        fs::read_to_string(content_root.join("scripts/player/interfaces/questlist.if")).ok()?;
-    let header = format!("{row}]");
-    let block = interface.split("\n[").find(|block| {
-        block
-            .lines()
-            .next()
-            .is_some_and(|line| line.trim_start_matches('[') == header)
-    })?;
-    let name = block
-        .lines()
-        .find_map(|line| line.trim().strip_prefix("text="))?
-        .trim();
-    (!name.is_empty()).then(|| name.to_string())
+    let journal = JournalLinks::from_content(content_root);
+    let saved = journal.constant(threshold)?;
+    journal.completed_name(varp, saved).map(str::to_owned)
 }
 
 pub(super) fn toll_shantay_henge_edges(

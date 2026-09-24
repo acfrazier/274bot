@@ -8,7 +8,8 @@ use super::*;
 /// `[oploc1,<name>]` open script: a `switch_int(%<varp>)` whose opening
 /// cases carry the open call, or an `if (%<varp> >= ^<const> [| …])` whose
 /// arm opens. The generic `_door_closed` script opens freely and carries
-/// nothing.
+/// nothing. The pack binder replaces non-transmitted requirements with a
+/// completed journal proof, or omits an edge whose proof is ambiguous.
 pub(super) fn quest_door_reqs(
     content_root: &Path,
     door_names: &HashSet<String>,

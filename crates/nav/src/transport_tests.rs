@@ -6,6 +6,17 @@ use crate::collision::{bake_from_maps, WorldCollision};
 use client::config::{Cache, LocType};
 use client::io::JagFile;
 
+const JOURNAL_GREEN_SOURCE: &str = "\
+[proc,send_quest_progress_colour](component $component, int $progress, int $complete_progress)
+if ($progress = 0) {
+    if_setcolour($component, ^red_rgb);
+} else if ($progress >= $complete_progress) {
+    if_setcolour($component, ^green_rgb);
+} else {
+    if_setcolour($component, ^yellow_rgb);
+}
+";
+
 /// The real Server content root this machine bakes against (the same
 /// path `nav-pack` defaults to); `None` when the checkout is absent,
 /// so the content-backed tests skip with a message instead of faking
@@ -911,10 +922,9 @@ fn derive_transports_emits_spirit_tree_edges() {
         .collect();
     let n = trees.len();
     assert!(n >= 8, "rs2b0t catalog is 8 directed hops, got {n}");
-    // The stronghold tree carries the Grand Tree gate
-    // (`%grandtree >= ^grandtree_complete`), the village and young
-    // trees the Tree Gnome Village gate (`%treequest >= ^tree_complete`)
-    // — the same varps the gliders gate on.
+    // Raw tree derivation reads `%grandtree` / `%treequest` completed
+    // thresholds from the script; the pack binder uses their observable
+    // journal names instead of either non-transmitted varp.
     for e in &trees {
         assert_eq!(e.option, 1, "Talk-to");
         assert_eq!(e.ticks, SPIRIT_TREE_TICKS);
@@ -2294,8 +2304,8 @@ p_arrivedelay;
     let wc = bake_collision(&fx, &defs, &HashSet::new());
     let graph = derive_transports(fx.path(), &defs, &wc);
     // The unknown ladder name resolves nothing; remaining edges are the
-    // explicit 2004 boat/cart/wizard/glider tables plus boat-side
-    // disembark planks (Ladder loc hops, not script-derived ladders).
+    // explicit boat/cart/wizard tables plus boat-side disembark planks.
+    // A missing pilot script and journal prove no glider flights.
     let explicit = graph
         .edges
         .iter()
@@ -2339,7 +2349,7 @@ p_arrivedelay;
             .iter()
             .filter(|e| e.kind == TransportKind::Glider)
             .count(),
-        14
+        0
     );
 }
 
@@ -3801,6 +3811,22 @@ fn derive_transports_tenzing_free_arms_from_real_content() {
 #[test]
 fn derive_transports_emits_glider_edges_from_platform_to_platform() {
     let fx = Fixture::new();
+    fx.write(
+        "scripts/areas/area_gnome/scripts/gnome_glider.rs2",
+        "[opnpc1,gnomepilot]\nif(%grandtree = ^grandtree_complete & map_members = ^true) {\n    @multi3(\"Can you take me on the glider?\", gnome_pilot_glider);\n}\n",
+    );
+    fx.write(
+        "scripts/general/scripts/quests.rs2",
+        &format!("{JOURNAL_GREEN_SOURCE}~send_quest_progress_colour(questlist:grandtree, %grandtree, ^grandtree_complete);\n"),
+    );
+    fx.write(
+        "scripts/general/configs/quest.constant",
+        "^grandtree_complete=160\n",
+    );
+    fx.write(
+        "scripts/player/interfaces/questlist.if",
+        "[grandtree]\ntext=The Grand Tree\n",
+    );
     let defs = loc_defs(&[]);
     let wc = bake_collision(&fx, &defs, &HashSet::new());
     let graph = derive_transports(fx.path(), &defs, &wc);
@@ -3812,8 +3838,8 @@ fn derive_transports_emits_glider_edges_from_platform_to_platform() {
         .collect();
     // The Grand Tree hub flies to all four pads and back from three of
     // them (`calc_glidervar` has no lemanto_andra → hub pair): 7
-    // flights × varp + journal proofs.
-    assert_eq!(gliders.len(), 14);
+    // journal-gated flights, no non-transmitted varp alternative.
+    assert_eq!(gliders.len(), 7);
     let hub = WorldTile {
         x: 2465,
         z: 3501,
@@ -3835,12 +3861,12 @@ fn derive_transports_emits_glider_edges_from_platform_to_platform() {
         level: 0,
     };
     let hub_edges: Vec<_> = gliders.iter().filter(|e| e.at == hub).collect();
-    assert_eq!(hub_edges.len(), 8);
+    assert_eq!(hub_edges.len(), 4);
     assert!(hub_edges.iter().any(|e| e.to == sindarpos));
     assert!(hub_edges.iter().any(|e| e.to == gandius));
     assert!(hub_edges.iter().any(|e| e.to == lemanto_andra));
     let sindarpos_edges: Vec<_> = gliders.iter().filter(|e| e.at == sindarpos).collect();
-    assert_eq!(sindarpos_edges.len(), 2);
+    assert_eq!(sindarpos_edges.len(), 1);
     assert_eq!(sindarpos_edges[0].to, hub);
     // Lemanto Andra is one-way: no pad → hub flight exists in
     // gnome_glider.rs2.
@@ -3848,20 +3874,18 @@ fn derive_transports_emits_glider_edges_from_platform_to_platform() {
     for g in &gliders {
         assert_eq!(g.option, 1, "Talk-to the Gnome pilot");
         assert_eq!(g.loc_id, 170);
-        let varp = g.varp_req == [(150, 160)];
-        let journal = g.quest_req == ["The Grand Tree".to_string()];
         assert!(
-            varp ^ journal,
-            "each flight is varp XOR journal, not both: {g:?}"
+            g.varp_req.is_empty(),
+            "the server never transmits grandtree"
         );
+        assert_eq!(g.quest_req, ["The Grand Tree"]);
     }
 }
 
-/// Live step 29: Gandius pad → Grand Tree hub. Empty WorldState
-/// cannot prove `%grandtree >= 160`; with that varp the packed glider
-/// hop is the route.
+/// Gandius pad → Grand Tree hub admits the visible quest journal row,
+/// not the untransmitted `%grandtree` varp.
 #[test]
-fn gandius_glider_reaches_grand_tree_hub_with_grandtree_varp() {
+fn gandius_glider_reaches_grand_tree_hub_from_journal() {
     let Some((graph, collision)) = derive_from_real_content() else {
         return;
     };
@@ -3889,15 +3913,18 @@ fn gandius_glider_reaches_grand_tree_hub_with_grandtree_varp() {
     );
     let mut state = crate::world_state::WorldState::empty();
     state.varps.insert(150, 160);
-    crate::router::find_with(
-        &collision,
-        &graph,
-        pad,
-        hub,
-        crate::router::FindOptions::default(),
-        &state,
-    )
-    .expect("Gandius → Grand Tree hub with grandtree 160");
+    assert!(
+        crate::router::find_with(
+            &collision,
+            &graph,
+            pad,
+            hub,
+            crate::router::FindOptions::default(),
+            &state,
+        )
+        .is_err(),
+        "non-transmitted grandtree varp is not a live route proof"
+    );
     let mut journal = crate::world_state::WorldState::empty();
     journal.quests.insert("The Grand Tree".into());
     crate::router::find_with(
@@ -6795,7 +6822,7 @@ param=next_loc_stage,loc_1563
     );
     fx.write(
         "scripts/general/scripts/quests.rs2",
-        "~send_quest_progress_colour(questlist:prince, %princequest, ^prince_complete);\n",
+        &format!("{JOURNAL_GREEN_SOURCE}~send_quest_progress_colour(questlist:prince, %princequest, ^prince_complete);\n"),
     );
     fx.write(
         "scripts/general/configs/quest.constant",
@@ -6847,6 +6874,82 @@ param=next_loc_stage,loc_1563
             .filter(|e| e.loc_id == 2882)
             .all(|e| !e.item_req.is_empty()),
         "a changed guard without the pass call must not waive coins"
+    );
+}
+
+#[test]
+fn baked_varp_gates_require_transmission_or_a_unique_completed_journal_proof() {
+    let fx = Fixture::new();
+    fx.write(
+        "pack/varp.pack",
+        "145=blackarmgang\n146=phoenixgang\n150=grandtree\n500=visible\n",
+    );
+    fx.write(
+        "scripts/quests/configs/quest.varp",
+        "[blackarmgang]\nscope=perm\n[phoenixgang]\nscope=perm\n[grandtree]\nscope=perm\n[visible]\ntransmit=yes\n",
+    );
+    fx.write(
+        "scripts/general/scripts/quests.rs2",
+        &format!("{JOURNAL_GREEN_SOURCE}~send_quest_progress_colour(questlist:grandtree, %grandtree, ^grandtree_complete);\n~send_quest_progress_colour(questlist:blackarmgang, %blackarmgang, ^blackarmgang_complete);\n~send_quest_progress_colour(questlist:blackarmgang, %phoenixgang, ^phoenixgang_complete);\n"),
+    );
+    fx.write(
+        "scripts/general/configs/quest.constant",
+        "^grandtree_complete=160\n^blackarmgang_complete=4\n^phoenixgang_complete=10\n",
+    );
+    fx.write(
+        "scripts/player/interfaces/questlist.if",
+        "[grandtree]\ntext=The Grand Tree\n[blackarmgang]\ntext=Shield of Arrav\n",
+    );
+    let edge = |loc_id, id, min| TransportEdge {
+        kind: TransportKind::Door,
+        at: WorldTile {
+            x: 100,
+            z: 100,
+            level: 0,
+        },
+        to: WorldTile {
+            x: 101,
+            z: 100,
+            level: 0,
+        },
+        loc_id,
+        option: 1,
+        ticks: 1,
+        dir: None,
+        open_loc_id: None,
+        skill_req: vec![],
+        item_req: vec![],
+        quest_req: vec![],
+        varp_req: vec![(id, min)],
+        worn_req: vec![],
+        members_req: false,
+    };
+    let mut graph = TransportGraph {
+        edges: vec![
+            edge(10, 150, 160),
+            edge(11, 145, 4),
+            edge(12, 146, 10),
+            edge(13, 500, 3),
+            edge(14, 150, 161),
+        ],
+        at: HashMap::new(),
+        teleports: vec![],
+    };
+    let audit = bind_observable_varp_gates(fx.path(), &mut graph);
+    assert_eq!(audit.converted, 1);
+    assert_eq!(audit.omitted, HashMap::from([(145, 1), (146, 1), (150, 1)]));
+    assert_eq!(graph.edges.len(), 2);
+    assert_eq!(graph.edges[0].quest_req, ["The Grand Tree"]);
+    assert!(graph.edges[0].varp_req.is_empty());
+    assert_eq!(
+        graph.edges[1].varp_req,
+        [(500, 3)],
+        "transmitted varp stays"
+    );
+    assert_eq!(
+        graph.at[&graph.edges[0].at],
+        [0, 1],
+        "reindexed after omitted edges"
     );
 }
 
