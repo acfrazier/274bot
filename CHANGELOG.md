@@ -72,6 +72,17 @@ best-effort and untested in this release.
   one cycle as in Java, GPU texture coordinates keep their sign across zero,
   GPU tests skip cleanly without an adapter, and clippy 1.98 cleanup.
 
+### Navigation and packaging
+
+- Navigation bakes are reproducible: the transport edges are put in a canonical
+  order, so the same revision inputs produce byte-identical `.navpack`,
+  `.navreach` and `.navcanlight` files on every run and platform. Previously
+  door, ladder, stair, agility and teleport edges came out in hash-set or
+  directory-listing order.
+- Release packages carry the local 289 navigation build; CI builds without
+  navigation inputs (`BOT_NAV_BUILD=skip`). Internal campaign notes under
+  `docs/compat` and `docs/harness-integration` are no longer tracked.
+
 ### Known limits
 
 - Defence-1 `moss_giant`/`green_dragon`/`fire_giant` catalog cells cannot win
