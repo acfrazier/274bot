@@ -165,7 +165,7 @@ impl WithdrawTo {
                 self.waiting = Some(waiting);
                 self.phase = Phase::AwaitOp { before };
             }
-            Sent::Settled(_) | Sent::NotImpl(_) => self.land(before, cx),
+            Sent::Settled(_) => self.land(before, cx),
         }
     }
 
@@ -189,6 +189,9 @@ impl WithdrawTo {
 impl Family for WithdrawTo {
     const NAME: &'static str = "bank_withdraw_to";
     const CALLBACKS: &'static [&'static str] = &["count"];
+    /// Frozen `countInInv()` is a synchronous call: a returned promise is a
+    /// value (`NaN` once it meets a number).
+    const AWAIT_CALLBACKS: bool = false;
     /// `const start = countInInv()` and the first withdraw join the
     /// caller's tick.
     const KICK_ON_START: bool = true;
@@ -196,6 +199,11 @@ impl Family for WithdrawTo {
     type Output = Value;
 
     fn begin(args: WithdrawToArgs, _cx: &mut Cx<'_>) -> Begin<Self> {
+        // Another bank op is in flight: as the shim's pending guard, no op
+        // of this run could be sent, so nothing is gained.
+        if crate::bank_op::busy() {
+            return Begin::Done(json!(0));
+        }
         Begin::Run(Self {
             counter: Counter {
                 name: Some(args.name.clone()),
@@ -257,7 +265,7 @@ impl Family for WithdrawTo {
                                 }
                                 Sent::Settled(true) => self.phase = Phase::AfterX { before, need },
                                 // Frozen `Bank.withdrawX` answers false with no row or op.
-                                Sent::Settled(false) | Sent::NotImpl(_) => {
+                                Sent::Settled(false) => {
                                     if !self.fallback(before, need, cx) {
                                         self.phase = Phase::Finish;
                                     }
@@ -339,6 +347,8 @@ fn posted_tick() -> u64 {
 impl Family for CloseConfirm {
     const NAME: &'static str = "bank_close_confirm";
     const CALLBACKS: &'static [&'static str] = &["count"];
+    /// Frozen `count()` is a synchronous call.
+    const AWAIT_CALLBACKS: bool = false;
     type Args = CloseConfirmArgs;
     type Output = bool;
 
@@ -398,6 +408,159 @@ impl Family for CloseConfirm {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::load::callback_v8::HeldCallback;
+    use crate::machine::{self, Called, Js, Outcome, Pending, Reply, Started, Take};
+    use crate::observed::{ItemRow, Ops};
+    use crate::shim::InteractReq;
+    use std::rc::Rc;
+
+    /// Without a `count` hook the run reads `Inventory.count` itself.
+    struct NoJs;
+
+    impl Js for NoJs {
+        fn queue_len(&mut self) -> usize {
+            0
+        }
+
+        fn call(&mut self, _hook: Option<&HeldCallback>, _args: &[Value]) -> Called {
+            panic!("no count hook was passed");
+        }
+
+        fn poll(&mut self, _pending: &Pending) -> Option<Reply> {
+            panic!("no count hook was passed");
+        }
+
+        fn claimed(&mut self) -> bool {
+            false
+        }
+    }
+
+    fn row(name: &str, count: i32, ops: &[&str]) -> ItemRow {
+        ItemRow {
+            id: 379,
+            count,
+            name: Some(Rc::from(name)),
+            ops: ops.iter().map(|op| Rc::from(*op)).collect::<Ops>(),
+            ..ItemRow::default()
+        }
+    }
+
+    /// An open bank holding 100 lobsters with `ops`, a pack holding `held`
+    /// lobsters plus `filler` other rows, and the op result seq.
+    fn post(tick: u64, ops: &[&str], held: i32, filler: usize, seq: u64) {
+        let mut inv: Vec<ItemRow> = (0..filler).map(|_| row("Bones", 1, &[])).collect();
+        if held > 0 {
+            inv.push(row("Lobster", held, &[]));
+        }
+        let bank = vec![row("Lobster", 100, ops)];
+        observed::post(tick, |post| {
+            post.session(true)
+                .bank_open(true)
+                .bank_loaded(true)
+                .bank_generation(3)
+                .bank_op_result_seq(seq)
+                .bank_op_result(true)
+                .inv_size(28)
+                .inv(inv)
+                .bank(bank);
+        });
+    }
+
+    fn start(target: i32) -> Started {
+        machine::on_reset();
+        machine::start(
+            WithdrawTo::NAME,
+            json!({ "name": "Lobster", "target": target }),
+            Vec::new(),
+            0,
+        )
+    }
+
+    fn tick() -> Vec<InteractReq> {
+        machine::step(&mut NoJs);
+        machine::merge_ops(Vec::new())
+    }
+
+    fn running(started: Started) -> machine::Handle {
+        match started {
+            Started::Running(handle) => handle,
+            other => panic!("expected a running row, got {other:?}"),
+        }
+    }
+
+    const LADDER: [&str; 4] = ["Withdraw-1", "Withdraw-5", "Withdraw-10", "Withdraw-X"];
+
+    /// Frozen `!Inventory.isFull()` ends the loop before any withdraw.
+    #[test]
+    fn a_full_pack_withdraws_nothing() {
+        observed::on_reset();
+        post(1, &LADDER, 2, 27, 0);
+        let handle = running(start(22));
+        assert!(tick().is_empty(), "a full pack sends no withdraw");
+        assert_eq!(
+            machine::take(handle),
+            Take::Settled(Outcome::Done(json!(0.0)))
+        );
+    }
+
+    /// A labelled withdraw that never lands ends the loop at the frozen
+    /// 2.5 s bound, with no second withdraw.
+    #[test]
+    fn a_withdraw_that_never_lands_ends_at_the_land_bound() {
+        observed::on_reset();
+        post(1, &LADDER, 0, 0, 0);
+        let handle = running(start(4));
+        assert_eq!(
+            tick(),
+            vec![InteractReq::Withdraw {
+                name: "Lobster".into(),
+                action: "Withdraw-1".into(),
+            }]
+        );
+        post(2, &LADDER, 0, 0, 1);
+        assert!(
+            tick().is_empty(),
+            "the result is in; the pack has not grown"
+        );
+        assert_eq!(machine::take(handle), Take::Pending, "inside the bound");
+        machine::tests::expire_deadlines();
+        assert!(tick().is_empty(), "the lapsed bound sends nothing more");
+        assert_eq!(
+            machine::take(handle),
+            Take::Settled(Outcome::Done(json!(0.0)))
+        );
+    }
+
+    /// A Withdraw-X the bank row cannot take (no X op) falls back to the
+    /// labelled Withdraw-10, as frozen does when `withdrawX` answers false.
+    #[test]
+    fn a_refused_withdraw_x_falls_back_to_the_labelled_ten() {
+        observed::on_reset();
+        post(1, &["Withdraw-1", "Withdraw-5", "Withdraw-10"], 2, 0, 0);
+        let handle = running(start(22));
+        assert_eq!(
+            tick(),
+            vec![InteractReq::Withdraw {
+                name: "Lobster".into(),
+                action: "Withdraw-10".into(),
+            }]
+        );
+        post(2, &["Withdraw-1", "Withdraw-5", "Withdraw-10"], 12, 0, 1);
+        assert_eq!(
+            tick(),
+            vec![InteractReq::Withdraw {
+                name: "Lobster".into(),
+                action: "Withdraw-10".into(),
+            }],
+            "landed: the next round needs 10"
+        );
+        post(3, &["Withdraw-1", "Withdraw-5", "Withdraw-10"], 22, 0, 2);
+        assert!(tick().is_empty());
+        assert_eq!(
+            machine::take(handle),
+            Take::Settled(Outcome::Done(json!(20.0)))
+        );
+    }
 
     #[test]
     fn next_chunk_is_the_frozen_ladder() {

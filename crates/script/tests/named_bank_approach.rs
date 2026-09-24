@@ -910,3 +910,73 @@ export default class T extends LoopingBot {
     ));
     iso.join();
 }
+
+/// The default booth's pre-check is frozen `isArrived`: a booth one tile
+/// away across a wall edge (no adjacent reach) is not arrived, so the
+/// access walks beside it instead of pressing it; with the edge open it is
+/// arrived and the booth is opened at once.
+#[test]
+fn bank_access_default_booth_across_a_wall_edge_walks_first() {
+    let src = r#"
+import { Bank } from '../../api/bank/Bank.js';
+export default class T extends LoopingBot {
+    async loop() { await Bank.openNearestAccess({name:'Bank booth',op:'Use-quickly'}); }
+}
+"#;
+    // A 2x1 window: the player at (10,10), the booth at (11,10).
+    let view = |reachable_adj: &'static [u32], adjacent_rank: &'static [u16]| ReachViewInput {
+        available: true,
+        base_x: 10,
+        base_z: 10,
+        level: 0,
+        width: 2,
+        height: 1,
+        walkable: &[0b01],
+        reachable: &[0b01],
+        reachable_adj,
+        exact_rank: &[0, u16::MAX],
+        adjacent_rank,
+        step: &[0, 0],
+        canlight: &[],
+        stamp: 0,
+    };
+    let run = |reach: ReachViewInput<'static>| {
+        let iso = LoadIsolate::spawn(src.into(), LoadShape::CompatClass, vec![]).unwrap();
+        let mut snap = base_snapshot();
+        snap.here = Some(tile(10, 10));
+        snap.nearest_booth = Some(NearestBoothInput {
+            x: 11,
+            z: 10,
+            level: 0,
+            id: 2213,
+            name: "Bank booth",
+            op: "Use-quickly",
+        });
+        snap.reach = reach;
+        let ready = [approach_row(2213, 11, 10, true, Some((10, 10)))];
+        post_snapshot_native(&iso, &snap, &ready);
+        iso.on_game_tick(1);
+        iso.probe("true").unwrap();
+        let requests = iso.drain_interacts();
+        iso.join();
+        requests
+    };
+    assert_eq!(
+        run(view(&[0b01], &[0, u16::MAX])),
+        vec![InteractReq::WalkNear {
+            x: 11,
+            z: 10,
+            level: 0,
+            radius: 1,
+            allow_teleports: false,
+            allow_wilderness: true,
+            allow_bank_fetch: true,
+            request_id: 0,
+        }],
+        "Chebyshev 1 across a wall is not arrived"
+    );
+    assert!(matches!(
+        run(view(&[0b11], &[0, 1])).as_slice(),
+        [InteractReq::OpenBooth { x: 11, z: 10, .. }]
+    ));
+}

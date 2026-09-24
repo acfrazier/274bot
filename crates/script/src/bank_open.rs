@@ -478,7 +478,9 @@ impl BankOpen {
 impl Family for BankOpen {
     const NAME: &'static str = "bank_open";
     /// One open at a time: a newer start ends the older row `superseded`
-    /// and its await settles false. The frozen surface has no guard.
+    /// and its await settles false. The access openers
+    /// ([`crate::bank_access`]) share this group. The frozen surface has no
+    /// guard.
     const EXCLUSIVE: bool = true;
     type Args = BankOpenArgs;
     type Output = bool;

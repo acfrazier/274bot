@@ -147,10 +147,9 @@ pub(crate) enum Op {
 /// What sending an op did.
 pub(crate) enum Sent {
     Awaiting(Awaiting),
-    /// Settled without a verb (not ready, no row, a zero count).
+    /// Settled without a verb (not ready, no row or op, a zero count):
+    /// frozen answers the same boolean.
     Settled(bool),
-    /// The shim's explicit `not impl` (`Bank.withdrawX` with no row or op).
-    NotImpl(&'static str),
 }
 
 impl Op {
@@ -218,7 +217,7 @@ impl Op {
                         .iter()
                         .find(|row| row.name.as_deref().is_some_and(|got| same_name(got, name)))
                     else {
-                        return Sent::NotImpl("Bank.withdrawX");
+                        return Sent::Settled(false);
                     };
                     withdraw_x(&view, busy, row, amount, f64::from(row.id), cx)
                 }
@@ -313,7 +312,7 @@ fn withdraw_x(
             !action.is_empty() && action.replace('-', " ").trim().to_lowercase() == "withdraw x"
         })
     }) else {
-        return Sent::NotImpl("Bank.withdrawX");
+        return Sent::Settled(false);
     };
     let req = InteractReq::WithdrawX {
         name: row.name_or_empty().to_string(),
@@ -414,7 +413,6 @@ impl Family for BankOp {
         match op.send(busy(), cx) {
             Sent::Awaiting(waiting) => Begin::Run(Self { waiting }),
             Sent::Settled(ok) => Begin::Done(ok),
-            Sent::NotImpl(feature) => Begin::Refuse(feature.into()),
         }
     }
 
@@ -515,15 +513,19 @@ mod tests {
     }
 
     /// A take of 1/5/10 prefers the fixed op; other takes, or a row
-    /// without it, use Withdraw-X; a row with neither is `not impl`.
+    /// without it, use Withdraw-X. A row with neither, or no row, answers
+    /// frozen `false` with no verb.
     #[test]
     fn withdraw_x_picks_the_fixed_op_then_x() {
-        let x_action = |ops: &[&str], count: i32| {
+        let x_action = |ops: &[&str], name: &str, count: i32| {
             reset();
             post(vec![row("Feather", 314, 50, ops)], 0, false);
-            let started = start(json!({ "kind": "withdraw-x", "name": "Feather", "count": count }));
+            let started = start(json!({ "kind": "withdraw-x", "name": name, "count": count }));
             match started {
-                Started::Refused(reason) => reason,
+                Started::Settled(Outcome::Done(value)) => {
+                    assert!(drain().is_empty(), "a settled start sends nothing");
+                    value.to_string()
+                }
                 _ => match drain().as_slice() {
                     [InteractReq::WithdrawX { action, count, .. }] => format!("{action}/{count}"),
                     other => panic!("expected one withdraw-x, got {other:?}"),
@@ -531,15 +533,20 @@ mod tests {
             }
         };
         let ops = ["Withdraw-1", "Withdraw-5", "Withdraw-10", "Withdraw-X"];
-        assert_eq!(x_action(&ops, 5), "Withdraw-5/5");
-        assert_eq!(x_action(&ops, 7), "Withdraw-X/7");
-        assert_eq!(x_action(&["Withdraw-X"], 10), "Withdraw-X/10");
+        assert_eq!(x_action(&ops, "Feather", 5), "Withdraw-5/5");
+        assert_eq!(x_action(&ops, "Feather", 7), "Withdraw-X/7");
+        assert_eq!(x_action(&["Withdraw-X"], "Feather", 10), "Withdraw-X/10");
         assert_eq!(
-            x_action(&ops, 80),
+            x_action(&ops, "Feather", 80),
             "Withdraw-X/50",
             "take caps at the row count"
         );
-        assert_eq!(x_action(&["Withdraw-1"], 7), "Bank.withdrawX");
+        assert_eq!(
+            x_action(&["Withdraw-1"], "Feather", 7),
+            "false",
+            "no usable op"
+        );
+        assert_eq!(x_action(&ops, "Arrow", 7), "false", "no bank row");
     }
 
     /// The op settles on a new result for the same bank session; a closed

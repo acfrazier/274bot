@@ -401,3 +401,60 @@ fn guardian_hold_does_not_walk() {
     assert_eq!(number(&iso, "globalThis.__recovered || 0"), 0);
     iso.join();
 }
+
+/// Frozen calls `onRecovered` synchronously: a never-settling promise does
+/// not hold the finished run, so the next death recovers again.
+#[test]
+fn a_pending_on_recovered_does_not_hold_the_next_recovery() {
+    let src = r#"
+import { DeathRecovery } from '../../api/tasks/DeathRecovery.js';
+export default class T extends TaskBot {
+    onStart() {
+        this.add(new DeathRecovery(this, {
+            anchor: { x: 3235, z: 3295, level: 0 },
+            radius: 3,
+            onRecovered: () => {
+                globalThis.__recovered = (globalThis.__recovered || 0) + 1;
+                return new Promise(() => {});
+            },
+        }));
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.into(), LoadShape::CompatClass, vec![]).unwrap();
+    let welcome_lines = [welcome(1)];
+    let mut snap = base_snapshot();
+    snap.chat_lines = &welcome_lines;
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 1);
+
+    let first = [death(2), welcome(1)];
+    snap.here = Some(lumbridge());
+    snap.chat_lines = &first;
+    for n in 2..=6 {
+        snap.tick = n;
+        post_snapshot_input(&iso, &snap);
+        tick(&iso, n);
+    }
+    assert_eq!(iso.drain_interacts(), vec![walk_near_anchor()]);
+    snap.tick = 7;
+    snap.here = Some(anchor());
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 7);
+    assert_eq!(number(&iso, "globalThis.__recovered || 0"), 1);
+
+    let second = [death(3), death(2), welcome(1)];
+    snap.here = Some(lumbridge());
+    snap.chat_lines = &second;
+    for n in 8..=12 {
+        snap.tick = n;
+        post_snapshot_input(&iso, &snap);
+        tick(&iso, n);
+    }
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![walk_near_anchor()],
+        "the second death is recovered"
+    );
+    iso.join();
+}

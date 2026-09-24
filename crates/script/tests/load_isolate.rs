@@ -3448,6 +3448,69 @@ export default class T extends LoopingBot {
     iso.join();
 }
 
+/// Frozen calls the deposit matcher and `countInInv` synchronously: a
+/// promise they return is a value, never awaited. An async matcher is a
+/// truthy Promise, so the first row is deposited; an async count compares
+/// false with the target, so withdrawTo sends nothing.
+#[test]
+fn isolate_bank_sync_hooks_take_a_promise_as_a_value() {
+    let src = r#"
+import { Bank } from '../../api/bank/Bank.js';
+export default class T extends LoopingBot {
+    loop() {
+        if (globalThis.__did) return;
+        globalThis.__did = true;
+        Bank.depositAllMatching(async (name) => name === 'Coins');
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut snap = base_snapshot();
+    let bank_side = [nc(Some("Bones"), 1), nc(Some("Coins"), 25)];
+    snap.bank_side = &bank_side;
+    snap.bank_open = true;
+    snap.bank_loaded = true;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let _ = iso.probe("1 + 1");
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![script::shim::InteractReq::Deposit {
+            name: "Bones".into()
+        }],
+        "the async matcher's Promise is truthy for the first row"
+    );
+    iso.join();
+
+    let src = r#"
+import { withdrawTo } from '../../api/thieving/stealRules.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__did) return;
+        globalThis.__did = true;
+        await withdrawTo('Lobster', 22, async () => 2);
+        globalThis.__done = true;
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let ops = ["Withdraw-10".to_string(), "Withdraw-X".to_string()];
+    let bank = [item_row(379, Some("Lobster"), 100, &ops, false, -1, 0)];
+    let mut snap = base_snapshot();
+    snap.bank = &bank;
+    snap.bank_open = true;
+    snap.bank_loaded = true;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let _ = iso.probe("1 + 1");
+    assert_eq!(iso.probe("__done").unwrap(), true);
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "a Promise count is not below the target: nothing is withdrawn"
+    );
+    iso.join();
+}
+
 #[test]
 fn isolate_banking_deposit_waits_for_observed_host_result() {
     let src = r#"
@@ -3456,8 +3519,6 @@ export default class T extends LoopingBot {
     async loop() {
         if (globalThis.__did) return;
         globalThis.__did = true;
-        globalThis.__clock = 0;
-        globalThis.performance.now = () => globalThis.__clock;
         await Bank.depositAllMatching((name) => name === 'Bones');
         globalThis.__depositDone = true;
     }
@@ -3559,14 +3620,19 @@ export default class T extends LoopingBot {
     iso.join();
 }
 
+/// A row without a Withdraw-X op answers frozen `false` (`Bank.ts`
+/// 222-225) and sends nothing, and the empty posted ops stay empty.
 #[test]
-fn isolate_bank_items_do_not_invent_ops_and_withdraw_x_throws() {
+fn isolate_bank_items_do_not_invent_ops_and_withdraw_x_answers_false() {
     let src = r#"
 import { Bank } from '../../api/bank/Bank.js';
 export default class T extends LoopingBot {
-    loop() {
+    async loop() {
+        if (globalThis.__did) return;
+        globalThis.__did = true;
         this.log('ops:' + JSON.stringify(Bank.items()[0].ops));
-        Bank.withdrawX('Bones', 25);
+        globalThis.__ok = await Bank.withdrawX('Bones', 25);
+        globalThis.__absent = await Bank.withdrawX('Feather', 25);
     }
 }
 "#;
@@ -3578,16 +3644,17 @@ export default class T extends LoopingBot {
     snap.bank_loaded = true;
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(1);
-    let _ = iso.probe("__rs_bot");
+    let _ = iso.probe("1 + 1");
     let logs = iso.drain_logs();
     assert!(
         logs.iter().any(|l| l.contains("ops:[]")),
         "empty posted ops must stay empty, not a fabricated withdraw menu: {logs:?}"
     );
-    assert!(
-        logs.iter()
-            .any(|l| l.contains("not impl") && l.contains("Bank.withdrawX")),
-        "withdrawX without a host X-amount op must throw not impl: {logs:?}"
+    assert_eq!(iso.probe("__ok").unwrap(), false, "no usable op: {logs:?}");
+    assert_eq!(
+        iso.probe("__absent").unwrap(),
+        false,
+        "no bank row: {logs:?}"
     );
     assert!(
         iso.drain_interacts().is_empty(),

@@ -56,19 +56,59 @@ pub(crate) fn with_view<R>(f: impl FnOnce(&ReachQueryView) -> R) -> R {
     REACH.with(|slot| f(&slot.borrow().view))
 }
 
+/// The last posted player tile (the tile walk arrival is measured from).
+pub(crate) fn posted_here() -> Option<WorldTile> {
+    crate::observed::with(|scene| {
+        scene.latest().here().map(|here| WorldTile {
+            x: here.x,
+            z: here.z,
+            level: here.level,
+        })
+    })
+}
+
 /// Frozen `isArrived` ([`api::query::is_arrived`]) from the last posted
 /// player tile over the cached reach view: the arrival rule every shim and
 /// machine walk pre-check uses. No posted tile is not arrived.
 pub(crate) fn arrived(dest: WorldTile, radius: i32) -> bool {
-    let Some(here) = crate::observed::with(|scene| scene.latest().here()) else {
+    let Some(here) = posted_here() else {
         return false;
     };
-    let here = WorldTile {
-        x: here.x,
-        z: here.z,
+    with_view(|view| api::query::is_arrived(here, dest, radius, || view))
+}
+
+/// [`arrived`] for a caller's JS numbers, compared as frozen `isArrived`
+/// compares them: `level !==`, then Chebyshev `> radius` (a NaN radius
+/// never arrives, a fractional one is a plain bound). A dest off the tile
+/// grid is unprobeable, so within the radius it arrives, as frozen's
+/// `!probe.probeable(dest)` does.
+pub(crate) fn arrived_at(x: f64, z: f64, level: f64, radius: f64) -> bool {
+    let Some(here) = posted_here() else {
+        return false;
+    };
+    if f64::from(here.level) != level {
+        return false;
+    }
+    let dist = (f64::from(here.x) - x)
+        .abs()
+        .max((f64::from(here.z) - z).abs());
+    if !(dist <= radius) {
+        return false;
+    }
+    if dist == 0.0 {
+        return true;
+    }
+    let on_grid = |n: f64| n.fract() == 0.0 && n >= f64::from(i32::MIN) && n <= f64::from(i32::MAX);
+    if !(on_grid(x) && on_grid(z)) {
+        return true;
+    }
+    let dest = WorldTile {
+        x: x as i32,
+        z: z as i32,
         level: here.level,
     };
-    with_view(|view| api::query::is_arrived(here, dest, radius, || view))
+    // `dist <= radius` held: the integer distance is the bound.
+    arrived(dest, dist as i32)
 }
 
 fn view_from_reader(r: ReachReader<'_>) -> ReachQueryView {
@@ -173,20 +213,35 @@ fn v1_can_reach<'s>(
     bool_val(scope, with_view(|view| view.can_reach(tile, &options)))
 }
 
-/// `__rs2b0t_reach('arrived', dest, radius)`: a missing dest or a radius that
-/// is not an int32 is not arrived.
+/// `__rs2b0t_reach('arrived', dest, radius)`: [`arrived_at`] over JS
+/// `ToNumber` of `dest.x`, `dest.z`, `dest.level` (absent: 0) and `radius`.
+/// A missing dest is not arrived.
 fn v1_arrived<'s>(
     scope: &mut v8::HandleScope<'s>,
     dest: v8::Local<v8::Value>,
     radius: v8::Local<v8::Value>,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
-    let Some(dest) = tile_or_none(scope, dest)? else {
+    if dest.is_null_or_undefined() || !dest.is_object() {
         return bool_val(scope, false);
-    };
-    let Ok(radius) = required_i32(scope, radius) else {
-        return bool_val(scope, false);
-    };
-    bool_val(scope, arrived(dest, radius))
+    }
+    let x = optional_field(scope, dest, "x")?;
+    let z = optional_field(scope, dest, "z")?;
+    let level = optional_field(scope, dest, "level")?;
+    let x = js_number(scope, x, f64::NAN);
+    let z = js_number(scope, z, f64::NAN);
+    let level = js_number(scope, level, 0.0);
+    let radius = js_number(scope, Some(radius), f64::NAN);
+    bool_val(scope, arrived_at(x, z, level, radius))
+}
+
+/// JS `ToNumber` of a present value; `absent` for `undefined`/`null`.
+fn js_number(scope: &mut v8::HandleScope, value: Option<v8::Local<v8::Value>>, absent: f64) -> f64 {
+    match value {
+        Some(value) if !value.is_null_or_undefined() => {
+            value.number_value(scope).unwrap_or(f64::NAN)
+        }
+        _ => absent,
+    }
 }
 
 fn v2_walkable<'s>(

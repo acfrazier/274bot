@@ -5248,8 +5248,6 @@ export default class T extends LoopingBot {
     async loop() {
         if (globalThis.__did) return;
         globalThis.__did = true;
-        globalThis.__clock = 0;
-        globalThis.performance.now = () => globalThis.__clock;
         await Bank.depositInventory();
         globalThis.__deposit_done = true;
         globalThis.__withdraw_result = await Bank.withdraw('Knife', 'Withdraw All');

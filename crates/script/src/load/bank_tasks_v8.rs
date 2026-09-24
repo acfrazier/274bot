@@ -10,6 +10,9 @@
 //!   0, 15, 10).
 //! - `__rs2b0t_death_recovery_validate(opts)`: observe the posted chat,
 //!   call `opts.onDeath()` on a new death, answer due.
+//! - `__rs2b0t_next_withdraw_chunk(need)`: frozen `nextWithdrawChunk`
+//!   ([`crate::bank_withdraw::next_chunk`]), `null` or `{ kind, count }` /
+//!   `{ kind, op }`.
 
 use super::callback_v8::{self as cb, Callback, JsResult};
 use crate::periodic_bank::{
@@ -27,7 +30,30 @@ pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
         runtime,
         "__rs2b0t_death_recovery_validate",
         death_recovery_validate,
-    )
+    )?;
+    cb::install(runtime, "__rs2b0t_next_withdraw_chunk", next_withdraw_chunk)
+}
+
+fn next_withdraw_chunk<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    args: v8::FunctionCallbackArguments<'s>,
+    rv: v8::ReturnValue,
+) {
+    use crate::bank_withdraw::{next_chunk, Chunk};
+    let result = cb::number(scope, args.get(0)).and_then(|need| match next_chunk(need) {
+        None => Ok(v8::null(scope).into()),
+        Some(Chunk::X(count)) => {
+            let kind = cb::string(scope, "x");
+            let count = cb::num(scope, count);
+            cb::object(scope, &[("kind", kind), ("count", count)])
+        }
+        Some(Chunk::Op(op)) => {
+            let kind = cb::string(scope, "op");
+            let op = cb::string(scope, op);
+            cb::object(scope, &[("kind", kind), ("op", op)])
+        }
+    });
+    cb::finish(scope, rv, result);
 }
 
 /// `opts[key]()` when it is a function (receiver `opts`), else `None`.

@@ -866,3 +866,78 @@ export default class T extends LoopingBot {
     );
     iso.join();
 }
+
+/// Frozen calls `setStatus`, `log` and the deposit matcher synchronously: a
+/// never-settling status promise does not hold the run, and an async
+/// matcher's Promise is truthy, so the first backpack row is deposited.
+#[test]
+fn synchronous_options_are_not_awaited() {
+    let src = r#"
+import { PeriodicBank } from '../../api/tasks/PeriodicBank.js';
+export default class T extends TaskBot {
+    onStart() {
+        this.add(new PeriodicBank({
+            strategy: () => 'loot',
+            itemsThreshold: () => 1,
+            minutesThreshold: () => 10,
+            countLoot: () => 2,
+            deposit: async (name) => name === 'Coins',
+            commonJunk: () => false,
+            returnTo: () => null,
+            setStatus: () => new Promise(() => {}),
+            log: () => new Promise(() => {}),
+        }));
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.into(), LoadShape::CompatClass, vec![]).unwrap();
+    let side = [item_row("Bones", 526, 1), item_row("Coins", 995, 25)];
+    let mut snap = base_snapshot();
+    snap.here = Some(TileInput {
+        x: 2724,
+        z: 3490,
+        level: 0,
+    });
+    snap.nearest_booth = Some(seers_booth());
+    snap.bank_open = true;
+    snap.bank_loaded = true;
+    snap.bank_generation = 4;
+    snap.bank_side = &side;
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 1);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::Deposit {
+            name: "Bones".into()
+        }]
+    );
+    iso.join();
+}
+
+/// A booth beside the player with no posted approach fact is not opened:
+/// the run fails closed and backs off with the frozen log line.
+#[test]
+fn an_adjacent_booth_without_an_approach_fact_fails_closed() {
+    let iso = LoadIsolate::spawn(CHICKEN.into(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut bag = serde_json::Map::new();
+    bag.insert("bankStrategy".into(), serde_json::json!("Loot count"));
+    iso.post_settings_bag(&bag);
+    let mut snap = base_snapshot();
+    snap.here = Some(TileInput {
+        x: 2724,
+        z: 3490,
+        level: 0,
+    });
+    snap.nearest_booth = Some(seers_booth());
+    post_snapshot_native(&iso, &snap, &[]);
+    tick(&iso, 1);
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "no OpenBooth without a fact"
+    );
+    assert_eq!(
+        iso.probe("__log").unwrap(),
+        "periodic bank: no bank reachable — will retry later"
+    );
+    iso.join();
+}

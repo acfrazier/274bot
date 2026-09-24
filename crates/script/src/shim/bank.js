@@ -24,7 +24,7 @@ async function driveBankOpen(input) {
 }
 
 // One bank item op: Rust decides the action from the posted rows, sends it
-// and awaits the host result; a `not impl` refusal throws.
+// and awaits the host result. Arguments Rust cannot read are refused.
 async function bankOp(args) {
     const out = await runMachine('bank_op', args);
     if (out.kind === 'refused') throw notImpl(out.reason);

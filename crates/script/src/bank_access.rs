@@ -372,7 +372,12 @@ impl BankAccess {
                     let booth =
                         observed::with(|scene| scene.since_login().nearest_booth().cloned());
                     let Some(booth) = booth else {
-                        return Some(Step::Done(false));
+                        let name = self.name.clone();
+                        self.say(
+                            format!("no usable '{name}' in the scene"),
+                            Phase::Finish(false),
+                        );
+                        return None;
                     };
                     let tile = WorldTile {
                         x: booth.tile.x,
@@ -672,7 +677,13 @@ fn log_first(
 
 impl Family for BankAccess {
     const NAME: &'static str = "bank_access";
+    /// One bank open at a time, whichever surface started it: a newer
+    /// open (this, `openNpcAccess`, `openBooth` …) supersedes this row.
+    const EXCLUSIVE: bool = true;
+    const EXCLUSIVE_GROUP: &'static str = BankOpen::NAME;
     const CALLBACKS: &'static [&'static str] = &["log"];
+    /// Frozen calls `log?.()` without awaiting it.
+    const AWAIT_CALLBACKS: bool = false;
     /// The first verb joins the caller's tick, after any log line.
     const KICK_ON_START: bool = true;
     type Args = AccessArgs;
@@ -919,7 +930,13 @@ impl NpcAccess {
 
 impl Family for NpcAccess {
     const NAME: &'static str = "bank_npc_access";
+    /// One bank open at a time, whichever surface started it: a newer
+    /// open (this, `openNpcAccess`, `openBooth` …) supersedes this row.
+    const EXCLUSIVE: bool = true;
+    const EXCLUSIVE_GROUP: &'static str = BankOpen::NAME;
     const CALLBACKS: &'static [&'static str] = &["log"];
+    /// Frozen calls `log?.()` without awaiting it.
+    const AWAIT_CALLBACKS: bool = false;
     /// The first verb joins the caller's tick, after any log line.
     const KICK_ON_START: bool = true;
     type Args = NpcAccessArgs;
@@ -931,5 +948,336 @@ impl Family for NpcAccess {
 
     fn step(&mut self, cx: &mut Cx<'_>) -> Step<bool> {
         self.run(cx)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::load::callback_v8::HeldCallback;
+    use crate::machine::{self, Called, Js, Outcome, Pending, Started, Take};
+    use crate::observed::{EntityRow, Ops, SceneRow, Tile};
+    use serde_json::Value;
+    use std::rc::Rc;
+
+    /// No `log` hook is passed: lines are skipped, verbs are what is seen.
+    struct NoJs;
+
+    impl Js for NoJs {
+        fn queue_len(&mut self) -> usize {
+            0
+        }
+
+        fn call(&mut self, _hook: Option<&HeldCallback>, _args: &[Value]) -> Called {
+            panic!("no log hook was passed");
+        }
+
+        fn poll(&mut self, _pending: &Pending) -> Option<Reply> {
+            panic!("no log hook was passed");
+        }
+
+        fn claimed(&mut self) -> bool {
+            false
+        }
+    }
+
+    fn ops(actions: &[&str]) -> Ops {
+        actions.iter().map(|action| Rc::from(*action)).collect()
+    }
+
+    fn loc(id: i32, name: &str, x: i32, z: i32, distance: i32, actions: &[&str]) -> SceneRow {
+        SceneRow {
+            id,
+            name: Some(Rc::from(name)),
+            x,
+            z,
+            level: 0,
+            distance,
+            actions: ops(actions),
+        }
+    }
+
+    fn banker() -> EntityRow {
+        EntityRow {
+            index: 5,
+            id: 494,
+            name: Some(Rc::from("Banker")),
+            distance: 2,
+            actions: ops(&["Talk-to", "Bank"]),
+            ..EntityRow::default()
+        }
+    }
+
+    fn at(x: i32, z: i32) -> Tile {
+        Tile { x, z, level: 0 }
+    }
+
+    fn start(family: &str, args: Value) -> machine::Handle {
+        match machine::start(family, args, Vec::new(), 0) {
+            Started::Running(handle) => handle,
+            other => panic!("expected a running row, got {other:?}"),
+        }
+    }
+
+    fn tick() -> Vec<InteractReq> {
+        machine::step(&mut NoJs);
+        machine::merge_ops(Vec::new())
+    }
+
+    fn reset() {
+        machine::on_reset();
+        observed::on_reset();
+    }
+
+    fn interact(loc: &SceneRow, action: &str) -> InteractReq {
+        InteractReq::Loc {
+            x: loc.x,
+            z: loc.z,
+            level: 0,
+            action: action.into(),
+            id: Some(loc.id),
+        }
+    }
+
+    fn talk() -> InteractReq {
+        InteractReq::Npc {
+            name: "Banker".into(),
+            action: "Bank".into(),
+            index: Some(5),
+        }
+    }
+
+    fn done(handle: machine::Handle, ok: bool) {
+        assert_eq!(
+            machine::take(handle),
+            Take::Settled(Outcome::Done(Value::Bool(ok)))
+        );
+    }
+
+    /// `openFirst`: the closed loc is opened first, then the named access
+    /// loc (a different id on the same tile) is used.
+    #[test]
+    fn open_first_opens_the_closer_then_banks_at_the_opened_loc() {
+        reset();
+        let closed = loc(1, "Closed chest", 3382, 3269, 1, &["Open"]);
+        let open = loc(2, "Open chest", 3382, 3269, 1, &["Bank"]);
+        observed::post(1, |post| {
+            post.session(true)
+                .here(at(3382, 3268))
+                .locs(vec![closed.clone()]);
+        });
+        let handle = start(
+            "bank_access",
+            json!({ "name": "Open chest", "op": "Bank",
+                    "open_first": { "name": "Closed chest", "op": "Open" } }),
+        );
+        assert_eq!(tick(), vec![interact(&closed, "Open")]);
+        observed::post(2, |post| {
+            post.locs(vec![open.clone()]);
+        });
+        assert_eq!(tick(), vec![interact(&open, "Bank")]);
+        observed::post(3, |post| {
+            post.bank_open(true).bank_loaded(true);
+        });
+        assert!(tick().is_empty());
+        done(handle, true);
+    }
+
+    /// No opener in the scene: three one-tick attempts, then `false`.
+    #[test]
+    fn open_first_gives_up_after_three_attempts() {
+        reset();
+        observed::post(1, |post| {
+            post.session(true).here(at(3382, 3268)).locs(Vec::new());
+        });
+        let handle = start(
+            "bank_access",
+            json!({ "name": "Open chest", "op": "Bank",
+                    "open_first": { "name": "Closed chest", "op": "Open" } }),
+        );
+        for n in 1..=3 {
+            observed::post(n, |_| {});
+            assert!(tick().is_empty());
+            assert_eq!(machine::take(handle), Take::Pending, "attempt {n}");
+        }
+        observed::post(4, |_| {});
+        assert!(tick().is_empty());
+        done(handle, false);
+    }
+
+    /// An object dialogue (Continue) after the interact is pressed through,
+    /// and the bank opening after it answers true.
+    #[test]
+    fn an_object_dialogue_is_continued_into_the_bank() {
+        reset();
+        let chest = loc(2693, "Shantay chest", 3309, 3120, 1, &["Open"]);
+        observed::post(1, |post| {
+            post.session(true)
+                .here(at(3308, 3120))
+                .locs(vec![chest.clone()]);
+        });
+        let handle = start(
+            "bank_access",
+            json!({ "name": "Shantay chest", "op": "Open" }),
+        );
+        assert_eq!(tick(), vec![interact(&chest, "Open")]);
+        observed::post(2, |post| {
+            post.chat_modal_id(4882).chat_continue(true);
+        });
+        assert_eq!(tick(), vec![InteractReq::ContinueDialog]);
+        observed::post(3, |post| {
+            post.chat_modal_id(-1).chat_continue(false);
+        });
+        assert!(tick().is_empty(), "acknowledged: one settle tick");
+        observed::post(4, |post| {
+            post.bank_open(true).bank_loaded(true);
+        });
+        assert!(tick().is_empty());
+        done(handle, true);
+    }
+
+    /// A far loc that did not open: step beside it (no reach view: the loc
+    /// tile, radius 1), then interact again from there.
+    #[test]
+    fn an_unopened_far_loc_is_retried_from_beside_it() {
+        reset();
+        let far = loc(2693, "Shantay chest", 3303, 3120, 3, &["Open"]);
+        observed::post(1, |post| {
+            post.session(true)
+                .here(at(3300, 3120))
+                .locs(vec![far.clone()]);
+        });
+        let handle = start(
+            "bank_access",
+            json!({ "name": "Shantay chest", "op": "Open" }),
+        );
+        assert_eq!(tick(), vec![interact(&far, "Open")]);
+        machine::tests::expire_deadlines();
+        assert_eq!(
+            tick(),
+            vec![InteractReq::WalkNear {
+                x: 3303,
+                z: 3120,
+                level: 0,
+                radius: 1,
+                allow_teleports: false,
+                allow_wilderness: true,
+                allow_bank_fetch: true,
+                request_id: 0,
+            }]
+        );
+        let beside = loc(2693, "Shantay chest", 3303, 3120, 1, &["Open"]);
+        observed::post(2, |post| {
+            post.here(at(3302, 3120)).locs(vec![beside.clone()]);
+        });
+        assert_eq!(tick(), vec![interact(&beside, "Open")]);
+        assert_eq!(machine::take(handle), Take::Pending);
+    }
+
+    /// Frozen `openedReady`: an open bank whose list never posts still
+    /// answers open once the 4 s wait lapses.
+    #[test]
+    fn opened_ready_answers_open_after_its_wait() {
+        reset();
+        observed::post(1, |post| {
+            post.session(true)
+                .here(at(3308, 3120))
+                .bank_open(true)
+                .bank_loaded(false);
+        });
+        let handle = start(
+            "bank_access",
+            json!({ "name": "Shantay chest", "op": "Open" }),
+        );
+        assert!(tick().is_empty());
+        assert_eq!(machine::take(handle), Take::Pending, "inside the wait");
+        machine::tests::expire_deadlines();
+        assert!(tick().is_empty());
+        done(handle, true);
+    }
+
+    /// The banker: absent for one attempt, then talked to; a silent talk is
+    /// retried; the dialogue is continued, then the access option answered.
+    #[test]
+    fn npc_access_retries_then_continues_and_answers_the_option() {
+        reset();
+        observed::post(1, |post| {
+            post.session(true).here(at(2852, 2952)).npcs(Vec::new());
+        });
+        let handle = start(
+            "bank_npc_access",
+            json!({ "name": "Banker", "op": "Bank", "choose": "access my bank" }),
+        );
+        assert!(tick().is_empty(), "no banker: one tick");
+        observed::post(2, |post| {
+            post.npcs(vec![banker()]);
+        });
+        assert_eq!(tick(), vec![talk()]);
+        machine::tests::expire_deadlines();
+        assert_eq!(tick(), vec![talk()], "no dialogue opened: the next attempt");
+        observed::post(3, |post| {
+            post.chat_modal_id(1).chat_continue(true);
+        });
+        assert_eq!(tick(), vec![InteractReq::ContinueDialog]);
+        observed::post(4, |post| {
+            post.chat_modal_id(2)
+                .chat_continue(false)
+                .chat_options(vec![
+                    "Nothing thanks".into(),
+                    "I'd like to access my bank account".into(),
+                ]);
+        });
+        assert!(tick().is_empty(), "acknowledged: one settle tick");
+        observed::post(5, |_| {});
+        assert_eq!(tick(), vec![InteractReq::Answer { option: 2 }]);
+        assert_eq!(machine::take(handle), Take::Pending);
+    }
+
+    /// No banker for all three attempts: `false`.
+    #[test]
+    fn npc_access_gives_up_after_three_attempts() {
+        reset();
+        observed::post(1, |post| {
+            post.session(true).here(at(2852, 2952)).npcs(Vec::new());
+        });
+        let handle = start(
+            "bank_npc_access",
+            json!({ "name": "Banker", "op": "Bank", "choose": "access" }),
+        );
+        for n in 1..=3 {
+            observed::post(n, |_| {});
+            assert!(tick().is_empty());
+            assert_eq!(machine::take(handle), Take::Pending, "attempt {n}");
+        }
+        observed::post(4, |_| {});
+        assert!(tick().is_empty());
+        done(handle, false);
+    }
+
+    /// Every bank open shares one exclusive group: a newer `Bank.openBooth`
+    /// supersedes a running access opener, as it did the shim's
+    /// `openBooth` it used to call.
+    #[test]
+    fn a_newer_bank_open_supersedes_an_access_opener() {
+        reset();
+        let chest = loc(2693, "Shantay chest", 3309, 3120, 1, &["Open"]);
+        observed::post(1, |post| {
+            post.session(true)
+                .here(at(3308, 3120))
+                .locs(vec![chest.clone()]);
+        });
+        let access = start(
+            "bank_access",
+            json!({ "name": "Shantay chest", "op": "Open" }),
+        );
+        assert_eq!(tick(), vec![interact(&chest, "Open")]);
+        observed::post(2, |post| {
+            post.bank_open(true).bank_loaded(false);
+        });
+        let _open = start("bank_open", json!({ "mode": "open-booth" }));
+        assert_eq!(
+            machine::take(access),
+            Take::Settled(Outcome::Aborted(machine::AbortReason::Superseded))
+        );
     }
 }

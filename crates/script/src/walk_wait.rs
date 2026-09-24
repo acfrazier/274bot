@@ -118,15 +118,6 @@ impl HostOutcome {
     }
 }
 
-/// The last posted player tile.
-fn posted_here(scene: &Scene) -> Option<WorldTile> {
-    scene.latest().here().map(|tile| WorldTile {
-        x: tile.x,
-        z: tile.z,
-        level: tile.level,
-    })
-}
-
 struct Wait {
     token: u64,
     key: WalkKey,
@@ -269,7 +260,10 @@ pub(crate) fn dispatch(input: &Value) -> Value {
                 json!(token)
             }
             "settled" => {
-                json!(slot.poll(json_u64(input.get("token")), observed::with(posted_here)))
+                json!(slot.poll(
+                    json_u64(input.get("token")),
+                    crate::load::reach_query::posted_here()
+                ))
             }
             "value" => json!(slot.value(json_u64(input.get("token")))),
             _ => Value::Null,

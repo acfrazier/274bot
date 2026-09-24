@@ -155,6 +155,8 @@ fn read_anchor(value: &Value) -> Option<Tile> {
 impl Family for DeathRecovery {
     const NAME: &'static str = "death_recovery";
     const CALLBACKS: &'static [&'static str] = &["walkBack", "onRecovered"];
+    /// Frozen awaits `walkBack`; `onRecovered` is a synchronous call.
+    const SYNC_HOOKS: &'static [usize] = &[ON_RECOVERED];
     type Args = RecoveryArgs;
     type Output = Value;
 
@@ -308,5 +310,86 @@ mod tests {
         assert!(latch.observe(&fresh));
         assert!(latch.latched);
         assert!(!latch.observe(&fresh), "the same death seq fires once");
+    }
+
+    struct NoJs;
+
+    impl machine::Js for NoJs {
+        fn queue_len(&mut self) -> usize {
+            0
+        }
+
+        fn call(
+            &mut self,
+            _hook: Option<&crate::load::callback_v8::HeldCallback>,
+            _args: &[Value],
+        ) -> machine::Called {
+            panic!("no hooks were passed");
+        }
+
+        fn poll(&mut self, _pending: &machine::Pending) -> Option<machine::Reply> {
+            panic!("no hooks were passed");
+        }
+
+        fn claimed(&mut self) -> bool {
+            false
+        }
+    }
+
+    /// Frozen reads no result from the 20 s respawn wait: when it lapses
+    /// with no respawn posted, three ticks later the walk still starts.
+    #[test]
+    fn a_lapsed_respawn_wait_still_walks_after_three_ticks() {
+        machine::on_reset();
+        observed::on_reset();
+        on_reset();
+        LATCH.with(|latch| latch.borrow_mut().latched = true);
+        observed::post(1, |post| {
+            post.session(false);
+        });
+        let started = machine::start(
+            DeathRecovery::NAME,
+            serde_json::json!({ "anchor": { "x": 3235, "z": 3295, "level": 0 }, "radius": 3 }),
+            Vec::new(),
+            0,
+        );
+        let machine::Started::Running(handle) = started else {
+            panic!("expected a running row, got {started:?}");
+        };
+        machine::step(&mut NoJs);
+        assert!(
+            machine::merge_ops(Vec::new()).is_empty(),
+            "waiting to respawn"
+        );
+        machine::tests::expire_deadlines();
+        machine::step(&mut NoJs);
+        for n in 2..=4 {
+            observed::post(n, |post| {
+                post.session(true).here(observed::Tile {
+                    x: 3222,
+                    z: 3218,
+                    level: 0,
+                });
+            });
+            machine::step(&mut NoJs);
+            let ops = machine::merge_ops(Vec::new());
+            if n < 4 {
+                assert!(ops.is_empty(), "tick {n}: inside the three ticks");
+            } else {
+                assert!(
+                    matches!(
+                        ops.as_slice(),
+                        [InteractReq::WalkNear {
+                            x: 3235,
+                            z: 3295,
+                            radius: 3,
+                            ..
+                        }]
+                    ),
+                    "{ops:?}"
+                );
+            }
+        }
+        assert_eq!(machine::take(handle), machine::Take::Pending);
     }
 }

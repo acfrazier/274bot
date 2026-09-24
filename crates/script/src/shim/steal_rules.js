@@ -1,10 +1,10 @@
-import { notImpl, runMachine } from '../../shim/_kernel.js';
+import { runMachine } from '../../shim/_kernel.js';
 
 export const THIEVER_BANKING_OPTIONS = ['None', 'Auto'];
 export const STUN_COMBAT_TICKS = 9;
 
-export function nextWithdrawChunk(_need) {
-    throw notImpl('nextWithdrawChunk');
+export function nextWithdrawChunk(need) {
+    return globalThis.__rs2b0t_next_withdraw_chunk(need);
 }
 
 // Rust runs the frozen loop; `count` is called through the callback path

@@ -41,8 +41,10 @@
 //!   synchronously inside the caller's JS. Ops it emits join this tick's
 //!   InteractReq batch at the caller's position in the JS queue. A
 //!   [`Family::EXCLUSIVE`] family aborts its older live row as
-//!   `superseded` when a new one runs. A [`Family::KICK_ON_START`] row is
-//!   then driven once ([`kick`]) inside the same call, so its first
+//!   `superseded` when a new one runs; families that share an
+//!   [`Family::EXCLUSIVE_GROUP`] supersede each other. A
+//!   [`Family::KICK_ON_START`] row is then driven once ([`kick`]) inside
+//!   the same call, so its first
 //!   callbacks and ops run in the caller's own synchronous turn, as the
 //!   frozen driver's first stretch did. The kick ignores pause and
 //!   guardian hold on purpose: the frozen driver ran whenever the caller
@@ -128,6 +130,10 @@ pub(crate) trait Family: Sized + 'static {
     const NAME: &'static str;
     /// At most one live row: a newer running start supersedes the older.
     const EXCLUSIVE: bool = false;
+    /// The exclusive set this family belongs to: by default itself. Two
+    /// families naming the same group supersede each other's rows (for
+    /// example every bank open, whichever surface started it).
+    const EXCLUSIVE_GROUP: &'static str = Self::NAME;
     /// Script callbacks by `hooks` key; [`Call::hook`] indexes this.
     const CALLBACKS: &'static [&'static str] = &[];
     /// Drive this row once inside `start`, so the first callbacks and
@@ -503,7 +509,8 @@ impl<F: Family> Machine for F {
 struct Row {
     handle: Handle,
     family: &'static str,
-    exclusive: bool,
+    /// [`Family::EXCLUSIVE_GROUP`] of an exclusive family.
+    exclusive: Option<&'static str>,
     /// [`Family::AWAIT_CALLBACKS`].
     awaits: bool,
     /// [`Family::SYNC_HOOKS`].
@@ -529,7 +536,7 @@ struct Host {
     /// The rows a [`pass`] is stepping right now. They are out of `rows`
     /// while a callback runs, and [`live`] must still see them.
     stepping: Vec<(&'static str, Handle)>,
-    /// The newest running row of each exclusive family.
+    /// The newest running row of each exclusive group.
     newest: Vec<(&'static str, Handle)>,
     settled: Vec<(Handle, Outcome)>,
     ops: Vec<PlacedOp>,
@@ -577,11 +584,11 @@ impl Host {
     }
 
     fn superseded(&self, row: &Row) -> bool {
-        row.exclusive
-            && self
-                .newest
+        row.exclusive.is_some_and(|group| {
+            self.newest
                 .iter()
-                .any(|(family, handle)| *family == row.family && *handle != row.handle)
+                .any(|(newest, handle)| *newest == group && *handle != row.handle)
+        })
     }
 
     fn abort_superseded(&mut self) {
@@ -668,15 +675,16 @@ fn begin_row<F: Family>(args: Value, hooks: Vec<Hook>, at: usize) -> Started {
                 let handle = host.next;
                 host.next += 1;
                 if F::EXCLUSIVE {
-                    host.newest.retain(|(family, _)| *family != F::NAME);
-                    host.newest.push((F::NAME, handle));
+                    host.newest
+                        .retain(|(group, _)| *group != F::EXCLUSIVE_GROUP);
+                    host.newest.push((F::EXCLUSIVE_GROUP, handle));
                     host.abort_superseded();
                 }
                 host.place(at, ops);
                 host.rows.push(Row {
                     handle,
                     family: F::NAME,
-                    exclusive: F::EXCLUSIVE,
+                    exclusive: F::EXCLUSIVE.then_some(F::EXCLUSIVE_GROUP),
                     awaits: F::AWAIT_CALLBACKS,
                     sync_hooks: F::SYNC_HOOKS,
                     clock,

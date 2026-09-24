@@ -76,8 +76,8 @@ impl Deposit {
                     if self.round >= ROUNDS {
                         return Step::Done(());
                     }
-                    let view = BankView::now();
-                    if side_rows().is_empty() && view.open {
+                    let rows = side_rows();
+                    if rows.is_empty() && BankView::now().open {
                         self.phase = Phase::WaitRows;
                         cx.clock().arm(DEPOSIT_VIEW_MS);
                         if let Some(hook) = self.log.filter(|hook| cx.has(*hook)) {
@@ -89,7 +89,7 @@ impl Deposit {
                         continue;
                     }
                     self.phase = Phase::Match {
-                        rows: side_rows(),
+                        rows,
                         index: 0,
                         asked: false,
                     };
@@ -165,7 +165,7 @@ impl Deposit {
                             self.phase = Phase::Await(waiting);
                             return Step::Wait;
                         }
-                        Sent::Settled(_) | Sent::NotImpl(_) => return Step::Done(()),
+                        Sent::Settled(_) => return Step::Done(()),
                     }
                 }
                 Phase::Await(waiting) => match waiting.poll(&BankView::now()) {
@@ -222,6 +222,9 @@ pub(crate) struct BankDeposit(Deposit);
 impl Family for BankDeposit {
     const NAME: &'static str = "bank_deposit";
     const CALLBACKS: &'static [&'static str] = &["match", "log"];
+    /// Frozen calls `match(...)` inside `items.find` and `log?.()`
+    /// without awaiting either: a returned promise is a (truthy) value.
+    const AWAIT_CALLBACKS: bool = false;
     /// The first predicate calls and the first deposit join the caller's tick.
     const KICK_ON_START: bool = true;
     type Args = DepositArgs;

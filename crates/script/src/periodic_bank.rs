@@ -744,6 +744,9 @@ pub(crate) struct BankNearest(Run);
 impl Family for BankNearest {
     const NAME: &'static str = "bank_nearest";
     const CALLBACKS: &'static [&'static str] = &["deposit", "afterDeposit", "log"];
+    /// Frozen awaits only `afterDeposit`; the matcher and `log` are
+    /// synchronous calls.
+    const SYNC_HOOKS: &'static [usize] = &[NEAREST_DEPOSIT, NEAREST_LOG];
     /// The first verb joins the caller's tick.
     const KICK_ON_START: bool = true;
     type Args = BankNearestArgs;
@@ -836,6 +839,16 @@ impl Family for PeriodicBank {
         "commonJunk",
         "returnTo",
         "log",
+    ];
+    /// Frozen awaits only `afterDeposit` (inside `bankNearest`); every other
+    /// option is a synchronous call.
+    const SYNC_HOOKS: &'static [usize] = &[
+        SET_STATUS,
+        DEPOSIT,
+        DESTINATION,
+        COMMON_JUNK,
+        RETURN_TO,
+        LOG,
     ];
     /// Status, the caller's reads and the first verb join the caller's tick.
     const KICK_ON_START: bool = true;
