@@ -28,16 +28,20 @@ pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
     callback_v8::install(runtime, "__rs2b0t_machine_take", take_callback)
 }
 
-/// Step every live machine once, before the tick's other JS.
-pub(super) fn step(runtime: &mut Runtime) {
-    machine::step(&mut RuntimeJs(runtime));
+/// Step every live machine once, before the tick's other JS. `claimed`
+/// is join's claim on the tick: once it holds, no further callback runs.
+pub(super) fn step(runtime: &mut Runtime, claimed: &dyn Fn() -> bool) {
+    machine::step(&mut RuntimeJs { runtime, claimed });
 }
 
 /// After the tick's pump: resume rows whose callback promise settled, and
 /// settle the awaits of the rows that ended.
-pub(super) fn resume(runtime: &mut Runtime) -> Result<(), rustyscript::Error> {
-    machine::resume(&mut RuntimeJs(runtime));
-    if machine::any_settled() {
+pub(super) fn resume(
+    runtime: &mut Runtime,
+    claimed: &dyn Fn() -> bool,
+) -> Result<(), rustyscript::Error> {
+    machine::resume(&mut RuntimeJs { runtime, claimed });
+    if machine::any_settled() && !claimed() {
         runtime.call_function_immediate::<()>(None, "__rs2b0t_settle_machines", json_args!())?;
     }
     Ok(())
@@ -165,11 +169,14 @@ fn js_queue_len(scope: &mut v8::HandleScope) -> usize {
 }
 
 /// The isolate runtime as the machine host's script side.
-struct RuntimeJs<'r>(&'r mut Runtime);
+struct RuntimeJs<'r> {
+    runtime: &'r mut Runtime,
+    claimed: &'r dyn Fn() -> bool,
+}
 
 impl machine::Js for RuntimeJs<'_> {
     fn queue_len(&mut self) -> usize {
-        let mut scope = self.0.deno_runtime().handle_scope();
+        let mut scope = self.runtime.deno_runtime().handle_scope();
         js_queue_len(&mut scope)
     }
 
@@ -177,7 +184,7 @@ impl machine::Js for RuntimeJs<'_> {
         let Some(hook) = hook else {
             return Called::Settled(Reply::Threw(Thrown::new("undeclared machine callback")));
         };
-        let scope = &mut self.0.deno_runtime().handle_scope();
+        let scope = &mut self.runtime.deno_runtime().handle_scope();
         let callback = hook.open(scope);
         let mut argv = Vec::with_capacity(args.len());
         for arg in args {
@@ -217,7 +224,7 @@ impl machine::Js for RuntimeJs<'_> {
     }
 
     fn poll(&mut self, pending: &Pending) -> Option<Reply> {
-        let scope = &mut self.0.deno_runtime().handle_scope();
+        let scope = &mut self.runtime.deno_runtime().handle_scope();
         let promise = v8::Local::new(scope, pending);
         match promise.state() {
             v8::PromiseState::Pending => None,
@@ -230,6 +237,10 @@ impl machine::Js for RuntimeJs<'_> {
                 Some(Reply::Threw(thrown(scope, reason)))
             }
         }
+    }
+
+    fn claimed(&mut self) -> bool {
+        (self.claimed)()
     }
 }
 

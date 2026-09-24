@@ -312,6 +312,10 @@ pub(crate) trait Js {
     fn call(&mut self, hook: Option<&HeldCallback>, args: &[Value]) -> Called;
     /// Poll a promise a callback returned; `None` while pending.
     fn poll(&mut self, pending: &Pending) -> Option<Reply>;
+    /// Join has claimed this tick for Stop: no more script may run. A
+    /// callback may have absorbed join's terminate, so a later one would
+    /// otherwise spin past it.
+    fn claimed(&mut self) -> bool;
 }
 
 /// A promise a script callback returned, held until it settles.
@@ -707,9 +711,13 @@ fn settle(handle: Handle, outcome: Outcome) {
     HOST.with(|host| host.borrow_mut().settled.push((handle, outcome)));
 }
 
-/// One row's steps for this pass; `Some` when it ended.
+/// One row's steps for this pass; `Some` when it ended. Stops, leaving
+/// the row as it is, once join has claimed the tick.
 fn drive(row: &mut Row, js: &mut impl Js, at: &mut usize) -> Option<Outcome> {
     loop {
+        if js.claimed() {
+            return None;
+        }
         if let Some(pending) = &row.pending {
             row.reply = Some(js.poll(pending)?);
             row.pending = None;
@@ -985,14 +993,18 @@ pub(crate) mod tests {
     }
 
     /// Calls `each(i)` for i in 0..calls, then completes with the replies.
+    /// A throw fails the machine, unless `keep` records its message.
     pub(crate) struct Burst {
         calls: usize,
+        keep: bool,
         replies: Vec<Value>,
     }
 
     #[derive(Deserialize)]
     pub(crate) struct BurstArgs {
         calls: usize,
+        #[serde(default)]
+        keep: bool,
     }
 
     impl Family for Burst {
@@ -1004,12 +1016,16 @@ pub(crate) mod tests {
         fn begin(args: BurstArgs, _cx: &mut Cx<'_>) -> Begin<Self> {
             Begin::Run(Self {
                 calls: args.calls,
+                keep: args.keep,
                 replies: Vec::new(),
             })
         }
 
         fn step(&mut self, cx: &mut Cx<'_>) -> Step<Value> {
             match cx.reply() {
+                Some(Reply::Threw(thrown)) if self.keep => {
+                    self.replies.push(json!(thrown.message()));
+                }
                 Some(Reply::Threw(thrown)) => return Step::Fail(thrown),
                 Some(Reply::Value(value)) => self.replies.push(value),
                 None => {}
@@ -1148,6 +1164,10 @@ pub(crate) mod tests {
         fn poll(&mut self, _pending: &Pending) -> Option<Reply> {
             unreachable!("Echo never returns a promise");
         }
+
+        fn claimed(&mut self) -> bool {
+            false
+        }
     }
 
     /// No script callbacks: a machine that asks for one is a test bug.
@@ -1164,6 +1184,10 @@ pub(crate) mod tests {
 
         fn poll(&mut self, _pending: &Pending) -> Option<Reply> {
             panic!("no script callbacks in this test");
+        }
+
+        fn claimed(&mut self) -> bool {
+            false
         }
     }
 
@@ -1401,6 +1425,10 @@ pub(crate) mod tests {
 
             fn poll(&mut self, _pending: &Pending) -> Option<Reply> {
                 unreachable!("the ask callback returns a value")
+            }
+
+            fn claimed(&mut self) -> bool {
+                false
             }
         }
         step(&mut StartsInside);

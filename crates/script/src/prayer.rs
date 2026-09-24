@@ -365,6 +365,10 @@ mod tests {
         fn poll(&mut self, _pending: &Pending) -> Option<Reply> {
             panic!("the prayer family calls no script callback");
         }
+
+        fn claimed(&mut self) -> bool {
+            false
+        }
     }
 
     fn data(rev: ClientRevision) -> std::sync::Arc<SelectedGameData> {

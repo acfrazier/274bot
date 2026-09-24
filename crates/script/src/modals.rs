@@ -136,6 +136,10 @@ mod tests {
         fn poll(&mut self, _pending: &Pending) -> Option<Reply> {
             panic!("the modals family calls no script callback");
         }
+
+        fn claimed(&mut self) -> bool {
+            false
+        }
     }
 
     fn observe(ingame: bool, main_modal_id: i32) {

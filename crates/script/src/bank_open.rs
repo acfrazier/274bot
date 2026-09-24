@@ -578,6 +578,10 @@ mod tests {
         fn poll(&mut self, _pending: &Pending) -> Option<Reply> {
             panic!("the bank-open family calls no script callback");
         }
+
+        fn claimed(&mut self) -> bool {
+            false
+        }
     }
 
     fn booth_row(id: i32, x: i32, z: i32, distance: i32, name: &str, actions: &[&str]) -> SceneRow {

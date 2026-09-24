@@ -1957,8 +1957,9 @@ fn tick_loop(
                 record_tick(&mut runtime, n);
                 // Step machines read the scene the Snapshot command just
                 // applied; they run before the tick's other JS, and a
-                // completion settles in this tick's pump.
-                super::machine_v8::step(&mut runtime);
+                // completion settles in this tick's pump. Join's claim is
+                // re-checked between callbacks: one may absorb its terminate.
+                super::machine_v8::step(&mut runtime, &|| tick_claimed(&teardown));
                 if events_consumed {
                     let observed = event_producer.take_eligible();
                     if let Some(diag) = observed.diagnostic {
@@ -2114,7 +2115,9 @@ fn tick_loop(
                 // settled resumes its row in this tick, and a row that ends
                 // here settles its await in this tick too.
                 if !tick_claimed(&teardown) {
-                    if let Err(e) = super::machine_v8::resume(&mut runtime) {
+                    if let Err(e) =
+                        super::machine_v8::resume(&mut runtime, &|| tick_claimed(&teardown))
+                    {
                         let _ = out.send(ThreadMsg::Log(format!("tick {n}: machines: {e}")));
                     }
                 }
@@ -3560,6 +3563,29 @@ loop() {
         machine_tick(&iso, 1);
         machine_tick(&iso, 2);
         iso.join();
+    }
+
+    #[test]
+    fn join_stops_a_machine_before_a_later_spinning_callback() {
+        // The first callback spins until join's terminate ends it; the
+        // machine keeps going on a throw, so without the claim re-check its
+        // next callback would spin on past join.
+        let iso = spawn_machine_card(
+            "globalThis.__out = await runMachine('burst', { calls: 3, keep: true }, {
+                 each() { for (;;) {} },
+             });",
+        );
+        let proof = iso.teardown_proof();
+        machine_tick(&iso, 1);
+        iso.on_game_tick(2);
+        std::thread::sleep(Duration::from_millis(200));
+        let t0 = Instant::now();
+        iso.join();
+        assert!(
+            proof.finished() && t0.elapsed() < JOIN_TIMEOUT,
+            "join abandoned the isolate after {:?}",
+            t0.elapsed()
+        );
     }
 
     #[test]
