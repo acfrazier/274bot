@@ -2,9 +2,9 @@
 //! then posts the same named OpenBooth identity when `can_operate`.
 
 use script::isolate_fb::{
-    encode_snapshot_with_native, BankApproachInput, BankStandInput, IsolateBuf, NativeFactsInput,
-    NearestBoothInput, ReachViewInput, SceneEntityInput, SnapshotFingerprint, SnapshotInput,
-    TileInput,
+    encode_snapshot_with_native, BankApproachInput, BankStandInput, ChatOptionInput, IsolateBuf,
+    NativeFactsInput, NearestBoothInput, ReachViewInput, SceneEntityInput, SnapshotFingerprint,
+    SnapshotInput, TileInput,
 };
 use script::shim::InteractReq;
 use script::{LoadIsolate, LoadShape};
@@ -703,32 +703,122 @@ fn world_open_walks_with_native_verb_then_opens_observed_booth() {
     iso.join();
 }
 
+/// A chest access row (Shantay: `Shantay chest` / `Open`) interacts with the
+/// named loc, then answers the frozen `openedReady` once the list posts.
 #[test]
-fn open_nearest_access_non_default_still_throws_unsupported() {
+fn open_nearest_access_chest_row_interacts_with_the_named_loc() {
     let src = r#"
 import { Bank } from '../../api/bank/Bank.js';
 export default class T extends LoopingBot {
     async loop() {
         if (globalThis.__did) return;
         globalThis.__did = true;
-        try {
-            await Bank.openNearestAccess({ name: 'Bank chest', op: 'Use' });
-            globalThis.__err = null;
-        } catch (e) {
-            globalThis.__err = String(e.message || e);
-        }
+        globalThis.__ok = await Bank.openNearestAccess({ name: 'Shantay chest', op: 'Open' });
     }
 }
 "#;
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
-    let snap = base_snapshot();
+    let actions = ["Open".to_string()];
+    let locs = [loc_row(
+        2693,
+        Some("Shantay chest"),
+        3309,
+        3120,
+        1,
+        &actions,
+    )];
+    let mut snap = base_snapshot();
+    snap.here = Some(tile(3308, 3120));
+    snap.locs = &locs;
     post_snapshot_input(&iso, &snap);
     tick(&iso, 1);
-    let err = iso.probe("__err").unwrap();
     assert_eq!(
-        err,
-        "not impl: Bank.openNearestAccess: unsupported bank access"
+        iso.drain_interacts(),
+        vec![InteractReq::Loc {
+            x: 3309,
+            z: 3120,
+            level: 0,
+            action: "Open".into(),
+            id: Some(2693),
+        }]
     );
+    assert_eq!(iso.probe("typeof __ok").unwrap(), "undefined");
+
+    snap.tick = 2;
+    snap.bank_open = true;
+    snap.bank_loaded = true;
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 2);
+    assert_eq!(iso.probe("__ok").unwrap(), true);
+    assert!(iso.drain_interacts().is_empty());
+    iso.join();
+}
+
+/// An NPC access row (Shilo `Banker` / `Bank`) talks to the banker, answers
+/// the access option, and settles true once the bank posts open.
+#[test]
+fn open_npc_access_row_talks_then_answers_the_access_option() {
+    let src = r#"
+import { Bank } from '../../api/bank/Bank.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__did) return;
+        globalThis.__did = true;
+        globalThis.__ok = await Bank.openNpcAccess(
+            { name: 'Banker', op: 'Bank', choose: "I'd like to access my bank account" },
+        );
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let actions = ["Talk-to".to_string(), "Bank".to_string()];
+    let mut banker = loc_row(2127, Some("Banker"), 2852, 2954, 2, &actions);
+    banker.index = 17;
+    let npcs = [banker];
+    let mut snap = base_snapshot();
+    snap.npcs = &npcs;
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 1);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::Npc {
+            name: "Banker".into(),
+            action: "Bank".into(),
+            index: Some(17),
+        }]
+    );
+
+    let options = [
+        ChatOptionInput {
+            text: "Nothing thanks",
+        },
+        ChatOptionInput {
+            text: "I'd like to access my bank account, please.",
+        },
+    ];
+    snap.tick = 2;
+    snap.chat_modal_id = 2492;
+    snap.chat_open = true;
+    snap.chat_options = &options;
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 2);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::Answer { option: 2 }],
+        "the option containing `choose`, 1-based"
+    );
+
+    snap.chat_modal_id = -1;
+    snap.chat_open = false;
+    snap.chat_options = &[];
+    snap.bank_open = true;
+    snap.bank_loaded = true;
+    for n in 3..=6 {
+        snap.tick = n;
+        post_snapshot_input(&iso, &snap);
+        tick(&iso, n);
+    }
+    assert_eq!(iso.probe("__ok").unwrap(), true);
     assert!(iso.drain_interacts().is_empty());
     iso.join();
 }

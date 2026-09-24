@@ -405,6 +405,8 @@ const FAMILIES: &[Entry] = &[
     entry::<crate::bank_deposit::BankDeposit>(),
     entry::<crate::bank_withdraw::WithdrawTo>(),
     entry::<crate::bank_withdraw::CloseConfirm>(),
+    entry::<crate::bank_access::BankAccess>(),
+    entry::<crate::bank_access::NpcAccess>(),
     #[cfg(test)]
     entry::<tests::Probe>(),
     #[cfg(test)]

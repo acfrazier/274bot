@@ -165,6 +165,19 @@ pub(crate) struct BankOpenArgs {
     booth_action: Option<String>,
 }
 
+impl BankOpenArgs {
+    /// `Bank.openBooth()` with no stand or names: the observed nearest
+    /// booth, for a family that opens as one step of its own sequence.
+    pub(crate) fn nearest_booth() -> Self {
+        Self {
+            mode: "open-booth".into(),
+            stand: None,
+            booth_name: None,
+            booth_action: None,
+        }
+    }
+}
+
 /// One open: the row is the whole attempt's state.
 pub(crate) struct BankOpen {
     mode: Mode,

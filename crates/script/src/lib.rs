@@ -95,6 +95,8 @@ pub use load::{transpile_ts, LoadIsolate, Ready};
 #[cfg(feature = "load")]
 mod autocast;
 #[cfg(feature = "load")]
+mod bank_access;
+#[cfg(feature = "load")]
 mod bank_deposit;
 #[cfg(feature = "load")]
 mod bank_op;

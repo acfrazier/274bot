@@ -1,6 +1,6 @@
 import { Execution } from '../execution/Execution.js';
 import { Inventory } from '../inventory/Inventory.js';
-import { distanceTo, runMachine } from '../../shim/_kernel.js';
+import { runMachine } from '../../shim/_kernel.js';
 const host = () => globalThis.__rs2b0t_host || {};
 const notImpl = (name, reason) =>
     new Error(reason ? 'not impl: ' + name + ': ' + reason : 'not impl: ' + name);
@@ -232,23 +232,26 @@ export const Bank = new Proxy(
                 snap().withdraw_load_result === true
             );
         },
-        async openNearestAccess(access, _log) {
-            if ((access?.name ?? 'Bank booth').toLowerCase() !== 'bank booth' ||
-                (access?.op ?? 'Use-quickly').toLowerCase() !== 'use-quickly') {
-                throw notImpl('Bank.openNearestAccess', 'unsupported bank access');
-            }
-            const row = snap().nearest_booth;
-            if (!row) return false;
-            const adjacent = () => {
-                const h = snap().here;
-                return h && h.level === (row.level ?? 0) && distanceTo(h, { x: row.x, z: row.z, level: row.level ?? 0 }) <= 1;
-
-            };
-            if (!adjacent()) {
-                queue({op:'walk-near',x:row.x,z:row.z,level:row.level ?? 0,radius:1,allow_teleports:false,allow_wilderness:true,allow_bank_fetch:true});
-                if (!(await Execution.delayUntil(adjacent, 60000))) return false;
-            }
-            return Bank.openBooth();
+        async openNearestAccess(access, log) {
+            const first = access?.openFirst;
+            const out = await runMachine(
+                'bank_access',
+                {
+                    name: String(access?.name ?? 'Bank booth'),
+                    op: String(access?.op ?? 'Use-quickly'),
+                    open_first: first ? { name: String(first.name), op: String(first.op) } : null,
+                },
+                { log: typeof log === 'function' ? log : undefined },
+            );
+            return out.kind === 'done' && out.value === true;
+        },
+        async openNpcAccess(access, log) {
+            const out = await runMachine(
+                'bank_npc_access',
+                { name: String(access.name), op: String(access.op), choose: String(access.choose) },
+                { log: typeof log === 'function' ? log : undefined },
+            );
+            return out.kind === 'done' && out.value === true;
         },
     },
     {
