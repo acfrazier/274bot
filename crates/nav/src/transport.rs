@@ -37,6 +37,11 @@ use api::snapshot::WorldTile;
 use crate::collision::WorldCollision;
 use crate::pack::{parse_door_config, parse_door_config_ids, parse_door_open_ids};
 mod condparse;
+mod index;
+mod script_text;
+pub(crate) use index::{loc_ids_by_name, loc_positions, Placement};
+use index::*;
+use script_text::*;
 use condparse::{
     arm_opens_directly, body_labels, check_axis_def, check_axis_or_proc, if_head_and_arm,
     proc_bitfield_varp, proc_bodies, script_blocks, script_header, script_varp_gate,
@@ -565,128 +570,6 @@ fn report(content_root: &Path, graph: &TransportGraph, skipped: &HashMap<&'stati
 // Content reads.
 // ---------------------------------------------------------------------------
 
-/// One loc placement read from a jm2 file (all levels).
-pub(crate) struct Placement {
-    pub(crate) id: i32,
-    pub(crate) shape: i32,
-    pub(crate) angle: i32,
-    pub(crate) level: i32,
-    pub(crate) x: i32,
-    pub(crate) z: i32,
-}
-
-/// `pack/loc.pack` id→name lines → name → id (m8aq `locIdsByName`).
-pub(crate) fn loc_ids_by_name(content_root: &Path) -> HashMap<String, i32> {
-    pack_ids_by_name(content_root, "loc.pack")
-}
-
-/// `pack/obj.pack` id→name lines → name → id (the spell-rune and jewellery
-/// item id map).
-fn obj_ids_by_name(content_root: &Path) -> HashMap<String, i32> {
-    pack_ids_by_name(content_root, "obj.pack")
-}
-
-/// `pack/<file>` `id=name` lines → name → id.
-fn pack_ids_by_name(content_root: &Path, file: &str) -> HashMap<String, i32> {
-    let mut out = HashMap::new();
-    let Ok(text) = fs::read_to_string(content_root.join("pack").join(file)) else {
-        return out;
-    };
-    for line in text.lines() {
-        let Some((id, name)) = line.split_once('=') else {
-            continue;
-        };
-        let Ok(id) = id.trim().parse::<i32>() else {
-            continue;
-        };
-        let name = name.trim();
-        if id >= 0 && !name.is_empty() {
-            out.insert(name.to_string(), id);
-        }
-    }
-    out
-}
-
-/// All jm2 loc placements grouped by id (m8aq `locPositions`).
-pub(crate) fn loc_positions(content_root: &Path) -> HashMap<i32, Vec<Placement>> {
-    let mut out: HashMap<i32, Vec<Placement>> = HashMap::new();
-    let Ok(entries) = fs::read_dir(content_root.join("maps")) else {
-        return out;
-    };
-    for ent in entries.flatten() {
-        let path = ent.path();
-        let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
-            continue;
-        };
-        let Some((mx, mz)) = mapsquare_coords(name) else {
-            continue;
-        };
-        let Ok(text) = fs::read_to_string(&path) else {
-            continue;
-        };
-        for p in parse_jm2_locs(&text, mx, mz) {
-            out.entry(p.id).or_default().push(p);
-        }
-    }
-    out
-}
-
-/// `m<x>_<z>.jm2` → `(x, z)`.
-fn mapsquare_coords(name: &str) -> Option<(i32, i32)> {
-    let rest = name.strip_prefix('m')?.strip_suffix(".jm2")?;
-    let (x, z) = rest.split_once('_')?;
-    Some((x.parse().ok()?, z.parse().ok()?))
-}
-
-/// Every `LOC` placement in a jm2 text (all levels), in absolute coords.
-fn parse_jm2_locs(text: &str, mx: i32, mz: i32) -> Vec<Placement> {
-    let mut out = Vec::new();
-    let mut in_loc = false;
-    for raw in text.lines() {
-        let line = raw.trim();
-        if line.is_empty() {
-            continue;
-        }
-        if let Some(name) = crate::pack::section(line) {
-            in_loc = name == "LOC";
-            continue;
-        }
-        if !in_loc {
-            continue;
-        }
-        let Some((coords, data)) = line.split_once(':') else {
-            continue;
-        };
-        let mut c = coords.split_whitespace();
-        let (Some(level), Some(x), Some(z)) = (
-            c.next().and_then(|t| t.parse::<i32>().ok()),
-            c.next().and_then(|t| t.parse::<i32>().ok()),
-            c.next().and_then(|t| t.parse::<i32>().ok()),
-        ) else {
-            continue;
-        };
-        if c.next().is_some() {
-            continue;
-        }
-        let mut d = data.split_whitespace();
-        let Some(id) = d.next().and_then(|t| t.parse::<i32>().ok()) else {
-            continue;
-        };
-        // Same token layout and defaults as m8aq `readMapsquare`: the second
-        // token is the shape, the third the angle.
-        let shape: i32 = d.next().and_then(|t| t.parse().ok()).unwrap_or(0);
-        let angle: i32 = d.next().and_then(|t| t.parse().ok()).unwrap_or(0);
-        out.push(Placement {
-            id,
-            shape,
-            angle,
-            level,
-            x: mx * 64 + x,
-            z: mz * 64 + z,
-        });
-    }
-    out
-}
 
 // ---------------------------------------------------------------------------
 // Doors.
@@ -1550,39 +1433,7 @@ fn open_gate_category(outer: bool) -> &'static str {
     }
 }
 
-/// A block body normalized for exact comparison: `//` comments dropped and
-/// all whitespace removed.
-fn normalized_body(body: &str) -> String {
-    let mut out = String::new();
-    for raw in body.lines() {
-        let line = match raw.find("//") {
-            Some(i) => &raw[..i],
-            None => raw,
-        };
-        out.extend(line.chars().filter(|c| !c.is_whitespace()));
-    }
-    out
-}
 
-/// Every `.loc` config text under `scripts`, recursively.
-fn visit_loc_configs(dir: &Path, cb: &mut impl FnMut(&str)) {
-    let mut pending = vec![dir.to_path_buf()];
-    while let Some(dir) = pending.pop() {
-        let Ok(entries) = fs::read_dir(&dir) else {
-            continue;
-        };
-        for ent in entries.flatten() {
-            let path = ent.path();
-            if path.is_dir() {
-                pending.push(path);
-            } else if path.extension().and_then(|s| s.to_str()) == Some("loc") {
-                if let Ok(text) = fs::read_to_string(&path) {
-                    cb(&text);
-                }
-            }
-        }
-    }
-}
 
 /// The `[oploc1,_gate_main_closed]` / `[oploc1,_gate_outer_closed]`
 /// category handlers in a script text → `(outer, body)`. `gates.rs2`
@@ -1717,27 +1568,6 @@ impl InheritedGate {
     }
 }
 
-/// A `param=next_loc_stage,<value>` value → the open leaf id. Named values
-/// and `loc_N` aliases resolve through [`loc_pack_id`]; an integer that is
-/// not a pack id is refused.
-fn stage_open_loc_id(value: &str, ids: &HashMap<String, i32>) -> Option<i32> {
-    loc_pack_id(value, ids)
-}
-
-/// Named loc row or `loc_N` alias → pack id. `loc_N` is admitted only when
-/// N is an id `pack/loc.pack` actually carries; an arbitrary integer is not
-/// a loc. Named rows win when the pack lists that name.
-fn loc_pack_id(name: &str, ids: &HashMap<String, i32>) -> Option<i32> {
-    if let Some(&id) = ids.get(name) {
-        return Some(id);
-    }
-    let n = name.strip_prefix("loc_")?;
-    if n.is_empty() || !n.bytes().all(|b| b.is_ascii_digit()) {
-        return None;
-    }
-    let id: i32 = n.parse().ok()?;
-    ids.values().copied().any(|v| v == id).then_some(id)
-}
 
 /// Every closed-gate declaration in one `.loc` text: `(id, gate)` per block
 /// that names one of the two closed gate categories, with the block's
@@ -2207,110 +2037,7 @@ fn web_far_side(at: WorldTile, dir: DoorDir, collision: &WorldCollision) -> Opti
 // Quest-gated doors (requirements read from the door's open script).
 // ---------------------------------------------------------------------------
 
-/// `[<name>]` config block header → the name.
-fn config_header(line: &str) -> Option<&str> {
-    let name = line.strip_prefix('[')?.strip_suffix(']')?;
-    if name.is_empty() || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_') {
-        return None;
-    }
-    Some(name)
-}
 
-/// Every `^<name> = <int>` constant under `content/scripts` (the value map
-/// the door scripts' `case ^…`/`if (%… >= ^…)` keys resolve through).
-fn script_constants(content_root: &Path) -> HashMap<String, i32> {
-    let mut out = HashMap::new();
-    let mut pending = vec![content_root.join("scripts")];
-    while let Some(dir) = pending.pop() {
-        let Ok(entries) = fs::read_dir(&dir) else {
-            continue;
-        };
-        for ent in entries.flatten() {
-            let path = ent.path();
-            if path.is_dir() {
-                pending.push(path);
-            } else if path.extension().and_then(|s| s.to_str()) == Some("constant") {
-                if let Ok(text) = fs::read_to_string(&path) {
-                    for raw in text.lines() {
-                        let line = raw.trim();
-                        let Some(rest) = line.strip_prefix('^') else {
-                            continue;
-                        };
-                        let Some((name, val)) = rest.split_once('=') else {
-                            continue;
-                        };
-                        let name = name.trim();
-                        let Ok(val) = val.trim().parse::<i32>() else {
-                            continue;
-                        };
-                        if !name.is_empty() {
-                            out.entry(name.to_string()).or_insert(val);
-                        }
-                    }
-                }
-            }
-        }
-    }
-    out
-}
-
-/// `pack/varp.pack` `id=name` → name → id (like [`loc_ids_by_name`]).
-fn varp_ids_by_name(content_root: &Path) -> HashMap<String, i32> {
-    pack_ids_by_name(content_root, "varp.pack")
-}
-
-/// Every `[<name>]` block in a door config (`scripts/doors/configs/`,
-/// `scripts/quests/`, `scripts/areas/`, `scripts/general_use/configs/`)
-/// that can open (`op1=Open` or `category=door_closed`, the
-/// [`parse_door_config`] rule) and resolves to a numeric loc id.
-fn door_config_names(content_root: &Path, ids: &HashMap<String, i32>) -> HashSet<String> {
-    let mut out = HashSet::new();
-    let scripts = content_root.join("scripts");
-    let mut pending = vec![
-        scripts.join("doors").join("configs"),
-        scripts.join("quests"),
-        scripts.join("areas"),
-        scripts.join("general_use").join("configs"),
-    ];
-    while let Some(dir) = pending.pop() {
-        let Ok(entries) = fs::read_dir(&dir) else {
-            continue;
-        };
-        for ent in entries.flatten() {
-            let path = ent.path();
-            if path.is_dir() {
-                pending.push(path);
-            } else if path.extension().and_then(|s| s.to_str()) == Some("loc") {
-                if let Ok(text) = fs::read_to_string(&path) {
-                    let mut cur: Option<&str> = None;
-                    let mut openable = false;
-                    for raw in text.lines() {
-                        let line = raw.trim();
-                        if let Some(name) = config_header(line) {
-                            if let Some(prev) = cur {
-                                if openable && ids.contains_key(prev) {
-                                    out.insert(prev.to_string());
-                                }
-                            }
-                            cur = Some(name);
-                            openable = false;
-                        } else if cur.is_some()
-                            && (line == "op1=Open" || line == "category=door_closed")
-                        {
-                            openable = true;
-                        }
-                    }
-                    if let Some(name) = cur {
-                        if openable && ids.contains_key(name) {
-                            out.insert(name.to_string());
-                        }
-                    }
-                }
-            }
-        }
-    }
-    out
-}
 
 /// Door loc id → its `(varp id, min value)` gate, read from the door's own
 /// `[oploc1,<name>]` open script: a `switch_int(%<varp>)` whose opening
@@ -2578,10 +2305,6 @@ enum SwitchOn {
     Unknown,
 }
 
-enum SwitchKind {
-    Coord,
-    Int,
-}
 
 /// Port of m8aq `parseScript`: walk a `ladders.rs2`/`stairs.rs2` text and
 /// fill `out` with one rule per `[oplocN,name]` block, recording landing/
@@ -5226,25 +4949,6 @@ fn magicguild_door_open_ids(content_root: &Path, ids: &HashMap<String, i32>) -> 
     out
 }
 
-fn named_loc_has_open(text: &str, name: &str) -> bool {
-    let mut in_block = false;
-    let mut open = false;
-    for raw in text.lines() {
-        let line = raw.trim();
-        if let Some(header) = config_header(line) {
-            if in_block {
-                return open;
-            }
-            in_block = header == name;
-            open = false;
-            continue;
-        }
-        if in_block && line == "op1=Open" {
-            open = true;
-        }
-    }
-    in_block && open
-}
 
 // ---------------------------------------------------------------------------
 // The Zanaris shed door (`quest_zanaris.rs2`): a worn-item teleport door.
@@ -5717,266 +5421,11 @@ fn teleport_dest(arg: &str) -> Option<WorldTile> {
     coord_literal(coord).map(|(level, x, z)| WorldTile { x, z, level })
 }
 
-fn visit_rs2(dir: &Path, cb: &mut impl FnMut(&str)) {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return;
-    };
-    for ent in entries.flatten() {
-        let path = ent.path();
-        if path.is_dir() {
-            visit_rs2(&path, cb);
-        } else if path.extension().and_then(|s| s.to_str()) == Some("rs2") {
-            if let Ok(text) = fs::read_to_string(&path) {
-                cb(&text);
-            }
-        }
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Script text helpers (m8aq regexes ported without a regex dependency).
 // ---------------------------------------------------------------------------
 
-/// `oplocN` → `N`.
-fn oploc_option(header: &str) -> Option<i32> {
-    let rest = header.strip_prefix("oploc")?;
-    if rest.is_empty() || !rest.bytes().all(|b| b.is_ascii_digit()) {
-        return None;
-    }
-    rest.parse().ok()
-}
-
-/// `def_coord $name = loc_coord[()]` → `$name`.
-fn def_coord_alias(line: &str) -> Option<String> {
-    let (lhs, rhs) = line.split_once('=')?;
-    let lhs = lhs.trim();
-    let (kw, name) = lhs.split_once(char::is_whitespace)?;
-    if kw != "def_coord" {
-        return None;
-    }
-    let name = name.trim();
-    if !name.starts_with('$') || name.len() == 1 {
-        return None;
-    }
-    if !name
-        .bytes()
-        .all(|b| b.is_ascii_alphanumeric() || b == b'$' || b == b'_')
-    {
-        return None;
-    }
-    if !rhs.trim_start().starts_with("loc_coord") {
-        return None;
-    }
-    Some(name.to_string())
-}
-
-/// `switch_(coord|int) (target) {` → `(kind, target)`.
-fn switch_kind(line: &str) -> Option<(SwitchKind, String)> {
-    let rest = line.strip_prefix("switch_")?;
-    let (kind, rest) = if let Some(r) = rest.strip_prefix("coord") {
-        (SwitchKind::Coord, r)
-    } else {
-        let r = rest.strip_prefix("int")?;
-        (SwitchKind::Int, r)
-    };
-    let after = rest.as_bytes().first();
-    if !matches!(after, None | Some(b' ') | Some(b'\t') | Some(b'(')) {
-        return None;
-    }
-    let inner = rest.trim_start().strip_prefix('(')?.split(')').next()?;
-    Some((kind, inner.trim().to_string()))
-}
-
-/// `case <key> : <body>` with a `default`/coord-literal/int key.
-fn case_parts(line: &str) -> Option<(&str, &str)> {
-    let rest = line.strip_prefix("case")?;
-    let rest = rest.trim_start();
-    let (key, body) = rest.split_once(':')?;
-    let key = key.trim();
-    if !case_key_valid(key) {
-        return None;
-    }
-    Some((key, body.trim()))
-}
-
-fn case_key_valid(key: &str) -> bool {
-    if key == "default" {
-        return true;
-    }
-    if key.is_empty() {
-        return false;
-    }
-    let parts: Vec<&str> = key.split('_').collect();
-    let digit_part = |p: &str| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit());
-    if parts.len() == 1 {
-        return digit_part(parts[0]);
-    }
-    parts.len() == 5 && parts.iter().all(|p| digit_part(p))
-}
-
-/// `if (target = <5-part coord literal>)` → `(target, literal)`.
-fn if_coord_target(line: &str) -> Option<(String, String)> {
-    let rest = line.strip_prefix("if")?;
-    let rest = rest.trim_start();
-    let inner = rest.strip_prefix('(')?.split(')').next()?;
-    let (target, value) = inner.split_once('=')?;
-    let target = target.trim();
-    if target.is_empty()
-        || !target
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'$')
-    {
-        return None;
-    }
-    let value = value.trim();
-    let parts: Vec<&str> = value.split('_').collect();
-    if parts.len() != 5
-        || !parts
-            .iter()
-            .all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()))
-    {
-        return None;
-    }
-    Some((target.to_string(), value.to_string()))
-}
-
-/// `@name` preceded by start/whitespace/`:` → `name`.
-fn label_name(line: &str) -> Option<&str> {
-    for (i, ch) in line.char_indices() {
-        if ch != '@' {
-            continue;
-        }
-        let prev_ok = i == 0 || matches!(line.as_bytes()[i - 1], b' ' | b'\t' | b':');
-        if !prev_ok {
-            continue;
-        }
-        let rest = &line[i + 1..];
-        let end = rest
-            .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
-            .unwrap_or(rest.len());
-        if end > 0 {
-            return Some(&rest[..end]);
-        }
-    }
-    None
-}
-
-/// Top-level args of `name(...)` in `text`, or None (m8aq `callArgs`).
-fn call_args(text: &str, name: &str) -> Option<Vec<String>> {
-    let needle = format!("{name}(");
-    let at = text.find(&needle)?;
-    if at > 0 {
-        let prev = text.as_bytes()[at - 1];
-        if prev.is_ascii_alphanumeric() || prev == b'_' {
-            return None;
-        }
-    }
-    let after = &text[at + needle.len()..];
-    let mut args = Vec::new();
-    // Depth starts at 1: the call's own `(` was consumed by the needle.
-    let mut depth = 1i32;
-    let mut start = 0usize;
-    for (i, ch) in after.char_indices() {
-        match ch {
-            '(' => depth += 1,
-            ',' if depth == 1 => {
-                args.push(after[start..i].trim().to_string());
-                start = i + 1;
-            }
-            ')' => {
-                depth -= 1;
-                if depth == 0 {
-                    args.push(after[start..i].trim().to_string());
-                    return Some(args);
-                }
-            }
-            _ => {}
-        }
-    }
-    None
-}
-
-/// Every `name(...)` call's args in `text`, in source order (the
-/// first-match [`call_args`] variant; the jewellery rub scripts carry one
-/// teleport per `case`, and each must resolve).
-fn call_args_all(text: &str, name: &str) -> Vec<Vec<String>> {
-    let needle = format!("{name}(");
-    let mut out = Vec::new();
-    let mut from = 0usize;
-    while let Some(rel) = text[from..].find(&needle) {
-        let at = from + rel;
-        if at > 0 {
-            let prev = text.as_bytes()[at - 1];
-            if prev.is_ascii_alphanumeric() || prev == b'_' {
-                from = at + needle.len();
-                continue;
-            }
-        }
-        let after = &text[at + needle.len()..];
-        let mut args = Vec::new();
-        let mut depth = 1i32;
-        let mut start = 0usize;
-        let mut closed = None;
-        for (i, ch) in after.char_indices() {
-            match ch {
-                '(' => depth += 1,
-                ',' if depth == 1 => {
-                    args.push(after[start..i].trim().to_string());
-                    start = i + 1;
-                }
-                ')' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        args.push(after[start..i].trim().to_string());
-                        closed = Some(i + 1);
-                        break;
-                    }
-                }
-                _ => {}
-            }
-        }
-        let Some(consumed) = closed else {
-            break;
-        };
-        out.push(args);
-        from = at + needle.len() + consumed;
-    }
-    out
-}
-
-/// `L_XHI_ZHI_XLO_ZLO` → `(level, x, z)` with `x = XHI<<6|XLO` (m8aq
-/// `parseCoordLiteral`).
-fn coord_literal(text: &str) -> Option<(i32, i32, i32)> {
-    let t = text.trim();
-    let mut parts = t.split('_');
-    let level = parts.next()?;
-    let x_hi = parts.next()?;
-    let z_hi = parts.next()?;
-    let x_lo = parts.next()?;
-    let z_lo = parts.next()?;
-    if parts.next().is_some() {
-        return None;
-    }
-    let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
-    if !(digits(level) && digits(x_hi) && digits(z_hi) && digits(x_lo) && digits(z_lo)) {
-        return None;
-    }
-    Some((
-        level.parse().ok()?,
-        (x_hi.parse::<i32>().ok()? << 6) | x_lo.parse::<i32>().ok()?,
-        (z_hi.parse::<i32>().ok()? << 6) | z_lo.parse::<i32>().ok()?,
-    ))
-}
-
-/// `-?\d+` (m8aq `intOrNull`).
-fn int_or_null(text: &str) -> Option<i32> {
-    let t = text.trim();
-    let digits = t.strip_prefix('-').unwrap_or(t);
-    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
-        return None;
-    }
-    t.parse().ok()
-}
 
 #[cfg(test)]
 #[path = "transport_tests.rs"]
