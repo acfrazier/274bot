@@ -196,7 +196,12 @@ impl Walk {
         let Some(here) = here() else {
             return Err(false);
         };
-        if here.level == dest.level && here.cheb(dest) <= radius {
+        // Frozen `walkResilient` asks `isArrived` first: the one arrival
+        // rule the walk wait and the host follow share.
+        let arrived = crate::load::reach_query::with_view(|view| {
+            api::query::is_arrived(here.world(), dest.world(), radius, || view)
+        });
+        if arrived {
             return Err(true);
         }
         let token = walk_wait::dispatch(&json!({
@@ -235,7 +240,9 @@ impl Walk {
         Ok(Self { token })
     }
 
-    /// `Some(arrived)` once the walk settled or timed out.
+    /// `Some(arrived)` once the walk settled or timed out. A timeout stops
+    /// the host follow (as a returned frozen `walkResilient` has stopped
+    /// its walker), so its next walk packet cannot cancel a later click.
     fn step(&self, cx: &mut Cx<'_>) -> Option<bool> {
         let settled = walk_wait::dispatch(&json!({ "op": "settled", "token": self.token }))
             .as_bool()
@@ -247,7 +254,11 @@ impl Walk {
                     .unwrap_or(false),
             );
         }
-        cx.clock().bound_reached().then_some(false)
+        if !cx.clock().bound_reached() {
+            return None;
+        }
+        cx.emit(InteractReq::AbortWalk);
+        Some(false)
     }
 }
 
@@ -966,6 +977,62 @@ impl WalkHops {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::load::callback_v8::HeldCallback;
+    use crate::machine::{self, Called, Outcome, Pending, Started, Take};
+
+    /// No script callbacks are held here.
+    struct NoJs;
+
+    impl machine::Js for NoJs {
+        fn queue_len(&mut self) -> usize {
+            0
+        }
+
+        fn call(&mut self, _hook: Option<&HeldCallback>, _args: &[Value]) -> Called {
+            panic!("no hook is held");
+        }
+
+        fn poll(&mut self, _pending: &Pending) -> Option<Reply> {
+            panic!("no hook is held");
+        }
+
+        fn claimed(&mut self) -> bool {
+            false
+        }
+    }
+
+    #[test]
+    fn a_timed_out_walk_stops_the_host_follow_and_fails() {
+        observed::on_reset();
+        machine::on_reset();
+        walk_wait::on_reset();
+        observed::post(1, |post| {
+            post.session(true).here(observed::Tile {
+                x: 0,
+                z: 0,
+                level: 0,
+            });
+        });
+        let args = json!({ "dest": { "x": 10, "z": 0, "level": 0 }, "radius": 0, "hops": [] });
+        let Started::Running(h) = machine::start("walk-hops", args, Vec::new(), 0) else {
+            panic!("walk-hops runs");
+        };
+        machine::step(&mut NoJs);
+        assert!(matches!(
+            machine::merge_ops(Vec::new()).as_slice(),
+            [InteractReq::Walk { x: 10, z: 0, .. }]
+        ));
+        machine::step(&mut NoJs);
+        assert!(machine::merge_ops(Vec::new()).is_empty(), "still walking");
+        machine::tests::expire_deadlines();
+        machine::step(&mut NoJs);
+        assert_eq!(
+            machine::merge_ops(Vec::new()),
+            vec![InteractReq::AbortWalk],
+            "a timed-out wait stops the follow before anything else is sent"
+        );
+        assert_eq!(machine::take(h), Take::Settled(Outcome::Done(json!(false))));
+    }
 
     fn loc(name: &str, actions: &[&str]) -> SceneRow {
         SceneRow {
@@ -1007,6 +1074,10 @@ mod tests {
         };
         assert!(!a.underground());
         assert!(b.underground());
-        assert_eq!(a.distance_to(b), 1_000_003, "Chebyshev 3 plus the level penalty");
+        assert_eq!(
+            a.distance_to(b),
+            1_000_003,
+            "Chebyshev 3 plus the level penalty"
+        );
     }
 }

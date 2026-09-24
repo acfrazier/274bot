@@ -1409,6 +1409,8 @@ pub(super) fn dispatch_script_interact_cached(
                     request_id,
                 );
             }
+            // Not a game packet: the follow stops, nothing is written.
+            InteractReq::AbortWalk => abort_script_walk(navs, name),
             InteractReq::WalkNearestBank => {
                 if let (Some((hx, hz, hl)), Some(nav_world)) = (here, world.as_deref()) {
                     if let Some(tile) = nearest_bank_booth(nav_world, (hx, hz, hl)) {

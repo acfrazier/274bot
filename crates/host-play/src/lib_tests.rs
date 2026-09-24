@@ -15238,3 +15238,45 @@ fn observer_pump_session_boundary_skips_guardian_producer_but_keeps_catalog_life
         .expect("post-Start session boundary is terminal")
         .contains("session boundary after Start"));
 }
+
+/// A machine's timed-out walk sends `abort-walk`: the armed follow stops
+/// (as after OpenBooth), and no game packet is written.
+#[test]
+fn abort_walk_request_stops_the_armed_follow_without_a_packet() {
+    let mut c = bank_client();
+    let mut snap = GameSnapshot::new();
+    snap.rebuild(&c);
+    let (navs, world) = empty_nav();
+    navs.lock().unwrap().insert(
+        "alice".to_string(),
+        NavBot {
+            route_generation: 3,
+            requested_route: Some(native_requested(
+                WorldTile {
+                    x: 3210,
+                    z: 3210,
+                    level: 0,
+                },
+                1,
+                false,
+            )),
+            ..Default::default()
+        },
+    );
+    let out_before = c.out.pos;
+    assert!(!dispatch_script_interact(
+        &mut c,
+        &snap,
+        None,
+        Some((3205, 3205, 0)),
+        &navs,
+        &world,
+        None,
+        "alice",
+        vec![script::shim::InteractReq::AbortWalk],
+    ));
+    assert_eq!(c.out.pos, out_before);
+    let bot = &navs.lock().unwrap()["alice"];
+    assert_eq!(bot.route_generation, 4, "the follow's route is superseded");
+    assert!(bot.route.is_none());
+}

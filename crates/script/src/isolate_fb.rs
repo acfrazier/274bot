@@ -6037,6 +6037,7 @@ pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>
                 request_id: row.request_id(),
             }),
             "walk-nearest-bank" => out.push(crate::shim::InteractReq::WalkNearestBank),
+            "abort-walk" => out.push(crate::shim::InteractReq::AbortWalk),
             "inspect-route" => out.push(crate::shim::InteractReq::InspectRoute {
                 x: row.x(),
                 z: row.z(),
@@ -6344,6 +6345,7 @@ fn interact_off<'b>(
         InteractReq::Walk { .. } => "walk",
         InteractReq::WalkNear { .. } => "walk-near",
         InteractReq::WalkNearestBank => "walk-nearest-bank",
+        InteractReq::AbortWalk => "abort-walk",
         InteractReq::InspectRoute { .. } => "inspect-route",
         InteractReq::InspectAck { .. } => "inspect-ack",
         InteractReq::WalkTo { .. } => "walk-to",
@@ -6543,7 +6545,7 @@ fn interact_off<'b>(
                 b.push_slot_always(VT_IN_ALLOW_BANK_FETCH, true);
             }
         }
-        InteractReq::WalkNearestBank => {}
+        InteractReq::WalkNearestBank | InteractReq::AbortWalk => {}
         InteractReq::InspectRoute {
             x,
             z,
@@ -7293,6 +7295,25 @@ pub(crate) mod tests {
             },
             InteractReq::Unequip {
                 name: "Iron chainbody".into(),
+            },
+        ];
+        let bytes = encode_interact_batch(&reqs);
+        let got = decode_interact_batch(&bytes).expect("interact batch decodes");
+        assert_eq!(got, reqs);
+    }
+
+    /// `abort-walk` crosses the wire as its own op, in batch order, so the
+    /// host stops the follow before the click queued after it.
+    #[test]
+    fn encode_decode_interact_abort_walk_keeps_its_place_in_the_batch() {
+        let reqs = vec![
+            InteractReq::AbortWalk,
+            InteractReq::Loc {
+                x: 7,
+                z: 5,
+                level: 0,
+                action: "Open".into(),
+                id: Some(1530),
             },
         ];
         let bytes = encode_interact_batch(&reqs);

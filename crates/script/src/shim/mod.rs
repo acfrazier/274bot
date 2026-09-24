@@ -1134,6 +1134,12 @@ pub enum InteractReq {
     /// Select the nearest packed booth stand in Rust and route within one tile.
     #[serde(rename = "walk-nearest-bank")]
     WalkNearestBank,
+    /// Stop the armed scripted walk follow (frozen: a `walkResilient` that
+    /// returned has stopped its walker). A Rust machine sends it when its
+    /// own walk wait timed out, before a later click the follow's next
+    /// walk packet would otherwise cancel.
+    #[serde(rename = "abort-walk")]
+    AbortWalk,
     /// Pure inspect-route preview. `x/z/level` are the destination.
     #[serde(rename = "inspect-route")]
     InspectRoute {
