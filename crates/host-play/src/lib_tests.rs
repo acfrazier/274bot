@@ -1,5 +1,6 @@
 use super::*;
 use client::config::if_type::ComponentType;
+use client::{BotTarget, ClientSessionConfig, ClientSessionProfile};
 use host::Guardian;
 use std::io::{Read, Write};
 use std::net::TcpListener;
@@ -492,6 +493,114 @@ fn full_world_round_uses_existing_backoff() {
         public_worlds::WorldErrorStep::Stay
     );
     assert_eq!(login_retry_wait(&mut backoff, 7), Duration::from_secs(5));
+}
+
+#[test]
+fn running_slot_profile_world_change_reseats_next_login_handshake() {
+    let w1_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let w1_port = w1_listener.local_addr().unwrap().port();
+    let w2_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let w2_port = w2_listener.local_addr().unwrap().port();
+    let worlds = public_worlds::PublicWorlds {
+        schema_version: 1,
+        worlds: vec![
+            public_worlds::PublicWorld {
+                number: 1,
+                host: "127.0.0.1".into(),
+                port: w1_port,
+                node_id: 10,
+            },
+            public_worlds::PublicWorld {
+                number: 2,
+                host: "localhost".into(),
+                port: w2_port,
+                node_id: 11,
+            },
+        ],
+    };
+    // Keep this proof entirely local: pre-seat the key cache so production
+    // world configuration never attempts an HTTPS fetch.
+    for world in &worlds.worlds {
+        public_worlds::modulus_for(world, false, |_, _| {
+            Some(client::PROD_LOGIN_RSAN.to_string())
+        });
+    }
+
+    let session_profile = Arc::new(
+        ClientSessionProfile::new(ClientSessionConfig {
+            revision: client::client::ClientRevision::R289,
+            target: BotTarget::Prod,
+            game_host: worlds.worlds[0].host.clone(),
+            game_port: w1_port,
+            asset_host: "127.0.0.1".into(),
+            asset_port: 1,
+            cache_dir: "/tmp".into(),
+            unpack_dir: "/tmp".into(),
+            rsa_modulus: client::PROD_LOGIN_RSAN.into(),
+            rsa_exponent: client::PROD_LOGIN_RSAE.into(),
+            expected_crc: Some([0; 9]),
+            content_id: "world-edit-login-fixture".into(),
+        })
+        .unwrap(),
+    );
+    let config = session_profile.client_config(true, true);
+    let mut client = Client::from_shared_with_profile(
+        config,
+        Arc::new(Cache::default()),
+        Arc::new(Vec::new()),
+        Arc::new(Vec::new()),
+        session_profile,
+    )
+    .unwrap();
+    let arm = SlotArm::new(42, false);
+    let mut account = profile("alice", 42);
+    let mut play = run_with_io(
+        &PlayOptions {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            lowmem: true,
+            mainland: false,
+        },
+        vec![],
+        |_| (None, None),
+        |_, _, _| {},
+    );
+    play.attach_arm("alice", Arc::clone(&arm));
+    play.statuses.lock().unwrap().push(SlotStatus {
+        username: "alice".into(),
+        world: Some(1),
+        ..SlotStatus::default()
+    });
+    play.remember_profile(account.clone());
+
+    let mut round = public_worlds::WorldRound::new(&worlds, None, Some(1)).unwrap();
+    assert!(!refresh_slot_world_preference(&mut round, &worlds, &arm).unwrap());
+    configure_slot_world(&mut client, &worlds.worlds[round.index], false, &arm.stop).unwrap();
+    let w1_server = thread::spawn(move || w1_listener.accept().unwrap());
+    let socket =
+        std::net::TcpStream::connect((client.config.host.as_str(), client.config.port)).unwrap();
+    drop(socket);
+    drop(w1_server.join().unwrap());
+
+    account.settings.world = Some(2);
+    play.remember_profile(account);
+    assert_eq!(
+        play.statuses()[0].world,
+        Some(1),
+        "editing a live slot must not relabel its current connection"
+    );
+    assert!(refresh_slot_world_preference(&mut round, &worlds, &arm).unwrap());
+    configure_slot_world(&mut client, &worlds.worlds[round.index], false, &arm.stop).unwrap();
+    assert_eq!(client.config.host, "localhost");
+    assert_eq!(client.config.port, w2_port);
+    assert_eq!(client.node_id, 11);
+
+    let w2_server = thread::spawn(move || w2_listener.accept().unwrap());
+    let socket =
+        std::net::TcpStream::connect((client.config.host.as_str(), client.config.port)).unwrap();
+    drop(socket);
+    drop(w2_server.join().unwrap());
 }
 
 #[test]

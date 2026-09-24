@@ -939,6 +939,10 @@ pub struct SlotArm {
     pub lamp_auto: Arc<AtomicBool>,
     /// Live lamp skill choice (`ProfileSettings.lamp_skill`).
     pub lamp_skill: Arc<Mutex<String>>,
+    /// Operator-selected world for the next login handshake. `None` keeps
+    /// automatic fallback; panel profile saves update this shared value
+    /// without disturbing an online connection.
+    pub world: Arc<parking_lot::Mutex<Option<u16>>>,
     /// Next handshake is opcode 18 (lost_con reconnect). First-ever online
     /// is 16; after a grant this is true.
     pub reconnect: Arc<AtomicBool>,
@@ -956,9 +960,20 @@ impl SlotArm {
             random_events: Arc::new(AtomicBool::new(true)),
             lamp_auto: Arc::new(AtomicBool::new(true)),
             lamp_skill: Arc::new(Mutex::new("strength".to_string())),
+            world: Arc::new(parking_lot::Mutex::new(None)),
             reconnect: Arc::new(AtomicBool::new(false)),
         })
     }
+}
+
+fn sync_profile_arm(arm: &SlotArm, profile: &Profile) {
+    arm.uid.store(profile.uid, Ordering::Relaxed);
+    arm.random_events
+        .store(profile.settings.random_events, Ordering::Relaxed);
+    arm.lamp_auto
+        .store(profile.settings.lamp_auto, Ordering::Relaxed);
+    *arm.lamp_skill.lock().unwrap() = profile.settings.lamp_skill.clone();
+    *arm.world.lock() = profile.settings.world;
 }
 
 /// Whether the slot may start a login handshake: on the title (not ingame)
@@ -1437,9 +1452,12 @@ impl Play {
         self.arms.get(name).cloned()
     }
 
-    /// Keep vault credentials for a later [`Play::spawn_slot`] /
-    /// reconnect.
+    /// Keep vault credentials for a later [`Play::spawn_slot`] / reconnect,
+    /// and publish handshake-time settings to an already-running slot.
     pub fn remember_profile(&mut self, profile: Profile) {
+        if let Some(arm) = self.arms.get(&profile.username) {
+            sync_profile_arm(arm, &profile);
+        }
         self.profiles.insert(profile.username.clone(), profile);
     }
 
@@ -1919,22 +1937,16 @@ impl Play {
             })
             .transpose()?;
         // Keep the vault credentials on the wall for later spawns and
-        // DC-reconnect re-handshakes.
-        self.profiles
-            .insert(profile.username.clone(), profile.clone());
+        // publish a changed world preference to an existing slot before
+        // the already-spawned early return.
+        self.remember_profile(profile.clone());
         if !self.spawned.insert(profile.username.clone()) {
             return Ok(());
         }
         let arm = arm.unwrap_or_else(|| SlotArm::new(profile.uid, true));
-        // `stop_slot` leaves the FIFO by `arm.uid`; force it from the
-        // profile at spawn. The store goes through the shared inner field
-        // so a caller's own clone cannot keep a stale uid.
-        arm.uid.store(profile.uid, Ordering::Relaxed);
-        arm.random_events
-            .store(profile.settings.random_events, Ordering::Relaxed);
-        arm.lamp_auto
-            .store(profile.settings.lamp_auto, Ordering::Relaxed);
-        *arm.lamp_skill.lock().unwrap() = profile.settings.lamp_skill.clone();
+        // Store through the shared inner fields so a caller's own clone
+        // cannot retain stale profile settings.
+        sync_profile_arm(&arm, &profile);
         self.arms.insert(profile.username.clone(), Arc::clone(&arm));
         // The control wake: `Play::wake` kicks the parked slot thread on
         // focus/draw/stop/spawn changes; the slot thread polls the park end.
@@ -2206,6 +2218,15 @@ fn record_login_error(statuses: &Arc<Mutex<Vec<SlotStatus>>>, name: &str, e: &Lo
         s.startup_phase_started = Instant::now();
         s.error = Some(msg);
     }
+}
+
+fn refresh_slot_world_preference(
+    round: &mut public_worlds::WorldRound,
+    worlds: &public_worlds::PublicWorlds,
+    arm: &SlotArm,
+) -> Result<bool, String> {
+    let choice = *arm.world.lock();
+    round.reselect_if_changed(worlds, choice)
 }
 
 fn configure_slot_world(
@@ -2555,6 +2576,36 @@ fn spawn_slot_thread(
                     // arm so an explicit Log in cannot keep a stale TRUE from
                     // the last park publish through queue/connect.
                     publish_login_latched_from_arm(&slot_statuses, &username, &arm);
+                    if let Some(round) = world_round.as_mut() {
+                        let worlds = connection
+                            .profile()
+                            .and_then(|p| p.public_worlds())
+                            .expect("public world round requires bound public worlds");
+                        match refresh_slot_world_preference(round, worlds, &arm) {
+                            Ok(true) => {
+                                world_dirty = true;
+                                refresh_key = false;
+                                key_refreshed = false;
+                            }
+                            Ok(false) => {}
+                            Err(error) => {
+                                if let Some(row) = slot_statuses
+                                    .lock()
+                                    .unwrap()
+                                    .iter_mut()
+                                    .find(|s| s.username == username)
+                                {
+                                    row.startup_phase = StartupPhase::Error;
+                                    row.startup_phase_started = Instant::now();
+                                    row.error = Some(format!(
+                                        "public world preference failed: {error}"
+                                    ));
+                                }
+                                arm.want_login.store(false, Ordering::Relaxed);
+                                continue;
+                            }
+                        }
+                    }
                     if world_dirty {
                         let round = world_round.as_ref().expect("public world round");
                         let worlds = connection.profile().and_then(|p| p.public_worlds())
