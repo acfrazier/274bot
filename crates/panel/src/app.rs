@@ -3725,13 +3725,13 @@ fn render_all_warn_window(ui: &Ui, session: &mut Session) {
     }
 }
 
-/// One tile per wall member, in wall order: cap (traffic-light dot,
-/// name + brief, ✗) then a `TILE_W`×`TILE_H` body. The body blits the
-/// slot's `FrameBuf` when `draw_for_slot` says this member paints, else
-/// the renderer-off placeholder. While `only_render_selected` is on (the
-/// safe default) the strip is collapsed: cap only, no body. Clicking the
-/// name or the body focuses the member; the ✗ (a sibling button, never
-/// part of the name click) removes it.
+/// One tile per wall member, in wall order: cap (world number or local
+/// traffic-light dot, name + brief, ✗) then a `TILE_W`×`TILE_H` body. The
+/// body blits the slot's `FrameBuf` when `draw_for_slot` says this member
+/// paints; otherwise it shows the renderer-off placeholder. While
+/// `only_render_selected` is on (the safe default) the strip is collapsed:
+/// cap only, no body. Clicking the name or body focuses the member; the ✗
+/// (a sibling button, never part of the name click) removes it.
 fn rail_tiles(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
     ui.spacing();
     let members = state.session.wall.members.clone();
@@ -3795,10 +3795,10 @@ fn rail_tiles(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
     }
 }
 
-/// Cap row: the traffic-light dot, the member's name plus brief status
-/// (click selects), and a small red ✗ (rail remove: logout arm then
-/// `stop_slot`, never `vault`). `width` is the strip the row must fit
-/// (rail avail or grid cell width). Returns `(selected, removed)`.
+/// Cap row: the active public-world number (or a traffic-light dot for local
+/// profiles), the member's name plus brief status (click selects), and a small
+/// red ✗ (rail remove: logout arm then `stop_slot`, never `vault`). `width` is
+/// the strip the row must fit (rail avail or grid cell width).
 fn rail_cap(
     ui: &Ui,
     name: &str,
@@ -3810,15 +3810,19 @@ fn rail_cap(
 ) -> (bool, bool, bool) {
     const BTN: f32 = 28.0;
     const DOT_W: f32 = 18.0;
-    ui.text_colored(light.rgb(), STATUS_GLYPH);
-    gap_line(ui);
+    let marker_x = ui.cursor_pos_x();
+    match world {
+        Some(number) => {
+            ui.text_colored(light.rgb(), number.to_string());
+            ui.set_item_tooltip(format!("w{number} · {}", light.brief()));
+        }
+        None => ui.text_colored(light.rgb(), STATUS_GLYPH),
+    }
+    ui.same_line_with_pos(marker_x + DOT_W + BUTTON_GAP);
     let selected = focused == Some(name);
     let name_w = (width - BTN * 2.0 - DOT_W - BUTTON_GAP * 3.0).max(10.0);
     let clicked = ui
-        .selectable_config(match world {
-            Some(number) => format!("{} · w{number}", cap_title(name, light)),
-            None => cap_title(name, light),
-        })
+        .selectable_config(cap_title(name, light))
         .selected(selected)
         .size([name_w, 0.0])
         .build();
