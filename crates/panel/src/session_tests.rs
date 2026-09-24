@@ -4229,6 +4229,10 @@ fn save_credentials_upsert_error_surfaces_on_session_error() {
     use std::os::unix::fs::PermissionsExt;
 
     let dir = std::env::temp_dir().join(format!("274bot-panel-save-err-{}", std::process::id()));
+    if dir.exists() {
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("vault.vault");
     let mut s = Session::new();
@@ -4244,6 +4248,8 @@ fn save_credentials_upsert_error_surfaces_on_session_error() {
         "upsert failure must land on session.error, got {:?}",
         s.error
     );
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 #[test]
