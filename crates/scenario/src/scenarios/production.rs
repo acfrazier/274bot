@@ -263,7 +263,6 @@ pub(crate) const HITPOINTS_STAT: i32 = 3;
 /// when the pack is full, returns to STAND and steals again. Fight stays
 /// pending. Cake 1891 is the sequential identity; chocolate cake 1897 is not
 /// stall food.
-
 pub(crate) const KNIFE_ID: i32 = 946;
 
 pub(super) const CATHERBY_BANK: WorldTile = WorldTile {
@@ -301,7 +300,6 @@ pub(crate) const DRAYNOR_BANK_BOOTH_ID: i32 = 2213;
 /// Script withdraws, climbs to the wheel, spins Flax into 1777 with Crafting
 /// XP, deposits, restocks, returns upstairs and spins again. Wool is not this
 /// core.
-
 /// Open one exact booth until the bank arm holds. Runner re-fires `Repeat`
 /// every tick *before* checking the arm: re-clicking Use-quickly on an already
 /// open loaded bank bumps the bank session and clears `bank_loaded` /
@@ -352,6 +350,5 @@ pub(super) fn herblore_open_seed_bank_at(
 /// first carry). Carry `FOOD_DEFAULT_COUNT` at the field so loot starts
 /// instead of an empty-pack Edgeville restock. Ground Take 223, deposit,
 /// empty product pack, close, return, further Take. Eggs are not given.
-
 pub(super) const STAFF_OF_AIR_ID: i32 = 1381;
 pub(super) const STAFF_OF_WATER_ID: i32 = 1383;
