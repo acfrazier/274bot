@@ -1110,6 +1110,35 @@ fn append_wait_facts(reqs: &mut Vec<crate::shim::InteractReq>, enqueued: u32, se
     }
 }
 
+/// Run this tick's event loop for up to 10 ms. An unhandled promise
+/// rejection — an un-awaited shim call that failed — surfaces here once
+/// as the drain's error; log it under the tick instead of dropping it.
+fn drain_event_loop(runtime: &mut Runtime, out: &Sender<ThreadMsg>, n: u64) {
+    if let Err(e) = runtime.block_on_event_loop(
+        rustyscript::deno_core::PollEventLoopOptions::default(),
+        Some(Duration::from_millis(10)),
+    ) {
+        let _ = out.send(ThreadMsg::Log(format!("tick {n}: {e}")));
+    }
+}
+
+/// Log what the tick's callbacks left on the host handle, under the tick
+/// number: the recorded error (a throwing onPaint or event callback, a
+/// rejected v2 tick), then `LoopingBot.log` / `this.log` lines, so
+/// BOT_DEBUG and the panel can see script-side lines.
+fn forward_script_logs(runtime: &mut Runtime, out: &Sender<ThreadMsg>, n: u64) {
+    let err: Option<String> = runtime
+        .eval("(() => { const e = globalThis.__rs2b0t_host.lastError; if (e) { globalThis.__rs2b0t_host.lastError = null; return e; } return null; })()")
+        .unwrap_or(None);
+    if let Some(e) = err {
+        let _ = out.send(ThreadMsg::Log(format!("tick {n}: {e}")));
+    }
+    let rows: Result<Vec<String>, rustyscript::Error> = runtime.eval(DRAIN_BOT_LOG);
+    for line in rows.unwrap_or_default() {
+        let _ = out.send(ThreadMsg::Log(line));
+    }
+}
+
 /// The settle promise of a compat method invoker or a v1 native tick: it
 /// fulfils `null` on success or the error text, and never rejects.
 type Settle = rustyscript::js_value::Promise<Option<String>>;
@@ -1124,6 +1153,9 @@ enum Runner {
     Unstarted,
     /// Compat `onStart` in flight.
     Starting(Settle),
+    /// `onStart` failed during this tick. The first `loop()` waits for
+    /// the next eligible tick, as the pre-F02 runner did.
+    StartFailed,
     /// Nothing in flight: the next eligible tick invokes `loop()`/`tick`.
     Idle,
     /// `loop()` or the native tick in flight.
@@ -1145,19 +1177,24 @@ impl Runner {
     }
 
     /// Observe the in-flight promise; on settle log its error and go
-    /// idle. `true` when a `loop()`/tick fulfilled cleanly.
+    /// idle (`StartFailed` for a failed `onStart`). `true` when a
+    /// `loop()`/tick fulfilled cleanly.
     fn poll(&mut self, runtime: &mut Runtime, out: &Sender<ThreadMsg>, n: u64) -> bool {
         let (state, is_loop) = match self {
             Self::Starting(p) => (p.poll_promise(runtime), false),
             Self::Running(p) => (p.poll_promise(runtime), true),
-            Self::Unstarted | Self::Idle => return false,
+            Self::Unstarted | Self::StartFailed | Self::Idle => return false,
         };
         let err = match state {
             std::task::Poll::Pending => return false,
             std::task::Poll::Ready(Ok(err)) => err,
             std::task::Poll::Ready(Err(e)) => Some(e.to_string()),
         };
-        *self = Self::Idle;
+        *self = if err.is_some() && !is_loop {
+            Self::StartFailed
+        } else {
+            Self::Idle
+        };
         match err {
             Some(e) => {
                 let _ = out.send(ThreadMsg::Log(format!("tick {n}: {e}")));
@@ -1169,7 +1206,7 @@ impl Runner {
 }
 
 /// One eligible non-v2 tick, in the phase order the isolate owns: record
-/// the tick, tick listeners (compat), wait settle, `onStart` once, native
+/// the tick, tick listeners, wait settle, `onStart` once (compat), native
 /// events once started, then `loop()`/`tick` when nothing is in flight.
 /// Sets `loop_settled` when a compat `loop()` settle is observed here.
 ///
@@ -1177,7 +1214,8 @@ impl Runner {
 /// whose wait settles in this tick's pump (continuations run as each
 /// call returns) finishes this tick, and the next `loop()` starts on the
 /// next one — at most one `loop()` start per tick. A settling `onStart`
-/// is re-polled after the pump so the first `loop()` follows it at once.
+/// is re-polled after the pump so the first `loop()` follows a successful
+/// one at once; after a failed one it starts on the next tick.
 fn run_tick_phases(
     runtime: &mut Runtime,
     runner: &mut Runner,
@@ -1188,16 +1226,14 @@ fn run_tick_phases(
     loop_settled: &mut bool,
 ) -> Result<(), rustyscript::Error> {
     *loop_settled |= runner.poll(runtime, out, n) && compat;
-    runtime.eval::<()>(&format!("globalThis.__rs2b0t_host.tick = {n}"))?;
-    if compat {
-        // BotHost tick listeners, before any wait settles this tick.
-        // Absent when the card never loaded BotHost.
-        let _ = runtime.call_function_immediate::<()>(
-            None,
-            "__rs2b0t_fire_tick_listeners",
-            json_args!(),
-        );
+    if let Runner::StartFailed = runner {
+        *runner = Runner::Idle;
     }
+    runtime.eval::<()>(&format!("globalThis.__rs2b0t_host.tick = {n}"))?;
+    // BotHost tick listeners, before any wait settles this tick. Absent
+    // when the card never loaded BotHost.
+    let _ =
+        runtime.call_function_immediate::<()>(None, "__rs2b0t_fire_tick_listeners", json_args!());
     runtime.call_function_immediate::<()>(None, "__rs2b0t_pump", json_args!(n))?;
     match runner {
         // An onStart a listener or a settled wait just finished lets the
@@ -1206,18 +1242,17 @@ fn run_tick_phases(
             runner.poll(runtime, out, n);
         }
         Runner::Unstarted => {
-            // onStart is invoked exactly once: a failed call still leaves
-            // the runner started, like a thrown onStart.
-            *runner = Runner::Idle;
+            // onStart is invoked exactly once: a failed call counts as a
+            // failed onStart.
+            *runner = Runner::StartFailed;
             let start: Settle =
                 runtime.call_function_immediate(None, "__rs2b0t_compat_on_start", json_args!())?;
             *runner = Runner::Starting(start);
             // Microtasks run as the call returns, so a synchronous
-            // onStart has settled here and the first `loop()` runs on
-            // this tick.
+            // onStart has settled here.
             runner.poll(runtime, out, n);
         }
-        Runner::Idle | Runner::Running(_) => {}
+        Runner::StartFailed | Runner::Idle | Runner::Running(_) => {}
     }
     if events_consumed && runner.started() {
         runtime.call_function_immediate::<()>(
@@ -1666,10 +1701,8 @@ fn tick_loop(
                             json_args!(),
                         );
                     }
-                    let _ = runtime.block_on_event_loop(
-                        rustyscript::deno_core::PollEventLoopOptions::default(),
-                        Some(Duration::from_millis(10)),
-                    );
+                    drain_event_loop(&mut runtime, &out, n);
+                    forward_script_logs(&mut runtime, &out, n);
                     // Work that fulfils under hold is still scheduler
                     // progress; its gameplay is dropped below.
                     let mut lifecycle: Vec<crate::shim::InteractReq> = Vec::new();
@@ -1786,10 +1819,7 @@ fn tick_loop(
                         "if (typeof globalThis.__rs_prayer_pump === 'function') globalThis.__rs_prayer_pump()",
                     );
                 }
-                let _ = runtime.block_on_event_loop(
-                    rustyscript::deno_core::PollEventLoopOptions::default(),
-                    Some(Duration::from_millis(10)),
-                );
+                drain_event_loop(&mut runtime, &out, n);
                 // The host may have armed `terminate_execution` to
                 // interrupt a slow tick; clear it now that the tick's
                 // JS frames have fully unwound. This is the only cancel
@@ -1809,25 +1839,6 @@ fn tick_loop(
                 counters.tick(elapsed);
                 if let Err(e) = result {
                     let _ = out.send(ThreadMsg::Log(format!("tick {n}: {e}")));
-                }
-                // Errors the callbacks record on the host handle (an
-                // event callback, a rejected v2 tick, or the previous
-                // tick's throwing onPaint) fold into the log like sync
-                // tick errors.
-                let async_err: Option<String> = runtime
-                    .eval("(() => { const e = globalThis.__rs2b0t_host.lastError; if (e) { globalThis.__rs2b0t_host.lastError = null; return e; } return null; })()")
-                    .unwrap_or(None);
-                if let Some(e) = async_err {
-                    let _ = out.send(ThreadMsg::Log(format!("tick {n}: {e}")));
-                }
-                // `LoopingBot.log` / `this.log` push onto the host
-                // handle; fold them into the isolate log so BOT_DEBUG
-                // and the panel can see script-side lines.
-                let bot_log: Result<Vec<String>, rustyscript::Error> = runtime.eval(DRAIN_BOT_LOG);
-                if let Ok(rows) = bot_log {
-                    for line in rows {
-                        let _ = out.send(ThreadMsg::Log(line));
-                    }
                 }
                 // Forward the tick's shim interact queue (Bank/Banking
                 // requests written to `__rs2b0t_host.interact`) to the
@@ -1879,6 +1890,9 @@ fn tick_loop(
                 if !v2_native {
                     let _ = runtime.eval::<()>("globalThis.__rs2b0t_call_on_paint()");
                 }
+                // After the paint pass, so a throwing onPaint is logged
+                // under this tick.
+                forward_script_logs(&mut runtime, &out, n);
                 match compose_forwarded_paint(&mut runtime) {
                     Ok(frame) => {
                         forward_paint_if_changed(&mut ipc, &out, &mut last_forwarded_paint, frame);
@@ -1989,10 +2003,12 @@ fn tick_loop(
                     let _ = runtime.eval::<()>(
                         "if (typeof globalThis.__rs_prayer_pump === 'function') globalThis.__rs_prayer_pump()",
                     );
-                    let _ = runtime.block_on_event_loop(
+                    if let Err(e) = runtime.block_on_event_loop(
                         rustyscript::deno_core::PollEventLoopOptions::default(),
                         Some(Duration::from_millis(10)),
-                    );
+                    ) {
+                        let _ = out.send(ThreadMsg::Log(format!("session reset: {e}")));
+                    }
                 }
                 let _ = runtime.eval::<()>("globalThis.__rs2b0t_host.interact = []");
                 clear_unconsumed_paint_click(&mut runtime);

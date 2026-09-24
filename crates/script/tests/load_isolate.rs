@@ -863,17 +863,20 @@ fn isolate_remaps_api_imports_to_our_game_and_teleport_throws() {
     );
     iso.join();
 
-    // Game.teleport is a real member whose promise rejects at runtime.
-    let src = "import { Game } from '../../api/game/Game.js'; export default class T extends LoopingBot { async loop() { await Game.teleport('Lumbridge'); } }";
+    // Game.teleport is a real member whose promise rejects at runtime. An
+    // un-awaited call's rejection is unhandled; it must still be logged
+    // under the tick, not dropped with the event-loop drain.
+    let src = "import { Game } from '../../api/game/Game.js'; export default class T extends LoopingBot { loop() { Game.teleport('Lumbridge'); } }";
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![])
         .expect("teleport bot loads");
     iso.on_game_tick(1);
     let _ = iso.probe("__rs_bot");
     let logs = iso.drain_logs();
     assert!(
-        logs.iter()
-            .any(|l| l.contains("not impl") && l.contains("Game.teleport")),
-        "teleport throws not impl: {logs:?}"
+        logs.iter().any(|l| l.starts_with("tick 1: ")
+            && l.contains("not impl")
+            && l.contains("Game.teleport")),
+        "teleport not impl is logged on tick 1: {logs:?}"
     );
     iso.join();
 }
@@ -958,7 +961,7 @@ fn isolate_onpaint_throw_paints_the_not_impl() {
 import { notImpl } from '../../shim/_kernel.js';
 export default class T extends LoopingBot {
     onPaint() {
-        throw notImpl('Date.now');
+        throw notImpl('Date.now@' + globalThis.__rs2b0t_host.tick);
     }
 }
 "#;
@@ -974,6 +977,16 @@ export default class T extends LoopingBot {
         paint.lines.iter().any(|l| l.contains("not impl: Date.now")),
         "overlay must name the missing verb, got {paint:?}"
     );
+    // The throw is logged under the tick whose onPaint threw — held
+    // ticks included — not the next one.
+    assert_eq!(iso.drain_logs(), vec!["tick 1: not impl: Date.now@1"]);
+    let mut snap = base_snapshot();
+    snap.hold = true;
+    snap.tick = 2;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(2);
+    let _ = iso.probe("0");
+    assert_eq!(iso.drain_logs(), vec!["tick 2: not impl: Date.now@2"]);
     iso.join();
 }
 
@@ -1509,6 +1522,202 @@ export default class T extends LoopingBot {
         "parked",
         "the listener's wait keeps its own due time"
     );
+    iso.join();
+}
+
+// M5: a listener's own wait settles on its due tick while `loop()` stays
+// parked on a later one; neither wait disturbs the other.
+#[test]
+fn listener_wait_settles_while_the_loop_stays_parked() {
+    let src = r#"
+import { Execution } from '../../api/execution/Execution.js';
+import { BotHost } from '../../runtime/BotHost.js';
+export default class T extends LoopingBot {
+    onStart() {
+        BotHost.addTickListener(() => {
+            if (globalThis.__side) return;
+            globalThis.__side = 'parked';
+            Execution.delayTicks(1).then(() => {
+                globalThis.__side = 'settled@' + globalThis.__rs2b0t_host.tick;
+            });
+        });
+    }
+    async loop() {
+        globalThis.__loops = (globalThis.__loops || 0) + 1;
+        await Execution.delayTicks(3);
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    iso.on_game_tick(1); // loop parks until tick 4
+    iso.on_game_tick(2); // listener parks until tick 3
+    iso.on_game_tick(3);
+    assert_eq!(iso.probe("__side").unwrap(), "settled@3");
+    assert_eq!(iso.probe("__loops").unwrap(), 1, "loop still parked");
+    iso.on_game_tick(4); // loop's wait settles; it finishes this tick
+    assert_eq!(iso.probe("__loops").unwrap(), 1);
+    iso.on_game_tick(5);
+    assert_eq!(
+        iso.probe("__loops").unwrap(),
+        2,
+        "next loop on the next tick"
+    );
+    iso.join();
+}
+
+// M5: two waits parked by one `loop()` (`Promise.all`) both settle, and
+// the loop runs again on the tick after the later one.
+#[test]
+fn two_waits_in_one_loop_both_settle() {
+    let src = r#"
+import { Execution } from '../../api/execution/Execution.js';
+export default class T extends LoopingBot {
+    async loop() {
+        globalThis.__loops = (globalThis.__loops || 0) + 1;
+        await Promise.all([Execution.delayTicks(1), Execution.delayTicks(2)]);
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    for n in 1..=3 {
+        iso.on_game_tick(n);
+        assert_eq!(iso.probe("__loops").unwrap(), 1, "parked through tick {n}");
+    }
+    iso.on_game_tick(4);
+    assert_eq!(iso.probe("__loops").unwrap(), 2);
+    iso.join();
+}
+
+// A throwing `loop()` is logged under its tick, is not scheduler progress,
+// and runs again on the next tick.
+#[test]
+fn throwing_loop_is_logged_and_restarted_next_tick() {
+    let src = r#"
+export default class T extends LoopingBot {
+    loop() {
+        globalThis.__loops = (globalThis.__loops || 0) + 1;
+        throw new Error('boom@' + globalThis.__rs2b0t_host.tick);
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    for n in 1..=2 {
+        iso.on_game_tick(n);
+        assert_eq!(iso.probe("__loops").unwrap(), n);
+        assert_eq!(iso.drain_logs(), vec![format!("tick {n}: boom@{n}")]);
+        assert!(
+            iso.drain_lifecycle().is_empty(),
+            "a throw is not loop-settled"
+        );
+    }
+    iso.join();
+}
+
+// A failed `onStart` — thrown, or rejected once its wait settles — is
+// logged under its tick, and the first `loop()` runs on the next tick.
+#[test]
+fn failed_on_start_is_logged_and_loop_starts_next_tick() {
+    let sync = r#"
+export default class T extends LoopingBot {
+    onStart() { throw new Error('startboom'); }
+    loop() { globalThis.__loops = (globalThis.__loops || 0) + 1; }
+}
+"#;
+    let parked = r#"
+import { Execution } from '../../api/execution/Execution.js';
+export default class T extends LoopingBot {
+    async onStart() {
+        await Execution.delayTicks(1);
+        throw new Error('startboom');
+    }
+    loop() { globalThis.__loops = (globalThis.__loops || 0) + 1; }
+}
+"#;
+    // (source, tick onStart fails on)
+    for (src, fails) in [(sync, 1), (parked, 2)] {
+        let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+        for n in 1..=fails {
+            iso.on_game_tick(n);
+            assert_eq!(iso.probe("globalThis.__loops || 0").unwrap(), 0);
+        }
+        assert_eq!(iso.drain_logs(), vec![format!("tick {fails}: startboom")]);
+        iso.on_game_tick(fails + 1);
+        assert_eq!(iso.probe("__loops").unwrap(), 1, "loop on the next tick");
+        iso.join();
+    }
+}
+
+// A compat `loop()` that fulfils during a guardian hold is scheduler
+// progress (loop-settled), while the gameplay it queued is dropped.
+#[test]
+fn compat_loop_settled_during_hold_forwards_only_scheduler_progress() {
+    let src = r#"
+import { Game } from '../../api/game/Game.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__did) return;
+        globalThis.__did = true;
+        await new Promise((resolve) => {
+            const host = globalThis.__rs2b0t_host;
+            let tick = host.tick;
+            Object.defineProperty(host, 'tick', {
+                configurable: true,
+                get() { return tick; },
+                set(next) {
+                    tick = next;
+                    if (next === 2) resolve();
+                },
+            });
+        });
+        Game.setCameraYaw(5);
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    iso.on_game_tick(1);
+    assert!(iso.drain_lifecycle().is_empty(), "loop still pending");
+    let mut snap = base_snapshot();
+    snap.hold = true;
+    snap.tick = 2;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(2);
+    let _ = iso.probe("true");
+    assert_eq!(
+        iso.drain_lifecycle(),
+        vec![script::shim::InteractReq::LoopSettled],
+        "fulfilled loop under hold is scheduler progress"
+    );
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "gameplay queued by the held continuation is dropped"
+    );
+    iso.join();
+}
+
+// BotHost tick listeners fire once per eligible posted tick for the v1
+// native `tick(api)` shape too — not only while a wait is parked.
+#[test]
+fn native_tick_listeners_fire_every_posted_tick() {
+    let src = r#"
+import { BotHost } from '../../runtime/BotHost.js';
+import { Execution } from '../../api/execution/Execution.js';
+globalThis.__fired = [];
+BotHost.addTickListener(() => { globalThis.__fired.push(globalThis.__rs2b0t_host.tick); });
+export async function tick(api) {
+    globalThis.__n = (globalThis.__n || 0) + 1;
+    if (globalThis.__n === 2) await Execution.delayTicks(3);
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::NativeTick, vec![]).unwrap();
+    for n in 1..=8 {
+        iso.on_game_tick(n);
+    }
+    assert_eq!(
+        iso.probe("__fired").unwrap(),
+        serde_json::json!([1, 2, 3, 4, 5, 6, 7, 8])
+    );
+    // Parked on tick 2 until tick 5, then one run per tick.
+    assert_eq!(iso.probe("__n").unwrap(), 5);
     iso.join();
 }
 

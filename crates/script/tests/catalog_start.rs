@@ -25,6 +25,57 @@ fn locked_unloadable(spec: &str) -> bool {
         || spec.contains("barcrawl/")
 }
 
+/// A fresh account's stat rows (client stat index, name): an in-game
+/// client always posts them, and a card's first `onPaint` — logged on its
+/// own tick — reads them.
+const SKILLS: [(i32, &str); 19] = [
+    (0, "attack"),
+    (1, "defence"),
+    (2, "strength"),
+    (3, "hitpoints"),
+    (4, "ranged"),
+    (5, "prayer"),
+    (6, "magic"),
+    (7, "cooking"),
+    (8, "woodcutting"),
+    (9, "fletching"),
+    (10, "fishing"),
+    (11, "firemaking"),
+    (12, "crafting"),
+    (13, "smithing"),
+    (14, "mining"),
+    (15, "herblore"),
+    (16, "agility"),
+    (17, "thieving"),
+    (20, "runecraft"),
+];
+
+fn fresh_stats() -> Vec<script::isolate_fb::StatInput<'static>> {
+    SKILLS
+        .iter()
+        .map(|&(index, name)| {
+            let (xp, level) = if name == "hitpoints" {
+                (1154, 10)
+            } else {
+                (0, 1)
+            };
+            script::isolate_fb::StatInput {
+                index,
+                name,
+                xp,
+                base: level,
+                effective: level,
+            }
+        })
+        .collect()
+}
+
+/// Full special energy: the host posts every nonzero varp.
+const VARPS: [script::isolate_fb::VarpInput; 1] = [script::isolate_fb::VarpInput {
+    index: 300,
+    value: 1000,
+}];
+
 fn empty_snap() -> script::isolate_fb::SnapshotInput<'static> {
     script::isolate_fb::SnapshotInput {
         tick: 1,
@@ -63,7 +114,7 @@ fn empty_snap() -> script::isolate_fb::SnapshotInput<'static> {
         chat_text: None,
         chat_options: &[],
         side_tab: -1,
-        varps: &[],
+        varps: &VARPS,
         combat_styles: &[],
         run_energy: 0,
         run_enabled: false,
@@ -137,6 +188,10 @@ fn bright_catalog_cards_start_without_not_impl() {
 
     let mut hits: BTreeSet<String> = BTreeSet::new();
     let cache = JsCache::new(dir.join("sib-cache"));
+    let stats = fresh_stats();
+    let mut snap = empty_snap();
+    snap.stats = &stats;
+    let snap = script::isolate_fb::encode_snapshot(&snap);
     for name in &names {
         if let Err(e) = lib.ensure_js(ScriptSource::Catalog, name) {
             hits.insert(format!("{name}: transpile {e}"));
@@ -181,7 +236,7 @@ fn bright_catalog_cards_start_without_not_impl() {
                 if !bag.is_empty() {
                     iso.post_settings_bag(&bag);
                 }
-                iso.post_snapshot(script::isolate_fb::encode_snapshot(&empty_snap()));
+                iso.post_snapshot(snap.clone());
                 iso.on_game_tick(1);
                 let _ = iso.probe("__rs_bot");
                 for line in iso.drain_logs() {
