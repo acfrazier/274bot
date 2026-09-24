@@ -76,7 +76,7 @@ export default class T extends LoopingBot {
 }
 
 #[test]
-fn ranged_loadout_is_truthful_and_uses_dart_shape_only() {
+fn ranged_loadout_distinguishes_dart_custom_thrown_and_bow() {
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let iso = LoadIsolate::spawn_with_game_data(
         r#"
@@ -88,6 +88,7 @@ export default class T extends LoopingBot {
             bow: rangeLoadoutOf('Maple shortbow', 'Iron arrow'),
             dart: rangeLoadoutOf('Bronze dart', 'Iron arrow'),
             missing: rangeLoadoutOf('Dragon dart', 'Rune arrow'),
+            customThrown: rangeLoadoutOf(' Rune knife ', 'rune KNIFE'),
         });
     }
 }
@@ -109,7 +110,58 @@ export default class T extends LoopingBot {
             "bow": {"weapon": "Maple shortbow", "projectile": "Iron arrow", "thrown": false},
             "dart": {"weapon": "Bronze dart", "projectile": "Bronze dart", "thrown": true},
             "missing": {"weapon": "Dragon dart", "projectile": "Rune arrow", "thrown": false},
+            "customThrown": {"weapon": " Rune knife ", "projectile": "rune KNIFE", "thrown": true},
         })
+    );
+}
+
+#[test]
+fn ranged_settings_other_resolves_or_reports_missing_custom_name() {
+    let value = probe_json(
+        r#"
+import { rangedItem, CUSTOM_RANGED_SETTINGS } from '../../api/combat/rangedSettings.js';
+export default class T extends LoopingBot {
+    loop() {
+        const bag = (values) => ({ str: (key, fallback) => values[key] ?? fallback });
+        let missing;
+        try { rangedItem(bag({ bow: 'Other', customBow: '  ' }), 'bow', 'Maple shortbow'); }
+        catch (error) { missing = String(error); }
+        let missingAmmo;
+        try { rangedItem(bag({ ammo: 'Other' }), 'ammo', 'Iron arrow'); }
+        catch (error) { missingAmmo = String(error); }
+        globalThis.__probe = JSON.stringify({
+            defaultBow: rangedItem(bag({}), 'bow', 'Maple shortbow'),
+            selectedAmmo: rangedItem(bag({ ammo: ' Rune arrow ' }), 'ammo', 'Iron arrow'),
+            customBow: rangedItem(bag({ bow: 'Other', customBow: ' Rune knife ' }), 'bow', 'Maple shortbow'),
+            customAmmo: rangedItem(bag({ ammo: 'Other', customAmmo: ' Rune knife ' }), 'ammo', 'Iron arrow'),
+            missing,
+            missingAmmo,
+            bowShowIf: CUSTOM_RANGED_SETTINGS.customBow.showIf,
+            ammoShowIf: CUSTOM_RANGED_SETTINGS.customAmmo.showIf,
+        });
+    }
+}
+"#,
+    );
+    assert_eq!(value["defaultBow"], "Maple shortbow");
+    assert_eq!(value["selectedAmmo"], "Rune arrow");
+    assert_eq!(value["customBow"], "Rune knife");
+    assert_eq!(value["customAmmo"], "Rune knife");
+    assert!(value["missing"]
+        .as_str()
+        .unwrap()
+        .contains("Enter a custom ranged weapon name"));
+    assert!(value["missingAmmo"]
+        .as_str()
+        .unwrap()
+        .contains("Enter a custom ammunition name"));
+    assert_eq!(
+        value["bowShowIf"],
+        serde_json::json!({"key": "bow", "anyOf": ["Other"]})
+    );
+    assert_eq!(
+        value["ammoShowIf"],
+        serde_json::json!({"key": "ammo", "anyOf": ["Other"]})
     );
 }
 

@@ -504,7 +504,7 @@ pub(crate) enum Flow<'s> {
 /// iteration hands back, or the thrown value; everything else it created is
 /// released with the scope.
 ///
-/// ```ignore
+/// ```text
 /// loop {
 ///     let scope = &mut v8::EscapableHandleScope::new(scope);
 ///     let flow = one_iteration(scope, ...);

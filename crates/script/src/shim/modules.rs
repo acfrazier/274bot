@@ -592,6 +592,10 @@ pub(crate) fn shim_modules() -> Vec<Module> {
             include_str!("special.js"),
         ),
         Module::new(
+            "/rs2b0t/bot/api/combat/rangedSettings.js",
+            include_str!("ranged_settings.js"),
+        ),
+        Module::new(
             "/rs2b0t/bot/api/combat/fightUpkeep.js",
             include_str!("fight_upkeep.js"),
         ),

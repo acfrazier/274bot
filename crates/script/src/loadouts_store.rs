@@ -427,7 +427,12 @@ pub fn resolve_setting_options_with_labels(
     loadouts: &LoadoutsStore,
     game_data: Option<&api::game_data::SelectedGameData>,
 ) -> ResolvedSettingOptions {
-    if !def.options.is_empty() {
+    let mixed_equipment_options = def.options.last().is_some_and(|s| s == "Other")
+        && def.options_from.as_deref().is_some_and(|from| {
+            from.split(',')
+                .all(|ident| crate::rs2b0t_registry::w1c_equipment_option_families(ident).is_some())
+        });
+    if !def.options.is_empty() && !mixed_equipment_options {
         return ResolvedSettingOptions::from_values(def.options.clone());
     }
     if def.options_from.as_deref() == Some("loadouts") {
@@ -437,6 +442,22 @@ pub fn resolve_setting_options_with_labels(
         return resolve_item_option_spec(spec, game_data);
     }
     if let Some(from) = def.options_from.as_deref() {
+        if from
+            .split(',')
+            .all(|ident| crate::rs2b0t_registry::w1c_equipment_option_families(ident).is_some())
+        {
+            let mut resolved = ResolvedSettingOptions::default();
+            for family in from.split(',') {
+                let part = resolve_w1c_equipment_options(family, game_data);
+                resolved.values.extend(part.values);
+                resolved.labels.extend(part.labels);
+            }
+            for literal in &def.options {
+                resolved.values.push(literal.clone());
+                resolved.labels.push(literal.clone());
+            }
+            return resolved;
+        }
         if crate::rs2b0t_registry::is_revision_fact_option_ident(from) {
             return resolve_w1c_equipment_options(from, game_data);
         }

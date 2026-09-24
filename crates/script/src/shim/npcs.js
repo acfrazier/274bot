@@ -49,6 +49,13 @@ export class Npc {
         return Tile.from({ x: this.snap.nx, z: this.snap.nz, level: this.snap.level ?? 0 });
     }
 
+    networkTile() {
+        if (!Number.isInteger(this.snap.nx) || !Number.isInteger(this.snap.nz)) {
+            throw notImpl('Npc.networkTile');
+        }
+        return Tile.from({ x: this.snap.nx, z: this.snap.nz, level: this.snap.level ?? 0 });
+    }
+
     /**
      * True when this NPC's combat target is the local player (`face_entity`),
      * not merely when `Game.inCombat()` is true.

@@ -145,14 +145,15 @@ fn catalog_index_dts(root: &std::path::Path) -> std::path::PathBuf {
     root.join("packages/rs2b0t-api/index.d.ts")
 }
 
-/// Frozen 96410ec5 pin: 180 runtime exports, Execution.noteProgress, Ent quartet.
+/// Frozen 00d39a17e0 pin: 181 runtime exports, including Special and the
+/// previously missed NPC/Player/Shop members.
 #[test]
-fn frozen_declared_abi_has_180_exports_note_progress_and_ent_quartet() {
+fn frozen_declared_abi_has_special_and_new_members() {
     let fixture = load_fixture().expect("js_declared_abi.json");
     assert_eq!(
         fixture.len(),
-        180,
-        "frozen catalog ABI is 180 runtime exports"
+        181,
+        "frozen catalog ABI is 181 runtime exports"
     );
     let execution = fixture
         .iter()
@@ -206,11 +207,25 @@ fn frozen_declared_abi_has_180_exports_note_progress_and_ent_quartet() {
             .kind,
         DeclaredKind::Function
     );
+    for (name, member) in [
+        ("Special", "arm"),
+        ("Npc", "networkTile"),
+        ("Npc", "size"),
+        ("Player", "combatLevel"),
+        ("Shop", "sellAll"),
+    ] {
+        assert!(
+            fixture
+                .iter()
+                .any(|e| e.name == name && e.members.iter().any(|m| m == member)),
+            "missing declared member {name}.{member}"
+        );
+    }
 }
 
 /// When `$RS2B0T` is set on this process, the checked-in fixture must match
 /// a fresh parse of that tree's `index.d.ts`. Isolated from the operator
-/// persisted catalog so a dirty/older checkout cannot un-pin 96410ec5.
+/// persisted catalog so a dirty/older checkout cannot un-pin 00d39a17e0.
 #[test]
 fn declared_abi_fixture_matches_local_dts() {
     let env = script::IsolatedEnv::enter("declared-abi");
