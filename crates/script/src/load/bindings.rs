@@ -311,15 +311,6 @@ pub(super) fn wire_runtime(
             ))
         })
         .map_err(|e| format!("register special: {e}"))?;
-    let selected_shop = game_data.clone();
-    runtime
-        .register_function("__rs2b0t_shop", move |args: &[serde_json::Value]| {
-            Ok(crate::shop::dispatch(
-                selected_shop.as_deref(),
-                args.first().unwrap_or(&serde_json::Value::Null),
-            ))
-        })
-        .map_err(|e| format!("register shop: {e}"))?;
     runtime
         .register_function("__rs2b0t_fight", |args: &[serde_json::Value]| {
             Ok(crate::hunt_fight::dispatch(

@@ -263,6 +263,23 @@ pub(crate) struct Cx<'a> {
     hooks: &'a [Hook],
 }
 
+impl<'a> Cx<'a> {
+    /// A bare context for a family's own unit tests: no hooks held.
+    #[cfg(test)]
+    pub(crate) fn test(
+        ops: &'a mut Vec<InteractReq>,
+        clock: &'a mut InstantTaskClock,
+        reply: Option<Reply>,
+    ) -> Self {
+        Self {
+            ops,
+            clock,
+            reply,
+            hooks: &[],
+        }
+    }
+}
+
 impl Cx<'_> {
     /// Append one game op to this tick's InteractReq batch.
     pub(crate) fn emit(&mut self, op: InteractReq) {
@@ -350,6 +367,7 @@ const FAMILIES: &[Entry] = &[
     entry::<crate::modals::Modals>(),
     entry::<crate::bank_open::BankOpen>(),
     entry::<crate::fire::LightFire>(),
+    entry::<crate::shop::Shop>(),
     #[cfg(test)]
     entry::<tests::Probe>(),
     #[cfg(test)]

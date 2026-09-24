@@ -55,11 +55,13 @@ export default class T extends LoopingBot {
             unsupported,
             posted: Object.keys(SHOP_DB).sort(),
             shopJsonUnknown: (function() {
-                const fn = globalThis.rustyscript && globalThis.rustyscript.functions
-                    ? globalThis.rustyscript.functions.__rs2b0t_shop
-                    : undefined;
-                if (typeof fn !== 'function') return 'missing';
-                return fn({ op: 'buyout-plan', rec: rec, stock: {}, coins: 200, chosen: [] });
+                // rustyscript answers an unregistered name with a stub that
+                // throws "<name> is not a function".
+                try {
+                    return globalThis.rustyscript.functions.__rs2b0t_shop({ op: 'buyout-plan', rec: rec, stock: {}, coins: 200, chosen: [] });
+                } catch (e) {
+                    return String(e.message || e).includes('is not a function') ? 'missing' : String(e);
+                }
             })(),
         };
     }
@@ -107,10 +109,9 @@ fn frozen_shopbuyout_specifiers_get_rec_and_call_rust_planner() {
         unsupported.contains("not impl"),
         "unsupported shop must fail closed, got {unsupported:?}"
     );
-    let shop_json = &probe["shopJsonUnknown"];
     assert_eq!(
-        shop_json["kind"], "notImpl",
-        "buyout-plan must not ride the JSON shop binding, got {shop_json}"
+        probe["shopJsonUnknown"], "missing",
+        "buyout-plan must not ride a JSON shop binding (none is registered)"
     );
     iso.join();
 }

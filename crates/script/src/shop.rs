@@ -1,17 +1,19 @@
-//! Rust-owned observed shop open/buy/sell/close sequencing.
+//! Rust-owned observed shop open/buy/sell/close sequencing, the `shop`
+//! [`crate::machine`] family.
 //!
 //! The selected caches own the shop interface identities (`shop_template`
 //! 3824 / `shop_template:inv` 3900 for Buy, `shop_template_side` 3822 /
 //! `shop_template_side:inv` 3823 for Sell) and their fixed op slots; the
 //! compact snapshot seam owns where those containers currently are and what
-//! they hold. JavaScript supplies the call argument, returns the caller's
-//! completion and dispatches the verbs this module returns — the 10/5/1
-//! batching, the packet-per-tick bound, the waits and the held-count
-//! settlement policy stay here. A queued click is not a transfer: a batch is
-//! only counted once the posted container counts moved.
+//! they hold. JavaScript starts one machine per call and awaits the frozen
+//! result — the 10/5/1 batching, the packet-per-tick bound, the waits and
+//! the held-count settlement policy stay here. A queued click is not a
+//! transfer: a batch is only counted once the posted container counts moved.
 
+use crate::machine::{Begin, Cx, Family, Step};
 use crate::observed::{self, ItemRow, Scene, Text};
-use crate::task_clock::InstantTaskClock;
+use crate::shim::InteractReq;
+use serde::Deserialize;
 use serde_json::{json, Value};
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -29,7 +31,6 @@ pub const SETTLE_MS: u64 = 3_000;
 pub const MAX_PACKETS_PER_TICK: usize = 5;
 
 thread_local! {
-    static RUNTIME: RefCell<ShopRuntime> = const { RefCell::new(ShopRuntime::new()) };
     static GAME_DATA: RefCell<Option<Arc<api::game_data::SelectedGameData>>> =
         const { RefCell::new(None) };
 }
@@ -120,18 +121,30 @@ impl NativeObservation {
 }
 
 /// What the caller asked for.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Kind {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum Kind {
     Open,
     Buy,
     Sell,
     Close,
 }
 
+impl Kind {
+    /// The frozen settle value: `open` a boolean, `buy`/`sell` the observed
+    /// count, `close` void.
+    fn value(self, result: bool, quantity: i32) -> Value {
+        match self {
+            Self::Open => json!(result),
+            Self::Close => Value::Null,
+            Self::Buy | Self::Sell => json!(quantity),
+        }
+    }
+}
+
 /// Transfer phase of the current operation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Phase {
-    Idle,
     /// Waiting for the posted open/close boundary.
     WaitBoundary,
     /// A batch of Buy/Sell ops is outstanding.
@@ -141,9 +154,18 @@ enum Phase {
     SettleTick,
 }
 
-struct ShopRuntime {
-    clock: InstantTaskClock,
-    token: u64,
+#[derive(Deserialize)]
+pub(crate) struct ShopArgs {
+    kind: Kind,
+    #[serde(default)]
+    name: String,
+    /// A positive count or `"all"`; anything else is an invalid request.
+    #[serde(default)]
+    qty: Value,
+}
+
+/// One frozen `Shop.open`/`buy`/`sell`/`close` call.
+pub(crate) struct Shop {
     phase: Phase,
     kind: Kind,
     /// The selected row's name (Shop.open: the NPC name).
@@ -163,17 +185,121 @@ struct ShopRuntime {
     /// An op is outstanding in the current wait window (`Shop.open` presses
     /// one Trade per attempt, exactly like the frozen loop).
     pressed: bool,
-    /// Remaining `Shop.open`/`Shop.close` attempts.
+    /// Remaining `Shop.open` attempts.
     attempts_left: u32,
 }
 
-impl ShopRuntime {
-    const fn new() -> Self {
+impl Family for Shop {
+    const NAME: &'static str = "shop";
+    /// A new shop call replaces the one in flight.
+    const EXCLUSIVE: bool = true;
+    type Args = ShopArgs;
+    type Output = Value;
+
+    fn begin(args: ShopArgs, cx: &mut Cx<'_>) -> Begin<Self> {
+        let kind = args.kind;
+        let name = args.name.trim().to_string();
+        let obs = observed::with(|scene| NativeObservation::from_scene(scene, kind == Kind::Open));
+        let probe = obs.probe();
+        // Not in game: nothing is sent and the call settles empty.
+        let refused = Begin::Done(kind.value(false, 0));
+        if !probe.ingame {
+            return refused;
+        }
+        let mut shop = Self::new(kind);
+        match kind {
+            Kind::Open => {
+                // The frozen `Shop.open` returns false when no posted NPC
+                // offers that name with a Trade op: that is an absent world
+                // object, not a missing host capability.
+                let Some((npc_name, action)) = trade_target(probe.npcs, &name) else {
+                    return refused;
+                };
+                if probe.shop_open {
+                    // Already open: success with no Trade press.
+                    return Begin::Done(kind.value(true, 0));
+                }
+                shop.name = npc_name;
+                shop.npc_action = action;
+                shop.attempts_left = OPEN_ATTEMPTS;
+                shop.phase = Phase::WaitBoundary;
+                shop.press_trade(cx);
+                Begin::Run(shop)
+            }
+            Kind::Close => {
+                if !probe.shop_open {
+                    return Begin::Done(kind.value(true, 0));
+                }
+                shop.phase = Phase::WaitBoundary;
+                cx.clock().arm(CLOSE_WAIT_MS);
+                cx.emit(InteractReq::CloseModal);
+                Begin::Run(shop)
+            }
+            Kind::Buy | Kind::Sell => {
+                if !probe.shop_open || name.is_empty() {
+                    return refused;
+                }
+                let container = match kind {
+                    Kind::Buy if !probe.has_stock => {
+                        return Begin::Refuse("missing shop stock".into());
+                    }
+                    Kind::Buy => probe.stock,
+                    _ => match probe.player {
+                        Some(player) => player,
+                        None => return Begin::Refuse("missing shop player pack".into()),
+                    },
+                };
+                let Some(row) = find_row(container, &name).cloned() else {
+                    return refused;
+                };
+                // The frozen `Shop.buy` breaks out on a stock row already at zero.
+                if kind == Kind::Buy && row.count <= 0 {
+                    return refused;
+                }
+                let requested = match &args.qty {
+                    Value::String(all) if all == "all" => row.count,
+                    // A JS number beyond int32 reaches Rust as a float.
+                    qty => match qty
+                        .as_i64()
+                        .or_else(|| qty.as_f64().filter(|n| n.fract() == 0.0).map(|n| n as i64))
+                    {
+                        Some(qty) if qty >= 1 => qty as i32,
+                        _ => return refused,
+                    },
+                };
+                if requested < 1 {
+                    return refused;
+                }
+                shop.name = row.name.to_string();
+                shop.requested = requested;
+                shop.held_now = count_of(probe.inv, &row.name);
+                match shop.send_batch(&row, cx) {
+                    Step::Done(value) => Begin::Done(value),
+                    _ => Begin::Run(shop),
+                }
+            }
+        }
+    }
+
+    fn step(&mut self, cx: &mut Cx<'_>) -> Step<Value> {
+        let obs = observed::with(|scene| NativeObservation::from_scene(scene, false));
+        let probe = obs.probe();
+        if !probe.ingame {
+            return Step::Done(self.kind.value(false, 0));
+        }
+        match self.kind {
+            Kind::Open => self.open_step(&probe, cx),
+            Kind::Close => self.close_step(&probe, cx),
+            Kind::Buy | Kind::Sell => self.transfer_step(&probe, cx),
+        }
+    }
+}
+
+impl Shop {
+    fn new(kind: Kind) -> Self {
         Self {
-            clock: InstantTaskClock::new(),
-            token: 0,
-            phase: Phase::Idle,
-            kind: Kind::Buy,
+            phase: Phase::WaitBoundary,
+            kind,
             name: String::new(),
             npc_action: String::new(),
             requested: 0,
@@ -186,137 +312,143 @@ impl ShopRuntime {
         }
     }
 
-    fn frozen(&self) -> bool {
-        self.clock.frozen()
+    fn done(&self, result: bool) -> Step<Value> {
+        Step::Done(self.kind.value(result, self.transferred))
     }
 
-    fn set_freeze(&mut self, paused: bool, held: bool) {
-        self.clock.set_freeze(paused, held);
-    }
-
-    fn arm(&mut self, window: u64) {
-        self.clock.arm(window);
-    }
-
-    fn bound_reached(&self) -> bool {
-        self.clock.bound_reached()
-    }
-
-    fn abort_runtime(&mut self) {
-        self.token = self.token.wrapping_add(1);
-        self.phase = Phase::Idle;
-        self.name.clear();
-        self.npc_action.clear();
-        self.requested = 0;
-        self.transferred = 0;
-        self.batch_delta = 0;
-        self.batch_baseline = 0;
-        self.held_now = 0;
-        self.pressed = false;
-        self.attempts_left = 0;
-        self.clock.deadline = None;
-    }
-
-    fn done(&mut self, result: bool, reason: &str) -> Value {
-        let token = self.token;
-        let quantity = self.transferred;
-        self.phase = Phase::Idle;
-        self.clock.deadline = None;
-        json!({
-            "kind": "done",
-            "token": token,
-            "result": result,
-            "quantity": quantity,
-            "reason": reason,
-        })
-    }
-
-    fn npc_verb(&self) -> Value {
-        json!({
-            "kind": "npc",
-            "token": self.token,
-            "name": self.name,
-            "action": self.npc_action,
-        })
-    }
-
-    fn close_verb(&self) -> Value {
-        json!({ "kind": "close-modal", "token": self.token })
+    /// Press the NPC's Trade op once and open this attempt's window.
+    fn press_trade(&mut self, cx: &mut Cx<'_>) {
+        self.pressed = true;
+        cx.clock().arm(OPEN_WAIT_MS);
+        cx.emit(InteractReq::Npc {
+            name: self.name.clone(),
+            action: self.npc_action.clone(),
+            index: None,
+        });
     }
 
     /// Emit the next batch of Buy/Sell ops for the outstanding remainder and
     /// arm the held-count settlement window.
-    fn send_batch(&mut self, row: &Row) -> Value {
-        let remaining = self.requested - self.transferred;
-        let chunks = plan(remaining);
+    fn send_batch(&mut self, row: &Row, cx: &mut Cx<'_>) -> Step<Value> {
+        let chunks = plan(self.requested - self.transferred);
         if chunks.is_empty() {
-            return self.done(self.transferred >= self.requested, "requested");
+            return self.done(self.transferred >= self.requested);
         }
-        let verb_kind = if self.kind == Kind::Buy {
+        let kind = if self.kind == Kind::Buy {
             "buy"
         } else {
             "sell"
         };
-        let ops: Vec<Value> = chunks
-            .iter()
-            .map(|chunk| {
-                json!({
-                    "op": "shop-button",
-                    "kind": verb_kind,
-                    "name": row.name,
-                    "id": row.id,
-                    "slot": row.slot,
-                    "component": row.component,
-                    "chunk": chunk,
-                })
-            })
-            .collect();
+        for chunk in chunks {
+            cx.emit(InteractReq::ShopButton {
+                kind: kind.into(),
+                name: row.name.to_string(),
+                id: row.id,
+                slot: row.slot,
+                component: row.component,
+                chunk,
+            });
+        }
         self.batch_delta = 0;
         self.batch_baseline = self.held_now;
         self.phase = Phase::WaitBatch;
-        self.arm(SETTLE_MS);
-        json!({ "kind": "ops", "token": self.token, "ops": ops })
+        cx.clock().arm(SETTLE_MS);
+        Step::Wait
     }
-}
 
-pub fn on_pause() {
-    RUNTIME.with(|rt| {
-        let held = rt.borrow().clock.held;
-        rt.borrow_mut().set_freeze(true, held);
-    });
-}
+    fn open_step(&mut self, probe: &Probe<'_>, cx: &mut Cx<'_>) -> Step<Value> {
+        if probe.shop_open {
+            return self.done(true);
+        }
+        // The frozen `Shop.open` presses Trade once per attempt and only
+        // re-presses after that attempt's own 3000 ms window expired.
+        if !self.pressed {
+            self.press_trade(cx);
+            return Step::Wait;
+        }
+        if !cx.clock().bound_reached() {
+            return Step::Wait;
+        }
+        self.attempts_left = self.attempts_left.saturating_sub(1);
+        if self.attempts_left == 0 {
+            return self.done(false);
+        }
+        self.press_trade(cx);
+        Step::Wait
+    }
 
-pub fn on_resume() {
-    RUNTIME.with(|rt| {
-        let held = rt.borrow().clock.held;
-        rt.borrow_mut().set_freeze(false, held);
-    });
-}
+    fn close_step(&mut self, probe: &Probe<'_>, cx: &mut Cx<'_>) -> Step<Value> {
+        if !probe.shop_open || cx.clock().bound_reached() {
+            return self.done(!probe.shop_open);
+        }
+        Step::Wait
+    }
 
-pub fn on_hold(held: bool) {
-    RUNTIME.with(|rt| {
-        let paused = rt.borrow().clock.paused;
-        rt.borrow_mut().set_freeze(paused, held);
-    });
-}
+    fn transfer_step(&mut self, probe: &Probe<'_>, cx: &mut Cx<'_>) -> Step<Value> {
+        if !probe.shop_open {
+            return self.done(false);
+        }
+        let container = match self.kind {
+            Kind::Buy if !probe.has_stock => return self.done(false),
+            Kind::Buy => probe.stock,
+            // The shop's player pack is our Sell identity: losing it stops
+            // the transfer instead of falling back to the backpack.
+            _ => match probe.player {
+                Some(player) => player,
+                None => return self.done(false),
+            },
+        };
+        let Some(row) = find_row(container, &self.name).cloned() else {
+            return self.done(self.transferred >= self.requested);
+        };
+        // The frozen `Shop.buy` breaks out on a stock row already at zero.
+        if self.kind == Kind::Buy && row.count <= 0 {
+            return self.done(self.transferred >= self.requested);
+        }
+        match self.phase {
+            Phase::WaitBatch => {
+                let delta = self.batch_delta(probe);
+                if delta > 0 {
+                    self.batch_delta = delta;
+                    self.phase = Phase::SettleTick;
+                } else if cx.clock().bound_reached() {
+                    // The window closed with no movement; the batch's own
+                    // server tick may still land, so settle exactly one more
+                    // tick before declaring the transfer stalled.
+                    self.phase = Phase::SettleTick;
+                }
+                Step::Wait
+            }
+            Phase::SettleTick => {
+                let delta = self.batch_delta(probe).max(self.batch_delta);
+                self.transferred += delta;
+                self.held_now = count_of(probe.inv, &self.name);
+                if self.transferred >= self.requested {
+                    return self.done(true);
+                }
+                if delta == 0 {
+                    // Nothing moved across the settle window and its one tick.
+                    return self.done(false);
+                }
+                self.send_batch(&row, cx)
+            }
+            Phase::WaitBoundary => self.done(false),
+        }
+    }
 
-pub fn on_reset() {
-    RUNTIME.with(|rt| rt.borrow_mut().abort_runtime());
+    /// The items this batch moved, read from the posted backpack counts: Buy
+    /// adds to the pack, Sell takes from it.
+    fn batch_delta(&self, probe: &Probe<'_>) -> i32 {
+        let held = count_of(probe.inv, &self.name);
+        match self.kind {
+            Kind::Buy => (held - self.batch_baseline).max(0),
+            _ => (self.batch_baseline - held).max(0),
+        }
+    }
 }
 
 pub fn configure(data: Option<Arc<api::game_data::SelectedGameData>>) {
     GAME_DATA.with(|slot| *slot.borrow_mut() = data);
-}
-
-/// Open/buy/sell/close stay on the existing JSON shop binding. The planner
-/// is an in-isolate Rust helper (typed request/result, native V8 marshalling),
-/// not an extra shop JSON op and not a FlatBuffer RPC.
-pub fn dispatch(_game_data: Option<&api::game_data::SelectedGameData>, input: &Value) -> Value {
-    match input.get("op").and_then(Value::as_str).unwrap_or("") {
-        "begin" => begin(input),
-        "next" => next(input.get("token").and_then(Value::as_u64).unwrap_or(0)),
-        _ => json!({ "kind": "notImpl", "reason": "unknown op" }),
-    }
 }
 
 /// In-isolate buyout helper request. Built from V8 args; never a host wire.
@@ -417,259 +549,6 @@ struct Probe<'a> {
     npcs: &'a [(String, Vec<String>)],
 }
 
-/// A terminal outcome for a transfer that never selected a row: refused
-/// before any packet, so nothing moved.
-fn refused(reason: &str) -> Value {
-    RUNTIME.with(|rt| {
-        let mut rt = rt.borrow_mut();
-        rt.abort_runtime();
-        let token = rt.token;
-        json!({
-            "kind": "done",
-            "token": token,
-            "result": false,
-            "quantity": 0,
-            "reason": reason,
-        })
-    })
-}
-
-fn begin(input: &Value) -> Value {
-    let kind = match input.get("kind").and_then(Value::as_str).unwrap_or("") {
-        "open" => Kind::Open,
-        "buy" => Kind::Buy,
-        "sell" => Kind::Sell,
-        "close" => Kind::Close,
-        _ => return json!({ "kind": "notImpl", "reason": "unknown shop op" }),
-    };
-    let name = input
-        .get("name")
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .trim()
-        .to_string();
-    let qty = input.get("qty");
-    let obs = observed::with(|scene| NativeObservation::from_scene(scene, kind == Kind::Open));
-    let probe = obs.probe();
-    if !probe.ingame {
-        return json!({ "kind": "aborted", "reason": "not ingame" });
-    }
-    match kind {
-        Kind::Open => {
-            // The frozen `Shop.open` returns false when no posted NPC offers
-            // that name with a Trade op: that is an absent world object, not
-            // a missing host capability, so it resolves false without a
-            // packet instead of throwing.
-            let Some((npc_name, action)) = trade_target(probe.npcs, &name) else {
-                return refused("no-trade-target");
-            };
-            RUNTIME.with(|rt| {
-                let mut rt = rt.borrow_mut();
-                rt.abort_runtime();
-                rt.kind = Kind::Open;
-                rt.name = npc_name;
-                rt.npc_action = action;
-                if probe.shop_open {
-                    // Already open: the frozen Shop.open reports success and
-                    // sends no Trade press.
-                    return rt.done(true, "open");
-                }
-                rt.attempts_left = OPEN_ATTEMPTS;
-                rt.phase = Phase::WaitBoundary;
-                rt.pressed = true;
-                rt.arm(OPEN_WAIT_MS);
-                rt.npc_verb()
-            })
-        }
-        Kind::Close => RUNTIME.with(|rt| {
-            let mut rt = rt.borrow_mut();
-            rt.abort_runtime();
-            rt.kind = Kind::Close;
-            if !probe.shop_open {
-                return rt.done(true, "closed");
-            }
-            rt.phase = Phase::WaitBoundary;
-            rt.arm(CLOSE_WAIT_MS);
-            rt.close_verb()
-        }),
-        Kind::Buy | Kind::Sell => {
-            if !probe.shop_open {
-                return refused("closed");
-            }
-            if name.is_empty() {
-                return refused("invalid");
-            }
-            let container = match kind {
-                Kind::Buy => {
-                    if !probe.has_stock {
-                        return json!({ "kind": "notImpl", "reason": "missing shop stock" });
-                    }
-                    probe.stock
-                }
-                _ => {
-                    let Some(player) = probe.player else {
-                        return json!({ "kind": "notImpl", "reason": "missing shop player pack" });
-                    };
-                    player
-                }
-            };
-            let Some(row) = find_row(container, &name).cloned() else {
-                return refused("absent");
-            };
-            // The frozen `Shop.buy` breaks out on a stock row already at zero.
-            if kind == Kind::Buy && row.count <= 0 {
-                return refused("depleted");
-            }
-            let requested = match qty {
-                Some(value) if value.as_i64().is_some_and(|qty| qty >= 1) => {
-                    value.as_i64().unwrap_or(0) as i32
-                }
-                Some(value) if value.as_str() == Some("all") => row.count,
-                _ => return refused("invalid"),
-            };
-            if requested < 1 {
-                return refused("empty");
-            }
-            RUNTIME.with(|rt| {
-                let mut rt = rt.borrow_mut();
-                rt.abort_runtime();
-                rt.kind = kind;
-                rt.name = row.name.to_string();
-                rt.requested = requested;
-                rt.held_now = count_of(probe.inv, &row.name);
-                rt.send_batch(&row)
-            })
-        }
-    }
-}
-
-fn next(token: u64) -> Value {
-    let obs = observed::with(|scene| NativeObservation::from_scene(scene, false));
-    let probe = obs.probe();
-    RUNTIME.with(|rt| {
-        let mut rt = rt.borrow_mut();
-        if token != rt.token || rt.phase == Phase::Idle {
-            return json!({ "kind": "aborted", "token": rt.token });
-        }
-        if rt.frozen() {
-            return json!({ "kind": "wait", "token": rt.token });
-        }
-        if !probe.ingame {
-            let token = rt.token;
-            rt.phase = Phase::Idle;
-            rt.clock.deadline = None;
-            return json!({ "kind": "aborted", "token": token });
-        }
-        match rt.kind {
-            Kind::Open => open_step(&mut rt, &probe),
-            Kind::Close => close_step(&mut rt, &probe),
-            Kind::Buy | Kind::Sell => transfer_step(&mut rt, &probe),
-        }
-    })
-}
-
-fn open_step(rt: &mut ShopRuntime, probe: &Probe<'_>) -> Value {
-    if probe.shop_open {
-        return rt.done(true, "open");
-    }
-    // The frozen `Shop.open` presses Trade once per attempt and only re-presses
-    // after that attempt's own 3000 ms window expired.
-    if !rt.pressed {
-        rt.pressed = true;
-        rt.arm(OPEN_WAIT_MS);
-        return rt.npc_verb();
-    }
-    if !rt.bound_reached() {
-        return json!({ "kind": "wait", "token": rt.token });
-    }
-    rt.attempts_left = rt.attempts_left.saturating_sub(1);
-    if rt.attempts_left == 0 {
-        return rt.done(false, "open-timeout");
-    }
-    rt.pressed = true;
-    rt.arm(OPEN_WAIT_MS);
-    rt.npc_verb()
-}
-
-fn close_step(rt: &mut ShopRuntime, probe: &Probe<'_>) -> Value {
-    if !probe.shop_open {
-        return rt.done(true, "closed");
-    }
-    if rt.bound_reached() {
-        return rt.done(false, "close-timeout");
-    }
-    json!({ "kind": "wait", "token": rt.token })
-}
-
-fn transfer_step(rt: &mut ShopRuntime, probe: &Probe<'_>) -> Value {
-    if !probe.shop_open {
-        return rt.done(false, "closed");
-    }
-    let container = match rt.kind {
-        Kind::Buy => {
-            if !probe.has_stock {
-                return rt.done(false, "stock-missing");
-            }
-            probe.stock
-        }
-        _ => match probe.player {
-            Some(player) => player,
-            // The shop's player pack is our Sell identity: losing it stops
-            // the transfer instead of falling back to the backpack.
-            None => return rt.done(false, "player-missing"),
-        },
-    };
-    let Some(row) = find_row(container, &rt.name).cloned() else {
-        return rt.done(rt.transferred >= rt.requested, "depleted");
-    };
-    // The frozen `Shop.buy` breaks out on a stock row already at zero.
-    if rt.kind == Kind::Buy && row.count <= 0 {
-        return rt.done(rt.transferred >= rt.requested, "depleted");
-    }
-    match rt.phase {
-        Phase::WaitBatch => {
-            let delta = batch_delta(rt, probe);
-            if delta > 0 {
-                rt.batch_delta = delta;
-                rt.phase = Phase::SettleTick;
-                return json!({ "kind": "wait", "token": rt.token });
-            }
-            if rt.bound_reached() {
-                // The window closed with no movement; the batch's own server
-                // tick may still land, so settle exactly one more tick before
-                // declaring the transfer stalled.
-                rt.phase = Phase::SettleTick;
-                return json!({ "kind": "wait", "token": rt.token });
-            }
-            json!({ "kind": "wait", "token": rt.token })
-        }
-        Phase::SettleTick => {
-            let delta = batch_delta(rt, probe).max(rt.batch_delta);
-            rt.transferred += delta;
-            rt.held_now = count_of(probe.inv, &rt.name);
-            if rt.transferred >= rt.requested {
-                return rt.done(true, "done");
-            }
-            if delta == 0 {
-                // Nothing moved across the settle window and its one tick.
-                return rt.done(false, "stalled");
-            }
-            rt.send_batch(&row)
-        }
-        _ => rt.done(false, "aborted"),
-    }
-}
-
-/// The items this batch moved, read from the posted backpack counts: Buy
-/// adds to the pack, Sell takes from it.
-fn batch_delta(rt: &ShopRuntime, probe: &Probe<'_>) -> i32 {
-    let held = count_of(probe.inv, &rt.name);
-    match rt.kind {
-        Kind::Buy => (held - rt.batch_baseline).max(0),
-        _ => (rt.batch_baseline - held).max(0),
-    }
-}
-
 fn trade_target(npcs: &[(String, Vec<String>)], name: &str) -> Option<(String, String)> {
     let npc = npcs
         .iter()
@@ -711,6 +590,7 @@ fn plan(remaining: i32) -> Vec<i32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::task_clock::InstantTaskClock;
     use std::time::{Duration, Instant};
 
     fn row(name: &str, count: i32, slot: i32) -> Row {
@@ -786,191 +666,195 @@ mod tests {
         assert!(trade_target(&no_npc, "Shop keeper").is_none());
     }
 
-    #[test]
-    fn a_queued_batch_is_not_a_transfer_until_the_counts_move() {
-        let mut rt = ShopRuntime::new();
-        rt.kind = Kind::Buy;
-        rt.name = "Feather".into();
-        rt.requested = 10;
-        rt.batch_baseline = 4;
-        rt.phase = Phase::WaitBatch;
-        rt.arm(SETTLE_MS);
-        let inv = [row("Feather", 4, 1)];
-        let stock = [row("Feather", 20, 3)];
-        let probe = Probe {
+    fn shop(kind: Kind, name: &str, requested: i32, phase: Phase) -> Shop {
+        let mut shop = Shop::new(kind);
+        shop.name = name.into();
+        shop.requested = requested;
+        shop.phase = phase;
+        shop
+    }
+
+    fn probe<'a>(stock: &'a [Row], player: Option<&'a [Row]>, inv: &'a [Row]) -> Probe<'a> {
+        Probe {
             ingame: true,
             shop_open: true,
             has_stock: true,
-            stock: &stock,
-            player: None,
-            inv: &inv,
+            stock,
+            player,
+            inv,
             npcs: &[],
+        }
+    }
+
+    fn armed(window: u64) -> InstantTaskClock {
+        let mut clock = InstantTaskClock::new();
+        clock.arm(window);
+        clock
+    }
+
+    fn expire(clock: &mut InstantTaskClock) {
+        clock.deadline = Some(Instant::now() - Duration::from_millis(1));
+    }
+
+    /// One step: `None` while it waits, else the settle value; plus the ops.
+    fn step(
+        shop: &mut Shop,
+        clock: &mut InstantTaskClock,
+        probe: &Probe<'_>,
+    ) -> (Option<Value>, Vec<InteractReq>) {
+        let mut ops = Vec::new();
+        let mut cx = Cx::test(&mut ops, clock, None);
+        let step = match shop.kind {
+            Kind::Open => shop.open_step(probe, &mut cx),
+            Kind::Close => shop.close_step(probe, &mut cx),
+            Kind::Buy | Kind::Sell => shop.transfer_step(probe, &mut cx),
         };
+        let out = match step {
+            Step::Wait => None,
+            Step::Done(value) => Some(value),
+            _ => panic!("the shop neither calls back nor fails"),
+        };
+        (out, ops)
+    }
+
+    #[test]
+    fn a_queued_batch_is_not_a_transfer_until_the_counts_move() {
+        let mut rt = shop(Kind::Buy, "Feather", 10, Phase::WaitBatch);
+        rt.batch_baseline = 4;
+        let mut clock = armed(SETTLE_MS);
+        let inv = [row("Feather", 4, 1)];
+        let stock = [row("Feather", 20, 3)];
+        let probe = probe(&stock, None, &inv);
         // Nothing moved yet: the batch still waits inside its window.
-        let step = transfer_step(&mut rt, &probe);
-        assert_eq!(step["kind"], "wait");
+        assert_eq!(step(&mut rt, &mut clock, &probe), (None, vec![]));
         assert_eq!(rt.transferred, 0);
         // Past the window the batch settles exactly one more tick (the tick
         // the frozen loop waits for its batch to land in) before it counts.
-        rt.clock.deadline = Some(Instant::now() - Duration::from_millis(1));
-        let step = transfer_step(&mut rt, &probe);
-        assert_eq!(step["kind"], "wait");
-        // Only a recount that is still empty stalls the transfer.
-        let step = transfer_step(&mut rt, &probe);
-        assert_eq!(step["kind"], "done");
-        assert_eq!(step["result"], false);
-        assert_eq!(step["quantity"], 0);
-        assert_eq!(step["reason"], "stalled");
+        expire(&mut clock);
+        assert_eq!(step(&mut rt, &mut clock, &probe), (None, vec![]));
+        // Only a recount that is still empty stalls the transfer at 0.
+        assert_eq!(step(&mut rt, &mut clock, &probe), (Some(json!(0)), vec![]));
     }
 
     #[test]
     fn open_presses_trade_once_per_attempt_and_bounds_at_three() {
-        let mut rt = ShopRuntime::new();
-        rt.kind = Kind::Open;
-        rt.name = "Shop keeper".into();
+        let mut rt = shop(Kind::Open, "Shop keeper", 0, Phase::WaitBoundary);
         rt.npc_action = "Trade".into();
         rt.attempts_left = OPEN_ATTEMPTS;
-        rt.phase = Phase::WaitBoundary;
         rt.pressed = true;
-        rt.arm(OPEN_WAIT_MS);
-        let closed = [(
-            "Shop keeper".to_string(),
-            vec!["Talk-to".to_string(), "Trade".to_string()],
-        )];
-        let probe = Probe {
-            ingame: true,
+        let mut clock = armed(OPEN_WAIT_MS);
+        let closed = Probe {
             shop_open: false,
             has_stock: false,
-            stock: &[],
-            player: None,
-            inv: &[],
-            npcs: &closed,
+            ..probe(&[], None, &[])
+        };
+        let trade = InteractReq::Npc {
+            name: "Shop keeper".into(),
+            action: "Trade".into(),
+            index: None,
         };
         // Inside the attempt window the frozen loop only waits: no re-press.
-        let step = open_step(&mut rt, &probe);
-        assert_eq!(step["kind"], "wait");
-        assert_eq!(rt.attempts_left, OPEN_ATTEMPTS);
+        assert_eq!(step(&mut rt, &mut clock, &closed), (None, vec![]));
         // Each expired window re-presses once, for the frozen three attempts.
         for attempt in 1..OPEN_ATTEMPTS {
-            rt.clock.deadline = Some(Instant::now() - Duration::from_millis(1));
-            let step = open_step(&mut rt, &probe);
-            assert_eq!(step["kind"], "npc", "attempt {attempt} re-presses Trade");
-            assert_eq!(step["action"], "Trade");
-            assert_eq!(rt.attempts_left, OPEN_ATTEMPTS - attempt);
-            let step = open_step(&mut rt, &probe);
-            assert_eq!(step["kind"], "wait", "one press per window");
+            expire(&mut clock);
+            assert_eq!(
+                step(&mut rt, &mut clock, &closed),
+                (None, vec![trade.clone()]),
+                "attempt {attempt} re-presses Trade"
+            );
+            assert_eq!(
+                step(&mut rt, &mut clock, &closed),
+                (None, vec![]),
+                "one press per window"
+            );
         }
         // The last window closes the call as a timeout, not another press.
-        rt.clock.deadline = Some(Instant::now() - Duration::from_millis(1));
-        let step = open_step(&mut rt, &probe);
-        assert_eq!(step["kind"], "done");
-        assert_eq!(step["result"], false);
-        assert_eq!(step["reason"], "open-timeout");
+        expire(&mut clock);
+        assert_eq!(
+            step(&mut rt, &mut clock, &closed),
+            (Some(json!(false)), vec![])
+        );
     }
 
     #[test]
     fn open_reports_success_once_the_posted_shop_is_up() {
-        let mut rt = ShopRuntime::new();
-        rt.kind = Kind::Open;
+        let mut rt = shop(Kind::Open, "Shop keeper", 0, Phase::WaitBoundary);
         rt.attempts_left = OPEN_ATTEMPTS;
         rt.pressed = true;
-        rt.phase = Phase::WaitBoundary;
-        rt.arm(OPEN_WAIT_MS);
-        let open = Probe {
-            ingame: true,
-            shop_open: true,
-            has_stock: true,
-            stock: &[],
-            player: None,
-            inv: &[],
-            npcs: &[],
+        let mut clock = armed(OPEN_WAIT_MS);
+        let open = probe(&[], None, &[]);
+        assert_eq!(
+            step(&mut rt, &mut clock, &open),
+            (Some(json!(true)), vec![])
+        );
+    }
+
+    #[test]
+    fn close_settles_void_on_the_closed_boundary() {
+        let mut rt = shop(Kind::Close, "", 0, Phase::WaitBoundary);
+        let mut clock = armed(CLOSE_WAIT_MS);
+        let open = probe(&[], None, &[]);
+        assert_eq!(step(&mut rt, &mut clock, &open), (None, vec![]));
+        let closed = Probe {
+            shop_open: false,
+            ..open
         };
-        let step = open_step(&mut rt, &open);
-        assert_eq!(step["kind"], "done");
-        assert_eq!(step["result"], true);
-        assert_eq!(step["reason"], "open");
+        assert_eq!(
+            step(&mut rt, &mut clock, &closed),
+            (Some(Value::Null), vec![])
+        );
     }
 
     #[test]
     fn a_depleted_stock_row_ends_buy_with_the_partial_count() {
-        let mut rt = ShopRuntime::new();
-        rt.kind = Kind::Buy;
-        rt.name = "Feather".into();
-        rt.requested = 25;
+        let mut rt = shop(Kind::Buy, "Feather", 25, Phase::SettleTick);
         rt.transferred = 10;
-        rt.phase = Phase::SettleTick;
-        rt.batch_delta = 0;
+        let mut clock = InstantTaskClock::new();
         let empty = [row("Feather", 0, 3)];
         let inv = [row("Feather", 12, 1)];
-        let probe = Probe {
-            ingame: true,
-            shop_open: true,
-            has_stock: true,
-            stock: &empty,
-            player: None,
-            inv: &inv,
-            npcs: &[],
-        };
-        let step = transfer_step(&mut rt, &probe);
-        assert_eq!(step["kind"], "done");
-        assert_eq!(step["result"], false, "the request was not filled");
-        assert_eq!(step["quantity"], 10, "partial progress is reported");
-        assert_eq!(step["reason"], "depleted");
+        assert_eq!(
+            step(&mut rt, &mut clock, &probe(&empty, None, &inv)),
+            (Some(json!(10)), vec![]),
+            "partial progress is reported"
+        );
     }
 
     #[test]
     fn a_served_batch_settles_one_tick_then_continues_the_remainder() {
-        let mut rt = ShopRuntime::new();
-        rt.kind = Kind::Buy;
-        rt.name = "Feather".into();
-        rt.requested = 25;
+        let mut rt = shop(Kind::Buy, "Feather", 25, Phase::WaitBatch);
         rt.transferred = 10;
         rt.batch_baseline = 10;
-        rt.phase = Phase::WaitBatch;
-        rt.arm(SETTLE_MS);
+        let mut clock = armed(SETTLE_MS);
         let stock = [row("Feather", 90, 3)];
-        let probes_inv = [row("Feather", 20, 1)];
-        let probe = Probe {
-            ingame: true,
-            shop_open: true,
-            has_stock: true,
-            stock: &stock,
-            player: None,
-            inv: &probes_inv,
-            npcs: &[],
-        };
+        let inv = [row("Feather", 20, 1)];
+        let probe = probe(&stock, None, &inv);
         // The batch moved 10 of the 10 requested: settle one tick, no count yet.
-        let step = transfer_step(&mut rt, &probe);
-        assert_eq!(step["kind"], "wait");
+        assert_eq!(step(&mut rt, &mut clock, &probe), (None, vec![]));
         assert_eq!(rt.transferred, 10, "settlement is not added yet");
 
         // One tick later the delta is added and the remainder is batch-planned.
-        let step = transfer_step(&mut rt, &probe);
+        let (out, ops) = step(&mut rt, &mut clock, &probe);
+        assert_eq!(out, None);
         assert_eq!(rt.transferred, 20);
-        assert_eq!(step["kind"], "ops");
-        let chunks = step["ops"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|op| op["chunk"].as_i64().unwrap())
-            .collect::<Vec<_>>();
-        assert_eq!(chunks, vec![5], "remaining 5 is the frozen 5 chunk");
-        assert!(step["ops"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .all(|op| op["op"] == "shop-button" && op["kind"] == "buy"));
+        assert_eq!(
+            ops,
+            vec![InteractReq::ShopButton {
+                kind: "buy".into(),
+                name: "Feather".into(),
+                id: 221,
+                slot: 3,
+                component: 3900,
+                chunk: 5,
+            }],
+            "remaining 5 is the frozen 5 chunk on the exact stock row"
+        );
     }
 
     #[test]
     fn buy_settles_total_across_separate_matching_inventory_slots() {
-        let mut rt = ShopRuntime::new();
-        rt.kind = Kind::Buy;
-        rt.name = "Vial".into();
-        rt.requested = 15;
-        rt.batch_baseline = 0;
-        rt.phase = Phase::WaitBatch;
-        rt.arm(SETTLE_MS);
+        let mut rt = shop(Kind::Buy, "Vial", 15, Phase::WaitBatch);
+        let mut clock = armed(SETTLE_MS);
         let stock = [row("Vial", 20, 3), row("Feather", 99, 4)];
         let inv = [
             row("Vial", 10, 1),
@@ -978,138 +862,49 @@ mod tests {
             row("vIaL", 5, 7),
             row("Feather", 99, 8),
         ];
-        let probe = Probe {
-            ingame: true,
-            shop_open: true,
-            has_stock: true,
-            stock: &stock,
-            player: None,
-            inv: &inv,
-            npcs: &[],
-        };
-        assert_eq!(transfer_step(&mut rt, &probe)["kind"], "wait");
-        let settled = transfer_step(&mut rt, &probe);
-        assert_eq!(settled["kind"], "done");
-        assert_eq!(settled["result"], true);
-        assert_eq!(settled["quantity"], 15);
-        assert_eq!(rt.transferred, 15);
+        let probe = probe(&stock, None, &inv);
+        assert_eq!(step(&mut rt, &mut clock, &probe), (None, vec![]));
+        assert_eq!(step(&mut rt, &mut clock, &probe), (Some(json!(15)), vec![]));
     }
 
     #[test]
     fn sell_plans_against_the_shop_player_pack_and_counts_inventory_losses() {
-        let mut rt = ShopRuntime::new();
-        rt.kind = Kind::Sell;
-        rt.name = "Vial".into();
-        rt.requested = 10;
+        let mut rt = shop(Kind::Sell, "Vial", 10, Phase::SettleTick);
         rt.batch_baseline = 12;
-        rt.phase = Phase::SettleTick;
         rt.batch_delta = 10;
+        let mut clock = InstantTaskClock::new();
         let player = [row("Vial", 2, 4)];
         let inv = [row("Vial", 2, 8)];
-        let probe = Probe {
-            ingame: true,
-            shop_open: true,
-            has_stock: true,
-            stock: &[],
-            player: Some(&player),
-            inv: &inv,
-            npcs: &[],
-        };
-        let step = transfer_step(&mut rt, &probe);
-        assert_eq!(rt.transferred, 10);
-        assert_eq!(step["kind"], "done");
-        assert_eq!(step["result"], true);
-        assert_eq!(step["quantity"], 10);
+        assert_eq!(
+            step(&mut rt, &mut clock, &probe(&[], Some(&player), &inv)),
+            (Some(json!(10)), vec![])
+        );
     }
 
     #[test]
     fn sell_settles_total_across_separate_matching_inventory_slots() {
-        let mut rt = ShopRuntime::new();
-        rt.kind = Kind::Sell;
-        rt.name = "Vial".into();
-        rt.requested = 10;
+        let mut rt = shop(Kind::Sell, "Vial", 10, Phase::WaitBatch);
         rt.batch_baseline = 20;
-        rt.phase = Phase::WaitBatch;
-        rt.arm(SETTLE_MS);
+        let mut clock = armed(SETTLE_MS);
         let player = [row("Vial", 7, 4), row("Coins", 2000, 5), row("vIaL", 3, 9)];
         let inv = [
             row("Vial", 4, 8),
             row("Feather", 99, 10),
             row("vIaL", 6, 11),
         ];
-        let probe = Probe {
-            ingame: true,
-            shop_open: true,
-            has_stock: true,
-            stock: &[],
-            player: Some(&player),
-            inv: &inv,
-            npcs: &[],
-        };
-        assert_eq!(transfer_step(&mut rt, &probe)["kind"], "wait");
-        let settled = transfer_step(&mut rt, &probe);
-        assert_eq!(settled["kind"], "done");
-        assert_eq!(settled["result"], true);
-        assert_eq!(settled["quantity"], 10);
-        assert_eq!(rt.transferred, 10);
+        let probe = probe(&[], Some(&player), &inv);
+        assert_eq!(step(&mut rt, &mut clock, &probe), (None, vec![]));
+        assert_eq!(step(&mut rt, &mut clock, &probe), (Some(json!(10)), vec![]));
     }
 
     #[test]
     fn losing_the_shop_player_pack_stops_sell_without_touching_the_backpack() {
-        let mut rt = ShopRuntime::new();
-        rt.kind = Kind::Sell;
-        rt.name = "Vial".into();
-        rt.requested = 5;
-        rt.phase = Phase::WaitBatch;
-        rt.arm(SETTLE_MS);
+        let mut rt = shop(Kind::Sell, "Vial", 5, Phase::WaitBatch);
+        let mut clock = armed(SETTLE_MS);
         let inv = [row("Vial", 9, 8)];
-        let probe = Probe {
-            ingame: true,
-            shop_open: true,
-            has_stock: true,
-            stock: &[],
-            player: None,
-            inv: &inv,
-            npcs: &[],
-        };
-        let step = transfer_step(&mut rt, &probe);
-        assert_eq!(step["kind"], "done");
-        assert_eq!(step["result"], false);
-        assert_eq!(step["reason"], "player-missing");
-    }
-
-    #[test]
-    fn pause_and_hold_freeze_the_settlement_deadline() {
-        let mut rt = ShopRuntime::new();
-        rt.arm(SETTLE_MS);
-        let before = rt.clock.deadline.expect("armed");
-        rt.set_freeze(true, false);
-        assert!(rt.frozen());
-        std::thread::sleep(Duration::from_millis(5));
-        rt.set_freeze(false, false);
-        assert!(!rt.frozen());
-        assert!(rt.clock.deadline.expect("still armed") > before);
-        rt.set_freeze(false, true);
-        assert!(rt.frozen(), "guardian hold freezes too");
-    }
-
-    #[test]
-    fn abort_runtime_bumps_the_token_and_clears_the_operation() {
-        let mut rt = ShopRuntime::new();
-        rt.kind = Kind::Buy;
-        rt.name = "Feather".into();
-        rt.requested = 25;
-        rt.transferred = 10;
-        rt.attempts_left = 3;
-        rt.arm(SETTLE_MS);
-        let before = rt.token;
-        rt.abort_runtime();
-        assert_eq!(rt.token, before.wrapping_add(1));
-        assert_eq!(rt.phase, Phase::Idle);
-        assert_eq!(rt.requested, 0);
-        assert_eq!(rt.transferred, 0);
-        assert_eq!(rt.attempts_left, 0);
-        assert!(rt.clock.deadline.is_none());
-        assert!(rt.name.is_empty());
+        assert_eq!(
+            step(&mut rt, &mut clock, &probe(&[], None, &inv)),
+            (Some(json!(0)), vec![])
+        );
     }
 }
