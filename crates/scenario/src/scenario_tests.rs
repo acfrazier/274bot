@@ -2321,17 +2321,22 @@ fn remaining_production_options_are_registered_with_ordered_exact_proofs() {
 
 #[test]
 fn bank_cells_register_their_cards_injects_and_watch_chain() {
-    for (name, card) in [
-        ("auto_fighter_bank", "AutoFighter"),
-        ("moss_giant_bank", "MossGiant"),
-        ("moss_giant_bank_start", "MossGiant"),
-        ("hill_giant_bank", "HillGiant"),
-        ("chaos_druid_bank", "ChaosDruidKiller"),
-        ("ardy_fighter_bank", "ArdyFighter"),
+    for (name, card, deadline) in [
+        ("auto_fighter_bank", "AutoFighter", SCRIPT_GOLD_DEADLINE),
+        ("moss_giant_bank", "MossGiant", SCRIPT_GOLD_DEADLINE),
+        ("moss_giant_bank_start", "MossGiant", SCRIPT_GOLD_DEADLINE),
+        ("hill_giant_bank", "HillGiant", SCRIPT_GOLD_DEADLINE),
+        // The frozen trip reaches the field ~128s in (two banks).
+        (
+            "chaos_druid_bank",
+            "ChaosDruidKiller",
+            Duration::from_secs(300),
+        ),
+        ("ardy_fighter_bank", "ArdyFighter", SCRIPT_GOLD_DEADLINE),
     ] {
         let scenario = get(name).unwrap_or_else(|| panic!("{name} registered"));
         assert_eq!(scenario.settings.start_script, Some(card));
-        assert_eq!(scenario.settings.deadline, SCRIPT_GOLD_DEADLINE);
+        assert_eq!(scenario.settings.deadline, deadline, "{name}");
         assert_eq!(scenario.settings.terminal_shot, Some(name));
         assert!(scenario.settings.full_rate && scenario.seed.mainland);
         let start = scenario

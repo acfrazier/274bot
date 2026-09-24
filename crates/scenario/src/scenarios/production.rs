@@ -9556,6 +9556,18 @@ const FIREMAKER_INJECT: &[ScriptSettingInject] = &[
         value: ScriptInjectValue::Str("Varrock East"),
     },
 ];
+/// Whole-scenario wall for the Firemaking-1 Logs cell. The frozen card
+/// withdraws a full pack (`inventorySize - used` = 27 beside the tinderbox)
+/// and banks only once every log is burnt, so the core's restock and further
+/// light follow a whole 27-fire lane. At Firemaking 1 each light is a run of
+/// 4-tick attempts: 73 live fire-to-fire gaps (2eeaa5090, 1b88d89, 341f0f4e4)
+/// average 9.9 ticks (SD 7.3). The cycle is ~30 ticks Start → first fire,
+/// 26 gaps (~257), the bank leg (~17), then close, the walk back to a lane
+/// and one light (~26): ~345 engine ticks after the observed Start tick (13),
+/// ~212s at the measured ~0.62s a tick (all three cells hit 180s at tick
+/// 292, having lit 24, 25 and 27 of the 27 logs). 300s is that mean plus
+/// ~3.8 SD of the 27-light sum.
+pub(crate) const FIREMAKER_LOGS_DEADLINE: Duration = Duration::from_secs(300);
 const FIREMAKER_OAK_INJECT: &[ScriptSettingInject] = &[
     ScriptSettingInject {
         id: "logType",
@@ -11029,6 +11041,7 @@ pub(crate) fn firemaker_scenario() -> Scenario {
         "logs",
         LOGS_ID,
         OAK_LOGS_ID,
+        FIREMAKER_LOGS_DEADLINE,
     )
 }
 
@@ -11040,6 +11053,7 @@ pub(crate) fn firemaker_oak_scenario() -> Scenario {
         "oak_logs",
         OAK_LOGS_ID,
         LOGS_ID,
+        SCRIPT_GOLD_DEADLINE,
     )
 }
 
@@ -11050,6 +11064,7 @@ fn firemaker_variant(
     log_alias: &'static str,
     log_id: i32,
     wrong_id: i32,
+    deadline: Duration,
 ) -> Scenario {
     let xp = Proof::StatXpGain {
         id: FIREMAKING_STAT,
@@ -11256,7 +11271,7 @@ fn firemaker_variant(
         settings: ScenarioSettings {
             full_rate: true,
             require_mainland_base: true,
-            deadline: SCRIPT_GOLD_DEADLINE,
+            deadline,
             start_script: Some("Firemaker"),
             script_settings_inject: Some(inject),
             terminal_shot: Some(name),
