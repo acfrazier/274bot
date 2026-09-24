@@ -178,6 +178,7 @@ impl Host {
                 None,
                 None,
                 None,
+                Arc::new(RunPolicyOverrideCell::new()),
                 |_, _, _, _| false,
                 |_| false,
                 |_| RandomClaim::Host,
@@ -218,50 +219,11 @@ impl Host {
     /// (EOF, partial packet) skips the socket on the next park so it cannot
     /// busy-spin.
     ///
-    /// This entry point uses the default global auto-run policy without a
-    /// shared script overlay. Script integrations use
-    /// [`Host::run_client_with_run_policy`].
+    /// This is the single slot entry point. The required run-policy cell is
+    /// shared with the matching script slot (or left unset for unscripted
+    /// slots), so Start/Stop and `RunManager.override` affect host auto-run.
     #[allow(clippy::too_many_arguments)]
     pub fn run_client<F, P, K>(
-        client: &mut Client,
-        username: &str,
-        settings: ProfileSettings,
-        random_events: Arc<AtomicBool>,
-        lamp_auto: Arc<AtomicBool>,
-        lamp_skill: Arc<Mutex<String>>,
-        input: Option<Arc<SlotInput>>,
-        mailbox: Option<Arc<FrameBuf>>,
-        ctl: Option<Arc<SlotPark>>,
-        observe: F,
-        probe: P,
-        knock: K,
-    ) where
-        F: FnMut(&mut Client, &str, u32, &RandomStatus) -> bool,
-        P: FnMut(&mut Client) -> bool,
-        K: FnMut(&DetectedRandom) -> RandomClaim,
-    {
-        Self::run_client_inner(
-            client,
-            username,
-            settings,
-            random_events,
-            lamp_auto,
-            lamp_skill,
-            input,
-            mailbox,
-            ctl,
-            Arc::new(RunPolicyOverrideCell::new()),
-            observe,
-            probe,
-            knock,
-        );
-    }
-
-    /// Run a script-hosting slot with the overlay cell owned by the matching
-    /// script slot. Start and Stop clear that cell; `RunManager.override`
-    /// replaces it.
-    #[allow(clippy::too_many_arguments)]
-    pub fn run_client_with_run_policy<F, P, K>(
         client: &mut Client,
         username: &str,
         settings: ProfileSettings,
@@ -317,14 +279,13 @@ impl Host {
         P: FnMut(&mut Client) -> bool,
         K: FnMut(&DetectedRandom) -> RandomClaim,
     {
-        let mut slot = SlotLoop {
+        let mut slot = SlotLoop::with_settings(
             settings,
             random_events,
             lamp_auto,
             lamp_skill,
             run_policy_override,
-            ..SlotLoop::new()
-        };
+        );
         let mut run_sends = 0u32;
         // The last published random-event status: `client_frame` returns it
         // and the next observe copies it onto the slot's status row and
@@ -961,17 +922,34 @@ struct SlotLoop {
 }
 
 impl SlotLoop {
+    #[cfg(test)]
     fn new() -> Self {
+        Self::with_settings(
+            ProfileSettings::default(),
+            Arc::new(AtomicBool::new(true)),
+            Arc::new(AtomicBool::new(true)),
+            Arc::new(Mutex::new("strength".to_string())),
+            Arc::new(RunPolicyOverrideCell::new()),
+        )
+    }
+
+    fn with_settings(
+        settings: ProfileSettings,
+        random_events: Arc<AtomicBool>,
+        lamp_auto: Arc<AtomicBool>,
+        lamp_skill: Arc<Mutex<String>>,
+        run_policy_override: Arc<RunPolicyOverrideCell>,
+    ) -> Self {
         Self {
             pump: Pump::new(),
             snapshot: GameSnapshot::new(),
             run_on: false,
             run_sends: 0,
-            run_policy_override: Arc::new(RunPolicyOverrideCell::new()),
-            settings: ProfileSettings::default(),
-            random_events: Arc::new(AtomicBool::new(true)),
-            lamp_auto: Arc::new(AtomicBool::new(true)),
-            lamp_skill: Arc::new(Mutex::new("strength".to_string())),
+            run_policy_override,
+            settings,
+            random_events,
+            lamp_auto,
+            lamp_skill,
             guardian: Guardian::new(),
             guardian_status: RandomStatus::default(),
             renderer: None,

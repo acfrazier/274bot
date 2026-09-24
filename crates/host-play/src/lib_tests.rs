@@ -9735,6 +9735,139 @@ fn script_observe_ticks_only_on_player_edge_while_up() {
 }
 
 #[test]
+fn script_run_policy_override_reaches_host_auto_run_and_stop_clears_it() {
+    let ScriptWiring {
+        scripts,
+        cheats,
+        count: _,
+    } = script_wiring();
+    let (navs, world) = empty_nav();
+    let run_policy_override = Arc::new(api::run_policy::RunPolicyOverrideCell::new());
+    let slot = script_slot_or_insert(&scripts, "alice");
+    {
+        let mut slot = slot.lock().unwrap();
+        slot.stop();
+        slot.bind_run_policy_override(Arc::clone(&run_policy_override))
+            .unwrap();
+        slot.start_load_settled(
+            r#"
+import { RunManager } from '../../runtime/RunManager.js';
+export default class T extends LoopingBot {
+    loop() {
+        RunManager.override({ energyMin: 80 });
+    }
+}
+"#
+            .into(),
+            script::LoadShape::CompatClass,
+            vec![],
+        )
+        .expect("run-policy script starts");
+    }
+
+    let mut client = prepare_client(
+        ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 1,
+            cache_dir: String::new(),
+            members: true,
+            lowmem: true,
+        },
+        1,
+        Arc::new(Cache::default()),
+        Arc::new(vec![]),
+        Vec::new(),
+    );
+    client.ingame = true;
+    client.scene_state = 2;
+    client.local_player = Some(client::client::ClientPlayer::at(10, 10));
+    client.gens.player = 1;
+    client.gens.player_info = 1;
+    client.runenergy = 20;
+
+    script_observe(
+        &mut client,
+        "alice",
+        true,
+        true,
+        1,
+        Some((10, 10, 0)),
+        None,
+        None,
+        None,
+        None,
+        &scripts,
+        &cheats,
+        &navs,
+        &world,
+        false,
+        false,
+    );
+    slot.lock()
+        .unwrap()
+        .probe("true")
+        .expect("the script's policy override tick completes");
+    assert_eq!(
+        slot.lock().unwrap().run_policy_override(),
+        Some(api::run_policy::RunPolicyOverride {
+            run_auto: None,
+            energy_min: Some(80),
+        })
+    );
+
+    let drive_one_host_frame = |client: &mut Client| {
+        let done = Arc::new(AtomicBool::new(false));
+        let observed = Arc::clone(&done);
+        Host::run_client(
+            client,
+            "alice",
+            vault::ProfileSettings::default(),
+            Arc::new(AtomicBool::new(true)),
+            Arc::new(AtomicBool::new(true)),
+            Arc::new(Mutex::new("strength".to_string())),
+            None,
+            None,
+            None,
+            Arc::clone(&run_policy_override),
+            move |_, _, _, _| {
+                observed.store(true, Ordering::Relaxed);
+                false
+            },
+            move |_| done.load(Ordering::Relaxed),
+            |_| RandomClaim::Host,
+        );
+    };
+    let run_button_sent = |client: &Client| {
+        client.out.data()[..client.out.pos]
+            .windows(3)
+            .any(|packet| {
+                packet[0] == client::io::ClientProt::IF_BUTTON.id as u8
+                    && u16::from_be_bytes([packet[1], packet[2]])
+                        == api::interact::RUN_ORB_IFACE as u16
+            })
+    };
+
+    drive_one_host_frame(&mut client);
+    assert!(
+        !run_button_sent(&client),
+        "the script's energyMin override suppresses auto-run below 80 energy"
+    );
+
+    slot.lock().unwrap().stop();
+    assert_eq!(
+        run_policy_override.get(),
+        None,
+        "Stop clears the shared cell"
+    );
+    client.out.pos = 0;
+    drive_one_host_frame(&mut client);
+    assert!(
+        run_button_sent(&client),
+        "after Stop, host auto-run falls back to the global 20-energy threshold"
+    );
+}
+
+#[test]
 fn script_observe_idle_slot_publishes_nothing_on_tick_edge() {
     // Task 12: an Idle SlotScript must not publish a script snapshot —
     // no dispatch and no driver write, so the slot has nothing to send

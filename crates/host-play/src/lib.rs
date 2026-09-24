@@ -2399,12 +2399,15 @@ fn spawn_slot_thread(
                     ..SlotStatus::default()
                 });
             }
-            script_slot_or_insert(&slot_scripts, &username);
+            let slot_script = script_slot_or_insert(&slot_scripts, &username);
             let slot_input = slot_input.unwrap_or_else(SlotInput::new);
-            if let Some(slot) = script_slot(&slot_scripts, &username) {
-                slot.lock()
-                    .unwrap()
-                    .bind_native_input(slot_input.authority());
+            let run_policy_override = Arc::new(api::run_policy::RunPolicyOverrideCell::new());
+            {
+                let mut slot_script = slot_script.lock().unwrap();
+                slot_script.bind_native_input(slot_input.authority());
+                slot_script
+                    .bind_run_policy_override(Arc::clone(&run_policy_override))
+                    .expect("run-policy override is bound before script start");
             }
             slot_cheats
                 .lock()
@@ -2570,6 +2573,7 @@ fn spawn_slot_thread(
                     Some(slot_input.clone()),
                     slot_mailbox.clone(),
                     park.clone(),
+                    Arc::clone(&run_policy_override),
                     {
                         let slot_frame = Arc::clone(&slot_frame);
                         let slot_statuses = Arc::clone(&slot_statuses);

@@ -1681,6 +1681,7 @@ fn idle_slot_parks_between_packets_and_wakes_on_one() {
             None,
             None,
             Some(Arc::new(park)),
+            Arc::new(api::run_policy::RunPolicyOverrideCell::new()),
             |c, _, _, _| {
                 let mut v = mirror.lock().unwrap();
                 v.0 = c.loop_cycle;
@@ -1753,6 +1754,7 @@ fn focused_slot_keeps_the_twenty_ms_cadence() {
             Some(inp),
             None,
             None,
+            Arc::new(api::run_policy::RunPolicyOverrideCell::new()),
             |c, _, _, _| {
                 mirror.lock().unwrap().0 = c.loop_cycle;
                 false
@@ -1813,6 +1815,7 @@ fn busy_observe_keeps_the_slot_on_the_frame_loop() {
             None,
             None,
             None,
+            Arc::new(api::run_policy::RunPolicyOverrideCell::new()),
             |c, _, _, _| {
                 mirror.lock().unwrap().0 = c.loop_cycle;
                 true // script/cheat/nav work due: never park
@@ -1869,6 +1872,7 @@ fn watch_only_sidecar_parks_wakes_once_per_second_and_paints() {
             None,
             Some(buf2),
             Some(Arc::new(park)),
+            Arc::new(api::run_policy::RunPolicyOverrideCell::new()),
             |c, _, _, _| {
                 mirror.lock().unwrap().0 = c.loop_cycle;
                 false
@@ -1952,6 +1956,7 @@ fn stop_control_wakes_a_parked_slot_and_returns() {
             None,
             None,
             Some(Arc::new(park)),
+            Arc::new(api::run_policy::RunPolicyOverrideCell::new()),
             |_, _, _, _| false,
             |_| stop2.load(Ordering::Relaxed),
             |_| RandomClaim::Host,
@@ -2000,6 +2005,7 @@ fn draw_kick_wakes_a_parked_slot_into_the_frame_loop() {
             Some(Arc::clone(&inp)),
             None,
             Some(Arc::new(park)),
+            Arc::new(api::run_policy::RunPolicyOverrideCell::new()),
             |c, _, _, _| {
                 let on = want2.load(Ordering::Relaxed);
                 c.set_draw(on);
@@ -2073,6 +2079,7 @@ fn spurious_kick_does_not_busy_loop_a_parked_slot() {
             None,
             None,
             Some(Arc::new(park)),
+            Arc::new(api::run_policy::RunPolicyOverrideCell::new()),
             |c, _, _, _| {
                 mirror.lock().unwrap().0 = c.loop_cycle;
                 false // stays idle after the kick
