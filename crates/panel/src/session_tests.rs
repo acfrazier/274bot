@@ -16,7 +16,7 @@ use client::io::{Packet, ServerProt};
 use client::render::nav_debug::{CORNER_NE, FACE_N, FACE_S};
 use host::{FrameBuf, SlotInput};
 use host_play::profile::ProfileEnvironment;
-use host_play::{ProfileOptions, SlotArm, SlotStatus};
+use host_play::{ProfileOptions, SlotArm, SlotStatus, StartupPhase};
 use nav::collision::WorldCollision;
 use nav::paint::{MAX_DRAW_TILES, NEAR_FULL_DENSITY};
 use nav::router::{Leg, Route};
@@ -4797,6 +4797,49 @@ fn logout_latches_member_until_login_all() {
     assert!(
         !s.wall.latch.contains("alice"),
         "Login all clears the latch"
+    );
+}
+
+#[test]
+fn login_all_during_loading_scene_publishes_no_control_owned_place() {
+    let mut s = Session::new();
+    let mut play = empty_play();
+    let alice = SlotArm::new(1, false);
+    let bob = SlotArm::new(2, false);
+    play.attach_arm("alice", Arc::clone(&alice));
+    play.attach_arm("bob", Arc::clone(&bob));
+    play.statuses.lock().unwrap().extend([
+        SlotStatus {
+            username: "alice".into(),
+            startup_phase: StartupPhase::LoadingScene,
+            ingame: false,
+            ..SlotStatus::default()
+        },
+        SlotStatus {
+            username: "bob".into(),
+            ..SlotStatus::default()
+        },
+    ]);
+    for name in ["alice", "bob"] {
+        s.wall.load(name);
+        s.slots.insert(
+            name.into(),
+            SlotIo {
+                input: SlotInput::new(),
+                pixels: FrameBuf::new(),
+            },
+        );
+    }
+    s.focus.lock().unwrap().focused = Some("alice".into());
+    s.play = Some(play);
+
+    s.login_all();
+
+    assert!(alice.want_login.load(Ordering::Relaxed));
+    assert!(bob.want_login.load(Ordering::Relaxed));
+    assert!(
+        s.play.as_ref().unwrap().login_queue_uids().is_empty(),
+        "only worker Queueing transitions create FIFO membership"
     );
 }
 
