@@ -3813,7 +3813,7 @@ fn rail_cap(
     let marker_x = ui.cursor_pos_x();
     match world {
         Some(number) => {
-            ui.text_colored(light.rgb(), number.to_string());
+            ui.text_colored(light.rgb(), world_marker(number));
             ui.set_item_tooltip(format!("w{number} · {}", light.brief()));
         }
         None => ui.text_colored(light.rgb(), STATUS_GLYPH),
@@ -3840,6 +3840,16 @@ fn rail_cap(
     ui.set_item_tooltip("drop from the wall — does not delete the vault profile");
     red.pop();
     (clicked, removed, folded)
+}
+
+/// Filled circled digit (`❶`..`❿`, U+2776..U+277F, merged from DejaVu Sans)
+/// for public worlds 1-10, the plain number beyond that.
+fn world_marker(number: u16) -> String {
+    match number {
+        1..=10 => char::from_u32(0x2775 + u32::from(number))
+            .map_or_else(|| number.to_string(), String::from),
+        _ => number.to_string(),
+    }
 }
 
 /// Tile body: the member's `FrameBuf` blitted into a `size` box via a
