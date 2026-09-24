@@ -50,11 +50,12 @@ export class Npc {
     }
 
     networkTile() {
-        // Frozen Npc.ts:55-57 falls back to the centre tile for old snapshots.
-        if (!Number.isInteger(this.snap.network_x) || !Number.isInteger(this.snap.network_z)) {
-            return this.tile();
-        }
-        return Tile.from({ x: this.snap.network_x, z: this.snap.network_z, level: this.snap.level ?? 0 });
+        // Frozen Npc.ts:55-57 maps a missing network tile to tile().
+        return Tile.from({
+            x: this.snap.network_x ?? this.snap.x,
+            z: this.snap.network_z ?? this.snap.z,
+            level: this.snap.level ?? 0,
+        });
     }
 
     /**
