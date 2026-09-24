@@ -6176,6 +6176,10 @@ fn alternate_camp_and_fight_option_cases_register() {
         inject.get("thieveTarget"),
         Some(&Value::String("Guard".into()))
     );
+    // One full opening stall session: the 289 Guard catch comes from it.
+    assert_eq!(inject.get("foodTarget"), Some(&Value::from(27.0)));
+    assert_eq!(inject.get("restockAtFood"), Some(&Value::from(0.0)));
+    assert_eq!(inject.get("bankAtLootSlots"), Some(&Value::from(1.0)));
     let start = thiever_fight
         .steps
         .iter()
@@ -6211,12 +6215,12 @@ fn alternate_camp_and_fight_option_cases_register() {
     assert_eq!(
         watch,
         vec![
+            strength,
             Proof::StatXpGain {
                 id: THIEVING_STAT,
                 min: 1
             },
             coins,
-            strength,
             Proof::BankItemId {
                 id: COINS_ID,
                 count: 1

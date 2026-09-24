@@ -10276,6 +10276,69 @@ export default class NativeStop extends LoopingBot {{
         )
         .qualify()
         .is_err());
+
+        // On 289 the catch comes from the opening stall restock, before any
+        // coins: the kill counts from Start.
+        let stall_fight = ardy_fight_obs(
+            ARDY_CAKES_STAND,
+            &[(CAKE_ID, 1)],
+            &[],
+            16,
+            20,
+            40,
+            &[combat_npc(6, "Guard", 22, true, ARDY_CAKES_STAND)],
+            true,
+            Some(6),
+        );
+        let stall_kill = ardy_fight_obs(
+            ARDY_CAKES_STAND,
+            &[(CAKE_ID, 1)],
+            &[],
+            16,
+            48,
+            40,
+            &[combat_npc(6, "Guard", 0, false, ARDY_CAKES_STAND)],
+            false,
+            None,
+        );
+        let kill_first = [
+            &stall_fight,
+            &stall_kill,
+            &pickpocketed,
+            &deposited,
+            &returned,
+            &further,
+        ];
+        assert!(
+            witness(CoreCase::ArdyThieverFight, &thiever_base, kill_first)
+                .qualify()
+                .is_ok()
+        );
+        // The Flee kite counts from Start too, even before the first coins.
+        let mut fled_early = stall_fight.clone();
+        fled_early.tile = Some(ARDY_FLEE_TILE);
+        assert!(witness(
+            CoreCase::ArdyThieverFight,
+            &thiever_base,
+            [
+                &fled_early,
+                &stall_kill,
+                &pickpocketed,
+                &deposited,
+                &returned,
+                &further
+            ]
+        )
+        .qualify()
+        .is_err());
+        // A kill still has to be followed by coins and their deposit.
+        assert!(witness(
+            CoreCase::ArdyThieverFight,
+            &thiever_base,
+            [&stall_fight, &stall_kill]
+        )
+        .qualify()
+        .is_err());
     }
 
     /// Camp/Fight option inject keys must be declared by the frozen card
@@ -10794,7 +10857,9 @@ export default class NativeStop extends LoopingBot {{
             &further,
         ]
         .map(with_ore);
-        assert!(witness(case, &baseline, ore_trip.each_ref()).qualify().is_err());
+        assert!(witness(case, &baseline, ore_trip.each_ref())
+            .qualify()
+            .is_err());
 
         // --- moss_giant_bank: food-gone trip end, Ardougne West, lobster restock.
         let case = CoreCase::parse("moss_giant_bank").expect("bank case registered");

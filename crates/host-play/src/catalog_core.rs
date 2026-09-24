@@ -10582,8 +10582,13 @@ impl ArdyThieverCycle {
     }
 }
 
-/// `guardResponse=Fight` on ArdyThiever: the Flee bank-cycle shape plus a
-/// FightBack Guard kill. The Flee kite tile fails this branch.
+/// `guardResponse=Fight` on ArdyThiever: a FightBack Guard kill plus the Flee
+/// bank-cycle shape. The kill and the Flee-kite check count from Start, not
+/// from the first coins: on 289 only a caught stall steal draws a Guard (a
+/// failed pickpocket stuns but never starts combat), and ArdyThiever steals
+/// from the stall only while its food is at `restockAtFood`, so the catch
+/// comes from the opening restock. The deposit still needs both the coins
+/// and the kill. The Flee kite tile fails this branch.
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct ArdyThieverFightCycle {
     pub pickpocketed: Option<Observation>,
@@ -10607,7 +10612,7 @@ impl ArdyThieverFightCycle {
         {
             self.pickpocketed = Some(now.clone());
         }
-        if self.pickpocketed.is_some() && self.killed.is_none() {
+        if self.killed.is_none() {
             self.fled |= near(now.tile, ARDY_FLEE_TILE, 2);
         }
         for npc in &now.npc_facts {
@@ -10622,8 +10627,7 @@ impl ArdyThieverFightCycle {
             if selected {
                 self.engaged_guard = Some(npc.index);
             }
-            if self.pickpocketed.is_some()
-                && self.killed.is_none()
+            if self.killed.is_none()
                 && self.engaged_guard == Some(npc.index)
                 && npc.total_health > 0
                 && npc.health == 0
@@ -10632,8 +10636,7 @@ impl ArdyThieverFightCycle {
                 self.killed = Some(now.clone());
             }
         }
-        if self.pickpocketed.is_some()
-            && self.killed.is_none()
+        if self.killed.is_none()
             && self.style_xp
             && self
                 .engaged_guard

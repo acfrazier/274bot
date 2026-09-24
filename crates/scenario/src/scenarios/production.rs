@@ -6161,9 +6161,11 @@ const ARDY_THIEVER_FIGHT_INJECT: &[ScriptSettingInject] = &[
         id: "bankAtLootSlots",
         value: ScriptInjectValue::Num(1.0),
     },
+    // A full opening restock: one frozen stealCakes session (<= 90 s) at the
+    // stall, where the Guard catches. See ardy_thiever_fight_scenario.
     ScriptSettingInject {
         id: "foodTarget",
-        value: ScriptInjectValue::Num(1.0),
+        value: ScriptInjectValue::Num(27.0),
     },
     ScriptSettingInject {
         id: "restockAtFood",
@@ -6552,9 +6554,29 @@ pub(crate) fn ardy_thiever_knight_scenario() -> Scenario {
     })
 }
 
-/// `guardResponse=Fight` on ArdyThiever: pickpocket coins, FightBack on catch,
-/// then the same loot-count bank/return/further cycle as the Flee cell. Combat
-/// kit is prepared before Start; catalog owns the Guard defeat + no-Flee gate.
+/// `guardResponse=Fight` on ArdyThiever: FightBack kills the Guard that catches
+/// a stall steal, then pickpocket coins and the loot-count bank/return/further
+/// cycle of the Flee cell. Combat kit is prepared before Start; catalog owns
+/// the Guard defeat + no-Flee gate.
+///
+/// **Why the kill comes first (289 content).** A failed pickpocket never starts
+/// combat: `fail_pick_pocket` (thieving.rs2) only stuns and deals 2 damage.
+/// The only Guard aggression is `stealing_check_for_guard` on a stall steal
+/// (stealing.rs2). ArdyThiever steals from the stall only while its food is at
+/// `restockAtFood`, and after the first coins it gets there only by eating,
+/// which needs HP lost to failed pickpockets (Guard success at Thieving 40 is
+/// 126/256). Each success also costs a ~60-tick bank trip at loot-count 1.
+/// Modelled, a catch after the coins within the 150-dirty watch is 1-9% with
+/// the old inject and about 42% with the best food seed (at a 0.2 catch
+/// chance per steal). So this cell watches
+/// Strength XP first, and injects `foodTarget` 27 with `restockAtFood` 0: the
+/// opening RestockCakes call is one full frozen stealCakes session at the
+/// stall. A Monte Carlo of that session (8-tick respawn after a success, ~5
+/// ticks per silent owner refusal with a swap after three) puts a Guard catch
+/// within 150 ticks of Start at 0.97 on the pooled 289 rates (11 success /
+/// 5 refused / 3 caught of 19 steals), 0.84 on the ArdyCakes run alone, and
+/// 1.0 at the passing `ardy_cakes_fight` rates. The coins, deposit, return
+/// and further-coins gates follow unchanged.
 pub(crate) fn ardy_thiever_fight_scenario() -> Scenario {
     let stand = ARDOUGNE_GUARD;
     let first_xp = Proof::StatXpGain {
@@ -6654,12 +6676,12 @@ pub(crate) fn ardy_thiever_fight_scenario() -> Scenario {
     steps.push(select_strength_combat_style_step());
     steps.push(start_catalog_step());
     for (step_name, arm) in [
-        ("watch Thieving XP after Start", first_xp),
-        ("watch exact Coins 995 pickpocketed after Start", coins),
         (
             "watch Strength XP from FightBack on the catching Guard after Start",
             style_xp,
         ),
+        ("watch Thieving XP after Start", first_xp),
+        ("watch exact Coins 995 pickpocketed after Start", coins),
         (
             "watch script-pickpocketed coins enter a fresh Ardougne bank",
             Proof::BankItemId {
