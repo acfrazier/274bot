@@ -408,7 +408,7 @@ impl NativeConfig {
 }
 /// Typed per-case arguments the native adapter supports. The reference `args` are
 /// preserved as metadata; only explicitly supported flags are forwarded.
-fn supported_arg(_arg: &str) -> bool {
+pub(super) fn supported_arg(_arg: &str) -> bool {
     // No reference harness flag maps to a native executable flag yet: `--no-deploy`,
     // `--minutes`, `--base` and friends belong to the foreign runner. Declaring one here
     // without a native adapter would be inventing support.
@@ -416,6 +416,6 @@ fn supported_arg(_arg: &str) -> bool {
 }
 /// Reference `env` entries are applied only when they name a native host knob the suite
 /// deliberately supports.
-fn typed_env_key(_key: &str) -> bool {
+pub(super) fn typed_env_key(_key: &str) -> bool {
     false
 }
