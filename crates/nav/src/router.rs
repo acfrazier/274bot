@@ -244,6 +244,7 @@ pub fn find_with_avoid(
 /// [`find_with_avoid`] with an injectable node-expansion cap. Production
 /// inspect uses [`find_with_avoid`] (the default [`NODE_BUDGET`]); tests
 /// may pass a smaller bound to distinguish `BudgetExhausted` from `NoPath`.
+#[allow(clippy::too_many_arguments)] // collision/graph/tiles/opts/state/avoid/budget surface
 pub fn find_with_avoid_bounded(
     collision: &WorldCollision,
     graph: &TransportGraph,
@@ -329,6 +330,7 @@ pub fn find_missing_item_reqs_with_avoid(
 
 /// [`find_missing_item_reqs_with_avoid`] with an injectable node-expansion
 /// cap. Production inspect uses the default-budget form.
+#[allow(clippy::too_many_arguments)] // collision/graph/tiles/opts/state/avoid/budget surface
 pub fn find_missing_item_reqs_with_avoid_bounded(
     collision: &WorldCollision,
     graph: &TransportGraph,
@@ -2628,7 +2630,7 @@ mod tests {
                 tile(2912, 4833, 0),
                 aubury,
                 FindOptions {
-                    essence: Some(session.clone()),
+                    essence: Some(session),
                     ..FindOptions::default()
                 },
                 &empty,

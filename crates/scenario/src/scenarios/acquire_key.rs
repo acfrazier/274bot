@@ -171,7 +171,7 @@ pub(super) mod tests {
             ),
             "the key card must earn the jail key itself"
         );
-        assert_eq!(s.settings.start_file.as_deref(), Some("acquire_key_v2.ts"));
+        assert_eq!(s.settings.start_file, Some("acquire_key_v2.ts"));
         assert_eq!(s.settings.wait_script_stop, Some(ACQUIRE_KEY_V2_STOP));
     }
 }

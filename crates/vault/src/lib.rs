@@ -685,13 +685,15 @@ mod tests {
 
     #[test]
     fn assignment_roundtrip_keeps_missing_source_identity() {
-        let mut settings = ProfileSettings::default();
-        settings.script_assignment = Some(super::ScriptAssignment {
-            source_kind: "file".into(),
-            identity: "/tmp/gone/bot.ts".into(),
-            display_name: "bot".into(),
-            unavailable: Some("missing file: /tmp/gone/bot.ts".into()),
-        });
+        let mut settings = ProfileSettings {
+            script_assignment: Some(super::ScriptAssignment {
+                source_kind: "file".into(),
+                identity: "/tmp/gone/bot.ts".into(),
+                display_name: "bot".into(),
+                unavailable: Some("missing file: /tmp/gone/bot.ts".into()),
+            }),
+            ..Default::default()
+        };
         let mut overrides = serde_json::Map::new();
         overrides.insert("buryBones".into(), serde_json::json!(false));
         settings

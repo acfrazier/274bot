@@ -157,7 +157,7 @@ mod tests {
                 .any(|st| st.name.contains("setstat") || st.name.contains("setvar")),
             "no post-Start prayer seed"
         );
-        assert_eq!(s.settings.start_file.as_deref(), Some(file));
+        assert_eq!(s.settings.start_file, Some(file));
         assert_eq!(s.settings.start_script, None);
         assert_eq!(s.settings.wait_script_stop, Some(stop));
         assert_ne!(

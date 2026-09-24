@@ -547,7 +547,7 @@ fn bank_passes_only_on_the_hosts_approach_walk_and_a_restock() {
     };
     let approach = walk_act(BANK_V2_DEST, false, 3, false);
     assert!(
-        trip(&[approach.clone()], true, done(json!(true))),
+        trip(std::slice::from_ref(&approach), true, done(json!(true))),
         "walked near the bank, the host saw it open and shut, settled true"
     );
     assert!(
@@ -587,11 +587,11 @@ fn bank_passes_only_on_the_hosts_approach_walk_and_a_restock() {
         "a booth approach far from the site bank cannot pass"
     );
     assert!(
-        !trip(&[approach.clone()], false, done(json!(true))),
+        !trip(std::slice::from_ref(&approach), false, done(json!(true))),
         "a restock the host never saw the bank open for cannot pass"
     );
     assert!(
-        !trip(&[approach.clone()], true, done(json!(false))),
+        !trip(std::slice::from_ref(&approach), true, done(json!(false))),
         "a trip that settled false did not restock"
     );
     assert!(

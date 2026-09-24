@@ -269,9 +269,6 @@ mod tests {
             .steps
             .iter()
             .any(|st| st.name.contains("empty pack and Ardougne bank food+coins")));
-        assert_eq!(
-            s.settings.start_script.as_deref(),
-            Some("BrimhavenMossGiants")
-        );
+        assert_eq!(s.settings.start_script, Some("BrimhavenMossGiants"));
     }
 }

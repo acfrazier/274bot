@@ -485,7 +485,7 @@ impl Poll {
     pub(crate) fn check<'s>(&self, scope: &mut v8::HandleScope<'s>) -> JsResult<'s, ()> {
         let count = self.0.get().wrapping_add(1);
         self.0.set(count);
-        if count % POLL_EVERY == 0 {
+        if count.is_multiple_of(POLL_EVERY) {
             op(scope, Op::Poll, &[])?;
         }
         Ok(())

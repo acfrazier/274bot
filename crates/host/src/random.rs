@@ -2421,9 +2421,7 @@ mod tests {
 
     fn clear_npcs(c: &mut Client) {
         c.npc_count = 0;
-        for npc in &mut c.npc {
-            *npc = None;
-        }
+        c.npc.fill(None);
     }
 
     fn plant_bank_open(c: &mut Client) {

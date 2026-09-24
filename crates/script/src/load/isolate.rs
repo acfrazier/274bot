@@ -1766,6 +1766,7 @@ impl Runner {
 /// next one — at most one `loop()` start per tick. A settling `onStart`
 /// is re-polled after the pump so the first `loop()` follows a successful
 /// one at once; after a failed one it starts on the next tick.
+#[allow(clippy::too_many_arguments)] // tick phase needs runtime/runner/out/teardown knobs together
 fn run_tick_phases(
     runtime: &mut Runtime,
     runner: &mut Runner,
@@ -2172,6 +2173,7 @@ fn extends_stale_window(cmd: &IsolateCmd, generation: u64, latest: &mut u64) -> 
 /// generation. The window runs past snapshots: the host posts one before
 /// every tick, so stopping at the first non-Tick would skip nothing. Every
 /// other drained command then runs in its queued order.
+#[allow(clippy::too_many_arguments)] // isolate loop owns queues, gens, teardown, and mode flags
 fn tick_loop(
     mut runtime: Runtime,
     cmds: CmdQueue,

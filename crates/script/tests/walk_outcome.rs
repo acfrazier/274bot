@@ -340,28 +340,27 @@ fn isolate_same_target_old_request_id_does_not_settle_new_wait() {
 }
 
 fn overlapping_walk_src() -> String {
-    format!(
-        r#"
-import {{ Traversal }} from '../../api/walking/Traversal.js';
-export default class T extends LoopingBot {{
-    async loop() {{
+    r#"
+import { Traversal } from '../../api/walking/Traversal.js';
+export default class T extends LoopingBot {
+    async loop() {
         if (globalThis.__rs_done) return;
         globalThis.__rs_a = null;
         globalThis.__rs_b = null;
         Traversal.walkTo(
-            {{ x: 2820, z: 3556, level: 0 }},
-            {{ radius: 1, timeoutMs: 300000 }},
-        ).then(v => {{ globalThis.__rs_a = v; }});
+            { x: 2820, z: 3556, level: 0 },
+            { radius: 1, timeoutMs: 300000 },
+        ).then(v => { globalThis.__rs_a = v; });
         globalThis.__rs_b = await Traversal.walkTo(
-            {{ x: 2820, z: 3556, level: 0 }},
-            {{ radius: 1, timeoutMs: 300000 }},
+            { x: 2820, z: 3556, level: 0 },
+            { radius: 1, timeoutMs: 300000 },
         );
 
         globalThis.__rs_done = true;
-    }}
-}}
+    }
+}
 "#
-    )
+    .to_string()
 }
 
 fn park_two_walks(iso: &LoadIsolate) -> (u64, u64) {

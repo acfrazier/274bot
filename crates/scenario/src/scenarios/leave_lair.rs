@@ -70,15 +70,12 @@ mod tests {
                 .map(|st| st.name)
                 .collect::<Vec<_>>()
         );
-        assert_eq!(s.settings.start_file.as_deref(), Some("leave_lair_v2.ts"));
+        assert_eq!(s.settings.start_file, Some("leave_lair_v2.ts"));
         assert_eq!(s.settings.start_script, None);
         assert_eq!(s.settings.wait_script_stop, Some(LEAVE_LAIR_V2_STOP));
         assert_eq!(s.settings.deadline, LEAVE_LAIR_DEADLINE);
         assert!(s.seed.mainland);
         assert!(s.settings.require_mainland_base);
-        assert_eq!(
-            s.settings.terminal_shot.as_deref(),
-            Some("leave_lair_v2_ts")
-        );
+        assert_eq!(s.settings.terminal_shot, Some("leave_lair_v2_ts"));
     }
 }

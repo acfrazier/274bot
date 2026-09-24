@@ -74,7 +74,7 @@ pub(crate) fn equippable(item: &GameItem) -> bool {
 /// Frozen `buildCatalog(...).items`: named unnoted objs that are not a pile
 /// model, trade, and a shop would stock as their own row, in name then id
 /// order. The name order is a case-folded byte order, not ICU collation.
-pub(crate) fn listed<'a>(items: &'a [GameItem]) -> Vec<(&'a GameItem, &'a str)> {
+pub(crate) fn listed(items: &[GameItem]) -> Vec<(&GameItem, &str)> {
     let mut out: Vec<_> = records(items)
         .filter(|(item, name)| {
             !(item.is_certificate() && item.certificate_link >= 0)

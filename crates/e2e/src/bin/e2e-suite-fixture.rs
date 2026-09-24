@@ -487,6 +487,8 @@ fn main() {
         "escape-pipe" => {
             use std::os::unix::process::CommandExt;
             let pid_file = std::env::var_os("E2E_SUITE_ESCAPED_PID").expect("test pid path");
+            // Suite owns and reaps this hang child by recorded PID.
+            #[allow(clippy::zombie_processes)] // suite owns hang child via recorded PID
             let mut child = std::process::Command::new(std::env::current_exe().unwrap())
                 .args(["--mode", "hang"])
                 .process_group(0)
@@ -517,6 +519,8 @@ fn main() {
                     .stdout(Stdio::null())
                     .stderr(Stdio::null());
             }
+            // Suite owns and reaps this hang child by recorded PID.
+            #[allow(clippy::zombie_processes)] // suite owns hang child via recorded PID
             let mut child = command.spawn().expect("spawn the descendant fixture");
             if let Err(error) = std::fs::write(&pid_file, child.id().to_string()) {
                 let _ = child.kill();

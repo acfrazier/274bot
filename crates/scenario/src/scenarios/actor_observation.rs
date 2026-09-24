@@ -68,18 +68,12 @@ mod tests {
                 .map(|st| st.name)
                 .collect::<Vec<_>>()
         );
-        assert_eq!(
-            s.settings.start_file.as_deref(),
-            Some("actor_observation_v2.ts")
-        );
+        assert_eq!(s.settings.start_file, Some("actor_observation_v2.ts"));
         assert_eq!(s.settings.start_script, None);
         assert_eq!(s.settings.wait_script_stop, Some(ACTOR_OBSERVATION_V2_STOP));
         assert_eq!(s.settings.deadline, ACTOR_DEADLINE);
         assert!(s.seed.mainland);
         assert!(s.settings.require_mainland_base);
-        assert_eq!(
-            s.settings.terminal_shot.as_deref(),
-            Some("actor_observation_v2_ts")
-        );
+        assert_eq!(s.settings.terminal_shot, Some("actor_observation_v2_ts"));
     }
 }

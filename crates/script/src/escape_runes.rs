@@ -43,6 +43,21 @@ pub fn escape_runes_for_optional(
     escape_runes_for(data, id)
 }
 
+fn fact_from_spell(spell: &TeleportSpell) -> EscapeRunesFact {
+    EscapeRunesFact {
+        runes: spell
+            .runes
+            .iter()
+            .map(|rune| RuneCost {
+                rune: rune.name.clone(),
+                count: rune.count,
+            })
+            .collect(),
+        level: spell.level,
+        label: format!("{} teleport", spell.name),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -71,20 +86,5 @@ mod tests {
                 Err(EscapeRunesError::UnknownId)
             );
         }
-    }
-}
-
-fn fact_from_spell(spell: &TeleportSpell) -> EscapeRunesFact {
-    EscapeRunesFact {
-        runes: spell
-            .runes
-            .iter()
-            .map(|rune| RuneCost {
-                rune: rune.name.clone(),
-                count: rune.count,
-            })
-            .collect(),
-        level: spell.level,
-        label: format!("{} teleport", spell.name),
     }
 }

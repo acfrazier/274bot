@@ -826,7 +826,7 @@ pub(super) fn soak_capture_tick(
     match &mut live.soak_capture {
         SoakCapture::PostPass { label, started } => {
             enqueue_soak_capture(session, shots, label);
-            let status = soak_capture_status(session, &*shots.lock().unwrap(), label);
+            let status = soak_capture_status(session, &shots.lock().unwrap(), label);
             match status {
                 ShotStatus::Written => {
                     println!("[panel] soak checkpoint {label} written");
@@ -867,7 +867,7 @@ pub(super) fn soak_capture_tick(
         }
         SoakCapture::Final { label, started } => {
             enqueue_soak_capture(session, shots, label);
-            let status = soak_capture_status(session, &*shots.lock().unwrap(), label);
+            let status = soak_capture_status(session, &shots.lock().unwrap(), label);
             match status {
                 ShotStatus::Written => {
                     println!("[panel] soak final readback {label} written");

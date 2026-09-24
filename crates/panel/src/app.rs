@@ -2246,7 +2246,7 @@ fn browse_script_card(ui: &Ui, session: &mut Session, card: &script::JsCard, w: 
             if let Some(failure) = session.js.load_failure(&card.identity_key()) {
                 ui.text_colored(ERROR, format!("failed {}", failure.stage.as_str()));
                 if selected {
-                    ui.text_wrapped(&failure.named_line());
+                    ui.text_wrapped(failure.named_line());
                 }
             }
             if !card.description.is_empty() {
@@ -4448,7 +4448,7 @@ fn pump_shots(state: &mut PanelState) -> usize {
                 == Some(actor)
         });
         let ready_json = pending_actor_is_focused
-            .then(|| focused.as_deref())
+            .then_some(focused.as_deref())
             .flatten()
             .and_then(|actor| pair_actor_capture_ready(state, actor));
         let presented = ready_json.is_some().then(|| focused.clone()).flatten();

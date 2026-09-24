@@ -516,7 +516,7 @@ pub fn resource_root_for_build(
         if dir.as_os_str().is_empty() {
             return Err("BOT_NAV_RESOURCE_DIR is empty".into());
         }
-        return Ok(normalize(dir)?);
+        return normalize(dir);
     }
     let build_dir = out_dir
         .parent()

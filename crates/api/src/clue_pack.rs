@@ -551,7 +551,7 @@ mod tests {
             "chart",
             "Chart",
         ] {
-            assert_eq!(keep(name, &[]), true, "{name}");
+            assert!(keep(name, &[]), "{name}");
         }
         // Identity is equality: a longer name containing one of the six is not
         // kept by the constant clause.
@@ -565,7 +565,7 @@ mod tests {
             "chart table",
             "spades",
         ] {
-            assert_eq!(keep(name, &[]), false, "{name}");
+            assert!(!keep(name, &[]), "{name}");
         }
     }
 
@@ -584,7 +584,7 @@ mod tests {
             "Pirate casket",
             "trail_clue_easy_map001_casket",
         ] {
-            assert_eq!(keep(name, &[]), true, "{name}");
+            assert!(keep(name, &[]), "{name}");
         }
         // Food is never implied, and a scroll-adjacent word is not a scroll.
         for name in [
@@ -597,7 +597,7 @@ mod tests {
             "Radimus notes",
             "",
         ] {
-            assert_eq!(keep(name, &[]), false, "{name}");
+            assert!(!keep(name, &[]), "{name}");
         }
     }
 
@@ -606,24 +606,24 @@ mod tests {
     /// `{ keep: false }`, not an error.
     #[test]
     fn keep_extra_is_additive_ascii_equality() {
-        assert_eq!(keep("Rune scimitar", &["Rune scimitar"]), true);
-        assert_eq!(keep("RUNE SCIMITAR", &["rune scimitar"]), true);
-        assert_eq!(keep("rune scimitar", &["RUNE SCIMITAR"]), true);
+        assert!(keep("Rune scimitar", &["Rune scimitar"]));
+        assert!(keep("RUNE SCIMITAR", &["rune scimitar"]));
+        assert!(keep("rune scimitar", &["RUNE SCIMITAR"]));
         // The frozen Entrana veto is not this helper's: a restricted name the
         // caller asked for is kept.
-        assert_eq!(keep("Bronze platebody", &["Bronze platebody"]), true);
+        assert!(keep("Bronze platebody", &["Bronze platebody"]));
         // Equality, not substring, and no widening.
-        assert_eq!(keep("Rune scimitar", &["Rune"]), false);
-        assert_eq!(keep("Super spade", &["spade"]), false);
-        assert_eq!(keep("Bronze platebody", &["platebody"]), false);
-        assert_eq!(keep("Rope", &["Ropes"]), false);
+        assert!(!keep("Rune scimitar", &["Rune"]));
+        assert!(!keep("Super spade", &["spade"]));
+        assert!(!keep("Bronze platebody", &["platebody"]));
+        assert!(!keep("Rope", &["Ropes"]));
         // Additive only: extra cannot un-keep a constant or a substring.
-        assert_eq!(keep("Clue scroll", &["Shark"]), true);
-        assert_eq!(keep("spade", &[]), true);
+        assert!(keep("Clue scroll", &["Shark"]));
+        assert!(keep("spade", &[]));
         // `""` is a present entry, and it matches the empty name exactly.
-        assert_eq!(keep("", &[""]), true);
-        assert_eq!(keep("Shark", &["Shark"]), true);
-        assert_eq!(keep("Shark", &["shark"]), true);
+        assert!(keep("", &[""]));
+        assert!(keep("Shark", &["Shark"]));
+        assert!(keep("Shark", &["shark"]));
     }
 
     /// Nothing is trimmed, and the fold is ASCII, so a Unicode-only case pair
@@ -638,13 +638,13 @@ mod tests {
             "shantay pass ",
             "Sextant\t",
         ] {
-            assert_eq!(keep(name, &[]), false, "{name}");
+            assert!(!keep(name, &[]), "{name}");
         }
         // `İ` (U+0130) folds to `i̇` under Unicode `toLowerCase`, which is not
         // this lock's fold, and `ı` is not the ASCII `i`.
-        assert_eq!(keep("İ", &["İ"]), true);
-        assert_eq!(keep("İ", &["i̇"]), false);
-        assert_eq!(keep("ı", &["I"]), false);
+        assert!(keep("İ", &["İ"]));
+        assert!(!keep("İ", &["i̇"]));
+        assert!(!keep("ı", &["I"]));
     }
 
     /// The whole published value, and only it: `keep` is a boolean, so a miss

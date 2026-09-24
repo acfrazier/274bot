@@ -306,6 +306,7 @@ pub(crate) fn script_self_stop_observed(
 /// `inject_companion_as` is set on a fleet, also Start the same JS on
 /// slot 1 with that key naming the driven player (P2P Trade), as the game
 /// shows it ([`partner_screen_name`]).
+#[allow(clippy::too_many_arguments)] // pending start packs names/companion/loadout fields
 fn stash_pending_starts(
     pending: &Mutex<Vec<PendingCatalogStart>>,
     names: &[String],
@@ -374,6 +375,7 @@ fn stash_compiled_start(
     }];
 }
 
+#[allow(clippy::too_many_arguments)] // pair start packs names/case/watch fields
 fn stash_pair_starts(
     pending: &Mutex<Vec<PendingCatalogStart>>,
     names: &[String],

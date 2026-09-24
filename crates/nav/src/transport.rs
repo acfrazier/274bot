@@ -1140,7 +1140,8 @@ fn membergate_edges(
         return;
     }
 
-    let mut placed: HashMap<(i32, i32, i32), Vec<(i32, i32, i32)>> = HashMap::new();
+    type Xyz = (i32, i32, i32);
+    let mut placed: HashMap<Xyz, Vec<Xyz>> = HashMap::new();
     for &id in admitted.keys() {
         let Some(ps) = positions.get(&id) else {
             continue;
@@ -4948,14 +4949,14 @@ fn rangingguild_apply(tile: WorldTile, (dx, d_level, dz): (i32, i32, i32)) -> Wo
     }
 }
 
-fn rangingguild_parse_opener(
-    content_root: &Path,
-) -> Option<(
+type RangingGuildOpener = (
     (i32, i32, i32),
     (i32, i32, i32),
     (i32, i32, i32),
     (i32, i32, i32),
-)> {
+);
+
+fn rangingguild_parse_opener(content_root: &Path) -> Option<RangingGuildOpener> {
     let script = fs::read_to_string(
         content_root
             .join("scripts")
@@ -6253,7 +6254,8 @@ mod tests {
 
     /// `(at, dir, to)` of every door edge of `loc_id`, sorted, so a
     /// directional door's exact crossings can be asserted.
-    fn door_crossings(graph: &TransportGraph, loc_id: i32) -> Vec<((i32, i32), char, (i32, i32))> {
+    type DoorCrossing = ((i32, i32), char, (i32, i32));
+    fn door_crossings(graph: &TransportGraph, loc_id: i32) -> Vec<DoorCrossing> {
         let mut out: Vec<_> = graph
             .edges
             .iter()
@@ -7607,7 +7609,7 @@ category=karamja_stepping_stone
         loc_defs(&[(9001, 1, 6), (9002, 1, 6), (9003, 1, 6), (9333, 1, 1)])
     }
 
-    fn island_rope_edge<'a>(graph: &'a TransportGraph, loc_id: i32) -> Option<&'a TransportEdge> {
+    fn island_rope_edge(graph: &TransportGraph, loc_id: i32) -> Option<&TransportEdge> {
         graph
             .edges
             .iter()
@@ -8935,7 +8937,7 @@ return (getbit_range(%death_map, ^death_map_lower, ^death_map_upper));
             assert_eq!(e.varp_req, vec![(314, 70)]);
             assert!(e.quest_req.is_empty());
             assert!(
-                empty.allows(e) == false,
+                !empty.allows(e),
                 "the castle door still fails closed without varp 314"
             );
             let with_varp = crate::world_state::WorldState {
@@ -12079,10 +12081,7 @@ p_teleport(movecoord(coord, 2, 0, -2));
             .collect()
     }
 
-    fn rangingguild_usable_from<'a>(
-        graph: &'a TransportGraph,
-        stand: WorldTile,
-    ) -> Vec<&'a TransportEdge> {
+    fn rangingguild_usable_from(graph: &TransportGraph, stand: WorldTile) -> Vec<&TransportEdge> {
         rangingguild_doors(graph)
             .into_iter()
             .filter(|e| {

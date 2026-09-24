@@ -1155,7 +1155,7 @@ fn moss_default_loot(names: &[String]) -> Vec<String> {
 fn green_default_loot(names: &[String]) -> Vec<String> {
     names
         .iter()
-        .filter(|name| name.to_ascii_lowercase() != "bass")
+        .filter(|name| !name.eq_ignore_ascii_case("bass"))
         .cloned()
         .collect()
 }

@@ -2573,7 +2573,7 @@ impl ReachCacheKey {
         h ^= self.canlight_stamp.rotate_left(13);
         h = h.wrapping_mul(0x9E37_79B9_7F4A_7C15);
         h ^= (self.available as u64) << 1;
-        h ^= (self.base_x as u64).wrapping_mul(0x1000_001);
+        h ^= (self.base_x as u64).wrapping_mul(0x0100_0001);
         h ^= (self.base_z as u64).rotate_left(11);
         h ^= (self.level as u64) << 32;
         h ^= (self.width as u64) << 16;

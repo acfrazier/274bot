@@ -1888,7 +1888,7 @@ export default class T extends LoopingBot {
 }
 "#;
         let mut slot = SlotScript::new();
-        slot.start_load_with_loadouts(source.into(), LoadShape::CompatClass, vec![], &[])
+        slot.start_load_with_loadouts(source.to_string(), LoadShape::CompatClass, vec![], &[])
             .unwrap();
         let input = crate::isolate_fb::tests::empty_input(1);
         slot.encode_snapshot_delta(&input, false);
@@ -1971,7 +1971,7 @@ export default class T extends LoopingBot {{
 "#
         );
         let mut slot = SlotScript::new();
-        slot.start_load_with_loadouts(source.into(), LoadShape::CompatClass, vec![], &[])
+        slot.start_load_with_loadouts(source, LoadShape::CompatClass, vec![], &[])
             .unwrap();
         let input = crate::isolate_fb::tests::empty_input(1);
         slot.encode_snapshot_delta(&input, false);

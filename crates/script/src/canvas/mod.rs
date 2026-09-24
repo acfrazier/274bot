@@ -1326,7 +1326,7 @@ mod tests {
         assert!(raster.byte_len() <= (APPLET_W as usize) * (APPLET_H as usize) * 4);
         assert!(raster.x <= 6 && raster.y <= 6);
         let mut opaque = 0usize;
-        for px in raster.rgba.chunks_exact(4) {
+        for px in raster.rgba.as_chunks::<4>().0 {
             if px[3] > 0 {
                 opaque += 1;
             }
@@ -1753,16 +1753,18 @@ mod tests {
             color: pack_rgba(255, 0, 0, 255),
             extras: DrawExtras::default(),
         };
-        let dirty = dirty_bounds(&[op.clone()]);
+        let dirty = dirty_bounds(std::slice::from_ref(&op));
         assert!(dirty.is_some());
         let _ = rasterize(&[op]);
 
-        let mut extras = DrawExtras::default();
-        extras.shadow = Shadow {
-            color: pack_rgba(0, 0, 0, 200),
-            blur: MAX_SHADOW_BLUR,
-            offset_x: f32::MAX,
-            offset_y: -f32::MAX,
+        let extras = DrawExtras {
+            shadow: Shadow {
+                color: pack_rgba(0, 0, 0, 200),
+                blur: MAX_SHADOW_BLUR,
+                offset_x: f32::MAX,
+                offset_y: -f32::MAX,
+            },
+            ..Default::default()
         };
         let shadowed = CanvasOp::FillRect {
             x: 20,
@@ -1772,7 +1774,7 @@ mod tests {
             color: pack_rgba(255, 255, 255, 255),
             extras,
         };
-        let _ = dirty_bounds(&[shadowed.clone()]);
+        let _ = dirty_bounds(std::slice::from_ref(&shadowed));
         let _ = rasterize(&[shadowed]);
     }
 }

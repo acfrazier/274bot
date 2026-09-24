@@ -200,6 +200,7 @@ enum Phase {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[allow(clippy::enum_variant_names)] // After* names encode the proof checkpoint
 enum ProofKind {
     AfterCast,
     AfterExit,

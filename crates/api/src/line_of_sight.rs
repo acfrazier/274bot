@@ -218,10 +218,7 @@ pub fn line_of_sight_v1(
     to: WorldTile,
     size: Option<i32>,
 ) -> bool {
-    match line_of_sight_v2(collision, from, to, size) {
-        Ok(v) => v,
-        Err(_) => false,
-    }
+    line_of_sight_v2(collision, from, to, size).unwrap_or_default()
 }
 
 /// Public raw index `lx * height + lz` on the posted identity.

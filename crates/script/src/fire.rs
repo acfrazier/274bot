@@ -1057,9 +1057,7 @@ mod tests {
     #[test]
     fn valid_all_zero_canlight_has_no_candidate() {
         let mut reach = reach_covering(&[(3235, 3418), (3236, 3418)], 3235, 3418, 4, 3);
-        for word in &mut reach.canlight {
-            *word = 0;
-        }
+        reach.canlight.fill(0);
         assert!(reach.canlight_available());
         assert!(
             select_burn_tile(plot(), None, &HashSet::new(), &[], &reach, 1, &[(-1, 0)]).is_none()

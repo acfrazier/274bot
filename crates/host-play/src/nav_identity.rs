@@ -19,7 +19,7 @@ pub use nav::bundle::NavIdentityRow as BundledNavIdentity;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NavOrigin {
     Bundled {
-        identity: BundledNavIdentity,
+        identity: Box<BundledNavIdentity>,
         path: PathBuf,
     },
     External {
@@ -40,7 +40,7 @@ impl NavOrigin {
 
     pub fn bundled_identity(&self) -> Option<&BundledNavIdentity> {
         match self {
-            Self::Bundled { identity, .. } => Some(identity),
+            Self::Bundled { identity, .. } => Some(identity.as_ref()),
             Self::External { .. } => None,
         }
     }
@@ -155,7 +155,7 @@ pub fn select_nav_origin(
     let path = contained_pack_path(root, &identity.relative_path)?;
     validate_identity_shape(identity)?;
     Ok(NavOrigin::Bundled {
-        identity: identity.clone(),
+        identity: Box::new(identity.clone()),
         path,
     })
 }

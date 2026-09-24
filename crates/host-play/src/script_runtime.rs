@@ -6,6 +6,7 @@ use nav::router::MissingReq;
 
 #[path = "route_inspect.rs"]
 mod route_inspect;
+#[cfg(test)]
 pub(super) use route_inspect::PostedInspect;
 
 /// Per-uid script cell on the wall. Encode/post/drain take the slot lock
@@ -164,6 +165,7 @@ fn emit_script_debug_logs(slot: &mut SlotScript, name: &str) {
 /// — no dispatch, no flush.
 // Slot threads pass the same shared handles everywhere; a context struct
 // would churn every call site, so the arg count is allowed on purpose.
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn script_observe_with_npc_boxes(
     driver: &mut dyn Driver,
@@ -1237,6 +1239,7 @@ fn record_script_act(navs: &Arc<Mutex<HashMap<String, NavBot>>>, slot: &str, act
 /// wire default off). `walk-to` (scene `DirectNavigator`) is the
 /// [`Interactions::walk`] packet. Returns whether the driver's out buffer
 /// was written.
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn dispatch_script_interact(
     driver: &mut dyn Driver,
@@ -2214,6 +2217,7 @@ fn recovery_walk_idle(navs: &Arc<Mutex<HashMap<String, NavBot>>>, name: &str) ->
     bot.route_worker.is_none() && bot.route.is_none() && bot.pending_route.is_none()
 }
 
+#[allow(clippy::too_many_arguments)] // watchdog nav action packs driver/snapshot/nav handles
 fn apply_watchdog_nav_action(
     action: script::WatchdogAction,
     _driver: &mut dyn Driver,
@@ -2624,6 +2628,8 @@ pub(super) fn slot_arrival_reach(
     }
 }
 
+#[cfg(test)]
+#[allow(clippy::too_many_arguments)] // test wrapper over shorts packer
 pub(super) fn with_script_snapshot_input<R>(
     tick: u64,
     here: Option<(i32, i32, i32)>,
@@ -3925,7 +3931,6 @@ pub(super) fn with_script_snapshot_input_shorts<R>(
     f(&input, native)
 }
 /// Whether this observe pass needs a [`WorldState`] from the slot snapshot.
-
 /// Built only for a Running script (walk arm) or an armed nav bot (route /
 /// BankBudget session — interact dispatch may walk with gating facts).
 pub(super) fn nav_world_state_for_observe(
@@ -4138,6 +4143,7 @@ impl ScriptWalkArm {
         );
     }
 
+    #[allow(clippy::too_many_arguments)] // route queue packs dest/options/request id fields
     pub(super) fn queue_route(
         &self,
         x: i32,
@@ -5789,6 +5795,7 @@ export function tick(api) {
     /// One production observe frame for the slot: the fixture's own cache and
     /// ObjNames, which is the tuple a real puzzle-move needs (no cache means
     /// no held-op table, and then nothing is sent).
+    #[allow(clippy::too_many_arguments)] // puzzle frame observe packs wall/cheat/nav handles
     fn observe_puzzle_frame(
         rec: &mut MenuRec,
         scripts: &ScriptWall,

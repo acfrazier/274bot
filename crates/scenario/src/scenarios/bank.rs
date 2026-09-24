@@ -70,7 +70,7 @@ mod tests {
     fn bank_card_starts_at_the_falador_fountain() {
         let s = bank_v2_scenario();
         starts_at_the_landing_after_its_seed(&s, FALADOR_FOUNTAIN);
-        assert_eq!(s.settings.start_file.as_deref(), Some("bank_v2.ts"));
+        assert_eq!(s.settings.start_file, Some("bank_v2.ts"));
         assert_eq!(s.settings.wait_script_stop, Some(BANK_V2_STOP));
     }
 }

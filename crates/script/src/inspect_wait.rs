@@ -1053,6 +1053,7 @@ mod tests {
         )
     }
 
+    #[allow(clippy::too_many_arguments)] // native facts fixture packs route-inspect ids
     fn facts_with<'a>(
         latest: RouteInspectTerminalInput<'a>,
         prev: RouteInspectTerminalInput<'a>,

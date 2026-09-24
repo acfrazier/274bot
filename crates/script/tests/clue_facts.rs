@@ -1930,8 +1930,7 @@ export function tick(api) {
     ] {
         assert_eq!(steps[index]["kind"], kind, "{index} {value:?}");
     }
-    for index in 1..steps.len() {
-        let step = &steps[index];
+    for (index, step) in steps.iter().enumerate().skip(1) {
         assert_eq!(step["ok"], true, "{index} {step}");
         assert_eq!(step["status"], "continue", "{index} {step}");
         assert_eq!(step["token"], *token, "{index} {step}");
@@ -2142,8 +2141,12 @@ export function tick(api) {
     ] {
         assert_eq!(steps[index]["kind"], kind, "{index} {value:?}");
     }
-    for index in 1..steps.len() - 2 {
-        let step = &steps[index];
+    for (index, step) in steps
+        .iter()
+        .enumerate()
+        .take(steps.len().saturating_sub(2))
+        .skip(1)
+    {
         assert_eq!(step["ok"], true, "{index} {step}");
         assert_eq!(step["status"], "continue", "{index} {step}");
         assert_eq!(step["token"], *token, "{index} {step}");
@@ -2841,8 +2844,7 @@ export function tick(api) {
     ] {
         assert_eq!(steps[index]["kind"], kind, "{index} {value:?}");
     }
-    for index in 1..steps.len() {
-        let step = &steps[index];
+    for (index, step) in steps.iter().enumerate().skip(1) {
         assert_eq!(step["ok"], true, "{index} {step}");
         assert_eq!(step["status"], "continue", "{index} {step}");
         assert_eq!(step["token"], value["token"], "{index} {step}");
@@ -3141,8 +3143,7 @@ export function tick(api) {
     ] {
         assert_eq!(steps[index]["kind"], kind, "{index} {value:?}");
     }
-    for index in 1..steps.len() {
-        let step = &steps[index];
+    for (index, step) in steps.iter().enumerate().skip(1) {
         assert_eq!(step["ok"], true, "{index} {step}");
         assert_eq!(step["status"], "continue", "{index} {step}");
         assert_eq!(step["token"], value["token"], "{index} {step}");
@@ -3497,8 +3498,7 @@ export function tick(api) {
     ] {
         assert_eq!(steps[index]["kind"], kind, "{index} {value:?}");
     }
-    for index in 1..steps.len() {
-        let step = &steps[index];
+    for (index, step) in steps.iter().enumerate().skip(1) {
         assert_eq!(step["ok"], true, "{index} {step}");
         assert_eq!(step["status"], "continue", "{index} {step}");
         assert_eq!(step["token"], value["token"], "{index} {step}");
@@ -3979,9 +3979,9 @@ export function tick(api) {
     assert_eq!(steps[8]["name"], "Zamorak Wizard", "{value:?}");
     assert_eq!(steps[8]["action"], "Attack", "{value:?}");
     assert_eq!(steps[8]["index"], 7, "{value:?}");
-    for index in 1..steps.len() {
-        assert_eq!(steps[index]["token"], value["token"], "{index} {value:?}");
-        assert!(steps[index].get("error").is_none(), "{index} {value:?}");
+    for (index, step) in steps.iter().enumerate().skip(1) {
+        assert_eq!(step["token"], value["token"], "{index} {value:?}");
+        assert!(step.get("error").is_none(), "{index} {value:?}");
     }
     let text = value.to_string();
     for forbidden in [
@@ -7423,8 +7423,12 @@ export function tick(api) {
         ] {
             assert_eq!(steps[index]["kind"], kind, "{id} {index} {value:?}");
         }
-        for index in 1..steps.len() - 1 {
-            let step = &steps[index];
+        for (index, step) in steps
+            .iter()
+            .enumerate()
+            .take(steps.len().saturating_sub(1))
+            .skip(1)
+        {
             assert_eq!(step["token"], value["token"], "{id} {index} {step}");
             assert!(step.get("error").is_none(), "{id} {index} {step}");
             assert_eq!(step["status"], "continue", "{id} {index} {step}");

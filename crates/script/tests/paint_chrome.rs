@@ -2,7 +2,7 @@
 //! advertised chrome on ScriptPaint, and statGrid recording. No jive module.
 
 use script::isolate_fb::{ReachViewInput, SnapshotInput, TileInput};
-use script::shim::{PaintChromeBand, ScriptPaint};
+use script::shim::PaintChromeBand;
 use script::{LoadIsolate, LoadShape};
 
 mod common;

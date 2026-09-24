@@ -493,11 +493,10 @@ mod tests {
             vec![2, 4]
         );
         assert!(!hit.truncated);
-        assert_eq!(
+        assert!(
             scene_npcs(&[-1], &["Attack".to_string()], 1, None)
                 .expect("cap")
-                .truncated,
-            true
+                .truncated
         );
     }
 

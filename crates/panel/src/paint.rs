@@ -320,9 +320,7 @@ impl PaintOverlay {
             }
         }
 
-        let Some(paint) = structured else {
-            return None;
-        };
+        let paint = structured?;
         let s = paint_uniform_scale(size);
         let [x, y, w, h] = chatbox_rect(min, size);
         let row_h = (ui.frame_height().max(ROW_H_FLOOR) * s).max(1.0);
@@ -441,7 +439,6 @@ impl PaintOverlay {
             }
             if !brand.is_empty() {
                 let slot_x = x + seg.brand.x;
-                let brand_w = text_width(ui, font_sz, brand);
                 // The reserve includes the collapse square; text starts at its left edge.
                 let brand_x = slot_x;
                 let _brand_clip =
@@ -450,6 +447,7 @@ impl PaintOverlay {
                 self.lines.push(brand.to_string());
                 #[cfg(test)]
                 {
+                    let brand_w = text_width(ui, font_sz, brand);
                     self.strip_brand_label_rect =
                         Some([brand_x, text_y, brand_x + brand_w, text_y + font_sz]);
                 }
@@ -1037,7 +1035,7 @@ mod tests {
         assert!(raster.x <= 6 && raster.y <= 6);
         assert!(raster.x + raster.w as i32 >= 6 + (width + 12.0).round() as i32);
         let mut painted = 0usize;
-        for px in raster.rgba.chunks_exact(4) {
+        for px in raster.rgba.as_chunks::<4>().0 {
             if px[3] > 0 {
                 painted += 1;
             }

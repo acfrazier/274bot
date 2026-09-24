@@ -70,12 +70,12 @@ mod tests {
                 .map(|st| st.name)
                 .collect::<Vec<_>>()
         );
-        assert_eq!(s.settings.start_file.as_deref(), Some("walk_spot_v2.ts"));
+        assert_eq!(s.settings.start_file, Some("walk_spot_v2.ts"));
         assert_eq!(s.settings.start_script, None);
         assert_eq!(s.settings.wait_script_stop, Some(WALK_SPOT_V2_STOP));
         assert_eq!(s.settings.deadline, WALK_SPOT_DEADLINE);
         assert!(s.seed.mainland);
         assert!(s.settings.require_mainland_base);
-        assert_eq!(s.settings.terminal_shot.as_deref(), Some("walk_spot_v2_ts"));
+        assert_eq!(s.settings.terminal_shot, Some("walk_spot_v2_ts"));
     }
 }

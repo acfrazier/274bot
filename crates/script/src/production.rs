@@ -61,6 +61,7 @@ pub(crate) enum Kind {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(clippy::enum_variant_names)] // Wait* names encode the phase predicate
 enum Phase {
     /// Make-X button sent; waiting `count_dialog_open`.
     WaitCountOpen,

@@ -281,11 +281,9 @@ fn view_gate(station: WorldTile, orbit_yaw: i32, orbit_pitch: i32) -> Proof {
     }
 }
 
-fn tele_and_orbit_send(
-    station: WorldTile,
-    orbit_yaw: i32,
-    orbit_pitch: i32,
-) -> Box<dyn Fn(&mut Client, &GameSnapshot) -> bool + Send + Sync> {
+type SnapshotPred = Box<dyn Fn(&mut Client, &GameSnapshot) -> bool + Send + Sync>;
+
+fn tele_and_orbit_send(station: WorldTile, orbit_yaw: i32, orbit_pitch: i32) -> SnapshotPred {
     Box::new(move |client, _| {
         cheat(client, &tele_args(station.level, station.x, station.z));
         apply_orbit_camera(client, orbit_yaw, orbit_pitch);

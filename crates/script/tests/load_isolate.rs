@@ -808,7 +808,8 @@ fn tick_after_a_refused_snapshot_is_refused_and_not_left_in_flight() {
 // `slow_tick_is_interrupted_and_isolate_survives`.)
 #[test]
 fn stale_window_ends_at_operator_commands() {
-    let closers: [(&str, fn(&LoadIsolate)); 3] = [
+    type Closer = fn(&LoadIsolate);
+    let closers: [(&str, Closer); 3] = [
         ("paint click", |iso| iso.paint_click("b")),
         ("paint select", |iso| iso.paint_select("k", "v")),
         ("recovery anchor", |iso| iso.request_recovery_anchor()),

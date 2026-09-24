@@ -67,18 +67,12 @@ mod tests {
                 .map(|st| st.name)
                 .collect::<Vec<_>>()
         );
-        assert_eq!(
-            s.settings.start_file.as_deref(),
-            Some("line_of_sight_v2.ts")
-        );
+        assert_eq!(s.settings.start_file, Some("line_of_sight_v2.ts"));
         assert_eq!(s.settings.start_script, None);
         assert_eq!(s.settings.wait_script_stop, Some(LOS_V2_STOP));
         assert_eq!(s.settings.deadline, LOS_DEADLINE);
         assert!(s.seed.mainland);
         assert!(s.settings.require_mainland_base);
-        assert_eq!(
-            s.settings.terminal_shot.as_deref(),
-            Some("line_of_sight_v2_ts")
-        );
+        assert_eq!(s.settings.terminal_shot, Some("line_of_sight_v2_ts"));
     }
 }

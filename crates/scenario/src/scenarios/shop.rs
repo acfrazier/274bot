@@ -1136,6 +1136,7 @@ enum ShopBuyoutBankAccess {
     },
 }
 
+#[allow(clippy::too_many_arguments)] // scenario factory bundles inject/stand/shop timing
 fn shop_buyout_variant(
     name: &'static str,
     inject: &'static [ScriptSettingInject],

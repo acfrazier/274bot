@@ -99,8 +99,10 @@ fn run(scope: &mut v8::HandleScope, args: &v8::FunctionCallbackArguments) -> Res
             ops.clear();
             ops.extend(
                 bytes
-                    .chunks_exact(8)
-                    .map(|c| f64::from_ne_bytes(c.try_into().expect("8-byte tape slot"))),
+                    .as_chunks::<8>()
+                    .0
+                    .iter()
+                    .map(|c| f64::from_ne_bytes(*c)),
             );
             replay(&ops, &strs)
         })

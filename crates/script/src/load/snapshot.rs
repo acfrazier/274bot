@@ -1243,6 +1243,7 @@ fn collision_object<'s>(
     )
 }
 
+#[allow(clippy::too_many_arguments)] // mirrors collision plane fields into one V8 object
 fn collision_from_parts<'s>(
     scope: &mut v8::HandleScope<'s>,
     available: bool,

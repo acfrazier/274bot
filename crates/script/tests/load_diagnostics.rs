@@ -217,9 +217,8 @@ fn catalog_mixed_batch_retains_named_failures() {
     assert!(diff.changed.iter().any(|n| n == "GoodBot"));
     let mut prepared_ok = Vec::new();
     for name in &diff.changed.clone() {
-        match js.prepare_card(ScriptSource::Catalog, name) {
-            Ok(prepared) => prepared_ok.push(prepared),
-            Err(_) => {}
+        if let Ok(prepared) = js.prepare_card(ScriptSource::Catalog, name) {
+            prepared_ok.push(prepared);
         }
     }
     assert_eq!(prepared_ok.len(), 1);

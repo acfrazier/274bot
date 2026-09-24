@@ -1217,8 +1217,8 @@ fn quoted_field_in_object(obj: &str, field: &str) -> Option<String> {
 fn skip_object_value(after_colon: &str) -> Option<&str> {
     let rest = skip_expression(after_colon)?;
     let rest = rest.trim_start();
-    if rest.starts_with(',') {
-        Some(rest[1..].trim_start())
+    if let Some(stripped) = rest.strip_prefix(',') {
+        Some(stripped.trim_start())
     } else {
         Some(rest)
     }
@@ -2100,9 +2100,7 @@ fn parse_shop_db_records(src: &str) -> Option<Vec<ShopDbRecord>> {
             rest = rest[1..].trim_start();
             continue;
         }
-        let Some((_, key_end)) = scan_quoted(rest) else {
-            return None;
-        };
+        let (_, key_end) = scan_quoted(rest)?;
         let after_key = &rest[key_end..];
         let after_colon = after_key.trim_start().strip_prefix(':')?.trim_start();
         if !after_colon.starts_with('{') {

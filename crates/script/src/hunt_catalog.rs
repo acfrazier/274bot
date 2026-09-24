@@ -423,7 +423,7 @@ pub(crate) fn call(name: &str, args: &[Value]) -> Result<Value, String> {
             let spots = spots(field(s, "spots"));
             let index = field(s, "rotated")
                 .and_then(Value::as_f64)
-                .map_or_else(|| nearest(spot(field(s, "from")), &spots) as f64, |i| i);
+                .unwrap_or_else(|| nearest(spot(field(s, "from")), &spots) as f64);
             let next = if spots.is_empty() {
                 index
             } else {

@@ -259,7 +259,7 @@ fn bare_return(stmt: &str) -> bool {
 /// disjuncts, one of each, no nesting and no `&` — → the boolean's value and
 /// the proc comparison's `(proc, const)` names.
 pub(super) fn check_axis_or_proc(head: &str, axis_bool: &str) -> Option<(bool, String, String)> {
-    if head.contains(|c| c == '(' || c == ')' || c == '&') {
+    if head.contains(['(', ')', '&']) {
         return None;
     }
     let mut disjuncts = head.split('|');
@@ -274,12 +274,11 @@ pub(super) fn check_axis_or_proc(head: &str, axis_bool: &str) -> Option<(bool, S
             if boolean.replace(value).is_some() {
                 return None;
             }
-        } else if let Some(pair) = proc_const_disjunct(disjunct) {
+        } else {
+            let pair = proc_const_disjunct(disjunct)?;
             if compare.replace(pair).is_some() {
                 return None;
             }
-        } else {
-            return None;
         }
     }
     let (proc, cname) = compare?;

@@ -1853,10 +1853,7 @@ impl GameSnapshot {
                     self.close_bank_inv_session(session.main_com_id, generation);
                 }
             }
-            let needs_open = match self.bank_inventory_session {
-                Some(session) if session.main_com_id == bank_component_id => false,
-                _ => true,
-            };
+            let needs_open = !matches!(self.bank_inventory_session, Some(session) if session.main_com_id == bank_component_id);
             if needs_open {
                 self.open_bank_inv_session(bank_component_id);
             }

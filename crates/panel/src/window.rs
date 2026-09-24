@@ -817,6 +817,7 @@ enum FrameSubmission {
 /// present image, never blits, and never presents; with nothing promoted it
 /// returns [`FrameSubmission::Skipped`] before any allocation, draw, or
 /// readback.
+#[allow(clippy::too_many_arguments)] // frame submit packs device/queue/renderer/shot handles
 fn submit_acquired_frame(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -873,6 +874,7 @@ fn submit_acquired_frame(
 /// encoder, optionally blit `target` onto a presentable destination, and
 /// submit. Returns the staged readbacks for [`complete_readbacks`] and
 /// never blocks on the mapped bytes.
+#[allow(clippy::too_many_arguments)] // ui frame submit packs device/queue/renderer/shot handles
 fn submit_ui_frame(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -1764,7 +1766,7 @@ mod tests {
         let width = texture.width();
         let height = texture.height();
         let mut data = vec![0u8; (width * height * 4) as usize];
-        for chunk in data.chunks_exact_mut(4) {
+        for chunk in data.as_chunks_mut::<4>().0 {
             chunk.copy_from_slice(&px);
         }
         queue.write_texture(
@@ -1997,7 +1999,7 @@ mod tests {
         }
         let reused = read_texture_rgba(&device, &queue, &persistent, format);
         assert!(
-            !reused.chunks_exact(4).any(|px| px == MAGENTA),
+            !reused.as_chunks::<4>().0.iter().any(|px| px == &MAGENTA),
             "the reused target holds this frame, not the stale prefill"
         );
     }
@@ -2080,7 +2082,7 @@ mod tests {
         assert!(matches!(submission, FrameSubmission::Skipped));
         let prefilled = read_texture_rgba(&device, &queue, &target, format);
         assert!(
-            prefilled.chunks_exact(4).all(|px| px == MAGENTA),
+            prefilled.as_chunks::<4>().0.iter().all(|px| px == &MAGENTA),
             "no render pass ran over the caller's target"
         );
 
@@ -2201,7 +2203,7 @@ mod tests {
         assert_eq!(pixel(&drawn, OCCLUDED_TEST_PX, x0 + 4, y0 + 4), RED);
         assert_eq!(pixel(&drawn, OCCLUDED_TEST_PX, x1 + 8, y1 + 8), GREEN);
         assert!(
-            !drawn.chunks_exact(4).any(|px| px == MAGENTA),
+            !drawn.as_chunks::<4>().0.iter().any(|px| px == &MAGENTA),
             "the acquired image holds this frame, not the stale prefill"
         );
     }

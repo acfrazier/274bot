@@ -389,7 +389,7 @@ impl SlotInput {
         }
         let ax = x.floor() as i32;
         let ay = y.floor() as i32;
-        if ax < 0 || ax >= APPLET_W || ay < 0 || ay >= APPLET_H {
+        if !(0..APPLET_W).contains(&ax) || !(0..APPLET_H).contains(&ay) {
             return None;
         }
         Some((ax, ay, 1))

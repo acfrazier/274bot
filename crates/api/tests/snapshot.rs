@@ -859,10 +859,9 @@ fn npc_size4_moving_rendered_sw_vs_network_sw() {
 fn npc_live_row_size_follows_new_type_after_rebuild() {
     let mut c = client_with_npc();
     let npc = c.npc[7].as_mut().unwrap();
-    let mut first = None;
     let mut second = None;
     if let Some(cache) = Arc::get_mut(&mut c.cache) {
-        first = Some(cache.npcs.len());
+        let first = Some(cache.npcs.len());
         npc.r#type = first;
         cache.npcs.push(NpcType {
             id: 9,

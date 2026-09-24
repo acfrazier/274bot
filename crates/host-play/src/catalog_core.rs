@@ -3025,7 +3025,7 @@ pub struct FightFieldNpc {
     pub level: i32,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, PartialEq, Eq)]
 pub struct FightFieldObservation {
     pub available: bool,
     pub identity: LineOfSightIdentity,
@@ -3034,20 +3034,6 @@ pub struct FightFieldObservation {
     pub host_los_network: Option<bool>,
     pub host_los_tile: Option<bool>,
     pub receipt: Option<FightFieldScriptReceipt>,
-}
-
-impl Default for FightFieldObservation {
-    fn default() -> Self {
-        Self {
-            available: false,
-            identity: LineOfSightIdentity::default(),
-            here: None,
-            npc: None,
-            host_los_network: None,
-            host_los_tile: None,
-            receipt: None,
-        }
-    }
 }
 
 pub fn fight_field_baseline_ready(baseline: &Observation) -> bool {
@@ -11021,6 +11007,7 @@ impl CoreWatch {
     /// lifecycle receipt, prior-frame guardian fact and (hunt cards only)
     /// the slot's act ledger without touching the panel's pending-log
     /// consumer.
+    #[allow(clippy::too_many_arguments)] // watch observe packs account/snapshot/lifecycle/paint fields
     pub fn observe_snapshot_with_lifecycle(
         &self,
         account: &str,

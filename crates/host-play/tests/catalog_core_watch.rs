@@ -1677,9 +1677,7 @@ fn line_of_sight_rejects_source_scenery_blocked_despite_entering_v() {
     let skip_to_clear = |x: i32, z: i32| {
         if x == 6 && z == 5 {
             Some(LOS_WALK_SCENERY)
-        } else if x == 7 && z == 5 {
-            Some(LOS_V_W)
-        } else if x == 7 && z == 6 {
+        } else if x == 7 && (z == 5 || z == 6) {
             Some(LOS_V_W)
         } else {
             Some(0)

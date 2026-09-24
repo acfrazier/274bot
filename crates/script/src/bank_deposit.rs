@@ -116,7 +116,7 @@ impl Deposit {
                         Matcher::All => true,
                         Matcher::Keep(kept) => {
                             let lower = name.as_deref().unwrap_or_default().to_lowercase();
-                            !kept.iter().any(|keep| *keep == lower)
+                            !kept.contains(&lower)
                         }
                         Matcher::Hook {
                             hook,

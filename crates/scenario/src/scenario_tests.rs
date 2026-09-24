@@ -2393,7 +2393,8 @@ fn bank_cells_register_their_cards_injects_and_watch_chain() {
             "auto_fighter_bank must not prepare a deposit-class item before Start"
         );
     }
-    for &id in &[BONES_ID] {
+    {
+        let id = BONES_ID;
         assert!(
             auto_scenario.steps[..auto_start].iter().any(|step| {
                 matches!(step.wait.arm, Proof::ItemIdAtMost { id: got, count: 0 } if got == id)
@@ -3887,9 +3888,9 @@ fn alcher_swarm_drain_preserves_frozen_seed_settings_and_macro_event_inject() {
     );
 }
 
-fn swarm_inject_send(
-    scenario: &Scenario,
-) -> &Box<dyn Fn(&mut Client, &GameSnapshot) -> bool + Send + Sync> {
+type SnapshotPred = Box<dyn Fn(&mut Client, &GameSnapshot) -> bool + Send + Sync>;
+
+fn swarm_inject_send(scenario: &Scenario) -> &SnapshotPred {
     let step = scenario
         .steps
         .iter()
@@ -10445,7 +10446,7 @@ fn quest_prereq_is_acknowledged_before_the_reset_teleport_and_start() {
         // the complete-all debugproc whose queued completions leak.
         let mut client = native_seed_client();
         let mut snapshot = GameSnapshot::new();
-        snapshot.rebuild(&mut client);
+        snapshot.rebuild(&client);
         match &scenario.steps[load].kind {
             StepKind::Perform { send } => assert!(send(&mut client, &snapshot)),
             _ => panic!("{name}: the kickoff step is a Perform"),
@@ -10596,7 +10597,7 @@ fn climbing_boots_variants_seed_complete_death_plateau_map_before_relog_and_star
 
         let mut snapshot = GameSnapshot::new();
         let mut client = native_seed_client();
-        snapshot.rebuild(&mut client);
+        snapshot.rebuild(&client);
         match &scenario.steps[primary].kind {
             StepKind::Perform { send } => assert!(send(&mut client, &snapshot)),
             _ => panic!("{name}: primary Death Plateau step is a Perform"),
@@ -10619,7 +10620,7 @@ fn climbing_boots_variants_seed_complete_death_plateau_map_before_relog_and_star
         );
 
         let mut client = native_seed_client();
-        snapshot.rebuild(&mut client);
+        snapshot.rebuild(&client);
         match &scenario.steps[map].kind {
             StepKind::Perform { send } => assert!(send(&mut client, &snapshot)),
             _ => panic!("{name}: map progress step is a Perform"),

@@ -418,6 +418,7 @@ mod tests {
             .unwrap_or(false)
     }
 
+    #[allow(clippy::too_many_arguments)] // walk-fail fixture packs outcome fields
     fn fail_native(
         seq: u64,
         generation: u64,

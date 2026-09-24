@@ -3058,7 +3058,7 @@ mod tests {
         c.bump_gens(ServerProt::REBUILD_NORMAL);
         let mut runner = ScenarioRunner::with_world(maze_episode_scenario(30), None);
         runner.set_scene_settle(Duration::ZERO);
-        runner.snapshot.rebuild(&mut c);
+        runner.snapshot.rebuild(&c);
         runner.phase = Phase::Running;
         runner.begin_step();
         assert_eq!(

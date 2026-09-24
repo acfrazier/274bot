@@ -1,4 +1,4 @@
-use super::acquire_key::{taverley_dungeon_seed_steps, TAVERLEY_DUNGEON_LANDING};
+use super::acquire_key::taverley_dungeon_seed_steps;
 use crate::*;
 
 /// Matches `cell_v2.ts` `STOP_OK`.
@@ -53,6 +53,7 @@ pub(crate) fn cell_v2_scenario() -> Scenario {
 #[cfg(test)]
 mod tests {
     use super::super::acquire_key::tests::starts_at_the_landing_after_its_seed;
+    use super::super::acquire_key::TAVERLEY_DUNGEON_LANDING;
     use super::*;
 
     #[test]
@@ -74,7 +75,7 @@ mod tests {
             )),
             "the jail key is seeded and seen before Start"
         );
-        assert_eq!(s.settings.start_file.as_deref(), Some("cell_v2.ts"));
+        assert_eq!(s.settings.start_file, Some("cell_v2.ts"));
         assert_eq!(s.settings.wait_script_stop, Some(CELL_V2_STOP));
     }
 }

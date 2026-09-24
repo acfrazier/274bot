@@ -10179,6 +10179,7 @@ pub(crate) fn smithing_bot_mithril_scenario() -> Scenario {
     )
 }
 
+#[allow(clippy::too_many_arguments)] // scenario factory bundles inject/skills/products
 fn smithing_bot_variant(
     name: &'static str,
     inject: &'static [ScriptSettingInject],
@@ -10820,6 +10821,7 @@ pub(crate) fn leather_crafter_thread_shop_scenario() -> Scenario {
     }
 }
 
+#[allow(clippy::too_many_arguments)] // scenario factory bundles inject/skills/products
 fn leather_crafter_variant(
     name: &'static str,
     inject: &'static [ScriptSettingInject],

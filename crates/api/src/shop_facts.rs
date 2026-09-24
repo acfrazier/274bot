@@ -141,7 +141,7 @@ fn joined_shops(data: &SelectedGameData) -> &'static JoinedShops {
         let parsed = parsed_shop_facts();
         let shops: Vec<ShopRecord> = POSTED_INVS
             .iter()
-            .filter_map(|inv_name| join_shop(*inv_name, &parsed.invs, &parsed.keepers, data))
+            .filter_map(|inv_name| join_shop(inv_name, &parsed.invs, &parsed.keepers, data))
             .collect();
         let mut by_inv = HashMap::with_capacity(shops.len());
         let mut by_keeper = HashMap::new();
@@ -172,7 +172,7 @@ pub fn content_json_value(data: &SelectedGameData) -> serde_json::Value {
     for shop in shops_for(data) {
         map.insert(
             shop.inv.clone(),
-            serde_json::to_value(&shop).expect("shop record json"),
+            serde_json::to_value(shop).expect("shop record json"),
         );
     }
     serde_json::Value::Object(map)
@@ -217,7 +217,7 @@ pub fn buyout_plan(
                 && stock.get(&item.obj).copied().unwrap_or(0) > 0
         })
         .collect();
-    wants.sort_by(|a, b| b.cost.cmp(&a.cost));
+    wants.sort_by_key(|a| std::cmp::Reverse(a.cost));
 
     let mut left = coins;
     let mut plan = Vec::new();

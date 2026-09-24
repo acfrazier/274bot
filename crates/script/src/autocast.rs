@@ -120,6 +120,7 @@ impl From<ArmOutcome> for Value {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(clippy::enum_variant_names)] // Wait* names encode the phase predicate
 enum Phase {
     WaitTab,
     WaitPanel,

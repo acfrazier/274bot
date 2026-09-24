@@ -28,7 +28,7 @@ const HELD: usize = 1;
 const CAPACITY: usize = RING + HELD;
 
 #[derive(Clone, Debug, PartialEq)]
-pub(super) struct InspectHop {
+pub(crate) struct InspectHop {
     pub kind: String,
     pub loc_id: i32,
     pub loc_name: String,
@@ -44,7 +44,7 @@ pub(super) struct InspectHop {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub(super) struct InspectTerminal {
+pub(crate) struct InspectTerminal {
     pub seq: u64,
     pub generation: u64,
     pub request_id: u64,
@@ -71,7 +71,7 @@ impl InspectTerminal {
 }
 
 #[derive(Clone)]
-pub(super) struct InspectCapture {
+pub(crate) struct InspectCapture {
     pub request_id: u64,
     pub generation: u64,
     pub world: Arc<NavWorld>,
@@ -338,6 +338,7 @@ pub(super) fn validate_request(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)] // inspect queue packs nav/world/state/request fields
 pub(super) fn queue_inspect(
     navs: &Arc<Mutex<HashMap<String, NavBot>>>,
     name: &str,
@@ -904,6 +905,7 @@ pub(crate) struct InspectBarrier {
 }
 
 impl InspectBarrier {
+    #[cfg(test)]
     pub(crate) fn new() -> Arc<Self> {
         Arc::new(Self {
             entered: (Mutex::new(false), Condvar::new()),
@@ -918,6 +920,7 @@ impl InspectBarrier {
         cv.notify_all();
     }
 
+    #[cfg(test)]
     pub(crate) fn wait_entered(&self) {
         let (lock, cv) = &self.entered;
         let mut g = lock.lock().unwrap();
@@ -934,6 +937,7 @@ impl InspectBarrier {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn release(&self) {
         let (lock, cv) = &self.release;
         let mut g = lock.lock().unwrap();
@@ -1623,6 +1627,7 @@ mod tests {
         clear_barrier();
     }
 
+    #[allow(clippy::too_many_arguments)] // test capture packs world/tiles/budget fields
     fn capture(
         world: Arc<NavWorld>,
         from: WorldTile,

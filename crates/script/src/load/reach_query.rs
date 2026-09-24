@@ -127,9 +127,7 @@ pub(crate) fn arrived_at(x: f64, z: f64, level: f64, radius: f64) -> bool {
         }
         let lx = x - f64::from(view.base_x);
         let lz = z - f64::from(view.base_z);
-        let outside =
-            lx < 0.0 || lz < 0.0 || lx >= f64::from(view.width) || lz >= f64::from(view.height);
-        outside
+        lx < 0.0 || lz < 0.0 || lx >= f64::from(view.width) || lz >= f64::from(view.height)
     })
 }
 

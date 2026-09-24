@@ -326,9 +326,8 @@ fn fourth_attempt_yields_false_and_a_walk_reclick_does_not_burn_one() {
     set_observation(obs(Some(outside())));
     let token = begin();
     let proj = site(json!({}));
-    let mut keys = 0;
     let mut reply = None;
-    for _ in 0..6 {
+    for keys in 0..6 {
         let step = call(token, proj.clone(), reply);
         if kind(&step) == "yield" {
             assert_eq!(step["value"], false, "{step}");
@@ -336,7 +335,6 @@ fn fourth_attempt_yields_false_and_a_walk_reclick_does_not_burn_one() {
             return;
         }
         assert_eq!(kind(&step), "key", "{step}");
-        keys += 1;
         reply = Some(json!({ "held": false }));
     }
     panic!("never yielded");

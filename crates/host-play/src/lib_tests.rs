@@ -2378,7 +2378,7 @@ fn encode_walk_snapshot(tick: u64, here: (i32, i32, i32), outcome: PostedWalkOut
         None,
         outcome,
         PostedInspect::default(),
-        |input, native| script::isolate_fb::encode_snapshot_with_native(input, native),
+        script::isolate_fb::encode_snapshot_with_native,
     )
 }
 
@@ -10598,7 +10598,7 @@ fn script_snapshot_crops_shared_canlight_from_profile_plane() {
         level: 1,
     };
     let idx =
-        1 * world_w * world_h + (lit.z - origin_z) as usize * world_w + (lit.x - origin_x) as usize;
+        world_w * world_h + (lit.z - origin_z) as usize * world_w + (lit.x - origin_x) as usize;
     bits[idx / 64] |= 1u64 << (idx % 64);
     let bytes = with_script_snapshot_input(
         1,
@@ -10728,7 +10728,7 @@ fn script_snapshot_fb_posts_collision_and_los_identity() {
     let flags = packed.flags();
     assert_eq!(flags.len(), 104 * 104);
     assert_ne!(flags[5 * 104 + 1] & CollisionFlag::V_W, 0);
-    assert_eq!(flags[1 * 104 + 1], CollisionFlag::_OPEN);
+    assert_eq!(flags[104 + 1], CollisionFlag::_OPEN);
 
     script::observed::on_reset();
     script::observed::apply(&view);
@@ -10758,7 +10758,7 @@ fn script_snapshot_fb_posts_collision_and_los_identity() {
     assert!(script::line_of_sight::query_v1(here, open_to, None));
     assert!(!script::line_of_sight::query_v1(here, blocked_to, None));
     assert_eq!(
-        script::line_of_sight::raw_flag_at(1 * 104 + 1),
+        script::line_of_sight::raw_flag_at(104 + 1),
         Some(CollisionFlag::_OPEN)
     );
     assert_eq!(script::line_of_sight::raw_flag_at(-1), None);
@@ -15177,7 +15177,7 @@ fn observer_pump_paired_only_skips_catalog_fact_producers() {
             lifecycle_called.set(true);
             None
         },
-        || catalog_core::BoundedGuardian::default(),
+        catalog_core::BoundedGuardian::default,
         None,
         None,
         None,

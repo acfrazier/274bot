@@ -11620,7 +11620,8 @@ mod tests {
 
         // The posted chat modal without a continue is still not a Talk-to,
         // and it does not walk either: `dialog_ready` waits the tick out.
-        for extra in [json!({ "chat_modal_id": 968 })] {
+        {
+            let extra = json!({ "chat_modal_id": 968 });
             let open = call(
                 &data,
                 token,
@@ -12536,7 +12537,6 @@ mod tests {
                 },
             ),
         ] {
-            let page = json!([[id, 1]]);
             let token = steady(&data, id);
             let posted = keeper_npc(21, keeper, name, spawn, 1, &[ATTACK]);
             // The keeper posted on its own spawn and the key already on the

@@ -334,8 +334,10 @@ mod tests {
 
     #[test]
     fn close_then_ack_releases_hold_before_script_work() {
-        let mut r = LoginReadiness::default();
-        r.session_epoch = 1;
+        let mut r = LoginReadiness {
+            session_epoch: 1,
+            ..Default::default()
+        };
         let mut closes = 0;
         let step = r.step(&open_at(1, 42), || {
             closes += 1;
@@ -363,8 +365,10 @@ mod tests {
 
     #[test]
     fn late_welcome_after_scene2_settled_holds_again() {
-        let mut r = LoginReadiness::default();
-        r.session_epoch = 1;
+        let mut r = LoginReadiness {
+            session_epoch: 1,
+            ..Default::default()
+        };
         let _ = r.step(&closed_at(1, -1), || panic!("no close"));
         let step = r.step(&open_at(4, 142), || CloseAttempt::Sent);
         assert!(step.hold);
@@ -376,8 +380,10 @@ mod tests {
 
     #[test]
     fn unrelated_modal_is_not_closed() {
-        let mut r = LoginReadiness::default();
-        r.session_epoch = 1;
+        let mut r = LoginReadiness {
+            session_epoch: 1,
+            ..Default::default()
+        };
         let mut closes = 0;
         // Bank/trade/quest: main modal is not the native welcome id.
         let step = r.step(&obs(1, 1, 42, 600), || {
@@ -398,8 +404,10 @@ mod tests {
 
     #[test]
     fn reconnect_epoch_invalidates_stale_close() {
-        let mut r = LoginReadiness::default();
-        r.session_epoch = 1;
+        let mut r = LoginReadiness {
+            session_epoch: 1,
+            ..Default::default()
+        };
         let step = r.step(&open_at(1, 42), || CloseAttempt::Sent);
         assert_eq!(step.action, WelcomeAction::Close);
         r.on_session_boundary();
@@ -424,8 +432,10 @@ mod tests {
 
     #[test]
     fn logout_resets_and_does_not_close() {
-        let mut r = LoginReadiness::default();
-        r.session_epoch = 1;
+        let mut r = LoginReadiness {
+            session_epoch: 1,
+            ..Default::default()
+        };
         let _ = r.step(&open_at(1, 42), || CloseAttempt::Sent);
         let mut closes = 0;
         let logged_out = WelcomeObservation {
@@ -464,8 +474,10 @@ mod tests {
         stopped.stop();
         assert_eq!(stopped.state(), RunState::Idle);
 
-        let mut r = LoginReadiness::default();
-        r.session_epoch = 1;
+        let mut r = LoginReadiness {
+            session_epoch: 1,
+            ..Default::default()
+        };
         let _ = r.step(&open_at(1, 42), || CloseAttempt::Sent);
         let _ = r.step(&closed_at(3, 42), || panic!("no extra close"));
 
@@ -477,8 +489,10 @@ mod tests {
 
     #[test]
     fn bounded_failure_is_visible_and_stops_clicking() {
-        let mut r = LoginReadiness::default();
-        r.session_epoch = 1;
+        let mut r = LoginReadiness {
+            session_epoch: 1,
+            ..Default::default()
+        };
         let mut closes = 0;
         let mut last = r.step(&open_at(1, 42), || {
             closes += 1;
@@ -513,8 +527,10 @@ mod tests {
 
     #[test]
     fn refused_closes_are_bounded_and_visible() {
-        let mut r = LoginReadiness::default();
-        r.session_epoch = 1;
+        let mut r = LoginReadiness {
+            session_epoch: 1,
+            ..Default::default()
+        };
         let mut last = WelcomeStep {
             hold: false,
             action: WelcomeAction::None,
@@ -539,8 +555,10 @@ mod tests {
 
     #[test]
     fn no_close_before_scene_ready() {
-        let mut r = LoginReadiness::default();
-        r.session_epoch = 1;
+        let mut r = LoginReadiness {
+            session_epoch: 1,
+            ..Default::default()
+        };
         let mut closes = 0;
         let early = WelcomeObservation {
             allow_close: false,

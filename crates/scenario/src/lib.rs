@@ -779,7 +779,7 @@ fn native_bank_deposit(name: &'static str, seeds: Vec<NativeSeed>) -> Vec<Step> 
                     let mut ix = Interactions::new(snapshot, c);
                     snapshot
                         .bank_side()
-                        .into_iter()
+                        .iter()
                         .filter(|item| {
                             // Bank-side rows are the pack: bulk fixtures sit
                             // there as certificates, not as unnoted bases.

@@ -68,15 +68,12 @@ mod tests {
                 .map(|st| st.name)
                 .collect::<Vec<_>>()
         );
-        assert_eq!(s.settings.start_file.as_deref(), Some("fight_field_v2.ts"));
+        assert_eq!(s.settings.start_file, Some("fight_field_v2.ts"));
         assert_eq!(s.settings.start_script, None);
         assert_eq!(s.settings.wait_script_stop, Some(FIGHT_FIELD_V2_STOP));
         assert_eq!(s.settings.deadline, FIGHT_FIELD_DEADLINE);
         assert!(s.seed.mainland);
         assert!(s.settings.require_mainland_base);
-        assert_eq!(
-            s.settings.terminal_shot.as_deref(),
-            Some("fight_field_v2_ts")
-        );
+        assert_eq!(s.settings.terminal_shot, Some("fight_field_v2_ts"));
     }
 }

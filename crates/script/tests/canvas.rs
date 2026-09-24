@@ -530,7 +530,7 @@ export default class T extends LoopingBot {
     let raster = canvas::rasterize(&paint.canvas).expect("raster");
     assert!(raster.w > 10 && raster.h > 10);
     let mut opaque = 0usize;
-    for px in raster.rgba.chunks_exact(4) {
+    for px in raster.rgba.as_chunks::<4>().0 {
         if px[3] > 0 {
             opaque += 1;
         }
@@ -677,7 +677,7 @@ export default class T extends LoopingBot {
     assert_eq!(paint.canvas.len(), 2, "{paint:?}");
     let raster = canvas::rasterize(&paint.canvas).expect("raster");
     let mut colors = std::collections::BTreeSet::new();
-    for px in raster.rgba.chunks_exact(4) {
+    for px in raster.rgba.as_chunks::<4>().0 {
         if px[3] > 200 {
             colors.insert((px[0] / 16, px[1] / 16, px[2] / 16));
         }

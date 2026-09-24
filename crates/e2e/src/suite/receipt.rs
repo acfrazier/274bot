@@ -1806,7 +1806,13 @@ mod tests {
                 let parsed = parse(&external_output(&broken, "PASS"));
                 assert!(
                     matches!(
-                        super::validate(&case, &parsed, Some(0), &[capture.clone()], Some(&source)),
+                        super::validate(
+                            &case,
+                            &parsed,
+                            Some(0),
+                            std::slice::from_ref(&capture),
+                            Some(&source)
+                        ),
                         Verdict::SharedFailure {
                             kind: "receipt",
                             ..
@@ -1868,7 +1874,13 @@ mod tests {
         let receipts = parse(&format!(
             "EXTERNAL_LOADER: script_external_loader {receipt}\nPASS: live script_external_loader {other}\n"
         ));
-        match super::validate(&case, &receipts, Some(0), &[capture.clone()], Some(&source)) {
+        match super::validate(
+            &case,
+            &receipts,
+            Some(0),
+            std::slice::from_ref(&capture),
+            Some(&source),
+        ) {
             Verdict::SharedFailure { reason, .. } => {
                 assert!(reason.contains("disagree"), "{reason}")
             }
@@ -1924,7 +1936,13 @@ mod tests {
                 other => panic!("unhandled mutation {other}"),
             }
             let receipts = parse(&external_output(&broken, "PASS"));
-            match super::validate(&case, &receipts, Some(0), &[capture.clone()], Some(&source)) {
+            match super::validate(
+                &case,
+                &receipts,
+                Some(0),
+                std::slice::from_ref(&capture),
+                Some(&source),
+            ) {
                 Verdict::SharedFailure { reason, .. } => {
                     assert!(reason.contains(needle), "{mutate}: {reason}")
                 }
@@ -1936,7 +1954,13 @@ mod tests {
         let mut arbitrary = receipt.clone();
         arbitrary["source_sha_after"] = serde_json::json!("not-a-hash");
         let receipts = parse(&external_output(&arbitrary, "PASS"));
-        match super::validate(&case, &receipts, Some(0), &[capture.clone()], Some(&source)) {
+        match super::validate(
+            &case,
+            &receipts,
+            Some(0),
+            std::slice::from_ref(&capture),
+            Some(&source),
+        ) {
             Verdict::SharedFailure { reason, .. } => {
                 assert!(reason.contains("lowercase SHA-256 digest"), "{reason}")
             }
@@ -1947,7 +1971,13 @@ mod tests {
         let mut unbound = receipt.clone();
         unbound["script"]["sha256"] = serde_json::json!("not-the-bound-source");
         let receipts = parse(&external_output(&unbound, "PASS"));
-        match super::validate(&case, &receipts, Some(0), &[capture.clone()], Some(&source)) {
+        match super::validate(
+            &case,
+            &receipts,
+            Some(0),
+            std::slice::from_ref(&capture),
+            Some(&source),
+        ) {
             Verdict::SharedFailure { reason, .. } => {
                 assert!(reason.contains("not the bound source sha"), "{reason}")
             }

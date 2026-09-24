@@ -3878,6 +3878,7 @@ mod tests {
         plant_loc_sized(c, id, name, op1, scene_x, scene_z, 1, 1, 1);
     }
 
+    #[allow(clippy::too_many_arguments)] // test helper plants loc geometry fields together
     fn plant_loc_sized(
         c: &mut Client,
         id: i32,

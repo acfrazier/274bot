@@ -526,7 +526,7 @@ fn near_bank(obs: &BankObservation, bank: Tile) -> bool {
         .is_some_and(|here| live_dist(here, bank) <= APPROACH_RADIUS)
 }
 
-fn slotted<'a>(obs: &'a BankObservation) -> impl Iterator<Item = &'a BankRow> {
+fn slotted(obs: &BankObservation) -> impl Iterator<Item = &BankRow> {
     obs.inv.iter().filter(|row| real_slot(row) && row.count > 0)
 }
 
@@ -2138,10 +2138,8 @@ fn ready_with(rt: &BankRuntime, proj: &BankProj, obs: &BankObservation) -> bool 
         return false;
     };
     match plan.key {
-        KeyArm::Held | KeyArm::Bank => {
-            if !slotted_has_id(obs, plan.key_id) {
-                return false;
-            }
+        KeyArm::Held | KeyArm::Bank if !slotted_has_id(obs, plan.key_id) => {
+            return false;
         }
         _ => {}
     }

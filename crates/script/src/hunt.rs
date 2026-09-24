@@ -250,10 +250,12 @@ pub(crate) trait Kind: 'static {
     }
 }
 
+type SessionSites = HashMap<(&'static str, u64), Box<dyn Any>>;
+
 thread_local! {
     /// Session sites by family and token, parsed once at begin. They
     /// outlive ResetSession, as the Task instances holding the tokens do.
-    static SITES: RefCell<HashMap<(&'static str, u64), Box<dyn Any>>> = RefCell::new(HashMap::new());
+    static SITES: RefCell<SessionSites> = RefCell::new(HashMap::new());
 }
 
 /// A Task class's begin: mint the token and keep its site.
