@@ -274,3 +274,84 @@ globalThis.__out = {
         })
     );
 }
+
+/// Relational operators are JS's own: `ToPrimitive` on objects (`valueOf`
+/// before `toString`, arrays, `String` wrappers), BigInt, and string
+/// comparison by UTF-16 code units. Each case compares the export with the
+/// frozen `count(req.name) >= (req.min ?? 1)` evaluated inline.
+#[test]
+fn comparisons_follow_js_to_primitive_bigint_and_code_units() {
+    let actual = probe(
+        r#"
+const cases = [
+    [{ valueOf() { return '5'; } }, '10'],
+    [[5], '10'],
+    [{}, '10'],
+    [new String('5'), '10'],
+    [5n, 1],
+    ['\uDC00', '\uFFFD'],
+    [{ [Symbol.toPrimitive]: (hint) => (hint === 'number' ? 1 : '9') }, 2],
+];
+globalThis.__out = cases.map(([have, min]) => {
+    const native = capture(() => hasToolReq({ name: 'x', min }, null, () => have));
+    const frozen = capture(() => have >= (min ?? 1));
+    return { native, frozen, same: native === frozen };
+});
+"#,
+        "__out",
+    );
+    let rows = actual.as_array().expect("rows");
+    assert_eq!(rows.len(), 7);
+    for row in rows {
+        assert_eq!(row["same"], true, "{row}");
+    }
+    assert_eq!(rows[0]["native"], true, "'5' >= '10' compares strings");
+    assert_eq!(rows[4]["native"], true, "5n >= 1 is a BigInt comparison");
+    assert_eq!(rows[5]["native"], false, "a lone surrogate compares by UTF-16 code unit, below U+FFFD");
+}
+
+/// A `hasAllTools` walk over 2^27 holes runs no JS at all; the watchdog's
+/// termination must still stop it within the tick budget, and the isolate
+/// must stay usable. The same holds for a `for...of` whose callback is a
+/// builtin (`chooseTarget(sparse, Boolean)`).
+#[test]
+fn a_native_loop_over_holes_is_interrupted_by_the_tick_budget() {
+    for body in [
+        "globalThis.__rs2b0t_tools('hasAllTools', a, null, () => 1)",
+        "globalThis.__rs2b0t_choose_target(a, Boolean)",
+    ] {
+        let src = format!(
+            "export function tick(api) {{\n\
+                 globalThis.__rs_n = (globalThis.__rs_n || 0) + 1;\n\
+                 if (globalThis.__rs_n === 1) {{\n\
+                     const a = []; a.length = 2 ** 27;\n\
+                     try {{ {body}; }} finally {{ globalThis.__finally = true; }}\n\
+                     globalThis.__after = true;\n\
+                 }}\n\
+             }}"
+        );
+        let iso = LoadIsolate::spawn(src, LoadShape::NativeTick, vec![]).unwrap();
+        iso.on_game_tick(1);
+        std::thread::sleep(std::time::Duration::from_millis(80));
+        let armed = std::time::Instant::now();
+        iso.pause();
+        iso.resume();
+        iso.on_game_tick(2);
+        let n = iso
+            .probe("__rs_n")
+            .expect("isolate must stay usable after an interrupted native loop");
+        let elapsed = armed.elapsed();
+        assert_eq!(n, 2, "{body}: the next tick ran");
+        assert!(
+            elapsed < std::time::Duration::from_secs(3),
+            "{body}: termination took {elapsed:?}"
+        );
+        assert_eq!(
+            iso.probe("globalThis.__after === undefined && globalThis.__finally === undefined")
+                .unwrap(),
+            true,
+            "{body}: no script code runs after a terminated call"
+        );
+        iso.join();
+    }
+}

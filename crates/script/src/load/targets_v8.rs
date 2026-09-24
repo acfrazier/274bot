@@ -12,7 +12,7 @@
 //! ([`ForOf`]); `reachable` is called once per visited candidate until the
 //! first truthy answer, which closes the iterator.
 
-use super::callback_v8::{self as cb, Callback, ForOf, JsResult};
+use super::callback_v8::{self as cb, Callback, Flow, ForOf, JsResult};
 use rustyscript::Runtime;
 
 pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
@@ -36,14 +36,33 @@ fn run<'s>(
     let reachable = Callback::plain(scope, reachable, "reachable");
     let null: v8::Local<v8::Value> = v8::null(scope).into();
     let walk = ForOf::open(scope, candidates, "candidatesNearestFirst")?;
-    while let Some(candidate) = walk.step(scope)? {
-        let hit = reachable.truthy(scope, &[candidate]);
-        if walk.body(scope, hit)? {
-            walk.close(scope)?;
-            return cb::object(scope, &[("target", candidate), ("blocked", null)]);
+    let target = loop {
+        let scope = &mut v8::EscapableHandleScope::new(scope);
+        let flow = candidate_iteration(scope, &walk, reachable);
+        if let Flow::Break(target) = cb::iteration(scope, flow)? {
+            break target;
         }
+    };
+    if let Some(target) = target {
+        return cb::object(scope, &[("target", target), ("blocked", null)]);
     }
     let first = cb::get_index(scope, candidates, 0)?;
     let blocked = if first.is_null_or_undefined() { null } else { first };
     cb::object(scope, &[("target", null), ("blocked", blocked)])
+}
+
+fn candidate_iteration<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    walk: &ForOf<'s>,
+    reachable: Callback<'s>,
+) -> JsResult<'s, Flow<'s>> {
+    let Some(candidate) = walk.step(scope)? else {
+        return Ok(Flow::Break(None));
+    };
+    let hit = reachable.truthy(scope, &[candidate]);
+    if walk.body(scope, hit)? {
+        walk.close(scope)?;
+        return Ok(Flow::Break(Some(candidate)));
+    }
+    Ok(Flow::Continue(None))
 }

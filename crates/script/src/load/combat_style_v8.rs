@@ -70,7 +70,10 @@ fn casts_available<'s>(
     for cost in &costs {
         let rune = cb::string(scope, &cost.rune);
         let have = held.call(scope, &[rune])?;
-        let casts = (number(scope, have)? / f64::from(cost.count)).floor();
+        let per_cast = cb::num(scope, f64::from(cost.count));
+        let casts = cb::div(scope, have, per_cast)?;
+        // `Math.floor` is `ToNumber` then floor.
+        let casts = number(scope, casts)?.floor();
         least = if casts.is_nan() || least.is_nan() {
             f64::NAN
         } else {
@@ -87,9 +90,9 @@ fn rune_withdraw_list<'s>(
 ) -> JsResult<'s, v8::Local<'s, v8::Value>> {
     let mut rows = Vec::new();
     for cost in costs.unwrap_or_default() {
-        let count = f64::from(cost.count) * number(scope, casts)?;
+        let per_cast = cb::num(scope, f64::from(cost.count));
+        let count = cb::mul(scope, per_cast, casts)?;
         let rune = cb::string(scope, &cost.rune);
-        let count = cb::num(scope, count);
         rows.push(cb::object(scope, &[("rune", rune), ("count", count)])?);
     }
     Ok(v8::Array::new_with_elements(scope, &rows).into())

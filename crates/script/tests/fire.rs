@@ -675,6 +675,9 @@ globalThis.__plots = {
     clamped: box(localFirePlot({ x: 3000, z: 3000, level: 0 }, 1)),
     nanHalf: Number.isNaN(localFirePlot({ x: 3000, z: 3000, level: 0 }, 'wide').x0),
     missing: capture(() => localFirePlot(undefined)),
+    // Frozen `origin.x + h` / `origin.x - h`: `+` concatenates after ToPrimitive.
+    stringX: (() => { const p = localFirePlot({ x: new String('5'), z: 0, level: 0 }, 2); return [p.x0, p.x1]; })(),
+    bigintX: capture(() => localFirePlot({ x: 5n, z: 0, level: 0 }, 2)),
 };
 
 const plot = { bank: { x: 3235, z: 3420, level: 0 }, x0: 3235, x1: 3237, z0: 3418, z1: 3419 };
@@ -741,6 +744,8 @@ fn local_fire_plot_is_the_frozen_box_around_the_origin() {
             "clamped": {"bank": [3000, 3000, 0], "tile": true, "x0": 2998, "x1": 3002, "z0": 2998, "z1": 3002},
             "nanHalf": true,
             "missing": "THREW TypeError: Cannot read properties of undefined (reading 'x')",
+            "stringX": [3, "52"],
+            "bigintX": "THREW TypeError: Cannot mix BigInt and other types, use explicit conversions",
         })
     );
     iso.join();

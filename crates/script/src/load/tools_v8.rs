@@ -9,7 +9,7 @@
 //! requirement stays an explicit `notImpl`.
 
 use super::callback_v8::{
-    self as cb, get, not_impl, number, Callback, ForOf, JsResult,
+    self as cb, get, not_impl, number, Callback, Flow, ForOf, JsResult, Poll,
 };
 use crate::gather_tools::{self, ToolKind};
 use rustyscript::Runtime;
@@ -71,7 +71,10 @@ fn best<'s>(
     let hit = gather_tools::best_tool(
         scope,
         kind,
-        |scope, need| Ok(number(scope, level)? >= f64::from(need)),
+        |scope, need| {
+            let need = cb::num(scope, f64::from(need));
+            cb::ge(scope, level, need)
+        },
         |scope, name| {
             let name = cb::string(scope, name);
             available.truthy(scope, &[name])
@@ -90,14 +93,33 @@ fn best_from_tiers<'s>(
 ) -> JsResult<'s, v8::Local<'s, v8::Value>> {
     let available = Callback::plain(scope, available, "available");
     let tiers = ForOf::open(scope, tiers, "tiers")?;
-    while let Some(tier) = tiers.step(scope)? {
-        let hit = tier_hit(scope, level, tier, available);
-        if let Some(name) = tiers.body(scope, hit)? {
-            tiers.close(scope)?;
-            return Ok(name);
+    let hit = loop {
+        let scope = &mut v8::EscapableHandleScope::new(scope);
+        let flow = tier_iteration(scope, &tiers, level, available);
+        if let Flow::Break(hit) = cb::iteration(scope, flow)? {
+            break hit;
         }
+    };
+    Ok(hit.unwrap_or_else(|| v8::null(scope).into()))
+}
+
+fn tier_iteration<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    tiers: &ForOf<'s>,
+    level: v8::Local<'s, v8::Value>,
+    available: Callback<'s>,
+) -> JsResult<'s, Flow<'s>> {
+    let Some(tier) = tiers.step(scope)? else {
+        return Ok(Flow::Break(None));
+    };
+    let hit = tier_hit(scope, level, tier, available);
+    match tiers.body(scope, hit)? {
+        Some(name) => {
+            tiers.close(scope)?;
+            Ok(Flow::Break(Some(name)))
+        }
+        None => Ok(Flow::Continue(None)),
     }
-    Ok(v8::null(scope).into())
 }
 
 fn tier_hit<'s>(
@@ -132,7 +154,10 @@ fn can_wield<'s>(
     let ok = match gather_tools::wield_gate(&name) {
         None => false,
         Some(None) => true,
-        Some(Some(need)) => number(scope, attack)? >= f64::from(need),
+        Some(Some(need)) => {
+            let need = cb::num(scope, f64::from(need));
+            cb::ge(scope, attack, need)?
+        }
     };
     Ok(v8::Boolean::new(scope, ok).into())
 }
@@ -157,17 +182,39 @@ fn has_all<'s>(
     } else {
         length.min(f64::from(u32::MAX)) as u32
     };
+    let poll = Poll::default();
+    let mut every = true;
     for index in 0..length {
-        let present = cb::catching(scope, |s| reqs.to_object(s)?.has_index(s, index))?;
-        if !present {
-            continue;
-        }
-        let req = cb::get_index(scope, reqs, index)?;
-        if !has_tool_req(scope, req, count, "Tools.hasAllTools")? {
-            return Ok(v8::Boolean::new(scope, false).into());
+        let scope = &mut v8::EscapableHandleScope::new(scope);
+        let flow = every_iteration(scope, &poll, reqs, index, count);
+        if let Flow::Break(_) = cb::iteration(scope, flow)? {
+            every = false;
+            break;
         }
     }
-    Ok(v8::Boolean::new(scope, true).into())
+    Ok(v8::Boolean::new(scope, every).into())
+}
+
+/// One `every` index: a hole is skipped (no JS runs, hence the [`Poll`]); a
+/// failing requirement breaks.
+fn every_iteration<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    poll: &Poll,
+    reqs: v8::Local<'s, v8::Value>,
+    index: u32,
+    count: Callback<'s>,
+) -> JsResult<'s, Flow<'s>> {
+    poll.check(scope)?;
+    let present = cb::catching(scope, |s| reqs.to_object(s)?.has_index(s, index))?;
+    if !present {
+        return Ok(Flow::Continue(None));
+    }
+    let req = cb::get_index(scope, reqs, index)?;
+    if has_tool_req(scope, req, count, "Tools.hasAllTools")? {
+        Ok(Flow::Continue(None))
+    } else {
+        Ok(Flow::Break(None))
+    }
 }
 
 /// Frozen `hasToolReq(req, skillLevel, count)` for an exact requirement:
@@ -209,16 +256,33 @@ fn restock_plan<'s>(
     let inv_count = Callback::plain(scope, inv_count, "invCount");
     let bank_count = Callback::plain(scope, bank_count, "bankCount");
     let plan = v8::Array::new(scope, 0);
-    let mut len = 0u32;
     let rows = ForOf::open(scope, reqs, "reqs")?;
-    while let Some(req) = rows.step(scope)? {
-        let step = restock_row(scope, req, inv_count, bank_count);
-        if let Some(step) = rows.body(scope, step)? {
-            cb::catching(scope, |s| plan.set_index(s, len, step))?;
-            len += 1;
+    loop {
+        let scope = &mut v8::EscapableHandleScope::new(scope);
+        let flow = restock_iteration(scope, &rows, plan, inv_count, bank_count);
+        if let Flow::Break(_) = cb::iteration(scope, flow)? {
+            break;
         }
     }
     Ok(plan.into())
+}
+
+fn restock_iteration<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    rows: &ForOf<'s>,
+    plan: v8::Local<'s, v8::Array>,
+    inv_count: Callback<'s>,
+    bank_count: Callback<'s>,
+) -> JsResult<'s, Flow<'s>> {
+    let Some(req) = rows.step(scope)? else {
+        return Ok(Flow::Break(None));
+    };
+    let step = restock_row(scope, req, inv_count, bank_count);
+    if let Some(step) = rows.body(scope, step)? {
+        let len = plan.length();
+        cb::catching(scope, |s| plan.set_index(s, len, step))?;
+    }
+    Ok(Flow::Continue(None))
 }
 
 fn restock_row<'s>(
@@ -246,16 +310,18 @@ fn restock_row<'s>(
     let name = get(scope, req, "name")?;
     let have = inv_count.call(scope, &[name])?;
     let need = cb::sub(scope, target, have)?;
-    if need <= 0.0 {
+    let zero = cb::num(scope, 0.0);
+    if cb::le(scope, need, zero)? {
         return Ok(None);
     }
     let name = get(scope, req, "name")?;
     let available = bank_count.call(scope, &[name])?;
-    let zero = cb::num(scope, 0.0);
     if cb::le(scope, available, zero)? {
         return Ok(None);
     }
     let name = get(scope, req, "name")?;
+    // `Math.min(need, available)`: ToNumber of each argument, in order.
+    let need = number(scope, need)?;
     let available = number(scope, available)?;
     let qty = if need.is_nan() || available.is_nan() {
         f64::NAN

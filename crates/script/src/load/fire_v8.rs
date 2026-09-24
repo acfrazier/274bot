@@ -9,7 +9,7 @@
 //! - `noLight*`: the `NoLightTiles` set held in Rust ([`crate::fire`]); the JS
 //!   instance passes only its slot.
 
-use super::callback_v8::{self as cb, get, not_impl, number, Callback, ForOf, JsResult};
+use super::callback_v8::{self as cb, get, not_impl, number, Callback, Flow, ForOf, JsResult, Poll};
 use crate::fire;
 use rustyscript::Runtime;
 
@@ -53,13 +53,13 @@ fn run<'s>(
         "noLightNew" => Ok(cb::num(scope, fire::no_light_new() as f64)),
         "noLightAdd" => {
             let slot = slot(scope, args.get(1))?;
-            let key = tile_key(scope, args.get(2))?;
+            let key = registry_key(scope, args.get(2))?;
             fire::no_light_add(slot, key).ok_or_else(|| bad_slot(scope))?;
             Ok(v8::undefined(scope).into())
         }
         "noLightHas" => {
             let slot = slot(scope, args.get(1))?;
-            let key = tile_key(scope, args.get(2))?;
+            let key = registry_key(scope, args.get(2))?;
             let has = fire::no_light_has(slot, &key).ok_or_else(|| bad_slot(scope))?;
             Ok(v8::Boolean::new(scope, has).into())
         }
@@ -103,12 +103,10 @@ fn local_fire_plot<'s>(
     let bank = cb::construct(scope, tile_class, &[x, z, level], "Tile")?;
     let x = get(scope, origin, "x")?;
     let x0 = cb::sub(scope, x, h)?;
-    let x0 = cb::num(scope, x0);
     let x = get(scope, origin, "x")?;
     let x1 = cb::add(scope, x, h)?;
     let z = get(scope, origin, "z")?;
     let z0 = cb::sub(scope, z, h)?;
-    let z0 = cb::num(scope, z0);
     let z = get(scope, origin, "z")?;
     let z1 = cb::add(scope, z, h)?;
     cb::object(
@@ -143,36 +141,51 @@ struct RunArgs<'s> {
 fn run_in_dir<'s>(scope: &mut v8::HandleScope<'s>, a: RunArgs<'s>) -> JsResult<'s, f64> {
     let mut n = 0.0;
     let mut cur = a.from;
+    let poll = Poll::default();
     loop {
-        let count = cb::num(scope, n);
-        if !cb::lt(scope, count, a.cap)? {
-            break;
+        let scope = &mut v8::EscapableHandleScope::new(scope);
+        let flow = lane_iteration(scope, &a, &poll, cur, &mut n);
+        match cb::iteration(scope, flow)? {
+            Flow::Continue(Some(next)) => cur = next,
+            _ => break,
         }
-        if !in_fire_plot(scope, cur, a.plot)? {
-            break;
-        }
-        let has = get(scope, a.occupied, "has")?;
-        let key = tile_key(scope, cur)?;
-        let key = cb::string(scope, &key);
-        let occupied = Callback::method(has, a.occupied, "occupied.has").call(scope, &[key])?;
-        if cb::truthy(scope, occupied) || !a.walkable.truthy(scope, &[cur])? {
-            break;
-        }
-        n += 1.0;
-        let x = get(scope, cur, "x")?;
-        let dx = get(scope, a.dir, "dx")?;
-        let x = cb::add(scope, x, dx)?;
-        let z = get(scope, cur, "z")?;
-        let dz = get(scope, a.dir, "dz")?;
-        let z = cb::add(scope, z, dz)?;
-        let level = get(scope, cur, "level")?;
-        let next = cb::object(scope, &[("x", x), ("z", z), ("level", level)])?;
-        if !a.can_step.truthy(scope, &[cur, next])? {
-            break;
-        }
-        cur = next;
     }
     Ok(n)
+}
+
+/// One lane tile: `Continue(next)` to step on, `Break` to stop. `walkable` /
+/// `canStep` may be builtins, so the loop polls for termination.
+fn lane_iteration<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    a: &RunArgs<'s>,
+    poll: &Poll,
+    cur: v8::Local<'s, v8::Value>,
+    n: &mut f64,
+) -> JsResult<'s, Flow<'s>> {
+    poll.check(scope)?;
+    let count = cb::num(scope, *n);
+    if !cb::lt(scope, count, a.cap)? || !in_fire_plot(scope, cur, a.plot)? {
+        return Ok(Flow::Break(None));
+    }
+    let has = get(scope, a.occupied, "has")?;
+    let key = tile_key(scope, cur)?;
+    let occupied = Callback::method(has, a.occupied, "occupied.has").call(scope, &[key])?;
+    if cb::truthy(scope, occupied) || !a.walkable.truthy(scope, &[cur])? {
+        return Ok(Flow::Break(None));
+    }
+    *n += 1.0;
+    let x = get(scope, cur, "x")?;
+    let dx = get(scope, a.dir, "dx")?;
+    let x = cb::add(scope, x, dx)?;
+    let z = get(scope, cur, "z")?;
+    let dz = get(scope, a.dir, "dz")?;
+    let z = cb::add(scope, z, dz)?;
+    let level = get(scope, cur, "level")?;
+    let next = cb::object(scope, &[("x", x), ("z", z), ("level", level)])?;
+    if !a.can_step.truthy(scope, &[cur, next])? {
+        return Ok(Flow::Break(None));
+    }
+    Ok(Flow::Continue(Some(next)))
 }
 
 /// Frozen `inFirePlot(t, plot)`:
@@ -200,13 +213,24 @@ fn in_fire_plot<'s>(
     Ok(level.strict_equals(bank_level))
 }
 
-/// Frozen `tileKey(t)`: `` `${t.x},${t.z}` ``.
-fn tile_key<'s>(scope: &mut v8::HandleScope<'s>, t: v8::Local<'s, v8::Value>) -> JsResult<'s, String> {
+/// Frozen `tileKey(t)`: `` `${t.x},${t.z}` `` (V8 strings, no UTF-8 round trip).
+fn tile_key<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    t: v8::Local<'s, v8::Value>,
+) -> JsResult<'s, v8::Local<'s, v8::Value>> {
     let x = get(scope, t, "x")?;
-    let x = cb::to_string(scope, x)?;
+    let x = cb::catching(scope, |s| x.to_string(s))?.into();
     let z = get(scope, t, "z")?;
-    let z = cb::to_string(scope, z)?;
-    Ok(format!("{x},{z}"))
+    let z = cb::catching(scope, |s| z.to_string(s))?.into();
+    let comma = cb::string(scope, ",");
+    let head = cb::add(scope, x, comma)?;
+    cb::add(scope, head, z)
+}
+
+/// The registry key for a tile (the frozen `Set<string>` key).
+fn registry_key<'s>(scope: &mut v8::HandleScope<'s>, t: v8::Local<'s, v8::Value>) -> JsResult<'s, String> {
+    let key = tile_key(scope, t)?;
+    Ok(key.to_rust_string_lossy(scope))
 }
 
 fn slot<'s>(scope: &mut v8::HandleScope<'s>, value: v8::Local<'s, v8::Value>) -> JsResult<'s, usize> {
@@ -232,9 +256,12 @@ fn no_light_merge<'s>(
     let all = v8::Set::new(scope);
     if !occupied.is_null_or_undefined() {
         let keys = ForOf::open(scope, occupied, "occupied")?;
-        while let Some(key) = keys.step(scope)? {
-            let added = cb::catching(scope, |s| all.add(s, key));
-            keys.body(scope, added)?;
+        loop {
+            let scope = &mut v8::EscapableHandleScope::new(scope);
+            let flow = merge_iteration(scope, &keys, all);
+            if let Flow::Break(_) = cb::iteration(scope, flow)? {
+                break;
+            }
         }
     }
     let refused = fire::no_light_keys(slot).ok_or_else(|| bad_slot(scope))?;
@@ -243,4 +270,18 @@ fn no_light_merge<'s>(
         cb::catching(scope, |s| all.add(s, key))?;
     }
     Ok(all.into())
+}
+
+/// `all.add(key)` for one key of the caller's `occupied` iterable.
+fn merge_iteration<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    keys: &ForOf<'s>,
+    all: v8::Local<'s, v8::Set>,
+) -> JsResult<'s, Flow<'s>> {
+    let Some(key) = keys.step(scope)? else {
+        return Ok(Flow::Break(None));
+    };
+    let added = cb::catching(scope, |s| all.add(s, key));
+    keys.body(scope, added)?;
+    Ok(Flow::Continue(None))
 }

@@ -7,7 +7,7 @@
 //! where the frozen loop does and returning the caller's own objects.
 
 use super::callback_v8::{
-    self as cb, call, call_method, get, not_impl, number, Callback, ForOf, JsResult,
+    self as cb, call, call_method, get, not_impl, number, Callback, Flow, ForOf, JsResult,
 };
 use crate::boost_potions::{
     boost_faded_by, BoostPotion, FadedOperand, BOOST_FLOOR, BOOST_POTIONS, DEFAULT_WANT,
@@ -73,6 +73,13 @@ fn table<'s>(scope: &mut v8::HandleScope<'s>) -> JsResult<'s, v8::Local<'s, v8::
 }
 
 /// Frozen `boostFaded(base, effective, floor = BOOST_FLOOR)`.
+///
+/// Every operand position in the frozen expression (`-`, `>`, `>=`, `<=`,
+/// `*`) is numeric against a number, so each read is `ToNumber` of the caller's
+/// value, in the frozen order ([`boost_faded_by`]); objects and numeric strings
+/// convert exactly as there. Scope: a BigInt level throws `Cannot convert a
+/// BigInt value to a number` where the frozen arithmetic throws `Cannot mix
+/// BigInt and other types` (or, for all-BigInt `base <= 0`, returns `false`).
 fn faded<'s>(
     scope: &mut v8::HandleScope<'s>,
     base: v8::Local<'s, v8::Value>,
@@ -113,19 +120,15 @@ fn plan_for<'s>(
     carry: v8::Local<'s, v8::Value>,
 ) -> JsResult<'s, v8::Local<'s, v8::Value>> {
     let entries = ForOf::open(scope, carry, "carry")?;
-    while let Some(entry) = entries.step(scope)? {
-        let matched = matching_dose(scope, potion, entry);
-        let Some(flask) = entries.body(scope, matched)? else {
-            continue;
-        };
-        let want = get(scope, entry, "qty");
-        let want = entries.body(scope, want)?;
-        entries.close(scope)?;
-        let flask = cb::string(scope, &flask);
-        return cb::object(
-            scope,
-            &[("potion", descriptor), ("flask", flask), ("want", want)],
-        );
+    let planned = loop {
+        let scope = &mut v8::EscapableHandleScope::new(scope);
+        let flow = plan_iteration(scope, &entries, potion, descriptor);
+        if let Flow::Break(planned) = cb::iteration(scope, flow)? {
+            break planned;
+        }
+    };
+    if let Some(planned) = planned {
+        return Ok(planned);
     }
     let flask = cb::string(scope, &potion.flask());
     let want = cb::num(scope, DEFAULT_WANT as f64);
@@ -133,6 +136,31 @@ fn plan_for<'s>(
         scope,
         &[("potion", descriptor), ("flask", flask), ("want", want)],
     )
+}
+
+/// One carried entry: the plan on a dose match, else on to the next entry.
+fn plan_iteration<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    entries: &ForOf<'s>,
+    potion: &BoostPotion,
+    descriptor: v8::Local<'s, v8::Value>,
+) -> JsResult<'s, Flow<'s>> {
+    let Some(entry) = entries.step(scope)? else {
+        return Ok(Flow::Break(None));
+    };
+    let matched = matching_dose(scope, potion, entry);
+    let Some(flask) = entries.body(scope, matched)? else {
+        return Ok(Flow::Continue(None));
+    };
+    let want = get(scope, entry, "qty");
+    let want = entries.body(scope, want)?;
+    entries.close(scope)?;
+    let flask = cb::string(scope, &flask);
+    let plan = cb::object(
+        scope,
+        &[("potion", descriptor), ("flask", flask), ("want", want)],
+    )?;
+    Ok(Flow::Break(Some(plan)))
 }
 
 fn matching_dose<'s>(
@@ -144,7 +172,8 @@ fn matching_dose<'s>(
         let item = get(scope, entry, "item")?;
         let trimmed = call_method(scope, item, "trim", &[], "entry.item.trim")?;
         let key = call_method(scope, trimmed, "toLowerCase", &[], "entry.item.trim(...).toLowerCase")?;
-        if key.is_string() && key.to_rust_string_lossy(scope) == dose.to_lowercase() {
+        let wanted = cb::string(scope, &dose.to_lowercase());
+        if wanted.strict_equals(key) {
             return Ok(Some(dose));
         }
     }
@@ -166,14 +195,30 @@ fn potion_to_sip<'s>(
 ) -> JsResult<'s, v8::Local<'s, v8::Value>> {
     let plans = get(scope, state, "plans")?;
     let plans = ForOf::open(scope, plans, "s.plans")?;
-    while let Some(plan) = plans.step(scope)? {
-        let due = sip_due(scope, state, plan);
-        if plans.body(scope, due)? {
-            plans.close(scope)?;
-            return Ok(plan);
+    let chosen = loop {
+        let scope = &mut v8::EscapableHandleScope::new(scope);
+        let flow = sip_iteration(scope, &plans, state);
+        if let Flow::Break(chosen) = cb::iteration(scope, flow)? {
+            break chosen;
         }
+    };
+    Ok(chosen.unwrap_or_else(|| v8::null(scope).into()))
+}
+
+fn sip_iteration<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    plans: &ForOf<'s>,
+    state: v8::Local<'s, v8::Value>,
+) -> JsResult<'s, Flow<'s>> {
+    let Some(plan) = plans.step(scope)? else {
+        return Ok(Flow::Break(None));
+    };
+    let due = sip_due(scope, state, plan);
+    if plans.body(scope, due)? {
+        plans.close(scope)?;
+        return Ok(Flow::Break(Some(plan)));
     }
-    Ok(v8::null(scope).into())
+    Ok(Flow::Continue(None))
 }
 
 fn sip_due<'s>(
@@ -196,14 +241,16 @@ fn sip_due<'s>(
     faded(scope, base, effective, floor)
 }
 
-/// `const { base, effective } = value`.
+/// `const { base, effective } = s.levels(...)`, with the engine's message
+/// for a nullish answer.
 fn destructure_levels<'s>(
     scope: &mut v8::HandleScope<'s>,
     value: v8::Local<'s, v8::Value>,
 ) -> JsResult<'s, (v8::Local<'s, v8::Value>, v8::Local<'s, v8::Value>)> {
     if value.is_null_or_undefined() {
         let shown = if value.is_null() { "null" } else { "undefined" };
-        let message = format!("Cannot destructure '{shown}' as it is {shown}.");
+        let message =
+            format!("Cannot destructure property 'base' of 's.levels(...)' as it is {shown}.");
         return Err(cb::type_error(scope, &message));
     }
     let base = get(scope, value, "base")?;

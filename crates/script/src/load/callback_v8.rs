@@ -26,11 +26,20 @@
 //! - [`ForOf`] is the frozen `for...of`: the caller's iterator is acquired
 //!   once, `next` is read once, a returning hit closes it with a normal
 //!   completion and a throwing body closes it with a throw completion.
-//! - Truthiness is JS `ToBoolean` ([`truthy`]); relational operators follow
-//!   JS: two strings compare by UTF-16 code units, anything else by
-//!   `ToNumber` ([`compare`]). BigInt operands and objects whose
-//!   `Symbol.toPrimitive` yields a string are outside the typed callers'
-//!   domain and take the numeric path.
+//! - Truthiness is JS `ToBoolean` ([`truthy`]). The binary operators
+//!   (`>=`, `<=`, `>`, `<`, `+`, `-`, `*`, `/`: [`ge`] … [`div`]) are
+//!   evaluated by V8 itself through a table of one-line arrow functions
+//!   compiled once per context ([`install_ops`]), so `ToPrimitive`
+//!   (`@@toPrimitive`, `valueOf`/`toString` order), string comparison by
+//!   UTF-16 code units, BigInt and the engine's error messages are exactly
+//!   JS. [`number`] is `ToNumber` (a BigInt throws, as `Math.floor` does).
+//! - Loops driven by script data give every iteration its own `HandleScope`
+//!   ([`iteration`], escaping only what the loop keeps), so memory stays flat
+//!   however long the loop runs, and they call into V8 at least every
+//!   [`POLL_EVERY`] iterations ([`Poll`], built into [`ForOf::step`]) so a
+//!   watchdog termination requested while the loop runs only builtins or no
+//!   JS at all still surfaces as [`Throw::Terminated`]. F03 step machines
+//!   follow the same rule.
 //!
 //! # Extension point: callbacks held across ticks (F03)
 //!
@@ -46,7 +55,7 @@
 //! implemented here because none of the helpers that use it today await.
 
 use rustyscript::Runtime;
-use std::cmp::Ordering;
+use std::cell::Cell;
 
 /// Why a JS-observable step did not produce a value.
 pub(crate) enum Throw<'s> {
@@ -288,21 +297,73 @@ pub(crate) fn to_string<'s>(
     Ok(s.to_rust_string_lossy(scope))
 }
 
-/// JS abstract relational comparison of `left` and `right`, converting `left`
-/// first. `None` is an unordered (`NaN`) comparison.
-pub(crate) fn compare<'s>(
+/// The operators V8 evaluates for these helpers, by table index.
+#[derive(Clone, Copy)]
+enum Op {
+    Ge,
+    Le,
+    Gt,
+    Lt,
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Poll,
+}
+
+/// One arrow function per [`Op`], in order. `Poll` does nothing: entering it
+/// is what lets V8 service a pending termination request.
+const OPS_SOURCE: &str = "[(a, b) => a >= b, (a, b) => a <= b, (a, b) => a > b, (a, b) => a < b, \
+     (a, b) => a + b, (a, b) => a - b, (a, b) => a * b, (a, b) => a / b, () => undefined]";
+
+/// Private (script-invisible) key of the operator table on the context global.
+const OPS_KEY: &str = "rs2b0t.callback_v8.ops";
+
+/// Compile the operator table into the main context. Installed before any
+/// helper that uses [`ge`] … [`div`] or [`Poll`].
+pub(crate) fn install_ops(runtime: &mut Runtime) -> Result<(), String> {
+    let context = runtime.deno_runtime().main_context();
+    let mut scope = runtime.deno_runtime().handle_scope();
+    let global = context.open(&mut scope).global(&mut scope);
+    let source = v8::String::new(&mut scope, OPS_SOURCE).ok_or("callback ops: source")?;
+    let script = v8::Script::compile(&mut scope, source, None).ok_or("callback ops: compile")?;
+    let table = script.run(&mut scope).ok_or("callback ops: run")?;
+    let name = v8::String::new(&mut scope, OPS_KEY).ok_or("callback ops: key")?;
+    let key = v8::Private::for_api(&mut scope, Some(name));
+    global
+        .set_private(&mut scope, key, table)
+        .ok_or("callback ops: set")?;
+    Ok(())
+}
+
+fn op<'s>(
     scope: &mut v8::HandleScope<'s>,
+    op: Op,
+    args: &[v8::Local<'s, v8::Value>],
+) -> JsResult<'s, v8::Local<'s, v8::Value>> {
+    let global = scope.get_current_context().global(scope);
+    let name = v8::String::new(scope, OPS_KEY).unwrap_or_else(|| v8::String::empty(scope));
+    let key = v8::Private::for_api(scope, Some(name));
+    let func = global
+        .get_private(scope, key)
+        .and_then(|table| table.to_object(scope))
+        .and_then(|table| table.get_index(scope, op as u32))
+        .and_then(|func| v8::Local::<v8::Function>::try_from(func).ok());
+    let Some(func) = func else {
+        return Err(not_impl(scope, "callback operators"));
+    };
+    let recv = v8::undefined(scope).into();
+    catching(scope, |s| func.call(s, recv, args))
+}
+
+fn relation<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    which: Op,
     left: v8::Local<'s, v8::Value>,
     right: v8::Local<'s, v8::Value>,
-) -> JsResult<'s, Option<Ordering>> {
-    if left.is_string() && right.is_string() {
-        let l = left.to_rust_string_lossy(scope);
-        let r = right.to_rust_string_lossy(scope);
-        return Ok(Some(l.encode_utf16().cmp(r.encode_utf16())));
-    }
-    let l = number(scope, left)?;
-    let r = number(scope, right)?;
-    Ok(l.partial_cmp(&r))
+) -> JsResult<'s, bool> {
+    let result = op(scope, which, &[left, right])?;
+    Ok(result.is_true())
 }
 
 /// `left >= right`.
@@ -311,10 +372,7 @@ pub(crate) fn ge<'s>(
     left: v8::Local<'s, v8::Value>,
     right: v8::Local<'s, v8::Value>,
 ) -> JsResult<'s, bool> {
-    Ok(matches!(
-        compare(scope, left, right)?,
-        Some(Ordering::Greater | Ordering::Equal)
-    ))
+    relation(scope, Op::Ge, left, right)
 }
 
 /// `left <= right`.
@@ -323,10 +381,7 @@ pub(crate) fn le<'s>(
     left: v8::Local<'s, v8::Value>,
     right: v8::Local<'s, v8::Value>,
 ) -> JsResult<'s, bool> {
-    Ok(matches!(
-        compare(scope, left, right)?,
-        Some(Ordering::Less | Ordering::Equal)
-    ))
+    relation(scope, Op::Le, left, right)
 }
 
 /// `left > right`.
@@ -335,7 +390,7 @@ pub(crate) fn gt<'s>(
     left: v8::Local<'s, v8::Value>,
     right: v8::Local<'s, v8::Value>,
 ) -> JsResult<'s, bool> {
-    Ok(compare(scope, left, right)? == Some(Ordering::Greater))
+    relation(scope, Op::Gt, left, right)
 }
 
 /// `left < right`.
@@ -344,35 +399,98 @@ pub(crate) fn lt<'s>(
     left: v8::Local<'s, v8::Value>,
     right: v8::Local<'s, v8::Value>,
 ) -> JsResult<'s, bool> {
-    Ok(compare(scope, left, right)? == Some(Ordering::Less))
+    relation(scope, Op::Lt, left, right)
 }
 
-/// `left - right` (always numeric).
-pub(crate) fn sub<'s>(
-    scope: &mut v8::HandleScope<'s>,
-    left: v8::Local<'s, v8::Value>,
-    right: v8::Local<'s, v8::Value>,
-) -> JsResult<'s, f64> {
-    let l = number(scope, left)?;
-    let r = number(scope, right)?;
-    Ok(l - r)
-}
-
-/// `left + right`: string concatenation when either operand is a string,
-/// numeric addition otherwise.
+/// `left + right`.
 pub(crate) fn add<'s>(
     scope: &mut v8::HandleScope<'s>,
     left: v8::Local<'s, v8::Value>,
     right: v8::Local<'s, v8::Value>,
 ) -> JsResult<'s, v8::Local<'s, v8::Value>> {
-    if left.is_string() || right.is_string() {
-        let mut out = to_string(scope, left)?;
-        out.push_str(&to_string(scope, right)?);
-        return Ok(string(scope, &out));
+    op(scope, Op::Add, &[left, right])
+}
+
+/// `left - right`.
+pub(crate) fn sub<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    left: v8::Local<'s, v8::Value>,
+    right: v8::Local<'s, v8::Value>,
+) -> JsResult<'s, v8::Local<'s, v8::Value>> {
+    op(scope, Op::Sub, &[left, right])
+}
+
+/// `left * right`.
+pub(crate) fn mul<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    left: v8::Local<'s, v8::Value>,
+    right: v8::Local<'s, v8::Value>,
+) -> JsResult<'s, v8::Local<'s, v8::Value>> {
+    op(scope, Op::Mul, &[left, right])
+}
+
+/// `left / right`.
+pub(crate) fn div<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    left: v8::Local<'s, v8::Value>,
+    right: v8::Local<'s, v8::Value>,
+) -> JsResult<'s, v8::Local<'s, v8::Value>> {
+    op(scope, Op::Div, &[left, right])
+}
+
+/// A loop that may run without entering JS calls into V8 at least this often.
+pub(crate) const POLL_EVERY: u32 = 256;
+
+/// Termination polling for a loop driven by script data.
+///
+/// A watchdog `TerminateExecution` is a V8 interrupt: it is serviced only when
+/// JS runs. A native loop over holes, or one whose callbacks are builtins,
+/// could otherwise run to completion after the tick budget. Every
+/// [`POLL_EVERY`]th [`Poll::check`] enters a no-op JS function; a pending
+/// termination then surfaces as [`Throw::Terminated`].
+#[derive(Default)]
+pub(crate) struct Poll(Cell<u32>);
+
+impl Poll {
+    pub(crate) fn check<'s>(&self, scope: &mut v8::HandleScope<'s>) -> JsResult<'s, ()> {
+        let count = self.0.get().wrapping_add(1);
+        self.0.set(count);
+        if count % POLL_EVERY == 0 {
+            op(scope, Op::Poll, &[])?;
+        }
+        Ok(())
     }
-    let l = number(scope, left)?;
-    let r = number(scope, right)?;
-    Ok(v8::Number::new(scope, l + r).into())
+}
+
+/// What one loop iteration hands back to its loop.
+pub(crate) enum Flow<'s> {
+    /// Run the next iteration, carrying a value the loop keeps (if any).
+    Continue(Option<v8::Local<'s, v8::Value>>),
+    /// Leave the loop with a value (if any).
+    Break(Option<v8::Local<'s, v8::Value>>),
+}
+
+/// Close one loop iteration's own `HandleScope`: escape the one value the
+/// iteration hands back, or the thrown value; everything else it created is
+/// released with the scope.
+///
+/// ```ignore
+/// loop {
+///     let scope = &mut v8::EscapableHandleScope::new(scope);
+///     let flow = one_iteration(scope, ...);
+///     match cb::iteration(scope, flow)? { ... }
+/// }
+/// ```
+pub(crate) fn iteration<'i, 'e>(
+    scope: &mut v8::EscapableHandleScope<'i, 'e>,
+    result: JsResult<'i, Flow<'i>>,
+) -> JsResult<'e, Flow<'e>> {
+    match result {
+        Ok(Flow::Continue(value)) => Ok(Flow::Continue(value.map(|v| scope.escape(v)))),
+        Ok(Flow::Break(value)) => Ok(Flow::Break(value.map(|v| scope.escape(v)))),
+        Err(Throw::Value(thrown)) => Err(Throw::Value(scope.escape(thrown))),
+        Err(Throw::Terminated) => Err(Throw::Terminated),
+    }
 }
 
 /// A V8 string value (an over-long string degrades to `""`).
@@ -403,6 +521,7 @@ pub(crate) fn object<'s>(
 pub(crate) struct ForOf<'s> {
     iterator: v8::Local<'s, v8::Value>,
     next: v8::Local<'s, v8::Value>,
+    poll: Poll,
 }
 
 impl<'s> ForOf<'s> {
@@ -430,15 +549,22 @@ impl<'s> ForOf<'s> {
             ));
         }
         let next = get(scope, iterator, "next")?;
-        Ok(Self { iterator, next })
+        Ok(Self {
+            iterator,
+            next,
+            poll: Poll::default(),
+        })
     }
 
     /// One `IteratorStep`: the next value, or `None` once the iterator is done.
-    /// A throwing `next` does not close the iterator (frozen semantics).
+    /// A throwing `next` does not close the iterator (frozen semantics). Call
+    /// it inside the loop's per-iteration scope ([`iteration`]); it polls for
+    /// termination ([`Poll`]) because a builtin `next` never services one.
     pub(crate) fn step(
         &self,
         scope: &mut v8::HandleScope<'s>,
     ) -> JsResult<'s, Option<v8::Local<'s, v8::Value>>> {
+        self.poll.check(scope)?;
         let result = self.call_method(scope, self.next)?;
         if !result.is_object() {
             let shown = to_string(scope, result).unwrap_or_default();

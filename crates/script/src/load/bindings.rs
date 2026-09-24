@@ -863,6 +863,7 @@ pub(super) fn wire_runtime(
     super::partner_trade_v8::install(runtime).map_err(|e| format!("partner trade v8: {e}"))?;
     super::paint_chrome::install(runtime).map_err(|e| format!("paint chrome: {e}"))?;
     super::paint_jive::install(runtime).map_err(|e| format!("paint jive: {e}"))?;
+    super::callback_v8::install_ops(runtime).map_err(|e| format!("callback ops: {e}"))?;
     super::tools_v8::install(runtime).map_err(|e| format!("tools v8: {e}"))?;
     super::boost_potions_v8::install(runtime).map_err(|e| format!("boost potions v8: {e}"))?;
     super::targets_v8::install(runtime).map_err(|e| format!("targets v8: {e}"))?;
