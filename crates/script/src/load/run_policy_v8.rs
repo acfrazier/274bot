@@ -6,9 +6,8 @@ use api::run_policy::{RunEnergyMin, RunPolicyOverride, RunPolicyOverrideCell};
 use rustyscript::Runtime;
 use std::sync::Arc;
 
-/// Keep this as a direct global callback; intercepting Rustyscript's `functions`
-/// proxy would put this hook on unrelated native binding lookups.
-
+/// Store the slot's cell on the isolate and install `__rs2b0t_run_override`
+/// as a direct global callback.
 pub(super) fn install(
     runtime: &mut Runtime,
     run_policy_override: Arc<RunPolicyOverrideCell>,
@@ -44,6 +43,7 @@ fn store_policy(scope: &mut v8::HandleScope, policy: Option<RunPolicyOverride>) 
     cell.set(policy);
     true
 }
+
 fn run_policy_override<'s>(
     scope: &mut v8::HandleScope<'s>,
     value: v8::Local<'s, v8::Value>,
