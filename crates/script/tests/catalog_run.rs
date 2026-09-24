@@ -28,6 +28,51 @@ fn locked_unloadable(spec: &str) -> bool {
 }
 
 #[test]
+fn new_clue_duel_modules_import_but_refuse_unwired_actions() {
+    use script::{LoadIsolate, LoadShape};
+
+    let src = r#"
+import { ClueDuelHelper } from '../../api/duel/ClueDuel.js';
+import { Duel } from '../../api/duel/Duel.js';
+import { openClueBank } from '../../api/ai/clues/bankAccess.js';
+import { walkAcrossClueDuel } from '../../api/ai/clues/duelTravel.js';
+export default class T extends LoopingBot {
+    loop() {
+        const refuses = (fn) => {
+            try { fn(); return 'unexpected success'; }
+            catch (error) { return String(error); }
+        };
+        globalThis.__probe = JSON.stringify([
+            refuses(() => new ClueDuelHelper('partner', () => {})),
+            refuses(() => Duel.active()),
+            refuses(() => openClueBank()),
+            refuses(() => walkAcrossClueDuel()),
+        ]);
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![])
+        .expect("unwired duel module imports load");
+    iso.on_game_tick(1);
+    let value: Vec<String> = serde_json::from_str(
+        iso.probe("__probe")
+            .expect("duel refusal probe")
+            .as_str()
+            .unwrap(),
+    )
+    .unwrap();
+    iso.join();
+    for (actual, suffix) in value.iter().zip([
+        "ClueDuel.ClueDuelHelper",
+        "Duel.active",
+        "bankAccess.openClueBank",
+        "duelTravel.walkAcrossClueDuel",
+    ]) {
+        assert_eq!(actual, &format!("Error: not impl: {suffix}"));
+    }
+}
+
+#[test]
 fn autofighter_and_herb_cleaner_import_herbs_without_unloadable_stamp() {
     let Some(root) = script::rs2b0t_root() else {
         return;
