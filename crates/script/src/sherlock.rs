@@ -539,214 +539,10 @@ fn answered_token(answer: &Value) -> Option<u64> {
 /// host matches that row and refuses a stale one. An unknown kind is not a
 /// verb: nothing is enqueued for it, and a step missing a field it needs is
 /// not a verb either.
-fn enqueue(sink: &mut Vec<InteractReq>, kind: &str, step: &Value) {
-    match kind {
-        "walk" => {
-            let (Some(x), Some(z), Some(level)) =
-                (int_of(step, "x"), int_of(step, "z"), int_of(step, "level"))
-            else {
-                return;
-            };
-            sink.push(InteractReq::Walk {
-                x,
-                z,
-                level,
-                allow_teleports: false,
-                allow_wilderness: false,
-                allow_bank_fetch: false,
-                request_id: 0,
-            });
-        }
-        "held" => {
-            let (Some(name), Some(action)) = (text_of(step, "name"), text_of(step, "action"))
-            else {
-                return;
-            };
-            sink.push(InteractReq::Held {
-                name: name.to_string(),
-                action: action.to_string(),
-            });
-        }
-        "loc" => {
-            let (Some(x), Some(z), Some(level), Some(action), Some(id)) = (
-                int_of(step, "x"),
-                int_of(step, "z"),
-                int_of(step, "level"),
-                text_of(step, "action"),
-                int_of(step, "id"),
-            ) else {
-                return;
-            };
-            sink.push(InteractReq::Loc {
-                x,
-                z,
-                level,
-                action: action.to_string(),
-                id: Some(id),
-            });
-        }
-        "npc" => {
-            let (Some(name), Some(action), Some(index)) = (
-                text_of(step, "name"),
-                text_of(step, "action"),
-                int_of(step, "index"),
-            ) else {
-                return;
-            };
-            sink.push(InteractReq::Npc {
-                name: name.to_string(),
-                action: action.to_string(),
-                index: Some(index),
-            });
-        }
-        "if-button" => {
-            let Some(component_id) = int_of(step, "component_id") else {
-                return;
-            };
-            sink.push(InteractReq::IfButton { component_id });
-        }
-        "close-modal" => {
-            sink.push(InteractReq::CloseModal);
-        }
-        "obj" => {
-            let (Some(x), Some(z), Some(level), Some(name), Some(action)) = (
-                int_of(step, "x"),
-                int_of(step, "z"),
-                int_of(step, "level"),
-                text_of(step, "name"),
-                text_of(step, "action"),
-            ) else {
-                return;
-            };
-            sink.push(InteractReq::Obj {
-                x,
-                z,
-                level,
-                name: Some(name.to_string()),
-                action: action.to_string(),
-            });
-        }
-        "puzzle-move" => {
-            let (Some(id), Some(slot), Some(component), Some(generation)) = (
-                int_of(step, "id"),
-                int_of(step, "slot"),
-                int_of(step, "component"),
-                step.get("generation").and_then(Value::as_u64),
-            ) else {
-                return;
-            };
-            sink.push(InteractReq::PuzzleMove {
-                id,
-                slot,
-                component,
-                generation,
-            });
-        }
-        "continue" => {
-            sink.push(InteractReq::ContinueDialog);
-        }
-        "answer" => {
-            let Some(option) = int_of(step, "option") else {
-                return;
-            };
-            sink.push(InteractReq::Answer { option });
-        }
-        "answer-count" => {
-            let Some(value) = int_of(step, "value") else {
-                return;
-            };
-            sink.push(InteractReq::AnswerCount { value });
-        }
-        "shop-button" => {
-            let (Some(shop), Some(name), Some(id), Some(slot), Some(component), Some(chunk)) = (
-                text_of(step, "shop"),
-                text_of(step, "name"),
-                int_of(step, "id"),
-                int_of(step, "slot"),
-                int_of(step, "component"),
-                int_of(step, "chunk"),
-            ) else {
-                return;
-            };
-            sink.push(InteractReq::ShopButton {
-                kind: shop.to_string(),
-                name: name.to_string(),
-                id,
-                slot,
-                component,
-                chunk,
-            });
-        }
-        "wear" => {
-            let Some(name) = text_of(step, "name") else {
-                return;
-            };
-            sink.push(InteractReq::Wear {
-                name: name.to_string(),
-            });
-        }
-        "unequip" => {
-            let Some(name) = text_of(step, "name") else {
-                return;
-            };
-            sink.push(InteractReq::Unequip {
-                name: name.to_string(),
-            });
-        }
-        "deposit" => {
-            let Some(name) = text_of(step, "name") else {
-                return;
-            };
-            sink.push(InteractReq::Deposit {
-                name: name.to_string(),
-            });
-        }
-        "withdraw" => {
-            let (Some(name), Some(action)) = (text_of(step, "name"), text_of(step, "action"))
-            else {
-                return;
-            };
-            sink.push(InteractReq::Withdraw {
-                name: name.to_string(),
-                action: action.to_string(),
-            });
-        }
-        "walk-nearest-bank" => {
-            sink.push(InteractReq::WalkNearestBank);
-        }
-        "open-booth" => {
-            let (Some(x), Some(z), Some(level), Some(id)) = (
-                int_of(step, "x"),
-                int_of(step, "z"),
-                int_of(step, "level"),
-                int_of(step, "id"),
-            ) else {
-                return;
-            };
-            sink.push(InteractReq::OpenBooth {
-                x,
-                z,
-                level,
-                id,
-                name: text_of(step, "name").map(str::to_string),
-                action: text_of(step, "action").map(str::to_string),
-            });
-        }
-        "close" => {
-            sink.push(InteractReq::Close);
-        }
-        _ => {}
+fn enqueue(sink: &mut Vec<InteractReq>, _kind: &str, step: &Value) {
+    if let Some(req) = crate::clue::verb_req(step) {
+        sink.push(req);
     }
-}
-
-/// One integer field of a machine step.
-fn int_of(step: &Value, key: &str) -> Option<i32> {
-    i32::try_from(step.get(key)?.as_i64()?).ok()
-}
-
-/// One string field of a machine step.
-fn text_of<'a>(step: &'a Value, key: &str) -> Option<&'a str> {
-    step.get(key).and_then(Value::as_str)
 }
 
 #[cfg(test)]
@@ -759,7 +555,6 @@ mod tests {
     use client::dash3d::ClientObj;
     use client::datastruct::LinkList;
     use client::io::{ClientRevision, ServerProt};
-    use std::collections::BTreeSet;
     use std::sync::Arc;
 
     /// The selected-revision facts every session identifies against.
@@ -1834,137 +1629,28 @@ mod tests {
         assert!(script.token.is_some(), "continue keeps the session");
     }
 
-    fn adapter_enqueued_kinds() -> BTreeSet<String> {
-        let src = include_str!("shim/solve_clue.js");
-        let start = src
-            .find("const ENQUEUED_KINDS = [")
-            .expect("ENQUEUED_KINDS");
-        let rest = &src[start..];
-        let end = rest.find(']').expect("ENQUEUED_KINDS close");
-        js_idents(&rest[..end], '\'')
-    }
-
-    fn adapter_next_keys() -> BTreeSet<String> {
-        let src = include_str!("shim/solve_clue.js");
-        let start = src
-            .find("function clueNextPayload(")
-            .expect("clueNextPayload");
-        let rest = &src[start..];
-        let end = rest
-            .find("\nexport class SolveClue")
-            .expect("clueNextPayload end");
-        let body = &rest[..end];
-        let mut keys = BTreeSet::new();
-        for line in body.lines() {
-            let line = line.trim();
-            if let Some(colon) = line.find(':') {
-                let name = line[..colon].trim();
-                if !name.is_empty()
-                    && name
-                        .chars()
-                        .all(|c| c.is_ascii_lowercase() || c == '_')
-                {
-                    keys.insert(name.to_string());
-                }
-            }
-        }
-        let mut rest = body;
-        while let Some(i) = rest.find("payload.") {
-            rest = &rest[i + "payload.".len()..];
-            let name: String = rest
-                .chars()
-                .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
-                .collect();
-            if !name.is_empty() {
-                keys.insert(name);
-            }
-        }
-        keys
-    }
-
-    fn sherlock_next_keys() -> BTreeSet<String> {
-        let src = include_str!("sherlock.rs");
-        let start = src.find("fn next_payload(").expect("next_payload");
-        let rest = &src[start..];
-        let end = rest.find("\nfn held_page(").expect("held_page");
-        let mut keys = BTreeSet::new();
-        let mut body = &rest[..end];
-        while let Some(i) = body.find("page.insert(") {
-            body = &body[i + "page.insert(".len()..];
-            let trimmed = body.trim_start();
-            let Some(rest) = trimmed.strip_prefix('"') else {
-                continue;
-            };
-            let Some(end) = rest.find('"') else { break };
-            keys.insert(rest[..end].to_string());
-            body = &rest[end + 1..];
-        }
-        keys
-    }
-
-    fn sherlock_enqueued_kinds() -> BTreeSet<String> {
-        let src = include_str!("sherlock.rs");
-        let start = src.find("fn enqueue(").expect("enqueue");
-        let rest = &src[start..];
-        let end = rest.find("\nfn int_of(").expect("int_of");
-        let mut keys = BTreeSet::new();
-        for line in rest[..end].lines() {
-            let line = line.trim();
-            let Some(s) = line.strip_prefix('"') else {
-                continue;
-            };
-            let Some(end) = s.find('"') else { continue };
-            if s[end + 1..].trim_start().starts_with("=>") {
-                keys.insert(s[..end].to_string());
-            }
-        }
-        keys
-    }
-
-    fn js_idents(src: &str, quote: char) -> BTreeSet<String> {
-        let mut keys = BTreeSet::new();
-        let mut rest = src;
-        while let Some(start) = rest.find(quote) {
-            rest = &rest[start + quote.len_utf8()..];
-            let Some(end) = rest.find(quote) else { break };
-            let s = &rest[..end];
-            if !s.is_empty()
-                && s.chars()
-                    .all(|c| c.is_ascii_lowercase() || c == '-' || c == '_')
-            {
-                keys.insert(s.to_string());
-            }
-            rest = &rest[end + quote.len_utf8()..];
-        }
-        keys
-    }
-
-    /// The compiled page set and enqueue kinds stay in lockstep with the
-    /// isolate adapter. `resume` is iterate's answer slot, not `next_payload`.
-    /// `walk_missing_carry` is isolate-posted from a walk outcome this
-    /// compiled tick does not observe.
+    /// Unknown kinds are not locs. Shared `verb_req` is the isolate family
+    /// and this card's enqueue; the JS ENQUEUED_KINDS table is gone.
     #[test]
-    fn compiled_page_and_enqueue_sets_match_the_adapter() {
-        let adapter_kinds = adapter_enqueued_kinds();
-        assert_eq!(
-            adapter_kinds,
-            sherlock_enqueued_kinds(),
-            "enqueue kinds diverged from ENQUEUED_KINDS"
-        );
-
-        let mut adapter_keys = adapter_next_keys();
-        assert!(
-            adapter_keys.remove("resume"),
-            "adapter next payload lost resume"
-        );
-        assert!(
-            adapter_keys.remove("walk_missing_carry"),
-            "adapter next payload lost walk_missing_carry"
-        );
-        assert_eq!(
-            adapter_keys,
-            sherlock_next_keys(),
-            "next page keys diverged from clueNextPayload"
-        );
+    fn unknown_kind_is_not_enqueued_as_a_loc() {
+        assert!(crate::clue::verb_req(&serde_json::json!({
+            "kind": "nope",
+            "x": 1,
+            "z": 2,
+            "level": 0,
+            "action": "Search",
+            "id": 1
+        }))
+        .is_none());
+        assert!(matches!(
+            crate::clue::verb_req(&serde_json::json!({ "kind": "continue" })),
+            Some(InteractReq::ContinueDialog)
+        ));
+        assert!(matches!(
+            crate::clue::verb_req(
+                &serde_json::json!({ "kind": "walk", "x": 1, "z": 2, "level": 0 })
+            ),
+            Some(InteractReq::Walk { .. })
+        ));
     }
 }

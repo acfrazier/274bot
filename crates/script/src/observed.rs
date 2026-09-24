@@ -360,10 +360,12 @@ pub struct MakeProduct {
 }
 
 /// The Rust-picked nearest Use-quickly booth.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct NearestBooth {
     pub tile: Tile,
     pub id: i32,
+    pub name: Option<Text>,
+    pub op: Option<Text>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -421,6 +423,29 @@ pub struct Reach {
     pub walkable: Vec<u32>,
     pub step: Vec<u8>,
     pub canlight: Vec<u32>,
+}
+
+/// Posted puzzle board plus the generation that rides a click.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PuzzlePage {
+    pub component_id: i32,
+    pub size: i32,
+    pub items: Vec<PuzzlePiece>,
+    pub generation: u64,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PuzzlePiece {
+    pub slot: i32,
+    pub id: i32,
+}
+
+/// One navigator-named Carry short from a walk outcome.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct CarryRow {
+    pub id: i32,
+    pub count: i32,
+    pub name: Option<Text>,
 }
 
 /// The host's last published walk outcome.
@@ -542,10 +567,10 @@ scene_pages! {
         combat_tab_root: i32,
         /// Whether a posted bank-stand table has any `booth` stand.
         has_booth_stands: bool,
-        nearest_booth: NearestBooth,
         stats: Skills,
     }
     rows {
+        nearest_booth: NearestBooth,
         trade_partner: String,
         inv: Vec<ItemRow>,
         equipment: Vec<ItemRow>,
@@ -574,6 +599,8 @@ scene_pages! {
         main_modal_texts: ModalTexts,
         collision: CollisionQuery,
         reach: Reach,
+        puzzle_board: PuzzlePage,
+        walk_missing_carry: Vec<CarryRow>,
     }
 }
 
@@ -922,6 +949,14 @@ impl Scene {
                     level: booth.level(),
                 },
                 id: booth.id(),
+                name: {
+                    let name = booth.name();
+                    (!name.is_empty()).then(|| strings.text(name))
+                },
+                op: {
+                    let op = booth.op();
+                    (!op.is_empty()).then(|| strings.text(op))
+                },
             });
         }
         if snap.has_bank_approaches() {
@@ -993,6 +1028,37 @@ impl Scene {
                 step: r.step(),
                 canlight: r.canlight(),
             });
+        }
+        if snap.has_puzzle_board() {
+            let board = snap.puzzle_board();
+            p.puzzle_board(PuzzlePage {
+                component_id: board.as_ref().map(|b| b.component_id()).unwrap_or(-1),
+                size: board.as_ref().map(|b| b.size()).unwrap_or(0),
+                items: board
+                    .map(|b| {
+                        b.items()
+                            .iter()
+                            .map(|row| PuzzlePiece {
+                                slot: row.slot(),
+                                id: row.id(),
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+                generation: snap.puzzle_board_generation(),
+            });
+        }
+        if snap.has_walk_missing_carry() {
+            p.walk_missing_carry(
+                snap.walk_missing_carry()
+                    .iter()
+                    .map(|row| CarryRow {
+                        id: row.id(),
+                        count: row.count(),
+                        name: row.name().map(|name| strings.text(name)),
+                    })
+                    .collect(),
+            );
         }
         if snap.has_walk_outcome_seq() {
             p.walk_outcome(WalkOutcome {

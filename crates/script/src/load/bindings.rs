@@ -393,6 +393,13 @@ pub(super) fn wire_runtime(
         })
         .map_err(|e| format!("register clue: {e}"))?;
     runtime
+        .register_function("__rs2b0t_clue_verb", |args: &[serde_json::Value]| {
+            Ok(crate::clue::verb_json(
+                args.first().unwrap_or(&serde_json::Value::Null),
+            ))
+        })
+        .map_err(|e| format!("register clue verb: {e}"))?;
+    runtime
         .register_function("__rs2b0t_fire", move |args: &[serde_json::Value]| {
             Ok(crate::fire::dispatch(
                 args.first().unwrap_or(&serde_json::Value::Null),
@@ -1034,596 +1041,22 @@ function clueKeepV2(input) {
 function clueCall(payload) {
   return globalThis.rustyscript.functions.__rs2b0t_clue(payload);
 }
-// The page is the already-posted `snapshot.inv` `(id, count)` sequence and
-// nothing else: a missing or empty page is an empty held list, never a
-// second snapshot error token, and a row that is not an i32 pair cannot be
-// held. The pair is marshalled as `[id, count]`.
-function cluePageI32(value) {
-  return typeof value === 'number' && Number.isInteger(value)
-    && value >= -2147483648 && value <= 2147483647;
-}
-function clueHeldPage() {
-  const snapshot = host().snapshot;
-  if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return [];
-  const page = snapshot.inv;
-  if (!Array.isArray(page)) return [];
-  const held = [];
-  for (const row of page) {
-    if (!row || typeof row !== 'object' || Array.isArray(row)) continue;
-    if (!cluePageI32(row.id) || !cluePageI32(row.count)) continue;
-    held.push([row.id, row.count]);
-  }
-  return held;
-}
-// The posted cooperative interrupt, re-read every call: EventSignal.pending()
-// reads the same `hold || ours` pair. Nothing about it is captured at begin.
-function cluePending() {
-  const h = host();
-  return h.hold === true || h.ours === true;
-}
-// The posted player tile, read at call time the same way `clueHeldPage` reads
-// the pack page. A missing, null, or malformed `here` is not sent, and the
-// machine then has no arrival claim to make.
-function clueHereTile() {
-  const snapshot = host().snapshot;
-  if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return null;
-  const here = snapshot.here;
-  if (!here || typeof here !== 'object' || Array.isArray(here)) return null;
-  if (!cluePageI32(here.x) || !cluePageI32(here.z) || !cluePageI32(here.level)) return null;
-  return { x: here.x, z: here.z, level: here.level };
-}
-// One posted scene page (`locs` / `ground`), the same call-time class of page.
-// `api.snapshot` hides both (SNAPSHOT_KEYS), so this reads `host().snapshot`
-// directly the way `sceneProjection` does, and never through `api.sceneLocs`.
-// A row that is not the posted `(id, x, z, level, actions)` shape cannot be
-// picked and is dropped here, never a snapshot error. `name` rides along only
-// for the page whose verb resolves identity by name, and it is never invented.
-function clueScenePage(key, withName) {
-  const snapshot = host().snapshot;
-  if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return [];
-  const page = snapshot[key];
-  if (!Array.isArray(page)) return [];
-  const rows = [];
-  for (const row of page) {
-    if (!row || typeof row !== 'object' || Array.isArray(row)) continue;
-    if (!cluePageI32(row.id) || !cluePageI32(row.x) || !cluePageI32(row.z)
-        || !cluePageI32(row.level)) continue;
-    if (!Array.isArray(row.actions)) continue;
-    const actions = [];
-    let ok = true;
-    for (const action of row.actions) {
-      if (typeof action !== 'string') { ok = false; break; }
-      actions.push(action);
-    }
-    if (!ok) continue;
-    const out = { id: row.id, x: row.x, z: row.z, level: row.level, actions: actions };
-    if (withName) out.name = typeof row.name === 'string' ? row.name : null;
-    rows.push(out);
-  }
-  return rows;
-}
-function clueLocPage() {
-  return clueScenePage('locs', false);
-}
-// The posted ground page the collect arm Takes from: the loc shape plus the
-// display name the host resolves. Read at call time like every other page.
-function clueGroundPage() {
-  return clueScenePage('ground', true);
-}
-// The posted pack page the collect arm reads: the display name the Drop
-// resolves and the positive count that occupies a slot. This is not a second
-// inventory read and not a change to `clueHeldPage` — the identify page stays
-// the `(id, count)` pair, and both come from the one posted `snapshot.inv`.
-function clueInvPage() {
-  const snapshot = host().snapshot;
-  if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return [];
-  const page = snapshot.inv;
-  if (!Array.isArray(page)) return [];
-  const rows = [];
-  for (const row of page) {
-    if (!row || typeof row !== 'object' || Array.isArray(row)) continue;
-    if (!cluePageI32(row.id) || !cluePageI32(row.count)) continue;
-    rows.push({
-      id: row.id,
-      name: typeof row.name === 'string' ? row.name : null,
-      count: row.count,
-    });
-  }
-  return rows;
-}
-// The posted worn page the Entrana strip reads: the raw rows with their own
-// `slot`, marshal-only and omit-if-absent the way the locs page is — a field
-// the page did not carry is left off rather than defaulted, and a row that
-// posted none of the four is not a row. This reads `host().snapshot` directly
-// the way every call-time page here does (`api.snapshot` hides `equipment`,
-// and `Equipment.items()` drops the slot); the machine matches on the posted
-// `name` and reads the id only for its two hard-trail dagger ids.
-function clueEquipmentPage() {
-  const snapshot = host().snapshot;
-  if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return [];
-  const page = snapshot.equipment;
-  if (!Array.isArray(page)) return [];
-  const rows = [];
-  for (const row of page) {
-    if (!row || typeof row !== 'object' || Array.isArray(row)) continue;
-    const out = {};
-    if (typeof row.name === 'string') out.name = row.name;
-    if (cluePageI32(row.id)) out.id = row.id;
-    if (cluePageI32(row.count)) out.count = row.count;
-    if (cluePageI32(row.slot)) out.slot = row.slot;
-    if (Object.keys(out).length > 0) rows.push(out);
-  }
-  return rows;
-}
-// The posted nearest Use-quickly booth the strip's and the restore's bank trip
-// opens: the loc's own tile, id and — when the page posted them — display name
-// and action, exactly as the landed bank helpers queue `open-booth`. A page
-// that posted no booth (or no tile or id) hands the machine nothing at all: no
-// stand is invented and no tile is copied.
-function clueNearestBooth() {
-  const snapshot = host().snapshot;
-  if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return null;
-  const row = snapshot.nearest_booth;
-  if (!row || typeof row !== 'object' || Array.isArray(row)) return null;
-  if (!cluePageI32(row.x) || !cluePageI32(row.z) || !cluePageI32(row.level)
-      || !cluePageI32(row.id)) return null;
-  const out = { x: row.x, z: row.z, level: row.level, id: row.id };
-  if (typeof row.name === 'string') out.name = row.name;
-  if (typeof row.op === 'string') out.op = row.op;
-  return out;
-}
-// The posted bank interface, and only when the page posted the boolean: the
-// strip's deposit and the restore's claim go out only behind a posted open
-// bank, and an omitted slot is unobserved rather than closed.
-function clueBankOpen() {
-  const snapshot = host().snapshot;
-  if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return null;
-  return typeof snapshot.bank_open === 'boolean' ? snapshot.bank_open : null;
-}
-// The posted main modal id, and only when the page posted it: an omitted slot
-// is not the closed `-1` and not a second definition of it, so the machine is
-// handed no `main_modal_id` at all. Never `6960`, and never the `modals`
-// step machine.
-function clueMainModalId() {
-  const snapshot = host().snapshot;
-  if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return null;
-  return cluePageI32(snapshot.main_modal_id) ? snapshot.main_modal_id : null;
-}
-// The posted chat slots the talk arm reads: the open chat modal id — `-1` is
-// the closed one the page posts itself — and the posted `chat_continue`. Both
-// are posted only when the page carried them: an unobserved slot is not an open
-// chat and not a close. Neither key is on `SNAPSHOT_KEYS`, so `api.snapshot`
-// hides both and this reader goes to `host().snapshot` the way every other
-// call-time page here does.
-function clueChatModalId() {
-  const snapshot = host().snapshot;
-  if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return null;
-  return cluePageI32(snapshot.chat_modal_id) ? snapshot.chat_modal_id : null;
-}
-function clueChatContinue() {
-  const snapshot = host().snapshot;
-  if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return null;
-  return typeof snapshot.chat_continue === 'boolean' ? snapshot.chat_continue : null;
-}
-// The posted chat choices the acquire chain answers, read at call time like the
-// other chat slots. Each row keeps its own 1-based posted slot — the machine
-// answers that slot and never a position it re-derived — so a row that posted
-// no text is dropped without renumbering the rows around it. A page that posted
-// no `chat_options` array hands the machine nothing at all: an unobserved list
-// is not an empty one, and `api.snapshot` hides the key anyway, so this reads
-// `host().snapshot` like every other call-time page here.
-function clueChatOptions() {
-  const snapshot = host().snapshot;
-  if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return null;
-  const page = snapshot.chat_options;
-  if (!Array.isArray(page)) return null;
-  const rows = [];
-  for (let i = 0; i < page.length; i += 1) {
-    const row = page[i];
-    if (!row || typeof row !== 'object' || Array.isArray(row)) continue;
-    if (typeof row.text !== 'string') continue;
-    rows.push({ text: row.text, option: i + 1 });
-  }
-  return rows;
-}
-// The posted count dialog, and only when the page posted the boolean: the talk
-// arm answers a count only behind the posted open fact, and an omitted slot is
-// unobserved rather than closed.
-function clueCountDialogOpen() {
-  const snapshot = host().snapshot;
-  if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return null;
-  return typeof snapshot.count_dialog_open === 'boolean' ? snapshot.count_dialog_open : null;
-}
-// The posted inv tab slot count. A page that did not post it hands the machine
-// nothing: 28 is the client default, not this machine's to invent.
-function clueInvSize() {
-  const snapshot = host().snapshot;
-  if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return null;
-  return cluePageI32(snapshot.inv_size) ? snapshot.inv_size : null;
-}
-// The posted npc page the guarded encounter observes after its spawn: the
-// posted index the Attack verb carries, the posted id and display name the row
-// family's cap-documented wizard filter matches, the posted `x`/`z`/`level`
-// tile the same-level filter and the absent-distance Chebyshev read are made
-// from, the posted distance the frozen radius prefers, the posted health and
-// target pairs the kill is read through and the posted `in_combat` flag. Read
-// at call time like every other page — `api.snapshot.npcs` is the public
-// projection and this machine never scans it. A row that did not post an index
-// cannot be Attacked and is dropped here; every other absent field is posted
-// as null and matches nothing.
-function clueNpcPage() {
-  const snapshot = host().snapshot;
-  if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return [];
-  const page = snapshot.npcs;
-  if (!Array.isArray(page)) return [];
-  const rows = [];
-  for (const row of page) {
-    if (!row || typeof row !== 'object' || Array.isArray(row)) continue;
-    if (!cluePageI32(row.index)) continue;
-    rows.push({
-      index: row.index,
-      id: cluePageI32(row.id) ? row.id : null,
-      name: typeof row.name === 'string' ? row.name : null,
-      x: cluePageI32(row.x) ? row.x : null,
-      z: cluePageI32(row.z) ? row.z : null,
-      level: cluePageI32(row.level) ? row.level : null,
-      distance: cluePageI32(row.distance) ? row.distance : null,
-      health: cluePageI32(row.health) ? row.health : null,
-      max_health: cluePageI32(row.max_health) ? row.max_health : null,
-      in_combat: typeof row.in_combat === 'boolean' ? row.in_combat : null,
-      actions: Array.isArray(row.actions)
-        ? row.actions.filter((action) => typeof action === 'string')
-        : [],
-      target_kind: cluePageI32(row.target_kind) ? row.target_kind : null,
-      target_index: cluePageI32(row.target_index) ? row.target_index : null,
-    });
-  }
-  return rows;
-}
-// The posted local-player table slot and its own posted target pair: the
-// encounter's `targetsMe` read and the health-0 ownership read. Posted only
-// when the page carried it, so an absent slot is never read as zero.
-function clueSelfSlot() {
-  const snapshot = host().snapshot;
-  if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return null;
-  return cluePageI32(snapshot.self_slot) ? snapshot.self_slot : null;
-}
-// The local player's own posted target pair — `target_kind` `1` is an npc —
-// which the health-0 kill read compares with the wizard this token owns. Both
-// halves are needed, so a page that posted only one posts no target at all.
-function clueSelfTarget() {
-  const snapshot = host().snapshot;
-  if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return null;
-  if (!cluePageI32(snapshot.self_target_kind) || !cluePageI32(snapshot.self_target_index)) {
-    return null;
-  }
-  return { kind: snapshot.self_target_kind, index: snapshot.self_target_index };
-}
-// The posted Protect from Magic overlay: the selected prayer row's own varp,
-// index 95 on both pins. Posted only when the varp page carried it, so the
-// machine reads a missing overlay as unobserved rather than as off.
-function clueVarp95() {
-  const snapshot = host().snapshot;
-  if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return null;
-  const page = snapshot.varps;
-  if (!Array.isArray(page)) return null;
-  const row = page.find((v) => v && typeof v === 'object' && v.index === 95);
-  return row && cluePageI32(row.value) ? row.value : null;
-}
-// The posted effective hitpoints of the local player, off the posted
-// `snapshot.stats` page: the frozen mid-fight wait. A page that did not post
-// the row is not a zero.
-function clueHitpoints() {
-  const snapshot = host().snapshot;
-  if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return null;
-  const page = snapshot.stats;
-  if (!Array.isArray(page)) return null;
-  const row = page.find((s) => s && typeof s === 'object' && s.name === 'hitpoints');
-  return row && cluePageI32(row.effective) ? row.effective : null;
-}
-// The posted puzzle board the plan reads and the generation its click rides:
-// the identified component, its observed slot count and its sparse rows, read
-// at call time off `host().snapshot` exactly like every other page here. SNAP
-// owns the observation — a closed board is the present `{-1, 0, []}`, an empty
-// slot contributes no row, and this reader never fills a board to 25. A row
-// that did not post an i32 slot and id is dropped here; the machine's own read
-// rejects a board that is not 24 pieces around one gap, and it rejects a page
-// with no generation rather than clicking on an invented one.
-// The posted walk outcome's navigator-named gate shorts: the strict route's own
-// `Carry` diagnosis, one row per `item_req` the posted pack could not prove. A
-// row that is not the posted `(id, count)` pair cannot be a named short, and
-// `name` rides along only as the string the host obj table resolved — the join
-// is the id. A page that did not post the vector hands the machine nothing at
-// all: an unobserved list is not an empty one, and the fail bit beside it is
-// never a substitute for it.
-function clueWalkMissingCarry() {
-  const snapshot = host().snapshot;
-  if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return null;
-  const page = snapshot.walk_missing_carry;
-  if (!Array.isArray(page)) return null;
-  const rows = [];
-  for (const row of page) {
-    if (!row || typeof row !== 'object' || Array.isArray(row)) continue;
-    if (!cluePageI32(row.id) || !cluePageI32(row.count)) continue;
-    rows.push({
-      id: row.id,
-      count: row.count,
-      name: typeof row.name === 'string' ? row.name : null,
-    });
-  }
-  return rows;
-}
-// The posted shop interface the gate-toll trip reads. Both slots are posted only
-// when the page carried them: an omitted `shop_open` is unobserved rather than a
-// closed interface, and a row the page posted without a clickable slot,
-// component or display name is still posted as the observation it is — the
-// machine skips it rather than this adapter guessing at one.
-function clueShopOpen() {
-  const snapshot = host().snapshot;
-  if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return null;
-  return typeof snapshot.shop_open === 'boolean' ? snapshot.shop_open : null;
-}
-function clueShopStock() {
-  const snapshot = host().snapshot;
-  if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return null;
-  const page = snapshot.shop_stock;
-  if (!Array.isArray(page)) return null;
-  const rows = [];
-  for (const row of page) {
-    if (!row || typeof row !== 'object' || Array.isArray(row)) continue;
-    if (!cluePageI32(row.id)) continue;
-    rows.push({
-      id: row.id,
-      name: typeof row.name === 'string' ? row.name : null,
-      count: cluePageI32(row.count) ? row.count : null,
-      slot: cluePageI32(row.slot) ? row.slot : null,
-      component: cluePageI32(row.component_id) ? row.component_id : null,
-    });
-  }
-  return rows;
-}
-function cluePuzzleBoard() {
-  const snapshot = host().snapshot;
-  if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return null;
-  const board = snapshot.puzzle_board;
-  if (!board || typeof board !== 'object' || Array.isArray(board)) return null;
-  if (!cluePageI32(board.component_id) || !cluePageI32(board.size)) return null;
-  if (!Array.isArray(board.items)) return null;
-  const items = [];
-  for (const row of board.items) {
-    if (!row || typeof row !== 'object' || Array.isArray(row)) continue;
-    if (!cluePageI32(row.slot) || !cluePageI32(row.id)) continue;
-    items.push({ slot: row.slot, id: row.id });
-  }
-  return { component_id: board.component_id, size: board.size, items: items };
-}
-// The posted board session generation: `puzzle_board_generation` is the page's
-// own session counter, so a non-negative safe integer is the whole of it a
-// double can carry. A page that did not post one hands the machine nothing,
-// and no click is sent on an invented session.
-function cluePuzzleGeneration() {
-  const snapshot = host().snapshot;
-  if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return null;
-  const generation = snapshot.puzzle_board_generation;
-  return typeof generation === 'number' && Number.isSafeInteger(generation) && generation >= 0
-    ? generation
-    : null;
-}
-// Every continue step is this envelope, the completion kinds included: the
-// machine's `kind` is what tells them apart, and `status: 'continue'` is this
-// helper's own slot — never hunt's `status: 'done'`.
+// Continue envelope and begin/next error mapping. Scene pages are read in
+// Rust; verbs are mapped by `__rs2b0t_clue_verb` (never a loc fall-through).
 function clueStep(step) {
   return { ok: true, status: 'continue', token: step.token, ...step };
 }
-// A dead token is `stale`; the generation abort the machine reported is
-// `aborted`. The identify family's own tokens — the same three `begin`
-// preserves — survive here too: a live session that loses its held
-// membership reports `none-held`, not `stale`, and the packed 3554
-// `access: "constrained"` row reports `constrained`. Internal reasons are
-// never handed out as an ok kind.
 function clueStepError(reason) {
   if (reason === 'aborted' || reason === 'constrained') return reason;
   if (reason === 'missing-selected-data' || reason === 'family-unavailable:trails'
       || reason === 'none-held') return reason;
   return 'stale';
 }
-// The begin refusals are the identify family's own tokens, the constrained
-// row's own refusal and the abandon latch's: the row this machine left in the
-// pack is refused while it is still the one held, so a later pickup of it needs
-// a `retry` or a different held row. Anything else internal is `stale`.
 function clueBeginError(reason) {
   if (reason === 'constrained' || reason === 'abandoned') return reason;
   if (reason === 'missing-selected-data' || reason === 'family-unavailable:trails'
       || reason === 'none-held') return reason;
   return 'stale';
-}
-// The machine's own walk, held, npc, if-button, chat and shop steps go onto the
-// shared interact drain the way the quest journal enqueues `if-button` /
-// `close-modal` and the landed npc consumers enqueue `npc`: a generation check,
-// then a push. Each kind has its own explicit arm before the loc fall-through,
-// so a held item identity is never enqueued as a loc, an `obj` Take is never
-// enqueued as a loc, the closed-handler `continue` / `answer` pair is never
-// enqueued as one, a `shop-button` click is never enqueued as one, and the loc
-// row always carries the posted id. `held` is
-// already an author `V2_OPS` verb, but this machine enqueues its own step
-// directly instead of going through `enqueueRequest`; `loc`, `obj`,
-// `close-modal`, `npc`, `if-button`, `continue`, `answer` and `shop-button` are
-// not `V2_OPS`
-// verbs at all, so `api.request({ op: 'npc' })`, `api.request({ op: 'continue' })`,
-// `api.request({ op: 'answer' })` and `api.request({ op: 'shop-button' })` stay
-// `not impl`.
-function enqueueClueVerb(step) {
-  const h = host();
-  h.interact = h.interact || [];
-  if (step.kind === 'walk') {
-    h.interact.push({ op: 'walk', x: step.x, z: step.z, level: step.level });
-    return;
-  }
-  if (step.kind === 'if-button') {
-    // The landed generic if-button push the prayer isolate and the quest
-    // journal already use: the selected Protect from Magic component id.
-    h.interact.push({ op: 'if-button', component_id: step.component_id });
-    return;
-  }
-  if (step.kind === 'npc') {
-    // The posted identity the Attack rides: the posted name, the action the
-    // machine dispatched and the posted scene index. The arm is generic, not
-    // Attack-hardcoded — the action is whatever the step carried.
-    h.interact.push({
-      op: 'npc',
-      name: step.name,
-      action: step.action,
-      index: step.index,
-    });
-    return;
-  }
-  if (step.kind === 'answer-count') {
-    // The open count dialog the talk arm's challenge step answers: the selected
-    // answer the machine parsed, and nothing else. Its own arm, before the loc
-    // fall-through, and never a `V2_OPS` request.
-    h.interact.push({ op: 'answer-count', value: step.value });
-    return;
-  }
-  if (step.kind === 'continue') {
-    // The open giver chat the acquire chain continues: the landed
-    // `ContinueDialog` step, with no option and no text of its own. Its own arm,
-    // and never a `V2_OPS` request: `continue` is not an author verb.
-    h.interact.push({ op: 'continue' });
-    return;
-  }
-  if (step.kind === 'answer') {
-    // The posted 1-based option slot the acquire chain answers: the machine's
-    // own slot, never a position re-derived here and never the last option of a
-    // list it could not match. Never a `V2_OPS` request either.
-    h.interact.push({ op: 'answer', option: step.option });
-    return;
-  }
-  if (step.kind === 'close-modal') {
-    // The journal's own close push: the main modal this machine's Collecting
-    // arm saw posted open, and nothing else.
-    h.interact.push({ op: 'close-modal' });
-    return;
-  }
-  if (step.kind === 'obj') {
-    // The casket overflow on the posted tile, by the posted name and action.
-    // The host matches that identity and refuses a stale row rather than
-    // taking another ground row on the same tile.
-    h.interact.push({
-      op: 'obj',
-      x: step.x,
-      z: step.z,
-      level: step.level,
-      name: step.name,
-      action: step.action,
-    });
-    return;
-  }
-  if (step.kind === 'puzzle-move') {
-    // The exact posted board row: its own id, the slot it sits in, the posted
-    // component and this call's board generation. The host re-resolves that
-    // identity under the board session and refuses a closed board, a stale
-    // slot, a wrong-size board and a stale generation; nothing else rides
-    // along and no reply is expected.
-    h.interact.push({
-      op: 'puzzle-move',
-      id: step.id,
-      slot: step.slot,
-      component: step.component,
-      generation: step.generation,
-    });
-    return;
-  }
-  if (step.kind === 'shop-button') {
-    // The open shop interface's own click: the posted stock row's identity and
-    // one chunk of one. The landed `shop-button` op and nothing else — its own
-    // explicit arm before the loc fall-through, never a `kind: "ops"` shopping
-    // list, never a `V2_OPS` author verb (`api.request({ op: 'shop-button' })`
-    // stays `not impl`), and never a nested `shop.rs` batch.
-    h.interact.push({
-      op: 'shop-button',
-      kind: step.shop,
-      name: step.name,
-      id: step.id,
-      slot: step.slot,
-      component: step.component,
-      chunk: step.chunk,
-    });
-    return;
-  }
-  if (step.kind === 'held') {
-    // The selected item display name; the host resolves the first inventory
-    // row with the name. No row id and no tile rides along. The Collecting
-    // Drop reuses this arm with `action: 'Drop'`.
-    h.interact.push({ op: 'held', name: step.name, action: step.action });
-    return;
-  }
-  if (step.kind === 'unequip') {
-    // The landed worn-row verb the shim's `Equipment.unequip` queues: the
-    // worn component's own `Remove` for the display name the Entrana strip
-    // takes off. `wear` resolves inventory rows alone, so the strip never
-    // rides that one. Not a `V2_OPS` author verb — `api.request({ op:
-    // 'unequip' })` is `not impl` — and only the display name rides it.
-    h.interact.push({ op: 'unequip', name: step.name });
-    return;
-  }
-  if (step.kind === 'wear') {
-    // The landed equip-from-pack verb the Entrana restore puts a listed name
-    // back on with: the display name and nothing else. Not a `V2_OPS` author
-    // verb either — `api.request({ op: 'wear' })` is `not impl`, and this
-    // machine enqueues its own step directly.
-    h.interact.push({ op: 'wear', name: step.name });
-    return;
-  }
-  if (step.kind === 'deposit') {
-    // The landed bank-side deposit by display name: the restricted names the
-    // strip put in the pack, and never the ordinary loot deposit.
-    h.interact.push({ op: 'deposit', name: step.name });
-    return;
-  }
-  if (step.kind === 'withdraw') {
-    // The landed bank withdraw for one listed name with the machine's own
-    // posted action label (`Withdraw-1`).
-    h.interact.push({ op: 'withdraw', name: step.name, action: step.action });
-    return;
-  }
-  if (step.kind === 'walk-nearest-bank') {
-    // The landed Rust-picked stand walk: no tile rides it, because the machine
-    // never invents one.
-    h.interact.push({ op: 'walk-nearest-bank' });
-    return;
-  }
-  if (step.kind === 'open-booth') {
-    // The posted booth's own identity, the way the landed bank helpers queue
-    // it: no stand is picked here and no tile is copied.
-    const open = { op: 'open-booth', x: step.x, z: step.z, level: step.level, id: step.id };
-    if (typeof step.name === 'string') open.name = step.name;
-    if (typeof step.action === 'string') open.action = step.action;
-    h.interact.push(open);
-    return;
-  }
-  if (step.kind === 'close') {
-    // The open bank interface's own close, after the strip's deposit or the
-    // restore's claim.
-    h.interact.push({ op: 'close' });
-    return;
-  }
-  // The completion envelope is not a verb: `done`, `grind-ready`, `dead`,
-  // `abandon`, `supplies-needed`, `no-shop` and `guardian-lost` are `next` kinds
-  // and never pushed onto the interact drain. The explicit returns keep them off
-  // the loc fall-through, so an unknown kind is never enqueued as a loc either.
-  if (step.kind === 'done' || step.kind === 'grind-ready' || step.kind === 'dead'
-      || step.kind === 'abandon' || step.kind === 'supplies-needed'
-      || step.kind === 'no-shop' || step.kind === 'guardian-lost') {
-    return;
-  }
-  h.interact.push({
-    op: 'loc',
-    x: step.x,
-    z: step.z,
-    level: step.level,
-    action: step.action,
-    id: step.id,
-  });
 }
 api.clue = {
   row: function (input) {
@@ -1684,52 +1117,15 @@ api.clue = {
     const step = clueCall({
       op: 'begin',
       generation: lifecycleGeneration,
-      held: clueHeldPage(),
     });
     if (!step || typeof step !== 'object') return helperErr('stale');
     if (step.kind === 'token') return helperOk({ token: step.token });
     if (step.kind === 'aborted') return helperErr(clueBeginError(step.reason));
     return helperErr('stale');
   },
-  // One step. `resume` is the callback return (hunt's `reply` slot under this
-  // name; both are never read). The wrapper marshals the call-time pages —
-  // the parked `snapshot.inv` page, the posted `here` tile, the posted loc
-  // page, and for the trail-end collect the posted ground page, the posted
-  // pack rows with their slot count and the posted main modal — so the
-  // machine never caches a world copy. The guarded encounter adds the posted
-  // npc page, the local-player slot and target pair, the posted Protect from
-  // Magic overlay and the posted effective hitpoints. The talk arm adds the
-  // posted chat modal, its continue flag and the posted count dialog, and the
-  // trio acquire chain adds the posted `chat_options` choices, each with its
-  // own 1-based posted slot. The Entrana strip and its restore add the posted
-  // worn `equipment` rows and the posted bank facts — `nearest_booth` and
-  // `bank_open` — and their own `unequip`, `wear`, `deposit`, `withdraw`,
-  // `walk-nearest-bank`, `open-booth` and `close` steps. Kinds
-  // are `wait`, `yield`, `callback.enabled`, `callback.log`,
-  // `callback.setStatus`, `held`, `walk`, `loc`, `close-modal`, `obj`, `npc`,
-  // `if-button`, `answer-count`, `continue`, `answer` and the completion
-  // envelope — `grind-ready`,
-  // `supplies-needed`, `no-shop`, `done`, `dead`, `abandon` and `guardian-lost`.
-  // The
-  // completion kinds ride this same continue shape and are never enqueued;
-  // `done` is the finished collect's own kind, not a hunt `status: 'done'`,
-  // and the exact `'clue solved'` string is the machine's own
-  // `callback.setStatus` message. The puzzle-box
-  // arm adds the posted board and its session generation, and its
-  // `puzzle-move` kind. The gate-toll trip adds the posted walk outcome's
-  // navigator-named `walk_missing_carry` shorts and the posted shop interface
-  // (`shop_open`, `shop_stock`), and its `shop-button` kind — the landed
-  // `InteractReq::ShopButton` click on one posted stock row, never a
-  // `kind: "ops"` list and never a `V2_OPS` request. `no-shop` is the named
-  // wait-class a trip that could not observe the short's own Trade, interface
-  // or stock row ends with: the token lives. A `walk`, `held`, `loc`,
-  // `close-modal`, `obj`, `npc`,
-  // `if-button`, `answer-count`, `puzzle-move`, `continue`, `answer` or
-  // `shop-button` step is
-  // enqueued onto the
-  // interact drain like the journal's `if-button`, and the step is still
-  // returned as a continue object. A dead token is the error object, never
-  // `undefined` and never an `aborted` continue kind.
+  // One step. `resume` is the callback return. Rust reads the isolate scene;
+  // this helper never echoes snapshot pages. A verb is enqueued by the Rust
+  // mapper (`__rs2b0t_clue_verb`); an unknown kind is not a loc.
   next: function (input) {
     if (arguments.length === 0) return helperErr('invalid-args');
     if (input == null || typeof input !== 'object' || Array.isArray(input)) {
@@ -1743,111 +1139,30 @@ api.clue = {
       op: 'next',
       token: input.token,
       generation: generation,
-      held: clueHeldPage(),
-      hold: cluePending(),
-      locs: clueLocPage(),
-      ground: clueGroundPage(),
-      inv: clueInvPage(),
-      npcs: clueNpcPage(),
-      // The worn page the Entrana strip reads, always present the way `inv` is:
-      // a page that posted nothing is an empty list, and never a second
-      // `Equipment.items()` read.
-      equipment: clueEquipmentPage(),
     };
-    const here = clueHereTile();
-    if (here !== null) payload.here = here;
-    // The strip's and the restore's own bank facts, posted-only like the chat
-    // slots: an omitted booth or bank slot stays unobserved on the machine
-    // rather than becoming an invented stand or a closed bank.
-    const nearestBooth = clueNearestBooth();
-    if (nearestBooth !== null) payload.nearest_booth = nearestBooth;
-    const bankOpen = clueBankOpen();
-    if (bankOpen !== null) payload.bank_open = bankOpen;
-    const main = clueMainModalId();
-    if (main !== null) payload.main_modal_id = main;
-    // The talk arm's own call-time facts, posted-only like `main_modal_id`: an
-    // omitted chat or count slot is unobserved, never a closed one.
-    const chatModal = clueChatModalId();
-    if (chatModal !== null) payload.chat_modal_id = chatModal;
-    const chatContinue = clueChatContinue();
-    if (chatContinue !== null) payload.chat_continue = chatContinue;
-    // The acquire chain's own posted choices, posted-only like the slots above:
-    // an unobserved list stays unobserved on the machine rather than becoming
-    // an empty one it could read a close into.
-    const chatOptions = clueChatOptions();
-    if (chatOptions !== null) payload.chat_options = chatOptions;
-    const countOpen = clueCountDialogOpen();
-    if (countOpen !== null) payload.count_dialog_open = countOpen;
-    const invSize = clueInvSize();
-    if (invSize !== null) payload.inv_size = invSize;
-    const selfSlot = clueSelfSlot();
-    if (selfSlot !== null) payload.self_slot = selfSlot;
-    const selfTarget = clueSelfTarget();
-    if (selfTarget !== null) {
-      payload.self_target_kind = selfTarget.kind;
-      payload.self_target_index = selfTarget.index;
-    }
-    const hitpoints = clueHitpoints();
-    if (hitpoints !== null) payload.hitpoints = hitpoints;
-    const varp95 = clueVarp95();
-    if (varp95 !== null) payload.varp95 = varp95;
-    const puzzleBoard = cluePuzzleBoard();
-    if (puzzleBoard !== null) payload.puzzle_board = puzzleBoard;
-    const puzzleGeneration = cluePuzzleGeneration();
-    if (puzzleGeneration !== null) payload.puzzle_board_generation = puzzleGeneration;
-    // The walk outcome's own navigator-named shorts, and the posted shop
-    // interface the gate-toll trip reads: all three are posted-only, so a slot
-    // the page did not carry stays unobserved on the machine rather than
-    // becoming a named short, a closed interface or an empty stock.
-    const missingCarry = clueWalkMissingCarry();
-    if (missingCarry !== null) payload.walk_missing_carry = missingCarry;
-    const shopOpen = clueShopOpen();
-    if (shopOpen !== null) payload.shop_open = shopOpen;
-    const shopStock = clueShopStock();
-    if (shopStock !== null) payload.shop_stock = shopStock;
     if (hasResume) payload.resume = input.resume;
     const step = clueCall(payload);
     if (!step || typeof step !== 'object') return helperErr('stale');
     if (step.kind === 'aborted') return helperErr(clueStepError(step.reason));
-    if (step.kind === 'walk' || step.kind === 'held' || step.kind === 'loc'
-        || step.kind === 'close-modal' || step.kind === 'obj'
-        || step.kind === 'npc' || step.kind === 'if-button'
-        || step.kind === 'answer-count' || step.kind === 'puzzle-move'
-        || step.kind === 'continue' || step.kind === 'answer'
-        || step.kind === 'shop-button' || step.kind === 'wear'
-        || step.kind === 'unequip'
-        || step.kind === 'deposit' || step.kind === 'withdraw'
-        || step.kind === 'walk-nearest-bank' || step.kind === 'open-booth'
-        || step.kind === 'close') {
-      // Enqueue synchronously, after the generation check: a reset or stop
-      // between the call and this push is not a verb for the dead session.
-      if (generation !== lifecycleGeneration) return helperErr('stale');
-      enqueueClueVerb(step);
-      return clueStep(step);
+    if (generation !== lifecycleGeneration) return helperErr('stale');
+    const req = globalThis.rustyscript.functions.__rs2b0t_clue_verb(step);
+    if (req && typeof req === 'object' && typeof req.op === 'string') {
+      const h = host();
+      h.interact = h.interact || [];
+      h.interact.push(req);
     }
     if (step.kind === 'wait' || step.kind === 'yield'
         || step.kind === 'callback.enabled' || step.kind === 'callback.log'
-        || step.kind === 'callback.setStatus') {
-      return clueStep(step);
-    }
-    // The completion envelope rides the same continue shape: `grind-ready` is
-    // a live-token continue, `supplies-needed` the arrived dig's wait-class,
-    // `no-shop` the gate-toll trip's own wait-class, and `done` / `dead` /
-    // `abandon` / `guardian-lost` are terminal kinds the machine emits once.
-    // None of them is a verb and none is enqueued.
-    if (step.kind === 'grind-ready' || step.kind === 'supplies-needed'
+        || step.kind === 'callback.setStatus'
+        || step.kind === 'grind-ready' || step.kind === 'supplies-needed'
         || step.kind === 'no-shop' || step.kind === 'done' || step.kind === 'dead'
-        || step.kind === 'abandon' || step.kind === 'guardian-lost') {
+        || step.kind === 'abandon' || step.kind === 'guardian-lost'
+        || req && typeof req === 'object' && typeof req.op === 'string') {
       return clueStep(step);
     }
     return helperErr('stale');
   },
-  // The frozen `retry()` on this machine's own seat: the abandon latch's clear
-  // and nothing else. Sync, not a Promise, not a `request()` op, not a new host
-  // op — and never `on_reset`: the live token is not aborted, `strippedGear` is
-  // not cleared and no other latch exists yet. `{ cleared: true }` is the whole
-  // value.
-  retry: function () {
+    retry: function () {
     const step = clueCall({ op: 'retry' });
     if (!step || typeof step !== 'object' || step.kind !== 'retry') {
       return helperErr('stale');

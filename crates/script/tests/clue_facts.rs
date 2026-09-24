@@ -3808,18 +3808,19 @@ export function tick(api) {
         z: 3884,
         level: 0,
     };
-    // The same wrapper marshal over a raw posted page, where the row posts no
-    // distance at all: its own `x`/`z`/`level` tile is the measure, and the
-    // posted `id`/`in_combat` ride along. Two tiles out and thirteen tiles out
-    // are the near and far halves of the frozen radius.
-    let near = "globalThis.__rs2b0t_host.snapshot.npcs = [{ index: 7, id: 107, \
-         name: 'Zamorak Wizard', x: 3058, z: 3886, level: 0, health: 10, \
-         max_health: 10, in_combat: true, actions: ['Attack'], \
-         target_kind: 0, target_index: -1 }]; true";
-    let outside = "globalThis.__rs2b0t_host.snapshot.npcs = [{ index: 7, id: 107, \
-         name: 'Zamorak Wizard', x: 3058, z: 3897, level: 0, health: 10, \
-         max_health: 10, in_combat: true, actions: ['Attack'], \
-         target_kind: 0, target_index: -1 }]; true";
+    // Posted distance is the frozen radius: thirteen tiles out waits, two
+    // tiles out is the spawn. Rust reads the isolate scene, not a JS-mutated
+    // snapshot.npcs page.
+    let outside_npc = SceneEntityInput {
+        z: 3897,
+        in_combat: true,
+        ..scene_npc(7, "Zamorak Wizard", 13, 10, 10, &attack)
+    };
+    let near_npc = SceneEntityInput {
+        z: 3886,
+        in_combat: true,
+        ..scene_npc(7, "Zamorak Wizard", 2, 10, 10, &attack)
+    };
 
     // Ticks 1-4: the begin and the landed report, already arrived with the
     // Spade and with no npc page posted at all.
@@ -3878,9 +3879,8 @@ export function tick(api) {
         &iso,
         7,
         &page,
-        &guarded_scene(arrived, &names, &[], &overlay_off, &[], false, false),
+        &guarded_scene(arrived, &names, &[outside_npc], &overlay_off, &[], false, false),
     );
-    iso.probe(outside).unwrap();
     iso.on_game_tick(7);
     assert!(iso.probe("true").is_ok());
     assert!(
@@ -3894,9 +3894,8 @@ export function tick(api) {
         &iso,
         8,
         &page,
-        &guarded_scene(arrived, &names, &[], &overlay_off, &[], false, false),
+        &guarded_scene(arrived, &names, &[near_npc], &overlay_off, &[], false, false),
     );
-    iso.probe(near).unwrap();
     iso.on_game_tick(8);
     assert!(iso.probe("true").is_ok());
     assert_eq!(
@@ -3911,9 +3910,8 @@ export function tick(api) {
         &iso,
         9,
         &page,
-        &guarded_scene(arrived, &names, &[], &overlay_on, &[], false, false),
+        &guarded_scene(arrived, &names, &[near_npc], &overlay_on, &[], false, false),
     );
-    iso.probe(near).unwrap();
     iso.on_game_tick(9);
     assert!(iso.probe("true").is_ok());
     assert_eq!(
@@ -3932,9 +3930,8 @@ export function tick(api) {
         &iso,
         10,
         &page,
-        &guarded_scene(arrived, &names, &[], &overlay_on, &[], false, false),
+        &guarded_scene(arrived, &names, &[near_npc], &overlay_on, &[], false, false),
     );
-    iso.probe(near).unwrap();
     iso.on_game_tick(10);
     assert!(iso.probe("true").is_ok());
     assert!(
@@ -4350,47 +4347,6 @@ export function tick(api) {
     }
 }
 
-/// The guarded encounter's npc page is the locked marshal: `clue.next` is
-/// handed the posted index, id, name, tile, distance, health pair, `in_combat`
-/// flag, actions and target pair and nothing else, so the machine's same-level
-/// filter and its Chebyshev read both have the posted page to work from.
-#[test]
-fn the_guarded_npc_page_marshals_the_locked_field_list() {
-    let bindings = include_str!("../src/load/bindings.rs");
-    let page = bindings
-        .split("function clueNpcPage()")
-        .nth(1)
-        .expect("clueNpcPage");
-    let page = page
-        .split("function clueSelfSlot()")
-        .next()
-        .expect("page end");
-    for field in [
-        "index: row.index,",
-        "id: cluePageI32(row.id) ? row.id : null,",
-        "name: typeof row.name === 'string' ? row.name : null,",
-        "x: cluePageI32(row.x) ? row.x : null,",
-        "z: cluePageI32(row.z) ? row.z : null,",
-        "level: cluePageI32(row.level) ? row.level : null,",
-        "distance: cluePageI32(row.distance) ? row.distance : null,",
-        "health: cluePageI32(row.health) ? row.health : null,",
-        "max_health: cluePageI32(row.max_health) ? row.max_health : null,",
-        "in_combat: typeof row.in_combat === 'boolean' ? row.in_combat : null,",
-        "actions: Array.isArray(row.actions)",
-        "target_kind: cluePageI32(row.target_kind) ? row.target_kind : null,",
-        "target_index: cluePageI32(row.target_index) ? row.target_index : null,",
-    ] {
-        assert!(page.contains(field), "{field} missing from {page}");
-    }
-    // A row that did not post an index cannot be Attacked and is dropped here:
-    // never a snapshot error and never an invented row.
-    assert!(
-        page.contains("if (!cluePageI32(row.index)) continue;"),
-        "{page}"
-    );
-}
-
-#[test]
 fn v2_clue_begin_keeps_family_absence_apart_from_none_held() {
     let src = r#"
 export const apiVersion = 2;

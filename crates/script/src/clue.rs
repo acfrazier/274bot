@@ -1,11 +1,13 @@
-//! Isolate-owned clue-session machine skeleton: `api.clue.begin` / `next`.
+//! Isolate-owned clue-session machine: `api.clue.begin` / `next`, the v1
+//! SolveClue execute family, and Sherlock.
 //!
-//! One token per isolate over the landed held-step identify. The JS wrapper
-//! owns the page reads — the posted `snapshot.inv` `(id, count)` page, the
-//! posted `hold || ours` signal, the wrapper's `lifecycleGeneration` — and
-//! hands them in; this machine owns the token, the generation captured at
-//! begin, the frozen clock, the identify call, the callback kinds and the
-//! idle end state.
+//! One token per isolate over the landed held-step identify. Callers that
+//! omit marshalled pages are filled from the isolate scene
+//! ([`crate::observed`]); Sherlock and the unit tests still pass pages.
+//! Verbs are [`verb_req`]. The v1 adapter's `execute` awaits the `clue`
+//! family; `validate` is the enabled gate plus one begin. This machine owns
+//! the token, the generation captured at begin, the frozen clock, the
+//! identify call, the callback kinds and the idle end state.
 //!
 //! `api::clue_logic::identify_step` over the current posted page and the
 //! selected `trails()` family is the only membership decision, in its own
@@ -280,7 +282,9 @@
 //! the isolate scene when the wrapper omits them.
 
 use crate::food_policy::food_forms_for;
+use crate::machine::{Begin, Call, Cx, Family, Reply, Step};
 use crate::observed;
+use crate::shim::InteractReq;
 use crate::task_clock::InstantTaskClock;
 use api::clue_logic::{identify_step, NONE_HELD};
 use api::clue_pack::SHARK_ID;
@@ -289,7 +293,9 @@ use api::game_data::{
     SelectedGameData, TalkKeyKeeper, TalkKeyKeyRow, TalkKeyTalkRow, TrailMembershipRow,
     TrioGiverRow,
 };
+use serde::Deserialize;
 use serde_json::{json, Value};
+use std::borrow::Cow;
 use std::cell::RefCell;
 use std::time::{Duration, Instant};
 
@@ -1406,10 +1412,12 @@ impl ClueRuntime {
         if token != self.token || self.phase == Phase::Idle {
             return self.aborted(STALE);
         }
-        if input.get("generation").and_then(Value::as_u64) != Some(self.generation) {
-            // Reset, stop and a second begin abort silently; the first thing
-            // the dead token hears about it is this error, never a kind.
-            return self.aborted(ABORTED);
+        if let Some(generation) = input.get("generation").and_then(Value::as_u64) {
+            if generation != self.generation {
+                // Reset, stop and a second begin abort silently; the first thing
+                // the dead token hears about it is this error, never a kind.
+                return self.aborted(ABORTED);
+            }
         }
         if self.clock.frozen() {
             // Frozen: no callback, no verb and no burn. `resume` is not
@@ -1515,10 +1523,7 @@ impl ClueRuntime {
                 // casket lands is continued rather than Opened through. A
                 // page that posted only `chat_modal_id` is not a continue,
                 // and a posted option list is the professor's to answer.
-                if !count_open(input)
-                    && continue_posted(input)
-                    && !options_posted(input)
-                {
+                if !count_open(input) && continue_posted(input) && !options_posted(input) {
                     return self.emit(CONTINUE);
                 }
                 match casket_name(selected, row) {
@@ -5029,6 +5034,7 @@ pub fn on_hold(held: bool) {
 /// leave-in-pack latch across a relog too. Operator Stop is
 /// [`on_stop`], not this.
 pub fn on_reset() {
+    observed::on_reset();
     RUNTIME.with(|rt| rt.borrow_mut().abort());
 }
 
@@ -5046,13 +5052,601 @@ pub fn on_stop() {
     });
 }
 
+fn hydrate(input: &Value) -> Cow<'_, Value> {
+    if input.get("held").is_some() {
+        Cow::Borrowed(input)
+    } else {
+        Cow::Owned(fill_from_scene(input))
+    }
+}
+
+fn fill_from_scene(input: &Value) -> Value {
+    let mut out = input.clone();
+    let Some(obj) = out.as_object_mut() else {
+        return out;
+    };
+    observed::with(|scene| {
+        if !scene.applied() {
+            return;
+        }
+        let page = scene.latest();
+        if !obj.contains_key("held") {
+            let held: Vec<Value> = match page.inv() {
+                Some(rows) => rows.iter().map(|row| json!([row.id, row.count])).collect(),
+                None => Vec::new(),
+            };
+            obj.insert("held".into(), json!(held));
+        }
+        if !obj.contains_key("hold") {
+            obj.insert(
+                "hold".into(),
+                json!(page.hold().unwrap_or(false) || page.ours().unwrap_or(false)),
+            );
+        }
+        if !obj.contains_key("here") {
+            if let Some(tile) = page.here() {
+                obj.insert(
+                    "here".into(),
+                    json!({ "x": tile.x, "z": tile.z, "level": tile.level }),
+                );
+            }
+        }
+        if !obj.contains_key("locs") {
+            if let Some(rows) = page.locs() {
+                obj.insert(
+                    "locs".into(),
+                    json!(rows
+                        .iter()
+                        .map(|row| json!({
+                            "id": row.id,
+                            "x": row.x,
+                            "z": row.z,
+                            "level": row.level,
+                            "actions": observed::strings(&row.actions),
+                        }))
+                        .collect::<Vec<_>>()),
+                );
+            }
+        }
+        if !obj.contains_key("ground") {
+            if let Some(rows) = page.ground() {
+                obj.insert(
+                    "ground".into(),
+                    json!(rows
+                        .iter()
+                        .map(|row| json!({
+                            "id": row.id,
+                            "name": row.name.as_deref(),
+                            "x": row.x,
+                            "z": row.z,
+                            "level": row.level,
+                            "actions": observed::strings(&row.actions),
+                        }))
+                        .collect::<Vec<_>>()),
+                );
+            }
+        }
+        if !obj.contains_key("inv") {
+            if let Some(rows) = page.inv() {
+                obj.insert(
+                    "inv".into(),
+                    json!(rows
+                        .iter()
+                        .map(|row| json!({
+                            "id": row.id,
+                            "name": row.name.as_deref(),
+                            "count": row.count,
+                        }))
+                        .collect::<Vec<_>>()),
+                );
+            }
+        }
+        if !obj.contains_key("npcs") {
+            if let Some(rows) = page.npcs() {
+                obj.insert(
+                    "npcs".into(),
+                    json!(rows
+                        .iter()
+                        .map(|row| json!({
+                            "index": row.index,
+                            "id": row.id,
+                            "name": row.name.as_deref(),
+                            "x": row.x,
+                            "z": row.z,
+                            "level": row.level,
+                            "distance": row.distance,
+                            "health": row.health,
+                            "max_health": row.max_health,
+                            "in_combat": row.in_combat,
+                            "actions": observed::strings(&row.actions),
+                            "target_kind": row.target_kind,
+                            "target_index": row.target_index,
+                        }))
+                        .collect::<Vec<_>>()),
+                );
+            }
+        }
+        if !obj.contains_key("equipment") {
+            if let Some(rows) = page.equipment() {
+                obj.insert(
+                    "equipment".into(),
+                    json!(rows
+                        .iter()
+                        .map(|row| {
+                            let mut item = serde_json::Map::new();
+                            if let Some(name) = row.name.as_deref() {
+                                item.insert("name".into(), json!(name));
+                            }
+                            item.insert("id".into(), json!(row.id));
+                            item.insert("count".into(), json!(row.count));
+                            if let Some(slot) = row.slot {
+                                item.insert("slot".into(), json!(slot));
+                            }
+                            Value::Object(item)
+                        })
+                        .collect::<Vec<_>>()),
+                );
+            }
+        }
+        if !obj.contains_key("nearest_booth") {
+            if let Some(booth) = page.nearest_booth() {
+                let mut booth_json = json!({
+                    "x": booth.tile.x,
+                    "z": booth.tile.z,
+                    "level": booth.tile.level,
+                    "id": booth.id,
+                });
+                if let Some(name) = booth.name.as_deref() {
+                    booth_json["name"] = json!(name);
+                }
+                if let Some(op) = booth.op.as_deref() {
+                    booth_json["op"] = json!(op);
+                }
+                obj.insert("nearest_booth".into(), booth_json);
+            }
+        }
+        if !obj.contains_key("bank_open") {
+            if let Some(open) = page.bank_open() {
+                obj.insert("bank_open".into(), json!(open));
+            }
+        }
+        if !obj.contains_key("main_modal_id") {
+            if let Some(id) = page.main_modal_id() {
+                obj.insert("main_modal_id".into(), json!(id));
+            }
+        }
+        if !obj.contains_key("chat_modal_id") {
+            if let Some(id) = page.chat_modal_id() {
+                obj.insert("chat_modal_id".into(), json!(id));
+            }
+        }
+        if !obj.contains_key("chat_continue") {
+            if let Some(cont) = page.chat_continue() {
+                obj.insert("chat_continue".into(), json!(cont));
+            }
+        }
+        if !obj.contains_key("chat_options") {
+            if let Some(rows) = page.chat_options() {
+                obj.insert(
+                    "chat_options".into(),
+                    json!(rows
+                        .iter()
+                        .enumerate()
+                        .map(|(i, text)| json!({ "text": text, "option": i as i32 + 1 }))
+                        .collect::<Vec<_>>()),
+                );
+            }
+        }
+        if !obj.contains_key("count_dialog_open") {
+            if let Some(open) = page.count_dialog_open() {
+                obj.insert("count_dialog_open".into(), json!(open));
+            }
+        }
+        if !obj.contains_key("inv_size") {
+            if let Some(size) = page.inv_size() {
+                obj.insert("inv_size".into(), json!(size));
+            }
+        }
+        if !obj.contains_key("self_slot") {
+            if let Some(slot) = page.self_slot() {
+                obj.insert("self_slot".into(), json!(slot));
+            }
+        }
+        if !obj.contains_key("self_target_kind") {
+            if let (Some(kind), Some(index)) = (page.self_target_kind(), page.self_target_index()) {
+                obj.insert("self_target_kind".into(), json!(kind));
+                obj.insert("self_target_index".into(), json!(index));
+            }
+        }
+        if !obj.contains_key("hitpoints") {
+            if let Some(hp) = page.stats().and_then(|stats| stats.hitpoints) {
+                obj.insert("hitpoints".into(), json!(hp.effective));
+            }
+        }
+        if !obj.contains_key("varp95") {
+            if let Some(value) = page
+                .varps()
+                .and_then(|rows| rows.iter().find(|row| row.index == 95).map(|row| row.value))
+            {
+                obj.insert("varp95".into(), json!(value));
+            }
+        }
+        if !obj.contains_key("puzzle_board") {
+            if let Some(board) = page.puzzle_board() {
+                obj.insert(
+                    "puzzle_board".into(),
+                    json!({
+                        "component_id": board.component_id,
+                        "size": board.size,
+                        "items": board
+                            .items
+                            .iter()
+                            .map(|row| json!({ "slot": row.slot, "id": row.id }))
+                            .collect::<Vec<_>>(),
+                    }),
+                );
+                if !obj.contains_key("puzzle_board_generation") {
+                    obj.insert("puzzle_board_generation".into(), json!(board.generation));
+                }
+            }
+        }
+        if !obj.contains_key("walk_missing_carry") {
+            if let Some(rows) = page.walk_missing_carry() {
+                obj.insert(
+                    "walk_missing_carry".into(),
+                    json!(rows
+                        .iter()
+                        .map(|row| json!({
+                            "id": row.id,
+                            "count": row.count,
+                            "name": row.name.as_deref(),
+                        }))
+                        .collect::<Vec<_>>()),
+                );
+            }
+        }
+        if !obj.contains_key("shop_open") {
+            if let Some(open) = page.shop_open() {
+                obj.insert("shop_open".into(), json!(open));
+            }
+        }
+        if !obj.contains_key("shop_stock") {
+            if let Some(rows) = page.shop_stock() {
+                obj.insert(
+                    "shop_stock".into(),
+                    json!(rows
+                        .iter()
+                        .map(|row| json!({
+                            "id": row.id,
+                            "name": row.name.as_deref(),
+                            "count": row.count,
+                            "slot": row.slot,
+                            "component": row.component_id,
+                        }))
+                        .collect::<Vec<_>>()),
+                );
+            }
+        }
+    });
+    out
+}
+
+fn i32_field(step: &Value, key: &str) -> Option<i32> {
+    i32::try_from(step.get(key)?.as_i64()?).ok()
+}
+
+fn text_field<'a>(step: &'a Value, key: &str) -> Option<&'a str> {
+    step.get(key).and_then(Value::as_str)
+}
+
+/// Map one machine verb onto an interact op. An unknown kind is not a loc.
+pub(crate) fn verb_req(step: &Value) -> Option<InteractReq> {
+    match step.get("kind").and_then(Value::as_str)? {
+        "walk" => Some(InteractReq::Walk {
+            x: i32_field(step, "x")?,
+            z: i32_field(step, "z")?,
+            level: i32_field(step, "level")?,
+            allow_teleports: false,
+            allow_wilderness: false,
+            allow_bank_fetch: false,
+            request_id: 0,
+        }),
+        "held" => Some(InteractReq::Held {
+            name: text_field(step, "name")?.to_string(),
+            action: text_field(step, "action")?.to_string(),
+        }),
+        "loc" => Some(InteractReq::Loc {
+            x: i32_field(step, "x")?,
+            z: i32_field(step, "z")?,
+            level: i32_field(step, "level")?,
+            action: text_field(step, "action")?.to_string(),
+            id: Some(i32_field(step, "id")?),
+        }),
+        "npc" => Some(InteractReq::Npc {
+            name: text_field(step, "name")?.to_string(),
+            action: text_field(step, "action")?.to_string(),
+            index: Some(i32_field(step, "index")?),
+        }),
+        "if-button" => Some(InteractReq::IfButton {
+            component_id: i32_field(step, "component_id")?,
+        }),
+        "close-modal" => Some(InteractReq::CloseModal),
+        "obj" => Some(InteractReq::Obj {
+            x: i32_field(step, "x")?,
+            z: i32_field(step, "z")?,
+            level: i32_field(step, "level")?,
+            name: Some(text_field(step, "name")?.to_string()),
+            action: text_field(step, "action")?.to_string(),
+        }),
+        "puzzle-move" => Some(InteractReq::PuzzleMove {
+            id: i32_field(step, "id")?,
+            slot: i32_field(step, "slot")?,
+            component: i32_field(step, "component")?,
+            generation: step.get("generation").and_then(Value::as_u64)?,
+        }),
+        "continue" => Some(InteractReq::ContinueDialog),
+        "answer" => Some(InteractReq::Answer {
+            option: i32_field(step, "option")?,
+        }),
+        "answer-count" => Some(InteractReq::AnswerCount {
+            value: i32_field(step, "value")?,
+        }),
+        "shop-button" => Some(InteractReq::ShopButton {
+            kind: text_field(step, "shop")?.to_string(),
+            name: text_field(step, "name")?.to_string(),
+            id: i32_field(step, "id")?,
+            slot: i32_field(step, "slot")?,
+            component: i32_field(step, "component")?,
+            chunk: i32_field(step, "chunk")?,
+        }),
+        "wear" => Some(InteractReq::Wear {
+            name: text_field(step, "name")?.to_string(),
+        }),
+        "unequip" => Some(InteractReq::Unequip {
+            name: text_field(step, "name")?.to_string(),
+        }),
+        "deposit" => Some(InteractReq::Deposit {
+            name: text_field(step, "name")?.to_string(),
+        }),
+        "withdraw" => Some(InteractReq::Withdraw {
+            name: text_field(step, "name")?.to_string(),
+            action: text_field(step, "action")?.to_string(),
+        }),
+        "walk-nearest-bank" => Some(InteractReq::WalkNearestBank),
+        "open-booth" => Some(InteractReq::OpenBooth {
+            x: i32_field(step, "x")?,
+            z: i32_field(step, "z")?,
+            level: i32_field(step, "level")?,
+            id: i32_field(step, "id")?,
+            name: text_field(step, "name").map(str::to_string),
+            action: text_field(step, "action").map(str::to_string),
+        }),
+        "close" => Some(InteractReq::Close),
+        _ => None,
+    }
+}
+
+pub(crate) fn verb_json(step: &Value) -> Value {
+    let Some(req) = verb_req(step) else {
+        return Value::Null;
+    };
+    match req {
+        InteractReq::Walk { x, z, level, .. } => {
+            json!({ "op": "walk", "x": x, "z": z, "level": level })
+        }
+        InteractReq::Held { name, action } => {
+            json!({ "op": "held", "name": name, "action": action })
+        }
+        InteractReq::Loc {
+            x,
+            z,
+            level,
+            action,
+            id,
+        } => {
+            json!({ "op": "loc", "x": x, "z": z, "level": level, "action": action, "id": id })
+        }
+        InteractReq::Npc {
+            name,
+            action,
+            index,
+        } => {
+            json!({ "op": "npc", "name": name, "action": action, "index": index })
+        }
+        InteractReq::IfButton { component_id } => {
+            json!({ "op": "if-button", "component_id": component_id })
+        }
+        InteractReq::CloseModal => json!({ "op": "close-modal" }),
+        InteractReq::Obj {
+            x,
+            z,
+            level,
+            name,
+            action,
+        } => {
+            json!({ "op": "obj", "x": x, "z": z, "level": level, "name": name, "action": action })
+        }
+        InteractReq::PuzzleMove {
+            id,
+            slot,
+            component,
+            generation,
+        } => json!({
+            "op": "puzzle-move",
+            "id": id,
+            "slot": slot,
+            "component": component,
+            "generation": generation,
+        }),
+        InteractReq::ContinueDialog => json!({ "op": "continue" }),
+        InteractReq::Answer { option } => json!({ "op": "answer", "option": option }),
+        InteractReq::AnswerCount { value } => json!({ "op": "answer-count", "value": value }),
+        InteractReq::ShopButton {
+            kind,
+            name,
+            id,
+            slot,
+            component,
+            chunk,
+        } => json!({
+            "op": "shop-button",
+            "kind": kind,
+            "name": name,
+            "id": id,
+            "slot": slot,
+            "component": component,
+            "chunk": chunk,
+        }),
+        InteractReq::Wear { name } => json!({ "op": "wear", "name": name }),
+        InteractReq::Unequip { name } => json!({ "op": "unequip", "name": name }),
+        InteractReq::Deposit { name } => json!({ "op": "deposit", "name": name }),
+        InteractReq::Withdraw { name, action } => {
+            json!({ "op": "withdraw", "name": name, "action": action })
+        }
+        InteractReq::WalkNearestBank => json!({ "op": "walk-nearest-bank" }),
+        InteractReq::OpenBooth {
+            x,
+            z,
+            level,
+            id,
+            name,
+            action,
+        } => {
+            let mut req = json!({ "op": "open-booth", "x": x, "z": z, "level": level, "id": id });
+            if let Some(name) = name {
+                req["name"] = json!(name);
+            }
+            if let Some(action) = action {
+                req["action"] = json!(action);
+            }
+            req
+        }
+        InteractReq::Close => json!({ "op": "close" }),
+        _ => Value::Null,
+    }
+}
+
+const HOOK_ENABLED: usize = 0;
+const HOOK_LOG: usize = 1;
+const HOOK_STATUS: usize = 2;
+
+#[derive(Deserialize)]
+pub(crate) struct ClueArgs {
+    token: u64,
+}
+
+/// Execute-loop family over the isolate clue session.
+pub(crate) struct Clue {
+    token: u64,
+    last_hook: Option<usize>,
+    resume: Option<bool>,
+}
+
+impl Family for Clue {
+    const NAME: &'static str = "clue";
+    const EXCLUSIVE: bool = true;
+    const KICK_ON_START: bool = true;
+    const CALLBACKS: &'static [&'static str] = &["enabled", "log", "setStatus"];
+    type Args = ClueArgs;
+    type Output = Value;
+
+    fn begin(args: ClueArgs, _cx: &mut Cx<'_>) -> Begin<Self> {
+        let live = RUNTIME.with(|rt| {
+            let rt = rt.borrow();
+            (rt.phase != Phase::Idle && rt.token == args.token).then_some(args.token)
+        });
+        match live {
+            Some(token) => Begin::Run(Self {
+                token,
+                last_hook: None,
+                resume: None,
+            }),
+            None => Begin::Refuse("stale".into()),
+        }
+    }
+
+    fn step(&mut self, cx: &mut Cx<'_>) -> Step<Value> {
+        if let Some(reply) = cx.reply() {
+            match self.last_hook.take() {
+                Some(HOOK_ENABLED) => match reply {
+                    Reply::Value(value) => self.resume = Some(value.as_bool() == Some(true)),
+                    Reply::Threw(thrown) => return Step::Fail(thrown),
+                },
+                Some(_) => {
+                    if let Reply::Threw(thrown) = reply {
+                        return Step::Fail(thrown);
+                    }
+                }
+                None => {}
+            }
+        }
+        let selected = crate::supply_v2::selected_data();
+        loop {
+            let mut payload = json!({ "op": "next", "token": self.token });
+            if let Some(resume) = self.resume.take() {
+                payload["resume"] = json!(resume);
+            }
+            let step = dispatch(selected.as_deref(), &payload);
+            let kind = step.get("kind").and_then(Value::as_str).unwrap_or("");
+            match kind {
+                "callback.enabled" => {
+                    self.last_hook = Some(HOOK_ENABLED);
+                    return Step::Call(Call {
+                        hook: HOOK_ENABLED,
+                        args: Vec::new(),
+                    });
+                }
+                "callback.log" => {
+                    if !cx.has(HOOK_LOG) {
+                        continue;
+                    }
+                    self.last_hook = Some(HOOK_LOG);
+                    return Step::Call(Call {
+                        hook: HOOK_LOG,
+                        args: vec![step.get("message").cloned().unwrap_or(json!(""))],
+                    });
+                }
+                "callback.setStatus" => {
+                    if !cx.has(HOOK_STATUS) {
+                        continue;
+                    }
+                    self.last_hook = Some(HOOK_STATUS);
+                    return Step::Call(Call {
+                        hook: HOOK_STATUS,
+                        args: vec![step.get("message").cloned().unwrap_or(json!(""))],
+                    });
+                }
+                "grind-ready" => {}
+                "wait" | "supplies-needed" | "no-shop" => return Step::Wait,
+                "yield" => return Step::Done(step),
+                "done" | "dead" | "abandon" | "guardian-lost" | "aborted" => {
+                    return Step::Done(step)
+                }
+                _ => {
+                    if let Some(req) = verb_req(&step) {
+                        cx.emit(req);
+                        return Step::Wait;
+                    }
+                    return Step::Done(step);
+                }
+            }
+        }
+    }
+}
+
 /// The machine's only entry point: the selected pin comes from the native
 /// registration's captured `game_data`, and the payload is the wrapper's
 /// marshalled call — never a host wire.
 pub fn dispatch(selected: Option<&SelectedGameData>, input: &Value) -> Value {
     match input.get("op").and_then(Value::as_str).unwrap_or("") {
-        "begin" => RUNTIME.with(|rt| rt.borrow_mut().begin(selected, input)),
-        "next" => RUNTIME.with(|rt| rt.borrow_mut().next(selected, input)),
+        "begin" => {
+            let input = hydrate(input);
+            RUNTIME.with(|rt| rt.borrow_mut().begin(selected, &input))
+        }
+        "next" => {
+            let input = hydrate(input);
+            RUNTIME.with(|rt| rt.borrow_mut().next(selected, &input))
+        }
         // The machine-state seats. None is a step over a page and none takes a
         // token: `ownsEquipment` is a read of the stripped list the shim
         // publishes as `SolveClue.ownsEquipment`, `retry` is the frozen latch

@@ -971,6 +971,8 @@ mod tests {
                     level: 0,
                 },
                 id: 2213,
+                name: None,
+                op: None,
             })
             .bank_approaches(vec![approach(
                 2213,
