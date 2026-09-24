@@ -1957,7 +1957,10 @@ fn tick_loop(
                     if let Some(diag) = observed.diagnostic {
                         let _ = out.send(ThreadMsg::Log(diag));
                     }
-                    deliver_native_events(&mut runtime, &observed.events, &out);
+                    // A machine callback may have absorbed join's terminate.
+                    if !tick_claimed(&teardown) {
+                        deliver_native_events(&mut runtime, &observed.events, &out);
+                    }
                 }
                 // Guardian hold: skip `loop()` AND skip resolving
                 // parked conds (time waits too) — the wait stays parked
@@ -3338,56 +3341,65 @@ loop() {
     // (up to the per-row budget), like a frozen `for` with `await`s.
     #[test]
     fn microtask_only_awaits_answer_in_the_same_step() {
-        let iso = spawn_machine_card(
+        const B: usize = crate::machine::CALLS_PER_TICK;
+        let iso = spawn_machine_card(&format!(
             "globalThis.__ticks = [];
-             globalThis.__out = await runMachine('burst', { calls: 40 }, {
-                 async each(i) {
+             globalThis.__out = await runMachine('burst', {{ calls: {} }}, {{
+                 async each(i) {{
                      await null;
                      await Promise.resolve();
                      globalThis.__ticks.push(globalThis.__rs2b0t_host.tick);
                      return i;
-                 },
-             });
+                 }},
+             }});
              globalThis.__at = globalThis.__rs2b0t_host.tick;",
-        );
+            B + 8
+        ));
         machine_tick(&iso, 1);
         machine_tick(&iso, 2);
         let ticks: Vec<u64> =
             serde_json::from_value(iso.probe("globalThis.__ticks").unwrap()).unwrap();
-        assert_eq!(ticks.len(), 32, "the budget bounds tick 2: {ticks:?}");
+        assert_eq!(ticks.len(), B, "the budget bounds tick 2");
         assert!(ticks.iter().all(|&t| t == 2), "{ticks:?}");
         machine_tick(&iso, 3);
         let ticks: Vec<u64> =
             serde_json::from_value(iso.probe("globalThis.__ticks").unwrap()).unwrap();
-        assert_eq!(ticks.len(), 40);
-        assert!(ticks[32..].iter().all(|&t| t == 3), "{ticks:?}");
-        assert_eq!(iso.probe("globalThis.__out.value.length").unwrap(), 40);
+        assert_eq!(ticks.len(), B + 8);
+        assert!(ticks[B..].iter().all(|&t| t == 3), "{ticks:?}");
+        assert_eq!(iso.probe("globalThis.__out.value.length").unwrap(), B + 8);
         assert_eq!(iso.probe("globalThis.__at").unwrap(), 3);
         iso.join();
     }
 
     // N1(b): a callback promise the pump settles resumes its row after the
     // pump in the same tick, and the budget spans both passes: 6 calls
-    // before the wait, 26 after it in tick 2, the last 8 in tick 3.
+    // before the wait, the rest of the budget after it in tick 2, the last
+    // 8 in tick 3.
     #[test]
     fn a_pump_settled_callback_resumes_its_row_in_the_same_tick() {
-        let iso = spawn_machine_card(
+        const B: usize = crate::machine::CALLS_PER_TICK;
+        let iso = spawn_machine_card(&format!(
             "globalThis.__ticks = [];
-             const each = (i) => {
+             const each = (i) => {{
                  globalThis.__ticks.push(globalThis.__rs2b0t_host.tick);
                  return i === 5 ? Execution.delayTicks(0).then(() => i) : i;
-             };
-             globalThis.__out = await runMachine('burst', { calls: 40 }, { each });",
-        );
+             }};
+             globalThis.__out = await runMachine('burst', {{ calls: {} }}, {{ each }});",
+            B + 8
+        ));
         machine_tick(&iso, 1);
         machine_tick(&iso, 2);
         let ticks: Vec<u64> =
             serde_json::from_value(iso.probe("globalThis.__ticks").unwrap()).unwrap();
-        assert_eq!(ticks, vec![2; 32], "6 calls, the pump, then 26 more");
+        assert_eq!(
+            ticks,
+            vec![2; B],
+            "6 calls, the pump, then the rest of the budget"
+        );
         machine_tick(&iso, 3);
         let ticks: Vec<u64> =
             serde_json::from_value(iso.probe("globalThis.__ticks").unwrap()).unwrap();
-        assert_eq!(ticks[32..], [3; 8]);
+        assert_eq!(ticks[B..], [3; 8]);
         assert_eq!(
             iso.probe("globalThis.__out.value[5]").unwrap(),
             5,

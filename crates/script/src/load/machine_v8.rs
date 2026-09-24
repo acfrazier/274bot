@@ -192,7 +192,8 @@ impl machine::Js for ScopeJs<'_, '_> {
     }
 
     /// A start runs inside the caller's own script call: join's claim is
-    /// checked when that call returns.
+    /// checked when that call returns. A callback terminated inside the
+    /// kick ends the kick itself ([`machine::Called::Terminated`]).
     fn claimed(&mut self) -> bool {
         false
     }
@@ -246,9 +247,8 @@ fn call_hook(scope: &mut v8::HandleScope, hook: Option<&HeldCallback>, args: &[V
             scope.perform_microtask_checkpoint();
             return Called::Settled(Reply::Threw(thrown(scope, exception)));
         }
-        Err(Throw::Terminated) => {
-            return Called::Settled(Reply::Threw(Thrown::new("execution terminated")));
-        }
+        // Rethrown; the host stops driving and no family sees it as a throw.
+        Err(Throw::Terminated) => return Called::Terminated,
     };
     let Ok(promise) = v8::Local::<v8::Promise>::try_from(value) else {
         scope.perform_microtask_checkpoint();

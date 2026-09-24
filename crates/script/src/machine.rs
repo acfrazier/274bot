@@ -41,7 +41,14 @@
 //!   synchronously inside the caller's JS. Ops it emits join this tick's
 //!   InteractReq batch at the caller's position in the JS queue. A
 //!   [`Family::EXCLUSIVE`] family aborts its older live row as
-//!   `superseded` when a new one runs.
+//!   `superseded` when a new one runs. A [`Family::KICK_ON_START`] row is
+//!   then driven once ([`kick`]) inside the same call, so its first
+//!   callbacks and ops run in the caller's own synchronous turn, as the
+//!   frozen driver's first stretch did. The kick ignores pause and
+//!   guardian hold on purpose: the frozen driver ran whenever the caller
+//!   ran (a held tick still runs paint, native events and the event-loop
+//!   drain), and ops emitted on a held tick are dropped with the JS queue
+//!   there too ([`drop_ops`]). Only later steps are held back.
 //! - **Step**: the isolate thread records the tick number, then calls
 //!   [`step`] once per eligible tick, before any other of that tick's JS
 //!   (the scene was applied by the Snapshot command before the Tick). A
@@ -64,6 +71,12 @@
 //!   `runMachine` await with that same value. At most [`CALLS_PER_TICK`]
 //!   callbacks run per row per tick, across both passes; the rest
 //!   continue next tick. A row whose callback superseded it stops at once.
+//!   A callback ended by termination (join's or the watchdog's) is never
+//!   shown to the family: the row is aborted `terminated` and no further
+//!   callback runs in that pass or kick. A [`Family::AWAIT_CALLBACKS`]
+//!   `false` family keeps frozen synchronous-call semantics instead: a
+//!   returned promise is not awaited, and its reply is the promise as a
+//!   value (`{}`: an object with no own properties).
 //! - **Completion**: a `Done`/`Fail` row ends at once (no JS `end` op). Its
 //!   outcome waits in the host until the JS await helper — a wait parked
 //!   on the `Execution` park list — takes it, so it settles exactly once:
@@ -98,7 +111,15 @@ use std::cell::{Cell, RefCell};
 pub(crate) type Handle = u64;
 
 /// Callbacks one row may run in one tick before it yields to the next.
-pub(crate) const CALLS_PER_TICK: usize = 32;
+///
+/// The bound exists so a family that keeps calling back cannot hold the
+/// tick forever; it must not split frozen-sized work across ticks. The
+/// largest frozen driver iteration is bounded by the 28-slot pack: the
+/// partner-trade receiver counts their offer twice (2 × 28
+/// `theirProductMatch`) plus under ten fixed hooks, and `Trade` `pick`
+/// sees at most 28 rows. 256 leaves about 4× headroom over that while
+/// still yielding a runaway family within one tick.
+pub(crate) const CALLS_PER_TICK: usize = 256;
 
 /// One machine family: a Rust type the host begins, steps and aborts.
 pub(crate) trait Family: Sized + 'static {
@@ -113,6 +134,10 @@ pub(crate) trait Family: Sized + 'static {
     /// first step (teleport clicks in begin). Clue's first next is a
     /// callback, so it opts in.
     const KICK_ON_START: bool = false;
+    /// Await a promise a callback returns (the default). `false` keeps
+    /// frozen synchronous-call semantics: the reply is the promise object
+    /// itself as a value, and the row steps on at once.
+    const AWAIT_CALLBACKS: bool = true;
     /// Typed start arguments, decoded from the JS value.
     type Args: DeserializeOwned;
     /// The completion value JS receives as `value`.
@@ -215,6 +240,8 @@ pub(crate) enum AbortReason {
     Reset,
     /// A newer start of the same exclusive family.
     Superseded,
+    /// A callback of this row was terminated (join or the watchdog).
+    Terminated,
     /// The handle was never started here or was already taken.
     Unknown,
 }
@@ -224,6 +251,7 @@ impl AbortReason {
         match self {
             Self::Reset => "reset",
             Self::Superseded => "superseded",
+            Self::Terminated => "terminated",
             Self::Unknown => "unknown",
         }
     }
@@ -330,6 +358,8 @@ pub(crate) type Pending = v8::Global<v8::Promise>;
 pub(crate) enum Called {
     Settled(Reply),
     Pending(Pending),
+    /// Execution was terminated inside the callback; nothing else may run.
+    Terminated,
 }
 
 /// One registered family.
@@ -379,6 +409,8 @@ const FAMILIES: &[Entry] = &[
     entry::<tests::Nested>(),
     #[cfg(test)]
     entry::<tests::SoloHooked>(),
+    #[cfg(test)]
+    entry::<tests::Kicked>(),
     #[cfg(test)]
     entry::<tests::Ask>(),
 ];
@@ -457,6 +489,8 @@ struct Row {
     handle: Handle,
     family: &'static str,
     exclusive: bool,
+    /// [`Family::AWAIT_CALLBACKS`].
+    awaits: bool,
     clock: InstantTaskClock,
     hooks: Vec<Hook>,
     /// Callbacks run this tick, across both passes.
@@ -490,6 +524,8 @@ thread_local! {
     static HOST: RefCell<Host> = const { RefCell::new(Host::new()) };
     /// A family `begin` is running: a nested start is refused.
     static IN_BEGIN: Cell<bool> = const { Cell::new(false) };
+    /// A callback was terminated in this pass or kick: drive no further.
+    static TERMINATED: Cell<bool> = const { Cell::new(false) };
 }
 
 impl Host {
@@ -624,6 +660,7 @@ fn begin_row<F: Family>(args: Value, hooks: Vec<Hook>, at: usize) -> Started {
                     handle,
                     family: F::NAME,
                     exclusive: F::EXCLUSIVE,
+                    awaits: F::AWAIT_CALLBACKS,
                     clock,
                     hooks,
                     calls: 0,
@@ -660,6 +697,7 @@ pub(crate) fn start(family: &str, args: Value, hooks: Vec<Hook>, at: usize) -> S
 
 /// Drive one live row once (the starting tick for [`Family::KICK_ON_START`]).
 pub(crate) fn kick(handle: Handle, js: &mut impl Js) {
+    TERMINATED.with(|flag| flag.set(false));
     let mut at = js.queue_len();
     let Some(mut row) = HOST.with(|host| {
         let mut host = host.borrow_mut();
@@ -720,6 +758,7 @@ fn pass(js: &mut impl Js, pass: Pass) {
     }) else {
         return;
     };
+    TERMINATED.with(|flag| flag.set(false));
     // Script code may have queued rows before this pass (a probe, the
     // recovery anchor, this tick's own JS); step ops land after them.
     let mut at = js.queue_len();
@@ -761,7 +800,7 @@ fn settle(handle: Handle, outcome: Outcome) {
 /// the row as it is, once join has claimed the tick.
 fn drive(row: &mut Row, js: &mut impl Js, at: &mut usize) -> Option<Outcome> {
     loop {
-        if js.claimed() {
+        if js.claimed() || TERMINATED.with(Cell::get) {
             return None;
         }
         if let Some(pending) = &row.pending {
@@ -790,7 +829,16 @@ fn drive(row: &mut Row, js: &mut impl Js, at: &mut usize) -> Option<Outcome> {
                 *at = js.queue_len();
                 match called {
                     Called::Settled(reply) => row.reply = Some(reply),
-                    Called::Pending(pending) => row.pending = Some(pending),
+                    Called::Pending(pending) if row.awaits => row.pending = Some(pending),
+                    // A frozen synchronous call sees the promise object.
+                    Called::Pending(_) => {
+                        row.reply = Some(Reply::Value(Value::Object(Default::default())))
+                    }
+                    Called::Terminated => {
+                        TERMINATED.with(|flag| flag.set(true));
+                        row.machine.abort(AbortReason::Terminated);
+                        return Some(Outcome::Aborted(AbortReason::Terminated));
+                    }
                 }
                 // The callback started a newer row of this exclusive family.
                 if HOST.with(|host| host.borrow().superseded(row)) {
@@ -1192,6 +1240,53 @@ pub(crate) mod tests {
         }
     }
 
+    /// KICK_ON_START: calls `each(0)`, `each(1)`, emits `if-button 60`,
+    /// then completes with the replies (at once when `done`, else on the
+    /// next step).
+    pub(crate) struct Kicked {
+        done: bool,
+        replies: Vec<Value>,
+    }
+
+    #[derive(Deserialize)]
+    pub(crate) struct KickedArgs {
+        done: bool,
+    }
+
+    impl Family for Kicked {
+        const NAME: &'static str = "kicked";
+        const CALLBACKS: &'static [&'static str] = &["each"];
+        const KICK_ON_START: bool = true;
+        type Args = KickedArgs;
+        type Output = Value;
+
+        fn begin(args: KickedArgs, _cx: &mut Cx<'_>) -> Begin<Self> {
+            Begin::Run(Self {
+                done: args.done,
+                replies: Vec::new(),
+            })
+        }
+
+        fn step(&mut self, cx: &mut Cx<'_>) -> Step<Value> {
+            if let Some(Reply::Value(value)) = cx.reply() {
+                self.replies.push(value);
+                if self.replies.len() == 2 {
+                    cx.emit(InteractReq::IfButton { component_id: 60 });
+                    if !self.done {
+                        return Step::Wait;
+                    }
+                }
+            }
+            if self.replies.len() < 2 {
+                return Step::Call(Call {
+                    hook: 0,
+                    args: vec![json!(self.replies.len())],
+                });
+            }
+            Step::Done(Value::Array(self.replies.clone()))
+        }
+    }
+
     /// Answers every callback at once with its first argument.
     struct Echo {
         calls: usize,
@@ -1429,7 +1524,8 @@ pub(crate) mod tests {
 
     #[test]
     fn a_row_runs_at_most_the_callback_budget_per_tick() {
-        let h = running(begin("burst", json!({ "calls": 40 })));
+        let total = CALLS_PER_TICK + 8;
+        let h = running(begin("burst", json!({ "calls": total })));
         let mut js = Echo { calls: 0 };
         step(&mut js);
         assert_eq!(js.calls, CALLS_PER_TICK);
@@ -1440,11 +1536,118 @@ pub(crate) mod tests {
         );
         assert_eq!(take(h), Take::Pending);
         step(&mut js);
-        assert_eq!(js.calls, 40);
+        assert_eq!(js.calls, total);
         let Take::Settled(Outcome::Done(Value::Array(replies))) = take(h) else {
             panic!("the burst completes on the second tick");
         };
-        assert_eq!(replies, (0..40).map(|i| json!(i)).collect::<Vec<_>>());
+        assert_eq!(replies, (0..total).map(|i| json!(i)).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn the_budget_does_not_split_a_frozen_sized_iteration() {
+        // The partner-trade receiver's worst frozen iteration: two passes
+        // over 28 offer rows plus its fixed hooks.
+        let h = running(begin("burst", json!({ "calls": 2 * 28 + 10 })));
+        step(&mut Echo { calls: 0 });
+        assert!(matches!(take(h), Take::Settled(Outcome::Done(_))));
+    }
+
+    /// Answers like [`Echo`], and moves the JS queue one row per call (a
+    /// callback that queued a JS op), until call `terminate_at`, which is
+    /// terminated.
+    struct Scripted {
+        calls: usize,
+        queued: usize,
+        terminate_at: Option<usize>,
+    }
+
+    impl Js for Scripted {
+        fn queue_len(&mut self) -> usize {
+            self.queued
+        }
+
+        fn call(&mut self, _hook: Option<&HeldCallback>, args: &[Value]) -> Called {
+            self.calls += 1;
+            if self.terminate_at == Some(self.calls) {
+                return Called::Terminated;
+            }
+            self.queued += 1;
+            Called::Settled(Reply::Value(args[0].clone()))
+        }
+
+        fn poll(&mut self, _pending: &Pending) -> Option<Reply> {
+            unreachable!("Scripted never returns a promise");
+        }
+
+        fn claimed(&mut self) -> bool {
+            false
+        }
+    }
+
+    fn scripted(terminate_at: Option<usize>) -> Scripted {
+        Scripted {
+            calls: 0,
+            queued: 0,
+            terminate_at,
+        }
+    }
+
+    #[test]
+    fn a_kick_runs_the_first_callbacks_and_ops_in_the_starting_turn() {
+        let h = running(begin("kicked", json!({ "done": false })));
+        let mut js = scripted(None);
+        kick(h, &mut js);
+        assert_eq!(js.calls, 2, "both callbacks ran inside the start");
+        let js_row = |id: i32| MaybeInteractReq::Req(button(id));
+        assert_eq!(
+            merge_ops(vec![js_row(1), js_row(2)]),
+            vec![button(1), button(2), button(60)],
+            "the kick's op lands after the rows its callbacks queued"
+        );
+        assert_eq!(take(h), Take::Pending);
+        resume(&mut js);
+        assert_eq!(js.calls, 2, "a kicked row not on a promise does not resume");
+        step(&mut js);
+        assert_eq!(take(h), Take::Settled(Outcome::Done(json!([0, 1]))));
+    }
+
+    #[test]
+    fn a_row_that_ends_inside_its_kick_settles_at_once() {
+        let h = running(begin("kicked", json!({ "done": true })));
+        kick(h, &mut scripted(None));
+        assert_eq!(live_rows(), 0);
+        assert!(any_settled());
+        assert_eq!(take(h), Take::Settled(Outcome::Done(json!([0, 1]))));
+    }
+
+    #[test]
+    fn a_terminated_callback_in_a_kick_aborts_the_row_unseen() {
+        // `keep` would record a throw and call on: the family must never
+        // see the termination.
+        let h = running(begin("burst", json!({ "calls": 3, "keep": true })));
+        let mut js = scripted(Some(1));
+        kick(h, &mut js);
+        assert_eq!(js.calls, 1, "no callback runs after the terminated one");
+        assert_eq!(
+            take(h),
+            Take::Settled(Outcome::Aborted(AbortReason::Terminated))
+        );
+    }
+
+    #[test]
+    fn a_terminated_callback_stops_the_whole_pass() {
+        let a = running(begin("burst", json!({ "calls": 3, "keep": true })));
+        let b = running(begin("burst", json!({ "calls": 1, "keep": true })));
+        let mut js = scripted(Some(1));
+        step(&mut js);
+        assert_eq!(js.calls, 1, "the second row is not driven this pass");
+        assert_eq!(
+            take(a),
+            Take::Settled(Outcome::Aborted(AbortReason::Terminated))
+        );
+        assert_eq!(take(b), Take::Pending);
+        step(&mut Echo { calls: 0 });
+        assert_eq!(take(b), Take::Settled(Outcome::Done(json!([0]))));
     }
 
     #[test]
