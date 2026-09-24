@@ -5,12 +5,11 @@
 //!   old and duplicate chat does not.
 //! - `validate` is one typed helper (`load/bank_tasks_v8.rs`): it observes
 //!   ([`observe`]), fires the caller's `onDeath` on a new latch, and, as
-//!   frozen `validate`, clears the latch and fires `onRecovered` when the
-//!   posted tile is within Chebyshev `radius` of the anchor ([`near`],
-//!   [`recover`]); otherwise it answers due and `execute` runs again.
-//!   Deviation kept on purpose: the position is checked only after a run
-//!   finished since the latch, so a death line posted before the respawn
-//!   tile cannot clear at the death spot.
+//!   frozen `validate` on every pass while the death is latched (and no
+//!   run is live), clears the latch and fires `onRecovered` when the posted
+//!   tile is within Chebyshev `radius` of the anchor ([`near`],
+//!   [`recover`]); otherwise it answers due and `execute` runs (again). A
+//!   death beside the anchor therefore recovers at once, with no run.
 //! - The `death_recovery` [`crate::machine`] family is frozen `execute`:
 //!   wait for the respawn (bounded 20 s), three ticks, then the caller's
 //!   `walkBack` or a walk to the anchor. Neither result is read.
@@ -32,8 +31,6 @@ pub const DEFAULT_RADIUS: i32 = 6;
 /// The chat latch, kept across runs and reset with the session.
 struct Latch {
     latched: bool,
-    /// A recovery run finished since the latch.
-    ran: bool,
     baseline: bool,
     last_seq: i32,
 }
@@ -42,7 +39,6 @@ impl Latch {
     const fn new() -> Self {
         Self {
             latched: false,
-            ran: false,
             baseline: false,
             last_seq: 0,
         }
@@ -75,7 +71,6 @@ impl Latch {
         self.last_seq = newest;
         if death && !self.latched {
             self.latched = true;
-            self.ran = false;
             return true;
         }
         false
@@ -92,8 +87,7 @@ fn is_death_line(text: &str) -> bool {
 }
 
 /// What `validate` read: whether a new death latched now, and the posted
-/// tile to check against the anchor (latched, a run finished since, no
-/// run live, a tile posted).
+/// tile to check against the anchor (latched, no run live, a tile posted).
 pub(crate) struct Observed {
     pub(crate) died: bool,
     pub(crate) check_from: Option<Tile>,
@@ -114,7 +108,7 @@ pub(crate) fn observe() -> Observed {
     });
     let checkable = LATCH.with(|latch| {
         let latch = latch.borrow();
-        latch.latched && latch.ran
+        latch.latched
     }) && !machine::live(DeathRecovery::NAME);
     Observed {
         died,
@@ -139,11 +133,6 @@ pub(crate) fn recover() {
 /// `return this.died`, while no recovery run is live.
 pub(crate) fn due() -> bool {
     latched() && !machine::live(DeathRecovery::NAME)
-}
-
-/// A run ended: the next validate checks the position.
-fn ran() {
-    LATCH.with(|latch| latch.borrow_mut().ran = true);
 }
 
 pub fn on_reset() {
@@ -256,7 +245,6 @@ impl Family for DeathRecovery {
                         return Step::Fail(thrown);
                     }
                     // Frozen ignores walkBack's result: validate decides.
-                    ran();
                     return Step::Done(Value::Null);
                 }
                 Phase::Walk => {
@@ -265,7 +253,6 @@ impl Family for DeathRecovery {
                     };
                     // Frozen `walkResilient` returns at once when arrived.
                     if arrived(anchor, self.radius) {
-                        ran();
                         return Step::Done(Value::Null);
                     }
                     cx.clock().arm(WALK_BOUND_MS);
@@ -288,7 +275,6 @@ impl Family for DeathRecovery {
                     };
                     // The walk's own result is not read: validate decides.
                     if arrived(anchor, self.radius) || cx.clock().bound_reached() {
-                        ran();
                         return Step::Done(Value::Null);
                     }
                     return Step::Wait;

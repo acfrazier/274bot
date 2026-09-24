@@ -494,3 +494,53 @@ export default class T extends TaskBot {
     );
     iso.join();
 }
+
+/// Frozen `validate` checks `near` on every pass while `died` is set,
+/// including the first: a death whose respawn tile is already within
+/// `radius` of the anchor recovers at once, with no run (no respawn wait,
+/// no ticks, no walk).
+#[test]
+fn an_anchor_near_the_respawn_recovers_on_the_first_validate() {
+    let src = r#"
+import { DeathRecovery } from '../../api/tasks/DeathRecovery.js';
+export default class T extends TaskBot {
+    onStart() {
+        this.add(new DeathRecovery(this, {
+            anchor: { x: 3222, z: 3222, level: 0 },
+            onDeath: () => { globalThis.__deaths = (globalThis.__deaths || 0) + 1; },
+            onRecovered: () => { globalThis.__recovered = (globalThis.__recovered || 0) + 1; },
+            walkBack: async () => { globalThis.__walkBack = (globalThis.__walkBack || 0) + 1; },
+        }));
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.into(), LoadShape::CompatClass, vec![]).unwrap();
+    let welcome_lines = [welcome(1)];
+    let mut snap = base_snapshot();
+    snap.here = Some(lumbridge());
+    snap.chat_lines = &welcome_lines;
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 1);
+
+    let death_lines = [death(2), welcome(1)];
+    snap.tick = 2;
+    snap.chat_lines = &death_lines;
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 2);
+    assert_eq!(number(&iso, "globalThis.__deaths || 0"), 1);
+    assert_eq!(
+        number(&iso, "globalThis.__recovered || 0"),
+        1,
+        "recovered by the same validate"
+    );
+
+    for n in 3..=8 {
+        snap.tick = n;
+        post_snapshot_input(&iso, &snap);
+        tick(&iso, n);
+    }
+    assert!(iso.drain_interacts().is_empty(), "no walk");
+    assert_eq!(number(&iso, "globalThis.__walkBack || 0"), 0, "no run");
+    assert_eq!(number(&iso, "globalThis.__recovered || 0"), 1);
+    iso.join();
+}
