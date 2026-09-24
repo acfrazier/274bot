@@ -386,7 +386,6 @@ export default class T extends TaskBot {
             retried: this.solveClue.retry(),
             note: thrown(() => this.solveClue.noteDeath()),
             heldClue: thrown(() => heldClueLikeId()),
-            bank: thrown(() => walkToBank()),
             exports: Object.keys(clueModule).sort().join(','),
             reached: globalThis.__reached,
         });
@@ -418,10 +417,9 @@ export default class T extends TaskBot {
         value["heldClue"], "not impl: SolveClue.heldClueLikeId",
         "{value:?}"
     );
-    assert_eq!(value["bank"], "not impl: SolveClue.walkToBank", "{value:?}");
     assert_eq!(
         value["exports"], "SolveClue,heldClueLikeId,walkToBank",
-        "the module surface is the class and the two throwing helpers: {value:?}"
+        "the module surface is the class and the two helpers: {value:?}"
     );
     assert_eq!(
         value["reached"],
@@ -429,6 +427,62 @@ export default class T extends TaskBot {
         "a disabled session dispatches no callback: {value:?}"
     );
     assert_clean(&logs);
+}
+
+/// Frozen JiveDragons' initial bank (`walkToBank(SITE.bank, log)`, frozen
+/// `SolveClue.ts:96-105`): one resilient world walk to the bank stand at
+/// radius 3 with the trail's teleports allowed, settled by posted arrival.
+#[test]
+fn walk_to_bank_is_one_trail_walk_to_the_stand() {
+    let src = r#"
+import { walkToBank } from '../../api/ai/clues/SolveClue.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__did) return;
+        globalThis.__did = true;
+        globalThis.__ok = null;
+        globalThis.__ok = await walkToBank({ x: 2946, z: 3368, level: 0 }, () => {});
+    }
+}
+"#;
+    let iso = spawn(src);
+    let far = Scene {
+        here: Some(TileInput {
+            x: 2900,
+            z: 3400,
+            level: 0,
+        }),
+        ..Scene::default()
+    };
+    post_scene(&iso, 1, &[], &far);
+    tick(&iso, 1);
+    match &iso.drain_interacts()[..] {
+        [InteractReq::WalkNear {
+            x: 2946,
+            z: 3368,
+            level: 0,
+            radius: 3,
+            allow_teleports: true,
+            allow_wilderness: true,
+            allow_bank_fetch: true,
+            request_id,
+        }] => assert_ne!(*request_id, 0),
+        other => panic!("walkToBank must queue one trail walk: {other:?}"),
+    }
+    assert_eq!(iso.probe("__ok").unwrap(), serde_json::Value::Null);
+    let near = Scene {
+        here: Some(TileInput {
+            x: 2944,
+            z: 3370,
+            level: 0,
+        }),
+        ..Scene::default()
+    };
+    post_scene(&iso, 2, &[], &near);
+    tick(&iso, 2);
+    assert_eq!(iso.probe("__ok").unwrap(), true, "arrival within 3 settles");
+    assert!(iso.drain_interacts().is_empty());
+    iso.join();
 }
 
 /// Disabled is validate-false, not a begin: the held row stays unclaimed, the

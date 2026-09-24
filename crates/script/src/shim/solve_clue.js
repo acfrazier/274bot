@@ -4,6 +4,7 @@
 // (`enabled` / `log` / `setStatus`) go through the one callback path. This file
 // never echoes snapshot pages and never enqueues a loc for an unknown kind.
 import { notImpl, runMachine } from '../../../shim/_kernel.js';
+import { Traversal } from '../../walking/Traversal.js';
 
 const throwUse = (name) => {
     throw notImpl(name);
@@ -117,6 +118,16 @@ export function heldClueLikeId() {
     throwUse('SolveClue.heldClueLikeId');
 }
 
-export function walkToBank() {
-    throwUse('SolveClue.walkToBank');
+// Frozen `walkToBank` (SolveClue.ts:96-105): one resilient trail-leg walk to
+// the bank stand (radius 3, 300 s, the trail's default teleport policy).
+// The Isafdar and Kharazi crossings are not mapped; the host route decides.
+export function walkToBank(tile, log) {
+    return Traversal.walkResilient(tile, {
+        radius: 3,
+        attempts: 6,
+        timeoutMs: 300_000,
+        log,
+        useTeleportCatalog: true,
+        policy: { useTeleports: true, distanceBeforeTeleport: 40 },
+    });
 }
