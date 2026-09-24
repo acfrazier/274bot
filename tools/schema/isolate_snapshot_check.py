@@ -325,12 +325,16 @@ def run_self_test() -> int:
             )
             return 1
 
+        # Append a phantom field at the real end of `table Snapshot`, wherever
+        # its last field currently is (a fixed anchor goes stale as fields grow).
+        snap_start = text.find("table Snapshot {")
+        snap_end = text.find("\n}", snap_start)
+        if snap_start < 0 or snap_end < 0:
+            sys.stderr.write("self-test: unexpected isolate.fbs Snapshot layout\n")
+            return 1
         extra_fbs = tmp_path / "extra.fbs"
         extra_fbs.write_text(
-            text.replace(
-                "  puzzle_board_generation: ulong;\n}",
-                "  puzzle_board_generation: ulong;\n  phantom_field: int;\n}",
-            ),
+            text[:snap_end] + "\n  phantom_field: int;" + text[snap_end:],
             encoding="utf-8",
         )
         code, out = _run_public_check(extra_fbs, rs, expect_fail=True)

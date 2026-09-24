@@ -3,7 +3,7 @@
 All notable public changes to 274bot. Host workspace crate versions are `0.1.8` and
 `publish = false` (not on crates.io). Git tags are `0.1.0`, `0.1.1`, …
 
-## [0.1.8] — 2026-09-24
+## [0.1.8] — 2026-09-24 — Alpha 3
 
 JS API v1 compatibility with the frozen rs2b0t catalog on revision 289, and the
 JS shim pulled back toward name maps: most loops, tables, decisions, retries and
