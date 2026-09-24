@@ -4046,45 +4046,67 @@ export default class T extends LoopingBot {
 
 #[test]
 fn isolate_live_catalog_uses_selected_certificate_links() {
-    let src = r#"
-import { liveCatalog, notedId, unnotedId } from '../../api/market/catalog.js';
-export default class T extends LoopingBot {
-    loop() {
+    let data = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
+    let held = data.item_by_id(1113).expect("rune chainbody is selected");
+    assert!(
+        !held.is_certificate() && held.certificate_link >= 0,
+        "held base 1113 must name its note in selected data"
+    );
+    let held_id = held.id;
+    let held_note = held.certificate_link;
+    let note = data.item_by_id(held_note).expect("held note is selected");
+    assert!(note.is_certificate());
+    assert_eq!(note.certificate_link, held_id);
+    let other = data
+        .items()
+        .iter()
+        .find(|item| !item.is_certificate() && item.certificate_link >= 0 && item.id != held_id)
+        .expect("another selected cert pair");
+    let other_id = other.id;
+    let other_note = other.certificate_link;
+    let src = format!(
+        r#"
+import {{ liveCatalog, notedId, unnotedId }} from '../../api/market/catalog.js';
+const HELD = {held_id};
+const HELD_NOTE = {held_note};
+const OTHER = {other_id};
+const OTHER_NOTE = {other_note};
+export default class T extends LoopingBot {{
+    loop() {{
         const hits = [];
-        const tryHit = (fn) => {
-            try { hits.push(fn()); } catch (e) { hits.push(String(e.message || e)); }
-        };
-        tryHit(() => liveCatalog().notedOf.get(1113));
-        tryHit(() => notedId(1113));
-        tryHit(() => unnotedId(1114));
+        const tryHit = (fn) => {{
+            try {{ hits.push(fn()); }} catch (e) {{ hits.push(String(e.message || e)); }}
+        }};
+        tryHit(() => notedId(HELD));
+        tryHit(() => unnotedId(HELD_NOTE));
+        tryHit(() => notedId(OTHER));
+        tryHit(() => unnotedId(OTHER_NOTE));
+        tryHit(() => liveCatalog().notedOf.get(HELD));
+        tryHit(() => liveCatalog().unnotedOf.get(OTHER_NOTE));
         tryHit(() => notedId(999999));
         tryHit(() => unnotedId(999999));
         globalThis.__probe = JSON.stringify(hits);
-    }
-}
-"#;
-    let data = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
-    let iso = LoadIsolate::spawn_with_game_data(
-        src.to_string(),
-        LoadShape::CompatClass,
-        vec![],
-        data,
-    )
-    .unwrap();
+    }}
+}}
+"#
+    );
+    let iso = LoadIsolate::spawn_with_game_data(src, LoadShape::CompatClass, vec![], data).unwrap();
     iso.on_game_tick(1);
     let value = iso.probe("__probe").unwrap();
     let hits: Vec<serde_json::Value> =
         serde_json::from_str(value.as_str().expect("probe string")).expect("json");
-    assert_eq!(hits.len(), 5, "catalog cert probes: {hits:?}");
-    assert_eq!(hits[0], 1114);
-    assert_eq!(hits[1], 1114);
-    assert_eq!(hits[2], 1113);
-    for miss in &hits[3..] {
+    assert_eq!(hits.len(), 8, "catalog cert probes: {hits:?}");
+    assert_eq!(hits[0], held_note, "notedId held from selected data");
+    assert_eq!(hits[1], held_id, "unnotedId held note from selected data");
+    assert_eq!(hits[2], other_note, "notedId non-held from selected data");
+    assert_eq!(hits[3], other_id, "unnotedId non-held from selected data");
+    assert_eq!(hits[4], held_note);
+    assert_eq!(hits[5], other_id);
+    for miss in &hits[6..] {
         assert!(miss.as_str().unwrap_or("").contains("not impl"));
     }
     iso.join();
 }
-
 
 // Bounded Reachability fails closed without the native coordinate ranks,
 // even when a colocated entity row still carries legacy unbounded bits.
@@ -6926,7 +6948,8 @@ export default class T extends LoopingBot {
         const c = globalThis.__rs2b0t_host.content || {};
         globalThis.__probe = {
             cows: COW_LOCATIONS.map((row) => row.name),
-            nearestCow: nearestCowLocation()?.name,
+            nearestCow: nearestCowLocation({ x: 3013, z: 3355, level: 0 })?.name,
+            nearestCowLum: nearestCowLocation({ x: 3253, z: 3282, level: 0 })?.name,
             cowToll: COW_LOCATIONS[0]?.usesAlKharidToll,
             alBank: { x: AL_KHARID_BANK.x, z: AL_KHARID_BANK.z },
             air: { bank: RUNES['Air rune']?.bank, x: RUNES['Air rune']?.ruins.x, z: RUNES['Air rune']?.ruins.z },
@@ -6957,11 +6980,18 @@ export default class T extends LoopingBot {
         Some(cow_names),
         "COW_LOCATIONS must be materialized from the Rust table: {probe:?}"
     );
-    assert_eq!(probe.get("hasItems").and_then(|value| value.as_bool()), Some(false));
-    assert_eq!(probe["nearestCow"], "Lumbridge cow field");
+    assert_eq!(
+        probe.get("hasItems").and_then(|value| value.as_bool()),
+        Some(false)
+    );
+    assert_eq!(probe["nearestCow"], "South of Falador");
+    assert_eq!(probe["nearestCowLum"], "Lumbridge cow field");
     assert_eq!(probe["cowToll"], true);
     assert_eq!(probe["alBank"], serde_json::json!({"x": 3269, "z": 3167}));
-    assert_eq!(probe["air"], serde_json::json!({"bank": "Falador East", "x": 2983, "z": 3288}));
+    assert_eq!(
+        probe["air"],
+        serde_json::json!({"bank": "Falador East", "x": 2983, "z": 3288})
+    );
     assert_eq!(
         probe
             .get("fires")

@@ -1728,11 +1728,24 @@ mod tests {
                 .is_none());
 
             for fact in &data.consumption {
+                let name = fact.item.name.as_str();
+                let expected = scanned_fixed_food_heal(&data, name);
                 assert_eq!(
-                    data.fixed_food_heal(&fact.item.name),
-                    scanned_fixed_food_heal(&data, &fact.item.name),
-                    "{} on {revision:?}",
-                    fact.item.name
+                    data.fixed_food_heal(name),
+                    expected,
+                    "{name} on {revision:?}"
+                );
+                let upper = name.to_ascii_uppercase();
+                let lower = name.to_ascii_lowercase();
+                assert_eq!(
+                    data.fixed_food_heal(&upper),
+                    expected,
+                    "upper {upper} on {revision:?}"
+                );
+                assert_eq!(
+                    data.fixed_food_heal(&lower),
+                    expected,
+                    "lower {lower} on {revision:?}"
                 );
             }
             assert_eq!(data.fixed_food_heal("not a selected food"), None);

@@ -2,6 +2,7 @@
 //! This is isolate-local calculation, not an isolate-to-host transport.
 
 use crate::supply_v2;
+use api::snapshot::WorldTile;
 use rustyscript::Runtime;
 
 const PENDING: &str = "__pending__";
@@ -42,8 +43,9 @@ fn run_selected_facts<'s>(
         "food-forms" => food_forms(scope, args.get(1)),
         "range-loadout" => range_loadout(scope, args.get(1), args.get(2)),
         "cert-maps" => cert_maps(scope),
+        "cert-link" => cert_link(scope, args.get(1), args.get(2)),
         "cow-locations" => cow_locations(scope),
-        "cow-nearest" => cow_nearest(scope),
+        "cow-nearest" => cow_nearest(scope, args.get(1)),
         "pickpocket-spot" => pickpocket_spot(scope, args.get(1)),
         _ => Err("invalid selected facts op".into()),
     }
@@ -95,7 +97,8 @@ fn range_loadout<'s>(
     let ammo = js_to_string(scope, ammo)?;
     let data = supply_v2::selected_data();
     let loadout = crate::ranged::range_loadout_of_items(
-        data.as_deref().map_or(&[], api::game_data::SelectedGameData::items),
+        data.as_deref()
+            .map_or(&[], api::game_data::SelectedGameData::items),
         &weapon,
         &ammo,
     );
@@ -132,9 +135,36 @@ fn cert_maps<'s>(scope: &mut v8::HandleScope<'s>) -> Result<v8::Local<'s, v8::Va
     Ok(row.into())
 }
 
-fn cow_locations<'s>(
+fn cert_link<'s>(
     scope: &mut v8::HandleScope<'s>,
+    id: v8::Local<v8::Value>,
+    direction: v8::Local<v8::Value>,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
+    let Some(data) = supply_v2::selected_data() else {
+        return Ok(v8::null(scope).into());
+    };
+    let Some(id) = js_i32(scope, id)? else {
+        return Ok(v8::null(scope).into());
+    };
+    let direction = js_to_string(scope, direction)?;
+    let item = data.item_by_id(id);
+    let linked = match (direction.as_str(), item) {
+        ("noted", Some(item)) if !item.is_certificate() && item.certificate_link >= 0 => {
+            Some(item.certificate_link)
+        }
+        ("unnoted", Some(item)) if item.is_certificate() && item.certificate_link >= 0 => {
+            Some(item.certificate_link)
+        }
+        ("noted" | "unnoted", _) => None,
+        _ => return Err("invalid selected facts op".into()),
+    };
+    match linked {
+        Some(n) => Ok(v8::Integer::new(scope, n).into()),
+        None => Ok(v8::null(scope).into()),
+    }
+}
+
+fn cow_locations<'s>(scope: &mut v8::HandleScope<'s>) -> Result<v8::Local<'s, v8::Value>, String> {
     let array = v8::Array::new(
         scope,
         i32::try_from(crate::content::COW_FIELDS.len()).unwrap_or(i32::MAX),
@@ -157,8 +187,14 @@ fn cow_locations<'s>(
     Ok(facts.into())
 }
 
-fn cow_nearest<'s>(scope: &mut v8::HandleScope<'s>) -> Result<v8::Local<'s, v8::Value>, String> {
-    match crate::content::nearest_cow_field() {
+fn cow_nearest<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    tile: v8::Local<v8::Value>,
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    let Some(from) = js_tile(scope, tile)? else {
+        return Ok(v8::null(scope).into());
+    };
+    match crate::content::nearest_cow_field(from) {
         Some(field) => cow_field(scope, field),
         None => Ok(v8::null(scope).into()),
     }
@@ -263,6 +299,52 @@ fn js_to_string(
         Some(text) => Ok(text.to_rust_string_lossy(scope)),
         None => Err(PENDING.into()),
     }
+}
+
+fn js_i32(scope: &mut v8::HandleScope, value: v8::Local<v8::Value>) -> Result<Option<i32>, String> {
+    if value.is_null() || value.is_undefined() || !value.is_number() {
+        return Ok(None);
+    }
+    let n = value
+        .number_value(scope)
+        .ok_or_else(|| PENDING.to_string())?;
+    if !n.is_finite() || n.fract() != 0.0 {
+        return Ok(None);
+    }
+    if n < (f64::from(i32::MIN)) || n > (f64::from(i32::MAX)) {
+        return Ok(None);
+    }
+    Ok(Some(n as i32))
+}
+
+fn js_tile(
+    scope: &mut v8::HandleScope,
+    value: v8::Local<v8::Value>,
+) -> Result<Option<WorldTile>, String> {
+    if value.is_null() || value.is_undefined() || !value.is_object() {
+        return Ok(None);
+    }
+    let Some(x) = object_i32(scope, value, "x")? else {
+        return Ok(None);
+    };
+    let Some(z) = object_i32(scope, value, "z")? else {
+        return Ok(None);
+    };
+    let level = object_i32(scope, value, "level")?.unwrap_or(0);
+    Ok(Some(WorldTile { x, z, level }))
+}
+
+fn object_i32(
+    scope: &mut v8::HandleScope,
+    value: v8::Local<v8::Value>,
+    key: &str,
+) -> Result<Option<i32>, String> {
+    let obj = value.to_object(scope).ok_or_else(|| PENDING.to_string())?;
+    let key = v8::String::new(scope, key).ok_or_else(|| "selected facts string".to_string())?;
+    let field = obj
+        .get(scope, key.into())
+        .ok_or_else(|| PENDING.to_string())?;
+    js_i32(scope, field)
 }
 
 fn v8_str<'s>(

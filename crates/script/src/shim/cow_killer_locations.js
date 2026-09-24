@@ -30,7 +30,7 @@ export function resolveCowLocation(setting) {
     return COW_LOCATIONS.find((row) => row.name.toLowerCase() === want) || null;
 }
 
-export function nearestCowLocation() {
-    const nearest = selectedFacts('cow-nearest');
+export function nearestCowLocation(tile) {
+    const nearest = selectedFacts('cow-nearest', tile);
     return nearest ? resolveCowLocation(nearest.name) : undefined;
 }

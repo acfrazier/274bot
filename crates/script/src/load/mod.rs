@@ -35,10 +35,10 @@ mod paint_jive;
 #[cfg(feature = "load")]
 mod partner_trade_v8;
 mod quest_facts_v8;
+mod selected_facts_v8;
 mod shape;
 #[cfg(feature = "load")]
 mod snapshot;
-mod selected_facts_v8;
 mod supply_v8;
 
 pub use shape::{

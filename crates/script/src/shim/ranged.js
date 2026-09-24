@@ -1,3 +1,4 @@
+import { notImpl } from '../../shim/_kernel.js';
 import { BOWS, DARTS } from './equipment.js';
 
 export const RANGED_WEAPONS = [...BOWS, ...DARTS];
@@ -5,13 +6,7 @@ export const ROCK_CRAB_RANGED_WEAPONS = RANGED_WEAPONS;
 
 export function rangeLoadoutOf(weapon, ammo) {
     const fn = globalThis.__rs2b0t_selected_facts;
-    if (typeof fn !== 'function') {
-        return {
-            weapon: String(weapon ?? ''),
-            projectile: String(ammo ?? ''),
-            thrown: false,
-        };
-    }
+    if (typeof fn !== 'function') throw notImpl('rangeLoadoutOf');
     return fn('range-loadout', String(weapon ?? ''), String(ammo ?? ''));
 }
 

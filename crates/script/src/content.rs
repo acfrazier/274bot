@@ -75,8 +75,21 @@ pub fn cow_uses_al_kharid_toll(field: &CowField) -> bool {
     field.name == "Lumbridge cow field"
 }
 
-pub fn nearest_cow_field() -> Option<&'static CowField> {
-    COW_FIELDS.first()
+/// Frozen `Tile.distanceTo` nearest field: Chebyshev xz, different level
+/// is `1_000_000 + xz`. Ties keep the earlier table row.
+pub fn nearest_cow_field(from: WorldTile) -> Option<&'static CowField> {
+    COW_FIELDS
+        .iter()
+        .min_by_key(|field| cow_field_distance(field, from))
+}
+
+fn cow_field_distance(field: &CowField, from: WorldTile) -> i32 {
+    let xz = (field.x - from.x).abs().max((field.z - from.z).abs());
+    if field.level != from.level {
+        1_000_000 + xz
+    } else {
+        xz
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -397,6 +410,37 @@ mod tests {
             .find(|f| f.name == "Lumbridge cow field")
             .expect("lumbridge");
         assert_eq!((lum.x, lum.z, lum.level), (3253, 3282, 0));
+    }
+
+    #[test]
+    fn nearest_cow_field_uses_tile_distance() {
+        let falador_east = WorldTile {
+            x: 3013,
+            z: 3355,
+            level: 0,
+        };
+        assert_eq!(
+            nearest_cow_field(falador_east).map(|field| field.name),
+            Some("South of Falador")
+        );
+        let lumbridge = WorldTile {
+            x: 3253,
+            z: 3282,
+            level: 0,
+        };
+        assert_eq!(
+            nearest_cow_field(lumbridge).map(|field| field.name),
+            Some("Lumbridge cow field")
+        );
+        let north_west = WorldTile {
+            x: 3162,
+            z: 3311,
+            level: 0,
+        };
+        assert_eq!(
+            nearest_cow_field(north_west).map(|field| field.name),
+            Some("North-west of Lumbridge")
+        );
     }
 
     #[test]

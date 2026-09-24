@@ -85,7 +85,7 @@ export function localFirePlot(origin, half = 4) {
     };
 }
 
-export const LOG_LEVELS = (host().content && host().content.log_levels) || {};
+export const LOG_LEVELS = Object.fromEntries((host().content && host().content.log_levels) || []);
 
 export function tileKey(t) {
     return `${t.x},${t.z}`;

@@ -784,9 +784,10 @@ pub(crate) fn content_json(
                 "ruins": {"x": route.ruins.x, "z": route.ruins.z, "level": route.ruins.level}
             })
         }).collect::<Vec<_>>(),
-        "log_levels": LOG_LEVELS.iter().map(|(name, level)| {
-            ((*name).to_string(), serde_json::json!(level))
-        }).collect::<serde_json::Map<_, _>>(),
+        "log_levels": LOG_LEVELS
+            .iter()
+            .map(|(name, level)| serde_json::json!([*name, *level]))
+            .collect::<Vec<_>>(),
         "fire_plots": FIRE_PLOTS.iter().map(|p| {
             serde_json::json!({
                 "name": p.name,

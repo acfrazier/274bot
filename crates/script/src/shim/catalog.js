@@ -9,15 +9,19 @@ const EMPTY = {
     aliases: new Map(),
 };
 
+let cachedCatalog = null;
+
 export function liveCatalog() {
+    if (cachedCatalog) return cachedCatalog;
     const fn = globalThis.__rs2b0t_selected_facts;
     if (typeof fn !== 'function') return { ...EMPTY };
     const maps = fn('cert-maps');
-    return {
+    cachedCatalog = {
         ...EMPTY,
         notedOf: new Map(maps.notedOf),
         unnotedOf: new Map(maps.unnotedOf),
     };
+    return cachedCatalog;
 }
 
 export function tradeable(_id) {
@@ -32,14 +36,21 @@ export function displayName(_id) {
     throw notImpl('displayName');
 }
 
+function certLink(id, direction) {
+    const fn = globalThis.__rs2b0t_selected_facts;
+    if (typeof fn !== 'function') return undefined;
+    const n = fn('cert-link', id, direction);
+    return n == null ? undefined : n;
+}
+
 export function notedId(id) {
-    const n = liveCatalog().notedOf.get(id);
+    const n = certLink(id, 'noted');
     if (n === undefined) throw notImpl('notedId');
     return n;
 }
 
 export function unnotedId(id) {
-    const n = liveCatalog().unnotedOf.get(id);
+    const n = certLink(id, 'unnoted');
     if (n === undefined) throw notImpl('unnotedId');
     return n;
 }

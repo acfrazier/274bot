@@ -102,6 +102,14 @@ struct ParsedShopFacts {
 }
 
 static PARSED_SHOP_FACTS: OnceLock<ParsedShopFacts> = OnceLock::new();
+static JOINED_274: OnceLock<JoinedShops> = OnceLock::new();
+static JOINED_289: OnceLock<JoinedShops> = OnceLock::new();
+
+struct JoinedShops {
+    shops: Vec<ShopRecord>,
+    by_inv: HashMap<String, usize>,
+    by_keeper: HashMap<String, usize>,
+}
 
 fn parsed_shop_facts() -> &'static ParsedShopFacts {
     PARSED_SHOP_FACTS.get_or_init(|| ParsedShopFacts {
@@ -123,13 +131,39 @@ fn parsed_shop_facts() -> &'static ParsedShopFacts {
     })
 }
 
+fn joined_shops(data: &SelectedGameData) -> &'static JoinedShops {
+    let cell = if data.revision() == 274 {
+        &JOINED_274
+    } else {
+        &JOINED_289
+    };
+    cell.get_or_init(|| {
+        let parsed = parsed_shop_facts();
+        let shops: Vec<ShopRecord> = POSTED_INVS
+            .iter()
+            .filter_map(|inv_name| join_shop(*inv_name, &parsed.invs, &parsed.keepers, data))
+            .collect();
+        let mut by_inv = HashMap::with_capacity(shops.len());
+        let mut by_keeper = HashMap::new();
+        for (index, shop) in shops.iter().enumerate() {
+            by_inv.insert(shop.inv.to_ascii_lowercase(), index);
+            for keeper in &shop.keepers {
+                by_keeper
+                    .entry(keeper.to_ascii_lowercase())
+                    .or_insert(index);
+            }
+        }
+        JoinedShops {
+            shops,
+            by_inv,
+            by_keeper,
+        }
+    })
+}
+
 /// Posted shops for this revision, skipping any inv whose obj aliases are missing.
-pub fn shops_for(data: &SelectedGameData) -> Vec<ShopRecord> {
-    let parsed = parsed_shop_facts();
-    POSTED_INVS
-        .iter()
-        .filter_map(|inv_name| join_shop(*inv_name, &parsed.invs, &parsed.keepers, data))
-        .collect()
+pub fn shops_for(data: &SelectedGameData) -> &'static [ShopRecord] {
+    &joined_shops(data).shops
 }
 
 /// `__rs2b0t_host.content.shops` object keyed by inv. Empty when nothing joined.
@@ -145,19 +179,15 @@ pub fn content_json_value(data: &SelectedGameData) -> serde_json::Value {
 }
 
 pub fn shop_by_inv(data: &SelectedGameData, inv: &str) -> Option<ShopRecord> {
-    let wanted = inv.trim();
-    shops_for(data)
-        .into_iter()
-        .find(|shop| shop.inv.eq_ignore_ascii_case(wanted))
+    let joined = joined_shops(data);
+    let index = *joined.by_inv.get(&inv.trim().to_ascii_lowercase())?;
+    joined.shops.get(index).cloned()
 }
 
 pub fn shop_by_keeper(data: &SelectedGameData, keeper: &str) -> Option<ShopRecord> {
-    let wanted = keeper.trim();
-    shops_for(data).into_iter().find(|shop| {
-        shop.keepers
-            .iter()
-            .any(|name| name.eq_ignore_ascii_case(wanted))
-    })
+    let joined = joined_shops(data);
+    let index = *joined.by_keeper.get(&keeper.trim().to_ascii_lowercase())?;
+    joined.shops.get(index).cloned()
 }
 
 /// Frozen `unitPrice`: stock-sensitive per-unit sell price, never below 1.
