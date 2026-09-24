@@ -8,7 +8,7 @@ This repo does not ship Jagex assets and does not promise
 automatic asset distribution beyond the client’s ordinary `/crc` + jag
 fetch into the configured cache/unpack directory.
 
-## Downloaded Alpha 2 packages
+## Downloaded Alpha 3 packages
 
 The macOS app opens on **public-289**. Standalone binaries use
 `./panel-play --profile public-289` or `./tui-play --profile public-289`

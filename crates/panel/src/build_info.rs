@@ -1,11 +1,11 @@
 //! Deploy fingerprint: static release label plus rs2b0t git stamp.
 //!
-//! Visible line is `alpha 2 · e978193` (same ` · ` as the old 4.5c line).
+//! Visible line is `alpha 3 · e978193` (same ` · ` as the old 4.5c line).
 //! Hover is the crate version (`0.1.7`), then full commit + `builtAt`.
 //! Bump [`RELEASE`] by hand when the public name changes.
 
 /// Public name on the dim line. Not derived from git or Cargo.toml.
-pub const RELEASE: &str = "alpha 2";
+pub const RELEASE: &str = "alpha 3";
 /// Crate version (`Cargo.toml`), shown on hover.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Full 40-char SHA when known, else `"unknown"`.
@@ -26,7 +26,7 @@ pub fn git_stamp(short: &str, dirty: bool) -> String {
     }
 }
 
-/// `alpha 2 · e978193`
+/// `alpha 3 · e978193`
 pub fn line(release: &str, stamp: &str) -> String {
     format!("{release} · {stamp}")
 }
@@ -61,7 +61,7 @@ mod tests {
     #[test]
     fn line_matches_the_old_dot_format() {
         assert_eq!(line("alpha 2", "e978193"), "alpha 2 · e978193");
-        assert_eq!(line(RELEASE, "e978193-dirty"), "alpha 2 · e978193-dirty");
+        assert_eq!(line("alpha 3", "e978193-dirty"), "alpha 3 · e978193-dirty");
     }
 
     #[test]

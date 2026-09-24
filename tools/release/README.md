@@ -1,6 +1,7 @@
 # Release packaging
 
-Alpha 2 uses host workspace version 0.1.7. Initial targets:
+Alpha 3 uses host workspace version 0.1.8. The public name comes from
+`crates/panel/src/build_info.rs` `RELEASE`. Initial targets:
 
 - macOS ARM64: Developer ID signed `274bot.app`, `panel-play`, `tui-play`.
 - Windows x64: `panel-play.exe`, `tui-play.exe`.

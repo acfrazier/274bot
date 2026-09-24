@@ -27,7 +27,7 @@ pub const ERROR: [f32; 4] = [1.0, 123.0 / 255.0, 123.0 / 255.0, 1.0];
 /// Running cap dot (#4cd964), the green cap state.
 pub const GREEN: [f32; 4] = [76.0 / 255.0, 217.0 / 255.0, 100.0 / 255.0, 1.0];
 /// Dim build line under the title is [`crate::build_info::build_line`]
-/// (`alpha 2 ·` git stamp; hover is crate version + full commit).
+/// (`alpha 3 ·` git stamp; hover is crate version + full commit).
 /// Right-hand chrome width, matching rs2b0t's 330px panel. Locked: the
 /// strip does not grow with the OS window, only taller.
 pub const PANEL_WIDTH: f32 = 330.0;

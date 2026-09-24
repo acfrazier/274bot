@@ -8,6 +8,10 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  # GitHub runners have no canonical 289 engine/content tree, so the build
+  # stages no navigation bundle (checked-in identities only). Release builds
+  # and LIVE runs keep the default `require` on machines with the inputs.
+  BOT_NAV_BUILD: skip
 
 # GitHub is a subset of local CI (see CONTRIBUTING.md): no LIVE=1, no GPU
 # adapter (SKIP_GPU=1). The cargo graph is the same as local — host workspace

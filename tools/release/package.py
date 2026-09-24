@@ -9,6 +9,7 @@ import argparse
 import hashlib
 import json
 import plistlib
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -41,6 +42,9 @@ def main():
     metadata = json.loads(run('cargo', 'metadata', '--locked', '--no-deps', '--format-version', '1',
                               '--manifest-path', str(root / 'Cargo.toml')))
     version = next(x['version'] for x in metadata['packages'] if x['name'] == 'panel')
+    # Public name (e.g. "alpha 3") has one source: the panel's build line.
+    build_info = (root / 'crates/panel/src/build_info.rs').read_text()
+    release = re.search(r'pub const RELEASE: &str = "([^"]+)";', build_info).group(1).title()
     receipt = json.loads(a.build_receipt.read_text())
     for key in ('host_commit', 'client_commit', 'target', 'rustc', 'features', 'built_at', 'files'):
         if key not in receipt:
@@ -93,7 +97,7 @@ def main():
         shutil.copy2(a.input / 'panel-play', macos / 'panel-play')
         shutil.copytree(a.output / 'nav', resources / 'nav')
         info = {
-            'CFBundleName': '274bot', 'CFBundleDisplayName': '274bot Alpha 2',
+            'CFBundleName': '274bot', 'CFBundleDisplayName': '274bot ' + release,
             'CFBundleIdentifier': 'com.acfrazier.274bot',
             'CFBundleExecutable': 'panel-play', 'CFBundlePackageType': 'APPL',
             'CFBundleShortVersionString': version, 'CFBundleVersion': version,
@@ -110,7 +114,7 @@ def main():
                                 str(target)], check=True)
                 subprocess.run(['codesign', '--verify', '--strict', '--verbose=2', str(target)], check=True)
                 signed.append(str(target.relative_to(a.output)))
-    receipt.update(version=version, release='Alpha 2', platform=a.platform,
+    receipt.update(version=version, release=release, platform=a.platform,
                    revision=int(a.revision), app_profile=a.app_profile,
                    signed=signed, notarized=False,
                    status='signed-staging' if signed else 'unsigned-staging')
