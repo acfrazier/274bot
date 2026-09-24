@@ -590,6 +590,25 @@ fn running_slot_profile_world_change_reseats_next_login_handshake() {
         Some(1),
         "editing a live slot must not relabel its current connection"
     );
+    assert!(matches!(
+        play.queue
+            .lock()
+            .unwrap()
+            .request_permit(42, Instant::now()),
+        Permit::Grant
+    ));
+    assert!(
+        !granted_permit_world_is_current(&play.queue, 42, Some(&round), &arm),
+        "a world edit while queued must defer the grant before any handshake"
+    );
+    {
+        let mut queue = play.queue.lock().unwrap();
+        assert!(matches!(
+            queue.request_permit(43, Instant::now()),
+            Permit::Grant
+        ));
+        assert!(queue.abandon_permit(43), "the stale grant was released");
+    }
     assert!(refresh_slot_world_preference(&mut round, &worlds, &arm).unwrap());
     configure_slot_world(&mut client, &worlds.worlds[round.index], false, &arm.stop).unwrap();
     assert_eq!(client.config.host, "localhost");

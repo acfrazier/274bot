@@ -162,6 +162,10 @@ impl WorldRound {
         })
     }
 
+    pub fn preference(&self) -> Option<u16> {
+        self.choice
+    }
+
     /// Rebuild this round when the operator's account preference changed.
     /// Auto rotation does not count as a preference change: `choice` stays
     /// `None` while `index` advances through full worlds.
