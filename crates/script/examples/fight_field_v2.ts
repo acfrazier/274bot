@@ -2,12 +2,15 @@ import { Npc } from '../../api/npcs/Npcs.js';
 import { Reachability } from '../../event/webwalk/geometry/Reachability.js';
 
 type NativeApi = import('../host-js/index.d.ts').NativeApi;
+type HuntHooks = import('../host-js/index.d.ts').HuntHooks;
+type HuntSite = import('../host-js/index.d.ts').HuntSite;
 
 /**
  * Headed File witness: field observation only. Melee style so field() uses
- * posted distance / rendered SW (from === null), not safespot LOS. fightValidate
- * plus at most one fightNext must not emit npc / Attack. LOS is recorded in the
- * receipt only; stop does not require losNetwork/losTile true.
+ * posted distance / rendered SW (from === null), not safespot LOS. begin +
+ * validate + one awaited run (died so the pass ends after status) must not
+ * Attack. LOS is recorded in the receipt only; stop does not require
+ * losNetwork/losTile true.
  */
 export const apiVersion = 2;
 
@@ -15,8 +18,12 @@ const STOP_OK = 'fight field qualification complete';
 const RECEIPT_PREFIX = 'fight-field-receipt:';
 
 let token: number | null = null;
+let running = false;
 
-export function tick(api: NativeApi): void {
+export async function tick(api: NativeApi): Promise<void> {
+    if (running) {
+        return;
+    }
     const snap = api.snapshot;
     if (!snap.ingame || !snap.here) {
         return;
@@ -53,21 +60,7 @@ export function tick(api: NativeApi): void {
         maxZ: Math.max(here.z, origin.z, tile.z) + 8,
         level: here.level,
     };
-    const projection = {
-        died: false,
-        targetIdx: null,
-        hpFraction: 1,
-        panicHp: 0.1,
-        retreatHp: 0.2,
-        hasFood: true,
-        needEat: false,
-        style: 'melee',
-        safespotIndex: 0,
-        buryBones: false,
-        boneName: 'Bones',
-        hasVlog: false,
-        hasArmSpecial: false,
-        hasShieldReady: false,
+    const site: HuntSite = {
         key: 'fight-field',
         target: n.name || 'npc',
         alsoHunt: [],
@@ -77,28 +70,38 @@ export function tick(api: NativeApi): void {
         fireAtRange: false,
         rangedThreat: false,
     };
+    const hooks: HuntHooks = {
+        died: () => true,
+        hpFraction: () => 1,
+        panicHp: () => 0.1,
+        retreatHp: () => 0.2,
+        hasFood: () => true,
+        needEat: () => false,
+        style: () => 'melee',
+        safespotIndex: () => 0,
+        buryBones: () => false,
+        boneName: () => 'Bones',
+    };
 
     if (token == null) {
-        const began = api.fightBegin();
+        const began = api.fightBegin(site);
         if (!began.ok) {
             throw new Error(began.error);
         }
         token = began.value.token;
     }
-    const validated = api.fightValidate({ token, ...projection });
+    const validated = api.fightValidate({ token }, hooks);
     if (!validated.ok) {
         throw new Error(validated.error);
     }
     if (!validated.value) {
         return;
     }
-    const step = api.fightNext({ token, ...projection });
-    if (!step.ok) {
-        throw new Error(step.error);
-    }
-    const kind = 'kind' in step ? step.kind : undefined;
-    if (kind === 'npc' || kind === 'Attack' || kind === 'attack') {
-        throw new Error('fight field witness must not emit npc / Attack');
+
+    running = true;
+    const outcome = await api.fightRun({ token }, hooks);
+    if (outcome.kind !== 'done') {
+        throw new Error(`fightRun expected done, got ${outcome.kind}`);
     }
 
     const toNet = { x: origin.x, z: origin.z, level: n.level };
@@ -119,25 +122,15 @@ export function tick(api: NativeApi): void {
         throw new Error('networkOrigin must equal packed nx,nz');
     }
 
-    const receipt: {
-        index: number;
-        size: number;
-        tile: { x: number; z: number };
-        networkOrigin: { x: number; z: number };
-        losNetwork: boolean;
-        losTile: boolean;
-        kind?: string;
-    } = {
+    const receipt = {
         index: n.index,
         size: n.size,
         tile: { x: n.x, z: n.z },
         networkOrigin: { x: origin.x, z: origin.z },
         losNetwork: losNetwork.value,
         losTile: losTile.value,
+        outcome,
     };
-    if (typeof kind === 'string') {
-        receipt.kind = kind;
-    }
     const line = `${RECEIPT_PREFIX}${JSON.stringify(receipt)}`;
     api.log(line);
     api.paint

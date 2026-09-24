@@ -1,10 +1,12 @@
 type NativeApi = import('../host-js/index.d.ts').NativeApi;
+type HuntHooks = import('../host-js/index.d.ts').HuntHooks;
+type HuntSite = import('../host-js/index.d.ts').HuntSite;
 
 /**
  * Headed File witness: field observation only. Dest is a neighbouring tile
- * (Chebyshev 2–6), never meleeAnchor. One retreatNext must be status /
- * set-safespot / log / walk-to to dest — not walk / npc / Attack.
- * Already-on-dest is not PASS. Stop without the 4×3s hop loop.
+ * (Chebyshev 2–6), never meleeAnchor. begin + validate + one awaited run
+ * hops with walk-to to dest — not a world walk / npc / Attack.
+ * Already-on-dest is not PASS. Stop without waiting out a live fight.
  */
 export const apiVersion = 2;
 
@@ -17,6 +19,7 @@ type Tile = { x: number; z: number; level: number };
 
 let token: number | null = null;
 let dest: Tile | null = null;
+let running = false;
 
 function chebyshev(a: Tile, b: Tile): number {
     return Math.max(Math.abs(a.x - b.x), Math.abs(a.z - b.z));
@@ -47,19 +50,10 @@ function pickDest(here: Tile, api: NativeApi): Tile | null {
     return null;
 }
 
-function forbiddenKind(kind: string | undefined): boolean {
-    if (typeof kind !== 'string') return false;
-    const k = kind.toLowerCase();
-    return k === 'walk' || k === 'npc' || k === 'attack';
-}
-
-function allowedKind(kind: string | undefined): boolean {
-    if (typeof kind !== 'string') return false;
-    const k = kind.toLowerCase();
-    return k === 'status' || k === 'set-safespot' || k === 'log' || k === 'walk-to';
-}
-
-export function tick(api: NativeApi): void {
+export async function tick(api: NativeApi): Promise<void> {
+    if (running) {
+        return;
+    }
     const snap = api.snapshot;
     if (!snap.ingame || !snap.here) {
         return;
@@ -97,21 +91,7 @@ export function tick(api: NativeApi): void {
         maxZ: Math.max(here.z, dest.z),
         level: here.level,
     };
-    const projection = {
-        died: false,
-        targetIdx: null,
-        hpFraction: 1,
-        panicHp: 0.1,
-        retreatHp: 0.2,
-        hasFood: false,
-        needEat: false,
-        style: 'melee',
-        safespotIndex: 0,
-        buryBones: false,
-        boneName: 'Bones',
-        hasVlog: false,
-        hasArmSpecial: false,
-        hasShieldReady: false,
+    const site: HuntSite = {
         key: 'retreat-spot',
         target: 'retreat',
         alsoHunt: [],
@@ -121,43 +101,44 @@ export function tick(api: NativeApi): void {
         fireAtRange: false,
         rangedThreat: false,
     };
+    const hooks: HuntHooks = {
+        died: () => false,
+        hpFraction: () => 1,
+        panicHp: () => 0.1,
+        retreatHp: () => 0.2,
+        hasFood: () => false,
+        needEat: () => false,
+        style: () => 'melee',
+        safespotIndex: () => 0,
+        buryBones: () => false,
+        boneName: () => 'Bones',
+    };
 
     if (token == null) {
-        const began = api.retreatBegin();
+        const began = api.retreatBegin(site);
         if (!began.ok) {
             throw new Error(began.error);
         }
         token = began.value.token;
     }
-    const validated = api.retreatValidate({ token, ...projection });
+    const validated = api.retreatValidate({ token }, hooks);
     if (!validated.ok) {
         throw new Error(validated.error);
     }
     if (!validated.value) {
         return;
     }
-    const step = api.retreatNext({ token, ...projection });
-    if (!step.ok) {
-        throw new Error(step.error);
-    }
-    const kind = 'kind' in step ? step.kind : undefined;
-    if (forbiddenKind(kind)) {
-        throw new Error('retreat spot witness must not emit walk / npc / Attack');
-    }
-    if (!allowedKind(kind)) {
-        return;
-    }
-    if (kind === 'walk-to') {
-        const walk = step as { x?: number; z?: number; level?: number };
-        if (walk.x !== dest.x || walk.z !== dest.z || walk.level !== dest.level) {
-            throw new Error('retreatNext walk-to must target dest');
-        }
+
+    running = true;
+    const outcome = await api.retreatRun({ token }, hooks);
+    if (outcome.kind !== 'done') {
+        throw new Error(`retreatRun expected done, got ${outcome.kind}`);
     }
 
     const receipt = {
         here: { x: here.x, z: here.z, level: here.level },
         dest: { x: dest.x, z: dest.z, level: dest.level },
-        kind,
+        outcome,
     };
     const line = `${RECEIPT_PREFIX}${JSON.stringify(receipt)}`;
     api.log(line);
@@ -166,7 +147,7 @@ export function tick(api: NativeApi): void {
         .title('retreat spot v2')
         .row(line)
         .row('here', `${here.x},${here.z},${here.level}`, 'dest', `${dest.x},${dest.z},${dest.level}`)
-        .row('kind', String(kind))
+        .row('outcome', outcome.kind)
         .row('result', STOP_OK)
         .end();
     api.stop(STOP_OK);

@@ -1,9 +1,12 @@
 type NativeApi = import('../host-js/index.d.ts').NativeApi;
+type HuntHooks = import('../host-js/index.d.ts').HuntHooks;
+type HuntSite = import('../host-js/index.d.ts').HuntSite;
 
 /**
  * Headed File witness: field observation only. Range hold with dest a
- * neighbouring tile (Chebyshev 2–6). One holdNext must be status or walk
- * to dest — not walk-to / npc / Attack. Already-on-dest is not PASS.
+ * neighbouring tile (Chebyshev 2–6). begin + validate + one awaited run
+ * walks the world to dest (not walk-to / npc / Attack). Already-on-dest
+ * is not PASS.
  */
 export const apiVersion = 2;
 
@@ -16,6 +19,7 @@ type Tile = { x: number; z: number; level: number };
 
 let token: number | null = null;
 let dest: Tile | null = null;
+let running = false;
 
 function chebyshev(a: Tile, b: Tile): number {
     return Math.max(Math.abs(a.x - b.x), Math.abs(a.z - b.z));
@@ -42,13 +46,10 @@ function pickDest(here: Tile, api: NativeApi): Tile | null {
     return null;
 }
 
-function forbiddenKind(kind: string | undefined): boolean {
-    if (typeof kind !== 'string') return false;
-    const k = kind.toLowerCase();
-    return k === 'walk-to' || k === 'npc' || k === 'attack';
-}
-
-export function tick(api: NativeApi): void {
+export async function tick(api: NativeApi): Promise<void> {
+    if (running) {
+        return;
+    }
     const snap = api.snapshot;
     if (!snap.ingame || !snap.here) {
         return;
@@ -80,21 +81,7 @@ export function tick(api: NativeApi): void {
         maxZ: Math.max(here.z, dest.z),
         level: here.level,
     };
-    const projection = {
-        died: false,
-        targetIdx: null,
-        hpFraction: 1,
-        panicHp: 0.1,
-        retreatHp: 0.2,
-        hasFood: true,
-        needEat: false,
-        style: 'range',
-        safespotIndex: 0,
-        buryBones: false,
-        boneName: 'Bones',
-        hasVlog: false,
-        hasArmSpecial: false,
-        hasShieldReady: false,
+    const site: HuntSite = {
         key: 'hold-spot',
         target: 'hold',
         alsoHunt: [],
@@ -104,43 +91,44 @@ export function tick(api: NativeApi): void {
         fireAtRange: false,
         rangedThreat: false,
     };
+    const hooks: HuntHooks = {
+        died: () => false,
+        hpFraction: () => 1,
+        panicHp: () => 0.1,
+        retreatHp: () => 0.2,
+        hasFood: () => true,
+        needEat: () => false,
+        style: () => 'range',
+        safespotIndex: () => 0,
+        buryBones: () => false,
+        boneName: () => 'Bones',
+    };
 
     if (token == null) {
-        const began = api.holdBegin();
+        const began = api.holdBegin(site);
         if (!began.ok) {
             throw new Error(began.error);
         }
         token = began.value.token;
     }
-    const validated = api.holdValidate({ token, ...projection });
+    const validated = api.holdValidate({ token }, hooks);
     if (!validated.ok) {
         throw new Error(validated.error);
     }
     if (!validated.value) {
         return;
     }
-    const step = api.holdNext({ token, ...projection });
-    if (!step.ok) {
-        throw new Error(step.error);
-    }
-    const kind = 'kind' in step ? step.kind : undefined;
-    if (forbiddenKind(kind)) {
-        throw new Error('hold spot witness must not emit walk-to / npc / Attack');
-    }
-    if (kind !== 'status' && kind !== 'walk') {
-        return;
-    }
-    if (kind === 'walk') {
-        const walk = step as { x?: number; z?: number; level?: number };
-        if (walk.x !== dest.x || walk.z !== dest.z || walk.level !== dest.level) {
-            throw new Error('holdNext walk must target dest');
-        }
+
+    running = true;
+    const outcome = await api.holdRun({ token }, hooks);
+    if (outcome.kind !== 'done') {
+        throw new Error(`holdRun expected done, got ${outcome.kind}`);
     }
 
     const receipt = {
         here: { x: here.x, z: here.z, level: here.level },
         dest: { x: dest.x, z: dest.z, level: dest.level },
-        kind,
+        outcome,
     };
     const line = `${RECEIPT_PREFIX}${JSON.stringify(receipt)}`;
     api.log(line);
@@ -149,7 +137,7 @@ export function tick(api: NativeApi): void {
         .title('hold spot v2')
         .row(line)
         .row('here', `${here.x},${here.z},${here.level}`, 'dest', `${dest.x},${dest.z},${dest.level}`)
-        .row('kind', String(kind))
+        .row('outcome', outcome.kind)
         .row('result', STOP_OK)
         .end();
     api.stop(STOP_OK);

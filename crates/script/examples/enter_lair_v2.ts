@@ -1,16 +1,16 @@
 type NativeApi = import('../host-js/index.d.ts').NativeApi;
+type HuntHooks = import('../host-js/index.d.ts').HuntHooks;
+type HuntSite = import('../host-js/index.d.ts').HuntSite;
 
 /**
- * Headed File witness: field observation of the gateless first effect.
+ * Headed File witness: field observation of the gateless approach walk.
  * Not a lair entry and not inArea success. Curated box does not contain
  * here. One approach tile inside that box, same level, Chebyshev 8–16
  * (greater than the skip of 1, not Hold's 2-tile walk-back, not Walk's
  * > 12 gate). The picker scans that Chebyshev ring and may choose a
- * diagonal. A missing collision map does not reject the tile. One
- * enterNext must be `walk` radius 0 toward that tile.
- * The isolate omits radius; the shim would queue it at radius 0 with
- * allow_teleports, allow_wilderness, and allow_bank_fetch all false.
- * Do not ack the walk — acking arms the 120s bound. Do not wait out the
+ * diagonal. A missing collision map does not reject the tile.
+ * begin + validate starts one run; the host walks radius 0 with
+ * teleports, wilderness, and bank fetch off. Do not wait out the
  * approach or the 300s stand. Do not claim inArea.
  * Gate is `ingame` and `here` only. NativeSnapshot does not publish
  * `scene_state`.
@@ -30,6 +30,7 @@ type Box = { minX: number; maxX: number; minZ: number; maxZ: number; level: numb
 let token: number | null = null;
 let approach: Tile | null = null;
 let box: Box | null = null;
+let running = false;
 
 function chebyshev(a: Tile, b: Tile): number {
     return Math.max(Math.abs(a.x - b.x), Math.abs(a.z - b.z));
@@ -48,7 +49,6 @@ function contains(area: Box, tile: Tile): boolean {
         tile.z <= area.maxZ
     );
 }
-
 
 function forbiddenTile(tile: Tile): boolean {
     return tile.x === FORBIDDEN_TILE.x && tile.z === FORBIDDEN_TILE.z;
@@ -95,24 +95,10 @@ function pickApproach(
     return null;
 }
 
-function forbiddenKind(kind: string | undefined): boolean {
-    if (typeof kind !== 'string') return false;
-    const k = kind.toLowerCase();
-    return (
-        k === 'walk-to' ||
-        k === 'walk-near' ||
-        k === 'npc' ||
-        k === 'loc' ||
-        k === 'use-on' ||
-        k === 'answer' ||
-        k === 'bank-open' ||
-        k === 'attack' ||
-        k === 'kbd' ||
-        k === 'kbd-lair'
-    );
-}
-
-export function tick(api: NativeApi): void {
+export async function tick(api: NativeApi): Promise<void> {
+    if (running) {
+        return;
+    }
     const snap = api.snapshot;
     if (!snap.ingame || !snap.here) {
         return;
@@ -148,11 +134,7 @@ export function tick(api: NativeApi): void {
         return;
     }
 
-    const projection = {
-        parked: false,
-        shieldReady: true,
-        hpFraction: 1,
-        panicHp: 0.2,
+    const site: HuntSite = {
         key: SITE_KEY,
         boxes: [box],
         approach: [{ x: approach.x, z: approach.z, level: approach.level }],
@@ -161,18 +143,24 @@ export function tick(api: NativeApi): void {
         gate: null,
         keyItem: null,
     };
-    if (projection.key === 'kbd-lair') {
+    if (site.key === 'kbd-lair') {
         throw new Error('enter lair witness must not use kbd-lair');
     }
+    const hooks: HuntHooks = {
+        parked: () => false,
+        shieldReady: () => true,
+        hpFraction: () => 1,
+        panicHp: () => 0.2,
+    };
 
     if (token == null) {
-        const began = api.enterBegin();
+        const began = api.enterBegin(site);
         if (!began.ok) {
             throw new Error(began.error);
         }
         token = began.value.token;
     }
-    const validated = api.enterValidate({ token, ...projection });
+    const validated = api.enterValidate({ token }, hooks);
     if (!validated.ok) {
         throw new Error(validated.error);
     }
@@ -180,78 +168,35 @@ export function tick(api: NativeApi): void {
         return;
     }
 
-    for (let i = 0; i < 4; i++) {
-        const step = api.enterNext({ token, ...projection });
-        if (!step.ok) {
-            throw new Error(step.error);
-        }
-        const kind = 'kind' in step ? step.kind : undefined;
-        if (kind === 'yield') {
-            throw new Error('enter lair witness must not claim inArea');
-        }
-        if (forbiddenKind(kind)) {
-            throw new Error(
-                'enter lair witness must not emit walk-near / walk-to / npc / loc / use-on / answer / bank-open / Attack / KBD',
-            );
-        }
-        if (kind === 'status' || kind === 'log' || kind === 'wait') {
-            continue;
-        }
-        if (kind !== 'walk') {
-            throw new Error(`enterNext expected walk radius 0, got ${String(kind)}`);
-        }
-        const walk = step as {
-            x?: number;
-            z?: number;
-            level?: number;
-            radius?: number;
-            allow_teleports?: boolean;
-            allow_wilderness?: boolean;
-            allow_bank_fetch?: boolean;
-        };
-        if (walk.x !== approach.x || walk.z !== approach.z || walk.level !== approach.level) {
-            throw new Error('enterNext walk must target the approach tile');
-        }
-        if (typeof walk.radius === 'number' && walk.radius !== 0) {
-            throw new Error('enterNext walk must be radius 0');
-        }
-        if (
-            walk.allow_teleports === true ||
-            walk.allow_wilderness === true ||
-            walk.allow_bank_fetch === true
-        ) {
-            throw new Error('enterNext walk must keep teleports, wilderness, and bank fetch off');
-        }
+    running = true;
+    const run = api.enterRun({ token }, hooks);
+    void run;
 
-        const receipt = {
-            here: { x: here.x, z: here.z, level: here.level },
-            approach: { x: approach.x, z: approach.z, level: approach.level },
-            kind,
-            discriminator: 'gateless',
-            radius: 0,
-            allow_teleports: false,
-            allow_wilderness: false,
-            allow_bank_fetch: false,
-            box,
-            key: SITE_KEY,
-        };
-        const line = `${RECEIPT_PREFIX}${JSON.stringify(receipt)}`;
-        api.log(line);
-        api.paint
-            .begin()
-            .title('enter lair v2')
-            .row(line)
-            .row(
-                'here',
-                `${here.x},${here.z},${here.level}`,
-                'approach',
-                `${approach.x},${approach.z},${approach.level}`,
-            )
-            .row('kind', String(kind), 'discriminator', 'gateless')
-            .row('result', STOP_OK)
-            .end();
-        api.stop(STOP_OK);
-        return;
-    }
-    throw new Error('enterNext did not emit walk radius 0');
+    const receipt = {
+        here: { x: here.x, z: here.z, level: here.level },
+        approach: { x: approach.x, z: approach.z, level: approach.level },
+        discriminator: 'gateless',
+        radius: 0,
+        allow_teleports: false,
+        allow_wilderness: false,
+        allow_bank_fetch: false,
+        box,
+        key: SITE_KEY,
+    };
+    const line = `${RECEIPT_PREFIX}${JSON.stringify(receipt)}`;
+    api.log(line);
+    api.paint
+        .begin()
+        .title('enter lair v2')
+        .row(line)
+        .row(
+            'here',
+            `${here.x},${here.z},${here.level}`,
+            'approach',
+            `${approach.x},${approach.z},${approach.level}`,
+        )
+        .row('discriminator', 'gateless')
+        .row('result', STOP_OK)
+        .end();
+    api.stop(STOP_OK);
 }

@@ -1,10 +1,12 @@
 type NativeApi = import('../host-js/index.d.ts').NativeApi;
+type HuntHooks = import('../host-js/index.d.ts').HuntHooks;
+type HuntSite = import('../host-js/index.d.ts').HuntSite;
 
 /**
  * Headed File witness: field observation only. Dest is Chebyshev 13–20,
- * never a 2-tile Hold walk-back and never meleeAnchor. One walkspotNext
- * must be `walk` toward dest. The isolate omits radius; the shim queues
- * that walk at radius 0. Do not ack it — acking arms the 120s walk.
+ * never a 2-tile Hold walk-back and never meleeAnchor. begin + validate +
+ * one awaited run walks the world toward dest at radius 0. The host owns
+ * the walk; do not invent allow-flags.
  */
 export const apiVersion = 2;
 
@@ -17,6 +19,7 @@ type Tile = { x: number; z: number; level: number };
 
 let token: number | null = null;
 let dest: Tile | null = null;
+let running = false;
 
 function chebyshev(a: Tile, b: Tile): number {
     return Math.max(Math.abs(a.x - b.x), Math.abs(a.z - b.z));
@@ -47,19 +50,10 @@ function pickDest(here: Tile, api: NativeApi): Tile | null {
     return null;
 }
 
-function forbiddenKind(kind: string | undefined): boolean {
-    if (typeof kind !== 'string') return false;
-    const k = kind.toLowerCase();
-    return (
-        k === 'walk-to' ||
-        k === 'walk-near' ||
-        k === 'npc' ||
-        k === 'attack' ||
-        k === 'set-safespot'
-    );
-}
-
-export function tick(api: NativeApi): void {
+export async function tick(api: NativeApi): Promise<void> {
+    if (running) {
+        return;
+    }
     const snap = api.snapshot;
     if (!snap.ingame || !snap.here) {
         return;
@@ -98,40 +92,38 @@ export function tick(api: NativeApi): void {
         maxZ: Math.max(here.z, dest.z),
         level: here.level,
     };
-    const projection = {
-        died: false,
-        targetIdx: null,
-        hpFraction: 1,
-        panicHp: 0.1,
-        retreatHp: 0.2,
-        hasFood: false,
-        needEat: false,
-        style: 'range',
-        safespotIndex: 0,
-        buryBones: false,
-        boneName: 'Bones',
-        hasVlog: false,
-        hasArmSpecial: false,
-        hasShieldReady: false,
+    const site: HuntSite = {
         key: 'walk-spot',
         target: 'walk',
         alsoHunt: [],
         safespots: [{ x: dest.x, z: dest.z, level: dest.level }],
         meleeAnchor,
         boxes: [siteBox],
+        approach: [],
         fireAtRange: false,
         rangedThreat: false,
-        approach: [],
+    };
+    const hooks: HuntHooks = {
+        died: () => false,
+        hpFraction: () => 1,
+        panicHp: () => 0.1,
+        retreatHp: () => 0.2,
+        hasFood: () => false,
+        needEat: () => false,
+        style: () => 'range',
+        safespotIndex: () => 0,
+        buryBones: () => false,
+        boneName: () => 'Bones',
     };
 
     if (token == null) {
-        const began = api.walkspotBegin();
+        const began = api.walkspotBegin(site);
         if (!began.ok) {
             throw new Error(began.error);
         }
         token = began.value.token;
     }
-    const validated = api.walkspotValidate({ token, ...projection });
+    const validated = api.walkspotValidate({ token }, hooks);
     if (!validated.ok) {
         throw new Error(validated.error);
     }
@@ -139,51 +131,26 @@ export function tick(api: NativeApi): void {
         return;
     }
 
-    for (let i = 0; i < 4; i++) {
-        const step = api.walkspotNext({ token, ...projection });
-        if (!step.ok) {
-            throw new Error(step.error);
-        }
-        const kind = 'kind' in step ? step.kind : undefined;
-        if (forbiddenKind(kind)) {
-            throw new Error(
-                'walk spot witness must not emit walk-to / walk-near / npc / Attack / set-safespot',
-            );
-        }
-        if (kind === 'status') {
-            continue;
-        }
-        if (kind !== 'walk') {
-            throw new Error(`walkspotNext expected walk radius 0, got ${String(kind)}`);
-        }
-        const walk = step as { x?: number; z?: number; level?: number; radius?: number };
-        if (walk.x !== dest.x || walk.z !== dest.z || walk.level !== dest.level) {
-            throw new Error('walkspotNext walk must target dest');
-        }
-        if (sameTile({ x: walk.x, z: walk.z, level: walk.level ?? here.level }, meleeAnchor)) {
-            throw new Error('walkspotNext walk must not target meleeAnchor');
-        }
-        if (typeof walk.radius === 'number' && walk.radius !== 0) {
-            throw new Error('walkspotNext walk must be radius 0');
-        }
-
-        const receipt = {
-            here: { x: here.x, z: here.z, level: here.level },
-            dest: { x: dest.x, z: dest.z, level: dest.level },
-            kind,
-        };
-        const line = `${RECEIPT_PREFIX}${JSON.stringify(receipt)}`;
-        api.log(line);
-        api.paint
-            .begin()
-            .title('walk spot v2')
-            .row(line)
-            .row('here', `${here.x},${here.z},${here.level}`, 'dest', `${dest.x},${dest.z},${dest.level}`)
-            .row('kind', String(kind))
-            .row('result', STOP_OK)
-            .end();
-        api.stop(STOP_OK);
-        return;
+    running = true;
+    const outcome = await api.walkspotRun({ token }, hooks);
+    if (outcome.kind !== 'done') {
+        throw new Error(`walkspotRun expected done, got ${outcome.kind}`);
     }
-    throw new Error('walkspotNext did not emit walk radius 0');
+
+    const receipt = {
+        here: { x: here.x, z: here.z, level: here.level },
+        dest: { x: dest.x, z: dest.z, level: dest.level },
+        outcome,
+    };
+    const line = `${RECEIPT_PREFIX}${JSON.stringify(receipt)}`;
+    api.log(line);
+    api.paint
+        .begin()
+        .title('walk spot v2')
+        .row(line)
+        .row('here', `${here.x},${here.z},${here.level}`, 'dest', `${dest.x},${dest.z},${dest.level}`)
+        .row('outcome', outcome.kind)
+        .row('result', STOP_OK)
+        .end();
+    api.stop(STOP_OK);
 }

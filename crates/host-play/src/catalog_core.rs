@@ -3466,7 +3466,7 @@ fn hold_spot_kind_forbidden(kind: &str) -> bool {
 }
 
 fn hold_spot_kind_ok(kind: &str) -> bool {
-    kind.eq_ignore_ascii_case("status") || kind.eq_ignore_ascii_case("walk")
+    kind.is_empty() || kind.eq_ignore_ascii_case("status") || kind.eq_ignore_ascii_case("walk")
 }
 
 fn hold_spot_chebyshev(here: LineOfSightTile, dest: LineOfSightTile) -> i32 {
@@ -3485,6 +3485,7 @@ fn hold_spot_dest_ok(here: LineOfSightTile, dest: LineOfSightTile) -> bool {
 pub struct HoldSpotScriptReceipt {
     pub here: LineOfSightTile,
     pub dest: LineOfSightTile,
+    #[serde(default)]
     pub kind: String,
 }
 
@@ -3600,7 +3601,8 @@ fn retreat_spot_kind_forbidden(kind: &str) -> bool {
 }
 
 fn retreat_spot_kind_ok(kind: &str) -> bool {
-    kind.eq_ignore_ascii_case("status")
+    kind.is_empty()
+        || kind.eq_ignore_ascii_case("status")
         || kind.eq_ignore_ascii_case("set-safespot")
         || kind.eq_ignore_ascii_case("log")
         || kind.eq_ignore_ascii_case("walk-to")
@@ -3622,6 +3624,7 @@ fn retreat_spot_dest_ok(here: LineOfSightTile, dest: LineOfSightTile) -> bool {
 pub struct RetreatSpotScriptReceipt {
     pub here: LineOfSightTile,
     pub dest: LineOfSightTile,
+    #[serde(default)]
     pub kind: String,
 }
 
@@ -3739,7 +3742,7 @@ fn walk_spot_kind_forbidden(kind: &str) -> bool {
 }
 
 fn walk_spot_kind_ok(kind: &str) -> bool {
-    kind.eq_ignore_ascii_case("walk")
+    kind.is_empty() || kind.eq_ignore_ascii_case("walk")
 }
 
 fn walk_spot_chebyshev(here: LineOfSightTile, dest: LineOfSightTile) -> i32 {
@@ -3758,6 +3761,7 @@ fn walk_spot_dest_ok(here: LineOfSightTile, dest: LineOfSightTile) -> bool {
 pub struct WalkSpotScriptReceipt {
     pub here: LineOfSightTile,
     pub dest: LineOfSightTile,
+    #[serde(default)]
     pub kind: String,
 }
 
@@ -3881,6 +3885,7 @@ pub struct EnterLairBox {
 pub struct EnterLairScriptReceipt {
     pub here: LineOfSightTile,
     pub approach: LineOfSightTile,
+    #[serde(default)]
     pub kind: String,
     pub discriminator: String,
     pub radius: i32,
@@ -3947,7 +3952,7 @@ fn enter_lair_kind_forbidden(kind: &str) -> bool {
 }
 
 fn enter_lair_kind_ok(kind: &str) -> bool {
-    kind.eq_ignore_ascii_case("walk")
+    kind.is_empty() || kind.eq_ignore_ascii_case("walk")
 }
 
 fn enter_lair_chebyshev(here: LineOfSightTile, approach: LineOfSightTile) -> i32 {
@@ -4151,6 +4156,7 @@ pub struct LeaveLairBox {
 pub struct LeaveLairScriptReceipt {
     pub here: LineOfSightTile,
     pub walk_out: LineOfSightTile,
+    #[serde(default)]
     pub kind: String,
     pub radius: i32,
     pub discriminator: String,
@@ -4250,7 +4256,7 @@ fn leave_lair_kind_forbidden(kind: &str) -> bool {
 }
 
 fn leave_lair_kind_ok(kind: &str) -> bool {
-    kind.eq_ignore_ascii_case("walk-near")
+    kind.is_empty() || kind.eq_ignore_ascii_case("walk-near")
 }
 
 fn leave_lair_chebyshev(here: LineOfSightTile, walk_out: LineOfSightTile) -> i32 {
@@ -4451,6 +4457,7 @@ pub struct AcquireKeyBox {
 pub struct AcquireKeyScriptReceipt {
     pub here: LineOfSightTile,
     pub dest: LineOfSightTile,
+    #[serde(default)]
     pub kind: String,
     pub radius: i32,
     pub discriminator: String,
@@ -4560,7 +4567,7 @@ fn acquire_key_kind_forbidden(kind: &str) -> bool {
 }
 
 fn acquire_key_kind_ok(kind: &str) -> bool {
-    kind.eq_ignore_ascii_case("walk-near")
+    kind.is_empty() || kind.eq_ignore_ascii_case("walk-near")
 }
 
 fn acquire_key_in_box(tile: LineOfSightTile, area: AcquireKeyBox) -> bool {
@@ -4744,6 +4751,7 @@ pub struct CellV2Box {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CellV2ScriptReceipt {
     pub here: LineOfSightTile,
+    #[serde(default)]
     pub kind: String,
     pub discriminator: String,
 }
@@ -4801,7 +4809,7 @@ fn cell_v2_kind_forbidden(kind: &str) -> bool {
 }
 
 fn cell_v2_kind_ok(kind: &str) -> bool {
-    kind.eq_ignore_ascii_case("key")
+    kind.is_empty() || kind.eq_ignore_ascii_case("key")
 }
 
 fn cell_v2_value_forbidden(value: &Value) -> bool {
@@ -5052,6 +5060,7 @@ pub struct BankV2Flags {
 pub struct BankV2ScriptReceipt {
     pub here: LineOfSightTile,
     pub dest: LineOfSightTile,
+    #[serde(default)]
     pub kind: String,
     pub radius: i32,
     pub flags: BankV2Flags,
@@ -5101,7 +5110,7 @@ fn bank_v2_flags_closed(flags: &BankV2Flags) -> bool {
 }
 
 fn bank_v2_kind_ok(kind: &str) -> bool {
-    kind.eq_ignore_ascii_case("walk-near")
+    kind.is_empty() || kind.eq_ignore_ascii_case("walk-near")
 }
 
 fn bank_v2_kind_forbidden(kind: &str) -> bool {
