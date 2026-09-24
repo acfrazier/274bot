@@ -9,6 +9,8 @@ use script::isolate_fb::{
 use script::load::first_unloadable_for_card;
 use script::{CacheMeta, JsCache, JsLibrary, LoadIsolate, ScriptKind, ScriptSource};
 
+mod common;
+
 fn frozen_root() -> PathBuf {
     let root =
         PathBuf::from(std::env::var_os("RS2B0T").expect("set absolute RS2B0T for catalog checks"));
@@ -32,6 +34,25 @@ fn scratch(name: &str) -> PathBuf {
 
 fn post_snapshot_input(iso: &LoadIsolate, input: &SnapshotInput<'_>) {
     iso.post_snapshot(encode_snapshot(input));
+}
+
+fn loaded_stats(skill: &'static str, xp: i32, base: i32) -> Vec<StatInput<'static>> {
+    common::FRESH_STATS
+        .iter()
+        .map(|row| {
+            if row.name == skill {
+                StatInput {
+                    index: row.index,
+                    name: row.name,
+                    xp,
+                    base,
+                    effective: base,
+                }
+            } else {
+                *row
+            }
+        })
+        .collect()
 }
 
 fn jive_snapshot<'a>(
@@ -230,13 +251,7 @@ fn jive_crafting_full_module_onpaint_uses_real_settings_and_select() {
         "schema default, not a test-invented product"
     );
     iso.post_settings_bag(&bag);
-    let stats = [StatInput {
-        index: 12,
-        name: "crafting",
-        xp: 0,
-        base: 40,
-        effective: 40,
-    }];
+    let stats = loaded_stats("crafting", 0, 40);
     let booth = NearestBoothInput {
         x: 3269,
         z: 3167,
@@ -247,6 +262,7 @@ fn jive_crafting_full_module_onpaint_uses_real_settings_and_select() {
     };
     post_snapshot_input(&iso, &jive_snapshot(&stats, Some(booth)));
     tick(&iso, 1);
+    tick(&iso, 2);
     let logs = iso.drain_logs();
     let paint = iso.paint().unwrap_or_else(|| {
         panic!("JiveCrafting onPaint must record a frame; logs={logs:?}");
@@ -269,7 +285,7 @@ fn jive_crafting_full_module_onpaint_uses_real_settings_and_select() {
     );
 
     iso.paint_select("strip:jive:JiveCrafting", "Options");
-    tick(&iso, 2);
+    tick(&iso, 3);
     let options = iso.paint().expect("options");
     assert!(
         options
@@ -288,7 +304,7 @@ fn jive_crafting_full_module_onpaint_uses_real_settings_and_select() {
 
     iso.paint_select("strip:jive:JiveCrafting", "Statistics");
     iso.paint_select("rail:jive:JiveCrafting", "Supplies");
-    tick(&iso, 3);
+    tick(&iso, 4);
     let supplies = iso.paint().expect("supplies");
     assert!(
         supplies.lines.iter().any(|l| l.contains("Bars:")),
@@ -314,13 +330,7 @@ fn jive_enchanter_full_module_onpaint_uses_real_settings_and_select() {
         "schema default, not a test-invented jewel"
     );
     iso.post_settings_bag(&bag);
-    let stats = [StatInput {
-        index: 6,
-        name: "magic",
-        xp: 0,
-        base: 40,
-        effective: 40,
-    }];
+    let stats = loaded_stats("magic", 0, 40);
     let booth = NearestBoothInput {
         x: 3269,
         z: 3167,
@@ -331,6 +341,7 @@ fn jive_enchanter_full_module_onpaint_uses_real_settings_and_select() {
     };
     post_snapshot_input(&iso, &jive_snapshot(&stats, Some(booth)));
     tick(&iso, 1);
+    tick(&iso, 2);
     let logs = iso.drain_logs();
     let paint = iso.paint().unwrap_or_else(|| {
         panic!("JiveEnchanter onPaint must record a frame; logs={logs:?}");
@@ -345,7 +356,7 @@ fn jive_enchanter_full_module_onpaint_uses_real_settings_and_select() {
     );
 
     iso.paint_select("strip:jive:JiveEnchanter", "Options");
-    tick(&iso, 2);
+    tick(&iso, 3);
     let options = iso.paint().expect("options");
     assert!(
         options
@@ -360,7 +371,7 @@ fn jive_enchanter_full_module_onpaint_uses_real_settings_and_select() {
 
     iso.paint_select("strip:jive:JiveEnchanter", "Statistics");
     iso.paint_select("rail:jive:JiveEnchanter", "Supplies");
-    tick(&iso, 3);
+    tick(&iso, 4);
     let supplies = iso.paint().expect("supplies");
     assert!(
         supplies

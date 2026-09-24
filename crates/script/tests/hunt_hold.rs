@@ -4,7 +4,7 @@ use script::hunt_fight::{
     self, hold_deadline_remaining_ms, hold_force_bound_reached, hold_token_alive, last_hp,
     seen_contains, skip_contains, token_alive, FightNpc, FightObservation, Tile,
 };
-use script::isolate_fb::{SnapshotInput, TileInput};
+use script::isolate_fb::{ItemRowInput, SnapshotInput, StatInput, TileInput};
 use script::shim::InteractReq;
 use script::{LoadIsolate, LoadShape};
 use serde_json::{json, Value};
@@ -742,5 +742,244 @@ export default class T extends LoopingBot {
             } if *request_id != 0
         )),
         "{walks:?}"
+    );
+}
+
+#[test]
+fn v1_in_area_predicate_without_boxes_is_asked() {
+    let iso = LoadIsolate::spawn(
+        r#"
+import { Fight } from '../../api/combat/hunting/combat.js';
+export default class T extends LoopingBot {
+    loop() {
+        const host = {
+            died: true,
+            hpFraction: () => 1,
+            panicHp: () => 0.1,
+            retreatHp: () => 0.2,
+            hasFood: () => true,
+            needEat: () => false,
+            style: () => 'melee',
+            safespotIndex: () => 0,
+            buryBones: () => false,
+            boneName: () => 'Bones',
+            log() {},
+            setStatus() {},
+        };
+        const site = {
+            key: 't',
+            target: 'Goblin',
+            alsoHunt: [],
+            safespots: [{ x: 2900, z: 9808, level: 0 }],
+            meleeAnchor: { x: 2900, z: 9808, level: 0 },
+            inArea(t) {
+                globalThis.__area = (globalThis.__area || 0) + 1;
+                return t.x === 2900 && t.z === 9808;
+            },
+        };
+        const fight = globalThis.__f || (globalThis.__f = new Fight(host, site));
+        globalThis.__inside = fight.validate();
+        fight.execute();
+    }
+}
+"#
+        .to_string(),
+        LoadShape::CompatClass,
+        vec![],
+    )
+    .unwrap();
+    iso.post_snapshot(script::isolate_fb::encode_snapshot(&empty_snapshot(
+        1,
+        TileInput {
+            x: 2900,
+            z: 9808,
+            level: 0,
+        },
+    )));
+    iso.on_game_tick(1);
+    let area = iso.probe("globalThis.__area").unwrap();
+    iso.join();
+    assert!(
+        area.as_i64().unwrap_or(0) >= 1,
+        "inArea must be asked when the site has no boxes: {area:?}"
+    );
+}
+
+#[test]
+fn wait_fed_settles_true_and_false() {
+    let iso = LoadIsolate::spawn(
+        r#"
+import { waitFed } from '../../api/combat/hunting/supply.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__ran) return;
+        globalThis.__ran = true;
+        globalThis.__true = await waitFed(() => true, 0);
+        globalThis.__false = await waitFed(() => false, 0);
+    }
+}
+"#
+        .to_string(),
+        LoadShape::CompatClass,
+        vec![],
+    )
+    .unwrap();
+    iso.post_snapshot(script::isolate_fb::encode_snapshot(&empty_snapshot(
+        1,
+        TileInput {
+            x: 3200,
+            z: 3200,
+            level: 0,
+        },
+    )));
+    iso.on_game_tick(1);
+    iso.on_game_tick(2);
+    let yes = iso.probe("globalThis.__true").unwrap();
+    let no = iso.probe("globalThis.__false").unwrap();
+    iso.join();
+    assert_eq!(yes, true, "{yes:?}");
+    assert_eq!(no, false, "{no:?}");
+}
+
+#[test]
+fn teleport_out_reports_escape_shortfall() {
+    let data = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
+    let iso = LoadIsolate::spawn_with_game_data(
+        r#"
+import { teleportOut } from '../../api/combat/hunting/supply.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__ran) return;
+        globalThis.__ran = true;
+        const host = { log(m) { globalThis.__log = m; }, setStatus() {} };
+        const site = { escapeTeleportId: 'varrock', inArea: () => true };
+        globalThis.__out = await teleportOut(host, site);
+    }
+}
+"#
+        .to_string(),
+        LoadShape::CompatClass,
+        vec![],
+        data,
+    )
+    .unwrap();
+    let mut snap = empty_snapshot(
+        1,
+        TileInput {
+            x: 3200,
+            z: 3200,
+            level: 0,
+        },
+    );
+    let stats = [StatInput {
+        index: 6,
+        name: "Magic",
+        xp: 0,
+        base: 1,
+        effective: 1,
+    }];
+    snap.stats = &stats;
+    iso.post_snapshot(script::isolate_fb::encode_snapshot(&snap));
+    iso.on_game_tick(1);
+    iso.on_game_tick(2);
+    let out = iso.probe("globalThis.__out").unwrap();
+    iso.join();
+    let text = out.as_str().unwrap_or("");
+    assert!(
+        text.contains("magic 1 is below the") && text.contains("it needs"),
+        "{out:?}"
+    );
+}
+
+#[test]
+fn acquire_key_state_is_held_when_carried_or_unneeded() {
+    let iso = LoadIsolate::spawn(
+        r#"
+import { acquireKey } from '../../api/combat/hunting/supply.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__ran) return;
+        globalThis.__ran = true;
+        const host = { log() {}, setStatus() {} };
+        globalThis.__none = await acquireKey(host, { key: 't', keyItem: null });
+        globalThis.__held = await acquireKey(host, {
+            key: 't',
+            keyItem: { name: 'Dusty key', id: 1590 },
+        });
+    }
+}
+"#
+        .to_string(),
+        LoadShape::CompatClass,
+        vec![],
+    )
+    .unwrap();
+    let mut snap = empty_snapshot(
+        1,
+        TileInput {
+            x: 3200,
+            z: 3200,
+            level: 0,
+        },
+    );
+    let inv = [ItemRowInput {
+        name: Some("Dusty key"),
+        count: 1,
+        id: 1590,
+        ops: &[],
+        noted: false,
+        cert: -1,
+        component_id: -1,
+        slot: 0,
+    }];
+    snap.inv = &inv;
+    iso.post_snapshot(script::isolate_fb::encode_snapshot(&snap));
+    iso.on_game_tick(1);
+    iso.on_game_tick(2);
+    let none = iso.probe("globalThis.__none").unwrap();
+    let held = iso.probe("globalThis.__held").unwrap();
+    iso.join();
+    assert_eq!(none, "held", "{none:?}");
+    assert_eq!(held, "held", "{held:?}");
+}
+
+#[test]
+fn acquire_key_state_is_fetch_when_the_key_is_missing() {
+    let iso = LoadIsolate::spawn(
+        r#"
+import { acquireKey } from '../../api/combat/hunting/supply.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__ran) return;
+        globalThis.__ran = true;
+        const host = { log() {}, setStatus(m) { globalThis.__status = m; } };
+        acquireKey(host, { key: 't', keyItem: { name: 'Dusty key', id: 1590 } }).then((v) => {
+            globalThis.__state = v;
+        });
+    }
+}
+"#
+        .to_string(),
+        LoadShape::CompatClass,
+        vec![],
+    )
+    .unwrap();
+    iso.post_snapshot(script::isolate_fb::encode_snapshot(&empty_snapshot(
+        1,
+        TileInput {
+            x: 3200,
+            z: 3200,
+            level: 0,
+        },
+    )));
+    iso.on_game_tick(1);
+    let status = iso.probe("globalThis.__status").unwrap();
+    iso.join();
+    assert!(
+        status
+            .as_str()
+            .unwrap_or("")
+            .contains("fetching the Dusty key"),
+        "missing key banks then Velrak: {status:?}"
     );
 }
