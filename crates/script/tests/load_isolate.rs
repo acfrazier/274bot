@@ -701,6 +701,73 @@ fn slow_tick_is_interrupted_and_isolate_survives() {
     iso.join();
 }
 
+/// The first tick's JS runs past the budget, spinning `ms` milliseconds.
+fn slow_first_tick(ms: u32) -> String {
+    format!(
+        "export function tick(api) {{ globalThis.__rs_n = (globalThis.__rs_n||0)+1; \
+         if (globalThis.__rs_n === 1) {{ const t = Date.now(); while (Date.now() - t < {ms}) {{}} }} }}"
+    )
+}
+
+// M12: the host posts a Snapshot before every Tick, so the stale-skip after
+// a slow tick must drain past the snapshots — applying each one in order —
+// and skip every queued tick, not stop at the first non-Tick command.
+#[test]
+fn slow_tick_skips_queued_ticks_past_their_snapshots() {
+    let iso = spawn_ready(slow_first_tick(150), LoadShape::NativeTick, vec![]);
+    let mut snap = base_snapshot();
+    for tick in 1..=3 {
+        snap.tick = tick;
+        post_snapshot_input(&iso, &snap);
+        iso.on_game_tick(tick);
+    }
+    assert_eq!(
+        iso.probe("__rs_n").unwrap(),
+        1,
+        "ticks 2 and 3 were queued behind the slow tick: both are stale"
+    );
+    assert_eq!(
+        iso.probe("__rs2b0t_host.snapshot.tick").unwrap(),
+        3,
+        "every queued snapshot still applies"
+    );
+    let logs = iso.drain_logs();
+    assert!(
+        logs.iter().any(|l| l == "skipped stale ticks -> 3"),
+        "{logs:?}"
+    );
+    snap.tick = 4;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(4);
+    assert_eq!(iso.probe("__rs_n").unwrap(), 2, "the next fresh tick runs");
+    iso.join();
+}
+
+// M12: a thread that consumes nothing leaves the channel bounded — posts are
+// refused past the cap — and posts are accepted again once it drains.
+#[test]
+fn wedged_isolate_refuses_posts_past_the_backlog_cap() {
+    let iso = spawn_ready(slow_first_tick(400), LoadShape::NativeTick, vec![]);
+    iso.on_game_tick(1);
+    // Let the thread take tick 1 and start spinning.
+    thread::sleep(Duration::from_millis(50));
+    let bytes = script::isolate_fb::encode_snapshot(&base_snapshot());
+    let accepted = (0..200)
+        .filter(|_| iso.post_snapshot(bytes.clone()))
+        .count();
+    assert!(
+        (1..200).contains(&accepted),
+        "the backlog is bounded while the thread is busy: {accepted} accepted"
+    );
+    // The round trip waits for the thread to drain every queued command.
+    assert_eq!(iso.probe("__rs_n").unwrap(), 1);
+    assert!(
+        iso.post_snapshot(bytes),
+        "a drained isolate accepts posts again"
+    );
+    iso.join();
+}
+
 // (5g) A tight `while(true){}` tick cannot hang Stop: `join` is bounded
 // and returns even if the interrupt were somehow not delivered.
 #[test]

@@ -60,6 +60,13 @@ const MAX_HEAP: usize = 64 * 1024 * 1024;
 /// isolate. Overflow invalidates every unmatched pair rather than letting
 /// a later up inherit a newer gesture's identity.
 const MAX_MOUSE_GESTURES: usize = 32;
+/// Commands the host may leave unconsumed in the isolate's channel before
+/// it stops queueing ticks and snapshot deltas (about 19 s of game ticks at
+/// one snapshot plus one tick each, well past the setup deadline). Past it
+/// the isolate thread is wedged: a queued tick would only be skipped as
+/// stale, and a dropped delta is recovered by the slot's next keyframe.
+/// Operator commands (Pause, Stop, probes, paint input) are never dropped.
+const MAX_QUEUED_COMMANDS: usize = 64;
 
 #[derive(Default)]
 struct MouseGestureIdentities {
@@ -147,6 +154,29 @@ enum IsolateCmd {
     Stop {
         invoke_hook: bool,
     },
+}
+
+/// The isolate thread's end of the command channel. Every receive
+/// releases one slot of the host's [`MAX_QUEUED_COMMANDS`] backlog.
+struct CmdQueue {
+    rx: Receiver<IsolateCmd>,
+    queued: std::sync::Arc<AtomicUsize>,
+}
+
+impl CmdQueue {
+    fn recv(&self) -> Option<IsolateCmd> {
+        let cmd = self.rx.recv().ok()?;
+        self.queued
+            .fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
+        Some(cmd)
+    }
+
+    fn try_recv(&self) -> Option<IsolateCmd> {
+        let cmd = self.rx.try_recv().ok()?;
+        self.queued
+            .fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
+        Some(cmd)
+    }
 }
 
 /// Host/isolate coordination for Stop vs `onStop`. Transitions are
@@ -370,6 +400,9 @@ pub struct LoadIsolate {
     /// One bounded, non-consuming terminal receipt for ScriptRunner.stop.
     script_stop: Mutex<Option<ScriptStopReceipt>>,
     tx: Sender<IsolateCmd>,
+    /// Commands sent on `tx` and not yet received by the isolate thread.
+    /// Bounds the channel: see [`MAX_QUEUED_COMMANDS`].
+    queued: std::sync::Arc<AtomicUsize>,
     rx: Mutex<Receiver<ThreadMsg>>,
     logs: Mutex<Vec<String>>,
     /// Interact requests forwarded by the tick thread (the shim
@@ -528,6 +561,8 @@ impl LoadIsolate {
             NEXT_PAINT_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         ));
         let thread_paint_generation = paint_generation.clone();
+        let queued = std::sync::Arc::new(AtomicUsize::new(0));
+        let thread_queued = queued.clone();
         let handle = std::thread::Builder::new()
             .name("js-isolate".into())
             .spawn(move || {
@@ -537,7 +572,10 @@ impl LoadIsolate {
                     siblings,
                     game_data,
                     named_banks,
-                    rx,
+                    CmdQueue {
+                        rx,
+                        queued: thread_queued,
+                    },
                     msg_tx,
                     setup_tx,
                     thread_generation,
@@ -561,6 +599,7 @@ impl LoadIsolate {
             stopped: std::sync::atomic::AtomicBool::new(false),
             script_stop: Mutex::new(None),
             tx,
+            queued,
             rx: Mutex::new(msg_rx),
             logs: Mutex::new(Vec::new()),
             interacts: Mutex::new(Vec::new()),
@@ -587,7 +626,14 @@ impl LoadIsolate {
     /// fields are copied — no World clone. Commands are serialized on
     /// the isolate thread, so a post followed by
     /// [`LoadIsolate::on_game_tick`] reaches JS in that order.
-    pub fn post_snapshot(&self, bytes: Vec<u8>) {
+    ///
+    /// `false`: the isolate thread has left [`MAX_QUEUED_COMMANDS`]
+    /// unconsumed and the post was dropped. A dropped delta leaves the
+    /// isolate's copy behind, so the caller's next post must be a keyframe.
+    pub fn post_snapshot(&self, bytes: Vec<u8>) -> bool {
+        if self.backlogged() {
+            return false;
+        }
         let message = SnapshotMessage {
             #[cfg(feature = "memory-profile")]
             _lease: crate::memory_profile::SnapshotLease::new(
@@ -597,13 +643,32 @@ impl LoadIsolate {
             ),
             bytes,
         };
-        let _ = self.tx.send(IsolateCmd::Snapshot(message));
+        self.send(IsolateCmd::Snapshot(message));
+        true
+    }
+
+    /// The isolate thread has not consumed [`MAX_QUEUED_COMMANDS`] commands.
+    fn backlogged(&self) -> bool {
+        self.queued.load(std::sync::atomic::Ordering::Acquire) >= MAX_QUEUED_COMMANDS
+    }
+
+    /// Queue one command, counted until the isolate thread receives it.
+    /// `false`: the thread is gone and nothing will receive it.
+    fn send(&self, cmd: IsolateCmd) -> bool {
+        self.queued
+            .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        if self.tx.send(cmd).is_ok() {
+            return true;
+        }
+        self.queued
+            .fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
+        false
     }
 
     /// Post available loadouts before subsequent tick commands.
     pub fn post_loadouts(&self, loadouts: &[crate::loadouts_store::Loadout]) {
         let json = serde_json::to_string(loadouts).expect("serializable loadouts");
-        let _ = self.tx.send(IsolateCmd::Loadouts(json));
+        self.send(IsolateCmd::Loadouts(json));
     }
 
     /// Post the merged operator settings bag (schema defaults + panel/TUI
@@ -613,7 +678,7 @@ impl LoadIsolate {
         let Ok(json) = serde_json::to_string(bag) else {
             return;
         };
-        let _ = self.tx.send(IsolateCmd::Settings(json));
+        self.send(IsolateCmd::Settings(json));
     }
 
     /// Dispatch one observed game tick to the isolate. The previous
@@ -635,12 +700,12 @@ impl LoadIsolate {
         {
             return;
         }
-        #[cfg(feature = "memory-profile")]
-        self.dispatched
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let generation = self
             .work_generation
             .load(std::sync::atomic::Ordering::Acquire);
+        // A wedged thread would only skip this tick as stale: do not queue
+        // it, and keep the oldest unfinished tick in flight for the budget.
+        let backlogged = self.backlogged();
         let interrupted = {
             let mut in_flight = self.in_flight.lock().unwrap();
             // The previous tick is still in flight (no `Completed`
@@ -649,7 +714,9 @@ impl LoadIsolate {
                 .as_ref()
                 .filter(|(_, _, started)| ready && started.elapsed() > SLOW_TICK)
                 .map(|(_, tick, started)| (*tick, started.elapsed()));
-            *in_flight = Some((generation, snap_tick, Instant::now()));
+            if !backlogged {
+                *in_flight = Some((generation, snap_tick, Instant::now()));
+            }
             over
         };
         if let Some((tick, elapsed)) = interrupted {
@@ -666,7 +733,13 @@ impl LoadIsolate {
             };
             self.logs.lock().unwrap().push(line);
         }
-        let _ = self.tx.send(IsolateCmd::Tick {
+        if backlogged {
+            return;
+        }
+        #[cfg(feature = "memory-profile")]
+        self.dispatched
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.send(IsolateCmd::Tick {
             tick: snap_tick,
             generation,
             input_identity,
@@ -698,7 +771,7 @@ impl LoadIsolate {
         let ready = self.poll_ready() == Ready::Ready;
         self.pump_logs();
         if self.teardown_blocks_dispatch() {
-            let _ = self.tx.send(IsolateCmd::Pause);
+            self.send(IsolateCmd::Pause);
             return;
         }
         let over = self
@@ -712,12 +785,12 @@ impl LoadIsolate {
             // itself once it has returned from the interrupted tick.
             self.fire_watchdog();
         }
-        let _ = self.tx.send(IsolateCmd::Pause);
+        self.send(IsolateCmd::Pause);
     }
 
     /// Re-arm tick dispatch after [`LoadIsolate::pause`].
     pub fn resume(&self) {
-        let _ = self.tx.send(IsolateCmd::Resume);
+        self.send(IsolateCmd::Resume);
     }
 
     /// Queue a one-shot paint-button id for the current work generation.
@@ -730,7 +803,7 @@ impl LoadIsolate {
         let generation = self
             .work_generation
             .load(std::sync::atomic::Ordering::Acquire);
-        let _ = self.tx.send(IsolateCmd::PaintClick {
+        self.send(IsolateCmd::PaintClick {
             id: id.to_string(),
             generation,
         });
@@ -746,7 +819,7 @@ impl LoadIsolate {
         let generation = self
             .work_generation
             .load(std::sync::atomic::Ordering::Acquire);
-        let _ = self.tx.send(IsolateCmd::PaintSelect {
+        self.send(IsolateCmd::PaintSelect {
             key: key.to_string(),
             name: name.to_string(),
             generation,
@@ -784,16 +857,16 @@ impl LoadIsolate {
             };
             self.logs.lock().unwrap().push(line);
         }
-        let _ = self.tx.send(IsolateCmd::RecoveryAnchor { generation });
+        self.send(IsolateCmd::RecoveryAnchor { generation });
     }
 
     /// Evaluate `expr` in the isolate's global scope and return its
     /// JSON value (test/status read-back; e.g. `"__rs_bot.n"`).
     pub fn probe(&self, expr: &str) -> Result<serde_json::Value, String> {
         let (tx, rx) = mpsc::channel::<Result<serde_json::Value, String>>();
-        self.tx
-            .send(IsolateCmd::Probe(expr.to_string(), tx))
-            .map_err(|e| e.to_string())?;
+        if !self.send(IsolateCmd::Probe(expr.to_string(), tx)) {
+            return Err("probe: isolate thread gone".into());
+        }
         rx.recv_timeout(Duration::from_secs(10))
             .map_err(|e| format!("probe: {e}"))?
     }
@@ -900,7 +973,7 @@ impl LoadIsolate {
             }
         }
         *self.in_flight.lock().unwrap() = None;
-        let _ = self.tx.send(IsolateCmd::ResetSession);
+        self.send(IsolateCmd::ResetSession);
     }
 
     /// The latest recorded paint frame (the tick thread forwards the
@@ -1004,7 +1077,7 @@ impl LoadIsolate {
     /// the terminate handle, so a tick queued before Ready can still be
     /// interrupted; the reaper, never the UI, owns that wait.
     pub fn join(mut self) -> Vec<String> {
-        let _ = self.tx.send(IsolateCmd::Stop { invoke_hook: true });
+        self.send(IsolateCmd::Stop { invoke_hook: true });
         let _ = self.resolve_setup(Some(Instant::now() + SETUP_TIMEOUT));
         {
             let mut st = self.teardown.lock().unwrap();
@@ -1147,7 +1220,7 @@ impl Drop for LoadIsolate {
         // has returned). After a successful join the hook is Done: do
         // not re-interrupt a completed teardown.
         let _ = self.poll_ready();
-        let _ = self.tx.send(IsolateCmd::Stop { invoke_hook: false });
+        self.send(IsolateCmd::Stop { invoke_hook: false });
         let mut st = self.teardown.lock().unwrap();
         match st.phase {
             TeardownPhase::Done => {}
@@ -1195,7 +1268,7 @@ fn isolate_main(
     siblings: Vec<(String, String)>,
     game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
     named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
-    cmds: Receiver<IsolateCmd>,
+    cmds: CmdQueue,
     out: Sender<ThreadMsg>,
     setup: Sender<Result<v8::IsolateHandle, String>>,
     work_generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
@@ -1815,6 +1888,28 @@ fn script_stop_reason(runtime: &mut Runtime) -> String {
     reason
 }
 
+/// One queued command seen by a slow tick's stale-skip. The per-tick posts
+/// (snapshot deltas, settings, loadouts and the ticks themselves) keep the
+/// window open, and a queued tick of `generation` raises `latest`. Any other
+/// command — Pause/Resume, a session reset, paint input, a probe, Stop —
+/// ends it: a tick queued after one is a fresh dispatch, not backlog.
+fn extends_stale_window(cmd: &IsolateCmd, generation: u64, latest: &mut u64) -> bool {
+    match cmd {
+        IsolateCmd::Tick {
+            tick,
+            generation: g,
+            ..
+        } => {
+            if *g == generation {
+                *latest = (*latest).max(*tick);
+            }
+            true
+        }
+        IsolateCmd::Snapshot(_) | IsolateCmd::Settings(_) | IsolateCmd::Loadouts(_) => true,
+        _ => false,
+    }
+}
+
 /// The tick loop: commands are serialized on this thread; ticks run
 /// with a time budget, slow ticks are logged and stale queued ticks are
 /// skipped, and errors never kill the isolate.
@@ -1823,14 +1918,15 @@ fn script_stop_reason(runtime: &mut Runtime) -> String {
 /// is then never observed and no batch is built, so the isolate pays
 /// nothing for events nothing can receive.
 ///
-/// The stale-skip drain consumes commands with an explicit match so a
-/// non-Tick command (Pause/Resume/Probe/Stop/PaintClick) that arrives while ticks
-/// are queued is stashed for the next iteration instead of being
-/// dropped (a `while let Ok(IsolateCmd::Tick(..))` pattern would
-/// swallow it).
+/// After a slow tick the stale-skip drains the queued commands, in order,
+/// into `pending` up to the end of the stale window
+/// ([`extends_stale_window`]) and drops the window's ticks of that
+/// generation. The window runs past snapshots: the host posts one before
+/// every tick, so stopping at the first non-Tick would skip nothing. Every
+/// other drained command then runs in its queued order.
 fn tick_loop(
     mut runtime: Runtime,
-    cmds: Receiver<IsolateCmd>,
+    cmds: CmdQueue,
     out: Sender<ThreadMsg>,
     work_generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
     paint_generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
@@ -1848,7 +1944,7 @@ fn tick_loop(
     #[cfg(feature = "memory-profile")]
     let mut last_heap_sample = None::<Instant>;
     let mut paused = false;
-    let mut pending: Option<IsolateCmd> = None;
+    let mut pending: VecDeque<IsolateCmd> = VecDeque::new();
     // Host-owned hold gate (SEC-004): set from the posted FlatBuffer
     // snapshot, never from a JS-writable `__rs2b0t_host.hold`.
     let mut host_hold = false;
@@ -1880,12 +1976,8 @@ fn tick_loop(
             counters.heap_samples.fetch_add(1, Relaxed);
             last_heap_sample = Some(Instant::now());
         }
-        let cmd = match pending.take() {
-            Some(cmd) => cmd,
-            None => match cmds.recv() {
-                Ok(cmd) => cmd,
-                Err(_) => break,
-            },
+        let Some(cmd) = pending.pop_front().or_else(|| cmds.recv()) else {
+            break;
         };
         match cmd {
             IsolateCmd::Snapshot(bytes) => {
@@ -2252,23 +2344,32 @@ fn tick_loop(
                 if elapsed > SLOW_TICK {
                     let _ = out.send(ThreadMsg::Log(format!("slow tick {n}: {elapsed:?}")));
                     // Skip stale queued ticks: a slow tick means the
-                    // pump backed up, so only the newest matters.
+                    // pump backed up, so only the newest matters. The
+                    // window runs past the per-tick posts and ends at the
+                    // first other command; everything drained but the
+                    // window's ticks still runs, in order.
                     let mut latest = n;
-                    loop {
-                        match cmds.try_recv() {
-                            Ok(IsolateCmd::Tick {
-                                tick: next,
-                                generation: next_generation,
-                                input_identity: _,
-                            }) if next_generation == generation => latest = next,
-                            Ok(other) => {
-                                pending = Some(other);
+                    let mut window = pending
+                        .iter()
+                        .take_while(|cmd| extends_stale_window(cmd, generation, &mut latest))
+                        .count();
+                    if window == pending.len() {
+                        while let Some(cmd) = cmds.try_recv() {
+                            let open = extends_stale_window(&cmd, generation, &mut latest);
+                            pending.push_back(cmd);
+                            if !open {
                                 break;
                             }
-                            Err(_) => break,
+                            window += 1;
                         }
                     }
                     if latest != n {
+                        let mut at = 0;
+                        pending.retain(|cmd| {
+                            at += 1;
+                            at > window
+                                || !matches!(cmd, IsolateCmd::Tick { generation: g, .. } if *g == generation)
+                        });
                         let _ =
                             out.send(ThreadMsg::Log(format!("skipped stale ticks -> {latest}")));
                     }
@@ -2462,13 +2563,11 @@ mod tests {
         .unwrap();
         iso.reset_session_work();
         // A sender captured this tick before reset but enqueued it late.
-        iso.tx
-            .send(IsolateCmd::Tick {
-                tick: 1,
-                generation: 0,
-                input_identity: 0,
-            })
-            .unwrap();
+        assert!(iso.send(IsolateCmd::Tick {
+            tick: 1,
+            generation: 0,
+            input_identity: 0,
+        }));
         assert_eq!(
             iso.probe("globalThis.n || 0").unwrap(),
             serde_json::json!(0)

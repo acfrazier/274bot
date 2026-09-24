@@ -1137,11 +1137,14 @@ impl SlotScript {
 
     /// Post the host's FlatBuffer snapshot blob into a Load isolate (no-op
     /// for a compiled script). Call it before [`SlotScript::on_game_tick`]
-    /// so the posted blob is what the tick's JS reads.
+    /// so the posted blob is what the tick's JS reads. A post the wedged
+    /// isolate refused makes the next encode a keyframe.
     #[cfg(feature = "load")]
-    pub fn post_snapshot(&self, bytes: Vec<u8>) {
+    pub fn post_snapshot(&mut self, bytes: Vec<u8>) {
         if let Some(isolate) = &self.load {
-            isolate.post_snapshot(bytes);
+            if !isolate.post_snapshot(bytes) {
+                self.last_snapshot = None;
+            }
         }
     }
 
