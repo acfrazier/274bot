@@ -34,12 +34,15 @@
 //!   UTF-16 code units, BigInt and the engine's error messages are exactly
 //!   JS. [`number`] is `ToNumber` (a BigInt throws, as `Math.floor` does).
 //! - Loops driven by script data give every iteration its own `HandleScope`
-//!   ([`iteration`], escaping only what the loop keeps), so memory stays flat
-//!   however long the loop runs, and they call into V8 at least every
-//!   [`POLL_EVERY`] iterations ([`Poll`], built into [`ForOf::step`]) so a
-//!   watchdog termination requested while the loop runs only builtins or no
-//!   JS at all still surfaces as [`Throw::Terminated`]. F03 step machines
-//!   follow the same rule.
+//!   ([`iteration`], escaping only what the loop keeps). Handles are not
+//!   flat: each iteration's escape slot lives in the parent scope, so a loop
+//!   grows by a few bytes per iteration until the call returns (about 8 B
+//!   for `chooseTarget`, about 65 B for `runInDir`, whose visited tiles stay
+//!   reachable). The loops call into V8 at least every [`POLL_EVERY`]
+//!   iterations ([`Poll`], built into [`ForOf::step`]), so a watchdog
+//!   termination requested while a loop runs only builtins, or no JS at all,
+//!   still surfaces as [`Throw::Terminated`]; the tick budget therefore caps
+//!   that growth. F03 step machines follow the same rule.
 //!
 //! # Extension point: callbacks held across ticks (F03)
 //!
