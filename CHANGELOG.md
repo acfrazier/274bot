@@ -78,7 +78,8 @@ best-effort and untested in this release.
   order, so the same revision inputs produce byte-identical `.navpack`,
   `.navreach` and `.navcanlight` files on every run and platform. Previously
   door, ladder, stair, agility and teleport edges came out in hash-set or
-  directory-listing order.
+  directory-listing order. The navigation source digest labels paths with `/`
+  on every platform, so Windows records the same provenance.
 - Release packages carry the local 289 navigation build; CI builds without
   navigation inputs (`BOT_NAV_BUILD=skip`). Internal campaign notes under
   `docs/compat` and `docs/harness-integration` are no longer tracked.
