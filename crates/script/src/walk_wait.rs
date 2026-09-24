@@ -21,6 +21,7 @@
 //! Genuinely pending follow (`None`) keeps the caller timeout.
 
 use crate::isolate_fb::SnapshotReader;
+use crate::observed::{self, Scene};
 use serde_json::{json, Value};
 use std::cell::RefCell;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -95,6 +96,37 @@ impl HostOutcome {
             },
         }
     }
+
+    /// The host's last published outcome, or the empty one before any.
+    fn posted(scene: &Scene) -> Self {
+        scene
+            .latest()
+            .walk_outcome()
+            .map_or(Self::empty(), |o| Self {
+                seq: o.seq,
+                generation: o.generation,
+                request_id: o.request_id,
+                failed: o.failed,
+                key: WalkKey {
+                    tile: Tile {
+                        x: o.tile.x,
+                        z: o.tile.z,
+                        level: o.tile.level,
+                    },
+                    radius: o.radius,
+                    allow_teleports: o.allow_teleports,
+                },
+            })
+    }
+}
+
+/// The last posted player tile.
+fn posted_here(scene: &Scene) -> Option<Tile> {
+    scene.latest().here().map(|tile| Tile {
+        x: tile.x,
+        z: tile.z,
+        level: tile.level,
+    })
 }
 
 struct Wait {
@@ -105,65 +137,38 @@ struct Wait {
     matched_failure: bool,
 }
 
+/// The one live wait. The player tile and the host outcome are read from
+/// the isolate scene; only the wait itself is this module's state.
 struct WalkSlot {
-    here: Option<Tile>,
-    outcome: HostOutcome,
     wait: Option<Wait>,
 }
 
 impl WalkSlot {
     const fn new() -> Self {
-        Self {
-            here: None,
-            outcome: HostOutcome::empty(),
-            wait: None,
-        }
+        Self { wait: None }
     }
 
     fn reset(&mut self) {
         *self = Self::new();
     }
 
-    fn observe(&mut self, snap: &SnapshotReader<'_>) {
-        if snap.has_here() {
-            self.here = snap.here().map(|tile| Tile {
-                x: tile.x(),
-                z: tile.z(),
-                level: tile.level(),
-            });
-        }
-        if snap.has_walk_outcome_seq() {
-            let outcome = HostOutcome {
-                seq: snap.walk_outcome_seq(),
-                generation: snap.walk_outcome_generation(),
-                request_id: snap.walk_outcome_request_id(),
-                failed: snap.walk_outcome_failed(),
-                key: WalkKey {
-                    tile: Tile {
-                        x: snap.walk_outcome_x(),
-                        z: snap.walk_outcome_z(),
-                        level: snap.walk_outcome_level(),
-                    },
-                    radius: snap.walk_outcome_radius(),
-                    allow_teleports: snap.walk_outcome_allow_teleports(),
-                },
-            };
-            self.outcome = outcome;
-            if let Some(wait) = self.wait.as_mut() {
-                if Self::fail_matches(outcome, wait) {
-                    wait.matched_failure = true;
-                }
+    /// A post that carried an outcome: a failure for the live request is
+    /// latched now, so a later outcome cannot hide it.
+    fn observe_outcome(&mut self, outcome: HostOutcome) {
+        if let Some(wait) = self.wait.as_mut() {
+            if Self::fail_matches(outcome, wait) {
+                wait.matched_failure = true;
             }
         }
     }
 
-    fn begin(&mut self, key: WalkKey) -> u64 {
-        let token = alloc_token(self.outcome.request_id);
+    fn begin(&mut self, key: WalkKey, outcome: HostOutcome) -> u64 {
+        let token = alloc_token(outcome.request_id);
         self.wait = Some(Wait {
             token,
             key,
             settled: None,
-            seq_at_begin: self.outcome.seq,
+            seq_at_begin: outcome.seq,
             matched_failure: false,
         });
         token
@@ -186,7 +191,7 @@ impl WalkSlot {
             && outcome.seq != wait.seq_at_begin
     }
 
-    fn poll(&mut self, token: u64) -> bool {
+    fn poll(&mut self, token: u64, here: Option<Tile>) -> bool {
         let Some(wait) = self.wait.as_mut() else {
             return false;
         };
@@ -196,7 +201,7 @@ impl WalkSlot {
         if wait.settled.is_some() {
             return true;
         }
-        if self.here.is_some_and(|here| Self::arrived(here, wait.key)) {
+        if here.is_some_and(|here| Self::arrived(here, wait.key)) {
             wait.settled = Some(true);
             return true;
         }
@@ -214,8 +219,13 @@ impl WalkSlot {
     }
 }
 
+/// After the isolate applied `snap` to the scene.
 pub(crate) fn on_snapshot(snap: &SnapshotReader<'_>) {
-    SLOT.with(|slot| slot.borrow_mut().observe(snap));
+    if !snap.has_walk_outcome_seq() {
+        return;
+    }
+    let outcome = observed::with(HostOutcome::posted);
+    SLOT.with(|slot| slot.borrow_mut().observe_outcome(outcome));
 }
 
 pub(crate) fn on_reset() {
@@ -234,7 +244,7 @@ pub(crate) fn dispatch(input: &Value) -> Value {
         let mut slot = slot.borrow_mut();
         match op {
             "begin" => {
-                let token = slot.begin(WalkKey {
+                let key = WalkKey {
                     tile: Tile {
                         x: json_i32(input.get("x")),
                         z: json_i32(input.get("z")),
@@ -245,10 +255,13 @@ pub(crate) fn dispatch(input: &Value) -> Value {
                         .get("allow_teleports")
                         .and_then(Value::as_bool)
                         .unwrap_or(false),
-                });
+                };
+                let token = slot.begin(key, observed::with(HostOutcome::posted));
                 json!(token)
             }
-            "settled" => json!(slot.poll(json_u64(input.get("token")))),
+            "settled" => {
+                json!(slot.poll(json_u64(input.get("token")), observed::with(posted_here)))
+            }
             "value" => json!(slot.value(json_u64(input.get("token")))),
             _ => Value::Null,
         }
@@ -280,6 +293,18 @@ mod tests {
         encode_snapshot, encode_snapshot_with_native, NativeFactsInput, ReachViewInput,
         SnapshotInput, TileInput,
     };
+
+    /// `ResetSession` as the isolate runs it: the scene and the wait.
+    fn on_reset() {
+        crate::observed::on_reset();
+        super::on_reset();
+    }
+
+    /// One decoded post, applied the way the isolate applies it.
+    fn post(snap: &SnapshotReader<'_>) {
+        crate::observed::apply(snap);
+        on_snapshot(snap);
+    }
 
     fn empty_input(tick: u64) -> SnapshotInput<'static> {
         SnapshotInput {
@@ -360,7 +385,7 @@ mod tests {
     fn observe(input: SnapshotInput<'_>, native: NativeFactsInput<'_>) {
         let bytes = encode_snapshot_with_native(&input, native);
         let snap = SnapshotReader::from_bytes(&bytes).expect("snapshot");
-        on_snapshot(&snap);
+        post(&snap);
     }
 
     fn begin(x: i32, z: i32, level: i32, radius: i32, allow_teleports: bool) -> u64 {
@@ -605,7 +630,7 @@ mod tests {
         });
         let bytes = encode_snapshot(&input);
         let snap = SnapshotReader::from_bytes(&bytes).expect("snapshot");
-        on_snapshot(&snap);
+        post(&snap);
         assert!(!settled(token));
     }
 

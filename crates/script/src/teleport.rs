@@ -3,7 +3,7 @@
 //! change. JavaScript sends the caller name and dispatches the returned
 //! if-button. A queued click is not arrival.
 
-use crate::isolate_fb::SnapshotReader;
+use crate::observed::{self, Scene};
 use api::game_data::SelectedGameData;
 use serde_json::{json, Value};
 use std::cell::RefCell;
@@ -12,7 +12,6 @@ pub const SETTLE_POLLS: u32 = 14;
 
 thread_local! {
     static RUNTIME: RefCell<TeleportRuntime> = const { RefCell::new(TeleportRuntime::new()) };
-    static NATIVE_OBSERVATION: RefCell<NativeObservation> = const { RefCell::new(NativeObservation::new()) };
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -22,6 +21,7 @@ struct Tile {
     level: i32,
 }
 
+/// The posted facts this module decides from, read from the isolate scene.
 struct NativeObservation {
     ingame: bool,
     here: Option<Tile>,
@@ -30,42 +30,19 @@ struct NativeObservation {
 }
 
 impl NativeObservation {
-    const fn new() -> Self {
+    /// A logout forgets the session: only pages posted since login count.
+    fn from_scene(scene: &Scene) -> Self {
+        let session = scene.since_login();
+        let magic = session.stat("magic");
         Self {
-            ingame: false,
-            here: None,
-            magic_xp: None,
-            magic_level: None,
-        }
-    }
-
-    fn update(&mut self, snap: &SnapshotReader<'_>) {
-        if snap.has_ingame() {
-            if !snap.ingame() {
-                *self = Self::new();
-                return;
-            }
-            self.ingame = true;
-        }
-        if snap.has_here() {
-            self.here = snap.here().map(|tile| Tile {
-                x: tile.x(),
-                z: tile.z(),
-                level: tile.level(),
-            });
-        }
-        if snap.has_stats() {
-            let mut xp = None;
-            let mut level = None;
-            for row in snap.stats() {
-                if row.name().eq_ignore_ascii_case("magic") {
-                    xp = Some(row.xp());
-                    level = Some(row.effective());
-                    break;
-                }
-            }
-            self.magic_xp = xp;
-            self.magic_level = level;
+            ingame: session.ingame().unwrap_or(false),
+            here: session.here().map(|tile| Tile {
+                x: tile.x,
+                z: tile.z,
+                level: tile.level,
+            }),
+            magic_xp: magic.map(|row| row.xp),
+            magic_level: magic.map(|row| row.effective),
         }
     }
 }
@@ -114,10 +91,6 @@ impl TeleportRuntime {
     }
 }
 
-pub fn on_snapshot(snap: &SnapshotReader<'_>) {
-    NATIVE_OBSERVATION.with(|obs| obs.borrow_mut().update(snap));
-}
-
 pub fn on_pause() {
     RUNTIME.with(|rt| rt.borrow_mut().paused = true);
 }
@@ -132,7 +105,6 @@ pub fn on_hold(held: bool) {
 
 pub fn on_reset() {
     RUNTIME.with(|rt| rt.borrow_mut().abort_runtime());
-    NATIVE_OBSERVATION.with(|obs| *obs.borrow_mut() = NativeObservation::new());
 }
 
 pub fn dispatch(data: Option<&SelectedGameData>, input: &Value) -> Value {
@@ -159,11 +131,8 @@ fn begin(data: Option<&SelectedGameData>, name: &str) -> Value {
     if !spell.available() {
         return json!({ "kind": "notImpl", "reason": "absent control" });
     }
-    let obs = NATIVE_OBSERVATION.with(|obs| {
-        let borrowed = obs.borrow();
-        (borrowed.here, borrowed.magic_xp, borrowed.magic_level)
-    });
-    if let Some(level) = obs.2 {
+    let obs = observed::with(NativeObservation::from_scene);
+    if let Some(level) = obs.magic_level {
         if level < spell.level {
             return json!({ "kind": "done", "result": false, "reason": "level" });
         }
@@ -173,8 +142,8 @@ fn begin(data: Option<&SelectedGameData>, name: &str) -> Value {
         runtime.abort_runtime();
         runtime.phase = Phase::WaitSettle;
         runtime.polls_left = SETTLE_POLLS;
-        runtime.start_here = obs.0;
-        runtime.start_xp = obs.1;
+        runtime.start_here = obs.here;
+        runtime.start_xp = obs.magic_xp;
         json!({
             "kind": "if-button",
             "token": runtime.token,
@@ -192,15 +161,12 @@ fn next(token: u64) -> Value {
         if runtime.frozen() {
             return json!({ "kind": "wait", "token": runtime.token });
         }
-        let obs = NATIVE_OBSERVATION.with(|obs| {
-            let borrowed = obs.borrow();
-            (borrowed.ingame, borrowed.here, borrowed.magic_xp)
-        });
-        if !obs.0 {
+        let obs = observed::with(NativeObservation::from_scene);
+        if !obs.ingame {
             runtime.phase = Phase::Idle;
             return json!({ "kind": "aborted", "token": runtime.token });
         }
-        if arrived(runtime.start_here, runtime.start_xp, obs.1, obs.2) {
+        if arrived(runtime.start_here, runtime.start_xp, obs.here, obs.magic_xp) {
             runtime.phase = Phase::Idle;
             return json!({
                 "kind": "done",

@@ -131,6 +131,9 @@ pub mod line_of_sight;
 mod melee_weapons;
 #[cfg(feature = "load")]
 mod modals;
+/// One decoded snapshot scene per isolate thread, read by the step machines.
+#[cfg(feature = "load")]
+pub mod observed;
 #[cfg(feature = "load")]
 mod partner_trade;
 #[cfg(feature = "load")]

@@ -1411,13 +1411,15 @@ fn tick_loop(
         };
         match cmd {
             IsolateCmd::Snapshot(bytes) => {
-                // Decode the posted FlatBuffer and materialise the JS
-                // object the shim reads on the host handle. A
-                // malformed blob is logged, never fatal.
+                // Decode the posted FlatBuffer once into the isolate
+                // scene the step machines read, then materialise the JS
+                // object the shim reads on the host handle. A malformed
+                // blob is logged, never fatal.
                 match crate::isolate_fb::SnapshotReader::from_bytes(&bytes.bytes) {
                     Ok(snap) => {
-                        crate::bank_open::on_snapshot(&snap);
-                        crate::cake_stall::on_snapshot(&snap);
+                        // Step machines read the scene at call time; the
+                        // hooks below are the edge-triggered waits.
+                        crate::observed::apply(&snap);
                         crate::walk_wait::on_snapshot(&snap);
                         crate::inspect_wait::on_snapshot(&snap);
                         if let Some((seq, inspect_generation)) =
@@ -1434,26 +1436,8 @@ fn tick_loop(
                                 generation,
                             });
                         }
-                        crate::autocast::on_snapshot(&snap);
-                        crate::prayer::on_snapshot(&snap);
-                        crate::teleport::on_snapshot(&snap);
-                        crate::shop::on_snapshot(&snap);
-                        crate::hunt_fight::on_snapshot(&snap);
-                        crate::hunt_lair::on_snapshot(&snap);
-                        crate::hunt_leave::on_snapshot(&snap);
-                        crate::hunt_key::on_snapshot(&snap);
-                        crate::hunt_cell::on_snapshot(&snap);
-                        crate::hunt_bank::on_snapshot(&snap);
-                        crate::production::on_snapshot(&snap);
-                        crate::dialog::on_snapshot(&snap);
-                        crate::modals::on_snapshot(&snap);
-                        crate::quest_journal::on_snapshot(&snap);
-                        crate::clue::on_snapshot(&snap);
+                        crate::dialog::on_snapshot();
                         crate::reach::on_snapshot(&snap);
-                        crate::line_of_sight::on_snapshot(&snap);
-                        crate::fire::on_snapshot(&snap);
-                        crate::trade::on_snapshot(&snap);
-                        crate::drive_partner_trade::on_snapshot(&snap);
                         if snap.has_hold() {
                             host_hold = snap.hold();
                             crate::periodic_bank::on_hold(host_hold);
@@ -1806,6 +1790,7 @@ fn tick_loop(
                 }
             }
             IsolateCmd::ResetSession => {
+                crate::observed::on_reset();
                 crate::periodic_bank::on_reset();
                 crate::bank_open::on_reset();
                 crate::cake_stall::on_reset();
@@ -1829,7 +1814,6 @@ fn tick_loop(
                 crate::quest_journal::on_reset();
                 crate::clue::on_reset();
                 crate::reach::on_reset();
-                crate::line_of_sight::on_reset();
                 crate::fire::on_reset();
                 crate::trade::on_reset();
                 crate::drive_partner_trade::on_reset();

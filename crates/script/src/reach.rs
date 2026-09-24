@@ -6,6 +6,7 @@
 //! the existing FlatBuffer walk and npc verbs.
 
 use crate::isolate_fb::SnapshotReader;
+use crate::observed::{self, Scene};
 use crate::task_clock::InstantTaskClock;
 use crate::walk_wait;
 use serde_json::{json, Value};
@@ -21,7 +22,6 @@ const ADJACENT: i32 = 1;
 
 thread_local! {
     static RUNTIME: RefCell<ReachRuntime> = const { RefCell::new(ReachRuntime::new()) };
-    static OBSERVATION: RefCell<Observation> = const { RefCell::new(Observation::new()) };
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -41,6 +41,7 @@ struct Npc {
     reachable_adj: bool,
 }
 
+/// The posted facts this module decides from, read from the isolate scene.
 #[derive(Clone)]
 struct Observation {
     ingame: bool,
@@ -54,76 +55,60 @@ struct Observation {
 }
 
 impl Observation {
-    const fn new() -> Self {
+    /// A logout forgets the session: only pages posted since login count.
+    fn from_scene(scene: &Scene) -> Self {
+        let session = scene.since_login();
         Self {
-            ingame: false,
-            here: None,
-            hold: false,
-            ours: false,
-            chat_modal_id: -1,
-            chat_continue: false,
-            chat_lines: Vec::new(),
-            npcs: Vec::new(),
+            ingame: session.ingame().unwrap_or(false),
+            here: session.here().map(|tile| Tile {
+                x: tile.x,
+                z: tile.z,
+                level: tile.level,
+            }),
+            hold: session.hold().unwrap_or(false),
+            ours: session.ours().unwrap_or(false),
+            chat_modal_id: session.chat_modal_id().unwrap_or(-1),
+            chat_continue: session.chat_continue().unwrap_or(false),
+            chat_lines: session
+                .chat_lines()
+                .map(|lines| {
+                    lines
+                        .iter()
+                        .map(|line| (line.seq, line.text.clone()))
+                        .collect()
+                })
+                .unwrap_or_default(),
+            npcs: session
+                .npcs()
+                .map(|rows| {
+                    rows.iter()
+                        .map(|npc| Npc {
+                            name: npc.name_or_empty().to_string(),
+                            actions: npc
+                                .actions
+                                .iter()
+                                .filter(|action| !action.is_empty() && *action != "hidden")
+                                .cloned()
+                                .collect(),
+                            index: npc.index,
+                            tile: Tile {
+                                x: npc.x,
+                                z: npc.z,
+                                level: npc.level,
+                            },
+                            distance: npc.distance,
+                            reachable_adj: npc.reachable_adj,
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
         }
     }
 
-    fn update(&mut self, snap: &SnapshotReader<'_>) {
-        if snap.has_ingame() {
-            if !snap.ingame() {
-                *self = Self::new();
-                return;
-            }
-            self.ingame = true;
-        }
-        if snap.has_here() {
-            self.here = snap.here().map(|tile| Tile {
-                x: tile.x(),
-                z: tile.z(),
-                level: tile.level(),
-            });
-        }
-        if snap.has_hold() {
-            self.hold = snap.hold();
-        }
-        if snap.has_ours() {
-            self.ours = snap.ours();
-        }
-        if snap.has_chat_modal_id() {
-            self.chat_modal_id = snap.chat_modal_id();
-        }
-        if snap.has_chat_continue() {
-            self.chat_continue = snap.chat_continue();
-        }
-        if snap.has_chat_lines() {
-            self.chat_lines = snap
-                .chat_lines()
-                .iter()
-                .map(|line| (line.seq(), line.text().to_string()))
-                .collect();
-        }
-        if snap.has_npcs() {
-            self.npcs = snap
-                .npcs()
-                .iter()
-                .map(|npc| Npc {
-                    name: npc.name().unwrap_or_default().to_string(),
-                    actions: npc
-                        .actions()
-                        .iter()
-                        .filter(|action| !action.is_empty() && **action != "hidden")
-                        .map(|action| (*action).to_string())
-                        .collect(),
-                    index: npc.index(),
-                    tile: Tile {
-                        x: npc.x(),
-                        z: npc.z(),
-                        level: npc.level(),
-                    },
-                    distance: npc.distance(),
-                    reachable_adj: npc.reachable_adj(),
-                })
-                .collect();
-        }
+    /// The posted `hold || ours` cooperative interrupt.
+    fn pending_in(scene: &Scene) -> bool {
+        let session = scene.since_login();
+        session.hold().unwrap_or(false) || session.ours().unwrap_or(false)
     }
 
     fn pending(&self) -> bool {
@@ -282,17 +267,16 @@ impl ReachRuntime {
     }
 }
 
+/// After the isolate applied `snap` to the scene: a live reach notes the
+/// posted cooperative interrupt.
 pub fn on_snapshot(snap: &SnapshotReader<'_>) {
     walk_wait::on_snapshot(snap);
-    OBSERVATION.with(|obs| {
-        let mut obs = obs.borrow_mut();
-        obs.update(snap);
-        RUNTIME.with(|rt| {
-            let mut rt = rt.borrow_mut();
-            if rt.phase != Phase::Idle && obs.pending() {
-                rt.interrupted = true;
-            }
-        });
+    let pending = observed::with(Observation::pending_in);
+    RUNTIME.with(|rt| {
+        let mut rt = rt.borrow_mut();
+        if rt.phase != Phase::Idle && pending {
+            rt.interrupted = true;
+        }
     });
 }
 
@@ -319,7 +303,6 @@ pub fn on_hold(held: bool) {
 
 pub fn on_reset() {
     RUNTIME.with(|rt| rt.borrow_mut().abort_runtime());
-    OBSERVATION.with(|obs| *obs.borrow_mut() = Observation::new());
 }
 
 pub fn dispatch(input: &Value) -> Value {
@@ -345,23 +328,21 @@ fn begin(input: &Value) -> Value {
             .unwrap_or(OPEN_MS),
         _ => OPEN_MS,
     };
-    OBSERVATION.with(|o| {
-        let obs = o.borrow();
-        RUNTIME.with(|rt| {
-            let mut rt = rt.borrow_mut();
-            rt.abort_runtime();
-            rt.npc_name = npc_name;
-            rt.near = near;
-            rt.open_ms = open_ms;
-            if !obs.ingame {
-                return json!({ "kind": "aborted", "token": rt.token });
-            }
-            if obs.pending() {
-                rt.interrupted = true;
-                return rt.finish("retry", None);
-            }
-            start(&mut rt, &obs)
-        })
+    let obs = observed::with(Observation::from_scene);
+    RUNTIME.with(|rt| {
+        let mut rt = rt.borrow_mut();
+        rt.abort_runtime();
+        rt.npc_name = npc_name;
+        rt.near = near;
+        rt.open_ms = open_ms;
+        if !obs.ingame {
+            return json!({ "kind": "aborted", "token": rt.token });
+        }
+        if obs.pending() {
+            rt.interrupted = true;
+            return rt.finish("retry", None);
+        }
+        start(&mut rt, &obs)
     })
 }
 
@@ -392,28 +373,26 @@ fn start(rt: &mut ReachRuntime, obs: &Observation) -> Value {
 }
 
 fn next(token: u64) -> Value {
-    OBSERVATION.with(|o| {
-        let obs = o.borrow();
-        RUNTIME.with(|rt| {
-            let mut rt = rt.borrow_mut();
-            if token != rt.token || rt.phase == Phase::Idle {
-                return json!({ "kind": "aborted", "token": rt.token });
-            }
-            if rt.frozen() {
-                return rt.wait();
-            }
-            if !obs.ingame {
-                return json!({ "kind": "aborted", "token": rt.token });
-            }
-            if rt.interrupted || obs.pending() {
-                return rt.finish("retry", None);
-            }
-            match rt.phase {
-                Phase::Idle => json!({ "kind": "aborted", "token": rt.token }),
-                Phase::CloseIn | Phase::WalkStand | Phase::Clear => walk_step(&mut rt, &obs),
-                Phase::WaitOpen => wait_open(&mut rt, &obs),
-            }
-        })
+    let obs = observed::with(Observation::from_scene);
+    RUNTIME.with(|rt| {
+        let mut rt = rt.borrow_mut();
+        if token != rt.token || rt.phase == Phase::Idle {
+            return json!({ "kind": "aborted", "token": rt.token });
+        }
+        if rt.frozen() {
+            return rt.wait();
+        }
+        if !obs.ingame {
+            return json!({ "kind": "aborted", "token": rt.token });
+        }
+        if rt.interrupted || obs.pending() {
+            return rt.finish("retry", None);
+        }
+        match rt.phase {
+            Phase::Idle => json!({ "kind": "aborted", "token": rt.token }),
+            Phase::CloseIn | Phase::WalkStand | Phase::Clear => walk_step(&mut rt, &obs),
+            Phase::WaitOpen => wait_open(&mut rt, &obs),
+        }
     })
 }
 
@@ -782,6 +761,7 @@ mod tests {
     fn observe(input: &SnapshotInput<'_>, native: NativeFactsInput<'_>) {
         let bytes = encode_snapshot_with_native(input, native);
         let snap = SnapshotReader::from_bytes(&bytes).expect("snapshot");
+        observed::apply(&snap);
         on_snapshot(&snap);
     }
 
@@ -824,8 +804,10 @@ mod tests {
     fn reset() {
         on_reset();
         walk_wait::on_reset();
+        observed::on_reset();
         let bytes = encode_snapshot(&base());
         let snap = SnapshotReader::from_bytes(&bytes).expect("base");
+        observed::apply(&snap);
         on_snapshot(&snap);
     }
 

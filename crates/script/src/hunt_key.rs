@@ -5,7 +5,7 @@
 //! Call `hunt_fight::in_area_body` only. Do not call Leave or Fight dispatch.
 
 use crate::hunt_fight::{in_area_body, SiteBox, Tile};
-use crate::isolate_fb::SnapshotReader;
+use crate::observed::{self, EntityRow, ItemRow, Scene};
 use crate::task_clock::InstantTaskClock;
 use serde_json::{json, Value};
 use std::cell::RefCell;
@@ -38,7 +38,6 @@ const CELL: SiteBox = SiteBox {
 thread_local! {
     static KEY_RUNTIMES: RefCell<HashMap<u64, KeyRuntime>> = RefCell::new(HashMap::new());
     static NEXT_TOKEN: RefCell<u64> = const { RefCell::new(1) };
-    static OBSERVATION: RefCell<KeyObservation> = RefCell::new(KeyObservation::empty());
 }
 
 #[derive(Clone, Debug)]
@@ -75,6 +74,117 @@ pub struct KeyObservation {
 }
 
 impl KeyObservation {
+    /// Fields read from the isolate scene over the `empty` defaults. A
+    /// logout clears `here` (a tile posted with the logout still counts);
+    /// every other page keeps its last posted value.
+    fn from_scene(scene: &Scene) -> Self {
+        let empty = Self::empty();
+        let latest = scene.latest();
+        Self {
+            here: scene.since_logout().here().map(Tile::from),
+            ingame: latest.ingame().unwrap_or(empty.ingame),
+            hold: latest.hold().unwrap_or(empty.hold),
+            ours: latest.ours().unwrap_or(empty.ours),
+            inv: latest
+                .inv()
+                .map(|rows| {
+                    rows.iter()
+                        .map(|row| KeyInv {
+                            id: row.id,
+                            count: row.count,
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
+            ground: latest
+                .ground()
+                .map(|rows| {
+                    rows.iter()
+                        .map(|row| KeyGround {
+                            id: row.id,
+                            name: row.name_or_empty().to_string(),
+                            tile: row.tile().into(),
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
+            npcs: latest
+                .npcs()
+                .map(|rows| {
+                    rows.iter()
+                        .map(|row| KeyNpc {
+                            index: row.index,
+                            name: row.name_or_empty().to_string(),
+                            actions: row.actions.clone(),
+                            tile: row.tile().into(),
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
+            locs: latest
+                .locs()
+                .map(|rows| rows.iter().map(|loc| loc.id).collect())
+                .unwrap_or_default(),
+        }
+    }
+
+    /// Write this observation into the isolate scene as posts, replacing it.
+    fn post(self) {
+        observed::replace(0, self.ingame, |post| {
+            if let Some(here) = self.here {
+                post.here(here.into());
+            }
+            post.hold(self.hold)
+                .ours(self.ours)
+                .inv(
+                    self.inv
+                        .into_iter()
+                        .map(|row| ItemRow {
+                            id: row.id,
+                            count: row.count,
+                            ..ItemRow::default()
+                        })
+                        .collect(),
+                )
+                .ground(
+                    self.ground
+                        .into_iter()
+                        .map(|row| EntityRow {
+                            id: row.id,
+                            name: Some(row.name),
+                            x: row.tile.x,
+                            z: row.tile.z,
+                            level: row.tile.level,
+                            ..EntityRow::default()
+                        })
+                        .collect(),
+                )
+                .npcs(
+                    self.npcs
+                        .into_iter()
+                        .map(|row| EntityRow {
+                            index: row.index,
+                            name: Some(row.name),
+                            actions: row.actions,
+                            x: row.tile.x,
+                            z: row.tile.z,
+                            level: row.tile.level,
+                            ..EntityRow::default()
+                        })
+                        .collect(),
+                )
+                .locs(
+                    self.locs
+                        .into_iter()
+                        .map(|id| EntityRow {
+                            id,
+                            ..EntityRow::default()
+                        })
+                        .collect(),
+                );
+        });
+    }
+
     fn empty() -> Self {
         Self {
             here: None,
@@ -165,11 +275,12 @@ impl KeyRuntime {
 }
 
 fn observation() -> KeyObservation {
-    OBSERVATION.with(|o| o.borrow().clone())
+    observed::with(KeyObservation::from_scene)
 }
 
+/// Test seam: replace the isolate scene with posts that read back as `obs`.
 pub fn set_observation(obs: KeyObservation) {
-    OBSERVATION.with(|o| *o.borrow_mut() = obs);
+    obs.post();
 }
 
 fn live_dist(here: Tile, tile: Tile) -> i32 {
@@ -618,75 +729,6 @@ fn next_effect(rt: &mut KeyRuntime, proj: &KeyProj, reply: Option<&Value>) -> Va
     }
 }
 
-pub fn on_snapshot(snap: &SnapshotReader<'_>) {
-    OBSERVATION.with(|slot| {
-        let mut o = slot.borrow_mut();
-        if snap.has_ingame() {
-            o.ingame = snap.ingame();
-            if !o.ingame {
-                o.here = None;
-            }
-        }
-        if snap.has_here() {
-            o.here = snap.here().map(|t| Tile {
-                x: t.x(),
-                z: t.z(),
-                level: t.level(),
-            });
-        }
-        if snap.has_hold() {
-            o.hold = snap.hold();
-        }
-        if snap.has_ours() {
-            o.ours = snap.ours();
-        }
-        if snap.has_inv() {
-            o.inv = snap
-                .inv()
-                .iter()
-                .map(|row| KeyInv {
-                    id: row.id(),
-                    count: row.count(),
-                })
-                .collect();
-        }
-        if snap.has_ground() {
-            o.ground = snap
-                .ground()
-                .iter()
-                .map(|row| KeyGround {
-                    id: row.id(),
-                    name: row.name().unwrap_or_default().to_string(),
-                    tile: Tile {
-                        x: row.x(),
-                        z: row.z(),
-                        level: row.level(),
-                    },
-                })
-                .collect();
-        }
-        if snap.has_npcs() {
-            o.npcs = snap
-                .npcs()
-                .iter()
-                .map(|row| KeyNpc {
-                    index: row.index(),
-                    name: row.name().unwrap_or_default().to_string(),
-                    actions: row.actions().iter().map(|s| s.to_string()).collect(),
-                    tile: Tile {
-                        x: row.x(),
-                        z: row.z(),
-                        level: row.level(),
-                    },
-                })
-                .collect();
-        }
-        if snap.has_locs() {
-            o.locs = snap.locs().iter().map(|loc| loc.id()).collect();
-        }
-    });
-}
-
 fn each_runtime(f: impl Fn(&mut KeyRuntime)) {
     KEY_RUNTIMES.with(|m| {
         for rt in m.borrow_mut().values_mut() {
@@ -718,7 +760,6 @@ pub fn on_hold(held: bool) {
 
 pub fn on_reset() {
     KEY_RUNTIMES.with(|m| m.borrow_mut().clear());
-    OBSERVATION.with(|o| *o.borrow_mut() = KeyObservation::empty());
 }
 
 pub fn dispatch(input: &Value) -> Value {

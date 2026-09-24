@@ -314,7 +314,7 @@ fn magic_gate_reads_base_not_effective() {
     }];
     let bytes = encode_snapshot(&snap_with(inside(), &low, &inv));
     let reader = SnapshotReader::from_bytes(&bytes).unwrap();
-    hunt_leave::on_snapshot(&reader);
+    script::observed::apply(&reader);
     let token = begin();
     let short = call(Some(&data), token, site(json!({})), None);
     assert_ne!(
@@ -333,7 +333,7 @@ fn magic_gate_reads_base_not_effective() {
     }];
     let bytes = encode_snapshot(&snap_with(inside(), &high, &inv));
     let reader = SnapshotReader::from_bytes(&bytes).unwrap();
-    hunt_leave::on_snapshot(&reader);
+    script::observed::apply(&reader);
     let token = begin();
     let ready = call(Some(&data), token, site(json!({})), None);
     assert_eq!(kind(&ready), "teleport");
@@ -844,13 +844,7 @@ fn yield_shape_and_shim_flags_are_not_fight_copies() {
     );
 
     let iso = include_str!("../src/load/isolate.rs");
-    for hook in [
-        "on_snapshot",
-        "on_pause",
-        "on_hold",
-        "on_resume",
-        "on_reset",
-    ] {
+    for hook in ["on_pause", "on_hold", "on_resume", "on_reset"] {
         assert!(
             iso.contains(&format!("hunt_leave::{hook}")),
             "missing {hook}"

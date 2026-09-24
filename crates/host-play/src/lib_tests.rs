@@ -10426,8 +10426,8 @@ fn script_snapshot_fb_posts_collision_and_los_identity() {
     assert_ne!(flags[5 * 104 + 1] & CollisionFlag::V_W, 0);
     assert_eq!(flags[1 * 104 + 1], CollisionFlag::_OPEN);
 
-    script::line_of_sight::on_reset();
-    script::line_of_sight::on_snapshot(&view);
+    script::observed::on_reset();
+    script::observed::apply(&view);
     let here = api::snapshot::WorldTile {
         x: 3201,
         z: 3201,

@@ -4,11 +4,11 @@
 //! field pick and Taverley `site.key` branches stay here. One effect per
 //! `next()`. Tokens are per Task instance; session reset drops the map.
 
-use crate::isolate_fb::SnapshotReader;
+use crate::observed::{self, EntityRow, ItemRow, Scene, StatRow};
 use crate::task_clock::InstantTaskClock;
 use api::snapshot::WorldTile;
 use serde_json::{json, Value};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
@@ -50,7 +50,8 @@ thread_local! {
     static RETREAT_RUNTIMES: RefCell<HashMap<u64, RetreatRuntime>> = RefCell::new(HashMap::new());
     static WALK_RUNTIMES: RefCell<HashMap<u64, WalkRuntime>> = RefCell::new(HashMap::new());
     static NEXT_TOKEN: RefCell<u64> = const { RefCell::new(1) };
-    static OBSERVATION: RefCell<FightObservation> = RefCell::new(FightObservation::ready());
+    /// Test seam: a forced line-of-sight answer. Never set from a snapshot.
+    static LOS_OVERRIDE: Cell<Option<bool>> = const { Cell::new(None) };
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -63,6 +64,26 @@ pub struct Tile {
 impl Tile {
     fn equals(self, other: Tile) -> bool {
         self.x == other.x && self.z == other.z && self.level == other.level
+    }
+}
+
+impl From<observed::Tile> for Tile {
+    fn from(t: observed::Tile) -> Self {
+        Self {
+            x: t.x,
+            z: t.z,
+            level: t.level,
+        }
+    }
+}
+
+impl From<Tile> for observed::Tile {
+    fn from(t: Tile) -> Self {
+        Self {
+            x: t.x,
+            z: t.z,
+            level: t.level,
+        }
     }
 }
 
@@ -116,6 +137,47 @@ pub struct FightNpc {
 }
 
 impl FightNpc {
+    fn from_row(n: &EntityRow) -> Self {
+        Self {
+            index: n.index,
+            id: n.id,
+            name: n.name_or_empty().to_string(),
+            x: n.x,
+            z: n.z,
+            level: n.level,
+            nx: n.nx,
+            nz: n.nz,
+            size: n.size,
+            distance: n.distance,
+            health: n.health,
+            in_combat: n.in_combat,
+            actions: n.actions.clone(),
+            target_kind: n.target_kind,
+            target_index: n.target_index,
+        }
+    }
+
+    fn to_row(&self) -> EntityRow {
+        EntityRow {
+            index: self.index,
+            id: self.id,
+            name: Some(self.name.clone()),
+            x: self.x,
+            z: self.z,
+            level: self.level,
+            nx: self.nx,
+            nz: self.nz,
+            size: self.size,
+            distance: self.distance,
+            health: self.health,
+            in_combat: self.in_combat,
+            actions: self.actions.clone(),
+            target_kind: self.target_kind,
+            target_index: self.target_index,
+            ..EntityRow::default()
+        }
+    }
+
     fn tile(&self) -> Tile {
         Tile {
             x: self.x,
@@ -167,6 +229,75 @@ pub struct FightObservation {
 }
 
 impl FightObservation {
+    /// Fields read from the isolate scene. A logout forgets the session:
+    /// other than `ingame`, only pages posted since login count, over the
+    /// scene-ready defaults.
+    fn from_scene(scene: &Scene) -> Self {
+        let ready = Self::ready();
+        let session = scene.since_login();
+        Self {
+            here: session.here().map(Tile::from),
+            ingame: scene.latest().ingame().unwrap_or(ready.ingame),
+            scene_state: session.scene_state().unwrap_or(ready.scene_state),
+            hold: session.hold().unwrap_or(ready.hold),
+            ours: session.ours().unwrap_or(ready.ours),
+            chat_continue: session.chat_continue().unwrap_or(ready.chat_continue),
+            npcs: session
+                .npcs()
+                .map(|rows| rows.iter().map(FightNpc::from_row).collect())
+                .unwrap_or_default(),
+            self_target_kind: session.self_target_kind().unwrap_or(ready.self_target_kind),
+            self_target_index: session
+                .self_target_index()
+                .unwrap_or(ready.self_target_index),
+            self_slot: session.self_slot().unwrap_or(ready.self_slot),
+            hp_effective: session
+                .stats()
+                .and_then(|rows| rows.iter().find(|row| row.name == "hitpoints"))
+                .map_or(ready.hp_effective, |row| row.effective),
+            inv_names: session
+                .inv()
+                .map(|rows| rows.iter().filter_map(|row| row.name.clone()).collect())
+                .unwrap_or_default(),
+            animating: session.animating().unwrap_or(ready.animating),
+            los_override: LOS_OVERRIDE.with(Cell::get),
+            tick: scene.session_tick().unwrap_or(ready.tick),
+        }
+    }
+
+    /// Write this observation into the isolate scene as posts, replacing it.
+    fn post(self) {
+        LOS_OVERRIDE.with(|slot| slot.set(self.los_override));
+        observed::replace(self.tick, self.ingame, |post| {
+            if let Some(here) = self.here {
+                post.here(here.into());
+            }
+            post.scene_state(self.scene_state)
+                .hold(self.hold)
+                .ours(self.ours)
+                .chat_continue(self.chat_continue)
+                .npcs(self.npcs.iter().map(FightNpc::to_row).collect())
+                .self_target_kind(self.self_target_kind)
+                .self_target_index(self.self_target_index)
+                .self_slot(self.self_slot)
+                .stats(vec![StatRow {
+                    name: "hitpoints".into(),
+                    effective: self.hp_effective,
+                    ..StatRow::default()
+                }])
+                .inv(
+                    self.inv_names
+                        .into_iter()
+                        .map(|name| ItemRow {
+                            name: Some(name),
+                            ..ItemRow::default()
+                        })
+                        .collect(),
+                )
+                .animating(self.animating);
+        });
+    }
+
     fn ready() -> Self {
         Self {
             here: None,
@@ -625,11 +756,12 @@ fn token_of(input: &Value) -> u64 {
 }
 
 fn observation() -> FightObservation {
-    OBSERVATION.with(|o| o.borrow().clone())
+    observed::with(FightObservation::from_scene)
 }
 
+/// Test seam: replace the isolate scene with posts that read back as `obs`.
 pub fn set_observation(obs: FightObservation) {
-    OBSERVATION.with(|o| *o.borrow_mut() = obs);
+    obs.post();
 }
 
 pub fn observation_snapshot() -> FightObservation {
@@ -1421,94 +1553,6 @@ fn with_runtime<T>(token: u64, f: impl FnOnce(&mut FightRuntime) -> T) -> Option
     RUNTIMES.with(|m| m.borrow_mut().get_mut(&token).map(f))
 }
 
-pub fn on_snapshot(snap: &SnapshotReader<'_>) {
-    OBSERVATION.with(|slot| {
-        let mut o = slot.borrow_mut();
-        if snap.has_ingame() {
-            if !snap.ingame() {
-                let los = o.los_override;
-                *o = FightObservation::ready();
-                o.ingame = false;
-                o.los_override = los;
-                return;
-            }
-            o.ingame = true;
-        }
-        o.tick = snap.tick();
-        if snap.has_here() {
-            o.here = snap.here().map(|t| Tile {
-                x: t.x(),
-                z: t.z(),
-                level: t.level(),
-            });
-        }
-        if snap.has_scene_state() {
-            o.scene_state = snap.scene_state();
-        }
-        if snap.has_hold() {
-            o.hold = snap.hold();
-        }
-        if snap.has_ours() {
-            o.ours = snap.ours();
-        }
-        if snap.has_chat_continue() {
-            o.chat_continue = snap.chat_continue();
-        }
-        if snap.has_npcs() {
-            o.npcs = snap
-                .npcs()
-                .iter()
-                .map(|n| FightNpc {
-                    index: n.index(),
-                    id: n.id(),
-                    name: n.name().unwrap_or_default().to_string(),
-                    x: n.x(),
-                    z: n.z(),
-                    level: n.level(),
-                    nx: n.nx(),
-                    nz: n.nz(),
-                    size: n.size(),
-                    distance: n.distance(),
-                    health: n.health(),
-                    in_combat: n.in_combat(),
-                    actions: n.actions().iter().map(|a| a.to_string()).collect(),
-                    target_kind: n.target_kind(),
-                    target_index: n.target_index(),
-                })
-                .collect();
-        }
-        if snap.has_self_target_kind() {
-            o.self_target_kind = snap.self_target_kind();
-        }
-        if snap.has_self_target_index() {
-            o.self_target_index = snap.self_target_index();
-        }
-        if snap.has_self_slot() {
-            o.self_slot = snap.self_slot();
-        }
-        if snap.has_stats() {
-            if let Some(hp) = snap
-                .stats()
-                .iter()
-                .find(|s| s.name() == "hitpoints")
-                .map(|s| s.effective())
-            {
-                o.hp_effective = hp;
-            }
-        }
-        if snap.has_inv() {
-            o.inv_names = snap
-                .inv()
-                .iter()
-                .filter_map(|row| row.name().map(str::to_string))
-                .collect();
-        }
-        if snap.has_animating() {
-            o.animating = snap.animating();
-        }
-    });
-}
-
 fn each_runtime(f: impl Fn(&mut FightRuntime)) {
     RUNTIMES.with(|m| {
         for rt in m.borrow_mut().values_mut() {
@@ -1603,7 +1647,7 @@ pub fn on_reset() {
     HOLD_RUNTIMES.with(|m| m.borrow_mut().clear());
     RETREAT_RUNTIMES.with(|m| m.borrow_mut().clear());
     WALK_RUNTIMES.with(|m| m.borrow_mut().clear());
-    OBSERVATION.with(|o| *o.borrow_mut() = FightObservation::ready());
+    LOS_OVERRIDE.with(|slot| slot.set(None));
 }
 
 fn alloc_token() -> u64 {

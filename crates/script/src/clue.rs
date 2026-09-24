@@ -268,13 +268,13 @@
 //! Stop, a new Start — and clears the stripped list and the abandon latch with
 //! the step. Pause and hold freeze this machine's own clock,
 //! so a frozen call emits no callback, no walk, no loc and no held, and does
-//! not advance the session. `on_snapshot` is fan-out only: begin and next
-//! read the pages the wrapper hands in at call time — the parked page, this
-//! call's `here` tile and its posted loc page — so nothing is cached here and
-//! there is no world copy.
+//! not advance the session. Nothing is cached here and there is no world
+//! copy: the pages are the ones the wrapper hands in at call time, and the
+//! player tile, the slot count and the `hold || ours` interrupt fall back to
+//! the isolate scene when the wrapper omits them.
 
 use crate::food_policy::food_forms_for;
-use crate::isolate_fb::SnapshotReader;
+use crate::observed;
 use crate::task_clock::InstantTaskClock;
 use api::clue_logic::{identify_step, NONE_HELD};
 use api::clue_pack::SHARK_ID;
@@ -1410,7 +1410,7 @@ impl ClueRuntime {
             // consumed, so the gate is still unanswered after the thaw.
             return self.emit("wait");
         }
-        if input.get("hold").and_then(Value::as_bool).unwrap_or(false) {
+        if posted_hold(input) {
             // The posted `hold || ours` cooperative interrupt. The token
             // lives and the step is not trail completion.
             return self.emit("yield");
@@ -1588,7 +1588,7 @@ impl ClueRuntime {
         {
             return self.emit("close-modal");
         }
-        let Some(here) = input.get("here").and_then(posted_tile) else {
+        let Some(here) = posted_here(input) else {
             // No posted tile: no ground row can be claimed as same-tile, so
             // this call has nothing to close and nothing to take.
             return self.empty(selected, input);
@@ -1600,7 +1600,7 @@ impl ClueRuntime {
         // posted slot count. A page that posted no `inv_size` has not said how
         // full the pack is, and this machine does not invent the client's 28
         // for it — it waits for the page instead.
-        let Some(size) = input.get("inv_size").and_then(i32_of) else {
+        let Some(size) = posted_inv_size(input) else {
             return self.emit("wait");
         };
         if occupied(input) < i64::from(size) {
@@ -1919,7 +1919,7 @@ impl ClueRuntime {
             // are identified and then idle.
             return self.emit("wait");
         };
-        let Some(here) = input.get("here").and_then(posted_tile) else {
+        let Some(here) = posted_here(input) else {
             // No posted tile: there is no arrival claim to make and no walk
             // to measure, so this tick waits rather than walking blind.
             return self.emit("wait");
@@ -2256,12 +2256,7 @@ impl ClueRuntime {
         let spawn = if owned.is_some() {
             None
         } else {
-            pick_npc(
-                names,
-                page,
-                self_slot,
-                input.get("here").and_then(posted_tile),
-            )
+            pick_npc(names, page, self_slot, posted_here(input))
         };
         if owned.is_none() && spawn.is_none() {
             return self.emit("wait");
@@ -2634,7 +2629,7 @@ impl ClueRuntime {
                 }
             }
             None => {
-                let Some(here) = input.get("here").and_then(posted_tile) else {
+                let Some(here) = posted_here(input) else {
                     // No posted tile: there is no arrival claim to make and no
                     // distance to measure a posted row by, so this tick waits
                     // rather than walking blind.
@@ -2794,7 +2789,7 @@ impl ClueRuntime {
                 // the hunt Takes it.
                 match pick_key(input, key.key_id, tile) {
                     Some(drop) => {
-                        let Some(size) = input.get("inv_size").and_then(i32_of) else {
+                        let Some(size) = posted_inv_size(input) else {
                             // No posted slot count: the pack's fullness is not
                             // invented for it.
                             return self.emit("wait");
@@ -2867,7 +2862,7 @@ enum Arrival {
 /// Chebyshev `ARRIVE_RADIUS` the search walk uses, so the guarded and unguarded
 /// Dig arrive exactly the way their sibling search row does.
 fn arrival(tile: Tile, input: &Value) -> Arrival {
-    let Some(here) = input.get("here").and_then(posted_tile) else {
+    let Some(here) = posted_here(input) else {
         return Arrival::Unknown;
     };
     if here.level == tile.level && chebyshev(here, tile) <= i64::from(ARRIVE_RADIUS) {
@@ -4946,10 +4941,45 @@ fn pack_full_warning(name: &str, hard: bool) -> String {
     )
 }
 
-/// The posted snapshot is not this machine's page: begin and next read the
-/// page the wrapper hands in at call time, so nothing is cached here.
-/// Registered so the machine's hook set matches the isolate's fan-out.
-pub fn on_snapshot(_snap: &SnapshotReader<'_>) {}
+/// The isolate scene's last post, once this session has one. The adapter
+/// still echoes these scalar pages from the same post (dropping the echo is
+/// the adapter rework): a page the echo carries is read from it, and a page
+/// the echo omits is read from the scene.
+fn scene_page<R>(read: impl FnOnce(observed::Lens<'_>) -> R) -> Option<R> {
+    observed::with(|scene| scene.applied().then(|| read(scene.latest())))
+}
+
+/// The posted player tile. No posted tile is no arrival claim.
+fn posted_here(input: &Value) -> Option<Tile> {
+    match input.get("here") {
+        Some(echo) => posted_tile(echo),
+        None => scene_page(|page| {
+            page.here().map(|tile| Tile {
+                x: tile.x,
+                z: tile.z,
+                level: tile.level,
+            })
+        })
+        .flatten(),
+    }
+}
+
+/// The posted inventory slot count. Never invented when unposted.
+fn posted_inv_size(input: &Value) -> Option<i32> {
+    match input.get("inv_size") {
+        Some(echo) => i32_of(echo),
+        None => scene_page(|page| page.inv_size()).flatten(),
+    }
+}
+
+/// The posted `hold || ours` cooperative interrupt.
+fn posted_hold(input: &Value) -> bool {
+    match input.get("hold").and_then(Value::as_bool) {
+        Some(echo) => echo,
+        None => scene_page(|page| page.hold().unwrap_or(false) || page.ours().unwrap_or(false))
+            .unwrap_or(false),
+    }
+}
 
 pub fn on_pause() {
     RUNTIME.with(|rt| {
@@ -12827,5 +12857,50 @@ mod tests {
         assert!(message.contains("restore-incomplete"), "{incomplete}");
         assert_eq!(stripped(), vec!["Rune full helm".to_string()]);
         on_reset();
+    }
+
+    #[test]
+    fn omitted_scalar_pages_fall_back_to_the_scene_and_the_echo_wins() {
+        crate::observed::on_reset();
+        let bare = json!({ "op": "next" });
+        assert_eq!(posted_here(&bare), None, "no echo and no scene: no tile");
+        assert_eq!(posted_inv_size(&bare), None);
+        assert!(!posted_hold(&bare));
+
+        crate::observed::post(3, |post| {
+            post.here(crate::observed::Tile {
+                x: 3200,
+                z: 3218,
+                level: 1,
+            })
+            .inv_size(28)
+            .ours(true);
+        });
+        assert_eq!(
+            posted_here(&bare),
+            Some(Tile {
+                x: 3200,
+                z: 3218,
+                level: 1
+            })
+        );
+        assert_eq!(posted_inv_size(&bare), Some(28));
+        assert!(posted_hold(&bare), "`ours` alone is the interrupt");
+
+        let echoed = json!({
+            "here": { "x": 1, "z": 2, "level": 0 },
+            "inv_size": 0,
+            "hold": false,
+        });
+        assert_eq!(
+            posted_here(&echoed),
+            Some(Tile {
+                x: 1,
+                z: 2,
+                level: 0
+            })
+        );
+        assert_eq!(posted_inv_size(&echoed), Some(0));
+        assert!(!posted_hold(&echoed));
     }
 }

@@ -8,7 +8,7 @@
 //! transfer. A noted identity, an over-offer, a stale screen or a
 //! changed partner fail closed.
 
-use crate::isolate_fb::{RowReader, SnapshotReader};
+use crate::observed::{self, ItemRow, Scene};
 use crate::task_clock::InstantTaskClock;
 use serde_json::{json, Value};
 use std::cell::RefCell;
@@ -42,8 +42,6 @@ pub const REMOVE_STEP_MS: u64 = 600;
 
 thread_local! {
     static RUNTIME: RefCell<TradeRuntime> = const { RefCell::new(TradeRuntime::new()) };
-    static NATIVE_OBSERVATION: RefCell<NativeObservation> =
-        const { RefCell::new(NativeObservation::new()) };
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -56,15 +54,15 @@ struct Row {
     noted: bool,
 }
 
-fn rows_of(rows: Vec<RowReader<'_>>) -> Vec<Row> {
+fn rows_of(rows: &[ItemRow]) -> Vec<Row> {
     rows.iter()
         .map(|row| Row {
-            name: row.name().unwrap_or_default().to_string(),
-            id: row.id(),
-            slot: row.slot(),
-            component: row.component_id(),
-            count: row.count(),
-            noted: row.noted(),
+            name: row.name_or_empty().to_string(),
+            id: row.id,
+            slot: row.slot_or_unset(),
+            component: row.component_or_unset(),
+            count: row.count,
+            noted: row.noted,
         })
         .collect()
 }
@@ -76,6 +74,7 @@ struct PlayerRef {
     actions: Vec<String>,
 }
 
+/// The posted facts this module decides from, read from the isolate scene.
 struct NativeObservation {
     ingame: bool,
     offer_open: bool,
@@ -90,71 +89,56 @@ struct NativeObservation {
 }
 
 impl NativeObservation {
-    const fn new() -> Self {
+    /// A logout forgets the session: only pages posted since login count.
+    fn from_scene(scene: &Scene) -> Self {
+        let session = scene.since_login();
         Self {
-            ingame: false,
-            offer_open: false,
-            confirm_open: false,
-            partner: None,
-            accept_id: -1,
-            decline_id: -1,
-            count_dialog_open: false,
-            side: Vec::new(),
-            mine: Vec::new(),
-            players: Vec::new(),
+            ingame: session.ingame().unwrap_or(false),
+            offer_open: session.trade_offer_open().unwrap_or(false),
+            confirm_open: session.trade_confirm_open().unwrap_or(false),
+            partner: session
+                .trade_partner()
+                .map(|name| name.trim())
+                .filter(|name| !name.is_empty())
+                .map(str::to_string),
+            accept_id: session.trade_accept_id().unwrap_or(-1),
+            decline_id: session.trade_decline_id().unwrap_or(-1),
+            count_dialog_open: session.count_dialog_open().unwrap_or(false),
+            side: session
+                .trade_side()
+                .map(|rows| rows_of(rows))
+                .unwrap_or_default(),
+            mine: session
+                .trade_mine()
+                .map(|rows| rows_of(rows))
+                .unwrap_or_default(),
+            players: session
+                .players()
+                .map(|rows| {
+                    rows.iter()
+                        .map(|player| PlayerRef {
+                            name: player.name_or_empty().to_string(),
+                            distance: player.distance,
+                            actions: player.actions.clone(),
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
         }
     }
 
-    fn update(&mut self, snap: &SnapshotReader<'_>) {
-        if snap.has_ingame() {
-            if !snap.ingame() {
-                *self = Self::new();
-                return;
-            }
-            self.ingame = true;
-        }
-        if snap.has_trade_offer_open() {
-            self.offer_open = snap.trade_offer_open();
-        }
-        if snap.has_trade_confirm_open() {
-            self.confirm_open = snap.trade_confirm_open();
-        }
-        if snap.has_trade_partner() {
-            self.partner = snap
-                .trade_partner()
-                .map(str::trim)
-                .filter(|name| !name.is_empty())
-                .map(str::to_string);
-        }
-        if snap.has_trade_accept_id() {
-            self.accept_id = snap.trade_accept_id();
-        }
-        if snap.has_trade_decline_id() {
-            self.decline_id = snap.trade_decline_id();
-        }
-        if snap.has_count_dialog_open() {
-            self.count_dialog_open = snap.count_dialog_open();
-        }
-        if snap.has_trade_side() {
-            self.side = rows_of(snap.trade_side());
-        }
-        if snap.has_trade_mine() {
-            self.mine = rows_of(snap.trade_mine());
-        }
-        if snap.has_players() {
-            self.players = snap
-                .players()
-                .iter()
-                .map(|player| PlayerRef {
-                    name: player.name().unwrap_or_default().to_string(),
-                    distance: player.distance(),
-                    actions: player
-                        .actions()
-                        .iter()
-                        .map(|action| (*action).to_string())
-                        .collect(),
-                })
-                .collect();
+    fn probe(&self) -> Probe<'_> {
+        Probe {
+            ingame: self.ingame,
+            offer_open: self.offer_open,
+            confirm_open: self.confirm_open,
+            partner: self.partner.as_deref(),
+            accept_id: self.accept_id,
+            decline_id: self.decline_id,
+            count_dialog_open: self.count_dialog_open,
+            side: &self.side,
+            mine: &self.mine,
+            players: &self.players,
         }
     }
 }
@@ -353,10 +337,6 @@ impl TradeRuntime {
     }
 }
 
-pub fn on_snapshot(snap: &SnapshotReader<'_>) {
-    NATIVE_OBSERVATION.with(|obs| obs.borrow_mut().update(snap));
-}
-
 pub fn on_pause() {
     RUNTIME.with(|rt| {
         let held = rt.borrow().clock.held;
@@ -380,7 +360,6 @@ pub fn on_hold(held: bool) {
 
 pub fn on_reset() {
     RUNTIME.with(|rt| rt.borrow_mut().abort_runtime());
-    NATIVE_OBSERVATION.with(|obs| *obs.borrow_mut() = NativeObservation::new());
 }
 
 pub fn dispatch(input: &Value) -> Value {
@@ -478,33 +457,8 @@ fn begin(input: &Value) -> Value {
         .trim()
         .to_string();
     let n = input.get("n").and_then(Value::as_i64).unwrap_or(0);
-    let obs = NATIVE_OBSERVATION.with(|o| {
-        let o = o.borrow();
-        (
-            o.ingame,
-            o.offer_open,
-            o.confirm_open,
-            o.partner.clone(),
-            o.accept_id,
-            o.decline_id,
-            o.count_dialog_open,
-            o.side.clone(),
-            o.mine.clone(),
-            o.players.clone(),
-        )
-    });
-    let probe = Probe {
-        ingame: obs.0,
-        offer_open: obs.1,
-        confirm_open: obs.2,
-        partner: obs.3.as_deref(),
-        accept_id: obs.4,
-        decline_id: obs.5,
-        count_dialog_open: obs.6,
-        side: &obs.7,
-        mine: &obs.8,
-        players: &obs.9,
-    };
+    let obs = observed::with(NativeObservation::from_scene);
+    let probe = obs.probe();
     if !probe.ingame {
         return json!({ "kind": "aborted", "reason": "not ingame" });
     }
@@ -641,108 +595,82 @@ fn select(input: &Value) -> Value {
     let token = input.get("token").and_then(Value::as_u64).unwrap_or(0);
     let id = input.get("id").and_then(Value::as_i64);
     let slot = input.get("slot").and_then(Value::as_i64);
-    NATIVE_OBSERVATION.with(|o| {
-        let o = o.borrow();
-        let probe = Probe {
-            ingame: o.ingame,
-            offer_open: o.offer_open,
-            confirm_open: o.confirm_open,
-            partner: o.partner.as_deref(),
-            accept_id: o.accept_id,
-            decline_id: o.decline_id,
-            count_dialog_open: o.count_dialog_open,
-            side: &o.side,
-            mine: &o.mine,
-            players: &o.players,
+    let obs = observed::with(NativeObservation::from_scene);
+    let probe = obs.probe();
+    RUNTIME.with(|rt| {
+        let mut rt = rt.borrow_mut();
+        if token != rt.token || rt.phase != Phase::WaitSelect {
+            return json!({ "kind": "aborted", "token": rt.token });
+        }
+        if rt.frozen() {
+            return rt.wait();
+        }
+        if !probe.ingame {
+            return rt.done(false, "not-ingame");
+        }
+        if !probe.offer_open || screen_stale(&rt, &probe) {
+            return rt.done(false, "stale-screen");
+        }
+        let Some(id) = id.and_then(|n| i32::try_from(n).ok()) else {
+            return rt.done(false, "no-match");
         };
-        RUNTIME.with(|rt| {
-            let mut rt = rt.borrow_mut();
-            if token != rt.token || rt.phase != Phase::WaitSelect {
-                return json!({ "kind": "aborted", "token": rt.token });
+        let Some(slot) = slot.and_then(|n| i32::try_from(n).ok()) else {
+            return rt.done(false, "no-match");
+        };
+        let Some(row) = named_side(probe.side, &rt.name)
+            .into_iter()
+            .find(|row| row.id == id && row.slot == slot)
+            .cloned()
+        else {
+            return rt.done(false, "wrong-identity");
+        };
+        if row.noted {
+            return rt.done(false, "noted");
+        }
+        if row.component < 0 || row.slot < 0 {
+            return rt.done(false, "no-identity");
+        }
+        match rt.kind {
+            Kind::OfferAll => {
+                rt.selected = Some(row.clone());
+                let verb = rt.inv_button(&row, OFFER_ALL);
+                rt.finish_ops(verb, true, "sent")
             }
-            if rt.frozen() {
-                return rt.wait();
-            }
-            if !probe.ingame {
-                return rt.done(false, "not-ingame");
-            }
-            if !probe.offer_open || screen_stale(&rt, &probe) {
-                return rt.done(false, "stale-screen");
-            }
-            let Some(id) = id.and_then(|n| i32::try_from(n).ok()) else {
-                return rt.done(false, "no-match");
-            };
-            let Some(slot) = slot.and_then(|n| i32::try_from(n).ok()) else {
-                return rt.done(false, "no-match");
-            };
-            let Some(row) = named_side(probe.side, &rt.name)
-                .into_iter()
-                .find(|row| row.id == id && row.slot == slot)
-                .cloned()
-            else {
-                return rt.done(false, "wrong-identity");
-            };
-            if row.noted {
-                return rt.done(false, "noted");
-            }
-            if row.component < 0 || row.slot < 0 {
-                return rt.done(false, "no-identity");
-            }
-            match rt.kind {
-                Kind::OfferAll => {
-                    rt.selected = Some(row.clone());
-                    let verb = rt.inv_button(&row, OFFER_ALL);
-                    rt.finish_ops(verb, true, "sent")
+            Kind::Offer => {
+                if rt.amount > row.count {
+                    return rt.done(false, "over-offer");
                 }
-                Kind::Offer => {
-                    if rt.amount > row.count {
-                        return rt.done(false, "over-offer");
-                    }
-                    rt.selected = Some(row.clone());
-                    rt.mine_baseline = offered_of(probe.mine, row.id);
-                    rt.phase = Phase::WaitCountOpen;
-                    rt.arm(COUNT_OPEN_MS);
-                    rt.inv_button(&row, OFFER_X)
-                }
-                _ => rt.done(false, "wrong-kind"),
+                rt.selected = Some(row.clone());
+                rt.mine_baseline = offered_of(probe.mine, row.id);
+                rt.phase = Phase::WaitCountOpen;
+                rt.arm(COUNT_OPEN_MS);
+                rt.inv_button(&row, OFFER_X)
             }
-        })
+            _ => rt.done(false, "wrong-kind"),
+        }
     })
 }
 
 fn next(token: u64) -> Value {
-    NATIVE_OBSERVATION.with(|o| {
-        let o = o.borrow();
-        let probe = Probe {
-            ingame: o.ingame,
-            offer_open: o.offer_open,
-            confirm_open: o.confirm_open,
-            partner: o.partner.as_deref(),
-            accept_id: o.accept_id,
-            decline_id: o.decline_id,
-            count_dialog_open: o.count_dialog_open,
-            side: &o.side,
-            mine: &o.mine,
-            players: &o.players,
-        };
-        RUNTIME.with(|rt| {
-            let mut rt = rt.borrow_mut();
-            if token != rt.token || rt.phase == Phase::Idle {
-                return json!({ "kind": "aborted", "token": rt.token });
-            }
-            if rt.frozen() {
-                return rt.wait();
-            }
-            if !probe.ingame {
-                return rt.done(false, "not-ingame");
-            }
-            match rt.kind {
-                Kind::Offer => offer_step(&mut rt, &probe),
-                Kind::RemoveAll => remove_step(&mut rt, &probe),
-                Kind::Decline => decline_step(&mut rt, &probe),
-                Kind::OfferAll | Kind::Request | Kind::Accept => rt.done(true, "sent"),
-            }
-        })
+    let obs = observed::with(NativeObservation::from_scene);
+    let probe = obs.probe();
+    RUNTIME.with(|rt| {
+        let mut rt = rt.borrow_mut();
+        if token != rt.token || rt.phase == Phase::Idle {
+            return json!({ "kind": "aborted", "token": rt.token });
+        }
+        if rt.frozen() {
+            return rt.wait();
+        }
+        if !probe.ingame {
+            return rt.done(false, "not-ingame");
+        }
+        match rt.kind {
+            Kind::Offer => offer_step(&mut rt, &probe),
+            Kind::RemoveAll => remove_step(&mut rt, &probe),
+            Kind::Decline => decline_step(&mut rt, &probe),
+            Kind::OfferAll | Kind::Request | Kind::Accept => rt.done(true, "sent"),
+        }
     })
 }
 

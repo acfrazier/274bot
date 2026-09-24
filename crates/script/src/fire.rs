@@ -7,7 +7,7 @@
 //! Fire locs and refused tiles. JavaScript marshals inputs and dispatches
 //! the returned use-on; it does not rank lanes or poll XP.
 
-use crate::isolate_fb::{RowReader, SnapshotReader};
+use crate::observed::{self, ItemRow, Scene};
 use api::query::ReachQueryView;
 use api::snapshot::WorldTile;
 use serde_json::{json, Value};
@@ -27,8 +27,6 @@ const BURN_DIRS: [(i32, i32); 4] = [(-1, 0), (1, 0), (0, -1), (0, 1)];
 
 thread_local! {
     static RUNTIME: RefCell<FireRuntime> = const { RefCell::new(FireRuntime::new()) };
-    static NATIVE_OBSERVATION: RefCell<NativeObservation> =
-        const { RefCell::new(NativeObservation::new()) };
     static LAST_TRACE: RefCell<Option<(u64, u64, Phase)>> = const { RefCell::new(None) };
 }
 
@@ -47,34 +45,23 @@ struct Tile {
     level: i32,
 }
 
-#[derive(Debug, Clone)]
-struct ReachBits {
-    available: bool,
-    base_x: i32,
-    base_z: i32,
-    level: i32,
-    width: i32,
-    height: i32,
-    walkable: Vec<u32>,
-    step: Vec<u8>,
-    canlight: Vec<u32>,
-}
+/// The posted reach bit views, as the isolate scene holds them.
+type ReachBits = observed::Reach;
+
+/// No posted reach view: nothing is walkable.
+static NO_REACH: ReachBits = ReachBits {
+    available: false,
+    base_x: 0,
+    base_z: 0,
+    level: 0,
+    width: 0,
+    height: 0,
+    walkable: Vec::new(),
+    step: Vec::new(),
+    canlight: Vec::new(),
+};
 
 impl ReachBits {
-    const fn empty() -> Self {
-        Self {
-            available: false,
-            base_x: 0,
-            base_z: 0,
-            level: 0,
-            width: 0,
-            height: 0,
-            walkable: Vec::new(),
-            step: Vec::new(),
-            canlight: Vec::new(),
-        }
-    }
-
     fn walkable_at(&self, tile: Tile) -> bool {
         self.available
             && ReachQueryView::bit_at(
@@ -139,7 +126,9 @@ impl ReachBits {
     }
 }
 
-/// Compact projection of posted snapshot fields this module decides from.
+/// The posted facts the light machine decides from, read from the isolate
+/// scene. A logout forgets the session: only pages posted since login count.
+/// The tick is always the last posted one.
 struct NativeObservation {
     ingame: bool,
     tick: u64,
@@ -147,116 +136,83 @@ struct NativeObservation {
     animating: bool,
     firemaking_xp: Option<i32>,
     inv: Vec<ItemRef>,
-    fire_locs: Vec<Tile>,
     chat_max_seq: i32,
     cant_light_seq: Option<i32>,
-    reach: ReachBits,
 }
 
 impl NativeObservation {
-    const fn new() -> Self {
+    fn from_scene(scene: &Scene) -> Self {
+        let session = scene.since_login();
+        let lines = session.chat_lines();
         Self {
-            ingame: false,
-            tick: 0,
-            here: None,
-            animating: false,
-            firemaking_xp: None,
-            inv: Vec::new(),
-            fire_locs: Vec::new(),
-            chat_max_seq: -1,
-            cant_light_seq: None,
-            reach: ReachBits::empty(),
+            ingame: session.ingame().unwrap_or(false),
+            tick: scene.tick().unwrap_or(0),
+            here: session.here().map(|tile| Tile {
+                x: tile.x,
+                z: tile.z,
+                level: tile.level,
+            }),
+            animating: session.animating().unwrap_or(false),
+            firemaking_xp: session.stat("firemaking").map(|row| row.xp),
+            inv: session
+                .inv()
+                .map(|rows| rows.iter().filter_map(item_ref).collect())
+                .unwrap_or_default(),
+            chat_max_seq: lines.map_or(-1, |lines| {
+                lines.iter().map(|line| line.seq).max().unwrap_or(-1)
+            }),
+            cant_light_seq: lines.and_then(|lines| {
+                lines
+                    .iter()
+                    .filter(|line| line.text.to_ascii_lowercase().contains(CANT_LIGHT))
+                    .map(|line| line.seq)
+                    .max()
+            }),
         }
     }
 
-    fn update(&mut self, snap: &SnapshotReader<'_>) {
-        self.tick = snap.tick();
-        if snap.has_ingame() {
-            if !snap.ingame() {
-                *self = Self::new();
-                self.tick = snap.tick();
-                return;
-            }
-            self.ingame = true;
-        }
-        if snap.has_here() {
-            self.here = snap.here().map(|tile| Tile {
-                x: tile.x(),
-                z: tile.z(),
-                level: tile.level(),
-            });
-        }
-        if snap.has_animating() {
-            self.animating = snap.animating();
-        }
-        if snap.has_stats() {
-            self.firemaking_xp = snap.stats().iter().find_map(|row| {
-                row.name()
-                    .eq_ignore_ascii_case("firemaking")
-                    .then_some(row.xp())
-            });
-        }
-        if snap.has_inv() {
-            self.inv = snap.inv().iter().filter_map(item_ref).collect();
-        }
-        if snap.has_locs() {
-            self.fire_locs = snap
-                .locs()
-                .iter()
-                .filter(|loc| {
-                    loc.name()
-                        .is_some_and(|name| name.eq_ignore_ascii_case(FIRE_LOC))
-                })
-                .map(|loc| Tile {
-                    x: loc.x(),
-                    z: loc.z(),
-                    level: loc.level(),
-                })
-                .collect();
-        }
-        if snap.has_chat_lines() {
-            let lines = snap.chat_lines();
-            self.chat_max_seq = lines.iter().map(|line| line.seq()).max().unwrap_or(-1);
-            self.cant_light_seq = lines
-                .iter()
-                .filter(|line| line.text().to_ascii_lowercase().contains(CANT_LIGHT))
-                .map(|line| line.seq())
-                .max();
-        }
-        if snap.has_reach() {
-            self.reach = snap
-                .reach()
-                .map(reach_bits)
-                .unwrap_or_else(ReachBits::empty);
-        }
+    fn observe() -> Self {
+        observed::with(Self::from_scene)
     }
 }
 
-fn item_ref(row: &RowReader<'_>) -> Option<ItemRef> {
-    let name = row.name()?.to_string();
+/// The posted Fire locs and reach view since login.
+fn fire_locs(scene: &Scene) -> Vec<Tile> {
+    scene
+        .since_login()
+        .locs()
+        .map(|rows| {
+            rows.iter()
+                .filter(|loc| {
+                    loc.name
+                        .as_deref()
+                        .is_some_and(|name| name.eq_ignore_ascii_case(FIRE_LOC))
+                })
+                .map(|loc| Tile {
+                    x: loc.x,
+                    z: loc.z,
+                    level: loc.level,
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn reach_of(scene: &Scene) -> &ReachBits {
+    scene.since_login().reach().unwrap_or(&NO_REACH)
+}
+
+fn item_ref(row: &ItemRow) -> Option<ItemRef> {
+    let name = row.name.as_deref()?;
     if name.is_empty() {
         return None;
     }
     Some(ItemRef {
-        name,
-        id: row.id(),
-        slot: row.slot(),
-        count: row.count(),
+        name: name.to_string(),
+        id: row.id,
+        slot: row.slot_or_unset(),
+        count: row.count,
     })
-}
-
-fn reach_bits(reach: crate::isolate_fb::ReachReader<'_>) -> ReachBits {
-    ReachBits {
-        available: reach.available(),
-        base_x: reach.base_x(),
-        base_z: reach.base_z(),
-        level: reach.level(),
-        width: reach.width(),
-        height: reach.height(),
-        walkable: reach.walkable(),
-        step: reach.step(),
-        canlight: reach.canlight(),
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -390,12 +346,8 @@ impl FireRuntime {
     }
 }
 
-pub fn on_snapshot(snap: &SnapshotReader<'_>) {
-    NATIVE_OBSERVATION.with(|obs| obs.borrow_mut().update(snap));
-}
-
 fn now_tick() -> u64 {
-    NATIVE_OBSERVATION.with(|obs| obs.borrow().tick)
+    observed::with(|scene| scene.tick().unwrap_or(0))
 }
 
 pub fn on_pause() {
@@ -424,7 +376,6 @@ pub fn on_hold(held: bool) {
 
 pub fn on_reset() {
     RUNTIME.with(|rt| rt.borrow_mut().abort_runtime());
-    NATIVE_OBSERVATION.with(|obs| *obs.borrow_mut() = NativeObservation::new());
     LAST_TRACE.with(|last| *last.borrow_mut() = None);
 }
 
@@ -460,35 +411,33 @@ fn trace_light(op: &str, result: &Value) {
     if op == "next" && kind == "aborted" {
         return;
     }
-    NATIVE_OBSERVATION.with(|obs| {
-        let obs = obs.borrow();
-        RUNTIME.with(|rt| {
-            let rt = rt.borrow();
-            let key = (rt.token, obs.tick, rt.phase);
-            let duplicate_wait = LAST_TRACE.with(|last| {
-                let mut last = last.borrow_mut();
-                let duplicate = kind == "wait" && *last == Some(key);
-                *last = Some(key);
-                duplicate
-            });
-            if duplicate_wait {
-                return;
-            }
-            eprintln!(
-                "[fire-trace] op={op} token={} tick={} phase={:?} kind={kind} result={} reason={} logs={} xp={:?} observed_animating={} tile={:?} deadline={:?} frozen={}",
-                rt.token,
-                obs.tick,
-                rt.phase,
-                result.get("result").and_then(Value::as_str).unwrap_or("-"),
-                result.get("reason").and_then(Value::as_str).unwrap_or("-"),
-                named_count(&obs.inv, &rt.log_name),
-                obs.firemaking_xp,
-                obs.animating,
-                obs.here,
-                rt.deadline_tick,
-                rt.frozen(),
-            );
+    let obs = NativeObservation::observe();
+    RUNTIME.with(|rt| {
+        let rt = rt.borrow();
+        let key = (rt.token, obs.tick, rt.phase);
+        let duplicate_wait = LAST_TRACE.with(|last| {
+            let mut last = last.borrow_mut();
+            let duplicate = kind == "wait" && *last == Some(key);
+            *last = Some(key);
+            duplicate
         });
+        if duplicate_wait {
+            return;
+        }
+        eprintln!(
+            "[fire-trace] op={op} token={} tick={} phase={:?} kind={kind} result={} reason={} logs={} xp={:?} observed_animating={} tile={:?} deadline={:?} frozen={}",
+            rt.token,
+            obs.tick,
+            rt.phase,
+            result.get("result").and_then(Value::as_str).unwrap_or("-"),
+            result.get("reason").and_then(Value::as_str).unwrap_or("-"),
+            named_count(&obs.inv, &rt.log_name),
+            obs.firemaking_xp,
+            obs.animating,
+            obs.here,
+            rt.deadline_tick,
+            rt.frozen(),
+        );
     });
 }
 
@@ -524,24 +473,14 @@ fn begin(input: &Value) -> Value {
     if log_name.is_empty() {
         return json!({ "kind": "done", "result": "stalled", "reason": "no-match" });
     }
-    let obs = NATIVE_OBSERVATION.with(|o| {
-        let o = o.borrow();
-        (
-            o.ingame,
-            o.tick,
-            o.animating,
-            o.firemaking_xp,
-            o.inv.clone(),
-            o.chat_max_seq,
-        )
-    });
-    if !obs.0 {
+    let obs = NativeObservation::observe();
+    if !obs.ingame {
         return json!({ "kind": "aborted", "reason": "not ingame" });
     }
-    let Some(tinder) = first_named(&obs.4, TINDERBOX) else {
+    let Some(tinder) = first_named(&obs.inv, TINDERBOX) else {
         return json!({ "kind": "done", "result": "stalled", "reason": "missing-items" });
     };
-    let Some(logs) = first_named(&obs.4, &log_name) else {
+    let Some(logs) = first_named(&obs.inv, &log_name) else {
         return json!({ "kind": "done", "result": "stalled", "reason": "missing-items" });
     };
     let tinder_name = tinder.name.clone();
@@ -554,11 +493,11 @@ fn begin(input: &Value) -> Value {
         rt.tinder_slot = tinder.slot;
         rt.log_id = logs.id;
         rt.log_slot = logs.slot;
-        rt.start_xp = obs.3;
-        rt.start_logs = named_count(&obs.4, &log_held);
-        rt.mark_seq = obs.5;
+        rt.start_xp = obs.firemaking_xp;
+        rt.start_logs = named_count(&obs.inv, &log_held);
+        rt.mark_seq = obs.chat_max_seq;
         rt.phase = Phase::WaitStart;
-        rt.arm_ticks(FIRE_START_TICKS, obs.1);
+        rt.arm_ticks(FIRE_START_TICKS, obs.tick);
         rt.use_on(&tinder_name, &log_held)
     })
 }
@@ -575,29 +514,27 @@ fn lit(probe: &Probe<'_>, start_xp: Option<i32>) -> bool {
 }
 
 fn next(token: u64) -> Value {
-    NATIVE_OBSERVATION.with(|o| {
-        let o = o.borrow();
-        let probe = Probe {
-            ingame: o.ingame,
-            tick: o.tick,
-            animating: o.animating,
-            firemaking_xp: o.firemaking_xp,
-            inv: &o.inv,
-            cant_light_seq: o.cant_light_seq,
-        };
-        RUNTIME.with(|rt| {
-            let mut rt = rt.borrow_mut();
-            if token != rt.token || rt.phase == Phase::Idle {
-                return json!({ "kind": "aborted", "token": rt.token });
-            }
-            if rt.frozen() {
-                return rt.wait();
-            }
-            if !probe.ingame {
-                return rt.done("stalled", "not-ingame");
-            }
-            light_step(&mut rt, &probe)
-        })
+    let o = NativeObservation::observe();
+    let probe = Probe {
+        ingame: o.ingame,
+        tick: o.tick,
+        animating: o.animating,
+        firemaking_xp: o.firemaking_xp,
+        inv: &o.inv,
+        cant_light_seq: o.cant_light_seq,
+    };
+    RUNTIME.with(|rt| {
+        let mut rt = rt.borrow_mut();
+        if token != rt.token || rt.phase == Phase::Idle {
+            return json!({ "kind": "aborted", "token": rt.token });
+        }
+        if rt.frozen() {
+            return rt.wait();
+        }
+        if !probe.ingame {
+            return rt.done("stalled", "not-ingame");
+        }
+        light_step(&mut rt, &probe)
     })
 }
 
@@ -855,27 +792,27 @@ fn next_tile(input: &Value) -> Value {
         })
         .filter(|rows| !rows.is_empty())
         .unwrap_or_else(|| BURN_DIRS.to_vec());
-    let (reach, fire_locs) = NATIVE_OBSERVATION.with(|o| {
-        let o = o.borrow();
-        (o.reach.clone(), o.fire_locs.clone())
-    });
-    if !reach.available {
-        return json!({ "kind": "notImpl", "reason": "missing walkable" });
-    }
-    if !reach.canlight_available() {
-        return json!({ "kind": "notImpl", "reason": "missing canlight" });
-    }
-    match select_burn_tile(plot, here, &refused, &fire_locs, &reach, want, &directions) {
-        Some((tile, direction, run)) => json!({
-            "kind": "tile",
-            "x": tile.x,
-            "z": tile.z,
-            "level": tile.level,
-            "run": run,
-            "dir": { "dx": direction.0, "dz": direction.1 },
-        }),
-        None => json!({ "kind": "none" }),
-    }
+    observed::with(|scene| {
+        let reach = reach_of(scene);
+        if !reach.available {
+            return json!({ "kind": "notImpl", "reason": "missing walkable" });
+        }
+        if !reach.canlight_available() {
+            return json!({ "kind": "notImpl", "reason": "missing canlight" });
+        }
+        let fire_locs = fire_locs(scene);
+        match select_burn_tile(plot, here, &refused, &fire_locs, reach, want, &directions) {
+            Some((tile, direction, run)) => json!({
+                "kind": "tile",
+                "x": tile.x,
+                "z": tile.z,
+                "level": tile.level,
+                "run": run,
+                "dir": { "dx": direction.0, "dz": direction.1 },
+            }),
+            None => json!({ "kind": "none" }),
+        }
+    })
 }
 
 fn in_fire_plot(input: &Value) -> Value {
@@ -957,16 +894,15 @@ fn run_in_dir(input: &Value) -> Value {
             .unwrap_or(0.0)
             .floor()
             .clamp(0.0, 27.0) as i32;
-        let (reach, fire_locs) = NATIVE_OBSERVATION.with(|o| {
-            let o = o.borrow();
-            (o.reach.clone(), o.fire_locs.clone())
-        });
-        if reach.available && !reach.canlight_available() {
-            return json!({ "kind": "notImpl", "reason": "missing canlight" });
-        }
-        return json!({
-            "kind": "run",
-            "run": if cap > 0 { run_length(from, direction, cap, &refused_keys(input.get("occupied")), &fire_locs, &reach, plot) } else { 0 },
+        return observed::with(|scene| {
+            let reach = reach_of(scene);
+            if reach.available && !reach.canlight_available() {
+                return json!({ "kind": "notImpl", "reason": "missing canlight" });
+            }
+            json!({
+                "kind": "run",
+                "run": if cap > 0 { run_length(from, direction, cap, &refused_keys(input.get("occupied")), &fire_locs(scene), reach, plot) } else { 0 },
+            })
         });
     }
     let (Some(from), Some(plot)) = (
@@ -995,18 +931,17 @@ fn run_in_dir(input: &Value) -> Value {
     } else {
         let direction = direction_from(input.get("dir")).unwrap_or((-1, 0));
         let cap = cap.floor().clamp(0.0, 27.0) as i32;
-        let (reach, fire_locs) = NATIVE_OBSERVATION.with(|o| {
-            let o = o.borrow();
-            (o.reach.clone(), o.fire_locs.clone())
-        });
-        if reach.available && !reach.canlight_available() {
-            json!({ "kind": "notImpl", "reason": "missing canlight" })
-        } else {
-            json!({ "kind": "run", "run": run_length(
-                from, direction, cap, &refused_keys(input.get("occupied")),
-                &fire_locs, &reach, plot
-            ) })
-        }
+        observed::with(|scene| {
+            let reach = reach_of(scene);
+            if reach.available && !reach.canlight_available() {
+                json!({ "kind": "notImpl", "reason": "missing canlight" })
+            } else {
+                json!({ "kind": "run", "run": run_length(
+                    from, direction, cap, &refused_keys(input.get("occupied")),
+                    &fire_locs(scene), reach, plot
+                ) })
+            }
+        })
     }
 }
 
@@ -1199,7 +1134,7 @@ mod tests {
 
     #[test]
     fn unavailable_reach_is_not_a_guessed_walkable_tile() {
-        let reach = ReachBits::empty();
+        let reach = NO_REACH.clone();
         assert!(
             select_burn_tile(plot(), None, &HashSet::new(), &[], &reach, 1, &[(-1, 0)]).is_none()
         );
@@ -1432,7 +1367,9 @@ mod tests {
     fn missing_canlight_is_not_a_walkable_rank() {
         let mut reach = reach_covering(&[(3235, 3418)], 3235, 3418, 4, 3);
         reach.canlight.clear();
-        NATIVE_OBSERVATION.with(|o| o.borrow_mut().reach = reach.clone());
+        observed::post(0, |post| {
+            post.reach(reach.clone());
+        });
         let result = next_tile(&json!({
             "plot": { "x0": 3235, "x1": 3237, "z0": 3418, "z1": 3419, "bank": { "x": 3235, "z": 3420, "level": 0 } },
             "here": { "x": 3235, "z": 3418, "level": 0 },
@@ -1453,7 +1390,9 @@ mod tests {
         assert!(
             select_burn_tile(plot(), None, &HashSet::new(), &[], &reach, 1, &[(-1, 0)]).is_none()
         );
-        NATIVE_OBSERVATION.with(|o| o.borrow_mut().reach = reach);
+        observed::post(0, |post| {
+            post.reach(reach);
+        });
         let result = next_tile(&json!({
             "plot": { "x0": 3235, "x1": 3237, "z0": 3418, "z1": 3419, "bank": { "x": 3235, "z": 3420, "level": 0 } },
             "want": 1,

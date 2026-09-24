@@ -4,7 +4,7 @@
 //! Capture, the 3000ms identity wait, pause/hold freeze, reset/token abort
 //! and the bool-vs-void result stay here. A queued close is not accepted.
 
-use crate::isolate_fb::SnapshotReader;
+use crate::observed::{self, Scene};
 use crate::task_clock::InstantTaskClock;
 use serde_json::{json, Value};
 use std::cell::RefCell;
@@ -14,8 +14,6 @@ pub const CLOSE_TIMEOUT_MS: u64 = 3_000;
 
 thread_local! {
     static RUNTIME: RefCell<ModalsRuntime> = const { RefCell::new(ModalsRuntime::new()) };
-    static NATIVE_OBSERVATION: RefCell<NativeObservation> =
-        const { RefCell::new(NativeObservation::new()) };
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -30,29 +28,19 @@ enum Phase {
     WaitChange,
 }
 
+/// The posted facts this module decides from, read from the isolate scene.
 struct NativeObservation {
     ingame: bool,
     main_modal_id: i32,
 }
 
 impl NativeObservation {
-    const fn new() -> Self {
+    /// A logout forgets the session: only pages posted since login count.
+    fn from_scene(scene: &Scene) -> Self {
+        let session = scene.since_login();
         Self {
-            ingame: false,
-            main_modal_id: -1,
-        }
-    }
-
-    fn update(&mut self, snap: &SnapshotReader<'_>) {
-        if snap.has_ingame() {
-            if !snap.ingame() {
-                *self = Self::new();
-                return;
-            }
-            self.ingame = true;
-        }
-        if snap.has_main_modal_id() {
-            self.main_modal_id = snap.main_modal_id();
+            ingame: session.ingame().unwrap_or(false),
+            main_modal_id: session.main_modal_id().unwrap_or(-1),
         }
     }
 }
@@ -129,10 +117,6 @@ impl ModalsRuntime {
     }
 }
 
-pub fn on_snapshot(snap: &SnapshotReader<'_>) {
-    NATIVE_OBSERVATION.with(|obs| obs.borrow_mut().update(snap));
-}
-
 pub fn on_pause() {
     RUNTIME.with(|rt| {
         let held = rt.borrow().clock.held;
@@ -156,7 +140,6 @@ pub fn on_hold(held: bool) {
 
 pub fn on_reset() {
     RUNTIME.with(|rt| rt.borrow_mut().abort_runtime());
-    NATIVE_OBSERVATION.with(|obs| *obs.borrow_mut() = NativeObservation::new());
 }
 
 pub fn dispatch(input: &Value) -> Value {
@@ -173,49 +156,45 @@ fn begin(input: &Value) -> Value {
         "closeIfOpen" => Kind::CloseIfOpen,
         _ => return json!({ "kind": "notImpl", "reason": "unknown modals op" }),
     };
-    NATIVE_OBSERVATION.with(|o| {
-        let obs = o.borrow();
-        RUNTIME.with(|rt| {
-            let mut rt = rt.borrow_mut();
-            rt.abort_runtime();
-            rt.kind = kind;
-            if !obs.ingame {
-                return json!({ "kind": "aborted", "reason": "not ingame" });
-            }
-            let before = obs.main_modal_id;
-            if before == -1 {
-                return rt.done(true, "absent");
-            }
-            rt.before = before;
-            rt.phase = Phase::WaitChange;
-            rt.arm(CLOSE_TIMEOUT_MS);
-            rt.close_verb()
-        })
+    let obs = observed::with(NativeObservation::from_scene);
+    RUNTIME.with(|rt| {
+        let mut rt = rt.borrow_mut();
+        rt.abort_runtime();
+        rt.kind = kind;
+        if !obs.ingame {
+            return json!({ "kind": "aborted", "reason": "not ingame" });
+        }
+        let before = obs.main_modal_id;
+        if before == -1 {
+            return rt.done(true, "absent");
+        }
+        rt.before = before;
+        rt.phase = Phase::WaitChange;
+        rt.arm(CLOSE_TIMEOUT_MS);
+        rt.close_verb()
     })
 }
 
 fn next(token: u64) -> Value {
-    NATIVE_OBSERVATION.with(|o| {
-        let obs = o.borrow();
-        RUNTIME.with(|rt| {
-            let mut rt = rt.borrow_mut();
-            if token != rt.token || rt.phase == Phase::Idle {
-                return json!({ "kind": "aborted", "token": rt.token });
-            }
-            if rt.frozen() {
-                return rt.wait();
-            }
-            if !obs.ingame {
-                return json!({ "kind": "aborted", "token": rt.token });
-            }
-            if obs.main_modal_id != rt.before {
-                return rt.done(true, "changed");
-            }
-            if rt.bound_reached() {
-                return rt.done(false, "timeout");
-            }
-            rt.wait()
-        })
+    let obs = observed::with(NativeObservation::from_scene);
+    RUNTIME.with(|rt| {
+        let mut rt = rt.borrow_mut();
+        if token != rt.token || rt.phase == Phase::Idle {
+            return json!({ "kind": "aborted", "token": rt.token });
+        }
+        if rt.frozen() {
+            return rt.wait();
+        }
+        if !obs.ingame {
+            return json!({ "kind": "aborted", "token": rt.token });
+        }
+        if obs.main_modal_id != rt.before {
+            return rt.done(true, "changed");
+        }
+        if rt.bound_reached() {
+            return rt.done(false, "timeout");
+        }
+        rt.wait()
     })
 }
 
@@ -225,11 +204,8 @@ mod tests {
     use std::time::Duration;
 
     fn observe(ingame: bool, main_modal_id: i32) {
-        NATIVE_OBSERVATION.with(|slot| {
-            *slot.borrow_mut() = NativeObservation {
-                ingame,
-                main_modal_id,
-            };
+        observed::post(0, |post| {
+            post.session(ingame).main_modal_id(main_modal_id);
         });
     }
 

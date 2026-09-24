@@ -413,7 +413,7 @@ fn posted_npc_distance_zero_does_not_skip_the_walk() {
     };
     let bytes = encode_snapshot(&snap_scene(cell_here(), &[], &[], &[npc]));
     let reader = SnapshotReader::from_bytes(&bytes).unwrap();
-    hunt_cell::on_snapshot(&reader);
+    script::observed::apply(&reader);
     let step = call(token, proj.clone(), Some(json!({ "held": true })));
     assert_eq!(kind(&step), "delay-ticks", "{step}");
     let step = call(token, proj, None);
@@ -553,7 +553,7 @@ fn posted_loc_distance_does_not_pick_the_door() {
         &[],
     ));
     let reader = SnapshotReader::from_bytes(&bytes).unwrap();
-    hunt_cell::on_snapshot(&reader);
+    script::observed::apply(&reader);
     let token = begin();
     let proj = site(json!({}));
     assert_eq!(kind(&call(token, proj.clone(), None)), "delay-ticks");
@@ -905,7 +905,7 @@ fn snapshot_bank_row_is_not_completion() {
     };
     let bytes = encode_snapshot(&snap_rows(outside(), &[cert], &[bank]));
     let reader = SnapshotReader::from_bytes(&bytes).unwrap();
-    hunt_cell::on_snapshot(&reader);
+    script::observed::apply(&reader);
     let step = call(begin(), site(json!({})), None);
     assert_ne!(
         step["value"], true,
@@ -1038,13 +1038,7 @@ fn shim_and_bindings_keep_the_yield_shape_and_walk_to_has_no_flags() {
     assert!(!acquire.contains("__rs2b0t_cell"));
 
     let iso = include_str!("../src/load/isolate.rs");
-    for hook in [
-        "on_snapshot",
-        "on_pause",
-        "on_hold",
-        "on_resume",
-        "on_reset",
-    ] {
+    for hook in ["on_pause", "on_hold", "on_resume", "on_reset"] {
         assert!(
             iso.contains(&format!("hunt_cell::{hook}")),
             "missing {hook}"

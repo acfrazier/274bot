@@ -1,11 +1,11 @@
 //! Selected-world autocast control facts and Rust-owned arm sequencing.
-//! Snapshot deltas feed a compact native projection. JS keeps the frozen ABI,
-//! dispatches returned buttons and logs the final reason.
+//! The arm facts are read from the isolate scene at call time. JS keeps the
+//! frozen ABI, dispatches returned buttons and logs the final reason.
 
-use crate::isolate_fb::SnapshotReader;
+use crate::observed::{self, Scene};
 use api::game_data::{AutocastControls, SelectedGameData};
 use serde_json::{json, Value};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::time::{Duration, Instant};
 
 const COMBAT_TAB: i32 = 0;
@@ -14,7 +14,8 @@ const STEP_MS: u64 = 3_000;
 
 thread_local! {
     static RUNTIME: RefCell<AutocastRuntime> = const { RefCell::new(AutocastRuntime::new()) };
-    static OBSERVATION: RefCell<NativeObservation> = const { RefCell::new(NativeObservation::new()) };
+    /// The selected cache's autocast varp; `-1` when the cache has none.
+    static MAGIC_VARP: Cell<i32> = const { Cell::new(-1) };
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -34,60 +35,29 @@ struct ArmObservation {
     magic_varp_value: i32,
 }
 
-struct NativeObservation {
-    arm: ArmObservation,
-    magic_varp: i32,
-}
-
-impl NativeObservation {
-    const fn new() -> Self {
+impl ArmObservation {
+    /// A logout forgets the session: only pages posted since login count.
+    fn from_scene(scene: &Scene, magic_varp: i32) -> Self {
+        let session = scene.since_login();
         Self {
-            arm: ArmObservation {
-                ingame: false,
-                active_side_tab: -1,
-                combat_tab_root: -1,
-                magic_varp_value: 0,
-            },
-            magic_varp: -1,
+            ingame: session.ingame().unwrap_or(false),
+            active_side_tab: session.side_tab().unwrap_or(-1),
+            combat_tab_root: session.side_tab_ifaces().map_or(-1, |rows| {
+                rows.iter()
+                    .find(|row| row.index == COMBAT_TAB)
+                    .map_or(-1, |row| row.id)
+            }),
+            magic_varp_value: session.varps().map_or(0, |rows| {
+                rows.iter()
+                    .find(|row| row.index == magic_varp)
+                    .map_or(0, |row| row.value)
+            }),
         }
     }
 
-    fn clear_facts(&mut self) {
-        self.arm = Self::new().arm;
-    }
-
-    fn configure(&mut self, data: Option<&SelectedGameData>) {
-        *self = Self::new();
-        self.magic_varp = data
-            .and_then(SelectedGameData::autocast_controls)
-            .map_or(-1, |controls| controls.magic_varp);
-    }
-
-    fn update(&mut self, snap: &SnapshotReader<'_>) {
-        if snap.has_ingame() {
-            if !snap.ingame() {
-                self.clear_facts();
-                return;
-            }
-            self.arm.ingame = true;
-        }
-        if snap.has_side_tab() {
-            self.arm.active_side_tab = snap.side_tab();
-        }
-        if snap.has_side_tab_ifaces() {
-            self.arm.combat_tab_root = snap
-                .side_tab_ifaces()
-                .iter()
-                .find(|row| row.index() == COMBAT_TAB)
-                .map_or(-1, |row| row.id());
-        }
-        if snap.has_varps() {
-            self.arm.magic_varp_value = snap
-                .varps()
-                .iter()
-                .find(|row| row.index() == self.magic_varp)
-                .map_or(0, |row| row.value());
-        }
+    fn observe() -> Self {
+        let magic_varp = MAGIC_VARP.with(Cell::get);
+        observed::with(|scene| Self::from_scene(scene, magic_varp))
     }
 }
 
@@ -264,15 +234,13 @@ pub fn on_hold(held: bool) {
 
 pub fn on_reset() {
     RUNTIME.with(|runtime| runtime.borrow_mut().abort());
-    OBSERVATION.with(|observation| observation.borrow_mut().clear_facts());
 }
 
 pub fn configure(data: Option<&SelectedGameData>) {
-    OBSERVATION.with(|observation| observation.borrow_mut().configure(data));
-}
-
-pub fn on_snapshot(snap: &SnapshotReader<'_>) {
-    OBSERVATION.with(|observation| observation.borrow_mut().update(snap));
+    let magic_varp = data
+        .and_then(SelectedGameData::autocast_controls)
+        .map_or(-1, |controls| controls.magic_varp);
+    MAGIC_VARP.with(|slot| slot.set(magic_varp));
 }
 
 pub fn controls_json(data: Option<&SelectedGameData>) -> Value {
@@ -337,32 +305,30 @@ pub fn observe(data: Option<&SelectedGameData>, combat_tab_root: i32, magic_varp
 }
 
 pub fn dispatch(data: Option<&SelectedGameData>, input: &Value) -> Value {
-    OBSERVATION.with(|observation| {
-        let obs = observation.borrow().arm;
-        match input
-            .get("op")
-            .and_then(Value::as_str)
-            .unwrap_or("controls")
-        {
-            "observe" => observe(data, obs.combat_tab_root, obs.magic_varp_value),
-            "begin" => RUNTIME.with(|runtime| {
-                runtime.borrow_mut().begin(
-                    data.and_then(SelectedGameData::autocast_controls),
-                    input.get("spell_com").and_then(Value::as_i64).unwrap_or(-1) as i32,
-                    &obs,
-                )
-            }),
-            "next" => RUNTIME.with(|runtime| {
-                runtime.borrow_mut().next(
-                    input.get("token").and_then(Value::as_u64).unwrap_or(0),
-                    data.and_then(SelectedGameData::autocast_controls),
-                    &obs,
-                )
-            }),
-            "current_token" => RUNTIME.with(|runtime| json!(runtime.borrow().token)),
-            _ => controls_json(data),
-        }
-    })
+    let obs = ArmObservation::observe();
+    match input
+        .get("op")
+        .and_then(Value::as_str)
+        .unwrap_or("controls")
+    {
+        "observe" => observe(data, obs.combat_tab_root, obs.magic_varp_value),
+        "begin" => RUNTIME.with(|runtime| {
+            runtime.borrow_mut().begin(
+                data.and_then(SelectedGameData::autocast_controls),
+                input.get("spell_com").and_then(Value::as_i64).unwrap_or(-1) as i32,
+                &obs,
+            )
+        }),
+        "next" => RUNTIME.with(|runtime| {
+            runtime.borrow_mut().next(
+                input.get("token").and_then(Value::as_u64).unwrap_or(0),
+                data.and_then(SelectedGameData::autocast_controls),
+                &obs,
+            )
+        }),
+        "current_token" => RUNTIME.with(|runtime| json!(runtime.borrow().token)),
+        _ => controls_json(data),
+    }
 }
 
 #[cfg(test)]
@@ -375,13 +341,18 @@ mod tests {
     }
 
     fn set_observation(active_side_tab: i32, combat_tab_root: i32, magic_varp_value: i32) {
-        OBSERVATION.with(|observation| {
-            observation.borrow_mut().arm = ArmObservation {
-                ingame: true,
-                active_side_tab,
-                combat_tab_root,
-                magic_varp_value,
-            };
+        let magic_varp = MAGIC_VARP.with(Cell::get);
+        observed::post(0, |post| {
+            post.session(true)
+                .side_tab(active_side_tab)
+                .side_tab_ifaces(vec![crate::observed::SideTabIface {
+                    index: COMBAT_TAB,
+                    id: combat_tab_root,
+                }])
+                .varps(vec![crate::observed::VarpRow {
+                    index: magic_varp,
+                    value: magic_varp_value,
+                }]);
         });
     }
 

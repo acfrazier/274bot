@@ -1,8 +1,9 @@
 //! Rust-owned one-attempt bank approach/open sequencing.
-//! Snapshot deltas feed a compact native projection; JavaScript supplies only
-//! options/tokens and dispatches returned verbs. Rust owns identity and clocks.
+//! The facts are read from the isolate scene at call time; JavaScript supplies
+//! only options/tokens and dispatches returned verbs. Rust owns identity and
+//! clocks.
 
-use crate::isolate_fb::{SceneEntityReader, SnapshotReader};
+use crate::observed::{self, EntityRow, Scene};
 use serde_json::{json, Value};
 use std::cell::RefCell;
 use std::time::{Duration, Instant};
@@ -13,7 +14,6 @@ const ACCESS_RADIUS: i32 = 1;
 
 thread_local! {
     static RUNTIME: RefCell<BankOpenRuntime> = const { RefCell::new(BankOpenRuntime::new()) };
-    static OBSERVATION: RefCell<Observation> = const { RefCell::new(Observation::new()) };
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -72,91 +72,55 @@ struct Observation {
 }
 
 impl Observation {
-    const fn new() -> Self {
+    /// A logout forgets the session: only pages posted since login count.
+    fn from_scene(scene: &Scene) -> Self {
+        let session = scene.since_login();
+        let tile = |t: observed::Tile| Tile {
+            x: t.x,
+            z: t.z,
+            level: t.level,
+        };
         Self {
-            ingame: false,
-            here: None,
-            bank_open: false,
-            bank_loaded: false,
-            bank_generation: 0,
-            nearest_booth: None,
-            locs: Vec::new(),
-            locs_populated: false,
-            has_booth_stands: false,
-            approaches: Vec::new(),
-        }
-    }
-
-    fn update(&mut self, snap: &SnapshotReader<'_>) {
-        if snap.has_ingame() {
-            if !snap.ingame() {
-                *self = Self::new();
-                return;
-            }
-            self.ingame = true;
-        }
-        if snap.has_here() {
-            self.here = snap.here().map(|tile| Tile {
-                x: tile.x(),
-                z: tile.z(),
-                level: tile.level(),
-            });
-        }
-        if snap.has_bank_open() {
-            self.bank_open = snap.bank_open();
-        }
-        if snap.has_bank_loaded() {
-            self.bank_loaded = snap.bank_loaded();
-        }
-        if snap.has_bank_generation() {
-            self.bank_generation = snap.bank_generation();
-        }
-        if snap.has_nearest_booth() {
-            self.nearest_booth = snap.nearest_booth().map(|booth| Booth {
-                tile: Tile {
-                    x: booth.x(),
-                    z: booth.z(),
-                    level: booth.level(),
-                },
-                id: booth.id(),
+            ingame: session.ingame().unwrap_or(false),
+            here: session.here().map(tile),
+            bank_open: session.bank_open().unwrap_or(false),
+            bank_loaded: session.bank_loaded().unwrap_or(false),
+            bank_generation: session.bank_generation().unwrap_or(0),
+            nearest_booth: session.nearest_booth().map(|booth| Booth {
+                tile: tile(booth.tile),
+                id: booth.id,
                 distance: i32::MAX,
                 name: None,
                 action: None,
                 actions: Vec::new(),
-            });
-        }
-        if snap.has_banks() {
-            self.has_booth_stands = snap.banks().iter().any(|stand| stand.kind() == "booth");
-        }
-        if snap.has_locs() {
-            self.locs_populated = true;
-            self.locs = snap.locs().iter().filter_map(bank_candidate).collect();
-        }
-        if snap.has_bank_approaches() {
-            self.approaches = snap
+            }),
+            locs: session
+                .locs()
+                .map(|rows| rows.iter().filter_map(bank_candidate).collect())
+                .unwrap_or_default(),
+            locs_populated: session.locs().is_some(),
+            has_booth_stands: session
+                .banks()
+                .is_some_and(|stands| stands.iter().any(|stand| stand.kind == "booth")),
+            approaches: session
                 .bank_approaches()
-                .iter()
-                .map(|row| ApproachFact {
-                    loc_id: row.loc_id(),
-                    tile: Tile {
-                        x: row.x(),
-                        z: row.z(),
-                        level: row.level(),
-                    },
-                    can_operate: row.can_operate(),
-                    dest: row.dest_ok().then_some(Tile {
-                        x: row.dest_x(),
-                        z: row.dest_z(),
-                        level: row.dest_level(),
-                    }),
+                .map(|rows| {
+                    rows.iter()
+                        .map(|row| ApproachFact {
+                            loc_id: row.loc_id,
+                            tile: tile(row.tile),
+                            can_operate: row.can_operate,
+                            dest: row.dest.map(tile),
+                        })
+                        .collect()
                 })
-                .collect();
+                .unwrap_or_default(),
         }
     }
 }
 
-fn bank_candidate(row: &SceneEntityReader<'_>) -> Option<Booth> {
-    let name = row.name()?;
+fn bank_candidate(row: &EntityRow) -> Option<Booth> {
+    let name = row.name.as_deref()?;
     if !name
         .as_bytes()
         .windows(4)
@@ -165,19 +129,19 @@ fn bank_candidate(row: &SceneEntityReader<'_>) -> Option<Booth> {
         return None;
     }
     let actions = row
-        .actions()
-        .into_iter()
+        .actions
+        .iter()
         .filter(|action| !action.is_empty() && *action != "hidden")
-        .map(str::to_string)
+        .cloned()
         .collect();
     Some(Booth {
         tile: Tile {
-            x: row.x(),
-            z: row.z(),
-            level: row.level(),
+            x: row.x,
+            z: row.z,
+            level: row.level,
         },
-        id: row.id(),
-        distance: row.distance(),
+        id: row.id,
+        distance: row.distance,
         name: Some(name.to_string()),
         action: None,
         actions,
@@ -636,45 +600,38 @@ pub fn on_hold(held: bool) {
 
 pub fn on_reset() {
     RUNTIME.with(|runtime| runtime.borrow_mut().abort());
-    OBSERVATION.with(|observation| *observation.borrow_mut() = Observation::new());
-}
-
-pub fn on_snapshot(snap: &SnapshotReader<'_>) {
-    OBSERVATION.with(|observation| observation.borrow_mut().update(snap));
 }
 
 pub fn dispatch(input: &Value) -> Value {
-    OBSERVATION.with(|observation| {
-        RUNTIME.with(|runtime| {
-            let observation = observation.borrow();
-            let mut runtime = runtime.borrow_mut();
-            match input.get("op").and_then(Value::as_str).unwrap_or("") {
-                "begin" => {
-                    let stand_value = input.get("stand");
-                    let stand = read_tile(stand_value);
-                    runtime.begin(
-                        parse_mode(input),
-                        stand,
-                        stand_value.is_some_and(|value| !value.is_null()) && stand.is_none(),
-                        input
-                            .get("booth_name")
-                            .and_then(Value::as_str)
-                            .map(str::to_string),
-                        input
-                            .get("booth_action")
-                            .and_then(Value::as_str)
-                            .map(str::to_string),
-                        &observation,
-                    )
-                }
-                "next" => runtime.next(
-                    input.get("token").and_then(Value::as_u64).unwrap_or(0),
+    let observation = observed::with(Observation::from_scene);
+    RUNTIME.with(|runtime| {
+        let mut runtime = runtime.borrow_mut();
+        match input.get("op").and_then(Value::as_str).unwrap_or("") {
+            "begin" => {
+                let stand_value = input.get("stand");
+                let stand = read_tile(stand_value);
+                runtime.begin(
+                    parse_mode(input),
+                    stand,
+                    stand_value.is_some_and(|value| !value.is_null()) && stand.is_none(),
+                    input
+                        .get("booth_name")
+                        .and_then(Value::as_str)
+                        .map(str::to_string),
+                    input
+                        .get("booth_action")
+                        .and_then(Value::as_str)
+                        .map(str::to_string),
                     &observation,
-                ),
-                "current_token" => json!(runtime.token),
-                _ => json!({"kind": "done", "ok": false, "reason": "unknown-op"}),
+                )
             }
-        })
+            "next" => runtime.next(
+                input.get("token").and_then(Value::as_u64).unwrap_or(0),
+                &observation,
+            ),
+            "current_token" => json!(runtime.token),
+            _ => json!({"kind": "done", "ok": false, "reason": "unknown-op"}),
+        }
     })
 }
 
@@ -733,7 +690,9 @@ mod tests {
 
     #[test]
     fn out_of_range_stand_fails_closed() {
-        OBSERVATION.with(|observation| *observation.borrow_mut() = obs());
+        observed::post(0, |post| {
+            post.session(true);
+        });
         let result = dispatch(&json!({
             "op": "begin",
             "mode": "open-booth",

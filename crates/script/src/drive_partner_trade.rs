@@ -6,7 +6,7 @@
 //! settlement and cancellation. Sends reuse native trade ops. This is not a
 //! copy of `drivePartnerTrade.ts` or PartnerTrade policy.
 
-use crate::isolate_fb::SnapshotReader;
+use crate::observed;
 use crate::task_clock::InstantTaskClock;
 use serde_json::{json, Value};
 use std::cell::RefCell;
@@ -21,8 +21,6 @@ pub const TRADE_CLOSE_DEBOUNCE_MS: u64 = 600;
 
 thread_local! {
     static RUNTIME: RefCell<ExchangeRuntime> = const { RefCell::new(ExchangeRuntime::new()) };
-    static NATIVE_OBSERVATION: RefCell<NativeObservation> =
-        const { RefCell::new(NativeObservation::new()) };
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -40,65 +38,6 @@ enum Phase {
     WaitConfirm,
     WaitClose,
     Declining,
-}
-
-struct NativeObservation {
-    ingame: bool,
-    offer_open: bool,
-    confirm_open: bool,
-    partner: Option<String>,
-    accept_id: i32,
-    decline_id: i32,
-    mine_len: usize,
-    tick: u64,
-}
-
-impl NativeObservation {
-    const fn new() -> Self {
-        Self {
-            ingame: false,
-            offer_open: false,
-            confirm_open: false,
-            partner: None,
-            accept_id: -1,
-            decline_id: -1,
-            mine_len: 0,
-            tick: 0,
-        }
-    }
-
-    fn update(&mut self, snap: &SnapshotReader<'_>) {
-        if snap.has_ingame() {
-            if !snap.ingame() {
-                *self = Self::new();
-                return;
-            }
-            self.ingame = true;
-        }
-        if snap.has_trade_offer_open() {
-            self.offer_open = snap.trade_offer_open();
-        }
-        if snap.has_trade_confirm_open() {
-            self.confirm_open = snap.trade_confirm_open();
-        }
-        if snap.has_trade_partner() {
-            self.partner = snap
-                .trade_partner()
-                .map(str::trim)
-                .filter(|name| !name.is_empty())
-                .map(str::to_string);
-        }
-        if snap.has_trade_accept_id() {
-            self.accept_id = snap.trade_accept_id();
-        }
-        if snap.has_trade_decline_id() {
-            self.decline_id = snap.trade_decline_id();
-        }
-        if snap.has_trade_mine() {
-            self.mine_len = snap.trade_mine().len();
-        }
-        self.tick = snap.tick();
-    }
 }
 
 struct Probe<'a> {
@@ -210,10 +149,6 @@ impl ExchangeRuntime {
     }
 }
 
-pub fn on_snapshot(snap: &SnapshotReader<'_>) {
-    NATIVE_OBSERVATION.with(|obs| obs.borrow_mut().update(snap));
-}
-
 pub fn on_pause() {
     RUNTIME.with(|rt| {
         let held = rt.borrow().clock.held;
@@ -237,7 +172,6 @@ pub fn on_hold(held: bool) {
 
 pub fn on_reset() {
     RUNTIME.with(|rt| rt.borrow_mut().abort_runtime());
-    NATIVE_OBSERVATION.with(|obs| *obs.borrow_mut() = NativeObservation::new());
 }
 
 pub fn dispatch(input: &Value) -> Value {
@@ -326,33 +260,25 @@ fn partner_allowed(partners: &[String], name: &str) -> bool {
     crate::partner_trade::is_configured_partner(Some(name), partners)
 }
 
-fn observe() -> (bool, bool, bool, Option<String>, i32, usize, u64) {
-    NATIVE_OBSERVATION.with(|o| {
-        let o = o.borrow();
-        (
-            o.ingame,
-            o.offer_open,
-            o.confirm_open,
-            o.partner.clone(),
-            o.accept_id,
-            o.mine_len,
-            o.tick,
-        )
-    })
-}
-
+/// The posted trade facts, read from the isolate scene. A logout forgets the
+/// session: only pages posted since login count.
 fn with_probe<R>(f: impl FnOnce(&Probe<'_>) -> R) -> R {
-    let obs = observe();
-    let probe = Probe {
-        ingame: obs.0,
-        offer_open: obs.1,
-        confirm_open: obs.2,
-        partner: obs.3.as_deref(),
-        accept_id: obs.4,
-        mine_len: obs.5,
-        tick: obs.6,
-    };
-    f(&probe)
+    observed::with(|scene| {
+        let session = scene.since_login();
+        let probe = Probe {
+            ingame: session.ingame().unwrap_or(false),
+            offer_open: session.trade_offer_open().unwrap_or(false),
+            confirm_open: session.trade_confirm_open().unwrap_or(false),
+            partner: session
+                .trade_partner()
+                .map(|name| name.trim())
+                .filter(|name| !name.is_empty()),
+            accept_id: session.trade_accept_id().unwrap_or(-1),
+            mine_len: session.trade_mine().map_or(0, Vec::len),
+            tick: scene.session_tick().unwrap_or(0),
+        };
+        f(&probe)
+    })
 }
 
 fn begin(input: &Value) -> Value {

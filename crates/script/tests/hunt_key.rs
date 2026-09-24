@@ -817,7 +817,7 @@ fn snapshot_reads_inv_id_not_cert_bank_or_equipment() {
     };
     let bytes = encode_snapshot(&snap_rows(outside(), &[cert, dusty], &[jail], &[jail]));
     let reader = SnapshotReader::from_bytes(&bytes).unwrap();
-    hunt_key::on_snapshot(&reader);
+    script::observed::apply(&reader);
     let token = begin();
     let step = call(token, site(json!({})), None);
     assert_ne!(
@@ -828,7 +828,7 @@ fn snapshot_reads_inv_id_not_cert_bank_or_equipment() {
     reset();
     let bytes = encode_snapshot(&snap_rows(outside(), &[jail], &[], &[]));
     let reader = SnapshotReader::from_bytes(&bytes).unwrap();
-    hunt_key::on_snapshot(&reader);
+    script::observed::apply(&reader);
     let token = begin();
     let step = call(token, site(json!({})), None);
     assert_eq!(kind(&step), "yield", "{step}");
@@ -921,13 +921,7 @@ fn shim_and_bindings_keep_the_yield_shape_and_flag_falses() {
     );
 
     let iso = include_str!("../src/load/isolate.rs");
-    for hook in [
-        "on_snapshot",
-        "on_pause",
-        "on_hold",
-        "on_resume",
-        "on_reset",
-    ] {
+    for hook in ["on_pause", "on_hold", "on_resume", "on_reset"] {
         assert!(iso.contains(&format!("hunt_key::{hook}")), "missing {hook}");
         assert!(iso.contains(&format!("hunt_leave::{hook}")));
     }

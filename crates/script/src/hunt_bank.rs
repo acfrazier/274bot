@@ -5,7 +5,7 @@
 //! the other hunt machines. A supplied leave is a continuation, not lever ops.
 
 use crate::hunt_fight::{in_area_body, SiteBox, Tile};
-use crate::isolate_fb::SnapshotReader;
+use crate::observed::{self, ItemRow, Scene, StatRow};
 use crate::task_clock::InstantTaskClock;
 use serde_json::{json, Value};
 use std::cell::RefCell;
@@ -25,7 +25,6 @@ const FOOD_GUARD: u32 = 12;
 thread_local! {
     static BANK_RUNTIMES: RefCell<HashMap<u64, BankRuntime>> = RefCell::new(HashMap::new());
     static NEXT_TOKEN: RefCell<u64> = const { RefCell::new(1) };
-    static OBSERVATION: RefCell<BankObservation> = RefCell::new(BankObservation::empty());
 }
 
 #[derive(Clone, Debug)]
@@ -61,6 +60,79 @@ pub struct BankObservation {
 }
 
 impl BankObservation {
+    /// Fields read from the isolate scene over the `empty` defaults. A
+    /// logout clears `here` (a tile posted with the logout still counts);
+    /// every other page keeps its last posted value.
+    fn from_scene(scene: &Scene) -> Self {
+        let empty = Self::empty();
+        let latest = scene.latest();
+        let rows = |page: Option<&Vec<ItemRow>>| -> Vec<BankRow> {
+            page.map(|rows| rows.iter().map(BankRow::from_row).collect())
+                .unwrap_or_default()
+        };
+        let hp = latest
+            .stats()
+            .and_then(|rows| rows.iter().find(|row| row.name == "hitpoints"));
+        Self {
+            here: scene.since_logout().here().map(Tile::from),
+            ingame: latest.ingame().unwrap_or(empty.ingame),
+            hold: latest.hold().unwrap_or(empty.hold),
+            ours: latest.ours().unwrap_or(empty.ours),
+            inv: rows(latest.inv()),
+            inv_size: latest.inv_size().unwrap_or(empty.inv_size),
+            equipment: rows(latest.equipment()),
+            bank: rows(latest.bank()),
+            bank_side: rows(latest.bank_side()),
+            bank_open: latest.bank_open().unwrap_or(empty.bank_open),
+            bank_loaded: latest.bank_loaded().unwrap_or(empty.bank_loaded),
+            bank_generation: latest.bank_generation().unwrap_or(empty.bank_generation),
+            bank_op_result_seq: latest
+                .bank_op_result_seq()
+                .unwrap_or(empty.bank_op_result_seq),
+            bank_op_result: latest.bank_op_result().unwrap_or(empty.bank_op_result),
+            withdraw_x_result_seq: latest
+                .withdraw_x_result_seq()
+                .unwrap_or(empty.withdraw_x_result_seq),
+            withdraw_x_result: latest
+                .withdraw_x_result()
+                .unwrap_or(empty.withdraw_x_result),
+            hp_base: hp.map_or(empty.hp_base, |row| row.base),
+            hp_effective: hp.map_or(empty.hp_effective, |row| row.effective),
+        }
+    }
+
+    /// Write this observation into the isolate scene as posts, replacing it.
+    fn post(self) {
+        let rows = |rows: Vec<BankRow>| -> Vec<ItemRow> {
+            rows.into_iter().map(BankRow::into_row).collect()
+        };
+        observed::replace(0, self.ingame, |post| {
+            if let Some(here) = self.here {
+                post.here(here.into());
+            }
+            post.hold(self.hold)
+                .ours(self.ours)
+                .inv(rows(self.inv))
+                .inv_size(self.inv_size)
+                .equipment(rows(self.equipment))
+                .bank(rows(self.bank))
+                .bank_side(rows(self.bank_side))
+                .bank_open(self.bank_open)
+                .bank_loaded(self.bank_loaded)
+                .bank_generation(self.bank_generation)
+                .bank_op_result_seq(self.bank_op_result_seq)
+                .bank_op_result(self.bank_op_result)
+                .withdraw_x_result_seq(self.withdraw_x_result_seq)
+                .withdraw_x_result(self.withdraw_x_result)
+                .stats(vec![StatRow {
+                    name: "hitpoints".into(),
+                    base: self.hp_base,
+                    effective: self.hp_effective,
+                    ..StatRow::default()
+                }]);
+        });
+    }
+
     pub fn empty() -> Self {
         Self {
             here: None,
@@ -338,11 +410,12 @@ impl BankRuntime {
 }
 
 fn observation() -> BankObservation {
-    OBSERVATION.with(|o| o.borrow().clone())
+    observed::with(BankObservation::from_scene)
 }
 
+/// Test seam: replace the isolate scene with posts that read back as `obs`.
 pub fn set_observation(obs: BankObservation) {
-    OBSERVATION.with(|o| *o.borrow_mut() = obs);
+    obs.post();
 }
 
 fn live_dist(here: Tile, tile: Tile) -> i32 {
@@ -2082,84 +2155,29 @@ fn next_effect(rt: &mut BankRuntime, proj: &BankProj, reply: Option<&Value>) -> 
     }
 }
 
-fn row_from(row: &crate::isolate_fb::RowReader<'_>) -> BankRow {
-    let posted = row.has_slot();
-    let slot = if posted { row.slot() } else { -1 };
-    BankRow {
-        id: row.id(),
-        count: row.count(),
-        name: row.name().unwrap_or_default().to_string(),
-        slot,
-        has_slot: posted && slot >= 0,
-        ops: row.ops().into_iter().map(str::to_string).collect(),
+impl BankRow {
+    fn from_row(row: &ItemRow) -> Self {
+        let slot = row.slot_or_unset();
+        Self {
+            id: row.id,
+            count: row.count,
+            name: row.name_or_empty().to_string(),
+            slot,
+            has_slot: row.slot.is_some() && slot >= 0,
+            ops: row.ops.clone(),
+        }
     }
-}
 
-pub fn on_snapshot(snap: &SnapshotReader<'_>) {
-    OBSERVATION.with(|slot| {
-        let mut o = slot.borrow_mut();
-        if snap.has_ingame() {
-            o.ingame = snap.ingame();
-            if !o.ingame {
-                o.here = None;
-            }
+    fn into_row(self) -> ItemRow {
+        ItemRow {
+            id: self.id,
+            count: self.count,
+            name: Some(self.name),
+            slot: self.has_slot.then_some(self.slot),
+            ops: self.ops,
+            ..ItemRow::default()
         }
-        if snap.has_here() {
-            o.here = snap.here().map(|t| Tile {
-                x: t.x(),
-                z: t.z(),
-                level: t.level(),
-            });
-        }
-        if snap.has_hold() {
-            o.hold = snap.hold();
-        }
-        if snap.has_ours() {
-            o.ours = snap.ours();
-        }
-        if snap.has_inv_size() {
-            o.inv_size = snap.inv_size();
-        }
-        if snap.has_inv() {
-            o.inv = snap.inv().iter().map(row_from).collect();
-        }
-        if snap.has_equipment() {
-            o.equipment = snap.equipment().iter().map(row_from).collect();
-        }
-        if snap.has_bank() {
-            o.bank = snap.bank().iter().map(row_from).collect();
-        }
-        if snap.has_bank_side() {
-            o.bank_side = snap.bank_side().iter().map(row_from).collect();
-        }
-        if snap.has_bank_open() {
-            o.bank_open = snap.bank_open();
-        }
-        if snap.has_bank_loaded() {
-            o.bank_loaded = snap.bank_loaded();
-        }
-        if snap.has_bank_generation() {
-            o.bank_generation = snap.bank_generation();
-        }
-        if snap.has_bank_op_result_seq() {
-            o.bank_op_result_seq = snap.bank_op_result_seq();
-        }
-        if snap.has_bank_op_result() {
-            o.bank_op_result = snap.bank_op_result();
-        }
-        if snap.has_withdraw_x_result_seq() {
-            o.withdraw_x_result_seq = snap.withdraw_x_result_seq();
-        }
-        if snap.has_withdraw_x_result() {
-            o.withdraw_x_result = snap.withdraw_x_result();
-        }
-        if snap.has_stats() {
-            if let Some(hp) = snap.stats().iter().find(|stat| stat.name() == "hitpoints") {
-                o.hp_base = hp.base();
-                o.hp_effective = hp.effective();
-            }
-        }
-    });
+    }
 }
 
 fn each_runtime(f: impl Fn(&mut BankRuntime)) {
@@ -2193,7 +2211,6 @@ pub fn on_hold(held: bool) {
 
 pub fn on_reset() {
     BANK_RUNTIMES.with(|m| m.borrow_mut().clear());
-    OBSERVATION.with(|o| *o.borrow_mut() = BankObservation::empty());
 }
 
 pub fn dispatch(input: &Value) -> Value {

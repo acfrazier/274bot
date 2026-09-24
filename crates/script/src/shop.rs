@@ -10,7 +10,7 @@
 //! settlement policy stay here. A queued click is not a transfer: a batch is
 //! only counted once the posted container counts moved.
 
-use crate::isolate_fb::{RowReader, SnapshotReader};
+use crate::observed::{self, ItemRow, Scene};
 use crate::task_clock::InstantTaskClock;
 use serde_json::{json, Value};
 use std::cell::RefCell;
@@ -30,8 +30,6 @@ pub const MAX_PACKETS_PER_TICK: usize = 5;
 
 thread_local! {
     static RUNTIME: RefCell<ShopRuntime> = const { RefCell::new(ShopRuntime::new()) };
-    static NATIVE_OBSERVATION: RefCell<NativeObservation> =
-        const { RefCell::new(NativeObservation::new()) };
     static GAME_DATA: RefCell<Option<Arc<api::game_data::SelectedGameData>>> =
         const { RefCell::new(None) };
 }
@@ -46,20 +44,19 @@ struct Row {
     count: i32,
 }
 
-fn rows_of(rows: Vec<RowReader<'_>>) -> Vec<Row> {
+fn rows_of(rows: &[ItemRow]) -> Vec<Row> {
     rows.iter()
         .map(|row| Row {
-            name: row.name().unwrap_or_default().to_string(),
-            id: row.id(),
-            slot: row.slot(),
-            component: row.component_id(),
-            count: row.count(),
+            name: row.name_or_empty().to_string(),
+            id: row.id,
+            slot: row.slot_or_unset(),
+            component: row.component_or_unset(),
+            count: row.count,
         })
         .collect()
 }
 
-/// The compact projection this module keeps from posted snapshots. Deltas
-/// only carry changed fields, so each field is remembered once seen.
+/// The posted facts this module decides from, read from the isolate scene.
 struct NativeObservation {
     ingame: bool,
     shop_open: bool,
@@ -72,54 +69,42 @@ struct NativeObservation {
 }
 
 impl NativeObservation {
-    const fn new() -> Self {
+    /// A logout forgets the session: only pages posted since login count.
+    fn from_scene(scene: &Scene) -> Self {
+        let session = scene.since_login();
         Self {
-            ingame: false,
-            shop_open: false,
-            has_stock: false,
-            stock: Vec::new(),
-            player: None,
-            inv: Vec::new(),
-            npcs: Vec::new(),
+            ingame: session.ingame().unwrap_or(false),
+            shop_open: session.shop_open().unwrap_or(false),
+            has_stock: session.shop_stock().is_some(),
+            stock: session
+                .shop_stock()
+                .map(|rows| rows_of(rows))
+                .unwrap_or_default(),
+            player: session
+                .shop_player()
+                .and_then(Option::as_ref)
+                .map(|rows| rows_of(rows)),
+            inv: session.inv().map(|rows| rows_of(rows)).unwrap_or_default(),
+            npcs: session
+                .npcs()
+                .map(|rows| {
+                    rows.iter()
+                        .map(|npc| (npc.name_or_empty().to_string(), npc.actions.clone()))
+                        .collect()
+                })
+                .unwrap_or_default(),
         }
     }
 
-    fn update(&mut self, snap: &SnapshotReader<'_>) {
-        if snap.has_ingame() {
-            if !snap.ingame() {
-                *self = Self::new();
-                return;
-            }
-            self.ingame = true;
-        }
-        if snap.has_shop_open() {
-            self.shop_open = snap.shop_open();
-        }
-        if snap.has_shop_stock() {
-            self.has_stock = true;
-            self.stock = rows_of(snap.shop_stock());
-        }
-        if snap.has_shop_player_available() {
-            self.player = if snap.shop_player_available() {
-                Some(rows_of(snap.shop_player()))
-            } else {
-                None
-            };
-        }
-        if snap.has_inv() {
-            self.inv = rows_of(snap.inv());
-        }
-        if snap.has_npcs() {
-            self.npcs = snap
-                .npcs()
-                .iter()
-                .map(|npc| {
-                    (
-                        npc.name().unwrap_or_default().to_string(),
-                        npc.actions().iter().map(|a| a.to_string()).collect(),
-                    )
-                })
-                .collect();
+    fn probe(&self) -> Probe<'_> {
+        Probe {
+            ingame: self.ingame,
+            shop_open: self.shop_open,
+            has_stock: self.has_stock,
+            stock: &self.stock,
+            player: self.player.as_deref(),
+            inv: &self.inv,
+            npcs: &self.npcs,
         }
     }
 }
@@ -284,10 +269,6 @@ impl ShopRuntime {
     }
 }
 
-pub fn on_snapshot(snap: &SnapshotReader<'_>) {
-    NATIVE_OBSERVATION.with(|obs| obs.borrow_mut().update(snap));
-}
-
 pub fn on_pause() {
     RUNTIME.with(|rt| {
         let held = rt.borrow().clock.held;
@@ -311,7 +292,6 @@ pub fn on_hold(held: bool) {
 
 pub fn on_reset() {
     RUNTIME.with(|rt| rt.borrow_mut().abort_runtime());
-    NATIVE_OBSERVATION.with(|obs| *obs.borrow_mut() = NativeObservation::new());
 }
 
 pub fn configure(data: Option<Arc<api::game_data::SelectedGameData>>) {
@@ -459,27 +439,8 @@ fn begin(input: &Value) -> Value {
         .trim()
         .to_string();
     let qty = input.get("qty");
-    let obs = NATIVE_OBSERVATION.with(|o| {
-        let o = o.borrow();
-        (
-            o.ingame,
-            o.shop_open,
-            o.has_stock,
-            o.stock.clone(),
-            o.player.clone(),
-            o.inv.clone(),
-            o.npcs.clone(),
-        )
-    });
-    let probe = Probe {
-        ingame: obs.0,
-        shop_open: obs.1,
-        has_stock: obs.2,
-        stock: &obs.3,
-        player: obs.4.as_deref(),
-        inv: &obs.5,
-        npcs: &obs.6,
-    };
+    let obs = observed::with(NativeObservation::from_scene);
+    let probe = obs.probe();
     if !probe.ingame {
         return json!({ "kind": "aborted", "reason": "not ingame" });
     }
@@ -573,37 +534,27 @@ fn begin(input: &Value) -> Value {
 }
 
 fn next(token: u64) -> Value {
-    NATIVE_OBSERVATION.with(|o| {
-        let o = o.borrow();
-        let probe = Probe {
-            ingame: o.ingame,
-            shop_open: o.shop_open,
-            has_stock: o.has_stock,
-            stock: &o.stock,
-            player: o.player.as_deref(),
-            inv: &o.inv,
-            npcs: &o.npcs,
-        };
-        RUNTIME.with(|rt| {
-            let mut rt = rt.borrow_mut();
-            if token != rt.token || rt.phase == Phase::Idle {
-                return json!({ "kind": "aborted", "token": rt.token });
-            }
-            if rt.frozen() {
-                return json!({ "kind": "wait", "token": rt.token });
-            }
-            if !probe.ingame {
-                let token = rt.token;
-                rt.phase = Phase::Idle;
-                rt.clock.deadline = None;
-                return json!({ "kind": "aborted", "token": token });
-            }
-            match rt.kind {
-                Kind::Open => open_step(&mut rt, &probe),
-                Kind::Close => close_step(&mut rt, &probe),
-                Kind::Buy | Kind::Sell => transfer_step(&mut rt, &probe),
-            }
-        })
+    let obs = observed::with(NativeObservation::from_scene);
+    let probe = obs.probe();
+    RUNTIME.with(|rt| {
+        let mut rt = rt.borrow_mut();
+        if token != rt.token || rt.phase == Phase::Idle {
+            return json!({ "kind": "aborted", "token": rt.token });
+        }
+        if rt.frozen() {
+            return json!({ "kind": "wait", "token": rt.token });
+        }
+        if !probe.ingame {
+            let token = rt.token;
+            rt.phase = Phase::Idle;
+            rt.clock.deadline = None;
+            return json!({ "kind": "aborted", "token": token });
+        }
+        match rt.kind {
+            Kind::Open => open_step(&mut rt, &probe),
+            Kind::Close => close_step(&mut rt, &probe),
+            Kind::Buy | Kind::Sell => transfer_step(&mut rt, &probe),
+        }
     })
 }
 

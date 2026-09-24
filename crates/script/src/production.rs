@@ -9,7 +9,7 @@
 //! dispatches the returned verbs and reports completion — it does not wait
 //! one tick and guess the count dialog is open.
 
-use crate::isolate_fb::{RowReader, SnapshotReader};
+use crate::observed::{self, ItemRow, Scene};
 use crate::task_clock::InstantTaskClock;
 use serde_json::{json, Value};
 use std::cell::RefCell;
@@ -25,8 +25,6 @@ pub const PANEL_WAIT_MS: u64 = 5_000;
 
 thread_local! {
     static RUNTIME: RefCell<ProductionRuntime> = const { RefCell::new(ProductionRuntime::new()) };
-    static NATIVE_OBSERVATION: RefCell<NativeObservation> =
-        const { RefCell::new(NativeObservation::new()) };
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -50,7 +48,7 @@ struct PanelRow {
     ops: Vec<String>,
 }
 
-/// Compact projection of posted snapshot fields this module decides from.
+/// The posted facts this module decides from, read from the isolate scene.
 struct NativeObservation {
     ingame: bool,
     count_dialog_open: bool,
@@ -61,65 +59,58 @@ struct NativeObservation {
 }
 
 impl NativeObservation {
-    const fn new() -> Self {
+    /// A logout forgets the session: only pages posted since login count.
+    fn from_scene(scene: &Scene) -> Self {
+        let session = scene.since_login();
         Self {
-            ingame: false,
-            count_dialog_open: false,
-            main_modal_id: -1,
-            make_products: Vec::new(),
-            main_make: None,
+            ingame: session.ingame().unwrap_or(false),
+            count_dialog_open: session.count_dialog_open().unwrap_or(false),
+            main_modal_id: session.main_modal_id().unwrap_or(-1),
+            make_products: session
+                .make_products()
+                .map(|products| {
+                    products
+                        .iter()
+                        .map(|product| MakeProduct {
+                            name: product.name.clone(),
+                            buttons: product
+                                .buttons
+                                .iter()
+                                .map(|button| MakeButton {
+                                    qty: button.qty,
+                                    com_id: button.com_id,
+                                })
+                                .collect(),
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
+            main_make: session
+                .main_make()
+                .and_then(Option::as_ref)
+                .map(|rows| panel_rows(rows)),
         }
     }
 
-    fn update(&mut self, snap: &SnapshotReader<'_>) {
-        if snap.has_ingame() {
-            if !snap.ingame() {
-                *self = Self::new();
-                return;
-            }
-            self.ingame = true;
-        }
-        if snap.has_count_dialog_open() {
-            self.count_dialog_open = snap.count_dialog_open();
-        }
-        if snap.has_main_modal_id() {
-            self.main_modal_id = snap.main_modal_id();
-        }
-        if snap.has_make_products() {
-            self.make_products = snap
-                .make_products()
-                .iter()
-                .map(|product| MakeProduct {
-                    name: product.name().to_string(),
-                    buttons: product
-                        .buttons()
-                        .iter()
-                        .map(|button| MakeButton {
-                            qty: button.qty(),
-                            com_id: button.com_id(),
-                        })
-                        .collect(),
-                })
-                .collect();
-        }
-        if snap.has_main_make_available() {
-            self.main_make = if snap.main_make_available() {
-                Some(panel_rows(snap.main_make()))
-            } else {
-                None
-            };
+    fn probe(&self) -> Probe<'_> {
+        Probe {
+            ingame: self.ingame,
+            count_dialog_open: self.count_dialog_open,
+            main_modal_id: self.main_modal_id,
+            make_products: &self.make_products,
+            main_make: self.main_make.as_deref(),
         }
     }
 }
 
-fn panel_rows(rows: Vec<RowReader<'_>>) -> Vec<PanelRow> {
+fn panel_rows(rows: &[ItemRow]) -> Vec<PanelRow> {
     rows.iter()
         .map(|row| PanelRow {
-            name: row.name().unwrap_or_default().to_string(),
-            id: row.id(),
-            slot: row.slot(),
-            component: row.component_id(),
-            ops: row.ops().iter().map(|op| (*op).to_string()).collect(),
+            name: row.name_or_empty().to_string(),
+            id: row.id,
+            slot: row.slot_or_unset(),
+            component: row.component_or_unset(),
+            ops: row.ops.clone(),
         })
         .collect()
 }
@@ -245,10 +236,6 @@ impl ProductionRuntime {
     }
 }
 
-pub fn on_snapshot(snap: &SnapshotReader<'_>) {
-    NATIVE_OBSERVATION.with(|obs| obs.borrow_mut().update(snap));
-}
-
 pub fn on_pause() {
     RUNTIME.with(|rt| {
         let held = rt.borrow().clock.held;
@@ -272,7 +259,6 @@ pub fn on_hold(held: bool) {
 
 pub fn on_reset() {
     RUNTIME.with(|rt| rt.borrow_mut().abort_runtime());
-    NATIVE_OBSERVATION.with(|obs| *obs.borrow_mut() = NativeObservation::new());
 }
 
 pub fn dispatch(input: &Value) -> Value {
@@ -317,23 +303,8 @@ fn begin(input: &Value) -> Value {
         .unwrap_or("")
         .trim()
         .to_string();
-    let obs = NATIVE_OBSERVATION.with(|o| {
-        let o = o.borrow();
-        (
-            o.ingame,
-            o.count_dialog_open,
-            o.main_modal_id,
-            o.make_products.clone(),
-            o.main_make.clone(),
-        )
-    });
-    let probe = Probe {
-        ingame: obs.0,
-        count_dialog_open: obs.1,
-        main_modal_id: obs.2,
-        make_products: &obs.3,
-        main_make: obs.4.as_deref(),
-    };
+    let obs = observed::with(NativeObservation::from_scene);
+    let probe = obs.probe();
     if !probe.ingame {
         return json!({ "kind": "aborted", "reason": "not ingame" });
     }
@@ -415,34 +386,26 @@ fn begin_panel_max(probe: &Probe<'_>, match_name: &str) -> Value {
 }
 
 fn next(token: u64) -> Value {
-    NATIVE_OBSERVATION.with(|o| {
-        let o = o.borrow();
-        let probe = Probe {
-            ingame: o.ingame,
-            count_dialog_open: o.count_dialog_open,
-            main_modal_id: o.main_modal_id,
-            make_products: &o.make_products,
-            main_make: o.main_make.as_deref(),
-        };
-        RUNTIME.with(|rt| {
-            let mut rt = rt.borrow_mut();
-            if token != rt.token || rt.phase == Phase::Idle {
-                return json!({ "kind": "aborted", "token": rt.token });
-            }
-            if rt.frozen() {
-                return rt.wait();
-            }
-            if !probe.ingame {
-                let token = rt.token;
-                rt.phase = Phase::Idle;
-                rt.clock.deadline = None;
-                return json!({ "kind": "aborted", "token": token });
-            }
-            match rt.kind {
-                Kind::MakeX => make_x_step(&mut rt, &probe),
-                Kind::MakeFromPanelMax => panel_step(&mut rt, &probe),
-            }
-        })
+    let obs = observed::with(NativeObservation::from_scene);
+    let probe = obs.probe();
+    RUNTIME.with(|rt| {
+        let mut rt = rt.borrow_mut();
+        if token != rt.token || rt.phase == Phase::Idle {
+            return json!({ "kind": "aborted", "token": rt.token });
+        }
+        if rt.frozen() {
+            return rt.wait();
+        }
+        if !probe.ingame {
+            let token = rt.token;
+            rt.phase = Phase::Idle;
+            rt.clock.deadline = None;
+            return json!({ "kind": "aborted", "token": token });
+        }
+        match rt.kind {
+            Kind::MakeX => make_x_step(&mut rt, &probe),
+            Kind::MakeFromPanelMax => panel_step(&mut rt, &probe),
+        }
     })
 }
 

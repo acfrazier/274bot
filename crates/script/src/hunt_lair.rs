@@ -5,7 +5,7 @@
 //! and token counter. Call `hunt_fight::in_area_body` only.
 
 use crate::hunt_fight::{in_area_body, SiteBox, Tile};
-use crate::isolate_fb::SnapshotReader;
+use crate::observed::{self, EntityRow, ItemRow, Scene};
 use crate::task_clock::InstantTaskClock;
 use serde_json::{json, Value};
 use std::cell::RefCell;
@@ -21,7 +21,6 @@ const TALK_ATTEMPTS: u32 = 3;
 thread_local! {
     static ENTER_RUNTIMES: RefCell<HashMap<u64, EnterRuntime>> = RefCell::new(HashMap::new());
     static NEXT_TOKEN: RefCell<u64> = const { RefCell::new(1) };
-    static OBSERVATION: RefCell<EnterObservation> = RefCell::new(EnterObservation::empty());
 }
 
 #[derive(Clone, Debug)]
@@ -73,6 +72,138 @@ pub struct EnterObservation {
 }
 
 impl EnterObservation {
+    /// Fields read from the isolate scene over the `empty` defaults. A
+    /// logout clears `here` (a tile posted with the logout still counts);
+    /// every other page keeps its last posted value.
+    fn from_scene(scene: &Scene) -> Self {
+        let empty = Self::empty();
+        let latest = scene.latest();
+        Self {
+            here: scene.since_logout().here().map(Tile::from),
+            ingame: latest.ingame().unwrap_or(empty.ingame),
+            hold: latest.hold().unwrap_or(empty.hold),
+            ours: latest.ours().unwrap_or(empty.ours),
+            chat_continue: latest.chat_continue().unwrap_or(empty.chat_continue),
+            chat_open: latest.chat_open().unwrap_or(empty.chat_open),
+            chat_lines: latest
+                .chat_lines()
+                .map(|lines| {
+                    lines
+                        .iter()
+                        .map(|line| EnterChatLine {
+                            seq: line.seq,
+                            text: line.text.clone(),
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
+            chat_options: latest.chat_options().cloned().unwrap_or_default(),
+            main_modal_id: latest.main_modal_id().unwrap_or(empty.main_modal_id),
+            npcs: latest
+                .npcs()
+                .map(|rows| {
+                    rows.iter()
+                        .map(|n| EnterNpc {
+                            index: n.index,
+                            name: n.name_or_empty().to_string(),
+                            actions: n.actions.clone(),
+                            distance: n.distance,
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
+            locs: latest
+                .locs()
+                .map(|rows| {
+                    rows.iter()
+                        .map(|loc| EnterLoc {
+                            id: loc.id,
+                            x: loc.x,
+                            z: loc.z,
+                            level: loc.level,
+                            distance: loc.distance,
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
+            inv: latest
+                .inv()
+                .map(|rows| {
+                    rows.iter()
+                        .map(|row| EnterInv {
+                            id: row.id,
+                            count: row.count,
+                            slot: row.slot_or_unset(),
+                            name: row.name_or_empty().to_string(),
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
+            tick: scene.tick().unwrap_or(empty.tick),
+        }
+    }
+
+    /// Write this observation into the isolate scene as posts, replacing it.
+    fn post(self) {
+        observed::replace(self.tick, self.ingame, |post| {
+            if let Some(here) = self.here {
+                post.here(here.into());
+            }
+            post.hold(self.hold)
+                .ours(self.ours)
+                .chat_continue(self.chat_continue)
+                .chat_open(self.chat_open)
+                .chat_lines(
+                    self.chat_lines
+                        .into_iter()
+                        .map(|line| observed::ChatLine {
+                            seq: line.seq,
+                            text: line.text,
+                        })
+                        .collect(),
+                )
+                .chat_options(self.chat_options)
+                .main_modal_id(self.main_modal_id)
+                .npcs(
+                    self.npcs
+                        .into_iter()
+                        .map(|n| EntityRow {
+                            index: n.index,
+                            name: Some(n.name),
+                            actions: n.actions,
+                            distance: n.distance,
+                            ..EntityRow::default()
+                        })
+                        .collect(),
+                )
+                .locs(
+                    self.locs
+                        .into_iter()
+                        .map(|loc| EntityRow {
+                            id: loc.id,
+                            x: loc.x,
+                            z: loc.z,
+                            level: loc.level,
+                            distance: loc.distance,
+                            ..EntityRow::default()
+                        })
+                        .collect(),
+                )
+                .inv(
+                    self.inv
+                        .into_iter()
+                        .map(|row| ItemRow {
+                            id: row.id,
+                            count: row.count,
+                            slot: (row.slot != -1).then_some(row.slot),
+                            name: Some(row.name),
+                            ..ItemRow::default()
+                        })
+                        .collect(),
+                );
+        });
+    }
+
     fn empty() -> Self {
         Self {
             here: None,
@@ -237,11 +368,12 @@ impl EnterRuntime {
 }
 
 fn observation() -> EnterObservation {
-    OBSERVATION.with(|o| o.borrow().clone())
+    observed::with(EnterObservation::from_scene)
 }
 
+/// Test seam: replace the isolate scene with posts that read back as `obs`.
 pub fn set_observation(obs: EnterObservation) {
-    OBSERVATION.with(|o| *o.borrow_mut() = obs);
+    obs.post();
 }
 
 fn distance_to(a: Tile, b: Tile) -> i32 {
@@ -1179,95 +1311,6 @@ fn next_effect(rt: &mut EnterRuntime, proj: &EnterProj, reply: Option<&Value>) -
     }
 }
 
-pub fn on_snapshot(snap: &SnapshotReader<'_>) {
-    OBSERVATION.with(|slot| {
-        let mut o = slot.borrow_mut();
-        if snap.has_ingame() {
-            o.ingame = snap.ingame();
-            if !o.ingame {
-                o.here = None;
-            }
-        }
-        o.tick = snap.tick();
-        if snap.has_here() {
-            o.here = snap.here().map(|t| Tile {
-                x: t.x(),
-                z: t.z(),
-                level: t.level(),
-            });
-        }
-        if snap.has_hold() {
-            o.hold = snap.hold();
-        }
-        if snap.has_ours() {
-            o.ours = snap.ours();
-        }
-        if snap.has_chat_continue() {
-            o.chat_continue = snap.chat_continue();
-        }
-        if snap.has_chat_open() {
-            o.chat_open = snap.chat_open();
-        }
-        if snap.has_chat_options() {
-            o.chat_options = snap
-                .chat_options()
-                .iter()
-                .map(|opt| opt.text().to_string())
-                .collect();
-        }
-        if snap.has_chat_lines() {
-            o.chat_lines = snap
-                .chat_lines()
-                .iter()
-                .map(|line| EnterChatLine {
-                    seq: line.seq(),
-                    text: line.text().to_string(),
-                })
-                .collect();
-        }
-        if snap.has_main_modal_id() {
-            o.main_modal_id = snap.main_modal_id();
-        }
-        if snap.has_npcs() {
-            o.npcs = snap
-                .npcs()
-                .iter()
-                .map(|n| EnterNpc {
-                    index: n.index(),
-                    name: n.name().unwrap_or_default().to_string(),
-                    actions: n.actions().iter().map(|a| a.to_string()).collect(),
-                    distance: n.distance(),
-                })
-                .collect();
-        }
-        if snap.has_locs() {
-            o.locs = snap
-                .locs()
-                .iter()
-                .map(|loc| EnterLoc {
-                    id: loc.id(),
-                    x: loc.x(),
-                    z: loc.z(),
-                    level: loc.level(),
-                    distance: loc.distance(),
-                })
-                .collect();
-        }
-        if snap.has_inv() {
-            o.inv = snap
-                .inv()
-                .iter()
-                .map(|row| EnterInv {
-                    id: row.id(),
-                    count: row.count(),
-                    slot: row.slot(),
-                    name: row.name().unwrap_or_default().to_string(),
-                })
-                .collect();
-        }
-    });
-}
-
 fn each_runtime(f: impl Fn(&mut EnterRuntime)) {
     ENTER_RUNTIMES.with(|m| {
         for rt in m.borrow_mut().values_mut() {
@@ -1299,7 +1342,6 @@ pub fn on_hold(held: bool) {
 
 pub fn on_reset() {
     ENTER_RUNTIMES.with(|m| m.borrow_mut().clear());
-    OBSERVATION.with(|o| *o.borrow_mut() = EnterObservation::empty());
 }
 
 pub fn dispatch(input: &Value) -> Value {

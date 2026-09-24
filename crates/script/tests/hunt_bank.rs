@@ -248,7 +248,7 @@ fn snapshot_slot_minus_one_is_not_a_real_held_row() {
     snap.bank_generation = 4;
     let bytes = encode_snapshot(&snap);
     let reader = SnapshotReader::from_bytes(&bytes).unwrap();
-    hunt_bank::on_snapshot(&reader);
+    script::observed::apply(&reader);
     let step = call(token, proj, Some(json!({ "opened": true })));
     assert_ne!(kind(&step), "withdraw", "{step}");
     assert!(!step.to_string().contains("Velrak"), "{step}");
@@ -672,13 +672,7 @@ fn shim_and_bindings_keep_the_yield_shape_and_walk_flags() {
     );
 
     let iso = include_str!("../src/load/isolate.rs");
-    for hook in [
-        "on_snapshot",
-        "on_pause",
-        "on_hold",
-        "on_resume",
-        "on_reset",
-    ] {
+    for hook in ["on_pause", "on_hold", "on_resume", "on_reset"] {
         assert!(
             iso.contains(&format!("hunt_bank::{hook}")),
             "missing {hook}"

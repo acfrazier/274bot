@@ -1,7 +1,7 @@
 //! Private prayer set/clear machine. Public results stay HelperResult;
 //! this Step keeps the existing autocast `{kind,token,ok,reason}` shape.
 
-use crate::isolate_fb::SnapshotReader;
+use crate::observed::{self, Scene};
 use api::game_data::SelectedGameData;
 use api::prayer::{
     active, available, lookup, matches_on, max, on_is_truthy, points, OnArg, PrayerObservation,
@@ -13,7 +13,6 @@ use std::time::{Duration, Instant};
 
 thread_local! {
     static RUNTIME: RefCell<PrayerRuntime> = const { RefCell::new(PrayerRuntime::new()) };
-    static OBSERVATION: RefCell<NativeObservation> = const { RefCell::new(NativeObservation::new()) };
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -23,60 +22,21 @@ enum Phase {
     WaitClear,
 }
 
-struct NativeObservation {
-    obs: PrayerObservation,
-}
-
-impl NativeObservation {
-    const fn new() -> Self {
-        Self {
-            obs: PrayerObservation::empty(),
-        }
+/// Prayer points/max and the overlay varps, read from the isolate scene. A
+/// logout forgets the session: only pages posted since login count. A varp
+/// row the last varps page did not carry stays unobserved.
+fn prayer_observation(scene: &Scene) -> PrayerObservation {
+    let session = scene.since_login();
+    let mut obs = PrayerObservation::empty();
+    if let Some(row) = session.stat("prayer") {
+        obs.points = row.effective;
+        obs.max = row.base;
     }
-
-    fn clear_facts(&mut self) {
-        self.obs = PrayerObservation::empty();
+    for row in session.varps().into_iter().flatten() {
+        // Rows outside the 15 overlay varps are ignored by `set_varp`.
+        obs.set_varp(row.index, row.value);
     }
-
-    fn update(&mut self, snap: &SnapshotReader<'_>) {
-        if snap.has_ingame() && !snap.ingame() {
-            self.clear_facts();
-            return;
-        }
-        if snap.has_stats() {
-            let mut found = false;
-            for row in snap.stats() {
-                if row.name().eq_ignore_ascii_case("prayer") {
-                    self.obs.points = row.effective();
-                    self.obs.max = row.base();
-                    found = true;
-                    break;
-                }
-            }
-            if !found {
-                self.obs.points = 0;
-                self.obs.max = 0;
-            }
-        }
-        if snap.has_varps() {
-            let mut seen = [false; PRAYER_COUNT];
-            for row in snap.varps() {
-                let index = row.index();
-                if let Ok(slot) = usize::try_from(index - api::prayer::PRAYER_VARP0) {
-                    if slot < PRAYER_COUNT {
-                        seen[slot] = true;
-                        self.obs.set_varp(index, row.value());
-                    }
-                }
-            }
-            for (slot, seen) in seen.iter().enumerate() {
-                if !seen {
-                    self.obs
-                        .unobserve_varp(api::prayer::PRAYER_VARP0 + slot as i32);
-                }
-            }
-        }
-    }
+    obs
 }
 
 struct PrayerRuntime {
@@ -292,14 +252,9 @@ pub fn on_hold(held: bool) {
 
 pub fn on_reset() {
     RUNTIME.with(|runtime| runtime.borrow_mut().abort());
-    OBSERVATION.with(|observation| observation.borrow_mut().clear_facts());
 }
 
 pub fn configure(_data: Option<&SelectedGameData>) {}
-
-pub fn on_snapshot(snap: &SnapshotReader<'_>) {
-    OBSERVATION.with(|observation| observation.borrow_mut().update(snap));
-}
 
 fn parse_on(input: &Value) -> OnArg {
     let on = input.get("on").unwrap_or(&Value::Null);
@@ -340,32 +295,28 @@ fn query(data: Option<&SelectedGameData>, obs: &PrayerObservation, input: &Value
 }
 
 pub fn dispatch(data: Option<&SelectedGameData>, input: &Value) -> Value {
-    OBSERVATION.with(|observation| {
-        let obs = observation.borrow().obs;
-        match input.get("op").and_then(Value::as_str).unwrap_or("") {
-            "points" | "max" | "full" | "known" | "available" | "active" => {
-                query(data, &obs, input)
-            }
-            "begin-set" => RUNTIME.with(|runtime| {
-                runtime.borrow_mut().begin_set(
-                    data,
-                    input.get("name").and_then(Value::as_str).unwrap_or(""),
-                    parse_on(input),
-                    &obs,
-                )
-            }),
-            "begin-clear" => RUNTIME.with(|runtime| runtime.borrow_mut().begin_clear(data, &obs)),
-            "next" => RUNTIME.with(|runtime| {
-                runtime.borrow_mut().next(
-                    input.get("token").and_then(Value::as_u64).unwrap_or(0),
-                    data,
-                    &obs,
-                )
-            }),
-            "current_token" => RUNTIME.with(|runtime| json!(runtime.borrow().token)),
-            _ => json!({ "ok": false, "error": "unknown-op" }),
-        }
-    })
+    let obs = observed::with(prayer_observation);
+    match input.get("op").and_then(Value::as_str).unwrap_or("") {
+        "points" | "max" | "full" | "known" | "available" | "active" => query(data, &obs, input),
+        "begin-set" => RUNTIME.with(|runtime| {
+            runtime.borrow_mut().begin_set(
+                data,
+                input.get("name").and_then(Value::as_str).unwrap_or(""),
+                parse_on(input),
+                &obs,
+            )
+        }),
+        "begin-clear" => RUNTIME.with(|runtime| runtime.borrow_mut().begin_clear(data, &obs)),
+        "next" => RUNTIME.with(|runtime| {
+            runtime.borrow_mut().next(
+                input.get("token").and_then(Value::as_u64).unwrap_or(0),
+                data,
+                &obs,
+            )
+        }),
+        "current_token" => RUNTIME.with(|runtime| json!(runtime.borrow().token)),
+        _ => json!({ "ok": false, "error": "unknown-op" }),
+    }
 }
 
 #[cfg(test)]
@@ -379,17 +330,26 @@ mod tests {
         api::game_data::for_revision(rev).expect("selected data")
     }
 
+    /// Stand in for a post carrying the prayer stat and one more overlay
+    /// varp; earlier varp rows stay on the page.
     fn set_obs(points: i32, max: i32, varp: i32, value: i32) {
-        OBSERVATION.with(|observation| {
-            let mut obs = observation.borrow_mut();
-            obs.obs.points = points;
-            obs.obs.max = max;
-            obs.obs.set_varp(varp, value);
+        let mut varps = observed::with(|scene| scene.latest().varps().cloned().unwrap_or_default());
+        varps.retain(|row| row.index != varp);
+        varps.push(observed::VarpRow { index: varp, value });
+        observed::post(0, |post| {
+            post.stats(vec![observed::StatRow {
+                name: "prayer".into(),
+                effective: points,
+                base: max,
+                ..observed::StatRow::default()
+            }])
+            .varps(varps);
         });
     }
 
     fn reset_tls() {
         on_reset();
+        observed::on_reset();
         on_resume();
         on_hold(false);
     }

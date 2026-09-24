@@ -7,7 +7,7 @@
 //! and completion stay here. Game actions reuse the existing FlatBuffer
 //! `npc` / `continue` / `answer` verbs.
 
-use crate::isolate_fb::SnapshotReader;
+use crate::observed::{self, Scene};
 use crate::task_clock::InstantTaskClock;
 use serde_json::{json, Value};
 use std::cell::RefCell;
@@ -28,8 +28,6 @@ pub const CHOICE_TICKS: u64 = 2;
 
 thread_local! {
     static RUNTIME: RefCell<DialogRuntime> = const { RefCell::new(DialogRuntime::new()) };
-    static NATIVE_OBSERVATION: RefCell<NativeObservation> =
-        const { RefCell::new(NativeObservation::new()) };
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -40,6 +38,7 @@ struct Npc {
     index: i32,
 }
 
+/// The posted facts this module decides from, read from the isolate scene.
 #[derive(Clone)]
 struct NativeObservation {
     ingame: bool,
@@ -54,70 +53,45 @@ struct NativeObservation {
 }
 
 impl NativeObservation {
-    const fn new() -> Self {
+    /// A logout forgets the session: only pages posted since login count.
+    /// The tick is always the last posted one.
+    fn from_scene(scene: &Scene) -> Self {
+        let session = scene.since_login();
         Self {
-            ingame: false,
-            tick: 0,
-            hold: false,
-            ours: false,
-            chat_modal_id: -1,
-            chat_continue: false,
-            chat_options: Vec::new(),
-            bank_open: false,
-            npcs: Vec::new(),
+            ingame: session.ingame().unwrap_or(false),
+            tick: scene.tick().unwrap_or(0),
+            hold: session.hold().unwrap_or(false),
+            ours: session.ours().unwrap_or(false),
+            chat_modal_id: session.chat_modal_id().unwrap_or(-1),
+            chat_continue: session.chat_continue().unwrap_or(false),
+            // Empty texts stay: the 1-based Answer index is the posted slot.
+            chat_options: session.chat_options().cloned().unwrap_or_default(),
+            bank_open: session.bank_open().unwrap_or(false),
+            npcs: session
+                .npcs()
+                .map(|rows| {
+                    rows.iter()
+                        .map(|npc| Npc {
+                            name: npc.name_or_empty().to_string(),
+                            actions: npc
+                                .actions
+                                .iter()
+                                .filter(|action| !action.is_empty() && *action != "hidden")
+                                .cloned()
+                                .collect(),
+                            distance: npc.distance,
+                            index: npc.index,
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
         }
     }
 
-    fn update(&mut self, snap: &SnapshotReader<'_>) {
-        self.tick = snap.tick();
-        if snap.has_ingame() {
-            if !snap.ingame() {
-                *self = Self::new();
-                self.tick = snap.tick();
-                return;
-            }
-            self.ingame = true;
-        }
-        if snap.has_hold() {
-            self.hold = snap.hold();
-        }
-        if snap.has_ours() {
-            self.ours = snap.ours();
-        }
-        if snap.has_chat_modal_id() {
-            self.chat_modal_id = snap.chat_modal_id();
-        }
-        if snap.has_chat_continue() {
-            self.chat_continue = snap.chat_continue();
-        }
-        if snap.has_chat_options() {
-            // Keep empty texts: the 1-based Answer index is the posted slot.
-            self.chat_options = snap
-                .chat_options()
-                .iter()
-                .map(|row| row.text().to_string())
-                .collect();
-        }
-        if snap.has_bank_open() {
-            self.bank_open = snap.bank_open();
-        }
-        if snap.has_npcs() {
-            self.npcs = snap
-                .npcs()
-                .iter()
-                .map(|npc| Npc {
-                    name: npc.name().unwrap_or_default().to_string(),
-                    actions: npc
-                        .actions()
-                        .iter()
-                        .filter(|action| !action.is_empty() && **action != "hidden")
-                        .map(|action| (*action).to_string())
-                        .collect(),
-                    distance: npc.distance(),
-                    index: npc.index(),
-                })
-                .collect();
-        }
+    /// The posted `hold || ours` cooperative interrupt.
+    fn pending_in(scene: &Scene) -> bool {
+        let session = scene.since_login();
+        session.hold().unwrap_or(false) || session.ours().unwrap_or(false)
     }
 
     fn pending(&self) -> bool {
@@ -271,16 +245,15 @@ impl DialogRuntime {
     }
 }
 
-pub fn on_snapshot(snap: &SnapshotReader<'_>) {
-    NATIVE_OBSERVATION.with(|obs| {
-        let mut obs = obs.borrow_mut();
-        obs.update(snap);
-        RUNTIME.with(|rt| {
-            let mut rt = rt.borrow_mut();
-            if rt.phase != Phase::Idle && obs.pending() {
-                rt.interrupted = true;
-            }
-        });
+/// After the isolate applied a post: a live dialog notes the posted
+/// cooperative interrupt.
+pub fn on_snapshot() {
+    let pending = observed::with(NativeObservation::pending_in);
+    RUNTIME.with(|rt| {
+        let mut rt = rt.borrow_mut();
+        if rt.phase != Phase::Idle && pending {
+            rt.interrupted = true;
+        }
     });
 }
 
@@ -307,7 +280,6 @@ pub fn on_hold(held: bool) {
 
 pub fn on_reset() {
     RUNTIME.with(|rt| rt.borrow_mut().abort_runtime());
-    NATIVE_OBSERVATION.with(|obs| *obs.borrow_mut() = NativeObservation::new());
 }
 
 pub fn dispatch(input: &Value) -> Value {
@@ -336,24 +308,22 @@ fn begin(input: &Value) -> Value {
         .get("gapMs")
         .and_then(Value::as_u64)
         .unwrap_or(DIALOG_GAP_MS);
-    NATIVE_OBSERVATION.with(|o| {
-        let obs = o.borrow();
-        RUNTIME.with(|rt| {
-            let mut rt = rt.borrow_mut();
-            rt.abort_runtime();
-            rt.kind = kind;
-            rt.npc_name = npc_name;
-            rt.prefer = prefer;
-            rt.gap_ms = gap_ms;
-            if !obs.ingame {
-                return json!({ "kind": "aborted", "reason": "not ingame" });
-            }
-            if obs.pending() {
-                rt.interrupted = true;
-                return rt.done(false, "pending", None);
-            }
-            start(&mut rt, &obs)
-        })
+    let obs = observed::with(NativeObservation::from_scene);
+    RUNTIME.with(|rt| {
+        let mut rt = rt.borrow_mut();
+        rt.abort_runtime();
+        rt.kind = kind;
+        rt.npc_name = npc_name;
+        rt.prefer = prefer;
+        rt.gap_ms = gap_ms;
+        if !obs.ingame {
+            return json!({ "kind": "aborted", "reason": "not ingame" });
+        }
+        if obs.pending() {
+            rt.interrupted = true;
+            return rt.done(false, "pending", None);
+        }
+        start(&mut rt, &obs)
     })
 }
 
@@ -393,39 +363,37 @@ fn start(rt: &mut DialogRuntime, obs: &NativeObservation) -> Value {
 }
 
 fn next(token: u64) -> Value {
-    NATIVE_OBSERVATION.with(|o| {
-        let obs = o.borrow();
-        RUNTIME.with(|rt| {
-            let mut rt = rt.borrow_mut();
-            if token != rt.token || rt.phase == Phase::Idle {
-                return json!({ "kind": "aborted", "token": rt.token });
-            }
-            if rt.frozen() {
-                return rt.wait();
-            }
-            if !obs.ingame {
-                return json!({ "kind": "aborted", "token": rt.token });
-            }
-            if rt.interrupted || obs.pending() {
-                return rt.done(false, "pending", None);
-            }
-            match rt.phase {
-                Phase::Idle => json!({ "kind": "aborted", "token": rt.token }),
-                Phase::WaitOpen => wait_open(&mut rt, &obs),
-                Phase::WaitContinueAck => wait_continue_ack(&mut rt, &obs),
-                Phase::WaitChoiceAck => wait_choice_ack(&mut rt, &obs),
-                Phase::WaitContinueTick | Phase::WaitChoiceTicks => {
-                    if obs.tick >= rt.due_tick {
-                        rt.phase = Phase::Drive;
-                        drive_step(&mut rt, &obs)
-                    } else {
-                        rt.wait()
-                    }
+    let obs = observed::with(NativeObservation::from_scene);
+    RUNTIME.with(|rt| {
+        let mut rt = rt.borrow_mut();
+        if token != rt.token || rt.phase == Phase::Idle {
+            return json!({ "kind": "aborted", "token": rt.token });
+        }
+        if rt.frozen() {
+            return rt.wait();
+        }
+        if !obs.ingame {
+            return json!({ "kind": "aborted", "token": rt.token });
+        }
+        if rt.interrupted || obs.pending() {
+            return rt.done(false, "pending", None);
+        }
+        match rt.phase {
+            Phase::Idle => json!({ "kind": "aborted", "token": rt.token }),
+            Phase::WaitOpen => wait_open(&mut rt, &obs),
+            Phase::WaitContinueAck => wait_continue_ack(&mut rt, &obs),
+            Phase::WaitChoiceAck => wait_choice_ack(&mut rt, &obs),
+            Phase::WaitContinueTick | Phase::WaitChoiceTicks => {
+                if obs.tick >= rt.due_tick {
+                    rt.phase = Phase::Drive;
+                    drive_step(&mut rt, &obs)
+                } else {
+                    rt.wait()
                 }
-                Phase::WaitGap => wait_gap(&mut rt, &obs),
-                Phase::Drive => drive_step(&mut rt, &obs),
             }
-        })
+            Phase::WaitGap => wait_gap(&mut rt, &obs),
+            Phase::Drive => drive_step(&mut rt, &obs),
+        }
     })
 }
 
@@ -652,6 +620,31 @@ mod tests {
         }
     }
 
+    /// Stand in for a decoded post carrying `obs`.
+    fn post(obs: &NativeObservation) {
+        observed::post(obs.tick, |post| {
+            post.session(obs.ingame)
+                .hold(obs.hold)
+                .ours(obs.ours)
+                .chat_modal_id(obs.chat_modal_id)
+                .chat_continue(obs.chat_continue)
+                .chat_options(obs.chat_options.clone())
+                .bank_open(obs.bank_open)
+                .npcs(
+                    obs.npcs
+                        .iter()
+                        .map(|npc| observed::EntityRow {
+                            index: npc.index,
+                            name: Some(npc.name.clone()),
+                            distance: npc.distance,
+                            actions: npc.actions.clone(),
+                            ..observed::EntityRow::default()
+                        })
+                        .collect(),
+                );
+        });
+    }
+
     #[test]
     fn frozen_bounds_match_the_canonical_primitives() {
         assert_eq!(DIALOG_GAP_MS, 1_500);
@@ -719,7 +712,7 @@ mod tests {
         on_reset();
         let mut observation = obs(vec![npc("Gundai", &["Talk-to"], 1, 3)]);
         observation.ours = true;
-        NATIVE_OBSERVATION.with(|slot| *slot.borrow_mut() = observation.clone());
+        post(&observation);
         let pending = dispatch(&json!({
             "op": "begin",
             "kind": "talk",
@@ -730,7 +723,7 @@ mod tests {
         assert_eq!(pending["reason"], "pending");
 
         observation.ours = false;
-        NATIVE_OBSERVATION.with(|slot| *slot.borrow_mut() = observation.clone());
+        post(&observation);
         let begin = dispatch(&json!({
             "op": "begin",
             "kind": "talk",
@@ -746,7 +739,7 @@ mod tests {
         assert_eq!(stopped["result"], false);
         assert_eq!(stopped["reason"], "pending");
 
-        NATIVE_OBSERVATION.with(|slot| *slot.borrow_mut() = observation);
+        post(&observation);
         let again = dispatch(&json!({
             "op": "begin",
             "kind": "talk",

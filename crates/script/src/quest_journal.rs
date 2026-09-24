@@ -1,16 +1,17 @@
 //! Owned-root quest-journal machine: `api.questJournalBegin` / `Next` / `Close`.
 //!
 //! One token per isolate over the posted quest row and the paired main-modal
-//! texts. The JS wrapper owns the page read (args, the posted tab, the pair,
-//! the row selection) and hands the pair in; this machine owns the token, the
-//! generation captured at Begin, the frozen clock, acquisition, the
-//! owned-root refusal and the one close.
+//! texts. The JS wrapper owns the call arguments, the posted tab and the row
+//! selection. The pair and its tick are read from the isolate scene; the
+//! wrapper's echo of the same page is only read before the scene has carried
+//! the pair this session. This machine owns the token, the generation
+//! captured at Begin, the frozen clock, acquisition, the owned-root refusal
+//! and the one close.
 //!
 //! The pair is the only occupancy fact. The closed start is the explicit
-//! `{ root: -1, texts: [] }` the materializer wrote; an omitted pair is not
-//! free, `main_modal_id` is not a second closed definition, and the closed
-//! pair is never acquired. `on_snapshot` is not a page cache: inside that
-//! hook the materialized page is the previous one.
+//! `{ root: -1, texts: [] }` the host posted; an omitted pair is not free,
+//! `main_modal_id` is not a second closed definition, and the closed pair is
+//! never acquired.
 //!
 //! One `if-button` per token, one `close-modal` per token. Begin of another
 //! name cancels the live token and emits no close for it; the same name is
@@ -19,7 +20,7 @@
 //! the acquisition window. There is no Stop arm and nothing is enqueued from
 //! `onStop`.
 
-use crate::isolate_fb::SnapshotReader;
+use crate::observed;
 use crate::task_clock::InstantTaskClock;
 use serde_json::{json, Value};
 use std::cell::RefCell;
@@ -108,7 +109,7 @@ impl JournalRuntime {
             .and_then(Value::as_i64)
             .and_then(|id| i32::try_from(id).ok());
         let generation = input.get("generation").and_then(Value::as_u64);
-        let sequence = input.get("sequence").and_then(Value::as_u64);
+        let sequence = posted_sequence(input);
         let (Some(component_id), Some(generation), Some(sequence)) =
             (component_id, generation, sequence)
         else {
@@ -116,7 +117,7 @@ impl JournalRuntime {
             // still has to be a refusal, never a click on a guessed target.
             return self.aborted("snapshot-unavailable");
         };
-        let Some((root, texts)) = read_pair(input) else {
+        let Some((root, texts)) = posted_pair(input) else {
             return self.aborted("snapshot-unavailable");
         };
         // One token. The same name is busy and is not cancelled: a second
@@ -170,7 +171,7 @@ impl JournalRuntime {
         if input.get("generation").and_then(Value::as_u64) != Some(self.generation) {
             return self.aborted("stale");
         }
-        let Some((root, texts)) = read_pair(input) else {
+        let Some((root, texts)) = posted_pair(input) else {
             return json!({
                 "kind": "aborted",
                 "token": self.token,
@@ -190,7 +191,7 @@ impl JournalRuntime {
             // instant, so the window does not advance.
             return json!({ "kind": "wait", "token": self.token });
         }
-        let sequence = input.get("sequence").and_then(Value::as_u64).unwrap_or(0);
+        let sequence = posted_sequence(input).unwrap_or(0);
         match self.phase {
             Phase::Idle => self.aborted("stale"),
             Phase::AwaitingAcquire => {
@@ -248,7 +249,7 @@ impl JournalRuntime {
         if input.get("generation").and_then(Value::as_u64) != Some(self.generation) {
             return self.aborted("stale");
         }
-        let Some((root, texts)) = read_pair(input) else {
+        let Some((root, texts)) = posted_pair(input) else {
             return json!({
                 "kind": "aborted",
                 "token": self.token,
@@ -265,7 +266,7 @@ impl JournalRuntime {
         if self.frozen() {
             return json!({ "kind": "wait", "token": self.token });
         }
-        let sequence = input.get("sequence").and_then(Value::as_u64).unwrap_or(0);
+        let sequence = posted_sequence(input).unwrap_or(0);
         match self.phase {
             Phase::Idle => self.aborted("stale"),
             Phase::AwaitingAcquire => {
@@ -304,7 +305,25 @@ impl JournalRuntime {
     }
 }
 
-/// The paired object the materializer wrote, as handed in by the wrapper.
+/// The paired main-modal walk this call reads: the pair the host posted to
+/// the isolate scene, or the wrapper's echo before the scene carried one.
+fn posted_pair(input: &Value) -> Option<(i32, Vec<String>)> {
+    observed::with(|scene| {
+        scene
+            .latest()
+            .main_modal_texts()
+            .map(|pair| (pair.root, pair.texts.clone()))
+    })
+    .or_else(|| read_pair(input))
+}
+
+/// The tick that carried [`posted_pair`]'s pair.
+fn posted_sequence(input: &Value) -> Option<u64> {
+    observed::with(|scene| scene.latest().main_modal_texts().and(scene.tick()))
+        .or_else(|| input.get("sequence").and_then(Value::as_u64))
+}
+
+/// The paired object the materializer wrote, as echoed by the wrapper.
 /// `None` is unusable: a root that is not an integer, or texts that are not
 /// strings. An omitted pair never reaches here — the wrapper refuses it.
 fn read_pair(input: &Value) -> Option<(i32, Vec<String>)> {
@@ -316,13 +335,6 @@ fn read_pair(input: &Value) -> Option<(i32, Vec<String>)> {
     }
     Some((root, texts))
 }
-
-/// The posted snapshot is not this machine's page. Begin, Next and Close read
-/// the materialized JS object at call time, so nothing is cached here: inside
-/// this hook the materialized page is the previous one, and a cache filled
-/// from the posted table could not tell an omitted slot from the closed pair.
-/// Registered so the machine's hook set matches the isolate's fan-out.
-pub fn on_snapshot(_snap: &SnapshotReader<'_>) {}
 
 pub fn on_pause() {
     RUNTIME.with(|rt| {
@@ -454,5 +466,28 @@ mod tests {
         let closed = call("close", token, 1, -1, json!([]), 11);
         assert_eq!(closed["kind"], "done");
         assert_eq!(closed["as_of_sequence"], 11);
+    }
+
+    #[test]
+    fn the_posted_pair_is_read_from_the_scene_over_a_stale_echo() {
+        on_reset();
+        observed::on_reset();
+        let post = |tick: u64, root: i32, texts: &[&str]| {
+            observed::post(tick, |post| {
+                post.main_modal_texts(observed::ModalTexts {
+                    root,
+                    texts: texts.iter().map(|text| (*text).to_string()).collect(),
+                });
+            });
+        };
+        post(7, -1, &[]);
+        let token = begin("Cook's Assistant", 1)["token"].as_u64().unwrap();
+        post(8, 77, &["@dre@The Cook's Quest"]);
+        // The echo still carries the closed pair from an older page.
+        let acquired = call("next", token, 1, -1, json!([]), 7);
+        assert_eq!(acquired["kind"], "done", "{acquired}");
+        assert_eq!(acquired["root"], 77);
+        assert_eq!(acquired["lines"], json!(["@dre@The Cook's Quest"]));
+        assert_eq!(acquired["as_of_sequence"], 8);
     }
 }

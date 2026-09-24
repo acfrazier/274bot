@@ -1,11 +1,11 @@
 //! Rust-owned Baker stall target/restock policy and one-attempt sequencing.
 //! `api::cake_stall` owns the posted pins and row types; this module owns
-//! selection, restock and stall-food predicates. Snapshot deltas feed a
-//! compact native projection; JavaScript supplies callbacks and dispatches
-//! returned verbs.
+//! selection, restock and stall-food predicates. The posted facts are read
+//! from the isolate scene at call time; JavaScript supplies callbacks and
+//! dispatches returned verbs.
 
 use super::{counts_as_stall_food, needs_cake_restock, select_baker_stall};
-use crate::isolate_fb::SnapshotReader;
+use crate::observed::{self, EntityRow, Scene};
 use api::cake_stall::{StallLoc, BAKER_STALL};
 use serde_json::{json, Value};
 use std::cell::RefCell;
@@ -16,7 +16,6 @@ pub const STEAL_RESOLVE_MS: u64 = 2_400;
 
 thread_local! {
     static RUNTIME: RefCell<CakeStallRuntime> = const { RefCell::new(CakeStallRuntime::new()) };
-    static NATIVE_OBSERVATION: RefCell<NativeObservation> = const { RefCell::new(NativeObservation::new()) };
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -49,6 +48,7 @@ struct Observation {
     locked_out_until: Option<i64>,
 }
 
+/// The posted facts this module decides from, read from the isolate scene.
 struct NativeObservation {
     ingame: bool,
     tick: i64,
@@ -61,51 +61,30 @@ struct NativeObservation {
 }
 
 impl NativeObservation {
-    const fn new() -> Self {
+    /// A logout forgets the session: only pages posted since login count.
+    fn from_scene(scene: &Scene) -> Self {
+        let session = scene.since_login();
+        let inv = session.inv();
         Self {
-            ingame: false,
-            tick: 0,
-            here: None,
-            in_combat: false,
-            inv_size: 0,
-            inv_len: 0,
-            carried: 0,
-            stall: None,
-        }
-    }
-
-    fn update(&mut self, snap: &SnapshotReader<'_>) {
-        self.tick = i64::try_from(snap.tick()).unwrap_or(i64::MAX);
-        if snap.has_ingame() {
-            if !snap.ingame() {
-                *self = Self::new();
-                return;
-            }
-            self.ingame = true;
-        }
-        if snap.has_here() {
-            self.here = snap.here().map(|tile| Tile {
-                x: tile.x(),
-                z: tile.z(),
-                level: tile.level(),
-            });
-        }
-        if snap.has_in_combat() {
-            self.in_combat = snap.in_combat();
-        }
-        if snap.has_inv_size() {
-            self.inv_size = snap.inv_size();
-        }
-        if snap.has_inv() {
-            let inv = snap.inv();
-            self.inv_len = inv.len();
-            self.carried = sum_carried(
-                inv.iter()
-                    .filter_map(|row| row.name().map(|name| (name, row.count()))),
-            );
-        }
-        if snap.has_locs() {
-            self.stall = selected_stall(snap);
+            ingame: session.ingame().unwrap_or(false),
+            tick: scene
+                .session_tick()
+                .map_or(0, |tick| i64::try_from(tick).unwrap_or(i64::MAX)),
+            here: session.here().map(|tile| Tile {
+                x: tile.x,
+                z: tile.z,
+                level: tile.level,
+            }),
+            in_combat: session.in_combat().unwrap_or(false),
+            inv_size: session.inv_size().unwrap_or(0),
+            inv_len: inv.map_or(0, Vec::len),
+            carried: inv.map_or(0, |rows| {
+                sum_carried(
+                    rows.iter()
+                        .filter_map(|row| row.name.as_deref().map(|name| (name, row.count))),
+                )
+            }),
+            stall: session.locs().and_then(|locs| selected_stall(locs)),
         }
     }
 
@@ -395,19 +374,21 @@ fn on_stand(here: Option<Tile>) -> bool {
     })
 }
 
-fn selected_stall(snap: &SnapshotReader<'_>) -> Option<SelectedLoc> {
-    let locs = snap.locs();
-    let action_refs: Vec<Vec<&str>> = locs.iter().map(|loc| loc.actions()).collect();
+fn selected_stall(locs: &[EntityRow]) -> Option<SelectedLoc> {
+    let action_refs: Vec<Vec<&str>> = locs
+        .iter()
+        .map(|loc| loc.actions.iter().map(String::as_str).collect())
+        .collect();
     let views: Vec<StallLoc<'_>> = locs
         .iter()
         .zip(action_refs.iter())
         .map(|(loc, actions)| StallLoc {
-            id: loc.id(),
-            name: loc.name(),
-            x: loc.x(),
-            z: loc.z(),
-            level: loc.level(),
-            distance: loc.distance(),
+            id: loc.id,
+            name: loc.name.as_deref(),
+            x: loc.x,
+            z: loc.z,
+            level: loc.level,
+            distance: loc.distance,
             actions,
         })
         .collect();
@@ -442,47 +423,38 @@ pub fn on_hold(held: bool) {
 
 pub fn on_reset() {
     RUNTIME.with(|runtime| runtime.borrow_mut().abort_runtime());
-    NATIVE_OBSERVATION.with(|observation| {
-        *observation.borrow_mut() = NativeObservation::new();
-    });
-}
-
-pub fn on_snapshot(snap: &SnapshotReader<'_>) {
-    NATIVE_OBSERVATION.with(|observation| observation.borrow_mut().update(snap));
 }
 
 pub fn dispatch(input: &Value) -> Value {
-    NATIVE_OBSERVATION.with(|native| {
-        let obs = native.borrow().with_callbacks(input);
-        match input.get("op").and_then(Value::as_str).unwrap_or("") {
-            "count" => json!(obs.carried),
-            "needs_restock" => json!(needs_cake_restock(
-                obs.carried,
+    let obs = observed::with(NativeObservation::from_scene).with_callbacks(input);
+    match input.get("op").and_then(Value::as_str).unwrap_or("") {
+        "count" => json!(obs.carried),
+        "needs_restock" => json!(needs_cake_restock(
+            obs.carried,
+            input
+                .get("target")
+                .and_then(Value::as_i64)
+                .map(|n| n as i32),
+            pack_full(&obs),
+        )),
+        "begin" => RUNTIME.with(|runtime| {
+            runtime.borrow_mut().begin(
                 input
-                    .get("target")
+                    .get("fill_to")
                     .and_then(Value::as_i64)
                     .map(|n| n as i32),
-                pack_full(&obs),
-            )),
-            "begin" => RUNTIME.with(|runtime| {
-                runtime.borrow_mut().begin(
-                    input
-                        .get("fill_to")
-                        .and_then(Value::as_i64)
-                        .map(|n| n as i32),
-                    &obs,
-                )
-            }),
-            "next" => RUNTIME.with(|runtime| {
-                runtime.borrow_mut().next(
-                    input.get("token").and_then(Value::as_u64).unwrap_or(0),
-                    &obs,
-                )
-            }),
-            "current_token" => RUNTIME.with(|runtime| json!(runtime.borrow().token)),
-            _ => json!({"kind": "done", "result": "no-progress", "stole": false}),
-        }
-    })
+                &obs,
+            )
+        }),
+        "next" => RUNTIME.with(|runtime| {
+            runtime.borrow_mut().next(
+                input.get("token").and_then(Value::as_u64).unwrap_or(0),
+                &obs,
+            )
+        }),
+        "current_token" => RUNTIME.with(|runtime| json!(runtime.borrow().token)),
+        _ => json!({"kind": "done", "result": "no-progress", "stole": false}),
+    }
 }
 
 #[cfg(test)]
