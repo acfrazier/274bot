@@ -768,6 +768,33 @@ fn wedged_isolate_refuses_posts_past_the_backlog_cap() {
     iso.join();
 }
 
+// M7: a queued interact row no request variant accepts is logged under its
+// tick; its valid siblings still reach the host.
+#[test]
+fn malformed_interact_rows_are_logged_not_dropped_silently() {
+    let src = "export function tick(api) { const h = globalThis.__rs2b0t_host; \
+               (h.interact ||= []).push({ op: 'no-such-op' }, 42, \
+               { op: 'mouse', down: true, x: 1, y: 2 }); }";
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::NativeTick, vec![]).unwrap();
+    iso.on_game_tick(1);
+    let _ = iso.probe("1");
+    assert!(
+        matches!(
+            iso.drain_interacts().as_slice(),
+            [script::shim::InteractReq::Mouse { down: true, .. }]
+        ),
+        "the valid sibling is forwarded"
+    );
+    assert_eq!(
+        iso.drain_logs(),
+        vec![
+            "tick 1: dropped malformed interact row: op \"no-such-op\"".to_string(),
+            "tick 1: dropped malformed interact row: a number".to_string(),
+        ]
+    );
+    iso.join();
+}
+
 // (5g) A tight `while(true){}` tick cannot hang Stop: `join` is bounded
 // and returns even if the interrupt were somehow not delivered.
 #[test]

@@ -2097,7 +2097,8 @@ pub(crate) mod tests {
             (2, button(4)),
             (9, button(6)),
         ];
-        let rows = vec![js(2), MaybeInteractReq::Skip(serde::de::IgnoredAny), js(5)];
+        let skipped = MaybeInteractReq::Skip(crate::shim::RejectedRow("a number".into()));
+        let rows = vec![js(2), skipped, js(5)];
         assert_eq!(
             merge(rows, &mut placed),
             vec![

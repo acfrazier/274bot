@@ -1464,7 +1464,74 @@ impl<'de> serde::Deserialize<'de> for InspectAvoidWire {
 #[serde(untagged)]
 pub(crate) enum MaybeInteractReq {
     Req(InteractReq),
-    Skip(serde::de::IgnoredAny),
+    Skip(RejectedRow),
+}
+
+/// A queued interact row no [`InteractReq`] variant accepts, named by its
+/// `op` so the tick loop can log what it refused instead of dropping it
+/// silently.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct RejectedRow(pub(crate) String);
+
+impl<'de> serde::Deserialize<'de> for RejectedRow {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        struct V;
+        impl<'de> serde::de::Visitor<'de> for V {
+            type Value = RejectedRow;
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                write!(f, "any JS value")
+            }
+            fn visit_bool<E: serde::de::Error>(self, _: bool) -> Result<RejectedRow, E> {
+                Ok(RejectedRow("a boolean".into()))
+            }
+            fn visit_i64<E: serde::de::Error>(self, _: i64) -> Result<RejectedRow, E> {
+                Ok(RejectedRow("a number".into()))
+            }
+            fn visit_u64<E: serde::de::Error>(self, _: u64) -> Result<RejectedRow, E> {
+                Ok(RejectedRow("a number".into()))
+            }
+            fn visit_f64<E: serde::de::Error>(self, _: f64) -> Result<RejectedRow, E> {
+                Ok(RejectedRow("a number".into()))
+            }
+            fn visit_str<E: serde::de::Error>(self, _: &str) -> Result<RejectedRow, E> {
+                Ok(RejectedRow("a string".into()))
+            }
+            fn visit_none<E: serde::de::Error>(self) -> Result<RejectedRow, E> {
+                Ok(RejectedRow("null".into()))
+            }
+            fn visit_unit<E: serde::de::Error>(self) -> Result<RejectedRow, E> {
+                Ok(RejectedRow("null".into()))
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(
+                self,
+                mut seq: A,
+            ) -> Result<RejectedRow, A::Error> {
+                while seq.next_element::<serde::de::IgnoredAny>()?.is_some() {}
+                Ok(RejectedRow("an array".into()))
+            }
+            fn visit_map<A: serde::de::MapAccess<'de>>(
+                self,
+                mut map: A,
+            ) -> Result<RejectedRow, A::Error> {
+                let mut op = None;
+                while let Some(key) = map.next_key::<String>()? {
+                    if key == "op" {
+                        op = map
+                            .next_value::<serde_json::Value>()?
+                            .as_str()
+                            .map(String::from);
+                    } else {
+                        map.next_value::<serde::de::IgnoredAny>()?;
+                    }
+                }
+                Ok(RejectedRow(match op {
+                    Some(op) => format!("op {op:?}"),
+                    None => "an object without a string op".into(),
+                }))
+            }
+        }
+        d.deserialize_any(V)
+    }
 }
 
 fn deserialize_js_f64<'de, D: serde::Deserializer<'de>>(d: D) -> Result<f64, D::Error> {

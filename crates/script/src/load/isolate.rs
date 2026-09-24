@@ -1451,6 +1451,37 @@ fn clear_unconsumed_paint_click(runtime: &mut Runtime) {
     set_host_field(runtime, "paintClick", HostValue::Null);
 }
 
+/// This tick's shim interact queue. A row no request variant accepts, or
+/// a queue that cannot be read at all, is logged under the tick — never
+/// dropped silently.
+fn interact_rows(
+    runtime: &mut Runtime,
+    out: &Sender<ThreadMsg>,
+    n: u64,
+) -> Vec<crate::shim::MaybeInteractReq> {
+    let rows: Vec<crate::shim::MaybeInteractReq> =
+        match runtime.eval("globalThis.__rs2b0t_host.interact || []") {
+            Ok(rows) => rows,
+            Err(e) => {
+                let _ = out.send(ThreadMsg::Log(format!("tick {n}: interact queue: {e}")));
+                return Vec::new();
+            }
+        };
+    log_rejected_rows(&rows, out, n);
+    rows
+}
+
+fn log_rejected_rows(rows: &[crate::shim::MaybeInteractReq], out: &Sender<ThreadMsg>, n: u64) {
+    for row in rows {
+        if let crate::shim::MaybeInteractReq::Skip(rejected) = row {
+            let _ = out.send(ThreadMsg::Log(format!(
+                "tick {n}: dropped malformed interact row: {}",
+                rejected.0
+            )));
+        }
+    }
+}
+
 /// Drain Execution wait enqueue/settle counters. Each increment is a
 /// real lifecycle fact, including settle+repark in the same pump.
 fn take_wait_facts(runtime: &mut Runtime) -> (u32, u32) {
@@ -2118,15 +2149,12 @@ fn tick_loop(
                     // progress; its gameplay is dropped below.
                     let mut lifecycle: Vec<crate::shim::InteractReq> = Vec::new();
                     if v2_native {
-                        let rows: Result<Vec<crate::shim::MaybeInteractReq>, rustyscript::Error> =
-                            runtime.eval("globalThis.__rs2b0t_host.interact || []");
-                        lifecycle.extend(rows.unwrap_or_default().into_iter().filter_map(|row| {
-                            match row {
-                                crate::shim::MaybeInteractReq::Req(
-                                    req @ crate::shim::InteractReq::LoopSettled,
-                                ) => Some(req),
-                                _ => None,
-                            }
+                        let rows = interact_rows(&mut runtime, &out, n);
+                        lifecycle.extend(rows.into_iter().filter_map(|row| match row {
+                            crate::shim::MaybeInteractReq::Req(
+                                req @ crate::shim::InteractReq::LoopSettled,
+                            ) => Some(req),
+                            _ => None,
                         }));
                     } else if runner.poll(&mut runtime, &out, n) && compat {
                         lifecycle.push(crate::shim::InteractReq::LoopSettled);
@@ -2269,9 +2297,8 @@ fn tick_loop(
                 // object cannot drop a sibling key.
                 // Machine-emitted ops join the batch in Rust at the JS
                 // queue position where they were emitted.
-                let rows: Result<Vec<crate::shim::MaybeInteractReq>, rustyscript::Error> =
-                    runtime.eval("globalThis.__rs2b0t_host.interact || []");
-                let mut reqs = crate::machine::merge_ops(rows.unwrap_or_default());
+                let rows = interact_rows(&mut runtime, &out, n);
+                let mut reqs = crate::machine::merge_ops(rows);
                 stamp_mouse_gesture_identities(&mut reqs, input_identity, &mut mouse_gestures);
                 crate::inspect_wait::filter_public_inspect_wire(&mut reqs);
                 let (enqueued, settled) = take_wait_facts(&mut runtime);
