@@ -2299,7 +2299,7 @@ export default class T extends LoopingBot {
     iso.join();
 }
 
-// OPT-007: the isolate thread forwards ignoredRandoms after each tick;
+// OPT-007: the isolate thread forwards ignoredRandoms when it changes;
 // the host reads the cache without a probe recv_timeout round-trip.
 #[test]
 fn ignored_randoms_cache_fills_without_probe() {
@@ -2343,6 +2343,51 @@ export default class T extends LoopingBot {
     );
     iso.join();
     iso_block.join();
+}
+
+// The ignore list crosses only when it changes — including back to empty.
+#[test]
+fn ignored_randoms_forward_each_change() {
+    let src = r#"
+export default class T extends LoopingBot {
+    ignoredRandoms() { return globalThis.__ignore || []; }
+    loop() {}
+}
+"#;
+    let iso = spawn_ready(src.to_string(), LoadShape::CompatClass, vec![]);
+    iso.probe("globalThis.__ignore = ['swarm']; true").unwrap();
+    iso.on_game_tick(1);
+    let _ = iso.probe("1");
+    assert_eq!(iso.ignored_randoms(), vec!["swarm".to_string()]);
+    iso.on_game_tick(2);
+    let _ = iso.probe("1");
+    assert_eq!(iso.ignored_randoms(), vec!["swarm".to_string()]);
+    iso.probe("globalThis.__ignore = []; true").unwrap();
+    iso.on_game_tick(3);
+    let _ = iso.probe("1");
+    assert!(
+        iso.ignored_randoms().is_empty(),
+        "the cleared list reaches the host"
+    );
+    iso.join();
+}
+
+// R4: the tick's after-tick read is one call, but a malformed paint record
+// costs only the frame — the tick's log lines still arrive.
+#[test]
+fn malformed_paint_record_keeps_the_ticks_logs() {
+    let src = "export function tick(api) { const h = globalThis.__rs2b0t_host; \
+               h.paint = 'not a frame'; (h.log ||= []).push('still logged'); }";
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::NativeTick, vec![]).unwrap();
+    iso.on_game_tick(1);
+    let _ = iso.probe("1");
+    let logs = iso.drain_logs();
+    assert!(logs.iter().any(|l| l == "still logged"), "{logs:?}");
+    assert!(
+        logs.iter().any(|l| l.starts_with("paint eval: ")),
+        "{logs:?}"
+    );
+    iso.join();
 }
 
 // Task 12 — `EventSignal.ignoredRandoms()` reads the bot instance (the
