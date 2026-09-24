@@ -6830,7 +6830,7 @@ fn interact_off<'b>(
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::shim::{InteractReq, ScriptPaint};
+    use crate::shim::InteractReq;
 
     pub(crate) fn empty_input(tick: u64) -> SnapshotInput<'static> {
         SnapshotInput {
