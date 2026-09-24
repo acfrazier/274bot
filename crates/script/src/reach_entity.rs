@@ -684,15 +684,16 @@ pub(crate) struct WalkHops {
     result: Option<bool>,
     /// This tick's advance already ended waiting (a log was written after).
     waiting: bool,
+    pumped: bool,
 }
 
 impl Family for WalkHops {
     const NAME: &'static str = "walk-hops";
-    const CALLBACKS: &'static [&'static str] = &["log"];
+    const CALLBACKS: &'static [&'static str] = &["log", "sustain"];
+    /// Frozen `log(...)` is not awaited; `await Sustain.run()` is.
+    const SYNC_HOOKS: &'static [usize] = &[LOG_HOP];
     /// The first walk or ladder click goes out in the caller's turn.
     const KICK_ON_START: bool = true;
-    /// Frozen `log(...)` is not awaited.
-    const AWAIT_CALLBACKS: bool = false;
     type Args = WalkHopsArgs;
     type Output = bool;
 
@@ -705,6 +706,7 @@ impl Family for WalkHops {
             logger: Logger::default(),
             result: None,
             waiting: false,
+            pumped: false,
         })
     }
 
@@ -726,11 +728,22 @@ impl Family for WalkHops {
                 return Step::Done(result);
             }
             if std::mem::take(&mut self.waiting) {
+                self.pumped = false;
                 return Step::Wait;
+            }
+            if !self.pumped && cx.has(SUSTAIN_HOP) {
+                self.pumped = true;
+                return Step::Call(Call {
+                    hook: SUSTAIN_HOP,
+                    args: Vec::new(),
+                });
             }
             match self.advance(cx) {
                 Some(result) => self.result = Some(result),
-                None if self.logger.lines.is_empty() => return Step::Wait,
+                None if self.logger.lines.is_empty() => {
+                    self.pumped = false;
+                    return Step::Wait;
+                }
                 None => self.waiting = true,
             }
         }
@@ -738,6 +751,7 @@ impl Family for WalkHops {
 }
 
 const LOG_HOP: usize = 0;
+const SUSTAIN_HOP: usize = 1;
 
 impl WalkHops {
     /// `Some(result)` once the walk ended; `None` waits (or writes a log).

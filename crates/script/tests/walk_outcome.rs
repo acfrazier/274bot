@@ -788,3 +788,38 @@ export default class T extends LoopingBot {
     );
 }
 
+#[test]
+fn isolate_walk_with_hops_pumps_sustain_while_walking() {
+    let src = r#"
+import { walkWithHops } from '../../api/ai/quests/exec/primitives.js';
+import { Sustain } from '../../api/sustain/Sustain.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__ran) return;
+        globalThis.__ran = true;
+        globalThis.__fed = 0;
+        Sustain.set(() => { globalThis.__fed += 1; });
+        globalThis.__ok = await walkWithHops(
+            { x: 2820, z: 3556, level: 0 },
+            1,
+            [],
+            () => {},
+        );
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    for tick in 1..=4 {
+        iso.post_snapshot(encode_snapshot(&base_snapshot(tick, far())));
+        iso.on_game_tick(tick);
+    }
+    let fed = iso.probe("globalThis.__fed").unwrap();
+    let ok = iso.probe("globalThis.__ok").unwrap();
+    iso.join();
+    assert_eq!(ok, serde_json::Value::Null, "walk still in flight: {ok:?}");
+    let n = fed.as_i64().unwrap_or(0);
+    assert!(
+        n >= 3,
+        "walkWithHops pumps Sustain.run like walkResilient; got {fed:?}"
+    );
+}

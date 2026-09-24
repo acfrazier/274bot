@@ -1,5 +1,7 @@
 import { notImpl, runMachine } from '../../../../shim/_kernel.js';
 import { talkOp } from '../../../npcs/Npcs.js';
+import { Sustain } from '../../../sustain/Sustain.js';
+
 
 export { talkOp };
 
@@ -60,7 +62,8 @@ export async function walkWithHops(dest, radius, hops, log) {
                 ...(h.walk ? { walk: tile(h.walk) } : {}),
             })),
         },
-        { log },
+        { log, sustain: () => Sustain.run() },
+
     );
     if (out.kind === 'refused') throw notImpl('primitives.walkWithHops', out.reason);
     return out.kind === 'done' && out.value === true;

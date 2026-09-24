@@ -3,8 +3,9 @@
 //!
 //! Frozen (`Traversal.ts` 102–209, `walkLadder.ts` 47–86):
 //! - `await Sustain.run()` at the start of each loop (`Traversal.ts:130`).
-//! - `EventSignal.pending()` (`hold` / `ours`) returns false before arrival
-//!   (`Traversal.ts:131–134`, `walkLadder.ts:48–52`).
+//! - `EventSignal.pending()` for an owned random (`ours`) returns false
+//!   (`Traversal.ts:131–134`, `walkLadder.ts:48–52`). Guardian `hold` does
+//!   not abort: `machine::on_hold` freezes the row and the walk pauses.
 //! - `timeoutMs` is each baked `walkTo` bound, default 90_000 (`Traversal.ts:107`).
 //! - `attempts` is `maxPasses` (`Traversal.ts:108`); the bound applies only
 //!   when set (`Traversal.ts:149`).
@@ -18,6 +19,11 @@
 //!   `WalkExecutor.probeDest` here, so verify is fail-closed as probe-dead
 //!   (`walkLadder.ts:66–68`).
 //! - Backoff 2–16 ticks (`walkLadder.ts:30–31, 39–40`).
+//! - Frozen `WalkExecutor.lastOutcome === 'blocked'` returns true
+//!   (`Traversal.ts:172–174`). This host's walk wait is arrived-or-failed;
+//!   there is no blocked, so a settled walk is re-checked with `isArrived`.
+//! - Frozen `budget` rebakes once with `bigBudget` (`walkLadder.ts:73–75`).
+//!   The wait is a bool; there is no budget vs failed, so no big-budget rebake.
 
 use crate::machine::{Begin, Call, Cx, Family, Reply, Step};
 use crate::observed;
@@ -95,12 +101,10 @@ fn here() -> Option<WorldTile> {
     })
 }
 
-/// Frozen `EventSignal.pending()`: guardian hold or a detected owned random.
+/// Frozen `EventSignal.pending()` for an owned random. Guardian `hold`
+/// freezes the row (`machine::on_hold`) instead of aborting the walk.
 fn interrupted() -> bool {
-    observed::with(|scene| {
-        let session = scene.since_login();
-        session.hold().unwrap_or(false) || session.ours().unwrap_or(false)
-    })
+    observed::with(|scene| scene.since_login().ours().unwrap_or(false))
 }
 
 /// Frozen `isArrived` over the cached reach view.
@@ -500,6 +504,7 @@ mod tests {
         observed::on_reset();
         machine::on_reset();
         walk_wait::on_reset();
+        machine::on_hold(false);
     }
 
     fn post_here(x: i32, z: i32) {
@@ -652,7 +657,7 @@ mod tests {
     }
 
     #[test]
-    fn hold_after_nopath_returns_false() {
+    fn ours_after_nopath_returns_false() {
         reset();
         post_here(0, 0);
         let h = start(None);
@@ -665,7 +670,7 @@ mod tests {
                     z: 0,
                     level: 0,
                 })
-                .hold(true)
+                .ours(true)
                 .walk_outcome(WalkOutcome {
                     seq: 1,
                     generation: 0,
@@ -682,6 +687,20 @@ mod tests {
         });
         machine::step(&mut NoJs);
         assert_eq!(machine::take(h), Take::Settled(Outcome::Done(json!(false))));
+    }
+
+    #[test]
+    fn guardian_hold_pauses_the_row() {
+        reset();
+        post_here(0, 0);
+        let h = start(None);
+        machine::step(&mut NoJs);
+        let _token = walk_token();
+        machine::on_hold(true);
+        machine::step(&mut NoJs);
+        assert!(machine::merge_ops(Vec::new()).is_empty());
+        assert_eq!(machine::take(h), Take::Pending);
+        machine::on_hold(false);
     }
 
     #[test]
