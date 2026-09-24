@@ -242,15 +242,14 @@ pub(crate) fn accept(cx: &mut Cx<'_>) -> Result<(), &'static str> {
     Ok(())
 }
 
-/// Offer-All the first unnoted side row named `name` (the partner
-/// exchange's own pick). `Err` is the refusal reason; nothing was sent.
-pub(crate) fn offer_all_unnoted(name: &str, cx: &mut Cx<'_>) -> Result<(), &'static str> {
+/// Frozen `Trade.offerAll(name)` without `pick`: Offer-All on the first
+/// side row named `name` (a noted row fails closed, as in [`Trade`]).
+/// `Err` is the refusal reason; nothing was sent.
+pub(crate) fn offer_all(name: &str, cx: &mut Cx<'_>) -> Result<(), &'static str> {
     let obs = observe();
     let probe = obs.probe();
     let rows = offer_rows(&probe, Kind::OfferAll, name, 0)?;
-    let Some(row) = rows.iter().find(|row| !row.noted) else {
-        return Err("no-match");
-    };
+    let row = &rows[0];
     select(&probe, &Screen::of(&probe), name, row, Kind::OfferAll, 0).map(|pressed| {
         cx.emit(pressed);
     })
