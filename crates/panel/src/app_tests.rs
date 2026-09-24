@@ -1,4 +1,7 @@
+use std::io::{Read, Write};
+use std::net::TcpListener;
 use std::path::PathBuf;
+use std::thread;
 use std::time::{Duration, Instant, SystemTime};
 
 use super::{
@@ -21,6 +24,7 @@ use crate::window::RedrawMode;
 use dear_imgui_rs::{ConfigFlags, Id, WindowFlags};
 use host_play::profile::ProfileEnvironment;
 use host_play::SharedClientTemplate;
+use client::io::Packet;
 
 #[test]
 fn logout_is_enabled_only_for_a_loaded_ingame_or_queued_focus() {
@@ -76,6 +80,170 @@ fn checked_fixture(revision: u16) -> (PathBuf, PathBuf, PathBuf) {
     }
     let manifest = fixture.join(format!("manifest-{revision}.json"));
     (root, cache, manifest)
+}
+
+const JAG_SLOTS: [&str; 8] = [
+    "title",
+    "config",
+    "interface",
+    "media",
+    "versionlist",
+    "textures",
+    "wordenc",
+    "sounds",
+];
+
+fn identity_packs() -> Vec<(String, Vec<u8>)> {
+    let fixture =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../host-play/tests/fixtures/profile");
+    let mut tables: Vec<(String, Vec<u8>)> = Vec::new();
+    for prefix in ["model", "anim", "midi", "map"] {
+        tables.push((format!("{prefix}_version"), vec![0, 1]));
+        tables.push((format!("{prefix}_crc"), 1u32.to_be_bytes().to_vec()));
+        tables.push((format!("{prefix}_index"), vec![0]));
+    }
+    let refs: Vec<(&str, &[u8])> = tables
+        .iter()
+        .map(|(name, bytes)| (name.as_str(), bytes.as_slice()))
+        .collect();
+    let versionlist = client::io::synthetic_jag(&refs);
+    JAG_SLOTS
+        .iter()
+        .map(|name| {
+            let bytes = if *name == "versionlist" {
+                versionlist.clone()
+            } else if *name == "config" || *name == "interface" {
+                std::fs::read(fixture.join(name)).unwrap()
+            } else {
+                client::io::synthetic_jag(&[("data", b"content".as_slice())])
+            };
+            ((*name).to_string(), bytes)
+        })
+        .collect()
+}
+fn crc_body(packs: &[(String, Vec<u8>)]) -> Vec<u8> {
+    let mut checksums = [0i32; 9];
+    for (name, bytes) in packs {
+        let slot = JAG_SLOTS
+            .iter()
+            .position(|candidate| candidate == name)
+            .unwrap()
+            + 1;
+        checksums[slot] = Packet::getcrc(bytes, 0, bytes.len());
+    }
+    let mut body = Packet::alloc(0);
+    for &checksum in &checksums {
+        body.p4(checksum);
+    }
+    let mut hash = 1234i32;
+    for &checksum in &checksums {
+        hash = hash.wrapping_shl(1).wrapping_add(checksum);
+    }
+    body.p4(hash);
+    body.data()[..body.pos].to_vec()
+}
+
+fn plant_snapshot(unpack: &std::path::Path, packs: &[(String, Vec<u8>)]) {
+    let versionlist = &packs
+        .iter()
+        .find(|(name, _)| name == "versionlist")
+        .unwrap()
+        .1;
+    let version = client::unpack::version_hash(versionlist);
+    let dir = unpack.join(&version);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut manifest = format!(
+        "version={version}\ndir={}\nsource=update-server\ncomplete=1\n",
+        dir.display()
+    );
+    for (name, bytes) in packs {
+        std::fs::write(dir.join(name), bytes).unwrap();
+        manifest += &format!("jag.{name}.bytes={}\n", bytes.len());
+    }
+    for name in ["models", "anims", "midi", "maps"] {
+        let mut bin = 0u32.to_le_bytes().to_vec();
+        bin.extend_from_slice(&4u32.to_le_bytes());
+        bin.extend_from_slice(b"body");
+        std::fs::write(dir.join(format!("{name}.bin")), &bin).unwrap();
+        manifest += &format!(
+            "{name}.total=1\n{name}.unpacked=1\n{name}.skipped=0\n{name}.bytes={}\n",
+            bin.len()
+        );
+    }
+    std::fs::write(dir.join("manifest"), manifest).unwrap();
+}
+
+/// Mock update server: `/crc` matching the fixture packs, plus pack GETs if
+/// a runtime refresh asks. Detached so unit tests never need a live engine.
+fn serve_fixture_crc(packs: Vec<(String, Vec<u8>)>) -> u16 {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    thread::spawn(move || {
+        listener.set_nonblocking(true).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let body = crc_body(&packs);
+        while Instant::now() < deadline {
+            let (mut sock, _) = match listener.accept() {
+                Ok(conn) => conn,
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    thread::sleep(Duration::from_millis(5));
+                    continue;
+                }
+                Err(_) => break,
+            };
+            let _ = sock.set_read_timeout(Some(Duration::from_secs(5)));
+            let mut request = Vec::new();
+            let mut buf = [0u8; 1024];
+            while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+                match sock.read(&mut buf) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => request.extend_from_slice(&buf[..n]),
+                }
+            }
+            let path = String::from_utf8_lossy(&request)
+                .split_whitespace()
+                .nth(1)
+                .unwrap_or_default()
+                .to_string();
+            let payload = if path == "/crc" {
+                body.clone()
+            } else {
+                packs
+                    .iter()
+                    .find(|(name, _)| path.starts_with(&format!("/{name}")))
+                    .map(|(_, bytes)| bytes.clone())
+                    .unwrap_or_default()
+            };
+            let response = [
+                b"HTTP/1.0 200 OK\r\nContent-Length: ".as_slice(),
+                payload.len().to_string().as_bytes(),
+                b"\r\n\r\n",
+                &payload,
+            ]
+            .concat();
+            let _ = sock.write_all(&response);
+        }
+    });
+    port
+}
+
+fn runtime_checked_fixture(revision: u16) -> (PathBuf, PathBuf, PathBuf, PathBuf, u16) {
+    let (root, cache, _) = checked_fixture(revision);
+    let packs = identity_packs();
+    for (name, bytes) in &packs {
+        std::fs::write(cache.join(name), bytes).unwrap();
+    }
+    let manifest_path = root.join("cache-manifest.json");
+    std::fs::write(
+        &manifest_path,
+        serde_json::to_vec(&host_play::profile::CacheManifest::capture(revision, &cache).unwrap())
+            .unwrap(),
+    )
+    .unwrap();
+    let unpack = root.join("unpack");
+    plant_snapshot(&unpack, &packs);
+    let port = serve_fixture_crc(packs);
+    (root, cache, manifest_path, unpack, port)
 }
 
 #[test]
@@ -158,11 +326,13 @@ fn boot_is_deferred_and_maps_live_smoke_and_vault_pass() {
 }
 
 fn prepared_startup(boot: Boot) -> (PanelState, StartupPreparation, PathBuf) {
-    let (root, cache, manifest) = checked_fixture(274);
+    let (root, cache, manifest, unpack, port) = runtime_checked_fixture(274);
     let options = host_play::ProfileOptions {
         profile: Some("local-274".into()),
         cache_dir: Some(cache),
         cache_manifest: Some(manifest),
+        unpack_dir: Some(unpack),
+        http_port: Some(port),
         vault_path: Some(root.join("startup.vault")),
         ..host_play::ProfileOptions::default()
     };

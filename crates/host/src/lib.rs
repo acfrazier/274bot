@@ -1725,31 +1725,33 @@ mod tests {
         let mut snapshot = GameSnapshot::new();
         publish_snapshot(&mut snapshot, &client, pump.drain(client.gens));
         assert_eq!(snapshot.scene_state(), 1);
-        let scene_before = (
-            snapshot.scene().available,
-            snapshot.scene().base_x,
-            snapshot.scene().base_z,
-            snapshot.scene().level,
-            snapshot.scene().collision_flags.clone(),
+        assert!(
+            !snapshot.scene().available,
+            "scene_state 1 must not publish a collision grid"
         );
 
         // check_scene performs this transition locally without moving a
-        // packet-family generation.
+        // packet-family generation. The host copies the scalar every quiet
+        // drain; an unavailable grid is materialized once when the client
+        // becomes scene-ready (retained collision after a session reset).
         client.scene_state = 2;
         let quiet = pump.drain(client.gens);
         assert!(!quiet.dirty.any());
         publish_snapshot(&mut snapshot, &client, quiet);
 
         assert_eq!(snapshot.scene_state(), 2);
+        assert!(
+            snapshot.scene().available,
+            "scene-ready must materialize the missing host collision view once"
+        );
+        let flags_before = snapshot.scene().collision_flags.clone();
+        client.collision[0].flags[0][0] ^= 1;
+        let quiet_again = pump.drain(client.gens);
+        assert!(!quiet_again.dirty.any());
+        publish_snapshot(&mut snapshot, &client, quiet_again);
         assert_eq!(
-            (
-                snapshot.scene().available,
-                snapshot.scene().base_x,
-                snapshot.scene().base_z,
-                snapshot.scene().level,
-                snapshot.scene().collision_flags.clone(),
-            ),
-            scene_before
+            snapshot.scene().collision_flags, flags_before,
+            "a later quiet drain must not copy the grid without a scene gen or identity change"
         );
     }
 

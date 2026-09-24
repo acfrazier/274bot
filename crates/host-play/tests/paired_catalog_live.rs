@@ -1427,6 +1427,9 @@ mod tests {
         runner.saw_confirm_with_partner = true;
         master.transferred_in = 25;
         runner.transferred_out = 25;
+        master.partner_transfer_events = 1;
+        runner.partner_transfer_events = 1;
+        master.post_transfer_craft_events = 1;
         master.air_from_script = 25;
         master.xp_from_script = 125;
         let mut master_now = master_base;
@@ -2023,8 +2026,12 @@ mod tests {
 
         pair.crafter.observe(air_obs("alice", 0, 27, 135));
         pair.mule.observe(air_obs("bob", 27, 0, 0));
-        pair.mule.observe(air_obs("bob", 0, 27, 0));
-        pair.crafter.observe(air_obs("alice", 27, 0, 135));
+        let mut delayed_mule = air_obs("bob", 0, 27, 0);
+        delayed_mule.tick = 11;
+        pair.mule.observe(delayed_mule);
+        let mut delayed_crafter = air_obs("alice", 27, 0, 135);
+        delayed_crafter.tick = 11;
+        pair.crafter.observe(delayed_crafter);
         let mut post_exchange_craft = air_obs("alice", 0, 27, 270);
         post_exchange_craft.tile = Some((AIR_RUINS.0, 4800, AIR_RUINS.2));
         post_exchange_craft.in_temple = true;
@@ -2545,7 +2552,10 @@ mod tests {
             tile: Some(FLAX_FIELD),
             ..flax_obs("runner", 0, 0, 0)
         };
-        let spinner_base = flax_obs("spinner", 0, 0, 0);
+        let spinner_base = FlaxObservation {
+            crafting: 10,
+            ..flax_obs("spinner", 0, 0, 0)
+        };
         flax_prepared_current(FlaxRole::Runner, "runner", &runner_base).unwrap();
         flax_prepared_current(FlaxRole::Spinner, "spinner", &spinner_base).unwrap();
         let mut pair = FlaxPairWitness {

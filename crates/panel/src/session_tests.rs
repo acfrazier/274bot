@@ -12,7 +12,7 @@ use api::snapshot::{GameSnapshot, WorldTile};
 use client::client::{Client, ClientConfig};
 use client::config::if_type::{ComponentType, IfType, IfTypeMut};
 use client::dash3d::CollisionFlag;
-use client::io::ServerProt;
+use client::io::{Packet, ServerProt};
 use client::render::nav_debug::{CORNER_NE, FACE_N, FACE_S};
 use host::{FrameBuf, SlotInput};
 use host_play::profile::ProfileEnvironment;
@@ -25,11 +25,13 @@ use nav::transport::{TransportEdge, TransportGraph, TransportKind};
 use nav::traveller::Traveller;
 use nav::world::NavWorld;
 use nav::WorldState;
+use std::io::{Read, Write};
+use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
-
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::thread;
+use std::time::{Duration, Instant};
 use vault::{Profile, ProfileSettings, Vault};
 
 #[test]
@@ -134,8 +136,9 @@ fn checked_profile_fixture(revision: u16) -> (PathBuf, PathBuf, PathBuf) {
     let fixture =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../host-play/tests/fixtures/profile");
     let root = std::env::temp_dir().join(format!(
-        "274bot-panel-session-profile-{revision}-{}",
-        std::process::id()
+        "274bot-panel-session-profile-{revision}-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
     ));
     let _ = std::fs::remove_dir_all(&root);
     let cache = root.join("cache");
@@ -156,9 +159,173 @@ fn checked_profile_fixture(revision: u16) -> (PathBuf, PathBuf, PathBuf) {
     (root, cache, manifest)
 }
 
+const JAG_SLOTS: [&str; 8] = [
+    "title",
+    "config",
+    "interface",
+    "media",
+    "versionlist",
+    "textures",
+    "wordenc",
+    "sounds",
+];
+
+fn identity_packs() -> Vec<(String, Vec<u8>)> {
+    let fixture =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../host-play/tests/fixtures/profile");
+    let mut tables: Vec<(String, Vec<u8>)> = Vec::new();
+    for prefix in ["model", "anim", "midi", "map"] {
+        tables.push((format!("{prefix}_version"), vec![0, 1]));
+        tables.push((format!("{prefix}_crc"), 1u32.to_be_bytes().to_vec()));
+        tables.push((format!("{prefix}_index"), vec![0]));
+    }
+    let refs: Vec<(&str, &[u8])> = tables
+        .iter()
+        .map(|(name, bytes)| (name.as_str(), bytes.as_slice()))
+        .collect();
+    let versionlist = client::io::synthetic_jag(&refs);
+    JAG_SLOTS
+        .iter()
+        .map(|name| {
+            let bytes = if *name == "versionlist" {
+                versionlist.clone()
+            } else if *name == "config" || *name == "interface" {
+                std::fs::read(fixture.join(name)).unwrap()
+            } else {
+                client::io::synthetic_jag(&[("data", b"content".as_slice())])
+            };
+            ((*name).to_string(), bytes)
+        })
+        .collect()
+}
+fn crc_body(packs: &[(String, Vec<u8>)]) -> Vec<u8> {
+    let mut checksums = [0i32; 9];
+    for (name, bytes) in packs {
+        let slot = JAG_SLOTS
+            .iter()
+            .position(|candidate| candidate == name)
+            .unwrap()
+            + 1;
+        checksums[slot] = Packet::getcrc(bytes, 0, bytes.len());
+    }
+    let mut body = Packet::alloc(0);
+    for &checksum in &checksums {
+        body.p4(checksum);
+    }
+    let mut hash = 1234i32;
+    for &checksum in &checksums {
+        hash = hash.wrapping_shl(1).wrapping_add(checksum);
+    }
+    body.p4(hash);
+    body.data()[..body.pos].to_vec()
+}
+
+fn plant_snapshot(unpack: &Path, packs: &[(String, Vec<u8>)]) {
+    let versionlist = &packs
+        .iter()
+        .find(|(name, _)| name == "versionlist")
+        .unwrap()
+        .1;
+    let version = client::unpack::version_hash(versionlist);
+    let dir = unpack.join(&version);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut manifest = format!(
+        "version={version}\ndir={}\nsource=update-server\ncomplete=1\n",
+        dir.display()
+    );
+    for (name, bytes) in packs {
+        std::fs::write(dir.join(name), bytes).unwrap();
+        manifest += &format!("jag.{name}.bytes={}\n", bytes.len());
+    }
+    for name in ["models", "anims", "midi", "maps"] {
+        let mut bin = 0u32.to_le_bytes().to_vec();
+        bin.extend_from_slice(&4u32.to_le_bytes());
+        bin.extend_from_slice(b"body");
+        std::fs::write(dir.join(format!("{name}.bin")), &bin).unwrap();
+        manifest += &format!(
+            "{name}.total=1\n{name}.unpacked=1\n{name}.skipped=0\n{name}.bytes={}\n",
+            bin.len()
+        );
+    }
+    std::fs::write(dir.join("manifest"), manifest).unwrap();
+}
+
+/// Mock update server: `/crc` matching the fixture packs, plus pack GETs if
+/// a runtime refresh asks. Detached so unit tests never need a live engine.
+fn serve_fixture_crc(packs: Vec<(String, Vec<u8>)>) -> u16 {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    thread::spawn(move || {
+        listener.set_nonblocking(true).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let body = crc_body(&packs);
+        while Instant::now() < deadline {
+            let (mut sock, _) = match listener.accept() {
+                Ok(conn) => conn,
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    thread::sleep(Duration::from_millis(5));
+                    continue;
+                }
+                Err(_) => break,
+            };
+            let _ = sock.set_read_timeout(Some(Duration::from_secs(5)));
+            let mut request = Vec::new();
+            let mut buf = [0u8; 1024];
+            while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+                match sock.read(&mut buf) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => request.extend_from_slice(&buf[..n]),
+                }
+            }
+            let path = String::from_utf8_lossy(&request)
+                .split_whitespace()
+                .nth(1)
+                .unwrap_or_default()
+                .to_string();
+            let payload = if path == "/crc" {
+                body.clone()
+            } else {
+                packs
+                    .iter()
+                    .find(|(name, _)| path.starts_with(&format!("/{name}")))
+                    .map(|(_, bytes)| bytes.clone())
+                    .unwrap_or_default()
+            };
+            let response = [
+                b"HTTP/1.0 200 OK\r\nContent-Length: ".as_slice(),
+                payload.len().to_string().as_bytes(),
+                b"\r\n\r\n",
+                &payload,
+            ]
+            .concat();
+            let _ = sock.write_all(&response);
+        }
+    });
+    port
+}
+
+fn runtime_profile_fixture(revision: u16) -> (PathBuf, PathBuf, PathBuf, PathBuf, u16) {
+    let (root, cache, _) = checked_profile_fixture(revision);
+    let packs = identity_packs();
+    for (name, bytes) in &packs {
+        std::fs::write(cache.join(name), bytes).unwrap();
+    }
+    let manifest_path = root.join("cache-manifest.json");
+    std::fs::write(
+        &manifest_path,
+        serde_json::to_vec(&host_play::profile::CacheManifest::capture(revision, &cache).unwrap())
+            .unwrap(),
+    )
+    .unwrap();
+    let unpack = root.join("unpack");
+    plant_snapshot(&unpack, &packs);
+    let port = serve_fixture_crc(packs);
+    (root, cache, manifest_path, unpack, port)
+}
+
 #[test]
 fn explicit_profile_wins_saved_revision_and_bound_session_refuses_changes() {
-    let (root, cache, manifest) = checked_profile_fixture(274);
+    let (root, cache, manifest, unpack, port) = runtime_profile_fixture(274);
     let mut session = Session::new();
     session.ui.server_revision = 289;
     session
@@ -166,6 +333,8 @@ fn explicit_profile_wins_saved_revision_and_bound_session_refuses_changes() {
             profile: Some("local-274".into()),
             cache_dir: Some(cache),
             cache_manifest: Some(manifest),
+            unpack_dir: Some(unpack),
+            http_port: Some(port),
             ..ProfileOptions::default()
         })
         .unwrap();
@@ -186,13 +355,15 @@ fn explicit_profile_wins_saved_revision_and_bound_session_refuses_changes() {
 
 #[test]
 fn stale_profile_preparation_is_dropped_without_partial_session_state() {
-    let (root, cache, manifest) = checked_profile_fixture(274);
+    let (root, cache, manifest, unpack, port) = runtime_profile_fixture(274);
     let mut session = Session::new();
     session
         .configure_profile(ProfileOptions {
             profile: Some("local-274".into()),
             cache_dir: Some(cache),
             cache_manifest: Some(manifest),
+            unpack_dir: Some(unpack),
+            http_port: Some(port),
             ..ProfileOptions::default()
         })
         .unwrap();
@@ -246,13 +417,15 @@ fn profile_preparation_failure_keeps_vault_play_and_slots_absent() {
 
 #[test]
 fn validated_profile_unlock_uses_the_ticket_without_rebinding() {
-    let (root, cache, manifest) = checked_profile_fixture(274);
+    let (root, cache, manifest, unpack, port) = runtime_profile_fixture(274);
     let mut session = Session::new();
     session
         .configure_profile(ProfileOptions {
             profile: Some("local-274".into()),
             cache_dir: Some(cache.clone()),
             cache_manifest: Some(manifest),
+            unpack_dir: Some(unpack),
+            http_port: Some(port),
             vault_path: Some(root.join("prepared.vault")),
             ..ProfileOptions::default()
         })
@@ -394,7 +567,7 @@ fn explicit_catalog_default_allows_manual_import_and_preserves_custom_cards() {
 
 #[test]
 fn revision_and_binding_allow_already_loaded_scripts_and_source_edits() {
-    let (root, cache, manifest) = checked_profile_fixture(274);
+    let (root, cache, manifest, unpack, port) = runtime_profile_fixture(274);
     let catalog = write_looping_catalog(&root.join("catalog"), &[("Chosen", "Chosen")]);
     let source = catalog.join("src/bot/scripts/Chosen/Chosen.ts");
     let mut session = Session::new();
@@ -404,6 +577,8 @@ fn revision_and_binding_allow_already_loaded_scripts_and_source_edits() {
             revision: None,
             cache_dir: Some(cache),
             cache_manifest: Some(manifest),
+            unpack_dir: Some(unpack),
+            http_port: Some(port),
             catalog_root: Some(catalog),
             ..ProfileOptions::default()
         })
