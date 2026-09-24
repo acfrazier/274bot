@@ -210,14 +210,13 @@ fn obj_catalog<'s>(scope: &mut v8::HandleScope<'s>) -> Result<v8::Local<'s, v8::
             .set_index(scope, index as u32, row.into())
             .ok_or_else(|| "selected facts catalog items".to_string())?;
     }
-    for (id, alias) in crate::market_catalog::aliases(data.items()) {
+    for (id, alias) in crate::market_catalog::aliases(&data).iter() {
         let row = v8::Object::new(scope);
-        let words: Vec<_> = alias.words;
-        let words = string_array(scope, &words)?;
+        let words = string_array(scope, &alias.words)?;
         set_key(scope, row, "words", words);
         let label = v8_str(scope, &alias.label)?;
         set_key(scope, row, "label", label);
-        let id = v8::Integer::new(scope, id);
+        let id = v8::Integer::new(scope, *id);
         aliases
             .set(scope, id.into(), row.into())
             .ok_or_else(|| "selected facts catalog aliases".to_string())?;

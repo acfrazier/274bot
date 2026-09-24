@@ -5,11 +5,13 @@
 //!
 //! Not mapped: the frozen hand-written `ITEM_ALIASES` (green hide, unstrung
 //! bow and torn-page labels). Only the aliases the frozen generator derives
-//! from debugnames (`gen-namecollisions.ts`) are derived here.
+//! from debugnames (`gen-namecollisions.ts`) are derived here, once per
+//! selected revision and shared by every isolate.
 
 use api::game_data::{GameItem, SelectedGameData};
 use std::cmp::Ordering;
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex, PoisonError, Weak};
 
 /// Frozen `ItemAlias`: the words that separate an obj from its same-named
 /// siblings and the label the shop says back.
@@ -33,9 +35,9 @@ pub(crate) fn client_name(data: &SelectedGameData, id: i32) -> Option<&str> {
 
 /// Frozen `displayName(cat, id)`: the alias label, else the plain name, else
 /// `item <id>`.
-pub(crate) fn display_name(data: &SelectedGameData, id: i32) -> String {
-    if let Some(alias) = alias_of(data, id) {
-        return alias.label;
+pub(crate) fn display_name(data: &Arc<SelectedGameData>, id: i32) -> String {
+    if let Some(alias) = aliases(data).get(&id) {
+        return alias.label.clone();
     }
     match client_name(data, id) {
         Some(name) => name.to_string(),
@@ -127,9 +129,32 @@ fn collides(item: &GameItem) -> Option<(&str, &str)> {
 
 type Member<'a> = (i32, &'a str, &'a str);
 
-/// Every derived alias, keyed by obj id (frozen `buildAliases` without the
-/// hand-written `ITEM_ALIASES`).
-pub(crate) fn aliases(items: &[GameItem]) -> HashMap<i32, ItemAlias> {
+/// Derived aliases by obj id.
+pub(crate) type Aliases = HashMap<i32, ItemAlias>;
+
+/// One derived alias map per selected-data allocation (one per revision in
+/// production), shared by every isolate on every thread.
+static ALIASES: Mutex<Vec<(Weak<SelectedGameData>, Arc<Aliases>)>> = Mutex::new(Vec::new());
+
+/// Every derived alias of this selected data, keyed by obj id (frozen
+/// `buildAliases` without the hand-written `ITEM_ALIASES`). Built on the
+/// first call for this data, then shared.
+pub(crate) fn aliases(data: &Arc<SelectedGameData>) -> Arc<Aliases> {
+    let mut cache = ALIASES.lock().unwrap_or_else(PoisonError::into_inner);
+    // A dropped data's slot could be reused by a new allocation: forget it.
+    cache.retain(|(owner, _)| owner.strong_count() > 0);
+    if let Some((_, map)) = cache
+        .iter()
+        .find(|(owner, _)| std::ptr::eq(owner.as_ptr(), Arc::as_ptr(data)))
+    {
+        return Arc::clone(map);
+    }
+    let map = Arc::new(derive_aliases(data.items()));
+    cache.push((Arc::downgrade(data), Arc::clone(&map)));
+    map
+}
+
+fn derive_aliases(items: &[GameItem]) -> Aliases {
     let mut groups: HashMap<String, Vec<Member>> = HashMap::new();
     for item in items {
         if let Some((debugname, name)) = collides(item) {
@@ -139,27 +164,7 @@ pub(crate) fn aliases(items: &[GameItem]) -> HashMap<i32, ItemAlias> {
                 .push((item.id, debugname, name));
         }
     }
-    groups
-        .into_values()
-        .flat_map(|members| distinguish(members))
-        .collect()
-}
-
-/// The derived alias of one obj, without building the whole map.
-fn alias_of(data: &SelectedGameData, id: i32) -> Option<ItemAlias> {
-    let (_, name) = collides(data.item_by_id(id)?)?;
-    let key = name.to_lowercase();
-    let members = data
-        .items()
-        .iter()
-        .filter_map(|item| {
-            let (debugname, name) = collides(item)?;
-            (name.to_lowercase() == key).then_some((item.id, debugname, name))
-        })
-        .collect();
-    distinguish(members)
-        .into_iter()
-        .find_map(|(member, alias)| (member == id).then_some(alias))
+    groups.into_values().flat_map(distinguish).collect()
 }
 
 /// Frozen `distinguish` + `usable` + `titled` over one same-name group: the
@@ -236,7 +241,8 @@ mod tests {
         // Dragonhides differ only by their debugname colour.
         assert_eq!(display_name(&data, 1753), "Green dragonhide");
         assert_eq!(client_name(&data, 1753), Some("Dragonhide"));
-        let all = aliases(data.items());
+        let all = aliases(&data);
+        assert!(Arc::ptr_eq(&all, &aliases(&data)), "built once, shared");
         assert_eq!(all[&1747].words, ["black"]);
         assert_eq!(display_name(&data, 1113), "Rune chainbody");
         assert_eq!(display_name(&data, -5), "item -5");
