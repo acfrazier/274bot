@@ -69,6 +69,33 @@ pub enum ReloadOutcome {
     Failed(String),
 }
 
+/// Which operator action a pending Start came from: it decides where a
+/// setup failure is reported once it is observed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PendingStartKind {
+    Start,
+    StartAll,
+    Reload,
+}
+
+/// A Load Start whose isolate setup has not settled. Start returns before
+/// V8 setup, so the card's assignment is persisted and its load diagnostic
+/// cleared only on Ready; a failure records the diagnostic instead.
+#[derive(Debug, Clone)]
+pub(crate) struct PendingStart {
+    card: script::JsCard,
+    kind: PendingStartKind,
+}
+
+/// The last Start all tally. A member whose setup fails after the click
+/// moves from started to failed, so the report lists it.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct BulkStart {
+    started: usize,
+    skipped: usize,
+    failures: Vec<String>,
+}
+
 impl Session {
     pub fn restore_script_heading(&mut self, profile: &str) {
         if let Some(sel) = self.pending_browse.get(profile).cloned() {
@@ -335,19 +362,24 @@ impl Session {
                         api_family: Some(card.api_family.as_str().into()),
                     },
                 )?;
-                {
-                    let play = self.play.as_ref().ok_or_else(|| "no play".to_string())?;
-                    let result = play.script_start_load_typed(
-                        profile,
-                        card.js.clone(),
-                        card.shape,
-                        bag,
-                        siblings,
-                    );
-                    self.js.record_start_result(&card, result)?;
-                    play.script_attach_identity(profile, card.identity_key());
+                let play = self.play.as_ref().ok_or_else(|| "no play".to_string())?;
+                if let Err(e) = play.script_start_load_typed(
+                    profile,
+                    card.js.clone(),
+                    card.shape,
+                    bag,
+                    siblings,
+                ) {
+                    return self.js.record_start_result(&card, Err(e));
                 }
-                self.persist_successful_assignment(profile, card.assignment());
+                play.script_attach_identity(profile, card.identity_key());
+                self.pending_starts.insert(
+                    profile.to_string(),
+                    PendingStart {
+                        card,
+                        kind: PendingStartKind::Start,
+                    },
+                );
                 Ok(())
             }
         }
@@ -379,16 +411,109 @@ impl Session {
                 script::RunState::Idle | script::RunState::Error => {}
             }
             match self.script_start_profile(&name) {
-                Ok(()) => started += 1,
+                Ok(()) => {
+                    started += 1;
+                    if let Some(pending) = self.pending_starts.get_mut(&name) {
+                        pending.kind = PendingStartKind::StartAll;
+                    }
+                }
                 Err(e) => failures.push(format!("{name}: {e}")),
             }
         }
         let report = format_bulk("Start all", started, skipped, &failures);
+        self.bulk_start = Some(BulkStart {
+            started,
+            skipped,
+            failures,
+        });
         if self.last_bulk_script_report.as_deref() == Some(report.as_str()) {
             return;
         }
         self.last_bulk_script_report = Some(report.clone());
         self.error = Some(report);
+    }
+
+    /// Commit or report every Load Start whose setup has settled since the
+    /// last frame: Ready persists the assignment and clears the card's
+    /// load diagnostic; a failure records it and reports it where the
+    /// Start was made. Called once per UI frame.
+    pub fn settle_script_starts(&mut self) {
+        if self.pending_starts.is_empty() {
+            return;
+        }
+        let Some(play) = self.play.as_ref() else {
+            return;
+        };
+        let mut settled = Vec::new();
+        for name in self.pending_starts.keys() {
+            match play.script_take_start_outcome(name) {
+                Some(outcome) => settled.push((name.clone(), Some(outcome))),
+                // No outcome and no setup in flight: the slot was removed
+                // (its Stop cancelled the Start) — nothing to commit.
+                None if !matches!(
+                    play.script_state(name),
+                    script::RunState::Starting | script::RunState::Stopping
+                ) =>
+                {
+                    settled.push((name.clone(), None))
+                }
+                None => {}
+            }
+        }
+        for (name, outcome) in settled {
+            let Some(pending) = self.pending_starts.remove(&name) else {
+                continue;
+            };
+            match outcome {
+                Some(script::StartOutcome::Ready) => {
+                    let _ = self.js.record_start_result(&pending.card, Ok(()));
+                    // Persisting is bookkeeping, not an operator action: it
+                    // must not clear a message shown since the click.
+                    let shown = self.error.take();
+                    self.persist_successful_assignment(&name, pending.card.assignment());
+                    if self.error.is_none() {
+                        self.error = shown;
+                    }
+                }
+                Some(script::StartOutcome::Failed(e)) => {
+                    let diagnostic = self
+                        .js
+                        .record_start_result(
+                            &pending.card,
+                            Err(script::StartLoadError::RuntimeLoad(e.clone())),
+                        )
+                        .err()
+                        .unwrap_or(e);
+                    self.report_start_failure(&name, pending.kind, diagnostic);
+                }
+                Some(script::StartOutcome::Cancelled) | None => {}
+            }
+        }
+    }
+
+    fn report_start_failure(&mut self, name: &str, kind: PendingStartKind, diagnostic: String) {
+        match kind {
+            PendingStartKind::Start => {
+                let message = format!("script: {diagnostic}");
+                if let Some(watch) = self.external_core_watch() {
+                    if watch.configured() && watch.account() == name {
+                        watch.fail_start(message.clone());
+                    }
+                }
+                self.error = Some(message);
+            }
+            PendingStartKind::StartAll => {
+                let bulk = self.bulk_start.get_or_insert_with(BulkStart::default);
+                bulk.started = bulk.started.saturating_sub(1);
+                bulk.failures.push(format!("{name}: {diagnostic}"));
+                let report = format_bulk("Start all", bulk.started, bulk.skipped, &bulk.failures);
+                self.last_bulk_script_report = Some(report.clone());
+                self.error = Some(report);
+            }
+            PendingStartKind::Reload => {
+                self.error = Some(format!("reload: {name}: {diagnostic}"));
+            }
+        }
     }
 
     pub fn script_stop_all(&mut self) {
@@ -406,9 +531,7 @@ impl Session {
             let state = play.script_state(&name);
             if matches!(
                 state,
-                script::RunState::Running
-                    | script::RunState::Paused
-                    | script::RunState::Starting
+                script::RunState::Running | script::RunState::Paused | script::RunState::Starting
             ) {
                 play.script_stop(&name);
                 stopped += 1;
@@ -657,14 +780,15 @@ impl Session {
         }
     }
 
+    /// Restart one replaced slot on the prepared card. The caller has just
+    /// stopped it, so the slot is usually still reaping (`Stopping`): the
+    /// slot queues this Start behind the reap. `Ok` means the Start was
+    /// accepted; its setup settles in [`Self::settle_script_starts`].
     fn script_start_prepared(
         &mut self,
         profile: &str,
         prepared: &script::PreparedCard,
     ) -> Result<(), String> {
-        if script_active_name(self, profile) {
-            return Ok(());
-        }
         if self.play.is_none() {
             return Err("no play".into());
         }
@@ -681,19 +805,24 @@ impl Session {
         if self.fail_reload_start_for.as_deref() == Some(profile) {
             return Err("injected start failure".into());
         }
-        {
-            let play = self.play.as_ref().ok_or_else(|| "no play".to_string())?;
-            let result = play.script_start_load_typed(
-                profile,
-                card.js.clone(),
-                card.shape,
-                bag,
-                prepared.siblings.clone(),
-            );
-            self.js.record_start_result(card, result)?;
-            play.script_attach_identity(profile, card.identity_key());
+        let play = self.play.as_ref().ok_or_else(|| "no play".to_string())?;
+        if let Err(e) = play.script_start_load_typed(
+            profile,
+            card.js.clone(),
+            card.shape,
+            bag,
+            prepared.siblings.clone(),
+        ) {
+            return self.js.record_start_result(card, Err(e));
         }
-        self.persist_successful_assignment(profile, card.assignment());
+        play.script_attach_identity(profile, card.identity_key());
+        self.pending_starts.insert(
+            profile.to_string(),
+            PendingStart {
+                card: card.clone(),
+                kind: PendingStartKind::Reload,
+            },
+        );
         Ok(())
     }
 
@@ -1203,7 +1332,32 @@ mod tests {
     use super::*;
     use std::fs;
     use std::sync::atomic::{AtomicU32, Ordering};
+    use std::time::{Duration, Instant};
     use vault::{Profile, ProfileSettings, Vault};
+
+    /// Pump the panel's per-frame Start settle (the public observe path)
+    /// until every pending Start has settled. Start returns before V8
+    /// setup; a Reload restart also waits for the old isolate's reap.
+    fn settle(s: &mut Session) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !s.pending_starts.is_empty() && Instant::now() < deadline {
+            s.settle_script_starts();
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(s.pending_starts.is_empty(), "script Start did not settle");
+    }
+
+    /// Pump `name`'s lifecycle until it reaches `want` (Stop returns
+    /// before the reap).
+    fn wait_state(s: &Session, name: &str, want: script::RunState) {
+        let play = s.play.as_ref().unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while play.script_state(name) != want && Instant::now() < deadline {
+            play.pump_script_lifecycle(name);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(play.script_state(name), want, "{name}");
+    }
 
     fn tmp(name: &str) -> std::path::PathBuf {
         static N: AtomicU32 = AtomicU32::new(0);
@@ -1458,6 +1612,7 @@ mod tests {
             bad_path.to_string_lossy().into_owned(),
         ));
         s.script_start_selected();
+        settle(&mut s);
         assert!(
             s.error
                 .as_deref()
@@ -1469,6 +1624,10 @@ mod tests {
         assert_eq!(
             s.play.as_ref().unwrap().script_state("alice"),
             script::RunState::Idle
+        );
+        assert!(
+            s.profile_assignment("alice").is_none(),
+            "a broken Start is never the profile's assignment"
         );
 
         let good_path = write_bot(&dir, "good.ts", BOT_TS);
@@ -1497,7 +1656,23 @@ mod tests {
         let path = write_bot(&dir, "retry.ts", source);
         let card = s.js.load(&path).unwrap();
         let sel = script::ScriptSel::Loaded(card.source, path.to_string_lossy().into_owned());
-        assert!(s.script_start_sel("alice", sel.clone()).is_err());
+        // Start returns before V8 setup: the runtime failure settles after
+        // it and reaches the operator as the Start error it used to be.
+        s.script_start_sel("alice", sel.clone())
+            .expect("Start is accepted before setup");
+        settle(&mut s);
+        assert!(
+            s.error
+                .as_deref()
+                .unwrap_or("")
+                .contains("retry-load-proof"),
+            "{:?}",
+            s.error
+        );
+        assert_eq!(
+            s.play.as_ref().unwrap().script_state("alice"),
+            script::RunState::Idle
+        );
         let failure = s.js.load_failure(&card.identity_key()).unwrap().clone();
         assert!(s.profile_assignment("alice").is_none());
         assert_eq!(
@@ -1516,12 +1691,21 @@ mod tests {
             &format!("throw new Error('other-load-proof');\n{BOT_TS}"),
         );
         let other = s.js.load(&other_path).unwrap();
-        assert!(s
-            .script_start_sel(
-                "bob",
-                script::ScriptSel::Loaded(other.source, other_path.to_string_lossy().into_owned())
-            )
-            .is_err());
+        s.script_start_sel(
+            "bob",
+            script::ScriptSel::Loaded(other.source, other_path.to_string_lossy().into_owned()),
+        )
+        .expect("Start is accepted before setup");
+        settle(&mut s);
+        assert!(
+            s.error
+                .as_deref()
+                .unwrap_or("")
+                .contains("other-load-proof"),
+            "{:?}",
+            s.error
+        );
+        assert!(s.profile_assignment("bob").is_none());
         let other_failure = s.js.load_failure(&other.identity_key()).unwrap().clone();
         assert_eq!(other_failure.api_family, Some(script::ApiFamily::V1));
         assert_eq!(other_failure.stage, script::LoadStage::RuntimeLoad);
@@ -1530,6 +1714,7 @@ mod tests {
         // or running a throwaway validation isolate that could clear the diagnostic.
         fs::write(&helper, "export const fail = false;").unwrap();
         s.script_start_sel("alice", sel.clone()).unwrap();
+        settle(&mut s);
         assert!(s.js.load_failure(&card.identity_key()).is_none());
         assert_eq!(
             s.js.load_failure(&other.identity_key()),
@@ -1601,6 +1786,7 @@ mod tests {
             true,
         );
         s.script_start_selected();
+        settle(&mut s);
         assert_eq!(s.error, None, "{:?}", s.error);
         let play = s.play.as_ref().unwrap();
         assert_eq!(play.script_state("alice"), script::RunState::Running);
@@ -1610,7 +1796,7 @@ mod tests {
         assert!(asg.identity.contains("ext.ts"), "{}", asg.identity);
         assert!(asg.unavailable.is_none());
         play.script_stop("alice");
-        assert_eq!(play.script_state("alice"), script::RunState::Idle);
+        wait_state(&s, "alice", script::RunState::Idle);
         assert_eq!(
             s.profile_assignment("alice").unwrap().identity,
             asg.identity,
@@ -1648,8 +1834,10 @@ mod tests {
                 .count();
         assert_eq!(again, 1, "same path must replace, not duplicate");
         s.script_start_selected();
+        settle(&mut s);
         s.play.as_ref().unwrap().script_stop("alice");
         assert_eq!(s.script_reload_clicked(), ReloadOutcome::NothingChanged);
+        settle(&mut s);
     }
 
     #[test]
@@ -1658,8 +1846,10 @@ mod tests {
         let path = write_bot(&dir, "same.ts", BOT_TS);
         s.load_js(&path);
         s.script_start_selected();
+        settle(&mut s);
         assert_eq!(s.error, None, "{:?}", s.error);
         let out = s.script_reload_clicked();
+        settle(&mut s);
         assert_eq!(out, ReloadOutcome::NothingChanged);
         assert_eq!(s.error.as_deref(), Some(script::NOTHING_CHANGED_RELOAD));
         assert_eq!(
@@ -1675,6 +1865,7 @@ mod tests {
         let path = write_bot(&dir, "run.ts", BOT_TS);
         s.load_js(&path);
         s.script_start_selected();
+        settle(&mut s);
         assert_eq!(s.error, None, "{:?}", s.error);
         let old_js =
             s.js.get(script::ScriptSource::File, &path.to_string_lossy())
@@ -1708,6 +1899,7 @@ mod tests {
         let path = write_bot(&dir, "pause.ts", BOT_TS);
         s.load_js(&path);
         s.script_start_selected();
+        settle(&mut s);
         fs::write(&path, format!("{BOT_TS}// changed\n")).unwrap();
         assert_eq!(s.script_reload(false), ReloadOutcome::NeedsConfirm);
         s.play.as_ref().unwrap().script_pause("alice");
@@ -1721,6 +1913,7 @@ mod tests {
                 .js
                 .clone();
         let commit = s.script_reload(true);
+        settle(&mut s);
         assert_eq!(commit, ReloadOutcome::NeedsConfirm);
         assert!(
             s.error
@@ -1749,12 +1942,14 @@ mod tests {
         let path = write_bot(&dir, "keep.ts", BOT_TS);
         s.load_js(&path);
         s.script_start_selected();
+        settle(&mut s);
         let old =
             s.js.get(script::ScriptSource::File, &path.to_string_lossy())
                 .unwrap()
                 .clone();
         fs::write(&path, "const x = 1;\n").unwrap();
         let out = s.script_reload(true);
+        settle(&mut s);
         match out {
             ReloadOutcome::Failed(e) => assert!(
                 e.contains("shape") || e.contains("unloadable") || e.contains("prepare"),
@@ -1781,6 +1976,7 @@ mod tests {
         let path = write_bot(&dir, "live.ts", src);
         s.load_js(&path);
         s.script_start_selected();
+        settle(&mut s);
         assert_eq!(s.error, None, "{:?}", s.error);
         assert!(s.set_profile_setting(
             "alice",
@@ -1849,6 +2045,7 @@ mod tests {
         )
         .unwrap();
         s.refresh_catalog_at(&root);
+        settle(&mut s);
         let good = s.js.get(script::ScriptSource::Catalog, "GoodBot").unwrap();
         assert!(!good.js.is_empty(), "successful prepare must keep js");
         assert_ne!(good.js, good_js, "changed good card commits prepared js");
@@ -1908,6 +2105,7 @@ mod tests {
         )
         .unwrap();
         s.refresh_catalog_at(&root);
+        settle(&mut s);
         let names: Vec<_> =
             s.js.load_failures()
                 .iter()
@@ -1951,6 +2149,7 @@ mod tests {
             "RunBot".into(),
         ));
         s.script_start_selected();
+        settle(&mut s);
         assert_eq!(s.error, None, "{:?}", s.error);
         fs::write(
             root.join("src/bot/scripts/RunBot/RunBot.ts"),
@@ -1958,6 +2157,7 @@ mod tests {
         )
         .unwrap();
         s.refresh_catalog_at(&root);
+        settle(&mut s);
         assert_eq!(
             s.play.as_ref().unwrap().script_state("alice"),
             script::RunState::Running,
@@ -1986,6 +2186,7 @@ mod tests {
         s.script_sel = Some(sel.clone());
         s.set_pending_browse(profile, sel);
         s.script_start_selected();
+        settle(s);
         assert_eq!(s.error, None, "{profile} start: {:?}", s.error);
     }
 
@@ -1993,6 +2194,7 @@ mod tests {
         fs::write(path, format!("{BOT_TS}// changed\n")).unwrap();
         focus_profile(s, "alice");
         assert_eq!(s.script_reload_clicked(), ReloadOutcome::NeedsConfirm);
+        settle(s);
     }
 
     fn assert_applied(out: ReloadOutcome, restarted: usize, failed: usize) {
@@ -2049,6 +2251,7 @@ mod tests {
         );
         // A later click must prepare and warn again, never reuse cancelled consent.
         assert_eq!(s.script_reload_clicked(), ReloadOutcome::NeedsConfirm);
+        settle(&mut s);
         s.play.as_ref().unwrap().script_stop("alice");
         s.play.as_ref().unwrap().script_stop("bob");
     }
@@ -2060,10 +2263,12 @@ mod tests {
         let path_b = write_bot(&dir, "b.ts", BOT_TS);
         s.load_js(&path_a);
         s.script_start_selected();
+        settle(&mut s);
         assert_eq!(s.error, None, "{:?}", s.error);
         focus_profile(&mut s, "bob");
         s.load_js(&path_b);
         s.script_start_selected();
+        settle(&mut s);
         assert_eq!(s.error, None, "{:?}", s.error);
         s.play.as_ref().unwrap().script_pause("bob");
         let old_b =
@@ -2075,6 +2280,7 @@ mod tests {
         fs::write(&path_b, format!("{BOT_TS}// b changed\n")).unwrap();
         focus_profile(&mut s, "alice");
         assert_eq!(s.script_reload_clicked(), ReloadOutcome::NeedsConfirm);
+        settle(&mut s);
         assert!(
             s.reload_warning
                 .as_ref()
@@ -2084,6 +2290,7 @@ mod tests {
         );
         focus_profile(&mut s, "bob");
         let second = s.script_reload_clicked();
+        settle(&mut s);
         assert_eq!(
             second,
             ReloadOutcome::NeedsConfirm,
@@ -2111,11 +2318,13 @@ mod tests {
         let path_b = write_bot(&dir, "keep-b.ts", BOT_TS);
         s.load_js(&path_a);
         s.script_start_selected();
+        settle(&mut s);
         focus_profile(&mut s, "bob");
         s.load_js(&path_b);
         fs::write(&path_a, format!("{BOT_TS}// changed\n")).unwrap();
         focus_profile(&mut s, "alice");
         assert_eq!(s.script_reload_clicked(), ReloadOutcome::NeedsConfirm);
+        settle(&mut s);
         let warned = s.reload_warning.as_ref().unwrap().lookup.clone();
         focus_profile(&mut s, "bob");
         assert!(
@@ -2125,6 +2334,7 @@ mod tests {
         assert_eq!(s.reload_warning.as_ref().unwrap().lookup, warned);
         focus_profile(&mut s, "alice");
         let out = s.script_reload_clicked();
+        settle(&mut s);
         match out {
             ReloadOutcome::Applied { restarted, .. } => assert_eq!(restarted, 1),
             other => panic!("focus-only must leave A's confirm valid, got {other:?}"),
@@ -2159,6 +2369,7 @@ mod tests {
             "PauseBot".into(),
         ));
         s.script_start_selected();
+        settle(&mut s);
         assert_eq!(s.error, None, "{:?}", s.error);
         let old_js =
             s.js.get(script::ScriptSource::Catalog, "PauseBot")
@@ -2171,12 +2382,14 @@ mod tests {
         )
         .unwrap();
         s.refresh_catalog_at(&root);
+        settle(&mut s);
         assert_eq!(
             s.play.as_ref().unwrap().script_state("alice"),
             script::RunState::Running
         );
         s.play.as_ref().unwrap().script_pause("alice");
         s.refresh_catalog_at(&root);
+        settle(&mut s);
         assert_eq!(
             s.play.as_ref().unwrap().script_state("alice"),
             script::RunState::Paused,
@@ -2209,6 +2422,7 @@ mod tests {
         let path = write_bot(&dir, "throw.ts", BOT_TS);
         s.load_js(&path);
         s.script_start_selected();
+        settle(&mut s);
         assert_eq!(s.error, None, "{:?}", s.error);
         let old =
             s.js.get(script::ScriptSource::File, &path.to_string_lossy())
@@ -2220,6 +2434,7 @@ mod tests {
         )
         .unwrap();
         let out = s.script_reload_clicked();
+        settle(&mut s);
         match out {
             ReloadOutcome::Failed(e) => assert!(
                 e.contains("prep boom") || e.contains("load:") || e.contains("prepare"),
@@ -2249,6 +2464,7 @@ mod tests {
         let _ = sib;
         s.load_js(&path);
         s.script_start_selected();
+        settle(&mut s);
         assert_eq!(s.error, None, "{:?}", s.error);
         let old =
             s.js.get(script::ScriptSource::File, &path.to_string_lossy())
@@ -2256,6 +2472,7 @@ mod tests {
                 .clone();
         fs::write(&path, src).unwrap();
         let out = s.script_reload_clicked();
+        settle(&mut s);
         match out {
             ReloadOutcome::Failed(e) => assert!(
                 e.contains("missingFn") || e.contains("load:") || e.contains("prepare"),
@@ -2298,6 +2515,7 @@ mod tests {
             "StaleBot".into(),
         ));
         s.script_start_selected();
+        settle(&mut s);
         let old_js =
             s.js.get(script::ScriptSource::Catalog, "StaleBot")
                 .unwrap()
@@ -2306,12 +2524,14 @@ mod tests {
         let bot = root.join("src/bot/scripts/StaleBot/StaleBot.ts");
         fs::write(&bot, format!("{BOT_TS}// first\n")).unwrap();
         s.refresh_catalog_at(&root);
+        settle(&mut s);
         assert_eq!(
             s.play.as_ref().unwrap().script_state("alice"),
             script::RunState::Running
         );
         fs::write(&bot, format!("{BOT_TS}// second\n")).unwrap();
         s.refresh_catalog_at(&root);
+        settle(&mut s);
         assert_eq!(
             s.play.as_ref().unwrap().script_state("alice"),
             script::RunState::Running,
@@ -2332,6 +2552,7 @@ mod tests {
         warn_shared_reload(&mut s, &path);
         s.play.as_mut().unwrap().stop_slot("bob");
         let out = s.script_reload_clicked();
+        settle(&mut s);
         assert_applied(out, 1, 0);
         assert!(
             !s.error.as_deref().unwrap_or("").contains("bob"),
@@ -2355,6 +2576,7 @@ mod tests {
         warn_shared_reload(&mut s, &path);
         s.fail_reload_start_for = Some("bob".into());
         let out = s.script_reload_clicked();
+        settle(&mut s);
         assert_applied(out, 1, 1);
         assert!(
             s.error.as_deref().unwrap_or("").contains("bob"),
@@ -2365,11 +2587,8 @@ mod tests {
             s.play.as_ref().unwrap().script_state("alice"),
             script::RunState::Running
         );
-        assert_eq!(
-            s.play.as_ref().unwrap().script_state("bob"),
-            script::RunState::Idle,
-            "failed replacement start leaves the stopped target stopped"
-        );
+        // A failed replacement start leaves the stopped target stopped.
+        wait_state(&s, "bob", script::RunState::Idle);
         s.play.as_ref().unwrap().script_stop("alice");
     }
 
@@ -2383,11 +2602,9 @@ mod tests {
         warn_shared_reload(&mut s, &path);
         s.play.as_ref().unwrap().script_stop("bob");
         let out = s.script_reload_clicked();
+        settle(&mut s);
         assert_applied(out, 1, 0);
-        assert_eq!(
-            s.play.as_ref().unwrap().script_state("bob"),
-            script::RunState::Idle
-        );
+        wait_state(&s, "bob", script::RunState::Idle);
         assert!(s
             .play
             .as_ref()
@@ -2413,11 +2630,9 @@ mod tests {
         s.script_stop();
         focus_profile(&mut s, "alice");
         let out = s.script_reload_clicked();
+        settle(&mut s);
         assert_applied(out, 1, 0);
-        assert_eq!(
-            s.play.as_ref().unwrap().script_state("bob"),
-            script::RunState::Idle
-        );
+        wait_state(&s, "bob", script::RunState::Idle);
         assert_eq!(
             s.play.as_ref().unwrap().script_state("alice"),
             script::RunState::Running
@@ -2435,14 +2650,8 @@ mod tests {
         warn_shared_reload(&mut s, &path);
         s.script_stop_all();
         assert!(s.pending_reload.is_none());
-        assert_eq!(
-            s.play.as_ref().unwrap().script_state("alice"),
-            script::RunState::Idle
-        );
-        assert_eq!(
-            s.play.as_ref().unwrap().script_state("bob"),
-            script::RunState::Idle
-        );
+        wait_state(&s, "alice", script::RunState::Idle);
+        wait_state(&s, "bob", script::RunState::Idle);
     }
 
     #[test]
@@ -2456,6 +2665,7 @@ mod tests {
         let bob_gen = s.play.as_ref().unwrap().script_runtime_generation("bob");
         s.logout("bob");
         let out = s.script_reload_clicked();
+        settle(&mut s);
         assert_applied(out, 1, 0);
         assert_eq!(
             s.play.as_ref().unwrap().script_state("bob"),
@@ -2486,6 +2696,7 @@ mod tests {
         let bob_gen = s.play.as_ref().unwrap().script_runtime_generation("bob");
         s.logout_all();
         let out = s.script_reload_clicked();
+        settle(&mut s);
         assert_applied(out, 0, 0);
         assert_eq!(
             s.play.as_ref().unwrap().script_runtime_generation("alice"),
@@ -2519,6 +2730,7 @@ mod tests {
             },
         );
         let out = s.script_reload_clicked();
+        settle(&mut s);
         assert_applied(out, 1, 0);
         assert_eq!(
             s.play.as_ref().unwrap().script_state("bob"),
@@ -2546,10 +2758,18 @@ mod tests {
         start_file_on(&mut s, "bob", &path);
         warn_shared_reload(&mut s, &path);
         s.play.as_ref().unwrap().script_stop("bob");
+        // The panel's Start is disabled while the reap runs; Start again
+        // once the slot is Idle, as the operator would.
+        wait_state(&s, "bob", script::RunState::Idle);
         start_file_on(&mut s, "bob", &path);
+        assert_eq!(
+            s.play.as_ref().unwrap().script_state("bob"),
+            script::RunState::Running
+        );
         let bob_gen = s.play.as_ref().unwrap().script_runtime_generation("bob");
         focus_profile(&mut s, "alice");
         let out = s.script_reload_clicked();
+        settle(&mut s);
         assert_applied(out, 1, 0);
         assert_eq!(
             s.play.as_ref().unwrap().script_runtime_generation("bob"),
@@ -2562,6 +2782,63 @@ mod tests {
         );
         s.play.as_ref().unwrap().script_stop("alice");
         s.play.as_ref().unwrap().script_stop("bob");
+    }
+
+    #[test]
+    fn reload_of_a_running_script_restarts_it() {
+        let (mut s, dir) = session_with_play(&["alice"]);
+        let path = write_bot(&dir, "restart.ts", BOT_TS);
+        s.load_js(&path);
+        s.script_start_selected();
+        settle(&mut s);
+        let play = s.play.as_ref().unwrap();
+        let identity = play.script_source_identity("alice").unwrap();
+        let before = play.script_runtime_generation("alice").unwrap();
+        fs::write(&path, format!("{BOT_TS}// changed\n")).unwrap();
+        assert_eq!(s.script_reload_clicked(), ReloadOutcome::NeedsConfirm);
+        assert_applied(s.script_reload_clicked(), 1, 0);
+        // The old isolate is still reaping; the restart is queued behind it.
+        settle(&mut s);
+        let play = s.play.as_ref().unwrap();
+        assert_eq!(play.script_state("alice"), script::RunState::Running);
+        assert!(play.script_runtime_generation("alice").unwrap() > before);
+        assert_eq!(
+            play.script_source_identity("alice").as_deref(),
+            Some(identity.as_str())
+        );
+        assert_eq!(s.error, None, "{:?}", s.error);
+        assert_eq!(s.profile_assignment("alice").unwrap().key(), identity);
+        play.script_stop("alice");
+    }
+
+    #[test]
+    fn start_all_lists_a_member_whose_setup_fails_after_the_click() {
+        let (mut s, dir) = session_with_play(&["alice", "bob"]);
+        let good_path = write_bot(&dir, "good.ts", BOT_TS);
+        let bad_path = write_bot(
+            &dir,
+            "bad.ts",
+            "throw new Error('bulk-load-proof');\nexport function tick(api) {}\n",
+        );
+        let good = s.js.load(&good_path).unwrap();
+        let bad = s.js.load(&bad_path).unwrap();
+        s.persist_successful_assignment("alice", good.assignment());
+        s.persist_successful_assignment("bob", bad.assignment());
+        s.script_start_all();
+        assert_eq!(s.error.as_deref(), Some("Start all: started 2, skipped 0"));
+        settle(&mut s);
+        let report = s.error.clone().unwrap_or_default();
+        assert!(
+            report.starts_with("Start all: started 1, skipped 0, failed 1: bob: ")
+                && report.contains("bulk-load-proof"),
+            "{report}"
+        );
+        let play = s.play.as_ref().unwrap();
+        assert_eq!(play.script_state("alice"), script::RunState::Running);
+        assert_eq!(play.script_state("bob"), script::RunState::Idle);
+        let failure = s.js.load_failure(&bad.identity_key()).expect("recorded");
+        assert_eq!(failure.stage, script::LoadStage::RuntimeLoad);
+        play.script_stop("alice");
     }
 
     #[test]
@@ -2587,6 +2864,7 @@ mod tests {
         ));
         focus_profile(&mut s, "alice");
         s.script_start_selected();
+        settle(&mut s);
         assert_eq!(s.error, None, "{:?}", s.error);
         focus_profile(&mut s, "bob");
         s.script_sel = Some(script::ScriptSel::Loaded(
@@ -2594,6 +2872,7 @@ mod tests {
             "StopBot".into(),
         ));
         s.script_start_selected();
+        settle(&mut s);
         assert_eq!(s.error, None, "{:?}", s.error);
         fs::write(
             root.join("src/bot/scripts/StopBot/StopBot.ts"),
@@ -2601,16 +2880,15 @@ mod tests {
         )
         .unwrap();
         s.refresh_catalog_at(&root);
+        settle(&mut s);
         assert_eq!(
             s.play.as_ref().unwrap().script_state("alice"),
             script::RunState::Running
         );
         s.play.as_ref().unwrap().script_stop("bob");
         s.refresh_catalog_at(&root);
-        assert_eq!(
-            s.play.as_ref().unwrap().script_state("bob"),
-            script::RunState::Idle
-        );
+        settle(&mut s);
+        wait_state(&s, "bob", script::RunState::Idle);
         assert_eq!(
             s.play.as_ref().unwrap().script_state("alice"),
             script::RunState::Running

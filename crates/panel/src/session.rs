@@ -64,6 +64,9 @@ struct PendingCatalogStart {
     loadouts: Vec<script::Loadout>,
     /// Compiled registry card; when set, Start uses `start_compiled`.
     compiled: Option<script::CompiledId>,
+    /// Start was accepted; kept until its isolate setup settles so a setup
+    /// failure still fails the core watch with its reason.
+    started: bool,
 }
 
 
@@ -172,7 +175,9 @@ pub(crate) enum ProfilePreparationCompletion {
 
 /// When the runner is on [`scenario::StepKind::StartScript`], start every
 /// stashed isolate. Returns false when Start was attempted and failed,
-/// so the pump must not consume the one-tick wait.
+/// so the pump must not consume the one-tick wait. Started cards stay
+/// stashed until their setup settles: Start returns before V8 setup, so a
+/// setup failure fails the core watch here, with its diagnostic.
 fn fire_pending_catalog_start(
     pending: &Mutex<Vec<PendingCatalogStart>>,
     handle: &Mutex<Option<host_play::ScriptStartHandle>>,
@@ -180,11 +185,16 @@ fn fire_pending_catalog_start(
     pair_watch: &Mutex<Option<host_play::paired_core::PairWatch>>,
     runner: &scenario::ScenarioRunner,
 ) -> bool {
+    let mut pending = pending.lock().unwrap();
+    if pending.iter().any(|card| card.started) {
+        if let Some(h) = handle.lock().unwrap().as_ref() {
+            settle_started_catalog_cards(&mut pending, h, core_watch, pair_watch);
+        }
+    }
     if !runner.on_start_script() {
         return true;
     }
-    let mut pending = pending.lock().unwrap();
-    if pending.is_empty() {
+    if pending.iter().all(|card| card.started) {
         return true;
     }
     let handle = handle.lock().unwrap();
@@ -211,25 +221,57 @@ fn fire_pending_catalog_start(
         {
             return false;
         }
-        for card in pending.iter() {
+        for card in pending.iter_mut() {
             if let Err(error) = start_stashed_catalog_card(h, card) {
                 pair.fail_start(error);
                 return false;
             }
+            card.started = true;
         }
-        pending.clear();
         return true;
     }
     let watch = core_watch.lock().unwrap().clone().unwrap_or_default();
-    for card in pending.iter() {
+    for card in pending.iter_mut().filter(|card| !card.started) {
         if start_catalog_with_core(&watch, &card.slot, || start_stashed_catalog_card(h, card))
             .is_err()
         {
             return false;
         }
+        card.started = true;
     }
-    pending.clear();
     true
+}
+
+/// Drop started cards whose setup settled; a failed setup fails the watch
+/// that armed its Start (the refusal path `fail_start` already covers).
+fn settle_started_catalog_cards(
+    pending: &mut Vec<PendingCatalogStart>,
+    handle: &host_play::ScriptStartHandle,
+    core_watch: &Mutex<Option<host_play::catalog_core::CoreWatch>>,
+    pair_watch: &Mutex<Option<host_play::paired_core::PairWatch>>,
+) {
+    let mut failed = Vec::new();
+    pending.retain(|card| {
+        if !card.started {
+            return true;
+        }
+        match handle.take_start_outcome(&card.slot) {
+            None => true,
+            Some(script::StartOutcome::Failed(error)) => {
+                failed.push((card.slot.clone(), error));
+                false
+            }
+            Some(script::StartOutcome::Ready | script::StartOutcome::Cancelled) => false,
+        }
+    });
+    for (slot, error) in failed {
+        let pair = pair_watch.lock().unwrap().clone().unwrap_or_default();
+        if pair.configured() {
+            pair.fail_start(error);
+        } else if let Some(watch) = core_watch.lock().unwrap().clone() {
+            watch.fail_start(&slot, error);
+        }
+    }
 }
 
 /// Load one exact in-tree example and return the File card selected by
@@ -280,6 +322,7 @@ fn stash_pending_starts(
         siblings: siblings.clone(),
         loadouts: loadouts.clone(),
         compiled: None,
+        started: false,
     }];
     if let Some(key) = inject_companion_as {
         if names.len() > 1 {
@@ -293,6 +336,7 @@ fn stash_pending_starts(
                 siblings,
                 loadouts,
                 compiled: None,
+                started: false,
             });
         }
     }
@@ -312,6 +356,7 @@ fn stash_compiled_start(
         siblings: Vec::new(),
         loadouts: Vec::new(),
         compiled: Some(id),
+        started: false,
     }];
 }
 
@@ -340,6 +385,7 @@ fn stash_pair_starts(
             siblings: siblings.clone(),
             loadouts: Vec::new(),
             compiled: None,
+            started: false,
         },
         PendingCatalogStart {
             slot: names[1].clone(),
@@ -349,6 +395,7 @@ fn stash_pair_starts(
             siblings,
             loadouts: Vec::new(),
             compiled: None,
+            started: false,
         },
     ];
     Ok(())
@@ -1033,6 +1080,12 @@ pub struct Session {
     /// Per-profile Browse selection, never treated as last successful Start.
     pub pending_browse: HashMap<String, script::ScriptSel>,
     pub last_bulk_script_report: Option<String>,
+    /// Load Starts whose isolate setup has not settled, by profile. The
+    /// assignment and the load diagnostic are committed when it does.
+    pub(crate) pending_starts: HashMap<String, crate::profile_script::PendingStart>,
+    /// The last Start all report, kept so a member whose setup fails after
+    /// the click moves from started to failed.
+    pub(crate) bulk_start: Option<crate::profile_script::BulkStart>,
     pub reload_warning: Option<crate::profile_script::ReloadWarning>,
     /// Bound prepare/warn record for Reload or catalog Refresh confirm.
     pub pending_reload: Option<crate::profile_script::PendingReload>,
@@ -1343,6 +1396,8 @@ impl Session {
             script_sel: None,
             pending_browse: HashMap::new(),
             last_bulk_script_report: None,
+            pending_starts: HashMap::new(),
+            bulk_start: None,
             reload_warning: None,
             pending_reload: None,
             catalog_refresh_confirm: false,
@@ -2907,6 +2962,13 @@ impl Session {
         let Some(current) = self.play.as_ref().map(|p| p.statuses()) else {
             return;
         };
+        // Start/Stop return before the isolate is up or reaped: resolve
+        // them here for every slot (an offline or queued slot has no
+        // observe of its own) and commit the Starts that settled.
+        if let Some(play) = &self.play {
+            play.pump_script_lifecycles();
+        }
+        self.settle_script_starts();
         self.ingest_tutorial_chat(&current);
         self.maybe_getvar_tutorial(&current);
         if let Some(play) = &self.play {

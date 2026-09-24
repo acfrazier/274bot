@@ -262,6 +262,22 @@ enum AfterStop {
     Fail(String),
 }
 
+/// How the latest operator Load Start settled. Start returns before V8
+/// setup, so the caller that owns the assignment and the load diagnostic
+/// commits them from this, never from Start's `Ok`.
+#[cfg(feature = "load")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StartOutcome {
+    /// Setup finished; the runtime is live (Running, or Paused by the
+    /// operator or the gate).
+    Ready,
+    /// Setup failed. The slot is Idle and `last_error` holds this
+    /// diagnostic — the one Start used to return synchronously.
+    Failed(String),
+    /// Stopped before setup finished; nothing ran.
+    Cancelled,
+}
+
 /// Per-uid runner. Compiled XOR Load (a JS isolate) — never both.
 pub struct SlotScript {
     pub want_run: bool,
@@ -303,6 +319,15 @@ pub struct SlotScript {
     stop_rx: Option<std::sync::mpsc::Receiver<Vec<String>>>,
     #[cfg(feature = "load")]
     after_stop: AfterStop,
+    /// An operator Load Start has not settled yet (see [`StartOutcome`]).
+    #[cfg(feature = "load")]
+    start_pending: bool,
+    #[cfg(feature = "load")]
+    start_outcome: Option<StartOutcome>,
+    /// `runtime_generation` before the unsettled setup's bump. A setup
+    /// that fails restores it: a failed Start never counted as a Start.
+    #[cfg(feature = "load")]
+    setup_generation_base: Option<u64>,
     /// Per-slot last-post snapshot fingerprint (delta posts: only the
     /// fields that changed are re-sent) and the `NavWorld` identity the
     /// packed banks keyframe on. Cleared on Start so the first post is a
@@ -375,6 +400,12 @@ impl SlotScript {
             #[cfg(feature = "load")]
             after_stop: AfterStop::Idle,
             #[cfg(feature = "load")]
+            start_pending: false,
+            #[cfg(feature = "load")]
+            start_outcome: None,
+            #[cfg(feature = "load")]
+            setup_generation_base: None,
+            #[cfg(feature = "load")]
             last_snapshot: None,
             #[cfg(feature = "load")]
             last_world_id: None,
@@ -425,10 +456,7 @@ impl SlotScript {
         selected: Option<Arc<api::game_data::SelectedGameData>>,
     ) -> Result<(), String> {
         match self.state {
-            RunState::Running
-            | RunState::Paused
-            | RunState::Stopping
-            | RunState::Starting => {
+            RunState::Running | RunState::Paused | RunState::Stopping | RunState::Starting => {
                 Err("script already active: stop it first".to_string())
             }
             RunState::Idle | RunState::Error => {
@@ -535,24 +563,35 @@ impl SlotScript {
                         "compiled script active: stop it first".to_string(),
                     ));
                 }
-                if matches!(self.after_stop, AfterStop::Start) {
+                // A queued Start or a watchdog restart already owns the
+                // reap; only a plain Stop (or a failed setup) may be followed.
+                if matches!(self.after_stop, AfterStop::Start | AfterStop::Restart) {
                     return Err(StartLoadError::Refused(
                         "script already active: stop it first".to_string(),
                     ));
                 }
-                self.retain_load_identity(
-                    source,
+                if let AfterStop::Fail(e) = &self.after_stop {
+                    // The failed setup is being reaped; keep its diagnostic
+                    // in the log instead of silently replacing it.
+                    self.pending_logs.push(e.clone());
+                }
+                self.load_identity = Some(SlotLoadIdentity {
+                    source: Arc::from(source),
                     shape,
-                    siblings,
-                    loadouts,
+                    siblings: siblings.into(),
+                    settings_bag: None,
                     game_data,
                     named_banks,
-                );
+                    loadouts: Arc::from(loadouts.to_vec()),
+                });
                 self.after_stop = AfterStop::Start;
-                self.want_run = true;
-                self.last_error = None;
-                self.lifecycle_receipt = None;
-                self.ticks = 0;
+                self.reset_for_fresh_start();
+                // The generation moves now, not when the reap finishes, so
+                // the value a caller reads after Start is the one it runs.
+                self.setup_generation_base = Some(self.runtime_generation);
+                self.runtime_generation = self.runtime_generation.wrapping_add(1);
+                self.last_settings_fp = None;
+                self.begin_start_outcome();
                 Ok(())
             }
             RunState::Idle | RunState::Error => {
@@ -561,72 +600,27 @@ impl SlotScript {
                         "compiled script active: stop it first".to_string(),
                     ));
                 }
-                self.spawn_load_isolate(
-                    source,
+                let identity = SlotLoadIdentity {
+                    source: Arc::from(source),
                     shape,
-                    siblings,
-                    loadouts,
+                    siblings: siblings.into(),
+                    settings_bag: None,
                     game_data,
                     named_banks,
-                )
+                    loadouts: Arc::from(loadouts.to_vec()),
+                };
+                self.spawn_isolate(identity, true)
+                    .map_err(StartLoadError::RuntimeLoad)?;
+                self.reset_for_fresh_start();
+                self.begin_start_outcome();
+                Ok(())
             }
         }
     }
 
+    /// Operator-Start bookkeeping shared by an immediate and a queued Start.
     #[cfg(feature = "load")]
-    fn retain_load_identity(
-        &mut self,
-        source: String,
-        shape: LoadShape,
-        siblings: Vec<(String, String)>,
-        loadouts: &[crate::loadouts_store::Loadout],
-        game_data: Option<Arc<api::game_data::SelectedGameData>>,
-        named_banks: Arc<api::named_banks::NamedBankFacts>,
-    ) {
-        self.load_identity = Some(SlotLoadIdentity {
-            source: Arc::from(source),
-            shape,
-            siblings: siblings.into(),
-            settings_bag: None,
-            game_data,
-            named_banks,
-            loadouts: Arc::from(loadouts.to_vec()),
-        });
-    }
-
-    #[cfg(feature = "load")]
-    fn spawn_load_isolate(
-        &mut self,
-        source: String,
-        shape: LoadShape,
-        siblings: Vec<(String, String)>,
-        loadouts: &[crate::loadouts_store::Loadout],
-        game_data: Option<Arc<api::game_data::SelectedGameData>>,
-        named_banks: Arc<api::named_banks::NamedBankFacts>,
-    ) -> Result<(), StartLoadError> {
-        let source: Arc<str> = Arc::from(source);
-        let siblings: Arc<[(String, String)]> = siblings.into();
-        let loadouts_arc: Arc<[crate::loadouts_store::Loadout]> = Arc::from(loadouts.to_vec());
-        let isolate = LoadIsolate::spawn_with_content(
-            source.to_string(),
-            shape,
-            siblings.iter().cloned().collect(),
-            game_data.clone(),
-            Arc::clone(&named_banks),
-        )
-        .map_err(StartLoadError::RuntimeLoad)?;
-        isolate.post_loadouts(loadouts);
-        self.load = Some(isolate);
-        self.load_ready = false;
-        self.load_identity = Some(SlotLoadIdentity {
-            source,
-            shape,
-            siblings,
-            settings_bag: None,
-            game_data,
-            named_banks,
-            loadouts: loadouts_arc,
-        });
+    fn reset_for_fresh_start(&mut self) {
         self.watchdog.arm_fresh(Instant::now());
         self.want_run = true;
         self.last_error = None;
@@ -640,12 +634,60 @@ impl SlotScript {
         self.pending_bank_op = None;
         self.bank_op_result_seq = 0;
         self.bank_op_result = false;
+    }
+
+    #[cfg(feature = "load")]
+    fn begin_start_outcome(&mut self) {
+        self.start_pending = true;
+        self.start_outcome = None;
+    }
+
+    #[cfg(feature = "load")]
+    fn settle_start(&mut self, outcome: StartOutcome) {
+        if std::mem::take(&mut self.start_pending) {
+            self.start_outcome = Some(outcome);
+        }
+    }
+
+    /// Take how the latest operator Load Start settled; `None` while it is
+    /// still setting up (or when nothing is owed). Call after
+    /// [`Self::observe_lifecycle`].
+    #[cfg(feature = "load")]
+    pub fn take_start_outcome(&mut self) -> Option<StartOutcome> {
+        self.start_outcome.take()
+    }
+
+    /// Spawn the isolate for `identity` and enter Starting. `bump` moves
+    /// the runtime generation (a queued Start already moved it).
+    #[cfg(feature = "load")]
+    fn spawn_isolate(&mut self, identity: SlotLoadIdentity, bump: bool) -> Result<(), String> {
+        let isolate = LoadIsolate::spawn_with_content(
+            identity.source.to_string(),
+            identity.shape,
+            identity.siblings.iter().cloned().collect(),
+            identity.game_data.clone(),
+            Arc::clone(&identity.named_banks),
+        )?;
+        isolate.post_loadouts(&identity.loadouts);
+        if let Some(bag) = identity.settings_bag.as_deref() {
+            isolate.post_settings_bag(bag);
+        }
+        self.load = Some(isolate);
+        self.load_ready = false;
+        self.load_identity = Some(identity);
         self.last_snapshot = None;
         self.last_world_id = None;
         self.reach_cache.clear();
+        self.ipc = IsolateBuf::new();
+        self.last_error = None;
+        self.lifecycle_receipt = None;
+        self.ticks = 0;
         self.state = RunState::Starting;
-        self.runtime_generation = self.runtime_generation.wrapping_add(1);
-        self.last_settings_fp = None;
+        if bump {
+            self.setup_generation_base = Some(self.runtime_generation);
+            self.runtime_generation = self.runtime_generation.wrapping_add(1);
+            self.last_settings_fp = None;
+        }
         Ok(())
     }
 
@@ -658,6 +700,7 @@ impl SlotScript {
         isolate.join_detached(tx);
         self.stop_rx = Some(rx);
         self.load_ready = false;
+        self.setup_generation_base = None;
         self.state = RunState::Stopping;
         self.after_stop = after.clone();
         if matches!(after, AfterStop::Idle) {
@@ -685,6 +728,7 @@ impl SlotScript {
             self.load_ready = false;
             self.stop_rx = None;
             self.after_stop = AfterStop::Idle;
+            self.setup_generation_base = None;
             self.load_identity = None;
             self.watchdog.cancel_clear();
         }
@@ -708,6 +752,7 @@ impl SlotScript {
                     Ready::Pending => {}
                     Ready::Ready => {
                         self.load_ready = true;
+                        self.setup_generation_base = None;
                         if self.state == RunState::Starting {
                             if self.want_run {
                                 self.state = RunState::Running;
@@ -717,6 +762,7 @@ impl SlotScript {
                                 self.state = RunState::Paused;
                             }
                         }
+                        self.settle_start(StartOutcome::Ready);
                     }
                     Ready::Failed(e) => {
                         let isolate = self.load.take().expect("failed setup still owns isolate");
@@ -760,69 +806,46 @@ impl SlotScript {
                 }
                 self.compiled_selected = None;
                 self.compiled_interacts.clear();
+                self.watchdog.cancel_clear();
                 self.want_run = false;
                 self.state = RunState::Idle;
             }
-            AfterStop::Fail(e) => {
-                self.last_error = Some(e.clone());
-                self.pending_logs.push(e);
-                self.load_identity = None;
-                self.source_identity = None;
-                self.runtime_generation = self.runtime_generation.wrapping_add(1);
-                self.watchdog.cancel_clear();
-                self.last_settings_fp = None;
-                self.state = RunState::Error;
-            }
-            AfterStop::Restart => {
-                if let Err(e) = self.spawn_from_retained_identity() {
-                    self.last_error = Some(e.clone());
-                    self.pending_logs.push(e);
-                    self.state = RunState::Error;
-                    self.want_run = false;
-                } else {
-                    self.watchdog.on_restart_applied(Instant::now());
+            AfterStop::Fail(e) => self.fail_setup(e),
+            AfterStop::Restart => match self.load_identity.clone() {
+                Some(identity) => match self.spawn_isolate(identity, true) {
+                    Ok(()) => self.watchdog.on_restart_applied(Instant::now()),
+                    Err(e) => self.fail_setup(e),
+                },
+                None => self.fail_setup("watchdog restart: no retained identity".into()),
+            },
+            AfterStop::Start => match self.load_identity.clone() {
+                Some(identity) => {
+                    if let Err(e) = self.spawn_isolate(identity, false) {
+                        self.fail_setup(e);
+                    }
                 }
-            }
-            AfterStop::Start => {
-                if let Err(e) = self.spawn_from_retained_identity() {
-                    self.last_error = Some(e.clone());
-                    self.pending_logs.push(e);
-                    self.state = RunState::Error;
-                    self.want_run = false;
-                }
-            }
+                None => self.fail_setup("start: no retained identity".into()),
+            },
         }
     }
 
+    /// A setup that never reached Ready: no runtime ran, so the slot goes
+    /// back to Idle with the diagnostic Start used to return, and the
+    /// generation that setup took is given back.
     #[cfg(feature = "load")]
-    fn spawn_from_retained_identity(&mut self) -> Result<(), String> {
-        let identity = self
-            .load_identity
-            .clone()
-            .ok_or_else(|| "watchdog restart: no retained identity".to_string())?;
-        let isolate = LoadIsolate::spawn_with_content(
-            identity.source.to_string(),
-            identity.shape,
-            identity.siblings.iter().cloned().collect(),
-            identity.game_data.clone(),
-            Arc::clone(&identity.named_banks),
-        )?;
-        isolate.post_loadouts(&identity.loadouts);
-        if let Some(bag) = identity.settings_bag.as_deref() {
-            isolate.post_settings_bag(bag);
+    fn fail_setup(&mut self, e: String) {
+        self.last_error = Some(e.clone());
+        self.pending_logs.push(e.clone());
+        self.load_identity = None;
+        self.source_identity = None;
+        if let Some(base) = self.setup_generation_base.take() {
+            self.runtime_generation = base;
         }
-        self.load = Some(isolate);
-        self.load_ready = false;
-        self.last_snapshot = None;
-        self.last_world_id = None;
-        self.ipc = IsolateBuf::new();
-        self.last_error = None;
-        self.lifecycle_receipt = None;
-        self.ticks = 0;
-        self.state = RunState::Starting;
-        self.runtime_generation = self.runtime_generation.wrapping_add(1);
+        self.watchdog.cancel_clear();
         self.last_settings_fp = None;
-        Ok(())
+        self.want_run = false;
+        self.state = RunState::Idle;
+        self.settle_start(StartOutcome::Failed(e));
     }
 
     /// Operator Pause: `want_run` stays false (survives login) until
@@ -838,9 +861,7 @@ impl SlotScript {
             pending.freeze();
         }
         let mut abort_recovery = false;
-        if self.has_instance()
-            && matches!(self.state, RunState::Running | RunState::Starting)
-        {
+        if self.has_instance() && matches!(self.state, RunState::Running | RunState::Starting) {
             #[cfg(feature = "load")]
             if let Some(isolate) = &self.load {
                 isolate.pause();
@@ -911,21 +932,31 @@ impl SlotScript {
         // `reset_session_work` must not make: that one is a connection
         // boundary and drops the step alone.
         #[cfg(feature = "load")]
-        if !self.load_active() {
+        if !self.load_active() && self.state != RunState::Stopping {
             self.clue_stop_owed = true;
             self.clue_abort_owed = false;
         }
+        // A failed setup already ends Idle with its diagnostic; a Stop
+        // during its reap must not turn that into a silent cancel.
+        #[cfg(feature = "load")]
+        if self.state == RunState::Stopping && matches!(self.after_stop, AfterStop::Fail(_)) {
+            return;
+        }
+        // A Start that has not reached Ready never ran: nothing to commit.
+        #[cfg(feature = "load")]
+        self.settle_start(StartOutcome::Cancelled);
         #[cfg(feature = "load")]
         if self.state == RunState::Stopping {
+            // Already reaping: a queued Start or a watchdog restart after
+            // it is dropped, and the reap ends Idle.
             self.after_stop = AfterStop::Idle;
+            self.setup_generation_base = None;
             self.want_run = false;
             self.load_identity = None;
             self.source_identity = None;
+            self.runtime_generation = self.runtime_generation.wrapping_add(1);
+            self.watchdog.cancel_clear();
             self.last_settings_fp = None;
-            if let Some(mut script) = self.compiled.take() {
-                script.on_stop();
-            }
-            self.compiled_selected = None;
             return;
         }
         #[cfg(feature = "load")]
@@ -1483,18 +1514,23 @@ impl SlotScript {
         if self.watchdog.frozen() {
             return Err("watchdog restart cancelled: frozen".into());
         }
-        if self.load_identity.is_none() {
+        let Some(identity) = self.load_identity.clone() else {
             return Err("watchdog restart: no retained identity".into());
-        }
+        };
         if self.state == RunState::Stopping {
-            self.after_stop = AfterStop::Restart;
-            return Ok(());
+            // A respawn is already queued behind this reap.
+            return match self.after_stop {
+                AfterStop::Restart | AfterStop::Start => Ok(()),
+                AfterStop::Idle | AfterStop::Fail(_) => {
+                    Err("watchdog restart cancelled: stopping".into())
+                }
+            };
         }
         self.revoke_native_input();
         if self.begin_async_stop(AfterStop::Restart) {
             return Ok(());
         }
-        self.spawn_from_retained_identity()?;
+        self.spawn_isolate(identity, true)?;
         self.watchdog.on_restart_applied(now);
         Ok(())
     }
@@ -2351,24 +2387,68 @@ export default class T extends LoopingBot {
 
     #[cfg(feature = "load")]
     #[test]
-    fn start_load_setup_failure_surfaces_the_error() {
+    fn start_load_setup_failure_returns_to_idle_with_the_diagnostic() {
         let mut slot = SlotScript::new();
         slot.start_load(
-            "not valid javascript!!!!".into(),
+            "throw new Error('zz-setup-proof');\nexport function tick(api) {}".into(),
+            LoadShape::NativeTick,
+            vec![],
+        )
+        .expect("Start returns before setup");
+        slot.attach_source_identity("file:bad.ts");
+        assert_eq!(slot.take_start_outcome(), None, "setup has not settled");
+        wait_state(&mut slot, RunState::Idle);
+        let err = slot.last_error().unwrap_or("").to_string();
+        assert!(err.contains("zz-setup-proof"), "{err}");
+        assert_eq!(slot.take_start_outcome(), Some(StartOutcome::Failed(err)));
+        assert_eq!(slot.source_identity(), None);
+        assert!(slot.load_identity.is_none());
+        assert_eq!(
+            slot.runtime_generation(),
+            0,
+            "a Start that never reached Ready is not a Start"
+        );
+    }
+
+    #[cfg(feature = "load")]
+    #[test]
+    fn stop_during_starting_ends_idle_and_cancels_the_start() {
+        let mut slot = SlotScript::new();
+        slot.start_load(
+            "export function tick(api) {}".into(),
             LoadShape::NativeTick,
             vec![],
         )
         .unwrap();
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while !matches!(slot.state(), RunState::Error | RunState::Idle)
-            && Instant::now() < deadline
-        {
+        assert_eq!(slot.state(), RunState::Starting);
+        slot.stop();
+        assert_eq!(slot.state(), RunState::Stopping);
+        wait_state(&mut slot, RunState::Idle);
+        assert_eq!(slot.take_start_outcome(), Some(StartOutcome::Cancelled));
+        assert_eq!(slot.last_error(), None);
+    }
+
+    #[cfg(feature = "load")]
+    #[test]
+    fn watchdog_restart_during_stop_reap_never_revives_the_slot() {
+        let mut slot = SlotScript::new();
+        slot.start_load(
+            "export function tick(api) {}".into(),
+            LoadShape::NativeTick,
+            vec![],
+        )
+        .unwrap();
+        wait_state(&mut slot, RunState::Running);
+        slot.stop();
+        assert_eq!(slot.state(), RunState::Stopping);
+        assert!(slot.restart_load_from_identity(Instant::now()).is_err());
+        wait_state(&mut slot, RunState::Idle);
+        for _ in 0..20 {
             slot.observe_lifecycle();
             std::thread::sleep(Duration::from_millis(5));
         }
-        assert_eq!(slot.state(), RunState::Error);
-        let err = slot.last_error().unwrap_or("");
-        assert!(!err.is_empty(), "setup failure must surface: {err}");
+        assert_eq!(slot.state(), RunState::Idle);
+        assert!(!slot.load_active());
     }
 
     #[cfg(feature = "load")]
@@ -2392,8 +2472,20 @@ export default class T extends LoopingBot {
         assert_eq!(slot.state(), RunState::Stopping);
         slot.start_load(src.into(), LoadShape::CompatClass, vec![])
             .expect("Start while Stopping is queued");
+        let generation = slot.runtime_generation();
+        assert!(
+            slot.start_load(src.into(), LoadShape::CompatClass, vec![])
+                .is_err(),
+            "a second queued Start is refused"
+        );
         wait_state(&mut slot, RunState::Starting);
         wait_state(&mut slot, RunState::Running);
+        assert_eq!(slot.take_start_outcome(), Some(StartOutcome::Ready));
+        assert_eq!(
+            slot.runtime_generation(),
+            generation,
+            "the generation read after Start is the one that runs"
+        );
         let logs = slot.take_pending_logs();
         assert!(
             logs.iter().any(|l| l.contains("stopped-ok")),
@@ -2424,27 +2516,6 @@ export default class T extends LoopingBot {
             slot.stop();
             wait_state(slot, RunState::Idle);
         }
-    }
-
-    #[cfg(feature = "load")]
-    #[test]
-    fn slot_drop_runs_the_stop_hook() {
-        let src = "export default class T extends LoopingBot {
-            loop() {}
-            onStop() { this.log('stopped-ok'); }
-        }";
-        let mut slot = SlotScript::new();
-        slot.start_load(src.into(), LoadShape::CompatClass, vec![])
-            .unwrap();
-        wait_state(&mut slot, RunState::Running);
-        let _ = slot.probe("1");
-        slot.stop();
-        wait_state(&mut slot, RunState::Idle);
-        let logs = slot.take_pending_logs();
-        assert!(
-            logs.iter().any(|l| l.contains("stopped-ok")),
-            "slot Stop must run onStop: {logs:?}"
-        );
     }
 
     /// A compiled card that queues one walk per tick onto the ctx's sink —

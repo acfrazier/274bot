@@ -477,6 +477,10 @@ pub struct TuiSession {
     script_settings_inject: Option<serde_json::Map<String, serde_json::Value>>,
     /// Last directory visited in the out-of-tree Load file browser.
     script_load_last_dir: Option<PathBuf>,
+    /// Load Starts whose isolate setup has not settled, by profile: Start
+    /// returns before V8 setup, so the card's load diagnostic is recorded
+    /// or cleared when [`TuiSession::settle_script_starts`] observes it.
+    pending_starts: HashMap<String, script::JsCard>,
 }
 
 #[cfg(test)]
@@ -531,6 +535,7 @@ impl TuiSession {
             loadouts: script::LoadoutsStore::with_default_path(),
             script_settings_inject: None,
             script_load_last_dir: None,
+            pending_starts: HashMap::new(),
         }
     }
 
@@ -1173,16 +1178,19 @@ impl TuiSession {
                                             api_family: Some(card.api_family.as_str().into()),
                                         },
                                     ) {
-                                        Ok(siblings) => {
-                                            let result = play.script_start_load_typed(
-                                                &name,
-                                                card.js.clone(),
-                                                card.shape,
-                                                bag,
-                                                siblings,
-                                            );
-                                            self.js.record_start_result(&card, result)
-                                        }
+                                        Ok(siblings) => match play.script_start_load_typed(
+                                            &name,
+                                            card.js.clone(),
+                                            card.shape,
+                                            bag,
+                                            siblings,
+                                        ) {
+                                            Ok(()) => {
+                                                self.pending_starts.insert(name.clone(), card);
+                                                Ok(())
+                                            }
+                                            Err(e) => self.js.record_start_result(&card, Err(e)),
+                                        },
                                         Err(e) => Err(e),
                                     }
                                 }
@@ -1206,6 +1214,61 @@ impl TuiSession {
             }
             Err(e) => Some(format!("script: {e}")),
         };
+    }
+
+    /// Record or clear the load diagnostic of every Start whose isolate
+    /// setup has settled, and show the outcome the way a synchronous Start
+    /// did: a failure is `script: <diagnostic>`, success the remaining
+    /// failure list (or nothing). Called once per pump.
+    fn settle_script_starts(&mut self, app: &mut TuiApp) {
+        if self.pending_starts.is_empty() {
+            return;
+        }
+        let Some(play) = self.play.as_ref() else {
+            return;
+        };
+        let mut settled = Vec::new();
+        for name in self.pending_starts.keys() {
+            match play.script_take_start_outcome(name) {
+                Some(outcome) => settled.push((name.clone(), Some(outcome))),
+                // No outcome and no setup in flight: the slot was removed.
+                None if !matches!(
+                    play.script_state(name),
+                    script::RunState::Starting | script::RunState::Stopping
+                ) =>
+                {
+                    settled.push((name.clone(), None))
+                }
+                None => {}
+            }
+        }
+        for (name, outcome) in settled {
+            let Some(card) = self.pending_starts.remove(&name) else {
+                continue;
+            };
+            match outcome {
+                Some(script::StartOutcome::Ready) => {
+                    let _ = self.js.record_start_result(&card, Ok(()));
+                    app.error = if self.js.load_failures().is_empty() {
+                        None
+                    } else {
+                        Some(self.js.named_failure_output())
+                    };
+                }
+                Some(script::StartOutcome::Failed(e)) => {
+                    let diagnostic = self
+                        .js
+                        .record_start_result(
+                            &card,
+                            Err(script::StartLoadError::RuntimeLoad(e.clone())),
+                        )
+                        .err()
+                        .unwrap_or(e);
+                    app.error = Some(format!("script: {diagnostic}"));
+                }
+                Some(script::StartOutcome::Cancelled) | None => {}
+            }
+        }
     }
 
     /// Pause or resume the focused slot's script (toggle like the panel).
@@ -1307,6 +1370,14 @@ impl TuiSession {
                 }
             }
         }
+
+        // Start/Stop return before the isolate is up or reaped. A slot that
+        // is offline or queued for login has no observe of its own, so the
+        // pump resolves every slot, then commits the Starts that settled.
+        if let Some(play) = &self.play {
+            play.pump_script_lifecycles();
+        }
+        self.settle_script_starts(app);
 
         let statuses = self.play.as_ref().map(|p| p.statuses()).unwrap_or_default();
         // Running slots join the strip even when they are not in the
@@ -2814,6 +2885,20 @@ ScriptRegistry.register({ name: 'Thiever', create: () => new ThievingBot() });
         );
     }
 
+    /// Pump the TUI's Start settle (the public observe path) until every
+    /// pending Start has settled. Start returns before V8 setup.
+    fn settle_starts(session: &mut TuiSession, app: &mut TuiApp) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !session.pending_starts.is_empty() && Instant::now() < deadline {
+            session.settle_script_starts(app);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(
+            session.pending_starts.is_empty(),
+            "script Start did not settle"
+        );
+    }
+
     #[test]
     fn initial_runtime_failure_survives_success_and_refusals_in_tui_output() {
         let iso = IsolatedEnv::enter("tui-initial-load");
@@ -2833,20 +2918,34 @@ ScriptRegistry.register({ name: 'Thiever', create: () => new ThievingBot() });
         let card = session.js.load(&path).unwrap();
         let sel = script::ScriptSel::Loaded(card.source, path.to_string_lossy().into_owned());
         session.script_start(&mut app, &sel);
-        wait_script_state(
-            session.play.as_ref().unwrap(),
-            "alice",
-            script::RunState::Error,
-        );
-        let err = session
-            .play
-            .as_ref()
-            .unwrap()
-            .script_last_error("alice")
-            .unwrap_or_default();
+        settle_starts(&mut session, &mut app);
+        // The failure reaches the operator once setup settles, as the
+        // synchronous Start error used to.
+        let shown = app.error.clone().unwrap_or_default();
         assert!(
-            err.contains("tui-initial-load"),
-            "setup failure must surface: {err}"
+            shown.starts_with("script: ") && shown.contains("tui-initial-load"),
+            "{shown}"
+        );
+        let failure = session
+            .js
+            .load_failure(&card.identity_key())
+            .unwrap()
+            .clone();
+        assert_eq!(failure.identity_key, card.identity_key());
+        assert_eq!(failure.path, path);
+        assert_eq!(failure.stage, script::LoadStage::RuntimeLoad);
+        assert_eq!(failure.api_family, Some(script::ApiFamily::V2));
+        assert_eq!(
+            failure.fingerprint,
+            script::raw_content_fingerprint(&path, src)
+        );
+        assert_eq!(
+            session
+                .play
+                .as_ref()
+                .unwrap()
+                .script_runtime_generation("alice"),
+            Some(0)
         );
 
         let good_path = iso.dir.join("good.ts");
@@ -2862,30 +2961,46 @@ ScriptRegistry.register({ name: 'Thiever', create: () => new ThievingBot() });
             &mut app,
             &script::ScriptSel::Loaded(good.source, good_path.to_string_lossy().into_owned()),
         );
-        wait_script_state(
-            session.play.as_ref().unwrap(),
-            "bob",
-            script::RunState::Running,
+        settle_starts(&mut session, &mut app);
+        assert_eq!(
+            session.play.as_ref().unwrap().script_state("bob"),
+            script::RunState::Running
         );
+        let output = app.error.as_deref().unwrap();
+        assert!(output.contains("tui-initial-load") && output.contains("runtime-load"));
+        assert!(output.contains(&path.display().to_string()));
         session.script_start(&mut app, &sel); // active slot refuses before evaluating
         assert!(app
             .error
             .as_deref()
             .unwrap()
             .contains("script already active"));
+        assert_eq!(
+            session.js.load_failure(&card.identity_key()),
+            Some(&failure)
+        );
         app.focused = Some(2);
         session.script_start(&mut app, &sel);
         assert_eq!(app.error.as_deref(), Some("script: no slot: missing"));
+        assert_eq!(
+            session.js.load_failure(&card.identity_key()),
+            Some(&failure)
+        );
 
         std::fs::write(&helper, "export const fail = false;").unwrap();
         app.focused = Some(0);
         session.script_start(&mut app, &sel);
-        wait_script_state(
-            session.play.as_ref().unwrap(),
-            "alice",
-            script::RunState::Running,
-        );
+        settle_starts(&mut session, &mut app);
+        assert!(session.js.load_failure(&card.identity_key()).is_none());
         assert_eq!(app.error, None);
+        assert_eq!(
+            session
+                .play
+                .as_ref()
+                .unwrap()
+                .script_runtime_generation("alice"),
+            Some(1)
+        );
         session.play.as_ref().unwrap().script_stop("alice");
         session.play.as_ref().unwrap().script_stop("bob");
     }
@@ -2933,6 +3048,7 @@ ScriptRegistry.register({ name: 'Thiever', create: () => new ThievingBot() });
         let src = "export function tick(api) { api._n = (api._n||0)+1 }".to_string();
         play.script_start_load("alice", src, script::LoadShape::NativeTick, None, vec![])
             .unwrap();
+        wait_script_state(&play, "alice", script::RunState::Running);
         let mut session = TuiSession::new(dummy_options());
         session.inject_play(play);
         let mut app = TuiApp::new("274bot headless");

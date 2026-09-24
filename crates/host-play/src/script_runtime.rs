@@ -25,6 +25,74 @@ pub(super) fn script_slot_or_insert(wall: &ScriptWall, name: &str) -> ScriptSlot
         .clone()
 }
 
+/// Resolve `name`'s lifecycle, then take how its latest Start settled.
+pub(super) fn take_start_outcome(wall: &ScriptWall, name: &str) -> Option<script::StartOutcome> {
+    let slot = script_slot(wall, name)?;
+    let mut slot = slot.lock().unwrap();
+    slot.observe_lifecycle();
+    slot.take_start_outcome()
+}
+
+/// Test-only Start that waits (bounded) for the isolate to settle through
+/// the public observe path. Start returns before V8 setup; fixtures that
+/// drive observes against a live script start from Ready, and a setup
+/// failure comes back as the `Err` Start used to return.
+#[cfg(test)]
+pub(super) trait SettledStart {
+    fn start_load_settled(
+        &mut self,
+        source: String,
+        shape: script::LoadShape,
+        siblings: Vec<(String, String)>,
+    ) -> Result<(), String>;
+    fn start_load_with_loadouts_settled(
+        &mut self,
+        source: String,
+        shape: script::LoadShape,
+        siblings: Vec<(String, String)>,
+        loadouts: &[script::Loadout],
+    ) -> Result<(), String>;
+}
+
+#[cfg(test)]
+fn settle_start(slot: &mut SlotScript) -> Result<(), String> {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        slot.observe_lifecycle();
+        match slot.take_start_outcome() {
+            Some(script::StartOutcome::Ready) => return Ok(()),
+            Some(script::StartOutcome::Failed(e)) => return Err(e),
+            Some(script::StartOutcome::Cancelled) => return Err("start cancelled".into()),
+            None if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(2)),
+            None => panic!("script setup did not settle: {:?}", slot.state()),
+        }
+    }
+}
+
+#[cfg(test)]
+impl SettledStart for SlotScript {
+    fn start_load_settled(
+        &mut self,
+        source: String,
+        shape: script::LoadShape,
+        siblings: Vec<(String, String)>,
+    ) -> Result<(), String> {
+        self.start_load(source, shape, siblings)?;
+        settle_start(self)
+    }
+
+    fn start_load_with_loadouts_settled(
+        &mut self,
+        source: String,
+        shape: script::LoadShape,
+        siblings: Vec<(String, String)>,
+        loadouts: &[script::Loadout],
+    ) -> Result<(), String> {
+        self.start_load_with_loadouts(source, shape, siblings, loadouts)?;
+        settle_start(self)
+    }
+}
+
 /// Drain isolate `this.log` / tick-error lines onto stderr when
 /// `BOT_DEBUG=1`. Tick errors also become [`SlotScript::last_error`].
 fn emit_script_debug_logs(slot: &mut SlotScript, name: &str) {
@@ -4945,6 +5013,7 @@ mod tests {
     use script::isolate_fb::decode_snapshot;
 
     use super::script_snapshot_fb;
+    use super::SettledStart;
 
     const HINT: usize = 0;
     const BOARD: usize = 1;
@@ -5495,7 +5564,7 @@ export function tick(api) {
         script_slot_or_insert(&scripts, "alice")
             .lock()
             .unwrap()
-            .start_load_with_loadouts(
+            .start_load_with_loadouts_settled(
                 PUZZLE_MOVE_V2.into(),
                 script::LoadShape::NativeTick,
                 vec![],
@@ -5796,7 +5865,7 @@ export function tick(api) {
         script_slot_or_insert(&scripts, "alice")
             .lock()
             .unwrap()
-            .start_load_with_loadouts(
+            .start_load_with_loadouts_settled(
                 PUZZLE_MOVE_BESIDE_DEPOSIT_V2.into(),
                 script::LoadShape::NativeTick,
                 vec![],

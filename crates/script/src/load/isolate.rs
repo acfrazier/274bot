@@ -563,7 +563,8 @@ impl LoadIsolate {
     /// Dispatch one observed game tick, tagging produced mouse rows with
     /// the native permit identity that was live at production.
     pub fn on_game_tick_at(&self, snap_tick: u64, input_identity: u64) {
-        let _ = self.poll_ready();
+        // Before Ready no tick has started, so none can be over budget.
+        let ready = self.poll_ready() == Ready::Ready;
         self.pump_logs();
         if self.stopped.load(std::sync::atomic::Ordering::Acquire)
             || self.teardown_blocks_dispatch()
@@ -582,7 +583,7 @@ impl LoadIsolate {
             // folded yet) past the budget: interrupt it.
             let over = in_flight
                 .as_ref()
-                .filter(|(_, _, started)| started.elapsed() > SLOW_TICK)
+                .filter(|(_, _, started)| ready && started.elapsed() > SLOW_TICK)
                 .map(|(_, tick, started)| (*tick, started.elapsed()));
             *in_flight = Some((generation, snap_tick, Instant::now()));
             over
@@ -630,7 +631,7 @@ impl LoadIsolate {
     /// Park tick dispatch. A runaway tick is interrupted first so the
     /// thread returns to the command loop.
     pub fn pause(&self) {
-        let _ = self.poll_ready();
+        let ready = self.poll_ready() == Ready::Ready;
         self.pump_logs();
         if self.teardown_blocks_dispatch() {
             let _ = self.tx.send(IsolateCmd::Pause);
@@ -640,7 +641,7 @@ impl LoadIsolate {
             .in_flight
             .lock()
             .unwrap()
-            .map(|(_, _, started)| started.elapsed() > SLOW_TICK)
+            .map(|(_, _, started)| ready && started.elapsed() > SLOW_TICK)
             .unwrap_or(false);
         if over {
             // No cancel here: the isolate thread clears the terminate
@@ -692,7 +693,7 @@ impl LoadIsolate {
     /// this work generation. Non-blocking: the reply arrives as a
     /// generation-tagged interact (`recovery-anchor` / `recovery-anchor-none`).
     pub fn request_recovery_anchor(&self) {
-        let _ = self.poll_ready();
+        let ready = self.poll_ready() == Ready::Ready;
         if self.stopped.load(std::sync::atomic::Ordering::Acquire)
             || self.teardown_blocks_dispatch()
         {
@@ -705,7 +706,7 @@ impl LoadIsolate {
             let mut in_flight = self.in_flight.lock().unwrap();
             let over = in_flight
                 .as_ref()
-                .filter(|(_, _, started)| started.elapsed() > SLOW_TICK)
+                .filter(|(_, _, started)| ready && started.elapsed() > SLOW_TICK)
                 .map(|(_, tick, started)| (*tick, started.elapsed()));
             *in_flight = Some((generation, RECOVERY_ANCHOR_TICK, Instant::now()));
             over
@@ -840,32 +841,48 @@ impl LoadIsolate {
     /// Resolve setup without blocking. Called from the slot's per-frame
     /// observe. Commands already queue until this returns [`Ready::Ready`].
     pub fn poll_ready(&self) -> Ready {
+        self.resolve_setup(None)
+    }
+
+    fn resolve_setup(&self, block_until: Option<Instant>) -> Ready {
         let mut setup = self.setup.lock().unwrap();
-        match &*setup {
+        let (rx, deadline) = match &*setup {
             SetupState::Ready => return Ready::Ready,
             SetupState::Failed(e) => return Ready::Failed(e.clone()),
-            SetupState::Pending { .. } => {}
-        }
-        let SetupState::Pending { rx, deadline } = &*setup else {
-            unreachable!("setup is Pending");
+            SetupState::Pending { rx, deadline } => (rx, *deadline),
         };
-        let outcome = match rx.try_recv() {
+        // `Err(true)` is a disconnected channel; `Err(false)` nothing yet.
+        let received = match block_until {
+            None => rx
+                .try_recv()
+                .map_err(|e| matches!(e, mpsc::TryRecvError::Disconnected)),
+            Some(until) => rx
+                .recv_timeout(
+                    until
+                        .min(deadline)
+                        .saturating_duration_since(Instant::now()),
+                )
+                .map_err(|e| matches!(e, mpsc::RecvTimeoutError::Disconnected)),
+        };
+        let outcome = match received {
             Ok(Ok(handle)) => {
                 let _ = self.terminate.set(handle);
+                // A tick queued before setup finished starts running now:
+                // its slow-tick budget is measured from here, not its send.
+                if let Some(entry) = self.in_flight.lock().unwrap().as_mut() {
+                    entry.2 = Instant::now();
+                }
                 Ready::Ready
             }
             Ok(Err(e)) => Ready::Failed(e),
-            Err(mpsc::TryRecvError::Disconnected) => Ready::Failed(format!(
+            Err(true) => Ready::Failed(format!(
                 "isolate init: {}",
                 mpsc::RecvTimeoutError::Disconnected
             )),
-            Err(mpsc::TryRecvError::Empty) if Instant::now() < *deadline => {
-                return Ready::Pending;
+            Err(false) if Instant::now() < deadline => return Ready::Pending,
+            Err(false) => {
+                Ready::Failed(format!("isolate init: {}", mpsc::RecvTimeoutError::Timeout))
             }
-            Err(mpsc::TryRecvError::Empty) => Ready::Failed(format!(
-                "isolate init: {}",
-                mpsc::RecvTimeoutError::Timeout
-            )),
         };
         *setup = match &outcome {
             Ready::Ready => SetupState::Ready,
@@ -901,9 +918,12 @@ impl LoadIsolate {
     /// Tick interruption is claimed only while phase is `Running`. Once
     /// the isolate has entered the hook, only that hook's 50 ms
     /// one-shot may terminate; join never samples `in_flight` to decide.
+    /// A join during setup first waits (bounded by the setup deadline) for
+    /// the terminate handle, so a tick queued before Ready can still be
+    /// interrupted; the reaper, never the UI, owns that wait.
     pub fn join(mut self) -> Vec<String> {
-        let _ = self.poll_ready();
         let _ = self.tx.send(IsolateCmd::Stop { invoke_hook: true });
+        let _ = self.resolve_setup(Some(Instant::now() + SETUP_TIMEOUT));
         {
             let mut st = self.teardown.lock().unwrap();
             if st.phase == TeardownPhase::Running {
@@ -3041,7 +3061,9 @@ loop() {
             "join_detached blocked: {:?}",
             t0.elapsed()
         );
-        let logs = rx.recv_timeout(Duration::from_secs(5)).expect("reaper logs");
+        let logs = rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("reaper logs");
         assert!(
             logs.iter().any(|l| l.contains("stopped-ok")),
             "onStop log missing: {logs:?}"

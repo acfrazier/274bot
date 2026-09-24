@@ -4653,7 +4653,7 @@ export default class T extends LoopingBot {
     script_slot_or_insert(&scripts, "alice")
         .lock()
         .unwrap()
-        .start_load(source.to_string(), script::LoadShape::CompatClass, vec![])
+        .start_load_settled(source.to_string(), script::LoadShape::CompatClass, vec![])
         .expect("withdraw-X isolate starts");
 
     let mut c = bank_fetch_client();
@@ -5002,7 +5002,7 @@ export default class T extends LoopingBot {
     script_slot_or_insert(&scripts, "alice")
         .lock()
         .unwrap()
-        .start_load(source.to_string(), script::LoadShape::CompatClass, vec![])
+        .start_load_settled(source.to_string(), script::LoadShape::CompatClass, vec![])
         .expect("deposit isolate starts");
 
     let mut c = bank_fetch_client();
@@ -5224,7 +5224,7 @@ export default class T extends LoopingBot {
     script_slot_or_insert(&scripts, "alice")
         .lock()
         .unwrap()
-        .start_load(source.to_string(), script::LoadShape::CompatClass, vec![])
+        .start_load_settled(source.to_string(), script::LoadShape::CompatClass, vec![])
         .expect("withdraw-X isolate starts");
     let mut c = bank_fetch_client();
     let names = api::obj_names::ObjNames::from_objs(&c.cache.objs);
@@ -5342,7 +5342,7 @@ export default class T extends LoopingBot {
     script_slot_or_insert(&scripts, "alice")
         .lock()
         .unwrap()
-        .start_load(source.to_string(), script::LoadShape::CompatClass, vec![])
+        .start_load_settled(source.to_string(), script::LoadShape::CompatClass, vec![])
         .expect("withdraw-X isolate starts");
     let mut c = bank_fetch_client();
     let names = api::obj_names::ObjNames::from_objs(&c.cache.objs);
@@ -5508,7 +5508,7 @@ export default class T extends LoopingBot {
     script_slot_or_insert(&scripts, "alice")
         .lock()
         .unwrap()
-        .start_load(source.to_string(), script::LoadShape::CompatClass, vec![])
+        .start_load_settled(source.to_string(), script::LoadShape::CompatClass, vec![])
         .expect("canvas keyboard isolate starts");
     let mut c = bank_client();
     let names = api::obj_names::ObjNames::from_objs(&c.cache.objs);
@@ -5832,7 +5832,7 @@ export default class T extends LoopingBot {
     script_slot_or_insert(&scripts, "alice")
         .lock()
         .unwrap()
-        .start_load(source.to_string(), script::LoadShape::CompatClass, vec![])
+        .start_load_settled(source.to_string(), script::LoadShape::CompatClass, vec![])
         .expect("pause isolate starts");
     let mut c = bank_client();
     let names = api::obj_names::ObjNames::from_objs(&c.cache.objs);
@@ -5967,7 +5967,7 @@ export default class T extends LoopingBot {
     script_slot_or_insert(&scripts_hold, "bob")
         .lock()
         .unwrap()
-        .start_load(source.to_string(), script::LoadShape::CompatClass, vec![])
+        .start_load_settled(source.to_string(), script::LoadShape::CompatClass, vec![])
         .expect("hold isolate starts");
     script_observe(
         &mut held,
@@ -6038,7 +6038,7 @@ export default class T extends LoopingBot {
     script_slot_or_insert(&scripts, "alice")
         .lock()
         .unwrap()
-        .start_load(source.to_string(), script::LoadShape::CompatClass, vec![])
+        .start_load_settled(source.to_string(), script::LoadShape::CompatClass, vec![])
         .expect("pending-enter isolate starts");
     let mut c = bank_client();
     let names = api::obj_names::ObjNames::from_objs(&c.cache.objs);
@@ -6167,7 +6167,7 @@ export default class T extends LoopingBot {
         let slot = script_slot_or_insert(&scripts, "alice");
         let mut slot = slot.lock().unwrap();
         slot.bind_native_input(inp.authority());
-        slot.start_load(source.to_string(), script::LoadShape::CompatClass, vec![])
+        slot.start_load_settled(source.to_string(), script::LoadShape::CompatClass, vec![])
             .expect("canvas mouse isolate starts");
     }
     let mut c = bank_client();
@@ -6280,7 +6280,7 @@ export default class T extends LoopingBot {
         let slot = script_slot_or_insert(&scripts, "alice");
         let mut slot = slot.lock().unwrap();
         slot.bind_native_input(inp.authority());
-        slot.start_load(source.to_string(), script::LoadShape::CompatClass, vec![])
+        slot.start_load_settled(source.to_string(), script::LoadShape::CompatClass, vec![])
             .expect("pause mouse isolate starts");
     }
     let mut c = bank_client();
@@ -6364,7 +6364,7 @@ export default class T extends LoopingBot {
         let slot = script_slot_or_insert(&scripts, "alice");
         let mut slot = slot.lock().unwrap();
         slot.bind_native_input(inp.authority());
-        slot.start_load(source.to_string(), script::LoadShape::CompatClass, vec![])
+        slot.start_load_settled(source.to_string(), script::LoadShape::CompatClass, vec![])
             .expect("pause/resume mouse isolate starts");
     }
     let mut c = bank_client();
@@ -6451,7 +6451,7 @@ export default class T extends LoopingBot {
         let slot = script_slot_or_insert(&scripts, "alice");
         let mut slot = slot.lock().unwrap();
         slot.bind_native_input(inp.authority());
-        slot.start_load(source.to_string(), script::LoadShape::CompatClass, vec![])
+        slot.start_load_settled(source.to_string(), script::LoadShape::CompatClass, vec![])
             .expect("stop/start mouse isolate starts");
     }
     let mut c = bank_client();
@@ -6513,7 +6513,7 @@ export default class T extends LoopingBot {
         let mut slot = slot.lock().unwrap();
         slot.stop();
         slot.bind_native_input(inp.authority());
-        slot.start_load(source.to_string(), script::LoadShape::CompatClass, vec![])
+        slot.start_load_settled(source.to_string(), script::LoadShape::CompatClass, vec![])
             .expect("replacement start");
     }
     inp.consume_native_frame(&mut c.shell);
@@ -6541,7 +6541,7 @@ export default class T extends LoopingBot {
         let slot = script_slot_or_insert(&scripts, "alice");
         let mut slot = slot.lock().unwrap();
         slot.bind_native_input(inp.authority());
-        slot.start_load(source.to_string(), script::LoadShape::CompatClass, vec![])
+        slot.start_load_settled(source.to_string(), script::LoadShape::CompatClass, vec![])
             .expect("delayed up isolate starts");
     }
     let mut c = bank_client();
@@ -6814,7 +6814,7 @@ export default class T extends LoopingBot {
     script_slot_or_insert(&scripts, "alice")
         .lock()
         .unwrap()
-        .start_load(source.to_string(), script::LoadShape::CompatClass, vec![])
+        .start_load_settled(source.to_string(), script::LoadShape::CompatClass, vec![])
         .unwrap();
     let mut c = bank_fetch_client();
     let names = api::obj_names::ObjNames::from_objs(&c.cache.objs);
@@ -6911,7 +6911,7 @@ export default class T extends LoopingBot {
     script_slot_or_insert(&scripts, "alice")
         .lock()
         .unwrap()
-        .start_load(source.to_string(), script::LoadShape::CompatClass, vec![])
+        .start_load_settled(source.to_string(), script::LoadShape::CompatClass, vec![])
         .expect("withdraw-load isolate starts");
 
     let mut c = bank_fetch_client();
@@ -7138,7 +7138,7 @@ export default class T extends LoopingBot {
     script_slot_or_insert(&scripts, "alice")
         .lock()
         .unwrap()
-        .start_load(source.to_string(), script::LoadShape::CompatClass, vec![])
+        .start_load_settled(source.to_string(), script::LoadShape::CompatClass, vec![])
         .expect("withdraw-X isolate starts");
 
     let mut c = bank_fetch_client();
@@ -9644,7 +9644,7 @@ fn projected_npc_boxes_are_lazy_for_the_isolate_snapshot_gate() {
     let slot = script_slot_or_insert(&scripts, "alice");
     slot.lock()
         .unwrap()
-        .start_load(
+        .start_load_settled(
             "export default class T extends LoopingBot { loop() {} }".to_string(),
             script::LoadShape::CompatClass,
             vec![],
@@ -9709,7 +9709,7 @@ fn script_observe_load_isolate_still_encodes_snapshot_on_tick_edge() {
     script_slot_or_insert(&scripts, "alice")
         .lock()
         .unwrap()
-        .start_load(src.to_string(), script::LoadShape::CompatClass, vec![])
+        .start_load_settled(src.to_string(), script::LoadShape::CompatClass, vec![])
         .expect("load isolate starts");
     assert!(script_slot(&scripts, "alice")
         .unwrap()
@@ -12029,7 +12029,7 @@ fn script_observe_posts_blob_while_held_and_skips_dispatch() {
     script_slot_or_insert(&scripts, "alice")
         .lock()
         .unwrap()
-        .start_load(src.to_string(), script::LoadShape::CompatClass, vec![])
+        .start_load_settled(src.to_string(), script::LoadShape::CompatClass, vec![])
         .expect("load isolate starts");
     // Held edge: blob posts + isolate tick (paint-only); loop must not
     // advance.
@@ -12174,7 +12174,7 @@ export default class T extends LoopingBot {
     script_slot_or_insert(&scripts, "alice")
         .lock()
         .unwrap()
-        .start_load(src.to_string(), script::LoadShape::CompatClass, vec![])
+        .start_load_settled(src.to_string(), script::LoadShape::CompatClass, vec![])
         .expect("load isolate starts");
     c.ingame = true;
     c.scene_state = 2;
@@ -12374,7 +12374,7 @@ export default class T extends LoopingBot {
     script_slot_or_insert(&scripts, "alice")
         .lock()
         .unwrap()
-        .start_load(src.to_string(), script::LoadShape::CompatClass, vec![])
+        .start_load_settled(src.to_string(), script::LoadShape::CompatClass, vec![])
         .expect("load isolate starts");
     c.ingame = true;
     c.scene_state = 2;
@@ -12579,7 +12579,7 @@ export default class T extends LoopingBot {
     script_slot_or_insert(&scripts, "alice")
         .lock()
         .unwrap()
-        .start_load(src.to_string(), script::LoadShape::CompatClass, vec![])
+        .start_load_settled(src.to_string(), script::LoadShape::CompatClass, vec![])
         .expect("load isolate starts");
     c.ingame = true;
     c.scene_state = 2;
@@ -12700,7 +12700,7 @@ fn guardian_hold_aborts_recovery_unlike_internal_hold() {
     script_slot_or_insert(&scripts, "alice")
         .lock()
         .unwrap()
-        .start_load(src.to_string(), script::LoadShape::CompatClass, vec![])
+        .start_load_settled(src.to_string(), script::LoadShape::CompatClass, vec![])
         .expect("load isolate starts");
     c.ingame = true;
     c.scene_state = 2;
@@ -12883,7 +12883,7 @@ fn session_reset_clears_live_recovery_walk() {
     script_slot_or_insert(&scripts, "alice")
         .lock()
         .unwrap()
-        .start_load(
+        .start_load_settled(
             "export default class T extends LoopingBot { loop() {} }".into(),
             script::LoadShape::CompatClass,
             vec![],
@@ -12946,7 +12946,7 @@ export default class T extends LoopingBot {
     script_slot_or_insert(&scripts, "alice")
         .lock()
         .unwrap()
-        .start_load(src.to_string(), script::LoadShape::CompatClass, vec![])
+        .start_load_settled(src.to_string(), script::LoadShape::CompatClass, vec![])
         .unwrap();
     script_observe(
         &mut c,
@@ -13104,7 +13104,7 @@ export default class T extends LoopingBot {
     script_slot_or_insert(&scripts, "alice")
         .lock()
         .unwrap()
-        .start_load(src.to_string(), script::LoadShape::CompatClass, vec![])
+        .start_load_settled(src.to_string(), script::LoadShape::CompatClass, vec![])
         .expect("load isolate starts");
     let mut status = SlotStatus {
         username: "alice".into(),
@@ -13366,7 +13366,7 @@ fn ignored_randoms_skips_flee_but_detect_still_publishes() {
     script_slot_or_insert(&scripts, "alice")
         .lock()
         .unwrap()
-        .start_load(src.to_string(), script::LoadShape::CompatClass, vec![])
+        .start_load_settled(src.to_string(), script::LoadShape::CompatClass, vec![])
         .expect("load isolate starts");
     // The production knock arm (see the slot thread): always ask the
     // running slot script; ignore-list is not consulted here.
@@ -13416,7 +13416,7 @@ fn event_signal_pending_reads_true_during_dialog_hold() {
     script_slot_or_insert(&scripts, "alice")
         .lock()
         .unwrap()
-        .start_load(src.to_string(), script::LoadShape::CompatClass, vec![])
+        .start_load_settled(src.to_string(), script::LoadShape::CompatClass, vec![])
         .expect("load isolate starts");
 
     // The guardian talks to the old man and holds the slot.

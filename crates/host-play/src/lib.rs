@@ -1223,6 +1223,10 @@ impl ScriptStartHandle {
         result
     }
 
+    /// How `name`'s latest Start settled (see [`Play::script_take_start_outcome`]).
+    pub fn take_start_outcome(&self, name: &str) -> Option<script::StartOutcome> {
+        take_start_outcome(&self.scripts, name)
+    }
 }
 
 impl Play {
@@ -1675,15 +1679,35 @@ impl Play {
             .unwrap_or(script::RunState::Idle)
     }
 
-    /// Resolve non-blocking isolate Start/Stop. The slot thread calls this
-    /// every observe; tests and the panel pump call it when there is no
-    /// live game thread.
+    /// Resolve `name`'s non-blocking isolate Start/Stop. The slot thread
+    /// does this every observe; a slot that is offline or queued for login
+    /// has no observe, so the UI pumps it (see [`Self::pump_script_lifecycles`]).
     pub fn pump_script_lifecycle(&self, name: &str) {
         if let Some(slot) = script_slot(&self.scripts, name) {
             if let Ok(mut slot) = slot.lock() {
                 slot.observe_lifecycle();
             }
         }
+    }
+
+    /// Resolve every slot's pending Start/Stop once. Called per UI frame by
+    /// the panel and the TUI. A slot its own thread holds is skipped: that
+    /// thread is observing it right now.
+    pub fn pump_script_lifecycles(&self) {
+        let slots: Vec<_> = self.scripts.lock().unwrap().values().cloned().collect();
+        for slot in slots {
+            if let Ok(mut slot) = slot.try_lock() {
+                slot.observe_lifecycle();
+            }
+        }
+    }
+
+    /// How `name`'s latest operator Load Start settled, once it has: Start
+    /// returns before V8 setup, so the assignment and the load diagnostic
+    /// are committed from this, not from Start's `Ok`. `None` while setup
+    /// runs or when nothing is owed.
+    pub fn script_take_start_outcome(&self, name: &str) -> Option<script::StartOutcome> {
+        take_start_outcome(&self.scripts, name)
     }
 
     #[cfg(feature = "memory-profile")]
@@ -1715,8 +1739,12 @@ impl Play {
         let Some(slot) = script_slot(&self.scripts, name) else {
             return Vec::new();
         };
-        let Ok(mut slot) = slot.try_lock() else {
-            return Vec::new();
+        // A slot its own thread holds keeps its lines for the next frame;
+        // a poisoned slot is a bug and still panics, as `lock` did.
+        let mut slot = match slot.try_lock() {
+            Ok(slot) => slot,
+            Err(std::sync::TryLockError::WouldBlock) => return Vec::new(),
+            Err(std::sync::TryLockError::Poisoned(e)) => panic!("script slot poisoned: {e}"),
         };
         slot.take_pending_logs()
     }
@@ -1783,7 +1811,9 @@ impl Play {
         self.spawned.remove(name);
         self.statuses.lock().unwrap().retain(|s| s.username != name);
         self.arms.remove(name);
-        if let Some(slot) = self.scripts.lock().unwrap().remove(name) {
+        // Release the wall lock before the slot lock (wall-then-slot order).
+        let removed = self.scripts.lock().unwrap().remove(name);
+        if let Some(slot) = removed {
             slot.lock().unwrap().stop();
         }
         self.cheats.lock().unwrap().remove(name);

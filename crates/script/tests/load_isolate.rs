@@ -20,6 +20,23 @@ use script::{CompiledId, ScriptSource, SlotScript};
 
 mod common;
 
+/// Spawn and wait (bounded) for setup to finish. `spawn` returns before V8
+/// setup, so tests that time JS against the wall clock start from Ready.
+fn spawn_ready(js: String, shape: LoadShape, siblings: Vec<(String, String)>) -> LoadIsolate {
+    let iso = LoadIsolate::spawn(js, shape, siblings).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        match iso.poll_ready() {
+            script::Ready::Ready => return iso,
+            script::Ready::Failed(e) => panic!("isolate setup failed: {e}"),
+            script::Ready::Pending if Instant::now() < deadline => {
+                thread::sleep(Duration::from_millis(2));
+            }
+            script::Ready::Pending => panic!("isolate setup did not finish"),
+        }
+    }
+}
+
 fn wait_slot_state(slot: &mut SlotScript, want: script::RunState) {
     let deadline = Instant::now() + Duration::from_secs(5);
     while slot.state() != want && Instant::now() < deadline {
@@ -475,7 +492,7 @@ fn isolate_spawn_compat_fixture_ticks_and_joins() {
 // (5c) Pause ignores ticks; resume continues; join returns.
 #[test]
 fn isolate_pause_ignores_ticks_and_resume_continues() {
-    let iso = LoadIsolate::spawn(NATIVE_TICK.to_string(), LoadShape::NativeTick, vec![]).unwrap();
+    let iso = spawn_ready(NATIVE_TICK.to_string(), LoadShape::NativeTick, vec![]);
     iso.on_game_tick(1);
     iso.pause();
     iso.on_game_tick(2);
@@ -661,7 +678,7 @@ fn isolate_logs_tick_errors() {
 fn slow_tick_is_interrupted_and_isolate_survives() {
     // The first tick spins forever; later ticks count.
     let src = "export function tick(api) { globalThis.__rs_n = (globalThis.__rs_n||0)+1; if (globalThis.__rs_n === 1) { while(true){} } }";
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::NativeTick, vec![]).unwrap();
+    let iso = spawn_ready(src.to_string(), LoadShape::NativeTick, vec![]);
     iso.on_game_tick(1);
     // Let the thread enter the spin; pause then arms a terminate for the
     // over-budget tick (no immediate cancel), and resume re-arms dispatch.
@@ -1956,7 +1973,7 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let iso = spawn_ready(src.to_string(), LoadShape::CompatClass, vec![]);
     iso.on_game_tick(1);
     std::thread::sleep(std::time::Duration::from_millis(140));
     iso.on_game_tick(2); // wall clock elapsed: the wait settles
@@ -1986,7 +2003,7 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let iso = spawn_ready(src.to_string(), LoadShape::CompatClass, vec![]);
     iso.on_game_tick(1);
     std::thread::sleep(std::time::Duration::from_millis(140));
     iso.on_game_tick(2); // timeout elapsed: the wait resolves false
@@ -2120,7 +2137,7 @@ export default class T extends LoopingBot {
     loop() {}
 }
 "#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let iso = spawn_ready(src.to_string(), LoadShape::CompatClass, vec![]);
     iso.on_game_tick(1);
     let deadline = Instant::now() + Duration::from_millis(500);
     let list = loop {
@@ -2141,8 +2158,7 @@ export default class T extends LoopingBot {
     loop() { if (globalThis.__rs_tick >= 2) { while (true) {} } }
 }
 "#;
-    let iso_block =
-        LoadIsolate::spawn(src_block.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let iso_block = spawn_ready(src_block.to_string(), LoadShape::CompatClass, vec![]);
     iso_block.on_game_tick(1);
     thread::sleep(Duration::from_millis(50));
     iso_block.on_game_tick(2);
