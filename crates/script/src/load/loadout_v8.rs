@@ -1,17 +1,43 @@
-//! Typed local V8 marshalling for the eight loadout/potion v2 helpers.
-//! Not a rustyscript `register_function` JSON op.
+//! Typed local V8 marshalling for the eight loadout/potion v2 helpers. Not a
+//! rustyscript `register_function` JSON op. Also keeps the loadouts the host
+//! posted to this isolate, so the compat `selectedLoadout` accessor reads
+//! them in Rust instead of JS echoing them back.
 
+use std::cell::RefCell;
 use std::collections::BTreeMap;
 
 use crate::boost_potions::{
     self, PlannedCarry, PotionLevel, PotionPlan, PotionToSipError, BOOST_FLOOR,
 };
 use crate::loadout_plan::{self, LoadoutCarry, LoadoutInput};
+use crate::loadouts_store::Loadout;
 use crate::ranged;
 use crate::supply_v2;
 use rustyscript::Runtime;
 
 const PENDING: &str = "__pending__";
+
+thread_local! {
+    /// The loadouts the host posted to this thread's isolate
+    /// (`IsolateCmd::Loadouts`).
+    static POSTED: RefCell<Vec<Loadout>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Replace this isolate's posted loadouts.
+pub(super) fn post(rows: Vec<Loadout>) {
+    POSTED.with(|posted| *posted.borrow_mut() = rows);
+}
+
+/// `selectedLoadout(bag)`: the posted loadout the `loadout` setting names
+/// (case-insensitive, trimmed), else the first one, else `null`, in the
+/// persisted shape (`{ name, worn, carry, unassigned? }`).
+pub(super) fn selected_compat(wanted: &str) -> serde_json::Value {
+    POSTED.with(|posted| {
+        crate::loadouts_store::selected_compat_loadout(&posted.borrow(), wanted)
+            .and_then(|row| serde_json::to_value(row).ok())
+            .unwrap_or(serde_json::Value::Null)
+    })
+}
 
 pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
     let context = runtime.deno_runtime().main_context();

@@ -236,12 +236,8 @@ pub(super) fn wire_runtime(
         .register_function(
             "__rs2b0t_selected_loadout",
             |args: &[serde_json::Value]| {
-                let rows: Vec<crate::loadouts_store::Loadout> =
-                    serde_json::from_value(args.first().cloned().unwrap_or(serde_json::json!([])))
-                        .unwrap_or_default();
-                Ok(crate::loadouts_store::selected_compat_loadout(
-                    &rows,
-                    args.get(1).and_then(|v| v.as_str()).unwrap_or(""),
+                Ok(super::loadout_v8::selected_compat(
+                    args.first().and_then(|v| v.as_str()).unwrap_or(""),
                 ))
             },
         )

@@ -542,37 +542,13 @@ fn resolve_item_option_spec(
     ResolvedSettingOptions { values, labels }
 }
 
-/// Adapt the host's persisted loadout shape for script accessors.
-pub fn selected_compat_loadout(rows: &[Loadout], wanted: &str) -> serde_json::Value {
-    let Some(row) = rows
-        .iter()
+/// The loadout a compat script's `loadout` setting names (trimmed,
+/// case-insensitive), else the first one. Its serialized shape
+/// (`{ name, worn, carry, unassigned? }`) is what the script reads.
+pub fn selected_compat_loadout<'a>(rows: &'a [Loadout], wanted: &str) -> Option<&'a Loadout> {
+    rows.iter()
         .find(|r| r.name.eq_ignore_ascii_case(wanted.trim()))
         .or_else(|| rows.first())
-    else {
-        return serde_json::Value::Null;
-    };
-    loadout_to_compat(row)
-}
-
-pub fn loadout_to_compat(row: &Loadout) -> serde_json::Value {
-    let mut worn = serde_json::Map::new();
-    for (slot, item) in &row.worn {
-        worn.insert(slot.clone(), serde_json::Value::String(item.clone()));
-    }
-    let mut out = serde_json::Map::new();
-    out.insert("name".into(), serde_json::Value::String(row.name.clone()));
-    out.insert("worn".into(), serde_json::Value::Object(worn));
-    out.insert(
-        "carry".into(),
-        serde_json::to_value(&row.carry).unwrap_or_else(|_| serde_json::json!([])),
-    );
-    if !row.unassigned.is_empty() {
-        out.insert(
-            "unassigned".into(),
-            serde_json::to_value(&row.unassigned).unwrap_or_else(|_| serde_json::json!([])),
-        );
-    }
-    serde_json::Value::Object(out)
 }
 
 /// Hat-first worn names, then unassigned, after trim and empty filter.
@@ -1329,16 +1305,10 @@ mod compatibility_tests {
                 .with_carry("Lobster", 1),
             Loadout::new("Second").with_carry("Shark", 1),
         ];
-        assert_eq!(selected_compat_loadout(&rows, " SECOND ")["name"], "Second");
-        assert_eq!(
-            selected_compat_loadout(&rows, "missing")["carry"][1]["item"],
-            "Lobster"
-        );
-        assert_eq!(
-            selected_compat_loadout(&rows, "missing")["carry"][1]["qty"],
-            1
-        );
-        assert!(selected_compat_loadout(&[], "").is_null());
+        let pick = |wanted: &str| selected_compat_loadout(&rows, wanted).map(|r| r.name.as_str());
+        assert_eq!(pick(" SECOND "), Some("Second"));
+        assert_eq!(pick("missing"), Some("First"));
+        assert!(selected_compat_loadout(&[], "").is_none());
     }
 
     #[test]
@@ -1349,7 +1319,7 @@ mod compatibility_tests {
             .with_carry("Lobster", 10);
         let mut row = row;
         row.unassigned.push("old helm".into());
-        let json = loadout_to_compat(&row);
+        let json = serde_json::to_value(&row).unwrap();
         assert_eq!(weapon_of(&json, Some("Bronze sword")), "Rune scimitar");
         assert_eq!(supplies_of(&json), vec![CarryEntry::new("Lobster", 10)]);
         assert_eq!(

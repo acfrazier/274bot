@@ -110,6 +110,47 @@ export default class T extends LoopingBot {
     iso.join();
 }
 
+// Echo #14: the isolate keeps the posted loadouts in Rust. `selectedLoadout`
+// passes only the setting name; a re-post replaces the rows it selects from.
+#[test]
+fn selected_loadout_reads_the_latest_posted_rows() {
+    use script::Loadout;
+
+    let src = r#"
+import { selectedLoadout } from '../../api/loadout/loadoutSetting.js';
+export default class T extends LoopingBot {
+    loop() {
+        const picked = selectedLoadout(this.settings);
+        (globalThis.__picked ||= []).push(picked ? picked.name : null);
+        globalThis.__worn = picked ? picked.worn : null;
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![])
+        .expect("spawn loadout selection");
+    iso.on_game_tick(1);
+    iso.post_loadouts(&[
+        Loadout::new("Melee").with_slot("righthand", "Rune scimitar"),
+        Loadout::new("Range").with_slot("righthand", "Oak shortbow"),
+    ]);
+    let mut bag = serde_json::Map::new();
+    bag.insert("loadout".into(), serde_json::json!(" range "));
+    iso.post_settings_bag(&bag);
+    iso.on_game_tick(2);
+    assert_eq!(
+        iso.probe("__worn").unwrap(),
+        serde_json::json!({ "righthand": "Oak shortbow" })
+    );
+    iso.post_loadouts(&[Loadout::new("Mage")]);
+    iso.on_game_tick(3);
+    assert_eq!(
+        iso.probe("__picked").unwrap(),
+        serde_json::json!([null, "Range", "Mage"]),
+        "nothing posted, then the named row, then the re-post's first row"
+    );
+    iso.join();
+}
+
 #[test]
 fn isolate_provision_composes_fresh_bank_withdraw_and_wear() {
     use script::Loadout;

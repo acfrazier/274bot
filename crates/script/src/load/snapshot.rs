@@ -877,10 +877,23 @@ pub(super) fn materialize_snapshot(
     set(&mut scope, host, "snapshot", snapshot)
 }
 
-pub(super) fn materialize_settings_bag(runtime: &mut Runtime, json: &str) -> Result<(), String> {
-    runtime
-        .eval::<()>(format!("globalThis.__rs2b0t_host.settingsBag = {json};"))
-        .map_err(|e| format!("settings bag: {e}"))
+/// Install the merged settings bag as `__rs2b0t_host.settingsBag`, built as
+/// V8 values from the typed map (never JSON text evaluated as source).
+pub(super) fn materialize_settings_bag(
+    runtime: &mut Runtime,
+    bag: &serde_json::Map<String, serde_json::Value>,
+) -> Result<(), String> {
+    let context = runtime.deno_runtime().main_context();
+    let mut scope = runtime.deno_runtime().handle_scope();
+    let global = context.open(&mut scope).global(&mut scope);
+    let host_key = js_string(&mut scope, "__rs2b0t_host")?;
+    let host = global
+        .get(&mut scope, host_key)
+        .and_then(|host| host.to_object(&mut scope))
+        .ok_or_else(|| "settings bag: no __rs2b0t_host object".to_string())?;
+    let value = rustyscript::deno_core::serde_v8::to_v8(&mut scope, bag)
+        .map_err(|e| format!("settings bag: {e}"))?;
+    set(&mut scope, host, "settingsBag", value)
 }
 
 fn native_event_object<'s>(

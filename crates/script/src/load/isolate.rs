@@ -124,9 +124,11 @@ enum IsolateCmd {
     /// JS object the Game/Inventory/Skills/EventSignal shims read
     /// before the next dispatched tick. Never a JSON string.
     Snapshot(SnapshotMessage),
-    /// Merged operator settings JSON for the prelude's `this.settings.*`.
-    Settings(String),
-    Loadouts(String),
+    /// Merged operator settings bag for the prelude's `this.settings.*`,
+    /// built on the isolate thread as V8 values (never JSON text).
+    Settings(serde_json::Map<String, serde_json::Value>),
+    /// Available loadouts. Rust keeps them for `selectedLoadout`.
+    Loadouts(Vec<crate::loadouts_store::Loadout>),
     Pause,
     Resume,
     /// One-shot script-local paint button, tagged with the isolate
@@ -314,25 +316,45 @@ fn cancel_terminate(runtime: &mut Runtime, teardown: &Mutex<TeardownState>) {
         .cancel_terminate_execution();
 }
 
-/// Record the eligible tick number on the host handle
-/// (`__rs2b0t_host.tick`) before any of the tick's JS runs.
-fn record_tick(runtime: &mut Runtime, n: u64) {
+/// A value Rust writes onto the host handle without running any JS.
+enum HostValue<'a> {
+    Number(f64),
+    Str(&'a str),
+    Null,
+}
+
+/// Set `__rs2b0t_host[key]` through V8 directly: typed, no script eval.
+/// `false` when the host handle is missing or the write failed.
+fn set_host_field(runtime: &mut Runtime, key: &str, value: HostValue<'_>) -> bool {
     let scope = &mut runtime.deno_runtime().handle_scope();
     let global = scope.get_current_context().global(scope);
-    let (Some(host_key), Some(tick_key)) = (
+    let (Some(host_key), Some(field)) = (
         v8::String::new(scope, "__rs2b0t_host"),
-        v8::String::new(scope, "tick"),
+        v8::String::new(scope, key),
     ) else {
-        return;
+        return false;
     };
     let Some(host) = global
         .get(scope, host_key.into())
         .and_then(|host| host.to_object(scope))
     else {
-        return;
+        return false;
     };
-    let tick = v8::Number::new(scope, n as f64);
-    let _ = host.set(scope, tick_key.into(), tick.into());
+    let value: v8::Local<v8::Value> = match value {
+        HostValue::Number(n) => v8::Number::new(scope, n).into(),
+        HostValue::Str(s) => match v8::String::new(scope, s) {
+            Some(s) => s.into(),
+            None => return false,
+        },
+        HostValue::Null => v8::null(scope).into(),
+    };
+    host.set(scope, field.into(), value).is_some()
+}
+
+/// Record the eligible tick number on the host handle
+/// (`__rs2b0t_host.tick`) before any of the tick's JS runs.
+fn record_tick(runtime: &mut Runtime, n: u64) {
+    set_host_field(runtime, "tick", HostValue::Number(n as f64));
 }
 
 /// Drops every machine row when the tick loop ends (Stop, script stop).
@@ -667,18 +689,14 @@ impl LoadIsolate {
 
     /// Post available loadouts before subsequent tick commands.
     pub fn post_loadouts(&self, loadouts: &[crate::loadouts_store::Loadout]) {
-        let json = serde_json::to_string(loadouts).expect("serializable loadouts");
-        self.send(IsolateCmd::Loadouts(json));
+        self.send(IsolateCmd::Loadouts(loadouts.to_vec()));
     }
 
     /// Post the merged operator settings bag (schema defaults + panel/TUI
     /// overrides + optional scenario inject). The prelude's
     /// `this.settings.*` reads `__rs2b0t_host.settingsBag`.
     pub fn post_settings_bag(&self, bag: &serde_json::Map<String, serde_json::Value>) {
-        let Ok(json) = serde_json::to_string(bag) else {
-            return;
-        };
-        self.send(IsolateCmd::Settings(json));
+        self.send(IsolateCmd::Settings(bag.clone()));
     }
 
     /// Dispatch one observed game tick to the isolate. The previous
@@ -1430,16 +1448,7 @@ fn forward_paint_if_changed(
 
 /// Drop an unconsumed one-shot so a later paint cannot return a stale id.
 fn clear_unconsumed_paint_click(runtime: &mut Runtime) {
-    let _ = runtime.eval::<()>(
-        "if (globalThis.__rs2b0t_host && globalThis.__rs2b0t_host.paintClick != null) { globalThis.__rs2b0t_host.paintClick = null; }",
-    );
-}
-
-fn set_paint_click(runtime: &mut Runtime, id: &str) -> Result<(), String> {
-    let json = serde_json::to_string(id).map_err(|e| e.to_string())?;
-    runtime
-        .eval::<()>(&format!("globalThis.__rs2b0t_host.paintClick = {json};"))
-        .map_err(|e| e.to_string())
+    set_host_field(runtime, "paintClick", HostValue::Null);
 }
 
 /// Drain Execution wait enqueue/settle counters. Each increment is a
@@ -2038,15 +2047,9 @@ fn tick_loop(
                     }
                 }
             }
-            IsolateCmd::Loadouts(json) => {
-                if let Err(e) =
-                    runtime.eval::<()>(&format!("globalThis.__rs2b0t_host.loadouts = {json};"))
-                {
-                    let _ = out.send(ThreadMsg::Log(format!("loadouts: {e}")));
-                }
-            }
-            IsolateCmd::Settings(json) => {
-                if let Err(e) = materialize_settings_bag(&mut runtime, &json) {
+            IsolateCmd::Loadouts(rows) => super::loadout_v8::post(rows),
+            IsolateCmd::Settings(bag) => {
+                if let Err(e) = materialize_settings_bag(&mut runtime, &bag) {
                     let _ = out.send(ThreadMsg::Log(format!("settings: {e}")));
                 }
             }
@@ -2479,8 +2482,8 @@ fn tick_loop(
                 {
                     continue;
                 }
-                if let Err(e) = set_paint_click(&mut runtime, &id) {
-                    let _ = out.send(ThreadMsg::Log(format!("paintClick: {e}")));
+                if !set_host_field(&mut runtime, "paintClick", HostValue::Str(&id)) {
+                    let _ = out.send(ThreadMsg::Log("paintClick: no host handle".into()));
                 }
             }
             IsolateCmd::PaintSelect {
