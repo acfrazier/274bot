@@ -322,23 +322,19 @@ pub struct ArtifactLayout {
 }
 
 /// `nav/<revision>/…` keeps revisions side by side: building the other
-/// revision never overwrites the staged artifacts of this one.
+/// revision never overwrites the staged artifacts of this one. The relative
+/// strings are install-relative and written into the stamp, so they use `/`
+/// on every platform (Windows file APIs accept it).
 pub fn artifact_layout(revision: u16) -> ArtifactLayout {
-    let dir = PathBuf::from(format!("nav/{revision}"));
+    let rel = |file: &str| format!("nav/{revision}/{file}");
     ArtifactLayout {
-        relative_pack: dir.join("274bot.navpack").to_string_lossy().into_owned(),
-        relative_flags: dir.join("274bot.navflags").to_string_lossy().into_owned(),
-        relative_reach: dir.join("274bot.navreach").to_string_lossy().into_owned(),
-        relative_canlight: dir
-            .join("274bot.navcanlight")
-            .to_string_lossy()
-            .into_owned(),
-        relative_manifest: dir
-            .join("274bot.navpack.json")
-            .to_string_lossy()
-            .into_owned(),
-        relative_stamp: dir.join("nav-build.json").to_string_lossy().into_owned(),
-        dir,
+        relative_pack: rel("274bot.navpack"),
+        relative_flags: rel("274bot.navflags"),
+        relative_reach: rel("274bot.navreach"),
+        relative_canlight: rel("274bot.navcanlight"),
+        relative_manifest: rel("274bot.navpack.json"),
+        relative_stamp: rel("nav-build.json"),
+        dir: PathBuf::from(format!("nav/{revision}")),
     }
 }
 
@@ -785,15 +781,10 @@ mod tests {
             resource_root_for_build(out, None).unwrap(),
             PathBuf::from("/w/target/x86_64-pc-windows-msvc/release")
         );
-        // A macOS bundle stages into Contents/Resources instead.
-        assert_eq!(
-            resource_root_for_build(
-                out,
-                Some(Path::new("/Applications/274bot.app/Contents/Resources"))
-            )
-            .unwrap(),
-            PathBuf::from("/Applications/274bot.app/Contents/Resources")
-        );
+        // A macOS bundle (or installer staging dir) stages into its own
+        // absolute directory instead; an absolute override passes through.
+        let bundle = std::env::temp_dir().join("274bot.app/Contents/Resources");
+        assert_eq!(resource_root_for_build(out, Some(&bundle)).unwrap(), bundle);
         assert!(resource_root_for_build(Path::new("/unexpected/out"), None).is_err());
         assert!(resource_root_for_build(out, Some(Path::new(""))).is_err());
     }
