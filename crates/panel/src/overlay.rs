@@ -111,13 +111,7 @@ impl PathOverlay {
     /// Draw the displayed bot's queue card over the Image. `min` is the
     /// Image widget's top-left corner; `size` is unused now that the
     /// polyline is gone.
-    pub fn frame(
-        &mut self,
-        ui: &Ui,
-        queue: Option<(i32, i32)>,
-        min: [f32; 2],
-        _size: [f32; 2],
-    ) {
+    pub fn frame(&mut self, ui: &Ui, queue: Option<(i32, i32)>, min: [f32; 2], _size: [f32; 2]) {
         if queue != self.queue {
             self.queue = queue;
             self.queue_lines = queue_card_lines(queue);

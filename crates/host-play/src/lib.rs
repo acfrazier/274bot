@@ -2368,11 +2368,7 @@ fn record_login_error(statuses: &Arc<Mutex<Vec<SlotStatus>>>, name: &str, e: &Lo
     }
 }
 
-fn publish_transfer_countdown(
-    statuses: &Arc<Mutex<Vec<SlotStatus>>>,
-    name: &str,
-    remaining: u64,
-) {
+fn publish_transfer_countdown(statuses: &Arc<Mutex<Vec<SlotStatus>>>, name: &str, remaining: u64) {
     let mut all = statuses.lock().unwrap();
     if let Some(s) = all.iter_mut().find(|s| s.username == name) {
         s.startup_phase = StartupPhase::Connecting;
