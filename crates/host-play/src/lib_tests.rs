@@ -894,6 +894,46 @@ fn stop_slot_wakes_a_parked_thread_before_joining() {
 }
 
 #[test]
+fn stop_slot_interrupts_login_backoff() {
+    let mut play = run_with_io(
+        &PlayOptions {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            lowmem: true,
+            mainland: false,
+        },
+        vec![],
+        |_| (None, None),
+        |_, _, _| {},
+    );
+    let arm = SlotArm::new(9, true);
+    play.arms.insert("bob".into(), Arc::clone(&arm));
+    play.spawned.insert("bob".into());
+    let (waiting_tx, waiting_rx) = std::sync::mpsc::channel();
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    let waiter = thread::spawn(move || {
+        waiting_tx.send(()).unwrap();
+        done_tx
+            .send(arm.wait_for_retry(Duration::from_secs(60)))
+            .unwrap();
+    });
+    play.handles.insert("bob".into(), waiter);
+    waiting_rx.recv().unwrap();
+
+    let start = Instant::now();
+    play.stop_slot("bob");
+    assert!(
+        start.elapsed() < Duration::from_millis(500),
+        "Stop must not join through the remaining login backoff"
+    );
+    assert!(
+        !done_rx.recv_timeout(Duration::from_millis(100)).unwrap(),
+        "Stop cancels, rather than completes, the retry wait"
+    );
+}
+
+#[test]
 fn stop_slot_during_unresponsive_public_key_fetch_is_bounded() {
     use std::sync::mpsc;
 

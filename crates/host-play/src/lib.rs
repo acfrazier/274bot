@@ -946,6 +946,8 @@ pub struct SlotArm {
     /// Next handshake is opcode 18 (lost_con reconnect). First-ever online
     /// is 16; after a grant this is true.
     pub reconnect: Arc<AtomicBool>,
+    retry_wait: parking_lot::Mutex<()>,
+    retry_wake: parking_lot::Condvar,
 }
 
 impl SlotArm {
@@ -962,7 +964,31 @@ impl SlotArm {
             lamp_skill: Arc::new(Mutex::new("strength".to_string())),
             world: Arc::new(parking_lot::Mutex::new(None)),
             reconnect: Arc::new(AtomicBool::new(false)),
+            retry_wait: parking_lot::Mutex::new(()),
+            retry_wake: parking_lot::Condvar::new(),
         })
+    }
+
+    /// Wake a retry/backoff wait after control intent changes.
+    fn notify_retry_wait(&self) {
+        let _guard = self.retry_wait.lock();
+        self.retry_wake.notify_all();
+    }
+
+    /// Wait for a retry deadline while remaining interruptible by Stop,
+    /// logout/withdrawal, or an intentional-logout latch.
+    fn wait_for_retry(&self, timeout: Duration) -> bool {
+        let mut guard = self.retry_wait.lock();
+        if self.stop.load(Ordering::Relaxed)
+            || !self.want_login.load(Ordering::Relaxed)
+            || self.latch.load(Ordering::Relaxed)
+        {
+            return false;
+        }
+        self.retry_wake.wait_for(&mut guard, timeout);
+        !self.stop.load(Ordering::Relaxed)
+            && self.want_login.load(Ordering::Relaxed)
+            && !self.latch.load(Ordering::Relaxed)
     }
 }
 
@@ -1399,11 +1425,11 @@ impl Play {
         }
     }
 
-    /// Kick one slot's parked thread (a no-op when the name is not a
-    /// running slot or the thread is already awake). The panel/host-play
-    /// call this whenever a shared-state change must take effect within a
-    /// frame instead of at the next game-tick park timeout.
+    /// Kick one slot's parked thread and any login retry/backoff wait.
     pub fn wake(&self, name: &str) {
+        if let Some(arm) = self.arms.get(name) {
+            arm.notify_retry_wait();
+        }
         if let Some(w) = self.wakes.get(name) {
             w.wake();
         }
@@ -1412,6 +1438,9 @@ impl Play {
     /// Kick every running slot (wall-policy changes like
     /// `only_render_selected` affect every member's draw state).
     pub fn wake_all(&self) {
+        for arm in self.arms.values() {
+            arm.notify_retry_wait();
+        }
         for w in self.wakes.values() {
             w.wake();
         }
@@ -1853,6 +1882,7 @@ impl Play {
     pub fn stop_slot(&mut self, name: &str) {
         if let Some(arm) = self.arms.get(name) {
             arm.stop.store(true, Ordering::Relaxed);
+            arm.notify_retry_wait();
             self.queue
                 .lock()
                 .unwrap()
@@ -2726,7 +2756,7 @@ fn spawn_slot_thread(
                                 refresh_key = true;
                                 world_dirty = true;
                             }
-                            thread::sleep(login_retry_wait(&mut backoff, e.code));
+                            arm.wait_for_retry(login_retry_wait(&mut backoff, e.code));
                             continue;
                         }
                     }
