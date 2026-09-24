@@ -1,5 +1,7 @@
 // Thin marshal for `/rs2b0t/bot/paint/jive.js`. Branding, XP deltas,
-// level-row formats and paintLevels room live in the Rust helper.
+// level-row formats, the frame plan (strip, rail on the first page, byline)
+// and the paintLevels room live in the Rust helper; this module only applies
+// the paint calls it returns.
 import { notImpl } from '../shim/_kernel.js';
 import { Paint } from './Paint.js';
 
@@ -11,39 +13,31 @@ function jive(op, a, b, c, d, e) {
     return fn(op, a, b, c, d, e);
 }
 
-function asNames(names) {
-    if (!names) {
-        return [];
-    }
-    const out = [];
-    for (let i = 0; i < names.length; i++) {
-        out.push(String(names[i]));
-    }
-    return out;
-}
-
-function applyFrame(cfg, opts) {
-    const frame = Paint.begin(null, { dock: cfg.dock, accent: cfg.accent });
-    const pages = asNames(opts && opts.pages);
-    const sections = asNames(opts && opts.sections);
-    const status = opts && opts.status != null ? String(opts.status) : '';
-    const script = opts && opts.script != null ? String(opts.script) : '';
-    const page = frame.strip(cfg.key, pages, status, script);
-    const section = page === (pages[0] || '') ? frame.rail(cfg.key, sections) : '';
-    frame.footer(cfg.byline);
-    return { frame, page, section };
-}
-
 export const JIVE_ACCENT = jive('accent');
 export const JIVE_BYLINE = jive('byline');
 export const COMBAT_SKILLS = jive('combatSkills');
 
+/**
+ * Begin the frame, then apply the plan's paint calls in order. The plan is
+ * asked for after `Paint.begin`, because the strip spends a dock row and
+ * begin resets the budget.
+ */
+function applyFrame(cfg) {
+    const frame = Paint.begin(null, { dock: cfg.dock, accent: cfg.accent });
+    const plan = jive('frame', cfg);
+    for (let i = 0; i < plan.ops.length; i++) {
+        const op = plan.ops[i];
+        if (op) frame[op.m].apply(frame, op.a);
+    }
+    return { frame, page: plan.page, section: plan.section };
+}
+
 export function scriptFrame(ctx, opts) {
-    return applyFrame(jive('scriptFrame', opts || {}), opts || {});
+    return applyFrame(jive('scriptFrame', opts || {}));
 }
 
 export function jiveFrame(ctx, opts) {
-    return applyFrame(jive('jiveFrame', opts || {}), opts || {});
+    return applyFrame(jive('jiveFrame', opts || {}));
 }
 
 export class XpTracker {
@@ -71,6 +65,17 @@ export class XpTracker {
     }
 }
 
+function asNames(names) {
+    if (!names) {
+        return [];
+    }
+    const out = [];
+    for (let i = 0; i < names.length; i++) {
+        out.push(String(names[i]));
+    }
+    return out;
+}
+
 export function paintLevels(p, gains, mins, reserve, empty) {
     const rowsLeft = typeof p.rowsLeft === 'function' ? p.rowsLeft() : 0;
     const ops = jive('paintLevels', gains || [], mins, reserve, empty, rowsLeft);
@@ -79,13 +84,6 @@ export function paintLevels(p, gains, mins, reserve, empty) {
     }
     for (let i = 0; i < ops.length; i++) {
         const op = ops[i];
-        if (!op) continue;
-        if (op.kind === 'text') {
-            p.text(op.text);
-        } else if (op.kind === 'bar') {
-            p.bar(op.label, op.fraction);
-        } else if (op.kind === 'row') {
-            p.row.apply(p, op.cells || []);
-        }
+        if (op) p[op.m].apply(p, op.a);
     }
 }

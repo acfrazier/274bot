@@ -10,6 +10,7 @@ use script::LoadIsolate;
 mod common;
 
 fn tick_paint(iso: &LoadIsolate, n: u64) -> ScriptPaint {
+fn tick_paint(iso: &LoadIsolate, n: u64) -> std::sync::Arc<ScriptPaint> {
     iso.on_game_tick(n);
     let _ = iso.probe("0");
     iso.paint().expect("paint forwarded")

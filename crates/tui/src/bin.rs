@@ -3048,7 +3048,7 @@ ScriptRegistry.register({ name: 'Thiever', create: () => new ThievingBot() });
         let mut app = TuiApp::new("274bot headless");
         app.names = vec!["alice".into()];
         app.focused = Some(0);
-        app.chat_data.script_paint = Some(script::shim::ScriptPaint {
+        app.chat_data.script_paint = Some(std::sync::Arc::new(script::shim::ScriptPaint {
             title: Some("NatureCrafter".into()),
             accent: None,
             lines: vec!["status".into()],
@@ -3059,7 +3059,7 @@ ScriptRegistry.register({ name: 'Thiever', create: () => new ThievingBot() });
             generation: 0,
             canvas: Vec::new(),
             ..Default::default()
-        });
+        }));
         dispatch(
             &mut session,
             &mut app,

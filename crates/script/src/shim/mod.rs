@@ -132,15 +132,85 @@ globalThis.TreeBot = class TreeBot extends globalThis.LoopingBot {
         throw new Error('not impl: TreeBot.root');
     }
 };
+// Paint ctx: records its calls into a Float64Array op tape plus a
+// deduplicated string table and flushes them in one typed crossing. Op codes
+// and arity mirror `load/canvas_tape.rs`. `measureText` needs recorder state,
+// so it flushes first; style getters answer from the ctx's own state and never
+// cross.
 globalThis.__rs2b0t_make_paint_ctx = () => {
     const fn = globalThis.rustyscript.functions;
     fn.__rs2b0t_canvas_begin();
+    const SET = 1, SET_NUM = 2, FILL_GRADIENT = 3, FILL_RECT = 4, FILL_TEXT = 5,
+        SAVE = 6, RESTORE = 7, BEGIN_PATH = 8, CLOSE_PATH = 9, MOVE_TO = 10,
+        LINE_TO = 11, QUAD_TO = 12, ARC = 13, FILL = 14, STROKE = 15, CLIP = 16,
+        CREATE_LINEAR = 17, CREATE_RADIAL = 18, ADD_STOP = 19;
+    let cap = 256;
+    let tape = new Float64Array(cap);
+    let n = 0;
+    const strs = [];
+    const ids = new Map();
+    const put = (v) => {
+        if (n === cap) {
+            cap *= 2;
+            const grown = new Float64Array(cap);
+            grown.set(tape);
+            tape = grown;
+        }
+        tape[n++] = v;
+    };
+    const s = (v) => {
+        const key = String(v);
+        const seen = ids.get(key);
+        if (seen !== undefined) return seen;
+        const i = strs.length;
+        strs.push(key);
+        ids.set(key, i);
+        return i;
+    };
+    // json_f64 parity: only a finite number crosses; anything else is 0.
+    const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+    const flush = () => {
+        if (n === 0) return;
+        const ops = tape.subarray(0, n);
+        n = 0;
+        const err = globalThis.__rs2b0t_canvas_submit(ops, strs);
+        // The ops in flight reference this table; the next flush sends its own.
+        strs.length = 0;
+        ids.clear();
+        if (typeof err === 'string') throw new Error(err);
+    };
+    // The recorded style, mirrored here so a getter needs no crossing; a value
+    // the recorder rejects reads back as written until the next flush.
+    let style = {
+        font: '10px sans-serif',
+        fillStyle: '#000000',
+        strokeStyle: '#000000',
+        shadowColor: 'transparent',
+        lineJoin: 'miter',
+        textAlign: 'left',
+        textBaseline: 'alphabetic',
+        lineWidth: 1,
+        shadowBlur: 0,
+        shadowOffsetX: 0,
+        shadowOffsetY: 0,
+    };
+    const saved = [];
     const grads = Object.create(null);
+    let gradCount = 0;
     const gradObj = (id) => {
         if (!grads[id]) {
             const g = {
                 addColorStop(offset, color) {
-                    fn.__rs2b0t_canvas_add_color_stop(id, Number(offset), String(color));
+                    const at = num(Number(offset));
+                    // Same reason as `arc`: the declared ctx throws this at the
+                    // call site, not at the flush.
+                    if (at < 0 || at > 1) {
+                        throw new Error('IndexSizeError: offset must be in [0, 1]');
+                    }
+                    put(ADD_STOP);
+                    put(id);
+                    put(at);
+                    put(s(color));
                 }
             };
             Object.defineProperty(g, '__rs2b0t_gradient', { value: id });
@@ -149,62 +219,101 @@ globalThis.__rs2b0t_make_paint_ctx = () => {
         return grads[id];
     };
     const ctx = {
-        set font(v) { fn.__rs2b0t_canvas_set('font', String(v)); },
-        get font() { return fn.__rs2b0t_canvas_get('font'); },
+        set font(v) { put(SET); put(s('font')); put(s(v)); style.font = String(v); },
+        get font() { return style.font; },
         set fillStyle(v) {
             if (v && typeof v === 'object' && typeof v.__rs2b0t_gradient === 'number') {
-                fn.__rs2b0t_canvas_set_fill_gradient(v.__rs2b0t_gradient);
+                put(FILL_GRADIENT);
+                put(v.__rs2b0t_gradient);
+                style.fillStyle = v;
                 return;
             }
-            fn.__rs2b0t_canvas_set('fillStyle', String(v));
+            put(SET);
+            put(s('fillStyle'));
+            put(s(v));
+            style.fillStyle = String(v);
         },
-        get fillStyle() {
-            const id = fn.__rs2b0t_canvas_fill_gradient_id();
-            if (id >= 0) return gradObj(id);
-            return fn.__rs2b0t_canvas_get('fillStyle');
-        },
-        set strokeStyle(v) { fn.__rs2b0t_canvas_set('strokeStyle', String(v)); },
-        get strokeStyle() { return fn.__rs2b0t_canvas_get('strokeStyle'); },
-        set shadowColor(v) { fn.__rs2b0t_canvas_set('shadowColor', String(v)); },
-        get shadowColor() { return fn.__rs2b0t_canvas_get('shadowColor'); },
-        set lineJoin(v) { fn.__rs2b0t_canvas_set('lineJoin', String(v)); },
-        get lineJoin() { return fn.__rs2b0t_canvas_get('lineJoin'); },
-        set textAlign(v) { fn.__rs2b0t_canvas_set('textAlign', String(v)); },
-        get textAlign() { return fn.__rs2b0t_canvas_get('textAlign'); },
-        set textBaseline(v) { fn.__rs2b0t_canvas_set('textBaseline', String(v)); },
-        get textBaseline() { return fn.__rs2b0t_canvas_get('textBaseline'); },
-        set lineWidth(v) { fn.__rs2b0t_canvas_set_num('lineWidth', Number(v)); },
-        get lineWidth() { return fn.__rs2b0t_canvas_get_num('lineWidth'); },
-        set shadowBlur(v) { fn.__rs2b0t_canvas_set_num('shadowBlur', Number(v)); },
-        get shadowBlur() { return fn.__rs2b0t_canvas_get_num('shadowBlur'); },
-        set shadowOffsetX(v) { fn.__rs2b0t_canvas_set_num('shadowOffsetX', Number(v)); },
-        get shadowOffsetX() { return fn.__rs2b0t_canvas_get_num('shadowOffsetX'); },
-        set shadowOffsetY(v) { fn.__rs2b0t_canvas_set_num('shadowOffsetY', Number(v)); },
-        get shadowOffsetY() { return fn.__rs2b0t_canvas_get_num('shadowOffsetY'); },
-        fillRect(x, y, w, h) { fn.__rs2b0t_canvas_fill_rect(x, y, w, h); },
+        get fillStyle() { return style.fillStyle; },
+        set strokeStyle(v) { put(SET); put(s('strokeStyle')); put(s(v)); style.strokeStyle = String(v); },
+        get strokeStyle() { return style.strokeStyle; },
+        set shadowColor(v) { put(SET); put(s('shadowColor')); put(s(v)); style.shadowColor = String(v); },
+        get shadowColor() { return style.shadowColor; },
+        set lineJoin(v) { put(SET); put(s('lineJoin')); put(s(v)); style.lineJoin = String(v); },
+        get lineJoin() { return style.lineJoin; },
+        set textAlign(v) { put(SET); put(s('textAlign')); put(s(v)); style.textAlign = String(v); },
+        get textAlign() { return style.textAlign; },
+        set textBaseline(v) { put(SET); put(s('textBaseline')); put(s(v)); style.textBaseline = String(v); },
+        get textBaseline() { return style.textBaseline; },
+        set lineWidth(v) { put(SET_NUM); put(s('lineWidth')); put(num(Number(v))); style.lineWidth = Number(v); },
+        get lineWidth() { return style.lineWidth; },
+        set shadowBlur(v) { put(SET_NUM); put(s('shadowBlur')); put(num(Number(v))); style.shadowBlur = Number(v); },
+        get shadowBlur() { return style.shadowBlur; },
+        set shadowOffsetX(v) { put(SET_NUM); put(s('shadowOffsetX')); put(num(Number(v))); style.shadowOffsetX = Number(v); },
+        get shadowOffsetX() { return style.shadowOffsetX; },
+        set shadowOffsetY(v) { put(SET_NUM); put(s('shadowOffsetY')); put(num(Number(v))); style.shadowOffsetY = Number(v); },
+        get shadowOffsetY() { return style.shadowOffsetY; },
+        fillRect(x, y, w, h) { put(FILL_RECT); put(num(x)); put(num(y)); put(num(w)); put(num(h)); },
         fillText(text, x, y) {
             if (arguments.length >= 4) throw new Error('not impl: Canvas.fillText.maxWidth');
-            fn.__rs2b0t_canvas_fill_text(String(text), x, y);
+            put(FILL_TEXT);
+            put(s(text));
+            put(num(x));
+            put(num(y));
         },
         measureText(text) {
+            flush();
             return { width: fn.__rs2b0t_canvas_measure_text(String(text)) };
         },
-        save() { fn.__rs2b0t_canvas_save(); },
-        restore() { fn.__rs2b0t_canvas_restore(); },
-        beginPath() { fn.__rs2b0t_canvas_begin_path(); },
-        closePath() { fn.__rs2b0t_canvas_close_path(); },
-        moveTo(x, y) { fn.__rs2b0t_canvas_move_to(x, y); },
-        lineTo(x, y) { fn.__rs2b0t_canvas_line_to(x, y); },
-        quadraticCurveTo(cpx, cpy, x, y) { fn.__rs2b0t_canvas_quad_to(cpx, cpy, x, y); },
-        arc(x, y, r, a0, a1, ccw) { fn.__rs2b0t_canvas_arc(x, y, r, a0, a1, !!ccw); },
-        fill() { fn.__rs2b0t_canvas_fill(); },
-        stroke() { fn.__rs2b0t_canvas_stroke(); },
-        clip() { fn.__rs2b0t_canvas_clip(); },
+        save() { put(SAVE); saved.push({ ...style }); },
+        restore() {
+            put(RESTORE);
+            const prev = saved.pop();
+            if (prev) style = prev;
+        },
+        beginPath() { put(BEGIN_PATH); },
+        closePath() { put(CLOSE_PATH); },
+        moveTo(x, y) { put(MOVE_TO); put(num(x)); put(num(y)); },
+        lineTo(x, y) { put(LINE_TO); put(num(x)); put(num(y)); },
+        quadraticCurveTo(cpx, cpy, x, y) {
+            put(QUAD_TO);
+            put(num(cpx));
+            put(num(cpy));
+            put(num(x));
+            put(num(y));
+        },
+        arc(x, y, r, a0, a1, ccw) {
+            const radius = num(r);
+            // The recorder's IndexSizeError is part of the declared ctx, so it
+            // stays a call-site throw instead of surfacing at the flush.
+            if (radius < 0) throw new Error('IndexSizeError: radius must be non-negative');
+            put(ARC);
+            put(num(x));
+            put(num(y));
+            put(radius);
+            put(num(a0));
+            put(num(a1));
+            put(ccw ? 1 : 0);
+        },
+        fill() { put(FILL); },
+        stroke() { put(STROKE); },
+        clip() { put(CLIP); },
         createLinearGradient(x0, y0, x1, y1) {
-            return gradObj(fn.__rs2b0t_canvas_create_linear(x0, y0, x1, y1));
+            put(CREATE_LINEAR);
+            put(num(x0));
+            put(num(y0));
+            put(num(x1));
+            put(num(y1));
+            return gradObj(gradCount++);
         },
         createRadialGradient(x0, y0, r0, x1, y1, r1) {
-            return gradObj(fn.__rs2b0t_canvas_create_radial(x0, y0, r0, x1, y1, r1));
+            put(CREATE_RADIAL);
+            put(num(x0));
+            put(num(y0));
+            put(num(r0));
+            put(num(x1));
+            put(num(y1));
+            put(num(r1));
+            return gradObj(gradCount++);
         },
     };
     const styleProps = {
@@ -212,7 +321,7 @@ globalThis.__rs2b0t_make_paint_ctx = () => {
         textAlign: 1, textBaseline: 1, lineWidth: 1, shadowBlur: 1,
         shadowOffsetX: 1, shadowOffsetY: 1
     };
-    return new Proxy(ctx, {
+    const guarded = new Proxy(ctx, {
         get(target, prop) {
             if (typeof prop === 'symbol') return target[prop];
             if (prop === 'canvas') return undefined;
@@ -231,6 +340,7 @@ globalThis.__rs2b0t_make_paint_ctx = () => {
             return prop in target;
         },
     });
+    return { ctx: guarded, flush };
 };
 globalThis.__rs2b0t_call_on_paint = (bot) => {
     bot = bot || globalThis.__rs_bot;
@@ -241,11 +351,16 @@ globalThis.__rs2b0t_call_on_paint = (bot) => {
         fn.__rs2b0t_canvas_onpaint_done(1);
         return;
     }
-    const ctx = globalThis.__rs2b0t_make_paint_ctx();
+    const paint = globalThis.__rs2b0t_make_paint_ctx();
     try {
-        bot.onPaint(ctx);
+        bot.onPaint(paint.ctx);
+        paint.flush();
         fn.__rs2b0t_canvas_onpaint_done(0);
     } catch (e) {
+        // Ops recorded before the throw land, as the per-call path did; a
+        // failed flush already applies every op before the failing one and
+        // clears the tape, so this retry never re-applies them.
+        try { paint.flush(); } catch (_) {}
         const msg = String((e && e.message) || e);
         h.lastError = msg;
         fn.__rs2b0t_canvas_onpaint_done(2, msg);

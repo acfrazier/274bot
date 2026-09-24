@@ -1575,11 +1575,11 @@ impl SlotScript {
 
     /// The slot script's latest recorded paint frame (a Load isolate's
     /// host handle forwards it after every tick that painted); `None` for
-    /// a compiled script or a slot that has not painted. The host copies
-    /// it onto the status row so the TUI/panel views can show it in the
-    /// chat pane in place of the game chat.
+    /// a compiled script or a slot that has not painted. The host shares
+    /// the frame with the status row so the TUI/panel views can show it in
+    /// the chat pane in place of the game chat.
     #[cfg(feature = "load")]
-    pub fn paint(&self) -> Option<crate::shim::ScriptPaint> {
+    pub fn paint(&self) -> Option<std::sync::Arc<crate::shim::ScriptPaint>> {
         self.load.as_ref().and_then(|iso| iso.paint())
     }
 

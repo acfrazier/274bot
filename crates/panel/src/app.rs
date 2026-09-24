@@ -953,7 +953,7 @@ fn overlay_script_paint(
             if let Some((hit, generation)) =
                 state
                     .paint
-                    .frame(ui, Some(gpu), slot.script_paint.as_ref(), min, size)
+                    .frame(ui, Some(gpu), slot.script_paint.as_deref(), min, size)
             {
                 match hit {
                     crate::paint::PaintFrameHit::Button(id) => {

@@ -6893,7 +6893,7 @@ impl CanvasOpReader<'_> {
             ));
         }
         Ok(DrawExtras {
-            clips,
+            clips: clips.into(),
             shadow: Shadow {
                 color: unsafe { self.tab.get::<u32>(VT_CANVAS_SHADOW_COLOR, None) }.unwrap_or(0),
                 blur,

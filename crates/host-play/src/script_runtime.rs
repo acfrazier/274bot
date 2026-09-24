@@ -3794,19 +3794,21 @@ pub(super) fn script_running(scripts: &ScriptWall, name: &str) -> bool {
 pub(super) fn script_paint_of(
     scripts: &ScriptWall,
     name: &str,
-) -> Option<script::shim::ScriptPaint> {
+) -> Option<std::sync::Arc<script::shim::ScriptPaint>> {
     script_slot(scripts, name).and_then(|s| s.lock().unwrap().paint())
 }
 
-/// Copy `paint` onto `status.script_paint` only when the frame changed.
+/// Publish `paint` onto `status.script_paint`, sharing the frame the isolate
+/// recorded. The isolate forwards only changed frames, so a different handle
+/// is a new frame; an equal one is skipped.
 pub(super) fn publish_script_paint(
     status: &mut SlotStatus,
-    paint: Option<&script::shim::ScriptPaint>,
+    paint: Option<std::sync::Arc<script::shim::ScriptPaint>>,
 ) {
-    match (&status.script_paint, paint) {
-        (Some(cur), Some(next)) if cur == next => {}
+    match (&status.script_paint, &paint) {
+        (Some(cur), Some(next)) if std::sync::Arc::ptr_eq(cur, next) => {}
         (None, None) => {}
-        _ => status.script_paint = paint.cloned(),
+        _ => status.script_paint = paint,
     }
 }
 

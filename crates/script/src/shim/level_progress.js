@@ -1,46 +1,33 @@
-const MAX_LEVEL = 99;
+// `/rs2b0t/bot/paint/levelProgress.js`: the reference experience curve, the
+// per-level progress, the eta and the level row all live in the Rust helper
+// (`load/paint_jive.rs`), which serves the same numbers to the Jive level
+// rows. This module only marshals the arguments.
+import { notImpl } from '../shim/_kernel.js';
 
-const XP_AT_LEVEL = (() => {
-    const out = [0, 0];
-    let points = 0;
-    for (let level = 1; level < MAX_LEVEL; level++) {
-        points += Math.floor(level + 300 * Math.pow(2, level / 7));
-        out[level + 1] = Math.floor(points / 4);
-    }
-    return out;
-})();
-
-export function xpAtLevel(level) {
-    return XP_AT_LEVEL[Math.min(MAX_LEVEL, Math.max(1, Math.floor(level)))] ?? 0;
-}
-
-export function levelProgress(level, xp) {
-    const cur = Math.min(MAX_LEVEL, Math.max(1, Math.floor(level)));
-    const next = Math.min(MAX_LEVEL, cur + 1);
-    const base = xpAtLevel(cur);
-    const top = xpAtLevel(next);
-    const span = Math.max(1, top - base);
-    const fraction = cur >= MAX_LEVEL ? 1 : Math.max(0, Math.min(1, (xp - base) / span));
-    return {
-        level: cur,
-        fraction,
-        remaining: cur >= MAX_LEVEL ? 0 : Math.max(0, top - xp),
-    };
-}
-
-export function etaHours(level, xp, xpPerHour) {
-    if (xpPerHour <= 0) {
-        return null;
-    }
-    const prog = levelProgress(level, xp);
-    const hours = prog.remaining / xpPerHour;
-    return Number.isFinite(hours) ? hours : null;
-}
-
-export function levelRow(g, mins) {
+function jive(op, a, b, c) {
     const fn = globalThis.__rs2b0t_paint_jive;
     if (typeof fn !== 'function') {
-        throw new Error('not impl: levelRow');
+        throw notImpl('levelProgress.' + op);
     }
-    return fn('levelRow', g, mins);
+    return fn(op, a, b, c);
+}
+
+/** Total experience required to reach `level` (1-99). */
+export function xpAtLevel(level) {
+    return jive('xpAtLevel', level);
+}
+
+/** Where `xp` sits between its level and the next. */
+export function levelProgress(level, xp) {
+    return jive('levelProgress', level, xp);
+}
+
+/** Hours to the next level at this rate, or null when it is not moving. */
+export function etaHours(remaining, xpPerHour) {
+    return jive('etaHours', remaining, xpPerHour);
+}
+
+/** The bar and the line under it for one skill, from what it gained over `mins`. */
+export function levelRow(g, mins) {
+    return jive('levelRow', g, mins);
 }

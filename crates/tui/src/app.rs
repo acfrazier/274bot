@@ -149,10 +149,10 @@ pub struct ChatData {
     pub options: Vec<ChatOptionView>,
     /// A BUTTON_CONTINUE component is up.
     pub has_continue: bool,
-    /// The focused slot's script paint frame (copied from the status row
-    /// each pump); the pane shows it instead of the ring while it is
-    /// non-empty.
-    pub script_paint: Option<script::shim::ScriptPaint>,
+    /// The focused slot's script paint frame (shared with the status row,
+    /// which shares it with the isolate recorder); the pane shows it
+    /// instead of the ring while it is non-empty.
+    pub script_paint: Option<std::sync::Arc<script::shim::ScriptPaint>>,
     /// Operator toggle (`p`): show the game chat even while the script
     /// paints. Preserved across pumps (it is operator state, not a
     /// snapshot view).
@@ -172,7 +172,7 @@ impl ChatData {
             modal_texts: &self.modal_texts,
             options: &self.options,
             has_continue: self.has_continue,
-            script_paint: self.script_paint.as_ref(),
+            script_paint: self.script_paint.as_deref(),
             show_game_chat: self.show_game_chat,
         }
     }
@@ -1507,7 +1507,7 @@ mod tests {
     #[test]
     fn paint_showing_digit_routes_to_paint_button_not_wire() {
         let mut app = TuiApp::new("274bot headless");
-        app.chat_data.script_paint = Some(script::shim::ScriptPaint {
+        app.chat_data.script_paint = Some(std::sync::Arc::new(script::shim::ScriptPaint {
             title: Some("NatureCrafter".into()),
             accent: None,
             lines: vec!["status".into()],
@@ -1518,7 +1518,7 @@ mod tests {
             generation: 0,
             canvas: Vec::new(),
             ..Default::default()
-        });
+        }));
         assert_eq!(
             app.on_key(key(KeyCode::Char('1'))),
             AppAction::Chat(super::ChatAction::PaintButton(0)),
@@ -1537,7 +1537,7 @@ mod tests {
     fn nature_crafter_button_is_rendered_and_only_its_row_is_clickable_at_140x40() {
         const WIDTH: u16 = 140;
         let mut app = TuiApp::new("274bot headless");
-        app.chat_data.script_paint = Some(nature_crafter_paint());
+        app.chat_data.script_paint = Some(std::sync::Arc::new(nature_crafter_paint()));
         let mut terminal = Terminal::new(TestBackend::new(WIDTH, 40)).unwrap();
         terminal.draw(|frame| app.draw(frame)).unwrap();
 
@@ -1572,7 +1572,7 @@ mod tests {
     fn nature_crafter_button_remains_visible_and_clickable_in_a_compact_terminal() {
         const WIDTH: u16 = 48;
         let mut app = TuiApp::new("274bot headless");
-        app.chat_data.script_paint = Some(nature_crafter_paint());
+        app.chat_data.script_paint = Some(std::sync::Arc::new(nature_crafter_paint()));
         let mut terminal = Terminal::new(TestBackend::new(WIDTH, 18)).unwrap();
         terminal.draw(|frame| app.draw(frame)).unwrap();
 
@@ -2038,7 +2038,7 @@ mod tests {
     fn chat_pane_shows_script_paint_instead_of_the_game_chat() {
         let mut app = TuiApp::new("274bot headless");
         app.chat_data.lines = vec![line("last game chat line")];
-        app.chat_data.script_paint = Some(script::shim::ScriptPaint {
+        app.chat_data.script_paint = Some(std::sync::Arc::new(script::shim::ScriptPaint {
             title: Some("BoneBurier — digging".into()),
             accent: Some("#f3e6a2".into()),
             lines: vec!["Runtime: 1.2m | Buried: 3".into(), "".into()],
@@ -2046,7 +2046,7 @@ mod tests {
             generation: 0,
             canvas: Vec::new(),
             ..Default::default()
-        });
+        }));
         let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
         terminal.draw(|frame| app.draw(frame)).unwrap();
         let buf = terminal.backend().buffer();

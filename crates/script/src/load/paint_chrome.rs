@@ -57,6 +57,12 @@ impl ChromeState {
         self.consumed = self.consumed.saturating_add(px.max(0));
     }
 
+    /// Batched body rows: one crossing spends `count` recorded lines.
+    fn consume_lines(&mut self, count: i64) {
+        let px = count.max(0).saturating_mul(i64::from(LINE));
+        self.consume(px.clamp(0, i64::from(i32::MAX)) as i32);
+    }
+
     fn resolve(&self, key: &str, names: &[String]) -> String {
         if let Some(stored) = self.selections.get(key) {
             if names.iter().any(|n| n == stored) {
@@ -87,6 +93,23 @@ pub(super) fn store_select(key: &str, name: &str) {
             .selections
             .insert(key.to_string(), name.to_string());
     });
+}
+
+/// Resolve a strip band's selection and spend its title row, for a caller that
+/// records the frame itself (`paint_jive`'s frame plan) instead of marshalling
+/// the call.
+pub(super) fn strip_select(id: &str, names: &[String]) -> String {
+    STATE.with(|s| {
+        let mut st = s.borrow_mut();
+        st.consume(TITLE_H);
+        st.resolve(&format!("strip:{id}"), names)
+    })
+}
+
+/// Resolve a rail band's selection. The rail is vertical, so it spends no
+/// dock rows.
+pub(super) fn rail_select(id: &str, names: &[String]) -> String {
+    STATE.with(|s| s.borrow().resolve_rail(&format!("rail:{id}"), names))
 }
 
 pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
@@ -135,8 +158,11 @@ fn run<'s>(
             STATE.with(|s| s.borrow_mut().consume(TITLE_H));
             Ok(v8::undefined(scope).into())
         }
-        "body" => {
-            STATE.with(|s| s.borrow_mut().consume(LINE));
+        // Batched recorded lines: the frame counts them and flushes once, so
+        // the dock budget costs one crossing per pass instead of one per row.
+        "rows" => {
+            let count = js_opt_i32(scope, args.get(1), 0);
+            STATE.with(|s| s.borrow_mut().consume_lines(i64::from(count)));
             Ok(v8::undefined(scope).into())
         }
         "gap" => {
@@ -144,7 +170,6 @@ fn run<'s>(
             STATE.with(|s| s.borrow_mut().consume(px));
             Ok(v8::undefined(scope).into())
         }
-        "footer" => Ok(v8::undefined(scope).into()),
         "buttons" | "select" => {
             STATE.with(|s| s.borrow_mut().consume(BUTTON_H + BUTTON_TRAIL));
             Ok(v8::undefined(scope).into())
@@ -156,17 +181,13 @@ fn run<'s>(
         "strip" => {
             let id = js_string_arg(scope, args.get(1));
             let names = js_string_array(scope, args.get(2))?;
-            let selected = STATE.with(|s| {
-                let mut st = s.borrow_mut();
-                st.consume(TITLE_H);
-                st.resolve(&format!("strip:{id}"), &names)
-            });
+            let selected = strip_select(&id, &names);
             js_string(scope, &selected)
         }
         "rail" => {
             let id = js_string_arg(scope, args.get(1));
             let names = js_string_array(scope, args.get(2))?;
-            let selected = STATE.with(|s| s.borrow().resolve_rail(&format!("rail:{id}"), &names));
+            let selected = rail_select(&id, &names);
             js_string(scope, &selected)
         }
         "tabs" => {

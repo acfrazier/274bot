@@ -13090,12 +13090,13 @@ fn identical_script_paint_skips_status_clone() {
     };
     let mut status = SlotStatus {
         username: "alice".into(),
-        script_paint: Some(frame.clone()),
+        script_paint: Some(std::sync::Arc::new(frame.clone())),
         ..SlotStatus::default()
     };
     let lines_ptr = status.script_paint.as_ref().unwrap().lines.as_ptr();
 
-    publish_script_paint(&mut status, Some(&frame));
+    let shared = std::sync::Arc::clone(status.script_paint.as_ref().unwrap());
+    publish_script_paint(&mut status, Some(shared));
     assert_eq!(
         status.script_paint.as_ref().unwrap().lines.as_ptr(),
         lines_ptr,
@@ -13111,7 +13112,7 @@ fn identical_script_paint_skips_status_clone() {
         canvas: Vec::new(),
         ..Default::default()
     };
-    publish_script_paint(&mut status, Some(&changed));
+    publish_script_paint(&mut status, Some(std::sync::Arc::new(changed)));
     assert_ne!(
         status.script_paint.as_ref().unwrap().lines.as_ptr(),
         lines_ptr,
@@ -13131,7 +13132,7 @@ fn identical_script_paint_skips_status_clone() {
         canvas: Vec::new(),
         ..Default::default()
     };
-    publish_script_paint(&mut status, Some(&relabel));
+    publish_script_paint(&mut status, Some(std::sync::Arc::new(relabel)));
     assert_eq!(
         status.script_paint.as_ref().unwrap().buttons[0].label,
         "Resume",
@@ -13204,7 +13205,7 @@ export default class T extends LoopingBot {
         wait_until(500, || script_paint_of(&scripts, "alice").is_some()),
         "first tick paints"
     );
-    publish_script_paint(&mut status, script_paint_of(&scripts, "alice").as_ref());
+    publish_script_paint(&mut status, script_paint_of(&scripts, "alice"));
     let lines_ptr = status
         .script_paint
         .as_ref()
@@ -13233,7 +13234,7 @@ export default class T extends LoopingBot {
         wait_until(500, || script_paint_of(&scripts, "alice").is_some()),
         "second tick still has paint"
     );
-    publish_script_paint(&mut status, script_paint_of(&scripts, "alice").as_ref());
+    publish_script_paint(&mut status, script_paint_of(&scripts, "alice"));
     assert_eq!(
         status.script_paint.as_ref().unwrap().lines.as_ptr(),
         lines_ptr,

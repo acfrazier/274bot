@@ -260,13 +260,6 @@ enum ThreadMsg {
         bytes: Vec<u8>,
         generation: u64,
     },
-    /// The tick's recorded paint frame (`Paint.begin` … `end()` on the
-    /// host handle), a FlatBuffer `Paint` forwarded for the script
-    /// paint views. The host reads the latest frame off the handle
-    /// without a probe round-trip. Null frames are not forwarded — a
-    /// script that stops painting keeps its last frame. Never a JSON
-    /// value on this channel.
-    Paint(Vec<u8>),
     /// The bot instance's `ignoredRandoms()` list, read on the isolate
     /// thread after the tick and cached on the host handle (no probe).
     IgnoredRandoms(Vec<String>),
@@ -287,6 +280,10 @@ enum ThreadMsg {
         generation: u64,
         tick: u64,
     },
+    /// The tick's recorded paint frame. Both ends are this crate in this
+    /// process, so the frame crosses as the typed value the recorder built:
+    /// no FlatBuffer encode/verify/decode, and every reader shares one frame.
+    Paint(std::sync::Arc<crate::shim::ScriptPaint>),
 }
 
 /// One JS bot running in its own rustyscript/V8 isolate. Spawned only
@@ -303,8 +300,9 @@ pub struct LoadIsolate {
     work_generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
     /// Host-owned identity of forwarded paint frames. Unique per spawn
     /// and bumped on session reset so a stale overlay generation cannot
-    /// match a later isolate that advertises the same button id.
-    paint_generation: std::sync::atomic::AtomicU64,
+    /// match a later isolate that advertises the same button id. Shared
+    /// with the isolate thread, which stamps the frame it forwards.
+    paint_generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
     stopped: std::sync::atomic::AtomicBool,
     /// One bounded, non-consuming terminal receipt for ScriptRunner.stop.
     script_stop: Mutex<Option<ScriptStopReceipt>>,
@@ -316,10 +314,10 @@ pub struct LoadIsolate {
     interacts: Mutex<Vec<crate::shim::InteractReq>>,
     /// Watchdog lifecycle facts from the same FlatBuffer batch.
     lifecycle: Mutex<Vec<crate::shim::InteractReq>>,
-    /// The latest paint frame the tick thread forwarded (a
-    /// [`crate::shim::ScriptPaint`] decoded off the host handle after
-    /// each tick), read by the script paint views.
-    paint: Mutex<Option<crate::shim::ScriptPaint>>,
+    /// The latest paint frame the tick thread forwarded (the
+    /// [`crate::shim::ScriptPaint`] the recorder built after each tick),
+    /// shared with every reader instead of copied per read.
+    paint: Mutex<Option<std::sync::Arc<crate::shim::ScriptPaint>>>,
     /// The bot instance's random-ignore list, forwarded by the tick
     /// thread after each tick (same source as the old probe path).
     ignored_randoms: Mutex<Vec<String>>,
@@ -463,8 +461,10 @@ impl LoadIsolate {
         let thread_teardown = teardown.clone();
         let proof = TeardownProof::new();
         let thread_proof = proof.inner.clone();
-        let paint_generation =
-            NEXT_PAINT_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let paint_generation = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(
+            NEXT_PAINT_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+        ));
+        let thread_paint_generation = paint_generation.clone();
         let handle = std::thread::Builder::new()
             .name("js-isolate".into())
             .spawn(move || {
@@ -478,6 +478,7 @@ impl LoadIsolate {
                     msg_tx,
                     setup_tx,
                     thread_generation,
+                    thread_paint_generation,
                     thread_teardown,
                     thread_proof,
                     #[cfg(feature = "memory-profile")]
@@ -493,7 +494,7 @@ impl LoadIsolate {
             #[cfg(feature = "memory-profile")]
             dispatched: std::sync::atomic::AtomicU64::new(0),
             work_generation,
-            paint_generation: std::sync::atomic::AtomicU64::new(paint_generation),
+            paint_generation,
             stopped: std::sync::atomic::AtomicBool::new(false),
             script_stop: Mutex::new(None),
             tx,
@@ -815,25 +816,23 @@ impl LoadIsolate {
             let mut interacts = self.interacts.lock().unwrap();
             self.work_generation
                 .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+            // The held frame keeps the generation it was forwarded under; the
+            // isolate stamps the next one, and the overlay that displays the
+            // held frame passes that same generation back.
             self.paint_generation
                 .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
             interacts.clear();
             self.lifecycle.lock().unwrap().clear();
-        }
-        if let Some(paint) = self.paint.lock().unwrap().as_mut() {
-            paint.generation = self
-                .paint_generation
-                .load(std::sync::atomic::Ordering::Acquire);
         }
         *self.in_flight.lock().unwrap() = None;
         let _ = self.tx.send(IsolateCmd::ResetSession);
     }
 
     /// The latest recorded paint frame (the tick thread forwards the
-    /// host handle's `paint` record after every tick that painted).
-    /// `None` when the script has not painted yet. No probe
+    /// recorder's frame after every tick that painted, shared, not
+    /// copied). `None` when the script has not painted yet. No probe
     /// round-trip — the host reads this every frame.
-    pub fn paint(&self) -> Option<crate::shim::ScriptPaint> {
+    pub fn paint(&self) -> Option<std::sync::Arc<crate::shim::ScriptPaint>> {
         self.pump_logs();
         self.paint.lock().unwrap().clone()
     }
@@ -1003,20 +1002,8 @@ impl LoadIsolate {
                         Err(e) => self.logs.lock().unwrap().push(format!("interact: {e}")),
                     }
                 }
-                ThreadMsg::Paint(bytes) => {
-                    // Decode the FlatBuffer paint frame (no JSON).
-                    match crate::isolate_fb::decode_paint(&bytes) {
-                        Ok(mut paint) => {
-                            paint.generation = self
-                                .paint_generation
-                                .load(std::sync::atomic::Ordering::Acquire);
-                            let mut slot = self.paint.lock().unwrap();
-                            if slot.as_ref() != Some(&paint) {
-                                *slot = Some(paint);
-                            }
-                        }
-                        Err(e) => self.logs.lock().unwrap().push(format!("paint: {e}")),
-                    }
+                ThreadMsg::Paint(frame) => {
+                    *self.paint.lock().unwrap() = Some(frame);
                 }
                 ThreadMsg::IgnoredRandoms(list) => {
                     *self.ignored_randoms.lock().unwrap() = list;
@@ -1115,6 +1102,7 @@ fn isolate_main(
     out: Sender<ThreadMsg>,
     setup: Sender<Result<v8::IsolateHandle, String>>,
     work_generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    paint_generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
     teardown: std::sync::Arc<Mutex<TeardownState>>,
     proof: std::sync::Arc<TeardownProofInner>,
     #[cfg(feature = "memory-profile")] counters: std::sync::Arc<crate::memory_profile::Counters>,
@@ -1171,6 +1159,7 @@ fn isolate_main(
         cmds,
         out,
         work_generation,
+        paint_generation,
         teardown,
         proof,
         v2_native,
@@ -1241,17 +1230,23 @@ fn compat_may_paint(runner: &Runner) -> bool {
         })
 }
 
+/// Forward the recorder's frame when it differs from the last one sent,
+/// stamped with the session it belongs to. The frame is built here, so it
+/// crosses as the typed value the host reads — no codec round trip, and no
+/// copy per reader.
 fn forward_paint_if_changed(
-    ipc: &mut crate::isolate_fb::IsolateBuf,
     out: &Sender<ThreadMsg>,
-    last: &mut Option<crate::shim::ScriptPaint>,
-    frame: crate::shim::ScriptPaint,
+    last: &mut Option<std::sync::Arc<crate::shim::ScriptPaint>>,
+    paint_generation: &std::sync::atomic::AtomicU64,
+    mut frame: crate::shim::ScriptPaint,
 ) {
-    if last.as_ref() == Some(&frame) {
+    frame.generation = paint_generation.load(std::sync::atomic::Ordering::Acquire);
+    if last.as_deref() == Some(&frame) {
         return;
     }
-    *last = Some(frame.clone());
-    let _ = out.send(ThreadMsg::Paint(ipc.encode_paint(&frame)));
+    let frame = std::sync::Arc::new(frame);
+    *last = Some(std::sync::Arc::clone(&frame));
+    let _ = out.send(ThreadMsg::Paint(frame));
 }
 
 /// Drop an unconsumed one-shot so a later paint cannot return a stale id.
@@ -1719,6 +1714,7 @@ fn tick_loop(
     cmds: Receiver<IsolateCmd>,
     out: Sender<ThreadMsg>,
     work_generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    paint_generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
     teardown: std::sync::Arc<Mutex<TeardownState>>,
     proof: std::sync::Arc<TeardownProofInner>,
     v2_native: bool,
@@ -1735,10 +1731,10 @@ fn tick_loop(
     // snapshot, never from a JS-writable `__rs2b0t_host.hold`.
     let mut host_hold = false;
     let mut event_producer = crate::events::NativeEventProducer::new();
-    // One reusable encode buffer for this V8 isolate: interact batch
-    // and paint frames share it (`reset` between messages).
+    // One reusable encode buffer for this V8 isolate's interact batches
+    // (`reset` between messages). Paint frames cross typed, not encoded.
     let mut ipc = crate::isolate_fb::IsolateBuf::new();
-    let mut last_forwarded_paint: Option<crate::shim::ScriptPaint> = None;
+    let mut last_forwarded_paint: Option<std::sync::Arc<crate::shim::ScriptPaint>> = None;
     let mut mouse_gestures = MouseGestureIdentities::default();
     let mut runner = Runner::new(compat);
     loop {
@@ -1920,9 +1916,9 @@ fn tick_loop(
                     match paint_frame(&mut runtime, script_paint) {
                         Ok(frame) => {
                             forward_paint_if_changed(
-                                &mut ipc,
                                 &out,
                                 &mut last_forwarded_paint,
+                                &paint_generation,
                                 frame,
                             );
                         }
@@ -2088,7 +2084,12 @@ fn tick_loop(
                 forward_script_logs(&mut runtime, &out, n);
                 match paint_frame(&mut runtime, script_paint) {
                     Ok(frame) => {
-                        forward_paint_if_changed(&mut ipc, &out, &mut last_forwarded_paint, frame);
+                        forward_paint_if_changed(
+                            &out,
+                            &mut last_forwarded_paint,
+                            &paint_generation,
+                            frame,
+                        );
                     }
                     Err(e) => {
                         let _ = out.send(ThreadMsg::Log(format!("paint eval: {e}")));

@@ -98,6 +98,39 @@ fn run<'s>(
         "combatSkills" => js_string_array_value(scope, COMBAT_SKILLS),
         "scriptFrame" => frame_cfg(scope, args.get(1), false),
         "jiveFrame" => frame_cfg(scope, args.get(1), true),
+        "frame" => frame_plan(scope, args.get(1)),
+        // The reference `paintLogic.ts` / `levelProgress.ts` formatters, served
+        // here so the shim has one owner for every paint string.
+        "fmtDuration" => {
+            let mins = js_f64(scope, args.get(1), 0.0);
+            js_string(scope, &fmt_duration(mins))
+        }
+        "fmtXpHr" => {
+            let gained = js_f64(scope, args.get(1), 0.0);
+            let mins = js_f64(scope, args.get(2), 0.0);
+            js_string(scope, &fmt_xp_hr(gained, mins))
+        }
+        "paintSkillShort" => {
+            let skill = js_string_arg(scope, args.get(1));
+            js_string(scope, paint_skill_short(&skill))
+        }
+        "xpAtLevel" => {
+            let level = js_f64(scope, args.get(1), 0.0);
+            Ok(v8::Number::new(scope, xp_at_level(level)).into())
+        }
+        "levelProgress" => {
+            let level = js_f64(scope, args.get(1), 0.0);
+            let xp = js_f64(scope, args.get(2), 0.0);
+            js_progress(scope, &level_progress(level, xp))
+        }
+        "etaHours" => {
+            let remaining = js_f64(scope, args.get(1), 0.0);
+            let xp_per_hour = js_f64(scope, args.get(2), 0.0);
+            match eta_hours(remaining, xp_per_hour) {
+                Some(hours) => Ok(v8::Number::new(scope, hours).into()),
+                None => Ok(v8::null(scope).into()),
+            }
+        }
         "construct" => {
             let id = STATE.with(|s| {
                 let mut st = s.borrow_mut();
@@ -134,12 +167,12 @@ fn run<'s>(
         }
         "levelRow" => {
             let gain = js_gain(scope, args.get(1))?;
-            let mins = js_opt_f64(scope, args.get(2), 0.0);
+            let mins = js_f64(scope, args.get(2), 0.0);
             js_level_row(scope, &level_row(&gain, mins))
         }
         "paintLevels" => {
             let gains = js_gain_array(scope, args.get(1))?;
-            let mins = js_opt_f64(scope, args.get(2), 0.0);
+            let mins = js_f64(scope, args.get(2), 0.0);
             let reserve = js_opt_i32(scope, args.get(3), 0);
             let empty = if args.get(4).is_null_or_undefined() {
                 DEFAULT_EMPTY.to_string()
@@ -156,6 +189,10 @@ fn run<'s>(
     }
 }
 
+/// The `scriptFrame` / `jiveFrame` configuration: the frame's dock and accent
+/// (what `Paint.begin` needs) plus the strip, rail and byline inputs. Returned
+/// before the frame begins, because the strip spends a dock row and `begin`
+/// resets the budget.
 fn frame_cfg<'s>(
     scope: &mut v8::HandleScope<'s>,
     opts: v8::Local<v8::Value>,
@@ -175,7 +212,7 @@ fn frame_cfg<'s>(
     } else {
         let accent = js_obj_string(scope, opts, "accent", JIVE_ACCENT);
         let byline = js_obj_string(scope, opts, "byline", JIVE_BYLINE);
-        let key = key_opt.unwrap_or(script);
+        let key = key_opt.unwrap_or_else(|| script.clone());
         (
             if accent.is_empty() {
                 JIVE_ACCENT.to_string()
@@ -191,15 +228,114 @@ fn frame_cfg<'s>(
         )
     };
     let obj = v8::Object::new(scope);
-    let dock = js_string(scope, &dock)?;
-    set(scope, obj, "dock", dock)?;
-    let accent = js_string(scope, &accent)?;
-    set(scope, obj, "accent", accent)?;
-    let byline = js_string(scope, &byline)?;
-    set(scope, obj, "byline", byline)?;
-    let key = js_string(scope, &key)?;
-    set(scope, obj, "key", key)?;
+    for (name, value) in [
+        ("dock", dock),
+        ("accent", accent),
+        ("byline", byline),
+        ("key", key),
+        ("script", script),
+    ] {
+        let value = js_string(scope, &value)?;
+        set(scope, obj, name, value)?;
+    }
+    let status = js_obj_opt_string(scope, opts, "status").unwrap_or_default();
+    let status = js_string(scope, &status)?;
+    set(scope, obj, "status", status)?;
+    for (name, values) in [
+        ("pages", js_obj_string_array(scope, opts, "pages")?),
+        ("sections", js_obj_string_array(scope, opts, "sections")?),
+    ] {
+        let value =
+            js_string_array_value(scope, &values.iter().map(String::as_str).collect::<Vec<_>>())?;
+        set(scope, obj, name, value)?;
+    }
     Ok(obj.into())
+}
+
+/// The `frame` plan for a `frame_cfg`: a branded strip, a rail only on the
+/// first page, and a byline, as the paint calls the caller's frame must make.
+/// The strip and rail selections are resolved here (the chrome store is Rust
+/// state), so JS applies the plan without a decision of its own.
+fn frame_plan<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    cfg: v8::Local<v8::Value>,
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    let key = js_obj_string(scope, cfg, "key", "");
+    let script = js_obj_string(scope, cfg, "script", "");
+    let byline = js_obj_string(scope, cfg, "byline", JIVE_BYLINE);
+    let status = js_obj_opt_string(scope, cfg, "status").unwrap_or_default();
+    let pages = js_obj_string_array(scope, cfg, "pages")?;
+    let sections = js_obj_string_array(scope, cfg, "sections")?;
+    let page = super::paint_chrome::strip_select(&key, &pages);
+    let rail_on = pages.first().is_some_and(|first| *first == page);
+    let section = if rail_on {
+        super::paint_chrome::rail_select(&key, &sections)
+    } else {
+        String::new()
+    };
+    let obj = v8::Object::new(scope);
+    let page_value = js_string(scope, &page)?;
+    set(scope, obj, "page", page_value)?;
+    let section_value = js_string(scope, &section)?;
+    set(scope, obj, "section", section_value)?;
+    let ops = v8::Array::new(scope, 3);
+    let pages_value =
+        js_string_array_value(scope, &pages.iter().map(String::as_str).collect::<Vec<_>>())?;
+    let status_value = js_string(scope, &status)?;
+    let script_value = js_string(scope, &script)?;
+    let page_value = js_string(scope, &page)?;
+    let key_value = js_string(scope, &key)?;
+    push_frame_op(
+        scope,
+        ops,
+        0,
+        "strip",
+        vec![key_value, pages_value, status_value, script_value, page_value],
+    )?;
+    let mut next = 1u32;
+    if rail_on {
+        let sections_value = js_string_array_value(
+            scope,
+            &sections.iter().map(String::as_str).collect::<Vec<_>>(),
+        )?;
+        let selected = js_string(scope, &section)?;
+        let key_value = js_string(scope, &key)?;
+        push_frame_op(
+            scope,
+            ops,
+            next,
+            "rail",
+            vec![key_value, sections_value, selected],
+        )?;
+        next += 1;
+    }
+    let byline_value = js_string(scope, &byline)?;
+    push_frame_op(scope, ops, next, "footer", vec![byline_value])?;
+    set(scope, obj, "ops", ops.into())?;
+    Ok(obj.into())
+}
+
+/// One `{ m, a }` entry of a frame plan: the frame method to call and its
+/// arguments, in the order the caller applies them.
+fn push_frame_op<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    ops: v8::Local<'s, v8::Array>,
+    index: u32,
+    method: &str,
+    args: Vec<v8::Local<'s, v8::Value>>,
+) -> Result<(), String> {
+    let call = v8::Object::new(scope);
+    let name = js_string(scope, method)?;
+    set(scope, call, "m", name)?;
+    let list = v8::Array::new(scope, args.len() as i32);
+    for (i, value) in args.into_iter().enumerate() {
+        list.set_index(scope, i as u32, value)
+            .ok_or_else(|| "v8 frame arg set failed".to_string())?;
+    }
+    set(scope, call, "a", list.into())?;
+    ops.set_index(scope, index, call.into())
+        .ok_or_else(|| "v8 frame op set failed".to_string())?;
+    Ok(())
 }
 
 fn collect_progress(
@@ -258,6 +394,9 @@ fn paint_level_ops(
         .collect()
 }
 
+/// One paint call the caller's frame must make, with the arguments to make it
+/// with. Which call, and in what order, is decided here; the shim only applies
+/// them.
 enum PaintOp {
     Text(String),
     Bar(String, f64),
@@ -265,75 +404,76 @@ enum PaintOp {
 }
 
 fn level_row(g: &SkillGain, mins: f64) -> LevelRow {
-    let prog = level_progress(g.level, g.xp);
+    let prog = level_progress(f64::from(g.level), f64::from(g.xp));
     let per_hour = if mins > 0.5 {
-        format!("{}/hr", fmt_xp_hr(g.gained, mins))
+        format!("{}/hr", fmt_xp_hr(f64::from(g.gained), mins))
     } else {
         "xp/hr n/a".to_string()
     };
-    let label = format!("{} {}", paint_skill_short(&g.skill), prog.level);
-    if prog.level >= MAX_LEVEL {
+    let label = format!("{} {}", paint_skill_short(&g.skill), js_number(prog.level));
+    if prog.level >= f64::from(MAX_LEVEL) {
         return LevelRow {
             label,
             fraction: 1.0,
             cells: [per_hour, "maxed".to_string(), String::new()],
         };
     }
-    let eta = eta_hours(
-        prog.remaining,
-        if mins > 0.5 {
-            (g.gained as f64 / mins) * 60.0
-        } else {
-            0.0
-        },
-    );
-    let eta_cell = match eta {
+    let rate = if mins > 0.5 {
+        (f64::from(g.gained) / mins) * 60.0
+    } else {
+        0.0
+    };
+    let eta_cell = match eta_hours(prog.remaining, rate) {
         None => "eta n/a".to_string(),
-        Some(hours) => format!("eta {}", fmt_hms_from_mins(hours * 60.0)),
+        Some(hours) => format!("eta {}", fmt_duration(hours * 60.0)),
     };
     LevelRow {
         label,
         fraction: prog.fraction,
         cells: [
             per_hour,
-            format!("{} to go", fmt_grouped(prog.remaining)),
+            format!("{} to go", fmt_locale(prog.remaining)),
             eta_cell,
         ],
     }
 }
 
 struct Progress {
-    level: i32,
+    level: f64,
     fraction: f64,
-    remaining: i32,
+    remaining: f64,
 }
 
-fn level_progress(level: i32, xp: i32) -> Progress {
-    let cur = level.clamp(1, MAX_LEVEL);
-    if cur >= MAX_LEVEL {
+/// `levelProgress` from the reference `levelProgress.ts`: the caller's level
+/// comes back untouched, the table lookup clamps, and 99 is maxed. `xpAtLevel`
+/// reads 0 for an index the table has no entry for, exactly as the old array
+/// did.
+fn level_progress(level: f64, xp: f64) -> Progress {
+    if level >= f64::from(MAX_LEVEL) {
         return Progress {
-            level: MAX_LEVEL,
+            level: f64::from(MAX_LEVEL),
             fraction: 1.0,
-            remaining: 0,
+            remaining: 0.0,
         };
     }
-    let base = xp_at_level(cur);
-    let top = xp_at_level(cur + 1);
-    let span = (top - base).max(1);
-    let fraction = ((xp - base) as f64 / span as f64).clamp(0.0, 1.0);
+    let base = xp_at_level(level);
+    let next = xp_at_level(level + 1.0);
+    let span = next - base;
+    let into = js_min(js_max(0.0, xp - base), span);
     Progress {
-        level: cur,
-        fraction,
-        remaining: (top - xp).max(0),
+        level,
+        fraction: if span > 0.0 { into / span } else { 1.0 },
+        remaining: js_max(0.0, next - xp),
     }
 }
 
-fn eta_hours(remaining: i32, xp_per_hour: f64) -> Option<f64> {
-    if remaining <= 0 || xp_per_hour <= 0.0 || !xp_per_hour.is_finite() {
+/// `etaHours` from the reference: null only for a spent or idle rate. A
+/// non-finite rate is the caller's number and comes back as one.
+fn eta_hours(remaining: f64, xp_per_hour: f64) -> Option<f64> {
+    if remaining <= 0.0 || xp_per_hour <= 0.0 {
         return None;
     }
-    let hours = remaining as f64 / xp_per_hour;
-    hours.is_finite().then_some(hours)
+    Some(remaining / xp_per_hour)
 }
 
 fn xp_table() -> &'static [i32; 100] {
@@ -349,21 +489,122 @@ fn xp_table() -> &'static [i32; 100] {
     })
 }
 
-fn xp_at_level(level: i32) -> i32 {
-    let i = level.clamp(1, MAX_LEVEL) as usize;
-    xp_table()[i]
+/// `XP_AT_LEVEL[Math.min(99, Math.max(1, Math.floor(level)))] ?? 0`.
+fn xp_at_level(level: f64) -> f64 {
+    let index = js_min(f64::from(MAX_LEVEL), js_max(1.0, level.floor()));
+    if !index.is_finite() || index.fract() != 0.0 || !(1.0..=f64::from(MAX_LEVEL)).contains(&index)
+    {
+        return 0.0;
+    }
+    f64::from(xp_table()[index as usize])
 }
 
-fn fmt_xp_hr(gained: i32, mins: f64) -> String {
-    format!("{:.1}k", ((gained as f64 / mins) * 60.0) / 1000.0)
+/// `fmtXpHr` from the reference `paintLogic.ts`.
+fn fmt_xp_hr(gained: f64, mins: f64) -> String {
+    if mins <= 0.5 {
+        return "\u{2014}".to_string();
+    }
+    format!("{}k", to_fixed1(((gained / mins) * 60.0) / 1000.0))
 }
 
-fn fmt_hms_from_mins(mins: f64) -> String {
-    let t = (mins * 60.0).floor().max(0.0) as i64;
-    format!("{}:{:02}:{:02}", t / 3600, (t % 3600) / 60, t % 60)
+/// `fmtDuration` from the reference: `H:MM:SS` over whole seconds, never
+/// negative. Non-finite input reproduces JS number formatting, so a degenerate
+/// rate reads exactly as it did there.
+fn fmt_duration(mins: f64) -> String {
+    let t = if mins.is_nan() {
+        f64::NAN
+    } else {
+        (mins * 60.0).floor().max(0.0)
+    };
+    let hours = js_number((t / 3600.0).floor());
+    let minutes = pad2(((t % 3600.0) / 60.0).floor());
+    let seconds = pad2(t % 60.0);
+    format!("{hours}:{minutes}:{seconds}")
 }
 
-fn fmt_grouped(n: i32) -> String {
+/// `String(Math.floor(x)).padStart(2, '0')`.
+fn pad2(x: f64) -> String {
+    let text = js_number(x);
+    if text.len() >= 2 {
+        text
+    } else {
+        format!("0{text}")
+    }
+}
+
+/// JS `String(n)`: `NaN` / `Infinity` spell out, an integral value in the
+/// exact integer range prints as an integer, and anything else keeps the
+/// shortest round-tripping repr.
+fn js_number(v: f64) -> String {
+    if v.is_nan() {
+        return "NaN".to_string();
+    }
+    if v.is_infinite() {
+        return if v > 0.0 { "Infinity" } else { "-Infinity" }.to_string();
+    }
+    if v.fract() == 0.0 && v.abs() < 9_007_199_254_740_992.0 {
+        format!("{}", v as i64)
+    } else {
+        format!("{v}")
+    }
+}
+
+/// JS `Number.prototype.toFixed(1)`: the correctly rounded tenth, except at an
+/// exact decimal tie (`odd / 4`), where JS rounds away from zero and Rust's
+/// own formatting would round to even.
+fn to_fixed1(x: f64) -> String {
+    if x.is_nan() {
+        return "NaN".to_string();
+    }
+    if x.is_infinite() {
+        return if x > 0.0 { "Infinity" } else { "-Infinity" }.to_string();
+    }
+    let magnitude = x.abs();
+    let quarters = magnitude * 4.0;
+    let tie = quarters.is_finite()
+        && quarters < 9_007_199_254_740_992.0
+        && quarters.fract() == 0.0
+        && (quarters as i64) % 2 != 0;
+    let body = if tie {
+        let tenths = (magnitude * 10.0 + 0.5) as i64;
+        format!("{}.{}", tenths / 10, tenths % 10)
+    } else {
+        format!("{magnitude:.1}")
+    };
+    if x < 0.0 {
+        format!("-{body}")
+    } else {
+        body
+    }
+}
+
+/// JS `Number.prototype.toLocaleString()` in the isolate's locale: thousands
+/// separators and up to three fraction digits.
+fn fmt_locale(v: f64) -> String {
+    if !v.is_finite() {
+        return js_number(v);
+    }
+    let magnitude = v.abs();
+    let rounded = if magnitude < 1e15 {
+        (magnitude * 1000.0).round() / 1000.0
+    } else {
+        magnitude
+    };
+    let whole = rounded.trunc();
+    let mut out = fmt_grouped(whole as i64);
+    let fraction = format!("{:.3}", rounded - whole);
+    let fraction = fraction[1..].trim_end_matches('0');
+    if fraction.len() > 1 {
+        out.push_str(fraction);
+    }
+    if v < 0.0 {
+        format!("-{out}")
+    } else {
+        out
+    }
+}
+
+fn fmt_grouped(n: i64) -> String {
     let s = n.max(0).to_string();
     let bytes = s.as_bytes();
     let mut out = String::with_capacity(s.len() + s.len() / 3);
@@ -374,6 +615,28 @@ fn fmt_grouped(n: i32) -> String {
         out.push(ch);
     }
     out
+}
+
+/// JS `Math.max` / `Math.min`: `NaN` propagates instead of being dropped, so
+/// the frozen formatters' NaN branches are reached.
+fn js_max(a: f64, b: f64) -> f64 {
+    if a.is_nan() || b.is_nan() {
+        f64::NAN
+    } else if a > b {
+        a
+    } else {
+        b
+    }
+}
+
+fn js_min(a: f64, b: f64) -> f64 {
+    if a.is_nan() || b.is_nan() {
+        f64::NAN
+    } else if a < b {
+        a
+    } else {
+        b
+    }
 }
 
 fn paint_skill_short(skill: &str) -> &str {
@@ -422,14 +685,14 @@ fn js_opt_i32(scope: &mut v8::HandleScope, value: v8::Local<v8::Value>, default:
         .unwrap_or(default)
 }
 
-fn js_opt_f64(scope: &mut v8::HandleScope, value: v8::Local<v8::Value>, default: f64) -> f64 {
+/// A formatter argument: `Number(v)`, `null`/`undefined` as the default.
+/// Non-finite values are preserved so the frozen formats' NaN and Infinity
+/// branches are reached instead of being rounded to the default.
+fn js_f64(scope: &mut v8::HandleScope, value: v8::Local<v8::Value>, default: f64) -> f64 {
     if value.is_null_or_undefined() {
         return default;
     }
-    value
-        .number_value(scope)
-        .filter(|n| n.is_finite())
-        .unwrap_or(default)
+    value.number_value(scope).unwrap_or(default)
 }
 
 fn js_string_array(
@@ -584,6 +847,37 @@ fn set<'s>(
     Ok(())
 }
 
+fn js_progress<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    progress: &Progress,
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    let obj = v8::Object::new(scope);
+    let level = v8::Number::new(scope, progress.level).into();
+    set(scope, obj, "level", level)?;
+    let fraction = v8::Number::new(scope, progress.fraction).into();
+    set(scope, obj, "fraction", fraction)?;
+    let remaining = v8::Number::new(scope, progress.remaining).into();
+    set(scope, obj, "remaining", remaining)?;
+    Ok(obj.into())
+}
+
+fn js_obj_string_array(
+    scope: &mut v8::HandleScope,
+    value: v8::Local<v8::Value>,
+    key: &str,
+) -> Result<Vec<String>, String> {
+    let Some(obj) = value.to_object(scope) else {
+        return Ok(Vec::new());
+    };
+    let Some(key) = v8::String::new(scope, key) else {
+        return Ok(Vec::new());
+    };
+    let Some(got) = obj.get(scope, key.into()) else {
+        return Ok(Vec::new());
+    };
+    js_string_array(scope, got)
+}
+
 fn js_gains<'s>(
     scope: &mut v8::HandleScope<'s>,
     gains: &[SkillGain],
@@ -634,29 +928,36 @@ fn js_paint_ops<'s>(
         let obj = v8::Object::new(scope);
         match op {
             PaintOp::Text(text) => {
-                let kind = js_string(scope, "text")?;
-                set(scope, obj, "kind", kind)?;
+                let method = js_string(scope, "text")?;
+                set(scope, obj, "m", method)?;
+                let args = v8::Array::new(scope, 1);
                 let text = js_string(scope, text)?;
-                set(scope, obj, "text", text)?;
+                args.set_index(scope, 0, text)
+                    .ok_or_else(|| "v8 text arg set failed".to_string())?;
+                set(scope, obj, "a", args.into())?;
             }
             PaintOp::Bar(label, fraction) => {
-                let kind = js_string(scope, "bar")?;
-                set(scope, obj, "kind", kind)?;
+                let method = js_string(scope, "bar")?;
+                set(scope, obj, "m", method)?;
+                let args = v8::Array::new(scope, 2);
                 let label = js_string(scope, label)?;
-                set(scope, obj, "label", label)?;
+                args.set_index(scope, 0, label)
+                    .ok_or_else(|| "v8 bar label set failed".to_string())?;
                 let fraction = v8::Number::new(scope, *fraction).into();
-                set(scope, obj, "fraction", fraction)?;
+                args.set_index(scope, 1, fraction)
+                    .ok_or_else(|| "v8 bar fraction set failed".to_string())?;
+                set(scope, obj, "a", args.into())?;
             }
             PaintOp::Row(cells) => {
-                let kind = js_string(scope, "row")?;
-                set(scope, obj, "kind", kind)?;
-                let list = v8::Array::new(scope, cells.len() as i32);
+                let method = js_string(scope, "row")?;
+                set(scope, obj, "m", method)?;
+                let args = v8::Array::new(scope, cells.len() as i32);
                 for (j, cell) in cells.iter().enumerate() {
                     let value = js_string(scope, cell)?;
-                    list.set_index(scope, j as u32, value)
+                    args.set_index(scope, j as u32, value)
                         .ok_or_else(|| "v8 row cell set failed".to_string())?;
                 }
-                set(scope, obj, "cells", list.into())?;
+                set(scope, obj, "a", args.into())?;
             }
         }
         arr.set_index(scope, i as u32, obj.into())

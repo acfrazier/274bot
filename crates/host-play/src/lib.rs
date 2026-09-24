@@ -430,10 +430,10 @@ pub struct SlotStatus {
     pub random: RandomStatus,
     /// The slot script's latest recorded paint frame (the Load isolate
     /// forwards it after every tick that painted); `None` when the slot
-    /// has no script or the script has not painted. Copied from the
-    /// isolate each observe — the TUI shows it in the chat pane in place
-    /// of the game chat.
-    pub script_paint: Option<script::shim::ScriptPaint>,
+    /// has no script or the script has not painted. The frame is shared,
+    /// not copied: the status holds the same one the isolate recorder
+    /// built — the TUI shows it in the chat pane in place of the game chat.
+    pub script_paint: Option<std::sync::Arc<script::shim::ScriptPaint>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2661,7 +2661,7 @@ fn spawn_slot_thread(
                                 },
                                 || bounded_guardian_fact(status),
                                 inspect,
-                                catalog_paint.as_ref(),
+                                catalog_paint.as_deref(),
                             );
                             let ready = c.ingame && c.scene_state == 2
                                 && nav_snapshot.local_player().is_some();
@@ -2723,7 +2723,7 @@ fn spawn_slot_thread(
                                         copy_stream_bytes(c, s);
                                         s.chat_head = if ready { c.chat_text[0].clone() } else { String::new() };
                                         s.random = if session_boundary { RandomStatus::default() } else { status.clone() };
-                                        publish_script_paint(s, paint.as_ref());
+                                        publish_script_paint(s, paint.clone());
                                         here = nav_snapshot.tile();
                                         let (tx, tz, level) = here.unwrap_or((-1, -1, -1));
                                         s.tile_x = tx;

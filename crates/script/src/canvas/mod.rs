@@ -13,7 +13,7 @@ use std::sync::OnceLock;
 use ab_glyph::{Font, FontRef, PxScale, ScaleFont};
 
 pub use geom::{
-    ClipPath, DrawExtras, FillPaint, GradStop, LineJoinKind, PathSeg, Shadow, TextAlign,
+    ClipPath, ClipSet, DrawExtras, FillPaint, GradStop, LineJoinKind, PathSeg, Shadow, TextAlign,
     TextBaseline, MAX_CLIP_PATHS, MAX_GRADIENTS, MAX_GRADIENT_STOPS, MAX_LINE_WIDTH,
     MAX_PATH_SEGS_PER_FRAME, MAX_PATH_SEGS_PER_OP, MAX_SAVE_DEPTH, MAX_SHADOW_BLUR,
 };
@@ -167,16 +167,12 @@ struct Style {
     fill: FillKind,
     font_px: u16,
     mono: bool,
-    font_css: String,
-    fill_css: String,
     stroke: u32,
-    stroke_css: String,
     line_width: f32,
     line_join: LineJoinKind,
     text_align: TextAlign,
     text_baseline: TextBaseline,
     shadow_color: u32,
-    shadow_css: String,
     shadow_blur: f32,
     shadow_offset_x: f32,
     shadow_offset_y: f32,
@@ -188,16 +184,12 @@ impl Default for Style {
             fill: FillKind::Solid(pack_rgba(0, 0, 0, 255)),
             font_px: 10,
             mono: false,
-            font_css: "10px sans-serif".into(),
-            fill_css: "#000000".into(),
             stroke: pack_rgba(0, 0, 0, 255),
-            stroke_css: "#000000".into(),
             line_width: 1.0,
             line_join: LineJoinKind::Miter,
             text_align: TextAlign::Left,
             text_baseline: TextBaseline::Alphabetic,
             shadow_color: 0,
-            shadow_css: "transparent".into(),
             shadow_blur: 0.0,
             shadow_offset_x: 0.0,
             shadow_offset_y: 0.0,
@@ -213,7 +205,7 @@ struct LiveGradient {
 #[derive(Clone)]
 struct Saved {
     style: Style,
-    clip: Vec<ClipPath>,
+    clip: ClipSet,
 }
 
 /// Why this onPaint call failed closed (typed, not inferred from user text).
@@ -243,7 +235,7 @@ struct Recorder {
     style: Style,
     stack: Vec<Saved>,
     path: Vec<PathSeg>,
-    clip: Vec<ClipPath>,
+    clip: ClipSet,
     gradients: Vec<LiveGradient>,
     ops: Vec<CanvasOp>,
     overflow: bool,
@@ -257,7 +249,7 @@ impl Recorder {
             style: Style::default(),
             stack: Vec::new(),
             path: Vec::new(),
-            clip: Vec::new(),
+            clip: ClipSet::default(),
             gradients: Vec::new(),
             ops: Vec::new(),
             overflow: false,
@@ -399,65 +391,6 @@ pub fn onpaint_done(kind: i64, message: Option<&str>) {
     OUTCOME.with(|o| *o.borrow_mut() = Some(outcome));
 }
 
-/// CSS `font` getter (last accepted string).
-pub fn font() -> String {
-    RECORDER.with(|r| r.borrow().style.font_css.clone())
-}
-
-/// CSS `fillStyle` getter (last accepted string). Empty when fill is a gradient.
-pub fn fill_style() -> String {
-    RECORDER.with(|r| r.borrow().style.fill_css.clone())
-}
-
-pub fn get_style(prop: &str) -> String {
-    RECORDER.with(|r| {
-        let rec = r.borrow();
-        match prop {
-            "font" => rec.style.font_css.clone(),
-            "fillStyle" => rec.style.fill_css.clone(),
-            "strokeStyle" => rec.style.stroke_css.clone(),
-            "shadowColor" => rec.style.shadow_css.clone(),
-            "lineJoin" => match rec.style.line_join {
-                LineJoinKind::Miter => "miter".into(),
-                LineJoinKind::Round => "round".into(),
-                LineJoinKind::Bevel => "bevel".into(),
-            },
-            "textAlign" => match rec.style.text_align {
-                TextAlign::Left => "left".into(),
-                TextAlign::Center => "center".into(),
-                TextAlign::Right => "right".into(),
-            },
-            "textBaseline" => match rec.style.text_baseline {
-                TextBaseline::Alphabetic => "alphabetic".into(),
-                TextBaseline::Top => "top".into(),
-                TextBaseline::Middle => "middle".into(),
-                TextBaseline::Bottom => "bottom".into(),
-            },
-            _ => String::new(),
-        }
-    })
-}
-
-pub fn get_number(prop: &str) -> f64 {
-    RECORDER.with(|r| {
-        let rec = r.borrow();
-        match prop {
-            "lineWidth" => rec.style.line_width as f64,
-            "shadowBlur" => rec.style.shadow_blur as f64,
-            "shadowOffsetX" => rec.style.shadow_offset_x as f64,
-            "shadowOffsetY" => rec.style.shadow_offset_y as f64,
-            _ => 0.0,
-        }
-    })
-}
-
-pub fn fill_gradient_id() -> i32 {
-    RECORDER.with(|r| match r.borrow().style.fill {
-        FillKind::Gradient(id) => id as i32,
-        FillKind::Solid(_) => -1,
-    })
-}
-
 /// Set `font` or `fillStyle`. Unparseable assignments keep the previous
 /// value (HTML). Unknown names are not invented.
 pub fn set_style(prop: &str, value: &str) {
@@ -468,25 +401,21 @@ pub fn set_style(prop: &str, value: &str) {
                 if let Some((px, mono)) = parse_font(value) {
                     rec.style.font_px = px;
                     rec.style.mono = mono;
-                    rec.style.font_css = value.to_string();
                 }
             }
             "fillStyle" => {
                 if let Some(color) = parse_color(value) {
                     rec.style.fill = FillKind::Solid(color);
-                    rec.style.fill_css = value.to_string();
                 }
             }
             "strokeStyle" => {
                 if let Some(color) = parse_color(value) {
                     rec.style.stroke = color;
-                    rec.style.stroke_css = value.to_string();
                 }
             }
             "shadowColor" => {
                 if let Some(color) = parse_color(value) {
                     rec.style.shadow_color = color;
-                    rec.style.shadow_css = value.to_string();
                 }
             }
             "lineJoin" => match value.trim().to_ascii_lowercase().as_str() {
@@ -551,7 +480,6 @@ pub fn set_fill_gradient(id: u32) {
         let mut rec = r.borrow_mut();
         if (id as usize) < rec.gradients.len() {
             rec.style.fill = FillKind::Gradient(id);
-            rec.style.fill_css.clear();
         }
     });
 }
@@ -797,7 +725,8 @@ pub fn clip() {
             return;
         }
         if rec.path.is_empty() {
-            rec.clip.push(ClipPath { segs: Vec::new() });
+            let clip = rec.clip.with_pushed(ClipPath { segs: Vec::new() });
+            rec.clip = clip;
             return;
         }
         if rec.path.len() > MAX_PATH_SEGS_PER_OP {
@@ -805,7 +734,8 @@ pub fn clip() {
             return;
         }
         let segs = rec.path.clone();
-        rec.clip.push(ClipPath { segs });
+        let clip = rec.clip.with_pushed(ClipPath { segs });
+        rec.clip = clip;
     });
 }
 
@@ -1258,7 +1188,6 @@ mod tests {
         set_style("fillStyle", "#ffb15b");
         set_style("fillStyle", "red");
         set_style("fillStyle", "???");
-        assert_eq!(fill_style(), "#ffb15b");
         fill_rect(0.0, 0.0, 1.0, 1.0);
         match &take().ops[0] {
             CanvasOp::FillRect { color, .. } => {
@@ -1276,7 +1205,13 @@ mod tests {
         reset();
         set_style("font", "12px monospace");
         set_style("font", "nope");
-        assert_eq!(font(), "12px monospace");
+        fill_text("x", 0.0, 0.0);
+        match &take().ops[0] {
+            CanvasOp::FillText { font_px, mono, .. } => {
+                assert_eq!((*font_px, *mono), (12, true), "nope keeps 12px monospace");
+            }
+            _ => panic!("expected fillText"),
+        }
     }
 
     #[test]
@@ -1531,11 +1466,28 @@ mod tests {
         set_number("lineWidth", 0.0);
         set_number("lineWidth", -2.0);
         set_number("lineWidth", f64::NAN);
-        assert!((get_number("lineWidth") - 1.5).abs() < 1e-6);
         set_number("shadowBlur", 10.0);
         set_number("shadowBlur", -1.0);
         set_number("shadowBlur", f64::INFINITY);
-        assert!((get_number("shadowBlur") - 10.0).abs() < 1e-6);
+        set_style("strokeStyle", "#000000");
+        begin_path();
+        move_to(0.0, 0.0);
+        line_to(10.0, 0.0);
+        stroke();
+        fill_rect(0.0, 0.0, 1.0, 1.0);
+        let taken = take();
+        match &taken.ops[0] {
+            CanvasOp::StrokePath { line_width, .. } => {
+                assert!((line_width - 1.5).abs() < 1e-6);
+            }
+            other => panic!("{other:?}"),
+        }
+        match &taken.ops[1] {
+            CanvasOp::FillRect { extras, .. } => {
+                assert!((extras.shadow.blur - 10.0).abs() < 1e-6, "{extras:?}");
+            }
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]
@@ -1720,7 +1672,7 @@ mod tests {
         assert_eq!(taken.ops.len(), ok);
 
         let mut extras = DrawExtras::default();
-        extras.clips.push(ClipPath {
+        extras.clips = vec![ClipPath {
             segs: (0..MAX_PATH_SEGS_PER_OP)
                 .map(|i| {
                     if i == 0 {
@@ -1733,7 +1685,8 @@ mod tests {
                     }
                 })
                 .collect(),
-        });
+        }]
+        .into();
         let over: Vec<CanvasOp> = (0..(ok + 1))
             .map(|_| CanvasOp::FillRect {
                 x: 0,
