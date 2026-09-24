@@ -76,15 +76,18 @@ pub fn cow_uses_al_kharid_toll(field: &CowField) -> bool {
 }
 
 /// Frozen `Tile.distanceTo` nearest field: Chebyshev xz, different level
-/// is `1_000_000 + xz`. Ties keep the earlier table row.
+/// is `1_000_000 + xz`. Ties keep the earlier table row. Computed in `i64`
+/// so any script-supplied tile, however far out of range, cannot overflow.
 pub fn nearest_cow_field(from: WorldTile) -> Option<&'static CowField> {
     COW_FIELDS
         .iter()
         .min_by_key(|field| cow_field_distance(field, from))
 }
 
-fn cow_field_distance(field: &CowField, from: WorldTile) -> i32 {
-    let xz = (field.x - from.x).abs().max((field.z - from.z).abs());
+fn cow_field_distance(field: &CowField, from: WorldTile) -> i64 {
+    let dx = (i64::from(field.x) - i64::from(from.x)).abs();
+    let dz = (i64::from(field.z) - i64::from(from.z)).abs();
+    let xz = dx.max(dz);
     if field.level != from.level {
         1_000_000 + xz
     } else {
@@ -441,6 +444,27 @@ mod tests {
             nearest_cow_field(north_west).map(|field| field.name),
             Some("North-west of Lumbridge")
         );
+    }
+
+    /// A script can pass any tile. Extreme coordinates must not overflow
+    /// (which would panic inside the V8 callback and abort the process);
+    /// they still resolve to a field by the frozen rule.
+    #[test]
+    fn nearest_cow_field_survives_extreme_tiles() {
+        for from in [
+            WorldTile {
+                x: i32::MAX,
+                z: 0,
+                level: 1,
+            },
+            WorldTile {
+                x: i32::MIN,
+                z: i32::MIN,
+                level: 0,
+            },
+        ] {
+            assert!(nearest_cow_field(from).is_some(), "{from:?}");
+        }
     }
 
     #[test]
