@@ -815,3 +815,49 @@ export default class T extends LoopingBot {
     );
     iso.join();
 }
+
+// The live script_trade cell: TradeBot's partner is a minted account whose
+// login is `live…_1` but whose posted player row shows the screen name
+// `Live… 1`. Frozen `Players.query().name()` matches the shown name only
+// (trimmed, case-folded), so the setting must carry the screen name; the
+// login form finds no player and sends nothing, every tick.
+#[test]
+fn trade_bot_requests_the_partner_by_its_screen_name_not_its_login() {
+    let js = script::transpile_ts(include_str!("fixtures/trade_bot.ts"))
+        .expect("transpile trade_bot.ts");
+    let actions = trade_ops();
+    let players = [player("Livepyom5o 1", 2, &actions)];
+    let mut snap = base();
+    snap.players = &players;
+    let mut request = |partner: &str| {
+        let iso = LoadIsolate::spawn(js.clone(), LoadShape::CompatClass, vec![]).unwrap();
+        iso.probe(&format!(
+            "globalThis.__rs2b0t_host.settingsBag = {{ partner: '{partner}' }}; true"
+        ))
+        .unwrap();
+        let mut sent = Vec::new();
+        for n in 1..=3 {
+            snap.tick = n;
+            post(&iso, &snap);
+            tick(&iso, n);
+            sent.extend(iso.drain_interacts());
+        }
+        iso.join();
+        sent
+    };
+    assert!(
+        request("livepyom5o_1").is_empty(),
+        "the login name is not a posted player: nothing is sent"
+    );
+    assert_eq!(
+        request("Livepyom5o 1"),
+        vec![
+            InteractReq::Player {
+                name: "Livepyom5o 1".into(),
+                action: "Trade with".into(),
+            };
+            3
+        ],
+        "the screen name requests the partner each tick until the screen opens"
+    );
+}

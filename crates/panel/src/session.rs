@@ -306,7 +306,8 @@ pub(crate) fn script_self_stop_observed(
 
 /// Stash StartScript isolate(s). Driven slot always. When
 /// `inject_companion_as` is set on a fleet, also Start the same JS on
-/// slot 1 with that key pointing at the driven minted name (P2P Trade).
+/// slot 1 with that key naming the driven player (P2P Trade), as the game
+/// shows it ([`partner_screen_name`]).
 fn stash_pending_starts(
     pending: &Mutex<Vec<PendingCatalogStart>>,
     names: &[String],
@@ -330,7 +331,10 @@ fn stash_pending_starts(
     if let Some(key) = inject_companion_as {
         if names.len() > 1 {
             let mut companion_bag = bag.unwrap_or_default();
-            companion_bag.insert(key.to_string(), serde_json::Value::String(names[0].clone()));
+            companion_bag.insert(
+                key.to_string(),
+                serde_json::Value::String(partner_screen_name(&names[0])),
+            );
             starts.push(PendingCatalogStart {
                 slot: names[1].clone(),
                 js,
@@ -344,6 +348,15 @@ fn stash_pending_starts(
         }
     }
     *pending.lock().unwrap() = starts;
+}
+
+/// A partner setting names the player as the game shows it: minted
+/// usernames (`live…_1`) display as screen names (`Live… 1`), and the
+/// frozen `Players.query().name()` (like host dispatch) matches the shown
+/// name exactly, ignoring case. The pair watches do the same
+/// ([`host_play::paired_core::pair_settings`]).
+fn partner_screen_name(username: &str) -> String {
+    client::util::JString::to_screen_name(username)
 }
 
 fn stash_compiled_start(
@@ -2388,9 +2401,10 @@ impl Session {
         if pair_case.is_none() {
             if let Some(key) = view.inject_companion_as {
                 if names.len() > 1 {
-                    inject
-                        .get_or_insert_with(serde_json::Map::new)
-                        .insert(key.to_string(), serde_json::Value::String(names[1].clone()));
+                    inject.get_or_insert_with(serde_json::Map::new).insert(
+                        key.to_string(),
+                        serde_json::Value::String(partner_screen_name(&names[1])),
+                    );
                 }
             }
         }

@@ -3450,8 +3450,10 @@ fn live_prepare_script_trade_loads_the_file_fixture_and_injects_partner() {
             .as_ref()
             .expect("driven partner inject")
             .get("partner"),
-        Some(&serde_json::json!(names[1])),
-        "driven partner is the companion minted name"
+        Some(&serde_json::json!(client::util::JString::to_screen_name(
+            &names[1]
+        ))),
+        "driven partner is the companion as the game shows it"
     );
     assert_eq!(
         pending[1]
@@ -3459,8 +3461,14 @@ fn live_prepare_script_trade_loads_the_file_fixture_and_injects_partner() {
             .as_ref()
             .expect("companion partner inject")
             .get("partner"),
-        Some(&serde_json::json!(names[0])),
-        "companion partner is the driven minted name"
+        Some(&serde_json::json!(client::util::JString::to_screen_name(
+            &names[0]
+        ))),
+        "companion partner is the driven player as the game shows it"
+    );
+    assert!(
+        names.iter().all(|name| name.contains('_')),
+        "minted names carry the underscore the screen name replaces: {names:?}"
     );
     assert!(s.multibox, "fleet opens the MultiBox wall");
 }
@@ -3545,10 +3553,12 @@ fn live_prepare_sherlock_starts_the_compiled_card_without_catalog() {
     let pending = s.pending_script.lock().unwrap();
     let card = pending.first().expect("compiled start stashed");
     assert_eq!(card.compiled, Some(script::CompiledId("Sherlock")));
-    assert!(card.js.is_empty(), "compiled Start must not stash catalog JS");
+    assert!(
+        card.js.is_empty(),
+        "compiled Start must not stash catalog JS"
+    );
     let _ = iso;
 }
-
 
 #[test]
 fn live_prepare_script_enables_multibox_for_a_fleet_only() {
