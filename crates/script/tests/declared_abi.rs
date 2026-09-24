@@ -1,7 +1,7 @@
 // Declared JS catalog ABI (rs2b0t-api index.d.ts names). Not the Rust host ABI.
 use script::declared_abi::{
-    fixture_path, load_fixture, parse_index_dts, write_declared_surface, write_fixture,
-    DeclaredKind,
+    declared_surface_path, fixture_path, load_fixture, parse_index_dts, render_declared_surface,
+    write_declared_surface, write_fixture, DeclaredKind,
 };
 
 const SLICE: &str = r#"
@@ -256,5 +256,30 @@ fn regen_js_declared_abi() {
         exports.len(),
         fixture_path().display(),
         script::declared_abi::declared_surface_path().display()
+    );
+}
+
+/// Writes `src/shim/declared_surface.js` from the checked-in fixture, so the
+/// generated bundle refreshes without the catalog tree.
+#[test]
+#[ignore]
+fn regen_declared_surface_from_fixture() {
+    let exports = load_fixture().expect("js_declared_abi.json");
+    write_declared_surface(&exports).expect("write declared_surface.js");
+}
+
+/// The checked-in bundle is exactly what the generator renders from the
+/// pinned fixture (no hand edit can drift it).
+#[test]
+fn declared_surface_matches_generator() {
+    let exports = load_fixture().expect("js_declared_abi.json");
+    let expected = render_declared_surface(&exports);
+    let path = declared_surface_path();
+    let actual = std::fs::read_to_string(&path).expect("read declared_surface.js");
+    assert!(
+        actual == expected,
+        "{} is stale; run: cargo test -p script --test declared_abi \
+         regen_declared_surface_from_fixture -- --ignored",
+        path.display()
     );
 }
