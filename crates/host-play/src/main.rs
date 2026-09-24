@@ -186,7 +186,21 @@ mod tests {
             "alice",
         ])
         .unwrap();
-        let selection = parsed.profile.resolve(None).unwrap();
+        let home =
+            std::env::temp_dir().join(format!("274bot-host-play-parser-{}", std::process::id()));
+        if home.exists() {
+            std::fs::remove_dir_all(&home).unwrap();
+        }
+        let selection = parsed
+            .profile
+            .resolve_with_env(
+                None,
+                &host_play::profile::ProfileEnvironment {
+                    home: Some(home.clone()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
         assert_eq!(selection.game_host(), "w1.rs2b2t.com");
         assert_eq!(
             selection.cache_dir(),
@@ -194,6 +208,7 @@ mod tests {
         );
         assert_eq!(selection.revision(), ClientRevision::R289);
         assert_eq!(parsed.users, ["alice"]);
+        std::fs::remove_dir_all(home).unwrap();
     }
 
     #[test]

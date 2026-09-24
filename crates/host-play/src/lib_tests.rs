@@ -760,6 +760,59 @@ fn stop_slot_wakes_a_parked_thread_before_joining() {
 }
 
 #[test]
+fn stop_slot_during_unresponsive_public_key_fetch_is_bounded() {
+    use std::sync::mpsc;
+
+    let mut play = run_with_io(
+        &PlayOptions {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            lowmem: true,
+            mainland: false,
+        },
+        vec![],
+        |_| (None, None),
+        |_, _, _| {},
+    );
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let (accepted, waiting) = mpsc::channel();
+    let (release, keep_open) = mpsc::channel();
+    let server = thread::spawn(move || {
+        let (_socket, _) = listener.accept().unwrap();
+        accepted.send(()).unwrap();
+        keep_open.recv().unwrap();
+    });
+    let arm = SlotArm::new(44, true);
+    play.arms.insert("alice".into(), Arc::clone(&arm));
+    let slot = thread::spawn(move || {
+        let mut client = Client::new(ClientConfig {
+            host: "127.0.0.1".into(),
+            port,
+            cache_dir: "/tmp".into(),
+            members: false,
+            lowmem: true,
+        });
+        let world = public_worlds::PublicWorld {
+            number: 13,
+            host: "127.0.0.1".into(),
+            port,
+            node_id: 42,
+        };
+        configure_slot_world(&mut client, &world, true, &arm.stop).unwrap();
+        assert!(arm.stop.load(Ordering::Relaxed));
+    });
+    play.handles.insert("alice".into(), slot);
+    waiting.recv_timeout(Duration::from_secs(3)).unwrap();
+    let started = Instant::now();
+    play.stop_slot("alice");
+    release.send(()).unwrap();
+    server.join().unwrap();
+    assert!(started.elapsed() < Duration::from_secs(5));
+}
+
+#[test]
 fn stop_slot_leaves_profile_uid_when_arm_shared_at_spawn() {
     // A caller that retains its own clone makes the arm shared before
     // spawn; the uid must still be forced from the profile (an
