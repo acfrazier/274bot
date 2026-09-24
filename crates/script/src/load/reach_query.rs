@@ -51,6 +51,7 @@ pub(crate) fn on_reset() {
     });
 }
 
+/// Read the posted reach view (Rust helpers and machine families).
 pub(crate) fn with_view<R>(f: impl FnOnce(&ReachQueryView) -> R) -> R {
     REACH.with(|slot| f(&slot.borrow().view))
 }

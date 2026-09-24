@@ -205,6 +205,8 @@ fn shim_exports_npc_dialog_and_keeps_entity_op() {
     assert_eq!(iso.probe("__entityOp").unwrap(), "function");
     iso.probe("globalThis.__entity = true").unwrap();
     tick(&iso, 2);
+    // Frozen: an already-true expect still waits for the next pump.
+    tick(&iso, 3);
     assert_eq!(iso.probe("__entityStatus").unwrap(), "done");
     assert!(iso.drain_interacts().is_empty());
     iso.join();
@@ -581,5 +583,96 @@ fn hold_and_reset_do_not_emit_another_talk() {
     post(&iso, &snap);
     tick(&iso, 5);
     assert!(iso.drain_interacts().is_empty());
+    iso.join();
+}
+
+const ENTITY_OP: &str = r#"
+import { Reach } from '../../api/walking/Reach.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__did) return;
+        globalThis.__did = true;
+        globalThis.__ok = null;
+        globalThis.__logs = [];
+        globalThis.__clicks = 0;
+        const entity = {
+            interact: (op) => { globalThis.__clicks++; globalThis.__op = op; return true; },
+            tile: () => ({ x: 8, z: 5, level: 0 }),
+        };
+        globalThis.__ok = await Reach.entityOp({
+            find: () => (globalThis.__gone ? null : entity),
+            op: 'Attack',
+            expect: () => globalThis.__ready === true,
+            log: (m) => globalThis.__logs.push(String(m)),
+        });
+    }
+}
+"#;
+
+#[test]
+fn entity_op_clicks_once_then_settles_done_on_expect() {
+    let iso = spawn(ENTITY_OP);
+    let mut snap = base(stand());
+    post(&iso, &snap);
+    tick(&iso, 1);
+    assert_eq!(iso.probe("__clicks").unwrap(), 1);
+    assert_eq!(iso.probe("__op").unwrap(), "Attack");
+    snap.tick = 2;
+    post(&iso, &snap);
+    tick(&iso, 2);
+    assert_eq!(
+        iso.probe("__ok").unwrap(),
+        Value::Null,
+        "still waiting on expect"
+    );
+    iso.probe("globalThis.__ready = true").unwrap();
+    snap.tick = 3;
+    post(&iso, &snap);
+    tick(&iso, 3);
+    tick(&iso, 4);
+    assert_eq!(iso.probe("__ok").unwrap(), "done");
+    assert_eq!(iso.probe("__clicks").unwrap(), 1, "no re-click");
+    iso.join();
+}
+
+#[test]
+fn entity_op_cant_reach_without_a_door_is_unreachable_with_the_frozen_log() {
+    let iso = spawn(ENTITY_OP);
+    let mut snap = base(stand());
+    post(&iso, &snap);
+    tick(&iso, 1);
+    let lines = [ChatLineInput {
+        seq: 3,
+        text: "I can't reach that!",
+        type_: 0,
+        username: None,
+    }];
+    snap.tick = 2;
+    snap.chat_lines = &lines;
+    post(&iso, &snap);
+    tick(&iso, 2);
+    tick(&iso, 3);
+    assert_eq!(iso.probe("__ok").unwrap(), "unreachable");
+    assert_eq!(
+        iso.probe("__logs").unwrap(),
+        serde_json::json!([
+            "reach: 'Attack' at (8,5): server can't reach it and no door in front to open or close (unreachable)"
+        ])
+    );
+    iso.join();
+}
+
+#[test]
+fn entity_op_that_could_not_click_retries_after_one_tick() {
+    let iso = spawn(ENTITY_OP);
+    iso.probe("globalThis.__gone = true").unwrap();
+    let snap = base(stand());
+    post(&iso, &snap);
+    tick(&iso, 1);
+    assert_eq!(iso.probe("__ok").unwrap(), Value::Null);
+    tick(&iso, 2);
+    tick(&iso, 3);
+    assert_eq!(iso.probe("__ok").unwrap(), "retry");
+    assert_eq!(iso.probe("__clicks").unwrap(), 0);
     iso.join();
 }

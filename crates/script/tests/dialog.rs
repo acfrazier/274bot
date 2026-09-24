@@ -698,3 +698,57 @@ export default class T extends LoopingBot {
     );
     iso.join();
 }
+
+#[test]
+fn walk_with_hops_climbs_the_nearest_same_side_ladder_then_arrives() {
+    let src = r#"
+import { walkWithHops } from '../../api/ai/quests/exec/primitives.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__did) return;
+        globalThis.__did = true;
+        globalThis.__ok = null;
+        globalThis.__ok = await walkWithHops({ x: 2532, z: 9600, level: 0 }, 2, [
+            { stand: { x: 2540, z: 9600, level: 0 }, locName: 'Ladder', op: 'Climb-up', arrive: { x: 2540, z: 4712, level: 0 } },
+            { stand: { x: 2532, z: 4712, level: 0 }, locName: 'Ladder', op: 'Climb-down', arrive: { x: 2532, z: 9601, level: 0 } },
+        ], () => {});
+    }
+}
+"#;
+    let iso = spawn(src);
+    let ops = ["Climb-down".to_string()];
+    let mut ladder = npc("Ladder", &ops, 0);
+    ladder.id = 1759;
+    ladder.x = 2532;
+    ladder.z = 4713;
+    let locs = [ladder];
+    let mut snap = base();
+    snap.locs = &locs;
+    post(&iso, &snap);
+    tick(&iso, 1);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::Loc {
+            x: 2532,
+            z: 4713,
+            level: 0,
+            action: "Climb-down".into(),
+            id: Some(1759),
+        }],
+        "the surface hop's ladder, not the underground one"
+    );
+    assert_eq!(iso.probe("__ok").unwrap(), Value::Null);
+    snap.tick = 2;
+    snap.here = Some(TileInput {
+        x: 2532,
+        z: 9601,
+        level: 0,
+    });
+    snap.locs = &[];
+    post(&iso, &snap);
+    tick(&iso, 2);
+    tick(&iso, 3);
+    assert_eq!(iso.probe("__ok").unwrap(), true, "landed within radius");
+    assert!(iso.drain_interacts().is_empty(), "no final walk needed");
+    iso.join();
+}

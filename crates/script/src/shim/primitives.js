@@ -1,6 +1,5 @@
 import { notImpl, runMachine } from '../../../../shim/_kernel.js';
 import { talkOp } from '../../../npcs/Npcs.js';
-import { Traversal } from '../../../walking/Traversal.js';
 
 export { talkOp };
 
@@ -35,21 +34,36 @@ export function pickByLine() {
 }
 
 export function isUnderground(t) {
-    return !!(t && t.z > 6400);
+    return t.z >= 5000;
 }
 
 export function needsHop() {
     throw notImpl('primitives.needsHop');
 }
 
-// Ladder hops are not driven: the walk is the frozen final
-// `walkResilient(dest, { radius, attempts: 3, log })`, awaited for its result.
-export async function walkWithHops(dest, radius, _hops, log) {
-    if (!dest || typeof dest.x !== 'number') return false;
-    return Traversal.walkResilient(
-        { x: dest.x, z: dest.z, level: dest.level ?? 0 },
-        { radius: radius ?? 0, attempts: 3, log },
+const tile = (t) => ({ x: t.x, z: t.z, level: t.level ?? 0 });
+
+// One `walk-hops` await: Rust crosses the ladder hop (frozen crossHops /
+// hopLadder), then walks the last leg within `radius`.
+export async function walkWithHops(dest, radius, hops, log) {
+    const out = await runMachine(
+        'walk-hops',
+        {
+            dest: tile(dest),
+            radius: radius ?? 0,
+            hops: (hops || []).map((h) => ({
+                stand: tile(h.stand),
+                locName: String(h.locName),
+                op: String(h.op),
+                arrive: tile(h.arrive),
+                ...(h.open !== undefined ? { open: String(h.open) } : {}),
+                ...(h.walk ? { walk: tile(h.walk) } : {}),
+            })),
+        },
+        { log },
     );
+    if (out.kind === 'refused') throw notImpl('primitives.walkWithHops', out.reason);
+    return out.kind === 'done' && out.value === true;
 }
 
 export async function gotoNpc(stop) {

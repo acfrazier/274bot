@@ -148,6 +148,8 @@ mod quest_journal;
 #[cfg(feature = "load")]
 mod reach;
 #[cfg(feature = "load")]
+mod reach_entity;
+#[cfg(feature = "load")]
 mod scene_query;
 #[cfg(feature = "load")]
 mod sherlock;

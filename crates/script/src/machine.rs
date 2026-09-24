@@ -395,6 +395,8 @@ const FAMILIES: &[Entry] = &[
     entry::<crate::trade::Trade>(),
     entry::<crate::drive_partner_trade::PartnerTrade>(),
     entry::<crate::clue::Clue>(),
+    entry::<crate::reach_entity::EntityOp>(),
+    entry::<crate::reach_entity::WalkHops>(),
     #[cfg(test)]
     entry::<tests::Probe>(),
     #[cfg(test)]
