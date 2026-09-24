@@ -50,7 +50,8 @@ export class Npc {
     }
 
     networkTile() {
-        if (!Number.isInteger(this.snap.nx) || !Number.isInteger(this.snap.nz)) {
+        if (typeof this.snap.size !== 'number' || !Number.isInteger(this.snap.size) || this.snap.size < 1 ||
+            !Number.isInteger(this.snap.nx) || !Number.isInteger(this.snap.nz)) {
             throw notImpl('Npc.networkTile');
         }
         return Tile.from({ x: this.snap.nx, z: this.snap.nz, level: this.snap.level ?? 0 });

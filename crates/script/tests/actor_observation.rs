@@ -125,10 +125,13 @@ export default class T extends LoopingBot {
     loop() {
         const n = Npcs.all()[0];
         const origin = n.networkOrigin();
+        const network = n.networkTile();
         globalThis.__probe = {
             size: n.size,
             nx: origin.x,
             nz: origin.z,
+            networkX: network.x,
+            networkZ: network.z,
             tileX: n.tile().x,
             tileZ: n.tile().z,
             same: origin.x === n.tile().x && origin.z === n.tile().z,
@@ -147,6 +150,8 @@ export default class T extends LoopingBot {
     assert_eq!(probe["size"], 4);
     assert_eq!(probe["nx"], 2832);
     assert_eq!(probe["nz"], 9825);
+    assert_eq!(probe["networkX"], 2832);
+    assert_eq!(probe["networkZ"], 9825);
     assert_eq!(probe["tileX"], 2833);
     assert_eq!(probe["tileZ"], 9823);
     assert_eq!(probe["same"], false);
@@ -164,6 +169,8 @@ export default class T extends LoopingBot {
         catch (e) { globalThis.__size = String(e); }
         try { n.networkOrigin(); globalThis.__origin = 'ok'; }
         catch (e) { globalThis.__origin = String(e); }
+        try { n.networkTile(); globalThis.__network = 'ok'; }
+        catch (e) { globalThis.__network = String(e); }
         globalThis.__me = n.targetsMe();
     }
 }
@@ -187,6 +194,14 @@ export default class T extends LoopingBot {
             .unwrap_or("")
             .contains("not impl: Npc.networkOrigin"),
         "{origin}"
+    );
+    let network = iso.probe("__network").unwrap();
+    assert!(
+        network
+            .as_str()
+            .unwrap_or("")
+            .contains("not impl: Npc.networkTile"),
+        "{network}"
     );
     assert_eq!(iso.probe("__me").unwrap(), false);
     iso.join();
