@@ -1287,6 +1287,10 @@ const GREEN_DRAGON_LOOT_EMPTY: &[i32] = &[
     GREEN_DRAGONHIDE_ID,
     NOTED_GREEN_DRAGONHIDE_ID,
 ];
+/// Lost City Of Zanaris (`quest_names_enum` 34, journal row `[zanaris]`):
+/// `levelrequire_zanaris_quest_attack(60, last_slot)` gates
+/// `opheld2 dragon_dagger` (`content/scripts/levelrequire/scripts/tier60.rs2`,
+/// `content/scripts/levelrequire/scripts/levelrequire.rs2`).
 pub(crate) const LOST_CITY_PREREQ: NativeQuestPrereq = NativeQuestPrereq {
     dialog: "Lost City",
     journal: "Lost City",
