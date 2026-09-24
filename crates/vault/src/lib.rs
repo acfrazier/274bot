@@ -594,14 +594,10 @@ mod tests {
         let mut v = Vault::create(&file, "bot").unwrap();
         v.upsert(profile("alice", "pw1")).unwrap();
 
-        // Drop write permission so the next atomic write cannot succeed.
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o500)).unwrap();
-        }
-        #[cfg(not(unix))]
-        std::fs::remove_dir_all(&dir).unwrap();
+        // Block the atomic write's `.tmp` path with a directory so the next
+        // write fails on every platform (Windows cannot delete the open
+        // vault's directory, and permission bits do not stop it writing).
+        std::fs::create_dir(file.with_extension("tmp")).unwrap();
         assert!(v.upsert(profile("bob", "pw2")).is_err());
         assert!(
             v.get("bob").is_none(),
