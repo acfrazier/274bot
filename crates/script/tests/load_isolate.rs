@@ -2206,6 +2206,35 @@ export default class T extends LoopingBot {
 }
 
 #[test]
+fn isolate_equipment_unequip_queues_host_unequip_not_wear() {
+    let src = r#"
+import { Equipment } from '../../api/equipment/Equipment.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__did) return;
+        globalThis.__did = true;
+        globalThis.__ok = await Equipment.unequip('Iron chainbody');
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut snap = base_snapshot();
+    let worn = [item_row(1101, Some("Iron chainbody"), 1, &[], false, -1, 0)];
+    snap.equipment = &worn;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let _ = iso.probe("1 + 1");
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![script::shim::InteractReq::Unequip {
+            name: "Iron chainbody".into()
+        }],
+        "a worn item's unequip is one host Unequip, never a Wear"
+    );
+    iso.join();
+}
+
+#[test]
 fn isolate_chat_dialog_make_x_queues_answer_count_after_button() {
     let src = r#"
 import { ChatDialog } from '../../api/ui/dialogue/ChatDialog.js';

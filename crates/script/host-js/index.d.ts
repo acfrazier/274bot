@@ -336,6 +336,7 @@ export type InteractReq =
   | { op: 'close-modal'}
   | { op: 'side-tab'; tab: number}
   | { op: 'wear'; name: string}
+  | { op: 'unequip'; name: string}
   | { op: 'set-run'; on: boolean}
   | { op: 'set-retaliate'; on: boolean}
   | { op: 'set-note-mode'; on: boolean}

@@ -32,7 +32,7 @@ export const Equipment = proxy('Equipment', {
     },
     async unequip(name) {
         if (!Equipment.contains(name)) return true;
-        queue({ op: 'wear', name: String(name) });
+        queue({ op: 'unequip', name: String(name) });
         return Execution.delayUntil(() => !Equipment.contains(name), 3000);
     },
 });

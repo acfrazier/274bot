@@ -935,6 +935,33 @@ impl<'a> Interactions<'a> {
         )
     }
 
+    /// Remove a worn item by obj id: resolves the worn-equipment row (the
+    /// worn tab's TYPE_INV component slot) and dispatches that component's
+    /// `Remove` op — an INV_BUTTON at the row's id/slot/component — with
+    /// the same preconditions as [`Interactions::interact`]. Refuses
+    /// `StaleTarget` when the item is not worn, `InvalidAction` when the
+    /// worn row's menu has no Remove slot.
+    pub fn unequip(&mut self, id: i32) -> SendResult<'a> {
+        let snapshot = self.snapshot;
+        if let Some(reason) = self.precondition(snapshot, false) {
+            return refuse(snapshot, reason);
+        }
+        let Some(item) = snapshot.equipment().iter().find(|it| it.def.id == id) else {
+            return refuse(snapshot, SendReason::StaleTarget);
+        };
+        let target = OpTarget::Item(item);
+        if let Some(reason) = self.check_target(&target, snapshot) {
+            return refuse(snapshot, reason);
+        }
+        let Some(operation) = operation_of(&target, "Remove") else {
+            return refuse(snapshot, SendReason::InvalidAction);
+        };
+        self.dispatch(
+            WireCommand::Op { target, operation },
+            snapshot.tick() as u64,
+        )
+    }
+
     pub fn use_item_on<'t>(&mut self, item: &'t ItemView, target: OpTarget<'t>) -> SendResult<'t> {
         let snapshot = self.snapshot;
         if let Some(reason) = self.precondition(snapshot, false) {

@@ -5113,6 +5113,7 @@ fn bank_v2_kind_forbidden(kind: &str) -> bool {
             | "deposit"
             | "withdraw"
             | "wear"
+            | "unequip"
             | "held"
             | "close"
             | "count-bank-trip"

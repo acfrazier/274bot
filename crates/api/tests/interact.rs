@@ -2119,6 +2119,130 @@ fn wear_refuses_non_wearable_and_missing_items() {
     assert!(rec.menus.is_empty());
 }
 
+/// The worn-items tab (side tab 4): a layer (710) wrapping the worn
+/// TYPE_INV component (711) whose own `iop` is `ops`, with obj 5 (stored
+/// 6) worn in slot 3.
+fn plant_worn(c: &mut Client, ops: [Option<String>; 5]) {
+    set_iface(
+        c,
+        710,
+        IfType {
+            id: 710,
+            layer_id: 710,
+            r#type: ComponentType::TYPE_LAYER,
+            children: Some(vec![711]),
+            ..Default::default()
+        },
+    );
+    set_iface(
+        c,
+        711,
+        IfType {
+            id: 711,
+            layer_id: 710,
+            r#type: ComponentType::TYPE_INV,
+            iop: ops,
+            ..Default::default()
+        },
+    );
+    set_iface_mut(
+        c,
+        711,
+        IfTypeMut {
+            link_obj_type: Some(vec![0, 0, 0, 6]),
+            link_obj_number: Some(vec![0, 0, 0, 1]),
+            ..Default::default()
+        },
+    );
+    c.side_icon[4] = 710;
+}
+
+/// `unequip` sends the worn component's `Remove` op — INV_BUTTON at the
+/// worn row's id/slot/component, never the obj's held ops (whose menu is
+/// Wear). An item that is held but not worn is `StaleTarget`, and `wear`
+/// on that held item still sends its held Wear op.
+#[test]
+fn unequip_sends_remove_on_the_worn_component_row() {
+    let mut s = scene();
+    plant_inventory(&mut s.client); // obj 3 held in inv slot 0
+    plant_worn(
+        &mut s.client,
+        [Some("Operate".into()), Some("Remove".into()), None, None, None],
+    );
+    {
+        let cache = Arc::get_mut(&mut s.client.cache).expect("sole cache owner");
+        cache.objs.resize(6, ObjType::default());
+        cache.objs[3] = ObjType {
+            id: 3,
+            iop: [Some("Wear".into()), None, None, None, None],
+            ..Default::default()
+        };
+        cache.objs[5] = ObjType {
+            id: 5,
+            iop: [Some("Wear".into()), None, None, None, None],
+            ..Default::default()
+        };
+    }
+    let snap = rebuild(&mut s.client);
+    let worn = snap.equipment();
+    assert_eq!(worn.len(), 1);
+    assert_eq!((worn[0].def.id, worn[0].slot, worn[0].component_id), (5, 3, 711));
+    let mut rec = Recorder::default();
+    {
+        let mut ix = Interactions::new(&snap, &mut rec);
+        match ix.unequip(5) {
+            SendResult::Sent { tick, command } => {
+                assert_eq!(tick, snap.tick() as u64);
+                assert!(matches!(command, WireCommand::Op { operation: 2, .. }));
+            }
+            SendResult::Refused { reason, .. } => panic!("refused: {reason:?}"),
+        }
+        assert!(
+            matches!(
+                ix.unequip(3),
+                SendResult::Refused {
+                    reason: SendReason::StaleTarget,
+                    ..
+                }
+            ),
+            "a held item that is not worn is stale"
+        );
+        assert!(matches!(ix.wear(3), SendResult::Sent { .. }));
+    }
+    assert_eq!(rec.actions, vec![0, 0]);
+    assert_eq!(
+        rec.menus,
+        vec![
+            (0, MiniMenuAction::INV_BUTTON2, 5, 3, 711),
+            (0, MiniMenuAction::OP_HELD1, 3, 0, 500),
+        ],
+        "Remove is INV_BUTTON2 on the worn row; Wear stays OP_HELD1 on the held row"
+    );
+}
+
+/// A worn row whose component menu has no Remove slot is `InvalidAction`
+/// and sends nothing.
+#[test]
+fn unequip_refuses_a_worn_row_without_remove() {
+    let mut s = scene();
+    plant_worn(&mut s.client, [None, None, None, None, None]);
+    let snap = rebuild(&mut s.client);
+    assert_eq!(snap.equipment().len(), 1);
+    let mut rec = Recorder::default();
+    {
+        let mut ix = Interactions::new(&snap, &mut rec);
+        assert!(matches!(
+            ix.unequip(5),
+            SendResult::Refused {
+                reason: SendReason::InvalidAction,
+                ..
+            }
+        ));
+    }
+    assert!(rec.actions.is_empty(), "nothing sent");
+    assert!(rec.menus.is_empty());
+}
+
 /// `press` dispatches a BUTTON_OK through IF_BUTTON and refuses the
 /// target-verb and client-code arms before the driver sees them.
 #[test]

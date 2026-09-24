@@ -7405,6 +7405,12 @@ pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>
                     .ok_or_else(|| "wear has no name".to_string())?
                     .to_string(),
             }),
+            "unequip" => out.push(crate::shim::InteractReq::Unequip {
+                name: row
+                    .name()
+                    .ok_or_else(|| "unequip has no name".to_string())?
+                    .to_string(),
+            }),
             "set-run" => out.push(crate::shim::InteractReq::SetRun {
                 on: row.action().is_some_and(|a| a == "on" || a == "true"),
             }),
@@ -7483,6 +7489,7 @@ fn interact_off<'b>(
         InteractReq::CloseModal => "close-modal",
         InteractReq::SideTab { .. } => "side-tab",
         InteractReq::Wear { .. } => "wear",
+        InteractReq::Unequip { .. } => "unequip",
         InteractReq::SetRun { .. } => "set-run",
         InteractReq::SetRetaliate { .. } => "set-retaliate",
         InteractReq::SetNoteMode { .. } => "set-note-mode",
@@ -7517,7 +7524,8 @@ fn interact_off<'b>(
         | InteractReq::Player { name, .. }
         | InteractReq::UseOn { name, .. }
         | InteractReq::ShopButton { name, .. }
-        | InteractReq::Wear { name } => Some(b.create_string(name)),
+        | InteractReq::Wear { name }
+        | InteractReq::Unequip { name } => Some(b.create_string(name)),
         InteractReq::Obj { name, .. } => name.as_deref().map(|n| b.create_string(n)),
         _ => None,
     };
@@ -7901,7 +7909,7 @@ fn interact_off<'b>(
         InteractReq::SideTab { tab } => {
             b.push_slot_always(VT_IN_STAND_OP, *tab);
         }
-        InteractReq::Wear { .. } => {
+        InteractReq::Wear { .. } | InteractReq::Unequip { .. } => {
             b.push_slot_always(VT_IN_NAME, name_off.unwrap());
         }
         InteractReq::SetRun { .. }
@@ -8389,6 +8397,23 @@ pub(crate) mod tests {
             action: "Pick".into(),
             index: None,
         }];
+        let bytes = encode_interact_batch(&reqs);
+        let got = decode_interact_batch(&bytes).expect("interact batch decodes");
+        assert_eq!(got, reqs);
+    }
+
+    /// `wear` and `unequip` share the name slot; the op string keeps a
+    /// removal from decoding as a wear of the same item.
+    #[test]
+    fn encode_decode_interact_wear_and_unequip_round_trip() {
+        let reqs = vec![
+            InteractReq::Wear {
+                name: "Iron chainbody".into(),
+            },
+            InteractReq::Unequip {
+                name: "Iron chainbody".into(),
+            },
+        ];
         let bytes = encode_interact_batch(&reqs);
         let got = decode_interact_batch(&bytes).expect("interact batch decodes");
         assert_eq!(got, reqs);

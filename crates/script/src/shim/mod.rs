@@ -1228,6 +1228,9 @@ pub enum InteractReq {
     /// Wear/wield an inventory item by resolved name.
     #[serde(rename = "wear")]
     Wear { name: String },
+    /// Remove a worn item by resolved name (the worn component's `Remove`).
+    #[serde(rename = "unequip")]
+    Unequip { name: String },
     /// Toggle run on/off.
     #[serde(rename = "set-run")]
     SetRun { on: bool },

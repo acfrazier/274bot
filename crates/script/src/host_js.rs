@@ -2496,6 +2496,15 @@ const INTERACT_VARIANTS: &[InteractVariant] = &[
         }],
     },
     InteractVariant {
+        op: "unequip",
+        fields: &[TsField {
+            name: "name",
+            ty: "string",
+            optional: false,
+            doc: None,
+        }],
+    },
+    InteractVariant {
         op: "set-run",
         fields: &[TsField {
             name: "on",

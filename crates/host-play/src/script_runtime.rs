@@ -1832,6 +1832,33 @@ pub(super) fn dispatch_script_interact_cached(
                     );
                 }
             }
+            InteractReq::Unequip { name } => {
+                let id = snapshot.equipment().iter().find_map(|it| {
+                    obj_names
+                        .and_then(|n| n.name(it.def.id))
+                        .filter(|n| n.eq_ignore_ascii_case(&name))
+                        .map(|_| it.def.id)
+                });
+                if let Some(id) = id {
+                    let res = ix.unequip(id);
+                    if host::debug_enabled() {
+                        let outcome = match &res {
+                            SendResult::Sent { .. } => "sent".to_string(),
+                            SendResult::Refused { reason, .. } => format!("refused {reason:?}"),
+                        };
+                        eprintln!(
+                            "[shim-unequip] {name} id={id} worn={} -> {outcome}",
+                            snapshot.equipment().len()
+                        );
+                    }
+                    wrote |= matches!(res, SendResult::Sent { .. });
+                } else if host::debug_enabled() {
+                    eprintln!(
+                        "[shim-unequip] {name} no equipment() row worn={}",
+                        snapshot.equipment().len()
+                    );
+                }
+            }
             InteractReq::SetRun { on } => {
                 wrote |= matches!(ix.set_run(on), SendResult::Sent { .. });
             }

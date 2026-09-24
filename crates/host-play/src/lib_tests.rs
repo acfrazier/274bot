@@ -7253,6 +7253,101 @@ fn dispatch_script_interact_sends_held_item_bury() {
     );
 }
 
+/// The shim `Equipment.unequip` arm: an `Unequip { name }` request
+/// resolves the worn row by case-insensitive ObjNames name and sends the
+/// worn component's `Remove` op (INV_BUTTON1 at the worn row's
+/// id/slot/component). A held-but-not-worn name and an unknown name
+/// send nothing.
+#[test]
+fn dispatch_script_interact_unequip_removes_the_worn_row() {
+    use client::client::MiniMenuAction;
+
+    let mut c = bank_fetch_client();
+    // Worn-items tab 4: the Knife (obj 2, stored 3) worn in slot 1 of a
+    // TYPE_INV component whose own menu is `Remove`.
+    c.side_icon[4] = 710;
+    c.set_iface(
+        710,
+        IfType {
+            id: 710,
+            r#type: ComponentType::TYPE_INV,
+            iop: [Some("Remove".into()), None, None, None, None],
+            ..Default::default()
+        },
+    );
+    c.set_iface_mut(
+        710,
+        IfTypeMut {
+            link_obj_type: Some(vec![0, 3]),
+            link_obj_number: Some(vec![0, 1]),
+            ..Default::default()
+        },
+    );
+    c.bump_gens(ServerProt::UPDATE_INV_FULL);
+    let mut snap = GameSnapshot::new();
+    snap.rebuild(&c);
+    let names = api::obj_names::ObjNames::from_objs(&{
+        let cache = Arc::get_mut(&mut c.cache).expect("sole cache owner");
+        cache.objs.clone()
+    });
+    let (navs, world) = empty_nav();
+    assert_eq!(
+        snap.equipment()
+            .iter()
+            .map(|it| (it.def.id, it.slot, it.component_id))
+            .collect::<Vec<_>>(),
+        vec![(2, 1, 710)],
+        "the worn tab holds the Knife"
+    );
+
+    let mut rec = GuardRec::default();
+    assert!(!dispatch_script_interact(
+        &mut rec,
+        &snap,
+        Some(&names),
+        Some((3205, 3205, 0)),
+        &navs,
+        &world,
+        None,
+        "alice",
+        vec![
+            script::shim::InteractReq::Unequip {
+                name: "Bones".into()
+            },
+            script::shim::InteractReq::Unequip {
+                name: "Lobster".into()
+            },
+        ],
+    ));
+    assert!(
+        rec.menus.is_empty() && rec.actions.is_empty(),
+        "a held-but-not-worn name and an unknown name send nothing"
+    );
+
+    assert!(
+        dispatch_script_interact(
+            &mut rec,
+            &snap,
+            Some(&names),
+            Some((3205, 3205, 0)),
+            &navs,
+            &world,
+            None,
+            "alice",
+            vec![script::shim::InteractReq::Unequip {
+                name: "knife".into()
+            }],
+        ),
+        "unequip of a worn item must dispatch"
+    );
+    assert_eq!(rec.actions, vec![0]);
+    assert_eq!(
+        rec.menus,
+        vec![(0, MiniMenuAction::INV_BUTTON1, 2, 1, 710)],
+        "Remove on the worn component row"
+    );
+}
+
 #[test]
 fn dispatch_use_on_honors_exact_inventory_identity_and_rejects_stale_slots() {
     use client::config::ObjType;
