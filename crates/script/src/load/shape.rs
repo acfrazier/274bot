@@ -359,35 +359,23 @@ pub fn scan_same_folder_js_imports(source: &str) -> Vec<String> {
     out
 }
 
-/// Every `from '…'` / `from "…"` specifier, first-seen order.
-/// Template fragments inside log strings (`from '${who}'`) are not imports.
+/// Runtime import / re-export specifiers, first-seen source order. Type-only
+/// declarations are skipped: the transpiled module never loads them.
 pub fn scan_import_specifiers(source: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    for quote in ['\'', '"'] {
-        let needle = format!("from {quote}");
-        let mut rest = source;
-        while let Some(idx) = rest.find(&needle) {
-            let after = &rest[idx + needle.len()..];
-            if let Some(end) = after.find(quote) {
-                let spec = after[..end].trim();
-                if looks_like_module_specifier(spec) && !out.iter().any(|x| x == spec) {
-                    out.push(spec.to_string());
-                }
-            }
-            rest = &rest[idx + 1..];
+    let mut out: Vec<String> = Vec::new();
+    for import in crate::module_imports::module_imports(source) {
+        if import.runtime
+            && looks_like_module_specifier(&import.specifier)
+            && !out.contains(&import.specifier)
+        {
+            out.push(import.specifier);
         }
     }
     out
 }
 
 fn looks_like_module_specifier(spec: &str) -> bool {
-    !spec.is_empty()
-        && !spec.contains('$')
-        && !spec.contains('{')
-        && (spec.starts_with('.')
-            || spec.starts_with('#')
-            || spec.starts_with('@')
-            || spec.starts_with('/'))
+    spec.starts_with('.') || spec.starts_with('#') || spec.starts_with('@') || spec.starts_with('/')
 }
 
 pub fn scan_scripts_sibling_js_imports(source: &str) -> Vec<String> {

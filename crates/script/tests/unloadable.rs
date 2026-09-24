@@ -225,6 +225,34 @@ fn log_from_who_is_not_an_import_specifier() {
 }
 
 #[test]
+fn type_only_imports_never_block_a_card() {
+    // BrimhavenMossGiants `bank.ts`: the danger-zone type is erased by the transpile.
+    let src = r#"
+import { Navigator } from '../../event/webwalk/Navigator.js';
+import type { DangerZoneRect } from '../../event/webwalk/data/dangerZones.js';
+import { type PathPolicy } from '../../event/webwalk/types.js';
+export type { WorldStateData } from '../../event/webwalk/worldStateData.js';
+const ZONE: DangerZoneRect = { minX: 1, maxX: 2, minZ: 1, maxZ: 2 };
+export default class T extends LoopingBot { loop() {} }
+"#;
+    assert_eq!(script::first_unloadable_specifier(src), None);
+}
+
+#[test]
+fn a_value_binding_beside_a_type_binding_still_blocks() {
+    let src = r#"
+import type { Task } from '../../api/bot/Bot.js';
+import { type DangerZoneRect, resolveDangerZones } from '../../event/webwalk/data/dangerZones.js';
+export * from '../../event/webwalk/WalkExecutor.js';
+export default class T extends LoopingBot { loop() {} }
+"#;
+    assert_eq!(
+        script::first_unloadable_specifier(src).as_deref(),
+        Some("../../event/webwalk/data/dangerZones.js")
+    );
+}
+
+#[test]
 fn herb_cleaner_parent_sibling_remaps() {
     let src = "import { HERBS } from '../HerbCleaner/HerbCleanerLogic.js'; export default class T extends LoopingBot { loop() {} }";
     assert_eq!(script::first_unloadable_specifier(src), None);

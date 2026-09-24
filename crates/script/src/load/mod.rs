@@ -27,9 +27,13 @@ mod library;
 mod line_of_sight;
 mod loadout_v8;
 #[cfg(feature = "load")]
+mod melee_weapons_v8;
+#[cfg(feature = "load")]
 mod paint_chrome;
 #[cfg(feature = "load")]
 mod paint_jive;
+#[cfg(feature = "load")]
+mod partner_trade_v8;
 mod quest_facts_v8;
 mod shape;
 #[cfg(feature = "load")]

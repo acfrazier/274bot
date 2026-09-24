@@ -323,13 +323,7 @@ fn matched_count(their: &[TheirRow]) -> i32 {
 }
 
 fn partner_allowed(partners: &[String], name: &str) -> bool {
-    let have = name.trim();
-    if have.is_empty() {
-        return false;
-    }
-    partners
-        .iter()
-        .any(|want| want.trim().eq_ignore_ascii_case(have))
+    crate::partner_trade::is_configured_partner(Some(name), partners)
 }
 
 fn observe() -> (bool, bool, bool, Option<String>, i32, usize, u64) {

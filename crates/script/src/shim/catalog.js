@@ -38,6 +38,10 @@ export function liveCatalog() {
     return { ...EMPTY, notedOf, unnotedOf };
 }
 
+export function tradeable(_id) {
+    throw notImpl('tradeable', 'untradeable ids are not in selected facts');
+}
+
 export function clientName(_id) {
     throw notImpl('clientName');
 }

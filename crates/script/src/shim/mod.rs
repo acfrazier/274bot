@@ -401,6 +401,10 @@ pub(crate) fn shim_modules() -> Vec<Module> {
             "/rs2b0t/bot/api/trade/drivePartnerTrade.js",
             include_str!("drive_partner_trade.js"),
         ),
+        Module::new(
+            "/rs2b0t/bot/api/trade/PartnerTrade.js",
+            include_str!("partner_trade.js"),
+        ),
         Module::new("/rs2b0t/bot/api/shop/Shop.js", include_str!("shop.js")),
         Module::new(
             "/rs2b0t/bot/api/shop/types.js",
@@ -498,6 +502,10 @@ pub(crate) fn shim_modules() -> Vec<Module> {
         Module::new(
             "/rs2b0t/bot/api/combat/equipment.js",
             include_str!("combat_equipment.js"),
+        ),
+        Module::new(
+            "/rs2b0t/bot/api/combat/meleeWeapons.js",
+            include_str!("melee_weapons.js"),
         ),
         Module::new(
             "/rs2b0t/bot/api/combat/ranged.js",

@@ -30,6 +30,7 @@ mod keep_list;
 pub mod load;
 pub mod loadout_plan;
 pub mod loadouts_store;
+mod module_imports;
 pub mod params;
 /// Pure ranged supply predicate (`rangeSupplyEmpty`).
 pub mod ranged;
@@ -127,7 +128,11 @@ mod inspect_wait;
 #[cfg(feature = "load")]
 pub mod line_of_sight;
 #[cfg(feature = "load")]
+mod melee_weapons;
+#[cfg(feature = "load")]
 mod modals;
+#[cfg(feature = "load")]
+mod partner_trade;
 #[cfg(feature = "load")]
 mod periodic_bank;
 #[cfg(feature = "load")]

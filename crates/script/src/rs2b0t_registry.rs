@@ -350,28 +350,16 @@ pub(crate) fn same_dir_import_rel(script_rel: &str, import_rel: &str) -> Option<
 /// module under `./`. Parent-dir and absolute imports are ignored.
 fn scan_imports(src: &str) -> HashMap<String, ImportBinding> {
     let mut imports = HashMap::new();
-    let mut pos = 0;
-    while let Some(rel) = src[pos..].find("import") {
-        let start = pos + rel;
-        let before = src[..start].chars().next_back();
-        if !matches!(
-            before,
-            None | Some('\n') | Some('\r') | Some(' ') | Some('\t') | Some(';') | Some('}')
-        ) {
-            pos = start + 1;
+    for import in crate::module_imports::module_imports(src) {
+        if !import.specifier.starts_with("./") {
             continue;
         }
-        let tail = &src[start + "import".len()..];
-        let stmt_len = tail.find(';').unwrap_or(tail.len());
-        if let Some((bindings, path)) = parse_import_stmt(&tail[..stmt_len]) {
-            for (local, export_name) in bindings {
-                imports.entry(local).or_insert_with(|| ImportBinding {
-                    rel_path: path.clone(),
-                    export_name,
-                });
-            }
+        for (local, export_name) in import.bindings {
+            imports.entry(local).or_insert_with(|| ImportBinding {
+                rel_path: import.specifier.clone(),
+                export_name,
+            });
         }
-        pos = start + "import".len() + stmt_len;
     }
     imports
 }
@@ -386,71 +374,6 @@ pub(crate) fn same_dir_import_rels(script_rel: &str, src: &str) -> Vec<String> {
         }
     }
     out
-}
-
-/// Parse one import statement body (the text after `import`, before `;`).
-/// Returns local-name/export-name pairs and the module path.
-fn parse_import_stmt(stmt: &str) -> Option<(Vec<(String, String)>, String)> {
-    let stmt = stmt.trim_start();
-    let stmt = stmt.strip_prefix("type ").unwrap_or(stmt);
-    let fi = stmt.rfind("from ")?;
-    let after = stmt[fi + "from ".len()..].trim_start();
-    let path = quoted_after(after)?;
-    if !path.starts_with("./") {
-        return None;
-    }
-    let spec = stmt[..fi].trim();
-    let mut bindings = Vec::new();
-    if let Some(rest) = spec.strip_prefix('{') {
-        let inner = rest.strip_suffix('}').unwrap_or(rest);
-        for part in inner.split(',') {
-            parse_named_import_part(part, &mut bindings);
-        }
-    } else {
-        let group = spec.find('{');
-        let head = group.map_or(spec, |i| &spec[..i]);
-        if let Some(ident) = head
-            .split(|c: char| c.is_whitespace() || c == ',')
-            .find(|t| !t.is_empty())
-        {
-            bindings.push((ident.to_string(), ident.to_string()));
-        }
-        if let Some(i) = group {
-            if let Some(j) = spec.rfind('}') {
-                for part in spec[i + 1..j].split(',') {
-                    parse_named_import_part(part, &mut bindings);
-                }
-            }
-        }
-    }
-    if bindings.is_empty() {
-        return None;
-    }
-    Some((bindings, path))
-}
-
-fn parse_named_import_part(part: &str, bindings: &mut Vec<(String, String)>) {
-    let part = part.trim();
-    if part.is_empty() {
-        return;
-    }
-    if let Some((export_name, local)) = part.split_once(" as ") {
-        let export_name = export_name.trim();
-        let local = local.trim();
-        if !local.is_empty() {
-            bindings.push((
-                local.to_string(),
-                if export_name.is_empty() {
-                    local.to_string()
-                } else {
-                    export_name.to_string()
-                },
-            ));
-        }
-    } else {
-        let ident = part.split_whitespace().next().unwrap_or(part).to_string();
-        bindings.push((ident.clone(), ident));
-    }
 }
 
 /// The first `'…'` or `"…"` string in `s`, unescaping `\'` `\"` `\\`.

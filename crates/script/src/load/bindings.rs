@@ -947,6 +947,8 @@ pub(super) fn wire_runtime(
     super::clue_pack_v8::install(runtime).map_err(|e| format!("clue pack v8: {e}"))?;
     super::loadout_v8::install(runtime).map_err(|e| format!("loadout v8: {e}"))?;
     super::line_of_sight::install(runtime).map_err(|e| format!("line of sight: {e}"))?;
+    super::melee_weapons_v8::install(runtime).map_err(|e| format!("melee weapons v8: {e}"))?;
+    super::partner_trade_v8::install(runtime).map_err(|e| format!("partner trade v8: {e}"))?;
     super::paint_chrome::install(runtime).map_err(|e| format!("paint chrome: {e}"))?;
     super::paint_jive::install(runtime).map_err(|e| format!("paint jive: {e}"))?;
     let content = format!(
