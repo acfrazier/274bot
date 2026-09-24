@@ -98,10 +98,14 @@ pub fn source_digest(root: &Path, files: &[&Path]) -> Result<String, String> {
     let mut digest = Sha256::new();
     digest.update(b"274NAVSOURCE01");
     for path in paths {
+        // `/`-joined on every platform: a Windows label must not differ.
         let label = path
             .strip_prefix(root)
             .map_err(|e| e.to_string())?
-            .to_string_lossy();
+            .components()
+            .map(|c| c.as_os_str().to_string_lossy())
+            .collect::<Vec<_>>()
+            .join("/");
         digest.update((label.len() as u64).to_be_bytes());
         digest.update(label.as_bytes());
         digest.update(crate::manifest::hash_file(&path)?.as_bytes());
@@ -681,6 +685,22 @@ mod tests {
         std::fs::write(&file, b"two").unwrap();
         assert_ne!(first, super::source_digest(&root, &[]).unwrap());
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// Provenance is machine-independent: nested inputs digest to the same
+    /// value on every platform (Windows once hashed `maps\m.jm2` labels).
+    #[test]
+    fn content_digest_is_the_same_on_every_platform() {
+        let root = std::env::temp_dir().join(format!("nav-source-labels-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("maps")).unwrap();
+        std::fs::write(root.join("maps").join("m50_50.jm2"), b"map").unwrap();
+        std::fs::write(root.join("gates.loc"), b"gate").unwrap();
+        let digest = super::source_digest(&root, &[]).unwrap();
+        std::fs::remove_dir_all(&root).unwrap();
+        assert_eq!(
+            digest,
+            "d05cb65b16c8c8cd706f9205447c6a876ee91b9e82dd0d3132c398a4e0095fce"
+        );
     }
 
     #[test]
