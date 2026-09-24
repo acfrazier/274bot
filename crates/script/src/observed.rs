@@ -27,7 +27,7 @@
 //! read from each.
 
 use crate::isolate_fb::{
-    QuestStatusReader, RowReader, SceneEntityReader, SnapshotReader, StatReader,
+    CombatStyleReader, QuestStatusReader, RowReader, SceneEntityReader, SnapshotReader, StatReader,
 };
 use api::line_of_sight::CollisionQuery;
 use std::cell::RefCell;
@@ -271,6 +271,26 @@ impl SceneRow {
             x: self.x,
             z: self.z,
             level: self.level,
+        }
+    }
+}
+
+/// One posted UI button row. The combat tab's style buttons and the magic
+/// tab's target buttons arrive with the same shape: a varp mode, the button's
+/// own label, and its component id.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ButtonRow {
+    pub mode: i32,
+    pub label: Text,
+    pub component_id: i32,
+}
+
+impl ButtonRow {
+    fn read(row: &CombatStyleReader<'_>, strings: &mut Interner) -> Self {
+        Self {
+            mode: row.mode(),
+            label: strings.text(row.label()),
+            component_id: row.component_id(),
         }
     }
 }
@@ -570,6 +590,8 @@ scene_pages! {
         stats: Skills,
     }
     rows {
+        combat_styles: Vec<ButtonRow>,
+        spell_buttons: Vec<ButtonRow>,
         nearest_booth: NearestBooth,
         trade_partner: String,
         inv: Vec<ItemRow>,
@@ -729,6 +751,12 @@ impl Scene {
                 .map(|row| SceneRow::read(row, strings))
                 .collect()
         };
+        let buttons =
+            |rows: Vec<CombatStyleReader<'_>>, strings: &mut Interner| -> Vec<ButtonRow> {
+                rows.iter()
+                    .map(|row| ButtonRow::read(row, strings))
+                    .collect()
+            };
         let mut post = self.begin_post(snap.tick());
         let p = &mut post;
         if snap.has_ingame() {
@@ -880,6 +908,12 @@ impl Scene {
         }
         if snap.has_stats() {
             p.stats(Skills::read(&snap.stats()));
+        }
+        if snap.has_combat_styles() {
+            p.combat_styles(buttons(snap.combat_styles(), strings));
+        }
+        if snap.has_spell_buttons() {
+            p.spell_buttons(buttons(snap.spell_buttons(), strings));
         }
         if snap.has_varps() {
             p.varps(

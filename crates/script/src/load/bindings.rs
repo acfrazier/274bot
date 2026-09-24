@@ -26,6 +26,98 @@ fn json_i32(value: Option<&serde_json::Value>) -> Option<i32> {
     })
 }
 
+/// A posted combat-tab label as the frozen `parseInterfaceCombatStyle` reads
+/// it: one leading `(` and one trailing `)` dropped, trimmed, lowercased.
+fn interface_style(label: &str) -> Option<&'static str> {
+    let trimmed = label.trim();
+    let trimmed = trimmed.strip_prefix('(').unwrap_or(trimmed);
+    let trimmed = trimmed.strip_suffix(')').unwrap_or(trimmed);
+    match trimmed.trim().to_ascii_lowercase().as_str() {
+        "accurate" => Some("attack"),
+        "aggressive" => Some("strength"),
+        "controlled" => Some("controlled"),
+        "defensive" => Some("defence"),
+        _ => None,
+    }
+}
+
+/// The frozen `tryParseCombatStyle` aliases: a known token resolves to its
+/// canonical style, anything else is itself (trimmed, lowercased).
+fn style_token(style: &str) -> String {
+    let key = style.trim().to_ascii_lowercase();
+    match key.as_str() {
+        "attack" | "accurate" => "attack",
+        "strength" | "aggressive" => "strength",
+        "controlled" | "shared" => "controlled",
+        "defence" | "defense" | "defensive" => "defence",
+        _ => key.as_str(),
+    }
+    .to_string()
+}
+
+/// The frozen `resolveCombatStyle` over the posted combat-tab buttons
+/// (`bot/api/combat/CombatStyle.ts`): the offered mode whose label names the
+/// requested style, else the last defensive option, else `null`. Rust owns
+/// the style vocabulary, the duplicate-mode rule and the fallback order; the
+/// shim only passes the script's token.
+fn resolve_combat_style(style: &str) -> serde_json::Value {
+    let requested = style_token(style);
+    crate::observed::with(|scene| {
+        let Some(rows) = scene.latest().combat_styles() else {
+            return serde_json::Value::Null;
+        };
+        let mut seen: Vec<i32> = Vec::new();
+        let mut modes: Vec<(&crate::observed::ButtonRow, &'static str)> = Vec::new();
+        for row in rows {
+            let Some(effective) = interface_style(&row.label) else {
+                continue;
+            };
+            if seen.contains(&row.mode) {
+                continue;
+            }
+            seen.push(row.mode);
+            modes.push((row, effective));
+        }
+        let selected = modes
+            .iter()
+            .find(|(_, effective)| *effective == requested.as_str())
+            .or_else(|| {
+                modes
+                    .iter()
+                    .rev()
+                    .find(|(_, effective)| *effective == "defence")
+            });
+        match selected {
+            Some((row, effective)) => serde_json::json!({
+                "mode": row.mode,
+                "label": row.label.as_ref(),
+                "effective": effective,
+            }),
+            None => serde_json::Value::Null,
+        }
+    })
+}
+
+/// The posted magic-tab button whose label names `spell`, else `-1`. The
+/// magic tab posts one row per target button; the component id is Rust's, not
+/// a JS row scan.
+fn posted_spell_button_com(spell: &str) -> i32 {
+    let wanted = spell.trim().to_ascii_lowercase();
+    if wanted.is_empty() {
+        return -1;
+    }
+    crate::observed::with(|scene| {
+        scene
+            .latest()
+            .spell_buttons()
+            .and_then(|rows| {
+                rows.iter()
+                    .find(|row| row.label.trim().to_ascii_lowercase() == wanted)
+            })
+            .map_or(-1, |row| row.component_id)
+    })
+}
+
 fn json_tile(value: Option<&serde_json::Value>) -> Option<api::WorldTile> {
     let object = value.and_then(serde_json::Value::as_object)?;
     Some(api::WorldTile {
@@ -261,6 +353,24 @@ pub(super) fn wire_runtime(
             },
         )
         .map_err(|e| format!("register spell button: {e}"))?;
+    runtime
+        .register_function(
+            "__rs2b0t_spell_button_row",
+            |args: &[serde_json::Value]| {
+                let spell = args.first().and_then(|v| v.as_str()).unwrap_or("");
+                Ok(serde_json::json!(posted_spell_button_com(spell)))
+            },
+        )
+        .map_err(|e| format!("register spell button row: {e}"))?;
+    runtime
+        .register_function(
+            "__rs2b0t_combat_style_row",
+            |args: &[serde_json::Value]| {
+                let style = args.first().and_then(|v| v.as_str()).unwrap_or("");
+                Ok(resolve_combat_style(style))
+            },
+        )
+        .map_err(|e| format!("register combat style row: {e}"))?;
     crate::shop::configure(game_data.clone());
     crate::supply_v2::configure(game_data.clone());
     let selected_autocast = game_data.clone();

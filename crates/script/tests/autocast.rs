@@ -420,7 +420,18 @@ export default class T extends LoopingBot {
 }
 "#;
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
-    iso.probe("globalThis.__rs2b0t_host.snapshot = {combat_styles:[{mode:1,label:'Aggressive',component_id:77}]}").unwrap();
+    // The resolution reads the decoded scene, so the rows arrive the way the
+    // host sends them (one FlatBuffer post), not as a JS object literal.
+    let styles = [script::isolate_fb::CombatStyleInput {
+        mode: 1,
+        label: "Aggressive",
+        component_id: 77,
+    }];
+    let mut snap = base_snapshot();
+    snap.combat_styles = &styles;
+    let mut encoder = IsolateBuf::new();
+    let mut last = None;
+    post_snapshot_delta(&iso, &mut encoder, &mut last, &snap);
     iso.on_game_tick(1);
     let probe = iso.probe("__probe").unwrap();
     assert_eq!(probe["requested"], "strength");
