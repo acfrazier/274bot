@@ -3880,6 +3880,11 @@ pub(super) struct NavBot {
     pub(super) requested_route: Option<(WorldTile, i32, bool, bool, bool)>,
     pub(super) traveller: Traveller,
     pub(super) route: Option<Route>,
+    /// The walk request id `publish_route` installed `route` for. A retarget
+    /// moves `walk_request_id` / `requested_route` to the new walk while the
+    /// old route is still followed; only a route end whose owner is the
+    /// armed walk may settle that walk's wait.
+    pub(super) route_request_id: u64,
     pub(super) bank_fetch: Option<PendingBankFetch>,
     /// Isolate-allocated walk request id for the armed / in-flight find.
     /// Distinct from `route_generation`, which remains the worker / retained-route token.
@@ -4252,10 +4257,12 @@ impl ScriptWalkArm {
 /// a settled (not failed) outcome for that id: frozen `WalkExecutor`
 /// returns true at the path terminal whether or not `isArrived` holds there
 /// (`WalkExecutor.ts:316-325`, `'closest'`), and a radius route ends on its
-/// approach tile, which the reach-aware rule may not call arrival. A bank
-/// fetch's stand sub-route is not the armed walk's end and publishes
-/// nothing. Only genuinely pending follow work (None) keeps the caller
-/// timeout.
+/// approach tile, which the reach-aware rule may not call arrival. Only a
+/// route installed for the armed request id (`route_request_id`) publishes
+/// its end: an old route still followed after a retarget does not settle
+/// the new walk. A bank fetch's stand sub-route is not the armed walk's end
+/// and publishes nothing, nor does request id 0. Only genuinely pending
+/// follow work (None) keeps the caller timeout.
 pub(super) fn apply_nav_follow_outcome(
     bot: &mut NavBot,
     outcome: Option<nav::traveller::TravelOutcome>,
@@ -4267,6 +4274,7 @@ pub(super) fn apply_nav_follow_outcome(
             if bot.bank_fetch.is_none() {
                 if let Some((to, radius, allow_teleports, ..)) = bot.requested_route {
                     if bot.walk_request_id != 0
+                        && bot.route_request_id == bot.walk_request_id
                         && bot.armed_outcome_may_publish(bot.walk_request_id)
                     {
                         bot.note_route_end(
@@ -5092,6 +5100,7 @@ impl NavBot {
         };
         self.traveller.clear();
         self.route = Some(route);
+        self.route_request_id = request_id;
         self.bank_fetch = pending;
         self.allow_teleports = allow_teleports;
     }

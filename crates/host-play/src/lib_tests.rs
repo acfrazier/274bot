@@ -2035,6 +2035,118 @@ fn exact_walk_near_retargets_active_nearby_route_and_rejects_stale_worker() {
     assert_eq!(navs.lock().unwrap()["bank"].route_generation, 2);
 }
 
+/// R2-1: WalkNear B retargets while walk A's route is still followed. A's
+/// route ending inside that window is not B's route end: B's wait must not
+/// settle there. Once B's own route is installed its end publishes for B.
+#[test]
+fn route_end_of_a_retargeted_walk_does_not_settle_the_new_walk() {
+    let a = WorldTile {
+        x: 6,
+        z: 6,
+        level: 0,
+    };
+    let b = WorldTile {
+        x: 1,
+        z: 1,
+        level: 0,
+    };
+    let route_to = |dest| Route {
+        legs: vec![],
+        dest,
+        ticks: 0.0,
+    };
+    let navs = Arc::new(Mutex::new(HashMap::from([(
+        "bank".to_string(),
+        NavBot {
+            route_generation: 1,
+            requested_route: Some(native_requested(a, 2, false)),
+            walk_request_id: 7,
+            ..Default::default()
+        },
+    )])));
+    {
+        let mut all = navs.lock().unwrap();
+        let bot = all.get_mut("bank").unwrap();
+        bot.publish_route(1, 7, false, RouteOutcome::Routed(route_to(a)));
+        // A find is still in flight, so B's retarget coalesces onto it and
+        // B's route is not installed yet: the retarget window.
+        bot.route_worker = Some(Arc::new(()));
+    }
+    let arm = ScriptWalkArm {
+        here: Some((0, 0, 0)),
+        world: Some(Arc::new(open_world(7, 7))),
+        navs: Arc::clone(&navs),
+        name: "bank".into(),
+        state: None,
+        bank: vec![],
+    };
+    assert!(arm.queue_route(b.x, b.z, b.level, FindOptions::default(), 1, true, 8));
+
+    let mut all = navs.lock().unwrap();
+    let bot = all.get_mut("bank").unwrap();
+    assert_eq!(bot.walk_request_id, 8, "B is the armed walk");
+    assert_eq!(
+        bot.route.as_ref().map(|r| r.dest),
+        Some(a),
+        "A still followed"
+    );
+    apply_nav_follow_outcome(
+        bot,
+        Some(nav::traveller::TravelOutcome::Arrived { at: a }),
+        false,
+    );
+    assert!(bot.route.is_none());
+    assert_eq!(
+        bot.walk_outcome_seq, 0,
+        "A's route end must not settle B's wait"
+    );
+
+    bot.publish_route(2, 8, false, RouteOutcome::Routed(route_to(b)));
+    apply_nav_follow_outcome(
+        bot,
+        Some(nav::traveller::TravelOutcome::Arrived { at: b }),
+        false,
+    );
+    assert_eq!(bot.walk_outcome_seq, 1, "B's own route end publishes");
+    assert!(!bot.walk_outcome_failed);
+    assert_eq!(bot.walk_outcome_request_id, 8);
+    assert_eq!((bot.walk_outcome_x, bot.walk_outcome_z), (b.x, b.z));
+    assert_eq!(bot.walk_outcome_radius, 1);
+}
+
+/// Request id 0 (ctx.walk, old buffers) never settles a wait: its route end
+/// publishes nothing, so a success still leaves `walk_outcome_seq` unmoved.
+#[test]
+fn route_end_of_request_id_zero_publishes_nothing() {
+    let dest = WorldTile {
+        x: 4,
+        z: 4,
+        level: 0,
+    };
+    let mut bot = NavBot {
+        route_generation: 1,
+        requested_route: Some(native_requested(dest, 2, false)),
+        ..Default::default()
+    };
+    bot.publish_route(
+        1,
+        0,
+        false,
+        RouteOutcome::Routed(Route {
+            legs: vec![],
+            dest,
+            ticks: 0.0,
+        }),
+    );
+    apply_nav_follow_outcome(
+        &mut bot,
+        Some(nav::traveller::TravelOutcome::Arrived { at: dest }),
+        false,
+    );
+    assert!(bot.route.is_none(), "the route ended");
+    assert_eq!(bot.walk_outcome_seq, 0, "request id 0 publishes nothing");
+}
+
 #[test]
 fn bank_fetch_session_refuses_exact_walk_near() {
     let dest = WorldTile {
