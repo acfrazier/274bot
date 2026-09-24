@@ -107,6 +107,296 @@ claim that `e2e` owns those crates' production behavior.
 If a future change needs a new edge or kind, edit the policy and this page
 and get review. Do not add a second hidden graph.
 
+## Per-crate module ownership
+
+Paths relative to `crates/<crate>/src`, as they are at `bb51386a6`.
+`api`, `e2e`, `host`, `nav`, `scenario`, `script` are split as listed.
+`host-play`, `panel`, `tui` are listed as they are: one file per owner,
+no split children. `*_tests.rs` rows are test bodies, not production
+owners.
+
+### vault
+
+| module | owns (one reason to change) | notes |
+| --- | --- | --- |
+| `lib.rs` | encrypted profile store | single-module crate |
+
+### api
+
+| module | owns (one reason to change) | notes |
+| --- | --- | --- |
+| `lib.rs` | crate facade and re-exports | declares every module below |
+| `snapshot.rs` | snapshot storage and rebuild | generation orchestration, read accessors |
+| `snapshot/views.rs` | snapshot view rows | typed row shapes |
+| `snapshot/decode.rs` | client decoding into views | packet bytes to rows |
+| `snapshot/context.rs` | read context over a snapshot | query-time context |
+| `query.rs` | borrowing family queries | `Query` builder and per-family traits |
+| `query/reach.rs` | scene reachability | `SceneQuery::can_reach` options |
+| `query/widget_search.rs` | widget and button lookups | snapshot-level |
+| `query/loc_approach.rs` | loc approach mask | footprint plus wall flags |
+| `interact.rs` | send vocabulary and dispatch | `Driver` seam, accepted-send semantics |
+| `interact/driver.rs` | client transport mapping | `doAction`, `tryMove`, `out`, ISAAC intact |
+| `game_data.rs` | generated game facts by revision | decoding, indexes, lookups |
+| `content.rs` | shared rock names and loot predicate | revision facts stay in `game_data` |
+| `ent.rs` | Ent NPC identity facts | revision-independent ids and lifetime |
+| `obj_names.rs` | item and loc definition views | id-to-name table for scripts |
+| `prot.rs` | legal send table and builders | writes via `Out`, never raw opcode |
+| `settle.rs` | pollable settle evidence | host drives polls per tick |
+| `native_input.rs` | input identity and revoke mutex | not mouse policy |
+| `line_of_sight.rs` | line-of-sight ray and query order | not the Reach flood |
+| `random.rs` | cross-crate random types | detect and act stay in `host` |
+| `prayer.rs` | prayer queries | over fact rows and observed stats |
+| `quest_facts.rs` | quest identity and prereqs | over the posted family |
+| `shop_facts.rs` | shop preset facts | ShopBuyout presets only |
+| `clue_facts.rs` | clue row lookup | over the posted trail family |
+| `clue_logic.rs` | held-step identify | first held step in posted order |
+| `clue_pack.rs` | trail pack budgeting and keep predicate | frozen pack-plan arithmetic |
+| `clue_puzzle.rs` | sliding-puzzle plan | frozen grouped search over caller rows |
+| `cake_stall.rs` | Baker-stall pins | posted facts, selection in `script` |
+| `gather_methods.rs` | gather-methods query | over the posted family |
+| `gather_tools.rs` | gather-tool identity, use, wield | posted facts |
+| `named_banks.rs` | bank-alias row shapes | geometry resolution lives in `nav` |
+| `game_data_tests.rs` | test body | logical `game_data::tests` |
+
+### host
+
+| module | owns (one reason to change) | notes |
+| --- | --- | --- |
+| `lib.rs` | slot pump and crate facade | one OS thread per slot |
+| `slot.rs` | per-slot drain pump | gens diff, tick synthesis, dirty families |
+| `slot_io.rs` | frame and input channels | mailbox, input, park and wake |
+| `login_queue.rs` | login FIFO and backoff | production rate limits |
+| `auto_run.rs` | auto-run toggle | run-energy threshold |
+| `random.rs` | random detection and shared vocabulary | stateless detect, caller-owned cooldowns |
+| `random/guardian.rs` | act, hold, and dialog state machine | trap holds, cooldown writes, knock edge |
+| `random/maze.rs` | maze graph, route, and phase | port of the frozen maze logic |
+| `random/maze/layout.rs` | static maze layout data | copied layout rows |
+| `lib_tests.rs`, `random_tests.rs`, `random/maze_tests.rs` | test bodies | grouped, not owners |
+
+### nav
+
+| module | owns (one reason to change) | notes |
+| --- | --- | --- |
+| `lib.rs` | crate facade and re-exports | declares every module below |
+| `arrival.rs` | arrival detection | on tile or adjacent to solid |
+| `bake.rs` | shared world bake | one derivation for CLI and build script |
+| `bank_fetch.rs` | BankBudget fetch-and-wear plan | plan only, router stays fail-closed |
+| `bundle.rs` | build-time bundling and stamps | identities, no runtime state |
+| `camera.rs` | path-facing orbit yaw | pure, host writes yaw per observe |
+| `canlight.rs` | canlight sidecar bake | static allow-loc-add subset |
+| `collision.rs` | whole-world collision bake | four planes plus walkable word |
+| `essence.rs` | essence-mine return latch | session-gated return hop |
+| `grid.rs` | walkability grids | step-grid surface |
+| `manifest.rs` | bound pack manifest | bake identity checks |
+| `named_banks.rs` | bank-alias geometry resolution | caller passes preferences, no `script` dep |
+| `pack.rs` | pack wire codec and bake hub | pack encode and decode, stable exports |
+| `pack/config_parse.rs` | pack config parsers | content config text |
+| `pack/mapsquare.rs` | mapsquare parse and geometry | mapsquare bake rows |
+| `pack/banks.rs` | bank table codec and derivation | booth tiles and stands |
+| `pack/sidecars.rs` | sidecar formats and codecs | flags, paint-reach, canlight |
+| `paint.rs` | nav-paint buffers | no imgui, no client draw |
+| `router.rs` | world-space Dijkstra | total-ticks cost, gated edges |
+| `router/grid.rs` | legacy grid A-star | `find_on_grid` for traveller and harness |
+| `tile.rs` | tile coords and distance | x, z, level |
+| `transport.rs` | transport graph orchestration | types, ordering, shared cost and geometry |
+| `transport/condparse.rs` | shared condition text helpers | fail-closed, same behavior |
+| `transport/index.rs`, `transport/script_text.rs` | shared placement readers and script text | producers, consumed by family derivers |
+| `transport/observable.rs` | quest-journal observability proof | green-row rule |
+| `transport/gates.rs`, `transport/quest_doors.rs`, `transport/doors.rs`, `transport/brass_key.rs`, `transport/membergate.rs`, `transport/webs.rs`, `transport/vertical.rs`, `transport/shortcuts.rs` | door, gate, vertical, and shortcut families | one family each |
+| `transport/static_routes.rs`, `transport/npc_hops.rs`, `transport/gliders.rs`, `transport/spirit_trees.rs`, `transport/levers.rs`, `transport/toll.rs`, `transport/magic_guild.rs`, `transport/ranging_guild.rs`, `transport/zanaris.rs`, `transport/teleports.rs` | fixed-route, guild, and teleport families | one family each |
+| `traveller.rs` | follow facade and scheduler | `FollowRun` start and step, shared state |
+| `traveller/snapshot.rs` | snapshot-query helpers | scene reads for hops |
+| `traveller/dialog.rs` | dialog and teleport-send helpers | chat and teleport sends |
+| `traveller/walk.rs` | walk-hop execution and reporting | walk targeting |
+| `traveller/transport_hop.rs` | transport-hop execution | approach and door execution |
+| `traveller/legacy_grid.rs` | legacy-grid execution | via the stable grid API |
+| `walk_destinations.rs` | shared walk-destination pins | town tiles for WalkTo confirm |
+| `wilderness.rs` | wilderness zones | world bands from the content table |
+| `world.rs` | bound world handle | packed collision plus transport graph |
+| `world_state.rs` | search gating facts | fail-closed edge requirements |
+| `bin/nav-pack.rs` | nav-pack CLI | whole-world bake entrypoint |
+| `bin/nav-input-audit.rs` | input audit CLI | offline cache and content audit |
+| `bin/cache-content-id.rs` | content identity export | read-only identity |
+| `required-content-274.tsv`, `required-content-289.tsv` | canonical content inventory | build-checked data, not code |
+| `arrival_tests.rs`, `bake_tests.rs`, `bank_fetch_tests.rs`, `bundle_tests.rs`, `camera_tests.rs`, `canlight_tests.rs`, `collision_tests.rs`, `essence_tests.rs`, `lib_tests.rs`, `manifest_tests.rs`, `named_banks_tests.rs`, `pack_tests.rs`, `paint_tests.rs`, `router_tests.rs`, `traveller_tests.rs`, `walk_destinations_tests.rs`, `wilderness_tests.rs`, `world_tests.rs`, `world_state_tests.rs`, `bin/nav-pack/nav_pack_tests.rs`, `transport_tests.rs` | test bodies | grouped, logical `<owner>::tests` |
+
+### script
+
+| module | owns (one reason to change) | notes |
+| --- | --- | --- |
+| `lib.rs` | crate facade: `Script`, `ScriptCtx`, `SlotScript` | `load` feature gates the isolate |
+| `ctx.rs` | compiled `Script` trait and per-tick context | driver send-side, no `client` or world |
+| `slot.rs` | per-uid runner lifecycle | intent and presence gates, tick edge |
+| `slot/pending.rs` | bank settlement records | host-owned pending accessors |
+| `machine.rs` | step-machine host | one multi-tick behavior in Rust |
+| `observed.rs` | per-isolate decoded scene | delta-merge, owned rows |
+| `isolate_fb.rs` | isolate wire codec | hand-written builder and reader, no JSON per tick |
+| `host_js.rs` | generated Host JS types | from verb tables, not rs2b0t names |
+| `content.rs` | curated sites and hostile predicate | bank aliases posted via the shim payload |
+| `ent.rs` | Ent lookup over caller rows | no scene scan |
+| `bank_access.rs`, `bank_deposit.rs`, `bank_op.rs`, `bank_open.rs`, `bank_withdraw.rs` | bank open, op, deposit, and withdraw steps | machine families, shared pieces |
+| `clue.rs` | clue session machine | token, clock, identify, verbs |
+| `clue/scene.rs`, `clue/puzzle.rs`, `clue/entrana.rs`, `clue/acquire.rs`, `clue/shop.rs`, `clue/talk.rs`, `clue/combat.rs`, `clue/verbs.rs`, `clue/family.rs` | clue phase helpers | one phase slice each |
+| `sherlock.rs` | Sherlock card wiring | marshals the frame, maps verbs, no second solver |
+| `hunt.rs` | hunt framework on the machine host | sessions and runs, child nesting |
+| `hunt/wait.rs`, `hunt/teleport_out.rs`, `hunt/acquire.rs` | hunt family slices | three distinct families |
+| `hunt_bank.rs`, `hunt_bank/plan.rs` | hunt bank runtime and planning | stages in root, plan projection in child |
+| `hunt_fight.rs` | fight aggregate and shared projection | policy, clocks, field pick |
+| `hunt_fight/hold.rs`, `hunt_fight/retreat.rs`, `hunt_fight/walk_spot.rs` | fight auxiliary machines | one machine plus its Kind each |
+| `hunt_cell.rs`, `hunt_key.rs`, `hunt_lair.rs`, `hunt_leave.rs` | single-phase hunt machines | one phase chain each |
+| `hunt_catalog.rs` | hunt tables and small rules | coordinates and pure helpers, no sends |
+| `cake_stall.rs`, `cake_stall/runtime.rs` | stall selection and steal loop | facts in `api`, sequence here |
+| `production.rs` | chat-make sequencing | Make-X and panel family |
+| `fire.rs` | fire lighting and lane ranking | frozen light loop |
+| `food_policy.rs`, `supply_v2.rs`, `boost_potions.rs`, `prayer.rs`, `autocast.rs`, `ranged.rs`, `special.rs`, `melee_weapons.rs`, `escape_runes.rs` | combat and supply policy | descriptors, predicates, arm sequencing |
+| `gather_tools.rs` | gather-tool selection | policy over the posted rows |
+| `dialog.rs`, `teleport.rs`, `trade.rs`, `partner_trade.rs`, `drive_partner_trade.rs` | dialog, teleport, and trade sequences | machine families |
+| `death_recovery.rs` | death latch and recovery run | chat latch plus walk-back |
+| `periodic_bank.rs` | periodic bank run | validate and execute |
+| `walk.rs`, `walk_wait.rs`, `reach.rs`, `reach_entity.rs`, `scene_query.rs`, `inspect_wait.rs`, `task_clock.rs`, `watchdog.rs` | walk, wait, and reach helpers | tick waits and arrival |
+| `line_of_sight.rs` | line-of-sight over the posted table | isolate-scene reads |
+| `keep_list.rs` | combat keep-list composition | compatibility list |
+| `modals.rs` | modal helpers | dialog page helpers |
+| `quest_journal.rs`, `shop.rs`, `market_catalog.rs` | quest, shop, and market descriptors | preset and catalog tables |
+| `loadout_plan.rs`, `loadouts_store.rs`, `settings_store.rs`, `params.rs` | loadout and settings stores | operator-facing descriptors |
+| `registry.rs`, `rs2b0t_registry.rs`, `rs2b0t_registry/paths.rs`, `rs2b0t_registry/settings.rs`, `declared_abi.rs`, `module_imports.rs`, `identity.rs` | card registration and identity | import scan, paths, ABI names |
+| `isolated_env.rs`, `js_cache.rs`, `memory_profile.rs`, `events.rs` | isolate env, cache, and diagnostics | support, no game actions |
+| `load/mod.rs` | Load facade: shapes, cards, isolate | feature-gated library and isolate |
+| `load/library.rs`, `load/library/catalog.rs` | JS card library and catalog apply | file store in root |
+| `load/isolate.rs`, `load/isolate/thread.rs`, `load/isolate/teardown.rs` | V8 isolate thread and teardown | caller handle in root |
+| `load/bindings.rs` | isolate bootstrap registration | register order and wrappers |
+| `load/callback_v8.rs` | caller-callback invocation | one mechanism for typed helpers |
+| `load/bank_tasks_v8.rs`, `load/boost_potions_v8.rs`, `load/clue_facts_v8.rs`, `load/clue_logic_v8.rs`, `load/clue_pack_v8.rs`, `load/combat_style_v8.rs`, `load/dialog_v8.rs`, `load/fire_v8.rs`, `load/gather_methods_v8.rs`, `load/hunt_v8.rs`, `load/loadout_v8.rs`, `load/machine_v8.rs`, `load/melee_weapons_v8.rs`, `load/partner_trade_v8.rs`, `load/quest_facts_v8.rs`, `load/scene_v8.rs`, `load/selected_facts_v8.rs`, `load/supply_v8.rs`, `load/targets_v8.rs`, `load/tools_v8.rs` | typed local V8 marshalling | one native call each, no machines |
+| `load/buyout_plan.rs`, `load/distance.rs`, `load/reach_query.rs`, `load/shape.rs`, `load/line_of_sight.rs` | small typed V8 helpers | planning and geometry marshalling |
+| `load/canvas_tape.rs` | canvas op tape | typed flush onto the recorder |
+| `load/snapshot.rs` | snapshot-to-V8 materializer | typed settings and event rows |
+| `load/paint_chrome.rs`, `load/paint_jive.rs` | paint payload builders | chrome and jive paints |
+| `canvas/mod.rs` | canvas recorder | state and recording API |
+| `canvas/geom.rs`, `canvas/raster.rs`, `canvas/style.rs`, `canvas/compose.rs` | canvas geometry, raster, style, composition | one slice each |
+| `shim/mod.rs` | import-remap facade | re-exports, JS bytes untouched |
+| `shim/content.rs`, `shim/paint.rs`, `shim/interact.rs`, `shim/modules.rs` | shim Rust producers | wire, paint, and content |
+| `shim/*.js` | embedded JS sources | name maps, coercion, await plumbing only |
+| `clue_tests.rs`, `slot_tests.rs`, `rs2b0t_registry_tests.rs`, `canvas/canvas_tests.rs`, `load/isolate_tests.rs` | test bodies | grouped, logical `<owner>::tests` |
+
+### host-play
+
+| module | owns (one reason to change) | notes |
+| --- | --- | --- |
+| `lib.rs` | `Play` state and session lifecycle | unlock, spawn, login FIFO, tick pump |
+| `main.rs` | `host-play` CLI | profile bind, vault unlock, run |
+| `profile.rs` | launch-input resolution | world, vault, and script paths |
+| `cache.rs` | runtime cache preparation order | progress stages, client owns mechanics |
+| `catalog_core.rs` | shared full-core proof witness | headed and headless proof paths |
+| `catalog_core_hunt.rs` | hunt proof witness | hold, retreat, spot, enter, leave, key, cell, bank |
+| `catalog_core_ranging.rs` | ranging-guild proof witness | post-Start work only |
+| `paired_core.rs` | paired full-cycle proof witness | Air, Mule, Flax, Duel |
+| `script_runtime.rs` | per-slot observe, dispatch, and nav continuation | script wall and walk continuation |
+| `route_inspect.rs` | inspect off-pump job | admission, calculation, publication |
+| `login_readiness.rs` | login-readiness gate | welcome-modal settle before script work |
+| `nav_identity.rs` | bundled nav identities | build-published table plus checked-in rows |
+| `bundled-nav-identities.json`, `known-cache-identities.json` | checked-in identity rows | data, not code |
+| `external_loader.rs` | external loader smoke witness | proof infrastructure, disabled by default |
+| `memory.rs` | opt-in memory harness | `BOT_MEMORY_N` only |
+| `memory_diagnostics.rs` | memory-run diagnostics | bounded, never drains logs |
+| `audio.rs` | focused-slot speaker gate | at most one speaker |
+| `rss.rs` | process RSS and CPU sample | harness and resource card |
+| `scatter.rs` | seed tiles for the wall | nav world, else Lumbridge |
+| `progress.rs` | preparation progress values | small, copy-free |
+| `lib_tests.rs` | test body | grouped, not an owner |
+
+### scenario
+
+| module | owns (one reason to change) | notes |
+| --- | --- | --- |
+| `lib.rs` | shared layer facade | seed, steps, proof; two runners |
+| `runner.rs` | shared step state machine | tick bookkeeping, no sleeps |
+| `proof.rs` | proof predicates | named assertions over a snapshot |
+| `evidence.rs` | JSON evidence record | terminal snapshot plus predicate |
+| `fixture.rs` | fixture prepare and run modes | offline sav versus live seed |
+| `shot.rs` | window shot files | shared naming for both runners |
+| `catalog.rs` | scenario catalog | names and lookup |
+| `render_betty_views.rs` | fixed-orbit render captures | station times yaw and pitch |
+| `scenarios/mod.rs` | scenario facade | re-exports families |
+| `scenarios/production.rs` | production facade and shared vocabulary | seed and watch helpers |
+| `scenarios/production/agility.rs`, `scenarios/production/alcher.rs`, `scenarios/production/ardy_thieving.rs`, `scenarios/production/bank_fletcher.rs`, `scenarios/production/chickens.rs`, `scenarios/production/climbing_boots.rs`, `scenarios/production/coal_trucks.rs`, `scenarios/production/cooking.rs`, `scenarios/production/dart_fletcher.rs`, `scenarios/production/door_opener.rs`, `scenarios/production/firemaking.rs`, `scenarios/production/flax.rs`, `scenarios/production/gem_cutter.rs`, `scenarios/production/gnome.rs`, `scenarios/production/herb_cleaner.rs`, `scenarios/production/herblore_secondaries.rs`, `scenarios/production/leather.rs`, `scenarios/production/potion_maker.rs`, `scenarios/production/runecrafting.rs`, `scenarios/production/smelting.rs`, `scenarios/production/smithing.rs`, `scenarios/production/superheater.rs`, `scenarios/production/tanner.rs`, `scenarios/production/thiever.rs`, `scenarios/production/vial_filler.rs` | production skill and script families | one family each |
+| `scenarios/combat.rs` | combat facade and shared kit | witness builders, quest and equipment kit |
+| `scenarios/combat/ardy_fighter.rs`, `scenarios/combat/auto_fighter.rs`, `scenarios/combat/chaos_druid.rs`, `scenarios/combat/fire_giant.rs`, `scenarios/combat/green_dragon.rs`, `scenarios/combat/hill_giant.rs`, `scenarios/combat/moss_giant.rs`, `scenarios/combat/rock_crab.rs` | combat target families | field and bank variants each |
+| `scenarios/shop.rs`, `scenarios/shop/buyout.rs` | shop scenarios and buyout | teleport factories in root |
+| `scenarios/pair.rs`, `scenarios/pair/travel.rs` | trade and companion scenarios | preparation and travel kit in child |
+| `scenarios/navigation.rs` | nav-edge probes | probe helpers and closer-slot machinery |
+| `scenarios/acquire_key.rs`, `scenarios/bank.rs`, `scenarios/cell.rs`, `scenarios/clue.rs`, `scenarios/enter_lair.rs`, `scenarios/fight_field.rs`, `scenarios/hold_spot.rs`, `scenarios/leave_lair.rs`, `scenarios/line_of_sight.rs`, `scenarios/prayer.rs`, `scenarios/ranging_guild.rs`, `scenarios/render.rs`, `scenarios/retreat_spot.rs`, `scenarios/route_inspect.rs`, `scenarios/script_basics.rs`, `scenarios/walk_spot.rs`, `scenarios/actor_observation.rs` | single-scenario probes | one probe each |
+| `runner_tests.rs`, `scenario_tests.rs` | test bodies | grouped, not owners |
+
+### panel
+
+| module | owns (one reason to change) | notes |
+| --- | --- | --- |
+| `lib.rs` | crate facade and re-exports | declares every module below |
+| `main.rs` | `panel-play` entrypoint | flag parsing, window loop |
+| `app.rs` | panel shell and frame composition | docking shell on the owned window loop |
+| `session.rs` | session state and Play orchestration | vault, slots, focus, channels |
+| `session/chooser.rs` | chooser credential scratch | edit buffers and vault helpers |
+| `session_catalog.rs` | catalog discovery and warmup | loading and transpile warmup |
+| `profile_script.rs` | per-profile script controls | assignment, start, reload, refresh |
+| `window.rs` | GPU and winit shell | config, surface, errors |
+| `game_view.rs` | game image texture | mailbox frames to texture |
+| `input_capture.rs` | game input capture | keyboard queue and mouse streaming |
+| `picker.rs` | WalkTo picker map | walkable dots, snap, arm walk |
+| `grid.rs` | MultiBox grid layout | cell geometry |
+| `rail.rs` | sidecar rail chrome | geometry and status dot |
+| `chrome.rs` | app chrome | menus and banners |
+| `overlay.rs` | queue-card overlay | focused queue card over the image |
+| `paint.rs` | script-paint overlay | structured paint over the chatbox rect |
+| `queue_card.rs` | queue-card labels | pure label helpers, no ImGui |
+| `focus.rs` | focus tracking | focused slot and pane |
+| `clipboard.rs` | native clipboard backend | OS pasteboard bridge |
+| `build_info.rs` | deploy fingerprint | release label and git stamp |
+| `loadouts.rs` | loadout editor | equipment and supply CRUD |
+| `script_picker.rs` | script browse picker | category order and badges |
+| `nav_settings.rs` | nav settings pane | find opt-ins and pack selection |
+| `live_harness.rs` | headed live and smoke watch | tick and capture qualification |
+| `ui_state.rs` | persisted UI prefs | focused profile and collapsed maps |
+| `theme.rs` | theme tokens | colors and metrics |
+| `resource.rs` | resource formatters and sampler | pure formatters plus sampler |
+| `wall.rs` | wall membership model | chooser, logout latch, bulk login state |
+| `srgb_present.rs` | present-path test helper | test-only |
+| `app_tests.rs`, `session_tests.rs`, `input_capture_tests.rs` | test bodies | grouped, logical `<owner>::tests` |
+
+### tui
+
+| module | owns (one reason to change) | notes |
+| --- | --- | --- |
+| `lib.rs` | crate facade and re-exports | second view of `Play`, no GPU |
+| `main.rs` | `tui-play` entrypoint | flags and run modes |
+| `bin.rs` | headless session and dispatch lifecycle | owns the `Play` session |
+| `app.rs` | view model and render root | polls statuses, routes keys and clicks |
+| `map.rs` | WalkTo map widget | dots, route polyline, selection |
+| `chat.rs` | chat and dialogue pane | chat ring, modal continue and answer |
+| `status.rs` | status pane | focused slot rows plus guardian status |
+| `script_params.rs` | script parameter editors | schema-driven editors |
+| `script_shape.rs` | script pane widgets | browse, start, pause, stop, load |
+| `loadouts.rs` | loadouts popup | worn gear and carry CRUD |
+| `settings.rs` | settings popup | random toggles and nav opt-ins |
+
+### e2e
+
+| module | owns (one reason to change) | notes |
+| --- | --- | --- |
+| `lib.rs` | crate facade | exposes `suite` |
+| `suite/mod.rs` | suite driver facade | selection, launch, validate, ledger |
+| `suite/manifest.rs` | frozen suite manifest | reference rows plus adapter map |
+| `suite/select.rs` | case selection | level and `--only` semantics |
+| `suite/child.rs` | child process ownership | construction, supervision, logging |
+| `suite/child/config.rs` | launch configuration | profile and environment |
+| `suite/cli.rs` | CLI verbs and reporting | list, dry-run, run |
+| `suite/identity.rs` | run identity and resume gate | receipt binding, unchanged resume |
+| `suite/ledger.rs` | run ledger | durable attempt records |
+| `suite/receipt.rs` | receipt parsing and validation | terminal lines and captures |
+| `suite/receipt/external.rs` | external-loader protocol qualification | loader receipts only |
+| `bin/e2e-suite.rs` | suite entrypoint binary | flag list in help |
+| `bin/e2e-suite-fixture.rs` | disposable receipt fixture child | offline verification only |
+| `suite/child_tests.rs`, `suite/cli_tests.rs`, `suite/identity_tests.rs`, `suite/receipt_tests.rs` | test bodies | grouped, not owners |
+
 ## Runtime ownership
 
 These are product boundaries. The crate checker does not prove them.
@@ -146,11 +436,14 @@ independent-review and test requirements unless a later, robust check exists.
 
 ## Tests versus production
 
-Large test suites in `panel`, `host-play`, and `scenario` are a **layout**
-concern. Moving inline test modules into sibling files does not decompose
-production ownership and is not an architecture change. This checker does
-not require those sibling paths to exist and must not be used as a
-path-presence gate while that layout work lands.
+Sibling `*_tests.rs` files are **layout**, not production decomposition.
+Moving an inline test module into a sibling file does not split ownership.
+The per-crate tables above mark those rows as test bodies.
+
+Production splits that have landed are in the tables above: `api`, `e2e`,
+`host`, `nav`, `scenario`, `script`. `host-play`, `panel`, and `tui` remain
+one file per owner; their large files are still a layout concern, not a
+second owner. This checker does not gate on sibling paths.
 
 `e2e` and ignored live tests in `host-play` are wide orchestration. Linking
 those crates for tests is not a claim that test code is the product owner of
