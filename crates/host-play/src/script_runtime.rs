@@ -4257,12 +4257,12 @@ impl ScriptWalkArm {
 /// a settled (not failed) outcome for that id: frozen `WalkExecutor`
 /// returns true at the path terminal whether or not `isArrived` holds there
 /// (`WalkExecutor.ts:316-325`, `'closest'`), and a radius route ends on its
-/// approach tile, which the reach-aware rule may not call arrival. Only a
-/// route installed for the armed request id (`route_request_id`) publishes
-/// its end: an old route still followed after a retarget does not settle
-/// the new walk. A bank fetch's stand sub-route is not the armed walk's end
-/// and publishes nothing, nor does request id 0. Only genuinely pending
-/// follow work (None) keeps the caller timeout.
+/// approach tile, which the reach-aware rule may not call arrival. Both
+/// publish only for a route installed for the armed request id
+/// (`route_request_id`): an old route still followed after a retarget
+/// neither settles nor fails the new walk. A bank fetch's stand sub-route is
+/// not the armed walk's end, and request id 0 never publishes a route end.
+/// Only genuinely pending follow work (None) keeps the caller timeout.
 pub(super) fn apply_nav_follow_outcome(
     bot: &mut NavBot,
     outcome: Option<nav::traveller::TravelOutcome>,
@@ -4289,7 +4289,16 @@ pub(super) fn apply_nav_follow_outcome(
             }
         }
         Some(_) => {
-            if let Some((to, radius, allow_teleports, ..)) = bot.requested_route {
+            let owned = bot.route_request_id == bot.walk_request_id;
+            if !owned {
+                log_walk_arm_bot(|| {
+                    format!(
+                        "follow failure of a superseded route route_request_id={} \
+                         walk_request_id={} not published",
+                        bot.route_request_id, bot.walk_request_id
+                    )
+                });
+            } else if let Some((to, radius, allow_teleports, ..)) = bot.requested_route {
                 if bot.armed_outcome_may_publish(bot.walk_request_id) {
                     bot.note_failure(
                         bot.route_generation,

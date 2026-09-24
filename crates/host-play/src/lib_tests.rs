@@ -2114,6 +2114,72 @@ fn route_end_of_a_retargeted_walk_does_not_settle_the_new_walk() {
     assert_eq!(bot.walk_outcome_radius, 1);
 }
 
+/// The failure side of R2-1: walk A's route stalling inside B's retarget
+/// window must not fail B's wait. B's own route stalling still does.
+#[test]
+fn stall_of_a_retargeted_walk_does_not_fail_the_new_walk() {
+    let a = WorldTile {
+        x: 6,
+        z: 6,
+        level: 0,
+    };
+    let b = WorldTile {
+        x: 1,
+        z: 1,
+        level: 0,
+    };
+    let route_to = |dest| Route {
+        legs: vec![],
+        dest,
+        ticks: 0.0,
+    };
+    let gave_up = |at| Some(nav::traveller::TravelOutcome::GaveUp { at, hops: 40 });
+    let navs = Arc::new(Mutex::new(HashMap::from([(
+        "bank".to_string(),
+        NavBot {
+            route_generation: 1,
+            requested_route: Some(native_requested(a, 2, false)),
+            walk_request_id: 7,
+            ..Default::default()
+        },
+    )])));
+    {
+        let mut all = navs.lock().unwrap();
+        let bot = all.get_mut("bank").unwrap();
+        bot.publish_route(1, 7, false, RouteOutcome::Routed(route_to(a)));
+        bot.route_worker = Some(Arc::new(()));
+    }
+    let arm = ScriptWalkArm {
+        here: Some((0, 0, 0)),
+        world: Some(Arc::new(open_world(7, 7))),
+        navs: Arc::clone(&navs),
+        name: "bank".into(),
+        state: None,
+        bank: vec![],
+    };
+    assert!(arm.queue_route(b.x, b.z, b.level, FindOptions::default(), 1, true, 8));
+
+    let mut all = navs.lock().unwrap();
+    let bot = all.get_mut("bank").unwrap();
+    assert_eq!(bot.walk_request_id, 8, "B is the armed walk");
+    assert_eq!(
+        bot.route.as_ref().map(|r| r.dest),
+        Some(a),
+        "A still followed"
+    );
+    apply_nav_follow_outcome(bot, gave_up(a), false);
+    assert!(bot.route.is_none(), "the stalled route is dropped");
+    assert_eq!(bot.walk_outcome_seq, 0, "A's stall must not fail B's wait");
+    assert!(bot.pending_route.is_some(), "B's find is still owed");
+
+    bot.publish_route(2, 8, false, RouteOutcome::Routed(route_to(b)));
+    apply_nav_follow_outcome(bot, gave_up(b), false);
+    assert_eq!(bot.walk_outcome_seq, 1, "B's own stall publishes");
+    assert!(bot.walk_outcome_failed);
+    assert_eq!(bot.walk_outcome_request_id, 8);
+    assert_eq!((bot.walk_outcome_x, bot.walk_outcome_z), (b.x, b.z));
+}
+
 /// Request id 0 (ctx.walk, old buffers) never settles a wait: its route end
 /// publishes nothing, so a success still leaves `walk_outcome_seq` unmoved.
 #[test]
@@ -2527,6 +2593,7 @@ fn mid_follow_terminals_publish_the_armed_request_id() {
     };
     let mut bot = NavBot {
         route: Some(route.clone()),
+        route_request_id: 7,
         route_generation: 4,
         walk_request_id: 7,
         requested_route: Some(native_requested(dest, 0, false)),
@@ -2564,6 +2631,7 @@ fn mid_follow_terminals_publish_the_armed_request_id() {
 
     bot.route = Some(route);
     bot.walk_request_id = 8;
+    bot.route_request_id = 8;
     apply_nav_follow_outcome(
         &mut bot,
         Some(nav::traveller::TravelOutcome::Blocked {
