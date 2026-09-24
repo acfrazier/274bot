@@ -331,6 +331,12 @@ fn a_native_loop_over_holes_is_interrupted_by_the_tick_budget() {
              }}"
         );
         let iso = LoadIsolate::spawn(src, LoadShape::NativeTick, vec![]).unwrap();
+        // `spawn` returns before V8 setup; time the loop from Ready, not setup.
+        let setup = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while matches!(iso.poll_ready(), script::Ready::Pending) {
+            assert!(std::time::Instant::now() < setup, "isolate setup did not finish");
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
         iso.on_game_tick(1);
         std::thread::sleep(std::time::Duration::from_millis(80));
         let armed = std::time::Instant::now();
