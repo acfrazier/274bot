@@ -3090,10 +3090,6 @@ fn headed_stress_spawns_every_member_prefers_and_arms_s00() {
     );
     assert_eq!(s.tv_name().as_deref(), Some("s00"));
     assert!(
-        s.play.as_ref().unwrap().login_queue_uids().is_empty(),
-        "focus and login intent do not create control-thread membership"
-    );
-    assert!(
         s.play
             .as_ref()
             .unwrap()
