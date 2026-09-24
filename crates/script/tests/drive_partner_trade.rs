@@ -521,3 +521,36 @@ fn reset_ends_the_iteration_without_later_callbacks_or_sends() {
     assert!(iso.drain_interacts().is_empty());
     iso.join();
 }
+
+#[test]
+fn a_verifying_giver_declines_a_stranger_before_offering() {
+    let iso = spawn(CARD);
+    set(&iso, "globalThis.__role = 'giver'");
+    let side = [row("Flax", 1779, 24, 3322, 0, false)];
+    let mut snap = offer_screen(Some("stranger"));
+    snap.trade_side = &side;
+    post(&iso, &snap);
+    tick(&iso, 1);
+    assert_eq!(
+        take(&iso),
+        strs(&[
+            "status:declining trade",
+            "log:trade: declining (not a configured partner (stranger))",
+        ]),
+        "no myOfferReady, names or offer before the partner gate"
+    );
+    assert_eq!(iso.drain_interacts(), vec![if_button(3422)]);
+    snap.tick = 2;
+    snap.trade_offer_open = false;
+    post(&iso, &snap);
+    tick(&iso, 2);
+    assert_eq!(
+        take(&iso),
+        strs(&[
+            "log:trade: decline clicked — screen now closed",
+            "decline:not a configured partner (stranger)",
+            "end",
+        ])
+    );
+    iso.join();
+}

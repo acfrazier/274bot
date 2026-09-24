@@ -768,3 +768,50 @@ fn trade_bot_fixture_sequences_request_offer_accept() {
     assert!(logs.iter().all(|l| !l.starts_with("tick ")), "{logs:?}");
     iso.join();
 }
+
+#[test]
+fn an_async_pick_is_truthy_and_takes_the_first_row_as_frozen_find_does() {
+    let src = r#"
+import { Trade } from '../../api/trade/Trade.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__did) return;
+        globalThis.__did = true;
+        globalThis.__seen = [];
+        globalThis.__ok = await Trade.offerAll('Rune essence', async (i) => {
+            globalThis.__seen.push(i.slot);
+            return i.slot === 2;
+        });
+    }
+}
+"#;
+    let iso = spawn(src);
+    let side = [
+        row("Rune essence", 1436, 25, 3322, 1, false),
+        row("Rune essence", 1437, 25, 3322, 2, false),
+    ];
+    let mut snap = base();
+    snap.trade_offer_open = true;
+    snap.trade_partner = Some("bob");
+    snap.trade_side = &side;
+    post(&iso, &snap);
+    tick(&iso, 1);
+    assert_eq!(
+        iso.probe("__seen").unwrap(),
+        serde_json::json!([1]),
+        "the first promise is truthy: find stops there"
+    );
+    assert!(
+        matches!(
+            iso.drain_interacts().as_slice(),
+            [InteractReq::InvButton {
+                id: 1436,
+                slot: 1,
+                operation: 4,
+                ..
+            }]
+        ),
+        "the first row is offered, not the one the promise resolves for"
+    );
+    iso.join();
+}
