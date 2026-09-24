@@ -496,6 +496,12 @@ fn full_world_round_uses_existing_backoff() {
 }
 
 #[test]
+fn response_one_returns_to_fifo_before_retry() {
+    let mut backoff = LoginBackoff::new();
+    assert_eq!(login_retry_wait(&mut backoff, 1), Duration::from_secs(2));
+}
+
+#[test]
 fn running_slot_profile_world_change_reseats_next_login_handshake() {
     let w1_listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let w1_port = w1_listener.local_addr().unwrap().port();

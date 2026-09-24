@@ -2254,6 +2254,7 @@ fn configure_slot_world(
 
 fn login_retry_wait(backoff: &mut LoginBackoff, code: i32) -> Duration {
     match code {
+        1 => Duration::from_secs(2),
         16 => backoff.delay(),
         5 => Duration::from_secs(60),
         _ => Duration::from_secs(5),
@@ -2524,6 +2525,9 @@ fn spawn_slot_thread(
                     }
                 },
             };
+            // The host owns every reconnect attempt so each fresh socket
+            // returns through the shared FIFO and reservation accounting.
+            client.set_external_reconnect_owner(true);
             #[cfg(test)]
             {
                 // Unit tests spawn slots with no web server on :80; shrink
