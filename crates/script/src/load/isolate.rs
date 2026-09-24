@@ -9,12 +9,12 @@ use thread::isolate_main;
 #[cfg(test)]
 use thread::{stamp_mouse_gesture_identities, MouseGestureIdentities};
 
-use super::{loadout_v8, machine_v8, paint_chrome, paint_jive, reach_query, shape, snapshot};
 use super::bindings::wire_runtime;
 use super::shape::LoadShape;
 use super::snapshot::{
     dispatch_native_events, key_string, materialize_settings_bag, materialize_snapshot,
 };
+use super::{loadout_v8, machine_v8, paint_chrome, paint_jive, reach_query, shape, snapshot};
 use rustyscript::{json_args, Runtime, RuntimeOptions};
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize};
@@ -79,7 +79,6 @@ const MAX_MOUSE_GESTURES: usize = 32;
 /// stale, and a dropped delta is recovered by the slot's next keyframe.
 /// Operator commands (Pause, Stop, probes, paint input) are never dropped.
 const MAX_QUEUED_COMMANDS: usize = 64;
-
 
 struct SnapshotMessage {
     bytes: Vec<u8>,
@@ -155,8 +154,6 @@ impl CmdQueue {
         Some(cmd)
     }
 }
-
-
 
 enum ThreadMsg {
     Log(String),
@@ -1074,10 +1071,6 @@ fn ensure_platform() {
         rustyscript::init_platform(1, true);
     });
 }
-
-
-
-
 
 #[cfg(test)]
 #[path = "isolate_tests.rs"]

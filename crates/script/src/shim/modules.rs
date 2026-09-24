@@ -839,4 +839,3 @@ pub(crate) fn remap_hash_bot(source: &str) -> String {
 pub(crate) fn remap_catalog_imports(source: &str) -> String {
     remap_hash_bot(&remap_rs2b0t_api(source))
 }
-

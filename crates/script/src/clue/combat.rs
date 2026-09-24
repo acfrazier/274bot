@@ -1,6 +1,5 @@
 use super::*;
 
-
 /// The selected key-keeper step an identified membership row owns: the
 /// `talk_key.keys` row whose own id is the row's, or `None` when the row is not
 /// a key-hunt membership.
@@ -28,7 +27,6 @@ pub(super) fn keeper_type(keeper: &TalkKeyKeeper) -> Option<(i32, &str)> {
     (keeper.kind == KEEPER_TYPE).then_some((id, name))
 }
 impl ClueRuntime {
-
     /// `Steady` on an identified guarded row: the first Dig, the fight, or the
     /// post-kill redig.
     ///

@@ -15,16 +15,15 @@ mod tests;
 
 use std::cell::RefCell;
 
-
+pub use compose::compose_paint;
 pub use geom::{
     ClipPath, ClipSet, DrawExtras, FillPaint, GradStop, LineJoinKind, PathSeg, Shadow, TextAlign,
     TextBaseline, MAX_CLIP_PATHS, MAX_GRADIENTS, MAX_GRADIENT_STOPS, MAX_LINE_WIDTH,
     MAX_PATH_SEGS_PER_FRAME, MAX_PATH_SEGS_PER_OP, MAX_SAVE_DEPTH, MAX_SHADOW_BLUR,
 };
 pub use raster::{dirty_bounds, rasterize};
-pub use compose::compose_paint;
-pub use style::{font_px_allowed, measure_with, pack_rgba, parse_color, parse_font, unpack_rgba};
 pub(crate) use style::font_for;
+pub use style::{font_px_allowed, measure_with, pack_rgba, parse_color, parse_font, unpack_rgba};
 
 use geom::{append_arc, finite_f32};
 
@@ -39,7 +38,6 @@ pub const MAX_CANVAS_OPS: usize = 256;
 pub const MAX_PAINT_TEXT: usize = 512;
 /// Font size cap (CSS parser and decode/raster share this).
 pub const MAX_FONT_PX: u16 = 256;
-
 
 /// One recorded draw op. Color is packed `0xRRGGBBAA`.
 ///
@@ -913,7 +911,6 @@ pub fn measure_text(text: &str) -> Result<f64, String> {
     })
 }
 
-
 pub struct Take {
     pub ops: Vec<CanvasOp>,
     pub overflow: bool,
@@ -955,7 +952,6 @@ pub(super) fn take_outcome() -> OnPaintOutcome {
     OUTCOME.with(|o| o.borrow_mut().take().unwrap_or(OnPaintOutcome::Success))
 }
 
-
 fn round_px(v: f64) -> Option<i32> {
     if !v.is_finite() {
         return None;
@@ -969,7 +965,6 @@ fn round_px(v: f64) -> Option<i32> {
         Some(r as i32)
     }
 }
-
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DirtyRect {
@@ -1016,7 +1011,6 @@ pub(crate) fn normalize_rect(x: i32, y: i32, w: i32, h: i32) -> Option<(i64, i64
     }
 }
 
-
 /// Map an applet-space rect through the Game Image blit (`min`,`size`).
 pub fn map_applet_rect(min: [f32; 2], size: [f32; 2], x: i32, y: i32, w: i32, h: i32) -> [f32; 4] {
     let sx = size[0] / APPLET_W as f32;
@@ -1028,4 +1022,3 @@ pub fn map_applet_rect(min: [f32; 2], size: [f32; 2], x: i32, y: i32, w: i32, h:
         h as f32 * sy,
     ]
 }
-

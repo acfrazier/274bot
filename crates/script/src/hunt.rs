@@ -30,10 +30,10 @@ mod teleport_out;
 mod wait;
 
 pub(crate) use acquire::Acquire;
-pub(crate) use teleport_out::{escape_shortfall, TeleportOut};
-pub(crate) use wait::WaitFed;
 #[allow(unused_imports)]
 pub(crate) use teleport_out::TeleportOutArgs;
+pub(crate) use teleport_out::{escape_shortfall, TeleportOut};
+pub(crate) use wait::WaitFed;
 #[allow(unused_imports)]
 pub(crate) use wait::WaitFedArgs;
 
@@ -868,4 +868,3 @@ fn game_op(kind: &str, effect: &Value) -> Option<InteractReq> {
         _ => return None,
     })
 }
-

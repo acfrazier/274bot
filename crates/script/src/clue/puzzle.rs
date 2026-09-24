@@ -1,6 +1,5 @@
 use super::*;
 
-
 /// The identified row's own puzzle box: the selected `{alias}_puzzlebox` item
 /// the frozen `solveHeld` is handed by id, together with the display name the
 /// Open resolves.
@@ -61,7 +60,6 @@ pub(super) fn live_board(selected: Option<&SelectedGameData>, page: &PostedBoard
     clue_puzzle::read_puzzle_board(&page.rows, selected)
 }
 impl ClueRuntime {
-
     /// Whether this call runs the held puzzle box's own arm or falls through to
     /// the `Steady` arms below it: the row's own box is on this call's page — or
     /// this token already opened that board — and this step's solved-or-

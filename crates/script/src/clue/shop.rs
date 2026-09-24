@@ -1,6 +1,5 @@
 use super::*;
 
-
 /// The selected toll keeper's own spawn: the unique jm2 tile the Shantay arm
 /// walks to. Selected constants and never the frozen `GATE_ITEM_SHOPS` stand —
 /// `(3304, 3122, 0)` is off by one in z, and no frozen tile is ported here.
@@ -90,7 +89,6 @@ pub(super) fn buy_verb(row: &BuyRow<'_>, token: u64) -> Value {
     })
 }
 impl ClueRuntime {
-
     /// The gate-toll walk intercept: one live walk this token dispatched that
     /// has not arrived, whose page names a `Carry` short for the selected
     /// Shantay pass that the posted pack does not hold. `None` is the
@@ -113,7 +111,11 @@ impl ClueRuntime {
     /// Once per item id per token: the id is latched before the trip's first
     /// verb goes out, so the Shantay walk can never re-enter this intercept and
     /// a second failure of the same walk never starts a third trip.
-    pub(super) fn toll(&mut self, selected: Option<&SelectedGameData>, input: &Value) -> Option<Value> {
+    pub(super) fn toll(
+        &mut self,
+        selected: Option<&SelectedGameData>,
+        input: &Value,
+    ) -> Option<Value> {
         if let Some(shop) = self.shop {
             return self.shop_trip(shop, input);
         }

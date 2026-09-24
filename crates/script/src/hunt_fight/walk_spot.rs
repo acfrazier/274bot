@@ -1,5 +1,5 @@
-use super::*;
 use super::hold::{reply_u64, spot_name, walk_wait_settled};
+use super::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum WalkMode {

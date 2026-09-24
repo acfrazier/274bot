@@ -1,6 +1,5 @@
 use super::*;
 
-
 /// Whether the identified row needs the coordinate trio: a selected
 /// `trail_sextant=yes` param on the row itself.
 ///
@@ -179,7 +178,6 @@ pub(super) fn options_posted(input: &Value) -> bool {
         .is_some_and(|rows| !rows.is_empty())
 }
 impl ClueRuntime {
-
     /// `Steady` on an identified row that needs the coordinate tools while this
     /// call's posted pack is short of one or more of them: the acquire chain,
     /// one verb per call.

@@ -1,6 +1,5 @@
 use super::*;
 
-
 /// The cap's Entrana box: membership is the identified row's own selected
 /// `trail_coord`, decoded the landed way, inside this square on level 0 — the
 /// frozen `isEntranaClueCoord` and never a copied `CLUE_DB`. The one selected
@@ -102,7 +101,8 @@ pub(super) const RESTORE_INCOMPLETE: &str = "restore-incomplete";
 /// line: the strip's own give-up, logged while the listed names stay listed and
 /// the row's own arms wait for the next attempt rather than walking with the
 /// gear in hand.
-pub(super) const STILL_HOLDING: &str = "still holding Entrana-banned gear after bank prep — will retry";
+pub(super) const STILL_HOLDING: &str =
+    "still holding Entrana-banned gear after bank prep — will retry";
 
 /// The machine's own window for one Entrana bank approach or one strip: how
 /// long the walk to the nearest stand, the posted booth's own open and one
@@ -491,7 +491,6 @@ pub(super) fn restore_walk_failed() -> String {
     format!("{RESTORE_WALK_FAILED}: the bank did not come up — will retry")
 }
 impl ClueRuntime {
-
     /// The Entrana restore the collect's exit owes while `strippedGear` is
     /// non-empty: the frozen `restoreStrippedGear`, one verb per call over this
     /// call's posted pages.
@@ -512,7 +511,11 @@ impl ClueRuntime {
     /// on are the named `restore-incomplete` log and the next call starts a
     /// fresh attempt, so a name that will not go back on stays listed, is never
     /// a machine kind, and never lets the finish latch report the trail solved.
-    pub(super) fn restore(&mut self, selected: Option<&SelectedGameData>, input: &Value) -> Option<Value> {
+    pub(super) fn restore(
+        &mut self,
+        selected: Option<&SelectedGameData>,
+        input: &Value,
+    ) -> Option<Value> {
         if self.stripped.is_empty() {
             return None;
         }
@@ -776,7 +779,11 @@ impl ClueRuntime {
     /// `restore-walk-failed` — the caps' own name for this bank trip — and
     /// re-arms, so a stand the page never posts is a named failure rather than a
     /// silent hang. Freeze-honored like every other window here.
-    pub(super) fn bank_approach(&mut self, bank: &mut BankApproach, input: &Value) -> Option<Value> {
+    pub(super) fn bank_approach(
+        &mut self,
+        bank: &mut BankApproach,
+        input: &Value,
+    ) -> Option<Value> {
         if bank_open(input) {
             bank.opened = true;
             return None;

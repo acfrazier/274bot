@@ -4,17 +4,16 @@
 //! modules; the rs2b0t sources are never executed. Missing members throw
 //! `not impl: <throw reason>` — never a fake value.
 
-
 mod content;
 mod interact;
 mod modules;
 mod paint;
 
 pub(crate) use content::content_json;
-pub use interact::{InspectAvoidWire, InteractReq};
-pub(crate) use interact::{MaybeInteractReq, QueuedRow};
 #[cfg(test)]
 pub(crate) use interact::RejectedRow;
+pub use interact::{InspectAvoidWire, InteractReq};
+pub(crate) use interact::{MaybeInteractReq, QueuedRow};
 pub(crate) use modules::{remap_catalog_imports, shim_modules, BOT_MODULE, MAIN_MODULE, PRELUDE};
 #[allow(unused_imports)]
 pub(crate) use modules::{remap_hash_bot, remap_rs2b0t_api};

@@ -1,6 +1,5 @@
 use super::*;
 
-
 /// The selected talk step an identified membership row owns: the
 /// `talk_key.talk` row whose own id is the row's, or `None` when the row is not
 /// a talk membership. The key keepers, the puzzle-box extras and every other
@@ -57,7 +56,10 @@ pub(super) fn challenge_step<'a>(
 /// `None` when the step has no challenge, and `None` when the selected string
 /// is not one — an unparsed, negative or absent answer never clicks, so no
 /// count is ever invented.
-pub(super) fn challenge_answer(selected: Option<&SelectedGameData>, talk: &TalkKeyTalkRow) -> Option<i32> {
+pub(super) fn challenge_answer(
+    selected: Option<&SelectedGameData>,
+    talk: &TalkKeyTalkRow,
+) -> Option<i32> {
     for challenge in &selected?.trails()?.challenge_answers {
         if challenge.alias.strip_suffix(CHALLENGE_SUFFIX) != Some(talk.alias.as_str()) {
             continue;
@@ -72,7 +74,6 @@ pub(super) fn challenge_answer(selected: Option<&SelectedGameData>, talk: &TalkK
     None
 }
 impl ClueRuntime {
-
     /// `Steady` on an identified talk membership: the selected
     /// `talk_key.talk` row this held step owns, walked to and then Talk-to'd,
     /// one verb per call.

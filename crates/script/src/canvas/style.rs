@@ -1,6 +1,6 @@
-use std::sync::OnceLock;
-use ab_glyph::{Font, FontRef, PxScale, ScaleFont};
 use super::MAX_FONT_PX;
+use ab_glyph::{Font, FontRef, PxScale, ScaleFont};
+use std::sync::OnceLock;
 
 const SANS_BYTES: &[u8] = include_bytes!("../../fonts/LiberationSans-Regular.ttf");
 const MONO_BYTES: &[u8] = include_bytes!("../../fonts/LiberationMono-Regular.ttf");

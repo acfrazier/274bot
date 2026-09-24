@@ -164,7 +164,9 @@ pub(super) fn drain_bot_log(runtime: &mut Runtime, out: &Sender<ThreadMsg>) {
     }
 }
 
-pub(super) fn take_hook_entry_delay(teardown: &std::sync::Arc<Mutex<TeardownState>>) -> Option<Duration> {
+pub(super) fn take_hook_entry_delay(
+    teardown: &std::sync::Arc<Mutex<TeardownState>>,
+) -> Option<Duration> {
     teardown.lock().unwrap().hook_entry_delay.take()
 }
 
@@ -303,4 +305,3 @@ pub(super) fn teardown_once(
     let _ = worker.join();
     let _ = out.send(ThreadMsg::Stopped);
 }
-

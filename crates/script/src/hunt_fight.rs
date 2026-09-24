@@ -8,15 +8,22 @@ mod hold;
 mod retreat;
 mod walk_spot;
 
-use hold::HoldRuntime;
-use retreat::RetreatRuntime;
-use walk_spot::WalkRuntime;
 pub(crate) use hold::HoldKind;
+use hold::HoldRuntime;
+pub use hold::{
+    hold_deadline_remaining_ms, hold_dispatch, hold_force_bound_reached, hold_token_alive,
+};
 pub(crate) use retreat::RetreatKind;
+use retreat::RetreatRuntime;
+pub use retreat::{
+    retreat_deadline_remaining_ms, retreat_dispatch, retreat_force_bound_reached,
+    retreat_token_alive,
+};
+use walk_spot::WalkRuntime;
 pub(crate) use walk_spot::WalkSpotKind;
-pub use hold::{hold_deadline_remaining_ms, hold_dispatch, hold_force_bound_reached, hold_token_alive};
-pub use retreat::{retreat_deadline_remaining_ms, retreat_dispatch, retreat_force_bound_reached, retreat_token_alive};
-pub use walk_spot::{walk_deadline_remaining_ms, walk_dispatch, walk_force_bound_reached, walk_token_alive};
+pub use walk_spot::{
+    walk_deadline_remaining_ms, walk_dispatch, walk_force_bound_reached, walk_token_alive,
+};
 
 use crate::hunt::{flag, hook, index, number, strict_true, text, Host, Kind as HuntKind};
 use crate::machine::Ended;
@@ -1986,9 +1993,6 @@ fn _attack_range_used_in_taverley() -> i32 {
     attack_range_for(Style::Range)
 }
 
-
-
-
 fn unknown_token() -> Value {
     json!({ "kind": "aborted", "reason": "unknown token" })
 }
@@ -2083,6 +2087,3 @@ pub(crate) fn interrupt_watch(token: u64) {
     FightKind::ensure(token);
     with_runtime(token, FightRuntime::interrupt_watch);
 }
-
-
-

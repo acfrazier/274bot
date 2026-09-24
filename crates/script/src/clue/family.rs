@@ -1,6 +1,5 @@
 use super::*;
 
-
 pub(super) const HOOK_ENABLED: usize = 0;
 pub(super) const HOOK_LOG: usize = 1;
 pub(super) const HOOK_STATUS: usize = 2;

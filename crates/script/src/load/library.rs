@@ -466,7 +466,6 @@ impl JsLibrary {
         }
     }
 
-
     /// Re-read `card`'s origin from disk; when the SHA differs, fetch a new
     /// cached object and update that `(source, name)` card in place. Isolate
     /// respawn is the caller's job — the updated `js`/`sha256` are on the
@@ -723,8 +722,6 @@ impl JsLibrary {
         Ok(prepared.card)
     }
 
-
-
     /// True when this card already holds transpiled JS (isolate-ready).
     pub fn js_is_ready(&self, source: ScriptSource, name: &str) -> bool {
         self.get(source, name).is_some_and(|c| !c.js.is_empty())
@@ -757,7 +754,6 @@ pub struct PreparedCard {
     pub siblings: Vec<(String, String)>,
     pub fingerprint: String,
 }
-
 
 #[cfg(feature = "load")]
 fn shape_to_kind(shape: LoadShape) -> ScriptKind {

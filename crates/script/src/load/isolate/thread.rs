@@ -1,5 +1,5 @@
-use super::*;
 use super::teardown::*;
+use super::*;
 
 #[derive(Default)]
 pub(super) struct MouseGestureIdentities {
@@ -1407,4 +1407,3 @@ fn tick_loop(
         }
     }
 }
-

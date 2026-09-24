@@ -488,7 +488,11 @@ pub(super) struct Ground<'a> {
 /// `{ id, name, x, z, level, actions }` shape, a row with no posted name, and
 /// every row on another tile are skipped rather than guessed at: the verb is
 /// the row's own tile and the name the host resolves by first name match.
-pub(super) fn pick_ground<'a>(input: &'a Value, here: Tile, discarded: &[i32]) -> Option<Ground<'a>> {
+pub(super) fn pick_ground<'a>(
+    input: &'a Value,
+    here: Tile,
+    discarded: &[i32],
+) -> Option<Ground<'a>> {
     let rows = input.get("ground")?.as_array()?;
     for row in rows {
         let (Some(id), Some(tile)) = (row.get("id").and_then(i32_of), posted_tile(row)) else {
@@ -676,7 +680,10 @@ impl NpcIdentity<'_> {
 /// never compared to a posted string: the page carries no alias at all. A row
 /// that posted no index, no name, or no action this identity dispatches at is
 /// not a row this arm can use.
-pub(super) fn named_row<'a>(row: &'a Value, identity: &NpcIdentity<'_>) -> Option<(i32, &'a str, &'a str)> {
+pub(super) fn named_row<'a>(
+    row: &'a Value,
+    identity: &NpcIdentity<'_>,
+) -> Option<(i32, &'a str, &'a str)> {
     let index = posted_i32(row, "index")?;
     let posted = row
         .get("name")
@@ -804,7 +811,12 @@ pub(super) fn pick_at_spawn<'a>(
 /// Nearest wins and ties keep posted order — the scan only replaces its best on
 /// a strict improvement. A row with no posted index, no posted name, no
 /// `Attack`, another level, no distance and no marshalled tile matches nothing.
-pub(super) fn pick_keeper<'a>(id: i32, name: &str, page: &'a [Value], spawn: Tile) -> Option<(i32, &'a str)> {
+pub(super) fn pick_keeper<'a>(
+    id: i32,
+    name: &str,
+    page: &'a [Value],
+    spawn: Tile,
+) -> Option<(i32, &'a str)> {
     let mut best: Option<(i32, &'a str, i64)> = None;
     for row in page {
         let Some(index) = posted_i32(row, "index") else {

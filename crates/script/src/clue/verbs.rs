@@ -1,6 +1,5 @@
 use super::*;
 
-
 pub(super) fn i32_field(step: &Value, key: &str) -> Option<i32> {
     i32::try_from(step.get(key)?.as_i64()?).ok()
 }

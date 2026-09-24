@@ -292,6 +292,10 @@ mod talk;
 mod verbs;
 
 use acquire::*;
+#[cfg(test)]
+use combat::{keeper_type, key_step};
+#[cfg(test)]
+use entrana::{entrana_coord, entrana_restricted_gear};
 pub(crate) use family::Clue;
 #[allow(unused_imports)]
 pub(crate) use family::ClueArgs;
@@ -299,10 +303,6 @@ use puzzle::*;
 use scene::*;
 use talk::*;
 pub(crate) use verbs::{verb_json, verb_req};
-#[cfg(test)]
-use combat::{key_step, keeper_type};
-#[cfg(test)]
-use entrana::{entrana_coord, entrana_restricted_gear};
 
 use crate::food_policy::food_forms_for;
 use crate::machine::{Begin, Call, Cx, Family, Reply, Step};
@@ -1554,7 +1554,6 @@ impl ClueRuntime {
     }
 }
 
-
 /// The identified row's role for the held casket item. Membership is the
 /// landed identify's; this only reads the role it returned.
 const CASKET_ROLE: &str = "casket";
@@ -1951,7 +1950,6 @@ pub fn dispatch(selected: Option<&SelectedGameData>, input: &Value) -> Value {
         _ => json!({ "kind": "notImpl", "reason": "unknown clue op" }),
     }
 }
-
 
 #[cfg(test)]
 #[path = "clue_tests.rs"]
