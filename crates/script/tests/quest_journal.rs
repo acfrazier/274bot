@@ -792,7 +792,7 @@ fn another_name_begin_of_an_occupied_pair_is_refused_and_cancels_the_old_token()
 }
 
 #[test]
-fn the_owned_flow_never_calls_the_modals_machine() {
+fn the_owned_flow_never_starts_the_modals_machine() {
     let mut j = Journal::new();
     let rows = [row("Cook's Assistant", "notStarted", Some(1234))];
     j.post(Post::at(1).rows(&rows).closed_pair());
@@ -801,14 +801,14 @@ fn the_owned_flow_never_calls_the_modals_machine() {
         .probe(
             "(function () { \
              const fns = globalThis.rustyscript && globalThis.rustyscript.functions; \
-             if (!fns || typeof fns.__rs2b0t_modals !== 'function') return 'missing'; \
-             const original = fns.__rs2b0t_modals; \
+             if (!fns || typeof fns.__rs2b0t_machine_start !== 'function') return 'missing'; \
+             const original = fns.__rs2b0t_machine_start; \
              globalThis.__modalsCalls = 0; \
-             fns.__rs2b0t_modals = function (payload) { \
-               globalThis.__modalsCalls += 1; \
-               return original(payload); \
+             fns.__rs2b0t_machine_start = function (family, args, hooks) { \
+               if (family === 'modals') globalThis.__modalsCalls += 1; \
+               return original(family, args, hooks); \
              }; \
-             return fns.__rs2b0t_modals === original ? 'unwritable' : 'spied'; \
+             return fns.__rs2b0t_machine_start === original ? 'unwritable' : 'spied'; \
              })()",
         )
         .unwrap();

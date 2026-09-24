@@ -343,6 +343,7 @@ const FAMILIES: &[Entry] = &[
     entry::<crate::prayer::Prayer>(),
     entry::<crate::autocast::Autocast>(),
     entry::<crate::special::Special>(),
+    entry::<crate::modals::Modals>(),
     #[cfg(test)]
     entry::<tests::Probe>(),
     #[cfg(test)]

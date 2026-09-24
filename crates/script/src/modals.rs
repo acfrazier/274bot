@@ -1,32 +1,18 @@
-//! Rust-owned `Modals.close` / `closeIfOpen` wait.
+//! Rust-owned `Modals.close` / `closeIfOpen`, a [`crate::machine`] family.
 //!
-//! JavaScript marshals the call and queues the one returned `close-modal`.
-//! Capture, the 3000ms identity wait, pause/hold freeze, reset/token abort
-//! and the bool-vs-void result stay here. A queued close is not accepted.
+//! The close verb, the 3000ms identity wait, the pause/hold freeze and the
+//! bool-vs-void result are all here; JavaScript starts one close and maps
+//! the settled value onto its declared return. Capture, the identity wait
+//! and the window read the isolate scene. A queued close is not accepted.
 
+use crate::machine::{Begin, Cx, Family, Step};
 use crate::observed::{self, Scene};
-use crate::task_clock::InstantTaskClock;
-use serde_json::{json, Value};
-use std::cell::RefCell;
+use crate::shim::InteractReq;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 /// Frozen `Modals.close` wait for `main !== before`.
 pub const CLOSE_TIMEOUT_MS: u64 = 3_000;
-
-thread_local! {
-    static RUNTIME: RefCell<ModalsRuntime> = const { RefCell::new(ModalsRuntime::new()) };
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Kind {
-    Close,
-    CloseIfOpen,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Phase {
-    Idle,
-    WaitChange,
-}
 
 /// The posted facts this module decides from, read from the isolate scene.
 struct NativeObservation {
@@ -45,168 +31,148 @@ impl NativeObservation {
     }
 }
 
-struct ModalsRuntime {
-    clock: InstantTaskClock,
-    token: u64,
-    phase: Phase,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+enum Kind {
+    Close,
+    CloseIfOpen,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct ModalsArgs {
+    kind: Kind,
+}
+
+/// One settlement: `close` reports its boolean, `closeIfOpen` stays void.
+#[derive(Debug, PartialEq, Serialize)]
+pub(crate) struct ModalsDone {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    result: Option<bool>,
+}
+
+impl ModalsDone {
+    fn settled(kind: Kind, result: bool) -> Self {
+        Self {
+            result: matches!(kind, Kind::Close).then_some(result),
+        }
+    }
+}
+
+impl From<ModalsDone> for Value {
+    fn from(done: ModalsDone) -> Self {
+        serde_json::to_value(done).unwrap_or(Value::Null)
+    }
+}
+
+/// One close: the verb went out at begin; each step watches the root.
+pub(crate) struct Modals {
     kind: Kind,
     before: i32,
 }
 
-impl ModalsRuntime {
-    const fn new() -> Self {
-        Self {
-            clock: InstantTaskClock::new(),
-            token: 0,
-            phase: Phase::Idle,
-            kind: Kind::Close,
-            before: -1,
-        }
-    }
+impl Family for Modals {
+    const NAME: &'static str = "modals";
+    /// A newer close replaces the one in flight, as the frozen token bump did.
+    const EXCLUSIVE: bool = true;
+    type Args = ModalsArgs;
+    type Output = ModalsDone;
 
-    fn frozen(&self) -> bool {
-        self.clock.frozen()
-    }
-
-    fn set_freeze(&mut self, paused: bool, held: bool) {
-        self.clock.set_freeze(paused, held);
-    }
-
-    fn arm(&mut self, window: u64) {
-        self.clock.arm(window);
-    }
-
-    fn bound_reached(&self) -> bool {
-        self.clock.bound_reached()
-    }
-
-    fn abort_runtime(&mut self) {
-        self.token = self.token.wrapping_add(1);
-        self.phase = Phase::Idle;
-        self.kind = Kind::Close;
-        self.before = -1;
-        self.clock.deadline = None;
-    }
-
-    fn done(&mut self, result: bool, reason: &str) -> Value {
-        let token = self.token;
-        let kind = self.kind;
-        self.phase = Phase::Idle;
-        self.clock.deadline = None;
-        match kind {
-            Kind::CloseIfOpen => json!({
-                "kind": "done",
-                "token": token,
-                "reason": reason,
-            }),
-            Kind::Close => json!({
-                "kind": "done",
-                "token": token,
-                "result": result,
-                "reason": reason,
-            }),
-        }
-    }
-
-    fn wait(&self) -> Value {
-        json!({ "kind": "wait", "token": self.token })
-    }
-
-    fn close_verb(&self) -> Value {
-        json!({ "kind": "close-modal", "token": self.token })
-    }
-}
-
-pub fn on_pause() {
-    RUNTIME.with(|rt| {
-        let held = rt.borrow().clock.held;
-        rt.borrow_mut().set_freeze(true, held);
-    });
-}
-
-pub fn on_resume() {
-    RUNTIME.with(|rt| {
-        let held = rt.borrow().clock.held;
-        rt.borrow_mut().set_freeze(false, held);
-    });
-}
-
-pub fn on_hold(held: bool) {
-    RUNTIME.with(|rt| {
-        let paused = rt.borrow().clock.paused;
-        rt.borrow_mut().set_freeze(paused, held);
-    });
-}
-
-pub fn on_reset() {
-    RUNTIME.with(|rt| rt.borrow_mut().abort_runtime());
-}
-
-pub fn dispatch(input: &Value) -> Value {
-    match input.get("op").and_then(Value::as_str).unwrap_or("") {
-        "begin" => begin(input),
-        "next" => next(input.get("token").and_then(Value::as_u64).unwrap_or(0)),
-        _ => json!({ "kind": "notImpl", "reason": "unknown op" }),
-    }
-}
-
-fn begin(input: &Value) -> Value {
-    let kind = match input.get("kind").and_then(Value::as_str).unwrap_or("") {
-        "close" => Kind::Close,
-        "closeIfOpen" => Kind::CloseIfOpen,
-        _ => return json!({ "kind": "notImpl", "reason": "unknown modals op" }),
-    };
-    let obs = observed::with(NativeObservation::from_scene);
-    RUNTIME.with(|rt| {
-        let mut rt = rt.borrow_mut();
-        rt.abort_runtime();
-        rt.kind = kind;
+    fn begin(args: ModalsArgs, cx: &mut Cx<'_>) -> Begin<Self> {
+        let obs = observed::with(NativeObservation::from_scene);
         if !obs.ingame {
-            return json!({ "kind": "aborted", "reason": "not ingame" });
+            return Begin::Done(ModalsDone::settled(args.kind, false));
         }
-        let before = obs.main_modal_id;
-        if before == -1 {
-            return rt.done(true, "absent");
+        if obs.main_modal_id == -1 {
+            return Begin::Done(ModalsDone::settled(args.kind, true));
         }
-        rt.before = before;
-        rt.phase = Phase::WaitChange;
-        rt.arm(CLOSE_TIMEOUT_MS);
-        rt.close_verb()
-    })
-}
+        cx.clock().arm(CLOSE_TIMEOUT_MS);
+        cx.emit(InteractReq::CloseModal);
+        Begin::Run(Self {
+            kind: args.kind,
+            before: obs.main_modal_id,
+        })
+    }
 
-fn next(token: u64) -> Value {
-    let obs = observed::with(NativeObservation::from_scene);
-    RUNTIME.with(|rt| {
-        let mut rt = rt.borrow_mut();
-        if token != rt.token || rt.phase == Phase::Idle {
-            return json!({ "kind": "aborted", "token": rt.token });
-        }
-        if rt.frozen() {
-            return rt.wait();
-        }
+    fn step(&mut self, cx: &mut Cx<'_>) -> Step<ModalsDone> {
+        let obs = observed::with(NativeObservation::from_scene);
         if !obs.ingame {
-            return json!({ "kind": "aborted", "token": rt.token });
+            return Step::Done(ModalsDone::settled(self.kind, false));
         }
-        if obs.main_modal_id != rt.before {
-            return rt.done(true, "changed");
+        if obs.main_modal_id != self.before {
+            return Step::Done(ModalsDone::settled(self.kind, true));
         }
-        if rt.bound_reached() {
-            return rt.done(false, "timeout");
+        if cx.clock().bound_reached() {
+            return Step::Done(ModalsDone::settled(self.kind, false));
         }
-        rt.wait()
-    })
+        Step::Wait
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::machine::{self, Called, Js, Outcome, Pending, Reply, Started, Take};
+    use serde_json::json;
+    use std::thread;
     use std::time::Duration;
+
+    /// The modals family never calls a script callback.
+    struct NoJs;
+
+    impl Js for NoJs {
+        fn queue_len(&mut self) -> usize {
+            0
+        }
+
+        fn call(
+            &mut self,
+            _hook: Option<&crate::load::callback_v8::HeldCallback>,
+            _args: &[Value],
+        ) -> Called {
+            panic!("the modals family calls no script callback");
+        }
+
+        fn poll(&mut self, _pending: &Pending) -> Option<Reply> {
+            panic!("the modals family calls no script callback");
+        }
+    }
 
     fn observe(ingame: bool, main_modal_id: i32) {
         observed::post(0, |post| {
             post.session(ingame).main_modal_id(main_modal_id);
         });
+    }
+
+    fn reset() {
+        machine::on_reset();
+        observed::on_reset();
+    }
+
+    fn tick() {
+        machine::step(&mut NoJs);
+    }
+
+    fn drain() -> Vec<InteractReq> {
+        machine::merge_ops(Vec::new())
+    }
+
+    fn start(kind: &str) -> Started {
+        machine::start("modals", json!({ "kind": kind }), Vec::new(), 0)
+    }
+
+    fn running(started: Started) -> machine::Handle {
+        match started {
+            Started::Running(handle) => handle,
+            other => panic!("expected a running row, got {other:?}"),
+        }
+    }
+
+    /// The settled envelope exactly as JS receives it.
+    fn done(handle: machine::Handle) -> Value {
+        match machine::take(handle) {
+            Take::Settled(Outcome::Done(value)) => value,
+            other => panic!("expected a done outcome, got {other:?}"),
+        }
     }
 
     #[test]
@@ -216,96 +182,117 @@ mod tests {
 
     #[test]
     fn absent_close_is_true_without_a_verb() {
-        on_reset();
+        reset();
         observe(true, -1);
-        let step = dispatch(&json!({ "op": "begin", "kind": "close" }));
-        assert_eq!(step["kind"], "done");
-        assert_eq!(step["result"], true);
-        assert_eq!(step["reason"], "absent");
+        assert_eq!(
+            start("close"),
+            Started::Settled(Outcome::Done(json!({ "result": true })))
+        );
+        assert!(drain().is_empty());
     }
 
     #[test]
     fn present_close_emits_one_close_modal_and_settles_on_identity_change() {
-        on_reset();
+        reset();
         observe(true, 6675);
-        let begin = dispatch(&json!({ "op": "begin", "kind": "close" }));
-        assert_eq!(begin["kind"], "close-modal");
-        let token = begin["token"].as_u64().unwrap();
+        let handle = running(start("close"));
+        assert_eq!(drain(), vec![InteractReq::CloseModal]);
 
         observe(true, 6675);
-        assert_eq!(
-            dispatch(&json!({ "op": "next", "token": token }))["kind"],
-            "wait"
-        );
+        tick();
+        assert_eq!(machine::take(handle), Take::Pending);
+        assert!(drain().is_empty(), "one action only");
 
         observe(true, -1);
-        let closed = dispatch(&json!({ "op": "next", "token": token }));
-        assert_eq!(closed["kind"], "done");
-        assert_eq!(closed["result"], true);
-
-        on_reset();
-        observe(true, 6675);
-        let again = dispatch(&json!({ "op": "begin", "kind": "close" }));
-        let token = again["token"].as_u64().unwrap();
-        observe(true, 3824);
-        let swapped = dispatch(&json!({ "op": "next", "token": token }));
-        assert_eq!(swapped["result"], true);
+        tick();
+        assert_eq!(done(handle), json!({ "result": true }));
         assert_eq!(
-            dispatch(&json!({ "op": "next", "token": token }))["kind"],
-            "aborted",
-            "settled token must not emit another close"
+            machine::take(handle),
+            Take::Settled(Outcome::Aborted(machine::AbortReason::Unknown)),
+            "a settled close is handed out once"
         );
+
+        reset();
+        observe(true, 6675);
+        let handle = running(start("close"));
+        assert_eq!(drain(), vec![InteractReq::CloseModal]);
+        observe(true, 3824);
+        tick();
+        assert_eq!(
+            done(handle),
+            json!({ "result": true }),
+            "a newer root is a settled close, not another close"
+        );
+        assert!(drain().is_empty());
     }
 
     #[test]
     fn unchanged_root_times_out_false_without_reclose() {
-        on_reset();
+        reset();
         observe(true, 6675);
-        let begin = dispatch(&json!({ "op": "begin", "kind": "close" }));
-        let token = begin["token"].as_u64().unwrap();
-        RUNTIME.with(|rt| {
-            let now = rt.borrow().clock.now();
-            rt.borrow_mut().clock.deadline = Some(now - Duration::from_millis(1));
-        });
-        let timed = dispatch(&json!({ "op": "next", "token": token }));
-        assert_eq!(timed["kind"], "done");
-        assert_eq!(timed["result"], false);
-        assert_eq!(timed["reason"], "timeout");
+        let handle = running(start("close"));
+        assert_eq!(drain(), vec![InteractReq::CloseModal]);
+        tick();
         assert_eq!(
-            dispatch(&json!({ "op": "next", "token": token }))["kind"],
-            "aborted"
+            machine::take(handle),
+            Take::Pending,
+            "unchanged is not success"
         );
+
+        thread::sleep(Duration::from_millis(CLOSE_TIMEOUT_MS + 100));
+        tick();
+        assert_eq!(done(handle), json!({ "result": false }));
+        tick();
+        assert!(drain().is_empty(), "timeout must not re-close");
     }
 
     #[test]
     fn close_if_open_absent_is_void_and_pause_reset_do_not_close() {
-        on_reset();
+        reset();
         observe(true, -1);
-        let absent = dispatch(&json!({ "op": "begin", "kind": "closeIfOpen" }));
-        assert_eq!(absent["kind"], "done");
-        assert!(absent.get("result").is_none());
+        assert_eq!(
+            start("closeIfOpen"),
+            Started::Settled(Outcome::Done(json!({})))
+        );
 
         observe(true, 6675);
-        let begin = dispatch(&json!({ "op": "begin", "kind": "closeIfOpen" }));
-        assert_eq!(begin["kind"], "close-modal");
-        let token = begin["token"].as_u64().unwrap();
-        on_pause();
+        let handle = running(start("closeIfOpen"));
+        assert_eq!(drain(), vec![InteractReq::CloseModal]);
+        machine::on_pause();
         observe(true, -1);
+        tick();
         assert_eq!(
-            dispatch(&json!({ "op": "next", "token": token }))["kind"],
-            "wait"
+            machine::take(handle),
+            Take::Pending,
+            "paused rows do not step"
         );
-        on_resume();
-        on_hold(true);
+        machine::on_resume();
+        machine::on_hold(true);
+        tick();
         assert_eq!(
-            dispatch(&json!({ "op": "next", "token": token }))["kind"],
-            "wait"
+            machine::take(handle),
+            Take::Pending,
+            "held rows do not step"
         );
-        on_hold(false);
-        on_reset();
+        machine::on_hold(false);
+        machine::on_reset();
         assert_eq!(
-            dispatch(&json!({ "op": "next", "token": token }))["kind"],
-            "aborted"
+            machine::take(handle),
+            Take::Settled(Outcome::Aborted(machine::AbortReason::Reset))
         );
+        tick();
+        assert!(drain().is_empty(), "a reset close never re-closes");
+    }
+
+    #[test]
+    fn a_logout_settles_false_without_faking_a_close() {
+        reset();
+        observe(true, 6675);
+        let handle = running(start("close"));
+        assert_eq!(drain(), vec![InteractReq::CloseModal]);
+        observe(false, 6675);
+        tick();
+        assert_eq!(done(handle), json!({ "result": false }));
+        assert!(drain().is_empty());
     }
 }

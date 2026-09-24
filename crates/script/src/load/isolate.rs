@@ -1903,7 +1903,6 @@ fn tick_loop(
                             crate::hunt_bank::on_hold(host_hold);
                             crate::production::on_hold(host_hold);
                             crate::dialog::on_hold(host_hold);
-                            crate::modals::on_hold(host_hold);
                             crate::quest_journal::on_hold(host_hold);
                             crate::clue::on_hold(host_hold);
                             crate::reach::on_hold(host_hold);
@@ -2270,7 +2269,6 @@ fn tick_loop(
                 crate::hunt_bank::on_reset();
                 crate::production::on_reset();
                 crate::dialog::on_reset();
-                crate::modals::on_reset();
                 crate::quest_journal::on_reset();
                 crate::clue::on_reset();
                 crate::reach::on_reset();
@@ -2333,7 +2331,6 @@ fn tick_loop(
                 crate::hunt_bank::on_pause();
                 crate::production::on_pause();
                 crate::dialog::on_pause();
-                crate::modals::on_pause();
                 crate::quest_journal::on_pause();
                 crate::clue::on_pause();
                 crate::reach::on_pause();
@@ -2361,7 +2358,6 @@ fn tick_loop(
                 crate::hunt_bank::on_resume();
                 crate::production::on_resume();
                 crate::dialog::on_resume();
-                crate::modals::on_resume();
                 crate::quest_journal::on_resume();
                 crate::clue::on_resume();
                 crate::reach::on_resume();

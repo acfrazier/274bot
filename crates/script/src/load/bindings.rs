@@ -410,13 +410,6 @@ pub(super) fn wire_runtime(
         })
         .map_err(|e| format!("register dialog: {e}"))?;
     runtime
-        .register_function("__rs2b0t_modals", move |args: &[serde_json::Value]| {
-            Ok(crate::modals::dispatch(
-                args.first().unwrap_or(&serde_json::Value::Null),
-            ))
-        })
-        .map_err(|e| format!("register modals: {e}"))?;
-    runtime
         .register_function("__rs2b0t_quest_journal", |args: &[serde_json::Value]| {
             Ok(crate::quest_journal::dispatch(
                 args.first().unwrap_or(&serde_json::Value::Null),
@@ -918,6 +911,11 @@ function prayerCall(payload) {
 }
 function helperOk(value) { return { ok: true, value: value }; }
 function helperErr(error) { return { ok: false, error: String(error) }; }
+function enqueueIfButton(component_id) {
+  const h = host();
+  h.interact = h.interact || [];
+  h.interact.push({ op: 'if-button', component_id: component_id });
+}
 // One Rust step machine per Set/Clear: Rust owns the click, the wait and
 // the one-at-a-time admission (a second start settles busy), so a
 // Promise never outlives its own operation.

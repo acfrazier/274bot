@@ -1,54 +1,18 @@
-// Our Modals module. close / closeIfOpen are Rust-owned: this shim marshals
-// the call, queues the one returned close-modal and reports bool vs void.
-// It does not decide a wait, walk a close button or send a second close.
-import { snap, queue, notImpl, proxy } from '../../../shim/_kernel.js';
-import { Execution } from '../../execution/Execution.js';
+// Our Modals module. close / closeIfOpen are one Rust step machine each:
+// the shim coerces the kind, awaits the settlement and reports bool vs void.
+// Rust queues the one close-modal, watches the captured root and owns the
+// window.
+import { notImpl, proxy, snap, runMachine } from '../../../shim/_kernel.js';
 
-function callModals(payload) {
-    const fn = globalThis.rustyscript && globalThis.rustyscript.functions
-        ? globalThis.rustyscript.functions.__rs2b0t_modals
-        : undefined;
-    if (typeof fn !== 'function') {
-        throw notImpl('Modals');
-    }
-    return fn(payload);
-}
-
-function settle(kind, step) {
+function settle(kind, out) {
     if (kind === 'closeIfOpen') return undefined;
-    return step.result === true;
-}
-
-function abortedResult(kind) {
-    if (kind === 'closeIfOpen') return undefined;
-    return false;
+    return out.kind === 'done' && out.value.result === true;
 }
 
 async function run(kind) {
-    const begin = callModals({ op: 'begin', kind });
-    if (!begin) return abortedResult(kind);
-    if (begin.kind === 'notImpl') throw notImpl('Modals.' + kind, begin.reason);
-    if (begin.kind === 'aborted') return abortedResult(kind);
-    if (begin.kind === 'done') return settle(kind, begin);
-    const token = begin.token;
-    let current = begin;
-    while (current) {
-        if (current.kind === 'done') return settle(kind, current);
-        if (current.kind === 'aborted') return abortedResult(kind);
-        if (current.kind === 'notImpl') throw notImpl('Modals.' + kind, current.reason);
-        if (current.kind === 'close-modal') {
-            queue({ op: 'close-modal' });
-        } else if (current.kind !== 'wait') {
-            return abortedResult(kind);
-        }
-        let next = null;
-        await Execution.delayUntil(() => {
-            next = callModals({ op: 'next', token });
-            return next?.kind !== 'wait';
-        }, 0);
-        current = next;
-    }
-    return abortedResult(kind);
+    const out = await runMachine('modals', { kind });
+    if (out.kind === 'refused') throw notImpl('Modals.' + kind, out.reason);
+    return settle(kind, out);
 }
 
 export const Modals = proxy('Modals', {
