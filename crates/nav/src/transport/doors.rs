@@ -11,8 +11,9 @@ use super::*;
 /// each `to` is that crossing's arrival side, never a snap. Quest-gated
 /// doors (`scripts/quests/*/configs/*.loc` and
 /// `scripts/areas/*/configs/*.loc` named blocks) join the door set when
-/// their `[oploc1,<name>]` open script declares a varp gate; the gate is
-/// carried on every edge of the door (`varp_req`), never invented.
+/// their `[oploc1,<name>]` open script declares a varp gate; producers
+/// carry transmitted varps or convert the gate to a unique completed
+/// journal proof, omitting edges with no live-observable proof.
 /// A door whose open script instead proves a directional free arm
 /// ([`quest_door_free_arms`]) keeps that crossing with empty requirements.
 /// The gated reverse is omitted unless [`completed_quest_reverse`] proves a
@@ -29,6 +30,8 @@ pub(super) fn door_edges(
     graph: &mut TransportGraph,
     skipped: &mut HashMap<&'static str, usize>,
     collision: &WorldCollision,
+    observable: &ObservableGates,
+    audit: &mut VarpGateAudit,
 ) {
     let configs = content_root.join("scripts").join("doors").join("configs");
     let mut door_ids = HashSet::new();
@@ -123,35 +126,39 @@ pub(super) fn door_edges(
                 let Some(to) = door_far_side(at, dir, collision) else {
                     continue;
                 };
-                graph.edges.push(TransportEdge {
-                    kind: TransportKind::Door,
-                    at,
-                    to,
-                    loc_id: *id,
-                    option: 1,
-                    ticks: 1,
-                    dir: Some(dir),
-                    open_loc_id: open_ids.get(id).copied(),
-                    skill_req: vec![],
-                    item_req: vec![],
-                    quest_req: if is_gated_reverse {
-                        quest_reverse
-                            .map(|q| vec![q.to_string()])
-                            .unwrap_or_default()
-                    } else {
-                        vec![]
+                observable.admit_edge(
+                    graph,
+                    TransportEdge {
+                        kind: TransportKind::Door,
+                        at,
+                        to,
+                        loc_id: *id,
+                        option: 1,
+                        ticks: 1,
+                        dir: Some(dir),
+                        open_loc_id: open_ids.get(id).copied(),
+                        skill_req: vec![],
+                        item_req: vec![],
+                        quest_req: if is_gated_reverse {
+                            quest_reverse
+                                .map(|q| vec![q.to_string()])
+                                .unwrap_or_default()
+                        } else {
+                            vec![]
+                        },
+                        // The proven free crossing has no requirement; a door
+                        // with a readable gate carries it on both crossings.
+                        // The quest-gated reverse is not a varp gate.
+                        varp_req: if free_arm.is_some() {
+                            vec![]
+                        } else {
+                            varp_req.clone()
+                        },
+                        worn_req: vec![],
+                        members_req: false,
                     },
-                    // The proven free crossing has no requirement; a door
-                    // with a readable gate carries it on both crossings.
-                    // The quest-gated reverse is not a varp gate.
-                    varp_req: if free_arm.is_some() {
-                        vec![]
-                    } else {
-                        varp_req.clone()
-                    },
-                    worn_req: vec![],
-                    members_req: false,
-                });
+                    audit,
+                );
             }
         }
     }

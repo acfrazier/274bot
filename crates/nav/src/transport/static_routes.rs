@@ -282,24 +282,32 @@ pub(super) const BOAT_ROUTES: &[BoatRoute] = &[
 /// journey (NPC tile → `set_sail` deck), plus a loc-backed disembark
 /// hop (`Cross` on the boat-side gangplank → dock). Kind is Ladder: a
 /// level-changing loc op, not an NPC.
-pub(super) fn boat_edges(graph: &mut TransportGraph) {
+pub(super) fn boat_edges(
+    graph: &mut TransportGraph,
+    gates: &ObservableGates,
+    audit: &mut VarpGateAudit,
+) {
     for r in BOAT_ROUTES {
-        graph.edges.push(TransportEdge {
-            kind: TransportKind::Boat,
-            at: r.at,
-            to: r.to,
-            loc_id: r.npc,
-            option: 1,
-            ticks: r.ticks,
-            dir: None,
-            open_loc_id: None,
-            skill_req: vec![],
-            item_req: r.fare.map(|(id, n)| vec![(id, n)]).unwrap_or_default(),
-            quest_req: vec![],
-            varp_req: r.varp_req.map(|v| vec![v]).unwrap_or_default(),
-            worn_req: vec![],
-            members_req: false,
-        });
+        gates.admit_edge(
+            graph,
+            TransportEdge {
+                kind: TransportKind::Boat,
+                at: r.at,
+                to: r.to,
+                loc_id: r.npc,
+                option: 1,
+                ticks: r.ticks,
+                dir: None,
+                open_loc_id: None,
+                skill_req: vec![],
+                item_req: r.fare.map(|(id, n)| vec![(id, n)]).unwrap_or_default(),
+                quest_req: vec![],
+                varp_req: r.varp_req.map(|v| vec![v]).unwrap_or_default(),
+                worn_req: vec![],
+                members_req: false,
+            },
+            audit,
+        );
         if let Some(p) = r.plank {
             graph.edges.push(TransportEdge {
                 kind: TransportKind::Ladder,

@@ -72,11 +72,10 @@ pub(super) fn glider_edges(content_root: &Path, graph: &mut TransportGraph) {
     else {
         return;
     };
-    if !body
+    let members_req = body
         .lines()
-        .any(|line| line.trim() == "if(%grandtree = ^grandtree_complete & map_members = ^true) {")
-        || !body.lines().any(|line| line.contains("gnome_pilot_glider"))
-    {
+        .any(|line| line.trim() == "if(%grandtree = ^grandtree_complete & map_members = ^true) {");
+    if !members_req || !body.lines().any(|line| line.contains("gnome_pilot_glider")) {
         return;
     }
     let journal = JournalLinks::from_content(content_root);
@@ -87,9 +86,9 @@ pub(super) fn glider_edges(content_root: &Path, graph: &mut TransportGraph) {
         return;
     };
     for (pad, round_trip) in GLIDER_PADS {
-        push_glider_flight(graph, GLIDER_HUB, *pad, quest);
+        push_glider_flight(graph, GLIDER_HUB, *pad, quest, members_req);
         if *round_trip {
-            push_glider_flight(graph, *pad, GLIDER_HUB, quest);
+            push_glider_flight(graph, *pad, GLIDER_HUB, quest, members_req);
         }
     }
 }
@@ -99,6 +98,7 @@ pub(super) fn push_glider_flight(
     at: WorldTile,
     to: WorldTile,
     quest: &str,
+    members_req: bool,
 ) {
     graph.edges.push(TransportEdge {
         kind: TransportKind::Glider,
@@ -114,6 +114,6 @@ pub(super) fn push_glider_flight(
         quest_req: vec![quest.to_string()],
         varp_req: vec![],
         worn_req: vec![],
-        members_req: false,
+        members_req,
     });
 }

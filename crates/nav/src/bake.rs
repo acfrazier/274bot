@@ -26,7 +26,7 @@ use crate::pack::{
     sha256_hex, FORMAT_ID,
 };
 use crate::paint::bake_reach;
-use crate::transport::{bind_observable_varp_gates, derive_transports};
+use crate::transport::{assert_transmitted_varp_reqs, derive_transports_for_bake};
 
 /// Door loc configs under `content/scripts/doors/configs`.
 pub const DOOR_CONFIGS: [&str; 3] = ["doors.loc", "doubledoors.loc", "opened_doors.loc"];
@@ -289,8 +289,8 @@ pub fn bake_world(request: &BakeRequest<'_>) -> Result<BakedNav, String> {
     // all live under the maps dir's parent); door edge from/to snap to the
     // nearest walkable tile on the collision just baked.
     let content_root = request.maps_dir.parent().unwrap_or(Path::new("."));
-    let mut graph = derive_transports(content_root, &loc_defs, &collision);
-    let audit = bind_observable_varp_gates(content_root, &mut graph);
+    let (graph, audit) = derive_transports_for_bake(content_root, &loc_defs, &collision);
+    assert_transmitted_varp_reqs(content_root, &graph);
     if audit.converted != 0 {
         notes.push(format!(
             "converted {} non-transmitted varp requirements to completed journal gates",

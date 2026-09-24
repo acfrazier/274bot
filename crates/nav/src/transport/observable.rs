@@ -150,56 +150,73 @@ pub(crate) struct VarpGateAudit {
     pub(crate) omitted: HashMap<i32, usize>,
 }
 
-/// At the pack boundary, replace untransmitted varp requirements by a
-/// content-proven completed journal row. No sound journal implication means
-/// omit the affected edge, never emit a route the live snapshot cannot
-/// evaluate. Reindex after removals.
-pub(crate) fn bind_observable_varp_gates(
-    content_root: &Path,
-    graph: &mut TransportGraph,
-) -> VarpGateAudit {
-    let transmitted = transmitted_varps(content_root);
-    let names_by_id: HashMap<_, _> = varp_ids_by_name(content_root)
-        .into_iter()
-        .map(|(name, id)| (id, name))
-        .collect();
-    let journal = JournalLinks::from_content(content_root);
-    let mut audit = VarpGateAudit::default();
-    let mut bind = |edge: &mut TransportEdge| {
+/// Shared source facts for transport producers. Resolve each gated edge
+/// before it enters the graph: a non-transmitted varp must have a unique
+/// completed-journal implication, otherwise the producer omits the edge.
+pub(super) struct ObservableGates {
+    transmitted: HashSet<i32>,
+    names_by_id: HashMap<i32, String>,
+    journal: JournalLinks,
+}
+
+impl ObservableGates {
+    pub(super) fn from_content(content_root: &Path) -> Self {
+        Self {
+            transmitted: transmitted_varps(content_root),
+            names_by_id: varp_ids_by_name(content_root)
+                .into_iter()
+                .map(|(name, id)| (id, name))
+                .collect(),
+            journal: JournalLinks::from_content(content_root),
+        }
+    }
+
+    pub(super) fn admit_edge(
+        &self,
+        graph: &mut TransportGraph,
+        mut edge: TransportEdge,
+        audit: &mut VarpGateAudit,
+    ) {
+        if edge.varp_req.is_empty() {
+            graph.edges.push(edge);
+            return;
+        }
         let mut proofs = Vec::new();
         for &(id, min) in &edge.varp_req {
-            if transmitted.contains(&id) {
+            if self.transmitted.contains(&id) {
                 continue;
             }
-            let name = names_by_id
+            let name = self
+                .names_by_id
                 .get(&id)
-                .and_then(|varp| journal.completed_name(varp, min));
+                .and_then(|varp| self.journal.completed_name(varp, min));
             let Some(name) = name else {
                 *audit.omitted.entry(id).or_default() += 1;
-                return false;
+                return;
             };
             proofs.push(name);
         }
         audit.converted += proofs.len();
         edge.quest_req.extend(proofs.into_iter().map(str::to_owned));
-        edge.varp_req.retain(|(id, _)| transmitted.contains(id));
-        true
-    };
-    graph.edges.retain_mut(&mut bind);
-    graph.teleports.retain_mut(&mut bind);
-    graph.edges.sort_by(super::edge_order);
-    graph.at.clear();
-    for (index, edge) in graph.edges.iter().enumerate() {
-        graph.at.entry(edge.at).or_default().push(index);
+        edge.varp_req
+            .retain(|(id, _)| self.transmitted.contains(id));
+        graph.edges.push(edge);
     }
-    assert!(
-        graph
-            .edges
-            .iter()
-            .chain(&graph.teleports)
-            .flat_map(|edge| &edge.varp_req)
-            .all(|(id, _)| transmitted.contains(id)),
-        "baked varp requirement has no transmit=yes declaration"
-    );
-    audit
+}
+
+/// Independent pack-boundary assertion on the graph the producers emitted.
+/// A new producer that bypasses [`ObservableGates::admit_edge`] cannot put
+/// an untransmitted varp into a release pack unnoticed.
+pub(crate) fn assert_transmitted_varp_reqs(content_root: &Path, graph: &TransportGraph) {
+    let transmitted = transmitted_varps(content_root);
+    for edge in graph.edges.iter().chain(&graph.teleports) {
+        for (id, _) in &edge.varp_req {
+            assert!(
+                transmitted.contains(id),
+                "producer emitted non-transmitted varp {id} on {:?} loc {}",
+                edge.kind,
+                edge.loc_id
+            );
+        }
+    }
 }

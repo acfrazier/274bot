@@ -74,8 +74,8 @@ use levers::*;
 use magic_guild::*;
 use membergate::*;
 use npc_hops::*;
-pub(crate) use observable::bind_observable_varp_gates;
-use observable::JournalLinks;
+pub(crate) use observable::{assert_transmitted_varp_reqs, VarpGateAudit};
+use observable::{JournalLinks, ObservableGates};
 use quest_doors::*;
 use ranging_guild::*;
 use script_text::*;
@@ -201,23 +201,52 @@ pub fn derive_transports(
     loc_defs: &LocDefs,
     collision: &WorldCollision,
 ) -> TransportGraph {
-    let (graph, skipped) = derive_transports_with_skips(content_root, loc_defs, collision);
-    report(content_root, &graph, &skipped);
-    graph
+    derive_transports_for_bake(content_root, loc_defs, collision).0
 }
 
+/// The graph and accounting for source gates the live snapshot cannot prove.
+pub(crate) fn derive_transports_for_bake(
+    content_root: &Path,
+    loc_defs: &LocDefs,
+    collision: &WorldCollision,
+) -> (TransportGraph, VarpGateAudit) {
+    let (graph, skipped, audit) = derive_transports_with_audit(content_root, loc_defs, collision);
+    report(content_root, &graph, &skipped);
+    (graph, audit)
+}
+
+#[cfg(test)]
 fn derive_transports_with_skips(
     content_root: &Path,
     loc_defs: &LocDefs,
     collision: &WorldCollision,
 ) -> (TransportGraph, HashMap<&'static str, usize>) {
+    let (graph, skipped, _) = derive_transports_with_audit(content_root, loc_defs, collision);
+    (graph, skipped)
+}
+
+fn derive_transports_with_audit(
+    content_root: &Path,
+    loc_defs: &LocDefs,
+    collision: &WorldCollision,
+) -> (TransportGraph, HashMap<&'static str, usize>, VarpGateAudit) {
     let mut graph = TransportGraph::default();
     let mut skipped: HashMap<&'static str, usize> = HashMap::new();
+    let mut audit = VarpGateAudit::default();
+    let gates = ObservableGates::from_content(content_root);
 
     let ids = loc_ids_by_name(content_root);
     let positions = loc_positions(content_root);
 
-    door_edges(content_root, &ids, &mut graph, &mut skipped, collision);
+    door_edges(
+        content_root,
+        &ids,
+        &mut graph,
+        &mut skipped,
+        collision,
+        &gates,
+        &mut audit,
+    );
     brass_key_door_edges(
         content_root,
         &ids,
@@ -269,12 +298,20 @@ fn derive_transports_with_skips(
         collision,
         &mut skipped,
     );
-    boat_edges(&mut graph);
+    boat_edges(&mut graph, &gates, &mut audit);
     cart_edges(&mut graph);
     essence_mine_edges(&mut graph);
     elkoy_edges(&mut graph);
     glider_edges(content_root, &mut graph);
-    spirit_tree_edges(content_root, &ids, &positions, &mut graph, &mut skipped);
+    spirit_tree_edges(
+        content_root,
+        &ids,
+        &positions,
+        &mut graph,
+        &mut skipped,
+        &gates,
+        &mut audit,
+    );
     lever_edges(content_root, &ids, &positions, &mut graph, &mut skipped);
     toll_edges(
         content_root,
@@ -296,7 +333,7 @@ fn derive_transports_with_skips(
         graph.at.entry(e.at).or_default().push(i);
     }
 
-    (graph, skipped)
+    (graph, skipped, audit)
 }
 
 /// Canonical pack order: by kind, loc and interact tile, then by every other

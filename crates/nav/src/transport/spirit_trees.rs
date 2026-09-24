@@ -11,16 +11,17 @@ use super::*;
 /// call for the young tree's single destination). One directed edge per
 /// tree loc placement per destination: `at` the tree loc tile (jm2
 /// placement, like every loc-backed edge), `to` the destination constant's
-/// tile, `Talk-to` op 1, one tick. Raw derivation records the script's
-/// `%grandtree` / `%treequest` requirement; the pack binder replaces those
-/// non-transmitted varps with their completed journal names. The members
-/// check in `spirit_tree_tele` is not a varp and is left off until WorldState.
+/// tile, `Talk-to` op 1, one tick. Non-transmitted `%grandtree` and
+/// `%treequest` gates need a unique completed-journal proof to enter the
+/// graph. The `spirit_tree_tele` members guard applies to every destination.
 pub(super) fn spirit_tree_edges(
     content_root: &Path,
     ids: &HashMap<String, i32>,
     positions: &HashMap<i32, Vec<Placement>>,
     graph: &mut TransportGraph,
     skipped: &mut HashMap<&'static str, usize>,
+    gates: &ObservableGates,
+    audit: &mut VarpGateAudit,
 ) {
     let Ok(script) = fs::read_to_string(
         content_root
@@ -42,6 +43,28 @@ pub(super) fn spirit_tree_edges(
     ) else {
         return;
     };
+    // Every destination uses this helper. Without its early members abort
+    // there is no source proof that a live F2P player may take these edges.
+    let members_req = script
+        .split_once("[label,spirit_tree_tele](coord $dest)")
+        .and_then(|(_, body)| body.split("\n[").next())
+        .is_some_and(|body| {
+            body.lines()
+                .map(str::trim)
+                .filter(|line| !line.is_empty())
+                .take(5)
+                .eq([
+                    "if(map_members = ^false) {",
+                    "if_close;",
+                    "mes(^mes_members_feature);",
+                    "return;",
+                    "}",
+                ])
+                && body.contains("p_telejump($dest);")
+        });
+    if !members_req {
+        return;
+    }
     // `^name` → the tree's tile (`0_mx_mz_lx_lz`, decoded like every other
     // coord literal).
     let mut tree_dests: HashMap<String, WorldTile> = HashMap::new();
@@ -97,22 +120,26 @@ pub(super) fn spirit_tree_edges(
                 level: loc.level,
             };
             for to in &dests {
-                graph.edges.push(TransportEdge {
-                    kind: TransportKind::SpiritTree,
-                    at,
-                    to: *to,
-                    loc_id,
-                    option: 1,
-                    ticks: SPIRIT_TREE_TICKS,
-                    dir: None,
-                    open_loc_id: None,
-                    skill_req: vec![],
-                    item_req: vec![],
-                    quest_req: vec![],
-                    varp_req: varp_req.clone(),
-                    worn_req: vec![],
-                    members_req: false,
-                });
+                gates.admit_edge(
+                    graph,
+                    TransportEdge {
+                        kind: TransportKind::SpiritTree,
+                        at,
+                        to: *to,
+                        loc_id,
+                        option: 1,
+                        ticks: SPIRIT_TREE_TICKS,
+                        dir: None,
+                        open_loc_id: None,
+                        skill_req: vec![],
+                        item_req: vec![],
+                        quest_req: vec![],
+                        varp_req: varp_req.clone(),
+                        worn_req: vec![],
+                        members_req,
+                    },
+                    audit,
+                );
             }
         }
     }

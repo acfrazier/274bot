@@ -922,19 +922,31 @@ fn derive_transports_emits_spirit_tree_edges() {
         .collect();
     let n = trees.len();
     assert!(n >= 8, "rs2b0t catalog is 8 directed hops, got {n}");
-    // Raw tree derivation reads `%grandtree` / `%treequest` completed
-    // thresholds from the script; the pack binder uses their observable
-    // journal names instead of either non-transmitted varp.
+    // Neither quest varp is transmitted; the producer binds the
+    // completed journal row and the shared teleport helper's members guard.
     for e in &trees {
         assert_eq!(e.option, 1, "Talk-to");
         assert_eq!(e.ticks, SPIRIT_TREE_TICKS);
         assert_eq!(e.dir, None);
+        assert!(e.members_req);
+        assert!(e.varp_req.is_empty());
         match e.loc_id {
-            1293 => assert_eq!(e.varp_req, vec![(150, 160)]),
-            1294 | 1317 => assert_eq!(e.varp_req, vec![(111, 9)]),
+            1293 => assert_eq!(e.quest_req, ["The Grand Tree"]),
+            1294 | 1317 => assert_eq!(e.quest_req, ["Tree Gnome Village"]),
             other => panic!("unexpected spirit-tree loc id {other}"),
         }
     }
+    // The young tree near Varrock occupies F2P-world geometry. Its
+    // completed journal row alone cannot override the script's members abort.
+    let young_near_varrock = trees
+        .iter()
+        .find(|e| e.loc_id == 1317 && e.at.x > 3000)
+        .expect("young tree near Varrock");
+    let mut journal = crate::world_state::WorldState::empty();
+    journal.quests.insert("Tree Gnome Village".into());
+    assert!(!journal.allows(young_near_varrock));
+    journal.map_members = true;
+    assert!(journal.allows(young_near_varrock));
     // The stronghold tree (ent, loc 1293) reaches the village, varrock,
     // and khazard trees; the village tree (stronghold_ent, loc 1294)
     // reaches back to khazard, varrock, and the stronghold.
@@ -998,6 +1010,66 @@ fn derive_transports_emits_spirit_tree_edges() {
             z: 3169,
             level: 0
         }));
+}
+
+#[test]
+fn spirit_tree_without_members_abort_is_not_emitted() {
+    let fx = Fixture::new();
+    fx.write(
+        "scripts/areas/area_gnome/configs/spirit_tree.constant",
+        "^village_tree=0_39_49_30_33\n",
+    );
+    let script = "[oploc1,youngtree]\n@spirit_tree_tele(^village_tree);\n\
+[label,spirit_tree_tele](coord $dest)\n\
+if(map_members = ^false) {\n    if_close;\n    mes(^mes_members_feature);\n    return;\n}\n\
+p_telejump($dest);\n";
+    fx.write("scripts/areas/area_gnome/scripts/spirit_tree.rs2", script);
+    let ids = HashMap::from([("youngtree".to_string(), 1317)]);
+    let positions = HashMap::from([(
+        1317,
+        vec![Placement {
+            id: 1317,
+            shape: 10,
+            angle: 0,
+            level: 0,
+            x: 3179,
+            z: 3507,
+        }],
+    )]);
+    let mut graph = TransportGraph::default();
+    let mut skipped = HashMap::new();
+    let mut audit = VarpGateAudit::default();
+    let gates = ObservableGates::from_content(fx.path());
+    spirit_tree_edges(
+        fx.path(),
+        &ids,
+        &positions,
+        &mut graph,
+        &mut skipped,
+        &gates,
+        &mut audit,
+    );
+    assert_eq!(graph.edges.len(), 1);
+    assert!(graph.edges[0].members_req);
+
+    fx.write(
+        "scripts/areas/area_gnome/scripts/spirit_tree.rs2",
+        &script.replace("    return;\n", ""),
+    );
+    graph.edges.clear();
+    spirit_tree_edges(
+        fx.path(),
+        &ids,
+        &positions,
+        &mut graph,
+        &mut skipped,
+        &gates,
+        &mut audit,
+    );
+    assert!(
+        graph.edges.is_empty(),
+        "missing members abort supplies no edge"
+    );
 }
 
 /// The real content must derive at least one `TransportKind::Npc` edge
@@ -2303,9 +2375,8 @@ p_arrivedelay;
     let defs = loc_defs(&[(1747, 1, 1)]);
     let wc = bake_collision(&fx, &defs, &HashSet::new());
     let graph = derive_transports(fx.path(), &defs, &wc);
-    // The unknown ladder name resolves nothing; remaining edges are the
-    // explicit boat/cart/wizard tables plus boat-side disembark planks.
-    // A missing pilot script and journal prove no glider flights.
+    // The unknown ladder name resolves nothing; ungated explicit hops
+    // remain, while Shanks and gliders require absent source proofs.
     let explicit = graph
         .edges
         .iter()
@@ -2324,14 +2395,6 @@ p_arrivedelay;
             .filter(|e| e.kind == TransportKind::Ladder)
             .count(),
         6
-    );
-    assert_eq!(
-        graph
-            .edges
-            .iter()
-            .filter(|e| e.kind == TransportKind::Boat)
-            .count(),
-        8
     );
     // 2 carts + the 5 essence-mine wizard entries + the 2 Elkoy maze
     // escorts.
@@ -2375,6 +2438,11 @@ fn derive_transports_without_door_configs_emits_no_door_edges() {
 #[test]
 fn derive_transports_emits_boat_edges_from_npc_tile_to_dock_tile() {
     let fx = Fixture::new();
+    fx.write("pack/varp.pack", "116=zombiequeen\n");
+    fx.write(
+        "scripts/quests/configs/quest.varp",
+        "[zombiequeen]\ntransmit=yes\n",
+    );
     let defs = loc_defs(&[]);
     let wc = bake_collision(&fx, &defs, &HashSet::new());
     let graph = derive_transports(fx.path(), &defs, &wc);
@@ -2748,6 +2816,10 @@ fn derive_transports_carries_quest_door_varp_req() {
     fx.write("pack/loc.pack", "2526=elenagateshut\n4=mcannondoor1\n");
     fx.write("pack/varp.pack", "165=elenaquest\n0=mcannon\n");
     fx.write(
+        "scripts/quests/configs/quest.varp",
+        "[elenaquest]\ntransmit=yes\n[mcannon]\ntransmit=yes\n",
+    );
+    fx.write(
         "scripts/quests/quest_elena/configs/doors.loc",
         "\
 [elenagateshut]
@@ -2863,6 +2935,10 @@ fn derive_transports_emits_tenzing_free_door_arms() {
         "3743=death_castledoor\n3745=death_sherpa_door\n3746=death_sherpa_backdoor\n",
     );
     fx.write("pack/varp.pack", "314=death_equiproom\n315=death_map\n");
+    fx.write(
+        "scripts/quests/configs/quest.varp",
+        "[death_equiproom]\ntransmit=yes\n",
+    );
     fx.write(
         "scripts/quests/quest_death/configs/quest_death.loc",
         "\
@@ -3747,10 +3823,9 @@ return (getbit_range(%death_map, ^death_map_lower, ^death_map_upper));
     );
 }
 
-/// The real Server content (274) carries the same four Tenzing
-/// directions: 3745's free exit E and gated entry W (completed Death
-/// Plateau), 3746's free garden-to-hut S and gated garden exit N, while
-/// the direct-varp castle door keeps both crossings and its gate.
+/// The real Server content carries Tenzing's four crossings and the
+/// castle's non-transmitted threshold is implied by the completed
+/// Death Plateau journal row.
 #[test]
 fn derive_transports_tenzing_free_arms_from_real_content() {
     let Some((graph, _)) = derive_from_real_content() else {
@@ -3797,15 +3872,10 @@ fn derive_transports_tenzing_free_arms_from_real_content() {
         .iter()
         .filter(|e| e.kind == TransportKind::Door && e.loc_id == 3743)
         .collect();
-    assert_eq!(castle.len(), 2, "the direct-varp door keeps both crossings");
-    for e in &castle {
-        assert_eq!(
-            e.varp_req,
-            vec![(314, 70)],
-            "unchanged `%death_equiproom` gate"
-        );
-        assert!(e.quest_req.is_empty());
-    }
+    assert_eq!(castle.len(), 2);
+    assert!(castle
+        .iter()
+        .all(|e| { e.varp_req.is_empty() && e.quest_req == ["Death Plateau"] }));
 }
 
 #[test]
@@ -3879,7 +3949,20 @@ fn derive_transports_emits_glider_edges_from_platform_to_platform() {
             "the server never transmits grandtree"
         );
         assert_eq!(g.quest_req, ["The Grand Tree"]);
+        assert!(g.members_req, "the pilot's map_members guard is required");
     }
+    fx.write(
+        "scripts/areas/area_gnome/scripts/gnome_glider.rs2",
+        "[opnpc1,gnomepilot]\nif(%grandtree = ^grandtree_complete) {\n    @multi3(\"Can you take me on the glider?\", gnome_pilot_glider);\n}\n",
+    );
+    let no_proof = derive_transports(fx.path(), &defs, &wc);
+    assert!(
+        no_proof
+            .edges
+            .iter()
+            .all(|e| e.kind != TransportKind::Glider),
+        "pilot with missing members proof emits no glider"
+    );
 }
 
 /// Gandius pad → Grand Tree hub admits the visible quest journal row,
@@ -3927,6 +4010,19 @@ fn gandius_glider_reaches_grand_tree_hub_from_journal() {
     );
     let mut journal = crate::world_state::WorldState::empty();
     journal.quests.insert("The Grand Tree".into());
+    assert!(
+        crate::router::find_with(
+            &collision,
+            &graph,
+            pad,
+            hub,
+            crate::router::FindOptions::default(),
+            &journal,
+        )
+        .is_err(),
+        "Gandius is F2P-world geometry, but the pilot still denies F2P"
+    );
+    journal.map_members = true;
     crate::router::find_with(
         &collision,
         &graph,
@@ -3935,7 +4031,7 @@ fn gandius_glider_reaches_grand_tree_hub_from_journal() {
         crate::router::FindOptions::default(),
         &journal,
     )
-    .expect("Gandius → Grand Tree hub with journal complete");
+    .expect("Gandius → Grand Tree hub with members and journal complete");
 }
 
 #[test]
@@ -6878,7 +6974,7 @@ param=next_loc_stage,loc_1563
 }
 
 #[test]
-fn baked_varp_gates_require_transmission_or_a_unique_completed_journal_proof() {
+fn producers_require_transmission_or_a_unique_completed_journal_proof() {
     let fx = Fixture::new();
     fx.write(
         "pack/varp.pack",
@@ -6924,18 +7020,29 @@ fn baked_varp_gates_require_transmission_or_a_unique_completed_journal_proof() {
         worn_req: vec![],
         members_req: false,
     };
-    let mut graph = TransportGraph {
-        edges: vec![
-            edge(10, 150, 160),
-            edge(11, 145, 4),
-            edge(12, 146, 10),
-            edge(13, 500, 3),
-            edge(14, 150, 161),
-        ],
-        at: HashMap::new(),
-        teleports: vec![],
-    };
-    let audit = bind_observable_varp_gates(fx.path(), &mut graph);
+    let raw = [
+        edge(10, 150, 160),
+        edge(11, 145, 4),
+        edge(12, 146, 10),
+        edge(13, 500, 3),
+        edge(14, 150, 161),
+    ];
+    let gates = ObservableGates::from_content(fx.path());
+    let mut graph = TransportGraph::default();
+    let mut audit = VarpGateAudit::default();
+    assert!(
+        std::panic::catch_unwind(|| {
+            let mut invalid = TransportGraph::default();
+            invalid.edges.push(raw[0].clone());
+            assert_transmitted_varp_reqs(fx.path(), &invalid);
+        })
+        .is_err(),
+        "the pack assertion rejects raw producer output before any filtering"
+    );
+    for edge in raw {
+        gates.admit_edge(&mut graph, edge, &mut audit);
+    }
+    assert_transmitted_varp_reqs(fx.path(), &graph);
     assert_eq!(audit.converted, 1);
     assert_eq!(audit.omitted, HashMap::from([(145, 1), (146, 1), (150, 1)]));
     assert_eq!(graph.edges.len(), 2);
@@ -6945,11 +7052,6 @@ fn baked_varp_gates_require_transmission_or_a_unique_completed_journal_proof() {
         graph.edges[1].varp_req,
         [(500, 3)],
         "transmitted varp stays"
-    );
-    assert_eq!(
-        graph.at[&graph.edges[0].at],
-        [0, 1],
-        "reindexed after omitted edges"
     );
 }
 
