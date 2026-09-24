@@ -1398,8 +1398,8 @@ impl ClueRuntime {
         }
         self.token = self.token.wrapping_add(1);
         self.phase = Phase::Gate;
-        // Strictly captured: `next` requires the same generation to be
-        // posted again, so a wrapper that stops sending it fails closed.
+        // Captured at begin. A posted generation that does not match is
+        // aborted; an omitted key (the Clue family payload) is not.
         self.generation = input.get("generation").and_then(Value::as_u64).unwrap_or(0);
         self.step_id = row.id;
         json!({ "kind": "token", "token": self.token })
@@ -5034,7 +5034,6 @@ pub fn on_hold(held: bool) {
 /// leave-in-pack latch across a relog too. Operator Stop is
 /// [`on_stop`], not this.
 pub fn on_reset() {
-    observed::on_reset();
     RUNTIME.with(|rt| rt.borrow_mut().abort());
 }
 

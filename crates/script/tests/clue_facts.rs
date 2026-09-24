@@ -3879,7 +3879,15 @@ export function tick(api) {
         &iso,
         7,
         &page,
-        &guarded_scene(arrived, &names, &[outside_npc], &overlay_off, &[], false, false),
+        &guarded_scene(
+            arrived,
+            &names,
+            &[outside_npc],
+            &overlay_off,
+            &[],
+            false,
+            false,
+        ),
     );
     iso.on_game_tick(7);
     assert!(iso.probe("true").is_ok());
@@ -3894,7 +3902,15 @@ export function tick(api) {
         &iso,
         8,
         &page,
-        &guarded_scene(arrived, &names, &[near_npc], &overlay_off, &[], false, false),
+        &guarded_scene(
+            arrived,
+            &names,
+            &[near_npc],
+            &overlay_off,
+            &[],
+            false,
+            false,
+        ),
     );
     iso.on_game_tick(8);
     assert!(iso.probe("true").is_ok());
@@ -4347,6 +4363,7 @@ export function tick(api) {
     }
 }
 
+#[test]
 fn v2_clue_begin_keeps_family_absence_apart_from_none_held() {
     let src = r#"
 export const apiVersion = 2;
