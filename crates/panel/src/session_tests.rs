@@ -4079,7 +4079,7 @@ fn save_credentials_upserts_under_username_key_keeping_uid() {
 }
 
 #[test]
-fn chooser_world_edit_persists_for_next_slot_start() {
+fn chooser_world_edit_persists_and_updates_running_slot() {
     let path = tmp_vault("world-choice.vault");
     let mut session = Session::new();
     session.vault = Some(Vault::create(&path, "bot").unwrap());
@@ -4089,6 +4089,21 @@ fn chooser_world_edit_persists_for_next_slot_start() {
         .unwrap()
         .upsert(profile("alice", "pw", 42))
         .unwrap();
+    let mut play = host_play::run_with_io(
+        &host_play::PlayOptions {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            lowmem: true,
+            mainland: false,
+        },
+        vec![],
+        |_| (None, None),
+        |_, _, _| {},
+    );
+    let arm = SlotArm::new(42, false);
+    play.attach_arm("alice", Arc::clone(&arm));
+    session.play = Some(play);
     session.begin_edit_profile(Some("alice"));
     assert_eq!(session.cred_settings.world, None);
     session.cred_settings.world = Some(2);
@@ -4102,6 +4117,11 @@ fn chooser_world_edit_persists_for_next_slot_start() {
             .world,
         Some(2)
     );
+    assert_eq!(
+        *arm.world.lock(),
+        Some(2),
+        "the profile-save path must update a running slot's next handshake"
+    );
     session.cred_settings.world = None;
     session.cred_pass = "updated".into();
     assert!(session.save_credentials());
@@ -4114,6 +4134,11 @@ fn chooser_world_edit_persists_for_next_slot_start() {
             .world,
         Some(2),
         "a credentials save outside the editor must not unpin an account"
+    );
+    assert_eq!(
+        *arm.world.lock(),
+        Some(2),
+        "a non-editor save must preserve the running slot's pin"
     );
 }
 

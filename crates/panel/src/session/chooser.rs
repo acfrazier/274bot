@@ -50,7 +50,12 @@ impl Session {
                     .unwrap_or_else(|| self.cred_settings.clone()),
             }
         };
-        match self.vault.as_mut().expect("vault checked").upsert(profile) {
+        match self
+            .vault
+            .as_mut()
+            .expect("vault checked")
+            .upsert(profile.clone())
+        {
             Ok(()) => {}
             Err(e) => {
                 self.error = Some(format!("credentials: {e}"));
@@ -66,8 +71,12 @@ impl Session {
                 }
             }
         }
+        if let Some(play) = self.play.as_mut() {
+            play.remember_profile(profile);
+        }
         self.chooser_edit = None;
-        // `select` builds the arm from the vault auto-login setting.
+        // `select` builds the arm from the vault auto-login setting; a
+        // running slot already received its next-handshake settings above.
         self.error = None;
         self.select(&username);
         true

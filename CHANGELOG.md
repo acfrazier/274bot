@@ -6,10 +6,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
 ## [0.1.8.1] — Public worlds
 
 - Public 289 world endpoints come from editable `~/.274bot/worlds.json`
-  (w1/w2 defaults); account settings can pin a world or choose auto.
+  (w1/w2 defaults); account settings can pin a world or choose auto, and
+  panel edits apply to an already-running slot at its next login handshake.
 - Auto accounts move to the next world on a full-world login response, with
-  a pause after all worlds report full. Panel and TUI show the active world;
-  `tui-play --world N` sets the default for auto accounts.
+  a pause after all worlds report full. Panel and TUI show the world used by
+  the current connection; `tui-play --world N` sets the default for auto
+  accounts.
 - Public login fetches the world's RSA modulus at runtime with a baked-key
   fallback and refreshes after a wrong-key response. The shared cache tries
   the next listed asset world if the first cannot be reached.

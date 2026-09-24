@@ -126,7 +126,8 @@ impl PublicWorlds {
 pub struct WorldRound {
     pub index: usize,
     full_in_round: usize,
-    pinned: bool,
+    choice: Option<u16>,
+    auto_default: Option<u16>,
 }
 
 /// A slot's next action after a login error. Callers can supply a pinned
@@ -156,8 +157,24 @@ impl WorldRound {
         Ok(Self {
             index,
             full_in_round: 0,
-            pinned: choice.is_some(),
+            choice,
+            auto_default,
         })
+    }
+
+    /// Rebuild this round when the operator's account preference changed.
+    /// Auto rotation does not count as a preference change: `choice` stays
+    /// `None` while `index` advances through full worlds.
+    pub fn reselect_if_changed(
+        &mut self,
+        worlds: &PublicWorlds,
+        choice: Option<u16>,
+    ) -> Result<bool, String> {
+        if self.choice == choice {
+            return Ok(false);
+        }
+        *self = Self::new(worlds, choice, self.auto_default)?;
+        Ok(true)
     }
 
     /// Only response 7 rotates an auto account. A non-full error starts a
@@ -167,7 +184,7 @@ impl WorldRound {
             self.full_in_round = 0;
             return WorldErrorStep::Stay;
         }
-        if self.pinned || world_count == 1 {
+        if self.choice.is_some() || world_count == 1 {
             return WorldErrorStep::Stay;
         }
         self.full_in_round += 1;
