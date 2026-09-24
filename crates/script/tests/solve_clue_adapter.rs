@@ -1406,7 +1406,8 @@ export default class T extends TaskBot {
         "an open chat blocks the Talk-to"
     );
 
-    // Tick 5: the posted `chat_continue` half of the same gate.
+    // Tick 5: a posted `chat_continue` (no options, no count dialog) is
+    // drained first, as frozen `drainChat`: a continue, never the Talk-to.
     post_scene(
         &iso,
         5,
@@ -1423,9 +1424,10 @@ export default class T extends TaskBot {
         },
     );
     tick(&iso, 5);
-    assert!(
-        iso.drain_interacts().is_empty(),
-        "a posted continue blocks the Talk-to too"
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::ContinueDialog],
+        "a posted continue is continued before the Talk-to"
     );
 
     // Tick 6: a posted hitpoints at zero ends the session: the token is gone
