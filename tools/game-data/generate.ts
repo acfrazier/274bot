@@ -1204,7 +1204,7 @@ export function extractNurmofEssenceFacts(content: string, items: ObjType[], npc
         },
         curated_vendor_tactics: {
             label: 'curated',
-            authority: 'reference rs2b0t-beecd9126b src/bot/api/acquisition/ToolAcquire.ts NURMOF_VENDOR',
+            authority: 'reference rs2b0t-00d39a17e0 src/bot/api/acquisition/ToolAcquire.ts NURMOF_VENDOR',
             keeper: 'Nurmof',
             stand: { x: 2997, z: 9844, plane: 0 },
             bank_stand: { x: 3013, z: 3355, plane: 0 },
@@ -1270,7 +1270,7 @@ export function extractFlourSixFacts(content: string, items: ObjType[]) {
             plane: 0,
             role: 'interaction_near',
             provenance: 'curated',
-            authority: 'reference rs2b0t-beecd9126b src/bot/api/ai/quests/defs/murder/areas.ts MURDER_TILE.FLOUR_BARREL',
+            authority: 'reference rs2b0t-00d39a17e0 src/bot/api/ai/quests/defs/murder/areas.ts MURDER_TILE.FLOUR_BARREL',
             note: 'FlourCollector Reach.locOp near / recovery anchor; not the jm2 loc tile (object at z=3582).',
         },
         bank_tile: {
@@ -1278,7 +1278,7 @@ export function extractFlourSixFacts(content: string, items: ObjType[]) {
             z: 3491,
             plane: 0,
             provenance: 'curated',
-            authority: 'reference rs2b0t-beecd9126b src/bot/api/ai/quests/defs/murder/areas.ts MURDER_TILE.BANK',
+            authority: 'reference rs2b0t-00d39a17e0 src/bot/api/ai/quests/defs/murder/areas.ts MURDER_TILE.BANK',
             note: 'Bank stand tile for Murder Mystery withdraw; not a loc placement row in selected content.',
         },
     };

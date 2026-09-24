@@ -1,10 +1,10 @@
 {
   "schema": "r018-equipment-names-curated-1",
   "source": {
-    "path": ".superpowers/release-0.1.8/reference/rs2b0t-beecd9126b/src/bot/api/combat/equipment.ts",
+    "path": ".superpowers/release-0.1.9/reference/rs2b0t-00d39a17e0/src/bot/api/combat/equipment.ts",
     "sha256": "ec2ab37311b6373046626f08777ebbbf5f86590e6599c7a3f906acedc79151d3",
     "bytes": 2360,
-    "commit": "beecd9126b"
+    "commit": "00d39a17e0"
   },
   "families": {
     "bows": [

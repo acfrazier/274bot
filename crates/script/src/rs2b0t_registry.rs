@@ -744,7 +744,7 @@ pub(crate) fn is_revision_fact_option_ident(ident: &str) -> bool {
 
 /// W1c `equipment_names` families backing a frozen settings `options` /
 /// `optionsFrom` ident. `RANGED_WEAPONS` and `ROCK_CRAB_RANGED_WEAPONS` mirror
-/// `.superpowers/release-0.1.8/reference/rs2b0t-beecd9126b/src/bot/api/combat/ranged.ts`
+/// `.superpowers/release-0.1.9/reference/rs2b0t-00d39a17e0/src/bot/api/combat/ranged.ts`
 /// (`[...BOWS, ...DARTS]`). `AXES` and `DROP_DB` stay outside W1c.
 pub(crate) fn w1c_equipment_option_families(ident: &str) -> Option<&'static [&'static str]> {
     Some(match ident {
@@ -2917,7 +2917,7 @@ ScriptRegistry.register({ name: 'ShopBuyout', settingsSchema: SETTINGS, create: 
         use client::io::ClientRevision;
 
         const FROZEN_SETTINGS: &str = "src/bot/scripts/FireGiant/FireGiant.ts";
-        const FROZEN_PIN: &str = "beecd9126b";
+        const FROZEN_PIN: &str = "00d39a17e0";
 
         let root = PathBuf::from(
             std::env::var("RS2B0T").expect("RS2B0T must name the frozen catalog root"),

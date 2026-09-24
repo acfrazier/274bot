@@ -67682,7 +67682,7 @@
     },
     "curated_vendor_tactics": {
       "label": "curated",
-      "authority": "reference rs2b0t-beecd9126b src/bot/api/acquisition/ToolAcquire.ts NURMOF_VENDOR",
+      "authority": "reference rs2b0t-00d39a17e0 src/bot/api/acquisition/ToolAcquire.ts NURMOF_VENDOR",
       "keeper": "Nurmof",
       "stand": {
         "x": 2997,
@@ -67743,7 +67743,7 @@
       "plane": 0,
       "role": "interaction_near",
       "provenance": "curated",
-      "authority": "reference rs2b0t-beecd9126b src/bot/api/ai/quests/defs/murder/areas.ts MURDER_TILE.FLOUR_BARREL",
+      "authority": "reference rs2b0t-00d39a17e0 src/bot/api/ai/quests/defs/murder/areas.ts MURDER_TILE.FLOUR_BARREL",
       "note": "FlourCollector Reach.locOp near / recovery anchor; not the jm2 loc tile (object at z=3582)."
     },
     "bank_tile": {
@@ -67751,7 +67751,7 @@
       "z": 3491,
       "plane": 0,
       "provenance": "curated",
-      "authority": "reference rs2b0t-beecd9126b src/bot/api/ai/quests/defs/murder/areas.ts MURDER_TILE.BANK",
+      "authority": "reference rs2b0t-00d39a17e0 src/bot/api/ai/quests/defs/murder/areas.ts MURDER_TILE.BANK",
       "note": "Bank stand tile for Murder Mystery withdraw; not a loc placement row in selected content."
     }
   },
@@ -67759,13 +67759,13 @@
     "curated_input": {
       "path": "tools/game-data/equipment-names.curated.json",
       "bytes": 2613,
-      "sha256": "4c1a2f5c94ad1cfc6354fe064521abc680187b1fd9fc471d25e82cd8ec84b9e1"
+      "sha256": "2e00f6383fd1341468d1b07ed14b179ddfd5bf0ae4ddde122dbd110891d5048d"
     },
     "equipment_source": {
-      "path": ".superpowers/release-0.1.8/reference/rs2b0t-beecd9126b/src/bot/api/combat/equipment.ts",
+      "path": ".superpowers/release-0.1.9/reference/rs2b0t-00d39a17e0/src/bot/api/combat/equipment.ts",
       "bytes": 2360,
       "sha256": "ec2ab37311b6373046626f08777ebbbf5f86590e6599c7a3f906acedc79151d3",
-      "commit": "beecd9126b"
+      "commit": "00d39a17e0"
     },
     "equipment_evidence": {
       "path": "tools/game-data/equipment-names.frozen.ts",
