@@ -2417,10 +2417,9 @@ fn tick_loop(
                     Some((x, z, level)) => crate::shim::InteractReq::RecoveryAnchor { x, z, level },
                     None => crate::shim::InteractReq::RecoveryAnchorNone,
                 };
-                runtime
-                    .deno_runtime()
-                    .v8_isolate()
-                    .cancel_terminate_execution();
+                // Also clears a watchdog mark fired at this slow eval, so
+                // the next tick's machine pass is not halted by it.
+                cancel_terminate(&mut runtime, &teardown);
                 if start.elapsed() > SLOW_TICK {
                     let _ = out.send(ThreadMsg::Log(format!(
                         "slow recoveryAnchor: {:?}",
@@ -3633,6 +3632,45 @@ loop() {
             "join abandoned the isolate after {:?}",
             t0.elapsed()
         );
+    }
+
+    #[test]
+    fn machines_step_normally_again_after_a_watchdog_fire() {
+        // A callback spins on tick 2; dispatching tick 3 fires the
+        // watchdog. Once that tick's cancel clears the mark, a machine
+        // started afterwards must step every tick and complete.
+        let iso = spawn_machine_card(
+            "globalThis.__first = await runMachine('burst', { calls: 1, keep: true }, {
+                 each() { for (;;) {} },
+             });
+             globalThis.__startedAt = globalThis.__rs2b0t_host.tick;
+             globalThis.__out = await runMachine('probe', { button: 10, steps: 1 });
+             globalThis.__at = globalThis.__rs2b0t_host.tick;",
+        );
+        machine_tick(&iso, 1);
+        iso.on_game_tick(2);
+        std::thread::sleep(Duration::from_millis(200));
+        machine_tick(&iso, 3);
+        assert_eq!(
+            iso.probe("globalThis.__first").unwrap(),
+            serde_json::json!({ "kind": "aborted", "reason": "terminated" })
+        );
+        let started: u64 =
+            serde_json::from_value(iso.probe("globalThis.__startedAt").unwrap()).unwrap();
+        assert_eq!(iso.drain_interacts(), vec![if_button(10)]);
+        machine_tick(&iso, started + 1);
+        assert_eq!(
+            iso.drain_interacts(),
+            vec![if_button(11)],
+            "the first tick after the start steps the machine"
+        );
+        machine_tick(&iso, started + 2);
+        assert_eq!(
+            iso.probe("globalThis.__out").unwrap(),
+            serde_json::json!({ "kind": "done", "value": 1 })
+        );
+        assert_eq!(iso.probe("globalThis.__at").unwrap(), started + 2);
+        iso.join();
     }
 
     #[test]
