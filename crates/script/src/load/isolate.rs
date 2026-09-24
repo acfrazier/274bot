@@ -1076,11 +1076,15 @@ fn paint_frame(
 /// holds (`:38-59`): in game, scene state 2, a local tile, and stats
 /// loaded — or detached, which here is an isolate that was never posted a
 /// session (`ingame` absent), as rs2b0t treats an unattached reader.
-/// rs2b0t's `statsReady` also requires each stat to arrive in this login;
-/// the host posts no per-login stat generation, so this uses its
-/// `activeStatsReady` rule (every used stat's base level above 0). The
-/// script-state term (running or paused) is implicit: the isolate paints
-/// only on ticks it runs.
+/// rs2b0t's `statsReady` also requires each stat to arrive in this login.
+/// The host empties posted stats at logout and on every session change
+/// (`GameSnapshot::reset_session`), so the gate closes until the new
+/// session's first `UPDATE_STAT`; this uses the `activeStatsReady` rule
+/// (every used stat's base level above 0). The only gap left is a mix of
+/// old and new values inside the same account's login stat burst: exact
+/// per-slot parity would need a per-slot seen generation in the client.
+/// The script-state term (running or paused) is implicit: the isolate
+/// paints only on ticks it runs.
 fn compat_may_paint(runner: &Runner) -> bool {
     runner.start_ok
         && crate::observed::with(|scene| {
