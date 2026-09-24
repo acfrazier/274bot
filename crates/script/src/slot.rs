@@ -288,28 +288,9 @@ impl SlotScript {
         }
     }
 
-    /// Construct a script slot sharing its run-policy overlay with the host
-    /// slot that drives the same client.
-    pub fn with_run_policy_override(
-        run_policy_override: Arc<api::run_policy::RunPolicyOverrideCell>,
-    ) -> Self {
-        run_policy_override.clear();
-        let mut slot = Self::new();
-        slot.run_policy_override = run_policy_override;
-        slot
-    }
-
-    /// Bind the host slot's overlay before a script starts.
-    pub fn bind_run_policy_override(
-        &mut self,
-        run_policy_override: Arc<api::run_policy::RunPolicyOverrideCell>,
-    ) -> Result<(), String> {
-        if self.has_instance() || matches!(self.state, RunState::Starting | RunState::Stopping) {
-            return Err("run policy cannot be rebound while a script is active".into());
-        }
-        run_policy_override.clear();
-        self.run_policy_override = run_policy_override;
-        Ok(())
+    /// The host slot reads the same cell as this script slot's V8 binding.
+    pub fn run_policy_override_cell(&self) -> Arc<api::run_policy::RunPolicyOverrideCell> {
+        Arc::clone(&self.run_policy_override)
     }
 
     pub fn run_policy_override(&self) -> Option<api::run_policy::RunPolicyOverride> {
@@ -548,7 +529,7 @@ impl SlotScript {
     /// the runtime generation (a queued Start already moved it).
     #[cfg(feature = "load")]
     fn spawn_isolate(&mut self, identity: SlotLoadIdentity, bump: bool) -> Result<(), String> {
-        let isolate = LoadIsolate::spawn_with_content_and_run_policy(
+        let isolate = LoadIsolate::spawn_with_content(
             identity.source.to_string(),
             identity.shape,
             identity.siblings.iter().cloned().collect(),
@@ -680,6 +661,9 @@ impl SlotScript {
 
     #[cfg(feature = "load")]
     fn complete_stop(&mut self) {
+        // Frozen ScriptRunner.ts:389-397 runs onStop before clearing the
+        // RunManager overlay. The reaper has finished the hook at this point.
+        self.run_policy_override.clear();
         self.stop_rx = None;
         self.last_snapshot = None;
         self.last_world_id = None;

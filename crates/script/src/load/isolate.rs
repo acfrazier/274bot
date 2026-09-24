@@ -315,27 +315,9 @@ impl LoadIsolate {
         )
     }
 
-    /// Spawn with selected-revision facts and already-resolved named
-    /// bank aliases. Existing constructors post empty aliases.
+    /// Spawn with selected-revision facts, named aliases, and the script
+    /// slot's shared run-policy cell.
     pub fn spawn_with_content(
-        js: String,
-        shape: LoadShape,
-        siblings: Vec<(String, String)>,
-        game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
-        named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
-    ) -> Result<Self, String> {
-        Self::spawn_inner(
-            js,
-            shape,
-            siblings,
-            game_data,
-            named_banks,
-            std::sync::Arc::new(api::run_policy::RunPolicyOverrideCell::new()),
-        )
-    }
-
-    /// Spawn with the script-session run-policy cell shared by the host slot.
-    pub fn spawn_with_content_and_run_policy(
         js: String,
         shape: LoadShape,
         siblings: Vec<(String, String)>,

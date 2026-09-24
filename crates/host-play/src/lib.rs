@@ -2348,6 +2348,44 @@ fn publish_session_boundary_status(
     session_boundary
 }
 
+#[allow(clippy::too_many_arguments)]
+fn run_client_for_script_slot<F, P, K>(
+    client: &mut Client,
+    username: &str,
+    settings: vault::ProfileSettings,
+    random_events: Arc<AtomicBool>,
+    lamp_auto: Arc<AtomicBool>,
+    lamp_skill: Arc<Mutex<String>>,
+    input: Option<Arc<SlotInput>>,
+    mailbox: Option<Arc<FrameBuf>>,
+    ctl: Option<Arc<SlotPark>>,
+    script_slot: &ScriptSlot,
+    observe: F,
+    probe: P,
+    knock: K,
+) where
+    F: FnMut(&mut Client, &str, u32, &RandomStatus) -> bool,
+    P: FnMut(&mut Client) -> bool,
+    K: FnMut(&DetectedRandom) -> RandomClaim,
+{
+    let run_policy_override = script_slot.lock().unwrap().run_policy_override_cell();
+    Host::run_client(
+        client,
+        username,
+        settings,
+        random_events,
+        lamp_auto,
+        lamp_skill,
+        input,
+        mailbox,
+        ctl,
+        run_policy_override,
+        observe,
+        probe,
+        knock,
+    );
+}
+
 /// Every profile spawns one slot thread; shared handles are threaded through
 /// because the closure moves most of them (allowed: see `script_observe`).
 #[allow(clippy::too_many_arguments)]
@@ -2401,13 +2439,9 @@ fn spawn_slot_thread(
             }
             let slot_script = script_slot_or_insert(&slot_scripts, &username);
             let slot_input = slot_input.unwrap_or_else(SlotInput::new);
-            let run_policy_override = Arc::new(api::run_policy::RunPolicyOverrideCell::new());
             {
                 let mut slot_script = slot_script.lock().unwrap();
                 slot_script.bind_native_input(slot_input.authority());
-                slot_script
-                    .bind_run_policy_override(Arc::clone(&run_policy_override))
-                    .expect("run-policy override is bound before script start");
             }
             slot_cheats
                 .lock()
@@ -2563,7 +2597,7 @@ fn spawn_slot_thread(
                     let mut slot = slot.lock().unwrap();
                     slot.on_random(ev)
                 };
-                Host::run_client(
+                run_client_for_script_slot(
                     &mut client,
                     &username,
                     profile.settings.clone(),
@@ -2573,7 +2607,7 @@ fn spawn_slot_thread(
                     Some(slot_input.clone()),
                     slot_mailbox.clone(),
                     park.clone(),
-                    Arc::clone(&run_policy_override),
+                    &slot_script,
                     {
                         let slot_frame = Arc::clone(&slot_frame);
                         let slot_statuses = Arc::clone(&slot_statuses);

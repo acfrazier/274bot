@@ -42,7 +42,7 @@ export default class T extends LoopingBot {
         slot.run_policy_override(),
         Some(api::run_policy::RunPolicyOverride {
             run_auto: None,
-            energy_min: Some(55),
+            energy_min: Some(api::run_policy::RunEnergyMin::Floor(55)),
         }),
         "the second call replaces the whole snapshot"
     );
@@ -51,14 +51,14 @@ export default class T extends LoopingBot {
     assert_eq!(
         slot.run_policy_override(),
         None,
-        "Stop returns auto-run to global"
+        "Stop returns auto-run to the host defaults"
     );
     wait_state(&mut slot, RunState::Idle);
 
     slot.run_policy_override
         .set(Some(api::run_policy::RunPolicyOverride {
             run_auto: Some(false),
-            energy_min: Some(99),
+            energy_min: Some(api::run_policy::RunEnergyMin::Floor(99)),
         }));
     slot.start_load(
         "export default class T extends LoopingBot { loop() {} }".into(),
@@ -72,6 +72,151 @@ export default class T extends LoopingBot {
         "the next Start clears a leftover harness or previous-run override"
     );
     slot.stop();
+}
+#[cfg(feature = "load")]
+#[test]
+fn run_manager_override_uses_frozen_javascript_coercions() {
+    let source = r#"
+import { RunManager } from '../../runtime/RunManager.js';
+export default class T extends LoopingBot {
+    loop() {
+        const step = this.step || 0;
+        switch (step) {
+            case 0:
+                globalThis.__override_return = RunManager.override({ energyMin: Infinity });
+                break;
+            case 1:
+                RunManager.override({ energyMin: -Infinity });
+                break;
+            case 2:
+                RunManager.override({ energyMin: NaN });
+                break;
+            case 3:
+                RunManager.override({ energyMin: '50' });
+                break;
+            case 4:
+                RunManager.override({ runAuto: 0, energyMin: '50' });
+                break;
+            case 5:
+                RunManager.override({ runAuto: '' });
+                break;
+            case 6:
+                RunManager.override({ runAuto: {} });
+                break;
+            case 7:
+                RunManager.override({ runAuto: null, energyMin: null });
+                break;
+        }
+        this.step = step + 1;
+    }
+}
+"#;
+    let mut slot = SlotScript::new();
+    slot.start_load(source.into(), LoadShape::CompatClass, vec![])
+        .unwrap();
+    wait_state(&mut slot, RunState::Running);
+
+    use api::run_policy::{RunEnergyMin, RunPolicyOverride};
+    let expected = [
+        Some(RunPolicyOverride {
+            run_auto: None,
+            energy_min: Some(RunEnergyMin::Floor(100)),
+        }),
+        Some(RunPolicyOverride {
+            run_auto: None,
+            energy_min: Some(RunEnergyMin::Floor(0)),
+        }),
+        Some(RunPolicyOverride {
+            run_auto: None,
+            energy_min: Some(RunEnergyMin::NotANumber),
+        }),
+        Some(RunPolicyOverride {
+            run_auto: None,
+            energy_min: Some(RunEnergyMin::Floor(50)),
+        }),
+        Some(RunPolicyOverride {
+            run_auto: Some(false),
+            energy_min: Some(RunEnergyMin::Floor(50)),
+        }),
+        Some(RunPolicyOverride {
+            run_auto: Some(false),
+            energy_min: None,
+        }),
+        Some(RunPolicyOverride {
+            run_auto: Some(true),
+            energy_min: None,
+        }),
+        None,
+    ];
+    for (index, expected) in expected.into_iter().enumerate() {
+        slot.load.as_ref().unwrap().on_game_tick(index as u64 + 1);
+        slot.probe("true")
+            .expect("override tick settles before probe");
+        assert_eq!(slot.run_policy_override(), expected, "case {index}");
+        if index == 0 {
+            assert_eq!(
+                slot.probe("__override_return === undefined").unwrap(),
+                serde_json::json!(true),
+                "RunManager.override returns the frozen undefined value"
+            );
+        }
+    }
+    slot.stop();
+    wait_state(&mut slot, RunState::Idle);
+}
+
+#[cfg(feature = "load")]
+#[test]
+fn on_stop_override_is_cleared_before_idle_or_queued_start() {
+    let old_source = r#"
+import { RunManager } from '../../runtime/RunManager.js';
+export default class Old extends LoopingBot {
+    loop() {}
+    onStop() {
+        RunManager.override({ runAuto: false });
+        this.log('onstop-policy-set');
+    }
+}
+"#;
+    let mut slot = SlotScript::new();
+    let cell = slot.run_policy_override_cell();
+    slot.start_load(old_source.into(), LoadShape::CompatClass, vec![])
+        .unwrap();
+    wait_state(&mut slot, RunState::Running);
+    slot.stop();
+    wait_state(&mut slot, RunState::Idle);
+    assert!(
+        slot.take_pending_logs()
+            .iter()
+            .any(|line| line.contains("onstop-policy-set")),
+        "the Stop teardown hook actually writes the overlay"
+    );
+    assert_eq!(cell.get(), None, "Stop → Idle clears the onStop write");
+
+    slot.start_load(old_source.into(), LoadShape::CompatClass, vec![])
+        .unwrap();
+    wait_state(&mut slot, RunState::Running);
+    slot.stop();
+    slot.start_load(
+        "export default class New extends LoopingBot { loop() {} }".into(),
+        LoadShape::CompatClass,
+        vec![],
+    )
+    .expect("Start queues behind the old isolate reap");
+    wait_state(&mut slot, RunState::Running);
+    assert_eq!(
+        cell.get(),
+        None,
+        "Stop → immediate Start does not carry the previous onStop write"
+    );
+    assert!(
+        slot.take_pending_logs()
+            .iter()
+            .any(|line| line.contains("onstop-policy-set")),
+        "the old isolate's onStop ran before the new run reached Running"
+    );
+    slot.stop();
+    wait_state(&mut slot, RunState::Idle);
 }
 
 #[cfg(feature = "load")]

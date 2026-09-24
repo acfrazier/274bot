@@ -665,6 +665,7 @@ fn spawn_with_named_banks(src: &str, facts: NamedBankFacts) -> LoadIsolate {
         vec![],
         None,
         Arc::new(facts),
+        Arc::new(api::run_policy::RunPolicyOverrideCell::new()),
     )
     .unwrap()
 }
@@ -749,9 +750,15 @@ fn autofighter_catalog_module_graph_loads_bank_unlocked_export() {
     .expect("AutoFighter siblings");
     let facts = Arc::new(resolve(BANK_ALIASES, &packed_bank_booths(), |_| true));
     let game_data = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
-    let iso =
-        LoadIsolate::spawn_with_content(card.js, card.shape, siblings, Some(game_data), facts)
-            .expect("AutoFighter module graph must load");
+    let iso = LoadIsolate::spawn_with_content(
+        card.js,
+        card.shape,
+        siblings,
+        Some(game_data),
+        facts,
+        Arc::new(api::run_policy::RunPolicyOverrideCell::new()),
+    )
+    .expect("AutoFighter module graph must load");
     iso.on_game_tick(1);
     let logs = iso.drain_logs();
     assert!(

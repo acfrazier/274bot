@@ -54,8 +54,8 @@ best-effort and untested in this release.
   is pending. In the ResetSession window the v2 quest journal/status return
   `snapshot-unavailable`.
 - `RunManager.override({ runAuto?, energyMin? })` supplies the matching host
-  slot's per-session auto-run overlay. Missing fields fall through to Global,
-  and Start or Stop clears the overlay without changing the global setting.
+  slot's per-session auto-run overlay. Missing fields fall through to host
+  defaults (`runAuto: true`, `energyMin: 20`); Start or Stop clears the overlay.
 
 ### Gameplay fixes (live 289)
 

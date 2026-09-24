@@ -58,6 +58,8 @@ mod quest_facts_v8;
 #[cfg(feature = "load")]
 pub(crate) mod reach_query;
 #[cfg(feature = "load")]
+mod run_policy_v8;
+#[cfg(feature = "load")]
 mod scene_v8;
 mod selected_facts_v8;
 mod shape;

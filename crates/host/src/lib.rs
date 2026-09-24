@@ -219,48 +219,10 @@ impl Host {
     /// (EOF, partial packet) skips the socket on the next park so it cannot
     /// busy-spin.
     ///
-    /// This is the single slot entry point. The required run-policy cell is
-    /// shared with the matching script slot (or left unset for unscripted
-    /// slots), so Start/Stop and `RunManager.override` affect host auto-run.
+    /// This is the single slot entry point. Its cell is owned by the matching
+    /// script slot and remains unset until a script calls `RunManager.override`.
     #[allow(clippy::too_many_arguments)]
     pub fn run_client<F, P, K>(
-        client: &mut Client,
-        username: &str,
-        settings: ProfileSettings,
-        random_events: Arc<AtomicBool>,
-        lamp_auto: Arc<AtomicBool>,
-        lamp_skill: Arc<Mutex<String>>,
-        input: Option<Arc<SlotInput>>,
-        mailbox: Option<Arc<FrameBuf>>,
-        ctl: Option<Arc<SlotPark>>,
-        run_policy_override: Arc<RunPolicyOverrideCell>,
-        observe: F,
-        probe: P,
-        knock: K,
-    ) where
-        F: FnMut(&mut Client, &str, u32, &RandomStatus) -> bool,
-        P: FnMut(&mut Client) -> bool,
-        K: FnMut(&DetectedRandom) -> RandomClaim,
-    {
-        Self::run_client_inner(
-            client,
-            username,
-            settings,
-            random_events,
-            lamp_auto,
-            lamp_skill,
-            input,
-            mailbox,
-            ctl,
-            run_policy_override,
-            observe,
-            probe,
-            knock,
-        );
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn run_client_inner<F, P, K>(
         client: &mut Client,
         username: &str,
         settings: ProfileSettings,

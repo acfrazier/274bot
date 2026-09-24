@@ -111,6 +111,7 @@ fn spawn(src: &str, facts: NamedBankFacts) -> LoadIsolate {
         vec![],
         None,
         Arc::new(facts),
+        Arc::new(api::run_policy::RunPolicyOverrideCell::new()),
     )
     .unwrap()
 }

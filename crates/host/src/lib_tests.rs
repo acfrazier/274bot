@@ -814,14 +814,20 @@ fn script_run_override_applies_until_shared_cell_is_cleared() {
     slot.run_policy_override
         .set(Some(api::run_policy::RunPolicyOverride {
             run_auto: None,
-            energy_min: Some(80),
+            energy_min: Some(api::run_policy::RunEnergyMin::Floor(80)),
         }));
     slot.after_drain(&mut client);
-    assert_eq!(slot.run_sends, 0, "session threshold overrides global 20");
+    assert_eq!(
+        slot.run_sends, 0,
+        "session threshold overrides host default 20"
+    );
 
     slot.run_policy_override.clear();
     slot.after_drain(&mut client);
-    assert_eq!(slot.run_sends, 1, "clear falls back to unchanged global 20");
+    assert_eq!(
+        slot.run_sends, 1,
+        "clear falls back to unchanged host default 20"
+    );
 }
 
 #[test]

@@ -9736,19 +9736,18 @@ fn script_observe_ticks_only_on_player_edge_while_up() {
 
 #[test]
 fn script_run_policy_override_reaches_host_auto_run_and_stop_clears_it() {
-    let ScriptWiring {
-        scripts,
-        cheats,
-        count: _,
-    } = script_wiring();
+    let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
+    let cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>> =
+        Arc::new(Mutex::new(HashMap::new()));
+    cheats
+        .lock()
+        .unwrap()
+        .insert("alice".into(), VecDeque::new());
     let (navs, world) = empty_nav();
-    let run_policy_override = Arc::new(api::run_policy::RunPolicyOverrideCell::new());
     let slot = script_slot_or_insert(&scripts, "alice");
+    let run_policy_override = slot.lock().unwrap().run_policy_override_cell();
     {
         let mut slot = slot.lock().unwrap();
-        slot.stop();
-        slot.bind_run_policy_override(Arc::clone(&run_policy_override))
-            .unwrap();
         slot.start_load_settled(
             r#"
 import { RunManager } from '../../runtime/RunManager.js';
@@ -9811,14 +9810,18 @@ export default class T extends LoopingBot {
         slot.lock().unwrap().run_policy_override(),
         Some(api::run_policy::RunPolicyOverride {
             run_auto: None,
-            energy_min: Some(80),
+            energy_min: Some(api::run_policy::RunEnergyMin::Floor(80)),
         })
     );
+    assert!(Arc::ptr_eq(
+        &run_policy_override,
+        &slot.lock().unwrap().run_policy_override_cell(),
+    ));
 
     let drive_one_host_frame = |client: &mut Client| {
         let done = Arc::new(AtomicBool::new(false));
         let observed = Arc::clone(&done);
-        Host::run_client(
+        run_client_for_script_slot(
             client,
             "alice",
             vault::ProfileSettings::default(),
@@ -9828,7 +9831,7 @@ export default class T extends LoopingBot {
             None,
             None,
             None,
-            Arc::clone(&run_policy_override),
+            &slot,
             move |_, _, _, _| {
                 observed.store(true, Ordering::Relaxed);
                 false
@@ -9863,7 +9866,7 @@ export default class T extends LoopingBot {
     drive_one_host_frame(&mut client);
     assert!(
         run_button_sent(&client),
-        "after Stop, host auto-run falls back to the global 20-energy threshold"
+        "after Stop, host auto-run falls back to the host's 20-energy default"
     );
 }
 
