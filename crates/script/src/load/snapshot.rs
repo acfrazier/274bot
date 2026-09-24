@@ -659,25 +659,25 @@ pub(super) fn materialize_snapshot(
         set_readonly(&mut scope, host, "ours", falsy)?;
     }
     if snap.has_npcs() {
-        let npcs = scene_entity_array(&mut scope, &snap.npcs())?;
+        let npcs = scene_entity_array(&mut scope, &snap.npcs(), true)?;
         set(&mut scope, obj, "npcs", npcs)?;
     } else if !had {
         set(&mut scope, obj, "npcs", empty_rows)?;
     }
     if snap.has_locs() {
-        let locs = scene_entity_array(&mut scope, &snap.locs())?;
+        let locs = scene_entity_array(&mut scope, &snap.locs(), false)?;
         set(&mut scope, obj, "locs", locs)?;
     } else if !had {
         set(&mut scope, obj, "locs", empty_rows)?;
     }
     if snap.has_players() {
-        let players = scene_entity_array(&mut scope, &snap.players())?;
+        let players = scene_entity_array(&mut scope, &snap.players(), false)?;
         set(&mut scope, obj, "players", players)?;
     } else if !had {
         set(&mut scope, obj, "players", empty_rows)?;
     }
     if snap.has_ground() {
-        let ground = scene_entity_array(&mut scope, &snap.ground())?;
+        let ground = scene_entity_array(&mut scope, &snap.ground(), false)?;
         set(&mut scope, obj, "ground", ground)?;
     } else if !had {
         set(&mut scope, obj, "ground", empty_rows)?;
@@ -1381,6 +1381,7 @@ fn tile_array<'s>(
 fn scene_entity_object<'s>(
     scope: &mut v8::HandleScope<'s>,
     ent: &crate::isolate_fb::SceneEntityReader<'_>,
+    npc: bool,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
     let o = v8::Object::new(scope);
     let index = num(scope, ent.index() as f64);
@@ -1443,16 +1444,26 @@ fn scene_entity_object<'s>(
     set(scope, o, "nx", nx)?;
     let nz = num(scope, ent.nz() as f64);
     set(scope, o, "nz", nz)?;
+    if npc && ent.size() >= 1 {
+        // Frozen `ClientAdapter.ts:243,879`: the route-head centre is the
+        // posted SW route origin plus half the NPC footprint.
+        let offset = ent.size() / 2;
+        let network_x = num(scope, ent.nx().saturating_add(offset) as f64);
+        set(scope, o, "network_x", network_x)?;
+        let network_z = num(scope, ent.nz().saturating_add(offset) as f64);
+        set(scope, o, "network_z", network_z)?;
+    }
     Ok(o.into())
 }
 
 fn scene_entity_array<'s>(
     scope: &mut v8::HandleScope<'s>,
     ents: &[crate::isolate_fb::SceneEntityReader<'_>],
+    npc: bool,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
     let arr = v8::Array::new(scope, ents.len() as i32);
     for (i, ent) in ents.iter().enumerate() {
-        let ent = scene_entity_object(scope, ent)?;
+        let ent = scene_entity_object(scope, ent, npc)?;
         arr.set_index(scope, i as u32, ent)
             .ok_or_else(|| "v8 array set failed".to_string())?;
     }

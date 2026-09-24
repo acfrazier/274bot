@@ -50,11 +50,11 @@ export class Npc {
     }
 
     networkTile() {
-        if (typeof this.snap.size !== 'number' || !Number.isInteger(this.snap.size) || this.snap.size < 1 ||
-            !Number.isInteger(this.snap.nx) || !Number.isInteger(this.snap.nz)) {
-            throw notImpl('Npc.networkTile');
+        // Frozen Npc.ts:55-57 falls back to the centre tile for old snapshots.
+        if (!Number.isInteger(this.snap.network_x) || !Number.isInteger(this.snap.network_z)) {
+            return this.tile();
         }
-        return Tile.from({ x: this.snap.nx, z: this.snap.nz, level: this.snap.level ?? 0 });
+        return Tile.from({ x: this.snap.network_x, z: this.snap.network_z, level: this.snap.level ?? 0 });
     }
 
     /**

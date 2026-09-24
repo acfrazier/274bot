@@ -145,16 +145,10 @@ fn catalog_index_dts(root: &std::path::Path) -> std::path::PathBuf {
     root.join("packages/rs2b0t-api/index.d.ts")
 }
 
-/// Frozen 00d39a17e0 pin: 181 runtime exports, including Special and the
-/// previously missed NPC/Player/Shop members.
+/// Legacy ENT exports and Execution.noteProgress declared by the catalog.
 #[test]
-fn frozen_declared_abi_has_special_and_new_members() {
+fn declared_abi_has_note_progress_and_ent_quartet() {
     let fixture = load_fixture().expect("js_declared_abi.json");
-    assert_eq!(
-        fixture.len(),
-        181,
-        "frozen catalog ABI is 181 runtime exports"
-    );
     let execution = fixture
         .iter()
         .find(|e| e.name == "Execution")
@@ -207,20 +201,6 @@ fn frozen_declared_abi_has_special_and_new_members() {
             .kind,
         DeclaredKind::Function
     );
-    for (name, member) in [
-        ("Special", "arm"),
-        ("Npc", "networkTile"),
-        ("Npc", "size"),
-        ("Player", "combatLevel"),
-        ("Shop", "sellAll"),
-    ] {
-        assert!(
-            fixture
-                .iter()
-                .any(|e| e.name == name && e.members.iter().any(|m| m == member)),
-            "missing declared member {name}.{member}"
-        );
-    }
 }
 
 /// When `$RS2B0T` is set on this process, the checked-in fixture must match

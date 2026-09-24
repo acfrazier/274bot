@@ -50,7 +50,7 @@ pub struct RangeLoadout {
 
 /// A selected `*_dart` uses its canonical name for both slots. Otherwise the
 /// raw weapon/ammo are preserved; matching trimmed names are thrown.
-/// Frozen `src/bot/api/combat/ranged.ts:20-27`.
+/// Frozen `src/bot/api/combat/ranged.ts:20-28`.
 pub fn range_loadout_of<'a, I>(items: I, weapon: &str, ammo: &str) -> RangeLoadout
 where
     I: IntoIterator<Item = (&'a str, &'a str)>,
