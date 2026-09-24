@@ -486,6 +486,8 @@ fn begin_refuses_bad_args_before_the_page() {
         "invalid-args",
     );
     // Args were fine here: a missing page is the page error, not invalid-args.
+    assert_error(&j.next(1), "snapshot-unavailable");
+    assert_error(&j.close(1), "snapshot-unavailable");
     assert_error(&j.begin("Cook's Assistant"), "snapshot-unavailable");
     j.iso.join();
 }
@@ -667,11 +669,11 @@ fn a_generation_bump_and_on_reset_abort_the_token_and_emit_nothing() {
     assert_eq!(j.next(token)["out"]["ok"], true);
     assert_eq!(j.close(token)["queued"], json!([{ "op": "close-modal" }]));
 
-    // ResetSession bumps the generation and then runs on_reset. The pair is
-    // still the acquired root, so a live token would close it again.
+    // ResetSession aborts the token and clears the isolate scene, so the
+    // page error wins: a live token would have closed the acquired root.
     j.iso.reset_session_work();
-    assert_error(&j.close(token), "stale");
-    assert_error(&j.next(token), "stale");
+    assert_error(&j.close(token), "snapshot-unavailable");
+    assert_error(&j.next(token), "snapshot-unavailable");
     j.iso.join();
 }
 
@@ -854,5 +856,26 @@ fn the_page_fields_stay_off_api_snapshot() {
         )
         .unwrap();
     assert_eq!(raw, json!({ "quests": true, "pair": true }), "{raw}");
+    j.iso.join();
+}
+
+#[test]
+fn a_refused_begin_leaves_the_live_token_closable() {
+    let mut j = Journal::new();
+    let rows = [row("Cook's Assistant", "notStarted", Some(1234))];
+    j.post(Post::at(1).rows(&rows).closed_pair());
+    let token = assert_if_button(&j.begin("Cook's Assistant"), 1234);
+    let texts = vec!["@dre@The Cook's Quest".to_string()];
+    j.post(Post::at(2).pair(77, &texts));
+    assert_eq!(j.next(token)["out"]["ok"], true);
+
+    assert_error(&j.begin("Missing Quest"), "unknown-quest");
+    let closing = j.close(token);
+    assert_eq!(closing["out"], json!({ "pending": true }), "{closing}");
+    assert_eq!(
+        closing["queued"],
+        json!([{ "op": "close-modal" }]),
+        "{closing}"
+    );
     j.iso.join();
 }

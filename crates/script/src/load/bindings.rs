@@ -762,10 +762,12 @@ const OPTIONAL = {
 function host() {
   return globalThis.__rs2b0t_host || (globalThis.__rs2b0t_host = { interact: [], log: [] });
 }
-const snapshotProxyCache = new WeakMap();
+const snapshotRootCache = new WeakMap();
+const snapshotNestedCache = new WeakMap();
 function readOnlyView(value, root) {
   if (value === null || typeof value !== 'object') return value;
-  const cached = snapshotProxyCache.get(value);
+  const cache = root ? snapshotRootCache : snapshotNestedCache;
+  const cached = cache.get(value);
   if (cached) return cached;
   const proxy = new Proxy(value, {
     get(target, prop) {
@@ -791,7 +793,7 @@ function readOnlyView(value, root) {
       return { ...desc, writable: false };
     },
   });
-  snapshotProxyCache.set(value, proxy);
+  cache.set(value, proxy);
   return proxy;
 }
 function settingsReader() {

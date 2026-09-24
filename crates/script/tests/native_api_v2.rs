@@ -2178,3 +2178,41 @@ export function tick(api) {
     assert_eq!(probe["invSame"], true, "{probe:?}");
     assert_eq!(probe["npcsSame"], true, "{probe:?}");
 }
+
+#[test]
+fn v2_scene_and_quest_args_match_number_is_integer_and_typeof() {
+    let src = r#"
+export const apiVersion = 2;
+export function tick(api) {
+  const wideId = api.sceneLocs({ ids: [2147483648], limit: 1 });
+  const wideRegion = api.sceneLocs({
+    ids: [1],
+    limit: 1,
+    region: { min_x: 0, min_z: 0, max_x: 1e10, max_z: 0, level: 0 },
+  });
+  const asFn = Object.assign(function () {}, { ids: [1], limit: 1 });
+  const fnLocs = api.sceneLocs(asFn);
+  const fnQuest = api.questStatus(function Cook() {});
+  const bom = api.questStatus({ name: '\uFEFF' });
+  const nel = api.questStatus({ name: '\u0085' });
+  globalThis.__probe = {
+    wideId: wideId.error,
+    wideRegion: wideRegion.error,
+    fnLocs: fnLocs.error,
+    fnQuest: fnQuest.error,
+    bom: bom.error,
+    nel: nel.error,
+  };
+}
+"#;
+    let iso = LoadIsolate::spawn(src.into(), LoadShape::NativeTick, vec![]).unwrap();
+    iso.on_game_tick(1);
+    let probe = iso.probe("globalThis.__probe").unwrap();
+    iso.join();
+    assert_eq!(probe["wideId"], "snapshot-unavailable", "{probe:?}");
+    assert_eq!(probe["wideRegion"], "snapshot-unavailable", "{probe:?}");
+    assert_eq!(probe["fnLocs"], "invalid-args", "{probe:?}");
+    assert_eq!(probe["fnQuest"], "invalid-args", "{probe:?}");
+    assert_eq!(probe["bom"], "invalid-args", "{probe:?}");
+    assert_eq!(probe["nel"], "snapshot-unavailable", "{probe:?}");
+}

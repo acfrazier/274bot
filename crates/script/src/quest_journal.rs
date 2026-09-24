@@ -96,6 +96,11 @@ impl JournalRuntime {
         json!({ "kind": "aborted", "token": self.token, "reason": reason })
     }
 
+    /// A lookup refusal. Does not bump the token or drop a live journal.
+    fn refuse(&self, reason: &str) -> Value {
+        json!({ "kind": "aborted", "token": self.token, "reason": reason })
+    }
+
     /// The stored acquired pair is still the live pair, tags and order
     /// included. A generation bump is checked before this.
     fn still_owned(&self, root: i32, texts: &[String]) -> bool {
@@ -107,9 +112,9 @@ impl JournalRuntime {
         let Some(generation) = input.get("generation").and_then(Value::as_u64) else {
             // The wrapper refuses a missing generation; a direct call still
             // has to be a refusal, never a click on a guessed target.
-            return self.aborted("snapshot-unavailable");
+            return self.refuse("snapshot-unavailable");
         };
-        let folded = scene_query::fold_ascii(name.trim());
+        let folded = scene_query::fold_ascii(scene_query::js_trim(name));
         let lookup = observed::with(|scene| {
             let Some(tab) = scene.latest().quest_statuses() else {
                 return Err("snapshot-unavailable");
@@ -135,7 +140,7 @@ impl JournalRuntime {
         });
         let (component_id, root, texts, sequence) = match lookup {
             Ok(hit) => hit,
-            Err(reason) => return self.aborted(reason),
+            Err(reason) => return self.refuse(reason),
         };
         // One token. The same name is busy and is not cancelled: a second
         // click is the steal the owned-root contract forbids. Another name
@@ -179,6 +184,14 @@ impl JournalRuntime {
     }
 
     fn next(&mut self, input: &Value) -> Value {
+        // Page first: a missing pair is snapshot-unavailable and does not
+        // spend the token, even when generation is also wrong.
+        let Some((root, texts)) = posted_pair() else {
+            return self.refuse("snapshot-unavailable");
+        };
+        if root == -1 && !texts.is_empty() {
+            return self.refuse("snapshot-unavailable");
+        }
         let Some(token) = input.get("token").and_then(Value::as_u64) else {
             return self.aborted("stale");
         };
@@ -187,21 +200,6 @@ impl JournalRuntime {
         }
         if input.get("generation").and_then(Value::as_u64) != Some(self.generation) {
             return self.aborted("stale");
-        }
-        let Some((root, texts)) = posted_pair() else {
-            return json!({
-                "kind": "aborted",
-                "token": self.token,
-                "reason": "snapshot-unavailable",
-            });
-        };
-        if root == -1 && !texts.is_empty() {
-            // Not the closed pair and not a modal: the pair is unusable.
-            return json!({
-                "kind": "aborted",
-                "token": self.token,
-                "reason": "snapshot-unavailable",
-            });
         }
         if self.frozen() {
             // Frozen: no verb and no burn. `bound_reached` reads the frozen
@@ -257,6 +255,12 @@ impl JournalRuntime {
     }
 
     fn close(&mut self, input: &Value) -> Value {
+        let Some((root, texts)) = posted_pair() else {
+            return self.refuse("snapshot-unavailable");
+        };
+        if root == -1 && !texts.is_empty() {
+            return self.refuse("snapshot-unavailable");
+        }
         let Some(token) = input.get("token").and_then(Value::as_u64) else {
             return self.aborted("stale");
         };
@@ -265,20 +269,6 @@ impl JournalRuntime {
         }
         if input.get("generation").and_then(Value::as_u64) != Some(self.generation) {
             return self.aborted("stale");
-        }
-        let Some((root, texts)) = posted_pair() else {
-            return json!({
-                "kind": "aborted",
-                "token": self.token,
-                "reason": "snapshot-unavailable",
-            });
-        };
-        if root == -1 && !texts.is_empty() {
-            return json!({
-                "kind": "aborted",
-                "token": self.token,
-                "reason": "snapshot-unavailable",
-            });
         }
         if self.frozen() {
             return json!({ "kind": "wait", "token": self.token });
@@ -513,5 +503,23 @@ mod tests {
         assert_eq!(acquired["root"], 77);
         assert_eq!(acquired["lines"], json!(["@dre@The Cook's Quest"]));
         assert_eq!(acquired["as_of_sequence"], 8);
+    }
+
+    #[test]
+    fn a_refused_begin_does_not_abort_a_live_token() {
+        reset_closed();
+        let token = begin("Cook's Assistant", 1)["token"].as_u64().unwrap();
+        post_tab(
+            8,
+            77,
+            &["@dre@The Cook's Quest"],
+            vec![cook_row(), waterfall_row()],
+        );
+        assert_eq!(call("next", token, 1)["kind"], "done");
+        let unknown = begin("Missing Quest", 1);
+        assert_eq!(unknown["kind"], "aborted");
+        assert_eq!(unknown["reason"], "unknown-quest");
+        let closing = call("close", token, 1);
+        assert_eq!(closing["kind"], "close-modal", "{closing}");
     }
 }

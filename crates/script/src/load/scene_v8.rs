@@ -149,7 +149,9 @@ fn object_arg<'s>(
     scope: &mut v8::HandleScope<'s>,
     input: v8::Local<v8::Value>,
 ) -> Result<v8::Local<'s, v8::Object>, String> {
-    if input.is_null_or_undefined() || !input.is_object() || input.is_array() {
+    // `typeof fn === 'function'`, not `'object'`.
+    if input.is_null_or_undefined() || input.is_function() || !input.is_object() || input.is_array()
+    {
         return Err(SceneQueryError::InvalidArgs.as_str().into());
     }
     input
@@ -160,8 +162,8 @@ fn object_arg<'s>(
 fn int_array<'s>(
     scope: &mut v8::HandleScope<'s>,
     value: v8::Local<'s, v8::Value>,
-) -> Result<Vec<i32>, String> {
-    if !value.is_array() {
+) -> Result<Vec<i64>, String> {
+    if !js_is_array(scope, value) {
         return Err(SceneQueryError::InvalidArgs.as_str().into());
     }
     let arr = value
@@ -171,7 +173,7 @@ fn int_array<'s>(
     let mut out = Vec::with_capacity(len as usize);
     for i in 0..len {
         let item = index_at(scope, arr, i)?;
-        out.push(required_i32(scope, item)?);
+        out.push(js_integer(scope, item)?);
     }
     Ok(out)
 }
@@ -180,7 +182,7 @@ fn string_array<'s>(
     scope: &mut v8::HandleScope<'s>,
     value: v8::Local<'s, v8::Value>,
 ) -> Result<Vec<String>, String> {
-    if value.is_null_or_undefined() || !value.is_array() {
+    if value.is_null_or_undefined() || !js_is_array(scope, value) {
         return Err(SceneQueryError::InvalidArgs.as_str().into());
     }
     let arr = value
@@ -203,11 +205,11 @@ fn limit_field<'s>(
     obj: v8::Local<'s, v8::Object>,
 ) -> Result<i32, String> {
     let value = field(scope, obj, "limit")?;
-    let n = required_i32(scope, value)?;
-    if !(1..=scene_query::SCENE_LIMIT_MAX).contains(&n) {
+    let n = js_integer(scope, value)?;
+    if n < 1 || n > i64::from(scene_query::SCENE_LIMIT_MAX) {
         return Err(SceneQueryError::InvalidArgs.as_str().into());
     }
-    Ok(n)
+    Ok(n as i32)
 }
 
 fn region_arg<'s>(
@@ -218,17 +220,18 @@ fn region_arg<'s>(
         return Ok(None);
     }
     let value = field(scope, obj, "region")?;
-    if value.is_null_or_undefined() || !value.is_object() || value.is_array() {
+    if value.is_null_or_undefined() || value.is_function() || !value.is_object() || value.is_array()
+    {
         return Err(SceneQueryError::InvalidArgs.as_str().into());
     }
     let region = value
         .to_object(scope)
         .ok_or_else(|| SceneQueryError::InvalidArgs.as_str().to_string())?;
-    let min_x = required_i32_field(scope, region, "min_x")?;
-    let min_z = required_i32_field(scope, region, "min_z")?;
-    let max_x = required_i32_field(scope, region, "max_x")?;
-    let max_z = required_i32_field(scope, region, "max_z")?;
-    let level = required_i32_field(scope, region, "level")?;
+    let min_x = integer_field(scope, region, "min_x")?;
+    let min_z = integer_field(scope, region, "min_z")?;
+    let max_x = integer_field(scope, region, "max_x")?;
+    let max_z = integer_field(scope, region, "max_z")?;
+    let level = integer_field(scope, region, "level")?;
     Ok(Some(Region {
         min_x,
         min_z,
@@ -238,19 +241,21 @@ fn region_arg<'s>(
     }))
 }
 
-fn required_i32_field<'s>(
+fn integer_field<'s>(
     scope: &mut v8::HandleScope<'s>,
     obj: v8::Local<'s, v8::Object>,
     name: &str,
-) -> Result<i32, String> {
+) -> Result<i64, String> {
     let v = field(scope, obj, name)?;
-    required_i32(scope, v)
+    js_integer(scope, v)
 }
 
-fn required_i32<'s>(
+/// `Number.isInteger`: any finite integer-valued number, including values
+/// outside i32. Exact JS integers fit in i64.
+fn js_integer<'s>(
     scope: &mut v8::HandleScope<'s>,
     value: v8::Local<'s, v8::Value>,
-) -> Result<i32, String> {
+) -> Result<i64, String> {
     if !value.is_number() {
         return Err(SceneQueryError::InvalidArgs.as_str().into());
     }
@@ -260,10 +265,37 @@ fn required_i32<'s>(
     if !n.is_finite() || n.fract() != 0.0 {
         return Err(SceneQueryError::InvalidArgs.as_str().into());
     }
-    if n < (i32::MIN as f64) || n > (i32::MAX as f64) {
-        return Err(SceneQueryError::InvalidArgs.as_str().into());
+    Ok(n as i64)
+}
+
+fn js_is_array(scope: &mut v8::HandleScope, value: v8::Local<v8::Value>) -> bool {
+    if value.is_array() {
+        return true;
     }
-    Ok(n as i32)
+    let context = scope.get_current_context();
+    let global = context.global(scope);
+    let Some(array_key) = v8::String::new(scope, "Array") else {
+        return false;
+    };
+    let Some(array_val) = global.get(scope, array_key.into()) else {
+        return false;
+    };
+    let Some(array_obj) = array_val.to_object(scope) else {
+        return false;
+    };
+    let Some(is_array_key) = v8::String::new(scope, "isArray") else {
+        return false;
+    };
+    let Some(fn_val) = array_obj.get(scope, is_array_key.into()) else {
+        return false;
+    };
+    let Ok(func) = v8::Local::<v8::Function>::try_from(fn_val) else {
+        return false;
+    };
+    let Some(result) = func.call(scope, array_val, &[value]) else {
+        return false;
+    };
+    result.boolean_value(scope)
 }
 
 fn array_len<'s>(

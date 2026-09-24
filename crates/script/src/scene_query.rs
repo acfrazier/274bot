@@ -13,11 +13,11 @@ const QUEST_STATUS_VALUES: [&str; 4] = ["notStarted", "inProgress", "complete", 
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Region {
-    pub min_x: i32,
-    pub min_z: i32,
-    pub max_x: i32,
-    pub max_z: i32,
-    pub level: i32,
+    pub min_x: i64,
+    pub min_z: i64,
+    pub max_x: i64,
+    pub max_z: i64,
+    pub level: i64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -103,8 +103,35 @@ pub fn fold_ascii(text: &str) -> String {
         .collect()
 }
 
+/// ECMAScript `String.prototype.trim`: WhiteSpace + LineTerminator, including
+/// U+FEFF, excluding U+0085 (NEL).
+pub fn js_trim(text: &str) -> &str {
+    fn is_es_trim(c: char) -> bool {
+        matches!(
+            c,
+            '\u{0009}'
+                | '\u{000A}'
+                | '\u{000B}'
+                | '\u{000C}'
+                | '\u{000D}'
+                | '\u{0020}'
+                | '\u{00A0}'
+                | '\u{1680}'
+                | '\u{2000}'
+                ..='\u{200A}'
+                    | '\u{2028}'
+                    | '\u{2029}'
+                    | '\u{202F}'
+                    | '\u{205F}'
+                    | '\u{3000}'
+                    | '\u{FEFF}'
+        )
+    }
+    text.trim_matches(is_es_trim)
+}
+
 pub fn scene_locs(
-    ids: &[i32],
+    ids: &[i64],
     limit: i32,
     region: Option<Region>,
 ) -> Result<SceneProjection, SceneQueryError> {
@@ -118,7 +145,7 @@ pub fn scene_locs(
 }
 
 pub fn scene_npcs(
-    types: &[i32],
+    types: &[i64],
     actions: &[String],
     limit: i32,
     region: Option<Region>,
@@ -136,7 +163,7 @@ pub fn scene_npcs(
 }
 
 pub fn quest_status(name: &str) -> Result<QuestStatusHit, QuestStatusError> {
-    let wanted = fold_ascii(name.trim());
+    let wanted = fold_ascii(js_trim(name));
     if wanted.is_empty() {
         return Err(QuestStatusError::InvalidArgs);
     }
@@ -177,7 +204,7 @@ fn quest_row_matches(row: &QuestStatusRow, wanted_folded: &str) -> bool {
     {
         return false;
     }
-    fold_ascii(row.name.trim()) == wanted_folded
+    js_trim(&row.name).eq_ignore_ascii_case(wanted_folded)
 }
 
 enum Page {
@@ -187,7 +214,7 @@ enum Page {
 
 fn project(
     page: Page,
-    ids: &[i32],
+    ids: &[i64],
     actions: Option<&[String]>,
     limit: i32,
     region: Option<Region>,
@@ -242,22 +269,22 @@ fn in_region(x: i32, z: i32, level: i32, region: Option<Region>) -> bool {
     let Some(region) = region else {
         return true;
     };
-    level == region.level
-        && x >= region.min_x
-        && x <= region.max_x
-        && z >= region.min_z
-        && z <= region.max_z
+    (level as i64) == region.level
+        && (x as i64) >= region.min_x
+        && (x as i64) <= region.max_x
+        && (z as i64) >= region.min_z
+        && (z as i64) <= region.max_z
 }
 
 fn take_locs(
     posted: &[SceneRow],
-    ids: &[i32],
+    ids: &[i64],
     region: Option<Region>,
     limit: usize,
 ) -> (Vec<SceneRowOut>, bool) {
     let mut rows = Vec::new();
     for entity in posted {
-        if !ids.contains(&entity.id) {
+        if !ids.contains(&(entity.id as i64)) {
             continue;
         }
         if !in_region(entity.x, entity.z, entity.level, region) {
@@ -279,14 +306,14 @@ fn take_locs(
 
 fn take_npcs(
     posted: &[EntityRow],
-    ids: &[i32],
+    ids: &[i64],
     actions: &[String],
     region: Option<Region>,
     limit: usize,
 ) -> (Vec<SceneRowOut>, bool) {
     let mut rows = Vec::new();
     for entity in posted {
-        if !ids.contains(&entity.id) {
+        if !ids.contains(&(entity.id as i64)) {
             continue;
         }
         if !in_region(entity.x, entity.z, entity.level, region) {
@@ -534,5 +561,45 @@ mod tests {
         assert_eq!(fold_ascii("Death Plateau"), "DEATH PLATEAU");
         assert_eq!(fold_ascii("cook's assistant"), "COOK'S ASSISTANT");
         assert_eq!(fold_ascii("İ"), "İ");
+    }
+
+    #[test]
+    fn js_trim_matches_ecmascript_not_unicode_white_space() {
+        assert_eq!(js_trim("\u{FEFF}"), "");
+        assert_eq!(js_trim("\u{0085}"), "\u{0085}");
+        assert_eq!(
+            quest_status("\u{FEFF}").unwrap_err(),
+            QuestStatusError::InvalidArgs
+        );
+        observed::on_reset();
+        assert_eq!(
+            quest_status("\u{0085}").unwrap_err(),
+            QuestStatusError::SnapshotUnavailable
+        );
+    }
+
+    #[test]
+    fn ids_outside_i32_are_legal_and_match_nothing() {
+        observed::on_reset();
+        observed::post(1, |post| {
+            post.collision(open_collision());
+            post.locs(vec![loc(2092, 3200, 3200, &[])]);
+        });
+        let hit = scene_locs(&[1i64 << 31], 8, None).expect("wide id");
+        assert!(hit.rows.is_empty());
+        assert!(!hit.truncated);
+        let boxed = scene_locs(
+            &[2092],
+            8,
+            Some(Region {
+                min_x: 0,
+                min_z: 0,
+                max_x: 10_000_000_000,
+                max_z: 10_000_000_000,
+                level: 0,
+            }),
+        )
+        .expect("wide region");
+        assert_eq!(boxed.rows.len(), 1);
     }
 }
