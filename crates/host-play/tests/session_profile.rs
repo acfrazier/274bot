@@ -580,6 +580,7 @@ fn navigation_and_scatter_use_the_selected_shared_world_and_keep_it_after_disk_e
         varp_req: vec![],
         worn_req: vec![],
         members_req: false,
+        wildy_cap: None,
     });
     let bytes = nav::pack::encode(&collision, &graph, &[]);
     let flags = nav::pack::encode_flags_sidecar(origin, 2, 1, &[0; 8]);

@@ -147,6 +147,7 @@ pub(super) fn toll_edges(
                     varp_req: vec![],
                     worn_req: vec![],
                     members_req: false,
+                    wildy_cap: None,
                 };
                 // Prefer the free crossing on equal-cost relaxed searches
                 // (bank-fetch diagnosis); both alternatives remain available.
@@ -242,6 +243,7 @@ pub(super) fn toll_shantay_henge_edges(
             varp_req: vec![],
             worn_req: vec![],
             members_req: false,
+            wildy_cap: None,
         });
         graph.edges.push(TransportEdge {
             kind: TransportKind::Door,
@@ -262,6 +264,7 @@ pub(super) fn toll_shantay_henge_edges(
             varp_req: vec![],
             worn_req: vec![],
             members_req: false,
+            wildy_cap: None,
         });
     }
     if graph.edges.len() == edge_start {

@@ -1,6 +1,9 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
+use super::wilderness::{
+    TEST_LEVELS_CONSTANT, TEST_LEVELS_RS2, TEST_SPELL_TELEPORT_RS2, TEST_ZONES_DBROW,
+};
 use super::*;
 use crate::collision::{bake_from_maps, WorldCollision};
 use client::config::{Cache, LocType};
@@ -7019,6 +7022,7 @@ fn producers_require_transmission_or_a_unique_completed_journal_proof() {
         varp_req: vec![(id, min)],
         worn_req: vec![],
         members_req: false,
+        wildy_cap: None,
     };
     let raw = [
         edge(10, 150, 160),
@@ -7242,4 +7246,323 @@ param=next_loc_stage,loc_1522
         0,
         "emitted left must not count as a door skip: {skipped:?}"
     );
+}
+
+#[test]
+fn wilderness_level_formula_and_caps_derive_from_fixture_content() {
+    let fx = Fixture::new();
+    fx.write(
+        TEST_LEVELS_RS2,
+        "\
+[proc,wilderness_level](coord $coord)(int)
+def_coord $coord1;
+def_coord $coord2;
+def_int $i = 0;
+while($i < db_getfieldcount(wilderness_zones, coord_pair_table:coord_pair)) {
+    $coord1, $coord2 = db_getfield(wilderness_zones, coord_pair_table:coord_pair, $i);
+    if(inzone($coord1, $coord2, $coord) = true) {
+        return (calc((coordz($coord) - coordz($coord1))/8 + 1));
+    } else {
+        $i = add($i, 1);
+    }
+}
+return(0);
+",
+    );
+    fx.write(
+        TEST_ZONES_DBROW,
+        "\
+[wilderness_zones]
+table=coord_pair_table
+data=coord_pair,0_46_55_0_0,3_52_99_63_63
+data=coord_pair,0_46_155_0_0,0_52_199_63_63
+",
+    );
+    fx.write(
+        TEST_LEVELS_CONSTANT,
+        "^wilderness_starting_z = 3520\n^wilderness_starting_underground_z = 9920\n",
+    );
+    fx.write(
+        TEST_SPELL_TELEPORT_RS2,
+        "if (~wilderness_level(coord) > 20) {\n    return;\n}\n",
+    );
+    fx.write(
+        "scripts/general/scripts/enchanted_jewellry/ring_of_dueling.rs2",
+        "[opheld4,_category_136]\nif (~wilderness_level(coord) > 20) {\n    return;\n}\n~player_teleport_normal(0_51_50_51_35);\n",
+    );
+    fx.write(
+        "scripts/general/scripts/enchanted_jewellry/necklace_of_minigames.rs2",
+        "[opheld4,_necklace_of_minigames]\nif (~wilderness_level(coord) > 20) {\n    return;\n}\n~player_teleport_normal(0_34_77_31_12);\n",
+    );
+    fx.write(
+        "scripts/general/scripts/enchanted_jewellry/amulet_of_glory.rs2",
+        "[opheld4,amulet_of_glory_4] @amulet_of_glory_interface(\"x\");\n[label,amulet_of_glory_interface](string $message)\nif (~wilderness_level(coord) > 30) {\n    return;\n}\n~player_teleport_normal(0_48_54_15_40);\n",
+    );
+    fx.write(
+        "pack/obj.pack",
+        "554=firerune\n556=airrune\n563=lawrune\n1712=amulet_of_glory_4\n2552=ring_of_dueling_8\n3853=necklace_of_minigames_8\n",
+    );
+    fx.write(
+        "scripts/skill_magic/configs/enchanted_jewelry.obj",
+        "[ring_of_dueling_8]\ncategory=category_136\n[necklace_of_minigames_8]\ncategory=necklace_of_minigames\n[amulet_of_glory_4]\n",
+    );
+    fx.write(
+        "scripts/skill_magic/configs/magic_spells.dbrow",
+        "[magic_spell_teleport_varrock]\ndata=levelrequired,25\ndata=runesrequired,firerune,1,airrune,3,lawrune,1\ndata=tele_coord,0_50_53_13_32\n",
+    );
+    let defs = loc_defs(&[]);
+    let wc = bake_collision(&fx, &defs, &HashSet::new());
+    let graph = derive_transports(fx.path(), &defs, &wc);
+    require_wilderness_teleport_legality(fx.path(), &graph).expect("caps derive");
+    assert_eq!(graph.wilderness.divisor, 8);
+    assert_eq!(graph.wilderness.offset, 1);
+    assert_eq!(
+        graph.wilderness.level(WorldTile {
+            x: 3100,
+            z: 3679,
+            level: 0
+        }),
+        20
+    );
+    assert_eq!(
+        graph.wilderness.level(WorldTile {
+            x: 3100,
+            z: 3680,
+            level: 0
+        }),
+        21
+    );
+    let spells: Vec<_> = graph.teleports.iter().filter(|e| e.loc_id == 0).collect();
+    assert!(!spells.is_empty());
+    assert!(spells.iter().all(|e| e.wildy_cap == Some(20)));
+    assert!(graph
+        .teleports
+        .iter()
+        .any(|e| e.loc_id == 1712 && e.wildy_cap == Some(30)));
+    assert!(graph
+        .teleports
+        .iter()
+        .any(|e| e.loc_id == 2552 && e.wildy_cap == Some(20)));
+}
+
+#[test]
+fn bake_fails_when_wilderness_teleport_caps_cannot_be_derived() {
+    let fx = Fixture::new();
+    fx.write(
+        TEST_LEVELS_RS2,
+        "[proc,wilderness_level](coord $coord)(int)\nreturn(99);\n",
+    );
+    fx.write(
+        TEST_ZONES_DBROW,
+        "[wilderness_zones]\ntable=coord_pair_table\ndata=coord_pair,0_46_55_0_0,3_52_99_63_63\n",
+    );
+    fx.write(
+        TEST_SPELL_TELEPORT_RS2,
+        "[label,magic_teleport](int $spell)\nreturn;\n",
+    );
+    fx.write(
+        "scripts/general/scripts/enchanted_jewellry/ring_of_dueling.rs2",
+        "",
+    );
+    fx.write(
+        "scripts/general/scripts/enchanted_jewellry/necklace_of_minigames.rs2",
+        "",
+    );
+    fx.write(
+        "scripts/general/scripts/enchanted_jewellry/amulet_of_glory.rs2",
+        "",
+    );
+    let defs = loc_defs(&[]);
+    let wc = bake_collision(&fx, &defs, &HashSet::new());
+    let graph = derive_transports(fx.path(), &defs, &wc);
+    let err = require_wilderness_teleport_legality(fx.path(), &graph)
+        .expect_err("unparseable formula must fail the bake check");
+    assert!(
+        err.contains("cannot be derived")
+            || err.contains("does not return")
+            || err.contains("missing")
+            || err.contains("wilderness_zones")
+            || err.contains("coord_pair"),
+        "{err}"
+    );
+}
+
+#[test]
+fn real_289_content_derives_wilderness_teleport_caps() {
+    let Some((graph, _)) = derive_from_lostcity_content() else {
+        return;
+    };
+    require_wilderness_teleport_legality(
+        Path::new("/Users/acfrazier/experiments/lostcity-289/content"),
+        graph,
+    )
+    .expect("289 content must derive wilderness teleport caps");
+    assert!(graph.wilderness.divisor > 0);
+    let spell = graph
+        .teleports
+        .iter()
+        .find(|e| e.loc_id == 0)
+        .and_then(|e| e.wildy_cap)
+        .expect("spell cap");
+    assert!(graph
+        .teleports
+        .iter()
+        .any(|e| e.loc_id > 0 && e.wildy_cap == Some(spell)));
+    let glory = graph
+        .teleports
+        .iter()
+        .filter(|e| e.loc_id > 0)
+        .filter_map(|e| e.wildy_cap)
+        .max()
+        .unwrap();
+    assert!(glory > spell, "glory cap exceeds spell cap");
+}
+
+#[test]
+fn real_289_routes_respect_wilderness_teleport_caps() {
+    use crate::router::{find_with, FindOptions, Leg};
+    let Some((graph, wc)) = derive_from_lostcity_content() else {
+        return;
+    };
+    require_wilderness_teleport_legality(
+        Path::new("/Users/acfrazier/experiments/lostcity-289/content"),
+        graph,
+    )
+    .expect("caps");
+    let spell = graph
+        .teleports
+        .iter()
+        .find(|e| e.loc_id == 0 && e.wildy_cap.is_some())
+        .expect("spell");
+    let spell_cap = spell.wildy_cap.unwrap();
+    let dest = spell.to;
+    let mut inv = HashMap::new();
+    for &(id, n) in &spell.item_req {
+        inv.insert(id, n.max(5));
+    }
+    let magic = spell
+        .skill_req
+        .iter()
+        .find(|(id, _)| *id == 6)
+        .map(|(_, lvl)| *lvl)
+        .unwrap_or(99);
+    let state = crate::world_state::WorldState {
+        stats: HashMap::from([(6, magic)]),
+        inv,
+        ..crate::world_state::WorldState::default()
+    };
+    let opts = FindOptions {
+        allow_teleports: true,
+        allow_wilderness: true,
+        ..FindOptions::default()
+    };
+    let below = standable_wildy_on(wc, graph, spell_cap).expect("tile at spell cap");
+    let above = standable_wildy_on(wc, graph, spell_cap + 1).expect("tile above spell cap");
+    let r_below = find_with(wc, graph, below, dest, opts, &state)
+        .unwrap_or_else(|e| panic!("from level {spell_cap} {below:?} -> {dest:?}: {e:?}"));
+    assert!(
+        r_below
+            .legs
+            .iter()
+            .any(|l| matches!(l, Leg::Transport { edge } if edge.kind == TransportKind::Teleport)),
+        "from below the cap the route still teleports"
+    );
+    assert_legal_teleports(graph, below, &r_below);
+    if let Ok(route) = find_with(wc, graph, above, dest, opts, &state) {
+        assert_legal_teleports(graph, above, &route);
+        for (from, _) in teleport_takeoffs(above, &route) {
+            assert_ne!(
+                from, above,
+                "must not teleport from above-cap origin {above:?}"
+            );
+        }
+    }
+    let glory_cap = graph
+        .teleports
+        .iter()
+        .filter(|e| e.loc_id > 0)
+        .filter_map(|e| e.wildy_cap)
+        .max()
+        .expect("jewellery cap");
+    assert!(glory_cap > spell_cap);
+    let glory = graph
+        .teleports
+        .iter()
+        .find(|e| e.wildy_cap == Some(glory_cap))
+        .unwrap();
+    let gstate = crate::world_state::WorldState {
+        inv: HashMap::from([(glory.item_req[0].0, 1)]),
+        ..crate::world_state::WorldState::default()
+    };
+    let g_below = standable_wildy_on(wc, graph, glory_cap).expect("tile at glory cap");
+    let g_above = standable_wildy_on(wc, graph, glory_cap + 1).expect("tile above glory cap");
+    let ok = find_with(wc, graph, g_below, glory.to, opts, &gstate)
+        .unwrap_or_else(|e| panic!("glory from level {glory_cap}: {e:?}"));
+    assert!(ok
+        .legs
+        .iter()
+        .any(|l| matches!(l, Leg::Transport { edge } if edge.kind == TransportKind::Teleport)));
+    assert_legal_teleports(graph, g_below, &ok);
+    if let Ok(route) = find_with(wc, graph, g_above, glory.to, opts, &gstate) {
+        assert_legal_teleports(graph, g_above, &route);
+        for (from, _) in teleport_takeoffs(g_above, &route) {
+            assert_ne!(from, g_above);
+        }
+    }
+}
+
+fn standable_wildy_on(wc: &WorldCollision, graph: &TransportGraph, want: i32) -> Option<WorldTile> {
+    let rules = &graph.wilderness;
+    if rules.divisor <= 0 {
+        return None;
+    }
+    for zone in &rules.zones {
+        if zone.level1 > 0 {
+            continue;
+        }
+        let z0 = zone.origin_z + (want - rules.offset) * rules.divisor;
+        let z1 = z0 + rules.divisor - 1;
+        for z in z0..=z1 {
+            for x in (zone.x1..=zone.x2).step_by(3) {
+                let t = WorldTile { x, z, level: 0 };
+                if wc.standable(t) {
+                    return Some(t);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn teleport_takeoffs(start: WorldTile, route: &crate::router::Route) -> Vec<(WorldTile, i32)> {
+    let mut cur = start;
+    let mut out = Vec::new();
+    for leg in &route.legs {
+        match leg {
+            crate::router::Leg::Walk { tiles } => {
+                if let Some(last) = tiles.last() {
+                    cur = *last;
+                }
+            }
+            crate::router::Leg::Transport { edge } => {
+                if edge.kind == TransportKind::Teleport {
+                    if let Some(cap) = edge.wildy_cap {
+                        out.push((cur, cap));
+                    }
+                }
+                cur = edge.to;
+            }
+        }
+    }
+    out
+}
+
+fn assert_legal_teleports(graph: &TransportGraph, start: WorldTile, route: &crate::router::Route) {
+    for (from, cap) in teleport_takeoffs(start, route) {
+        let level = graph.wilderness.level(from);
+        assert!(
+            level <= cap,
+            "teleport from {from:?} wilderness level {level} > cap {cap}"
+        );
+    }
 }

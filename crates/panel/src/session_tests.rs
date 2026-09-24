@@ -1230,6 +1230,7 @@ fn publish_nav_debug_carries_reach_from_the_bitset() {
                 varp_req: vec![],
                 worn_req: vec![],
                 members_req: false,
+                wildy_cap: None,
             }],
             ..Default::default()
         },
@@ -1484,6 +1485,7 @@ fn door_route() -> Route {
                     varp_req: vec![],
                     worn_req: vec![],
                     members_req: false,
+                    wildy_cap: None,
                 },
             },
         ],
@@ -1708,6 +1710,7 @@ fn nav_path_subsamples_to_the_draw_budget_keeping_hops() {
                     varp_req: vec![],
                     worn_req: vec![],
                     members_req: false,
+                    wildy_cap: None,
                 },
             },
         ],
@@ -2295,6 +2298,7 @@ fn toll_world() -> NavWorld {
         varp_req: vec![],
         worn_req: vec![],
         members_req: false,
+        wildy_cap: None,
     };
     let mut graph = TransportGraph::default();
     graph.at.entry(edge.at).or_default().push(0);
@@ -2506,6 +2510,7 @@ fn arm_walk_on_ignores_teles_until_allow_teleports() {
         varp_req: vec![],
         worn_req: vec![],
         members_req: false,
+        wildy_cap: None,
     });
     let (walk, blocked) = nav::collision::pack_walk(&flags);
     let world = NavWorld::from_parts(
@@ -2600,6 +2605,7 @@ fn arm_walk_on_uses_find_with_options() {
         varp_req: vec![],
         worn_req: vec![],
         members_req: false,
+        wildy_cap: None,
     });
     let (walk, blocked) = nav::collision::pack_walk(&flags);
     let world = NavWorld::from_parts(

@@ -8660,6 +8660,7 @@ fn dispatch_script_interact_walk_forwards_allow_teleports() {
         varp_req: vec![],
         worn_req: vec![],
         members_req: false,
+        wildy_cap: None,
     });
     let (walk, blocked) = nav::collision::pack_walk(&flags);
     let world = Some(Arc::new(NavWorld::from_parts(
@@ -9323,6 +9324,7 @@ fn knife_nav_world(knife_id: i32) -> NavWorld {
         varp_req: vec![],
         worn_req: vec![knife_id],
         members_req: false,
+        wildy_cap: None,
     };
     let mut graph = TransportGraph::default();
     graph.at.entry(edge.at).or_default().push(0);
@@ -14540,6 +14542,7 @@ fn glory_edge() -> TransportEdge {
         varp_req: vec![],
         worn_req: vec![],
         members_req: false,
+        wildy_cap: None,
     }
 }
 
@@ -14779,6 +14782,7 @@ fn toll_nav_world() -> NavWorld {
         varp_req: vec![],
         worn_req: vec![],
         members_req: false,
+        wildy_cap: None,
     };
     let mut graph = TransportGraph::default();
     graph.at.entry(edge.at).or_default().push(0);

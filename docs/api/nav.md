@@ -33,12 +33,12 @@ maps dir's parent (`content/scripts/general_use/configs/gates.loc`).
 
 The pack serializes the whole-world `WorldCollision` (four planes, packed
 9-bit walk per tile: `u8` face + `SQ_BLOCKED`, row-major z-then-x) plus
-the derived `TransportGraph`. Magic `b"274V"`, version byte **9** (v9
-keeps the content-derived bank-stand table after the edges and appends
-per-edge `members_req`; raw `u32` flags are not on the pack wire, the
-optional `274F` sidecar holds them for collision paint; the paint-reach
-bitset is a separate `274R` sidecar bound to the pack identity). `decode`
-accepts version 9 only — v8 and older are `BadVersion`. The `274N` grid
+the derived `TransportGraph`. Magic `b"274V"`, version byte **10** (v10 keeps the content-derived bank-stand table after
+the edges, per-edge `members_req`, a per-edge wilderness teleport cap, and
+the wilderness-level formula after the banks; raw `u32` flags are not on
+the pack wire, the optional `274F` sidecar holds them for collision paint;
+the paint-reach bitset is a separate `274R` sidecar bound to the pack
+identity). `decode` accepts version 10 only — v9 and older are `BadVersion`. The `274N` grid
 decoder (`decode_grid`) stays for old boolean-walk files.
 
 ### Build-time selection, reuse and overrides

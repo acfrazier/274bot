@@ -305,6 +305,7 @@ pub(super) fn boat_edges(
                 varp_req: r.varp_req.map(|v| vec![v]).unwrap_or_default(),
                 worn_req: vec![],
                 members_req: false,
+                wildy_cap: None,
             },
             audit,
         );
@@ -324,6 +325,7 @@ pub(super) fn boat_edges(
                 varp_req: vec![],
                 worn_req: vec![],
                 members_req: false,
+                wildy_cap: None,
             });
         }
     }
@@ -418,6 +420,7 @@ pub(super) fn cart_edges(graph: &mut TransportGraph) {
             varp_req: vec![],
             worn_req: vec![],
             members_req: false,
+            wildy_cap: None,
         });
     }
 }

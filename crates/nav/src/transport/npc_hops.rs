@@ -127,6 +127,7 @@ pub(super) fn essence_mine_edges(graph: &mut TransportGraph) {
             varp_req: vec![],
             worn_req: vec![],
             members_req: false,
+            wildy_cap: None,
         });
     }
 }
@@ -217,6 +218,7 @@ pub(super) fn elkoy_edges(graph: &mut TransportGraph) {
             varp_req: vec![],
             worn_req: vec![],
             members_req: false,
+            wildy_cap: None,
         });
     }
 }

@@ -131,6 +131,7 @@ pub(super) fn brass_key_door_edges(
                 varp_req: vec![],
                 worn_req: vec![],
                 members_req: false,
+                wildy_cap: None,
             });
         }
     }

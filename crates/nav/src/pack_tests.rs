@@ -453,6 +453,7 @@ fn roundtrip_collision_and_transport_graph() {
         varp_req: vec![],
         worn_req: vec![772], // dramen_staff on the Zanaris shed door
         members_req: false,
+        wildy_cap: None,
     };
     let ladder = TransportEdge {
         kind: TransportKind::Ladder,
@@ -477,6 +478,7 @@ fn roundtrip_collision_and_transport_graph() {
         varp_req: vec![(4, 1)],
         worn_req: vec![],
         members_req: false,
+        wildy_cap: None,
     };
     let di = graph.edges.len();
     graph.edges.push(door);
@@ -505,6 +507,7 @@ fn roundtrip_collision_and_transport_graph() {
         varp_req: vec![(150, 160)],
         worn_req: vec![],
         members_req: false,
+        wildy_cap: None,
     };
     let gi = graph.edges.len();
     graph.edges.push(glider);
@@ -533,6 +536,7 @@ fn roundtrip_collision_and_transport_graph() {
         varp_req: vec![(150, 160)],
         worn_req: vec![],
         members_req: false,
+        wildy_cap: None,
     };
     let si = graph.edges.len();
     graph.edges.push(spirit);
@@ -559,6 +563,7 @@ fn roundtrip_collision_and_transport_graph() {
         varp_req: vec![],
         worn_req: vec![],
         members_req: false,
+        wildy_cap: None,
     };
     let ni = graph.edges.len();
     graph.edges.push(npc);
@@ -587,6 +592,7 @@ fn roundtrip_collision_and_transport_graph() {
         varp_req: vec![],
         worn_req: vec![],
         members_req: false,
+        wildy_cap: None,
     });
     graph.at.entry(graph.edges[di].at).or_default().push(di);
     graph.at.entry(graph.edges[li].at).or_default().push(li);
@@ -702,6 +708,7 @@ fn v8_roundtrips_worn_req() {
         varp_req: vec![],
         worn_req: vec![772],
         members_req: false,
+        wildy_cap: None,
     };
     let mut graph = TransportGraph::default();
     graph.edges.push(door.clone());
@@ -756,20 +763,21 @@ fn v9_roundtrips_members_req_true_and_false() {
         varp_req: vec![],
         worn_req: vec![],
         members_req,
+        wildy_cap: None,
     };
     for members_req in [true, false] {
         let mut graph = TransportGraph::default();
         graph.edges.push(edge(members_req));
         let bytes = encode(&collision, &graph, &[]);
         assert_eq!(bytes[4], VERSION);
-        assert_eq!(FORMAT_ID, "274V9");
+        assert_eq!(FORMAT_ID, "274V10");
         let (_, g, _) = decode(&bytes).unwrap();
         assert_eq!(g.edges[0].members_req, members_req);
     }
 }
 
 #[test]
-fn v9_decode_rejects_v8_bytes() {
+fn v10_decode_rejects_older_version_bytes() {
     let flags = vec![0u32; 4 * 2 * 2];
     let (walk, blocked) = pack_walk(&flags);
     let collision = WorldCollision {
@@ -787,6 +795,8 @@ fn v9_decode_rejects_v8_bytes() {
     let mut bytes = encode(&collision, &TransportGraph::default(), &[]);
     bytes[4] = 8;
     assert!(matches!(decode(&bytes), Err(PackError::BadVersion(8))));
+    bytes[4] = 9;
+    assert!(matches!(decode(&bytes), Err(PackError::BadVersion(9))));
 }
 
 #[test]
@@ -828,13 +838,14 @@ fn v9_decode_rejects_invalid_members_req_flag() {
         varp_req: vec![],
         worn_req: vec![],
         members_req: false,
+        wildy_cap: None,
     };
     let mut graph = TransportGraph::default();
     graph.edges.push(door);
     let mut bytes = encode(&collision, &graph, &[]);
-    // members_req is the last byte of the single edge, immediately
-    // before the bank-stand count u32.
-    let flag_at = bytes.len() - 4 - 1;
+    // members_req sits just before wildy_cap (i32), the bank-stand count
+    // (u32), and the wilderness trailer (zone count + divisor + offset).
+    let flag_at = bytes.len() - 12 - 4 - 4 - 1;
     bytes[flag_at] = 2;
     assert!(matches!(decode(&bytes), Err(PackError::BadLength(_))));
 }
@@ -1365,4 +1376,69 @@ fn bake_emits_bankbooth_use_quickly_only() {
         }
     );
     assert_eq!(banks[0].access, BankAccess::Booth { op: 2 });
+}
+
+#[test]
+fn v10_roundtrips_wilderness_rules_and_wildy_cap() {
+    let flags = vec![0u32; 4 * 2 * 2];
+    let (walk, blocked) = pack_walk(&flags);
+    let collision = WorldCollision {
+        origin: WorldTile {
+            x: 0,
+            z: 0,
+            level: 0,
+        },
+        width: 2,
+        height: 2,
+        walk,
+        blocked,
+        flags: None,
+    };
+    let mut graph = TransportGraph {
+        wilderness: crate::transport::WildernessRules {
+            zones: vec![crate::transport::WildernessZone {
+                x1: 2944,
+                z1: 3520,
+                x2: 3391,
+                z2: 6399,
+                level1: 0,
+                level2: 3,
+                origin_z: 3520,
+            }],
+            divisor: 8,
+            offset: 1,
+        },
+        ..TransportGraph::default()
+    };
+    graph.teleports.push(TransportEdge {
+        kind: TransportKind::Teleport,
+        at: WorldTile {
+            x: 0,
+            z: 0,
+            level: 0,
+        },
+        to: WorldTile {
+            x: 3213,
+            z: 3424,
+            level: 0,
+        },
+        loc_id: 0,
+        option: 0,
+        ticks: 3,
+        dir: None,
+        open_loc_id: None,
+        skill_req: vec![(6, 25)],
+        item_req: vec![],
+        quest_req: vec![],
+        varp_req: vec![],
+        worn_req: vec![],
+        members_req: false,
+        wildy_cap: Some(20),
+    });
+    let bytes = encode(&collision, &graph, &[]);
+    assert_eq!(bytes[4], VERSION);
+    assert_eq!(FORMAT_ID, "274V10");
+    let (_, g, _) = decode(&bytes).unwrap();
+    assert_eq!(g.wilderness, graph.wilderness);
+    assert_eq!(g.teleports[0].wildy_cap, Some(20));
 }

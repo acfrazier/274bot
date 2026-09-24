@@ -57,6 +57,7 @@ mod teleports;
 mod toll;
 mod vertical;
 mod webs;
+mod wilderness;
 mod zanaris;
 
 use brass_key::*;
@@ -86,6 +87,9 @@ use teleports::*;
 use toll::*;
 use vertical::*;
 use webs::*;
+pub(crate) use wilderness::require_wilderness_teleport_legality;
+use wilderness::*;
+pub use wilderness::{WildernessRules, WildernessZone};
 use zanaris::*;
 
 /// The kinds of transport edge this graph derives.
@@ -162,6 +166,10 @@ pub struct TransportEdge {
     /// deriver; only the canonical `membergatel`/`membergater` family sets
     /// this. Packed as a `u8` on the v9 wire after `worn_req`.
     pub members_req: bool,
+    /// Content-derived max wilderness level this teleport may be used from
+    /// (`~wilderness_level(coord) > cap` refuses). `None` = no wilderness cap.
+    /// Packed as i32le on the v10 wire after `members_req` (`-1` = None).
+    pub wildy_cap: Option<i32>,
 }
 
 /// All transport edges, indexed by interact target (`graph.at[tile]` lists
@@ -175,6 +183,10 @@ pub struct TransportGraph {
     /// them. [`crate::router::find_allow_teleports`] unions them in from
     /// any node. `at` is a wire-only placeholder, never indexed.
     pub teleports: Vec<TransportEdge>,
+    /// Zones + `(z − origin_z) / divisor + offset` derived from
+    /// `wilderness_levels.rs2` / `wilderness_zones.dbrow`. Empty on graphs
+    /// that did not see those sources (fixtures).
+    pub wilderness: WildernessRules,
 }
 
 /// Derive the transport graph from `content_root` (the Server content tree:
@@ -350,7 +362,7 @@ fn edge_order(a: &TransportEdge, b: &TransportEdge) -> std::cmp::Ordering {
             tile(e.to),
             (e.option, e.ticks, e.dir.map(|d| d as u8), e.open_loc_id),
             (&e.skill_req, &e.item_req, &e.quest_req),
-            (&e.varp_req, &e.worn_req, e.members_req),
+            (&e.varp_req, &e.worn_req, e.members_req, e.wildy_cap),
         )
     }
     let family = (a.kind as u8, a.loc_id, tile(a.at)).cmp(&(b.kind as u8, b.loc_id, tile(b.at)));

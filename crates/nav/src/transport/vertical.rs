@@ -355,6 +355,7 @@ pub(super) fn ladder_stair_edges(
                         varp_req: vec![],
                         worn_req: vec![],
                         members_req: false,
+                        wildy_cap: None,
                     });
                 }
             }
@@ -435,6 +436,7 @@ pub(super) fn trapdoor_edges(
                     varp_req: vec![],
                     worn_req: vec![],
                     members_req: false,
+                    wildy_cap: None,
                 });
             }
         }
@@ -473,6 +475,7 @@ pub(super) fn trapdoor_edges(
                 varp_req: vec![],
                 worn_req: vec![],
                 members_req: false,
+                wildy_cap: None,
             });
         }
     }

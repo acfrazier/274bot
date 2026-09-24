@@ -103,6 +103,7 @@ pub fn essence_return_edge(at: WorldTile, session: &EssenceSession) -> Transport
         varp_req: vec![],
         worn_req: vec![],
         members_req: false,
+        wildy_cap: None,
     }
 }
 

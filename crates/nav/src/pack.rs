@@ -12,7 +12,7 @@
 //! (see [`parse_door_config`]). Blocking loc footprints come from
 //! `[loc_N]` `blockwalk` (default yes).
 //!
-//! Pack format (274V): magic `b"274V"`, version `u8` 9, collision origin
+//! Pack format (274V): magic `b"274V"`, version `u8` 10, collision origin
 //! `(x, z, level)` i32le, width/height u32le, the [`WorldCollision`]
 //! packed walk surface — first the `u8` face byte per tile per level,
 //! four planes, level-major, each `width × height` (row-major z then x),
@@ -43,11 +43,11 @@
 //! access (`u8` tag: 0 = [`BankAccess::Booth`] `op` i32le, 1 =
 //! [`BankAccess::Npc`] length-prefixed npc name + `op` i32le + an optional
 //! dialog choice as a presence `u8` then a length-prefixed string), see
-//! [`derive_banks`]. [`decode`] accepts version 9 only — a v8 stream (or
+//! [`derive_banks`]. [`decode`] accepts version 10 only — a v9 stream (or
 //! any earlier one, the v6 packed u16 words included) is
 //! [`PackError::BadVersion`];
 //! there is no flags→walk compat load. The 274N grid decoder stays for
-//! old `.navpack` files; `nav-pack` now writes v9.
+//! old `.navpack` files; `nav-pack` now writes v10.
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -101,20 +101,22 @@ const MAGIC_GRID: &[u8; 4] = b"274N";
 /// content-derived bank stand table ([`BankStand`], baked by
 /// [`derive_banks`]) after the transport edges; the v4 wire also carries
 /// the spirit-tree (7) and reserved NPC (8) transport kinds on the same
-/// kind byte — no version bump. v9 — the current wire — appends a
-/// per-edge `members_req` `u8` (`0`/`1`) after `worn_req`. [`decode`]
-/// accepts version 9 only; 8, 7, 6, 5, and older streams are rejected
-/// rather than compat-loaded.
+/// kind byte — no version bump. v9 appends a per-edge `members_req` `u8`
+/// (`0`/`1`) after `worn_req`. v10 — the current wire — appends a per-edge
+/// wilderness teleport cap (`i32le`, `-1` = none) after `members_req` and
+/// the wilderness-level formula after the bank table. [`decode`] accepts
+/// version 10 only; 9, 8, 7, 6, 5, and older streams are rejected rather
+/// than compat-loaded.
 /// Rebake with `nav-pack` over `$ENGINE_DIR/../content/maps` whenever the
 /// Server content changes (new loc/NPC placements, pack bumps).
-const VERSION: u8 = 9;
+const VERSION: u8 = 10;
 /// Current pack file magic.
 const MAGIC: &[u8; 4] = b"274V";
 /// Pack format identity as it appears in bundled navigation identities: the
-/// file magic followed by the format version (`274V9` for the current wire).
+/// file magic followed by the format version (`274V10` for the current wire).
 /// A format improvement changes this identity and therefore invalidates
 /// staged build artifacts.
-pub const FORMAT_ID: &str = "274V9";
+pub const FORMAT_ID: &str = "274V10";
 /// Bytes per door entry.
 const DOOR_BYTES: usize = 40;
 /// Largest grid side a pack may decode (16384×16384 tiles ≈ 256 MB of walk
@@ -301,19 +303,22 @@ pub fn encode(collision: &WorldCollision, graph: &TransportGraph, banks: &[BankS
         write_req_pairs(&mut out, &e.varp_req);
         write_req_ids(&mut out, &e.worn_req);
         out.push(if e.members_req { 1 } else { 0 });
+        let cap = e.wildy_cap.unwrap_or(-1);
+        out.extend_from_slice(&cap.to_le_bytes());
     }
     write_bank_stands(&mut out, banks);
+    write_wilderness_rules(&mut out, &graph.wilderness);
     out
 }
 
 /// Deserialize the whole-world pack, validating magic, version, and
 /// lengths. The `at` index is rebuilt from the decoded edges; kind-4
 /// (teleport) edges split back into [`TransportGraph::teleports`] and are
-/// excluded from it. Version 9 is the only accepted wire: the collision
+/// excluded from it. Version 10 is the only accepted wire: the collision
 /// decodes as the `u8` face bytes plus the packed `SQ_BLOCKED`
 /// bit-plane with no resident flags (`flags` is
 /// `None` until the sidecar is loaded), and the trailing bank stand table
-/// (see [`BankStand`]) decodes after the edges; any other version — 8, 7, 6,
+/// (see [`BankStand`]) decodes after the edges; any other version — 9, 8, 7, 6,
 /// 5, or older — is rejected rather than mis-read or compat-loaded.
 pub fn decode(bytes: &[u8]) -> Result<(WorldCollision, TransportGraph, Vec<BankStand>), PackError> {
     let mut r = Cursor::new(bytes);
@@ -403,6 +408,19 @@ pub fn decode(bytes: &[u8]) -> Result<(WorldCollision, TransportGraph, Vec<BankS
                     )));
                 }
             },
+            wildy_cap: {
+                let cap = read_i32(&mut r)?;
+                if cap < 0 {
+                    if cap != -1 {
+                        return Err(PackError::BadLength(format!(
+                            "wildy_cap {cap} is not -1 or a non-negative level"
+                        )));
+                    }
+                    None
+                } else {
+                    Some(cap)
+                }
+            },
         };
         if edge.kind == TransportKind::Teleport {
             graph.teleports.push(edge);
@@ -414,6 +432,7 @@ pub fn decode(bytes: &[u8]) -> Result<(WorldCollision, TransportGraph, Vec<BankS
         graph.at.entry(e.at).or_default().push(i);
     }
     let banks = read_bank_stands(&mut r)?;
+    graph.wilderness = read_wilderness_rules(&mut r)?;
     Ok((
         WorldCollision {
             origin,
@@ -550,6 +569,46 @@ fn read_req_ids(r: &mut Cursor<&[u8]>) -> Result<Vec<i32>, PackError> {
         out.push(read_i32(r)?);
     }
     Ok(out)
+}
+
+fn write_wilderness_rules(out: &mut Vec<u8>, rules: &crate::transport::WildernessRules) {
+    out.extend_from_slice(&(rules.zones.len() as u32).to_le_bytes());
+    for z in &rules.zones {
+        for v in [z.x1, z.z1, z.x2, z.z2, z.level1, z.level2, z.origin_z] {
+            out.extend_from_slice(&v.to_le_bytes());
+        }
+    }
+    out.extend_from_slice(&rules.divisor.to_le_bytes());
+    out.extend_from_slice(&rules.offset.to_le_bytes());
+}
+
+fn read_wilderness_rules(
+    r: &mut Cursor<&[u8]>,
+) -> Result<crate::transport::WildernessRules, PackError> {
+    let n = read_u32(r)? as usize;
+    let remaining = r.get_ref().len().saturating_sub(r.position() as usize);
+    if n > remaining / 28 {
+        return Err(PackError::BadLength(format!(
+            "wilderness zone count {n} exceeds remaining pack bytes"
+        )));
+    }
+    let mut zones = Vec::with_capacity(n);
+    for _ in 0..n {
+        zones.push(crate::transport::WildernessZone {
+            x1: read_i32(r)?,
+            z1: read_i32(r)?,
+            x2: read_i32(r)?,
+            z2: read_i32(r)?,
+            level1: read_i32(r)?,
+            level2: read_i32(r)?,
+            origin_z: read_i32(r)?,
+        });
+    }
+    Ok(crate::transport::WildernessRules {
+        zones,
+        divisor: read_i32(r)?,
+        offset: read_i32(r)?,
+    })
 }
 
 fn read_i32(r: &mut Cursor<&[u8]>) -> Result<i32, PackError> {

@@ -72,6 +72,7 @@ pub(super) fn shortcut_edges(
                     varp_req: vec![],
                     worn_req: vec![],
                     members_req: false,
+                    wildy_cap: None,
                 });
             }
         }
@@ -262,6 +263,7 @@ pub(super) fn emit_island_rope_leaf(
         varp_req: vec![],
         worn_req: vec![],
         members_req: false,
+        wildy_cap: None,
     });
 }
 

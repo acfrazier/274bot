@@ -115,5 +115,6 @@ pub(super) fn push_glider_flight(
         varp_req: vec![],
         worn_req: vec![],
         members_req,
+        wildy_cap: None,
     });
 }

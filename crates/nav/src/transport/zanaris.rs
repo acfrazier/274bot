@@ -107,6 +107,7 @@ pub(super) fn zanaris_door_edges(
             varp_req: vec![],
             worn_req: vec![staff_id],
             members_req: false,
+            wildy_cap: None,
         });
     }
     if graph.edges.len() == edge_start {

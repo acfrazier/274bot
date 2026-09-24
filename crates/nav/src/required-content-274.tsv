@@ -31,6 +31,7 @@ file	scripts/quests/quest_zanaris/scripts/quest_zanaris.rs2	Zanaris shed door ed
 file	scripts/skill_magic/configs/magic_spells.dbrow	spell teleports
 file	scripts/skill_magic/configs/enchanted_jewelry.obj	jewellery rub categories
 file	scripts/skill_firemaking/configs/bank_zones.dbrow	canlight bank_zones
+file	scripts/areas/area_wilderness/configs/wilderness_zones.dbrow	wilderness level zones for teleport caps
 file	scripts/player/interfaces/questlist.if	journal names for quest-gated transports
 # scripts/**/*.rs2: the recursive door/open-script scan
 rs2	scripts/_test/scripts/cheats/cheat_bank.rs2

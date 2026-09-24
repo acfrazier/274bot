@@ -354,7 +354,7 @@ pub struct BakeStamp {
     pub source_sha256: Option<String>,
     /// Generator identity of the bake, from [`crate::bake::generator_identity`].
     pub generator: String,
-    /// Pack format identity (`274V9`); a format bump invalidates.
+    /// Pack format identity (`274V10`); a format bump invalidates.
     pub format: String,
     pub revision: u16,
     pub cache_id: String,

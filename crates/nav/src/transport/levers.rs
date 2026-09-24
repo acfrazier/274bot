@@ -101,6 +101,7 @@ pub(super) fn lever_edges(
                     varp_req: vec![],
                     worn_req: vec![],
                     members_req: false,
+                    wildy_cap: None,
                 });
             }
         }

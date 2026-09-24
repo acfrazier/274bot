@@ -405,6 +405,7 @@ fn the_inventory_names_the_implicit_bake_inputs_of_each_release_revision() {
         "scripts/skill_magic/configs/magic_spells.dbrow",
         "scripts/skill_magic/configs/enchanted_jewelry.obj",
         "scripts/skill_firemaking/configs/bank_zones.dbrow",
+        "scripts/areas/area_wilderness/configs/wilderness_zones.dbrow",
     ] {
         assert!(paths.contains(&expected), "{expected} is required");
     }

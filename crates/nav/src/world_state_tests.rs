@@ -60,6 +60,7 @@ fn gated_edge() -> TransportEdge {
         varp_req: vec![(150, 160)], // Grand Tree complete
         worn_req: vec![1712],       // a charged glory
         members_req: false,
+        wildy_cap: None,
     }
 }
 
@@ -187,6 +188,7 @@ fn completed_prince_ali_rescue_waives_only_the_real_alkharid_toll() {
         edges: vec![free.clone(), toll.clone()],
         at: HashMap::from([(at, vec![0, 1])]),
         teleports: vec![],
+        wilderness: crate::transport::WildernessRules::default(),
     };
     let from = WorldTile {
         x: 3267,

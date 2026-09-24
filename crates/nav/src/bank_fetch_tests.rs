@@ -66,6 +66,7 @@ fn knife_graph() -> TransportGraph {
         varp_req: vec![],
         worn_req: vec![KNIFE],
         members_req: false,
+        wildy_cap: None,
     };
     let mut graph = TransportGraph::default();
     graph.at.entry(edge.at).or_default().push(0);

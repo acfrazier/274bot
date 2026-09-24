@@ -3282,6 +3282,7 @@ ScriptRegistry.register({ name: 'Thiever', create: () => new ThievingBot() });
                 varp_req: vec![],
                 worn_req: vec![knife_id],
                 members_req: false,
+                wildy_cap: None,
             };
             let mut graph = TransportGraph::default();
             graph.at.entry(edge.at).or_default().push(0);

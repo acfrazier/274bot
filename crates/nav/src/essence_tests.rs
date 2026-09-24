@@ -66,6 +66,7 @@ fn entry_edges_are_the_wizard_npc_hops_only() {
         varp_req: vec![],
         worn_req: vec![],
         members_req: false,
+        wildy_cap: None,
     };
     assert!(
         !is_essence_entry_edge(&cart),

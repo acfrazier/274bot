@@ -157,6 +157,7 @@ pub(super) fn membergate_edges(
                     varp_req: vec![],
                     worn_req: vec![],
                     members_req: true,
+                    wildy_cap: None,
                 });
             }
         }

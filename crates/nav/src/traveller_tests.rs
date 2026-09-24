@@ -984,6 +984,7 @@ fn door_edge() -> TransportEdge {
         varp_req: vec![],
         worn_req: vec![],
         members_req: false,
+        wildy_cap: None,
     }
 }
 
@@ -1012,6 +1013,7 @@ fn ladder_edge() -> TransportEdge {
         varp_req: vec![],
         worn_req: vec![],
         members_req: false,
+        wildy_cap: None,
     }
 }
 
@@ -1035,6 +1037,7 @@ fn agility_at(loc_id: i32, at: WorldTile) -> TransportEdge {
         varp_req: vec![],
         worn_req: vec![],
         members_req: false,
+        wildy_cap: None,
     }
 }
 
@@ -1112,6 +1115,7 @@ fn find_transport_loc_rejects_unrelated_or_far_candidate_at_gap_4() {
         varp_req: vec![],
         worn_req: vec![],
         members_req: false,
+        wildy_cap: None,
     };
     assert!(
         super::find_transport_loc(&snap, &closed).is_none(),
@@ -1146,6 +1150,7 @@ fn trapdoor_edge() -> TransportEdge {
         varp_req: vec![],
         worn_req: vec![],
         members_req: false,
+        wildy_cap: None,
     }
 }
 
@@ -1175,6 +1180,7 @@ fn cart_edge() -> TransportEdge {
         varp_req: vec![],
         worn_req: vec![],
         members_req: false,
+        wildy_cap: None,
     }
 }
 
@@ -2069,6 +2075,7 @@ fn follow_disembark_plank_ops_the_boat_side_loc() {
         varp_req: vec![],
         worn_req: vec![],
         members_req: false,
+        wildy_cap: None,
     };
     let route = Route {
         legs: vec![Leg::Transport { edge }],
@@ -2123,6 +2130,7 @@ fn dest_dialog_choice_indexes_spirit_tree_siblings() {
         varp_req: vec![],
         worn_req: vec![],
         members_req: false,
+        wildy_cap: None,
     };
     let packed = [tree(village), tree(varrock)];
     let leg = Leg::Transport {
@@ -2365,6 +2373,7 @@ fn follow_spirit_tree_answers_gate_then_second_dest() {
         varp_req: vec![],
         worn_req: vec![],
         members_req: false,
+        wildy_cap: None,
     };
     let packed = [tree(village), tree(varrock), tree(khazard)];
     let route = Route {
@@ -2715,6 +2724,7 @@ fn rangingguild_enter_edge() -> TransportEdge {
         varp_req: vec![],
         worn_req: vec![],
         members_req: false,
+        wildy_cap: None,
     }
 }
 
@@ -2743,6 +2753,7 @@ fn shantay_north_short_edge() -> TransportEdge {
         varp_req: vec![],
         worn_req: vec![],
         members_req: false,
+        wildy_cap: None,
     }
 }
 
@@ -2787,6 +2798,7 @@ fn shantay_edge() -> TransportEdge {
         varp_req: vec![],
         worn_req: vec![],
         members_req: false,
+        wildy_cap: None,
     }
 }
 
@@ -3194,6 +3206,7 @@ fn follow_far_dir_none_door_keeps_close_enough_tolerance() {
         varp_req: vec![],
         worn_req: vec![],
         members_req: false,
+        wildy_cap: None,
     };
     let mut t = Traveller::new();
     let route = Route {
@@ -3591,6 +3604,7 @@ fn ring_edge() -> TransportEdge {
         varp_req: vec![],
         worn_req: vec![],
         members_req: false,
+        wildy_cap: None,
     }
 }
 
@@ -3623,6 +3637,7 @@ fn glory_edge() -> TransportEdge {
         varp_req: vec![],
         worn_req: vec![],
         members_req: false,
+        wildy_cap: None,
     }
 }
 
@@ -3653,6 +3668,7 @@ fn varrock_spell_edge() -> TransportEdge {
         varp_req: vec![],
         worn_req: vec![],
         members_req: false,
+        wildy_cap: None,
     }
 }
 
@@ -3683,6 +3699,7 @@ fn lumbridge_spell_edge() -> TransportEdge {
         varp_req: vec![],
         worn_req: vec![],
         members_req: false,
+        wildy_cap: None,
     }
 }
 
@@ -6142,6 +6159,7 @@ fn level_change_transport_requires_proximity_to_to() {
         varp_req: vec![],
         worn_req: vec![],
         members_req: false,
+        wildy_cap: None,
     };
     let route = Route {
         legs: vec![Leg::Transport { edge }],

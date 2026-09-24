@@ -26,7 +26,9 @@ use crate::pack::{
     sha256_hex, FORMAT_ID,
 };
 use crate::paint::bake_reach;
-use crate::transport::{assert_transmitted_varp_reqs, derive_transports_for_bake};
+use crate::transport::{
+    assert_transmitted_varp_reqs, derive_transports_for_bake, require_wilderness_teleport_legality,
+};
 
 /// Door loc configs under `content/scripts/doors/configs`.
 pub const DOOR_CONFIGS: [&str; 3] = ["doors.loc", "doubledoors.loc", "opened_doors.loc"];
@@ -42,7 +44,7 @@ pub const GENERATOR_ID: &str = "nav-bake-1";
 /// bytes. Pack/flags come from bake/collision/pack/transport; reach bits also
 /// depend on `paint.rs` (`bake_reach`) and `router.rs` (`step_ok`). Traveller
 /// and grid-search changes do not decide those bytes.
-pub const GENERATOR_SOURCES: [&str; 33] = [
+pub const GENERATOR_SOURCES: [&str; 34] = [
     "src/bake.rs",
     "src/canlight.rs",
     "src/collision.rs",
@@ -76,6 +78,7 @@ pub const GENERATOR_SOURCES: [&str; 33] = [
     "src/transport/ranging_guild.rs",
     "src/transport/zanaris.rs",
     "src/transport/teleports.rs",
+    "src/transport/wilderness.rs",
 ];
 
 /// Digest of the bake generator: the manual id, the pack format identity and
@@ -291,6 +294,7 @@ pub fn bake_world(request: &BakeRequest<'_>) -> Result<BakedNav, String> {
     let content_root = request.maps_dir.parent().unwrap_or(Path::new("."));
     let (graph, audit) = derive_transports_for_bake(content_root, &loc_defs, &collision);
     assert_transmitted_varp_reqs(content_root, &graph);
+    require_wilderness_teleport_legality(content_root, &graph)?;
     if audit.converted != 0 {
         notes.push(format!(
             "converted {} non-transmitted varp requirements to completed journal gates",

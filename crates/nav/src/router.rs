@@ -1081,6 +1081,9 @@ fn search_kernel(
                 if !wildy_step_ok(cur, edge.to, allow_wilderness) {
                     continue;
                 }
+                if !graph.teleport_legal_from(cur, edge) {
+                    continue;
+                }
                 let nd = n.cost + edge.ticks as f64;
                 if !done.contains(&edge.to) && dist.get(&edge.to).is_none_or(|&g| g > nd) {
                     dist.insert(edge.to, nd);

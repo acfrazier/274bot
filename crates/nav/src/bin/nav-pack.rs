@@ -2,7 +2,7 @@
 //! into a per-level [`WorldCollision`] (four planes like the client's
 //! `collision[4]`), derive the [`TransportGraph`] from
 //! the Server content, and write the v9 nav pack (magic `274V`, version
-//! byte 9; `encode`) to `$NAV_PACK` or
+//! byte 10; `encode`) to `$NAV_PACK` or
 //! `~/.274bot/274bot.navpack` (default), plus the raw flags sidecar
 //! (magic `274F`; `encode_flags_sidecar`) to `$NAV_FLAGS` or the pack
 //! path with its extension swapped to `.navflags` (default

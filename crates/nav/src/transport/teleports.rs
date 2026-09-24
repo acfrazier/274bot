@@ -10,8 +10,12 @@ pub(super) fn teleport_edges(
     graph: &mut TransportGraph,
     skipped: &mut HashMap<&'static str, usize>,
 ) {
+    if let Ok(rules) = load_wilderness_rules(content_root) {
+        graph.wilderness = rules;
+    }
     let objs = obj_ids_by_name(content_root);
-    spell_teleports(content_root, &objs, graph, skipped);
+    let spell_cap = spell_teleport_cap(content_root).ok().flatten();
+    spell_teleports(content_root, &objs, graph, skipped, spell_cap);
     jewellery_teleports(content_root, &objs, graph, skipped);
 }
 
@@ -27,6 +31,7 @@ pub(super) fn spell_teleports(
     objs: &HashMap<String, i32>,
     graph: &mut TransportGraph,
     skipped: &mut HashMap<&'static str, usize>,
+    wildy_cap: Option<i32>,
 ) {
     let path = content_root
         .join("scripts")
@@ -43,7 +48,7 @@ pub(super) fn spell_teleports(
         let line = raw.trim();
         if let Some(name) = dbrow_block(line) {
             if let Some(block) = cur.take() {
-                push_spell_teleport(objs, graph, skipped, block);
+                push_spell_teleport(objs, graph, skipped, block, wildy_cap);
             }
             cur = name
                 .starts_with("magic_spell_teleport_")
@@ -62,7 +67,7 @@ pub(super) fn spell_teleports(
         }
     }
     if let Some(block) = cur.take() {
-        push_spell_teleport(objs, graph, skipped, block);
+        push_spell_teleport(objs, graph, skipped, block, wildy_cap);
     }
 }
 
@@ -96,6 +101,7 @@ pub(super) fn push_spell_teleport(
     graph: &mut TransportGraph,
     skipped: &mut HashMap<&'static str, usize>,
     (level, runes, coord): (Option<i32>, Vec<(String, i32)>, Option<String>),
+    wildy_cap: Option<i32>,
 ) {
     let Some(level) = level else {
         bump(skipped, SKIP_TELEPORT_BAD_DEST, 1);
@@ -132,6 +138,7 @@ pub(super) fn push_spell_teleport(
         varp_req: vec![],
         worn_req: vec![],
         members_req: false,
+        wildy_cap,
     });
 }
 
@@ -167,6 +174,7 @@ pub(super) fn jewellery_teleports(
         let Ok(text) = fs::read_to_string(&path) else {
             continue;
         };
+        let wildy_cap = jewellery_file_cap(&text).ok().flatten();
         for (op, name, body) in jewellery_blocks(&text) {
             if op != "opheld4" {
                 continue;
@@ -200,6 +208,7 @@ pub(super) fn jewellery_teleports(
                         varp_req: vec![],
                         worn_req: vec![],
                         members_req: false,
+                        wildy_cap,
                     });
                 }
             }

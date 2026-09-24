@@ -137,6 +137,7 @@ pub(super) fn spirit_tree_edges(
                         varp_req: varp_req.clone(),
                         worn_req: vec![],
                         members_req,
+                        wildy_cap: None,
                     },
                     audit,
                 );
