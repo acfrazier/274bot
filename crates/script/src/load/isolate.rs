@@ -1893,7 +1893,6 @@ fn tick_loop(
                             crate::walk_wait::on_hold(host_hold);
                             crate::inspect_wait::on_hold(host_hold);
                             crate::death_recovery::on_hold(host_hold);
-                            crate::special::on_hold(host_hold);
                             crate::machine::on_hold(host_hold);
                             crate::shop::on_hold(host_hold);
                             crate::hunt_fight::on_hold(host_hold);
@@ -2261,7 +2260,6 @@ fn tick_loop(
                 crate::walk_wait::on_reset();
                 crate::inspect_wait::on_reset();
                 crate::death_recovery::on_reset();
-                crate::special::on_reset();
                 crate::machine::on_reset();
                 crate::shop::on_reset();
                 crate::hunt_fight::on_reset();
@@ -2325,7 +2323,6 @@ fn tick_loop(
                 crate::walk_wait::on_pause();
                 crate::inspect_wait::on_pause();
                 crate::death_recovery::on_pause();
-                crate::special::on_pause();
                 crate::machine::on_pause();
                 crate::shop::on_pause();
                 crate::hunt_fight::on_pause();
@@ -2354,7 +2351,6 @@ fn tick_loop(
                 crate::walk_wait::on_resume();
                 crate::inspect_wait::on_resume();
                 crate::death_recovery::on_resume();
-                crate::special::on_resume();
                 crate::machine::on_resume();
                 crate::shop::on_resume();
                 crate::hunt_fight::on_resume();

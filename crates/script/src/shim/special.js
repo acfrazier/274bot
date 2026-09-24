@@ -1,7 +1,7 @@
-// Special bar: posted varps if present. Cost/bar/arm need selected-cache facts.
-import { snap, notImpl, proxy } from '../../shim/_kernel.js';
-import { actions, reader } from '../../adapter/ClientAdapter.js';
-import { Execution } from '../execution/Execution.js';
+// Special bar: posted varps if present. Cost/bar/arm need selected-cache
+// facts; the arm is one Rust step machine and the bar root comes from the
+// scene the isolate already decoded.
+import { snap, notImpl, proxy, runMachine } from '../../shim/_kernel.js';
 
 function call(payload) {
     return globalThis.rustyscript.functions.__rs2b0t_special(payload);
@@ -67,40 +67,12 @@ export const Special = proxy('Special', {
     },
     barComponent() {
         requireControls();
-        let root = -1;
-        try {
-            const id = reader.sideTabInterface(0);
-            root = typeof id === 'number' ? id : -1;
-        } catch (_) {
-            return -1;
-        }
-        if (root === -1) return -1;
-        const bar = call({ op: 'bar', combat_tab_root: root });
+        const bar = call({ op: 'bar' });
         return typeof bar === 'number' ? bar : -1;
     },
     async arm() {
-        const c = requireControls();
-        if (Special.armed()) {
-            return true;
-        }
-        const bar = Special.barComponent();
-        if (bar === -1) {
-            return false;
-        }
-        const token = call({ op: 'begin' }).token;
-        const aborted = () => call({ op: 'current_token' }) !== token;
-        if (!actions.ifButton(bar)) {
-            return false;
-        }
-        const ticks =
-            typeof c.arm_confirm_ticks === 'number' && c.arm_confirm_ticks > 0
-                ? c.arm_confirm_ticks
-                : 2;
-        const armed = await Execution.delayUntilTicks(
-            () => aborted() || Special.armed(),
-            ticks,
-        );
-        if (aborted()) return false;
-        return armed === true;
+        const out = await runMachine('special', {});
+        if (out.kind === 'refused') throw notImpl('Special', out.reason);
+        return out.kind === 'done' && out.value === true;
     },
 });

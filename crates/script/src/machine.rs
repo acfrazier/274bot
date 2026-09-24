@@ -342,6 +342,7 @@ const FAMILIES: &[Entry] = &[
     entry::<crate::teleport::Teleport>(),
     entry::<crate::prayer::Prayer>(),
     entry::<crate::autocast::Autocast>(),
+    entry::<crate::special::Special>(),
     #[cfg(test)]
     entry::<tests::Probe>(),
     #[cfg(test)]

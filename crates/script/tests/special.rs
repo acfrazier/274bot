@@ -414,6 +414,41 @@ fn pause_and_hold_freeze_mid_arm_without_late_click() {
     iso.join();
 }
 
+// The arm reads the bar root and the armed varp from the scene Rust holds:
+// the JS snapshot pages must not cross the seam.
+#[test]
+fn arm_reads_the_scene_not_the_js_side_tab_or_varp_pages() {
+    let iso = spawn(ARM);
+    let idle = energy_armed(1000, 0);
+    let tabs = [SideTabIfaceInput { index: 0, id: 2276 }];
+    let mut snap = base_snapshot();
+    snap.varps = &idle;
+    snap.side_tab_ifaces = &tabs;
+    post_snapshot_input(&iso, &snap);
+    iso.probe(
+        r#"(() => {
+            Object.defineProperties(globalThis.__rs2b0t_host.snapshot, {
+                side_tab_ifaces: { get() { throw new Error('side_tab_ifaces crossed JS/native seam'); } },
+                varps: { get() { throw new Error('varps crossed JS/native seam'); } },
+            });
+            return true;
+        })()"#,
+    )
+    .unwrap();
+
+    tick(&iso, 1);
+    assert_eq!(iso.drain_interacts(), vec![if_button(7562)]);
+
+    let armed = energy_armed(1000, 1);
+    snap.tick = 2;
+    snap.varps = &armed;
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 2);
+    assert_eq!(iso.probe("__ok").unwrap(), true);
+    assert!(iso.drain_interacts().is_empty());
+    iso.join();
+}
+
 #[test]
 fn energy_without_posted_varp_still_throws() {
     let src = r#"
