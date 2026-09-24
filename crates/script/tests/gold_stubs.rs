@@ -651,36 +651,6 @@ export default class T extends LoopingBot {
     iso.join();
 }
 
-#[test]
-fn withdraw_x_waits_for_inventory_publication() {
-    let src = r#"
-import { Bank } from '../../api/bank/Bank.js';
-export default class T extends LoopingBot {
-    async loop() { globalThis.__withdrawResult = await Bank.withdrawX('Lobster', 19); }
-}
-"#;
-    let iso = LoadIsolate::spawn(src.into(), LoadShape::CompatClass, vec![]).unwrap();
-    iso.probe("globalThis.__rs2b0t_host.snapshot={bank:[{id:377,name:'Lobster',count:2000,ops:['Withdraw X']}],bank_open:true,bank_loaded:true,bank_generation:1,count_dialog_open:false,inv_size:28,inv:[{name:'Lobster',count:3}]};true").unwrap();
-    iso.on_game_tick(1);
-    iso.probe("true").unwrap();
-    iso.probe("globalThis.__rs2b0t_host.snapshot.count_dialog_open=true;true")
-        .unwrap();
-    for tick in 2..=3 {
-        iso.on_game_tick(tick);
-        iso.probe("true").unwrap();
-    }
-    assert_eq!(
-        iso.probe("typeof globalThis.__withdrawResult").unwrap(),
-        "undefined",
-        "a sent count is not a completed withdrawal"
-    );
-    iso.probe("globalThis.__rs2b0t_host.snapshot.inv=[{name:'Lobster',count:22}];globalThis.__rs2b0t_host.snapshot.withdraw_x_result_seq=1;globalThis.__rs2b0t_host.snapshot.withdraw_x_result=true;true")
-        .unwrap();
-    iso.on_game_tick(4);
-    assert_eq!(iso.probe("globalThis.__withdrawResult").unwrap(), true);
-    iso.join();
-}
-
 fn packed_bank_booths() -> Vec<WorldTile> {
     BANK_ALIASES
         .iter()

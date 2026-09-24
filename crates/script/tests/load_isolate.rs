@@ -3416,6 +3416,38 @@ export default class T extends LoopingBot {
     iso.join();
 }
 
+/// `Bank.depositAllExcept(keep)` takes the first row whose name is not kept
+/// (case-insensitive), with no script predicate.
+#[test]
+fn isolate_bank_deposit_all_except_skips_kept_names() {
+    let src = r#"
+import { Bank } from '../../api/bank/Bank.js';
+export default class T extends LoopingBot {
+    loop() {
+        if (globalThis.__did) return;
+        globalThis.__did = true;
+        Bank.depositAllExcept(['knife']);
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut snap = base_snapshot();
+    let bank_side = [nc(Some("Knife"), 1), nc(Some("Bones"), 1)];
+    snap.bank_side = &bank_side;
+    snap.bank_open = true;
+    snap.bank_loaded = true;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let _ = iso.probe("1 + 1");
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![script::shim::InteractReq::Deposit {
+            name: "Bones".into()
+        }]
+    );
+    iso.join();
+}
+
 #[test]
 fn isolate_banking_deposit_waits_for_observed_host_result() {
     let src = r#"

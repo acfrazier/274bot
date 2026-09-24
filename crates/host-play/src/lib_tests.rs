@@ -5359,12 +5359,9 @@ export default class T extends LoopingBot {
         .unwrap()
         .pending_bank_op()
         .is_none());
-    script_slot(&scripts, "alice")
-        .unwrap()
-        .lock()
-        .unwrap()
-        .probe("globalThis.__clock = 2001")
-        .unwrap();
+    // The emptied side view is waited on for the frozen 1.2 s (a Rust
+    // deadline): let it lapse.
+    std::thread::sleep(std::time::Duration::from_millis(1_250));
     script_observe(
         &mut c,
         "alice",
