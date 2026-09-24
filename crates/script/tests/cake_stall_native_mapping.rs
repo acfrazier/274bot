@@ -170,10 +170,16 @@ export default class T extends LoopingBot {
             abort: () => globalThis.__abort === true,
             shouldEat: () => globalThis.__eat === true,
             lockedOutUntil: () => globalThis.__lockUntil ?? 0,
-            setStatus: () => {},
-            log: (m) => { (globalThis.__logs ||= []).push(m); },
+            setStatus: (s) => { (globalThis.__events ||= []).push(['status', s]); },
+            log: (m) => {
+                (globalThis.__logs ||= []).push(m);
+                (globalThis.__events ||= []).push(['log', m]);
+            },
             onSteal: () => { globalThis.__stolen += 1; },
-            onReset: () => { globalThis.__reset += 1; },
+            onReset: () => {
+                globalThis.__reset += 1;
+                (globalThis.__events ||= []).push(['reset']);
+            },
         });
         globalThis.__returns = (globalThis.__returns ?? 0) + 1;
     }
@@ -643,6 +649,29 @@ fn watched_stand_swaps_after_three_refused_steals() {
         logs.to_string()
             .contains("3 refused steals — swapping to the stand at (2669,3310)"),
         "{logs}"
+    );
+    // The pump hands the caller each step's status, then its log, then
+    // onReset, in the frozen order (ArdyCakes paints the status).
+    let events: Vec<serde_json::Value> =
+        serde_json::from_value(iso.probe("globalThis.__events").unwrap()).unwrap();
+    assert!(
+        events.contains(&serde_json::json!(["status", "stealing cake (0/28)"])),
+        "{events:?}"
+    );
+    let swap = events
+        .iter()
+        .position(|event| *event == serde_json::json!(["status", "watched — swapping stands"]))
+        .unwrap_or_else(|| panic!("no swap status: {events:?}"));
+    assert_eq!(
+        events[swap + 1..swap + 3],
+        [
+            serde_json::json!([
+                "log",
+                "3 refused steals — swapping to the stand at (2669,3310)"
+            ]),
+            serde_json::json!(["reset"]),
+        ],
+        "{events:?}"
     );
     iso.join();
 }

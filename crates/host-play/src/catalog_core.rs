@@ -10589,6 +10589,12 @@ impl ArdyThieverCycle {
 /// from the stall only while its food is at `restockAtFood`, so the catch
 /// comes from the opening restock. The deposit still needs both the coins
 /// and the kill. The Flee kite tile fails this branch.
+///
+/// Coins count only as a pickpocket: a coin gain with a Thieving XP rise in
+/// the same or the previous observation (the pickpocket script adds the
+/// coins and the XP in one server tick). A dropped Guard's coins picked up by
+/// `LootDrops` carry no Thieving XP, and neither does the stall steal that
+/// raised it earlier.
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct ArdyThieverFightCycle {
     pub pickpocketed: Option<Observation>,
@@ -10599,17 +10605,26 @@ pub struct ArdyThieverFightCycle {
     pub fled: bool,
     pub engaged_guard: Option<usize>,
     pub style_xp: bool,
+    /// Coins and Thieving XP at the previous observation, and whether the
+    /// XP rose on it.
+    #[serde(skip)]
+    last: Option<(i32, i32, bool)>,
 }
 
 impl ArdyThieverFightCycle {
     pub fn observe(&mut self, baseline: &Observation, now: &Observation) {
         self.style_xp |= now.skill_xp("strength") > baseline.skill_xp("strength")
             || now.skill_xp("attack") > baseline.skill_xp("attack");
-        if self.pickpocketed.is_none()
-            && now.item_id(COINS_ID) >= 1
-            && baseline.item_id(COINS_ID) == 0
-            && now.skill_xp("thieving") > baseline.skill_xp("thieving")
-        {
+        let (coins, thieving) = (now.item_id(COINS_ID), now.skill_xp("thieving"));
+        let (last_coins, last_thieving, xp_rose_before) = self.last.unwrap_or((
+            baseline.item_id(COINS_ID),
+            baseline.skill_xp("thieving"),
+            false,
+        ));
+        let xp_rose = thieving > last_thieving;
+        let picked = coins > last_coins && (xp_rose || xp_rose_before);
+        self.last = Some((coins, thieving, xp_rose));
+        if self.pickpocketed.is_none() && picked && baseline.item_id(COINS_ID) == 0 {
             self.pickpocketed = Some(now.clone());
         }
         if self.killed.is_none() {
@@ -10662,7 +10677,7 @@ impl ArdyThieverFightCycle {
                 && near(now.tile, ARDY_THIEVER_STAND, 6);
         }
         if self.returned {
-            self.further |= !now.bank_open && now.item_id(COINS_ID) >= 1;
+            self.further |= !now.bank_open && picked;
         }
     }
 

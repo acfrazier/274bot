@@ -10078,8 +10078,19 @@ export default class NativeStop extends LoopingBot {{
         .is_err());
     }
 
+    /// The fixtures' `Observation`s overflow the default 2 MiB test-thread
+    /// stack in a debug build, so the checks run on a thread with a larger one.
     #[test]
     fn fight_guard_response_needs_a_kill_and_rejects_the_flee_kite() {
+        std::thread::Builder::new()
+            .stack_size(64 << 20)
+            .spawn(fight_guard_response_checks)
+            .expect("spawn the check thread")
+            .join()
+            .expect("fight guard response checks");
+    }
+
+    fn fight_guard_response_checks() {
         let cakes_base = ardy_fight_obs(
             ARDY_CAKES_STAND,
             &[(KNIFE_ID, ARDY_CAKES_BALLAST_KNIVES)],
@@ -10336,6 +10347,24 @@ export default class NativeStop extends LoopingBot {{
             CoreCase::ArdyThieverFight,
             &thiever_base,
             [&stall_fight, &stall_kill]
+        )
+        .qualify()
+        .is_err());
+        // Coins from the dead Guard's drop, picked up with no Thieving XP, are
+        // not a pickpocket: the bank cycle on them does not qualify.
+        let mut looted = stall_kill.clone();
+        looted.item_ids.insert(COINS_ID, 30);
+        assert!(witness(
+            CoreCase::ArdyThieverFight,
+            &thiever_base,
+            [
+                &stall_fight,
+                &stall_kill,
+                &looted,
+                &deposited,
+                &returned,
+                &further
+            ]
         )
         .qualify()
         .is_err());
@@ -10857,9 +10886,7 @@ export default class NativeStop extends LoopingBot {{
             &further,
         ]
         .map(with_ore);
-        assert!(witness(case, &baseline, ore_trip.each_ref())
-            .qualify()
-            .is_err());
+        assert!(witness(case, &baseline, ore_trip.each_ref()).qualify().is_err());
 
         // --- moss_giant_bank: food-gone trip end, Ardougne West, lobster restock.
         let case = CoreCase::parse("moss_giant_bank").expect("bank case registered");

@@ -6317,7 +6317,6 @@ fn alternate_camp_and_fight_option_cases_register() {
 
     for name in [
         "ardy_cakes_fight",
-        "ardy_thiever_fight",
         "chaos_druid_tower",
         "chaos_druid_yanille",
     ] {
@@ -6325,6 +6324,9 @@ fn alternate_camp_and_fight_option_cases_register() {
         let scenario = get(name).unwrap();
         assert_eq!(scenario.settings.deadline, SCRIPT_GOLD_DEADLINE);
     }
+    // The opening stall session and Guard fight come before the gold chain.
+    assert!(names().contains(&"ardy_thiever_fight"));
+    assert_eq!(thiever_fight.settings.deadline, ARDY_THIEVER_FIGHT_DEADLINE);
 }
 
 #[test]

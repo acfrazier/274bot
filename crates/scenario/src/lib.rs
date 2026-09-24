@@ -556,6 +556,19 @@ const ARDY_CAKES_BANK_WATCH_TICKS: u32 = 220;
 /// return, close and a further cake ~30 s: ≈ 186 s at the 95th percentile,
 /// over the 180 s gold cap. Use **240 s**.
 const ARDY_CAKES_DEADLINE: Duration = Duration::from_secs(240);
+/// ArdyThiever Fight whole-run cap. After Start the cell runs an opening
+/// Baker stall session until a Guard catches, the FightBack kill (27 engine
+/// ticks measured on `ardy_cakes_fight`, 290253afd), another stall visit if
+/// the catch came before any food (10-tick lockout first), the pickpockets
+/// until coins (126/256 per attempt, ~11 ticks per stunned failure), the bank
+/// deposit and return (~28 + ~25 ticks measured on the live Fight run), and
+/// the pickpockets until further coins. A 200k-run Monte Carlo of that chain,
+/// over the runs whose catch lands inside the Strength watch, gives a 95th
+/// percentile of 240/256/247 engine ticks at the pooled / ArdyCakes-only /
+/// `ardy_cakes_fight` stall rates, and a 99th of 278/291/330. With ~25 s of
+/// seed and Start at 0.6 s per tick, the 95th percentile is 169-179 s, at the
+/// 180 s gold cap, and the 99th is 192-223 s. Use **240 s**.
+const ARDY_THIEVER_FIGHT_DEADLINE: Duration = Duration::from_secs(240);
 
 /// GnomeMagicChopper fletch cells: the first Magic-tree Woodcutting XP arm and
 /// the further Magic logs arm after the deposit return.

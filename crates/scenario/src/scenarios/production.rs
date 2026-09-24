@@ -6575,8 +6575,11 @@ pub(crate) fn ardy_thiever_knight_scenario() -> Scenario {
 /// ticks per silent owner refusal with a swap after three) puts a Guard catch
 /// within 150 ticks of Start at 0.97 on the pooled 289 rates (11 success /
 /// 5 refused / 3 caught of 19 steals), 0.84 on the ArdyCakes run alone, and
-/// 1.0 at the passing `ardy_cakes_fight` rates. The coins, deposit, return
-/// and further-coins gates follow unchanged.
+/// 1.0 at the passing `ardy_cakes_fight` rates. The watch is 150 runner
+/// dirties, about 143 engine ticks at the measured 1.05 dirties per tick,
+/// which gives 0.967 / 0.837 / 1.0. The coins, deposit, return and
+/// further-coins gates follow unchanged; the whole-run cap is
+/// `ARDY_THIEVER_FIGHT_DEADLINE`.
 pub(crate) fn ardy_thiever_fight_scenario() -> Scenario {
     let stand = ARDOUGNE_GUARD;
     let first_xp = Proof::StatXpGain {
@@ -6725,7 +6728,7 @@ pub(crate) fn ardy_thiever_fight_scenario() -> Scenario {
         settings: ScenarioSettings {
             full_rate: true,
             require_mainland_base: true,
-            deadline: SCRIPT_GOLD_DEADLINE,
+            deadline: ARDY_THIEVER_FIGHT_DEADLINE,
             start_script: Some("ArdyThiever"),
             script_settings_inject: Some(ARDY_THIEVER_FIGHT_INJECT),
             terminal_shot: Some("ardy_thiever_fight"),
