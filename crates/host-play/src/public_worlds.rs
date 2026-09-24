@@ -210,19 +210,24 @@ pub fn modulus_for(
             return value.clone();
         }
     }
-    let value = fetch(&world.host, world.port)
-        .filter(|digits| {
-            let mut nonzero = false;
-            digits.len() >= 250
-                && digits.bytes().all(|b| {
-                    nonzero |= b != b'0';
-                    b.is_ascii_digit()
-                })
-                && nonzero
-        })
-        .unwrap_or_else(|| client::PROD_LOGIN_RSAN.into());
-    cache.lock().insert(world.host.clone(), value.clone());
-    value
+    match fetch(&world.host, world.port).filter(|digits| {
+        let mut nonzero = false;
+        digits.len() >= 250
+            && digits.bytes().all(|b| {
+                nonzero |= b != b'0';
+                b.is_ascii_digit()
+            })
+            && nonzero
+    }) {
+        Some(value) => {
+            cache.lock().insert(world.host.clone(), value.clone());
+            value
+        }
+        None => {
+            cache.lock().remove(&world.host);
+            client::PROD_LOGIN_RSAN.into()
+        }
+    }
 }
 
 #[cfg(test)]
@@ -298,6 +303,11 @@ mod tests {
         assert_eq!(
             modulus_for(&world, true, |_, _| Some("0".repeat(260))),
             client::PROD_LOGIN_RSAN
+        );
+        assert_eq!(
+            modulus_for(&world, false, |_, _| Some(first.clone())),
+            first,
+            "a failed fetch must not pin a baked or stale key"
         );
     }
 }

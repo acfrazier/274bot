@@ -2197,7 +2197,6 @@ fn apply_startup_phase(s: &mut SlotStatus, name: &str, ready: bool, client_ingam
 
 fn record_login_error(statuses: &Arc<Mutex<Vec<SlotStatus>>>, name: &str, e: &LoginError) {
     let msg = format!("code {}: {}", e.code, e.mes2);
-
     if debug_enabled() {
         eprintln!("[host-play] slot {name}: login {msg}");
     }
@@ -2208,14 +2207,19 @@ fn record_login_error(statuses: &Arc<Mutex<Vec<SlotStatus>>>, name: &str, e: &Lo
         s.error = Some(msg);
     }
 }
+
 fn configure_slot_world(
     client: &mut Client,
     world: &public_worlds::PublicWorld,
     refresh: bool,
+    stop: &AtomicBool,
 ) -> Result<(), String> {
     let modulus = public_worlds::modulus_for(world, refresh, |host, port| {
         Client::fetch_login_modulus_for(BotTarget::Prod, host, port)
     });
+    if stop.load(Ordering::Relaxed) {
+        return Ok(());
+    }
     client.set_public_world(&world.host, world.port, world.node_id, &modulus)
 }
 
@@ -2556,11 +2560,19 @@ fn spawn_slot_thread(
                         let worlds = connection.profile().and_then(|p| p.public_worlds())
                             .expect("bound public worlds");
                         let world = &worlds.worlds[round.index];
-                        if let Err(error) = configure_slot_world(&mut client, world, refresh_key) {
+                        if let Err(error) = configure_slot_world(&mut client, world, refresh_key, &arm.stop) {
+                            if arm.stop.load(Ordering::Relaxed) {
+                                return;
+                            }
                             if let Some(row) = slot_statuses.lock().unwrap().iter_mut().find(|s| s.username == username) {
                                 row.startup_phase = StartupPhase::Error;
-                                row.error = Some(format!("profile asset initialization failed: {error}"));
+                                row.startup_phase_started = Instant::now();
+                                row.error = Some(format!("public world login configuration failed: {error}"));
                             }
+                            clear_startup_progress(&slot_statuses, &username);
+                            return;
+                        }
+                        if arm.stop.load(Ordering::Relaxed) {
                             return;
                         }
                         if let Some(row) = slot_statuses.lock().unwrap().iter_mut().find(|s| s.username == username) {

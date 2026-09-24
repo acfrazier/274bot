@@ -34,8 +34,11 @@ An auto account moves to the next listed world when login says it is full,
 waiting after all worlds report full; pinned accounts stay put. Panel and TUI
 show the active world beside each slot. `tui-play --world N` sets a session
 default only for accounts stored as auto. Public login fetches the current
-RSA modulus from that world's `/client/client.js`, caches it per host and
-refreshes on a wrong-key login response; if unavailable, it uses the baked key.
+RSA modulus from that world's `/client/client.js`, caches successful fetches
+per host and refreshes on a wrong-key login response; a failed fetch uses
+the baked key without caching it. Built-in content facts apply to the bundled
+w1/w2 endpoints; a custom listed endpoint must prove matching content identity
+at runtime bind before receiving those facts.
 
 `--world-members true|false` is an operator-declared property of the selected endpoint, held immutable with the profile. It is not a client/server packet observation and not `NODE_MEMBERS`. Explicit `false` beats a local `world.json` `members: true`. Omission uses a guarded bind: only `local-274` / `local-289` loopback profiles whose `engine_dir/data/config/world.json` has matching typed `engine.revision`, `node.port`, and a JSON bool `node.members` inherit that bool. Missing, malformed, mismatched, or public-289 records stay **unknown** and route as not-members. Public-289 never inherits the local engine file; it may still be declared explicitly through `--world-members`. Cache/account membership flags are a different fact.
 

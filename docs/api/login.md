@@ -88,10 +88,11 @@ from the first reachable configured asset world. Each vault account stores
 an optional world number: auto rotates on response 7, waits after all
 worlds report full, and pinned accounts stay on their chosen world.
 The client uses the selected world's node id and fetches its login RSA
-modulus from `/client/client.js` (once per host, refreshed on response 6);
-the baked public modulus is used if the fetch fails. The local engine
-key path above is unchanged. Login and cache transport remain WSS/HTTPS
-for public worlds; Cargo `TARGET` remains the rustc triple.
+modulus from `/client/client.js` (successful fetches cached per host, refreshed
+on response 6); a failed fetch uses the baked public modulus without caching
+the fallback. The local engine key path above is unchanged. Login and
+cache transport remain WSS/HTTPS for public worlds; Cargo `TARGET` remains the
+rustc triple.
 
 `$ENGINE_DIR` defaults depend on revision (274:
 `$HOME/experiments/Server/engine`; 289:

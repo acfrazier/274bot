@@ -483,13 +483,18 @@ impl ProfileOptions {
         let engine_dir = absolute(engine_dir);
         let guarded = parse_guarded_local_world(selection, game_port, &engine_dir);
         let world_members = world_members_from_guarded(self.world_members, guarded.as_ref());
-        // Default public/local launches stay supported when no endpoint flags
-        // are present. Endpoint flags still opt out unless a local profile's
-        // selected engine world.json agrees with the resolved loopback ports.
-        // Bind then applies the existing cache/content identity and source
-        // hashes; equal cache or --engine presence is not enough.
-        let supported_server = endpoint_flags_absent(self)
-            || (selection == ServerSelection::Public289)
+        // Only the bundled public endpoints imply bundled content facts at
+        // selection time. A custom listed endpoint must prove its content
+        // identity when bound before receiving those facts.
+        let bundled_public_endpoints = selection == ServerSelection::Public289
+            && [(&game_host, game_port), (&asset_host, asset_port)]
+                .into_iter()
+                .all(|(host, port)| {
+                    port == 443 && (host == "w1.rs2b2t.com" || host == "w2.rs2b2t.com")
+                });
+        let supported_server = (endpoint_flags_absent(self)
+            && selection != ServerSelection::Public289)
+            || bundled_public_endpoints
             || matching_local_world_supports_facts(
                 selection,
                 &game_host,
@@ -792,7 +797,7 @@ impl ProfileSelection {
         table: &[BundledNavIdentity],
         resource_root: Option<&Path>,
     ) -> Result<Arc<ServerProfile>, String> {
-        self.bind_inner(observer, table, resource_root, false)
+        self.bind_inner(observer, table, resource_root, false, &mut false)
     }
 
     /// Negotiate the selected endpoint before freezing a complete owned cache.
@@ -817,6 +822,7 @@ impl ProfileSelection {
             })
             .unwrap_or(0);
         for attempt in 0..count {
+            let mut asset_connection_failed = false;
             match selected.bind_inner(
                 observer,
                 bundled_nav_identities(),
@@ -825,13 +831,10 @@ impl ProfileSelection {
                     .map(|exe| install_resource_root(&exe))
                     .as_deref(),
                 true,
+                &mut asset_connection_failed,
             ) {
                 Ok(profile) => return Ok(profile),
-                Err(error)
-                    if attempt + 1 < count
-                        && (error.contains("update server /crc: connection problem")
-                            || error.contains("fetch or CRC check failed")) =>
-                {
+                Err(_) if attempt + 1 < count && asset_connection_failed => {
                     let world = &worlds.expect("public worlds for fallback").worlds
                         [(initial + attempt + 1) % count];
                     selected.asset_host = world.host.clone();
@@ -849,6 +852,7 @@ impl ProfileSelection {
         table: &[BundledNavIdentity],
         resource_root: Option<&Path>,
         runtime: bool,
+        asset_connection_failed: &mut bool,
     ) -> Result<Arc<ServerProfile>, String> {
         // The declared identity is read before any preparation: a manifest for
         // another revision must be rejected without touching the update server
@@ -889,6 +893,10 @@ impl ProfileSelection {
                     asset_port: self.asset_port,
                     game_host: &self.game_host,
                     game_port: self.game_port,
+                })
+                .map_err(|error| {
+                    *asset_connection_failed = error.is_connection();
+                    error.to_string()
                 })?;
             observer.report(ProfileProgress::steps(
                 ProfileProgressStage::PreparingCache,
@@ -1087,7 +1095,7 @@ impl ProfileSelection {
             expected_crc: Some(crcs),
             content_id: cache_id.clone(),
         })?);
-        let game_data = if self.supported_server {
+        let game_data = if self.supported_server || (runtime && self.target() == BotTarget::Prod) {
             api::game_data::for_optional_profile(self.revision(), &cache_id)?.filter(|data| {
                 self.target() == BotTarget::Prod
                     || data.source_inputs().all(|(content, input)| {
