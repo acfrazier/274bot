@@ -9813,15 +9813,11 @@ export default class T extends LoopingBot {
             energy_min: Some(api::run_policy::RunEnergyMin::Floor(80)),
         })
     );
-    assert!(Arc::ptr_eq(
-        &run_policy_override,
-        &slot.lock().unwrap().run_policy_override_cell(),
-    ));
 
     let drive_one_host_frame = |client: &mut Client| {
         let done = Arc::new(AtomicBool::new(false));
         let observed = Arc::clone(&done);
-        run_client_for_script_slot(
+        Host::run_client(
             client,
             "alice",
             vault::ProfileSettings::default(),
@@ -9831,7 +9827,7 @@ export default class T extends LoopingBot {
             None,
             None,
             None,
-            &slot,
+            Arc::clone(&run_policy_override),
             move |_, _, _, _| {
                 observed.store(true, Ordering::Relaxed);
                 false
