@@ -2338,6 +2338,11 @@ fn record_login_error(statuses: &Arc<Mutex<Vec<SlotStatus>>>, name: &str, e: &Lo
     if debug_enabled() {
         eprintln!("[host-play] slot {name}: login {msg}");
     }
+    // Response 1 is a transient protocol retry owned by this host. Keep the
+    // slot in Connecting rather than publishing a terminal-looking Error.
+    if e.code == 1 {
+        return;
+    }
     let mut all = statuses.lock().unwrap();
     if let Some(s) = all.iter_mut().find(|s| s.username == name) {
         s.startup_phase = StartupPhase::Error;
