@@ -1,8 +1,8 @@
 //! Bounded Baker stall mapping: posted pins, filtered loc id, honest results.
 
 use script::isolate_fb::{
-    IsolateBuf, ItemRowInput, ReachViewInput, SceneEntityInput, SnapshotFingerprint, SnapshotInput,
-    TileInput,
+    ChatLineInput, IsolateBuf, ItemRowInput, ReachViewInput, SceneEntityInput, SnapshotFingerprint,
+    SnapshotInput, TileInput,
 };
 use script::shim::InteractReq;
 use script::{LoadIsolate, LoadShape};
@@ -635,5 +635,44 @@ fn watched_stand_swaps_after_three_refused_steals() {
             .contains("3 refused steals — swapping to the stand at (2669,3310)"),
         "{logs}"
     );
+    iso.join();
+}
+
+/// Within ten ticks of combat the server refuses a stall steal with a chat
+/// line. The frozen `stealCakes` waits that lockout out before the next steal
+/// and does not count it as the owner watching the stand.
+#[test]
+fn combat_lockout_line_holds_the_next_steal_for_ten_ticks() {
+    let steal = ["Steal from".to_string()];
+    let locs = [loc_row(2561, Some("Baker's stall"), 2667, 3310, 1, &steal)];
+    let lockout = [ChatLineInput {
+        seq: 5,
+        text: "You can't steal from the market stall during combat!",
+        type_: 0,
+        username: None,
+    }];
+    let iso = spawn();
+    iso.probe("globalThis.__fillTo = 28").unwrap();
+    let mut snap = base_snapshot(tile(2668, 3312, 0));
+    snap.locs = &locs;
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 1);
+    assert_eq!(iso.drain_interacts(), vec![steal_loc()]);
+
+    // The line lands on tick 2. Ticks 3..=11 span more than the 2.4 s
+    // resolve window, so a steal that ignored the line would retry in here.
+    snap.chat_lines = &lockout;
+    for n in 2..12 {
+        snap.tick = n;
+        post_snapshot_input(&iso, &snap);
+        tick(&iso, n);
+        assert!(iso.drain_interacts().is_empty(), "tick {n}");
+        std::thread::sleep(std::time::Duration::from_millis(300));
+    }
+    snap.tick = 12;
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 12);
+    assert_eq!(iso.drain_interacts(), vec![steal_loc()], "same stand");
+    assert_eq!(iso.probe("__reset").unwrap(), 0);
     iso.join();
 }

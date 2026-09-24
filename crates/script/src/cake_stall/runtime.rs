@@ -17,6 +17,12 @@ pub const STEAL_RESOLVE_MS: u64 = 2_400;
 /// were not caught (the stall owner was watching) before the other stand is
 /// tried.
 pub const RESET_AFTER_REFUSALS: u32 = 3;
+/// Frozen `LOCKOUT_TICKS`: how long a steal refused for recent combat waits
+/// before the next attempt.
+pub const LOCKOUT_TICKS: i64 = 10;
+/// Frozen `LOCKOUT_RE`: the server refuses stall steals within ten ticks of
+/// combat with this line. It is neither a catch nor a watched-stand refusal.
+const LOCKOUT_LINE: &str = "can't steal from the market stall during combat";
 
 thread_local! {
     static RUNTIME: RefCell<CakeStallRuntime> = const { RefCell::new(CakeStallRuntime::new()) };
@@ -50,6 +56,8 @@ struct Observation {
     facts_valid: bool,
     stall: Option<SelectedLoc>,
     locked_out_until: Option<i64>,
+    chat_max_seq: i32,
+    lockout_seq: Option<i32>,
 }
 
 /// The posted facts this module decides from, read from the isolate scene.
@@ -62,6 +70,8 @@ struct NativeObservation {
     inv_len: usize,
     carried: i32,
     stall: Option<SelectedLoc>,
+    chat_max_seq: i32,
+    lockout_seq: Option<i32>,
 }
 
 impl NativeObservation {
@@ -70,6 +80,7 @@ impl NativeObservation {
     fn from_scene(scene: &Scene, pick_stall: bool) -> Self {
         let session = scene.since_login();
         let inv = session.inv();
+        let lines = session.chat_lines();
         Self {
             ingame: session.ingame().unwrap_or(false),
             tick: scene
@@ -94,6 +105,16 @@ impl NativeObservation {
             } else {
                 None
             },
+            chat_max_seq: lines.map_or(-1, |lines| {
+                lines.iter().map(|line| line.seq).max().unwrap_or(-1)
+            }),
+            lockout_seq: lines.and_then(|lines| {
+                lines
+                    .iter()
+                    .filter(|line| contains_ascii_ci(&line.text, LOCKOUT_LINE))
+                    .map(|line| line.seq)
+                    .max()
+            }),
         }
     }
 
@@ -117,6 +138,8 @@ impl NativeObservation {
                 .unwrap_or(false),
             stall: self.stall,
             locked_out_until: input.get("locked_out_until").and_then(Value::as_i64),
+            chat_max_seq: self.chat_max_seq,
+            lockout_seq: self.lockout_seq,
         }
     }
 }
@@ -149,6 +172,12 @@ struct CakeStallRuntime {
     alt_stand: bool,
     /// Consecutive refused steals from the current stand.
     refusals: u32,
+    /// Frozen `selfLockout`: the tick a steal refused for recent combat may
+    /// be retried from, kept across passes like the stand.
+    self_lockout_until: i64,
+    /// Newest chat seq when the current steal was sent; only later lines
+    /// resolve it.
+    mark_seq: i32,
 }
 
 impl CakeStallRuntime {
@@ -164,6 +193,8 @@ impl CakeStallRuntime {
             deadline: None,
             alt_stand: false,
             refusals: 0,
+            self_lockout_until: 0,
+            mark_seq: -1,
         }
     }
 
@@ -213,10 +244,12 @@ impl CakeStallRuntime {
     }
 
     /// A session boundary or a pass that ended on anything but a retry: the
-    /// next steal starts from the main stand with no refusals counted.
+    /// next steal starts from the main stand with no refusals counted and no
+    /// self-imposed lockout, as a fresh frozen `stealCakes` call does.
     fn reset_stand(&mut self) {
         self.alt_stand = false;
         self.refusals = 0;
+        self.self_lockout_until = 0;
     }
 
     fn done(&mut self, result: &str, stole: bool) -> Value {
@@ -266,7 +299,11 @@ impl CakeStallRuntime {
     }
 
     fn start_after_lockout(&mut self, obs: &Observation, arrived: Option<bool>) -> Value {
-        if obs.tick < obs.locked_out_until.unwrap_or(0) {
+        let until = obs
+            .locked_out_until
+            .unwrap_or(0)
+            .max(self.self_lockout_until);
+        if obs.tick < until {
             return self.done("no-progress", false);
         }
         if arrived == Some(false) || !obs.facts_valid {
@@ -292,6 +329,7 @@ impl CakeStallRuntime {
             return self.done("no-progress", false);
         };
         self.before = obs.carried;
+        self.mark_seq = obs.chat_max_seq;
         self.phase = Phase::WaitSteal;
         self.deadline = Some(self.now() + Duration::from_millis(STEAL_RESOLVE_MS));
         json!({
@@ -342,6 +380,7 @@ impl CakeStallRuntime {
                     || obs.should_eat
                     || obs.in_combat
                     || gained
+                    || self.lockout_seen(obs)
                     || self.expired()
                 {
                     self.phase = Phase::NeedStealResult;
@@ -364,6 +403,12 @@ impl CakeStallRuntime {
                 }
                 if at_goal(obs, self.fill_to) {
                     return self.done("stocked", false);
+                }
+                // Refused for recent combat: wait the lockout out, and do not
+                // count it against the stand.
+                if self.lockout_seen(obs) {
+                    self.self_lockout_until = obs.tick.saturating_add(LOCKOUT_TICKS);
+                    return self.done("no-progress", false);
                 }
                 // Nothing gained and not caught: the owner was watching.
                 self.refusals += 1;
@@ -404,6 +449,17 @@ impl CakeStallRuntime {
     fn expired(&self) -> bool {
         self.deadline.is_some_and(|deadline| self.now() >= deadline)
     }
+
+    fn lockout_seen(&self, obs: &Observation) -> bool {
+        obs.lockout_seq.is_some_and(|seq| seq > self.mark_seq)
+    }
+}
+
+/// ASCII case-insensitive substring test, without the copy.
+fn contains_ascii_ci(hay: &str, needle: &str) -> bool {
+    hay.as_bytes()
+        .windows(needle.len())
+        .any(|window| window.eq_ignore_ascii_case(needle.as_bytes()))
 }
 
 fn sum_carried<'a>(inv: impl IntoIterator<Item = (&'a str, i32)>) -> i32 {
@@ -546,6 +602,8 @@ mod tests {
                 level: BAKER_STALL.stall.level,
             }),
             locked_out_until: None,
+            chat_max_seq: -1,
+            lockout_seq: None,
         }
     }
 
@@ -670,5 +728,47 @@ mod tests {
             (walk["x"].as_i64(), walk["z"].as_i64()),
             (Some(2668), Some(3312))
         );
+    }
+
+    /// The server's "can't steal ... during combat" line resolves the steal
+    /// at once, holds the next steal for `LOCKOUT_TICKS` from the same stand,
+    /// and is not a watched-stand refusal (frozen `classifySteal` 'lockout').
+    #[test]
+    fn combat_lockout_line_waits_ten_ticks_and_is_not_a_refusal() {
+        let mut runtime = CakeStallRuntime::new();
+        let main = at(BAKER_STALL.stand);
+        for _ in 1..RESET_AFTER_REFUSALS {
+            assert_eq!(refused_pass(&mut runtime, &main)["result"], "no-progress");
+        }
+        let locked_at = |tick: i64| Observation {
+            tick,
+            chat_max_seq: 0,
+            lockout_seq: Some(0),
+            ..at(BAKER_STALL.stand)
+        };
+
+        let token = runtime.begin(Some(28), &main)["token"].as_u64().unwrap();
+        assert_eq!(runtime.next(token, &main)["kind"], "loc");
+        // The line resolves the steal before its resolve window runs out.
+        assert_eq!(runtime.next(token, &locked_at(5))["kind"], "observe");
+        assert_eq!(runtime.next(token, &locked_at(5))["result"], "no-progress");
+
+        for tick in 5..5 + LOCKOUT_TICKS {
+            let token = runtime.begin(Some(28), &locked_at(tick))["token"]
+                .as_u64()
+                .unwrap();
+            let held = runtime.next(token, &locked_at(tick));
+            assert_eq!(held["result"], "no-progress", "tick {tick}: {held}");
+        }
+
+        // Same stand after the lockout; the old line does not resolve it.
+        let after = locked_at(5 + LOCKOUT_TICKS);
+        let token = runtime.begin(Some(28), &after)["token"].as_u64().unwrap();
+        assert_eq!(runtime.next(token, &after)["kind"], "loc");
+        assert_eq!(runtime.next(token, &after)["kind"], "wait");
+        // Only now is the third refusal counted.
+        runtime.deadline = Some(Instant::now() - Duration::from_millis(1));
+        assert_eq!(runtime.next(token, &after)["kind"], "observe");
+        assert_eq!(runtime.next(token, &after)["kind"], "on-reset");
     }
 }
