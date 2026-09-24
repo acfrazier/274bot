@@ -63,8 +63,8 @@ export const ChatDialog = proxy('ChatDialog', {
         }
         return (snap().main_make_items || []).map((row) => row.name ?? '');
     },
-    async makeFromPanel() {
-        throw notImpl('ChatDialog.makeFromPanel');
+    async makeFromPanel(match, op) {
+        return run('makeFromPanel', { match: String(match ?? ''), op: op == null ? null : String(op) });
     },
     async makeFromPanelMax(match) {
         return run('makeFromPanelMax', { match: String(match ?? '') });

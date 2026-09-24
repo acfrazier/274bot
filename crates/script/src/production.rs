@@ -8,7 +8,8 @@
 //! quantity and waits the modal to change; `chooseOption` answers the
 //! matching option and waits the page to move. The anvil panel is a
 //! distinct main-modal TYPE_INV with Make-N ops: `makeFromPanelMax` presses
-//! the largest posted Make-N on the matched row. JavaScript starts one
+//! the largest posted Make-N on the matched row and `makeFromPanel` the named
+//! op (else the first posted one). JavaScript starts one
 //! machine per call and awaits its boolean — it does not pick a product,
 //! wait one tick and guess the count dialog is open.
 
@@ -54,6 +55,7 @@ fn probe(scene: &Scene) -> Probe<'_> {
 pub(crate) enum Kind {
     Make,
     MakeX,
+    MakeFromPanel,
     MakeFromPanelMax,
     ChooseOption,
 }
@@ -82,6 +84,9 @@ pub(crate) struct ChatArgs {
     match_name: Option<String>,
     #[serde(default)]
     count: Value,
+    /// `makeFromPanel`'s op label; absent presses the first posted op.
+    #[serde(default)]
+    op: Option<String>,
 }
 
 /// One `ChatDialog` make or option call.
@@ -108,6 +113,7 @@ impl Family for ChatDialog {
                 // Make-X and the anvil panel stop at once when not in game.
                 _ if !probe.ingame => Begin::Done(false),
                 Kind::MakeX => begin_make_x(&probe, match_name.trim(), &args.count, cx),
+                Kind::MakeFromPanel => begin_panel(&probe, &match_name, args.op.as_deref(), cx),
                 Kind::MakeFromPanelMax => begin_panel_max(&probe, match_name.trim(), cx),
             }
         })
@@ -274,6 +280,44 @@ fn begin_panel_max(probe: &Probe<'_>, match_name: &str, cx: &mut Cx<'_>) -> Begi
         return Begin::Done(false);
     };
     let Some((index, _)) = largest_make_op(&row.ops) else {
+        return Begin::Done(false);
+    };
+    cx.emit(InteractReq::MakePanel {
+        id: row.id,
+        slot: row.slot_or_unset(),
+        component: row.component_or_unset(),
+        operation: (index + 1) as i32,
+    });
+    let before = probe.main_modal_id;
+    run(Phase::WaitPanel { before }, PANEL_WAIT_MS, cx)
+}
+
+/// Frozen `ChatDialog.makeFromPanel(match, op?)`: the first named row whose
+/// name contains `match`, the op equal to `op` (case-folded) or else the first
+/// posted op, then the main modal change.
+fn begin_panel(
+    probe: &Probe<'_>,
+    match_name: &str,
+    op: Option<&str>,
+    cx: &mut Cx<'_>,
+) -> Begin<ChatDialog> {
+    let Some(rows) = probe.main_make else {
+        return Begin::Refuse("missing anvil panel".into());
+    };
+    let want = match_name.to_lowercase();
+    let Some(row) = rows.iter().find(|row| {
+        row.name
+            .as_deref()
+            .is_some_and(|name| contains_ci(name, &want))
+    }) else {
+        return Begin::Done(false);
+    };
+    let op = op.map(str::to_lowercase);
+    let index = row.ops.iter().position(|posted| match &op {
+        Some(op) => posted.to_lowercase() == *op,
+        None => !posted.is_empty(),
+    });
+    let Some(index) = index else {
         return Begin::Done(false);
     };
     cx.emit(InteractReq::MakePanel {

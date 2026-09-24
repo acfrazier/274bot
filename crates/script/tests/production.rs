@@ -472,7 +472,7 @@ fn pause_hold_and_session_reset_abort_a_parked_make_x() {
 }
 
 #[test]
-fn make_one_and_make_from_panel_stay_not_impl() {
+fn make_one_stays_not_impl() {
     let src = r#"
 import { ChatDialog } from '../../api/ui/dialogue/ChatDialog.js';
 export default class T extends LoopingBot {
@@ -480,11 +480,8 @@ export default class T extends LoopingBot {
         if (globalThis.__did) return;
         globalThis.__did = true;
         globalThis.__one = null;
-        globalThis.__panel = null;
         try { globalThis.__one = await ChatDialog.makeOne('Flax'); }
         catch (e) { globalThis.__one = String(e.message || e); }
-        try { globalThis.__panel = await ChatDialog.makeFromPanel('Dagger'); }
-        catch (e) { globalThis.__panel = String(e.message || e); }
     }
 }
 "#;
@@ -492,17 +489,100 @@ export default class T extends LoopingBot {
     post(&iso, &base(), Some(&[]));
     tick(&iso, 1);
     let one = iso.probe("__one").unwrap();
-    let panel = iso.probe("__panel").unwrap();
     assert!(
         one.as_str().unwrap_or("").contains("not impl"),
         "makeOne stays not impl, got {one:?}"
     );
-    assert!(
-        panel.as_str().unwrap_or("").contains("not impl"),
-        "makeFromPanel stays not impl, got {panel:?}"
-    );
     assert!(iso.drain_interacts().is_empty());
     iso.join();
+}
+
+const PANEL: &str = r#"
+import { ChatDialog } from '../../api/ui/dialogue/ChatDialog.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__did) return;
+        globalThis.__did = true;
+        globalThis.__ok = null;
+        try {
+            globalThis.__ok = await ChatDialog.makeFromPanel(globalThis.__match, globalThis.__op);
+        } catch (e) {
+            globalThis.__ok = String(e.message || e);
+        }
+    }
+}
+"#;
+
+/// Frozen JiveCrafting at the furnace: `makeFromPanel(jewel.item, 'Make 5')`
+/// presses that op on the first row naming the jewel, then waits the panel
+/// to close.
+fn furnace_panel(item: &str, op: Option<&str>) -> (LoadIsolate, Vec<InteractReq>) {
+    let iso = spawn(PANEL);
+    let op = op.map_or("undefined".to_string(), |op| format!("{op:?}"));
+    iso.probe(&format!(
+        "globalThis.__match = {item:?}; globalThis.__op = {op}; true"
+    ))
+    .unwrap();
+    let ops = [
+        "Make".to_string(),
+        "Make 5".to_string(),
+        "Make 10".to_string(),
+    ];
+    let rows = [
+        panel_row("Gold ring", 1635, 0, 4233, &ops),
+        panel_row("Gold necklace", 1654, 0, 4239, &ops),
+    ];
+    let mut snap = base();
+    snap.main_modal_id = 4161;
+    post(&iso, &snap, Some(&rows));
+    tick(&iso, 1);
+    let sent = iso.drain_interacts();
+    snap.tick = 2;
+    snap.main_modal_id = -1;
+    post(&iso, &snap, Some(&rows));
+    tick(&iso, 2);
+    (iso, sent)
+}
+
+#[test]
+fn make_from_panel_presses_the_named_op_on_the_matched_row() {
+    let (iso, sent) = furnace_panel("necklace", Some("make 5"));
+    assert_eq!(
+        sent,
+        vec![InteractReq::MakePanel {
+            id: 1654,
+            slot: 0,
+            component: 4239,
+            operation: 2,
+        }],
+        "'make 5' folds to the posted 'Make 5', 1-based op 2 on the necklace row"
+    );
+    assert_eq!(iso.probe("__ok").unwrap(), Value::Bool(true));
+    iso.join();
+
+    let (iso, sent) = furnace_panel("Gold", None);
+    assert_eq!(
+        sent,
+        vec![InteractReq::MakePanel {
+            id: 1635,
+            slot: 0,
+            component: 4233,
+            operation: 1,
+        }],
+        "no op presses the first posted op of the first matching row"
+    );
+    assert_eq!(iso.probe("__ok").unwrap(), Value::Bool(true));
+    iso.join();
+}
+
+#[test]
+fn make_from_panel_without_the_row_or_op_is_false_without_a_packet() {
+    for (item, op) in [("amulet", Some("Make")), ("ring", Some("Make 28"))] {
+        let (iso, sent) = furnace_panel(item, op);
+        assert!(sent.is_empty(), "{item} {op:?}: {sent:?}");
+        assert_eq!(iso.probe("__ok").unwrap(), Value::Bool(false));
+        iso.join();
+    }
 }
 
 const CHOOSE_AND_MAKE: &str = r#"
