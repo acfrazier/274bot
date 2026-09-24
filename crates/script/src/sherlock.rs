@@ -42,11 +42,14 @@
 //! ([`ScriptCtx::snapshot`], [`ScriptCtx::here`], [`ScriptCtx::obj_names`] and
 //! the ctx's [`crate::CompiledTick`]): an absent slot is omitted rather than
 //! defaulted, so the machine never reads an invented `-1`, `28` or slot `0`.
+//! The `next` page set is the adapter's: required keys always, optional
+//! chat / bank / shop / overlay slots only when this frame carried them.
+//! [`enqueue`] maps every adapter `ENQUEUED_KINDS` verb onto this slot's
+//! interact queue. `walk_missing_carry` is isolate-posted from a walk
+//! outcome this compiled tick does not observe, so it stays omitted.
 //!
-//! Out of scope for this card, on purpose: deposit, talk, keyboard, the trio
-//! and gate supply, the death envelope, the duel `3554` family, honor-SETTINGS
-//! and loadout provisioning. Those stay with the frozen card and its later
-//! slices.
+//! Out of scope for this card, on purpose: keyboard, the death envelope, the
+//! duel `3554` family, honor-SETTINGS and loadout provisioning.
 
 use api::game_data::SelectedGameData;
 use api::snapshot::{ActorKind, ActorTargetView, GameSnapshot};
@@ -217,10 +220,11 @@ fn begin_payload(ctx: &ScriptCtx<'_>) -> Value {
 /// The `next` call's page, in the machine's own field names.
 ///
 /// The required keys are always present (`[]`/`null` when the frame posted
-/// nothing there). The optional slots — `here`, the local player's own target
-/// pair, `hitpoints`, `varp95`, the board and its generation — are posted only
-/// when this frame carried the fact, so the machine reads an unposted slot as
-/// unobserved rather than as a default it was never handed.
+/// nothing there). The optional slots — `here`, the chat / bank / shop
+/// facts, the local player's own target pair, `hitpoints`, `varp95`, the
+/// board and its generation — are posted only when this frame carried the
+/// fact, so the machine reads an unposted slot as unobserved rather than as
+/// a default it was never handed.
 fn next_payload(ctx: &ScriptCtx<'_>, token: u64) -> Value {
     let mut page = Map::new();
     page.insert("op".into(), json!("next"));
@@ -232,13 +236,33 @@ fn next_payload(ctx: &ScriptCtx<'_>, token: u64) -> Value {
     page.insert("ground".into(), ground_page(ctx));
     page.insert("inv".into(), inv_page(ctx));
     page.insert("npcs".into(), npc_page(ctx));
+    page.insert("equipment".into(), equipment_page(ctx));
     if let Some((x, z, level)) = ctx.here {
         page.insert("here".into(), json!({ "x": x, "z": z, "level": level }));
     }
     let Some(snapshot) = ctx.snapshot else {
         return Value::Object(page);
     };
+    if let Some(booth) = nearest_booth(snapshot) {
+        page.insert("nearest_booth".into(), booth);
+    }
+    page.insert(
+        "bank_open".into(),
+        json!(snapshot.bank_component_id() != -1),
+    );
     page.insert("main_modal_id".into(), json!(snapshot.modals().main));
+    page.insert("chat_modal_id".into(), json!(snapshot.modals().chat));
+    page.insert(
+        "chat_continue".into(),
+        json!(snapshot.chat_continue_component_id() != -1),
+    );
+    if let Some(options) = chat_options_page(snapshot) {
+        page.insert("chat_options".into(), options);
+    }
+    page.insert(
+        "count_dialog_open".into(),
+        json!(snapshot.count_dialog_open()),
+    );
     page.insert("inv_size".into(), json!(snapshot.inventory_size()));
     page.insert("self_slot".into(), json!(snapshot.self_slot()));
     if let Some(target) = snapshot
@@ -273,6 +297,10 @@ fn next_payload(ctx: &ScriptCtx<'_>, token: u64) -> Value {
         }),
     );
     page.insert("puzzle_board_generation".into(), json!(board.generation));
+    page.insert("shop_open".into(), json!(snapshot.shop().open));
+    if snapshot.shop().open {
+        page.insert("shop_stock".into(), shop_stock_page(snapshot));
+    }
     Value::Object(page)
 }
 
@@ -374,6 +402,97 @@ fn npc_page(ctx: &ScriptCtx<'_>) -> Value {
                     "target_kind": target_kind,
                     "target_index": target_index,
                 })
+            })
+            .collect(),
+    )
+}
+
+/// The posted worn page the Entrana strip reads: raw rows with their own
+/// `slot`, omit-if-absent the way the adapter's `clueEquipmentPage` is. A
+/// page that posted nothing is an empty list, never a second equipment read.
+fn equipment_page(ctx: &ScriptCtx<'_>) -> Value {
+    let rows: &[api::snapshot::ItemView] = ctx.snapshot.map_or(&[], GameSnapshot::equipment);
+    let names = ctx.obj_names;
+    Value::Array(
+        rows.iter()
+            .filter_map(|item| {
+                let mut row = Map::new();
+                if let Some(name) = names
+                    .and_then(|names| names.name(item.def.id))
+                    .or(item.def.name.as_deref())
+                    .filter(|name| !name.is_empty())
+                {
+                    row.insert("name".into(), json!(name));
+                }
+                row.insert("id".into(), json!(item.def.id));
+                row.insert("count".into(), json!(item.count));
+                row.insert("slot".into(), json!(item.slot));
+                (!row.is_empty()).then_some(Value::Object(row))
+            })
+            .collect(),
+    )
+}
+
+/// The posted nearest Use-quickly booth, or `None` when the frame posted no
+/// booth on the plane. Never an invented stand.
+fn nearest_booth(snapshot: &GameSnapshot) -> Option<Value> {
+    let loc = snapshot.nearest_use_quickly_booth()?;
+    let mut row = Map::new();
+    row.insert("x".into(), json!(loc.tile.x));
+    row.insert("z".into(), json!(loc.tile.z));
+    row.insert("level".into(), json!(loc.tile.level));
+    row.insert("id".into(), json!(loc.id));
+    if let Some(name) = loc.name.as_deref().filter(|name| !name.is_empty()) {
+        row.insert("name".into(), json!(name));
+    }
+    if let Some(op) = loc
+        .actions
+        .iter()
+        .flatten()
+        .find(|action| action.eq_ignore_ascii_case("Use-quickly"))
+    {
+        row.insert("op".into(), json!(op));
+    }
+    Some(Value::Object(row))
+}
+
+/// The posted chat choices, or `None` when the frame posted no rows with
+/// text. Option numbers keep the original 1-based slots so a dropped row
+/// does not renumber the ones around it.
+fn chat_options_page(snapshot: &GameSnapshot) -> Option<Value> {
+    let rows: Vec<Value> = snapshot
+        .chat_options()
+        .iter()
+        .enumerate()
+        .filter(|(_, option)| !option.text.is_empty())
+        .map(|(index, option)| {
+            json!({
+                "text": option.text,
+                "option": index as i32 + 1,
+            })
+        })
+        .collect();
+    (!rows.is_empty()).then_some(Value::Array(rows))
+}
+
+/// The posted shop stock of an open shop. A row without a clickable id is
+/// still posted as the observation it is.
+fn shop_stock_page(snapshot: &GameSnapshot) -> Value {
+    Value::Array(
+        snapshot
+            .shop()
+            .stock
+            .iter()
+            .map(|item| {
+                let mut row = Map::new();
+                row.insert("id".into(), json!(item.def.id));
+                if let Some(name) = item.def.name.as_deref().filter(|name| !name.is_empty()) {
+                    row.insert("name".into(), json!(name));
+                }
+                row.insert("count".into(), json!(item.count));
+                row.insert("slot".into(), json!(item.slot));
+                row.insert("component".into(), json!(item.component_id));
+                Value::Object(row)
             })
             .collect(),
     )
@@ -523,6 +642,99 @@ fn enqueue(sink: &mut Vec<InteractReq>, kind: &str, step: &Value) {
                 generation,
             });
         }
+        "continue" => {
+            sink.push(InteractReq::ContinueDialog);
+        }
+        "answer" => {
+            let Some(option) = int_of(step, "option") else {
+                return;
+            };
+            sink.push(InteractReq::Answer { option });
+        }
+        "answer-count" => {
+            let Some(value) = int_of(step, "value") else {
+                return;
+            };
+            sink.push(InteractReq::AnswerCount { value });
+        }
+        "shop-button" => {
+            let (Some(shop), Some(name), Some(id), Some(slot), Some(component), Some(chunk)) = (
+                text_of(step, "shop"),
+                text_of(step, "name"),
+                int_of(step, "id"),
+                int_of(step, "slot"),
+                int_of(step, "component"),
+                int_of(step, "chunk"),
+            ) else {
+                return;
+            };
+            sink.push(InteractReq::ShopButton {
+                kind: shop.to_string(),
+                name: name.to_string(),
+                id,
+                slot,
+                component,
+                chunk,
+            });
+        }
+        "wear" => {
+            let Some(name) = text_of(step, "name") else {
+                return;
+            };
+            sink.push(InteractReq::Wear {
+                name: name.to_string(),
+            });
+        }
+        "unequip" => {
+            let Some(name) = text_of(step, "name") else {
+                return;
+            };
+            sink.push(InteractReq::Unequip {
+                name: name.to_string(),
+            });
+        }
+        "deposit" => {
+            let Some(name) = text_of(step, "name") else {
+                return;
+            };
+            sink.push(InteractReq::Deposit {
+                name: name.to_string(),
+            });
+        }
+        "withdraw" => {
+            let (Some(name), Some(action)) = (text_of(step, "name"), text_of(step, "action"))
+            else {
+                return;
+            };
+            sink.push(InteractReq::Withdraw {
+                name: name.to_string(),
+                action: action.to_string(),
+            });
+        }
+        "walk-nearest-bank" => {
+            sink.push(InteractReq::WalkNearestBank);
+        }
+        "open-booth" => {
+            let (Some(x), Some(z), Some(level), Some(id)) = (
+                int_of(step, "x"),
+                int_of(step, "z"),
+                int_of(step, "level"),
+                int_of(step, "id"),
+            ) else {
+                return;
+            };
+            sink.push(InteractReq::OpenBooth {
+                x,
+                z,
+                level,
+                id,
+                name: text_of(step, "name").map(str::to_string),
+                action: text_of(step, "action").map(str::to_string),
+            });
+        }
+        "close" => {
+            sink.push(InteractReq::Close);
+        }
         _ => {}
     }
 }
@@ -542,11 +754,12 @@ mod tests {
     use super::*;
     use api::game_data::TrailMembershipRow;
     use client::client::{Client, ClientConfig, Skill};
-    use client::config::if_type::{ComponentType, IfType, IfTypeMut};
+    use client::config::if_type::{ButtonType, ComponentType, IfType, IfTypeMut};
     use client::config::ObjType;
     use client::dash3d::ClientObj;
     use client::datastruct::LinkList;
     use client::io::{ClientRevision, ServerProt};
+    use std::collections::BTreeSet;
     use std::sync::Arc;
 
     /// The selected-revision facts every session identifies against.
@@ -846,6 +1059,58 @@ mod tests {
         }
     }
 
+    /// A frame whose chat modal posts a continue button and nothing else:
+    /// the observed `chat_continue` the frozen `drainChat` reads, with no
+    /// option list for the professor arm to steal.
+    fn continue_dialog(held: &[(i32, i32)], here: Option<(i32, i32, i32)>) -> Frame {
+        let mut c = client_with(held);
+        c.set_iface(
+            2000,
+            IfType {
+                id: 2000,
+                layer_id: 2000,
+                children: Some(vec![2003]),
+                ..Default::default()
+            },
+        );
+        c.set_iface(
+            2003,
+            IfType {
+                id: 2003,
+                layer_id: 2000,
+                r#type: ComponentType::TYPE_TEXT,
+                ..Default::default()
+            },
+        );
+        c.set_iface_mut(
+            2003,
+            IfTypeMut {
+                button_type: ButtonType::BUTTON_CONTINUE,
+                ..Default::default()
+            },
+        );
+        c.chat_modal_id = 2000;
+        c.bump_gens(ServerProt::IF_OPENCHAT);
+        Frame {
+            snapshot: snap(&mut c),
+            here,
+            hold: false,
+            names: None,
+        }
+    }
+
+    /// The first selected talk membership whose jm2 spawn is unique, so the
+    /// talk arm has a tile to walk to when no continue is posted.
+    fn talk_row(data: &SelectedGameData) -> i32 {
+        data.talk_key()
+            .expect("talk_key")
+            .talk
+            .iter()
+            .find(|row| row.spawn.is_some())
+            .expect("a unique-spawn talk membership")
+            .id
+    }
+
     /// One tick over `frame`, and the requests it queued.
     fn tick(
         frame: &mut Frame,
@@ -915,6 +1180,11 @@ mod tests {
         assert_eq!(
             page_keys(&page),
             [
+                "bank_open",
+                "chat_continue",
+                "chat_modal_id",
+                "count_dialog_open",
+                "equipment",
                 "generation",
                 "ground",
                 "held",
@@ -929,6 +1199,7 @@ mod tests {
                 "puzzle_board",
                 "puzzle_board_generation",
                 "self_slot",
+                "shop_open",
                 "token",
             ],
         );
@@ -942,6 +1213,12 @@ mod tests {
             page["main_modal_id"], -1,
             "the observed main modal, not an invented one"
         );
+        assert_eq!(page["chat_modal_id"], -1, "the observed closed chat");
+        assert_eq!(page["chat_continue"], false, "no continue on this frame");
+        assert_eq!(page["count_dialog_open"], false);
+        assert_eq!(page["bank_open"], false);
+        assert_eq!(page["shop_open"], false);
+        assert_eq!(page["equipment"], json!([]));
         assert_eq!(page["inv_size"], 1, "the inv tab's own slot count");
         assert_eq!(page["self_slot"], -1, "the client's own local slot");
         assert_eq!(page["locs"], json!([]));
@@ -955,7 +1232,11 @@ mod tests {
         assert!(
             page.get("hitpoints").is_none()
                 && page.get("varp95").is_none()
-                && page.get("self_target_kind").is_none(),
+                && page.get("self_target_kind").is_none()
+                && page.get("nearest_booth").is_none()
+                && page.get("chat_options").is_none()
+                && page.get("shop_stock").is_none()
+                && page.get("walk_missing_carry").is_none(),
             "a fact this frame did not carry is omitted, never defaulted: {page}"
         );
         assert_ne!(tile.0, 0, "the decoded search tile is a real destination");
@@ -986,6 +1267,7 @@ mod tests {
         assert_eq!(
             page_keys(&page),
             [
+                "equipment",
                 "generation",
                 "ground",
                 "held",
@@ -999,11 +1281,14 @@ mod tests {
         );
         assert_eq!(page["held"], json!([]));
         assert_eq!(page["inv"], json!([]));
+        assert_eq!(page["equipment"], json!([]));
         assert_eq!(page["locs"], json!([]));
         assert_eq!(page["npcs"], json!([]));
         assert_eq!(page["ground"], json!([]));
         assert!(page.get("inv_size").is_none(), "{page}");
         assert!(page.get("main_modal_id").is_none(), "{page}");
+        assert!(page.get("chat_modal_id").is_none(), "{page}");
+        assert!(page.get("chat_continue").is_none(), "{page}");
         assert!(page.get("self_slot").is_none(), "{page}");
         assert!(page.get("puzzle_board").is_none(), "{page}");
     }
@@ -1307,6 +1592,73 @@ mod tests {
                 "generation": 7,
             }),
         );
+        enqueue(&mut sink, "continue", &json!({ "kind": "continue" }));
+        enqueue(
+            &mut sink,
+            "answer",
+            &json!({ "kind": "answer", "option": 2 }),
+        );
+        enqueue(
+            &mut sink,
+            "answer-count",
+            &json!({ "kind": "answer-count", "value": 6859 }),
+        );
+        enqueue(
+            &mut sink,
+            "shop-button",
+            &json!({
+                "kind": "shop-button",
+                "shop": "Buy",
+                "name": "Shantay pass",
+                "id": 1854,
+                "slot": 3,
+                "component": 3900,
+                "chunk": 1,
+            }),
+        );
+        enqueue(
+            &mut sink,
+            "wear",
+            &json!({ "kind": "wear", "name": "Bronze platebody" }),
+        );
+        enqueue(
+            &mut sink,
+            "unequip",
+            &json!({ "kind": "unequip", "name": "Bronze platebody" }),
+        );
+        enqueue(
+            &mut sink,
+            "deposit",
+            &json!({ "kind": "deposit", "name": "Bronze platebody" }),
+        );
+        enqueue(
+            &mut sink,
+            "withdraw",
+            &json!({
+                "kind": "withdraw",
+                "name": "Bronze platebody",
+                "action": "Withdraw-1",
+            }),
+        );
+        enqueue(
+            &mut sink,
+            "walk-nearest-bank",
+            &json!({ "kind": "walk-nearest-bank" }),
+        );
+        enqueue(
+            &mut sink,
+            "open-booth",
+            &json!({
+                "kind": "open-booth",
+                "x": 3091,
+                "z": 3245,
+                "level": 0,
+                "id": 2213,
+                "name": "Bank booth",
+                "action": "Use-quickly",
+            }),
+        );
+        enqueue(&mut sink, "close", &json!({ "kind": "close" }));
         assert_eq!(
             sink,
             vec![
@@ -1341,6 +1693,40 @@ mod tests {
                     component: 6600,
                     generation: 7,
                 },
+                InteractReq::ContinueDialog,
+                InteractReq::Answer { option: 2 },
+                InteractReq::AnswerCount { value: 6859 },
+                InteractReq::ShopButton {
+                    kind: "Buy".into(),
+                    name: "Shantay pass".into(),
+                    id: 1854,
+                    slot: 3,
+                    component: 3900,
+                    chunk: 1,
+                },
+                InteractReq::Wear {
+                    name: "Bronze platebody".into(),
+                },
+                InteractReq::Unequip {
+                    name: "Bronze platebody".into(),
+                },
+                InteractReq::Deposit {
+                    name: "Bronze platebody".into(),
+                },
+                InteractReq::Withdraw {
+                    name: "Bronze platebody".into(),
+                    action: "Withdraw-1".into(),
+                },
+                InteractReq::WalkNearestBank,
+                InteractReq::OpenBooth {
+                    x: 3091,
+                    z: 3245,
+                    level: 0,
+                    id: 2213,
+                    name: Some("Bank booth".into()),
+                    action: Some("Use-quickly".into()),
+                },
+                InteractReq::Close,
             ]
         );
 
@@ -1409,6 +1795,176 @@ mod tests {
         assert!(
             script.token.is_some(),
             "the frozen frame is not a session end"
+        );
+    }
+
+    /// A posted continue-dialog produces a continue step, not another Talk-to
+    /// and not a wait: Sherlock marshals `chat_continue`, the machine drains
+    /// it at `Steady`, and enqueue maps it onto `ContinueDialog`.
+    #[test]
+    fn a_posted_continue_dialog_produces_a_continue_step() {
+        let data = selected();
+        let held_id = talk_row(&data);
+        let mut script = Sherlock::default();
+
+        let mut walking = Frame::new(&[(held_id, 1)], Some(far()));
+        let first = tick(&mut walking, &mut script, Some(&data));
+        assert!(
+            matches!(first.as_slice(), [InteractReq::Walk { .. }]),
+            "the talk arm walks when no chat is posted: {first:?}"
+        );
+        assert!(script.token.is_some());
+
+        let mut chatting = continue_dialog(&[(held_id, 1)], Some(far()));
+        let page = {
+            let mut driver = crate::ctx::test_support::NullDriver::default();
+            let ctx = chatting.ctx(&mut driver, Some(&data));
+            next_payload(&ctx, script.token.expect("live token"))
+        };
+        assert_eq!(page["chat_continue"], true, "{page}");
+        assert_eq!(page["chat_modal_id"], 2000, "{page}");
+        assert!(page.get("chat_options").is_none(), "{page}");
+
+        let sink = tick(&mut chatting, &mut script, Some(&data));
+        assert_eq!(
+            sink,
+            vec![InteractReq::ContinueDialog],
+            "a posted continue is not a Talk-to and not a wait"
+        );
+        assert!(script.token.is_some(), "continue keeps the session");
+    }
+
+    fn adapter_enqueued_kinds() -> BTreeSet<String> {
+        let src = include_str!("shim/solve_clue.js");
+        let start = src
+            .find("const ENQUEUED_KINDS = [")
+            .expect("ENQUEUED_KINDS");
+        let rest = &src[start..];
+        let end = rest.find(']').expect("ENQUEUED_KINDS close");
+        js_idents(&rest[..end], '\'')
+    }
+
+    fn adapter_next_keys() -> BTreeSet<String> {
+        let src = include_str!("shim/solve_clue.js");
+        let start = src
+            .find("function clueNextPayload(")
+            .expect("clueNextPayload");
+        let rest = &src[start..];
+        let end = rest
+            .find("\nexport class SolveClue")
+            .expect("clueNextPayload end");
+        let body = &rest[..end];
+        let mut keys = BTreeSet::new();
+        for line in body.lines() {
+            let line = line.trim();
+            if let Some(colon) = line.find(':') {
+                let name = line[..colon].trim();
+                if !name.is_empty()
+                    && name
+                        .chars()
+                        .all(|c| c.is_ascii_lowercase() || c == '_')
+                {
+                    keys.insert(name.to_string());
+                }
+            }
+        }
+        let mut rest = body;
+        while let Some(i) = rest.find("payload.") {
+            rest = &rest[i + "payload.".len()..];
+            let name: String = rest
+                .chars()
+                .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+                .collect();
+            if !name.is_empty() {
+                keys.insert(name);
+            }
+        }
+        keys
+    }
+
+    fn sherlock_next_keys() -> BTreeSet<String> {
+        let src = include_str!("sherlock.rs");
+        let start = src.find("fn next_payload(").expect("next_payload");
+        let rest = &src[start..];
+        let end = rest.find("\nfn held_page(").expect("held_page");
+        let mut keys = BTreeSet::new();
+        let mut body = &rest[..end];
+        while let Some(i) = body.find("page.insert(") {
+            body = &body[i + "page.insert(".len()..];
+            let trimmed = body.trim_start();
+            let Some(rest) = trimmed.strip_prefix('"') else {
+                continue;
+            };
+            let Some(end) = rest.find('"') else { break };
+            keys.insert(rest[..end].to_string());
+            body = &rest[end + 1..];
+        }
+        keys
+    }
+
+    fn sherlock_enqueued_kinds() -> BTreeSet<String> {
+        let src = include_str!("sherlock.rs");
+        let start = src.find("fn enqueue(").expect("enqueue");
+        let rest = &src[start..];
+        let end = rest.find("\nfn int_of(").expect("int_of");
+        let mut keys = BTreeSet::new();
+        for line in rest[..end].lines() {
+            let line = line.trim();
+            let Some(s) = line.strip_prefix('"') else {
+                continue;
+            };
+            let Some(end) = s.find('"') else { continue };
+            if s[end + 1..].trim_start().starts_with("=>") {
+                keys.insert(s[..end].to_string());
+            }
+        }
+        keys
+    }
+
+    fn js_idents(src: &str, quote: char) -> BTreeSet<String> {
+        let mut keys = BTreeSet::new();
+        let mut rest = src;
+        while let Some(start) = rest.find(quote) {
+            rest = &rest[start + quote.len_utf8()..];
+            let Some(end) = rest.find(quote) else { break };
+            let s = &rest[..end];
+            if !s.is_empty()
+                && s.chars()
+                    .all(|c| c.is_ascii_lowercase() || c == '-' || c == '_')
+            {
+                keys.insert(s.to_string());
+            }
+            rest = &rest[end + quote.len_utf8()..];
+        }
+        keys
+    }
+
+    /// The compiled page set and enqueue kinds stay in lockstep with the
+    /// isolate adapter. `resume` is iterate's answer slot, not `next_payload`.
+    /// `walk_missing_carry` is isolate-posted from a walk outcome this
+    /// compiled tick does not observe.
+    #[test]
+    fn compiled_page_and_enqueue_sets_match_the_adapter() {
+        let adapter_kinds = adapter_enqueued_kinds();
+        assert_eq!(
+            adapter_kinds,
+            sherlock_enqueued_kinds(),
+            "enqueue kinds diverged from ENQUEUED_KINDS"
+        );
+
+        let mut adapter_keys = adapter_next_keys();
+        assert!(
+            adapter_keys.remove("resume"),
+            "adapter next payload lost resume"
+        );
+        assert!(
+            adapter_keys.remove("walk_missing_carry"),
+            "adapter next payload lost walk_missing_carry"
+        );
+        assert_eq!(
+            adapter_keys,
+            sherlock_next_keys(),
+            "next page keys diverged from clueNextPayload"
         );
     }
 }

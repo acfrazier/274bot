@@ -178,9 +178,15 @@
 //! and keep the posted name and posted scene index on the verb, and a page that
 //! posts no match, no `here` or no talk action waits with the token live.
 //!
-//! An open chat closes the arm for the tick: the posted `chat_modal_id` beside
-//! `chat_continue` is the landed `dialog_ready`, so no walk and no Talk-to goes
-//! out while it holds, and the posted `count_dialog_open` blocks the same way.
+//! An open chat closes the Talk-to for the tick: the posted `chat_modal_id`
+//! beside `chat_continue` is the landed `dialog_ready`, so no walk and no
+//! Talk-to goes out while it holds, and the posted `count_dialog_open` blocks
+//! the same way. A posted `chat_continue` with no option list and no count
+//! dialog is drained at the head of `Steady` — the frozen `drainChat` — so the
+//! continue goes out before the casket Open or the Talk-to; a page that posted
+//! only `chat_modal_id` still waits, and a posted option list is the
+//! professor's to answer, not that drain.
+//!
 //! The challenge seam is a `none-held` sibling of Collecting: `identify_step`
 //! reads no challenge id, so a page that holds only a selected
 //! `challenge_answers` scroll joins its parent talk step through the
@@ -1502,6 +1508,18 @@ impl ClueRuntime {
                 // falls through untouched.
                 if let Some(step) = self.toll(selected, input) {
                     return step;
+                }
+                // The frozen `drainChat`: a posted continue with no option
+                // list and no count dialog is sent before the casket Open or
+                // the step's own verb, so a giver chat still open when the
+                // casket lands is continued rather than Opened through. A
+                // page that posted only `chat_modal_id` is not a continue,
+                // and a posted option list is the professor's to answer.
+                if !count_open(input)
+                    && continue_posted(input)
+                    && !options_posted(input)
+                {
+                    return self.emit(CONTINUE);
                 }
                 match casket_name(selected, row) {
                     // The held casket's own item, opened by name. Repeats while
@@ -10975,13 +10993,9 @@ mod tests {
             &["Talk-to"]
         )]);
 
-        // The posted chat modal: an open chat is not a tick to Talk-to again,
-        // and it does not walk either.
-        for extra in [
-            json!({ "chat_modal_id": 968 }),
-            json!({ "chat_continue": true }),
-            json!({ "chat_modal_id": 968, "chat_continue": true }),
-        ] {
+        // The posted chat modal without a continue is still not a Talk-to,
+        // and it does not walk either: `dialog_ready` waits the tick out.
+        for extra in [json!({ "chat_modal_id": 968 })] {
             let open = call(
                 &data,
                 token,
@@ -10996,6 +11010,28 @@ mod tests {
                 talk_scene(here(3100, 3233, 0), on_tile.clone(), extra.clone()),
             );
             assert_eq!(far["kind"], "wait", "{extra} {far}");
+        }
+
+        // A posted continue is the frozen `drainChat`: it goes out before the
+        // Talk-to, arrived or far, and is never a wait behind an open chat.
+        for extra in [
+            json!({ "chat_continue": true }),
+            json!({ "chat_modal_id": 968, "chat_continue": true }),
+        ] {
+            let open = call(
+                &data,
+                token,
+                page.clone(),
+                talk_scene(here(3207, 3233, 0), on_tile.clone(), extra.clone()),
+            );
+            assert_eq!(open["kind"], "continue", "{extra} {open}");
+            let far = call(
+                &data,
+                token,
+                page.clone(),
+                talk_scene(here(3100, 3233, 0), on_tile.clone(), extra.clone()),
+            );
+            assert_eq!(far["kind"], "continue", "{extra} {far}");
         }
 
         // The posted closed chat is not an open one, and an omitted slot is
@@ -11062,6 +11098,82 @@ mod tests {
             talk_scene(here(3207, 3233, 0), on_tile, json!({})),
         );
         assert_eq!(after["reason"], "stale", "{after}");
+    }
+
+    /// The frozen `drainChat` at the head of `Steady`: a posted continue with
+    /// no option list is sent before the Talk-to, the search walk and the
+    /// casket Open. A posted option list is not drained, and a count dialog
+    /// still belongs to the talk arm.
+    #[test]
+    fn steady_drains_a_posted_continue_before_the_step_verb() {
+        on_reset();
+        let data = selected();
+
+        let token = steady(&data, TALK);
+        let on_tile = json!([talk_npc(
+            51,
+            0,
+            "Hans",
+            Tile {
+                x: 3207,
+                z: 3233,
+                level: 0
+            },
+            1,
+            &["Talk-to"]
+        )]);
+        let continued = call(
+            &data,
+            token,
+            talk_page(TALK),
+            talk_scene(
+                here(3207, 3233, 0),
+                on_tile.clone(),
+                json!({ "chat_continue": true }),
+            ),
+        );
+        assert_eq!(continued["kind"], "continue", "{continued}");
+
+        let token = steady(&data, TALK);
+        let listed = call(
+            &data,
+            token,
+            talk_page(TALK),
+            talk_scene(
+                here(3207, 3233, 0),
+                on_tile,
+                json!({
+                    "chat_continue": true,
+                    "chat_options": [option("I seek a challenge.", 1)],
+                }),
+            ),
+        );
+        assert_eq!(listed["kind"], "wait", "{listed}");
+
+        let token = steady(&data, SEARCH);
+        let searched = call(
+            &data,
+            token,
+            json!([[SEARCH, 1]]),
+            json!({
+                "here": { "x": 2000, "z": 2000, "level": 0 },
+                "chat_continue": true,
+            }),
+        );
+        assert_eq!(searched["kind"], "continue", "{searched}");
+
+        let token = steady(&data, EASY_CASKET);
+        let opened = call(
+            &data,
+            token,
+            json!([[EASY_CASKET, 1]]),
+            json!({ "chat_continue": true }),
+        );
+        assert_eq!(opened["kind"], "continue", "{opened}");
+        let token = steady(&data, EASY_CASKET);
+        let held = call(&data, token, json!([[EASY_CASKET, 1]]), json!({}));
+        assert_eq!(held["kind"], "held", "{held}");
+        assert_eq!(held["action"], "Open", "{held}");
     }
 
     /// The talk arm's own outcome set: the walk, the Talk-to, the answer and
