@@ -249,10 +249,10 @@ impl LoginQueue {
             let until = if state.pending > 0 {
                 Some(QUEUE_POLL)
             } else {
-                state.last.and_then(|last| {
-                    let since = now.saturating_duration_since(last);
-                    (since < UID_COOLDOWN).then_some(UID_COOLDOWN - since)
-                })
+                state
+                    .last
+                    .and_then(|last| UID_COOLDOWN.checked_sub(now.saturating_duration_since(last)))
+                    .filter(|left| !left.is_zero())
             };
             if let Some(until) = until {
                 wait = Some(wait.map_or(until, |w| w.max(until)));
@@ -635,6 +635,22 @@ mod tests {
             q.request_permit(7, base + Duration::from_secs(15)),
             Permit::Grant
         ));
+    }
+
+    /// A waiting uid keeps its FIFO place, so its cooldown row survives
+    /// pruning. Its retry lands a little after the 15 s TTL (a real sleep
+    /// overshoots), which must grant, not panic.
+    #[test]
+    fn queued_uid_retrying_after_ttl_overshoot_grants() {
+        let base = Instant::now();
+        let mut q = LoginQueue::default();
+        for _ in 0..4 {
+            assert!(matches!(q.request_permit(7, base), Permit::Grant));
+            assert!(q.acknowledge_login_return(7, base));
+        }
+        assert!(matches!(q.request_permit(7, base), Permit::Wait(_)));
+        let retry = base + UID_COOLDOWN + Duration::from_millis(3);
+        assert!(matches!(q.request_permit(7, retry), Permit::Grant));
     }
 
     #[test]
