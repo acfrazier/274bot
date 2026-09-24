@@ -50,6 +50,7 @@ fn run_selected_facts<'s>(
         "cow-locations" => cow_locations(scope),
         "cow-nearest" => cow_nearest(scope, args.get(1)),
         "pickpocket-spot" => pickpocket_spot(scope, args.get(1)),
+        "required-thieving" => required_thieving(scope, args.get(1)),
         _ => Err("invalid selected facts op".into()),
     }
 }
@@ -331,13 +332,22 @@ fn pickpocket_spot<'s>(
     set_i32(scope, row, "z", spot.z);
     set_i32(scope, row, "level", spot.level);
     set_i32(scope, row, "leash", spot.leash);
-    if let Some(level) = supply_v2::selected_data()
-        .as_deref()
-        .and_then(|data| data.required_thieving(spot.name))
-    {
-        set_i32(scope, row, "required_thieving", level);
-    }
     Ok(row.into())
+}
+
+/// Frozen `requiredThieving(target)`: the selected pickpocket level of the
+/// NPC named `target`, and the frozen `?? 1` for a name no pickpocket row
+/// lists. `undefined` without selected data.
+fn required_thieving<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    target: v8::Local<v8::Value>,
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    let target = js_to_string(scope, target)?;
+    let Some(data) = supply_v2::selected_data() else {
+        return Ok(v8::undefined(scope).into());
+    };
+    let level = data.required_thieving(&target).unwrap_or(1);
+    Ok(v8::Integer::new(scope, level).into())
 }
 
 fn string_array<'s>(

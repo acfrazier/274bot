@@ -506,6 +506,41 @@ export default class T extends LoopingBot {
     offline.join();
 }
 
+/// Frozen `requiredThieving(target)` is the pickpocket level of that NPC
+/// name, `1` for a name no row lists — never the level of the spot table's
+/// Guard fallback. ArdyThiever checks it at Start and on a paint switch.
+#[test]
+fn required_thieving_is_the_selected_level_of_the_named_target() {
+    let source = r#"
+import { requiredThieving } from '../../api/thieving/targets.js';
+import { ARDOUGNE_PICKPOCKET_TARGETS } from '../../data/pickpocketTargets.js';
+export default class T extends LoopingBot {
+    loop() {
+        globalThis.__probe = [...ARDOUGNE_PICKPOCKET_TARGETS, 'Farmer', 'Man', 'Nobody']
+            .map((target) => [target, requiredThieving(target)]);
+    }
+}
+"#;
+    let data = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
+    let iso =
+        LoadIsolate::spawn_with_game_data(source.into(), LoadShape::CompatClass, vec![], data)
+            .unwrap();
+    iso.on_game_tick(1);
+    assert_eq!(
+        iso.probe("__probe").unwrap(),
+        serde_json::json!([
+            ["Guard", 40],
+            ["Knight of Ardougne", 55],
+            ["Paladin", 70],
+            ["Hero", 80],
+            ["Farmer", 10],
+            ["Man", 1],
+            ["Nobody", 1]
+        ])
+    );
+    iso.join();
+}
+
 #[test]
 #[ignore = "requires RS2B0T to name a frozen catalog root"]
 fn selected_game_data_composes_with_frozen_alcher_logic() {

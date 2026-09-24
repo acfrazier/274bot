@@ -29,16 +29,9 @@ export function targetSpot(target) {
 }
 
 export function requiredThieving(target) {
-    const bag = host().settingsBag || {};
-    const levels = bag.pickpocketLevels || bag.thievingLevels;
-    if (levels && typeof levels[target] === 'number') {
-        return levels[target];
-    }
-    const posted = spotRow(target);
-    if (!posted || typeof posted.required_thieving !== 'number') {
-        throw notImpl('requiredThieving');
-    }
-    return posted.required_thieving;
+    const level = globalThis.__rs2b0t_selected_facts('required-thieving', String(target ?? ''));
+    if (level === undefined) throw notImpl('requiredThieving', 'no selected game data');
+    return level;
 }
 
 export const HOSTILE_NAMES = [];
