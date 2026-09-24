@@ -6,6 +6,9 @@ pub(crate) use chaos_druid::*;
 mod moss_giant;
 use moss_giant::MOSS_GIANT_FIXTURE_LOADOUTS;
 pub(crate) use moss_giant::*;
+mod hill_giant;
+use hill_giant::HILL_GIANT_FIXTURE_LOADOUTS;
+pub(crate) use hill_giant::*;
 
 pub(crate) const TROUT_ID: i32 = 333;
 pub(crate) const COMBAT_SCIMITAR_ID: i32 = 1331;
@@ -17,10 +20,8 @@ const NOTED_LIMPWURT_ROOT_ID: i32 = 226;
 pub(crate) const LAW_RUNE_ID: i32 = 563;
 pub(crate) const BONES_ID: i32 = 526;
 const NOTED_BONES_ID: i32 = 527;
-pub(crate) const HILL_GIANT_FOOD: i32 = 8;
 pub(crate) const AUTO_FIGHTER_FOOD: i32 = 8;
 const AUTO_FIGHTER_BANK_RESTOCK: i32 = 10;
-const HILL_GIANT_BANK_RESTOCK: i32 = 4;
 const AUTO_FIGHTER_MAGE_LEVEL: i32 = 13;
 const AUTO_FIGHTER_MAGE_CASTS: i32 = 150;
 const AUTO_FIGHTER_MAGE_AIR_RUNES: i32 = AUTO_FIGHTER_MAGE_CASTS * 2;
@@ -122,11 +123,6 @@ pub(crate) const GUARD_DROP_IDS: [i32; 6] = [
     NATURE_RUNE_ID,
 ];
 
-const HILL_GIANT_PIT: WorldTile = WorldTile {
-    x: 3110,
-    z: 9832,
-    level: 0,
-};
 const ROCK_CRAB_SPOT: WorldTile = WorldTile {
     x: 2704,
     z: 3726,
@@ -192,10 +188,6 @@ const VARROCK_TELE_FIRE: i32 = 3;
 const GREEN_DRAGON_BANK_RESTOCK: i32 = 20;
 const FIRE_GIANT_BANK_RESTOCK: i32 = 20;
 
-const HILL_GIANT_FIXTURE_LOADOUTS: &[FixtureLoadout] = &[FixtureLoadout {
-    name: "Scenario Hill Giant food",
-    carry: &[("Trout", HILL_GIANT_FOOD as u32)],
-}];
 const GREEN_DRAGON_FIXTURE_LOADOUTS: &[FixtureLoadout] = &[
     FixtureLoadout {
         name: "Scenario Green Dragon food",
@@ -226,20 +218,6 @@ fn combat_fixture_loadouts(card: &str) -> Option<&'static [FixtureLoadout]> {
     }
 }
 
-const HILL_GIANT_INJECT: &[ScriptSettingInject] = &[
-    ScriptSettingInject {
-        id: "loadout",
-        value: ScriptInjectValue::Str("Scenario Hill Giant food"),
-    },
-    ScriptSettingInject {
-        id: "meleeStyle",
-        value: ScriptInjectValue::Str("strength"),
-    },
-    ScriptSettingInject {
-        id: "buryBones",
-        value: ScriptInjectValue::Bool(false),
-    },
-];
 const AUTO_FIGHTER_INJECT: &[ScriptSettingInject] = &[
     ScriptSettingInject {
         id: "food",
@@ -865,12 +843,6 @@ const ARDY_FIGHTER_INJECT: &[ScriptSettingInject] = &[
         id: "foodTarget",
         value: ScriptInjectValue::Num(1.0),
     },
-];
-const HILL_GIANT_LOOT_EMPTY: &[i32] = &[
-    BIG_BONES_ID,
-    NOTED_BIG_BONES_ID,
-    LIMPWURT_ROOT_ID,
-    NOTED_LIMPWURT_ROOT_ID,
 ];
 const AUTO_FIGHTER_LOOT_EMPTY: &[i32] = &[BONES_ID, NOTED_BONES_ID];
 const ROCK_CRAB_LOOT_EMPTY: &[i32] = &[
@@ -1607,30 +1579,6 @@ fn combat_range_scenario(
             ..Default::default()
         },
     }
-}
-
-/// HillGiant default melee in the pit. Target display is Giant. The Brass key
-/// is prepared because this inside-pit cell does not qualify the key-fetch or
-/// entrance branch. Blank weapon. DeathRecovery and banking stay idle.
-pub(crate) fn hill_giant_scenario() -> Scenario {
-    combat_core_scenario(CombatCorePlan {
-        name: "hill_giant",
-        card: "HillGiant",
-        tele: HILL_GIANT_PIT,
-        radius: 16,
-        food_alias: "trout",
-        food_id: TROUT_ID,
-        food_count: HILL_GIANT_FOOD,
-        weapon_alias: "adamant_scimitar",
-        weapon_id: COMBAT_SCIMITAR_ID,
-        extra_give: &[("edgevilledungeonkey", BRASS_KEY_ID, 1)],
-        wear: None,
-        loot_empty: HILL_GIANT_LOOT_EMPTY,
-        inject: HILL_GIANT_INJECT,
-        complete_quest: None,
-        thieving: 0,
-        agility: 0,
-    })
 }
 
 /// AutoFighter Guard at Start position. banking=None, clues/special off.
@@ -2699,27 +2647,6 @@ const GREEN_DRAGON_BANK_DEFAULT_PREPARED_INJECT: &[ScriptSettingInject] = &[
     },
 ];
 
-/// HillGiant's always-on trip end, reached on the first loot slot so the cell
-/// does not need fourteen giant drops. `meleeStyle`/`buryBones` as the core.
-const HILL_GIANT_BANK_INJECT: &[ScriptSettingInject] = &[
-    ScriptSettingInject {
-        id: "loadout",
-        value: ScriptInjectValue::Str("Scenario Hill Giant food"),
-    },
-    ScriptSettingInject {
-        id: "meleeStyle",
-        value: ScriptInjectValue::Str("strength"),
-    },
-    ScriptSettingInject {
-        id: "buryBones",
-        value: ScriptInjectValue::Bool(false),
-    },
-    ScriptSettingInject {
-        id: "lootSlots",
-        value: ScriptInjectValue::Num(1.0),
-    },
-];
-
 /// ArdyFighter's `bankStrategy=Loot count` PeriodicBank after it has looted a
 /// Guard drop. `foodTarget=1` keeps the stall restock short so the cell has
 /// room for the loot the bank trip deposits.
@@ -3139,169 +3066,6 @@ pub(crate) fn auto_fighter_bank_scenario() -> Scenario {
     )
 }
 
-/// HillGiant's always-on trip end (`lootSlots=1`): one looted Giant drop ends
-/// the trip, Varrock West banks it and withdraws trout back, then the pit
-/// fight resumes.
-pub(crate) fn hill_giant_bank_scenario() -> Scenario {
-    combat_bank_scenario(
-        "hill_giant_bank",
-        "HillGiant",
-        HILL_GIANT_PIT,
-        16,
-        "trout",
-        TROUT_ID,
-        HILL_GIANT_FOOD,
-        "adamant_scimitar",
-        COMBAT_SCIMITAR_ID,
-        &[("edgevilledungeonkey", BRASS_KEY_ID, 1)],
-        HILL_GIANT_LOOT_EMPTY,
-        HILL_GIANT_BANK_INJECT,
-        0,
-        "trout",
-        12,
-        &[
-            (
-                "watch the trip's Big bones enter a fresh Varrock West bank",
-                Proof::BankItemId {
-                    id: BIG_BONES_ID,
-                    count: 1,
-                },
-            ),
-            (
-                "watch the restock of Trout to the card's declared twelve",
-                Proof::ItemId {
-                    id: TROUT_ID,
-                    count: HILL_GIANT_FOOD + HILL_GIANT_BANK_RESTOCK,
-                },
-            ),
-            ("watch HillGiant close its bank", Proof::BankClosed),
-            (
-                "watch return to the giant pit after banking",
-                Proof::ArrivedNear {
-                    x: HILL_GIANT_PIT.x,
-                    z: HILL_GIANT_PIT.z,
-                    level: HILL_GIANT_PIT.level,
-                    radius: 16,
-                },
-            ),
-            (
-                "watch fresh Strength XP after the bank return",
-                Proof::FreshStatXpGain {
-                    id: STRENGTH_STAT,
-                    min: 1,
-                },
-            ),
-        ],
-    )
-}
-
-/// Prepared HillGiant earned-kill full bank. Same source strength/`lootSlots=1`
-/// inject as `hill_giant_bank`, but 70-stat Rune armour and no seeded bones or
-/// limpwurt. Restock is the card's declared `foodWithdraw` 12. Seeded-cargo
-/// upstream bank proof is not this cell.
-pub(crate) fn hill_giant_bank_prepared_scenario() -> Scenario {
-    let mut scenario = remaining_prepared_combat_bank_scenario(
-        "hill_giant_bank_prepared",
-        "HillGiant",
-        HILL_GIANT_PIT,
-        16,
-        "trout",
-        TROUT_ID,
-        HILL_GIANT_FOOD,
-        "adamant_scimitar",
-        COMBAT_SCIMITAR_ID,
-        &[("edgevilledungeonkey", BRASS_KEY_ID, 1)],
-        HILL_GIANT_LOOT_EMPTY,
-        HILL_GIANT_BANK_INJECT,
-        "trout",
-        12,
-        REMAINING_COMBAT_PREPARED_LEVEL,
-        COMBAT_QUALIFICATION_DEADLINE,
-        COMBAT_QUALIFICATION_WATCH_TICKS,
-        &[
-            (
-                "watch earned Giant loot enter a fresh Varrock West bank",
-                Proof::BankItemIdAny {
-                    ids: &HILL_GIANT_BANK_DEPOSIT,
-                    count: 1,
-                },
-            ),
-            (
-                "watch the prepared restock of Trout to the card's declared twelve",
-                Proof::ItemId {
-                    id: TROUT_ID,
-                    count: HILL_GIANT_FOOD + HILL_GIANT_BANK_RESTOCK,
-                },
-            ),
-            ("watch prepared HillGiant close its bank", Proof::BankClosed),
-            (
-                "watch prepared return to the giant pit after banking",
-                Proof::ArrivedNear {
-                    x: HILL_GIANT_PIT.x,
-                    z: HILL_GIANT_PIT.z,
-                    level: HILL_GIANT_PIT.level,
-                    radius: 16,
-                },
-            ),
-            (
-                "watch fresh Strength XP after the prepared bank return",
-                Proof::FreshStatXpGain {
-                    id: STRENGTH_STAT,
-                    min: 1,
-                },
-            ),
-        ],
-    );
-    insert_setstat_drain_before_hostile_tele(&mut scenario);
-    scenario
-}
-
-/// Deposit-only HillGiant qualification: same pit prep, inject and combat-first
-/// Strength XP as `hill_giant_bank`, then a script-looted Big bones in pack,
-/// then a fresh Varrock West deposit under the ordinary 150-dirty bank watch.
-/// Restock, close, return and second-fight watches remain on the frozen full-cycle cell.
-pub(crate) fn hill_giant_loot_deposit_scenario() -> Scenario {
-    let mut scenario = combat_bank_scenario(
-        "hill_giant_loot_deposit",
-        "HillGiant",
-        HILL_GIANT_PIT,
-        16,
-        "trout",
-        TROUT_ID,
-        HILL_GIANT_FOOD,
-        "adamant_scimitar",
-        COMBAT_SCIMITAR_ID,
-        &[("edgevilledungeonkey", BRASS_KEY_ID, 1)],
-        HILL_GIANT_LOOT_EMPTY,
-        HILL_GIANT_BANK_INJECT,
-        0,
-        "trout",
-        12,
-        &[
-            (
-                "watch looted Big bones in pack before the bank trip",
-                Proof::ItemId {
-                    id: BIG_BONES_ID,
-                    count: 1,
-                },
-            ),
-            (
-                "watch the trip's Big bones enter a fresh Varrock West bank",
-                Proof::BankItemId {
-                    id: BIG_BONES_ID,
-                    count: 1,
-                },
-            ),
-        ],
-    );
-    scenario.proof = Proof::BankItemId {
-        id: BIG_BONES_ID,
-        count: 1,
-    };
-    scenario
-}
-
-
 /// ArdyFighter's `bankStrategy=Loot count` trip: after a Guard drop lands in
 /// the pack the PeriodicBank walks to the East Ardougne booth, deposits the
 /// card's own loot list and returns to the market anchor for further work.
@@ -3355,7 +3119,6 @@ pub(crate) fn ardy_fighter_bank_scenario() -> Scenario {
 
 pub(crate) const ROCK_CRAB_BANK_DEPOSIT: [i32; 2] = [UNCUT_SAPPHIRE_ID, CASKET_ID];
 pub(crate) const GREEN_DRAGON_BANK_DEPOSIT: [i32; 2] = [DRAGON_BONES_ID, GREEN_DRAGONHIDE_ID];
-pub(crate) const HILL_GIANT_BANK_DEPOSIT: [i32; 2] = [BIG_BONES_ID, LIMPWURT_ROOT_ID];
 
 /// FireGiant's Waterfall Quest prerequisite via the native individual-quest
 /// path, ahead of the stat/inventory reset — the same targeted completion
