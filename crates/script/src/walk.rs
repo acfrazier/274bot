@@ -10,8 +10,10 @@
 //! - `attempts` is `maxPasses` (`Traversal.ts:108`); the bound applies only
 //!   when set (`Traversal.ts:149`).
 //! - A closer Chebyshev rebakes and resets no-progress (`walkLadder.ts:55–59`).
-//! - A baked walk that ends short of the destination is not success: frozen
-//!   reads `isArrived` on the next loop (`Traversal.ts:118–121`, `141–142`).
+//! - Frozen WalkExecutor returns true at `'closest'` (`WalkExecutor.ts:316-321`)
+//!   even when `isArrived` is false. If that terminal is inside `radius`
+//!   (unwalkable booth dest), the walk succeeded: a stale flood origin can
+//!   make `is_arrived` fail-close. Out-of-radius closest is not success.
 //! - No-progress after baked: frozen goes scene → unstick (`Traversal.ts:176–189`,
 //!   `walkLadder.ts:73–81`). This host has no scene/unstick walker; the closest
 //!   honest equivalent is one pass then backoff (`walkLadder.ts:82–86`).
@@ -19,6 +21,7 @@
 //!   `WalkExecutor.probeDest` here, so verify is fail-closed as probe-dead
 //!   (`walkLadder.ts:66–68`).
 //! - Backoff 2–16 ticks (`walkLadder.ts:30–31, 39–40`).
+
 //! - Frozen `WalkExecutor.lastOutcome === 'blocked'` returns true
 //!   (`Traversal.ts:172–174`). This host's walk wait is arrived-or-failed;
 //!   there is no blocked, so a settled walk is re-checked with `isArrived`.
@@ -107,12 +110,10 @@ fn interrupted() -> bool {
     observed::with(|scene| scene.since_login().ours().unwrap_or(false))
 }
 
-/// Frozen `isArrived` over the cached reach view.
+/// Frozen `isArrived` over the cached reach view — the same helper
+/// `walk_wait` uses (`posted_here` + flood origin + `canReachAdjacent`).
 fn arrived(dest: WorldTile, radius: i32) -> bool {
-    let Some(here) = here() else {
-        return false;
-    };
-    crate::load::reach_query::with_view(|view| api::query::is_arrived(here, dest, radius, || view))
+    crate::load::reach_query::arrived(dest, radius)
 }
 
 /// Frozen `backoffTicks` (`walkLadder.ts:39–40`).
@@ -135,17 +136,14 @@ impl Walk {
         allow_teleports: bool,
         cx: &mut Cx<'_>,
     ) -> Result<Self, bool> {
-        let Some(here) = here() else {
+        if here().is_none() {
             return Err(false);
-        };
-        // Frozen `walkResilient` asks `isArrived` first: the one arrival
-        // rule the walk wait and the host follow share.
-        let arrived = crate::load::reach_query::with_view(|view| {
-            api::query::is_arrived(here, dest, radius, || view)
-        });
-        if arrived {
+        }
+
+        if crate::load::reach_query::arrived(dest, radius) {
             return Err(true);
         }
+
         let token = walk_wait::dispatch(&json!({
             "op": "begin",
             "x": dest.x,
@@ -317,7 +315,7 @@ impl Resilient {
                     self.phase = Phase::Walking(walk);
                     None
                 }
-                Some(_) => self.after_baked(cx),
+                Some(ok) => self.after_baked(cx, ok),
             },
         }
     }
@@ -338,7 +336,7 @@ impl Resilient {
         }
     }
 
-    fn after_baked(&mut self, cx: &mut Cx<'_>) -> Option<bool> {
+    fn after_baked(&mut self, cx: &mut Cx<'_>, closest: bool) -> Option<bool> {
         // Frozen next-loop order: pending, then withinRadius (N5/N6).
         if interrupted() {
             self.logs
@@ -352,6 +350,14 @@ impl Resilient {
             return Some(false);
         };
         let cur = walk_chebyshev(here, self.dest);
+        // Frozen WalkExecutor returns true at the path terminal even when
+        // `isArrived` is false (`WalkExecutor.ts:316-321`, `'closest'`).
+        // An unwalkable booth dest is reached at Chebyshev radius; the
+        // cached flood may still be from another tile, so `is_arrived`
+        // fail-closes. In-radius closest is the walk succeeding.
+        if closest && here.level == self.dest.level && cur <= self.radius {
+            return Some(true);
+        }
         if cur < self.best_dist {
             self.best_dist = cur;
             self.no_progress = 0;
@@ -505,6 +511,7 @@ mod tests {
         observed::on_reset();
         machine::on_reset();
         walk_wait::on_reset();
+        crate::load::reach_query::on_reset();
         machine::on_hold(false);
     }
 
@@ -528,6 +535,12 @@ mod tests {
     fn walk_token() -> u64 {
         match machine::merge_ops(Vec::new()).as_slice() {
             [InteractReq::Walk {
+                x: 10,
+                z: 0,
+                request_id,
+                ..
+            }]
+            | [InteractReq::WalkNear {
                 x: 10,
                 z: 0,
                 request_id,
@@ -652,6 +665,108 @@ mod tests {
             machine::take(h),
             Take::Pending,
             "N1: isArrived, not wait true"
+        );
+    }
+
+    /// Live auto_fighter_bank: WalkNear r=3 to an unwalkable booth, player
+    /// ends 3 tiles away. Nav publishes closest; `is_arrived` fail-closes
+    /// when the flood is not from `me`. Frozen WalkExecutor returns true.
+    #[test]
+    fn closest_in_radius_of_unwalkable_booth_is_success() {
+        use crate::isolate_fb::{
+            encode_snapshot_with_native, NativeFactsInput, ReachViewInput, SnapshotReader,
+            TileInput,
+        };
+        use api::snapshot::SceneView;
+        use client::dash3d::CollisionFlag;
+
+        reset();
+        post_here(0, 0);
+        let args = json!({
+            "tile": { "x": 10, "z": 0, "level": 0 },
+            "opts": { "radius": 3 },
+        });
+        let Started::Running(h) = machine::start("walk-resilient", args, Vec::new(), 0) else {
+            panic!("walk-resilient runs");
+        };
+        machine::step(&mut NoJs);
+        let token = walk_token();
+
+        let dest = WorldTile {
+            x: 10,
+            z: 0,
+            level: 0,
+        };
+        let stand = WorldTile {
+            x: 7,
+            z: 0,
+            level: 0,
+        };
+        let mut scene = SceneView {
+            available: true,
+            base_x: 5,
+            base_z: -5,
+            level: 0,
+            width: 11,
+            height: 11,
+            collision_flags: vec![0; 121],
+        };
+        let lx = dest.x - scene.base_x;
+        let lz = dest.z - scene.base_z;
+        scene.collision_flags[(lx * 11 + lz) as usize] = CollisionFlag::SQ_BLOCKED;
+        // Flood from the booth, not the stand: origin guard makes is_arrived
+        // false even though Chebyshev 3 <= radius 3 and an adjacent tile is open.
+        let flood = api::query::SceneQuery::new(&scene, Some(dest)).flood_reach();
+        let view = api::query::pack_reach_query(&scene, flood.as_ref());
+        assert!(
+            !api::query::is_arrived(stand, dest, 3, || &view),
+            "stale flood must not answer is_arrived for the stand"
+        );
+
+        let mut input = crate::isolate_fb::tests::empty_input(2);
+        input.here = Some(TileInput {
+            x: stand.x,
+            z: stand.z,
+            level: 0,
+        });
+        input.reach = ReachViewInput {
+            available: view.available,
+            base_x: view.base_x,
+            base_z: view.base_z,
+            level: view.level,
+            width: view.width,
+            height: view.height,
+            walkable: &view.walkable,
+            reachable: &view.reachable,
+            reachable_adj: &view.reachable_adj,
+            exact_rank: &view.exact_rank,
+            adjacent_rank: &view.adjacent_rank,
+            step: &view.step,
+            canlight: &view.canlight,
+            stamp: 2,
+        };
+        let native = NativeFactsInput {
+            walk_outcome_seq: 1,
+            walk_outcome_request_id: token,
+            walk_outcome_failed: false,
+            walk_outcome_x: dest.x,
+            walk_outcome_z: dest.z,
+            walk_outcome_level: 0,
+            walk_outcome_radius: 3,
+            walk_outcome_allow_teleports: false,
+            ..Default::default()
+        };
+        let bytes = encode_snapshot_with_native(&input, native);
+        let snap = SnapshotReader::from_bytes(&bytes).expect("snap");
+        observed::apply(&snap);
+        crate::load::reach_query::apply(&snap);
+        walk_wait::on_snapshot(&snap);
+
+        machine::step(&mut NoJs);
+        assert_eq!(
+            machine::take(h),
+            Take::Settled(Outcome::Done(json!(true))),
+            "closest in radius of an unwalkable booth is success"
         );
     }
 
