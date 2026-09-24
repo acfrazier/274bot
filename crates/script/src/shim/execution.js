@@ -38,13 +38,13 @@ const park = {
 
     // A wait enqueued by a settled wait's continuation lands on the next
     // pump: continuations run after this returns, never inside the pass.
-    settle(tick, now) {
+    settle(tick, now, only) {
         if (park.waits.length === 0) return;
         const pending = park.waits;
         park.waits = [];
         const h = host();
         for (const wait of pending) {
-            const outcome = trySettle(wait, tick, now);
+            const outcome = only && wait.kind !== only ? undefined : trySettle(wait, tick, now);
             if (outcome === undefined) {
                 park.waits.push(wait);
                 continue;
@@ -115,4 +115,11 @@ export function parkMachine(handle) {
 // continuations run as the call returns.
 globalThis.__rs2b0t_pump = (n) => {
     park.settle(n, performance.now());
+};
+
+// After the pump, a machine that resumed on a settled callback promise
+// may have ended: settle only the machine waits, so its await resolves in
+// the tick it ended. Every other wait keeps its once-per-tick pump.
+globalThis.__rs2b0t_settle_machines = () => {
+    park.settle(0, 0, 'machine');
 };

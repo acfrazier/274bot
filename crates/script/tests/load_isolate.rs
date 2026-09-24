@@ -977,7 +977,12 @@ export default class T extends LoopingBot {
         vec![button(7), button(1164), button(1170)]
     );
     assert_eq!(
-        iso.probe("globalThis.__first ?? null").unwrap(),
+        iso.probe("globalThis.__first").unwrap(),
+        false,
+        "the superseded cast settles in the tick it was superseded"
+    );
+    assert_eq!(
+        iso.probe("globalThis.__second ?? null").unwrap(),
         serde_json::Value::Null
     );
 

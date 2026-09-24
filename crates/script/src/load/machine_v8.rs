@@ -6,17 +6,21 @@
 //! - `__rs2b0t_machine_take(handle)` is the parked wait's poll
 //!   (`undefined` while the machine runs).
 //! - [`step`] is the isolate thread's per-tick step, with script callbacks
-//!   invoked through the one callback path (`callback_v8`) and returned
-//!   promises held and their state polled once per tick.
+//!   invoked through the one callback path (`callback_v8`), each followed
+//!   by a microtask checkpoint; a promise still pending is held and its
+//!   state polled.
+//! - [`resume`] runs after the tick's pump: rows whose callback promise
+//!   has settled step again, and outcomes they reach settle their awaits
+//!   (`__rs2b0t_settle_machines`) in the same tick.
 //!
 //! Nothing here sends to the host: machine ops join the tick's
 //! InteractReq batch in Rust.
 
 use super::callback_v8::{self, Callback, HeldCallback, Throw};
-use crate::machine::{self, Called, Outcome, Pending, Reply, Started, Take, Thrown};
+use crate::machine::{self, Called, Hook, Outcome, Pending, Reply, Started, Take, Thrown};
 use rustyscript::deno_core::error::JsError;
 use rustyscript::deno_core::serde_v8;
-use rustyscript::Runtime;
+use rustyscript::{json_args, Runtime};
 use serde_json::Value;
 
 pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
@@ -24,9 +28,19 @@ pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
     callback_v8::install(runtime, "__rs2b0t_machine_take", take_callback)
 }
 
-/// Step every live machine once, before this tick's JS.
+/// Step every live machine once, before the tick's other JS.
 pub(super) fn step(runtime: &mut Runtime) {
     machine::step(&mut RuntimeJs(runtime));
+}
+
+/// After the tick's pump: resume rows whose callback promise settled, and
+/// settle the awaits of the rows that ended.
+pub(super) fn resume(runtime: &mut Runtime) -> Result<(), rustyscript::Error> {
+    machine::resume(&mut RuntimeJs(runtime));
+    if machine::any_settled() {
+        runtime.call_function_immediate::<()>(None, "__rs2b0t_settle_machines", json_args!())?;
+    }
+    Ok(())
 }
 
 fn start_callback<'s>(
@@ -58,18 +72,21 @@ fn start_callback<'s>(
     callback_v8::finish(scope, rv, envelope);
 }
 
-/// `hooks[name]` for each declared callback, called as `hooks.name(...)`.
-/// A family without callbacks never reads `hooks`.
+/// `hooks[name]` for each declared callback, read once now and called as
+/// `hooks.name(...)`. A family without callbacks never reads `hooks`.
 fn hold_hooks<'s>(
     scope: &mut v8::HandleScope<'s>,
     family: &str,
     hooks: v8::Local<'s, v8::Value>,
-) -> Result<Vec<HeldCallback>, Throw<'s>> {
+) -> Result<Vec<Hook>, Throw<'s>> {
     let names = machine::callbacks_of(family).unwrap_or_default();
     let mut held = Vec::with_capacity(names.len());
     for &name in names {
         let func = callback_v8::get(scope, hooks, name)?;
-        held.push(Callback::method(func, hooks, name).hold(scope));
+        held.push(Hook {
+            present: !func.is_null_or_undefined(),
+            callback: Callback::method(func, hooks, name).hold(scope),
+        });
     }
     Ok(held)
 }
@@ -175,23 +192,28 @@ impl machine::Js for RuntimeJs<'_> {
         let value = match callback.call(scope, &argv) {
             Ok(value) => value,
             Err(Throw::Value(exception)) => {
+                scope.perform_microtask_checkpoint();
                 return Called::Settled(Reply::Threw(thrown(scope, exception)));
             }
             Err(Throw::Terminated) => {
                 return Called::Settled(Reply::Threw(Thrown::new("execution terminated")));
             }
         };
-        if let Ok(promise) = v8::Local::<v8::Promise>::try_from(value) {
-            // The host observes the rejection; it is not an unhandled one.
-            if let Some(noop) = v8::Function::new(
-                scope,
-                |_: &mut v8::HandleScope, _: v8::FunctionCallbackArguments, _: v8::ReturnValue| {},
-            ) {
-                promise.catch(scope, noop);
-            }
-            return Called::Pending(v8::Global::new(scope, promise));
+        let Ok(promise) = v8::Local::<v8::Promise>::try_from(value) else {
+            scope.perform_microtask_checkpoint();
+            return Called::Settled(settled_value(scope, value));
+        };
+        // The host observes the rejection; it is not an unhandled one.
+        if let Some(noop) = v8::Function::new(
+            scope,
+            |_: &mut v8::HandleScope, _: v8::FunctionCallbackArguments, _: v8::ReturnValue| {},
+        ) {
+            promise.catch(scope, noop);
         }
-        Called::Settled(settled_value(scope, value))
+        // An `await` on something already settled resumes here, as it
+        // would in the frozen driver's own microtask flush.
+        scope.perform_microtask_checkpoint();
+        Called::Pending(v8::Global::new(scope, promise))
     }
 
     fn poll(&mut self, pending: &Pending) -> Option<Reply> {

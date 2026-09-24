@@ -15,14 +15,21 @@
 //!   first ops through [`Cx::emit`], and return [`Begin::Run`] (a live
 //!   row), [`Begin::Done`] (settled at once, e.g. a refused precondition)
 //!   or [`Begin::Refuse`] (nothing started; ops emitted by a refusing
-//!   begin are discarded). Begin never calls script callbacks.
+//!   begin are discarded). Begin never calls script callbacks, and a
+//!   machine start from inside a begin is refused.
 //! - [`Family::step`]: read the scene, emit ops, arm/read deadlines on
 //!   [`Cx::clock`], read the last callback's [`Cx::reply`], and return
 //!   [`Step::Wait`] (done for this tick), [`Step::Call`] (call one script
 //!   callback, then step again), [`Step::Done`] or [`Step::Fail`].
 //! - [`Family::CALLBACKS`]: the script callbacks the family may call, by
 //!   key on the `hooks` object passed to `runMachine`; [`Call::hook`]
-//!   indexes this list.
+//!   indexes this list. Each key is read once, at start (getters run
+//!   then), with receiver `hooks`. [`Cx::has`] says whether it was
+//!   present (not `undefined`/`null`), so a family keeps the frozen
+//!   `hook?.()` semantics by skipping an absent hook; calling an absent
+//!   hook throws the frozen `<name> is not a function`. A script that
+//!   needs call-time reads passes a wrapper
+//!   (`{ walkBack: () => opts.walkBack?.() }`).
 //! - [`Family::abort`]: optional cleanup when the host drops a live row
 //!   (ResetSession, a superseding start). It emits nothing.
 //!
@@ -35,29 +42,39 @@
 //!   InteractReq batch at the caller's position in the JS queue. A
 //!   [`Family::EXCLUSIVE`] family aborts its older live row as
 //!   `superseded` when a new one runs.
-//! - **Step**: the isolate thread calls [`step`] once per eligible tick,
-//!   before any of that tick's JS runs (the scene was applied by the
-//!   Snapshot command before the Tick). A row started during tick N is
-//!   first stepped on tick N+1. Ops a step emits join the batch in emit
-//!   order, after any JS rows its callbacks queued.
+//! - **Step**: the isolate thread records the tick number, then calls
+//!   [`step`] once per eligible tick, before any other of that tick's JS
+//!   (the scene was applied by the Snapshot command before the Tick). A
+//!   row started during tick N is first stepped on tick N+1. Ops a step
+//!   emits join the batch in emit order, after any JS rows already queued
+//!   or queued by its callbacks.
 //! - **Callbacks**: a [`Step::Call`] invokes the held script function
 //!   through the one callback path (`load/callback_v8.rs`), in a fresh
-//!   handle scope per call. A plain return value is the [`Reply`] of the
-//!   very next step, in the same tick. A returned promise is held and its
-//!   state polled each tick; the row does not step while it is pending,
-//!   and steps with its settlement. A throw or rejection is
-//!   [`Reply::Threw`] carrying the thrown value itself; a family that
-//!   fails with it ([`Step::Fail`]) rejects the script's `runMachine` await
-//!   with that same value. At most [`CALLS_PER_TICK`] callbacks run per
-//!   row per tick; the rest continue next tick.
+//!   handle scope per call, followed by a microtask checkpoint. A plain
+//!   return value is the [`Reply`] of the very next step, in the same
+//!   tick; so is a promise that settles through microtasks alone. A
+//!   promise still pending is held; the row does not step until it
+//!   settles. After the tick's pump (and its microtasks) the isolate runs
+//!   [`resume`], which drives only the rows whose promise was pending, so
+//!   a callback that waited on an Execution wait resumes its row in the
+//!   tick the wait settled, as a frozen `await` would; a row that ends
+//!   there settles its await in the same tick ([`any_settled`]). A throw
+//!   or rejection is [`Reply::Threw`] carrying the thrown value itself; a
+//!   family that fails with it ([`Step::Fail`]) rejects the script's
+//!   `runMachine` await with that same value. At most [`CALLS_PER_TICK`]
+//!   callbacks run per row per tick, across both passes; the rest
+//!   continue next tick. A row whose callback superseded it stops at once.
 //! - **Completion**: a `Done`/`Fail` row ends at once (no JS `end` op). Its
 //!   outcome waits in the host until the JS await helper — a wait parked
-//!   on the `Execution` park list — takes it in the pump, so it settles
-//!   exactly once, in the Execution phase order.
+//!   on the `Execution` park list — takes it, so it settles exactly once:
+//!   in the tick's pump, or, for an outcome reached after the pump (the
+//!   resume pass, a supersede by the tick's own JS), in the machine-only
+//!   settle that follows the resume pass in the same tick.
 //! - **ResetSession** ([`on_reset`]): every live row is aborted and its
 //!   await settles `{ kind: 'aborted', reason: 'reset' }`; held callbacks
 //!   and pending promises are released; pending ops are dropped with the
-//!   JS queue.
+//!   JS queue, including ops of machines started during the reset drain
+//!   ([`drop_ops`]).
 //! - **Pause / guardian hold** ([`on_pause`], [`on_resume`], [`on_hold`]):
 //!   rows are not stepped nor promises polled, and every row's
 //!   [`InstantTaskClock`] freezes, so deadlines resume where they stopped.
@@ -75,7 +92,7 @@ use crate::shim::{InteractReq, MaybeInteractReq};
 use crate::task_clock::InstantTaskClock;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 
 /// A started machine's id, unique for the isolate thread's life.
 pub(crate) type Handle = u64;
@@ -247,6 +264,7 @@ pub(crate) struct Cx<'a> {
     )]
     clock: &'a mut InstantTaskClock,
     reply: Option<Reply>,
+    hooks: &'a [Hook],
 }
 
 impl Cx<'_> {
@@ -273,13 +291,32 @@ impl Cx<'_> {
     pub(crate) fn reply(&mut self) -> Option<Reply> {
         self.reply.take()
     }
+
+    /// Whether `hooks[CALLBACKS[hook]]` was present (not `undefined` or
+    /// `null`) when the machine started.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "first callback family lands in F06/F07")
+    )]
+    pub(crate) fn has(&self, hook: usize) -> bool {
+        self.hooks.get(hook).is_some_and(|hook| hook.present)
+    }
+}
+
+/// One declared script callback, held from start.
+pub(crate) struct Hook {
+    pub(crate) callback: HeldCallback,
+    /// Not `undefined`/`null` when read at start.
+    pub(crate) present: bool,
 }
 
 /// The isolate side of a step: script callbacks and the JS queue.
 pub(crate) trait Js {
     /// `__rs2b0t_host.interact.length` now.
     fn queue_len(&mut self) -> usize;
-    /// Call `hook` (`None`: the family asked for an undeclared hook).
+    /// Call `hook` (`None`: the family asked for an undeclared hook), then
+    /// run a microtask checkpoint, so a promise that settles through
+    /// microtasks alone comes back settled.
     fn call(&mut self, hook: Option<&HeldCallback>, args: &[Value]) -> Called;
     /// Poll a promise a callback returned; `None` while pending.
     fn poll(&mut self, pending: &Pending) -> Option<Reply>;
@@ -297,7 +334,7 @@ pub(crate) enum Called {
 struct Entry {
     name: &'static str,
     callbacks: &'static [&'static str],
-    begin: fn(&mut Host, Value, Vec<HeldCallback>, usize) -> Started,
+    begin: fn(Value, Vec<Hook>, usize) -> Started,
 }
 
 const fn entry<F: Family>() -> Entry {
@@ -317,6 +354,14 @@ const FAMILIES: &[Entry] = &[
     entry::<tests::Solo>(),
     #[cfg(test)]
     entry::<tests::Hooked>(),
+    #[cfg(test)]
+    entry::<tests::Burst>(),
+    #[cfg(test)]
+    entry::<tests::Present>(),
+    #[cfg(test)]
+    entry::<tests::Nested>(),
+    #[cfg(test)]
+    entry::<tests::SoloHooked>(),
 ];
 
 /// The callback names `family` holds at start, or `None` if unregistered.
@@ -353,7 +398,9 @@ struct Row {
     family: &'static str,
     exclusive: bool,
     clock: InstantTaskClock,
-    hooks: Vec<HeldCallback>,
+    hooks: Vec<Hook>,
+    /// Callbacks run this tick, across both passes.
+    calls: usize,
     /// The settled callback the next step reads.
     reply: Option<Reply>,
     /// The callback promise the row waits on.
@@ -378,6 +425,8 @@ struct Host {
 
 thread_local! {
     static HOST: RefCell<Host> = const { RefCell::new(Host::new()) };
+    /// A family `begin` is running: a nested start is refused.
+    static IN_BEGIN: Cell<bool> = const { Cell::new(false) };
 }
 
 impl Host {
@@ -461,79 +510,124 @@ impl Host {
     }
 }
 
-fn begin_row<F: Family>(
-    host: &mut Host,
-    args: Value,
-    hooks: Vec<HeldCallback>,
-    at: usize,
-) -> Started {
+fn begin_row<F: Family>(args: Value, hooks: Vec<Hook>, at: usize) -> Started {
     let args: F::Args = match serde_json::from_value(args) {
         Ok(args) => args,
         Err(e) => return Started::Refused(format!("{} arguments: {e}", F::NAME)),
     };
-    let mut clock = host.fresh_clock();
+    let mut clock = HOST.with(|host| host.borrow().fresh_clock());
     let mut ops = Vec::new();
+    // The host is not borrowed while the family begins.
+    IN_BEGIN.with(|flag| flag.set(true));
+    let _begun = BeginGuard;
     let begun = F::begin(
         args,
         &mut Cx {
             ops: &mut ops,
             clock: &mut clock,
             reply: None,
+            hooks: &hooks,
         },
     );
-    match begun {
-        Begin::Refuse(reason) => Started::Refused(reason),
-        Begin::Done(out) => {
-            host.place(at, ops);
-            Started::Settled(Outcome::Done(out.into()))
-        }
-        Begin::Run(machine) => {
-            let handle = host.next;
-            host.next += 1;
-            if F::EXCLUSIVE {
-                host.newest.retain(|(family, _)| *family != F::NAME);
-                host.newest.push((F::NAME, handle));
-                host.abort_superseded();
+    drop(_begun);
+    HOST.with(|host| {
+        let mut host = host.borrow_mut();
+        match begun {
+            Begin::Refuse(reason) => Started::Refused(reason),
+            Begin::Done(out) => {
+                host.place(at, ops);
+                Started::Settled(Outcome::Done(out.into()))
             }
-            host.place(at, ops);
-            host.rows.push(Row {
-                handle,
-                family: F::NAME,
-                exclusive: F::EXCLUSIVE,
-                clock,
-                hooks,
-                reply: None,
-                pending: None,
-                machine: Box::new(machine),
-            });
-            Started::Running(handle)
+            Begin::Run(machine) => {
+                let handle = host.next;
+                host.next += 1;
+                if F::EXCLUSIVE {
+                    host.newest.retain(|(family, _)| *family != F::NAME);
+                    host.newest.push((F::NAME, handle));
+                    host.abort_superseded();
+                }
+                host.place(at, ops);
+                host.rows.push(Row {
+                    handle,
+                    family: F::NAME,
+                    exclusive: F::EXCLUSIVE,
+                    clock,
+                    hooks,
+                    calls: 0,
+                    reply: None,
+                    pending: None,
+                    machine: Box::new(machine),
+                });
+                Started::Running(handle)
+            }
         }
+    })
+}
+
+/// Clears [`IN_BEGIN`] however the begin returns.
+struct BeginGuard;
+
+impl Drop for BeginGuard {
+    fn drop(&mut self) {
+        IN_BEGIN.with(|flag| flag.set(false));
     }
 }
 
 /// Start `family` with JS `args` and its held `hooks` (one per
 /// [`Family::CALLBACKS`] name); `at` is the JS interact queue length.
-pub(crate) fn start(family: &str, args: Value, hooks: Vec<HeldCallback>, at: usize) -> Started {
+pub(crate) fn start(family: &str, args: Value, hooks: Vec<Hook>, at: usize) -> Started {
+    if IN_BEGIN.with(Cell::get) {
+        return Started::Refused("a machine begin may not start a machine".into());
+    }
     let Some(entry) = FAMILIES.iter().find(|entry| entry.name == family) else {
         return Started::Refused(format!("unknown machine family {family:?}"));
     };
-    HOST.with(|host| (entry.begin)(&mut host.borrow_mut(), args, hooks, at))
+    (entry.begin)(args, hooks, at)
 }
 
-/// Step every live row once. Called at the start of each eligible tick.
-///
+/// Step every live row once. Called at the start of each eligible tick,
+/// after the tick number is recorded.
+pub(crate) fn step(js: &mut impl Js) {
+    pass(js, Pass::Step);
+}
+
+/// Drive the rows waiting on a callback promise, if it settled. Called
+/// once per eligible tick, after the pump and its microtasks.
+pub(crate) fn resume(js: &mut impl Js) {
+    pass(js, Pass::Resume);
+}
+
+/// Whether an outcome waits for its JS await.
+pub(crate) fn any_settled() -> bool {
+    HOST.with(|host| !host.borrow().settled.is_empty())
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Pass {
+    /// Every row; starts the tick's callback budget.
+    Step,
+    /// Rows waiting on a promise; the budget carries over.
+    Resume,
+}
+
 /// Rows are taken out of the host while they step, so a callback may
 /// start another machine; the host is borrowed only between JS calls.
-pub(crate) fn step(js: &mut impl Js) {
+fn pass(js: &mut impl Js, pass: Pass) {
     let Some(mut rows) = HOST.with(|host| {
         let mut host = host.borrow_mut();
         (!(host.paused || host.held)).then(|| std::mem::take(&mut host.rows))
     }) else {
         return;
     };
-    // The JS queue is empty when a tick starts; callbacks may grow it.
-    let mut at = 0;
+    // Script code may have queued rows before this pass (a probe, the
+    // recovery anchor, this tick's own JS); step ops land after them.
+    let mut at = js.queue_len();
     rows.retain_mut(|row| {
+        if pass == Pass::Step {
+            row.calls = 0;
+        } else if row.pending.is_none() {
+            return true;
+        }
         if HOST.with(|host| host.borrow().superseded(row)) {
             row.machine.abort(AbortReason::Superseded);
             settle(row.handle, Outcome::Aborted(AbortReason::Superseded));
@@ -559,35 +653,41 @@ fn settle(handle: Handle, outcome: Outcome) {
     HOST.with(|host| host.borrow_mut().settled.push((handle, outcome)));
 }
 
-/// One row's steps for this tick; `Some` when it ended.
+/// One row's steps for this pass; `Some` when it ended.
 fn drive(row: &mut Row, js: &mut impl Js, at: &mut usize) -> Option<Outcome> {
-    let mut calls = 0;
     loop {
         if let Some(pending) = &row.pending {
             row.reply = Some(js.poll(pending)?);
             row.pending = None;
+        }
+        if row.calls == CALLS_PER_TICK {
+            return None;
         }
         let mut ops = Vec::new();
         let step = row.machine.step(&mut Cx {
             ops: &mut ops,
             clock: &mut row.clock,
             reply: row.reply.take(),
+            hooks: &row.hooks,
         });
         HOST.with(|host| host.borrow_mut().place(*at, ops));
         match step {
             Step::Wait => return None,
             Step::Done(value) => return Some(Outcome::Done(value)),
-            Step::Fail(reason) => return Some(Outcome::Failed(reason)),
+            Step::Fail(thrown) => return Some(Outcome::Failed(thrown)),
             Step::Call(call) => {
-                let called = js.call(row.hooks.get(call.hook), &call.args);
+                let hook = row.hooks.get(call.hook).map(|hook| &hook.callback);
+                let called = js.call(hook, &call.args);
+                row.calls += 1;
                 *at = js.queue_len();
                 match called {
                     Called::Settled(reply) => row.reply = Some(reply),
                     Called::Pending(pending) => row.pending = Some(pending),
                 }
-                calls += 1;
-                if calls == CALLS_PER_TICK {
-                    return None;
+                // The callback started a newer row of this exclusive family.
+                if HOST.with(|host| host.borrow().superseded(row)) {
+                    row.machine.abort(AbortReason::Superseded);
+                    return Some(Outcome::Aborted(AbortReason::Superseded));
                 }
             }
         }
@@ -830,6 +930,146 @@ pub(crate) mod tests {
         }
     }
 
+    /// Calls `each(i)` for i in 0..calls, then completes with the replies.
+    pub(crate) struct Burst {
+        calls: usize,
+        replies: Vec<Value>,
+    }
+
+    #[derive(Deserialize)]
+    pub(crate) struct BurstArgs {
+        calls: usize,
+    }
+
+    impl Family for Burst {
+        const NAME: &'static str = "burst";
+        const CALLBACKS: &'static [&'static str] = &["each"];
+        type Args = BurstArgs;
+        type Output = Value;
+
+        fn begin(args: BurstArgs, _cx: &mut Cx<'_>) -> Begin<Self> {
+            Begin::Run(Self {
+                calls: args.calls,
+                replies: Vec::new(),
+            })
+        }
+
+        fn step(&mut self, cx: &mut Cx<'_>) -> Step<Value> {
+            match cx.reply() {
+                Some(Reply::Threw(thrown)) => return Step::Fail(thrown),
+                Some(Reply::Value(value)) => self.replies.push(value),
+                None => {}
+            }
+            if self.replies.len() == self.calls {
+                return Step::Done(Value::Array(std::mem::take(&mut self.replies)));
+            }
+            Step::Call(Call {
+                hook: 0,
+                args: vec![json!(self.replies.len())],
+            })
+        }
+    }
+
+    /// Settles at begin with which of `a`, `b`, `c` were present.
+    pub(crate) struct Present;
+
+    impl Family for Present {
+        const NAME: &'static str = "present";
+        const CALLBACKS: &'static [&'static str] = &["a", "b", "c"];
+        type Args = Value;
+        type Output = Value;
+
+        fn begin(_args: Value, cx: &mut Cx<'_>) -> Begin<Self> {
+            Begin::Done(json!([cx.has(0), cx.has(1), cx.has(2), cx.has(3)]))
+        }
+
+        fn step(&mut self, _cx: &mut Cx<'_>) -> Step<Value> {
+            Step::Wait
+        }
+    }
+
+    /// A begin that (wrongly) starts another machine; settles with what
+    /// that start returned.
+    pub(crate) struct Nested;
+
+    impl Family for Nested {
+        const NAME: &'static str = "nested";
+        type Args = Value;
+        type Output = Value;
+
+        fn begin(_args: Value, _cx: &mut Cx<'_>) -> Begin<Self> {
+            let inner = start("probe", json!({ "button": 1, "steps": 1 }), Vec::new(), 0);
+            Begin::Done(json!(format!("{inner:?}")))
+        }
+
+        fn step(&mut self, _cx: &mut Cx<'_>) -> Step<Value> {
+            Step::Wait
+        }
+    }
+
+    /// Exclusive: calls `again()` once, then emits `if-button 999` each
+    /// step; `quiet` rows only wait.
+    pub(crate) struct SoloHooked {
+        quiet: bool,
+        called: bool,
+    }
+
+    #[derive(Deserialize)]
+    pub(crate) struct SoloHookedArgs {
+        #[serde(default)]
+        quiet: bool,
+    }
+
+    impl Family for SoloHooked {
+        const NAME: &'static str = "solo-hooked";
+        const EXCLUSIVE: bool = true;
+        const CALLBACKS: &'static [&'static str] = &["again"];
+        type Args = SoloHookedArgs;
+        type Output = Value;
+
+        fn begin(args: SoloHookedArgs, _cx: &mut Cx<'_>) -> Begin<Self> {
+            Begin::Run(Self {
+                quiet: args.quiet,
+                called: false,
+            })
+        }
+
+        fn step(&mut self, cx: &mut Cx<'_>) -> Step<Value> {
+            if self.quiet {
+                return Step::Wait;
+            }
+            if !self.called {
+                self.called = true;
+                return Step::Call(Call {
+                    hook: 0,
+                    args: Vec::new(),
+                });
+            }
+            cx.emit(InteractReq::IfButton { component_id: 999 });
+            Step::Wait
+        }
+    }
+
+    /// Answers every callback at once with its first argument.
+    struct Echo {
+        calls: usize,
+    }
+
+    impl Js for Echo {
+        fn queue_len(&mut self) -> usize {
+            0
+        }
+
+        fn call(&mut self, _hook: Option<&HeldCallback>, args: &[Value]) -> Called {
+            self.calls += 1;
+            Called::Settled(Reply::Value(args[0].clone()))
+        }
+
+        fn poll(&mut self, _pending: &Pending) -> Option<Reply> {
+            unreachable!("Echo never returns a promise");
+        }
+    }
+
     /// No script callbacks: a machine that asks for one is a test bug.
     struct NoJs;
 
@@ -1024,6 +1264,39 @@ pub(crate) mod tests {
         assert_eq!(SOLO_ABORTS.with(|c| c.get()), Some(AbortReason::Superseded));
         assert_eq!(take(new), Take::Pending);
         assert_eq!(take(other), Take::Pending);
+    }
+
+    #[test]
+    fn a_row_runs_at_most_the_callback_budget_per_tick() {
+        let h = running(begin("burst", json!({ "calls": 40 })));
+        let mut js = Echo { calls: 0 };
+        step(&mut js);
+        assert_eq!(js.calls, CALLS_PER_TICK);
+        resume(&mut js);
+        assert_eq!(
+            js.calls, CALLS_PER_TICK,
+            "a row not waiting on a promise does not resume"
+        );
+        assert_eq!(take(h), Take::Pending);
+        step(&mut js);
+        assert_eq!(js.calls, 40);
+        let Take::Settled(Outcome::Done(Value::Array(replies))) = take(h) else {
+            panic!("the burst completes on the second tick");
+        };
+        assert_eq!(replies, (0..40).map(|i| json!(i)).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn a_begin_that_starts_a_machine_is_refused_not_a_panic() {
+        assert_eq!(
+            begin("nested", json!({})),
+            Started::Settled(Outcome::Done(json!(format!(
+                "{:?}",
+                Started::Refused("a machine begin may not start a machine".into())
+            ))))
+        );
+        assert_eq!(live_rows(), 0);
+        running(begin("probe", json!({ "button": 1, "steps": 1 })));
     }
 
     #[test]

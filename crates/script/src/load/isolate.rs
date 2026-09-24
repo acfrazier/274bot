@@ -251,6 +251,27 @@ impl Drop for TickLoopFinish {
     }
 }
 
+/// Record the eligible tick number on the host handle
+/// (`__rs2b0t_host.tick`) before any of the tick's JS runs.
+fn record_tick(runtime: &mut Runtime, n: u64) {
+    let scope = &mut runtime.deno_runtime().handle_scope();
+    let global = scope.get_current_context().global(scope);
+    let (Some(host_key), Some(tick_key)) = (
+        v8::String::new(scope, "__rs2b0t_host"),
+        v8::String::new(scope, "tick"),
+    ) else {
+        return;
+    };
+    let Some(host) = global
+        .get(scope, host_key.into())
+        .and_then(|host| host.to_object(scope))
+    else {
+        return;
+    };
+    let tick = v8::Number::new(scope, n as f64);
+    let _ = host.set(scope, tick_key.into(), tick.into());
+}
+
 /// Drops every machine row when the tick loop ends (Stop, script stop).
 struct MachinesStop;
 impl Drop for MachinesStop {
@@ -1154,6 +1175,9 @@ fn isolate_main(
             return;
         }
     };
+    // Declared after `runtime`, so a failed wire (whose module code may
+    // have started a machine) drops the rows before the isolate.
+    let _machines = MachinesStop;
     #[cfg(feature = "memory-profile")]
     counters
         .heap_live
@@ -1430,12 +1454,13 @@ impl Runner {
     }
 }
 
-/// One eligible non-v2 tick, in the phase order the isolate owns: record
-/// the tick, tick listeners, wait settle, `onStart` once (compat), native
-/// events once started, then `loop()`/`tick` when nothing is in flight.
-/// Sets `loop_settled` when a compat `loop()` settle is observed here.
+/// One eligible non-v2 tick, in the phase order the isolate owns (the
+/// tick is already recorded and machines stepped): tick listeners, wait
+/// settle, `onStart` once (compat), native events once started, then
+/// `loop()`/`tick` when nothing is in flight. Sets `loop_settled` when a
+/// compat `loop()` settle is observed here.
 ///
-/// A running `loop()` is polled before any of this tick's JS runs: one
+/// A running `loop()` is polled before any of these phases' JS runs: one
 /// whose wait settles in this tick's pump (continuations run as each
 /// call returns) finishes this tick, and the next `loop()` starts on the
 /// next one — at most one `loop()` start per tick. A settling `onStart`
@@ -1454,7 +1479,6 @@ fn run_tick_phases(
     if let Phase::StartFailed = runner.phase {
         runner.phase = Phase::Idle;
     }
-    runtime.eval::<()>(&format!("globalThis.__rs2b0t_host.tick = {n}"))?;
     // BotHost tick listeners, before any wait settles this tick. Absent
     // when the card never loaded BotHost.
     let _ =
@@ -1904,8 +1928,11 @@ fn tick_loop(
                     continue;
                 }
                 let start = Instant::now();
+                // Every shape records the tick first, so machine callbacks,
+                // listeners and waits all see this tick's number.
+                record_tick(&mut runtime, n);
                 // Step machines read the scene the Snapshot command just
-                // applied; they run before any of this tick's JS, and a
+                // applied; they run before the tick's other JS, and a
                 // completion settles in this tick's pump.
                 super::machine_v8::step(&mut runtime);
                 if events_consumed {
@@ -1923,7 +1950,6 @@ fn tick_loop(
                     // Paint-only tick: no loop, no pump. The single paint
                     // pass of a held tick. Use `__rs_bot` (global);
                     // module-local `inst` is not visible here.
-                    let _ = runtime.eval::<()>(&format!("globalThis.__rs2b0t_host.tick = {n}"));
                     let script_paint = !compat || compat_may_paint(&runner);
                     if !v2_native && script_paint {
                         let _ = runtime.eval::<()>("globalThis.__rs2b0t_call_on_paint()");
@@ -2064,6 +2090,12 @@ fn tick_loop(
                     .deno_runtime()
                     .v8_isolate()
                     .cancel_terminate_execution();
+                // A machine callback whose promise the pump (or the drain)
+                // settled resumes its row in this tick, and a row that ends
+                // here settles its await in this tick too.
+                if let Err(e) = super::machine_v8::resume(&mut runtime) {
+                    let _ = out.send(ThreadMsg::Log(format!("tick {n}: machines: {e}")));
+                }
                 if !v2_native {
                     // A loop that finished in the drain frees the
                     // single-flight for the next tick.
@@ -2247,7 +2279,10 @@ fn tick_loop(
                         let _ = out.send(ThreadMsg::Log(format!("session reset: {e}")));
                     }
                 }
+                // Rows queued during the reset drain go, machine ops with
+                // them.
                 let _ = runtime.eval::<()>("globalThis.__rs2b0t_host.interact = []");
+                crate::machine::drop_ops();
                 clear_unconsumed_paint_click(&mut runtime);
                 super::paint_chrome::reset();
                 super::paint_jive::reset();
@@ -3245,30 +3280,34 @@ loop() {
         iso.join();
     }
 
+    // Frozen timing: a callback sees the tick it runs in, `delayTicks(1)`
+    // from a tick-2 callback resumes in tick 3's pump, and the row resumes
+    // (and here ends, settling the await) in tick 3 as well.
     #[test]
     fn a_machine_calls_sync_and_async_script_callbacks_in_order() {
         let iso = spawn_machine_card(
             "globalThis.__calls = [];
+             const at = () => globalThis.__rs2b0t_host.tick;
              const hooks = {
                  tag: 'H',
                  sync(n, s) {
-                     globalThis.__calls.push(['sync', n, s, this.tag]);
+                     globalThis.__calls.push(['sync', n, s, this.tag, at()]);
                      queue({ op: 'if-button', component_id: 900 });
                      return n + 1;
                  },
                  async later(v) {
-                     globalThis.__calls.push(['later', v]);
+                     globalThis.__calls.push(['later', v, at()]);
                      await Execution.delayTicks(1);
-                     globalThis.__calls.push(['later-resumed', v]);
+                     globalThis.__calls.push(['later-resumed', v, at()]);
                      return v * 10;
                  },
                  mark() {
-                     globalThis.__calls.push(['mark']);
+                     globalThis.__calls.push(['mark', at()]);
                      return 'm';
                  },
              };
              globalThis.__out = await runMachine('hooked', { emit: 500 }, hooks);
-             globalThis.__at = globalThis.__rs2b0t_host.tick;",
+             globalThis.__at = at();",
         );
         machine_tick(&iso, 1);
         assert!(iso.drain_interacts().is_empty());
@@ -3280,20 +3319,158 @@ loop() {
         );
         assert_eq!(
             iso.probe("globalThis.__calls").unwrap(),
-            serde_json::json!([["sync", 1, "a", "H"], ["later", 2], ["later-resumed", 2]]),
-            "the async callback is pending when the tick-2 step yields"
+            serde_json::json!([["sync", 1, "a", "H", 2], ["later", 2, 2]]),
+            "callbacks see the tick they run in; delayTicks(1) has not elapsed"
         );
         assert_eq!(
             iso.probe("globalThis.__out ?? null").unwrap(),
             serde_json::Value::Null
         );
         machine_tick(&iso, 3);
+        assert_eq!(
+            iso.probe("globalThis.__calls").unwrap(),
+            serde_json::json!([
+                ["sync", 1, "a", "H", 2],
+                ["later", 2, 2],
+                ["later-resumed", 2, 3],
+                ["mark", 3],
+            ]),
+            "the row resumes in the tick the wait settled"
+        );
         assert_eq!(iso.drain_interacts(), vec![if_button(502), if_button(503)]);
         assert_eq!(
             iso.probe("globalThis.__out").unwrap(),
             serde_json::json!({ "kind": "done", "value": [2, 20, "m"] })
         );
         assert_eq!(iso.probe("globalThis.__at").unwrap(), 3);
+        iso.join();
+    }
+
+    // N1(a): a callback that only awaits microtasks answers in the call's
+    // own checkpoint, so all of a burst's awaited calls run in one tick
+    // (up to the per-row budget), like a frozen `for` with `await`s.
+    #[test]
+    fn microtask_only_awaits_answer_in_the_same_step() {
+        let iso = spawn_machine_card(
+            "globalThis.__ticks = [];
+             globalThis.__out = await runMachine('burst', { calls: 40 }, {
+                 async each(i) {
+                     await null;
+                     await Promise.resolve();
+                     globalThis.__ticks.push(globalThis.__rs2b0t_host.tick);
+                     return i;
+                 },
+             });
+             globalThis.__at = globalThis.__rs2b0t_host.tick;",
+        );
+        machine_tick(&iso, 1);
+        machine_tick(&iso, 2);
+        let ticks: Vec<u64> =
+            serde_json::from_value(iso.probe("globalThis.__ticks").unwrap()).unwrap();
+        assert_eq!(ticks.len(), 32, "the budget bounds tick 2: {ticks:?}");
+        assert!(ticks.iter().all(|&t| t == 2), "{ticks:?}");
+        machine_tick(&iso, 3);
+        let ticks: Vec<u64> =
+            serde_json::from_value(iso.probe("globalThis.__ticks").unwrap()).unwrap();
+        assert_eq!(ticks.len(), 40);
+        assert!(ticks[32..].iter().all(|&t| t == 3), "{ticks:?}");
+        assert_eq!(iso.probe("globalThis.__out.value.length").unwrap(), 40);
+        assert_eq!(iso.probe("globalThis.__at").unwrap(), 3);
+        iso.join();
+    }
+
+    // N1(b): a callback promise the pump settles resumes its row after the
+    // pump in the same tick, and the budget spans both passes: 6 calls
+    // before the wait, 26 after it in tick 2, the last 8 in tick 3.
+    #[test]
+    fn a_pump_settled_callback_resumes_its_row_in_the_same_tick() {
+        let iso = spawn_machine_card(
+            "globalThis.__ticks = [];
+             const each = (i) => {
+                 globalThis.__ticks.push(globalThis.__rs2b0t_host.tick);
+                 return i === 5 ? Execution.delayTicks(0).then(() => i) : i;
+             };
+             globalThis.__out = await runMachine('burst', { calls: 40 }, { each });",
+        );
+        machine_tick(&iso, 1);
+        machine_tick(&iso, 2);
+        let ticks: Vec<u64> =
+            serde_json::from_value(iso.probe("globalThis.__ticks").unwrap()).unwrap();
+        assert_eq!(ticks, vec![2; 32], "6 calls, the pump, then 26 more");
+        machine_tick(&iso, 3);
+        let ticks: Vec<u64> =
+            serde_json::from_value(iso.probe("globalThis.__ticks").unwrap()).unwrap();
+        assert_eq!(ticks[32..], [3; 8]);
+        assert_eq!(
+            iso.probe("globalThis.__out.value[5]").unwrap(),
+            5,
+            "the resumed row read the settled value"
+        );
+        iso.join();
+    }
+
+    // N2: presence is read once, at start; null/undefined are absent.
+    #[test]
+    fn hook_presence_is_read_once_at_start() {
+        let iso = spawn_machine_card(
+            "globalThis.__reads = 0;
+             const hooks = {
+                 a() {},
+                 b: null,
+                 get c() { globalThis.__reads += 1; return () => 1; },
+             };
+             globalThis.__out = await runMachine('present', {}, hooks);",
+        );
+        machine_tick(&iso, 1);
+        assert_eq!(
+            iso.probe("globalThis.__out").unwrap(),
+            serde_json::json!({ "kind": "done", "value": [true, false, true, false] })
+        );
+        assert_eq!(iso.probe("globalThis.__reads").unwrap(), 1);
+        iso.join();
+    }
+
+    // N3: rows script code queued between ticks (a probe here, the
+    // recovery anchor in production) stay ahead of the next step's ops.
+    #[test]
+    fn step_ops_follow_rows_queued_before_the_tick() {
+        let iso = spawn_machine_card(
+            "globalThis.__out = await runMachine('probe', { button: 10, steps: 1 });",
+        );
+        machine_tick(&iso, 1);
+        assert_eq!(iso.drain_interacts(), vec![if_button(10)]);
+        let _ = iso
+            .probe("globalThis.__rs2b0t_host.interact.push({ op: 'if-button', component_id: 7 })");
+        machine_tick(&iso, 2);
+        assert_eq!(iso.drain_interacts(), vec![if_button(7), if_button(11)]);
+        iso.join();
+    }
+
+    // N5: a row whose callback starts a newer row of its exclusive family
+    // stops driving at once: no further op, and it settles `superseded`.
+    #[test]
+    fn a_row_that_supersedes_itself_mid_step_stops_at_once() {
+        let iso = spawn_machine_card(
+            "globalThis.__out = await runMachine('solo-hooked', {}, {
+                 again() {
+                     globalThis.__next = runMachine('solo-hooked', { quiet: true }, {
+                         again: () => 0,
+                     });
+                     return 1;
+                 },
+             });",
+        );
+        machine_tick(&iso, 1);
+        machine_tick(&iso, 2);
+        assert!(
+            iso.drain_interacts().is_empty(),
+            "the superseded row emits nothing after its callback"
+        );
+        machine_tick(&iso, 3);
+        assert_eq!(
+            iso.probe("globalThis.__out").unwrap(),
+            serde_json::json!({ "kind": "aborted", "reason": "superseded" })
+        );
         iso.join();
     }
 
