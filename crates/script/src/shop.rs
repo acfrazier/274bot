@@ -432,14 +432,15 @@ impl Shop {
         if self.kind == Kind::SellAll && self.clicks >= SELL_ALL_CLICKS {
             return self.done(false);
         }
-        let mut chunks = plan(self.requested - self.transferred);
-        if self.kind == Kind::SellAll {
-            // Frozen `Shop.ts:151-176`: re-read the player pack and re-run
-            // `pick` after every Sell 10, not after a multi-click batch.
-            chunks.truncate(1);
-            self.clicks += chunks.len();
-        }
-        if chunks.is_empty() {
+        let chunks = if self.kind == Kind::SellAll {
+            // Frozen `Shop.ts:151-176`: one Sell 10 per settled click;
+            // re-read the player pack and re-run `pick` before the next one.
+            self.clicks += 1;
+            None
+        } else {
+            Some(plan(self.requested - self.transferred))
+        };
+        if chunks.as_ref().is_some_and(Vec::is_empty) {
             return self.done(self.transferred >= self.requested);
         }
         let kind = if self.kind == Kind::Buy {
@@ -447,7 +448,7 @@ impl Shop {
         } else {
             "sell"
         };
-        for chunk in chunks {
+        for &chunk in chunks.as_deref().unwrap_or(&[10]) {
             cx.emit(InteractReq::ShopButton {
                 kind: kind.into(),
                 name: row.name.to_string(),
