@@ -910,9 +910,15 @@ function enqueueIfButton(component_id) {
   h.interact.push({ op: 'if-button', component_id: component_id });
 }
 // One Rust step machine per Set/Clear: Rust owns the click, the wait and
-// the one-at-a-time admission (a second start settles busy), so a
-// Promise never outlives its own operation.
+// the clock. This surface admits one prayer operation at a time, so a
+// second call settles `busy` before Rust begins or clicks anything.
+function prayerBusy() {
+  return globalThis.__rs2b0t_machine_live('prayer') === true;
+}
 async function prayerMachine(payload) {
+  if (prayerBusy()) {
+    return helperErr('busy');
+  }
   const out = await runMachine('prayer', payload);
   if (out.kind === 'done') {
     const settled = out.value;
@@ -1229,8 +1235,8 @@ function clueBankOpen() {
 }
 // The posted main modal id, and only when the page posted it: an omitted slot
 // is not the closed `-1` and not a second definition of it, so the machine is
-// handed no `main_modal_id` at all. Never `6960`, and never the
-// `__rs2b0t_modals` machine.
+// handed no `main_modal_id` at all. Never `6960`, and never the `modals`
+// step machine.
 function clueMainModalId() {
   const snapshot = host().snapshot;
   if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return null;

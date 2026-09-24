@@ -72,7 +72,8 @@ pub(crate) struct Modals {
 
 impl Family for Modals {
     const NAME: &'static str = "modals";
-    /// A newer close replaces the one in flight, as the frozen token bump did.
+    /// One close at a time: a newer start ends the older row `superseded`
+    /// and its await settles false. The frozen surface has no guard.
     const EXCLUSIVE: bool = true;
     type Args = ModalsArgs;
     type Output = ModalsDone;

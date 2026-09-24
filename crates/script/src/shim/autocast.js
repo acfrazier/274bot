@@ -30,7 +30,7 @@ export const Autocast = {
         const out = await runMachine('autocast', { spell: String(spellName) });
         if (out.kind !== 'done') return false;
         if (out.value.message) log?.(out.value.message);
-        if (out.value.not_impl) throw notImpl('Autocast.arm', out.value.not_impl);
+        if (out.value.not_impl) throw notImpl('Autocast.arm');
         return out.value.ok === true;
     },
 };

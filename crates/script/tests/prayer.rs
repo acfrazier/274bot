@@ -355,11 +355,11 @@ export default class T extends LoopingBot {
     }
 }
 
-// The frozen v1 surface has one admitted prayer operation: the first
-// `Prayer.set` in a tick owns the click, a concurrent second settles
-// false without clicking, and the first still settles on its own varp.
+// The frozen v1 surface has no admission guard: a second `Prayer.set` in
+// the same tick supersedes the first (its await settles false) and the
+// newer set is the one that settles on its own varp.
 #[test]
-fn v1_concurrent_sets_click_once_and_the_loser_settles_false() {
+fn v1_concurrent_sets_supersede_and_the_newest_settles_true() {
     let src = r#"
 import { Prayer } from '../../api/prayer/Prayer.js';
 export default class T extends LoopingBot {
@@ -387,26 +387,35 @@ export default class T extends LoopingBot {
     tick(&iso, 1);
     assert_eq!(
         iso.drain_interacts(),
-        vec![if_button(5623)],
-        "the admitted set owns the click"
+        vec![if_button(5623), if_button(5621)],
+        "each set clicks for itself"
     );
-    assert_eq!(iso.probe("globalThis.__second").unwrap(), false);
+    assert_eq!(
+        iso.probe("globalThis.__first").unwrap(),
+        false,
+        "the superseded set settles false without clicking twice"
+    );
     assert!(
-        iso.probe("globalThis.__first").unwrap().is_null(),
-        "the admitted set is still waiting on its varp"
+        iso.probe("globalThis.__second").unwrap().is_null(),
+        "the newer set still waits on its varp"
     );
-    snap.varps = &[VarpInput {
-        index: 97,
-        value: 1,
-    }];
+
+    snap.varps = &[
+        VarpInput {
+            index: 95,
+            value: 1,
+        },
+        VarpInput {
+            index: 97,
+            value: 0,
+        },
+    ];
     snap.tick = 2;
     post_snapshot_input(&iso, &snap);
     tick(&iso, 2);
-    assert_eq!(iso.probe("globalThis.__first").unwrap(), true);
-    assert!(
-        iso.drain_interacts().is_empty(),
-        "the refused set must not click Magic"
-    );
+    assert_eq!(iso.probe("globalThis.__second").unwrap(), true);
+    assert_eq!(iso.probe("globalThis.__first").unwrap(), false);
+    assert!(iso.drain_interacts().is_empty());
     iso.join();
 }
 

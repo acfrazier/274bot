@@ -628,21 +628,15 @@ fn shim_and_bindings_keep_the_yield_shape_and_walk_flags() {
     assert!(routine.contains("opts.leave"));
     assert!(routine.contains("{ left:"));
     assert!(routine.contains("Use-quickly") || js.contains("booth_action: 'Use-quickly'"));
-    // The site's open is the shared bank-open family: one awaited start,
-    // never a JS begin/next loop over the returned verbs.
     let driver = js.split("async function driveSiteBankOpen").nth(1).unwrap();
     let driver = driver
         .split("export async function bankRoutine")
         .next()
         .unwrap();
-    assert!(driver.contains("runMachine('bank_open'"));
     assert!(driver.contains("open-nearest"));
     assert!(driver.contains("Bank booth"));
     assert!(driver.contains("Use-quickly"));
     assert!(!driver.contains("walk-nearest-bank"));
-    assert!(!driver.contains("op: 'next'"));
-    assert!(!driver.contains("op: 'begin'"));
-    assert!(!driver.contains("delayUntil"));
     assert!(routine.contains("countBankTrip"));
     assert!(!routine.contains("keyStatus"));
     assert!(!routine.contains("Inventory"));

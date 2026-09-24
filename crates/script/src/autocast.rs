@@ -87,12 +87,10 @@ impl Reason {
         }
     }
 
-    /// The `not impl` reason that makes `arm` throw instead of returning.
-    fn not_impl(self, spell: &str) -> Option<String> {
-        match self {
-            Self::MissingControls => Some(format!("Autocast.arm needs posted coms for '{spell}'")),
-            _ => None,
-        }
+    /// Whether this reason is the frozen `not impl` throw. The shim's
+    /// `notImpl('Autocast.arm')` text carries the name once.
+    fn not_impl(self) -> bool {
+        self == Self::MissingControls
     }
 }
 
@@ -102,8 +100,7 @@ impl Reason {
 pub(crate) struct ArmOutcome {
     ok: bool,
     message: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    not_impl: Option<String>,
+    not_impl: bool,
 }
 
 impl ArmOutcome {
@@ -111,7 +108,7 @@ impl ArmOutcome {
         Self {
             ok: reason == Reason::Armed,
             message: reason.log(spell).unwrap_or_default(),
-            not_impl: reason.not_impl(spell),
+            not_impl: reason.not_impl(),
         }
     }
 }
@@ -160,7 +157,8 @@ impl Autocast {
 
 impl Family for Autocast {
     const NAME: &'static str = "autocast";
-    /// A newer arm replaces the one in flight, as the frozen token bump did.
+    /// One arm at a time: a newer start ends the older row `superseded`
+    /// and its await settles false. The frozen surface has no guard.
     const EXCLUSIVE: bool = true;
     type Args = ArmArgs;
     type Output = ArmOutcome;
@@ -454,7 +452,7 @@ mod tests {
             Started::Settled(Outcome::Done(json!({
                 "ok": false,
                 "message": "not impl: Autocast.arm needs posted coms for 'Wind Strike'",
-                "not_impl": "Autocast.arm needs posted coms for 'Wind Strike'",
+                "not_impl": true,
             })))
         );
         assert!(drain().is_empty(), "a refused arm sends nothing");
@@ -469,6 +467,7 @@ mod tests {
             Started::Settled(Outcome::Done(json!({
                 "ok": false,
                 "message": "'Not a spell' is not an autocastable spell — see SPELL_DB (Wind Strike … Fire Wave)",
+                "not_impl": false,
             })))
         );
         assert!(drain().is_empty());
@@ -481,7 +480,11 @@ mod tests {
         observed::on_reset();
         assert_eq!(
             start("Wind Strike"),
-            Started::Settled(Outcome::Done(json!({ "ok": false, "message": "" }))),
+            Started::Settled(Outcome::Done(json!({
+                "ok": false,
+                "message": "",
+                "not_impl": false,
+            }))),
             "no posted facts is not a click"
         );
         assert!(drain().is_empty());
@@ -492,6 +495,7 @@ mod tests {
             Started::Settled(Outcome::Done(json!({
                 "ok": false,
                 "message": "combat tab is not the staff layout — is a staff wielded?",
+                "not_impl": false,
             })))
         );
         assert!(drain().is_empty());
@@ -521,7 +525,11 @@ mod tests {
         tick();
         assert_eq!(
             done(handle),
-            json!({ "ok": true, "message": "autocast armed: Wind Strike" })
+            json!({
+                "ok": true,
+                "message": "autocast armed: Wind Strike",
+                "not_impl": false,
+            })
         );
         assert!(drain().is_empty());
     }
@@ -536,7 +544,11 @@ mod tests {
         tick();
         assert_eq!(
             done(handle),
-            json!({ "ok": false, "message": "spell chooser did not open" })
+            json!({
+                "ok": false,
+                "message": "spell chooser did not open",
+                "not_impl": false,
+            })
         );
     }
 

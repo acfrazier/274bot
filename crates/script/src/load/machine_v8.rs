@@ -25,12 +25,27 @@ use serde_json::Value;
 
 pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
     callback_v8::install(runtime, "__rs2b0t_machine_start", start_callback)?;
-    callback_v8::install(runtime, "__rs2b0t_machine_take", take_callback)
+    callback_v8::install(runtime, "__rs2b0t_machine_take", take_callback)?;
+    callback_v8::install(runtime, "__rs2b0t_machine_live", live_callback)
 }
 
 /// Step every live machine once, before the tick's other JS.
 pub(super) fn step(runtime: &mut Runtime) {
     machine::step(&mut RuntimeJs(runtime));
+}
+
+/// `__rs2b0t_machine_live(family)`: whether a row of `family` is running.
+/// The v2 surface's own one-at-a-time admission asks before it starts
+/// another; it is host state, not a JS flag, and it is true during the
+/// pass stepping that row.
+fn live_callback<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    args: v8::FunctionCallbackArguments<'s>,
+    mut rv: v8::ReturnValue,
+) {
+    let family = args.get(0).to_rust_string_lossy(scope);
+    let live = machine::live(&family);
+    rv.set(v8::Boolean::new(scope, live).into());
 }
 
 /// After the tick's pump: resume rows whose callback promise settled, and

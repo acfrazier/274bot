@@ -5,7 +5,7 @@
 //! `points|max|full|known|available|active` queries stay one native call
 //! each over the same selected rows.
 
-use crate::machine::{self, Begin, Cx, Family, Step};
+use crate::machine::{Begin, Cx, Family, Step};
 use crate::observed::{self, Scene};
 use crate::shim::InteractReq;
 use api::game_data::SelectedGameData;
@@ -214,16 +214,14 @@ pub(crate) enum Prayer {
 
 impl Family for Prayer {
     const NAME: &'static str = "prayer";
-    /// The frozen v2 surface admits one prayer operation: a second start
-    /// is refused `busy` and the admitted one keeps its click and await.
+    /// One row per isolate: a newer start ends the older one. The v2
+    /// surface refuses a second Set/Clear `busy` before it starts; v1 has
+    /// no such guard and the newer set wins.
     const EXCLUSIVE: bool = true;
     type Args = PrayerArgs;
     type Output = PrayerDone;
 
     fn begin(args: PrayerArgs, cx: &mut Cx<'_>) -> Begin<Self> {
-        if machine::live(Self::NAME) {
-            return Begin::Done(PrayerDone::failed("busy"));
-        }
         let data = crate::supply_v2::selected_data();
         let obs = observed::with(prayer_observation);
         match args.op {
@@ -481,29 +479,29 @@ mod tests {
     }
 
     #[test]
-    fn a_second_start_is_busy_without_a_second_click() {
+    fn a_second_start_supersedes_the_first() {
         prepare(ClientRevision::R289);
         set_obs(43, 43, 97, 0);
-        let handle = running(start(set(on(true))));
+        let first = running(start(set(on(true))));
         assert_eq!(drain(), vec![InteractReq::IfButton { component_id: 5623 }]);
+        let second = running(start(set(on(true))));
         assert_eq!(
-            start(set(on(false))),
-            Started::Settled(Outcome::Done(json!({ "ok": false, "reason": "busy" }))),
-            "the admitted toggle keeps the click"
+            machine::take(first),
+            Take::Settled(Outcome::Aborted(machine::AbortReason::Superseded)),
+            "the newer set ends the older row"
         );
-        assert!(drain().is_empty(), "a busy start clicks nothing");
+        assert_eq!(
+            drain(),
+            vec![InteractReq::IfButton { component_id: 5623 }],
+            "each admitted set clicks for itself"
+        );
         set_obs(43, 43, 97, 1);
         tick();
         assert_eq!(
-            done(handle),
+            done(second),
             json!({ "ok": true, "reason": "toggled", "value": true })
         );
-        // The row is gone: the family admits another operation.
-        set_obs(43, 43, 97, 1);
-        assert!(
-            matches!(start(set(on(false))), Started::Running(_)),
-            "a settled row frees the family"
-        );
+        assert!(!machine::live("prayer"), "a settled row is not live");
     }
 
     #[test]
@@ -512,6 +510,8 @@ mod tests {
         set_obs(43, 43, 97, 0);
         let handle = running(start(set(on(true))));
         machine::on_pause();
+        // The frozen clock reads the pause instant, so a row that stepped
+        // here would already be past its 2s toggle window.
         thread::sleep(Duration::from_millis(TOGGLE_MS + 50));
         tick();
         assert_eq!(
@@ -527,13 +527,21 @@ mod tests {
             Take::Pending,
             "held rows do not step"
         );
+        // The pause and hold spans are reclaimed on the thaw: a row that
+        // spent them would settle here instead of waiting its window out.
         machine::on_hold(false);
+        tick();
+        assert_eq!(
+            machine::take(handle),
+            Take::Pending,
+            "the frozen span does not count toward the deadline"
+        );
         thread::sleep(Duration::from_millis(TOGGLE_MS + 50));
         tick();
         assert_eq!(
             done(handle),
             json!({ "ok": false, "reason": "toggle-timeout" }),
-            "the frozen span does not count toward the deadline"
+            "the window still runs from the thaw"
         );
 
         let _ = drain();

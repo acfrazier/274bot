@@ -359,6 +359,8 @@ const FAMILIES: &[Entry] = &[
     entry::<tests::Nested>(),
     #[cfg(test)]
     entry::<tests::SoloHooked>(),
+    #[cfg(test)]
+    entry::<tests::Ask>(),
 ];
 
 /// The callback names `family` holds at start, or `None` if unregistered.
@@ -375,8 +377,14 @@ pub(crate) fn callbacks_of(family: &str) -> Option<&'static [&'static str]> {
 /// A family whose frozen surface admits one operation at a time asks
 /// inside its own begin, before it emits anything; a start that refuses
 /// this way supersedes nothing, so the admitted row keeps its await.
+/// A row a [`pass`] is stepping counts: its callback runs inside that
+/// pass, and script code started from it must see the row it belongs to.
 pub(crate) fn live(family: &str) -> bool {
-    HOST.with(|host| host.borrow().rows.iter().any(|row| row.family == family))
+    HOST.with(|host| {
+        let host = host.borrow();
+        host.rows.iter().any(|row| row.family == family)
+            || host.stepping.iter().any(|(name, _)| *name == family)
+    })
 }
 
 /// Test seam: pull a live row's deadline `millis` closer to now, so a
@@ -439,6 +447,9 @@ type PlacedOp = (usize, InteractReq);
 struct Host {
     next: Handle,
     rows: Vec<Row>,
+    /// The rows a [`pass`] is stepping right now. They are out of `rows`
+    /// while a callback runs, and [`live`] must still see them.
+    stepping: Vec<(&'static str, Handle)>,
     /// The newest running row of each exclusive family.
     newest: Vec<(&'static str, Handle)>,
     settled: Vec<(Handle, Outcome)>,
@@ -458,6 +469,7 @@ impl Host {
         Self {
             next: 1,
             rows: Vec::new(),
+            stepping: Vec::new(),
             newest: Vec::new(),
             settled: Vec::new(),
             ops: Vec::new(),
@@ -474,6 +486,13 @@ impl Host {
 
     fn place(&mut self, at: usize, ops: Vec<InteractReq>) {
         self.ops.extend(ops.into_iter().map(|op| (at, op)));
+    }
+
+    /// Drop `handle` from the rows a pass is stepping: it ended here, so
+    /// it is no longer live.
+    fn unstep(&mut self, family: &'static str, handle: Handle) {
+        self.stepping
+            .retain(|(name, held)| !(*name == family && *held == handle));
     }
 
     fn superseded(&self, row: &Row) -> bool {
@@ -523,12 +542,14 @@ impl Host {
                 .push((row.handle, Outcome::Aborted(AbortReason::Reset)));
         }
         self.newest.clear();
+        self.stepping.clear();
         self.ops.clear();
     }
 
     fn stop(&mut self) {
         self.rows.clear();
         self.newest.clear();
+        self.stepping.clear();
         self.settled.clear();
         self.ops.clear();
     }
@@ -636,10 +657,16 @@ enum Pass {
 
 /// Rows are taken out of the host while they step, so a callback may
 /// start another machine; the host is borrowed only between JS calls.
+/// [`Host::stepping`] keeps those rows visible to [`live`].
 fn pass(js: &mut impl Js, pass: Pass) {
     let Some(mut rows) = HOST.with(|host| {
         let mut host = host.borrow_mut();
-        (!(host.paused || host.held)).then(|| std::mem::take(&mut host.rows))
+        if host.paused || host.held {
+            return None;
+        }
+        let rows = std::mem::take(&mut host.rows);
+        host.stepping = rows.iter().map(|row| (row.family, row.handle)).collect();
+        Some(rows)
     }) else {
         return;
     };
@@ -654,11 +681,13 @@ fn pass(js: &mut impl Js, pass: Pass) {
         }
         if HOST.with(|host| host.borrow().superseded(row)) {
             row.machine.abort(AbortReason::Superseded);
+            HOST.with(|host| host.borrow_mut().unstep(row.family, row.handle));
             settle(row.handle, Outcome::Aborted(AbortReason::Superseded));
             return false;
         }
         match drive(row, js, &mut at) {
             Some(outcome) => {
+                HOST.with(|host| host.borrow_mut().unstep(row.family, row.handle));
                 settle(row.handle, outcome);
                 false
             }
@@ -667,6 +696,7 @@ fn pass(js: &mut impl Js, pass: Pass) {
     });
     HOST.with(|host| {
         let mut host = host.borrow_mut();
+        host.stepping.clear();
         let started = std::mem::replace(&mut host.rows, rows);
         host.rows.extend(started);
         host.abort_superseded();
@@ -1074,6 +1104,32 @@ pub(crate) mod tests {
         }
     }
 
+    /// Calls `ask()` once and completes with its reply. Used to start
+    /// another machine from inside a callback.
+    pub(crate) struct Ask;
+
+    impl Family for Ask {
+        const NAME: &'static str = "ask";
+        const CALLBACKS: &'static [&'static str] = &["ask"];
+        type Args = Value;
+        type Output = Value;
+
+        fn begin(_args: Value, _cx: &mut Cx<'_>) -> Begin<Self> {
+            Begin::Run(Self)
+        }
+
+        fn step(&mut self, cx: &mut Cx<'_>) -> Step<Value> {
+            match cx.reply() {
+                Some(Reply::Threw(thrown)) => Step::Fail(thrown),
+                Some(Reply::Value(value)) => Step::Done(value),
+                None => Step::Call(Call {
+                    hook: 0,
+                    args: Vec::new(),
+                }),
+            }
+        }
+    }
+
     /// Answers every callback at once with its first argument.
     struct Echo {
         calls: usize,
@@ -1321,6 +1377,41 @@ pub(crate) mod tests {
         );
         assert_eq!(live_rows(), 0);
         running(begin("probe", json!({ "button": 1, "steps": 1 })));
+    }
+
+    #[test]
+    fn a_row_stepping_a_callback_stays_live() {
+        let handle = running(begin("ask", json!({})));
+        assert!(live("ask"));
+        // Starts a `solo` row from inside the callback, as script code
+        // does, and answers with what `live` saw during that call.
+        struct StartsInside;
+        impl Js for StartsInside {
+            fn queue_len(&mut self) -> usize {
+                0
+            }
+
+            fn call(&mut self, _hook: Option<&HeldCallback>, _args: &[Value]) -> Called {
+                running(begin("solo", json!({ "button": 7, "steps": 5 })));
+                Called::Settled(Reply::Value(json!({
+                    "asking": live("ask"),
+                    "started": live("solo"),
+                })))
+            }
+
+            fn poll(&mut self, _pending: &Pending) -> Option<Reply> {
+                unreachable!("the ask callback returns a value")
+            }
+        }
+        step(&mut StartsInside);
+        assert_eq!(
+            take(handle),
+            Take::Settled(Outcome::Done(json!({ "asking": true, "started": true }))),
+            "a callback must see this pass's rows, not an empty map"
+        );
+        assert!(live("solo"), "the callback's own row is live");
+        assert!(!live("ask"), "a settled row is not live");
+        assert_eq!(drain(), vec![button(7)], "the inner row kept its ops");
     }
 
     #[test]

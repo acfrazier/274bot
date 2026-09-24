@@ -31,7 +31,8 @@ pub(crate) struct Special {
 
 impl Family for Special {
     const NAME: &'static str = "special";
-    /// A newer arm replaces the one in flight, as the frozen token bump did.
+    /// One arm at a time: a newer start ends the older row `superseded`
+    /// and its await settles false. The frozen surface has no guard.
     const EXCLUSIVE: bool = true;
     /// The frozen `arm()` takes no arguments.
     type Args = Value;

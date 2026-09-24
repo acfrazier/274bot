@@ -464,7 +464,8 @@ impl BankOpen {
 
 impl Family for BankOpen {
     const NAME: &'static str = "bank_open";
-    /// A newer open replaces the one in flight, as the frozen token bump did.
+    /// One open at a time: a newer start ends the older row `superseded`
+    /// and its await settles false. The frozen surface has no guard.
     const EXCLUSIVE: bool = true;
     type Args = BankOpenArgs;
     type Output = bool;
@@ -908,6 +909,10 @@ mod tests {
         post_scene(named_booth(), named_approach(Some((3011, 3353))));
         let handle = running(start(named_nearest()));
         assert_eq!(drain(), vec![walk_near_dest()]);
+        // Both freezes read the frozen clock, so a row that stepped while
+        // paused or held would find its (already due) bound reached and
+        // settle instead of waiting.
+        machine::age(handle, WALK_BOUND_MS + 1);
         machine::on_pause();
         tick();
         assert_eq!(
@@ -917,20 +922,20 @@ mod tests {
         );
         machine::on_resume();
         machine::on_hold(true);
-        machine::age(handle, WALK_BOUND_MS + 1);
         tick();
         assert_eq!(
             machine::take(handle),
             Take::Pending,
-            "a held row does not burn its window"
+            "held rows do not step"
         );
         machine::on_hold(false);
         tick();
         assert_eq!(
             done(handle),
             json!(false),
-            "the frozen span does not count toward the bound"
+            "the row walks its bound out once it runs again"
         );
+        assert!(drain().is_empty(), "no second walk after the bound");
     }
 
     #[test]
