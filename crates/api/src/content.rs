@@ -5,8 +5,8 @@
 //! their script consumer in `script::content`; this module keeps the facts a
 //! lower layer must not depend on `script` to read.
 
-/// Posted rock option names. `resolveRockIds` is still empty, so these stay
-/// display names until a real rock-id sidecar exists.
+/// Posted rock option names. No rock-id sidecar is selected, so
+/// `resolveRockIds` throws `not impl` and these stay display names.
 pub const ROCK_TYPE_NAMES: &[&str] = &[
     "Clay",
     "Copper",
