@@ -3901,16 +3901,15 @@ fn live_full_rate_sync_raises_focus_and_members() {
 }
 
 #[test]
-fn focused_card_rejects_invalid_queue_tuple() {
+fn queue_for_rejects_invalid_queue_tuple() {
     let mut s = Session::new();
-    s.focus.lock().unwrap().focused = Some("s00".into());
     s.statuses.push(SlotStatus {
         username: "s00".into(),
         queue_position: 3,
         queue_total: 0,
         ..SlotStatus::default()
     });
-    assert_eq!(s.focused_queue(), None);
+    assert_eq!(s.queue_for("s00"), None);
 }
 
 #[test]
@@ -4857,28 +4856,28 @@ fn focused_ingame_is_false_without_status() {
 }
 
 #[test]
-fn focused_queue_tracks_the_focused_status_row() {
+fn queue_for_tracks_each_named_status_independent_of_focus() {
     let mut s = Session::new();
     s.focus.lock().unwrap().focused = Some("alice".into());
-    assert_eq!(s.focused_queue(), None, "not queued by default");
+    assert_eq!(s.queue_for("alice"), None, "not queued by default");
     s.statuses.push(SlotStatus {
         username: "alice".into(),
         queue_position: 2,
         queue_total: 3,
         ..SlotStatus::default()
     });
-    assert_eq!(s.focused_queue(), Some((2, 3)));
-
-    // A queued non-focused slot does not surface on another focus.
-    let mut s2 = Session::new();
-    s2.focus.lock().unwrap().focused = Some("bob".into());
-    s2.statuses.push(SlotStatus {
-        username: "alice".into(),
+    s.statuses.push(SlotStatus {
+        username: "bob".into(),
         queue_position: 1,
         queue_total: 2,
         ..SlotStatus::default()
     });
-    assert_eq!(s2.focused_queue(), None);
+    assert_eq!(s.queue_for("alice"), Some((2, 3)));
+    assert_eq!(s.queue_for("bob"), Some((1, 2)));
+
+    s.focus.lock().unwrap().focused = Some("bob".into());
+    assert_eq!(s.queue_for("alice"), Some((2, 3)));
+    assert_eq!(s.queue_for("bob"), Some((1, 2)));
 }
 
 #[test]

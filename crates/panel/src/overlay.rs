@@ -1,16 +1,15 @@
 //! Queue-card overlay for the Game Image.
 //!
-//! The armed route's remaining tiles are painted by the client's 3D
-//! renderer and on the pack map, so this overlay draws only the focused
-//! slot's queue card over the Image.
+//! The armed route's remaining tiles are painted by the client's 3D renderer
+//! and on the pack map, so this overlay draws only the queue card belonging
+//! to the bot shown in each Image.
 
 use dear_imgui_rs::Ui;
 
 use crate::queue_card::{queue_ahead_label, queue_k_of_n, QUEUE_CARD_TITLE};
-use crate::session::Session;
 use crate::theme::ACCENT;
 
-/// Amber queue-card lines for a focused FIFO place: title, `k of n`,
+/// Amber queue-card lines for one slot's FIFO place: title, `k of n`,
 /// ahead label. Empty when the slot is not queued, so the card disappears
 /// the moment the grant lands (`logging in…`).
 fn queue_card_lines(queue: Option<(i32, i32)>) -> Vec<String> {
@@ -78,18 +77,17 @@ fn draw_queue_card(ui: &Ui, min: [f32; 2], lines: &[String]) {
     }
 }
 
-/// Queue card over the focused slot's cell (MultiBox grid mode). No-op
-/// when the focused slot is not queued, so the card disappears the moment
-/// the grant lands.
-pub fn draw_focused_queue_card(ui: &Ui, session: &Session, min: [f32; 2]) {
-    let lines = queue_card_lines(session.focused_queue());
+/// Queue card over one bot's Image. No-op when that bot is not queued, so
+/// the card disappears the moment the grant lands.
+pub fn draw_queue_card_for(ui: &Ui, queue: Option<(i32, i32)>, min: [f32; 2]) {
+    let lines = queue_card_lines(queue);
     if !lines.is_empty() {
         draw_queue_card(ui, min, &lines);
     }
 }
 
-/// Cached queue-card state for the focused slot. The card must appear
-/// immediately on enqueue, so it is cached on the FIFO tuple, not a
+/// Cached queue-card state for the bot shown by this overlay. The card must
+/// appear immediately on enqueue, so it is cached on the FIFO tuple, not a
 /// timer.
 pub struct PathOverlay {
     queue: Option<(i32, i32)>,
@@ -110,11 +108,16 @@ impl PathOverlay {
         &[]
     }
 
-    /// Draw the focused slot's queue card over the Image. `min` is the
+    /// Draw the displayed bot's queue card over the Image. `min` is the
     /// Image widget's top-left corner; `size` is unused now that the
     /// polyline is gone.
-    pub fn frame(&mut self, ui: &Ui, session: &Session, min: [f32; 2], _size: [f32; 2]) {
-        let queue = session.focused_queue();
+    pub fn frame(
+        &mut self,
+        ui: &Ui,
+        queue: Option<(i32, i32)>,
+        min: [f32; 2],
+        _size: [f32; 2],
+    ) {
         if queue != self.queue {
             self.queue = queue;
             self.queue_lines = queue_card_lines(queue);
@@ -192,7 +195,7 @@ mod tests {
         );
         let mut overlay = PathOverlay::new();
         ui.window("##overlay-test").build(|| {
-            overlay.frame(ui, &s, [10.0, 10.0], [90.0, 90.0]);
+            overlay.frame(ui, None, [10.0, 10.0], [90.0, 90.0]);
         });
         ctx.render();
         assert!(
@@ -219,7 +222,7 @@ mod tests {
     }
 
     #[test]
-    fn overlay_draws_queue_card_when_focused_slot_is_queued() {
+    fn each_bot_view_keeps_its_own_queue_place_when_focus_changes() {
         let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
         let mut ctx = dear_imgui_rs::Context::create();
         ctx.prepare_frame(
@@ -228,30 +231,41 @@ mod tests {
         );
         let ui = ctx.frame();
         let mut s = Session::new();
-        s.focus.lock().unwrap().focused = Some("alice".into());
         s.statuses.push(host_play::SlotStatus {
             username: "alice".into(),
             queue_position: 1,
-            queue_total: 2,
+            queue_total: 3,
             ..host_play::SlotStatus::default()
         });
-        let mut overlay = PathOverlay::new();
-        ui.window("##overlay-queue-test").build(|| {
-            overlay.frame(ui, &s, [10.0, 10.0], [90.0, 90.0]);
+        s.statuses.push(host_play::SlotStatus {
+            username: "bob".into(),
+            queue_position: 2,
+            queue_total: 3,
+            ..host_play::SlotStatus::default()
+        });
+        s.focus.lock().unwrap().focused = Some("alice".into());
+        let mut alice = PathOverlay::new();
+        let mut bob = PathOverlay::new();
+        ui.window("##overlay-alice").build(|| {
+            alice.frame(ui, s.queue_for("alice"), [10.0, 10.0], [90.0, 90.0]);
+        });
+        ui.window("##overlay-bob").build(|| {
+            bob.frame(ui, s.queue_for("bob"), [110.0, 10.0], [90.0, 90.0]);
+        });
+        s.focus.lock().unwrap().focused = Some("bob".into());
+        ui.window("##overlay-alice-after-focus").build(|| {
+            alice.frame(ui, s.queue_for("alice"), [10.0, 110.0], [90.0, 90.0]);
+        });
+        ui.window("##overlay-bob-after-focus").build(|| {
+            bob.frame(ui, s.queue_for("bob"), [110.0, 110.0], [90.0, 90.0]);
         });
         ctx.render();
-        assert_eq!(
-            overlay.queue_lines,
-            vec![
-                "AUTO-LOGIN QUEUE".to_string(),
-                "1 of 2".to_string(),
-                "0 bots in front".to_string()
-            ]
-        );
+        assert_eq!(alice.queue_lines[1], "1 of 3");
+        assert_eq!(bob.queue_lines[1], "2 of 3");
     }
 
     #[test]
-    fn overlay_queue_card_disappears_when_focus_grants() {
+    fn slot_without_queue_does_not_borrow_another_slots_card() {
         let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
         let mut ctx = dear_imgui_rs::Context::create();
         ctx.prepare_frame(
@@ -273,7 +287,7 @@ mod tests {
         });
         let mut overlay = PathOverlay::new();
         ui.window("##overlay-queue-fifo-test").build(|| {
-            overlay.frame(ui, &s, [10.0, 10.0], [90.0, 90.0]);
+            overlay.frame(ui, s.queue_for("s00"), [10.0, 10.0], [90.0, 90.0]);
         });
         ctx.render();
         assert!(overlay.queue_lines.is_empty());
@@ -292,7 +306,7 @@ mod tests {
         s.focus.lock().unwrap().focused = Some("alice".into());
         let mut overlay = PathOverlay::new();
         ui.window("##overlay-queue-test").build(|| {
-            overlay.frame(ui, &s, [10.0, 10.0], [90.0, 90.0]);
+            overlay.frame(ui, None, [10.0, 10.0], [90.0, 90.0]);
         });
         ctx.render();
         assert!(overlay.queue_lines.is_empty(), "no queue -> no card");
