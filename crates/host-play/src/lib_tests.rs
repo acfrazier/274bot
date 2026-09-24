@@ -12125,6 +12125,9 @@ export default class T extends LoopingBot {
         .expect("load isolate starts");
     c.ingame = true;
     c.scene_state = 2;
+    // Stats loaded: a compat card paints only then (rs2b0t paintBot).
+    c.stat_base_level.fill(1);
+    c.bump_gens(ServerProt::UPDATE_STAT);
     let mut snap = GameSnapshot::new();
     snap.rebuild(&c);
     let observe = |c: &mut Client, tick_edge: bool, tick: u64| {

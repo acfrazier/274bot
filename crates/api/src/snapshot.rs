@@ -221,6 +221,12 @@ pub struct StatView {
     pub used: bool,
 }
 
+/// Whether the client's skill table uses stat slot `index`
+/// (`Skill::used`). Unused slots always post base 0.
+pub fn stat_used(index: usize) -> bool {
+    Skill::used.get(index).copied().unwrap_or(false)
+}
+
 /// One varp's value from the client's `var` table (the m8aq
 /// `VarpSnapshot`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]

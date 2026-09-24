@@ -18,6 +18,8 @@ use script::ctx::ScriptCtx;
 use script::load::{JsLibrary, LoadIsolate, LoadShape};
 use script::{CompiledId, ScriptSource, SlotScript};
 
+mod common;
+
 // The brief's native fixture: exported `tick` that counts on its own
 // global (the `api` object is host-owned: `api.tick` is the only member,
 // every other read/set throws `not impl`).
@@ -237,6 +239,22 @@ fn base_snapshot<'a>() -> script::isolate_fb::SnapshotInput<'a> {
         self_target_kind: 0,
         self_target_index: -1,
         widgets: &[],
+    }
+}
+
+/// An in-game, loaded scene: a tile, scene state 2 and every used stat
+/// posted — the state in which a compat card may paint (rs2b0t
+/// `ScriptRunner.paintBot`).
+fn ready_snapshot<'a>() -> script::isolate_fb::SnapshotInput<'a> {
+    script::isolate_fb::SnapshotInput {
+        here: Some(script::isolate_fb::TileInput {
+            x: 3222,
+            z: 3222,
+            level: 0,
+        }),
+        scene_state: 2,
+        stats: &common::FRESH_STATS,
+        ..base_snapshot()
     }
 }
 
@@ -980,7 +998,7 @@ export default class T extends LoopingBot {
     // The throw is logged under the tick whose onPaint threw — held
     // ticks included — not the next one.
     assert_eq!(iso.drain_logs(), vec!["tick 1: not impl: Date.now@1"]);
-    let mut snap = base_snapshot();
+    let mut snap = ready_snapshot();
     snap.hold = true;
     snap.tick = 2;
     post_snapshot_input(&iso, &snap);
@@ -1015,27 +1033,81 @@ export default class T extends LoopingBot {
     iso.join();
 }
 
+// rs2b0t `ScriptRunner.paintBot` (`runtime/ScriptRunner.ts:141-151`): a
+// compat card's onPaint runs only once onStart has completed and the
+// scene is loaded — in game, scene state 2, a tile, and every used stat
+// posted. The live pre-stats-load state (every level 0) and a parked
+// onStart forward an empty frame and never call onPaint; once both
+// clear, onPaint runs once per tick.
 #[test]
-fn isolate_onstart_park_still_paints() {
+fn compat_onpaint_waits_for_on_start_and_loaded_stats() {
     let src = r#"
 import { Execution } from '../../api/execution/Execution.js';
 import { Paint } from '../../paint/Paint.js';
+import { Skills } from '../../api/skills/Skills.js';
 export default class T extends LoopingBot {
     async onStart() {
-        await Execution.delayUntil(() => false, 60000);
+        await Execution.delayUntil(() => globalThis.__go === true, 0);
     }
     onPaint() {
+        globalThis.__paints = (globalThis.__paints || 0) + 1;
         const p = Paint.begin();
-        p.title('after-onStart-park');
+        p.title('HP ' + Skills.hpFraction());
         p.end();
     }
 }
 "#;
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let paints = |iso: &LoadIsolate| iso.probe("globalThis.__paints || 0").unwrap();
+    // An empty frame (the host stamps its own generation on receipt).
+    let blank = |iso: &LoadIsolate| {
+        iso.paint().is_some_and(|p| {
+            script::shim::ScriptPaint { generation: 0, ..p } == script::shim::ScriptPaint::default()
+        })
+    };
+
+    // Loaded scene, onStart parked: no paint.
+    let mut snap = ready_snapshot();
+    post_snapshot_input(&iso, &snap);
     iso.on_game_tick(1);
+    assert_eq!(paints(&iso), 0, "no onPaint while onStart is pending");
+    assert!(blank(&iso), "an empty frame is forwarded");
+
+    // onStart completes, but the scene is the live pre-stats-load state.
+    let loading: Vec<_> = common::FRESH_STATS
+        .iter()
+        .map(|row| script::isolate_fb::StatInput {
+            xp: 0,
+            base: 0,
+            effective: 0,
+            ..*row
+        })
+        .collect();
+    snap.stats = &loading;
+    for n in 2..=3 {
+        snap.tick = n;
+        post_snapshot_input(&iso, &snap);
+        iso.probe("globalThis.__go = true").unwrap();
+        iso.on_game_tick(n);
+        assert_eq!(paints(&iso), 0, "no onPaint before stats load (tick {n})");
+    }
+    assert!(blank(&iso), "still an empty frame");
+    assert!(
+        iso.drain_logs().is_empty(),
+        "no Skills.hpFraction not-impl before the gate"
+    );
+
+    // Stats arrive: onPaint runs once per tick.
+    snap.stats = &common::FRESH_STATS;
+    for n in 4..=5 {
+        snap.tick = n;
+        post_snapshot_input(&iso, &snap);
+        iso.on_game_tick(n);
+        assert_eq!(paints(&iso), n - 3);
+    }
     let _ = iso.probe("0");
-    let paint = iso.paint().expect("onStart park must not skip onPaint");
-    assert_eq!(paint.title.as_deref(), Some("after-onStart-park"));
+    assert_eq!(iso.paint().unwrap().title.as_deref(), Some("HP 1"));
+    assert!(iso.drain_logs().is_empty());
     iso.join();
 }
 
@@ -1338,7 +1410,7 @@ export default class T extends LoopingBot {
     // One onPaint pass per tick: the isolate thread's paint point.
     assert_eq!(paints_after_first, 1, "onPaint runs once on the first tick");
     // Post hold via the FlatBuffer — never poke `__rs2b0t_host.hold`.
-    let mut snap = base_snapshot();
+    let mut snap = ready_snapshot();
     snap.hold = true;
     snap.tick = 2;
     post_snapshot_input(&iso, &snap);
@@ -1781,18 +1853,25 @@ export default class T extends LoopingBot {
 }
 "#;
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
-    let mut snap = base_snapshot();
-    snap.hold = true;
-    snap.tick = 1;
+    // One unheld tick runs onStart (onPaint waits for it) and the loop.
+    let mut snap = ready_snapshot();
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(1);
+    assert_eq!(iso.probe("__rs_loops").unwrap(), 1);
+    snap.hold = true;
+    snap.tick = 2;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(2);
     assert_eq!(
-        iso.probe("globalThis.__rs_loops || 0").unwrap(),
-        0,
-        "held first tick must not run loop()"
+        iso.probe("__rs_loops").unwrap(),
+        1,
+        "held tick must not run loop()"
     );
-    let paints: i64 = iso.probe("__rs_paints").unwrap().as_i64().unwrap();
-    assert_eq!(paints, 1, "onPaint runs while held");
+    assert_eq!(
+        iso.probe("__rs_paints").unwrap(),
+        2,
+        "onPaint runs while held"
+    );
     // JS tries to clear hold; the blob still has hold:true (unchanged delta).
     iso.probe("try { globalThis.__rs2b0t_host.hold = false; } catch (e) {}")
         .unwrap();
@@ -1801,17 +1880,17 @@ export default class T extends LoopingBot {
         true,
         "JS must not overwrite the posted hold gate"
     );
-    iso.on_game_tick(2);
     iso.on_game_tick(3);
+    iso.on_game_tick(4);
     assert_eq!(
-        iso.probe("globalThis.__rs_loops || 0").unwrap(),
-        0,
+        iso.probe("__rs_loops").unwrap(),
+        1,
         "loop() must not run after JS cleared hold while blob holds"
     );
-    let paints: i64 = iso.probe("__rs_paints").unwrap().as_i64().unwrap();
-    assert!(
-        paints >= 3,
-        "onPaint still runs while blob hold is true (paints={paints})"
+    assert_eq!(
+        iso.probe("__rs_paints").unwrap(),
+        4,
+        "onPaint still runs while blob hold is true"
     );
     iso.join();
 }
@@ -1967,8 +2046,6 @@ export default class T extends LoopingBot {
         };
     }
     loop() { this.capture(); }
-    // Guardian hold still calls onPaint — keep the probe fresh while held.
-    onPaint() { this.capture(); }
 }
 "#;
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
@@ -1989,7 +2066,8 @@ export default class T extends LoopingBot {
         base: 10,
         effective: 10,
     }];
-    snap.hold = true;
+    // `ours` (not hold, which freezes loop()) makes pending() true.
+    snap.ours = true;
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(1);
     let value = iso.probe("__probe").expect("posted snapshot reads back");
@@ -2000,7 +2078,7 @@ export default class T extends LoopingBot {
     assert_eq!(value["drag"], 0, "a name never posted fails closed to 0");
     assert_eq!(
         value["pending"], true,
-        "EventSignal.pending() is hold as posted"
+        "EventSignal.pending() reads the posted flags"
     );
     assert_eq!(
         value["ignored"],
@@ -2138,14 +2216,15 @@ export default class T extends LoopingBot {
         };
     }
     loop() { this.capture(); }
-    // Guardian hold still calls onPaint — pending flips while held.
+    // Guardian hold still calls onPaint (loaded scene, onStart done) —
+    // pending flips while held.
     onPaint() { this.capture(); }
 }
 "#;
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
 
     // First post is the keyframe: the inv table is present.
-    let mut snap = base_snapshot();
+    let mut snap = ready_snapshot();
     let inv = [nc(Some("Bones"), 2)];
     snap.inv = &inv;
     let (keyframe, fp1) = script::isolate_fb::encode_snapshot_delta(None, &snap, false);
@@ -5342,10 +5421,14 @@ export default class T extends LoopingBot {
 }
 "#;
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
-    let mut snap = base_snapshot();
-    snap.hold = true;
+    // An unheld tick runs onStart, so the held tick's onPaint may run.
+    let mut snap = ready_snapshot();
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(1);
+    snap.tick = 2;
+    snap.hold = true;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(2);
     let value = iso.probe("__probe").unwrap();
     assert_eq!(
         value, true,
@@ -5367,10 +5450,14 @@ export default class T extends LoopingBot {
 }
 "#;
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
-    let mut snap = base_snapshot();
-    snap.hold = true;
+    // An unheld tick runs onStart, so the held tick's onPaint may run.
+    let mut snap = ready_snapshot();
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(1);
+    snap.tick = 2;
+    snap.hold = true;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(2);
     let value = iso.probe("__probe").unwrap();
     assert_eq!(
         value, true,

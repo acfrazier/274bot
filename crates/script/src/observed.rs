@@ -290,12 +290,23 @@ pub struct Skills {
     pub prayer: Option<Skill>,
     pub magic: Option<Skill>,
     pub firemaking: Option<Skill>,
+    /// Every skill the client uses (`Skill::used`, by stat index) has a
+    /// posted base level above 0. The rs2b0t `activeStatsReady` rule: a
+    /// freshly logged-in client posts 0 until the stat packets arrive.
+    pub ready: bool,
 }
 
 impl Skills {
     fn read(rows: &[StatReader<'_>]) -> Self {
         let mut skills = Self::default();
+        // Bit `i`: stat slot `i` posted a base level above 0.
+        let mut loaded = 0u64;
         for row in rows {
+            if row.base() > 0 {
+                if let Ok(i) = u32::try_from(row.index()) {
+                    loaded |= 1u64.checked_shl(i).unwrap_or(0);
+                }
+            }
             let name = row.name();
             let slot = if name == "hitpoints" {
                 &mut skills.hitpoints
@@ -314,6 +325,9 @@ impl Skills {
                 effective: row.effective(),
             });
         }
+        skills.ready = (0..u64::BITS as usize)
+            .filter(|&i| api::snapshot::stat_used(i))
+            .all(|i| loaded & (1 << i) != 0);
         skills
     }
 }

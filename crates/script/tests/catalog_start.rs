@@ -4,8 +4,11 @@
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
+use script::isolate_fb::StatInput;
 use script::load::{JsLibrary, LoadIsolate, LoadShape};
 use script::{CacheMeta, JsCache, ScriptKind, ScriptSource};
+
+mod common;
 
 fn scratch(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!(
@@ -23,51 +26,6 @@ fn locked_unloadable(spec: &str) -> bool {
         || spec.contains("ToolAcquire.js")
         || spec.contains("/defs/")
         || spec.contains("barcrawl/")
-}
-
-/// A fresh account's stat rows (client stat index, name): an in-game
-/// client always posts them, and a card's first `onPaint` — logged on its
-/// own tick — reads them.
-const SKILLS: [(i32, &str); 19] = [
-    (0, "attack"),
-    (1, "defence"),
-    (2, "strength"),
-    (3, "hitpoints"),
-    (4, "ranged"),
-    (5, "prayer"),
-    (6, "magic"),
-    (7, "cooking"),
-    (8, "woodcutting"),
-    (9, "fletching"),
-    (10, "fishing"),
-    (11, "firemaking"),
-    (12, "crafting"),
-    (13, "smithing"),
-    (14, "mining"),
-    (15, "herblore"),
-    (16, "agility"),
-    (17, "thieving"),
-    (20, "runecraft"),
-];
-
-fn fresh_stats() -> Vec<script::isolate_fb::StatInput<'static>> {
-    SKILLS
-        .iter()
-        .map(|&(index, name)| {
-            let (xp, level) = if name == "hitpoints" {
-                (1154, 10)
-            } else {
-                (0, 1)
-            };
-            script::isolate_fb::StatInput {
-                index,
-                name,
-                xp,
-                base: level,
-                effective: level,
-            }
-        })
-        .collect()
 }
 
 /// Full special energy: the host posts every nonzero varp.
@@ -188,10 +146,25 @@ fn bright_catalog_cards_start_without_not_impl() {
 
     let mut hits: BTreeSet<String> = BTreeSet::new();
     let cache = JsCache::new(dir.join("sib-cache"));
-    let stats = fresh_stats();
+    // Start each card on the two scenes a fresh login shows: the live
+    // pre-stats-load state (every level 0, special energy not yet posted),
+    // where rs2b0t paints nothing, and the loaded state.
+    let loading: Vec<StatInput<'static>> = common::FRESH_STATS
+        .iter()
+        .map(|row| StatInput {
+            xp: 0,
+            base: 0,
+            effective: 0,
+            ..*row
+        })
+        .collect();
     let mut snap = empty_snap();
-    snap.stats = &stats;
-    let snap = script::isolate_fb::encode_snapshot(&snap);
+    snap.stats = &loading;
+    snap.varps = &[];
+    let loading = script::isolate_fb::encode_snapshot(&snap);
+    snap.stats = &common::FRESH_STATS;
+    snap.varps = &VARPS;
+    let loaded = script::isolate_fb::encode_snapshot(&snap);
     for name in &names {
         if let Err(e) = lib.ensure_js(ScriptSource::Catalog, name) {
             hits.insert(format!("{name}: transpile {e}"));
@@ -223,29 +196,33 @@ fn bright_catalog_cards_start_without_not_impl() {
             }
         };
         let bag = script::merge_bag(&card.settings_schema, &serde_json::Map::new(), None);
-        match LoadIsolate::spawn_with_game_data(
-            card.js.clone(),
-            card.shape,
-            siblings,
-            api::game_data::for_revision(client::io::ClientRevision::R274).unwrap(),
-        ) {
-            Err(e) => {
-                hits.insert(format!("{name}: load {e}"));
-            }
-            Ok(iso) => {
-                if !bag.is_empty() {
-                    iso.post_settings_bag(&bag);
+        for (scene, bytes) in [("pre-stats", &loading), ("loaded", &loaded)] {
+            let iso = match LoadIsolate::spawn_with_game_data(
+                card.js.clone(),
+                card.shape,
+                siblings.clone(),
+                api::game_data::for_revision(client::io::ClientRevision::R274).unwrap(),
+            ) {
+                Ok(iso) => iso,
+                Err(e) => {
+                    hits.insert(format!("{name}: load {e}"));
+                    break;
                 }
-                iso.post_snapshot(snap.clone());
-                iso.on_game_tick(1);
-                let _ = iso.probe("__rs_bot");
-                for line in iso.drain_logs() {
-                    if throw_shaped(&line) {
-                        hits.insert(format!("{name}: {line}"));
-                    }
-                }
-                iso.join();
+            };
+            if !bag.is_empty() {
+                iso.post_settings_bag(&bag);
             }
+            iso.post_snapshot(bytes.clone());
+            iso.on_game_tick(1);
+            // A round-trip barrier. Never probe `__rs_bot`: a started bot's
+            // object graph can be cyclic.
+            let _ = iso.probe("true");
+            for line in iso.drain_logs() {
+                if throw_shaped(&line) {
+                    hits.insert(format!("{name} ({scene}): {line}"));
+                }
+            }
+            iso.join();
         }
     }
 

@@ -7,6 +7,8 @@ use script::isolate_fb::{ReachViewInput, SnapshotInput, TileInput};
 use script::shim::InteractReq;
 use script::{LoadIsolate, LoadShape, SlotScript, WatchdogAction, WatchdogState};
 
+mod common;
+
 fn post_snapshot_input(iso: &LoadIsolate, input: &SnapshotInput<'_>) {
     iso.post_snapshot(script::isolate_fb::encode_snapshot(input));
 }
@@ -22,7 +24,7 @@ fn base_snapshot<'a>() -> SnapshotInput<'a> {
         ingame: true,
         inv: &[],
         inv_size: 28,
-        stats: &[],
+        stats: &common::FRESH_STATS,
         booths: &[],
         banks: &[],
         bank: &[],
@@ -493,7 +495,7 @@ fn explicit_note_progress_is_real_host_effect() {
 }
 
 #[test]
-fn never_resolving_on_start_is_single_flight_and_still_paints_and_fires_listeners() {
+fn never_resolving_on_start_is_single_flight_fires_listeners_and_does_not_paint() {
     let src = r#"
 import { BotHost } from '../../runtime/BotHost.js';
 export default class T extends LoopingBot {
@@ -520,9 +522,9 @@ export default class T extends LoopingBot {
         fires >= 2,
         "tick listeners continue during onStart: fires={fires}"
     );
-    assert!(
-        paints >= 2,
-        "onPaint continues during onStart: paints={paints}"
+    assert_eq!(
+        paints, 0,
+        "no onPaint before onStart completes (rs2b0t ScriptRunner.paintBot)"
     );
     iso.join();
 }

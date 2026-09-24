@@ -6,6 +6,8 @@ use script::isolate_fb::{decode_paint, IsolateBuf, ReachViewInput, SnapshotInput
 use script::shim::{PaintChromeBand, ScriptPaint};
 use script::{LoadIsolate, LoadShape};
 
+mod common;
+
 fn post_snapshot_input(iso: &LoadIsolate, input: &SnapshotInput<'_>) {
     iso.post_snapshot(script::isolate_fb::encode_snapshot(input));
 }
@@ -21,7 +23,7 @@ fn base_snapshot<'a>() -> SnapshotInput<'a> {
         ingame: true,
         inv: &[],
         inv_size: 28,
-        stats: &[],
+        stats: &common::FRESH_STATS,
         booths: &[],
         banks: &[],
         bank: &[],

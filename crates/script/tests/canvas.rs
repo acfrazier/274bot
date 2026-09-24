@@ -7,6 +7,8 @@ use script::isolate_fb::{decode_paint, IsolateBuf};
 use script::shim::ScriptPaint;
 use script::LoadIsolate;
 
+mod common;
+
 fn tick_paint(iso: &LoadIsolate, n: u64) -> ScriptPaint {
     iso.on_game_tick(n);
     let _ = iso.probe("0");
@@ -44,7 +46,11 @@ fn is_error(p: &ScriptPaint) -> bool {
 #[test]
 fn unchanged_template_forwards_canvas_ops_not_fallback() {
     let iso = spawn(&examplebot_source());
-    let paint = tick_paint(&iso, 1);
+    // The template's onStart waits for `Game.ingame()` (settled on tick 2);
+    // onPaint waits for onStart (rs2b0t `ScriptRunner.paintBot`).
+    common::post_snapshot_input(&iso, &common::ingame_snapshot());
+    iso.on_game_tick(1);
+    let paint = tick_paint(&iso, 2);
     assert!(
         !is_fallback(&paint),
         "canvas-only must not plant Paint.end fallback: {paint:?}"

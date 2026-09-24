@@ -1054,14 +1054,49 @@ fn deliver_native_events(
     }
 }
 
-/// Drain the native recorder and compose it with user Paint.end (if any).
-fn compose_forwarded_paint(
+/// This tick's script paint frame: the native recorder composed with the
+/// user `Paint.end` record. A compat bot that may not paint yet forwards
+/// an empty frame instead — rs2b0t clears the script layer while
+/// `paintBot` is null (`panel/Overlay.ts:43-58`).
+fn paint_frame(
     runtime: &mut Runtime,
+    script_paint: bool,
 ) -> Result<crate::shim::ScriptPaint, rustyscript::Error> {
+    if !script_paint {
+        return Ok(crate::shim::ScriptPaint::default());
+    }
     let user: Option<crate::shim::ScriptPaint> =
         runtime.eval("globalThis.__rs2b0t_host.paint || null")?;
     Ok(crate::canvas::compose_paint(user))
 }
+
+/// rs2b0t `ScriptRunner.paintBot` (`runtime/ScriptRunner.ts:141-151`): a
+/// compat bot's `onPaint` runs only after `onStart` completed
+/// (`startupComplete`, set at `:220`) and while `loopReadyOrDetached()`
+/// holds (`:38-59`): in game, scene state 2, a local tile, and stats
+/// loaded — or detached, which here is an isolate that was never posted a
+/// session (`ingame` absent), as rs2b0t treats an unattached reader.
+/// rs2b0t's `statsReady` also requires each stat to arrive in this login;
+/// the host posts no per-login stat generation, so this uses its
+/// `activeStatsReady` rule (every used stat's base level above 0). The
+/// script-state term (running or paused) is implicit: the isolate paints
+/// only on ticks it runs.
+fn compat_may_paint(runner: &Runner) -> bool {
+    runner.start_ok
+        && crate::observed::with(|scene| {
+            let scene = scene.latest();
+            match scene.ingame() {
+                None => true,
+                Some(ingame) => {
+                    ingame
+                        && scene.scene_state() == Some(2)
+                        && scene.here().is_some()
+                        && scene.stats().is_some_and(|stats| stats.ready)
+                }
+            }
+        })
+}
+
 fn forward_paint_if_changed(
     ipc: &mut crate::isolate_fb::IsolateBuf,
     out: &Sender<ThreadMsg>,
@@ -1148,7 +1183,14 @@ type Settle = rustyscript::js_value::Promise<Option<String>>;
 /// returned a promise) is never re-entered while its promise is pending.
 /// Only the runner's own promise holds it: an Execution wait parked by a
 /// listener or an un-awaited helper does not.
-enum Runner {
+struct Runner {
+    phase: Phase,
+    /// `onStart` settled successfully — rs2b0t `ScriptRunner.startupComplete`
+    /// (`ScriptRunner.ts:220`). Native shapes have no onStart: always set.
+    start_ok: bool,
+}
+
+enum Phase {
     /// Compat card whose `onStart` has not been invoked.
     Unstarted,
     /// Compat `onStart` in flight.
@@ -1164,37 +1206,41 @@ enum Runner {
 
 impl Runner {
     fn new(compat: bool) -> Self {
-        if compat {
-            Self::Unstarted
-        } else {
-            Self::Idle
+        Self {
+            phase: if compat {
+                Phase::Unstarted
+            } else {
+                Phase::Idle
+            },
+            start_ok: !compat,
         }
     }
 
     /// `onStart` has settled, so its subscriptions exist.
     fn started(&self) -> bool {
-        matches!(self, Self::Idle | Self::Running(_))
+        matches!(self.phase, Phase::Idle | Phase::Running(_))
     }
 
     /// Observe the in-flight promise; on settle log its error and go
     /// idle (`StartFailed` for a failed `onStart`). `true` when a
     /// `loop()`/tick fulfilled cleanly.
     fn poll(&mut self, runtime: &mut Runtime, out: &Sender<ThreadMsg>, n: u64) -> bool {
-        let (state, is_loop) = match self {
-            Self::Starting(p) => (p.poll_promise(runtime), false),
-            Self::Running(p) => (p.poll_promise(runtime), true),
-            Self::Unstarted | Self::StartFailed | Self::Idle => return false,
+        let (state, is_loop) = match &self.phase {
+            Phase::Starting(p) => (p.poll_promise(runtime), false),
+            Phase::Running(p) => (p.poll_promise(runtime), true),
+            Phase::Unstarted | Phase::StartFailed | Phase::Idle => return false,
         };
         let err = match state {
             std::task::Poll::Pending => return false,
             std::task::Poll::Ready(Ok(err)) => err,
             std::task::Poll::Ready(Err(e)) => Some(e.to_string()),
         };
-        *self = if err.is_some() && !is_loop {
-            Self::StartFailed
+        self.phase = if err.is_some() && !is_loop {
+            Phase::StartFailed
         } else {
-            Self::Idle
+            Phase::Idle
         };
+        self.start_ok |= !is_loop && err.is_none();
         match err {
             Some(e) => {
                 let _ = out.send(ThreadMsg::Log(format!("tick {n}: {e}")));
@@ -1226,8 +1272,8 @@ fn run_tick_phases(
     loop_settled: &mut bool,
 ) -> Result<(), rustyscript::Error> {
     *loop_settled |= runner.poll(runtime, out, n) && compat;
-    if let Runner::StartFailed = runner {
-        *runner = Runner::Idle;
+    if let Phase::StartFailed = runner.phase {
+        runner.phase = Phase::Idle;
     }
     runtime.eval::<()>(&format!("globalThis.__rs2b0t_host.tick = {n}"))?;
     // BotHost tick listeners, before any wait settles this tick. Absent
@@ -1235,24 +1281,24 @@ fn run_tick_phases(
     let _ =
         runtime.call_function_immediate::<()>(None, "__rs2b0t_fire_tick_listeners", json_args!());
     runtime.call_function_immediate::<()>(None, "__rs2b0t_pump", json_args!(n))?;
-    match runner {
+    match runner.phase {
         // An onStart a listener or a settled wait just finished lets the
         // first `loop()` run on this tick.
-        Runner::Starting(_) => {
+        Phase::Starting(_) => {
             runner.poll(runtime, out, n);
         }
-        Runner::Unstarted => {
+        Phase::Unstarted => {
             // onStart is invoked exactly once: a failed call counts as a
             // failed onStart.
-            *runner = Runner::StartFailed;
+            runner.phase = Phase::StartFailed;
             let start: Settle =
                 runtime.call_function_immediate(None, "__rs2b0t_compat_on_start", json_args!())?;
-            *runner = Runner::Starting(start);
+            runner.phase = Phase::Starting(start);
             // Microtasks run as the call returns, so a synchronous
             // onStart has settled here.
             runner.poll(runtime, out, n);
         }
-        Runner::StartFailed | Runner::Idle | Runner::Running(_) => {}
+        Phase::StartFailed | Phase::Idle | Phase::Running(_) => {}
     }
     if events_consumed && runner.started() {
         runtime.call_function_immediate::<()>(
@@ -1261,16 +1307,16 @@ fn run_tick_phases(
             json_args!(),
         )?;
     }
-    if let Runner::Idle = runner {
+    if let Phase::Idle = runner.phase {
         if compat {
             let run: Settle =
                 runtime.call_function_immediate(None, "__rs2b0t_compat_loop", json_args!())?;
-            *runner = Runner::Running(run);
+            runner.phase = Phase::Running(run);
         } else {
             let run: Option<Settle> =
                 runtime.call_function_immediate(None, "__rs_tick", json_args!(n))?;
             if let Some(run) = run {
-                *runner = Runner::Running(run);
+                runner.phase = Phase::Running(run);
             }
         }
     }
@@ -1691,7 +1737,8 @@ fn tick_loop(
                     // pass of a held tick. Use `__rs_bot` (global);
                     // module-local `inst` is not visible here.
                     let _ = runtime.eval::<()>(&format!("globalThis.__rs2b0t_host.tick = {n}"));
-                    if !v2_native {
+                    let script_paint = !compat || compat_may_paint(&runner);
+                    if !v2_native && script_paint {
                         let _ = runtime.eval::<()>("globalThis.__rs2b0t_call_on_paint()");
                     }
                     if events_consumed && runner.started() {
@@ -1726,7 +1773,7 @@ fn tick_loop(
                             generation,
                         });
                     }
-                    match compose_forwarded_paint(&mut runtime) {
+                    match paint_frame(&mut runtime, script_paint) {
                         Ok(frame) => {
                             forward_paint_if_changed(
                                 &mut ipc,
@@ -1884,16 +1931,18 @@ fn tick_loop(
                 // walks the v8 object into `ScriptPaint`; the channel
                 // carries a FlatBuffer, never a `serde_json::Value`.
                 // This is the tick's one onPaint pass: onPaint is sync
-                // and never waits for `loop()`, so it runs even while
-                // the runner is parked in onStart/loop and the forward
-                // always sees this tick's frame (or the placeholder).
-                if !v2_native {
+                // and never waits for `loop()`. A compat bot paints once
+                // its onStart completed and the scene and stats are
+                // ready (`compat_may_paint`), even while `loop()` is
+                // parked; native shapes paint every tick.
+                let script_paint = !compat || compat_may_paint(&runner);
+                if !v2_native && script_paint {
                     let _ = runtime.eval::<()>("globalThis.__rs2b0t_call_on_paint()");
                 }
                 // After the paint pass, so a throwing onPaint is logged
                 // under this tick.
                 forward_script_logs(&mut runtime, &out, n);
-                match compose_forwarded_paint(&mut runtime) {
+                match paint_frame(&mut runtime, script_paint) {
                     Ok(frame) => {
                         forward_paint_if_changed(&mut ipc, &out, &mut last_forwarded_paint, frame);
                     }

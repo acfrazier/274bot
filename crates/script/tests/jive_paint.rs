@@ -4,6 +4,8 @@
 use script::isolate_fb::{encode_snapshot, ReachViewInput, SnapshotInput, StatInput, TileInput};
 use script::{LoadIsolate, LoadShape};
 
+mod common;
+
 fn post_snapshot_input(iso: &LoadIsolate, input: &SnapshotInput<'_>) {
     iso.post_snapshot(encode_snapshot(input));
 }
@@ -105,6 +107,20 @@ fn crafting(xp: i32, base: i32) -> StatInput<'static> {
         base,
         effective: base,
     }
+}
+
+/// Every used stat loaded (so a compat card may paint), crafting as given.
+fn loaded_with_crafting(xp: i32, base: i32) -> Vec<StatInput<'static>> {
+    common::FRESH_STATS
+        .iter()
+        .map(|row| {
+            if row.name == "crafting" {
+                crafting(xp, base)
+            } else {
+                *row
+            }
+        })
+        .collect()
 }
 
 const TRACKER: &str = r#"
@@ -413,7 +429,7 @@ export default class T extends LoopingBot {
 fn jive_crafting_chrome_selection_changes_recorded_lines() {
     let iso = spawn(CRAFT_GOLD);
     let mut snap = base_snapshot();
-    let stats0 = [crafting(0, 40)];
+    let stats0 = loaded_with_crafting(0, 40);
     snap.stats = &stats0;
     post_snapshot_input(&iso, &snap);
     tick(&iso, 1);
@@ -428,7 +444,7 @@ fn jive_crafting_chrome_selection_changes_recorded_lines() {
         overview.lines
     );
 
-    let stats1 = [crafting(200, 40)];
+    let stats1 = loaded_with_crafting(200, 40);
     snap.stats = &stats1;
     post_snapshot_input(&iso, &snap);
     iso.paint_select("strip:jive:JiveCrafting", "Options");
