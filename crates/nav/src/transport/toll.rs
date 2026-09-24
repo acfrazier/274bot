@@ -36,10 +36,11 @@ pub(super) const SHANTAY_SOUTH_TICKS: i32 = 2;
 /// Al Kharid border-toll and Shantay-pass edges, derived from the loc
 /// config, scripts and jm2 placements. Both toll locs have paid crossings
 /// (`item_req` coins) and, when `border_gate.rs2` proves the free branch,
-/// parallel crossings with `varp_req` for `%princequest >= ^prince_saved`.
-/// The varp id and threshold come from `pack/varp.pack` and
-/// `quest_prince.constant`, not a runtime table. Without any of those
-/// content facts the free crossing is omitted, never assumed open.
+/// parallel crossings gated by the corresponding completed quest journal
+/// row. `%princequest` is not transmitted to the client; `quests.rs2`
+/// links it to a green `questlist:prince` row only at `^prince_complete`,
+/// which must be at least the free-branch `^prince_saved` threshold. A
+/// missing content fact omits the free crossing instead of assuming it open.
 ///
 /// The toll gates (`border_gate_toll_left`/`_right`, loc 2882/2883) parse
 /// as doors under [`parse_door_config_ids`], at the m51_50 (4,27)/(4,28)
@@ -131,7 +132,7 @@ pub(super) fn toll_edges(
                 let Some(to) = door_far_side(at, dir, collision) else {
                     continue;
                 };
-                let edge = |item_req, varp_req| TransportEdge {
+                let edge = |item_req, quest_req| TransportEdge {
                     kind: TransportKind::Door,
                     at,
                     to,
@@ -142,15 +143,15 @@ pub(super) fn toll_edges(
                     open_loc_id: open_ids.get(&id).copied(),
                     skill_req: vec![],
                     item_req,
-                    quest_req: vec![],
-                    varp_req,
+                    quest_req,
+                    varp_req: vec![],
                     worn_req: vec![],
                     members_req: false,
                 };
                 // Prefer the free crossing on equal-cost relaxed searches
                 // (bank-fetch diagnosis); both alternatives remain available.
-                if let Some((varp, min)) = waiver {
-                    graph.edges.push(edge(vec![], vec![(varp, min)]));
+                if let Some(quest) = &waiver {
+                    graph.edges.push(edge(vec![], vec![quest.clone()]));
                 }
                 graph
                     .edges
@@ -167,10 +168,11 @@ pub(super) fn toll_edges(
 
 /// Resolve the only free arm in `[label,talk_to_border_guard]`: a threshold
 /// guard must call `@pass_toll_gate` before the coin-dialogue arm. The label
-/// header has formal parameters (`[label,...](coord ...)`), so the generic
-/// no-parameter `script_blocks` parser cannot identify it. Fail closed on
-/// absent or changed syntax, missing constant, or missing packed varp.
-fn toll_waiver_gate(content_root: &Path, alkharid: &Path) -> Option<(i32, i32)> {
+/// has formal parameters, so the no-parameter `script_blocks` parser cannot
+/// identify it. Match its varp to the journal-colour script, require that
+/// journal green implies the guard threshold, then resolve its visible row
+/// name from `questlist.if`. Unproven content never waives the toll.
+fn toll_waiver_gate(content_root: &Path, alkharid: &Path) -> Option<String> {
     let script = fs::read_to_string(alkharid.join("scripts").join("border_gate.rs2")).ok()?;
     let body = script
         .split_once("[label,talk_to_border_guard]")?
@@ -189,9 +191,39 @@ fn toll_waiver_gate(content_root: &Path, alkharid: &Path) -> Option<(i32, i32)> 
     {
         return None;
     }
-    let id = *varp_ids_by_name(content_root).get(varp)?;
-    let min = *script_constants(content_root).get(threshold)?;
-    Some((id, min))
+    varp_ids_by_name(content_root).get(varp)?;
+    let constants = script_constants(content_root);
+    let saved = *constants.get(threshold)?;
+    let journal =
+        fs::read_to_string(content_root.join("scripts/general/scripts/quests.rs2")).ok()?;
+    let (row, complete) = journal.lines().find_map(|line| {
+        let args = line
+            .trim()
+            .strip_prefix("~send_quest_progress_colour(")?
+            .strip_suffix(");")?;
+        let mut args = args.split(',').map(str::trim);
+        let row = args.next()?.strip_prefix("questlist:")?;
+        let linked_varp = args.next()?.strip_prefix('%')?;
+        let complete = args.next()?.strip_prefix('^')?;
+        (linked_varp == varp && args.next().is_none()).then_some((row, complete))
+    })?;
+    if *constants.get(complete)? < saved {
+        return None;
+    }
+    let interface =
+        fs::read_to_string(content_root.join("scripts/player/interfaces/questlist.if")).ok()?;
+    let header = format!("{row}]");
+    let block = interface.split("\n[").find(|block| {
+        block
+            .lines()
+            .next()
+            .is_some_and(|line| line.trim_start_matches('[') == header)
+    })?;
+    let name = block
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("text="))?
+        .trim();
+    (!name.is_empty()).then(|| name.to_string())
 }
 
 pub(super) fn toll_shantay_henge_edges(

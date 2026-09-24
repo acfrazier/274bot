@@ -1081,7 +1081,7 @@ fn derive_transports_emits_alkharid_toll_and_shantay_north() {
         return;
     };
     // Each gate has two crossing directions, each with paid and
-    // quest-varp-waived alternatives derived from the border guard script.
+    // journal-completed alternatives derived from the border guard script.
     let tolls: Vec<_> = graph
         .edges
         .iter()
@@ -1120,10 +1120,11 @@ fn derive_transports_emits_alkharid_toll_and_shantay_north() {
             }
         );
         assert!(
-            (e.item_req == vec![(995, 10)] && e.varp_req.is_empty())
-                || (e.item_req.is_empty() && e.varp_req == vec![(273, 100)]),
-            "each crossing is either paid or waived by the Prince Ali Rescue varp: {e:?}"
+            (e.item_req == vec![(995, 10)] && e.quest_req.is_empty())
+                || (e.item_req.is_empty() && e.quest_req == ["Prince Ali Rescue"]),
+            "each crossing is either paid or waived by the completed quest journal: {e:?}"
         );
+        assert!(e.varp_req.is_empty(), "princequest is not transmitted");
         assert_eq!(e.option, 1, "Open op");
         assert_eq!(
             e.open_loc_id,
@@ -1138,7 +1139,10 @@ fn derive_transports_emits_alkharid_toll_and_shantay_north() {
                 .collect();
             assert_eq!(crossing.len(), 2);
             assert_eq!(crossing.iter().filter(|e| e.item_req.is_empty()).count(), 1);
-            assert_eq!(crossing.iter().filter(|e| e.varp_req.is_empty()).count(), 1);
+            assert_eq!(
+                crossing.iter().filter(|e| e.quest_req.is_empty()).count(),
+                1
+            );
         }
     }
     // The Shantay henge carries exactly two edges, one per
@@ -6789,6 +6793,18 @@ param=next_loc_stage,loc_1563
         "scripts/areas/area_alkharid/scripts/border_gate.rs2",
         "[label,talk_to_border_guard](coord $loc_coord)\nif (%princequest >= ^prince_saved) {\n    @pass_toll_gate($loc_coord);\n}\n",
     );
+    fx.write(
+        "scripts/general/scripts/quests.rs2",
+        "~send_quest_progress_colour(questlist:prince, %princequest, ^prince_complete);\n",
+    );
+    fx.write(
+        "scripts/general/configs/quest.constant",
+        "^prince_complete = 83\n",
+    );
+    fx.write(
+        "scripts/player/interfaces/questlist.if",
+        "[prince]\ntype=text\ntext=Prince Ali Rescue\n",
+    );
     let (graph, _) = derive_transports_with_skips(fx.path(), &defs, &wc);
     let free: Vec<_> = graph
         .edges
@@ -6799,7 +6815,26 @@ param=next_loc_stage,loc_1563
         !free.is_empty(),
         "the source-backed waiver adds a parallel crossing"
     );
-    assert!(free.iter().all(|e| e.varp_req == vec![(419, 73)]));
+    assert!(free
+        .iter()
+        .all(|e| e.quest_req == ["Prince Ali Rescue"] && e.varp_req.is_empty()));
+    fx.write(
+        "scripts/general/configs/quest.constant",
+        "^prince_complete = 72\n",
+    );
+    let (graph, _) = derive_transports_with_skips(fx.path(), &defs, &wc);
+    assert!(
+        graph
+            .edges
+            .iter()
+            .filter(|e| e.loc_id == 2882)
+            .all(|e| !e.item_req.is_empty()),
+        "journal green below the free-branch threshold cannot prove the waiver"
+    );
+    fx.write(
+        "scripts/general/configs/quest.constant",
+        "^prince_complete = 83\n",
+    );
     fx.write(
         "scripts/areas/area_alkharid/scripts/border_gate.rs2",
         "[label,talk_to_border_guard](coord $loc_coord)\nif (%princequest >= ^prince_saved) {\n    return;\n}\n",

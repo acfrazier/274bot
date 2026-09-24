@@ -85,39 +85,68 @@ fn completed_prince_ali_rescue_waives_only_the_real_alkharid_toll() {
         .iter()
         .find(|e| e.loc_id == 2882 && e.at == at && e.to == toll.to && e.item_req.is_empty())
         .expect("real pack contains the quest-waived crossing alongside the paid one");
-    let &[(quest_varp, saved)] = free.varp_req.as_slice() else {
-        panic!("waiver must require one quest varp: {free:?}");
-    };
-    assert_eq!(saved, 100);
+    assert_eq!(free.quest_req, ["Prince Ali Rescue"]);
+    assert!(
+        free.varp_req.is_empty(),
+        "princequest is not transmitted live"
+    );
     let unpaid = WorldState::empty();
     assert!(!unpaid.allows(toll));
     assert!(!unpaid.allows(free), "an unknown quest still needs coins");
-    let journal_only = WorldState {
-        quests: HashSet::from(["Prince Ali Rescue".to_string()]),
+    let injected_varp = WorldState {
+        varps: HashMap::from([(273, 110)]),
         ..WorldState::empty()
     };
     assert!(
-        !journal_only.allows(free),
-        "the varp, not the journal name, controls the gate"
+        !injected_varp.allows(free),
+        "a fabricated non-transmitted varp cannot waive the toll"
     );
     let short = WorldState {
-        varps: HashMap::from([(quest_varp, saved - 1)]),
+        varps: HashMap::from([(273, 100)]),
         inv: HashMap::from([(995, 9)]),
         ..WorldState::empty()
     };
     assert!(!short.allows(free));
     assert!(!short.allows(toll));
-    let completed = WorldState {
-        varps: HashMap::from([(quest_varp, saved)]),
-        ..WorldState::empty()
-    };
+    // The quest journal is the fact the live client carries: a green
+    // quest-list component becomes a snapshot quest state without varps.
+    let mut c = client();
+    c.side_icon[2] = 700;
+    c.set_iface(
+        700,
+        IfType {
+            children: Some(vec![701]),
+            ..Default::default()
+        },
+    );
+    c.set_iface(
+        701,
+        IfType {
+            r#type: ComponentType::TYPE_TEXT,
+            ..Default::default()
+        },
+    );
+    c.set_iface_mut(
+        701,
+        IfTypeMut {
+            text: free.quest_req[0].clone(),
+            colour: QUEST_COMPLETE_COLOUR,
+            ..Default::default()
+        },
+    );
+    c.bump_gens(ServerProt::IF_OPENMAIN);
+    let mut snapshot = GameSnapshot::new();
+    assert!(snapshot.rebuild(&c));
+    let completed = WorldState::from_snapshot(&snapshot);
+    assert!(completed.varps.is_empty());
+    assert!(completed.quests.contains("Prince Ali Rescue"));
     assert!(
         !completed.allows(toll),
         "the paid edge always requires coins"
     );
     assert!(
         completed.allows(free),
-        "completed quest enables the free alternative"
+        "the live journal fact enables the free alternative"
     );
     let paid = WorldState {
         inv: HashMap::from([(995, 10)]),
@@ -130,7 +159,7 @@ fn completed_prince_ali_rescue_waives_only_the_real_alkharid_toll() {
         .edges
         .iter()
         .find(|edge| {
-            edge.loc_id == 2883 && edge.item_req.is_empty() && edge.varp_req == free.varp_req
+            edge.loc_id == 2883 && edge.item_req.is_empty() && edge.quest_req == free.quest_req
         })
         .expect("other Al Kharid toll gate also has a quest-waived crossing");
     assert!(!unpaid.allows(south_gate));
@@ -173,11 +202,11 @@ fn completed_prince_ali_rescue_waives_only_the_real_alkharid_toll() {
         FindOptions::default(),
         &completed,
     )
-    .expect("quest varp admits the toll route with no coins");
+    .expect("quest journal admits the toll route with no coins");
     assert!(route
         .legs
         .iter()
-        .any(|leg| matches!(leg, Leg::Transport { edge } if edge.item_req.is_empty() && edge.varp_req == free.varp_req)));
+        .any(|leg| matches!(leg, Leg::Transport { edge } if edge.item_req.is_empty() && edge.quest_req == free.quest_req)));
     assert!(
         find_with(
             &collision,
@@ -192,7 +221,7 @@ fn completed_prince_ali_rescue_waives_only_the_real_alkharid_toll() {
     );
     assert!(
         find_with(&collision, &graph, from, to, FindOptions::default(), &short).is_err(),
-        "neither nine coins nor the varp below threshold admits a crossing"
+        "neither nine coins nor an untransmitted varp admits a crossing"
     );
     assert!(
         find_with(&collision, &graph, from, to, FindOptions::default(), &paid).is_ok(),
