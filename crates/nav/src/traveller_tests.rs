@@ -4014,6 +4014,69 @@ fn follow_spell_teleport_presses_the_spellbook_button_and_arrives() {
 }
 
 #[test]
+fn follow_refused_spell_teleport_does_not_resend() {
+    // The server refuses a wilderness teleport with a mes, not "I can't
+    // reach that", so the hop never matches an arm. The traveller must
+    // press the spell once, wait out the hop budget, and Stall — never
+    // recast. A later find from the same tile cannot pick that teleport
+    // again (the packed cap is the same gate the server applied).
+    let mut c = scene_client();
+    let mut snap = snap_at(&mut c, 0, 0);
+    let mut rec = FollowRec {
+        route: Some((0, 0)),
+        ..FollowRec::default()
+    };
+    let mut t = Traveller::new();
+    let dest = WorldTile {
+        x: 3213,
+        z: 3424,
+        level: 0,
+    };
+    let route = Route {
+        legs: vec![Leg::Transport {
+            edge: varrock_spell_edge(),
+        }],
+        dest,
+        ticks: 3.0,
+    };
+    let mut options = TravelOptions {
+        budget_ticks_per_hop: 3,
+        ..TravelOptions::default()
+    };
+    let outcome = drive(
+        &mut t,
+        &mut rec,
+        &mut c,
+        &mut snap,
+        &route,
+        &mut options,
+        |_| {},
+    );
+    assert!(
+        matches!(
+            outcome,
+            TravelOutcome::Stalled {
+                aiming,
+                why: HopFailure::Dropped,
+                tries: 1,
+                ..
+            } if aiming == dest
+        ),
+        "{outcome:?}"
+    );
+    assert_eq!(
+        rec.if_button_components,
+        vec![1164],
+        "the spell is pressed exactly once; a budget lapse must not recast"
+    );
+    assert_eq!(rec.held_ops, 0, "a spell is a button, never a held op");
+    assert!(
+        rec.sink.strings.is_empty(),
+        "the spell cast is never the ::tele cheat"
+    );
+}
+
+#[test]
 fn follow_spell_teleport_presses_the_live_spellbook_button_by_text() {
     // When the magic tab's tree carries the 2004 spellbook button
     // text, the hop presses the live button (a gated IF_BUTTON)

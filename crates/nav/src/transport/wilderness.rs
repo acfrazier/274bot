@@ -61,15 +61,27 @@ impl WildernessRules {
         }
         0
     }
+
+    /// Inclusive `inzone` membership against packed `wilderness_zones`.
+    /// A reversed bound in the listed pair is an empty zone, matching the
+    /// engine (`x1..x2` / `level1..level2` as written, not min/max).
+    pub fn contains(&self, t: WorldTile) -> bool {
+        self.zones.iter().any(|z| z.contains(t))
+    }
 }
 
 impl TransportGraph {
     /// Whether `edge` may be taken from `from` under the packed wilderness cap.
     /// Non-teleports and teleports with no derived cap stay unrestricted.
     pub fn teleport_legal_from(&self, from: WorldTile, edge: &TransportEdge) -> bool {
+        Self::teleport_legal_at_level(self.wilderness.level(from), edge)
+    }
+
+    /// [`Self::teleport_legal_from`] with a precomputed wilderness level.
+    pub fn teleport_legal_at_level(level: i32, edge: &TransportEdge) -> bool {
         match edge.wildy_cap {
             None => true,
-            Some(cap) => self.wilderness.level(from) <= cap,
+            Some(cap) => level <= cap,
         }
     }
 }
@@ -129,6 +141,66 @@ pub(super) fn jewellery_file_cap(text: &str) -> Result<Option<i32>, String> {
     Ok(wilderness_level_cap(text))
 }
 
+/// Cap each jewellery obj id should carry, from the three gated rub files.
+fn jewellery_caps_by_obj(
+    content_root: &Path,
+) -> Result<(HashMap<i32, i32>, i32, i32, i32), String> {
+    let objs = obj_ids_by_name(content_root);
+    let cats = jewellery_categories(content_root);
+    let dir = content_root.join(JEWELLERY_DIR);
+    let mut by_obj = HashMap::new();
+    let mut dueling = None;
+    let mut games = None;
+    let mut glory = None;
+    for name in [RING_OF_DUELING, GAMES_NECKLACE, AMULET_OF_GLORY] {
+        let path = dir.join(name);
+        if !path.is_file() {
+            return Err(format!(
+                "wilderness teleport legality: {name} is missing under {JEWELLERY_DIR}"
+            ));
+        }
+        let text = fs::read_to_string(&path).map_err(|e| format!("{name}: {e}"))?;
+        let cap = jewellery_file_cap(&text)?
+            .ok_or_else(|| format!("wilderness teleport legality: {name} cap cannot be derived"))?;
+        match name {
+            RING_OF_DUELING => dueling = Some(cap),
+            GAMES_NECKLACE => games = Some(cap),
+            AMULET_OF_GLORY => glory = Some(cap),
+            _ => {}
+        }
+        for (op, block_name, body) in jewellery_blocks(&text) {
+            if op != "opheld4" {
+                continue;
+            }
+            if block_teleport_dests(&body, &text).is_empty() {
+                continue;
+            }
+            let items: Vec<String> = match block_name.strip_prefix('_') {
+                Some(cat) => cats.get(cat).cloned().unwrap_or_default(),
+                None => vec![block_name],
+            };
+            for item in items {
+                let Some(&id) = objs.get(&item) else {
+                    continue;
+                };
+                if let Some(prev) = by_obj.insert(id, cap) {
+                    if prev != cap {
+                        return Err(format!(
+                            "wilderness teleport legality: obj {id} has caps {prev} and {cap}"
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    Ok((
+        by_obj,
+        dueling.ok_or("wilderness teleport legality: dueling cap cannot be derived")?,
+        games.ok_or("wilderness teleport legality: games necklace cap cannot be derived")?,
+        glory.ok_or("wilderness teleport legality: glory cap cannot be derived")?,
+    ))
+}
+
 /// Bake-time check: when the wilderness sources exist, caps and the formula
 /// must parse and every packed teleport must carry the derived cap.
 pub(crate) fn require_wilderness_teleport_legality(
@@ -146,25 +218,16 @@ pub(crate) fn require_wilderness_teleport_legality(
     }
     let spell_cap = spell_teleport_cap(content_root)?
         .ok_or("wilderness teleport legality: spell cap cannot be derived")?;
-    let jewellery_dir = content_root.join(JEWELLERY_DIR);
-    let mut jewellery_caps = HashSet::new();
-    for name in [RING_OF_DUELING, GAMES_NECKLACE, AMULET_OF_GLORY] {
-        let path = jewellery_dir.join(name);
-        if !path.is_file() {
-            return Err(format!(
-                "wilderness teleport legality: {name} is missing under {JEWELLERY_DIR}"
-            ));
-        }
-        let text = fs::read_to_string(&path).map_err(|e| format!("{name}: {e}"))?;
-        let cap = jewellery_file_cap(&text)?
-            .ok_or_else(|| format!("wilderness teleport legality: {name} cap cannot be derived"))?;
-        jewellery_caps.insert(cap);
+    let (by_obj, dueling, games, _glory) = jewellery_caps_by_obj(content_root)?;
+    if dueling != spell_cap {
+        return Err(format!(
+            "wilderness teleport legality: dueling cap {dueling} != spell cap {spell_cap}"
+        ));
     }
-    if !jewellery_caps.contains(&spell_cap) {
-        return Err(
-            "wilderness teleport legality: dueling/games necklace caps must match the spell cap"
-                .into(),
-        );
+    if games != spell_cap {
+        return Err(format!(
+            "wilderness teleport legality: games necklace cap {games} != spell cap {spell_cap}"
+        ));
     }
     if graph.teleports.is_empty() {
         return Err(
@@ -185,10 +248,19 @@ pub(crate) fn require_wilderness_teleport_legality(
                     "wilderness teleport legality: spell teleport cap {cap} != derived {spell_cap}"
                 ));
             }
-        } else if !jewellery_caps.contains(&cap) {
-            return Err(format!(
-                "wilderness teleport legality: jewellery teleport cap {cap} is not a derived jewellery cap"
-            ));
+        } else {
+            let Some(&expected) = by_obj.get(&e.loc_id) else {
+                return Err(format!(
+                    "wilderness teleport legality: jewellery teleport loc {} has no per-file cap",
+                    e.loc_id
+                ));
+            };
+            if cap != expected {
+                return Err(format!(
+                    "wilderness teleport legality: jewellery loc {} cap {cap} != file cap {expected}",
+                    e.loc_id
+                ));
+            }
         }
     }
     Ok(())
@@ -325,6 +397,8 @@ fn parse_wilderness_zones(dbrow: &str) -> Result<Vec<WildernessZone>, String> {
             return Err(format!("{ZONES_DBROW} coord_pair has extra fields"));
         }
         // `$coord1` is the first listed coord; the formula origins on its z.
+        // Engine `inzone` uses the pair as listed (a reversed x or level
+        // bound is an empty zone). North-first z would invert the origin.
         if a.2 > b.2 {
             return Err(format!(
                 "{ZONES_DBROW} coord_pair lists a north coord first (z {} > {})",
@@ -332,12 +406,12 @@ fn parse_wilderness_zones(dbrow: &str) -> Result<Vec<WildernessZone>, String> {
             ));
         }
         zones.push(WildernessZone {
-            x1: a.1.min(b.1),
-            z1: a.2.min(b.2),
-            x2: a.1.max(b.1),
-            z2: a.2.max(b.2),
-            level1: a.0.min(b.0),
-            level2: a.0.max(b.0),
+            x1: a.1,
+            z1: a.2,
+            x2: b.1,
+            z2: b.2,
+            level1: a.0,
+            level2: b.0,
             origin_z: a.2,
         });
     }

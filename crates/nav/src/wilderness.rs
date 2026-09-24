@@ -1,7 +1,10 @@
-//! Wilderness zones from the r274 `wilderness_zones.dbrow` table: the
-//! world AABB pairs `in_wilderness` tests against (the surface band plus
-//! the underground dungeon band).
-
+//! Wilderness zones for searches whose graph has no packed rules.
+//!
+//! A baked pack carries content-derived zones on
+//! [`crate::transport::WildernessRules`]; the router prefers those when
+//! present. This table is the empty-graph / e2e fallback, decoded from the
+//! r274 `wilderness_zones.dbrow` pairs (the surface band plus the
+//! underground dungeon band).
 use api::snapshot::WorldTile;
 
 /// One inclusive world AABB of a zone row.
@@ -49,8 +52,10 @@ const ZONES: [Zone; 2] = [
 ];
 
 /// Whether `t` lies inside any wilderness zone (inclusive edges). Default
-/// [`crate::router::find`] refuses to enter wilderness tiles; searches
-/// with `FindOptions::allow_wilderness` may.
+/// [`crate::router::find`] refuses to enter wilderness tiles when the
+/// search graph has no packed zones; searches with
+/// `FindOptions::allow_wilderness` may. Packed graphs use
+/// [`crate::transport::WildernessRules::contains`] instead.
 pub fn in_wilderness(t: WorldTile) -> bool {
     ZONES.iter().any(|z| z.contains(t))
 }

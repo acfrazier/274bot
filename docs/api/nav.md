@@ -171,8 +171,10 @@ SpiritTree/Npc), `from`/`to`, `loc_id`, the 1-based menu `option`
 vectors including `worn_req` (**any-of**). Spell teleports have no fixed
 origin: they live on `TransportGraph::teleports` and stay out of Dijkstra
 unless `FindOptions::allow_teleports`. Wilderness tiles stay out unless
-`FindOptions::allow_wilderness`. Both default **off**. `find` also
-fail-closes on live `WorldState`.
+`FindOptions::allow_wilderness`. Both default **off**. Packed spell and
+jewellery teleports also carry a content-derived wilderness cap; `find`
+will not take them from a tile whose packed `wilderness_level` exceeds
+that cap. `find` also fail-closes on live `WorldState`.
 
 ## Router (`nav::router`)
 
@@ -183,15 +185,20 @@ those in. Tile steps use the client's directional `PL_WALK_*` masks,
 **not** the blanket `walkable()`. Transport take-off is any standable
 tile within **`INTERACT_RADIUS` 1** of the edge `at` (adjacent only — a
 radius of 3 let cow-pen routes “use” the north-west road gate through a
-fence). `Route { legs, dest, ticks }`; `Leg::Walk { tiles }` runs
-collapse, `Leg::Transport { edge }` is one per transport. `RouteError` is
-`NoPath` or `BudgetExhausted` (a node-expansion cap). `find` is CPU-heavy;
-run it off-pump (a short-lived worker) and arm the result.
+fence). Any-tile teleports are refused when the takeoff tile's wilderness
+level exceeds the edge's packed cap (the content
+`~wilderness_level(coord) > N` gate). `Route { legs, dest, ticks }`;
+`Leg::Walk { tiles }` runs collapse, `Leg::Transport { edge }` is one per
+transport. `RouteError` is `NoPath` or `BudgetExhausted` (a node-expansion
+cap). `find` is CPU-heavy; run it off-pump (a short-lived worker) and arm
+the result.
 
 `Traveller::follow` walks loc hops and fires packed OP_NPC, boats,
 gliders, webs, EssenceSession, Shantay, and teles. NPC-backed hops use
 the live NPC tile (search radius 8). Glider landings settle Chebyshev 1.
-Agility waits packed `edge.ticks` after land.
+Agility waits packed `edge.ticks` after land. A teleport hop that never
+lands (a server-refused wilderness cast) stalls after the hop budget;
+the spell or rub is not resent.
 
 ## Traveller (`nav::traveller`)
 

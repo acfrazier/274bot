@@ -10,12 +10,19 @@ pub(super) fn teleport_edges(
     graph: &mut TransportGraph,
     skipped: &mut HashMap<&'static str, usize>,
 ) {
-    if let Ok(rules) = load_wilderness_rules(content_root) {
-        graph.wilderness = rules;
+    match load_wilderness_rules(content_root) {
+        Ok(rules) => graph.wilderness = rules,
+        Err(_) => {
+            // Present-but-unparseable: do not emit an uncapped teleport layer.
+            bump(skipped, SKIP_WILDERNESS_RULES, 1);
+            return;
+        }
     }
     let objs = obj_ids_by_name(content_root);
-    let spell_cap = spell_teleport_cap(content_root).ok().flatten();
-    spell_teleports(content_root, &objs, graph, skipped, spell_cap);
+    match spell_teleport_cap(content_root) {
+        Ok(spell_cap) => spell_teleports(content_root, &objs, graph, skipped, spell_cap),
+        Err(_) => bump(skipped, SKIP_TELEPORT_WILDY_CAP, 1),
+    }
     jewellery_teleports(content_root, &objs, graph, skipped);
 }
 
@@ -174,7 +181,7 @@ pub(super) fn jewellery_teleports(
         let Ok(text) = fs::read_to_string(&path) else {
             continue;
         };
-        let wildy_cap = jewellery_file_cap(&text).ok().flatten();
+        let wildy_cap = wilderness_level_cap(&text);
         for (op, name, body) in jewellery_blocks(&text) {
             if op != "opheld4" {
                 continue;

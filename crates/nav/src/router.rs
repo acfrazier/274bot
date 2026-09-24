@@ -15,7 +15,8 @@
 //! [`find`] and [`find_with_model`] never see teleports; the any-tile
 //! teleport layer ([`TransportGraph::teleports`]) only joins the search
 //! through [`find_allow_teleports`]/[`find_allow_teleports_with_model`].
-//! Wilderness tiles ([`crate::wilderness::in_wilderness`]) are refused
+//! Wilderness tiles ([`crate::wilderness::in_wilderness`], or packed
+//! [`TransportGraph::wilderness`] when the graph carries zones) are refused
 //! unless the search's [`FindOptions::allow_wilderness`] is set; every
 //! option'd entry point is [`find_with`]. Every transport edge — walked
 //! or teleported — is additionally gated by the search's [`WorldState`]:
@@ -964,7 +965,7 @@ fn search_kernel(
                 if !avoid.is_empty() && !escaping && tile_in_any_avoid(nb, avoid) {
                     continue;
                 }
-                if !wildy_step_ok(cur, nb, allow_wilderness) {
+                if !wildy_step_ok(graph, cur, nb, allow_wilderness) {
                     continue;
                 }
                 let nd = n.cost + model.run_per_step;
@@ -1006,7 +1007,7 @@ fn search_kernel(
                         if !avoid.is_empty() && !escaping && tile_in_any_avoid(edge.to, avoid) {
                             continue;
                         }
-                        if !wildy_step_ok(cur, edge.to, allow_wilderness) {
+                        if !wildy_step_ok(graph, cur, edge.to, allow_wilderness) {
                             continue;
                         }
                         let nd = n.cost + edge.ticks as f64;
@@ -1041,7 +1042,7 @@ fn search_kernel(
                     {
                         continue;
                     }
-                    if !wildy_step_ok(cur, session.return_tile, allow_wilderness) {
+                    if !wildy_step_ok(graph, cur, session.return_tile, allow_wilderness) {
                         continue;
                     }
                     let nd = n.cost + ESSENCE_MINE_EXIT_TICKS as f64;
@@ -1066,6 +1067,7 @@ fn search_kernel(
         // other transport `to` (no walkability filter — the content
         // declares it).
         if use_teleports {
+            let wildy_level = graph.wilderness.level(cur);
             for (ti, edge) in graph.teleports.iter().enumerate() {
                 let gate_ok = if relax_carry_worn {
                     state.allows_without_carry_worn(edge)
@@ -1078,10 +1080,10 @@ fn search_kernel(
                 if !avoid.is_empty() && !escaping && tile_in_any_avoid(edge.to, avoid) {
                     continue;
                 }
-                if !wildy_step_ok(cur, edge.to, allow_wilderness) {
+                if !wildy_step_ok(graph, cur, edge.to, allow_wilderness) {
                     continue;
                 }
-                if !graph.teleport_legal_from(cur, edge) {
+                if !TransportGraph::teleport_legal_at_level(wildy_level, edge) {
                     continue;
                 }
                 let nd = n.cost + edge.ticks as f64;
@@ -1121,8 +1123,23 @@ fn search_kernel(
 /// `allow_wilderness` a non-wilderness node may not relax into a
 /// wilderness tile (a walk step or a transport landing). Once inside the
 /// wilderness the search walks freely — only the entry is gated.
-fn wildy_step_ok(cur: WorldTile, next: WorldTile, allow_wilderness: bool) -> bool {
-    allow_wilderness || in_wilderness(cur) || !in_wilderness(next)
+/// Packed graphs use content-derived zones; empty-graph fixtures fall
+/// back to [`crate::wilderness::in_wilderness`].
+fn wildy_step_ok(
+    graph: &TransportGraph,
+    cur: WorldTile,
+    next: WorldTile,
+    allow_wilderness: bool,
+) -> bool {
+    allow_wilderness || in_wilderness_tile(graph, cur) || !in_wilderness_tile(graph, next)
+}
+
+fn in_wilderness_tile(graph: &TransportGraph, t: WorldTile) -> bool {
+    if graph.wilderness.zones.is_empty() {
+        in_wilderness(t)
+    } else {
+        graph.wilderness.contains(t)
+    }
 }
 
 /// Whether a one-tile step from `cur` by `d` is allowed — the client's

@@ -7397,17 +7397,28 @@ fn real_289_content_derives_wilderness_teleport_caps() {
         graph,
     )
     .expect("289 content must derive wilderness teleport caps");
-    assert!(graph.wilderness.divisor > 0);
+    assert_eq!(graph.wilderness.divisor, 8);
+    assert_eq!(graph.wilderness.offset, 1);
+    let t = |z| WorldTile {
+        x: 3100,
+        z,
+        level: 0,
+    };
+    assert_eq!(graph.wilderness.level(t(3679)), 20);
+    assert_eq!(graph.wilderness.level(t(3680)), 21);
+    assert_eq!(graph.wilderness.level(t(3759)), 30);
+    assert_eq!(graph.wilderness.level(t(3760)), 31);
     let spell = graph
         .teleports
         .iter()
         .find(|e| e.loc_id == 0)
         .and_then(|e| e.wildy_cap)
         .expect("spell cap");
+    assert_eq!(spell, 20);
     assert!(graph
         .teleports
         .iter()
-        .any(|e| e.loc_id > 0 && e.wildy_cap == Some(spell)));
+        .any(|e| e.loc_id > 0 && e.wildy_cap == Some(20)));
     let glory = graph
         .teleports
         .iter()
@@ -7415,7 +7426,7 @@ fn real_289_content_derives_wilderness_teleport_caps() {
         .filter_map(|e| e.wildy_cap)
         .max()
         .unwrap();
-    assert!(glory > spell, "glory cap exceeds spell cap");
+    assert_eq!(glory, 30);
 }
 
 #[test]
@@ -7435,6 +7446,7 @@ fn real_289_routes_respect_wilderness_teleport_caps() {
         .find(|e| e.loc_id == 0 && e.wildy_cap.is_some())
         .expect("spell");
     let spell_cap = spell.wildy_cap.unwrap();
+    assert_eq!(spell_cap, 20);
     let dest = spell.to;
     let mut inv = HashMap::new();
     for &(id, n) in &spell.item_req {
@@ -7456,8 +7468,10 @@ fn real_289_routes_respect_wilderness_teleport_caps() {
         allow_wilderness: true,
         ..FindOptions::default()
     };
-    let below = standable_wildy_on(wc, graph, spell_cap).expect("tile at spell cap");
-    let above = standable_wildy_on(wc, graph, spell_cap + 1).expect("tile above spell cap");
+    let below = standable_wildy_on(wc, graph, 20, true).expect("standable last tile of level 20");
+    let above = standable_wildy_on(wc, graph, 21, false).expect("standable first tile of level 21");
+    assert_eq!(below.z, 3679, "level 20 ends at z 3679");
+    assert_eq!(above.z, 3680, "level 21 starts at z 3680");
     let r_below = find_with(wc, graph, below, dest, opts, &state)
         .unwrap_or_else(|e| panic!("from level {spell_cap} {below:?} -> {dest:?}: {e:?}"));
     assert!(
@@ -7484,7 +7498,7 @@ fn real_289_routes_respect_wilderness_teleport_caps() {
         .filter_map(|e| e.wildy_cap)
         .max()
         .expect("jewellery cap");
-    assert!(glory_cap > spell_cap);
+    assert_eq!(glory_cap, 30);
     let glory = graph
         .teleports
         .iter()
@@ -7494,8 +7508,11 @@ fn real_289_routes_respect_wilderness_teleport_caps() {
         inv: HashMap::from([(glory.item_req[0].0, 1)]),
         ..crate::world_state::WorldState::default()
     };
-    let g_below = standable_wildy_on(wc, graph, glory_cap).expect("tile at glory cap");
-    let g_above = standable_wildy_on(wc, graph, glory_cap + 1).expect("tile above glory cap");
+    let g_below = standable_wildy_on(wc, graph, 30, true).expect("standable last tile of level 30");
+    let g_above =
+        standable_wildy_on(wc, graph, 31, false).expect("standable first tile of level 31");
+    assert_eq!(g_below.z, 3759, "level 30 ends at z 3759");
+    assert_eq!(g_above.z, 3760, "level 31 starts at z 3760");
     let ok = find_with(wc, graph, g_below, glory.to, opts, &gstate)
         .unwrap_or_else(|e| panic!("glory from level {glory_cap}: {e:?}"));
     assert!(ok
@@ -7511,7 +7528,12 @@ fn real_289_routes_respect_wilderness_teleport_caps() {
     }
 }
 
-fn standable_wildy_on(wc: &WorldCollision, graph: &TransportGraph, want: i32) -> Option<WorldTile> {
+fn standable_wildy_on(
+    wc: &WorldCollision,
+    graph: &TransportGraph,
+    want: i32,
+    north_edge: bool,
+) -> Option<WorldTile> {
     let rules = &graph.wilderness;
     if rules.divisor <= 0 {
         return None;
@@ -7521,13 +7543,15 @@ fn standable_wildy_on(wc: &WorldCollision, graph: &TransportGraph, want: i32) ->
             continue;
         }
         let z0 = zone.origin_z + (want - rules.offset) * rules.divisor;
-        let z1 = z0 + rules.divisor - 1;
-        for z in z0..=z1 {
-            for x in (zone.x1..=zone.x2).step_by(3) {
-                let t = WorldTile { x, z, level: 0 };
-                if wc.standable(t) {
-                    return Some(t);
-                }
+        let z = if north_edge {
+            z0 + rules.divisor - 1
+        } else {
+            z0
+        };
+        for x in zone.x1..=zone.x2 {
+            let t = WorldTile { x, z, level: 0 };
+            if zone.contains(t) && wc.standable(t) {
+                return Some(t);
             }
         }
     }

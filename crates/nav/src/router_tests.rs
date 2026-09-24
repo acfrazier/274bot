@@ -1008,7 +1008,7 @@ fn bank_targets_match_independent_find_with_on_real_289_pack() {
                     let actual = many.route(index).unwrap();
                     assert_eq!(actual.dest, target);
                     assert_eq!(actual.ticks, expected.ticks);
-                    validate_real_route(&world.collision, &actual, state, false, &[]);
+                    validate_real_route(&world.collision, &world.graph, &actual, state, false, &[]);
                 }
                 Err(error) => assert_eq!(
                     many.results()[index],
@@ -1119,6 +1119,7 @@ fn bank_targets_match_independent_find_with_on_real_289_pack() {
                     );
                     validate_real_route(
                         &world.collision,
+                        &world.graph,
                         &many.route(index).unwrap(),
                         state,
                         opts.allow_wilderness,
@@ -1184,6 +1185,7 @@ fn bank_targets_match_independent_find_with_on_real_289_pack() {
 
 fn validate_real_route(
     collision: &WorldCollision,
+    graph: &TransportGraph,
     route: &crate::router::Route,
     state: &WorldState,
     allow_wilderness: bool,
@@ -1200,7 +1202,12 @@ fn validate_real_route(
                 for step in tiles.windows(2) {
                     let d = (step[1].x - step[0].x, step[1].z - step[0].z);
                     assert!(step_ok(collision, step[0], d), "invalid walk {step:?}");
-                    assert!(super::wildy_step_ok(step[0], step[1], allow_wilderness));
+                    assert!(super::wildy_step_ok(
+                        graph,
+                        step[0],
+                        step[1],
+                        allow_wilderness
+                    ));
                     assert!(
                         super::tile_in_any_avoid(step[0], avoid)
                             || !super::tile_in_any_avoid(step[1], avoid)
@@ -1222,7 +1229,18 @@ fn validate_real_route(
                             <= 1
                     );
                 }
-                assert!(super::wildy_step_ok(previous, edge.to, allow_wilderness));
+                assert!(super::wildy_step_ok(
+                    graph,
+                    previous,
+                    edge.to,
+                    allow_wilderness
+                ));
+                if edge.kind == TransportKind::Teleport {
+                    assert!(
+                        graph.teleport_legal_from(previous, edge),
+                        "teleport from {previous:?} exceeds packed cap"
+                    );
+                }
                 assert!(
                     super::tile_in_any_avoid(previous, avoid)
                         || !super::tile_in_any_avoid(edge.to, avoid)
@@ -2508,170 +2526,4 @@ fn glory_teleport_cap_is_exact_at_level_30() {
         ),
         "level 31 cannot glory across the wall"
     );
-}
-
-fn teleport_takeoff(start: WorldTile, route: &crate::router::Route) -> Vec<(WorldTile, i32)> {
-    let mut cur = start;
-    let mut out = Vec::new();
-    for leg in &route.legs {
-        match leg {
-            Leg::Walk { tiles } => {
-                if let Some(last) = tiles.last() {
-                    cur = *last;
-                }
-            }
-            Leg::Transport { edge } => {
-                if edge.kind == TransportKind::Teleport {
-                    if let Some(cap) = edge.wildy_cap {
-                        out.push((cur, cap));
-                    }
-                }
-                cur = edge.to;
-            }
-        }
-    }
-    out
-}
-
-#[test]
-fn real_pack_refuses_teleports_above_derived_caps() {
-    let Some(world) = crate::world::NavWorld::load_default_pack_or_skip() else {
-        return;
-    };
-    if world.graph.wilderness.zones.is_empty()
-        || world.graph.teleports.iter().all(|e| e.wildy_cap.is_none())
-    {
-        eprintln!("SKIP: packed graph has no derived wilderness teleport caps");
-        return;
-    }
-    let spell = world
-        .graph
-        .teleports
-        .iter()
-        .find(|e| e.loc_id == 0 && e.wildy_cap.is_some())
-        .expect("packed spell teleport with a cap");
-    let spell_cap = spell.wildy_cap.unwrap();
-    let dest = spell.to;
-    let mut inv = HashMap::new();
-    for &(id, n) in &spell.item_req {
-        inv.insert(id, n.max(5));
-    }
-    let magic = spell
-        .skill_req
-        .iter()
-        .find(|(id, _)| *id == 6)
-        .map(|(_, lvl)| *lvl)
-        .unwrap_or(99);
-    let state = WorldState {
-        stats: HashMap::from([(6, magic)]),
-        inv,
-        ..WorldState::default()
-    };
-    let opts = teleport_opts();
-    let below = standable_wildy_level(&world, spell_cap).expect("standable tile at spell cap");
-    let above =
-        standable_wildy_level(&world, spell_cap + 1).expect("standable tile above spell cap");
-    let r_below = find_with(&world.collision, &world.graph, below, dest, opts, &state)
-        .unwrap_or_else(|e| panic!("from level {spell_cap} {below:?} -> {dest:?}: {e:?}"));
-    assert!(
-        r_below
-            .legs
-            .iter()
-            .any(|l| matches!(l, Leg::Transport { edge } if edge.kind == TransportKind::Teleport)),
-        "from below the cap the route still teleports"
-    );
-    for (from, cap) in teleport_takeoff(below, &r_below) {
-        assert!(
-            world.graph.wilderness.level(from) <= cap,
-            "teleport from {from:?} level {} > cap {cap}",
-            world.graph.wilderness.level(from)
-        );
-    }
-    let r_above = find_with(&world.collision, &world.graph, above, dest, opts, &state);
-    if let Ok(route) = r_above {
-        for (from, cap) in teleport_takeoff(above, &route) {
-            assert!(
-                world.graph.wilderness.level(from) <= cap,
-                "above-cap start {above:?} teleported from {from:?} level {} > {cap}",
-                world.graph.wilderness.level(from)
-            );
-            assert_ne!(
-                from, above,
-                "must not teleport from the above-cap origin {above:?}"
-            );
-        }
-    }
-    let glory_cap = world
-        .graph
-        .teleports
-        .iter()
-        .filter(|e| e.loc_id > 0)
-        .filter_map(|e| e.wildy_cap)
-        .max()
-        .expect("jewellery cap");
-    if glory_cap > spell_cap {
-        let glory = world
-            .graph
-            .teleports
-            .iter()
-            .find(|e| e.wildy_cap == Some(glory_cap))
-            .unwrap();
-        let gstate = WorldState {
-            inv: HashMap::from([(glory.item_req[0].0, 1)]),
-            ..WorldState::default()
-        };
-        let g_below =
-            standable_wildy_level(&world, glory_cap).expect("standable tile at glory cap");
-        let g_above =
-            standable_wildy_level(&world, glory_cap + 1).expect("standable tile above glory cap");
-        let ok = find_with(
-            &world.collision,
-            &world.graph,
-            g_below,
-            glory.to,
-            opts,
-            &gstate,
-        )
-        .unwrap_or_else(|e| panic!("glory from level {glory_cap}: {e:?}"));
-        assert!(ok
-            .legs
-            .iter()
-            .any(|l| matches!(l, Leg::Transport { edge } if edge.kind == TransportKind::Teleport)));
-        if let Ok(route) = find_with(
-            &world.collision,
-            &world.graph,
-            g_above,
-            glory.to,
-            opts,
-            &gstate,
-        ) {
-            for (from, cap) in teleport_takeoff(g_above, &route) {
-                assert!(world.graph.wilderness.level(from) <= cap);
-                assert_ne!(from, g_above);
-            }
-        }
-    }
-}
-
-fn standable_wildy_level(world: &crate::world::NavWorld, want: i32) -> Option<WorldTile> {
-    let rules = &world.graph.wilderness;
-    if rules.divisor <= 0 {
-        return None;
-    }
-    for zone in &rules.zones {
-        if zone.level1 > 0 {
-            continue;
-        }
-        let z0 = zone.origin_z + (want - rules.offset) * rules.divisor;
-        let z1 = z0 + rules.divisor - 1;
-        for z in z0..=z1 {
-            for x in (zone.x1..=zone.x2).step_by(3) {
-                let t = WorldTile { x, z, level: 0 };
-                if world.collision.standable(t) {
-                    return Some(t);
-                }
-            }
-        }
-    }
-    None
 }
