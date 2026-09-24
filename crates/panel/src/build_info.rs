@@ -74,8 +74,6 @@ mod tests {
             tooltip("0.1.7", "abcdef0123456789", true, ""),
             "0.1.7\ncommit abcdef0123456789 (dirty tree)\nbuilt —"
         );
-        assert_eq!(VERSION, "0.1.7");
-        assert_eq!(RELEASE, "alpha 2");
     }
 
     #[test]

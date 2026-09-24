@@ -1,9 +1,91 @@
 # Changelog
 
-All notable public changes to 274bot. Host workspace crate versions are `0.1.7` and
+All notable public changes to 274bot. Host workspace crate versions are `0.1.8` and
 `publish = false` (not on crates.io). Git tags are `0.1.0`, `0.1.1`, …
 
-## [Unreleased] — 0.1.7 / Alpha 2
+## [0.1.8] — 2026-09-24
+
+JS API v1 compatibility with the frozen rs2b0t catalog on revision 289, and the
+JS shim pulled back toward name maps: most loops, tables, decisions, retries and
+sequencing now live in Rust step machines that read the snapshot Rust already
+holds (residuals are listed under Known limits). Revision 274 remains
+best-effort and untested in this release.
+
+### Script runtime (fence)
+
+- One decoded scene per isolate; Rust helpers read it instead of JS-posted
+  pages. The runner, park list and a single paint pass per tick are Rust-owned.
+- A Rust step-machine host (`runMachine`): each driver is one native start and
+  one await, with exclusive supersede, reset/pause/hold semantics, join and
+  watchdog claims, and one Rust→JS callback path (synchronous hooks stay
+  synchronous, as in frozen). Teleport, prayer, autocast, special, modals, bank
+  open/access/deposit/withdraw/close, PeriodicBank, DeathRecovery, bankNearest,
+  light fire, shop, chat dialog (make/makeX/makeFromPanel/chooseOption), dialog,
+  reach (npcDialog/entityOp), walkWithHops, walkResilient, trade, partner trade,
+  clue/Sherlock and every hunt family run on it.
+- The v2 hunt family is begin plus one awaited run with typed `.d.ts` inputs;
+  the nine v2 hunt examples are rewritten to that contract.
+- Paint: canvas ops record on a tape and flush once per pass; paint frames are
+  shared by `Arc` with sender-side caps; the FlatBuffer paint codec is removed.
+  `fmtDuration`/`fmtXpHr`/`etaHours`/`levelProgress`/`paintSkillShort` emit the
+  rs2b0t strings.
+- Isolate Start/Stop no longer block the UI thread; the isolate command backlog
+  is bounded; no JSON text is evaluated as source on the tick path.
+
+### Compatibility and behavior
+
+- v1 `onPaint` runs only after `onStart` succeeds and while the reader is ready
+  (in game, scene 2, a tile, stats loaded), as frozen `ScriptRunner.paintBot`.
+- Walk arrival is one Rust rule equal to frozen `isArrived` (reach probes), used
+  by the isolate wait, the host follow and every shim pre-check; a route that
+  ends on its approach tile settles true (frozen "closest").
+- `Tile.distanceTo` runs in Rust (NaN propagates as in `Math.max`).
+  `Quests.points()` reads varp 101 and every nonzero varp is posted.
+  `Equipment.unequip` and the `Equip` op use real host verbs.
+- `liveCatalog()` items, `tradeable`, `displayName`/`clientName` and note links
+  come from selected game data (game data gains `tradeable` and
+  `stack_variant`). `ChatDialog.makeFromPanel`, `Shop.sell` with a pick
+  predicate, `SolveClue.walkToBank`, `requiredThieving`, non-booth
+  `Bank.openNearestAccess` and `Bank.openNpcAccess` are implemented.
+- Declared-surface stubs throw `not impl` on use instead of returning fake
+  values.
+- A superseded `Game.teleport` resolves `false` in the tick it is superseded.
+  v2 `api.tick` advances on every eligible tick, including while an async tick
+  is pending. In the ResetSession window the v2 quest journal/status return
+  `snapshot-unavailable`.
+
+### Gameplay fixes (live 289)
+
+- Sherlock continues a giver dialog left open when a casket lands.
+- Ardougne stalls: the frozen stealCakes loop runs in Rust; the combat lockout
+  is waited out instead of counted as a refusal.
+- Nav steps through `open_and_close_door2` doors (Tenzing's hut) instead of
+  stalling the door hop; the host follow ends at the requested radius.
+- A walk wait settles on a posted outcome that later snapshot deltas omit
+  (wolf-pit recovery); `walkResilient` retries as frozen.
+- DeathRecovery recovers only near its anchor (frozen `near`), and PeriodicBank
+  returns with the bank open, as frozen does.
+
+### Rendering and client
+
+- Client `cea0e82`: side-step walk sequence names, zero-delay frames play for
+  one cycle as in Java, GPU texture coordinates keep their sign across zero,
+  GPU tests skip cleanly without an adapter, and clippy 1.98 cleanup.
+
+### Known limits
+
+- Defence-1 `moss_giant`/`green_dragon`/`fire_giant` catalog cells cannot win
+  their fights on 289 (each eat clears the attack); the prepared cells are the
+  representatives. `moss_giant_bank`, `ardy_fighter_bank` and the earned-loot
+  step of `rock_crab_bank` depend on the frozen Fight hold or drop RNG.
+- Fence residuals for 0.1.9: `cake_stall.js` still pumps a Rust begin/next
+  driver instead of one machine await; the v2 clue and quest-journal APIs are
+  still begin/next; several in-isolate helpers still take untyped JSON
+  arguments (no additional host wire).
+- Lumbridge fountain banding on the GPU path needs a vertex-format change
+  (0.1.9). Measurement-only performance claims are deferred to 0.1.9.
+
+## [0.1.7] — 2026-09-16 — Alpha 2
 
 ### Server profiles and operator script controls
 
