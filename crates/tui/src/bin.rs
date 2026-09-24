@@ -773,8 +773,9 @@ impl TuiSession {
         };
         profile.settings.raster = vault::RasterMode::Off;
         let auto_login = profile.settings.auto_login;
-        let arm = SlotArm::new(profile.uid, true);
-        arm.auto_login.store(auto_login, Ordering::Relaxed);
+        let arm = SlotArm::new(profile.uid, false);
+        arm.set_auto_login(auto_login);
+        arm.arm_explicit_login();
         arm.random_events
             .store(profile.settings.random_events, Ordering::Relaxed);
         arm.lamp_auto

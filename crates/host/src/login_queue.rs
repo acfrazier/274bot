@@ -60,6 +60,7 @@ pub struct LoginQueue {
     ip_count: usize,
     ip_pending: usize,
     ip_last: Option<Instant>,
+    throttle_until: Option<Instant>,
     by_uid: HashMap<i32, UidState>,
 }
 
@@ -86,6 +87,7 @@ impl LoginQueue {
             ip_count: 0,
             ip_pending: 0,
             ip_last: None,
+            throttle_until: None,
             by_uid: HashMap::new(),
         }
     }
@@ -208,6 +210,13 @@ impl LoginQueue {
     }
 
     /// Longest unmet constraint for granting `uid` at `now`.
+
+    /// Pause all sibling attempts after the server reports an address/device
+    /// login throttle. Repeated reports may extend, but never shorten, it.
+    pub fn hold_for(&mut self, now: Instant, duration: Duration) {
+        let deadline = now + duration;
+        self.throttle_until = Some(self.throttle_until.map_or(deadline, |old| old.max(deadline)));
+    }
     fn blocked_for(&mut self, uid: i32, now: Instant) -> Option<Duration> {
         let mut wait = None;
 
@@ -218,6 +227,15 @@ impl LoginQueue {
             }
         }
 
+
+        if let Some(until) = self.throttle_until {
+            let left = until.saturating_duration_since(now);
+            if left.is_zero() {
+                self.throttle_until = None;
+            } else {
+                wait = Some(wait.map_or(left, |w| w.max(left)));
+            }
+        }
         if self.ip_pending == 0
             && self
                 .ip_last
@@ -281,29 +299,19 @@ impl LoginQueue {
         state.pending += 1;
     }
 
-    /// Drop uid cooldown entries whose 15 s window elapsed and who are not
-    /// queued, so a long-lived host does not keep one map slot per uid ever
-    /// seen.
+    /// Drop every uid accounting row after 15 s idle when it has no pending
+    /// permit and is not queued. Partial counts expire on the same server TTL
+    /// as a full device window.
     fn prune_uid(&mut self, now: Instant) {
         let queued = &self.queue;
         self.by_uid.retain(|uid, state| {
-            if queued.contains(uid) {
-                return true;
-            }
-            if state.pending > 0 {
-                return true;
-            }
-            if state.count >= UID_GRANT_CAP {
-                match state.last {
-                    Some(last) => now.saturating_duration_since(last) < UID_COOLDOWN,
-                    None => false,
-                }
-            } else {
-                true
-            }
+            queued.contains(uid)
+                || state.pending > 0
+                || state
+                    .last
+                    .is_some_and(|last| now.saturating_duration_since(last) < UID_COOLDOWN)
         });
     }
-
     #[cfg(test)]
     fn tracks(&self, uid: i32) -> bool {
         self.by_uid.contains_key(&uid)
@@ -711,6 +719,32 @@ mod tests {
         let s3 = q.status(3).unwrap();
         assert_eq!((s3.position, s3.total), (1, 1));
         assert!(q.status(2).is_none());
+    }
+
+    #[test]
+    fn partial_uid_count_expires_after_idle() {
+        let base = Instant::now();
+        let mut q = LoginQueue::default();
+        for _ in 0..3 {
+            assert_eq!(q.request_permit(7, base), Permit::Grant);
+            assert!(q.acknowledge_login_return(7, base));
+        }
+        let fresh = base + Duration::from_secs(100);
+        assert_eq!(q.request_permit(7, fresh), Permit::Grant);
+        assert!(q.acknowledge_login_return(7, fresh));
+        assert_eq!(q.request_permit(7, fresh), Permit::Grant);
+    }
+
+    #[test]
+    fn response_throttle_holds_sibling_attempts() {
+        let base = Instant::now();
+        let mut q = LoginQueue::default();
+        q.hold_for(base, Duration::from_secs(20));
+        assert!(matches!(q.request_permit(8, base), Permit::Wait(wait) if wait == Duration::from_secs(20)));
+        assert_eq!(
+            q.request_permit(8, base + Duration::from_secs(20)),
+            Permit::Grant
+        );
     }
 
     #[test]

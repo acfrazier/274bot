@@ -1571,6 +1571,22 @@ fn login_error_return_acknowledges_the_reserved_attempt() {
 }
 
 #[test]
+fn auto_off_before_first_wait_withdraws_auto_intent() {
+    let arm = SlotArm::new(7, true);
+    arm.set_auto_login(false);
+    assert!(permit_wait_cancelled(&arm));
+    assert!(!arm.want_login.load(Ordering::Relaxed));
+}
+
+#[test]
+fn auto_on_arms_an_unlatched_parked_slot() {
+    let arm = SlotArm::new(7, false);
+    arm.set_auto_login(true);
+    assert!(arm.want_login.load(Ordering::Relaxed));
+    assert!(!permit_wait_cancelled(&arm));
+}
+
+#[test]
 fn waiting_slot_withdraws_when_auto_login_is_cleared() {
     // Auto-login armed the intent (`SlotArm::new(uid, true)`). Clearing
     // the checkbox while the slot waits must withdraw the request: no

@@ -931,6 +931,8 @@ pub struct SlotArm {
     /// so an unexpected DC re-handshakes; a panel one-shot arm disarms
     /// after the handshake unless the profile's auto_login was on).
     pub auto_login: Arc<AtomicBool>,
+    /// True only when the current `want_login` was derived from auto-login.
+    auto_intent: AtomicBool,
     /// Live guardian toggle (`ProfileSettings.random_events`). Mirrored
     /// from the vault on spawn and by panel/TUI settings writes so a
     /// toggle-off never acts/holds without a respawn.
@@ -959,6 +961,7 @@ impl SlotArm {
             stop: Arc::new(AtomicBool::new(false)),
             latch: Arc::new(AtomicBool::new(false)),
             auto_login: Arc::new(AtomicBool::new(want_login)),
+            auto_intent: AtomicBool::new(want_login),
             random_events: Arc::new(AtomicBool::new(true)),
             lamp_auto: Arc::new(AtomicBool::new(true)),
             lamp_skill: Arc::new(Mutex::new("strength".to_string())),
@@ -967,6 +970,41 @@ impl SlotArm {
             retry_wait: parking_lot::Mutex::new(()),
             retry_wake: parking_lot::Condvar::new(),
         })
+    }
+
+    /// Arm an operator-requested one-shot login independently of auto-login.
+    pub fn arm_explicit_login(&self) {
+        let _guard = self.retry_wait.lock();
+        self.latch.store(false, Ordering::Relaxed);
+        self.want_login.store(true, Ordering::Relaxed);
+        self.auto_intent.store(false, Ordering::Relaxed);
+        self.want_logout.store(false, Ordering::Relaxed);
+        self.retry_wake.notify_all();
+    }
+
+    /// Apply the live auto-login policy. Disabling it withdraws only an
+    /// auto-derived intent; enabling it arms an unlatched parked slot.
+    pub fn set_auto_login(&self, enabled: bool) {
+        let _guard = self.retry_wait.lock();
+        self.auto_login.store(enabled, Ordering::Relaxed);
+        if enabled {
+            if !self.latch.load(Ordering::Relaxed) {
+                self.want_login.store(true, Ordering::Relaxed);
+                self.auto_intent.store(true, Ordering::Relaxed);
+            }
+        } else if self.auto_intent.swap(false, Ordering::Relaxed) {
+            self.want_login.store(false, Ordering::Relaxed);
+        }
+        self.retry_wake.notify_all();
+    }
+
+    /// Withdraw the active login intent without changing the saved
+    /// auto-login policy.
+    pub fn withdraw_login(&self) {
+        let _guard = self.retry_wait.lock();
+        self.want_login.store(false, Ordering::Relaxed);
+        self.auto_intent.store(false, Ordering::Relaxed);
+        self.retry_wake.notify_all();
     }
 
     /// Wake a retry/backoff wait after control intent changes.
@@ -1062,14 +1100,12 @@ fn login_and_acknowledge_permit<T, E>(
     result
 }
 
-/// After a successful handshake: stay armed only when this slot was spawned
-/// with auto-login (an unexpected DC re-handshakes); a one-shot Log in /
-/// Login all disarms until the next explicit arm.
+/// After a successful handshake, keep an unlatched slot armed exactly when
+/// its saved auto-login policy is enabled.
 fn on_login_success(arm: &SlotArm) {
-    arm.want_login.store(
-        arm.auto_login.load(Ordering::Relaxed) && !arm.latch.load(Ordering::Relaxed),
-        Ordering::Relaxed,
-    );
+    let keep = arm.auto_login.load(Ordering::Relaxed) && !arm.latch.load(Ordering::Relaxed);
+    arm.want_login.store(keep, Ordering::Relaxed);
+    arm.auto_intent.store(keep, Ordering::Relaxed);
     // A later DC / tune / park is opcode 18, not a cold 16.
     arm.reconnect.store(true, Ordering::Relaxed);
 }
@@ -1085,13 +1121,13 @@ fn tick_flags(client: &mut Client, ifaces: &[Option<Box<IfType>>], arm: &SlotArm
         client.take_session_exit_observation()
     {
         arm.latch.store(true, Ordering::Relaxed);
-        arm.want_login.store(false, Ordering::Relaxed);
+        arm.withdraw_login();
     }
     if arm.want_logout.load(Ordering::Relaxed) && client.ingame {
         api::interact::logout(client, ifaces);
         arm.want_logout.store(false, Ordering::Relaxed);
         arm.latch.store(true, Ordering::Relaxed);
-        arm.want_login.store(false, Ordering::Relaxed);
+        arm.withdraw_login();
         // Do not honor `stop` on the same probe as the logout press — the
         // body must keep running until the client leaves the game.
         return false;
@@ -2643,7 +2679,7 @@ fn spawn_slot_thread(
                                         "public world preference failed: {error}"
                                     ));
                                 }
-                                arm.want_login.store(false, Ordering::Relaxed);
+                                arm.withdraw_login();
                                 continue;
                             }
                         }
@@ -2756,7 +2792,11 @@ fn spawn_slot_thread(
                                 refresh_key = true;
                                 world_dirty = true;
                             }
-                            arm.wait_for_retry(login_retry_wait(&mut backoff, e.code));
+                            let retry = login_retry_wait(&mut backoff, e.code);
+                            if e.code == 16 {
+                                slot_queue.lock().unwrap().hold_for(Instant::now(), retry);
+                            }
+                            arm.wait_for_retry(retry);
                             continue;
                         }
                     }
@@ -3267,24 +3307,15 @@ fn drop_queue_place(
     apply_queue_wait(&mut statuses.lock().unwrap(), username, None);
 }
 
-/// Whether a pending permit wait must be withdrawn before any handshake:
-/// `stop` (rail ✕ / slot removal), the intent itself (`want_login` cleared by
-/// an intentional logout or by the wall re-applying auto-login), the logout
-/// latch, or the auto-login checkbox that armed the intent being cleared.
-/// `auto_sourced` latches once the pending intent is observed armed by
-/// auto-login — [`SlotArm::new`] seeds `want_login = auto_login`, so clearing
-/// the checkbox withdraws the wait it armed, while an explicit Log in /
-/// Login all intent (armed with auto-login off) survives the same toggle.
-fn permit_wait_cancelled(arm: &SlotArm, auto_sourced: &mut bool) -> bool {
-    let want = arm.want_login.load(Ordering::Relaxed);
-    let auto = arm.auto_login.load(Ordering::Relaxed);
-    if want && auto {
-        *auto_sourced = true;
-    }
+/// Whether a pending permit wait must be withdrawn before any handshake.
+/// Intent provenance lives on the arm, so turning auto-login off is still
+/// observed even when it happens before the first queue poll.
+fn permit_wait_cancelled(arm: &SlotArm) -> bool {
     arm.stop.load(Ordering::Relaxed)
-        || !want
+        || !arm.want_login.load(Ordering::Relaxed)
         || arm.latch.load(Ordering::Relaxed)
-        || (*auto_sourced && !auto)
+        || (arm.auto_intent.load(Ordering::Relaxed)
+            && !arm.auto_login.load(Ordering::Relaxed))
 }
 
 /// Block until the login queue grants `uid` a handshake permit, mirroring
@@ -3300,12 +3331,10 @@ fn wait_for_permit(
     uid: i32,
     arm: &SlotArm,
 ) -> PermitWait {
-    let mut auto_sourced = false;
-    // Withdraw a dead request: clear `want_login` so the caller's loop does
-    // not re-enter the queue for an intent the operator dropped, drop the
-    // FIFO place and clear the published `k of n`.
+    // Withdraw a dead request so the caller cannot re-enter the queue for
+    // intent the operator dropped, then clear its place and publication.
     let withdraw = || {
-        arm.want_login.store(false, Ordering::Relaxed);
+        arm.withdraw_login();
         drop_queue_place(queue, statuses, username, uid);
         if debug_enabled() {
             eprintln!("[host-play] slot {username}: permit wait withdrawn");
@@ -3314,7 +3343,7 @@ fn wait_for_permit(
     loop {
         // Before `request_permit`: it enqueues, so a place dropped by
         // `stop_slot` (or by a withdrawn intent) must not be recreated.
-        if permit_wait_cancelled(arm, &mut auto_sourced) {
+        if permit_wait_cancelled(arm) {
             withdraw();
             return PermitWait::Cancelled;
         }
@@ -3344,7 +3373,7 @@ fn wait_for_permit(
         // place (no `request_permit`), so no grant can happen here.
         let deadline = Instant::now() + wait;
         let mut next_publish = Instant::now() + QUEUE_PUBLISH;
-        while Instant::now() < deadline && !permit_wait_cancelled(arm, &mut auto_sourced) {
+        while Instant::now() < deadline && !permit_wait_cancelled(arm) {
             let now = Instant::now();
             if now >= next_publish {
                 let pos = queue.lock().unwrap().status(uid);
