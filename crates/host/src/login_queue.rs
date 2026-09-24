@@ -45,23 +45,37 @@ pub struct QueuePos {
 }
 
 /// Login FIFO with focused-slot priority when that slot requests a permit.
-/// Production profiles are expected to have unique UIDs because FIFO
-/// membership is keyed by UID, not slot. If duplicate UIDs are configured,
-/// their in-flight reservations remain conservative fungible counts, but
-/// they do not gain distinct FIFO identities.
+///
+/// FIFO identity is a slot-owner token, not a device UID: two configured
+/// accounts may share the same UID and must still own two independently
+/// pollable places. Rate accounting remains keyed by UID because that is the
+/// server's device limit.
 #[derive(Debug)]
 pub struct LoginQueue {
     spacing: Duration,
     ip_cap: usize,
     ip_window: Duration,
-    queue: VecDeque<i32>,
-    preferred: Option<i32>,
+    queue: VecDeque<QueueEntry>,
+    preferred: Option<u64>,
+    order_hints: HashMap<u64, u64>,
+    next_hint: u64,
     last_grant: Option<Instant>,
     ip_count: usize,
     ip_pending: usize,
     ip_last: Option<Instant>,
     throttle_until: Option<Instant>,
     by_uid: HashMap<i32, UidState>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct QueueEntry {
+    owner: u64,
+    uid: i32,
+    order: u64,
+}
+
+fn uid_owner(uid: i32) -> u64 {
+    u64::from(uid as u32)
 }
 
 #[derive(Debug)]
@@ -84,6 +98,8 @@ impl LoginQueue {
             ip_window,
             queue: VecDeque::new(),
             preferred: None,
+            order_hints: HashMap::new(),
+            next_hint: 0,
             last_grant: None,
             ip_count: 0,
             ip_pending: 0,
@@ -93,60 +109,131 @@ impl LoginQueue {
         }
     }
 
-    /// Enter the FIFO exactly once at the caller's Queueing transition.
-    /// Focused priority is the only exception to append order.
-    pub fn enqueue(&mut self, uid: i32) {
-        if self.queue.contains(&uid) {
+    /// Record control-thread operator order without creating membership.
+    /// The owning slot thread consumes this hint when it reaches Queueing.
+    pub fn hint_owner(&mut self, owner: u64) {
+        if self.queue.iter().any(|entry| entry.owner == owner) {
             return;
         }
-        if self.preferred == Some(uid) {
-            self.queue.push_front(uid);
+        self.order_hints.insert(owner, self.next_hint);
+        self.next_hint = self.next_hint.wrapping_add(1);
+    }
+
+    /// Enter one slot owner into the FIFO exactly once at its Queueing
+    /// transition. Focused priority is the only exception to hinted/FIFO
+    /// order.
+    pub fn enqueue_owner(&mut self, owner: u64, uid: i32) {
+        if self.queue.iter().any(|entry| entry.owner == owner) {
+            return;
+        }
+        let entry = QueueEntry {
+            owner,
+            uid,
+            order: self.order_hints.remove(&owner).unwrap_or(u64::MAX),
+        };
+        if self.preferred == Some(owner) {
+            self.queue.push_front(entry);
+        } else if let Some(index) = self
+            .queue
+            .iter()
+            .position(|queued| self.preferred != Some(queued.owner) && queued.order > entry.order)
+        {
+            self.queue.insert(index, entry);
         } else {
-            self.queue.push_back(uid);
+            self.queue.push_back(entry);
         }
     }
 
-    /// Poll a place already entered through [`Self::enqueue`].
-    pub fn poll_permit(&mut self, uid: i32, now: Instant) -> Permit {
+    /// Poll a slot-owner place already entered through
+    /// [`Self::enqueue_owner`].
+    pub fn poll_owner(&mut self, owner: u64, uid: i32, now: Instant) -> Permit {
         self.prune_uid(now);
-        if self.queue.front() != Some(&uid) {
+        if self.queue.front().map(|entry| entry.owner) != Some(owner) {
             return Permit::Wait(QUEUE_POLL.max(self.spacing));
         }
+        let front = self.queue.front().expect("owner is at the front");
+        if self.preferred != Some(owner)
+            && self.order_hints.values().any(|&hint| hint < front.order)
+        {
+            return Permit::Wait(QUEUE_POLL.max(self.spacing));
+        }
+        debug_assert_eq!(self.queue.front().map(|entry| entry.uid), Some(uid));
         match self.blocked_for(uid, now) {
             Some(wait) => Permit::Wait(wait),
             None => {
-                self.grant(uid, now);
+                self.grant(owner, uid, now);
                 Permit::Grant
             }
         }
     }
 
-    /// Convenience request for single-threaded callers and tests. Host slots
-    /// use `enqueue` at Queueing and then only `poll_permit`.
-    pub fn request_permit(&mut self, uid: i32, now: Instant) -> Permit {
-        self.enqueue(uid);
-        self.poll_permit(uid, now)
-    }
-
-    /// Where `uid` sits in the queue. `position` is 1-based; a granted uid
-    /// is popped and no longer present.
-    pub fn status(&self, uid: i32) -> Option<QueuePos> {
-        let i = self.queue.iter().position(|&u| u == uid)?;
+    /// Where a slot owner sits in the queue. `position` is 1-based; a
+    /// granted owner is popped and no longer present.
+    pub fn status_owner(&self, owner: u64) -> Option<QueuePos> {
+        let i = self.queue.iter().position(|entry| entry.owner == owner)?;
         Some(QueuePos {
             position: (i as u32) + 1,
             total: self.queue.len() as u32,
         })
     }
 
-    /// Drop `uid` from the queue (rail ✕ while queued, a withdrawn login
-    /// intent, or a stale reservation from `Play::prefer_login`). Returns
-    /// whether a place was really held: the caller clears the published
-    /// `k of n` only on `true`, so a slot that never queued does not blank
-    /// another member's card. No-op for an absent uid.
-    pub fn leave(&mut self, uid: i32) -> bool {
+    /// Drop one slot owner's place. Other owners with the same device UID
+    /// remain queued.
+    pub fn leave_owner(&mut self, owner: u64) -> bool {
+        self.order_hints.remove(&owner);
         let before = self.queue.len();
-        self.queue.retain(|&u| u != uid);
+        self.queue.retain(|entry| entry.owner != owner);
         self.queue.len() != before
+    }
+
+    /// Give one slot owner focused priority without manufacturing membership.
+    pub fn prefer_owner(&mut self, owner: u64) {
+        self.set_preferred_owner(Some(owner));
+    }
+
+    /// Remember the focused slot owner for subsequent handshakes.
+    pub fn set_preferred_owner(&mut self, owner: Option<u64>) {
+        self.preferred = owner;
+        if let Some(owner) = owner {
+            if self.queue.iter().any(|entry| entry.owner == owner) {
+                let entry = self
+                    .queue
+                    .iter()
+                    .find(|entry| entry.owner == owner)
+                    .copied()
+                    .expect("queued owner exists");
+                self.queue.retain(|entry| entry.owner != owner);
+                self.queue.push_front(entry);
+            }
+        }
+    }
+
+    /// Backwards-compatible single-owner convenience for direct queue
+    /// callers. Host slots use the explicit owner APIs above.
+    pub fn enqueue(&mut self, uid: i32) {
+        self.enqueue_owner(uid_owner(uid), uid);
+    }
+
+    /// Backwards-compatible direct queue poll.
+    pub fn poll_permit(&mut self, uid: i32, now: Instant) -> Permit {
+        self.poll_owner(uid_owner(uid), uid, now)
+    }
+
+    /// Convenience request for single-threaded callers and tests. Host slots
+    /// use `enqueue_owner` at Queueing and then only `poll_owner`.
+    pub fn request_permit(&mut self, uid: i32, now: Instant) -> Permit {
+        self.enqueue(uid);
+        self.poll_permit(uid, now)
+    }
+
+    /// Backwards-compatible direct queue position lookup.
+    pub fn status(&self, uid: i32) -> Option<QueuePos> {
+        self.status_owner(uid_owner(uid))
+    }
+
+    /// Backwards-compatible direct queue withdrawal.
+    pub fn leave(&mut self, uid: i32) -> bool {
+        self.leave_owner(uid_owner(uid))
     }
 
     /// Record completion of one granted `uid` login call. Success and error
@@ -197,28 +284,19 @@ impl LoginQueue {
         true
     }
 
-    /// Give `uid` focused priority without manufacturing queue membership.
-    /// If it is already waiting it moves to the front; otherwise the
-    /// preference applies when that owner actually requests a permit.
+    /// Backwards-compatible focused UID preference.
     pub fn prefer(&mut self, uid: i32) {
-        self.set_preferred(Some(uid));
+        self.prefer_owner(uid_owner(uid));
     }
 
-    /// Remember the focused uid for subsequent handshakes. An online or
-    /// unarmed slot must not reserve a FIFO entry and block other logins.
+    /// Backwards-compatible focused UID preference update.
     pub fn set_preferred(&mut self, uid: Option<i32>) {
-        self.preferred = uid;
-        if let Some(uid) = uid {
-            if self.queue.contains(&uid) {
-                self.queue.retain(|&queued| queued != uid);
-                self.queue.push_front(uid);
-            }
-        }
+        self.set_preferred_owner(uid.map(uid_owner));
     }
 
-    /// Front-first copy of the FIFO (tests / panel TV-first assert).
+    /// Front-first copy of queued device UIDs (tests / panel diagnostics).
     pub fn queued_uids(&self) -> Vec<i32> {
-        self.queue.iter().copied().collect()
+        self.queue.iter().map(|entry| entry.uid).collect()
     }
 
     /// Pause all sibling attempts after the server reports an address/device
@@ -291,8 +369,11 @@ impl LoginQueue {
         wait
     }
 
-    fn grant(&mut self, uid: i32, now: Instant) {
-        debug_assert_eq!(self.queue.front(), Some(&uid));
+    fn grant(&mut self, owner: u64, uid: i32, now: Instant) {
+        debug_assert_eq!(
+            self.queue.front().map(|entry| (entry.owner, entry.uid)),
+            Some((owner, uid))
+        );
         self.queue.pop_front();
         self.last_grant = Some(now);
         self.ip_count += 1;
@@ -401,6 +482,46 @@ mod tests {
     }
 
     #[test]
+    fn duplicate_uids_keep_independent_fifo_owners() {
+        let now = Instant::now();
+        let mut q = LoginQueue::default();
+        q.enqueue_owner(11, 7);
+        q.enqueue_owner(22, 7);
+        assert_eq!(q.queued_uids(), vec![7, 7]);
+
+        assert_eq!(q.poll_owner(11, 7, now), Permit::Grant);
+        assert!(q.acknowledge_login_return(7, now));
+        assert_eq!(
+            q.status_owner(22),
+            Some(QueuePos {
+                position: 1,
+                total: 1,
+            })
+        );
+        assert_eq!(q.poll_owner(22, 7, now), Permit::Grant);
+        assert!(q.acknowledge_login_return(7, now));
+        assert!(q.queued_uids().is_empty());
+    }
+
+    #[test]
+    fn operator_hint_waits_for_earlier_owner_without_creating_membership() {
+        let now = Instant::now();
+        let mut q = LoginQueue::default();
+        q.hint_owner(11);
+        q.hint_owner(22);
+        assert!(q.queued_uids().is_empty(), "hints are not membership");
+
+        q.enqueue_owner(22, 2);
+        assert_eq!(q.poll_owner(22, 2, now), Permit::Wait(QUEUE_POLL));
+        q.enqueue_owner(11, 1);
+        assert_eq!(q.queued_uids(), vec![1, 2]);
+        assert_eq!(q.poll_owner(11, 1, now), Permit::Grant);
+        assert!(q.acknowledge_login_return(1, now));
+        assert_eq!(q.poll_owner(22, 2, now), Permit::Grant);
+        assert!(q.acknowledge_login_return(2, now));
+    }
+
+    #[test]
     fn focus_changes_do_not_reserve_online_slots_or_bypass_limits() {
         let now = Instant::now();
         let mut q = LoginQueue::new(Duration::from_secs(1), 1, Duration::from_secs(60));
@@ -432,7 +553,7 @@ mod tests {
         assert!(matches!(q.request_permit(3, now), Permit::Wait(_)));
         assert!(matches!(q.request_permit(1, now), Permit::Wait(_)));
         q.prefer(1);
-        assert_eq!(q.queue.front(), Some(&1));
+        assert_eq!(q.queue.front().map(|entry| entry.uid), Some(1));
         assert_eq!(q.status(1).unwrap().position, 1);
     }
 
