@@ -16,7 +16,7 @@ use crate::chrome::{
 use crate::focus::{draw_for_slot, should_capture, should_draw};
 use crate::game_view::GameView;
 use crate::grid::grid_cells;
-use crate::overlay::{draw_focused_queue_card, PathOverlay};
+use crate::overlay::{draw_queue_card_for, PathOverlay};
 use crate::paint::PaintOverlay;
 use crate::picker;
 use crate::queue_card::queue_k_of_n;
@@ -1224,8 +1224,9 @@ fn game_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
         }
         // Queue-card overlay: the armed route's remaining tiles are
         // painted by the client's 3D renderer and on the pack map, so the
-        // Image only carries the focused slot's queue card.
-        state.overlay.frame(ui, &state.session, min, size);
+        // Image only carries the displayed slot's own queue card.
+        let queue = state.session.queue_for(&name);
+        state.overlay.frame(ui, queue, min, size);
         // Script-paint overlay: the focused slot's paint renders in an
         // ImGui window over the chatbox rect — never on the game texture.
         let statuses = state.session.statuses();
@@ -1329,9 +1330,10 @@ fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
             ]);
             let draw = draw_for_slot(&state.session.focus.lock().unwrap(), name);
             body_clicked = cell_body(ui, gpu, state, name, size, draw);
+            let image_min = ui.item_rect_min();
             if is_focused && capture && ui.is_item_hovered() {
                 let mouse = ui.io().mouse_pos();
-                let min = ui.item_rect_min();
+                let min = image_min;
                 stream_capture(
                     &state.session.capture_tx,
                     mouse[0] - min[0],
@@ -1345,8 +1347,8 @@ fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
                     &capture_keys(ui),
                 );
             }
+            draw_queue_card_for(ui, state.session.queue_for(name), image_min);
             if is_focused {
-                draw_focused_queue_card(ui, &state.session, ui.item_rect_min());
                 overlay_script_paint(
                     ui,
                     gpu,
@@ -1806,7 +1808,10 @@ fn login_logout_row(ui: &Ui, session: &mut Session) {
     let vault_open = session.vault.is_some();
     let focused = session.focused_name();
     let can_login = vault_open && focused.is_some();
-    let focused_queued = session.focused_queue().is_some();
+    let focused_queued = focused
+        .as_deref()
+        .and_then(|name| session.queue_for(name))
+        .is_some();
     let can_logout = logout_enabled(
         vault_open,
         focused.is_some(),
