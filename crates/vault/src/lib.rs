@@ -82,6 +82,9 @@ pub struct ProfileSettings {
     pub lowmem: bool,
     #[serde(default)]
     pub auto_login: bool,
+    /// Public world number, or automatic selection when absent.
+    #[serde(default)]
+    pub world: Option<u16>,
     /// Cached TutSkip. `None` = never read (`getvar tutorial` pending).
     /// `Some(true)` = skipped (`>= 1000` or TutSkip pressed). `Some(false)`
     /// = engine reported the tutorial still open.
@@ -123,6 +126,7 @@ impl Default for ProfileSettings {
     fn default() -> Self {
         Self {
             lowmem: true,
+            world: None,
             auto_login: false,
             tutorial_skipped: None,
             raster: RasterMode::Gpu,
@@ -460,6 +464,7 @@ mod tests {
         assert!(!missing.auto_login);
         assert_eq!(missing.tutorial_skipped, None);
         assert_eq!(missing.raster, super::RasterMode::Gpu);
+        assert_eq!(missing.world, None);
     }
 
     #[test]
@@ -490,6 +495,24 @@ mod tests {
         assert_eq!(p.uid, 42);
         assert!(!p.settings.lowmem);
         assert!(v.get("nobody").is_none());
+    }
+    #[test]
+    fn selected_world_survives_encrypted_vault_roundtrip() {
+        let path = tmp_path("selected-world.vault");
+        let mut v = Vault::create(&path, "bot").unwrap();
+        let mut p = profile("alice", "secret");
+        p.settings.world = Some(2);
+        v.upsert(p).unwrap();
+        drop(v);
+        assert_eq!(
+            Vault::unlock(&path, "bot")
+                .unwrap()
+                .get("alice")
+                .unwrap()
+                .settings
+                .world,
+            Some(2)
+        );
     }
 
     #[test]

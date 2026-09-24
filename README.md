@@ -19,9 +19,23 @@ A session binds **one** server profile for the whole process. Named profiles are
 | --- | --- | --- | --- | --- | --- |
 | `local-274` | 274 | local engine | `127.0.0.1:43594` | HTTP `:80` | `~/.274bot/vault` |
 | `local-289` | 289 | local engine | `127.0.0.1:44594` | HTTP `:1080` | `~/.274bot/vault-289` |
-| `public-289` | 289 | public WSS/HTTPS | `w1.rs2b2t.com:443` | HTTPS `:443` | `~/.274bot/vault-prod` |
+| `public-289` | 289 | public WSS/HTTPS | first configured world (default `w1.rs2b2t.com:443`) | HTTPS `:443` | `~/.274bot/vault-prod` |
 
 Select with `--profile local-274|local-289|public-289` on `host-play`, `panel-play`, and `tui-play` (or `BOT_SERVER_PROFILE`). Related knobs: `--revision 274|289`, `BOT_REVISION`, `--prod` / `BOT_TARGET=prod|live`, `--engine`, `--cache`, `--vault`, `--catalog`, `--world-members true|false`. Conflicting combinations fail closed (for example `--prod` with a local profile, or `public-274`).
+
+Public world endpoints live in `~/.274bot/worlds.json` (written with w1 and w2
+defaults on the first public launch). Its `schema_version: 1` and ordered
+`worlds` list hold `{number, host, port, node_id}` entries; edit the file and
+restart to apply. Invalid files fail startup, and a public host/port not in the
+list is refused. The shared cache is prepared from the first world, trying the
+next if its asset server is unreachable; `~/.274bot/unpack-289` remains shared.
+Each account can select `auto` or a listed world in the panel Profiles editor.
+An auto account moves to the next listed world when login says it is full,
+waiting after all worlds report full; pinned accounts stay put. Panel and TUI
+show the active world beside each slot. `tui-play --world N` sets a session
+default only for accounts stored as auto. Public login fetches the current
+RSA modulus from that world's `/client/client.js`, caches it per host and
+refreshes on a wrong-key login response; if unavailable, it uses the baked key.
 
 `--world-members true|false` is an operator-declared property of the selected endpoint, held immutable with the profile. It is not a client/server packet observation and not `NODE_MEMBERS`. Explicit `false` beats a local `world.json` `members: true`. Omission uses a guarded bind: only `local-274` / `local-289` loopback profiles whose `engine_dir/data/config/world.json` has matching typed `engine.revision`, `node.port`, and a JSON bool `node.members` inherit that bool. Missing, malformed, mismatched, or public-289 records stay **unknown** and route as not-members. Public-289 never inherits the local engine file; it may still be declared explicitly through `--world-members`. Cache/account membership flags are a different fact.
 

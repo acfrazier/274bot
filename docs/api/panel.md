@@ -43,7 +43,9 @@ section is shown: **TutSkip** (`setvar tutorial 1000`, hidden once the
 profile is known skipped; unknown profiles `getvar tutorial` first),
 **Lumbridge** (`~home`), **maxme** (19× `setstat`
 99), **Teles** popup, and a disabled **DebugPanel** stub (v2 later).
-Public `w1.rs2b2t.com` hides that heading.
+Public world hosts hide that heading. The Profiles editor offers `auto` or
+each configured world from `~/.274bot/worlds.json`; the selected world is
+used on the next slot start. Live slot rows display the current world.
 
 Last focused profile is restored from `~/.274bot/panel-ui.json`
 (`last_focus`). Collapsible section open/closed state persists there per

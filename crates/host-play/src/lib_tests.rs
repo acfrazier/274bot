@@ -473,6 +473,28 @@ fn live_vault_passphrase_prod_is_not_bot() {
 }
 
 #[test]
+fn full_world_round_uses_existing_backoff() {
+    let worlds = public_worlds::PublicWorlds::default();
+    let mut round = public_worlds::WorldRound::new(&worlds, None, None).unwrap();
+    let mut backoff = LoginBackoff::new();
+    assert_eq!(
+        round.on_login_error(7, worlds.worlds.len()),
+        public_worlds::WorldErrorStep::SwitchNow
+    );
+    assert_eq!(
+        round.on_login_error(7, worlds.worlds.len()),
+        public_worlds::WorldErrorStep::SwitchAfterWait
+    );
+    assert_eq!(login_retry_wait(&mut backoff, 7), Duration::from_secs(5));
+    let mut pinned = public_worlds::WorldRound::new(&worlds, Some(2), None).unwrap();
+    assert_eq!(
+        pinned.on_login_error(7, worlds.worlds.len()),
+        public_worlds::WorldErrorStep::Stay
+    );
+    assert_eq!(login_retry_wait(&mut backoff, 7), Duration::from_secs(5));
+}
+
+#[test]
 fn validate_play_host_loopback_ok_with_local_rsa() {
     assert!(validate_play_host("127.0.0.1", BotTarget::Local).is_ok());
     assert!(validate_play_host("localhost", BotTarget::Local).is_ok());

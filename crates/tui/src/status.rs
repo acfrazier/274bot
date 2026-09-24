@@ -111,6 +111,10 @@ impl Widget for StatusPane<'_> {
                         }
                     )),
                     Line::from(format!("tile: {} {}", s.tile_x, s.tile_z)),
+                    Line::from(match s.world {
+                        Some(number) => format!("world: w{number}"),
+                        None => "world: local".to_string(),
+                    }),
                     Line::from(format!("walk: {}", self.walk)),
                     Line::from(format!("queue: {}", queue_text(s))),
                     Line::from(format!("modals: {}", s.main_modal_id)),
@@ -176,6 +180,14 @@ mod tests {
         assert!(text.contains("ingame scene 2"), "state row: {text:?}");
         assert!(text.contains("tile: 10 11"), "tile row: {text:?}");
         assert!(text.contains("walk: 10 11 0"), "walk row: {text:?}");
+    }
+
+    #[test]
+    fn status_displays_current_public_world() {
+        let mut slot = status(false, 0);
+        slot.world = Some(2);
+        let text = render(StatusPane::new(Some(&slot), "—", "lowmem"), 40, 12);
+        assert!(text.contains("world: w2"), "world row: {text:?}");
     }
 
     #[test]

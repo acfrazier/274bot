@@ -40,7 +40,13 @@ impl Session {
                 username: username.clone(),
                 password: self.cred_pass.clone(),
                 settings: existing
-                    .map(|p| p.settings)
+                    .map(|p| {
+                        let mut settings = p.settings;
+                        if self.chooser_edit.is_some() {
+                            settings.world = self.cred_settings.world;
+                        }
+                        settings
+                    })
                     .unwrap_or_else(|| self.cred_settings.clone()),
             }
         };

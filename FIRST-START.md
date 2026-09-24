@@ -2,8 +2,9 @@
 
 274bot talks to a **local Lost City engine** first. Choose an immutable
 **server profile** for the process (`local-274`, `local-289`, or
-`public-289`). Public `public-289` / `--prod` is WSS + HTTPS on
-`w1.rs2b2t.com:443` and requires separate live login verification.
+`public-289`). Public `public-289` / `--prod` uses WSS + HTTPS on
+the worlds in `~/.274bot/worlds.json` (default w1/w2 on port 443)
+and requires separate live login verification.
 This repo does not ship Jagex assets and does not promise
 automatic asset distribution beyond the client’s ordinary `/crc` + jag
 fetch into the configured cache/unpack directory.
@@ -109,9 +110,16 @@ cargo run --release -p tui --bin tui-play -- --profile public-289
 # or: --prod / BOT_TARGET=prod (selects public-289 when revision is unset)
 ```
 
-`public-289` fetches `/crc` and jags over **HTTPS :443** into the unpack
-dir and the game stream is **WSS** (`binary` subprotocol) on
-`w1.rs2b2t.com:443`. Local stays TCP on the profile’s game/asset ports.
+`public-289` fetches `/crc` and jags over **HTTPS :443** into the shared
+`~/.274bot/unpack-289` directory (tries the next listed asset world when
+the first is unavailable). The game stream uses **WSS** (`binary`
+subprotocol) on the account's selected world. First launch writes
+`~/.274bot/worlds.json` with ordered w1/w2 endpoints and node ids; edit it
+and restart to change the list. A malformed file refuses startup. Panel
+Profiles edits each account's world (`auto`, w1 or w2). Auto retries the
+next world promptly on \"world full\"; pinned accounts do not move.
+`tui-play --world 2` chooses w2 only for accounts stored as auto.
+Local stays TCP on the profile's game/asset ports.
 Vault defaults: `~/.274bot/vault-prod` for public-289; local-274
 `~/.274bot/vault`; local-289 `~/.274bot/vault-289`. `--vault PATH` still
 wins. Unit tests do not verify public login.

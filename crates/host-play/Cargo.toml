@@ -17,6 +17,7 @@ sha2 = "=0.10.9"
 libc = "0.2"
 vault = { path = "../vault" }
 rand_core = { version = "=0.6.4", features = ["getrandom"] }
+parking_lot = "0.12"
 
 # The build script bakes/stages the selected revision's navigation artifact
 # and publishes its identities to the compile-time table (`nav_identity`).
