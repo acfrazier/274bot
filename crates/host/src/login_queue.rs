@@ -183,13 +183,11 @@ impl LoginQueue {
         true
     }
 
-    /// Put `uid` at the front of the FIFO (TV head logs in first). If it
-    /// was already queued, it is moved; if not, it is inserted. Priority
-    /// persists for later requests until focus changes.
+    /// Give `uid` focused priority without manufacturing queue membership.
+    /// If it is already waiting it moves to the front; otherwise the
+    /// preference applies when that owner actually requests a permit.
     pub fn prefer(&mut self, uid: i32) {
-        self.preferred = Some(uid);
-        self.queue.retain(|&u| u != uid);
-        self.queue.push_front(uid);
+        self.set_preferred(Some(uid));
     }
 
     /// Remember the focused uid for subsequent handshakes. An online or
@@ -728,24 +726,20 @@ mod tests {
     }
 
     #[test]
-    fn leave_reports_removal_and_unblocks_the_head() {
-        // A reservation (`prefer`, e.g. `Play::prefer_login` for the TV head
-        // before that slot's thread asks) holds the front for a uid that is
-        // not waiting. It must not strand a real waiter behind it, and
-        // `leave` must report whether a real place was dropped so the caller
-        // only clears the published `k of n` it actually owned.
+    fn preferred_owner_that_is_not_waiting_cannot_block_followers() {
         let mut q = LoginQueue::new(Duration::from_secs(60), 30, Duration::from_secs(60));
         let base = Instant::now();
         q.prefer(7);
-        assert!(matches!(q.request_permit(8, base), Permit::Wait(_)));
-        let s8 = q.status(8).unwrap();
-        assert_eq!((s8.position, s8.total), (2, 2));
-
-        assert!(q.leave(7), "the reserved front place was held");
-        assert!(!q.leave(7), "no place left to drop");
-        let s8 = q.status(8).unwrap();
-        assert_eq!((s8.position, s8.total), (1, 1));
-        assert_eq!(q.request_permit(8, base), Permit::Grant);
+        assert!(
+            q.queued_uids().is_empty(),
+            "preference alone is not waiting membership"
+        );
+        assert_eq!(
+            q.request_permit(8, base),
+            Permit::Grant,
+            "a terminal preferred owner cannot become a phantom head"
+        );
+        assert!(q.status(7).is_none());
     }
 
     #[test]
