@@ -507,9 +507,24 @@ fn full_world_round_uses_existing_backoff() {
 }
 
 #[test]
-fn response_one_returns_to_fifo_before_retry() {
+fn response_one_returns_to_fifo_without_publishing_error() {
     let mut backoff = LoginBackoff::new();
     assert_eq!(login_retry_wait(&mut backoff, 1), Duration::from_secs(2));
+
+    let statuses = rows(&["alice"]);
+    set_startup_phase(&statuses, "alice", StartupPhase::Connecting);
+    record_login_error(
+        &statuses,
+        "alice",
+        &LoginError {
+            code: 1,
+            mes1: "retry".into(),
+            mes2: "retry".into(),
+        },
+    );
+    let rows = statuses.lock().unwrap();
+    assert_eq!(rows[0].startup_phase, StartupPhase::Connecting);
+    assert!(rows[0].error.is_none());
 }
 
 #[test]
