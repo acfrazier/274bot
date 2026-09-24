@@ -1,26 +1,20 @@
-//! Private prayer set/clear machine. Public results stay HelperResult;
-//! this Step keeps the existing autocast `{kind,token,ok,reason}` shape.
+//! Rust-owned prayer toggle and overlay sweep, a [`crate::machine`]
+//! family. JavaScript starts `set`/`clear` with the caller name and the
+//! classified `on`, and awaits one envelope; Rust owns the click, the
+//! observed-varp wait, the overlay order and the deadline. The frozen
+//! `points|max|full|known|available|active` queries stay one native call
+//! each over the same selected rows.
 
+use crate::machine::{self, Begin, Cx, Family, Step};
 use crate::observed::{self, Scene};
+use crate::shim::InteractReq;
 use api::game_data::SelectedGameData;
 use api::prayer::{
     active, available, lookup, matches_on, max, on_is_truthy, points, OnArg, PrayerObservation,
     PRAYER_COUNT, TOGGLE_MS,
 };
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::cell::RefCell;
-use std::time::{Duration, Instant};
-
-thread_local! {
-    static RUNTIME: RefCell<PrayerRuntime> = const { RefCell::new(PrayerRuntime::new()) };
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Phase {
-    Idle,
-    WaitToggle,
-    WaitClear,
-}
 
 /// Prayer points/max and the overlay varps, read from the isolate scene. A
 /// logout forgets the session: only pages posted since login count. A varp
@@ -39,231 +33,258 @@ fn prayer_observation(scene: &Scene) -> PrayerObservation {
     obs
 }
 
-struct PrayerRuntime {
-    paused: bool,
-    held: bool,
-    frozen_at: Option<Instant>,
-    token: u64,
-    phase: Phase,
-    want: OnArg,
-    varp: i32,
-    deadline: Option<Instant>,
-    clear_index: usize,
-    clicked: u32,
-    timed_out: u32,
+/// The frozen `on` argument, already classified by the shim's coercion.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub(crate) enum OnInput {
+    Boolean {
+        value: bool,
+    },
+    Other {
+        truthy: bool,
+    },
+    #[default]
+    Undefined,
 }
 
-impl PrayerRuntime {
-    const fn new() -> Self {
+impl OnInput {
+    fn on_arg(self) -> OnArg {
+        match self {
+            Self::Boolean { value } => OnArg::Bool(value),
+            Self::Other { truthy } => OnArg::Other { truthy },
+            Self::Undefined => OnArg::Undefined,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum Op {
+    Set,
+    Clear,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct PrayerArgs {
+    op: Op,
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    on: OnInput,
+}
+
+/// One settlement: the frozen `ok`/`reason` pair plus the value the
+/// declared return carries when it has one.
+#[derive(Debug, PartialEq, Serialize)]
+pub(crate) struct PrayerDone {
+    ok: bool,
+    reason: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    value: Option<Value>,
+}
+
+impl PrayerDone {
+    fn matched(reason: &'static str) -> Self {
         Self {
-            paused: false,
-            held: false,
-            frozen_at: None,
-            token: 0,
-            phase: Phase::Idle,
-            want: OnArg::Undefined,
-            varp: -1,
-            deadline: None,
-            clear_index: 0,
-            clicked: 0,
-            timed_out: 0,
+            ok: true,
+            reason,
+            value: Some(json!(true)),
         }
     }
 
-    fn frozen(&self) -> bool {
-        self.paused || self.held
+    fn cleared(clicked: u32, timed_out: u32) -> Self {
+        Self {
+            ok: true,
+            reason: "cleared",
+            value: Some(json!({ "clicked": clicked, "timed_out": timed_out })),
+        }
     }
 
-    fn now(&self) -> Instant {
-        self.frozen_at.unwrap_or_else(Instant::now)
+    fn failed(reason: &'static str) -> Self {
+        Self {
+            ok: false,
+            reason,
+            value: None,
+        }
+    }
+}
+
+impl From<PrayerDone> for Value {
+    fn from(done: PrayerDone) -> Self {
+        serde_json::to_value(done).unwrap_or(Value::Null)
+    }
+}
+
+/// `Prayer.set`: one toggle click out, then the observed varp.
+pub(crate) struct Toggle {
+    want: OnArg,
+    varp: i32,
+}
+
+impl Toggle {
+    fn step(&self, obs: &PrayerObservation, cx: &mut Cx<'_>) -> Step<PrayerDone> {
+        // A matching observation wins over the deadline: a slow page that
+        // arrives late still settles the toggle.
+        if match self.want {
+            OnArg::Bool(true) => obs.is_on(self.varp),
+            OnArg::Bool(false) => obs.is_off(self.varp),
+            OnArg::Undefined | OnArg::Other { .. } => false,
+        } {
+            return Step::Done(PrayerDone::matched("toggled"));
+        }
+        if cx.clock().bound_reached() {
+            return Step::Done(PrayerDone::failed("toggle-timeout"));
+        }
+        Step::Wait
+    }
+}
+
+/// `Prayer.clear`: click every active overlay in selected order.
+pub(crate) struct Clear {
+    index: usize,
+    clicked: u32,
+    timed_out: u32,
+    varp: i32,
+}
+
+/// What one overlay sweep pass decided.
+enum Sweep {
+    Clicked,
+    Done(PrayerDone),
+}
+
+impl Clear {
+    fn step(
+        &mut self,
+        data: Option<&SelectedGameData>,
+        obs: &PrayerObservation,
+        cx: &mut Cx<'_>,
+    ) -> Step<PrayerDone> {
+        let settled = if obs.is_off(self.varp) {
+            true
+        } else if cx.clock().bound_reached() {
+            // A dropped click is not the sweep's end: count it and take
+            // the next active overlay.
+            self.timed_out = self.timed_out.saturating_add(1);
+            true
+        } else {
+            false
+        };
+        if !settled {
+            return Step::Wait;
+        }
+        match self.sweep(data, obs, cx) {
+            Sweep::Clicked => Step::Wait,
+            Sweep::Done(done) => Step::Done(done),
+        }
     }
 
-    fn set_freeze(&mut self, paused: bool, held: bool) {
-        let was_frozen = self.frozen();
-        self.paused = paused;
-        self.held = held;
-        let frozen = self.frozen();
-        if !was_frozen && frozen {
-            self.frozen_at = Some(Instant::now());
-        } else if was_frozen && !frozen {
-            if let Some(at) = self.frozen_at.take() {
-                if let Some(deadline) = self.deadline.as_mut() {
-                    *deadline += Instant::now().saturating_duration_since(at);
+    /// Click the next observed-active overlay row, or settle with counts.
+    fn sweep(
+        &mut self,
+        data: Option<&SelectedGameData>,
+        obs: &PrayerObservation,
+        cx: &mut Cx<'_>,
+    ) -> Sweep {
+        if let Some(data) = data {
+            let rows = data.prayers();
+            while self.index < rows.len() && self.index < PRAYER_COUNT {
+                let row = &rows[self.index];
+                self.index += 1;
+                if obs.is_on(row.varp) {
+                    self.clicked = self.clicked.saturating_add(1);
+                    self.varp = row.varp;
+                    cx.clock().arm(TOGGLE_MS);
+                    cx.emit(InteractReq::IfButton {
+                        component_id: row.button_com,
+                    });
+                    return Sweep::Clicked;
                 }
             }
         }
+        Sweep::Done(PrayerDone::cleared(self.clicked, self.timed_out))
     }
+}
 
-    fn abort(&mut self) {
-        self.token = self.token.wrapping_add(1);
-        self.phase = Phase::Idle;
-        self.want = OnArg::Undefined;
-        self.varp = -1;
-        self.deadline = None;
-        self.clear_index = 0;
-        self.clicked = 0;
-        self.timed_out = 0;
-    }
+/// One `set` or `clear`; the row is the whole operation's state.
+pub(crate) enum Prayer {
+    Toggle(Toggle),
+    Clear(Clear),
+}
 
-    fn done(&mut self, ok: bool, reason: &str, value: Value) -> Value {
-        self.phase = Phase::Idle;
-        self.deadline = None;
-        let mut out = json!({
-            "kind": "done",
-            "token": self.token,
-            "ok": ok,
-            "reason": reason,
-        });
-        if !value.is_null() {
-            out["value"] = value;
+impl Family for Prayer {
+    const NAME: &'static str = "prayer";
+    /// The frozen v2 surface admits one prayer operation: a second start
+    /// is refused `busy` and the admitted one keeps its click and await.
+    const EXCLUSIVE: bool = true;
+    type Args = PrayerArgs;
+    type Output = PrayerDone;
+
+    fn begin(args: PrayerArgs, cx: &mut Cx<'_>) -> Begin<Self> {
+        if machine::live(Self::NAME) {
+            return Begin::Done(PrayerDone::failed("busy"));
         }
-        out
-    }
-
-    fn command_click(&mut self, phase: Phase, component_id: i32) -> Value {
-        self.phase = phase;
-        self.deadline = Some(self.now() + Duration::from_millis(TOGGLE_MS));
-        json!({
-            "kind": "if-button",
-            "token": self.token,
-            "component_id": component_id,
-        })
-    }
-
-    fn begin_set(
-        &mut self,
-        data: Option<&SelectedGameData>,
-        name: &str,
-        on: OnArg,
-        obs: &PrayerObservation,
-    ) -> Value {
-        self.abort();
-        let Some(data) = data else {
-            return self.done(false, "unknown-prayer", Value::Null);
-        };
-        let Some(row) = lookup(data, name) else {
-            return self.done(false, "unknown-prayer", Value::Null);
-        };
-        if matches_on(active(data, name, obs), on) {
-            return self.done(true, "matched", json!(true));
+        let data = crate::supply_v2::selected_data();
+        let obs = observed::with(prayer_observation);
+        match args.op {
+            Op::Set => begin_set(data.as_deref(), &args, &obs, cx),
+            Op::Clear => begin_clear(data.as_deref(), &obs, cx),
         }
-        if on_is_truthy(on) && !available(data, name, obs) {
-            return self.done(false, "unavailable", Value::Null);
-        }
-        self.want = on;
-        self.varp = row.varp;
-        self.command_click(Phase::WaitToggle, row.button_com)
     }
 
-    fn begin_clear(&mut self, data: Option<&SelectedGameData>, obs: &PrayerObservation) -> Value {
-        self.abort();
-        self.phase = Phase::WaitClear;
-        self.clear_index = 0;
-        self.clicked = 0;
-        self.timed_out = 0;
-        self.advance_clear(data, obs)
-    }
-
-    fn advance_clear(&mut self, data: Option<&SelectedGameData>, obs: &PrayerObservation) -> Value {
-        let Some(data) = data else {
-            return self.clear_done();
-        };
-        let rows = data.prayers();
-        while self.clear_index < rows.len() && self.clear_index < PRAYER_COUNT {
-            let row = &rows[self.clear_index];
-            self.clear_index += 1;
-            if obs.is_on(row.varp) {
-                self.clicked = self.clicked.saturating_add(1);
-                self.varp = row.varp;
-                return self.command_click(Phase::WaitClear, row.button_com);
-            }
-        }
-        self.clear_done()
-    }
-
-    fn clear_done(&mut self) -> Value {
-        let value = json!({
-            "clicked": self.clicked,
-            "timed_out": self.timed_out,
-        });
-        self.done(true, "cleared", value)
-    }
-
-    fn timed_out(&self) -> bool {
-        self.deadline.is_some_and(|deadline| self.now() >= deadline)
-    }
-
-    fn next(
-        &mut self,
-        token: u64,
-        data: Option<&SelectedGameData>,
-        obs: &PrayerObservation,
-    ) -> Value {
-        if token != self.token || self.phase == Phase::Idle {
-            return json!({"kind": "aborted", "token": self.token});
-        }
-        if self.frozen() {
-            return json!({"kind": "wait", "token": self.token});
-        }
-        match self.phase {
-            Phase::Idle => json!({"kind": "aborted", "token": self.token}),
-            Phase::WaitToggle
-                if match self.want {
-                    OnArg::Bool(true) => obs.is_on(self.varp),
-                    OnArg::Bool(false) => obs.is_off(self.varp),
-                    OnArg::Undefined | OnArg::Other { .. } => false,
-                } =>
-            {
-                self.done(true, "toggled", json!(true))
-            }
-            Phase::WaitToggle if self.timed_out() => {
-                self.done(false, "toggle-timeout", Value::Null)
-            }
-            Phase::WaitClear if obs.is_off(self.varp) => self.advance_clear(data, obs),
-            Phase::WaitClear if self.timed_out() => {
-                self.timed_out = self.timed_out.saturating_add(1);
-                self.advance_clear(data, obs)
-            }
-            _ => json!({"kind": "wait", "token": self.token}),
+    fn step(&mut self, cx: &mut Cx<'_>) -> Step<PrayerDone> {
+        let data = crate::supply_v2::selected_data();
+        let obs = observed::with(prayer_observation);
+        match self {
+            Self::Toggle(toggle) => toggle.step(&obs, cx),
+            Self::Clear(clear) => clear.step(data.as_deref(), &obs, cx),
         }
     }
 }
 
-pub fn on_pause() {
-    RUNTIME.with(|runtime| {
-        let held = runtime.borrow().held;
-        runtime.borrow_mut().set_freeze(true, held);
+fn begin_set(
+    data: Option<&SelectedGameData>,
+    args: &PrayerArgs,
+    obs: &PrayerObservation,
+    cx: &mut Cx<'_>,
+) -> Begin<Prayer> {
+    let Some(data) = data else {
+        return Begin::Done(PrayerDone::failed("unknown-prayer"));
+    };
+    let Some(row) = lookup(data, &args.name) else {
+        return Begin::Done(PrayerDone::failed("unknown-prayer"));
+    };
+    let want = args.on.on_arg();
+    if matches_on(active(data, &args.name, obs), want) {
+        return Begin::Done(PrayerDone::matched("matched"));
+    }
+    if on_is_truthy(want) && !available(data, &args.name, obs) {
+        return Begin::Done(PrayerDone::failed("unavailable"));
+    }
+    cx.clock().arm(TOGGLE_MS);
+    cx.emit(InteractReq::IfButton {
+        component_id: row.button_com,
     });
+    Begin::Run(Prayer::Toggle(Toggle {
+        want,
+        varp: row.varp,
+    }))
 }
 
-pub fn on_resume() {
-    RUNTIME.with(|runtime| {
-        let held = runtime.borrow().held;
-        runtime.borrow_mut().set_freeze(false, held);
-    });
-}
-
-pub fn on_hold(held: bool) {
-    RUNTIME.with(|runtime| {
-        let paused = runtime.borrow().paused;
-        runtime.borrow_mut().set_freeze(paused, held);
-    });
-}
-
-pub fn on_reset() {
-    RUNTIME.with(|runtime| runtime.borrow_mut().abort());
-}
-
-pub fn configure(_data: Option<&SelectedGameData>) {}
-
-fn parse_on(input: &Value) -> OnArg {
-    let on = input.get("on").unwrap_or(&Value::Null);
-    match on.get("kind").and_then(Value::as_str) {
-        Some("boolean") => OnArg::Bool(on.get("value").and_then(Value::as_bool).unwrap_or(false)),
-        Some("other") => OnArg::Other {
-            truthy: on.get("truthy").and_then(Value::as_bool).unwrap_or(false),
-        },
-        _ => OnArg::Undefined,
+fn begin_clear(
+    data: Option<&SelectedGameData>,
+    obs: &PrayerObservation,
+    cx: &mut Cx<'_>,
+) -> Begin<Prayer> {
+    let mut clear = Clear {
+        index: 0,
+        clicked: 0,
+        timed_out: 0,
+        varp: -1,
+    };
+    match clear.sweep(data, obs, cx) {
+        Sweep::Clicked => Begin::Run(Prayer::Clear(clear)),
+        Sweep::Done(done) => Begin::Done(done),
     }
 }
 
@@ -298,23 +319,6 @@ pub fn dispatch(data: Option<&SelectedGameData>, input: &Value) -> Value {
     let obs = observed::with(prayer_observation);
     match input.get("op").and_then(Value::as_str).unwrap_or("") {
         "points" | "max" | "full" | "known" | "available" | "active" => query(data, &obs, input),
-        "begin-set" => RUNTIME.with(|runtime| {
-            runtime.borrow_mut().begin_set(
-                data,
-                input.get("name").and_then(Value::as_str).unwrap_or(""),
-                parse_on(input),
-                &obs,
-            )
-        }),
-        "begin-clear" => RUNTIME.with(|runtime| runtime.borrow_mut().begin_clear(data, &obs)),
-        "next" => RUNTIME.with(|runtime| {
-            runtime.borrow_mut().next(
-                input.get("token").and_then(Value::as_u64).unwrap_or(0),
-                data,
-                &obs,
-            )
-        }),
-        "current_token" => RUNTIME.with(|runtime| json!(runtime.borrow().token)),
         _ => json!({ "ok": false, "error": "unknown-op" }),
     }
 }
@@ -322,9 +326,31 @@ pub fn dispatch(data: Option<&SelectedGameData>, input: &Value) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::machine::{self, Called, Js, Outcome, Pending, Reply, Started, Take};
     use client::io::ClientRevision;
     use std::thread;
     use std::time::Duration;
+
+    /// The prayer family never calls a script callback.
+    struct NoJs;
+
+    impl Js for NoJs {
+        fn queue_len(&mut self) -> usize {
+            0
+        }
+
+        fn call(
+            &mut self,
+            _hook: Option<&crate::load::callback_v8::HeldCallback>,
+            _args: &[Value],
+        ) -> Called {
+            panic!("the prayer family calls no script callback");
+        }
+
+        fn poll(&mut self, _pending: &Pending) -> Option<Reply> {
+            panic!("the prayer family calls no script callback");
+        }
+    }
 
     fn data(rev: ClientRevision) -> std::sync::Arc<SelectedGameData> {
         api::game_data::for_revision(rev).expect("selected data")
@@ -349,125 +375,196 @@ mod tests {
         });
     }
 
-    fn reset_tls() {
-        on_reset();
+    fn prepare(rev: ClientRevision) {
+        machine::on_reset();
         observed::on_reset();
-        on_resume();
-        on_hold(false);
+        crate::supply_v2::configure(Some(data(rev)));
+    }
+
+    fn tick() {
+        machine::step(&mut NoJs);
+    }
+
+    fn drain() -> Vec<InteractReq> {
+        machine::merge_ops(Vec::new())
+    }
+
+    fn start(args: Value) -> Started {
+        machine::start("prayer", args, Vec::new(), 0)
+    }
+
+    fn running(started: Started) -> machine::Handle {
+        match started {
+            Started::Running(handle) => handle,
+            other => panic!("expected a running row, got {other:?}"),
+        }
+    }
+
+    /// The settled envelope exactly as JS receives it.
+    fn done(handle: machine::Handle) -> Value {
+        match machine::take(handle) {
+            Take::Settled(Outcome::Done(value)) => value,
+            other => panic!("expected a done outcome, got {other:?}"),
+        }
+    }
+
+    fn set(on: Value) -> Value {
+        json!({ "op": "set", "name": "Protect from Melee", "on": on })
+    }
+
+    fn on(value: bool) -> Value {
+        json!({ "kind": "boolean", "value": value })
     }
 
     #[test]
     fn matching_set_does_not_click_and_unknown_is_error() {
-        reset_tls();
-        let data = data(ClientRevision::R274);
+        prepare(ClientRevision::R274);
         set_obs(43, 43, 97, 1);
-        let matched = dispatch(
-            Some(data.as_ref()),
-            &json!({"op":"begin-set","name":"Protect from Melee","on":{"kind":"boolean","value":true}}),
+        assert_eq!(
+            start(set(on(true))),
+            Started::Settled(Outcome::Done(
+                json!({ "ok": true, "reason": "matched", "value": true })
+            ))
         );
-        assert_eq!(matched["kind"], "done");
-        assert_eq!(matched["ok"], true);
-        assert_eq!(matched["reason"], "matched");
-
-        let unknown = dispatch(
-            Some(data.as_ref()),
-            &json!({"op":"begin-set","name":"Nope","on":{"kind":"boolean","value":true}}),
+        assert_eq!(
+            start(json!({ "op": "set", "name": "Nope", "on": on(true) })),
+            Started::Settled(Outcome::Done(
+                json!({ "ok": false, "reason": "unknown-prayer" })
+            ))
         );
-        assert_eq!(unknown["kind"], "done");
-        assert_eq!(unknown["ok"], false);
-        assert_eq!(unknown["reason"], "unknown-prayer");
-        reset_tls();
+        assert!(drain().is_empty(), "neither path clicks");
+        assert!(!machine::live("prayer"));
     }
 
     #[test]
     fn unavailable_on_does_not_click_off_ignores_available() {
-        reset_tls();
-        let data = data(ClientRevision::R289);
+        prepare(ClientRevision::R289);
         set_obs(0, 1, 97, 0);
-        let unavailable = dispatch(
-            Some(data.as_ref()),
-            &json!({"op":"begin-set","name":"Protect from Melee","on":{"kind":"boolean","value":true}}),
+        assert_eq!(
+            start(set(on(true))),
+            Started::Settled(Outcome::Done(
+                json!({ "ok": false, "reason": "unavailable" })
+            ))
         );
-        assert_eq!(unavailable["ok"], false);
-        assert_eq!(unavailable["reason"], "unavailable");
-        assert_ne!(unavailable["kind"], "if-button");
+        assert!(drain().is_empty());
 
         set_obs(0, 1, 97, 1);
-        let off = dispatch(
-            Some(data.as_ref()),
-            &json!({"op":"begin-set","name":"Protect from Melee","on":{"kind":"boolean","value":false}}),
+        let handle = running(start(set(on(false))));
+        assert_eq!(drain(), vec![InteractReq::IfButton { component_id: 5623 }]);
+        set_obs(0, 1, 97, 0);
+        tick();
+        assert_eq!(
+            done(handle),
+            json!({ "ok": true, "reason": "toggled", "value": true })
         );
-        assert_eq!(off["kind"], "if-button");
-        assert_eq!(off["component_id"], 5623);
-        reset_tls();
     }
 
     #[test]
-    fn omitted_on_clicks_then_times_out() {
-        reset_tls();
-        let data = data(ClientRevision::R274);
+    fn omitted_on_clicks_then_times_out_after_the_frozen_window() {
+        prepare(ClientRevision::R274);
         set_obs(43, 43, 97, 0);
-        let begin = dispatch(
-            Some(data.as_ref()),
-            &json!({"op":"begin-set","name":"Protect from Melee","on":{"kind":"undefined"}}),
+        let handle = running(start(set(json!({ "kind": "undefined" }))));
+        assert_eq!(drain(), vec![InteractReq::IfButton { component_id: 5623 }]);
+        tick();
+        assert_eq!(
+            machine::take(handle),
+            Take::Pending,
+            "unobserved varp waits"
         );
-        assert_eq!(begin["kind"], "if-button");
-        assert_eq!(begin["component_id"], 5623);
-        let token = begin["token"].as_u64().expect("token");
         thread::sleep(Duration::from_millis(TOGGLE_MS + 50));
-        let done = dispatch(Some(data.as_ref()), &json!({"op":"next","token":token}));
-        assert_eq!(done["kind"], "done");
-        assert_eq!(done["ok"], false);
-        assert_eq!(done["reason"], "toggle-timeout");
-        reset_tls();
+        tick();
+        assert_eq!(
+            done(handle),
+            json!({ "ok": false, "reason": "toggle-timeout" })
+        );
+        assert_eq!(TOGGLE_MS, 2_000);
     }
 
     #[test]
-    fn pause_hold_freeze_deadline_and_reset_aborts_token() {
-        reset_tls();
-        let data = data(ClientRevision::R289);
+    fn a_second_start_is_busy_without_a_second_click() {
+        prepare(ClientRevision::R289);
         set_obs(43, 43, 97, 0);
-        let begin = dispatch(
-            Some(data.as_ref()),
-            &json!({"op":"begin-set","name":"Protect from Melee","on":{"kind":"boolean","value":true}}),
+        let handle = running(start(set(on(true))));
+        assert_eq!(drain(), vec![InteractReq::IfButton { component_id: 5623 }]);
+        assert_eq!(
+            start(set(on(false))),
+            Started::Settled(Outcome::Done(json!({ "ok": false, "reason": "busy" }))),
+            "the admitted toggle keeps the click"
         );
-        let token = begin["token"].as_u64().expect("token");
-        on_pause();
+        assert!(drain().is_empty(), "a busy start clicks nothing");
+        set_obs(43, 43, 97, 1);
+        tick();
+        assert_eq!(
+            done(handle),
+            json!({ "ok": true, "reason": "toggled", "value": true })
+        );
+        // The row is gone: the family admits another operation.
+        set_obs(43, 43, 97, 1);
+        assert!(
+            matches!(start(set(on(false))), Started::Running(_)),
+            "a settled row frees the family"
+        );
+    }
+
+    #[test]
+    fn pause_and_hold_freeze_the_deadline_and_reset_settles_the_row() {
+        prepare(ClientRevision::R289);
+        set_obs(43, 43, 97, 0);
+        let handle = running(start(set(on(true))));
+        machine::on_pause();
         thread::sleep(Duration::from_millis(TOGGLE_MS + 50));
-        let paused = dispatch(Some(data.as_ref()), &json!({"op":"next","token":token}));
-        assert_eq!(paused["kind"], "wait");
-        on_resume();
-        on_hold(true);
+        tick();
+        assert_eq!(
+            machine::take(handle),
+            Take::Pending,
+            "paused rows do not step"
+        );
+        machine::on_resume();
+        machine::on_hold(true);
+        tick();
+        assert_eq!(
+            machine::take(handle),
+            Take::Pending,
+            "held rows do not step"
+        );
+        machine::on_hold(false);
         thread::sleep(Duration::from_millis(TOGGLE_MS + 50));
-        let held = dispatch(Some(data.as_ref()), &json!({"op":"next","token":token}));
-        assert_eq!(held["kind"], "wait");
-        on_hold(false);
-        on_reset();
-        let stale = dispatch(Some(data.as_ref()), &json!({"op":"next","token":token}));
-        assert_eq!(stale["kind"], "aborted");
-        reset_tls();
+        tick();
+        assert_eq!(
+            done(handle),
+            json!({ "ok": false, "reason": "toggle-timeout" }),
+            "the frozen span does not count toward the deadline"
+        );
+
+        let _ = drain();
+        let handle = running(start(set(on(true))));
+        assert_eq!(drain(), vec![InteractReq::IfButton { component_id: 5623 }]);
+        machine::on_reset();
+        assert_eq!(
+            machine::take(handle),
+            Take::Settled(Outcome::Aborted(machine::AbortReason::Reset))
+        );
+        tick();
+        assert!(drain().is_empty(), "an aborted row never clicks again");
+        assert!(!machine::live("prayer"));
     }
 
     #[test]
     fn clear_continues_after_timeout_with_counts() {
-        reset_tls();
-        let data = data(ClientRevision::R274);
+        prepare(ClientRevision::R274);
         set_obs(43, 43, 96, 1);
         set_obs(43, 43, 97, 1);
-        let begin = dispatch(Some(data.as_ref()), &json!({"op":"begin-clear"}));
-        assert_eq!(begin["kind"], "if-button");
-        assert_eq!(begin["component_id"], 5622);
-        let token = begin["token"].as_u64().expect("token");
+        let handle = running(start(json!({ "op": "clear" })));
+        assert_eq!(drain(), vec![InteractReq::IfButton { component_id: 5622 }]);
         thread::sleep(Duration::from_millis(TOGGLE_MS + 50));
-        let second = dispatch(Some(data.as_ref()), &json!({"op":"next","token":token}));
-        assert_eq!(second["kind"], "if-button");
-        assert_eq!(second["component_id"], 5623);
+        tick();
+        assert_eq!(drain(), vec![InteractReq::IfButton { component_id: 5623 }]);
         set_obs(43, 43, 97, 0);
-        let done = dispatch(Some(data.as_ref()), &json!({"op":"next","token":token}));
-        assert_eq!(done["kind"], "done");
-        assert_eq!(done["ok"], true);
-        assert_eq!(done["value"]["clicked"], 2);
-        assert_eq!(done["value"]["timed_out"], 1);
-        reset_tls();
+        tick();
+        assert_eq!(
+            done(handle),
+            json!({ "ok": true, "reason": "cleared", "value": { "clicked": 2, "timed_out": 1 } }),
+            "counts stay in the settled value"
+        );
     }
 }

@@ -258,10 +258,6 @@ pub(crate) enum Take {
 /// What a family sees while it begins or steps.
 pub(crate) struct Cx<'a> {
     ops: &'a mut Vec<InteractReq>,
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "first deadline family lands in F05")
-    )]
     clock: &'a mut InstantTaskClock,
     reply: Option<Reply>,
     hooks: &'a [Hook],
@@ -274,10 +270,6 @@ impl Cx<'_> {
     }
 
     /// This row's pause/hold-aware deadline clock.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "first deadline family lands in F05")
-    )]
     pub(crate) fn clock(&mut self) -> &mut InstantTaskClock {
         self.clock
     }
@@ -348,6 +340,7 @@ const fn entry<F: Family>() -> Entry {
 /// Every registered family, by name. The only machine dispatch table.
 const FAMILIES: &[Entry] = &[
     entry::<crate::teleport::Teleport>(),
+    entry::<crate::prayer::Prayer>(),
     #[cfg(test)]
     entry::<tests::Probe>(),
     #[cfg(test)]
@@ -370,6 +363,16 @@ pub(crate) fn callbacks_of(family: &str) -> Option<&'static [&'static str]> {
         .iter()
         .find(|entry| entry.name == family)
         .map(|entry| entry.callbacks)
+}
+
+/// Whether a live row of `family` is running (its begin returned
+/// [`Begin::Run`] and it has not settled).
+///
+/// A family whose frozen surface admits one operation at a time asks
+/// inside its own begin, before it emits anything; a start that refuses
+/// this way supersedes nothing, so the admitted row keeps its await.
+pub(crate) fn live(family: &str) -> bool {
+    HOST.with(|host| host.borrow().rows.iter().any(|row| row.family == family))
 }
 
 /// The type-erased row the host steps.

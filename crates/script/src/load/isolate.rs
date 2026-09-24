@@ -1894,7 +1894,6 @@ fn tick_loop(
                             crate::inspect_wait::on_hold(host_hold);
                             crate::death_recovery::on_hold(host_hold);
                             crate::autocast::on_hold(host_hold);
-                            crate::prayer::on_hold(host_hold);
                             crate::special::on_hold(host_hold);
                             crate::machine::on_hold(host_hold);
                             crate::shop::on_hold(host_hold);
@@ -2102,18 +2101,9 @@ fn tick_loop(
                     )
                 };
                 // Eligible NativeTick only: pause, generation mismatch,
-                // and guardian hold already `continue` above. Advance an
-                // admitted prayer private pump once per tick, including
-                // a sync caller that did not return the Promise.
-                // Before: pump ran only on `v2_pending` (and reset).
-                // After: one no-op-if-absent call here, then the same
-                // single event-loop drain as before — not a second 10ms
-                // framework and not a duplicate drain.
-                if v2_native {
-                    let _ = runtime.eval::<()>(
-                        "if (typeof globalThis.__rs_prayer_pump === 'function') globalThis.__rs_prayer_pump()",
-                    );
-                }
+                // and guardian hold already `continue` above. The step
+                // machines were stepped before this tick's JS; their
+                // awaits settle in the pump below with every other wait.
                 drain_event_loop(&mut runtime, &out, n);
                 // The host may have armed `terminate_execution` to
                 // interrupt a slow tick; clear it now that the tick's
@@ -2273,7 +2263,6 @@ fn tick_loop(
                 crate::inspect_wait::on_reset();
                 crate::death_recovery::on_reset();
                 crate::autocast::on_reset();
-                crate::prayer::on_reset();
                 crate::special::on_reset();
                 crate::machine::on_reset();
                 crate::shop::on_reset();
@@ -2305,9 +2294,15 @@ fn tick_loop(
                     let _ = runtime.eval::<()>(
                         "if (typeof globalThis.__rs_v2_reset_session === 'function') globalThis.__rs_v2_reset_session()",
                     );
-                    let _ = runtime.eval::<()>(
-                        "if (typeof globalThis.__rs_prayer_pump === 'function') globalThis.__rs_prayer_pump()",
-                    );
+                    // Machine rows are gone: settle their awaits now, so a
+                    // stale promise cannot take a later snapshot's facts.
+                    if crate::machine::any_settled() {
+                        let _ = runtime.call_function_immediate::<()>(
+                            None,
+                            "__rs2b0t_settle_machines",
+                            json_args!(),
+                        );
+                    }
                     if let Err(e) = runtime.block_on_event_loop(
                         rustyscript::deno_core::PollEventLoopOptions::default(),
                         Some(Duration::from_millis(10)),
@@ -2333,7 +2328,6 @@ fn tick_loop(
                 crate::inspect_wait::on_pause();
                 crate::death_recovery::on_pause();
                 crate::autocast::on_pause();
-                crate::prayer::on_pause();
                 crate::special::on_pause();
                 crate::machine::on_pause();
                 crate::shop::on_pause();
@@ -2364,7 +2358,6 @@ fn tick_loop(
                 crate::inspect_wait::on_resume();
                 crate::death_recovery::on_resume();
                 crate::autocast::on_resume();
-                crate::prayer::on_resume();
                 crate::special::on_resume();
                 crate::machine::on_resume();
                 crate::shop::on_resume();

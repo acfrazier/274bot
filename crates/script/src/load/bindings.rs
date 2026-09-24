@@ -290,7 +290,6 @@ pub(super) fn wire_runtime(
         )
         .map_err(|e| format!("register spell button: {e}"))?;
     crate::autocast::configure(game_data.as_deref());
-    crate::prayer::configure(game_data.as_deref());
     crate::shop::configure(game_data.clone());
     crate::supply_v2::configure(game_data.clone());
     let selected_autocast = game_data.clone();
@@ -717,6 +716,7 @@ return Promise.resolve(r).then(() => null, (e) => String((e && e.message) || e))
 /// and returns void. Async single-flight is observed by the Rust isolate.
 const NATIVE_V2_MAIN: &str = r#"
 import { tick } from './bot.js';
+import { runMachine } from '../../shim/_kernel.js';
 const SNAPSHOT_KEYS = new Set([
   'ingame','here','inv','inv_size','stats','bank','bank_side','bank_open','bank_loaded',
   'bank_generation','banks','nearest_booth','bank_approaches','count_dialog_open',
@@ -911,6 +911,7 @@ const api = {
 globalThis.__rs_api = api;
 globalThis.__rs_api_family = 2;
 globalThis.__rs_v2_tick_pending = false;
+// Bumped by ResetSession: the clue wrapper's own stale-token guard.
 let lifecycleGeneration = 0;
 globalThis.__rs_v2_reset_session = () => { lifecycleGeneration += 1; };
 function prayerCall(payload) {
@@ -918,55 +919,19 @@ function prayerCall(payload) {
 }
 function helperOk(value) { return { ok: true, value: value }; }
 function helperErr(error) { return { ok: false, error: String(error) }; }
-function mapPrayerDone(step) {
-  if (!step || step.kind === 'aborted' || step.kind !== 'done') {
-    return helperErr((step && step.reason) || 'aborted');
+// One Rust step machine per Set/Clear: Rust owns the click, the wait and
+// the one-at-a-time admission (a second start settles busy), so a
+// Promise never outlives its own operation.
+async function prayerMachine(payload) {
+  const out = await runMachine('prayer', payload);
+  if (out.kind === 'done') {
+    const settled = out.value;
+    if (settled.ok === true) {
+      return helperOk(settled.value === undefined ? true : settled.value);
+    }
+    return helperErr(settled.reason || 'aborted');
   }
-  if (step.ok === true) {
-    return helperOk(step.value === undefined ? true : step.value);
-  }
-  return helperErr(step.reason || 'aborted');
-}
-function enqueueIfButton(component_id) {
-  const h = host();
-  h.interact = h.interact || [];
-  h.interact.push({ op: 'if-button', component_id: component_id });
-}
-function runPrayerMachine(payload) {
-  // Before: a second begin overwrote __rs_prayer_pump; Rust abort of the
-  // old token did not resolve the first Promise (hang).
-  // After: refuse a second native Set/Clear with busy before Rust begin
-  // or click. The admitted operation keeps the pump and must settle.
-  if (typeof globalThis.__rs_prayer_pump === 'function') {
-    return Promise.resolve(helperErr('busy'));
-  }
-  const generation = lifecycleGeneration;
-  const begin = prayerCall(payload);
-  if (begin && begin.kind === 'if-button') {
-    enqueueIfButton(begin.component_id);
-  }
-  if (begin && (begin.kind === 'done' || begin.kind === 'aborted')) {
-    return Promise.resolve(mapPrayerDone(begin));
-  }
-  const token = begin && begin.token;
-  return new Promise((resolve) => {
-    const pump = () => {
-      if (generation !== lifecycleGeneration) {
-        if (globalThis.__rs_prayer_pump === pump) delete globalThis.__rs_prayer_pump;
-        resolve(helperErr('aborted'));
-        return;
-      }
-      const next = prayerCall({ op: 'next', token: token });
-      if (!next || next.kind === 'wait') return;
-      if (next.kind === 'if-button') {
-        enqueueIfButton(next.component_id);
-        return;
-      }
-      if (globalThis.__rs_prayer_pump === pump) delete globalThis.__rs_prayer_pump;
-      resolve(mapPrayerDone(next));
-    };
-    globalThis.__rs_prayer_pump = pump;
-  });
+  return out.kind === 'refused' ? helperErr(out.reason) : helperErr('aborted');
 }
 api.prayerPoints = function () { return prayerCall({ op: 'points' }); };
 api.prayerMax = function () { return prayerCall({ op: 'max' }); };
@@ -991,15 +956,15 @@ api.prayerSet = function (input) {
   if (!input || typeof input.name !== 'string' || typeof input.on !== 'boolean') {
     return Promise.resolve(helperErr('invalid-args'));
   }
-  return runPrayerMachine({
-    op: 'begin-set',
+  return prayerMachine({
+    op: 'set',
     name: input.name,
     on: { kind: 'boolean', value: input.on },
   });
 };
 api.prayerClear = function () {
-  // Same admission rule as prayerSet: busy if a pump is already installed.
-  return runPrayerMachine({ op: 'begin-clear' });
+  // Same admission rule as prayerSet: busy while one operation runs.
+  return prayerMachine({ op: 'clear' });
 };
 function supplyV2(op, input) {
   return globalThis.__rs2b0t_supply_v2(op, input);

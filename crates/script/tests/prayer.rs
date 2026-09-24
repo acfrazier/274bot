@@ -355,6 +355,61 @@ export default class T extends LoopingBot {
     }
 }
 
+// The frozen v1 surface has one admitted prayer operation: the first
+// `Prayer.set` in a tick owns the click, a concurrent second settles
+// false without clicking, and the first still settles on its own varp.
+#[test]
+fn v1_concurrent_sets_click_once_and_the_loser_settles_false() {
+    let src = r#"
+import { Prayer } from '../../api/prayer/Prayer.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__did) return;
+        globalThis.__did = true;
+        const first = Prayer.set('Protect from Melee', true);
+        const second = Prayer.set('Protect from Magic', true);
+        first.then((r) => { globalThis.__first = r; });
+        second.then((r) => { globalThis.__second = r; });
+        await Promise.all([first, second]);
+    }
+}
+"#;
+    let iso = spawn_v1(src, data());
+    let stats = [prayer_stat(43, 43)];
+    let varps = [VarpInput {
+        index: 97,
+        value: 0,
+    }];
+    let mut snap = base_snapshot();
+    snap.stats = &stats;
+    snap.varps = &varps;
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 1);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![if_button(5623)],
+        "the admitted set owns the click"
+    );
+    assert_eq!(iso.probe("globalThis.__second").unwrap(), false);
+    assert!(
+        iso.probe("globalThis.__first").unwrap().is_null(),
+        "the admitted set is still waiting on its varp"
+    );
+    snap.varps = &[VarpInput {
+        index: 97,
+        value: 1,
+    }];
+    snap.tick = 2;
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 2);
+    assert_eq!(iso.probe("globalThis.__first").unwrap(), true);
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "the refused set must not click Magic"
+    );
+    iso.join();
+}
+
 const V2_QUERY: &str = r#"
 export const apiVersion = 2;
 export function tick(api) {
