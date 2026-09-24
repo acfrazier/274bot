@@ -50,7 +50,11 @@ pub(super) const APPROACH_RING: [(i32, i32); 8] = [
 /// [`scene_standable`] mirrors `WorldCollision::standable` against the
 /// loaded scene's collision flags. `None` when no adjacent tile is
 /// standable.
-pub(super) fn approach_tile(snapshot: &GameSnapshot, at: WorldTile, here: WorldTile) -> Option<WorldTile> {
+pub(super) fn approach_tile(
+    snapshot: &GameSnapshot,
+    at: WorldTile,
+    here: WorldTile,
+) -> Option<WorldTile> {
     APPROACH_RING
         .iter()
         .map(|(dx, dz)| WorldTile {
@@ -110,7 +114,10 @@ pub(super) fn loc_chebyshev_to_footprint(loc: &LocView, at: WorldTile) -> i32 {
 /// to the rotated footprint (the m8aq `gap <= 3`), nearest first.
 /// Trapdoors `loc_change` closed→open (1568→1570); matching only the
 /// closed id leaves Climb-down unarmed.
-pub(super) fn find_transport_loc<'s>(snapshot: &'s GameSnapshot, edge: &TransportEdge) -> Option<&'s LocView> {
+pub(super) fn find_transport_loc<'s>(
+    snapshot: &'s GameSnapshot,
+    edge: &TransportEdge,
+) -> Option<&'s LocView> {
     snapshot
         .locs()
         .iter()
@@ -123,4 +130,3 @@ pub(super) fn find_transport_loc<'s>(snapshot: &'s GameSnapshot, edge: &Transpor
         .min_by_key(|(_, gap)| *gap)
         .map(|(loc, _)| loc)
 }
-

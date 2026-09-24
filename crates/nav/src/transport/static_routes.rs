@@ -1,5 +1,10 @@
 use super::*;
 
+// ---------------------------------------------------------------------------
+// Boats: the 2004 dock-NPC journeys (explicit route table). Teleports are
+// the any-tile layer (see `teleport_edges` in `teleports`).
+// ---------------------------------------------------------------------------
+
 /// Destination-ship disembark: `oploc1` `Cross` on the `_gangplank_disembark`
 /// loc (`gangplank.rs2`), landing on the dock. Live Port Sarim → Musa
 /// stalls on the Musa deck if this hop is folded into the Boat edge —

@@ -1,5 +1,9 @@
 use super::*;
 
+// ---------------------------------------------------------------------------
+// Quest-gated doors (requirements read from the door's open script).
+// ---------------------------------------------------------------------------
+
 /// Door loc id → its `(varp id, min value)` gate, read from the door's own
 /// `[oploc1,<name>]` open script: a `switch_int(%<varp>)` whose opening
 /// cases carry the open call, or an `if (%<varp> >= ^<const> [| …])` whose

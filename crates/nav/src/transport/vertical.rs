@@ -1,5 +1,9 @@
 use super::*;
 
+// ---------------------------------------------------------------------------
+// Ladders and stairs (m8aq `resolvePlacements` port).
+// ---------------------------------------------------------------------------
+
 /// Per-placement outcome resolution, m8aq-style: a landing, or a skip reason.
 #[derive(Debug)]
 pub(super) enum Outcome {

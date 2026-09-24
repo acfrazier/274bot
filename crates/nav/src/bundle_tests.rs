@@ -600,8 +600,7 @@ fn a_single_missing_mapsquare_or_named_input_is_reported() {
     assert!(
         missing
             .iter()
-            .any(|row| row
-                .starts_with("scripts/ladders+stairs/scripts/stairs.rs2 (stair edges)")),
+            .any(|row| row.starts_with("scripts/ladders+stairs/scripts/stairs.rs2 (stair edges)")),
         "{missing:?}"
     );
 }
@@ -609,8 +608,7 @@ fn a_single_missing_mapsquare_or_named_input_is_reported() {
 #[test]
 fn a_missing_ranging_loc_is_reported_without_duplicating_scan_owned_rs2() {
     const RANGING_LOC: &str = "scripts/minigames/game_ranging/configs/ranging.loc";
-    const RANGING_DOOR_RS2: &str =
-        "scripts/minigames/game_ranging/scripts/ranging_guild_door.rs2";
+    const RANGING_DOOR_RS2: &str = "scripts/minigames/game_ranging/scripts/ranging_guild_door.rs2";
     for revision in [289u16, 274] {
         let rows = required_content_inputs(revision).expect("inventory");
         let loc_rows: Vec<_> = rows.iter().filter(|row| row.path == RANGING_LOC).collect();

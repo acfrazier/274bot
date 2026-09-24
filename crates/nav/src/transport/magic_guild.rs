@@ -1,5 +1,9 @@
 use super::*;
 
+// ---------------------------------------------------------------------------
+// Magic Guild doors (`magic_guild.rs2`): named loc-specific openers.
+// ---------------------------------------------------------------------------
+
 /// Named Magic Guild doors (`magicguild_door_l` / `_r`). Not inherited
 /// closed gates — `[oploc1,magicguild_door_*]` in `magic_guild.rs2` is a
 /// loc-specific opener, so [`inherited_closed_gates`] refuses them.
@@ -145,7 +149,10 @@ pub(super) fn magicguild_opener_jump(rest: &str) -> bool {
     flat.starts_with(&format!("@{MAGICGUILD_OPEN_LABEL}(")) && flat.ends_with(");")
 }
 
-pub(super) fn magicguild_door_open_ids(content_root: &Path, ids: &HashMap<String, i32>) -> HashMap<i32, i32> {
+pub(super) fn magicguild_door_open_ids(
+    content_root: &Path,
+    ids: &HashMap<String, i32>,
+) -> HashMap<i32, i32> {
     let path = content_root
         .join("scripts")
         .join("areas")

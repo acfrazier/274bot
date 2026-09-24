@@ -282,7 +282,12 @@ pub(super) fn rangingguild_split_leading_if(text: &str) -> Option<(String, Strin
     ))
 }
 
-pub(super) fn rangingguild_match(text: &str, open_idx: usize, open: char, close: char) -> Option<usize> {
+pub(super) fn rangingguild_match(
+    text: &str,
+    open_idx: usize,
+    open: char,
+    close: char,
+) -> Option<usize> {
     let mut depth = 0i32;
     for (i, ch) in text[open_idx..].char_indices() {
         if ch == open {
@@ -297,7 +302,11 @@ pub(super) fn rangingguild_match(text: &str, open_idx: usize, open: char, close:
     None
 }
 
-pub(super) fn rangingguild_unique_delta(arm: &str, name: &str, base: &str) -> Option<(i32, i32, i32)> {
+pub(super) fn rangingguild_unique_delta(
+    arm: &str,
+    name: &str,
+    base: &str,
+) -> Option<(i32, i32, i32)> {
     let calls = call_args_all(arm, name);
     if calls.len() != 1 {
         return None;

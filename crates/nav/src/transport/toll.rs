@@ -13,7 +13,6 @@ pub(super) const SHANTAY_NORTH_TO: WorldTile = WorldTile {
     level: 0,
 };
 
-
 /// The Shantay henge edge ticks: OP_BASE 1 + the `p_teleport` tick + the
 /// `p_telejump` tick (both `p_delay(0)` in the queue block).
 pub(super) const SHANTAY_NORTH_TICKS: i32 = 3;

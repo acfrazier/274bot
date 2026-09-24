@@ -1,5 +1,9 @@
 use super::*;
 
+// ---------------------------------------------------------------------------
+// Content reads.
+// ---------------------------------------------------------------------------
+
 /// One loc placement read from a jm2 file (all levels).
 pub(crate) struct Placement {
     pub(crate) id: i32,
@@ -212,7 +216,10 @@ pub(super) fn varp_ids_by_name(content_root: &Path) -> HashMap<String, i32> {
 /// `scripts/quests/`, `scripts/areas/`, `scripts/general_use/configs/`)
 /// that can open (`op1=Open` or `category=door_closed`, the
 /// [`parse_door_config`] rule) and resolves to a numeric loc id.
-pub(super) fn door_config_names(content_root: &Path, ids: &HashMap<String, i32>) -> HashSet<String> {
+pub(super) fn door_config_names(
+    content_root: &Path,
+    ids: &HashMap<String, i32>,
+) -> HashSet<String> {
     let mut out = HashSet::new();
     let scripts = content_root.join("scripts");
     let mut pending = vec![
@@ -276,4 +283,3 @@ pub(super) fn visit_rs2(dir: &Path, cb: &mut impl FnMut(&str)) {
         }
     }
 }
-

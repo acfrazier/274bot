@@ -1,5 +1,10 @@
 use super::*;
 
+// ---------------------------------------------------------------------------
+// Rune Mysteries essence mine: wizard entry teleports
+// (`TransportKind::Npc`).
+// ---------------------------------------------------------------------------
+
 /// One essence-mine wizard journey: `at` the wizard NPC's placement tile
 /// (jm2 `==== NPC ====` placement, id resolved through `pack/npc.pack`),
 /// `to` the Rune Essence mine pad. The whole hop is the wizard's direct

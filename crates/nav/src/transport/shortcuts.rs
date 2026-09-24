@@ -1,5 +1,9 @@
 use super::*;
 
+// ---------------------------------------------------------------------------
+// Agility shortcuts (m8aq `resolveShortcutPlacements` port).
+// ---------------------------------------------------------------------------
+
 /// Agility shortcut edges for the three locs m8aq models (`fullstyle`,
 /// `watchshortcut`, `castlecrumbly`), plus the `stat(agility) < N` level the
 /// scripts declare as the skill requirement.

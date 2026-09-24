@@ -323,7 +323,11 @@ pub(super) fn to_tile(t: WorldTile) -> Tile {
 }
 
 /// Absolute tile -> local mapsquare coords, if it sits in that square.
-pub(super) fn local_in_square(t: Tile, mapsquare_x: i32, mapsquare_z: i32) -> Option<(usize, usize)> {
+pub(super) fn local_in_square(
+    t: Tile,
+    mapsquare_x: i32,
+    mapsquare_z: i32,
+) -> Option<(usize, usize)> {
     if t.level != 0 {
         return None;
     }

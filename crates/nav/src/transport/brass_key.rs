@@ -1,5 +1,9 @@
 use super::*;
 
+// ---------------------------------------------------------------------------
+// Edgeville brass-key hut door.
+// ---------------------------------------------------------------------------
+
 pub(super) const BRASS_KEY_DOOR_NAME: &str = "brasskeydoor";
 pub(super) const BRASS_KEY_NAME: &str = "edgevilledungeonkey";
 pub(super) const BRASS_KEY_OPEN_LABEL: &str = "open_edgeville_dungeon_door";
@@ -190,7 +194,11 @@ pub(super) fn brass_key_handler_matches(content_root: &Path) -> bool {
 /// even when that next header has an inline body. `script_blocks` retains
 /// its historical next-line-only behavior; the brass-key source ends with
 /// inline odd-wall handlers that must not be mistaken for label content.
-pub(super) fn selected_script_bodies(text: &str, selected_op: &str, selected_name: &str) -> Vec<String> {
+pub(super) fn selected_script_bodies(
+    text: &str,
+    selected_op: &str,
+    selected_name: &str,
+) -> Vec<String> {
     let mut out = Vec::new();
     let mut selected = false;
     let mut body = String::new();

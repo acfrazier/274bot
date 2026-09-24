@@ -1,5 +1,9 @@
 use super::*;
 
+// ---------------------------------------------------------------------------
+// Gnome gliders: the 2004 Gnome Air network (fixed platform table).
+// ---------------------------------------------------------------------------
+
 /// The Grand Tree glider hub (Ta Quir Priw): `^ta_quir_priw =
 /// 3_38_54_33_45` in `scripts/areas/area_gnome/configs/glider.constant`
 /// (the Gnome pilot spawns one tile west).

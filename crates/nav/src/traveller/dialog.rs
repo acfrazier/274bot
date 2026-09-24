@@ -173,7 +173,10 @@ pub(super) fn spirit_tree_choice(
     2
 }
 
-pub(super) fn spirit_tree_dest_count(edge: &TransportEdge, packed: Option<&[TransportEdge]>) -> usize {
+pub(super) fn spirit_tree_dest_count(
+    edge: &TransportEdge,
+    packed: Option<&[TransportEdge]>,
+) -> usize {
     let Some(list) = packed else {
         return 0;
     };
@@ -344,4 +347,3 @@ pub(super) fn teleport_send<D: Driver>(
         }
     }
 }
-

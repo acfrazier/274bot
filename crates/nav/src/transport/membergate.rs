@@ -1,5 +1,9 @@
 use super::*;
 
+// ---------------------------------------------------------------------------
+// Canonical membergate family (membergatel / membergater).
+// ---------------------------------------------------------------------------
+
 pub(super) const MEMBERGATE_LEFT: &str = "membergatel";
 pub(super) const MEMBERGATE_RIGHT: &str = "membergater";
 pub(super) const MEMBERGATE_LEFT_CLOSED: &str = "door_left_closed";

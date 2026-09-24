@@ -62,28 +62,29 @@ use crate::grid::{DoorEdge, StepGrid};
 use crate::tile::Tile;
 use crate::transport::{DoorDir, TransportEdge, TransportGraph, TransportKind};
 
-mod config_parse;
-mod sidecars;
-pub use sidecars::{
-    decode_canlight_sidecar, decode_flags_sidecar, decode_reach_sidecar,
-    encode_canlight_sidecar, encode_flags_sidecar, encode_reach_sidecar, sha256_from_hex,
-    sha256_hex, CanlightSidecar, ReachSidecar,
-};
-#[cfg(test)]
-use sidecars::{MAGIC_FLAGS, VERSION_FLAGS};
 mod banks;
+mod config_parse;
+mod mapsquare;
+mod sidecars;
+
 pub use banks::{derive_banks, BankAccess, BankStand};
 use banks::{read_bank_stands, write_bank_stands};
-mod mapsquare;
-pub use mapsquare::{merge_squares, parse_mapsquare_jm2, walkable_dots, Mapsquare};
-pub(crate) use mapsquare::{parse_loc_fields, parse_map_line, section};
-#[expect(unused_imports)]
-pub(crate) use mapsquare::LocOnSquare;
-#[cfg(test)]
-use mapsquare::{parse_mapsquare_text, SQUARE};
 pub use config_parse::{
     parse_door_config, parse_door_config_ids, parse_door_open_ids, parse_passable_locs,
 };
+#[expect(unused_imports)]
+pub(crate) use mapsquare::LocOnSquare;
+pub use mapsquare::{merge_squares, parse_mapsquare_jm2, walkable_dots, Mapsquare};
+pub(crate) use mapsquare::{parse_loc_fields, parse_map_line, section};
+#[cfg(test)]
+use mapsquare::{parse_mapsquare_text, SQUARE};
+pub use sidecars::{
+    decode_canlight_sidecar, decode_flags_sidecar, decode_reach_sidecar, encode_canlight_sidecar,
+    encode_flags_sidecar, encode_reach_sidecar, sha256_from_hex, sha256_hex, CanlightSidecar,
+    ReachSidecar,
+};
+#[cfg(test)]
+use sidecars::{MAGIC_FLAGS, VERSION_FLAGS};
 
 /// Grid (274N) format version: boolean walk bytes + doors.
 const VERSION_GRID: u8 = 1;
@@ -148,7 +149,6 @@ impl fmt::Display for PackError {
 }
 
 impl std::error::Error for PackError {}
-
 
 /// Serialize `g` to the 274N grid byte format.
 pub fn encode_grid(g: &StepGrid) -> Vec<u8> {
@@ -430,7 +430,6 @@ pub fn decode(bytes: &[u8]) -> Result<(WorldCollision, TransportGraph, Vec<BankS
     ))
 }
 
-
 /// `TransportKind` as a wire byte.
 fn kind_to_u8(k: TransportKind) -> u8 {
     match k {
@@ -552,10 +551,6 @@ fn read_req_ids(r: &mut Cursor<&[u8]>) -> Result<Vec<i32>, PackError> {
     }
     Ok(out)
 }
-
-
-
-
 
 fn read_i32(r: &mut Cursor<&[u8]>) -> Result<i32, PackError> {
     let mut b = [0u8; 4];

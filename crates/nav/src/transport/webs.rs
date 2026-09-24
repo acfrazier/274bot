@@ -136,7 +136,11 @@ pub(super) fn slash_weapon_ids(content_root: &Path, objs: &HashMap<String, i32>)
 
 // Web footprint traversal retains its existing behavior in this wall-door
 // correction; webs are not shape-0 wall doors and need separate validation.
-pub(super) fn web_far_side(at: WorldTile, dir: DoorDir, collision: &WorldCollision) -> Option<WorldTile> {
+pub(super) fn web_far_side(
+    at: WorldTile,
+    dir: DoorDir,
+    collision: &WorldCollision,
+) -> Option<WorldTile> {
     let (dx, dz) = match dir {
         DoorDir::N => (0, 1),
         DoorDir::S => (0, -1),

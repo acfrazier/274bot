@@ -1,5 +1,9 @@
 use super::*;
 
+// ---------------------------------------------------------------------------
+// Spirit trees: the `area_gnome` network (three script blocks, content-read).
+// ---------------------------------------------------------------------------
+
 /// Spirit-tree edges from `scripts/areas/area_gnome/scripts/spirit_tree.rs2`
 /// plus the same folder's `spirit_tree.constant`: each `[oploc1,<loc>]`
 /// block lists its destinations as `^…_tree` constants (a `$end_pos = ^…`

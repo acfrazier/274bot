@@ -1,5 +1,9 @@
 use super::*;
 
+// ---------------------------------------------------------------------------
+// Inherited closed fence gates (quest/area configs).
+// ---------------------------------------------------------------------------
+
 /// The two closed fence-gate categories and their generic category handlers
 /// in `scripts/general_use/scripts/gates.rs2`:
 /// `[oploc1,_gate_main_closed] ~open_gate;` (main) and
@@ -180,7 +184,10 @@ impl InheritedGate {
 /// valid `[header]` ends the previous block even when the name does not
 /// resolve. Unresolved headers and blocks whose category is `gate_*_open`
 /// (the open leaves) yield nothing.
-pub(super) fn closed_gate_blocks(text: &str, ids: &HashMap<String, i32>) -> Vec<(i32, InheritedGate)> {
+pub(super) fn closed_gate_blocks(
+    text: &str,
+    ids: &HashMap<String, i32>,
+) -> Vec<(i32, InheritedGate)> {
     let mut out = Vec::new();
     let mut cur: Option<(i32, InheritedGate)> = None;
     for raw in text.lines() {

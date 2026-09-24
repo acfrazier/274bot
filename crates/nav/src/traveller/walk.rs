@@ -226,7 +226,12 @@ impl FollowRun {
     /// actual tile change resets the window so a live hop is never
     /// spuriously reissued. Idle is tracked at the latest observed tile
     /// so partial-hop progress can still recover once movement stops.
-    pub(super) fn note_walk_stall_idle(&self, hop: &mut WalkHop, snapshot: &GameSnapshot, here: WorldTile) {
+    pub(super) fn note_walk_stall_idle(
+        &self,
+        hop: &mut WalkHop,
+        snapshot: &GameSnapshot,
+        here: WorldTile,
+    ) {
         let active = snapshot.map_flag().is_some()
             || snapshot
                 .local_player()
@@ -385,4 +390,3 @@ impl FollowRun {
         }
     }
 }
-

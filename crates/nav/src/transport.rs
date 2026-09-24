@@ -36,59 +36,54 @@ use api::snapshot::WorldTile;
 
 use crate::collision::WorldCollision;
 use crate::pack::{parse_door_config, parse_door_config_ids, parse_door_open_ids};
-mod condparse;
-mod index;
-mod script_text;
-mod magic_guild;
-mod ranging_guild;
-mod zanaris;
-mod teleports;
-use magic_guild::*;
-use ranging_guild::*;
-use zanaris::*;
-use teleports::*;
-
-mod spirit_trees;
-mod levers;
-mod toll;
-use spirit_trees::*;
-use levers::*;
-use toll::*;
-
-mod static_routes;
-mod npc_hops;
-mod gliders;
-use static_routes::*;
-use npc_hops::*;
-use gliders::*;
-
-mod vertical;
-mod shortcuts;
-use vertical::*;
-use shortcuts::*;
-
-mod doors;
 mod brass_key;
-mod membergate;
-mod webs;
-use doors::*;
-use brass_key::*;
-use membergate::*;
-use webs::*;
-
+mod condparse;
+mod doors;
 mod gates;
+mod gliders;
+mod index;
+mod levers;
+mod magic_guild;
+mod membergate;
+mod npc_hops;
 mod quest_doors;
-use gates::*;
-use quest_doors::*;
+mod ranging_guild;
+mod script_text;
+mod shortcuts;
+mod spirit_trees;
+mod static_routes;
+mod teleports;
+mod toll;
+mod vertical;
+mod webs;
+mod zanaris;
 
-pub(crate) use index::{loc_ids_by_name, loc_positions, Placement};
-use index::*;
-use script_text::*;
+use brass_key::*;
 use condparse::{
     arm_opens_directly, body_labels, check_axis_def, check_axis_or_proc, if_head_and_arm,
     proc_bitfield_varp, proc_bodies, script_blocks, script_header, script_varp_gate,
     top_level_statements,
 };
+use doors::*;
+use gates::*;
+use gliders::*;
+use index::*;
+pub(crate) use index::{loc_ids_by_name, loc_positions, Placement};
+use levers::*;
+use magic_guild::*;
+use membergate::*;
+use npc_hops::*;
+use quest_doors::*;
+use ranging_guild::*;
+use script_text::*;
+use shortcuts::*;
+use spirit_trees::*;
+use static_routes::*;
+use teleports::*;
+use toll::*;
+use vertical::*;
+use webs::*;
+use zanaris::*;
 
 /// The kinds of transport edge this graph derives.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -609,34 +604,8 @@ fn report(content_root: &Path, graph: &TransportGraph, skipped: &HashMap<&'stati
 }
 
 // ---------------------------------------------------------------------------
-// Content reads.
-// ---------------------------------------------------------------------------
-
-
-// ---------------------------------------------------------------------------
 // Doors.
 // ---------------------------------------------------------------------------
-
-
-// ---------------------------------------------------------------------------
-// Edgeville brass-key hut door.
-// ---------------------------------------------------------------------------
-
-
-// ---------------------------------------------------------------------------
-// Canonical membergate family (membergatel / membergater).
-// ---------------------------------------------------------------------------
-
-
-// ---------------------------------------------------------------------------
-// Inherited closed fence gates (quest/area configs).
-// ---------------------------------------------------------------------------
-
-
-
-
-
-
 
 /// `DoorDir` for a placement angle (0=west, 1=north, 2=east, 3=south —
 /// the [`client::dash3d::LocAngle`] order), `None` for any other angle.
@@ -660,7 +629,6 @@ fn opposite(dir: DoorDir) -> DoorDir {
     }
 }
 
-
 /// A wall door can expose the adjacent tile, not erase intervening scenery.
 fn door_far_side(at: WorldTile, dir: DoorDir, collision: &WorldCollision) -> Option<WorldTile> {
     let (dx, dz) = match dir {
@@ -677,53 +645,6 @@ fn door_far_side(at: WorldTile, dir: DoorDir, collision: &WorldCollision) -> Opt
     collision.standable(to).then_some(to)
 }
 
-
-// ---------------------------------------------------------------------------
-// Quest-gated doors (requirements read from the door's open script).
-// ---------------------------------------------------------------------------
-
-
-
-
-// ---------------------------------------------------------------------------
-// Ladders and stairs (m8aq `resolvePlacements` port).
-// ---------------------------------------------------------------------------
-
-
-
-
-// ---------------------------------------------------------------------------
-// Agility shortcuts (m8aq `resolveShortcutPlacements` port).
-// ---------------------------------------------------------------------------
-
-
-// ---------------------------------------------------------------------------
-// Boats: the 2004 dock-NPC journeys (explicit route table). Teleports are
-// the any-tile layer (see `teleport_edges` below).
-// ---------------------------------------------------------------------------
-
-
-// ---------------------------------------------------------------------------
-// Rune Mysteries essence mine: wizard entry teleports
-// (`TransportKind::Npc`).
-// ---------------------------------------------------------------------------
-
-
-// ---------------------------------------------------------------------------
-// Gnome gliders: the 2004 Gnome Air network (fixed platform table).
-// ---------------------------------------------------------------------------
-
-
-// ---------------------------------------------------------------------------
-// Spirit trees: the `area_gnome` network (three script blocks, content-read).
-// ---------------------------------------------------------------------------
-
-
-// ---------------------------------------------------------------------------
-// Wilderness levers: the Ardougne↔wilderness teleport pair.
-// ---------------------------------------------------------------------------
-
-
 // ---------------------------------------------------------------------------
 // Al Kharid border toll and the Shantay northbound hop (item-gated gates).
 // ---------------------------------------------------------------------------
@@ -733,26 +654,6 @@ fn door_far_side(at: WorldTile, dir: DoorDir, collision: &WorldCollision) -> Opt
 /// the traveller drives the gated branch's pass-handover chat dialogs
 /// for this loc (see [`crate::traveller`]).
 pub(crate) const SHANTAY_HENGE_LOC_ID: i32 = 4031;
-
-// ---------------------------------------------------------------------------
-// Magic Guild doors (`magic_guild.rs2`): named loc-specific openers.
-// ---------------------------------------------------------------------------
-
-
-
-
-
-// ---------------------------------------------------------------------------
-// The Zanaris shed door (`quest_zanaris.rs2`): a worn-item teleport door.
-// ---------------------------------------------------------------------------
-
-
-
-
-// ---------------------------------------------------------------------------
-// Script text helpers (m8aq regexes ported without a regex dependency).
-// ---------------------------------------------------------------------------
-
 
 #[cfg(test)]
 #[path = "transport_tests.rs"]

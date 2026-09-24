@@ -113,7 +113,10 @@ pub(super) fn npc_backed(edge: &TransportEdge) -> bool {
 
 /// Closed or open leaf within chebyshev 3 of `edge.at` (live Catherby
 /// open 1531 sits a tile off the derived `at`).
-pub(super) fn find_door_loc<'s>(snapshot: &'s GameSnapshot, edge: &TransportEdge) -> Option<&'s LocView> {
+pub(super) fn find_door_loc<'s>(
+    snapshot: &'s GameSnapshot,
+    edge: &TransportEdge,
+) -> Option<&'s LocView> {
     find_transport_loc(snapshot, edge)
 }
 
@@ -205,7 +208,11 @@ pub(super) fn door_step_pending(edge: &TransportEdge, here: WorldTile) -> bool {
 /// Those short hops require the exact landing. Far dir=None doors
 /// (Zanaris, levers, Shantay south) keep the runner's radius. Cardinal
 /// `dir=Some` doors stay on [`door_crossed`].
-pub(super) fn door_dir_none_arrived(edge: &TransportEdge, here: WorldTile, close_enough: i32) -> bool {
+pub(super) fn door_dir_none_arrived(
+    edge: &TransportEdge,
+    here: WorldTile,
+    close_enough: i32,
+) -> bool {
     if here.level != edge.to.level {
         return false;
     }
@@ -1016,4 +1023,3 @@ impl FollowRun {
         None
     }
 }
-

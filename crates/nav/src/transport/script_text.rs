@@ -1,3 +1,7 @@
+// ---------------------------------------------------------------------------
+// Script text helpers (m8aq regexes ported without a regex dependency).
+// ---------------------------------------------------------------------------
+
 /// A block body normalized for exact comparison: `//` comments dropped and
 /// all whitespace removed.
 pub(super) fn normalized_body(body: &str) -> String {
@@ -286,4 +290,3 @@ pub(super) fn int_or_null(text: &str) -> Option<i32> {
     }
     t.parse().ok()
 }
-

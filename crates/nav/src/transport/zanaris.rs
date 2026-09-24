@@ -1,5 +1,9 @@
 use super::*;
 
+// ---------------------------------------------------------------------------
+// The Zanaris shed door (`quest_zanaris.rs2`): a worn-item teleport door.
+// ---------------------------------------------------------------------------
+
 /// The Zanaris shed door ticks: OP_BASE 1, the door block's `p_delay(1)`,
 /// and the `player_teleport_normal` cast `p_delay(2)` (the whole Open
 /// channel; the shimmer `mes` and the open anim add no delay).

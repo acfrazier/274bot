@@ -1,5 +1,9 @@
 use super::*;
 
+// ---------------------------------------------------------------------------
+// Wilderness levers: the Ardougne↔wilderness teleport pair.
+// ---------------------------------------------------------------------------
+
 /// Wilderness lever edges from `scripts/areas/area_ardougne_east/scripts/
 /// wilderness_lever.rs2` plus the folder's `wilderness_lever.constant`:
 /// each `[oploc1,<loc>]` block's `~player_teleport_normal(^…_coord)` call

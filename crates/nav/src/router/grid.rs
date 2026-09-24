@@ -200,4 +200,3 @@ impl Ord for GridNode {
             .then_with(|| self.tile.level.cmp(&other.tile.level))
     }
 }
-
