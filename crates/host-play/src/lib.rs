@@ -3190,7 +3190,9 @@ fn publish_login_latched_from_arm(
 }
 
 fn apply_queue_wait(rows: &mut [SlotStatus], name: &str, pos: Option<QueuePos>) {
-    let (position, total) = match pos {
+    let (position, total) = match pos.filter(|p| {
+        p.position >= 1 && p.total >= 1 && p.position <= p.total
+    }) {
         Some(p) => (p.position as i32, p.total as i32),
         None => (-1, -1),
     };

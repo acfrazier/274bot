@@ -14,14 +14,17 @@ use crate::theme::ACCENT;
 /// ahead label. Empty when the slot is not queued, so the card disappears
 /// the moment the grant lands (`logging in…`).
 fn queue_card_lines(queue: Option<(i32, i32)>) -> Vec<String> {
-    match queue {
-        Some((k, n)) => vec![
-            QUEUE_CARD_TITLE.to_string(),
-            queue_k_of_n(k, n).unwrap_or_default(),
-            queue_ahead_label(k.max(1) as u32),
-        ],
-        None => Vec::new(),
-    }
+    let Some((position, total)) = queue else {
+        return Vec::new();
+    };
+    let Some(place) = queue_k_of_n(position, total) else {
+        return Vec::new();
+    };
+    vec![
+        QUEUE_CARD_TITLE.to_string(),
+        place,
+        queue_ahead_label(position as u32),
+    ]
 }
 
 /// Horizontal/vertical pad inside the queue card border (equal L/R and T/B).
@@ -79,7 +82,7 @@ fn draw_queue_card(ui: &Ui, min: [f32; 2], lines: &[String]) {
 /// when the focused slot is not queued, so the card disappears the moment
 /// the grant lands.
 pub fn draw_focused_queue_card(ui: &Ui, session: &Session, min: [f32; 2]) {
-    let lines = queue_card_lines(session.queue_place());
+    let lines = queue_card_lines(session.focused_queue());
     if !lines.is_empty() {
         draw_queue_card(ui, min, &lines);
     }
@@ -111,7 +114,7 @@ impl PathOverlay {
     /// Image widget's top-left corner; `size` is unused now that the
     /// polyline is gone.
     pub fn frame(&mut self, ui: &Ui, session: &Session, min: [f32; 2], _size: [f32; 2]) {
-        let queue = session.queue_place();
+        let queue = session.focused_queue();
         if queue != self.queue {
             self.queue = queue;
             self.queue_lines = queue_card_lines(queue);
@@ -210,6 +213,12 @@ mod tests {
     }
 
     #[test]
+    fn invalid_queue_tuple_does_not_paint_a_card() {
+        assert!(queue_card_lines(Some((3, 0))).is_empty());
+        assert!(queue_card_lines(Some((3, 2))).is_empty());
+    }
+
+    #[test]
     fn overlay_draws_queue_card_when_focused_slot_is_queued() {
         let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
         let mut ctx = dear_imgui_rs::Context::create();
@@ -242,7 +251,7 @@ mod tests {
     }
 
     #[test]
-    fn overlay_queue_card_follows_fifo_head_when_focus_already_granted() {
+    fn overlay_queue_card_disappears_when_focus_grants() {
         let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
         let mut ctx = dear_imgui_rs::Context::create();
         ctx.prepare_frame(
@@ -267,10 +276,7 @@ mod tests {
             overlay.frame(ui, &s, [10.0, 10.0], [90.0, 90.0]);
         });
         ctx.render();
-        assert_eq!(
-            overlay.queue_lines[1], "1 of 49",
-            "after the focused slot grants, the card steps k of n for the next queued member"
-        );
+        assert!(overlay.queue_lines.is_empty());
     }
 
     #[test]

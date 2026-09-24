@@ -1123,6 +1123,19 @@ fn apply_queue_wait_writes_k_of_n_and_grant_clears() {
     apply_queue_wait(&mut rows, "b", None);
     assert_eq!(rows[1].queue_position, -1);
     assert_eq!(rows[1].queue_total, -1);
+    apply_queue_wait(
+        &mut rows,
+        "b",
+        Some(host::login_queue::QueuePos {
+            position: 3,
+            total: 0,
+        }),
+    );
+    assert_eq!(
+        (rows[1].queue_position, rows[1].queue_total),
+        (-1, -1),
+        "an invalid producer tuple is cleared at publication"
+    );
 }
 
 #[test]
