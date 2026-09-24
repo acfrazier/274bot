@@ -2418,8 +2418,12 @@ pub(crate) fn green_dragon_scenario() -> Scenario {
     })
 }
 
+/// Prepared GreenDragon melee core. The strict core needs one kill, its loot
+/// and further work on a second dragon; the measured first 75-HP kill alone
+/// took 265 ticks after the first Attack at 40/40/40 with the Rune scimitar,
+/// which leaves the 180s gold wall no room for the rest.
 pub(crate) fn green_dragon_prepared_scenario() -> Scenario {
-    prepared_combat_core_scenario(
+    let mut scenario = prepared_combat_core_scenario(
         CombatCorePlan {
             name: "green_dragon_prepared",
             card: "GreenDragon",
@@ -2446,7 +2450,13 @@ pub(crate) fn green_dragon_prepared_scenario() -> Scenario {
             extra_give: TIER40_RUNE_ARMOUR_GIVE,
             wear: TIER40_RUNE_ARMOUR_WEAR,
         },
-    )
+    );
+    apply_combat_qualification_budget(
+        &mut scenario,
+        COMBAT_QUALIFICATION_DEADLINE,
+        COMBAT_QUALIFICATION_WATCH_TICKS,
+    );
+    scenario
 }
 
 /// Prepared GreenDragon Fire Strike option. Exact AutoFighter mage rune
@@ -2906,8 +2916,12 @@ pub(crate) fn fire_giant_scenario() -> Scenario {
     scenario
 }
 
+/// Prepared FireGiant melee core. One 111-HP kill at 40/40/40 Rune scimitar
+/// is ~188 ticks of uninterrupted swings (hit 0.53, max 9, 4-tick rate) and
+/// measured 250-360 ticks with the card's eats and re-issues, so the kill,
+/// Big bones and the further engagement need the 300s combat wall.
 pub(crate) fn fire_giant_prepared_scenario() -> Scenario {
-    prepared_combat_core_scenario(
+    let mut scenario = prepared_combat_core_scenario(
         CombatCorePlan {
             name: "fire_giant_prepared",
             card: "FireGiant",
@@ -2937,7 +2951,13 @@ pub(crate) fn fire_giant_prepared_scenario() -> Scenario {
             extra_give: TIER40_RUNE_ARMOUR_GIVE,
             wear: TIER40_RUNE_ARMOUR_WEAR,
         },
-    )
+    );
+    apply_combat_qualification_budget(
+        &mut scenario,
+        COMBAT_QUALIFICATION_DEADLINE,
+        COMBAT_QUALIFICATION_WATCH_TICKS,
+    );
+    scenario
 }
 
 /// ArdyFighter default Guard/strength. No fabricated cakes; the script

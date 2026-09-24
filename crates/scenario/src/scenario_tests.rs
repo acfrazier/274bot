@@ -7953,7 +7953,15 @@ fn prepared_dragon_and_fire_fixtures_acknowledge_tier40_gear_before_teleport() {
                 Some(&Value::String("Rune scimitar".into()))
             );
         }
-        assert_eq!(scenario.settings.deadline, SCRIPT_GOLD_DEADLINE);
+        assert_eq!(
+            scenario.settings.deadline,
+            Duration::from_secs(300),
+            "{name} uses the 300s combat qualification wall"
+        );
+        assert_eq!(
+            original.settings.deadline, SCRIPT_GOLD_DEADLINE,
+            "{name}'s Defence-1 original keeps the gold wall"
+        );
         assert_eq!(
             scenario.proof,
             Proof::StatXpGain {
@@ -7967,6 +7975,12 @@ fn prepared_dragon_and_fire_fixtures_acknowledge_tier40_gear_before_teleport() {
             .iter()
             .position(|step| matches!(step.kind, StepKind::StartScript))
             .expect("prepared combat Start");
+        assert!(
+            scenario.steps[start + 1..]
+                .iter()
+                .all(|step| step.wait.budget_ticks >= 750),
+            "{name} post-Start dirty budgets must not pre-empt the 300s wall"
+        );
         let before = &scenario.steps[..start];
         let arms = before.iter().map(|step| step.wait.arm).collect::<Vec<_>>();
         for id in [0, STRENGTH_STAT, DEFENCE_STAT, 3] {
