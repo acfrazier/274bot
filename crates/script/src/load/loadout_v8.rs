@@ -155,11 +155,7 @@ fn v2_boost_faded<'s>(
         None => BOOST_FLOOR,
         Some(n) => loadout_plan::finite_number(n).ok_or_else(|| "invalid-args".to_string())?,
     };
-    let faded = boost_potions::boost_faded(
-        boost_potions::JsNumber::Finite(base),
-        boost_potions::JsNumber::Finite(effective),
-        boost_potions::JsNumber::Finite(floor),
-    );
+    let faded = boost_potions::boost_faded(base, effective, floor);
     let value = v8::Boolean::new(scope, faded);
     helper_ok(scope, value.into())
 }

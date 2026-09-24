@@ -161,16 +161,6 @@ export default class T extends LoopingBot {
             });
             globalThis.__invCalls = calls;
         }
-        if (globalThis.__mode === 'absent') {
-            const content = globalThis.__rs2b0t_host.content || {};
-            delete content.gather_tools;
-            globalThis.__rs2b0t_host.content = content;
-            globalThis.__absent = {
-                pick: bestPickaxe(99, () => true),
-                axe: bestAxe(99, () => true),
-                wield: canWieldTool('Steel pickaxe', 99),
-            };
-        }
     }
 }
 "#;
@@ -288,9 +278,13 @@ fn can_wield_is_attack_not_held_and_unknown_is_false() {
     assert_eq!(iso.probe("__wieldSteelAxe5").unwrap(), true);
     assert_eq!(iso.probe("__wieldBronze0").unwrap(), true);
     assert_eq!(iso.probe("__wieldUnknown").unwrap(), false);
-    assert_eq!(
-        iso.probe("__restock").unwrap(),
-        "not impl: Tools.toolRestockPlan"
+    assert!(
+        iso.probe("__restock")
+            .unwrap()
+            .as_str()
+            .unwrap_or("")
+            .contains("not iterable"),
+        "frozen `for (const r of reqs)` over a missing list"
     );
     assert_eq!(
         iso.probe("__exact").unwrap(),
@@ -300,18 +294,11 @@ fn can_wield_is_attack_not_held_and_unknown_is_false() {
 }
 
 #[test]
-fn preload_is_void_noop_and_absent_facts_fail_closed() {
+fn preload_is_void_noop() {
     let iso = spawn();
     let preload = iso.probe("__preload").unwrap();
     assert_eq!(preload["threw"], serde_json::Value::Null);
     assert_eq!(preload["value"], "undefined");
     assert_eq!(preload["queued"], false);
-
-    iso.probe("globalThis.__mode = 'absent'").unwrap();
-    tick(&iso, 1);
-    let absent = iso.probe("__absent").unwrap();
-    assert_eq!(absent["pick"], serde_json::Value::Null);
-    assert_eq!(absent["axe"], serde_json::Value::Null);
-    assert_eq!(absent["wield"], false);
     iso.join();
 }

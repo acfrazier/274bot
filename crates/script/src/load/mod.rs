@@ -15,10 +15,18 @@
 #[cfg(feature = "load")]
 mod bindings;
 #[cfg(feature = "load")]
+mod boost_potions_v8;
+#[cfg(feature = "load")]
 mod buyout_plan;
+#[cfg(feature = "load")]
+mod callback_v8;
 mod clue_facts_v8;
 mod clue_logic_v8;
 mod clue_pack_v8;
+#[cfg(feature = "load")]
+mod combat_style_v8;
+#[cfg(feature = "load")]
+mod fire_v8;
 mod gather_methods_v8;
 #[cfg(feature = "load")]
 mod isolate;
@@ -44,6 +52,10 @@ mod shape;
 #[cfg(feature = "load")]
 mod snapshot;
 mod supply_v8;
+#[cfg(feature = "load")]
+mod targets_v8;
+#[cfg(feature = "load")]
+mod tools_v8;
 
 pub use shape::{
     collect_raw_sibling_hashes, detect_shape, first_unloadable_for_card,

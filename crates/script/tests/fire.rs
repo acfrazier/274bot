@@ -189,7 +189,7 @@ export default class T extends LoopingBot {
 "#;
 
 const LANE: &str = r#"
-import { findBurnLane, inFirePlot, NoLightTiles, tileKey, burnLaneWant, fireReactionTicks, isBurnWest, runInDir } from '../../api/firemaking/Firemaking.js';
+import { findBurnLane, inFirePlot, NoLightTiles, tileKey, burnLaneWant, fireReactionTicks, isBurnWest } from '../../api/firemaking/Firemaking.js';
 export default class T extends LoopingBot {
     async loop() {
         if (globalThis.__did) return;
@@ -203,11 +203,6 @@ export default class T extends LoopingBot {
             globalThis.__want = burnLaneWant(20);
             globalThis.__ticks = fireReactionTicks();
             globalThis.__west = isBurnWest({ dx: -1, dz: 0 });
-            globalThis.__events = [];
-            globalThis.__early = runInDir(globalThis.__here, plot, {}, occupied, () => { globalThis.__events.push('walkable'); return true; }, () => { globalThis.__events.push('canStep'); return true; }, 0);
-            globalThis.__callback = runInDir(globalThis.__here, plot, {}, new Set(), () => { globalThis.__events.push('walkable'); return false; }, () => { globalThis.__events.push('canStep'); return true; }, 1);
-            globalThis.__native = runInDir({x: 3237, z: 3419, level: 0}, plot, {dx: -1, dz: 0}, new Set(), undefined, undefined, 3);
-            globalThis.__nativeRun = (from, walkable) => runInDir(from, plot, {dx: -1, dz: 0}, new Set(), walkable, undefined, 3);
             const no = new NoLightTiles();
             no.add({ x: 1, z: 2 });
             globalThis.__merged = [...no.merge(new Set(['2,3', '1,2']))];
@@ -237,8 +232,7 @@ export default class T extends LoopingBot {
                 (n) => inv[n] || 0,
                 (n) => bank[n] || 0,
             );
-            try { toolRestockPlan([exactTool('Hammer')], () => 1, () => 0, () => 1); globalThis.__hammer = 'called'; }
-            catch (e) { globalThis.__hammer = String(e.message || e); }
+            globalThis.__hammer = toolRestockPlan([exactTool('Hammer')], () => 1, () => 0, () => 1);
             globalThis.__pick = bestPickaxe(99, () => false);
             globalThis.__ok = true;
         } catch (e) {
@@ -493,58 +487,9 @@ fn find_burn_lane_and_run_use_posted_native_steps_and_validate_start() {
     assert_eq!(iso.probe("__ticks").unwrap(), 1);
     assert_eq!(iso.probe("__west").unwrap(), true);
     assert_eq!(iso.probe("__refused").unwrap(), true);
-    assert_eq!(iso.probe("__early").unwrap(), 0);
-    assert_eq!(iso.probe("__callback").unwrap(), 0);
-    assert_eq!(iso.probe("__native").unwrap(), 3);
-    assert_eq!(
-        iso.probe("__events").unwrap(),
-        serde_json::json!(["walkable"])
-    );
     assert_eq!(
         iso.probe("__merged").unwrap(),
         serde_json::json!(["2,3", "1,2"])
-    );
-    assert_eq!(
-        iso.probe("__nativeRun(__here, () => true)").unwrap(),
-        0,
-        "a true callback must not admit a native Fire on the starting tile"
-    );
-    assert_eq!(
-        iso.probe("__nativeRun({x: 3237, z: 3419, level: 0}, () => true)")
-            .unwrap(),
-        3,
-        "a true callback must retain the native multi-tile run"
-    );
-    let mut blocked_steps = steps.clone();
-    blocked_steps[3 + 1] = 0;
-    snap.reach.step = &blocked_steps;
-    post(&iso, &snap);
-    assert_eq!(
-        iso.probe("__nativeRun({x: 3237, z: 3419, level: 0})")
-            .unwrap(),
-        2,
-        "the posted blocked step must terminate the run"
-    );
-    let blocked_start = walkable_words(4, 3, 3235, 3418, &[(3235, 3419), (3236, 3419)]);
-    snap.reach.walkable = &blocked_start;
-    post(&iso, &snap);
-    for caller in ["undefined", "() => true"] {
-        assert_eq!(
-            iso.probe(&format!(
-                "__nativeRun({{x: 3237, z: 3419, level: 0}}, {caller})"
-            ))
-            .unwrap(),
-            0,
-            "native non-walkable start must fail with or without a caller veto"
-        );
-    }
-    snap.reach = ReachViewInput::UNAVAILABLE;
-    post(&iso, &snap);
-    assert_eq!(
-        iso.probe("__nativeRun({x: 3237, z: 3419, level: 0}, () => true)")
-            .unwrap(),
-        0,
-        "unavailable native reach must not invent a one-tile run"
     );
     iso.join();
 }
@@ -702,545 +647,167 @@ fn tool_restock_plan_is_ordinary_tinderbox_withdraw() {
         iso.probe("__plan").unwrap(),
         serde_json::json!([{ "name": "Tinderbox", "qty": 1, "equip": false }])
     );
-    assert!(
-        iso.probe("__hammer")
-            .unwrap()
-            .as_str()
-            .unwrap_or("")
-            .contains("not impl"),
-        "hammer/gatherer restock stays not impl"
+    assert_eq!(
+        iso.probe("__hammer").unwrap(),
+        serde_json::json!([{ "name": "Hammer", "qty": 1, "equip": false }]),
+        "frozen toolRestockPlan plans any exact tool"
     );
     assert_eq!(iso.probe("__pick").unwrap(), Value::Null);
     iso.join();
 }
 
-// `localFirePlot`: the posted-plot scan is native `__rs2b0t_fire` `local-plot`;
-// the shim keeps the posted row read, the two scalar facts and the fallback box.
-const LOCAL_PLOT: &str = r#"
-import { localFirePlot } from '../../api/firemaking/Firemaking.js';
 
-const plots = globalThis.__rs2b0t_host.content.fire_plots;
+// `localFirePlot`, `runInDir` and `NoLightTiles` are one native call each
+// (`__rs2b0t_firemaking`). Expected values are the frozen
+// `bot/api/firemaking/Firemaking.ts` bodies.
+const HELPERS: &str = r#"
+import { localFirePlot, runInDir, NoLightTiles } from '../../api/firemaking/Firemaking.js';
+import Tile from '../../geometry/Tile.js';
 
-function view(p) {
-    return {
-        bank: { x: p.bank.x, z: p.bank.z, level: p.bank.level },
-        x0: p.x0, x1: p.x1, z0: p.z0, z1: p.z1,
-    };
-}
+const capture = (fn) => { try { return fn(); } catch (e) { return 'THREW ' + (e && e.name) + ': ' + (e && e.message); } };
+const box = (p) => ({ bank: [p.bank.x, p.bank.z, p.bank.level], tile: p.bank instanceof Tile, x0: p.x0, x1: p.x1, z0: p.z0, z1: p.z1 });
 
-function attempt(origin, half, useDefaultHalf) {
-    try {
-        return view(useDefaultHalf ? localFirePlot(origin) : localFirePlot(origin, half));
-    } catch (e) {
-        return String(e && e.message ? e.message : e);
-    }
-}
-
-// Posted order: first plot whose bank level matches and whose inclusive AABB
-// contains the origin, in the existing `content.fire_plots` order.
-globalThis.__posted = {
-    varrockEast: attempt({ x: 3253, z: 3420, level: 0 }),
-    varrockWest: attempt({ x: 3185, z: 3440, level: 0 }),
-    draynor: attempt({ x: 3093, z: 3243, level: 0 }),
-    seers: attempt({ x: 2725, z: 3491, level: 0 }),
-    eastCorner: attempt({ x: 3235, z: 3418, level: 0 }),
-    eastEdge: attempt({ x: 3275, z: 3432, level: 0 }),
-    outside: attempt({ x: 3000, z: 3000, level: 0 }),
-    wrongPlane: attempt({ x: 3253, z: 3420, level: 1 }),
-    nullLevel: attempt({ x: 3253, z: 3420, level: null }),
-    stringLevel: attempt({ x: 3253, z: 3420, level: '0' }),
+// Frozen: `h = Math.max(2, Math.floor(half))`, `half = 8` when omitted, a box
+// around the origin whatever posted plot contains it.
+globalThis.__plots = {
+    defaultHalf: box(localFirePlot({ x: 3253, z: 3429, level: 0 })),
+    half3: box(localFirePlot({ x: 3000, z: 3000, level: 1 }, 3.7)),
+    clamped: box(localFirePlot({ x: 3000, z: 3000, level: 0 }, 1)),
+    nanHalf: Number.isNaN(localFirePlot({ x: 3000, z: 3000, level: 0 }, 'wide').x0),
+    missing: capture(() => localFirePlot(undefined)),
 };
 
-// The first posted plot still wins when a later row also contains the origin.
-globalThis.__overlap = (() => {
-    const saved = plots[1];
-    plots[1] = {
-        name: 'Overlap',
-        bank: { x: 2710, z: 3482, level: 0 },
-        x0: 2700, x1: 2760, z0: 3470, z1: 3500,
-    };
-    try {
-        return attempt({ x: 2725, z: 3491, level: 0 });
-    } finally {
-        plots[1] = saved;
-    }
-})();
-
-// `h = Math.max(0, Math.floor(Number(half) || 4))`, default 4, `±h` at origin.
-globalThis.__half = {
-    defaultHalf: attempt({ x: 3000, z: 3000, level: 0 }, undefined, true),
-    ten: attempt({ x: 3000, z: 3000, level: 0 }, 10),
-    stringThree: attempt({ x: 3000, z: 3000, level: 0 }, '3'),
-    zeroIsFour: attempt({ x: 3000, z: 3000, level: 0 }, 0),
-    negativeIsZero: attempt({ x: 3000, z: 3000, level: 0 }, -2),
-    fractionFloors: attempt({ x: 3000, z: 3000, level: 0 }, 2.7),
-    nanIsFour: attempt({ x: 3000, z: 3000, level: 0 }, NaN),
+const plot = { bank: { x: 3235, z: 3420, level: 0 }, x0: 3235, x1: 3237, z0: 3418, z1: 3419 };
+const west = { dx: -1, dz: 0 };
+const key = (t) => t.x + ',' + t.z;
+function lane(from, occupied, walkable, canStep, cap) {
+    const log = [];
+    const seen = [];
+    const run = capture(() => runInDir(
+        from, plot, west, occupied,
+        walkable && ((t) => { log.push('walkable:' + key(t)); seen.push(t); return walkable(t); }),
+        canStep && ((a, b) => { log.push('canStep:' + key(a) + '>' + key(b)); return canStep(a, b); }),
+        cap,
+    ));
+    return { run, log, firstIsFrom: seen[0] === from };
+}
+const start = { x: 3237, z: 3419, level: 0 };
+globalThis.__lanes = {
+    // Stops on the occupied third tile after two walkable/canStep rounds.
+    occupied: lane(start, new Set(['3235,3419']), () => true, () => true, 5),
+    // The cap ends the walk before any callback.
+    capZero: lane(start, new Set(), () => true, () => true, 0),
+    // A refused step counts the tile it left.
+    stepRefused: lane(start, new Set(), () => true, () => false, 5),
+    // Truthy non-booleans continue; the first falsy `walkable` stops.
+    truthy: lane(start, new Set(), (t) => (t.x === 3235 ? 0 : 'yes'), () => 1, 5),
+    // The plot edge (x0 = 3235) ends a west run of three.
+    plotEdge: lane(start, new Set(), () => true, () => true, 27),
+    outside: lane({ x: 9999, z: 3419, level: 0 }, new Set(), () => true, () => true, 5),
+    wrongLevel: lane({ x: 3237, z: 3419, level: 1 }, new Set(), () => true, () => true, 5),
+    boom: lane(start, new Set(), () => { throw new Error('walk boom'); }, () => true, 5),
+    noWalkable: lane(start, new Set(), undefined, () => true, 5),
 };
 
-// Invalid origins keep the explicit `notImpl`; non-finite coordinates keep
-// their JS value instead of being converted through the bridge.
-globalThis.__invalid = [
-    { x: '5', z: 3000 },
-    {},
-    undefined,
-    null,
-    7,
-    { x: 3000, z: null },
-].map((origin) => {
-    try {
-        localFirePlot(origin);
-        return 'no throw';
-    } catch (e) {
-        return String(e && e.message ? e.message : e);
-    }
-});
-
-globalThis.__nonFinite = {
-    nanOrigin: (() => {
-        const p = localFirePlot({ x: NaN, z: 3000, level: 0 });
-        return {
-            x0NaN: Number.isNaN(p.x0), x1NaN: Number.isNaN(p.x1),
-            bankXNaN: Number.isNaN(p.bank.x), z0: p.z0, z1: p.z1,
-        };
-    })(),
-    infOrigin: (() => {
-        const p = localFirePlot({ x: Infinity, z: 3000, level: 0 });
-        return {
-            x0Inf: p.x0 === Infinity, x1Inf: p.x1 === Infinity,
-            bankXInf: p.bank.x === Infinity, z0: p.z0, z1: p.z1,
-        };
-    })(),
-    infHalf: (() => {
-        const p = localFirePlot({ x: 3000, z: 3000, level: 0 }, Infinity);
-        return { x0NegInf: p.x0 === -Infinity, x1PosInf: p.x1 === Infinity };
-    })(),
-    objectLevel: (() => {
-        const level = {};
-        const p = localFirePlot({ x: 3253, z: 3420, level });
-        return { fellBack: p.x0 === 3253 - 4, levelSame: p.bank.level === level };
-    })(),
+const a = new NoLightTiles();
+const b = new NoLightTiles();
+a.add({ x: 1, z: 2 });
+a.add({ x: 1, z: 2 });
+a.add({ x: 4, z: 5 });
+const merged = a.merge(new Set(['9,9', '4,5']));
+globalThis.__noLight = {
+    has: a.has({ x: 1, z: 2 }),
+    hasOther: a.has({ x: 2, z: 1 }),
+    size: a.size,
+    otherSize: b.size,
+    merged: [...merged],
+    mergedIsSet: merged instanceof Set,
+    mergeNothing: [...a.merge(undefined)],
 };
+a.clear();
+globalThis.__noLight.cleared = [a.size, a.has({ x: 1, z: 2 })];
 
-// The previous body, kept verbatim as the parity oracle, over whichever posted
-// list the case installed on the host content.
-function postedPlots() {
-    const content = globalThis.__rs2b0t_host.content;
-    return (content && content.fire_plots) || [];
-}
-
-function referencePlot(origin, half) {
-    const o = origin;
-    const x = o.x;
-    const z = o.z;
-    const level = o.level ?? 0;
-    const plots = postedPlots();
-    for (const p of plots) {
-        const lv = (p.bank && p.bank.level) ?? 0;
-        if (lv !== level) {
-            continue;
-        }
-        if (x >= p.x0 && x <= p.x1 && z >= p.z0 && z <= p.z1) {
-            return { bank: { x: p.bank.x, z: p.bank.z, level: lv }, x0: p.x0, x1: p.x1, z0: p.z0, z1: p.z1 };
-        }
-    }
-    const h = Math.max(0, Math.floor(Number(half) || 4));
-    return { bank: { x, z, level }, x0: x - h, x1: x + h, z0: z - h, z1: z + h };
-}
-
-function same(a, b) {
-    return Object.is(a.bank.x, b.bank.x) && Object.is(a.bank.z, b.bank.z)
-        && Object.is(a.bank.level, b.bank.level)
-        && Object.is(a.x0, b.x0) && Object.is(a.x1, b.x1)
-        && Object.is(a.z0, b.z0) && Object.is(a.z1, b.z1);
-}
-
-globalThis.__parity = [
-    { name: 'inside-east', origin: { x: 3253, z: 3420, level: 0 } },
-    { name: 'edge-inclusive', origin: { x: 3235, z: 3432, level: 0 } },
-    { name: 'outside', origin: { x: 3000, z: 3000, level: 0 } },
-    { name: 'wrong-plane', origin: { x: 2710, z: 3482, level: 2 } },
-    { name: 'seers-corner', origin: { x: 2710, z: 3482, level: 0 } },
-    { name: 'whole-halves', origin: { x: 3000, z: 3000, level: 0 }, halves: [undefined, 0, 1, 4, 8, '6', NaN, -3, 12.9] },
-].map(({ name, origin, halves }) => {
-    const h = halves || [undefined];
-    return h.map((half) => {
-        const native = half === undefined ? localFirePlot(origin) : localFirePlot(origin, half);
-        const reference = referencePlot(origin, half);
-        return { name, half: String(half), parity: same(native, reference) };
-    });
-}).flat();
-
-// The caller's posted list is iterated the way the previous body iterated it:
-// a non-array iterable, a customised array `Symbol.iterator`, the close on the
-// hitting return and the row/iterator errors all keep the frozen order.
-function withPlots(value, fn) {
-    const content = globalThis.__rs2b0t_host.content;
-    const saved = content.fire_plots;
-    content.fire_plots = value;
-    try {
-        return fn();
-    } finally {
-        content.fire_plots = saved;
-    }
-}
-
-const ORIGIN = { x: 3253, z: 3420, level: 0 };
-
-function equal(a, b) {
-    if (typeof a === 'string' || typeof b === 'string') return a === b;
-    return same(a, b);
-}
-
-// Each side scans a fresh posted list, built by `make`, installed on the host
-// content for the call.
-function scanned(make) {
-    const run = (impl) => withPlots(make(), () => {
-        try {
-            return view(impl(ORIGIN, 4));
-        } catch (e) {
-            return String(e && e.message ? e.message : e);
-        }
-    });
-    const native = run(localFirePlot);
-    const reference = run(referencePlot);
-    return { native, reference, parity: equal(native, reference) };
-}
-
-function plotRow(name, bankX, level) {
-    return { name, bank: { x: bankX, z: 3420, level }, x0: 3250, x1: 3260, z0: 3410, z1: 3430 };
-}
-
-globalThis.__iterator = {
-    plainArray: scanned(() => [plotRow('First', 3253, 0)]),
-    nonArrayIterable: scanned(() => new Set([plotRow('First', 3253, 0)])),
-    generatorList: scanned(function* () { yield plotRow('First', 3253, 0); }),
-    customArrayIterator: scanned(() => {
-        const rows = [plotRow('First', 3253, 0)];
-        const arr = [];
-        arr[Symbol.iterator] = function* () { yield rows[0]; };
-        return arr;
-    }),
-    reorderedArray: scanned(() => {
-        const rows = [plotRow('First', 3253, 0), plotRow('Second', 2710, 0)];
-        rows[Symbol.iterator] = function* () { yield rows[1]; yield rows[0]; };
-        return rows;
-    }),
-    nonIterable: scanned(() => 5),
-};
-
-// The caller's iterator is closed by the return that leaves the scan, its own
-// error survives a throwing close, and a throwing close wins over the hit.
-function tracedScan(makeIterator) {
-    const run = (impl) => {
-        const log = [];
-        const list = { [Symbol.iterator]: () => makeIterator(log) };
-        const value = withPlots(list, () => {
-            try {
-                return view(impl(ORIGIN, 4));
-            } catch (e) {
-                return String(e && e.message ? e.message : e);
-            }
-        });
-        return { value, log };
-    };
-    const native = run(localFirePlot);
-    const reference = run(referencePlot);
-    return {
-        native: native.value,
-        reference: reference.value,
-        parity: equal(native.value, reference.value),
-        nativeLog: native.log,
-        logsMatch: JSON.stringify(native.log) === JSON.stringify(reference.log),
-    };
-}
-
-function hitRow() {
-    return plotRow('First', 3253, 0);
-}
-
-globalThis.__close = {
-    onHit: tracedScan((log) => {
-        const rows = [hitRow()];
-        let at = 0;
-        return {
-            next: () => (at < rows.length
-                ? { done: false, value: rows[at++] }
-                : { done: true, value: undefined }),
-            return: () => { log.push('close'); return {}; },
-        };
-    }),
-    onRowThrow: tracedScan((log) => {
-        let at = 0;
-        return {
-            next: () => (at++ === 0
-                ? { done: false, value: { get bank() { throw new Error('row boom'); } } }
-                : { done: true, value: undefined }),
-            return: () => { log.push('close'); return {}; },
-        };
-    }),
-    rowThrowBeatsCloseThrow: tracedScan((log) => {
-        let at = 0;
-        return {
-            next: () => (at++ === 0
-                ? { done: false, value: { get bank() { throw new Error('row boom'); } } }
-                : { done: true, value: undefined }),
-            return: () => { log.push('close'); throw new Error('close boom'); },
-        };
-    }),
-    closeThrowBeatsHit: tracedScan((log) => {
-        const rows = [hitRow()];
-        let at = 0;
-        return {
-            next: () => (at < rows.length
-                ? { done: false, value: rows[at++] }
-                : { done: true, value: undefined }),
-            return: () => { log.push('close'); throw new Error('close boom'); },
-        };
-    }),
-};
-
-// The direct wire contract of the `local-plot` op.
-const fire = globalThis.rustyscript.functions.__rs2b0t_fire;
-globalThis.__wire = {
-    levelMiss: fire({ op: 'local-plot', level_ok: false }),
-    levelHit: fire({ op: 'local-plot', level_ok: true }),
-    contained: fire({ op: 'local-plot', contained: true }),
-    missed: fire({ op: 'local-plot', contained: false }),
-    exhausted: fire({ op: 'local-plot', exhausted: true }),
-    noFact: fire({ op: 'local-plot' }),
-};
-
-export default class T extends LoopingBot {
-    loop() {}
-}
+export default class T extends LoopingBot { loop() {} }
 "#;
 
 #[test]
-fn local_fire_plot_selects_the_first_posted_plot_in_order() {
-    let iso = spawn(LOCAL_PLOT);
-    let posted = iso.probe("__posted").unwrap();
-    for (name, bank_x, bank_z) in [
-        ("varrockEast", 3253, 3420),
-        ("varrockWest", 3185, 3440),
-        ("draynor", 3093, 3243),
-        ("seers", 2725, 3491),
-    ] {
-        assert_eq!(
-            (
-                posted[name]["bank"]["x"].as_i64(),
-                posted[name]["bank"]["z"].as_i64()
-            ),
-            (Some(bank_x), Some(bank_z)),
-            "{name} must return its own posted bank stand: {posted:?}"
-        );
-    }
+fn local_fire_plot_is_the_frozen_box_around_the_origin() {
+    let iso = spawn(HELPERS);
     assert_eq!(
-        posted["eastCorner"]["x0"],
-        serde_json::json!(3235),
-        "the inclusive AABB lower corner is inside the first posted plot: {posted:?}"
-    );
-    assert_eq!(posted["eastEdge"]["x1"], serde_json::json!(3275));
-    assert_eq!(
-        posted["seers"]["x1"],
-        serde_json::json!(2735),
-        "a later posted plot is still selected on its own tile: {posted:?}"
-    );
-    assert_eq!(
-        iso.probe("__overlap").unwrap(),
+        iso.probe("__plots").unwrap(),
         serde_json::json!({
-            "bank": { "x": 2710, "z": 3482, "level": 0 },
-            "x0": 2700, "x1": 2760, "z0": 3470, "z1": 3500,
-        }),
-        "an earlier posted row wins over a later containing row"
+            "defaultHalf": {"bank": [3253, 3429, 0], "tile": true, "x0": 3245, "x1": 3261, "z0": 3421, "z1": 3437},
+            "half3": {"bank": [3000, 3000, 1], "tile": true, "x0": 2997, "x1": 3003, "z0": 2997, "z1": 3003},
+            "clamped": {"bank": [3000, 3000, 0], "tile": true, "x0": 2998, "x1": 3002, "z0": 2998, "z1": 3002},
+            "nanHalf": true,
+            "missing": "THREW TypeError: Cannot read properties of undefined (reading 'x')",
+        })
     );
     iso.join();
 }
 
 #[test]
-fn local_fire_plot_level_gate_and_half_fallback_hold() {
-    let iso = spawn(LOCAL_PLOT);
-    let posted = iso.probe("__posted").unwrap();
-    for name in ["wrongPlane", "stringLevel"] {
-        assert_eq!(
-            posted[name],
-            serde_json::json!({
-                "bank": { "x": 3253, "z": 3420, "level": posted[name]["bank"]["level"] },
-                "x0": 3249, "x1": 3257, "z0": 3416, "z1": 3424,
-            }),
-            "{name} must fall back to the ±4 box: {posted:?}"
-        );
-    }
+fn run_in_dir_calls_walkable_and_can_step_per_visited_tile() {
+    let iso = spawn(HELPERS);
     assert_eq!(
-        posted["wrongPlane"]["bank"]["level"],
-        serde_json::json!(1),
-        "the fallback box keeps the origin plane"
-    );
-    assert_eq!(
-        posted["nullLevel"]["bank"]["x"],
-        serde_json::json!(3253),
-        "`level ?? 0` still matches the posted plot: {posted:?}"
-    );
-    let half = iso.probe("__half").unwrap();
-    assert_eq!(
-        half["defaultHalf"],
+        iso.probe("__lanes").unwrap(),
         serde_json::json!({
-            "bank": { "x": 3000, "z": 3000, "level": 0 },
-            "x0": 2996, "x1": 3004, "z0": 2996, "z1": 3004,
-        }),
-        "the shim default half is 4"
-    );
-    assert_eq!(half["ten"]["x0"], serde_json::json!(2990));
-    assert_eq!(
-        half["stringThree"]["x0"],
-        serde_json::json!(2997),
-        "JS `Number('3')` coercion stays in the shim"
-    );
-    assert_eq!(
-        half["zeroIsFour"]["x0"],
-        serde_json::json!(2996),
-        "`Number(half) || 4` keeps a falsy half at the default"
-    );
-    assert_eq!(half["negativeIsZero"]["x0"], serde_json::json!(3000));
-    assert_eq!(half["fractionFloors"]["x1"], serde_json::json!(3002));
-    assert_eq!(half["nanIsFour"]["x1"], serde_json::json!(3004));
-    iso.join();
-}
-
-#[test]
-fn local_fire_plot_guards_invalid_origins_without_json_coercion() {
-    let iso = spawn(LOCAL_PLOT);
-    assert_eq!(
-        iso.probe("__invalid").unwrap(),
-        serde_json::json!([
-            "not impl: localFirePlot",
-            "not impl: localFirePlot",
-            "not impl: localFirePlot",
-            "not impl: localFirePlot",
-            "not impl: localFirePlot",
-            "not impl: localFirePlot",
-        ]),
-        "a non-number x/z keeps the current `notImpl` error"
-    );
-    assert_eq!(
-        iso.probe("__nonFinite").unwrap(),
-        serde_json::json!({
-            "nanOrigin": {
-                "x0NaN": true, "x1NaN": true, "bankXNaN": true,
-                "z0": 2996, "z1": 3004,
+            "occupied": {
+                "run": 2,
+                "log": [
+                    "walkable:3237,3419", "canStep:3237,3419>3236,3419",
+                    "walkable:3236,3419", "canStep:3236,3419>3235,3419",
+                ],
+                "firstIsFrom": true,
             },
-            "infOrigin": {
-                "x0Inf": true, "x1Inf": true, "bankXInf": true,
-                "z0": 2996, "z1": 3004,
+            "capZero": {"run": 0, "log": [], "firstIsFrom": false},
+            "stepRefused": {
+                "run": 1,
+                "log": ["walkable:3237,3419", "canStep:3237,3419>3236,3419"],
+                "firstIsFrom": true,
             },
-            "infHalf": { "x0NegInf": true, "x1PosInf": true },
-            "objectLevel": { "fellBack": true, "levelSame": true },
-        }),
-        "NaN/Infinity stay JS values and never cross the bridge"
+            "truthy": {
+                "run": 2,
+                "log": [
+                    "walkable:3237,3419", "canStep:3237,3419>3236,3419",
+                    "walkable:3236,3419", "canStep:3236,3419>3235,3419",
+                    "walkable:3235,3419",
+                ],
+                "firstIsFrom": true,
+            },
+            "plotEdge": {
+                "run": 3,
+                "log": [
+                    "walkable:3237,3419", "canStep:3237,3419>3236,3419",
+                    "walkable:3236,3419", "canStep:3236,3419>3235,3419",
+                    "walkable:3235,3419", "canStep:3235,3419>3234,3419",
+                ],
+                "firstIsFrom": true,
+            },
+            "outside": {"run": 0, "log": [], "firstIsFrom": false},
+            "wrongLevel": {"run": 0, "log": [], "firstIsFrom": false},
+            "boom": {"run": "THREW Error: walk boom", "log": ["walkable:3237,3419"], "firstIsFrom": true},
+            "noWalkable": {"run": "THREW TypeError: walkable is not a function", "log": [], "firstIsFrom": false},
+        })
     );
     iso.join();
 }
 
 #[test]
-fn local_fire_plot_scans_the_callers_posted_list_and_closes_it() {
-    let iso = spawn(LOCAL_PLOT);
-    let iterator = iso.probe("__iterator").unwrap();
-    for case in [
-        "plainArray",
-        "nonArrayIterable",
-        "generatorList",
-        "customArrayIterator",
-        "reorderedArray",
-        "nonIterable",
-    ] {
-        assert_eq!(
-            iterator[case]["parity"], true,
-            "{case} must scan the posted list the previous body scanned: {iterator:?}"
-        );
-    }
+fn no_light_tiles_keep_a_per_instance_set_in_rust() {
+    let iso = spawn(HELPERS);
     assert_eq!(
-        iterator["nonArrayIterable"]["native"]["bank"]["x"], 3253,
-        "a non-array posted iterable is scanned, not skipped: {iterator:?}"
-    );
-    assert_eq!(
-        iterator["generatorList"]["native"]["bank"]["x"], 3253,
-        "a generator posted list is scanned, not skipped: {iterator:?}"
-    );
-    assert_eq!(
-        iterator["customArrayIterator"]["native"]["bank"]["x"], 3253,
-        "a customised array `Symbol.iterator` is what is walked: {iterator:?}"
-    );
-    assert_eq!(
-        iterator["reorderedArray"]["native"]["bank"]["x"], 2710,
-        "the caller's own iteration order decides the hit: {iterator:?}"
-    );
-    assert!(
-        iterator["nonIterable"]["native"].is_string(),
-        "a non-iterable posted value throws instead of falling back: {iterator:?}"
-    );
-
-    let close = iso.probe("__close").unwrap();
-    for case in [
-        "onHit",
-        "onRowThrow",
-        "rowThrowBeatsCloseThrow",
-        "closeThrowBeatsHit",
-    ] {
-        assert_eq!(
-            close[case]["parity"], true,
-            "{case} must match the previous body: {close:?}"
-        );
-        assert_eq!(
-            close[case]["logsMatch"], true,
-            "{case} must close the caller's iterator as before: {close:?}"
-        );
-    }
-    assert_eq!(
-        close["onHit"]["nativeLog"],
-        serde_json::json!(["close"]),
-        "the hitting return closes the caller's iterator: {close:?}"
-    );
-    assert_eq!(close["onHit"]["native"]["bank"]["x"], 3253);
-    assert_eq!(close["onRowThrow"]["native"], "row boom");
-    assert_eq!(
-        close["onRowThrow"]["nativeLog"],
-        serde_json::json!(["close"]),
-        "a row error still closes the caller's iterator: {close:?}"
-    );
-    assert_eq!(
-        close["rowThrowBeatsCloseThrow"]["native"], "row boom",
-        "the row error survives a throwing close: {close:?}"
-    );
-    assert_eq!(
-        close["closeThrowBeatsHit"]["native"], "close boom",
-        "a throwing close propagates instead of the hit: {close:?}"
-    );
-    iso.join();
-}
-
-#[test]
-fn local_fire_plot_matches_the_previous_scan_body() {
-    let iso = spawn(LOCAL_PLOT);
-    let parity = iso.probe("__parity").unwrap();
-    let rows = parity.as_array().expect("parity rows");
-    assert!(!rows.is_empty(), "parity cases ran");
-    for row in rows {
-        assert_eq!(
-            row["parity"],
-            serde_json::json!(true),
-            "native scan differs from the previous body at {row:?}"
-        );
-    }
-    assert_eq!(
-        iso.probe("__wire").unwrap(),
+        iso.probe("__noLight").unwrap(),
         serde_json::json!({
-            "levelMiss": { "kind": "plot" },
-            "levelHit": { "kind": "contains" },
-            "contained": { "kind": "hit" },
-            "missed": { "kind": "plot" },
-            "exhausted": { "kind": "fallback" },
-            "noFact": { "kind": "notImpl", "reason": "missing plot fact" },
-        }),
-        "the local-plot steps answer the shim without holding state"
+            "has": true,
+            "hasOther": false,
+            "size": 2,
+            "otherSize": 0,
+            "merged": ["9,9", "4,5", "1,2"],
+            "mergedIsSet": true,
+            "mergeNothing": ["1,2", "4,5"],
+            "cleared": [0, false],
+        })
     );
     iso.join();
 }

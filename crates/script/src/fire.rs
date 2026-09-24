@@ -2,10 +2,12 @@
 //!
 //! Frozen `lightFire` uses tinderbox on logs, then Firemaking XP or the
 //! cannot-light game-chat line, with `FIRE_START_TICKS` / `FIRE_LIGHT_TICKS`
-//! from identical `Firemaking.ts`. Burn lanes are ranked and traversed
-//! inside the posted plot using native walkability and step masks, excluding
-//! Fire locs and refused tiles. JavaScript marshals inputs and dispatches
-//! the returned use-on; it does not rank lanes or poll XP.
+//! from identical `Firemaking.ts`. Burn lanes are ranked inside the posted
+//! plot using native walkability and step masks, excluding Fire locs and
+//! refused tiles. JavaScript marshals inputs and dispatches the returned
+//! use-on; it does not rank lanes or poll XP. The `NoLightTiles` refused set
+//! and the `localFirePlot` half-width live here too; `load::fire_v8` walks the
+//! caller's own `runInDir` callbacks.
 
 use crate::observed::{self, ItemRow, Scene, Text};
 use api::query::ReachQueryView;
@@ -397,12 +399,9 @@ pub fn dispatch(input: &Value) -> Value {
         "next" => next(input.get("token").and_then(Value::as_u64).unwrap_or(0)),
         "next-tile" => next_tile(input),
         "in-fire-plot" => in_fire_plot(input),
-        "local-plot" => local_plot_step(input),
         "burn-lane-want" => burn_lane_want(input),
         "is-burn-west" => is_burn_west(input),
         "fire-reaction-ticks" => json!(1),
-        "run-in-dir" | "run-in-dir-result" => run_in_dir(input),
-        "no-light" => no_light(input),
         _ => json!({ "kind": "notImpl", "reason": "unknown op" }),
     };
     if matches!(op, "begin" | "next") {
@@ -842,32 +841,6 @@ fn in_fire_plot(input: &Value) -> Value {
     )
 }
 
-/// One step of the posted-plot scan behind `Firemaking.localFirePlot`
-/// (`local-plot`): the first posted plot whose bank level matches the origin
-/// and whose inclusive AABB contains it, else the `±half` box around the
-/// origin.
-///
-/// The caller's list is walked by its own iterator in JS (the frozen
-/// `for...of`), so this step decides what to do with the row that iterator just
-/// produced: `{level_ok}` gates the level comparison before the containment is
-/// asked for, `{contained}` names the first hit, and the `{exhausted}` report
-/// authorises the fallback box only after the caller's list ends. No
-/// coordinate, level or posted row crosses the bridge, so `typeof`, `?? 0`,
-/// NaN/Infinity and a mutated posted row keep their existing JS coercion; the
-/// fallback box arithmetic and the `Tile` construction also stay in the shim.
-fn local_plot_step(input: &Value) -> Value {
-    if let Some(contained) = input.get("contained").and_then(Value::as_bool) {
-        return json!({ "kind": if contained { "hit" } else { "plot" } });
-    }
-    if let Some(level_ok) = input.get("level_ok").and_then(Value::as_bool) {
-        return json!({ "kind": if level_ok { "contains" } else { "plot" } });
-    }
-    if input.get("exhausted").and_then(Value::as_bool) == Some(true) {
-        return json!({ "kind": "fallback" });
-    }
-    json!({ "kind": "notImpl", "reason": "missing plot fact" })
-}
-
 fn burn_lane_want(input: &Value) -> Value {
     let count = input
         .get("logCount")
@@ -883,131 +856,81 @@ fn is_burn_west(input: &Value) -> Value {
     json!(i32_field(dir, "dx") == Some(-1) && i32_field(dir, "dz") == Some(0))
 }
 
-fn run_in_dir(input: &Value) -> Value {
-    if input.get("op").and_then(Value::as_str) == Some("run-in-dir-result") {
-        if !input
-            .get("walkable")
-            .and_then(Value::as_bool)
-            .unwrap_or(false)
-        {
-            return json!({ "kind": "run", "run": 0 });
-        }
-        let (Some(from), Some(plot)) = (
-            tile_from(input.get("from")),
-            input.get("plot").and_then(plot_from),
-        ) else {
-            return json!({ "kind": "run", "run": 0 });
-        };
-        let direction = direction_from(input.get("dir")).unwrap_or((-1, 0));
-        let cap = input
-            .get("cap")
-            .and_then(Value::as_f64)
-            .unwrap_or(0.0)
-            .floor()
-            .clamp(0.0, 27.0) as i32;
-        return observed::with(|scene| {
-            let reach = reach_of(scene);
-            if reach.available && !reach.canlight_available() {
-                return json!({ "kind": "notImpl", "reason": "missing canlight" });
-            }
-            json!({
-                "kind": "run",
-                "run": if cap > 0 { run_length(from, direction, cap, &refused_keys(input.get("occupied")), &fire_locs(scene), reach, plot) } else { 0 },
-            })
-        });
-    }
-    let (Some(from), Some(plot)) = (
-        tile_from(input.get("from")),
-        input.get("plot").and_then(plot_from),
-    ) else {
-        return json!({ "kind": "run", "run": 0 });
-    };
-    let cap = input.get("cap").and_then(Value::as_f64).unwrap_or(0.0);
-    if cap <= 0.0
-        || from.level != plot.level
-        || from.x < plot.x0
-        || from.x > plot.x1
-        || from.z < plot.z0
-        || from.z > plot.z1
-        || refused_keys(input.get("occupied")).contains(&(from.x, from.z))
-    {
-        return json!({ "kind": "run", "run": 0 });
-    }
-    if input
-        .get("hasWalkable")
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
-    {
-        json!({ "kind": "callback", "callback": "walkable" })
+/// Half-width of the frozen `localFirePlot` box when the caller omits `half`.
+const LOCAL_FIRE_HALF: f64 = 8.0;
+/// The smallest half-width the frozen box allows.
+const LOCAL_FIRE_MIN_HALF: f64 = 2.0;
+
+/// Frozen `localFirePlot` half-width: `Math.max(2, Math.floor(half))`, with
+/// `half = 8` when the caller omits it. `NaN` stays `NaN` (`Math.max`).
+pub(crate) fn local_fire_half(half: Option<f64>) -> f64 {
+    let half = half.unwrap_or(LOCAL_FIRE_HALF).floor();
+    if half.is_nan() {
+        f64::NAN
     } else {
-        let direction = direction_from(input.get("dir")).unwrap_or((-1, 0));
-        let cap = cap.floor().clamp(0.0, 27.0) as i32;
-        observed::with(|scene| {
-            let reach = reach_of(scene);
-            if reach.available && !reach.canlight_available() {
-                json!({ "kind": "notImpl", "reason": "missing canlight" })
-            } else {
-                json!({ "kind": "run", "run": run_length(
-                    from, direction, cap, &refused_keys(input.get("occupied")),
-                    &fire_locs(scene), reach, plot
-                ) })
-            }
-        })
+        half.max(LOCAL_FIRE_MIN_HALF)
     }
 }
 
-fn no_light(input: &Value) -> Value {
-    let keys = input
-        .get("keys")
-        .and_then(Value::as_array)
-        .map(|rows| {
-            rows.iter()
-                .filter_map(Value::as_str)
-                .map(str::to_string)
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
-    match input.get("action").and_then(Value::as_str).unwrap_or("") {
-        "add" => {
-            let key = input.get("key").and_then(Value::as_str).unwrap_or("");
-            let mut out = keys;
-            if !out.iter().any(|item| item == key) {
-                out.push(key.to_string());
-            }
-            json!(out)
+/// The tile keys one `NoLightTiles` instance refused this session, in
+/// insertion order (the frozen `Set<string>`). Rust holds the set; the JS
+/// instance keeps only its slot, so no call ships the set across.
+#[derive(Default)]
+struct NoLightKeys {
+    order: Vec<String>,
+    seen: HashSet<String>,
+}
+
+thread_local! {
+    /// One slot per `new NoLightTiles()` in this isolate thread. Instances are
+    /// session-lived script fields, so slots are never reused; the table dies
+    /// with the isolate thread.
+    static NO_LIGHT: RefCell<Vec<NoLightKeys>> = const { RefCell::new(Vec::new()) };
+}
+
+/// A fresh, empty refused-tile set; returns its slot.
+pub(crate) fn no_light_new() -> usize {
+    NO_LIGHT.with(|slots| {
+        let mut slots = slots.borrow_mut();
+        slots.push(NoLightKeys::default());
+        slots.len() - 1
+    })
+}
+
+fn with_no_light<R>(slot: usize, f: impl FnOnce(&mut NoLightKeys) -> R) -> Option<R> {
+    NO_LIGHT.with(|slots| slots.borrow_mut().get_mut(slot).map(f))
+}
+
+/// `refused.add(key)`; `None` for an unknown slot.
+pub(crate) fn no_light_add(slot: usize, key: String) -> Option<()> {
+    with_no_light(slot, |keys| {
+        if keys.seen.insert(key.clone()) {
+            keys.order.push(key);
         }
-        "has" => json!(input
-            .get("key")
-            .and_then(Value::as_str)
-            .is_some_and(|key| keys.iter().any(|item| item == key))),
-        "size" => json!(keys.len()),
-        "merge" => {
-            let occupied = input
-                .get("occupied")
-                .and_then(Value::as_array)
-                .map(|rows| {
-                    rows.iter()
-                        .filter_map(Value::as_str)
-                        .map(str::to_string)
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default();
-            let mut out = Vec::new();
-            for key in occupied {
-                if !out.iter().any(|item| item == &key) {
-                    out.push(key);
-                }
-            }
-            for key in keys {
-                if !out.iter().any(|item| item == &key) {
-                    out.push(key);
-                }
-            }
-            json!(out)
-        }
-        "clear" => json!([]),
-        _ => json!({ "kind": "notImpl", "reason": "unknown no-light operation" }),
-    }
+    })
+}
+
+/// `refused.has(key)`.
+pub(crate) fn no_light_has(slot: usize, key: &str) -> Option<bool> {
+    with_no_light(slot, |keys| keys.seen.contains(key))
+}
+
+/// `refused.size`.
+pub(crate) fn no_light_size(slot: usize) -> Option<usize> {
+    with_no_light(slot, |keys| keys.order.len())
+}
+
+/// The refused keys in insertion order (`for (const key of refused)`).
+pub(crate) fn no_light_keys(slot: usize) -> Option<Vec<String>> {
+    with_no_light(slot, |keys| keys.order.clone())
+}
+
+/// `refused.clear()`.
+pub(crate) fn no_light_clear(slot: usize) -> Option<()> {
+    with_no_light(slot, |keys| {
+        keys.order.clear();
+        keys.seen.clear();
+    })
 }
 
 #[cfg(test)]
@@ -1409,66 +1332,5 @@ mod tests {
             "want": 1,
         }));
         assert_eq!(result["kind"], "none");
-    }
-
-    #[test]
-    fn local_plot_steps_are_routed_through_dispatch() {
-        let step = json!({ "op": "local-plot", "level_ok": true });
-        assert_eq!(
-            dispatch(&step),
-            json!({ "kind": "contains" }),
-            "the op is routed through dispatch"
-        );
-        assert_eq!(dispatch(&step), local_plot_step(&step));
-    }
-
-    #[test]
-    fn local_plot_gates_level_before_containment_and_stops_at_the_hit() {
-        assert_eq!(
-            local_plot_step(&json!({ "op": "local-plot", "level_ok": false })),
-            json!({ "kind": "plot" }),
-            "a level mismatch advances without asking for containment"
-        );
-        assert_eq!(
-            local_plot_step(&json!({ "op": "local-plot", "level_ok": true })),
-            json!({ "kind": "contains" }),
-            "a matching level asks for the inclusive AABB fact"
-        );
-        assert_eq!(
-            local_plot_step(&json!({ "op": "local-plot", "contained": true })),
-            json!({ "kind": "hit" }),
-            "the first containing posted plot is the hit"
-        );
-        assert_eq!(
-            local_plot_step(&json!({ "op": "local-plot", "contained": false })),
-            json!({ "kind": "plot" }),
-            "an inclusive AABB miss advances to the next posted plot"
-        );
-    }
-
-    #[test]
-    fn local_plot_falls_back_only_when_the_posted_list_is_exhausted() {
-        assert_eq!(
-            local_plot_step(&json!({ "op": "local-plot", "exhausted": true })),
-            json!({ "kind": "fallback" }),
-            "the caller's exhausted list is the only fallback path"
-        );
-        assert_eq!(
-            local_plot_step(&json!({
-                "op": "local-plot", "level_ok": true, "contained": false,
-            })),
-            json!({ "kind": "plot" }),
-            "containment outranks the level fact"
-        );
-        assert_eq!(
-            local_plot_step(&json!({ "op": "local-plot" })),
-            json!({ "kind": "notImpl", "reason": "missing plot fact" }),
-            "a step without a plot fact is explicit, never a guessed hit"
-        );
-        assert_eq!(
-            local_plot_step(&json!({ "op": "local-plot", "exhausted": false })),
-            json!({ "kind": "notImpl", "reason": "missing plot fact" }),
-            "only a true exhaustion report authorises the fallback"
-        );
     }
 }

@@ -1185,9 +1185,10 @@ equip, withdraw, or invent `snapshot.loadout`. Callers supply a loadout
 literal and read `api.snapshot.inv` / `api.snapshot.stats`.
 
 v1 JSON helpers (`__rs2b0t_food_of`, `__rs2b0t_gear_of`,
-`__rs2b0t_supplies_of`, `__rs2b0t_weapon_of`, `__rs2b0t_boost_potions_step`)
-and the current ranged.js shim stay unchanged, including callback/identity
-quirks. New typed calls do not go through that JSON dispatch.
+`__rs2b0t_supplies_of`, `__rs2b0t_weapon_of`), the v1 boost-potion helper
+(`__rs2b0t_boost_potions`, which calls the script's own `levels`/`held`
+callbacks) and the current ranged.js shim stay separate. New typed calls do
+not go through those v1 paths.
 
 | Method | OK | Errors |
 | --- | --- | --- |

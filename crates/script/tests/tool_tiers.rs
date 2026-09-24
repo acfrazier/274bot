@@ -70,12 +70,18 @@ try {
     globalThis.__availBoom = String(e && e.message ? e.message : e);
 }
 
+// Frozen `for (const t of tiers)` reads `t.level` on every visited tier, so a
+// null tier after an unaccepted one throws before `B` is reached.
 const orderTiers = [{ name: 'A', level: 1 }, null, { name: 'B', level: 1 }];
 const orderCalls = [];
-globalThis.__orderHit = bestFromTiers(5, orderTiers, (n) => {
-    orderCalls.push(n);
-    return n === 'B';
-});
+try {
+    globalThis.__orderHit = bestFromTiers(5, orderTiers, (n) => {
+        orderCalls.push(n);
+        return n === 'B';
+    });
+} catch (e) {
+    globalThis.__orderHit = String(e && e.message ? e.message : e);
+}
 globalThis.__orderCalls = orderCalls;
 
 export default class T extends LoopingBot {
@@ -136,11 +142,14 @@ fn best_from_tiers_export_orders_level_before_available_and_short_circuits() {
         "null available is not invoked when no tier is eligible"
     );
     assert_eq!(iso.probe("__availBoom").unwrap(), "avail boom");
-    assert_eq!(iso.probe("__orderHit").unwrap(), "B");
+    assert_eq!(
+        iso.probe("__orderHit").unwrap(),
+        "Cannot read properties of null (reading 'level')"
+    );
     assert_eq!(
         iso.probe("__orderCalls").unwrap(),
-        serde_json::json!(["A", "B"]),
-        "sparse tiers keep source index order without dropping holes"
+        serde_json::json!(["A"]),
+        "the frozen loop stops at the null tier it cannot read"
     );
     iso.join();
 }

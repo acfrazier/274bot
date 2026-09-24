@@ -62,35 +62,7 @@ export function isHostileAttacker(c, maxDistance) {
     });
 }
 
-function callStep(payload) {
-    return globalThis.rustyscript.functions.__rs2b0t_target_step(payload);
-}
-
-/**
- * First candidate the caller accepts wins. The native step owns the decisions:
- * it asks for the element's `reachable` answer, names the first truthy answer
- * as the hit, stops the scan there, and only the caller's exhaustion reaches
- * the blocked fallback.
- *
- * The walk is the engine's own `for...of` over the caller's iterable and
- * nothing else: the iterator is acquired once, its `next` is read once and
- * called per step, a primitive `next()` result, a missing or non-callable
- * `Symbol.iterator`, a non-callable `return` and the close on the returning
- * hit keep their exact engine order. Only the element read, the `reachable(c)`
- * call and the truthiness conversion happen in JS, and no candidate, callback
- * answer or collected reachability crosses the bridge.
- */
+/** First candidate the caller accepts wins; one native call walks the caller's iterable. */
 export function chooseTarget(candidatesNearestFirst, reachable) {
-    const start = callStep({ op: 'choose' });
-    if (start.kind !== 'next') throw notImpl('Thieving.chooseTarget', start.reason);
-    for (const c of candidatesNearestFirst) {
-        const held = callStep({ op: 'choose', done: false });
-        if (held.kind !== 'probe') throw notImpl('Thieving.chooseTarget', held.reason);
-        const verdict = callStep({ op: 'choose', probed: !!reachable(c) });
-        if (verdict.kind === 'hit') return { target: c, blocked: null };
-        if (verdict.kind !== 'next') throw notImpl('Thieving.chooseTarget', verdict.reason);
-    }
-    const end = callStep({ op: 'choose', done: true });
-    if (end.kind !== 'exhausted') throw notImpl('Thieving.chooseTarget', end.reason);
-    return { target: null, blocked: candidatesNearestFirst[0] ?? null };
+    return globalThis.__rs2b0t_choose_target(candidatesNearestFirst, reachable);
 }
