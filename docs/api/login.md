@@ -2,11 +2,12 @@
 
 `crates/host/src/login_queue.rs` stays under Lost City's **production**
 login rate limits. FIFO identity is a process-unique slot owner, while device
-rate accounting remains keyed by UID. Only the slot thread creates membership
-at its Queueing transition, then polls its owner token for `Permit::Grant` or
-`Permit::Wait(duration)`. Login-all records non-membership order hints before
-it exposes each new login intent; a later worker cannot overtake an earlier
-hinted owner, and an online or mid-handshake slot cannot leave a ghost place.
+rate accounting remains keyed by UID. Only a slot thread creates membership
+when it reaches Queueing. Workers enter in arrival order; the focused/preferred
+owner is the sole exception, entering at the front or moving there if already
+queued. Login all, Log in, and auto-login changes only arm intent and wake
+workers. They create no membership, record no order hints, and no absent owner
+can gate the head.
 
 A process binds one **server profile** (`local-274`, `local-289`,
 `public-289`) before sockets open. Profile defaults (ports, vault path,
@@ -39,8 +40,9 @@ gap was invented (rs2b0t used 1 s); it is not a server default.
 | backoff (response 16, attempts exceeded) | **20 s + 45 s per prior hit** | shared across the wall; `LoginBackoff::reset()` clears per-slot escalation |
 
 Defaults are `LoginQueue::default()`; `new(spacing, ip_cap, ip_window)`
-exists for tests and rejects a zero address cap. A blocked requester waits
-the longest unmet spacing, shared-throttle, per-IP, or per-uid constraint.
+exists for tests and rejects a zero address cap. A requester waits when another
+owner is ahead of it or for the longest unmet spacing, shared-throttle, per-IP,
+or per-uid constraint. There is no separate hint wait.
 
 ## Backoff
 
@@ -60,10 +62,10 @@ returns its place as `Option<QueuePos { position: u32, total: u32 }>` — the
 present). Two slots with the same UID therefore keep independent places while
 sharing conservative device-attempt accounting. host-play publishes both
 fields atomically with owner membership; an absent owner always clears its
-own row. The panel renders only the focused slot's valid
-`1 <= position <= total` tuple, so a connected slot never inherits another
-slot's card. Withdrawal, terminal startup failure, rail removal, and Stop
-clear both owner membership and status.
+own row. Each game view renders only its displayed slot's valid
+`1 <= position <= total` tuple, so connected and neighboring slots never
+inherit another slot's card. Withdrawal, terminal startup failure, worker
+unwind, rail removal, and Stop clear both owner membership and status.
 
 ## Mainland hop (tutorial skip)
 
