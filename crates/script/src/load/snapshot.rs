@@ -6,6 +6,16 @@
 //! the tick loop. Lifecycle/teardown stays in `isolate`.
 
 use rustyscript::Runtime;
+use std::cell::Cell;
+
+thread_local! {
+    /// The previous post's `animating` flag and tick. The swing-start edge
+    /// (`fight_upkeep.swingStartedThisTick`: the tick the local player's
+    /// primary animation began) is the one boolean of cross-post state it
+    /// needs; Rust keeps it here instead of a JS clock. Cleared when the JS
+    /// snapshot object is rebuilt.
+    static LAST_ANIMATING: Cell<Option<(bool, u64)>> = const { Cell::new(None) };
+}
 
 /// Materialise the decoded FlatBuffer snapshot as the JS object the
 /// shim reads (`__rs2b0t_host.snapshot`), merging it onto the last
@@ -48,6 +58,10 @@ pub(super) fn materialize_snapshot(
     // to (the same values the shim's `snap()` reads with no snapshot).
     let empty_rows: v8::Local<v8::Value> = v8::Array::new(&mut scope, 0).into();
     let none: v8::Local<v8::Value> = v8::null(&mut scope).into();
+    if !had {
+        // A new snapshot object: no previous post to compare against.
+        LAST_ANIMATING.with(|cell| cell.set(None));
+    }
 
     // `tick` is always carried. A field the buffer carries overwrites
     // the object; a field a delta omits keeps its last value. On the
@@ -754,12 +768,26 @@ pub(super) fn materialize_snapshot(
     } else if !had {
         set(&mut scope, obj, "in_combat", falsy)?;
     }
-    if snap.has_animating() {
+    let animating_now = if snap.has_animating() {
         let animating = v8::Boolean::new(&mut scope, snap.animating());
         set(&mut scope, obj, "animating", animating.into())?;
-    } else if !had {
+        snap.animating()
+    } else if had {
+        LAST_ANIMATING.with(|cell| cell.get().is_some_and(|(anim, _)| anim))
+    } else {
         set(&mut scope, obj, "animating", falsy)?;
-    }
+        false
+    };
+    // The one fact `fight_upkeep` / `eat_timing` read: the tick the local
+    // player's primary animation began. A second post in the same tick keeps
+    // the first post's answer, as a caller-driven clock would.
+    let tick_number = snap.tick();
+    let swing_started = LAST_ANIMATING.with(|cell| {
+        let previous = cell.replace(Some((animating_now, tick_number)));
+        previous.is_some_and(|(anim, tick)| animating_now && !anim && tick != tick_number)
+    });
+    let swing = v8::Boolean::new(&mut scope, swing_started);
+    set(&mut scope, obj, "swing_started", swing.into())?;
     if snap.has_main_modal_id() {
         let main_modal_id = num(&mut scope, snap.main_modal_id() as f64);
         set(&mut scope, obj, "main_modal_id", main_modal_id)?;
@@ -1115,7 +1143,6 @@ fn tile_values_object<'s>(
     set(scope, o, "level", level)?;
     Ok(o.into())
 }
-
 
 fn unavailable_collision<'s>(
     scope: &mut v8::HandleScope<'s>,

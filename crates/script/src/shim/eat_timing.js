@@ -1,5 +1,8 @@
+import { snap } from '../../shim/_kernel.js';
+
 export const URGENT_HP_FRACTION = 0.35;
 
+/** Whether to hold this tick and eat on the next one instead. */
 export function shouldHoldEat(input) {
     const hp = input && typeof input.hpFraction === 'number' ? input.hpFraction : 1;
     const urgent = input && typeof input.urgentAt === 'number' ? input.urgentAt : URGENT_HP_FRACTION;
@@ -9,27 +12,18 @@ export function shouldHoldEat(input) {
     return input && input.attackedThisTick === true;
 }
 
+/**
+ * Frozen `AttackClock`: the tick our attack animation began, keyed on
+ * animation changes. Rust owns the change and posts it as `swing_started`, so
+ * the clock keeps no state of its own: `observe` takes the frozen arguments
+ * and reads nothing, and `reset` has nothing to clear.
+ */
 export class AttackClock {
-    constructor() {
-        this.lastAnim = -1;
-        this.startedTick = -1;
-    }
-
-    observe(anim, tick) {
-        if (anim !== this.lastAnim) {
-            this.lastAnim = anim;
-            if (anim !== -1) {
-                this.startedTick = tick;
-            }
-        }
-    }
+    observe(_anim, _tick) {}
 
     attackedThisTick(tick) {
-        return this.startedTick === tick;
+        return snap().swing_started === true && snap().tick === tick;
     }
 
-    reset() {
-        this.lastAnim = -1;
-        this.startedTick = -1;
-    }
+    reset() {}
 }
