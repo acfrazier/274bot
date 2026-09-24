@@ -77,6 +77,7 @@ impl LoginQueue {
     /// pending reservations; a full `ip_window` starts at the latest login
     /// return only after no reservation remains in flight.
     pub fn new(spacing: Duration, ip_cap: usize, ip_window: Duration) -> Self {
+        assert!(ip_cap > 0, "ip_cap must be positive");
         Self {
             spacing,
             ip_cap,
@@ -220,14 +221,17 @@ impl LoginQueue {
         self.queue.iter().copied().collect()
     }
 
-    /// Longest unmet constraint for granting `uid` at `now`.
-
     /// Pause all sibling attempts after the server reports an address/device
     /// login throttle. Repeated reports may extend, but never shorten, it.
     pub fn hold_for(&mut self, now: Instant, duration: Duration) {
         let deadline = now + duration;
-        self.throttle_until = Some(self.throttle_until.map_or(deadline, |old| old.max(deadline)));
+        self.throttle_until = Some(
+            self.throttle_until
+                .map_or(deadline, |old| old.max(deadline)),
+        );
     }
+
+    /// Longest unmet constraint for granting `uid` at `now`.
     fn blocked_for(&mut self, uid: i32, now: Instant) -> Option<Duration> {
         let mut wait = None;
 
@@ -237,7 +241,6 @@ impl LoginQueue {
                 wait = Some(self.spacing - since);
             }
         }
-
 
         if let Some(until) = self.throttle_until {
             let left = until.saturating_duration_since(now);
@@ -311,13 +314,11 @@ impl LoginQueue {
     }
 
     /// Drop every uid accounting row after 15 s idle when it has no pending
-    /// permit and is not queued. Partial counts expire on the same server TTL
-    /// as a full device window.
+    /// permit. Queue identity is stored separately, so an expired waiting uid
+    /// keeps its FIFO place while its partial counter resets.
     fn prune_uid(&mut self, now: Instant) {
-        let queued = &self.queue;
-        self.by_uid.retain(|uid, state| {
-            queued.contains(uid)
-                || state.pending > 0
+        self.by_uid.retain(|_, state| {
+            state.pending > 0
                 || state
                     .last
                     .is_some_and(|last| now.saturating_duration_since(last) < UID_COOLDOWN)
@@ -751,7 +752,9 @@ mod tests {
         let base = Instant::now();
         let mut q = LoginQueue::default();
         q.hold_for(base, Duration::from_secs(20));
-        assert!(matches!(q.request_permit(8, base), Permit::Wait(wait) if wait == Duration::from_secs(20)));
+        assert!(
+            matches!(q.request_permit(8, base), Permit::Wait(wait) if wait == Duration::from_secs(20))
+        );
         assert_eq!(
             q.request_permit(8, base + Duration::from_secs(20)),
             Permit::Grant
@@ -796,6 +799,12 @@ mod tests {
             "a terminal preferred owner cannot become a phantom head"
         );
         assert!(q.status(7).is_none());
+    }
+
+    #[test]
+    #[should_panic(expected = "ip_cap must be positive")]
+    fn zero_cap_is_rejected_at_construction() {
+        let _ = LoginQueue::new(Duration::ZERO, 0, Duration::from_secs(60));
     }
 
     #[test]

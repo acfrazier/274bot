@@ -1,9 +1,11 @@
 # Login: FIFO throttle numbers
 
 `crates/host/src/login_queue.rs` stays under Lost City's **production**
-login rate limits. `LoginQueue::request_permit(uid, now)` returns
-`Permit::Grant` or `Permit::Wait(duration)` — retry after `duration`. Only
-the FIFO head may be granted.
+login rate limits. Slots call `LoginQueue::enqueue(uid)` once at the
+Queueing transition, then poll `poll_permit(uid, now)` for
+`Permit::Grant` or `Permit::Wait(duration)`. Only the FIFO head may be
+granted; control-thread Login-all enqueue order therefore cannot be
+reordered by worker lock acquisition.
 
 A process binds one **server profile** (`local-274`, `local-289`,
 `public-289`) before sockets open. Profile defaults (ports, vault path,
@@ -31,30 +33,32 @@ gap was invented (rs2b0t used 1 s); it is not a server default.
 | Rule | Value | Meaning |
 | --- | --- | --- |
 | spacing | **0** | engine has none; not-head polls every **20 ms** |
-| per-IP window | **30 grants / 60 s** | production `rateLimitAddressLogin` + address TTL |
-| per-uid cap | **4 grants, then remaining of 15 s** | production device cap is 5 (`>= 5` rejects); stay under with 4, cooldown = device TTL from the latest grant |
-| backoff (response 16, world full) | **20 s + 45 s per prior hit** | `LoginBackoff::delay()` escalates; `reset()` clears |
+| per-IP window | **29 attempts / 60 s idle** | production threshold is 30 and rejects the attempt that reaches it; pending reservations count |
+| per-uid cap | **4 attempts, then remaining of 15 s idle** | production device threshold is 5 (`>= 5` rejects); partial counts expire after the same idle TTL |
+| backoff (response 16, attempts exceeded) | **20 s + 45 s per prior hit** | shared across the wall; `LoginBackoff::reset()` clears per-slot escalation |
 
 Defaults are `LoginQueue::default()`; `new(spacing, ip_cap, ip_window)`
-exists for tests. A blocked requester waits the longest unmet constraint:
-the per-IP window roll-off or the per-uid cooldown.
+exists for tests and rejects a zero address cap. A blocked requester waits
+the longest unmet spacing, shared-throttle, per-IP, or per-uid constraint.
 
 ## Backoff
 
-`LoginBackoff` delays retries after a response-16 (world full) rejection:
-first retry 20 s, then 65 s, 110 s, … (`20 + 45·hits`). Call `reset()` on
-any successful login.
+`LoginBackoff` delays retries after response 16 (“Login attempts exceeded”):
+first retry 20 s, then 65 s, 110 s, … (`20 + 45·hits`). A response-16 hold
+is also published to the shared queue so sibling slots pause. Retry waits are
+interruptible by Stop and intent changes. Any successful login resets the
+slot's escalation.
 
 ## Queue position and leaving
 
 While a slot waits it sits on the FIFO. `LoginQueue::status(uid)` returns
 its place as `Option<QueuePos { position: u32, total: u32 }>` — the **k of n**
 snapshot (1-based; a granted uid is popped and no longer present). host-play
-mirrors that onto `SlotStatus.queue_position` / `queue_total` while the slot
-waits; the panel renders it as **"k of n"** in the status row and as the
-queue card over the focused slot. `LoginQueue::leave(uid)` drops a queued
-uid (no-op if absent) — the panel's rail ✕ and `stop_slot` call it so a
-removed slot does not sit in the FIFO.
+publishes both fields atomically with queue membership; an absent uid always
+clears its own row. The panel renders only the focused slot's valid
+`1 <= position <= total` tuple, so a connected slot never inherits another
+slot's card. `LoginQueue::leave(uid)` drops a queued uid; rail removal,
+withdrawal, terminal startup failure, and Stop clear membership and status.
 
 ## Mainland hop (tutorial skip)
 
@@ -102,10 +106,11 @@ the rustc triple, not a world switch.
 
 ## Wiring
 
-`api::interact::login` routes the handshake through the driver
-(`Client::login`), which opens a fresh stream per attempt and blocks until
-the server responds. The FIFO sits ahead of that handshake: request a permit,
-wait the returned `Duration` when throttled, then send.
+Every host-owned socket attempt is preceded by a shared permit, including
+opcode-18 reconnects and a retry after response 1. The embedded client
+returns those intents to host-play instead of reconnecting or recursively
+retrying internally. A granted attempt is acknowledged on success, error, or
+unwind; an unused grant is abandoned before any socket call.
 
 
 ## Panel: Login all vs auto-login
@@ -118,7 +123,8 @@ The panel arms logins through `SlotArm` flags (host-play), not
   lands the arm disarms, so an unexpected DC leaves the slot on the title
   until the next explicit arm.
 - **Auto-login** (General config → **slot**, **auto-login on title**, backed
-  by `ProfileSettings.auto_login`, default **off**) keeps the arm armed
-  after a successful handshake, so a DC re-handshakes. An explicit
-  **Logout / Logout all** latches the member, which blocks even an
-  auto-login slot until the next **Login all** clears the latch.
+  by `ProfileSettings.auto_login`, default **off**) records the intent's
+  provenance. Turning it on arms an unlatched parked slot; turning it off
+  withdraws only auto-derived intent, including during preparation/backoff.
+  Explicit Log in intent survives an auto toggle. An explicit **Logout /
+  Logout all** latches the member until the next **Login all** clears it.

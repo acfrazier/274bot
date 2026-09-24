@@ -4160,9 +4160,7 @@ impl Session {
             .iter()
             .find(|s| s.username == name)
             .filter(|s| {
-                s.queue_position >= 1
-                    && s.queue_total >= 1
-                    && s.queue_position <= s.queue_total
+                s.queue_position >= 1 && s.queue_total >= 1 && s.queue_position <= s.queue_total
             })
             .map(|s| (s.queue_position, s.queue_total))
     }
@@ -4436,7 +4434,6 @@ fn warn_stress50_debug() {
 fn fresh_uid(vault: &Vault) -> i32 {
     vault.profiles().map(|p| p.uid).max().unwrap_or(274_000_000) + 1
 }
-
 
 /// Copy a traveller dest into `SlotStatus.walk_*`; −1 when idle.
 fn apply_queued_walk(status: &mut SlotStatus, queued: Option<Tile>) {
