@@ -874,21 +874,21 @@ impl Guardian {
         }
     }
 
-    /// Step off a hazard underfoot: flee rings from the player while the
-    /// hazard loc is within Chebyshev 2, then stop (the event may still
-    /// linger in the loaded scene — the danger is what matters).
+    /// Step off a hazard underfoot: use the hazard's posted tile as the
+    /// threat and the frozen four-tile step ring (`RandomEvents.ts:607-614`).
+    /// Stop once no hazard loc is within Chebyshev 2; the loc may still
+    /// linger elsewhere in the loaded scene.
     fn step_hazard<D: Driver>(&mut self, driver: &mut D, snap: &GameSnapshot) {
         let Some((px, pz, _)) = snap.tile() else {
             return;
         };
-        let near = snap.locs().iter().any(|l| {
-            is_hazard_loc_name(l.name.as_deref()) && cheb((px, pz), (l.tile.x, l.tile.z)) <= 2
-        });
-        if !near {
+        let Some(hazard) = snap.locs().iter().find(|loc| {
+            is_hazard_loc_name(loc.name.as_deref()) && cheb((px, pz), (loc.tile.x, loc.tile.z)) <= 2
+        }) else {
             self.acting = false;
             return;
-        }
-        for (x, z) in flee_candidates((px, pz)) {
+        };
+        for (x, z) in hazard_flee_candidates((px, pz), (hazard.tile.x, hazard.tile.z)) {
             if walk(driver, x, z) {
                 break;
             }

@@ -242,6 +242,55 @@ fn neighbour_genie_overhead_other_name_is_not_ours() {
 }
 
 #[test]
+fn talking_random_targeting_another_player_is_ignored_but_ours_is_handled() {
+    let settings = ProfileSettings::default();
+
+    let mut c = new_client();
+    ingame_scene(&mut c);
+    plant_player(&mut c, "Test", 0, 0);
+    // The target is player slot 1, not local slot 0. Even misleading
+    // overhead ownership text must not make this other player's genie ours.
+    plant_npc(&mut c, 0, "Genie", 32769, Some("Greetings Test!"));
+    let mut g = Guardian::new();
+    let mut drv = FakeDriver::default();
+    let mut snap = GameSnapshot::new();
+    let mut knocks = 0;
+
+    tick_at(&mut c, &mut snap);
+    let status = {
+        let mut knock = |_: &DetectedRandom| {
+            knocks += 1;
+            RandomClaim::Handle
+        };
+        g.tick(&mut drv, &snap, &settings, 0, Some(&mut knock))
+    };
+    assert_eq!(knocks, 0, "a foreign talking random must not claim");
+    assert_eq!(status.kind, None);
+    assert!(!status.ours);
+    assert!(!status.handling);
+    assert!(!status.hold);
+    assert!(drv.menus.is_empty());
+    assert!(drv.actions.is_empty());
+
+    let mut c = new_client();
+    ingame_scene(&mut c);
+    plant_player(&mut c, "Test", 0, 0);
+    plant_npc(&mut c, 0, "Genie", 32768, None);
+    let mut g = Guardian::new();
+    let mut drv = FakeDriver::default();
+    let mut snap = GameSnapshot::new();
+
+    tick_at(&mut c, &mut snap);
+    let status = g.tick(&mut drv, &snap, &settings, 0, None);
+    assert_eq!(status.kind, Some(RandomKind::Dialog));
+    assert!(status.ours);
+    assert!(status.handling);
+    assert!(status.hold);
+    assert_eq!(drv.menus, vec![(0, MiniMenuAction::OP_NPC1, 0, 0, 0)]);
+    assert_eq!(drv.actions, vec![0]);
+}
+
+#[test]
 fn swarm_targeting_self_is_evade_ours_untargeted_swarm_is_not() {
     let mut c = new_client();
     plant_player(&mut c, "Test", 0, 0);
@@ -2448,8 +2497,30 @@ fn hazard_smoking_rock_underfoot_walks_off() {
     assert!(status.hold, "stepping off holds the slot");
     assert_eq!(
         drv.walks,
-        vec![(0, -12)],
-        "flee ring from self, farthest first"
+        vec![(4, 0)],
+        "standing on the hazard uses the frozen four-tile step"
+    );
+}
+
+#[test]
+fn hazard_next_to_player_flees_four_tiles_to_the_far_side() {
+    let mut c = new_client();
+    ingame_scene(&mut c);
+    plant_player(&mut c, "Test", 1, 0);
+    plant_loc(&mut c, 510, "Smoking rock", 0, 0);
+    let mut g = Guardian::new();
+    let mut drv = FakeDriver::default();
+    let settings = ProfileSettings::default();
+    let mut snap = GameSnapshot::new();
+
+    tick_at(&mut c, &mut snap);
+    let status = g.tick(&mut drv, &snap, &settings, 0, None);
+    assert_eq!(status.kind, Some(RandomKind::Hazard));
+    assert!(status.hold);
+    assert_eq!(
+        drv.walks,
+        vec![(5, 0)],
+        "the four-tile candidate must be on the side away from the hazard"
     );
 }
 

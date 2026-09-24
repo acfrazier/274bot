@@ -134,6 +134,19 @@ const FLEE_COMPASS: [(i32, i32); 8] = [
     (-1, 0),
     (-1, -1),
 ];
+/// Frozen random-event step distance (`RandomEvents.ts:64-65`).
+const HAZARD_STEP: i32 = 4;
+/// `eventEvade.ts:7-16` order, retained for equal-distance hazard choices.
+const HAZARD_COMPASS: [(i32, i32); 8] = [
+    (1, 0),
+    (1, 1),
+    (0, 1),
+    (-1, 1),
+    (-1, 0),
+    (-1, -1),
+    (0, -1),
+    (1, -1),
+];
 
 /// Pack-full sacrificial drop names, matched as substrings (the rs2b0t
 /// `COMMON_BANK_LOOT` junk list; a name that is not a 274 obj never
@@ -262,7 +275,12 @@ fn detect_scene(
                 npc_index: Some(npc.index),
             });
         }
-        if ours && DIALOG_NAMES.contains(&name.as_str()) {
+        // A talking random following another player is foreign even if
+        // stale overhead text mentions us (`RandomEvents.ts:39-44`).
+        if ours
+            && DIALOG_NAMES.contains(&name.as_str())
+            && !event_npc_targets_another_player(npc, self_slot)
+        {
             return Some(DetectedRandom {
                 kind: RandomKind::Dialog,
                 name,
@@ -324,6 +342,16 @@ fn detect_scene(
         // the pick evidence rule above.
     }
     None
+}
+
+/// Whether a talking random explicitly follows a different known player.
+/// An absent target or unknown local slot cannot prove that it is foreign,
+/// matching frozen `eventNpcTargetsAnotherPlayer` (`RandomEvents.ts:39-44`).
+fn event_npc_targets_another_player(npc: &NpcView, self_slot: i32) -> bool {
+    self_slot >= 0
+        && npc.target.is_some_and(|target| {
+            target.kind == ActorKind::Player && target.index != self_slot as usize
+        })
 }
 
 /// The spec's hard owner: the NPC faces the local player, or its
@@ -459,6 +487,32 @@ fn flee_candidates(from: (i32, i32)) -> Vec<(i32, i32)> {
         for (dx, dz) in FLEE_COMPASS {
             tiles.push((from.0 + dx * dist, from.1 + dz * dist));
         }
+    }
+    tiles
+}
+
+/// Hazard escape candidates are exactly one frozen four-tile ring around
+/// the player, ordered farthest from the hazard's tile. Using the player
+/// as both points leaves the compass order unsorted and can step beside the
+/// hazard (`RandomEvents.ts:607-614`).
+fn hazard_flee_candidates(
+    from: (i32, i32),
+    hazard: (i32, i32),
+) -> [(i32, i32); HAZARD_COMPASS.len()] {
+    let mut tiles =
+        HAZARD_COMPASS.map(|(dx, dz)| (from.0 + dx * HAZARD_STEP, from.1 + dz * HAZARD_STEP));
+
+    // Stable insertion sort preserves the frozen compass order for ties
+    // without allocating a temporary vector.
+    for i in 1..tiles.len() {
+        let tile = tiles[i];
+        let distance = cheb(tile, hazard);
+        let mut j = i;
+        while j > 0 && cheb(tiles[j - 1], hazard) < distance {
+            tiles[j] = tiles[j - 1];
+            j -= 1;
+        }
+        tiles[j] = tile;
     }
     tiles
 }
