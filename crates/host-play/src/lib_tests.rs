@@ -1418,6 +1418,28 @@ fn wait_for_permit_grant_clears_the_published_place() {
 }
 
 #[test]
+fn late_prefer_snapshot_cannot_survive_title_cleanup() {
+    let queue = Arc::new(Mutex::new(LoginQueue::default()));
+    let statuses = rows(&["alice"]);
+    let stale = {
+        let mut q = queue.lock().unwrap();
+        q.prefer(7);
+        q.status(7)
+    };
+    assert_eq!(
+        queue
+            .lock()
+            .unwrap()
+            .request_permit(7, Instant::now()),
+        Permit::Grant
+    );
+    apply_queue_wait(&mut statuses.lock().unwrap(), "alice", None);
+    apply_queue_wait(&mut statuses.lock().unwrap(), "alice", stale);
+    drop_queue_place(&queue, &statuses, "alice", 7);
+    assert_eq!(row_queue(&statuses, "alice"), (-1, -1));
+}
+
+#[test]
 fn cancellation_after_grant_before_login_abandons_the_unused_permit() {
     let queue = Arc::new(Mutex::new(LoginQueue::new(
         Duration::ZERO,

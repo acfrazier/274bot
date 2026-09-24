@@ -1479,13 +1479,9 @@ impl Play {
     }
 
     /// Move `uid` to the front of the login FIFO so the TV head handshakes
-    /// before slots that already queued. Mirrors the place onto the status row
-    /// so the queue card can show *k of n* during maininit (the slot has not
-    /// entered [`wait_for_permit`] yet). A slot that cannot wait — already
-    /// ingame, or a thread that already returned — only gets the precedence
-    /// remembered: reserving a place for it would be an orphan FIFO entry that
-    /// strands real waiters behind a phantom and publishes *k of n* for a
-    /// running bot.
+    /// before slots that already queued. Queue membership and status
+    /// publication are kept under the queue lock so a grant cannot clear the
+    /// row and then be overwritten by an older preferred-place snapshot.
     pub fn prefer_login(&self, uid: i32) {
         let name = self
             .arms
@@ -1496,20 +1492,15 @@ impl Play {
         let mut q = self.queue.lock().unwrap();
         if reserve {
             q.prefer(uid);
-            let pos = q.status(uid);
-            drop(q);
-            if let Some(name) = name {
-                apply_queue_wait(&mut self.statuses.lock().unwrap(), &name, pos);
-            }
-            return;
+        } else {
+            // Keep the head's precedence without a place: `request_permit`
+            // pushes a preferred uid to the front when it really asks.
+            q.set_preferred(Some(uid));
+            q.leave(uid);
         }
-        // Keep the head's precedence without a place: `request_permit`
-        // pushes a preferred uid to the front when it really asks.
-        q.set_preferred(Some(uid));
-        q.leave(uid);
-        drop(q);
         if let Some(name) = name {
-            apply_queue_wait(&mut self.statuses.lock().unwrap(), &name, None);
+            let pos = q.status(uid);
+            apply_queue_wait(&mut self.statuses.lock().unwrap(), &name, pos);
         }
     }
 
@@ -3226,20 +3217,18 @@ enum PermitWait {
     Cancelled,
 }
 
-/// Drop `uid`'s login-FIFO place and the slot's published `k of n`.
-/// [`LoginQueue::leave`] reports whether a place was really held, so a slot
-/// that never queued leaves its row alone. Guessing here would blank a card
-/// the panel legitimately shows through its FIFO-head fallback.
+/// Drop `uid`'s login-FIFO place and always clear this slot's published
+/// `k of n`. The row belongs to `username`; an already-granted/removed uid
+/// must still clear a stale publication left by an earlier snapshot.
 fn drop_queue_place(
     queue: &Arc<Mutex<LoginQueue>>,
     statuses: &Arc<Mutex<Vec<SlotStatus>>>,
     username: &str,
     uid: i32,
 ) {
-    let removed = queue.lock().unwrap().leave(uid);
-    if removed {
-        apply_queue_wait(&mut statuses.lock().unwrap(), username, None);
-    }
+    let mut q = queue.lock().unwrap();
+    q.leave(uid);
+    apply_queue_wait(&mut statuses.lock().unwrap(), username, None);
 }
 
 /// Whether a pending permit wait must be withdrawn before any handshake:
