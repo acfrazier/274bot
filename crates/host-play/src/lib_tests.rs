@@ -531,13 +531,10 @@ fn response_one_returns_to_fifo_without_publishing_error() {
 }
 
 #[test]
-fn response_21_waits_server_delay_and_retries_same_world() {
+fn response_21_ignores_world_change_until_server_delay_expires() {
     let statuses = rows(&["alice"]);
     set_startup_phase(&statuses, "alice", StartupPhase::Connecting);
     let arm = SlotArm::new(7, true);
-    let worlds = public_worlds::PublicWorlds::default();
-    let round = public_worlds::WorldRound::new(&worlds, None, None).unwrap();
-    let world_before = round.index;
     let started = Instant::now();
     let waiter = {
         let statuses = Arc::clone(&statuses);
@@ -566,16 +563,13 @@ fn response_21_waits_server_delay_and_retries_same_world() {
         assert_eq!(rows[0].startup_phase, StartupPhase::Connecting);
         assert!(rows[0].error.is_none());
     }
+    *arm.world.lock() = Some(2);
+    arm.world_generation.fetch_add(1, Ordering::Relaxed);
+    arm.notify_retry_wait();
 
     assert_eq!(waiter.join().unwrap(), Some(true));
     assert!(started.elapsed() >= Duration::from_millis(900));
-    assert_eq!(round.index, world_before, "response 21 stays on this world");
-    let mut backoff = LoginBackoff::new();
-    assert_eq!(
-        backoff.delay(),
-        Duration::from_secs(20),
-        "transfer waits do not spend response-16 escalation"
-    );
+    assert_eq!(*arm.world.lock(), Some(2));
 }
 
 #[test]
