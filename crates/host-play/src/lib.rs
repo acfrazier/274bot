@@ -990,7 +990,7 @@ impl SlotArm {
         let _guard = self.retry_wait.lock();
         self.auto_login.store(enabled, Ordering::Relaxed);
         if enabled {
-            if !self.latch.load(Ordering::Relaxed) {
+            if !self.latch.load(Ordering::Relaxed) && !self.want_login.load(Ordering::Relaxed) {
                 self.want_login.store(true, Ordering::Relaxed);
                 self.auto_intent.store(true, Ordering::Relaxed);
             }
