@@ -1883,7 +1883,6 @@ fn tick_loop(
                                 generation,
                             });
                         }
-                        crate::dialog::on_snapshot();
                         crate::reach::on_snapshot(&snap);
                         if snap.has_hold() {
                             host_hold = snap.hold();
@@ -1899,7 +1898,6 @@ fn tick_loop(
                             crate::hunt_key::on_hold(host_hold);
                             crate::hunt_cell::on_hold(host_hold);
                             crate::hunt_bank::on_hold(host_hold);
-                            crate::dialog::on_hold(host_hold);
                             crate::quest_journal::on_hold(host_hold);
                             crate::clue::on_hold(host_hold);
                             crate::trade::on_hold(host_hold);
@@ -2263,7 +2261,6 @@ fn tick_loop(
                 crate::hunt_key::on_reset();
                 crate::hunt_cell::on_reset();
                 crate::hunt_bank::on_reset();
-                crate::dialog::on_reset();
                 crate::quest_journal::on_reset();
                 crate::clue::on_reset();
                 crate::trade::on_reset();
@@ -2320,7 +2317,6 @@ fn tick_loop(
                 crate::hunt_key::on_pause();
                 crate::hunt_cell::on_pause();
                 crate::hunt_bank::on_pause();
-                crate::dialog::on_pause();
                 crate::quest_journal::on_pause();
                 crate::clue::on_pause();
                 crate::trade::on_pause();
@@ -2342,7 +2338,6 @@ fn tick_loop(
                 crate::hunt_key::on_resume();
                 crate::hunt_cell::on_resume();
                 crate::hunt_bank::on_resume();
-                crate::dialog::on_resume();
                 crate::quest_journal::on_resume();
                 crate::clue::on_resume();
                 crate::trade::on_resume();

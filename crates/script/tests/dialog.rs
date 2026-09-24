@@ -649,3 +649,52 @@ fn pause_and_reset_during_continue_ack_drop_stale_actions() {
     assert!(iso.drain_interacts().is_empty());
     iso.join();
 }
+
+#[test]
+fn pick_preferred_is_the_frozen_pick_and_walk_with_hops_awaits_the_walk() {
+    let src = r#"
+import { pickPreferred, walkWithHops } from '../../api/ai/quests/exec/primitives.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__did) return;
+        globalThis.__did = true;
+        const opts = ['Yes please.', 'No thanks.'];
+        globalThis.__picks = [
+            pickPreferred(opts, ['maybe', 'NO']),
+            pickPreferred(opts, ['']),
+            pickPreferred(opts, ['maybe']),
+            pickPreferred(['', 'Bank'], ['', 'bank']),
+        ];
+        globalThis.__here = null;
+        globalThis.__here = await walkWithHops({ x: 2531, z: 4712, level: 0 }, 0, [], () => {});
+        globalThis.__far = null;
+        globalThis.__far = await walkWithHops({ x: 2560, z: 4712, level: 0 }, 2, [], () => {});
+    }
+}
+"#;
+    let iso = spawn(src);
+    post(&iso, &base());
+    tick(&iso, 1);
+    assert_eq!(
+        iso.probe("__picks").unwrap(),
+        serde_json::json!(["No thanks.", "Yes please.", null, "Bank"])
+    );
+    assert_eq!(iso.probe("__here").unwrap(), true, "already there");
+    assert!(
+        matches!(
+            iso.drain_interacts().as_slice(),
+            [InteractReq::WalkNear {
+                x: 2560,
+                radius: 2,
+                ..
+            }]
+        ),
+        "the far walk is queued"
+    );
+    assert_eq!(
+        iso.probe("__far").unwrap(),
+        Value::Null,
+        "a queued walk is not an arrival: walkWithHops awaits its result"
+    );
+    iso.join();
+}

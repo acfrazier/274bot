@@ -377,13 +377,6 @@ pub(super) fn wire_runtime(
         })
         .map_err(|e| format!("register bank: {e}"))?;
     runtime
-        .register_function("__rs2b0t_dialog", move |args: &[serde_json::Value]| {
-            Ok(crate::dialog::dispatch(
-                args.first().unwrap_or(&serde_json::Value::Null),
-            ))
-        })
-        .map_err(|e| format!("register dialog: {e}"))?;
-    runtime
         .register_function("__rs2b0t_quest_journal", |args: &[serde_json::Value]| {
             Ok(crate::quest_journal::dispatch(
                 args.first().unwrap_or(&serde_json::Value::Null),
@@ -596,6 +589,7 @@ pub(super) fn wire_runtime(
     super::fire_v8::install(runtime).map_err(|e| format!("fire v8: {e}"))?;
     super::combat_style_v8::install(runtime).map_err(|e| format!("combat style v8: {e}"))?;
     super::machine_v8::install(runtime).map_err(|e| format!("machine v8: {e}"))?;
+    super::dialog_v8::install(runtime).map_err(|e| format!("dialog v8: {e}"))?;
     let content = format!(
         "globalThis.__rs2b0t_host.content = {};",
         crate::shim::content_json(game_data.as_deref(), named_banks.as_ref())

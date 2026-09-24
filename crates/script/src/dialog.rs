@@ -1,16 +1,17 @@
 //! Rust-owned chat-dialogue sequencing for `openDialogue` / `driveDialog` /
-//! `talkThrough`.
+//! `talkThrough`, the `dialog` [`crate::machine`] family.
 //!
-//! JavaScript marshals the NPC name, preferred fragments and optional gap,
-//! dispatches the returned verbs and reports the bool. Matching, the 120-step
-//! cap, open/gap bounds, continue-vs-choice, pause-latch quiet, pending abort
-//! and completion stay here. Game actions reuse the existing FlatBuffer
-//! `npc` / `continue` / `answer` verbs.
+//! JavaScript passes the NPC name, preferred fragments, optional gap and the
+//! caller's `log`, and awaits the bool. Matching, the 120-step cap,
+//! open/gap bounds, continue-vs-choice, pause-latch quiet, pending abort,
+//! the frozen log lines and completion stay here. Game actions reuse the
+//! existing FlatBuffer `npc` / `continue` / `answer` verbs.
 
+use crate::machine::{Begin, Call, Cx, Family, Reply, Step};
 use crate::observed::{self, Ops, Scene, Text};
-use crate::task_clock::InstantTaskClock;
-use serde_json::{json, Value};
-use std::cell::RefCell;
+use crate::shim::InteractReq;
+use serde::Deserialize;
+use serde_json::json;
 
 /// Frozen page-turn quiet. A scene that walks an NPC about wants its caller
 /// to name more via `gapMs`.
@@ -25,10 +26,6 @@ pub const PAGE_ACK_MS: u64 = 3_000;
 pub const CONTINUE_TICKS: u64 = 1;
 /// Frozen `delayTicks(2)` after a choice ack.
 pub const CHOICE_TICKS: u64 = 2;
-
-thread_local! {
-    static RUNTIME: RefCell<DialogRuntime> = const { RefCell::new(DialogRuntime::new()) };
-}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Npc {
@@ -85,12 +82,6 @@ impl NativeObservation {
         }
     }
 
-    /// The posted `hold || ours` cooperative interrupt.
-    fn pending_in(scene: &Scene) -> bool {
-        let session = scene.since_login();
-        session.hold().unwrap_or(false) || session.ours().unwrap_or(false)
-    }
-
     fn pending(&self) -> bool {
         self.hold || self.ours
     }
@@ -108,8 +99,12 @@ impl NativeObservation {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Kind {
+/// The caller's `log` hook.
+const LOG: usize = 0;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum Kind {
     Open,
     Drive,
     Talk,
@@ -117,7 +112,6 @@ enum Kind {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Phase {
-    Idle,
     WaitOpen,
     Drive,
     WaitContinueAck,
@@ -127,9 +121,28 @@ enum Phase {
     WaitGap,
 }
 
-struct DialogRuntime {
-    clock: InstantTaskClock,
-    token: u64,
+/// What a step does once its log line was written.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum After {
+    Wait,
+    Done(bool),
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DialogArgs {
+    kind: Kind,
+    #[serde(default)]
+    npc: String,
+    #[serde(default)]
+    prefer: Vec<String>,
+    /// A whole non-negative number; anything else keeps the frozen 1.5 s.
+    #[serde(default)]
+    gap_ms: serde_json::Value,
+}
+
+/// One frozen `openDialogue` / `driveDialog` / `talkThrough`.
+pub(crate) struct Dialog {
     phase: Phase,
     kind: Kind,
     npc_name: String,
@@ -140,366 +153,257 @@ struct DialogRuntime {
     steps: u32,
     due_tick: u64,
     ack_modal_id: i32,
-    interrupted: bool,
+    /// [`crate::reach::pending_posts`] when the dialogue began.
+    pending_mark: u64,
+    /// A log line to write before `after`.
+    log: Option<String>,
+    after: Option<After>,
 }
 
-impl DialogRuntime {
-    const fn new() -> Self {
-        Self {
-            clock: InstantTaskClock::new(),
-            token: 0,
-            phase: Phase::Idle,
-            kind: Kind::Drive,
-            npc_name: String::new(),
+impl Family for Dialog {
+    const NAME: &'static str = "dialog";
+    /// One dialogue at a time: a new one replaces the one in flight.
+    const EXCLUSIVE: bool = true;
+    const CALLBACKS: &'static [&'static str] = &["log"];
+    /// A begin that settles with a log line writes it in the caller's tick.
+    const KICK_ON_START: bool = true;
+    type Args = DialogArgs;
+    type Output = bool;
+
+    fn begin(args: DialogArgs, cx: &mut Cx<'_>) -> Begin<Self> {
+        let obs = observed::with(NativeObservation::from_scene);
+        if !obs.ingame || obs.pending() {
+            return Begin::Done(false);
+        }
+        let mut dialog = Self {
+            phase: Phase::Drive,
+            kind: args.kind,
+            npc_name: args.npc.trim().to_string(),
             npc_action: String::new(),
             npc_index: -1,
-            prefer: Vec::new(),
-            gap_ms: DIALOG_GAP_MS,
+            prefer: args.prefer,
+            gap_ms: args
+                .gap_ms
+                .as_u64()
+                .or_else(|| {
+                    args.gap_ms
+                        .as_f64()
+                        .filter(|n| *n >= 0.0 && n.fract() == 0.0)
+                        .map(|n| n as u64)
+                })
+                .unwrap_or(DIALOG_GAP_MS),
             steps: 0,
             due_tick: 0,
             ack_modal_id: -1,
-            interrupted: false,
-        }
-    }
-
-    fn frozen(&self) -> bool {
-        self.clock.frozen()
-    }
-
-    fn set_freeze(&mut self, paused: bool, held: bool) {
-        self.clock.set_freeze(paused, held);
-    }
-
-    fn arm(&mut self, window: u64) {
-        self.clock.arm(window);
-    }
-
-    fn bound_reached(&self) -> bool {
-        self.clock.bound_reached()
-    }
-
-    fn abort_runtime(&mut self) {
-        self.token = self.token.wrapping_add(1);
-        self.phase = Phase::Idle;
-        self.npc_name.clear();
-        self.npc_action.clear();
-        self.npc_index = -1;
-        self.prefer.clear();
-        self.gap_ms = DIALOG_GAP_MS;
-        self.steps = 0;
-        self.due_tick = 0;
-        self.ack_modal_id = -1;
-        self.interrupted = false;
-        self.clock.deadline = None;
-    }
-
-    fn done(&mut self, result: bool, reason: &str, log: Option<String>) -> Value {
-        let token = self.token;
-        self.phase = Phase::Idle;
-        self.clock.deadline = None;
-        with_log(
-            json!({
-                "kind": "done",
-                "token": token,
-                "result": result,
-                "reason": reason,
-            }),
-            log,
-        )
-    }
-
-    fn wait(&self) -> Value {
-        json!({ "kind": "wait", "token": self.token })
-    }
-
-    fn npc_verb(&self) -> Value {
-        json!({
-            "kind": "npc",
-            "token": self.token,
-            "name": self.npc_name,
-            "action": self.npc_action,
-            "index": self.npc_index,
-        })
-    }
-
-    fn continue_verb(&self) -> Value {
-        json!({
-            "kind": "ops",
-            "token": self.token,
-            "ops": [{ "op": "continue" }],
-        })
-    }
-
-    fn answer_verb(&self, option: i32, log: Option<String>) -> Value {
-        with_log(
-            json!({
-                "kind": "ops",
-                "token": self.token,
-                "ops": [{ "op": "answer", "option": option }],
-            }),
-            log,
-        )
-    }
-}
-
-/// After the isolate applied a post: a live dialog notes the posted
-/// cooperative interrupt.
-pub fn on_snapshot() {
-    let pending = observed::with(NativeObservation::pending_in);
-    RUNTIME.with(|rt| {
-        let mut rt = rt.borrow_mut();
-        if rt.phase != Phase::Idle && pending {
-            rt.interrupted = true;
-        }
-    });
-}
-
-pub fn on_pause() {
-    RUNTIME.with(|rt| {
-        let held = rt.borrow().clock.held;
-        rt.borrow_mut().set_freeze(true, held);
-    });
-}
-
-pub fn on_resume() {
-    RUNTIME.with(|rt| {
-        let held = rt.borrow().clock.held;
-        rt.borrow_mut().set_freeze(false, held);
-    });
-}
-
-pub fn on_hold(held: bool) {
-    RUNTIME.with(|rt| {
-        let paused = rt.borrow().clock.paused;
-        rt.borrow_mut().set_freeze(paused, held);
-    });
-}
-
-pub fn on_reset() {
-    RUNTIME.with(|rt| rt.borrow_mut().abort_runtime());
-}
-
-pub fn dispatch(input: &Value) -> Value {
-    match input.get("op").and_then(Value::as_str).unwrap_or("") {
-        "begin" => begin(input),
-        "next" => next(input.get("token").and_then(Value::as_u64).unwrap_or(0)),
-        _ => json!({ "kind": "notImpl", "reason": "unknown op" }),
-    }
-}
-
-fn begin(input: &Value) -> Value {
-    let kind = match input.get("kind").and_then(Value::as_str).unwrap_or("") {
-        "open" => Kind::Open,
-        "drive" => Kind::Drive,
-        "talk" => Kind::Talk,
-        _ => return json!({ "kind": "notImpl", "reason": "unknown dialog op" }),
-    };
-    let npc_name = input
-        .get("npc")
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .trim()
-        .to_string();
-    let prefer = read_prefer(input.get("prefer"));
-    let gap_ms = input
-        .get("gapMs")
-        .and_then(Value::as_u64)
-        .unwrap_or(DIALOG_GAP_MS);
-    let obs = observed::with(NativeObservation::from_scene);
-    RUNTIME.with(|rt| {
-        let mut rt = rt.borrow_mut();
-        rt.abort_runtime();
-        rt.kind = kind;
-        rt.npc_name = npc_name;
-        rt.prefer = prefer;
-        rt.gap_ms = gap_ms;
-        if !obs.ingame {
-            return json!({ "kind": "aborted", "reason": "not ingame" });
-        }
-        if obs.pending() {
-            rt.interrupted = true;
-            return rt.done(false, "pending", None);
-        }
-        start(&mut rt, &obs)
-    })
-}
-
-fn start(rt: &mut DialogRuntime, obs: &NativeObservation) -> Value {
-    match rt.kind {
-        Kind::Drive => {
-            rt.phase = Phase::Drive;
-            drive_step(rt, obs)
-        }
-        Kind::Open | Kind::Talk => {
-            if obs.dialog_ready() {
-                if rt.kind == Kind::Open {
-                    return rt.done(true, "already-open", None);
-                }
-                rt.phase = Phase::Drive;
-                return drive_step(rt, obs);
-            }
-            if obs.bank_open {
-                return rt.done(rt.kind == Kind::Talk, "bank-open", None);
-            }
-            let Some(npc) = talk_target(&obs.npcs, &rt.npc_name) else {
-                let name = rt.npc_name.clone();
-                return rt.done(
-                    false,
-                    "no-npc",
-                    Some(format!("no '{name}' nearby to talk to")),
-                );
-            };
-            rt.npc_name = npc.name;
-            rt.npc_action = npc.action;
-            rt.npc_index = npc.index;
-            rt.phase = Phase::WaitOpen;
-            rt.arm(DIALOGUE_OPEN_MS);
-            rt.npc_verb()
-        }
-    }
-}
-
-fn next(token: u64) -> Value {
-    let obs = observed::with(NativeObservation::from_scene);
-    RUNTIME.with(|rt| {
-        let mut rt = rt.borrow_mut();
-        if token != rt.token || rt.phase == Phase::Idle {
-            return json!({ "kind": "aborted", "token": rt.token });
-        }
-        if rt.frozen() {
-            return rt.wait();
-        }
-        if !obs.ingame {
-            return json!({ "kind": "aborted", "token": rt.token });
-        }
-        if rt.interrupted || obs.pending() {
-            return rt.done(false, "pending", None);
-        }
-        match rt.phase {
-            Phase::Idle => json!({ "kind": "aborted", "token": rt.token }),
-            Phase::WaitOpen => wait_open(&mut rt, &obs),
-            Phase::WaitContinueAck => wait_continue_ack(&mut rt, &obs),
-            Phase::WaitChoiceAck => wait_choice_ack(&mut rt, &obs),
-            Phase::WaitContinueTick | Phase::WaitChoiceTicks => {
-                if obs.tick >= rt.due_tick {
-                    rt.phase = Phase::Drive;
-                    drive_step(&mut rt, &obs)
-                } else {
-                    rt.wait()
-                }
-            }
-            Phase::WaitGap => wait_gap(&mut rt, &obs),
-            Phase::Drive => drive_step(&mut rt, &obs),
-        }
-    })
-}
-
-fn wait_open(rt: &mut DialogRuntime, obs: &NativeObservation) -> Value {
-    if obs.dialog_ready() {
-        if rt.kind == Kind::Open {
-            return rt.done(true, "opened", None);
-        }
-        rt.phase = Phase::Drive;
-        return drive_step(rt, obs);
-    }
-    if obs.bank_open {
-        return rt.done(rt.kind == Kind::Talk, "bank-open", None);
-    }
-    if rt.bound_reached() {
-        let name = rt.npc_name.clone();
-        return rt.done(
-            false,
-            "open-timeout",
-            Some(format!("'{name}' never opened a dialogue")),
-        );
-    }
-    rt.wait()
-}
-
-fn continue_acked(rt: &DialogRuntime, obs: &NativeObservation) -> bool {
-    obs.chat_modal_id != rt.ack_modal_id || !obs.chat_continue
-}
-
-fn choice_acked(rt: &DialogRuntime, obs: &NativeObservation) -> bool {
-    obs.chat_modal_id != rt.ack_modal_id || obs.chat_continue
-}
-
-fn wait_continue_ack(rt: &mut DialogRuntime, obs: &NativeObservation) -> Value {
-    if continue_acked(rt, obs) {
-        rt.phase = Phase::WaitContinueTick;
-        rt.due_tick = obs.tick.saturating_add(CONTINUE_TICKS);
-        rt.clock.deadline = None;
-        return rt.wait();
-    }
-    if rt.bound_reached() {
-        return rt.done(false, "continue-ack-timeout", None);
-    }
-    rt.wait()
-}
-
-fn wait_choice_ack(rt: &mut DialogRuntime, obs: &NativeObservation) -> Value {
-    if choice_acked(rt, obs) {
-        rt.phase = Phase::WaitChoiceTicks;
-        rt.due_tick = obs.tick.saturating_add(CHOICE_TICKS);
-        rt.clock.deadline = None;
-        return rt.wait();
-    }
-    if rt.bound_reached() {
-        return rt.done(false, "choice-ack-timeout", None);
-    }
-    rt.wait()
-}
-
-fn wait_gap(rt: &mut DialogRuntime, obs: &NativeObservation) -> Value {
-    if obs.dialog_ready() {
-        rt.phase = Phase::Drive;
-        rt.clock.deadline = None;
-        return drive_step(rt, obs);
-    }
-    if obs.bank_open || rt.bound_reached() {
-        return rt.done(!obs.is_open(), "gap", None);
-    }
-    rt.wait()
-}
-
-fn drive_step(rt: &mut DialogRuntime, obs: &NativeObservation) -> Value {
-    if rt.steps >= DRIVE_STEPS {
-        return rt.done(!obs.is_open(), "step-cap", None);
-    }
-    if !obs.dialog_ready() {
-        if obs.bank_open {
-            return rt.done(true, "bank-open", None);
-        }
-        rt.phase = Phase::WaitGap;
-        rt.arm(rt.gap_ms);
-        return if rt.bound_reached() {
-            rt.done(!obs.is_open(), "gap", None)
-        } else {
-            rt.wait()
+            pending_mark: crate::reach::pending_posts(),
+            log: None,
+            after: None,
         };
+        match dialog.start(&obs, cx) {
+            // A queued log line is written by the first step (the start kick).
+            Step::Done(ok) if dialog.log.is_none() => Begin::Done(ok),
+            _ => Begin::Run(dialog),
+        }
     }
-    if obs.chat_continue {
-        rt.steps += 1;
-        rt.ack_modal_id = obs.chat_modal_id;
-        rt.phase = Phase::WaitContinueAck;
-        rt.arm(PAGE_ACK_MS);
-        return rt.continue_verb();
+
+    fn step(&mut self, cx: &mut Cx<'_>) -> Step<bool> {
+        if let Some(Reply::Threw(thrown)) = cx.reply() {
+            return Step::Fail(thrown);
+        }
+        if let Some(line) = self.log.take() {
+            return Step::Call(Call {
+                hook: LOG,
+                args: vec![json!(line)],
+            });
+        }
+        if let Some(after) = self.after.take() {
+            return match after {
+                After::Wait => Step::Wait,
+                After::Done(ok) => Step::Done(ok),
+            };
+        }
+        let obs = observed::with(NativeObservation::from_scene);
+        if !obs.ingame || crate::reach::pending_posts() != self.pending_mark || obs.pending() {
+            return Step::Done(false);
+        }
+        let step = match self.phase {
+            Phase::WaitOpen => self.wait_open(&obs, cx),
+            Phase::WaitContinueAck => self.wait_continue_ack(&obs, cx),
+            Phase::WaitChoiceAck => self.wait_choice_ack(&obs, cx),
+            Phase::WaitContinueTick | Phase::WaitChoiceTicks => {
+                if obs.tick >= self.due_tick {
+                    self.phase = Phase::Drive;
+                    self.drive_step(&obs, cx)
+                } else {
+                    Step::Wait
+                }
+            }
+            Phase::WaitGap => self.wait_gap(&obs, cx),
+            Phase::Drive => self.drive_step(&obs, cx),
+        };
+        match self.log.take() {
+            Some(line) => Step::Call(Call {
+                hook: LOG,
+                args: vec![json!(line)],
+            }),
+            None => step,
+        }
     }
-    if !obs.options().is_empty() {
-        let (option, log) = choose_option(obs.options(), &rt.prefer);
-        rt.steps += 1;
-        rt.ack_modal_id = obs.chat_modal_id;
-        rt.phase = Phase::WaitChoiceAck;
-        rt.arm(PAGE_ACK_MS);
-        return rt.answer_verb(option, log);
+}
+
+impl Dialog {
+    /// Queue `line` for the caller's `log` (when it gave one), then
+    /// `after`; without a line this is `after` itself.
+    fn then(&mut self, line: Option<String>, after: After, cx: &Cx<'_>) -> Step<bool> {
+        if let Some(line) = line.filter(|_| cx.has(LOG)) {
+            self.log = Some(line);
+            self.after = Some(after);
+            return Step::Wait;
+        }
+        match after {
+            After::Wait => Step::Wait,
+            After::Done(ok) => Step::Done(ok),
+        }
     }
-    // Chat is up but the continue id is hidden (pause latch) and no
-    // choices are posted: stay quiet one tick, never Talk-to or re-press.
-    rt.steps += 1;
-    rt.phase = Phase::WaitContinueTick;
-    rt.due_tick = obs.tick.saturating_add(CONTINUE_TICKS);
-    rt.clock.deadline = None;
-    rt.wait()
+
+    fn start(&mut self, obs: &NativeObservation, cx: &mut Cx<'_>) -> Step<bool> {
+        match self.kind {
+            Kind::Drive => self.drive_step(obs, cx),
+            Kind::Open | Kind::Talk => {
+                if obs.dialog_ready() {
+                    if self.kind == Kind::Open {
+                        return Step::Done(true);
+                    }
+                    return self.drive_step(obs, cx);
+                }
+                if obs.bank_open {
+                    return Step::Done(self.kind == Kind::Talk);
+                }
+                let Some(npc) = talk_target(&obs.npcs, &self.npc_name) else {
+                    let line = format!("no '{}' nearby to talk to", self.npc_name);
+                    return self.then(Some(line), After::Done(false), cx);
+                };
+                self.npc_name = npc.name;
+                self.npc_action = npc.action;
+                self.npc_index = npc.index;
+                self.phase = Phase::WaitOpen;
+                cx.clock().arm(DIALOGUE_OPEN_MS);
+                cx.emit(InteractReq::Npc {
+                    name: self.npc_name.clone(),
+                    action: self.npc_action.clone(),
+                    index: Some(self.npc_index),
+                });
+                Step::Wait
+            }
+        }
+    }
+
+    fn wait_open(&mut self, obs: &NativeObservation, cx: &mut Cx<'_>) -> Step<bool> {
+        if obs.dialog_ready() {
+            if self.kind == Kind::Open {
+                return Step::Done(true);
+            }
+            self.phase = Phase::Drive;
+            return self.drive_step(obs, cx);
+        }
+        if obs.bank_open {
+            return Step::Done(self.kind == Kind::Talk);
+        }
+        if cx.clock().bound_reached() {
+            let line = format!("'{}' never opened a dialogue", self.npc_name);
+            return self.then(Some(line), After::Done(false), cx);
+        }
+        Step::Wait
+    }
+
+    fn continue_acked(&self, obs: &NativeObservation) -> bool {
+        obs.chat_modal_id != self.ack_modal_id || !obs.chat_continue
+    }
+
+    fn choice_acked(&self, obs: &NativeObservation) -> bool {
+        obs.chat_modal_id != self.ack_modal_id || obs.chat_continue
+    }
+
+    fn wait_continue_ack(&mut self, obs: &NativeObservation, cx: &mut Cx<'_>) -> Step<bool> {
+        if self.continue_acked(obs) {
+            self.phase = Phase::WaitContinueTick;
+            self.due_tick = obs.tick.saturating_add(CONTINUE_TICKS);
+            cx.clock().deadline = None;
+            return Step::Wait;
+        }
+        if cx.clock().bound_reached() {
+            return Step::Done(false);
+        }
+        Step::Wait
+    }
+
+    fn wait_choice_ack(&mut self, obs: &NativeObservation, cx: &mut Cx<'_>) -> Step<bool> {
+        if self.choice_acked(obs) {
+            self.phase = Phase::WaitChoiceTicks;
+            self.due_tick = obs.tick.saturating_add(CHOICE_TICKS);
+            cx.clock().deadline = None;
+            return Step::Wait;
+        }
+        if cx.clock().bound_reached() {
+            return Step::Done(false);
+        }
+        Step::Wait
+    }
+
+    fn wait_gap(&mut self, obs: &NativeObservation, cx: &mut Cx<'_>) -> Step<bool> {
+        if obs.dialog_ready() {
+            self.phase = Phase::Drive;
+            cx.clock().deadline = None;
+            return self.drive_step(obs, cx);
+        }
+        if obs.bank_open || cx.clock().bound_reached() {
+            return Step::Done(!obs.is_open());
+        }
+        Step::Wait
+    }
+
+    fn drive_step(&mut self, obs: &NativeObservation, cx: &mut Cx<'_>) -> Step<bool> {
+        self.phase = Phase::Drive;
+        if self.steps >= DRIVE_STEPS {
+            return Step::Done(!obs.is_open());
+        }
+        if !obs.dialog_ready() {
+            if obs.bank_open {
+                return Step::Done(true);
+            }
+            self.phase = Phase::WaitGap;
+            cx.clock().arm(self.gap_ms);
+            return if cx.clock().bound_reached() {
+                Step::Done(!obs.is_open())
+            } else {
+                Step::Wait
+            };
+        }
+        if obs.chat_continue {
+            self.steps += 1;
+            self.ack_modal_id = obs.chat_modal_id;
+            self.phase = Phase::WaitContinueAck;
+            cx.clock().arm(PAGE_ACK_MS);
+            cx.emit(InteractReq::ContinueDialog);
+            return Step::Wait;
+        }
+        if !obs.options().is_empty() {
+            let (option, line) = choose_option(obs.options(), &self.prefer);
+            self.steps += 1;
+            self.ack_modal_id = obs.chat_modal_id;
+            self.phase = Phase::WaitChoiceAck;
+            cx.clock().arm(PAGE_ACK_MS);
+            cx.emit(InteractReq::Answer { option });
+            return self.then(line, After::Wait, cx);
+        }
+        // Chat is up but the continue id is hidden (pause latch) and no
+        // choices are posted: stay quiet one tick, never Talk-to or re-press.
+        self.steps += 1;
+        self.phase = Phase::WaitContinueTick;
+        self.due_tick = obs.tick.saturating_add(CONTINUE_TICKS);
+        cx.clock().deadline = None;
+        Step::Wait
+    }
 }
 
 struct TalkTarget {
@@ -541,20 +445,16 @@ fn talk_op(actions: &[Text]) -> Option<&str> {
     })
 }
 
-fn pick_preferred(options: &[String], prefer: &[String]) -> Option<usize> {
-    for fragment in prefer {
-        let want = fragment.to_ascii_lowercase();
-        if want.is_empty() {
-            continue;
-        }
-        if let Some(index) = options
+/// Frozen `pickPreferred`: the first fragment (in order) that some option
+/// contains, case-insensitively; a matched empty option is no pick.
+pub(crate) fn pick_preferred(options: &[String], prefer: &[String]) -> Option<usize> {
+    prefer.iter().find_map(|fragment| {
+        let want = fragment.to_lowercase();
+        options
             .iter()
-            .position(|option| option.to_ascii_lowercase().contains(&want))
-        {
-            return Some(index);
-        }
-    }
-    None
+            .position(|option| option.to_lowercase().contains(&want))
+            .filter(|&index| !options[index].is_empty())
+    })
 }
 
 fn choose_option(options: &[String], prefer: &[String]) -> (i32, Option<String>) {
@@ -571,28 +471,10 @@ fn choose_option(options: &[String], prefer: &[String]) -> (i32, Option<String>)
     )
 }
 
-fn read_prefer(value: Option<&Value>) -> Vec<String> {
-    match value {
-        Some(Value::Array(rows)) => rows
-            .iter()
-            .filter_map(Value::as_str)
-            .map(str::to_string)
-            .collect(),
-        _ => Vec::new(),
-    }
-}
-
-fn with_log(mut value: Value, log: Option<String>) -> Value {
-    if let Some(log) = log {
-        value["log"] = json!(log);
-    }
-    value
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Duration;
+    use crate::machine::{self, AbortReason, Called, Handle, Outcome, Pending, Started, Take};
 
     fn npc(name: &str, actions: &[&str], distance: i32, index: i32) -> Npc {
         Npc {
@@ -685,6 +567,16 @@ mod tests {
             2,
             "an empty earlier slot keeps the posted 1-based index"
         );
+        assert_eq!(
+            pick_preferred(&opts, &["".into()]),
+            Some(0),
+            "frozen: an empty fragment is contained by every option"
+        );
+        assert_eq!(
+            pick_preferred(&with_empty, &["".into(), "BANK".into()]),
+            Some(1),
+            "a matched empty option is no pick: the next fragment decides"
+        );
         let (option, log) = choose_option(&opts, &["no such".into()]);
         assert_eq!(option, 2);
         assert!(log.as_deref().unwrap().contains("taking the last"));
@@ -704,69 +596,118 @@ mod tests {
         assert!(talk_target(&npcs, "").is_none());
     }
 
+    /// No script callbacks: no `log` hook is held here.
+    struct NoJs;
+
+    impl machine::Js for NoJs {
+        fn queue_len(&mut self) -> usize {
+            0
+        }
+
+        fn call(
+            &mut self,
+            _hook: Option<&crate::load::callback_v8::HeldCallback>,
+            _args: &[serde_json::Value],
+        ) -> Called {
+            panic!("no log hook is held");
+        }
+
+        fn poll(&mut self, _pending: &Pending) -> Option<Reply> {
+            panic!("no log hook is held");
+        }
+
+        fn claimed(&mut self) -> bool {
+            false
+        }
+    }
+
+    fn start(kind: &str) -> Started {
+        machine::start(
+            "dialog",
+            json!({ "kind": kind, "npc": "Gundai", "prefer": ["access my bank"] }),
+            Vec::new(),
+            0,
+        )
+    }
+
+    fn running(started: Started) -> Handle {
+        match started {
+            Started::Running(handle) => handle,
+            other => panic!("expected a running dialogue, got {other:?}"),
+        }
+    }
+
+    fn tick() -> Vec<InteractReq> {
+        machine::step(&mut NoJs);
+        machine::merge_ops(Vec::new())
+    }
+
+    fn ops() -> Vec<InteractReq> {
+        machine::merge_ops(Vec::new())
+    }
+
     #[test]
     fn pending_and_reset_fail_closed_without_another_talk() {
-        on_reset();
         let mut observation = obs(vec![npc("Gundai", &["Talk-to"], 1, 3)]);
         observation.ours = true;
         post(&observation);
-        let pending = dispatch(&json!({
-            "op": "begin",
-            "kind": "talk",
-            "npc": "Gundai",
-            "prefer": ["access my bank"],
-        }));
-        assert_eq!(pending["result"], false);
-        assert_eq!(pending["reason"], "pending");
+        assert_eq!(
+            start("talk"),
+            Started::Settled(Outcome::Done(json!(false))),
+            "a pending interrupt refuses to talk"
+        );
+        assert!(ops().is_empty());
 
         observation.ours = false;
         post(&observation);
-        let begin = dispatch(&json!({
-            "op": "begin",
-            "kind": "talk",
-            "npc": "Gundai",
-            "prefer": ["access my bank"],
-        }));
-        assert_eq!(begin["kind"], "npc");
-        assert_eq!(begin["action"], "Talk-to");
-        let token = begin["token"].as_u64().unwrap();
-        RUNTIME.with(|rt| rt.borrow_mut().interrupted = true);
-        let stopped = dispatch(&json!({ "op": "next", "token": token }));
-        assert_eq!(stopped["kind"], "done");
-        assert_eq!(stopped["result"], false);
-        assert_eq!(stopped["reason"], "pending");
-
-        post(&observation);
-        let again = dispatch(&json!({
-            "op": "begin",
-            "kind": "talk",
-            "npc": "Gundai",
-            "prefer": ["access my bank"],
-        }));
-        let stale = again["token"].as_u64().unwrap();
-        on_reset();
+        let talk = running(start("talk"));
         assert_eq!(
-            dispatch(&json!({ "op": "next", "token": stale }))["kind"],
-            "aborted"
+            ops(),
+            vec![InteractReq::Npc {
+                name: "Gundai".into(),
+                action: "Talk-to".into(),
+                index: Some(3),
+            }]
+        );
+        observation.ours = true;
+        post(&observation);
+        assert!(tick().is_empty());
+        assert_eq!(
+            machine::take(talk),
+            Take::Settled(Outcome::Done(json!(false)))
+        );
+
+        observation.ours = false;
+        post(&observation);
+        let again = running(start("talk"));
+        ops();
+        machine::on_reset();
+        assert!(tick().is_empty());
+        assert_eq!(
+            machine::take(again),
+            Take::Settled(Outcome::Aborted(AbortReason::Reset))
         );
     }
 
     #[test]
     fn pause_does_not_continue_or_choose() {
+        // Chat up with the continue id hidden: the drive stays quiet a tick.
         let mut observation = obs(vec![npc("Gundai", &["Talk-to"], 1, 3)]);
         observation.chat_modal_id = 968;
+        post(&observation);
+        let drive = running(start("drive"));
+        assert!(ops().is_empty());
+        machine::on_pause();
+        observation.tick = 2;
         observation.chat_continue = true;
-        let mut runtime = DialogRuntime::new();
-        runtime.kind = Kind::Talk;
-        runtime.npc_name = "Gundai".into();
-        runtime.prefer = vec!["access my bank".into()];
-        runtime.phase = Phase::Drive;
-        runtime.set_freeze(true, false);
-        assert_eq!(runtime.wait()["kind"], "wait");
-        runtime.set_freeze(false, false);
-        let step = drive_step(&mut runtime, &observation);
-        assert_eq!(step["kind"], "ops");
-        assert_eq!(step["ops"][0]["op"], "continue");
+        post(&observation);
+        assert!(
+            tick().is_empty(),
+            "a paused drive neither continues nor chooses"
+        );
+        machine::on_resume();
+        assert_eq!(tick(), vec![InteractReq::ContinueDialog]);
+        assert_eq!(machine::take(drive), Take::Pending);
     }
 
     #[test]
@@ -774,21 +715,18 @@ mod tests {
         let mut observation = obs(vec![npc("Gundai", &["Talk-to"], 1, 3)]);
         observation.chat_modal_id = 968;
         observation.chat_continue = true;
-        let mut runtime = DialogRuntime::new();
-        runtime.kind = Kind::Talk;
-        runtime.phase = Phase::Drive;
-        let first = drive_step(&mut runtime, &observation);
-        assert_eq!(first["ops"][0]["op"], "continue");
-        assert_eq!(runtime.phase, Phase::WaitContinueAck);
+        post(&observation);
+        let drive = running(start("drive"));
+        assert_eq!(ops(), vec![InteractReq::ContinueDialog]);
         observation.tick = 5;
+        post(&observation);
+        assert!(tick().is_empty(), "the same page is not continued twice");
+        assert_eq!(machine::take(drive), Take::Pending);
+        machine::tests::expire_deadlines();
+        assert!(tick().is_empty());
         assert_eq!(
-            wait_continue_ack(&mut runtime, &observation)["kind"],
-            "wait"
+            machine::take(drive),
+            Take::Settled(Outcome::Done(json!(false)))
         );
-        runtime.clock.deadline = Some(runtime.clock.now() - Duration::from_millis(1));
-        let timed = wait_continue_ack(&mut runtime, &observation);
-        assert_eq!(timed["kind"], "done");
-        assert_eq!(timed["result"], false);
-        assert_eq!(timed["reason"], "continue-ack-timeout");
     }
 }

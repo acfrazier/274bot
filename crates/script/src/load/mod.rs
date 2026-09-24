@@ -38,6 +38,8 @@ mod line_of_sight;
 #[cfg(feature = "load")]
 mod distance;
 #[cfg(feature = "load")]
+mod dialog_v8;
+#[cfg(feature = "load")]
 mod reach_query;
 mod loadout_v8;
 #[cfg(feature = "load")]

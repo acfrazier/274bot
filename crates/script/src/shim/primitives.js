@@ -1,75 +1,19 @@
-import { notImpl, queue } from '../../../../shim/_kernel.js';
+import { notImpl, runMachine } from '../../../../shim/_kernel.js';
 import { talkOp } from '../../../npcs/Npcs.js';
 import { Traversal } from '../../../walking/Traversal.js';
-import { Execution } from '../../../execution/Execution.js';
 
 export { talkOp };
 
-function callDialog(payload) {
-    const fn =
-        globalThis.rustyscript && globalThis.rustyscript.functions
-            ? globalThis.rustyscript.functions.__rs2b0t_dialog
-            : undefined;
-    if (typeof fn !== 'function') {
-        throw notImpl('primitives.driveDialog');
-    }
-    return fn(payload);
-}
-
-function emitLog(step, log) {
-    if (typeof step?.log === 'string' && typeof log === 'function') {
-        log(step.log);
-    }
-}
-
-function dispatchVerb(step) {
-    if (step.kind === 'npc') {
-        queue({
-            op: 'npc',
-            name: step.name,
-            action: step.action,
-            ...(typeof step.index === 'number' ? { index: step.index } : {}),
-        });
-        return true;
-    }
-    if (step.kind === 'ops') {
-        for (const op of step.ops || []) queue(op);
-        return true;
-    }
-    return false;
-}
-
+// One `dialog` machine await; Rust drives the pages and writes the frozen
+// log lines through the caller's `log`.
 async function run(input, log) {
-    const begin = callDialog({ op: 'begin', ...input });
-    if (!begin) return false;
-    emitLog(begin, log);
-    if (begin.kind === 'notImpl') {
-        throw notImpl('primitives.' + (input.kind || 'driveDialog'), begin.reason);
+    const out = await runMachine('dialog', input, {
+        log: typeof log === 'function' ? log : undefined,
+    });
+    if (out.kind === 'refused') {
+        throw notImpl('primitives.' + (input.kind || 'driveDialog'), out.reason);
     }
-    if (begin.kind === 'aborted') return false;
-    if (begin.kind === 'done') return begin.result === true;
-    const token = begin.token;
-    let current = begin;
-    while (current) {
-        emitLog(current, log);
-        if (current.kind === 'done') return current.result === true;
-        if (current.kind === 'aborted') return false;
-        if (current.kind === 'notImpl') {
-            throw notImpl('primitives.' + (input.kind || 'driveDialog'), current.reason);
-        }
-        if (current.kind === 'npc' || current.kind === 'ops') {
-            dispatchVerb(current);
-        } else if (current.kind !== 'wait') {
-            return false;
-        }
-        let next = null;
-        await Execution.delayUntil(() => {
-            next = callDialog({ op: 'next', token });
-            return next?.kind !== 'wait';
-        }, 0);
-        current = next;
-    }
-    return false;
+    return out.kind === 'done' && out.value === true;
 }
 
 function preferList(prefer) {
@@ -82,12 +26,8 @@ function optionalGap(gapMs) {
 
 export function pickPreferred(options, prefer) {
     const opts = options || [];
-    for (const p of prefer || []) {
-        const want = String(p).toLowerCase();
-        const hit = opts.find((o) => String(o).toLowerCase().includes(want));
-        if (hit) return hit;
-    }
-    return null;
+    const i = globalThis.__rs2b0t_pick_preferred(opts.map(String), [...(prefer || [])].map(String));
+    return i < 0 ? null : opts[i];
 }
 
 export function pickByLine() {
@@ -102,10 +42,14 @@ export function needsHop() {
     throw notImpl('primitives.needsHop');
 }
 
-export async function walkWithHops(dest) {
+// Ladder hops are not driven: the walk is the frozen final
+// `walkResilient(dest, { radius, attempts: 3, log })`, awaited for its result.
+export async function walkWithHops(dest, radius, _hops, log) {
     if (!dest || typeof dest.x !== 'number') return false;
-    Traversal.walkTo({ x: dest.x, z: dest.z, level: dest.level ?? 0 });
-    return true;
+    return Traversal.walkResilient(
+        { x: dest.x, z: dest.z, level: dest.level ?? 0 },
+        { radius: radius ?? 0, attempts: 3, log },
+    );
 }
 
 export async function gotoNpc(stop) {
