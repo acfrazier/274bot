@@ -1,11 +1,12 @@
 # Login: FIFO throttle numbers
 
 `crates/host/src/login_queue.rs` stays under Lost City's **production**
-login rate limits. Slots call `LoginQueue::enqueue(uid)` once at the
-Queueing transition, then poll `poll_permit(uid, now)` for
-`Permit::Grant` or `Permit::Wait(duration)`. Only the FIFO head may be
-granted; control-thread Login-all enqueue order therefore cannot be
-reordered by worker lock acquisition.
+login rate limits. FIFO identity is a process-unique slot owner, while device
+rate accounting remains keyed by UID. Only the slot thread creates membership
+at its Queueing transition, then polls its owner token for `Permit::Grant` or
+`Permit::Wait(duration)`. Login-all records non-membership order hints before
+it exposes each new login intent; a later worker cannot overtake an earlier
+hinted owner, and an online or mid-handshake slot cannot leave a ghost place.
 
 A process binds one **server profile** (`local-274`, `local-289`,
 `public-289`) before sockets open. Profile defaults (ports, vault path,
@@ -45,20 +46,24 @@ the longest unmet spacing, shared-throttle, per-IP, or per-uid constraint.
 
 `LoginBackoff` delays retries after response 16 (“Login attempts exceeded”):
 first retry 20 s, then 65 s, 110 s, … (`20 + 45·hits`). A response-16 hold
-is also published to the shared queue so sibling slots pause. Retry waits are
-interruptible by Stop and intent changes. Any successful login resets the
+is also published to the shared queue so sibling slots pause. Retry waits run
+to their deadline and exit early only for Stop, login withdrawal, an
+intentional-logout latch, or a changed world selection. Generic focus, render,
+script, and panel wakes do not shorten them. Any successful login resets the
 slot's escalation.
 
 ## Queue position and leaving
 
-While a slot waits it sits on the FIFO. `LoginQueue::status(uid)` returns
-its place as `Option<QueuePos { position: u32, total: u32 }>` — the **k of n**
-snapshot (1-based; a granted uid is popped and no longer present). host-play
-publishes both fields atomically with queue membership; an absent uid always
-clears its own row. The panel renders only the focused slot's valid
+While a slot waits it sits on the FIFO. `LoginQueue::status_owner(owner)`
+returns its place as `Option<QueuePos { position: u32, total: u32 }>` — the
+**k of n** snapshot (1-based; a granted owner is popped and no longer
+present). Two slots with the same UID therefore keep independent places while
+sharing conservative device-attempt accounting. host-play publishes both
+fields atomically with owner membership; an absent owner always clears its
+own row. The panel renders only the focused slot's valid
 `1 <= position <= total` tuple, so a connected slot never inherits another
-slot's card. `LoginQueue::leave(uid)` drops a queued uid; rail removal,
-withdrawal, terminal startup failure, and Stop clear membership and status.
+slot's card. Withdrawal, terminal startup failure, rail removal, and Stop
+clear both owner membership and status.
 
 ## Mainland hop (tutorial skip)
 
@@ -107,10 +112,13 @@ the rustc triple, not a world switch.
 ## Wiring
 
 Every host-owned socket attempt is preceded by a shared permit, including
-opcode-18 reconnects and a retry after response 1. The embedded client
-returns those intents to host-play instead of reconnecting or recursively
-retrying internally. A granted attempt is acknowledged on success, error, or
-unwind; an unused grant is abandoned before any socket call.
+opcode-18 reconnects and a retry after response 1. In external-ownership mode
+the embedded client returns those intents to host-play instead of reconnecting
+or recursively retrying internally; standalone clients retain their
+Java-compatible response-1 retry. A granted attempt is acknowledged on
+success, error, or unwind; an unused grant is abandoned before any socket
+call. Host-play keeps transient response 1 in Connecting rather than
+publishing phase Error.
 
 
 ## Panel: Login all vs auto-login
@@ -124,7 +132,8 @@ The panel arms logins through `SlotArm` flags (host-play), not
   until the next explicit arm.
 - **Auto-login** (General config → **slot**, **auto-login on title**, backed
   by `ProfileSettings.auto_login`, default **off**) records the intent's
-  provenance. Turning it on arms an unlatched parked slot; turning it off
-  withdraws only auto-derived intent, including during preparation/backoff.
-  Explicit Log in intent survives an auto toggle. An explicit **Logout /
-  Logout all** latches the member until the next **Login all** clears it.
+  provenance. Turning it on arms an unlatched parked slot only when no
+  explicit intent is already active; turning it off withdraws only
+  auto-derived intent, including during preparation/backoff. An explicit
+  **Log in** survives an auto on→off toggle. An explicit **Logout / Logout
+  all** latches the member until the next **Login all** clears it.
