@@ -863,8 +863,8 @@ fn isolate_remaps_api_imports_to_our_game_and_teleport_throws() {
     );
     iso.join();
 
-    // Game.teleport is a real member that throws at runtime.
-    let src = "import { Game } from '../../api/game/Game.js'; export default class T extends LoopingBot { loop() { Game.teleport('Lumbridge'); } }";
+    // Game.teleport is a real member whose promise rejects at runtime.
+    let src = "import { Game } from '../../api/game/Game.js'; export default class T extends LoopingBot { async loop() { await Game.teleport('Lumbridge'); } }";
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![])
         .expect("teleport bot loads");
     iso.on_game_tick(1);
@@ -1322,11 +1322,8 @@ export default class T extends LoopingBot {
     iso.on_game_tick(1);
     assert_eq!(iso.probe("__rs_loops").unwrap(), 1, "first loop runs");
     let paints_after_first = iso.probe("__rs_paints").unwrap();
-    // Existing runner paints once inside the loop wrapper and once when forwarding.
-    assert_eq!(
-        paints_after_first, 2,
-        "preserve the existing first-tick paint cadence"
-    );
+    // One onPaint pass per tick: the isolate thread's paint point.
+    assert_eq!(paints_after_first, 1, "onPaint runs once on the first tick");
     // Post hold via the FlatBuffer — never poke `__rs2b0t_host.hold`.
     let mut snap = base_snapshot();
     snap.hold = true;
@@ -1339,19 +1336,16 @@ export default class T extends LoopingBot {
         loops, 1,
         "posted hold freezes loop: count does not increase"
     );
-    let paints: i64 = iso.probe("__rs_paints").unwrap().as_i64().unwrap();
-    assert!(
-        paints >= 3,
-        "onPaint still runs while held (paints={paints})"
-    );
+    let paints = iso.probe("__rs_paints").unwrap();
+    assert_eq!(paints, 3, "onPaint runs once on each held tick too");
     let frame = iso.paint().expect("paint forwarded while held");
     assert_eq!(frame.title.as_deref(), Some("held"));
     assert!(frame.lines.iter().any(|l| l == "status"));
     iso.join();
 }
 
-// Parked Execution wait: `__rs2b0t_pump` must still call onPaint and
-// forward Paint.begin/end — do not wait for loop() to return.
+// Parked Execution wait: the tick still calls onPaint (once) and
+// forwards Paint.begin/end — paint does not wait for loop() to return.
 #[test]
 fn isolate_parked_wait_still_paints_each_tick() {
     let src = r#"
@@ -1377,23 +1371,144 @@ export default class T extends LoopingBot {
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     iso.on_game_tick(1); // parks inside loop
     assert_eq!(iso.probe("__rs_loops").unwrap(), 1, "first loop parks");
-    let paints_after_first: i64 = iso.probe("__rs_paints").unwrap().as_i64().unwrap_or(0);
-    assert!(
-        paints_after_first >= 1,
-        "first tick must paint even when loop parks (paints={paints_after_first})"
+    assert_eq!(
+        iso.probe("__rs_paints").unwrap(),
+        1,
+        "first tick paints once even when loop parks"
     );
     iso.on_game_tick(2);
     iso.on_game_tick(3);
     let loops = iso.probe("__rs_loops").unwrap();
     assert_eq!(loops, 1, "still parked: loop must not re-enter");
-    let paints: i64 = iso.probe("__rs_paints").unwrap().as_i64().unwrap();
-    assert!(
-        paints >= 3,
-        "onPaint must run on parked pump ticks (paints={paints})"
+    assert_eq!(
+        iso.probe("__rs_paints").unwrap(),
+        3,
+        "onPaint runs once on each parked tick"
     );
     let frame = iso.paint().expect("paint forwarded while parked");
     assert_eq!(frame.title.as_deref(), Some("parked"));
     assert!(frame.lines.iter().any(|l| l == "tick"));
+    iso.join();
+}
+
+// M1a: onPaint (or, for a native tick, the paint pass) runs exactly once
+// per tick for every non-v2 shape — while the runner is in flight on an
+// Execution wait and after it settles. The runner is single-flight: the
+// parked first `loop()`/`tick` is not re-entered until its wait settles.
+#[test]
+fn onpaint_runs_exactly_once_per_tick_for_every_shape() {
+    let class = r#"
+import { Execution } from '../../api/execution/Execution.js';
+export default class T extends LoopingBot {
+    async loop() {
+        globalThis.__loops = (globalThis.__loops || 0) + 1;
+        if (globalThis.__loops === 1) await Execution.delayTicks(2);
+    }
+    onPaint() { globalThis.__paints = (globalThis.__paints || 0) + 1; }
+}
+"#;
+    let define_bot = r#"
+import { Execution } from '../../api/execution/Execution.js';
+export default defineBot({
+    name: 'painter',
+    create() {
+        return {
+            async loop() {
+                globalThis.__loops = (globalThis.__loops || 0) + 1;
+                if (globalThis.__loops === 1) await Execution.delayTicks(2);
+            },
+            onPaint() { globalThis.__paints = (globalThis.__paints || 0) + 1; },
+        };
+    },
+});
+"#;
+    // A native tick has no onPaint: count the paint passes themselves.
+    let native = r#"
+import { Execution } from '../../api/execution/Execution.js';
+const paint = globalThis.__rs2b0t_call_on_paint;
+globalThis.__rs2b0t_call_on_paint = (bot) => {
+    globalThis.__paints = (globalThis.__paints || 0) + 1;
+    return paint(bot);
+};
+export async function tick(api) {
+    globalThis.__loops = (globalThis.__loops || 0) + 1;
+    if (globalThis.__loops === 1) await Execution.delayTicks(2);
+}
+"#;
+    for (shape, src) in [
+        (LoadShape::CompatClass, class),
+        (LoadShape::CompatDefineBot, define_bot),
+        (LoadShape::NativeTick, native),
+    ] {
+        let iso = LoadIsolate::spawn(src.to_string(), shape, vec![]).unwrap();
+        for n in 1..=4 {
+            iso.on_game_tick(n);
+            assert_eq!(
+                iso.probe("__paints").unwrap(),
+                n,
+                "{shape:?}: one paint pass per tick (tick {n})"
+            );
+        }
+        // Parked on tick 1 (due tick 3), settled in tick 3's drain, so
+        // the second entry is tick 4.
+        assert_eq!(
+            iso.probe("__loops").unwrap(),
+            2,
+            "{shape:?}: single-flight until the parked wait settles"
+        );
+        let logs = iso.drain_logs();
+        assert!(
+            logs.iter().all(|l| !is_throw_shaped_log(l)),
+            "{shape:?}: {logs:?}"
+        );
+        iso.join();
+    }
+}
+
+// M5: a second Execution wait parked while `loop()` is parked — here a
+// BotHost tick listener's un-awaited delay — must not replace the loop's
+// wait. The loop's wait settles on its tick and `loop()` runs again on
+// the next one; the listener's wait stays parked on its own.
+#[test]
+fn concurrent_wait_does_not_strand_a_parked_loop() {
+    let src = r#"
+import { Execution } from '../../api/execution/Execution.js';
+import { BotHost } from '../../runtime/BotHost.js';
+export default class T extends LoopingBot {
+    onStart() {
+        BotHost.addTickListener(() => {
+            if (globalThis.__side) return;
+            globalThis.__side = 'parked';
+            Execution.delay(600000).then(() => { globalThis.__side = 'settled'; });
+        });
+    }
+    async loop() {
+        globalThis.__loops = (globalThis.__loops || 0) + 1;
+        await Execution.delayTicks(1);
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    iso.on_game_tick(1);
+    assert_eq!(iso.probe("__loops").unwrap(), 1, "loop parks until tick 2");
+    // Tick 2: the listener parks a second wait, then the loop's wait
+    // settles and the loop finishes.
+    iso.on_game_tick(2);
+    assert_eq!(iso.probe("__side").unwrap(), "parked");
+    iso.on_game_tick(3);
+    assert_eq!(
+        iso.probe("__loops").unwrap(),
+        2,
+        "the loop is not stranded by the listener's wait"
+    );
+    iso.on_game_tick(4);
+    iso.on_game_tick(5);
+    assert_eq!(iso.probe("__loops").unwrap(), 3);
+    assert_eq!(
+        iso.probe("__side").unwrap(),
+        "parked",
+        "the listener's wait keeps its own due time"
+    );
     iso.join();
 }
 

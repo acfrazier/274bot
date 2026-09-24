@@ -383,3 +383,46 @@ export default class T extends LoopingBot {
     );
     iso.join();
 }
+
+// The declared `Game.teleport` is `async`: a refused name (with teleport
+// facts) and a missing fact (without) both come back as a Promise, never
+// a bare boolean or a sync throw.
+#[test]
+fn every_branch_returns_a_promise() {
+    let src = r#"
+import { Game } from '../../api/game/Game.js';
+export default class T extends LoopingBot {
+    loop() {
+        if (globalThis.__did) return;
+        globalThis.__did = true;
+        const shape = (name) => {
+            try {
+                const r = Game.teleport(name);
+                if (r && typeof r.then === 'function') {
+                    r.catch(() => {});
+                    return 'promise';
+                }
+                return typeof r;
+            } catch (e) {
+                return 'threw';
+            }
+        };
+        globalThis.__shapes = [shape('Nowhere'), shape('Varrock')];
+    }
+}
+"#;
+    let factless = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    for iso in [factless, spawn(src)] {
+        let mut snap = base_snapshot();
+        let stats = [magic(100, 50)];
+        snap.stats = &stats;
+        post_snapshot_input(&iso, &snap);
+        tick(&iso, 1);
+        assert_eq!(
+            iso.probe("__shapes").unwrap(),
+            serde_json::json!(["promise", "promise"]),
+            "every branch returns a Promise"
+        );
+        iso.join();
+    }
+}

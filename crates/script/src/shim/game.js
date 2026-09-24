@@ -181,7 +181,7 @@ export const Game = new Proxy(
             });
             return true;
         },
-        teleport(name) {
+        async teleport(name) {
             const step = callTeleport({ op: 'begin', name: String(name ?? '') });
             if (!step || step.kind === 'unknown') return false;
             if (step.kind === 'notImpl') {
@@ -192,25 +192,23 @@ export const Game = new Proxy(
             }
             const token = step.token;
             let current = step;
-            return (async () => {
-                while (current && current.kind !== 'done' && current.kind !== 'aborted') {
-                    if (current.kind === 'if-button') {
-                        actions.ifButton(current.component_id);
-                    } else if (current.kind !== 'wait') {
-                        return false;
-                    }
-                    let next = null;
-                    await Execution.delayUntil(() => {
-                        next = callTeleport({ op: 'next', token });
-                        return next?.kind !== 'wait';
-                    }, 0);
-                    current = next;
+            while (current && current.kind !== 'done' && current.kind !== 'aborted') {
+                if (current.kind === 'if-button') {
+                    actions.ifButton(current.component_id);
+                } else if (current.kind !== 'wait') {
+                    return false;
                 }
-                if (current && current.kind === 'done') {
-                    return current.result === true;
-                }
-                return false;
-            })();
+                let next = null;
+                await Execution.delayUntil(() => {
+                    next = callTeleport({ op: 'next', token });
+                    return next?.kind !== 'wait';
+                }, 0);
+                current = next;
+            }
+            if (current && current.kind === 'done') {
+                return current.result === true;
+            }
+            return false;
         },
         energy() {
             return typeof snap().run_energy === 'number' ? snap().run_energy : 0;

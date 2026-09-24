@@ -1035,6 +1035,7 @@ fn isolate_main(
         proof,
         v2_native,
         events_consumed,
+        matches!(shape, LoadShape::CompatDefineBot | LoadShape::CompatClass),
         #[cfg(feature = "memory-profile")]
         counters,
     );
@@ -1107,6 +1108,138 @@ fn append_wait_facts(reqs: &mut Vec<crate::shim::InteractReq>, enqueued: u32, se
     for _ in 0..settled {
         reqs.push(crate::shim::InteractReq::WaitSettled);
     }
+}
+
+/// The settle promise of a compat method invoker or a v1 native tick: it
+/// fulfils `null` on success or the error text, and never rejects.
+type Settle = rustyscript::js_value::Promise<Option<String>>;
+
+/// Rust-owned single-flight for every non-v2 shape. Compat `onStart`
+/// runs once and gates `loop()`; `loop()` (or a v1 native tick that
+/// returned a promise) is never re-entered while its promise is pending.
+/// Only the runner's own promise holds it: an Execution wait parked by a
+/// listener or an un-awaited helper does not.
+enum Runner {
+    /// Compat card whose `onStart` has not been invoked.
+    Unstarted,
+    /// Compat `onStart` in flight.
+    Starting(Settle),
+    /// Nothing in flight: the next eligible tick invokes `loop()`/`tick`.
+    Idle,
+    /// `loop()` or the native tick in flight.
+    Running(Settle),
+}
+
+impl Runner {
+    fn new(compat: bool) -> Self {
+        if compat {
+            Self::Unstarted
+        } else {
+            Self::Idle
+        }
+    }
+
+    /// `onStart` has settled, so its subscriptions exist.
+    fn started(&self) -> bool {
+        matches!(self, Self::Idle | Self::Running(_))
+    }
+
+    /// Observe the in-flight promise; on settle log its error and go
+    /// idle. `true` when a `loop()`/tick fulfilled cleanly.
+    fn poll(&mut self, runtime: &mut Runtime, out: &Sender<ThreadMsg>, n: u64) -> bool {
+        let (state, is_loop) = match self {
+            Self::Starting(p) => (p.poll_promise(runtime), false),
+            Self::Running(p) => (p.poll_promise(runtime), true),
+            Self::Unstarted | Self::Idle => return false,
+        };
+        let err = match state {
+            std::task::Poll::Pending => return false,
+            std::task::Poll::Ready(Ok(err)) => err,
+            std::task::Poll::Ready(Err(e)) => Some(e.to_string()),
+        };
+        *self = Self::Idle;
+        match err {
+            Some(e) => {
+                let _ = out.send(ThreadMsg::Log(format!("tick {n}: {e}")));
+                false
+            }
+            None => is_loop,
+        }
+    }
+}
+
+/// One eligible non-v2 tick, in the phase order the isolate owns: record
+/// the tick, tick listeners (compat), wait settle, `onStart` once, native
+/// events once started, then `loop()`/`tick` when nothing is in flight.
+/// Sets `loop_settled` when a compat `loop()` settle is observed here.
+///
+/// A running `loop()` is polled before any of this tick's JS runs: one
+/// whose wait settles in this tick's pump (continuations run as each
+/// call returns) finishes this tick, and the next `loop()` starts on the
+/// next one — at most one `loop()` start per tick. A settling `onStart`
+/// is re-polled after the pump so the first `loop()` follows it at once.
+fn run_tick_phases(
+    runtime: &mut Runtime,
+    runner: &mut Runner,
+    n: u64,
+    compat: bool,
+    events_consumed: bool,
+    out: &Sender<ThreadMsg>,
+    loop_settled: &mut bool,
+) -> Result<(), rustyscript::Error> {
+    *loop_settled |= runner.poll(runtime, out, n) && compat;
+    runtime.eval::<()>(&format!("globalThis.__rs2b0t_host.tick = {n}"))?;
+    if compat {
+        // BotHost tick listeners, before any wait settles this tick.
+        // Absent when the card never loaded BotHost.
+        let _ = runtime.call_function_immediate::<()>(
+            None,
+            "__rs2b0t_fire_tick_listeners",
+            json_args!(),
+        );
+    }
+    runtime.call_function_immediate::<()>(None, "__rs2b0t_pump", json_args!(n))?;
+    match runner {
+        // An onStart a listener or a settled wait just finished lets the
+        // first `loop()` run on this tick.
+        Runner::Starting(_) => {
+            runner.poll(runtime, out, n);
+        }
+        Runner::Unstarted => {
+            // onStart is invoked exactly once: a failed call still leaves
+            // the runner started, like a thrown onStart.
+            *runner = Runner::Idle;
+            let start: Settle =
+                runtime.call_function_immediate(None, "__rs2b0t_compat_on_start", json_args!())?;
+            *runner = Runner::Starting(start);
+            // Microtasks run as the call returns, so a synchronous
+            // onStart has settled here and the first `loop()` runs on
+            // this tick.
+            runner.poll(runtime, out, n);
+        }
+        Runner::Idle | Runner::Running(_) => {}
+    }
+    if events_consumed && runner.started() {
+        runtime.call_function_immediate::<()>(
+            None,
+            "__rs2b0t_flush_native_events",
+            json_args!(),
+        )?;
+    }
+    if let Runner::Idle = runner {
+        if compat {
+            let run: Settle =
+                runtime.call_function_immediate(None, "__rs2b0t_compat_loop", json_args!())?;
+            *runner = Runner::Running(run);
+        } else {
+            let run: Option<Settle> =
+                runtime.call_function_immediate(None, "__rs_tick", json_args!(n))?;
+            if let Some(run) = run {
+                *runner = Runner::Running(run);
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Sample recoveryAnchor on the isolate thread. Invalid/missing/throw → none.
@@ -1365,6 +1498,7 @@ fn tick_loop(
     proof: std::sync::Arc<TeardownProofInner>,
     v2_native: bool,
     events_consumed: bool,
+    compat: bool,
     #[cfg(feature = "memory-profile")] counters: std::sync::Arc<crate::memory_profile::Counters>,
 ) {
     let _finish = TickLoopFinish(proof.clone());
@@ -1381,6 +1515,7 @@ fn tick_loop(
     let mut ipc = crate::isolate_fb::IsolateBuf::new();
     let mut last_forwarded_paint: Option<crate::shim::ScriptPaint> = None;
     let mut mouse_gestures = MouseGestureIdentities::default();
+    let mut runner = Runner::new(compat);
     loop {
         #[cfg(feature = "memory-profile")]
         if last_heap_sample.is_none_or(|t| t.elapsed() >= Duration::from_secs(1)) {
@@ -1516,36 +1651,46 @@ fn tick_loop(
                 // until the hold lifts. Still call `onPaint` so status
                 // rows keep updating. Pause already freezes above.
                 if host_hold {
-                    // Paint-only tick: no loop, no pump. Use `__rs_bot`
-                    // (global); module-local `inst` is not visible here.
+                    // Paint-only tick: no loop, no pump. The single paint
+                    // pass of a held tick. Use `__rs_bot` (global);
+                    // module-local `inst` is not visible here.
                     let _ = runtime.eval::<()>(&format!("globalThis.__rs2b0t_host.tick = {n}"));
                     if !v2_native {
                         let _ = runtime.eval::<()>("globalThis.__rs2b0t_call_on_paint()");
                     }
-                    let _ = runtime.eval::<()>("if (typeof globalThis.__rs2b0t_flush_native_events === 'function') globalThis.__rs2b0t_flush_native_events()");
+                    if events_consumed && runner.started() {
+                        let _ = runtime.call_function_immediate::<()>(
+                            None,
+                            "__rs2b0t_flush_native_events",
+                            json_args!(),
+                        );
+                    }
                     let _ = runtime.block_on_event_loop(
                         rustyscript::deno_core::PollEventLoopOptions::default(),
                         Some(Duration::from_millis(10)),
                     );
+                    // Work that fulfils under hold is still scheduler
+                    // progress; its gameplay is dropped below.
+                    let mut lifecycle: Vec<crate::shim::InteractReq> = Vec::new();
                     if v2_native {
                         let rows: Result<Vec<crate::shim::MaybeInteractReq>, rustyscript::Error> =
                             runtime.eval("globalThis.__rs2b0t_host.interact || []");
-                        let lifecycle: Vec<crate::shim::InteractReq> = rows
-                            .unwrap_or_default()
-                            .into_iter()
-                            .filter_map(|row| match row {
+                        lifecycle.extend(rows.unwrap_or_default().into_iter().filter_map(|row| {
+                            match row {
                                 crate::shim::MaybeInteractReq::Req(
                                     req @ crate::shim::InteractReq::LoopSettled,
                                 ) => Some(req),
                                 _ => None,
-                            })
-                            .collect();
-                        if !lifecycle.is_empty() {
-                            let _ = out.send(ThreadMsg::Interact {
-                                bytes: ipc.encode_interact_batch(&lifecycle),
-                                generation,
-                            });
-                        }
+                            }
+                        }));
+                    } else if runner.poll(&mut runtime, &out, n) && compat {
+                        lifecycle.push(crate::shim::InteractReq::LoopSettled);
+                    }
+                    if !lifecycle.is_empty() {
+                        let _ = out.send(ThreadMsg::Interact {
+                            bytes: ipc.encode_interact_batch(&lifecycle),
+                            generation,
+                        });
                     }
                     match compose_forwarded_paint(&mut runtime) {
                         Ok(frame) => {
@@ -1595,35 +1740,37 @@ fn tick_loop(
                     });
                     continue;
                 }
-                // A parked Execution wait: settle it (cond / due tick /
-                // due time) so the loop's continuation runs — never call
-                // `loop()` again while parked. Otherwise start a fresh
-                // tick. `__rs2b0t_pump` is async and awaited through the
-                // event loop, so the resolved wait's continuation (which
-                // may re-park or complete the tick) lands here.
-                let parked = runtime
-                    .eval::<bool>("!!(globalThis.__rs2b0t_host && globalThis.__rs2b0t_host.parked)")
-                    .unwrap_or(false);
-                let v2_pending = v2_native
-                    && runtime
+                // Rust owns the tick phases and the single-flight. Every
+                // shape settles its due Execution waits (the pump); v2
+                // keeps its JS-flagged single-flight, every other shape
+                // runs through the Rust `Runner`. Onward work lands in
+                // the drain below.
+                let mut loop_settled = false;
+                let result: Result<(), rustyscript::Error> = if v2_native {
+                    let pumped =
+                        runtime.call_function_immediate::<()>(None, "__rs2b0t_pump", json_args!(n));
+                    // Do not re-enter tick while a previous returned
+                    // Promise is pending. Snapshot posts still merge;
+                    // this only skips tick.
+                    let v2_pending = runtime
                         .eval::<bool>("!!globalThis.__rs_v2_tick_pending")
                         .unwrap_or(false);
-                let result: Result<(), rustyscript::Error> = if parked {
-                    // Pump settles the wait (and may re-park), then
-                    // paints. Drain so await + onPaint + loop
-                    // continuation land on this tick before paint
-                    // forward.
-                    runtime.call_function(None, "__rs2b0t_pump", json_args!(n))
-                } else if v2_pending {
-                    // Rust-owned v2 single-flight: do not re-enter tick
-                    // while a previous returned Promise is pending.
-                    // Snapshot posts still merge; this only skips tick.
-                    Ok(())
+                    let ticked = if v2_pending {
+                        Ok(())
+                    } else {
+                        runtime.call_function_immediate(None, "__rs_tick", json_args!(n))
+                    };
+                    pumped.and(ticked)
                 } else {
-                    // `__rs_tick` is a synchronous entry that returns
-                    // immediately (parked or not), so this cannot hang on
-                    // a wait.
-                    runtime.call_function_immediate(None, "__rs_tick", json_args!(n))
+                    run_tick_phases(
+                        &mut runtime,
+                        &mut runner,
+                        n,
+                        compat,
+                        events_consumed,
+                        &out,
+                        &mut loop_settled,
+                    )
                 };
                 // Eligible NativeTick only: pause, generation mismatch,
                 // and guardian hold already `continue` above. Advance an
@@ -1642,9 +1789,6 @@ fn tick_loop(
                     rustyscript::deno_core::PollEventLoopOptions::default(),
                     Some(Duration::from_millis(10)),
                 );
-                if parked {
-                    let _ = runtime.eval::<()>("if (typeof globalThis.__rs2b0t_flush_native_events === 'function') globalThis.__rs2b0t_flush_native_events()");
-                }
                 // The host may have armed `terminate_execution` to
                 // interrupt a slow tick; clear it now that the tick's
                 // JS frames have fully unwound. This is the only cancel
@@ -1654,15 +1798,21 @@ fn tick_loop(
                     .deno_runtime()
                     .v8_isolate()
                     .cancel_terminate_execution();
+                if !v2_native {
+                    // A loop that finished in the drain frees the
+                    // single-flight for the next tick.
+                    loop_settled |= runner.poll(&mut runtime, &out, n) && compat;
+                }
                 let elapsed = start.elapsed();
                 #[cfg(feature = "memory-profile")]
                 counters.tick(elapsed);
                 if let Err(e) = result {
                     let _ = out.send(ThreadMsg::Log(format!("tick {n}: {e}")));
                 }
-                // Async errors (a cond that throws, a rejected wait)
-                // surface on the runner's catch instead of throwing the
-                // tick; fold them into the log like sync tick errors.
+                // Errors the callbacks record on the host handle (an
+                // event callback, a rejected v2 tick, or the previous
+                // tick's throwing onPaint) fold into the log like sync
+                // tick errors.
                 let async_err: Option<String> = runtime
                     .eval("(() => { const e = globalThis.__rs2b0t_host.lastError; if (e) { globalThis.__rs2b0t_host.lastError = null; return e; } return null; })()")
                     .unwrap_or(None);
@@ -1702,6 +1852,9 @@ fn tick_loop(
                 stamp_mouse_gesture_identities(&mut reqs, input_identity, &mut mouse_gestures);
                 crate::inspect_wait::filter_public_inspect_wire(&mut reqs);
                 let (enqueued, settled) = take_wait_facts(&mut runtime);
+                if loop_settled {
+                    reqs.push(crate::shim::InteractReq::LoopSettled);
+                }
                 append_wait_facts(&mut reqs, enqueued, settled);
                 if !reqs.is_empty() {
                     let _ = out.send(ThreadMsg::Interact {
@@ -1718,9 +1871,10 @@ fn tick_loop(
                 // in place (Stop drops the whole isolate). serde_v8
                 // walks the v8 object into `ScriptPaint`; the channel
                 // carries a FlatBuffer, never a `serde_json::Value`.
-                // onPaint is sync; the async runner may still be parked
-                // in onStart/loop. Invoke it here so the forward always
-                // sees this tick's frame (or the catch/placeholder).
+                // This is the tick's one onPaint pass: onPaint is sync
+                // and never waits for `loop()`, so it runs even while
+                // the runner is parked in onStart/loop and the forward
+                // always sees this tick's frame (or the placeholder).
                 if !v2_native {
                     let _ = runtime.eval::<()>("globalThis.__rs2b0t_call_on_paint()");
                 }
@@ -2263,11 +2417,7 @@ async loop() {
     const canvas = document.getElementById('canvas');
     canvas.dispatchEvent(new MouseEvent('mousedown', {clientX: 100, clientY: 100}));
     await new Promise((resolve) => {
-        globalThis.__release = () => {
-            globalThis.__rs2b0t_host.parked = false;
-            resolve();
-        };
-        globalThis.__rs2b0t_host.parked = true;
+        globalThis.__release = resolve;
     });
     canvas.dispatchEvent(new MouseEvent('mouseup', {clientX: 100, clientY: 100}));
 }

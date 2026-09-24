@@ -1000,7 +1000,9 @@ pub(super) fn wire_runtime(
 /// receives the tick number and a persistent `api` object. `api` is a
 /// Proxy: the host owns it (`api.tick` is set each tick); reading or
 /// writing any other member throws `not impl` — a script stashes its own
-/// state elsewhere, never in host-owned slots.
+/// state elsewhere, never in host-owned slots. A synchronous tick returns
+/// `null`; an async one returns its never-rejecting settle promise, which
+/// the isolate thread holds so the tick is not re-entered while pending.
 const NATIVE_MAIN: &str = r#"
 import { tick } from './bot.js';
 const api = new Proxy({}, {
@@ -1015,7 +1017,12 @@ set(target, prop, value) {
 },
 });
 globalThis.__rs_api = api;
-globalThis.__rs_tick = (n) => { api.tick = n; return tick(api); };
+globalThis.__rs_tick = (n) => {
+api.tick = n;
+const r = tick(api);
+if (!r || typeof r.then !== 'function') return null;
+return Promise.resolve(r).then(() => null, (e) => String((e && e.message) || e));
+};
 "#;
 
 /// Explicit v2 wrapper: public NativeApi only. Does not grow shim policy.
@@ -2891,7 +2898,7 @@ globalThis.__rs_tick = (n) => {
 "#;
 
 /// Compat wrapper: `create()` the bot instance, then the shared compat
-/// runner (onStart once, awaited, then loop/onPaint every tick). The
+/// runner (the method invokers the isolate thread drives). The
 /// instance is exposed as `__rs_bot` for probe read-back and the
 /// EventSignal/ignoredRandoms host read (same global the class shape
 /// uses).
@@ -2910,16 +2917,12 @@ const inst = new bot();
 globalThis.__rs_bot = inst;
 "#;
 
-/// The shared compat tick runner (defineBot and class shapes): `onStart`
-/// once (awaited), then `loop()` (awaited). `onPaint` runs on every
-/// posted tick even while `loop` is parked on an Execution wait —
-/// paint is not gated on `loop()` returning. `__rs2b0t_tick_async` is
-/// async so an Execution wait parks the whole runner; `__rs_tick` is
-/// the synchronous entry the thread calls (it returns immediately —
-/// parked or not), and the wait is settled by `__rs2b0t_pump` on later
-/// posted ticks instead of a re-entrant `loop()`. Async errors (a cond
-/// that throws) land on the host handle's `lastError` for the thread
-/// to log.
+/// The shared compat runner (defineBot and class shapes). JS only invokes
+/// the declared methods; the isolate thread owns the tick phases, the
+/// onStart-once gate, the `loop()` single-flight and the one paint
+/// pass. Each invoker returns a promise that always fulfils — `null`
+/// on success, the error text on a throw or rejection — so the thread
+/// can hold it and poll its state without an unhandled rejection.
 const COMPAT_RUNNER: &str = r#"
 globalThis.__rs2b0t_flush_native_events = () => {
 const pending = globalThis.__rs2b0t_pending_native_event_batch;
@@ -2929,50 +2932,14 @@ if (pending && pending.length) {
     if (typeof dispatch === 'function') dispatch(pending);
 }
 };
-globalThis.__rs_tick = (n) => {
-if (!inst) return;
-globalThis.__rs2b0t_tick_async(n).catch((e) => {
-    globalThis.__rs2b0t_host.lastError = String((e && e.message) || e);
-    globalThis.__rs2b0t_host.loopInFlight = false;
-});
-};
-globalThis.__rs2b0t_tick_async = async (n) => {
-const h = globalThis.__rs2b0t_host;
-h.tick = n;
-const fire = globalThis.__rs2b0t_fire_tick_listeners;
-if (typeof fire === 'function') fire();
-if (!globalThis.__rs2b0t_started) {
-    globalThis.__rs2b0t_started = true;
-    // Same single-flight as loop(): a pending onStart must not let a
-    // later tick enter loop(). Listeners/chat/onPaint still run.
-    h.loopInFlight = true;
+const __rs2b0t_invoke = async (method) => {
     try {
-        if (typeof inst.onStart === 'function') { await inst.onStart(); }
-    } finally {
-        h.loopInFlight = false;
+        if (inst && typeof inst[method] === 'function') await inst[method]();
+        return null;
+    } catch (e) {
+        return String((e && e.message) || e);
     }
-}
-// Native Rust selects/deduplicates events; deliver them only after
-// onStart has installed subscriptions.
-globalThis.__rs2b0t_flush_native_events();
-
-// Single-flight: a never-resolving loop() must not re-enter. Tick
-// listeners, chat, and onPaint still run.
-if (h.loopInFlight) {
-    await Promise.resolve();
-    globalThis.__rs2b0t_call_on_paint(inst);
-    return;
-}
-h.loopInFlight = true;
-const loopP = (typeof inst.loop === 'function') ? inst.loop() : Promise.resolve();
-await Promise.resolve();
-globalThis.__rs2b0t_call_on_paint(inst);
-try {
-    await loopP;
-    h.interact = h.interact || [];
-    h.interact.push({ op: 'loop-settled' });
-} finally {
-    h.loopInFlight = false;
-}
 };
+globalThis.__rs2b0t_compat_on_start = () => __rs2b0t_invoke('onStart');
+globalThis.__rs2b0t_compat_loop = () => __rs2b0t_invoke('loop');
 "#;

@@ -626,3 +626,122 @@ fn pause_hold_and_session_reset_abort_a_parked_offer() {
     assert!(iso.drain_interacts().is_empty());
     iso.join();
 }
+
+// A sibling module loaded before the card: each Trade verb the fixture
+// uses stays open for one posted tick after its click, the way a verb
+// that waits on the server would. A verb begun while another is open
+// would abort it (the Rust `begin` aborts the prior session); the wrapper
+// logs that as `abort:<kind>`.
+const ONE_TICK_TRADE: &str = r#"
+import { Trade } from '../../api/trade/Trade.js';
+import { Execution } from '../../api/execution/Execution.js';
+const log = globalThis.__trade_log = [];
+let open = null;
+for (const kind of ['request', 'offerAll', 'accept']) {
+    const real = Trade[kind];
+    Trade[kind] = async (...args) => {
+        if (open) log.push('abort:' + open);
+        open = kind;
+        log.push('begin:' + kind);
+        const result = await real(...args);
+        await Execution.delayTicks(1);
+        if (open !== kind) return false;
+        open = null;
+        log.push('done:' + kind);
+        return result;
+    };
+}
+"#;
+
+// The registered `TradeBot` card awaits each verb, so request → offer →
+// accept run one session at a time: no verb begins while another is
+// still open, and the loop is not re-entered mid-verb.
+#[test]
+fn trade_bot_fixture_sequences_request_offer_accept() {
+    let js = script::transpile_ts(include_str!("fixtures/trade_bot.ts"))
+        .expect("transpile trade_bot.ts");
+    let wrapper = (
+        "/rs2b0t/bot/scripts/bot/one_tick_trade.js".to_string(),
+        ONE_TICK_TRADE.to_string(),
+    );
+    let iso = LoadIsolate::spawn(js, LoadShape::CompatClass, vec![wrapper]).unwrap();
+    iso.probe("globalThis.__rs2b0t_host.settingsBag = { partner: 'bob' }; true")
+        .unwrap();
+    let actions = trade_ops();
+    let players = [player("bob", 2, &actions)];
+    let side = [row("Coins", 995, 100, 3322, 0, false)];
+    let mut snap = base();
+    snap.players = &players;
+    snap.trade_accept_id = 9001;
+
+    // No trade open: request, settled on the next tick.
+    post(&iso, &snap);
+    tick(&iso, 1);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::Player {
+            name: "bob".into(),
+            action: "Trade with".into(),
+        }]
+    );
+    snap.tick = 2;
+    post(&iso, &snap);
+    tick(&iso, 2);
+    let settled = iso.drain_interacts();
+    assert!(
+        settled.is_empty(),
+        "request settles without a packet: {settled:?}"
+    );
+
+    // Offer screen: Offer All, then Accept once the offer settles.
+    snap.trade_offer_open = true;
+    snap.trade_partner = Some("bob");
+    snap.trade_side = &side;
+    snap.tick = 3;
+    post(&iso, &snap);
+    tick(&iso, 3);
+    assert_eq!(iso.drain_interacts(), vec![inv_button(995, 0, 3322, 4)]);
+    snap.tick = 4;
+    post(&iso, &snap);
+    tick(&iso, 4);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::IfButton { component_id: 9001 }]
+    );
+    snap.tick = 5;
+    post(&iso, &snap);
+    tick(&iso, 5);
+    assert!(iso.drain_interacts().is_empty());
+
+    // Confirm screen: Accept.
+    snap.trade_offer_open = false;
+    snap.trade_confirm_open = true;
+    snap.tick = 6;
+    post(&iso, &snap);
+    tick(&iso, 6);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::IfButton { component_id: 9001 }]
+    );
+    snap.tick = 7;
+    post(&iso, &snap);
+    tick(&iso, 7);
+
+    assert_eq!(
+        iso.probe("__trade_log").unwrap(),
+        serde_json::json!([
+            "begin:request",
+            "done:request",
+            "begin:offerAll",
+            "done:offerAll",
+            "begin:accept",
+            "done:accept",
+            "begin:accept",
+            "done:accept",
+        ]),
+        "one verb at a time, none aborted"
+    );
+    let logs = iso.drain_logs();
+    assert!(logs.iter().all(|l| !l.starts_with("tick ")), "{logs:?}");
+    iso.join();
+}

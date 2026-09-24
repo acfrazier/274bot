@@ -347,7 +347,7 @@ export default class T extends LoopingBot {
         });
     }
     async loop() {
-        globalThis.__looping = true;
+        globalThis.__loops = (globalThis.__loops || 0) + 1;
         await Execution.delayUntil(() => false, 60000);
     }
 }
@@ -359,14 +359,18 @@ export default class T extends LoopingBot {
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(1);
     let _ = iso.probe("1");
-    assert_eq!(iso.probe("__rs2b0t_host.loopInFlight").unwrap(), true);
+    assert_eq!(probe_i64(&iso, "__loops||0"), 1);
     snap.inv = &[];
     snap.tick = 2;
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(2);
     let _ = iso.probe("1");
     assert_eq!(probe_i64(&iso, "__buried||0"), 1);
-    assert_eq!(iso.probe("__rs2b0t_host.loopInFlight").unwrap(), true);
+    assert_eq!(
+        probe_i64(&iso, "__loops||0"),
+        1,
+        "the parked loop is not re-entered while its listener fires"
+    );
     iso.join();
 }
 

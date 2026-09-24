@@ -6595,11 +6595,7 @@ export default class T extends LoopingBot {
         const canvas = document.getElementById('canvas');
         canvas.dispatchEvent(new MouseEvent('mousedown', {clientX: 100, clientY: 100}));
         await new Promise((resolve) => {
-            globalThis.__release = () => {
-                globalThis.__rs2b0t_host.parked = false;
-                resolve();
-            };
-            globalThis.__rs2b0t_host.parked = true;
+            globalThis.__release = resolve;
         });
         canvas.dispatchEvent(new MouseEvent('mouseup', {clientX: 100, clientY: 100}));
     }
