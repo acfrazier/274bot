@@ -14,7 +14,7 @@ fn wait_for_permit(
     uid: i32,
     arm: &SlotArm,
 ) -> PermitWait {
-    enqueue_queue_place(queue, statuses, username, uid);
+    enqueue_queue_place(queue, statuses, username, uid, arm);
     super::wait_for_permit(queue, statuses, username, uid, arm)
 }
 
@@ -845,7 +845,11 @@ fn stop_slot_sets_stop_and_forgets_name() {
             assert!(matches!(q.request_permit(1000 + i, now), Permit::Grant));
             assert!(q.acknowledge_login_return(1000 + i, now));
         }
-        assert!(matches!(q.request_permit(7, now), Permit::Wait(_)));
+        q.enqueue_owner(arm.queue_owner, 7);
+        assert!(matches!(
+            q.poll_owner(arm.queue_owner, 7, now),
+            Permit::Wait(_)
+        ));
     }
 
     play.statuses.lock().unwrap().push(SlotStatus {
@@ -863,7 +867,7 @@ fn stop_slot_sets_stop_and_forgets_name() {
         play.statuses().iter().all(|s| s.username != "alice"),
         "stop_slot drops the status row"
     );
-    assert!(play.queue.lock().status(7).is_none());
+    assert!(play.queue.lock().status_owner(arm.queue_owner).is_none());
 }
 
 #[test]
@@ -1065,7 +1069,11 @@ fn stop_slot_leaves_profile_uid_when_arm_shared_at_spawn() {
             assert!(matches!(q.request_permit(1000 + i, now), Permit::Grant));
             assert!(q.acknowledge_login_return(1000 + i, now));
         }
-        assert!(matches!(q.request_permit(42, now), Permit::Wait(_)));
+        q.enqueue_owner(arm.queue_owner, 42);
+        assert!(matches!(
+            q.poll_owner(arm.queue_owner, 42, now),
+            Permit::Wait(_)
+        ));
     }
     play.spawn_slot(
         Profile {
@@ -1083,7 +1091,7 @@ fn stop_slot_leaves_profile_uid_when_arm_shared_at_spawn() {
     play.stop_slot("alice");
 
     assert!(arm.stop.load(Ordering::Relaxed));
-    assert!(play.queue.lock().status(42).is_none());
+    assert!(play.queue.lock().status_owner(arm.queue_owner).is_none());
     assert!(!play.spawned.contains("alice"));
     assert!(play.handles.is_empty());
 }
@@ -1822,11 +1830,7 @@ fn retried_login_re_enters_at_the_fifo_tail() {
 }
 
 #[test]
-fn ingame_focused_slot_takes_no_place_and_the_real_waiter_publishes() {
-    // The operator's case: the focused bot is already running and Login
-    // all is pressed. The running slot must not hold a phantom FIFO place
-    // (which would hide the real waiter behind its own k of n), and the
-    // member that is actually waiting must show 1 of 1.
+fn login_all_during_loading_scene_grants_every_parked_owner() {
     let mut play = run_with_io(
         &PlayOptions {
             host: "127.0.0.1".into(),
@@ -1840,59 +1844,83 @@ fn ingame_focused_slot_takes_no_place_and_the_real_waiter_publishes() {
         |_, _, _| {},
     );
     let alice = SlotArm::new(1, true);
-    let bob = SlotArm::new(2, true);
-    play.attach_arm("alice", Arc::clone(&alice));
-    play.attach_arm("bob", Arc::clone(&bob));
+    let bob = SlotArm::new(2, false);
+    // Duplicate device UIDs are legal throttle identities but distinct slots.
+    let carol = SlotArm::new(2, false);
+    for (name, arm) in [
+        ("alice", Arc::clone(&alice)),
+        ("bob", Arc::clone(&bob)),
+        ("carol", Arc::clone(&carol)),
+    ] {
+        play.attach_arm(name, arm);
+    }
     play.statuses.lock().unwrap().extend([
         SlotStatus {
             username: "alice".into(),
-            ingame: true,
+            startup_phase: StartupPhase::Connecting,
             ..SlotStatus::default()
         },
         SlotStatus {
             username: "bob".into(),
             ..SlotStatus::default()
         },
+        SlotStatus {
+            username: "carol".into(),
+            ..SlotStatus::default()
+        },
     ]);
-    // A full address window keeps bob's request queued so it publishes.
-    fill_address_window(&play.queue);
 
-    play.prefer_login(1);
+    // Alice owns a granted reservation and is between client.login and the
+    // first ready observation when Login all lands.
+    assert_eq!(
+        wait_for_permit(&play.queue, &play.statuses, "alice", 1, &alice),
+        PermitWait::Granted
+    );
+    assert!(play
+        .queue
+        .lock()
+        .acknowledge_login_return(1, Instant::now()));
+    on_login_success(&alice);
+    set_startup_phase(&play.statuses, "alice", StartupPhase::LoadingScene);
 
+    play.prefer_login("alice");
+    for name in ["alice", "bob", "carol"] {
+        play.hint_login_order(name);
+    }
+    for arm in [&alice, &bob, &carol] {
+        arm.arm_explicit_login();
+    }
     assert!(
         play.login_queue_uids().is_empty(),
-        "a running slot holds no login-FIFO place"
+        "Login all may publish order hints, never membership"
     );
-    let alice_row = play
-        .statuses()
-        .into_iter()
-        .find(|s| s.username == "alice")
-        .expect("row");
-    assert_eq!((alice_row.queue_position, alice_row.queue_total), (-1, -1));
+    assert_eq!(row_queue(&play.statuses, "alice"), (-1, -1));
 
-    let waiter = {
-        let (queue, statuses, arm) = (
-            Arc::clone(&play.queue),
-            Arc::clone(&play.statuses),
-            Arc::clone(&bob),
-        );
-        thread::spawn(move || wait_for_permit(&queue, &statuses, "bob", 2, &arm))
-    };
-    assert!(
-        wait_until(2000, || {
-            play.statuses()
-                .into_iter()
-                .find(|s| s.username == "bob")
-                .map(|s| (s.queue_position, s.queue_total))
-                == Some((1, 1))
-        }),
-        "the real waiter publishes 1 of 1, got {:?}",
-        play.statuses()
+    assert_eq!(
+        wait_for_permit(&play.queue, &play.statuses, "bob", 2, &bob),
+        PermitWait::Granted
     );
-    assert_eq!(play.login_queue_uids(), vec![2]);
+    assert!(play
+        .queue
+        .lock()
+        .acknowledge_login_return(2, Instant::now()));
+    assert_eq!(
+        wait_for_permit(&play.queue, &play.statuses, "carol", 2, &carol),
+        PermitWait::Granted
+    );
+    assert!(play
+        .queue
+        .lock()
+        .acknowledge_login_return(2, Instant::now()));
+    assert!(play.login_queue_uids().is_empty());
 
-    bob.stop.store(true, Ordering::Relaxed);
-    assert_eq!(waiter.join().unwrap(), PermitWait::Cancelled);
+    let mut rows = play.statuses.lock().unwrap();
+    let alice_row = rows
+        .iter_mut()
+        .find(|row| row.username == "alice")
+        .expect("alice row");
+    alice_row.ingame = true;
+    alice_row.startup_phase = StartupPhase::Ready;
 }
 
 #[test]
@@ -1944,8 +1972,10 @@ fn focus_selects_the_sampled_slot() {
         |_, _, _| {},
     );
     assert_eq!(play.focused(), None, "no slot is focused before focus()");
-    play.arms.insert("b".into(), SlotArm::new(11, false));
-    play.arms.insert("c".into(), SlotArm::new(12, false));
+    let b = SlotArm::new(11, false);
+    let c = SlotArm::new(12, false);
+    play.arms.insert("b".into(), Arc::clone(&b));
+    play.arms.insert("c".into(), Arc::clone(&c));
     *play.queue.lock() = LoginQueue::new(Duration::from_secs(1), 30, Duration::from_secs(60));
     play.focus("b");
     assert_eq!(play.focused().as_deref(), Some("b"));
@@ -1953,9 +1983,18 @@ fn focus_selects_the_sampled_slot() {
     {
         let mut q = play.queue.lock();
         assert!(q.queued_uids().is_empty(), "focus must not reserve a login");
-        assert_eq!(q.request_permit(11, now), Permit::Grant);
-        assert!(matches!(q.request_permit(12, now), Permit::Wait(_)));
-        assert!(matches!(q.request_permit(11, now), Permit::Wait(_)));
+        q.enqueue_owner(b.queue_owner, 11);
+        assert_eq!(q.poll_owner(b.queue_owner, 11, now), Permit::Grant);
+        q.enqueue_owner(c.queue_owner, 12);
+        assert!(matches!(
+            q.poll_owner(c.queue_owner, 12, now),
+            Permit::Wait(_)
+        ));
+        q.enqueue_owner(b.queue_owner, 11);
+        assert!(matches!(
+            q.poll_owner(b.queue_owner, 11, now),
+            Permit::Wait(_)
+        ));
         assert_eq!(
             q.queued_uids(),
             vec![11, 12],

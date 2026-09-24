@@ -3555,8 +3555,8 @@ impl Session {
     pub fn login(&mut self, name: &str) {
         self.wall.clear_latch(name);
         if let Some(play) = self.play.as_ref() {
-            play.enqueue_login(name);
             if let Some(arm) = play.arm(name) {
+                play.hint_login_order(name);
                 arm.arm_explicit_login();
             }
         }
@@ -3601,10 +3601,10 @@ impl Session {
             }
         }
         if let Some(play) = self.play.as_ref() {
-            if on {
-                play.enqueue_login(name);
-            }
             if let Some(arm) = play.arm(name) {
+                if on {
+                    play.hint_login_order(name);
+                }
                 arm.set_auto_login(on);
             }
         }
@@ -3783,10 +3783,10 @@ impl Session {
         if let Some(play) = self.play.as_ref() {
             // Already running (re-click): re-apply saved auto intent while a
             // latched logout remains parked.
-            if want_login {
-                play.enqueue_login(name);
-            }
             if let Some(arm) = play.arm(name) {
+                if want_login {
+                    play.hint_login_order(name);
+                }
                 arm.set_auto_login(auto_login);
                 if !want_login {
                     arm.withdraw_login();
@@ -3869,22 +3869,22 @@ impl Session {
         // so the status row is missing and prefer would be skipped.
         let head = self.tv_name();
         if let (Some(play), Some(h)) = (self.play.as_ref(), head.as_ref()) {
-            if let Some(arm) = play.arm(h) {
-                play.prefer_login(arm.uid.load(Ordering::Relaxed));
-            }
+            play.prefer_login(h);
         }
         let mut names = self.wall.members.clone();
         if let Some(h) = &head {
             names.retain(|n| n != h);
             names.insert(0, h.clone());
         }
+        if let Some(play) = self.play.as_ref() {
+            for name in &names {
+                play.hint_login_order(name);
+            }
+        }
         for name in names {
             self.wall.clear_latch(&name);
-            if let Some(play) = self.play.as_ref() {
-                play.enqueue_login(&name);
-                if let Some(arm) = play.arm(&name) {
-                    arm.arm_explicit_login();
-                }
+            if let Some(arm) = self.play.as_ref().and_then(|play| play.arm(&name)) {
+                arm.arm_explicit_login();
             }
         }
         if let Some(play) = self.play.as_ref() {
