@@ -92,18 +92,22 @@ impl LoginQueue {
         }
     }
 
-    /// FIFO permit request: only the head of the queue can be granted, and
-    /// only when spacing, the per-IP window, and the per-uid rule all pass.
-    /// A blocked caller retries after the returned wait.
-    pub fn request_permit(&mut self, uid: i32, now: Instant) -> Permit {
-        self.prune_uid(now);
-        if !self.queue.contains(&uid) {
-            if self.preferred == Some(uid) {
-                self.queue.push_front(uid);
-            } else {
-                self.queue.push_back(uid);
-            }
+    /// Enter the FIFO exactly once at the caller's Queueing transition.
+    /// Focused priority is the only exception to append order.
+    pub fn enqueue(&mut self, uid: i32) {
+        if self.queue.contains(&uid) {
+            return;
         }
+        if self.preferred == Some(uid) {
+            self.queue.push_front(uid);
+        } else {
+            self.queue.push_back(uid);
+        }
+    }
+
+    /// Poll a place already entered through [`Self::enqueue`].
+    pub fn poll_permit(&mut self, uid: i32, now: Instant) -> Permit {
+        self.prune_uid(now);
         if self.queue.front() != Some(&uid) {
             return Permit::Wait(QUEUE_POLL.max(self.spacing));
         }
@@ -114,6 +118,13 @@ impl LoginQueue {
                 Permit::Grant
             }
         }
+    }
+
+    /// Convenience request for single-threaded callers and tests. Host slots
+    /// use `enqueue` at Queueing and then only `poll_permit`.
+    pub fn request_permit(&mut self, uid: i32, now: Instant) -> Permit {
+        self.enqueue(uid);
+        self.poll_permit(uid, now)
     }
 
     /// Where `uid` sits in the queue. `position` is 1-based; a granted uid
@@ -757,6 +768,17 @@ mod tests {
         assert_eq!(q.status(11).unwrap().position, 1);
         assert_eq!(q.status(12).unwrap().position, 2);
         assert_eq!(q.status(12).unwrap().total, 2);
+    }
+
+    #[test]
+    fn enqueue_order_wins_request_lock_race() {
+        let base = Instant::now();
+        let mut q = LoginQueue::default();
+        q.enqueue(10);
+        q.enqueue(11);
+        assert!(matches!(q.poll_permit(11, base), Permit::Wait(_)));
+        assert_eq!(q.poll_permit(10, base), Permit::Grant);
+        assert_eq!(q.poll_permit(11, base), Permit::Grant);
     }
 
     #[test]

@@ -7,6 +7,17 @@ use std::net::TcpListener;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+fn wait_for_permit(
+    queue: &Arc<Mutex<LoginQueue>>,
+    statuses: &Arc<Mutex<Vec<SlotStatus>>>,
+    username: &str,
+    uid: i32,
+    arm: &SlotArm,
+) -> PermitWait {
+    enqueue_queue_place(queue, statuses, username, uid);
+    super::wait_for_permit(queue, statuses, username, uid, arm)
+}
+
 fn native_requested(
     to: WorldTile,
     radius: i32,
