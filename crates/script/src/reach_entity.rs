@@ -13,7 +13,7 @@
 use crate::machine::{Begin, Call, Cx, Family, Reply, Step};
 use crate::observed::{self, SceneRow};
 use crate::shim::InteractReq;
-use crate::walk::Walk;
+use crate::walk::{Resilient, Walk, BAKED_TIMEOUT_MS, HOP_ATTEMPTS};
 
 use api::query::SceneReachOptions;
 use api::snapshot::WorldTile;
@@ -35,8 +35,9 @@ const TOWARD_SLACK: i32 = 4;
 const DOOR_WAIT_MS: u64 = 5_000;
 /// Frozen `openBlockingDoor` walk timeout.
 const DOOR_WALK_MS: u64 = 30_000;
-/// `Traversal.walkResilient` timeout when the caller gives none.
-const WALK_MS: u64 = 60_000;
+/// Frozen `Traversal.walkResilient` default baked timeout (`Traversal.ts:107`).
+const WALK_MS: u64 = BAKED_TIMEOUT_MS;
+
 /// Frozen `hopLadder` arrival wait.
 const CLIMB_MS: u64 = 8_000;
 
@@ -658,7 +659,7 @@ enum HopPhase {
     Start,
     HopWalk {
         hop: usize,
-        walk: Walk,
+        walk: Resilient,
     },
     Opened {
         hop: usize,
@@ -669,7 +670,7 @@ enum HopPhase {
         hop: usize,
     },
     FinalWalk {
-        walk: Walk,
+        walk: Resilient,
     },
 }
 
@@ -746,14 +747,21 @@ impl WalkHops {
                 Some(here) => self.cross(here, cx),
                 None => Some(false),
             },
-            HopPhase::HopWalk { hop, walk } => match walk.step(cx) {
-                None => {
-                    self.phase = HopPhase::HopWalk { hop, walk };
-                    None
+            HopPhase::HopWalk { hop, mut walk } => {
+                let out = walk.step(cx);
+                while let Some(line) = walk.pop_log() {
+                    self.logger.lines.push_back(line);
                 }
-                Some(false) => Some(false),
-                Some(true) => self.ladder(hop, cx),
-            },
+                match out {
+                    None => {
+                        self.phase = HopPhase::HopWalk { hop, walk };
+                        None
+                    }
+                    Some(false) => Some(false),
+                    Some(true) => self.ladder(hop, cx),
+                }
+            }
+
             HopPhase::Opened {
                 hop,
                 ticks,
@@ -794,13 +802,19 @@ impl WalkHops {
                 self.phase = HopPhase::Climb { hop };
                 None
             }
-            HopPhase::FinalWalk { walk } => match walk.step(cx) {
-                None => {
-                    self.phase = HopPhase::FinalWalk { walk };
-                    None
+            HopPhase::FinalWalk { mut walk } => {
+                let out = walk.step(cx);
+                while let Some(line) = walk.pop_log() {
+                    self.logger.lines.push_back(line);
                 }
-                done => done,
-            },
+                match out {
+                    None => {
+                        self.phase = HopPhase::FinalWalk { walk };
+                        None
+                    }
+                    done => done,
+                }
+            }
         }
     }
 
@@ -826,7 +840,7 @@ impl WalkHops {
         let stand = self.hops[hop].stand;
         if stand.distance_to(here) > 2 {
             let to = self.hops[hop].walk.unwrap_or(stand);
-            match Walk::begin(to.world(), 2, WALK_MS, false, cx) {
+            match Resilient::new(to.world(), 2, WALK_MS, Some(HOP_ATTEMPTS), false).start(cx) {
                 Ok(walk) => {
                     self.phase = HopPhase::HopWalk { hop, walk };
                     return None;
@@ -894,7 +908,15 @@ impl WalkHops {
         if here.level == self.dest.level && self.dest.distance_to(here) <= self.radius {
             return Some(true);
         }
-        match Walk::begin(self.dest.world(), self.radius, WALK_MS, false, cx) {
+        match Resilient::new(
+            self.dest.world(),
+            self.radius,
+            WALK_MS,
+            Some(HOP_ATTEMPTS),
+            false,
+        )
+        .start(cx)
+        {
             Ok(walk) => {
                 self.phase = HopPhase::FinalWalk { walk };
                 None
@@ -910,7 +932,6 @@ mod tests {
     use crate::load::callback_v8::HeldCallback;
     use crate::machine::{self, Called, Outcome, Pending, Started, Take};
     use crate::walk_wait;
-
 
     /// No script callbacks are held here.
     struct NoJs;
@@ -980,7 +1001,7 @@ mod tests {
             "a timed-out wait stops only its own follow (the host keeps the \
              script's walk, whose token differs)"
         );
-        assert_eq!(machine::take(h), Take::Settled(Outcome::Done(json!(false))));
+        assert_eq!(machine::take(h), Take::Pending);
     }
 
     fn loc(name: &str, actions: &[&str]) -> SceneRow {

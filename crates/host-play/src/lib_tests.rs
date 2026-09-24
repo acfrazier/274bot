@@ -2389,10 +2389,11 @@ import {{ Traversal }} from '../../api/walking/Traversal.js';
 export default class T extends LoopingBot {{
     async loop() {{
         globalThis.__rs_ok = null;
-        globalThis.__rs_ok = await Traversal.walkResilient(
+        globalThis.__rs_ok = await Traversal.walkTo(
             {{ x: {x}, z: {z}, level: 0 }},
             {{ radius: {radius}, timeoutMs: 300000 }},
         );
+
     }}
 }}
 "#
@@ -2408,14 +2409,15 @@ export default class T extends LoopingBot {{
         if (globalThis.__rs_done) return;
         globalThis.__rs_a = null;
         globalThis.__rs_b = null;
-        Traversal.walkResilient(
+        Traversal.walkTo(
             {{ x: {x}, z: {z}, level: 0 }},
             {{ radius: {radius}, timeoutMs: 300000 }},
         ).then(v => {{ globalThis.__rs_a = v; }});
-        globalThis.__rs_b = await Traversal.walkResilient(
+        globalThis.__rs_b = await Traversal.walkTo(
             {{ x: {x}, z: {z}, level: 0 }},
             {{ radius: {radius}, timeoutMs: 300000 }},
         );
+
         globalThis.__rs_done = true;
     }}
 }}

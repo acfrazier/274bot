@@ -128,10 +128,11 @@ import {{ Traversal }} from '../../api/walking/Traversal.js';
 export default class T extends LoopingBot {{
     async loop() {{
         globalThis.__rs_ok = null;
-        globalThis.__rs_ok = await Traversal.walkResilient(
+        globalThis.__rs_ok = await Traversal.walkTo(
             {{ x: 2820, z: 3556, level: 0 }},
             {{ radius: 1, timeoutMs: {timeout_ms} }},
         );
+
     }}
 }}
 "#
@@ -347,14 +348,15 @@ export default class T extends LoopingBot {{
         if (globalThis.__rs_done) return;
         globalThis.__rs_a = null;
         globalThis.__rs_b = null;
-        Traversal.walkResilient(
+        Traversal.walkTo(
             {{ x: 2820, z: 3556, level: 0 }},
             {{ radius: 1, timeoutMs: 300000 }},
         ).then(v => {{ globalThis.__rs_a = v; }});
-        globalThis.__rs_b = await Traversal.walkResilient(
+        globalThis.__rs_b = await Traversal.walkTo(
             {{ x: 2820, z: 3556, level: 0 }},
             {{ radius: 1, timeoutMs: 300000 }},
         );
+
         globalThis.__rs_done = true;
     }}
 }}
@@ -751,3 +753,38 @@ fn walk_to_stop_start_does_not_consume_prior_request_id() {
     );
     iso2.join();
 }
+
+#[test]
+fn isolate_walk_resilient_pumps_sustain_while_walking() {
+    let src = r#"
+import { Traversal } from '../../api/walking/Traversal.js';
+import { Sustain } from '../../api/sustain/Sustain.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__ran) return;
+        globalThis.__ran = true;
+        globalThis.__fed = 0;
+        Sustain.set(() => { globalThis.__fed += 1; });
+        globalThis.__ok = await Traversal.walkResilient(
+            { x: 2820, z: 3556, level: 0 },
+            { radius: 1, timeoutMs: 300000 },
+        );
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    for tick in 1..=4 {
+        iso.post_snapshot(encode_snapshot(&base_snapshot(tick, far())));
+        iso.on_game_tick(tick);
+    }
+    let fed = iso.probe("globalThis.__fed").unwrap();
+    let ok = iso.probe("globalThis.__ok").unwrap();
+    iso.join();
+    assert_eq!(ok, serde_json::Value::Null, "walk still in flight: {ok:?}");
+    let n = fed.as_i64().unwrap_or(0);
+    assert!(
+        n >= 3,
+        "frozen await Sustain.run() each loop; fed while walking, got {fed:?}"
+    );
+}
+

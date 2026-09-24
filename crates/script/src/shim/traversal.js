@@ -1,6 +1,7 @@
 import { snap, queue, proxy, notImpl, arrived, runMachine } from '../../shim/_kernel.js';
-
 import { Execution } from '../execution/Execution.js';
+import { Sustain } from '../sustain/Sustain.js';
+
 
 function allowTeleports(opts) {
     return opts.useTeleportCatalog === true || opts.policy?.useTeleports === true;
@@ -62,10 +63,11 @@ export const Traversal = proxy('Traversal', {
                     useTeleportCatalog: allowTeleports(opts),
                 },
             },
-            { log: typeof opts.log === 'function' ? opts.log : undefined },
+            { log: typeof opts.log === 'function' ? opts.log : undefined, sustain: () => Sustain.run() },
         );
-        if (out.kind === 'refused') return false;
+        if (out.kind === 'refused') throw notImpl('Traversal.walkResilient', out.reason);
         return out.kind === 'done' && out.value === true;
+
     },
 
     preload() {
