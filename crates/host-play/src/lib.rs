@@ -999,6 +999,23 @@ fn granted_permit_may_start_login(
     false
 }
 
+/// A profile edit can land while this slot waits in the FIFO. Abandon that
+/// unused grant so the next pass can configure the new endpoint before the
+/// socket handshake starts.
+fn granted_permit_world_is_current(
+    queue: &Arc<Mutex<LoginQueue>>,
+    uid: i32,
+    round: Option<&public_worlds::WorldRound>,
+    arm: &SlotArm,
+) -> bool {
+    if round.is_none_or(|round| round.preference() == *arm.world.lock()) {
+        return true;
+    }
+    let abandoned = queue.lock().unwrap().abandon_permit(uid);
+    debug_assert!(abandoned, "granted permit must be abandoned exactly once");
+    false
+}
+
 /// Run the login call that owns a granted permit, then acknowledge its return
 /// before success/error handling can branch. Errors are counted deliberately:
 /// the client may have sent the attempt before returning either result.
@@ -2638,6 +2655,14 @@ fn spawn_slot_thread(
                             slot_queue.lock().unwrap().leave(uid);
                             return;
                         }
+                        continue;
+                    }
+                    if !granted_permit_world_is_current(
+                        &slot_queue,
+                        uid,
+                        world_round.as_ref(),
+                        &arm,
+                    ) {
                         continue;
                     }
                     // A withdrawal or stop that lands after the granting poll
