@@ -768,13 +768,108 @@ fn wedged_isolate_refuses_posts_past_the_backlog_cap() {
     iso.join();
 }
 
-// M7: a queued interact row no request variant accepts is logged under its
-// tick; its valid siblings still reach the host.
+// M12: a tick whose snapshot the wedged isolate refused is refused with it,
+// even once the backlog has drained, and leaves no tick in flight for the
+// watchdog to fire on.
+#[test]
+fn tick_after_a_refused_snapshot_is_refused_and_not_left_in_flight() {
+    let iso = spawn_ready(slow_first_tick(300), LoadShape::NativeTick, vec![]);
+    iso.on_game_tick(1);
+    thread::sleep(Duration::from_millis(50));
+    let bytes = script::isolate_fb::encode_snapshot(&base_snapshot());
+    assert!(
+        (0..200).any(|_| !iso.post_snapshot(bytes.clone())),
+        "the busy isolate refuses a post"
+    );
+    // The round trip waits for the thread to drain every queued command.
+    assert_eq!(iso.probe("__rs_n").unwrap(), 1);
+    let _ = iso.drain_logs();
+    iso.on_game_tick(2);
+    assert_eq!(
+        iso.probe("__rs_n").unwrap(),
+        1,
+        "the tick paired with the refused snapshot never ran"
+    );
+    // A refused tick left in flight would now be past the budget.
+    thread::sleep(Duration::from_millis(80));
+    assert!(iso.post_snapshot(bytes));
+    iso.on_game_tick(3);
+    assert_eq!(iso.probe("__rs_n").unwrap(), 2, "the next paired tick runs");
+    let logs = iso.drain_logs();
+    assert!(
+        !logs.iter().any(|l| l.contains("interrupted")),
+        "no refused tick was in flight: {logs:?}"
+    );
+    iso.join();
+}
+
+// M12: the stale window ends at an operator command; a tick queued after it
+// is a fresh dispatch and runs. (Pause/Resume: see
+// `slow_tick_is_interrupted_and_isolate_survives`.)
+#[test]
+fn stale_window_ends_at_operator_commands() {
+    let closers: [(&str, fn(&LoadIsolate)); 3] = [
+        ("paint click", |iso| iso.paint_click("b")),
+        ("paint select", |iso| iso.paint_select("k", "v")),
+        ("recovery anchor", |iso| iso.request_recovery_anchor()),
+    ];
+    for (name, close) in closers {
+        let iso = spawn_ready(slow_first_tick(150), LoadShape::NativeTick, vec![]);
+        let mut snap = base_snapshot();
+        iso.on_game_tick(1);
+        thread::sleep(Duration::from_millis(20));
+        snap.tick = 2;
+        assert!(iso.post_snapshot(script::isolate_fb::encode_snapshot(&snap)));
+        iso.on_game_tick(2);
+        close(&iso);
+        snap.tick = 3;
+        assert!(iso.post_snapshot(script::isolate_fb::encode_snapshot(&snap)));
+        iso.on_game_tick(3);
+        assert_eq!(
+            iso.probe("__rs_n").unwrap(),
+            2,
+            "{name}: tick 2 is stale, tick 3 came after the {name} and runs"
+        );
+        iso.join();
+    }
+}
+
+// N1: onPaint's continuations and rejections run and log in the tick that
+// painted, as the per-field evals' event-loop pass ran them.
+#[test]
+fn on_paint_microtasks_and_rejections_land_in_their_tick() {
+    let src = r#"
+export default class T extends LoopingBot {
+    loop() {}
+    onPaint() {
+        const h = globalThis.__rs2b0t_host;
+        Promise.resolve().then(() => (h.log ||= []).push('continued'));
+        Promise.reject(new Error('late paint'));
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    iso.on_game_tick(1);
+    let _ = iso.probe("1");
+    let logs = iso.drain_logs();
+    assert!(logs.iter().any(|l| l == "continued"), "{logs:?}");
+    assert!(
+        logs.iter()
+            .any(|l| l.starts_with("tick 1: ") && l.contains("late paint")),
+        "{logs:?}"
+    );
+    iso.join();
+}
+
+// M7: a queued interact row no request variant accepts — or no serde read
+// at all — is logged under its tick; its valid siblings and the tick's wait
+// facts still reach the host.
 #[test]
 fn malformed_interact_rows_are_logged_not_dropped_silently() {
     let src = "export function tick(api) { const h = globalThis.__rs2b0t_host; \
-               (h.interact ||= []).push({ op: 'no-such-op' }, 42, \
-               { op: 'mouse', down: true, x: 1, y: 2 }); }";
+               h.waitEnqueues = 1; \
+               (h.interact ||= []).push({ op: 'no-such-op' }, 42, new Uint8Array(2), \
+               { op: new Uint8Array(1) }, 10n, { op: 'mouse', down: true, x: 1, y: 2 }); }";
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::NativeTick, vec![]).unwrap();
     iso.on_game_tick(1);
     let _ = iso.probe("1");
@@ -786,11 +881,25 @@ fn malformed_interact_rows_are_logged_not_dropped_silently() {
         "the valid sibling is forwarded"
     );
     assert_eq!(
-        iso.drain_logs(),
-        vec![
-            "tick 1: dropped malformed interact row: op \"no-such-op\"".to_string(),
-            "tick 1: dropped malformed interact row: a number".to_string(),
-        ]
+        iso.drain_lifecycle(),
+        vec![script::shim::InteractReq::WaitEnqueued],
+        "the wait facts survive"
+    );
+    let logs = iso.drain_logs();
+    assert_eq!(
+        logs[..4],
+        [
+            "tick 1: dropped malformed interact row: op \"no-such-op\"",
+            "tick 1: dropped malformed interact row: a number",
+            "tick 1: dropped malformed interact row: bytes",
+            "tick 1: dropped malformed interact row: an object without a string op",
+        ],
+        "{logs:?}"
+    );
+    assert_eq!(logs.len(), 5, "{logs:?}");
+    assert!(
+        logs[4].starts_with("tick 1: dropped malformed interact row: unreadable ("),
+        "{logs:?}"
     );
     iso.join();
 }

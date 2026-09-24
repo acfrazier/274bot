@@ -438,6 +438,9 @@ pub struct LoadIsolate {
     /// Commands sent on `tx` and not yet received by the isolate thread.
     /// Bounds the channel: see [`MAX_QUEUED_COMMANDS`].
     queued: std::sync::Arc<AtomicUsize>,
+    /// The latest snapshot post was refused; the next tick is refused with
+    /// it, keeping each tick paired with its scene.
+    snapshot_refused: AtomicBool,
     rx: Mutex<Receiver<ThreadMsg>>,
     logs: Mutex<Vec<String>>,
     /// Interact requests forwarded by the tick thread (the shim
@@ -635,6 +638,7 @@ impl LoadIsolate {
             script_stop: Mutex::new(None),
             tx,
             queued,
+            snapshot_refused: AtomicBool::new(false),
             rx: Mutex::new(msg_rx),
             logs: Mutex::new(Vec::new()),
             interacts: Mutex::new(Vec::new()),
@@ -664,9 +668,14 @@ impl LoadIsolate {
     ///
     /// `false`: the isolate thread has left [`MAX_QUEUED_COMMANDS`]
     /// unconsumed and the post was dropped. A dropped delta leaves the
-    /// isolate's copy behind, so the caller's next post must be a keyframe.
+    /// isolate's copy behind, so the caller's next post must be a keyframe,
+    /// and the next tick is refused too: it would run against the scene the
+    /// dropped post was meant to replace.
     pub fn post_snapshot(&self, bytes: Vec<u8>) -> bool {
-        if self.backlogged() {
+        let refused = self.backlogged();
+        self.snapshot_refused
+            .store(refused, std::sync::atomic::Ordering::Release);
+        if refused {
             return false;
         }
         let message = SnapshotMessage {
@@ -734,9 +743,14 @@ impl LoadIsolate {
         let generation = self
             .work_generation
             .load(std::sync::atomic::Ordering::Acquire);
-        // A wedged thread would only skip this tick as stale: do not queue
-        // it, and keep the oldest unfinished tick in flight for the budget.
-        let backlogged = self.backlogged();
+        // A wedged thread would only skip this tick as stale, and a tick
+        // whose snapshot was refused would run on the previous scene: do
+        // not queue it, and keep the oldest unfinished tick in flight for
+        // the budget.
+        let backlogged = self
+            .snapshot_refused
+            .swap(false, std::sync::atomic::Ordering::AcqRel)
+            || self.backlogged();
         let interrupted = {
             let mut in_flight = self.in_flight.lock().unwrap();
             // The previous tick is still in flight (no `Completed`
@@ -1444,49 +1458,69 @@ fn clear_unconsumed_paint_click(runtime: &mut Runtime) {
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct TickOutput {
-    interact: Vec<crate::shim::MaybeInteractReq>,
+    /// Each row read on its own, so no row can cost its siblings or the
+    /// wait facts beside them.
+    interact: Vec<crate::shim::QueuedRow>,
     /// `typeof` a non-array queue the script left in place of the array.
     queue: Option<String>,
     wait_enqueues: u32,
     wait_settles: u32,
 }
 
+/// The tick's taken interact queue and wait facts.
+#[derive(Default)]
+struct TickRows {
+    rows: Vec<crate::shim::MaybeInteractReq>,
+    /// `typeof` a non-array queue the script left in place of the array.
+    queue: Option<String>,
+    enqueued: u32,
+    settled: u32,
+}
+
+impl TickRows {
+    /// Name, under the tick, every row that will not reach the host
+    /// because it is malformed — never dropped silently.
+    fn log_rejected(&self, out: &Sender<ThreadMsg>, n: u64) {
+        if let Some(kind) = &self.queue {
+            let _ = out.send(ThreadMsg::Log(format!(
+                "tick {n}: interact queue: dropped a {kind}, not an array"
+            )));
+        }
+        for row in &self.rows {
+            if let crate::shim::MaybeInteractReq::Skip(rejected) = row {
+                let _ = out.send(ThreadMsg::Log(format!(
+                    "tick {n}: dropped malformed interact row: {}",
+                    rejected.0
+                )));
+            }
+        }
+    }
+}
+
 /// Take and clear this tick's shim interact queue, and with `facts` its
 /// Execution wait enqueue/settle counters (each increment is a real
-/// lifecycle fact, including settle+repark in the same pump). A row no
-/// request variant accepts, or a queue that cannot be read at all, is
-/// logged under the tick — never dropped silently.
+/// lifecycle fact, including settle+repark in the same pump). A queue that
+/// cannot be read at all is logged under the tick.
 fn take_tick_output(
     runtime: &mut Runtime,
     out: &Sender<ThreadMsg>,
     n: u64,
     facts: bool,
-) -> (Vec<crate::shim::MaybeInteractReq>, u32, u32) {
-    let output: TickOutput =
-        match runtime.call_function_immediate(None, "__rs2b0t_take_tick_output", json_args!(facts))
-        {
-            Ok(output) => output,
-            Err(e) => {
-                let _ = out.send(ThreadMsg::Log(format!("tick {n}: interact queue: {e}")));
-                return (Vec::new(), 0, 0);
-            }
-        };
-    if let Some(kind) = output.queue {
-        let _ = out.send(ThreadMsg::Log(format!(
-            "tick {n}: interact queue: dropped a {kind}, not an array"
-        )));
-    }
-    log_rejected_rows(&output.interact, out, n);
-    (output.interact, output.wait_enqueues, output.wait_settles)
-}
-
-fn log_rejected_rows(rows: &[crate::shim::MaybeInteractReq], out: &Sender<ThreadMsg>, n: u64) {
-    for row in rows {
-        if let crate::shim::MaybeInteractReq::Skip(rejected) = row {
-            let _ = out.send(ThreadMsg::Log(format!(
-                "tick {n}: dropped malformed interact row: {}",
-                rejected.0
-            )));
+) -> TickRows {
+    match runtime.call_function_immediate::<TickOutput>(
+        None,
+        "__rs2b0t_take_tick_output",
+        json_args!(facts),
+    ) {
+        Ok(output) => TickRows {
+            rows: output.interact.into_iter().map(|row| row.0).collect(),
+            queue: output.queue,
+            enqueued: output.wait_enqueues,
+            settled: output.wait_settles,
+        },
+        Err(e) => {
+            let _ = out.send(ThreadMsg::Log(format!("tick {n}: interact queue: {e}")));
+            TickRows::default()
         }
     }
 }
@@ -1512,8 +1546,20 @@ fn drain_event_loop(runtime: &mut Runtime, out: &Sender<ThreadMsg>, n: u64) {
     }
 }
 
-/// Everything else the tick's JS left on the host handle, read by the
-/// tick's one after-tick call (`__rs2b0t_after_tick`).
+/// Run one pass of the event loop — the microtask checkpoint and ready ops
+/// every script eval used to run as it returned — so continuations and
+/// rejections queued by the call before it land in this tick. A rejection
+/// is logged under the tick.
+fn pump_event_loop(runtime: &mut Runtime, out: &Sender<ThreadMsg>, n: u64) {
+    if let Err(e) =
+        runtime.advance_event_loop(rustyscript::deno_core::PollEventLoopOptions::default())
+    {
+        let _ = out.send(ThreadMsg::Log(format!("tick {n}: {e}")));
+    }
+}
+
+/// What the tick's JS left on the host handle, read by the tick's one
+/// after-tick call (`__rs2b0t_after_tick`).
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct AfterTick {
@@ -1525,8 +1571,6 @@ struct AfterTick {
     paint: PaintRecord,
     /// `None` when user code was not run (a claimed tick).
     ignored_randoms: Option<Vec<String>>,
-    stop: bool,
-    stop_reason: Option<String>,
 }
 
 /// The user `Paint.end` record. Read on its own terms: a malformed record
@@ -1541,13 +1585,15 @@ impl<'de> serde::Deserialize<'de> for PaintRecord {
     }
 }
 
-/// The tick's after-tick crossing (R4): one call runs onPaint when
-/// `run_paint` and the bot's `ignoredRandoms()` unless `claimed`, then
-/// reads what the tick left. The recorded error and `this.log` lines are
-/// logged under the tick (after the paint pass, so a throwing onPaint is
-/// logged on the tick it threw); the paint frame and the ignore list are
-/// forwarded only when they changed. Returns the bounded stop reason when
-/// the script called ScriptRunner.stop.
+/// The tick's tail after its phases (R4), in the order the per-field evals
+/// ran it: onPaint when `run_paint`, then its microtasks; one call that
+/// reads and clears the recorded error, the `this.log` lines, the paint
+/// record and the paint click, then calls the bot's `ignoredRandoms()`
+/// unless `claimed`; that call's microtasks; the stop flag last. The error
+/// and log lines are logged under the tick (after the paint pass, so a
+/// throwing onPaint is logged on the tick it threw); the paint frame and
+/// the ignore list are forwarded only when they changed. Returns the
+/// bounded stop reason when the script called ScriptRunner.stop.
 #[allow(clippy::too_many_arguments)] // the tick loop's paint and ignore-list state
 fn finish_tick(
     runtime: &mut Runtime,
@@ -1560,41 +1606,39 @@ fn finish_tick(
     paint_generation: &std::sync::atomic::AtomicU64,
     last_ignored: &mut Vec<String>,
 ) -> Option<String> {
+    if run_paint {
+        let _ = runtime.call_function_immediate::<()>(None, "__rs2b0t_call_on_paint", json_args!());
+        pump_event_loop(runtime, out, n);
+    }
     let after: Result<AfterTick, rustyscript::Error> = runtime.call_function_immediate(
         None,
         "__rs2b0t_after_tick",
-        json_args!(run_paint, script_paint, !claimed),
+        json_args!(script_paint, !claimed),
     );
-    let after = match after {
-        Ok(after) => Some(after),
+    let mut paint = None;
+    match after {
+        Ok(after) => {
+            if let Some(e) = after.error {
+                let _ = out.send(ThreadMsg::Log(format!("tick {n}: {e}")));
+            }
+            for line in after.log {
+                let _ = out.send(ThreadMsg::Log(line));
+            }
+            match after.paint.0 {
+                Ok(user) => paint = Some(user),
+                Err(e) if script_paint => {
+                    let _ = out.send(ThreadMsg::Log(format!("paint eval: {e}")));
+                }
+                Err(_) => {}
+            }
+            if let Some(list) = after.ignored_randoms.filter(|list| list != last_ignored) {
+                last_ignored.clone_from(&list);
+                let _ = out.send(ThreadMsg::IgnoredRandoms(list));
+            }
+        }
         Err(e) => {
             let _ = out.send(ThreadMsg::Log(format!("tick {n}: after tick: {e}")));
-            None
         }
-    };
-    let mut paint = None;
-    let mut stop = None;
-    if let Some(after) = after {
-        if let Some(e) = after.error {
-            let _ = out.send(ThreadMsg::Log(format!("tick {n}: {e}")));
-        }
-        for line in after.log {
-            let _ = out.send(ThreadMsg::Log(line));
-        }
-        match after.paint.0 {
-            Ok(user) => paint = Some(user),
-            Err(e) if script_paint => {
-                let _ = out.send(ThreadMsg::Log(format!("paint eval: {e}")));
-            }
-            Err(_) => {}
-        }
-        if let Some(list) = after.ignored_randoms.filter(|list| list != last_ignored) {
-            last_ignored.clone_from(&list);
-            let _ = out.send(ThreadMsg::IgnoredRandoms(list));
-        }
-        stop = after
-            .stop
-            .then(|| bounded_stop_reason(after.stop_reason.unwrap_or_default()));
     }
     // A compat bot that may not paint yet forwards an empty frame instead —
     // rs2b0t clears the script layer while `paintBot` is null
@@ -1607,7 +1651,30 @@ fn finish_tick(
     if let Some(frame) = frame {
         forward_paint_if_changed(out, last_paint, paint_generation, frame);
     }
-    stop
+    if !claimed {
+        pump_event_loop(runtime, out, n);
+    }
+    requested_stop(runtime)
+}
+
+/// ScriptRunner.stop's flag and bounded reason, read off the host handle
+/// through V8 (no script).
+fn requested_stop(runtime: &mut Runtime) -> Option<String> {
+    let scope = &mut runtime.deno_runtime().handle_scope();
+    let global = scope.get_current_context().global(scope);
+    let host_key = key_string(scope, "__rs2b0t_host").ok()?;
+    let host = global.get(scope, host_key.into())?.to_object(scope)?;
+    let flag = key_string(scope, "stopRequested").ok()?;
+    if !host.get(scope, flag.into())?.boolean_value(scope) {
+        return None;
+    }
+    let reason = key_string(scope, "stopReason")
+        .ok()
+        .and_then(|key| host.get(scope, key.into()))
+        .filter(|reason| reason.is_string())
+        .map(|reason| reason.to_rust_string_lossy(scope))
+        .unwrap_or_default();
+    Some(bounded_stop_reason(reason))
 }
 
 /// The settle promise of a compat method invoker or a v1 native tick: it
@@ -1795,11 +1862,11 @@ fn eval_recovery_anchor(runtime: &mut Runtime) -> Option<(i32, i32, i32)> {
 
 /// Host-handle hooks the tick loop calls by name (no per-call script
 /// compile): the exactly-once `onStop` body and its log drain, and the two
-/// per-tick crossings. `__rs2b0t_take_tick_output` runs no user code, so a
-/// slow onPaint can never cost the tick's interact batch;
-/// `__rs2b0t_after_tick` runs onPaint and `ignoredRandoms()` first and
-/// clears nothing until they returned, so a terminate inside them leaves
-/// the tick's log lines for the next tick.
+/// per-tick reads. `__rs2b0t_take_tick_output` runs no user code, so a
+/// slow onPaint can never cost the tick's interact batch.
+/// `__rs2b0t_after_tick` reads in the order the per-field evals did — the
+/// recorded error, `this.log`, the paint record, the paint-click clear —
+/// and only then calls the bot's `ignoredRandoms()`.
 const INSTALL_HOST_HOOKS: &str = r#"void (globalThis.__rs2b0t_invoke_on_stop = function () {
   try {
 const inst = globalThis.__rs_bot;
@@ -1834,9 +1901,20 @@ return String((e && (e.message || e.stack)) || e);
     waitEnqueues: e,
     waitSettles: s,
   };
-}, globalThis.__rs2b0t_after_tick = function (paint, readPaint, user) {
-  if (paint && typeof globalThis.__rs2b0t_call_on_paint === 'function') {
-    try { globalThis.__rs2b0t_call_on_paint(); } catch (_) {}
+}, globalThis.__rs2b0t_after_tick = function (readPaint, user) {
+  const h = globalThis.__rs2b0t_host;
+  let error = null, log = [], paint = null;
+  if (h) {
+    if (h.lastError) {
+      error = String(h.lastError);
+      h.lastError = null;
+    }
+    if (Array.isArray(h.log) && h.log.length > 0) {
+      log = h.log.map(String);
+      h.log = [];
+    }
+    if (readPaint) paint = h.paint || null;
+    if (h.paintClick != null) h.paintClick = null;
   }
   let ignored = null;
   if (user) {
@@ -1849,26 +1927,7 @@ return String((e && (e.message || e.stack)) || e);
       }
     } catch (_) {}
   }
-  const h = globalThis.__rs2b0t_host;
-  if (!h) {
-    return { error: null, log: [], paint: null, ignoredRandoms: ignored, stop: false, stopReason: null };
-  }
-  const error = h.lastError;
-  if (error) h.lastError = null;
-  let log = [];
-  if (Array.isArray(h.log) && h.log.length > 0) {
-    log = h.log.map(String);
-    h.log = [];
-  }
-  if (h.paintClick != null) h.paintClick = null;
-  return {
-    error: error ? String(error) : null,
-    log,
-    paint: readPaint ? (h.paint || null) : null,
-    ignoredRandoms: ignored,
-    stop: !!h.stopRequested,
-    stopReason: typeof h.stopReason === 'string' ? h.stopReason : null,
-  };
+  return { error, log, paint, ignoredRandoms: ignored };
 }, 0)"#;
 
 fn enter_teardown_hook(teardown: &std::sync::Arc<Mutex<TeardownState>>) -> bool {
@@ -2289,6 +2348,7 @@ fn tick_loop(
                             "__rs2b0t_call_on_paint",
                             json_args!(),
                         );
+                        pump_event_loop(&mut runtime, &out, n);
                     }
                     if events_consumed && runner.started() && !claimed {
                         let _ = runtime.call_function_immediate::<()>(
@@ -2300,35 +2360,18 @@ fn tick_loop(
                     if !claimed {
                         drain_event_loop(&mut runtime, &out, n);
                     }
-                    // Work that fulfils under hold is still scheduler
-                    // progress; its gameplay is dropped below.
-                    let loop_settled = !v2_native && runner.poll(&mut runtime, &out, n) && compat;
                     // Ownership boundary after callback eval + microtasks:
                     // cancel a terminate armed by a runaway listener so the
-                    // reads below and the next eligible tick recover, then
-                    // drop public actions. Wait facts stay counted until an
-                    // eligible tick forwards them.
+                    // next eligible tick recovers, then drop public actions.
+                    // The cancel comes before the tick's reads because the
+                    // reads are now one call with the interact clear and
+                    // `ignoredRandoms()`, which always ran after it. Wait
+                    // facts stay counted until an eligible tick forwards
+                    // them; held game rows are dropped without a
+                    // malformed-row log, as before.
                     cancel_terminate(&mut runtime, &teardown);
-                    let (rows, _, _) = take_tick_output(&mut runtime, &out, n, false);
+                    let output = take_tick_output(&mut runtime, &out, n, false);
                     crate::machine::drop_ops();
-                    let mut lifecycle: Vec<crate::shim::InteractReq> = rows
-                        .into_iter()
-                        .filter_map(|row| match row {
-                            crate::shim::MaybeInteractReq::Req(
-                                req @ crate::shim::InteractReq::LoopSettled,
-                            ) if v2_native => Some(req),
-                            _ => None,
-                        })
-                        .collect();
-                    if loop_settled {
-                        lifecycle.push(crate::shim::InteractReq::LoopSettled);
-                    }
-                    if !lifecycle.is_empty() {
-                        let _ = out.send(ThreadMsg::Interact {
-                            bytes: ipc.encode_interact_batch(&lifecycle),
-                            generation,
-                        });
-                    }
                     let stop = finish_tick(
                         &mut runtime,
                         &out,
@@ -2340,6 +2383,33 @@ fn tick_loop(
                         &paint_generation,
                         &mut last_ignored_randoms,
                     );
+                    // Work that fulfils under hold is still scheduler
+                    // progress; its gameplay is dropped above. Polled after
+                    // the log read, so a failed loop logs after the tick's
+                    // own lines, as it did.
+                    let mut lifecycle: Vec<crate::shim::InteractReq> = if v2_native {
+                        output
+                            .rows
+                            .into_iter()
+                            .filter_map(|row| match row {
+                                crate::shim::MaybeInteractReq::Req(
+                                    req @ crate::shim::InteractReq::LoopSettled,
+                                ) => Some(req),
+                                _ => None,
+                            })
+                            .collect()
+                    } else {
+                        Vec::new()
+                    };
+                    if !v2_native && runner.poll(&mut runtime, &out, n) && compat {
+                        lifecycle.push(crate::shim::InteractReq::LoopSettled);
+                    }
+                    if !lifecycle.is_empty() {
+                        let _ = out.send(ThreadMsg::Interact {
+                            bytes: ipc.encode_interact_batch(&lifecycle),
+                            generation,
+                        });
+                    }
                     if let Some(reason) = stop {
                         stop_on_script_request(
                             &mut runtime,
@@ -2441,14 +2511,15 @@ fn tick_loop(
                 // mouse object cannot drop a sibling key.
                 // Machine-emitted ops join the batch in Rust at the JS
                 // queue position where they were emitted.
-                let (rows, enqueued, settled) = take_tick_output(&mut runtime, &out, n, true);
-                let mut reqs = crate::machine::merge_ops(rows);
+                let taken = take_tick_output(&mut runtime, &out, n, true);
+                taken.log_rejected(&out, n);
+                let mut reqs = crate::machine::merge_ops(taken.rows);
                 stamp_mouse_gesture_identities(&mut reqs, input_identity, &mut mouse_gestures);
                 crate::inspect_wait::filter_public_inspect_wire(&mut reqs);
                 if loop_settled {
                     reqs.push(crate::shim::InteractReq::LoopSettled);
                 }
-                append_wait_facts(&mut reqs, enqueued, settled);
+                append_wait_facts(&mut reqs, taken.enqueued, taken.settled);
                 if !reqs.is_empty() {
                     let _ = out.send(ThreadMsg::Interact {
                         bytes: ipc.encode_interact_batch(&reqs),
@@ -2456,11 +2527,11 @@ fn tick_loop(
                     });
                 }
                 // The tick's one onPaint pass and everything else it left
-                // on the host handle, in one call (`finish_tick`). onPaint
-                // is sync and never waits for `loop()`. A compat bot
-                // paints once its onStart completed and the scene and
-                // stats are ready (`compat_may_paint`), even while
-                // `loop()` is parked; native shapes paint every tick.
+                // on the host handle (`finish_tick`). onPaint is sync and
+                // never waits for `loop()`. A compat bot paints once its
+                // onStart completed and the scene and stats are ready
+                // (`compat_may_paint`), even while `loop()` is parked;
+                // native shapes paint every tick.
                 let script_paint = !compat || compat_may_paint(&runner);
                 // The terminate was just cancelled: once join has claimed
                 // the tick, onPaint must not run past it.

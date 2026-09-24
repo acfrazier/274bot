@@ -2877,7 +2877,7 @@ fn unpublished_wait_refusal_survives_legacy_zero_and_yields_to_newer_wait() {
         );
         bot.publish_route(1, 7, false, RouteOutcome::NoPath);
         assert_eq!(bot.walk_outcome_request_id, 11);
-        bot.mark_walk_outcome_posted();
+        bot.mark_walk_outcome_posted(bot.walk_outcome_seq);
         bot.requested_route = Some(native_requested(dest, 1, false));
         bot.publish_route(1, 7, false, RouteOutcome::NoPath);
         assert_eq!(
@@ -3021,7 +3021,7 @@ fn two_same_key_walk_near_refuses_later_wait_and_old_nopath_does_not_settle_it()
         assert_eq!(bot.route.as_ref().map(|r| r.dest), Some(dest));
         // The isolate already observed the current wait refusal. A later
         // coalesced NoPath may now occupy the single outcome slot.
-        bot.mark_walk_outcome_posted();
+        bot.mark_walk_outcome_posted(bot.walk_outcome_seq);
         bot.publish_route(1, first_id, false, RouteOutcome::NoPath);
         assert_eq!(
             bot.route.as_ref().map(|r| r.dest),

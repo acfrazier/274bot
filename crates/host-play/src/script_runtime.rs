@@ -99,6 +99,26 @@ impl SettledStart for SlotScript {
     }
 }
 
+/// Post the slot's snapshot. Only a post the isolate accepted counts as the
+/// isolate having seen the walk outcome it carries (`walk_seq`), so only
+/// then is the live refusal guard released. A refused post leaves the guard
+/// in place, and the isolate refuses the paired tick.
+pub(super) fn post_script_snapshot(
+    slot: &mut SlotScript,
+    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    name: &str,
+    walk_seq: u64,
+    bytes: Vec<u8>,
+) -> bool {
+    let accepted = slot.post_snapshot(bytes);
+    if accepted {
+        if let Some(bot) = navs.lock().unwrap().get_mut(name) {
+            bot.mark_walk_outcome_posted(walk_seq);
+        }
+    }
+    accepted
+}
+
 /// Drain isolate `this.log` / tick-error lines onto stderr when
 /// `BOT_DEBUG=1`. Tick errors also become [`SlotScript::last_error`].
 fn emit_script_debug_logs(slot: &mut SlotScript, name: &str) {
@@ -449,7 +469,9 @@ pub(super) fn script_observe_cached(
                                 b.walk_missing_carry.clone(),
                                 b.inspect.posted(),
                             );
-                            b.mark_walk_outcome_posted();
+                            // The live refusal guard is released only once
+                            // the isolate accepts the snapshot carrying this
+                            // outcome (`post_script_snapshot`).
                             posted
                         }
                         None => (
@@ -531,7 +553,7 @@ pub(super) fn script_observe_cached(
                         slot.encode_snapshot_delta_with_native(input, native, force_banks)
                     },
                 );
-                slot.post_snapshot(bytes);
+                post_script_snapshot(&mut slot, navs, name, walk_seq, bytes);
                 slot.store_last_world_id(world_id);
             }
             if isolate_hold {
@@ -5044,8 +5066,13 @@ impl NavBot {
         self.walk_live_refusal_id == 0 || request_id == self.walk_live_refusal_id
     }
 
-    pub(super) fn mark_walk_outcome_posted(&mut self) {
-        self.walk_live_refusal_id = 0;
+    /// A snapshot carrying outcome `posted_seq` reached the isolate. The
+    /// live refusal guard is released only when that was the latest
+    /// published outcome; a newer one stays guarded until it is posted.
+    pub(super) fn mark_walk_outcome_posted(&mut self, posted_seq: u64) {
+        if self.walk_outcome_seq == posted_seq {
+            self.walk_live_refusal_id = 0;
+        }
     }
 
     pub(super) fn note_failure(
@@ -6201,6 +6228,61 @@ export function tick(api) {
             (1, false),
             "the refused deposit is the only bank result"
         );
+    }
+
+    /// F14 R2: the walk refusal guard protects a published outcome until a
+    /// snapshot carrying it reaches the isolate. A refused post keeps it; an
+    /// accepted post of an older outcome keeps it too; only an accepted post
+    /// of the latest outcome releases it.
+    #[test]
+    fn walk_refusal_guard_is_released_only_by_an_accepted_post() {
+        let navs = navs_for_test();
+        navs.lock().unwrap().insert(
+            "alice".into(),
+            NavBot {
+                walk_outcome_seq: 3,
+                walk_live_refusal_id: 9,
+                ..Default::default()
+            },
+        );
+        let guard = || navs.lock().unwrap()["alice"].walk_live_refusal_id;
+        // The bytes are never decoded for this guard; only acceptance matters.
+        let bytes = Vec::new;
+        // No isolate takes the post: refused.
+        let mut idle = script::SlotScript::new();
+        assert!(!super::post_script_snapshot(
+            &mut idle,
+            &navs,
+            "alice",
+            3,
+            bytes()
+        ));
+        assert_eq!(guard(), 9, "a refused post leaves the refusal guarded");
+        let mut slot = script::SlotScript::new();
+        slot.start_load_with_loadouts_settled(
+            "export function tick(api) {}".into(),
+            script::LoadShape::NativeTick,
+            vec![],
+            &[],
+        )
+        .expect("the isolate starts");
+        assert!(super::post_script_snapshot(
+            &mut slot,
+            &navs,
+            "alice",
+            2,
+            bytes()
+        ));
+        assert_eq!(guard(), 9, "the post carried an older outcome");
+        assert!(super::post_script_snapshot(
+            &mut slot,
+            &navs,
+            "alice",
+            3,
+            bytes()
+        ));
+        assert_eq!(guard(), 0, "the latest outcome reached the isolate");
+        slot.stop();
     }
 
     /// A throwaway nav wall for the dispatch-level refuses.

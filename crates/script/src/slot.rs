@@ -1137,15 +1137,19 @@ impl SlotScript {
 
     /// Post the host's FlatBuffer snapshot blob into a Load isolate (no-op
     /// for a compiled script). Call it before [`SlotScript::on_game_tick`]
-    /// so the posted blob is what the tick's JS reads. A post the wedged
-    /// isolate refused makes the next encode a keyframe.
+    /// so the posted blob is what the tick's JS reads. `false`: the wedged
+    /// isolate refused the post — nothing in it reached the script, the
+    /// next encode is a keyframe, and the isolate refuses the paired tick.
     #[cfg(feature = "load")]
-    pub fn post_snapshot(&mut self, bytes: Vec<u8>) {
-        if let Some(isolate) = &self.load {
-            if !isolate.post_snapshot(bytes) {
-                self.last_snapshot = None;
-            }
+    pub fn post_snapshot(&mut self, bytes: Vec<u8>) -> bool {
+        let Some(isolate) = &self.load else {
+            return false;
+        };
+        let accepted = isolate.post_snapshot(bytes);
+        if !accepted {
+            self.last_snapshot = None;
         }
+        accepted
     }
 
     /// Post the merged operator settings bag into a Load isolate.
@@ -2022,6 +2026,44 @@ export default class T extends LoopingBot {{
         assert_eq!(slot.encode_snapshot_delta(&input, false), first);
         // The earlier owned packet remains intact after reuse and Stop.
         assert!(crate::isolate_fb::SnapshotReader::from_bytes(&first).is_ok());
+    }
+
+    /// F14 M12: a post the wedged isolate refused never reached it, so the
+    /// delta base must not advance: the next encode is a keyframe.
+    #[cfg(feature = "load")]
+    #[test]
+    fn refused_snapshot_post_forces_a_keyframe() {
+        let mut slot = SlotScript::new();
+        slot.start_load_with_loadouts(
+            "export function tick(api) { const t = Date.now(); while (Date.now() - t < 400) {} }"
+                .into(),
+            LoadShape::NativeTick,
+            vec![],
+            &[],
+        )
+        .unwrap();
+        let text = "x".repeat(64 * 1024);
+        let mut input = crate::isolate_fb::tests::empty_input(1);
+        input.chat_text = Some(&text);
+        let keyframe = slot.encode_snapshot_delta(&input, false);
+        assert!(keyframe.len() > text.len());
+        assert!(slot.post_snapshot(keyframe));
+        slot.load.as_ref().unwrap().on_game_tick(1);
+        let mut refused = false;
+        for _ in 0..200 {
+            let delta = slot.encode_snapshot_delta(&input, false);
+            assert!(delta.len() < 1024, "unchanged fields stay out of a delta");
+            if !slot.post_snapshot(delta) {
+                refused = true;
+                break;
+            }
+        }
+        assert!(refused, "the busy isolate's backlog is bounded");
+        assert!(
+            slot.encode_snapshot_delta(&input, false).len() > text.len(),
+            "the post after a refusal carries every field again"
+        );
+        slot.stop();
     }
 
     #[test]
