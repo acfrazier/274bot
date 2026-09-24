@@ -933,7 +933,7 @@ fn resolve_string_array_ident_visited(
     for shim in [
         include_str!("shim/banking.js"),
         include_str!("shim/combat_style.js"),
-        include_str!("shim/thieving_targets.js"),
+        include_str!("shim/data/pickpocket_targets.js"),
         include_str!("shim/food.js"),
         include_str!("shim/steal_rules.js"),
     ] {
@@ -942,6 +942,11 @@ fn resolve_string_array_ident_visited(
         }
         if let Some(alias) = string_array_alias_in(shim, ident) {
             return resolve_string_array_ident_visited(shim, &alias, stack);
+        }
+        if let Some(arr) = const_eq_rhs(shim, ident)
+            .and_then(|rhs| parse_mapped_or_keys_rhs(rhs.trim_start(), shim))
+        {
+            return Some(arr);
         }
     }
     if let Some(rhs) = const_eq_rhs(file_src, ident) {

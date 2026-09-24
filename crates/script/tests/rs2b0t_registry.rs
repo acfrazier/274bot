@@ -563,6 +563,34 @@ export const SETTINGS: SettingsSchema = {
 }
 
 #[test]
+fn parse_settings_inlines_mapped_pickpocket_target_names() {
+    // ThievingBot-shaped: the shim derives the names with `.map((t) => t.name)`.
+    let src = r#"
+export const SETTINGS: SettingsSchema = {
+    target: { type: 'string', default: 'Man', options: PICKPOCKET_TARGET_NAMES, label: 'Pickpocket target' },
+};
+"#;
+    let schema = script::settings_schema_from_source(src);
+    let target = schema.iter().find(|s| s.id == "target").unwrap();
+    assert_eq!(
+        target.options,
+        vec![
+            "Man",
+            "Woman",
+            "Farmer",
+            "Warrior woman",
+            "Al-Kharid warrior",
+            "Rogue",
+            "Guard",
+            "Knight of Ardougne",
+            "Watchman",
+            "Paladin",
+            "Hero"
+        ]
+    );
+}
+
+#[test]
 fn parse_settings_inlines_same_file_and_shim_spreads() {
     let src = r#"
 export const EXTRA = {
