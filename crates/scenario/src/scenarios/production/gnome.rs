@@ -1,6 +1,5 @@
 use super::*;
 pub(crate) const WOODCUTTING_STAT: i32 = 8;
-pub(crate) const MINING_STAT: i32 = 14;
 pub(crate) const MAGIC_LOGS_ID: i32 = 1513;
 const NOTED_MAGIC_LOGS_ID: i32 = 1514;
 pub(crate) const UNSTRUNG_MAGIC_SHORTBOW_ID: i32 = 72;
@@ -43,6 +42,11 @@ const GNOME_FLETCH_INJECT: &[ScriptSettingInject] = &[ScriptSettingInject {
     id: "fletchLogs",
     value: ScriptInjectValue::Bool(true),
 }];
+/// One free product slot at the south-bank Magic tree. fletchLogs off. Seed WC 75, Rune
+/// axe 1359, and retained nonproduct Knife ballast. The script chops one
+/// magic log 1513 with Woodcutting XP, deposits it at the upstairs gnome
+/// booth, returns to ground and chops again. This qualifies the resource
+/// cycle, not ordinary 28-slot throughput. Death recovery stays out.
 pub(crate) fn gnome_chop_scenario() -> Scenario {
     let stand = GNOME_SOUTH_BANK_MAGIC_STAND;
     let first_xp = Proof::StatXpGain {
