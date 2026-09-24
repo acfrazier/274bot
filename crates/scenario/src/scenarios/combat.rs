@@ -3301,21 +3301,6 @@ pub(crate) fn hill_giant_loot_deposit_scenario() -> Scenario {
     scenario
 }
 
-/// ChaosDruidKiller's own `prepare-trip` end: the pack carries less than
-/// `foodWithdraw`, so the card climbs out, deposits the pack at the Edgeville
-/// booth, withdraws its twelve lobster, closes and returns through the trapdoor
-/// to the field, where the kills, loot and further work have to follow.
-///
-/// The frozen trip is fixed before any kill: its `observeLifecycle` only runs
-/// inside `bankReason`, so the ladder climb leaves `lastArea` on the dungeon
-/// and the first `bankReason` after the restock reads a missed death and banks
-/// a second time. Both live cells (baseline PASS and 341f0f4e4) reached the
-/// field at engine tick 206/209, ~128s of the old 180s wall (~0.62s a tick,
-/// both walls closing at ticks 249/292). That left ~84 ticks for an engage,
-/// a kill and a HerbLawNature pickup: the PASS took 43 ticks after arrival
-/// (one kill, a Law rune), the FAIL needed two kills (the first druid's herb
-/// waits until the card's own target dies) and ran out at tick 292. The
-/// shared 300s combat qualification wall leaves ~170s after arrival.
 
 /// ArdyFighter's `bankStrategy=Loot count` trip: after a Guard drop lands in
 /// the pack the PeriodicBank walks to the East Ardougne booth, deposits the
