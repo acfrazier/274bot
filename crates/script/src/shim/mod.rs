@@ -58,7 +58,11 @@ globalThis.LoopingBot = class LoopingBot {
     }
     get settings() {
         const bag = globalThis.__rs2b0t_host.settingsBag || {};
-        return {
+        // One view per bag: the accessors read the bag at call time, so the
+        // view is rebuilt only when the host posts a new bag.
+        const cached = globalThis.__rs2b0t_settings_view;
+        if (cached !== undefined && cached.bag === bag) return cached.view;
+        const view = {
             str(name, fallback = '') {
                 const v = bag[name];
                 return typeof v === 'string' ? v : fallback;
@@ -86,6 +90,8 @@ globalThis.LoopingBot = class LoopingBot {
                 return Array.isArray(v) ? v : fallback;
             },
         };
+        globalThis.__rs2b0t_settings_view = { bag, view };
+        return view;
     }
 };
 globalThis.__rs2b0t_dispatch_native_events = (evs) => {

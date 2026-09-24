@@ -58,37 +58,56 @@ export default class EntityQuery {
         return this;
     }
 
-    results() {
-        const out = [];
+    /** Every match in supply order; `seen` true stops the walk. */
+    forEachMatch(seen) {
         for (const raw of this.supplySnaps()) {
             const s = entitySnapView(raw);
             if (!s) continue;
             if (this.snapFilters.length > 0 && !this.snapFilters.every((f) => f(s))) continue;
             const e = this.wrap(raw);
             if (this.entityFilters.length > 0 && !this.entityFilters.every((f) => f(e))) continue;
-            out.push(e);
+            if (seen(e)) return;
         }
+    }
+
+    results() {
+        const out = [];
+        this.forEachMatch((e) => {
+            out.push(e);
+            return false;
+        });
         return out;
     }
 
     nearest() {
         let best = null;
-        for (const e of this.results()) {
+        this.forEachMatch((e) => {
             if (!best || e.distance() < best.distance()) best = e;
-        }
+            return false;
+        });
         return best;
     }
 
     first() {
-        return this.results()[0] ?? null;
+        let hit = null;
+        this.forEachMatch((e) => {
+            hit = e;
+            return true;
+        });
+        return hit;
     }
 
     exists() {
-        return this.results().length > 0;
+        return this.first() !== null;
     }
 
     count() {
-        return this.results().length;
+        let n = 0;
+        this.forEachMatch(() => {
+            n += 1;
+            return false;
+        });
+        return n;
     }
 
     inside(_area) {

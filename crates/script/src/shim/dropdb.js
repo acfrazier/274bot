@@ -3,12 +3,20 @@
 // the host omitted the required four-card tables (fail-closed at use).
 const host = () => globalThis.__rs2b0t_host || {};
 
+let cached = null;
+
 function postedDropDb() {
     const content = host().content;
+    // One validation per posted content object: identity is the cache key.
+    if (cached !== null && cached.content === content) {
+        return cached.db;
+    }
     const dropDb = content && content.drop_db;
     if (!dropDb || typeof dropDb !== 'object' || Array.isArray(dropDb) || Object.keys(dropDb).length === 0) {
+        cached = null;
         throw new Error('selected-revision drop facts are required but missing or empty');
     }
+    cached = { content, db: dropDb };
     return dropDb;
 }
 

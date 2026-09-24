@@ -438,6 +438,12 @@ pub(super) fn wire_runtime(
         })
         .map_err(|e| format!("register ent npc ids: {e}"))?;
     runtime
+        .register_function("__rs2b0t_machine_live", |args: &[serde_json::Value]| {
+            let family = args.first().and_then(|v| v.as_str()).unwrap_or("");
+            Ok(serde_json::Value::Bool(crate::machine::live(family)))
+        })
+        .map_err(|e| format!("register machine live: {e}"))?;
+    runtime
         .register_function(
             "__rs2b0t_ent_life_ticks",
             |_args: &[serde_json::Value]| Ok(serde_json::json!(api::ent::ENT_LIFE_TICKS)),
