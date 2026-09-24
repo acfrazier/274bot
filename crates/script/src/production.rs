@@ -9,7 +9,7 @@
 //! dispatches the returned verbs and reports completion — it does not wait
 //! one tick and guess the count dialog is open.
 
-use crate::observed::{self, ItemRow, Scene};
+use crate::observed::{self, ItemRow, MakeProduct, Scene, Text};
 use crate::task_clock::InstantTaskClock;
 use serde_json::{json, Value};
 use std::cell::RefCell;
@@ -27,92 +27,20 @@ thread_local! {
     static RUNTIME: RefCell<ProductionRuntime> = const { RefCell::new(ProductionRuntime::new()) };
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct MakeButton {
-    qty: i32,
-    com_id: i32,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct MakeProduct {
-    name: String,
-    buttons: Vec<MakeButton>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct PanelRow {
-    name: String,
-    id: i32,
-    slot: i32,
-    component: i32,
-    ops: Vec<String>,
-}
-
-/// The posted facts this module decides from, read from the isolate scene.
-struct NativeObservation {
-    ingame: bool,
-    count_dialog_open: bool,
-    main_modal_id: i32,
-    make_products: Vec<MakeProduct>,
-    /// `None` = the main skill-multi panel was not decoded this rebuild.
-    main_make: Option<Vec<PanelRow>>,
-}
-
-impl NativeObservation {
-    /// A logout forgets the session: only pages posted since login count.
-    fn from_scene(scene: &Scene) -> Self {
-        let session = scene.since_login();
-        Self {
-            ingame: session.ingame().unwrap_or(false),
-            count_dialog_open: session.count_dialog_open().unwrap_or(false),
-            main_modal_id: session.main_modal_id().unwrap_or(-1),
-            make_products: session
-                .make_products()
-                .map(|products| {
-                    products
-                        .iter()
-                        .map(|product| MakeProduct {
-                            name: product.name.clone(),
-                            buttons: product
-                                .buttons
-                                .iter()
-                                .map(|button| MakeButton {
-                                    qty: button.qty,
-                                    com_id: button.com_id,
-                                })
-                                .collect(),
-                        })
-                        .collect()
-                })
-                .unwrap_or_default(),
-            main_make: session
-                .main_make()
-                .and_then(Option::as_ref)
-                .map(|rows| panel_rows(rows)),
-        }
+/// The posted facts this module decides from, borrowed from the isolate
+/// scene. A logout forgets the session: only pages posted since login count.
+fn probe(scene: &Scene) -> Probe<'_> {
+    let session = scene.since_login();
+    Probe {
+        ingame: session.ingame().unwrap_or(false),
+        count_dialog_open: session.count_dialog_open().unwrap_or(false),
+        main_modal_id: session.main_modal_id().unwrap_or(-1),
+        make_products: session.make_products().map_or(&[], Vec::as_slice),
+        main_make: session
+            .main_make()
+            .and_then(Option::as_ref)
+            .map(Vec::as_slice),
     }
-
-    fn probe(&self) -> Probe<'_> {
-        Probe {
-            ingame: self.ingame,
-            count_dialog_open: self.count_dialog_open,
-            main_modal_id: self.main_modal_id,
-            make_products: &self.make_products,
-            main_make: self.main_make.as_deref(),
-        }
-    }
-}
-
-fn panel_rows(rows: &[ItemRow]) -> Vec<PanelRow> {
-    rows.iter()
-        .map(|row| PanelRow {
-            name: row.name_or_empty().to_string(),
-            id: row.id,
-            slot: row.slot_or_unset(),
-            component: row.component_or_unset(),
-            ops: row.ops.clone(),
-        })
-        .collect()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -221,15 +149,15 @@ impl ProductionRuntime {
         })
     }
 
-    fn panel_verb(&self, row: &PanelRow, operation: i32) -> Value {
+    fn panel_verb(&self, row: &ItemRow, operation: i32) -> Value {
         json!({
             "kind": "ops",
             "token": self.token,
             "ops": [{
                 "op": "make-panel",
                 "id": row.id,
-                "slot": row.slot,
-                "component": row.component,
+                "slot": row.slot_or_unset(),
+                "component": row.component_or_unset(),
                 "operation": operation,
             }],
         })
@@ -274,7 +202,8 @@ struct Probe<'a> {
     count_dialog_open: bool,
     main_modal_id: i32,
     make_products: &'a [MakeProduct],
-    main_make: Option<&'a [PanelRow]>,
+    /// `None` = the main skill-multi panel was not decoded this rebuild.
+    main_make: Option<&'a [ItemRow]>,
 }
 
 fn refused(reason: &str) -> Value {
@@ -303,15 +232,16 @@ fn begin(input: &Value) -> Value {
         .unwrap_or("")
         .trim()
         .to_string();
-    let obs = observed::with(NativeObservation::from_scene);
-    let probe = obs.probe();
-    if !probe.ingame {
-        return json!({ "kind": "aborted", "reason": "not ingame" });
-    }
-    match kind {
-        Kind::MakeX => begin_make_x(&probe, &match_name, input.get("count")),
-        Kind::MakeFromPanelMax => begin_panel_max(&probe, &match_name),
-    }
+    observed::with(|scene| {
+        let probe = probe(scene);
+        if !probe.ingame {
+            return json!({ "kind": "aborted", "reason": "not ingame" });
+        }
+        match kind {
+            Kind::MakeX => begin_make_x(&probe, &match_name, input.get("count")),
+            Kind::MakeFromPanelMax => begin_panel_max(&probe, &match_name),
+        }
+    })
 }
 
 fn begin_make_x(probe: &Probe<'_>, match_name: &str, count: Option<&Value>) -> Value {
@@ -365,7 +295,7 @@ fn begin_panel_max(probe: &Probe<'_>, match_name: &str) -> Value {
     let want = match_name.to_ascii_lowercase();
     let Some(row) = rows
         .iter()
-        .find(|row| row.name.to_ascii_lowercase().contains(&want))
+        .find(|row| row.name_or_empty().to_ascii_lowercase().contains(&want))
     else {
         return refused("absent");
     };
@@ -386,26 +316,27 @@ fn begin_panel_max(probe: &Probe<'_>, match_name: &str) -> Value {
 }
 
 fn next(token: u64) -> Value {
-    let obs = observed::with(NativeObservation::from_scene);
-    let probe = obs.probe();
-    RUNTIME.with(|rt| {
-        let mut rt = rt.borrow_mut();
-        if token != rt.token || rt.phase == Phase::Idle {
-            return json!({ "kind": "aborted", "token": rt.token });
-        }
-        if rt.frozen() {
-            return rt.wait();
-        }
-        if !probe.ingame {
-            let token = rt.token;
-            rt.phase = Phase::Idle;
-            rt.clock.deadline = None;
-            return json!({ "kind": "aborted", "token": token });
-        }
-        match rt.kind {
-            Kind::MakeX => make_x_step(&mut rt, &probe),
-            Kind::MakeFromPanelMax => panel_step(&mut rt, &probe),
-        }
+    observed::with(|scene| {
+        let probe = probe(scene);
+        RUNTIME.with(|rt| {
+            let mut rt = rt.borrow_mut();
+            if token != rt.token || rt.phase == Phase::Idle {
+                return json!({ "kind": "aborted", "token": rt.token });
+            }
+            if rt.frozen() {
+                return rt.wait();
+            }
+            if !probe.ingame {
+                let token = rt.token;
+                rt.phase = Phase::Idle;
+                rt.clock.deadline = None;
+                return json!({ "kind": "aborted", "token": token });
+            }
+            match rt.kind {
+                Kind::MakeX => make_x_step(&mut rt, &probe),
+                Kind::MakeFromPanelMax => panel_step(&mut rt, &probe),
+            }
+        })
     })
 }
 
@@ -464,7 +395,7 @@ fn panel_step(rt: &mut ProductionRuntime, probe: &Probe<'_>) -> Value {
 /// The 0-based op index and parsed quantity of the largest posted Make-N
 /// label. A Make op without digits counts as 1. Missing Make controls
 /// refuse rather than inventing an index.
-pub fn largest_make_op(ops: &[String]) -> Option<(usize, i32)> {
+pub fn largest_make_op(ops: &[Text]) -> Option<(usize, i32)> {
     let mut best: Option<(usize, i32)> = None;
     for (index, op) in ops.iter().enumerate() {
         if op.is_empty() {
@@ -491,6 +422,7 @@ pub fn largest_make_op(ops: &[String]) -> Option<(usize, i32)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::observed::MakeButton;
     use std::time::{Duration, Instant};
 
     fn product(name: &str, buttons: &[(i32, i32)]) -> MakeProduct {
@@ -506,19 +438,20 @@ mod tests {
         }
     }
 
-    fn panel(name: &str, id: i32, slot: i32, component: i32, ops: &[&str]) -> PanelRow {
-        PanelRow {
-            name: name.into(),
+    fn panel(name: &str, id: i32, slot: i32, component: i32, ops: &[&str]) -> ItemRow {
+        ItemRow {
+            name: Some(name.into()),
             id,
-            slot,
-            component,
-            ops: ops.iter().map(|op| (*op).to_string()).collect(),
+            slot: Some(slot),
+            component_id: Some(component),
+            ops: ops.iter().map(|op| Text::from(*op)).collect(),
+            ..ItemRow::default()
         }
     }
 
     fn probe<'a>(
         products: &'a [MakeProduct],
-        main_make: Option<&'a [PanelRow]>,
+        main_make: Option<&'a [ItemRow]>,
         count_open: bool,
         main_modal: i32,
     ) -> Probe<'a> {

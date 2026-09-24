@@ -42,11 +42,7 @@ impl ArmObservation {
         Self {
             ingame: session.ingame().unwrap_or(false),
             active_side_tab: session.side_tab().unwrap_or(-1),
-            combat_tab_root: session.side_tab_ifaces().map_or(-1, |rows| {
-                rows.iter()
-                    .find(|row| row.index == COMBAT_TAB)
-                    .map_or(-1, |row| row.id)
-            }),
+            combat_tab_root: session.combat_tab_root().unwrap_or(-1),
             magic_varp_value: session.varps().map_or(0, |rows| {
                 rows.iter()
                     .find(|row| row.index == magic_varp)
@@ -345,10 +341,7 @@ mod tests {
         observed::post(0, |post| {
             post.session(true)
                 .side_tab(active_side_tab)
-                .side_tab_ifaces(vec![crate::observed::SideTabIface {
-                    index: COMBAT_TAB,
-                    id: combat_tab_root,
-                }])
+                .combat_tab_root(combat_tab_root)
                 .varps(vec![crate::observed::VarpRow {
                     index: magic_varp,
                     value: magic_varp_value,

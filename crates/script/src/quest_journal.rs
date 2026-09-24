@@ -317,7 +317,9 @@ fn posted_pair(input: &Value) -> Option<(i32, Vec<String>)> {
     .or_else(|| read_pair(input))
 }
 
-/// The tick that carried [`posted_pair`]'s pair.
+/// The sequence stamped on the answer: the last posted tick once the scene
+/// holds a pair (the pair itself may have been carried by an earlier post,
+/// as the wrapper's `page.tick` always was), else the wrapper's echo.
 fn posted_sequence(input: &Value) -> Option<u64> {
     observed::with(|scene| scene.latest().main_modal_texts().and(scene.tick()))
         .or_else(|| input.get("sequence").and_then(Value::as_u64))

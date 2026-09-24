@@ -3,7 +3,7 @@
 //! only options/tokens and dispatches returned verbs. Rust owns identity and
 //! clocks.
 
-use crate::observed::{self, EntityRow, Scene};
+use crate::observed::{self, Scene, SceneRow};
 use serde_json::{json, Value};
 use std::cell::RefCell;
 use std::time::{Duration, Instant};
@@ -99,9 +99,7 @@ impl Observation {
                 .map(|rows| rows.iter().filter_map(bank_candidate).collect())
                 .unwrap_or_default(),
             locs_populated: session.locs().is_some(),
-            has_booth_stands: session
-                .banks()
-                .is_some_and(|stands| stands.iter().any(|stand| stand.kind == "booth")),
+            has_booth_stands: session.has_booth_stands().unwrap_or(false),
             approaches: session
                 .bank_approaches()
                 .map(|rows| {
@@ -119,7 +117,7 @@ impl Observation {
     }
 }
 
-fn bank_candidate(row: &EntityRow) -> Option<Booth> {
+fn bank_candidate(row: &SceneRow) -> Option<Booth> {
     let name = row.name.as_deref()?;
     if !name
         .as_bytes()
@@ -131,8 +129,8 @@ fn bank_candidate(row: &EntityRow) -> Option<Booth> {
     let actions = row
         .actions
         .iter()
-        .filter(|action| !action.is_empty() && *action != "hidden")
-        .cloned()
+        .filter(|action| !action.is_empty() && &***action != "hidden")
+        .map(|action| action.to_string())
         .collect();
     Some(Booth {
         tile: Tile {
@@ -603,9 +601,10 @@ pub fn on_reset() {
 }
 
 pub fn dispatch(input: &Value) -> Value {
-    let observation = observed::with(Observation::from_scene);
     RUNTIME.with(|runtime| {
         let mut runtime = runtime.borrow_mut();
+        // Only begin and next decide from the posted facts.
+        let observation = || observed::with(Observation::from_scene);
         match input.get("op").and_then(Value::as_str).unwrap_or("") {
             "begin" => {
                 let stand_value = input.get("stand");
@@ -622,12 +621,12 @@ pub fn dispatch(input: &Value) -> Value {
                         .get("booth_action")
                         .and_then(Value::as_str)
                         .map(str::to_string),
-                    &observation,
+                    &observation(),
                 )
             }
             "next" => runtime.next(
                 input.get("token").and_then(Value::as_u64).unwrap_or(0),
-                &observation,
+                &observation(),
             ),
             "current_token" => json!(runtime.token),
             _ => json!({"kind": "done", "ok": false, "reason": "unknown-op"}),

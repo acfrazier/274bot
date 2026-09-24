@@ -7,7 +7,7 @@
 //! and completion stay here. Game actions reuse the existing FlatBuffer
 //! `npc` / `continue` / `answer` verbs.
 
-use crate::observed::{self, Scene};
+use crate::observed::{self, Ops, Scene, Text};
 use crate::task_clock::InstantTaskClock;
 use serde_json::{json, Value};
 use std::cell::RefCell;
@@ -32,8 +32,8 @@ thread_local! {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Npc {
-    name: String,
-    actions: Vec<String>,
+    name: Text,
+    actions: Ops,
     distance: i32,
     index: i32,
 }
@@ -71,14 +71,11 @@ impl NativeObservation {
                 .npcs()
                 .map(|rows| {
                     rows.iter()
+                        // Shared with the scene: no per-call string copies.
+                        // `talk_op` never matches an empty or `hidden` slot.
                         .map(|npc| Npc {
-                            name: npc.name_or_empty().to_string(),
-                            actions: npc
-                                .actions
-                                .iter()
-                                .filter(|action| !action.is_empty() && *action != "hidden")
-                                .cloned()
-                                .collect(),
+                            name: npc.name.clone().unwrap_or_default(),
+                            actions: npc.actions.clone(),
                             distance: npc.distance,
                             index: npc.index,
                         })
@@ -525,7 +522,7 @@ fn talk_target(npcs: &[Npc], wanted: &str) -> Option<TalkTarget> {
             Some((
                 npc.distance,
                 TalkTarget {
-                    name: npc.name.clone(),
+                    name: npc.name.to_string(),
                     action: action.to_string(),
                     index: npc.index,
                 },
@@ -535,12 +532,12 @@ fn talk_target(npcs: &[Npc], wanted: &str) -> Option<TalkTarget> {
         .map(|(_, target)| target)
 }
 
-fn talk_op(actions: &[String]) -> Option<&str> {
+fn talk_op(actions: &[Text]) -> Option<&str> {
     actions.iter().find_map(|action| {
         action
             .get(..4)
             .is_some_and(|head| head.eq_ignore_ascii_case("talk"))
-            .then_some(action.as_str())
+            .then_some(&**action)
     })
 }
 
@@ -600,7 +597,7 @@ mod tests {
     fn npc(name: &str, actions: &[&str], distance: i32, index: i32) -> Npc {
         Npc {
             name: name.into(),
-            actions: actions.iter().map(|action| (*action).to_string()).collect(),
+            actions: actions.iter().map(|action| Text::from(*action)).collect(),
             distance,
             index,
         }

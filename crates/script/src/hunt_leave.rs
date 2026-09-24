@@ -5,7 +5,7 @@
 //! and token counter. Call `hunt_fight::in_area_body` only.
 
 use crate::hunt_fight::{in_area_body, SiteBox, Tile};
-use crate::observed::{self, EntityRow, ItemRow, Scene};
+use crate::observed::{self, ItemRow, Scene, SceneRow};
 use crate::task_clock::InstantTaskClock;
 use api::game_data::SelectedGameData;
 use serde_json::{json, Value};
@@ -91,7 +91,10 @@ impl LeaveObservation {
                         .collect()
                 })
                 .unwrap_or_default(),
-            magic_base: latest.stat("magic").map(|row| row.base),
+            magic_base: latest
+                .stats()
+                .and_then(|skills| skills.magic)
+                .map(|row| row.base),
             tick: scene.tick().unwrap_or(empty.tick),
         }
     }
@@ -107,13 +110,13 @@ impl LeaveObservation {
                 .locs(
                     self.locs
                         .into_iter()
-                        .map(|loc| EntityRow {
+                        .map(|loc| SceneRow {
                             id: loc.id,
                             x: loc.x,
                             z: loc.z,
                             level: loc.level,
                             distance: loc.distance,
-                            ..EntityRow::default()
+                            ..SceneRow::default()
                         })
                         .collect(),
                 )
@@ -123,21 +126,18 @@ impl LeaveObservation {
                         .map(|row| ItemRow {
                             id: row.id,
                             count: row.count,
-                            name: Some(row.name),
+                            name: Some(row.name.into()),
                             ..ItemRow::default()
                         })
                         .collect(),
                 )
-                .stats(
-                    self.magic_base
-                        .map(|base| observed::StatRow {
-                            name: "magic".into(),
-                            base,
-                            ..observed::StatRow::default()
-                        })
-                        .into_iter()
-                        .collect(),
-                );
+                .stats(observed::Skills {
+                    magic: self.magic_base.map(|base| observed::Skill {
+                        base,
+                        ..observed::Skill::default()
+                    }),
+                    ..observed::Skills::default()
+                });
         });
     }
 

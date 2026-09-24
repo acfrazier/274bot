@@ -7,7 +7,7 @@
 //! not an abort copied from the key machine.
 
 use crate::hunt_fight::{in_area_body, SiteBox, Tile};
-use crate::observed::{self, EntityRow, ItemRow, Scene};
+use crate::observed::{self, EntityRow, ItemRow, Scene, SceneRow};
 use crate::task_clock::InstantTaskClock;
 use serde_json::{json, Value};
 use std::cell::RefCell;
@@ -133,7 +133,7 @@ impl CellObservation {
                         .map(|npc| CellNpc {
                             index: npc.index,
                             name: npc.name_or_empty().to_string(),
-                            actions: npc.actions.clone(),
+                            actions: observed::strings(&npc.actions),
                             tile: npc.tile().into(),
                         })
                         .collect()
@@ -159,7 +159,7 @@ impl CellObservation {
                         .map(|row| ItemRow {
                             id: row.id,
                             count: row.count,
-                            name: Some(row.name),
+                            name: Some(row.name.into()),
                             slot: row.has_slot.then_some(row.slot),
                             ..ItemRow::default()
                         })
@@ -168,12 +168,12 @@ impl CellObservation {
                 .locs(
                     self.locs
                         .into_iter()
-                        .map(|loc| EntityRow {
+                        .map(|loc| SceneRow {
                             id: loc.id,
                             x: loc.tile.x,
                             z: loc.tile.z,
                             level: loc.tile.level,
-                            ..EntityRow::default()
+                            ..SceneRow::default()
                         })
                         .collect(),
                 )
@@ -182,8 +182,8 @@ impl CellObservation {
                         .into_iter()
                         .map(|npc| EntityRow {
                             index: npc.index,
-                            name: Some(npc.name),
-                            actions: npc.actions,
+                            name: Some(npc.name.into()),
+                            actions: observed::ops_of(&npc.actions),
                             x: npc.tile.x,
                             z: npc.tile.z,
                             level: npc.tile.level,

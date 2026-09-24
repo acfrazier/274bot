@@ -10,7 +10,7 @@
 //! settlement policy stay here. A queued click is not a transfer: a batch is
 //! only counted once the posted container counts moved.
 
-use crate::observed::{self, ItemRow, Scene};
+use crate::observed::{self, ItemRow, Scene, Text};
 use crate::task_clock::InstantTaskClock;
 use serde_json::{json, Value};
 use std::cell::RefCell;
@@ -37,7 +37,7 @@ thread_local! {
 /// One posted container row (stock, shop player pack or backpack).
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Row {
-    name: String,
+    name: Text,
     id: i32,
     slot: i32,
     component: i32,
@@ -47,7 +47,7 @@ struct Row {
 fn rows_of(rows: &[ItemRow]) -> Vec<Row> {
     rows.iter()
         .map(|row| Row {
-            name: row.name_or_empty().to_string(),
+            name: row.name.clone().unwrap_or_default(),
             id: row.id,
             slot: row.slot_or_unset(),
             component: row.component_or_unset(),
@@ -70,7 +70,8 @@ struct NativeObservation {
 
 impl NativeObservation {
     /// A logout forgets the session: only pages posted since login count.
-    fn from_scene(scene: &Scene) -> Self {
+    /// The npc list is only read to open a shop.
+    fn from_scene(scene: &Scene, with_npcs: bool) -> Self {
         let session = scene.since_login();
         Self {
             ingame: session.ingame().unwrap_or(false),
@@ -87,9 +88,18 @@ impl NativeObservation {
             inv: session.inv().map(|rows| rows_of(rows)).unwrap_or_default(),
             npcs: session
                 .npcs()
+                .filter(|_| with_npcs)
                 .map(|rows| {
                     rows.iter()
-                        .map(|npc| (npc.name_or_empty().to_string(), npc.actions.clone()))
+                        .map(|npc| {
+                            (
+                                npc.name_or_empty().to_string(),
+                                npc.actions
+                                    .iter()
+                                    .map(|action| action.to_string())
+                                    .collect(),
+                            )
+                        })
                         .collect()
                 })
                 .unwrap_or_default(),
@@ -439,7 +449,7 @@ fn begin(input: &Value) -> Value {
         .trim()
         .to_string();
     let qty = input.get("qty");
-    let obs = observed::with(NativeObservation::from_scene);
+    let obs = observed::with(|scene| NativeObservation::from_scene(scene, kind == Kind::Open));
     let probe = obs.probe();
     if !probe.ingame {
         return json!({ "kind": "aborted", "reason": "not ingame" });
@@ -524,7 +534,7 @@ fn begin(input: &Value) -> Value {
                 let mut rt = rt.borrow_mut();
                 rt.abort_runtime();
                 rt.kind = kind;
-                rt.name = row.name.clone();
+                rt.name = row.name.to_string();
                 rt.requested = requested;
                 rt.held_now = count_of(probe.inv, &row.name);
                 rt.send_batch(&row)
@@ -534,7 +544,7 @@ fn begin(input: &Value) -> Value {
 }
 
 fn next(token: u64) -> Value {
-    let obs = observed::with(NativeObservation::from_scene);
+    let obs = observed::with(|scene| NativeObservation::from_scene(scene, false));
     let probe = obs.probe();
     RUNTIME.with(|rt| {
         let mut rt = rt.borrow_mut();
@@ -705,7 +715,7 @@ mod tests {
 
     fn row(name: &str, count: i32, slot: i32) -> Row {
         Row {
-            name: name.to_string(),
+            name: name.into(),
             id: 221,
             slot,
             component: 3900,

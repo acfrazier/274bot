@@ -7,7 +7,7 @@
 //! Fire locs and refused tiles. JavaScript marshals inputs and dispatches
 //! the returned use-on; it does not rank lanes or poll XP.
 
-use crate::observed::{self, ItemRow, Scene};
+use crate::observed::{self, ItemRow, Scene, Text};
 use api::query::ReachQueryView;
 use api::snapshot::WorldTile;
 use serde_json::{json, Value};
@@ -32,7 +32,7 @@ thread_local! {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ItemRef {
-    name: String,
+    name: Text,
     id: i32,
     slot: i32,
     count: i32,
@@ -153,7 +153,10 @@ impl NativeObservation {
                 level: tile.level,
             }),
             animating: session.animating().unwrap_or(false),
-            firemaking_xp: session.stat("firemaking").map(|row| row.xp),
+            firemaking_xp: session
+                .stats()
+                .and_then(|skills| skills.firemaking)
+                .map(|row| row.xp),
             inv: session
                 .inv()
                 .map(|rows| rows.iter().filter_map(item_ref).collect())
@@ -164,7 +167,7 @@ impl NativeObservation {
             cant_light_seq: lines.and_then(|lines| {
                 lines
                     .iter()
-                    .filter(|line| line.text.to_ascii_lowercase().contains(CANT_LIGHT))
+                    .filter(|line| contains_ascii_ci(&line.text, CANT_LIGHT))
                     .map(|line| line.seq)
                     .max()
             }),
@@ -202,13 +205,21 @@ fn reach_of(scene: &Scene) -> &ReachBits {
     scene.since_login().reach().unwrap_or(&NO_REACH)
 }
 
+/// `hay.to_ascii_lowercase().contains(needle)` for a lowercase ASCII
+/// needle, without the copy.
+fn contains_ascii_ci(hay: &str, needle: &str) -> bool {
+    hay.as_bytes()
+        .windows(needle.len())
+        .any(|window| window.eq_ignore_ascii_case(needle.as_bytes()))
+}
+
 fn item_ref(row: &ItemRow) -> Option<ItemRef> {
-    let name = row.name.as_deref()?;
+    let name = row.name.as_ref()?;
     if name.is_empty() {
         return None;
     }
     Some(ItemRef {
-        name: name.to_string(),
+        name: Text::clone(name),
         id: row.id,
         slot: row.slot_or_unset(),
         count: row.count,

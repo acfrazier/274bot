@@ -5,7 +5,7 @@
 //! dispatches returned verbs.
 
 use super::{counts_as_stall_food, needs_cake_restock, select_baker_stall};
-use crate::observed::{self, EntityRow, Scene};
+use crate::observed::{self, Scene, SceneRow};
 use api::cake_stall::{StallLoc, BAKER_STALL};
 use serde_json::{json, Value};
 use std::cell::RefCell;
@@ -62,7 +62,8 @@ struct NativeObservation {
 
 impl NativeObservation {
     /// A logout forgets the session: only pages posted since login count.
-    fn from_scene(scene: &Scene) -> Self {
+    /// The stall is picked only for the ops that walk to or steal from it.
+    fn from_scene(scene: &Scene, pick_stall: bool) -> Self {
         let session = scene.since_login();
         let inv = session.inv();
         Self {
@@ -84,7 +85,11 @@ impl NativeObservation {
                         .filter_map(|row| row.name.as_deref().map(|name| (name, row.count))),
                 )
             }),
-            stall: session.locs().and_then(|locs| selected_stall(locs)),
+            stall: if pick_stall {
+                session.locs().and_then(|locs| selected_stall(locs))
+            } else {
+                None
+            },
         }
     }
 
@@ -374,12 +379,18 @@ fn on_stand(here: Option<Tile>) -> bool {
     })
 }
 
-fn selected_stall(locs: &[EntityRow]) -> Option<SelectedLoc> {
-    let action_refs: Vec<Vec<&str>> = locs
+fn selected_stall(locs: &[SceneRow]) -> Option<SelectedLoc> {
+    // `select_baker_stall` only takes the pinned loc id, so only those rows
+    // are viewed.
+    let pinned: Vec<&SceneRow> = locs
         .iter()
-        .map(|loc| loc.actions.iter().map(String::as_str).collect())
+        .filter(|loc| loc.id == BAKER_STALL.loc_id)
         .collect();
-    let views: Vec<StallLoc<'_>> = locs
+    let action_refs: Vec<Vec<&str>> = pinned
+        .iter()
+        .map(|loc| loc.actions.iter().map(|action| &**action).collect())
+        .collect();
+    let views: Vec<StallLoc<'_>> = pinned
         .iter()
         .zip(action_refs.iter())
         .map(|(loc, actions)| StallLoc {
@@ -426,30 +437,36 @@ pub fn on_reset() {
 }
 
 pub fn dispatch(input: &Value) -> Value {
-    let obs = observed::with(NativeObservation::from_scene).with_callbacks(input);
+    let observe = |pick_stall: bool| {
+        observed::with(|scene| NativeObservation::from_scene(scene, pick_stall))
+            .with_callbacks(input)
+    };
     match input.get("op").and_then(Value::as_str).unwrap_or("") {
-        "count" => json!(obs.carried),
-        "needs_restock" => json!(needs_cake_restock(
-            obs.carried,
-            input
-                .get("target")
-                .and_then(Value::as_i64)
-                .map(|n| n as i32),
-            pack_full(&obs),
-        )),
+        "count" => json!(observe(false).carried),
+        "needs_restock" => {
+            let obs = observe(false);
+            json!(needs_cake_restock(
+                obs.carried,
+                input
+                    .get("target")
+                    .and_then(Value::as_i64)
+                    .map(|n| n as i32),
+                pack_full(&obs),
+            ))
+        }
         "begin" => RUNTIME.with(|runtime| {
             runtime.borrow_mut().begin(
                 input
                     .get("fill_to")
                     .and_then(Value::as_i64)
                     .map(|n| n as i32),
-                &obs,
+                &observe(true),
             )
         }),
         "next" => RUNTIME.with(|runtime| {
             runtime.borrow_mut().next(
                 input.get("token").and_then(Value::as_u64).unwrap_or(0),
-                &obs,
+                &observe(true),
             )
         }),
         "current_token" => RUNTIME.with(|runtime| json!(runtime.borrow().token)),

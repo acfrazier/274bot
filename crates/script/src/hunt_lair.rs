@@ -5,7 +5,7 @@
 //! and token counter. Call `hunt_fight::in_area_body` only.
 
 use crate::hunt_fight::{in_area_body, SiteBox, Tile};
-use crate::observed::{self, EntityRow, ItemRow, Scene};
+use crate::observed::{self, EntityRow, ItemRow, Scene, SceneRow};
 use crate::task_clock::InstantTaskClock;
 use serde_json::{json, Value};
 use std::cell::RefCell;
@@ -92,7 +92,7 @@ impl EnterObservation {
                         .iter()
                         .map(|line| EnterChatLine {
                             seq: line.seq,
-                            text: line.text.clone(),
+                            text: line.text.to_string(),
                         })
                         .collect()
                 })
@@ -106,7 +106,7 @@ impl EnterObservation {
                         .map(|n| EnterNpc {
                             index: n.index,
                             name: n.name_or_empty().to_string(),
-                            actions: n.actions.clone(),
+                            actions: observed::strings(&n.actions),
                             distance: n.distance,
                         })
                         .collect()
@@ -158,7 +158,7 @@ impl EnterObservation {
                         .into_iter()
                         .map(|line| observed::ChatLine {
                             seq: line.seq,
-                            text: line.text,
+                            text: line.text.into(),
                         })
                         .collect(),
                 )
@@ -169,8 +169,8 @@ impl EnterObservation {
                         .into_iter()
                         .map(|n| EntityRow {
                             index: n.index,
-                            name: Some(n.name),
-                            actions: n.actions,
+                            name: Some(n.name.into()),
+                            actions: observed::ops_of(&n.actions),
                             distance: n.distance,
                             ..EntityRow::default()
                         })
@@ -179,13 +179,13 @@ impl EnterObservation {
                 .locs(
                     self.locs
                         .into_iter()
-                        .map(|loc| EntityRow {
+                        .map(|loc| SceneRow {
                             id: loc.id,
                             x: loc.x,
                             z: loc.z,
                             level: loc.level,
                             distance: loc.distance,
-                            ..EntityRow::default()
+                            ..SceneRow::default()
                         })
                         .collect(),
                 )
@@ -196,7 +196,7 @@ impl EnterObservation {
                             id: row.id,
                             count: row.count,
                             slot: (row.slot != -1).then_some(row.slot),
-                            name: Some(row.name),
+                            name: Some(row.name.into()),
                             ..ItemRow::default()
                         })
                         .collect(),

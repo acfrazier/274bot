@@ -5,7 +5,7 @@
 //! Call `hunt_fight::in_area_body` only. Do not call Leave or Fight dispatch.
 
 use crate::hunt_fight::{in_area_body, SiteBox, Tile};
-use crate::observed::{self, EntityRow, ItemRow, Scene};
+use crate::observed::{self, EntityRow, ItemRow, Scene, SceneRow};
 use crate::task_clock::InstantTaskClock;
 use serde_json::{json, Value};
 use std::cell::RefCell;
@@ -115,7 +115,7 @@ impl KeyObservation {
                         .map(|row| KeyNpc {
                             index: row.index,
                             name: row.name_or_empty().to_string(),
-                            actions: row.actions.clone(),
+                            actions: observed::strings(&row.actions),
                             tile: row.tile().into(),
                         })
                         .collect()
@@ -149,13 +149,13 @@ impl KeyObservation {
                 .ground(
                     self.ground
                         .into_iter()
-                        .map(|row| EntityRow {
+                        .map(|row| SceneRow {
                             id: row.id,
-                            name: Some(row.name),
+                            name: Some(row.name.into()),
                             x: row.tile.x,
                             z: row.tile.z,
                             level: row.tile.level,
-                            ..EntityRow::default()
+                            ..SceneRow::default()
                         })
                         .collect(),
                 )
@@ -164,8 +164,8 @@ impl KeyObservation {
                         .into_iter()
                         .map(|row| EntityRow {
                             index: row.index,
-                            name: Some(row.name),
-                            actions: row.actions,
+                            name: Some(row.name.into()),
+                            actions: observed::ops_of(&row.actions),
                             x: row.tile.x,
                             z: row.tile.z,
                             level: row.tile.level,
@@ -176,9 +176,9 @@ impl KeyObservation {
                 .locs(
                     self.locs
                         .into_iter()
-                        .map(|id| EntityRow {
+                        .map(|id| SceneRow {
                             id,
-                            ..EntityRow::default()
+                            ..SceneRow::default()
                         })
                         .collect(),
                 );

@@ -28,7 +28,7 @@ enum Phase {
 fn prayer_observation(scene: &Scene) -> PrayerObservation {
     let session = scene.since_login();
     let mut obs = PrayerObservation::empty();
-    if let Some(row) = session.stat("prayer") {
+    if let Some(row) = session.stats().and_then(|skills| skills.prayer) {
         obs.points = row.effective;
         obs.max = row.base;
     }
@@ -337,12 +337,14 @@ mod tests {
         varps.retain(|row| row.index != varp);
         varps.push(observed::VarpRow { index: varp, value });
         observed::post(0, |post| {
-            post.stats(vec![observed::StatRow {
-                name: "prayer".into(),
-                effective: points,
-                base: max,
-                ..observed::StatRow::default()
-            }])
+            post.stats(observed::Skills {
+                prayer: Some(observed::Skill {
+                    effective: points,
+                    base: max,
+                    xp: 0,
+                }),
+                ..observed::Skills::default()
+            })
             .varps(varps);
         });
     }

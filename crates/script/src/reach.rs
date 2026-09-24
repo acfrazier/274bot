@@ -6,7 +6,7 @@
 //! the existing FlatBuffer walk and npc verbs.
 
 use crate::isolate_fb::SnapshotReader;
-use crate::observed::{self, Scene};
+use crate::observed::{self, Ops, Scene, Text};
 use crate::task_clock::InstantTaskClock;
 use crate::walk_wait;
 use serde_json::{json, Value};
@@ -33,8 +33,8 @@ struct Tile {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Npc {
-    name: String,
-    actions: Vec<String>,
+    name: Text,
+    actions: Ops,
     index: i32,
     tile: Tile,
     distance: i32,
@@ -50,7 +50,7 @@ struct Observation {
     ours: bool,
     chat_modal_id: i32,
     chat_continue: bool,
-    chat_lines: Vec<(i32, String)>,
+    chat_lines: Vec<(i32, Text)>,
     npcs: Vec<Npc>,
 }
 
@@ -82,14 +82,11 @@ impl Observation {
                 .npcs()
                 .map(|rows| {
                     rows.iter()
+                        // Shared with the scene: no per-call string copies.
+                        // `talk_op` never matches an empty or `hidden` slot.
                         .map(|npc| Npc {
-                            name: npc.name_or_empty().to_string(),
-                            actions: npc
-                                .actions
-                                .iter()
-                                .filter(|action| !action.is_empty() && *action != "hidden")
-                                .cloned()
-                                .collect(),
+                            name: npc.name.clone().unwrap_or_default(),
+                            actions: npc.actions.clone(),
                             index: npc.index,
                             tile: Tile {
                                 x: npc.x,
@@ -425,8 +422,8 @@ fn wait_open(rt: &mut ReachRuntime, obs: &Observation) -> Value {
         let Some(npc) = talk_target(&obs.npcs, &rt.npc_name).or_else(|| {
             if rt.npc_index >= 0 {
                 Some(Npc {
-                    name: rt.npc_name.clone(),
-                    actions: vec![rt.npc_action.clone()],
+                    name: Text::from(rt.npc_name.as_str()),
+                    actions: std::iter::once(Text::from(rt.npc_action.as_str())).collect(),
                     index: rt.npc_index,
                     tile: rt.npc_tile,
                     distance: 0,
@@ -515,7 +512,7 @@ fn walk_settle(rt: &ReachRuntime) -> WalkSettle {
 }
 
 fn remember_npc(rt: &mut ReachRuntime, npc: Npc) {
-    rt.npc_name = npc.name;
+    rt.npc_name = npc.name.to_string();
     rt.npc_action = talk_op(&npc.actions).unwrap_or("Talk-to").to_string();
     rt.npc_index = npc.index;
     rt.npc_tile = npc.tile;
@@ -548,26 +545,17 @@ fn talk_target(npcs: &[Npc], wanted: &str) -> Option<Npc> {
     }
     npcs.iter()
         .filter(|npc| npc.name.trim().to_ascii_lowercase() == want)
-        .filter_map(|npc| {
-            let action = talk_op(&npc.actions)?;
-            Some(Npc {
-                name: npc.name.clone(),
-                actions: vec![action.to_string()],
-                index: npc.index,
-                tile: npc.tile,
-                distance: npc.distance,
-                reachable_adj: npc.reachable_adj,
-            })
-        })
+        .filter(|npc| talk_op(&npc.actions).is_some())
         .min_by_key(|npc| npc.distance)
+        .cloned()
 }
 
-fn talk_op(actions: &[String]) -> Option<&str> {
+fn talk_op(actions: &[Text]) -> Option<&str> {
     actions.iter().find_map(|action| {
         action
             .get(..4)
             .is_some_and(|head| head.eq_ignore_ascii_case("talk"))
-            .then_some(action.as_str())
+            .then_some(&**action)
     })
 }
 

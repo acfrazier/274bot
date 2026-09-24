@@ -13,17 +13,46 @@
 //! Every page remembers the post that carried it. That lets a module keep
 //! its logout rule without a private copy: most machines treat a post that
 //! carries `ingame == false` as "forget the session", which is
-//! [`Scene::since_login`]. [`Scene::latest`] is the plain delta merge, the
-//! same page the JS materializer holds.
+//! [`Scene::since_login`]. [`Scene::latest`] is the plain delta merge over
+//! posted pages. Unlike the JS materializer it fills no default for a page
+//! the first post of a session omitted: that page stays absent.
+//!
+//! The scene keeps only what its readers use. Names and op lists are
+//! interned per isolate ([`Text`], [`Ops`]), so a repeated loc, npc or item
+//! name is allocated once and shared, not copied per row per post. The
+//! interner is bounded ([`INTERN_CAP`]) and resets when full.
+//! Loc, ground and player rows are the slim [`SceneRow`]; only npcs carry the
+//! combat fields ([`EntityRow`]). Stats keep the four skills machines read
+//! ([`Skills`]), and the side-tab and bank-stand tables keep the one fact
+//! read from each.
 
-use crate::isolate_fb::{RowReader, SceneEntityReader, SnapshotReader};
+use crate::isolate_fb::{RowReader, SceneEntityReader, SnapshotReader, StatReader};
 use api::line_of_sight::CollisionQuery;
 use std::cell::RefCell;
+use std::collections::{HashMap, HashSet};
+use std::hash::{BuildHasher, RandomState};
+use std::rc::Rc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 thread_local! {
-    static SCENE: RefCell<Scene> = RefCell::new(Scene::default());
+    static SCENE: RefCell<Scene> = RefCell::new(Scene::fresh());
 }
+
+/// Side tab 0: the combat tab whose root [`Lens::combat_tab_root`] keeps.
+const COMBAT_TAB: i32 = 0;
+
+/// Interned text: repeated strings share one allocation.
+pub type Text = Rc<str>;
+/// An interned op/action list in posted slot order.
+pub type Ops = Rc<[Text]>;
+
+/// Upper bound on interned strings plus lists. Past it the interner starts
+/// over; rows already built keep their `Rc`s, so nothing they hold changes.
+const INTERN_CAP: usize = 1024;
+
+/// Distinct scenes (isolate start or `ResetSession`), for [`Stamp`].
+static EPOCH: AtomicU64 = AtomicU64::new(1);
 
 /// Apply one decoded post. Called once per `IsolateCmd::Snapshot`, before
 /// the module hooks.
@@ -38,7 +67,7 @@ pub fn with<R>(f: impl FnOnce(&Scene) -> R) -> R {
 
 /// `ResetSession`: the next post is a keyframe for a new session.
 pub fn on_reset() {
-    SCENE.with(|scene| *scene.borrow_mut() = Scene::default());
+    SCENE.with(|scene| *scene.borrow_mut() = Scene::fresh());
 }
 
 /// Write one synthetic post. For module test seams that stand in for a
@@ -74,8 +103,8 @@ pub struct Tile {
 pub struct ItemRow {
     pub id: i32,
     pub count: i32,
-    pub name: Option<String>,
-    pub ops: Vec<String>,
+    pub name: Option<Text>,
+    pub ops: Ops,
     pub noted: bool,
     pub cert: i32,
     /// `None` when the row omitted the slot (not `-1`).
@@ -85,12 +114,12 @@ pub struct ItemRow {
 }
 
 impl ItemRow {
-    fn read(row: &RowReader<'_>) -> Self {
+    fn read(row: &RowReader<'_>, strings: &mut Interner) -> Self {
         Self {
             id: row.id(),
             count: row.count(),
-            name: row.name().map(str::to_string),
-            ops: row.ops().into_iter().map(str::to_string).collect(),
+            name: row.name().map(|name| strings.text(name)),
+            ops: strings.ops(&row.ops()),
             noted: row.noted(),
             cert: row.cert(),
             component_id: row.has_component_id().then(|| row.component_id()),
@@ -114,12 +143,12 @@ impl ItemRow {
     }
 }
 
-/// One npc/loc/player/ground row.
+/// One npc row.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EntityRow {
     pub index: i32,
     pub id: i32,
-    pub name: Option<String>,
+    pub name: Option<Text>,
     pub x: i32,
     pub z: i32,
     pub level: i32,
@@ -128,7 +157,7 @@ pub struct EntityRow {
     pub max_health: i32,
     pub in_combat: bool,
     pub animating: bool,
-    pub actions: Vec<String>,
+    pub actions: Ops,
     pub reachable: bool,
     pub reachable_adj: bool,
     pub combat_level: i32,
@@ -154,7 +183,7 @@ impl Default for EntityRow {
             max_health: -1,
             in_combat: false,
             animating: false,
-            actions: Vec::new(),
+            actions: Ops::default(),
             reachable: false,
             reachable_adj: false,
             combat_level: 0,
@@ -168,11 +197,11 @@ impl Default for EntityRow {
 }
 
 impl EntityRow {
-    fn read(row: &SceneEntityReader<'_>) -> Self {
+    fn read(row: &SceneEntityReader<'_>, strings: &mut Interner) -> Self {
         Self {
             index: row.index(),
             id: row.id(),
-            name: row.name().map(str::to_string),
+            name: row.name().map(|name| strings.text(name)),
             x: row.x(),
             z: row.z(),
             level: row.level(),
@@ -181,7 +210,7 @@ impl EntityRow {
             max_health: row.max_health(),
             in_combat: row.in_combat(),
             animating: row.animating(),
-            actions: row.actions().into_iter().map(str::to_string).collect(),
+            actions: strings.ops(&row.actions()),
             reachable: row.reachable(),
             reachable_adj: row.reachable_adj(),
             combat_level: row.combat_level(),
@@ -206,13 +235,87 @@ impl EntityRow {
     }
 }
 
+/// One loc, ground stack or other player: identity, place and ops.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct StatRow {
-    pub index: i32,
-    pub name: String,
+pub struct SceneRow {
+    pub id: i32,
+    pub name: Option<Text>,
+    pub x: i32,
+    pub z: i32,
+    pub level: i32,
+    pub distance: i32,
+    pub actions: Ops,
+}
+
+impl SceneRow {
+    fn read(row: &SceneEntityReader<'_>, strings: &mut Interner) -> Self {
+        Self {
+            id: row.id(),
+            name: row.name().map(|name| strings.text(name)),
+            x: row.x(),
+            z: row.z(),
+            level: row.level(),
+            distance: row.distance(),
+            actions: strings.ops(&row.actions()),
+        }
+    }
+
+    pub fn name_or_empty(&self) -> &str {
+        self.name.as_deref().unwrap_or_default()
+    }
+
+    pub fn tile(&self) -> Tile {
+        Tile {
+            x: self.x,
+            z: self.z,
+            level: self.level,
+        }
+    }
+}
+
+/// One posted skill row.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Skill {
     pub xp: i32,
     pub base: i32,
     pub effective: i32,
+}
+
+/// The skills machines read from a posted stats page. A skill the page did
+/// not carry is `None`. `hitpoints` matches the posted name exactly; the
+/// others match it case-insensitively. The first matching row wins.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Skills {
+    pub hitpoints: Option<Skill>,
+    pub prayer: Option<Skill>,
+    pub magic: Option<Skill>,
+    pub firemaking: Option<Skill>,
+}
+
+impl Skills {
+    fn read(rows: &[StatReader<'_>]) -> Self {
+        let mut skills = Self::default();
+        for row in rows {
+            let name = row.name();
+            let slot = if name == "hitpoints" {
+                &mut skills.hitpoints
+            } else if name.eq_ignore_ascii_case("prayer") {
+                &mut skills.prayer
+            } else if name.eq_ignore_ascii_case("magic") {
+                &mut skills.magic
+            } else if name.eq_ignore_ascii_case("firemaking") {
+                &mut skills.firemaking
+            } else {
+                continue;
+            };
+            slot.get_or_insert(Skill {
+                xp: row.xp(),
+                base: row.base(),
+                effective: row.effective(),
+            });
+        }
+        skills
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -221,16 +324,11 @@ pub struct VarpRow {
     pub value: i32,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct SideTabIface {
-    pub index: i32,
-    pub id: i32,
-}
-
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ChatLine {
     pub seq: i32,
-    pub text: String,
+    /// Shared, not interned: readers clone the `Rc`, never the text.
+    pub text: Text,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -245,23 +343,11 @@ pub struct MakeProduct {
     pub buttons: Vec<MakeButton>,
 }
 
-/// One packed bank stand. `kind` is `"booth"` or `"npc"`.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct BankStand {
-    pub name: String,
-    pub tile: Tile,
-    pub kind: String,
-    pub op: i32,
-    pub choose: Option<String>,
-}
-
 /// The Rust-picked nearest Use-quickly booth.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct NearestBooth {
     pub tile: Tile,
     pub id: i32,
-    pub name: String,
-    pub op: String,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -306,6 +392,14 @@ pub struct WalkOutcome {
     pub allow_teleports: bool,
 }
 
+/// Which post carried a page, in which scene. Equal stamps are the same
+/// posted table; a new table or a `ResetSession` changes the stamp.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Stamp {
+    epoch: u64,
+    post: u64,
+}
+
 /// One posted page and the post that carried it.
 #[derive(Clone, Debug)]
 struct Page<T> {
@@ -317,12 +411,16 @@ type Slot<T> = Option<Page<T>>;
 
 macro_rules! scene_pages {
     (
-        copy { $( $cname:ident : $cty:ty ),* $(,)? }
+        copy { $( $(#[$cdoc:meta])* $cname:ident : $cty:ty ),* $(,)? }
         rows { $( $(#[$doc:meta])* $rname:ident : $rty:ty ),* $(,)? }
     ) => {
         /// The decoded scene. Fields are pages; read them through a [`Lens`].
         #[derive(Default)]
         pub struct Scene {
+            /// This scene's [`Stamp`] epoch.
+            epoch: u64,
+            /// Interned names and op lists for the rows below.
+            strings: Interner,
             /// Posts applied since the last reset (the current post's id).
             seq: u64,
             /// The post that last carried `ingame == false` (0 = none).
@@ -334,6 +432,7 @@ macro_rules! scene_pages {
 
         impl<'a> Lens<'a> {
             $(
+                $(#[$cdoc])*
                 pub fn $cname(&self) -> Option<$cty> {
                     self.get(&self.scene.$cname).copied()
                 }
@@ -395,6 +494,13 @@ scene_pages! {
         trade_decline_id: i32,
         shop_open: bool,
         walk_outcome: WalkOutcome,
+        /// The posted root of side tab 0, or `-1` when a posted side-tab
+        /// table has no row for it.
+        combat_tab_root: i32,
+        /// Whether a posted bank-stand table has any `booth` stand.
+        has_booth_stands: bool,
+        nearest_booth: NearestBooth,
+        stats: Skills,
     }
     rows {
         trade_partner: String,
@@ -411,17 +517,13 @@ scene_pages! {
         /// `None` inside the page: the skill-multi panel was not decoded.
         main_make: Option<Vec<ItemRow>>,
         npcs: Vec<EntityRow>,
-        locs: Vec<EntityRow>,
-        ground: Vec<EntityRow>,
-        players: Vec<EntityRow>,
-        stats: Vec<StatRow>,
+        locs: Vec<SceneRow>,
+        ground: Vec<SceneRow>,
+        players: Vec<SceneRow>,
         varps: Vec<VarpRow>,
-        side_tab_ifaces: Vec<SideTabIface>,
         chat_options: Vec<String>,
         chat_lines: Vec<ChatLine>,
         make_products: Vec<MakeProduct>,
-        banks: Vec<BankStand>,
-        nearest_booth: NearestBooth,
         bank_approaches: Vec<BankApproach>,
         main_modal_texts: ModalTexts,
         collision: CollisionQuery,
@@ -443,11 +545,23 @@ impl<'a> Lens<'a> {
             .map(|page| &page.value)
     }
 
-    /// The first posted stat row whose name matches, case-insensitively.
-    pub fn stat(&self, name: &str) -> Option<&'a StatRow> {
-        self.stats()?
-            .iter()
-            .find(|row| row.name.eq_ignore_ascii_case(name))
+    fn stamp<T>(&self, slot: &'a Slot<T>) -> Option<Stamp> {
+        slot.as_ref()
+            .filter(|page| page.seq > self.after)
+            .map(|page| Stamp {
+                epoch: self.scene.epoch,
+                post: page.seq,
+            })
+    }
+
+    /// The stamp of the posted reach table.
+    pub fn reach_stamp(&self) -> Option<Stamp> {
+        self.stamp(&self.scene.reach)
+    }
+
+    /// The stamp of the posted collision table.
+    pub fn collision_stamp(&self) -> Option<Stamp> {
+        self.stamp(&self.scene.collision)
     }
 }
 
@@ -468,7 +582,14 @@ impl Post<'_> {
 }
 
 impl Scene {
-    /// Every page as last posted: the same merge the JS page holds.
+    fn fresh() -> Self {
+        Self {
+            epoch: EPOCH.fetch_add(1, Ordering::Relaxed),
+            ..Self::default()
+        }
+    }
+
+    /// Every page as last posted (the delta merge; absent stays absent).
     pub fn latest(&self) -> Lens<'_> {
         Lens {
             scene: self,
@@ -521,6 +642,20 @@ impl Scene {
     }
 
     fn apply(&mut self, snap: &SnapshotReader<'_>) {
+        let mut strings = std::mem::take(&mut self.strings);
+        self.apply_rows(snap, &mut strings);
+        self.strings = strings;
+    }
+
+    fn apply_rows(&mut self, snap: &SnapshotReader<'_>, strings: &mut Interner) {
+        let items = |rows: Vec<RowReader<'_>>, strings: &mut Interner| -> Vec<ItemRow> {
+            rows.iter().map(|row| ItemRow::read(row, strings)).collect()
+        };
+        let places = |rows: Vec<SceneEntityReader<'_>>, strings: &mut Interner| -> Vec<SceneRow> {
+            rows.iter()
+                .map(|row| SceneRow::read(row, strings))
+                .collect()
+        };
         let mut post = self.begin_post(snap.tick());
         let p = &mut post;
         if snap.has_ingame() {
@@ -618,60 +753,57 @@ impl Scene {
             p.shop_open(snap.shop_open());
         }
         if snap.has_inv() {
-            p.inv(items(snap.inv()));
+            p.inv(items(snap.inv(), strings));
         }
         if snap.has_equipment() {
-            p.equipment(items(snap.equipment()));
+            p.equipment(items(snap.equipment(), strings));
         }
         if snap.has_bank() {
-            p.bank(items(snap.bank()));
+            p.bank(items(snap.bank(), strings));
         }
         if snap.has_bank_side() {
-            p.bank_side(items(snap.bank_side()));
+            p.bank_side(items(snap.bank_side(), strings));
         }
         if snap.has_trade_mine() {
-            p.trade_mine(items(snap.trade_mine()));
+            p.trade_mine(items(snap.trade_mine(), strings));
         }
         if snap.has_trade_side() {
-            p.trade_side(items(snap.trade_side()));
+            p.trade_side(items(snap.trade_side(), strings));
         }
         if snap.has_shop_stock() {
-            p.shop_stock(items(snap.shop_stock()));
+            p.shop_stock(items(snap.shop_stock(), strings));
         }
         if snap.has_shop_player_available() {
             p.shop_player(
                 snap.shop_player_available()
-                    .then(|| items(snap.shop_player())),
+                    .then(|| items(snap.shop_player(), strings)),
             );
         }
         if snap.has_main_make_available() {
-            p.main_make(snap.main_make_available().then(|| items(snap.main_make())));
+            p.main_make(
+                snap.main_make_available()
+                    .then(|| items(snap.main_make(), strings)),
+            );
         }
         if snap.has_npcs() {
-            p.npcs(entities(snap.npcs()));
-        }
-        if snap.has_locs() {
-            p.locs(entities(snap.locs()));
-        }
-        if snap.has_ground() {
-            p.ground(entities(snap.ground()));
-        }
-        if snap.has_players() {
-            p.players(entities(snap.players()));
-        }
-        if snap.has_stats() {
-            p.stats(
-                snap.stats()
+            p.npcs(
+                snap.npcs()
                     .iter()
-                    .map(|row| StatRow {
-                        index: row.index(),
-                        name: row.name().to_string(),
-                        xp: row.xp(),
-                        base: row.base(),
-                        effective: row.effective(),
-                    })
+                    .map(|row| EntityRow::read(row, strings))
                     .collect(),
             );
+        }
+        if snap.has_locs() {
+            p.locs(places(snap.locs(), strings));
+        }
+        if snap.has_ground() {
+            p.ground(places(snap.ground(), strings));
+        }
+        if snap.has_players() {
+            p.players(places(snap.players(), strings));
+        }
+        if snap.has_stats() {
+            p.stats(Skills::read(&snap.stats()));
         }
         if snap.has_varps() {
             p.varps(
@@ -685,14 +817,11 @@ impl Scene {
             );
         }
         if snap.has_side_tab_ifaces() {
-            p.side_tab_ifaces(
+            p.combat_tab_root(
                 snap.side_tab_ifaces()
                     .iter()
-                    .map(|row| SideTabIface {
-                        index: row.index(),
-                        id: row.id(),
-                    })
-                    .collect(),
+                    .find(|row| row.index() == COMBAT_TAB)
+                    .map_or(-1, |row| row.id()),
             );
         }
         if snap.has_chat_options() {
@@ -710,7 +839,7 @@ impl Scene {
                     .iter()
                     .map(|line| ChatLine {
                         seq: line.seq(),
-                        text: line.text().to_string(),
+                        text: Text::from(line.text()),
                     })
                     .collect(),
             );
@@ -734,22 +863,7 @@ impl Scene {
             );
         }
         if snap.has_banks() {
-            p.banks(
-                snap.banks()
-                    .iter()
-                    .map(|stand| BankStand {
-                        name: stand.name().to_string(),
-                        tile: Tile {
-                            x: stand.x(),
-                            z: stand.z(),
-                            level: stand.level(),
-                        },
-                        kind: stand.kind().to_string(),
-                        op: stand.op(),
-                        choose: stand.choose().map(str::to_string),
-                    })
-                    .collect(),
-            );
+            p.has_booth_stands(snap.banks().iter().any(|stand| stand.kind() == "booth"));
         }
         if let Some(booth) = snap.nearest_booth() {
             p.nearest_booth(NearestBooth {
@@ -759,8 +873,6 @@ impl Scene {
                     level: booth.level(),
                 },
                 id: booth.id(),
-                name: booth.name().to_string(),
-                op: booth.op().to_string(),
             });
         }
         if snap.has_bank_approaches() {
@@ -832,20 +944,74 @@ impl Scene {
     }
 }
 
-fn items(rows: Vec<RowReader<'_>>) -> Vec<ItemRow> {
-    rows.iter().map(ItemRow::read).collect()
+/// An owned copy of an op list, for observation types that keep `String`s.
+pub fn strings(ops: &[Text]) -> Vec<String> {
+    ops.iter().map(|op| op.to_string()).collect()
 }
 
-fn entities(rows: Vec<SceneEntityReader<'_>>) -> Vec<EntityRow> {
-    rows.iter().map(EntityRow::read).collect()
+/// An op list from owned strings (test seams that write the scene).
+pub fn ops_of(items: &[String]) -> Ops {
+    items.iter().map(|item| Text::from(item.as_str())).collect()
+}
+
+/// Per-scene string interner for row names and op lists.
+#[derive(Default)]
+struct Interner {
+    texts: HashSet<Text>,
+    lists: HashMap<u64, Vec<Ops>>,
+    lists_len: usize,
+    empty: Ops,
+    hasher: RandomState,
+}
+
+impl Interner {
+    fn text(&mut self, s: &str) -> Text {
+        if let Some(text) = self.texts.get(s) {
+            return Rc::clone(text);
+        }
+        self.make_room();
+        let text: Text = Rc::from(s);
+        self.texts.insert(Rc::clone(&text));
+        text
+    }
+
+    fn ops(&mut self, items: &[&str]) -> Ops {
+        if items.is_empty() {
+            return Rc::clone(&self.empty);
+        }
+        let key = self.hasher.hash_one(items);
+        let same = |list: &&Ops| {
+            list.len() == items.len() && list.iter().zip(items).all(|(a, b)| &**a == *b)
+        };
+        if let Some(list) = self
+            .lists
+            .get(&key)
+            .and_then(|bucket| bucket.iter().find(same))
+        {
+            return Rc::clone(list);
+        }
+        let list: Ops = items.iter().map(|item| self.text(item)).collect();
+        self.make_room();
+        self.lists.entry(key).or_default().push(Rc::clone(&list));
+        self.lists_len += 1;
+        list
+    }
+
+    fn make_room(&mut self) {
+        if self.texts.len() + self.lists_len >= INTERN_CAP {
+            self.texts.clear();
+            self.lists.clear();
+            self.lists_len = 0;
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::isolate_fb::{
-        encode_snapshot, encode_snapshot_delta, ItemRowInput, SceneEntityInput, SnapshotInput,
-        TileInput,
+        encode_snapshot, encode_snapshot_delta, BankStandInput, ItemRowInput, ReachViewInput,
+        SceneEntityInput, SideTabIfaceInput, SnapshotInput, StatInput, TileInput,
     };
 
     fn empty(tick: u64) -> SnapshotInput<'static> {
@@ -1012,5 +1178,235 @@ mod tests {
             assert!(scene.latest().here().is_none());
             assert!(scene.latest().ingame().is_none());
         });
+    }
+
+    #[test]
+    fn a_logout_post_that_carries_pages_is_seen_only_since_logout() {
+        on_reset();
+        let npcs = [goblin(1)];
+        let mut snap = empty(1);
+        snap.ingame = true;
+        snap.here = Some(TileInput {
+            x: 3200,
+            z: 3200,
+            level: 0,
+        });
+        let (keyframe, fp) = encode_snapshot_delta(None, &snap, false);
+        apply_bytes(&keyframe);
+        // The logout post itself carries a new tile and an npc table.
+        snap.tick = 2;
+        snap.ingame = false;
+        snap.here = Some(TileInput {
+            x: 3210,
+            z: 3200,
+            level: 0,
+        });
+        snap.npcs = &npcs;
+        let (logout, fp) = encode_snapshot_delta(Some(&fp), &snap, false);
+        let reader = SnapshotReader::from_bytes(&logout).unwrap();
+        assert!(reader.has_here() && reader.has_npcs() && reader.has_ingame());
+        apply(&reader);
+        let moved = Tile {
+            x: 3210,
+            z: 3200,
+            level: 0,
+        };
+        with(|scene| {
+            // Machines that forget the session ignore the whole logout post.
+            assert_eq!(scene.since_login().here(), None);
+            assert!(scene.since_login().npcs().is_none());
+            // The hunt `here` rule: a tile posted with the logout counts.
+            assert_eq!(scene.since_logout().here(), Some(moved));
+            assert_eq!(scene.since_logout().npcs().map(Vec::len), Some(1));
+            assert_eq!(scene.latest().here(), Some(moved));
+        });
+        // A later post with no tile: since_logout still sees the logout's.
+        snap.tick = 3;
+        let (quiet, fp) = encode_snapshot_delta(Some(&fp), &snap, false);
+        apply_bytes(&quiet);
+        with(|scene| {
+            assert_eq!(scene.since_logout().here(), Some(moved));
+            assert_eq!(scene.since_login().here(), None);
+        });
+        // A second logout moves the mark: the first logout's pages drop out
+        // of since_logout too.
+        snap.tick = 4;
+        snap.ingame = true;
+        let (login, fp) = encode_snapshot_delta(Some(&fp), &snap, false);
+        apply_bytes(&login);
+        snap.tick = 5;
+        snap.ingame = false;
+        let (again, _) = encode_snapshot_delta(Some(&fp), &snap, false);
+        apply_bytes(&again);
+        with(|scene| {
+            assert_eq!(scene.since_logout().here(), None);
+            assert_eq!(scene.since_logout().ingame(), Some(false));
+        });
+    }
+
+    #[test]
+    fn skills_keep_the_first_matching_row_and_absent_skills_stay_absent() {
+        on_reset();
+        let stats = [
+            StatInput {
+                index: 3,
+                name: "Hitpoints",
+                xp: 1,
+                base: 1,
+                effective: 1,
+            },
+            StatInput {
+                index: 3,
+                name: "hitpoints",
+                xp: 1154,
+                base: 10,
+                effective: 7,
+            },
+            StatInput {
+                index: 6,
+                name: "Magic",
+                xp: 83,
+                base: 2,
+                effective: 3,
+            },
+            StatInput {
+                index: 6,
+                name: "magic",
+                xp: 0,
+                base: 1,
+                effective: 1,
+            },
+        ];
+        let mut snap = empty(1);
+        snap.stats = &stats;
+        apply_bytes(&encode_snapshot(&snap));
+        with(|scene| {
+            let skills = scene.latest().stats().expect("posted stats");
+            // `hitpoints` is an exact match; the others ignore case.
+            assert_eq!(skills.hitpoints.map(|row| row.effective), Some(7));
+            assert_eq!(
+                skills.magic,
+                Some(Skill {
+                    xp: 83,
+                    base: 2,
+                    effective: 3
+                })
+            );
+            assert_eq!(skills.prayer, None);
+            assert_eq!(skills.firemaking, None);
+        });
+    }
+
+    #[test]
+    fn side_tab_and_bank_stand_tables_keep_only_the_read_facts() {
+        on_reset();
+        let tabs = [
+            SideTabIfaceInput { index: 1, id: 3917 },
+            SideTabIfaceInput { index: 0, id: 328 },
+        ];
+        let banks = [BankStandInput {
+            name: "Banker",
+            x: 1,
+            z: 2,
+            level: 0,
+            kind: "npc",
+            op: 1,
+            choose: None,
+        }];
+        let mut snap = empty(1);
+        snap.side_tab_ifaces = &tabs;
+        snap.banks = &banks;
+        apply_bytes(&encode_snapshot(&snap));
+        with(|scene| {
+            assert_eq!(scene.latest().combat_tab_root(), Some(328));
+            assert_eq!(scene.latest().has_booth_stands(), Some(false));
+        });
+        let no_combat = [SideTabIfaceInput { index: 1, id: 3917 }];
+        snap.tick = 2;
+        snap.side_tab_ifaces = &no_combat;
+        snap.banks = &[];
+        apply_bytes(&encode_snapshot(&snap));
+        with(|scene| {
+            assert_eq!(scene.latest().combat_tab_root(), Some(-1));
+            assert_eq!(scene.latest().has_booth_stands(), Some(false));
+        });
+    }
+
+    #[test]
+    fn repeated_names_and_op_lists_share_one_allocation_across_posts() {
+        on_reset();
+        let ops = ["Talk-to".to_string(), "Attack".to_string()];
+        let mut npc = goblin(1);
+        npc.actions = &ops;
+        let first = [npc, goblin(2)];
+        let mut snap = empty(1);
+        snap.npcs = &first;
+        snap.locs = &first;
+        apply_bytes(&encode_snapshot(&snap));
+        let (name, actions) = with(|scene| {
+            let npcs = scene.latest().npcs().unwrap();
+            let locs = scene.latest().locs().unwrap();
+            // One name for both npc rows and the loc rows of the same name.
+            assert!(Rc::ptr_eq(
+                npcs[0].name.as_ref().unwrap(),
+                npcs[1].name.as_ref().unwrap()
+            ));
+            assert!(Rc::ptr_eq(
+                npcs[0].name.as_ref().unwrap(),
+                locs[0].name.as_ref().unwrap()
+            ));
+            assert!(Rc::ptr_eq(&npcs[0].actions, &locs[0].actions));
+            assert_eq!(&*npcs[0].actions[0], "Talk-to");
+            (npcs[0].name.clone().unwrap(), Rc::clone(&npcs[0].actions))
+        });
+        // A later post of the same rows reuses them instead of copying.
+        snap.tick = 2;
+        apply_bytes(&encode_snapshot(&snap));
+        with(|scene| {
+            let npcs = scene.latest().npcs().unwrap();
+            assert!(Rc::ptr_eq(npcs[0].name.as_ref().unwrap(), &name));
+            assert!(Rc::ptr_eq(&npcs[0].actions, &actions));
+        });
+    }
+
+    #[test]
+    fn reach_stamp_moves_only_with_a_new_table_or_a_reset() {
+        on_reset();
+        let bits = [1u32];
+        let steps = [0xffu8];
+        let mut snap = empty(1);
+        snap.reach = ReachViewInput {
+            available: true,
+            base_x: 3200,
+            base_z: 3200,
+            level: 0,
+            width: 1,
+            height: 1,
+            walkable: &bits,
+            reachable: &bits,
+            reachable_adj: &bits,
+            exact_rank: &[],
+            adjacent_rank: &[],
+            step: &steps,
+            canlight: &bits,
+        };
+        let (keyframe, fp) = encode_snapshot_delta(None, &snap, false);
+        apply_bytes(&keyframe);
+        let first = with(|scene| scene.latest().reach_stamp()).expect("posted reach");
+        snap.tick = 2;
+        let (same, fp) = encode_snapshot_delta(Some(&fp), &snap, false);
+        apply_bytes(&same);
+        assert_eq!(with(|scene| scene.latest().reach_stamp()), Some(first));
+        snap.tick = 3;
+        snap.reach.base_x = 3201;
+        let (moved, _) = encode_snapshot_delta(Some(&fp), &snap, false);
+        apply_bytes(&moved);
+        let second = with(|scene| scene.latest().reach_stamp()).unwrap();
+        assert_ne!(second, first);
+        on_reset();
+        assert_eq!(with(|scene| scene.latest().reach_stamp()), None);
+        apply_bytes(&keyframe);
+        let after_reset = with(|scene| scene.latest().reach_stamp()).unwrap();
+        assert_ne!(after_reset, first, "a new session never repeats a stamp");
     }
 }

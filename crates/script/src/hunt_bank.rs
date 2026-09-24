@@ -5,7 +5,7 @@
 //! the other hunt machines. A supplied leave is a continuation, not lever ops.
 
 use crate::hunt_fight::{in_area_body, SiteBox, Tile};
-use crate::observed::{self, ItemRow, Scene, StatRow};
+use crate::observed::{self, ItemRow, Scene, Skill, Skills};
 use crate::task_clock::InstantTaskClock;
 use serde_json::{json, Value};
 use std::cell::RefCell;
@@ -70,9 +70,7 @@ impl BankObservation {
             page.map(|rows| rows.iter().map(BankRow::from_row).collect())
                 .unwrap_or_default()
         };
-        let hp = latest
-            .stats()
-            .and_then(|rows| rows.iter().find(|row| row.name == "hitpoints"));
+        let hp = latest.stats().and_then(|skills| skills.hitpoints);
         Self {
             here: scene.since_logout().here().map(Tile::from),
             ingame: latest.ingame().unwrap_or(empty.ingame),
@@ -124,12 +122,14 @@ impl BankObservation {
                 .bank_op_result(self.bank_op_result)
                 .withdraw_x_result_seq(self.withdraw_x_result_seq)
                 .withdraw_x_result(self.withdraw_x_result)
-                .stats(vec![StatRow {
-                    name: "hitpoints".into(),
-                    base: self.hp_base,
-                    effective: self.hp_effective,
-                    ..StatRow::default()
-                }]);
+                .stats(Skills {
+                    hitpoints: Some(Skill {
+                        base: self.hp_base,
+                        effective: self.hp_effective,
+                        xp: 0,
+                    }),
+                    ..Skills::default()
+                });
         });
     }
 
@@ -2164,7 +2164,7 @@ impl BankRow {
             name: row.name_or_empty().to_string(),
             slot,
             has_slot: row.slot.is_some() && slot >= 0,
-            ops: row.ops.clone(),
+            ops: observed::strings(&row.ops),
         }
     }
 
@@ -2172,9 +2172,9 @@ impl BankRow {
         ItemRow {
             id: self.id,
             count: self.count,
-            name: Some(self.name),
+            name: Some(self.name.into()),
             slot: self.has_slot.then_some(self.slot),
-            ops: self.ops,
+            ops: observed::ops_of(&self.ops),
             ..ItemRow::default()
         }
     }

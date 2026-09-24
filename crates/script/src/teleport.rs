@@ -33,7 +33,7 @@ impl NativeObservation {
     /// A logout forgets the session: only pages posted since login count.
     fn from_scene(scene: &Scene) -> Self {
         let session = scene.since_login();
-        let magic = session.stat("magic");
+        let magic = session.stats().and_then(|skills| skills.magic);
         Self {
             ingame: session.ingame().unwrap_or(false),
             here: session.here().map(|tile| Tile {

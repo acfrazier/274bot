@@ -4,7 +4,7 @@
 //! field pick and Taverley `site.key` branches stay here. One effect per
 //! `next()`. Tokens are per Task instance; session reset drops the map.
 
-use crate::observed::{self, EntityRow, ItemRow, Scene, StatRow};
+use crate::observed::{self, EntityRow, ItemRow, Scene, Skill, Skills};
 use crate::task_clock::InstantTaskClock;
 use api::snapshot::WorldTile;
 use serde_json::{json, Value};
@@ -151,7 +151,7 @@ impl FightNpc {
             distance: n.distance,
             health: n.health,
             in_combat: n.in_combat,
-            actions: n.actions.clone(),
+            actions: observed::strings(&n.actions),
             target_kind: n.target_kind,
             target_index: n.target_index,
         }
@@ -161,7 +161,7 @@ impl FightNpc {
         EntityRow {
             index: self.index,
             id: self.id,
-            name: Some(self.name.clone()),
+            name: Some(self.name.as_str().into()),
             x: self.x,
             z: self.z,
             level: self.level,
@@ -171,7 +171,7 @@ impl FightNpc {
             distance: self.distance,
             health: self.health,
             in_combat: self.in_combat,
-            actions: self.actions.clone(),
+            actions: observed::ops_of(&self.actions),
             target_kind: self.target_kind,
             target_index: self.target_index,
             ..EntityRow::default()
@@ -253,11 +253,15 @@ impl FightObservation {
             self_slot: session.self_slot().unwrap_or(ready.self_slot),
             hp_effective: session
                 .stats()
-                .and_then(|rows| rows.iter().find(|row| row.name == "hitpoints"))
+                .and_then(|skills| skills.hitpoints)
                 .map_or(ready.hp_effective, |row| row.effective),
             inv_names: session
                 .inv()
-                .map(|rows| rows.iter().filter_map(|row| row.name.clone()).collect())
+                .map(|rows| {
+                    rows.iter()
+                        .filter_map(|row| row.name.as_deref().map(str::to_string))
+                        .collect()
+                })
                 .unwrap_or_default(),
             animating: session.animating().unwrap_or(ready.animating),
             los_override: LOS_OVERRIDE.with(Cell::get),
@@ -280,16 +284,18 @@ impl FightObservation {
                 .self_target_kind(self.self_target_kind)
                 .self_target_index(self.self_target_index)
                 .self_slot(self.self_slot)
-                .stats(vec![StatRow {
-                    name: "hitpoints".into(),
-                    effective: self.hp_effective,
-                    ..StatRow::default()
-                }])
+                .stats(Skills {
+                    hitpoints: Some(Skill {
+                        effective: self.hp_effective,
+                        ..Skill::default()
+                    }),
+                    ..Skills::default()
+                })
                 .inv(
                     self.inv_names
                         .into_iter()
                         .map(|name| ItemRow {
-                            name: Some(name),
+                            name: Some(name.into()),
                             ..ItemRow::default()
                         })
                         .collect(),

@@ -8,7 +8,7 @@
 //! transfer. A noted identity, an over-offer, a stale screen or a
 //! changed partner fail closed.
 
-use crate::observed::{self, ItemRow, Scene};
+use crate::observed::{self, ItemRow, Ops, Scene, Text};
 use crate::task_clock::InstantTaskClock;
 use serde_json::{json, Value};
 use std::cell::RefCell;
@@ -46,7 +46,7 @@ thread_local! {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Row {
-    name: String,
+    name: Text,
     id: i32,
     slot: i32,
     component: i32,
@@ -57,7 +57,7 @@ struct Row {
 fn rows_of(rows: &[ItemRow]) -> Vec<Row> {
     rows.iter()
         .map(|row| Row {
-            name: row.name_or_empty().to_string(),
+            name: row.name.clone().unwrap_or_default(),
             id: row.id,
             slot: row.slot_or_unset(),
             component: row.component_or_unset(),
@@ -69,9 +69,9 @@ fn rows_of(rows: &[ItemRow]) -> Vec<Row> {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct PlayerRef {
-    name: String,
+    name: Text,
     distance: i32,
-    actions: Vec<String>,
+    actions: Ops,
 }
 
 /// The posted facts this module decides from, read from the isolate scene.
@@ -117,7 +117,7 @@ impl NativeObservation {
                 .map(|rows| {
                     rows.iter()
                         .map(|player| PlayerRef {
-                            name: player.name_or_empty().to_string(),
+                            name: player.name.clone().unwrap_or_default(),
                             distance: player.distance,
                             actions: player.actions.clone(),
                         })
@@ -411,7 +411,7 @@ fn trade_action(player: &PlayerRef) -> Option<&str> {
     player
         .actions
         .get(TRADE_OP - 1)
-        .map(String::as_str)
+        .map(|action| &**action)
         .filter(|action| {
             let trimmed = action.trim();
             !trimmed.is_empty() && !trimmed.eq_ignore_ascii_case("hidden")
@@ -474,7 +474,7 @@ fn begin(input: &Value) -> Value {
                 let mut rt = rt.borrow_mut();
                 rt.abort_runtime();
                 rt.kind = Kind::Request;
-                rt.name = player.name.clone();
+                rt.name = player.name.to_string();
                 rt.player_action = action.to_string();
                 let verb = rt.player_verb();
                 rt.finish_ops(verb, true, "sent")
@@ -776,13 +776,14 @@ mod tests {
                 "Follow".into(),
                 "Report".into(),
                 "Trade with".into(),
-            ],
+            ]
+            .into(),
         };
         assert_eq!(trade_action(&player), Some("Trade with"));
         let missing = PlayerRef {
             name: "bob".into(),
             distance: 1,
-            actions: vec!["Attack".into(), "Follow".into()],
+            actions: vec!["Attack".into(), "Follow".into()].into(),
         };
         assert!(trade_action(&missing).is_none());
     }
