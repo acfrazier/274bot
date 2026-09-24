@@ -32,6 +32,67 @@ fn prelude_reads_posted_settings_bag_not_only_fallback() {
     iso.join();
 }
 
+// The posted bag is the value `JSON.parse` would give: ordinary objects at
+// every level, JS Numbers for every integer, and object values a shim can
+// stringify.
+#[test]
+fn posted_bag_values_are_plain_json_values() {
+    let src = r#"
+import { SettingsStore } from '../../runtime/Settings.js';
+export default class T extends LoopingBot {
+    loop() {
+        const bag = globalThis.__rs2b0t_host.settingsBag;
+        globalThis.__probe = {
+            bagProto: Object.getPrototypeOf(bag) === Object.prototype,
+            nestedProto: Object.getPrototypeOf(bag.spots.north) === Object.prototype,
+            rowProto: Object.getPrototypeOf(bag.rows[0]) === Object.prototype,
+            nestedOwn: bag.spots.hasOwnProperty('north'),
+            bigType: typeof bag.big,
+            bigValue: bag.big === 9007199254740992,
+            negType: typeof bag.neg,
+            protoKeyOwn: Object.prototype.hasOwnProperty.call(bag.odd, '__proto__'),
+            protoKeyKept: Object.getPrototypeOf(bag.odd) === Object.prototype,
+            display: SettingsStore.displayString('T', 'camp', { default: '' }),
+            saved: SettingsStore.saved('T', 'rows'),
+            text: `${bag.camp}`,
+        };
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![])
+        .expect("spawn settings shape probe");
+    let bag = serde_json::json!({
+        "spots": { "north": { "x": 1, "z": 2, "level": 0 } },
+        "rows": [{ "item": "Lobster" }],
+        "big": 9007199254740993u64,
+        "neg": -9007199254740993i64,
+        "odd": { "__proto__": { "polluted": true } },
+        "camp": { "name": "north camp" },
+    });
+    iso.post_settings_bag(bag.as_object().unwrap());
+    iso.on_game_tick(1);
+    let logs = iso.drain_logs();
+    assert_eq!(
+        iso.probe("__probe").expect("probe readable"),
+        serde_json::json!({
+            "bagProto": true,
+            "nestedProto": true,
+            "rowProto": true,
+            "nestedOwn": true,
+            "bigType": "number",
+            "bigValue": true,
+            "negType": "number",
+            "protoKeyOwn": true,
+            "protoKeyKept": true,
+            "display": "[object Object]",
+            "saved": "[object Object]",
+            "text": "[object Object]",
+        }),
+        "logs: {logs:?}"
+    );
+    iso.join();
+}
+
 #[test]
 fn settings_store_round_trips_overrides_at_private_mode() {
     let dir = std::env::temp_dir().join(format!(

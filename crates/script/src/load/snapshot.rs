@@ -891,9 +891,49 @@ pub(super) fn materialize_settings_bag(
         .get(&mut scope, host_key)
         .and_then(|host| host.to_object(&mut scope))
         .ok_or_else(|| "settings bag: no __rs2b0t_host object".to_string())?;
-    let value = rustyscript::deno_core::serde_v8::to_v8(&mut scope, bag)
-        .map_err(|e| format!("settings bag: {e}"))?;
+    let value = json_object(&mut scope, bag).map_err(|e| format!("settings bag: {e}"))?;
     set(&mut scope, host, "settingsBag", value)
+}
+
+/// A JSON value as the value `JSON.parse` would give for its text: plain
+/// objects inheriting `Object.prototype` whose keys are own data properties
+/// (a `__proto__` key included), real arrays, and every number a JS Number
+/// (integers past 2^53 round, never a BigInt).
+fn json_value<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    value: &serde_json::Value,
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    Ok(match value {
+        serde_json::Value::Null => v8::null(scope).into(),
+        serde_json::Value::Bool(b) => v8::Boolean::new(scope, *b).into(),
+        serde_json::Value::Number(n) => num(scope, n.as_f64().unwrap_or(f64::NAN)),
+        serde_json::Value::String(s) => js_string(scope, s)?,
+        serde_json::Value::Array(items) => {
+            let arr = v8::Array::new(scope, items.len() as i32);
+            for (i, item) in items.iter().enumerate() {
+                let item = json_value(scope, item)?;
+                arr.set_index(scope, i as u32, item)
+                    .ok_or_else(|| "v8 array set failed".to_string())?;
+            }
+            arr.into()
+        }
+        serde_json::Value::Object(map) => json_object(scope, map)?,
+    })
+}
+
+fn json_object<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    map: &serde_json::Map<String, serde_json::Value>,
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    let obj = v8::Object::new(scope);
+    for (key, value) in map {
+        let name =
+            v8::String::new(scope, key).ok_or_else(|| "v8 string alloc failed".to_string())?;
+        let value = json_value(scope, value)?;
+        obj.create_data_property(scope, name.into(), value)
+            .ok_or_else(|| format!("v8 object set failed for {key:?}"))?;
+    }
+    Ok(obj.into())
 }
 
 fn native_event_object<'s>(
