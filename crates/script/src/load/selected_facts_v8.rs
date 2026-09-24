@@ -44,6 +44,9 @@ fn run_selected_facts<'s>(
         "range-loadout" => range_loadout(scope, args.get(1), args.get(2)),
         "cert-maps" => cert_maps(scope),
         "cert-link" => cert_link(scope, args.get(1), args.get(2)),
+        "obj-catalog" => obj_catalog(scope),
+        "item-tradeable" => item_tradeable(scope, args.get(1)),
+        "item-name" => item_name(scope, args.get(1), args.get(2)),
         "cow-locations" => cow_locations(scope),
         "cow-nearest" => cow_nearest(scope, args.get(1)),
         "pickpocket-spot" => pickpocket_spot(scope, args.get(1)),
@@ -135,32 +138,130 @@ fn cert_maps<'s>(scope: &mut v8::HandleScope<'s>) -> Result<v8::Local<'s, v8::Va
     Ok(row.into())
 }
 
+/// Frozen `notedId(cat, id)` (the note or `null`) and `unnotedId(cat, id)`
+/// (the base item or the id itself). `undefined` without selected data.
 fn cert_link<'s>(
     scope: &mut v8::HandleScope<'s>,
     id: v8::Local<v8::Value>,
     direction: v8::Local<v8::Value>,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
+    let direction = js_to_string(scope, direction)?;
     let Some(data) = supply_v2::selected_data() else {
-        return Ok(v8::null(scope).into());
+        return Ok(v8::undefined(scope).into());
     };
     let Some(id) = js_i32(scope, id)? else {
         return Ok(v8::null(scope).into());
     };
-    let direction = js_to_string(scope, direction)?;
-    let item = data.item_by_id(id);
-    let linked = match (direction.as_str(), item) {
-        ("noted", Some(item)) if !item.is_certificate() && item.certificate_link >= 0 => {
-            Some(item.certificate_link)
-        }
-        ("unnoted", Some(item)) if item.is_certificate() && item.certificate_link >= 0 => {
-            Some(item.certificate_link)
-        }
-        ("noted" | "unnoted", _) => None,
+    let linked = match direction.as_str() {
+        "noted" => crate::market_catalog::noted_id(&data, id),
+        "unnoted" => Some(crate::market_catalog::unnoted_id(&data, id)),
         _ => return Err("invalid selected facts op".into()),
     };
     match linked {
         Some(n) => Ok(v8::Integer::new(scope, n).into()),
         None => Ok(v8::null(scope).into()),
+    }
+}
+
+/// Frozen `buildCatalog` minus the cert maps: `byId` holds every named obj
+/// as an `ObjRecord`, `items` the listed subset (the same record objects) and
+/// `aliases` the derived same-name labels. Empty without selected data.
+fn obj_catalog<'s>(scope: &mut v8::HandleScope<'s>) -> Result<v8::Local<'s, v8::Value>, String> {
+    let catalog = v8::Object::new(scope);
+    let by_id = v8::Map::new(scope);
+    let aliases = v8::Map::new(scope);
+    let Some(data) = supply_v2::selected_data() else {
+        set_key(scope, catalog, "byId", by_id.into());
+        let items = v8::Array::new(scope, 0);
+        set_key(scope, catalog, "items", items.into());
+        set_key(scope, catalog, "aliases", aliases.into());
+        return Ok(catalog.into());
+    };
+    let mut records = std::collections::HashMap::with_capacity(data.items().len());
+    for (item, name) in crate::market_catalog::records(data.items()) {
+        let row = v8::Object::new(scope);
+        set_i32(scope, row, "id", item.id);
+        let name = v8_str(scope, name)?;
+        set_key(scope, row, "name", name);
+        set_i32(scope, row, "cost", item.cost);
+        set_bool(scope, row, "stackable", item.stackable);
+        set_bool(scope, row, "members", item.members);
+        set_bool(
+            scope,
+            row,
+            "equippable",
+            crate::market_catalog::equippable(item),
+        );
+        set_i32(scope, row, "certlink", item.certificate_link);
+        set_i32(scope, row, "certtemplate", item.certificate_template);
+        set_bool(scope, row, "stackVariant", item.stack_variant);
+        let id = v8::Integer::new(scope, item.id);
+        by_id
+            .set(scope, id.into(), row.into())
+            .ok_or_else(|| "selected facts catalog byId".to_string())?;
+        records.insert(item.id, row);
+    }
+    let listed = crate::market_catalog::listed(data.items());
+    let items = v8::Array::new(scope, i32::try_from(listed.len()).unwrap_or(i32::MAX));
+    for (index, (item, _)) in listed.iter().enumerate() {
+        let row = records[&item.id];
+        items
+            .set_index(scope, index as u32, row.into())
+            .ok_or_else(|| "selected facts catalog items".to_string())?;
+    }
+    for (id, alias) in crate::market_catalog::aliases(data.items()) {
+        let row = v8::Object::new(scope);
+        let words: Vec<_> = alias.words;
+        let words = string_array(scope, &words)?;
+        set_key(scope, row, "words", words);
+        let label = v8_str(scope, &alias.label)?;
+        set_key(scope, row, "label", label);
+        let id = v8::Integer::new(scope, id);
+        aliases
+            .set(scope, id.into(), row.into())
+            .ok_or_else(|| "selected facts catalog aliases".to_string())?;
+    }
+    set_key(scope, catalog, "byId", by_id.into());
+    set_key(scope, catalog, "items", items.into());
+    set_key(scope, catalog, "aliases", aliases.into());
+    Ok(catalog.into())
+}
+
+/// Frozen `tradeable(id)`. `undefined` without selected data.
+fn item_tradeable<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    id: v8::Local<v8::Value>,
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    let Some(data) = supply_v2::selected_data() else {
+        return Ok(v8::undefined(scope).into());
+    };
+    let tradeable = js_i32(scope, id)?.is_none_or(|id| crate::market_catalog::tradeable(&data, id));
+    Ok(v8::Boolean::new(scope, tradeable).into())
+}
+
+/// Frozen `clientName(cat, id)` (`null` when unnamed) and
+/// `displayName(cat, id)`. `undefined` without selected data.
+fn item_name<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    id: v8::Local<v8::Value>,
+    which: v8::Local<v8::Value>,
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    let which = js_to_string(scope, which)?;
+    let Some(data) = supply_v2::selected_data() else {
+        return Ok(v8::undefined(scope).into());
+    };
+    match (which.as_str(), js_i32(scope, id)?) {
+        ("client", Some(id)) => match crate::market_catalog::client_name(&data, id) {
+            Some(name) => v8_str(scope, name),
+            None => Ok(v8::null(scope).into()),
+        },
+        ("client", None) => Ok(v8::null(scope).into()),
+        ("display", Some(id)) => v8_str(scope, &crate::market_catalog::display_name(&data, id)),
+        ("display", None) => {
+            let raw = js_to_string(scope, id)?;
+            v8_str(scope, &format!("item {raw}"))
+        }
+        _ => Err("invalid selected facts op".into()),
     }
 }
 
@@ -288,6 +389,11 @@ fn tile<'s>(
 
 fn set_i32(scope: &mut v8::HandleScope, row: v8::Local<v8::Object>, key: &str, value: i32) {
     let value = v8::Integer::new(scope, value);
+    set_key(scope, row, key, value.into());
+}
+
+fn set_bool(scope: &mut v8::HandleScope, row: v8::Local<v8::Object>, key: &str, value: bool) {
+    let value = v8::Boolean::new(scope, value);
     set_key(scope, row, key, value.into());
 }
 

@@ -29,7 +29,7 @@ function digest(file: string) { const data = fs.readFileSync(file); return { byt
 function commit(dir: string) { return execFileSync('git', ['-C', dir, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(); }
 function assertEqual(actual: unknown, expectedValue: unknown, label: string) { if (actual !== expectedValue) throw new Error(`${label}: expected ${expectedValue}, got ${actual}`); }
 /** One published item row, in the writer's decoded shape. Read under the checks below. */
-type PublishedItemRow = { alias: string | null; id: number; name: string | null; cost: number; stackable: boolean; members: boolean; certificate_link: number; certificate_template: number; wear_position: number; wear_position_2: number; wear_position_3: number };
+type PublishedItemRow = { alias: string | null; id: number; name: string | null; cost: number; stackable: boolean; members: boolean; certificate_link: number; certificate_template: number; wear_position: number; wear_position_2: number; wear_position_3: number; tradeable: boolean; stack_variant: boolean };
 /** One published talk_key step spawn. `plane` is the scene plane, never `level`. */
 type PublishedTalkKeySpawn = { x: number; z: number; plane: number };
 /** One published talk_key talk step. */

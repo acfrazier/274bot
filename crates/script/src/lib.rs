@@ -128,6 +128,9 @@ pub mod line_of_sight;
 /// Per-isolate step-machine host: families Rust begins, steps and aborts.
 #[cfg(feature = "load")]
 mod machine;
+/// Frozen market catalog facts over the selected revision's items.
+#[cfg(feature = "load")]
+mod market_catalog;
 #[cfg(feature = "load")]
 mod melee_weapons;
 #[cfg(feature = "load")]

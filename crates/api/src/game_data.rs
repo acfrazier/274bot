@@ -54,6 +54,12 @@ pub struct GameItem {
     pub wear_position: i32,
     pub wear_position_2: i32,
     pub wear_position_3: i32,
+    /// The engine's decoded trade flag: `tradeable=no`, a nonzero
+    /// `dummyitem`, or the note of an untradeable item clears it.
+    pub tradeable: bool,
+    /// A pile-size model another obj names in `countobj`: it repeats the
+    /// base item's name and is not a separate item.
+    pub stack_variant: bool,
 }
 
 #[derive(Debug, Deserialize)]

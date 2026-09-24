@@ -4580,19 +4580,19 @@ const OTHER = {other_id};
 const OTHER_NOTE = {other_note};
 export default class T extends LoopingBot {{
     loop() {{
-        const hits = [];
-        const tryHit = (fn) => {{
-            try {{ hits.push(fn()); }} catch (e) {{ hits.push(String(e.message || e)); }}
-        }};
-        tryHit(() => notedId(HELD));
-        tryHit(() => unnotedId(HELD_NOTE));
-        tryHit(() => notedId(OTHER));
-        tryHit(() => unnotedId(OTHER_NOTE));
-        tryHit(() => liveCatalog().notedOf.get(HELD));
-        tryHit(() => liveCatalog().unnotedOf.get(OTHER_NOTE));
-        tryHit(() => notedId(999999));
-        tryHit(() => unnotedId(999999));
-        globalThis.__probe = JSON.stringify(hits);
+        const cat = liveCatalog();
+        globalThis.__probe = JSON.stringify([
+            notedId(cat, HELD),
+            unnotedId(cat, HELD_NOTE),
+            notedId(cat, OTHER),
+            unnotedId(cat, OTHER_NOTE),
+            cat.notedOf.get(HELD),
+            cat.unnotedOf.get(OTHER_NOTE),
+            notedId(cat, HELD_NOTE),
+            unnotedId(cat, HELD),
+            notedId(cat, 999999),
+            unnotedId(cat, 999999),
+        ]);
     }}
 }}
 "#
@@ -4602,17 +4602,134 @@ export default class T extends LoopingBot {{
     let value = iso.probe("__probe").unwrap();
     let hits: Vec<serde_json::Value> =
         serde_json::from_str(value.as_str().expect("probe string")).expect("json");
-    assert_eq!(hits.len(), 8, "catalog cert probes: {hits:?}");
-    assert_eq!(hits[0], held_note, "notedId held from selected data");
-    assert_eq!(hits[1], held_id, "unnotedId held note from selected data");
-    assert_eq!(hits[2], other_note, "notedId non-held from selected data");
-    assert_eq!(hits[3], other_id, "unnotedId non-held from selected data");
-    assert_eq!(hits[4], held_note);
-    assert_eq!(hits[5], other_id);
-    for miss in &hits[6..] {
-        assert!(miss.as_str().unwrap_or("").contains("not impl"));
-    }
+    assert_eq!(
+        hits,
+        serde_json::json!([
+            held_note, held_id, other_note, other_id, held_note, other_id,
+            // frozen: a note has no note, a base item is its own base, and an
+            // unknown id is its own base with no note
+            null, held_id, null, 999999
+        ])
+        .as_array()
+        .unwrap()
+        .clone(),
+        "catalog cert probes"
+    );
     iso.join();
+}
+
+/// Frozen JiveMarketDumper: Start waits on `liveCatalog().items`, then
+/// `logic.ts` `dumpables` folds notes onto their item, drops coins and what
+/// the content refuses to trade, and names each line by the client's name and
+/// the shop label. The body below is the frozen `dumpables`.
+#[test]
+fn isolate_live_catalog_answers_the_market_dumper() {
+    let data = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
+    let untradeable = data
+        .items()
+        .iter()
+        .find(|item| !item.tradeable && !item.is_certificate() && item.name.is_some())
+        .expect("an untradeable selected obj")
+        .id;
+    let chain_note = data.item_by_id(1113).unwrap().certificate_link;
+    let hide_note = data
+        .item_by_id(1753)
+        .and_then(|hide| (hide.certificate_link >= 0).then_some(hide.certificate_link));
+    let src = format!(
+        r#"
+import {{ clientName, displayName, liveCatalog, notedId, tradeable, unnotedId }} from '../../api/market/catalog.js';
+function dumpables(items, cat) {{
+    const counts = new Map();
+    for (const item of items) {{
+        const id = unnotedId(cat, item.id);
+        if (id === 995 || !tradeable(id)) continue;
+        counts.set(id, (counts.get(id) ?? 0) + Math.max(1, item.count));
+    }}
+    const out = [];
+    for (const [id, count] of counts) {{
+        const name = clientName(cat, id);
+        if (name === undefined) continue;
+        out.push({{ id, name, displayName: displayName(cat, id), notedId: notedId(cat, id), stackable: cat.byId.get(id)?.stackable === true, count }});
+    }}
+    return out.sort((a, b) => a.displayName.localeCompare(b.displayName));
+}}
+export default class T extends LoopingBot {{
+    loop() {{
+        const cat = liveCatalog();
+        globalThis.__probe = {{
+            items: cat.items.length,
+            coinsListed: cat.items.some((r) => r.id === 995),
+            noteListed: cat.items.some((r) => r.id === {chain_note}),
+            sameRecord: cat.items.find((r) => r.id === 995) === cat.byId.get(995),
+            hide: cat.byId.get(1753),
+            hideAlias: cat.aliases.get(1753),
+            unknownName: clientName(cat, 999999) === undefined,
+            unknownLabel: displayName(cat, 999999),
+            dump: dumpables([
+                {{ id: 995, count: 500 }},
+                {{ id: {chain_note}, count: 3 }},
+                {{ id: 1113, count: 1 }},
+                {{ id: 1753, count: 2 }},
+                {{ id: {untradeable}, count: 1 }},
+            ], cat),
+        }};
+    }}
+}}
+"#
+    );
+    let iso = LoadIsolate::spawn_with_game_data(src, LoadShape::CompatClass, vec![], data).unwrap();
+    iso.on_game_tick(1);
+    let probe = iso.probe("__probe").unwrap();
+    assert!(probe["items"].as_u64().unwrap() > 1000, "{probe:?}");
+    assert_eq!(probe["coinsListed"], true);
+    assert_eq!(probe["noteListed"], false, "notes are cert-map rows");
+    assert_eq!(probe["sameRecord"], true, "items are byId records");
+    assert_eq!(probe["hide"]["name"], "Dragonhide");
+    assert_eq!(probe["hide"]["certtemplate"], -1);
+    assert_eq!(probe["hideAlias"]["label"], "Green dragonhide");
+    assert_eq!(probe["hideAlias"]["words"], serde_json::json!(["green"]));
+    assert_eq!(probe["unknownName"], true);
+    assert_eq!(probe["unknownLabel"], "item 999999");
+    assert_eq!(
+        probe["dump"],
+        serde_json::json!([
+            {
+                "id": 1753, "name": "Dragonhide", "displayName": "Green dragonhide",
+                "notedId": hide_note, "stackable": false, "count": 2
+            },
+            {
+                "id": 1113, "name": "Rune chainbody", "displayName": "Rune chainbody",
+                "notedId": chain_note, "stackable": false, "count": 4
+            }
+        ])
+    );
+    iso.join();
+
+    let offline = LoadIsolate::spawn(
+        r#"
+import { liveCatalog, tradeable, displayName } from '../../api/market/catalog.js';
+export default class T extends LoopingBot {
+    loop() {
+        const hits = [];
+        for (const fn of [() => tradeable(995), () => displayName(liveCatalog(), 995)]) {
+            try { hits.push(fn()); } catch (e) { hits.push(String(e.message || e)); }
+        }
+        globalThis.__probe = { items: liveCatalog().items.length, hits };
+    }
+}
+"#
+        .into(),
+        LoadShape::CompatClass,
+        vec![],
+    )
+    .unwrap();
+    offline.on_game_tick(1);
+    let probe = offline.probe("__probe").unwrap();
+    assert_eq!(probe["items"], 0, "no selected data lists nothing");
+    for hit in probe["hits"].as_array().unwrap() {
+        assert!(hit.as_str().unwrap_or("").contains("not impl"), "{probe:?}");
+    }
+    offline.join();
 }
 
 // Bounded Reachability fails closed without the native coordinate ranks,
@@ -5573,7 +5690,6 @@ export default class T extends LoopingBot {
 #[test]
 fn isolate_silent_fakes_throw_and_rust_policy_tables_are_published() {
     let src = r#"
-import { clientName, displayName } from '../../api/market/catalog.js';
 import { parseCombatStyle } from '../../api/combat/CombatStyle.js';
 import { SettingsStore } from '../../runtime/Settings.js';
 import { foodOf } from '../../api/loadout/loadoutPlan.js';
@@ -5589,8 +5705,6 @@ export default class T extends LoopingBot {
         const tryHit = async (fn) => {
             try { await fn(); hits.push('ok'); } catch (e) { hits.push(String(e.message || e)); }
         };
-        await tryHit(() => clientName(526));
-        await tryHit(() => displayName(526));
         await tryHit(() => parseCombatStyle('no-such-style'));
         await tryHit(() => SettingsStore.globalBag());
         await tryHit(() => foodOf({ carry: ['Shark'] }, 'Shark'));
@@ -5623,12 +5737,12 @@ export default class T extends LoopingBot {
     let hits = parsed["hits"].as_array().expect("hits");
     assert_eq!(
         hits.len(),
-        9,
+        7,
         "every silent fake must be probed: {parsed:?}"
     );
     for (i, hit) in hits.iter().enumerate() {
         let s = hit.as_str().unwrap_or("");
-        if i == 5 {
+        if i == 3 {
             assert_eq!(s, "ok", "the Rust common-loot predicate is supported");
             continue;
         }
