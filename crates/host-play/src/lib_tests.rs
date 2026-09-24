@@ -1681,19 +1681,22 @@ fn waiting_slot_withdraws_when_auto_login_is_cleared() {
 }
 
 #[test]
-fn explicit_login_intent_survives_the_auto_login_toggle() {
-    // A one-shot Log in with auto-login off (the wall's explicit arm) is
-    // not auto-sourced, so toggling the checkbox cannot withdraw it.
+fn explicit_login_intent_survives_auto_on_then_off() {
     let queue = Arc::new(QueueMutex::new(LoginQueue::default()));
     let statuses = rows(&["alice"]);
     let arm = SlotArm::new(7, false);
-    arm.want_login.store(true, Ordering::Relaxed);
+    arm.arm_explicit_login();
+    arm.set_auto_login(true);
+    arm.set_auto_login(false);
+    assert!(
+        arm.want_login.load(Ordering::Relaxed),
+        "auto toggles must not relabel and withdraw explicit intent"
+    );
     assert_eq!(
         wait_for_permit(&queue, &statuses, "alice", 7, &arm),
         PermitWait::Granted
     );
     assert!(queue.lock().abandon_permit(7));
-    assert!(arm.want_login.load(Ordering::Relaxed));
 }
 
 #[test]
