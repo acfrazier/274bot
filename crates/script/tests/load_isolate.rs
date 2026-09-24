@@ -1166,8 +1166,10 @@ export default class T extends LoopingBot {
     // An empty frame (the host stamps its own generation on receipt).
     let blank = |iso: &LoadIsolate| {
         iso.paint().is_some_and(|p| {
-            script::shim::ScriptPaint { generation: 0, ..(*p).clone() }
-                == script::shim::ScriptPaint::default()
+            script::shim::ScriptPaint {
+                generation: 0,
+                ..(*p).clone()
+            } == script::shim::ScriptPaint::default()
         })
     };
 
@@ -3450,16 +3452,16 @@ export default class T extends LoopingBot {
         "the helper stays parked"
     );
 
+    // The backpack still holds a row the predicate refuses, so the loop
+    // ends on the result without the side-view wait.
+    let rest = [item_row(995, Some("Coins"), 5, &deposit_ops, false, -1, 1)];
     snap.tick = 2;
-    snap.bank_side = &[];
+    snap.bank_side = &rest;
     snap.bank_op_result_seq = 1;
     snap.bank_op_result = true;
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(2);
-    iso.probe("globalThis.__clock = 2001").unwrap();
-    snap.tick = 3;
-    post_snapshot_input(&iso, &snap);
-    iso.on_game_tick(3);
+    let _ = iso.probe("1 + 1");
     assert_eq!(iso.probe("__depositDone").unwrap(), true);
     assert!(iso.drain_interacts().is_empty());
     iso.join();
@@ -3623,6 +3625,117 @@ export default class T extends LoopingBot {
     iso.on_game_tick(5);
     let ok = iso.probe("__ok").unwrap();
     assert_eq!(ok, true, "withdrawX resolves after inventory publication");
+    iso.join();
+}
+
+/// Frozen `withdrawTo`: Withdraw-X for a need above 10, a failed X falls
+/// back to the labelled 10, and the result is the caller count's gain; the
+/// caller's `count` is called, not `Inventory.count`.
+/// `closeBankAndConfirmCount` closes, then confirms with the caller count.
+#[test]
+fn isolate_withdraw_to_falls_back_and_counts_with_the_callers_count() {
+    let src = r#"
+import { withdrawTo, closeBankAndConfirmCount } from '../../api/thieving/stealRules.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__did) return;
+        globalThis.__did = true;
+        globalThis.__counts = 0;
+        const count = () => { globalThis.__counts += 1; return globalThis.__food; };
+        globalThis.__food = 2;
+        globalThis.__got = await withdrawTo('Lobster', 22, count);
+        globalThis.__closed = await closeBankAndConfirmCount(22, count);
+    }
+}
+"#;
+    use script::shim::InteractReq;
+    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let mut snap = base_snapshot();
+    let ops = [
+        "Withdraw-1".into(),
+        "Withdraw-5".into(),
+        "Withdraw-10".into(),
+        "Withdraw-X".into(),
+    ];
+    let bank = [item_row(379, Some("Lobster"), 100, &ops, false, -1, 0)];
+    snap.bank = &bank;
+    snap.bank_open = true;
+    snap.bank_loaded = true;
+    snap.bank_generation = 7;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let _ = iso.probe("1 + 1");
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::WithdrawX {
+            name: "Lobster".into(),
+            count: 20,
+            bank_item_id: 379,
+            lands_as_id: 379,
+            action: "Withdraw-X".into(),
+            bank_generation: 7,
+        }]
+    );
+
+    snap.tick = 2;
+    snap.withdraw_x_result_seq = 1;
+    snap.withdraw_x_result = false;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(2);
+    let _ = iso.probe("1 + 1");
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::Withdraw {
+            name: "Lobster".into(),
+            action: "Withdraw-10".into(),
+        }],
+        "a failed Withdraw-X falls back to the labelled 10"
+    );
+
+    iso.probe("globalThis.__food = 12").unwrap();
+    snap.tick = 3;
+    snap.bank_op_result_seq = 1;
+    snap.bank_op_result = true;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(3);
+    let _ = iso.probe("1 + 1");
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::Withdraw {
+            name: "Lobster".into(),
+            action: "Withdraw-10".into(),
+        }],
+        "the landed 10 leaves a need of 10: the labelled 10 again"
+    );
+
+    iso.probe("globalThis.__food = 22").unwrap();
+    snap.tick = 4;
+    snap.bank_op_result_seq = 2;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(4);
+    let _ = iso.probe("1 + 1");
+    assert_eq!(iso.probe("__got").unwrap(), 20);
+    assert!(iso.probe("__counts").unwrap().as_i64().unwrap() >= 6);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::Close],
+        "closeBankAndConfirmCount closes first"
+    );
+
+    snap.tick = 5;
+    snap.bank_open = false;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(5);
+    assert_eq!(
+        iso.probe("typeof __closed").unwrap(),
+        "undefined",
+        "one tick after the close"
+    );
+    snap.tick = 6;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(6);
+    let _ = iso.probe("1 + 1");
+    assert_eq!(iso.probe("__closed").unwrap(), true);
     iso.join();
 }
 

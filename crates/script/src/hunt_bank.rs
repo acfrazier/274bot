@@ -968,28 +968,13 @@ fn emit_close(rt: &mut BankRuntime, kind: OpKind) -> Value {
 }
 
 fn quantity_label(have: i32, want: i32) -> Option<Quantity> {
-    let out = crate::bank_withdraw::step(&json!({
-        "count": have,
-        "target": want,
-        "full": false,
-        "ok": true,
-    }));
-    match out.get("kind").and_then(Value::as_str) {
-        Some("x") => Some(Quantity::X {
-            count: out
-                .get("count")
-                .and_then(Value::as_f64)
-                .unwrap_or(0.0)
-                .max(0.0) as i32,
+    match crate::bank_withdraw::next_chunk(f64::from(want) - f64::from(have))? {
+        crate::bank_withdraw::Chunk::X(count) => Some(Quantity::X {
+            count: count.max(0.0) as i32,
         }),
-        Some("op") => Some(Quantity::Fixed {
-            action: out
-                .get("op")
-                .and_then(Value::as_str)
-                .unwrap_or("Withdraw-1")
-                .to_string(),
+        crate::bank_withdraw::Chunk::Op(action) => Some(Quantity::Fixed {
+            action: action.to_string(),
         }),
-        _ => None,
     }
 }
 

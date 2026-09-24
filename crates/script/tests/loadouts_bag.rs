@@ -1,6 +1,9 @@
 // Task 6: settings.str('loadout') reads the posted operator bag.
 
+use script::isolate_fb::ItemRowInput;
 use script::{LoadIsolate, LoadShape, SettingDef};
+
+mod common;
 
 const LOADOUT_PROBE: &str = r#"
 export default class T extends LoopingBot {
@@ -179,11 +182,29 @@ export default class T extends LoopingBot {
         .with_slot("righthand", "Rune scimitar")
         .with_carry("Lobster", 10)]);
     ready.post_settings_bag(&bag);
-    ready
-        .probe(
-            "globalThis.__rs2b0t_host.snapshot = {bank_open:true,bank_loaded:true,bank_generation:4,inv:[{name:'Rune scimitar',count:1,ops:[]}],equipment:[],bank:[{name:'Lobster',count:40,id:379,ops:['Withdraw 10','Withdraw X']}],inv_size:28}; true",
-        )
-        .unwrap();
+    // Rust reads the bank rows from the posted scene: post them, not a JS
+    // snapshot object.
+    let held_ops: [String; 0] = [];
+    let bank_ops = ["Withdraw 10".to_string(), "Withdraw X".to_string()];
+    let row = |name, count, id, ops| ItemRowInput {
+        name: Some(name),
+        count,
+        id,
+        ops,
+        noted: false,
+        cert: -1,
+        component_id: 0,
+        slot: -1,
+    };
+    let inv = [row("Rune scimitar", 1, 1333, &held_ops[..])];
+    let bank_rows = [row("Lobster", 40, 379, &bank_ops[..])];
+    let mut snap = common::ingame_snapshot();
+    snap.bank_open = true;
+    snap.bank_loaded = true;
+    snap.bank_generation = 4;
+    snap.inv = &inv;
+    snap.bank = &bank_rows;
+    common::post_snapshot_input(&ready, &snap);
     ready.on_game_tick(1);
     assert_eq!(ready.probe("__queued").unwrap(), true);
     let reqs = ready.drain_interacts();

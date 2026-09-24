@@ -10,8 +10,6 @@ const queue = (req) => {
     h.interact = h.interact || [];
     h.interact.push(req);
 };
-let withdrawXPending = false;
-let bankOpPending = false;
 
 // One try: Rust walks, presses the booth it observed and waits for the
 // fresh item list, then the caller's await answers the frozen boolean.
@@ -25,102 +23,18 @@ async function driveBankOpen(input) {
     return out.kind === 'done' && out.value === true;
 }
 
-function bankOp(req) {
-    if (!Bank.ready() || bankOpPending) return Promise.resolve(false);
-    const generation = Bank.snapshotGeneration();
-    const resultSeq = Number(snap().bank_op_result_seq) || 0;
-    bankOpPending = true;
-    queue(req);
-    return (async () => {
-        try {
-            await Execution.delayUntil(
-                () =>
-                    (Number(snap().bank_op_result_seq) || 0) !== resultSeq ||
-                    !Bank.isOpen() ||
-                    Bank.snapshotGeneration() !== generation,
-                0,
-            );
-            return (
-                Bank.isOpen() &&
-                Bank.snapshotGeneration() === generation &&
-                (Number(snap().bank_op_result_seq) || 0) !== resultSeq &&
-                snap().bank_op_result === true
-            );
-        } finally {
-            bankOpPending = false;
-        }
-    })();
+// One bank item op: Rust decides the action from the posted rows, sends it
+// and awaits the host result; a `not impl` refusal throws.
+async function bankOp(args) {
+    const out = await runMachine('bank_op', args);
+    if (out.kind === 'refused') throw notImpl(out.reason);
+    return out.kind === 'done' && out.value === true;
 }
 
-function withdrawXRow(row, count, landsAsId) {
-    const amount = Number(count);
-    if (
-        !Bank.ready() ||
-        !Number.isSafeInteger(amount) ||
-        amount <= 0 ||
-        amount > 2147483647 ||
-        !Number.isSafeInteger(row?.id) ||
-        !Number.isSafeInteger(landsAsId) ||
-        landsAsId < -2147483648 ||
-        landsAsId > 2147483647 ||
-        snap().count_dialog_open ||
-        withdrawXPending
-    ) {
-        return Promise.resolve(false);
-    }
-    const available = Math.max(0, Number(row.count) || 0);
-    if (available === 0) return Promise.resolve(false);
-    const take = Math.min(amount, available);
-    const ops = Array.isArray(row.ops) ? row.ops : [];
-    const fixed = [1, 5, 10].includes(take)
-        ? ops.find(
-              (action) =>
-                  action &&
-                  new RegExp(`^withdraw[\\s-]*${take}$`, 'i').test(String(action).trim()),
-          )
-        : null;
-    const action =
-        fixed ||
-        ops.find(
-            (candidate) =>
-                candidate &&
-                String(candidate).replace(/-/g, ' ').trim().toLowerCase() === 'withdraw x',
-        );
-    if (!action) throw notImpl('Bank.withdrawX');
-    const generation = Bank.snapshotGeneration();
-    const resultSeq = Number(snap().withdraw_x_result_seq) || 0;
-    withdrawXPending = true;
-    queue({
-        op: 'withdraw-x',
-        name: row.name,
-        count: take,
-        bank_item_id: row.id,
-        lands_as_id: landsAsId,
-        action,
-        bank_generation: generation,
-    });
-    return (async () => {
-        try {
-            // Rust owns the bounded dialog/settlement deadline and always posts
-            // an outcome, including rejection and session abort. Do not race it
-            // with an isolate wall clock that keeps advancing during Pause/hold.
-            await Execution.delayUntil(
-                () =>
-                    (Number(snap().withdraw_x_result_seq) || 0) !== resultSeq ||
-                    !Bank.isOpen() ||
-                    Bank.snapshotGeneration() !== generation,
-                0,
-            );
-            return (
-                Bank.isOpen() &&
-                Bank.snapshotGeneration() === generation &&
-                (Number(snap().withdraw_x_result_seq) || 0) !== resultSeq &&
-                snap().withdraw_x_result === true
-            );
-        } finally {
-            withdrawXPending = false;
-        }
-    })();
+// One Rust deposit loop (frozen depositAllMatching).
+async function deposit(args, hooks) {
+    const out = await runMachine('bank_deposit', args, hooks);
+    if (out.kind === 'refused') throw notImpl('Bank.depositAllMatching', out.reason);
 }
 
 // Pick the withdraw op for a requested amount (rs2b0t `withdrawOp`).
@@ -163,66 +77,26 @@ export const Bank = new Proxy(
                 )
                 .reduce((sum, row) => sum + (typeof row.count === 'number' ? row.count : 0), 0);
         },
-        // Deposit-all the named bank-side item. The deposit op is always
-        // the row's "all" op (`Deposit-1/5/10/All`), the only op worth
-        // sending here; the specific-op arm is not impl.
         deposit(name) {
-            const wanted = String(name).toLowerCase();
-            for (const row of snap().bank_side || []) {
-                if (row && typeof row.name === 'string' && row.name.toLowerCase() === wanted) {
-                    return bankOp({ op: 'deposit', name: row.name });
-                }
-            }
-            return Promise.resolve(false);
+            return bankOp({ kind: 'deposit', name: String(name) });
         },
         async depositInventory() {
-            await Bank.depositAllMatching(() => true);
+            await deposit({ all: true });
         },
-        async depositAllMatching(predicate) {
-            if (typeof predicate !== 'function') {
-                throw notImpl('Bank.depositAllMatching', 'requires a function');
-            }
-            for (let guard = 0; guard < 32; guard++) {
-                let rows = snap().bank_side || [];
-                if (rows.length === 0 && Bank.isOpen()) {
-                    await Execution.delayUntil(
-                        () => (snap().bank_side || []).length > 0 || !Bank.isOpen(),
-                        1200,
-                    );
-                    rows = snap().bank_side || [];
-                }
-                const row = rows.find(
-                    (item) =>
-                        item &&
-                        predicate(item.name ?? '', item.id ?? -1),
-                );
-                if (!row) return;
-                if (typeof row.name !== 'string') return;
-                if (!(await bankOp({ op: 'deposit', name: row.name }))) return;
-            }
+        async depositAllMatching(predicate, log) {
+            await deposit(
+                {},
+                {
+                    match: typeof predicate === 'function' ? predicate : undefined,
+                    log: typeof log === 'function' ? log : undefined,
+                },
+            );
         },
         async depositAllExcept(keep) {
-            const kept = new Set(Array.from(keep || []).map((k) => String(k).toLowerCase()));
-            await Bank.depositAllMatching((name) => !kept.has(name.toLowerCase()));
+            await deposit({ keep: Array.from(keep || []).map((k) => String(k)) });
         },
-        // Withdraw by name + op: an action label string is used verbatim
-        // (`Withdraw All` / `Withdraw 10` / `Withdraw 1`, or `'all'` for
-        // Withdraw All); a number maps to the brief's op set — all when it
-        // would cover the row's whole count (and is 10+), else 10, else 1.
         withdraw(name, amount) {
-            const wanted = String(name).toLowerCase();
-            let action;
-            if (typeof amount === 'string') {
-                action = amount.toLowerCase() === 'all' ? 'Withdraw All' : amount;
-            } else {
-                const n = Number(amount);
-                const row = (snap().bank || []).find(
-                    (r) => r && typeof r.name === 'string' && r.name.toLowerCase() === wanted,
-                );
-                const count = row && typeof row.count === 'number' ? row.count : 0;
-                action = n >= 10 && n >= count ? 'Withdraw All' : n >= 10 ? 'Withdraw 10' : 'Withdraw 1';
-            }
-            return bankOp({ op: 'withdraw', name: String(name), action });
+            return bankOp({ kind: 'withdraw', name: String(name), amount });
         },
         async setNoteMode(on) {
             if (!Bank.isOpen()) {
@@ -244,41 +118,14 @@ export const Bank = new Proxy(
             queue({ op: 'close' });
             return Execution.delayUntil(() => !Bank.isOpen(), 3000);
         },
-        async withdrawById(id, op = 'Withdraw-1') {
-            const row = (snap().bank || []).find((r) => r && r.id === id);
-            if (!row?.name) {
-                return false;
-            }
-            const action =
-                op.toLowerCase() === 'withdraw-all' || op.toLowerCase() === 'all'
-                    ? 'Withdraw All'
-                    : op.replace(/-/g, ' ');
-            return bankOp({ op: 'withdraw', name: row.name, action });
+        withdrawById(id, op = 'Withdraw-1') {
+            return bankOp({ kind: 'withdraw-id', id, op: String(op) });
         },
         withdrawX(name, count) {
-            const amount = Number(count);
-            if (Number.isSafeInteger(amount) && amount <= 0) {
-                return Promise.resolve(true);
-            }
-            const wanted = String(name).toLowerCase();
-            const row = (snap().bank || []).find(
-                (r) => r && typeof r.name === 'string' && r.name.toLowerCase() === wanted,
-            );
-            if (!row) {
-                throw notImpl('Bank.withdrawX');
-            }
-            return withdrawXRow(row, amount, row.id);
+            return bankOp({ kind: 'withdraw-x', name: String(name), count });
         },
-        async withdrawXById(id, count, landsAsId = id) {
-            const amount = Number(count);
-            if (Number.isSafeInteger(amount) && amount <= 0) {
-                return true;
-            }
-            const row = (snap().bank || []).find((r) => r && r.id === id);
-            if (!row?.name) {
-                return false;
-            }
-            return withdrawXRow(row, amount, Number(landsAsId));
+        withdrawXById(id, count, landsAsId = id) {
+            return bankOp({ kind: 'withdraw-x-id', id, count, lands_as: landsAsId });
         },
         async openBooth(stand, boothName, op, _log) {
             const named = boothName !== undefined || op !== undefined;

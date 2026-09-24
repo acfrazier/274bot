@@ -88,13 +88,6 @@ pub(super) fn wire_runtime(
         )
         .map_err(|e| format!("register range supply empty: {e}"))?;
     runtime
-        .register_function("__rs2b0t_withdraw_step", |args: &[serde_json::Value]| {
-            Ok(crate::bank_withdraw::step(
-                args.first().unwrap_or(&serde_json::Value::Null),
-            ))
-        })
-        .map_err(|e| format!("register withdraw: {e}"))?;
-    runtime
         .register_function(
             "__rs2b0t_matches_common_bank_loot",
             |args: &[serde_json::Value]| {

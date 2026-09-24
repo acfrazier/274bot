@@ -401,6 +401,10 @@ const FAMILIES: &[Entry] = &[
     entry::<crate::clue::Clue>(),
     entry::<crate::reach_entity::EntityOp>(),
     entry::<crate::reach_entity::WalkHops>(),
+    entry::<crate::bank_op::BankOp>(),
+    entry::<crate::bank_deposit::BankDeposit>(),
+    entry::<crate::bank_withdraw::WithdrawTo>(),
+    entry::<crate::bank_withdraw::CloseConfirm>(),
     #[cfg(test)]
     entry::<tests::Probe>(),
     #[cfg(test)]
