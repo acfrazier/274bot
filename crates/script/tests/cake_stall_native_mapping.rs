@@ -175,6 +175,7 @@ export default class T extends LoopingBot {
             onSteal: () => { globalThis.__stolen += 1; },
             onReset: () => { globalThis.__reset += 1; },
         });
+        globalThis.__returns = (globalThis.__returns ?? 0) + 1;
     }
 }
 "#;
@@ -198,15 +199,19 @@ fn steal_loc() -> InteractReq {
     }
 }
 
+/// Game ticks settle parked waits, so keep ticking (100 ms apart, past the
+/// 2.4 s steal resolve window) until the call returns.
 fn wait_result(iso: &LoadIsolate) -> serde_json::Value {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let mut n = 100;
     loop {
-        let _ = iso.probe("true");
+        tick(iso, n);
+        n += 1;
         let value = iso.probe("globalThis.__result").unwrap();
         if !value.is_null() || std::time::Instant::now() > deadline {
             return value;
         }
-        std::thread::sleep(std::time::Duration::from_millis(10));
+        std::thread::sleep(std::time::Duration::from_millis(100));
     }
 }
 
@@ -326,8 +331,20 @@ fn other_stall_depleted_wrong_op_and_missing_facts_queue_nothing() {
     snap.locs = &locs;
     post_snapshot_input(&iso, &snap);
     tick(&iso, 1);
+    tick(&iso, 2);
+    // No qualifying stall: the call waits for a restock, sends nothing and
+    // returns only when the caller aborts.
     assert!(iso.drain_interacts().is_empty());
-    assert_eq!(wait_result(&iso), "no-progress");
+    assert!(iso.probe("globalThis.__result").unwrap().is_null());
+    let logs = iso.probe("globalThis.__logs").unwrap();
+    assert!(
+        logs.to_string()
+            .contains("stall emptied — waiting for the restock"),
+        "{logs}"
+    );
+    iso.probe("globalThis.__abort = true").unwrap();
+    assert_eq!(wait_result(&iso), "aborted");
+    assert!(iso.drain_interacts().is_empty());
     iso.join();
 
     let iso = spawn();
@@ -379,8 +396,15 @@ fn gates_skip_dispatch_and_walk_revalidates() {
     iso.probe("globalThis.__lockUntil = 10").unwrap();
     post_snapshot_input(&iso, &snap);
     tick(&iso, 1);
+    // A caller lockout holds the steal until its tick; the same call then
+    // steals.
     assert!(iso.drain_interacts().is_empty());
-    assert_eq!(wait_result(&iso), "no-progress");
+    assert!(iso.probe("globalThis.__result").unwrap().is_null());
+    snap.tick = 10;
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 10);
+    assert_eq!(iso.drain_interacts(), vec![steal_loc()]);
+    snap.tick = 1;
     iso.join();
 
     let cake = [ItemRowInput::nc(Some("Cake"), 1)];
@@ -453,10 +477,16 @@ fn food_delta_calls_onsteal_once_and_partial_is_not_stocked() {
     snap.tick = 2;
     post_snapshot_delta(&iso, &mut encoder, &mut last, &snap);
     tick(&iso, 2);
-    assert_eq!(wait_result(&iso), "no-progress");
+    tick(&iso, 3);
+    // The gain is counted and the same call steals again toward fillTo.
     assert_eq!(iso.probe("__stolen").unwrap(), 1);
+    assert_eq!(iso.drain_interacts(), vec![steal_loc()]);
+    assert!(iso.probe("globalThis.__result").unwrap().is_null());
     assert_eq!(iso.probe("__reset").unwrap(), 0);
     assert_eq!(iso.probe("__carried").unwrap(), 0);
+    iso.probe("globalThis.__abort = true").unwrap();
+    assert_eq!(wait_result(&iso), "aborted");
+    assert_eq!(iso.probe("__stolen").unwrap(), 1);
     iso.join();
 
     let iso = spawn();
@@ -495,8 +525,9 @@ fn result_is_never_boolean_and_classify_is_not_on_the_path() {
     let snap = base_snapshot(tile(2668, 3312, 0));
     post_snapshot_input(&iso, &snap);
     tick(&iso, 1);
+    iso.probe("globalThis.__abort = true").unwrap();
     let result = wait_result(&iso);
-    assert_eq!(result, "no-progress");
+    assert_eq!(result, "aborted");
     assert!(result.as_str().is_some());
     assert_ne!(result, true);
     assert_ne!(result, false);
@@ -528,18 +559,11 @@ fn native_cake_owner_selects_with_native_predicate_and_posts_food_gain() {
     iso.probe("true").unwrap();
 
     let begin = iso
-        .probe(
-            r#"rustyscript.functions.__rs2b0t_cake_stall({
-                op: 'begin',
-                fill_to: 28,
-                abort: false,
-                should_eat: false,
-                facts_valid: true,
-            })"#,
-        )
+        .probe(r#"rustyscript.functions.__rs2b0t_cake_stall({ op: 'begin', fill_to: 28 })"#)
         .unwrap();
     let token = begin["token"].as_u64().expect("cake token");
     assert_eq!(begin["kind"], "observe");
+    assert_eq!(begin["callbacks"], true);
     assert_eq!(begin["lockout"], true);
 
     let steal = iso
@@ -564,36 +588,21 @@ fn native_cake_owner_selects_with_native_predicate_and_posts_food_gain() {
     post_snapshot_input(&iso, &snap);
     iso.probe("true").unwrap();
 
-    let result_check = iso
-        .probe(&format!(
+    let next = |iso: &LoadIsolate| {
+        iso.probe(&format!(
             r#"rustyscript.functions.__rs2b0t_cake_stall({{
                 op: 'next', token: {token}, abort: false, should_eat: false,
-                facts_valid: true,
+                facts_valid: true, locked_out_until: 0,
             }})"#
         ))
-        .unwrap();
-    assert_eq!(result_check["kind"], "observe");
-    assert_eq!(result_check["callbacks"], true);
-    let on_steal = iso
-        .probe(&format!(
-            r#"rustyscript.functions.__rs2b0t_cake_stall({{
-                op: 'next', token: {token}, abort: false, should_eat: false,
-                facts_valid: true,
-            }})"#
-        ))
-        .unwrap();
-    assert_eq!(on_steal["kind"], "on-steal");
-    let done = iso
-        .probe(&format!(
-            r#"rustyscript.functions.__rs2b0t_cake_stall({{
-                op: 'next', token: {token}, abort: false, should_eat: false,
-                facts_valid: true,
-            }})"#
-        ))
-        .unwrap();
-    assert_eq!(done["kind"], "done");
-    assert_eq!(done["result"], "no-progress");
-    assert_eq!(done["stole"], true);
+        .unwrap()
+    };
+    assert_eq!(next(&iso)["kind"], "on-steal");
+    assert_eq!(next(&iso)["kind"], "observe");
+    // The emptied stall is waited on inside the same call.
+    let pause = next(&iso);
+    assert_eq!(pause["kind"], "pause");
+    assert_eq!(pause["log"], "stall emptied — waiting for the restock");
     iso.join();
 }
 
@@ -674,5 +683,49 @@ fn combat_lockout_line_holds_the_next_steal_for_ten_ticks() {
     tick(&iso, 12);
     assert_eq!(iso.drain_interacts(), vec![steal_loc()], "same stand");
     assert_eq!(iso.probe("__reset").unwrap(), 0);
+    iso.join();
+}
+
+/// Frozen `stealCakes` is one loop: a gain goes back to its head and the
+/// same call steals again until `fillTo`. Callers such as ArdyThiever's
+/// `RestockCakes` rely on one call filling to their food target.
+#[test]
+fn one_call_steals_until_fill_to_before_returning() {
+    let steal = ["Steal from".to_string()];
+    let locs = [loc_row(2561, Some("Baker's stall"), 2667, 3310, 1, &steal)];
+    let one = [ItemRowInput::nc(Some("Cake"), 1)];
+    let two = [ItemRowInput::nc(Some("Cake"), 2)];
+    let iso = spawn();
+    iso.probe("globalThis.__fillTo = 2").unwrap();
+    let mut snap = base_snapshot(tile(2668, 3312, 0));
+    snap.locs = &locs;
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 1);
+    assert_eq!(iso.drain_interacts(), vec![steal_loc()]);
+
+    snap.inv = &one;
+    snap.tick = 2;
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 2);
+    assert_eq!(iso.drain_interacts(), vec![steal_loc()], "second steal");
+    assert_eq!(iso.probe("__stolen").unwrap(), 1);
+    assert!(
+        iso.probe("globalThis.__returns").unwrap().is_null(),
+        "the first gain must not return to the caller"
+    );
+
+    snap.inv = &two;
+    snap.tick = 3;
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 3);
+    // Returned once, on this tick, with the pack filled.
+    assert_eq!(iso.probe("globalThis.__result").unwrap(), "stocked");
+    assert_eq!(iso.probe("__stolen").unwrap(), 2);
+    assert_eq!(iso.probe("globalThis.__returns").unwrap(), 1);
+    let logs = iso.probe("globalThis.__logs").unwrap();
+    assert!(
+        logs.to_string().contains("stocked 2 stall food (1 slots)"),
+        "{logs}"
+    );
     iso.join();
 }

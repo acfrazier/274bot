@@ -49,7 +49,16 @@ function dispatchStep(step) {
         });
         return true;
     }
-    return step.kind === 'wait';
+    return step.kind === 'wait' || step.kind === 'pause';
+}
+
+function report(opts, step) {
+    if (typeof step?.status === 'string' && typeof opts.setStatus === 'function') {
+        opts.setStatus(step.status);
+    }
+    if (typeof step?.log === 'string' && typeof opts.log === 'function') {
+        opts.log(step.log);
+    }
 }
 
 export function carriedCakes() {
@@ -67,13 +76,10 @@ export function needsCakeRestock(target) {
 export async function stealCakes(opts = {}) {
     const fillTo =
         typeof opts.fillTo === 'number' && Number.isFinite(opts.fillTo) ? opts.fillTo : null;
-    let step = call({
-        op: 'begin',
-        fill_to: fillTo,
-        ...callbackResults(opts, true, false),
-    });
+    let step = call({ op: 'begin', fill_to: fillTo });
     const token = step?.token;
     while (step && step.kind !== 'done' && step.kind !== 'aborted') {
+        report(opts, step);
         if (step.kind === 'observe') {
             step = call({
                 op: 'next',
@@ -82,32 +88,18 @@ export async function stealCakes(opts = {}) {
             });
             continue;
         }
-        if (step.kind === 'on-reset') {
-            if (typeof opts.setStatus === 'function') opts.setStatus(step.status);
-            if (typeof opts.log === 'function') opts.log(step.log);
-            if (typeof opts.onReset === 'function') opts.onReset();
-            step = call({
-                op: 'next',
-                token,
-                ...callbackResults(opts, false, false),
-            });
-            continue;
-        }
-        if (step.kind === 'on-steal') {
-            if (typeof opts.onSteal === 'function') {
-                opts.onSteal();
+        if (step.kind === 'on-reset' || step.kind === 'on-steal') {
+            const hook = step.kind === 'on-reset' ? opts.onReset : opts.onSteal;
+            if (typeof hook === 'function') {
+                hook();
             }
-            step = call({
-                op: 'next',
-                token,
-                ...callbackResults(opts, false, false),
-            });
+            step = call({ op: 'next', token, ...callbackResults(opts, false, false) });
             continue;
         }
         if (!dispatchStep(step)) {
             return 'no-progress';
         }
-        const withCallbacks = step.kind === 'loc';
+        const withCallbacks = step.callbacks === true;
         let next = null;
         await Execution.delayUntil(() => {
             next = call({
@@ -120,6 +112,7 @@ export async function stealCakes(opts = {}) {
         step = next;
     }
     if (step?.kind === 'done') {
+        report(opts, step);
         return typeof step.result === 'string' ? step.result : 'no-progress';
     }
     return 'aborted';
