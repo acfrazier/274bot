@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use super::*;
+use crate::router::{find_with, FindOptions, Leg};
 use crate::transport::{TransportEdge, TransportKind};
 use api::snapshot::{GameSnapshot, WorldTile};
 use client::client::{Client, ClientConfig};
@@ -60,6 +61,153 @@ fn gated_edge() -> TransportEdge {
         worn_req: vec![1712],       // a charged glory
         members_req: false,
     }
+}
+
+#[test]
+fn completed_prince_ali_rescue_waives_only_the_real_alkharid_toll() {
+    let Some(world) = crate::world::NavWorld::load_default_pack_or_skip() else {
+        return;
+    };
+    let toll = world
+        .graph
+        .edges
+        .iter()
+        .find(|e| {
+            e.loc_id == 2882
+                && e.at
+                    == WorldTile {
+                        x: 3268,
+                        z: 3227,
+                        level: 0,
+                    }
+                && e.to.x > e.at.x
+                && e.item_req == vec![(995, 10)]
+        })
+        .expect("real pack contains the eastbound Al Kharid toll crossing");
+    let unpaid = WorldState::empty();
+    assert!(!unpaid.allows(toll), "an unknown quest still needs coins");
+    let completed = WorldState {
+        quests: HashSet::from(["Prince Ali Rescue".to_string()]),
+        ..WorldState::empty()
+    };
+    assert!(completed.allows(toll), "completed quest waives ten coins");
+    let south_gate = world
+        .graph
+        .edges
+        .iter()
+        .find(|edge| {
+            edge.loc_id == 2883
+                && edge.at
+                    == WorldTile {
+                        x: 3268,
+                        z: 3228,
+                        level: 0,
+                    }
+                && edge.item_req == vec![(995, 10)]
+        })
+        .expect("real pack contains the other Al Kharid toll gate");
+    assert!(!unpaid.allows(south_gate));
+    assert!(completed.allows(south_gate));
+    let short = WorldState {
+        inv: HashMap::from([(995, 9)]),
+        ..WorldState::empty()
+    };
+    assert!(
+        !short.allows(toll),
+        "an incomplete quest still needs all ten coins"
+    );
+    let paid = WorldState {
+        inv: HashMap::from([(995, 10)]),
+        ..WorldState::empty()
+    };
+    assert!(paid.allows(toll));
+    // Isolate the real packed edge in a sealed two-side corridor so an
+    // unrelated long-world detour cannot count as crossing this toll gate.
+    let mut flags = vec![0u32; 4 * 5 * 5];
+    for z in 0..5 {
+        flags[z * 5 + 2] = crate::collision::SQ_BLOCKED;
+    }
+    let (walk, blocked) = crate::collision::pack_walk(&flags);
+    let collision = crate::collision::WorldCollision {
+        origin: WorldTile {
+            x: 3266,
+            z: 3225,
+            level: 0,
+        },
+        width: 5,
+        height: 5,
+        walk,
+        blocked,
+        flags: None,
+    };
+    let graph = crate::transport::TransportGraph {
+        edges: vec![toll.clone()],
+        at: HashMap::from([(toll.at, vec![0])]),
+        teleports: vec![],
+    };
+    let from = WorldTile {
+        x: 3267,
+        z: 3227,
+        level: 0,
+    };
+    let to = toll.to;
+    let route = find_with(
+        &collision,
+        &graph,
+        from,
+        to,
+        FindOptions::default(),
+        &completed,
+    )
+    .expect("quest complete must admit the toll route with no coins");
+    assert!(route
+        .legs
+        .iter()
+        .any(|leg| matches!(leg, Leg::Transport { edge } if edge.loc_id == 2882)));
+    assert!(
+        find_with(
+            &collision,
+            &graph,
+            from,
+            to,
+            FindOptions::default(),
+            &unpaid
+        )
+        .is_err(),
+        "without quest and coins the gate cannot be crossed"
+    );
+    assert_eq!(
+        crate::router::find_missing_item_reqs(
+            &collision,
+            &graph,
+            from,
+            to,
+            FindOptions::default(),
+            &unpaid
+        ),
+        Some(vec![crate::router::MissingReq::Carry {
+            id: 995,
+            count: 10
+        }])
+    );
+    assert_eq!(
+        crate::router::find_missing_item_reqs(
+            &collision,
+            &graph,
+            from,
+            to,
+            FindOptions::default(),
+            &completed
+        ),
+        Some(vec![]),
+        "bank-fetch diagnosis must not request waived toll coins"
+    );
+    let mut other = toll.clone();
+    other.loc_id = 4031;
+    assert!(
+        !completed.allows(&other),
+        "quest must not waive another gate's coins"
+    );
 }
 
 /// `allows` passes only when every requirement kind is satisfied;

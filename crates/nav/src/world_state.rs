@@ -4,8 +4,9 @@
 //! bound world's `map_members` fact.
 //!
 //! Missing facts fail closed — [`WorldState::allows`] is false for any
-//! requirement the state cannot prove, so an unpaid toll, an incomplete
-//! quest, a missing level, or an unbound members world never routes.
+//! requirement the state cannot prove, so an unpaid Al Kharid toll without
+//! its completed Prince Ali Rescue waiver, a missing level, or an unbound
+//! members world never routes.
 //! There is no "assume yes". `map_members` is WORLD membership
 //! (`Environment.node.members`), never the account or cache flag.
 
@@ -13,7 +14,7 @@ use std::collections::{HashMap, HashSet};
 
 use api::snapshot::GameSnapshot;
 
-use crate::transport::TransportEdge;
+use crate::transport::{TransportEdge, TransportKind};
 
 /// The quest journal's "completed" green as the **client stores it**: the
 /// server sends `if_setcolour` as 15-bit 5-5-5 (`^green_rgb = 0xFF00` →
@@ -98,12 +99,11 @@ impl WorldState {
     }
 
     /// Whether the edge's requirements are all satisfied: every
-    /// `skill_req` level met, every `item_req` count carried, every
-    /// `quest_req` completed, every `varp_req` value reached, **any**
-    /// `worn_req` obj worn (empty is no worn gate — a Dramen staff is a
-    /// one-id list; a slash-weapon web lists every slash blade), and a
-    /// `members_req` edge only when [`Self::map_members`] is true. Any
-    /// requirement the state cannot prove fails the edge.
+    /// `skill_req` level met, every `item_req` count carried (except the
+    /// completed Prince Ali Rescue toll waiver), every `quest_req`
+    /// completed, every `varp_req` value reached, **any** `worn_req`
+    /// obj worn (empty is no worn gate), and a `members_req` edge only
+    /// when [`Self::map_members`] is true. Unknown facts fail closed.
     pub fn allows(&self, e: &TransportEdge) -> bool {
         self.members_ok(e)
             && e.skill_req
@@ -111,12 +111,31 @@ impl WorldState {
                 .all(|&(skill, level)| self.stats.get(&skill).is_some_and(|&l| l >= level))
             && e.item_req
                 .iter()
-                .all(|&(id, n)| self.inv.get(&id).is_some_and(|&c| c >= n))
+                .all(|&(id, n)| self.item_requirement_met(e, id, n))
             && e.quest_req.iter().all(|q| self.quests.contains(q))
             && e.varp_req
                 .iter()
                 .all(|&(varp, min)| self.varps.get(&varp).is_some_and(|&v| v >= min))
             && (e.worn_req.is_empty() || e.worn_req.iter().any(|id| self.worn.contains(id)))
+    }
+
+    /// The two Al Kharid border-gate locs already encoded in the pack carry
+    /// the 10-coin requirement. Frozen rs2b0t #860:
+    /// `data/specialCrossings.ts:53-55`, `requires.ts:37-56` waive only
+    /// their items when the journal says "Prince Ali Rescue" is complete.
+    /// Identify this existing edge family at runtime; the pack's graph and
+    /// serialization need no new fact, and Shantay/other coin gates remain
+    /// payable. Unknown or incomplete quest status still requires coins.
+    pub(crate) fn item_requirement_met(&self, e: &TransportEdge, id: i32, n: i32) -> bool {
+        (id == 995
+            && n == 10
+            && e.kind == TransportKind::Door
+            && matches!(e.loc_id, 2882 | 2883)
+            && e.at.level == 0
+            && e.at.x == 3268
+            && (3227..=3228).contains(&e.at.z)
+            && self.quests.contains("Prince Ali Rescue"))
+            || self.inv.get(&id).is_some_and(|&c| c >= n)
     }
 
     /// Like [`WorldState::allows`] but ignoring the `item_req`/`worn_req`

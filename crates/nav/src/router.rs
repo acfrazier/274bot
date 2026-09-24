@@ -572,7 +572,7 @@ pub fn find_missing_item_reqs_with_avoid_bounded(
             continue;
         };
         for &(id, count) in &edge.item_req {
-            if state.inv.get(&id).is_none_or(|&c| c < count) {
+            if !state.item_requirement_met(edge, id, count) {
                 missing.push(MissingReq::Carry { id, count });
             }
         }
