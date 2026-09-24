@@ -33,17 +33,19 @@ pub(super) const SHANTAY_SOUTH_TO: WorldTile = WorldTile {
 /// branch's own `p_delay(0)`).
 pub(super) const SHANTAY_SOUTH_TICKS: i32 = 2;
 
-/// Al Kharid border-toll and Shantay-pass edges: `TransportKind::Door`
-/// edges that cost an item, derived from `scripts/areas/area_alkharid/
-/// configs/border_gate.loc` and `shantay_pass.rs2` plus the jm2
-/// placements. The toll gates (`border_gate_toll_left`/`_right`, loc
-/// 2882/2883) parse as doors under the same [`parse_door_config`] rule
-/// (`op1=Open`) once their config's name-keyed blocks resolve through the
-/// loc id map ([`parse_door_config_ids`]), and derive their two
-/// crossings like every door: `at` the placement tile (m51_50 (4,27)/
-/// (4,28) = (3268,3227)/(3268,3228)), `to` the adjacent standable tile,
-/// `open_loc_id` the config's `next_loc_stage` leaf (loc 1562/1563),
-/// `item_req` the 10-coin toll. The Shantay henge doorway (loc 4031,
+/// Al Kharid border-toll and Shantay-pass edges, derived from the loc
+/// config, scripts and jm2 placements. Both toll locs have paid crossings
+/// (`item_req` coins) and, when `border_gate.rs2` proves the free branch,
+/// parallel crossings with `varp_req` for `%princequest >= ^prince_saved`.
+/// The varp id and threshold come from `pack/varp.pack` and
+/// `quest_prince.constant`, not a runtime table. Without any of those
+/// content facts the free crossing is omitted, never assumed open.
+///
+/// The toll gates (`border_gate_toll_left`/`_right`, loc 2882/2883) parse
+/// as doors under [`parse_door_config_ids`], at the m51_50 (4,27)/(4,28)
+/// placements (3268,3227)/(3268,3228). `open_loc_id` is the config's
+/// `next_loc_stage` leaf (loc 1562/1563).
+/// The Shantay henge doorway (loc 4031,
 /// `op1=Go-through`) derives two `TransportKind::Door` edges, one per
 /// script branch — the gated hop (`at` the m51_48 (38,44) placement =
 /// (3302,3116), `to` [`SHANTAY_NORTH_TO`], `item_req` one Shantay pass,
@@ -104,6 +106,7 @@ pub(super) fn toll_edges(
         TOLL_GATE_LOC_NAMES,
         &toll_ids,
     );
+    let waiver = toll_waiver_gate(content_root, &alkharid);
     for id in toll_ids {
         let edge_start = graph.edges.len();
         let Some(placements) = positions.get(&id) else {
@@ -128,7 +131,7 @@ pub(super) fn toll_edges(
                 let Some(to) = door_far_side(at, dir, collision) else {
                     continue;
                 };
-                graph.edges.push(TransportEdge {
+                let edge = |item_req, varp_req| TransportEdge {
                     kind: TransportKind::Door,
                     at,
                     to,
@@ -138,12 +141,20 @@ pub(super) fn toll_edges(
                     dir: Some(dir),
                     open_loc_id: open_ids.get(&id).copied(),
                     skill_req: vec![],
-                    item_req: vec![(coins_id, AL_KHARID_TOLL_COINS)],
+                    item_req,
                     quest_req: vec![],
-                    varp_req: vec![],
+                    varp_req,
                     worn_req: vec![],
                     members_req: false,
-                });
+                };
+                // Prefer the free crossing on equal-cost relaxed searches
+                // (bank-fetch diagnosis); both alternatives remain available.
+                if let Some((varp, min)) = waiver {
+                    graph.edges.push(edge(vec![], vec![(varp, min)]));
+                }
+                graph
+                    .edges
+                    .push(edge(vec![(coins_id, AL_KHARID_TOLL_COINS)], vec![]));
             }
         }
         if graph.edges.len() == edge_start && ids.values().any(|&packed| packed == id) {
@@ -152,6 +163,35 @@ pub(super) fn toll_edges(
     }
 
     toll_shantay_henge_edges(ids, positions, graph, pass_id, skipped);
+}
+
+/// Resolve the only free arm in `[label,talk_to_border_guard]`: a threshold
+/// guard must call `@pass_toll_gate` before the coin-dialogue arm. The label
+/// header has formal parameters (`[label,...](coord ...)`), so the generic
+/// no-parameter `script_blocks` parser cannot identify it. Fail closed on
+/// absent or changed syntax, missing constant, or missing packed varp.
+fn toll_waiver_gate(content_root: &Path, alkharid: &Path) -> Option<(i32, i32)> {
+    let script = fs::read_to_string(alkharid.join("scripts").join("border_gate.rs2")).ok()?;
+    let body = script
+        .split_once("[label,talk_to_border_guard]")?
+        .1
+        .split("\n[")
+        .next()?;
+    let guard = body.lines().find(|line| line.trim().starts_with("if (%"))?;
+    let condition = guard.trim().strip_prefix("if (")?.strip_suffix(") {")?;
+    let (varp, threshold) = condition.split_once(">=")?;
+    let varp = varp.trim().strip_prefix('%')?;
+    let threshold = threshold.trim().strip_prefix('^')?;
+    let arm = body.split_once(guard)?.1.split_once('}')?.0;
+    if !arm
+        .lines()
+        .any(|line| line.trim().starts_with("@pass_toll_gate("))
+    {
+        return None;
+    }
+    let id = *varp_ids_by_name(content_root).get(varp)?;
+    let min = *script_constants(content_root).get(threshold)?;
+    Some((id, min))
 }
 
 pub(super) fn toll_shantay_henge_edges(

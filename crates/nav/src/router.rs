@@ -399,9 +399,9 @@ pub fn find_many_with_avoid_bounded<'a>(
     )
 }
 
-/// As above, with a caller-supplied completion deadline. A deadline stops
-/// the shared flood without inventing costs for unsettled targets; the caller
-/// decides whether to use partial successes or its own fallback.
+/// As above, with a caller-supplied completion deadline. The wall-clock
+/// bound is caller policy; the search checks it every 256 heap pops and at
+/// exit, reports unsettled targets, and leaves fallback choice to the caller.
 #[allow(clippy::too_many_arguments)]
 pub fn find_many_with_avoid_bounded_until<'a>(
     collision: &WorldCollision,
@@ -572,7 +572,7 @@ pub fn find_missing_item_reqs_with_avoid_bounded(
             continue;
         };
         for &(id, count) in &edge.item_req {
-            if !state.item_requirement_met(edge, id, count) {
+            if state.inv.get(&id).is_none_or(|&c| c < count) {
                 missing.push(MissingReq::Carry { id, count });
             }
         }
@@ -895,8 +895,10 @@ fn search_kernel(
     });
 
     let mut expanded = 0usize;
+    let mut heap_pops = 0usize;
+    let expired = || deadline.is_some_and(|end| Instant::now() >= end);
     while !heap.is_empty() {
-        if deadline.is_some_and(|end| Instant::now() >= end) {
+        if heap_pops & 255 == 0 && expired() {
             return SearchOutcome::finish(
                 came_from,
                 &dist,
@@ -907,6 +909,7 @@ fn search_kernel(
                 record_capacities,
             );
         }
+        heap_pops += 1;
         let n = heap.pop().expect("nonempty heap");
         let cur = n.tile;
         // A stale heap entry (a cheaper path was found after the push) is
@@ -925,7 +928,11 @@ fn search_kernel(
                 &done,
                 &heap,
                 budget,
-                SearchStop::Budget,
+                if expired() {
+                    SearchStop::Deadline
+                } else {
+                    SearchStop::Budget
+                },
                 record_capacities,
             );
         }
@@ -936,7 +943,11 @@ fn search_kernel(
                 &done,
                 &heap,
                 expanded,
-                SearchStop::Completed,
+                if expired() {
+                    SearchStop::Deadline
+                } else {
+                    SearchStop::Completed
+                },
                 record_capacities,
             );
         }
@@ -1094,7 +1105,11 @@ fn search_kernel(
         &done,
         &heap,
         expanded,
-        SearchStop::Exhausted,
+        if expired() {
+            SearchStop::Deadline
+        } else {
+            SearchStop::Exhausted
+        },
         record_capacities,
     )
 }

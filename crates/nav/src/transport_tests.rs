@@ -1080,8 +1080,8 @@ fn derive_transports_emits_alkharid_toll_and_shantay_north() {
     let Some((graph, _)) = derive_from_real_content() else {
         return;
     };
-    // Both toll gates derive their two crossings (dir + opposite),
-    // pinned to the mined placements.
+    // Each gate has two crossing directions, each with paid and
+    // quest-varp-waived alternatives derived from the border guard script.
     let tolls: Vec<_> = graph
         .edges
         .iter()
@@ -1094,12 +1094,12 @@ fn derive_transports_emits_alkharid_toll_and_shantay_north() {
     );
     assert_eq!(
         tolls.iter().filter(|e| e.loc_id == 2882).count(),
-        2,
+        4,
         "left toll gate derives both crossings"
     );
     assert_eq!(
         tolls.iter().filter(|e| e.loc_id == 2883).count(),
-        2,
+        4,
         "right toll gate derives both crossings"
     );
     for e in &tolls {
@@ -1120,14 +1120,26 @@ fn derive_transports_emits_alkharid_toll_and_shantay_north() {
             }
         );
         assert!(
-            e.item_req.iter().any(|(id, n)| *id == 995 && *n >= 10),
-            "10-coin toll on {e:?}"
+            (e.item_req == vec![(995, 10)] && e.varp_req.is_empty())
+                || (e.item_req.is_empty() && e.varp_req == vec![(273, 100)]),
+            "each crossing is either paid or waived by the Prince Ali Rescue varp: {e:?}"
         );
         assert_eq!(e.option, 1, "Open op");
         assert_eq!(
             e.open_loc_id,
             Some(if e.loc_id == 2882 { 1562 } else { 1563 })
         );
+    }
+    for gate in [2882, 2883] {
+        for eastbound in [false, true] {
+            let crossing: Vec<_> = tolls
+                .iter()
+                .filter(|e| e.loc_id == gate && (e.to.x > e.at.x) == eastbound)
+                .collect();
+            assert_eq!(crossing.len(), 2);
+            assert_eq!(crossing.iter().filter(|e| e.item_req.is_empty()).count(), 1);
+            assert_eq!(crossing.iter().filter(|e| e.varp_req.is_empty()).count(), 1);
+        }
     }
     // The Shantay henge carries exactly two edges, one per
     // `[oploc1,shantay_pass_henge_doorway]` branch: the gated hop
@@ -6759,6 +6771,47 @@ param=next_loc_stage,loc_1563
         skip_total(&skipped, SKIP_TOLL_GATE),
         1,
         "right gate still missing"
+    );
+    assert!(
+        graph
+            .edges
+            .iter()
+            .filter(|e| e.loc_id == 2882)
+            .all(|e| { e.item_req == vec![(995, AL_KHARID_TOLL_COINS)] && e.varp_req.is_empty() }),
+        "a missing waiver script must leave only paid crossings"
+    );
+    fx.write("pack/varp.pack", "419=princequest\n");
+    fx.write(
+        "scripts/quests/quest_prince/configs/quest_prince.constant",
+        "^prince_saved = 73\n",
+    );
+    fx.write(
+        "scripts/areas/area_alkharid/scripts/border_gate.rs2",
+        "[label,talk_to_border_guard](coord $loc_coord)\nif (%princequest >= ^prince_saved) {\n    @pass_toll_gate($loc_coord);\n}\n",
+    );
+    let (graph, _) = derive_transports_with_skips(fx.path(), &defs, &wc);
+    let free: Vec<_> = graph
+        .edges
+        .iter()
+        .filter(|e| e.loc_id == 2882 && e.item_req.is_empty())
+        .collect();
+    assert!(
+        !free.is_empty(),
+        "the source-backed waiver adds a parallel crossing"
+    );
+    assert!(free.iter().all(|e| e.varp_req == vec![(419, 73)]));
+    fx.write(
+        "scripts/areas/area_alkharid/scripts/border_gate.rs2",
+        "[label,talk_to_border_guard](coord $loc_coord)\nif (%princequest >= ^prince_saved) {\n    return;\n}\n",
+    );
+    let (graph, _) = derive_transports_with_skips(fx.path(), &defs, &wc);
+    assert!(
+        graph
+            .edges
+            .iter()
+            .filter(|e| e.loc_id == 2882)
+            .all(|e| !e.item_req.is_empty()),
+        "a changed guard without the pass call must not waive coins"
     );
 }
 

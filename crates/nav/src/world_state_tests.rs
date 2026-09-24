@@ -68,59 +68,73 @@ fn completed_prince_ali_rescue_waives_only_the_real_alkharid_toll() {
     let Some(world) = crate::world::NavWorld::load_default_pack_or_skip() else {
         return;
     };
+    let at = WorldTile {
+        x: 3268,
+        z: 3227,
+        level: 0,
+    };
     let toll = world
         .graph
         .edges
         .iter()
-        .find(|e| {
-            e.loc_id == 2882
-                && e.at
-                    == WorldTile {
-                        x: 3268,
-                        z: 3227,
-                        level: 0,
-                    }
-                && e.to.x > e.at.x
-                && e.item_req == vec![(995, 10)]
-        })
-        .expect("real pack contains the eastbound Al Kharid toll crossing");
-    let unpaid = WorldState::empty();
-    assert!(!unpaid.allows(toll), "an unknown quest still needs coins");
-    let completed = WorldState {
-        quests: HashSet::from(["Prince Ali Rescue".to_string()]),
-        ..WorldState::empty()
-    };
-    assert!(completed.allows(toll), "completed quest waives ten coins");
-    let south_gate = world
+        .find(|e| e.loc_id == 2882 && e.at == at && e.to.x > at.x && e.item_req == vec![(995, 10)])
+        .expect("real pack contains the paid eastbound Al Kharid toll crossing");
+    let free = world
         .graph
         .edges
         .iter()
-        .find(|edge| {
-            edge.loc_id == 2883
-                && edge.at
-                    == WorldTile {
-                        x: 3268,
-                        z: 3228,
-                        level: 0,
-                    }
-                && edge.item_req == vec![(995, 10)]
-        })
-        .expect("real pack contains the other Al Kharid toll gate");
-    assert!(!unpaid.allows(south_gate));
-    assert!(completed.allows(south_gate));
-    let short = WorldState {
-        inv: HashMap::from([(995, 9)]),
+        .find(|e| e.loc_id == 2882 && e.at == at && e.to == toll.to && e.item_req.is_empty())
+        .expect("real pack contains the quest-waived crossing alongside the paid one");
+    let &[(quest_varp, saved)] = free.varp_req.as_slice() else {
+        panic!("waiver must require one quest varp: {free:?}");
+    };
+    assert_eq!(saved, 100);
+    let unpaid = WorldState::empty();
+    assert!(!unpaid.allows(toll));
+    assert!(!unpaid.allows(free), "an unknown quest still needs coins");
+    let journal_only = WorldState {
+        quests: HashSet::from(["Prince Ali Rescue".to_string()]),
         ..WorldState::empty()
     };
     assert!(
-        !short.allows(toll),
-        "an incomplete quest still needs all ten coins"
+        !journal_only.allows(free),
+        "the varp, not the journal name, controls the gate"
+    );
+    let short = WorldState {
+        varps: HashMap::from([(quest_varp, saved - 1)]),
+        inv: HashMap::from([(995, 9)]),
+        ..WorldState::empty()
+    };
+    assert!(!short.allows(free));
+    assert!(!short.allows(toll));
+    let completed = WorldState {
+        varps: HashMap::from([(quest_varp, saved)]),
+        ..WorldState::empty()
+    };
+    assert!(
+        !completed.allows(toll),
+        "the paid edge always requires coins"
+    );
+    assert!(
+        completed.allows(free),
+        "completed quest enables the free alternative"
     );
     let paid = WorldState {
         inv: HashMap::from([(995, 10)]),
         ..WorldState::empty()
     };
     assert!(paid.allows(toll));
+    assert!(!paid.allows(free));
+    let south_gate = world
+        .graph
+        .edges
+        .iter()
+        .find(|edge| {
+            edge.loc_id == 2883 && edge.item_req.is_empty() && edge.varp_req == free.varp_req
+        })
+        .expect("other Al Kharid toll gate also has a quest-waived crossing");
+    assert!(!unpaid.allows(south_gate));
+    assert!(completed.allows(south_gate));
     // Isolate the real packed edge in a sealed two-side corridor so an
     // unrelated long-world detour cannot count as crossing this toll gate.
     let mut flags = vec![0u32; 4 * 5 * 5];
@@ -141,8 +155,8 @@ fn completed_prince_ali_rescue_waives_only_the_real_alkharid_toll() {
         flags: None,
     };
     let graph = crate::transport::TransportGraph {
-        edges: vec![toll.clone()],
-        at: HashMap::from([(toll.at, vec![0])]),
+        edges: vec![free.clone(), toll.clone()],
+        at: HashMap::from([(at, vec![0, 1])]),
         teleports: vec![],
     };
     let from = WorldTile {
@@ -159,11 +173,11 @@ fn completed_prince_ali_rescue_waives_only_the_real_alkharid_toll() {
         FindOptions::default(),
         &completed,
     )
-    .expect("quest complete must admit the toll route with no coins");
+    .expect("quest varp admits the toll route with no coins");
     assert!(route
         .legs
         .iter()
-        .any(|leg| matches!(leg, Leg::Transport { edge } if edge.loc_id == 2882)));
+        .any(|leg| matches!(leg, Leg::Transport { edge } if edge.item_req.is_empty() && edge.varp_req == free.varp_req)));
     assert!(
         find_with(
             &collision,
@@ -176,6 +190,14 @@ fn completed_prince_ali_rescue_waives_only_the_real_alkharid_toll() {
         .is_err(),
         "without quest and coins the gate cannot be crossed"
     );
+    assert!(
+        find_with(&collision, &graph, from, to, FindOptions::default(), &short).is_err(),
+        "neither nine coins nor the varp below threshold admits a crossing"
+    );
+    assert!(
+        find_with(&collision, &graph, from, to, FindOptions::default(), &paid).is_ok(),
+        "ten coins still admit the paid alternative"
+    );
     assert_eq!(
         crate::router::find_missing_item_reqs(
             &collision,
@@ -184,6 +206,20 @@ fn completed_prince_ali_rescue_waives_only_the_real_alkharid_toll() {
             to,
             FindOptions::default(),
             &unpaid
+        ),
+        Some(vec![crate::router::MissingReq::Carry {
+            id: 995,
+            count: 10
+        }])
+    );
+    assert_eq!(
+        crate::router::find_missing_item_reqs(
+            &collision,
+            &graph,
+            from,
+            to,
+            FindOptions::default(),
+            &short
         ),
         Some(vec![crate::router::MissingReq::Carry {
             id: 995,
