@@ -2167,7 +2167,13 @@ fn unequip_sends_remove_on_the_worn_component_row() {
     plant_inventory(&mut s.client); // obj 3 held in inv slot 0
     plant_worn(
         &mut s.client,
-        [Some("Operate".into()), Some("Remove".into()), None, None, None],
+        [
+            Some("Operate".into()),
+            Some("Remove".into()),
+            None,
+            None,
+            None,
+        ],
     );
     {
         let cache = Arc::get_mut(&mut s.client.cache).expect("sole cache owner");
@@ -2186,7 +2192,10 @@ fn unequip_sends_remove_on_the_worn_component_row() {
     let snap = rebuild(&mut s.client);
     let worn = snap.equipment();
     assert_eq!(worn.len(), 1);
-    assert_eq!((worn[0].def.id, worn[0].slot, worn[0].component_id), (5, 3, 711));
+    assert_eq!(
+        (worn[0].def.id, worn[0].slot, worn[0].component_id),
+        (5, 3, 711)
+    );
     let mut rec = Recorder::default();
     {
         let mut ix = Interactions::new(&snap, &mut rec);
