@@ -6742,6 +6742,15 @@ pub(crate) fn ardy_thiever_fight_scenario() -> Scenario {
 /// at 1 slot. Script restocks one stall food, pickpockets coins with
 /// Thieving XP, deposits those coins, returns to the stand and pickpockets
 /// again. PeriodicBank Off is not the bank proof. Fight stays pending.
+///
+/// **Windows under the Baker owner model** (see `ARDY_CAKES_BANK_WATCH_TICKS`:
+/// 0.63 refusals per attempt, guard catch 0.12). Only one stall success is
+/// needed (`foodTarget` 1), so the ordinary 150-dirty (~143 engine ticks)
+/// watches hold. A 20k-run simulation gives P(first Thieving XP ≤143) = 0.962
+/// for the Guard and 0.964 for the Knight (p95 132 / 128). It gives P(coins
+/// ≤143 after that XP) = 0.986 / 0.989 (p95 68 / 60). That counts
+/// pickpockets at 126/256 and 155/256, stun damage 2 / 3, and a stall
+/// revisit when a one-bite food is eaten.
 fn ardy_thiever_variant(spec: ArdyThieverSpec) -> Scenario {
     let ArdyThieverSpec {
         name,

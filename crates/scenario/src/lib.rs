@@ -533,29 +533,43 @@ const HERBLORE_EGG_DEADLINE: Duration = Duration::from_secs(420);
 /// ArdyCakes first cake → Ardougne bank arrival: the Baker stall fill of the
 /// 6 free slots (22 Knife ballast) plus the bank walk.
 ///
-/// **Engine model (frozen stealCakes, 289 content):** after the first cake
-/// five more are needed. A success is followed by the stall's
-/// `respawn_ticks` 8 (stealing.dbrow; scaled by player count). A silent
-/// owner refusal costs the 2.4 s resolve plus a pass (~5 ticks), and three
-/// in a row swap stands (~3 ticks). A guard catch costs the Flee kite, the
-/// combat bar, the 10-tick lockout and the walk back (measured 32 ticks,
-/// live 290253afd). The bank walk is ~25 ticks. Per-attempt
-/// success/refusal/catch rates are pooled from the 289 runs of the five
-/// Ardougne cells: 11/5/3 of 19 attempts that did not directly follow a
-/// catch (ardy_cakes alone: 6/5/1 of 12). A Monte Carlo over this model
-/// (200k runs) gives P(arrival ≤150 engine ticks) = 0.79 (0.84 at the
-/// ardy_cakes rates). 95% needs 209 engine ticks (187 at the ardy_cakes
-/// rates).
+/// **Owner refusals (289 content).** The Baker (npc 571 `baker_merchant`)
+/// spawns at (2669,3310) (m41_51 local 45,46), which is the stall's
+/// alternate stand. He has the default `wanderrange` 5 (NpcType.ts), and
+/// Npc.ts `wanderMode` re-picks a random tile within ±5 of spawn with 1/8
+/// chance per tick. `stealing_check_for_owner` (stealing.rs2) refuses a
+/// steal silently (overhead text only) when he is within 5 tiles with line
+/// of sight. Both frozen stands lie inside his wander box: with the 2×2
+/// stall as the only blocker, he sees (2668,3312) from 50% of it and
+/// (2669,3310) from 68%. A simulation of that wander with the frozen loop
+/// gives 0.63 refusals per attempt in steady state. The two live ardy_cakes
+/// runs show 29 of 44 attempts refused (0.66): 5/12 at 290253afd and 24/32
+/// at 0c4e035a7. An earlier sizing pooled 5/19 from the other Ardougne
+/// cells and was too optimistic.
+///
+/// **Engine model (frozen stealCakes):** after the first cake five more
+/// are needed. A success is followed by the stall's `respawn_ticks` 8
+/// (stealing.dbrow). A refusal costs the 2.4 s resolve (~4 ticks), and
+/// three in a row swap stands (~2 ticks). A guard catch (0.12 per attempt)
+/// costs the Flee kite, the combat bar, the 10-tick lockout and the walk
+/// back (measured 32 ticks, live 290253afd). The bank walk is ~25 ticks. A
+/// 20k-run simulation of the Baker's wander and this loop gives a median
+/// of 9 refusals before the sixth cake (p90 21, p99 35), and P(arrival
+/// ≤209 engine ticks) = 0.78. 95% needs **305** engine ticks (p99 395).
+/// This model puts the 0c4e035a7 run (fill ~245 ticks + walk, 24
+/// refusals) at about the 90th percentile of arrival time.
 ///
 /// **Dirty budget:** the failed live step spent 156 dirties in 89.2 s wall,
-/// about 1.05 dirties per 600 ms engine tick, so 209 × 1.05 ≈ **220**.
-/// Every other ArdyCakes watch stays 150.
-const ARDY_CAKES_BANK_WATCH_TICKS: u32 = 220;
+/// about 1.05 dirties per 600 ms engine tick, so 305 × 1.05 ≈ **320**.
+/// Every other ArdyCakes watch stays 150. The further cake after return
+/// needs one stall success: P(≤143 engine ticks) = 0.96 under the same
+/// model.
+const ARDY_CAKES_BANK_WATCH_TICKS: u32 = 320;
 /// ArdyCakes whole-run cap. Seed + Start ~25 s, first cake ~5 s, the
-/// 220-dirty fill/bank watch ~126 s (0.57 s/dirty measured), then deposit,
-/// return, close and a further cake ~30 s: ≈ 186 s at the 95th percentile,
-/// over the 180 s gold cap. Use **240 s**.
-const ARDY_CAKES_DEADLINE: Duration = Duration::from_secs(240);
+/// 320-dirty fill/bank watch ~182 s at the 95th percentile (0.57 s/dirty
+/// measured), then deposit, return, close and a further cake ~30 s:
+/// ≈ 242 s. Use **300 s** for the tail.
+const ARDY_CAKES_DEADLINE: Duration = Duration::from_secs(300);
 /// ArdyThiever Fight whole-run cap. After Start the cell runs an opening
 /// Baker stall session until a Guard catches, the FightBack kill (27 engine
 /// ticks measured on `ardy_cakes_fight`, 290253afd), another stall visit if
