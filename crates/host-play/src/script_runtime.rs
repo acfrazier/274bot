@@ -4280,7 +4280,10 @@ pub(super) fn apply_nav_follow_outcome(
 /// idle); any terminal outcome clears the route — arrival and stall alike
 /// — so the status flips back to idle and a script may arm a fresh walk.
 /// Mid-follow Stall / Refused / Blocked / GaveUp publish the armed walk's
-/// isolate request id as a failed outcome. Arrival still settles from `here`.
+/// isolate request id as a failed outcome. Arrival still settles from `here`,
+/// and the same arrival ends the follow: once `here` is within the requested
+/// radius the route clears without another hop, even short of the approach
+/// tile the route aimed at.
 // Shared handles threaded like `script_observe`; the arg count is allowed.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn step_nav_bot<D: Driver>(
@@ -4344,18 +4347,28 @@ pub(super) fn step_nav_bot<D: Driver>(
         let Some(bot) = all.get_mut(name) else {
             return;
         };
-        let Some(route) = bot.route.clone() else {
+        if bot.route.is_none() {
             return;
-        };
-        let walking_stand = bot.bank_fetch.as_ref().is_some_and(|p| {
-            matches!(
-                p.steps.front(),
-                Some(BankStep::Walk { x, z, level })
-                    if route.dest.x == *x && route.dest.z == *z && route.dest.level == *level
-            )
-        });
-        let follow_outcome = bot.traveller.follow(driver, snapshot, route, &mut options);
-        apply_nav_follow_outcome(bot, follow_outcome, walking_stand);
+        }
+        if bot.bank_fetch.is_none() && here.is_some_and(|here| bot.reached_requested(here)) {
+            // The isolate settles the walk wait as soon as `here` is within
+            // the requested radius (walk_wait.rs), so the card has already
+            // moved on. Every further hop would be a click the card never
+            // sent; a stall re-send walks the player out of the fight the
+            // card started at the edge of the radius.
+            bot.traveller.clear();
+            bot.route = None;
+        } else if let Some(route) = bot.route.clone() {
+            let walking_stand = bot.bank_fetch.as_ref().is_some_and(|p| {
+                matches!(
+                    p.steps.front(),
+                    Some(BankStep::Walk { x, z, level })
+                        if route.dest.x == *x && route.dest.z == *z && route.dest.level == *level
+                )
+            });
+            let follow_outcome = bot.traveller.follow(driver, snapshot, route, &mut options);
+            apply_nav_follow_outcome(bot, follow_outcome, walking_stand);
+        }
         bot.route.as_ref().map(|r| r.dest)
     };
     let mut rows = statuses.lock().unwrap();
@@ -4825,6 +4838,14 @@ impl NavBot {
         if self.walk_outcome_seq == 0 {
             self.walk_outcome_seq = 1;
         }
+    }
+
+    /// The isolate's walk-wait arrival rule for the requested walk: same
+    /// level and Chebyshev distance to the requested dest within its radius.
+    fn reached_requested(&self, (x, z, level): (i32, i32, i32)) -> bool {
+        self.requested_route.is_some_and(|(to, radius, ..)| {
+            level == to.level && (x - to.x).abs().max((z - to.z).abs()) <= radius
+        })
     }
 
     /// Older armed-route results may publish only after the current wait

@@ -13885,6 +13885,96 @@ fn script_observe_walk_arms_route_and_pump_steps_follow() {
     }
 }
 
+/// A WalkNear settles in the isolate once `here` is within its radius, even
+/// short of the approach tile the route aimed at (the live chaos druid card
+/// stood at (3114,9932), four tiles from its dest, while the route still
+/// aimed at (3110,9932)). The host follow must end there too: a later stall
+/// re-send walked the player out of the fight the card had just started.
+#[test]
+fn walk_near_follow_ends_when_here_is_within_the_requested_radius() {
+    let world = Arc::new(NavWorld::from_parts(
+        nav::collision::WorldCollision {
+            origin: WorldTile {
+                x: 0,
+                z: 0,
+                level: 0,
+            },
+            width: 20,
+            height: 20,
+            walk: vec![0u8; 400],
+            blocked: vec![0u64; 400usize.div_ceil(64)],
+            flags: None,
+        },
+        nav::transport::TransportGraph::default(),
+        Vec::new(),
+    ));
+    let navs: Arc<Mutex<HashMap<String, NavBot>>> = Arc::new(Mutex::new(HashMap::new()));
+    let statuses: Arc<Mutex<Vec<SlotStatus>>> = Arc::new(Mutex::new(vec![SlotStatus {
+        username: "alice".into(),
+        ..SlotStatus::default()
+    }]));
+    let arm = ScriptWalkArm {
+        here: Some((10, 0, 0)),
+        world: Some(Arc::clone(&world)),
+        navs: Arc::clone(&navs),
+        name: "alice".into(),
+        state: None,
+        bank: Vec::new(),
+    };
+    assert!(arm.route_with_radius(10, 16, 0, FindOptions::default(), 4));
+    // The approach enumeration picks the lowest-x ring tile among the ties.
+    let approach = WorldTile {
+        x: 6,
+        z: 12,
+        level: 0,
+    };
+    assert!(
+        wait_until(500, || queued(&navs) == Some(approach)),
+        "the worker armed the approach route"
+    );
+    let mut d = NavRec::default();
+    let mut c = nav_client();
+    let mut snap = GameSnapshot::new();
+    let step = |d: &mut NavRec, snap: &GameSnapshot, here: (i32, i32, i32)| {
+        step_nav_bot(
+            d,
+            "alice",
+            Some(here),
+            snap,
+            &navs,
+            &statuses,
+            Some(world.as_ref()),
+            false,
+            false,
+        )
+    };
+    nav_snapshot_at(&mut c, &mut snap, 10, 0);
+    step(&mut d, &snap, (10, 0, 0));
+    assert!(d.walked.is_some(), "the follow sends its first hop");
+
+    // One tile outside the radius: the walk is still owed.
+    nav_snapshot_at(&mut c, &mut snap, 10, 11);
+    step(&mut d, &snap, (10, 11, 0));
+    assert_eq!(
+        queued(&navs),
+        Some(approach),
+        "outside the radius the route stays"
+    );
+
+    // Inside the radius, four tiles east of the approach tile: done.
+    d.walked = None;
+    nav_snapshot_at(&mut c, &mut snap, 10, 12);
+    step(&mut d, &snap, (10, 12, 0));
+    assert_eq!(d.walked, None, "no hop after the card's walk settled");
+    assert_eq!(queued(&navs), None, "radius arrival clears the route");
+    let rows = statuses.lock().unwrap();
+    assert_eq!(
+        (rows[0].walk_x, rows[0].walk_z),
+        (-1, -1),
+        "status reports idle"
+    );
+}
+
 /// A packed glory-style jewellery edge (obj 1712, `opheld4` Rub): the
 /// shape every dest of the multi-location glory group shares. The
 /// `to` names the landing (default Edgeville, `switch_int($choice)`
