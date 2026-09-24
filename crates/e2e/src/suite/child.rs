@@ -46,7 +46,7 @@ use super::identity;
 
 mod config;
 pub use config::{inherited_deadline_env, validate_deadline_env, NativeConfig, DEADLINE_ENV, MAINLAND_ENV};
-pub(super) use config::{supported_arg, typed_env_key};
+use config::{supported_arg, typed_env_key};
 
 /// Grace between a graceful termination and a forced kill (matches the native Stop
 /// contract's 10s bound).
