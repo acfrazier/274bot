@@ -179,22 +179,6 @@ globalThis.__rs2b0t_make_paint_ctx = () => {
         ids.clear();
         if (typeof err === 'string') throw new Error(err);
     };
-    // The recorded style, mirrored here so a getter needs no crossing; a value
-    // the recorder rejects reads back as written until the next flush.
-    let style = {
-        font: '10px sans-serif',
-        fillStyle: '#000000',
-        strokeStyle: '#000000',
-        shadowColor: 'transparent',
-        lineJoin: 'miter',
-        textAlign: 'left',
-        textBaseline: 'alphabetic',
-        lineWidth: 1,
-        shadowBlur: 0,
-        shadowOffsetX: 0,
-        shadowOffsetY: 0,
-    };
-    const saved = [];
     const grads = Object.create(null);
     let gradCount = 0;
     const gradObj = (id) => {
@@ -218,40 +202,46 @@ globalThis.__rs2b0t_make_paint_ctx = () => {
         }
         return grads[id];
     };
+    // Getters read the recorder, so a value the recorder rejects reads back as
+    // the previous one, as a canvas does. Pending sets land first, which is
+    // what the per-call path did by construction.
     const ctx = {
-        set font(v) { put(SET); put(s('font')); put(s(v)); style.font = String(v); },
-        get font() { return style.font; },
+        set font(v) { put(SET); put(s('font')); put(s(v)); },
+        get font() { flush(); return fn.__rs2b0t_canvas_get('font'); },
         set fillStyle(v) {
             if (v && typeof v === 'object' && typeof v.__rs2b0t_gradient === 'number') {
                 put(FILL_GRADIENT);
                 put(v.__rs2b0t_gradient);
-                style.fillStyle = v;
                 return;
             }
             put(SET);
             put(s('fillStyle'));
             put(s(v));
-            style.fillStyle = String(v);
         },
-        get fillStyle() { return style.fillStyle; },
-        set strokeStyle(v) { put(SET); put(s('strokeStyle')); put(s(v)); style.strokeStyle = String(v); },
-        get strokeStyle() { return style.strokeStyle; },
-        set shadowColor(v) { put(SET); put(s('shadowColor')); put(s(v)); style.shadowColor = String(v); },
-        get shadowColor() { return style.shadowColor; },
-        set lineJoin(v) { put(SET); put(s('lineJoin')); put(s(v)); style.lineJoin = String(v); },
-        get lineJoin() { return style.lineJoin; },
-        set textAlign(v) { put(SET); put(s('textAlign')); put(s(v)); style.textAlign = String(v); },
-        get textAlign() { return style.textAlign; },
-        set textBaseline(v) { put(SET); put(s('textBaseline')); put(s(v)); style.textBaseline = String(v); },
-        get textBaseline() { return style.textBaseline; },
-        set lineWidth(v) { put(SET_NUM); put(s('lineWidth')); put(num(Number(v))); style.lineWidth = Number(v); },
-        get lineWidth() { return style.lineWidth; },
-        set shadowBlur(v) { put(SET_NUM); put(s('shadowBlur')); put(num(Number(v))); style.shadowBlur = Number(v); },
-        get shadowBlur() { return style.shadowBlur; },
-        set shadowOffsetX(v) { put(SET_NUM); put(s('shadowOffsetX')); put(num(Number(v))); style.shadowOffsetX = Number(v); },
-        get shadowOffsetX() { return style.shadowOffsetX; },
-        set shadowOffsetY(v) { put(SET_NUM); put(s('shadowOffsetY')); put(num(Number(v))); style.shadowOffsetY = Number(v); },
-        get shadowOffsetY() { return style.shadowOffsetY; },
+        get fillStyle() {
+            flush();
+            const id = fn.__rs2b0t_canvas_fill_gradient_id();
+            if (id >= 0) return gradObj(id);
+            return fn.__rs2b0t_canvas_get('fillStyle');
+        },
+        set strokeStyle(v) { put(SET); put(s('strokeStyle')); put(s(v)); },
+        get strokeStyle() { flush(); return fn.__rs2b0t_canvas_get('strokeStyle'); },
+        set shadowColor(v) { put(SET); put(s('shadowColor')); put(s(v)); },
+        get shadowColor() { flush(); return fn.__rs2b0t_canvas_get('shadowColor'); },
+        set lineJoin(v) { put(SET); put(s('lineJoin')); put(s(v)); },
+        get lineJoin() { flush(); return fn.__rs2b0t_canvas_get('lineJoin'); },
+        set textAlign(v) { put(SET); put(s('textAlign')); put(s(v)); },
+        get textAlign() { flush(); return fn.__rs2b0t_canvas_get('textAlign'); },
+        set textBaseline(v) { put(SET); put(s('textBaseline')); put(s(v)); },
+        get textBaseline() { flush(); return fn.__rs2b0t_canvas_get('textBaseline'); },
+        set lineWidth(v) { put(SET_NUM); put(s('lineWidth')); put(num(Number(v))); },
+        get lineWidth() { flush(); return fn.__rs2b0t_canvas_get_num('lineWidth'); },
+        set shadowBlur(v) { put(SET_NUM); put(s('shadowBlur')); put(num(Number(v))); },
+        get shadowBlur() { flush(); return fn.__rs2b0t_canvas_get_num('shadowBlur'); },
+        set shadowOffsetX(v) { put(SET_NUM); put(s('shadowOffsetX')); put(num(Number(v))); },
+        get shadowOffsetX() { flush(); return fn.__rs2b0t_canvas_get_num('shadowOffsetX'); },
+        set shadowOffsetY(v) { put(SET_NUM); put(s('shadowOffsetY')); put(num(Number(v))); },
+        get shadowOffsetY() { flush(); return fn.__rs2b0t_canvas_get_num('shadowOffsetY'); },
         fillRect(x, y, w, h) { put(FILL_RECT); put(num(x)); put(num(y)); put(num(w)); put(num(h)); },
         fillText(text, x, y) {
             if (arguments.length >= 4) throw new Error('not impl: Canvas.fillText.maxWidth');
@@ -264,12 +254,8 @@ globalThis.__rs2b0t_make_paint_ctx = () => {
             flush();
             return { width: fn.__rs2b0t_canvas_measure_text(String(text)) };
         },
-        save() { put(SAVE); saved.push({ ...style }); },
-        restore() {
-            put(RESTORE);
-            const prev = saved.pop();
-            if (prev) style = prev;
-        },
+        save() { put(SAVE); },
+        restore() { put(RESTORE); },
         beginPath() { put(BEGIN_PATH); },
         closePath() { put(CLOSE_PATH); },
         moveTo(x, y) { put(MOVE_TO); put(num(x)); put(num(y)); },
@@ -306,13 +292,19 @@ globalThis.__rs2b0t_make_paint_ctx = () => {
             return gradObj(gradCount++);
         },
         createRadialGradient(x0, y0, r0, x1, y1, r1) {
+            const inner = num(r0);
+            const outer = num(r1);
+            // Same call-site contract as `arc`.
+            if (inner < 0 || outer < 0) {
+                throw new Error('IndexSizeError: radii must be non-negative');
+            }
             put(CREATE_RADIAL);
             put(num(x0));
             put(num(y0));
-            put(num(r0));
+            put(inner);
             put(num(x1));
             put(num(y1));
-            put(num(r1));
+            put(outer);
             return gradObj(gradCount++);
         },
     };

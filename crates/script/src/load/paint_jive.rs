@@ -685,12 +685,15 @@ fn js_opt_i32(scope: &mut v8::HandleScope, value: v8::Local<v8::Value>, default:
         .unwrap_or(default)
 }
 
-/// A formatter argument: `Number(v)`, `null`/`undefined` as the default.
-/// Non-finite values are preserved so the frozen formats' NaN and Infinity
-/// branches are reached instead of being rounded to the default.
+/// A formatter argument: JS `Number(v)` — `null` reads 0, `undefined` reads
+/// `NaN`, and a non-finite number is preserved so the frozen formats' NaN and
+/// Infinity branches are reached instead of being rounded to the default.
 fn js_f64(scope: &mut v8::HandleScope, value: v8::Local<v8::Value>, default: f64) -> f64 {
-    if value.is_null_or_undefined() {
+    if value.is_null() {
         return default;
+    }
+    if value.is_undefined() {
+        return f64::NAN;
     }
     value.number_value(scope).unwrap_or(default)
 }

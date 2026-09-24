@@ -816,13 +816,25 @@ impl LoadIsolate {
             let mut interacts = self.interacts.lock().unwrap();
             self.work_generation
                 .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
-            // The held frame keeps the generation it was forwarded under; the
-            // isolate stamps the next one, and the overlay that displays the
-            // held frame passes that same generation back.
             self.paint_generation
                 .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
             interacts.clear();
             self.lifecycle.lock().unwrap().clear();
+        }
+        {
+            // Re-stamp the held frame with the new generation: an overlay that
+            // captured the pre-reset generation no longer matches it, so a
+            // click or select carried over from that frame fails closed until
+            // the next forwarded frame. One clone per reset, not per tick.
+            let generation = self
+                .paint_generation
+                .load(std::sync::atomic::Ordering::Acquire);
+            let mut slot = self.paint.lock().unwrap();
+            if let Some(paint) = slot.as_ref().filter(|p| p.generation != generation) {
+                let mut restamped = (**paint).clone();
+                restamped.generation = generation;
+                *slot = Some(std::sync::Arc::new(restamped));
+            }
         }
         *self.in_flight.lock().unwrap() = None;
         let _ = self.tx.send(IsolateCmd::ResetSession);
@@ -1245,7 +1257,13 @@ fn forward_paint_if_changed(
         return;
     }
     let frame = std::sync::Arc::new(frame);
+    // Remembered even when it is capped, so an over-cap frame is logged once
+    // per change (the wire decoder used to drop it on the host side).
     *last = Some(std::sync::Arc::clone(&frame));
+    if let Err(e) = crate::isolate_fb::cap_paint(&frame) {
+        let _ = out.send(ThreadMsg::Log(format!("paint: {e}")));
+        return;
+    }
     let _ = out.send(ThreadMsg::Paint(frame));
 }
 

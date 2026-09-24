@@ -9,6 +9,8 @@ use std::path::PathBuf;
 
 use script::LoadIsolate;
 
+mod common;
+
 /// Wrap `rustyscript.functions` and the tape's direct global so every
 /// `__rs2b0t_canvas*` call increments a global counter. Returns whether the
 /// wrapper is installed.
@@ -57,6 +59,19 @@ fn spawn_counting(src: &str) -> LoadIsolate {
     iso
 }
 
+/// The compat paint gate holds until `onStart` finished and the scene is
+/// ready, so ExampleBot's `onStart` needs a live-shaped snapshot.
+fn spawn_counting_ingame(src: &str) -> LoadIsolate {
+    let iso = spawn_counting(src);
+    common::post_snapshot_input(&iso, &common::ingame_snapshot());
+    iso
+}
+
+fn tick_no_paint(iso: &LoadIsolate, n: u64) {
+    iso.on_game_tick(n);
+    let _ = iso.probe("0");
+}
+
 /// One paint pass: reset the counter, tick, read it back.
 fn pass_crossings(iso: &LoadIsolate, n: u64) -> i64 {
     let _ = iso.probe("globalThis.__canvasCalls = 0");
@@ -80,14 +95,15 @@ fn examplebot_source() -> String {
 /// The pinned template: 2 style sets, a measure, a fillRect and a fillText.
 #[test]
 fn examplebot_paint_pass_stays_within_the_tape_budget() {
-    let iso = spawn_counting(&examplebot_source());
-    let calls = pass_crossings(&iso, 1);
+    let iso = spawn_counting_ingame(&examplebot_source());
+    tick_no_paint(&iso, 1);
+    let calls = pass_crossings(&iso, 2);
     println!("ExampleBot: {calls} canvas crossings per paint pass");
     assert!(
         (3..=5).contains(&calls),
         "ExampleBot canvas crossings per paint pass: {calls} (begin + measure + flush + done)"
     );
-    let steady = pass_crossings(&iso, 2);
+    let steady = pass_crossings(&iso, 3);
     assert_eq!(steady, calls, "a later pass costs the same: {steady} vs {calls}");
     iso.join();
 }

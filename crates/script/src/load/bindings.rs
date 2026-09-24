@@ -568,6 +568,30 @@ pub(super) fn wire_runtime(
         })
         .map_err(|e| format!("register canvas begin: {e}"))?;
     runtime
+        .register_function("__rs2b0t_canvas_get", |args: &[serde_json::Value]| {
+            let prop = args
+                .first()
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("");
+            Ok(serde_json::Value::String(crate::canvas::get_style(prop)))
+        })
+        .map_err(|e| format!("register canvas get: {e}"))?;
+    runtime
+        .register_function("__rs2b0t_canvas_get_num", |args: &[serde_json::Value]| {
+            let prop = args
+                .first()
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("");
+            Ok(serde_json::json!(crate::canvas::get_number(prop)))
+        })
+        .map_err(|e| format!("register canvas get num: {e}"))?;
+    runtime
+        .register_function(
+            "__rs2b0t_canvas_fill_gradient_id",
+            |_args: &[serde_json::Value]| Ok(serde_json::json!(crate::canvas::fill_gradient_id())),
+        )
+        .map_err(|e| format!("register canvas fill gradient id: {e}"))?;
+    runtime
         .register_function(
             "__rs2b0t_canvas_measure_text",
             |args: &[serde_json::Value]| {

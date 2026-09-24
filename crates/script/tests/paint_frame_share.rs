@@ -8,6 +8,8 @@ use std::sync::Arc;
 
 use script::{LoadIsolate, LoadShape};
 
+mod common;
+
 const TICKED: &str = r#"
 import { Paint } from '../../paint/Paint.js';
 export default class T extends LoopingBot {
@@ -73,6 +75,88 @@ fn an_unchanged_tick_does_not_forward_a_new_frame() {
     assert!(
         Arc::ptr_eq(&first, &after),
         "an identical pass is not re-sent"
+    );
+    iso.join();
+}
+
+/// 600 body rows: over the 512-line cap the wire decoder used to enforce.
+const OVER_CAP_LINES: &str = r#"
+import { Paint } from '../../paint/Paint.js';
+export default class T extends LoopingBot {
+    onPaint() {
+        const p = Paint.begin(null, {});
+        for (let i = 0; i < 600; i++) p.text('row ' + i);
+        p.end();
+    }
+}
+"#;
+
+/// 40 advertised buttons: over the 32-button cap.
+const OVER_CAP_BUTTONS: &str = r#"
+import { Paint } from '../../paint/Paint.js';
+export default class T extends LoopingBot {
+    onPaint() {
+        const items = [];
+        for (let i = 0; i < 40; i++) items.push({ id: 'b' + i, label: 'B' + i });
+        const p = Paint.begin(null, {});
+        p.buttons(items);
+        p.end();
+    }
+}
+"#;
+
+/// A frame over a cap is dropped and logged, never forwarded — the check the
+/// wire decoder used to make on the host side.
+#[test]
+fn an_over_cap_frame_is_dropped_and_logged() {
+    for (src, want) in [
+        (OVER_CAP_LINES, "vector length 600 exceeds cap 512"),
+        (OVER_CAP_BUTTONS, "vector length 40 exceeds cap 32"),
+    ] {
+        let iso = spawn(src, LoadShape::CompatClass);
+        let _ = iso.drain_logs();
+        tick(&iso, 1);
+        assert!(iso.paint().is_none(), "over-cap frame not forwarded");
+        let logs = iso.drain_logs();
+        assert!(
+            logs.iter().any(|l| l.contains(want)),
+            "expected {want:?} in {logs:?}"
+        );
+        tick(&iso, 2);
+        let again = iso.drain_logs();
+        assert!(
+            !again.iter().any(|l| l.contains("exceeds cap")),
+            "an unchanged over-cap frame is logged once: {again:?}"
+        );
+        iso.join();
+    }
+}
+
+/// A reset re-stamps the held frame with the new generation, so an overlay
+/// that captured the pre-reset generation fails the host click/select check
+/// until the next forwarded frame.
+#[test]
+fn a_session_reset_restamps_the_held_frame() {
+    let iso = spawn(STEADY, LoadShape::CompatClass);
+    tick(&iso, 1);
+    let before = iso.paint().expect("first frame");
+    iso.reset_session_work();
+    let held = iso.paint().expect("held frame");
+    assert_eq!(
+        held.generation,
+        before.generation + 1,
+        "the held frame carries the post-reset generation"
+    );
+    assert_eq!(held.lines, before.lines, "the frame itself is unchanged");
+    assert!(
+        !Arc::ptr_eq(&before, &held),
+        "a re-stamped frame is a new shared frame"
+    );
+    tick(&iso, 2);
+    let next = iso.paint().expect("next frame");
+    assert_eq!(
+        next.generation, held.generation,
+        "the next forwarded frame carries the same generation"
     );
     iso.join();
 }

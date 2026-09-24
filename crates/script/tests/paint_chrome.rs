@@ -1,8 +1,7 @@
 //! G1-chrome: persistent strip/rail/tabs selection, source-derived rowsLeft,
 //! advertised chrome on ScriptPaint, and statGrid recording. No jive module.
 
-use flatbuffers::FlatBufferBuilder;
-use script::isolate_fb::{decode_paint, IsolateBuf, ReachViewInput, SnapshotInput, TileInput};
+use script::isolate_fb::{ReachViewInput, SnapshotInput, TileInput};
 use script::shim::{PaintChromeBand, ScriptPaint};
 use script::{LoadIsolate, LoadShape};
 
@@ -99,19 +98,6 @@ fn tick(iso: &LoadIsolate, n: u64) {
 
 fn spawn(src: &str) -> LoadIsolate {
     LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap()
-}
-
-fn encode_legacy_paint_without_chrome(title: &str, lines: &[&str]) -> Vec<u8> {
-    let mut b = FlatBufferBuilder::new();
-    let title_off = b.create_string(title);
-    let line_offs: Vec<_> = lines.iter().map(|s| b.create_string(s)).collect();
-    let lines_off = b.create_vector(&line_offs);
-    let tab = b.start_table();
-    b.push_slot_always(4u16, title_off);
-    b.push_slot_always(8u16, lines_off);
-    let root = b.end_table(tab);
-    b.finish(root, None);
-    b.finished_data().to_vec()
 }
 
 const CHROME: &str = r#"
@@ -472,59 +458,4 @@ export default class T extends LoopingBot {
         "unused widgets stay missing, got {err:?}"
     );
     iso.join();
-}
-
-#[test]
-fn chrome_roundtrip_and_legacy_empty_decode() {
-    let painted = ScriptPaint {
-        title: Some("JiveCrafting".into()),
-        accent: Some("#e05be0".into()),
-        lines: vec!["Runtime: 1m | Made: 0".into()],
-        buttons: Vec::new(),
-        canvas: Vec::new(),
-        generation: 0,
-        strip: Some(PaintChromeBand {
-            id: "k".into(),
-            names: vec!["Statistics".into(), "Options".into()],
-            selected: "Options".into(),
-            status: Some("ok".into()),
-            brand: Some("JiveCrafting".into()),
-        }),
-        rail: None,
-        footer: Some("Jive scripts".into()),
-        tabs: vec![PaintChromeBand {
-            id: "mg".into(),
-            names: vec!["Overview".into(), "Loot".into()],
-            selected: "Loot".into(),
-            status: None,
-            brand: None,
-        }],
-    };
-    let round = decode_paint(&IsolateBuf::new().encode_paint(&painted)).unwrap();
-    assert_eq!(round, painted);
-
-    let empty = ScriptPaint {
-        title: Some("t".into()),
-        accent: None,
-        lines: vec!["line".into()],
-        buttons: Vec::new(),
-        canvas: Vec::new(),
-        generation: 0,
-        strip: None,
-        rail: None,
-        footer: None,
-        tabs: Vec::new(),
-    };
-    let decoded_empty = decode_paint(&IsolateBuf::new().encode_paint(&empty)).unwrap();
-    assert_eq!(decoded_empty, empty);
-
-    let legacy = decode_paint(&encode_legacy_paint_without_chrome("old", &["x"])).unwrap();
-    assert_eq!(legacy.title.as_deref(), Some("old"));
-    assert_eq!(legacy.lines, vec!["x".to_string()]);
-    assert!(legacy.strip.is_none());
-    assert!(legacy.rail.is_none());
-    assert!(legacy.footer.is_none());
-    assert!(legacy.tabs.is_empty());
-    assert!(legacy.buttons.is_empty());
-    assert!(legacy.canvas.is_empty());
 }

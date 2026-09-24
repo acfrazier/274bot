@@ -1091,7 +1091,8 @@ export default class T extends LoopingBot {
     // An empty frame (the host stamps its own generation on receipt).
     let blank = |iso: &LoadIsolate| {
         iso.paint().is_some_and(|p| {
-            script::shim::ScriptPaint { generation: 0, ..p } == script::shim::ScriptPaint::default()
+            script::shim::ScriptPaint { generation: 0, ..(*p).clone() }
+                == script::shim::ScriptPaint::default()
         })
     };
 

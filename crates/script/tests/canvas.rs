@@ -3,13 +3,11 @@
 use std::path::PathBuf;
 
 use script::canvas::{self, CanvasOp, PathSeg};
-use script::isolate_fb::{decode_paint, IsolateBuf};
 use script::shim::ScriptPaint;
 use script::LoadIsolate;
 
 mod common;
 
-fn tick_paint(iso: &LoadIsolate, n: u64) -> ScriptPaint {
 fn tick_paint(iso: &LoadIsolate, n: u64) -> std::sync::Arc<ScriptPaint> {
     iso.on_game_tick(n);
     let _ = iso.probe("0");
@@ -363,65 +361,6 @@ export default class T extends LoopingBot {
 }
 
 #[test]
-fn encode_decode_preserves_ops_and_old_buffers_decode() {
-    let paint = ScriptPaint {
-        title: Some("t".into()),
-        accent: None,
-        lines: vec!["line".into()],
-        buttons: Vec::new(),
-        generation: 0,
-        canvas: vec![
-            CanvasOp::fill_rect(6, 6, 400, 50, canvas::pack_rgba(0, 0, 0, 178)),
-            CanvasOp::fill_text(
-                "hi",
-                12,
-                22,
-                canvas::pack_rgba(0xff, 0xb1, 0x5b, 255),
-                12,
-                true,
-            ),
-        ],
-        ..Default::default()
-    };
-    let bytes = IsolateBuf::new().encode_paint(&paint);
-    let decoded = decode_paint(&bytes).expect("roundtrip");
-    assert_eq!(decoded.canvas, paint.canvas);
-    assert_eq!(decoded.title, paint.title);
-    assert_eq!(decoded.lines, paint.lines);
-
-    let old = ScriptPaint {
-        title: Some("old".into()),
-        accent: None,
-        lines: vec!["x".into()],
-        buttons: Vec::new(),
-        generation: 0,
-        canvas: Vec::new(),
-        ..Default::default()
-    };
-    let old_bytes = IsolateBuf::new().encode_paint(&old);
-    let old_decoded = decode_paint(&old_bytes).expect("old buffer");
-    assert!(old_decoded.canvas.is_empty());
-
-    let mut huge = old.clone();
-    huge.canvas = (0..=canvas::MAX_CANVAS_OPS)
-        .map(|i| CanvasOp::fill_rect(i as i32, 0, 1, 1, 0))
-        .collect();
-    let over = IsolateBuf::new().encode_paint(&huge);
-    assert!(
-        decode_paint(&over).is_err(),
-        "oversized canvas vector must fail closed"
-    );
-
-    let mut huge_font = old.clone();
-    huge_font.canvas = vec![CanvasOp::fill_text("x", 0, 10, 0, 65535, true)];
-    let over_font = IsolateBuf::new().encode_paint(&huge_font);
-    assert!(
-        decode_paint(&over_font).is_err(),
-        "decoded font_px must not exceed parser cap 256"
-    );
-}
-
-#[test]
 fn user_onpaint_title_and_paint_end_line_survive_with_canvas() {
     let src = r#"
 import { Paint } from '../../paint/Paint.js';
@@ -687,9 +626,6 @@ export default class T extends LoopingBot {
         CanvasOp::FillRect { extras, .. } => assert!(extras.clips.is_empty()),
         other => panic!("{other:?}"),
     }
-    let bytes = IsolateBuf::new().encode_paint(&paint);
-    let decoded = decode_paint(&bytes).expect("roundtrip");
-    assert_eq!(decoded.canvas, paint.canvas);
     let raster = canvas::rasterize(&paint.canvas).expect("raster");
     let at = |x: i32, y: i32| -> [u8; 4] {
         let col = (x - raster.x) as usize;

@@ -11,6 +11,8 @@ use std::path::PathBuf;
 use script::shim::ScriptPaint;
 use script::LoadIsolate;
 
+mod common;
+
 fn spawn(src: &str) -> LoadIsolate {
     let shape = script::load::detect_shape(src);
     LoadIsolate::spawn(src.to_string(), shape, vec![]).expect("bot loads")
@@ -62,6 +64,16 @@ fn examplebot_source() -> String {
     script::transpile_ts(&src).expect("transpile ExampleBot")
 }
 
+/// The compat paint gate holds until `onStart` finished and the scene is
+/// ready, so a `defineBot` card's `onStart` needs a live-shaped snapshot and
+/// one tick to open it before the pass under test.
+fn spawn_ingame(src: &str) -> LoadIsolate {
+    let iso = spawn(src);
+    common::post_snapshot_input(&iso, &common::ingame_snapshot());
+    tick(&iso, 1);
+    iso
+}
+
 /// The pinned template's own `onPaint`: two style sets, a measure, a fillRect
 /// and a fillText.
 const EXAMPLEBOT_FRAME: &str = r##"title=None accent=None
@@ -75,8 +87,8 @@ op=FillText { text: "BoneBurier (external)  buried 0", x: 12, y: 22, color: 4289
 
 #[test]
 fn examplebot_frame_is_unchanged() {
-    let iso = spawn(&examplebot_source());
-    let paint = pass(&iso, 1);
+    let iso = spawn_ingame(&examplebot_source());
+    let paint = pass(&iso, 2);
     let got = digest(&paint);
     println!("{got}");
     assert_eq!(got, EXAMPLEBOT_FRAME, "ExampleBot recorded frame drifted");
@@ -137,6 +149,20 @@ export default class T extends LoopingBot {
         globalThis.__negThrew = false;
         try { ctx.arc(0, 0, -1, 0, 1); } catch (e) { globalThis.__negThrew = String(e.message).indexOf('IndexSizeError') >= 0; }
         ctx.fillText('after', 1, 2);
+        // Assignments the recorder rejects keep the previous value, as a
+        // browser does: the getters read the recorder, not a mirror.
+        ctx.fillStyle = '#101010';
+        ctx.fillStyle = '???';
+        globalThis.__badFill = ctx.fillStyle;
+        ctx.lineWidth = 3;
+        ctx.lineWidth = -2;
+        globalThis.__badWidth = ctx.lineWidth;
+        ctx.lineJoin = 'round';
+        ctx.lineJoin = 'nonsense';
+        globalThis.__badJoin = ctx.lineJoin;
+        ctx.font = '12px monospace';
+        ctx.font = 'garbage';
+        globalThis.__badFont = ctx.font;
     }
 }
 "#;
@@ -170,6 +196,10 @@ fn full_ctx_frame_is_unchanged() {
     assert_eq!(iso.probe("__restoredWidth").unwrap(), 1);
     assert_eq!(iso.probe("__gradBack").unwrap(), true);
     assert_eq!(iso.probe("__negThrew").unwrap(), true);
+    assert_eq!(iso.probe("__badFill").unwrap(), "#101010", "{got}");
+    assert_eq!(iso.probe("__badWidth").unwrap(), 3, "{got}");
+    assert_eq!(iso.probe("__badJoin").unwrap(), "round", "{got}");
+    assert_eq!(iso.probe("__badFont").unwrap(), "12px monospace", "{got}");
     assert!(
         iso.probe("__width").unwrap().as_f64().unwrap() > 7.0,
         "measureText uses the set font"

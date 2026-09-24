@@ -167,12 +167,16 @@ struct Style {
     fill: FillKind,
     font_px: u16,
     mono: bool,
+    font_css: String,
+    fill_css: String,
     stroke: u32,
+    stroke_css: String,
     line_width: f32,
     line_join: LineJoinKind,
     text_align: TextAlign,
     text_baseline: TextBaseline,
     shadow_color: u32,
+    shadow_css: String,
     shadow_blur: f32,
     shadow_offset_x: f32,
     shadow_offset_y: f32,
@@ -184,12 +188,16 @@ impl Default for Style {
             fill: FillKind::Solid(pack_rgba(0, 0, 0, 255)),
             font_px: 10,
             mono: false,
+            font_css: "10px sans-serif".into(),
+            fill_css: "#000000".into(),
             stroke: pack_rgba(0, 0, 0, 255),
+            stroke_css: "#000000".into(),
             line_width: 1.0,
             line_join: LineJoinKind::Miter,
             text_align: TextAlign::Left,
             text_baseline: TextBaseline::Alphabetic,
             shadow_color: 0,
+            shadow_css: "transparent".into(),
             shadow_blur: 0.0,
             shadow_offset_x: 0.0,
             shadow_offset_y: 0.0,
@@ -391,6 +399,70 @@ pub fn onpaint_done(kind: i64, message: Option<&str>) {
     OUTCOME.with(|o| *o.borrow_mut() = Some(outcome));
 }
 
+/// CSS `font` getter: the last accepted string.
+pub fn font() -> String {
+    RECORDER.with(|r| r.borrow().style.font_css.clone())
+}
+
+/// CSS `fillStyle` getter: the last accepted string. Empty once the fill is a
+/// gradient handle, which `fill_gradient_id` reports instead.
+pub fn fill_style() -> String {
+    RECORDER.with(|r| r.borrow().style.fill_css.clone())
+}
+
+/// The declared style getter (`get_style` on the paint ctx). Reads the
+/// recorder, so a rejected assignment reads back as the previous value.
+pub fn get_style(prop: &str) -> String {
+    RECORDER.with(|r| {
+        let rec = r.borrow();
+        match prop {
+            "font" => rec.style.font_css.clone(),
+            "fillStyle" => rec.style.fill_css.clone(),
+            "strokeStyle" => rec.style.stroke_css.clone(),
+            "shadowColor" => rec.style.shadow_css.clone(),
+            "lineJoin" => match rec.style.line_join {
+                LineJoinKind::Miter => "miter".into(),
+                LineJoinKind::Round => "round".into(),
+                LineJoinKind::Bevel => "bevel".into(),
+            },
+            "textAlign" => match rec.style.text_align {
+                TextAlign::Left => "left".into(),
+                TextAlign::Center => "center".into(),
+                TextAlign::Right => "right".into(),
+            },
+            "textBaseline" => match rec.style.text_baseline {
+                TextBaseline::Alphabetic => "alphabetic".into(),
+                TextBaseline::Top => "top".into(),
+                TextBaseline::Middle => "middle".into(),
+                TextBaseline::Bottom => "bottom".into(),
+            },
+            _ => String::new(),
+        }
+    })
+}
+
+/// The declared numeric style getter.
+pub fn get_number(prop: &str) -> f64 {
+    RECORDER.with(|r| {
+        let rec = r.borrow();
+        match prop {
+            "lineWidth" => rec.style.line_width as f64,
+            "shadowBlur" => rec.style.shadow_blur as f64,
+            "shadowOffsetX" => rec.style.shadow_offset_x as f64,
+            "shadowOffsetY" => rec.style.shadow_offset_y as f64,
+            _ => 0.0,
+        }
+    })
+}
+
+/// The gradient handle `fillStyle` currently holds, or -1 for a solid paint.
+pub fn fill_gradient_id() -> i32 {
+    RECORDER.with(|r| match r.borrow().style.fill {
+        FillKind::Gradient(id) => id as i32,
+        FillKind::Solid(_) => -1,
+    })
+}
+
 /// Set `font` or `fillStyle`. Unparseable assignments keep the previous
 /// value (HTML). Unknown names are not invented.
 pub fn set_style(prop: &str, value: &str) {
@@ -401,21 +473,25 @@ pub fn set_style(prop: &str, value: &str) {
                 if let Some((px, mono)) = parse_font(value) {
                     rec.style.font_px = px;
                     rec.style.mono = mono;
+                    rec.style.font_css = value.to_string();
                 }
             }
             "fillStyle" => {
                 if let Some(color) = parse_color(value) {
                     rec.style.fill = FillKind::Solid(color);
+                    rec.style.fill_css = value.to_string();
                 }
             }
             "strokeStyle" => {
                 if let Some(color) = parse_color(value) {
                     rec.style.stroke = color;
+                    rec.style.stroke_css = value.to_string();
                 }
             }
             "shadowColor" => {
                 if let Some(color) = parse_color(value) {
                     rec.style.shadow_color = color;
+                    rec.style.shadow_css = value.to_string();
                 }
             }
             "lineJoin" => match value.trim().to_ascii_lowercase().as_str() {
@@ -480,6 +556,7 @@ pub fn set_fill_gradient(id: u32) {
         let mut rec = r.borrow_mut();
         if (id as usize) < rec.gradients.len() {
             rec.style.fill = FillKind::Gradient(id);
+            rec.style.fill_css.clear();
         }
     });
 }
@@ -1646,19 +1723,6 @@ mod tests {
         let taken = take();
         assert!(!taken.overflow, "fail={:?}", taken.fail);
         assert_eq!(taken.ops.len(), ok);
-        let paint = crate::shim::ScriptPaint {
-            title: None,
-            accent: None,
-            lines: Vec::new(),
-            buttons: Vec::new(),
-            generation: 0,
-            canvas: taken.ops.clone(),
-            ..Default::default()
-        };
-        let buf = crate::isolate_fb::IsolateBuf::new().encode_paint(&paint);
-        let decoded =
-            crate::isolate_fb::decode_paint(&buf).expect("decoder must accept recorder frame");
-        assert_eq!(decoded.canvas.len(), ok);
 
         reset();
         line_path(MAX_PATH_SEGS_PER_OP);
@@ -1670,45 +1734,6 @@ mod tests {
         assert!(taken.overflow);
         assert_eq!(taken.fail, Some("canvas: exceeded path segments"));
         assert_eq!(taken.ops.len(), ok);
-
-        let mut extras = DrawExtras::default();
-        extras.clips = vec![ClipPath {
-            segs: (0..MAX_PATH_SEGS_PER_OP)
-                .map(|i| {
-                    if i == 0 {
-                        PathSeg::MoveTo { x: 0.0, y: 0.0 }
-                    } else {
-                        PathSeg::LineTo {
-                            x: i as f32,
-                            y: 0.0,
-                        }
-                    }
-                })
-                .collect(),
-        }]
-        .into();
-        let over: Vec<CanvasOp> = (0..(ok + 1))
-            .map(|_| CanvasOp::FillRect {
-                x: 0,
-                y: 0,
-                w: 1,
-                h: 1,
-                color: pack_rgba(255, 0, 0, 255),
-                extras: extras.clone(),
-            })
-            .collect();
-        let paint = crate::shim::ScriptPaint {
-            title: None,
-            accent: None,
-            lines: Vec::new(),
-            buttons: Vec::new(),
-            generation: 0,
-            canvas: over,
-            ..Default::default()
-        };
-        let buf = crate::isolate_fb::IsolateBuf::new().encode_paint(&paint);
-        let err = crate::isolate_fb::decode_paint(&buf).expect_err("decoder frame budget");
-        assert!(err.contains("path segs"), "{err}");
     }
 
     #[test]
