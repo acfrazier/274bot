@@ -1,22 +1,8 @@
-import { snap, queue, proxy, distanceTo, notImpl } from '../../shim/_kernel.js';
+import { snap, queue, proxy, notImpl, arrived } from '../../shim/_kernel.js';
 import { Execution } from '../execution/Execution.js';
 
 function allowTeleports(opts) {
     return opts.useTeleportCatalog === true || opts.policy?.useTeleports === true;
-}
-
-function arrival(tile, opts) {
-    const radius = opts.radius ?? 0;
-    const here = snap().here;
-    if (!here) return { here: null, target: null, radius, arrived: false };
-    const target = { x: tile.x, z: tile.z, level: tile.level ?? 0 };
-    return {
-        here,
-        target,
-        radius,
-        arrived: here.level === target.level && distanceTo(here, target) <= radius,
-
-    };
 }
 
 function walkNative(payload) {
@@ -24,9 +10,10 @@ function walkNative(payload) {
 }
 
 async function walkWorld(tile, opts = {}) {
-    const { target, radius, arrived } = arrival(tile, opts);
-    if (!target) return false;
-    if (arrived) return true;
+    const radius = opts.radius ?? 0;
+    if (!snap().here) return false;
+    const target = { x: tile.x, z: tile.z, level: tile.level ?? 0 };
+    if (arrived(target, radius)) return true;
     const allow_teleports = allowTeleports(opts);
     const token = walkNative({
         op: 'begin',

@@ -1,4 +1,4 @@
-import { queue, proxy, snap, distanceTo } from '../../shim/_kernel.js';
+import { queue, proxy, snap, arrived } from '../../shim/_kernel.js';
 import { Execution } from '../../api/execution/Execution.js';
 
 // Same-scene walk click. `walk-to` is the scene packet; Traveller is `walk`.
@@ -19,21 +19,15 @@ export const DirectNavigator = proxy('DirectNavigator', {
     },
     async walkTo(dest, radius = 2, timeoutMs = 45000) {
         if (!dest || typeof dest.x !== 'number' || typeof dest.z !== 'number') return false;
-        const here = snap().here;
-        if (!here) return false;
+        if (!snap().here) return false;
         const target = { x: dest.x, z: dest.z, level: dest.level ?? 0 };
-        if (here.level === target.level && distanceTo(here, target) <= radius) return true;
-
+        if (arrived(target, radius)) return true;
         queue({
             op: 'walk-to',
             x: target.x,
             z: target.z,
             level: target.level,
         });
-        return Execution.delayUntil(() => {
-            const h = snap().here;
-            return h && h.level === target.level && distanceTo(h, target) <= radius;
-
-        }, timeoutMs);
+        return Execution.delayUntil(() => arrived(target, radius), timeoutMs);
     },
 });

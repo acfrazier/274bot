@@ -1,8 +1,8 @@
-//! Typed V8 marshalling for `Reachability.{walkable,canReach,canStep}`
-//! and v2 `api.walkable` / `api.canStep` / `api.canReach`.
+//! Typed V8 marshalling for `Reachability.{walkable,canReach,canStep}`,
+//! v2 `api.walkable` / `api.canStep` / `api.canReach`, and walk arrival.
 //!
 //! The isolate caches the last posted [`ReachQueryView`]. Helpers read it;
-//! JS does not re-implement bit math.
+//! JS does not re-implement bit math or arrival.
 
 use api::query::{ReachQueryView, SceneReachOptions};
 use api::snapshot::WorldTile;
@@ -54,6 +54,21 @@ pub(crate) fn on_reset() {
 /// Read the posted reach view (Rust helpers and machine families).
 pub(crate) fn with_view<R>(f: impl FnOnce(&ReachQueryView) -> R) -> R {
     REACH.with(|slot| f(&slot.borrow().view))
+}
+
+/// Frozen `isArrived` ([`api::query::is_arrived`]) from the last posted
+/// player tile over the cached reach view: the arrival rule every shim and
+/// machine walk pre-check uses. No posted tile is not arrived.
+pub(crate) fn arrived(dest: WorldTile, radius: i32) -> bool {
+    let Some(here) = crate::observed::with(|scene| scene.latest().here()) else {
+        return false;
+    };
+    let here = WorldTile {
+        x: here.x,
+        z: here.z,
+        level: here.level,
+    };
+    with_view(|view| api::query::is_arrived(here, dest, radius, || view))
 }
 
 fn view_from_reader(r: ReachReader<'_>) -> ReachQueryView {
@@ -115,6 +130,7 @@ fn run_reach<'s>(
         "v2-walkable" => v2_walkable(scope, args.get(1)),
         "v2-canStep" => v2_can_step(scope, args.get(1)),
         "v2-canReach" => v2_can_reach(scope, args.get(1)),
+        "arrived" => v1_arrived(scope, args.get(1), args.get(2)),
         _ => Err("invalid-args".into()),
     }
 }
@@ -155,6 +171,22 @@ fn v1_can_reach<'s>(
         return bool_val(scope, false);
     };
     bool_val(scope, with_view(|view| view.can_reach(tile, &options)))
+}
+
+/// `__rs2b0t_reach('arrived', dest, radius)`: a missing dest or a radius that
+/// is not an int32 is not arrived.
+fn v1_arrived<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    dest: v8::Local<v8::Value>,
+    radius: v8::Local<v8::Value>,
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    let Some(dest) = tile_or_none(scope, dest)? else {
+        return bool_val(scope, false);
+    };
+    let Ok(radius) = required_i32(scope, radius) else {
+        return bool_val(scope, false);
+    };
+    bool_val(scope, arrived(dest, radius))
 }
 
 fn v2_walkable<'s>(

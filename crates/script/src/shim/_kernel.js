@@ -38,6 +38,10 @@ export function distanceTo(a, b) {
     return globalThis.__rs2b0t_distance(a, b);
 }
 
+// Walk arrival (frozen `isArrived`) from the posted player tile, in Rust.
+export function arrived(dest, radius) {
+    return globalThis.__rs2b0t_reach('arrived', dest, radius) === true;
+}
 
 export function presentOps(actions) {
     return (actions || []).filter((a) => a && a !== 'hidden');
