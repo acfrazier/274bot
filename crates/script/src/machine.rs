@@ -108,6 +108,11 @@ pub(crate) trait Family: Sized + 'static {
     const EXCLUSIVE: bool = false;
     /// Script callbacks by `hooks` key; [`Call::hook`] indexes this.
     const CALLBACKS: &'static [&'static str] = &[];
+    /// Drive this row once inside `start`, so the first callbacks and
+    /// verbs join the starting tick. Default is the host's next-tick
+    /// first step (teleport clicks in begin). Clue's first next is a
+    /// callback, so it opts in.
+    const KICK_ON_START: bool = false;
     /// Typed start arguments, decoded from the JS value.
     type Args: DeserializeOwned;
     /// The completion value JS receives as `value`.
@@ -135,17 +140,9 @@ pub(crate) enum Step<T> {
     /// Nothing more this tick.
     Wait,
     /// Call one script callback; its [`Reply`] reaches the next step.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "first callback family lands in F06/F07")
-    )]
     Call(Call),
     Done(T),
     /// End the row; the `runMachine` promise rejects with this value.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "first callback family lands in F06/F07")
-    )]
     Fail(Thrown),
 }
 
@@ -293,20 +290,12 @@ impl Cx<'_> {
 
     /// The settlement of the callback the previous step asked for; `None`
     /// on any other step.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "first callback family lands in F06/F07")
-    )]
     pub(crate) fn reply(&mut self) -> Option<Reply> {
         self.reply.take()
     }
 
     /// Whether `hooks[CALLBACKS[hook]]` was present (not `undefined` or
     /// `null`) when the machine started.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "first callback family lands in F06/F07")
-    )]
     pub(crate) fn has(&self, hook: usize) -> bool {
         self.hooks.get(hook).is_some_and(|hook| hook.present)
     }
@@ -347,6 +336,7 @@ pub(crate) enum Called {
 struct Entry {
     name: &'static str,
     callbacks: &'static [&'static str],
+    kick_on_start: bool,
     begin: fn(Value, Vec<Hook>, usize) -> Started,
 }
 
@@ -354,6 +344,7 @@ const fn entry<F: Family>() -> Entry {
     Entry {
         name: F::NAME,
         callbacks: F::CALLBACKS,
+        kick_on_start: F::KICK_ON_START,
         begin: begin_row::<F>,
     }
 }
@@ -427,6 +418,14 @@ pub(crate) fn age(handle: Handle, millis: u64) {
                 .and_then(|deadline| deadline.checked_sub(Duration::from_millis(millis)));
         }
     });
+}
+
+/// Whether `start` should drive `family` once before returning Running.
+pub(crate) fn kick_on_start(family: &str) -> bool {
+    FAMILIES
+        .iter()
+        .find(|entry| entry.name == family)
+        .is_some_and(|entry| entry.kick_on_start)
 }
 
 /// The type-erased row the host steps.
@@ -653,6 +652,28 @@ pub(crate) fn start(family: &str, args: Value, hooks: Vec<Hook>, at: usize) -> S
         return Started::Refused(format!("unknown machine family {family:?}"));
     };
     (entry.begin)(args, hooks, at)
+}
+
+/// Drive one live row once (the starting tick for [`Family::KICK_ON_START`]).
+pub(crate) fn kick(handle: Handle, js: &mut impl Js) {
+    let mut at = js.queue_len();
+    let Some(mut row) = HOST.with(|host| {
+        let mut host = host.borrow_mut();
+        host.rows
+            .iter()
+            .position(|row| row.handle == handle)
+            .map(|i| host.rows.remove(i))
+    }) else {
+        return;
+    };
+    let outcome = drive(&mut row, js, &mut at);
+    HOST.with(|host| {
+        let mut host = host.borrow_mut();
+        match outcome {
+            Some(outcome) => host.settled.push((handle, outcome)),
+            None => host.rows.push(row),
+        }
+    });
 }
 
 /// Step every live row once. Called at the start of each eligible tick,

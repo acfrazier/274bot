@@ -62,6 +62,11 @@ fn start_callback<'s>(
         Ok(value) => machine::start(&family, value, hooks, at),
         Err(e) => Started::Refused(format!("{family} arguments: {e}")),
     };
+    if let Started::Running(handle) = &started {
+        if machine::kick_on_start(&family) {
+            machine::kick(*handle, &mut ScopeJs { scope });
+        }
+    }
     let envelope = match started {
         Started::Running(handle) => {
             let handle = callback_v8::num(scope, handle as f64);
@@ -168,6 +173,31 @@ fn js_queue_len(scope: &mut v8::HandleScope) -> usize {
         .map_or(0, |rows| rows.length() as usize)
 }
 
+/// Drive a just-started row from the start callback's own scope.
+struct ScopeJs<'s, 'i> {
+    scope: &'s mut v8::HandleScope<'i>,
+}
+
+impl machine::Js for ScopeJs<'_, '_> {
+    fn queue_len(&mut self) -> usize {
+        js_queue_len(self.scope)
+    }
+
+    fn call(&mut self, hook: Option<&HeldCallback>, args: &[Value]) -> Called {
+        call_hook(self.scope, hook, args)
+    }
+
+    fn poll(&mut self, pending: &Pending) -> Option<Reply> {
+        poll_promise(self.scope, pending)
+    }
+
+    /// A start runs inside the caller's own script call: join's claim is
+    /// checked when that call returns.
+    fn claimed(&mut self) -> bool {
+        false
+    }
+}
+
 /// The isolate runtime as the machine host's script side.
 struct RuntimeJs<'r> {
     runtime: &'r mut Runtime,
@@ -181,66 +211,74 @@ impl machine::Js for RuntimeJs<'_> {
     }
 
     fn call(&mut self, hook: Option<&HeldCallback>, args: &[Value]) -> Called {
-        let Some(hook) = hook else {
-            return Called::Settled(Reply::Threw(Thrown::new("undeclared machine callback")));
-        };
         let scope = &mut self.runtime.deno_runtime().handle_scope();
-        let callback = hook.open(scope);
-        let mut argv = Vec::with_capacity(args.len());
-        for arg in args {
-            match serde_v8::to_v8(scope, arg) {
-                Ok(value) => argv.push(value),
-                Err(e) => {
-                    let failure = Thrown::new(format!("callback argument: {e}"));
-                    return Called::Settled(Reply::Threw(failure));
-                }
-            }
-        }
-        let value = match callback.call(scope, &argv) {
-            Ok(value) => value,
-            Err(Throw::Value(exception)) => {
-                scope.perform_microtask_checkpoint();
-                return Called::Settled(Reply::Threw(thrown(scope, exception)));
-            }
-            Err(Throw::Terminated) => {
-                return Called::Settled(Reply::Threw(Thrown::new("execution terminated")));
-            }
-        };
-        let Ok(promise) = v8::Local::<v8::Promise>::try_from(value) else {
-            scope.perform_microtask_checkpoint();
-            return Called::Settled(settled_value(scope, value));
-        };
-        // The host observes the rejection; it is not an unhandled one.
-        if let Some(noop) = v8::Function::new(
-            scope,
-            |_: &mut v8::HandleScope, _: v8::FunctionCallbackArguments, _: v8::ReturnValue| {},
-        ) {
-            promise.catch(scope, noop);
-        }
-        // An `await` on something already settled resumes here, as it
-        // would in the frozen driver's own microtask flush.
-        scope.perform_microtask_checkpoint();
-        Called::Pending(v8::Global::new(scope, promise))
+        call_hook(scope, hook, args)
     }
 
     fn poll(&mut self, pending: &Pending) -> Option<Reply> {
         let scope = &mut self.runtime.deno_runtime().handle_scope();
-        let promise = v8::Local::new(scope, pending);
-        match promise.state() {
-            v8::PromiseState::Pending => None,
-            v8::PromiseState::Fulfilled => {
-                let value = promise.result(scope);
-                Some(settled_value(scope, value))
-            }
-            v8::PromiseState::Rejected => {
-                let reason = promise.result(scope);
-                Some(Reply::Threw(thrown(scope, reason)))
-            }
-        }
+        poll_promise(scope, pending)
     }
 
     fn claimed(&mut self) -> bool {
         (self.claimed)()
+    }
+}
+
+fn call_hook(scope: &mut v8::HandleScope, hook: Option<&HeldCallback>, args: &[Value]) -> Called {
+    let Some(hook) = hook else {
+        return Called::Settled(Reply::Threw(Thrown::new("undeclared machine callback")));
+    };
+    let callback = hook.open(scope);
+    let mut argv = Vec::with_capacity(args.len());
+    for arg in args {
+        match serde_v8::to_v8(scope, arg) {
+            Ok(value) => argv.push(value),
+            Err(e) => {
+                let failure = Thrown::new(format!("callback argument: {e}"));
+                return Called::Settled(Reply::Threw(failure));
+            }
+        }
+    }
+    let value = match callback.call(scope, &argv) {
+        Ok(value) => value,
+        Err(Throw::Value(exception)) => {
+            scope.perform_microtask_checkpoint();
+            return Called::Settled(Reply::Threw(thrown(scope, exception)));
+        }
+        Err(Throw::Terminated) => {
+            return Called::Settled(Reply::Threw(Thrown::new("execution terminated")));
+        }
+    };
+    let Ok(promise) = v8::Local::<v8::Promise>::try_from(value) else {
+        scope.perform_microtask_checkpoint();
+        return Called::Settled(settled_value(scope, value));
+    };
+    // The host observes the rejection; it is not an unhandled one.
+    if let Some(noop) = v8::Function::new(
+        scope,
+        |_: &mut v8::HandleScope, _: v8::FunctionCallbackArguments, _: v8::ReturnValue| {},
+    ) {
+        promise.catch(scope, noop);
+    }
+    // An `await` on something already settled resumes here, as it
+    // would in the frozen driver's own microtask flush.
+    scope.perform_microtask_checkpoint();
+    Called::Pending(v8::Global::new(scope, promise))
+}
+
+fn poll_promise(scope: &mut v8::HandleScope, pending: &Pending) -> Option<Reply> {
+    let promise = v8::Local::new(scope, pending);
+    match promise.state() {
+        v8::PromiseState::Pending => None,
+        v8::PromiseState::Fulfilled => {
+            let value = promise.result(scope);
+            Some(settled_value(scope, value))
+        }
+        v8::PromiseState::Rejected => {
+            let reason = promise.result(scope);
+            Some(Reply::Threw(thrown(scope, reason)))
+        }
     }
 }
 
