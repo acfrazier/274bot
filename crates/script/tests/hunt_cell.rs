@@ -982,7 +982,7 @@ fn shim_and_bindings_keep_the_yield_shape_and_walk_to_has_no_flags() {
     assert!(!cell.contains("ok: true, status: 'aborted'"));
     assert!(!bindings.contains("api.cellValidate"));
     let reg = bindings.split("__rs2b0t_cell").nth(1).unwrap();
-    let reg = reg.split("__rs2b0t_production").next().unwrap();
+    let reg = reg.split("register bank:").next().unwrap();
     assert!(!reg.contains("SelectedGameData"));
     assert!(!reg.contains("selected_"));
 

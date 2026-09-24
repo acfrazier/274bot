@@ -377,16 +377,6 @@ pub(super) fn wire_runtime(
         })
         .map_err(|e| format!("register bank: {e}"))?;
     runtime
-        .register_function(
-            "__rs2b0t_production",
-            move |args: &[serde_json::Value]| {
-                Ok(crate::production::dispatch(
-                    args.first().unwrap_or(&serde_json::Value::Null),
-                ))
-            },
-        )
-        .map_err(|e| format!("register production: {e}"))?;
-    runtime
         .register_function("__rs2b0t_dialog", move |args: &[serde_json::Value]| {
             Ok(crate::dialog::dispatch(
                 args.first().unwrap_or(&serde_json::Value::Null),

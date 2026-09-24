@@ -1,18 +1,22 @@
-//! Rust-owned Make-X count-dialog and anvil main-panel sequencing.
+//! Rust-owned `ChatDialog` make and option sequencing, the `chat-dialog`
+//! [`crate::machine`] family.
 //!
 //! Chat `make_products` already posts the Make/Smelt quantity buttons.
 //! `ChatDialog.makeX` must click the posted Make-X control, wait the real
 //! count-dialog latch, send one Answer-Count, wait the dialog closed, then
-//! wait the make-menu to drop. The anvil panel is a distinct main-modal
-//! TYPE_INV with Make-N ops: `makeFromPanelMax` presses the largest posted
-//! Make-N on the matched row. JavaScript marshals the call argument,
-//! dispatches the returned verbs and reports completion — it does not wait
-//! one tick and guess the count dialog is open.
+//! wait the make-menu to drop. `ChatDialog.make` presses the largest fixed
+//! quantity and waits the modal to change; `chooseOption` answers the
+//! matching option and waits the page to move. The anvil panel is a
+//! distinct main-modal TYPE_INV with Make-N ops: `makeFromPanelMax` presses
+//! the largest posted Make-N on the matched row. JavaScript starts one
+//! machine per call and awaits its boolean — it does not pick a product,
+//! wait one tick and guess the count dialog is open.
 
+use crate::machine::{Begin, Cx, Family, Step};
 use crate::observed::{self, ItemRow, MakeProduct, Scene, Text};
-use crate::task_clock::InstantTaskClock;
-use serde_json::{json, Value};
-use std::cell::RefCell;
+use crate::shim::InteractReq;
+use serde::Deserialize;
+use serde_json::Value;
 
 /// Frozen family-1 count-dialog open wait.
 pub const COUNT_OPEN_MS: u64 = 3_000;
@@ -22,10 +26,8 @@ pub const COUNT_CLOSE_MS: u64 = 3_000;
 pub const MAKE_MENU_MS: u64 = 5_000;
 /// Frozen anvil panel modal-change wait.
 pub const PANEL_WAIT_MS: u64 = 5_000;
-
-thread_local! {
-    static RUNTIME: RefCell<ProductionRuntime> = const { RefCell::new(ProductionRuntime::new()) };
-}
+/// Frozen `ChatDialog.make` / `chooseOption` modal-change wait.
+pub const MODAL_WAIT_MS: u64 = 3_000;
 
 /// The posted facts this module decides from, borrowed from the isolate
 /// scene. A logout forgets the session: only pages posted since login count.
@@ -35,6 +37,9 @@ fn probe(scene: &Scene) -> Probe<'_> {
         ingame: session.ingame().unwrap_or(false),
         count_dialog_open: session.count_dialog_open().unwrap_or(false),
         main_modal_id: session.main_modal_id().unwrap_or(-1),
+        chat_modal_id: session.chat_modal_id(),
+        chat_continue: session.chat_continue().unwrap_or(false),
+        chat_options: session.chat_options().map_or(&[], Vec::as_slice),
         make_products: session.make_products().map_or(&[], Vec::as_slice),
         main_make: session
             .main_make()
@@ -43,157 +48,73 @@ fn probe(scene: &Scene) -> Probe<'_> {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Kind {
+/// The `ChatDialog` method.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum Kind {
+    Make,
     MakeX,
     MakeFromPanelMax,
+    ChooseOption,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Phase {
-    Idle,
     /// Make-X button sent; waiting `count_dialog_open`.
     WaitCountOpen,
     /// One Answer-Count sent; waiting the dialog to close.
     WaitCountClose,
     /// Count dialog closed; waiting chat make-products to drop.
     WaitMakeMenu,
-    /// Anvil Make-N sent; waiting the main modal identity to change.
-    WaitPanel,
+    /// Anvil Make-N sent; waiting the main modal identity to leave `before`.
+    WaitPanel { before: i32 },
+    /// Make-N button sent; waiting the chat (else main) modal to change.
+    WaitModal { chat: bool, before: i32 },
+    /// Option answered; waiting the chat modal to change or offer Continue.
+    WaitChoice { before: Option<i32> },
 }
 
-struct ProductionRuntime {
-    clock: InstantTaskClock,
-    token: u64,
-    phase: Phase,
+#[derive(Deserialize)]
+pub(crate) struct ChatArgs {
     kind: Kind,
-    /// Product / panel match string.
-    match_name: String,
+    /// The product / option / panel row text; absent picks the first.
+    #[serde(default, rename = "match")]
+    match_name: Option<String>,
+    #[serde(default)]
+    count: Value,
+}
+
+/// One `ChatDialog` make or option call.
+pub(crate) struct ChatDialog {
+    phase: Phase,
     /// Requested Make-X count.
     count: i32,
-    /// Posted Make-X component.
-    component_id: i32,
-    /// Main modal id observed when the anvil op was sent.
-    panel_before: i32,
 }
 
-impl ProductionRuntime {
-    const fn new() -> Self {
-        Self {
-            clock: InstantTaskClock::new(),
-            token: 0,
-            phase: Phase::Idle,
-            kind: Kind::MakeX,
-            match_name: String::new(),
-            count: 0,
-            component_id: -1,
-            panel_before: -1,
-        }
-    }
+impl Family for ChatDialog {
+    const NAME: &'static str = "chat-dialog";
+    /// One chat dialog: a new call replaces the one in flight.
+    const EXCLUSIVE: bool = true;
+    type Args = ChatArgs;
+    type Output = bool;
 
-    fn frozen(&self) -> bool {
-        self.clock.frozen()
-    }
-
-    fn set_freeze(&mut self, paused: bool, held: bool) {
-        self.clock.set_freeze(paused, held);
-    }
-
-    fn arm(&mut self, window: u64) {
-        self.clock.arm(window);
-    }
-
-    fn bound_reached(&self) -> bool {
-        self.clock.bound_reached()
-    }
-
-    fn abort_runtime(&mut self) {
-        self.token = self.token.wrapping_add(1);
-        self.phase = Phase::Idle;
-        self.match_name.clear();
-        self.count = 0;
-        self.component_id = -1;
-        self.panel_before = -1;
-        self.clock.deadline = None;
-    }
-
-    fn done(&mut self, result: bool, reason: &str) -> Value {
-        let token = self.token;
-        self.phase = Phase::Idle;
-        self.clock.deadline = None;
-        json!({
-            "kind": "done",
-            "token": token,
-            "result": result,
-            "reason": reason,
+    fn begin(args: ChatArgs, cx: &mut Cx<'_>) -> Begin<Self> {
+        let match_name = args.match_name.unwrap_or_default();
+        observed::with(|scene| {
+            let probe = probe(scene);
+            match args.kind {
+                Kind::Make => begin_make(&probe, &match_name, cx),
+                Kind::ChooseOption => begin_choose(&probe, &match_name, cx),
+                // Make-X and the anvil panel stop at once when not in game.
+                _ if !probe.ingame => Begin::Done(false),
+                Kind::MakeX => begin_make_x(&probe, match_name.trim(), &args.count, cx),
+                Kind::MakeFromPanelMax => begin_panel_max(&probe, match_name.trim(), cx),
+            }
         })
     }
 
-    fn wait(&self) -> Value {
-        json!({ "kind": "wait", "token": self.token })
-    }
-
-    fn if_button(&self) -> Value {
-        json!({
-            "kind": "ops",
-            "token": self.token,
-            "ops": [{ "op": "if-button", "component_id": self.component_id }],
-        })
-    }
-
-    fn answer_count(&self) -> Value {
-        json!({
-            "kind": "ops",
-            "token": self.token,
-            "ops": [{ "op": "answer-count", "value": self.count }],
-        })
-    }
-
-    fn panel_verb(&self, row: &ItemRow, operation: i32) -> Value {
-        json!({
-            "kind": "ops",
-            "token": self.token,
-            "ops": [{
-                "op": "make-panel",
-                "id": row.id,
-                "slot": row.slot_or_unset(),
-                "component": row.component_or_unset(),
-                "operation": operation,
-            }],
-        })
-    }
-}
-
-pub fn on_pause() {
-    RUNTIME.with(|rt| {
-        let held = rt.borrow().clock.held;
-        rt.borrow_mut().set_freeze(true, held);
-    });
-}
-
-pub fn on_resume() {
-    RUNTIME.with(|rt| {
-        let held = rt.borrow().clock.held;
-        rt.borrow_mut().set_freeze(false, held);
-    });
-}
-
-pub fn on_hold(held: bool) {
-    RUNTIME.with(|rt| {
-        let paused = rt.borrow().clock.paused;
-        rt.borrow_mut().set_freeze(paused, held);
-    });
-}
-
-pub fn on_reset() {
-    RUNTIME.with(|rt| rt.borrow_mut().abort_runtime());
-}
-
-pub fn dispatch(input: &Value) -> Value {
-    match input.get("op").and_then(Value::as_str).unwrap_or("") {
-        "begin" => begin(input),
-        "next" => next(input.get("token").and_then(Value::as_u64).unwrap_or(0)),
-        _ => json!({ "kind": "notImpl", "reason": "unknown op" }),
+    fn step(&mut self, cx: &mut Cx<'_>) -> Step<bool> {
+        observed::with(|scene| self.step_on(&probe(scene), cx))
     }
 }
 
@@ -201,52 +122,111 @@ struct Probe<'a> {
     ingame: bool,
     count_dialog_open: bool,
     main_modal_id: i32,
+    /// `None` until a chat modal id was posted (the frozen `undefined`).
+    chat_modal_id: Option<i32>,
+    chat_continue: bool,
+    chat_options: &'a [String],
     make_products: &'a [MakeProduct],
     /// `None` = the main skill-multi panel was not decoded this rebuild.
     main_make: Option<&'a [ItemRow]>,
 }
 
-fn refused(reason: &str) -> Value {
-    RUNTIME.with(|rt| {
-        let mut rt = rt.borrow_mut();
-        rt.abort_runtime();
-        let token = rt.token;
-        json!({
-            "kind": "done",
-            "token": token,
-            "result": false,
-            "reason": reason,
-        })
+impl Probe<'_> {
+    /// `reader.modals()`: the chat and main modal ids, `-1` when unposted.
+    fn chat_modal(&self) -> i32 {
+        self.chat_modal_id.unwrap_or(-1)
+    }
+}
+
+/// Frozen JS `a.toLowerCase().includes(b)`.
+fn contains_ci(hay: &str, want: &str) -> bool {
+    hay.to_lowercase().contains(want)
+}
+
+/// A whole JS number, which reaches Rust as a float beyond int32.
+fn whole(value: &Value) -> Option<i64> {
+    value.as_i64().or_else(|| {
+        value
+            .as_f64()
+            .filter(|n| n.fract() == 0.0)
+            .map(|n| n as i64)
     })
 }
 
-fn begin(input: &Value) -> Value {
-    let kind = match input.get("kind").and_then(Value::as_str).unwrap_or("") {
-        "makeX" => Kind::MakeX,
-        "makeFromPanelMax" => Kind::MakeFromPanelMax,
-        _ => return json!({ "kind": "notImpl", "reason": "unknown production op" }),
+fn run(phase: Phase, window: u64, cx: &mut Cx<'_>) -> Begin<ChatDialog> {
+    cx.clock().arm(window);
+    Begin::Run(ChatDialog { phase, count: 0 })
+}
+
+/// Frozen `ChatDialog.make`: the product containing `match` (else the
+/// first), its largest fixed quantity (first of equals), then the modal
+/// change.
+fn begin_make(probe: &Probe<'_>, match_name: &str, cx: &mut Cx<'_>) -> Begin<ChatDialog> {
+    let want = match_name.to_lowercase();
+    let product = if want.is_empty() {
+        probe.make_products.first()
+    } else {
+        probe
+            .make_products
+            .iter()
+            .find(|p| contains_ci(&p.name, &want))
     };
-    let match_name = input
-        .get("match")
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .trim()
-        .to_string();
-    observed::with(|scene| {
-        let probe = probe(scene);
-        if !probe.ingame {
-            return json!({ "kind": "aborted", "reason": "not ingame" });
-        }
-        match kind {
-            Kind::MakeX => begin_make_x(&probe, &match_name, input.get("count")),
-            Kind::MakeFromPanelMax => begin_panel_max(&probe, &match_name),
-        }
-    })
+    let button = product.and_then(|product| {
+        product.buttons.iter().filter(|b| b.qty > 0).fold(
+            None,
+            |best: Option<&observed::MakeButton>, b| match best {
+                Some(best) if best.qty >= b.qty => Some(best),
+                _ => Some(b),
+            },
+        )
+    });
+    let Some(button) = button else {
+        return Begin::Done(false);
+    };
+    let chat = probe.chat_modal() != -1;
+    let before = if chat {
+        probe.chat_modal()
+    } else {
+        probe.main_modal_id
+    };
+    cx.emit(InteractReq::IfButton {
+        component_id: button.com_id,
+    });
+    run(Phase::WaitModal { chat, before }, MODAL_WAIT_MS, cx)
 }
 
-fn begin_make_x(probe: &Probe<'_>, match_name: &str, count: Option<&Value>) -> Value {
+/// Frozen `ChatDialog.chooseOption`: the option containing `match` (else
+/// the first), answered by its 1-based position.
+fn begin_choose(probe: &Probe<'_>, match_name: &str, cx: &mut Cx<'_>) -> Begin<ChatDialog> {
+    if probe.chat_options.is_empty() {
+        return Begin::Done(false);
+    }
+    let want = match_name.to_lowercase();
+    let option = if want.is_empty() {
+        1
+    } else {
+        match probe
+            .chat_options
+            .iter()
+            .position(|option| contains_ci(option, &want))
+        {
+            Some(index) => index as i32 + 1,
+            None => return Begin::Done(false),
+        }
+    };
+    cx.emit(InteractReq::Answer { option });
+    let before = probe.chat_modal_id;
+    run(Phase::WaitChoice { before }, MODAL_WAIT_MS, cx)
+}
+
+fn begin_make_x(
+    probe: &Probe<'_>,
+    match_name: &str,
+    count: &Value,
+    cx: &mut Cx<'_>,
+) -> Begin<ChatDialog> {
     if match_name.is_empty() {
-        return refused("no-match");
+        return Begin::Done(false);
     }
     let want = match_name.to_ascii_lowercase();
     let Some(product) = probe
@@ -254,141 +234,108 @@ fn begin_make_x(probe: &Probe<'_>, match_name: &str, count: Option<&Value>) -> V
         .iter()
         .find(|p| p.name.to_ascii_lowercase().contains(&want))
     else {
-        return refused("absent");
+        return Begin::Done(false);
     };
-    let Some(button) = product.buttons.iter().find(|b| b.qty == -1) else {
-        return json!({ "kind": "notImpl", "reason": "missing Make-X button" });
+    let Some(button) = product
+        .buttons
+        .iter()
+        .find(|b| b.qty == -1 && b.com_id >= 0)
+    else {
+        return Begin::Refuse("missing Make-X button".into());
     };
-    if button.com_id < 0 {
-        return json!({ "kind": "notImpl", "reason": "missing Make-X button" });
-    }
-    let requested = match count {
-        Some(value)
-            if value
-                .as_i64()
-                .is_some_and(|n| (0..=i32::MAX as i64).contains(&n)) =>
-        {
-            value.as_i64().unwrap_or(0) as i32
-        }
-        _ => return refused("invalid"),
+    let Some(count) = whole(count)
+        .and_then(|n| i32::try_from(n).ok())
+        .filter(|n| *n >= 0)
+    else {
+        return Begin::Done(false);
     };
-    RUNTIME.with(|rt| {
-        let mut rt = rt.borrow_mut();
-        rt.abort_runtime();
-        rt.kind = Kind::MakeX;
-        rt.match_name = match_name.to_string();
-        rt.count = requested;
-        rt.component_id = button.com_id;
-        rt.phase = Phase::WaitCountOpen;
-        rt.arm(COUNT_OPEN_MS);
-        rt.if_button()
+    cx.emit(InteractReq::IfButton {
+        component_id: button.com_id,
+    });
+    cx.clock().arm(COUNT_OPEN_MS);
+    Begin::Run(ChatDialog {
+        phase: Phase::WaitCountOpen,
+        count,
     })
 }
 
-fn begin_panel_max(probe: &Probe<'_>, match_name: &str) -> Value {
+fn begin_panel_max(probe: &Probe<'_>, match_name: &str, cx: &mut Cx<'_>) -> Begin<ChatDialog> {
     let Some(rows) = probe.main_make else {
-        return json!({ "kind": "notImpl", "reason": "missing anvil panel" });
+        return Begin::Refuse("missing anvil panel".into());
     };
     if match_name.is_empty() {
-        return refused("no-match");
+        return Begin::Done(false);
     }
     let want = match_name.to_ascii_lowercase();
     let Some(row) = rows
         .iter()
         .find(|row| row.name_or_empty().to_ascii_lowercase().contains(&want))
     else {
-        return refused("absent");
+        return Begin::Done(false);
     };
     let Some((index, _)) = largest_make_op(&row.ops) else {
-        return refused("missing-make-op");
+        return Begin::Done(false);
     };
-    let operation = (index + 1) as i32;
-    RUNTIME.with(|rt| {
-        let mut rt = rt.borrow_mut();
-        rt.abort_runtime();
-        rt.kind = Kind::MakeFromPanelMax;
-        rt.match_name = match_name.to_string();
-        rt.panel_before = probe.main_modal_id;
-        rt.phase = Phase::WaitPanel;
-        rt.arm(PANEL_WAIT_MS);
-        rt.panel_verb(row, operation)
-    })
+    cx.emit(InteractReq::MakePanel {
+        id: row.id,
+        slot: row.slot_or_unset(),
+        component: row.component_or_unset(),
+        operation: (index + 1) as i32,
+    });
+    let before = probe.main_modal_id;
+    run(Phase::WaitPanel { before }, PANEL_WAIT_MS, cx)
 }
 
-fn next(token: u64) -> Value {
-    observed::with(|scene| {
-        let probe = probe(scene);
-        RUNTIME.with(|rt| {
-            let mut rt = rt.borrow_mut();
-            if token != rt.token || rt.phase == Phase::Idle {
-                return json!({ "kind": "aborted", "token": rt.token });
+impl ChatDialog {
+    fn step_on(&mut self, probe: &Probe<'_>, cx: &mut Cx<'_>) -> Step<bool> {
+        let timed_out = cx.clock().bound_reached();
+        match self.phase {
+            // The frozen modal waits read the modal ids only: a logout that
+            // clears them ends the wait as a change.
+            Phase::WaitModal { chat, before } => {
+                let now = if chat {
+                    probe.chat_modal()
+                } else {
+                    probe.main_modal_id
+                };
+                done_or_wait(now != before, timed_out)
             }
-            if rt.frozen() {
-                return rt.wait();
+            Phase::WaitChoice { before } => done_or_wait(
+                probe.chat_modal_id != before || probe.chat_continue,
+                timed_out,
+            ),
+            _ if !probe.ingame => Step::Done(false),
+            Phase::WaitCountOpen => {
+                if probe.count_dialog_open {
+                    self.phase = Phase::WaitCountClose;
+                    cx.clock().arm(COUNT_CLOSE_MS);
+                    cx.emit(InteractReq::AnswerCount { value: self.count });
+                    return Step::Wait;
+                }
+                done_or_wait(false, timed_out)
             }
-            if !probe.ingame {
-                let token = rt.token;
-                rt.phase = Phase::Idle;
-                rt.clock.deadline = None;
-                return json!({ "kind": "aborted", "token": token });
+            Phase::WaitCountClose => {
+                if !probe.count_dialog_open {
+                    self.phase = Phase::WaitMakeMenu;
+                    cx.clock().arm(MAKE_MENU_MS);
+                    return Step::Wait;
+                }
+                done_or_wait(false, timed_out)
             }
-            match rt.kind {
-                Kind::MakeX => make_x_step(&mut rt, &probe),
-                Kind::MakeFromPanelMax => panel_step(&mut rt, &probe),
-            }
-        })
-    })
-}
-
-fn make_x_step(rt: &mut ProductionRuntime, probe: &Probe<'_>) -> Value {
-    match rt.phase {
-        Phase::WaitCountOpen => {
-            if probe.count_dialog_open {
-                rt.phase = Phase::WaitCountClose;
-                rt.arm(COUNT_CLOSE_MS);
-                return rt.answer_count();
-            }
-            if rt.bound_reached() {
-                return rt.done(false, "count-open-timeout");
-            }
-            rt.wait()
+            Phase::WaitMakeMenu => done_or_wait(probe.make_products.is_empty(), timed_out),
+            Phase::WaitPanel { before } => done_or_wait(probe.main_modal_id != before, timed_out),
         }
-        Phase::WaitCountClose => {
-            if !probe.count_dialog_open {
-                rt.phase = Phase::WaitMakeMenu;
-                rt.arm(MAKE_MENU_MS);
-                return rt.wait();
-            }
-            if rt.bound_reached() {
-                return rt.done(false, "count-close-timeout");
-            }
-            rt.wait()
-        }
-        Phase::WaitMakeMenu => {
-            if probe.make_products.is_empty() {
-                return rt.done(true, "menu-closed");
-            }
-            if rt.bound_reached() {
-                return rt.done(false, "menu-timeout");
-            }
-            rt.wait()
-        }
-        Phase::Idle | Phase::WaitPanel => rt.done(false, "idle"),
     }
 }
 
-fn panel_step(rt: &mut ProductionRuntime, probe: &Probe<'_>) -> Value {
-    match rt.phase {
-        Phase::WaitPanel => {
-            if probe.main_modal_id != rt.panel_before {
-                return rt.done(true, "panel-closed");
-            }
-            if rt.bound_reached() {
-                return rt.done(false, "panel-timeout");
-            }
-            rt.wait()
-        }
-        _ => rt.done(false, "idle"),
+/// The frozen wait order: the condition, then the timeout.
+fn done_or_wait(settled: bool, timed_out: bool) -> Step<bool> {
+    if settled {
+        Step::Done(true)
+    } else if timed_out {
+        Step::Done(false)
+    } else {
+        Step::Wait
     }
 }
 
@@ -422,7 +369,9 @@ pub fn largest_make_op(ops: &[Text]) -> Option<(usize, i32)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::machine::Reply;
     use crate::observed::MakeButton;
+    use crate::task_clock::InstantTaskClock;
     use std::time::{Duration, Instant};
 
     fn product(name: &str, buttons: &[(i32, i32)]) -> MakeProduct {
@@ -459,8 +408,56 @@ mod tests {
             ingame: true,
             count_dialog_open: count_open,
             main_modal_id: main_modal,
+            chat_modal_id: Some(-1),
+            chat_continue: false,
+            chat_options: &[],
             make_products: products,
             main_make,
+        }
+    }
+
+    fn machine(phase: Phase, count: i32) -> ChatDialog {
+        ChatDialog { phase, count }
+    }
+
+    fn armed(window: u64) -> InstantTaskClock {
+        let mut clock = InstantTaskClock::new();
+        clock.arm(window);
+        clock
+    }
+
+    fn expired() -> InstantTaskClock {
+        let mut clock = InstantTaskClock::new();
+        clock.deadline = Some(Instant::now() - Duration::from_millis(1));
+        clock
+    }
+
+    /// One step: `None` while it waits, else the verdict; plus the ops.
+    fn step(
+        m: &mut ChatDialog,
+        clock: &mut InstantTaskClock,
+        probe: &Probe<'_>,
+    ) -> (Option<bool>, Vec<InteractReq>) {
+        let mut ops = Vec::new();
+        let out = match m.step_on(probe, &mut Cx::test(&mut ops, clock, None)) {
+            Step::Wait => None,
+            Step::Done(ok) => Some(ok),
+            _ => panic!("chat-dialog neither calls back nor fails"),
+        };
+        (out, ops)
+    }
+
+    /// A begin: the verdict it settled with (`None`: running), plus the ops.
+    fn begin(
+        f: impl FnOnce(&mut Cx<'_>) -> Begin<ChatDialog>,
+    ) -> (Option<bool>, Vec<InteractReq>, Option<ChatDialog>) {
+        let mut ops = Vec::new();
+        let mut clock = InstantTaskClock::new();
+        let reply: Option<Reply> = None;
+        match f(&mut Cx::test(&mut ops, &mut clock, reply)) {
+            Begin::Run(m) => (None, ops, Some(m)),
+            Begin::Done(ok) => (Some(ok), ops, None),
+            Begin::Refuse(why) => panic!("refused: {why}"),
         }
     }
 
@@ -480,101 +477,114 @@ mod tests {
     }
 
     #[test]
+    fn make_presses_the_largest_fixed_quantity_of_the_matched_product() {
+        let products = [
+            product("Bronze bar", &[(1, 10), (5, 11), (-1, 12)]),
+            product("Iron bar", &[(1, 20), (10, 21), (10, 22), (-1, 23)]),
+        ];
+        let at = probe(&products, None, false, 3000);
+        let (out, ops, _) = begin(|cx| begin_make(&at, "IRON", cx));
+        assert_eq!(out, None);
+        assert_eq!(
+            ops,
+            vec![InteractReq::IfButton { component_id: 21 }],
+            "largest positive qty, first of equals, never Make-X"
+        );
+        let (_, ops, _) = begin(|cx| begin_make(&at, "", cx));
+        assert_eq!(ops, vec![InteractReq::IfButton { component_id: 11 }]);
+        let (out, ops, _) = begin(|cx| begin_make(&at, "steel", cx));
+        assert_eq!((out, ops), (Some(false), vec![]));
+    }
+
+    #[test]
+    fn make_settles_on_the_modal_it_pressed_from_changing() {
+        let products = [product("Bronze bar", &[(5, 11)])];
+        let at = probe(&products, None, false, 3000);
+        let (_, _, m) = begin(|cx| begin_make(&at, "bronze", cx));
+        let mut m = m.expect("running");
+        let mut clock = armed(MODAL_WAIT_MS);
+        assert_eq!(step(&mut m, &mut clock, &at), (None, vec![]));
+        let moved = probe(&products, None, false, -1);
+        assert_eq!(step(&mut m, &mut clock, &moved), (Some(true), vec![]));
+        let mut late = expired();
+        let mut m = machine(
+            Phase::WaitModal {
+                chat: false,
+                before: 3000,
+            },
+            0,
+        );
+        assert_eq!(step(&mut m, &mut late, &at), (Some(false), vec![]));
+    }
+
+    #[test]
+    fn choose_option_answers_the_matched_position_and_waits_the_page() {
+        let options = ["Yes please.".to_string(), "No thanks.".to_string()];
+        let at = Probe {
+            chat_modal_id: Some(4882),
+            chat_options: &options,
+            ..probe(&[], None, false, -1)
+        };
+        let (out, ops, m) = begin(|cx| begin_choose(&at, "NO", cx));
+        assert_eq!(out, None);
+        assert_eq!(ops, vec![InteractReq::Answer { option: 2 }]);
+        let (_, ops, _) = begin(|cx| begin_choose(&at, "", cx));
+        assert_eq!(ops, vec![InteractReq::Answer { option: 1 }]);
+        let (out, ops, _) = begin(|cx| begin_choose(&at, "maybe", cx));
+        assert_eq!((out, ops), (Some(false), vec![]));
+
+        let mut m = m.expect("running");
+        let mut clock = armed(MODAL_WAIT_MS);
+        assert_eq!(step(&mut m, &mut clock, &at), (None, vec![]));
+        let cont = Probe {
+            chat_continue: true,
+            ..at
+        };
+        assert_eq!(step(&mut m, &mut clock, &cont), (Some(true), vec![]));
+    }
+
+    #[test]
     fn make_x_does_not_answer_count_until_the_dialog_is_posted_open() {
         let products = [product("Bow string", &[(-1, 8875), (10, 8876)])];
-        let mut rt = ProductionRuntime::new();
-        rt.kind = Kind::MakeX;
-        rt.component_id = 8875;
-        rt.count = 28;
-        rt.phase = Phase::WaitCountOpen;
-        rt.arm(COUNT_OPEN_MS);
+        let mut m = machine(Phase::WaitCountOpen, 28);
+        let mut clock = armed(COUNT_OPEN_MS);
         let closed = probe(&products, None, false, -1);
-        let step = make_x_step(&mut rt, &closed);
-        assert_eq!(step["kind"], "wait");
-        assert_eq!(rt.phase, Phase::WaitCountOpen);
+        assert_eq!(step(&mut m, &mut clock, &closed), (None, vec![]));
 
         let open = probe(&products, None, true, -1);
-        let step = make_x_step(&mut rt, &open);
-        assert_eq!(step["kind"], "ops");
-        assert_eq!(step["ops"][0]["op"], "answer-count");
-        assert_eq!(step["ops"][0]["value"], 28);
-        assert_eq!(rt.phase, Phase::WaitCountClose);
+        assert_eq!(
+            step(&mut m, &mut clock, &open),
+            (None, vec![InteractReq::AnswerCount { value: 28 }])
+        );
+        assert_eq!(m.phase, Phase::WaitCountClose);
     }
 
     #[test]
     fn make_x_count_open_timeout_sends_no_answer() {
         let products = [product("Bow string", &[(-1, 8875)])];
-        let mut rt = ProductionRuntime::new();
-        rt.kind = Kind::MakeX;
-        rt.count = 28;
-        rt.phase = Phase::WaitCountOpen;
-        rt.clock.deadline = Some(Instant::now() - Duration::from_millis(1));
+        let mut m = machine(Phase::WaitCountOpen, 28);
         let closed = probe(&products, None, false, -1);
-        let step = make_x_step(&mut rt, &closed);
-        assert_eq!(step["kind"], "done");
-        assert_eq!(step["result"], false);
-        assert_eq!(step["reason"], "count-open-timeout");
+        assert_eq!(step(&mut m, &mut expired(), &closed), (Some(false), vec![]));
     }
 
     #[test]
     fn make_x_waits_count_close_then_the_make_menu() {
         let products = [product("Bow string", &[(-1, 8875)])];
-        let mut rt = ProductionRuntime::new();
-        rt.kind = Kind::MakeX;
-        rt.phase = Phase::WaitCountClose;
-        rt.arm(COUNT_CLOSE_MS);
+        let mut m = machine(Phase::WaitCountClose, 28);
+        let mut clock = armed(COUNT_CLOSE_MS);
         let open = probe(&products, None, true, -1);
-        let step = make_x_step(&mut rt, &open);
-        assert_eq!(step["kind"], "wait");
+        assert_eq!(step(&mut m, &mut clock, &open), (None, vec![]));
 
         let closed = probe(&products, None, false, -1);
-        let step = make_x_step(&mut rt, &closed);
-        assert_eq!(step["kind"], "wait");
-        assert_eq!(rt.phase, Phase::WaitMakeMenu);
+        assert_eq!(step(&mut m, &mut clock, &closed), (None, vec![]));
+        assert_eq!(m.phase, Phase::WaitMakeMenu);
 
-        let gone: [MakeProduct; 0] = [];
-        let empty = probe(&gone, None, false, -1);
-        let step = make_x_step(&mut rt, &empty);
-        assert_eq!(step["kind"], "done");
-        assert_eq!(step["result"], true);
-        assert_eq!(step["reason"], "menu-closed");
+        let empty = probe(&[], None, false, -1);
+        assert_eq!(step(&mut m, &mut clock, &empty), (Some(true), vec![]));
     }
 
     #[test]
-    fn pause_and_hold_freeze_the_count_deadline() {
-        let mut rt = ProductionRuntime::new();
-        rt.arm(COUNT_OPEN_MS);
-        let before = rt.clock.deadline.expect("armed");
-        rt.set_freeze(true, false);
-        assert!(rt.frozen());
-        std::thread::sleep(Duration::from_millis(5));
-        rt.set_freeze(false, false);
-        assert!(!rt.frozen());
-        assert!(rt.clock.deadline.expect("still armed") > before);
-        rt.set_freeze(false, true);
-        assert!(rt.frozen(), "guardian hold freezes too");
-    }
-
-    #[test]
-    fn abort_runtime_bumps_the_token_and_clears_the_operation() {
-        let mut rt = ProductionRuntime::new();
-        rt.kind = Kind::MakeX;
-        rt.match_name = "Flax".into();
-        rt.count = 28;
-        rt.component_id = 8875;
-        rt.arm(COUNT_OPEN_MS);
-        let before = rt.token;
-        rt.abort_runtime();
-        assert_eq!(rt.token, before.wrapping_add(1));
-        assert_eq!(rt.phase, Phase::Idle);
-        assert!(rt.match_name.is_empty());
-        assert_eq!(rt.count, 0);
-        assert_eq!(rt.component_id, -1);
-        assert!(rt.clock.deadline.is_none());
-    }
-
-    #[test]
-    fn panel_max_succeeds_when_the_posted_main_modal_changes() {
+    fn panel_max_presses_the_largest_make_n_and_succeeds_on_the_modal_change() {
         let rows = [panel(
             "Bronze dagger",
             1205,
@@ -582,32 +592,30 @@ mod tests {
             1119,
             &["Make 1", "Make 5", "Make 10"],
         )];
-        let mut rt = ProductionRuntime::new();
-        rt.kind = Kind::MakeFromPanelMax;
-        rt.panel_before = 3000;
-        rt.phase = Phase::WaitPanel;
-        rt.arm(PANEL_WAIT_MS);
         let still = probe(&[], Some(rows.as_slice()), false, 3000);
-        let step = panel_step(&mut rt, &still);
-        assert_eq!(step["kind"], "wait");
+        let (out, ops, m) = begin(|cx| begin_panel_max(&still, "dagger", cx));
+        assert_eq!(out, None);
+        assert_eq!(
+            ops,
+            vec![InteractReq::MakePanel {
+                id: 1205,
+                slot: 0,
+                component: 1119,
+                operation: 3,
+            }]
+        );
+        let mut m = m.expect("running");
+        let mut clock = armed(PANEL_WAIT_MS);
+        assert_eq!(step(&mut m, &mut clock, &still), (None, vec![]));
         let closed = probe(&[], Some(rows.as_slice()), false, -1);
-        let step = panel_step(&mut rt, &closed);
-        assert_eq!(step["kind"], "done");
-        assert_eq!(step["result"], true);
+        assert_eq!(step(&mut m, &mut clock, &closed), (Some(true), vec![]));
     }
 
     #[test]
     fn panel_timeout_does_not_invent_a_second_press() {
         let rows = [panel("Bronze dagger", 1205, 0, 1119, &["Make 10"])];
-        let mut rt = ProductionRuntime::new();
-        rt.kind = Kind::MakeFromPanelMax;
-        rt.panel_before = 3000;
-        rt.phase = Phase::WaitPanel;
-        rt.clock.deadline = Some(Instant::now() - Duration::from_millis(1));
+        let mut m = machine(Phase::WaitPanel { before: 3000 }, 0);
         let still = probe(&[], Some(rows.as_slice()), false, 3000);
-        let step = panel_step(&mut rt, &still);
-        assert_eq!(step["kind"], "done");
-        assert_eq!(step["result"], false);
-        assert_eq!(step["reason"], "panel-timeout");
+        assert_eq!(step(&mut m, &mut expired(), &still), (Some(false), vec![]));
     }
 }

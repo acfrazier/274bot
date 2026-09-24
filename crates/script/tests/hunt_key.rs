@@ -874,7 +874,7 @@ fn shim_and_bindings_keep_the_yield_shape_and_flag_falses() {
     assert!(!key.contains("ok: true, status: 'aborted'"));
     assert!(!bindings.contains("api.keyValidate"));
     let reg = bindings.split("__rs2b0t_key").nth(1).unwrap();
-    let reg = reg.split("__rs2b0t_production").next().unwrap();
+    let reg = reg.split("register bank:").next().unwrap();
     assert!(!reg.contains("SelectedGameData"));
     assert!(!reg.contains("selected_"));
 

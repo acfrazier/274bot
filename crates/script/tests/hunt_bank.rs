@@ -608,7 +608,7 @@ fn shim_and_bindings_keep_the_yield_shape_and_walk_flags() {
     assert!(!bank.contains("ok: true, status: 'aborted'"));
     assert!(!bindings.contains("api.bankValidate"));
     let reg = bindings.split("__rs2b0t_bank\"").nth(1).unwrap();
-    let reg = reg.split("__rs2b0t_production").next().unwrap();
+    let reg = reg.split("register bank:").next().unwrap();
     assert!(!reg.contains("SelectedGameData"));
     assert!(!reg.contains("selected_"));
 

@@ -4,8 +4,8 @@
 // a completed make.
 
 use script::isolate_fb::{
-    encode_snapshot_with_native, ItemRowInput, MakeButtonInput, MakeProductInput, NativeFactsInput,
-    ReachViewInput, SnapshotInput, TileInput,
+    encode_snapshot_with_native, ChatOptionInput, ItemRowInput, MakeButtonInput, MakeProductInput,
+    NativeFactsInput, ReachViewInput, SnapshotInput, TileInput,
 };
 use script::shim::InteractReq;
 use script::{LoadIsolate, LoadShape};
@@ -502,5 +502,87 @@ export default class T extends LoopingBot {
         "makeFromPanel stays not impl, got {panel:?}"
     );
     assert!(iso.drain_interacts().is_empty());
+    iso.join();
+}
+
+const CHOOSE_AND_MAKE: &str = r#"
+import { ChatDialog } from '../../api/ui/dialogue/ChatDialog.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__did) return;
+        globalThis.__did = true;
+        globalThis.__choose = null;
+        globalThis.__make = null;
+        globalThis.__choose = await ChatDialog.chooseOption('NO');
+        globalThis.__make = await ChatDialog.make('iron');
+    }
+}
+"#;
+
+#[test]
+fn choose_option_and_make_are_rust_picked_and_wait_the_modal() {
+    let iso = spawn(CHOOSE_AND_MAKE);
+    let options = [
+        ChatOptionInput {
+            text: "Yes please.",
+        },
+        ChatOptionInput { text: "No thanks." },
+    ];
+    let mut snap = base();
+    snap.chat_modal_id = 4882;
+    snap.chat_options = &options;
+    post(&iso, &snap, None);
+    tick(&iso, 1);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::Answer { option: 2 }],
+        "the matched option by its 1-based position"
+    );
+    tick(&iso, 2);
+    assert_eq!(
+        iso.probe("__choose").unwrap(),
+        Value::Null,
+        "same page: still waiting"
+    );
+
+    let buttons = [
+        MakeButtonInput { qty: 1, com_id: 20 },
+        MakeButtonInput {
+            qty: 10,
+            com_id: 21,
+        },
+        MakeButtonInput {
+            qty: 10,
+            com_id: 22,
+        },
+        MakeButtonInput {
+            qty: -1,
+            com_id: 23,
+        },
+    ];
+    let products = [MakeProductInput {
+        object_id: 2351,
+        name: "Iron bar",
+        buttons: &buttons,
+    }];
+    snap.tick = 3;
+    snap.chat_modal_id = 2400;
+    snap.chat_options = &[];
+    snap.make_products = &products;
+    post(&iso, &snap, None);
+    tick(&iso, 3);
+    assert_eq!(iso.probe("__choose").unwrap(), true, "the page moved");
+    tick(&iso, 4);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::IfButton { component_id: 21 }],
+        "largest fixed quantity, first of equals"
+    );
+    snap.tick = 5;
+    snap.chat_modal_id = -1;
+    snap.make_products = &[];
+    post(&iso, &snap, None);
+    tick(&iso, 5);
+    assert_eq!(iso.probe("__make").unwrap(), true);
     iso.join();
 }
