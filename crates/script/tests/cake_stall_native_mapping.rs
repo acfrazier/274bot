@@ -171,7 +171,7 @@ export default class T extends LoopingBot {
             shouldEat: () => globalThis.__eat === true,
             lockedOutUntil: () => globalThis.__lockUntil ?? 0,
             setStatus: () => {},
-            log: () => {},
+            log: (m) => { (globalThis.__logs ||= []).push(m); },
             onSteal: () => { globalThis.__stolen += 1; },
             onReset: () => { globalThis.__reset += 1; },
         });
@@ -594,5 +594,46 @@ fn native_cake_owner_selects_with_native_predicate_and_posts_food_gain() {
     assert_eq!(done["kind"], "done");
     assert_eq!(done["result"], "no-progress");
     assert_eq!(done["stole"], true);
+    iso.join();
+}
+
+/// The stall owner watching the stand refuses steals silently: nothing is
+/// gained and no guard comes. After three, the frozen `stealCakes` swaps to
+/// the other stand and reports it through `log` and `onReset`.
+#[test]
+fn watched_stand_swaps_after_three_refused_steals() {
+    let steal = ["Steal from".to_string()];
+    let locs = [loc_row(2561, Some("Baker's stall"), 2667, 3310, 1, &steal)];
+    let iso = spawn();
+    iso.probe("globalThis.__fillTo = 28").unwrap();
+    let mut snap = base_snapshot(tile(2668, 3312, 0));
+    snap.locs = &locs;
+    post_snapshot_input(&iso, &snap);
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    let mut steals = 0;
+    let mut walked = None;
+    let mut n = 1;
+    while walked.is_none() && std::time::Instant::now() < deadline {
+        tick(&iso, n);
+        n += 1;
+        for req in iso.drain_interacts() {
+            match req {
+                InteractReq::Loc { .. } => steals += 1,
+                InteractReq::WalkTo { x, z, level } => walked = Some((x, z, level)),
+                _ => {}
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    assert_eq!(steals, 3, "three refused steals from the watched stand");
+    assert_eq!(walked, Some((2669, 3310, 0)), "then the alternate stand");
+    assert_eq!(iso.probe("__reset").unwrap(), 1);
+    let logs = iso.probe("globalThis.__logs").unwrap();
+    assert!(
+        logs.to_string()
+            .contains("3 refused steals — swapping to the stand at (2669,3310)"),
+        "{logs}"
+    );
     iso.join();
 }

@@ -13,6 +13,10 @@ use std::time::{Duration, Instant};
 
 pub const WALK_BOUND_MS: u64 = 60_000;
 pub const STEAL_RESOLVE_MS: u64 = 2_400;
+/// Frozen `RESET_AFTER_REFUSALS`: consecutive steals that gained nothing and
+/// were not caught (the stall owner was watching) before the other stand is
+/// tried.
+pub const RESET_AFTER_REFUSALS: u32 = 3;
 
 thread_local! {
     static RUNTIME: RefCell<CakeStallRuntime> = const { RefCell::new(CakeStallRuntime::new()) };
@@ -127,6 +131,7 @@ enum Phase {
     WaitSteal,
     NeedStealResult,
     AfterOnSteal,
+    AfterOnReset,
 }
 
 struct CakeStallRuntime {
@@ -138,6 +143,12 @@ struct CakeStallRuntime {
     fill_to: Option<i32>,
     before: i32,
     deadline: Option<Instant>,
+    /// The stand steals are made from, kept across passes the way the
+    /// frozen `stealCakes` loop keeps it until it returns anything but a
+    /// retry: `false` is the main stand, `true` the alternate.
+    alt_stand: bool,
+    /// Consecutive refused steals from the current stand.
+    refusals: u32,
 }
 
 impl CakeStallRuntime {
@@ -151,6 +162,8 @@ impl CakeStallRuntime {
             fill_to: None,
             before: 0,
             deadline: None,
+            alt_stand: false,
+            refusals: 0,
         }
     }
 
@@ -186,9 +199,32 @@ impl CakeStallRuntime {
         self.deadline = None;
     }
 
+    fn stand(&self) -> Tile {
+        let stand = if self.alt_stand {
+            BAKER_STALL.stand_alt
+        } else {
+            BAKER_STALL.stand
+        };
+        Tile {
+            x: stand.x,
+            z: stand.z,
+            level: stand.level,
+        }
+    }
+
+    /// A session boundary or a pass that ended on anything but a retry: the
+    /// next steal starts from the main stand with no refusals counted.
+    fn reset_stand(&mut self) {
+        self.alt_stand = false;
+        self.refusals = 0;
+    }
+
     fn done(&mut self, result: &str, stole: bool) -> Value {
         self.phase = Phase::Idle;
         self.deadline = None;
+        if result != "no-progress" {
+            self.reset_stand();
+        }
         json!({
             "kind": "done",
             "token": self.token,
@@ -236,7 +272,8 @@ impl CakeStallRuntime {
         if arrived == Some(false) || !obs.facts_valid {
             return self.done("no-progress", false);
         }
-        if on_stand(obs.here) {
+        let stand = self.stand();
+        if obs.here == Some(stand) {
             return self.start_steal(obs);
         }
         self.phase = Phase::WaitStand;
@@ -244,9 +281,9 @@ impl CakeStallRuntime {
         json!({
             "kind": "walk-to",
             "token": self.token,
-            "x": BAKER_STALL.stand.x,
-            "z": BAKER_STALL.stand.z,
-            "level": BAKER_STALL.stand.level,
+            "x": stand.x,
+            "z": stand.z,
+            "level": stand.level,
         })
     }
 
@@ -282,7 +319,7 @@ impl CakeStallRuntime {
                 if !obs.ingame {
                     return self.done("aborted", false);
                 }
-                let arrived = on_stand(obs.here);
+                let arrived = obs.here == Some(self.stand());
                 if arrived || self.expired() {
                     self.phase = Phase::NeedAfterWalkCallbacks { arrived };
                     self.observe(true, false)
@@ -318,6 +355,7 @@ impl CakeStallRuntime {
                     return self.done("aborted", false);
                 }
                 if obs.carried > self.before {
+                    self.refusals = 0;
                     self.phase = Phase::AfterOnSteal;
                     return json!({"kind": "on-steal", "token": self.token});
                 }
@@ -327,8 +365,27 @@ impl CakeStallRuntime {
                 if at_goal(obs, self.fill_to) {
                     return self.done("stocked", false);
                 }
+                // Nothing gained and not caught: the owner was watching.
+                self.refusals += 1;
+                if self.refusals >= RESET_AFTER_REFUSALS {
+                    let refusals = self.refusals;
+                    self.alt_stand = !self.alt_stand;
+                    self.refusals = 0;
+                    self.phase = Phase::AfterOnReset;
+                    let stand = self.stand();
+                    return json!({
+                        "kind": "on-reset",
+                        "token": self.token,
+                        "status": "watched — swapping stands",
+                        "log": format!(
+                            "{refusals} refused steals — swapping to the stand at ({},{})",
+                            stand.x, stand.z
+                        ),
+                    });
+                }
                 self.done("no-progress", false)
             }
+            Phase::AfterOnReset => self.done("no-progress", false),
             Phase::AfterOnSteal => {
                 if !obs.ingame {
                     return self.done("aborted", true);
@@ -361,22 +418,6 @@ fn pack_full(obs: &Observation) -> bool {
 
 fn at_goal(obs: &Observation, fill_to: Option<i32>) -> bool {
     pack_full(obs) || fill_to.is_some_and(|target| obs.carried >= target)
-}
-
-fn on_stand(here: Option<Tile>) -> bool {
-    here.is_some_and(|here| {
-        let stand = Tile {
-            x: BAKER_STALL.stand.x,
-            z: BAKER_STALL.stand.z,
-            level: BAKER_STALL.stand.level,
-        };
-        let alt = Tile {
-            x: BAKER_STALL.stand_alt.x,
-            z: BAKER_STALL.stand_alt.z,
-            level: BAKER_STALL.stand_alt.level,
-        };
-        here == stand || here == alt
-    })
 }
 
 fn selected_stall(locs: &[SceneRow]) -> Option<SelectedLoc> {
@@ -433,7 +474,11 @@ pub fn on_hold(held: bool) {
 }
 
 pub fn on_reset() {
-    RUNTIME.with(|runtime| runtime.borrow_mut().abort_runtime());
+    RUNTIME.with(|runtime| {
+        let mut runtime = runtime.borrow_mut();
+        runtime.abort_runtime();
+        runtime.reset_stand();
+    });
 }
 
 pub fn dispatch(input: &Value) -> Value {
@@ -531,5 +576,99 @@ mod tests {
         let stale = begin["token"].as_u64().unwrap();
         runtime.abort_runtime();
         assert_eq!(runtime.next(stale, &observation())["kind"], "aborted");
+    }
+
+    /// One steal pass from `obs`: begin, clear the lockout, steal, and let
+    /// the resolve window expire with nothing gained.
+    fn refused_pass(runtime: &mut CakeStallRuntime, obs: &Observation) -> Value {
+        let token = runtime.begin(Some(28), obs)["token"].as_u64().unwrap();
+        let steal = runtime.next(token, obs);
+        assert_eq!(steal["kind"], "loc", "{steal}");
+        runtime.deadline = Some(Instant::now() - Duration::from_millis(1));
+        assert_eq!(runtime.next(token, obs)["kind"], "observe");
+        runtime.next(token, obs)
+    }
+
+    fn at(stand: api::snapshot::WorldTile) -> Observation {
+        Observation {
+            here: Some(Tile {
+                x: stand.x,
+                z: stand.z,
+                level: stand.level,
+            }),
+            ..observation()
+        }
+    }
+
+    #[test]
+    fn three_refused_steals_move_to_the_other_stand() {
+        let mut runtime = CakeStallRuntime::new();
+        let main = at(BAKER_STALL.stand);
+        for _ in 1..RESET_AFTER_REFUSALS {
+            assert_eq!(refused_pass(&mut runtime, &main)["result"], "no-progress");
+        }
+        let reset = refused_pass(&mut runtime, &main);
+        assert_eq!(reset["kind"], "on-reset", "{reset}");
+        assert!(
+            reset["log"].as_str().unwrap().contains("(2669,3310)"),
+            "{reset}"
+        );
+        let token = reset["token"].as_u64().unwrap();
+        assert_eq!(runtime.next(token, &main)["result"], "no-progress");
+
+        // The next pass does not steal from the watched stand again.
+        let token = runtime.begin(Some(28), &main)["token"].as_u64().unwrap();
+        let walk = runtime.next(token, &main);
+        assert_eq!(walk["kind"], "walk-to", "{walk}");
+        assert_eq!(
+            (walk["x"].as_i64(), walk["z"].as_i64()),
+            (Some(2669), Some(3310))
+        );
+        let alt = at(BAKER_STALL.stand_alt);
+        assert_eq!(runtime.next(token, &alt)["kind"], "observe");
+        assert_eq!(runtime.next(token, &alt)["kind"], "observe");
+        assert_eq!(runtime.next(token, &alt)["kind"], "loc");
+    }
+
+    #[test]
+    fn a_steal_clears_the_count_and_combat_returns_to_the_main_stand() {
+        let mut runtime = CakeStallRuntime::new();
+        let main = at(BAKER_STALL.stand);
+        for _ in 1..RESET_AFTER_REFUSALS {
+            refused_pass(&mut runtime, &main);
+        }
+        // A steal that gains food clears the refusals.
+        let token = runtime.begin(Some(28), &main)["token"].as_u64().unwrap();
+        assert_eq!(runtime.next(token, &main)["kind"], "loc");
+        let gained = Observation {
+            carried: 1,
+            ..at(BAKER_STALL.stand)
+        };
+        assert_eq!(runtime.next(token, &gained)["kind"], "observe");
+        assert_eq!(runtime.next(token, &gained)["kind"], "on-steal");
+        assert_eq!(runtime.next(token, &gained)["result"], "no-progress");
+        for _ in 1..RESET_AFTER_REFUSALS {
+            assert_eq!(refused_pass(&mut runtime, &main)["result"], "no-progress");
+        }
+        assert_eq!(refused_pass(&mut runtime, &main)["kind"], "on-reset");
+
+        // Caught while on the alternate stand: the next pass starts over
+        // from the main stand, as a fresh frozen `stealCakes` call does.
+        let alt = at(BAKER_STALL.stand_alt);
+        let token = runtime.begin(Some(28), &alt)["token"].as_u64().unwrap();
+        assert_eq!(runtime.next(token, &alt)["kind"], "loc");
+        let caught = Observation {
+            in_combat: true,
+            ..at(BAKER_STALL.stand_alt)
+        };
+        assert_eq!(runtime.next(token, &caught)["kind"], "observe");
+        assert_eq!(runtime.next(token, &caught)["result"], "combat");
+        let token = runtime.begin(Some(28), &alt)["token"].as_u64().unwrap();
+        let walk = runtime.next(token, &alt);
+        assert_eq!(walk["kind"], "walk-to", "{walk}");
+        assert_eq!(
+            (walk["x"].as_i64(), walk["z"].as_i64()),
+            (Some(2668), Some(3312))
+        );
     }
 }

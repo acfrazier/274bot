@@ -82,6 +82,17 @@ export async function stealCakes(opts = {}) {
             });
             continue;
         }
+        if (step.kind === 'on-reset') {
+            if (typeof opts.setStatus === 'function') opts.setStatus(step.status);
+            if (typeof opts.log === 'function') opts.log(step.log);
+            if (typeof opts.onReset === 'function') opts.onReset();
+            step = call({
+                op: 'next',
+                token,
+                ...callbackResults(opts, false, false),
+            });
+            continue;
+        }
         if (step.kind === 'on-steal') {
             if (typeof opts.onSteal === 'function') {
                 opts.onSteal();
