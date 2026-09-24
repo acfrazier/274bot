@@ -53,6 +53,10 @@ best-effort and untested in this release.
   v2 `api.tick` advances on every eligible tick, including while an async tick
   is pending. In the ResetSession window the v2 quest journal/status return
   `snapshot-unavailable`.
+- Scripts may replace the global auto-run policy for one run with
+  `RunManager.override({ runAuto?, energyMin? })`. Missing fields fall through
+  to Global, and Start or Stop clears the session overlay without changing the
+  global setting.
 
 ### Gameplay fixes (live 289)
 

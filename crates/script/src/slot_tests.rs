@@ -22,6 +22,60 @@ fn wait_state(slot: &mut SlotScript, want: RunState) {
 
 #[cfg(feature = "load")]
 #[test]
+fn run_manager_override_is_session_scoped_and_last_call_replaces_snapshot() {
+    let source = r#"
+import { RunManager } from '../../runtime/RunManager.js';
+export default class T extends LoopingBot {
+    loop() {
+        RunManager.override({ runAuto: false, energyMin: 80 });
+        RunManager.override({ energyMin: 55 });
+    }
+}
+"#;
+    let mut slot = SlotScript::new();
+    slot.start_load(source.into(), LoadShape::CompatClass, vec![])
+        .unwrap();
+    wait_state(&mut slot, RunState::Running);
+    slot.load.as_ref().unwrap().on_game_tick(1);
+    slot.probe("1").expect("tick settles before probe");
+    assert_eq!(
+        slot.run_policy_override(),
+        Some(api::run_policy::RunPolicyOverride {
+            run_auto: None,
+            energy_min: Some(55),
+        }),
+        "the second call replaces the whole snapshot"
+    );
+
+    slot.stop();
+    assert_eq!(
+        slot.run_policy_override(),
+        None,
+        "Stop returns auto-run to global"
+    );
+    wait_state(&mut slot, RunState::Idle);
+
+    slot.run_policy_override
+        .set(Some(api::run_policy::RunPolicyOverride {
+            run_auto: Some(false),
+            energy_min: Some(99),
+        }));
+    slot.start_load(
+        "export default class T extends LoopingBot { loop() {} }".into(),
+        LoadShape::CompatClass,
+        vec![],
+    )
+    .unwrap();
+    assert_eq!(
+        slot.run_policy_override(),
+        None,
+        "the next Start clears a leftover harness or previous-run override"
+    );
+    slot.stop();
+}
+
+#[cfg(feature = "load")]
+#[test]
 fn script_requested_stop_cleans_slot_work_and_allows_fresh_restart() {
     let source = r#"
 import { ScriptRunner } from '../../runtime/ScriptRunner.js';

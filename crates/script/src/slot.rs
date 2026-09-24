@@ -218,6 +218,8 @@ pub struct SlotScript {
     runtime_generation: u64,
     last_settings_fp: Option<String>,
     native_input: Arc<NativeInputAuthority>,
+    /// Script-session run policy shared with the host slot.
+    run_policy_override: Arc<api::run_policy::RunPolicyOverrideCell>,
 }
 
 impl Default for SlotScript {
@@ -282,7 +284,36 @@ impl SlotScript {
             runtime_generation: 0,
             last_settings_fp: None,
             native_input: NativeInputAuthority::new(),
+            run_policy_override: Arc::new(api::run_policy::RunPolicyOverrideCell::new()),
         }
+    }
+
+    /// Construct a script slot sharing its run-policy overlay with the host
+    /// slot that drives the same client.
+    pub fn with_run_policy_override(
+        run_policy_override: Arc<api::run_policy::RunPolicyOverrideCell>,
+    ) -> Self {
+        run_policy_override.clear();
+        let mut slot = Self::new();
+        slot.run_policy_override = run_policy_override;
+        slot
+    }
+
+    /// Bind the host slot's overlay before a script starts.
+    pub fn bind_run_policy_override(
+        &mut self,
+        run_policy_override: Arc<api::run_policy::RunPolicyOverrideCell>,
+    ) -> Result<(), String> {
+        if self.has_instance() || matches!(self.state, RunState::Starting | RunState::Stopping) {
+            return Err("run policy cannot be rebound while a script is active".into());
+        }
+        run_policy_override.clear();
+        self.run_policy_override = run_policy_override;
+        Ok(())
+    }
+
+    pub fn run_policy_override(&self) -> Option<api::run_policy::RunPolicyOverride> {
+        self.run_policy_override.get()
     }
 
     /// True when either a compiled script or a JS isolate is installed.
@@ -311,6 +342,7 @@ impl SlotScript {
                 if self.load_active() {
                     return Err("loaded script active: stop it first".to_string());
                 }
+                self.run_policy_override.clear();
                 self.compiled = Some(script);
                 self.compiled_selected = selected;
                 #[cfg(feature = "load")]
@@ -423,6 +455,7 @@ impl SlotScript {
                     // in the log instead of silently replacing it.
                     self.pending_logs.push(e.clone());
                 }
+                self.run_policy_override.clear();
                 self.load_identity = Some(SlotLoadIdentity {
                     source: Arc::from(source),
                     shape,
@@ -448,6 +481,7 @@ impl SlotScript {
                         "compiled script active: stop it first".to_string(),
                     ));
                 }
+                self.run_policy_override.clear();
                 let identity = SlotLoadIdentity {
                     source: Arc::from(source),
                     shape,
@@ -514,12 +548,13 @@ impl SlotScript {
     /// the runtime generation (a queued Start already moved it).
     #[cfg(feature = "load")]
     fn spawn_isolate(&mut self, identity: SlotLoadIdentity, bump: bool) -> Result<(), String> {
-        let isolate = LoadIsolate::spawn_with_content(
+        let isolate = LoadIsolate::spawn_with_content_and_run_policy(
             identity.source.to_string(),
             identity.shape,
             identity.siblings.iter().cloned().collect(),
             identity.game_data.clone(),
             Arc::clone(&identity.named_banks),
+            Arc::clone(&self.run_policy_override),
         )?;
         isolate.post_loadouts(&identity.loadouts);
         if let Some(bag) = identity.settings_bag.as_deref() {
@@ -776,6 +811,7 @@ impl SlotScript {
     /// (onStop hook plus the 2 s cap) runs on a reaper; observe completes
     /// it. Compiled teardown still runs on this thread.
     pub fn stop(&mut self) {
+        self.run_policy_override.clear();
         self.lifecycle_receipt = None;
         self.revoke_native_input();
         // The compiled clue machine's abort belongs to the pump thread (its
@@ -1298,6 +1334,7 @@ impl SlotScript {
                 }
             };
         }
+        self.run_policy_override.clear();
         self.revoke_native_input();
         if self.begin_async_stop(AfterStop::Restart) {
             // Stamp the recovery and its cooldown at the decision, as the
@@ -1563,6 +1600,7 @@ impl SlotScript {
 
 impl Drop for SlotScript {
     fn drop(&mut self) {
+        self.run_policy_override.clear();
         #[cfg(feature = "load")]
         if let Some(isolate) = self.load.take() {
             let (tx, _rx) = std::sync::mpsc::channel();

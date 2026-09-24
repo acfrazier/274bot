@@ -24,6 +24,7 @@ pub mod prot;
 pub mod query;
 pub mod quest_facts;
 pub mod random;
+pub mod run_policy;
 pub mod settle;
 pub mod shop_facts;
 pub mod snapshot;

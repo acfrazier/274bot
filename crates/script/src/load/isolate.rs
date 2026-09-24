@@ -293,6 +293,7 @@ impl LoadIsolate {
             siblings,
             None,
             std::sync::Arc::new(api::named_banks::NamedBankFacts::empty()),
+            std::sync::Arc::new(api::run_policy::RunPolicyOverrideCell::new()),
         )
     }
 
@@ -310,6 +311,7 @@ impl LoadIsolate {
             siblings,
             Some(game_data),
             std::sync::Arc::new(api::named_banks::NamedBankFacts::empty()),
+            std::sync::Arc::new(api::run_policy::RunPolicyOverrideCell::new()),
         )
     }
 
@@ -322,7 +324,33 @@ impl LoadIsolate {
         game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
         named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
     ) -> Result<Self, String> {
-        Self::spawn_inner(js, shape, siblings, game_data, named_banks)
+        Self::spawn_inner(
+            js,
+            shape,
+            siblings,
+            game_data,
+            named_banks,
+            std::sync::Arc::new(api::run_policy::RunPolicyOverrideCell::new()),
+        )
+    }
+
+    /// Spawn with the script-session run-policy cell shared by the host slot.
+    pub fn spawn_with_content_and_run_policy(
+        js: String,
+        shape: LoadShape,
+        siblings: Vec<(String, String)>,
+        game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
+        named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
+        run_policy_override: std::sync::Arc<api::run_policy::RunPolicyOverrideCell>,
+    ) -> Result<Self, String> {
+        Self::spawn_inner(
+            js,
+            shape,
+            siblings,
+            game_data,
+            named_banks,
+            run_policy_override,
+        )
     }
 
     /// Evaluate and instantiate the candidate in a throwaway Runtime
@@ -348,6 +376,7 @@ impl LoadIsolate {
             siblings,
             None,
             std::sync::Arc::new(api::named_banks::NamedBankFacts::empty()),
+            std::sync::Arc::new(api::run_policy::RunPolicyOverrideCell::new()),
         )
     }
 
@@ -357,6 +386,7 @@ impl LoadIsolate {
         siblings: Vec<(String, String)>,
         game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
         named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
+        run_policy_override: std::sync::Arc<api::run_policy::RunPolicyOverrideCell>,
     ) -> Result<Self, String> {
         ensure_platform();
         let (tx, rx) = mpsc::channel::<IsolateCmd>();
@@ -387,6 +417,7 @@ impl LoadIsolate {
                     siblings,
                     game_data,
                     named_banks,
+                    run_policy_override,
                     CmdQueue {
                         rx,
                         queued: thread_queued,

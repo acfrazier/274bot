@@ -720,6 +720,10 @@ pub(crate) fn shim_modules() -> Vec<Module> {
             include_str!("market_maker.js"),
         ),
         Module::new(
+            "/rs2b0t/bot/runtime/RunManager.js",
+            include_str!("run_manager.js"),
+        ),
+        Module::new(
             "/rs2b0t/bot/runtime/Settings.js",
             include_str!("settings.js"),
         ),

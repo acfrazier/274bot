@@ -798,6 +798,33 @@ fn auto_run_20_0_20_sends_twice() {
 }
 
 #[test]
+fn script_run_override_applies_until_shared_cell_is_cleared() {
+    let mut client = prepare_client(
+        cfg(),
+        1,
+        Arc::new(Cache::default()),
+        Arc::new(vec![]),
+        Vec::new(),
+    );
+    let mut slot = SlotLoop::new();
+    ingame_scene2(&mut client);
+    client.runenergy = 20;
+    client.gens.stat = 1;
+
+    slot.run_policy_override
+        .set(Some(api::run_policy::RunPolicyOverride {
+            run_auto: None,
+            energy_min: Some(80),
+        }));
+    slot.after_drain(&mut client);
+    assert_eq!(slot.run_sends, 0, "session threshold overrides global 20");
+
+    slot.run_policy_override.clear();
+    slot.after_drain(&mut client);
+    assert_eq!(slot.run_sends, 1, "clear falls back to unchanged global 20");
+}
+
+#[test]
 fn already_running_echo_does_not_send() {
     let mut ifaces = vec![None; 154];
     ifaces[152] = Some(Box::new(IfType::default()));

@@ -26,6 +26,33 @@ fn json_i32(value: Option<&serde_json::Value>) -> Option<i32> {
     })
 }
 
+fn run_energy_min(value: &serde_json::Value) -> Option<i32> {
+    value
+        .as_f64()
+        .filter(|number| number.is_finite())
+        // Run energy is integral. Comparing it with the frozen numeric floor
+        // is equivalent to comparing it with that floor rounded upward.
+        .map(|number| number.ceil() as i32)
+}
+
+fn run_policy_override(
+    value: Option<&serde_json::Value>,
+) -> Option<api::run_policy::RunPolicyOverride> {
+    let value = value?;
+    if value.is_null() {
+        return None;
+    }
+    let object = value.as_object();
+    Some(api::run_policy::RunPolicyOverride {
+        run_auto: object
+            .and_then(|policy| policy.get("runAuto"))
+            .and_then(serde_json::Value::as_bool),
+        energy_min: object
+            .and_then(|policy| policy.get("energyMin"))
+            .and_then(run_energy_min),
+    })
+}
+
 /// A posted combat-tab label as the frozen `parseInterfaceCombatStyle` reads
 /// it: one leading `(` and one trailing `)` dropped, trimmed, lowercased.
 fn interface_style(label: &str) -> Option<&'static str> {
@@ -149,6 +176,7 @@ pub(super) fn wire_runtime(
     siblings: &[(String, String)],
     game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
     named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
+    run_policy_override_cell: std::sync::Arc<api::run_policy::RunPolicyOverrideCell>,
 ) -> Result<(), String> {
     if shape == LoadShape::Reject {
         return Err("not a bot shape".to_string());
@@ -158,6 +186,15 @@ pub(super) fn wire_runtime(
         Ok(Some(2)) => super::shape::ApiFamily::V2,
         _ => super::shape::ApiFamily::Unversioned,
     };
+    runtime
+        .register_function(
+            "__rs2b0t_run_override",
+            move |args: &[serde_json::Value]| {
+                run_policy_override_cell.set(run_policy_override(args.first()));
+                Ok(serde_json::Value::Null)
+            },
+        )
+        .map_err(|e| format!("register run override: {e}"))?;
     runtime
         .register_function(
             "__rs2b0t_now",

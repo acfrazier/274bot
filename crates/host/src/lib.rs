@@ -12,8 +12,9 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use api::interact::set_run;
+use api::run_policy::RunPolicyOverrideCell;
 use api::snapshot::GameSnapshot;
-use auto_run::{auto_run_ready, auto_run_tick};
+use auto_run::{auto_run_ready, auto_run_tick, resolve_run_policy, RunPolicy};
 use client::client::{Client, ClientConfig};
 use client::config::{Cache, IfType, IfTypeMut};
 use client::render::backend::FrameOutput;
@@ -193,17 +194,16 @@ impl Host {
     /// runs `mainloop`, and renders (via the slot's optional `Renderer`)
     /// only while `client.draw` is on. Dirty snapshot families
     /// rebuild from [`DrainResult::dirty`] (not `Pump::dirty()` after
-    /// drain); think (auto-run) reads
-    /// energy from the snapshot stat view when it has been rebuilt. The
-    /// third observe arg is the count of accepted auto-run `set_run(true)`
-    /// sends (from the previous tick); the fourth is the [`RandomStatus`]
-    /// the previous frame's guardian published — the observe copies it
-    /// onto the slot status row and gates script tick / follow on its
-    /// hold. Observe's return is whether the slot has script/cheat/nav
+    /// drain); think (auto-run) reads energy from the live client field.
+    /// The third observe arg is the count of accepted auto-run
+    /// `set_run(true)` sends (from the previous tick); the fourth is the
+    /// [`RandomStatus`] the previous frame's guardian published — the observe
+    /// copies it onto the slot status row and gates script tick / follow on
+    /// its hold. Observe's return is whether the slot has script/cheat/nav
     /// work, which keeps a busy slot on the frame loop. `settings` is the
-    /// slot's vault profile settings (the guardian's toggle); `knock` is
-    /// the script's rising-edge `on_random` arm (`Host` when the slot has
-    /// no scripts).
+    /// slot's vault profile settings (the guardian's toggle); `knock` is the
+    /// script's rising-edge `on_random` arm (`Host` when the slot has no
+    /// scripts).
     ///
     /// The scheduler is event-driven: a slot that captures input, is still
     /// loading (TV static), or runs full-rate TV keeps the fixed 20 ms
@@ -217,9 +217,10 @@ impl Host {
     /// is the first thing that drains it. A wake that consumed no bytes
     /// (EOF, partial packet) skips the socket on the next park so it cannot
     /// busy-spin.
-    // The pub surface threads the slot's shared handles plus the guardian
-    // status/knock; a context struct would churn every call site, so the
-    // arg count is allowed on purpose (same as host-play's observe).
+    ///
+    /// This entry point uses the default global auto-run policy without a
+    /// shared script overlay. Script integrations use
+    /// [`Host::run_client_with_run_policy`].
     #[allow(clippy::too_many_arguments)]
     pub fn run_client<F, P, K>(
         client: &mut Client,
@@ -231,6 +232,83 @@ impl Host {
         input: Option<Arc<SlotInput>>,
         mailbox: Option<Arc<FrameBuf>>,
         ctl: Option<Arc<SlotPark>>,
+        observe: F,
+        probe: P,
+        knock: K,
+    ) where
+        F: FnMut(&mut Client, &str, u32, &RandomStatus) -> bool,
+        P: FnMut(&mut Client) -> bool,
+        K: FnMut(&DetectedRandom) -> RandomClaim,
+    {
+        Self::run_client_inner(
+            client,
+            username,
+            settings,
+            random_events,
+            lamp_auto,
+            lamp_skill,
+            input,
+            mailbox,
+            ctl,
+            Arc::new(RunPolicyOverrideCell::new()),
+            observe,
+            probe,
+            knock,
+        );
+    }
+
+    /// Run a script-hosting slot with the overlay cell owned by the matching
+    /// script slot. Start and Stop clear that cell; `RunManager.override`
+    /// replaces it.
+    #[allow(clippy::too_many_arguments)]
+    pub fn run_client_with_run_policy<F, P, K>(
+        client: &mut Client,
+        username: &str,
+        settings: ProfileSettings,
+        random_events: Arc<AtomicBool>,
+        lamp_auto: Arc<AtomicBool>,
+        lamp_skill: Arc<Mutex<String>>,
+        input: Option<Arc<SlotInput>>,
+        mailbox: Option<Arc<FrameBuf>>,
+        ctl: Option<Arc<SlotPark>>,
+        run_policy_override: Arc<RunPolicyOverrideCell>,
+        observe: F,
+        probe: P,
+        knock: K,
+    ) where
+        F: FnMut(&mut Client, &str, u32, &RandomStatus) -> bool,
+        P: FnMut(&mut Client) -> bool,
+        K: FnMut(&DetectedRandom) -> RandomClaim,
+    {
+        Self::run_client_inner(
+            client,
+            username,
+            settings,
+            random_events,
+            lamp_auto,
+            lamp_skill,
+            input,
+            mailbox,
+            ctl,
+            run_policy_override,
+            observe,
+            probe,
+            knock,
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn run_client_inner<F, P, K>(
+        client: &mut Client,
+        username: &str,
+        settings: ProfileSettings,
+        random_events: Arc<AtomicBool>,
+        lamp_auto: Arc<AtomicBool>,
+        lamp_skill: Arc<Mutex<String>>,
+        input: Option<Arc<SlotInput>>,
+        mailbox: Option<Arc<FrameBuf>>,
+        ctl: Option<Arc<SlotPark>>,
+        run_policy_override: Arc<RunPolicyOverrideCell>,
         mut observe: F,
         mut probe: P,
         mut knock: K,
@@ -244,6 +322,7 @@ impl Host {
             random_events,
             lamp_auto,
             lamp_skill,
+            run_policy_override,
             ..SlotLoop::new()
         };
         let mut run_sends = 0u32;
@@ -826,6 +905,8 @@ struct SlotLoop {
     snapshot: GameSnapshot,
     run_on: bool,
     run_sends: u32,
+    /// Script-session policy overlay shared with the matching script slot.
+    run_policy_override: Arc<RunPolicyOverrideCell>,
     /// The slot's real `ProfileSettings` (wired once by `run_client` from
     /// the vault profile; the guardian's toggle reads it). `random_events`,
     /// `lamp_auto`, and `lamp_skill` are refreshed each frame from the
@@ -886,6 +967,7 @@ impl SlotLoop {
             snapshot: GameSnapshot::new(),
             run_on: false,
             run_sends: 0,
+            run_policy_override: Arc::new(RunPolicyOverrideCell::new()),
             settings: ProfileSettings::default(),
             random_events: Arc::new(AtomicBool::new(true)),
             lamp_auto: Arc::new(AtomicBool::new(true)),
@@ -930,9 +1012,10 @@ impl SlotLoop {
             // Cannot be running; wins over a stale run-on echo.
             self.run_on = false;
         }
+        let policy = resolve_run_policy(self.run_policy_override.get(), RunPolicy::default());
         if self.snapshot.local_player().is_some()
             && auto_run_ready(client.ingame, client.scene_state)
-            && auto_run_tick(energy, self.run_on)
+            && auto_run_tick(energy, self.run_on, policy)
             && set_run(client, true)
         {
             self.run_on = true;

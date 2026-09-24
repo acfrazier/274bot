@@ -108,6 +108,7 @@ pub(super) fn isolate_main(
     siblings: Vec<(String, String)>,
     game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
     named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
+    run_policy_override: std::sync::Arc<api::run_policy::RunPolicyOverrideCell>,
     cmds: CmdQueue,
     out: Sender<ThreadMsg>,
     setup: Sender<Result<v8::IsolateHandle, String>>,
@@ -144,6 +145,7 @@ pub(super) fn isolate_main(
         &siblings,
         game_data,
         named_banks,
+        run_policy_override,
     ) {
         let _ = setup.send(Err(e));
         return;
