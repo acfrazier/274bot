@@ -54,11 +54,11 @@ pub fn native_applet() -> [f32; 2] {
     [STAGE_W, STAGE_H]
 }
 
-/// Offset of the native applet inside the Game pane: flush to the panel
-/// (right) and vertically centred. Extra width sits on the left.
+/// Offset of the native applet inside the Game pane: centred both ways,
+/// so spare width is split evenly on each side.
 pub fn applet_offset(avail: [f32; 2], size: [f32; 2]) -> [f32; 2] {
     [
-        (avail[0] - size[0]).max(0.0),
+        ((avail[0] - size[0]) * 0.5).max(0.0),
         ((avail[1] - size[1]) * 0.5).max(0.0),
     ]
 }
