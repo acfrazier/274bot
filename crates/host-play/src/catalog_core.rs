@@ -355,11 +355,10 @@ pub const STEEL_ARROW_ID: i32 = 886;
 pub const BODY_TALISMAN_ID: i32 = 1446;
 pub const BLOOD_RUNE_ID: i32 = 565;
 pub const CHAOS_RUNE_ID: i32 = 562;
-/// The six verifiable Guard drops: the loot list the AutoFighter bank cell
-/// injects (`loot=[iron ore, steel arrow, body talisman, blood/chaos/nature
-/// rune]`, whose item names resolve to exactly these ids) and the class its
-/// bank trip deposits — the same ArdyFighter already lists. A clue-only or
-/// junk drop is not one of these.
+/// The six verifiable Guard drops ArdyFighter lists in `DEFAULT_LOOT`
+/// (`iron ore, steel arrow, body talisman, blood/chaos/nature rune`, whose
+/// item names resolve to exactly these ids) and the class its bank trip
+/// deposits. A clue-only or junk drop is not one of these.
 pub const GUARD_DROP_IDS: [i32; 6] = [
     IRON_ORE_ID,
     STEEL_ARROW_ID,
@@ -6093,8 +6092,8 @@ pub fn validate_case_baseline_with_preparation(
                     CoreCase::ChaosDruidYanille => baseline.level("agility") >= 40,
                     // Bank cells start from a wielded melee weapon: every one of
                     // these cards deposits (or is told to deposit) the pack, so a
-                    // carried weapon would be stashed instead of used. The Guard
-                    // loot class is refused by `combat_baseline_ready` itself
+                    // carried weapon would be stashed instead of used. Each
+                    // card's loot class is refused by `combat_baseline_ready` itself
                     // (`combat_loot_count == 0`): the cell's deposit class must
                     // not be seeded before Start.
                     CoreCase::AutoFighterBank => baseline.equipment_id(ADAMANT_SCIMITAR_ID) == 1,
@@ -6112,7 +6111,7 @@ pub fn validate_case_baseline_with_preparation(
                     }
                     CoreCase::ArdyFighterBank => {
                         // Guard-drop emptiness is `combat_baseline_ready`'s
-                        // `CombatLoot::GuardDrop` count == 0, same as AutoFighter.
+                        // `CombatLoot::GuardDrop` count == 0.
                         baseline.equipment_id(ADAMANT_SCIMITAR_ID) == 1
                             && baseline.item_id(CAKE_ID) == 0
                             && baseline.item_id(CHOCOLATE_CAKE_ID) == 0
@@ -6529,7 +6528,7 @@ pub fn validate_case_baseline_with_preparation(
             "Ardougne Guard (2661,3306,0), Attack/Strength/Hitpoints 40, Thieving 5, scimitar 1331, empty cake/bread/slice, bank Off"
         }
         CoreCase::AutoFighterBank => {
-            "Ardougne Guard (2661,3306,0) r8, Attack/Strength/Hitpoints 40, trout 8, worn scimitar 1331, banking Auto, empty Guard-drop class 440/886/1446/565/562/561"
+            "Ardougne Guard (2661,3306,0) r8, Attack/Strength/Hitpoints 40, trout 8, worn scimitar 1331, banking Auto, loot Bones, buryBones off, empty 526"
         }
         CoreCase::MossGiantBank => {
             "Moss safespot (2553,3406,0) r10, Attack/Strength/Hitpoints 40, worn scimitar 1331, lobster 2 (below its restock line), empty 532/225"
@@ -8259,9 +8258,12 @@ pub enum CombatLoot {
     /// `DragonBonesOrHide` cannot distinguish that pair from two of one id.
     DragonBonesAndHide,
     /// Guard-drop pack stock: any one of the six verifiable Guard drops
-    /// ([`GUARD_DROP_IDS`]) landing in the pack. AutoFighter bank injects that
-    /// list; ArdyFighter already lists the same names in `DEFAULT_LOOT`.
+    /// ([`GUARD_DROP_IDS`]) landing in the pack. ArdyFighter lists the same
+    /// names in `DEFAULT_LOOT`.
     GuardDrop,
+    /// Plain Bones (526) in the pack: the Guard's guaranteed death drop that
+    /// AutoFighter bank injects as its only `loot` with burial off.
+    Bones,
     /// RockCrab PeriodicBank listed loot the bank cell can verify by id.
     SapphireOrCasket,
     None,
@@ -8551,8 +8553,9 @@ pub fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
         // (MossGiant banks when the pack runs dry, ChaosDruidKiller when the
         // carried food is under `foodWithdraw`). AutoFighter finishes its
         // fights instantly at these levels, so the cell's trip end is the
-        // injected `bankAtLootSlots=1`: the loot class is the card's own
-        // injected Guard list, and the pack starts empty of it.
+        // injected `bankAtLootSlots=1`: the loot class is the card's injected
+        // `loot=[Bones]` (the Guard's guaranteed drop, burial off), and the
+        // pack starts empty of it.
         CoreCase::AutoFighterBank => Some(CombatSpec {
             target: "Guard",
             stand: ARDY_THIEVER_STAND,
@@ -8561,7 +8564,7 @@ pub fn combat_spec(case: CoreCase) -> Option<CombatSpec> {
             food_count: AUTO_FIGHTER_FOOD,
             weapon_id: ADAMANT_SCIMITAR_ID,
             style: CombatStyleWitness::Strength,
-            loot: CombatLoot::GuardDrop,
+            loot: CombatLoot::Bones,
             extra: CombatExtra::None,
             projectile: None,
             consumable: CombatConsumable::None,
@@ -8785,10 +8788,11 @@ pub fn combat_bank_spec(case: CoreCase) -> Option<CombatBankSpec> {
     match case {
         // `banking=Auto`: BankRun walks to the nearest bank from the anchor and
         // deposits everything its keep-list does not hold, then restocks food.
-        // The deposit class is the card's own injected Guard loot list: the
-        // pack only ever holds it because a Guard dropped it.
+        // The deposit class is the card's own injected `loot=[Bones]`: burial
+        // is off, so the pack only ever holds Bones because a Guard dropped
+        // them and the script looted them.
         CoreCase::AutoFighterBank => Some(CombatBankSpec {
-            deposit: &GUARD_DROP_IDS,
+            deposit: &[BONES_ID],
             stand: ARDOUGNE_EAST_BANK,
             stand_radius: 6,
             restock: Some(TROUT_ID),
@@ -9059,6 +9063,7 @@ pub fn combat_loot_count(observation: &Observation, loot: CombatLoot) -> i32 {
             .iter()
             .map(|id| observation.item_id(*id))
             .sum(),
+        CombatLoot::Bones => observation.item_id(BONES_ID),
         CombatLoot::SapphireOrCasket => {
             observation.item_id(UNCUT_SAPPHIRE_ID) + observation.item_id(CASKET_ID)
         }
@@ -9725,6 +9730,7 @@ pub fn combat_loot_id(id: i32, loot: CombatLoot) -> bool {
             id == DRAGON_BONES_ID || id == GREEN_DRAGONHIDE_ID
         }
         CombatLoot::GuardDrop => GUARD_DROP_IDS.contains(&id),
+        CombatLoot::Bones => id == BONES_ID,
         CombatLoot::SapphireOrCasket => id == UNCUT_SAPPHIRE_ID || id == CASKET_ID,
         CombatLoot::None => false,
     }

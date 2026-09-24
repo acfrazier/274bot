@@ -821,6 +821,7 @@ mod tests {
             shop_open: false,
             shop_stock: Vec::new(),
             main_make_ids: BTreeSet::new(),
+            ..Default::default()
         }
     }
 
@@ -10554,14 +10555,11 @@ export default class NativeStop extends LoopingBot {{
             false,
         );
         validate_case_baseline(case, &baseline).unwrap();
-        // The class item has to be a Guard drop: any seeded deposit-class
-        // stock fails the baseline (mirrors moss_giant_bank's seeded bones).
+        // The class item has to be a looted Guard drop: seeded Bones fail the
+        // baseline (mirrors moss_giant_bank's seeded bones).
         let mut seeded_loot = baseline.clone();
-        seeded_loot.item_ids.insert(IRON_ORE_ID, 1);
+        seeded_loot.item_ids.insert(BONES_ID, 1);
         assert!(validate_case_baseline(case, &seeded_loot).is_err());
-        let mut seeded_rune = baseline.clone();
-        seeded_rune.item_ids.insert(BLOOD_RUNE_ID, 1);
-        assert!(validate_case_baseline(case, &seeded_rune).is_err());
         let mut carried_weapon_only = baseline.clone();
         carried_weapon_only.equipment_ids.clear();
         assert!(validate_case_baseline(case, &carried_weapon_only).is_err());
@@ -10596,12 +10594,13 @@ export default class NativeStop extends LoopingBot {{
             0,
             false,
         );
-        // The kill's drop lands in the pack: the class only exists because the
-        // script looted it, and `bankAtLootSlots=1` ends the trip on it.
+        // The kill's guaranteed Bones land in the pack: burial is off, the
+        // class only exists because the script looted it, and
+        // `bankAtLootSlots=1` ends the trip on it.
         let looted = bank_obs(
             case,
             ARDY_THIEVER_STAND,
-            &[(TROUT_ID, AUTO_FIGHTER_FOOD), (IRON_ORE_ID, 1)],
+            &[(TROUT_ID, AUTO_FIGHTER_FOOD), (BONES_ID, 1)],
             &[(TROUT_ID, 20)],
             &[("strength", 40)],
             &[],
@@ -10614,7 +10613,7 @@ export default class NativeStop extends LoopingBot {{
             case,
             ARDOUGNE_EAST_BANK,
             &[(TROUT_ID, AUTO_FIGHTER_FOOD)],
-            &[(TROUT_ID, 20), (IRON_ORE_ID, 1)],
+            &[(TROUT_ID, 20), (BONES_ID, 1)],
             &[("strength", 40)],
             &[],
             false,
@@ -10626,7 +10625,7 @@ export default class NativeStop extends LoopingBot {{
             case,
             ARDOUGNE_EAST_BANK,
             &[(TROUT_ID, AUTO_FIGHTER_BANK_RESTOCK)],
-            &[(TROUT_ID, 18), (IRON_ORE_ID, 1)],
+            &[(TROUT_ID, 18), (BONES_ID, 1)],
             &[("strength", 40)],
             &[],
             false,
@@ -10638,7 +10637,7 @@ export default class NativeStop extends LoopingBot {{
             case,
             ARDOUGNE_EAST_BANK,
             &[(TROUT_ID, AUTO_FIGHTER_BANK_RESTOCK)],
-            &[(TROUT_ID, 18), (IRON_ORE_ID, 1)],
+            &[(TROUT_ID, 18), (BONES_ID, 1)],
             &[("strength", 40)],
             &[],
             false,
@@ -10650,7 +10649,7 @@ export default class NativeStop extends LoopingBot {{
             case,
             ARDY_THIEVER_STAND,
             &[(TROUT_ID, AUTO_FIGHTER_BANK_RESTOCK)],
-            &[(TROUT_ID, 18), (IRON_ORE_ID, 1)],
+            &[(TROUT_ID, 18), (BONES_ID, 1)],
             &[("strength", 40)],
             &[],
             false,
@@ -10662,7 +10661,7 @@ export default class NativeStop extends LoopingBot {{
             case,
             ARDY_THIEVER_STAND,
             &[(TROUT_ID, AUTO_FIGHTER_BANK_RESTOCK)],
-            &[(TROUT_ID, 18), (IRON_ORE_ID, 1)],
+            &[(TROUT_ID, 18), (BONES_ID, 1)],
             &[("strength", 60)],
             &[combat_npc(3, "Guard", 20, true, ARDY_THIEVER_STAND)],
             true,
@@ -10670,16 +10669,19 @@ export default class NativeStop extends LoopingBot {{
             6,
             false,
         );
-        assert!(witness(
+        // The live trip: looted Bones, fresh East Ardougne deposit, trout
+        // restock, close, return and further Strength XP.
+        let trip = witness(
             case,
             &baseline,
             [
                 &first, &defeat, &looted, &deposited, &restocked, &closed, &returned, &further,
-                &further
-            ]
-        )
-        .qualify()
-        .is_ok());
+                &further,
+            ],
+        );
+        if let Err(error) = trip.qualify() {
+            panic!("looted Bones banked at East Ardougne must qualify: {error}");
+        }
         // The bank never took the pack stock: no deposit, nothing to qualify.
         assert!(witness(
             case,
@@ -10694,7 +10696,7 @@ export default class NativeStop extends LoopingBot {{
             case,
             ARDOUGNE_EAST_BANK,
             &[(TROUT_ID, AUTO_FIGHTER_FOOD)],
-            &[(TROUT_ID, 20), (IRON_ORE_ID, 1)],
+            &[(TROUT_ID, 20), (BONES_ID, 1)],
             &[("strength", 40)],
             &[],
             false,
@@ -10722,7 +10724,7 @@ export default class NativeStop extends LoopingBot {{
         let open_only = bank_obs(
             case,
             ARDOUGNE_EAST_BANK,
-            &[(TROUT_ID, AUTO_FIGHTER_FOOD), (IRON_ORE_ID, 1)],
+            &[(TROUT_ID, AUTO_FIGHTER_FOOD), (BONES_ID, 1)],
             &[(TROUT_ID, 20)],
             &[("strength", 40)],
             &[],
@@ -10743,7 +10745,7 @@ export default class NativeStop extends LoopingBot {{
             case,
             ARDY_THIEVER_STAND,
             &[(TROUT_ID, AUTO_FIGHTER_FOOD)],
-            &[(TROUT_ID, 20), (IRON_ORE_ID, 1)],
+            &[(TROUT_ID, 20), (BONES_ID, 1)],
             &[("strength", 40)],
             &[],
             false,
@@ -10775,6 +10777,24 @@ export default class NativeStop extends LoopingBot {{
         )
         .qualify()
         .is_err());
+        // A Guard drop outside the card's injected `loot=[Bones]` is not the
+        // trip's loot: looting and banking iron ore cannot stand in for it.
+        let with_ore = |obs: &Observation| {
+            let mut obs = obs.clone();
+            if let Some(count) = obs.item_ids.remove(&BONES_ID) {
+                obs.item_ids.insert(IRON_ORE_ID, count);
+            }
+            if let Some(count) = obs.bank_ids.remove(&BONES_ID) {
+                obs.bank_ids.insert(IRON_ORE_ID, count);
+            }
+            obs
+        };
+        let ore_trip = [
+            &first, &defeat, &looted, &deposited, &restocked, &closed, &returned, &further,
+            &further,
+        ]
+        .map(with_ore);
+        assert!(witness(case, &baseline, ore_trip.each_ref()).qualify().is_err());
 
         // --- moss_giant_bank: food-gone trip end, Ardougne West, lobster restock.
         let case = CoreCase::parse("moss_giant_bank").expect("bank case registered");
@@ -11268,8 +11288,8 @@ export default class NativeStop extends LoopingBot {{
         let mut seeded_cake = baseline.clone();
         seeded_cake.item_ids.insert(CAKE_ID, 1);
         assert!(validate_case_baseline(case, &seeded_cake).is_err());
-        // Same class as auto_fighter_bank: a pre-Start Guard drop would fire
-        // `bankEveryItems=1` without a kill-fed pickup.
+        // A pre-Start Guard drop would fire `bankEveryItems=1` without a
+        // kill-fed pickup.
         let mut seeded_loot = baseline.clone();
         seeded_loot.item_ids.insert(IRON_ORE_ID, 1);
         assert!(validate_case_baseline(case, &seeded_loot).is_err());
@@ -11547,7 +11567,7 @@ export default class NativeStop extends LoopingBot {{
                 }
                 // Settings.list only accepts a JSON array; a CSV string falls
                 // back to AutoFighter's DEFAULT_LOOT (gems+clue), which Guards
-                // cannot feed. merge_bag must keep the injected Guard names.
+                // cannot feed. merge_bag must keep the injected Bones list.
                 if name == "auto_fighter_bank" {
                     let schema = script::settings_schema_from_source(&source);
                     let loot = schema
@@ -11561,15 +11581,13 @@ export default class NativeStop extends LoopingBot {{
                     let bag = script::merge_bag(&schema, &Map::new(), Some(&inject));
                     assert_eq!(
                         bag.get("loot"),
-                        Some(&json!([
-                            "iron ore",
-                            "steel arrow",
-                            "body talisman",
-                            "blood rune",
-                            "chaos rune",
-                            "nature rune"
-                        ])),
-                        "{name}: {card} at {commit} must deliver the injected Guard loot array, not DEFAULT_LOOT"
+                        Some(&json!(["Bones"])),
+                        "{name}: {card} at {commit} must deliver the injected Bones loot array, not DEFAULT_LOOT"
+                    );
+                    assert_eq!(
+                        bag.get("buryBones"),
+                        Some(&json!(false)),
+                        "{name}: {card} at {commit} must keep looted Bones for the deposit"
                     );
                 }
             }
