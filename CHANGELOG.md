@@ -68,7 +68,7 @@ best-effort and untested in this release.
 
 ### Rendering and client
 
-- Client `cbc2b9d`: side-step walk sequence names, zero-delay frames play for
+- Client `bc9b7f7`: side-step walk sequence names, zero-delay frames play for
   one cycle as in Java, GPU texture coordinates keep their sign across zero,
   GPU tests skip cleanly without an adapter, and clippy 1.98 cleanup.
 
