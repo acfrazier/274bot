@@ -855,8 +855,8 @@ fn fit_applet_keeps_aspect_and_does_not_dpi_double() {
     assert_eq!(fit_applet([765.0, 503.0]), [765.0, 503.0]);
     let off = applet_offset([1200.0, 700.0], [765.0, 503.0]);
     assert!(
-        (off[0] - (1200.0 - 765.0)).abs() < 0.01,
-        "flush to the panel"
+        (off[0] - (1200.0 - 765.0) * 0.5).abs() < 0.01,
+        "centred in the pane"
     );
     assert!((off[1] - (700.0 - 503.0) * 0.5).abs() < 0.01);
     // Grid cells downscale; the non-grid Game blit stays native_applet.
