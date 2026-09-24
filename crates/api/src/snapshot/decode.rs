@@ -1,0 +1,2084 @@
+use super::*;
+
+impl NpcView {
+    fn from_slot(
+        index: usize,
+        npc: &ClientNpc,
+        base: (i32, i32),
+        level: i32,
+        distance: i32,
+        loop_cycle: i32,
+        cache: &Cache,
+    ) -> Self {
+        let entity = &npc.entity;
+        let (name, actions, npc_level, size) = match npc.r#type.and_then(|t| cache.npcs.get(t)) {
+            Some(t) => (
+                Some(t.name.clone()),
+                t.op.clone(),
+                t.vislevel.max(0),
+                t.size,
+            ),
+            None => (None, Vec::new(), 0, entity.size),
+        };
+        NpcView {
+            index,
+            r#type: npc.r#type,
+            name,
+            actions,
+            tile: entity_world_tile(entity, base, level),
+            distance,
+            animation: entity.primary_anim,
+            pose_animation: entity.secondary_anim,
+            orientation: entity.yaw,
+            target_orientation: entity.dst_yaw,
+            overhead_text: entity.chat_message.clone(),
+            spot_animation: entity.spotanim_id,
+            health: entity.health,
+            total_health: entity.total_health,
+            face_entity: entity.face_entity,
+            target: decode_target(entity.face_entity),
+            moving: entity.route_length > 0,
+            running: entity.primary_anim == entity.runanim,
+            in_combat: actor_in_combat(entity.combat_cycle, loop_cycle),
+            level: npc_level,
+            size,
+            network: entity_network_tile(entity, base, level),
+            x: entity.x,
+            z: entity.z,
+            yaw: entity.yaw,
+        }
+    }
+}
+
+impl GameSnapshot {
+    pub(super) fn rebuild_stat(&mut self, client: &Client) -> bool {
+        if !track(client.gens.stat, &mut self.gens.stat) {
+            return false;
+        }
+        self.runenergy = client.runenergy;
+        self.stats = (0..Skill::count)
+            .map(|i| StatView {
+                index: i as i32,
+                name: Skill::names[i].to_string(),
+                effective: client.stat_effective_level[i],
+                base: client.stat_base_level[i],
+                xp: client.stat_xp[i],
+                used: Skill::used[i],
+            })
+            .collect();
+        true
+    }
+
+    /// Varp-family rebuild: the whole `Client.var` table, one view per
+    /// definition (unset entries read 0), gated on the varp gen.
+    pub(super) fn rebuild_varps(&mut self, client: &Client) -> bool {
+        if !track(client.gens.varp, &mut self.gens.varp) {
+            return false;
+        }
+        self.varps = (0..client.cache.varps.len())
+            .map(|i| VarpView {
+                index: i as i32,
+                value: client.var.get(i).copied().unwrap_or(0),
+            })
+            .collect();
+        true
+    }
+
+    /// Player-family rebuild: the scene origin, the local player's world
+    /// tile (base + route head), the `LocalPlayerView`, and the remote
+    /// `players` list. `REBUILD_NORMAL` bumps every gen, so a new world
+    /// origin re-arms this too.
+    pub(super) fn rebuild_player(&mut self, client: &Client, advance_tick: bool) -> bool {
+        if !self.family_observed(client, Family::Player) {
+            return false;
+        }
+        if !track(client.gens.player, &mut self.gens.player) {
+            return false;
+        }
+        if advance_tick {
+            // One `PLAYER_INFO` per game tick: the snapshot's tick count.
+            self.tick = self.tick.wrapping_add(1);
+        }
+        if !client.ingame || client.local_player.is_none() {
+            self.thieving_stun_tick = None;
+            self.thieving_stun_stamp = None;
+        } else if let Some(player) = client.local_player.as_ref() {
+            // Packet decoder stamps every SPOTANIM, including a restarted
+            // animation with the same ID. Visual expiry must not erase onset.
+            if player.spotanim_id == 245
+                && self.thieving_stun_stamp != Some(player.spotanim_last_cycle)
+            {
+                self.thieving_stun_tick = Some(self.tick);
+                self.thieving_stun_stamp = Some(player.spotanim_last_cycle);
+            }
+        }
+        self.self_slot = client.self_slot;
+        let base = (client.map_build_base_x, client.map_build_base_z);
+        self.base = Some(base);
+        self.tile = client.local_player.as_ref().map(|lp| {
+            (
+                base.0 + lp.route_x[0],
+                base.1 + lp.route_z[0],
+                // The scene level (`minusedlevel`), like every actor view.
+                client.minusedlevel,
+            )
+        });
+        let level = client.minusedlevel;
+        self.player = client.local_player.as_ref().map(|lp| LocalPlayerView {
+            player: PlayerView {
+                index: client.self_slot.max(0) as usize,
+                actor: actor_view(
+                    &lp.entity,
+                    base,
+                    level,
+                    0, // the local player's distance to itself
+                    lp.name.clone(),
+                    client.player_op.to_vec(),
+                    client.loop_cycle,
+                ),
+                combat_level: lp.combat_level,
+                skill_level: lp.skill_level,
+            },
+            energy: client.runenergy,
+            weight: client.runweight,
+        });
+        self.players.clear();
+        self.players.reserve(client.player_count as usize);
+        let local_tile = local_world_tile(client);
+        for i in 0..client.player_count as usize {
+            let index = client.player_ids[i] as usize;
+            if let Some(player) = client.players.get(index).and_then(|p| p.as_ref()) {
+                let tile = entity_world_tile(&player.entity, base, level);
+                let distance = local_tile
+                    .map(|(lx, lz)| chebyshev(tile.x, tile.z, lx, lz))
+                    .unwrap_or(0);
+                self.players.push(PlayerView {
+                    index,
+                    actor: actor_view(
+                        &player.entity,
+                        base,
+                        level,
+                        distance,
+                        player.name.clone(),
+                        client.player_op.to_vec(),
+                        client.loop_cycle,
+                    ),
+                    combat_level: player.combat_level,
+                    skill_level: player.skill_level,
+                });
+            }
+        }
+        self.refresh_loc_distances(client);
+        true
+    }
+
+    /// Refresh native scalar facts that may change without a packet-family
+    /// generation. Clone the overhead string only when its value changes.
+    pub(super) fn refresh_native_facts(&mut self, client: &Client) {
+        let local_overhead_text = client
+            .ingame
+            .then(|| client.local_player.as_ref()?.entity.chat_message.as_deref())
+            .flatten();
+        if self.local_overhead_text.as_deref() != local_overhead_text {
+            self.local_overhead_text = local_overhead_text.map(str::to_owned);
+        }
+        self.hint_tile = (client.ingame && client.hint_type == 2).then_some(HintTileView {
+            x: client.hint_tile_x,
+            z: client.hint_tile_z,
+        });
+        // Hitmarks live on the local entity and expire against loop_cycle;
+        // neither event bumps a packet family, so recompute every read.
+        self.taking_damage = local_player_taking_damage(client);
+    }
+
+    /// Rewrite cached loc Chebyshev distances when the local player tile
+    /// moves. Names, actions and the loc vec allocation stay put.
+    fn refresh_loc_distances(&mut self, client: &Client) {
+        let origin = local_world_tile(client);
+        if origin == self.loc_distance_tile {
+            return;
+        }
+        self.loc_distance_tile = origin;
+        let Some((lx, lz)) = origin else {
+            return;
+        };
+        for loc in &mut self.loc {
+            loc.distance = chebyshev(loc.tile.x, loc.tile.z, lx, lz);
+        }
+    }
+
+    /// Inv-family rebuild: zip the TYPE_INV iface's obj ids/counts. The
+    /// iface stores `obj_id + 1` (0 = empty), so the view carries the
+    /// real obj ids — the same convention as `ItemView.def.id`, the
+    /// `ObjNames` table and the evidence/`Proof::Item` consumers.
+    pub(super) fn rebuild_inv(&mut self, client: &Client) -> bool {
+        if !track(client.gens.inv, &mut self.gens.inv) {
+            return false;
+        }
+        self.inv_session_current = true;
+        self.inv.clear();
+        // The live inv is the side-tab-3 TYPE_INV container (the same the
+        // `inventory()` family reads); a naive first-TYPE_INV scan can
+        // pick an unrelated empty container (a shop/trade modal) and fail
+        // the nav `WorldState` gate closed. Tests/stub clients without a
+        // side tab fall back to the first TYPE_INV that actually holds
+        // decoded slots, else the first TYPE_INV in the table.
+        let inv = tab_inv_component(client, 3)
+            .and_then(|id| client.if_(id as usize))
+            .or_else(|| {
+                let mut first = None;
+                for com in client
+                    .ifaces_merged()
+                    .filter(|f| f.r#type == ComponentType::TYPE_INV)
+                {
+                    if com
+                        .link_obj_type
+                        .as_ref()
+                        .is_some_and(|ids| ids.iter().any(|id| *id > 0))
+                    {
+                        return Some(com);
+                    }
+                    if first.is_none() {
+                        first = Some(com);
+                    }
+                }
+                first
+            });
+        if let Some(inv) = inv {
+            if let (Some(ids), Some(counts)) = (&inv.link_obj_type, &inv.link_obj_number) {
+                self.inv = ids
+                    .iter()
+                    .zip(counts)
+                    .filter(|(id, _)| **id > 0)
+                    .map(|(id, n)| (*id - 1, *n))
+                    .collect();
+            }
+        }
+        true
+    }
+
+    /// Chat-family rebuild: the ring head (`chat_text[0]`) is the most
+    /// recent message, and the full ring becomes the `chat_lines` view
+    /// (index 0 = newest). Each line's `sequence` is the client's own
+    /// per-message counter (`chat_seq` bumps once per `add_chat`), so a
+    /// burst in one gen bump still gets distinct sequences that only move
+    /// forward.
+    pub(super) fn rebuild_chat(&mut self, client: &Client) -> bool {
+        if !track(client.gens.chat, &mut self.gens.chat) {
+            return false;
+        }
+        let latest = client.chat_text[0].clone();
+        self.chat = (!latest.is_empty()).then_some(latest);
+        let head_seq = client.chat_seq as i32;
+        self.chat_lines.clear();
+        for i in 0..100 {
+            let text = client.chat_text[i].clone();
+            if text.is_empty() {
+                break; // the ring is dense from the head (m8aq stops at the first hole)
+            }
+            self.chat_lines.push(ChatLineView {
+                type_: client.chat_type[i],
+                username: (!client.chat_username[i].is_empty())
+                    .then(|| client.chat_username[i].clone()),
+                text,
+                sequence: head_seq - i as i32,
+            });
+        }
+        true
+    }
+
+    /// Inventory rebuild: the inv tab's (side tab 3) TYPE_INV component,
+    /// with held ops from the obj defs. Gated on the iface + inv gens.
+    pub(super) fn rebuild_inventory(&mut self, client: &Client) -> bool {
+        if !self.inventory_gate.moved(client, self.inv_session_current) {
+            return false;
+        }
+        self.inventory.clear();
+        let Some(inv_id) = tab_inv_component(client, 3) else {
+            self.inventory_size = 0;
+            return true;
+        };
+        let Some(inv) = client.if_(inv_id as usize) else {
+            self.inventory_size = 0;
+            return true;
+        };
+        self.inventory_size = inv
+            .link_obj_type
+            .as_ref()
+            .map(|ids| ids.len() as i32)
+            .unwrap_or(0);
+        let (Some(ids), Some(counts)) = (&inv.link_obj_type, &inv.link_obj_number) else {
+            return true;
+        };
+        for (slot, stored) in ids
+            .iter()
+            .copied()
+            .enumerate()
+            .take(ids.len().min(counts.len()))
+        {
+            if stored <= 0 {
+                continue;
+            }
+            let id = stored - 1;
+            if let Some(view) = item_view(
+                &client.cache,
+                &inv,
+                slot,
+                ItemContainer::Inventory,
+                ItemActionFamily::Held,
+                cache_held_ops(&client.cache, id),
+            ) {
+                self.inventory.push(view);
+            }
+        }
+        true
+    }
+
+    /// Equipment rebuild: the worn-items tab's (side tab 4) TYPE_INV
+    /// component with its own interface ops.
+    pub(super) fn rebuild_equipment(&mut self, client: &Client) -> bool {
+        if !self.equipment_gate.moved(client, self.inv_session_current) {
+            return false;
+        }
+        self.equipment = tab_inv_component(client, 4)
+            .and_then(|com_id| inv_items(client, com_id, ItemContainer::Equipment))
+            .unwrap_or_default();
+        true
+    }
+
+    /// Bank rebuild: the open main modal's withdraw component (m8aq
+    /// `bankItems`).
+    pub(super) fn rebuild_bank(&mut self, client: &Client) -> bool {
+        if !self.bank_gate.moved(client, self.inv_session_current) {
+            return false;
+        }
+        let bank_component_id = if client.main_modal_id == -1 {
+            -1
+        } else {
+            let root = client.main_modal_id;
+            find_inv_component(client, root, |com| {
+                com.iop[0]
+                    .as_deref()
+                    .is_some_and(|s| s.to_ascii_lowercase().contains("withdraw"))
+            })
+            .unwrap_or(-1)
+        };
+        let modal = client.main_modal_packet_state();
+        let modal_delta = modal
+            .generation
+            .wrapping_sub(self.bank_modal_generation_seen);
+        if modal_delta != 0 {
+            self.bank_session_generation = self.bank_session_generation.wrapping_add(modal_delta);
+            self.bank_modal_generation_seen = modal.generation;
+        } else if bank_component_id != self.bank_component_id {
+            self.bank_session_generation = self.bank_session_generation.wrapping_add(1);
+        }
+
+        let track_com = if bank_component_id >= 0 {
+            bank_component_id
+        } else {
+            self.bank_component_id
+        };
+        if track_com >= 0 {
+            if let Some(state) = client.inventory_packet_state(track_com) {
+                self.note_bank_inv_state(
+                    track_com,
+                    state.generation,
+                    state.full_generation,
+                    state.full_observation,
+                    state.transmitting,
+                );
+            } else if self.bank_full_com != track_com {
+                self.bank_full_generation = 0;
+                self.bank_last_inv_com = -1;
+                self.bank_last_inv_generation = 0;
+                self.bank_last_full_observation = 0;
+            }
+        }
+
+        if bank_component_id < 0 {
+            if self.bank_inventory_session.is_some() || self.bank_component_id >= 0 {
+                let com = if self.bank_component_id >= 0 {
+                    self.bank_component_id
+                } else {
+                    self.bank_inventory_session
+                        .map(|session| session.main_com_id)
+                        .unwrap_or(-1)
+                };
+                let generation = if self.bank_last_inv_com == com {
+                    self.bank_last_inv_generation
+                } else {
+                    0
+                };
+                self.close_bank_inv_session(com, generation);
+            }
+        } else {
+            let same_com = bank_component_id == self.bank_component_id;
+            let closed_then_opened = same_com
+                && self.bank_component_id >= 0
+                && modal_delta != 0
+                && modal.closed_observation != 0
+                && modal.closed_observation < modal.opened_observation;
+            if closed_then_opened {
+                let generation = if self.bank_last_inv_com == bank_component_id {
+                    self.bank_last_inv_generation
+                } else {
+                    0
+                };
+                self.close_bank_inv_session(bank_component_id, generation);
+            } else if !same_com {
+                if let Some(session) = self.bank_inventory_session {
+                    let generation = if self.bank_last_inv_com == session.main_com_id {
+                        self.bank_last_inv_generation
+                    } else {
+                        0
+                    };
+                    self.close_bank_inv_session(session.main_com_id, generation);
+                }
+            }
+            let needs_open = !matches!(self.bank_inventory_session, Some(session) if session.main_com_id == bank_component_id);
+            if needs_open {
+                self.open_bank_inv_session(bank_component_id);
+            }
+        }
+
+        self.bank_component_id = bank_component_id;
+        self.bank_loaded = match self.bank_inventory_session {
+            Some(session) if session.main_com_id == bank_component_id => client
+                .inventory_packet_state(bank_component_id)
+                .is_some_and(|state| {
+                    state.transmitting
+                        && self.bank_full_generation > 0
+                        && self.bank_full_generation >= session.main_opened_at
+                }),
+            _ => false,
+        };
+        self.bank = if self.bank_component_id == -1 {
+            Vec::new()
+        } else {
+            inv_items(client, self.bank_component_id, ItemContainer::Bank).unwrap_or_default()
+        };
+        self.bank_note_controls = if client.main_modal_id == -1 {
+            None
+        } else {
+            bank_note_controls(client, client.main_modal_id)
+        };
+        true
+    }
+
+    fn note_bank_inv_state(
+        &mut self,
+        com_id: i32,
+        generation: u64,
+        full_generation: u64,
+        full_observation: u64,
+        transmitting: bool,
+    ) {
+        if !transmitting {
+            self.bank_full_generation = 0;
+        } else if self.bank_last_inv_com != com_id
+            || self.bank_last_full_observation != full_observation
+        {
+            self.bank_full_generation = if full_generation > 0 { generation } else { 0 };
+        }
+        self.bank_full_com = com_id;
+        self.bank_last_inv_com = com_id;
+        self.bank_last_inv_generation = generation;
+        self.bank_last_full_observation = full_observation;
+    }
+
+    fn close_bank_inv_session(&mut self, com_id: i32, generation: u64) {
+        if com_id >= 0 {
+            self.bank_prev_inv_com = com_id;
+            self.bank_prev_inv_generation = generation;
+        }
+        self.bank_inventory_session = None;
+    }
+
+    fn open_bank_inv_session(&mut self, com_id: i32) {
+        let main_opened_at = if self.bank_prev_inv_com == com_id {
+            self.bank_prev_inv_generation
+        } else {
+            0
+        };
+        self.bank_inventory_session = Some(BankInvSession {
+            main_com_id: com_id,
+            main_opened_at,
+        });
+    }
+
+    /// Bank-side rebuild: the open side modal's deposit component (m8aq
+    /// `bankSideItems`).
+    pub(super) fn rebuild_bank_side(&mut self, client: &Client) -> bool {
+        if !self.bank_side_gate.moved(client, self.inv_session_current) {
+            return false;
+        }
+        self.bank_side = if client.side_modal_id == -1 {
+            Vec::new()
+        } else {
+            let root = client.side_modal_id;
+            find_inv_component(client, root, |com| {
+                com.iop[0]
+                    .as_deref()
+                    .is_some_and(|s| s.to_ascii_lowercase().contains("deposit"))
+            })
+            .and_then(|com_id| inv_items(client, com_id, ItemContainer::BankSide))
+            .unwrap_or_default()
+        };
+        true
+    }
+
+    /// Trade rebuild: the 274 trade ifaces' state and containers. The
+    /// component ids are baked by the packed interface table, so the
+    /// reads work whether or not a trade is open (m8aq reads the same
+    /// hardcoded ids).
+    pub(super) fn rebuild_trade(&mut self, client: &Client) -> bool {
+        if !self.trade_gate.moved(client, self.inv_session_current) {
+            return false;
+        }
+        let my_offer =
+            inv_items(client, TRADEMAIN_INV, ItemContainer::TradeMyOffer).unwrap_or_default();
+        let their_offer = inv_items(client, TRADEMAIN_OTHER_INV, ItemContainer::TradeTheirOffer)
+            .map(|items| {
+                items
+                    .into_iter()
+                    .map(|mut item| {
+                        item.action_family = ItemActionFamily::None;
+                        item
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let side_pack =
+            inv_items(client, TRADESIDE_INV, ItemContainer::TradeSidePack).unwrap_or_default();
+        let (accept_component_id, decline_component_id) = trade_controls(client);
+        self.trade = TradeView {
+            offer_open: client.main_modal_id == TRADEMAIN,
+            confirm_open: client.main_modal_id == TRADECONFIRM,
+            my_offer,
+            their_offer,
+            side_pack,
+            partner: trade_partner(client),
+            accept_component_id,
+            decline_component_id,
+        };
+        true
+    }
+
+    /// Shop rebuild: the packed shop main modal's stock TYPE_INV plus the
+    /// shop side interface's player pack TYPE_INV. Both are empty while the
+    /// matching root is not open — never the backpack.
+    pub(super) fn rebuild_shop(&mut self, client: &Client) -> bool {
+        if !self.shop_gate.moved(client, self.inv_session_current) {
+            return false;
+        }
+        let open = client.main_modal_id == SHOPMAIN;
+        let player = (open && client.side_modal_id == SHOP_SIDE)
+            .then(|| inv_items(client, SHOP_SIDE_INV, ItemContainer::ShopPlayer))
+            .flatten();
+        self.shop = ShopView {
+            open,
+            stock: if open {
+                inv_items(client, SHOP_STOCK_INV, ItemContainer::ShopStock).unwrap_or_default()
+            } else {
+                Vec::new()
+            },
+            // The player pack is the shop *side* interface (3822 → 3823),
+            // opened with the main modal by `if_openmain_side`. Sell needs
+            // this container, not the stock rows and not the backpack.
+            player: player.clone().unwrap_or_default(),
+            player_available: player.is_some(),
+        };
+        true
+    }
+
+    /// Widgets rebuild: walk every open root's tree into `WidgetView`s.
+    /// Gated on the iface gen (tree/component state) and the inv gen
+    /// (TYPE_INV slot contents).
+    pub(super) fn rebuild_widgets(&mut self, client: &Client) -> bool {
+        if !self.widgets_gate.moved(client, self.inv_session_current) {
+            return false;
+        }
+        self.widgets.clear();
+        let roots = widget_roots(client);
+        let mut visited = vec![false; client.ifaces_len()];
+        for (root_id, root) in roots {
+            walk_widget_tree(client, root_id, root, &mut visited, &mut self.widgets);
+        }
+        true
+    }
+
+    /// Side-tabs rebuild: all 14 slots with the tab state and each
+    /// available tab's widget tree.
+    pub(super) fn rebuild_side_tabs(&mut self, client: &Client) -> bool {
+        if !self.side_tabs_gate.moved(client, self.inv_session_current) {
+            return false;
+        }
+        self.side_tabs.clear();
+        let mut visited = vec![false; client.ifaces_len()];
+        for index in 0..client.side_icon.len() {
+            let root_component_id = client.side_icon[index];
+            let available = root_component_id != -1;
+            let active = client.active_icon == index as i32;
+            let mut widgets = Vec::new();
+            if available {
+                walk_widget_tree(
+                    client,
+                    root_component_id,
+                    WidgetRoot::Side,
+                    &mut visited,
+                    &mut widgets,
+                );
+            }
+            self.side_tabs.push(SideTabView {
+                index: index as i32,
+                root_component_id,
+                available,
+                active,
+                visible: active && client.side_modal_id == -1 && available,
+                widgets,
+            });
+        }
+        true
+    }
+
+    /// Chat-options rebuild: the chat modal's BUTTON_OK choices and its
+    /// BUTTON_CONTINUE component (the m8aq `chatOptions`/continue).
+    pub(super) fn rebuild_chat_options(&mut self, client: &Client) -> bool {
+        if !track(client.gens.iface, &mut self.chat_options_gate) {
+            return false;
+        }
+        self.chat_options.clear();
+        self.chat_continue_component_id = -1;
+        if client.chat_modal_id == -1 {
+            return true;
+        }
+        let root = client.chat_modal_id;
+        // Walk the chat tree: level-up IFs nest `buttontype=pause` under a
+        // layer, so a direct-child scan misses `advancestat`'s continue.
+        let mut queue = vec![root];
+        let mut head = 0;
+        while head < queue.len() {
+            let id = queue[head];
+            head += 1;
+            let Some(com) = client.if_(id as usize) else {
+                continue;
+            };
+            if com.button_type == ButtonType::BUTTON_CONTINUE
+                && self.chat_continue_component_id == -1
+            {
+                self.chat_continue_component_id = id;
+            }
+            if com.button_type == ButtonType::BUTTON_OK {
+                let label = if !com.text.is_empty() {
+                    Some(com.text.to_string())
+                } else {
+                    non_empty(&com.button_text)
+                };
+                if let Some(text) = label {
+                    self.chat_options.push(ChatOptionView {
+                        component_id: id,
+                        text,
+                    });
+                }
+            }
+            queue.extend(children_of(&com));
+        }
+        if client.resumed_pause_button {
+            self.chat_continue_component_id = -1;
+        }
+        true
+    }
+
+    /// Make-products rebuild: the chat (or main) modal's obj-model
+    /// components as products with their make/smelt buttons grouped four
+    /// per product (m8aq `makeProducts`).
+    pub(super) fn rebuild_make_products(&mut self, client: &Client) -> bool {
+        if !track(client.gens.iface, &mut self.make_products_gate) {
+            return false;
+        }
+        self.make_products.clear();
+        let root = if client.chat_modal_id != -1 {
+            client.chat_modal_id
+        } else {
+            client.main_modal_id
+        };
+        if root == -1 {
+            return true;
+        }
+        let mut objs: Vec<i32> = Vec::new();
+        let mut buttons: Vec<MakeButtonView> = Vec::new();
+        let mut queue = vec![root];
+        let mut head = 0;
+        while head < queue.len() {
+            let id = queue[head];
+            head += 1;
+            let Some(com) = client.if_(id as usize) else {
+                continue;
+            };
+            if com.model1_type == 4 && com.model1_id > 0 {
+                objs.push(com.model1_id);
+            }
+            if com.button_type == ButtonType::BUTTON_OK {
+                if let Some(quantity) = make_quantity(&com.button_text) {
+                    buttons.push(MakeButtonView {
+                        quantity,
+                        component_id: id,
+                    });
+                }
+            }
+            queue.extend(children_of(&com));
+        }
+        // Make-X groups four quantity buttons per obj-model. A modal can
+        // carry TYPE_MODEL objs with no Make/Smelt buttons (the
+        // mysterious-cube random event) — do not invent products, and never
+        // slice `buttons[i*4..]` past the end.
+        if buttons.is_empty() {
+            return true;
+        }
+        for (i, obj) in objs.iter().enumerate() {
+            let name = client
+                .cache
+                .objs
+                .get(*obj as usize)
+                .map(|o| o.name.clone())
+                .unwrap_or_default();
+            let start = i * 4;
+            let chunk = if start >= buttons.len() {
+                Vec::new()
+            } else {
+                let end = (start + 4).min(buttons.len());
+                buttons[start..end].to_vec()
+            };
+            self.make_products.push(MakeProductView {
+                object_id: *obj,
+                name,
+                buttons: chunk,
+            });
+        }
+        true
+    }
+
+    /// Main-make rebuild: TYPE_INV children of the open main modal whose
+    /// component ops start with Make (the anvil skill-multi panel). Chat
+    /// make-products stay on `rebuild_make_products`; a shop/trade main
+    /// modal has Buy/Sell/Remove ops and yields no rows.
+    pub(super) fn rebuild_main_make(&mut self, client: &Client) -> bool {
+        if !self.main_make_gate.moved(client, self.inv_session_current) {
+            return false;
+        }
+        self.main_make.clear();
+        let root = client.main_modal_id;
+        if root == -1 {
+            return true;
+        }
+        let mut queue = vec![root];
+        let mut head = 0;
+        while head < queue.len() {
+            let id = queue[head];
+            head += 1;
+            let Some(com) = client.if_(id as usize) else {
+                continue;
+            };
+            if com.r#type == ComponentType::TYPE_INV
+                && com
+                    .iop
+                    .iter()
+                    .flatten()
+                    .any(|op| op.to_ascii_lowercase().starts_with("make"))
+            {
+                self.main_make.extend(read_inv_component(
+                    &client.cache,
+                    &com,
+                    ItemContainer::MainMake,
+                ));
+            }
+            queue.extend(children_of(&com));
+        }
+        true
+    }
+
+    /// Quest-statuses rebuild: the quest tab's (side tab 2) TYPE_TEXT
+    /// rows with their colours (m8aq `questStatuses`).
+    pub(super) fn rebuild_quest_statuses(&mut self, client: &Client) -> bool {
+        if !track(client.gens.iface, &mut self.quest_statuses_gate) {
+            return false;
+        }
+        self.quest_statuses.clear();
+        self.quest_statuses_available = false;
+        let Some(root) = client.side_icon.get(2).copied() else {
+            return true;
+        };
+        if root == -1 {
+            return true;
+        }
+        if client.if_(root as usize).is_none() {
+            return true;
+        }
+        self.quest_statuses_available = true;
+        let mut queue = vec![root];
+        let mut head = 0;
+        while head < queue.len() {
+            let id = queue[head];
+            head += 1;
+            let Some(com) = client.if_(id as usize) else {
+                continue;
+            };
+            if com.r#type == ComponentType::TYPE_TEXT && !com.text.is_empty() {
+                self.quest_statuses.push(QuestStatusView {
+                    component_id: id,
+                    name: com.text.to_string(),
+                    colour: com.colour,
+                });
+            }
+            queue.extend(children_of(&com));
+        }
+        true
+    }
+
+    /// Puzzle-board refresh: the open main modal's first depth-first
+    /// TYPE_INV with `obj_ops` (`find_inv_component` — the same helper the
+    /// bank's withdraw component uses; the hint panel is excluded because it
+    /// has no `obj_ops`). The board's identity and its `link_obj_type` slot
+    /// count are observed here, beside `main_modal_texts` (slot 248: the
+    /// board is slot 250 of the same observation); the rows are read from
+    /// the identified widget the widgets family already walked, never from
+    /// a world copy.
+    ///
+    /// The session generation advances on a session open, a session close or
+    /// a new board component — never on a piece move, so a stale generation
+    /// stays a publishable observation rather than a packet verdict.
+    fn refresh_puzzle_board(&mut self, client: &Client) {
+        let open = client.main_modal_id != -1;
+        let component_id = if open {
+            find_inv_component(client, client.main_modal_id, |com| com.obj_ops).unwrap_or(-1)
+        } else {
+            -1
+        };
+        if open != self.puzzle_board_open {
+            self.puzzle_board_open = open;
+            self.puzzle_session_generation = self.puzzle_session_generation.wrapping_add(1);
+        } else if component_id != self.puzzle_board_component_id {
+            self.puzzle_session_generation = self.puzzle_session_generation.wrapping_add(1);
+        }
+        self.puzzle_board_component_id = component_id;
+        self.puzzle_board_size = if component_id == -1 {
+            0
+        } else {
+            client
+                .if_(component_id as usize)
+                .and_then(|com| com.link_obj_type.as_ref().map(|ids| ids.len() as i32))
+                .unwrap_or(0)
+        };
+    }
+
+    /// Controls rebuild: the run/retaliate toggle pairs from the
+    /// player-controls overlay (a table scan — the overlay is a side tab,
+    /// so its root is not among the widget roots).
+    pub(super) fn rebuild_controls(&mut self, client: &Client) -> bool {
+        if !track(client.gens.iface, &mut self.controls_gate) {
+            return false;
+        }
+        self.run_controls = controls_pair(client, 5, 5, 4);
+        self.retaliate_controls = controls_pair(client, 3, 2, 3);
+        true
+    }
+
+    /// Modals rebuild: the four open roots plus the modal scalars. The
+    /// scalar fields copy every rebuild (the count dialog and active tab
+    /// flip locally with no packet), while the return value tracks the
+    /// iface gen for the harness.
+    pub(super) fn rebuild_modals(&mut self, client: &Client) -> bool {
+        let moved = track(client.gens.iface, &mut self.modals_gate);
+        self.modals = ModalView {
+            main: client.main_modal_id,
+            side: client.side_modal_id,
+            chat: client.chat_modal_id,
+            tutorial: client.tut_com_id,
+        };
+        self.count_dialog_open = client.dialog_input_open;
+        self.active_side_tab = client.active_icon;
+        self.main_modal_texts = modal_texts(client, client.main_modal_id);
+        self.chat_modal_texts = modal_texts(client, client.chat_modal_id);
+        self.refresh_puzzle_board(client);
+        moved
+    }
+
+    /// Menu rebuild: the minimenu entries and the login message. The menu
+    /// is rebuilt locally every frame with no packet, so the entries copy
+    /// every rebuild; the return value tracks the iface gen.
+    pub(super) fn rebuild_menu(&mut self, client: &Client) -> bool {
+        let moved = track(client.gens.iface, &mut self.menu_gate);
+        let n = client.menu_num_entries.max(0) as usize;
+        self.menu_entries = client.menu_option.iter().take(n).cloned().collect();
+        let mut login = String::new();
+        if !client.login_mes1.is_empty() {
+            login.push_str(&client.login_mes1);
+        }
+        if !client.login_mes2.is_empty() {
+            if !login.is_empty() {
+                login.push('\n');
+            }
+            login.push_str(&client.login_mes2);
+        }
+        self.login_message = login;
+        moved
+    }
+
+    fn loc_bits(&self, client: &Client) -> (u64, u64) {
+        self.loc_bits_prelude
+            .unwrap_or_else(|| loc_dirty_bits(client))
+    }
+
+    fn publish_scene_from_client(&mut self, client: &Client) {
+        if !client.ingame || client.scene_state != 2 {
+            self.scene = SceneView::default();
+            return;
+        }
+        let level = client.minusedlevel;
+        match client.collision.get(level as usize) {
+            Some(cmap) => {
+                self.scene = SceneView {
+                    available: true,
+                    base_x: client.map_build_base_x,
+                    base_z: client.map_build_base_z,
+                    level,
+                    width: cmap.size_x,
+                    height: cmap.size_z,
+                    collision_flags: cmap.flags.iter().flatten().copied().collect(),
+                };
+            }
+            None => {
+                self.scene = SceneView {
+                    available: false,
+                    base_x: client.map_build_base_x,
+                    base_z: client.map_build_base_z,
+                    level,
+                    ..SceneView::default()
+                };
+            }
+        }
+    }
+
+    /// Scene-family rebuild: `ingame` + `scene_state`, always fresh —
+    /// these flip locally (`check_scene` sets `scene_state = 2` on the SIM
+    /// loop with no gen bump), so a gen-gated copy would pin the snapshot
+    /// in a stale "loading" state. The `SceneView` (build base, level and
+    /// the collision grid) only changes on a world build, so it rebuilds
+    /// when the scene gen moves. A session reset clears the host-owned grid,
+    /// though response-15 reconnect retains the client's current map; once
+    /// that client is scene-ready, materialize the missing host view exactly
+    /// once without inventing a generation move. The return value still
+    /// tracks the gen for the harness's dirty/tick semantics.
+    pub(super) fn rebuild_scene(&mut self, client: &Client) -> bool {
+        let moved = track(client.gens.scene, &mut self.gens.scene);
+        self.ingame = client.ingame;
+        self.scene_state = client.scene_state;
+        self.attached = client.stream.is_some();
+        let (stamp, static_gen) = self.loc_bits(client);
+        let publishable = client.ingame && client.scene_state == 2;
+        if !publishable {
+            if self.scene.available || !self.scene.collision_flags.is_empty() {
+                self.scene = SceneView::default();
+            }
+            return moved;
+        }
+        let loc_dirty = stamp != self.loc_model_stamp || static_gen != self.loc_static_gen;
+        let identity_stale = !self.scene.available
+            || self.scene.level != client.minusedlevel
+            || self.scene.base_x != client.map_build_base_x
+            || self.scene.base_z != client.map_build_base_z;
+        if moved || loc_dirty || identity_stale {
+            self.publish_scene_from_client(client);
+        }
+        moved
+    }
+
+    /// Loc-family rebuild: sweep the sim world's four layers at
+    /// `minusedlevel` (locs sit on scene tiles, so the world tile is
+    /// `base + scene` with no pixel conversion). Gated on the scene gen,
+    /// the aggregated tile `model_stamp`, and World's static-scenery
+    /// mutation generation — typecodes can change after the observer
+    /// already consumed that gen (map restamp, a door multiloc, or a
+    /// queued LOC_DEL/add applied without another packet), so a gen-only
+    /// gate leaves nav reading the previous build's door or flax.
+    pub(super) fn rebuild_loc(&mut self, client: &Client) -> bool {
+        let moved = track(client.gens.scene, &mut self.loc_gen);
+        let standalone = self.loc_bits_prelude.is_none();
+        let (stamp, static_gen) = self.loc_bits(client);
+        if !moved && stamp == self.loc_model_stamp && static_gen == self.loc_static_gen {
+            return false;
+        }
+        let dirty = moved || stamp != self.loc_model_stamp || static_gen != self.loc_static_gen;
+        self.loc_model_stamp = stamp;
+        self.loc_static_gen = static_gen;
+        if standalone && client.ingame && client.scene_state == 2 {
+            self.publish_scene_from_client(client);
+        }
+        let base = (client.map_build_base_x, client.map_build_base_z);
+        let level = client.minusedlevel;
+        let local_tile = local_world_tile(client);
+        self.loc.clear();
+        for sx in 0..104 {
+            for sz in 0..104 {
+                // Per-tile layer order matches the m8aq sweep: wall,
+                // ground, ground decoration, wall decoration.
+                if let Some(wall) = client.world.get_wall(level, sx, sz) {
+                    self.loc.push(loc_view(
+                        wall.typecode,
+                        wall.typecode2 & 0xff,
+                        LocLayer::Wall,
+                        base,
+                        level,
+                        sx,
+                        sz,
+                        local_tile,
+                        &client.cache,
+                    ));
+                }
+                if let Some(sprite) = client.world.get_scene(level, sx, sz) {
+                    self.loc.push(loc_view(
+                        sprite.typecode,
+                        sprite.typecode2 & 0xff,
+                        LocLayer::Ground,
+                        base,
+                        level,
+                        sx,
+                        sz,
+                        local_tile,
+                        &client.cache,
+                    ));
+                }
+                if let Some(gd) = client.world.get_gd(level, sx, sz) {
+                    self.loc.push(loc_view(
+                        gd.typecode,
+                        gd.typecode2 & 0xff,
+                        LocLayer::GroundDecoration,
+                        base,
+                        level,
+                        sx,
+                        sz,
+                        local_tile,
+                        &client.cache,
+                    ));
+                }
+                if let Some(decor) = client.world.get_decor(level, sx, sz) {
+                    self.loc.push(loc_view(
+                        decor.typecode,
+                        decor.typecode2 & 0xff,
+                        LocLayer::WallDecoration,
+                        base,
+                        level,
+                        sx,
+                        sz,
+                        local_tile,
+                        &client.cache,
+                    ));
+                }
+            }
+        }
+        self.loc_distance_tile = local_tile;
+        dirty
+    }
+
+    /// Ground-item rebuild: iterate each `ground_obj` list at
+    /// `minusedlevel` into a `GroundItemView` (obj definition, stack
+    /// count, ground ops). The `LinkList`'s shared `for_each` iterator
+    /// needs no mutable cursor. Gated on the scene gen — object packets
+    /// bump it.
+    pub(super) fn rebuild_ground_items(&mut self, client: &Client) -> bool {
+        if !track(client.gens.scene, &mut self.ground_item_gen) {
+            return false;
+        }
+        let base = (client.map_build_base_x, client.map_build_base_z);
+        let level = client.minusedlevel;
+        let local_tile = local_world_tile(client);
+        self.ground_item.clear();
+        for x in 0..104 {
+            for z in 0..104 {
+                let Some(list) = &client.ground_obj[level as usize][x as usize][z as usize] else {
+                    continue;
+                };
+                let tile = WorldTile {
+                    x: base.0 + x,
+                    z: base.1 + z,
+                    level,
+                };
+                let distance = local_tile
+                    .map(|(lx, lz)| chebyshev(tile.x, tile.z, lx, lz))
+                    .unwrap_or(0);
+                list.for_each(|obj| {
+                    self.ground_item.push(GroundItemView {
+                        def: item_def_view(&client.cache, obj.id),
+                        count: obj.count,
+                        actions: ground_ops(&client.cache, obj.id),
+                        tile,
+                        distance,
+                    });
+                });
+            }
+        }
+        true
+    }
+
+    /// World-state rebuild: the client's world scalars. Cheap reads copy
+    /// every rebuild (like the scene status), so counts stay fresh between
+    /// world-gen bumps; the return value tracks the gen for the harness.
+    pub(super) fn rebuild_world(&mut self, client: &Client) -> bool {
+        let moved = track(client.gens.world, &mut self.gens.world);
+        self.world = WorldStateView {
+            map_base_x: client.map_build_base_x,
+            map_base_z: client.map_build_base_z,
+            level: client.minusedlevel,
+            members: client.members_account != 0,
+            multi_combat: client.in_multizone != 0,
+            player_count: client.player_count,
+            npc_count: client.npc_count,
+            cycle: client.loop_cycle,
+        };
+        moved
+    }
+
+    /// Camera rebuild: the follow-camera eye, the orbit target and the
+    /// cinematic flag. The follow camera eases every frame with no packet,
+    /// so the cheap fields copy every rebuild; the return value tracks the
+    /// gen.
+    pub(super) fn rebuild_camera(&mut self, client: &Client) -> bool {
+        let moved = track(client.gens.camera, &mut self.gens.camera);
+        self.camera = CameraView {
+            x: client.cam_x,
+            y: client.cam_y,
+            z: client.cam_z,
+            pitch: client.cam_pitch,
+            yaw: client.cam_yaw,
+            orbit_pitch: client.orbit_camera_pitch,
+            orbit_yaw: client.orbit_camera_yaw,
+            cinematic: client.cinema_cam,
+        };
+        moved
+    }
+
+    /// Map-flag rebuild: the minimap destination flag, `Some` only while
+    /// it is set. The flag flips on minimap clicks with no packet, so the
+    /// view copies every rebuild; the return value tracks the gen.
+    pub(super) fn rebuild_map_flag(&mut self, client: &Client) -> bool {
+        let moved = track(client.gens.map_flag, &mut self.gens.map_flag);
+        self.map_flag = (client.minimap_flag_x != 0).then_some(MapFlagView {
+            lx: client.minimap_flag_x,
+            lz: client.minimap_flag_z,
+        });
+        moved
+    }
+
+    pub(super) fn rebuild_npcs(&mut self, client: &Client) -> bool {
+        if client.gens.npc == self.gens.npc {
+            return false;
+        }
+        self.gens.npc = client.gens.npc;
+        self.npc.clear();
+        self.npc.reserve(client.npc_count as usize);
+        let base = (client.map_build_base_x, client.map_build_base_z);
+        let level = client.minusedlevel;
+        let local_tile = local_world_tile(client);
+        for i in 0..client.npc_count as usize {
+            let index = client.npc_ids[i] as usize;
+            if let Some(npc) = client.npc.get(index).and_then(|n| n.as_ref()) {
+                let tile = entity_world_tile(&npc.entity, base, level);
+                let distance = local_tile
+                    .map(|(lx, lz)| chebyshev(tile.x, tile.z, lx, lz))
+                    .unwrap_or(0);
+                self.npc.push(NpcView::from_slot(
+                    index,
+                    npc,
+                    base,
+                    level,
+                    distance,
+                    client.loop_cycle,
+                    &client.cache,
+                ));
+            }
+        }
+        true
+    }
+
+}
+/// The local player's world tile `(x, z)` from the live client (build
+/// base + route head); `None` before the first `PLAYER_INFO`.
+fn local_world_tile(client: &Client) -> Option<(i32, i32)> {
+    client.local_player.as_ref().map(|lp| {
+        (
+            client.map_build_base_x + lp.route_x[0],
+            client.map_build_base_z + lp.route_z[0],
+        )
+    })
+}
+
+fn chebyshev(ax: i32, az: i32, bx: i32, bz: i32) -> i32 {
+    (ax - bx).abs().max((az - bz).abs())
+}
+
+/// The absolute world tile of an entity: its scene-local pixel coords
+/// (`route * 128 + size * 64`) un-scaled by 128 and offset by the build
+/// base, so every actor view is in the same world-tile space as the local
+/// player's tile.
+fn entity_world_tile(entity: &ClientEntity, base: (i32, i32), level: i32) -> WorldTile {
+    WorldTile {
+        x: base.0 + (entity.x - entity.size * 64) / 128,
+        z: base.1 + (entity.z - entity.size * 64) / 128,
+        level,
+    }
+}
+
+/// Path-head network SW: build base plus `route[0]`. Independent of rendered
+/// pixel `x`/`z` (those stay mid-route until rest pose).
+fn entity_network_tile(entity: &ClientEntity, base: (i32, i32), level: i32) -> WorldTile {
+    WorldTile {
+        x: base.0 + entity.route_x[0],
+        z: base.1 + entity.route_z[0],
+        level,
+    }
+}
+
+/// The engine encodes a player face target as slot + 32768.
+pub const PLAYER_FACE_BASE: i32 = 32768;
+
+/// Local `Game.attackedByPlayer`: true only when `face_entity` is a player.
+pub fn attacked_by_player(face_entity: i32) -> bool {
+    face_entity >= PLAYER_FACE_BASE
+}
+
+/// Resolve `face_entity` with the client's own scheme (`entity_face` in
+/// `client.rs`): slots below 32768 are NPC table indexes, at or above are
+/// player slots offset by 32768. The player slot stays the raw server
+/// slot (the client only rewrites `self_slot` → 2047 for its internal
+/// turn lookup), so `targetingPlayer(self_slot)` matches the local player.
+fn decode_target(face_entity: i32) -> Option<ActorTargetView> {
+    if face_entity == -1 {
+        return None;
+    }
+    if face_entity < PLAYER_FACE_BASE {
+        Some(ActorTargetView {
+            kind: ActorKind::Npc,
+            index: face_entity as usize,
+        })
+    } else {
+        Some(ActorTargetView {
+            kind: ActorKind::Player,
+            index: (face_entity - PLAYER_FACE_BASE) as usize,
+        })
+    }
+}
+
+/// Health-bar window: the client draws it while `combatCycle > loopCycle`.
+/// `combat_cycle > 0` is wrong — after a hit the expiry tick stays a large
+/// positive number, so `Game.inCombat()` would stick true forever.
+fn actor_in_combat(combat_cycle: i32, loop_cycle: i32) -> bool {
+    combat_cycle > loop_cycle
+}
+
+/// Frozen `takingDamage` / positive active combat hit: ingame + local player
+/// required; at least one hitmark with value > 0, type == 1, and cycle still
+/// ahead of the current loop cycle. Zero, blocked, poison, and expired hits
+/// do not qualify; a later miss does not erase an earlier live positive hit.
+fn local_player_taking_damage(client: &Client) -> bool {
+    if !client.ingame {
+        return false;
+    }
+    let Some(player) = client.local_player.as_ref() else {
+        return false;
+    };
+    let entity = &player.entity;
+    let loop_cycle = client.loop_cycle;
+    (0..entity.damage_values.len()).any(|i| {
+        entity.damage_values[i] > 0
+            && entity.damage_types[i] == 1
+            && entity.damage_cycles[i] > loop_cycle
+    })
+}
+
+/// The shared actor fields from one entity, as the m8aq `ActorSnapshot`.
+fn actor_view(
+    entity: &ClientEntity,
+    base: (i32, i32),
+    level: i32,
+    distance: i32,
+    name: Option<String>,
+    actions: Vec<Option<String>>,
+    loop_cycle: i32,
+) -> ActorView {
+    ActorView {
+        name,
+        actions,
+        tile: entity_world_tile(entity, base, level),
+        distance,
+        animation: entity.primary_anim,
+        pose_animation: entity.secondary_anim,
+        orientation: entity.yaw,
+        target_orientation: entity.dst_yaw,
+        overhead_text: entity.chat_message.clone(),
+        spot_animation: entity.spotanim_id,
+        health: entity.health,
+        total_health: entity.total_health,
+        face_entity: entity.face_entity,
+        target: decode_target(entity.face_entity),
+        moving: entity.route_length > 0,
+        running: entity.primary_anim == entity.runanim,
+        in_combat: actor_in_combat(entity.combat_cycle, loop_cycle),
+    }
+}
+
+/// One `LocView` from a placed layer: decode the loc id and the
+/// shape/angle info byte, then resolve the definition from the loc table.
+/// An unloaded loc id reads the `LocType` defaults (the m8aq `LocType.list`
+/// dummy type).
+#[allow(clippy::too_many_arguments)]
+fn loc_view(
+    typecode: i32,
+    info: i32,
+    layer: LocLayer,
+    base: (i32, i32),
+    level: i32,
+    sx: i32,
+    sz: i32,
+    local_tile: Option<(i32, i32)>,
+    cache: &Cache,
+) -> LocView {
+    let id = (typecode >> 14) & 0x7fff;
+    let shape = info & 0x1f;
+    let angle = (info >> 6) & 0x3;
+    let x = base.0 + sx;
+    let z = base.1 + sz;
+    let (
+        name,
+        description,
+        actions,
+        width,
+        length,
+        block_walk,
+        block_range,
+        active,
+        animation,
+        map_function,
+        map_scene,
+        force_approach,
+    ) = match cache.locs.get(id as usize) {
+        Some(loc) => (
+            (!loc.name.is_empty()).then(|| loc.name.clone()),
+            (!loc.desc.is_empty()).then(|| loc.desc.clone()),
+            loc.op.clone(),
+            loc.width,
+            loc.length,
+            loc.blockwalk,
+            loc.blockrange,
+            loc.active,
+            loc.anim,
+            loc.mapfunction,
+            loc.mapscene,
+            loc.forceapproach,
+        ),
+        None => (
+            None,
+            None,
+            Vec::new(),
+            1,
+            1,
+            true,
+            true,
+            false,
+            -1,
+            -1,
+            -1,
+            0,
+        ),
+    };
+    LocView {
+        typecode,
+        info,
+        id,
+        name,
+        description,
+        actions,
+        tile: WorldTile { x, z, level },
+        distance: local_tile
+            .map(|(lx, lz)| chebyshev(x, z, lx, lz))
+            .unwrap_or(0),
+        layer,
+        shape,
+        angle,
+        width,
+        length,
+        // A 90°/270° rotation swaps the footprint axes.
+        footprint_width: if angle == 1 || angle == 3 {
+            length
+        } else {
+            width
+        },
+        footprint_length: if angle == 1 || angle == 3 {
+            width
+        } else {
+            length
+        },
+        block_walk,
+        block_range,
+        active,
+        animation,
+        map_function,
+        map_scene,
+        force_approach,
+    }
+}
+
+/// The obj's definition view via Task 1's mapping. An unloaded obj id
+/// reads the `ObjType` defaults with the requested id (the m8aq
+/// `ObjType.list` dummy type).
+fn item_def_view(cache: &Cache, id: i32) -> ItemDefView {
+    let mut def = match cache.objs.get(id as usize) {
+        Some(o) => ItemDefView::from_obj(o),
+        None => ItemDefView::from_obj(&ObjType::default()),
+    };
+    def.id = id;
+    def
+}
+
+/// The ground menu ops for an obj: the type's `op` table padded to five
+/// slots with a `Take` default filling an empty third (m8aq `groundOps`).
+fn ground_ops(cache: &Cache, id: i32) -> Vec<Option<String>> {
+    let mut ops = cache
+        .objs
+        .get(id as usize)
+        .map(|o| o.op.to_vec())
+        .unwrap_or_else(|| vec![None; 5]);
+    if ops.len() < 3 {
+        ops.resize(3, None);
+    }
+    if ops[2].is_none() {
+        ops[2] = Some("Take".into());
+    }
+    ops
+}
+
+pub(super) fn track(world: u64, tracked: &mut u64) -> bool {
+    if *tracked == world {
+        return false;
+    }
+    *tracked = world;
+    true
+}
+
+/// Cheap dirty bit for loc rebuilds: aggregate every scene tile's
+/// `model_stamp` (bumped by wall/decor/scenery mutations including door
+/// multilocs). Integer reads only — no loc string clones.
+pub(super) fn loc_dirty_bits(client: &Client) -> (u64, u64) {
+    (
+        loc_model_stamp(client),
+        client.world.static_loc_generation(),
+    )
+}
+
+fn loc_model_stamp(client: &Client) -> u64 {
+    let level = client.minusedlevel;
+    let mut stamp = 0u64;
+    for sx in 0..104 {
+        for sz in 0..104 {
+            stamp = stamp
+                .wrapping_mul(31)
+                .wrapping_add(client.world.tile_model_stamp(level, sx, sz) as u64);
+        }
+    }
+    stamp
+}
+
+pub(super) const fn empty_loc_model_stamp() -> u64 {
+    let mut stamp = 0u64;
+    let mut i = 0usize;
+    while i < 104 * 104 {
+        stamp = stamp.wrapping_mul(31).wrapping_add(i32::MIN as u64);
+        i += 1;
+    }
+    stamp
+}
+
+/// Session marker for bank snapshot readiness: last-full inv generation
+/// must be at least the inv generation recorded when this component closed.
+#[derive(Clone, Copy)]
+pub(super) struct BankInvSession {
+    main_com_id: i32,
+    main_opened_at: u64,
+}
+
+/// The two-counter gate of the item-bearing iface families: rebuild when
+/// either the iface or the inv gen moved (component ids on the iface gen,
+/// TYPE_INV slot data on the inv gen).
+#[derive(Default, Clone, Copy)]
+pub(super) struct InvIfaceGate {
+    pub(super) iface: u64,
+    pub(super) inv: u64,
+}
+
+impl InvIfaceGate {
+    fn moved(&mut self, client: &Client, inv_session_current: bool) -> bool {
+        if !inv_session_current {
+            return false;
+        }
+        let moved = client.gens.iface != self.iface || client.gens.inv != self.inv;
+        self.iface = client.gens.iface;
+        self.inv = client.gens.inv;
+        moved
+    }
+}
+
+/// `Some(s)` for a non-empty string (iface strings are empty when unset).
+fn non_empty(s: &str) -> Option<String> {
+    (!s.is_empty()).then(|| s.to_string())
+}
+
+/// A component's children list, empty when it has none.
+fn children_of(com: &IfType) -> &[i32] {
+    com.children.as_deref().unwrap_or_default()
+}
+
+/// The open widget roots: the main modal and overlay (both draw above the
+/// game view — the main modal carries the trade/bank/dialog tree), the
+/// side modal (else the active tab's interface), the chat modal and the
+/// tutorial overlay. Roots that are not cleanly resolvable (id not in the
+/// table) are skipped by the walk; every emitted widget keeps the root id
+/// and tag it was walked under.
+fn widget_roots(client: &Client) -> Vec<(i32, WidgetRoot)> {
+    let mut roots = Vec::new();
+    if client.main_modal_id != -1 {
+        roots.push((client.main_modal_id, WidgetRoot::Main));
+    }
+    if client.main_overlay_id != -1 {
+        roots.push((client.main_overlay_id, WidgetRoot::Main));
+    }
+    let side_root = if client.side_modal_id != -1 {
+        client.side_modal_id
+    } else {
+        client
+            .side_icon
+            .get(client.active_icon.max(0) as usize)
+            .copied()
+            .unwrap_or(-1)
+    };
+    if side_root != -1 {
+        roots.push((side_root, WidgetRoot::Side));
+    }
+    if client.chat_modal_id != -1 {
+        roots.push((client.chat_modal_id, WidgetRoot::Chat));
+    }
+    if client.tut_com_id != -1 {
+        roots.push((client.tut_com_id, WidgetRoot::Tutorial));
+    }
+    roots
+}
+
+/// Walk one widget root's tree into `out`, tagging every component with
+/// `root`/`root_component_id`. `visited` is shared across roots so a
+/// component reachable from two open roots belongs to the first that
+/// walks it (its ancestor chain reaches that root first). Positions
+/// accumulate `child_x`/`child_y` from the root (m8aq
+/// `walkPositionedComponents`); the root itself has parent -1.
+fn walk_widget_tree(
+    client: &Client,
+    root_id: i32,
+    root: WidgetRoot,
+    visited: &mut [bool],
+    out: &mut Vec<WidgetView>,
+) {
+    let mut queue: Vec<(i32, i32, i32, i32)> = vec![(root_id, -1, 0, 0)];
+    let mut head = 0;
+    while head < queue.len() {
+        let (id, parent_id, x, y) = queue[head];
+        head += 1;
+        if id < 0 || (id as usize) >= visited.len() || visited[id as usize] {
+            continue;
+        }
+        let Some(com) = client.if_(id as usize) else {
+            continue;
+        };
+        visited[id as usize] = true;
+        out.push(widget_view(
+            client, &com, id, parent_id, root_id, root, x, y,
+        ));
+        if let Some(children) = &com.children {
+            for (i, child) in children.iter().enumerate() {
+                let cx = com
+                    .child_x
+                    .as_ref()
+                    .and_then(|xs| xs.get(i))
+                    .copied()
+                    .unwrap_or(0);
+                let cy = com
+                    .child_y
+                    .as_ref()
+                    .and_then(|ys| ys.get(i))
+                    .copied()
+                    .unwrap_or(0);
+                queue.push((*child, id, x + cx, y + cy));
+            }
+        }
+    }
+}
+
+/// One `WidgetView` from a component plus its walk context. `component_id`
+/// is the table id the walk found the component under (matches `com.id`
+/// for well-formed ifaces).
+#[allow(clippy::too_many_arguments)]
+fn widget_view(
+    client: &Client,
+    com: &IfTypeView,
+    component_id: i32,
+    parent_id: i32,
+    root_component_id: i32,
+    root: WidgetRoot,
+    x: i32,
+    y: i32,
+) -> WidgetView {
+    WidgetView {
+        kind: WidgetKind::Widget,
+        component_id,
+        layer_id: com.layer_id,
+        parent_id,
+        root_component_id,
+        root,
+        type_: com.r#type,
+        button_type: com.button_type,
+        client_code: com.client_code,
+        x,
+        y,
+        width: com.width,
+        height: com.height,
+        scroll_height: com.scroll_height,
+        scroll_position: com.scroll_pos,
+        hidden: com.hide,
+        text: non_empty(com.text),
+        alternate_text: non_empty(&com.text2),
+        button_text: non_empty(&com.button_text),
+        target_verb: non_empty(&com.target_verb),
+        target_base: non_empty(&com.target_base),
+        target_mask: com.target_mask,
+        model_type: com.model1_type,
+        model_id: com.model1_id,
+        alternate_model_type: com.model2_type,
+        alternate_model_id: com.model2_id,
+        scripts: com
+            .scripts
+            .clone()
+            .map(|scripts| scripts.into_iter().map(Some).collect()),
+        script_comparators: com.script_comparator.clone(),
+        script_operands: com.script_operand.clone(),
+        varp_bindings: varp_bindings(com),
+        colour: com.colour,
+        actions: com.iop.to_vec(),
+        items: if com.r#type == ComponentType::TYPE_INV {
+            read_inv_component(&client.cache, com, ItemContainer::Widget)
+        } else {
+            Vec::new()
+        },
+    }
+}
+
+/// The varp-bound scripts of a component: opcode-5 (`IF_VARP`) scripts
+/// whose first operand is the varp, with the per-script comparator and
+/// operand (m8aq `widgetVarpBindings`; the client's own toggle/select
+/// arms decode `scripts[0][0] === 5` the same way).
+fn varp_bindings(com: &IfType) -> Vec<WidgetVarpBindingView> {
+    let mut out = Vec::new();
+    let Some(scripts) = &com.scripts else {
+        return out;
+    };
+    for (i, script) in scripts.iter().enumerate() {
+        if script.len() >= 2 && script[0] == 5 {
+            out.push(WidgetVarpBindingView {
+                script_index: i as i32,
+                varp: script[1],
+                value: com.script_operand.as_ref().and_then(|o| o.get(i)).copied(),
+                comparator: com
+                    .script_comparator
+                    .as_ref()
+                    .and_then(|c| c.get(i))
+                    .copied(),
+            });
+        }
+    }
+    out
+}
+
+/// One `ItemView` from a stored slot (`link_obj_type` holds `obj_id + 1`,
+/// 0 = empty), with the given ops.
+fn item_view(
+    cache: &Cache,
+    com: &IfTypeView,
+    slot: usize,
+    container: ItemContainer,
+    action_family: ItemActionFamily,
+    actions: Vec<Option<String>>,
+) -> Option<ItemView> {
+    let stored = com.link_obj_type.as_ref()?.get(slot).copied()?;
+    if stored <= 0 {
+        return None;
+    }
+    let id = stored - 1;
+    Some(ItemView {
+        def: item_def_view(cache, id),
+        container,
+        action_family,
+        slot: slot as i32,
+        count: com
+            .link_obj_number
+            .as_ref()
+            .and_then(|n| n.get(slot))
+            .copied()
+            .unwrap_or(0),
+        actions,
+        component_id: com.id,
+    })
+}
+
+/// The `ItemView`s of a TYPE_INV component's slots (m8aq
+/// `readInvComponent`), with ops from the component's own `iop`.
+fn read_inv_component(cache: &Cache, com: &IfTypeView, container: ItemContainer) -> Vec<ItemView> {
+    let mut out = Vec::new();
+    let Some(ids) = &com.link_obj_type else {
+        return out;
+    };
+    let n = com.link_obj_number.as_ref().map(|n| n.len()).unwrap_or(0);
+    for (slot, stored) in ids.iter().copied().enumerate().take(ids.len().min(n)) {
+        if stored <= 0 {
+            continue;
+        }
+        if let Some(view) = item_view(
+            cache,
+            com,
+            slot,
+            container,
+            ItemActionFamily::Component,
+            com.iop.to_vec(),
+        ) {
+            out.push(view);
+        }
+    }
+    out
+}
+
+/// The items of the iface-table component `com_id` (component ops).
+fn inv_items(client: &Client, com_id: i32, container: ItemContainer) -> Option<Vec<ItemView>> {
+    if com_id < 0 {
+        return None;
+    }
+    let com = client.if_(com_id as usize)?;
+    Some(read_inv_component(&client.cache, &com, container))
+}
+
+/// The held-item ops for obj `id`: the type's `iop` padded to five slots
+/// with a `Drop` default in the fifth (m8aq `heldOps`). Published for the
+/// send-time Held-family view the puzzle-move dispatch builds: a caller
+/// that cannot read the obj table sends nothing.
+pub fn cache_held_ops(cache: &Cache, id: i32) -> Vec<Option<String>> {
+    let mut ops = cache
+        .objs
+        .get(id as usize)
+        .map(|o| o.iop.to_vec())
+        .unwrap_or_else(|| vec![None; 5]);
+    if ops.len() < 5 {
+        ops.resize(5, None);
+    }
+    if ops[4].is_none() {
+        ops[4] = Some("Drop".into());
+    }
+    ops
+}
+
+/// The TYPE_INV component of side tab `tab` (m8aq `findTabInvComponent`):
+/// tab 4 (worn items) accepts any TYPE_INV, the other tabs need `obj_ops`.
+/// Public so the script shim's inventory post reads the same component
+/// the snapshot's inv view reads.
+pub fn tab_inv_component(client: &Client, tab: usize) -> Option<i32> {
+    let root = client.side_icon.get(tab).copied().unwrap_or(-1);
+    if root == -1 {
+        return None;
+    }
+    find_inv_component(client, root, |com| com.obj_ops || tab == 4)
+}
+
+/// Depth-first search for a TYPE_INV component satisfying `accept` under
+/// `root_id` (m8aq `findInvComponentIn`).
+fn find_inv_component<F>(client: &Client, root_id: i32, accept: F) -> Option<i32>
+where
+    F: Fn(&IfType) -> bool,
+{
+    let mut queue = vec![root_id];
+    while let Some(id) = queue.pop() {
+        let Some(com) = client.if_(id as usize) else {
+            continue;
+        };
+        if com.r#type == ComponentType::TYPE_INV && accept(&com) {
+            return Some(id);
+        }
+        queue.extend(children_of(&com));
+    }
+    None
+}
+
+/// The 274 shop iface ids (the packed `interface.order` allocation):
+/// shop_template 3824 (main modal), shop_template:inv 3900 (stock),
+/// shop_template_side 3822 (side modal) and shop_template_side:inv 3823
+/// (the shop's player pack — the Sell 1/5/10 container).
+const SHOPMAIN: i32 = 3824;
+const SHOP_STOCK_INV: i32 = 3900;
+const SHOP_SIDE: i32 = 3822;
+const SHOP_SIDE_INV: i32 = 3823;
+
+/// The 274 trade iface ids (the packed `interface.order` allocation):
+/// trademain 3323 (offer screen), tradeconfirm 3443, trademain:inv 3415,
+/// trademain:otherinv 3416, trademain:otherplayer 3417, tradeside:inv
+/// 3322. The m8aq adapter reads the same hardcoded ids.
+const TRADEMAIN: i32 = 3323;
+const TRADECONFIRM: i32 = 3443;
+const TRADEMAIN_INV: i32 = 3415;
+const TRADEMAIN_OTHER_INV: i32 = 3416;
+const TRADEMAIN_OTHER_PLAYER: i32 = 3417;
+const TRADESIDE_INV: i32 = 3322;
+
+/// The trade partner's name: the `otherplayer` label ("Trading With: X")
+/// with the prefix stripped and whitespace trimmed (m8aq
+/// `normalizeTradePartner`); `None` for an empty label.
+fn trade_partner(client: &Client) -> Option<String> {
+    let text = client
+        .if_(TRADEMAIN_OTHER_PLAYER as usize)
+        .map(|c| c.text.to_string())
+        .unwrap_or_default();
+    let name = match text.find(':') {
+        Some(colon) => text[colon + 1..].trim(),
+        None => text.trim(),
+    };
+    (!name.is_empty()).then(|| name.to_string())
+}
+
+/// The Accept / Decline controls on the open trade root (`TRADEMAIN` or
+/// `TRADECONFIRM`), discovered by walking the modal tree. The packed native
+/// interfaces put the label in a non-clickable TYPE_TEXT sibling next to the
+/// actual button, so the label itself must never be published as the target.
+fn trade_controls(client: &Client) -> (i32, i32) {
+    let (root, accept_id, decline_id) = match client.main_modal_id {
+        TRADECONFIRM => (TRADECONFIRM, 3546, 3548),
+        TRADEMAIN => (TRADEMAIN, 3420, 3422),
+        _ => return (-1, -1),
+    };
+    (
+        native_trade_control(client, root, accept_id, ButtonType::BUTTON_OK),
+        native_trade_control(client, root, decline_id, ButtonType::BUTTON_CLOSE),
+    )
+}
+
+/// Validate one canonical packed trade control. The numeric identity is part
+/// of the native interface contract; labels are separate TYPE_TEXT siblings
+/// and therefore cannot identify a replacement button. Walking the tree with
+/// visibility state also rejects controls hidden by any ancestor.
+fn native_trade_control(client: &Client, root: i32, wanted: i32, button_type: i32) -> i32 {
+    let mut queue = vec![root];
+    let mut head = 0;
+    while head < queue.len() {
+        let id = queue[head];
+        head += 1;
+        let Some(com) = client.if_(id as usize) else {
+            continue;
+        };
+        if com.hide {
+            continue;
+        }
+        let children = com.children.as_deref().unwrap_or(&[]);
+        for child_id in children {
+            let Some(candidate) = client.if_(*child_id as usize) else {
+                continue;
+            };
+            if candidate.id == wanted
+                && !candidate.hide
+                && candidate.r#type == ComponentType::TYPE_RECT
+                && candidate.button_type == button_type
+            {
+                return candidate.id;
+            }
+        }
+        queue.extend(children.iter().copied());
+    }
+    -1
+}
+
+/// The TYPE_TEXT contents of a modal tree, in walk order (m8aq
+/// `mainModalTexts`/`chatModalTexts`).
+fn modal_texts(client: &Client, root: i32) -> Vec<String> {
+    let mut out = Vec::new();
+    if root == -1 {
+        return out;
+    }
+    let mut queue = vec![root];
+    let mut head = 0;
+    while head < queue.len() {
+        let id = queue[head];
+        head += 1;
+        let Some(com) = client.if_(id as usize) else {
+            continue;
+        };
+        if com.r#type == ComponentType::TYPE_TEXT && !com.text.is_empty() {
+            out.push(com.text.to_string());
+        }
+        queue.extend(children_of(&com));
+    }
+    out
+}
+
+/// The Note/Item toggle pair on the open bank main modal.
+///
+/// Two packed shapes:
+/// - pressable TYPE_TEXT labeled "Note" / "Item" (unit fixtures)
+/// - 274 `bank_main.if`: unpressable labels sitting on TYPE_GRAPHIC
+///   SELECT boxes (`bankcert`); the snapshot maps those boxes.
+fn bank_note_controls(client: &Client, main_root: i32) -> Option<ToggleControlsView> {
+    if main_root == -1 {
+        return None;
+    }
+    let mut note_id = -1;
+    let mut item_id = -1;
+    let mut note_label: Option<(i32, i32)> = None;
+    let mut item_label: Option<(i32, i32)> = None;
+    let mut selects: Vec<(i32, i32, i32, i32, i32)> = Vec::new();
+    let mut queue: Vec<(i32, i32, i32)> = vec![(main_root, 0, 0)];
+    let mut head = 0;
+    while head < queue.len() {
+        let (id, x, y) = queue[head];
+        head += 1;
+        let Some(com) = client.if_(id as usize) else {
+            continue;
+        };
+        let label = if !com.text.trim().is_empty() {
+            com.text.trim()
+        } else {
+            com.button_text.trim()
+        };
+        if label.eq_ignore_ascii_case("note") {
+            if com.button_type != 0 {
+                note_id = id;
+            }
+            note_label = Some((x + com.width / 2, y + com.height / 2));
+        } else if label.eq_ignore_ascii_case("item") {
+            if com.button_type != 0 {
+                item_id = id;
+            }
+            item_label = Some((x + com.width / 2, y + com.height / 2));
+        }
+        if com.button_type == ButtonType::BUTTON_SELECT
+            || com.button_type == ButtonType::BUTTON_TOGGLE
+        {
+            selects.push((id, x, y, com.width, com.height));
+        }
+        if let Some(children) = &com.children {
+            for (i, child) in children.iter().enumerate() {
+                let cx = com
+                    .child_x
+                    .as_ref()
+                    .and_then(|xs| xs.get(i))
+                    .copied()
+                    .unwrap_or(0);
+                let cy = com
+                    .child_y
+                    .as_ref()
+                    .and_then(|ys| ys.get(i))
+                    .copied()
+                    .unwrap_or(0);
+                queue.push((*child, x + cx, y + cy));
+            }
+        }
+    }
+    if note_id >= 0 && item_id >= 0 {
+        return Some(ToggleControlsView {
+            on_component_id: note_id,
+            off_component_id: item_id,
+        });
+    }
+    let contains = |cx: i32, cy: i32, x: i32, y: i32, w: i32, h: i32| -> bool {
+        cx >= x && cy >= y && cx < x + w && cy < y + h
+    };
+    let pick = |center: (i32, i32)| -> Option<i32> {
+        let (cx, cy) = center;
+        selects
+            .iter()
+            .find(|(_, x, y, w, h)| contains(cx, cy, *x, *y, *w, *h))
+            .map(|(id, ..)| *id)
+    };
+    match (note_label, item_label) {
+        (Some(note), Some(item)) => {
+            let on = pick(note)?;
+            let off = pick(item)?;
+            if on == off {
+                return None;
+            }
+            Some(ToggleControlsView {
+                on_component_id: on,
+                off_component_id: off,
+            })
+        }
+        _ => None,
+    }
+}
+
+/// The toggle pair of the player-controls overlay: the root with an
+/// "Auto retaliate" label among its children, reading `on_index`/
+/// `off_index` from its children list (m8aq `runControls` reads 5/4 for
+/// run, `readRetaliateControls` 2/3 for retaliate — the 274 `controls.if`
+/// com_2/com_3 and com_4/com_5 buttons).
+fn controls_pair(
+    client: &Client,
+    min_children: usize,
+    on_index: usize,
+    off_index: usize,
+) -> Option<ToggleControlsView> {
+    for com in client.ifaces_merged() {
+        let Some(children) = &com.children else {
+            continue;
+        };
+        let has_retaliate = children.iter().any(|id| {
+            client
+                .if_(*id as usize)
+                .is_some_and(|c| c.text == "Auto retaliate")
+        });
+        if !has_retaliate || children.len() <= min_children {
+            continue;
+        }
+        let on = children.get(on_index).copied().unwrap_or(-1);
+        let off = children.get(off_index).copied().unwrap_or(-1);
+        if on < 0
+            || off < 0
+            || client.if_(on as usize).is_none()
+            || client.if_(off as usize).is_none()
+        {
+            return None;
+        }
+        return Some(ToggleControlsView {
+            on_component_id: on,
+            off_component_id: off,
+        });
+    }
+    None
+}
+
+/// The make/smelt button quantity: `"Make X"`/`"Smelt X"` reads -1,
+/// `"Make 10"` reads 10 (m8aq's button regex).
+fn make_quantity(button_text: &str) -> Option<i32> {
+    let lower = button_text.to_ascii_lowercase();
+    let start = lower.find("make ").or_else(|| lower.find("smelt "))?;
+    let rest = lower[start..].trim_start_matches(|c: char| c.is_ascii_alphabetic());
+    let rest = rest.trim_start();
+    if rest.is_empty() {
+        return None;
+    }
+    let token: String = rest
+        .chars()
+        .take_while(|c| c.is_ascii_alphanumeric())
+        .collect();
+    if token == "x" {
+        Some(-1)
+    } else {
+        token.parse::<i32>().ok()
+    }
+}
