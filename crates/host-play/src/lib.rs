@@ -41,6 +41,8 @@ use client::io::JagFile;
 use client::BotTarget;
 pub use host::debug_enabled;
 use host::login_queue::{LoginBackoff, LoginQueue, Permit, QueuePos};
+use parking_lot::Mutex as QueueMutex;
+type SharedLoginQueue = Arc<QueueMutex<LoginQueue>>;
 use host::prepare_client;
 pub use host::set_debug;
 pub use host::Host;
@@ -1050,7 +1052,7 @@ fn should_handshake(arm: &SlotArm, ingame: bool) -> bool {
 /// Cancellation or stop observed here abandons only this unused permit; once
 /// this returns true, the caller must acknowledge the login return instead.
 fn granted_permit_may_start_login(
-    queue: &Arc<Mutex<LoginQueue>>,
+    queue: &SharedLoginQueue,
     uid: i32,
     arm: &SlotArm,
     ingame: bool,
@@ -1058,7 +1060,7 @@ fn granted_permit_may_start_login(
     if !arm.stop.load(Ordering::Relaxed) && should_handshake(arm, ingame) {
         return true;
     }
-    let abandoned = queue.lock().unwrap().abandon_permit(uid);
+    let abandoned = queue.lock().abandon_permit(uid);
     debug_assert!(abandoned, "granted permit must be abandoned exactly once");
     false
 }
@@ -1067,7 +1069,7 @@ fn granted_permit_may_start_login(
 /// unused grant so the next pass can configure the new endpoint before the
 /// socket handshake starts.
 fn granted_permit_world_is_current(
-    queue: &Arc<Mutex<LoginQueue>>,
+    queue: &SharedLoginQueue,
     uid: i32,
     round: Option<&public_worlds::WorldRound>,
     arm: &SlotArm,
@@ -1075,29 +1077,74 @@ fn granted_permit_world_is_current(
     if round.is_none_or(|round| round.preference() == *arm.world.lock()) {
         return true;
     }
-    let abandoned = queue.lock().unwrap().abandon_permit(uid);
+    let abandoned = queue.lock().abandon_permit(uid);
     debug_assert!(abandoned, "granted permit must be abandoned exactly once");
     false
 }
 
-/// Run the login call that owns a granted permit, then acknowledge its return
-/// before success/error handling can branch. Errors are counted deliberately:
-/// the client may have sent the attempt before returning either result.
-fn login_and_acknowledge_permit<T, E>(
-    queue: &Arc<Mutex<LoginQueue>>,
+/// Unwind-safe ownership for one granted reservation. Until the socket call
+/// begins, Drop abandons it; once attempted, Drop conservatively acknowledges
+/// it. Thus neither preparation panics nor `client.login` panics leak capacity.
+struct GrantedReservation<'a> {
+    queue: &'a QueueMutex<LoginQueue>,
     uid: i32,
+    state: ReservationState,
+}
+
+#[derive(Clone, Copy)]
+enum ReservationState {
+    Unused,
+    Attempted,
+    Resolved,
+}
+
+impl<'a> GrantedReservation<'a> {
+    fn new(queue: &'a SharedLoginQueue, uid: i32) -> Self {
+        Self {
+            queue,
+            uid,
+            state: ReservationState::Unused,
+        }
+    }
+
+    fn attempt<T, E>(&mut self, login: impl FnOnce() -> Result<T, E>) -> Result<T, E> {
+        self.state = ReservationState::Attempted;
+        let result = login();
+        let acknowledged = self
+            .queue
+            .lock()
+            .acknowledge_login_return(self.uid, Instant::now());
+        debug_assert!(
+            acknowledged,
+            "each client.login return acknowledges one granted permit"
+        );
+        self.state = ReservationState::Resolved;
+        result
+    }
+}
+
+impl Drop for GrantedReservation<'_> {
+    fn drop(&mut self) {
+        match self.state {
+            ReservationState::Unused => {
+                let _ = self.queue.lock().abandon_permit(self.uid);
+            }
+            ReservationState::Attempted => {
+                let _ = self
+                    .queue
+                    .lock()
+                    .acknowledge_login_return(self.uid, Instant::now());
+            }
+            ReservationState::Resolved => {}
+        }
+    }
+}
+
+fn login_and_acknowledge_permit<T, E>(
+    permit: &mut GrantedReservation<'_>,
     login: impl FnOnce() -> Result<T, E>,
 ) -> Result<T, E> {
-    let result = login();
-    let acknowledged = queue
-        .lock()
-        .unwrap()
-        .acknowledge_login_return(uid, Instant::now());
-    debug_assert!(
-        acknowledged,
-        "each client.login return acknowledges one granted permit"
-    );
-    result
+    permit.attempt(login)
 }
 
 /// After a successful handshake, keep an unlatched slot armed exactly when
@@ -1186,7 +1233,7 @@ pub struct Play {
     paired_core: paired_core::PairWatch,
     ifaces: Arc<Vec<Option<Box<IfType>>>>,
     ifaces_mut_template: Arc<Vec<Option<Arc<IfTypeMut>>>>,
-    queue: Arc<Mutex<LoginQueue>>,
+    queue: SharedLoginQueue,
     per_frame: SlotFrame,
     spawned: HashSet<String>,
     arms: HashMap<String, Arc<SlotArm>>,
@@ -1388,7 +1435,7 @@ impl Play {
             paired_core: paired_core::PairWatch::default(),
             ifaces,
             ifaces_mut_template,
-            queue: Arc::new(Mutex::new(LoginQueue::default())),
+            queue: Arc::new(QueueMutex::new(LoginQueue::default())),
             per_frame: Arc::new(|_: &mut Client, _: &str, _hold: bool| {}),
             spawned: HashSet::new(),
             arms: HashMap::new(),
@@ -1429,7 +1476,7 @@ impl Play {
             .arms
             .get(name)
             .map(|arm| arm.uid.load(Ordering::Relaxed));
-        self.queue.lock().unwrap().set_preferred(uid);
+        self.queue.lock().set_preferred(uid);
         self.wake(name);
     }
 
@@ -1551,7 +1598,7 @@ impl Play {
             .iter()
             .find(|(_, arm)| arm.uid.load(Ordering::Relaxed) == uid)
             .map(|(n, _)| n.clone());
-        let mut q = self.queue.lock().unwrap();
+        let mut q = self.queue.lock();
         q.prefer(uid);
         if let Some(name) = name {
             let pos = q.status(uid);
@@ -1591,7 +1638,7 @@ impl Play {
 
     /// Snapshot of the login FIFO (front first). Panel tests pin TV-first.
     pub fn login_queue_uids(&self) -> Vec<i32> {
-        self.queue.lock().unwrap().queued_uids()
+        self.queue.lock().queued_uids()
     }
 
     /// Whether `name` is a slot this play controls (spawned or armed), so
@@ -1927,10 +1974,7 @@ impl Play {
         if let Some(arm) = self.arms.get(name) {
             arm.stop.store(true, Ordering::Relaxed);
             arm.notify_retry_wait();
-            self.queue
-                .lock()
-                .unwrap()
-                .leave(arm.uid.load(Ordering::Relaxed));
+            self.queue.lock().leave(arm.uid.load(Ordering::Relaxed));
         }
         self.spawned.remove(name);
         self.statuses.lock().unwrap().retain(|s| s.username != name);
@@ -1944,7 +1988,7 @@ impl Play {
         self.wires.lock().unwrap().remove(name);
         if self.focused.as_deref() == Some(name) {
             self.focused = None;
-            self.queue.lock().unwrap().set_preferred(None);
+            self.queue.lock().set_preferred(None);
         }
         // Wake a parked thread so its next probe sees `stop`; the wake end
         // stays alive (removed after the join) so the poll cannot miss it.
@@ -2517,7 +2561,7 @@ fn spawn_slot_thread(
     slot_cache: Arc<Cache>,
     ifaces_template: Arc<Vec<Option<Box<IfType>>>>,
     ifaces_mut_template: Arc<Vec<Option<Arc<IfTypeMut>>>>,
-    slot_queue: Arc<Mutex<LoginQueue>>,
+    slot_queue: SharedLoginQueue,
     slot_statuses: Arc<Mutex<Vec<SlotStatus>>>,
     slot_scripts: ScriptWall,
     slot_cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>>,
@@ -2645,7 +2689,7 @@ fn spawn_slot_thread(
             let mut script_tick: u64 = 0;
             loop {
                 if arm.stop.load(Ordering::Relaxed) {
-                    slot_queue.lock().unwrap().leave(uid);
+                    slot_queue.lock().leave(uid);
                     return;
                 }
                 if !client.ingame {
@@ -2733,7 +2777,7 @@ fn spawn_slot_thread(
                     let wait = wait_for_permit(&slot_queue, &slot_statuses, &username, uid, &arm);
                     if wait == PermitWait::Cancelled {
                         if arm.stop.load(Ordering::Relaxed) {
-                            slot_queue.lock().unwrap().leave(uid);
+                            slot_queue.lock().leave(uid);
                             return;
                         }
                         continue;
@@ -2755,11 +2799,12 @@ fn spawn_slot_thread(
                         client.ingame,
                     ) {
                         if arm.stop.load(Ordering::Relaxed) {
-                            slot_queue.lock().unwrap().leave(uid);
+                            slot_queue.lock().leave(uid);
                             return;
                         }
                         continue;
                     }
+                    let mut permit = GrantedReservation::new(&slot_queue, uid);
                     mark_login_started(&slot_statuses, &username);
                     let reconnect = arm.reconnect.load(Ordering::Relaxed);
                     if debug_enabled() {
@@ -2767,7 +2812,7 @@ fn spawn_slot_thread(
                             "[host-play] slot {username}: handshake begin reconnect={reconnect}"
                         );
                     }
-                    let login = login_and_acknowledge_permit(&slot_queue, uid, || {
+                    let login = login_and_acknowledge_permit(&mut permit, || {
                         client.login(&username, &password, reconnect)
                     });
                     match login {
@@ -2808,7 +2853,7 @@ fn spawn_slot_thread(
                             }
                             let retry = login_retry_wait(&mut backoff, e.code);
                             if e.code == 16 {
-                                slot_queue.lock().unwrap().hold_for(Instant::now(), retry);
+                                slot_queue.lock().hold_for(Instant::now(), retry);
                             }
                             arm.wait_for_retry(retry);
                             continue;
@@ -3146,7 +3191,7 @@ fn spawn_slot_thread(
                     &slot_navs,
                 );
                 if arm.stop.load(Ordering::Relaxed) {
-                    slot_queue.lock().unwrap().leave(uid);
+                    slot_queue.lock().leave(uid);
                     return;
                 }
             }
@@ -3278,12 +3323,11 @@ fn publish_login_latched_from_arm(
 }
 
 fn apply_queue_wait(rows: &mut [SlotStatus], name: &str, pos: Option<QueuePos>) {
-    let (position, total) = match pos.filter(|p| {
-        p.position >= 1 && p.total >= 1 && p.position <= p.total
-    }) {
-        Some(p) => (p.position as i32, p.total as i32),
-        None => (-1, -1),
-    };
+    let (position, total) =
+        match pos.filter(|p| p.position >= 1 && p.total >= 1 && p.position <= p.total) {
+            Some(p) => (p.position as i32, p.total as i32),
+            None => (-1, -1),
+        };
     for s in rows.iter_mut().filter(|s| s.username == name) {
         s.queue_position = position;
         s.queue_total = total;
@@ -3310,12 +3354,12 @@ enum PermitWait {
 /// Enter `uid` once and publish its authoritative place while the queue lock
 /// prevents a concurrent grant/leave from overtaking the row update.
 fn enqueue_queue_place(
-    queue: &Arc<Mutex<LoginQueue>>,
+    queue: &SharedLoginQueue,
     statuses: &Arc<Mutex<Vec<SlotStatus>>>,
     username: &str,
     uid: i32,
 ) {
-    let mut q = queue.lock().unwrap();
+    let mut q = queue.lock();
     q.enqueue(uid);
     let pos = q.status(uid);
     apply_queue_wait(&mut statuses.lock().unwrap(), username, pos);
@@ -3325,12 +3369,12 @@ fn enqueue_queue_place(
 /// `k of n`. The row belongs to `username`; an already-granted/removed uid
 /// must still clear a stale publication left by an earlier snapshot.
 fn drop_queue_place(
-    queue: &Arc<Mutex<LoginQueue>>,
+    queue: &SharedLoginQueue,
     statuses: &Arc<Mutex<Vec<SlotStatus>>>,
     username: &str,
     uid: i32,
 ) {
-    let mut q = queue.lock().unwrap();
+    let mut q = queue.lock();
     q.leave(uid);
     apply_queue_wait(&mut statuses.lock().unwrap(), username, None);
 }
@@ -3342,8 +3386,7 @@ fn permit_wait_cancelled(arm: &SlotArm) -> bool {
     arm.stop.load(Ordering::Relaxed)
         || !arm.want_login.load(Ordering::Relaxed)
         || arm.latch.load(Ordering::Relaxed)
-        || (arm.auto_intent.load(Ordering::Relaxed)
-            && !arm.auto_login.load(Ordering::Relaxed))
+        || (arm.auto_intent.load(Ordering::Relaxed) && !arm.auto_login.load(Ordering::Relaxed))
 }
 
 /// Block until the already-enqueued `uid` receives a handshake permit,
@@ -3351,7 +3394,7 @@ fn permit_wait_cancelled(arm: &SlotArm) -> bool {
 /// Withdrawal is observed before every poll, so a dropped place is never
 /// recreated by this waiter.
 fn wait_for_permit(
-    queue: &Arc<Mutex<LoginQueue>>,
+    queue: &SharedLoginQueue,
     statuses: &Arc<Mutex<Vec<SlotStatus>>>,
     username: &str,
     uid: i32,
@@ -3374,7 +3417,7 @@ fn wait_for_permit(
             return PermitWait::Cancelled;
         }
         let wait = {
-            let mut q = queue.lock().unwrap();
+            let mut q = queue.lock();
             match q.poll_permit(uid, Instant::now()) {
                 Permit::Grant => {
                     apply_queue_wait(&mut statuses.lock().unwrap(), username, None);
@@ -3397,7 +3440,7 @@ fn wait_for_permit(
         while Instant::now() < deadline && !permit_wait_cancelled(arm) {
             let now = Instant::now();
             if now >= next_publish {
-                let pos = queue.lock().unwrap().status(uid);
+                let pos = queue.lock().status(uid);
                 apply_queue_wait(&mut statuses.lock().unwrap(), username, pos);
                 next_publish = now + QUEUE_PUBLISH;
             }
