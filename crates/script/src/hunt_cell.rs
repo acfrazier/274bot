@@ -221,6 +221,7 @@ pub(crate) struct CellProj {
     area: Area,
     route_present: bool,
     loc_ids: Vec<i32>,
+    leave_only: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -259,6 +260,7 @@ enum AfterDelay {
 enum LeaveContext {
     Pump,
     Attempt,
+    Only,
 }
 
 struct CellRuntime {
@@ -509,6 +511,7 @@ fn parse_proj(input: &Value) -> CellProj {
             || present(input.get("outLever"))
             || present(input.get("upLadder")),
         loc_ids,
+        leave_only: input.get("leaveOnly").and_then(Value::as_bool) == Some(true),
     }
 }
 
@@ -634,13 +637,16 @@ fn fail_attempt(rt: &mut CellRuntime, proj: &CellProj) -> Value {
 
 fn leave_failed(rt: &mut CellRuntime, proj: &CellProj) -> Value {
     match rt.leave_context {
-        LeaveContext::Pump => rt.yield_value(false),
+        LeaveContext::Pump | LeaveContext::Only => rt.yield_value(false),
         LeaveContext::Attempt => fail_attempt(rt, proj),
     }
 }
 
 fn leave_done(rt: &mut CellRuntime, proj: &CellProj) -> Value {
     let obs = observation();
+    if rt.leave_context == LeaveContext::Only {
+        return rt.yield_value(!in_cell(&obs));
+    }
     if holds(&obs, DUSTY_KEY_ID) {
         return rt.yield_value(true);
     }
@@ -651,6 +657,7 @@ fn leave_done(rt: &mut CellRuntime, proj: &CellProj) -> Value {
             decide(rt, proj)
         }
         LeaveContext::Attempt => fail_attempt(rt, proj),
+        LeaveContext::Only => rt.yield_value(!in_cell(&obs)),
     }
 }
 
@@ -670,6 +677,9 @@ fn decide(rt: &mut CellRuntime, proj: &CellProj) -> Value {
     let obs = observation();
     if let Some(stop) = gate(rt, proj, &obs) {
         return stop;
+    }
+    if proj.leave_only {
+        return begin_cell_leave(rt, proj, LeaveContext::Only);
     }
     if in_lair(proj, &obs) && !in_cell(&obs) && !rt.lair_left {
         rt.phase = Phase::AckLeaveLair;

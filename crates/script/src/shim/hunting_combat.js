@@ -186,8 +186,9 @@ export function leaveLair(host, site) {
     return run('hunt-leave', host, site);
 }
 
-export function acquireKey(host, site) {
-    return run('hunt-key', host, site);
+export async function acquireKey(host, site) {
+    const out = await runMachine('hunt-acquire', { site: siteArgs(site) }, hooksOf(host, site));
+    return out.kind === 'done' ? out.value : undefined;
 }
 
 export function bankRoutine(host, site, opts) {

@@ -201,6 +201,7 @@ pub(crate) struct BankProj {
     runes: Vec<NamedCount>,
     escape_runes: Vec<NamedCount>,
     flasks: Vec<FlaskPlan>,
+    target: String,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -238,6 +239,7 @@ enum Phase {
     AckPick,
     AckPark,
     AckCount,
+    AckRestock,
     Done,
     Aborted,
 }
@@ -723,6 +725,11 @@ fn parse_proj(input: &Value) -> BankProj {
         runes: named_counts(input, "runes"),
         escape_runes: named_counts(input, "escapeRunes"),
         flasks: parse_flasks(input),
+        target: input
+            .get("target")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string(),
     }
 }
 
@@ -1826,7 +1833,19 @@ fn count_stage(rt: &mut BankRuntime, proj: &BankProj) -> Option<Value> {
         rt.phase = Phase::AckCount;
         return Some(rt.emit(json!({ "kind": "count-bank-trip" })));
     }
-    Some(rt.yield_value(true))
+    let heading = if proj.target.is_empty() {
+        "restocked, heading back to the monsters".to_string()
+    } else {
+        format!(
+            "restocked, heading back to the {}s",
+            proj.target.to_lowercase()
+        )
+    };
+    rt.phase = Phase::AckRestock;
+    Some(rt.emit(json!({
+        "kind": "status",
+        "message": heading,
+    })))
 }
 
 fn ready_with(rt: &BankRuntime, proj: &BankProj, obs: &BankObservation) -> bool {
@@ -2136,7 +2155,11 @@ fn next_effect(rt: &mut BankRuntime, proj: &BankProj, reply: Option<&Value>) -> 
             continue_work(rt, proj)
         }
         Phase::AckPark => rt.yield_value(false),
-        Phase::AckCount => rt.yield_value(true),
+        Phase::AckCount => {
+            rt.phase = Phase::Work;
+            continue_work(rt, proj)
+        }
+        Phase::AckRestock => rt.yield_value(true),
         Phase::Done => rt.yield_value(rt.yielded.unwrap_or(false)),
         Phase::Aborted => rt.aborted("aborted"),
     }

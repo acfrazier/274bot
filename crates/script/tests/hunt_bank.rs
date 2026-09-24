@@ -491,6 +491,15 @@ fn changed_generation_is_not_a_deposit_and_close_queued_is_not_done() {
     set_observation(shut);
     let count = call(token, proj.clone(), None);
     assert_eq!(kind(&count), "count-bank-trip", "{count}");
+    let restock = call(token, proj.clone(), None);
+    assert_eq!(kind(&restock), "status", "{restock}");
+    assert!(
+        restock["message"]
+            .as_str()
+            .unwrap_or("")
+            .starts_with("restocked, heading back"),
+        "{restock}"
+    );
     let done = call(token, proj, None);
     assert_yield(&done, true);
 }

@@ -58,9 +58,12 @@ export async function acquireKey(h, site) {
     return out.kind === 'done' ? out.value : logic('keyState', site.keyItem?.id ?? null);
 }
 
-// The cell run leaves the cell (after Velrak when the key is not held).
+// Frozen leaveCell only opens the door from inside.
 export function leaveCell(h) {
-    return cell(h, { key: 'taverley-blue', keyItem: { name: 'Dusty key', id: 1590 } });
+    const site = { key: 'taverley-blue', keyItem: { name: 'Dusty key', id: 1590 } };
+    return runMachine('hunt-cell', { site: siteArgs(site, { leaveOnly: true }) }, hooksOf(h, site)).then(
+        (out) => out.kind === 'done' && out.value === true,
+    );
 }
 
 export async function teleportOut(h, site) {

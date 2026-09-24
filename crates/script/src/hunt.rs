@@ -1112,9 +1112,9 @@ impl TeleportOut {
     }
 }
 
-/// Frozen `acquireKey(h, site)`: the site's key into the pack, from the
-/// bank when it is there (the bank run withdraws it) and else through the
-/// jail cell; settles the frozen `KeyState` off the posted pages.
+/// Frozen `acquireKey(h, site)`: leave if inside, then always bank
+/// (deposit, withdraw gear, equip) before Velrak; settles the frozen
+/// `KeyState` off the posted pages.
 pub(crate) struct Acquire {
     site: Value,
     key: i32,
@@ -1126,6 +1126,7 @@ pub(crate) struct Acquire {
 enum AcquirePhase {
     Start,
     Left,
+    Banked,
     Fetched,
 }
 
@@ -1223,17 +1224,26 @@ impl Acquire {
                 self.drive(cx)
             }
             AcquirePhase::Left => {
-                self.phase = AcquirePhase::Fetched;
+                self.phase = AcquirePhase::Banked;
                 let notify_status = json!(format!(
                     "fetching the {}",
                     self.site["keyItem"]["name"].as_str().unwrap_or("key")
                 ));
                 notify(cx, hook::SET_STATUS, &[notify_status])?;
-                self.child = Some(if state == "bank" {
-                    Child::Bank(Box::new(Hunt::run(self.site.clone())))
-                } else {
-                    Child::Cell(Box::new(Hunt::run(self.site.clone())))
-                });
+                self.child = Some(Child::Bank(Box::new(Hunt::run(self.site.clone()))));
+                self.drive(cx)
+            }
+            AcquirePhase::Banked => {
+                if state == "held" {
+                    return Ok(Step::Done(state));
+                }
+                self.phase = AcquirePhase::Fetched;
+                let notify_status = json!(format!(
+                    "fetching the {} from Velrak",
+                    self.site["keyItem"]["name"].as_str().unwrap_or("key")
+                ));
+                notify(cx, hook::SET_STATUS, &[notify_status])?;
+                self.child = Some(Child::Cell(Box::new(Hunt::run(self.site.clone()))));
                 self.drive(cx)
             }
             AcquirePhase::Fetched => Ok(Step::Done(state)),
