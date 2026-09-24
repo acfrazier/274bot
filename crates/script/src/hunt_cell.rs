@@ -24,6 +24,13 @@ const DOOR_LOC_ID: i32 = 2631;
 const DOOR_WITHIN: i32 = 5;
 const MAX_ATTEMPTS: u32 = 3;
 const DIALOG_STEPS: u32 = 120;
+/// Frozen `driveDialog` (`primitives.ts:191-219`): a continue waits one tick,
+/// an answer two, before the next page is read.
+const CONTINUE_TICKS: u32 = 1;
+const ANSWER_TICKS: u32 = 2;
+/// Frozen `DIALOG_GAP_MS` 1500 at 600 ms ticks: how long a closed dialogue
+/// may stay closed before the drive ends.
+const DIALOG_GAP_TICKS: u32 = 3;
 const KBD_LOCS: [i32; 4] = [1765, 1766, 1816, 1817];
 const JAIL_DOOR: Tile = Tile {
     x: 2931,
@@ -285,6 +292,10 @@ struct CellRuntime {
     after_delay: AfterDelay,
     velrak_reclick: u32,
     dialog_steps: u32,
+    /// Ticks to wait after the click this dialogue step just sent.
+    dialog_pause: u32,
+    /// Ticks the dialogue has been closed since the last page.
+    dialog_gap: u32,
     click_acked: bool,
     /// The last wait tick pumped the sustain hook (frozen `waitFed`).
     saw_sustain: bool,
@@ -311,6 +322,8 @@ impl CellRuntime {
             after_delay: AfterDelay::Unlock,
             velrak_reclick: 0,
             dialog_steps: 0,
+            dialog_pause: 0,
+            dialog_gap: 0,
             click_acked: false,
             saw_sustain: false,
             notes: Vec::new(),
@@ -1040,6 +1053,8 @@ fn ack_talk(rt: &mut CellRuntime, proj: &CellProj, reply: Option<&Value>) -> Val
     }
     if dialog_ready(&obs) {
         rt.dialog_steps = 0;
+        rt.dialog_pause = 0;
+        rt.dialog_gap = 0;
         rt.clock.deadline = None;
         rt.phase = Phase::Dialog;
         return dialog_step(rt, proj);
@@ -1060,7 +1075,14 @@ fn begin_handoff(rt: &mut CellRuntime, proj: &CellProj) -> Value {
     handoff_step(rt, proj)
 }
 
+/// Frozen `driveDialog(VELRAK_PREFER)`: one click per page, then the page's
+/// wait before the next read. A click is not acknowledged, so without the
+/// wait the row would click the same page again in the same tick.
 fn dialog_step(rt: &mut CellRuntime, proj: &CellProj) -> Value {
+    let pause = std::mem::take(&mut rt.dialog_pause);
+    if pause > 0 {
+        return rt.emit(json!({ "kind": "delay-ticks", "n": pause }));
+    }
     if rt.dialog_steps >= DIALOG_STEPS {
         return begin_handoff(rt, proj);
     }
@@ -1068,17 +1090,28 @@ fn dialog_step(rt: &mut CellRuntime, proj: &CellProj) -> Value {
     if let Some(stop) = gate(rt, proj, &obs) {
         return stop;
     }
-    rt.dialog_steps = rt.dialog_steps.saturating_add(1);
     if obs.chat_continue {
+        rt.dialog_steps += 1;
+        rt.dialog_gap = 0;
+        rt.dialog_pause = CONTINUE_TICKS;
         return rt.emit(json!({ "kind": "continue" }));
     }
     if !obs.chat_options.is_empty() {
+        rt.dialog_steps += 1;
+        rt.dialog_gap = 0;
+        rt.dialog_pause = ANSWER_TICKS;
         let option = preferred_slot(&obs.chat_options);
         return rt.emit(json!({ "kind": "answer", "option": option }));
     }
     if dialog_closed(&obs) {
-        return begin_handoff(rt, proj);
+        // Frozen: wait out `DIALOG_GAP_MS` for the next page, then stop.
+        if rt.dialog_gap >= DIALOG_GAP_TICKS {
+            return begin_handoff(rt, proj);
+        }
+        rt.dialog_gap += 1;
+        return rt.emit(json!({ "kind": "delay-ticks", "n": 1 }));
     }
+    rt.dialog_steps += 1;
     rt.emit(json!({ "kind": "delay-ticks", "n": 1 }))
 }
 

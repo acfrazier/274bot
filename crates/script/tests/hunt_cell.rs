@@ -749,6 +749,11 @@ fn dialog_answer_is_the_posted_slot_and_closed_is_not_the_handoff() {
     assert!(step.get("text").is_none());
     assert_ne!(kind(&step), "close-modal");
 
+    // The answer waits two ticks before the next page is read.
+    let step = call(token, proj.clone(), None);
+    assert_eq!(kind(&step), "delay-ticks", "{step}");
+    assert_eq!(step["n"], 2, "{step}");
+
     let mut seen = obs(Some(cell_here()));
     seen.chat_modal_id = 12;
     seen.chat_options = vec!["Nope".into(), "".into()];
@@ -795,7 +800,11 @@ fn dialog_drive_stops_at_120_steps_not_120_seconds() {
     let step = call(token, proj.clone(), Some(queued()));
     assert_eq!(kind(&step), "continue", "{step}");
     let mut continues = 1;
-    for _ in 0..130 {
+    for _ in 0..260 {
+        let step = call(token, proj.clone(), None);
+        // Every click waits a tick before the page is read again.
+        assert_eq!(kind(&step), "delay-ticks", "after continue {continues}: {step}");
+        assert_eq!(step["n"], 1, "{step}");
         let step = call(token, proj.clone(), None);
         if kind(&step) == "continue" {
             continues += 1;
@@ -808,6 +817,130 @@ fn dialog_drive_stops_at_120_steps_not_120_seconds() {
         return;
     }
     panic!("dialog did not stop");
+}
+
+/// Velrak's pages in 274/289 content (`velrak_the_explorer.rs2`, opnpc1,
+/// no dusty key held).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum VelrakPage {
+    Thanks,
+    Explore,
+    ExploreSaid,
+    Captured,
+    GiveItAGo,
+    Accept,
+    YesPleaseSaid,
+    KeyPassed,
+    RewardSaid,
+    Closed,
+}
+
+impl VelrakPage {
+    fn options(self) -> Vec<String> {
+        match self {
+            Self::Explore => vec![
+                "So... do you know anywhere good to explore?".into(),
+                "Do I get a reward?".into(),
+            ],
+            Self::Accept => vec![
+                "Yes please!".into(),
+                "No, it's too dangerous for me too.".into(),
+            ],
+            _ => vec![],
+        }
+    }
+
+    /// The page after the server takes one click; `None` ignores it.
+    fn after(self, click: &Value) -> Option<Self> {
+        let option = click["option"].as_i64();
+        Some(match (self, kind(click)) {
+            (Self::Thanks, "continue") => Self::Explore,
+            (Self::Explore, "answer") if option == Some(1) => Self::ExploreSaid,
+            (Self::Explore, "answer") if option == Some(2) => Self::RewardSaid,
+            (Self::ExploreSaid, "continue") => Self::Captured,
+            (Self::Captured, "continue") => Self::GiveItAGo,
+            (Self::GiveItAGo, "continue") => Self::Accept,
+            (Self::Accept, "answer") if option == Some(1) => Self::YesPleaseSaid,
+            (Self::Accept, "answer") => Self::Closed,
+            // `inv_add(inv, dusty_key, 1)` runs when this page is continued.
+            (Self::YesPleaseSaid, "continue") => Self::KeyPassed,
+            (Self::KeyPassed | Self::RewardSaid, "continue") => Self::Closed,
+            _ => return None,
+        })
+    }
+}
+
+#[test]
+fn velrak_hands_over_the_dusty_key_one_click_per_page() {
+    reset();
+    set_observation(obs(Some(outside())));
+    let token = begin();
+    let proj = site(json!({}));
+    assert_eq!(kind(&call(token, proj.clone(), None)), "key");
+
+    let mut page: Option<VelrakPage> = None;
+    let mut dusty_held = false;
+    let mut answers = Vec::new();
+    let mut reply = Some(json!({ "held": true }));
+    let mut sleep = 0;
+    for tick in 0..120 {
+        let mut seen = obs(Some(cell_here()));
+        seen.npcs = vec![velrak(4, cell_here(), "Talk-to")];
+        if dusty_held {
+            seen.inv = vec![dusty()];
+        }
+        if let Some(open) = page.filter(|page| *page != VelrakPage::Closed) {
+            seen.chat_modal_id = 12;
+            seen.chat_options = open.options();
+            seen.chat_continue = seen.chat_options.is_empty();
+        }
+        set_observation(seen);
+        if sleep > 0 {
+            sleep -= 1;
+            continue;
+        }
+        // One row step: effects until one ends the tick, as `hunt.rs` runs it.
+        let mut clicks = Vec::new();
+        for _ in 0..64 {
+            let step = call(token, proj.clone(), reply.take());
+            match kind(&step) {
+                "npc" => {
+                    assert_eq!(step["name"], "Velrak the explorer", "{step}");
+                    page.get_or_insert(VelrakPage::Thanks);
+                    reply = Some(queued());
+                }
+                "continue" | "answer" => clicks.push(step),
+                // `hunt.rs` skips `sustain` when the caller has no such hook.
+                "sustain" => {}
+                "delay-ticks" => {
+                    sleep = step["n"].as_u64().unwrap_or(1) - 1;
+                    break;
+                }
+                "walk" => {
+                    // Holding the dusty key, the run walks back to the door.
+                    assert!(dusty_held, "left the cell without the key: {step}");
+                    assert_eq!(answers, vec![1, 1], "the frozen options");
+                    return;
+                }
+                other => panic!("tick {tick}: unexpected {other}: {step}"),
+            }
+        }
+        assert!(
+            clicks.len() <= 1,
+            "tick {tick}: one click per page, not {}: {clicks:?}",
+            clicks.len()
+        );
+        if let (Some(click), Some(current)) = (clicks.first(), page) {
+            if kind(click) == "answer" {
+                answers.push(click["option"].as_i64().unwrap_or(0));
+            }
+            if let Some(next) = current.after(click) {
+                dusty_held |= next == VelrakPage::KeyPassed;
+                page = Some(next);
+            }
+        }
+    }
+    panic!("Velrak never handed over the key: page {page:?}, answers {answers:?}");
 }
 
 #[test]
