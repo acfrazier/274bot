@@ -817,7 +817,6 @@ fn yield_shape_and_shim_flags_are_not_fight_copies() {
     assert!(leave_js.contains("allow_teleports: false"));
     assert!(leave_js.contains("allow_wilderness: false"));
     assert!(leave_js.contains("allow_bank_fetch: false"));
-    assert!(leave_js.contains("__rs2b0t_teleport"));
     assert!(leave_js.contains("leaveProjection"));
     assert!(leave_js.contains("runLeaveTeleport"));
     assert!(!leave_js.contains("Game.teleport"));

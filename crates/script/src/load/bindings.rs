@@ -321,15 +321,6 @@ pub(super) fn wire_runtime(
             ))
         })
         .map_err(|e| format!("register special: {e}"))?;
-    let selected_teleport = game_data.clone();
-    runtime
-        .register_function("__rs2b0t_teleport", move |args: &[serde_json::Value]| {
-            Ok(crate::teleport::dispatch(
-                selected_teleport.as_deref(),
-                args.first().unwrap_or(&serde_json::Value::Null),
-            ))
-        })
-        .map_err(|e| format!("register teleport: {e}"))?;
     let selected_shop = game_data.clone();
     runtime
         .register_function("__rs2b0t_shop", move |args: &[serde_json::Value]| {
@@ -646,6 +637,7 @@ pub(super) fn wire_runtime(
     super::targets_v8::install(runtime).map_err(|e| format!("targets v8: {e}"))?;
     super::fire_v8::install(runtime).map_err(|e| format!("fire v8: {e}"))?;
     super::combat_style_v8::install(runtime).map_err(|e| format!("combat style v8: {e}"))?;
+    super::machine_v8::install(runtime).map_err(|e| format!("machine v8: {e}"))?;
     let content = format!(
         "globalThis.__rs2b0t_host.content = {};",
         crate::shim::content_json(game_data.as_deref(), named_banks.as_ref())

@@ -8,8 +8,10 @@
 const host = () => globalThis.__rs2b0t_host || {};
 
 // Mirrors rs2b0t Scheduler.trySettle per wait: cond, then timeout.
-// `undefined` keeps the wait parked; an Error rejects it.
+// `undefined` keeps the wait parked; an Error rejects it. A machine wait
+// takes its Rust outcome envelope once the machine has settled.
 function trySettle(wait, tick, now) {
+    if (wait.kind === 'machine') return globalThis.__rs2b0t_machine_take(wait.handle);
     if (wait.kind === 'tick') return tick >= wait.dueTick ? true : undefined;
     if (wait.kind === 'time') return now >= wait.dueAt ? true : undefined;
     try {
@@ -100,6 +102,12 @@ export const Execution = {
         h.interact.push({ op: 'note-progress' });
     },
 };
+
+// One Rust step machine's completion (`_kernel.js` `runMachine`), parked
+// like any wait so it settles in the pump's phase order.
+export function parkMachine(handle) {
+    return park.enqueue({ kind: 'machine', handle });
+}
 
 // The isolate tick loop calls this once per eligible posted tick, at the
 // point of its phase order where waits settle (after it recorded the

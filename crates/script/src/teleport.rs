@@ -1,18 +1,16 @@
-//! Rust-owned spellbook teleport. Selected-cache metadata names the
-//! non-target button; compact snapshot facts observe Magic XP and tile
-//! change. JavaScript sends the caller name and dispatches the returned
-//! if-button. A queued click is not arrival.
+//! Rust-owned spellbook teleport, a [`crate::machine`] family. Selected-
+//! cache metadata names the non-target button; compact snapshot facts
+//! observe Magic XP and tile change. JavaScript starts it with the caller
+//! name and awaits the arrival verdict; Rust presses the if-button. A
+//! queued click is not arrival.
 
+use crate::machine::{Begin, Cx, Family, Step};
 use crate::observed::{self, Scene};
-use api::game_data::SelectedGameData;
-use serde_json::{json, Value};
-use std::cell::RefCell;
+use crate::shim::InteractReq;
+use serde::Deserialize;
 
+/// Steps after the click before an unobserved arrival is a timeout.
 pub const SETTLE_POLLS: u32 = 14;
-
-thread_local! {
-    static RUNTIME: RefCell<TeleportRuntime> = const { RefCell::new(TeleportRuntime::new()) };
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Tile {
@@ -47,145 +45,67 @@ impl NativeObservation {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Phase {
-    Idle,
-    WaitSettle,
+#[derive(Deserialize)]
+pub(crate) struct TeleportArgs {
+    name: String,
 }
 
-struct TeleportRuntime {
-    paused: bool,
-    held: bool,
-    token: u64,
-    phase: Phase,
+/// One cast: the click went out at begin; each step polls for arrival.
+pub(crate) struct Teleport {
     polls_left: u32,
     start_here: Option<Tile>,
     start_xp: Option<i32>,
 }
 
-impl TeleportRuntime {
-    const fn new() -> Self {
-        Self {
-            paused: false,
-            held: false,
-            token: 0,
-            phase: Phase::Idle,
-            polls_left: 0,
-            start_here: None,
-            start_xp: None,
+impl Family for Teleport {
+    const NAME: &'static str = "teleport";
+    /// A new cast replaces the one in flight.
+    const EXCLUSIVE: bool = true;
+    type Args = TeleportArgs;
+    /// Arrival observed (Magic XP gained and tile changed).
+    type Output = bool;
+
+    fn begin(args: TeleportArgs, cx: &mut Cx<'_>) -> Begin<Self> {
+        let Some(selected) = crate::supply_v2::selected_data() else {
+            return Begin::Refuse("missing selected teleports".into());
+        };
+        if selected.teleports().is_empty() {
+            return Begin::Refuse("missing selected teleports".into());
         }
-    }
-
-    fn frozen(&self) -> bool {
-        self.paused || self.held
-    }
-
-    fn abort_runtime(&mut self) {
-        self.token = self.token.wrapping_add(1);
-        self.phase = Phase::Idle;
-        self.polls_left = 0;
-        self.start_here = None;
-        self.start_xp = None;
-        self.paused = false;
-        self.held = false;
-    }
-}
-
-pub fn on_pause() {
-    RUNTIME.with(|rt| rt.borrow_mut().paused = true);
-}
-
-pub fn on_resume() {
-    RUNTIME.with(|rt| rt.borrow_mut().paused = false);
-}
-
-pub fn on_hold(held: bool) {
-    RUNTIME.with(|rt| rt.borrow_mut().held = held);
-}
-
-pub fn on_reset() {
-    RUNTIME.with(|rt| rt.borrow_mut().abort_runtime());
-}
-
-pub fn dispatch(data: Option<&SelectedGameData>, input: &Value) -> Value {
-    match input.get("op").and_then(Value::as_str).unwrap_or("") {
-        "begin" => begin(
-            data,
-            input.get("name").and_then(Value::as_str).unwrap_or(""),
-        ),
-        "next" => next(input.get("token").and_then(Value::as_u64).unwrap_or(0)),
-        _ => json!({ "kind": "notImpl", "reason": "unknown op" }),
-    }
-}
-
-fn begin(data: Option<&SelectedGameData>, name: &str) -> Value {
-    let Some(selected) = data else {
-        return json!({ "kind": "notImpl", "reason": "missing selected teleports" });
-    };
-    if selected.teleports().is_empty() {
-        return json!({ "kind": "notImpl", "reason": "missing selected teleports" });
-    }
-    let Some(spell) = selected.teleport(name) else {
-        return json!({ "kind": "unknown" });
-    };
-    if !spell.available() {
-        return json!({ "kind": "notImpl", "reason": "absent control" });
-    }
-    let obs = observed::with(NativeObservation::from_scene);
-    if let Some(level) = obs.magic_level {
-        if level < spell.level {
-            return json!({ "kind": "done", "result": false, "reason": "level" });
-        }
-    }
-    RUNTIME.with(|rt| {
-        let mut runtime = rt.borrow_mut();
-        runtime.abort_runtime();
-        runtime.phase = Phase::WaitSettle;
-        runtime.polls_left = SETTLE_POLLS;
-        runtime.start_here = obs.here;
-        runtime.start_xp = obs.magic_xp;
-        json!({
-            "kind": "if-button",
-            "token": runtime.token,
-            "component_id": spell.component_id,
-        })
-    })
-}
-
-fn next(token: u64) -> Value {
-    RUNTIME.with(|rt| {
-        let mut runtime = rt.borrow_mut();
-        if token != runtime.token || runtime.phase == Phase::Idle {
-            return json!({ "kind": "aborted", "token": runtime.token });
-        }
-        if runtime.frozen() {
-            return json!({ "kind": "wait", "token": runtime.token });
+        let Some(spell) = selected.teleport(&args.name) else {
+            return Begin::Done(false);
+        };
+        if !spell.available() {
+            return Begin::Refuse("absent control".into());
         }
         let obs = observed::with(NativeObservation::from_scene);
+        if obs.magic_level.is_some_and(|level| level < spell.level) {
+            return Begin::Done(false);
+        }
+        cx.emit(InteractReq::IfButton {
+            component_id: spell.component_id,
+        });
+        Begin::Run(Self {
+            polls_left: SETTLE_POLLS,
+            start_here: obs.here,
+            start_xp: obs.magic_xp,
+        })
+    }
+
+    fn step(&mut self, _cx: &mut Cx<'_>) -> Step<bool> {
+        let obs = observed::with(NativeObservation::from_scene);
         if !obs.ingame {
-            runtime.phase = Phase::Idle;
-            return json!({ "kind": "aborted", "token": runtime.token });
+            return Step::Done(false);
         }
-        if arrived(runtime.start_here, runtime.start_xp, obs.here, obs.magic_xp) {
-            runtime.phase = Phase::Idle;
-            return json!({
-                "kind": "done",
-                "result": true,
-                "token": runtime.token,
-            });
+        if arrived(self.start_here, self.start_xp, obs.here, obs.magic_xp) {
+            return Step::Done(true);
         }
-        if runtime.polls_left == 0 {
-            runtime.phase = Phase::Idle;
-            return json!({
-                "kind": "done",
-                "result": false,
-                "reason": "timeout",
-                "token": runtime.token,
-            });
+        if self.polls_left == 0 {
+            return Step::Done(false);
         }
-        runtime.polls_left = runtime.polls_left.saturating_sub(1);
-        json!({ "kind": "wait", "token": runtime.token })
-    })
+        self.polls_left -= 1;
+        Step::Wait
+    }
 }
 
 fn arrived(
@@ -194,16 +114,9 @@ fn arrived(
     here: Option<Tile>,
     xp: Option<i32>,
 ) -> bool {
-    let Some(before) = start_here else {
-        return false;
-    };
-    let Some(after) = here else {
-        return false;
-    };
-    let Some(xp_before) = start_xp else {
-        return false;
-    };
-    let Some(xp_after) = xp else {
+    let (Some(before), Some(after), Some(xp_before), Some(xp_after)) =
+        (start_here, here, start_xp, xp)
+    else {
         return false;
     };
     after != before && xp_after > xp_before
@@ -211,10 +124,11 @@ fn arrived(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::machine::{self, Outcome, Started};
     use client::io::ClientRevision;
+    use serde_json::json;
 
-    fn data(rev: ClientRevision) -> std::sync::Arc<SelectedGameData> {
+    fn data(rev: ClientRevision) -> std::sync::Arc<api::game_data::SelectedGameData> {
         api::game_data::for_revision(rev).expect("selected data")
     }
 
@@ -250,12 +164,16 @@ mod tests {
 
     #[test]
     fn missing_controls_do_not_invent_a_button() {
-        let missing = dispatch(None, &json!({ "op": "begin", "name": "Varrock" }));
-        assert_eq!(missing["kind"], "notImpl");
-        let unknown = dispatch(
-            Some(data(ClientRevision::R274).as_ref()),
-            &json!({ "op": "begin", "name": "Nowhere" }),
+        crate::supply_v2::configure(None);
+        assert_eq!(
+            machine::start("teleport", json!({ "name": "Varrock" }), 0),
+            Started::Refused("missing selected teleports".into())
         );
-        assert_eq!(unknown["kind"], "unknown");
+        crate::supply_v2::configure(Some(data(ClientRevision::R274)));
+        assert_eq!(
+            machine::start("teleport", json!({ "name": "Nowhere" }), 0),
+            Started::Settled(Outcome::Done(json!(false)))
+        );
+        assert!(machine::merge_ops(Vec::new()).is_empty());
     }
 }

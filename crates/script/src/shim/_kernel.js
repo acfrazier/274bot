@@ -1,4 +1,6 @@
 // Shared helpers for kernel shim facades (snapshot reads + interact queue).
+import { parkMachine } from '../api/execution/Execution.js';
+
 export const host = () => globalThis.__rs2b0t_host || {};
 export const snap = () => host().snapshot || {};
 export const notImpl = (name, reason) =>
@@ -8,6 +10,14 @@ export const queue = (req) => {
     h.interact = h.interact || [];
     h.interact.push(req);
 };
+
+// Start one Rust step machine and await its single completion. Resolves
+// `{ kind: 'done', value }`, `{ kind: 'refused', reason }` (nothing
+// started) or `{ kind: 'aborted', reason }` (ResetSession, superseded).
+export function runMachine(family, args) {
+    const started = globalThis.__rs2b0t_machine_start(family, args);
+    return started.kind === 'running' ? parkMachine(started.handle) : Promise.resolve(started);
+}
 
 export const proxy = (ns, members) =>
     new Proxy(members, {

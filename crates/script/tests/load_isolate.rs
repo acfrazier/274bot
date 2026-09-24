@@ -928,6 +928,76 @@ fn isolate_remaps_api_imports_to_our_game_and_teleport_throws() {
     iso.join();
 }
 
+// `Game.teleport` is one Rust machine start plus one await: Rust presses
+// the if-button into the tick batch at the caller's queue position, a newer
+// cast supersedes the one in flight (its await settles `false`), and the
+// arrival the scene observes settles the newer one `true`.
+#[test]
+fn game_teleport_is_a_rust_machine_and_a_new_cast_supersedes_the_old() {
+    let src = r#"
+import { Game } from '../../api/game/Game.js';
+import { queue } from '../../shim/_kernel.js';
+export default class T extends LoopingBot {
+    async loop() {
+        if (globalThis.__did) return;
+        globalThis.__did = true;
+        queue({ op: 'if-button', component_id: 7 });
+        const first = Game.teleport('Varrock');
+        const second = Game.teleport('Falador');
+        globalThis.__first = await first;
+        globalThis.__second = await second;
+    }
+}
+"#;
+    let data = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
+    let iso =
+        LoadIsolate::spawn_with_game_data(src.to_string(), LoadShape::CompatClass, vec![], data)
+            .unwrap();
+    let magic = |xp| script::isolate_fb::StatInput {
+        index: 6,
+        name: "magic",
+        xp,
+        base: 50,
+        effective: 50,
+    };
+    let button = |id| script::shim::InteractReq::IfButton { component_id: id };
+    let start_stats = [magic(1000)];
+    let mut snap = base_snapshot();
+    snap.here = Some(script::isolate_fb::TileInput {
+        x: 3222,
+        z: 3222,
+        level: 0,
+    });
+    snap.stats = &start_stats;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(1);
+    let _ = iso.probe("true");
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![button(7), button(1164), button(1170)]
+    );
+    assert_eq!(
+        iso.probe("globalThis.__first ?? null").unwrap(),
+        serde_json::Value::Null
+    );
+
+    let landed = [magic(1480)];
+    snap.tick = 2;
+    snap.here = Some(script::isolate_fb::TileInput {
+        x: 2965,
+        z: 3379,
+        level: 0,
+    });
+    snap.stats = &landed;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(2);
+    let _ = iso.probe("true");
+    assert_eq!(iso.probe("globalThis.__first").unwrap(), false);
+    assert_eq!(iso.probe("globalThis.__second").unwrap(), true);
+    assert!(iso.drain_interacts().is_empty());
+    iso.join();
+}
+
 // Task 3 — the `@rs2b0t/api` bare specifier remaps to the same shim.
 #[test]
 fn isolate_rs2b0t_api_bare_import_resolves_to_our_shim() {

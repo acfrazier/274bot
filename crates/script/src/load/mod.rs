@@ -41,6 +41,8 @@ mod distance;
 mod reach_query;
 mod loadout_v8;
 #[cfg(feature = "load")]
+mod machine_v8;
+#[cfg(feature = "load")]
 mod melee_weapons_v8;
 #[cfg(feature = "load")]
 mod paint_chrome;

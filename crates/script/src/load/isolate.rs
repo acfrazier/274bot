@@ -251,6 +251,14 @@ impl Drop for TickLoopFinish {
     }
 }
 
+/// Drops every machine row when the tick loop ends (Stop, script stop).
+struct MachinesStop;
+impl Drop for MachinesStop {
+    fn drop(&mut self) {
+        crate::machine::on_stop();
+    }
+}
+
 enum ThreadMsg {
     Log(String),
     /// The tick's shim interact queue (`__rs2b0t_host.interact`), a
@@ -1755,6 +1763,9 @@ fn tick_loop(
     #[cfg(feature = "memory-profile")] counters: std::sync::Arc<crate::memory_profile::Counters>,
 ) {
     let _finish = TickLoopFinish(proof.clone());
+    // Locals drop before the `runtime` parameter: machine rows (and any
+    // V8 handles they hold) never outlive the isolate.
+    let _machines = MachinesStop;
     #[cfg(feature = "memory-profile")]
     let mut last_heap_sample = None::<Instant>;
     let mut paused = false;
@@ -1838,7 +1849,7 @@ fn tick_loop(
                             crate::autocast::on_hold(host_hold);
                             crate::prayer::on_hold(host_hold);
                             crate::special::on_hold(host_hold);
-                            crate::teleport::on_hold(host_hold);
+                            crate::machine::on_hold(host_hold);
                             crate::shop::on_hold(host_hold);
                             crate::hunt_fight::on_hold(host_hold);
                             crate::hunt_lair::on_hold(host_hold);
@@ -1893,6 +1904,10 @@ fn tick_loop(
                     continue;
                 }
                 let start = Instant::now();
+                // Step machines read the scene the Snapshot command just
+                // applied; they run before any of this tick's JS, and a
+                // completion settles in this tick's pump.
+                crate::machine::step();
                 if events_consumed {
                     let observed = event_producer.take_eligible();
                     if let Some(diag) = observed.diagnostic {
@@ -1969,6 +1984,7 @@ fn tick_loop(
                     let _ = runtime.eval::<()>(
                         "if (globalThis.__rs2b0t_host) globalThis.__rs2b0t_host.interact = []",
                     );
+                    crate::machine::drop_ops();
                     let _ = out.send(ThreadMsg::IgnoredRandoms(eval_ignored_randoms(
                         &mut runtime,
                     )));
@@ -2070,16 +2086,11 @@ fn tick_loop(
                 // batch, not a stringified JSON document. Each row is
                 // accepted or rejected locally so a malformed mouse
                 // object cannot drop a sibling key.
+                // Machine-emitted ops join the batch in Rust at the JS
+                // queue position where they were emitted.
                 let rows: Result<Vec<crate::shim::MaybeInteractReq>, rustyscript::Error> =
                     runtime.eval("globalThis.__rs2b0t_host.interact || []");
-                let mut reqs: Vec<crate::shim::InteractReq> = rows
-                    .unwrap_or_default()
-                    .into_iter()
-                    .filter_map(|row| match row {
-                        crate::shim::MaybeInteractReq::Req(req) => Some(req),
-                        crate::shim::MaybeInteractReq::Skip(_) => None,
-                    })
-                    .collect();
+                let mut reqs = crate::machine::merge_ops(rows.unwrap_or_default());
                 stamp_mouse_gesture_identities(&mut reqs, input_identity, &mut mouse_gestures);
                 crate::inspect_wait::filter_public_inspect_wire(&mut reqs);
                 let (enqueued, settled) = take_wait_facts(&mut runtime);
@@ -2196,7 +2207,7 @@ fn tick_loop(
                 crate::autocast::on_reset();
                 crate::prayer::on_reset();
                 crate::special::on_reset();
-                crate::teleport::on_reset();
+                crate::machine::on_reset();
                 crate::shop::on_reset();
                 crate::hunt_fight::on_reset();
                 crate::hunt_lair::on_reset();
@@ -2253,7 +2264,7 @@ fn tick_loop(
                 crate::autocast::on_pause();
                 crate::prayer::on_pause();
                 crate::special::on_pause();
-                crate::teleport::on_pause();
+                crate::machine::on_pause();
                 crate::shop::on_pause();
                 crate::hunt_fight::on_pause();
                 crate::hunt_lair::on_pause();
@@ -2284,7 +2295,7 @@ fn tick_loop(
                 crate::autocast::on_resume();
                 crate::prayer::on_resume();
                 crate::special::on_resume();
-                crate::teleport::on_resume();
+                crate::machine::on_resume();
                 crate::shop::on_resume();
                 crate::hunt_fight::on_resume();
                 crate::hunt_lair::on_resume();
@@ -3102,5 +3113,134 @@ loop() {
             "onStop log missing: {logs:?}"
         );
         let _ = abandoned_isolate_count();
+    }
+
+    fn machine_tick(iso: &LoadIsolate, n: u64) {
+        iso.on_game_tick(n);
+        let _ = iso.probe("true");
+    }
+
+    fn if_button(id: i32) -> crate::shim::InteractReq {
+        crate::shim::InteractReq::IfButton { component_id: id }
+    }
+
+    fn spawn_machine_card(body: &str) -> LoadIsolate {
+        let src = format!(
+            "import {{ runMachine, queue }} from '../../shim/_kernel.js';\n\
+             export default class T extends LoopingBot {{\n\
+             async loop() {{\n\
+             if (globalThis.__did) return;\n\
+             globalThis.__did = true;\n\
+             {body}\n\
+             }}\n}}\n"
+        );
+        LoadIsolate::spawn(src, LoadShape::CompatClass, vec![]).unwrap()
+    }
+
+    #[test]
+    fn machine_ops_join_the_batch_in_order_and_the_await_settles_once() {
+        let iso = spawn_machine_card(
+            "globalThis.__settles = 0;
+             queue({ op: 'if-button', component_id: 1 });
+             const run = runMachine('probe', { button: 10, steps: 2 });
+             queue({ op: 'if-button', component_id: 2 });
+             const out = await run;
+             globalThis.__settles += 1;
+             globalThis.__out = out;
+             globalThis.__at = globalThis.__rs2b0t_host.tick;",
+        );
+        machine_tick(&iso, 1);
+        assert_eq!(
+            iso.drain_interacts(),
+            vec![if_button(1), if_button(10), if_button(2)],
+            "begin ops sit where the caller started the machine"
+        );
+        machine_tick(&iso, 2);
+        assert_eq!(iso.drain_interacts(), vec![if_button(11)]);
+        machine_tick(&iso, 3);
+        assert_eq!(iso.drain_interacts(), vec![if_button(12)]);
+        assert_eq!(iso.probe("globalThis.__settles").unwrap(), 0);
+        for n in 4..=6 {
+            machine_tick(&iso, n);
+        }
+        assert_eq!(iso.probe("globalThis.__settles").unwrap(), 1);
+        assert_eq!(
+            iso.probe("globalThis.__out").unwrap(),
+            serde_json::json!({ "kind": "done", "value": 2 })
+        );
+        assert_eq!(
+            iso.probe("globalThis.__at").unwrap(),
+            4,
+            "the completing step settles in the same tick's pump"
+        );
+        assert!(
+            iso.drain_interacts().is_empty(),
+            "a finished row emits nothing"
+        );
+        iso.join();
+    }
+
+    #[test]
+    fn reset_session_aborts_a_running_machine_and_settles_its_await() {
+        let iso = spawn_machine_card(
+            "globalThis.__out = await runMachine('probe', { button: 10, steps: 5 });",
+        );
+        machine_tick(&iso, 1);
+        assert_eq!(iso.drain_interacts(), vec![if_button(10)]);
+        iso.reset_session_work();
+        machine_tick(&iso, 2);
+        assert_eq!(
+            iso.probe("globalThis.__out").unwrap(),
+            serde_json::json!({ "kind": "aborted", "reason": "reset" })
+        );
+        machine_tick(&iso, 3);
+        assert!(
+            iso.drain_interacts().is_empty(),
+            "an aborted row never steps"
+        );
+        iso.join();
+    }
+
+    #[test]
+    fn concurrent_machines_settle_independently() {
+        let iso = spawn_machine_card(
+            "const stamp = (p) => p.then((out) => ({ out, at: globalThis.__rs2b0t_host.tick }));
+             globalThis.__both = await Promise.all([
+                 stamp(runMachine('probe', { button: 100, steps: 1 })),
+                 stamp(runMachine('probe', { button: 200, steps: 3 })),
+             ]);",
+        );
+        for n in 1..=6 {
+            machine_tick(&iso, n);
+        }
+        assert_eq!(
+            iso.probe("globalThis.__both").unwrap(),
+            serde_json::json!([
+                { "out": { "kind": "done", "value": 1 }, "at": 3 },
+                { "out": { "kind": "done", "value": 3 }, "at": 5 },
+            ])
+        );
+        iso.join();
+    }
+
+    #[test]
+    fn refused_and_immediate_starts_resolve_without_a_wait() {
+        let iso = spawn_machine_card(
+            "globalThis.__outs = [
+                 await runMachine('probe', { button: 1, steps: 1, refuse: true }),
+                 await runMachine('probe', { button: 2, steps: 0 }),
+                 await runMachine('nowhere', {}),
+             ];",
+        );
+        machine_tick(&iso, 1);
+        let outs = iso.probe("globalThis.__outs").unwrap();
+        assert_eq!(
+            outs[0],
+            serde_json::json!({ "kind": "refused", "reason": "probe refused" })
+        );
+        assert_eq!(outs[1], serde_json::json!({ "kind": "done", "value": 0 }));
+        assert_eq!(outs[2]["kind"], "refused");
+        assert_eq!(iso.drain_interacts(), vec![if_button(2)]);
+        iso.join();
     }
 }

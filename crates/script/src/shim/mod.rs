@@ -419,13 +419,14 @@ globalThis.document = {
 /// `src/bot/api/...`, and the adapter lives at `src/bot/adapter/`).
 pub(crate) fn shim_modules() -> Vec<Module> {
     vec![
-        Module::new("/rs2b0t/bot/shim/_kernel.js", include_str!("_kernel.js")),
-        Module::new("/rs2b0t/bot/geometry/Tile.js", include_str!("tile.js")),
-        Module::new("/rs2b0t/bot/api/query/Query.js", include_str!("query.js")),
+        // `_kernel.js` imports the Execution park for `runMachine`.
         Module::new(
             "/rs2b0t/bot/api/execution/Execution.js",
             include_str!("execution.js"),
         ),
+        Module::new("/rs2b0t/bot/shim/_kernel.js", include_str!("_kernel.js")),
+        Module::new("/rs2b0t/bot/geometry/Tile.js", include_str!("tile.js")),
+        Module::new("/rs2b0t/bot/api/query/Query.js", include_str!("query.js")),
         Module::new(
             "/rs2b0t/bot/api/execution/EventSignal.js",
             include_str!("event_signal.js"),

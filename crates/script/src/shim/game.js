@@ -2,7 +2,7 @@
 // throw `not impl` — never a fake value.
 import { reader, actions } from '../../adapter/ClientAdapter.js';
 import { Execution } from '../execution/Execution.js';
-import { host, snap, notImpl, proxy, queue, optionalText } from '../../shim/_kernel.js';
+import { host, snap, notImpl, proxy, queue, optionalText, runMachine } from '../../shim/_kernel.js';
 
 const COM_MODE_VARP = 43;
 const RUN_VARP = 173;
@@ -41,16 +41,6 @@ function matchCombatRow(style) {
 function selectCombatMode(mode) {
     const btn = reader.selectButtonByVarp(-1, COM_MODE_VARP, mode);
     return btn !== -1 && actions.ifButton(btn);
-}
-
-function callTeleport(payload) {
-    const fn = globalThis.rustyscript && globalThis.rustyscript.functions
-        ? globalThis.rustyscript.functions.__rs2b0t_teleport
-        : undefined;
-    if (typeof fn !== 'function') {
-        throw notImpl('Game.teleport');
-    }
-    return fn(payload);
 }
 
 export const Game = new Proxy(
@@ -182,33 +172,9 @@ export const Game = new Proxy(
             return true;
         },
         async teleport(name) {
-            const step = callTeleport({ op: 'begin', name: String(name ?? '') });
-            if (!step || step.kind === 'unknown') return false;
-            if (step.kind === 'notImpl') {
-                throw notImpl('Game.teleport', step.reason);
-            }
-            if (step.kind === 'done') {
-                return step.result === true;
-            }
-            const token = step.token;
-            let current = step;
-            while (current && current.kind !== 'done' && current.kind !== 'aborted') {
-                if (current.kind === 'if-button') {
-                    actions.ifButton(current.component_id);
-                } else if (current.kind !== 'wait') {
-                    return false;
-                }
-                let next = null;
-                await Execution.delayUntil(() => {
-                    next = callTeleport({ op: 'next', token });
-                    return next?.kind !== 'wait';
-                }, 0);
-                current = next;
-            }
-            if (current && current.kind === 'done') {
-                return current.result === true;
-            }
-            return false;
+            const out = await runMachine('teleport', { name: String(name ?? '') });
+            if (out.kind === 'refused') throw notImpl('Game.teleport', out.reason);
+            return out.kind === 'done' && out.value === true;
         },
         energy() {
             return typeof snap().run_energy === 'number' ? snap().run_energy : 0;

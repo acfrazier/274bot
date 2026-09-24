@@ -125,6 +125,9 @@ pub mod hunt_leave;
 mod inspect_wait;
 #[cfg(feature = "load")]
 pub mod line_of_sight;
+/// Per-isolate step-machine host: families Rust begins, steps and aborts.
+#[cfg(feature = "load")]
+mod machine;
 #[cfg(feature = "load")]
 mod melee_weapons;
 #[cfg(feature = "load")]

@@ -1,6 +1,6 @@
 // Thin Fight Task. Rust owns field pick, clocks and gates. This file
 // marshals CombatHost + site data and dispatches the effect table only.
-import { notImpl, queue } from '../../../shim/_kernel.js';
+import { notImpl, queue, runMachine } from '../../../shim/_kernel.js';
 import { Execution } from '../../execution/Execution.js';
 import { Sustain } from '../../sustain/Sustain.js';
 
@@ -863,37 +863,8 @@ function beginLeaveWalk(step, radius) {
 }
 
 async function runLeaveTeleport(name) {
-    const fn = globalThis.rustyscript && globalThis.rustyscript.functions
-        ? globalThis.rustyscript.functions.__rs2b0t_teleport
-        : undefined;
-    if (typeof fn !== 'function') {
-        return false;
-    }
-    let current = fn({ op: 'begin', name: String(name ?? '') });
-    if (!current || current.kind === 'unknown' || current.kind === 'notImpl') {
-        return false;
-    }
-    if (current.kind === 'done') {
-        return current.result === true;
-    }
-    const token = current.token;
-    while (current && current.kind !== 'done' && current.kind !== 'aborted' && current.kind !== 'unknown' && current.kind !== 'notImpl') {
-        if (current.kind === 'if-button') {
-            queue({ op: 'if-button', component_id: current.component_id });
-        } else if (current.kind !== 'wait') {
-            return false;
-        }
-        let next = null;
-        await Execution.delayUntil(() => {
-            next = fn({ op: 'next', token });
-            return next?.kind !== 'wait';
-        }, 0);
-        current = next;
-    }
-    if (current && current.kind === 'done') {
-        return current.result === true;
-    }
-    return false;
+    const out = await runMachine('teleport', { name: String(name ?? '') });
+    return out.kind === 'done' && out.value === true;
 }
 
 export async function leaveLair(host, site) {
