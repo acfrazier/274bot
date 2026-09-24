@@ -10713,17 +10713,24 @@ fn climbing_boots_variants_seed_complete_death_plateau_map_before_relog_and_star
                 "{name}: teleport bank restock Water is acknowledged"
             );
             let landed = position(&cast).unwrap_or_else(|| panic!("{name}: cast arm"));
-            assert_eq!(
-                (spend + 1, landed + 1),
-                (landed, back),
-                "{name}: the cast follows the purchase and precedes the bank return"
-            );
+            // The runner baselines `StatXpGain` when its first arm of that
+            // shape begins and the proof reuses it. The proof must be that
+            // arm, starting after the 2-pair spend and before the cast, or
+            // its baseline is taken after the cycle and it waits for a
+            // second full trip (live bce85f2df: 720s deadline mid-trip 2).
             assert_eq!(
                 scenario.proof,
                 Proof::StatXpGain {
                     id: MAGIC_STAT,
                     min: 1,
                 }
+            );
+            let xp = position(&scenario.proof)
+                .unwrap_or_else(|| panic!("{name}: the proof's XP arm is watched"));
+            assert_eq!(
+                (spend + 1, xp + 1, landed + 1),
+                (xp, landed, back),
+                "{name}: spend, cast XP, landing, then the bank return"
             );
         } else {
             assert!(

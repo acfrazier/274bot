@@ -9633,7 +9633,9 @@ const CLIMBING_BOOTS_RUNES: &[(&str, i32)] = &[("lawrune", 1), ("airrune", 3), (
 /// seven pairs of the 28.
 /// Walk: 26 pairs (~290s) plus the ~260-tile hut → Falador West walk
 /// (≤156s at walking pace) ≈ 450s ≈ 1080 dirties → **1200**.
-/// Teleport: 23 pairs (~255s) plus the cast ≈ 615 dirties → **750**.
+/// Teleport: 23 pairs (~255s) plus the cast ≈ 615 dirties → **750**. In the
+/// teleport cell that arm is the cast's Magic XP (see the watch list); the
+/// landing follows it within a few ticks.
 pub(crate) const CLIMBING_BOOTS_WALK_RETURN_WATCH_TICKS: u32 = 1200;
 pub(crate) const CLIMBING_BOOTS_TELE_CAST_WATCH_TICKS: u32 = 750;
 /// The further-pair arm (`has_item_id(3105)>=2` after the restock left zero
@@ -9641,8 +9643,13 @@ pub(crate) const CLIMBING_BOOTS_TELE_CAST_WATCH_TICKS: u32 = 750;
 /// two pairs (~30s) ≈ 190s ≈ 460 dirties → **600**.
 pub(crate) const CLIMBING_BOOTS_FURTHER_WATCH_TICKS: u32 = 600;
 /// Whole-scenario wall: seed (~50s) + first pairs (~30s) + the arms above at
-/// their wall estimates + bank open/deposit/restock (~25s). Walk ≈ 745s,
-/// teleport ≈ 560s, each with ~20% margin.
+/// their wall estimates + bank open/deposit/restock (~25s). Walk ≈ 745s
+/// with ~20% margin. Teleport measured live at bce85f2df: Start 15s,
+/// 25th pair 286s, landing 292s, restock closed 306s, hut re-entered 404s,
+/// further pair (last watch) 427s → 720s keeps ~65% margin. The Magic XP
+/// proof shares the cast arm's baseline, so it holds at the last watch; a
+/// baseline taken after the cycle instead needs a second full trip (that
+/// run's 25th second-trip pair only landed at 715s).
 pub(crate) const CLIMBING_BOOTS_WALK_DEADLINE: Duration = Duration::from_secs(900);
 pub(crate) const CLIMBING_BOOTS_TELE_DEADLINE: Duration = Duration::from_secs(720);
 /// The Water rune id for the bank-seed acknowledgement (Law 563 and Air 556
@@ -9983,8 +9990,27 @@ fn climbing_boots_variant(
         ),
     ];
     if use_teleport {
+        // The runner takes a `StatXpGain` baseline when the first arm of
+        // that shape begins and the proof reuses it. Without an arm here
+        // the baseline is taken when proving starts, after the further
+        // pair, so the proof would wait for a second full trip and cast.
+        // `magic_teleport` deletes the runes and grants the XP one tick
+        // before `player_teleport_normal` jumps, so the XP arm (baseline
+        // after the 2-pair spend, before any cast) comes first, then the
+        // landing.
         watches.insert(
             2,
+            (
+                "watch the real Falador cast gain Magic XP",
+                Proof::StatXpGain {
+                    id: MAGIC_STAT,
+                    min: 1,
+                },
+                trip_watch,
+            ),
+        );
+        watches.insert(
+            3,
             (
                 "watch the real Falador cast land at the bank",
                 Proof::ArrivedNear {
@@ -9993,7 +10019,7 @@ fn climbing_boots_variant(
                     level: FALADOR_TELE_LAND.level,
                     radius: 8,
                 },
-                trip_watch,
+                SCRIPT_GOLD_WATCH_TICKS,
             ),
         );
     }
