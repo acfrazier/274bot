@@ -3,10 +3,13 @@ type HuntHooks = import('../host-js/index.d.ts').HuntHooks;
 type HuntSite = import('../host-js/index.d.ts').HuntSite;
 
 /**
- * Headed File witness: field observation only. Dest is a neighbouring tile
- * (Chebyshev 2–6), never meleeAnchor. begin + validate + one awaited run
- * hops with walk-to to dest — not a world walk / npc / Attack.
- * Already-on-dest is not PASS. Stop without waiting out a live fight.
+ * Headed File witness: one retreat hop to a neighbouring tile (Chebyshev
+ * 2–6), never meleeAnchor. begin + validate + one awaited retreatRun hops
+ * with walk-to to dest (not a world walk / npc / Attack). retreatRun
+ * settles `done` with `null` even when its stepper gives up, so the tile
+ * after the run is the proof: anything but `done` on dest throws. The
+ * receipt names the Start tile, the tile after the run, dest and the
+ * outcome; the gate checks them against the host's tile and walk-to.
  */
 export const apiVersion = 2;
 
@@ -130,15 +133,20 @@ export async function tick(api: NativeApi): Promise<void> {
     }
 
     running = true;
+    const from = { x: here.x, z: here.z, level: here.level };
     const outcome = await api.retreatRun({ token }, hooks);
-    if (outcome.kind !== 'done') {
-        throw new Error(`retreatRun expected done, got ${outcome.kind}`);
+    const after = api.snapshot.here;
+    if (outcome.kind !== 'done' || !after || !sameTile(after, dest)) {
+        throw new Error(
+            `retreatRun did not reach ${dest.x},${dest.z}: ${JSON.stringify(outcome)} at ${JSON.stringify(after)}`,
+        );
     }
 
     const receipt = {
-        here: { x: here.x, z: here.z, level: here.level },
-        dest: { x: dest.x, z: dest.z, level: dest.level },
         outcome,
+        from,
+        here: { x: after.x, z: after.z, level: after.level },
+        dest: { x: dest.x, z: dest.z, level: dest.level },
     };
     const line = `${RECEIPT_PREFIX}${JSON.stringify(receipt)}`;
     api.log(line);
@@ -146,7 +154,7 @@ export async function tick(api: NativeApi): Promise<void> {
         .begin()
         .title('retreat spot v2')
         .row(line)
-        .row('here', `${here.x},${here.z},${here.level}`, 'dest', `${dest.x},${dest.z},${dest.level}`)
+        .row('from', `${from.x},${from.z},${from.level}`, 'dest', `${dest.x},${dest.z},${dest.level}`)
         .row('outcome', outcome.kind)
         .row('result', STOP_OK)
         .end();

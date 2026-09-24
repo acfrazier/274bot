@@ -7,7 +7,9 @@ pub(crate) const ENTER_LAIR_V2_STOP: &str = "enter lair qualification complete";
 const ENTER_LAIR_DEADLINE: Duration = Duration::from_secs(180);
 const ENTER_LAIR_WATCH: u32 = 240;
 
-/// Headed File witness: gateless first effect, walk radius 0, never a lair entry.
+/// Headed File witness: one awaited gateless entry. The gate needs the host's
+/// radius-0 walk to the approach tile, the end tile inside the lair box and
+/// the settled `true` receipt.
 pub(crate) fn enter_lair_v2_scenario() -> Scenario {
     let mut steps = script_live_seed_steps();
     steps.push(start_catalog_step());

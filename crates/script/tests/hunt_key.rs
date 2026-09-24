@@ -899,6 +899,66 @@ export async function tick(api) {
     iso.join();
 }
 
+#[test]
+fn v2_key_run_from_the_mainland_walks_near_the_corridor_and_waits_for_it() {
+    let src = r#"
+export const apiVersion = 2;
+let started = false;
+export async function tick(api) {
+  if (started) return;
+  started = true;
+  globalThis.__done = await api.keyRun({
+    key: 'taverley-blue',
+    keyItem: { name: 'Dusty key', id: 1590 },
+    boxes: [{ minX: 40, maxX: 60, minZ: 40, maxZ: 60, level: 0 }],
+  }, {});
+}
+"#;
+    let iso = LoadIsolate::spawn(src.into(), LoadShape::NativeTick, vec![]).unwrap();
+    for tick in 1..=3 {
+        iso.post_snapshot(script::isolate_fb::encode_snapshot(&empty_snapshot(
+            tick,
+            TileInput {
+                x: 1,
+                z: 1,
+                level: 0,
+            },
+        )));
+        iso.on_game_tick(tick);
+    }
+    // `probe` is answered after the queued ticks, so the drain below sees
+    // every op they sent (draining first races the isolate thread).
+    let pending = iso.probe("globalThis.__done").unwrap_or(Value::Null);
+    let walks: Vec<InteractReq> = iso
+        .drain_interacts()
+        .into_iter()
+        .filter(|req| {
+            matches!(
+                req,
+                InteractReq::Walk { .. } | InteractReq::WalkNear { .. } | InteractReq::WalkTo { .. }
+            )
+        })
+        .collect();
+    iso.join();
+    assert!(
+        matches!(
+            walks.as_slice(),
+            [InteractReq::WalkNear {
+                x: 2931,
+                z: 9690,
+                level: 0,
+                radius: 1,
+                allow_teleports: false,
+                allow_wilderness: false,
+                allow_bank_fetch: false,
+                request_id,
+            }] if *request_id != 0
+        ),
+        "one corridor walk-near, not re-queued: {walks:?}"
+    );
+    assert_eq!(pending, Value::Null, "still walking: the run is pending");
+}
+
 fn snap_rows<'a>(
     here: Tile,
     inv: &'a [ItemRowInput<'a>],

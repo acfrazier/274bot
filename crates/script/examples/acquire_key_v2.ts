@@ -2,20 +2,21 @@ type NativeApi = import('../host-js/index.d.ts').NativeApi;
 type HuntSite = import('../host-js/index.d.ts').HuntSite;
 
 /**
- * Headed File witness: field observation of the corridor approach.
- * Not a key pickup, not a Jailer kill, and not cell entry. Mainland
- * Lumbridge has neither a ground key nor a Jailer. Do not invent either.
- * One keyRun starts the host walk-near radius 1 to the corridor. Do not
- * wait out the walk. Gate is ingame and here only. The v2 snapshot
- * does not publish a scene field.
+ * Headed File witness: one Jailer leg. The scenario seeds the account in the
+ * Taverley dungeon, far from the prison corridor and outside the jail cell.
+ * One awaited keyRun: the host walks near the corridor (2931,9690,0) at
+ * radius 1, attacks the Jailer and takes the jail key he drops. The run
+ * settles `true` only when the jail key is held; anything else throws. The
+ * receipt names the Start tile, the tile after the run, the corridor, the
+ * site key and the outcome; the gate checks the host's walk, attack, tile
+ * and inventory.
  */
 export const apiVersion = 2;
 
 const STOP_OK = 'acquire key qualification complete';
 const RECEIPT_PREFIX = 'acquire-key-receipt:';
-const SITE_KEY = 'acquire-key';
+const SITE_KEY = 'taverley-blue';
 const CORRIDOR = { x: 2931, z: 9690, level: 0 };
-const RADIUS = 1;
 const CELL = { minX: 2928, maxX: 2934, minZ: 9683, maxZ: 9689, level: 0 };
 const LAIR = { minX: 40, maxX: 60, minZ: 40, maxZ: 60, level: 0 };
 
@@ -23,16 +24,6 @@ type Tile = { x: number; z: number; level: number };
 type Box = { minX: number; maxX: number; minZ: number; maxZ: number; level: number };
 
 let running = false;
-
-function sameBox(a: Box, b: Box): boolean {
-    return (
-        a.minX === b.minX &&
-        a.maxX === b.maxX &&
-        a.minZ === b.minZ &&
-        a.maxZ === b.maxZ &&
-        a.level === b.level
-    );
-}
 
 function contains(area: Box, tile: Tile): boolean {
     return (
@@ -57,24 +48,27 @@ export async function tick(api: NativeApi): Promise<void> {
         return;
     }
 
+    // The key item makes the run fetch: without one it settles at once.
     const site: HuntSite = {
         key: SITE_KEY,
-        keyItem: { name: 'key', id: 1 },
+        keyItem: { name: 'Dusty key', id: 1590 },
         boxes: [LAIR],
     };
-    if (site.boxes!.some((box) => contains(box, here) || sameBox(box, CELL))) {
-        return;
-    }
 
     running = true;
-    const run = api.keyRun(site, {});
-    void run;
+    const from = { x: here.x, z: here.z, level: here.level };
+    const outcome = await api.keyRun(site, {});
+    const after = api.snapshot.here;
+    if (outcome.kind !== 'done' || outcome.value !== true || !after) {
+        throw new Error(`keyRun did not take the jail key: ${JSON.stringify(outcome)} at ${JSON.stringify(after)}`);
+    }
 
     const receipt = {
-        here: { x: here.x, z: here.z, level: here.level },
-        dest: { x: CORRIDOR.x, z: CORRIDOR.z, level: CORRIDOR.level },
-        radius: RADIUS,
-        discriminator: 'corridor',
+        outcome,
+        from,
+        here: { x: after.x, z: after.z, level: after.level },
+        dest: CORRIDOR,
+        key: SITE_KEY,
     };
     const line = `${RECEIPT_PREFIX}${JSON.stringify(receipt)}`;
     api.log(line);
@@ -82,13 +76,8 @@ export async function tick(api: NativeApi): Promise<void> {
         .begin()
         .title('acquire key v2')
         .row(line)
-        .row(
-            'here',
-            `${here.x},${here.z},${here.level}`,
-            'dest',
-            `${CORRIDOR.x},${CORRIDOR.z},${CORRIDOR.level}`,
-        )
-        .row('discriminator', 'corridor')
+        .row('from', `${from.x},${from.z},${from.level}`, 'here', `${after.x},${after.z},${after.level}`)
+        .row('outcome', `${outcome.kind} ${outcome.value}`)
         .row('result', STOP_OK)
         .end();
     api.stop(STOP_OK);

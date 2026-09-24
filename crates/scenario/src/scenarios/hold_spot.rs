@@ -7,7 +7,9 @@ pub(crate) const HOLD_SPOT_V2_STOP: &str = "hold spot qualification complete";
 const HOLD_SPOT_DEADLINE: Duration = Duration::from_secs(180);
 const HOLD_SPOT_WATCH: u32 = 240;
 
-/// Headed File witness: field observation, status or walk, never Attack / walk-to.
+/// Headed File witness: one awaited hold run. The gate needs the host's world
+/// walk to dest, the end tile on dest and the settled receipt; never Attack /
+/// walk-to.
 pub(crate) fn hold_spot_v2_scenario() -> Scenario {
     let mut steps = script_live_seed_steps();
     steps.push(start_catalog_step());

@@ -626,40 +626,109 @@ fn timeout_at_tile_yields_without_rotate() {
     assert_eq!(step["kind"], "yield");
 }
 
-#[test]
-fn retreat_and_walk_to_spot_classes_are_live() {
+/// One v1 task class executed once from `here` in a CompatClass isolate;
+/// the game requests its first tick sent, and `__status`.
+fn v1_task_first_requests(class: &str, here: TileInput) -> (Vec<InteractReq>, Value) {
     let iso = LoadIsolate::spawn(
-        r#"
-import { HoldSafespot, Retreat, WalkToSpot } from '../../api/combat/hunting/combat.js';
-export default class T extends LoopingBot {
-    loop() {
-        const probe = { retreat: null, walkToSpot: null, holdDue: typeof HoldSafespot };
-        try { new Retreat(); } catch (e) { probe.retreat = String(e && e.message || e); }
-        try { new WalkToSpot(); } catch (e) { probe.walkToSpot = String(e && e.message || e); }
-        globalThis.__probe = JSON.stringify(probe);
-    }
-}
+        format!(
+            r#"
+import {{ {class} }} from '../../api/combat/hunting/combat.js';
+export default class T extends LoopingBot {{
+    loop() {{
+        if (globalThis.__ran) return;
+        globalThis.__ran = true;
+        const host = {{
+            died: false,
+            targetIdx: null,
+            hpFraction: () => 0.1,
+            panicHp: () => 0.05,
+            retreatHp: () => 0.5,
+            hasFood: () => true,
+            needEat: () => false,
+            style: () => 'melee',
+            safespotIndex: () => 0,
+            buryBones: () => false,
+            boneName: () => 'Bones',
+            log() {{}},
+            setStatus(m) {{ globalThis.__status = m; }},
+            setSafespotIndex() {{}},
+        }};
+        const site = {{
+            key: 'test',
+            target: 'Goblin',
+            alsoHunt: [],
+            safespots: [{{ x: 2901, z: 9809, level: 0 }}],
+            meleeAnchor: {{ x: 2900, z: 9808, level: 0 }},
+            boxes: [{{ minX: 2888, maxX: 2923, minZ: 9769, maxZ: 9816, level: 0 }}],
+            fireAtRange: false,
+            rangedThreat: false,
+        }};
+        new {class}(host, site).execute();
+    }}
+}}
 "#
-        .to_string(),
+        ),
         LoadShape::CompatClass,
         vec![],
     )
     .unwrap();
+    iso.post_snapshot(script::isolate_fb::encode_snapshot(&empty_snapshot(1, here)));
     iso.on_game_tick(1);
-    let probe: Value =
-        serde_json::from_str(iso.probe("__probe").unwrap().as_str().unwrap()).unwrap();
+    let status = iso.probe("globalThis.__status").unwrap_or(Value::Null);
+    let drained = iso.drain_interacts();
     iso.join();
+    (drained, status)
+}
+
+#[test]
+fn retreat_and_walk_to_spot_classes_are_live() {
+    let off = || TileInput {
+        x: 2895,
+        z: 9800,
+        level: 0,
+    };
+    // Frozen `Retreat.execute`: `DirectNavigator.walk(spot)`, a scene
+    // walk-to the safespot, never a world walk.
+    let (retreat, status) = v1_task_first_requests("Retreat", off());
+    assert_eq!(status, json!("retreating to safespot 0"), "{retreat:?}");
     assert!(
-        probe["retreat"].is_null() || !probe["retreat"].as_str().unwrap_or("").contains("not impl"),
-        "Retreat isolate is live: {probe:?}"
+        retreat.iter().any(|req| matches!(
+            req,
+            InteractReq::WalkTo {
+                x: 2901,
+                z: 9809,
+                level: 0
+            }
+        )),
+        "{retreat:?}"
     );
     assert!(
-        probe["walkToSpot"].is_null()
-            || !probe["walkToSpot"]
-                .as_str()
-                .unwrap_or("")
-                .contains("not impl"),
-        "WalkToSpot isolate is live: {probe:?}"
+        !retreat
+            .iter()
+            .any(|req| matches!(req, InteractReq::Walk { .. } | InteractReq::WalkNear { .. })),
+        "{retreat:?}"
+    );
+
+    // Frozen `WalkToSpot.execute`: a radius-0 world walk to the melee anchor.
+    let (walk, status) = v1_task_first_requests("WalkToSpot", off());
+    assert_eq!(status, json!("walking to the fight spot"), "{walk:?}");
+    assert!(
+        walk.iter().any(|req| matches!(
+            req,
+            InteractReq::Walk {
+                x: 2900,
+                z: 9808,
+                level: 0,
+                allow_teleports: false,
+                request_id,
+                ..
+            } if *request_id != 0
+        )),
+        "{walk:?}"
+    );
+    assert!(
+        !walk.iter().any(|req| matches!(req, InteractReq::WalkTo { .. })),
+        "{walk:?}"
     );
 }
 
@@ -749,11 +818,12 @@ export default class T extends LoopingBot {
 fn v1_in_area_predicate_without_boxes_is_asked() {
     let iso = LoadIsolate::spawn(
         r#"
-import { Fight } from '../../api/combat/hunting/combat.js';
+import { HoldSafespot } from '../../api/combat/hunting/combat.js';
 export default class T extends LoopingBot {
     loop() {
         const host = {
-            died: true,
+            died: false,
+            targetIdx: null,
             hpFraction: () => 1,
             panicHp: () => 0.1,
             retreatHp: () => 0.2,
@@ -773,13 +843,12 @@ export default class T extends LoopingBot {
             safespots: [{ x: 2900, z: 9808, level: 0 }],
             meleeAnchor: { x: 2900, z: 9808, level: 0 },
             inArea(t) {
-                globalThis.__area = (globalThis.__area || 0) + 1;
-                return t.x === 2900 && t.z === 9808;
+                (globalThis.__asked = globalThis.__asked || []).push(`${t.x},${t.z}`);
+                return t.x <= 2905 && t.z === 9808;
             },
         };
-        const fight = globalThis.__f || (globalThis.__f = new Fight(host, site));
-        globalThis.__inside = fight.validate();
-        fight.execute();
+        const hold = globalThis.__h || (globalThis.__h = new HoldSafespot(host, site));
+        (globalThis.__inside = globalThis.__inside || []).push(hold.validate());
     }
 }
 "#
@@ -788,21 +857,31 @@ export default class T extends LoopingBot {
         vec![],
     )
     .unwrap();
-    iso.post_snapshot(script::isolate_fb::encode_snapshot(&empty_snapshot(
-        1,
-        TileInput {
-            x: 2900,
-            z: 9808,
-            level: 0,
-        },
-    )));
-    iso.on_game_tick(1);
-    let area = iso.probe("globalThis.__area").unwrap();
+    for (tick, x) in [(1, 2903), (2, 2950)] {
+        iso.post_snapshot(script::isolate_fb::encode_snapshot(&empty_snapshot(
+            tick,
+            TileInput {
+                x,
+                z: 9808,
+                level: 0,
+            },
+        )));
+        iso.on_game_tick(tick);
+    }
+    let inside = iso.probe("globalThis.__inside").unwrap();
+    let asked = iso.probe("globalThis.__asked").unwrap();
     iso.join();
-    assert!(
-        area.as_i64().unwrap_or(0) >= 1,
-        "inArea must be asked when the site has no boxes: {area:?}"
-    );
+    // No boxes: the site's own predicate is the area. It is asked about the
+    // player's tile, and its answer decides validate.
+    assert_eq!(inside, json!([true, false]), "asked {asked:?}");
+    let asked: Vec<&str> = asked
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
+    assert!(asked.contains(&"2903,9808"), "{asked:?}");
+    assert!(asked.contains(&"2950,9808"), "{asked:?}");
 }
 
 #[test]

@@ -7,7 +7,9 @@ pub(crate) const WALK_SPOT_V2_STOP: &str = "walk spot qualification complete";
 const WALK_SPOT_DEADLINE: Duration = Duration::from_secs(180);
 const WALK_SPOT_WATCH: u32 = 240;
 
-/// Headed File witness: field observation, walk radius 0, never Attack / walk-to.
+/// Headed File witness: one awaited walk-to-spot run. The gate needs the
+/// host's radius-0 world walk to dest, the end tile on dest and the settled
+/// receipt; never Attack / walk-to.
 pub(crate) fn walk_spot_v2_scenario() -> Scenario {
     let mut steps = script_live_seed_steps();
     steps.push(start_catalog_step());

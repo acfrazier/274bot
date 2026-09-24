@@ -7,8 +7,9 @@ pub(crate) const RETREAT_SPOT_V2_STOP: &str = "retreat spot qualification comple
 const RETREAT_SPOT_DEADLINE: Duration = Duration::from_secs(180);
 const RETREAT_SPOT_WATCH: u32 = 240;
 
-/// Headed File witness: field observation, status / set-safespot / log / walk-to,
-/// never Attack / walk / npc.
+/// Headed File witness: one awaited retreat hop. The gate needs the host's
+/// walk-to dest, the end tile on dest and the settled receipt; never Attack /
+/// a world walk / npc.
 pub(crate) fn retreat_spot_v2_scenario() -> Scenario {
     let mut steps = script_live_seed_steps();
     steps.push(start_catalog_step());

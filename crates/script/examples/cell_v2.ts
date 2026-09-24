@@ -2,18 +2,23 @@ type NativeApi = import('../host-js/index.d.ts').NativeApi;
 type HuntSite = import('../host-js/index.d.ts').HuntSite;
 
 /**
- * Headed File witness: field observation of the nested key run.
- * Not cell entry, not Velrak, and not a dusty key. Mainland Lumbridge
- * has no jail key. Do not invent a jail key, a door, or Velrak.
- * One cellRun starts the nested key family. Do not wait out the jail.
- * Gate is ingame and here only. The v2 snapshot does not publish a
- * scene field.
+ * Headed File witness: one trip through Velrak's cell. The scenario seeds
+ * the account in the Taverley dungeon with a jail key, far from the cell
+ * door. One awaited cellRun follows frozen `fetchFromVelrak`
+ * (`supply.ts:942-965`): walk near the jail door (2931,9690,0) at radius 1,
+ * stand on it, use the jail key on the door, talk to Velrak for the dusty
+ * key, then open the door from inside. The run settles `true` only when the
+ * dusty key is held outside the cell; anything else throws. The receipt
+ * names the Start tile, the tile after the run, the door, the site key and
+ * the outcome; the gate checks the host's walk, unlock, talk, open, tile
+ * and inventory.
  */
 export const apiVersion = 2;
 
 const STOP_OK = 'cell qualification complete';
 const RECEIPT_PREFIX = 'cell-receipt:';
 const SITE_KEY = 'taverley-blue';
+const JAIL_DOOR = { x: 2931, z: 9690, level: 0 };
 const CELL = { minX: 2928, maxX: 2934, minZ: 9683, maxZ: 9689, level: 0 };
 const LAIR = { minX: 40, maxX: 60, minZ: 40, maxZ: 60, level: 0 };
 
@@ -21,16 +26,6 @@ type Tile = { x: number; z: number; level: number };
 type Box = { minX: number; maxX: number; minZ: number; maxZ: number; level: number };
 
 let running = false;
-
-function sameBox(a: Box, b: Box): boolean {
-    return (
-        a.minX === b.minX &&
-        a.maxX === b.maxX &&
-        a.minZ === b.minZ &&
-        a.maxZ === b.maxZ &&
-        a.level === b.level
-    );
-}
 
 function contains(area: Box, tile: Tile): boolean {
     return (
@@ -57,23 +52,24 @@ export async function tick(api: NativeApi): Promise<void> {
 
     const site: HuntSite = {
         key: SITE_KEY,
-        keyItem: { name: 'key', id: 1 },
+        keyItem: { name: 'Dusty key', id: 1590 },
         boxes: [LAIR],
     };
-    if (site.key !== SITE_KEY) {
-        return;
-    }
-    if (site.boxes!.some((box) => contains(box, here) || sameBox(box, CELL))) {
-        return;
-    }
 
     running = true;
-    const run = api.cellRun(site, {});
-    void run;
+    const from = { x: here.x, z: here.z, level: here.level };
+    const outcome = await api.cellRun(site, {});
+    const after = api.snapshot.here;
+    if (outcome.kind !== 'done' || outcome.value !== true || !after || contains(CELL, after)) {
+        throw new Error(`cellRun did not bring the dusty key out: ${JSON.stringify(outcome)} at ${JSON.stringify(after)}`);
+    }
 
     const receipt = {
-        here: { x: here.x, z: here.z, level: here.level },
-        discriminator: 'key-call',
+        outcome,
+        from,
+        here: { x: after.x, z: after.z, level: after.level },
+        dest: JAIL_DOOR,
+        key: SITE_KEY,
     };
     const line = `${RECEIPT_PREFIX}${JSON.stringify(receipt)}`;
     api.log(line);
@@ -81,8 +77,8 @@ export async function tick(api: NativeApi): Promise<void> {
         .begin()
         .title('cell v2')
         .row(line)
-        .row('here', `${here.x},${here.z},${here.level}`)
-        .row('discriminator', 'key-call')
+        .row('from', `${from.x},${from.z},${from.level}`, 'here', `${after.x},${after.z},${after.level}`)
+        .row('outcome', `${outcome.kind} ${outcome.value}`)
         .row('result', STOP_OK)
         .end();
     api.stop(STOP_OK);

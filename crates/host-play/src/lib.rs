@@ -2301,6 +2301,7 @@ fn observe_slot_catalog_and_paired(
     guardian_fact: impl FnOnce() -> catalog_core::BoundedGuardian,
     inspect: Option<catalog_core::RouteInspectPublished>,
     paint: Option<&script::shim::ScriptPaint>,
+    acts: Option<catalog_core::ScriptActsPublished>,
 ) {
     if catalog.configured() {
         let script_lifecycle = lifecycle_receipt();
@@ -2318,6 +2319,7 @@ fn observe_slot_catalog_and_paired(
             session_boundary,
             inspect,
             paint,
+            acts,
         );
     }
     if paired.configured() {
@@ -2624,24 +2626,27 @@ fn spawn_slot_thread(
                             // `status` is last frame's client_frame publication.
                             // Snapshot observe runs before this frame copies it
                             // onto the slot row.
-                            let inspect = if obs_catalog_core.copies_route_inspect() {
-                                slot_navs.lock().unwrap().get(name).map(|bot| {
-                                    bot.inspect.published_core_facts()
-                                })
+                            // The hunt cards also read the slot's own record
+                            // of the requests host-play dispatched for it.
+                            let copies_inspect = obs_catalog_core.copies_route_inspect();
+                            let copies_hunt = obs_catalog_core.copies_hunt();
+                            let (inspect, acts) = if copies_inspect || copies_hunt {
+                                let navs = slot_navs.lock().unwrap();
+                                let bot = navs.get(name);
+                                (
+                                    bot.filter(|_| copies_inspect)
+                                        .map(|bot| bot.inspect.published_core_facts()),
+                                    copies_hunt.then(|| {
+                                        bot.map(|bot| bot.acts.published()).unwrap_or_default()
+                                    }),
+                                )
                             } else {
-                                None
+                                (None, None)
                             };
                             let catalog_paint = if obs_catalog_core.copies_line_of_sight()
                                 || obs_catalog_core.copies_actor_observation()
                                 || obs_catalog_core.copies_fight_field()
-                                || obs_catalog_core.copies_hold_spot()
-                                || obs_catalog_core.copies_retreat_spot()
-                                || obs_catalog_core.copies_walk_spot()
-                                || obs_catalog_core.copies_enter_lair()
-                                || obs_catalog_core.copies_leave_lair()
-                                || obs_catalog_core.copies_acquire_key()
-                                || obs_catalog_core.copies_cell()
-                                || obs_catalog_core.copies_bank()
+                                || copies_hunt
                             {
                                 script_paint_of(&slot_scripts, name)
                             } else {
@@ -2662,6 +2667,7 @@ fn spawn_slot_thread(
                                 || bounded_guardian_fact(status),
                                 inspect,
                                 catalog_paint.as_deref(),
+                                acts,
                             );
                             let ready = c.ingame && c.scene_state == 2
                                 && nav_snapshot.local_player().is_some();

@@ -7,7 +7,9 @@ pub(crate) const LEAVE_LAIR_V2_STOP: &str = "leave lair qualification complete";
 const LEAVE_LAIR_DEADLINE: Duration = Duration::from_secs(180);
 const LEAVE_LAIR_WATCH: u32 = 240;
 
-/// Headed File witness: gateless walk-out first effect, walk-near radius 3.
+/// Headed File witness: one awaited gateless walk-out. The gate needs the
+/// host's walk-near walkOut at radius 3, the end tile out of the Start box
+/// and the settled `true` receipt.
 pub(crate) fn leave_lair_v2_scenario() -> Scenario {
     let mut steps = script_live_seed_steps();
     steps.push(start_catalog_step());

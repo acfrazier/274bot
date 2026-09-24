@@ -3,17 +3,15 @@ type HuntHooks = import('../host-js/index.d.ts').HuntHooks;
 type HuntSite = import('../host-js/index.d.ts').HuntSite;
 
 /**
- * Headed File witness: field observation of the gateless approach walk.
- * Not a lair entry and not inArea success. Curated box does not contain
- * here. One approach tile inside that box, same level, Chebyshev 8–16
- * (greater than the skip of 1, not Hold's 2-tile walk-back, not Walk's
- * > 12 gate). The picker scans that Chebyshev ring and may choose a
- * diagonal. A missing collision map does not reject the tile.
- * begin + validate starts one run; the host walks radius 0 with
- * teleports, wilderness, and bank fetch off. Do not wait out the
- * approach or the 300s stand. Do not claim inArea.
- * Gate is `ingame` and `here` only. NativeSnapshot does not publish
- * `scene_state`.
+ * Headed File witness: one gateless lair entry. The lair is a 3x3 box
+ * around one approach tile Chebyshev 8–16 from here (greater than the skip
+ * of 1, not Hold's 2-tile walk-back, not Walk's > 12 gate); here is
+ * outside it. begin + validate + one awaited enterRun: the host walks
+ * radius 0 to the approach tile with teleports, wilderness and bank fetch
+ * off, and the run settles `true` once here is inside the box. Anything
+ * but `done` with `true`, or a tile outside the box after the run, throws.
+ * The receipt names the Start tile, the tile after the run, the approach
+ * tile, the box, the site key and the outcome.
  */
 export const apiVersion = 2;
 
@@ -60,13 +58,13 @@ function walkable(api: NativeApi, tile: Tile): boolean {
     return r.value === true;
 }
 
-/** Approach tile only. Chebyshev 8–16 keeps `here` outside this box. */
+/** The lair: the approach tile ± 1. Chebyshev 8–16 keeps `here` outside. */
 function approachBox(tile: Tile): Box {
     return {
-        minX: tile.x,
-        maxX: tile.x,
-        minZ: tile.z,
-        maxZ: tile.z,
+        minX: tile.x - 1,
+        maxX: tile.x + 1,
+        minZ: tile.z - 1,
+        maxZ: tile.z + 1,
         level: tile.level,
     };
 }
@@ -169,17 +167,18 @@ export async function tick(api: NativeApi): Promise<void> {
     }
 
     running = true;
-    const run = api.enterRun({ token }, hooks);
-    void run;
+    const from = { x: here.x, z: here.z, level: here.level };
+    const outcome = await api.enterRun({ token }, hooks);
+    const after = api.snapshot.here;
+    if (outcome.kind !== 'done' || outcome.value !== true || !after || !contains(box, after)) {
+        throw new Error(`enterRun did not enter the lair: ${JSON.stringify(outcome)} at ${JSON.stringify(after)}`);
+    }
 
     const receipt = {
-        here: { x: here.x, z: here.z, level: here.level },
-        approach: { x: approach.x, z: approach.z, level: approach.level },
-        discriminator: 'gateless',
-        radius: 0,
-        allow_teleports: false,
-        allow_wilderness: false,
-        allow_bank_fetch: false,
+        outcome,
+        from,
+        here: { x: after.x, z: after.z, level: after.level },
+        dest: { x: approach.x, z: approach.z, level: approach.level },
         box,
         key: SITE_KEY,
     };
@@ -190,12 +189,12 @@ export async function tick(api: NativeApi): Promise<void> {
         .title('enter lair v2')
         .row(line)
         .row(
-            'here',
-            `${here.x},${here.z},${here.level}`,
+            'from',
+            `${from.x},${from.z},${from.level}`,
             'approach',
             `${approach.x},${approach.z},${approach.level}`,
         )
-        .row('discriminator', 'gateless')
+        .row('outcome', `${outcome.kind} ${outcome.value}`)
         .row('result', STOP_OK)
         .end();
     api.stop(STOP_OK);

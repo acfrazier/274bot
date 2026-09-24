@@ -1,6 +1,7 @@
 //! Per-slot script observe/dispatch/hold transaction and script navigation continuation.
 
 use super::*;
+use crate::catalog_core::ScriptAct;
 use nav::router::MissingReq;
 
 #[path = "route_inspect.rs"]
@@ -1191,6 +1192,20 @@ pub(super) fn nearest_bank_booth(
         .map(|stand| stand.tile)
 }
 
+fn act_tile(x: i32, z: i32, level: i32) -> crate::catalog_core::LineOfSightTile {
+    crate::catalog_core::LineOfSightTile { x, z, level }
+}
+
+/// Note one game request host-play dispatched for `slot`'s script. The
+/// catalog hunt watch reads this record; the isolate never sees it.
+fn record_script_act(navs: &Arc<Mutex<HashMap<String, NavBot>>>, slot: &str, act: ScriptAct) {
+    let mut navs = navs.lock().unwrap();
+    match navs.get_mut(slot) {
+        Some(bot) => bot.acts.record(act),
+        None => navs.entry(slot.to_string()).or_default().acts.record(act),
+    }
+}
+
 /// Dispatch one isolate's shim interact requests. Open/close/deposit/
 /// withdraw run through [`api::interact::Interactions`] on the slot's
 /// snapshot + Driver — a request whose target is missing (no loc at the
@@ -1259,6 +1274,8 @@ pub(super) fn dispatch_script_interact_cached(
             }
         }
     }
+    // Arms below bind a request field called `name`; this is the slot's.
+    let slot = name;
     for req in reqs {
         match req {
             InteractReq::OpenBooth {
@@ -1357,7 +1374,7 @@ pub(super) fn dispatch_script_interact_cached(
                     state: state.clone(),
                     bank: bank_rows,
                 };
-                wrote |= arm.queue_route(
+                let queued = arm.queue_route(
                     x,
                     z,
                     level,
@@ -1371,6 +1388,22 @@ pub(super) fn dispatch_script_interact_cached(
                     false,
                     request_id,
                 );
+                if queued {
+                    record_script_act(
+                        navs,
+                        slot,
+                        ScriptAct::Walk {
+                            dest: act_tile(x, z, level),
+                            radius: 0,
+                            exact: true,
+                            allow_teleports,
+                            allow_wilderness,
+                            allow_bank_fetch,
+                            request_id,
+                        },
+                    );
+                }
+                wrote |= queued;
             }
             InteractReq::WalkNear {
                 x,
@@ -1394,7 +1427,7 @@ pub(super) fn dispatch_script_interact_cached(
                         .map(|it| (it.def.id, it.count))
                         .collect(),
                 };
-                wrote |= arm.queue_route(
+                let queued = arm.queue_route(
                     x,
                     z,
                     level,
@@ -1408,6 +1441,22 @@ pub(super) fn dispatch_script_interact_cached(
                     true,
                     request_id,
                 );
+                if queued {
+                    record_script_act(
+                        navs,
+                        slot,
+                        ScriptAct::Walk {
+                            dest: act_tile(x, z, level),
+                            radius,
+                            exact: false,
+                            allow_teleports,
+                            allow_wilderness,
+                            allow_bank_fetch,
+                            request_id,
+                        },
+                    );
+                }
+                wrote |= queued;
             }
             // Not a game packet: the follow stops, nothing is written.
             InteractReq::AbortWalk { request_id } => {
@@ -1449,7 +1498,17 @@ pub(super) fn dispatch_script_interact_cached(
                 }
             }
             InteractReq::WalkTo { x, z, level } => {
-                wrote |= matches!(ix.walk(WorldTile { x, z, level }), SendResult::Sent { .. });
+                let sent = matches!(ix.walk(WorldTile { x, z, level }), SendResult::Sent { .. });
+                if sent {
+                    record_script_act(
+                        navs,
+                        slot,
+                        ScriptAct::WalkTo {
+                            dest: act_tile(x, z, level),
+                        },
+                    );
+                }
+                wrote |= sent;
             }
             InteractReq::InspectRoute {
                 x,
@@ -1736,10 +1795,22 @@ pub(super) fn dispatch_script_interact_cached(
                     }
                 });
                 if let Some(npc) = npc {
-                    wrote |= matches!(
+                    let sent = matches!(
                         ix.interact(OpTarget::Npc(npc), ActionSpec::Label(action.clone())),
                         SendResult::Sent { .. }
                     );
+                    if sent {
+                        record_script_act(
+                            navs,
+                            slot,
+                            ScriptAct::Npc {
+                                name: npc.name.clone().unwrap_or_default(),
+                                action,
+                                index: npc.index as i32,
+                            },
+                        );
+                    }
+                    wrote |= sent;
                 }
             }
             InteractReq::Loc {
@@ -1759,10 +1830,22 @@ pub(super) fn dispatch_script_interact_cached(
                         && id.is_none_or(|wanted| l.id == wanted)
                 });
                 if let Some(loc) = loc {
-                    wrote |= matches!(
+                    let sent = matches!(
                         ix.interact(OpTarget::Loc(loc), ActionSpec::Label(action.clone())),
                         SendResult::Sent { .. }
                     );
+                    if sent {
+                        record_script_act(
+                            navs,
+                            slot,
+                            ScriptAct::Loc {
+                                tile: act_tile(loc.tile.x, loc.tile.z, loc.tile.level),
+                                id: loc.id,
+                                action,
+                            },
+                        );
+                    }
+                    wrote |= sent;
                 }
             }
             InteractReq::Obj {
@@ -1837,7 +1920,27 @@ pub(super) fn dispatch_script_interact_cached(
                         level,
                         index,
                     ) {
-                        wrote |= matches!(ix.use_item_on(item, target), SendResult::Sent { .. });
+                        let on_loc = match &target {
+                            OpTarget::Loc(loc) => {
+                                Some(act_tile(loc.tile.x, loc.tile.z, loc.tile.level))
+                            }
+                            _ => None,
+                        };
+                        let item_name = obj_names
+                            .and_then(|names| names.name(item.def.id))
+                            .map_or_else(|| name.clone(), str::to_string);
+                        let sent = matches!(ix.use_item_on(item, target), SendResult::Sent { .. });
+                        if let (true, Some(tile)) = (sent, on_loc) {
+                            record_script_act(
+                                navs,
+                                slot,
+                                ScriptAct::UseOnLoc {
+                                    item: item_name,
+                                    tile,
+                                },
+                            );
+                        }
+                        wrote |= sent;
                     }
                 }
             }
@@ -3924,6 +4027,9 @@ pub(super) struct NavBot {
     /// is, so a list can never outlive the failure it belongs to.
     pub(super) walk_missing_carry: Vec<MissingCarry>,
     pub(super) inspect: route_inspect::InspectNav,
+    /// The game requests this slot's script sent, as dispatched here. Host
+    /// data the catalog hunt watch reads; not an isolate wire.
+    pub(super) acts: crate::catalog_core::ScriptActLedger,
 }
 
 /// The shared script walk arm: both `ctx.walk` (default options) and

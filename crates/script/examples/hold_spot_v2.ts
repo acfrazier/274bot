@@ -3,10 +3,13 @@ type HuntHooks = import('../host-js/index.d.ts').HuntHooks;
 type HuntSite = import('../host-js/index.d.ts').HuntSite;
 
 /**
- * Headed File witness: field observation only. Range hold with dest a
- * neighbouring tile (Chebyshev 2–6). begin + validate + one awaited run
- * walks the world to dest (not walk-to / npc / Attack). Already-on-dest
- * is not PASS.
+ * Headed File witness: one hold run to a neighbouring tile (Chebyshev
+ * 2–6). begin + validate + one awaited holdRun: the host walks the world
+ * to dest (not walk-to / npc / Attack). holdRun settles `done` with `null`
+ * even when its stepper gives up, so the tile after the run is the proof:
+ * anything but `done` on dest throws. The receipt names the Start tile,
+ * the tile after the run, dest and the outcome; the gate checks all of
+ * them against the host's own tile and walk requests.
  */
 export const apiVersion = 2;
 
@@ -20,6 +23,10 @@ type Tile = { x: number; z: number; level: number };
 let token: number | null = null;
 let dest: Tile | null = null;
 let running = false;
+
+function sameTile(a: Tile, b: Tile): boolean {
+    return a.x === b.x && a.z === b.z && a.level === b.level;
+}
 
 function chebyshev(a: Tile, b: Tile): number {
     return Math.max(Math.abs(a.x - b.x), Math.abs(a.z - b.z));
@@ -60,7 +67,7 @@ export async function tick(api: NativeApi): Promise<void> {
         return;
     }
 
-    if (dest && dest.x === here.x && dest.z === here.z && dest.level === here.level) {
+    if (dest && sameTile(dest, here)) {
         dest = null;
     }
     if (!dest) {
@@ -120,15 +127,20 @@ export async function tick(api: NativeApi): Promise<void> {
     }
 
     running = true;
+    const from = { x: here.x, z: here.z, level: here.level };
     const outcome = await api.holdRun({ token }, hooks);
-    if (outcome.kind !== 'done') {
-        throw new Error(`holdRun expected done, got ${outcome.kind}`);
+    const after = api.snapshot.here;
+    if (outcome.kind !== 'done' || !after || !sameTile(after, dest)) {
+        throw new Error(
+            `holdRun did not reach ${dest.x},${dest.z}: ${JSON.stringify(outcome)} at ${JSON.stringify(after)}`,
+        );
     }
 
     const receipt = {
-        here: { x: here.x, z: here.z, level: here.level },
-        dest: { x: dest.x, z: dest.z, level: dest.level },
         outcome,
+        from,
+        here: { x: after.x, z: after.z, level: after.level },
+        dest: { x: dest.x, z: dest.z, level: dest.level },
     };
     const line = `${RECEIPT_PREFIX}${JSON.stringify(receipt)}`;
     api.log(line);
@@ -136,7 +148,7 @@ export async function tick(api: NativeApi): Promise<void> {
         .begin()
         .title('hold spot v2')
         .row(line)
-        .row('here', `${here.x},${here.z},${here.level}`, 'dest', `${dest.x},${dest.z},${dest.level}`)
+        .row('from', `${from.x},${from.z},${from.level}`, 'dest', `${dest.x},${dest.z},${dest.level}`)
         .row('outcome', outcome.kind)
         .row('result', STOP_OK)
         .end();

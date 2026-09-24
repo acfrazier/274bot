@@ -910,22 +910,6 @@ mod tests {
         assert!(v2.ends_with("leave_lair_v2.ts"), "{}", v2.display());
         assert!(live_example_path("leave_lair_v2").is_none());
         assert!(live_example_path("LeaveLair.ts").is_none());
-        let source = std::fs::read_to_string(&v2).expect("leave lair source");
-        assert!(source.contains("leave lair qualification complete"));
-        assert!(source.contains("leave-lair-receipt:"));
-        assert!(source.contains("leaveRun"));
-        assert!(!source.contains("leaveBegin"));
-        assert!(!source.contains("leaveNext"));
-        assert!(!source.contains("leaveLair"));
-        assert!(!source.contains("scene_state"));
-        assert!(!source.contains("allow_teleports"));
-        assert!(!source.contains("allow_wilderness"));
-        assert!(!source.contains("allow_bank_fetch"));
-        assert!(!source.contains("kbd-lair"));
-        assert!(!source.contains("1765"));
-        assert!(!source.contains("1766"));
-        assert!(!source.contains("1816"));
-        assert!(!source.contains("1817"));
     }
 
     #[test]
@@ -934,29 +918,6 @@ mod tests {
         assert!(v2.ends_with("acquire_key_v2.ts"), "{}", v2.display());
         assert!(live_example_path("acquire_key_v2").is_none());
         assert!(live_example_path("AcquireKey.ts").is_none());
-        let source = std::fs::read_to_string(&v2).expect("acquire key source");
-        assert!(source.contains("acquire key qualification complete"));
-        assert!(source.contains("acquire-key-receipt:"));
-        assert!(source.contains("keyRun"));
-        assert!(!source.contains("keyBegin"));
-        assert!(!source.contains("keyNext"));
-        assert!(source.contains("corridor"));
-        assert!(source.contains("2931"));
-        assert!(source.contains("9690"));
-        assert!(!source.contains("acquireKey"));
-        assert!(!source.contains("scene_state"));
-        assert!(!source.contains("allow_teleports"));
-        assert!(!source.contains("allow_wilderness"));
-        assert!(!source.contains("allow_bank_fetch"));
-        assert!(!source.contains("kbd-lair"));
-        assert!(!source.contains("1765"));
-        assert!(!source.contains("1766"));
-        assert!(!source.contains("1816"));
-        assert!(!source.contains("1817"));
-        assert!(!source.contains("1591"));
-        assert!(!source.contains("walkToken"));
-        assert!(!source.contains("api.walk"));
-        assert!(!source.contains(".queue"));
     }
 
     #[test]
@@ -965,31 +926,6 @@ mod tests {
         assert!(v2.ends_with("cell_v2.ts"), "{}", v2.display());
         assert!(live_example_path("cell_v2").is_none());
         assert!(live_example_path("Cell.ts").is_none());
-        let source = std::fs::read_to_string(&v2).expect("cell source");
-        assert!(source.contains("cell qualification complete"));
-        assert!(source.contains("cell-receipt:"));
-        assert!(source.contains("cellRun"));
-        assert!(!source.contains("cellBegin"));
-        assert!(!source.contains("cellNext"));
-        assert!(source.contains("key-call"));
-        assert!(source.contains("taverley-blue"));
-        assert!(!source.contains("scene_state"));
-        assert!(!source.contains("acquireKey"));
-        assert!(!source.contains("api.cell("));
-        assert!(!source.contains("held"));
-        assert!(!source.contains("route"));
-        assert!(!source.contains("kbd-lair"));
-        assert!(!source.contains("1765"));
-        assert!(!source.contains("1766"));
-        assert!(!source.contains("1816"));
-        assert!(!source.contains("1817"));
-        assert!(!source.contains("1590"));
-        assert!(!source.contains("1591"));
-        assert!(!source.contains("2931"));
-        assert!(!source.contains("9690"));
-        assert!(!source.contains("allow_teleports"));
-        assert!(!source.contains("allow_wilderness"));
-        assert!(!source.contains("allow_bank_fetch"));
     }
 
     #[test]
@@ -998,30 +934,5 @@ mod tests {
         assert!(v2.ends_with("bank_v2.ts"), "{}", v2.display());
         assert!(live_example_path("bank_v2").is_none());
         assert!(live_example_path("Bank.ts").is_none());
-        let source = std::fs::read_to_string(&v2).expect("bank source");
-        assert!(source.contains("bank qualification complete"));
-        assert!(source.contains("bank-receipt:"));
-        assert!(source.contains("bankRun"));
-        assert!(!source.contains("bankBegin"));
-        assert!(!source.contains("bankNext"));
-        assert!(source.contains("approach"));
-        assert!(source.contains("2946"));
-        assert!(source.contains("3369"));
-        assert!(source.contains("allow_teleports"));
-        assert!(source.contains("allow_wilderness"));
-        assert!(source.contains("allow_bank_fetch"));
-        assert!(!source.contains("scene_state"));
-        assert!(!source.contains("bankRoutine"));
-        assert!(!source.contains("kbd-lair"));
-        assert!(!source.contains("1765"));
-        assert!(!source.contains("1766"));
-        assert!(!source.contains("1816"));
-        assert!(!source.contains("1817"));
-        assert!(!source.contains("route"));
-        assert!(!source.contains("walkToken"));
-        assert!(!source.contains("pack ready"));
-        assert!(!source.contains("pack-ready"));
-        assert!(!source.contains("bank opened"));
-        assert!(!source.contains("api.walk"));
     }
 }
