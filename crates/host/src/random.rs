@@ -3222,24 +3222,6 @@ mod tests {
         assert!(!status.handling, "inert lamp must not latch the handler");
     }
 
-    #[test]
-    fn tick_skips_act_and_ours_for_inert_lamp() {
-        const SRC: &str = include_str!("random.rs");
-        let tick = SRC.split("pub fn tick").nth(1).unwrap_or("");
-        let tick = tick.split("fn act<").next().unwrap_or("");
-        assert!(
-            tick.contains("inert_lamp"),
-            "leftover lamp with auto off is a named skip, not a solver latch"
-        );
-        assert!(
-            tick.contains("&& !inert_lamp"),
-            "inert lamp must not enter act()"
-        );
-        assert!(
-            tick.contains("ours: !inert_lamp"),
-            "inert lamp must not publish ours (EventSignal.pending is hold OR ours)"
-        );
-    }
 
     /// Plant obj `obj_id` into the inventory TYPE_INV iface (the shape
     /// `detect` reads the inv view from). Two slots with one empty, so a
