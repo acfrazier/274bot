@@ -15,7 +15,6 @@ use super::shape::LoadShape;
 /// call anchors at isolate-thread start.
 static CLOCK_START: OnceLock<Instant> = OnceLock::new();
 
-
 fn json_i32(value: Option<&serde_json::Value>) -> Option<i32> {
     value.and_then(|v| {
         v.as_i64()
@@ -624,6 +623,7 @@ pub(super) fn wire_runtime(
     super::clue_pack_v8::install(runtime).map_err(|e| format!("clue pack v8: {e}"))?;
     super::loadout_v8::install(runtime).map_err(|e| format!("loadout v8: {e}"))?;
     super::line_of_sight::install(runtime).map_err(|e| format!("line of sight: {e}"))?;
+    super::scene_v8::install(runtime).map_err(|e| format!("scene v8: {e}"))?;
     super::distance::install(runtime).map_err(|e| format!("distance: {e}"))?;
     super::reach_query::install(runtime).map_err(|e| format!("reach query: {e}"))?;
     super::melee_weapons_v8::install(runtime).map_err(|e| format!("melee weapons v8: {e}"))?;
@@ -762,9 +762,12 @@ const OPTIONAL = {
 function host() {
   return globalThis.__rs2b0t_host || (globalThis.__rs2b0t_host = { interact: [], log: [] });
 }
+const snapshotProxyCache = new WeakMap();
 function readOnlyView(value, root) {
   if (value === null || typeof value !== 'object') return value;
-  return new Proxy(value, {
+  const cached = snapshotProxyCache.get(value);
+  if (cached) return cached;
+  const proxy = new Proxy(value, {
     get(target, prop) {
       if (typeof prop === 'symbol') return target[prop];
       if (root && !SNAPSHOT_KEYS.has(prop)) return undefined;
@@ -788,6 +791,8 @@ function readOnlyView(value, root) {
       return { ...desc, writable: false };
     },
   });
+  snapshotProxyCache.set(value, proxy);
+  return proxy;
 }
 function settingsReader() {
   return {
@@ -1049,6 +1054,20 @@ api.gatherResource = function (input) {
   }
   return gatherV2('gatherResource', input);
 };
+const SCENE_LIMIT_MAX = 64;
+function sceneLimitOk(value) {
+  return Number.isInteger(value) && value >= 1 && value <= SCENE_LIMIT_MAX;
+}
+function sceneRegionValue(value) {
+  if (value == null || typeof value !== 'object' || Array.isArray(value)) return null;
+  for (const key of ['min_x', 'min_z', 'max_x', 'max_z', 'level']) {
+    if (!Number.isInteger(value[key])) return null;
+  }
+  return {
+    min_x: value.min_x, min_z: value.min_z,
+    max_x: value.max_x, max_z: value.max_z, level: value.level,
+  };
+}
 // Placement region and limit reuse the scene gates. An omitted region key on
 // a present object is missing-region before resource, limit, or region shape.
 api.gatherPlacements = function (input) {
@@ -1926,189 +1945,17 @@ api.clue = {
     return helperOk({ cleared: true });
   },
 };
-const SCENE_LIMIT_MAX = 64;
-function sceneLimitOk(value) {
-  return Number.isInteger(value) && value >= 1 && value <= SCENE_LIMIT_MAX;
-}
-function sceneRegionValue(value) {
-  if (value == null || typeof value !== 'object' || Array.isArray(value)) return null;
-  for (const key of ['min_x', 'min_z', 'max_x', 'max_z', 'level']) {
-    if (!Number.isInteger(value[key])) return null;
-  }
-  return {
-    min_x: value.min_x, min_z: value.min_z,
-    max_x: value.max_x, max_z: value.max_z, level: value.level,
-  };
-}
-// A present region must be a box on one level. Omitted is undefined, a bad
-// value is null. There is no plane and no { cx, cz, radius } form.
-function sceneRegionArg(input) {
-  if (!Object.prototype.hasOwnProperty.call(input, 'region')) return undefined;
-  return sceneRegionValue(input.region);
-}
-function sceneBounds(collision) {
-  // Bounds only. Collision flags stay on the page and are not this result.
-  return {
-    available: collision.available,
-    base_x: collision.base_x, base_z: collision.base_z,
-    level: collision.level,
-    width: collision.width, height: collision.height,
-  };
-}
-function sceneRowMatched(entity, ids, actions, region) {
-  if (!entity || typeof entity !== 'object') return false;
-  if (ids.indexOf(entity.id) === -1) return false;
-  if (region && !(entity.level === region.level
-      && entity.x >= region.min_x && entity.x <= region.max_x
-      && entity.z >= region.min_z && entity.z <= region.max_z)) return false;
-  if (!actions) return true;
-  const posted = entity.actions;
-  if (!Array.isArray(posted)) return false;
-  for (const action of posted) {
-    if (actions.indexOf(action) !== -1) return true;
-  }
-  return false;
-}
-function sceneProjection(key, ids, actions, limit, region) {
-  // The copy reads host().snapshot. api.snapshot hides locs and tick, and a
-  // missing host page is snapshot-unavailable, not an empty rows list.
-  const snapshot = host().snapshot;
-  if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) {
-    return helperErr('snapshot-unavailable');
-  }
-  const collision = snapshot.collision;
-  if (!collision || typeof collision !== 'object' || Array.isArray(collision)) {
-    return helperErr('snapshot-unavailable');
-  }
-  // Unavailable collision wins over an empty posted array (post_base).
-  if (collision.available !== true) return helperErr('snapshot-unavailable');
-  if (typeof snapshot.tick !== 'number') return helperErr('snapshot-unavailable');
-  const posted = snapshot[key];
-  if (!Array.isArray(posted)) return helperErr('snapshot-unavailable');
-  const rows = [];
-  let truncated = false;
-  for (const entity of posted) {
-    if (!sceneRowMatched(entity, ids, actions, region)) continue;
-    // Posted order. More matches than limit set truncated and drop the rest.
-    if (rows.length >= limit) { truncated = true; break; }
-    rows.push({
-      id: entity.id,
-      x: entity.x, z: entity.z, level: entity.level,
-      actions: Array.isArray(entity.actions) ? entity.actions.slice() : [],
-    });
-  }
-  return helperOk({
-    as_of_sequence: snapshot.tick,
-    scene: sceneBounds(collision),
-    rows: rows,
-    truncated: truncated,
-  });
-}
 api.sceneLocs = function (input) {
-  if (arguments.length === 0) return helperErr('invalid-args');
-  if (input == null || typeof input !== 'object' || Array.isArray(input)) {
-    return helperErr('invalid-args');
-  }
-  const ids = input.ids;
-  if (ids == null) return helperErr('missing-ids');
-  if (!Array.isArray(ids)) return helperErr('invalid-args');
-  if (ids.length === 0) return helperErr('missing-ids');
-  for (const id of ids) {
-    if (!Number.isInteger(id)) return helperErr('invalid-args');
-  }
-  if (!sceneLimitOk(input.limit)) return helperErr('invalid-args');
-  const region = sceneRegionArg(input);
-  if (region === null) return helperErr('invalid-args');
-  return sceneProjection('locs', ids, null, input.limit, region);
+  return globalThis.__rs2b0t_scene_query('locs', input);
 };
 api.sceneNpcs = function (input) {
-  if (arguments.length === 0) return helperErr('invalid-args');
-  if (input == null || typeof input !== 'object' || Array.isArray(input)) {
-    return helperErr('invalid-args');
-  }
-  const types = input.types;
-  if (!Array.isArray(types) || types.length === 0) return helperErr('invalid-args');
-  for (const type of types) {
-    if (!Number.isInteger(type)) return helperErr('invalid-args');
-  }
-  // actions is required. Omitted is not match-any.
-  const actions = input.actions;
-  if (!Array.isArray(actions) || actions.length === 0) return helperErr('invalid-args');
-  for (const action of actions) {
-    if (typeof action !== 'string' || action === '') return helperErr('invalid-args');
-  }
-  if (!sceneLimitOk(input.limit)) return helperErr('invalid-args');
-  const region = sceneRegionArg(input);
-  if (region === null) return helperErr('invalid-args');
-  return sceneProjection('npcs', types, actions, input.limit, region);
+  return globalThis.__rs2b0t_scene_query('npcs', input);
 };
-const QUEST_STATUS_VALUES = ['notStarted', 'inProgress', 'complete', 'unknown'];
-// A-Z fold only. Not String.prototype.toLowerCase, which is Unicode and is
-// v1's own miss path.
-function questStatusFold(text) {
-  let out = '';
-  for (let i = 0; i < text.length; i += 1) {
-    const code = text.charCodeAt(i);
-    out += String.fromCharCode(code >= 97 && code <= 122 ? code - 32 : code);
-  }
-  return out;
-}
-function questStatusRow(row, wanted) {
-  // One junk row does not fail the page: skip a non-object, a non-string
-  // name, and a status outside the four posted strings. The posted status is
-  // copied, never rewritten.
-  if (!row || typeof row !== 'object' || Array.isArray(row)) return null;
-  if (typeof row.name !== 'string') return null;
-  if (QUEST_STATUS_VALUES.indexOf(row.status) === -1) return null;
-  return questStatusFold(row.name.trim()) === wanted ? row.status : null;
-}
 api.questStatus = function (input) {
-  // Args first: a bad call is never snapshot-unavailable and never
-  // quest-tab-unbound.
-  if (arguments.length === 0) return helperErr('invalid-args');
-  if (input == null || typeof input !== 'object' || Array.isArray(input)) {
-    return helperErr('invalid-args');
-  }
-  if (typeof input.name !== 'string') return helperErr('invalid-args');
-  // A present id is not a query key, even beside a legal name.
-  if (Object.prototype.hasOwnProperty.call(input, 'id')) {
-    return helperErr('invalid-args');
-  }
-  const wanted = questStatusFold(input.name.trim());
-  if (wanted === '') return helperErr('invalid-args');
-  // The copy reads host().snapshot. api.snapshot hides quest_statuses and
-  // tick, its getter substitutes {} for a missing page, and host() with no
-  // global is { interact: [], log: [] }: a missing page is
-  // snapshot-unavailable, not an unbound tab.
-  const snapshot = host().snapshot;
-  if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) {
-    return helperErr('snapshot-unavailable');
-  }
-  const posted = snapshot.quest_statuses;
-  // post_base encodes a null tab, and only a null tab is unbound. Strict
-  // equality: a missing key is not null, and neither is a non-array.
-  if (posted === null) return helperErr('quest-tab-unbound');
-  if (!Array.isArray(posted)) return helperErr('snapshot-unavailable');
-  // Null was checked before the tick: an unbound tab needs no sequence. On a
-  // bound tab a tick that is not a finite number is snapshot-unavailable.
-  const sequence = snapshot.tick;
-  if (typeof sequence !== 'number' || !Number.isFinite(sequence)) {
-    return helperErr('snapshot-unavailable');
-  }
-  // Posted order, first legal match. A miss is not-on-tab: do not invent
-  // unknown and do not join the identity table to fill it.
-  for (const row of posted) {
-    const status = questStatusRow(row, wanted);
-    if (status !== null) return helperOk({ status: status, as_of_sequence: sequence });
-  }
-  return helperErr('not-on-tab');
+  return globalThis.__rs2b0t_quest_status(input);
 };
-// Owned-root quest journal. One token per isolate: Begin clicks the posted
-// row id once, Next returns the acquired pair, Close closes only the root
-// this token opened. The pair is the only occupancy fact, so these read
-// host().snapshot — the page the materializer wrote. api.snapshot hides
-// quest_statuses, main_modal_texts and tick, and it substitutes {} for a
-// missing page. These three are not Promises and never return a verb kind.
+// Owned-root quest journal. One token per isolate. The machine reads the
+// isolate scene; these three only coerce args, one native call, and enqueue.
 function questJournalCall(payload) {
   return globalThis.rustyscript.functions.__rs2b0t_quest_journal(payload);
 }
@@ -2117,53 +1964,9 @@ function enqueueCloseModal() {
   h.interact = h.interact || [];
   h.interact.push({ op: 'close-modal' });
 }
-function questJournalPage() {
-  const page = host().snapshot;
-  if (!page || typeof page !== 'object' || Array.isArray(page)) {
-    return { error: 'snapshot-unavailable' };
-  }
-  // An omitted pair is not closed and not free: a first post that omits the
-  // slot writes no property at all, and a delta that omits it keeps the last
-  // pair. main_modal_id is not a second closed definition.
-  if (!Object.prototype.hasOwnProperty.call(page, 'main_modal_texts')) {
-    return { error: 'snapshot-unavailable' };
-  }
-  const pair = page.main_modal_texts;
-  if (!pair || typeof pair !== 'object' || Array.isArray(pair)) {
-    return { error: 'snapshot-unavailable' };
-  }
-  if (!Array.isArray(pair.texts) || !Number.isInteger(pair.root)) {
-    return { error: 'snapshot-unavailable' };
-  }
-  for (const line of pair.texts) {
-    if (typeof line !== 'string') return { error: 'snapshot-unavailable' };
-  }
-  // as_of_sequence is the posted tick, never api.tick (which stamps 0).
-  const sequence = page.tick;
-  if (typeof sequence !== 'number' || !Number.isFinite(sequence)) {
-    return { error: 'snapshot-unavailable' };
-  }
-  return { root: pair.root, texts: pair.texts, sequence: sequence };
-}
-function questJournalRow(posted, wanted) {
-  // The same junk predicate questStatus skips. The first legal match wins,
-  // and the scan does not continue past it because its id was omitted.
-  for (const row of posted) {
-    if (questStatusRow(row, wanted) !== null) return row;
-  }
-  return null;
-}
-function questJournalClickTarget(row) {
-  // The click is the row's posted component_id. An omitted slot omits the
-  // property — it is not 0, and a present 0 is a real id that is clicked.
-  if (!Object.prototype.hasOwnProperty.call(row, 'component_id')) return null;
-  return Number.isInteger(row.component_id) ? row.component_id : null;
-}
 function questJournalBeginError(reason) {
-  // A begin refusal is one of the begin errors; an internal aborted step is
-  // never handed out as `aborted`.
   if (reason === 'busy' || reason === 'main-modal-occupied') return reason;
-  if (reason === 'snapshot-unavailable') return reason;
+  if (reason === 'snapshot-unavailable' || reason === 'quest-tab-unbound' || reason === 'unknown-quest') return reason;
   return 'stale';
 }
 function questJournalStepError(reason) {
@@ -2171,47 +1974,21 @@ function questJournalStepError(reason) {
   return 'stale';
 }
 api.questJournalBegin = function (input) {
-  // Args first: a bad call is never snapshot-unavailable, never
-  // quest-tab-unbound and never unknown-quest.
   if (arguments.length === 0) return helperErr('invalid-args');
   if (input == null || typeof input !== 'object' || Array.isArray(input)) {
     return helperErr('invalid-args');
   }
   if (typeof input.name !== 'string') return helperErr('invalid-args');
-  // A present id is not a begin key, even beside a legal name.
   if (Object.prototype.hasOwnProperty.call(input, 'id')) return helperErr('invalid-args');
-  const wanted = questStatusFold(input.name.trim());
-  if (wanted === '') return helperErr('invalid-args');
-  const snapshot = host().snapshot;
-  if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) {
-    return helperErr('snapshot-unavailable');
-  }
-  const posted = snapshot.quest_statuses;
-  // Only a null tab is unbound, and an unbound tab needs no sequence.
-  if (posted === null) return helperErr('quest-tab-unbound');
-  if (!Array.isArray(posted)) return helperErr('snapshot-unavailable');
-  const page = questJournalPage();
-  if (page.error) return helperErr(page.error);
-  const row = questJournalRow(posted, wanted);
-  if (row === null) return helperErr('unknown-quest');
-  const componentId = questJournalClickTarget(row);
-  if (componentId === null) {
-    // No posted target: no click, and never a written 0.
-    return helperErr('snapshot-unavailable');
-  }
+  if (input.name.trim() === '') return helperErr('invalid-args');
   const generation = lifecycleGeneration;
   const step = questJournalCall({
     op: 'begin',
-    name: wanted,
-    component_id: componentId,
-    sequence: page.sequence,
+    name: input.name,
     generation: generation,
-    root: page.root,
-    texts: page.texts,
   });
   if (!step || typeof step !== 'object') return helperErr('stale');
   if (step.kind === 'if-button') {
-    // Enqueue synchronously, after the generation check.
     if (generation !== lifecycleGeneration) return helperErr('stale');
     enqueueIfButton(step.component_id);
     return helperOk({ token: step.token });
@@ -2225,18 +2002,12 @@ api.questJournalNext = function (input) {
     return helperErr('invalid-args');
   }
   if (!Number.isInteger(input.token)) return helperErr('invalid-args');
-  const page = questJournalPage();
-  if (page.error) return helperErr(page.error);
   const step = questJournalCall({
     op: 'next',
     token: input.token,
     generation: lifecycleGeneration,
-    sequence: page.sequence,
-    root: page.root,
-    texts: page.texts,
   });
   if (!step || typeof step !== 'object') return helperErr('stale');
-  // Not-done is { pending: true } with no ok field. It is not empty lines.
   if (step.kind === 'wait') return { pending: true };
   if (step.kind === 'done') {
     return helperOk({
@@ -2254,16 +2025,11 @@ api.questJournalClose = function (input) {
     return helperErr('invalid-args');
   }
   if (!Number.isInteger(input.token)) return helperErr('invalid-args');
-  const page = questJournalPage();
-  if (page.error) return helperErr(page.error);
   const generation = lifecycleGeneration;
   const step = questJournalCall({
     op: 'close',
     token: input.token,
     generation: generation,
-    sequence: page.sequence,
-    root: page.root,
-    texts: page.texts,
   });
   if (!step || typeof step !== 'object') return helperErr('stale');
   if (step.kind === 'close-modal') {
@@ -2273,7 +2039,6 @@ api.questJournalClose = function (input) {
   }
   if (step.kind === 'wait') return { pending: true };
   if (step.kind === 'done') {
-    // Only the explicit closed pair. Close never returns journal lines.
     return helperOk({ closed: true, as_of_sequence: step.as_of_sequence });
   }
   if (step.kind === 'aborted') return helperErr(questJournalStepError(step.reason));

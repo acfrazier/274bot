@@ -26,7 +26,9 @@
 //! ([`Skills`]), and the side-tab and bank-stand tables keep the one fact
 //! read from each.
 
-use crate::isolate_fb::{RowReader, SceneEntityReader, SnapshotReader, StatReader};
+use crate::isolate_fb::{
+    QuestStatusReader, RowReader, SceneEntityReader, SnapshotReader, StatReader,
+};
 use api::line_of_sight::CollisionQuery;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -380,6 +382,33 @@ pub struct ModalTexts {
     pub texts: Vec<String>,
 }
 
+/// One posted quest-tab row. `component_id` is omitted when the host did not
+/// walk a click target; a present `0` is a real id.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct QuestStatusRow {
+    pub name: Text,
+    pub status: Text,
+    pub component_id: Option<i32>,
+}
+
+impl QuestStatusRow {
+    fn read(row: &QuestStatusReader<'_>, strings: &mut Interner) -> Self {
+        Self {
+            name: strings.text(row.name()),
+            status: strings.text(row.status()),
+            component_id: row.component_id(),
+        }
+    }
+}
+
+/// Posted quest journal tab. `Unbound` is the host's null tab; `Bound` is a
+/// present table, possibly empty.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum QuestTab {
+    Unbound,
+    Bound(Vec<QuestStatusRow>),
+}
+
 /// The reach bit views the fire planner reads.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Reach {
@@ -539,6 +568,8 @@ scene_pages! {
         chat_lines: Vec<ChatLine>,
         make_products: Vec<MakeProduct>,
         bank_approaches: Vec<BankApproach>,
+        /// Null tab vs a present (possibly empty) journal list.
+        quest_statuses: QuestTab,
         main_modal_texts: ModalTexts,
         collision: CollisionQuery,
         reach: Reach,
@@ -916,6 +947,25 @@ impl Scene {
                 texts: pair.texts().into_iter().map(str::to_string).collect(),
             });
         }
+        if snap.has_quest_statuses_update() {
+            if snap.quest_statuses_available() {
+                p.quest_statuses(QuestTab::Bound(
+                    snap.quest_statuses()
+                        .iter()
+                        .map(|row| QuestStatusRow::read(row, strings))
+                        .collect(),
+                ));
+            } else {
+                p.quest_statuses(QuestTab::Unbound);
+            }
+        } else if snap.has_quest_statuses() {
+            p.quest_statuses(QuestTab::Bound(
+                snap.quest_statuses()
+                    .iter()
+                    .map(|row| QuestStatusRow::read(row, strings))
+                    .collect(),
+            ));
+        }
         if let Some(c) = snap.collision() {
             p.collision(CollisionQuery {
                 available: c.available(),
@@ -1024,8 +1074,9 @@ impl Interner {
 mod tests {
     use super::*;
     use crate::isolate_fb::{
-        encode_snapshot, encode_snapshot_delta, BankStandInput, ItemRowInput, ReachViewInput,
-        SceneEntityInput, SideTabIfaceInput, SnapshotInput, StatInput, TileInput,
+        encode_snapshot, encode_snapshot_delta, encode_snapshot_with_native, BankStandInput,
+        ItemRowInput, NativeFactsInput, QuestStatusInput, ReachViewInput, SceneEntityInput,
+        SideTabIfaceInput, SnapshotInput, StatInput, TileInput,
     };
 
     fn empty(tick: u64) -> SnapshotInput<'static> {
@@ -1423,5 +1474,44 @@ mod tests {
         apply_bytes(&keyframe);
         let after_reset = with(|scene| scene.latest().reach_stamp()).unwrap();
         assert_ne!(after_reset, first, "a new session never repeats a stamp");
+    }
+
+    #[test]
+    fn quest_tab_unbound_and_bound_rows_are_distinct_pages() {
+        on_reset();
+        let snap = empty(1);
+        apply_bytes(&encode_snapshot_with_native(
+            &snap,
+            NativeFactsInput {
+                quest_statuses: None,
+                ..Default::default()
+            },
+        ));
+        with(|scene| {
+            assert!(matches!(
+                scene.latest().quest_statuses(),
+                Some(QuestTab::Unbound)
+            ));
+        });
+        let rows = [QuestStatusInput {
+            name: "Death Plateau",
+            status: "inProgress",
+            component_id: Some(42),
+        }];
+        apply_bytes(&encode_snapshot_with_native(
+            &snap,
+            NativeFactsInput {
+                quest_statuses: Some(&rows),
+                ..Default::default()
+            },
+        ));
+        with(|scene| match scene.latest().quest_statuses() {
+            Some(QuestTab::Bound(posted)) => {
+                assert_eq!(&*posted[0].name, "Death Plateau");
+                assert_eq!(&*posted[0].status, "inProgress");
+                assert_eq!(posted[0].component_id, Some(42));
+            }
+            other => panic!("expected bound tab, got {other:?}"),
+        });
     }
 }

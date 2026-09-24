@@ -3,6 +3,10 @@
 
 use std::time::{Duration, Instant};
 
+use script::isolate_fb::{
+    encode_snapshot_with_native, CollisionViewInput, NativeFactsInput, QuestStatusInput,
+    SceneEntityInput,
+};
 use script::load::{
     parse_declared_api_version, resolve_api_family, ApiFamily, JsLibrary, LoadIsolate, LoadShape,
 };
@@ -1730,4 +1734,447 @@ export function tick(api) {
         interacts.is_empty(),
         "quest status must not push interact: {interacts:?}"
     );
+}
+
+fn loc_row<'a>(id: i32, x: i32, actions: &'a [String]) -> SceneEntityInput<'a> {
+    SceneEntityInput {
+        index: 0,
+        id,
+        name: None,
+        x,
+        z: 3200,
+        level: 0,
+        distance: 0,
+        health: -1,
+        max_health: -1,
+        in_combat: false,
+        animating: false,
+        actions,
+        reachable: false,
+        reachable_adj: false,
+        combat_level: 0,
+        target_kind: 0,
+        target_index: -1,
+        size: 0,
+        nx: 0,
+        nz: 0,
+    }
+}
+
+fn npc_row<'a>(id: i32, x: i32, actions: &'a [String]) -> SceneEntityInput<'a> {
+    SceneEntityInput {
+        index: 1,
+        id,
+        name: Some("Goblin"),
+        x,
+        z: 3201,
+        level: 0,
+        distance: 1,
+        health: 5,
+        max_health: 5,
+        in_combat: false,
+        animating: false,
+        actions,
+        reachable: false,
+        reachable_adj: false,
+        combat_level: 2,
+        target_kind: 0,
+        target_index: -1,
+        size: 1,
+        nx: x,
+        nz: 3201,
+    }
+}
+
+fn open_collision<'a>() -> NativeFactsInput<'a> {
+    NativeFactsInput {
+        collision: Some(CollisionViewInput {
+            available: true,
+            base_x: 3200,
+            base_z: 3200,
+            level: 0,
+            width: 16,
+            height: 16,
+            flags: &[],
+        }),
+        ..NativeFactsInput::default()
+    }
+}
+
+fn post_with_native(iso: &LoadIsolate, tick: u64, facts: NativeFactsInput<'_>) {
+    let mut input = script::isolate_fb::SnapshotInput {
+        tick,
+        here: None,
+        ingame: true,
+        inv: &[],
+        inv_size: 28,
+        stats: &[],
+        booths: &[],
+        banks: &[],
+        bank: &[],
+        bank_side: &[],
+        bank_open: false,
+        bank_loaded: false,
+        bank_generation: 7,
+        count_dialog_open: false,
+        withdraw_x_result_seq: 0,
+        withdraw_x_result: false,
+        withdraw_load_result_seq: 0,
+        withdraw_load_result: false,
+        bank_op_result_seq: 0,
+        bank_op_result: false,
+        hold: false,
+        ours: false,
+        npcs: &[],
+        locs: &[],
+        players: &[],
+        ground: &[],
+        equipment: &[],
+        chat_open: false,
+        chat_continue: false,
+        chat_text: None,
+        chat_options: &[],
+        side_tab: -1,
+        varps: &[],
+        combat_styles: &[],
+        run_energy: 0,
+        run_enabled: false,
+        retaliate_enabled: false,
+        my_name: None,
+        in_combat: false,
+        animating: false,
+        main_modal_id: -1,
+        chat_modal_id: -1,
+        make_products: &[],
+        side_tab_ifaces: &[],
+        spell_buttons: &[],
+        chat_lines: &[],
+        nearest_booth: None,
+        bank_note_on: -1,
+        bank_note_off: -1,
+        scene_state: 0,
+        weight: 0,
+        combat_level: 0,
+        camera_yaw: 0,
+        camera_pitch: 0,
+        teleports_enabled: false,
+        self_slot: 0,
+        trade_offer_open: false,
+        trade_confirm_open: false,
+        trade_partner: None,
+        trade_mine: &[],
+        trade_theirs: &[],
+        trade_side: &[],
+        trade_accept_id: -1,
+        trade_decline_id: -1,
+        shop_open: false,
+        shop_stock: &[],
+        reach: script::isolate_fb::ReachViewInput::UNAVAILABLE,
+        attacked_by_player: false,
+        self_target_kind: 0,
+        self_target_index: -1,
+        widgets: &[],
+    };
+    input.tick = tick;
+    iso.post_snapshot(encode_snapshot_with_native(&input, facts));
+}
+
+#[test]
+fn v2_scene_locs_filter_posted_order_and_truncate() {
+    let src = r#"
+export const apiVersion = 2;
+export function tick(api) {
+  const hit = api.sceneLocs({ ids: [2092], limit: 2 });
+  const miss = api.sceneLocs({ ids: [1], limit: 8, region: { min_x: 0, min_z: 0, max_x: 1, max_z: 1, level: 0 } });
+  const bad = api.sceneLocs({ ids: [], limit: 8 });
+  globalThis.__probe = { hit, miss, bad };
+}
+"#;
+    let iso = LoadIsolate::spawn(src.into(), LoadShape::NativeTick, vec![]).unwrap();
+    let mine = ["Mine".to_string()];
+    let prospect = ["Prospect".to_string()];
+    let locs = [
+        loc_row(1, 3200, &mine),
+        loc_row(2092, 3201, &mine),
+        loc_row(2092, 3202, &prospect),
+        loc_row(2092, 3203, &mine),
+    ];
+    let input = script::isolate_fb::SnapshotInput {
+        tick: 4,
+        here: None,
+        ingame: true,
+        inv: &[],
+        inv_size: 28,
+        stats: &[],
+        booths: &[],
+        banks: &[],
+        bank: &[],
+        bank_side: &[],
+        bank_open: false,
+        bank_loaded: false,
+        bank_generation: 7,
+        count_dialog_open: false,
+        withdraw_x_result_seq: 0,
+        withdraw_x_result: false,
+        withdraw_load_result_seq: 0,
+        withdraw_load_result: false,
+        bank_op_result_seq: 0,
+        bank_op_result: false,
+        hold: false,
+        ours: false,
+        npcs: &[],
+        locs: &locs,
+        players: &[],
+        ground: &[],
+        equipment: &[],
+        chat_open: false,
+        chat_continue: false,
+        chat_text: None,
+        chat_options: &[],
+        side_tab: -1,
+        varps: &[],
+        combat_styles: &[],
+        run_energy: 0,
+        run_enabled: false,
+        retaliate_enabled: false,
+        my_name: None,
+        in_combat: false,
+        animating: false,
+        main_modal_id: -1,
+        chat_modal_id: -1,
+        make_products: &[],
+        side_tab_ifaces: &[],
+        spell_buttons: &[],
+        chat_lines: &[],
+        nearest_booth: None,
+        bank_note_on: -1,
+        bank_note_off: -1,
+        scene_state: 0,
+        weight: 0,
+        combat_level: 0,
+        camera_yaw: 0,
+        camera_pitch: 0,
+        teleports_enabled: false,
+        self_slot: 0,
+        trade_offer_open: false,
+        trade_confirm_open: false,
+        trade_partner: None,
+        trade_mine: &[],
+        trade_theirs: &[],
+        trade_side: &[],
+        trade_accept_id: -1,
+        trade_decline_id: -1,
+        shop_open: false,
+        shop_stock: &[],
+        reach: script::isolate_fb::ReachViewInput::UNAVAILABLE,
+        attacked_by_player: false,
+        self_target_kind: 0,
+        self_target_index: -1,
+        widgets: &[],
+    };
+    iso.post_snapshot(encode_snapshot_with_native(&input, open_collision()));
+    iso.on_game_tick(1);
+    let probe = iso.probe("globalThis.__probe").unwrap();
+    iso.join();
+    assert_eq!(probe["hit"]["ok"], true, "{probe:?}");
+    assert_eq!(probe["hit"]["value"]["as_of_sequence"], 4, "{probe:?}");
+    assert_eq!(probe["hit"]["value"]["truncated"], true, "{probe:?}");
+    assert_eq!(
+        probe["hit"]["value"]["rows"],
+        serde_json::json!([
+            { "id": 2092, "x": 3201, "z": 3200, "level": 0, "actions": ["Mine"] },
+            { "id": 2092, "x": 3202, "z": 3200, "level": 0, "actions": ["Prospect"] }
+        ]),
+        "{probe:?}"
+    );
+    assert_eq!(probe["miss"]["ok"], true, "{probe:?}");
+    assert_eq!(
+        probe["miss"]["value"]["rows"],
+        serde_json::json!([]),
+        "{probe:?}"
+    );
+    assert_eq!(probe["miss"]["value"]["truncated"], false, "{probe:?}");
+    assert_eq!(probe["bad"]["ok"], false, "{probe:?}");
+    assert_eq!(probe["bad"]["error"], "missing-ids", "{probe:?}");
+}
+
+#[test]
+fn v2_scene_npcs_require_actions_and_keep_posted_order() {
+    let src = r#"
+export const apiVersion = 2;
+export function tick(api) {
+  const hit = api.sceneNpcs({ types: [-1], actions: ['Attack'], limit: 8 });
+  const omitted = api.sceneNpcs({ types: [-1], limit: 8 });
+  globalThis.__probe = { hit, omitted };
+}
+"#;
+    let iso = LoadIsolate::spawn(src.into(), LoadShape::NativeTick, vec![]).unwrap();
+    let talk = ["Talk-to".to_string()];
+    let attack = ["Attack".to_string()];
+    let both = ["Attack".to_string(), "Talk-to".to_string()];
+    let npcs = [
+        npc_row(-1, 1, &talk),
+        npc_row(-1, 2, &both),
+        npc_row(9, 3, &attack),
+        npc_row(-1, 4, &attack),
+    ];
+    let mut input = script::isolate_fb::SnapshotInput {
+        tick: 5,
+        here: None,
+        ingame: true,
+        inv: &[],
+        inv_size: 28,
+        stats: &[],
+        booths: &[],
+        banks: &[],
+        bank: &[],
+        bank_side: &[],
+        bank_open: false,
+        bank_loaded: false,
+        bank_generation: 7,
+        count_dialog_open: false,
+        withdraw_x_result_seq: 0,
+        withdraw_x_result: false,
+        withdraw_load_result_seq: 0,
+        withdraw_load_result: false,
+        bank_op_result_seq: 0,
+        bank_op_result: false,
+        hold: false,
+        ours: false,
+        npcs: &npcs,
+        locs: &[],
+        players: &[],
+        ground: &[],
+        equipment: &[],
+        chat_open: false,
+        chat_continue: false,
+        chat_text: None,
+        chat_options: &[],
+        side_tab: -1,
+        varps: &[],
+        combat_styles: &[],
+        run_energy: 0,
+        run_enabled: false,
+        retaliate_enabled: false,
+        my_name: None,
+        in_combat: false,
+        animating: false,
+        main_modal_id: -1,
+        chat_modal_id: -1,
+        make_products: &[],
+        side_tab_ifaces: &[],
+        spell_buttons: &[],
+        chat_lines: &[],
+        nearest_booth: None,
+        bank_note_on: -1,
+        bank_note_off: -1,
+        scene_state: 0,
+        weight: 0,
+        combat_level: 0,
+        camera_yaw: 0,
+        camera_pitch: 0,
+        teleports_enabled: false,
+        self_slot: 0,
+        trade_offer_open: false,
+        trade_confirm_open: false,
+        trade_partner: None,
+        trade_mine: &[],
+        trade_theirs: &[],
+        trade_side: &[],
+        trade_accept_id: -1,
+        trade_decline_id: -1,
+        shop_open: false,
+        shop_stock: &[],
+        reach: script::isolate_fb::ReachViewInput::UNAVAILABLE,
+        attacked_by_player: false,
+        self_target_kind: 0,
+        self_target_index: -1,
+        widgets: &[],
+    };
+    input.tick = 5;
+    iso.post_snapshot(encode_snapshot_with_native(&input, open_collision()));
+    iso.on_game_tick(1);
+    let probe = iso.probe("globalThis.__probe").unwrap();
+    iso.join();
+    assert_eq!(probe["hit"]["ok"], true, "{probe:?}");
+    assert_eq!(
+        probe["hit"]["value"]["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| row["x"].clone())
+            .collect::<Vec<_>>(),
+        vec![serde_json::json!(2), serde_json::json!(4)],
+        "{probe:?}"
+    );
+    assert_eq!(probe["omitted"]["ok"], false, "{probe:?}");
+    assert_eq!(probe["omitted"]["error"], "invalid-args", "{probe:?}");
+}
+
+#[test]
+fn v2_quest_status_maps_folded_name_and_keeps_first_legal_row() {
+    let src = r#"
+export const apiVersion = 2;
+export function tick(api) {
+  const hit = api.questStatus({ name: 'Death Plateau' });
+  const id = api.questStatus({ name: 'Death Plateau', id: 'death_plateau' });
+  const miss = api.questStatus({ name: 'Missing' });
+  globalThis.__probe = { hit, id, miss };
+}
+"#;
+    let iso = LoadIsolate::spawn(src.into(), LoadShape::NativeTick, vec![]).unwrap();
+    let rows = [
+        QuestStatusInput {
+            name: "skip",
+            status: "bogus",
+            component_id: Some(1),
+        },
+        QuestStatusInput {
+            name: "  death plateau  ",
+            status: "notStarted",
+            component_id: Some(2),
+        },
+        QuestStatusInput {
+            name: "Death Plateau",
+            status: "complete",
+            component_id: Some(3),
+        },
+    ];
+    post_with_native(
+        &iso,
+        6,
+        NativeFactsInput {
+            quest_statuses: Some(&rows),
+            ..NativeFactsInput::default()
+        },
+    );
+    iso.on_game_tick(1);
+    let probe = iso.probe("globalThis.__probe").unwrap();
+    iso.join();
+    assert_eq!(probe["hit"]["ok"], true, "{probe:?}");
+    assert_eq!(probe["hit"]["value"]["status"], "notStarted", "{probe:?}");
+    assert_eq!(probe["hit"]["value"]["as_of_sequence"], 6, "{probe:?}");
+    assert_eq!(probe["id"]["error"], "invalid-args", "{probe:?}");
+    assert_eq!(probe["miss"]["error"], "not-on-tab", "{probe:?}");
+}
+
+#[test]
+fn v2_snapshot_nested_reads_reuse_the_same_proxy() {
+    let src = r#"
+export const apiVersion = 2;
+export function tick(api) {
+  const a = api.snapshot.inv;
+  const b = api.snapshot.inv;
+  const c = api.snapshot.npcs;
+  const d = api.snapshot.npcs;
+  globalThis.__probe = { invSame: a === b, npcsSame: c === d };
+}
+"#;
+    let iso = LoadIsolate::spawn(src.into(), LoadShape::NativeTick, vec![]).unwrap();
+    post_base(&iso, 1);
+    iso.on_game_tick(1);
+    let probe = iso.probe("globalThis.__probe").unwrap();
+    iso.join();
+    assert_eq!(probe["invSame"], true, "{probe:?}");
+    assert_eq!(probe["npcsSame"], true, "{probe:?}");
 }

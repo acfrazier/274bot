@@ -51,6 +51,8 @@ mod paint_jive;
 #[cfg(feature = "load")]
 mod partner_trade_v8;
 mod quest_facts_v8;
+#[cfg(feature = "load")]
+mod scene_v8;
 mod selected_facts_v8;
 mod shape;
 #[cfg(feature = "load")]

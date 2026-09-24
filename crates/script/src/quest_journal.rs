@@ -1,12 +1,11 @@
 //! Owned-root quest-journal machine: `api.questJournalBegin` / `Next` / `Close`.
 //!
 //! One token per isolate over the posted quest row and the paired main-modal
-//! texts. The JS wrapper owns the call arguments, the posted tab and the row
-//! selection. The pair and its tick are read from the isolate scene; the
-//! wrapper's echo of the same page is only read before the scene has carried
-//! the pair this session. This machine owns the token, the generation
-//! captured at Begin, the frozen clock, acquisition, the owned-root refusal
-//! and the one close.
+//! texts. The JS wrapper owns call arguments, generation, and enqueue of the
+//! one `if-button` / `close-modal`. This machine reads the isolate scene for
+//! the tab, the click target, the pair and its tick. It owns the token, the
+//! generation captured at Begin, the frozen clock, acquisition, the
+//! owned-root refusal and the one close.
 //!
 //! The pair is the only occupancy fact. The closed start is the explicit
 //! `{ root: -1, texts: [] }` the host posted; an omitted pair is not free,
@@ -14,13 +13,14 @@
 //! never acquired.
 //!
 //! One `if-button` per token, one `close-modal` per token. Begin of another
-//! name cancels the live token and emits no close for it; the same name is
+//! name cancels the live token and emits no verb for it; the same name is
 //! `busy`. Reset and a generation bump abort the token. Pause and hold freeze
 //! this machine's own clock, so a frozen call emits no verb and does not burn
 //! the acquisition window. There is no Stop arm and nothing is enqueued from
 //! `onStop`.
 
-use crate::observed;
+use crate::observed::{self, QuestTab};
+use crate::scene_query;
 use crate::task_clock::InstantTaskClock;
 use serde_json::{json, Value};
 use std::cell::RefCell;
@@ -104,27 +104,44 @@ impl JournalRuntime {
 
     fn begin(&mut self, input: &Value) -> Value {
         let name = input.get("name").and_then(Value::as_str).unwrap_or("");
-        let component_id = input
-            .get("component_id")
-            .and_then(Value::as_i64)
-            .and_then(|id| i32::try_from(id).ok());
-        let generation = input.get("generation").and_then(Value::as_u64);
-        let sequence = posted_sequence(input);
-        let (Some(component_id), Some(generation), Some(sequence)) =
-            (component_id, generation, sequence)
-        else {
-            // The wrapper refuses these before the machine; a direct call
-            // still has to be a refusal, never a click on a guessed target.
+        let Some(generation) = input.get("generation").and_then(Value::as_u64) else {
+            // The wrapper refuses a missing generation; a direct call still
+            // has to be a refusal, never a click on a guessed target.
             return self.aborted("snapshot-unavailable");
         };
-        let Some((root, texts)) = posted_pair(input) else {
-            return self.aborted("snapshot-unavailable");
+        let folded = scene_query::fold_ascii(name.trim());
+        let lookup = observed::with(|scene| {
+            let Some(tab) = scene.latest().quest_statuses() else {
+                return Err("snapshot-unavailable");
+            };
+            match tab {
+                QuestTab::Unbound => Err("quest-tab-unbound"),
+                QuestTab::Bound(rows) => {
+                    let Some(pair) = scene.latest().main_modal_texts() else {
+                        return Err("snapshot-unavailable");
+                    };
+                    let Some(sequence) = scene.tick() else {
+                        return Err("snapshot-unavailable");
+                    };
+                    let Some(row) = scene_query::first_quest_row(rows, &folded) else {
+                        return Err("unknown-quest");
+                    };
+                    let Some(component_id) = row.component_id else {
+                        return Err("snapshot-unavailable");
+                    };
+                    Ok((component_id, pair.root, pair.texts.clone(), sequence))
+                }
+            }
+        });
+        let (component_id, root, texts, sequence) = match lookup {
+            Ok(hit) => hit,
+            Err(reason) => return self.aborted(reason),
         };
         // One token. The same name is busy and is not cancelled: a second
         // click is the steal the owned-root contract forbids. Another name
         // cancels the live token and emits no verb for it.
         if self.phase != Phase::Idle {
-            if self.name == name {
+            if self.name == folded {
                 return json!({
                     "kind": "aborted",
                     "token": self.token,
@@ -147,7 +164,7 @@ impl JournalRuntime {
         }
         self.token = self.token.wrapping_add(1);
         self.phase = Phase::AwaitingAcquire;
-        self.name = name.to_string();
+        self.name = folded;
         self.component_id = component_id;
         self.generation = generation;
         self.root = -1;
@@ -171,7 +188,7 @@ impl JournalRuntime {
         if input.get("generation").and_then(Value::as_u64) != Some(self.generation) {
             return self.aborted("stale");
         }
-        let Some((root, texts)) = posted_pair(input) else {
+        let Some((root, texts)) = posted_pair() else {
             return json!({
                 "kind": "aborted",
                 "token": self.token,
@@ -191,7 +208,7 @@ impl JournalRuntime {
             // instant, so the window does not advance.
             return json!({ "kind": "wait", "token": self.token });
         }
-        let sequence = posted_sequence(input).unwrap_or(0);
+        let sequence = posted_sequence().unwrap_or(0);
         match self.phase {
             Phase::Idle => self.aborted("stale"),
             Phase::AwaitingAcquire => {
@@ -249,7 +266,7 @@ impl JournalRuntime {
         if input.get("generation").and_then(Value::as_u64) != Some(self.generation) {
             return self.aborted("stale");
         }
-        let Some((root, texts)) = posted_pair(input) else {
+        let Some((root, texts)) = posted_pair() else {
             return json!({
                 "kind": "aborted",
                 "token": self.token,
@@ -266,7 +283,7 @@ impl JournalRuntime {
         if self.frozen() {
             return json!({ "kind": "wait", "token": self.token });
         }
-        let sequence = posted_sequence(input).unwrap_or(0);
+        let sequence = posted_sequence().unwrap_or(0);
         match self.phase {
             Phase::Idle => self.aborted("stale"),
             Phase::AwaitingAcquire => {
@@ -305,37 +322,20 @@ impl JournalRuntime {
     }
 }
 
-/// The paired main-modal walk this call reads: the pair the host posted to
-/// the isolate scene, or the wrapper's echo before the scene carried one.
-fn posted_pair(input: &Value) -> Option<(i32, Vec<String>)> {
+/// The paired main-modal walk this call reads from the isolate scene.
+fn posted_pair() -> Option<(i32, Vec<String>)> {
     observed::with(|scene| {
         scene
             .latest()
             .main_modal_texts()
             .map(|pair| (pair.root, pair.texts.clone()))
     })
-    .or_else(|| read_pair(input))
 }
 
 /// The sequence stamped on the answer: the last posted tick once the scene
-/// holds a pair (the pair itself may have been carried by an earlier post,
-/// as the wrapper's `page.tick` always was), else the wrapper's echo.
-fn posted_sequence(input: &Value) -> Option<u64> {
+/// holds a pair (the pair itself may have been carried by an earlier post).
+fn posted_sequence() -> Option<u64> {
     observed::with(|scene| scene.latest().main_modal_texts().and(scene.tick()))
-        .or_else(|| input.get("sequence").and_then(Value::as_u64))
-}
-
-/// The paired object the materializer wrote, as echoed by the wrapper.
-/// `None` is unusable: a root that is not an integer, or texts that are not
-/// strings. An omitted pair never reaches here — the wrapper refuses it.
-fn read_pair(input: &Value) -> Option<(i32, Vec<String>)> {
-    let root = i32::try_from(input.get("root")?.as_i64()?).ok()?;
-    let rows = input.get("texts")?.as_array()?;
-    let mut texts = Vec::with_capacity(rows.len());
-    for row in rows {
-        texts.push(row.as_str()?.to_string());
-    }
-    Some((root, texts))
 }
 
 pub fn on_pause() {
@@ -375,54 +375,79 @@ pub fn dispatch(input: &Value) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::observed::{ModalTexts, QuestStatusRow, QuestTab};
+
+    fn cook_row() -> QuestStatusRow {
+        QuestStatusRow {
+            name: "Cook's Assistant".into(),
+            status: "notStarted".into(),
+            component_id: Some(1234),
+        }
+    }
+
+    fn waterfall_row() -> QuestStatusRow {
+        QuestStatusRow {
+            name: "Waterfall Quest".into(),
+            status: "notStarted".into(),
+            component_id: Some(42),
+        }
+    }
+
+    fn post_tab(tick: u64, root: i32, texts: &[&str], rows: Vec<QuestStatusRow>) {
+        observed::post(tick, |post| {
+            post.quest_statuses(QuestTab::Bound(rows));
+            post.main_modal_texts(ModalTexts {
+                root,
+                texts: texts.iter().map(|text| (*text).to_string()).collect(),
+            });
+        });
+    }
+
+    fn reset_closed() {
+        on_reset();
+        observed::on_reset();
+        post_tab(7, -1, &[], vec![cook_row(), waterfall_row()]);
+    }
 
     fn begin(name: &str, generation: u64) -> Value {
         dispatch(&json!({
             "op": "begin",
             "name": name,
-            "component_id": 1234,
-            "sequence": 7,
             "generation": generation,
-            "root": -1,
-            "texts": [],
         }))
     }
 
-    fn call(
-        op: &str,
-        token: u64,
-        generation: u64,
-        root: i32,
-        texts: Value,
-        sequence: u64,
-    ) -> Value {
+    fn call(op: &str, token: u64, generation: u64) -> Value {
         dispatch(&json!({
             "op": op,
             "token": token,
             "generation": generation,
-            "root": root,
-            "texts": texts,
-            "sequence": sequence,
         }))
     }
 
     #[test]
     fn a_generation_mismatch_is_stale_without_a_verb() {
-        on_reset();
+        reset_closed();
         let begin = begin("Cook's Assistant", 4);
         assert_eq!(begin["kind"], "if-button");
         let token = begin["token"].as_u64().unwrap();
-        let step = call("next", token, 5, 77, json!(["@dre@The Cook's Quest"]), 8);
+        post_tab(
+            8,
+            77,
+            &["@dre@The Cook's Quest"],
+            vec![cook_row(), waterfall_row()],
+        );
+        let step = call("next", token, 5);
         assert_eq!(step["kind"], "aborted");
         assert_eq!(step["reason"], "stale");
         // The token died with the mismatch.
-        let after = call("next", token, 5, 77, json!(["@dre@The Cook's Quest"]), 9);
+        let after = call("next", token, 5);
         assert_eq!(after["reason"], "stale");
     }
 
     #[test]
     fn same_name_is_busy_and_another_name_cancels_before_the_occupied_refusal() {
-        on_reset();
+        reset_closed();
         let first = begin("Cook's Assistant", 4);
         let token = first["token"].as_u64().unwrap();
         let busy = begin("Cook's Assistant", 4);
@@ -431,62 +456,59 @@ mod tests {
 
         // Another name cancels the old token first, then refuses the
         // occupied pair: the old token is dead and no verb was returned.
-        let mut occupied = json!({
-            "op": "begin",
-            "name": "Waterfall Quest",
-            "component_id": 42,
-            "sequence": 7,
-            "generation": 4,
-            "root": 77,
-            "texts": ["@dre@The Cook's Quest"],
-        });
-        let step = dispatch(&occupied);
+        post_tab(
+            8,
+            77,
+            &["@dre@The Cook's Quest"],
+            vec![cook_row(), waterfall_row()],
+        );
+        let step = begin("Waterfall Quest", 4);
         assert_eq!(step["kind"], "aborted");
         assert_eq!(step["reason"], "main-modal-occupied");
-        let cancelled = call("next", token, 4, 77, json!(["@dre@The Cook's Quest"]), 7);
+        let cancelled = call("next", token, 4);
         assert_eq!(
             cancelled["reason"], "stale",
             "the cancelled token is not live: {cancelled}"
         );
-        occupied["texts"] = json!([]);
-        occupied["root"] = json!(-1);
-        let restarted = dispatch(&occupied);
+        post_tab(9, -1, &[], vec![cook_row(), waterfall_row()]);
+        let restarted = begin("Waterfall Quest", 4);
         assert_eq!(restarted["kind"], "if-button");
     }
 
     #[test]
     fn the_owned_close_succeeds_only_on_the_explicit_closed_pair() {
-        on_reset();
+        reset_closed();
         let token = begin("Cook's Assistant", 1)["token"].as_u64().unwrap();
-        let acquired = call("next", token, 1, 77, json!(["@dre@The Cook's Quest"]), 8);
+        post_tab(
+            8,
+            77,
+            &["@dre@The Cook's Quest"],
+            vec![cook_row(), waterfall_row()],
+        );
+        let acquired = call("next", token, 1);
         assert_eq!(acquired["kind"], "done");
-        let emitted = call("close", token, 1, 77, json!(["@dre@The Cook's Quest"]), 9);
+        let emitted = call("close", token, 1);
         assert_eq!(emitted["kind"], "close-modal");
         // A second close while the pair still stands is wait, not a verb.
-        let again = call("close", token, 1, 77, json!(["@dre@The Cook's Quest"]), 10);
+        let again = call("close", token, 1);
         assert_eq!(again["kind"], "wait");
-        let closed = call("close", token, 1, -1, json!([]), 11);
+        post_tab(11, -1, &[], vec![cook_row(), waterfall_row()]);
+        let closed = call("close", token, 1);
         assert_eq!(closed["kind"], "done");
         assert_eq!(closed["as_of_sequence"], 11);
     }
 
     #[test]
-    fn the_posted_pair_is_read_from_the_scene_over_a_stale_echo() {
-        on_reset();
-        observed::on_reset();
-        let post = |tick: u64, root: i32, texts: &[&str]| {
-            observed::post(tick, |post| {
-                post.main_modal_texts(observed::ModalTexts {
-                    root,
-                    texts: texts.iter().map(|text| (*text).to_string()).collect(),
-                });
-            });
-        };
-        post(7, -1, &[]);
+    fn the_posted_pair_is_read_from_the_scene() {
+        reset_closed();
         let token = begin("Cook's Assistant", 1)["token"].as_u64().unwrap();
-        post(8, 77, &["@dre@The Cook's Quest"]);
-        // The echo still carries the closed pair from an older page.
-        let acquired = call("next", token, 1, -1, json!([]), 7);
+        post_tab(
+            8,
+            77,
+            &["@dre@The Cook's Quest"],
+            vec![cook_row(), waterfall_row()],
+        );
+        let acquired = call("next", token, 1);
         assert_eq!(acquired["kind"], "done", "{acquired}");
         assert_eq!(acquired["root"], 77);
         assert_eq!(acquired["lines"], json!(["@dre@The Cook's Quest"]));
