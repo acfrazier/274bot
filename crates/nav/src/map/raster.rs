@@ -17,6 +17,7 @@ use super::spatial::{
     TileKey, WorldBounds, MAX_LOD, TILE_GUTTER, TILE_INTERIOR, TILE_PIXELS, TILE_RGBA_BYTES,
 };
 use super::{MapError, Rows, Text};
+use client::dash3d::MapFlag;
 use client::graphics::Pix8;
 use client::map_cache::{LocPlacement, MapIndexEntry, MAP_SQUARE_SIZE};
 use png::{BitDepth, ColorType, Compression, Decoder, Encoder, Filter};
@@ -29,6 +30,7 @@ use std::time::{Duration, Instant};
 const FIXED_WALL_RGB: u32 = 0xeeeeee;
 const FIXED_ACTIVE_WALL_RGB: u32 = 0xee0000;
 const GRID_MARGIN: i32 = 5;
+const CHECKPOINT_BATCH_TILES: usize = 32;
 
 // Native minimap masks, indexed by decoded overlay shape + 1.
 const MINIMAP_SHAPE: [[u8; 16]; 13] = [
@@ -129,9 +131,10 @@ pub enum ImageBakeOutcome {
 
 pub fn bake_policy() -> BakePolicy {
     BakePolicy {
-        algorithm: Text::new("native-sparse-terrain-v1").expect("static policy text"),
+        algorithm: Text::new("native-sparse-terrain-v2").expect("static policy text"),
         producer_sources: source_digest(&[
             include_bytes!("raster.rs"),
+            include_bytes!("../../build.rs"),
             include_bytes!("client_cache.rs"),
             include_bytes!("records.rs"),
             include_bytes!("spatial.rs"),
@@ -144,27 +147,33 @@ pub fn bake_policy() -> BakePolicy {
                 "../../../../vendor/fr-client-rust/crates/client/src/config/loc_type.rs"
             ),
             include_bytes!("../../../../vendor/fr-client-rust/crates/client/src/graphics/pix8.rs"),
+            include_bytes!("../../../../vendor/fr-client-rust/crates/client/src/graphics/pix3d.rs"),
+            include_bytes!(
+                "../../../../vendor/fr-client-rust/crates/client/src/dash3d/map_flag.rs"
+            ),
         ]),
         encoder: EncoderLibrary {
             name: Text::new("png").expect("static encoder name"),
-            version: Text::new("0.18.1").expect("static encoder version"),
+            version: Text::new(env!("NAV_PNG_VERSION")).expect("locked encoder version"),
         },
         libraries: Rows::new(vec![
             EncoderLibrary {
                 name: Text::new("crc32fast").expect("static library name"),
-                version: Text::new("1.5.0").expect("static library version"),
+                version: Text::new(env!("NAV_CRC32FAST_VERSION"))
+                    .expect("locked crc32fast version"),
             },
             EncoderLibrary {
                 name: Text::new("fdeflate").expect("static library name"),
-                version: Text::new("0.3.7").expect("static library version"),
+                version: Text::new(env!("NAV_FDEFLATE_VERSION")).expect("locked fdeflate version"),
             },
             EncoderLibrary {
                 name: Text::new("flate2").expect("static library name"),
-                version: Text::new("1.1.9").expect("static library version"),
+                version: Text::new(env!("NAV_FLATE2_VERSION")).expect("locked flate2 version"),
             },
             EncoderLibrary {
                 name: Text::new("miniz_oxide").expect("static library name"),
-                version: Text::new("0.8.9").expect("static library version"),
+                version: Text::new(env!("NAV_MINIZ_OXIDE_VERSION"))
+                    .expect("locked miniz_oxide version"),
             },
         ])
         .expect("static libraries are canonical"),
@@ -275,6 +284,13 @@ pub fn bake_images_to_partial(
             total_tiles,
         };
         if !keep_running(progress) {
+            write_checkpoint(
+                partial.directory(),
+                identity,
+                BakeStage::BaseTerrain,
+                total_tiles,
+                &completed,
+            )?;
             return Ok(ImageBakeOutcome::Paused(metrics_from(
                 &completed,
                 plan_stats,
@@ -294,9 +310,12 @@ pub fn bake_images_to_partial(
             if completed_keys.contains(&key) {
                 continue;
             }
-            let rgba = render_base(&context, &neighborhood, key)?;
+            let (rgba, scratch_bytes) = render_base(&context, &neighborhood, key)?;
             tracker.observe(
-                context.tracked_bytes() + neighborhood.tracked_bytes() + rgba.capacity() as u64,
+                context.tracked_bytes()
+                    + neighborhood.tracked_bytes()
+                    + rgba.capacity() as u64
+                    + scratch_bytes as u64,
             );
             let png = encode_png(&rgba)?;
             tracker.observe(
@@ -307,14 +326,18 @@ pub fn bake_images_to_partial(
             );
             complete_tile(
                 partial.directory(),
-                identity,
-                total_tiles,
-                BakeStage::BaseTerrain,
                 key,
                 &png,
                 &mut completed,
                 &mut completed_keys,
                 &mut completed_bytes,
+            )?;
+            write_checkpoint_if_batch(
+                partial.directory(),
+                identity,
+                BakeStage::BaseTerrain,
+                total_tiles,
+                &completed,
             )?;
         }
     }
@@ -341,6 +364,13 @@ pub fn bake_images_to_partial(
                 total_tiles,
             };
             if !keep_running(progress) {
+                write_checkpoint(
+                    partial.directory(),
+                    identity,
+                    BakeStage::Downsample,
+                    total_tiles,
+                    &completed,
+                )?;
                 return Ok(ImageBakeOutcome::Paused(metrics_from(
                     &completed,
                     plan_stats,
@@ -360,14 +390,18 @@ pub fn bake_images_to_partial(
             );
             complete_tile(
                 partial.directory(),
-                identity,
-                total_tiles,
-                BakeStage::Downsample,
                 key,
                 &png,
                 &mut completed,
                 &mut completed_keys,
                 &mut completed_bytes,
+            )?;
+            write_checkpoint_if_batch(
+                partial.directory(),
+                identity,
+                BakeStage::Downsample,
+                total_tiles,
+                &completed,
             )?;
         }
     }
@@ -418,6 +452,32 @@ pub fn bake_images_to_partial(
     }))
 }
 
+fn effective_plane(raw_plane: u8, link_below: bool) -> Option<u8> {
+    u8::try_from(crate::collision::game_plane(
+        i32::from(raw_plane),
+        link_below,
+    )?)
+    .ok()
+}
+
+fn minimap_plane(effective_plane: u8, flags: u8) -> Option<u8> {
+    if i32::from(flags) & MapFlag::VIS_BELOW != 0 {
+        effective_plane.checked_sub(1)
+    } else if i32::from(flags) & MapFlag::FORCE_HIGH_DETAIL != 0 {
+        None
+    } else {
+        Some(effective_plane)
+    }
+}
+
+fn validate_image_tile_count(count: usize) -> Result<(), MapError> {
+    if count > MAX_IMAGE_TILES {
+        Err(MapError::Limit("image tile count"))
+    } else {
+        Ok(())
+    }
+}
+
 struct RasterContext {
     definitions: Definitions,
     assets: RasterAssets,
@@ -452,10 +512,12 @@ impl RasterContext {
                         if cell.underlay == 0 && cell.overlay == 0 {
                             continue;
                         }
-                        if let Some(plane) =
-                            crate::collision::game_plane(i32::from(raw_plane), link_below)
-                        {
-                            present[plane as usize] = true;
+                        let Some(effective_plane) = effective_plane(raw_plane, link_below) else {
+                            continue;
+                        };
+                        let flags = land.cell(effective_plane, x, z).flags;
+                        if let Some(plane) = minimap_plane(effective_plane, flags) {
+                            present[usize::from(plane)] = true;
                         }
                     }
                 }
@@ -470,10 +532,12 @@ impl RasterContext {
                     placement_error = Some(MapError::Invalid("location definition id"));
                     return;
                 };
-                let Some(plane) = crate::collision::game_plane(
-                    i32::from(placement.plane),
-                    land.link_below(placement.x, placement.z),
-                ) else {
+                let link_below = land.link_below(placement.x, placement.z);
+                let Some(effective_plane) = effective_plane(placement.plane, link_below) else {
+                    return;
+                };
+                let flags = land.cell(effective_plane, placement.x, placement.z).flags;
+                let Some(plane) = minimap_plane(effective_plane, flags) else {
                     return;
                 };
                 if (definition.mapscene.is_some() && !matches!(placement.shape, 4..=8))
@@ -488,7 +552,7 @@ impl RasterContext {
                     placement,
                     definition,
                     &self.assets,
-                    plane as u8,
+                    plane,
                 ) {
                     placement_error = Some(error);
                 }
@@ -510,6 +574,7 @@ impl RasterContext {
         if base_tiles.is_empty() {
             return Err(MapError::Invalid("empty client imagery"));
         }
+        validate_image_tile_count(base_tiles.len())?;
         let mut tiles = base_tiles.clone();
         let mut level = base_tiles.clone();
         let mut max_lod = 0u8;
@@ -537,9 +602,7 @@ impl RasterContext {
                 })
                 .collect();
             tiles.extend(level.iter().copied());
-            if tiles.len() > MAX_IMAGE_TILES {
-                return Err(MapError::Limit("image tile count"));
-            }
+            validate_image_tile_count(tiles.len())?;
         }
         let mut planes = Vec::new();
         for plane in 0..4u8 {
@@ -632,6 +695,13 @@ struct Neighborhood {
     squares: BTreeMap<(i32, i32), SquareData>,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct MinimapCell {
+    effective_plane: u8,
+    visibility_flags: u8,
+    cell: GroundCell,
+}
+
 impl Neighborhood {
     fn square(&self, world_x: i32, world_z: i32) -> Option<(&SquareData, u8, u8)> {
         let square_x = world_x.div_euclid(64);
@@ -644,13 +714,28 @@ impl Neighborhood {
         ))
     }
 
-    fn normalized_cell(&self, plane: u8, world_x: i32, world_z: i32) -> Option<GroundCell> {
+    fn minimap_cell(
+        &self,
+        plane: u8,
+        world_x: i32,
+        world_z: i32,
+        above: bool,
+    ) -> Option<MinimapCell> {
         let (square, x, z) = self.square(world_x, world_z)?;
-        let raw_plane = plane.checked_add(u8::from(square.land.link_below(x, z)))?;
+        let link_below = square.land.link_below(x, z);
+        let effective_plane = plane.checked_add(u8::from(above))?;
+        if effective_plane >= 4 {
+            return None;
+        }
+        let raw_plane = effective_plane.checked_add(u8::from(link_below))?;
         if raw_plane >= 4 {
             return None;
         }
-        Some(square.land.cell(raw_plane, x, z))
+        Some(MinimapCell {
+            effective_plane,
+            visibility_flags: square.land.cell(effective_plane, x, z).flags,
+            cell: square.land.cell(raw_plane, x, z),
+        })
     }
 
     fn tracked_bytes(&self) -> u64 {
@@ -668,7 +753,7 @@ fn render_base(
     context: &RasterContext,
     neighborhood: &Neighborhood,
     key: TileKey,
-) -> Result<Vec<u8>, MapError> {
+) -> Result<(Vec<u8>, usize), MapError> {
     let mut rgba = vec![0; TILE_RGBA_BYTES];
     let west = key.x * 64;
     let north = (key.z + 1) * 64;
@@ -676,71 +761,100 @@ fn render_base(
     let grid_south = key.z * 64 - 1 - GRID_MARGIN;
     let grid_size = 66 + GRID_MARGIN * 2;
     let mut grid = Vec::with_capacity((grid_size * grid_size) as usize);
-    for x in 0..grid_size {
-        for z in 0..grid_size {
-            grid.push(neighborhood.normalized_cell(key.plane, grid_west + x, grid_south + z));
-        }
-    }
-    let grid_cell = |world_x: i32, world_z: i32| -> Option<GroundCell> {
-        let x = world_x - grid_west;
-        let z = world_z - grid_south;
-        if x < 0 || z < 0 || x >= grid_size || z >= grid_size {
-            return None;
-        }
-        grid[(x * grid_size + z) as usize]
-    };
 
-    for world_x in west - 1..=west + 64 {
-        for world_z in key.z * 64 - 1..=key.z * 64 + 64 {
-            let Some(cell) = grid_cell(world_x, world_z) else {
-                continue;
-            };
-            if cell.underlay == 0 && cell.overlay == 0 {
-                continue;
+    // The native minimap paints the normalized plane first, then paints the
+    // next raw plane over it only where VIS_BELOW requests that composition.
+    for above in [false, true] {
+        grid.clear();
+        for x in 0..grid_size {
+            for z in 0..grid_size {
+                grid.push(neighborhood.minimap_cell(
+                    key.plane,
+                    grid_west + x,
+                    grid_south + z,
+                    above,
+                ));
             }
-            let underlay =
-                blended_underlay(&context.definitions, &grid_cell, world_x, world_z, cell);
-            let overlay = overlay_colour(&context.definitions, &context.assets, cell.overlay);
-            let pixel_x = 1 + (world_x - west) * 4;
-            let pixel_y = 1 + (north - world_z - 1) * 4;
-            draw_floor_cell(
-                &mut rgba,
-                pixel_x,
-                pixel_y,
-                underlay,
-                overlay,
-                cell.overlay_shape,
-                cell.overlay_rotation,
-            );
         }
-    }
+        let grid_cell = |world_x: i32, world_z: i32| -> Option<MinimapCell> {
+            let x = world_x - grid_west;
+            let z = world_z - grid_south;
+            if x < 0 || z < 0 || x >= grid_size || z >= grid_size {
+                return None;
+            }
+            grid[(x * grid_size + z) as usize]
+        };
+        let cell_at = |world_x: i32, world_z: i32| -> Option<GroundCell> {
+            grid_cell(world_x, world_z).map(|layer| layer.cell)
+        };
 
-    for square in neighborhood.squares.values() {
-        for placement in &square.locs {
-            let Some(definition) = context.definitions.locs.get(placement.id as usize) else {
-                return Err(MapError::Invalid("location definition id"));
-            };
-            let link_below = square.land.link_below(placement.x, placement.z);
-            if crate::collision::game_plane(i32::from(placement.plane), link_below)
-                != Some(i32::from(key.plane))
-            {
-                continue;
+        for world_x in west - 1..=west + 64 {
+            for world_z in key.z * 64 - 1..=key.z * 64 + 64 {
+                let Some(layer) = grid_cell(world_x, world_z) else {
+                    continue;
+                };
+                if minimap_plane(layer.effective_plane, layer.visibility_flags) != Some(key.plane)
+                    || (layer.cell.underlay == 0 && layer.cell.overlay == 0)
+                {
+                    continue;
+                }
+                let underlay =
+                    blended_underlay(&context.definitions, &cell_at, world_x, world_z, layer.cell);
+                let overlay =
+                    overlay_colour(&context.definitions, &context.assets, layer.cell.overlay);
+                let pixel_x = 1 + (world_x - west) * 4;
+                let pixel_y = 1 + (north - world_z - 1) * 4;
+                draw_floor_cell(
+                    &mut rgba,
+                    pixel_x,
+                    pixel_y,
+                    underlay,
+                    overlay,
+                    layer.cell.overlay_shape,
+                    layer.cell.overlay_rotation,
+                );
             }
-            let world_x = square.land.square_x * 64 + i32::from(placement.x);
-            let world_z = square.land.square_z * 64 + i32::from(placement.z);
-            draw_location(
-                &mut rgba,
-                west,
-                north,
-                world_x,
-                world_z,
-                *placement,
-                definition,
-                &context.assets,
-            )?;
         }
     }
-    Ok(rgba)
+    let scratch_bytes = grid.capacity() * std::mem::size_of::<Option<MinimapCell>>();
+
+    // Detail uses the same two native passes so walls and mapscenes on hidden
+    // tiles neither leak onto their raw plane nor overpaint VIS_BELOW detail.
+    for draw_vis_below in [false, true] {
+        for square in neighborhood.squares.values() {
+            for placement in &square.locs {
+                let link_below = square.land.link_below(placement.x, placement.z);
+                let Some(effective_plane) = effective_plane(placement.plane, link_below) else {
+                    continue;
+                };
+                let flags = square
+                    .land
+                    .cell(effective_plane, placement.x, placement.z)
+                    .flags;
+                if (i32::from(flags) & MapFlag::VIS_BELOW != 0) != draw_vis_below
+                    || minimap_plane(effective_plane, flags) != Some(key.plane)
+                {
+                    continue;
+                }
+                let Some(definition) = context.definitions.locs.get(placement.id as usize) else {
+                    return Err(MapError::Invalid("location definition id"));
+                };
+                let world_x = square.land.square_x * 64 + i32::from(placement.x);
+                let world_z = square.land.square_z * 64 + i32::from(placement.z);
+                draw_location(
+                    &mut rgba,
+                    west,
+                    north,
+                    world_x,
+                    world_z,
+                    *placement,
+                    definition,
+                    &context.assets,
+                )?;
+            }
+        }
+    }
+    Ok((rgba, scratch_bytes))
 }
 
 fn blended_underlay(
@@ -1099,12 +1213,8 @@ fn decode_png(bytes: &[u8]) -> Result<Vec<u8>, MapError> {
     Ok(output)
 }
 
-#[allow(clippy::too_many_arguments)]
 fn complete_tile(
     directory: &Path,
-    identity: ImageIdentity,
-    total_tiles: u32,
-    stage: BakeStage,
     key: TileKey,
     png: &[u8],
     completed: &mut Vec<CompletedUnit>,
@@ -1133,7 +1243,20 @@ fn complete_tile(
         return Err(MapError::Duplicate("completed tile"));
     }
     *completed_bytes = projected_bytes;
-    write_checkpoint(directory, identity, stage, total_tiles, completed)
+    Ok(())
+}
+
+fn write_checkpoint_if_batch(
+    directory: &Path,
+    identity: ImageIdentity,
+    stage: BakeStage,
+    planned_units: u32,
+    completed: &[CompletedUnit],
+) -> Result<(), MapError> {
+    if completed.len().is_multiple_of(CHECKPOINT_BATCH_TILES) {
+        write_checkpoint(directory, identity, stage, planned_units, completed)?;
+    }
+    Ok(())
 }
 
 fn write_checkpoint(

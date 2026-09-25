@@ -164,3 +164,115 @@ fn textured_overlays_follow_native_texture_precedence() {
     assert_eq!(overlay_colour(&definitions, &assets, 3), None);
     assert_eq!(overlay_colour(&definitions, &assets, 4), Some(0x123456));
 }
+
+#[test]
+fn minimap_visibility_moves_vis_below_cells_and_hides_force_high_detail_cells() {
+    let ordinary = GroundCell {
+        flags: 0,
+        ..GroundCell::default()
+    };
+    let vis_below = GroundCell {
+        flags: MapFlag::VIS_BELOW as u8,
+        ..GroundCell::default()
+    };
+    let forced = GroundCell {
+        flags: MapFlag::FORCE_HIGH_DETAIL as u8,
+        ..GroundCell::default()
+    };
+    let both = GroundCell {
+        flags: (MapFlag::VIS_BELOW | MapFlag::FORCE_HIGH_DETAIL) as u8,
+        ..GroundCell::default()
+    };
+
+    assert_eq!(minimap_plane(1, ordinary.flags), Some(1));
+    assert_eq!(minimap_plane(1, vis_below.flags), Some(0));
+    assert_eq!(minimap_plane(0, vis_below.flags), None);
+    assert_eq!(minimap_plane(1, forced.flags), None);
+    assert_eq!(minimap_plane(1, both.flags), Some(0));
+
+    let bridged = effective_plane(1, true).unwrap();
+    assert_eq!(bridged, 0);
+    assert_eq!(minimap_plane(bridged, ordinary.flags), Some(0));
+    assert_eq!(minimap_plane(bridged, vis_below.flags), None);
+}
+
+#[test]
+fn planning_rejects_a_tile_count_above_the_shared_json_limit() {
+    assert!(validate_image_tile_count(MAX_IMAGE_TILES).is_ok());
+    assert!(matches!(
+        validate_image_tile_count(MAX_IMAGE_TILES + 1),
+        Err(MapError::Limit("image tile count"))
+    ));
+}
+
+#[test]
+fn resume_rewrites_uncheckpointed_tiles_byte_identically() {
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "274bot-raster-batch-{}-{nonce}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+    let identity = ImageIdentity {
+        revision: 289,
+        content: Digest([0x11; 32]),
+        policy: Digest([0x22; 32]),
+    };
+    write_checkpoint(&root, identity, BakeStage::BaseTerrain, 1, &[]).unwrap();
+    let initial_checkpoint = std::fs::read(root.join("checkpoint.json")).unwrap();
+    let key = TileKey {
+        plane: 0,
+        lod: 0,
+        x: 1,
+        z: 1,
+    };
+    let png = encode_png(&vec![0; TILE_RGBA_BYTES]).unwrap();
+    let mut completed = Vec::new();
+    let mut completed_keys = std::collections::BTreeSet::new();
+    let mut completed_bytes = 0;
+    complete_tile(
+        &root,
+        key,
+        &png,
+        &mut completed,
+        &mut completed_keys,
+        &mut completed_bytes,
+    )
+    .unwrap();
+    write_checkpoint_if_batch(&root, identity, BakeStage::BaseTerrain, 1, &completed).unwrap();
+    assert_eq!(
+        std::fs::read(root.join("checkpoint.json")).unwrap(),
+        initial_checkpoint
+    );
+
+    let checkpoint =
+        Checkpoint::decode(&initial_checkpoint, ArtifactIdentity::Image(identity)).unwrap();
+    assert!(checkpoint.completed.as_slice().is_empty());
+    let tile_path = root.join(key.relative_path().unwrap());
+    std::fs::write(&tile_path, b"uncheckpointed").unwrap();
+
+    let mut resumed = checkpoint.completed.as_slice().to_vec();
+    let mut resumed_keys = std::collections::BTreeSet::new();
+    let mut resumed_bytes = 0;
+    complete_tile(
+        &root,
+        key,
+        &png,
+        &mut resumed,
+        &mut resumed_keys,
+        &mut resumed_bytes,
+    )
+    .unwrap();
+    assert_eq!(std::fs::read(&tile_path).unwrap(), png);
+    write_checkpoint(&root, identity, BakeStage::BaseTerrain, 1, &resumed).unwrap();
+    let published = Checkpoint::decode(
+        &std::fs::read(root.join("checkpoint.json")).unwrap(),
+        ArtifactIdentity::Image(identity),
+    )
+    .unwrap();
+    assert_eq!(published.completed.as_slice(), resumed.as_slice());
+    std::fs::remove_dir_all(root).unwrap();
+}
