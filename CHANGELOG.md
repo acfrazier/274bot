@@ -13,6 +13,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   bridge-plane conversion now shares collision's implementation; server NPC
   coordinates are not shifted. This does not yet replace either WalkTo UI or
   change frozen catalog-facing bank selection.
+- Nav bake now emits a data-only `274bot.navpois` sidecar (`274P`/1) with
+  revision NPC placements, bounded `@openbank` / `loc_change` bank evidence,
+  and place labels. Missing navpois invalidates a warm stamp once. Frozen
+  `BANK_CATALOG` / named-bank APIs are unchanged; 274V10 routing bytes are
+  unchanged.
 
 ### Rendering and client
 

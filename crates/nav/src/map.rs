@@ -9,6 +9,7 @@ pub mod formats;
 pub mod identity;
 pub mod poi;
 pub mod records;
+pub mod services;
 pub mod spatial;
 
 use std::fmt;

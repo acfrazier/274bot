@@ -95,6 +95,7 @@ struct BakeInputs {
     flags_out: PathBuf,
     reach_out: PathBuf,
     canlight_out: PathBuf,
+    pois_out: PathBuf,
 }
 
 fn parse_args(args: impl IntoIterator<Item = impl AsRef<str>>) -> Result<BakeInputs, String> {
@@ -121,6 +122,7 @@ fn parse_args(args: impl IntoIterator<Item = impl AsRef<str>>) -> Result<BakeInp
         let flags_out = flags_out(&out);
         let reach_out = out.with_extension("navreach");
         let canlight_out = out.with_extension("navcanlight");
+        let pois_out = out.with_extension("navpois");
         let content_dir = maps_dir
             .parent()
             .unwrap_or_else(|| Path::new("."))
@@ -138,6 +140,7 @@ fn parse_args(args: impl IntoIterator<Item = impl AsRef<str>>) -> Result<BakeInp
             flags_out,
             reach_out,
             canlight_out,
+            pois_out,
         });
     }
 
@@ -205,6 +208,7 @@ fn parse_args(args: impl IntoIterator<Item = impl AsRef<str>>) -> Result<BakeInp
     let flags_out = explicit_flags.unwrap_or_else(|| flags_path_for(&out));
     let reach_out = out.with_extension("navreach");
     let canlight_out = out.with_extension("navcanlight");
+    let pois_out = out.with_extension("navpois");
     Ok(BakeInputs {
         revision: Some(revision),
         content_dir: content,
@@ -218,6 +222,7 @@ fn parse_args(args: impl IntoIterator<Item = impl AsRef<str>>) -> Result<BakeInp
         flags_out,
         reach_out,
         canlight_out,
+        pois_out,
     })
 }
 
@@ -285,6 +290,7 @@ fn bake_world(
         config_jag: &inputs.config_jag,
         cache,
         require_all_door_configs: false,
+        content_id: decoded.as_deref(),
     })?;
     if let (Some(revision), Some(cache_dir), Some(root), Some(id)) = (
         inputs.revision,
@@ -317,6 +323,12 @@ fn write_outputs(inputs: &BakeInputs, baked: &BakedNav) -> ExitCode {
         eprintln!("nav-pack: write {}: {e}", inputs.canlight_out.display());
         return ExitCode::FAILURE;
     }
+    if let Some(pois) = &baked.pois {
+        if let Err(e) = std::fs::write(&inputs.pois_out, pois) {
+            eprintln!("nav-pack: write {}: {e}", inputs.pois_out.display());
+            return ExitCode::FAILURE;
+        }
+    }
     if let Some(manifest) = &baked.manifest {
         let manifest_path = nav_manifest_path(&inputs.out);
         let bytes = match serde_json::to_vec_pretty(manifest) {
@@ -331,13 +343,14 @@ fn write_outputs(inputs: &BakeInputs, baked: &BakedNav) -> ExitCode {
             return ExitCode::FAILURE;
         }
         eprintln!(
-            "nav-pack: bound revision {} cache {} nav {} flags {} reach {} canlight {}",
+            "nav-pack: bound revision {} cache {} nav {} flags {} reach {} canlight {} pois {}",
             manifest.revision,
             manifest.cache_id,
             manifest.nav_sha256,
             manifest.flags_sha256.as_deref().unwrap_or("none"),
             manifest.reach_sha256.as_deref().unwrap_or("none"),
-            manifest.canlight_sha256.as_deref().unwrap_or("none")
+            manifest.canlight_sha256.as_deref().unwrap_or("none"),
+            manifest.pois_sha256.as_deref().unwrap_or("none")
         );
     }
     let summary = baked.summary;

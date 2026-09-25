@@ -15,14 +15,15 @@ fn manifest_content_id_mismatch_rejects_the_pack() {
             .into_iter()
             .collect(),
     };
-    let mut manifest = NavManifest::capture(revision, &cache, &bytes, None, None, None).unwrap();
+    let mut manifest =
+        NavManifest::capture(revision, &cache, &bytes, None, None, None, None).unwrap();
     assert!(
         manifest.content_id.is_none(),
         "capture without a decoded identity stays unset"
     );
     let nav_hash = super::hash_bytes(&bytes);
     assert!(manifest
-        .verify(revision, &cache, &bytes, None, None, None)
+        .verify(revision, &cache, &bytes, None, None, None, None)
         .is_ok());
     assert!(manifest
         .verify_pack(revision, &cache, &nav_hash, None)

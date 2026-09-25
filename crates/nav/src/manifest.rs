@@ -93,6 +93,8 @@ pub struct NavManifest {
     pub reach_sha256: Option<String>,
     #[serde(default)]
     pub canlight_sha256: Option<String>,
+    #[serde(default)]
+    pub pois_sha256: Option<String>,
     /// Decoded (`274DCI01`) identity of the cache the pack was baked from.
     /// Legacy sidecars omit it; `verify_pack` refuses it when the caller
     /// asserts a decoded id.
@@ -104,6 +106,7 @@ pub struct NavManifest {
 }
 
 impl NavManifest {
+    #[allow(clippy::too_many_arguments)]
     pub fn capture(
         revision: u16,
         cache: &CacheManifest,
@@ -111,6 +114,7 @@ impl NavManifest {
         flags: Option<&[u8]>,
         reach: Option<&[u8]>,
         canlight: Option<&[u8]>,
+        pois: Option<&[u8]>,
     ) -> Result<Self, String> {
         validate_revision(revision)?;
         if cache.revision != revision {
@@ -126,11 +130,13 @@ impl NavManifest {
             flags_sha256: flags.map(hash_bytes),
             reach_sha256: reach.map(hash_bytes),
             canlight_sha256: canlight.map(hash_bytes),
+            pois_sha256: pois.map(hash_bytes),
             content_id: None,
             source_sha256: None,
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn verify(
         &self,
         revision: u16,
@@ -139,8 +145,9 @@ impl NavManifest {
         flags: Option<&[u8]>,
         reach: Option<&[u8]>,
         canlight: Option<&[u8]>,
+        pois: Option<&[u8]>,
     ) -> Result<(), String> {
-        let actual = Self::capture(revision, cache, nav, flags, reach, canlight)?;
+        let actual = Self::capture(revision, cache, nav, flags, reach, canlight, pois)?;
         if actual != *self {
             return Err(
                 "navigation/profile mismatch: revision, cache identity or pack/flags content differs"

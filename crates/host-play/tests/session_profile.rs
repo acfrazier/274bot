@@ -396,6 +396,7 @@ fn cache_and_nav_mismatch_are_rejected_before_creating_resources() {
         flags_sha256: None,
         reach_sha256: None,
         canlight_sha256: None,
+        pois_sha256: None,
     };
     std::fs::write(
         host_play::profile::nav_manifest_path(&nav),
@@ -787,6 +788,7 @@ fn navigation_and_scatter_use_the_selected_shared_world_and_keep_it_after_disk_e
         flags_sha256: Some(format!("{:x}", Sha256::digest(&flags))),
         reach_sha256: None,
         canlight_sha256: None,
+        pois_sha256: None,
     };
     std::fs::write(
         host_play::profile::nav_manifest_path(&pack),
@@ -962,6 +964,7 @@ fn write_nav_sidecar(pack: &std::path::Path, revision: u16, cache_id: String, by
         flags_sha256: None,
         reach_sha256: None,
         canlight_sha256: None,
+        pois_sha256: None,
     };
     std::fs::write(
         host_play::profile::nav_manifest_path(pack),
@@ -992,6 +995,7 @@ fn bundled_identity_decodes_once_without_hashing_and_shares_the_world() {
         reach_sha256: Some(reach_sha256),
         canlight_sha256: Some(canlight_sha256),
         canlight_identity: Some(canlight_identity),
+        pois_sha256: None,
         relative_path: "274bot.navpack".into(),
     }];
     let mut options = fixture.options(289);
@@ -1065,6 +1069,7 @@ fn nav_pack_override_defeats_bundle_selection_and_hashes_once() {
         reach_sha256: None,
         canlight_sha256: None,
         canlight_identity: None,
+        pois_sha256: None,
         relative_path: "274bot.navpack".into(),
     }];
     let mut options = fixture.options(289);
@@ -1108,6 +1113,7 @@ fn nav_flags_override_keeps_external_provenance_even_on_bundle_sibling_path() {
         reach_sha256: Some(reach_sha256),
         canlight_sha256: Some(canlight_sha256),
         canlight_identity: Some(canlight_identity),
+        pois_sha256: None,
         relative_path: "274bot.navpack".into(),
     }];
 
@@ -1177,6 +1183,7 @@ fn external_wrong_hash_revision_or_corrupt_bytes_are_rejected() {
         flags_sha256: None,
         reach_sha256: None,
         canlight_sha256: None,
+        pois_sha256: None,
     };
     std::fs::write(
         host_play::profile::nav_manifest_path(&pack),
@@ -1287,6 +1294,7 @@ fn bundled_missing_or_unbound_reach_is_a_prepare_error() {
         reach_sha256: None,
         canlight_sha256: None,
         canlight_identity: None,
+        pois_sha256: None,
         relative_path: "274bot.navpack".into(),
     }];
     let error = options
@@ -1365,6 +1373,7 @@ fn bundled_stale_same_sized_canlight_rejects_new_bank_policy() {
         reach_sha256: Some(reach_sha256),
         canlight_sha256: Some(canlight_sha256),
         canlight_identity: Some(new_policy),
+        pois_sha256: None,
         relative_path: "274bot.navpack".into(),
     }];
     let mut options = fixture.options(289);

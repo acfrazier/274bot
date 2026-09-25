@@ -123,12 +123,13 @@ otherwise the captured identity must be one of the checked-in
 `crates/host-play/src/known-cache-identities.json` rows.
 
 Warm builds reuse unchanged artifacts: the staged `nav-build.json` stamp
-records the cache identity, the pack/flags/reach digests, the generator identity
-(the manual id plus the bytes of `bake.rs`/`collision.rs`/`pack.rs`/
-`paint.rs`/`router.rs`/`transport.rs`) and a fingerprint (size + mtime) of every canonical input
+records the cache identity, the pack/flags/reach/canlight/navpois digests, the
+generator identity (the manual id plus the bytes of `bake.rs`/`collision.rs`/
+`pack.rs`/`paint.rs`/`router.rs`/`transport.rs`), the navpois generator
+identity (`map/services.rs`/`map/poi.rs`) and a fingerprint (size + mtime) of every canonical input
 (content tree, config jag, cache archives). Any change to those inputs, to the
 pack format identity (`nav::pack::FORMAT_ID`), to the generator, to the cache
-identity, or a missing/replaced staged artifact (including the reach sidecar) rebakes.
+identity, a missing navpois sidecar, or a missing/replaced staged artifact (including the reach sidecar) rebakes.
 Build preparation additionally computes source and decoded digests to detect
 same-size replacement; runtime computes decoded identity once per prepared
 profile, not per bot. The bundled fast path keeps its cheap

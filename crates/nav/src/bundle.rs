@@ -33,6 +33,8 @@ pub struct NavIdentityRow {
     pub canlight_sha256: Option<String>,
     #[serde(default)]
     pub canlight_identity: Option<String>,
+    #[serde(default)]
+    pub pois_sha256: Option<String>,
     pub relative_path: String,
 }
 
@@ -321,6 +323,7 @@ pub struct ArtifactLayout {
     pub relative_flags: String,
     pub relative_reach: String,
     pub relative_canlight: String,
+    pub relative_pois: String,
     pub relative_manifest: String,
     pub relative_stamp: String,
 }
@@ -336,6 +339,7 @@ pub fn artifact_layout(revision: u16) -> ArtifactLayout {
         relative_flags: rel("274bot.navflags"),
         relative_reach: rel("274bot.navreach"),
         relative_canlight: rel("274bot.navcanlight"),
+        relative_pois: rel("274bot.navpois"),
         relative_manifest: rel("274bot.navpack.json"),
         relative_stamp: rel("nav-build.json"),
         dir: PathBuf::from(format!("nav/{revision}")),
@@ -373,6 +377,14 @@ pub struct BakeStamp {
     pub relative_flags: String,
     pub relative_reach: String,
     pub relative_canlight: String,
+    #[serde(default)]
+    pub pois_sha256: Option<String>,
+    #[serde(default)]
+    pub pois_bytes: Option<u64>,
+    #[serde(default)]
+    pub relative_pois: Option<String>,
+    #[serde(default)]
+    pub pois_generator: Option<String>,
     pub inputs: Vec<InputFingerprint>,
 }
 
@@ -388,6 +400,8 @@ pub struct StampExpectation<'a> {
     pub staged_flags_bytes: Option<u64>,
     pub staged_reach_bytes: Option<u64>,
     pub staged_canlight_bytes: Option<u64>,
+    pub staged_pois_bytes: Option<u64>,
+    pub pois_generator: &'a str,
 }
 
 impl BakeStamp {
@@ -453,6 +467,27 @@ impl BakeStamp {
                 return Err(format!(
                     "staged canlight {} is {bytes} bytes, stamped {}",
                     self.relative_canlight, self.canlight_bytes
+                ))
+            }
+            Some(_) => {}
+        }
+        if self.pois_sha256.is_none() {
+            return Err("staged navpois is missing".into());
+        }
+        if self.pois_generator.as_deref() != Some(expected.pois_generator) {
+            return Err("navpois generator changed".into());
+        }
+        match expected.staged_pois_bytes {
+            None => {
+                return Err(format!(
+                    "staged navpois {} is missing",
+                    self.relative_pois.as_deref().unwrap_or("274bot.navpois")
+                ))
+            }
+            Some(bytes) if self.pois_bytes != Some(bytes) => {
+                return Err(format!(
+                    "staged navpois is {bytes} bytes, stamped {}",
+                    self.pois_bytes.unwrap_or(0)
                 ))
             }
             Some(_) => {}

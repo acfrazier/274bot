@@ -113,6 +113,10 @@ fn router_source_bytes_invalidate_a_warm_reach_stamp() {
         relative_flags: "nav/289/274bot.navflags".into(),
         relative_reach: "nav/289/274bot.navreach".into(),
         relative_canlight: "nav/289/274bot.navcanlight".into(),
+        pois_sha256: Some("56".repeat(32)),
+        pois_bytes: Some(3),
+        relative_pois: Some("nav/289/274bot.navpois".into()),
+        pois_generator: Some("pois-gen".into()),
         inputs: inputs.to_vec(),
     };
     let expected = crate::bundle::StampExpectation {
@@ -125,6 +129,8 @@ fn router_source_bytes_invalidate_a_warm_reach_stamp() {
         staged_flags_bytes: Some(7),
         staged_reach_bytes: Some(9),
         staged_canlight_bytes: Some(5),
+        staged_pois_bytes: Some(3),
+        pois_generator: "pois-gen",
     };
     let error = baked
         .covers(&expected)
@@ -142,6 +148,7 @@ fn a_missing_canonical_input_fails_the_bake() {
         config_jag: Path::new("/nonexistent/engine/data/pack/config"),
         cache: None,
         require_all_door_configs: true,
+        content_id: None,
     };
     let error = bake_world(&request).err().expect("a bake without inputs");
     assert!(error.contains("doors.loc"), "{error}");

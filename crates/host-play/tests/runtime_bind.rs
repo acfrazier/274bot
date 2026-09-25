@@ -341,7 +341,8 @@ fn runtime_external_nav_requires_actual_selected_source_provenance() {
     let pack = root.join("world.navpack");
     std::fs::write(&pack, &bytes).unwrap();
     let mut manifest =
-        host_play::profile::NavManifest::capture(289, &cache, &bytes, None, None, None).unwrap();
+        host_play::profile::NavManifest::capture(289, &cache, &bytes, None, None, None, None)
+            .unwrap();
     manifest.content_id = Some(
         compute_decoded_content_identity(289, &retained, &retained)
             .unwrap()

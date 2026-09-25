@@ -525,6 +525,7 @@ impl ProfileSelection {
                     flags_sha256: identity.flags_sha256.clone(),
                     reach_sha256: identity.reach_sha256.clone(),
                     canlight_sha256: identity.canlight_sha256.clone(),
+                    pois_sha256: identity.pois_sha256.clone(),
                     content_id: identity.content_id.clone(),
                     source_sha256: identity.source_sha256.clone(),
                 }
@@ -549,6 +550,7 @@ impl ProfileSelection {
                             flags_sha256: None,
                             reach_sha256: None,
                             canlight_sha256: None,
+                            pois_sha256: None,
                             content_id: None,
                             source_sha256: None,
                         };

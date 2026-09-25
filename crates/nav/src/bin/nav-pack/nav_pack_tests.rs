@@ -37,6 +37,7 @@ fn explicit_289_inputs_bind_content_cache_config_and_outputs() {
     assert_eq!(inputs.flags_out, PathBuf::from("/tmp/289.navflags"));
     assert_eq!(inputs.reach_out, PathBuf::from("/tmp/289.navreach"));
     assert_eq!(inputs.canlight_out, PathBuf::from("/tmp/289.navcanlight"));
+    assert_eq!(inputs.pois_out, PathBuf::from("/tmp/289.navpois"));
 }
 
 #[test]

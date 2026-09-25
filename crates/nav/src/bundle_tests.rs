@@ -25,6 +25,10 @@ fn stamp(generator: &str, format: &str, cache_id: &str, pack_bytes: u64) -> Bake
         relative_flags: "nav/289/274bot.navflags".into(),
         relative_reach: "nav/289/274bot.navreach".into(),
         relative_canlight: "nav/289/274bot.navcanlight".into(),
+        pois_sha256: Some("56".repeat(32)),
+        pois_bytes: Some(3),
+        relative_pois: Some("nav/289/274bot.navpois".into()),
+        pois_generator: Some("pois-1".into()),
         inputs: vec![InputFingerprint {
             path: "/content/maps/m1.jm2".into(),
             bytes: 10,
@@ -44,6 +48,8 @@ fn expectation<'a>(inputs: &'a [InputFingerprint]) -> StampExpectation<'a> {
         staged_flags_bytes: Some(7),
         staged_reach_bytes: Some(9),
         staged_canlight_bytes: Some(5),
+        staged_pois_bytes: Some(3),
+        pois_generator: "pois-1",
     }
 }
 
@@ -88,6 +94,10 @@ fn a_matching_stamp_covers_and_every_change_is_stale() {
     changed.staged_canlight_bytes = None;
     assert!(baked.covers(&changed).unwrap_err().contains("canlight"));
 
+    let mut changed = expectation(&inputs);
+    changed.staged_pois_bytes = None;
+    assert!(baked.covers(&changed).unwrap_err().contains("navpois"));
+
     let modified = [InputFingerprint {
         path: "/content/maps/m1.jm2".into(),
         bytes: 10,
@@ -110,6 +120,38 @@ fn a_matching_stamp_covers_and_every_change_is_stale() {
         .covers(&expectation(&added))
         .unwrap_err()
         .contains("inputs changed"));
+}
+
+#[test]
+fn old_stamps_without_pois_parse_and_are_stale() {
+    let json = r#"{
+        "generator":"gen-1",
+        "format":"274V8",
+        "revision":289,
+        "cache_id":"cache-1",
+        "cache_manifest":null,
+        "nav_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "flags_sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "reach_sha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "canlight_sha256":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "canlight_identity":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "pack_bytes":11,
+        "flags_bytes":7,
+        "reach_bytes":9,
+        "canlight_bytes":5,
+        "relative_pack":"nav/289/274bot.navpack",
+        "relative_flags":"nav/289/274bot.navflags",
+        "relative_reach":"nav/289/274bot.navreach",
+        "relative_canlight":"nav/289/274bot.navcanlight",
+        "inputs":[{"path":"/content/maps/m1.jm2","bytes":10,"modified_nanos":5}]
+    }"#;
+    let stamp: BakeStamp = serde_json::from_str(json).expect("legacy stamp still parses");
+    assert!(stamp.pois_sha256.is_none());
+    let inputs = stamp.inputs.clone();
+    let err = stamp
+        .covers(&expectation(&inputs))
+        .expect_err("missing navpois is stale");
+    assert!(err.contains("navpois"), "{err}");
 }
 
 #[test]
@@ -179,6 +221,7 @@ fn generated_rows_win_over_superseded_checked_in_rows() {
         reach_sha256: None,
         canlight_sha256: None,
         canlight_identity: None,
+        pois_sha256: None,
         relative_path: "nav/289/274bot.navpack".into(),
     };
     let superseded = NavIdentityRow {
@@ -196,6 +239,7 @@ fn generated_rows_win_over_superseded_checked_in_rows() {
         reach_sha256: None,
         canlight_sha256: None,
         canlight_identity: None,
+        pois_sha256: None,
         relative_path: "prebuilt/274bot.navpack".into(),
     };
     let (rows, notes) =
@@ -219,6 +263,7 @@ fn artifact_layout_is_install_relative_and_revision_scoped() {
     assert_eq!(layout.relative_flags, "nav/289/274bot.navflags");
     assert_eq!(layout.relative_reach, "nav/289/274bot.navreach");
     assert_eq!(layout.relative_canlight, "nav/289/274bot.navcanlight");
+    assert_eq!(layout.relative_pois, "nav/289/274bot.navpois");
     assert_eq!(layout.relative_stamp, "nav/289/nav-build.json");
     assert!(!Path::new(&layout.relative_pack).is_absolute());
     assert_eq!(artifact_layout(274).relative_pack, "nav/274/274bot.navpack");

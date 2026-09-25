@@ -242,9 +242,10 @@ Image/catalogue schema 1 identities use domain-separated SHA-256 binary preimage
 transfer CRCs. Image policy includes exact encoder/compression-library versions.
 Nav/service changes affect the merged catalogue key, not terrain identity.
 `274bot.navpois` uses a 77-byte `274P`/1 header (length, record count, identity
-binding, payload hash) followed by bounded typed JSON. Its whole-file digest is
-supplied by the nav resource owner. This codec does not itself add supplement
-generation, packaging or bank-service static analysis.
+binding, payload hash) followed by bounded typed JSON. Nav bake generates the
+sidecar from jm2 NPC rows, rs2 bank-service handlers and `maps/labels.txt`;
+its whole-file digest is stamped on `NavManifest` / `BakeStamp` / identity rows.
+Packaging copies the data-only file with nav resources. Frozen bank APIs stay.
 
 Disk consumers use `ClientPois::decode`, `ImageManifest::decode`,
 `ServicePois::decode_navpois`, `ReadyCatalogue::open` and `ReadyImages::open`,

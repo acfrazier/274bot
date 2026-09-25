@@ -37,6 +37,7 @@ pub const DOOR_CONFIGS: [&str; 3] = ["doors.loc", "doubledoors.loc", "opened_doo
 /// [`FORMAT_ID`] does not already capture (a pack format bump changes the
 /// format identity instead).
 pub const GENERATOR_ID: &str = "nav-bake-1";
+pub use crate::map::services::{pois_generator_identity, POIS_GENERATOR_SOURCES};
 
 /// Baker sources whose bytes join the generator identity: a generated
 /// artifact is stale after any change to one of them. Paths are relative to
@@ -196,6 +197,8 @@ pub struct BakeRequest<'a> {
     /// missing one would bake a world that silently disagrees with the
     /// server. The developer CLI keeps skipping unavailable configs.
     pub require_all_door_configs: bool,
+    /// Decoded cache identity bound into navpois; required for a sidecar.
+    pub content_id: Option<&'a str>,
 }
 
 /// What one bake produced, in the order the CLI summarises it.
@@ -215,6 +218,7 @@ pub struct BakedNav {
     pub flags: Vec<u8>,
     pub reach: Vec<u8>,
     pub canlight: Vec<u8>,
+    pub pois: Option<Vec<u8>>,
     /// Hex of the canlight policy digest (algorithm + revision + bank_zones).
     pub canlight_identity: String,
     pub manifest: Option<NavManifest>,
@@ -268,12 +272,13 @@ pub fn bake_world(request: &BakeRequest<'_>) -> Result<BakedNav, String> {
         ));
     }
 
-    // Loc definitions (blockwalk, width/length, active) from the client
-    // cache: the same table the game client builds its collision from.
-    let loc_defs = match std::fs::read(request.config_jag) {
+    // Loc/NPC definitions from the client cache: collision uses loc defs;
+    // navpois validates NPC/loc ids and operations against the same tables.
+    let (loc_defs, npc_types, loc_types) = match std::fs::read(request.config_jag) {
         Ok(bytes) => {
             let cache = Cache::unpack(&JagFile::new(bytes));
-            LocDefs::from_locs(&cache.locs)
+            let loc_defs = LocDefs::from_locs(&cache.locs);
+            (loc_defs, cache.npcs, cache.locs)
         }
         Err(e) => {
             return Err(format!(
@@ -354,6 +359,36 @@ pub fn bake_world(request: &BakeRequest<'_>) -> Result<BakedNav, String> {
         &canlight_bits,
         &canlight_binding,
     );
+    let source_before = source_before?;
+    if source_before != crate::bundle::source_digest(content_root, &[request.config_jag])? {
+        return Err("baker inputs changed during preparation".into());
+    }
+    let pois = match (request.revision, request.cache, request.content_id) {
+        (Some(revision), Some(_), Some(content_id)) => {
+            let content = crate::map::identity::Digest::from_hex(content_id)
+                .map_err(|_| "decoded content identity is not SHA-256 hex".to_string())?;
+            let source = crate::map::identity::Digest::from_hex(&source_before)
+                .map_err(|_| "source digest is not SHA-256 hex".to_string())?;
+            let generator = crate::map::identity::Digest::from_hex(
+                &crate::map::services::pois_generator_identity_from_crate()?,
+            )
+            .map_err(|_| "navpois generator identity is not SHA-256 hex".to_string())?;
+            Some(
+                crate::map::services::produce_navpois(&crate::map::services::ProduceRequest {
+                    revision,
+                    content_root,
+                    npcs: &npc_types,
+                    locs: &loc_types,
+                    content_id: content,
+                    nav_sha256: crate::map::identity::Digest(pack_digest),
+                    source_sha256: source,
+                    generator_sha256: generator,
+                })?
+                .bytes,
+            )
+        }
+        _ => None,
+    };
     let mut manifest = match (request.revision, request.cache) {
         (Some(revision), Some(cache)) => Some(NavManifest::capture(
             revision,
@@ -362,14 +397,11 @@ pub fn bake_world(request: &BakeRequest<'_>) -> Result<BakedNav, String> {
             Some(&flags_bytes),
             Some(&reach_bytes),
             Some(&canlight_bytes),
+            pois.as_deref(),
         )?),
         (None, None) => None,
         _ => return Err("a bound bake needs both a revision and its cache manifest".into()),
     };
-    let source_before = source_before?;
-    if source_before != crate::bundle::source_digest(content_root, &[request.config_jag])? {
-        return Err("baker inputs changed during preparation".into());
-    }
     if let Some(manifest) = &mut manifest {
         manifest.source_sha256 = Some(source_before);
     };
@@ -378,6 +410,7 @@ pub fn bake_world(request: &BakeRequest<'_>) -> Result<BakedNav, String> {
         flags: flags_bytes,
         reach: reach_bytes,
         canlight: canlight_bytes,
+        pois,
         canlight_identity,
         manifest,
         summary: BakeSummary {
