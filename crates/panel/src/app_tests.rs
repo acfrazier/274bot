@@ -3019,7 +3019,10 @@ fn transfer_cooldown_is_a_connecting_banner_not_an_error() {
     };
     let (message, show_elapsed) = slot_startup_banner_line(&status).expect("transfer banner");
     assert_eq!(message, "Your profile will be transferred in: 3 seconds");
-    assert!(show_elapsed);
+    assert!(
+        !show_elapsed,
+        "the server countdown must not sit beside a rising elapsed timer"
+    );
 }
 
 #[test]

@@ -1525,19 +1525,22 @@ pub(crate) fn slot_startup_banner_line(status: &host_play::SlotStatus) -> Option
                 status.startup_progress_message.clone()
             }
         }
-        host_play::StartupPhase::LoadingScene => "Loading first scene".to_string(),
+        host_play::StartupPhase::LoadingScene => "Loading scene".to_string(),
         host_play::StartupPhase::Ready | host_play::StartupPhase::Error => String::new(),
     };
     if message.is_empty() {
         None
     } else {
-        let show_elapsed = matches!(
-            status.startup_phase,
+        // A host-published Connecting message is the server's own countdown
+        // (response 21 transfer), so a rising elapsed timer beside it would
+        // contradict it.
+        let show_elapsed = match status.startup_phase {
+            host_play::StartupPhase::Connecting => status.startup_progress_message.is_empty(),
             host_play::StartupPhase::Preparing
-                | host_play::StartupPhase::Queueing
-                | host_play::StartupPhase::Connecting
-                | host_play::StartupPhase::LoadingScene
-        );
+            | host_play::StartupPhase::Queueing
+            | host_play::StartupPhase::LoadingScene => true,
+            host_play::StartupPhase::Ready | host_play::StartupPhase::Error => false,
+        };
         Some((message, show_elapsed))
     }
 }
