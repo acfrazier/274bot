@@ -3205,7 +3205,10 @@ fn real_bone_burier_without_bones_queues_host_bank_route() {
     let source = std::fs::read_to_string(&path).expect("read captured BoneBurier.ts");
     let shape = script::detect_shape(&source);
     let js = script::transpile_ts(&source).expect("transpile captured BoneBurier.ts");
-    let iso = LoadIsolate::spawn(js, shape, vec![]).unwrap();
+    let iso = LoadIsolate::spawn_with_content(js, shape, vec![], None,
+        std::sync::Arc::new(api::named_banks::NamedBankFacts::from_banks(vec![
+            api::named_banks::NamedBank::new("Chosen bank", api::snapshot::WorldTile { x: 3300, z: 3300, level: 0 }),
+        ])), std::sync::Arc::new(api::run_policy::RunPolicyOverrideCell::new())).unwrap();
     let mut snap = base_snapshot();
     snap.ingame = true;
     snap.here = Some(script::isolate_fb::TileInput {
@@ -3244,11 +3247,23 @@ fn real_bone_burier_without_bones_queues_host_bank_route() {
         logs.iter().all(|line| !is_throw_shaped_log(line)),
         "captured BoneBurier bank trip must not throw: {logs:?}"
     );
-    assert_eq!(
-        iso.drain_interacts(),
-        vec![script::shim::InteractReq::WalkNearestBank],
-        "captured BoneBurier must request host-owned nearest-bank routing; logs: {logs:?}"
-    );
+    let requests = iso.drain_interacts();
+    let [script::shim::InteractReq::SelectBank { request_id, .. }] = requests.as_slice() else {
+        panic!("off-scene BoneBurier must await bank selection, got {requests:?}");
+    };
+    // The selected bank, not the unrelated packed booth at 3210,3210, owns
+    // this trip. No walk or withdrawal was admitted while selection waited.
+    iso.post_snapshot(script::isolate_fb::encode_snapshot_with_native(&snap,
+        script::isolate_fb::NativeFactsInput {
+            bank_selection: script::isolate_fb::BankSelectionInput {
+                request_id: *request_id, generation: 1, bank_index: 0, kind: 2,
+            },
+            ..Default::default()
+        }));
+    iso.on_game_tick(9);
+    iso.probe("true").unwrap();
+    assert!(matches!(iso.drain_interacts().as_slice(),
+        [script::shim::InteractReq::WalkNear { x: 3300, z: 3300, radius: 4, .. }]));
     iso.join();
 }
 
@@ -3434,7 +3449,7 @@ export default class T extends LoopingBot {
 }
 
 #[test]
-fn isolate_banking_open_forwards_stand_and_exact_named_access() {
+fn isolate_banking_open_reaches_the_preset_access_and_waits_for_loaded_stock() {
     let src = r#"
 import { Banking } from '../../api/bank/Banking.js';
 export default class T extends LoopingBot {
@@ -3483,20 +3498,9 @@ export default class T extends LoopingBot {
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(1);
     let _ = iso.probe("1 + 1");
-    assert_eq!(
-        iso.drain_interacts(),
-        vec![script::shim::InteractReq::WalkNear {
-            x: 150,
-            z: 150,
-            level: 0,
-            radius: 1,
-            allow_teleports: false,
-            allow_wilderness: true,
-            allow_bank_fetch: true,
-            request_id: 0,
-        }],
-        "the supplied stand is walked near instead of being dropped"
-    );
+    assert!(matches!(iso.drain_interacts().as_slice(),
+        [script::shim::InteractReq::WalkNear { x: 150, z: 150, radius: 2, .. }]),
+        "the preset uses the frozen radius-two approach");
 
     snap.tick = 2;
     snap.here = Some(script::isolate_fb::TileInput {
@@ -3519,11 +3523,21 @@ export default class T extends LoopingBot {
         }],
         "the exact requested name and op survive isolate IPC"
     );
+    assert!(iso.probe("globalThis.__ok").unwrap().is_null());
+    snap.bank_open = true;
+    snap.bank_generation = 1;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(3);
+    assert!(iso.probe("globalThis.__ok").unwrap().is_null(), "open without stock is not ready");
+    snap.bank_loaded = true;
+    post_snapshot_input(&iso, &snap);
+    iso.on_game_tick(4);
+    assert_eq!(iso.probe("globalThis.__ok").unwrap(), true);
     iso.join();
 }
 
 #[test]
-fn isolate_banking_bank_nearest_routes_to_an_off_scene_packed_booth() {
+fn isolate_banking_bank_nearest_selects_an_off_scene_bank_before_opening_its_booth() {
     let src = r#"
 import { Banking } from '../../api/bank/Banking.js';
 export default class T extends LoopingBot {
@@ -3534,7 +3548,10 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+    let iso = LoadIsolate::spawn_with_content(src.to_string(), LoadShape::CompatClass, vec![], None,
+        std::sync::Arc::new(api::named_banks::NamedBankFacts::from_banks(vec![
+            api::named_banks::NamedBank::new("Selected bank", api::snapshot::WorldTile { x: 299, z: 400, level: 0 }),
+        ])), std::sync::Arc::new(api::run_policy::RunPolicyOverrideCell::new())).unwrap();
     let stands = [script::isolate_fb::BankStandInput {
         name: "Falador east bank",
         x: 300,
@@ -3554,10 +3571,21 @@ export default class T extends LoopingBot {
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(1);
     let _ = iso.probe("true");
-    assert_eq!(
-        iso.drain_interacts(),
-        vec![script::shim::InteractReq::WalkNearestBank]
-    );
+    let requests = iso.drain_interacts();
+    let [script::shim::InteractReq::SelectBank { request_id, .. }] = requests.as_slice() else {
+        panic!("bankNearest must await selection, got {requests:?}");
+    };
+    iso.post_snapshot(script::isolate_fb::encode_snapshot_with_native(&snap,
+        script::isolate_fb::NativeFactsInput {
+            bank_selection: script::isolate_fb::BankSelectionInput {
+                request_id: *request_id, generation: 1, bank_index: 0, kind: 2,
+            },
+            ..Default::default()
+        }));
+    iso.on_game_tick(2);
+    iso.probe("true").unwrap();
+    assert!(matches!(iso.drain_interacts().as_slice(),
+        [script::shim::InteractReq::WalkNear { x: 299, z: 400, radius: 4, .. }]));
 
     snap.tick = 2;
     snap.here = Some(script::isolate_fb::TileInput {
@@ -3573,38 +3601,37 @@ export default class T extends LoopingBot {
         name: "Bank booth",
         op: "Use-quickly",
     });
+    let actions = ["Use-quickly".to_string()];
+    let locs = [script::isolate_fb::SceneEntityInput {
+        index: 0, id: 2213, name: Some("Bank booth"), x: 300, z: 400, level: 0,
+        distance: 1, health: -1, max_health: -1, in_combat: false, animating: false,
+        actions: &actions, reachable: true, reachable_adj: true, combat_level: 0,
+        target_kind: 0, target_index: -1, size: 1, nx: 300, nz: 400,
+    }];
+    snap.locs = &locs;
     post_operable_bank_snapshot(&iso, &snap, 2213, 300, 400);
-    iso.on_game_tick(2);
+    iso.on_game_tick(3);
     let _ = iso.probe("true");
-    // The run opens the booth the host picked, by its posted name and op.
-    assert_eq!(
-        iso.drain_interacts(),
-        vec![script::shim::InteractReq::OpenBooth {
-            x: 300,
-            z: 400,
-            level: 0,
-            id: 2213,
-            name: Some("Bank booth".into()),
-            action: Some("Use-quickly".into()),
-        }]
-    );
+    assert!(matches!(iso.drain_interacts().as_slice(),
+        [script::shim::InteractReq::OpenBooth { x: 300, z: 400, level: 0, id: 2213, .. }]),
+        "the run must open the live selected booth identity");
 
     snap.tick = 3;
     snap.bank_open = true;
     snap.bank_loaded = true;
     snap.bank_generation = 1;
     post_snapshot_input(&iso, &snap);
-    iso.on_game_tick(3);
+    iso.on_game_tick(4);
     let _ = iso.probe("true");
     snap.tick = 4;
     post_snapshot_input(&iso, &snap);
-    iso.on_game_tick(4);
+    iso.on_game_tick(5);
     assert_eq!(iso.probe("__banked").unwrap(), true);
     iso.join();
 }
 
 #[test]
-fn isolate_banking_bank_nearest_fails_closed_without_a_packed_booth() {
+fn isolate_banking_bank_nearest_fails_closed_when_selection_has_no_candidate() {
     let src = r#"
 import { Banking } from '../../api/bank/Banking.js';
 export default class T extends LoopingBot {
@@ -3625,50 +3652,46 @@ export default class T extends LoopingBot {
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(1);
     let _ = iso.probe("true");
+    let requests = iso.drain_interacts();
+    let [script::shim::InteractReq::SelectBank { request_id, .. }] = requests.as_slice() else {
+        panic!("bankNearest must await selection, got {requests:?}");
+    };
+    assert!(iso.probe("globalThis.__bank_result").unwrap().is_null());
+    iso.post_snapshot(script::isolate_fb::encode_snapshot_with_native(&snap,
+        script::isolate_fb::NativeFactsInput {
+            bank_selection: script::isolate_fb::BankSelectionInput {
+                request_id: *request_id, generation: 1, bank_index: -1, kind: 4,
+            },
+            ..Default::default()
+        }));
+    iso.on_game_tick(2);
+    iso.probe("true").unwrap();
     assert!(iso.drain_interacts().is_empty());
     assert_eq!(iso.probe("globalThis.__bank_result").unwrap(), false);
     iso.join();
 }
 
 #[test]
-fn isolate_banking_open_rejects_each_unsupported_option_by_name() {
+fn isolate_banking_open_refuses_unsupported_obstacle_work_without_acting() {
     let src = r#"
 import { Banking } from '../../api/bank/Banking.js';
 export default class T extends LoopingBot {
-    loop() {
+    async loop() {
         if (globalThis.__did) return;
         globalThis.__did = true;
-        globalThis.__errors = [];
-        const values = {
-            obstacles: [],
-            destination: { name: 'Elsewhere' },
-            preferNearby: false,
-            nearbyRadius: 14,
-        };
-        Promise.all(Object.entries(values).map(async ([name, value]) => {
-            try {
-                await Banking.open({ [name]: value });
-            } catch (error) {
-                globalThis.__errors.push(String(error && error.message));
-            }
-        })).then(() => { globalThis.__done = true; });
+        try {
+            await Banking.open({ stand: {x:150,z:150,level:0}, obstacles: ['Door'] });
+            globalThis.__refused = false;
+        } catch (_) {
+            globalThis.__refused = true;
+        }
     }
 }
 "#;
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     post_snapshot_input(&iso, &base_snapshot());
     iso.on_game_tick(1);
-    let _ = iso.probe("1 + 1");
-    assert_eq!(iso.probe("__done").unwrap(), true);
-    let errors = iso.probe("__errors").unwrap();
-    for name in ["obstacles", "destination", "preferNearby", "nearbyRadius"] {
-        assert!(
-            errors.as_array().unwrap().iter().any(|error| error
-                .as_str()
-                .is_some_and(|error| { error.contains("not impl") && error.contains(name) })),
-            "unsupported {name} must be named in its refusal: {errors}"
-        );
-    }
+    assert_eq!(iso.probe("globalThis.__refused").unwrap(), true);
     assert!(iso.drain_interacts().is_empty());
     iso.join();
 }
@@ -4861,185 +4884,54 @@ export default class T extends LoopingBot {
     iso.join();
 }
 
-// Hop 3 — nearestBank reads the host-posted nearest_booth row, never scans locs.
-#[test]
-fn isolate_nearest_bank_is_posted_booth_not_player_tile() {
-    let src = r#"
+fn nearest_bank_isolate() -> LoadIsolate {
+    use api::named_banks::{NamedBank, NamedBankFacts};
+    use api::snapshot::WorldTile;
+    LoadIsolate::spawn_with_content(
+        r#"
 import { nearestBank } from '../../api/bank/BankLocations.js';
-export default class T extends LoopingBot {
-    loop() {
-        const b = nearestBank();
-        globalThis.__probe = b ? { x: b.tile.x, z: b.tile.z, level: b.tile.level, name: b.name, op: b.op } : null;
-    }
+globalThis.pick = origin => nearestBank(origin)?.name ?? null;
+export default class T extends LoopingBot { loop() {} }
+"#.to_string(),
+        LoadShape::CompatClass,
+        vec![],
+        None,
+        std::sync::Arc::new(NamedBankFacts::from_banks(vec![
+            NamedBank::new("West", WorldTile { x: 100, z: 100, level: 0 }),
+            NamedBank::new("East", WorldTile { x: 120, z: 100, level: 0 }),
+        ])),
+        std::sync::Arc::new(api::run_policy::RunPolicyOverrideCell::new()),
+    ).unwrap()
 }
-"#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
-    let use_quickly = ["Use-quickly".to_string()];
-    let locs = [script::isolate_fb::SceneEntityInput {
-        index: 0,
-        id: 2213,
-        name: Some("Bank booth"),
-        x: 3180,
-        z: 3436,
-        level: 0,
-        distance: 20,
-        health: -1,
-        max_health: -1,
-        in_combat: false,
-        animating: false,
-        actions: &use_quickly,
-        reachable: false,
-        reachable_adj: false,
-        combat_level: 0,
-        target_kind: 0,
-        target_index: -1,
-        size: 0,
-        nx: 0,
-        nz: 0,
-    }];
+
+#[test]
+fn isolate_nearest_bank_uses_the_supplied_origin_not_the_player_or_scene_booth() {
+    let iso = nearest_bank_isolate();
     let mut snap = base_snapshot();
-    snap.here = Some(script::isolate_fb::TileInput {
-        x: 3185,
-        z: 3440,
-        level: 0,
-    });
-    snap.locs = &locs;
-    snap.nearest_booth = Some(nearest_booth_input(3180, 3436, 0, "Bank booth"));
+    snap.here = Some(script::isolate_fb::TileInput { x: 100, z: 100, level: 0 });
+    snap.nearest_booth = Some(nearest_booth_input(101, 100, 0, "Bank booth"));
     post_snapshot_input(&iso, &snap);
-    iso.on_game_tick(1);
-    let value = iso.probe("__probe").unwrap();
-    assert_eq!(
-        value["x"], 3180,
-        "nearestBank tile is the posted booth, not here"
-    );
-    assert_eq!(value["z"], 3436);
-    assert_eq!(value["level"], 0);
-    assert_ne!(
-        (value["x"].as_i64(), value["z"].as_i64()),
-        (Some(3185), Some(3440)),
-        "nearestBank must not fake a booth at the player tile"
-    );
+    assert_eq!(iso.probe("pick({x:119,z:100,level:0})").unwrap(), "East");
+    assert_eq!(iso.probe("pick({x:101,z:100,level:0})").unwrap(), "West");
     iso.join();
 }
 
 #[test]
-fn isolate_nearest_bank_picks_rust_nearest_of_two_booths() {
-    let src = r#"
-import { nearestBank } from '../../api/bank/BankLocations.js';
-export default class T extends LoopingBot {
-    loop() {
-        const b = nearestBank();
-        globalThis.__probe = b ? { x: b.tile.x, z: b.tile.z, level: b.tile.level } : null;
-    }
-}
-"#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
-    let use_quickly = ["Use-quickly".to_string()];
-    let near = script::isolate_fb::SceneEntityInput {
-        index: 0,
-        id: 2213,
-        name: Some("Bank booth"),
-        x: 3180,
-        z: 3436,
-        level: 0,
-        distance: 5,
-        health: -1,
-        max_health: -1,
-        in_combat: false,
-        animating: false,
-        actions: &use_quickly,
-        reachable: false,
-        reachable_adj: false,
-        combat_level: 0,
-        target_kind: 0,
-        target_index: -1,
-        size: 0,
-        nx: 0,
-        nz: 0,
-    };
-    let far = script::isolate_fb::SceneEntityInput {
-        index: 1,
-        id: 2214,
-        name: Some("Bank booth"),
-        x: 3195,
-        z: 3455,
-        level: 0,
-        distance: 20,
-        health: -1,
-        max_health: -1,
-        in_combat: false,
-        animating: false,
-        actions: &use_quickly,
-        reachable: false,
-        reachable_adj: false,
-        combat_level: 0,
-        target_kind: 0,
-        target_index: -1,
-        size: 0,
-        nx: 0,
-        nz: 0,
-    };
-    let locs = [near, far];
-    let mut snap = base_snapshot();
-    snap.here = Some(script::isolate_fb::TileInput {
-        x: 3185,
-        z: 3440,
-        level: 0,
-    });
-    snap.locs = &locs;
-    snap.nearest_booth = Some(nearest_booth_input(3180, 3436, 0, "Bank booth"));
-    post_snapshot_input(&iso, &snap);
-    iso.on_game_tick(1);
-    let value = iso.probe("__probe").unwrap();
-    assert_eq!(
-        (value["x"].as_i64(), value["z"].as_i64()),
-        (Some(3180), Some(3436)),
-        "two booths posted: nearestBank is Rust-nearest, not player tile"
-    );
-    assert_ne!(
-        (value["x"].as_i64(), value["z"].as_i64()),
-        (Some(3185), Some(3440)),
-        "must not return player tile when two booths exist"
-    );
+fn isolate_nearest_bank_air_order_ignores_plane_and_keeps_catalog_ties_without_scene_booths() {
+    let iso = nearest_bank_isolate();
+    post_snapshot_input(&iso, &base_snapshot());
+    assert_eq!(iso.probe("pick({x:110,z:100,level:3})").unwrap(), "West");
+    assert_eq!(iso.probe("pick({x:111,z:100,level:3})").unwrap(), "East");
     iso.join();
 }
 
 #[test]
-fn isolate_nearest_bank_null_when_no_booth() {
-    let src = r#"
-import { nearestBank } from '../../api/bank/BankLocations.js';
-export default class T extends LoopingBot {
-    loop() {
-        try {
-            globalThis.__probe = nearestBank();
-        } catch (e) {
-            globalThis.__probe = String(e.message || e);
-        }
-    }
-}
-"#;
-    let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
+fn isolate_nearest_bank_requires_an_origin_even_when_player_and_booth_are_known() {
+    let iso = nearest_bank_isolate();
     let mut snap = base_snapshot();
-    snap.here = Some(script::isolate_fb::TileInput {
-        x: 3222,
-        z: 3222,
-        level: 0,
-    });
+    snap.nearest_booth = Some(nearest_booth_input(100, 100, 0, "Bank booth"));
     post_snapshot_input(&iso, &snap);
-    iso.on_game_tick(1);
-    let value = iso.probe("__probe").unwrap();
-    let is_null = value.is_null();
-    let not_impl = value.as_str().is_some_and(|s| s.contains("not impl"));
-    assert!(
-        is_null || not_impl,
-        "no booth → null or not impl, not a fake at here: {value:?}"
-    );
-    if let Some(obj) = value.as_object() {
-        assert!(
-            obj.get("tile").is_none(),
-            "must not invent a booth object: {value:?}"
-        );
-    }
+    assert_eq!(iso.probe("(() => { try { pick(); return false; } catch (_) { return true; } })()").unwrap(), true);
     iso.join();
 }
 

@@ -168,7 +168,7 @@ impl BankingOpen {
         loop {
             match std::mem::replace(&mut self.phase, Phase::Choose) {
                 Phase::Choose => if let Some(step) = self.choose(cx) { return step; },
-                Phase::Select(select) => match select.result_bank() {
+                Phase::Select(select) => match select.result_bank(cx) {
                     None => { self.phase = Phase::Select(select); return Step::Wait; }
                     Some(Some(bank)) => self.walk_dest(Dest::named(bank), cx),
                     Some(None) => self.phase = Phase::Open(Target::Access(None)),

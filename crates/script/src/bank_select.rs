@@ -31,21 +31,21 @@ pub(crate) fn banks() -> Vec<NamedBank> {
     BANKS.with(|banks| banks.borrow().banks().to_vec())
 }
 
-fn eligible(bank: &NamedBank) -> bool {
+fn eligible(bank: &NamedBank, preferences: BankPreferences) -> bool {
     observed::with(|scene| {
         let view = scene.since_login();
         bank.eligible(
             |id| (id == 10).then(|| view.stats().and_then(|skills| skills.fishing).map(|skill| skill.base)).flatten(),
             |name| matches!(view.quest_statuses(), Some(observed::QuestTab::Bound(rows))
                 if rows.iter().any(|row| row.name.as_ref() == name && row.status.as_ref() == "complete")),
-            PREFERENCES.get(),
+            preferences,
         )
     })
 }
 
 pub(crate) fn unlocked(name: &str, tile: WorldTile) -> bool {
     BANKS.with(|banks| banks.borrow().banks().iter()
-        .any(|bank| bank.name == name && bank.tile == tile && eligible(bank)))
+        .any(|bank| bank.name == name && bank.tile == tile && eligible(bank, PREFERENCES.get())))
 }
 
 pub(crate) fn bank_value(bank: &NamedBank) -> Value {
@@ -83,8 +83,12 @@ pub(crate) fn selected(index: i32) -> Value {
 }
 
 pub(crate) fn nearest_bank(from: WorldTile) -> Option<NamedBank> {
+    nearest_with_preferences(from, PREFERENCES.get())
+}
+
+fn nearest_with_preferences(from: WorldTile, preferences: BankPreferences) -> Option<NamedBank> {
     BANKS.with(|banks| banks.borrow().banks().iter()
-        .filter(|bank| eligible(bank))
+        .filter(|bank| eligible(bank, preferences))
         .min_by_key(|bank| air_distance_squared(from, bank.air_tile())).copied())
 }
 
@@ -94,7 +98,7 @@ pub(crate) fn nearest(from: WorldTile) -> Value {
 
 pub(crate) fn ranked(from: WorldTile) -> Vec<NamedBank> {
     let mut banks = banks();
-    banks.retain(eligible);
+    banks.retain(|bank| eligible(bank, PREFERENCES.get()));
     banks.sort_by_key(|bank| air_distance_squared(from, bank.air_tile()));
     banks
 }
@@ -127,6 +131,7 @@ pub(crate) struct SelectArgs {
 
 pub(crate) struct SelectBank {
     request_id: u64,
+    fallback: Option<NamedBank>,
 }
 
 impl SelectBank {
@@ -138,17 +143,29 @@ impl SelectBank {
             return None;
         }
         let request_id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-        let preferences = PREFERENCES.get();
+        let defaults = PREFERENCES.get();
+        let preferences = BankPreferences {
+            use_mage_bank: args.use_mage_bank.unwrap_or(defaults.use_mage_bank),
+            use_zanaris_bank: args.use_zanaris_bank.unwrap_or(defaults.use_zanaris_bank),
+        };
+        let fallback = nearest_with_preferences(
+            WorldTile { x: from.x, z: from.z, level: from.level }, preferences,
+        );
+        // Start before host admission: a held/drained request must still end.
+        // The machine clock preserves the normal pause/hold freeze contract.
+        cx.clock().arm(5000);
         cx.emit(InteractReq::SelectBank {
             x: from.x, z: from.z, level: from.level,
             allow_wilderness: args.allow_wilderness, request_id,
-            use_mage_bank: args.use_mage_bank.unwrap_or(preferences.use_mage_bank),
-            use_zanaris_bank: args.use_zanaris_bank.unwrap_or(preferences.use_zanaris_bank),
+            use_mage_bank: preferences.use_mage_bank,
+            use_zanaris_bank: preferences.use_zanaris_bank,
         });
-        Some(Self { request_id })
+        Some(Self { request_id, fallback })
     }
 
-    pub(crate) fn result_bank(&self) -> Option<Option<NamedBank>> {
+    pub(crate) fn result_bank(&self, cx: &mut Cx<'_>) -> Option<Option<NamedBank>> {
+        // Reject even a matching late worker result once this window ends.
+        if cx.clock().bound_reached() { return Some(self.fallback); }
         observed::with(|scene| {
             let result = scene.since_login().bank_selection()?;
             (result.request_id == self.request_id && result.kind != 0)
@@ -156,8 +173,8 @@ impl SelectBank {
         })
     }
 
-    pub(crate) fn result(&self) -> Option<Value> {
-        self.result_bank().map(|bank| bank.as_ref().map(bank_value).unwrap_or(Value::Null))
+    pub(crate) fn result(&self, cx: &mut Cx<'_>) -> Option<Value> {
+        self.result_bank(cx).map(|bank| bank.as_ref().map(bank_value).unwrap_or(Value::Null))
     }
 }
 
@@ -174,7 +191,51 @@ impl Family for SelectBank {
         }
     }
 
-    fn step(&mut self, _cx: &mut Cx<'_>) -> Step<Value> {
-        self.result().map_or(Step::Wait, Step::Done)
+    fn step(&mut self, cx: &mut Cx<'_>) -> Step<Value> {
+        self.result(cx).map_or(Step::Wait, Step::Done)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::task_clock::InstantTaskClock;
+    use std::time::Duration;
+    #[test]
+    fn dropped_bank_selection_settles_at_its_clock_bound_with_captured_eligible_air_fallback() {
+        observed::on_reset();
+        settings(&serde_json::Map::new());
+        let mage = api::named_banks::BANK_CATALOG.iter().find(|bank| bank.name == "Mage Arena").unwrap();
+        let origin = mage.approach.unwrap();
+        let public = NamedBank::new("Public", WorldTile { x: origin.x + 1, ..origin });
+        install(Arc::new(NamedBankFacts::from_banks(vec![
+            NamedBank { name: mage.name, tile: mage.tile, definition: Some(mage), routable: true },
+            public,
+        ])));
+        observed::post(0, |post| { post.session(true); });
+        for opt_in in [false, true] {
+            let mut ops = Vec::new();
+            let mut clock = InstantTaskClock::new();
+            clock.set_freeze(false, true);
+            let started = clock.now();
+            let mut row = SelectBank::start(SelectArgs {
+                from: Some(FromTile { x: origin.x, z: origin.z, level: origin.level }),
+                use_mage_bank: Some(opt_in),
+                ..Default::default()
+            }, &mut Cx::test(&mut ops, &mut clock, None)).unwrap();
+            // Host admission never sees the emitted request.
+            ops.clear();
+            clock.frozen_at = Some(started + Duration::from_millis(4999));
+            assert!(matches!(row.step(&mut Cx::test(&mut ops, &mut clock, None)), Step::Wait));
+            clock.frozen_at = Some(started + Duration::from_millis(5000));
+            let Step::Done(value) = row.step(&mut Cx::test(&mut ops, &mut clock, None)) else {
+                panic!("a dropped selection must settle at its five-second machine-clock bound");
+            };
+            assert_eq!(value["name"], if opt_in { "Mage Arena" } else { "Public" });
+            assert!(ops.is_empty(), "a timeout must not move or restart a dropped request");
+        }
+        install(Arc::new(NamedBankFacts::empty()));
+        settings(&serde_json::Map::new());
+        observed::on_reset();
     }
 }

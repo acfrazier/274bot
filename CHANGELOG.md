@@ -24,6 +24,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   content stays a gated air fallback rather than an invented reachable bank.
   Stand resolution retains usable counter-side floor tiles with directional
   wall faces (including Varrock West), while still excluding blocked footprints.
+  The selection waiter also bounds requests dropped before host admission;
+  explicit v2 opt-ins override settings for both routing and air fallback.
 - `Banking.open`, periodic banking and world bank opens now share a Rust-owned
   select/walk/access continuation. Nearby banks still beat distant presets;
   explicit destinations remain the no-scene fallback. NPC and object access

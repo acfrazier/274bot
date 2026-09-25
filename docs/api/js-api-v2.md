@@ -45,9 +45,11 @@ Generated types live in `crates/script/host-js/index.d.ts` (`NativeApi`,
   air-nearest stand within four tiles bypasses routing. Otherwise one
   off-thread native search ranks resolved candidates by walk cost, with
   stable air-order ties. No route, budget exhaustion without a winner, or
-  an incomplete five-second window falls back to air-nearest; a bank result
-  does not by itself prove reachability. Selection does not replace a walk,
-  move, or open a bank.
+  an incomplete five-second window falls back to the eligible air-nearest bank
+  captured at the call. The waiter starts that bound before host admission, so
+  a dropped request also settles; its machine clock freezes during pause/hold.
+  A bank result does not by itself prove reachability. Selection does not
+  replace a walk, move, or open a bank.
   World-specific object/NPC placements and collision resolve legitimate walk
   stands once per bound world. Current 274/289 data resolves placements for
   19 banks; Canifis is absent from the selected content and remains a quest-gated

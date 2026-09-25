@@ -895,6 +895,8 @@ api.bankNearestReachable = async function (input = {}) {
   const out = await runMachine('bank_select', {
     from: input.from ?? null,
     allow_wilderness: !!input.allow_wilderness,
+    use_mage_bank: input.use_mage_bank == null ? null : !!input.use_mage_bank,
+    use_zanaris_bank: input.use_zanaris_bank == null ? null : !!input.use_zanaris_bank,
   });
   return out.kind === 'done' ? helperOk(out.value) : helperErr(out.reason || 'aborted');
 };
