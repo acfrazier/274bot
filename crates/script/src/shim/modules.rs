@@ -732,6 +732,10 @@ pub(crate) fn shim_modules() -> Vec<Module> {
             include_str!("quest_engine.js"),
         ),
         Module::new(
+            "/rs2b0t/bot/api/ai/quests/defs/murder/areas.js",
+            include_str!("murder_areas.js"),
+        ),
+        Module::new(
             "/rs2b0t/bot/api/duel/Duel.js",
             include_str!("duel_unimplemented.js"),
         ),

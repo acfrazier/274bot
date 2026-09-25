@@ -37,6 +37,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   restarts while the scene cannot accept a close.
 
 ### Script host
+- The FlourCollector catalog card now loads its four Murder Mystery area facts
+  through the shim; EssMiner stays visibly dimmed until native Gatherer support
+  replaces its pickaxe-acquisition dependency.
 
 - Alcher and LeatherCrafter can load their reachable-bank selector again.
   Selection runs one bounded native multi-target search off the slot pump,
