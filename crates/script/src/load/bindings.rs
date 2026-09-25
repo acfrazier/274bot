@@ -414,13 +414,6 @@ pub(super) fn wire_runtime(
         })
         .map_err(|e| format!("register clue: {e}"))?;
     runtime
-        .register_function("__rs2b0t_clue_verb", |args: &[serde_json::Value]| {
-            Ok(crate::clue::verb_json(
-                args.first().unwrap_or(&serde_json::Value::Null),
-            ))
-        })
-        .map_err(|e| format!("register clue verb: {e}"))?;
-    runtime
         .register_function("__rs2b0t_clue_paint", |_args: &[serde_json::Value]| {
             Ok(crate::clue::dispatch(
                 None,

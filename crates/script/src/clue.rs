@@ -302,7 +302,7 @@ pub(crate) use family::ClueArgs;
 use puzzle::*;
 use scene::*;
 use talk::*;
-pub(crate) use verbs::{verb_json, verb_req};
+pub(crate) use verbs::verb_req;
 
 use crate::food_policy::food_forms_for;
 use crate::machine::{Begin, Call, Cx, Family, Reply, Step};

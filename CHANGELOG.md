@@ -98,6 +98,8 @@ best-effort and untested in this release.
   modal acquisition, exact-pair close and timeout.
 - The v2 hunt family is begin plus one awaited run with typed `.d.ts` inputs;
   the nine v2 hunt examples are rewritten to that contract.
+- The obsolete clue-verb JSON adapter is removed; the clue machine emits
+  typed interact requests directly.
 - Paint: canvas ops record on a tape and flush once per pass; paint frames are
   shared by `Arc` with sender-side caps; the FlatBuffer paint codec is removed.
   `fmtDuration`/`fmtXpHr`/`etaHours`/`levelProgress`/`paintSkillShort` emit the
