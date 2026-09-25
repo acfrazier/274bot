@@ -7,6 +7,29 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
 
 ### Navigation
 
+- Radius walks to a solid in-scene target now route to one of its wall-valid
+  cardinal / interaction stands with one first-goal baked search, so doors
+  and transports remain usable. The same search serves the old radius goal
+  set as a fallback: a stand wins whenever one routes, and a radius tile it
+  passes on the way needs no second search. A backward search from the
+  stands runs beside it: stands sealed in a small region (a dead-end pocket,
+  a gated room) are proven unreachable after about twice that region's size.
+  A search that neither reaches a stand nor proves one reachable stops after
+  524,288 nodes instead of flooding the map; a proven-reachable stand keeps
+  the full 4,000,000-node search. The radius tiles keep that budget rule
+  for themselves inside the shared search, so it answers for them exactly
+  as a search over the tiles alone would; where the stands stop it before
+  that answer, the tiles get a search of their own. BankBudget then searches
+  once more with every obj the bank and backpack hold treated as carried and
+  wearable (their counts combined, capped at a full stack), so a stand
+  behind an obj the bank lacks no longer hides one the bank can open. A walk
+  spends at most two node-capped searches, plus one each time a planned bank
+  trip would deposit an item the route still needs.
+  A low-level nearest-route terminal still settles its owned wait, but
+  `walkResilient` continues its frozen scene-recovery ladder until the reach
+  probe confirms arrival. Every scene/direct `walk-to` request uses the
+  client's nearest-tile packet; resilient recovery also keeps the frozen
+  48-tile clamp and stalled/periodic re-click.
 - Added shared native-map data contracts: independently keyed image/POI caches,
   checked manifests and data-only service records, resumable partial-entry
   validation, bounded map-record reads and 24-texture LOD selection. Raw visual
