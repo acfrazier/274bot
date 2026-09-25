@@ -56,6 +56,10 @@ pub struct SlotArm {
     pub reconnect: Arc<AtomicBool>,
     retry_wait: parking_lot::Mutex<()>,
     retry_wake: parking_lot::Condvar,
+    /// Test seam for worker lifecycle cases whose subject starts at the
+    /// login queue, after unrelated asset initialization.
+    #[cfg(test)]
+    pub(crate) bypass_asset_startup: AtomicBool,
 }
 
 impl SlotArm {
@@ -77,7 +81,15 @@ impl SlotArm {
             reconnect: Arc::new(AtomicBool::new(false)),
             retry_wait: parking_lot::Mutex::new(()),
             retry_wake: parking_lot::Condvar::new(),
+            #[cfg(test)]
+            bypass_asset_startup: AtomicBool::new(false),
         })
+    }
+    /// Enter the spawned worker at the queue/login seam. Production slots
+    /// always run the complete asset startup.
+    #[cfg(test)]
+    pub(crate) fn bypass_asset_startup_for_test(&self) {
+        self.bypass_asset_startup.store(true, Ordering::Relaxed);
     }
 
     /// Arm an operator-requested one-shot login independently of auto-login.

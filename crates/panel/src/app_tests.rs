@@ -376,11 +376,17 @@ fn normal_unlock_waits_for_worker_validation_then_uses_prepared_profile() {
     let (mut state, mut startup, root) = prepared_startup(Boot::Unlock {
         pass: "prepared-pass".into(),
     });
-    let deadline = Instant::now() + Duration::from_secs(2);
-    while state.session.play.is_none() && Instant::now() < deadline {
-        drive_startup(&mut state, &mut startup);
-        std::thread::sleep(Duration::from_millis(1));
-    }
+    drive_startup(&mut state, &mut startup);
+    let mut validation = startup.validate.take().expect("final validation worker");
+    let result = validation
+        .receiver
+        .recv_timeout(Duration::from_secs(2))
+        .expect("final validation completion");
+    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+    sender.send(result).unwrap();
+    validation.receiver = receiver;
+    startup.validate = Some(validation);
+    drive_startup(&mut state, &mut startup);
     assert!(state.session.profile_bound());
     assert!(state.session.vault.is_some());
     assert!(state.session.play.is_some());

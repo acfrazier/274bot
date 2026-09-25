@@ -323,6 +323,12 @@ fn runtime_profile_fixture(revision: u16) -> (PathBuf, PathBuf, PathBuf, PathBuf
     (root, cache, manifest_path, unpack, port)
 }
 
+fn preparation_only_session() -> Session {
+    let mut session = Session::new();
+    session.skip_slot_spawn = true;
+    session
+}
+
 #[test]
 fn explicit_profile_wins_saved_revision_and_bound_session_refuses_changes() {
     let (root, cache, manifest, unpack, port) = runtime_profile_fixture(274);
@@ -2974,10 +2980,9 @@ fn flat_model_spawns_every_member_as_a_client() {
         3,
         "focus does not swap sockets; every slot stays up"
     );
-    // No `stop_slot` joins here: the slot threads sit in `maininit`'s
-    // bounded HTTP retry (host-play shrinks it only under its own
-    // `#[cfg(test)]`), so a join would block the suite for minutes.
-    // The threads are detached and die at process exit.
+    // Session teardown stops every arm and joins each slot. The startup
+    // progress callback transfers that stop into the client's shell, so an
+    // unreachable update server cannot hold the join through its retry schedule.
 }
 
 #[test]
@@ -3086,8 +3091,6 @@ fn logout_all_arms_every_wall_member() {
             .load(Ordering::Relaxed),
         "every wall member must logout"
     );
-    // No `stop_slot` joins: the slot threads stay in `maininit`'s
-    // bounded HTTP retry (see `flat_model_spawns_every_member_as_a_client`).
 }
 
 #[test]
@@ -3134,8 +3137,6 @@ fn headed_stress_spawns_every_member_prefers_and_arms_s00() {
         s.scatter.load(Ordering::Relaxed),
         "stress wall scatter-seeds after scene 2"
     );
-    // No `stop_slot` joins: the slot threads stay in `maininit`'s
-    // bounded HTTP retry (see `flat_model_spawns_every_member_as_a_client`).
 }
 
 #[test]
@@ -3156,7 +3157,6 @@ fn login_all_arms_every_wall_member() {
             .load(Ordering::Relaxed),
         "login all arms every member immediately (the FIFO serializes)"
     );
-    // No `stop_slot` joins (see `flat_model_spawns_every_member_as_a_client`).
 }
 
 #[test]
@@ -3225,7 +3225,7 @@ fn live_prepare_script_boots_the_seed_profile_and_installs_runner() {
         last_focus: None,
         ..Default::default()
     });
-    let mut s = Session::new();
+    let mut s = preparation_only_session();
     let scenario = scenario::get("walk").expect("walk scenario in registry");
     s.live_prepare_script(scenario).expect("prepare");
     // Live boots a minted per-run account — never the registry's
@@ -3256,7 +3256,6 @@ fn live_prepare_script_boots_the_seed_profile_and_installs_runner() {
         runner.drives(&name) && !runner.drives("test"),
         "the runner ticks only its minted profile's slot"
     );
-    // No `stop_slot` joins (see `flat_model_spawns_every_member_as_a_client`).
 }
 
 /// A scenario that names a script card (`start_script`) fills the
@@ -3272,7 +3271,7 @@ fn live_prepare_bone_burier_starts_the_rs2b0t_card_on_the_driven_slot() {
     });
     let root = write_looping_catalog(&iso.dir, &[("BoneBurier", "BoneBurier")]);
     iso.set_rs2b0t(&root);
-    let mut s = Session::new();
+    let mut s = preparation_only_session();
     let result = s.live_prepare_script(scenario::get("bone_burier").expect("registered"));
     let name = s
         .vault
@@ -3376,7 +3375,7 @@ fn live_prepare_keeps_v1_catalog_and_tradebot_stem() {
     });
     let root = write_looping_catalog(&iso.dir, &[("BoneBurier", "BoneBurier")]);
     iso.set_rs2b0t(&root);
-    let mut s = Session::new();
+    let mut s = preparation_only_session();
     s.live_prepare_script(scenario::get("bone_burier").expect("registered"))
         .expect("v1");
     assert_eq!(
@@ -3386,7 +3385,7 @@ fn live_prepare_keeps_v1_catalog_and_tradebot_stem() {
             "BoneBurier".into()
         ))
     );
-    let mut trade = Session::new();
+    let mut trade = preparation_only_session();
     trade.js =
         script::JsLibrary::with_cache(iso.dir.join("trade-js.json"), iso.dir.join("trade-cache"));
     trade
@@ -3438,7 +3437,7 @@ fn live_prepare_script_trade_loads_the_file_fixture_and_injects_partner() {
         last_focus: None,
         ..Default::default()
     });
-    let mut s = Session::new();
+    let mut s = preparation_only_session();
     s.js = script::JsLibrary::with_cache(iso.dir.join("js-scripts.json"), iso.dir.join("js-cache"));
     s.live_prepare_script(scenario::get("script_trade").expect("registered"))
         .expect("prepare");
@@ -3508,7 +3507,7 @@ fn live_prepare_thiever_posts_guard_target_when_schema_empty() {
     });
     let root = write_looping_catalog(&iso.dir, &[("Thiever", "ThievingBot")]);
     iso.set_rs2b0t(&root);
-    let mut s = Session::new();
+    let mut s = preparation_only_session();
     s.live_prepare_script(scenario::get("thiever").expect("registered"))
         .expect("prepare");
     let pending = s.pending_script.lock().unwrap();
@@ -3543,7 +3542,7 @@ fn live_prepare_script_sets_script_sel_for_catalog_start_script() {
     });
     let root = write_looping_catalog(&iso.dir, &[("Alcher", "Alcher")]);
     iso.set_rs2b0t(&root);
-    let mut s = Session::new();
+    let mut s = preparation_only_session();
     let mut scenario = scenario::get("alcher").expect("registered");
     scenario.settings.start_script = Some("Alcher");
     s.live_prepare_script(scenario).expect("prepare");
@@ -3564,7 +3563,7 @@ fn live_prepare_sherlock_starts_the_compiled_card_without_catalog() {
         last_focus: None,
         ..Default::default()
     });
-    let mut s = Session::new();
+    let mut s = preparation_only_session();
     s.live_prepare_script(scenario::get("sherlock_talk").expect("registered"))
         .expect("prepare compiled Sherlock without $RS2B0T");
     assert_eq!(
@@ -3588,7 +3587,7 @@ fn live_prepare_script_enables_multibox_for_a_fleet_only() {
         last_focus: None,
         ..Default::default()
     });
-    let mut s = Session::new();
+    let mut s = preparation_only_session();
     let fleet = scenario::get("nav_door").expect("nav_door is registered");
     assert!(
         fleet.seed.profiles.len() > 1,
@@ -3620,13 +3619,12 @@ fn live_prepare_script_enables_multibox_for_a_fleet_only() {
         );
     }
     assert!(!s.wall.chooser_open, "live keeps the chooser closed");
-    // No `stop_slot` joins (see `flat_model_spawns_every_member_as_a_client`).
 
     crate::ui_state::save(&crate::ui_state::PanelUiState {
         last_focus: None,
         ..Default::default()
     });
-    let mut s = Session::new();
+    let mut s = preparation_only_session();
     let solo = scenario::get("walk").expect("walk is registered");
     assert_eq!(solo.seed.profiles.len(), 1);
     s.live_prepare_script(solo).expect("prepare");
@@ -3635,7 +3633,6 @@ fn live_prepare_script_enables_multibox_for_a_fleet_only() {
         !s.focus.lock().unwrap().wall_open,
         "no wall members, no extra rasters"
     );
-    // No `stop_slot` joins (see `flat_model_spawns_every_member_as_a_client`).
 }
 
 #[test]
@@ -3703,7 +3700,7 @@ fn live_prepare_script_never_upserts_the_operator_vault() {
     }
     let op = crate::session::default_vault_path();
     let before = stamp(&op);
-    let mut s = Session::new();
+    let mut s = preparation_only_session();
     s.live_prepare_script(scenario::get("walk").unwrap())
         .expect("prepare");
     let after = stamp(&op);
@@ -3747,7 +3744,7 @@ fn live_prepare_script_does_not_write_last_focus() {
         last_focus: Some("alice".into()),
         ..Default::default()
     });
-    let mut s = Session::new();
+    let mut s = preparation_only_session();
     let fleet = scenario::get("nav_door").expect("nav_door");
     s.live_prepare_script(fleet).expect("prepare");
     assert_eq!(
@@ -3763,7 +3760,7 @@ fn live_prepare_nav_door_applies_full_rate_and_leaves_sidecar_off() {
         last_focus: None,
         ..Default::default()
     });
-    let mut s = Session::new();
+    let mut s = preparation_only_session();
     let fleet = scenario::get("nav_door").expect("nav_door");
     s.live_prepare_script(fleet).expect("prepare");
     let f = s.focus.lock().unwrap();
@@ -3780,7 +3777,7 @@ fn live_prepare_nav_full_runner_already_has_deadline_and_shot() {
         last_focus: None,
         ..Default::default()
     });
-    let mut s = Session::new();
+    let mut s = preparation_only_session();
     s.live_prepare_script(scenario::get("nav_full").unwrap())
         .expect("prepare");
     let runner = s.scenario.lock().unwrap();
@@ -3795,7 +3792,7 @@ fn live_prepare_smoke_runner_already_has_the_300s_deadline() {
         last_focus: None,
         ..Default::default()
     });
-    let mut s = Session::new();
+    let mut s = preparation_only_session();
     s.live_prepare_script(scenario::get("render_smoke").unwrap())
         .expect("prepare");
     let runner = s.scenario.lock().unwrap();
@@ -3811,7 +3808,7 @@ fn requested_nav_paints_survive_scenario_install_without_changing_gameplay_or_pr
     };
     crate::ui_state::save(&saved);
     for choice in [None, Some(true), Some(false)] {
-        let mut session = Session::new();
+        let mut session = preparation_only_session();
         session.set_nav_paints_override(choice);
         let mut scenario = scenario::get("nav_door").unwrap();
         scenario.settings.nav.allow_teleports = true;
@@ -3867,7 +3864,7 @@ fn live_force_layers_does_not_write_panel_ui() {
         !ui.nav.show_nav_path,
         "forced layers must never reach panel-ui.json"
     );
-    let mut s = Session::new();
+    let mut s = preparation_only_session();
     s.live_prepare_script(scenario::get("nav_door").unwrap())
         .expect("prepare");
     assert!(

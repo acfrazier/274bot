@@ -1112,6 +1112,10 @@ pub struct Session {
     /// eligibility and was stopped. Not a cancellation fixture.
     #[cfg(test)]
     pub fail_reload_start_for: Option<String>,
+    /// Test-only: prepare wall/runner state with fake arms and no client
+    /// thread. Preparation-state tests must not contact an update server.
+    #[cfg(test)]
+    skip_slot_spawn: bool,
     /// Catalog warmup: at most one `ensure_js` per armed frame.
     pub transpile_queue: VecDeque<(script::ScriptSource, String)>,
     pub(crate) transpile_armed: bool,
@@ -1420,6 +1424,8 @@ impl Session {
             reload_generation: 0,
             #[cfg(test)]
             fail_reload_start_for: None,
+            #[cfg(test)]
+            skip_slot_spawn: false,
             transpile_queue: VecDeque::new(),
             transpile_armed: false,
             transpile_done: 0,
@@ -3535,6 +3541,15 @@ impl Session {
         }
         let pixels = FrameBuf::new();
         self.audio.set_music(username, !lowmem);
+        #[cfg(test)]
+        if self.skip_slot_spawn {
+            if let (Some(play), Some(arm)) = (self.play.as_mut(), arm.as_ref()) {
+                play.attach_arm(username, Arc::clone(arm));
+            }
+            self.slots
+                .insert(username.to_string(), SlotIo { input, pixels });
+            return;
+        }
         if let Some(play) = &mut self.play {
             if let Err(error) = play.try_spawn_slot(
                 profile,

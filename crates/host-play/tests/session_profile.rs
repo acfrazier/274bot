@@ -1,9 +1,13 @@
 //! Profile selection and actual shared-client construction, without game servers.
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
-use client::{io::ClientRevision, BotTarget};
+use client::{
+    io::{ClientRevision, Packet},
+    BotTarget,
+};
 use host_play::nav_identity::NavFlagsOrigin;
 use host_play::profile::{CacheManifest, NavAvailability, NavManifest, ProfileEnvironment};
 use host_play::progress::{ProfileProgress, ProfileProgressObserver, ProfileProgressStage};
@@ -64,6 +68,79 @@ impl Drop for Fixture {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.0);
     }
+}
+fn fixture_crc_body(fixture: &Fixture) -> Vec<u8> {
+    let mut checksums = [0i32; 9];
+    for (index, name) in ARCHIVES.iter().enumerate() {
+        let bytes = std::fs::read(fixture.0.join(name)).unwrap();
+        checksums[index + 1] = Packet::getcrc(&bytes, 0, bytes.len());
+    }
+    let mut body = Packet::alloc(0);
+    for checksum in checksums {
+        body.p4(checksum);
+    }
+    let mut hash = 1234i32;
+    for checksum in checksums {
+        hash = hash.wrapping_shl(1).wrapping_add(checksum);
+    }
+    body.p4(hash);
+    body.data()[..body.pos].to_vec()
+}
+
+fn serve_fixture_crc(
+    fixture: &Fixture,
+) -> (
+    u16,
+    std::sync::mpsc::Receiver<()>,
+    std::thread::JoinHandle<()>,
+) {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let body = fixture_crc_body(fixture);
+    let (served_tx, served_rx) = std::sync::mpsc::sync_channel(1);
+    let server = std::thread::spawn(move || {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let mut socket = loop {
+            match listener.accept() {
+                Ok((socket, _)) => break socket,
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    assert!(
+                        std::time::Instant::now() < deadline,
+                        "fixture client never requested /crc"
+                    );
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                }
+                Err(error) => panic!("fixture /crc accept: {error}"),
+            }
+        };
+        socket
+            .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+            .unwrap();
+        let mut request = Vec::new();
+        let mut buffer = [0u8; 1024];
+        while !request.windows(4).any(|window| window == b"\r\n\r\n") {
+            match socket.read(&mut buffer) {
+                Ok(0) => break,
+                Ok(read) => request.extend_from_slice(&buffer[..read]),
+                Err(error) => panic!("fixture /crc request: {error}"),
+            }
+        }
+        assert_eq!(
+            String::from_utf8_lossy(&request).split_whitespace().nth(1),
+            Some("/crc")
+        );
+        let response = [
+            b"HTTP/1.0 200 OK\r\nContent-Length: ".as_slice(),
+            body.len().to_string().as_bytes(),
+            b"\r\n\r\n",
+            &body,
+        ]
+        .concat();
+        socket.write_all(&response).unwrap();
+        served_tx.send(()).unwrap();
+    });
+    (port, served_rx, server)
 }
 
 #[test]
@@ -468,11 +545,79 @@ fn both_revisions_reach_real_shared_client_constructor_and_keep_the_binding() {
 }
 
 #[test]
+fn stop_slot_aborts_an_unreachable_asset_retry_promptly() {
+    let _clients = CLIENTS.lock().unwrap();
+    let fixture = Fixture::new();
+    let dead_port = {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.local_addr().unwrap().port()
+    };
+    let mut options = fixture.options(289);
+    options.asset_host = Some("127.0.0.1".into());
+    options.http_port = Some(dead_port);
+    let profile = options
+        .resolve_with_env(None, &fixture.env())
+        .unwrap()
+        .bind()
+        .unwrap();
+    let template = SharedClientTemplate::load(Arc::clone(&profile)).unwrap();
+    let account = vault::Profile {
+        username: "stop-fixture".into(),
+        password: "fixture".into(),
+        uid: 43,
+        settings: Default::default(),
+    };
+    let mut play = host_play::run_with_template(
+        Arc::clone(&template),
+        false,
+        vec![],
+        |_| (None, None),
+        |_, _, _| {},
+    )
+    .unwrap();
+    play.try_spawn_slot(
+        account.clone(),
+        None,
+        None,
+        Some(host_play::SlotArm::new(account.uid, false)),
+    )
+    .unwrap();
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    loop {
+        if play.statuses().iter().any(|status| {
+            status.username == account.username
+                && status.startup_progress_message.contains("Will retry in")
+        }) {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "slot never entered the unreachable-server retry countdown"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+
+    let (done_tx, done_rx) = std::sync::mpsc::sync_channel(0);
+    let stop = std::thread::spawn(move || {
+        play.stop_slot("stop-fixture");
+        done_tx.send(()).unwrap();
+    });
+    done_rx
+        .recv_timeout(std::time::Duration::from_millis(1_500))
+        .expect("stop_slot waited for the five-second asset retry tick");
+    stop.join().unwrap();
+}
+
+#[test]
 fn qualified_revision_289_accepts_an_unarmed_slot_and_script_loading() {
     let _clients = CLIENTS.lock().unwrap();
     let fixture = Fixture::new();
-    let profile = fixture
-        .options(289)
+    let (asset_port, served, server) = serve_fixture_crc(&fixture);
+    let mut options = fixture.options(289);
+    options.asset_host = Some("127.0.0.1".into());
+    options.http_port = Some(asset_port);
+    let profile = options
         .resolve_with_env(None, &fixture.env())
         .unwrap()
         .bind()
@@ -500,6 +645,10 @@ fn qualified_revision_289_accepts_an_unarmed_slot_and_script_loading() {
         Some(host_play::SlotArm::new(account.uid, false)),
     )
     .unwrap();
+    served
+        .recv_timeout(std::time::Duration::from_secs(2))
+        .expect("slot did not reach the local /crc fixture");
+    server.join().unwrap();
     assert!(play.arm("fixture").is_some());
     assert!(play.login_queue_uids().is_empty());
     // The loader/start handle accepts the user's script under revision 289.

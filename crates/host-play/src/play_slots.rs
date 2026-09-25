@@ -59,9 +59,10 @@ impl Play {
     /// place immediately (a queued slot must not keep later slots behind
     /// it even if the thread is still blocked in `wait_for_permit`),
     /// drop the status row and arm, then join the thread. The slot body
-    /// checks `stop` every 20 ms, so the join returns within a frame when
-    /// the thread is inside `run_client`. Do **not** abort the TCP link
-    /// here — the caller sends a clean IF logout before calling this.
+    /// checks `stop` every 20 ms in `run_client`; startup retry progress
+    /// also transfers the arm stop into the client's shell, so an HTTP
+    /// countdown adds at most its one-second tick. Do **not** abort the TCP
+    /// link here — the caller sends a clean IF logout before calling this.
     pub fn stop_slot(&mut self, name: &str) {
         if let Some(arm) = self.arms.get(name) {
             arm.stop.store(true, Ordering::Relaxed);
@@ -392,13 +393,6 @@ fn spawn_slot_thread(
             // The host owns every reconnect attempt so each fresh socket
             // returns through the shared FIFO and reservation accounting.
             client.set_external_reconnect_owner(true);
-            #[cfg(test)]
-            {
-                // Unit tests spawn slots with no web server on :80; shrink
-                // maininit's HTTP retry so `stop_slot`'s join returns fast
-                // (the client's own HTTP tests stub retries the same way).
-                client.fetch_retry_wait = Duration::from_millis(1);
-            }
             if debug_enabled() {
                 eprintln!("[host-play] slot {username}: thread up");
             }
@@ -408,9 +402,19 @@ fn spawn_slot_thread(
             // `maininit` is renderer-free now: progress recording lives on
             // the Client, and no `Renderer` is constructed for a headless
             // slot.
-            client.maininit_with_progress(Some(&mut |_, message, percent| {
-                publish_startup_progress(&slot_statuses, &username, message, percent);
-            }));
+            #[cfg(test)]
+            let bypass_asset_startup = arm.bypass_asset_startup.load(Ordering::Relaxed);
+            #[cfg(not(test))]
+            let bypass_asset_startup = false;
+            if !bypass_asset_startup {
+                client.maininit_with_progress(Some(&mut |client, message, percent| {
+                    if arm.stop.load(Ordering::Relaxed) {
+                        client.shell.stop();
+                    } else {
+                        publish_startup_progress(&slot_statuses, &username, message, percent);
+                    }
+                }));
+            }
             if client.error_loading && connection.profile().is_some() {
                 if let Some(row) = slot_statuses.lock().unwrap().iter_mut().find(|s| s.username == username) {
                     row.startup_phase = StartupPhase::Error;

@@ -664,6 +664,7 @@ fn spawned_worker_response_21_retries_same_endpoint_without_fifo_ownership() {
         |_, _, _| {},
     );
     let arm = SlotArm::new(42, true);
+    arm.bypass_asset_startup_for_test();
     play.spawn_slot(profile("alice", 42), None, None, Some(Arc::clone(&arm)));
 
     let (first_number, first_attempt, first_endpoint) =
@@ -1884,6 +1885,7 @@ fn panicking_spawned_worker_retires_its_place_and_unblocks_follower() {
     );
     let window_started = fill_address_window(&play.queue);
     let dead = SlotArm::new(7, true);
+    dead.bypass_asset_startup_for_test();
     let dead_owner = dead.queue_owner;
     play.spawn_slot(profile("dead", 7), None, None, Some(Arc::clone(&dead)));
     assert!(
