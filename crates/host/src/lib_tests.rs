@@ -1485,6 +1485,112 @@ fn raster_this_tick_watch_is_wall_clock_one_fps_capture_is_every_tick() {
 }
 
 #[test]
+fn full_rate_title_paints_every_host_tick() {
+    force_cpu_backend();
+    let mut c = prepare_client(
+        cfg(),
+        1,
+        Arc::new(Cache::default()),
+        Arc::new(vec![]),
+        Vec::new(),
+    );
+    let buf = FrameBuf::new();
+    let mut slot = SlotLoop::new();
+    let mut sends = 0u32;
+    let inp = SlotInput::new();
+    inp.set_full_rate(true);
+    c.set_draw(true);
+    c.ingame = false;
+
+    Host::client_frame(
+        &mut c,
+        &mut slot,
+        "t",
+        Some(&inp),
+        Some(&buf),
+        &mut sends,
+        None,
+    );
+    Host::client_frame(
+        &mut c,
+        &mut slot,
+        "t",
+        Some(&inp),
+        Some(&buf),
+        &mut sends,
+        None,
+    );
+
+    assert_eq!(buf.generation(), 2, "a full-rate title paints every tick");
+}
+
+#[test]
+fn watch_rate_title_catches_up_flames_without_extra_paints() {
+    force_cpu_backend();
+    let mut c = prepare_client(
+        cfg(),
+        1,
+        Arc::new(Cache::default()),
+        Arc::new(vec![]),
+        Vec::new(),
+    );
+    let buf = FrameBuf::new();
+    let mut slot = SlotLoop::new();
+    let mut sends = 0u32;
+    let inp = SlotInput::new();
+    c.set_draw(true);
+    c.ingame = false;
+
+    Host::client_frame(
+        &mut c,
+        &mut slot,
+        "t",
+        Some(&inp),
+        Some(&buf),
+        &mut sends,
+        None,
+    );
+    let first_cycle = slot
+        .renderer
+        .as_ref()
+        .and_then(|r| r.title_flames.as_ref())
+        .expect("title flames")
+        .cycle;
+    Host::client_frame(
+        &mut c,
+        &mut slot,
+        "t",
+        Some(&inp),
+        Some(&buf),
+        &mut sends,
+        None,
+    );
+    assert_eq!(buf.generation(), 1, "watch title stays at one fps");
+
+    thread::sleep(Duration::from_secs(1) + Duration::from_millis(50));
+    Host::client_frame(
+        &mut c,
+        &mut slot,
+        "t",
+        Some(&inp),
+        Some(&buf),
+        &mut sends,
+        None,
+    );
+    let second_cycle = slot
+        .renderer
+        .as_ref()
+        .and_then(|r| r.title_flames.as_ref())
+        .expect("title flames")
+        .cycle;
+    assert_eq!(buf.generation(), 2, "watch title repaints after one second");
+    assert!(
+        second_cycle - first_cycle > 1,
+        "one watch paint catches up multiple 35 ms flame frames"
+    );
+}
+
+#[test]
 fn watch_only_paints_first_tick_then_once_per_second() {
     force_cpu_backend();
     let mut c = prepare_client(
