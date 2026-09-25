@@ -194,12 +194,18 @@ fn deliver_native_events(
     runtime: &mut Runtime,
     events: &[crate::events::NativeEvent],
     out: &Sender<ThreadMsg>,
+    n: u64,
+    generation: u64,
 ) {
     if events.is_empty() {
         return;
     }
     if let Err(e) = dispatch_native_events(runtime, events) {
-        let _ = out.send(ThreadMsg::Log(format!("native events: {e}")));
+        let _ = out.send(ThreadMsg::TickError {
+            tick: n,
+            generation,
+            message: format!("native events: {e}"),
+        });
     }
 }
 
@@ -240,6 +246,8 @@ fn compat_may_paint(runner: &Runner) -> bool {
 /// copy per reader.
 fn forward_paint_if_changed(
     out: &Sender<ThreadMsg>,
+    n: u64,
+    generation: u64,
     last: &mut Option<std::sync::Arc<crate::shim::ScriptPaint>>,
     paint_generation: &std::sync::atomic::AtomicU64,
     mut frame: crate::shim::ScriptPaint,
@@ -253,7 +261,11 @@ fn forward_paint_if_changed(
     // per change (the wire decoder used to drop it on the host side).
     *last = Some(std::sync::Arc::clone(&frame));
     if let Err(e) = crate::isolate_fb::cap_paint(&frame) {
-        let _ = out.send(ThreadMsg::Log(format!("paint: {e}")));
+        let _ = out.send(ThreadMsg::TickError {
+            tick: n,
+            generation,
+            message: format!("paint: {e}"),
+        });
         return;
     }
     let _ = out.send(ThreadMsg::Paint(frame));
@@ -291,18 +303,21 @@ struct TickRows {
 impl TickRows {
     /// Name, under the tick, every row that will not reach the host
     /// because it is malformed — never dropped silently.
-    fn log_rejected(&self, out: &Sender<ThreadMsg>, n: u64) {
+    fn log_rejected(&self, out: &Sender<ThreadMsg>, n: u64, generation: u64) {
         if let Some(kind) = &self.queue {
-            let _ = out.send(ThreadMsg::Log(format!(
-                "tick {n}: interact queue: dropped a {kind}, not an array"
-            )));
+            let _ = out.send(ThreadMsg::TickError {
+                tick: n,
+                generation,
+                message: format!("interact queue: dropped a {kind}, not an array"),
+            });
         }
         for row in &self.rows {
             if let crate::shim::MaybeInteractReq::Skip(rejected) = row {
-                let _ = out.send(ThreadMsg::Log(format!(
-                    "tick {n}: dropped malformed interact row: {}",
-                    rejected.0
-                )));
+                let _ = out.send(ThreadMsg::TickError {
+                    tick: n,
+                    generation,
+                    message: format!("dropped malformed interact row: {}", rejected.0),
+                });
             }
         }
     }
@@ -316,6 +331,7 @@ fn take_tick_output(
     runtime: &mut Runtime,
     out: &Sender<ThreadMsg>,
     n: u64,
+    generation: u64,
     facts: bool,
 ) -> TickRows {
     match runtime.call_function_immediate::<TickOutput>(
@@ -330,7 +346,11 @@ fn take_tick_output(
             settled: output.wait_settles,
         },
         Err(e) => {
-            let _ = out.send(ThreadMsg::Log(format!("tick {n}: interact queue: {e}")));
+            let _ = out.send(ThreadMsg::TickError {
+                tick: n,
+                generation,
+                message: format!("interact queue: {e}"),
+            });
             TickRows::default()
         }
     }
@@ -348,12 +368,21 @@ fn append_wait_facts(reqs: &mut Vec<crate::shim::InteractReq>, enqueued: u32, se
 /// Run this tick's event loop for up to 10 ms. An unhandled promise
 /// rejection — an un-awaited shim call that failed — surfaces here once
 /// as the drain's error; log it under the tick instead of dropping it.
-fn drain_event_loop(runtime: &mut Runtime, out: &Sender<ThreadMsg>, n: u64) {
+fn drain_event_loop(
+    runtime: &mut Runtime,
+    out: &Sender<ThreadMsg>,
+    n: u64,
+    generation: u64,
+) {
     if let Err(e) = runtime.block_on_event_loop(
         rustyscript::deno_core::PollEventLoopOptions::default(),
         Some(Duration::from_millis(10)),
     ) {
-        let _ = out.send(ThreadMsg::Log(format!("tick {n}: {e}")));
+        let _ = out.send(ThreadMsg::TickError {
+            tick: n,
+            generation,
+            message: e.to_string(),
+        });
     }
 }
 
@@ -361,11 +390,20 @@ fn drain_event_loop(runtime: &mut Runtime, out: &Sender<ThreadMsg>, n: u64) {
 /// every script eval used to run as it returned — so continuations and
 /// rejections queued by the call before it land in this tick. A rejection
 /// is logged under the tick.
-fn pump_event_loop(runtime: &mut Runtime, out: &Sender<ThreadMsg>, n: u64) {
+fn pump_event_loop(
+    runtime: &mut Runtime,
+    out: &Sender<ThreadMsg>,
+    n: u64,
+    generation: u64,
+) {
     if let Err(e) =
         runtime.advance_event_loop(rustyscript::deno_core::PollEventLoopOptions::default())
     {
-        let _ = out.send(ThreadMsg::Log(format!("tick {n}: {e}")));
+        let _ = out.send(ThreadMsg::TickError {
+            tick: n,
+            generation,
+            message: e.to_string(),
+        });
     }
 }
 
@@ -396,20 +434,11 @@ impl<'de> serde::Deserialize<'de> for PaintRecord {
     }
 }
 
-/// The tick's tail after its phases (R4), in the order the per-field evals
-/// ran it: onPaint when `run_paint`, then its microtasks; one call that
-/// reads and clears the recorded error, the `this.log` lines, the paint
-/// record and the paint click, then calls the bot's `ignoredRandoms()`
-/// unless `claimed`; that call's microtasks; the stop flag last. The error
-/// and log lines are logged under the tick (after the paint pass, so a
-/// throwing onPaint is logged on the tick it threw); the paint frame and
-/// the ignore list are forwarded only when they changed. Returns the
-/// bounded stop reason when the script called ScriptRunner.stop.
-#[allow(clippy::too_many_arguments)] // the tick loop's paint and ignore-list state
 fn finish_tick(
     runtime: &mut Runtime,
     out: &Sender<ThreadMsg>,
     n: u64,
+    generation: u64,
     run_paint: bool,
     script_paint: bool,
     claimed: bool,
@@ -419,7 +448,7 @@ fn finish_tick(
 ) -> Option<String> {
     if run_paint {
         let _ = runtime.call_function_immediate::<()>(None, "__rs2b0t_call_on_paint", json_args!());
-        pump_event_loop(runtime, out, n);
+        pump_event_loop(runtime, out, n, generation);
     }
     let after: Result<AfterTick, rustyscript::Error> = runtime.call_function_immediate(
         None,
@@ -430,7 +459,11 @@ fn finish_tick(
     match after {
         Ok(after) => {
             if let Some(e) = after.error {
-                let _ = out.send(ThreadMsg::Log(format!("tick {n}: {e}")));
+                let _ = out.send(ThreadMsg::TickError {
+                    tick: n,
+                    generation,
+                    message: e,
+                });
             }
             for line in after.log {
                 let _ = out.send(ThreadMsg::Log(line));
@@ -438,7 +471,11 @@ fn finish_tick(
             match after.paint.0 {
                 Ok(user) => paint = Some(user),
                 Err(e) if script_paint => {
-                    let _ = out.send(ThreadMsg::Log(format!("paint eval: {e}")));
+                    let _ = out.send(ThreadMsg::TickError {
+                        tick: n,
+                        generation,
+                        message: format!("paint eval: {e}"),
+                    });
                 }
                 Err(_) => {}
             }
@@ -448,7 +485,11 @@ fn finish_tick(
             }
         }
         Err(e) => {
-            let _ = out.send(ThreadMsg::Log(format!("tick {n}: after tick: {e}")));
+            let _ = out.send(ThreadMsg::TickError {
+                tick: n,
+                generation,
+                message: format!("after tick: {e}"),
+            });
         }
     }
     // A compat bot that may not paint yet forwards an empty frame instead —
@@ -460,10 +501,17 @@ fn finish_tick(
         Some(crate::shim::ScriptPaint::default())
     };
     if let Some(frame) = frame {
-        forward_paint_if_changed(out, last_paint, paint_generation, frame);
+        forward_paint_if_changed(
+            out,
+            n,
+            generation,
+            last_paint,
+            paint_generation,
+            frame,
+        );
     }
     if !claimed {
-        pump_event_loop(runtime, out, n);
+        pump_event_loop(runtime, out, n, generation);
     }
     requested_stop(runtime)
 }
@@ -512,7 +560,7 @@ enum Phase {
     /// `onStart` failed during this tick. The first `loop()` waits for
     /// the next eligible tick, as the pre-F02 runner did.
     StartFailed,
-    /// Nothing in flight: the next eligible tick invokes `loop()`/`tick`.
+    /// Nothing in flight: the next eligible tick invokes `loop()`/tick.
     Idle,
     /// `loop()` or the native tick in flight.
     Running(Settle),
@@ -538,7 +586,13 @@ impl Runner {
     /// Observe the in-flight promise; on settle log its error and go
     /// idle (`StartFailed` for a failed `onStart`). `true` when a
     /// `loop()`/tick fulfilled cleanly.
-    fn poll(&mut self, runtime: &mut Runtime, out: &Sender<ThreadMsg>, n: u64) -> bool {
+    fn poll(
+        &mut self,
+        runtime: &mut Runtime,
+        out: &Sender<ThreadMsg>,
+        n: u64,
+        generation: u64,
+    ) -> bool {
         let (state, is_loop) = match &self.phase {
             Phase::Starting(p) => (p.poll_promise(runtime), false),
             Phase::Running(p) => (p.poll_promise(runtime), true),
@@ -557,7 +611,11 @@ impl Runner {
         self.start_ok |= !is_loop && err.is_none();
         match err {
             Some(e) => {
-                let _ = out.send(ThreadMsg::Log(format!("tick {n}: {e}")));
+                let _ = out.send(ThreadMsg::TickError {
+                    tick: n,
+                    generation,
+                    message: e,
+                });
                 false
             }
             None => is_loop,
@@ -582,13 +640,14 @@ fn run_tick_phases(
     runtime: &mut Runtime,
     runner: &mut Runner,
     n: u64,
+    generation: u64,
     compat: bool,
     events_consumed: bool,
     out: &Sender<ThreadMsg>,
     loop_settled: &mut bool,
     teardown: &Mutex<TeardownState>,
 ) -> Result<(), rustyscript::Error> {
-    *loop_settled |= runner.poll(runtime, out, n) && compat;
+    *loop_settled |= runner.poll(runtime, out, n, generation) && compat;
     if let Phase::StartFailed = runner.phase {
         runner.phase = Phase::Idle;
     }
@@ -610,7 +669,7 @@ fn run_tick_phases(
         // An onStart a listener or a settled wait just finished lets the
         // first `loop()` run on this tick.
         Phase::Starting(_) => {
-            runner.poll(runtime, out, n);
+            runner.poll(runtime, out, n, generation);
         }
         Phase::Unstarted => {
             // onStart is invoked exactly once: a failed call counts as a
@@ -621,7 +680,7 @@ fn run_tick_phases(
             runner.phase = Phase::Starting(start);
             // Microtasks run as the call returns, so a synchronous
             // onStart has settled here.
-            runner.poll(runtime, out, n);
+            runner.poll(runtime, out, n, generation);
         }
         Phase::StartFailed | Phase::Idle | Phase::Running(_) => {}
     }
@@ -772,6 +831,7 @@ fn stop_on_script_request(
     let _ = out.send(ThreadMsg::Completed {
         tick: n,
         generation,
+        successful: false,
     });
     let _ = out.send(ThreadMsg::Log(format!(
         "script requested stop on tick {n}; isolate stopping"
@@ -973,6 +1033,7 @@ fn tick_loop(
                     let _ = out.send(ThreadMsg::Completed {
                         tick: n,
                         generation,
+                        successful: false,
                     });
                     continue;
                 }
@@ -983,7 +1044,7 @@ fn tick_loop(
                     }
                     // A machine callback may have absorbed join's terminate.
                     if !tick_claimed(&teardown) {
-                        deliver_native_events(&mut runtime, &observed.events, &out);
+                        deliver_native_events(&mut runtime, &observed.events, &out, n, generation);
                     }
                 }
                 // Guardian hold: skip `loop()` AND skip resolving
@@ -1004,7 +1065,7 @@ fn tick_loop(
                             "__rs2b0t_call_on_paint",
                             json_args!(),
                         );
-                        pump_event_loop(&mut runtime, &out, n);
+                        pump_event_loop(&mut runtime, &out, n, generation);
                     }
                     if events_consumed && runner.started() && !claimed {
                         let _ = runtime.call_function_immediate::<()>(
@@ -1014,7 +1075,7 @@ fn tick_loop(
                         );
                     }
                     if !claimed {
-                        drain_event_loop(&mut runtime, &out, n);
+                        drain_event_loop(&mut runtime, &out, n, generation);
                     }
                     // Ownership boundary after callback eval + microtasks:
                     // cancel a terminate armed by a runaway listener so the
@@ -1026,12 +1087,13 @@ fn tick_loop(
                     // them; held game rows are dropped without a
                     // malformed-row log, as before.
                     cancel_terminate(&mut runtime, &teardown);
-                    let output = take_tick_output(&mut runtime, &out, n, false);
+                    let output = take_tick_output(&mut runtime, &out, n, generation, false);
                     crate::machine::drop_ops();
                     let stop = finish_tick(
                         &mut runtime,
                         &out,
                         n,
+                        generation,
                         false,
                         script_paint,
                         tick_claimed(&teardown),
@@ -1057,7 +1119,7 @@ fn tick_loop(
                     } else {
                         Vec::new()
                     };
-                    if !v2_native && runner.poll(&mut runtime, &out, n) && compat {
+                    if !v2_native && runner.poll(&mut runtime, &out, n, generation) && compat {
                         lifecycle.push(crate::shim::InteractReq::LoopSettled);
                     }
                     if !lifecycle.is_empty() {
@@ -1081,6 +1143,7 @@ fn tick_loop(
                     let _ = out.send(ThreadMsg::Completed {
                         tick: n,
                         generation,
+                        successful: true,
                     });
                     continue;
                 }
@@ -1112,6 +1175,7 @@ fn tick_loop(
                         &mut runtime,
                         &mut runner,
                         n,
+                        generation,
                         compat,
                         events_consumed,
                         &out,
@@ -1126,7 +1190,7 @@ fn tick_loop(
                 // A claimed tick runs no more JS (a phase above may have
                 // absorbed join's terminate).
                 if !tick_claimed(&teardown) {
-                    drain_event_loop(&mut runtime, &out, n);
+                    drain_event_loop(&mut runtime, &out, n, generation);
                 }
                 // The host may have armed `terminate_execution` to
                 // interrupt a slow tick; clear it now that the tick's
@@ -1141,19 +1205,27 @@ fn tick_loop(
                     if let Err(e) =
                         super::machine_v8::resume(&mut runtime, &|| machines_halted(&teardown))
                     {
-                        let _ = out.send(ThreadMsg::Log(format!("tick {n}: machines: {e}")));
+                        let _ = out.send(ThreadMsg::TickError {
+                            tick: n,
+                            generation,
+                            message: format!("machines: {e}"),
+                        });
                     }
                 }
                 if !v2_native {
                     // A loop that finished in the drain frees the
                     // single-flight for the next tick.
-                    loop_settled |= runner.poll(&mut runtime, &out, n) && compat;
+                    loop_settled |= runner.poll(&mut runtime, &out, n, generation) && compat;
                 }
                 let elapsed = start.elapsed();
                 #[cfg(feature = "memory-profile")]
                 counters.tick(elapsed);
                 if let Err(e) = result {
-                    let _ = out.send(ThreadMsg::Log(format!("tick {n}: {e}")));
+                    let _ = out.send(ThreadMsg::TickError {
+                        tick: n,
+                        generation,
+                        message: e.to_string(),
+                    });
                 }
                 // Forward the tick's shim interact queue (Bank/Banking
                 // requests written to `__rs2b0t_host.interact`) to the
@@ -1167,8 +1239,8 @@ fn tick_loop(
                 // mouse object cannot drop a sibling key.
                 // Machine-emitted ops join the batch in Rust at the JS
                 // queue position where they were emitted.
-                let taken = take_tick_output(&mut runtime, &out, n, true);
-                taken.log_rejected(&out, n);
+                let taken = take_tick_output(&mut runtime, &out, n, generation, true);
+                taken.log_rejected(&out, n, generation);
                 let mut reqs = crate::machine::merge_ops(taken.rows);
                 stamp_mouse_gesture_identities(&mut reqs, input_identity, &mut mouse_gestures);
                 crate::inspect_wait::filter_public_inspect_wire(&mut reqs);
@@ -1196,6 +1268,7 @@ fn tick_loop(
                     &mut runtime,
                     &out,
                     n,
+                    generation,
                     !v2_native && script_paint && !claimed,
                     script_paint,
                     claimed,
@@ -1254,11 +1327,13 @@ fn tick_loop(
                     let _ = out.send(ThreadMsg::Completed {
                         tick: latest,
                         generation,
+                        successful: false,
                     });
                 } else {
                     let _ = out.send(ThreadMsg::Completed {
                         tick: n,
                         generation,
+                        successful: true,
                     });
                 }
             }

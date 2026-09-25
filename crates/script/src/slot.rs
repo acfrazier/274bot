@@ -192,6 +192,10 @@ pub struct SlotScript {
     #[cfg(feature = "load")]
     ipc: IsolateBuf,
     last_error: Option<String>,
+    /// Work generation that owns the active tick error, if any. A successful
+    /// tick from a later session must not clear an older diagnostic.
+    #[cfg(feature = "load")]
+    active_tick_error_generation: Option<u64>,
     lifecycle_receipt: Option<ScriptLifecycleReceipt>,
     /// Isolate log lines not yet taken by the panel (`take_pending_logs`).
     pending_logs: Vec<String>,
@@ -264,6 +268,8 @@ impl SlotScript {
             #[cfg(feature = "load")]
             ipc: IsolateBuf::new(),
             last_error: None,
+            #[cfg(feature = "load")]
+            active_tick_error_generation: None,
             lifecycle_receipt: None,
             pending_logs: Vec::new(),
             ticks: 0,
@@ -330,6 +336,10 @@ impl SlotScript {
                 self.compiled_interacts.clear();
                 self.want_run = true;
                 self.last_error = None;
+                #[cfg(feature = "load")]
+                {
+                    self.active_tick_error_generation = None;
+                }
                 self.lifecycle_receipt = None;
                 self.ticks = 0;
                 self.pending_withdraw_x = None;
@@ -487,6 +497,7 @@ impl SlotScript {
         self.watchdog.arm_fresh(Instant::now());
         self.want_run = true;
         self.last_error = None;
+        self.active_tick_error_generation = None;
         self.lifecycle_receipt = None;
         self.ticks = 0;
         self.pending_withdraw_x = None;
@@ -549,6 +560,7 @@ impl SlotScript {
         self.reach_cache.clear();
         self.ipc = IsolateBuf::new();
         self.last_error = None;
+        self.active_tick_error_generation = None;
         self.lifecycle_receipt = None;
         self.ticks = 0;
         self.state = RunState::Starting;
@@ -709,6 +721,7 @@ impl SlotScript {
     #[cfg(feature = "load")]
     fn fail_setup(&mut self, e: String) {
         self.last_error = Some(e.clone());
+        self.active_tick_error_generation = None;
         self.pending_logs.push(e.clone());
         self.load_identity = None;
         self.source_identity = None;
@@ -816,6 +829,11 @@ impl SlotScript {
         #[cfg(feature = "load")]
         if self.state == RunState::Stopping && matches!(self.after_stop, AfterStop::Fail(_)) {
             return;
+        }
+        #[cfg(feature = "load")]
+        {
+            self.last_error = None;
+            self.active_tick_error_generation = None;
         }
         // A Start that has not reached Ready never ran: nothing to commit.
         #[cfg(feature = "load")]
@@ -1531,30 +1549,54 @@ impl SlotScript {
     #[cfg(feature = "load")]
     pub fn drain_logs(&mut self) -> Vec<String> {
         self.observe_lifecycle();
-        let (logs, stopped, script_stop) = match &self.load {
+        let (logs, outcomes, stopped, script_stop) = match &self.load {
             Some(isolate) => {
                 let logs = isolate.drain_logs();
-                (logs, isolate.stopped(), isolate.script_stop_receipt())
+                let outcomes = isolate.drain_tick_outcomes();
+                (
+                    logs,
+                    outcomes,
+                    isolate.stopped(),
+                    isolate.script_stop_receipt(),
+                )
             }
-            None => (Vec::new(), false, None),
+            None => (Vec::new(), Vec::new(), false, None),
         };
-        if let Some(err) = logs
-            .iter()
-            .rev()
-            .find(|l| l.starts_with("tick ") || l.contains("script requested stop"))
-        {
-            self.last_error = Some(err.clone());
+        for outcome in outcomes {
+            match outcome {
+                crate::load::TickOutcome::Error {
+                    tick,
+                    generation,
+                    message,
+                } => {
+                    self.last_error = Some(format!("tick {tick}: {message}"));
+                    self.active_tick_error_generation = Some(generation);
+                }
+                crate::load::TickOutcome::Success { generation, .. }
+                    if self.active_tick_error_generation == Some(generation) =>
+                {
+                    self.last_error = None;
+                    self.active_tick_error_generation = None;
+                }
+                crate::load::TickOutcome::Success { .. } => {}
+            }
         }
         self.pending_logs.extend(logs.iter().cloned());
         if stopped {
             let runtime_generation = self.runtime_generation;
             self.stop();
-            self.lifecycle_receipt = script_stop.map(|receipt| ScriptLifecycleReceipt {
-                runtime_generation,
-                state: ScriptTerminalState::Stopped,
-                tick: receipt.tick,
-                reason: receipt.reason,
-            });
+            if let Some(receipt) = script_stop {
+                self.last_error = Some(format!(
+                    "script requested stop on tick {}: {}",
+                    receipt.tick, receipt.reason
+                ));
+                self.lifecycle_receipt = Some(ScriptLifecycleReceipt {
+                    runtime_generation,
+                    state: ScriptTerminalState::Stopped,
+                    tick: receipt.tick,
+                    reason: receipt.reason,
+                });
+            }
             self.observe_lifecycle();
         }
         logs

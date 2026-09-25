@@ -16,7 +16,7 @@ use super::snapshot::{
 };
 use super::{loadout_v8, machine_v8, paint_chrome, paint_jive, reach_query, shape, snapshot};
 use rustyscript::{json_args, Runtime, RuntimeOptions};
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Mutex, Once, OnceLock};
@@ -160,6 +160,14 @@ impl CmdQueue {
 
 enum ThreadMsg {
     Log(String),
+    /// A diagnostic emitted while processing one tick. The host keeps this
+    /// separate from user-authored log lines so a later user message cannot
+    /// clear or create the slot's active tick error.
+    TickError {
+        tick: u64,
+        generation: u64,
+        message: String,
+    },
     /// The tick's shim interact queue (`__rs2b0t_host.interact`), a
     /// FlatBuffer `InteractBatch` of [`crate::shim::InteractReq`]s
     /// forwarded after the tick's JS finished (parked or not).
@@ -175,6 +183,7 @@ enum ThreadMsg {
     Completed {
         tick: u64,
         generation: u64,
+        successful: bool,
     },
     /// ScriptRunner.stop ended this isolate with its bounded script reason.
     ScriptStopped {
@@ -192,6 +201,19 @@ enum ThreadMsg {
     /// process, so the frame crosses as the typed value the recorder built:
     /// no FlatBuffer encode/verify/decode, and every reader shares one frame.
     Paint(std::sync::Arc<crate::shim::ScriptPaint>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum TickOutcome {
+    Success {
+        tick: u64,
+        generation: u64,
+    },
+    Error {
+        tick: u64,
+        generation: u64,
+        message: String,
+    },
 }
 
 /// One JS bot running in its own rustyscript/V8 isolate. Spawned only
@@ -223,6 +245,11 @@ pub struct LoadIsolate {
     snapshot_refused: AtomicBool,
     rx: Mutex<Receiver<ThreadMsg>>,
     logs: Mutex<Vec<String>>,
+    /// Typed diagnostics collected while each tick runs. Kept separate from
+    /// user-authored `Log` messages so slot state cannot be driven by text.
+    tick_errors: Mutex<HashMap<(u64, u64), Vec<String>>>,
+    /// Completed tick outcomes waiting for the owning slot to consume them.
+    tick_outcomes: Mutex<Vec<TickOutcome>>,
     /// Interact requests forwarded by the tick thread (the shim
     /// `Bank`/`Banking` queue), drained by the host like logs.
     interacts: Mutex<Vec<crate::shim::InteractReq>>,
@@ -444,6 +471,8 @@ impl LoadIsolate {
             snapshot_refused: AtomicBool::new(false),
             rx: Mutex::new(msg_rx),
             logs: Mutex::new(Vec::new()),
+            tick_errors: Mutex::new(HashMap::new()),
+            tick_outcomes: Mutex::new(Vec::new()),
             interacts: Mutex::new(Vec::new()),
             lifecycle: Mutex::new(Vec::new()),
             paint: Mutex::new(None),
@@ -716,9 +745,9 @@ impl LoadIsolate {
 
     /// The bot instance's random-ignore list (`inst.ignoredRandoms?.()`
     /// on `__rs_bot`, default `[]`): read on the isolate thread each tick
-    /// and cached here when it changes (see [`ThreadMsg::IgnoredRandoms`]). A throwing /
-    /// non-array method and a native `tick`-shaped card (no instance)
-    /// fail closed to `[]`. No probe round-trip.
+    /// and cached here when it changes (see [`ThreadMsg::IgnoredRandoms`]).
+    /// A throwing / non-array method and a native `tick`-shaped card (no
+    /// instance) fail closed to `[]`. No probe round-trip.
     pub fn ignored_randoms(&self) -> Vec<String> {
         self.pump_logs();
         self.ignored_randoms.lock().unwrap().clone()
@@ -729,6 +758,13 @@ impl LoadIsolate {
     pub fn drain_logs(&self) -> Vec<String> {
         self.pump_logs();
         std::mem::take(&mut *self.logs.lock().unwrap())
+    }
+
+    /// Drain typed outcomes for ticks that completed since the last host
+    /// observation. User-authored log lines never enter this queue.
+    pub(crate) fn drain_tick_outcomes(&self) -> Vec<TickOutcome> {
+        self.pump_logs();
+        std::mem::take(&mut *self.tick_outcomes.lock().unwrap())
     }
 
     /// Cached terminal state, refreshed by the regular log drain.
@@ -809,6 +845,8 @@ impl LoadIsolate {
             interacts.clear();
             self.lifecycle.lock().unwrap().clear();
         }
+        self.tick_errors.lock().unwrap().clear();
+        self.tick_outcomes.lock().unwrap().clear();
         {
             // Re-stamp the held frame with the new generation: an overlay that
             // captured the pre-reset generation no longer matches it, so a
@@ -1012,6 +1050,22 @@ impl LoadIsolate {
         for msg in msgs {
             match msg {
                 ThreadMsg::Log(line) => self.logs.lock().unwrap().push(line),
+                ThreadMsg::TickError {
+                    tick,
+                    generation,
+                    message,
+                } => {
+                    self.logs
+                        .lock()
+                        .unwrap()
+                        .push(format!("tick {tick}: {message}"));
+                    self.tick_errors
+                        .lock()
+                        .unwrap()
+                        .entry((tick, generation))
+                        .or_default()
+                        .push(message);
+                }
                 ThreadMsg::ScriptStopped { tick, reason } => {
                     *self.script_stop.lock().unwrap() = Some(ScriptStopReceipt { tick, reason });
                 }
@@ -1065,15 +1119,34 @@ impl LoadIsolate {
                 ThreadMsg::IgnoredRandoms(list) => {
                     *self.ignored_randoms.lock().unwrap() = list;
                 }
-                ThreadMsg::Completed { tick, generation } => {
-                    let mut in_flight = self.in_flight.lock().unwrap();
-                    if generation
-                        != self
+                ThreadMsg::Completed {
+                    tick,
+                    generation,
+                    successful,
+                } => {
+                    let error = self.tick_errors.lock().unwrap().remove(&(tick, generation));
+                    let current = generation
+                        == self
                             .work_generation
-                            .load(std::sync::atomic::Ordering::Acquire)
-                    {
+                            .load(std::sync::atomic::Ordering::Acquire);
+                    if current {
+                        let outcome = match error {
+                            Some(messages) => Some(TickOutcome::Error {
+                                tick,
+                                generation,
+                                message: messages.join("; "),
+                            }),
+                            None if successful => Some(TickOutcome::Success { tick, generation }),
+                            None => None,
+                        };
+                        if let Some(outcome) = outcome {
+                            self.tick_outcomes.lock().unwrap().push(outcome);
+                        }
+                    }
+                    if !current {
                         continue;
                     }
+                    let mut in_flight = self.in_flight.lock().unwrap();
                     #[cfg(feature = "memory-profile")]
                     self.last_completed
                         .fetch_max(tick, std::sync::atomic::Ordering::Relaxed);

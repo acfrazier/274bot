@@ -30,6 +30,84 @@ fn allow_onstop_completion(slot: &SlotScript) {
 
 #[cfg(feature = "load")]
 #[test]
+fn active_tick_error_clears_on_success_not_user_log_text() {
+    let source = r#"
+export function tick() {
+    const n = globalThis.__ticks || 0;
+    globalThis.__ticks = n + 1;
+    if (n === 0) throw new Error('first tick failure');
+    globalThis.__rs2b0t_host.log = ['tick completed normally'];
+}
+"#;
+    let mut slot = SlotScript::new();
+    slot.start_load_with_loadouts(source.into(), LoadShape::NativeTick, vec![], &[])
+        .unwrap();
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while slot.state() != RunState::Running {
+        slot.observe_lifecycle();
+        assert!(
+            Instant::now() < deadline,
+            "load isolate did not become ready: {:?}",
+            slot.last_error()
+        );
+        std::thread::yield_now();
+    }
+
+    slot.load.as_ref().expect("load isolate").on_game_tick(1);
+    assert_eq!(
+        slot.load
+            .as_ref()
+            .expect("load isolate")
+            .probe("globalThis.__ticks")
+            .unwrap(),
+        serde_json::json!(1)
+    );
+    let first_logs = slot.drain_logs();
+    assert!(
+        first_logs
+            .iter()
+            .any(|line| line.contains("first tick failure")),
+        "{first_logs:?}"
+    );
+    assert!(
+        slot.last_error()
+            .is_some_and(|error| error.contains("first tick failure")),
+        "{:?}",
+        slot.last_error()
+    );
+
+    slot.load.as_ref().expect("load isolate").on_game_tick(2);
+    assert_eq!(
+        slot.load
+            .as_ref()
+            .expect("load isolate")
+            .probe("globalThis.__ticks")
+            .unwrap(),
+        serde_json::json!(2)
+    );
+    let second_logs = slot.drain_logs();
+    assert!(
+        second_logs
+            .iter()
+            .any(|line| line == "tick completed normally"),
+        "{second_logs:?}"
+    );
+    assert_eq!(
+        slot.last_error(),
+        None,
+        "a successful same-generation tick clears the active error; a user log does not replace it"
+    );
+    assert!(
+        slot.take_pending_logs()
+            .iter()
+            .any(|line| line.contains("first tick failure")),
+        "the recovered error remains in the slot log"
+    );
+    slot.stop();
+}
+
+#[test]
 fn run_manager_override_is_session_scoped_and_last_call_replaces_snapshot() {
     let source = r#"
 import { RunManager } from '../../runtime/RunManager.js';
