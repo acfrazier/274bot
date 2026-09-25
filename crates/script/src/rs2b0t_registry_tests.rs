@@ -631,7 +631,8 @@ fn frozen_fire_giant_w1c_equipment_settings_resolve_from_parsed_catalog() {
             .is_some_and(|v| v.contains(&format!("key: '{parent}'")) && v.contains("'Other'")));
     }
 
-    let store = LoadoutsStore::at(std::env::temp_dir().join("274bot-w1c-firegiant-resolve"));
+    let scratch = crate::IsolatedEnv::enter("w1c-firegiant-resolve");
+    let store = LoadoutsStore::at(scratch.dir.join("loadouts.json"));
     let r274 = api::game_data::for_revision(ClientRevision::R274).unwrap();
     let r289 = api::game_data::for_revision(ClientRevision::R289).unwrap();
 
