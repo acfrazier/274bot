@@ -182,6 +182,9 @@ enum ThreadMsg {
         generation: u64,
         message: String,
     },
+    /// A watchdog/Pause/session terminate cut script JS. The owning slot
+    /// must recreate the isolate; in-place single-flight recovery is unsafe.
+    ScriptCut,
     /// The tick's shim interact queue (`__rs2b0t_host.interact`), a
     /// FlatBuffer `InteractBatch` of [`crate::shim::InteractReq`]s
     /// forwarded after the tick's JS finished (parked or not).
@@ -269,6 +272,9 @@ pub struct LoadIsolate {
     /// Generation with a queued active-error outcome. Successful ticks are
     /// reported only while this is set, avoiding an allocation per tick.
     tick_outcome_error_generation: Mutex<Option<u64>>,
+    /// Set when the isolate confirms that a terminate cut script JS.
+    /// The owning slot consumes this once and recreates the runtime.
+    script_cut: AtomicBool,
     /// Interact requests forwarded by the tick thread (the shim
     /// `Bank`/`Banking` queue), drained by the host like logs.
     interacts: Mutex<Vec<crate::shim::InteractReq>>,
@@ -484,6 +490,7 @@ impl LoadIsolate {
             tick_errors: Mutex::new(HashMap::new()),
             tick_outcomes: Mutex::new(Vec::new()),
             tick_outcome_error_generation: Mutex::new(None),
+            script_cut: AtomicBool::new(false),
             interacts: Mutex::new(Vec::new()),
             lifecycle: Mutex::new(Vec::new()),
             paint: Mutex::new(None),
@@ -611,24 +618,35 @@ impl LoadIsolate {
         });
     }
 
-    /// Interrupt and report the currently active execution when its host
-    /// dispatch has exceeded the tick budget. `in_flight` can outlive the
-    /// corresponding V8 entry, so execution ownership is the final fence.
+    /// Interrupt the currently active execution against its own start time,
+    /// never the cadence of later host dispatches. If it is still inside its
+    /// horizon, arm one execution-scoped sleeper for the remaining time.
     fn interrupt_slow_execution(&self, ready: bool) {
         if !ready {
             return;
         }
-        let over = self
-            .in_flight
-            .lock()
-            .unwrap()
-            .as_ref()
-            .filter(|(_, _, started)| started.elapsed() > EXECUTION_WATCHDOG_HORIZON)
-            .map(|(_, tick, started)| (*tick, started.elapsed()));
-        let Some((tick, elapsed)) = over else {
+        let active = {
+            let st = self.teardown.lock().unwrap();
+            match (
+                st.phase,
+                st.execution_active,
+                st.execution_interrupt,
+                st.execution_started,
+            ) {
+                (TeardownPhase::Running, true, None, Some(started)) => {
+                    Some((st.execution_id, st.execution_tick, started.elapsed()))
+                }
+                _ => None,
+            }
+        };
+        let Some((execution_id, tick, elapsed)) = active else {
             return;
         };
-        if self.fire_execution_interrupt(teardown::ExecutionInterrupt::Watchdog) {
+        if elapsed <= EXECUTION_WATCHDOG_HORIZON {
+            self.arm_active_execution_deadline(teardown::ExecutionInterrupt::Watchdog);
+            return;
+        }
+        if self.fire_execution_interrupt(execution_id, teardown::ExecutionInterrupt::Watchdog) {
             let line = if tick == RECOVERY_ANCHOR_TICK {
                 format!("interrupted slow recoveryAnchor ({elapsed:?})")
             } else {
@@ -638,59 +656,76 @@ impl LoadIsolate {
         }
     }
 
-    /// Keep the runaway budget alive when dispatch stops producing the calls
-    /// that normally drive [`LoadIsolate::interrupt_slow_execution`]. The
-    /// execution id fences the sleeper from every later V8 entry.
+    /// Keep the active execution's original runaway horizon alive when the
+    /// next dispatch, Pause, or session reset observes it. At most one sleeper
+    /// is created for an execution; Pause/session reset can replace its owner.
     fn arm_active_execution_deadline(&self, owner: teardown::ExecutionInterrupt) {
         let deadline = {
-            let st = self.teardown.lock().unwrap();
-            match (
-                st.phase,
-                st.execution_active,
-                st.execution_interrupt,
-                st.execution_started,
-                self.terminate.get(),
-            ) {
-                (TeardownPhase::Running, true, None, Some(started), Some(handle)) => Some((
-                    st.execution_id,
-                    EXECUTION_WATCHDOG_HORIZON.saturating_sub(started.elapsed()),
-                    handle.clone(),
-                )),
-                _ => None,
+            let mut st = self.teardown.lock().unwrap();
+            let (Some(started), Some(handle)) = (st.execution_started, self.terminate.get()) else {
+                return;
+            };
+            if st.phase != TeardownPhase::Running
+                || !st.execution_active
+                || st.execution_interrupt.is_some()
+            {
+                return;
             }
+            if owner != teardown::ExecutionInterrupt::Watchdog
+                || st.execution_deadline_owner.is_none()
+            {
+                st.execution_deadline_owner = Some(owner);
+            }
+            if st.execution_deadline_armed {
+                return;
+            }
+            st.execution_deadline_armed = true;
+            Some((
+                st.execution_id,
+                EXECUTION_WATCHDOG_HORIZON.saturating_sub(started.elapsed()),
+                handle.clone(),
+            ))
         };
         let Some((execution_id, delay, terminate)) = deadline else {
             return;
         };
-        let (thread_name, log_name, require_pause) = match owner {
-            teardown::ExecutionInterrupt::Watchdog => {
-                ("script-watchdog-deadline", "watchdog", false)
-            }
-            teardown::ExecutionInterrupt::Pause => ("script-pause-deadline", "pause", true),
+        let (thread_name, log_name) = match owner {
+            teardown::ExecutionInterrupt::Watchdog => ("script-watchdog-deadline", "watchdog"),
+            teardown::ExecutionInterrupt::Pause => ("script-pause-deadline", "pause"),
             teardown::ExecutionInterrupt::SessionReset => {
-                ("script-session-deadline", "session reset", false)
+                ("script-session-deadline", "session reset")
             }
         };
         let teardown = std::sync::Arc::clone(&self.teardown);
+        let worker_teardown = std::sync::Arc::clone(&teardown);
         if let Err(error) = std::thread::Builder::new()
             .name(thread_name.into())
             .spawn(move || {
                 std::thread::sleep(delay);
-                let mut st = teardown.lock().unwrap();
+                let mut st = worker_teardown.lock().unwrap();
+                if st.execution_id != execution_id {
+                    return;
+                }
+                st.execution_deadline_armed = false;
+                let owner = st.execution_deadline_owner.take().unwrap_or(owner);
                 if st.phase == TeardownPhase::Running
-                    && (!require_pause || st.pause_requested)
+                    && (owner != teardown::ExecutionInterrupt::Pause || st.pause_requested)
                     && st.execution_active
-                    && st.execution_id == execution_id
                     && st.execution_interrupt.is_none()
                 {
                     st.execution_interrupt = Some(teardown::InterruptedExecution {
                         owner,
-                        stage: teardown::ExecutionStage::Other,
+                        consumed: false,
                     });
                     terminate.terminate_execution();
                 }
             })
         {
+            let mut st = teardown.lock().unwrap();
+            if st.execution_id == execution_id {
+                st.execution_deadline_armed = false;
+                st.execution_deadline_owner = None;
+            }
             self.logs
                 .lock()
                 .unwrap()
@@ -787,25 +822,8 @@ impl LoadIsolate {
         let generation = self
             .work_generation
             .load(std::sync::atomic::Ordering::Acquire);
-        let interrupted = {
-            let mut in_flight = self.in_flight.lock().unwrap();
-            let over = in_flight
-                .as_ref()
-                .filter(|(_, _, started)| ready && started.elapsed() > EXECUTION_WATCHDOG_HORIZON)
-                .map(|(_, tick, started)| (*tick, started.elapsed()));
-            *in_flight = Some((generation, RECOVERY_ANCHOR_TICK, Instant::now()));
-            over
-        };
-        if let Some((tick, elapsed)) = interrupted {
-            if self.fire_execution_interrupt(teardown::ExecutionInterrupt::Watchdog) {
-                let line = if tick == RECOVERY_ANCHOR_TICK {
-                    format!("interrupted slow recoveryAnchor ({elapsed:?})")
-                } else {
-                    format!("interrupted slow tick {tick} ({elapsed:?})")
-                };
-                self.logs.lock().unwrap().push(line);
-            }
-        }
+        self.interrupt_slow_execution(ready);
+        *self.in_flight.lock().unwrap() = Some((generation, RECOVERY_ANCHOR_TICK, Instant::now()));
         self.send(IsolateCmd::RecoveryAnchor { generation });
     }
 
@@ -835,6 +853,13 @@ impl LoadIsolate {
     pub fn drain_logs(&self) -> Vec<String> {
         self.pump_logs();
         std::mem::take(&mut *self.logs.lock().unwrap())
+    }
+    /// Consume the isolate's one cut notification. Only the owning slot calls
+    /// this; a standalone isolate remains stopped at the cut continuation.
+    pub(crate) fn take_script_cut(&self) -> bool {
+        self.pump_logs();
+        self.script_cut
+            .swap(false, std::sync::atomic::Ordering::AcqRel)
     }
 
     /// Drain typed outcomes already folded by the caller's regular
@@ -867,19 +892,21 @@ impl LoadIsolate {
         self.teardown.lock().unwrap().execution_active
     }
 
+    /// Monotonic identity and activity of the latest interruptible execution.
+    /// The identity remains after completion so lifecycle tests can observe
+    /// executions too short to sample while active.
+    #[doc(hidden)]
+    pub fn execution_sequence(&self) -> (u64, bool) {
+        let st = self.teardown.lock().unwrap();
+        (st.execution_id, st.execution_active)
+    }
+
     /// Number of per-tick diagnostics still awaiting their matching
     /// completion. Lifecycle regression seam; steady state is zero.
     #[doc(hidden)]
     pub fn pending_tick_error_count(&self) -> usize {
         self.pump_logs();
         self.tick_errors.lock().unwrap().len()
-    }
-
-    /// Whether the isolate is inside the script's loop/native tick call,
-    /// excluding record/onStart/paint bookkeeping.
-    #[doc(hidden)]
-    pub fn loop_execution_active(&self) -> bool {
-        self.teardown.lock().unwrap().execution_stage == teardown::ExecutionStage::Loop
     }
 
     /// Isolate-scoped seam: delay after the deadline owner is armed and
@@ -1083,20 +1110,25 @@ impl LoadIsolate {
         }
     }
 
-    /// Fire an eval interrupt only while the isolate thread owns an active
-    /// interruptible execution. The isolate-side finish/cancel uses this same
-    /// lock, so no terminate can leak into a later tick or `onStop`.
-    fn fire_execution_interrupt(&self, owner: teardown::ExecutionInterrupt) -> bool {
+    /// Fire an eval interrupt only for the exact execution the caller
+    /// inspected. The isolate-side finish/cancel uses this same lock, so a
+    /// delayed watchdog observation cannot terminate a later tick or onStop.
+    fn fire_execution_interrupt(
+        &self,
+        execution_id: u64,
+        owner: teardown::ExecutionInterrupt,
+    ) -> bool {
         let mut st = self.teardown.lock().unwrap();
         if st.phase != TeardownPhase::Running
             || !st.execution_active
+            || st.execution_id != execution_id
             || st.execution_interrupt.is_some()
         {
             return false;
         }
         st.execution_interrupt = Some(teardown::InterruptedExecution {
             owner,
-            stage: teardown::ExecutionStage::Other,
+            consumed: false,
         });
         self.fire_terminate();
         true
@@ -1211,6 +1243,10 @@ impl LoadIsolate {
                         .entry((tick, generation))
                         .or_default()
                         .push(message);
+                }
+                ThreadMsg::ScriptCut => {
+                    self.script_cut
+                        .store(true, std::sync::atomic::Ordering::Release);
                 }
                 ThreadMsg::ScriptStopped { tick, reason } => {
                     *self.script_stop.lock().unwrap() = Some(ScriptStopReceipt { tick, reason });

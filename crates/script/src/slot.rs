@@ -24,6 +24,10 @@ use crate::watchdog::{ProgressWatchdog, Tile as WatchdogTile, WatchdogAction};
 use api::native_input::NativeInputAuthority;
 use api::random::{DetectedRandom, RandomClaim};
 use serde::Serialize;
+#[cfg(feature = "load")]
+const CUT_RESTART_LIMIT: usize = 3;
+#[cfg(feature = "load")]
+const CUT_RESTART_WINDOW: Duration = Duration::from_secs(5 * 60);
 
 /// Failure at initial loaded-script Start, distinct from an operational refusal.
 #[cfg(feature = "load")]
@@ -93,6 +97,7 @@ pub struct SlotLoadIdentity {
 enum AfterStop {
     Idle,
     Restart,
+    CutLimit(String),
     Start,
     Fail(String),
 }
@@ -216,6 +221,12 @@ pub struct SlotScript {
     load_identity: Option<SlotLoadIdentity>,
     #[cfg(feature = "load")]
     watchdog: ProgressWatchdog,
+    /// Fixed-size rolling window for terminate-driven runtime recreates.
+    /// The third cut inside [`CUT_RESTART_WINDOW`] stops the script.
+    #[cfg(feature = "load")]
+    cut_restart_times: [Option<Instant>; CUT_RESTART_LIMIT],
+    #[cfg(feature = "load")]
+    cut_restart_next: usize,
     /// Stable source identity key for this execution (`catalog:Name` / file path).
     source_identity: Option<String>,
     /// Bumped on each successful Start and watchdog isolate replacement.
@@ -286,6 +297,10 @@ impl SlotScript {
             load_identity: None,
             #[cfg(feature = "load")]
             watchdog: ProgressWatchdog::new(),
+            #[cfg(feature = "load")]
+            cut_restart_times: [None; CUT_RESTART_LIMIT],
+            #[cfg(feature = "load")]
+            cut_restart_next: 0,
             source_identity: None,
             runtime_generation: 0,
             last_settings_fp: None,
@@ -508,6 +523,8 @@ impl SlotScript {
         self.pending_bank_op = None;
         self.bank_op_result_seq = 0;
         self.bank_op_result = false;
+        self.cut_restart_times = [None; CUT_RESTART_LIMIT];
+        self.cut_restart_next = 0;
     }
 
     #[cfg(feature = "load")]
@@ -658,6 +675,10 @@ impl SlotScript {
                 }
             }
         }
+        let script_cut = self.load.as_ref().is_some_and(LoadIsolate::take_script_cut);
+        if script_cut {
+            self.handle_script_cut(Instant::now());
+        }
         let Some(rx) = self.stop_rx.take() else {
             return;
         };
@@ -669,6 +690,52 @@ impl SlotScript {
             Err(std::sync::mpsc::TryRecvError::Empty) => self.stop_rx = Some(rx),
             Err(std::sync::mpsc::TryRecvError::Disconnected) => self.complete_stop(),
         }
+    }
+    #[cfg(feature = "load")]
+    fn handle_script_cut(&mut self, now: Instant) {
+        self.cut_restart_times[self.cut_restart_next] = Some(now);
+        self.cut_restart_next = (self.cut_restart_next + 1) % CUT_RESTART_LIMIT;
+        let recent = self
+            .cut_restart_times
+            .iter()
+            .flatten()
+            .filter(|cut| now.saturating_duration_since(**cut) <= CUT_RESTART_WINDOW)
+            .count();
+        if recent >= CUT_RESTART_LIMIT {
+            let error =
+                "script stopped after 3 runaway JavaScript cuts within 5 minutes".to_string();
+            self.pending_logs.push(error.clone());
+            self.last_error = Some(error.clone());
+            self.active_tick_error_generation = None;
+            self.want_run = false;
+            self.revoke_native_input();
+            if !self.begin_async_stop(AfterStop::CutLimit(error.clone())) {
+                self.finish_cut_limit(error);
+            }
+            return;
+        }
+        if let Err(error) = self.apply_load_restart(now) {
+            self.pending_logs.push(error.clone());
+            self.last_error = Some(error.clone());
+            self.want_run = false;
+            self.revoke_native_input();
+            if !self.begin_async_stop(AfterStop::CutLimit(error.clone())) {
+                self.finish_cut_limit(error);
+            }
+        }
+    }
+
+    #[cfg(feature = "load")]
+    fn finish_cut_limit(&mut self, error: String) {
+        self.load_identity = None;
+        self.source_identity = None;
+        self.watchdog.cancel_clear();
+        self.active_tick_error_generation = None;
+        self.last_error = Some(error);
+        self.want_run = false;
+        self.state = RunState::Error;
+        self.runtime_generation = self.runtime_generation.wrapping_add(1);
+        self.last_settings_fp = None;
     }
 
     #[cfg(feature = "load")]
@@ -695,6 +762,7 @@ impl SlotScript {
                 self.state = RunState::Idle;
             }
             AfterStop::Fail(e) => self.fail_setup(e),
+            AfterStop::CutLimit(error) => self.finish_cut_limit(error),
             // The cooldown was stamped when the restart was decided.
             AfterStop::Restart => match self.load_identity.clone() {
                 Some(identity) => {
@@ -1357,18 +1425,26 @@ impl SlotScript {
         if self.watchdog.frozen() {
             return Err("watchdog restart cancelled: frozen".into());
         }
-        let Some(identity) = self.load_identity.clone() else {
-            return Err("watchdog restart: no retained identity".into());
-        };
         if self.state == RunState::Stopping {
             // A respawn is already queued behind this reap.
             return match self.after_stop {
                 AfterStop::Restart | AfterStop::Start => Ok(()),
-                AfterStop::Idle | AfterStop::Fail(_) => {
+                AfterStop::Idle | AfterStop::Fail(_) | AfterStop::CutLimit(_) => {
                     Err("watchdog restart cancelled: stopping".into())
                 }
             };
         }
+        self.apply_load_restart(now)
+    }
+
+    /// Common retained-identity recreate used by the stall watchdog and by a
+    /// confirmed JavaScript cut. Policy checks belong to the callers: a
+    /// Pause-deadline cut deliberately recreates while operator-paused.
+    #[cfg(feature = "load")]
+    fn apply_load_restart(&mut self, now: Instant) -> Result<(), String> {
+        let Some(identity) = self.load_identity.clone() else {
+            return Err("watchdog restart: no retained identity".into());
+        };
         self.run_policy_override.clear();
         self.revoke_native_input();
         if self.begin_async_stop(AfterStop::Restart) {
@@ -1449,6 +1525,24 @@ impl SlotScript {
             Some(isolate) => isolate.probe(expr),
             None => Err("no load isolate".to_string()),
         }
+    }
+    /// Whether this slot's isolate owns an interruptible execution.
+    #[cfg(feature = "load")]
+    #[doc(hidden)]
+    pub fn load_execution_active(&self) -> bool {
+        self.load
+            .as_ref()
+            .is_some_and(LoadIsolate::execution_active)
+    }
+
+    /// Monotonic identity and activity of this slot's latest interruptible
+    /// isolate execution.
+    #[cfg(feature = "load")]
+    #[doc(hidden)]
+    pub fn load_execution_sequence(&self) -> (u64, bool) {
+        self.load
+            .as_ref()
+            .map_or((0, false), LoadIsolate::execution_sequence)
     }
 
     /// Call only on observed server tick. Dispatches the JS isolate's

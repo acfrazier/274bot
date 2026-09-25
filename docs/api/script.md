@@ -39,12 +39,16 @@ instance; `want_run` distinguishes operator Pause from offline.
 - Catalog cards are **Catalog** source: static parse of
   `src/bot/scripts/index.ts` (no V8 at registration). Browse fills both
   panel and TUI pickers.
-- Isolate is its own OS thread; ~50 ms budget; **64 MB V8 heap cap**
-  (`heap_limits(0, 64 MiB)`). The isolate starts small and grows with the
-  live set — not 64 MB reserved per card. Over the cap, the isolate is
-  terminated. Extra RSS (OS thread, deno/rustyscript, code space) sits on
-  top of JS heap and is **unmeasured** at the 50-slot wall — `rss_ladder`
-  is Null/draw-off clients, not Started JS.
+- Isolate is its own OS thread; a non-yielding execution has a **600 ms
+  runaway horizon** measured from that execution's own start; **64 MB V8 heap
+  cap** (`heap_limits(0, 64 MiB)`). A confirmed watchdog, Pause-deadline, or
+  session-reset cut is logged and recreates the script runtime (still paused
+  after an operator Pause). Three cuts within five minutes stop the script
+  with an error instead of restarting forever. The isolate starts small and
+  grows with the live set — not 64 MB reserved per card. Over the heap cap,
+  the isolate is terminated. Extra RSS (OS thread, deno/rustyscript, code
+  space) sits on top of JS heap and is **unmeasured** at the 50-slot wall —
+  `rss_ladder` is Null/draw-off clients, not Started JS.
 
 ### Content-addressed transpile cache
 

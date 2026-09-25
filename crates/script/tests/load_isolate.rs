@@ -599,142 +599,464 @@ fn pause_allows_an_in_budget_async_native_tick_to_resume() {
     iso.join();
 }
 
-fn assert_pause_recovers_terminated_async_continuation(source: &str, shape: LoadShape) {
-    let iso = spawn_ready(source.to_string(), shape, vec![]);
-    iso.on_game_tick(1);
-    iso.probe("true")
-        .expect("first tick parks on its host wait");
-    assert_eq!(iso.probe("__loops || 0").unwrap(), 1);
-    assert_eq!(iso.probe("globalThis.__done || 0").unwrap(), 0);
+const CUT_TRACKING: &str = r#"
+function __spin() { const start = Date.now(); while (Date.now() - start < 5000) {} }
+function __enter() {
+    const entry = (globalThis.__entries = (globalThis.__entries || 0) + 1);
+    globalThis.__active = (globalThis.__active || 0) + 1;
+    globalThis.__maxActive = Math.max(globalThis.__maxActive || 0, globalThis.__active);
+    return entry;
+}
+function __leave() {
+    globalThis.__active -= 1;
+    globalThis.__done = (globalThis.__done || 0) + 1;
+}
+"#;
 
-    iso.on_game_tick(2);
+fn h_probe_source(case: &str, v2: bool) -> String {
+    let imports = "import { BotHost } from '../../runtime/BotHost.js'; \
+                   import { Execution } from '../../api/execution/Execution.js';";
+    let body = match (case, v2) {
+        ("H1", false) => {
+            r#"
+let __wake;
+const __gate = new Promise((resolve) => { __wake = resolve; });
+(async () => { await __gate; __spin(); globalThis.__sideDone = true; })();
+export default class T extends LoopingBot {
+    async loop() {
+        const entry = __enter();
+        if (entry === 1) {
+            await Execution.delayTicks(2);
+            __wake();
+            await Execution.delayTicks(4);
+        } else {
+            await Execution.delayTicks(10);
+        }
+        __leave();
+    }
+}"#
+        }
+        ("H1", true) => {
+            r#"
+export const apiVersion = 2;
+let __wake;
+const __gate = new Promise((resolve) => { __wake = resolve; });
+(async () => { await __gate; __spin(); globalThis.__sideDone = true; })();
+export async function tick() {
+    const entry = __enter();
+    if (entry === 1) {
+        await Execution.delayTicks(2);
+        __wake();
+        await Execution.delayTicks(4);
+    } else {
+        await Execution.delayTicks(10);
+    }
+    __leave();
+}"#
+        }
+        ("H1b", false) => {
+            r#"
+async function __helper() { await null; __spin(); globalThis.__helperDone = true; }
+export default class T extends LoopingBot {
+    async loop() {
+        const entry = __enter();
+        if (entry === 1) await Execution.delayTicks(1);
+        else if (entry === 2) { __helper(); await Execution.delayTicks(4); }
+        else await Execution.delayTicks(10);
+        __leave();
+    }
+}"#
+        }
+        ("H1b", true) => {
+            r#"
+export const apiVersion = 2;
+async function __helper() { await null; __spin(); globalThis.__helperDone = true; }
+export async function tick() {
+    const entry = __enter();
+    if (entry === 1) await Execution.delayTicks(2);
+    else if (entry === 2) { __helper(); await Execution.delayTicks(4); }
+    else await Execution.delayTicks(10);
+    __leave();
+}"#
+        }
+        ("H3", false) => {
+            r#"
+let __release = null;
+export default class T extends LoopingBot {
+    onStart() {
+        BotHost.addTickListener(() => {
+            if (globalThis.__rs2b0t_host.tick === 8 && __release) {
+                const release = __release;
+                __release = null;
+                release();
+            }
+        });
+    }
+    async loop() {
+        const entry = __enter();
+        if (entry === 1) {
+            (async () => {
+                await Execution.delayTicks(2);
+                __spin();
+                globalThis.__sideDone = true;
+            })();
+            await new Promise((resolve) => { __release = resolve; });
+        } else {
+            await Execution.delayTicks(10);
+        }
+        __leave();
+    }
+}"#
+        }
+        ("H3", true) => {
+            r#"
+export const apiVersion = 2;
+let __release = null;
+BotHost.addTickListener(() => {
+    if (globalThis.__rs2b0t_host.tick === 8 && __release) {
+        const release = __release;
+        __release = null;
+        release();
+    }
+});
+export async function tick() {
+    const entry = __enter();
+    if (entry === 1) {
+        (async () => {
+            await Execution.delayTicks(2);
+            __spin();
+            globalThis.__sideDone = true;
+        })();
+        await new Promise((resolve) => { __release = resolve; });
+    } else {
+        await Execution.delayTicks(10);
+    }
+    __leave();
+}"#
+        }
+        _ => unreachable!("unknown H probe"),
+    };
+    [imports, CUT_TRACKING, body].concat()
+}
+
+fn h2_probe_source(v2: bool, background_delay: u64) -> String {
+    let imports = "import { Execution } from '../../api/execution/Execution.js';";
+    let body = if v2 {
+        format!(
+            r#"
+export const apiVersion = 2;
+export async function tick() {{
+    const entry = __enter();
+    if (entry === 1) {{
+        (async () => {{
+            for (;;) {{
+                await Execution.delayTicks({background_delay});
+                globalThis.__bg = (globalThis.__bg || 0) + 1;
+            }}
+        }})();
+    }}
+    await Execution.delayTicks(2);
+    if (entry === 1) {{
+        globalThis.__active -= 1;
+        __spin();
+        globalThis.__active += 1;
+    }}
+    __leave();
+}}"#
+        )
+    } else {
+        format!(
+            r#"
+export default class T extends LoopingBot {{
+    onStart() {{
+        (async () => {{
+            for (;;) {{
+                await Execution.delayTicks({background_delay});
+                globalThis.__bg = (globalThis.__bg || 0) + 1;
+            }}
+        }})();
+    }}
+    async loop() {{
+        const entry = __enter();
+        await Execution.delayTicks(2);
+        if (entry === 1) {{
+            globalThis.__active -= 1;
+            __spin();
+            globalThis.__active += 1;
+        }}
+        __leave();
+    }}
+}}"#
+        )
+    };
+    [imports, CUT_TRACKING, &body].concat()
+}
+
+fn dispatch_slot_tick(slot: &mut SlotScript, driver: &mut NullDriver, tick: u64) {
+    slot.on_game_tick(&mut ScriptCtx {
+        driver,
+        tick,
+        here: None,
+        walk: None,
+        walk_with: None,
+        inv: None,
+        snapshot: None,
+        obj_names: None,
+        compiled: script::CompiledTick::default(),
+    });
+}
+
+fn drive_until_runaway(slot: &mut SlotScript, driver: &mut NullDriver, next_tick: &mut u64) -> u64 {
+    for _ in 0..12 {
+        let tick = *next_tick;
+        *next_tick += 1;
+        let (before, _) = slot.load_execution_sequence();
+        dispatch_slot_tick(slot, driver, tick);
+        let entry_deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            let (execution, active) = slot.load_execution_sequence();
+            if execution != before {
+                if !active {
+                    break;
+                }
+                let runaway_deadline = Instant::now() + Duration::from_millis(400);
+                while slot.load_execution_active() && Instant::now() < runaway_deadline {
+                    thread::yield_now();
+                }
+                if slot.load_execution_active() {
+                    return tick;
+                }
+                break;
+            }
+            assert!(
+                Instant::now() < entry_deadline,
+                "tick {tick} never entered the isolate"
+            );
+            thread::yield_now();
+        }
+    }
+    panic!("probe never entered its runaway execution");
+}
+
+fn wait_for_cut_restart(
+    slot: &mut SlotScript,
+    previous_generation: u64,
+    expected: script::RunState,
+) -> Vec<String> {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut logs = Vec::new();
+    while Instant::now() < deadline {
+        slot.observe_lifecycle();
+        logs.extend(slot.take_pending_logs());
+        if slot.runtime_generation() > previous_generation && slot.state() == expected {
+            return logs;
+        }
+        thread::sleep(Duration::from_millis(2));
+    }
+    panic!(
+        "cut did not recreate the script: state={:?}, generation={}, error={:?}, logs={logs:?}",
+        slot.state(),
+        slot.runtime_generation(),
+        slot.last_error()
+    );
+}
+
+fn assert_cut_restarts(source: String, shape: LoadShape, pause: bool, label: &str) {
+    let mut slot = SlotScript::new();
+    slot.start_load(source, shape, vec![]).unwrap();
+    wait_slot_state(&mut slot, script::RunState::Running);
+    let generation = slot.runtime_generation();
+    let mut driver = NullDriver::default();
+    let mut next_tick = 1;
+    drive_until_runaway(&mut slot, &mut driver, &mut next_tick);
+
+    let expected = if pause {
+        slot.pause();
+        script::RunState::Paused
+    } else {
+        thread::sleep(Duration::from_millis(560));
+        dispatch_slot_tick(&mut slot, &mut driver, next_tick);
+        next_tick += 1;
+        script::RunState::Running
+    };
+    let logs = wait_for_cut_restart(&mut slot, generation, expected);
+    let owner = if pause { "Pause deadline" } else { "watchdog" };
+    assert!(
+        logs.iter()
+            .any(|line| line.contains("runaway execution interrupted by") && line.contains(owner)),
+        "{label}: missing cut log: {logs:?}"
+    );
+    assert_eq!(
+        slot.runtime_generation(),
+        generation + 1,
+        "{label}: exactly one recreate"
+    );
+    if pause {
+        assert_eq!(slot.state(), script::RunState::Paused, "{label}");
+        slot.resume();
+        assert_eq!(slot.state(), script::RunState::Running, "{label}");
+    }
+
+    dispatch_slot_tick(&mut slot, &mut driver, next_tick);
+    slot.probe("true").expect("fresh runtime must answer");
+    assert_eq!(
+        slot.probe("globalThis.__entries || 0").unwrap(),
+        1,
+        "{label}: entries must advance in the fresh runtime"
+    );
+    assert_eq!(
+        slot.probe("globalThis.__maxActive || 0").unwrap(),
+        1,
+        "{label}: fresh runtime must keep one lifecycle flight"
+    );
+    slot.stop();
+    wait_slot_state(&mut slot, script::RunState::Idle);
+}
+
+#[test]
+fn lifecycle_side_continuation_cuts_restart_the_script_single_flight() {
+    for case in ["H1", "H1b", "H3"] {
+        for v2 in [false, true] {
+            for pause in [false, true] {
+                let label = format!(
+                    "{case}-{}-{}",
+                    if v2 { "v2" } else { "compat" },
+                    if pause { "pause" } else { "watchdog" }
+                );
+                assert_cut_restarts(
+                    h_probe_source(case, v2),
+                    if v2 {
+                        LoadShape::NativeTick
+                    } else {
+                        LoadShape::CompatClass
+                    },
+                    pause,
+                    &label,
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn background_waiters_do_not_wedge_cut_restart() {
+    for (name, delay) in [("H2-bg", 1), ("H2s", 5)] {
+        for v2 in [false, true] {
+            for pause in [false, true] {
+                let label = format!(
+                    "{name}-{}-{}",
+                    if v2 { "v2" } else { "compat" },
+                    if pause { "pause" } else { "watchdog" }
+                );
+                assert_cut_restarts(
+                    h2_probe_source(v2, delay),
+                    if v2 {
+                        LoadShape::NativeTick
+                    } else {
+                        LoadShape::CompatClass
+                    },
+                    pause,
+                    &label,
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn dispatch_watchdog_uses_active_execution_start_and_tick() {
+    let source = [
+        CUT_TRACKING,
+        "export function tick() { if (globalThis.__rs2b0t_host.tick === 3) __spin(); }",
+    ]
+    .concat();
+    let mut slot = SlotScript::new();
+    slot.start_load(source, LoadShape::NativeTick, vec![])
+        .unwrap();
+    wait_slot_state(&mut slot, script::RunState::Running);
+    let generation = slot.runtime_generation();
+    let mut driver = NullDriver::default();
+    for tick in 1..=3 {
+        dispatch_slot_tick(&mut slot, &mut driver, tick);
+        if tick < 3 {
+            slot.probe("true").unwrap();
+        }
+    }
     let deadline = Instant::now() + Duration::from_secs(2);
-    while !iso.loop_execution_active() {
-        assert!(
-            Instant::now() < deadline,
-            "host-resolved continuation never entered"
-        );
+    while !slot.load_execution_active() {
+        assert!(Instant::now() < deadline, "runaway tick 3 never entered");
         thread::yield_now();
     }
-    iso.pause();
-    iso.probe("true")
-        .expect("Pause must settle the terminated continuation");
-    iso.resume();
-    iso.probe("true").expect("Resume must be observed");
-    iso.on_game_tick(3);
-    let loops = iso.probe("__loops || 0").unwrap();
-    let logs = iso.drain_logs();
-    assert_eq!(loops, 2, "interruption logs: {logs:?}");
-    assert_eq!(
-        iso.probe("__done || 0").unwrap(),
-        1,
-        "the terminated continuation must not poison the next loop"
+    let observed = Instant::now();
+    thread::sleep(Duration::from_millis(560));
+    dispatch_slot_tick(&mut slot, &mut driver, 4);
+    let logs = wait_for_cut_restart(&mut slot, generation, script::RunState::Running);
+    assert!(
+        observed.elapsed() < Duration::from_millis(900),
+        "watchdog was cadence-delayed: {:?}",
+        observed.elapsed()
     );
-    iso.join();
+    assert!(
+        logs.iter()
+            .any(|line| { line.contains("tick 3: runaway execution interrupted by watchdog") }),
+        "watchdog blamed the wrong dispatch: {logs:?}"
+    );
+    slot.stop();
+    wait_slot_state(&mut slot, script::RunState::Idle);
 }
 
 #[test]
-fn pause_resets_a_terminated_compat_async_continuation() {
-    assert_pause_recovers_terminated_async_continuation(
-        "import { Execution } from '../../api/execution/Execution.js';
-        export default class T extends LoopingBot {
-            async loop() {
-                globalThis.__loops = (globalThis.__loops || 0) + 1;
-                if (globalThis.__loops === 1) {
-                    await Execution.delayTicks(1);
-                    for (;;) {}
-                }
-                globalThis.__done = (globalThis.__done || 0) + 1;
+fn repeated_cut_restarts_are_bounded() {
+    let source = [
+        CUT_TRACKING,
+        "export function tick() { __enter(); __spin(); }",
+    ]
+    .concat();
+    let mut slot = SlotScript::new();
+    slot.start_load(source, LoadShape::NativeTick, vec![])
+        .unwrap();
+    wait_slot_state(&mut slot, script::RunState::Running);
+    let mut driver = NullDriver::default();
+    let mut next_tick = 1;
+
+    for cut in 1..=3 {
+        let generation = slot.runtime_generation();
+        drive_until_runaway(&mut slot, &mut driver, &mut next_tick);
+        thread::sleep(Duration::from_millis(560));
+        dispatch_slot_tick(&mut slot, &mut driver, next_tick);
+        next_tick += 1;
+        if cut < 3 {
+            let logs = wait_for_cut_restart(&mut slot, generation, script::RunState::Running);
+            assert!(
+                logs.iter()
+                    .any(|line| line.contains("runaway execution interrupted by watchdog")),
+                "cut {cut}: {logs:?}"
+            );
+        } else {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            let mut logs = Vec::new();
+            while slot.state() != script::RunState::Error && Instant::now() < deadline {
+                slot.observe_lifecycle();
+                logs.extend(slot.take_pending_logs());
+                thread::sleep(Duration::from_millis(2));
             }
-        }",
-        LoadShape::CompatClass,
-    );
-}
-
-#[test]
-fn pause_resets_a_terminated_v2_async_continuation() {
-    assert_pause_recovers_terminated_async_continuation(
-        "import { Execution } from '../../api/execution/Execution.js';
-        export const apiVersion = 2;
-        export async function tick() {
-            globalThis.__loops = (globalThis.__loops || 0) + 1;
-            if (globalThis.__loops === 1) {
-                await Execution.delayTicks(1);
-                for (;;) {}
-            }
-            globalThis.__done = (globalThis.__done || 0) + 1;
-        }",
-        LoadShape::NativeTick,
-    );
-}
-
-fn assert_watchdog_recovers_terminated_async_continuation(source: &str, shape: LoadShape) {
-    let iso = spawn_ready(source.to_string(), shape, vec![]);
-    iso.on_game_tick(1);
-    iso.probe("true")
-        .expect("first tick parks on its host wait");
-    assert_eq!(iso.probe("__loops || 0").unwrap(), 1);
-    assert_eq!(iso.probe("globalThis.__done || 0").unwrap(), 0);
-
-    iso.on_game_tick(2);
-    let deadline = Instant::now() + Duration::from_secs(2);
-    while !iso.loop_execution_active() {
-        assert!(
-            Instant::now() < deadline,
-            "host-resolved continuation never entered"
-        );
-        thread::yield_now();
+            logs.extend(slot.take_pending_logs());
+            assert_eq!(slot.state(), script::RunState::Error, "{logs:?}");
+            assert!(
+                slot.last_error()
+                    .is_some_and(|error| error.contains("3 runaway JavaScript cuts")),
+                "visible bounded-restart error missing: {:?}, {logs:?}",
+                slot.last_error()
+            );
+            assert!(
+                logs.iter()
+                    .any(|line| line.contains("3 runaway JavaScript cuts")),
+                "bounded-restart error missing from logs: {logs:?}"
+            );
+        }
     }
-    thread::sleep(Duration::from_millis(650));
-    iso.on_game_tick(3);
-    iso.probe("true")
-        .expect("watchdog must settle the terminated continuation");
-    iso.on_game_tick(4);
-    let loops = iso.probe("__loops || 0").unwrap();
-    let logs = iso.drain_logs();
-    assert_eq!(loops, 2, "interruption logs: {logs:?}");
-    assert_eq!(
-        iso.probe("__done || 0").unwrap(),
-        1,
-        "the watchdog-terminated continuation must not poison the next loop"
-    );
-    iso.join();
 }
 
-#[test]
-fn watchdog_resets_a_terminated_compat_async_continuation() {
-    assert_watchdog_recovers_terminated_async_continuation(
-        "import { Execution } from '../../api/execution/Execution.js';
-        export default class T extends LoopingBot {
-            async loop() {
-                globalThis.__loops = (globalThis.__loops || 0) + 1;
-                if (globalThis.__loops === 1) {
-                    await Execution.delayTicks(1);
-                    for (;;) {}
-                }
-                globalThis.__done = (globalThis.__done || 0) + 1;
-            }
-        }",
-        LoadShape::CompatClass,
-    );
-}
-
-#[test]
-fn watchdog_resets_a_terminated_v2_async_continuation() {
-    assert_watchdog_recovers_terminated_async_continuation(
-        "import { Execution } from '../../api/execution/Execution.js';
-        export const apiVersion = 2;
-        export async function tick() {
-            globalThis.__loops = (globalThis.__loops || 0) + 1;
-            if (globalThis.__loops === 1) {
-                await Execution.delayTicks(1);
-                for (;;) {}
-            }
-            globalThis.__done = (globalThis.__done || 0) + 1;
-        }",
-        LoadShape::NativeTick,
-    );
-}
 // P17/P17b: when an unrelated host wait resumes and is interrupted while a
 // lifecycle future is still parked, the cut is ambiguous. It must be reported,
 // but must not reset the parked lifecycle runner and admit a second flight.
@@ -1072,7 +1394,7 @@ fn queued_pause_resume_tick_pause_keeps_final_pause_intent() {
     );
     iso.on_game_tick(1);
     let deadline = Instant::now() + Duration::from_secs(2);
-    while !iso.loop_execution_active() {
+    while !iso.execution_active() {
         assert!(Instant::now() < deadline, "first tick never entered");
         thread::yield_now();
     }
@@ -1085,17 +1407,15 @@ fn queued_pause_resume_tick_pause_keeps_final_pause_intent() {
         "fixture tick ended before the command interleaving was queued"
     );
 
-    thread::sleep(Duration::from_millis(120));
-    assert!(
-        !iso.execution_active(),
-        "the queued tick entered despite the final Pause intent"
-    );
-    iso.resume();
+    // The probe is a FIFO barrier behind the final Pause command. Unlike a
+    // fixed sleep or sampling the gap between executions, its reply proves
+    // the isolate consumed the final intent before the test resumes it.
     assert_eq!(
         iso.probe("__entries").unwrap(),
         1,
         "the runaway second tick must have been refused"
     );
+    iso.resume();
     iso.join();
 }
 
@@ -1373,7 +1693,7 @@ fn session_reset_keeps_the_active_runaway_deadline() {
     assert_eq!(iso.probe("__started").unwrap(), true);
     iso.on_game_tick(2);
     let entry_deadline = Instant::now() + Duration::from_secs(2);
-    while !iso.loop_execution_active() {
+    while !iso.execution_active() {
         assert!(
             Instant::now() < entry_deadline,
             "runaway tick never entered execution"

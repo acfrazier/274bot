@@ -12,8 +12,8 @@ pub(super) enum TeardownPhase {
 }
 
 /// Owner of a terminate request aimed at the current tick/recovery eval.
-/// Pause cancellation and a connection boundary are not script failures;
-/// the dispatch watchdog is.
+/// Ownership selects the diagnostic only; every consumed request follows the
+/// same cut-and-recreate policy.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum ExecutionInterrupt {
     Watchdog,
@@ -22,18 +22,12 @@ pub(super) enum ExecutionInterrupt {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(super) enum ExecutionStage {
-    Other,
-    TickListener,
-    OnStart,
-    Loop,
-    Paint,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) struct InterruptedExecution {
     pub(super) owner: ExecutionInterrupt,
-    pub(super) stage: ExecutionStage,
+    /// Set only by the V8-entry fence around the call that consumed the
+    /// terminate. A request that arrived after a call returned is cancelled,
+    /// never treated as a cut.
+    pub(super) consumed: bool,
 }
 
 /// Phase, Hook-entry deadline, and at-most-one interrupt. Finish and the
@@ -56,19 +50,22 @@ pub(super) struct TeardownState {
     /// Pause, connection reset, and the dispatch watchdog may terminate only
     /// while this is true.
     pub(super) execution_active: bool,
-    /// Identity and start time of the active execution. One-shot deadlines
-    /// capture the identity so they cannot terminate later work.
+    /// Identity, owning tick, and start time of the active execution.
+    /// Deadlines capture the identity so they cannot terminate later work.
     pub(super) execution_id: u64,
+    pub(super) execution_tick: u64,
+    pub(super) execution_generation: u64,
     pub(super) execution_started: Option<Instant>,
-    /// Narrow stage seam used to distinguish lifecycle continuations from
-    /// paint, listeners, and tick bookkeeping in interruption recovery.
-    pub(super) execution_stage: ExecutionStage,
+    /// At most one execution-scoped deadline worker is live. Pause and a
+    /// session reset may replace its owner without changing its original
+    /// cadence-independent deadline.
+    pub(super) execution_deadline_armed: bool,
+    pub(super) execution_deadline_owner: Option<ExecutionInterrupt>,
     /// Pause intent published synchronously by the host. It blocks the next
     /// entry but does not halt healthy work that already owns execution.
     pub(super) pause_requested: bool,
     /// A terminate armed for the active eval and not yet cancelled by the
-    /// isolate thread. Its recovery stage is written only when V8 reports
-    /// that this exact call consumed the termination.
+    /// isolate thread.
     pub(super) execution_interrupt: Option<InterruptedExecution>,
 }
 
@@ -85,9 +82,12 @@ impl TeardownState {
             test_hook_timeout: None,
             execution_active: false,
             execution_id: 0,
+            execution_tick: 0,
+            execution_generation: 0,
             execution_started: None,
+            execution_deadline_armed: false,
+            execution_deadline_owner: None,
             pause_requested: false,
-            execution_stage: ExecutionStage::Other,
             execution_interrupt: None,
         }
     }
@@ -164,20 +164,24 @@ pub(super) fn machines_halted(teardown: &Mutex<TeardownState>) -> bool {
     st.phase != TeardownPhase::Running || st.execution_interrupt.is_some()
 }
 
-pub(super) fn set_execution_stage(teardown: &Mutex<TeardownState>, stage: ExecutionStage) {
-    teardown.lock().unwrap().execution_stage = stage;
-}
 /// Claim the next tick/recovery eval. This closes the race where Pause sees no
 /// active eval immediately before the isolate thread enters a queued one.
-pub(super) fn begin_interruptible_execution(teardown: &Mutex<TeardownState>) -> bool {
+pub(super) fn begin_interruptible_execution(
+    teardown: &Mutex<TeardownState>,
+    tick: u64,
+    generation: u64,
+) -> bool {
     let mut st = teardown.lock().unwrap();
     if st.phase != TeardownPhase::Running || st.pause_requested {
         return false;
     }
     st.execution_id = st.execution_id.wrapping_add(1);
+    st.execution_tick = tick;
+    st.execution_generation = generation;
     st.execution_started = Some(Instant::now());
     st.execution_active = true;
-    st.execution_stage = ExecutionStage::Other;
+    st.execution_deadline_armed = false;
+    st.execution_deadline_owner = None;
     true
 }
 
@@ -191,7 +195,8 @@ pub(super) fn finish_interruptible_execution(
     let mut st = teardown.lock().unwrap();
     st.execution_active = false;
     st.execution_started = None;
-    st.execution_stage = ExecutionStage::Other;
+    st.execution_deadline_armed = false;
+    st.execution_deadline_owner = None;
     let interrupt = st.execution_interrupt.take();
     runtime
         .deno_runtime()
