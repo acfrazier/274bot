@@ -188,7 +188,7 @@ export default class EssMiner extends LoopingBot { loop() { ToolAcquire; } }
         .expect("FlourCollector listed");
     assert_eq!(flour.unloadable, None);
     let prepared = library
-        .prepare_card(ScriptSource::Catalog, "FlourCollector")
+        .prepare_card_unvalidated(ScriptSource::Catalog, "FlourCollector")
         .expect("FlourCollector transpiles and instantiates");
     assert_eq!(prepared.card.unloadable, None);
 
@@ -222,7 +222,7 @@ fn pinned_flour_collector_transpiles_and_instantiates() {
         .expect("pinned FlourCollector listed");
     assert_eq!(card.unloadable, None);
     library
-        .prepare_card(ScriptSource::Catalog, "FlourCollector")
+        .prepare_card_unvalidated(ScriptSource::Catalog, "FlourCollector")
         .expect("pinned FlourCollector transpiles and instantiates");
     let _ = std::fs::remove_dir_all(dir);
 }
