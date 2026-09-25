@@ -305,9 +305,7 @@ impl Play {
         };
         {
             let mut slot = slot.lock().unwrap();
-            if slot.source_identity() != Some(identity)
-                || slot.runtime_generation() != generation
-            {
+            if slot.source_identity() != Some(identity) || slot.runtime_generation() != generation {
                 return false;
             }
             slot.stop();

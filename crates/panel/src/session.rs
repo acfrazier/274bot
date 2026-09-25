@@ -2983,11 +2983,7 @@ impl Session {
         if self.pending_slot_removals.is_empty() {
             return;
         }
-        let statuses = self
-            .play
-            .as_ref()
-            .map(Play::statuses)
-            .unwrap_or_default();
+        let statuses = self.play.as_ref().map(Play::statuses).unwrap_or_default();
         let now = Instant::now();
         let ready: Vec<String> = self
             .pending_slot_removals

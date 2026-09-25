@@ -9,9 +9,9 @@
 //! closed state is observed. Operator Pause/Stop/Logout are not resumed
 //! here.
 
-use std::time::{Duration, Instant};
 use api::interact::{Driver, Interactions, SendReason, SendResult};
 use api::snapshot::GameSnapshot;
+use std::time::{Duration, Instant};
 
 /// Native welcome is showing when the LAST_LOGIN_INFO-selected interface
 /// is the current main modal.
@@ -626,7 +626,10 @@ mod tests {
         };
         let settled = readiness.step(&closed, || panic!("closed modal needs no action"));
         assert!(!settled.hold);
-        assert!(settled.failure.is_none(), "closure clears the episode failure");
+        assert!(
+            settled.failure.is_none(),
+            "closure clears the episode failure"
+        );
     }
 
     struct NoopScript;

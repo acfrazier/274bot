@@ -185,7 +185,6 @@ impl Play {
         self.arms.insert(name.to_string(), arm);
     }
 
-
     /// Spawn one more slot on this play's FIFO. No-op if `username` is
     /// already in the status list (already running). `None` arm behaves as
     /// [`SlotArm::new(profile.uid, true)`] — the slot logs in immediately

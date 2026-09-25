@@ -2,7 +2,6 @@
 //! and catalog refresh. Session is the integration owner.
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::Ordering;
 
 use serde_json::{Map, Value};
 use vault::ScriptAssignment;
@@ -887,11 +886,7 @@ impl Session {
             let state = play.script_state(&slot_name);
             match state {
                 script::RunState::Running | script::RunState::Starting => {
-                    if !play.script_stop_if_identity_generation(
-                        &slot_name,
-                        &live_key,
-                        warned_gen,
-                    ) {
+                    if !play.script_stop_if_identity_generation(&slot_name, &live_key, warned_gen) {
                         continue;
                     }
                     match self.script_start_prepared(&slot_name, prepared_card) {
@@ -902,15 +897,13 @@ impl Session {
                         }
                     }
                 }
-                script::RunState::Paused => {
-                    if play.script_stop_if_identity_generation(
-                        &slot_name,
-                        &live_key,
-                        warned_gen,
-                    ) {
-                        stopped_paused += 1;
-                    }
+                script::RunState::Paused
+                    if play
+                        .script_stop_if_identity_generation(&slot_name, &live_key, warned_gen) =>
+                {
+                    stopped_paused += 1;
                 }
+                script::RunState::Paused => {}
                 _ => {}
             }
         }

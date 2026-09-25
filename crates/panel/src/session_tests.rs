@@ -3075,12 +3075,7 @@ fn logout_all_arms_every_wall_member() {
         "the focused member must logout"
     );
     assert!(
-        s.play
-            .as_ref()
-            .unwrap()
-            .arm("bob")
-            .unwrap()
-            .wants_logout(),
+        s.play.as_ref().unwrap().arm("bob").unwrap().wants_logout(),
         "every wall member must logout"
     );
 }
@@ -3108,12 +3103,7 @@ fn headed_stress_spawns_every_member_prefers_and_arms_s00() {
     );
     assert_eq!(s.tv_name().as_deref(), Some("s00"));
     assert!(
-        s.play
-            .as_ref()
-            .unwrap()
-            .arm("s00")
-            .unwrap()
-            .wants_login(),
+        s.play.as_ref().unwrap().arm("s00").unwrap().wants_login(),
         "the focused slot arms immediately"
     );
     assert!(
@@ -3139,12 +3129,7 @@ fn login_all_arms_every_wall_member() {
     let mut s = Session::new();
     s.live_prepare_stress(2, false).expect("prepare");
     assert!(
-        s.play
-            .as_ref()
-            .unwrap()
-            .arm("s01")
-            .unwrap()
-            .wants_login(),
+        s.play.as_ref().unwrap().arm("s01").unwrap().wants_login(),
         "login all arms every member immediately (the FIFO serializes)"
     );
 }

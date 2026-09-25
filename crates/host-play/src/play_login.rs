@@ -34,6 +34,13 @@ pub(super) struct IntentCommand {
     generation: u64,
 }
 
+#[cfg(test)]
+type WorkerStartGate = (
+    std::sync::mpsc::Sender<()>,
+    std::sync::mpsc::Receiver<()>,
+    std::sync::mpsc::Sender<()>,
+);
+
 /// Per-slot control arm. The panel flips these to make a slot sit on the
 /// title screen (no handshake) until login is armed, request a clean IF
 /// logout, or stop the thread. A `None` arm at spawn means CLI/e2e: the
@@ -74,13 +81,7 @@ pub struct SlotArm {
     pub(crate) bypass_asset_startup: AtomicBool,
     /// Deterministic worker-entry gate for lifecycle race regressions.
     #[cfg(test)]
-    worker_start_gate: parking_lot::Mutex<
-        Option<(
-            std::sync::mpsc::Sender<()>,
-            std::sync::mpsc::Receiver<()>,
-            std::sync::mpsc::Sender<()>,
-        )>,
-    >,
+    worker_start_gate: parking_lot::Mutex<Option<WorkerStartGate>>,
     #[cfg(test)]
     stop_cleanup_signal: parking_lot::Mutex<Option<std::sync::mpsc::Sender<()>>>,
 }
@@ -262,10 +263,7 @@ impl SlotArm {
         let world_generation = self.world_generation.load(Ordering::Relaxed);
         let deadline = Instant::now() + timeout;
         loop {
-            if self.stop.load(Ordering::Relaxed)
-                || !intent.want_login
-                || intent.login_latched
-            {
+            if self.stop.load(Ordering::Relaxed) || !intent.want_login || intent.login_latched {
                 return false;
             }
             if interrupt_on_world_change

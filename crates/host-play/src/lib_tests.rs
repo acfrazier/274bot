@@ -1130,12 +1130,7 @@ fn stop_before_worker_start_retires_entries_and_respawn_has_one_row() {
     arm.bypass_asset_startup_for_test();
     let (entered, release, published) = arm.hold_worker_start_for_test();
     let cleaned = arm.hold_stop_cleanup_for_test();
-    play.spawn_slot(
-        profile.clone(),
-        None,
-        None,
-        Some(Arc::clone(&arm)),
-    );
+    play.spawn_slot(profile.clone(), None, None, Some(Arc::clone(&arm)));
     entered
         .recv_timeout(Duration::from_secs(2))
         .expect("worker did not reach the startup gate");
@@ -2173,7 +2168,7 @@ fn panicking_spawned_worker_retires_its_place_and_unblocks_follower() {
     assert_eq!(play.reap_finished_workers(), vec!["dead"]);
     assert!(play.arm("dead").is_none());
     assert!(!play.spawned.contains("dead"));
-    assert!(play.handles.get("dead").is_none());
+    assert!(!play.handles.contains_key("dead"));
 }
 
 #[test]
@@ -2479,7 +2474,6 @@ fn login_all_during_loading_scene_grants_every_parked_owner() {
         .acknowledge_login_return(2, Instant::now()));
     assert!(play.login_queue_uids().is_empty());
 }
-
 
 #[test]
 fn focus_selects_the_sampled_slot() {
@@ -4701,11 +4695,7 @@ fn fenced_script_stop_requires_same_identity_and_generation() {
     play.script_attach_identity("alice", "card:a");
     let generation = play.script_runtime_generation("alice").unwrap();
 
-    assert!(!play.script_stop_if_identity_generation(
-        "alice",
-        "card:b",
-        generation
-    ));
+    assert!(!play.script_stop_if_identity_generation("alice", "card:b", generation));
     assert!(!play.script_stop_if_identity_generation(
         "alice",
         "card:a",
@@ -4713,11 +4703,7 @@ fn fenced_script_stop_requires_same_identity_and_generation() {
     ));
     assert_eq!(play.script_state("alice"), script::RunState::Running);
 
-    assert!(play.script_stop_if_identity_generation(
-        "alice",
-        "card:a",
-        generation
-    ));
+    assert!(play.script_stop_if_identity_generation("alice", "card:a", generation));
     wait_script_state(&play, "alice", script::RunState::Idle);
 }
 

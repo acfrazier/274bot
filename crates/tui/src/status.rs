@@ -182,7 +182,6 @@ mod tests {
 
     #[test]
     fn status_shows_ingame_scene_2_and_player() {
-
         let s = status(true, 2);
         assert_eq!(state_text(&s), "ingame scene 2");
         let text = render(StatusPane::new(Some(&s), "10 11 0", "lowmem"), 40, 12);
