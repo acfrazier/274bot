@@ -190,25 +190,38 @@ impl NativeObservation {
         }
     }
 
-    fn with_callbacks(&self, input: &Value) -> Observation {
+    fn with_callback_values(
+        &self,
+        abort: bool,
+        should_eat: bool,
+        locked_out_until: Option<i64>,
+    ) -> Observation {
         Observation {
             ingame: self.ingame,
             tick: self.tick,
             here: self.here,
             in_combat: self.in_combat,
-            abort: input.get("abort").and_then(Value::as_bool).unwrap_or(false),
-            should_eat: input
-                .get("should_eat")
-                .and_then(Value::as_bool)
-                .unwrap_or(false),
+            abort,
+            should_eat,
             inv_size: self.inv_size,
             inv_len: self.inv_len,
             carried: self.carried,
             stall: self.stall,
-            locked_out_until: input.get("locked_out_until").and_then(Value::as_i64),
+            locked_out_until,
             chat_max_seq: self.chat_max_seq,
             lockout_seq: self.lockout_seq,
         }
+    }
+
+    fn with_callbacks(&self, input: &Value) -> Observation {
+        self.with_callback_values(
+            input.get("abort").and_then(Value::as_bool).unwrap_or(false),
+            input
+                .get("should_eat")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            input.get("locked_out_until").and_then(Value::as_i64),
+        )
     }
 }
 
@@ -679,15 +692,12 @@ impl CakeStall {
     }
 
     fn advance_runtime(&mut self, lockout: bool) {
-        let mut input = json!({
-            "abort": self.abort,
-            "should_eat": self.should_eat,
-        });
-        if lockout {
-            input["locked_out_until"] = json!(self.locked_out_until);
-        }
         let obs = observed::with(|scene| NativeObservation::from_scene(scene, true))
-            .with_callbacks(&input);
+            .with_callback_values(
+                self.abort,
+                self.should_eat,
+                lockout.then_some(self.locked_out_until),
+            );
         self.step = RUNTIME.with(|runtime| runtime.borrow_mut().next(self.token, &obs));
         self.phase = DriverPhase::ReportStatus;
     }
