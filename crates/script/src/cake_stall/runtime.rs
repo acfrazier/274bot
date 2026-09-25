@@ -1083,8 +1083,10 @@ mod tests {
         let mut obs = observation();
         assert_eq!(
             sum_carried([("Chocolate cake", 1), ("Chocolate slice", 2)]),
-            2
+            3
         );
+        assert_eq!(sum_carried([("2/3 cake", 1), ("Slice of cake", 1)]), 2);
+        assert_eq!(sum_carried([("Lobster", 5), ("Rune scimitar", 1)]), 0);
         assert!(needs_cake_restock(obs.carried, Some(1), pack_full(&obs)));
         obs.carried = 2;
         assert!(!needs_cake_restock(obs.carried, Some(1), pack_full(&obs)));

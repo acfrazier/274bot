@@ -66,6 +66,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   A focused `alcher_dwarven_mine` scenario observes dungeon exit, the selected
   Falador East bank, real withdrawal and fresh High Alchemy XP.
 
+- Baker-stall carried-food counting matches frozen substring patterns, so
+  partial cakes (`2/3 cake`, `Slice of cake`) satisfy restock and eat gates
+  the same way whole `Cake` does.
+
 - Baker-stall restocking now awaits one Rust step machine; Rust owns selected
   stall facts, callback polling, waits, steal verbs, stand swaps and lockout
   sequencing while callbacks retain the options object as their receiver.

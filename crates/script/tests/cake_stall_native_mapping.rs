@@ -539,11 +539,12 @@ fn gates_skip_dispatch_and_walk_revalidates() {
 }
 
 #[test]
-fn food_delta_calls_onsteal_once_and_partial_is_not_stocked() {
+fn food_delta_calls_onsteal_once_and_partial_counts_as_stocked() {
     let steal = ["Steal from".to_string()];
     let locs = [loc_row(2561, Some("Baker's stall"), 2667, 3310, 1, &steal)];
     let cake = [ItemRowInput::nc(Some("Cake"), 1)];
-    let chocolate = [ItemRowInput::nc(Some("Chocolate cake"), 1)];
+    let slice = [ItemRowInput::nc(Some("Slice of cake"), 1)];
+    let two_thirds = [ItemRowInput::nc(Some("2/3 cake"), 1)];
 
     let iso = spawn();
     iso.probe("globalThis.__fillTo = 28").unwrap();
@@ -592,18 +593,71 @@ fn food_delta_calls_onsteal_once_and_partial_is_not_stocked() {
     assert_eq!(iso.probe("__stolen").unwrap(), 1);
     iso.join();
 
+    // Frozen foodTarget 1 is already met by a remaining slice or 2/3 cake.
     let iso = spawn();
-    iso.probe("globalThis.__fillTo = 28").unwrap();
-    snap.inv = &chocolate;
+    iso.probe("globalThis.__fillTo = 1").unwrap();
+    iso.probe("globalThis.__needTarget = 1").unwrap();
+    snap.inv = &slice;
+    snap.tick = 1;
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 1);
+    assert!(iso.drain_interacts().is_empty());
+    assert_eq!(wait_result(&iso), "stocked");
+    assert_eq!(iso.probe("__stolen").unwrap(), 0);
+    assert_eq!(iso.probe("__carried").unwrap(), 1);
+    assert_eq!(iso.probe("__need").unwrap(), false);
+    iso.join();
+
+    let iso = spawn();
+    iso.probe("globalThis.__fillTo = 1").unwrap();
+    iso.probe("globalThis.__needTarget = 1").unwrap();
+    snap.inv = &two_thirds;
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 1);
+    assert!(iso.drain_interacts().is_empty());
+    assert_eq!(wait_result(&iso), "stocked");
+    assert_eq!(iso.probe("__stolen").unwrap(), 0);
+    assert_eq!(iso.probe("__carried").unwrap(), 1);
+    assert_eq!(iso.probe("__need").unwrap(), false);
+    iso.join();
+}
+
+#[test]
+fn slice_of_cake_at_food_target_one_does_not_restock() {
+    let steal = ["Steal from".to_string()];
+    let locs = [loc_row(2561, Some("Baker's stall"), 2667, 3310, 1, &steal)];
+    let slice = [ItemRowInput::nc(Some("Slice of cake"), 1)];
+    let lobster = [ItemRowInput::nc(Some("Lobster"), 1)];
+
+    let iso = spawn();
+    iso.probe("globalThis.__fillTo = 1").unwrap();
+    iso.probe("globalThis.__needTarget = 1").unwrap();
+    let mut snap = base_snapshot(tile(2668, 3312, 0));
+    snap.locs = &locs;
+    snap.inv = &slice;
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 1);
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "slice satisfies foodTarget 1; no steal"
+    );
+    assert_eq!(wait_result(&iso), "stocked");
+    assert_eq!(iso.probe("__carried").unwrap(), 1);
+    assert_eq!(iso.probe("__need").unwrap(), false);
+    iso.join();
+
+    // Unrelated food still leaves the stall restock owed.
+    let iso = spawn();
+    iso.probe("globalThis.__fillTo = 1").unwrap();
+    iso.probe("globalThis.__needTarget = 1").unwrap();
+    snap.inv = &lobster;
     post_snapshot_input(&iso, &snap);
     tick(&iso, 1);
     assert_eq!(iso.drain_interacts(), vec![steal_loc()]);
-    assert_eq!(iso.probe("__stolen").unwrap(), 0);
-    iso.probe("globalThis.__abort = true").unwrap();
-    tick(&iso, 2);
-    assert_eq!(wait_result(&iso), "aborted");
-    assert_eq!(iso.probe("__stolen").unwrap(), 0);
+    assert_eq!(iso.probe("__carried").unwrap(), 0);
     assert_eq!(iso.probe("__need").unwrap(), true);
+    iso.probe("globalThis.__abort = true").unwrap();
+    assert_eq!(wait_result(&iso), "aborted");
     iso.join();
 }
 
