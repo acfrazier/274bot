@@ -549,9 +549,7 @@ fn render_native_v2(out: &mut String) {
         "  questJournalBegin(input: { name: string }): HelperResult<{ token: number }>;\n",
     );
     out.push_str("  /** One awaited run. Rust clicks the admitted row, acquires its exact modal, returns its lines, and closes only that modal. */\n");
-    out.push_str(
-        "  questJournalRun(input: { token: number }): Promise<QuestJournalOutcome>;\n",
-    );
+    out.push_str("  questJournalRun(input: { token: number }): Promise<QuestJournalOutcome>;\n");
     out.push_str("  foodOf(input: { loadout: LoadoutInput | null; fallback: string }): HelperResult<string>;\n");
     out.push_str("  gearOf(input: { loadout: LoadoutInput | null }): HelperResult<string[]>;\n");
     out.push_str("  suppliesOf(input: { loadout: LoadoutInput | null }): HelperResult<Array<{ item: string; qty: number }>>;\n");
@@ -703,13 +701,17 @@ fn render_native_v2(out: &mut String) {
     out.push_str("  setStatus?(message: string): void | Promise<void>;\n");
     out.push_str("}\n");
     out.push_str("export type ClueRunValue =\n");
-    out.push_str("  | { kind: 'yield' | 'done' | 'dead' | 'abandon' | 'guardian-lost'; token: number }\n");
+    out.push_str(
+        "  | { kind: 'yield' | 'done' | 'dead' | 'abandon' | 'guardian-lost'; token: number }\n",
+    );
     out.push_str("  | { kind: 'aborted'; token: number; reason: string };\n");
     out.push_str("/** One clue run's settlement. A hook that throws rejects the promise with that value. */\n");
     out.push_str("export type ClueOutcome =\n");
     out.push_str("  | { kind: 'done'; value: ClueRunValue }\n");
     out.push_str("  | { kind: 'refused'; reason: string }\n");
-    out.push_str("  | { kind: 'aborted'; reason: 'reset' | 'superseded' | 'terminated' | 'unknown' };\n");
+    out.push_str(
+        "  | { kind: 'aborted'; reason: 'reset' | 'superseded' | 'terminated' | 'unknown' };\n",
+    );
     out.push_str("/** The journal machine's terminal value. `as_of_sequence` observed the acquired lines; `closed_as_of_sequence` later proved that exact modal closed. */\n");
     out.push_str("export type QuestJournalRunValue =\n");
     out.push_str("  | { kind: 'done'; token: number; lines: string[]; root: number; as_of_sequence: number; closed_as_of_sequence: number }\n");
@@ -717,7 +719,9 @@ fn render_native_v2(out: &mut String) {
     out.push_str("export type QuestJournalOutcome =\n");
     out.push_str("  | { kind: 'done'; value: QuestJournalRunValue }\n");
     out.push_str("  | { kind: 'refused'; reason: string }\n");
-    out.push_str("  | { kind: 'aborted'; reason: 'reset' | 'superseded' | 'terminated' | 'unknown' };\n");
+    out.push_str(
+        "  | { kind: 'aborted'; reason: 'reset' | 'superseded' | 'terminated' | 'unknown' };\n",
+    );
 }
 
 const SUPPORTING_INTERFACES: &[TsInterface] = &[

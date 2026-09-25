@@ -224,7 +224,7 @@ impl Family for BankDeposit {
     const CALLBACKS: &'static [&'static str] = &["match", "log"];
     /// Frozen calls `match(...)` inside `items.find` and `log?.()`
     /// without awaiting either: a returned promise is a (truthy) value.
-    const AWAIT_CALLBACKS: bool = false;
+    const SYNC_HOOKS: &'static [usize] = &[MATCH, LOG];
     /// The first predicate calls and the first deposit join the caller's tick.
     const KICK_ON_START: bool = true;
     type Args = DepositArgs;

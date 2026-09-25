@@ -175,7 +175,6 @@ impl<'a> Post<'a> {
         self
     }
 
-
     fn full(mut self) -> Self {
         self.full = true;
         self
@@ -536,10 +535,7 @@ fn pause_freezes_the_acquisition_window_and_reset_aborts_the_await() {
 
     j.iso.reset_session_work();
     j.tick(4);
-    assert_eq!(
-        j.outcome(),
-        json!({ "kind": "aborted", "reason": "reset" })
-    );
+    assert_eq!(j.outcome(), json!({ "kind": "aborted", "reason": "reset" }));
     assert!(j.iso.drain_interacts().is_empty());
     j.iso.join();
 }

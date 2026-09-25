@@ -216,7 +216,7 @@ impl Family for Shop {
     /// `pick` runs in the caller's tick, like the frozen `find(pick)`.
     const KICK_ON_START: bool = true;
     /// Frozen `matches.find(pick)` does not await: a promise is truthy.
-    const AWAIT_CALLBACKS: bool = false;
+    const SYNC_HOOKS: &'static [usize] = &[PICK];
     type Args = ShopArgs;
     type Output = Value;
 

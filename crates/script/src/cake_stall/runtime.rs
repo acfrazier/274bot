@@ -707,10 +707,9 @@ impl CakeStall {
         if lockout {
             input["locked_out_until"] = json!(self.locked_out_until);
         }
-        let obs =
-            observed::with(|scene| NativeObservation::from_scene(scene, true)).with_callbacks(&input);
-        self.step =
-            RUNTIME.with(|runtime| runtime.borrow_mut().next(self.token, &obs));
+        let obs = observed::with(|scene| NativeObservation::from_scene(scene, true))
+            .with_callbacks(&input);
+        self.step = RUNTIME.with(|runtime| runtime.borrow_mut().next(self.token, &obs));
         self.phase = DriverPhase::ReportStatus;
     }
 
@@ -762,7 +761,16 @@ impl Family for CakeStall {
     ];
     /// Every frozen callback is a plain call; a returned promise is a truthy
     /// value for predicates and is ignored for notifications.
-    const AWAIT_CALLBACKS: bool = false;
+    const SYNC_HOOKS: &'static [usize] = &[
+        ABORT,
+        SHOULD_EAT,
+        FACTS_VALID,
+        LOCKED_OUT_UNTIL,
+        SET_STATUS,
+        LOG,
+        ON_STEAL,
+        ON_RESET,
+    ];
     /// Begin and the first steal join the caller's turn.
     const KICK_ON_START: bool = true;
     type Args = CakeStallArgs;
@@ -886,11 +894,7 @@ impl Family for CakeStall {
                             stage: ObserveStage::Facts,
                         };
                         if callbacks && !self.abort && cx.has(SHOULD_EAT) {
-                            return self.call(
-                                SHOULD_EAT,
-                                PendingHook::ShouldEat,
-                                Vec::new(),
-                            );
+                            return self.call(SHOULD_EAT, PendingHook::ShouldEat, Vec::new());
                         }
                     }
                     ObserveStage::Facts => {
@@ -900,11 +904,7 @@ impl Family for CakeStall {
                             stage: ObserveStage::Lockout,
                         };
                         if cx.has(FACTS_VALID) {
-                            return self.call(
-                                FACTS_VALID,
-                                PendingHook::Facts,
-                                Vec::new(),
-                            );
+                            return self.call(FACTS_VALID, PendingHook::Facts, Vec::new());
                         }
                     }
                     ObserveStage::Lockout => {
@@ -914,11 +914,7 @@ impl Family for CakeStall {
                             stage: ObserveStage::Dispatch,
                         };
                         if lockout && cx.has(LOCKED_OUT_UNTIL) {
-                            return self.call(
-                                LOCKED_OUT_UNTIL,
-                                PendingHook::Lockout,
-                                Vec::new(),
-                            );
+                            return self.call(LOCKED_OUT_UNTIL, PendingHook::Lockout, Vec::new());
                         }
                     }
                     ObserveStage::Dispatch => self.advance_runtime(lockout),

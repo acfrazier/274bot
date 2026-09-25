@@ -544,7 +544,6 @@ fn result_is_never_boolean_and_classify_is_not_on_the_path() {
     iso.join();
 }
 
-
 /// The stall owner watching the stand refuses steals silently: nothing is
 /// gained and no guard comes. After three, the frozen `stealCakes` swaps to
 /// the other stand and reports it through `log` and `onReset`.

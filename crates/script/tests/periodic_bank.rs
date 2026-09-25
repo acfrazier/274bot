@@ -860,8 +860,8 @@ export default class T extends LoopingBot {
     iso.join();
 }
 
-/// Frozen calls `setStatus`, `log` and the deposit matcher synchronously: a
-/// never-settling status promise does not hold the run, and an async
+/// Frozen calls `setStatus`, `log` and the deposit matcher synchronously:
+/// never-settling status and log promises do not hold the run, and an async
 /// matcher's Promise is truthy, so the first backpack row is deposited.
 #[test]
 fn synchronous_options_are_not_awaited() {
@@ -869,16 +869,26 @@ fn synchronous_options_are_not_awaited() {
 import { PeriodicBank } from '../../api/tasks/PeriodicBank.js';
 export default class T extends TaskBot {
     onStart() {
+        globalThis.__calls = [];
         this.add(new PeriodicBank({
             strategy: () => 'loot',
             itemsThreshold: () => 1,
             minutesThreshold: () => 10,
             countLoot: () => 2,
-            deposit: async (name) => name === 'Coins',
+            deposit: async (name) => {
+                globalThis.__calls.push(`deposit:${name}`);
+                return name === 'Coins';
+            },
             commonJunk: () => false,
             returnTo: () => null,
-            setStatus: () => new Promise(() => {}),
-            log: () => new Promise(() => {}),
+            setStatus: (status) => {
+                globalThis.__calls.push(`status:${status}`);
+                return new Promise(() => {});
+            },
+            log: (line) => {
+                globalThis.__calls.push(`log:${line}`);
+                return new Promise(() => {});
+            },
         }));
     }
 }
@@ -903,6 +913,29 @@ export default class T extends TaskBot {
         vec![InteractReq::Deposit {
             name: "Bones".into()
         }]
+    );
+    assert_eq!(
+        iso.probe("__calls").unwrap(),
+        serde_json::json!(["status:periodic bank run", "deposit:Bones"]),
+        "status precedes the matcher, and neither returned promise holds the first deposit"
+    );
+    snap.tick = 2;
+    snap.bank_open = false;
+    snap.bank_loaded = false;
+    snap.bank_side = &[];
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 2);
+    snap.tick = 3;
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 3);
+    assert_eq!(
+        iso.probe("__calls").unwrap(),
+        serde_json::json!([
+            "status:periodic bank run",
+            "deposit:Bones",
+            "log:periodic bank: completed"
+        ]),
+        "the final log follows the deposit and its pending promise does not hold completion"
     );
     iso.join();
 }

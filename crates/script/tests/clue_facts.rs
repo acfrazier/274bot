@@ -900,6 +900,3 @@ fn example_clue_held_step_v2_is_one_read_only_held_step_call() {
     assert_eq!(step["error"], "none-held", "{step:?}");
     assert!(step.get("value").is_none(), "{step:?}");
 }
-
-
-

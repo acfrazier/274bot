@@ -683,7 +683,7 @@ impl Family for BankAccess {
     const EXCLUSIVE_GROUP: &'static str = BankOpen::NAME;
     const CALLBACKS: &'static [&'static str] = &["log"];
     /// Frozen calls `log?.()` without awaiting it.
-    const AWAIT_CALLBACKS: bool = false;
+    const SYNC_HOOKS: &'static [usize] = &[LOG];
     /// The first verb joins the caller's tick, after any log line.
     const KICK_ON_START: bool = true;
     type Args = AccessArgs;
@@ -936,7 +936,7 @@ impl Family for NpcAccess {
     const EXCLUSIVE_GROUP: &'static str = BankOpen::NAME;
     const CALLBACKS: &'static [&'static str] = &["log"];
     /// Frozen calls `log?.()` without awaiting it.
-    const AWAIT_CALLBACKS: bool = false;
+    const SYNC_HOOKS: &'static [usize] = &[LOG];
     /// The first verb joins the caller's tick, after any log line.
     const KICK_ON_START: bool = true;
     type Args = NpcAccessArgs;

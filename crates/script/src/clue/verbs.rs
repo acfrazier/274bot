@@ -94,4 +94,3 @@ pub(crate) fn verb_req(step: &Value) -> Option<InteractReq> {
         _ => None,
     }
 }
-

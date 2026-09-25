@@ -168,7 +168,7 @@ impl Family for Dialog {
     /// A begin that settles with a log line writes it in the caller's tick.
     const KICK_ON_START: bool = true;
     /// Frozen `log(...)` is not awaited.
-    const AWAIT_CALLBACKS: bool = false;
+    const SYNC_HOOKS: &'static [usize] = &[LOG];
     type Args = DialogArgs;
     type Output = bool;
 
