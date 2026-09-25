@@ -93,8 +93,7 @@ impl Play {
         let arm = self.arms.get(name).cloned();
         self.signal_slot_stop(name);
         self.spawned.remove(name);
-        lock_statuses(&self.statuses)
-            .retain(|status| status.username != name);
+        lock_statuses(&self.statuses).retain(|status| status.username != name);
         self.arms.remove(name);
         let removed = self.scripts.lock().unwrap().remove(name);
         if let Some(slot) = removed {

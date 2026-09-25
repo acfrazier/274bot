@@ -1,6 +1,6 @@
+use crate::play_status::lock_statuses;
 use api::interact::Driver;
 use api::snapshot::{GameSnapshot, WorldTile};
-use crate::play_status::lock_statuses;
 
 use super::Play;
 

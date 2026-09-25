@@ -3018,8 +3018,7 @@ impl Session {
                 // be dropped, never stop the replacement.
                 (
                     name.clone(),
-                    current_arm.is_none()
-                        || (owns_current_lifetime && (disconnected || timed_out)),
+                    current_arm.is_none() || (owns_current_lifetime && (disconnected || timed_out)),
                 )
             })
             .collect();

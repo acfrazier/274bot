@@ -107,13 +107,13 @@ use play_login::{
 use play_slots::SlotFrame;
 #[cfg(test)]
 use play_slots::{observe_slot_catalog_and_paired, reset_slot_session_work};
-use play_status::{clear_startup_progress, lock_statuses};
 #[cfg(test)]
 use play_status::{
     apply_startup_phase, mark_login_started, publish_session_boundary_status,
     publish_startup_phase, publish_startup_progress, record_login_error, set_startup_phase,
     startup_phase_after_observation,
 };
+use play_status::{clear_startup_progress, lock_statuses};
 pub use play_status::{
     copy_stream_bytes, owned_terminal_startup_error, player_here_tile, player_world_tile,
     SlotStatus, StartupPhase, WorkerTerminal,

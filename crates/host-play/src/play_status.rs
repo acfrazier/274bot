@@ -89,9 +89,7 @@ pub struct SlotStatus {
 /// the rows and clear poison while still holding the guard. This prevents one
 /// failed slot from cascading through the UI and unrelated workers before its
 /// terminal publisher runs.
-pub(super) fn lock_statuses(
-    statuses: &Mutex<Vec<SlotStatus>>,
-) -> MutexGuard<'_, Vec<SlotStatus>> {
+pub(super) fn lock_statuses(statuses: &Mutex<Vec<SlotStatus>>) -> MutexGuard<'_, Vec<SlotStatus>> {
     match statuses.lock() {
         Ok(rows) => rows,
         Err(poisoned) => {
