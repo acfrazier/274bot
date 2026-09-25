@@ -354,73 +354,44 @@ fn a_native_loop_over_holes_is_interrupted_by_the_tick_budget() {
             true,
             "{body}: first tick must publish the slow-loop start handshake"
         );
-        let mut survived = false;
         let mut logs = Vec::new();
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        for attempt in 0..20u64 {
-            let tick = 2 + attempt;
-            iso.resume();
-            iso.on_game_tick(tick);
+        iso.resume();
+        iso.on_game_tick(2);
+        let trigger_at = std::time::Instant::now() + std::time::Duration::from_millis(60);
+        while std::time::Instant::now() < trigger_at {
             std::thread::yield_now();
-            iso.pause();
-            let mut attempt_logs = Vec::new();
-            let mut interrupted = false;
-            while std::time::Instant::now() < deadline {
-                attempt_logs.extend(iso.drain_logs());
-                if attempt_logs
-                    .iter()
-                    .any(|line| line.contains("interrupted slow tick"))
-                {
-                    interrupted = true;
-                    break;
-                }
-                iso.on_game_tick(tick);
-                std::thread::yield_now();
+        }
+        iso.pause();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while std::time::Instant::now() < deadline {
+            logs.extend(iso.drain_logs());
+            if logs.iter().any(|line| line.contains("slow tick")) {
+                break;
             }
-            if !interrupted {
-                logs.extend(attempt_logs);
-                continue;
-            }
-            for _ in 0..256 {
-                attempt_logs.extend(iso.drain_logs());
-                if attempt_logs.iter().any(|line| line.contains("slow tick")) {
-                    break;
-                }
-                std::thread::yield_now();
-            }
-            logs.extend(attempt_logs);
-            iso.resume();
-            let entered = iso
-                .probe("globalThis.__entered")
-                .expect("interrupted isolate must answer the entry probe");
-            if entered.as_i64().unwrap_or(0) == 0 {
-                continue;
-            }
-            let mut n = 0;
-            for next in 0..3u64 {
-                iso.on_game_tick(tick + 1 + next);
-                n = iso
-                    .probe("__rs_n")
-                    .expect("isolate must stay usable after an interrupted native loop")
-                    .as_i64()
-                    .unwrap_or(0);
-                if n >= 2 {
-                    break;
-                }
-            }
-            assert!(n >= 2, "{body}: the next tick ran, n={n}");
-            assert_eq!(
-                iso.probe("globalThis.__after === undefined && globalThis.__finally === undefined")
-                    .unwrap(),
-                true,
-                "{body}: no script code runs after a terminated call"
-            );
-            survived = true;
-            break;
+            std::thread::yield_now();
         }
         assert!(
-            survived,
-            "{body}: no attempt observed a started loop before watchdog interruption; logs={logs:?}"
+            logs.iter().any(|line| line.contains("slow tick")),
+            "{body}: the proving native loop must be interrupted: {logs:?}"
+        );
+        iso.resume();
+        assert_eq!(
+            iso.probe("globalThis.__entered").unwrap(),
+            1,
+            "{body}: the proving tick entered exactly once"
+        );
+        iso.on_game_tick(3);
+        let n = iso
+            .probe("__rs_n")
+            .expect("isolate must stay usable after an interrupted native loop")
+            .as_i64()
+            .unwrap_or(0);
+        assert_eq!(n, 2, "{body}: the next tick ran exactly once, n={n}");
+        assert_eq!(
+            iso.probe("globalThis.__after === undefined && globalThis.__finally === undefined")
+                .unwrap(),
+            true,
+            "{body}: no script code runs after a terminated call"
         );
         iso.join();
     }

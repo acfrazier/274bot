@@ -76,11 +76,13 @@ fn hostile_onstop_is_bounded_by_50ms_and_2s_join() {
     );
     iso.on_game_tick(1);
     let _ = iso.probe("1");
-    let (done_tx, done_rx) = std::sync::mpsc::channel();
-    iso.join_detached(done_tx);
-    let logs = done_rx
-        .recv_timeout(Duration::from_secs(5))
-        .expect("hostile onStop join exceeded the generous hang guard");
+    let t0 = Instant::now();
+    let logs = iso.join();
+    let elapsed = t0.elapsed();
+    assert!(
+        elapsed < Duration::from_secs(2),
+        "join ceiling is 2s, got {elapsed:?} logs={logs:?}"
+    );
     assert!(
         contains_line(&logs, "onStop threw"),
         "the hostile hook must be interrupted by its deadline: {logs:?}"
@@ -116,9 +118,16 @@ export default class T extends LoopingBot {
         "no idle deadline fleet while Running"
     );
     iso.on_game_tick(1);
+    let t0 = Instant::now();
+    let finished = wait_until(Duration::from_secs(2), || proof.finished());
+    let elapsed = t0.elapsed();
     assert!(
-        wait_until(Duration::from_secs(5), || proof.finished()),
-        "self-stop must finish from the native deadline without join/tick/pause/probe"
+        finished,
+        "self-stop must finish from the native deadline without join/tick/pause/probe: elapsed={elapsed:?}"
+    );
+    assert!(
+        elapsed < Duration::from_secs(2),
+        "self-stop join ceiling is 2s: {elapsed:?}"
     );
     let mut logs = iso.drain_logs();
     let stopped = iso.stopped();
@@ -157,15 +166,13 @@ fn drop_without_join_does_not_block_and_leaves_fresh_isolate() {
         "no idle deadline fleet while Running"
     );
     assert!(!proof.finished(), "Running isolate has not consumed Stop");
-    let (done_tx, done_rx) = std::sync::mpsc::channel();
-    let dropper = std::thread::spawn(move || {
-        drop(iso);
-        done_tx.send(()).unwrap();
-    });
-    done_rx
-        .recv_timeout(Duration::from_secs(5))
-        .expect("raw Drop must not block on the isolate thread");
-    dropper.join().unwrap();
+    let t0 = Instant::now();
+    drop(iso);
+    let elapsed = t0.elapsed();
+    assert!(
+        elapsed < Duration::from_millis(500),
+        "raw Drop must not join: {elapsed:?}"
+    );
     assert!(
         wait_until(Duration::from_secs(5), || proof.finished()),
         "raw Drop must finish on the isolate thread before hook/resource checks"
@@ -198,11 +205,17 @@ fn delayed_hook_entry_keeps_deadline_interrupt() {
     iso.on_game_tick(1);
     let _ = iso.probe("1");
     iso.delay_onstop_after_deadline_arm(Duration::from_millis(80));
+    let t0 = Instant::now();
     let (done_tx, done_rx) = std::sync::mpsc::channel();
     iso.join_detached(done_tx);
     let logs = done_rx
         .recv_timeout(Duration::from_secs(5))
         .expect("delayed onStop join exceeded the generous hang guard");
+    let elapsed = t0.elapsed();
+    assert!(
+        elapsed < Duration::from_secs(2),
+        "join ceiling is 2s after delayed entry: {elapsed:?} logs={logs:?}"
+    );
     assert!(
         contains_line(&logs, "onStop threw"),
         "deadline interrupt must survive delayed entry: {logs:?}"
@@ -221,7 +234,13 @@ fn deadline_spawn_failure_skips_hook_and_stays_bounded() {
     iso.on_game_tick(1);
     let _ = iso.probe("1");
     iso.fail_onstop_deadline_spawn();
+    let t0 = Instant::now();
     let logs = iso.join();
+    let elapsed = t0.elapsed();
+    assert!(
+        elapsed < Duration::from_secs(2),
+        "join ceiling is 2s when deadline-owner creation fails: {elapsed:?}"
+    );
     assert!(
         contains_line(&logs, "onStop skipped: no deadline owner"),
         "native diagnostic when no deadline owner: {logs:?}"

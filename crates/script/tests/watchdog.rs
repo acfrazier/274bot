@@ -682,9 +682,10 @@ export default class T extends LoopingBot {
             globalThis.__anchor_started = true;
             return { x: 2655, z: 3298, level: 0 };
         }
+        globalThis.__anchor_entered = true;
         while(true){}
     }
-    loop() {}
+    loop() { globalThis.__n = (globalThis.__n || 0) + 1; }
 }
 "#;
     let iso = spawn(src);
@@ -695,7 +696,18 @@ export default class T extends LoopingBot {
         true,
         "first recoveryAnchor call must publish the start handshake"
     );
-    iso.request_recovery_anchor();
+    let first = iso.drain_lifecycle();
+    assert!(
+        first
+            .iter()
+            .any(|req| matches!(req, InteractReq::RecoveryAnchor { .. })),
+        "first recoveryAnchor reply must be drained before the hostile call"
+    );
+    tick(&iso, 2, false);
+    assert!(
+        wait_for_recovery_entry(&iso),
+        "recoveryAnchor must enter before the bounded join"
+    );
     let (done_tx, done_rx) = std::sync::mpsc::channel();
     let joiner = std::thread::spawn(move || {
         iso.join();
