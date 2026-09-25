@@ -1167,11 +1167,6 @@ api.questStatus = function (input) {
 function questJournalCall(payload) {
   return globalThis.rustyscript.functions.__rs2b0t_quest_journal(payload);
 }
-function questJournalBeginError(reason) {
-  if (reason === 'busy' || reason === 'main-modal-occupied') return reason;
-  if (reason === 'snapshot-unavailable' || reason === 'quest-tab-unbound' || reason === 'unknown-quest') return reason;
-  return 'stale';
-}
 api.questJournalBegin = function (input) {
   if (arguments.length === 0) return helperErr('invalid-args');
   if (input == null || typeof input !== 'object' || Array.isArray(input)) {
@@ -1187,7 +1182,9 @@ api.questJournalBegin = function (input) {
   });
   if (!step || typeof step !== 'object') return helperErr('stale');
   if (step.kind === 'token') return helperOk({ token: step.token });
-  if (step.kind === 'aborted') return helperErr(questJournalBeginError(step.reason));
+  if (step.kind === 'aborted') {
+    return helperErr(typeof step.reason === 'string' ? step.reason : 'stale');
+  }
   return helperErr('stale');
 };
 api.questJournalRun = function (input) {

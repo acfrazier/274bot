@@ -483,6 +483,41 @@ fn replacement_modal_aborts_without_a_second_close() {
 }
 
 #[test]
+fn snapshot_unavailable_retries_within_the_window_then_closes() {
+    let mut j = Journal::new();
+    let rows = [row("Cook's Assistant", "notStarted", Some(1234))];
+    j.post(Post::at(1).rows(&rows).closed_pair());
+    j.request(json!({ "name": "Cook's Assistant" }));
+    j.tick(1);
+    assert_eq!(
+        j.iso.drain_interacts(),
+        vec![InteractReq::IfButton { component_id: 1234 }]
+    );
+
+    let unusable = vec!["orphaned modal text".to_string()];
+    j.post(Post::at(2).pair(-1, &unusable));
+    j.tick(2);
+    assert!(
+        j.outcome().is_null(),
+        "an unusable acquisition frame is retried"
+    );
+    assert!(j.iso.drain_interacts().is_empty());
+
+    let texts = vec!["@dre@The Cook's Quest".to_string()];
+    j.post(Post::at(3).pair(77, &texts));
+    j.tick(3);
+    assert_eq!(j.iso.drain_interacts(), vec![InteractReq::CloseModal]);
+    assert!(j.outcome().is_null());
+
+    let empty: Vec<String> = Vec::new();
+    j.post(Post::at(4).pair(-1, &empty));
+    j.tick(4);
+    assert_eq!(j.outcome()["value"]["kind"], "done");
+    assert!(j.iso.drain_interacts().is_empty());
+    j.iso.join();
+}
+
+#[test]
 fn acquisition_timeout_settles_the_run_without_closing() {
     let mut j = Journal::new();
     let rows = [row("Cook's Assistant", "notStarted", Some(1234))];
@@ -495,13 +530,32 @@ fn acquisition_timeout_settles_the_run_without_closing() {
     );
 
     std::thread::sleep(Duration::from_millis(PAST_WINDOW_MS));
-    j.post(Post::at(2).rows(&rows).closed_pair());
+    let unusable = vec!["orphaned modal text".to_string()];
+    j.post(Post::at(2).pair(-1, &unusable));
     j.tick(2);
     let outcome = j.outcome();
     assert_eq!(outcome["kind"], "done", "{outcome}");
     assert_eq!(outcome["value"]["kind"], "aborted", "{outcome}");
     assert_eq!(outcome["value"]["reason"], "modal-timeout", "{outcome}");
     assert!(j.iso.drain_interacts().is_empty());
+
+    let empty: Vec<String> = Vec::new();
+    j.post(Post::at(3).pair(-1, &empty));
+    let _ = j.probe(
+        "globalThis.__questStarted = false; \
+         globalThis.__questOut = null; \
+         globalThis.__questBegin = null; true",
+    );
+    j.request(json!({ "name": "Cook's Assistant" }));
+    j.tick(3);
+    assert_eq!(
+        j.iso.drain_interacts(),
+        vec![InteractReq::IfButton { component_id: 1234 }],
+        "the timed-out token released the journal"
+    );
+    assert_eq!(j.begin_result()["ok"], true);
+    j.iso.reset_session_work();
+    j.tick(4);
     j.iso.join();
 }
 

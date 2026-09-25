@@ -105,6 +105,18 @@ impl JournalRuntime {
         json!({ "kind": "aborted", "token": self.token, "reason": reason })
     }
 
+    /// A missing or internally inconsistent pair while the click is in flight
+    /// is an unobserved acquisition frame, not a terminal. It shares the
+    /// click's frozen deadline so a permanently unusable page releases the
+    /// token as `modal-timeout`.
+    fn acquisition_unavailable(&mut self) -> Value {
+        if self.frozen() || !self.clock.bound_reached() {
+            json!({ "kind": "wait", "token": self.token })
+        } else {
+            self.aborted("modal-timeout")
+        }
+    }
+
     /// The stored acquired pair is still the live pair, tags and order
     /// included. A generation bump is checked before this.
     fn still_owned(&self, root: i32, texts: &[String]) -> bool {
@@ -182,24 +194,26 @@ impl JournalRuntime {
         json!({ "kind": "token", "token": self.token })
     }
 
-    fn next(&mut self, input: &Value) -> Value {
-        // A missing pair is snapshot-unavailable and does not spend the
-        // token. An unusable pair (root -1 with texts) is checked after
-        // token and generation, matching the base machine.
-        let Some((root, texts)) = posted_pair() else {
-            return self.refuse("snapshot-unavailable");
-        };
-        let Some(token) = input.get("token").and_then(Value::as_u64) else {
-            return self.aborted("stale");
-        };
+    fn next(&mut self, token: u64, generation: u64) -> Value {
         if token != self.token || self.phase == Phase::Idle {
             return self.aborted("stale");
         }
-        if input.get("generation").and_then(Value::as_u64) != Some(self.generation) {
+        if generation != self.generation {
             return self.aborted("stale");
         }
+        let Some((root, texts)) = posted_pair() else {
+            return if self.phase == Phase::AwaitingAcquire {
+                self.acquisition_unavailable()
+            } else {
+                self.refuse("snapshot-unavailable")
+            };
+        };
         if root == -1 && !texts.is_empty() {
-            return self.refuse("snapshot-unavailable");
+            return if self.phase == Phase::AwaitingAcquire {
+                self.acquisition_unavailable()
+            } else {
+                self.refuse("snapshot-unavailable")
+            };
         }
         if self.frozen() {
             // Frozen: no verb and no burn. `bound_reached` reads the frozen
@@ -255,19 +269,16 @@ impl JournalRuntime {
         }
     }
 
-    fn close(&mut self, input: &Value) -> Value {
-        let Some((root, texts)) = posted_pair() else {
-            return self.refuse("snapshot-unavailable");
-        };
-        let Some(token) = input.get("token").and_then(Value::as_u64) else {
-            return self.aborted("stale");
-        };
+    fn close(&mut self, token: u64, generation: u64) -> Value {
         if token != self.token || self.phase == Phase::Idle {
             return self.aborted("stale");
         }
-        if input.get("generation").and_then(Value::as_u64) != Some(self.generation) {
+        if generation != self.generation {
             return self.aborted("stale");
         }
+        let Some((root, texts)) = posted_pair() else {
+            return self.refuse("snapshot-unavailable");
+        };
         if root == -1 && !texts.is_empty() {
             return self.refuse("snapshot-unavailable");
         }
@@ -387,10 +398,7 @@ impl Family for QuestJournal {
                     let step = RUNTIME.with(|rt| {
                         let mut rt = rt.borrow_mut();
                         let generation = rt.generation;
-                        rt.next(&json!({
-                            "token": self.token,
-                            "generation": generation,
-                        }))
+                        rt.next(self.token, generation)
                     });
                     match step.get("kind").and_then(Value::as_str) {
                         Some("wait") => return Step::Wait,
@@ -402,10 +410,7 @@ impl Family for QuestJournal {
                     let step = RUNTIME.with(|rt| {
                         let mut rt = rt.borrow_mut();
                         let generation = rt.generation;
-                        rt.close(&json!({
-                            "token": self.token,
-                            "generation": generation,
-                        }))
+                        rt.close(self.token, generation)
                     });
                     match step.get("kind").and_then(Value::as_str) {
                         Some("close-modal") => {
@@ -479,8 +484,6 @@ pub fn on_reset() {
 pub fn dispatch(input: &Value) -> Value {
     match input.get("op").and_then(Value::as_str).unwrap_or("") {
         "begin" => RUNTIME.with(|rt| rt.borrow_mut().begin(input)),
-        "next" => RUNTIME.with(|rt| rt.borrow_mut().next(input)),
-        "close" => RUNTIME.with(|rt| rt.borrow_mut().close(input)),
         _ => json!({ "kind": "notImpl", "reason": "unknown quest journal op" }),
     }
 }
@@ -539,11 +542,14 @@ mod tests {
     }
 
     fn call(op: &str, token: u64, generation: u64) -> Value {
-        dispatch(&json!({
-            "op": op,
-            "token": token,
-            "generation": generation,
-        }))
+        RUNTIME.with(|rt| {
+            let mut rt = rt.borrow_mut();
+            match op {
+                "next" => rt.next(token, generation),
+                "close" => rt.close(token, generation),
+                _ => json!({ "kind": "notImpl" }),
+            }
+        })
     }
 
     #[test]
