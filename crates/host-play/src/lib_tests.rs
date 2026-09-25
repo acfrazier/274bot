@@ -10463,6 +10463,9 @@ fn bank_fetch_session_deposits_withdraws_wears_then_finds() {
 #[test]
 fn solid_target_first_goal_no_path_goes_straight_to_bank_fetch_diagnosis() {
     let mut client = bank_fetch_client();
+    client.map_build_base_x = 0;
+    client.map_build_base_z = 0;
+    client.local_player = Some(client::dash3d::ClientPlayer::at(0, 4));
     client.collision[0].flags[4][4] |= client::dash3d::CollisionFlag::SQ_BLOCKED;
     let mut snapshot = GameSnapshot::new();
     snapshot.rebuild(&client);
@@ -10507,9 +10510,13 @@ fn solid_target_first_goal_no_path_goes_straight_to_bank_fetch_diagnosis() {
         .and_then(|bot| bot.bank_fetch.as_ref())
         .expect("missing worn knife plans a bank session after the shared strict NoPath");
     assert_eq!(
-        (fetch.dest.x - 4).abs().max((fetch.dest.z - 4).abs()),
-        1,
-        "the post-session route still ends at a target-adjacent stand"
+        fetch.dest,
+        WorldTile {
+            x: 3,
+            z: 4,
+            level: 0,
+        },
+        "the in-scene first-goal diagnosis must use the target-cardinal stand"
     );
     assert_eq!(fetch.final_route.dest, fetch.dest);
 }

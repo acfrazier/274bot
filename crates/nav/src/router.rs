@@ -293,6 +293,11 @@ pub fn find_with_avoid_bounded(
 /// Native bank-search cap: 500,000 non-goal expansions precede an accepted
 /// goal, which has 1-based settle ordinal 500,001.
 pub const BANK_TARGET_BUDGET: usize = 500_001;
+/// First-goal searches serve targets already visible in the current scene.
+/// Keep their worst-case scratch bounded while leaving a wide margin over
+/// the measured packed-booth maximum (11,700 settled nodes). Callers can
+/// fall back to their broader destination policy on [`RouteError::BudgetExhausted`].
+pub const FIRST_TARGET_BUDGET: usize = 32 * 1024;
 
 /// A target's exact shortest-path cost and 1-based shared settle ordinal.
 /// An origin shortcut has ordinal zero.
@@ -341,10 +346,11 @@ impl FirstRouteSearch {
     }
 }
 
-/// Search until the cheapest reachable target settles, using the same native
-/// options and 4M-node cap as [`find_with`]. Small goal sets are scanned
-/// inline without allocation; larger fallback sets build one membership map
-/// instead of scanning every target for every settled node.
+/// Search until the cheapest reachable target settles. The search uses the
+/// same native gates as [`find_with`], but a scene-local node cap prevents an
+/// unreachable goal set from flooding the whole world. Small goal sets are
+/// scanned inline without allocation; larger fallback sets build one
+/// membership map instead of scanning every target for every settled node.
 pub fn find_first_with(
     collision: &WorldCollision,
     graph: &TransportGraph,
@@ -381,7 +387,7 @@ pub fn find_first_with(
         graph,
         from,
         CostModel::running(),
-        NODE_BUDGET,
+        FIRST_TARGET_BUDGET,
         opts.allow_teleports,
         opts.allow_wilderness,
         state,

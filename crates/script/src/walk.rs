@@ -56,19 +56,30 @@ const BACKOFF_MAX: u32 = 16;
 
 #[cfg(test)]
 thread_local! {
-    static SCENE_TEST_AGE_MS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    static SCENE_TEST_CLOCK: std::cell::Cell<Option<(Instant, Instant)>> =
+        const { std::cell::Cell::new(None) };
 }
 
 fn scene_now(cx: &mut Cx<'_>) -> Instant {
-    let now = cx.clock().now();
     #[cfg(test)]
-    let now = SCENE_TEST_AGE_MS.with(|age| now + Duration::from_millis(age.get()));
-    now
+    if let Some((_, now)) = SCENE_TEST_CLOCK.with(std::cell::Cell::get) {
+        return now;
+    }
+    cx.clock().now()
+}
+
+#[cfg(test)]
+fn reset_scene_time() {
+    let now = Instant::now();
+    SCENE_TEST_CLOCK.with(|clock| clock.set(Some((now, now))));
 }
 
 #[cfg(test)]
 fn age_scene_time(millis: u64) {
-    SCENE_TEST_AGE_MS.with(|age| age.set(millis));
+    SCENE_TEST_CLOCK.with(|clock| {
+        let (base, _) = clock.get().expect("scene test clock initialized");
+        clock.set(Some((base, base + Duration::from_millis(millis))));
+    });
 }
 
 #[derive(Clone, Copy, Debug, Deserialize)]
@@ -645,7 +656,7 @@ mod tests {
         walk_wait::on_reset();
         crate::load::reach_query::on_reset();
         machine::on_hold(false);
-        age_scene_time(0);
+        reset_scene_time();
     }
 
     fn post_here(x: i32, z: i32) {

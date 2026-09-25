@@ -16,7 +16,7 @@ use crate::router::{
     find_missing_item_reqs_with_avoid, find_on_grid, find_with, find_with_avoid,
     find_with_avoid_bounded, find_with_model, local_step_component, step_ok, AvoidRect, CostModel,
     FindOptions, GridLeg, Leg, MissingReq, RouteError, TargetError, BANK_TARGET_BUDGET,
-    PER_STEP_WALK,
+    FIRST_TARGET_BUDGET, PER_STEP_WALK,
 };
 use crate::tile::Tile;
 use crate::transport::{
@@ -828,6 +828,37 @@ fn first_target_search_stops_before_an_unreachable_sibling_floods_the_map() {
     assert!(scratch.distances < 16);
     assert!(scratch.predecessors < 16);
     assert!(scratch.settled < 16);
+    assert!(scratch.heap < 16);
+}
+
+#[test]
+fn first_target_search_bounds_unreachable_stands() {
+    const EXPECTED_BUDGET: usize = FIRST_TARGET_BUDGET;
+    const WALL_X: i32 = 40_000;
+    let wc = bake(
+        WALL_X as usize + 2,
+        1,
+        &[
+            (WALL_X, 0, CollisionFlag::W_E as u32),
+            (WALL_X + 1, 0, CollisionFlag::W_W as u32),
+        ],
+    );
+    let targets = [tile(WALL_X + 1, 0, 0)];
+    let search = find_first_with(
+        &wc,
+        &TransportGraph::default(),
+        tile(0, 0, 0),
+        &targets,
+        FindOptions::default(),
+        &WorldState::empty(),
+    );
+
+    assert!(matches!(search.route(), Err(RouteError::BudgetExhausted)));
+    assert_eq!(search.settled(), EXPECTED_BUDGET);
+    let scratch = search.scratch_capacities();
+    assert!(scratch.distances <= EXPECTED_BUDGET * 2);
+    assert!(scratch.predecessors <= EXPECTED_BUDGET * 2);
+    assert!(scratch.settled <= EXPECTED_BUDGET * 2);
     assert!(scratch.heap < 16);
 }
 
