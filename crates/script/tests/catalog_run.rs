@@ -177,8 +177,8 @@ fn bank_picker_import_links_and_awaits_host_selection() {
     use script::{LoadIsolate, LoadShape};
     use std::sync::Arc;
     let banks = Arc::new(NamedBankFacts::from_banks(vec![
-        NamedBank { name: "Air near", tile: WorldTile { x: 3224, z: 3218, level: 0 } },
-        NamedBank { name: "Walk near", tile: WorldTile { x: 3200, z: 3210, level: 0 } },
+        NamedBank::new("Air near", WorldTile { x: 3224, z: 3218, level: 0 }),
+        NamedBank::new("Walk near", WorldTile { x: 3200, z: 3210, level: 0 }),
     ]));
     let iso = LoadIsolate::spawn_with_content(
         r#"

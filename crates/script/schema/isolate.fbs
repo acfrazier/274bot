@@ -524,6 +524,8 @@ table Interact {
   // Inspect session generation from the applied snapshot. Required on
   // inspect-ack so a caller cannot free terminals from another session.
   inspect_ack_generation: ulong = 0;
+  use_mage_bank: bool = false;
+  use_zanaris_bank: bool = false;
 }
 
 // The tick's shim interact queue, forwarded to the host.

@@ -1,7 +1,7 @@
 use api::interact::Driver;
 use api::snapshot::{GameSnapshot, WorldTile};
 use nav::world::NavWorld;
-use api::named_banks::NamedBankFacts;
+use api::named_banks::{BankPreferences, NamedBankFacts};
 use nav::router::{find_many_with_avoid_bounded, FindOptions, BANK_TARGET_BUDGET};
 use nav::WorldState;
 use script::isolate_fb::BankSelectionInput;
@@ -82,7 +82,8 @@ impl BankPickRequest {
     }
 
     fn calculate(&self) -> (Option<usize>, PickKind) {
-        let targets: Vec<_> = self.order.iter().map(|&i| self.facts.banks()[i].tile).collect();
+        let routed: Vec<_> = self.order.iter().copied().filter(|&i| self.facts.banks()[i].routable).collect();
+        let targets: Vec<_> = routed.iter().map(|&i| self.facts.banks()[i].tile).collect();
         let routes = find_many_with_avoid_bounded(
             &self.world.collision, &self.world.graph, self.from, &targets,
             self.opts, &self.state, &[], BANK_TARGET_BUDGET,
@@ -93,7 +94,7 @@ impl BankPickRequest {
             if let Ok(result) = result {
                 if result.ticks < cost {
                     cost = result.ticks;
-                    best = Some(self.order[i]);
+                    best = Some(routed[i]);
                 }
             }
         }
@@ -123,6 +124,8 @@ pub(super) fn queue_bank_pick(
     from: WorldTile,
     allow_wilderness: bool,
     request_id: u64,
+    preferences: BankPreferences,
+    fishing_base: Option<i32>,
 ) {
     let now = Instant::now();
     let mut all = navs.lock().unwrap();
@@ -139,13 +142,20 @@ pub(super) fn queue_bank_pick(
         pick.posted = BankSelectionInput { request_id, generation: pick.generation, kind: PickKind::NoCandidate as u8, ..Default::default() };
         return;
     };
-    let facts = Arc::clone(pick.facts.get_or_insert_with(|| Arc::new(world.named_bank_facts(script::content::BANK_ALIASES))));
-    let mut order: Vec<_> = (0..facts.banks().len()).collect();
-    order.sort_by_key(|&i| bank_air_distance(from, facts.banks()[i].tile));
+    let facts = Arc::clone(pick.facts.get_or_insert_with(|| world.named_bank_facts(None)));
+    let state = state.unwrap_or_default();
+    let mut order: Vec<_> = (0..facts.banks().len()).filter(|&i| {
+        facts.banks()[i].eligible(
+            |id| if id == 10 { fishing_base } else { None },
+            |quest| state.quests.contains(quest),
+            preferences,
+        )
+    }).collect();
+    order.sort_by_key(|&i| bank_air_distance(from, facts.banks()[i].air_tile()));
     let request = BankPickRequest {
         generation: pick.generation, request_id, world: Arc::clone(world), facts, from,
         opts: FindOptions { allow_wilderness, essence: bot.traveller.essence(), ..Default::default() },
-        state: state.unwrap_or_default(), order,
+        state, order,
         #[cfg(test)]
         test_gate: tests::capture_gate(),
     };

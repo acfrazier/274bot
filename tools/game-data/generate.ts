@@ -963,7 +963,7 @@ export function parseInvShopStock(text: string, shopName: string) {
     return stock;
 }
 
-export function parseNpcSection(text: string, alias: string) {
+function parseNpcConfigSections(text: string) {
     const sections = new Map<string, Record<string, string>>();
     let current: string | null = null;
     for (const raw of text.split(/\r?\n/)) {
@@ -984,7 +984,11 @@ export function parseNpcSection(text: string, alias: string) {
         const eq = line.indexOf('=');
         entry[line.slice(0, eq)] = line.slice(eq + 1);
     }
-    const section = sections.get(alias);
+    return sections;
+}
+
+export function parseNpcSection(text: string, alias: string) {
+    const section = parseNpcConfigSections(text).get(alias);
     if (!section) throw new Error(`npc config: missing [${alias}]`);
     return section;
 }
@@ -2661,6 +2665,183 @@ export function extractFacts(content: string, items: ObjType[], npcs: NpcType[])
     for (const parsed of parseRows(fs.readFileSync(path.join(content, 'scripts/skill_thieving/configs/pickpocking/pickpocket.dbrow'), 'utf8'))) { const npc = (parsed.values.npc ?? []).map((v) => { const found = npcIds.get(v[0]); if (!found) throw new Error(`pickpocket ${parsed.name}: unknown NPC ${v[0]}`); return { alias: v[0], id: found.id, name: found.name }; }); const chance = parsed.values.success_chance?.[0]; if (!chance || chance.length !== 2) throw new Error(`${parsed.name}: malformed success chance`); const loot = (parsed.values.loot ?? []).map((v) => { const item = itemIds.get(v[0]); if (!item) throw new Error(`pickpocket ${parsed.name}: unknown loot ${v[0]}`); return { item: { alias: v[0], id: item.id, name: item.name }, min: integer(v[1], parsed.name), max: integer(v[2], parsed.name), weight: integer(v[3], parsed.name) }; }); pickpocket.push({ group: parsed.name, npcs: npc, level: integer(required(parsed.values, 'level', parsed.name), parsed.name), experience: integer(required(parsed.values, 'experience', parsed.name), parsed.name), stun_ticks: integer(required(parsed.values, 'stun_ticks', parsed.name), parsed.name), stun_damage: integer(required(parsed.values, 'stun_damage', parsed.name), parsed.name), success_chance: { numerator: integer(chance[0], parsed.name), denominator: integer(chance[1], parsed.name) }, loot, pocket: required(parsed.values, 'pocket', parsed.name) }); }
     return { consumption, pickpocket };
 }
+type CatalogBank = {
+    name: string; tile: { x: number; z: number; level: number };
+    approach?: { x: number; z: number; level: number };
+    requires?: { skill?: { name: string; level: number }; quest?: string; setting?: string };
+    access?: { name: string; op: string; openFirst?: { name: string; op: string } };
+    npcAccess?: { name: string; op: string; choose?: string };
+};
+
+// The runtime-selected engine owns TypeScript. Only fields guarded by its
+// is* predicates are read; no foreign module is executed.
+type BankAstNode = {
+    text: string; name: BankAstNode; initializer: BankAstNode;
+    elements: BankAstNode[]; properties: BankAstNode[]; arguments: BankAstNode[];
+    expression: BankAstNode; getText(source: unknown): string;
+};
+type BankLiteral = string | number | BankLiteral[] | { [key: string]: BankLiteral };
+
+function catalogBank(value: BankLiteral): CatalogBank {
+    const record = (input: BankLiteral): { [key: string]: BankLiteral } => {
+        if (input === null || typeof input !== 'object' || Array.isArray(input)) throw new Error('bank catalog: expected object');
+        return input;
+    };
+    const string = (input: BankLiteral) => {
+        if (typeof input !== 'string') throw new Error('bank catalog: expected string');
+        return input;
+    };
+    const integer = (input: BankLiteral) => {
+        if (typeof input !== 'number' || !Number.isInteger(input)) throw new Error('bank catalog: expected integer');
+        return input;
+    };
+    const tile = (input: BankLiteral) => {
+        const row = record(input);
+        return { x: integer(row.x), z: integer(row.z), level: integer(row.level) };
+    };
+    const operation = (input: BankLiteral) => {
+        const row = record(input);
+        return { name: string(row.name), op: string(row.op) };
+    };
+    const row = record(value);
+    const bank: CatalogBank = { name: string(row.name), tile: tile(row.tile) };
+    if (row.approach !== undefined) bank.approach = tile(row.approach);
+    if (row.requires !== undefined) {
+        const req = record(row.requires);
+        bank.requires = {};
+        if (req.quest !== undefined) bank.requires.quest = string(req.quest);
+        if (req.setting !== undefined) bank.requires.setting = string(req.setting);
+        if (req.skill !== undefined) {
+            const skill = record(req.skill);
+            bank.requires.skill = { name: string(skill.name), level: integer(skill.level) };
+        }
+    }
+    if (row.access !== undefined) {
+        const access = record(row.access);
+        bank.access = operation(row.access);
+        if (access.openFirst !== undefined) bank.access.openFirst = operation(access.openFirst);
+    }
+    if (row.npcAccess !== undefined) {
+        const npc = record(row.npcAccess);
+        bank.npcAccess = operation(row.npcAccess);
+        if (npc.choose !== undefined) bank.npcAccess.choose = string(npc.choose);
+    }
+    return bank;
+}
+
+/** Read the pinned literal AST, not a second curated copy or evaluated foreign module. */
+export async function extractBankCatalog(engine: string, source: string) {
+    // Engine path is selected per revision; a static import would bind the wrong installation.
+    const ts = await import(pathToFileURL(path.join(engine, 'node_modules/typescript/lib/typescript.js')).href);
+    const ast = ts.createSourceFile('BankLocations.ts', source, ts.ScriptTarget.Latest, true);
+    const constants = new Map<string, BankAstNode>();
+    for (const statement of ast.statements) {
+        if (ts.isVariableStatement(statement)) {
+            for (const declaration of statement.declarationList.declarations) {
+                if (ts.isIdentifier(declaration.name)) constants.set(declaration.name.text, declaration.initializer);
+            }
+        }
+    }
+    function literal(node: BankAstNode | undefined): BankLiteral {
+        if (!node) throw new Error('bank catalog: missing literal');
+        if (ts.isStringLiteral(node)) return node.text;
+        if (ts.isNumericLiteral(node)) return Number(node.text);
+        if (ts.isIdentifier(node) && constants.has(node.text)) return literal(constants.get(node.text));
+        if (ts.isArrayLiteralExpression(node)) return node.elements.map(literal);
+        if (ts.isObjectLiteralExpression(node)) {
+            return Object.fromEntries(node.properties.map((property: BankAstNode) => {
+                if (!ts.isPropertyAssignment(property)) throw new Error('bank catalog: nonliteral property');
+                return [property.name.text, literal(property.initializer)];
+            }));
+        }
+        if (ts.isNewExpression(node) && node.expression.getText(ast) === 'Tile') {
+            const [x, z, level] = node.arguments.map(literal);
+            if (![x, z, level].every(value => typeof value === 'number' && Number.isInteger(value))) throw new Error('bank catalog: invalid tile');
+            return { x, z, level };
+        }
+        throw new Error(`bank catalog: unsupported AST ${node.getText(ast)}`);
+    }
+    const value = literal(constants.get('BANK_LOCATIONS'));
+    if (!Array.isArray(value)) throw new Error('bank catalog: expected array');
+    const rows = value.map(catalogBank);
+    if (!rows.length || new Set(rows.map(row => row.name)).size !== rows.length) throw new Error('bank catalog: empty or duplicate names');
+    return rows;
+}
+
+export function bankCatalogRust(rows: CatalogBank[]) {
+    const str = (value: string) => JSON.stringify(value);
+    const opt = <T>(value: T | undefined, emit: (value: T) => string) => value === undefined ? 'None' : `Some(${emit(value)})`;
+    const tile = (value: CatalogBank['tile']) => `WorldTile { x: ${value.x}, z: ${value.z}, level: ${value.level} }`;
+    const object = (value: { name: string; op: string }) => `BankOperation { name: ${str(value.name)}, op: ${str(value.op)} }`;
+    return '// Generated by tools/game-data/generate.ts from pinned BankLocations.ts; do not curate.\n'
+        + 'pub const BANK_CATALOG: &[BankDefinition] = &[\n'
+        + rows.map(row => {
+            const skill = row.requires?.skill;
+            // The frozen catalog currently has one skill gate; refuse silently assigning another id.
+            if (skill && skill.name !== 'fishing') throw new Error(`bank catalog: unknown skill ${skill.name}`);
+            return `    BankDefinition { name: ${str(row.name)}, tile: ${tile(row.tile)}, approach: ${opt(row.approach, tile)}, `
+                + `skill: ${skill ? `Some((10, ${skill.level}))` : 'None'}, quest: ${opt(row.requires?.quest, str)}, setting: ${opt(row.requires?.setting, str)}, `
+                + `object: ${opt(row.access, object)}, open_first: ${opt(row.access?.openFirst, object)}, `
+                + `npc: ${opt(row.npcAccess, object)}, choose: ${opt(row.npcAccess?.choose, str)} },`;
+        }).join('\n') + '\n];\n';
+}
+
+/** Selected content supplies the access identity, footprint, and placement; collision resolves the stand at bind time. */
+export function extractBankPlacements(content: string, catalog: CatalogBank[]) {
+    const locTree = contentTreeInputs(content, 'scripts', '.loc');
+    const npcTree = contentTreeInputs(content, 'scripts', '.npc');
+    const files = [...locTree.files, ...npcTree.files];
+    const maps = placementMapInputs(content);
+    const packedLocs = new Map([...parsePack(fs.readFileSync(path.join(content, 'pack/loc.pack'), 'utf8'))].map(([alias, id]) => [id, alias]));
+    const packedNpcs = new Map([...parsePack(fs.readFileSync(path.join(content, 'pack/npc.pack'), 'utf8'))].map(([alias, id]) => [id, alias]));
+    const configs = new Map<string, Record<string, string>>();
+    for (const file of files) {
+        const text = fs.readFileSync(path.join(content, file), 'utf8');
+        for (const [alias, config] of parseNpcConfigSections(text)) {
+            const key = `${path.extname(file)}:${alias}`;
+            if (configs.has(key)) throw new Error(`bank placements: duplicate ${key}`);
+            configs.set(key, config);
+        }
+    }
+    const rows: { name: string; kind: string; id: number; x: number; z: number; level: number; width: number; length: number }[] = [];
+    const ids = new Set(packedLocs.keys());
+    const near = (bank: CatalogBank, tile: { x: number; z: number; plane: number }) =>
+        bank.tile.level === tile.plane && Math.max(Math.abs(bank.tile.x - tile.x), Math.abs(bank.tile.z - tile.z)) <= 14;
+    const matches = (config: Record<string, string> | undefined, access: { name: string; op: string }) =>
+        config?.name === access.name && [1, 2, 3, 4, 5].some(index => config[`op${index}`] === access.op);
+    for (const input of maps) {
+        const { mx, mz } = parseMapsquarePath(input.path);
+        const text = fs.readFileSync(path.join(content, input.path), 'utf8');
+        for (const placement of parseJm2LocPlacements(text, ids)) {
+            const tile = worldFromMapsquare(mx, mz, placement.lx, placement.lz, placement.plane);
+            const config = configs.get(`.loc:${packedLocs.get(placement.loc_id)}`);
+            for (const bank of catalog) {
+                if (bank.npcAccess || !near(bank, tile)) continue;
+                const access = bank.access ?? { name: 'Bank booth', op: 'Use-quickly' };
+                if (!matches(config, access) && !(access.openFirst && matches(config, access.openFirst))) continue;
+                let width = Number(config?.width ?? 1), length = Number(config?.length ?? 1);
+                if (placement.angle & 1) [width, length] = [length, width];
+                if (![width, length].every(value => Number.isInteger(value) && value > 0)) throw new Error(`bank placements: invalid footprint ${bank.name}`);
+                rows.push({ name: bank.name, kind: 'object', id: placement.loc_id, x: tile.x, z: tile.z, level: tile.plane, width, length });
+            }
+        }
+        for (const placement of parseJm2NpcPlacements(text)) {
+            const tile = worldFromMapsquare(mx, mz, placement.lx, placement.lz, placement.plane);
+            const config = configs.get(`.npc:${packedNpcs.get(placement.npc_id)}`);
+            for (const bank of catalog) {
+                if (bank.npcAccess && near(bank, tile) && matches(config, bank.npcAccess)) {
+                    const size = Number(config?.size ?? 1);
+                    if (!Number.isInteger(size) || size < 1) throw new Error(`bank placements: invalid NPC size ${bank.name}`);
+                    rows.push({ name: bank.name, kind: 'npc', id: placement.npc_id, x: tile.x, z: tile.z, level: tile.plane, width: size, length: size });
+                }
+            }
+        }
+    }
+    rows.sort((a, b) => catalog.findIndex(bank => bank.name === a.name) - catalog.findIndex(bank => bank.name === b.name) || a.x - b.x || a.z - b.z || a.id - b.id);
+    const missing = catalog.filter(bank => !rows.some(row => row.name === bank.name)).map(bank => bank.name);
+    return { facts: { rows, missing }, inputs: { loc_configs: locTree.digest, npc_configs: npcTree.digest, maps: fileInventoryDigest(maps), loc_pack: sourceFile(content, 'pack/loc.pack'), npc_pack: sourceFile(content, 'pack/npc.pack') } };
+}
+
 async function generate(spec: Revision) {
     const pinned = assertPinned(spec);
     verifyCacheIdentity(spec.revision, spec.engine, spec.cacheIdentity);
@@ -2672,7 +2853,12 @@ async function generate(spec: Revision) {
     const npcModule = (await import(pathToFileURL(path.join(spec.engine, 'src/cache/config/NpcType.ts')).href)) as { default: { load(dir: string): void; configs: NpcType[] } }; npcModule.default.load('data/pack');
     const piles = pileModels(objModule.default.configs); const items = objModule.default.configs.map((obj) => row(obj, piles)); const aliases = items.filter((item) => item.alias !== null).map((item) => item.alias as string); if (new Set(items.map((item) => item.id)).size !== items.length || new Set(aliases).size !== aliases.length) throw new Error(`${spec.revision}: duplicate ids or aliases`);
     const facts = extractFacts(spec.content, objModule.default.configs, npcModule.default.configs); const drops = extractDropFacts(spec.content, objModule.default.configs, npcModule.default.configs); if (drops.length !== 4) throw new Error(`${spec.revision}: expected four combat drop tables, got ${drops.length}`); const magic = extractMagicFacts(spec.content, objModule.default.configs); if (magic.spells.length !== 16 || magic.spells[15].name !== 'Fire Wave' || magic.staves.length !== 14) throw new Error(`${spec.revision}: expected 16 combat spells and 14 staves, got ${magic.spells.length}/${magic.staves.length}`); const herbs = extractHerbFacts(spec.content, objModule.default.configs); if (herbs.herbs.length < 14) throw new Error(`${spec.revision}: expected a full herb identify table, got ${herbs.herbs.length}`); if (herbs.herb_level_default !== 3) throw new Error(`${spec.revision}: expected identify.param default 3, got ${herbs.herb_level_default}`); const autocast = extractAutocastControls(spec.content); const duel = extractDuelControls(spec.content); const special = extractSpecialControls(spec.content, objModule.default.configs);     const teleports = extractTeleportSpells(spec.content, objModule.default.configs); if (teleports.length !== 7 || teleports[0].name !== 'Varrock' || teleports[6].name !== 'Trollheim' || teleports[0].component_id !== 1164 || teleports[6].component_id !== 7455) throw new Error(`${spec.revision}: expected 7 standard teleports, got ${teleports.map((row) => row.name).join(',')}`);     const prayer = extractPrayerFacts(spec.content); if (prayer.prayers.length !== 15) throw new Error(`${spec.revision}: expected 15 prayers, got ${prayer.prayers.length}`); const nurmofEssence = extractNurmofEssenceFacts(spec.content, objModule.default.configs, npcModule.default.configs); if (nurmofEssence.pickaxes.length !== 6) throw new Error(`${spec.revision}: expected six pickaxes, got ${nurmofEssence.pickaxes.length}`);     const flourSix = extractFlourSixFacts(spec.content, objModule.default.configs); if (flourSix.pot.id !== 1931 || flourSix.flour_barrel.id !== 2662) throw new Error(`${spec.revision}: flour six join mismatch`); const objPackPath = path.join(spec.content, 'pack/obj.pack'); if (!fs.existsSync(objPackPath)) throw new Error(`${spec.revision}: missing pack/obj.pack`); const objPack = parsePack(fs.readFileSync(objPackPath, 'utf8')); if (objPack.size === 0) throw new Error(`${spec.revision}: empty pack/obj.pack`); const equipmentNames = extractEquipmentNamesFacts(items, objPack); const gatherMethods = extractGatherMethodsFacts(spec.content, spec.revision); if (gatherMethods.mining.length !== 17 || gatherMethods.woods.length !== 10 || gatherMethods.fishing.length !== 9) throw new Error(`${spec.revision}: expected 17 mine, 10 wood, and 9 fishing rows, got ${gatherMethods.mining.length}/${gatherMethods.woods.length}/${gatherMethods.fishing.length}`); const gatherPlacements = extractGatherPlacementsFacts(spec.content, gatherMethods.woods); if (gatherPlacements.woods.length !== 6) throw new Error(`${spec.revision}: expected six published woods, got ${gatherPlacements.woods.length}`); if (gatherPlacements.facts.coverage.length !== 1 || gatherPlacements.facts.coverage[0].class !== 'unknown' || gatherPlacements.facts.coverage[0].family !== 'mining') throw new Error(`${spec.revision}: gather placements must record mining as unknown coverage`); const questIdentity = extractQuestIdentityFacts(spec.content, spec.revision); if (questIdentity.rows.length !== 6 || questIdentity.rows[4].id !== 'death' || questIdentity.rows[4].varp !== 'death_equiproom' || questIdentity.rows[4].varp_id !== 314 || questIdentity.rows[4].complete !== 80 || questIdentity.rows.some((row) => row.requirements.qualification !== 'partial')) throw new Error(`${spec.revision}: quest identity join mismatch`); if (spec.revision === 274 && (questIdentity.coverage.length !== 1 || questIdentity.coverage[0].alias !== 'routequest' || questIdentity.coverage[0].other_pin_id !== 387 || questIdentity.coverage[0].copied !== false)) throw new Error(`${spec.revision}: quest coverage mismatch`); if (spec.revision !== 274 && questIdentity.coverage.length !== 0) throw new Error(`${spec.revision}: quest coverage must be empty`); const trails = extractTrailFacts(spec.content, objModule.default.configs); assertTrailPins(trails, spec.revision); const talkKey = extractTalkKeyFacts(spec.content, objModule.default.configs); assertTalkKeyPins(talkKey.facts, spec.revision); assertTalkKeyNpcJoins(talkKey.facts, npcModule.default.configs); const trioGivers = extractTrioGiversFacts(spec.content); assertTrioGiverPins(trioGivers.facts, spec.revision); assertTrioGiverNpcJoins(trioGivers.facts, npcModule.default.configs); const inputs = ['data/pack/server/obj.dat', 'data/pack/server/npc.dat', 'data/pack/client/config'].map((file) => sourceFile(spec.engine, file)); const contentInputs = contentFiles.map((file) => sourceFile(spec.content, file)); const sources = decoderSources.map((file) => sourceFile(spec.engine, file));
-    const payload = { schema_version: 4, revision: spec.revision, provenance: { engine_commit: pinned.engineCommit, content_commit: pinned.contentCommit, inputs, content_inputs: contentInputs, placement_inputs: gatherPlacements.inputs, talk_key_inputs: talkKey.inputs, trio_givers_inputs: trioGivers.inputs, decoder_sources: sources, cache_identity: spec.cacheIdentity }, items, ...facts, drop_tables: drops, ...magic, ...herbs, ...prayer, nurmof_essence: nurmofEssence, flour_six: flourSix, equipment_names: equipmentNames, gather_methods: gatherMethods, gather_placements: gatherPlacements.facts, quest_identity: questIdentity, trails, talk_key: talkKey.facts, trio_givers: trioGivers.facts, autocast, duel, special, teleports }; const bytes = `${JSON.stringify(payload, null, 2)}\n`; fs.mkdirSync(path.dirname(spec.output), { recursive: true }); fs.writeFileSync(spec.output, bytes); return { revision: spec.revision, output: path.relative(root, spec.output), records: items.length, consumption: facts.consumption.length, pickpocket: facts.pickpocket.length, drop_tables: drops.length, spells: magic.spells.length, staves: magic.staves.length, herbs: herbs.herbs.length, prayers: prayer.prayers.length, pickaxes: nurmofEssence.pickaxes.length, flour_six: 6, gather_methods: { mining: gatherMethods.mining.length, woods: gatherMethods.woods.length, fishing: gatherMethods.fishing.length }, gather_placements: { rows: gatherPlacements.facts.rows.length, maps: gatherPlacements.inputs.maps.files, published_loc_ids: gatherPlacements.inputs.published_loc_ids.count, coverage: gatherPlacements.facts.coverage.length, woods: gatherPlacements.woods }, equipment_names: { bows: equipmentNames.bows.length, crossbows: equipmentNames.crossbows.length, darts: equipmentNames.darts.length, arrows: equipmentNames.arrows.length, bolts: equipmentNames.bolts.length, melee_weapons: equipmentNames.melee_weapons.length, staffs: equipmentNames.staffs.length, resolved: EQUIPMENT_FAMILY_ORDER.reduce((sum, family) => sum + equipmentNames[family].filter((row) => row.disposition === 'resolved').length, 0), absent: EQUIPMENT_FAMILY_ORDER.reduce((sum, family) => sum + equipmentNames[family].filter((row) => row.disposition === 'absent').length, 0) }, autocast, duel, special: { energy_varp: special.energy_varp, armed_varp: special.armed_varp, max_energy: special.max_energy, bars: special.bars.length, weapons: special.weapons.length }, teleports: teleports.length, quest_identity: { rows: questIdentity.rows.length, coverage: questIdentity.coverage.length }, trails: { rows: trails.rows.length, clues: trails.rows.filter((row) => row.role === 'clue').length, caskets: trails.rows.filter((row) => row.role === 'casket').length, challenge_answers: trails.challenge_answers.length, access_constrained: trails.rows.filter((row) => row.access !== undefined).length }, talk_key: { talk: talkKey.facts.talk.length, talk_with_spawn: talkKey.facts.talk.filter((row) => row.spawn !== undefined).length, keys: talkKey.facts.keys.length, keys_with_spawn: talkKey.facts.keys.filter((row) => row.spawn !== undefined).length, coverage: talkKey.facts.coverage.length, maps: talkKey.inputs.maps.files, scripts: talkKey.inputs.scripts.files, npc_configs: talkKey.inputs.npc_configs.files, digest: crypto.createHash('sha256').update(JSON.stringify(talkKey.facts)).digest('hex') }, trio_givers: { rows: trioGivers.facts.rows.length, with_spawn: trioGivers.facts.rows.filter((row) => row.spawn !== undefined).length, coverage: trioGivers.facts.coverage.length, maps: trioGivers.inputs.maps.files, handlers: trioGivers.inputs.handlers.length, npc_configs: trioGivers.inputs.npc_configs.length, digest: crypto.createHash('sha256').update(JSON.stringify(trioGivers.facts)).digest('hex') }, bytes: Buffer.byteLength(bytes), sha256: crypto.createHash('sha256').update(bytes).digest('hex'), engine_commit: pinned.engineCommit, content_commit: pinned.contentCommit, inputs, content_inputs: contentInputs, decoder_sources: sources, cache_identity: spec.cacheIdentity };
+    const bankSource = path.join(envPath('RS2B0T', path.join(root, '.superpowers/release-0.1.9/reference/rs2b0t-00d39a17e0')), 'src/bot/api/bank/BankLocations.ts');
+    const bankCatalog = await extractBankCatalog(spec.engine, fs.readFileSync(bankSource, 'utf8'));
+    const bankPlacements = extractBankPlacements(spec.content, bankCatalog);
+    const bankInputs = { catalog: { path: 'rs2b0t-00d39a17e0/src/bot/api/bank/BankLocations.ts', ...sha256(bankSource) }, ...bankPlacements.inputs };
+    fs.writeFileSync(path.join(root, 'crates/api/data/game-data/bank-catalog.rs'), bankCatalogRust(bankCatalog));
+    const payload = { schema_version: 4, revision: spec.revision, provenance: { engine_commit: pinned.engineCommit, content_commit: pinned.contentCommit, inputs, content_inputs: contentInputs, placement_inputs: gatherPlacements.inputs, talk_key_inputs: talkKey.inputs, trio_givers_inputs: trioGivers.inputs, decoder_sources: sources, cache_identity: spec.cacheIdentity, bank_inputs: bankInputs }, items, ...facts, drop_tables: drops, ...magic, ...herbs, ...prayer, nurmof_essence: nurmofEssence, flour_six: flourSix, equipment_names: equipmentNames, gather_methods: gatherMethods, gather_placements: gatherPlacements.facts, quest_identity: questIdentity, trails, talk_key: talkKey.facts, trio_givers: trioGivers.facts, autocast, duel, special, teleports, bank_placements: bankPlacements.facts }; const bytes = `${JSON.stringify(payload, null, 2)}\n`; fs.mkdirSync(path.dirname(spec.output), { recursive: true }); fs.writeFileSync(spec.output, bytes); return { revision: spec.revision, output: path.relative(root, spec.output), records: items.length, consumption: facts.consumption.length, pickpocket: facts.pickpocket.length, drop_tables: drops.length, spells: magic.spells.length, staves: magic.staves.length, herbs: herbs.herbs.length, prayers: prayer.prayers.length, pickaxes: nurmofEssence.pickaxes.length, flour_six: 6, gather_methods: { mining: gatherMethods.mining.length, woods: gatherMethods.woods.length, fishing: gatherMethods.fishing.length }, gather_placements: { rows: gatherPlacements.facts.rows.length, maps: gatherPlacements.inputs.maps.files, published_loc_ids: gatherPlacements.inputs.published_loc_ids.count, coverage: gatherPlacements.facts.coverage.length, woods: gatherPlacements.woods }, equipment_names: { bows: equipmentNames.bows.length, crossbows: equipmentNames.crossbows.length, darts: equipmentNames.darts.length, arrows: equipmentNames.arrows.length, bolts: equipmentNames.bolts.length, melee_weapons: equipmentNames.melee_weapons.length, staffs: equipmentNames.staffs.length, resolved: EQUIPMENT_FAMILY_ORDER.reduce((sum, family) => sum + equipmentNames[family].filter((row) => row.disposition === 'resolved').length, 0), absent: EQUIPMENT_FAMILY_ORDER.reduce((sum, family) => sum + equipmentNames[family].filter((row) => row.disposition === 'absent').length, 0) }, autocast, duel, special: { energy_varp: special.energy_varp, armed_varp: special.armed_varp, max_energy: special.max_energy, bars: special.bars.length, weapons: special.weapons.length }, teleports: teleports.length, quest_identity: { rows: questIdentity.rows.length, coverage: questIdentity.coverage.length }, trails: { rows: trails.rows.length, clues: trails.rows.filter((row) => row.role === 'clue').length, caskets: trails.rows.filter((row) => row.role === 'casket').length, challenge_answers: trails.challenge_answers.length, access_constrained: trails.rows.filter((row) => row.access !== undefined).length }, talk_key: { talk: talkKey.facts.talk.length, talk_with_spawn: talkKey.facts.talk.filter((row) => row.spawn !== undefined).length, keys: talkKey.facts.keys.length, keys_with_spawn: talkKey.facts.keys.filter((row) => row.spawn !== undefined).length, coverage: talkKey.facts.coverage.length, maps: talkKey.inputs.maps.files, scripts: talkKey.inputs.scripts.files, npc_configs: talkKey.inputs.npc_configs.files, digest: crypto.createHash('sha256').update(JSON.stringify(talkKey.facts)).digest('hex') }, trio_givers: { rows: trioGivers.facts.rows.length, with_spawn: trioGivers.facts.rows.filter((row) => row.spawn !== undefined).length, coverage: trioGivers.facts.coverage.length, maps: trioGivers.inputs.maps.files, handlers: trioGivers.inputs.handlers.length, npc_configs: trioGivers.inputs.npc_configs.length, digest: crypto.createHash('sha256').update(JSON.stringify(trioGivers.facts)).digest('hex') }, bytes: Buffer.byteLength(bytes), sha256: crypto.createHash('sha256').update(bytes).digest('hex'), engine_commit: pinned.engineCommit, content_commit: pinned.contentCommit, inputs, content_inputs: contentInputs, decoder_sources: sources, cache_identity: spec.cacheIdentity, bank_inputs: bankInputs, bank_placements: { rows: bankPlacements.facts.rows.length, missing: bankPlacements.facts.missing } };
 }
 
 /**

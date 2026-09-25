@@ -128,8 +128,8 @@
         "npc_configs": 3,
         "digest": "61fad0df0a3449eb85e52902d83668c8ef56fe4e61337ff0fdc98b528c9ab9d1"
       },
-      "bytes": 3213936,
-      "sha256": "f770b98a2984fe920baf9a8e51ab1af647add9c55edb4b22e5a304341eda693d",
+      "bytes": 3228428,
+      "sha256": "6c0a35decd3d504f6e777d6e1dac83a011fb32b4ed9667c297cff93d97ead98b",
       "engine_commit": "4c95f87efe00b068cadbd229d94736626907bd1a",
       "content_commit": "000c19997e07206131bcb3c884265840efce416d",
       "inputs": [
@@ -548,6 +548,44 @@
         "content_id": "0d14c891b5727142379c6d8844bd5bb1ff9874d4d996db1dc5ceea0e9062469c",
         "nav_sha256": "05db24743e9f549ced16c1f00b87c30a390d3aaec391815da3f3563130b3bcd4",
         "flags_sha256": "92d5dea05c886ac8720be6b47e47cbc68355a8ff42676c0886f5b7ea8343a4cb"
+      },
+      "bank_inputs": {
+        "catalog": {
+          "path": "rs2b0t-00d39a17e0/src/bot/api/bank/BankLocations.ts",
+          "bytes": 11864,
+          "sha256": "b38f12202cd54b0f6d22d35a736e385022b04db8bbec206137ad0f4361d8c2be"
+        },
+        "loc_configs": {
+          "files": 128,
+          "bytes": 602628,
+          "sha256": "fb6d3385610e1f218cd8f254ba20f175c751de31666276f41c256a727392c23d"
+        },
+        "npc_configs": {
+          "files": 138,
+          "bytes": 885445,
+          "sha256": "3fedd0e528dbb318bccba2d2e3b68c9fc433501f57a19399d0cbc87eb57de6f4"
+        },
+        "maps": {
+          "files": 483,
+          "bytes": 48704328,
+          "sha256": "ab7e905e85bf13e10fc78cd635abab1b1881a228268ce5c0182eda698fda35b3"
+        },
+        "loc_pack": {
+          "path": "pack/loc.pack",
+          "bytes": 105424,
+          "sha256": "326b4b80f62abcd4b81dd0c6f7af94e2ab49b5b915e1dfe64ffab312df00c291"
+        },
+        "npc_pack": {
+          "path": "pack/npc.pack",
+          "bytes": 25984,
+          "sha256": "a19dc299ef62570e3c190029c32719373e3d6d3fc81b875ff1f02877fe75e01d"
+        }
+      },
+      "bank_placements": {
+        "rows": 70,
+        "missing": [
+          "Canifis"
+        ]
       }
     },
     {
@@ -676,8 +714,8 @@
         "npc_configs": 3,
         "digest": "61fad0df0a3449eb85e52902d83668c8ef56fe4e61337ff0fdc98b528c9ab9d1"
       },
-      "bytes": 3316097,
-      "sha256": "7a272664163dffb08c567377a1c2fedccb50da96ae1e4bc241c83d765c3a8131",
+      "bytes": 3330589,
+      "sha256": "a0bcae58095b414f046f0dd65a4a2a87b3e27fd42a88701f8ad6069b4cc116f8",
       "engine_commit": "cc359656b4acd216ca452495874b6beba9a0ac75",
       "content_commit": "92649430fcbc83538d8c4367ecb96cee1a67a944",
       "inputs": [
@@ -1096,6 +1134,44 @@
         "content_id": "cdb2f161c35239f09bf5175648e15e7dbbc4bbf9be4419cea41f7053ccf8b044",
         "nav_sha256": "131db92e32eddcb08148909d477589544320fe7e34a422e8004e97e888032924",
         "flags_sha256": "67e4094dff06def5cf8abc172ce751f4ca8679532ba04c1ba15ab6bf668c7a4a"
+      },
+      "bank_inputs": {
+        "catalog": {
+          "path": "rs2b0t-00d39a17e0/src/bot/api/bank/BankLocations.ts",
+          "bytes": 11864,
+          "sha256": "b38f12202cd54b0f6d22d35a736e385022b04db8bbec206137ad0f4361d8c2be"
+        },
+        "loc_configs": {
+          "files": 131,
+          "bytes": 673664,
+          "sha256": "efa4c8260972ce2c03f0204964826d604e2267e808c0bb03dbc063c848ec9c33"
+        },
+        "npc_configs": {
+          "files": 144,
+          "bytes": 933024,
+          "sha256": "3cd8ec5f94296143031083bb17a818e14e74248f969d3065c80664ccf5b83fab"
+        },
+        "maps": {
+          "files": 534,
+          "bytes": 55049838,
+          "sha256": "41a6bb259a87a851b0650db06ae2d26126086b4548f8d32368b99df41911f08d"
+        },
+        "loc_pack": {
+          "path": "pack/loc.pack",
+          "bytes": 117164,
+          "sha256": "64b0bb63190678077f7a6c6f353d3931a6f75eba0711023ff89275b07c438cb0"
+        },
+        "npc_pack": {
+          "path": "pack/npc.pack",
+          "bytes": 31379,
+          "sha256": "b28b1157c007690d9a7d1fc02bcb51bb4d45929997a71585ac9c0bdda35776d2"
+        }
+      },
+      "bank_placements": {
+        "rows": 70,
+        "missing": [
+          "Canifis"
+        ]
       }
     }
   ]

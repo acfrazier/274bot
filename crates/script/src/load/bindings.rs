@@ -192,26 +192,6 @@ pub(super) fn wire_runtime(
             },
         )
         .map_err(|e| format!("register common bank loot: {e}"))?;
-    let bank_unlock_facts = std::sync::Arc::clone(&named_banks);
-    runtime
-        .register_function(
-            "__rs2b0t_bank_unlocked",
-            move |args: &[serde_json::Value]| {
-                let payload = args.first().unwrap_or(&serde_json::Value::Null);
-                let Some(name) = payload.get("name").and_then(|v| v.as_str()) else {
-                    return Ok(serde_json::Value::Bool(false));
-                };
-                let Some(tile) = json_tile(Some(payload)) else {
-                    return Ok(serde_json::Value::Bool(false));
-                };
-                Ok(serde_json::Value::Bool(api::named_banks::bank_unlocked(
-                    bank_unlock_facts.as_ref(),
-                    name,
-                    tile,
-                )))
-            },
-        )
-        .map_err(|e| format!("register bank unlocked: {e}"))?;
     runtime
         .register_function("__rs2b0t_walk", |args: &[serde_json::Value]| {
             Ok(crate::walk_wait::dispatch(
@@ -616,7 +596,7 @@ pub(super) fn wire_runtime(
     super::dialog_v8::install(runtime).map_err(|e| format!("dialog v8: {e}"))?;
     let content = format!(
         "globalThis.__rs2b0t_host.content = {};",
-        crate::shim::content_json(game_data.as_deref(), named_banks.as_ref())
+        crate::shim::content_json(game_data.as_deref())
     );
     runtime
         .eval::<()>(content.as_str())

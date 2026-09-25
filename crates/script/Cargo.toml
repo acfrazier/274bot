@@ -39,7 +39,6 @@ v8 = { version = "=137.2.1", default-features = false, optional = true }
 # The ctx unit test builds an `ObjType` table; the compiled crate itself
 # never touches `client`.
 client = { workspace = true }
-# The named-bank alias tests resolve the shipped catalog configuration
-# (`script::content::BANK_ALIASES`) against real packed world geometry; the
-# compiled crate itself never touches `nav`.
+# Catalog geometry fixtures use the native resolver; the compiled crate
+# itself never depends on nav.
 nav = { path = "../nav" }

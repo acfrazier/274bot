@@ -960,6 +960,8 @@ pub struct SelectedGameData {
     talk_key: Option<TalkKeyFacts>,
     #[serde(default)]
     trio_givers: Option<TrioGiverFacts>,
+    #[serde(default)]
+    bank_placements: Option<crate::named_banks::BankPlacementFacts>,
     #[serde(skip)]
     item_id_index: Vec<Option<usize>>,
     #[serde(skip)]
@@ -977,6 +979,11 @@ impl SelectedGameData {
                 "generated game data schema mismatch: expected {SCHEMA_VERSION}, got {}",
                 data.schema_version
             ));
+        }
+        if let Some(facts) = &data.bank_placements {
+            if facts.rows.iter().any(|row| row.width < 1 || row.length < 1 || !(0..4).contains(&row.level)) {
+                return Err("bank_placements invalid access footprint".to_string());
+            }
         }
         if let Some(facts) = &data.gather_methods {
             if facts.woods.is_empty() && facts.mining.is_empty() && facts.fishing.is_empty() {
@@ -1369,6 +1376,10 @@ impl SelectedGameData {
 
     pub fn herb_level_default(&self) -> Option<i32> {
         self.herb_level_default
+    }
+
+    pub fn bank_placements(&self) -> Option<&crate::named_banks::BankPlacementFacts> {
+        self.bank_placements.as_ref()
     }
 
     pub fn herb_by_key(&self, key: &str) -> Option<&HerbFact> {

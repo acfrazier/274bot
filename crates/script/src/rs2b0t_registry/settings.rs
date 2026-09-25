@@ -142,8 +142,8 @@ pub(crate) fn w1c_equipment_option_families(ident: &str) -> Option<&'static [&'s
 /// copied from the frozen rs2b0t pin; this is not a JS evaluator.
 ///
 /// `BANK_LOCATIONS` / `BANK_LOCATION_OPTIONS` are the exception: a bank name
-/// is only a choice when the selected data publishes an alias the runtime
-/// `BANK_LOCATIONS` can resolve, so those read [`crate::content::BANK_ALIASES`].
+/// is drawn from the same frozen roster as runtime `BANK_LOCATIONS`, including
+/// gated entries (eligibility is evaluated when selecting a destination).
 pub(crate) fn catalog_option_table(ident: &str) -> Option<&'static [&'static str]> {
     Some(match ident {
         "COOK_LOCATION_OPTIONS" => &[
@@ -251,26 +251,21 @@ pub(crate) fn catalog_option_table(ident: &str) -> Option<&'static [&'static str
 }
 
 fn bank_location_names(ident: &str) -> &'static [&'static str] {
-    /// The published alias names in `BANK_ALIASES` table order.
-    ///
-    /// Derived at compile time so the dropdown cannot drift from the selected
-    /// data: a frozen foreign bank list offers names the runtime
-    /// `BANK_LOCATIONS` lookup has no row for.
-    const BANKS: [&str; crate::content::BANK_ALIASES.len()] = {
-        let mut names = [""; crate::content::BANK_ALIASES.len()];
+    /// The complete frozen roster, in the runtime payload's stable order.
+    const BANKS: [&str; api::named_banks::BANK_CATALOG.len()] = {
+        let mut names = [""; api::named_banks::BANK_CATALOG.len()];
         let mut i = 0;
         while i < names.len() {
-            names[i] = crate::content::BANK_ALIASES[i].name;
+            names[i] = api::named_banks::BANK_CATALOG[i].name;
             i += 1;
         }
         names
     };
-    /// `BANK_LOCATION_OPTIONS` keeps the caller's own `Nearest` head.
-    const WITH_NEAREST: [&str; crate::content::BANK_ALIASES.len() + 1] = {
-        let mut names = ["Nearest"; crate::content::BANK_ALIASES.len() + 1];
+    const WITH_NEAREST: [&str; api::named_banks::BANK_CATALOG.len() + 1] = {
+        let mut names = ["Nearest"; api::named_banks::BANK_CATALOG.len() + 1];
         let mut i = 0;
-        while i < crate::content::BANK_ALIASES.len() {
-            names[i + 1] = crate::content::BANK_ALIASES[i].name;
+        while i < api::named_banks::BANK_CATALOG.len() {
+            names[i + 1] = api::named_banks::BANK_CATALOG[i].name;
             i += 1;
         }
         names

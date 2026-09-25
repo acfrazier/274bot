@@ -1,30 +1,10 @@
 //! CookBot reads bank.tile and surface.stand from posted Catherby facts.
 
-use std::sync::Arc;
-
-use api::snapshot::WorldTile;
-use nav::named_banks::resolve;
-use script::content::BANK_ALIASES;
 use script::{LoadIsolate, LoadShape};
 
-fn packed_booths() -> Vec<WorldTile> {
-    BANK_ALIASES
-        .iter()
-        .flat_map(|c| c.booths.iter().copied())
-        .collect()
-}
 
 fn spawn(src: &str) -> LoadIsolate {
-    let facts = resolve(BANK_ALIASES, &packed_booths(), |_| true);
-    LoadIsolate::spawn_with_content(
-        src.to_string(),
-        LoadShape::CompatClass,
-        vec![],
-        None,
-        Arc::new(facts),
-        Arc::new(api::run_policy::RunPolicyOverrideCell::new()),
-    )
-    .unwrap()
+    LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap()
 }
 
 const SRC: &str = r#"
@@ -35,7 +15,6 @@ import {
     resolveCookLocation,
 } from '../../api/cooking/CookLocations.js';
 import { MAX_SURFACE_CHEB } from '../../data/cookLocations.js';
-import { BANK_LOCATIONS } from '../../api/bank/BankLocations.js';
 
 function xyz(t) {
     return t ? [t.x, t.z, t.level ?? 0] : null;
@@ -81,7 +60,6 @@ function consume(setting, mode, rangeName) {
 
 globalThis.__options = COOK_LOCATION_OPTIONS;
 globalThis.__names = COOK_LOCATIONS.map((l) => l.name);
-globalThis.__bankNames = BANK_LOCATIONS.map((b) => b.name);
 globalThis.__catherby = consume('Catherby', 'range', 'Range');
 globalThis.__postedSurface = (() => {
     const where = resolveCookLocation('Catherby');
@@ -174,15 +152,5 @@ fn custom_keeps_settings_fallback_and_options_stay_catherby() {
         serde_json::json!(["Auto", "Catherby", "Custom"])
     );
     assert_eq!(probe_obj(&iso, "__names"), serde_json::json!(["Catherby"]));
-    let banks = probe_obj(&iso, "__bankNames");
-    let bank_names = banks.as_array().expect("bank names");
-    assert!(
-        bank_names.iter().any(|n| n == "Falador East"),
-        "named-bank mapping must still exist beside cook stands, got {banks:?}"
-    );
-    assert!(
-        !bank_names.iter().any(|n| n == "Catherby"),
-        "Catherby must stay a cook stand, not a BANK_LOCATIONS alias"
-    );
     iso.join();
 }

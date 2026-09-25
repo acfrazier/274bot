@@ -380,7 +380,7 @@ export interface NativeSnapshot {
   walk_outcome_allow_teleports: boolean;
   walk_outcome_request_id: number;
   /** Latest select-only completion; fallback is not a reachability proof. */
-  bank_selection: { request_id: number; generation: number; kind: 'near' | 'reachable' | 'fallback' | 'none'; bank: { name: string; tile: WorldTile } | null } | null;
+  bank_selection: { request_id: number; generation: number; kind: 'near' | 'reachable' | 'fallback' | 'none'; bank: BankLocation | null } | null;
   route_inspect_seq: number;
   route_inspect_generation: number;
   route_inspect_request_id: number;
@@ -657,6 +657,15 @@ export interface SceneProjection {
   truncated: boolean;
 }
 
+export interface BankLocation {
+  name: string;
+  tile: WorldTile;
+  approach?: WorldTile;
+  requires?: { skill?: { name: string; level: number }; quest?: string; setting?: string };
+  access?: { name: string; op: string; openFirst?: { name: string; op: string } };
+  npcAccess?: { name: string; op: string; choose?: string };
+}
+
 /** Public JS API v2 handle. Explicit `export const apiVersion = 2` only. */
 export interface NativeApi {
   readonly tick: number;
@@ -685,7 +694,7 @@ export interface NativeApi {
   /** Completes the 15-row walk. timed_out may be nonzero; LIVE later requires all off. Same busy refuse as prayerSet. */
   prayerClear(): Promise<HelperResult<PrayerClearCounts>>;
   /** Select without moving. Native wilderness defaults false; an air fallback does not prove reachability. */
-  bankNearestReachable(input?: { from?: WorldTile; allow_wilderness?: boolean }): Promise<HelperResult<{ name: string; tile: WorldTile } | null>>;
+  bankNearestReachable(input?: { from?: WorldTile; allow_wilderness?: boolean; use_mage_bank?: boolean; use_zanaris_bank?: boolean }): Promise<HelperResult<BankLocation | null>>;
   foodCount(input: { items: ItemRow[]; foodName: string }): HelperResult<number>;
   foodHealAmount(input: { foodName: string }): HelperResult<number>;
   combatKeepNames(input: { food: string; style?: string; spell?: string; ammo?: string; weapon?: string; extra?: string[] }): HelperResult<string[]>;

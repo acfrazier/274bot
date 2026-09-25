@@ -904,6 +904,7 @@ pub(super) fn materialize_settings_bag(
     runtime: &mut Runtime,
     bag: &serde_json::Map<String, serde_json::Value>,
 ) -> Result<(), String> {
+    crate::bank_select::settings(bag);
     let context = runtime.deno_runtime().main_context();
     let mut scope = runtime.deno_runtime().handle_scope();
     let global = context.open(&mut scope).global(&mut scope);

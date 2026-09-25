@@ -178,8 +178,8 @@ pub struct Play {
     auto_world: Option<u16>,
     /// Generated facts only when the profile cache matches a checked-in asset.
     game_data: Option<Arc<api::game_data::SelectedGameData>>,
-    /// Bound-world named bank aliases, resolved once with the nav world and
-    /// the catalog alias configuration (`script::content::BANK_ALIASES`).
+    /// Frozen roster resolved once from selected access placements and the
+    /// bound walk surface; the selector and isolates share these exact rows.
     named_banks: Arc<api::named_banks::NamedBankFacts>,
     cache: Arc<Cache>,
     /// The shared obj-id → name table every script ctx resolves `has_item`

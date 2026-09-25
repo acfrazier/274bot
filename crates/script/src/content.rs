@@ -5,12 +5,9 @@
 //! revision facts: revision facts come from `api::game_data::SelectedGameData`
 //! and the shared loot predicate stays in `api::content`. The rows are posted
 //! through the existing content payload (`shim::content_json`) for the
-//! catalog shims that read them. The catalog bank aliases are the same class
-//! of configuration: their names, preferred stands and cluster booth
-//! preferences live here, and `nav::named_banks` projects them onto the bound
-//! world's packed stands and walk surface before the payload is posted.
+//! catalog shims that read them. Bank identities and access facts instead come
+//! from `api::named_banks` and the selected generated content.
 
-use api::named_banks::BankAliasCandidate;
 use api::snapshot::WorldTile;
 
 /// A named cow field: the walk-in tile, not a gathering camp.
@@ -318,66 +315,6 @@ pub fn pickpocket_spot(target: &str) -> Option<&'static PickpocketSpot> {
         .or_else(|| PICKPOCKET_SPOTS.first())
 }
 
-/// Curated tile shortcut for the bank alias cluster tables below.
-const fn t(x: i32, z: i32) -> WorldTile {
-    WorldTile { x, z, level: 0 }
-}
-
-const FALADOR_EAST_BOOTHS: &[WorldTile] = &[
-    t(3011, 3354),
-    t(3012, 3354),
-    t(3013, 3354),
-    t(3014, 3354),
-    t(3015, 3354),
-];
-const VARROCK_EAST_BOOTHS: &[WorldTile] =
-    &[t(3252, 3419), t(3253, 3419), t(3254, 3419), t(3256, 3419)];
-const EDGEVILLE_BOOTHS: &[WorldTile] = &[t(3095, 3491), t(3096, 3493)];
-const DRAYNOR_BOOTHS: &[WorldTile] = &[t(3091, 3242), t(3091, 3243), t(3091, 3245)];
-const AL_KHARID_BOOTHS: &[WorldTile] = &[
-    t(3268, 3164),
-    t(3268, 3165),
-    t(3268, 3166),
-    t(3268, 3167),
-    t(3268, 3168),
-    t(3268, 3169),
-];
-
-/// The five shim `RUNES.bank` catalog aliases: name, preferred walk stand,
-/// and the packed booth loc tiles that identify that named cluster.
-///
-/// These are catalog preferences, not server world facts. `nav`'s resolver
-/// projects them onto the bound world's packed booth set and walk surface —
-/// a stand that fails adjacency or walkability is replaced by a derived
-/// adjacent walkable tile, and an alias the world cannot support is omitted
-/// so `BANK_LOCATIONS.find` stays undefined.
-pub const BANK_ALIASES: &[BankAliasCandidate] = &[
-    BankAliasCandidate {
-        name: "Falador East",
-        stand: t(3013, 3355),
-        booths: FALADOR_EAST_BOOTHS,
-    },
-    BankAliasCandidate {
-        name: "Varrock East",
-        stand: t(3253, 3420),
-        booths: VARROCK_EAST_BOOTHS,
-    },
-    BankAliasCandidate {
-        name: "Edgeville",
-        stand: t(3094, 3493),
-        booths: EDGEVILLE_BOOTHS,
-    },
-    BankAliasCandidate {
-        name: "Draynor",
-        stand: t(3093, 3243),
-        booths: DRAYNOR_BOOTHS,
-    },
-    BankAliasCandidate {
-        name: "Al Kharid",
-        stand: t(3269, 3167),
-        booths: AL_KHARID_BOOTHS,
-    },
-];
 
 /// Frozen Fight/Flee attacker names. Exact display-name match only.
 pub const HOSTILE_ATTACKER_NAMES: &[&str] = &["Guard", "Knight of Ardougne", "Paladin", "Hero"];
@@ -491,55 +428,6 @@ mod tests {
         assert_eq!((guard.x, guard.z, guard.level), (2661, 3306, 0));
     }
 
-    #[test]
-    fn bank_aliases_are_the_five_catalog_names_in_payload_order() {
-        let names: Vec<_> = BANK_ALIASES.iter().map(|a| a.name).collect();
-        assert_eq!(
-            names,
-            [
-                "Falador East",
-                "Varrock East",
-                "Edgeville",
-                "Draynor",
-                "Al Kharid"
-            ]
-        );
-    }
-
-    #[test]
-    fn bank_aliases_name_a_preferred_stand_off_the_cluster_booth_locs() {
-        let stands: Vec<_> = BANK_ALIASES
-            .iter()
-            .map(|a| (a.name, a.stand.x, a.stand.z, a.stand.level))
-            .collect();
-        assert_eq!(
-            stands,
-            [
-                ("Falador East", 3013, 3355, 0),
-                ("Varrock East", 3253, 3420, 0),
-                ("Edgeville", 3094, 3493, 0),
-                ("Draynor", 3093, 3243, 0),
-                ("Al Kharid", 3269, 3167, 0),
-            ]
-        );
-        for alias in BANK_ALIASES {
-            assert!(
-                !alias.booths.is_empty(),
-                "{} needs the packed cluster booths it is identified by",
-                alias.name
-            );
-            assert!(
-                !alias.booths.contains(&alias.stand),
-                "{} stand must be a walk tile, not one of its booth loc tiles",
-                alias.name
-            );
-            assert!(
-                alias.booths.iter().all(|b| b.level == alias.stand.level),
-                "{} cluster booths must share the preferred stand's plane",
-                alias.name
-            );
-        }
-    }
 
     #[test]
     fn hostile_attacker_requires_every_frozen_fact() {

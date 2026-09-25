@@ -1,19 +1,13 @@
-//! Named BANK_LOCATIONS are import-time facts: the catalog alias
-//! configuration resolved against the bound world's packed booths and walk
-//! surface, posted once onto the isolate's content.
+//! Catalog ranking uses captured account facts, not scene-booth proximity.
 
 use std::sync::Arc;
 
-use api::named_banks::NamedBankFacts;
+use api::named_banks::{NamedBank, NamedBankFacts, BANK_CATALOG};
 use api::snapshot::WorldTile;
 use nav::named_banks::resolve;
-use script::content::BANK_ALIASES;
-use script::isolate_fb::{NearestBoothInput, ReachViewInput, SnapshotInput, TileInput};
+use script::isolate_fb::{NativeFactsInput, QuestStatusInput, ReachViewInput, SnapshotInput, StatInput, TileInput};
 use script::{LoadIsolate, LoadShape};
 
-fn post_snapshot_input(iso: &LoadIsolate, input: &SnapshotInput<'_>) {
-    iso.post_snapshot(script::isolate_fb::encode_snapshot(input));
-}
 
 fn base_snapshot<'a>() -> SnapshotInput<'a> {
     SnapshotInput {
@@ -95,14 +89,6 @@ fn base_snapshot<'a>() -> SnapshotInput<'a> {
     }
 }
 
-/// The shipped catalog alias configuration's own cluster booths, used as the
-/// bound world's packed booth set.
-fn packed_booths() -> Vec<WorldTile> {
-    BANK_ALIASES
-        .iter()
-        .flat_map(|c| c.booths.iter().copied())
-        .collect()
-}
 
 fn spawn(src: &str, facts: NamedBankFacts) -> LoadIsolate {
     LoadIsolate::spawn_with_content(
@@ -117,166 +103,73 @@ fn spawn(src: &str, facts: NamedBankFacts) -> LoadIsolate {
 }
 
 const PROBE: &str = r#"
-import { BANK_LOCATIONS, nearestBank } from '../../api/bank/BankLocations.js';
-import { COOK_LOCATIONS } from '../../api/cooking/CookLocations.js';
-
-function bankTile(name) {
-    const loc = BANK_LOCATIONS.find(b => b.name === name);
-    if (!loc) throw new Error(`bankTile: unknown bank '${name}'`);
-    return loc.tile;
-}
-
-const falador = BANK_LOCATIONS.find(b => b.name === 'Falador East');
-globalThis.__falador = falador ? [falador.tile.x, falador.tile.z, falador.tile.level] : null;
-globalThis.__missing = BANK_LOCATIONS.find(b => b.name === 'No Such Bank');
-globalThis.__names = BANK_LOCATIONS.map(b => b.name);
-globalThis.__cooks = COOK_LOCATIONS.map(c => c.name);
-try {
-    const tile = bankTile('Falador East');
-    globalThis.__bankTile = [tile.x, tile.z, tile.level];
-    globalThis.__bankTileErr = null;
-} catch (e) {
-    globalThis.__bankTile = null;
-    globalThis.__bankTileErr = String(e && e.message ? e.message : e);
-}
-try {
-    bankTile('No Such Bank');
-    globalThis.__unknownErr = null;
-} catch (e) {
-    globalThis.__unknownErr = String(e && e.message ? e.message : e);
-}
-
-export default class T extends LoopingBot {
-    loop() {
-        const n = nearestBank();
-        globalThis.__nearest = n ? [n.name, n.tile.x, n.tile.z, n.tile.level] : null;
-    }
-}
+import { nearestBank, nearestBanks, nearestUsableBank } from '../../api/bank/BankLocations.js';
+globalThis.pick = (x, z, level = 0) => nearestBank({x, z, level})?.name ?? null;
+globalThis.ranked = (x, z, level = 0) => nearestBanks({x, z, level}).map(bank => bank.name);
+globalThis.custom = (x, z, name) => nearestUsableBank({x, z, level: 0}, bank => bank.name === name)?.name ?? null;
+export default class T extends LoopingBot { loop() {} }
 "#;
 
-fn import_probe(iso: &LoadIsolate) -> serde_json::Value {
-    iso.probe(
-        r#"({
-            falador: globalThis.__falador,
-            missing: globalThis.__missing,
-            names: globalThis.__names,
-            cooks: globalThis.__cooks,
-            bankTile: globalThis.__bankTile,
-            bankTileErr: globalThis.__bankTileErr,
-            unknownErr: globalThis.__unknownErr
-        })"#,
-    )
-    .unwrap()
+fn catalog() -> NamedBankFacts {
+    let data = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
+    resolve(BANK_CATALOG, &data.bank_placements().unwrap().rows, |_| true)
+}
+
+fn post(iso: &LoadIsolate, fishing_base: i32, quests: &[QuestStatusInput<'_>]) {
+    let stats = [StatInput { index: 10, name: "Fishing", xp: 0, base: fishing_base, effective: 99 }];
+    let mut snapshot = base_snapshot();
+    snapshot.stats = &stats;
+    iso.post_snapshot(script::isolate_fb::encode_snapshot_with_native(
+        &snapshot, NativeFactsInput { quest_statuses: Some(quests), ..Default::default() },
+    ));
+    iso.probe("true").unwrap();
 }
 
 #[test]
-fn import_time_find_sees_falador_without_a_snapshot() {
-    let facts = resolve(BANK_ALIASES, &packed_booths(), |_| true);
-    let iso = spawn(PROBE, facts);
-    let probe = import_probe(&iso);
-    assert_eq!(
-        probe.get("falador"),
-        Some(&serde_json::json!([3013, 3355, 0]))
-    );
-    assert_eq!(
-        probe.get("bankTile"),
-        Some(&serde_json::json!([3013, 3355, 0]))
-    );
-    assert_eq!(probe.get("bankTileErr"), Some(&serde_json::Value::Null));
-    assert!(
-        probe.get("missing").is_none_or(|v| v.is_null()),
-        "unknown name must not be a BANK_LOCATIONS row, got {:?}",
-        probe.get("missing")
-    );
-    assert_eq!(
-        probe.get("unknownErr"),
-        Some(&serde_json::json!("bankTile: unknown bank 'No Such Bank'"))
-    );
-    let names = probe
-        .get("names")
-        .and_then(|v| v.as_array())
-        .expect("names");
-    assert_eq!(
-        names,
-        &vec![
-            serde_json::json!("Falador East"),
-            serde_json::json!("Varrock East"),
-            serde_json::json!("Edgeville"),
-            serde_json::json!("Draynor"),
-            serde_json::json!("Al Kharid"),
-        ]
-    );
-    assert_eq!(probe.get("cooks"), Some(&serde_json::json!(["Catherby"])));
+fn account_gates_use_base_level_and_require_both_quest_and_opt_in() {
+    let iso = spawn(PROBE, catalog());
+    post(&iso, 67, &[]);
+    assert_eq!(iso.probe("ranked(2586,3420).includes('Fishing Guild')").unwrap(), false);
+    assert_eq!(iso.probe("ranked(2852,2954).includes('Shilo Village')").unwrap(), false);
+    assert_ne!(iso.probe("pick(3153,9576)").unwrap(), "Zanaris");
+    let quests = [
+        QuestStatusInput { name: "Shilo Village", status: "complete", component_id: None },
+        QuestStatusInput { name: "Lost City", status: "complete", component_id: None },
+    ];
+    post(&iso, 68, &quests);
+    assert_eq!(iso.probe("pick(2586,3420)").unwrap(), "Fishing Guild");
+    assert_eq!(iso.probe("pick(2852,2954)").unwrap(), "Shilo Village");
+    assert_ne!(iso.probe("pick(3153,9576)").unwrap(), "Zanaris");
+    iso.post_settings_bag(serde_json::json!({"useZanarisBank":true}).as_object().unwrap());
+    assert_eq!(iso.probe("pick(3153,9576)").unwrap(), "Zanaris");
+    post(&iso, 68, &[]);
+    assert_ne!(iso.probe("pick(3153,9576)").unwrap(), "Zanaris");
     iso.join();
 }
 
 #[test]
-fn absent_world_facts_leave_bank_locations_empty() {
-    let iso = spawn(PROBE, NamedBankFacts::empty());
-    let probe = import_probe(&iso);
-    assert_eq!(probe.get("falador"), Some(&serde_json::Value::Null));
-    assert_eq!(probe.get("names"), Some(&serde_json::json!([])));
-    assert_eq!(
-        probe.get("unknownErr"),
-        Some(&serde_json::json!("bankTile: unknown bank 'No Such Bank'"))
-    );
-    assert_eq!(
-        probe.get("bankTileErr"),
-        Some(&serde_json::json!("bankTile: unknown bank 'Falador East'"))
-    );
+fn air_ranking_uses_mage_approach_and_caller_predicate_without_builtin_gates() {
+    let iso = spawn(PROBE, catalog());
+    post(&iso, 1, &[]);
+    assert_ne!(iso.probe("pick(3091,3958)").unwrap(), "Mage Arena");
+    assert_eq!(iso.probe("custom(3091,3958,'Mage Arena')").unwrap(), "Mage Arena");
+    iso.post_settings_bag(serde_json::json!({"useMageBank":true}).as_object().unwrap());
+    assert_eq!(iso.probe("pick(3091,3958)").unwrap(), "Mage Arena");
     iso.join();
 }
 
 #[test]
-fn independent_isolates_do_not_share_named_bank_facts() {
-    let falador_only: Vec<WorldTile> = BANK_ALIASES
-        .iter()
-        .find(|c| c.name == "Falador East")
-        .unwrap()
-        .booths
-        .to_vec();
-    let varrock_only: Vec<WorldTile> = BANK_ALIASES
-        .iter()
-        .find(|c| c.name == "Varrock East")
-        .unwrap()
-        .booths
-        .to_vec();
-    let a = spawn(PROBE, resolve(BANK_ALIASES, &falador_only, |_| true));
-    let b = spawn(PROBE, resolve(BANK_ALIASES, &varrock_only, |_| true));
-    let pa = import_probe(&a);
-    let pb = import_probe(&b);
-    assert_eq!(pa.get("names"), Some(&serde_json::json!(["Falador East"])));
-    assert_eq!(pb.get("names"), Some(&serde_json::json!(["Varrock East"])));
+fn air_ties_keep_catalog_order_across_planes_without_isolate_leakage() {
+    let a = spawn(PROBE, NamedBankFacts::from_banks(vec![
+        NamedBank::new("Upstairs", WorldTile { x: 10, z: 11, level: 1 }),
+        NamedBank::new("Ground", WorldTile { x: 11, z: 10, level: 0 }),
+    ]));
+    let b = spawn(PROBE, NamedBankFacts::from_banks(vec![
+        NamedBank::new("Other world", WorldTile { x: 10, z: 10, level: 0 }),
+    ]));
+    assert_eq!(a.probe("pick(10,10)").unwrap(), "Upstairs");
+    assert_eq!(a.probe("ranked(10,10)").unwrap(), serde_json::json!(["Upstairs", "Ground"]));
+    assert_eq!(b.probe("pick(10,10)").unwrap(), "Other world");
     a.join();
-    let reset = spawn(PROBE, NamedBankFacts::empty());
-    let pr = import_probe(&reset);
-    assert_eq!(pr.get("names"), Some(&serde_json::json!([])));
     b.join();
-    reset.join();
-}
-
-#[test]
-fn nearest_bank_follows_posted_booth_not_the_alias_list() {
-    let facts = resolve(BANK_ALIASES, &packed_booths(), |_| true);
-    let iso = spawn(PROBE, facts);
-    let booth = NearestBoothInput {
-        x: 3222,
-        z: 3218,
-        level: 0,
-        id: 2213,
-        name: "Bank booth",
-        op: "Use-quickly",
-    };
-    let mut snap = base_snapshot();
-    snap.nearest_booth = Some(booth);
-    post_snapshot_input(&iso, &snap);
-    iso.on_game_tick(1);
-    let _ = iso.probe("true");
-    let nearest = iso.probe("__nearest").unwrap();
-    assert_eq!(
-        nearest,
-        serde_json::json!(["Bank booth", 3222, 3218, 0]),
-        "nearestBank must follow live nearest_booth, not named aliases"
-    );
-    iso.join();
 }

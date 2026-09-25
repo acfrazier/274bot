@@ -11,13 +11,14 @@
 use std::path::Path;
 #[cfg(test)]
 use std::path::PathBuf;
+use std::sync::{Arc, OnceLock};
 
 use api::snapshot::WorldTile;
 use client::dash3d::CollisionFlag;
 
 use crate::collision::WorldCollision;
 use crate::grid::StepGrid;
-use crate::pack::{decode, decode_grid, BankAccess, BankStand, PackError};
+use crate::pack::{decode, decode_grid, BankStand, PackError};
 use crate::transport::{TransportEdge, TransportGraph, TransportKind};
 
 /// A fully-blocked stamp: every directional `PL_WALK_*` mask, so the
@@ -31,6 +32,7 @@ pub struct NavWorld {
     pub collision: WorldCollision,
     pub graph: TransportGraph,
     banks: Vec<BankStand>,
+    named_banks: OnceLock<Arc<api::named_banks::NamedBankFacts>>,
 }
 
 impl NavWorld {
@@ -40,23 +42,17 @@ impl NavWorld {
         &self.banks
     }
 
-    /// Resolve the catalog bank aliases (the host injects
-    /// `script::content::BANK_ALIASES` here) against this bound world's
-    /// packed booth tiles and walk surface. Missing booths, wrong plane,
-    /// or a blocked stand with no adjacent replacement omit that alias.
-    /// The packed stand table is not copied into the published facts, and
-    /// [`Self::banks`] keeps returning the packed stands.
+    /// Bind the complete frozen roster to this revision's access placements and
+    /// the loaded collision. Unresolved entries remain air-fallback candidates.
     pub fn named_bank_facts(
         &self,
-        candidates: &[api::named_banks::BankAliasCandidate],
-    ) -> api::named_banks::NamedBankFacts {
-        let packed: Vec<WorldTile> = self
-            .banks
-            .iter()
-            .filter(|stand| matches!(stand.access, BankAccess::Booth { .. }))
-            .map(|stand| stand.tile)
-            .collect();
-        crate::named_banks::resolve(candidates, &packed, |tile| self.collision.walkable(tile))
+        data: Option<&api::game_data::SelectedGameData>,
+    ) -> Arc<api::named_banks::NamedBankFacts> {
+        Arc::clone(self.named_banks.get_or_init(|| Arc::new(crate::named_banks::resolve(
+            api::named_banks::BANK_CATALOG,
+            data.and_then(|data| data.bank_placements()).map_or(&[], |facts| facts.rows.as_slice()),
+            |tile| self.collision.walkable(tile),
+        ))))
     }
 
     /// Decode already-read pack bytes into the router's world. Whole-world
@@ -92,6 +88,7 @@ impl NavWorld {
             collision,
             graph,
             banks,
+            named_banks: OnceLock::new(),
         }
     }
 
@@ -190,6 +187,7 @@ impl NavWorld {
             collision,
             graph,
             banks: Vec::new(),
+            named_banks: OnceLock::new(),
         }
     }
 }

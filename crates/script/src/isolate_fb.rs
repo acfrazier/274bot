@@ -405,6 +405,8 @@ const VT_IN_ALLOW_TELEPORTS: VOffsetT = 58;
 const VT_IN_AVOID: VOffsetT = 60;
 const VT_IN_INSPECT_ACK_SEQ: VOffsetT = 62;
 const VT_IN_INSPECT_ACK_GENERATION: VOffsetT = 64;
+const VT_IN_USE_MAGE_BANK: VOffsetT = 66;
+const VT_IN_USE_ZANARIS_BANK: VOffsetT = 68;
 
 // InteractBatch: { reqs: [Interact] }
 const VT_REQS: VOffsetT = 4;
@@ -5843,6 +5845,12 @@ impl InteractReader<'_> {
     pub fn request_id(&self) -> u64 {
         unsafe { self.tab.get::<u64>(VT_IN_REQUEST_ID, None) }.unwrap_or(0)
     }
+    pub fn use_mage_bank(&self) -> bool {
+        unsafe { self.tab.get::<bool>(VT_IN_USE_MAGE_BANK, None) }.unwrap_or(false)
+    }
+    pub fn use_zanaris_bank(&self) -> bool {
+        unsafe { self.tab.get::<bool>(VT_IN_USE_ZANARIS_BANK, None) }.unwrap_or(false)
+    }
     pub fn xf(&self) -> Option<f64> {
         unsafe { self.tab.get::<f64>(VT_IN_XF, None) }
     }
@@ -5912,6 +5920,8 @@ impl Verifiable for InteractReader<'_> {
             .visit_field::<i32>("from_z", VT_IN_FROM_Z, false)?
             .visit_field::<i32>("from_level", VT_IN_FROM_LEVEL, false)?
             .visit_field::<bool>("allow_teleports", VT_IN_ALLOW_TELEPORTS, false)?
+            .visit_field::<bool>("use_mage_bank", VT_IN_USE_MAGE_BANK, false)?
+            .visit_field::<bool>("use_zanaris_bank", VT_IN_USE_ZANARIS_BANK, false)?
             .visit_field::<ForwardsUOffset<Vector<ForwardsUOffset<AvoidRectReader>>>>(
                 "avoid",
                 VT_IN_AVOID,
@@ -6085,6 +6095,8 @@ pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>
             "select-bank" => out.push(crate::shim::InteractReq::SelectBank {
                 x: row.x(), z: row.z(), level: row.level(),
                 allow_wilderness: row.allow_wilderness(),
+                use_mage_bank: row.use_mage_bank(),
+                use_zanaris_bank: row.use_zanaris_bank(),
                 request_id: row.request_id(),
             }),
             "abort-walk" => out.push(crate::shim::InteractReq::AbortWalk {
@@ -6599,11 +6611,13 @@ fn interact_off<'b>(
             }
         }
         InteractReq::WalkNearestBank => {}
-        InteractReq::SelectBank { x, z, level, allow_wilderness, request_id } => {
+        InteractReq::SelectBank { x, z, level, allow_wilderness, use_mage_bank, use_zanaris_bank, request_id } => {
             b.push_slot_always(VT_IN_X, *x);
             b.push_slot_always(VT_IN_Z, *z);
             b.push_slot_always(VT_IN_LEVEL, *level);
             b.push_slot_always(VT_IN_ALLOW_WILDERNESS, *allow_wilderness);
+            b.push_slot_always(VT_IN_USE_MAGE_BANK, *use_mage_bank);
+            b.push_slot_always(VT_IN_USE_ZANARIS_BANK, *use_zanaris_bank);
             b.push_slot_always(VT_IN_REQUEST_ID, *request_id);
         }
         InteractReq::AbortWalk { request_id } => {

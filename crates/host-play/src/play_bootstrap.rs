@@ -363,12 +363,10 @@ impl Play {
         world: Option<Arc<NavWorld>>,
     ) -> Play {
         let obj_names = Arc::new(api::obj_names::ObjNames::from_objs(&cache.objs));
-        let named_banks = Arc::new(
-            world
-                .as_deref()
-                .map(|world| world.named_bank_facts(script::content::BANK_ALIASES))
-                .unwrap_or_default(),
-        );
+        let named_banks = world
+            .as_deref()
+            .map(|world| world.named_bank_facts(game_data.as_deref()))
+            .unwrap_or_default();
         Play {
             statuses: Arc::new(Mutex::new(Vec::new())),
             auto_world: None,

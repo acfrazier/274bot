@@ -512,6 +512,38 @@
       "content_id": "cdb2f161c35239f09bf5175648e15e7dbbc4bbf9be4419cea41f7053ccf8b044",
       "nav_sha256": "131db92e32eddcb08148909d477589544320fe7e34a422e8004e97e888032924",
       "flags_sha256": "67e4094dff06def5cf8abc172ce751f4ca8679532ba04c1ba15ab6bf668c7a4a"
+    },
+    "bank_inputs": {
+      "catalog": {
+        "path": "rs2b0t-00d39a17e0/src/bot/api/bank/BankLocations.ts",
+        "bytes": 11864,
+        "sha256": "b38f12202cd54b0f6d22d35a736e385022b04db8bbec206137ad0f4361d8c2be"
+      },
+      "loc_configs": {
+        "files": 131,
+        "bytes": 673664,
+        "sha256": "efa4c8260972ce2c03f0204964826d604e2267e808c0bb03dbc063c848ec9c33"
+      },
+      "npc_configs": {
+        "files": 144,
+        "bytes": 933024,
+        "sha256": "3cd8ec5f94296143031083bb17a818e14e74248f969d3065c80664ccf5b83fab"
+      },
+      "maps": {
+        "files": 534,
+        "bytes": 55049838,
+        "sha256": "41a6bb259a87a851b0650db06ae2d26126086b4548f8d32368b99df41911f08d"
+      },
+      "loc_pack": {
+        "path": "pack/loc.pack",
+        "bytes": 117164,
+        "sha256": "64b0bb63190678077f7a6c6f353d3931a6f75eba0711023ff89275b07c438cb0"
+      },
+      "npc_pack": {
+        "path": "pack/npc.pack",
+        "bytes": 31379,
+        "sha256": "b28b1157c007690d9a7d1fc02bcb51bb4d45929997a71585ac9c0bdda35776d2"
+      }
     }
   },
   "items": [
@@ -164746,5 +164778,712 @@
       "z": 3679,
       "plane": 0
     }
-  ]
+  ],
+  "bank_placements": {
+    "rows": [
+      {
+        "name": "Varrock East",
+        "kind": "object",
+        "id": 2213,
+        "x": 3252,
+        "z": 3419,
+        "level": 0,
+        "width": 1,
+        "length": 1
+      },
+      {
+        "name": "Varrock East",
+        "kind": "object",
+        "id": 2213,
+        "x": 3253,
+        "z": 3419,
+        "level": 0,
+        "width": 1,
+        "length": 1
+      },
+      {
+        "name": "Varrock East",
+        "kind": "object",
+        "id": 2213,
+        "x": 3254,
+        "z": 3419,
+        "level": 0,
+        "width": 1,
+        "length": 1
+      },
+      {
+        "name": "Varrock East",
+        "kind": "object",
+        "id": 2213,
+        "x": 3256,
+        "z": 3419,
+        "level": 0,
+        "width": 1,
+        "length": 1
+      },
+      {
+        "name": "Varrock West",
+        "kind": "object",
+        "id": 2213,
+        "x": 3186,
+        "z": 3436,
+        "level": 0,
+        "width": 1,
+        "length": 1
+      },
+      {
+        "name": "Varrock West",
+        "kind": "object",
+        "id": 2213,
+        "x": 3186,
+        "z": 3438,
+        "level": 0,
+        "width": 1,
+        "length": 1
+      },
+      {
+        "name": "Varrock West",
+        "kind": "object",
+        "id": 2213,
+        "x": 3186,
+        "z": 3440,
+        "level": 0,
+        "width": 1,
+        "length": 1
+      },
+      {
+        "name": "Varrock West",
+        "kind": "object",
+        "id": 2213,
+        "x": 3186,
+        "z": 3442,
+        "level": 0,
+        "width": 1,
+        "length": 1
+      },
+      {
+        "name": "Varrock West",
+        "kind": "object",
+        "id": 2213,
+        "x": 3186,
+        "z": 3444,
+        "level": 0,
+        "width": 1,
+        "length": 1
+      },
+      {
+        "name": "Varrock West",
+        "kind": "object",
+        "id": 2213,
+        "x": 3186,
+        "z": 3446,
+        "level": 0,
+        "width": 1,
+        "length": 1
+      },
+      {
+        "name": "Al Kharid",
+        "kind": "object",
+        "id": 2213,
+        "x": 3268,
+        "z": 3164,
+        "level": 0,
+        "width": 1,
+        "length": 1
+      },
+      {
+        "name": "Al Kharid",
+        "kind": "object",
+        "id": 2213,
+        "x": 3268,
+        "z": 3166,
+        "level": 0,
+        "width": 1,
+        "length": 1
+      },
+      {
+        "name": "Al Kharid",
+        "kind": "object",
+        "id": 2213,
+        "x": 3268,
+        "z": 3167,
+        "level": 0,
+        "width": 1,
+        "length": 1
+      },
+      {
+        "name": "Al Kharid",
+        "kind": "object",
+        "id": 2213,
+        "x": 3268,
+        "z": 3168,
+        "level": 0,
+        "width": 1,
+        "length": 1
+      },
+      {
+        "name": "Al Kharid",
+        "kind": "object",
+        "id": 2213,
+        "x": 3268,
+        "z": 3169,
+        "level": 0,
+        "width": 1,
+        "length": 1
+      },
+      {
+        "name": "Draynor",
+        "kind": "object",
+        "id": 2213,
+        "x": 3091,
+        "z": 3242,
+        "level": 0,
+        "width": 1,
+        "length": 1
+      },
+      {
+        "name": "Draynor",
+        "kind": "object",
+        "id": 2213,
+        "x": 3091,
+        "z": 3243,
+        "level": 0,
+        "width": 1,
+        "length": 1
+      },
+      {
+        "name": "Draynor",
+        "kind": "object",
+        "id": 2213,
+        "x": 3091,
+        "z": 3245,
+        "level": 0,
+        "width": 1,
+        "length": 1
+      },
+      {
+        "name": "Falador East",
+        "kind": "object",
+        "id": 2213,
+        "x": 3011,
+        "z": 3354,
+        "level": 0,
+        "width": 1,
+        "length": 1
+      },
+      {
+        "name": "Falador East",
+        "kind": "object",
+        "id": 2213,
+        "x": 3012,
+        "z": 3354,
+        "level": 0,
+        "width": 1,
+        "length": 1
+      },
+      {
+        "name": "Falador East",
+        "kind": "object",
+        "id": 2213,
+        "x": 3013,
+        "z": 3354,
+        "level": 0,
+        "width": 1,
+        "length": 1
+      },
+      {
+        "name": "Falador East",
+        "kind": "object",
+        "id": 2213,
+        "x": 3014,
+        "z": 3354,
+        "level": 0,
+        "width": 1,
+        "length": 1
+      },
+      {
+        "name": "Falador East",
+        "kind": "object",
+        "id": 2213,
+        "x": 3015,
+        "z": 3354,
+        "level": 0,
+        "width": 1,
+        "length": 1
+      },
+      {
+        "name": "Falador West",
+        "kind": "object",
+        "id": 2213,
+        "x": 2945,
+        "z": 3367,
+        "level": 0,
+        "width": 1,
+        "length": 1
+      },
+      {
+        "name": "Falador West",
+        "kind": "object",
+        "id": 2213,
+        "x": 2946,
+        "z": 3367,
+        "level": 0,
+        "width": 1,
+        "length": 1
+      },
+      {
+        "name": "Falador West",
+        "kind": "object",
+        "id": 2213,
+        "x": 2947,
+        "z": 3367,
+        "level": 0,
+        "width": 1,
+        "length": 1
+      },
+      {
+        "name": "Falador West",
+        "kind": "object",
+        "id": 2213,
+        "x": 2948,
+        "z": 3367,
+        "level": 0,
+        "width": 1,
+        "length": 1
+      },
+      {
+        "name": "Falador West",
+        "kind": "object",
+        "id": 2213,
+        "x": 2949,
+        "z": 3367,
+        "level": 0,
+        "width": 1,
+        "length": 1
+      },
+      {
+        "name": "Edgeville",
+        "kind": "object",
+        "id": 2213,
+        "x": 3095,
+        "z": 3489,
+        "level": 0,
+        "width": 1,
+        "length": 1
+      },
+      {
+        "name": "Edgeville",
+        "kind": "object",
+        "id": 2213,
+        "x": 3095,
+        "z": 3491,
+        "level": 0,
+        "width": 1,
+        "length": 1
+      },
+      {
+        "name": "Edgeville",
+        "kind": "object",
+        "id": 2213,
+        "x": 3096,
+        "z": 3493,
+        "level": 0,
+        "width": 1,
+        "length": 1
+      },
+      {
+        "name": "Edgeville",
+        "kind": "object",
+        "id": 2213,
+        "x": 3098,
+        "z": 3493,
+        "level": 0,
+        "width": 1,
+        "length": 1
+      },
+      {
+        "name": "Seers",
+        "kind": "object",
+        "id": 2213,
+        "x": 2721,
+        "z": 3494,
+        "level": 0,
+        "width": 1,
+        "length": 1
+      },
+      {
+        "name": "Seers",
+        "kind": "object",
+        "id": 2213,
+        "x": 2722,
+        "z": 3494,
+        "level": 0,
+        "width": 1,
+        "length": 1
+      },
+      {
+        "name": "Seers",
+        "kind": "object",
+        "id": 2213,
+        "x": 2724,
+        "z": 3494,
+        "level": 0,
+        "width": 1,
+        "length": 1
+      },
+      {
+        "name": "Seers",
+        "kind": "object",
+        "id": 2213,
+        "x": 2727,
+        "z": 3494,
+        "level": 0,
+        "width": 1,
+        "length": 1
+      },
+      {
+        "name": "Seers",
+        "kind": "object",
+        "id": 2213,
+        "x": 2728,
+        "z": 3494,
+        "level": 0,
+        "width": 1,
+        "length": 1
+      },
+      {
+        "name": "Seers",
+        "kind": "object",
+        "id": 2213,
+        "x": 2729,
+        "z": 3494,
+        "level": 0,
+        "width": 1,
+        "length": 1
+      },
+      {
+        "name": "Catherby",
+        "kind": "object",
+        "id": 2213,
+        "x": 2807,
+        "z": 3442,
+        "level": 0,
+        "width": 1,
+        "length": 1
+      },
+      {
+        "name": "Catherby",
+        "kind": "object",
+        "id": 2213,
+        "x": 2809,
+        "z": 3442,
+        "level": 0,
+        "width": 1,
+        "length": 1
+      },
+      {
+        "name": "Catherby",
+        "kind": "object",
+        "id": 2213,
+        "x": 2810,
+        "z": 3442,
+        "level": 0,
+        "width": 1,
+        "length": 1
+      },
+      {
+        "name": "Catherby",
+        "kind": "object",
+        "id": 2213,
+        "x": 2811,
+        "z": 3442,
+        "level": 0,
+        "width": 1,
+        "length": 1
+      },
+      {
+        "name": "Yanille",
+        "kind": "object",
+        "id": 2213,
+        "x": 2614,
+        "z": 3091,
+        "level": 0,
+        "width": 1,
+        "length": 1
+      },
+      {
+        "name": "Yanille",
+        "kind": "object",
+        "id": 2213,
+        "x": 2614,
+        "z": 3092,
+        "level": 0,
+        "width": 1,
+        "length": 1
+      },
+      {
+        "name": "Yanille",
+        "kind": "object",
+        "id": 2213,
+        "x": 2614,
+        "z": 3094,
+        "level": 0,
+        "width": 1,
+        "length": 1
+      },
+      {
+        "name": "Ardougne West",
+        "kind": "object",
+        "id": 2213,
+        "x": 2615,
+        "z": 3331,
+        "level": 0,
+        "width": 1,
+        "length": 1
+      },
+      {
+        "name": "Ardougne West",
+        "kind": "object",
+        "id": 2213,
+        "x": 2618,
+        "z": 3331,
+        "level": 0,
+        "width": 1,
+        "length": 1
+      },
+      {
+        "name": "Ardougne West",
+        "kind": "object",
+        "id": 2213,
+        "x": 2619,
+        "z": 3331,
+        "level": 0,
+        "width": 1,
+        "length": 1
+      },
+      {
+        "name": "Ardougne East",
+        "kind": "object",
+        "id": 2213,
+        "x": 2656,
+        "z": 3283,
+        "level": 0,
+        "width": 1,
+        "length": 1
+      },
+      {
+        "name": "Ardougne East",
+        "kind": "object",
+        "id": 2213,
+        "x": 2656,
+        "z": 3286,
+        "level": 0,
+        "width": 1,
+        "length": 1
+      },
+      {
+        "name": "Shilo Village",
+        "kind": "npc",
+        "id": 499,
+        "x": 2851,
+        "z": 2954,
+        "level": 0,
+        "width": 1,
+        "length": 1
+      },
+      {
+        "name": "Shilo Village",
+        "kind": "npc",
+        "id": 499,
+        "x": 2853,
+        "z": 2955,
+        "level": 0,
+        "width": 1,
+        "length": 1
+      },
+      {
+        "name": "Zanaris",
+        "kind": "npc",
+        "id": 498,
+        "x": 3150,
+        "z": 9577,
+        "level": 0,
+        "width": 1,
+        "length": 1
+      },
+      {
+        "name": "Zanaris",
+        "kind": "npc",
+        "id": 498,
+        "x": 3153,
+        "z": 9577,
+        "level": 0,
+        "width": 1,
+        "length": 1
+      },
+      {
+        "name": "Zanaris",
+        "kind": "npc",
+        "id": 498,
+        "x": 3153,
+        "z": 9579,
+        "level": 0,
+        "width": 1,
+        "length": 1
+      },
+      {
+        "name": "Zanaris",
+        "kind": "npc",
+        "id": 498,
+        "x": 3154,
+        "z": 9580,
+        "level": 0,
+        "width": 1,
+        "length": 1
+      },
+      {
+        "name": "Fishing Guild",
+        "kind": "object",
+        "id": 2213,
+        "x": 2585,
+        "z": 3418,
+        "level": 0,
+        "width": 1,
+        "length": 1
+      },
+      {
+        "name": "Fishing Guild",
+        "kind": "object",
+        "id": 2213,
+        "x": 2585,
+        "z": 3419,
+        "level": 0,
+        "width": 1,
+        "length": 1
+      },
+      {
+        "name": "Fishing Guild",
+        "kind": "object",
+        "id": 2213,
+        "x": 2585,
+        "z": 3421,
+        "level": 0,
+        "width": 1,
+        "length": 1
+      },
+      {
+        "name": "Fishing Guild",
+        "kind": "object",
+        "id": 2213,
+        "x": 2585,
+        "z": 3422,
+        "level": 0,
+        "width": 1,
+        "length": 1
+      },
+      {
+        "name": "Shantay Pass",
+        "kind": "object",
+        "id": 2693,
+        "x": 3309,
+        "z": 3120,
+        "level": 0,
+        "width": 1,
+        "length": 1
+      },
+      {
+        "name": "Mage Arena",
+        "kind": "npc",
+        "id": 902,
+        "x": 2534,
+        "z": 4714,
+        "level": 0,
+        "width": 1,
+        "length": 1
+      },
+      {
+        "name": "Grand Tree",
+        "kind": "object",
+        "id": 2213,
+        "x": 2441,
+        "z": 3487,
+        "level": 1,
+        "width": 1,
+        "length": 1
+      },
+      {
+        "name": "Grand Tree",
+        "kind": "object",
+        "id": 2213,
+        "x": 2441,
+        "z": 3488,
+        "level": 1,
+        "width": 1,
+        "length": 1
+      },
+      {
+        "name": "Grand Tree",
+        "kind": "object",
+        "id": 2213,
+        "x": 2441,
+        "z": 3489,
+        "level": 1,
+        "width": 1,
+        "length": 1
+      },
+      {
+        "name": "Grand Tree",
+        "kind": "object",
+        "id": 2213,
+        "x": 2448,
+        "z": 3481,
+        "level": 1,
+        "width": 1,
+        "length": 1
+      },
+      {
+        "name": "Grand Tree",
+        "kind": "object",
+        "id": 2213,
+        "x": 2449,
+        "z": 3481,
+        "level": 1,
+        "width": 1,
+        "length": 1
+      },
+      {
+        "name": "Grand Tree",
+        "kind": "object",
+        "id": 2213,
+        "x": 2450,
+        "z": 3481,
+        "level": 1,
+        "width": 1,
+        "length": 1
+      },
+      {
+        "name": "Duel Arena",
+        "kind": "object",
+        "id": 3193,
+        "x": 3381,
+        "z": 3269,
+        "level": 0,
+        "width": 1,
+        "length": 1
+      },
+      {
+        "name": "Duel Arena",
+        "kind": "object",
+        "id": 3193,
+        "x": 3382,
+        "z": 3270,
+        "level": 0,
+        "width": 1,
+        "length": 1
+      }
+    ],
+    "missing": [
+      "Canifis"
+    ]
+  }
 }

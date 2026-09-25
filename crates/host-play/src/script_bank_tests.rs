@@ -72,13 +72,13 @@ fn navs(banks: Vec<NamedBank>) -> Arc<Mutex<HashMap<String, super::super::NavBot
     bot.bank_pick.facts = Some(Arc::new(NamedBankFacts::from_banks(banks)));
     Arc::new(Mutex::new(HashMap::from([("test".to_string(), bot)])))
 }
-fn bank(name: &'static str, x: i32, z: i32) -> NamedBank { NamedBank { name, tile: tile(x,z) } }
+fn bank(name: &'static str, x: i32, z: i32) -> NamedBank { NamedBank::new(name, tile(x,z)) }
 
 #[test]
 fn bank_pick_radius_four_skips_worker_but_five_and_other_plane_search() {
     let world = Some(world(false));
     let navs = navs(vec![bank("near", 8, 8)]);
-    queue_bank_pick(&navs, "test", &world, None, tile(4,4), true, 1);
+    queue_bank_pick(&navs, "test", &world, None, tile(4,4), true, 1, BankPreferences::default(), None);
     {
         let all = navs.lock().unwrap();
         let bot = &all["test"];
@@ -88,7 +88,7 @@ fn bank_pick_radius_four_skips_worker_but_five_and_other_plane_search() {
     }
     for (id, from) in [(2, tile(3,3)), (3, WorldTile { level: 1, ..tile(8,8) })] {
         let gate = Controlled::new();
-        queue_bank_pick(&navs, "test", &world, None, from, true, id);
+        queue_bank_pick(&navs, "test", &world, None, from, true, id, BankPreferences::default(), None);
         gate.0.wait(1);
         {
             let all = navs.lock().unwrap();
@@ -110,7 +110,7 @@ fn bank_pick_wall_changes_winner_and_all_unreachable_falls_back() {
     ] {
         let navs = navs(banks);
         let gate = Controlled::new();
-        queue_bank_pick(&navs, "test", &world, None, tile(1,1), true, 1);
+        queue_bank_pick(&navs, "test", &world, None, tile(1,1), true, 1, BankPreferences::default(), None);
         gate.0.wait(1);
         gate.0.release();
         gate.0.wait(3);
@@ -127,7 +127,7 @@ fn bank_pick_timeout_and_reset_reject_late_completion_without_blocking_pump() {
     for reset in [false, true] {
         let navs = navs(vec![bank("bank", 8,8)]);
         let gate = Controlled::new();
-        queue_bank_pick(&navs, "test", &world, None, tile(0,0), true, 1);
+        queue_bank_pick(&navs, "test", &world, None, tile(0,0), true, 1, BankPreferences::default(), None);
         gate.0.wait(1);
         // A live calculation is parked; the slot can still acquire state and
         // publish a timeout/reset. There is no timing-based concurrency claim.
@@ -153,16 +153,63 @@ fn bank_pick_same_id_is_idempotent_and_new_near_request_supersedes_worker() {
     let world = Some(world(false));
     let navs = navs(vec![bank("bank", 8,8)]);
     let gate = Controlled::new();
-    queue_bank_pick(&navs, "test", &world, None, tile(0,0), true, 1);
+    queue_bank_pick(&navs, "test", &world, None, tile(0,0), true, 1, BankPreferences::default(), None);
     gate.0.wait(1);
     let generation = navs.lock().unwrap()["test"].bank_pick.generation;
-    queue_bank_pick(&navs, "test", &world, None, tile(8,8), true, 1);
+    queue_bank_pick(&navs, "test", &world, None, tile(8,8), true, 1, BankPreferences::default(), None);
     assert_eq!(navs.lock().unwrap()["test"].bank_pick.generation, generation);
-    queue_bank_pick(&navs, "test", &world, None, tile(8,8), true, 2);
+    queue_bank_pick(&navs, "test", &world, None, tile(8,8), true, 2, BankPreferences::default(), None);
     gate.0.release();
     gate.0.wait(3);
     let all = navs.lock().unwrap();
     assert_eq!(all["test"].bank_pick.posted.request_id, 2);
     assert_eq!(all["test"].bank_pick.posted.kind, PickKind::NearShortcut as u8);
     assert!(all["test"].route.is_none());
+}
+
+#[test]
+fn bank_pick_gates_precede_the_near_shortcut() {
+    static GATED: api::named_banks::BankDefinition = api::named_banks::BankDefinition {
+        name: "Gated", tile: WorldTile { x: 4, z: 4, level: 0 },
+        approach: None, skill: Some((10, 68)), quest: Some("Lost City"),
+        setting: Some("useZanarisBank"), object: None, open_first: None, npc: None, choose: None,
+    };
+    let world = Some(world(false));
+    for (fishing, quest, opt_in, expected) in [
+        (67, true, true, -1), (68, false, true, -1), (68, true, false, -1), (68, true, true, 0),
+    ] {
+        let mut bank = bank("Gated", 4, 4);
+        bank.definition = Some(&GATED);
+        let navs = navs(vec![bank]);
+        let mut state = WorldState::default();
+        state.stats.insert(10, 99);
+        if quest { state.quests.insert("Lost City".into()); }
+        queue_bank_pick(&navs, "test", &world, Some(state), tile(0, 0), true, 1,
+            BankPreferences { use_zanaris_bank: opt_in, ..Default::default() }, Some(fishing));
+        let all = navs.lock().unwrap();
+        assert_eq!(all["test"].bank_pick.posted.bank_index, expected);
+        assert!(all["test"].bank_pick.worker.is_none());
+    }
+}
+
+#[test]
+fn bank_pick_ignores_unresolved_geometry_and_keeps_ties_in_catalog_order() {
+    let world = Some(world(false));
+    let mut unknown = bank("unknown access", 5, 5);
+    unknown.routable = false;
+    for (banks, expected, kind) in [
+        (vec![unknown, bank("first reachable", 8, 0), bank("second reachable", 0, 8)], 1, PickKind::Reachable),
+        (vec![unknown], 0, PickKind::AirFallback),
+    ] {
+        let navs = navs(banks);
+        let gate = Controlled::new();
+        queue_bank_pick(&navs, "test", &world, None, tile(0, 0), true, 1, BankPreferences::default(), None);
+        gate.0.wait(1);
+        gate.0.release();
+        gate.0.wait(3);
+        let all = navs.lock().unwrap();
+        assert_eq!(all["test"].bank_pick.posted.bank_index, expected);
+        assert_eq!(all["test"].bank_pick.posted.kind, kind as u8);
+        assert!(all["test"].route.is_none());
+    }
 }

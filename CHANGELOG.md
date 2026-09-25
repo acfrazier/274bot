@@ -18,6 +18,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   keeps the same-plane radius-four shortcut, and falls back to air-nearest
   on an unavailable route or a five-second completion timeout. A typed v2
   `bankNearestReachable` helper exposes the same select-only capability.
+  The complete 20-bank catalog now preserves stable order, base-skill/quest
+  gates, default-off Mage Arena/Zanaris preferences, and object/NPC access.
+  Selected-world placements resolve safe walk stands; unavailable Canifis
+  content stays a gated air fallback rather than an invented reachable bank.
 
 - Baker-stall restocking now awaits one Rust step machine; Rust owns selected
   stall facts, callback polling, waits, steal verbs, stand swaps and lockout

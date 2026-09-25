@@ -297,10 +297,12 @@ pub(crate) fn dispatch_script_interact_cached(
                     abort_script_walk(navs, name);
                 }
             }
-            InteractReq::SelectBank { x, z, level, allow_wilderness, request_id } => {
+            InteractReq::SelectBank { x, z, level, allow_wilderness, use_mage_bank, use_zanaris_bank, request_id } => {
                 super::bank::queue_bank_pick(
                     navs, name, world, state.clone(), WorldTile { x, z, level },
                     allow_wilderness, request_id,
+                    api::named_banks::BankPreferences { use_mage_bank, use_zanaris_bank },
+                    snapshot.stats().iter().find(|stat| stat.index == 10).map(|stat| stat.base),
                 );
             }
             InteractReq::WalkNearestBank => {

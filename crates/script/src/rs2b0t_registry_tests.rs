@@ -167,12 +167,6 @@ export const SETTINGS = {
     let bank = setting(&schema, "bank");
     assert_eq!(bank.options[0], "Nearest");
     assert_eq!(
-        bank.options.len(),
-        crate::content::BANK_ALIASES.len() + 1,
-        "the imported BANK_LOCATIONS spread must resolve every published alias: {:?}",
-        bank.options
-    );
-    assert_eq!(
         setting(&schema, "pickaxe").options,
         ["Best available", "Rune", "Bronze"]
     );
@@ -874,23 +868,3 @@ fn frozen_catalog_settings_audit() {
     assert_eq!(recovered, 24);
 }
 
-/// The bank dropdown names are the published aliases: the runtime
-/// `BANK_LOCATIONS` resolves through `content.named_banks` (built from
-/// `content::BANK_ALIASES`), so a frozen foreign bank list would offer
-/// names the lookup has no row for.
-#[test]
-fn bank_location_options_are_the_published_aliases() {
-    let published: Vec<String> = crate::content::BANK_ALIASES
-        .iter()
-        .map(|alias| alias.name.to_string())
-        .collect();
-    assert!(!published.is_empty());
-    assert_eq!(catalog_option_values("BANK_LOCATIONS").unwrap(), published);
-    let mut with_nearest = vec!["Nearest".to_string()];
-    with_nearest.extend(published);
-    assert_eq!(
-        catalog_option_values("BANK_LOCATION_OPTIONS").unwrap(),
-        with_nearest,
-        "BANK_LOCATION_OPTIONS is the caller's Nearest head plus the aliases"
-    );
-}

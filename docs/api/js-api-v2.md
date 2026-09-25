@@ -35,15 +35,24 @@ Generated types live in `crates/script/host-js/index.d.ts` (`NativeApi`,
 - `stop(reason?)`
 - `paint.begin().title().row().gap().end()`
 - `request(op)` — enqueue one supported op; **returns void**
-- `bankNearestReachable({from?, allow_wilderness?})` — awaited select-only
-  `HelperResult<{name, tile} | null>`. The origin defaults to the observed
-  player; native wilderness admission defaults to false. A same-plane
+- `bankNearestReachable({from?, allow_wilderness?, use_mage_bank?, use_zanaris_bank?})`
+  — awaited select-only `HelperResult<BankLocation | null>`, retaining object
+  or NPC access metadata. The origin defaults to the observed player; native
+  wilderness admission defaults to false. Mage Arena and Zanaris require their
+  explicit opt-ins (or the captured boolean settings), defaulting to false.
+  Base Fishing level and completed quests gate the full stable 20-bank catalog.
+  A same-plane
   air-nearest stand within four tiles bypasses routing. Otherwise one
   off-thread native search ranks resolved candidates by walk cost, with
   stable air-order ties. No route, budget exhaustion without a winner, or
   an incomplete five-second window falls back to air-nearest; a bank result
   does not by itself prove reachability. Selection does not replace a walk,
   move, or open a bank.
+  World-specific object/NPC placements and collision resolve legitimate walk
+  stands once per bound world. Current 274/289 data resolves placements for
+  19 banks; Canifis is absent from the selected content and remains a quest-gated
+  air fallback, never a measured reachable target. Synchronous compatibility
+  bank queries retain Euclidean air ranking to `approach ?? tile`, ignoring plane.
 - `snapshot.bank_selection` — latest select-only completion, with request
   identity, generation, bank and `near` / `reachable` / `fallback` / `none`
   disposition. Stop, reset and replacement requests reject stale results.

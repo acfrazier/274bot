@@ -312,6 +312,7 @@ pub struct Skills {
     pub prayer: Option<Skill>,
     pub magic: Option<Skill>,
     pub firemaking: Option<Skill>,
+    pub fishing: Option<Skill>,
     /// Every skill the client uses (`Skill::used`, by stat index) has a
     /// posted base level above 0. The rs2b0t `activeStatsReady` rule: a
     /// freshly logged-in client posts 0 until the stat packets arrive.
@@ -338,6 +339,8 @@ impl Skills {
                 &mut skills.magic
             } else if name.eq_ignore_ascii_case("firemaking") {
                 &mut skills.firemaking
+            } else if name.eq_ignore_ascii_case("fishing") {
+                &mut skills.fishing
             } else {
                 continue;
             };

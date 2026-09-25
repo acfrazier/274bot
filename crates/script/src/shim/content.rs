@@ -2,7 +2,6 @@
 /// once onto `__rs2b0t_host.content` before catalog modules evaluate.
 pub(crate) fn content_json(
     game_data: Option<&api::game_data::SelectedGameData>,
-    named_banks: &api::named_banks::NamedBankFacts,
 ) -> String {
     use crate::content::{COOK_STANDS, FIRE_PLOTS, LOG_LEVELS, RUNE_ROUTES};
     use api::cake_stall::{BAKER_STALL, CAKE_ITEM_NAMES};
@@ -82,14 +81,6 @@ pub(crate) fn content_json(
                 "name": s.name,
                 "bank": {"x": s.bank.x, "z": s.bank.z, "level": s.bank.level},
                 "range": {"x": s.range.x, "z": s.range.z, "level": s.range.level}
-            })
-        }).collect::<Vec<_>>(),
-        "named_banks": named_banks.banks().iter().map(|b| {
-            serde_json::json!({
-                "name": b.name,
-                "x": b.tile.x,
-                "z": b.tile.z,
-                "level": b.tile.level
             })
         }).collect::<Vec<_>>(),
         "rock_type_names": ROCK_TYPE_NAMES,

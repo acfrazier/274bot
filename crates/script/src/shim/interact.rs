@@ -75,6 +75,10 @@ pub enum InteractReq {
         level: i32,
         #[serde(default)]
         allow_wilderness: bool,
+        #[serde(default)]
+        use_mage_bank: bool,
+        #[serde(default)]
+        use_zanaris_bank: bool,
         request_id: u64,
     },
     /// Select the nearest packed booth stand in Rust and route within one tile.
