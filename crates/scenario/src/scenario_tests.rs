@@ -2308,7 +2308,28 @@ fn bank_cells_register_their_cards_injects_and_watch_chain() {
                 count: 1,
             }
     }));
+    for step in &seeded.steps[..seeded_start] {
+        assert!(
+            !matches!(
+                step.wait.arm,
+                Proof::ItemIdAtMost { id, count: 0 } if id == CAKE_ID || id == IRON_ORE_ID
+            ),
+            "seeded Ardy pre-Start no-loot check must not reject seeded Cake/Iron ore: {}",
+            step.name
+        );
+    }
     let seeded_watch = &seeded.steps[seeded_start + 1..];
+    assert!(
+        !matches!(
+            seeded_watch
+                .first()
+                .expect("seeded Ardy has post-Start watch")
+                .wait
+                .arm,
+            Proof::StatXpGain { .. }
+        ),
+        "seeded Ardy must not wait for pre-bank Strength XP"
+    );
     let walk = seeded_watch
         .iter()
         .position(|step| {
@@ -2332,7 +2353,7 @@ fn bank_cells_register_their_cards_injects_and_watch_chain() {
         .position(|step| step.name == "watch fresh Strength XP after the seeded bank return")
         .expect("seeded Ardy fresh Strength XP proof");
     assert!(walk < banked && banked < closed && closed < returned && returned < fresh_xp);
-    assert_eq!(seeded_watch[walk].wait.budget_ticks, 60);
+    assert_eq!(seeded_watch[walk].wait.budget_ticks, 320);
     assert_eq!(seeded_watch[returned].wait.budget_ticks, 40);
     assert_eq!(seeded_watch[fresh_xp].wait.budget_ticks, 320);
     assert!(seeded_watch.iter().any(|step| {

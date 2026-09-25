@@ -26,12 +26,13 @@ pub(crate) const GUARD_DROP_IDS: [i32; 6] = [
 /// deposit) = 218 ticks; at 1.25 runner dirties per engine tick (`moss_giant.rs`)
 /// that is 273, rounded up to 320.
 const ARDY_FIGHTER_BANK_STYLE_WATCH_TICKS: u32 = 320;
-/// Seeded bank trip arithmetic uses the existing measured market↔East Ardougne
-/// path: 20 engine ticks outbound plus the 20-tick open/deposit component
-/// inferred from the 60-tick round-trip allowance (`20 + 20 + 20`). At the
-/// measured 1.25 runner dirties per engine tick, `40 * 1.25 = 50`, rounded to
-/// 60 for the first deposit arm. Return is `20 * 1.25 = 25`, rounded to 40.
-const ARDY_FIGHTER_BANK_SEEDED_DEPOSIT_WATCH_TICKS: u32 = 60;
+/// Seeded bank trip arithmetic uses the frozen Fight's possible pre-bank
+/// combat hold: `90 s / 0.6 s = 150` engine ticks, plus the measured
+/// market→East Ardougne approach (~23 tiles) and the existing 20-tick
+/// open/waitBankReady component. Thus `(150 + 23 + 20) * 1.25 = 241.25`
+/// runner dirties, rounded to 320 for the first deposit arm. Return is the
+/// measured 20-tile path: `20 * 1.25 = 25`, rounded to 40.
+const ARDY_FIGHTER_BANK_SEEDED_DEPOSIT_WATCH_TICKS: u32 = 320;
 const ARDY_FIGHTER_BANK_SEEDED_RETURN_WATCH_TICKS: u32 = 40;
 const ARDY_FIGHTER_INJECT: &[ScriptSettingInject] = &[
     ScriptSettingInject {
@@ -72,7 +73,6 @@ const ARDY_FIGHTER_BANK_LOOT_EMPTY: &[i32] = &[
     NATURE_RUNE_ID,
 ];
 const ARDY_FIGHTER_BANK_SEEDED_LOOT_EMPTY: &[i32] = &[
-    CAKE_ID,
     BREAD_ID,
     CHOCOLATE_SLICE_ID,
     CHOCOLATE_CAKE_ID,
@@ -195,8 +195,8 @@ pub(crate) fn ardy_fighter_bank_scenario() -> Scenario {
 }
 
 /// ArdyFighter startup PeriodicBank witness. One DEFAULT_LOOT Guard drop is
-/// seeded with one Cake so `BankRun`/PeriodicBank owns the first trip instead
-/// of `RestockCakes`; the seeded Iron ore leaves the pack, is banked in East
+/// seeded with one Cake so only PeriodicBank owns the first trip instead of
+/// `RestockCakes`; the seeded Iron ore leaves the pack, is banked in East
 /// Ardougne, and the script returns to the market before fresh Strength XP.
 pub(crate) fn ardy_fighter_bank_seeded_scenario() -> Scenario {
     let mut scenario = combat_bank_scenario(
