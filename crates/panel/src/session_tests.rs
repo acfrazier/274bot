@@ -2590,7 +2590,24 @@ fn arm_walk_on_uses_find_with_options() {
         z: 3525,
         level: 0,
     };
-    let mut graph = TransportGraph::default();
+    // Routing gates wilderness entry on the packed `graph.wilderness`
+    // rules; pack the surface zone so the fixture has a wilderness.
+    let mut graph = TransportGraph {
+        wilderness: nav::transport::WildernessRules {
+            zones: vec![nav::transport::WildernessZone {
+                x1: 2944,
+                z1: 3520,
+                x2: 3391,
+                z2: 6399,
+                level1: 0,
+                level2: 3,
+                origin_z: 3520,
+            }],
+            divisor: 8,
+            offset: 1,
+        },
+        ..TransportGraph::default()
+    };
     graph.teleports.push(TransportEdge {
         kind: TransportKind::Teleport,
         at: WorldTile {
