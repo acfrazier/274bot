@@ -1,64 +1,21 @@
-import { Execution } from '../execution/Execution.js';
-import { host, queue } from '../../shim/_kernel.js';
+import { host, runMachine } from '../../shim/_kernel.js';
 
 function call(payload) {
     return globalThis.rustyscript.functions.__rs2b0t_cake_stall(payload);
 }
 
-function called(fn) {
-    return typeof fn === 'function' && !!fn();
+function callback(fn) {
+    return typeof fn === 'function' ? fn : undefined;
+}
+
+function booleanCallback(fn) {
+    return typeof fn === 'function' ? () => !!fn() : undefined;
 }
 
 function lockoutTick(opts) {
-    const value = opts && opts.lockedOutUntil;
-    if (typeof value === 'function') {
-        const n = value();
-        return typeof n === 'number' && Number.isFinite(n) ? n : 0;
-    }
-    if (typeof value === 'number' && Number.isFinite(value)) {
-        return value;
-    }
-    return 0;
-}
-
-function callbackResults(opts, withCallbacks, withLockout) {
-    const h = host();
-    const abort = withCallbacks && called(opts?.abort);
-    const shouldEat = withCallbacks && !abort ? called(opts?.shouldEat) : false;
-    return {
-        abort,
-        should_eat: shouldEat,
-        facts_valid: h.content?.baker_stall != null,
-        ...(withLockout ? { locked_out_until: lockoutTick(opts) } : {}),
-    };
-}
-
-function dispatchStep(step) {
-    if (step.kind === 'walk-to') {
-        queue({ op: 'walk-to', x: step.x, z: step.z, level: step.level });
-        return true;
-    }
-    if (step.kind === 'loc') {
-        queue({
-            op: 'loc',
-            x: step.x,
-            z: step.z,
-            level: step.level,
-            action: step.action,
-            id: step.id,
-        });
-        return true;
-    }
-    return step.kind === 'wait' || step.kind === 'pause';
-}
-
-function report(opts, step) {
-    if (typeof step?.status === 'string' && typeof opts.setStatus === 'function') {
-        opts.setStatus(step.status);
-    }
-    if (typeof step?.log === 'string' && typeof opts.log === 'function') {
-        opts.log(step.log);
-    }
+    const value = opts.lockedOutUntil;
+    const tick = typeof value === 'function' ? value() : value;
+    return typeof tick === 'number' && Number.isFinite(tick) ? tick : 0;
 }
 
 export function carriedCakes() {
@@ -76,44 +33,20 @@ export function needsCakeRestock(target) {
 export async function stealCakes(opts = {}) {
     const fillTo =
         typeof opts.fillTo === 'number' && Number.isFinite(opts.fillTo) ? opts.fillTo : null;
-    let step = call({ op: 'begin', fill_to: fillTo });
-    const token = step?.token;
-    while (step && step.kind !== 'done' && step.kind !== 'aborted') {
-        report(opts, step);
-        if (step.kind === 'observe') {
-            step = call({
-                op: 'next',
-                token,
-                ...callbackResults(opts, step.callbacks === true, step.lockout === true),
-            });
-            continue;
-        }
-        if (step.kind === 'on-reset' || step.kind === 'on-steal') {
-            const hook = step.kind === 'on-reset' ? opts.onReset : opts.onSteal;
-            if (typeof hook === 'function') {
-                hook();
-            }
-            step = call({ op: 'next', token, ...callbackResults(opts, false, false) });
-            continue;
-        }
-        if (!dispatchStep(step)) {
-            return 'no-progress';
-        }
-        const withCallbacks = step.callbacks === true;
-        let next = null;
-        await Execution.delayUntil(() => {
-            next = call({
-                op: 'next',
-                token,
-                ...callbackResults(opts, withCallbacks, false),
-            });
-            return next?.kind !== 'wait';
-        }, 0);
-        step = next;
-    }
-    if (step?.kind === 'done') {
-        report(opts, step);
-        return typeof step.result === 'string' ? step.result : 'no-progress';
-    }
-    return 'aborted';
+    const out = await runMachine(
+        'cake_stall',
+        { fill_to: fillTo },
+        {
+            abort: booleanCallback(opts.abort),
+            shouldEat: booleanCallback(opts.shouldEat),
+            factsValid: () => host().content?.baker_stall != null,
+            lockedOutUntil: () => lockoutTick(opts),
+            setStatus: callback(opts.setStatus),
+            log: callback(opts.log),
+            onSteal: callback(opts.onSteal),
+            onReset: callback(opts.onReset),
+        },
+    );
+    if (out.kind !== 'done') return 'aborted';
+    return typeof out.value === 'string' ? out.value : 'no-progress';
 }

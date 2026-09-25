@@ -2,13 +2,15 @@
 //! `api::cake_stall` owns the posted pins and row types; this module owns
 //! selection, restock and stall-food predicates and the whole steal loop:
 //! its exits, its waits, and the stand, refusal and lockout state local to
-//! one call. The posted facts are read from the isolate scene at call time;
-//! JavaScript pumps the returned steps, answers callback observes and
-//! dispatches verbs.
+//! one `cake_stall` step-machine row; JavaScript only marshals the options and
+//! awaits its completion.
 
 use super::{counts_as_stall_food, needs_cake_restock, select_baker_stall};
+use crate::machine::{AbortReason, Begin, Call, Cx, Family, Reply, Step};
 use crate::observed::{self, Scene, SceneRow};
+use crate::shim::InteractReq;
 use api::cake_stall::{StallLoc, BAKER_STALL};
+use serde::Deserialize;
 use serde_json::{json, Value};
 use std::cell::RefCell;
 use std::time::{Duration, Instant};
@@ -35,6 +37,69 @@ pub const LOCKOUT_TICKS: i64 = 10;
 /// Frozen `LOCKOUT_RE`: the server refuses stall steals within ten ticks of
 /// combat with this line. It is neither a catch nor a watched-stand refusal.
 const LOCKOUT_LINE: &str = "can't steal from the market stall during combat";
+
+const ABORT: usize = 0;
+const SHOULD_EAT: usize = 1;
+const FACTS_VALID: usize = 2;
+const LOCKED_OUT_UNTIL: usize = 3;
+const SET_STATUS: usize = 4;
+const LOG: usize = 5;
+const ON_STEAL: usize = 6;
+const ON_RESET: usize = 7;
+
+#[derive(Deserialize)]
+pub(crate) struct CakeStallArgs {
+    #[serde(default)]
+    fill_to: Value,
+}
+
+#[derive(Clone, Copy)]
+enum DriverPhase {
+    ReportStatus,
+    ReportLog,
+    Handle,
+    Observe {
+        callbacks: bool,
+        lockout: bool,
+        stage: ObserveStage,
+    },
+    AfterEvent,
+    Poll {
+        callbacks: bool,
+    },
+}
+
+#[derive(Clone, Copy)]
+enum ObserveStage {
+    Abort,
+    ShouldEat,
+    Facts,
+    Lockout,
+    Dispatch,
+}
+
+#[derive(Clone, Copy)]
+enum PendingHook {
+    Abort,
+    Facts,
+    ShouldEat,
+    Lockout,
+    Notify,
+}
+
+/// One frozen `stealCakes` call. The existing policy runtime owns its token
+/// and waits; this family owns the former JavaScript begin/next pump.
+pub(crate) struct CakeStall {
+    token: u64,
+    step: Value,
+    phase: DriverPhase,
+    pending: Option<PendingHook>,
+    poll_callbacks: bool,
+    facts_valid: bool,
+    abort: bool,
+    should_eat: bool,
+    locked_out_until: i64,
+}
 
 thread_local! {
     static RUNTIME: RefCell<CakeStallRuntime> = const { RefCell::new(CakeStallRuntime::new()) };
@@ -559,6 +624,325 @@ impl CakeStallRuntime {
     }
 }
 
+#[derive(Clone, Copy)]
+enum CakeStepKind {
+    Observe,
+    OnReset,
+    OnSteal,
+    WalkTo,
+    Loc,
+    Wait,
+    Pause,
+    Done,
+    Aborted,
+    Unknown,
+}
+
+impl CakeStall {
+    fn kind(&self) -> CakeStepKind {
+        match self.step.get("kind").and_then(Value::as_str).unwrap_or("") {
+            "observe" => CakeStepKind::Observe,
+            "on-reset" => CakeStepKind::OnReset,
+            "on-steal" => CakeStepKind::OnSteal,
+            "walk-to" => CakeStepKind::WalkTo,
+            "loc" => CakeStepKind::Loc,
+            "wait" => CakeStepKind::Wait,
+            "pause" => CakeStepKind::Pause,
+            "done" => CakeStepKind::Done,
+            "aborted" => CakeStepKind::Aborted,
+            _ => CakeStepKind::Unknown,
+        }
+    }
+
+    fn begin_observe(&mut self, callbacks: bool, lockout: bool) {
+        self.abort = false;
+        self.should_eat = false;
+        self.facts_valid = false;
+        self.locked_out_until = 0;
+        self.phase = DriverPhase::Observe {
+            callbacks,
+            lockout,
+            stage: ObserveStage::Abort,
+        };
+    }
+
+    fn call(&mut self, hook: usize, pending: PendingHook, args: Vec<Value>) -> Step<String> {
+        self.pending = Some(pending);
+        Step::Call(Call { hook, args })
+    }
+
+    fn receive(&mut self, cx: &mut Cx<'_>) -> Result<(), Step<String>> {
+        let Some(reply) = cx.reply() else {
+            return Ok(());
+        };
+        match reply {
+            Reply::Threw(thrown) => Err(Step::Fail(thrown)),
+            Reply::Value(value) => {
+                match self.pending.take() {
+                    Some(PendingHook::Abort) => {
+                        self.abort = crate::bank_deposit::truthy(&value);
+                    }
+                    Some(PendingHook::Facts) => {
+                        self.facts_valid = crate::bank_deposit::truthy(&value);
+                    }
+                    Some(PendingHook::ShouldEat) => {
+                        self.should_eat = crate::bank_deposit::truthy(&value);
+                    }
+                    Some(PendingHook::Lockout) => {
+                        self.locked_out_until = value.as_i64().unwrap_or(0);
+                    }
+                    Some(PendingHook::Notify) | None => {}
+                }
+                Ok(())
+            }
+        }
+    }
+
+    fn advance_runtime(&mut self, lockout: bool) {
+        let mut input = json!({
+            "abort": self.abort,
+            "should_eat": self.should_eat,
+            "facts_valid": self.facts_valid,
+        });
+        if lockout {
+            input["locked_out_until"] = json!(self.locked_out_until);
+        }
+        let obs =
+            observed::with(|scene| NativeObservation::from_scene(scene, true)).with_callbacks(&input);
+        self.step =
+            RUNTIME.with(|runtime| runtime.borrow_mut().next(self.token, &obs));
+        self.phase = DriverPhase::ReportStatus;
+    }
+
+    fn emit_current(&self, cx: &mut Cx<'_>) -> bool {
+        let Some(x) = step_i32(&self.step, "x") else {
+            return false;
+        };
+        let Some(z) = step_i32(&self.step, "z") else {
+            return false;
+        };
+        let Some(level) = step_i32(&self.step, "level") else {
+            return false;
+        };
+        match self.kind() {
+            CakeStepKind::WalkTo => cx.emit(InteractReq::WalkTo { x, z, level }),
+            CakeStepKind::Loc => {
+                let Some(action) = self.step.get("action").and_then(Value::as_str) else {
+                    return false;
+                };
+                let Some(id) = step_i32(&self.step, "id") else {
+                    return false;
+                };
+                cx.emit(InteractReq::Loc {
+                    x,
+                    z,
+                    level,
+                    action: action.to_string(),
+                    id: Some(id),
+                });
+            }
+            _ => return false,
+        }
+        true
+    }
+}
+
+impl Family for CakeStall {
+    const NAME: &'static str = "cake_stall";
+    const EXCLUSIVE: bool = true;
+    const CALLBACKS: &'static [&'static str] = &[
+        "abort",
+        "shouldEat",
+        "factsValid",
+        "lockedOutUntil",
+        "setStatus",
+        "log",
+        "onSteal",
+        "onReset",
+    ];
+    /// Every frozen callback is a plain call; a returned promise is a truthy
+    /// value for predicates and is ignored for notifications.
+    const AWAIT_CALLBACKS: bool = false;
+    /// Begin and the first steal join the caller's turn.
+    const KICK_ON_START: bool = true;
+    type Args = CakeStallArgs;
+    type Output = String;
+
+    fn begin(args: CakeStallArgs, _cx: &mut Cx<'_>) -> Begin<Self> {
+        let fill_to = args.fill_to.as_i64().map(|value| value as i32);
+        let step = RUNTIME.with(|runtime| runtime.borrow_mut().begin(fill_to));
+        let token = step.get("token").and_then(Value::as_u64).unwrap_or(0);
+        Begin::Run(Self {
+            token,
+            step,
+            phase: DriverPhase::ReportStatus,
+            pending: None,
+            poll_callbacks: false,
+            facts_valid: false,
+            abort: false,
+            should_eat: false,
+            locked_out_until: 0,
+        })
+    }
+
+    fn step(&mut self, cx: &mut Cx<'_>) -> Step<String> {
+        if let Err(step) = self.receive(cx) {
+            return step;
+        }
+        loop {
+            match self.phase {
+                DriverPhase::ReportStatus => {
+                    self.phase = DriverPhase::ReportLog;
+                    if cx.has(SET_STATUS) {
+                        if let Some(status) = self.step.get("status").cloned() {
+                            return self.call(SET_STATUS, PendingHook::Notify, vec![status]);
+                        }
+                    }
+                }
+                DriverPhase::ReportLog => {
+                    self.phase = DriverPhase::Handle;
+                    if cx.has(LOG) {
+                        if let Some(log) = self.step.get("log").cloned() {
+                            return self.call(LOG, PendingHook::Notify, vec![log]);
+                        }
+                    }
+                }
+                DriverPhase::Handle => match self.kind() {
+                    CakeStepKind::Observe => {
+                        self.begin_observe(
+                            self.step.get("callbacks").and_then(Value::as_bool) == Some(true),
+                            self.step.get("lockout").and_then(Value::as_bool) == Some(true),
+                        );
+                    }
+                    CakeStepKind::OnReset | CakeStepKind::OnSteal => {
+                        let hook = if matches!(self.kind(), CakeStepKind::OnReset) {
+                            ON_RESET
+                        } else {
+                            ON_STEAL
+                        };
+                        self.phase = DriverPhase::AfterEvent;
+                        if cx.has(hook) {
+                            return self.call(hook, PendingHook::Notify, Vec::new());
+                        }
+                    }
+                    CakeStepKind::WalkTo | CakeStepKind::Loc => {
+                        if !self.emit_current(cx) {
+                            return Step::Done("no-progress".to_string());
+                        }
+                        self.poll_callbacks =
+                            self.step.get("callbacks").and_then(Value::as_bool) == Some(true);
+                        self.phase = DriverPhase::Poll {
+                            callbacks: self.poll_callbacks,
+                        };
+                        return Step::Wait;
+                    }
+                    CakeStepKind::Pause => {
+                        self.poll_callbacks =
+                            self.step.get("callbacks").and_then(Value::as_bool) == Some(true);
+                        self.phase = DriverPhase::Poll {
+                            callbacks: self.poll_callbacks,
+                        };
+                        return Step::Wait;
+                    }
+                    CakeStepKind::Wait => {
+                        self.phase = DriverPhase::Poll {
+                            callbacks: self.poll_callbacks,
+                        };
+                        return Step::Wait;
+                    }
+                    CakeStepKind::Done => {
+                        return Step::Done(
+                            self.step
+                                .get("result")
+                                .and_then(Value::as_str)
+                                .unwrap_or("no-progress")
+                                .to_string(),
+                        );
+                    }
+                    CakeStepKind::Aborted => return Step::Done("aborted".to_string()),
+                    CakeStepKind::Unknown => return Step::Done("no-progress".to_string()),
+                },
+                DriverPhase::AfterEvent => self.begin_observe(false, false),
+                DriverPhase::Poll { callbacks } => self.begin_observe(callbacks, false),
+                DriverPhase::Observe {
+                    callbacks,
+                    lockout,
+                    stage,
+                } => match stage {
+                    ObserveStage::Abort => {
+                        self.phase = DriverPhase::Observe {
+                            callbacks,
+                            lockout,
+                            stage: ObserveStage::ShouldEat,
+                        };
+                        if callbacks && cx.has(ABORT) {
+                            return self.call(ABORT, PendingHook::Abort, Vec::new());
+                        }
+                    }
+                    ObserveStage::ShouldEat => {
+                        self.phase = DriverPhase::Observe {
+                            callbacks,
+                            lockout,
+                            stage: ObserveStage::Facts,
+                        };
+                        if callbacks && !self.abort && cx.has(SHOULD_EAT) {
+                            return self.call(
+                                SHOULD_EAT,
+                                PendingHook::ShouldEat,
+                                Vec::new(),
+                            );
+                        }
+                    }
+                    ObserveStage::Facts => {
+                        self.phase = DriverPhase::Observe {
+                            callbacks,
+                            lockout,
+                            stage: ObserveStage::Lockout,
+                        };
+                        if cx.has(FACTS_VALID) {
+                            return self.call(
+                                FACTS_VALID,
+                                PendingHook::Facts,
+                                Vec::new(),
+                            );
+                        }
+                    }
+                    ObserveStage::Lockout => {
+                        self.phase = DriverPhase::Observe {
+                            callbacks,
+                            lockout,
+                            stage: ObserveStage::Dispatch,
+                        };
+                        if lockout && cx.has(LOCKED_OUT_UNTIL) {
+                            return self.call(
+                                LOCKED_OUT_UNTIL,
+                                PendingHook::Lockout,
+                                Vec::new(),
+                            );
+                        }
+                    }
+                    ObserveStage::Dispatch => self.advance_runtime(lockout),
+                },
+            }
+        }
+    }
+
+    fn abort(&mut self, _why: AbortReason) {
+        RUNTIME.with(|runtime| {
+            let mut runtime = runtime.borrow_mut();
+            if runtime.token == self.token && runtime.phase != Phase::Idle {
+                runtime.abort_runtime();
+            }
+        });
+    }
+}
+
+fn step_i32(step: &Value, key: &str) -> Option<i32> {
+    step.get(key)
+        .and_then(Value::as_i64)
+        .and_then(|value| i32::try_from(value).ok())
+}
+
 /// ASCII case-insensitive substring test, without the copy.
 fn contains_ascii_ci(hay: &str, needle: &str) -> bool {
     hay.as_bytes()
@@ -655,21 +1039,6 @@ pub fn dispatch(input: &Value) -> Value {
                 pack_full(&obs),
             ))
         }
-        "begin" => RUNTIME.with(|runtime| {
-            runtime.borrow_mut().begin(
-                input
-                    .get("fill_to")
-                    .and_then(Value::as_i64)
-                    .map(|n| n as i32),
-            )
-        }),
-        "next" => RUNTIME.with(|runtime| {
-            runtime.borrow_mut().next(
-                input.get("token").and_then(Value::as_u64).unwrap_or(0),
-                &observe(true),
-            )
-        }),
-        "current_token" => RUNTIME.with(|runtime| json!(runtime.borrow().token)),
         _ => json!({"kind": "done", "result": "no-progress"}),
     }
 }

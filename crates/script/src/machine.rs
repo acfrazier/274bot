@@ -493,6 +493,7 @@ const FAMILIES: &[Entry] = &[
     entry::<crate::bank_open::BankOpen>(),
     entry::<crate::fire::LightFire>(),
     entry::<crate::shop::Shop>(),
+    entry::<crate::cake_stall::CakeStall>(),
     entry::<crate::production::ChatDialog>(),
     entry::<crate::reach::NpcDialog>(),
     entry::<crate::dialog::Dialog>(),
