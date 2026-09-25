@@ -26,6 +26,8 @@ use crate::walk_plan::{route_or_bank_fetch, PendingBankFetch, RouteOutcome};
 pub struct WalkArm {
     pub traveller: Traveller,
     pub route: Option<Route>,
+    /// Changes only when an actual route is installed, not on hover or follow.
+    pub route_generation: u64,
     pub bank_fetch: Option<PendingBankFetch>,
 }
 
@@ -120,6 +122,7 @@ pub fn arm_walk_on(
                 arm.traveller.clear();
                 arm.bank_fetch = None;
                 arm.route = Some(route.clone());
+                arm.route_generation = arm.route_generation.wrapping_add(1);
             }
             Ok(route)
         }
@@ -135,6 +138,7 @@ pub fn arm_walk_on(
                 arm.traveller.clear();
                 arm.bank_fetch = Some(pending);
                 arm.route = Some(route.clone());
+                arm.route_generation = arm.route_generation.wrapping_add(1);
             }
             Ok(route)
         }
@@ -168,6 +172,9 @@ pub fn step_walk_arm_bank_fetch<D: Driver>(
         arm.route = None;
     } else if let Some(r) = bot.route {
         arm.route = Some(r);
+        if bot.map_route_generation != 0 {
+            arm.route_generation = arm.route_generation.wrapping_add(1);
+        }
     }
     wrote
 }

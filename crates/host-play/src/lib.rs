@@ -14,6 +14,7 @@ pub mod paired_core;
 pub mod profile;
 pub mod progress;
 pub mod public_worlds;
+pub mod walk_map;
 pub use nav_identity::{
     bundled_nav_identities, install_resource_root, BundledNavIdentity, NavFlagsOrigin,
     NavLoadCounters, NavOrigin,

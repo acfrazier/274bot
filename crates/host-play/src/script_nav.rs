@@ -44,6 +44,7 @@ pub(crate) struct MissingCarry {
 #[derive(Default)]
 pub(crate) struct NavBot {
     pub(crate) route_generation: u64,
+    pub(crate) map_route_generation: u64,
     pub(crate) route_worker: Option<Arc<()>>,
     pub(crate) pending_route: Option<ScriptRouteRequest>,
     /// Dest, radius, allow_teleports, allow_wilderness, allow_bank_fetch.
@@ -766,6 +767,7 @@ impl NavBot {
         };
         self.traveller.clear();
         self.route = Some(route);
+        self.map_route_generation = self.map_route_generation.wrapping_add(1);
         self.route_request_id = request_id;
         self.bank_fetch = pending;
         self.allow_teleports = allow_teleports;

@@ -22,7 +22,7 @@ fn invalidate_bank_pick(navs: &Arc<Mutex<HashMap<String, NavBot>>>, name: &str) 
 /// walk shows the same path / click as a picker walk.
 #[derive(Clone)]
 pub struct ScriptNavPaint {
-    navs: Arc<Mutex<HashMap<String, NavBot>>>,
+    pub(crate) navs: Arc<Mutex<HashMap<String, NavBot>>>,
 }
 
 impl ScriptNavPaint {
