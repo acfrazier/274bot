@@ -660,4 +660,66 @@ mod tests {
         let closing = call("close", token, 1);
         assert_eq!(closing["kind"], "close-modal", "{closing}");
     }
+    #[test]
+    fn close_before_acquisition_aborts_without_a_close_verb() {
+        reset_closed();
+        let token = begin("Cook's Assistant", 1)["token"].as_u64().unwrap();
+        let early = call("close", token, 1);
+        assert_eq!(early["kind"], "aborted", "{early}");
+        assert_eq!(early["reason"], "stale", "{early}");
+        let dead = call("next", token, 1);
+        assert_eq!(dead["kind"], "aborted", "{dead}");
+        assert_eq!(dead["reason"], "stale", "{dead}");
+    }
+
+    #[test]
+    fn a_replacement_root_is_stale_and_is_never_closed() {
+        reset_closed();
+        let token = begin("Cook's Assistant", 1)["token"].as_u64().unwrap();
+        post_tab(
+            8,
+            77,
+            &["@dre@The Cook's Quest"],
+            vec![cook_row(), waterfall_row()],
+        );
+        assert_eq!(call("next", token, 1)["kind"], "done");
+        assert_eq!(call("close", token, 1)["kind"], "close-modal");
+
+        post_tab(
+            9,
+            3824,
+            &["@dre@Some Other Quest"],
+            vec![cook_row(), waterfall_row()],
+        );
+        let replaced = call("close", token, 1);
+        assert_eq!(replaced["kind"], "aborted", "{replaced}");
+        assert_eq!(replaced["reason"], "stale", "{replaced}");
+        assert_eq!(call("next", token, 1)["reason"], "stale");
+    }
+
+    #[test]
+    fn a_wrong_token_on_an_unusable_pair_kills_the_live_token_as_stale() {
+        reset_closed();
+        let token = begin("Cook's Assistant", 1)["token"].as_u64().unwrap();
+        post_tab(
+            8,
+            -1,
+            &["orphaned modal text"],
+            vec![cook_row(), waterfall_row()],
+        );
+        let wrong = call("next", token + 5, 1);
+        assert_eq!(wrong["kind"], "aborted", "{wrong}");
+        assert_eq!(wrong["reason"], "stale", "{wrong}");
+        assert_eq!(call("close", token + 5, 1)["reason"], "stale");
+        assert_eq!(call("next", token, 1)["reason"], "stale");
+
+        post_tab(
+            9,
+            77,
+            &["@dre@The Cook's Quest"],
+            vec![cook_row(), waterfall_row()],
+        );
+        assert_eq!(call("next", token, 1)["reason"], "stale");
+    }
+
 }

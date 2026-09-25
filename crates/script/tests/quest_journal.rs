@@ -140,6 +140,7 @@ struct Post<'a> {
     /// Write every field instead of a delta: the pair is written again even
     /// when its content did not change (a same-id co-post).
     full: bool,
+    hold: bool,
 }
 
 impl<'a> Post<'a> {
@@ -149,6 +150,7 @@ impl<'a> Post<'a> {
             rows: Rows::Keep,
             pair: None,
             full: false,
+            hold: false,
         }
     }
 
@@ -179,6 +181,11 @@ impl<'a> Post<'a> {
         self.full = true;
         self
     }
+
+    fn hold(mut self, hold: bool) -> Self {
+        self.hold = hold;
+        self
+    }
 }
 
 fn post_page(
@@ -190,6 +197,7 @@ fn post_page(
 ) {
     let mut snap = base_snapshot();
     snap.tick = page.tick;
+    snap.hold = page.hold;
     if let Some(pair) = page.pair {
         // A real rebuild writes slot 68 and the pair from the same walk. The
         // machine still reads the pair only: the pair is the occupancy fact.
@@ -447,6 +455,83 @@ fn begin_is_sync_run_is_async_and_removed_pump_methods_stay_absent() {
     );
     j.iso.join();
 }
+#[test]
+fn begin_requires_a_usable_pair_and_component_but_accepts_posted_zero() {
+    let mut j = Journal::new();
+    let usable = [row("Cook's Assistant", "notStarted", Some(1234))];
+
+    // A default main-modal id is not the pair. The native pair itself must
+    // have been posted.
+    j.post(Post::at(1).rows(&usable));
+    assert_helper_error(
+        &j.begin(json!({ "name": "Cook's Assistant" })),
+        "snapshot-unavailable",
+    );
+
+    // A closed root carrying text is internally inconsistent, not free.
+    let orphan = vec!["orphaned modal text".to_string()];
+    j.post(Post::at(2).rows(&usable).pair(-1, &orphan));
+    assert_helper_error(
+        &j.begin(json!({ "name": "Cook's Assistant" })),
+        "snapshot-unavailable",
+    );
+
+    // The first matching row owns selection. If it omitted its component the
+    // scan neither guesses zero nor falls through to a later duplicate.
+    let missing = [
+        row("Cook's Assistant", "notStarted", None),
+        row("Cook's Assistant", "complete", Some(0)),
+    ];
+    j.post(Post::at(3).rows(&missing).closed_pair());
+    assert_helper_error(
+        &j.begin(json!({ "name": "Cook's Assistant" })),
+        "snapshot-unavailable",
+    );
+    assert!(j.iso.drain_interacts().is_empty());
+
+    // A zero that was actually posted on the selected row is a real component
+    // and the awaited runner emits exactly that button id.
+    let zero = [row("Cook's Assistant", "notStarted", Some(0))];
+    j.post(Post::at(4).rows(&zero).closed_pair());
+    j.request(json!({ "name": "Cook's Assistant" }));
+    j.tick(4);
+    assert_eq!(j.begin_result()["ok"], true);
+    assert_eq!(
+        j.iso.drain_interacts(),
+        vec![InteractReq::IfButton { component_id: 0 }]
+    );
+    assert!(j.outcome().is_null());
+    j.iso.reset_session_work();
+    j.tick(5);
+    j.iso.join();
+}
+
+#[test]
+fn a_frozen_begin_starts_no_token_or_click_then_thaws_normally() {
+    let mut j = Journal::new();
+    let rows = [row("Cook's Assistant", "notStarted", Some(1234))];
+    j.post(Post::at(1).rows(&rows).closed_pair());
+    j.iso.pause();
+    assert_helper_error(
+        &j.begin(json!({ "name": "Cook's Assistant" })),
+        "frozen",
+    );
+    assert!(j.iso.drain_interacts().is_empty());
+
+    j.iso.resume();
+    j.post(Post::at(2).rows(&rows).closed_pair());
+    j.request(json!({ "name": "Cook's Assistant" }));
+    j.tick(2);
+    assert_eq!(j.begin_result()["ok"], true);
+    assert_eq!(
+        j.iso.drain_interacts(),
+        vec![InteractReq::IfButton { component_id: 1234 }]
+    );
+    j.iso.reset_session_work();
+    j.tick(3);
+    j.iso.join();
+}
+
 
 #[test]
 fn replacement_modal_aborts_without_a_second_close() {
@@ -560,7 +645,7 @@ fn acquisition_timeout_settles_the_run_without_closing() {
 }
 
 #[test]
-fn pause_freezes_the_acquisition_window_and_reset_aborts_the_await() {
+fn pause_and_hold_freeze_the_acquisition_window_and_reset_aborts_the_await() {
     let mut j = Journal::new();
     let rows = [row("Cook's Assistant", "notStarted", Some(1234))];
     j.post(Post::at(1).rows(&rows).closed_pair());
@@ -578,17 +663,25 @@ fn pause_freezes_the_acquisition_window_and_reset_aborts_the_await() {
     assert!(j.iso.drain_interacts().is_empty());
     j.iso.resume();
 
-    let texts = vec!["@dre@The Cook's Quest".to_string()];
-    j.post(Post::at(3).pair(77, &texts));
+    j.post(Post::at(3).closed_pair().hold(true));
     j.tick(3);
+    std::thread::sleep(Duration::from_millis(PAST_WINDOW_MS));
+    j.post(Post::at(4).closed_pair().hold(true));
+    j.tick(4);
+    assert!(j.outcome().is_null(), "hold freezes the machine clock");
+    assert!(j.iso.drain_interacts().is_empty());
+
+    let texts = vec!["@dre@The Cook's Quest".to_string()];
+    j.post(Post::at(5).pair(77, &texts).hold(false));
+    j.tick(5);
     assert_eq!(
         j.iso.drain_interacts(),
         vec![InteractReq::CloseModal],
-        "the frozen time did not consume the acquisition window"
+        "pause and hold did not consume the acquisition window"
     );
 
     j.iso.reset_session_work();
-    j.tick(4);
+    j.tick(6);
     assert_eq!(j.outcome(), json!({ "kind": "aborted", "reason": "reset" }));
     assert!(j.iso.drain_interacts().is_empty());
     j.iso.join();
