@@ -894,10 +894,13 @@ export function tick(api) {
     assert_eq!(empty["nullArg"]["error"], "invalid-args");
     assert_eq!(empty["numberSkill"]["error"], "invalid-args");
     assert_eq!(empty["numberName"]["error"], "invalid-args");
-    assert_eq!(empty["omitted"]["error"], "missing-selected-data");
-    assert_eq!(empty["empty"]["error"], "missing-selected-data");
-    assert_eq!(empty["badSkill"]["error"], "missing-selected-data");
-    assert_eq!(empty["missName"]["error"], "missing-selected-data");
+    for key in ["omitted", "empty", "badSkill", "missName"] {
+        assert_eq!(
+            empty[key]["error"],
+            "game data unavailable: this server's content isn't verified (see profile/engine settings)",
+            "{key} {empty:?}"
+        );
+    }
 
     let iso = LoadIsolate::spawn_with_game_data(
         src.into(),
@@ -1081,7 +1084,11 @@ export function tick(api) {
         "{value:?}"
     );
     // Args first: a well-formed call is the only one that reaches the pin.
-    assert_eq!(value["good"]["error"], "missing-selected-data", "{value:?}");
+    assert_eq!(
+        value["good"]["error"],
+        "game data unavailable: this server's content isn't verified (see profile/engine settings)",
+        "{value:?}"
+    );
 }
 
 #[test]

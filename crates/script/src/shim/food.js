@@ -20,6 +20,9 @@ export function foodHealAmount(foodName) {
         if (row && row.ok === true && typeof row.value === 'number') {
             return row.value;
         }
+        if (row && row.ok === false && typeof row.reason === 'string') {
+            throw new Error(row.reason);
+        }
         throw notImpl('foodHealAmount');
     }
     throw notImpl('foodHealAmount');

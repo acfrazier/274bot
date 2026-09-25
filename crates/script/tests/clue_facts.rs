@@ -784,7 +784,11 @@ export function tick(api) {
     let value: serde_json::Value =
         serde_json::from_str(iso.probe("globalThis.__probe").unwrap().as_str().unwrap()).unwrap();
     iso.join();
-    assert_eq!(value["step"]["error"], "missing-selected-data", "{value:?}");
+    assert_eq!(
+        value["step"]["error"],
+        "game data unavailable: this server's content isn't verified (see profile/engine settings)",
+        "{value:?}"
+    );
 
     // A selected slot without the trail family: the family token, before
     // none-held, even with an empty page.
@@ -836,7 +840,8 @@ export function tick(api) {
     }
     for key in ["hit", "aliasHit", "blank", "zero"] {
         assert_eq!(
-            empty[key]["error"], "missing-selected-data",
+            empty[key]["error"],
+            "game data unavailable: this server's content isn't verified (see profile/engine settings)",
             "{key} {empty:?}"
         );
     }

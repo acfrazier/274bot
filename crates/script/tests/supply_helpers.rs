@@ -119,6 +119,34 @@ fn probe_compat(src: &str, revision: ClientRevision) -> serde_json::Value {
 }
 
 #[test]
+fn v1_food_heal_missing_data_explains_content_verification() {
+    let iso = LoadIsolate::spawn(
+        r#"
+import { foodHealAmount } from '../../api/combat/food.js';
+export default class T extends LoopingBot {
+    loop() {
+        let missing = '';
+        try { foodHealAmount('Bread'); } catch (e) { missing = String(e.message || e); }
+        globalThis.__probe = JSON.stringify({ missing });
+    }
+}
+"#
+        .into(),
+        LoadShape::CompatClass,
+        vec![],
+    )
+    .unwrap();
+    iso.on_game_tick(1);
+    let value: serde_json::Value =
+        serde_json::from_str(iso.probe("__probe").unwrap().as_str().unwrap()).unwrap();
+    iso.join();
+    assert_eq!(
+        value["missing"],
+        "game data unavailable: this server's content isn't verified (see profile/engine settings)"
+    );
+}
+
+#[test]
 fn native_food_count_hook_is_callable() {
     let iso = LoadIsolate::spawn(
         r#"
@@ -341,8 +369,14 @@ export function tick(api) {
     let value: serde_json::Value =
         serde_json::from_str(iso.probe("globalThis.__probe").unwrap().as_str().unwrap()).unwrap();
     iso.join();
-    assert_eq!(value["food"]["error"], "missing-selected-data");
-    assert_eq!(value["escape"]["error"], "missing-selected-data");
+    assert_eq!(
+        value["food"]["error"],
+        "game data unavailable: this server's content isn't verified (see profile/engine settings)"
+    );
+    assert_eq!(
+        value["escape"]["error"],
+        "game data unavailable: this server's content isn't verified (see profile/engine settings)"
+    );
 }
 
 #[test]

@@ -57,7 +57,7 @@ fn run_clue_logic<'s>(
 /// caller-supplied page.
 fn held_step_op<'s>(scope: &mut v8::HandleScope<'s>) -> Result<v8::Local<'s, v8::Value>, String> {
     let Some(data) = supply_v2::selected_data() else {
-        return Err("missing-selected-data".into());
+        return Err(supply_v2::GAME_DATA_UNAVAILABLE.into());
     };
     let held = posted_page(scope)?;
     match api::clue_logic::identify_step(&held, data.trails()) {
@@ -179,6 +179,11 @@ fn helper_err<'s>(
     let obj = v8::Object::new(scope);
     let ok = v8::Boolean::new(scope, false);
     set_key(scope, obj, "ok", ok.into());
+    let error = if error == "missing-selected-data" {
+        supply_v2::GAME_DATA_UNAVAILABLE
+    } else {
+        error
+    };
     let error = v8_str(scope, error)?;
     set_key(scope, obj, "error", error);
     Ok(obj.into())

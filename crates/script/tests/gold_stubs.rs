@@ -496,7 +496,10 @@ export default class T extends LoopingBot {
     offline.on_game_tick(1);
     let probe = offline.probe("__probe").unwrap();
     assert_eq!(probe["items"], 0);
-    assert!(probe["food"].as_str().unwrap().contains("not impl"));
+    assert_eq!(
+        probe["food"],
+        "game data unavailable: this server's content isn't verified (see profile/engine settings)"
+    );
     assert!(probe["target"].as_str().unwrap().contains("not impl"));
     offline.join();
 }

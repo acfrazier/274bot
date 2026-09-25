@@ -58,7 +58,7 @@ fn quest_identity_op<'s>(
 ) -> Result<v8::Local<'s, v8::Value>, String> {
     let (is_id, text) = identity_pin(scope, input)?;
     let Some(data) = supply_v2::selected_data() else {
-        return Err("missing-selected-data".into());
+        return Err(supply_v2::GAME_DATA_UNAVAILABLE.into());
     };
     let pin = if is_id {
         api::quest_facts::IdentityPin::Id(&text)
@@ -80,7 +80,7 @@ fn quest_prereqs_op<'s>(
 ) -> Result<v8::Local<'s, v8::Value>, String> {
     let id = required_id(scope, input)?;
     let Some(data) = supply_v2::selected_data() else {
-        return Err("missing-selected-data".into());
+        return Err(supply_v2::GAME_DATA_UNAVAILABLE.into());
     };
     match api::quest_facts::quest_prereqs(data.quest_identity(), &id) {
         Ok(value) => {
@@ -166,6 +166,11 @@ fn helper_err<'s>(
     let obj = v8::Object::new(scope);
     let ok = v8::Boolean::new(scope, false);
     set_key(scope, obj, "ok", ok.into());
+    let error = if error == "missing-selected-data" {
+        supply_v2::GAME_DATA_UNAVAILABLE
+    } else {
+        error
+    };
     let error = v8_str(scope, error)?;
     set_key(scope, obj, "error", error);
     Ok(obj.into())

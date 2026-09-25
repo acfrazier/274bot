@@ -1462,7 +1462,7 @@ fn world_members_parses_true_false_and_rejects_invalid() {
 }
 
 #[test]
-fn local_world_json_binds_only_when_revision_port_and_bool_match() {
+fn local_world_json_binds_only_when_revision_and_bool_match() {
     let fixture = Fixture::new();
     let engine = fixture.0.join("engine");
     write_world_json(&engine, 274, 43594, "true");
@@ -1500,12 +1500,13 @@ fn local_world_json_binds_only_when_revision_port_and_bool_match() {
         &host_play::WorldMembersFact::Unknown
     );
 
+    // Engine ports are independent from forwarded connect ports.
     write_world_json(&engine, 274, 1, "true");
     let selected = options.resolve_with_env(None, &env).unwrap();
-    assert_eq!(
+    assert!(matches!(
         selected.world_members(),
-        &host_play::WorldMembersFact::Unknown
-    );
+        host_play::WorldMembersFact::Known { members: true, .. }
+    ));
 
     write_world_json(&engine, 274, 43594, "1");
     let selected = options.resolve_with_env(None, &env).unwrap();
@@ -1664,20 +1665,27 @@ fn named_local_matching_loopback_ports_qualify_and_keep_identity_closed() {
 }
 
 #[test]
-fn named_local_changed_port_or_missing_web_does_not_qualify() {
+fn named_local_forwarded_ports_qualify_and_keep_identity_closed() {
     let fixture = Fixture::new();
     let engine = fixture.0.join("engine");
     write_world_json_with_web(&engine, 289, 45594, Some(1180), "true");
-    let changed = resolve_named_local_289(&fixture, &engine, 44594, 1180, &[]).unwrap();
-    assert!(!changed.supported_server());
-    assert_eq!(
-        changed.world_members(),
-        &host_play::WorldMembersFact::Unknown
+    let forwarded = resolve_named_local_289(&fixture, &engine, 44594, 2180, &[]).unwrap();
+    assert!(forwarded.supported_server());
+    assert!(matches!(
+        forwarded.world_members(),
+        host_play::WorldMembersFact::Known {
+            members: true,
+            source: host_play::WorldMembersSource::LocalWorldJson { .. }
+        }
+    ));
+    let profile = forwarded.bind().unwrap();
+    assert!(
+        profile.game_data().is_none(),
+        "synthetic cache must still fail identity/source qualification"
     );
-    assert!(changed.bind().unwrap().game_data().is_none());
 
     write_world_json(&engine, 289, 45594, "true");
-    let missing_web = resolve_named_local_289(&fixture, &engine, 45594, 1180, &[]).unwrap();
+    let missing_web = resolve_named_local_289(&fixture, &engine, 44594, 2180, &[]).unwrap();
     assert!(matches!(
         missing_web.world_members(),
         host_play::WorldMembersFact::Known {
@@ -1685,7 +1693,7 @@ fn named_local_changed_port_or_missing_web_does_not_qualify() {
             ..
         }
     ));
-    assert!(!missing_web.supported_server());
+    assert!(missing_web.supported_server());
     assert!(missing_web.bind().unwrap().game_data().is_none());
 }
 
@@ -1855,7 +1863,7 @@ fn explicit_world_members_does_not_manufacture_override_trust() {
 }
 
 #[test]
-fn malformed_web_port_does_not_qualify_facts() {
+fn malformed_web_port_does_not_affect_fact_qualification() {
     let fixture = Fixture::new();
     let engine = fixture.0.join("engine");
     let dir = engine.join("data/config");
@@ -1873,7 +1881,7 @@ fn malformed_web_port_does_not_qualify_facts() {
             ..
         }
     ));
-    assert!(!selected.supported_server());
+    assert!(selected.supported_server());
 }
 
 fn isolated_local_289_tree() -> Option<(PathBuf, PathBuf)> {

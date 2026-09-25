@@ -72,7 +72,14 @@ fn food_heal_v1_callback(
             let value = v8::Integer::new(scope, heal);
             set_key(scope, obj, "value", value.into());
         }
-        _ => {
+        FoodHealOutcome::MissingSelected => {
+            let ok = v8::Boolean::new(scope, false);
+            set_key(scope, obj, "ok", ok.into());
+            let reason = v8_str(scope, supply_v2::GAME_DATA_UNAVAILABLE)
+                .unwrap_or_else(|_| v8::undefined(scope).into());
+            set_key(scope, obj, "reason", reason);
+        }
+        FoodHealOutcome::UnknownFood => {
             let ok = v8::Boolean::new(scope, false);
             set_key(scope, obj, "ok", ok.into());
         }
@@ -488,6 +495,11 @@ fn helper_err<'s>(
     let obj = v8::Object::new(scope);
     let ok = v8::Boolean::new(scope, false);
     set_key(scope, obj, "ok", ok.into());
+    let error = if error == "missing-selected-data" {
+        supply_v2::GAME_DATA_UNAVAILABLE
+    } else {
+        error
+    };
     let err = v8_str(scope, error)?;
     set_key(scope, obj, "error", err);
     Ok(obj.into())

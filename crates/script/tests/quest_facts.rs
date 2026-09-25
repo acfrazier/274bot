@@ -481,7 +481,8 @@ export function tick(api) {
     }
     for key in ["blank", "blankPrereq", "hit", "miss", "hitPrereq"] {
         assert_eq!(
-            empty[key]["error"], "missing-selected-data",
+            empty[key]["error"],
+            "game data unavailable: this server's content isn't verified (see profile/engine settings)",
             "{key} {empty:?}"
         );
     }

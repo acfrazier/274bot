@@ -198,7 +198,7 @@ impl ProfileOptions {
             }
         };
         let engine_dir = absolute(engine_dir);
-        let guarded = parse_guarded_local_world(selection, game_port, &engine_dir);
+        let guarded = parse_guarded_local_world(selection, &engine_dir);
         let world_members = world_members_from_guarded(self.world_members, guarded.as_ref());
         // Only the bundled public endpoints imply bundled content facts at
         // selection time. A custom listed endpoint must prove its content
@@ -216,9 +216,7 @@ impl ProfileOptions {
                 selection,
                 &game_host,
                 &asset_host,
-                asset_port,
                 &world_members,
-                guarded.as_ref(),
             );
         Ok(ProfileSelection {
             selection,
@@ -255,12 +253,11 @@ impl ProfileOptions {
 }
 
 /// One guarded local `world.json` read. Public selections never match.
-/// Revision, `node.port`, and a real `node.members` bool must agree with the
-/// selected loopback profile. `web.port` is recorded for fact qualification
-/// and is not required for WORLD membership.
+/// Revision and a real `node.members` bool must agree with the selected
+/// loopback profile. Engine ports may differ when the local server is
+/// reached through forwarded endpoints.
 struct GuardedLocalWorld {
     members: bool,
-    web_port: Option<u64>,
     path: PathBuf,
     sha256: String,
     bytes: u64,
@@ -268,7 +265,6 @@ struct GuardedLocalWorld {
 
 fn parse_guarded_local_world(
     selection: ServerSelection,
-    game_port: u16,
     engine_dir: &Path,
 ) -> Option<GuardedLocalWorld> {
     let want_rev = match selection {
@@ -285,19 +281,10 @@ fn parse_guarded_local_world(
     if revision != want_rev {
         return None;
     }
-    let port = node.get("port").and_then(|v| v.as_u64())?;
-    if port != u64::from(game_port) {
-        return None;
-    }
     let members = node.get("members").and_then(|v| v.as_bool())?;
-    let web_port = value
-        .get("web")
-        .and_then(|web| web.get("port"))
-        .and_then(|v| v.as_u64());
     let sha256 = format!("{:x}", Sha256::digest(text.as_bytes()));
     Some(GuardedLocalWorld {
         members,
-        web_port,
         path,
         sha256,
         bytes: text.len() as u64,
@@ -341,9 +328,7 @@ fn matching_local_world_supports_facts(
     selection: ServerSelection,
     game_host: &str,
     asset_host: &str,
-    asset_port: u16,
     world_members: &WorldMembersFact,
-    guarded: Option<&GuardedLocalWorld>,
 ) -> bool {
     selection.target() == BotTarget::Local
         && crate::is_loopback_host(game_host)
@@ -355,5 +340,4 @@ fn matching_local_world_supports_facts(
                 ..
             }
         )
-        && guarded.and_then(|world| world.web_port) == Some(u64::from(asset_port))
 }
