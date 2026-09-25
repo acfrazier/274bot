@@ -51,7 +51,7 @@ impl NavWorld {
         Arc::clone(self.named_banks.get_or_init(|| Arc::new(crate::named_banks::resolve(
             api::named_banks::BANK_CATALOG,
             data.and_then(|data| data.bank_placements()).map_or(&[], |facts| facts.rows.as_slice()),
-            |tile| self.collision.walkable(tile),
+            |tile| self.collision.standable(tile),
         ))))
     }
 

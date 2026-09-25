@@ -22,6 +22,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   gates, default-off Mage Arena/Zanaris preferences, and object/NPC access.
   Selected-world placements resolve safe walk stands; unavailable Canifis
   content stays a gated air fallback rather than an invented reachable bank.
+  Stand resolution retains usable counter-side floor tiles with directional
+  wall faces (including Varrock West), while still excluding blocked footprints.
 
 - Baker-stall restocking now awaits one Rust step machine; Rust owns selected
   stall facts, callback polling, waits, steal verbs, stand swaps and lockout
