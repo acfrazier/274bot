@@ -56,6 +56,32 @@ pub struct PendingReload {
     pub kind: PendingReloadKind,
 }
 
+type ValidationBatch = Vec<(script::PreparedCard, Result<(), String>)>;
+
+pub(crate) struct ReloadValidationJob {
+    epoch: u64,
+    receiver: std::sync::mpsc::Receiver<ValidationBatch>,
+    kind: ReloadValidationKind,
+}
+
+struct ManualValidation {
+    source: script::ScriptSource,
+    lookup: String,
+    identity_key: String,
+    fingerprint: String,
+    running_before: Vec<String>,
+    paused_before: Vec<String>,
+}
+
+enum ReloadValidationKind {
+    Manual(ManualValidation),
+    Catalog {
+        root: PathBuf,
+        diff: script::CatalogDiff,
+        prepare_failed: Vec<script::LoadFailure>,
+    },
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReloadOutcome {
     NothingChanged,
@@ -530,6 +556,7 @@ impl Session {
             }
         }
         self.reload_generation = self.reload_generation.wrapping_add(1);
+        self.reload_validation = None;
         self.clear_pending_reload();
         let report = format!("Stop all: stopped {stopped}");
         if self.last_bulk_script_report.as_deref() == Some(report.as_str()) {
@@ -553,9 +580,283 @@ impl Session {
         self.pending_reload = Some(pending);
     }
 
+    pub fn reload_validation_pending(&self) -> bool {
+        self.reload_validation.is_some()
+    }
+
+    fn spawn_reload_validation(
+        &mut self,
+        prepared: Vec<script::PreparedCard>,
+        kind: ReloadValidationKind,
+    ) -> Result<(), String> {
+        if self.reload_validation.is_some() {
+            return Err("script validation already running".into());
+        }
+        let epoch = self.reload_generation;
+        let (sender, receiver) = std::sync::mpsc::channel();
+        std::thread::Builder::new()
+            .name("script-reload-validate".into())
+            .spawn(move || {
+                let results = prepared
+                    .into_iter()
+                    .map(|prepared| {
+                        let result = prepared.validate();
+                        (prepared, result)
+                    })
+                    .collect();
+                let _ = sender.send(results);
+            })
+            .map_err(|error| format!("script validation worker: {error}"))?;
+        self.reload_validation = Some(ReloadValidationJob {
+            epoch,
+            receiver,
+            kind,
+        });
+        Ok(())
+    }
+
+    /// Fold a finished validation worker on the UI frame. The worker owns
+    /// every throwaway V8 runtime; this method only commits or reports its
+    /// bounded result.
+    pub(crate) fn poll_reload_validation(&mut self) {
+        enum Poll {
+            Pending,
+            Ready(ValidationBatch),
+            Disconnected,
+        }
+
+        let poll = match self.reload_validation.as_ref() {
+            None => return,
+            Some(job) => match job.receiver.try_recv() {
+                Ok(batch) => Poll::Ready(batch),
+                Err(std::sync::mpsc::TryRecvError::Empty) => Poll::Pending,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => Poll::Disconnected,
+            },
+        };
+        let batch = match poll {
+            Poll::Pending => return,
+            Poll::Ready(batch) => Some(batch),
+            Poll::Disconnected => None,
+        };
+        let job = self
+            .reload_validation
+            .take()
+            .expect("polled reload validation job");
+        if job.epoch != self.reload_generation {
+            return;
+        }
+        let Some(batch) = batch else {
+            self.error = Some("script validation worker exited without a result".into());
+            return;
+        };
+        match job.kind {
+            ReloadValidationKind::Manual(manual) => self.complete_manual_validation(manual, batch),
+            ReloadValidationKind::Catalog {
+                root,
+                diff,
+                prepare_failed,
+            } => self.complete_catalog_validation(root, diff, prepare_failed, batch),
+        }
+    }
+
+    fn complete_manual_validation(&mut self, manual: ManualValidation, mut batch: ValidationBatch) {
+        let ManualValidation {
+            source,
+            lookup,
+            identity_key,
+            fingerprint,
+            running_before,
+            paused_before,
+        } = manual;
+        if batch.len() != 1 {
+            self.error = Some("reload: validation returned no candidate".into());
+            return;
+        }
+        let (prepared, result) = batch.pop().expect("one validation candidate");
+        if let Err(error) = result {
+            self.js.record_prepared_failure(&prepared, &error);
+            self.error = Some(format!("reload: {error}"));
+            return;
+        }
+        let (running, paused) = self.slots_with_identity(&identity_key);
+        let paused_during_prep = paused
+            .iter()
+            .filter(|name| running_before.iter().any(|prior| prior == *name))
+            .cloned()
+            .collect();
+        let affected: Vec<String> = running_before
+            .iter()
+            .chain(paused_before.iter())
+            .cloned()
+            .collect();
+        let warning = ReloadWarning {
+            identity_key,
+            source,
+            lookup,
+            fingerprint,
+            epoch: self.reload_generation,
+            running,
+            paused,
+            paused_during_prep,
+            affected_generations: self.generations_for(&affected),
+        };
+        if !warning.running.is_empty()
+            || !warning.paused.is_empty()
+            || !warning.paused_during_prep.is_empty()
+        {
+            self.error = Some(reload_warning_text(&warning));
+            self.install_pending(PendingReload {
+                warning,
+                prepared: vec![prepared],
+                kind: PendingReloadKind::Manual,
+            });
+        } else {
+            let _ = self.apply_prepared_reload(vec![prepared], warning);
+        }
+    }
+
+    fn complete_catalog_validation(
+        &mut self,
+        root: PathBuf,
+        diff: script::CatalogDiff,
+        mut prepare_failed: Vec<script::LoadFailure>,
+        batch: ValidationBatch,
+    ) {
+        let mut prepared = Vec::new();
+        for (candidate, result) in batch {
+            match result {
+                Ok(()) => prepared.push(candidate),
+                Err(error) => {
+                    self.js.record_prepared_failure(&candidate, &error);
+                    if let Some(failure) = self
+                        .js
+                        .load_failure(&candidate.card.identity_key())
+                        .cloned()
+                    {
+                        prepare_failed.push(failure);
+                    }
+                    self.error = Some(format!("catalog {}: {error}", candidate.card.name));
+                }
+            }
+        }
+        let added = diff.added.clone();
+        let changed = diff.changed.clone();
+        let removed = diff.removed.clone();
+        let mut running = Vec::new();
+        let mut paused = Vec::new();
+        for candidate in &prepared {
+            let (candidate_running, candidate_paused) =
+                self.slots_with_identity(&candidate.card.identity_key());
+            running.extend(candidate_running);
+            paused.extend(candidate_paused);
+        }
+        let set_fingerprint = catalog_set_fingerprint(&added, &changed, &removed, &prepared);
+        let warning = ReloadWarning {
+            identity_key: prepared
+                .first()
+                .map(|candidate| candidate.card.identity_key())
+                .unwrap_or_default(),
+            source: script::ScriptSource::Catalog,
+            lookup: changed.first().cloned().unwrap_or_default(),
+            fingerprint: set_fingerprint.clone(),
+            epoch: self.reload_generation,
+            running: running.clone(),
+            paused: paused.clone(),
+            paused_during_prep: Vec::new(),
+            affected_generations: self.generations_for(
+                &running
+                    .iter()
+                    .chain(paused.iter())
+                    .cloned()
+                    .collect::<Vec<_>>(),
+            ),
+        };
+        if !running.is_empty() || !paused.is_empty() {
+            self.error = Some(reload_warning_text(&warning));
+            self.install_pending(PendingReload {
+                warning,
+                prepared,
+                kind: PendingReloadKind::Catalog {
+                    root,
+                    added,
+                    removed,
+                    failed: prepare_failed,
+                    set_fingerprint,
+                },
+            });
+        } else {
+            self.apply_catalog_prepared(&root, diff, prepared, prepare_failed, warning);
+        }
+    }
+
     /// Product Reload click: preview first, confirm only a bound warning.
     pub fn script_reload_clicked(&mut self) -> ReloadOutcome {
         self.script_reload(self.manual_pending_binds_current())
+    }
+
+    /// Product UI Reload click. Preparation stays finite on the caller;
+    /// throwaway V8 validation is owned and polled by a worker.
+    pub fn begin_script_reload_clicked(&mut self) {
+        if self.reload_validation.is_some() {
+            return;
+        }
+        let Some((source, lookup)) = self.current_reload_target() else {
+            self.error = Some("reload: no script to reload".into());
+            return;
+        };
+        if self.manual_pending_binds(source, &lookup) {
+            let _ = self.commit_manual_pending();
+            return;
+        }
+        match self.js.raw_source_changed(source, &lookup) {
+            Ok(false) => {
+                self.error = Some(script::NOTHING_CHANGED_RELOAD.into());
+                if matches!(
+                    self.pending_reload.as_ref().map(|pending| &pending.kind),
+                    Some(PendingReloadKind::Manual)
+                ) {
+                    self.clear_pending_reload();
+                }
+                return;
+            }
+            Ok(true) => {}
+            Err(error) => {
+                self.error = Some(format!("reload: {error}"));
+                return;
+            }
+        }
+        let identity_key = self
+            .js
+            .get(source, &lookup)
+            .map(|card| card.identity_key())
+            .unwrap_or_default();
+        let fingerprint = match self.js.disk_fingerprint(source, &lookup) {
+            Ok(fingerprint) => fingerprint,
+            Err(error) => {
+                self.error = Some(format!("reload: {error}"));
+                return;
+            }
+        };
+        let (running_before, paused_before) = self.slots_with_identity(&identity_key);
+        let prepared = match self.js.prepare_card_unvalidated(source, &lookup) {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                self.error = Some(format!("reload: {error}"));
+                return;
+            }
+        };
+        let kind = ReloadValidationKind::Manual(ManualValidation {
+            source,
+            lookup,
+            identity_key,
+            fingerprint,
+            running_before,
+            paused_before,
+        });
+        match self.spawn_reload_validation(vec![prepared], kind) {
+            Ok(()) => self.error = None,
+            Err(error) => self.error = Some(format!("reload: {error}")),
+        }
     }
 
     pub fn script_reload_confirmation_pending(&self) -> bool {
@@ -564,6 +865,8 @@ impl Session {
 
     /// Discard the prepared candidate without touching any execution.
     pub fn cancel_reload(&mut self) {
+        self.reload_generation = self.reload_generation.wrapping_add(1);
+        self.reload_validation = None;
         self.clear_pending_reload();
         self.error = None;
     }
@@ -957,6 +1260,77 @@ impl Session {
             .iter()
             .filter_map(|n| play.script_runtime_generation(n).map(|g| (n.clone(), g)))
             .collect()
+    }
+
+    /// Product UI catalog refresh. Candidate parsing/transpile is finite on
+    /// this frame; every throwaway V8 validation runs on the reload worker.
+    pub fn begin_refresh_catalog(&mut self) {
+        let root = match self.catalog_root() {
+            Ok(Some(root)) => root,
+            Ok(None) => {
+                self.error = Some("Refresh catalog: no catalog configured".into());
+                return;
+            }
+            Err(error) => {
+                self.error = Some(format!("Refresh catalog: {error}"));
+                return;
+            }
+        };
+        self.begin_refresh_catalog_at(&root);
+    }
+
+    pub(crate) fn begin_refresh_catalog_at(&mut self, root: &Path) {
+        if self.reload_validation.is_some() {
+            return;
+        }
+        if self.catalog_pending_binds(root) {
+            if let ReloadOutcome::Failed(error) = self.commit_catalog_pending() {
+                self.error = Some(format!("Refresh catalog: {error}"));
+            }
+            return;
+        }
+        let diff = match self.js.diff_catalog(root) {
+            Ok(diff) => diff,
+            Err(error) => {
+                self.error = Some(format!("Refresh catalog: {error}"));
+                return;
+            }
+        };
+        if diff.is_noop() {
+            self.catalog_refresh_report = Some(script::NOTHING_CHANGED_CATALOG.into());
+            self.error = Some(script::NOTHING_CHANGED_CATALOG.into());
+            return;
+        }
+        for name in &diff.added {
+            self.enqueue_transpile(script::ScriptSource::Catalog, name.clone(), false);
+        }
+        let mut prepared = Vec::new();
+        let mut prepare_failed = Vec::new();
+        for name in &diff.changed {
+            match self
+                .js
+                .prepare_card_unvalidated(script::ScriptSource::Catalog, name)
+            {
+                Ok(candidate) => prepared.push(candidate),
+                Err(error) => {
+                    if let Some(card) = self.js.get(script::ScriptSource::Catalog, name) {
+                        if let Some(failure) = self.js.load_failure(&card.identity_key()).cloned() {
+                            prepare_failed.push(failure);
+                        }
+                    }
+                    self.error = Some(format!("catalog {name}: {error}"));
+                }
+            }
+        }
+        let kind = ReloadValidationKind::Catalog {
+            root: root.to_path_buf(),
+            diff,
+            prepare_failed,
+        };
+        match self.spawn_reload_validation(prepared, kind) {
+            Ok(()) => self.error = None,
+            Err(error) => self.error = Some(format!("Refresh catalog: {error}")),
+        }
     }
 
     /// Re-read the configured catalog. Does not rewrite the persisted path.

@@ -494,7 +494,13 @@ fn isolate_spawn_compat_fixture_ticks_and_joins() {
 fn isolate_pause_ignores_ticks_and_resume_continues() {
     let iso = spawn_ready(NATIVE_TICK.to_string(), LoadShape::NativeTick, vec![]);
     iso.on_game_tick(1);
+    assert_eq!(
+        iso.probe("__rs_n").unwrap(),
+        1,
+        "the pre-Pause tick settles before the Pause boundary"
+    );
     iso.pause();
+    iso.probe("true").unwrap();
     iso.on_game_tick(2);
     iso.on_game_tick(3);
     let n = iso.probe("__rs_n").unwrap();
@@ -770,6 +776,54 @@ fn slow_tick_skips_queued_ticks_past_their_snapshots() {
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(4);
     assert_eq!(iso.probe("__rs_n").unwrap(), 2, "the next fresh tick runs");
+    iso.join();
+}
+
+#[test]
+fn slow_tick_diagnostics_keep_the_executed_tick_identity() {
+    let source = r#"
+export function tick() {
+    globalThis.__runs = (globalThis.__runs || 0) + 1;
+    if (globalThis.__runs === 1) {
+        const started = Date.now();
+        while (Date.now() - started < 120) {}
+        throw new Error('slow-one');
+    }
+}
+"#;
+    let iso = spawn_ready(source.to_string(), LoadShape::NativeTick, vec![]);
+    let mut snapshot = base_snapshot();
+    for tick in 1..=3 {
+        snapshot.tick = tick;
+        post_snapshot_input(&iso, &snapshot);
+        iso.on_game_tick(tick);
+    }
+    assert_eq!(
+        iso.probe("globalThis.__runs").unwrap(),
+        1,
+        "queued ticks 2 and 3 are stale"
+    );
+    let logs = iso.drain_logs();
+    assert!(
+        logs.iter()
+            .any(|line| line.starts_with("tick 1:") && line.contains("slow-one")),
+        "the error belongs to the tick that actually ran: {logs:?}"
+    );
+    assert!(
+        logs.iter()
+            .all(|line| !(line.starts_with("tick 3:") && line.contains("slow-one"))),
+        "the newest skipped tick must not steal tick 1's diagnostic: {logs:?}"
+    );
+    snapshot.tick = 4;
+    post_snapshot_input(&iso, &snapshot);
+    iso.on_game_tick(4);
+    assert_eq!(iso.probe("globalThis.__runs").unwrap(), 2);
+    assert!(
+        iso.drain_logs()
+            .iter()
+            .all(|line| !line.contains("slow-one")),
+        "the completed diagnostic must not leak into a later tick"
+    );
     iso.join();
 }
 
@@ -2577,7 +2631,8 @@ fn malformed_paint_record_keeps_the_ticks_logs() {
     let logs = iso.drain_logs();
     assert!(logs.iter().any(|l| l == "still logged"), "{logs:?}");
     assert!(
-        logs.iter().any(|l| l.starts_with("paint eval: ")),
+        logs.iter()
+            .any(|line| line.starts_with("tick 1: paint eval: ")),
         "{logs:?}"
     );
     iso.join();

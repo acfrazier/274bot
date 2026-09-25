@@ -46,14 +46,14 @@ pub(super) use route_inspect::PostedInspect;
 
 #[path = "script_observe.rs"]
 mod script_observe;
+#[cfg(test)]
+pub(super) use script_observe::{
+    install_dispatch_barrier, post_script_snapshot, script_observe, script_observe_with_npc_boxes,
+    take_script_interacts, DispatchBarrier,
+};
 pub(super) use script_observe::{
     nav_world_state_for_observe, observe_script_inv, project_npc_boxes_for_isolate_snapshot,
     projected_npc_boxes, script_observe_cached,
-};
-#[cfg(test)]
-pub(super) use script_observe::{
-    post_script_snapshot, script_observe, script_observe_with_npc_boxes, take_script_interacts,
-    DispatchBarrier, clear_dispatch_barrier, install_dispatch_barrier,
 };
 /// Per-uid script cell on the wall. Encode/post/drain take the slot lock
 /// only — the wall map lock is held briefly for lookup/insert.

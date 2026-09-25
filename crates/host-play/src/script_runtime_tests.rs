@@ -205,8 +205,8 @@ use client::config::{Cache, ObjType};
 use nav::world::NavWorld;
 
 use super::{
-    clear_dispatch_barrier, install_dispatch_barrier, script_observe_cached, script_slot,
-    script_slot_or_insert, DispatchBarrier, NavBot, ScriptWall,
+    install_dispatch_barrier, script_observe_cached, script_slot, script_slot_or_insert,
+    DispatchBarrier, NavBot, ScriptWall,
 };
 
 /// The puzzle fixture's component ids in push order (an empty iface table
@@ -672,13 +672,6 @@ fn observe_dispatch_refuses_requests_after_stop_race() {
     let names = Arc::new(api::obj_names::ObjNames::from_objs(&client.cache.objs));
     let barrier = DispatchBarrier::new();
     install_dispatch_barrier(Arc::clone(&barrier));
-    struct BarrierReset;
-    impl Drop for BarrierReset {
-        fn drop(&mut self) {
-            clear_dispatch_barrier();
-        }
-    }
-    let _reset = BarrierReset;
 
     let scripts_for_thread = Arc::clone(&scripts);
     let cheats_for_thread = Arc::clone(&cheats);
@@ -713,6 +706,87 @@ fn observe_dispatch_refuses_requests_after_stop_race() {
         "a stopped generation must not reach the Driver: {:?} {:?}",
         rec.menus,
         rec.actions
+    );
+}
+
+/// A Pause that wins the final dispatch fence preserves the drained batch.
+/// Nothing sends while paused; Resume dispatches that exact batch once.
+#[test]
+fn observe_dispatch_restores_requests_after_pause_race() {
+    let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
+    let cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>> =
+        Arc::new(Mutex::new(HashMap::new()));
+    let navs: Arc<Mutex<HashMap<String, NavBot>>> = Arc::new(Mutex::new(HashMap::new()));
+    let world: Option<Arc<NavWorld>> = None;
+    script_slot_or_insert(&scripts, "alice")
+        .lock()
+        .unwrap()
+        .start_compiled(Box::new(QueueMove), None)
+        .expect("the compiled script starts");
+    let client = puzzle_move_client();
+    let cache = Arc::clone(&client.cache);
+    let mut snap = GameSnapshot::new();
+    snap.rebuild(&client);
+    let snap = Arc::new(snap);
+    let names = Arc::new(api::obj_names::ObjNames::from_objs(&client.cache.objs));
+    let barrier = DispatchBarrier::new();
+    install_dispatch_barrier(Arc::clone(&barrier));
+
+    let scripts_for_thread = Arc::clone(&scripts);
+    let cheats_for_thread = Arc::clone(&cheats);
+    let navs_for_thread = Arc::clone(&navs);
+    let world_for_thread = world.clone();
+    let cache_for_thread = Arc::clone(&cache);
+    let names_for_thread = Arc::clone(&names);
+    let barrier_for_thread = Arc::clone(&barrier);
+    let snap_for_thread = Arc::clone(&snap);
+    let thread = std::thread::spawn(move || {
+        barrier_for_thread.arm_for_current_thread();
+        let mut rec = MenuRec::default();
+        observe_puzzle_frame(
+            &mut rec,
+            &scripts_for_thread,
+            &cheats_for_thread,
+            &navs_for_thread,
+            &world_for_thread,
+            snap_for_thread.as_ref(),
+            &cache_for_thread,
+            &names_for_thread,
+            true,
+        );
+        rec
+    });
+
+    barrier.wait_entered();
+    let slot = script_slot(&scripts, "alice").expect("slot remains addressable");
+    slot.lock().unwrap().pause();
+    barrier.release();
+    let paused = thread.join().expect("observe thread completes");
+    assert!(
+        paused.menus.is_empty() && paused.actions.is_empty(),
+        "Pause must win before the first Driver call: {:?} {:?}",
+        paused.menus,
+        paused.actions
+    );
+
+    slot.lock().unwrap().resume();
+    let mut resumed = MenuRec::default();
+    observe_puzzle_frame(
+        &mut resumed,
+        &scripts,
+        &cheats,
+        &navs,
+        &world,
+        snap.as_ref(),
+        &cache,
+        &names,
+        false,
+    );
+    assert_eq!(resumed.menus.len(), 1, "the restored row dispatches once");
+    assert_eq!(
+        resumed.actions,
+        vec![0],
+        "no duplicate dispatch after Resume"
     );
 }
 

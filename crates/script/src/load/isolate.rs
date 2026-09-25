@@ -24,6 +24,7 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 static NEXT_PAINT_GENERATION: AtomicU64 = AtomicU64::new(1);
+static LIVE_RUNTIMES: AtomicUsize = AtomicUsize::new(0);
 static ABANDONED_ISOLATES: Mutex<Vec<JoinHandle<()>>> = Mutex::new(Vec::new());
 
 fn reap_finished_abandoned(list: &mut Vec<JoinHandle<()>>) {
@@ -51,6 +52,14 @@ pub fn abandoned_isolate_count() -> usize {
     let mut list = ABANDONED_ISOLATES.lock().unwrap();
     reap_finished_abandoned(&mut list);
     list.len()
+}
+
+/// V8 runtimes currently owned by isolate threads. Tests use this to prove a
+/// cancelled non-yielding startup was destroyed rather than merely detached.
+#[doc(hidden)]
+#[cfg(test)]
+pub fn live_runtime_count() -> usize {
+    LIVE_RUNTIMES.load(std::sync::atomic::Ordering::Acquire)
 }
 
 /// Per-tick budget: ticks taking longer than this are interrupted and
@@ -179,11 +188,13 @@ enum ThreadMsg {
     /// thread each tick and sent only when it changed; the host caches it
     /// (no probe).
     IgnoredRandoms(Vec<String>),
-    /// The highest tick the thread has fully processed (ran or skipped).
+    /// The tick whose work has fully finished. `report_errors` is false for
+    /// operator Pause cancellation: termination is not a script diagnostic.
     Completed {
         tick: u64,
         generation: u64,
         successful: bool,
+        report_errors: bool,
     },
     /// ScriptRunner.stop ended this isolate with its bounded script reason.
     ScriptStopped {
@@ -250,6 +261,9 @@ pub struct LoadIsolate {
     tick_errors: Mutex<HashMap<(u64, u64), Vec<String>>>,
     /// Completed tick outcomes waiting for the owning slot to consume them.
     tick_outcomes: Mutex<Vec<TickOutcome>>,
+    /// Generation with a queued active-error outcome. Successful ticks are
+    /// reported only while this is set, avoiding an allocation per tick.
+    tick_outcome_error_generation: Mutex<Option<u64>>,
     /// Interact requests forwarded by the tick thread (the shim
     /// `Bank`/`Banking` queue), drained by the host like logs.
     interacts: Mutex<Vec<crate::shim::InteractReq>>,
@@ -473,6 +487,7 @@ impl LoadIsolate {
             logs: Mutex::new(Vec::new()),
             tick_errors: Mutex::new(HashMap::new()),
             tick_outcomes: Mutex::new(Vec::new()),
+            tick_outcome_error_generation: Mutex::new(None),
             interacts: Mutex::new(Vec::new()),
             lifecycle: Mutex::new(Vec::new()),
             paint: Mutex::new(None),
@@ -583,32 +598,9 @@ impl LoadIsolate {
             .snapshot_refused
             .swap(false, std::sync::atomic::Ordering::AcqRel)
             || self.backlogged();
-        let interrupted = {
-            let mut in_flight = self.in_flight.lock().unwrap();
-            // The previous tick is still in flight (no `Completed`
-            // folded yet) past the budget: interrupt it.
-            let over = in_flight
-                .as_ref()
-                .filter(|(_, _, started)| ready && started.elapsed() > SLOW_TICK)
-                .map(|(_, tick, started)| (*tick, started.elapsed()));
-            if !backlogged {
-                *in_flight = Some((generation, snap_tick, Instant::now()));
-            }
-            over
-        };
-        if let Some((tick, elapsed)) = interrupted {
-            // Leave the terminate armed until the isolate thread has
-            // returned from the tick (it cancels there); an immediate
-            // cancel would race the interrupt and make this a no-op.
-            self.fire_watchdog();
-            // `in_flight` was released before this lock, so the lock
-            // order (never `in_flight` -> `logs`) holds everywhere.
-            let line = if tick == RECOVERY_ANCHOR_TICK {
-                format!("interrupted slow recoveryAnchor ({elapsed:?})")
-            } else {
-                format!("interrupted slow tick {tick} ({elapsed:?})")
-            };
-            self.logs.lock().unwrap().push(line);
+        self.interrupt_slow_execution(ready);
+        if !backlogged {
+            *self.in_flight.lock().unwrap() = Some((generation, snap_tick, Instant::now()));
         }
         if backlogged {
             return;
@@ -621,6 +613,33 @@ impl LoadIsolate {
             generation,
             input_identity,
         });
+    }
+
+    /// Interrupt and report the currently active execution when its host
+    /// dispatch has exceeded the tick budget. `in_flight` can outlive the
+    /// corresponding V8 entry, so execution ownership is the final fence.
+    fn interrupt_slow_execution(&self, ready: bool) {
+        if !ready {
+            return;
+        }
+        let over = self
+            .in_flight
+            .lock()
+            .unwrap()
+            .as_ref()
+            .filter(|(_, _, started)| started.elapsed() > SLOW_TICK)
+            .map(|(_, tick, started)| (*tick, started.elapsed()));
+        let Some((tick, elapsed)) = over else {
+            return;
+        };
+        if self.fire_execution_interrupt(teardown::ExecutionInterrupt::Watchdog) {
+            let line = if tick == RECOVERY_ANCHOR_TICK {
+                format!("interrupted slow recoveryAnchor ({elapsed:?})")
+            } else {
+                format!("interrupted slow tick {tick} ({elapsed:?})")
+            };
+            self.logs.lock().unwrap().push(line);
+        }
     }
 
     #[cfg(feature = "memory-profile")]
@@ -642,20 +661,25 @@ impl LoadIsolate {
             "in_flight":self.in_flight.lock().unwrap().as_ref().map(|(_,tick,t)|(*tick,t.elapsed().as_millis()))})
     }
 
-    /// Park tick dispatch. A runaway tick is interrupted first so the
-    /// thread returns to the command loop.
+    /// Park tick dispatch. Pause publishes intent under the execution lock,
+    /// terminating only the eval that is actually active. A queued eval sees
+    /// the intent before entry; a completed eval cannot be terminated after
+    /// its isolate-side cancel.
     pub fn pause(&self) {
+        let ready = self.poll_ready() == Ready::Ready;
         self.pump_logs();
-        if self.teardown_blocks_dispatch() {
-            self.send(IsolateCmd::Pause);
-            return;
-        }
-        let in_flight = self.in_flight.lock().unwrap().is_some();
-        if in_flight {
-            // Pause must own cancellation of an active execution even when
-            // it is younger than the normal slow-tick threshold: after this
-            // command is queued, no later game tick is guaranteed to arrive.
-            self.fire_watchdog();
+        self.interrupt_slow_execution(ready);
+        {
+            let mut st = self.teardown.lock().unwrap();
+            if st.phase == TeardownPhase::Running {
+                st.pause_requested = true;
+                if st.execution_active
+                    && st.execution_interrupt != Some(teardown::ExecutionInterrupt::Watchdog)
+                {
+                    st.execution_interrupt = Some(teardown::ExecutionInterrupt::Pause);
+                    self.fire_terminate();
+                }
+            }
         }
         self.send(IsolateCmd::Pause);
     }
@@ -721,13 +745,14 @@ impl LoadIsolate {
             over
         };
         if let Some((tick, elapsed)) = interrupted {
-            self.fire_watchdog();
-            let line = if tick == RECOVERY_ANCHOR_TICK {
-                format!("interrupted slow recoveryAnchor ({elapsed:?})")
-            } else {
-                format!("interrupted slow tick {tick} ({elapsed:?})")
-            };
-            self.logs.lock().unwrap().push(line);
+            if self.fire_execution_interrupt(teardown::ExecutionInterrupt::Watchdog) {
+                let line = if tick == RECOVERY_ANCHOR_TICK {
+                    format!("interrupted slow recoveryAnchor ({elapsed:?})")
+                } else {
+                    format!("interrupted slow tick {tick} ({elapsed:?})")
+                };
+                self.logs.lock().unwrap().push(line);
+            }
         }
         self.send(IsolateCmd::RecoveryAnchor { generation });
     }
@@ -760,10 +785,10 @@ impl LoadIsolate {
         std::mem::take(&mut *self.logs.lock().unwrap())
     }
 
-    /// Drain typed outcomes for ticks that completed since the last host
-    /// observation. User-authored log lines never enter this queue.
+    /// Drain typed outcomes already folded by the caller's regular
+    /// [`Self::pump_logs`] pass. User-authored log lines never enter this
+    /// queue.
     pub(crate) fn drain_tick_outcomes(&self) -> Vec<TickOutcome> {
-        self.pump_logs();
         std::mem::take(&mut *self.tick_outcomes.lock().unwrap())
     }
 
@@ -782,6 +807,14 @@ impl LoadIsolate {
     #[doc(hidden)]
     pub fn teardown_proof(&self) -> TeardownProof {
         self.proof.clone()
+    }
+
+    /// Whether the isolate thread currently owns an interruptible user
+    /// execution phase. Tests use this as a scheduling barrier rather than
+    /// guessing with a sleep.
+    #[doc(hidden)]
+    pub fn execution_active(&self) -> bool {
+        self.teardown.lock().unwrap().execution_active
     }
 
     /// Isolate-scoped seam: delay after the deadline owner is armed and
@@ -811,6 +844,15 @@ impl LoadIsolate {
     pub fn drain_interacts(&self) -> Vec<crate::shim::InteractReq> {
         self.pump_logs();
         std::mem::take(&mut *self.interacts.lock().unwrap())
+    }
+
+    /// Put a host-drained batch back in front of requests that arrived
+    /// afterward. Used when an operator Pause wins the host's final
+    /// dispatch fence: no verb is lost, and Resume observes original order.
+    pub(crate) fn restore_interacts(&self, mut drained: Vec<crate::shim::InteractReq>) {
+        let mut queued = self.interacts.lock().unwrap();
+        drained.append(&mut queued);
+        *queued = drained;
     }
 
     /// Drop queued canvas mouse rows so Pause/logout cannot replay them.
@@ -846,6 +888,7 @@ impl LoadIsolate {
             self.lifecycle.lock().unwrap().clear();
         }
         self.tick_errors.lock().unwrap().clear();
+        *self.tick_outcome_error_generation.lock().unwrap() = None;
         self.tick_outcomes.lock().unwrap().clear();
         {
             // Re-stamp the held frame with the new generation: an overlay that
@@ -907,7 +950,10 @@ impl LoadIsolate {
                     // Ready/Failed result. A startup eval can now be
                     // interrupted even if it never returns to send Ready.
                     let _ = self.terminate.set(handle);
-                    if self.teardown.lock().unwrap().phase != TeardownPhase::Running {
+                    let st = self.teardown.lock().unwrap();
+                    if st.phase == TeardownPhase::UnwindingTick {
+                        // Serialized with Hook entry: join can never fire
+                        // this startup/tick interrupt after onStop begins.
                         self.fire_terminate();
                     }
                 }
@@ -947,9 +993,10 @@ impl LoadIsolate {
         };
         drop(setup);
         if matches!(outcome, Ready::Failed(_)) {
-            // A setup deadline or wire failure is still an owned runtime:
-            // interrupt it before the caller forgets the setup result.
-            self.fire_terminate();
+            // A setup deadline or wire failure is still an owned runtime.
+            // Serialize termination with Hook entry so a concurrent Stop
+            // cannot turn this into an onStop interrupt.
+            self.fire_before_hook();
         }
         outcome
     }
@@ -960,12 +1007,28 @@ impl LoadIsolate {
         }
     }
 
-    /// The slow-tick watchdog's terminate, marked under the teardown lock
-    /// so the thread's cancel clears both together.
-    fn fire_watchdog(&self) {
+    /// Fire an eval interrupt only while the isolate thread owns an active
+    /// interruptible execution. The isolate-side finish/cancel uses this same
+    /// lock, so no terminate can leak into a later tick or `onStop`.
+    fn fire_execution_interrupt(&self, owner: teardown::ExecutionInterrupt) -> bool {
         let mut st = self.teardown.lock().unwrap();
-        st.watchdog_fired = true;
+        if st.phase != TeardownPhase::Running || !st.execution_active {
+            return false;
+        }
+        st.execution_interrupt = Some(owner);
         self.fire_terminate();
+        true
+    }
+
+    /// Terminate setup/tick failure while it is still before Hook.
+    fn fire_before_hook(&self) {
+        let st = self.teardown.lock().unwrap();
+        if matches!(
+            st.phase,
+            TeardownPhase::Running | TeardownPhase::UnwindingTick
+        ) {
+            self.fire_terminate();
+        }
     }
 
     /// Stop without blocking the caller. `join` (onStop hook plus the 2 s
@@ -1002,15 +1065,20 @@ impl LoadIsolate {
     }
 
     fn join_inner(mut self, invoke_hook: bool) -> Vec<String> {
+        self.send(IsolateCmd::Stop { invoke_hook });
         {
             let mut st = self.teardown.lock().unwrap();
             if st.phase == TeardownPhase::Running {
                 st.phase = TeardownPhase::UnwindingTick;
             }
+            if st.phase == TeardownPhase::UnwindingTick {
+                // Fire immediately when poll_ready already consumed the
+                // startup handle. Otherwise resolve_setup fires as soon as
+                // that independently owned handle arrives.
+                self.fire_terminate();
+            }
         }
-        self.send(IsolateCmd::Stop { invoke_hook });
         let _ = self.resolve_setup(Some(Instant::now() + SETUP_TIMEOUT));
-        self.fire_terminate();
         if let Some(handle) = self.handle.take() {
             let deadline = Instant::now() + JOIN_TIMEOUT;
             while !handle.is_finished() && Instant::now() < deadline {
@@ -1040,14 +1108,14 @@ impl LoadIsolate {
     /// slow-tick interrupt deadlock against `on_game_tick`), so each
     /// message is folded under its own lock.
     fn pump_logs(&self) {
-        let mut msgs = Vec::new();
-        {
-            let rx = self.rx.lock().unwrap();
-            while let Ok(msg) = rx.try_recv() {
-                msgs.push(msg);
-            }
-        }
-        for msg in msgs {
+        loop {
+            let msg = {
+                let rx = self.rx.lock().unwrap();
+                rx.try_recv().ok()
+            };
+            let Some(msg) = msg else {
+                break;
+            };
             match msg {
                 ThreadMsg::Log(line) => self.logs.lock().unwrap().push(line),
                 ThreadMsg::TickError {
@@ -1055,10 +1123,6 @@ impl LoadIsolate {
                     generation,
                     message,
                 } => {
-                    self.logs
-                        .lock()
-                        .unwrap()
-                        .push(format!("tick {tick}: {message}"));
                     self.tick_errors
                         .lock()
                         .unwrap()
@@ -1123,21 +1187,39 @@ impl LoadIsolate {
                     tick,
                     generation,
                     successful,
+                    report_errors,
                 } => {
                     let error = self.tick_errors.lock().unwrap().remove(&(tick, generation));
+                    if report_errors {
+                        if let Some(messages) = error.as_ref() {
+                            let mut logs = self.logs.lock().unwrap();
+                            logs.extend(
+                                messages
+                                    .iter()
+                                    .map(|message| format!("tick {tick}: {message}")),
+                            );
+                        }
+                    }
                     let current = generation
                         == self
                             .work_generation
                             .load(std::sync::atomic::Ordering::Acquire);
                     if current {
+                        let mut active = self.tick_outcome_error_generation.lock().unwrap();
                         let outcome = match error {
-                            Some(messages) => Some(TickOutcome::Error {
-                                tick,
-                                generation,
-                                message: messages.join("; "),
-                            }),
-                            None if successful => Some(TickOutcome::Success { tick, generation }),
-                            None => None,
+                            Some(messages) if report_errors => {
+                                *active = Some(generation);
+                                Some(TickOutcome::Error {
+                                    tick,
+                                    generation,
+                                    message: messages.join("; "),
+                                })
+                            }
+                            None if successful && *active == Some(generation) => {
+                                *active = None;
+                                Some(TickOutcome::Success { tick, generation })
+                            }
+                            _ => None,
                         };
                         if let Some(outcome) = outcome {
                             self.tick_outcomes.lock().unwrap().push(outcome);

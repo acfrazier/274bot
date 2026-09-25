@@ -1,5 +1,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
+#[cfg(test)]
+use std::time::Duration;
 use std::time::Instant;
 
 use api::interact::Driver;
@@ -22,7 +24,7 @@ use crate::debug_enabled;
 #[cfg(feature = "memory-profile")]
 use crate::memory_diagnostics;
 #[cfg(test)]
-use std::sync::{Condvar, LazyLock};
+use std::sync::{Condvar, LazyLock, Weak};
 
 #[cfg(test)]
 pub(crate) struct DispatchBarrier {
@@ -42,10 +44,15 @@ impl DispatchBarrier {
 
     pub(crate) fn wait_entered(&self) {
         let (lock, signal) = &self.entered;
-        let mut entered = lock.lock().unwrap();
-        while !*entered {
-            entered = signal.wait(entered).unwrap();
-        }
+        let (entered, timeout) = signal
+            .wait_timeout_while(lock.lock().unwrap(), Duration::from_secs(5), |entered| {
+                !*entered
+            })
+            .unwrap();
+        assert!(
+            *entered && !timeout.timed_out(),
+            "dispatch barrier was not entered"
+        );
     }
 
     pub(crate) fn release(&self) {
@@ -56,10 +63,15 @@ impl DispatchBarrier {
 
     fn wait_release(&self) {
         let (lock, signal) = &self.release;
-        let mut released = lock.lock().unwrap();
-        while !*released {
-            released = signal.wait(released).unwrap();
-        }
+        let (released, timeout) = signal
+            .wait_timeout_while(lock.lock().unwrap(), Duration::from_secs(5), |released| {
+                !*released
+            })
+            .unwrap();
+        assert!(
+            *released && !timeout.timed_out(),
+            "dispatch barrier was not released"
+        );
     }
 
     pub(crate) fn arm_for_current_thread(&self) {
@@ -78,28 +90,26 @@ impl DispatchBarrier {
 }
 
 #[cfg(test)]
-static DISPATCH_BARRIER: LazyLock<Mutex<Option<Arc<DispatchBarrier>>>> =
-    LazyLock::new(|| Mutex::new(None));
-
-#[cfg(test)]
-fn dispatch_barrier_cell() -> &'static Mutex<Option<Arc<DispatchBarrier>>> {
-    &DISPATCH_BARRIER
-}
+static DISPATCH_BARRIERS: LazyLock<Mutex<Vec<Weak<DispatchBarrier>>>> =
+    LazyLock::new(|| Mutex::new(Vec::new()));
 
 #[cfg(test)]
 pub(crate) fn install_dispatch_barrier(barrier: Arc<DispatchBarrier>) {
-    *dispatch_barrier_cell().lock().unwrap() = Some(barrier);
-}
-
-#[cfg(test)]
-pub(crate) fn clear_dispatch_barrier() {
-    *dispatch_barrier_cell().lock().unwrap() = None;
+    DISPATCH_BARRIERS
+        .lock()
+        .unwrap()
+        .push(Arc::downgrade(&barrier));
 }
 
 #[cfg(test)]
 fn wait_dispatch_barrier() {
-    let barrier = dispatch_barrier_cell().lock().unwrap().clone();
-    if let Some(barrier) = barrier {
+    let barriers = {
+        let mut registered = DISPATCH_BARRIERS.lock().unwrap();
+        let live: Vec<_> = registered.iter().filter_map(Weak::upgrade).collect();
+        registered.retain(|barrier| barrier.strong_count() != 0);
+        live
+    };
+    for barrier in barriers {
         barrier.enter();
     }
 }
@@ -754,155 +764,159 @@ pub(crate) fn script_observe_cached(
             wait_dispatch_barrier();
             if let Some(dispatch_slot) = script_slot(scripts, name) {
                 let mut slot = dispatch_slot.lock().unwrap();
-            if slot.state() == script::RunState::Running
-                && Some(slot.work_epoch()) == slot_work_epoch
-            {
-            let mut dispatchable = Vec::with_capacity(interact.len());
-            let mut armed = None;
-            let mut armed_bank_op = None;
-            let mut rejected_withdraw_x = 0usize;
-            let mut rejected_withdraw_load = 0usize;
-            let mut rejected_bank_op = 0usize;
-            for req in interact {
-                match req {
-                    req @ (script::shim::InteractReq::Deposit { .. }
-                    | script::shim::InteractReq::Withdraw { .. }) => {
-                        if pending_bank_op_active || armed_bank_op.is_some() {
-                            rejected_bank_op += 1;
-                        } else if let Some(pending) =
-                            dispatch_observed_bank_op(driver, snapshot, obj_names, inv, &req)
-                        {
-                            armed_bank_op = Some(pending);
-                            pending_bank_op_active = true;
-                            wrote = true;
-                        } else {
-                            rejected_bank_op += 1;
-                        }
-                    }
-                    script::shim::InteractReq::WithdrawX {
-                        name: item_name,
-                        count,
-                        bank_item_id,
-                        lands_as_id,
-                        action,
-                        bank_generation,
-                    } if armed.is_none()
-                        && !pending_withdraw_x_active
-                        && count > 0
-                        && snapshot.bank_component_id() >= 0
-                        && snapshot.bank_loaded()
-                        && !snapshot.count_dialog_open()
-                        && snapshot.bank_session_generation() == bank_generation =>
-                    {
-                        let mut accepted = false;
-                        let wanted = item_name.to_lowercase();
-                        let mut ix = api::interact::Interactions::new(snapshot, driver);
-                        if let Some(item) = snapshot.bank().iter().find(|item| {
-                            item.def.id == bank_item_id
-                                && obj_names
-                                    .and_then(|names| names.name(item.def.id))
-                                    .is_some_and(|name| name.eq_ignore_ascii_case(&wanted))
-                        }) {
-                            if let Some(op) = action_slot(&item.actions, &action) {
-                                let sent = matches!(
-                                    ix.interact(
-                                        api::interact::OpTarget::Item(item),
-                                        api::interact::ActionSpec::Operation(op),
-                                    ),
-                                    api::interact::SendResult::Sent { .. }
-                                );
-                                if sent {
-                                    let before = inv.map_or_else(
-                                        || {
-                                            snapshot
-                                                .inventory()
-                                                .iter()
-                                                .filter(|held| held.def.id == lands_as_id)
-                                                .map(|held| held.count)
-                                                .sum()
-                                        },
-                                        |rows| {
-                                            rows.iter()
-                                                .filter(|(id, _)| *id == lands_as_id)
-                                                .map(|(_, count)| *count)
-                                                .sum()
-                                        },
-                                    );
+                if slot.state() == script::RunState::Running
+                    && Some(slot.work_epoch()) == slot_work_epoch
+                {
+                    let mut dispatchable = Vec::with_capacity(interact.len());
+                    let mut armed = None;
+                    let mut armed_bank_op = None;
+                    let mut rejected_withdraw_x = 0usize;
+                    let mut rejected_withdraw_load = 0usize;
+                    let mut rejected_bank_op = 0usize;
+                    for req in interact {
+                        match req {
+                            req @ (script::shim::InteractReq::Deposit { .. }
+                            | script::shim::InteractReq::Withdraw { .. }) => {
+                                if pending_bank_op_active || armed_bank_op.is_some() {
+                                    rejected_bank_op += 1;
+                                } else if let Some(pending) = dispatch_observed_bank_op(
+                                    driver, snapshot, obj_names, inv, &req,
+                                ) {
+                                    armed_bank_op = Some(pending);
+                                    pending_bank_op_active = true;
                                     wrote = true;
-                                    let pending = script::slot::PendingWithdrawX::waiting_dialog(
-                                        lands_as_id,
-                                        count,
-                                        before,
-                                        before.saturating_add(count.min(item.count)),
-                                        bank_generation,
-                                    );
-                                    armed = Some(
-                                        if matches!(count, 1 | 5 | 10)
-                                            && action_slot(
-                                                &item.actions,
-                                                &format!("Withdraw {count}"),
-                                            ) == Some(op)
-                                        {
-                                            pending.waiting_settlement()
-                                        } else {
-                                            pending
-                                        },
-                                    );
-                                    pending_withdraw_x_active = true;
-                                    accepted = true;
+                                } else {
+                                    rejected_bank_op += 1;
                                 }
                             }
-                        }
-                        if !accepted {
-                            rejected_withdraw_x += 1;
-                        }
-                    }
-                    script::shim::InteractReq::WithdrawX { .. } => {
-                        rejected_withdraw_x += 1;
-                    }
-                    script::shim::InteractReq::WithdrawLoad {
-                        name: item_name,
-                        bank_generation,
-                    } if armed.is_none()
-                        && !pending_withdraw_x_active
-                        && snapshot.bank_component_id() >= 0
-                        && snapshot.bank_loaded()
-                        && !snapshot.count_dialog_open()
-                        && snapshot.bank_session_generation() == bank_generation =>
-                    {
-                        let capacity = snapshot.inventory_size().max(0) as usize;
-                        let used = inv.map_or_else(|| snapshot.inventory().len(), <[_]>::len);
-                        let free = capacity.saturating_sub(used);
-                        let mut accepted = false;
-                        if free > 0 {
-                            let mut ix = api::interact::Interactions::new(snapshot, driver);
-                            let wanted = item_name.to_lowercase();
-                            if let Some(item) = snapshot.bank().iter().find(|item| {
-                                item.count > 0
-                                    && obj_names
-                                        .and_then(|names| names.name(item.def.id))
-                                        .is_some_and(|name| name.eq_ignore_ascii_case(&wanted))
-                            }) {
-                                let bank_item_id = item.def.id;
-                                let count = item.count.min(free as i32);
-                                if let Some((op, needs_dialog)) =
-                                    fill_withdraw_action(&item.actions, count, item.count)
-                                {
-                                    let sent = matches!(
-                                        ix.interact(
-                                            api::interact::OpTarget::Item(item),
-                                            api::interact::ActionSpec::Operation(op),
-                                        ),
-                                        api::interact::SendResult::Sent { .. }
-                                    );
-                                    if sent {
-                                        let before_count = snapshot
-                                            .inventory()
-                                            .iter()
-                                            .filter(|held| held.def.id == bank_item_id)
-                                            .map(|held| held.count)
-                                            .sum();
-                                        let pending =
+                            script::shim::InteractReq::WithdrawX {
+                                name: item_name,
+                                count,
+                                bank_item_id,
+                                lands_as_id,
+                                action,
+                                bank_generation,
+                            } if armed.is_none()
+                                && !pending_withdraw_x_active
+                                && count > 0
+                                && snapshot.bank_component_id() >= 0
+                                && snapshot.bank_loaded()
+                                && !snapshot.count_dialog_open()
+                                && snapshot.bank_session_generation() == bank_generation =>
+                            {
+                                let mut accepted = false;
+                                let wanted = item_name.to_lowercase();
+                                let mut ix = api::interact::Interactions::new(snapshot, driver);
+                                if let Some(item) = snapshot.bank().iter().find(|item| {
+                                    item.def.id == bank_item_id
+                                        && obj_names
+                                            .and_then(|names| names.name(item.def.id))
+                                            .is_some_and(|name| name.eq_ignore_ascii_case(&wanted))
+                                }) {
+                                    if let Some(op) = action_slot(&item.actions, &action) {
+                                        let sent = matches!(
+                                            ix.interact(
+                                                api::interact::OpTarget::Item(item),
+                                                api::interact::ActionSpec::Operation(op),
+                                            ),
+                                            api::interact::SendResult::Sent { .. }
+                                        );
+                                        if sent {
+                                            let before = inv.map_or_else(
+                                                || {
+                                                    snapshot
+                                                        .inventory()
+                                                        .iter()
+                                                        .filter(|held| held.def.id == lands_as_id)
+                                                        .map(|held| held.count)
+                                                        .sum()
+                                                },
+                                                |rows| {
+                                                    rows.iter()
+                                                        .filter(|(id, _)| *id == lands_as_id)
+                                                        .map(|(_, count)| *count)
+                                                        .sum()
+                                                },
+                                            );
+                                            wrote = true;
+                                            let pending =
+                                                script::slot::PendingWithdrawX::waiting_dialog(
+                                                    lands_as_id,
+                                                    count,
+                                                    before,
+                                                    before.saturating_add(count.min(item.count)),
+                                                    bank_generation,
+                                                );
+                                            armed = Some(
+                                                if matches!(count, 1 | 5 | 10)
+                                                    && action_slot(
+                                                        &item.actions,
+                                                        &format!("Withdraw {count}"),
+                                                    ) == Some(op)
+                                                {
+                                                    pending.waiting_settlement()
+                                                } else {
+                                                    pending
+                                                },
+                                            );
+                                            pending_withdraw_x_active = true;
+                                            accepted = true;
+                                        }
+                                    }
+                                }
+                                if !accepted {
+                                    rejected_withdraw_x += 1;
+                                }
+                            }
+                            script::shim::InteractReq::WithdrawX { .. } => {
+                                rejected_withdraw_x += 1;
+                            }
+                            script::shim::InteractReq::WithdrawLoad {
+                                name: item_name,
+                                bank_generation,
+                            } if armed.is_none()
+                                && !pending_withdraw_x_active
+                                && snapshot.bank_component_id() >= 0
+                                && snapshot.bank_loaded()
+                                && !snapshot.count_dialog_open()
+                                && snapshot.bank_session_generation() == bank_generation =>
+                            {
+                                let capacity = snapshot.inventory_size().max(0) as usize;
+                                let used =
+                                    inv.map_or_else(|| snapshot.inventory().len(), <[_]>::len);
+                                let free = capacity.saturating_sub(used);
+                                let mut accepted = false;
+                                if free > 0 {
+                                    let mut ix = api::interact::Interactions::new(snapshot, driver);
+                                    let wanted = item_name.to_lowercase();
+                                    if let Some(item) = snapshot.bank().iter().find(|item| {
+                                        item.count > 0
+                                            && obj_names
+                                                .and_then(|names| names.name(item.def.id))
+                                                .is_some_and(|name| {
+                                                    name.eq_ignore_ascii_case(&wanted)
+                                                })
+                                    }) {
+                                        let bank_item_id = item.def.id;
+                                        let count = item.count.min(free as i32);
+                                        if let Some((op, needs_dialog)) =
+                                            fill_withdraw_action(&item.actions, count, item.count)
+                                        {
+                                            let sent = matches!(
+                                                ix.interact(
+                                                    api::interact::OpTarget::Item(item),
+                                                    api::interact::ActionSpec::Operation(op),
+                                                ),
+                                                api::interact::SendResult::Sent { .. }
+                                            );
+                                            if sent {
+                                                let before_count = snapshot
+                                                    .inventory()
+                                                    .iter()
+                                                    .filter(|held| held.def.id == bank_item_id)
+                                                    .map(|held| held.count)
+                                                    .sum();
+                                                let pending =
                                             script::slot::PendingWithdrawX::waiting_load_dialog(
                                                 bank_item_id,
                                                 count,
@@ -911,82 +925,85 @@ pub(crate) fn script_observe_cached(
                                                 item.count,
                                                 bank_generation,
                                             );
-                                        armed = Some(if needs_dialog {
-                                            pending
-                                        } else {
-                                            pending.waiting_settlement()
-                                        });
-                                        wrote = true;
-                                        pending_withdraw_x_active = true;
-                                        accepted = true;
+                                                armed = Some(if needs_dialog {
+                                                    pending
+                                                } else {
+                                                    pending.waiting_settlement()
+                                                });
+                                                wrote = true;
+                                                pending_withdraw_x_active = true;
+                                                accepted = true;
+                                            }
+                                        }
                                     }
+                                }
+                                if !accepted {
+                                    rejected_withdraw_load += 1;
+                                }
+                            }
+                            script::shim::InteractReq::WithdrawLoad { .. } => {
+                                rejected_withdraw_load += 1;
+                            }
+                            req => dispatchable.push(req),
+                        }
+                    }
+                    wrote |= dispatch_script_interact_cached(
+                        driver,
+                        snapshot,
+                        obj_names,
+                        here,
+                        navs,
+                        world,
+                        state.clone(),
+                        name,
+                        dispatchable,
+                        cache.clone(),
+                        obj_names_arc.clone(),
+                    );
+                    if (armed.is_some()
+                        || armed_bank_op.is_some()
+                        || rejected_withdraw_x != 0
+                        || rejected_withdraw_load != 0
+                        || rejected_bank_op != 0)
+                        && Some(slot.work_epoch()) == slot_work_epoch
+                    {
+                        for _ in 0..rejected_withdraw_x {
+                            slot.complete_withdraw_x(false);
+                        }
+                        for _ in 0..rejected_withdraw_load {
+                            slot.complete_withdraw_load(false);
+                        }
+                        for _ in 0..rejected_bank_op {
+                            slot.complete_bank_op(false);
+                        }
+                        if let Some(pending) = armed_bank_op {
+                            if matches!(
+                                slot.state(),
+                                script::RunState::Running | script::RunState::Paused
+                            ) {
+                                slot.set_pending_bank_op(Some(pending));
+                                if slot.state() == script::RunState::Paused {
+                                    slot.freeze_pending_bank_op();
                                 }
                             }
                         }
-                        if !accepted {
-                            rejected_withdraw_load += 1;
-                        }
-                    }
-                    script::shim::InteractReq::WithdrawLoad { .. } => {
-                        rejected_withdraw_load += 1;
-                    }
-                    req => dispatchable.push(req),
-                }
-            }
-            wrote |= dispatch_script_interact_cached(
-                driver,
-                snapshot,
-                obj_names,
-                here,
-                navs,
-                world,
-                state.clone(),
-                name,
-                dispatchable,
-                cache.clone(),
-                obj_names_arc.clone(),
-            );
-            if armed.is_some()
-                || armed_bank_op.is_some()
-                || rejected_withdraw_x != 0
-                || rejected_withdraw_load != 0
-                || rejected_bank_op != 0
-            {
-                if Some(slot.work_epoch()) == slot_work_epoch {
-                    for _ in 0..rejected_withdraw_x {
-                        slot.complete_withdraw_x(false);
-                    }
-                    for _ in 0..rejected_withdraw_load {
-                        slot.complete_withdraw_load(false);
-                    }
-                    for _ in 0..rejected_bank_op {
-                        slot.complete_bank_op(false);
-                    }
-                    if let Some(pending) = armed_bank_op {
-                        if matches!(
-                            slot.state(),
-                            script::RunState::Running | script::RunState::Paused
-                        ) {
-                            slot.set_pending_bank_op(Some(pending));
-                            if slot.state() == script::RunState::Paused {
-                                slot.freeze_pending_bank_op();
+                        if let Some(pending) = armed {
+                            if matches!(
+                                slot.state(),
+                                script::RunState::Running | script::RunState::Paused
+                            ) {
+                                slot.set_pending_withdraw_x(Some(pending));
+                                if slot.state() == script::RunState::Paused {
+                                    slot.freeze_pending_withdraw_x();
+                                }
                             }
                         }
                     }
-                    if let Some(pending) = armed {
-                        if matches!(
-                            slot.state(),
-                            script::RunState::Running | script::RunState::Paused
-                        ) {
-                            slot.set_pending_withdraw_x(Some(pending));
-                            if slot.state() == script::RunState::Paused {
-                                slot.freeze_pending_withdraw_x();
-                            }
-                        }
-                    }
+                } else if slot.state() == script::RunState::Paused
+                    && Some(slot.work_epoch()) == slot_work_epoch
+                {
+                    slot.restore_interacts(interact);
                 }
-            }
-            }
             }
         } else {
             let rejected_x = interact

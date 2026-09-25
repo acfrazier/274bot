@@ -4,15 +4,21 @@ use std::fs;
 use std::time::{Duration, Instant};
 use vault::{Profile, ProfileSettings, Vault};
 
-/// Pump the panel's per-frame Start settle (the public observe path)
-/// until every pending Start has settled. Start returns before V8
-/// setup; a Reload restart also waits for the old isolate's reap.
+/// Pump worker validation and per-frame Start settlement until all script
+/// lifecycle work has settled.
 fn settle(s: &mut Session) {
     let deadline = Instant::now() + Duration::from_secs(10);
-    while !s.pending_starts.is_empty() && Instant::now() < deadline {
+    while (s.reload_validation_pending() || !s.pending_starts.is_empty())
+        && Instant::now() < deadline
+    {
+        s.poll_reload_validation();
         s.settle_script_starts();
         std::thread::sleep(Duration::from_millis(5));
     }
+    assert!(
+        !s.reload_validation_pending(),
+        "script validation did not settle"
+    );
     assert!(s.pending_starts.is_empty(), "script Start did not settle");
 }
 
@@ -516,6 +522,59 @@ fn reload_unchanged_reports_exact_string() {
         script::RunState::Running
     );
     s.play.as_ref().unwrap().script_stop("alice");
+}
+
+#[test]
+fn ui_reload_validation_keeps_the_control_thread_responsive() {
+    let (mut session, dir) = session_with_play(&["alice"]);
+    let path = write_bot(&dir, "runaway.ts", BOT_TS);
+    session.load_js(&path);
+    let old_js = session
+        .js
+        .get(script::ScriptSource::File, &path.to_string_lossy())
+        .expect("loaded card")
+        .js
+        .clone();
+    fs::write(
+        &path,
+        "while (true) {}\nexport default class T extends LoopingBot { override loop() {} }\n",
+    )
+    .unwrap();
+
+    let started = Instant::now();
+    session.begin_script_reload_clicked();
+    assert!(
+        started.elapsed() < Duration::from_millis(500),
+        "the UI action must not wait for hostile module evaluation"
+    );
+    assert!(
+        session.reload_validation_pending(),
+        "the throwaway V8 runtime belongs to the worker"
+    );
+    assert_eq!(
+        session.focused_name().as_deref(),
+        Some("alice"),
+        "unrelated control state remains immediately readable"
+    );
+
+    settle(&mut session);
+    assert!(
+        session
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("prepare") || error.contains("timed out")),
+        "{:?}",
+        session.error
+    );
+    assert_eq!(
+        session
+            .js
+            .get(script::ScriptSource::File, &path.to_string_lossy())
+            .expect("old card remains installed")
+            .js,
+        old_js,
+        "failed worker validation cannot replace the live library card"
+    );
 }
 
 #[test]

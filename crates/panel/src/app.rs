@@ -2031,15 +2031,28 @@ fn script_section(ui: &Ui, session: &mut Session) {
         gap_line(ui);
     }
     let confirming = session.script_reload_confirmation_pending();
-    if ui.button_with_size(if confirming { "Confirm" } else { "Reload" }, [w, 0.0]) {
-        let _ = session.script_reload_clicked();
+    let validating = session.reload_validation_pending();
+    {
+        let _validating = validating.then(|| ui.begin_disabled());
+        let label = if validating {
+            "Validating…"
+        } else if confirming {
+            "Confirm"
+        } else {
+            "Reload"
+        };
+        if ui.button_with_size(label, [w, 0.0]) {
+            session.begin_script_reload_clicked();
+        }
     }
-    ui.set_item_tooltip(if confirming {
+    ui.set_item_tooltip(if validating {
+        "validating candidate script off the UI thread"
+    } else if confirming {
         "confirm reload: restart listed running bots and stop listed paused bots"
     } else {
         "hash source and supported siblings; unchanged skips transpile"
     });
-    if confirming && ui.button_with_size("Cancel reload", [avail, 0.0]) {
+    if (confirming || validating) && ui.button_with_size("Cancel reload", [avail, 0.0]) {
         session.cancel_reload();
     }
 
@@ -2316,15 +2329,23 @@ fn browse_card_grid(ui: &Ui, session: &mut Session, cards: &[&script::JsCard]) {
 
 fn browse_window_body(ui: &Ui, session: &mut Session) {
     let w = ui.content_region_avail()[0];
-    let label = if session.catalog_refresh_confirm {
+    let validating = session.reload_validation_pending();
+    let label = if validating {
+        "Validating catalog…"
+    } else if session.catalog_refresh_confirm {
         "Confirm catalog reload"
     } else {
         "Refresh catalog"
     };
-    if ui.button_with_size(label, [w, 0.0]) {
-        session.refresh_catalog();
+    {
+        let _validating = validating.then(|| ui.begin_disabled());
+        if ui.button_with_size(label, [w, 0.0]) {
+            session.begin_refresh_catalog();
+        }
     }
-    if session.catalog_refresh_confirm && ui.button_with_size("Cancel reload", [w, 0.0]) {
+    if (session.catalog_refresh_confirm || validating)
+        && ui.button_with_size("Cancel reload", [w, 0.0])
+    {
         session.cancel_reload();
     }
     ui.spacing();

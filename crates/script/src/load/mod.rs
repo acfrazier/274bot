@@ -92,6 +92,6 @@ pub use library::{
 };
 
 #[cfg(feature = "load")]
-pub use isolate::{LoadIsolate, Ready, ScriptStopReceipt, TeardownProof};
-#[cfg(feature = "load")]
 pub(crate) use isolate::TickOutcome;
+#[cfg(feature = "load")]
+pub use isolate::{LoadIsolate, Ready, ScriptStopReceipt, TeardownProof};

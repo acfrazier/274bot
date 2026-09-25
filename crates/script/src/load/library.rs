@@ -624,31 +624,61 @@ impl JsLibrary {
         Ok(self.fingerprints.get(&key).map(String::as_str) != Some(now.as_str()))
     }
 
-    /// Transpile/validate a candidate without replacing the live card.
-    /// Old isolates keep the previous registration until [`JsLibrary::commit_prepared`].
+    /// Transpile and validate a candidate without replacing the live card.
+    /// Old isolates keep the previous registration until
+    /// [`JsLibrary::commit_prepared`].
     pub fn prepare_card(
         &mut self,
         source: ScriptSource,
         name: &str,
     ) -> Result<PreparedCard, String> {
+        let prepared = self.prepare_card_unvalidated(source, name)?;
+        if let Err(error) = prepared.validate() {
+            self.record_prepared_failure(&prepared, &error);
+            return Err(error);
+        }
+        Ok(prepared)
+    }
+
+    /// Build a candidate without creating a V8 runtime. UI callers use this
+    /// finite disk/transpile phase, then move [`PreparedCard::validate`] to a
+    /// worker so hostile module evaluation never owns the UI thread.
+    pub fn prepare_card_unvalidated(
+        &mut self,
+        source: ScriptSource,
+        name: &str,
+    ) -> Result<PreparedCard, String> {
         let prior = self.get(source, name).cloned();
-        match self.prepare_card_unrecorded(source, name) {
+        match self.prepare_card_unvalidated_unrecorded(source, name) {
             Ok(prepared) => Ok(prepared),
-            Err(e) => {
+            Err(error) => {
                 if let Some(card) = prior {
                     let origin = std::fs::read_to_string(&card.path).ok();
                     let family = origin
                         .as_deref()
                         .and_then(|text| resolve_api_family(text).ok().map(|(_, family)| family))
                         .or(Some(card.api_family));
-                    self.note_err(source, &card.path, name, &e, origin.as_deref(), family);
+                    self.note_err(source, &card.path, name, &error, origin.as_deref(), family);
                 }
-                Err(e)
+                Err(error)
             }
         }
     }
 
-    fn prepare_card_unrecorded(
+    /// Retain a worker-side validation failure against the exact bytes that
+    /// were validated.
+    pub fn record_prepared_failure(&mut self, prepared: &PreparedCard, diagnostic: &str) {
+        self.note_err(
+            prepared.card.source,
+            &prepared.card.path,
+            &prepared.card.name,
+            diagnostic,
+            Some(&prepared.card.origin),
+            Some(prepared.card.api_family),
+        );
+    }
+
+    fn prepare_card_unvalidated_unrecorded(
         &self,
         source: ScriptSource,
         name: &str,
@@ -686,9 +716,6 @@ impl JsLibrary {
             cache_meta(shape, source, api_family),
         )?;
         let fingerprint = raw_content_fingerprint(&card.path, &origin);
-        #[cfg(feature = "load")]
-        crate::LoadIsolate::validate_source(&cached.js, shape, &siblings)
-            .map_err(|e| format!("prepare {name}: {e}"))?;
         let mut prepared = card;
         prepared.origin = origin;
         prepared.shape = shape;
@@ -753,6 +780,16 @@ pub struct PreparedCard {
     pub card: JsCard,
     pub siblings: Vec<(String, String)>,
     pub fingerprint: String,
+}
+
+#[cfg(feature = "load")]
+impl PreparedCard {
+    /// Evaluate this candidate in a bounded throwaway isolate. Callers that
+    /// serve UI actions must run this method on a worker thread.
+    pub fn validate(&self) -> Result<(), String> {
+        crate::LoadIsolate::validate_source(&self.card.js, self.card.shape, &self.siblings)
+            .map_err(|error| format!("prepare {}: {error}", self.card.name))
+    }
 }
 
 #[cfg(feature = "load")]

@@ -99,6 +99,22 @@ impl Drop for MachinesStop {
     }
 }
 
+/// Counts actual Runtime ownership, not merely live JoinHandles.
+struct RuntimeLifetime;
+
+impl RuntimeLifetime {
+    fn enter() -> Self {
+        LIVE_RUNTIMES.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        Self
+    }
+}
+
+impl Drop for RuntimeLifetime {
+    fn drop(&mut self) {
+        LIVE_RUNTIMES.fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
+    }
+}
+
 /// The isolate thread: create the Runtime, wire the module, hand the
 /// thread-safe isolate handle back, then run the tick loop.
 #[allow(clippy::too_many_arguments)] // channel endpoints plus optional diagnostics
@@ -120,6 +136,9 @@ pub(super) fn isolate_main(
 ) {
     #[cfg(feature = "memory-profile")]
     let _heap_lifetime = crate::memory_profile::HeapLifetime(counters.clone());
+    // Declared before `runtime` so the counter decrements only after the
+    // Runtime destructor has completed.
+    let _runtime_lifetime: RuntimeLifetime;
     let mut runtime = match Runtime::new(RuntimeOptions {
         timeout: RUNTIME_TIMEOUT,
         max_heap_size: Some(MAX_HEAP),
@@ -131,11 +150,15 @@ pub(super) fn isolate_main(
             return;
         }
     };
+    _runtime_lifetime = RuntimeLifetime::enter();
     let terminate = runtime.deno_runtime().v8_isolate().thread_safe_handle();
     let setup_handle = terminate.clone();
     let setup_failed = setup.send(SetupMessage::Interrupt(terminate)).is_err();
-    if setup_failed || teardown.lock().unwrap().phase != TeardownPhase::Running {
-        setup_handle.terminate_execution();
+    {
+        let st = teardown.lock().unwrap();
+        if setup_failed || st.phase != TeardownPhase::Running {
+            setup_handle.terminate_execution();
+        }
     }
     // Declared after `runtime`, so a failed wire (whose module code may
     // have started a machine) drops the rows before the isolate.
@@ -368,12 +391,7 @@ fn append_wait_facts(reqs: &mut Vec<crate::shim::InteractReq>, enqueued: u32, se
 /// Run this tick's event loop for up to 10 ms. An unhandled promise
 /// rejection — an un-awaited shim call that failed — surfaces here once
 /// as the drain's error; log it under the tick instead of dropping it.
-fn drain_event_loop(
-    runtime: &mut Runtime,
-    out: &Sender<ThreadMsg>,
-    n: u64,
-    generation: u64,
-) {
+fn drain_event_loop(runtime: &mut Runtime, out: &Sender<ThreadMsg>, n: u64, generation: u64) {
     if let Err(e) = runtime.block_on_event_loop(
         rustyscript::deno_core::PollEventLoopOptions::default(),
         Some(Duration::from_millis(10)),
@@ -390,12 +408,7 @@ fn drain_event_loop(
 /// every script eval used to run as it returned — so continuations and
 /// rejections queued by the call before it land in this tick. A rejection
 /// is logged under the tick.
-fn pump_event_loop(
-    runtime: &mut Runtime,
-    out: &Sender<ThreadMsg>,
-    n: u64,
-    generation: u64,
-) {
+fn pump_event_loop(runtime: &mut Runtime, out: &Sender<ThreadMsg>, n: u64, generation: u64) {
     if let Err(e) =
         runtime.advance_event_loop(rustyscript::deno_core::PollEventLoopOptions::default())
     {
@@ -433,7 +446,10 @@ impl<'de> serde::Deserialize<'de> for PaintRecord {
         ))
     }
 }
-
+/// Finish the tick's one paint/readback pass and forward changed host facts.
+/// Arguments are the explicit tick identity plus the isolate-owned caches;
+/// keeping them borrowed avoids rebuilding an aggregate on every tick.
+#[allow(clippy::too_many_arguments)]
 fn finish_tick(
     runtime: &mut Runtime,
     out: &Sender<ThreadMsg>,
@@ -501,14 +517,7 @@ fn finish_tick(
         Some(crate::shim::ScriptPaint::default())
     };
     if let Some(frame) = frame {
-        forward_paint_if_changed(
-            out,
-            n,
-            generation,
-            last_paint,
-            paint_generation,
-            frame,
-        );
+        forward_paint_if_changed(out, n, generation, last_paint, paint_generation, frame);
     }
     if !claimed {
         pump_event_loop(runtime, out, n, generation);
@@ -653,16 +662,16 @@ fn run_tick_phases(
     }
     // BotHost tick listeners, before any wait settles this tick. Absent
     // when the card never loaded BotHost.
-    if tick_claimed(teardown) {
+    if machines_halted(teardown) {
         return Ok(());
     }
     let _ =
         runtime.call_function_immediate::<()>(None, "__rs2b0t_fire_tick_listeners", json_args!());
-    if tick_claimed(teardown) {
+    if machines_halted(teardown) {
         return Ok(());
     }
     runtime.call_function_immediate::<()>(None, "__rs2b0t_pump", json_args!(n))?;
-    if tick_claimed(teardown) {
+    if machines_halted(teardown) {
         return Ok(());
     }
     match runner.phase {
@@ -684,14 +693,14 @@ fn run_tick_phases(
         }
         Phase::StartFailed | Phase::Idle | Phase::Running(_) => {}
     }
-    if events_consumed && runner.started() && !tick_claimed(teardown) {
+    if events_consumed && runner.started() && !machines_halted(teardown) {
         runtime.call_function_immediate::<()>(
             None,
             "__rs2b0t_flush_native_events",
             json_args!(),
         )?;
     }
-    if tick_claimed(teardown) {
+    if machines_halted(teardown) {
         return Ok(());
     }
     if let Phase::Idle = runner.phase {
@@ -832,6 +841,7 @@ fn stop_on_script_request(
         tick: n,
         generation,
         successful: false,
+        report_errors: true,
     });
     let _ = out.send(ThreadMsg::Log(format!(
         "script requested stop on tick {n}; isolate stopping"
@@ -1007,12 +1017,22 @@ fn tick_loop(
                 if paused
                     || generation != work_generation.load(std::sync::atomic::Ordering::Acquire)
                 {
+                    let _ = out.send(ThreadMsg::InFlightDone {
+                        generation,
+                        tick: n,
+                    });
                     continue;
                 }
-                // Stop is queued behind this tick and join has armed its
-                // terminate for it: run no script, so that terminate
-                // reaches the hook's cancel instead of an ignored call.
-                if tick_claimed(&teardown) {
+                // Pause intent and execution entry share a lock: either Pause
+                // terminates this active eval or this queued tick never enters
+                // V8. Stop uses the same phase gate.
+                if !begin_interruptible_execution(&teardown) {
+                    let _ = out.send(ThreadMsg::Completed {
+                        tick: n,
+                        generation,
+                        successful: false,
+                        report_errors: false,
+                    });
                     continue;
                 }
                 let start = Instant::now();
@@ -1024,16 +1044,16 @@ fn tick_loop(
                 // completion settles in this tick's pump. Join's claim is
                 // re-checked between callbacks: one may absorb its terminate.
                 super::machine_v8::step(&mut runtime, &|| machines_halted(&teardown));
-                // Pause can arm the watchdog before this command reaches
-                // user JS. Do not spend the terminate on a bookkeeping
-                // eval and then enter the runaway tick; cancel it only
-                // after publishing the skipped tick's completion.
+                // A machine callback may absorb an interrupt. Finish and
+                // cancel under the execution lock before returning to the
+                // command loop, so it cannot leak into Resume or onStop.
                 if machines_halted(&teardown) {
-                    cancel_terminate(&mut runtime, &teardown);
+                    let interrupt = finish_interruptible_execution(&mut runtime, &teardown);
                     let _ = out.send(ThreadMsg::Completed {
                         tick: n,
                         generation,
                         successful: false,
+                        report_errors: interrupt != Some(ExecutionInterrupt::Pause),
                     });
                     continue;
                 }
@@ -1043,7 +1063,7 @@ fn tick_loop(
                         let _ = out.send(ThreadMsg::Log(diag));
                     }
                     // A machine callback may have absorbed join's terminate.
-                    if !tick_claimed(&teardown) {
+                    if !machines_halted(&teardown) {
                         deliver_native_events(&mut runtime, &observed.events, &out, n, generation);
                     }
                 }
@@ -1055,11 +1075,11 @@ fn tick_loop(
                     // Paint-only tick: no loop, no pump. The single paint
                     // pass of a held tick. Use `__rs_bot` (global);
                     // module-local `inst` is not visible here.
-                    // Join may have claimed the tick through a machine
-                    // callback that absorbed its terminate: run no more JS.
-                    let claimed = tick_claimed(&teardown);
+                    // Pause/watchdog/Stop may have claimed execution through
+                    // a machine or event callback: run no more user JS.
+                    let halted = machines_halted(&teardown);
                     let script_paint = !compat || compat_may_paint(&runner);
-                    if !v2_native && script_paint && !claimed {
+                    if !v2_native && script_paint && !halted {
                         let _ = runtime.call_function_immediate::<()>(
                             None,
                             "__rs2b0t_call_on_paint",
@@ -1067,26 +1087,19 @@ fn tick_loop(
                         );
                         pump_event_loop(&mut runtime, &out, n, generation);
                     }
-                    if events_consumed && runner.started() && !claimed {
+                    if events_consumed && runner.started() && !halted {
                         let _ = runtime.call_function_immediate::<()>(
                             None,
                             "__rs2b0t_flush_native_events",
                             json_args!(),
                         );
                     }
-                    if !claimed {
+                    if !halted {
                         drain_event_loop(&mut runtime, &out, n, generation);
                     }
-                    // Ownership boundary after callback eval + microtasks:
-                    // cancel a terminate armed by a runaway listener so the
-                    // next eligible tick recovers, then drop public actions.
-                    // The cancel comes before the tick's reads because the
-                    // reads are now one call with the interact clear and
-                    // `ignoredRandoms()`, which always ran after it. Wait
-                    // facts stay counted until an eligible tick forwards
-                    // them; held game rows are dropped without a
-                    // malformed-row log, as before.
-                    cancel_terminate(&mut runtime, &teardown);
+                    // Held gameplay rows are dropped. Execution remains owned
+                    // through paint/readback so Pause cannot arm a terminate
+                    // after an early cancel and leak it into Resume.
                     let output = take_tick_output(&mut runtime, &out, n, generation, false);
                     crate::machine::drop_ops();
                     let stop = finish_tick(
@@ -1096,7 +1109,7 @@ fn tick_loop(
                         generation,
                         false,
                         script_paint,
-                        tick_claimed(&teardown),
+                        machines_halted(&teardown),
                         &mut last_forwarded_paint,
                         &paint_generation,
                         &mut last_ignored_randoms,
@@ -1122,6 +1135,7 @@ fn tick_loop(
                     if !v2_native && runner.poll(&mut runtime, &out, n, generation) && compat {
                         lifecycle.push(crate::shim::InteractReq::LoopSettled);
                     }
+                    let interrupt = finish_interruptible_execution(&mut runtime, &teardown);
                     if !lifecycle.is_empty() {
                         let _ = out.send(ThreadMsg::Interact {
                             bytes: ipc.encode_interact_batch(&lifecycle),
@@ -1143,7 +1157,10 @@ fn tick_loop(
                     let _ = out.send(ThreadMsg::Completed {
                         tick: n,
                         generation,
-                        successful: true,
+                        // A guardian-held frame painted but did not run the
+                        // script loop, so it cannot clear an active error.
+                        successful: false,
+                        report_errors: interrupt != Some(ExecutionInterrupt::Pause),
                     });
                     continue;
                 }
@@ -1153,9 +1170,9 @@ fn tick_loop(
                 // runs through the Rust `Runner`. Onward work lands in
                 // the drain below.
                 let mut loop_settled = false;
-                let result: Result<(), rustyscript::Error> = if tick_claimed(&teardown) {
-                    // A machine callback or native event absorbed join's
-                    // terminate: the loop must not start after it.
+                let result: Result<(), rustyscript::Error> = if machines_halted(&teardown) {
+                    // A callback or operator action claimed this execution:
+                    // no later user phase may start through that boundary.
                     Ok(())
                 } else if v2_native {
                     let pumped =
@@ -1164,7 +1181,7 @@ fn tick_loop(
                     // Promise is pending. Snapshot posts still merge;
                     // this only skips tick.
                     let v2_pending = global_flag(&mut runtime, "__rs_v2_tick_pending");
-                    let ticked = if v2_pending || tick_claimed(&teardown) {
+                    let ticked = if v2_pending || machines_halted(&teardown) {
                         Ok(())
                     } else {
                         runtime.call_function_immediate(None, "__rs_tick", json_args!(n))
@@ -1183,25 +1200,17 @@ fn tick_loop(
                         &teardown,
                     )
                 };
-                // Eligible NativeTick only: pause, generation mismatch,
-                // and guardian hold already `continue` above. The step
-                // machines were stepped before this tick's JS; their
-                // awaits settle in the pump below with every other wait.
-                // A claimed tick runs no more JS (a phase above may have
-                // absorbed join's terminate).
-                if !tick_claimed(&teardown) {
+                // Keep execution ownership through every remaining V8 phase.
+                // Pause/watchdog and this thread's final cancel serialize on
+                // the teardown mutex, so a stale host `in_flight` sample
+                // cannot arm termination for the next tick.
+                if !machines_halted(&teardown) {
                     drain_event_loop(&mut runtime, &out, n, generation);
                 }
-                // The host may have armed `terminate_execution` to
-                // interrupt a slow tick; clear it now that the tick's
-                // JS frames have fully unwound. This is the only cancel
-                // point — canceling from the host would race the
-                // interrupt and make it a no-op.
-                cancel_terminate(&mut runtime, &teardown);
                 // A machine callback whose promise the pump (or the drain)
                 // settled resumes its row in this tick, and a row that ends
                 // here settles its await in this tick too.
-                if !tick_claimed(&teardown) {
+                if !machines_halted(&teardown) {
                     if let Err(e) =
                         super::machine_v8::resume(&mut runtime, &|| machines_halted(&teardown))
                     {
@@ -1212,7 +1221,7 @@ fn tick_loop(
                         });
                     }
                 }
-                if !v2_native {
+                if !v2_native && !machines_halted(&teardown) {
                     // A loop that finished in the drain frees the
                     // single-flight for the next tick.
                     loop_settled |= runner.poll(&mut runtime, &out, n, generation) && compat;
@@ -1261,21 +1270,21 @@ fn tick_loop(
                 // (`compat_may_paint`), even while `loop()` is parked;
                 // native shapes paint every tick.
                 let script_paint = !compat || compat_may_paint(&runner);
-                // The terminate was just cancelled: once join has claimed
-                // the tick, onPaint must not run past it.
-                let claimed = tick_claimed(&teardown);
+                // A claimed/paused tick starts no new onPaint work.
+                let halted = machines_halted(&teardown);
                 let stop = finish_tick(
                     &mut runtime,
                     &out,
                     n,
                     generation,
-                    !v2_native && script_paint && !claimed,
+                    !v2_native && script_paint && !halted,
                     script_paint,
-                    claimed,
+                    halted,
                     &mut last_forwarded_paint,
                     &paint_generation,
                     &mut last_ignored_randoms,
                 );
+                let interrupt = finish_interruptible_execution(&mut runtime, &teardown);
                 // ScriptRunner.stop signal: the script flags the host
                 // handle. Fold the completed tick, log the stop, run
                 // exactly-once onStop under the isolate-owned 50 ms
@@ -1292,14 +1301,12 @@ fn tick_loop(
                     );
                     break;
                 }
-                if elapsed > SLOW_TICK {
+                let mut latest = n;
+                if elapsed > SLOW_TICK && interrupt != Some(ExecutionInterrupt::Pause) {
                     let _ = out.send(ThreadMsg::Log(format!("slow tick {n}: {elapsed:?}")));
-                    // Skip stale queued ticks: a slow tick means the
-                    // pump backed up, so only the newest matters. The
-                    // window runs past the per-tick posts and ends at the
-                    // first other command; everything drained but the
-                    // window's ticks still runs, in order.
-                    let mut latest = n;
+                    // Skip stale queued ticks, but complete the tick that
+                    // actually produced diagnostics. A separate in-flight
+                    // acknowledgement clears the newest skipped host tick.
                     let mut window = pending
                         .iter()
                         .take_while(|cmd| extends_stale_window(cmd, generation, &mut latest))
@@ -1324,16 +1331,17 @@ fn tick_loop(
                         let _ =
                             out.send(ThreadMsg::Log(format!("skipped stale ticks -> {latest}")));
                     }
-                    let _ = out.send(ThreadMsg::Completed {
+                }
+                let _ = out.send(ThreadMsg::Completed {
+                    tick: n,
+                    generation,
+                    successful: interrupt.is_none(),
+                    report_errors: interrupt != Some(ExecutionInterrupt::Pause),
+                });
+                if latest != n {
+                    let _ = out.send(ThreadMsg::InFlightDone {
+                        generation,
                         tick: latest,
-                        generation,
-                        successful: false,
-                    });
-                } else {
-                    let _ = out.send(ThreadMsg::Completed {
-                        tick: n,
-                        generation,
-                        successful: true,
                     });
                 }
             }
@@ -1393,6 +1401,7 @@ fn tick_loop(
             }
             IsolateCmd::Pause => {
                 paused = true;
+                teardown.lock().unwrap().pause_requested = false;
                 let _ = event_producer.set_paused(true);
                 crate::periodic_bank::on_pause();
                 crate::cake_stall::on_pause();
@@ -1411,6 +1420,7 @@ fn tick_loop(
             }
             IsolateCmd::Resume => {
                 paused = false;
+                teardown.lock().unwrap().pause_requested = false;
                 let _ = event_producer.set_paused(false);
                 crate::periodic_bank::on_resume();
                 crate::cake_stall::on_resume();
@@ -1464,21 +1474,28 @@ fn tick_loop(
                     });
                     continue;
                 }
+                if !begin_interruptible_execution(&teardown) {
+                    let _ = out.send(ThreadMsg::InFlightDone {
+                        generation,
+                        tick: RECOVERY_ANCHOR_TICK,
+                    });
+                    continue;
+                }
                 let start = Instant::now();
                 let req = match eval_recovery_anchor(&mut runtime) {
                     Some((x, z, level)) => crate::shim::InteractReq::RecoveryAnchor { x, z, level },
                     None => crate::shim::InteractReq::RecoveryAnchorNone,
                 };
-                // Also clears a watchdog mark fired at this slow eval, so
-                // the next tick's machine pass is not halted by it.
-                cancel_terminate(&mut runtime, &teardown);
-                if start.elapsed() > SLOW_TICK {
+                let interrupt = finish_interruptible_execution(&mut runtime, &teardown);
+                if start.elapsed() > SLOW_TICK && interrupt != Some(ExecutionInterrupt::Pause) {
                     let _ = out.send(ThreadMsg::Log(format!(
                         "slow recoveryAnchor: {:?}",
                         start.elapsed()
                     )));
                 }
-                if generation == work_generation.load(std::sync::atomic::Ordering::Acquire) {
+                if interrupt != Some(ExecutionInterrupt::Pause)
+                    && generation == work_generation.load(std::sync::atomic::Ordering::Acquire)
+                {
                     let _ = out.send(ThreadMsg::Interact {
                         bytes: ipc.encode_interact_batch(&[req]),
                         generation,

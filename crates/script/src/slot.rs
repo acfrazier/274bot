@@ -830,9 +830,9 @@ impl SlotScript {
         if self.state == RunState::Stopping && matches!(self.after_stop, AfterStop::Fail(_)) {
             return;
         }
+        self.last_error = None;
         #[cfg(feature = "load")]
         {
-            self.last_error = None;
             self.active_tick_error_generation = None;
         }
         // A Start that has not reached Ready never ran: nothing to commit.
@@ -911,6 +911,10 @@ impl SlotScript {
             self.last_snapshot = None;
             self.last_world_id = None;
             self.reach_cache.clear();
+            // A connection boundary starts a new isolate work generation.
+            // Keep the historical diagnostic visible, but do not let a
+            // success from the new session clear its old ownership.
+            self.active_tick_error_generation = None;
 
             let abort = self.watchdog.abort_owned_recovery();
             let reset = self.watchdog.on_session_reset(Instant::now());
@@ -1245,6 +1249,24 @@ impl SlotScript {
         }
     }
 
+    /// Restore a batch drained by the host when Pause wins the final
+    /// dispatch fence. The drained rows precede anything queued since the
+    /// drain, preserving the script's original request order.
+    #[cfg(feature = "load")]
+    pub fn restore_interacts(&mut self, mut drained: Vec<crate::shim::InteractReq>) {
+        debug_assert!(
+            !(self.compiled.is_some() && self.load.is_some()),
+            "a slot never owns both a compiled script and a Load isolate"
+        );
+        match &self.load {
+            Some(isolate) => isolate.restore_interacts(drained),
+            None => {
+                drained.append(&mut self.compiled_interacts);
+                self.compiled_interacts = drained;
+            }
+        }
+    }
+
     #[cfg(feature = "load")]
     pub fn drain_lifecycle(&self) -> Vec<crate::shim::InteractReq> {
         match &self.load {
@@ -1467,7 +1489,9 @@ impl SlotScript {
             self.compiled_interacts = ctx.compiled.interacts.take().unwrap_or_default();
         }
         if let Err(payload) = result {
-            self.last_error = Some(format!("script panic: {}", panic_message(&payload)));
+            let message = format!("script panic: {}", panic_message(&payload));
+            self.pending_logs.push(message.clone());
+            self.last_error = Some(message);
             self.state = RunState::Error;
             self.want_run = false;
             self.compiled = None;

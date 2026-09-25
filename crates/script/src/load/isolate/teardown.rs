@@ -11,6 +11,14 @@ pub(super) enum TeardownPhase {
     Done,
 }
 
+/// Owner of a terminate request aimed at the current tick/recovery eval.
+/// Pause cancellation is not a script failure; the budget watchdog is.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum ExecutionInterrupt {
+    Watchdog,
+    Pause,
+}
+
 /// Phase, Hook-entry deadline, and at-most-one interrupt. Finish and the
 /// one-shot worker decide under this same mutex.
 pub(super) struct TeardownState {
@@ -27,9 +35,15 @@ pub(super) struct TeardownState {
     /// Unit-test-only wider budget for success-path hook assertions.
     #[cfg(test)]
     pub(super) test_hook_timeout: Option<Duration>,
-    /// The slow-tick watchdog armed a terminate the isolate thread has not
-    /// cancelled yet. Set with the terminate, cleared with the cancel.
-    pub(super) watchdog_fired: bool,
+    /// An interruptible tick/recovery eval is currently inside V8. Pause and
+    /// the watchdog may terminate only while this is true.
+    pub(super) execution_active: bool,
+    /// Pause intent published synchronously by the host. The isolate clears
+    /// it when it consumes Pause/Resume; a queued eval cannot start through it.
+    pub(super) pause_requested: bool,
+    /// A terminate armed for the active eval and not yet cancelled by the
+    /// isolate thread.
+    pub(super) execution_interrupt: Option<ExecutionInterrupt>,
 }
 
 impl TeardownState {
@@ -43,7 +57,9 @@ impl TeardownState {
             fail_deadline_spawn: false,
             #[cfg(test)]
             test_hook_timeout: None,
-            watchdog_fired: false,
+            execution_active: false,
+            pause_requested: false,
+            execution_interrupt: None,
         }
     }
 }
@@ -111,33 +127,39 @@ impl Drop for TickLoopFinish {
     }
 }
 
-/// Join (or Drop) has claimed the isolate for Stop and armed a terminate
-/// for the running tick. A tick phase must not start after that point: an
-/// earlier call whose error is ignored may already have absorbed the
-/// terminate, and a spinning `loop()` would then never be interrupted.
-/// Join sets the phase before it fires the terminate, so a check made
-/// after any absorbing call sees it.
-pub(super) fn tick_claimed(teardown: &Mutex<TeardownState>) -> bool {
-    teardown.lock().unwrap().phase != TeardownPhase::Running
-}
-
-/// A machine pass must stop driving: join claimed the tick, or the
-/// watchdog armed a terminate. A terminate that ends a callback's microtask
-/// continuation is consumed there and never reported to the caller, so the
-/// armed flag is the only trace of it.
+/// A machine pass must stop driving once teardown or Pause has claimed the
+/// execution, or an interrupt has been armed for it.
 pub(super) fn machines_halted(teardown: &Mutex<TeardownState>) -> bool {
     let st = teardown.lock().unwrap();
-    st.phase != TeardownPhase::Running || st.watchdog_fired
+    st.phase != TeardownPhase::Running || st.pause_requested || st.execution_interrupt.is_some()
 }
 
-/// Cancel an armed terminate and forget the watchdog's, as one step.
-pub(super) fn cancel_terminate(runtime: &mut Runtime, teardown: &Mutex<TeardownState>) {
+/// Claim the next tick/recovery eval. This closes the race where Pause sees no
+/// active eval immediately before the isolate thread enters a queued one.
+pub(super) fn begin_interruptible_execution(teardown: &Mutex<TeardownState>) -> bool {
     let mut st = teardown.lock().unwrap();
-    st.watchdog_fired = false;
+    if st.phase != TeardownPhase::Running || st.pause_requested {
+        return false;
+    }
+    st.execution_active = true;
+    true
+}
+
+/// Finish the active eval and cancel its terminate while holding the same lock
+/// Pause/watchdog use to fire it. They therefore cannot fire after this cancel
+/// and leave termination armed for a later eval or `onStop`.
+pub(super) fn finish_interruptible_execution(
+    runtime: &mut Runtime,
+    teardown: &Mutex<TeardownState>,
+) -> Option<ExecutionInterrupt> {
+    let mut st = teardown.lock().unwrap();
+    st.execution_active = false;
+    let interrupt = st.execution_interrupt.take();
     runtime
         .deno_runtime()
         .v8_isolate()
         .cancel_terminate_execution();
+    interrupt
 }
 
 pub(super) fn enter_teardown_hook(teardown: &std::sync::Arc<Mutex<TeardownState>>) -> bool {

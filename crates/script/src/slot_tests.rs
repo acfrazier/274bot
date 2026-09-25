@@ -35,7 +35,7 @@ fn active_tick_error_clears_on_success_not_user_log_text() {
 export function tick() {
     const n = globalThis.__ticks || 0;
     globalThis.__ticks = n + 1;
-    if (n === 0) throw new Error('first tick failure');
+    if (n < 2) throw new Error(n === 0 ? 'first tick failure' : 'second tick failure');
     globalThis.__rs2b0t_host.log = ['tick completed normally'];
 }
 "#;
@@ -77,7 +77,29 @@ export function tick() {
         slot.last_error()
     );
 
+    let mut held = crate::isolate_fb::tests::empty_input(2);
+    held.hold = true;
+    let bytes = slot.encode_snapshot_delta(&held, false);
+    assert!(slot.post_snapshot(bytes));
     slot.load.as_ref().expect("load isolate").on_game_tick(2);
+    slot.load
+        .as_ref()
+        .expect("load isolate")
+        .probe("true")
+        .unwrap();
+    let _ = slot.drain_logs();
+    assert!(
+        slot.last_error()
+            .is_some_and(|error| error.contains("first tick failure")),
+        "a paint-only held frame cannot recover a loop failure: {:?}",
+        slot.last_error()
+    );
+
+    held.tick = 3;
+    held.hold = false;
+    let bytes = slot.encode_snapshot_delta(&held, false);
+    assert!(slot.post_snapshot(bytes));
+    slot.load.as_ref().expect("load isolate").on_game_tick(3);
     assert_eq!(
         slot.load
             .as_ref()
@@ -90,19 +112,123 @@ export function tick() {
     assert!(
         second_logs
             .iter()
-            .any(|line| line == "tick completed normally"),
+            .any(|line| line.contains("second tick failure")),
         "{second_logs:?}"
+    );
+    assert!(
+        slot.last_error()
+            .is_some_and(|error| error.contains("second tick failure")),
+        "a second failing loop cannot recover the active error: {:?}",
+        slot.last_error()
+    );
+
+    held.tick = 4;
+    let bytes = slot.encode_snapshot_delta(&held, false);
+    assert!(slot.post_snapshot(bytes));
+    slot.load.as_ref().expect("load isolate").on_game_tick(4);
+    assert_eq!(
+        slot.load
+            .as_ref()
+            .expect("load isolate")
+            .probe("globalThis.__ticks")
+            .unwrap(),
+        serde_json::json!(3)
+    );
+    let third_logs = slot.drain_logs();
+    assert!(
+        third_logs
+            .iter()
+            .any(|line| line == "tick completed normally"),
+        "{third_logs:?}"
     );
     assert_eq!(
         slot.last_error(),
         None,
-        "a successful same-generation tick clears the active error; a user log does not replace it"
+        "a successful same-generation loop clears the active error; a user log does not replace it"
     );
     assert!(
         slot.take_pending_logs()
             .iter()
             .any(|line| line.contains("first tick failure")),
         "the recovered error remains in the slot log"
+    );
+    slot.stop();
+}
+
+#[cfg(feature = "load")]
+#[test]
+fn reconnect_success_does_not_clear_the_previous_sessions_error() {
+    let source = r#"
+export function tick() {
+    globalThis.__ticks = (globalThis.__ticks || 0) + 1;
+    if (globalThis.__ticks === 1) throw new Error('session-one failure');
+}
+"#;
+    let mut slot = SlotScript::new();
+    slot.start_load_with_loadouts(source.into(), LoadShape::NativeTick, vec![], &[])
+        .unwrap();
+    wait_state(&mut slot, RunState::Running);
+    slot.load.as_ref().unwrap().on_game_tick(1);
+    slot.load.as_ref().unwrap().probe("true").unwrap();
+    let _ = slot.drain_logs();
+    let first_error = slot
+        .last_error()
+        .expect("active first-session error")
+        .to_string();
+
+    slot.reset_session_work();
+    slot.on_is_up(true);
+    slot.load.as_ref().unwrap().on_game_tick(2);
+    assert_eq!(
+        slot.load
+            .as_ref()
+            .unwrap()
+            .probe("globalThis.__ticks")
+            .unwrap(),
+        serde_json::json!(2)
+    );
+    let _ = slot.drain_logs();
+    assert_eq!(
+        slot.last_error(),
+        Some(first_error.as_str()),
+        "a success from the new work generation cannot recover an old-session diagnostic"
+    );
+    slot.stop();
+}
+
+#[cfg(feature = "load")]
+#[test]
+fn a_completed_slow_tick_recovers_the_active_error() {
+    let source = r#"
+export function tick() {
+    globalThis.__ticks = (globalThis.__ticks || 0) + 1;
+    if (globalThis.__ticks === 1) throw new Error('transient failure');
+    const started = Date.now();
+    while (Date.now() - started < 80) {}
+}
+"#;
+    let mut slot = SlotScript::new();
+    slot.start_load_with_loadouts(source.into(), LoadShape::NativeTick, vec![], &[])
+        .unwrap();
+    wait_state(&mut slot, RunState::Running);
+    slot.load.as_ref().unwrap().on_game_tick(1);
+    slot.load.as_ref().unwrap().probe("true").unwrap();
+    let _ = slot.drain_logs();
+    assert!(slot
+        .last_error()
+        .is_some_and(|error| error.contains("transient failure")));
+
+    slot.load.as_ref().unwrap().on_game_tick(2);
+    slot.load.as_ref().unwrap().probe("true").unwrap();
+    let logs = slot.drain_logs();
+    assert!(
+        logs.iter().any(|line| line.starts_with("slow tick 2:")),
+        "{logs:?}"
+    );
+    assert_eq!(
+        slot.last_error(),
+        None,
+        "a slow tick that completed normally is still a successful recovery"
     );
     slot.stop();
 }
@@ -452,8 +578,15 @@ fn stop_releases_snapshot_storage_and_restart_emits_keyframe() {
     assert!(!slot.has_snapshot_fingerprint());
     assert_eq!(slot.last_world_id(), None);
     assert_eq!(std::mem::take(&mut slot.ipc).into_backing_capacity(), 0);
-    assert_eq!(slot.last_error.as_deref(), Some("retained diagnostic"));
-    assert_eq!(slot.pending_logs, ["retained log"]);
+    assert_eq!(
+        slot.last_error, None,
+        "operator Stop clears the active diagnostic"
+    );
+    assert_eq!(
+        slot.pending_logs,
+        ["retained log"],
+        "Stop preserves diagnostic history for the panel"
+    );
     slot.start_compiled(Box::new(Noop), None).unwrap();
     assert_eq!(slot.encode_snapshot_delta(&input, false), first);
     // The earlier owned packet remains intact after reuse and Stop.
@@ -1117,6 +1250,38 @@ fn compiled_ctx<'a>(
             interacts: None,
         },
     }
+}
+
+#[cfg(feature = "load")]
+#[test]
+fn compiled_panic_moves_from_active_error_to_preserved_stop_history() {
+    struct Panics;
+    impl Script for Panics {
+        fn name(&self) -> &str {
+            "panics"
+        }
+
+        fn tick(&mut self, _ctx: &mut ScriptCtx<'_>) {
+            panic!("compiled boom");
+        }
+    }
+
+    let mut slot = SlotScript::new();
+    slot.start_compiled(Box::new(Panics), None).unwrap();
+    let mut driver = NullDriver::default();
+    slot.on_game_tick(&mut compiled_ctx(&mut driver, None));
+    assert_eq!(slot.state(), RunState::Error);
+    assert!(slot
+        .last_error()
+        .is_some_and(|error| error.contains("compiled boom")));
+    slot.stop();
+    assert_eq!(slot.last_error(), None, "explicit Stop clears active error");
+    assert!(
+        slot.take_pending_logs()
+            .iter()
+            .any(|line| line.contains("compiled boom")),
+        "the panic remains in diagnostic history"
+    );
 }
 
 #[cfg(feature = "load")]

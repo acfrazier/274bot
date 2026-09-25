@@ -1121,6 +1121,8 @@ pub struct Session {
     pub catalog_refresh_confirm: bool,
     pub catalog_refresh_report: Option<String>,
     pub reload_generation: u64,
+    /// Worker-owned V8 validation for an operator reload/catalog preview.
+    pub(crate) reload_validation: Option<crate::profile_script::ReloadValidationJob>,
     /// Test-only: fail replacement Start for this profile after it passed
     /// eligibility and was stopped. Not a cancellation fixture.
     #[cfg(test)]
@@ -1438,6 +1440,7 @@ impl Session {
             catalog_refresh_confirm: false,
             catalog_refresh_report: None,
             reload_generation: 0,
+            reload_validation: None,
             #[cfg(test)]
             fail_reload_start_for: None,
             #[cfg(test)]
@@ -3076,6 +3079,7 @@ impl Session {
         // the sidecar-50 cadence latch, and the speaker teardown when the
         // owning slot is no longer running.
         self.sync_sidecar_cadence();
+        self.poll_reload_validation();
         self.sync_nav_publish();
         if let Some(owner) = self.audio.owner() {
             if !self.slots.contains_key(&owner) {

@@ -407,7 +407,10 @@ fn interrupted_running_loop_then_normal_hook() {
         }",
     );
     iso.on_game_tick(1);
-    std::thread::sleep(Duration::from_millis(80));
+    assert!(
+        wait_until(Duration::from_secs(2), || iso.execution_active()),
+        "runaway loop never entered interruptible execution"
+    );
     let t0 = Instant::now();
     let logs = iso.join();
     assert!(t0.elapsed() < Duration::from_secs(2));

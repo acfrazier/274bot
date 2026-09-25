@@ -1,19 +1,52 @@
 use super::*;
 
+fn run_exact_child(test: &str, env: &str) {
+    let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", test, "--nocapture"])
+        .env(env, "1")
+        .spawn()
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(15);
+    loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            assert!(status.success(), "{test} child failed: {status}");
+            return;
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            panic!("{test} child did not return before the deadline");
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
 #[test]
 fn startup_non_yielding_module_has_bounded_join() {
-    let isolate = LoadIsolate::spawn(
-        "while (true) {}".into(),
-        LoadShape::NativeTick,
-        vec![],
-    )
-    .unwrap();
-    let started = Instant::now();
-    isolate.join();
-    assert!(
-        started.elapsed() < Duration::from_secs(3),
-        "startup evaluation outlived its owner: {:?}",
-        started.elapsed()
+    const CHILD: &str = "SCRIPT_STARTUP_CHILD";
+    if std::env::var_os(CHILD).is_some() {
+        let baseline = live_runtime_count();
+        for attempt in 1..=3 {
+            let isolate =
+                LoadIsolate::spawn("while (true) {}".into(), LoadShape::NativeTick, vec![])
+                    .unwrap();
+            let started = Instant::now();
+            isolate.join();
+            assert!(
+                started.elapsed() < Duration::from_secs(3),
+                "attempt {attempt}: startup evaluation outlived its owner: {:?}",
+                started.elapsed()
+            );
+            assert_eq!(
+                live_runtime_count(),
+                baseline,
+                "attempt {attempt}: joined startup left a live Runtime"
+            );
+        }
+        return;
+    }
+    run_exact_child(
+        "load::isolate::tests::startup_non_yielding_module_has_bounded_join",
+        CHILD,
     );
 }
 
@@ -21,36 +54,32 @@ fn startup_non_yielding_module_has_bounded_join() {
 fn validate_non_yielding_module_is_bounded() {
     const CHILD: &str = "SCRIPT_VALIDATE_CHILD";
     if std::env::var_os(CHILD).is_some() {
-        let result = LoadIsolate::validate_source(
-            "while (true) {}".into(),
-            LoadShape::NativeTick,
-            &[],
-        );
-        assert!(result.is_err(), "non-yielding source must be rejected");
+        let baseline = live_runtime_count();
+        for attempt in 1..=3 {
+            let started = Instant::now();
+            let result =
+                LoadIsolate::validate_source("while (true) {}", LoadShape::NativeTick, &[]);
+            assert!(
+                result.is_err(),
+                "attempt {attempt}: non-yielding source must be rejected"
+            );
+            assert!(
+                started.elapsed() < Duration::from_secs(3),
+                "attempt {attempt}: validation exceeded its owned deadline: {:?}",
+                started.elapsed()
+            );
+            assert_eq!(
+                live_runtime_count(),
+                baseline,
+                "attempt {attempt}: validation left a live Runtime"
+            );
+        }
         return;
     }
-
-    let mut child = std::process::Command::new(std::env::current_exe().unwrap())
-        .args([
-            "--exact",
-            "load::isolate::tests::validate_non_yielding_module_is_bounded",
-            "--nocapture",
-        ])
-        .env(CHILD, "1")
-        .spawn()
-        .unwrap();
-    let deadline = Instant::now() + Duration::from_secs(5);
-    loop {
-        if let Some(status) = child.try_wait().unwrap() {
-            assert!(status.success(), "validation child failed: {status}");
-            break;
-        }
-        if Instant::now() >= deadline {
-            let _ = child.kill();
-            panic!("validation child did not return before the deadline");
-        }
-        std::thread::yield_now();
-    }
+    run_exact_child(
+        "load::isolate::tests::validate_non_yielding_module_is_bounded",
+        CHILD,
+    );
 }
 
 #[test]
@@ -58,7 +87,12 @@ fn pause_interrupts_a_newly_started_runaway_tick() {
     const CHILD: &str = "SCRIPT_PAUSE_CHILD";
     if std::env::var_os(CHILD).is_some() {
         let iso = LoadIsolate::spawn(
-            "export function tick() { while (true) {} }".into(),
+            "export function tick(api) {
+                globalThis.__runs = (globalThis.__runs || 0) + 1;
+                globalThis.__lastTick = api.tick;
+                if (api.tick === 1) while (true) {}
+            }"
+            .into(),
             LoadShape::NativeTick,
             vec![],
         )
@@ -67,59 +101,69 @@ fn pause_interrupts_a_newly_started_runaway_tick() {
         loop {
             match iso.poll_ready() {
                 Ready::Pending => {
-                    assert!(Instant::now() < ready_deadline, "isolate setup did not settle");
-                    std::thread::yield_now();
+                    assert!(
+                        Instant::now() < ready_deadline,
+                        "isolate setup did not settle"
+                    );
+                    std::thread::sleep(Duration::from_millis(1));
                 }
                 Ready::Ready => break,
                 Ready::Failed(error) => panic!("isolate setup failed: {error}"),
             }
         }
         iso.on_game_tick(1);
+        let entered_deadline = Instant::now() + Duration::from_secs(2);
+        while !iso.execution_active() {
+            assert!(
+                Instant::now() < entered_deadline,
+                "runaway tick never became interruptible"
+            );
+            std::thread::sleep(Duration::from_millis(1));
+        }
         iso.pause();
         let finish_deadline = Instant::now() + Duration::from_secs(2);
+        let mut logs = Vec::new();
         loop {
-            let _ = iso.drain_logs();
+            logs.extend(iso.drain_logs());
             if iso.in_flight.lock().unwrap().is_none() {
-                iso.join();
-                return;
+                break;
             }
             assert!(
                 Instant::now() < finish_deadline,
                 "Pause did not terminate the active tick"
             );
-            std::thread::yield_now();
+            std::thread::sleep(Duration::from_millis(1));
         }
+        assert!(
+            logs.iter().all(|line| !line.contains("Unknown error")),
+            "operator cancellation is not a script error: {logs:?}"
+        );
+        iso.resume();
+        iso.probe("true").unwrap();
+        iso.on_game_tick(2);
+        assert_eq!(
+            iso.probe("globalThis.__lastTick").unwrap(),
+            serde_json::json!(2),
+            "the consumed Pause interrupt must not leak into the resumed tick"
+        );
+        iso.join();
+        return;
     }
-
-    let mut child = std::process::Command::new(std::env::current_exe().unwrap())
-        .args([
-            "--exact",
-            "load::isolate::tests::pause_interrupts_a_newly_started_runaway_tick",
-            "--nocapture",
-        ])
-        .env(CHILD, "1")
-        .spawn()
-        .unwrap();
-    let deadline = Instant::now() + Duration::from_secs(5);
-    loop {
-        if let Some(status) = child.try_wait().unwrap() {
-            assert!(status.success(), "pause child failed: {status}");
-            break;
-        }
-        if Instant::now() >= deadline {
-            let _ = child.kill();
-            panic!("pause child did not return before the deadline");
-        }
-        std::thread::yield_now();
-    }
+    run_exact_child(
+        "load::isolate::tests::pause_interrupts_a_newly_started_runaway_tick",
+        CHILD,
+    );
 }
 #[test]
 fn paint_generation_allocator_separates_reset_and_replacement() {
     const CHILD: &str = "SCRIPT_PAINT_GENERATION_CHILD";
     if std::env::var_os(CHILD).is_some() {
-        let old =
-            LoadIsolate::spawn("export function tick() {}".into(), LoadShape::NativeTick, vec![])
-                .unwrap();
+        let old = LoadIsolate::spawn(
+            "export function tick() {}".into(),
+            LoadShape::NativeTick,
+            vec![],
+        )
+        .unwrap();
         let initial = old
             .paint_generation
             .load(std::sync::atomic::Ordering::Acquire);
@@ -127,9 +171,12 @@ fn paint_generation_allocator_separates_reset_and_replacement() {
         let after_reset = old
             .paint_generation
             .load(std::sync::atomic::Ordering::Acquire);
-        let replacement =
-            LoadIsolate::spawn("export function tick() {}".into(), LoadShape::NativeTick, vec![])
-                .unwrap();
+        let replacement = LoadIsolate::spawn(
+            "export function tick() {}".into(),
+            LoadShape::NativeTick,
+            vec![],
+        )
+        .unwrap();
         let replacement_generation = replacement
             .paint_generation
             .load(std::sync::atomic::Ordering::Acquire);
@@ -143,30 +190,11 @@ fn paint_generation_allocator_separates_reset_and_replacement() {
         return;
     }
 
-    let mut child = std::process::Command::new(std::env::current_exe().unwrap())
-        .args([
-            "--exact",
-            "load::isolate::tests::paint_generation_allocator_separates_reset_and_replacement",
-            "--nocapture",
-        ])
-        .env(CHILD, "1")
-        .spawn()
-        .unwrap();
-    let deadline = Instant::now() + Duration::from_secs(5);
-    loop {
-        if let Some(status) = child.try_wait().unwrap() {
-            assert!(status.success(), "paint-generation child failed: {status}");
-            break;
-        }
-        if Instant::now() >= deadline {
-            let _ = child.kill();
-            panic!("paint-generation child did not return before the deadline");
-        }
-        std::thread::yield_now();
-    }
+    run_exact_child(
+        "load::isolate::tests::paint_generation_allocator_separates_reset_and_replacement",
+        CHILD,
+    );
 }
-
-
 
 #[test]
 fn reset_rejects_a_tick_queued_with_the_previous_session_generation() {
