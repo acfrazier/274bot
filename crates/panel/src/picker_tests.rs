@@ -9,11 +9,12 @@ use std::sync::Arc;
 
 use super::{
     available_levels, click_to_tile, decode_sidecar_file, drop_flags_sidecar, ensure_flags_sidecar,
-    flags_content_hash_count, flags_sidecar_for, flags_sidecar_state, last_picker_layout,
-    map_reach_bitset, pack, pan_by, picker_map_window, picker_nested_in_game, reach_bitset,
-    reset_flags_content_hash_count, right_align_x, set_navflags_binding, set_pack,
-    set_reach_binding, sidecar_for_grid, snap, walkto_canvas_flags, walkto_footer_labels,
-    walkto_window_flags, zoom_toward, FlagSidecar, FlagsSidecarState,
+    flags_content_hash_count, flags_sidecar_for, flags_sidecar_state, format_walkto_status,
+    last_picker_layout, map_reach_bitset, pack, pan_by, picker_map_window, picker_nested_in_game,
+    reach_bitset, reset_flags_content_hash_count, right_align_x, set_navflags_binding, set_pack,
+    set_reach_binding, sidecar_for_grid, snap, walkto_actions_enabled, walkto_canvas_flags,
+    walkto_footer_labels, walkto_selection_caption, walkto_window_flags, zoom_toward, FlagSidecar,
+    FlagsSidecarState, WalktoCaption,
 };
 use crate::rail::{BASE_WINDOW_H, BASE_WINDOW_W};
 use crate::session::Session;
@@ -21,6 +22,7 @@ use crate::test_support::TestDir;
 use crate::theme::PANEL_WIDTH;
 use crate::walk_map::WalkMapRenderer;
 use dear_imgui_rs::WindowFlags;
+use host_play::walk_map::MapModel;
 use std::sync::Mutex as StdMutex;
 
 /// Process-global flags binding/hash counters; serialize tests that touch them.
@@ -272,6 +274,40 @@ fn walkto_footer_adds_teleport_on_local_engine() {
     assert_eq!(
         walkto_footer_labels(true),
         &["recentre", "Walk", "Teleport"]
+    );
+}
+
+#[test]
+fn walkto_actions_enable_teleport_without_a_walk_target() {
+    let world = open_world(3, 3);
+    let mut model = MapModel::default();
+    let miss = Tile {
+        x: 1000,
+        z: 1001,
+        level: 1,
+    };
+    let hit = Tile {
+        x: 1,
+        z: 1,
+        level: 0,
+    };
+    assert_eq!(walkto_actions_enabled(None, true), (false, false));
+    assert_eq!(walkto_selection_caption(None), WalktoCaption::None);
+    assert_eq!(model.select_tile(&world, miss), None);
+    assert_eq!(walkto_actions_enabled(model.pending(), true), (false, true));
+    assert_eq!(
+        format_walkto_status(walkto_selection_caption(model.pending()), "ok"),
+        "blocked 1000 1001 1 (teleport only) · ok"
+    );
+    assert_eq!(model.select_tile(&world, hit), Some(hit));
+    assert_eq!(walkto_actions_enabled(model.pending(), true), (true, true));
+    assert_eq!(
+        walkto_actions_enabled(model.pending(), false),
+        (true, false)
+    );
+    assert_eq!(
+        format_walkto_status(walkto_selection_caption(model.pending()), "ok"),
+        "selected 1 1 0 (walk target 1 1) · ok"
     );
 }
 

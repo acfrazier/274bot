@@ -4273,12 +4273,13 @@ impl Session {
     pub fn picker_action_available(
         &self,
         world: &NavWorld,
+        kind: host_play::walk_map::ActionKind,
     ) -> Result<Tile, host_play::walk_map::ActionError> {
         let origin = self
             .focused_tile()
             .map(|(x, z, level)| Tile { x, z, level });
         self.map_model
-            .availability(&self.picker_context(world), origin)
+            .availability(kind, &self.picker_context(world), origin)
     }
 
     /// Consume a pending selection once. Missing player/focus is an explicit

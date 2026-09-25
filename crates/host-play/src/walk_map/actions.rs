@@ -100,6 +100,9 @@ impl Default for Layers {
         }
     }
 }
+/// One map click or search. `requested` is the exact tile; `target` is the
+/// optional radius-16 walk snap. Walk needs `target`. Debug Teleport uses
+/// `requested`, including blocked ground.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Selection {
     pub requested: Tile,
@@ -250,8 +253,11 @@ impl MapModel {
         });
         Ok(())
     }
+    /// Walk destination is the snapped target. Teleport destination is the
+    /// requested tile. Does not consume the selection.
     pub fn availability(
         &self,
+        kind: ActionKind,
         current: &MapContext,
         origin: Option<Tile>,
     ) -> Result<Tile, ActionError> {
@@ -259,15 +265,26 @@ impl MapModel {
         if pending.context != Some(*current) {
             return Err(ActionError::Stale);
         }
-        let target = pending.target.ok_or(ActionError::Blocked)?;
+        let destination = match kind {
+            ActionKind::Walk => pending.target.ok_or(ActionError::Blocked)?,
+            ActionKind::Teleport => {
+                let t = pending.requested;
+                if !(0..4).contains(&t.level) || t.x < 0 || t.z < 0 {
+                    return Err(ActionError::InvalidCoordinates);
+                }
+                t
+            }
+        };
         if origin.is_none_or(|t| !(0..4).contains(&t.level)) {
             return Err(ActionError::NoOrigin);
         }
         current.focus.ok_or(ActionError::NoFocus)?;
-        Ok(target)
+        Ok(destination)
     }
     /// Consume even a refused confirmation; no login/focus change can execute a
     /// latent click. MapCommand is deliberately not Clone/Copy.
+    /// Walk uses the snapped target (Blocked on a miss). Teleport uses the
+    /// requested tile, including blocked ground.
     pub fn confirm(
         &mut self,
         kind: ActionKind,
@@ -275,7 +292,7 @@ impl MapModel {
         origin: Option<Tile>,
         options: FindOptions,
     ) -> Result<MapCommand, ActionError> {
-        let result = self.availability(current, origin);
+        let result = self.availability(kind, current, origin);
         self.pending = None;
         let destination = result?;
         Ok(MapCommand {
@@ -406,10 +423,6 @@ impl Play {
             }
         };
         debug_authorized(self.connection.target(), host)?;
-        let world = self.world.as_deref().ok_or(ActionError::NoNavigation)?;
-        if !safe_standable(world, world_tile(command.destination)) {
-            return Err(ActionError::Blocked);
-        }
         // Keep the existing CLIENT_CHEAT queue and its session lock. Recheck and
         // enqueue together, so disconnect cannot clear it then receive old work.
         let statuses = crate::play_status::lock_statuses(&self.statuses);

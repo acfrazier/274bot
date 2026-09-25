@@ -36,11 +36,14 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   explicit; tellers and place labels are unavailable without the supplement.
 - The shared selection model provides a radius-16 query (at most 33×33 cells),
   ordered by Chebyshev distance, Manhattan distance, x, then z. A miss has no
-  action target; place-label anchors remain view jumps.
+  walk target; debug Teleport still uses the requested tile. Place-label
+  anchors remain view jumps unless they have a proven stand.
 - Shared map confirmations consume the selection once, preserving its captured
   slot lifetime/world/nav binding and taking routing options at confirmation.
   Panel adapters walk through `Play::map_walk`, refuse a missing observed
-  player, and send debug Teleport only through `Play::map_teleport`.
+  player, and send debug Teleport only through `Play::map_teleport`. Walk
+  needs the snapped target. Debug Teleport is a cheat: it uses the requested
+  tile and does not require walkability or radius-16 snap.
   The replacement picker supplies selection-time binding; confirmation does
   not rebind an old click to a new slot or profile.
 - The shared route projection borrows actual routes with driven-live, script,

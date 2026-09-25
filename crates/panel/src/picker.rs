@@ -3,8 +3,9 @@
 //! Terrain and optional grid/collision/reach layers are drawn by the app-owned
 //! [`crate::walk_map::WalkMapRenderer`]. Click, search, **Walk**, and **Teleport**
 //! go through [`host_play::walk_map::MapModel`] on `Session`; confirmation
-//! consumes the pending selection once and refuses missing origin/focus. The
-//! world is the session's [`Play`] world, injected once via [`set_pack`] — the
+//! consumes the pending selection once. Walk needs a snapped target; debug
+//! Teleport uses the requested tile. Missing origin or focus still refuse.
+//! The world is the session's [`Play`] world, injected once via [`set_pack`] — the
 //! picker never decodes the pack itself.
 
 use std::borrow::Cow;
@@ -16,7 +17,7 @@ use std::sync::{Arc, Mutex};
 use api::snapshot::WorldTile;
 use dear_imgui_rs::{Condition, Key, MouseButton, Ui, WindowFlags};
 use host_play::walk_map::{
-    select_route_source, ActionError, MapModel, RouteProjection, RouteSource,
+    select_route_source, ActionError, MapModel, RouteProjection, RouteSource, Selection,
 };
 use nav::map::spatial::GameTile;
 use nav::paint::{bake_reach, flood_components, remaining_path_tiles};
@@ -600,6 +601,50 @@ fn walkto_footer_labels(local: bool) -> &'static [&'static str] {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WalktoCaption {
+    None,
+    Walk { requested: Tile, target: Tile },
+    TeleportOnly { requested: Tile },
+}
+
+fn walkto_selection_caption(pending: Option<&Selection>) -> WalktoCaption {
+    match pending {
+        None => WalktoCaption::None,
+        Some(sel) => match sel.target {
+            Some(target) => WalktoCaption::Walk {
+                requested: sel.requested,
+                target,
+            },
+            None => WalktoCaption::TeleportOnly {
+                requested: sel.requested,
+            },
+        },
+    }
+}
+
+fn format_walkto_status(caption: WalktoCaption, status: &str) -> String {
+    match caption {
+        WalktoCaption::None => format!("click a tile, then Walk · {status}"),
+        WalktoCaption::Walk { requested, target } => format!(
+            "selected {} {} {} (walk target {} {}) · {status}",
+            requested.x, requested.z, requested.level, target.x, target.z
+        ),
+        WalktoCaption::TeleportOnly { requested } => format!(
+            "blocked {} {} {} (teleport only) · {status}",
+            requested.x, requested.z, requested.level
+        ),
+    }
+}
+
+/// Walk needs a snapped target. Teleport needs any selection on a local debug target.
+fn walkto_actions_enabled(pending: Option<&Selection>, local: bool) -> (bool, bool) {
+    (
+        pending.and_then(|sel| sel.target).is_some(),
+        local && pending.is_some(),
+    )
+}
+
 /// Combo width on the Level/Zoom toolbar so they do not eat the row
 /// (default item width is the remaining content region).
 const TOOLBAR_COMBO_W: f32 = 140.0;
@@ -1049,13 +1094,10 @@ fn picker_map_body(
     } else {
         map.status_line()
     };
-    match pending_highlight(session) {
-        Some(t) if pending_walk_target(session).is_some() => {
-            ui.text_disabled(format!("selected {} {} {} · {status}", t.x, t.z, t.level))
-        }
-        Some(t) => ui.text_disabled(format!("blocked {} {} {} · {status}", t.x, t.z, t.level)),
-        None => ui.text_disabled(format!("click a tile, then Walk · {status}")),
-    }
+    ui.text_disabled(format_walkto_status(
+        walkto_selection_caption(session.map_model.pending()),
+        status,
+    ));
     let spacing = ui.clone_style().item_spacing()[0];
     let local = session.debug_ui();
     let labels = walkto_footer_labels(local);
@@ -1071,16 +1113,19 @@ fn picker_map_body(
         sync_view_from_model(&session.map_model);
     }
     ui.same_line();
-    let can_walk = pending_walk_target(session).is_some();
-    let _off = ui.begin_disabled_with_cond(!can_walk);
-    if ui.button("Walk") && can_walk && session.confirm_picker_walk(world) {
-        session.walkto_open = false;
-        PREV_OPEN.store(false, Ordering::Relaxed);
-        session.map_model.close();
+    let (can_walk, can_teleport) = walkto_actions_enabled(session.map_model.pending(), local);
+    {
+        let _off = ui.begin_disabled_with_cond(!can_walk);
+        if ui.button("Walk") && can_walk && session.confirm_picker_walk(world) {
+            session.walkto_open = false;
+            PREV_OPEN.store(false, Ordering::Relaxed);
+            session.map_model.close();
+        }
     }
     if local {
         ui.same_line();
-        if ui.button("Teleport") && can_walk && session.confirm_picker_teleport(world) {
+        let _off = ui.begin_disabled_with_cond(!can_teleport);
+        if ui.button("Teleport") && can_teleport && session.confirm_picker_teleport(world) {
             session.walkto_open = false;
             PREV_OPEN.store(false, Ordering::Relaxed);
             session.map_model.close();

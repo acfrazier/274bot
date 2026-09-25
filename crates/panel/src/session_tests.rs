@@ -2145,6 +2145,47 @@ fn picker_teleport_without_spawned_queue_is_no_focus() {
     assert!(s.map_model.pending().is_none());
 }
 
+#[test]
+fn picker_blocked_selection_refuses_walk_and_teleports_requested() {
+    use host_play::walk_map::{ActionError, ActionKind};
+    let mut s = Session::new();
+    let world = open_world(3, 3);
+    let origin = Tile {
+        x: 0,
+        z: 1,
+        level: 0,
+    };
+    let blocked = Tile {
+        x: 1000,
+        z: 1001,
+        level: 1,
+    };
+    let _fixture = bind_picker_session(&mut s, &world, origin);
+    assert_eq!(s.select_picker_tile(&world, blocked), None);
+    let pending = s.map_model.pending().expect("miss still selects requested");
+    assert_eq!(pending.requested, blocked);
+    assert_eq!(pending.target, None);
+    assert_eq!(
+        s.picker_action_available(&world, ActionKind::Walk),
+        Err(ActionError::Blocked)
+    );
+    assert_eq!(
+        s.picker_action_available(&world, ActionKind::Teleport),
+        Ok(blocked)
+    );
+    assert!(
+        s.map_model.pending().is_some(),
+        "availability must not consume"
+    );
+    assert!(!s.confirm_picker_teleport(&world));
+    assert_eq!(
+        s.error,
+        Some(ActionError::NoFocus.to_string()),
+        "blocked Teleport must not fail as Blocked"
+    );
+    assert!(s.map_model.pending().is_none());
+}
+
 /// Both endpoints are real standable map cells; the mine remains an island.
 fn picker_mine_world() -> NavWorld {
     let (width, height) = (384, 1472);

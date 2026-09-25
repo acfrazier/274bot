@@ -582,6 +582,91 @@ fn local_loopback_teleport_without_spawned_queue_is_no_focus() {
 }
 
 #[test]
+fn blocked_tile_teleports_to_requested_and_refuses_walk_on_the_same_selection() {
+    let fixture = MapFixture::new(&world(t(3200, 3200, 0), 8, &[]), "local-289");
+    let origin = t(3201, 3201, 0);
+    let requested = t(4000, 4001, 2);
+    let play = fixture.play(origin);
+    play.cheats
+        .lock()
+        .unwrap()
+        .insert("alice".into(), Default::default());
+    let ctx = bound_context(&play);
+    let world = play.world().unwrap();
+    let mut model = MapModel::default();
+    model.bind(ctx);
+    assert_eq!(model.select_tile(&world, requested), None);
+    let pending = model
+        .pending()
+        .expect("a miss still selects the requested tile");
+    assert_eq!(pending.requested, requested);
+    assert_eq!(pending.target, None);
+    assert_eq!(
+        model.availability(ActionKind::Walk, &ctx, Some(origin)),
+        Err(ActionError::Blocked)
+    );
+    assert!(
+        model.pending().is_some(),
+        "Walk availability must not consume"
+    );
+    let command = model
+        .confirm(
+            ActionKind::Teleport,
+            &ctx,
+            Some(origin),
+            FindOptions::default(),
+        )
+        .unwrap();
+    assert_eq!(command.destination(), requested);
+    assert_eq!(play.map_teleport(command, &ctx), Ok(()));
+    assert_eq!(
+        play.cheats.lock().unwrap()["alice"]
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        [api::interact::tele_args(requested.level, requested.x, requested.z).as_str()]
+    );
+}
+
+#[test]
+fn teleport_uses_requested_tile_when_walk_snaps() {
+    let world = world(t(0, 0, 0), 4, &[(1, 1, 0)]);
+    let ctx = context();
+    let origin = t(0, 0, 0);
+    let requested = t(1, 1, 0);
+    let mut model = MapModel::default();
+    model.bind(ctx);
+    let snapped = model
+        .select_tile(&world, requested)
+        .expect("radius-16 snap");
+    assert_ne!(snapped, requested);
+    assert_eq!(model.pending().unwrap().requested, requested);
+    assert_eq!(model.pending().unwrap().target, Some(snapped));
+    assert_eq!(
+        model.availability(ActionKind::Walk, &ctx, Some(origin)),
+        Ok(snapped)
+    );
+    assert_eq!(
+        model.availability(ActionKind::Teleport, &ctx, Some(origin)),
+        Ok(requested)
+    );
+    let walk = model
+        .confirm(ActionKind::Walk, &ctx, Some(origin), FindOptions::default())
+        .unwrap();
+    assert_eq!(walk.destination(), snapped);
+    model.select_tile(&world, requested);
+    let teleport = model
+        .confirm(
+            ActionKind::Teleport,
+            &ctx,
+            Some(origin),
+            FindOptions::default(),
+        )
+        .unwrap();
+    assert_eq!(teleport.destination(), requested);
+}
+
+#[test]
 fn bound_host_walk_arms_and_rejects_a_foreign_nav_without_replacing_the_route() {
     let fixture = MapFixture::new(&world(t(3200, 3200, 0), 8, &[]), "local-289");
     let origin = t(3201, 3201, 0);
