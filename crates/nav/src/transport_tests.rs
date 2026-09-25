@@ -1129,15 +1129,11 @@ fn derive_transports_emits_wildy_ardougne_levers() {
         levers.len()
     );
     assert!(
-        levers
-            .iter()
-            .any(|e| crate::wilderness::in_wilderness(e.to)),
+        levers.iter().any(|e| graph.wilderness.contains(e.to)),
         "the Ardougne→wildy lever must land inside the wilderness"
     );
     assert!(
-        levers
-            .iter()
-            .any(|e| !crate::wilderness::in_wilderness(e.to)),
+        levers.iter().any(|e| !graph.wilderness.contains(e.to)),
         "the wildy→Ardougne lever must land outside the wilderness"
     );
 }
@@ -1306,7 +1302,6 @@ fn derive_transports_emits_alkharid_toll_and_shantay_north() {
 #[test]
 fn default_find_skips_the_ardougne_to_wildy_lever() {
     use crate::router::{find, find_with, FindOptions, RouteError};
-    use crate::wilderness::in_wilderness;
 
     let fx = Fixture::new();
     fx.write("pack/loc.pack", "1814=wildinlever\n");
@@ -1353,7 +1348,8 @@ mes(\"...And teleport into the wilderness.\");
     );
     let defs = loc_defs(&[(1814, 1, 1)]);
     let wc = bake_collision(&fx, &defs, &HashSet::new());
-    let graph = derive_transports(fx.path(), &defs, &wc);
+    let mut graph = derive_transports(fx.path(), &defs, &wc);
+    graph.wilderness = surface_wildy_rules();
 
     let at = WorldTile {
         x: 2561,
@@ -1376,7 +1372,7 @@ mes(\"...And teleport into the wilderness.\");
     assert_eq!(levers[0].to, to);
     assert_eq!(levers[0].option, 1); // Pull (oploc1)
     assert_eq!(levers[0].dir, None);
-    assert!(in_wilderness(to));
+    assert!(graph.wilderness.contains(to));
 
     // Default find: the enter-wildy hop is never relaxed, and no walk
     // path can reach the landing — NoPath.
@@ -1397,6 +1393,22 @@ mes(\"...And teleport into the wilderness.\");
     )
     .expect("allow_wilderness routes the Ardougne→wildy lever");
     assert_eq!(route.dest, to);
+}
+
+fn surface_wildy_rules() -> WildernessRules {
+    WildernessRules {
+        zones: vec![WildernessZone {
+            x1: 2944,
+            z1: 3520,
+            x2: 3391,
+            z2: 6399,
+            level1: 0,
+            level2: 3,
+            origin_z: 3520,
+        }],
+        divisor: 8,
+        offset: 1,
+    }
 }
 
 /// The gates seam: a route must now exist from Seers street
@@ -7383,6 +7395,42 @@ fn bake_fails_when_wilderness_teleport_caps_cannot_be_derived() {
             || err.contains("missing")
             || err.contains("wilderness_zones")
             || err.contains("coord_pair"),
+        "{err}"
+    );
+}
+
+#[test]
+fn bake_fails_when_only_one_wilderness_source_is_present() {
+    let fx = Fixture::new();
+    fx.write(
+        TEST_LEVELS_RS2,
+        "[proc,wilderness_level](coord $coord)(int)\nreturn(0);\n",
+    );
+    let defs = loc_defs(&[]);
+    let wc = bake_collision(&fx, &defs, &HashSet::new());
+    let graph = derive_transports(fx.path(), &defs, &wc);
+    let err = require_wilderness_teleport_legality(fx.path(), &graph)
+        .expect_err("exactly one wilderness source must fail the bake");
+    assert!(
+        err.contains("wilderness_zones") || err.contains("missing"),
+        "{err}"
+    );
+}
+
+#[test]
+fn bake_fails_when_teleport_gates_exist_without_wilderness_zones() {
+    let fx = Fixture::new();
+    fx.write(
+        TEST_SPELL_TELEPORT_RS2,
+        "if (~wilderness_level(coord) > 20) {\n    return;\n}\n",
+    );
+    let defs = loc_defs(&[]);
+    let wc = bake_collision(&fx, &defs, &HashSet::new());
+    let graph = derive_transports(fx.path(), &defs, &wc);
+    let err = require_wilderness_teleport_legality(fx.path(), &graph)
+        .expect_err("gates without zones must fail the bake");
+    assert!(
+        err.contains("without") || err.contains("wilderness_levels") || err.contains("missing"),
         "{err}"
     );
 }

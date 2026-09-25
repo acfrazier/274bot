@@ -171,7 +171,9 @@ SpiritTree/Npc), `from`/`to`, `loc_id`, the 1-based menu `option`
 vectors including `worn_req` (**any-of**). Spell teleports have no fixed
 origin: they live on `TransportGraph::teleports` and stay out of Dijkstra
 unless `FindOptions::allow_teleports`. Wilderness tiles stay out unless
-`FindOptions::allow_wilderness`. Both default **off**. Packed spell and
+`FindOptions::allow_wilderness`. Both default **off**. Membership is the
+packed `TransportGraph::wilderness` table derived at bake; a graph with
+no zones (a legacy 274N grid) gates nothing. Packed spell and
 jewellery teleports also carry a content-derived wilderness cap; `find`
 will not take them from a tile whose packed `wilderness_level` exceeds
 that cap. `find` also fail-closes on live `WorldState`.

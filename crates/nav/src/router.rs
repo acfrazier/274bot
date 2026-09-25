@@ -15,13 +15,13 @@
 //! [`find`] and [`find_with_model`] never see teleports; the any-tile
 //! teleport layer ([`TransportGraph::teleports`]) only joins the search
 //! through [`find_allow_teleports`]/[`find_allow_teleports_with_model`].
-//! Wilderness tiles ([`crate::wilderness::in_wilderness`], or packed
-//! [`TransportGraph::wilderness`] when the graph carries zones) are refused
-//! unless the search's [`FindOptions::allow_wilderness`] is set; every
-//! option'd entry point is [`find_with`]. Every transport edge — walked
-//! or teleported — is additionally gated by the search's [`WorldState`]:
-//! an edge whose requirements the state cannot prove is never relaxed
-//! (missing facts fail closed).
+//! Wilderness tiles ([`TransportGraph::wilderness`]) are refused unless
+//! the search's [`FindOptions::allow_wilderness`] is set; every option'd
+//! entry point is [`find_with`]. A graph with no packed zones (a legacy
+//! 274N grid) gates nothing. Every transport edge — walked or teleported
+//! — is additionally gated by the search's [`WorldState`]: an edge whose
+//! requirements the state cannot prove is never relaxed (missing facts
+//! fail closed).
 
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap, HashSet};
@@ -33,7 +33,7 @@ use client::dash3d::CollisionFlag;
 use crate::collision::WorldCollision;
 use crate::essence::{EssenceSession, ESSENCE_MINE_EXIT_TICKS, ESSENCE_MINE_PORTALS};
 use crate::transport::{TransportEdge, TransportGraph};
-use crate::wilderness::in_wilderness;
+
 use crate::world_state::WorldState;
 
 /// One leg of a route: a walk run or one transport crossing. Consecutive
@@ -85,8 +85,9 @@ impl CostModel {
 
 /// Per-search opt-ins, all default off so [`find`] keeps the safe
 /// defaults. `allow_teleports` unions the any-tile teleport layer in;
-/// `allow_wilderness` lets the search step into (or land in) the
-/// wilderness zone ([`crate::wilderness::in_wilderness`]).
+/// `allow_wilderness` lets the search step into (or land in) packed
+/// [`TransportGraph::wilderness`] zones. A graph with no packed zones
+/// gates nothing.
 /// `allow_bank_fetch` is the BankBudget opt-in: on its own it never
 /// inserts a bank leg or relaxes an item req — an edge stays unusable
 /// unless the search's [`WorldState`] already proves it. The
@@ -1122,24 +1123,16 @@ fn search_kernel(
 /// Whether the search may move from `cur` onto `next`: without
 /// `allow_wilderness` a non-wilderness node may not relax into a
 /// wilderness tile (a walk step or a transport landing). Once inside the
-/// wilderness the search walks freely — only the entry is gated.
-/// Packed graphs use content-derived zones; empty-graph fixtures fall
-/// back to [`crate::wilderness::in_wilderness`].
+/// wilderness the search walks freely — only the entry is gated. Membership
+/// is the packed [`TransportGraph::wilderness`] table; empty zones gate
+/// nothing.
 fn wildy_step_ok(
     graph: &TransportGraph,
     cur: WorldTile,
     next: WorldTile,
     allow_wilderness: bool,
 ) -> bool {
-    allow_wilderness || in_wilderness_tile(graph, cur) || !in_wilderness_tile(graph, next)
-}
-
-fn in_wilderness_tile(graph: &TransportGraph, t: WorldTile) -> bool {
-    if graph.wilderness.zones.is_empty() {
-        in_wilderness(t)
-    } else {
-        graph.wilderness.contains(t)
-    }
+    allow_wilderness || graph.wilderness.contains(cur) || !graph.wilderness.contains(next)
 }
 
 /// Whether a one-tile step from `cur` by `d` is allowed — the client's

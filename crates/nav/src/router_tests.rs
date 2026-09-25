@@ -1680,7 +1680,10 @@ fn find_does_not_enter_wilderness_without_the_flag() {
         5,
         12,
     );
-    let g = TransportGraph::default();
+    let g = TransportGraph {
+        wilderness: surface_wildy_rules(),
+        ..Default::default()
+    };
     let from = WorldTile {
         x: 3100,
         z: 3519,
@@ -1719,7 +1722,10 @@ fn already_in_wilderness_can_walk_out_without_the_flag() {
         5,
         12,
     );
-    let g = TransportGraph::default();
+    let g = TransportGraph {
+        wilderness: surface_wildy_rules(),
+        ..Default::default()
+    };
     let from = WorldTile {
         x: 3100,
         z: 3525,
@@ -1758,7 +1764,8 @@ fn find_allow_teleports_still_refuses_a_wilderness_landing() {
         flags: None,
     };
     let dest = tile(3102, 3525, 0);
-    let g = teleport(dest, 3, vec![(6, 25)], vec![(554, 1), (556, 3), (563, 1)]);
+    let mut g = teleport(dest, 3, vec![(6, 25)], vec![(554, 1), (556, 3), (563, 1)]);
+    g.wilderness = surface_wildy_rules();
     let from = tile(3100, 3519, 0);
     assert!(matches!(find(&wc, &g, from, dest), Err(RouteError::NoPath)));
     // The state proves the cast (Magic 25 + runes), so only the wildy
@@ -2063,10 +2070,14 @@ fn find_with_avoid_empty_matches_find_with_and_does_not_bypass_gates() {
         12,
     );
     let wild_to = tile(3100, 3525, 0);
+    let g_w = TransportGraph {
+        wilderness: surface_wildy_rules(),
+        ..Default::default()
+    };
     assert!(matches!(
         find_with_avoid(
             &wc_w,
-            &TransportGraph::default(),
+            &g_w,
             tile(3100, 3519, 0),
             wild_to,
             opts,

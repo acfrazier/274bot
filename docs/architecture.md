@@ -203,7 +203,7 @@ owners.
 | `transport/index.rs`, `transport/script_text.rs` | shared placement readers and script text | producers, consumed by family derivers |
 | `transport/observable.rs` | quest-journal observability proof | green-row rule |
 | `transport/gates.rs`, `transport/quest_doors.rs`, `transport/doors.rs`, `transport/brass_key.rs`, `transport/membergate.rs`, `transport/webs.rs`, `transport/vertical.rs`, `transport/shortcuts.rs` | door, gate, vertical, and shortcut families | one family each |
-| `transport/static_routes.rs`, `transport/npc_hops.rs`, `transport/gliders.rs`, `transport/spirit_trees.rs`, `transport/levers.rs`, `transport/toll.rs`, `transport/magic_guild.rs`, `transport/ranging_guild.rs`, `transport/zanaris.rs`, `transport/teleports.rs` | fixed-route, guild, and teleport families | one family each |
+| `transport/static_routes.rs`, `transport/npc_hops.rs`, `transport/gliders.rs`, `transport/spirit_trees.rs`, `transport/levers.rs`, `transport/toll.rs`, `transport/magic_guild.rs`, `transport/ranging_guild.rs`, `transport/zanaris.rs`, `transport/teleports.rs`, `transport/wilderness.rs` | fixed-route, guild, teleport, and wilderness-legality families | one family each |
 | `traveller.rs` | follow facade and scheduler | `FollowRun` start and step, shared state |
 | `traveller/snapshot.rs` | snapshot-query helpers | scene reads for hops |
 | `traveller/dialog.rs` | dialog and teleport-send helpers | chat and teleport sends |
@@ -211,14 +211,13 @@ owners.
 | `traveller/transport_hop.rs` | transport-hop execution | approach and door execution |
 | `traveller/legacy_grid.rs` | legacy-grid execution | via the stable grid API |
 | `walk_destinations.rs` | shared walk-destination pins | town tiles for WalkTo confirm |
-| `wilderness.rs` | wilderness zones | world bands from the content table |
 | `world.rs` | bound world handle | packed collision plus transport graph |
 | `world_state.rs` | search gating facts | fail-closed edge requirements |
 | `bin/nav-pack.rs` | nav-pack CLI | whole-world bake entrypoint |
 | `bin/nav-input-audit.rs` | input audit CLI | offline cache and content audit |
 | `bin/cache-content-id.rs` | content identity export | read-only identity |
 | `required-content-274.tsv`, `required-content-289.tsv` | canonical content inventory | build-checked data, not code |
-| `arrival_tests.rs`, `bake_tests.rs`, `bank_fetch_tests.rs`, `bundle_tests.rs`, `camera_tests.rs`, `canlight_tests.rs`, `collision_tests.rs`, `essence_tests.rs`, `lib_tests.rs`, `manifest_tests.rs`, `named_banks_tests.rs`, `pack_tests.rs`, `paint_tests.rs`, `router_tests.rs`, `traveller_tests.rs`, `walk_destinations_tests.rs`, `wilderness_tests.rs`, `world_tests.rs`, `world_state_tests.rs`, `bin/nav-pack/nav_pack_tests.rs`, `transport_tests.rs` | test bodies | grouped, logical `<owner>::tests` |
+| `arrival_tests.rs`, `bake_tests.rs`, `bank_fetch_tests.rs`, `bundle_tests.rs`, `camera_tests.rs`, `canlight_tests.rs`, `collision_tests.rs`, `essence_tests.rs`, `lib_tests.rs`, `manifest_tests.rs`, `named_banks_tests.rs`, `pack_tests.rs`, `paint_tests.rs`, `router_tests.rs`, `traveller_tests.rs`, `walk_destinations_tests.rs`, `world_tests.rs`, `world_state_tests.rs`, `bin/nav-pack/nav_pack_tests.rs`, `transport_tests.rs` | test bodies | grouped, logical `<owner>::tests` |
 
 ### script
 

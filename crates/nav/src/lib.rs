@@ -21,7 +21,6 @@ pub mod tile;
 pub mod transport;
 pub mod traveller;
 pub mod walk_destinations;
-pub mod wilderness;
 pub mod world;
 pub mod world_state;
 

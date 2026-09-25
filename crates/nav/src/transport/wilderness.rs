@@ -203,11 +203,34 @@ fn jewellery_caps_by_obj(
 
 /// Bake-time check: when the wilderness sources exist, caps and the formula
 /// must parse and every packed teleport must carry the derived cap.
+/// Exactly one of the formula/zones files, or teleport/jewellery gates
+/// without those files, is an error so a custom bake cannot silently
+/// ship no teleports.
 pub(crate) fn require_wilderness_teleport_legality(
     content_root: &Path,
     graph: &TransportGraph,
 ) -> Result<(), String> {
-    if !wilderness_legality_inputs_present(content_root) {
+    let rs2 = content_root.join(LEVELS_RS2).is_file();
+    let dbrow = content_root.join(ZONES_DBROW).is_file();
+    if rs2 != dbrow {
+        return Err(if rs2 {
+            format!("wilderness teleport legality: {ZONES_DBROW} is missing")
+        } else {
+            format!("wilderness teleport legality: {LEVELS_RS2} is missing")
+        });
+    }
+    let jewellery_dir = content_root.join(JEWELLERY_DIR);
+    let jewellery = [RING_OF_DUELING, GAMES_NECKLACE, AMULET_OF_GLORY]
+        .iter()
+        .any(|n| jewellery_dir.join(n).is_file());
+    let spell = content_root.join(SPELL_TELEPORT_RS2).is_file();
+    if !rs2 {
+        if spell || jewellery {
+            return Err(
+                "wilderness teleport legality: teleport or jewellery gates present without wilderness_levels.rs2 / wilderness_zones.dbrow"
+                    .into(),
+            );
+        }
         return Ok(());
     }
     let rules = load_wilderness_rules(content_root)?;
@@ -264,10 +287,6 @@ pub(crate) fn require_wilderness_teleport_legality(
         }
     }
     Ok(())
-}
-
-pub(super) fn wilderness_legality_inputs_present(content_root: &Path) -> bool {
-    content_root.join(LEVELS_RS2).is_file() && content_root.join(ZONES_DBROW).is_file()
 }
 
 /// Unique `~wilderness_level(coord) > N` in `text`. Several copies of the
