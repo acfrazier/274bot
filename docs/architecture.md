@@ -188,6 +188,14 @@ owners.
 | `essence.rs` | essence-mine return latch | session-gated return hop |
 | `grid.rs` | walkability grids | step-grid surface |
 | `manifest.rs` | bound pack manifest | bake identity checks |
+| `map.rs` | bounded map-data boundary | errors, capped records/text and header-first checks; no UI or game actions |
+| `map/identity.rs` | map identity byte layouts | independent image/catalogue keys; exact encoder/dependency policy |
+| `map/poi.rs` | source-tagged discovery evidence | classifier, physical placements and separate nav-bound stands; not account eligibility |
+| `map/spatial.rs` | map geometry and selection | north-up transforms, 24-slot LOD selection, radius-16 optional snap |
+| `map/formats.rs` | checked map payload codecs | client catalogue, image manifest and data-only `274P`/1 navpois |
+| `map/cache.rs` | publication readers and checkpoints | typed partial/ready entries; bounded reads and requested-payload verification |
+| `map/records.rs` | offset-only maps.bin access | header index plus one reusable record buffer, not an archive/world copy |
+| `map/tests.rs` | map contract boundaries | identity, malformed data, bridge planes, publication and spatial behavior |
 | `named_banks.rs` | selected-world bank stand resolution | captured account eligibility stays with the caller, no `script` dep |
 | `pack.rs` | pack wire codec and bake hub | pack encode and decode, stable exports |
 | `pack/config_parse.rs` | pack config parsers | content config text |
@@ -218,6 +226,40 @@ owners.
 | `bin/cache-content-id.rs` | content identity export | read-only identity |
 | `required-content-274.tsv`, `required-content-289.tsv` | canonical content inventory | build-checked data, not code |
 | `arrival_tests.rs`, `bake_tests.rs`, `bank_fetch_tests.rs`, `bundle_tests.rs`, `camera_tests.rs`, `canlight_tests.rs`, `collision_tests.rs`, `essence_tests.rs`, `lib_tests.rs`, `manifest_tests.rs`, `named_banks_tests.rs`, `pack_tests.rs`, `paint_tests.rs`, `router_tests.rs`, `traveller_tests.rs`, `walk_destinations_tests.rs`, `world_tests.rs`, `world_state_tests.rs`, `bin/nav-pack/nav_pack_tests.rs`, `transport_tests.rs` | test bodies | grouped, logical `<owner>::tests` |
+
+#### Native map data boundary
+
+The public `nav::map` modules define the data/spatial contract independently of
+the panel, TUI and worker lifecycle. `SourceSpace::ClientVisual` alone uses
+`collision::game_plane`; collision and can-light stamping use that same helper.
+Server NPC spawns and already-game-plane coordinates are never shifted.
+The conservative classifier preserves one-based operation slots and distinguishes
+bank candidates/map symbols from service evidence. It does not change the frozen
+catalog-facing bank roster or execute an operation.
+
+Image/catalogue schema 1 identities use domain-separated SHA-256 binary preimages
+(documented in `map/identity.rs`), with decoded client identity rather than
+transfer CRCs. Image policy includes exact encoder/compression-library versions.
+Nav/service changes affect the merged catalogue key, not terrain identity.
+`274bot.navpois` uses a 77-byte `274P`/1 header (length, record count, identity
+binding, payload hash) followed by bounded typed JSON. Its whole-file digest is
+supplied by the nav resource owner. This codec does not itself add supplement
+generation, packaging or bank-service static analysis.
+
+Disk consumers use `ClientPois::decode`, `ImageManifest::decode`,
+`ServicePois::decode_navpois`, `ReadyCatalogue::open` and `ReadyImages::open`,
+not unchecked serde construction. JSON is capped at 1 MiB; lists/text are bounded,
+keys sorted and unique, and filenames derived from typed tile keys. Image headers
+are fixed to 256-pixel interiors with one-pixel gutters, RGBA8 noninterlaced PNG.
+`TileReceipt::verify_png` verifies the receipt and IHDR before pixel allocation;
+the eventual PNG decoder still owns full chunk/CRC validation.
+
+Only `PartialEntry` reads `.<key>.partial` checkpoints. Ready readers require a
+canonical complete directory and validated manifest; ordinary image open does
+not hash/decode the pyramid. Resume verifies completed units and their exact
+policy identity. The cache-job owner still owns the prepared-cache `Arc`, locks,
+atomic publication, cancellation and quotas. Renderer/UI integration is separate.
+
 
 ### script
 

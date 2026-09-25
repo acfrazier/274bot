@@ -22,6 +22,19 @@ const SQUARE: usize = 64;
 /// client's `collision[4]`.
 const LEVELS: usize = 4;
 
+/// Convert a raw visual MAP/LOC plane to the client's collision/game plane.
+/// `link_below` is bit 0x2 of **plane 1** at this x/z, regardless of the
+/// source plane. A shifted plane zero has no game-plane placement.
+/// Already-game-plane coordinates (NPC spawns, routes, live tiles) must not
+/// call this helper. Invalid raw planes are absent, not clamped.
+pub fn game_plane(raw_plane: i32, link_below: bool) -> Option<i32> {
+    if !(0..LEVELS as i32).contains(&raw_plane) {
+        return None;
+    }
+    let plane = raw_plane - i32::from(link_below);
+    (plane >= 0).then_some(plane)
+}
+
 /// Flags that make a tile unwalkable: any wall direction, a scenery
 /// footprint, or MAP-blocked ground.
 const WALK_BLOCK: u32 = CollisionFlag::WALK_BLOCK_FLAGS as u32
@@ -504,12 +517,7 @@ fn stamp_square(
         }
         // Client `finishBuild` (TS 76-90): a BLOCK tile blocks its
         // LINK_BELOW-corrected plane; `true_level < 0` is never stamped.
-        let true_level = if link_below.contains(&(x, z)) {
-            level - 1
-        } else {
-            level
-        };
-        if true_level >= 0 {
+        if let Some(true_level) = game_plane(level, link_below.contains(&(x, z))) {
             set_at(
                 flags,
                 width,
@@ -526,14 +534,9 @@ fn stamp_square(
         // Client `loadLocations` (ClientBuild.ts): a loc whose tile has
         // LINK_BELOW on the level-1 map flags is placed on `level - 1`;
         // `level - 1 < 0` drops the loc entirely (no collision plane).
-        let true_level = if link_below.contains(&(loc.x, loc.z)) {
-            loc.level - 1
-        } else {
-            loc.level
-        };
-        if true_level < 0 {
+        let Some(true_level) = game_plane(loc.level, link_below.contains(&(loc.x, loc.z))) else {
             continue;
-        }
+        };
         // Local (origin-relative) tile coords; wall stamps may reach into
         // neighbouring squares of the same bbox.
         let (lx, lz) = (

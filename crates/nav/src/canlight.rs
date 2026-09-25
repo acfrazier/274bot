@@ -18,7 +18,7 @@ use api::snapshot::WorldTile;
 use client::dash3d::{CollisionFlag, LocAngle};
 use sha2::{Digest, Sha256};
 
-use crate::collision::WorldCollision;
+use crate::collision::{game_plane, WorldCollision};
 use crate::pack::{parse_loc_fields, parse_map_line, section, PackError};
 
 /// Manual policy identity. Bump when the static mask rules change in a way
@@ -402,14 +402,9 @@ fn stamp_square_active_locs(
         .collect();
     let plane = collision.width * collision.height;
     for loc in &locs {
-        let true_level = if link_below.contains(&(loc.x, loc.z)) {
-            loc.level - 1
-        } else {
-            loc.level
-        };
-        if !(0..LEVELS).contains(&true_level) {
+        let Some(true_level) = game_plane(loc.level, link_below.contains(&(loc.x, loc.z))) else {
             continue;
-        }
+        };
         let origin_x = square_x * SQUARE + loc.x as i32;
         let origin_z = square_z * SQUARE + loc.z as i32;
         let def = loc_defs.loc(loc.loc_id);

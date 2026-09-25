@@ -5,6 +5,15 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
 
 ## [0.1.9] — 2026-09-24
 
+### Navigation
+
+- Added shared native-map data contracts: independently keyed image/POI caches,
+  checked manifests and data-only service records, resumable partial-entry
+  validation, bounded map-record reads and 24-texture LOD selection. Raw visual
+  bridge-plane conversion now shares collision's implementation; server NPC
+  coordinates are not shifted. This does not yet replace either WalkTo UI or
+  change frozen catalog-facing bank selection.
+
 ### Rendering and client
 
 - Logged-out title-screen brazier flames animate again on CPU and GPU. Full-rate
