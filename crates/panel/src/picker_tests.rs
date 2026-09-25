@@ -16,6 +16,7 @@ use super::{
 };
 use crate::nav_settings::NavSettings;
 use crate::session::Session;
+use crate::test_support::TestDir;
 use dear_imgui_rs::WindowFlags;
 use nav::router::{Leg, Route};
 use std::sync::Mutex as StdMutex;
@@ -219,7 +220,7 @@ fn walkto_footer_adds_teleport_on_local_engine() {
 
 #[test]
 fn picker_map_window_builds_headless() {
-    let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
+    let _guard = crate::test_support::imgui_context_guard();
     let mut ctx = dear_imgui_rs::Context::create();
     ctx.prepare_frame(
         dear_imgui_rs::FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0).renderer_has_textures(),
@@ -256,7 +257,7 @@ fn picker_click_frame(
 
 #[test]
 fn picker_click_selects_a_walkable_tile() {
-    let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
+    let _guard = crate::test_support::imgui_context_guard();
     super::note_closed();
     let mut ctx = dear_imgui_rs::Context::create();
     let world = open_world(3, 3);
@@ -423,7 +424,7 @@ fn pack_map_flood_marks_two_components() {
 
 #[test]
 fn pack_map_marks_walkable_unreached_puddle() {
-    let _guard = REACH_TEST_LOCK.lock().unwrap();
+    let _guard = crate::test_support::lock_unpoisoned(&REACH_TEST_LOCK);
     set_reach_binding(
         None,
         WorldTile {
@@ -593,10 +594,8 @@ fn pack_map_flood_report_sizes_from_cached_sets() {
 
 #[test]
 fn sidecar_file_roundtrips_and_rejects_garbage() {
-    let path = std::env::temp_dir().join(format!(
-        "274bot-panel-sidecar-{}.navflags",
-        std::process::id()
-    ));
+    let dir = TestDir::new("sidecar");
+    let path = dir.join("flags.navflags");
     let flags = vec![
         CollisionFlag::W_N as u32 | CollisionFlag::WR_GRND as u32,
         CollisionFlag::W_E as u32,
@@ -701,11 +700,9 @@ fn picker_pack_uses_injected_arc_not_a_second_decode() {
 
 #[test]
 fn flags_sidecar_requires_exact_identity_and_drops_on_toggle_off() {
-    let _guard = FLAGS_TEST_LOCK.lock().unwrap();
-    let path = std::env::temp_dir().join(format!(
-        "274bot-panel-flags-identity-{}.navflags",
-        std::process::id()
-    ));
+    let _guard = crate::test_support::lock_unpoisoned(&FLAGS_TEST_LOCK);
+    let dir = TestDir::new("flags-identity");
+    let path = dir.join("flags.navflags");
     let origin = WorldTile {
         x: 3200,
         z: 3200,
@@ -748,16 +745,13 @@ fn flags_sidecar_requires_exact_identity_and_drops_on_toggle_off() {
     drop_flags_sidecar();
     assert_eq!(flags_sidecar_state(), FlagsSidecarState::Unloaded);
     assert!(flags_sidecar_for(origin, 1, 1).is_none());
-    let _ = std::fs::remove_file(path);
 }
 
 #[test]
 fn bundled_flags_decode_without_content_hash_and_reuse_sidecar() {
-    let _guard = FLAGS_TEST_LOCK.lock().unwrap();
-    let path = std::env::temp_dir().join(format!(
-        "274bot-panel-flags-bundled-{}.navflags",
-        std::process::id()
-    ));
+    let _guard = crate::test_support::lock_unpoisoned(&FLAGS_TEST_LOCK);
+    let dir = TestDir::new("flags-bundled");
+    let path = dir.join("flags.navflags");
     let origin = WorldTile {
         x: 3200,
         z: 3200,
@@ -821,13 +815,11 @@ fn bundled_flags_decode_without_content_hash_and_reuse_sidecar() {
         FlagsSidecarState::Refused("flags sidecar is unreadable")
     );
     assert_eq!(flags_content_hash_count(), 2);
-
-    let _ = std::fs::remove_file(path);
 }
 
 #[test]
 fn bundled_reach_is_shared_without_flood_on_first_or_second_paint() {
-    let _guard = REACH_TEST_LOCK.lock().unwrap();
+    let _guard = crate::test_support::lock_unpoisoned(&REACH_TEST_LOCK);
     let mut world = bake_world(3, 3, &[]);
     world.collision.origin.x = 7777;
     let origin = world.collision.origin;
@@ -857,7 +849,7 @@ fn bundled_reach_is_shared_without_flood_on_first_or_second_paint() {
 
 #[test]
 fn external_reach_floods_once_and_reuses_the_arc() {
-    let _guard = REACH_TEST_LOCK.lock().unwrap();
+    let _guard = crate::test_support::lock_unpoisoned(&REACH_TEST_LOCK);
     set_reach_binding(
         None,
         WorldTile {

@@ -33,6 +33,9 @@ pub use theme::*;
 mod srgb_present;
 
 #[cfg(test)]
+pub(crate) mod test_support;
+
+#[cfg(test)]
 /// Serializes tests that hold a Dear ImGui context: only one can be
 /// active at a time (`Context::create` panics on `ContextAlreadyActive`),
 /// so parallel tests that each create one race.

@@ -8,6 +8,7 @@ use super::{
     ProfilePreparationCompletion, Session, SlotIo, WalkArm,
 };
 use crate::focus::draw_for_slot;
+use crate::test_support::{TestDir, TestPath};
 use api::snapshot::{GameSnapshot, WorldTile};
 use client::client::{Client, ClientConfig};
 use client::config::if_type::{ComponentType, IfType, IfTypeMut};
@@ -132,15 +133,10 @@ fn catalog_core_initial_login_then_preparation_then_start_uses_current_session()
         .contains("no post-Start observations"));
 }
 
-fn checked_profile_fixture(revision: u16) -> (PathBuf, PathBuf, PathBuf) {
+fn checked_profile_fixture(revision: u16) -> (TestDir, PathBuf, PathBuf) {
     let fixture =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../host-play/tests/fixtures/profile");
-    let root = std::env::temp_dir().join(format!(
-        "274bot-panel-session-profile-{revision}-{}-{:?}",
-        std::process::id(),
-        std::thread::current().id()
-    ));
-    let _ = std::fs::remove_dir_all(&root);
+    let root = TestDir::new(&format!("session-profile-{revision}"));
     let cache = root.join("cache");
     std::fs::create_dir_all(&cache).unwrap();
     for jag in [
@@ -308,7 +304,7 @@ fn serve_fixture_crc(packs: Vec<(String, Vec<u8>)>) -> u16 {
     port
 }
 
-fn runtime_profile_fixture(revision: u16) -> (PathBuf, PathBuf, PathBuf, PathBuf, u16) {
+fn runtime_profile_fixture(revision: u16) -> (TestDir, PathBuf, PathBuf, PathBuf, u16) {
     let (root, cache, _) = checked_profile_fixture(revision);
     let packs = identity_packs();
     for (name, bytes) in &packs {
@@ -349,8 +345,8 @@ fn explicit_profile_wins_saved_revision_and_bound_session_refuses_changes() {
         })
         .unwrap();
     let env = ProfileEnvironment {
-        home: Some(root.clone()),
-        working_dir: Some(root.clone()),
+        home: Some(root.to_path_buf()),
+        working_dir: Some(root.to_path_buf()),
         rsa_modulus: Some(client::JAVA_LOGIN_RSAN.into()),
         rsa_exponent: Some(client::JAVA_LOGIN_RSAE.into()),
         ..ProfileEnvironment::default()
@@ -360,7 +356,6 @@ fn explicit_profile_wins_saved_revision_and_bound_session_refuses_changes() {
     assert_eq!(session.catalog_root().unwrap(), None);
     assert!(session.set_server_revision(289).is_err());
     assert!(session.bind_profile_with_env(&env).is_err());
-    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
@@ -378,8 +373,8 @@ fn stale_profile_preparation_is_dropped_without_partial_session_state() {
         })
         .unwrap();
     session.profile_environment = Some(ProfileEnvironment {
-        home: Some(root.clone()),
-        working_dir: Some(root.clone()),
+        home: Some(root.to_path_buf()),
+        working_dir: Some(root.to_path_buf()),
         rsa_modulus: Some(client::JAVA_LOGIN_RSAN.into()),
         rsa_exponent: Some(client::JAVA_LOGIN_RSAE.into()),
         ..ProfileEnvironment::default()
@@ -402,7 +397,6 @@ fn stale_profile_preparation_is_dropped_without_partial_session_state() {
     assert!(session.play.is_none());
     assert!(session.vault.is_none());
     assert!(session.slots.is_empty());
-    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
@@ -441,8 +435,8 @@ fn validated_profile_unlock_uses_the_ticket_without_rebinding() {
         })
         .unwrap();
     session.profile_environment = Some(ProfileEnvironment {
-        home: Some(root.clone()),
-        working_dir: Some(root.clone()),
+        home: Some(root.to_path_buf()),
+        working_dir: Some(root.to_path_buf()),
         rsa_modulus: Some(client::JAVA_LOGIN_RSAN.into()),
         rsa_exponent: Some(client::JAVA_LOGIN_RSAE.into()),
         ..ProfileEnvironment::default()
@@ -463,7 +457,6 @@ fn validated_profile_unlock_uses_the_ticket_without_rebinding() {
     assert!(session.play.is_some());
     assert!(session.vault.is_some());
     assert!(session.slots.is_empty());
-    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
@@ -476,23 +469,19 @@ fn prod_default_ignores_the_saved_local_revision() {
             ..ProfileOptions::default()
         })
         .unwrap();
-    let home = std::env::temp_dir().join(format!("274bot-panel-public-{}", std::process::id()));
+    let home = TestDir::new("public-profile");
     session.profile_environment = Some(ProfileEnvironment {
-        home: Some(home.clone()),
+        home: Some(home.to_path_buf()),
         ..ProfileEnvironment::default()
     });
     let selection = session.resolve_profile().unwrap();
     assert_eq!(selection.revision(), client::io::ClientRevision::R289);
     assert_eq!(selection.target(), client::BotTarget::Prod);
-    std::fs::remove_dir_all(home).unwrap();
 }
 
 #[test]
 fn invalid_profile_refuses_vault_reset_without_deleting_explicit_path() {
-    let root =
-        std::env::temp_dir().join(format!("274bot-panel-invalid-reset-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
-    std::fs::create_dir_all(&root).unwrap();
+    let root = TestDir::new("invalid-reset");
     let intended = root.join("intended.vault");
     std::fs::write(&intended, b"do not delete").unwrap();
 
@@ -510,7 +499,6 @@ fn invalid_profile_refuses_vault_reset_without_deleting_explicit_path() {
         .error
         .as_deref()
         .is_some_and(|error| error.contains("unsupported revision")));
-    std::fs::remove_dir_all(root).unwrap();
 }
 
 /// `register_name` is the ScriptRegistry name; `folder` is the class
@@ -609,8 +597,8 @@ fn revision_and_binding_allow_already_loaded_scripts_and_source_edits() {
     )
     .unwrap();
     let env = ProfileEnvironment {
-        home: Some(root.clone()),
-        working_dir: Some(root.clone()),
+        home: Some(root.to_path_buf()),
+        working_dir: Some(root.to_path_buf()),
         rsa_modulus: Some(client::JAVA_LOGIN_RSAN.into()),
         rsa_exponent: Some(client::JAVA_LOGIN_RSAE.into()),
         ..ProfileEnvironment::default()
@@ -628,7 +616,6 @@ fn revision_and_binding_allow_already_loaded_scripts_and_source_edits() {
         .js
         .get(script::ScriptSource::Catalog, "Another")
         .is_some());
-    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
@@ -1933,15 +1920,8 @@ fn sidecar_cadence_sync_raises_members_not_focus() {
     assert!(!b_in.full_rate());
 }
 
-fn tmp_vault(name: &str) -> std::path::PathBuf {
-    let dir =
-        std::env::temp_dir().join(format!("274bot-panel-session-test-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    let p = dir.join(name);
-    if p.exists() {
-        std::fs::remove_file(&p).unwrap();
-    }
-    p
+fn tmp_vault(name: &str) -> TestPath {
+    TestPath::new(name, "vault.vault")
 }
 
 fn profile(username: &str, password: &str, uid: i32) -> Profile {
@@ -2343,14 +2323,7 @@ fn toll_world() -> NavWorld {
 /// is a unique scratch dir so a stray real cache (e.g. jags under
 /// `/tmp`) cannot seed other ifaces.
 fn coins_snapshot_state() -> WorldState {
-    let cache_dir = std::env::temp_dir().join(format!(
-        "274bot-panel-toll-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
+    let cache_dir = TestDir::new("toll-cache");
     let mut c = Client::new(ClientConfig {
         host: "127.0.0.1".into(),
         port: 43594,
@@ -4253,12 +4226,7 @@ fn save_credentials_rename_editing_profile_replaces_old_key() {
 fn save_credentials_upsert_error_surfaces_on_session_error() {
     use std::os::unix::fs::PermissionsExt;
 
-    let dir = std::env::temp_dir().join(format!("274bot-panel-save-err-{}", std::process::id()));
-    if dir.exists() {
-        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
-        std::fs::remove_dir_all(&dir).unwrap();
-    }
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = TestDir::new("save-err");
     let path = dir.join("vault.vault");
     let mut s = Session::new();
     s.vault = Some(Vault::create(&path, "bot").unwrap());
@@ -4274,7 +4242,6 @@ fn save_credentials_upsert_error_surfaces_on_session_error() {
         s.error
     );
     std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
-    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 #[test]
@@ -5068,9 +5035,7 @@ fn script_start_selected_unported_id_reports_not_ported() {
 
 #[test]
 fn load_js_registers_card_selects_and_persists_to_the_session_store() {
-    let dir =
-        std::env::temp_dir().join(format!("274bot-panel-session-load-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = TestDir::new("session-load");
     let store = dir.join("js-scripts.json");
     let path = dir.join("tickbot.js");
     std::fs::write(
@@ -5126,8 +5091,7 @@ fn script_start_selected_refuses_without_selection_or_play() {
 
 #[test]
 fn script_start_selected_refuses_unloadable_import() {
-    let dir = std::env::temp_dir().join(format!("274bot-panel-unloadable-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = TestDir::new("unloadable");
     let path = dir.join("ghost.js");
     std::fs::write(
             &path,

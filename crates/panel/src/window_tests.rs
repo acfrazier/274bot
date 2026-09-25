@@ -1,5 +1,4 @@
 use super::*;
-use crate::IMGUI_CTX_TEST_GUARD;
 
 /// Headless wgpu device/queue for the renderer-backed test. `None` when
 /// no adapter exists (headless CI) — the texture test then skips.
@@ -31,7 +30,7 @@ fn gpu_texture_register_update_unregister_delegates_to_renderer_store() {
     let Some((device, queue)) = headless_device() else {
         return; // no adapter: nothing to delegate to
     };
-    let _guard = IMGUI_CTX_TEST_GUARD.lock().unwrap();
+    let _guard = crate::test_support::imgui_context_guard();
     let mut context = imgui::Context::create();
     let mut renderer = imgui_wgpu::WgpuRenderer::new(
         imgui_wgpu::WgpuInitInfo::new(
@@ -438,7 +437,7 @@ fn occluded_acquisition_captures_composed_frame_without_present() {
     let Some((device, queue)) = headless_device() else {
         return; // no adapter: no GPU path to assert
     };
-    let _guard = IMGUI_CTX_TEST_GUARD.lock().unwrap();
+    let _guard = crate::test_support::imgui_context_guard();
     let format = wgpu::TextureFormat::Rgba8Unorm;
     let (mut context, mut renderer) = headless_capture_renderer(&device, &queue, format);
     let desc = test_surface_desc(format);
@@ -558,7 +557,7 @@ fn occluded_acquisition_without_promoted_wanted_records_no_gpu_work() {
     let Some((device, queue)) = headless_device() else {
         return;
     };
-    let _guard = IMGUI_CTX_TEST_GUARD.lock().unwrap();
+    let _guard = crate::test_support::imgui_context_guard();
     let format = wgpu::TextureFormat::Rgba8Unorm;
     let (mut context, mut renderer) = headless_capture_renderer(&device, &queue, format);
 
@@ -646,7 +645,7 @@ fn visible_acquisition_captures_composed_frame_and_writes_the_image() {
     let Some((device, queue)) = headless_device() else {
         return;
     };
-    let _guard = IMGUI_CTX_TEST_GUARD.lock().unwrap();
+    let _guard = crate::test_support::imgui_context_guard();
     let format = wgpu::TextureFormat::Rgba8Unorm;
     let (mut context, mut renderer) = headless_capture_renderer(&device, &queue, format);
     let desc = test_surface_desc(format);
@@ -755,7 +754,7 @@ fn visible_acquisition_captures_composed_frame_and_writes_the_image() {
 /// remove). Without them the panel would render `?` again.
 #[test]
 fn glyph_font_merges_status_and_remove_codepoints() {
-    let _guard = IMGUI_CTX_TEST_GUARD.lock().unwrap();
+    let _guard = crate::test_support::imgui_context_guard();
     let mut ctx = imgui::Context::create();
     let (quincunx, ballot_x, folds, fa) = add_glyph_font(&mut ctx);
     assert!(

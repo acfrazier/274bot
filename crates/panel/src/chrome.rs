@@ -354,7 +354,7 @@ mod tests {
 
     #[test]
     fn apply_amber_replaces_imgui_blue_title() {
-        let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
+        let _guard = crate::test_support::imgui_context_guard();
         let mut ctx = dear_imgui_rs::Context::create();
         apply_amber(ctx.style_mut(), &crate::theme::ChromeColors::default());
         let title = ctx.style().color(dear_imgui_rs::StyleColor::TitleBgActive);

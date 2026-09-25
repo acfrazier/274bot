@@ -7,6 +7,7 @@ use super::{
     GLYPH_DESKTOP, GLYPH_DOCUMENTS, GLYPH_DOWNLOADS, GLYPH_FILE, GLYPH_FOLDER, GLYPH_HOME,
     UNCATEGORIZED,
 };
+use crate::test_support::TestDir;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, UNIX_EPOCH};
 
@@ -50,14 +51,13 @@ fn load_browse_up_navigates_to_parent() {
 
 #[test]
 fn rs2b0t_root_has_index_checks_catalog_file() {
-    let dir = std::env::temp_dir().join(format!("274bot-panel-index-check-{}", std::process::id()));
+    let dir = TestDir::new("index-check");
     let root = dir.join("rs2b0t");
     let scripts = root.join("src/bot/scripts");
     std::fs::create_dir_all(&scripts).unwrap();
     assert!(!rs2b0t_root_has_index(&root));
     std::fs::write(scripts.join("index.ts"), "// empty").unwrap();
     assert!(rs2b0t_root_has_index(&root));
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -88,15 +88,14 @@ fn empty_category_is_uncategorized() {
 
 #[test]
 fn sidebar_skips_missing_dirs() {
-    let home = std::env::temp_dir().join(format!("274bot-sidebar-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&home);
+    let home = TestDir::new("sidebar");
     std::fs::create_dir_all(home.join("Desktop")).unwrap();
     std::fs::create_dir_all(home.join("Downloads")).unwrap();
     let places = sidebar_places(&home);
     let labels: Vec<_> = places.iter().map(|p| p.label).collect();
     assert_eq!(labels, vec!["Home", "Desktop", "Downloads"]);
     assert!(!labels.contains(&"Documents"));
-    let _ = std::fs::remove_dir_all(&home);
+    drop(home);
 }
 
 #[test]
@@ -121,8 +120,7 @@ fn search_filters_case_insensitive() {
 
 #[test]
 fn dialog_rows_file_vs_folder_and_search() {
-    let dir = std::env::temp_dir().join(format!("274bot-dialog-rows-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
+    let dir = TestDir::new("dialog-rows");
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(dir.join("bot.ts"), "x").unwrap();
     std::fs::write(dir.join("readme.md"), "x").unwrap();
@@ -135,7 +133,6 @@ fn dialog_rows_file_vs_folder_and_search() {
     let filtered = dialog_rows(&dir, DialogMode::File, "BOT");
     assert_eq!(filtered.len(), 1);
     assert_eq!(filtered[0].name, "bot.ts");
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]

@@ -1,6 +1,6 @@
 use super::*;
+use crate::test_support::TestDir;
 use std::fs;
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 use vault::{Profile, ProfileSettings, Vault};
 
@@ -28,20 +28,11 @@ fn wait_state(s: &Session, name: &str, want: script::RunState) {
     assert_eq!(play.script_state(name), want, "{name}");
 }
 
-fn tmp(name: &str) -> std::path::PathBuf {
-    static N: AtomicU32 = AtomicU32::new(0);
-    let dir = std::env::temp_dir().join(format!(
-        "274bot-p2-{}-{}-{}",
-        std::process::id(),
-        N.fetch_add(1, Ordering::Relaxed),
-        name
-    ));
-    let _ = fs::remove_dir_all(&dir);
-    fs::create_dir_all(&dir).unwrap();
-    dir
+fn tmp(name: &str) -> TestDir {
+    TestDir::new(&format!("profile-script-{name}"))
 }
 
-fn session_with_profiles(names: &[&str]) -> (Session, std::path::PathBuf) {
+fn session_with_profiles(names: &[&str]) -> (Session, TestDir) {
     script::IsolatedEnv::ensure_thread();
     let dir = tmp("vault");
     let path = dir.join("v.vault");
@@ -225,7 +216,7 @@ fn empty_play() -> host_play::Play {
     )
 }
 
-fn session_with_play(names: &[&str]) -> (Session, std::path::PathBuf) {
+fn session_with_play(names: &[&str]) -> (Session, TestDir) {
     let (mut s, dir) = session_with_profiles(names);
     s.js = script::JsLibrary::with_cache(dir.join("js-scripts.json"), dir.join("js-cache"));
     let mut play = empty_play();

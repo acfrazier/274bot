@@ -17,6 +17,7 @@ use super::{
     StartupPreparation, BASE_WINDOW_H, BASE_WINDOW_W, LIVE_USAGE, NAV_FULL_SHOT_DRAIN,
     SMOKE_DEADLINE, SMOKE_SETTLE,
 };
+use crate::test_support::TestDir;
 use crate::theme::{
     applet_offset, fit_applet, game_window_title, native_applet, panel_split_ratio, PANEL_WIDTH,
 };
@@ -55,15 +56,10 @@ fn headed_core_gate_rejects_scenario_only_pass_and_times_out() {
     ));
 }
 
-fn checked_fixture(revision: u16) -> (PathBuf, PathBuf, PathBuf) {
+fn checked_fixture(revision: u16) -> (TestDir, PathBuf, PathBuf) {
     let fixture =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../host-play/tests/fixtures/profile");
-    let root = std::env::temp_dir().join(format!(
-        "274bot-panel-profile-{revision}-{}-{:?}",
-        std::process::id(),
-        std::thread::current().id()
-    ));
-    let _ = std::fs::remove_dir_all(&root);
+    let root = TestDir::new(&format!("profile-{revision}"));
     let cache = root.join("cache");
     std::fs::create_dir_all(&cache).unwrap();
     for jag in [
@@ -231,7 +227,7 @@ fn serve_fixture_crc(packs: Vec<(String, Vec<u8>)>) -> u16 {
     port
 }
 
-fn runtime_checked_fixture(revision: u16) -> (PathBuf, PathBuf, PathBuf, PathBuf, u16) {
+fn runtime_checked_fixture(revision: u16) -> (TestDir, PathBuf, PathBuf, PathBuf, u16) {
     let (root, cache, _) = checked_fixture(revision);
     let packs = identity_packs();
     for (name, bytes) in &packs {
@@ -268,8 +264,8 @@ fn frontend_parser_prepares_real_clients_for_both_fixture_manifests() {
         )
         .expect("frontend and shared flags parse in either order");
         let env = ProfileEnvironment {
-            home: Some(root.clone()),
-            working_dir: Some(root.clone()),
+            home: Some(root.to_path_buf()),
+            working_dir: Some(root.to_path_buf()),
             rsa_modulus: Some(client::JAVA_LOGIN_RSAN.into()),
             rsa_exponent: Some(client::JAVA_LOGIN_RSAE.into()),
             ..ProfileEnvironment::default()
@@ -280,7 +276,6 @@ fn frontend_parser_prepares_real_clients_for_both_fixture_manifests() {
         let template = SharedClientTemplate::load(profile).unwrap();
         let client = template.prepare_client(274_000_001, true).unwrap();
         drop(client);
-        std::fs::remove_dir_all(root).unwrap();
     }
 }
 
@@ -329,7 +324,7 @@ fn boot_is_deferred_and_maps_live_smoke_and_vault_pass() {
     assert!(boot_failure_is_fatal(&Boot::Live(LiveBoot::Smoke)));
 }
 
-fn prepared_startup(boot: Boot) -> (PanelState, StartupPreparation, PathBuf) {
+fn prepared_startup(boot: Boot) -> (PanelState, StartupPreparation, TestDir) {
     let (root, cache, manifest, unpack, port) = runtime_checked_fixture(274);
     let options = host_play::ProfileOptions {
         profile: Some("local-274".into()),
@@ -341,8 +336,8 @@ fn prepared_startup(boot: Boot) -> (PanelState, StartupPreparation, PathBuf) {
         ..host_play::ProfileOptions::default()
     };
     let env = ProfileEnvironment {
-        home: Some(root.clone()),
-        working_dir: Some(root.clone()),
+        home: Some(root.to_path_buf()),
+        working_dir: Some(root.to_path_buf()),
         rsa_modulus: Some(client::JAVA_LOGIN_RSAN.into()),
         rsa_exponent: Some(client::JAVA_LOGIN_RSAE.into()),
         ..ProfileEnvironment::default()
@@ -377,7 +372,7 @@ fn prepared_startup(boot: Boot) -> (PanelState, StartupPreparation, PathBuf) {
 
 #[test]
 fn normal_unlock_waits_for_worker_validation_then_uses_prepared_profile() {
-    let (mut state, mut startup, root) = prepared_startup(Boot::Unlock {
+    let (mut state, mut startup, _root) = prepared_startup(Boot::Unlock {
         pass: "prepared-pass".into(),
     });
     drive_startup(&mut state, &mut startup);
@@ -396,12 +391,11 @@ fn normal_unlock_waits_for_worker_validation_then_uses_prepared_profile() {
     assert!(state.session.play.is_some());
     assert!(state.session.slots.is_empty());
     assert!(startup_progress(&startup, state.session.profile_generation()).is_none());
-    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
 fn live_boot_stays_deferred_while_final_validation_is_in_flight() {
-    let (mut state, mut startup, root) = prepared_startup(Boot::Live(LiveBoot::Smoke));
+    let (mut state, mut startup, _root) = prepared_startup(Boot::Live(LiveBoot::Smoke));
     drive_startup(&mut state, &mut startup);
     assert!(state.session.profile_bound());
     let validation = startup.validate.take().expect("final validation worker");
@@ -415,7 +409,6 @@ fn live_boot_stays_deferred_while_final_validation_is_in_flight() {
         .unwrap()
         .is_ok());
     assert!(matches!(validation.boot, Boot::Live(LiveBoot::Smoke)));
-    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
@@ -464,7 +457,7 @@ fn startup_progress_is_latest_only_and_generation_scoped() {
 fn preparation_failure_clears_progress_with_partial_session_state_absent() {
     use host_play::progress::{ProfileProgress, ProfileProgressStage};
 
-    let (root, cache, manifest) = checked_fixture(274);
+    let (_root, cache, manifest) = checked_fixture(274);
     let mut state = PanelState::default();
     state
         .session
@@ -510,7 +503,6 @@ fn preparation_failure_clears_progress_with_partial_session_state_absent() {
         state.session.error.as_deref(),
         Some("fixture preparation failed")
     );
-    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
@@ -593,18 +585,8 @@ fn edit_parameters_enabled_for_operator_bag() {
 #[test]
 fn loadout_combo_lists_store_names() {
     use script::{resolve_setting_options, Loadout, LoadoutsStore, SettingDef};
-    use std::sync::atomic::{AtomicUsize, Ordering};
 
-    static COUNTER: AtomicUsize = AtomicUsize::new(0);
-    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-    let dir = std::env::temp_dir().join(format!(
-        "274bot-panel-loadout-combo-{n}-{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = TestDir::new("loadout-combo");
     let mut store = LoadoutsStore::at(dir.join("loadouts.json"));
     store.upsert(Loadout::new("guard"));
     store.upsert(Loadout::new("stall"));
@@ -767,7 +749,7 @@ fn dockspace_does_not_lock_undock_on_every_node() {
 
 #[test]
 fn apply_ui_scale_scales_padding_for_retina() {
-    let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
+    let _guard = crate::test_support::imgui_context_guard();
     let mut ctx = dear_imgui_rs::Context::create();
     let before = ctx.style().window_padding();
     apply_ui_scale(ctx.style_mut(), 2.0);
@@ -2781,16 +2763,10 @@ fn missing_external_terminal_shot_fails_after_drain() {
 
 #[test]
 fn pump_shots_marks_completion_only_after_the_png_and_snapshot_pair_write() {
-    let dir = std::env::temp_dir().join(format!(
-        "274bot-panel-shot-pump-{}-{:?}",
-        std::process::id(),
-        std::thread::current().id()
-    ));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = TestDir::new("shot-pump");
 
     let mut state = PanelState {
-        shot_dir: Some(dir.clone()),
+        shot_dir: Some(dir.to_path_buf()),
         ..PanelState::default()
     };
     state
@@ -2827,7 +2803,6 @@ fn pump_shots_marks_completion_only_after_the_png_and_snapshot_pair_write() {
         .collect::<Vec<_>>();
     extensions.sort();
     assert_eq!(extensions, ["json", "png"]);
-    std::fs::remove_dir_all(dir).unwrap();
 }
 
 fn smoke_at(started: Instant) -> LiveSmoke {
@@ -3174,7 +3149,7 @@ fn parameters_and_script_prefs_share_show_parameters_rail() {
 /// (panel-play SIGABRT on Browse, window `##scard-File-trade_bot`).
 #[test]
 fn browse_file_card_without_desc_does_not_assert_on_endchild() {
-    let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
+    let _guard = crate::test_support::imgui_context_guard();
     let iso = script::IsolatedEnv::enter("browse-scard-assert");
     let path = iso.dir.join("trade_bot.js");
     std::fs::write(

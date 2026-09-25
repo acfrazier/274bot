@@ -62,7 +62,6 @@ pub fn install_native_clipboard(context: &mut dear_imgui_rs::Context) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::IMGUI_CTX_TEST_GUARD;
     use dear_imgui_rs as imgui;
     use std::sync::{Arc, Mutex};
 
@@ -84,7 +83,7 @@ mod tests {
 
     #[test]
     fn fake_backend_roundtrip_via_imgui_clipboard_api() {
-        let _guard = IMGUI_CTX_TEST_GUARD.lock().unwrap();
+        let _guard = crate::test_support::imgui_context_guard();
         let mut ctx = imgui::Context::create();
         let store = Arc::new(Mutex::new(None));
         ctx.set_clipboard_backend(FakeClipboard {
@@ -99,7 +98,7 @@ mod tests {
 
     #[test]
     fn platform_io_callbacks_installed_after_set_clipboard_backend() {
-        let _guard = IMGUI_CTX_TEST_GUARD.lock().unwrap();
+        let _guard = crate::test_support::imgui_context_guard();
         let mut ctx = imgui::Context::create();
         let raw = ctx.as_raw();
 
@@ -190,7 +189,7 @@ mod tests {
     /// OS event delivery. Fixture text only; never logs contents.
     #[test]
     fn masked_inputtext_select_all_and_paste_via_shortcut_chords() {
-        let _guard = IMGUI_CTX_TEST_GUARD.lock().unwrap();
+        let _guard = crate::test_support::imgui_context_guard();
         let mut ctx = imgui::Context::create();
         let macos = ctx.io().config_macosx_behaviors();
 

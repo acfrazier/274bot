@@ -172,6 +172,7 @@ thread_local! {
 #[cfg(test)]
 mod tests {
     use super::{load, load_at, path, pick_focus, save, save_at, NavSettings, PanelUiState};
+    use crate::test_support::TestDir;
     use std::collections::HashMap;
 
     #[test]
@@ -204,9 +205,7 @@ mod tests {
         // (false) instead of failing deserialize and resetting the whole
         // `PanelUiState` (`load_at` falls back to `PanelUiState::default()`,
         // wiping focus / collapsed / colors).
-        let dir =
-            std::env::temp_dir().join(format!("274bot-panel-ui-old-nav-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = TestDir::new("ui-old-nav");
         let p = dir.join("panel-ui.json");
         std::fs::write(
             &p,
@@ -234,7 +233,6 @@ mod tests {
         )
         .unwrap();
         let back = load_at(&p);
-        let _ = std::fs::remove_dir_all(&dir);
         assert_eq!(
             back.last_focus.as_deref(),
             Some("alice"),
@@ -271,14 +269,8 @@ mod tests {
 
     #[test]
     fn load_save_roundtrip_last_focus() {
-        let dir = std::env::temp_dir().join(format!(
-            "274bot-panel-ui-roundtrip-{}-{}",
-            std::process::id(),
-            "rt"
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = TestDir::new("ui-roundtrip");
         let p = dir.join("panel-ui.json");
-        let _ = std::fs::remove_file(&p);
 
         let mut state = PanelUiState {
             last_focus: Some("bob".into()),
@@ -296,12 +288,8 @@ mod tests {
 
     #[test]
     fn load_missing_file_is_default() {
-        let p = std::env::temp_dir().join(format!(
-            "274bot-panel-ui-missing-{}-{}.json",
-            std::process::id(),
-            "x"
-        ));
-        let _ = std::fs::remove_file(&p);
+        let dir = TestDir::new("ui-missing");
+        let p = dir.join("panel-ui.json");
         let loaded = load_at(&p);
         assert!(loaded.last_focus.is_none());
         assert!(loaded.collapsed.is_empty());
@@ -330,9 +318,7 @@ mod tests {
 
     #[test]
     fn script_category_order_persist_roundtrip() {
-        let dir =
-            std::env::temp_dir().join(format!("274bot-panel-ui-cat-order-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = TestDir::new("ui-cat-order");
         let p = dir.join("panel-ui.json");
         let state = PanelUiState {
             script_category_order: vec!["Prayer".into(), "Combat".into(), "Skilling".into()],
@@ -344,14 +330,11 @@ mod tests {
             loaded.script_category_order,
             vec!["Prayer", "Combat", "Skilling"]
         );
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn script_catalog_last_dir_persist_roundtrip() {
-        let dir =
-            std::env::temp_dir().join(format!("274bot-panel-ui-cat-dir-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = TestDir::new("ui-cat-dir");
         let p = dir.join("panel-ui.json");
         let state = PanelUiState {
             script_catalog_last_dir: Some(std::path::PathBuf::from("/tmp/rs2b0t")),
@@ -368,7 +351,6 @@ mod tests {
             loaded.script_load_last_dir,
             Some(std::path::PathBuf::from("/tmp/scripts"))
         );
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -414,9 +396,7 @@ mod tests {
 
     #[test]
     fn capture_persist_roundtrip() {
-        let dir =
-            std::env::temp_dir().join(format!("274bot-panel-ui-capture-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = TestDir::new("ui-capture");
         let p = dir.join("panel-ui.json");
         let state = PanelUiState {
             capture: false,
@@ -424,7 +404,6 @@ mod tests {
         };
         save_at(&p, &state);
         assert!(!load_at(&p).capture);
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

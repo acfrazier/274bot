@@ -65,7 +65,7 @@ fn shifted_event_adapter_leaves_numpad_punctuation_to_backend() {
 
 #[test]
 fn shifted_event_reaches_capture_across_two_real_imgui_frames() {
-    let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
+    let _guard = crate::test_support::imgui_context_guard();
     discard_unconsumed_native_capture();
     let mut ctx = dear_imgui_rs::Context::create();
     let colon = WinitKey::Character(":".into());
@@ -117,7 +117,7 @@ fn shifted_event_reaches_capture_across_two_real_imgui_frames() {
 /// mutates the prefix. Capture must keep the produced character.
 #[test]
 fn native_colon_burst_survives_shift_release_before_imgui_frame() {
-    let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
+    let _guard = crate::test_support::imgui_context_guard();
     discard_unconsumed_native_capture();
     let mut ctx = dear_imgui_rs::Context::create();
     let colon = WinitKey::Character(":".into());
@@ -175,7 +175,7 @@ fn native_colon_burst_survives_shift_release_before_imgui_frame() {
 
 #[test]
 fn native_capture_release_keeps_press_character_after_shift_up() {
-    let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
+    let _guard = crate::test_support::imgui_context_guard();
     discard_unconsumed_native_capture();
     let mut ctx = dear_imgui_rs::Context::create();
     let colon = WinitKey::Character(":".into());
@@ -193,7 +193,7 @@ fn native_capture_release_keeps_press_character_after_shift_up() {
 
 #[test]
 fn native_capture_discard_does_not_replay_after_capture_off() {
-    let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
+    let _guard = crate::test_support::imgui_context_guard();
     discard_unconsumed_native_capture();
     let mut ctx = dear_imgui_rs::Context::create();
     let colon = WinitKey::Character(":".into());
@@ -241,7 +241,7 @@ fn down_up(ch: u8) -> [(bool, i32); 2] {
 /// then named-append streams.
 #[test]
 fn native_capture_same_frame_letter_space_letter_keeps_order() {
-    let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
+    let _guard = crate::test_support::imgui_context_guard();
     discard_unconsumed_native_capture();
     let mut ctx = dear_imgui_rs::Context::create();
     tap_character(ctx.io_mut(), "a");
@@ -263,7 +263,7 @@ fn native_capture_same_frame_letter_space_letter_keeps_order() {
 /// words when the whole burst arrives before the ImGui sample.
 #[test]
 fn native_give_bones_25_burst_keeps_spaces_in_order() {
-    let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
+    let _guard = crate::test_support::imgui_context_guard();
     discard_unconsumed_native_capture();
     let mut ctx = dear_imgui_rs::Context::create();
     let colon = WinitKey::Character(":".into());
@@ -307,7 +307,7 @@ fn native_give_bones_25_burst_keeps_spaces_in_order() {
 /// after printables when the events share a frame.
 #[test]
 fn native_capture_same_frame_backspace_and_enter_keep_order() {
-    let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
+    let _guard = crate::test_support::imgui_context_guard();
     discard_unconsumed_native_capture();
     let mut ctx = dear_imgui_rs::Context::create();
     tap_character(ctx.io_mut(), "a");
@@ -325,7 +325,7 @@ fn native_capture_same_frame_backspace_and_enter_keep_order() {
 
 #[test]
 fn native_capture_named_enter_uses_native_event_queue() {
-    let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
+    let _guard = crate::test_support::imgui_context_guard();
     discard_unconsumed_native_capture();
     let mut ctx = dear_imgui_rs::Context::create();
     let enter = WinitKey::Named(NamedKey::Enter);
@@ -337,7 +337,7 @@ fn native_capture_named_enter_uses_native_event_queue() {
 
 #[test]
 fn native_capture_space_character_and_named_are_both_space() {
-    let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
+    let _guard = crate::test_support::imgui_context_guard();
     discard_unconsumed_native_capture();
     let mut ctx = dear_imgui_rs::Context::create();
     tap_character(ctx.io_mut(), " ");
@@ -351,7 +351,7 @@ fn native_capture_space_character_and_named_are_both_space() {
 
 #[test]
 fn native_capture_leaves_numpad_enter_unqueued() {
-    let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
+    let _guard = crate::test_support::imgui_context_guard();
     discard_unconsumed_native_capture();
     let mut ctx = dear_imgui_rs::Context::create();
     let enter = WinitKey::Named(NamedKey::Enter);
@@ -368,7 +368,7 @@ fn native_capture_leaves_numpad_enter_unqueued() {
 /// Shift-up release still pairs with `:`.
 #[test]
 fn native_capture_empty_discard_keeps_drained_press_character() {
-    let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
+    let _guard = crate::test_support::imgui_context_guard();
     discard_unconsumed_native_capture();
     let mut ctx = dear_imgui_rs::Context::create();
     let colon = WinitKey::Character(":".into());
@@ -382,7 +382,7 @@ fn native_capture_empty_discard_keeps_drained_press_character() {
 
 #[test]
 fn native_capture_discard_clears_held_when_queue_nonempty() {
-    let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
+    let _guard = crate::test_support::imgui_context_guard();
     discard_unconsumed_native_capture();
     let mut ctx = dear_imgui_rs::Context::create();
     let colon = WinitKey::Character(":".into());
@@ -399,7 +399,7 @@ fn native_capture_discard_clears_held_when_queue_nonempty() {
 
 #[test]
 fn native_capture_leaves_numpad_punctuation_unqueued() {
-    let _guard = crate::IMGUI_CTX_TEST_GUARD.lock().unwrap();
+    let _guard = crate::test_support::imgui_context_guard();
     discard_unconsumed_native_capture();
     let mut ctx = dear_imgui_rs::Context::create();
     let plus = WinitKey::Character("+".into());
