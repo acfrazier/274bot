@@ -1207,6 +1207,226 @@ fn fallback_fails_only_when_its_own_budget_is_spent_with_the_preferred() {
     assert_eq!(search(65).fallback(), Some(&FallbackRoute::Undecided));
 }
 
+/// A shared first-goal search and a search over its fallback set alone,
+/// under the same gates and budgets: the shared search's preferred answer is
+/// the preferred-only search's, and its fallback answer is what the
+/// fallback-only search reports, or undecided where that search needs more
+/// settles than the shared one spent.
+#[allow(clippy::too_many_arguments)] // the first_search surface
+fn assert_fallback_matches_alone(
+    wc: &WorldCollision,
+    graph: &TransportGraph,
+    from: WorldTile,
+    targets: &[WorldTile],
+    fallback: &[WorldTile],
+    opts: FindOptions,
+    state: &WorldState,
+    budget: usize,
+    reachable_budget: usize,
+) -> Option<FallbackRoute> {
+    let search = |targets: &[WorldTile], fallback: &[WorldTile]| {
+        super::first_search(
+            wc,
+            graph,
+            from,
+            targets,
+            fallback,
+            opts,
+            state,
+            false,
+            &[],
+            budget,
+            reachable_budget,
+        )
+    };
+    let shared = search(targets, fallback);
+    let preferred = search(targets, &[]);
+    let summary = |route: Result<&crate::router::Route, RouteError>| {
+        route.map(|route| (route.dest, route.ticks))
+    };
+    assert_eq!(summary(shared.route()), summary(preferred.route()));
+    assert_eq!(shared.settled(), preferred.settled());
+    let alone = search(fallback, &[]);
+    match shared.fallback() {
+        None => assert!(shared.route().is_ok() || fallback.is_empty()),
+        Some(FallbackRoute::Routed(route)) => {
+            assert_eq!(Ok((route.dest, route.ticks)), summary(alone.route()));
+        }
+        Some(FallbackRoute::Failed(error)) => assert_eq!(Err(*error), summary(alone.route())),
+        Some(FallbackRoute::Undecided) => assert!(
+            alone.settled() >= shared.settled(),
+            "undecided at {} but alone decided at {}",
+            shared.settled(),
+            alone.settled()
+        ),
+    }
+    shared.fallback().cloned()
+}
+
+/// A fallback goal settling past the fallback set's unproven budget, in a
+/// search the preferred proof has lifted, counts only if the fallback's own
+/// proof showed a goal reachable within that budget. The preferred goal is
+/// reached only by a teleport dearer than walking the whole plane, so its
+/// proof lifts the search while it settles last; the fallback goal is 30
+/// tiles off, well past its budget of 64, and its proof cannot reach the
+/// origin in 64 steps: a search over it alone stops at the budget, and so
+/// does the set.
+#[test]
+fn late_fallback_goal_is_refused_past_its_own_unproven_budget() {
+    let wc = bake(128, 128, &[]);
+    let graph = teleport(tile(20, 20, 1), 1_000, vec![], vec![]);
+    let from = tile(20, 20, 0);
+    let preferred = [tile(20, 20, 1)];
+    let opts = FindOptions {
+        allow_teleports: true,
+        ..FindOptions::default()
+    };
+    let state = WorldState::empty();
+
+    let far = assert_fallback_matches_alone(
+        &wc,
+        &graph,
+        from,
+        &preferred,
+        &[tile(50, 20, 0)],
+        opts,
+        &state,
+        64,
+        10_000,
+    );
+    assert_eq!(
+        far,
+        Some(FallbackRoute::Failed(RouteError::BudgetExhausted))
+    );
+    // A fallback goal within its budget routes without a proof.
+    let near = assert_fallback_matches_alone(
+        &wc,
+        &graph,
+        from,
+        &preferred,
+        &[tile(22, 20, 0)],
+        opts,
+        &state,
+        64,
+        10_000,
+    );
+    assert!(matches!(near, Some(FallbackRoute::Routed(_))), "{near:?}");
+}
+
+/// Seeded differential over random worlds: walls with sealed pockets, a
+/// second plane, gated and ungated ladders and teleports, random goal sets
+/// and budgets. The shared search's fallback answer always matches a search
+/// over the fallback alone.
+#[test]
+fn shared_fallback_matches_a_fallback_only_search_on_random_worlds() {
+    const SIZE: i32 = 40;
+    let mut seed = 0x9e37_79b9_7f4a_7c15_u64;
+    let mut next = move |bound: u64| {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        seed % bound
+    };
+    let edge = |kind, at, to, ticks, item_req| TransportEdge {
+        kind,
+        at,
+        to,
+        loc_id: 1,
+        option: 1,
+        ticks,
+        dir: None,
+        open_loc_id: None,
+        skill_req: vec![],
+        item_req,
+        quest_req: vec![],
+        varp_req: vec![],
+        worn_req: vec![],
+        members_req: false,
+        wildy_cap: None,
+    };
+    let mut outcomes = HashMap::new();
+    for _ in 0..400 {
+        let mut extras = Vec::new();
+        let density = 10 + next(35);
+        for x in 0..SIZE {
+            for z in 0..SIZE {
+                if next(100) < density {
+                    extras.push((x, z, CollisionFlag::SQ_BLOCKED as u32));
+                }
+            }
+        }
+        let wc = bake(SIZE as usize, SIZE as usize, &extras);
+        let random_tile = |next: &mut dyn FnMut(u64) -> u64| {
+            tile(
+                next(SIZE as u64) as i32,
+                next(SIZE as u64) as i32,
+                (next(4) == 0) as i32,
+            )
+        };
+        let mut graph = TransportGraph::default();
+        for _ in 0..next(4) {
+            let at = random_tile(&mut next);
+            let to = random_tile(&mut next);
+            let gate = if next(3) == 0 { vec![(995, 1)] } else { vec![] };
+            graph.at.entry(at).or_default().push(graph.edges.len());
+            let ticks = 1 + next(20) as i32;
+            graph
+                .edges
+                .push(edge(TransportKind::Ladder, at, to, ticks, gate));
+        }
+        for _ in 0..next(3) {
+            let to = random_tile(&mut next);
+            let gate = if next(3) == 0 { vec![(995, 1)] } else { vec![] };
+            // Up to dearer than walking every tile, so a preferred goal
+            // behind one can settle after the fallback's budget.
+            let ticks = 1 + next(1_600) as i32;
+            graph.teleports.push(edge(
+                TransportKind::Teleport,
+                tile(0, 0, 0),
+                to,
+                ticks,
+                gate,
+            ));
+        }
+        let from = tile(next(SIZE as u64) as i32, next(SIZE as u64) as i32, 0);
+        let mut targets: Vec<_> = (0..1 + next(3)).map(|_| random_tile(&mut next)).collect();
+        // Often a teleport landing, which its proof shows reachable at once.
+        if let Some(teleport) = graph.teleports.first().filter(|_| next(2) == 0) {
+            targets.push(teleport.to);
+        }
+        let fallback: Vec<_> = (0..1 + next(6)).map(|_| random_tile(&mut next)).collect();
+        let opts = FindOptions {
+            allow_teleports: next(2) == 0,
+            ..FindOptions::default()
+        };
+        let budget = 1 + next(300) as usize;
+        let reachable_budget = budget + next(4_000) as usize;
+        let outcome = assert_fallback_matches_alone(
+            &wc,
+            &graph,
+            from,
+            &targets,
+            &fallback,
+            opts,
+            &WorldState::empty(),
+            budget,
+            reachable_budget,
+        );
+        let kind = match outcome {
+            None => "preferred",
+            Some(FallbackRoute::Routed(_)) => "routed",
+            Some(FallbackRoute::Failed(RouteError::NoPath)) => "no-path",
+            Some(FallbackRoute::Failed(_)) => "budget",
+            Some(FallbackRoute::Undecided) => "undecided",
+        };
+        *outcomes.entry(kind).or_insert(0) += 1;
+    }
+    // The worlds exercise every fallback answer.
+    for kind in ["preferred", "routed", "no-path", "budget", "undecided"] {
+        assert!(outcomes.get(kind).is_some_and(|&n| n > 0), "{outcomes:?}");
+    }
+}
+
 #[test]
 fn bank_budget_accepts_the_goal_after_500000_predecessors() {
     // A 1-wide corridor guarantees that the goal is pop 500001.

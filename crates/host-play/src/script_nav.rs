@@ -718,16 +718,15 @@ impl ScriptRouteRequest {
     /// frozen PathFinder falls back to, in order: a strict route to a stand,
     /// a BankBudget session to a stand, a strict route to a radius tile, a
     /// session to a radius tile. The strict search for the stands also
-    /// answers for the tiles where that needs no more settles
-    /// ([`find_first_with_fallback`]: a tile it passes, or the tiles' own
-    /// proof and budget where the stands stopped it), and so does the search
-    /// under what a session can fetch; a search over the tiles alone runs
-    /// only when its stand search left them undecided. Of each such pair at
-    /// most one stops at the unproven budget, so the arm spends at most two
-    /// budget-limited searches, one strict and one fetchable, plus one
-    /// fetchable search for each planned session whose post-state re-find
-    /// refuses its goal (the trip deposits a carried obj the route still
-    /// needs).
+    /// answers for the tiles as a search over them alone would, where that
+    /// needs no more settles ([`find_first_with_fallback`]: the tiles keep
+    /// their own proof and budget), and so does the search under what a
+    /// session can fetch; a search over the tiles alone runs only when its
+    /// stand search left them undecided. Of each such pair at most one stops
+    /// at the unproven budget, so the arm spends at most two budget-limited
+    /// searches, one strict and one fetchable, plus one fetchable search for
+    /// each planned session whose post-state re-find refuses its goal (the
+    /// trip deposits a carried obj the route still needs).
     fn calculate_solid(
         &self,
         stands: &[WorldTile],

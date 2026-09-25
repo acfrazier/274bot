@@ -361,7 +361,7 @@ pub enum FallbackRoute {
     Routed(Route),
     /// No fallback goal can settle: the set's own proof shows it
     /// unreachable, or everything reachable settled
-    /// ([`RouteError::NoPath`]); or the settles spent passed its own budget
+    /// ([`RouteError::NoPath`]); or a settle past its own budget exists
     /// without its proof showing a goal reachable
     /// ([`RouteError::BudgetExhausted`]).
     Failed(RouteError),
@@ -447,13 +447,16 @@ pub fn find_first_with(
 /// a cheaper fallback goal, and the search records the first fallback goal
 /// it settles on the way ([`FallbackRoute`]). The search stops as it would
 /// over the preferred goals alone; the fallback set keeps its own budget
-/// and backward proof, and is decided then only when that needs no more
-/// settles. Its proof starts when the preferred set stops, caught up to one
-/// step per settle spent (so a preferred goal that settles costs it
-/// nothing, and only one proof's scratch is live at a time): proven
-/// unreachable, or past its budget without proving a goal reachable, it
-/// has failed; otherwise it is [`FallbackRoute::Undecided`] for the caller
-/// to search alone, which decides it as that search would have. Of the two
+/// and backward proof, and whatever it reports is what a search over the
+/// fallback alone reports, as far as the shared settles decide it. Its
+/// proof starts only when one of its goals settles past its unproven budget
+/// or the preferred set stops without a goal, caught up to one step per
+/// settle spent (so a fallback goal within that budget, or a preferred goal,
+/// costs it nothing, and only one proof's scratch is live at a time). A
+/// goal settling past the budget counts only if the proof showed a goal
+/// reachable within it; proven unreachable, or past its budget without
+/// proving a goal reachable, the set has failed; otherwise it is
+/// [`FallbackRoute::Undecided`] for the caller to search alone. Of the two
 /// searches, at most one then stops at the unproven budget.
 pub fn find_first_with_fallback(
     collision: &WorldCollision,
@@ -569,9 +572,6 @@ fn first_search(
         debug_assert_eq!(ticks, cost.ticks);
         Route { legs, dest, ticks }
     };
-    // A preferred set still searching when the search stopped had
-    // everything reachable settled under it.
-    let exhausted = first.preferred.live();
     let route = match first.preferred.found {
         Some(goal) => Ok(route_to(goal)),
         None => Err(first.preferred.closed.unwrap_or(RouteError::NoPath)),
@@ -582,7 +582,6 @@ fn first_search(
         Some(match (first.fallback.found, first.fallback.closed) {
             (Some(goal), _) => FallbackRoute::Routed(route_to(goal)),
             (None, Some(error)) => FallbackRoute::Failed(error),
-            (None, None) if exhausted => FallbackRoute::Failed(RouteError::NoPath),
             (None, None) => FallbackRoute::Undecided,
         })
     };
@@ -1077,6 +1076,13 @@ impl Goals<'_> {
         }
     }
 
+    /// Everything reachable has settled, `settled` nodes in all.
+    fn exhausted(&mut self, settled: usize) {
+        if let Goals::First(first) = self {
+            first.exhausted(settled);
+        }
+    }
+
     /// The backward proofs' final report, dropping their scratch.
     fn finish_proofs(&mut self) -> ReverseReport {
         match self {
@@ -1122,9 +1128,9 @@ impl<'a> GoalSet<'a> {
         self.proof.finish();
     }
 
-    /// Records the set's first goal to settle.
+    /// Records the set's first goal to settle, while it is still searching.
     fn accept(&mut self, tile: WorldTile, cost: TargetCost) -> bool {
-        if self.found.is_some() || !self.targets.contains(&tile) {
+        if !self.live() || !self.targets.contains(&tile) {
             return false;
         }
         self.found = Some((tile, cost));
@@ -1145,10 +1151,14 @@ impl<'a> GoalSet<'a> {
 
 /// A first-goal search's preferred and fallback goal sets. The preferred
 /// set runs the search: its proof steps once per settle and lifts or ends
-/// it, and its first goal to settle ends it. The fallback set only records
-/// its first goal on the way. Its own proof matters only once the preferred
-/// set stops without a goal, so it starts then, caught up to one step per
-/// settle spent, and decides the set if that needs no further settle.
+/// it, and its first goal to settle ends it. The fallback set records its
+/// first goal on the way, decided at every point exactly as a search over
+/// the fallback alone would decide it (Dijkstra's settle order does not
+/// depend on the goals). Within its unproven budget that needs no proof;
+/// when one of its goals settles past that budget, or the preferred set
+/// stops without a goal, its proof starts, caught up to one step per settle
+/// spent. The preferred proof has decided by then, so only one proof's
+/// scratch is live at a time.
 struct FirstGoals<'a> {
     gates: ProofGates<'a>,
     reachable_budget: usize,
@@ -1178,38 +1188,64 @@ impl<'a> FirstGoals<'a> {
         let settled = cost.settled_at;
         if settled > self.preferred.budget {
             self.preferred.close(RouteError::BudgetExhausted);
-            self.decide_fallback(settled - 1);
+            self.decide_fallback(settled - 1, settled);
             return Settle::Spent;
         }
         if self.preferred.accept(tile, cost) {
             return Settle::Stop;
         }
-        self.fallback.accept(tile, cost);
+        self.settle_fallback(tile, cost);
         self.preferred
             .prove_to(self.gates, settled, self.reachable_budget);
         if self.preferred.live() {
             return Settle::Continue;
         }
-        self.decide_fallback(settled);
+        self.decide_fallback(settled, settled);
         Settle::Stop
     }
 
-    /// After the preferred set stops without a goal at `settled` settles,
-    /// the fallback set is decided if that needs no further settle. Its
-    /// proof is caught up to one step per settle, up to its budget, as a
+    /// A fallback goal settling past the set's unproven budget counts only
+    /// if the set's proof showed a goal reachable within that budget;
+    /// otherwise a search over the fallback alone stopped at the budget, and
+    /// so does the set. (Settling past the preferred set's lifted budget
+    /// implies the preferred proof decided, dropping its scratch.)
+    fn settle_fallback(&mut self, tile: WorldTile, cost: TargetCost) {
+        if !self.fallback.live() || !self.fallback.targets.contains(&tile) {
+            return;
+        }
+        let settled = cost.settled_at;
+        if settled > self.fallback.budget {
+            self.decide_fallback(settled - 1, settled);
+        }
+        self.fallback.accept(tile, cost);
+    }
+
+    /// Decides the fallback set, where that needs no further settle, after
+    /// `spent` settles with settle ordinal `known` known to exist. Its proof
+    /// is caught up to one step per settle spent, up to its budget, as a
     /// search over it alone would have stepped it: shown unreachable, the
-    /// set has failed; not shown reachable once the settles spent reach its
-    /// budget, the next settle would have stopped that search. Otherwise it
-    /// stays undecided.
-    fn decide_fallback(&mut self, settled: usize) {
+    /// set has failed; not shown reachable while a settle past its budget
+    /// exists, that search stopped at the budget. Otherwise it stays
+    /// undecided.
+    fn decide_fallback(&mut self, spent: usize, known: usize) {
         if !self.fallback.live() {
             return;
         }
-        let steps = settled.min(self.fallback.budget);
+        let steps = spent.min(self.fallback.budget);
         self.fallback
             .prove_to(self.gates, steps, self.reachable_budget);
-        if self.fallback.live() && settled >= self.fallback.budget {
+        if self.fallback.live() && known > self.fallback.budget {
             self.fallback.close(RouteError::BudgetExhausted);
+        }
+    }
+
+    /// Everything reachable settled, `settled` nodes, without a preferred
+    /// goal; a fallback set not stopped earlier has no goal to settle.
+    fn exhausted(&mut self, settled: usize) {
+        self.preferred.close(RouteError::NoPath);
+        self.decide_fallback(settled, settled);
+        if self.fallback.live() {
+            self.fallback.close(RouteError::NoPath);
         }
     }
 
@@ -1840,17 +1876,19 @@ fn search_kernel(
             }
         }
     }
+    let stop = if expired() {
+        SearchStop::Deadline
+    } else {
+        goals.exhausted(expanded);
+        SearchStop::Exhausted
+    };
     SearchOutcome::finish(
         came_from,
         &dist,
         &done,
         &heap,
         expanded,
-        if expired() {
-            SearchStop::Deadline
-        } else {
-            SearchStop::Exhausted
-        },
+        stop,
         record_capacities,
         goals.finish_proofs(),
     )
