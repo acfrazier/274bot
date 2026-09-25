@@ -3,6 +3,14 @@
 All notable public changes to 274bot. Host workspace crate versions are `0.1.8` and
 `publish = false` (not on crates.io). Git tags are `0.1.0`, `0.1.1`, …
 
+## [0.1.9] — 2026-09-24
+
+### Rendering and client
+
+- Logged-out title-screen brazier flames animate again on CPU and GPU. Full-rate
+  views follow the 35 ms flame clock, 1 fps rail tiles catch up when painted,
+  and draw-off bot slots remain raster-free.
+
 ## [0.1.8] — 2026-09-24 — Alpha 3
 
 JS API v1 compatibility with the frozen rs2b0t catalog on revision 289, and the
