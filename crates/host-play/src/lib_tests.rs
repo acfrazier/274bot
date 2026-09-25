@@ -15103,6 +15103,246 @@ fn nav_snapshot_at(c: &mut Client, snap: &mut GameSnapshot, x: i32, z: i32) {
 }
 
 #[test]
+fn raw_bank_walk_reaches_resolved_stand_before_native_v2_opens_booth() {
+    let mut c = bank_client();
+    c.map_build_base_x = 3250;
+    c.map_build_base_z = 3416;
+    c.main_modal_id = -1;
+    c.side_modal_id = -1;
+    c.world.set_wall(
+        0,
+        3,
+        3,
+        0,
+        0,
+        0,
+        0x4000_0000 + (2213 << 14) + 1 + (2 << 7),
+        10,
+        0,
+        0,
+        0,
+        0,
+    );
+    let start = WorldTile {
+        x: 3253,
+        z: 3421,
+        level: 0,
+    };
+    let stand = WorldTile {
+        x: 3253,
+        z: 3420,
+        level: 0,
+    };
+    let booth = WorldTile {
+        x: 3253,
+        z: 3419,
+        level: 0,
+    };
+    let mut snap = GameSnapshot::new();
+    nav_snapshot_at(&mut c, &mut snap, 3, 5);
+
+    let (walk, blocked) = nav::collision::pack_walk(&vec![0u32; 4 * 16 * 16]);
+    let world = Arc::new(NavWorld::from_parts(
+        nav::collision::WorldCollision {
+            origin: WorldTile {
+                x: 3250,
+                z: 3416,
+                level: 0,
+            },
+            width: 16,
+            height: 16,
+            walk,
+            blocked,
+            flags: None,
+        },
+        nav::transport::TransportGraph::default(),
+        vec![nav::pack::BankStand {
+            name: "Bank booth".into(),
+            tile: booth,
+            access: nav::pack::BankAccess::Booth { op: 2 },
+        }],
+    ));
+    let game_data = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
+    world.bind_named_bank_facts(&game_data).unwrap();
+    let bot = NavBot::default();
+    let navs = Arc::new(Mutex::new(HashMap::from([("test".to_string(), bot)])));
+    let statuses = Arc::new(Mutex::new(Vec::new()));
+    let world_opt = Some(Arc::clone(&world));
+
+    let source = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../script/examples/bone_burier_v2.js"),
+    )
+    .unwrap();
+    let iso = script::LoadIsolate::spawn(source, script::LoadShape::NativeTick, vec![]).unwrap();
+    let filler = [(999, 1)];
+    let post = |tick: u64, here: (i32, i32, i32), snapshot: &GameSnapshot| {
+        with_script_snapshot_input(
+            tick,
+            Some(here),
+            true,
+            Some(&filler),
+            Some(snapshot),
+            None,
+            Some(world.as_ref()),
+            None,
+            false,
+            false,
+            false,
+            0,
+            false,
+            0,
+            false,
+            0,
+            false,
+            None,
+            Default::default(),
+            Default::default(),
+            |input, native| {
+                iso.post_snapshot(script::isolate_fb::encode_snapshot_with_native(
+                    input, native,
+                ));
+            },
+        );
+        iso.on_game_tick(tick);
+        iso.probe("true").unwrap();
+    };
+
+    post(1, (start.x, start.z, start.level), &snap);
+    let requests = iso.drain_interacts();
+    assert_eq!(
+        requests,
+        vec![script::shim::InteractReq::WalkNearestBank],
+        "native v2 must select the raw bank-walk path from the initial scene",
+    );
+    let out_before = c.out.pos;
+    assert!(
+        dispatch_script_interact_cached(
+            &mut c,
+            &snap,
+            None,
+            Some((start.x, start.z, start.level)),
+            &navs,
+            &world_opt,
+            Some(WorldState::empty()),
+            "test",
+            requests,
+            None,
+            None,
+        ),
+        "raw bank selection must be accepted without a movement packet",
+    );
+    assert_eq!(
+        c.out.pos, out_before,
+        "raw bank selection itself must not write a movement packet",
+    );
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while navs
+        .lock()
+        .unwrap()
+        .get("test")
+        .and_then(|bot| bot.route.as_ref())
+        .is_none()
+    {
+        assert!(
+            Instant::now() < deadline,
+            "bank worker did not publish the selected stand route",
+        );
+        std::thread::sleep(Duration::from_millis(1));
+    }
+
+    let flood = api::query::SceneQuery::new(snap.scene(), Some(start)).flood_reach();
+    let reach = Arc::new(api::query::pack_reach_query(snap.scene(), flood.as_ref()));
+    let out_before = c.out.pos;
+    step_nav_bot(
+        &mut c,
+        "test",
+        Some((start.x, start.z, start.level)),
+        &snap,
+        &navs,
+        &statuses,
+        Some(world.as_ref()),
+        false,
+        false,
+        || Arc::clone(&reach),
+    );
+    assert!(
+        c.out.pos > out_before,
+        "the first follow pump must dispatch movement toward the resolved stand",
+    );
+
+    nav_snapshot_at(&mut c, &mut snap, 3, 4);
+    let flood = api::query::SceneQuery::new(snap.scene(), Some(stand)).flood_reach();
+    let reach = Arc::new(api::query::pack_reach_query(snap.scene(), flood.as_ref()));
+    step_nav_bot(
+        &mut c,
+        "test",
+        Some((stand.x, stand.z, stand.level)),
+        &snap,
+        &navs,
+        &statuses,
+        Some(world.as_ref()),
+        false,
+        false,
+        || Arc::clone(&reach),
+    );
+    assert!(
+        navs.lock().unwrap()["test"].route.is_none(),
+        "arrival on the resolved stand must settle the host route",
+    );
+
+    post(2, (stand.x, stand.z, stand.level), &snap);
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "native v2 observes the operable stand before opening it",
+    );
+    post(3, (stand.x, stand.z, stand.level), &snap);
+    let requests = iso.drain_interacts();
+    assert!(
+        matches!(
+            requests.as_slice(),
+            [script::shim::InteractReq::OpenStand {
+                x,
+                z,
+                level,
+                kind,
+                name,
+                stand_op,
+                choose: None,
+            }] if *x == booth.x
+                && *z == booth.z
+                && *level == booth.level
+                && kind == "booth"
+                && name.as_deref() == Some("Bank booth")
+                && *stand_op == Some(2)
+        ),
+        "operable bank approach must produce OpenStand for the booth: {requests:?}",
+    );
+    let out_before = c.out.pos;
+    assert!(
+        dispatch_script_interact_cached(
+            &mut c,
+            &snap,
+            None,
+            Some((stand.x, stand.z, stand.level)),
+            &navs,
+            &world_opt,
+            Some(WorldState::empty()),
+            "test",
+            requests,
+            None,
+            None,
+        ),
+        "OpenStand must dispatch through the real interaction boundary",
+    );
+    assert!(
+        c.out.pos > out_before,
+        "OpenStand must write the booth interaction packet",
+    );
+    iso.join();
+}
+
+#[test]
 fn script_observe_walk_arms_route_and_pump_steps_follow() {
     let NavRig {
         scripts,

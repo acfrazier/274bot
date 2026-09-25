@@ -70,6 +70,7 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   Stop/reload invalidates pending picks without replacing an existing follow.
   World bank facts now require explicit binding, so an early read cannot freeze
   an empty placement roster.
+- Native `walk-nearest-bank` now follows a resolved bank stand to exact arrival, preserving the final booth-approach step before opening.
 - `Banking.open`, periodic banking and world bank opens now share a Rust-owned
   select/walk/access continuation. Nearby banks still beat distant presets;
   explicit destinations remain the no-scene fallback. NPC and object access

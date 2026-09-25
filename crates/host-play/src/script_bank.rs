@@ -138,7 +138,7 @@ impl BankPickRequest {
     fn route_key(&self, index: usize) -> (WorldTile, i32, bool, bool, bool) {
         (
             self.facts.banks()[index].tile,
-            1,
+            0,
             self.opts.allow_teleports,
             self.opts.allow_wilderness,
             self.opts.allow_bank_fetch,
