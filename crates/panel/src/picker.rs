@@ -4,7 +4,8 @@
 //! [`crate::walk_map::WalkMapRenderer`]. Click, search, **Walk**, and **Teleport**
 //! go through [`host_play::walk_map::MapModel`] on `Session`; confirmation
 //! consumes the pending selection once. Walk needs a snapped target; debug
-//! Teleport uses the requested tile. Missing origin or focus still refuse.
+//! Teleport uses the requested tile when Local+loopback is authorized.
+//! Missing origin or focus still refuse.
 //! The world is the session's [`Play`] world, injected once via [`set_pack`] — the
 //! picker never decodes the pack itself.
 
@@ -592,9 +593,9 @@ fn right_align_x(cursor_x: f32, avail_x: f32, width: f32) -> f32 {
     cursor_x + avail_x - width
 }
 
-/// Footer labels: Teleport only on a local engine.
-fn walkto_footer_labels(local: bool) -> &'static [&'static str] {
-    if local {
+/// Footer labels: Teleport only when debug teleport is authorized.
+pub(crate) fn walkto_footer_labels(teleport: bool) -> &'static [&'static str] {
+    if teleport {
         &["recentre", "Walk", "Teleport"]
     } else {
         &["recentre", "Walk"]
@@ -602,13 +603,17 @@ fn walkto_footer_labels(local: bool) -> &'static [&'static str] {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum WalktoCaption {
+pub(crate) enum WalktoCaption {
     None,
     Walk { requested: Tile, target: Tile },
     TeleportOnly { requested: Tile },
+    Blocked { requested: Tile },
 }
 
-fn walkto_selection_caption(pending: Option<&Selection>) -> WalktoCaption {
+pub(crate) fn walkto_selection_caption(
+    pending: Option<&Selection>,
+    teleport: bool,
+) -> WalktoCaption {
     match pending {
         None => WalktoCaption::None,
         Some(sel) => match sel.target {
@@ -616,14 +621,17 @@ fn walkto_selection_caption(pending: Option<&Selection>) -> WalktoCaption {
                 requested: sel.requested,
                 target,
             },
-            None => WalktoCaption::TeleportOnly {
+            None if teleport => WalktoCaption::TeleportOnly {
+                requested: sel.requested,
+            },
+            None => WalktoCaption::Blocked {
                 requested: sel.requested,
             },
         },
     }
 }
 
-fn format_walkto_status(caption: WalktoCaption, status: &str) -> String {
+pub(crate) fn format_walkto_status(caption: WalktoCaption, status: &str) -> String {
     match caption {
         WalktoCaption::None => format!("click a tile, then Walk · {status}"),
         WalktoCaption::Walk { requested, target } => format!(
@@ -634,14 +642,18 @@ fn format_walkto_status(caption: WalktoCaption, status: &str) -> String {
             "blocked {} {} {} (teleport only) · {status}",
             requested.x, requested.z, requested.level
         ),
+        WalktoCaption::Blocked { requested } => format!(
+            "blocked {} {} {} · {status}",
+            requested.x, requested.z, requested.level
+        ),
     }
 }
 
-/// Walk needs a snapped target. Teleport needs any selection on a local debug target.
-fn walkto_actions_enabled(pending: Option<&Selection>, local: bool) -> (bool, bool) {
+/// Walk needs a snapped target. Teleport needs any selection when authorized.
+pub(crate) fn walkto_actions_enabled(pending: Option<&Selection>, teleport: bool) -> (bool, bool) {
     (
         pending.and_then(|sel| sel.target).is_some(),
-        local && pending.is_some(),
+        teleport && pending.is_some(),
     )
 }
 
@@ -1094,13 +1106,13 @@ fn picker_map_body(
     } else {
         map.status_line()
     };
+    let teleport = session.map_teleport_authorized();
     ui.text_disabled(format_walkto_status(
-        walkto_selection_caption(session.map_model.pending()),
+        walkto_selection_caption(session.map_model.pending(), teleport),
         status,
     ));
     let spacing = ui.clone_style().item_spacing()[0];
-    let local = session.debug_ui();
-    let labels = walkto_footer_labels(local);
+    let labels = walkto_footer_labels(teleport);
     let cluster = labels.iter().map(|l| button_w(ui, l)).sum::<f32>()
         + spacing * (labels.len().saturating_sub(1) as f32);
     let x = right_align_x(ui.cursor_pos()[0], ui.content_region_avail()[0], cluster);
@@ -1113,7 +1125,7 @@ fn picker_map_body(
         sync_view_from_model(&session.map_model);
     }
     ui.same_line();
-    let (can_walk, can_teleport) = walkto_actions_enabled(session.map_model.pending(), local);
+    let (can_walk, can_teleport) = walkto_actions_enabled(session.map_model.pending(), teleport);
     {
         let _off = ui.begin_disabled_with_cond(!can_walk);
         if ui.button("Walk") && can_walk && session.confirm_picker_walk(world) {
@@ -1122,7 +1134,7 @@ fn picker_map_body(
             session.map_model.close();
         }
     }
-    if local {
+    if teleport {
         ui.same_line();
         let _off = ui.begin_disabled_with_cond(!can_teleport);
         if ui.button("Teleport") && can_teleport && session.confirm_picker_teleport(world) {

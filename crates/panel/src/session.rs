@@ -423,7 +423,8 @@ fn seed_on_first_world(last_login_reconnect: Option<bool>) -> bool {
     last_login_reconnect != Some(true)
 }
 
-/// Loopback hosts get the debug heading / WalkTo Teleport. Public
+/// Loopback hosts get the debug heading. WalkTo Teleport also needs a Local
+/// target; see [`host_play::walk_map::debug_teleport_authorized`]. Public
 /// `w1.rs2b2t.com` and LAN IPs do not.
 pub fn is_local_engine(host: &str) -> bool {
     host_play::is_loopback_host(host)
@@ -3241,6 +3242,22 @@ impl Session {
     /// True when this session's world host is a local engine.
     pub fn debug_ui(&self) -> bool {
         is_local_engine(&self.options.host)
+    }
+
+    /// WalkTo Teleport uses the host's Local+loopback rule on this session's
+    /// play connection when present, otherwise the bound target and play host.
+    pub fn map_teleport_authorized(&self) -> bool {
+        match self.play.as_ref() {
+            Some(play) => play.map_teleport_authorized(),
+            None => {
+                host_play::walk_map::debug_teleport_authorized(self.target(), &self.options.host)
+            }
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_map_host(&mut self, host: &str) {
+        self.options.host = host.to_string();
     }
 
     /// Cached TutSkip for the focused profile: `None` unknown, `Some(true)`

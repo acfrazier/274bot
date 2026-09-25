@@ -332,10 +332,10 @@ and destination, wheel-zoom toward
 the cursor, click-to-pick uses the canvas rect (`is_mouse_hovering_rect`),
 header plane/zoom/search/layer controls that wrap at the default Game pane
 and narrower widths, footer **Recentre** / **Walk**, and **Teleport**
-(local-engine, guarded by
+(Local target on a loopback host, guarded by
 `host_play::walk_map`). Walk needs a snapped walkable target. Debug
 **Teleport** uses the clicked tile even when blocked, and is enabled
-whenever there is a selection on a local debug target. Confirmations
+whenever there is a selection and Teleport is authorized. Confirmations
 consume the pending `MapModel` selection once; missing origin or stale
 focus refuse instead of storing a later login dest. Status `walk`
 mirrors the armed dest.

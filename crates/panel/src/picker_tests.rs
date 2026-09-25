@@ -292,12 +292,16 @@ fn walkto_actions_enable_teleport_without_a_walk_target() {
         level: 0,
     };
     assert_eq!(walkto_actions_enabled(None, true), (false, false));
-    assert_eq!(walkto_selection_caption(None), WalktoCaption::None);
+    assert_eq!(walkto_selection_caption(None, true), WalktoCaption::None);
     assert_eq!(model.select_tile(&world, miss), None);
     assert_eq!(walkto_actions_enabled(model.pending(), true), (false, true));
     assert_eq!(
-        format_walkto_status(walkto_selection_caption(model.pending()), "ok"),
+        format_walkto_status(walkto_selection_caption(model.pending(), true), "ok"),
         "blocked 1000 1001 1 (teleport only) · ok"
+    );
+    assert_eq!(
+        format_walkto_status(walkto_selection_caption(model.pending(), false), "ok"),
+        "blocked 1000 1001 1 · ok"
     );
     assert_eq!(model.select_tile(&world, hit), Some(hit));
     assert_eq!(walkto_actions_enabled(model.pending(), true), (true, true));
@@ -306,7 +310,7 @@ fn walkto_actions_enable_teleport_without_a_walk_target() {
         (true, false)
     );
     assert_eq!(
-        format_walkto_status(walkto_selection_caption(model.pending()), "ok"),
+        format_walkto_status(walkto_selection_caption(model.pending(), false), "ok"),
         "selected 1 1 0 (walk target 1 1) · ok"
     );
 }

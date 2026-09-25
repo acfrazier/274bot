@@ -15,6 +15,12 @@ pub use catalogue::{
 pub use observations::{observed_services, ObservedService, MAX_OBSERVED_SERVICES};
 pub use routes::{select_route_source, RouteProjection, RouteSource, RouteStamp};
 
+/// Debug Teleport is a local-engine cheat: Local target and a loopback host.
+/// Panel enablement and [`crate::Play::map_teleport`] both call this; do not copy it.
+pub fn debug_teleport_authorized(target: client::BotTarget, host: &str) -> bool {
+    target == client::BotTarget::Local && crate::is_loopback_host(host)
+}
+
 /// A new route owner must not reuse the same cache stamp as a retired arm at
 /// the same destination. This clock is shared across manual/script owners.
 pub(crate) fn next_map_route_generation() -> u64 {

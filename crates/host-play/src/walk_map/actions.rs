@@ -410,19 +410,20 @@ impl Play {
         let world = self.world.as_deref().ok_or(ActionError::NoNavigation)?;
         command.walk_on(world, current, name, state, bank, arms)
     }
+    /// Same Local+loopback rule as [`crate::walk_map::debug_teleport_authorized`].
+    pub fn map_teleport_authorized(&self) -> bool {
+        crate::walk_map::debug_teleport_authorized(
+            self.connection.target(),
+            self.connection.game_host(),
+        )
+    }
     pub fn map_teleport(
         &self,
         command: MapCommand,
         current: &MapContext,
     ) -> Result<(), ActionError> {
         let name = self.validate_map_command(&command, current, ActionKind::Teleport)?;
-        let host = match &self.connection {
-            crate::play_bootstrap::PlayConnection::Legacy(options) => options.host.as_str(),
-            crate::play_bootstrap::PlayConnection::Bound { template, .. } => {
-                template.profile().client().game_host()
-            }
-        };
-        debug_authorized(self.connection.target(), host)?;
+        debug_authorized(self.connection.target(), self.connection.game_host())?;
         // Keep the existing CLIENT_CHEAT queue and its session lock. Recheck and
         // enqueue together, so disconnect cannot clear it then receive old work.
         let statuses = crate::play_status::lock_statuses(&self.statuses);
@@ -442,10 +443,10 @@ impl Play {
     }
 }
 pub(super) fn debug_authorized(target: client::BotTarget, host: &str) -> Result<(), ActionError> {
-    if target != client::BotTarget::Local || !crate::is_loopback_host(host) {
-        Err(ActionError::Unauthorized)
-    } else {
+    if crate::walk_map::debug_teleport_authorized(target, host) {
         Ok(())
+    } else {
+        Err(ActionError::Unauthorized)
     }
 }
 pub(super) fn teleport_command(t: Tile) -> Result<String, ActionError> {

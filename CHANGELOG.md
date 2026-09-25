@@ -43,7 +43,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   Panel adapters walk through `Play::map_walk`, refuse a missing observed
   player, and send debug Teleport only through `Play::map_teleport`. Walk
   needs the snapped target. Debug Teleport is a cheat: it uses the requested
-  tile and does not require walkability or radius-16 snap.
+  tile and does not require walkability or radius-16 snap. It is authorized
+  only for a Local target on a loopback host; the panel and host share that
+  predicate, and an unsnapped selection is labelled teleport-only only when
+  Teleport is available.
   The replacement picker supplies selection-time binding; confirmation does
   not rebind an old click to a new slot or profile.
 - The shared route projection borrows actual routes with driven-live, script,

@@ -447,6 +447,18 @@ fn confirmations_capture_once_and_expire_on_focus_identity_or_origin_loss() {
 #[test]
 fn debug_authority_requires_local_target_and_loopback_host() {
     use client::BotTarget;
+    assert!(!super::debug_teleport_authorized(
+        BotTarget::Prod,
+        "localhost"
+    ));
+    assert!(!super::debug_teleport_authorized(
+        BotTarget::Local,
+        "192.168.1.2"
+    ));
+    assert!(super::debug_teleport_authorized(
+        BotTarget::Local,
+        "127.0.0.1"
+    ));
     assert_eq!(
         super::actions::debug_authorized(BotTarget::Prod, "localhost"),
         Err(ActionError::Unauthorized)
@@ -459,6 +471,16 @@ fn debug_authority_requires_local_target_and_loopback_host() {
         super::actions::debug_authorized(BotTarget::Local, "127.0.0.1"),
         Ok(())
     );
+}
+
+#[test]
+fn play_map_teleport_authorized_follows_bound_target_and_host() {
+    let world = world(t(3200, 3200, 0), 8, &[]);
+    let local = MapFixture::new(&world, "local-289");
+    assert!(local.play(t(3200, 3200, 0)).map_teleport_authorized());
+    let prod = MapFixture::new(&world, "public-289");
+    assert!(!prod.play(t(3200, 3200, 0)).map_teleport_authorized());
+    assert!(!offline_play(world).map_teleport_authorized());
 }
 
 #[test]

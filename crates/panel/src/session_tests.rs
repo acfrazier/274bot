@@ -8,6 +8,9 @@ use super::{
     ProfilePreparationCompletion, Session, SlotIo, WalkArm,
 };
 use crate::focus::draw_for_slot;
+use crate::picker::{
+    format_walkto_status, walkto_actions_enabled, walkto_footer_labels, walkto_selection_caption,
+};
 use crate::test_support::{TestDir, TestPath};
 use api::snapshot::{GameSnapshot, WorldTile};
 use client::client::{Client, ClientConfig};
@@ -2143,6 +2146,73 @@ fn picker_teleport_without_spawned_queue_is_no_focus() {
     assert!(!s.confirm_picker_teleport(&world));
     assert_eq!(s.error, Some(ActionError::NoFocus.to_string()));
     assert!(s.map_model.pending().is_none());
+}
+
+fn walkto_panel_state(session: &Session) -> (&'static [&'static str], (bool, bool), String) {
+    let teleport = session.map_teleport_authorized();
+    (
+        walkto_footer_labels(teleport),
+        walkto_actions_enabled(session.map_model.pending(), teleport),
+        format_walkto_status(
+            walkto_selection_caption(session.map_model.pending(), teleport),
+            "ok",
+        ),
+    )
+}
+
+#[test]
+fn picker_teleport_follows_session_target_and_host() {
+    let world = open_world(3, 3);
+    let origin = Tile {
+        x: 0,
+        z: 1,
+        level: 0,
+    };
+    let blocked = Tile {
+        x: 1000,
+        z: 1001,
+        level: 1,
+    };
+
+    let mut local = Session::new();
+    let local_fixture = MapFixture::new(&world, "local-289");
+    let play = local_fixture.play(origin);
+    local.server_profile = Some(Arc::clone(local_fixture.template.profile()));
+    local.statuses = play.statuses();
+    local.focus.lock().unwrap().focused = Some("alice".into());
+    local.play = Some(play);
+    local.select_picker_tile(&world, blocked);
+    assert_eq!(local.target(), client::BotTarget::Local);
+    assert!(local.map_teleport_authorized());
+    let (labels, actions, status) = walkto_panel_state(&local);
+    assert_eq!(labels, &["recentre", "Walk", "Teleport"][..]);
+    assert_eq!(actions, (false, true));
+    assert_eq!(status, "blocked 1000 1001 1 (teleport only) · ok");
+
+    let mut prod = Session::new();
+    let prod_fixture = MapFixture::new(&world, "public-289");
+    prod.server_profile = Some(Arc::clone(prod_fixture.template.profile()));
+    prod.set_map_host("127.0.0.1");
+    prod.select_picker_tile(&world, blocked);
+    assert_eq!(prod.target(), client::BotTarget::Prod);
+    assert!(prod.debug_ui());
+    assert!(!prod.map_teleport_authorized());
+    let (labels, actions, status) = walkto_panel_state(&prod);
+    assert_eq!(labels, &["recentre", "Walk"][..]);
+    assert_eq!(actions, (false, false));
+    assert_eq!(status, "blocked 1000 1001 1 · ok");
+
+    let mut remote = Session::new();
+    let remote_fixture = MapFixture::new(&world, "local-289");
+    remote.server_profile = Some(Arc::clone(remote_fixture.template.profile()));
+    remote.set_map_host("192.168.1.2");
+    remote.select_picker_tile(&world, blocked);
+    assert_eq!(remote.target(), client::BotTarget::Local);
+    assert!(!remote.map_teleport_authorized());
+    let (labels, actions, status) = walkto_panel_state(&remote);
+    assert_eq!(labels, &["recentre", "Walk"][..]);
+    assert_eq!(actions, (false, false));
+    assert_eq!(status, "blocked 1000 1001 1 · ok");
 }
 
 #[test]

@@ -308,6 +308,13 @@ impl PlayConnection {
         self.profile()
             .map_or_else(client::bot_target, |p| p.target())
     }
+
+    pub(super) fn game_host(&self) -> &str {
+        match self {
+            Self::Legacy(options) => options.host.as_str(),
+            Self::Bound { template, .. } => template.profile().client().game_host(),
+        }
+    }
 }
 
 /// Nav pack path: `$NAV_PACK`, else `~/.274bot/274bot.navpack` (same rule
