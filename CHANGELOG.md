@@ -15,10 +15,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
 
 - Slot startup, stop and restart now have one owned lifetime: per-slot
   registries are published before the worker starts, stopped and crashed
-  workers release their queue place, and only explicit Log in recreates a
+  workers release their queue place, and Log in or Login all recreates a
   terminal worker. Panel rail removal waits and reaps asynchronously instead
-  of joining a worker on the UI thread; re-adding or logging in during that
-  window cancels only the matching lifetime's removal and restores its IO.
+  of joining a worker on the UI thread; re-adding, re-seeding or logging in
+  during that window cancels only the matching lifetime's removal and restores
+  its IO.
 - Login and logout commands are serialized by generation, so completion of an
   old logout cannot erase a newer Login all while a successful compatible
   handshake still consumes its one-shot intent. Retry notifications serialize
@@ -29,10 +30,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   scene loads, while game actions and routing still require a current player
   and valid tile.
 - Disconnect clears session byte/run counters but retains paused script paint;
-  Stop and unload clear published paint even offline. Panicked worker status
-  and script-slot poison are contained at terminal retirement. Welcome
-  dismissal keeps its spaced attempt bound and reports a visible failure
-  10 seconds after dismissal first becomes eligible.
+  Stop and unload clear published paint even offline. Status-lock poison from
+  a panicked worker is recovered at every access, and script-slot poison is
+  contained at terminal retirement. Welcome dismissal keeps its spaced attempt
+  bound and reports a visible failure after 10 eligible seconds, pausing that
+  elapsed bound while the scene cannot accept a close.
 
 ### Script host
 
