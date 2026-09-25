@@ -136,7 +136,7 @@ pub(crate) fn dispatch_script_interact_cached(
                 stand_op,
                 ..
             } => {
-                if kind == "booth" {
+                let accepted = if kind == "booth" {
                     let loc = snapshot.locs().iter().find(|loc| {
                         loc.tile.x == x
                             && loc.tile.z == z
@@ -147,32 +147,41 @@ pub(crate) fn dispatch_script_interact_cached(
                                     .is_some_and(|actual| actual.eq_ignore_ascii_case(wanted))
                             })
                     });
-                    if let Some(loc) = loc {
+                    loc.is_some_and(|loc| {
                         let op = stand_op.or_else(|| action_slot(&loc.actions, "Use-quickly"));
-                        if let Some(op) = op {
-                            wrote |= matches!(
+                        op.is_some_and(|op| {
+                            matches!(
                                 ix.interact(OpTarget::Loc(loc), ActionSpec::Operation(op)),
                                 SendResult::Sent { .. }
-                            );
-                        }
-                    }
+                            )
+                        })
+                    })
                 } else if kind == "npc" {
                     let npc = snapshot.npcs().iter().find(|n| {
                         name.as_deref().is_some_and(|wanted| {
                             n.name
                                 .as_deref()
-                                .is_some_and(|n| n.eq_ignore_ascii_case(wanted))
+                                .is_some_and(|actual| actual.eq_ignore_ascii_case(wanted))
                         })
                     });
-                    if let Some(npc) = npc {
-                        if let Some(op) = stand_op {
-                            wrote |= matches!(
+                    npc.is_some_and(|npc| {
+                        stand_op.is_some_and(|op| {
+                            matches!(
                                 ix.interact(OpTarget::Npc(npc), ActionSpec::Operation(op)),
                                 SendResult::Sent { .. }
-                            );
-                        }
-                    }
+                            )
+                        })
+                    })
+                } else {
+                    false
+                };
+                if accepted {
+                    // The interaction supersedes any earlier scripted walk.
+                    // Cancel after validation/dispatch only: rejected or
+                    // malformed requests must not disturb an armed route.
+                    abort_script_walk(navs, slot);
                 }
+                wrote |= accepted;
             }
             InteractReq::Walk {
                 x,

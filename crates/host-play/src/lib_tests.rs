@@ -15343,6 +15343,299 @@ fn raw_bank_walk_reaches_resolved_stand_before_native_v2_opens_booth() {
 }
 
 #[test]
+fn native_v2_open_stand_aborts_armed_walk_after_operable_neighbor() {
+    let mut c = bank_client();
+    c.map_build_base_x = 3200;
+    c.map_build_base_z = 3200;
+    let start = WorldTile {
+        x: 3206,
+        z: 3204,
+        level: 0,
+    };
+    let neighbor = WorldTile {
+        x: 3205,
+        z: 3205,
+        level: 0,
+    };
+    let stand = WorldTile {
+        x: 3204,
+        z: 3205,
+        level: 0,
+    };
+    let booth = WorldTile {
+        x: 3205,
+        z: 3206,
+        level: 0,
+    };
+    let mut snap = GameSnapshot::new();
+    nav_snapshot_at(&mut c, &mut snap, 6, 4);
+
+    let (walk, blocked) = nav::collision::pack_walk(&vec![0u32; 4 * 16 * 16]);
+    let world = Arc::new(NavWorld::from_parts(
+        nav::collision::WorldCollision {
+            origin: WorldTile {
+                x: 3200,
+                z: 3200,
+                level: 0,
+            },
+            width: 16,
+            height: 16,
+            walk,
+            blocked,
+            flags: None,
+        },
+        nav::transport::TransportGraph::default(),
+        Vec::new(),
+    ));
+    let world_opt = Some(Arc::clone(&world));
+    let navs = Arc::new(Mutex::new(HashMap::new()));
+    let statuses = Arc::new(Mutex::new(Vec::new()));
+    let iso = script::LoadIsolate::spawn(
+        r#"
+export const apiVersion = 2;
+let phase = 0;
+export function tick(api) {
+  if (phase === 0) {
+    phase = 1;
+    api.request({
+      op: 'walk',
+      x: 3204,
+      z: 3205,
+      level: 0,
+      allow_teleports: false,
+      allow_wilderness: false,
+      allow_bank_fetch: false,
+    });
+  } else if (phase === 1
+             && api.snapshot.here.x === 3205
+             && api.snapshot.here.z === 3205) {
+    phase = 2;
+    api.request({
+      op: 'open-stand',
+      x: 3205,
+      z: 3206,
+      level: 0,
+      kind: 'booth',
+      name: 'Bank booth',
+      stand_op: 2,
+    });
+  }
+}
+"#
+        .into(),
+        script::LoadShape::NativeTick,
+        vec![],
+    )
+    .unwrap();
+    let post = |tick: u64, here: WorldTile, snapshot: &GameSnapshot| {
+        with_script_snapshot_input(
+            tick,
+            Some((here.x, here.z, here.level)),
+            true,
+            Some(&[]),
+            Some(snapshot),
+            None,
+            Some(world.as_ref()),
+            None,
+            false,
+            false,
+            false,
+            0,
+            false,
+            0,
+            false,
+            0,
+            false,
+            None,
+            Default::default(),
+            Default::default(),
+            |input, native| {
+                iso.post_snapshot(script::isolate_fb::encode_snapshot_with_native(
+                    input, native,
+                ));
+            },
+        );
+        iso.on_game_tick(tick);
+        iso.probe("true").unwrap();
+    };
+
+    post(1, start, &snap);
+    let requests = iso.drain_interacts();
+    assert_eq!(
+        requests,
+        vec![script::shim::InteractReq::Walk {
+            x: stand.x,
+            z: stand.z,
+            level: stand.level,
+            allow_teleports: false,
+            allow_wilderness: false,
+            allow_bank_fetch: false,
+            request_id: 0,
+        }],
+        "native v2 must arm the walk before the approach tile is reached",
+    );
+    assert!(dispatch_script_interact(
+        &mut c,
+        &snap,
+        None,
+        Some((start.x, start.z, start.level)),
+        &navs,
+        &world_opt,
+        Some(WorldState::empty()),
+        "native-v2",
+        requests,
+    ));
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while navs
+        .lock()
+        .unwrap()
+        .get("native-v2")
+        .and_then(|bot| bot.route.as_ref())
+        .is_none()
+    {
+        assert!(
+            Instant::now() < deadline,
+            "native v2 walk did not publish a route",
+        );
+        std::thread::sleep(Duration::from_millis(1));
+    }
+
+    let reach = {
+        let flood = api::query::SceneQuery::new(snap.scene(), Some(start)).flood_reach();
+        Arc::new(api::query::pack_reach_query(snap.scene(), flood.as_ref()))
+    };
+    let out_before = c.out.pos;
+    step_nav_bot(
+        &mut c,
+        "native-v2",
+        Some((start.x, start.z, start.level)),
+        &snap,
+        &navs,
+        &statuses,
+        Some(world.as_ref()),
+        false,
+        false,
+        || Arc::clone(&reach),
+    );
+    assert!(
+        c.out.pos > out_before,
+        "the armed v2 walk must dispatch movement before the neighbor is reached",
+    );
+
+    nav_snapshot_at(&mut c, &mut snap, 5, 5);
+    let reach = {
+        let flood = api::query::SceneQuery::new(snap.scene(), Some(neighbor)).flood_reach();
+        Arc::new(api::query::pack_reach_query(snap.scene(), flood.as_ref()))
+    };
+    step_nav_bot(
+        &mut c,
+        "native-v2",
+        Some((neighbor.x, neighbor.z, neighbor.level)),
+        &snap,
+        &navs,
+        &statuses,
+        Some(world.as_ref()),
+        false,
+        false,
+        || Arc::clone(&reach),
+    );
+
+    let out_before = c.out.pos;
+    assert!(!dispatch_script_interact(
+        &mut c,
+        &snap,
+        None,
+        Some((neighbor.x, neighbor.z, neighbor.level)),
+        &navs,
+        &world_opt,
+        Some(WorldState::empty()),
+        "native-v2",
+        vec![script::shim::InteractReq::OpenStand {
+            x: booth.x,
+            z: booth.z,
+            level: booth.level,
+            kind: "booth".into(),
+            name: Some("Wrong booth".into()),
+            stand_op: Some(2),
+            choose: None,
+        }],
+    ));
+    assert_eq!(
+        c.out.pos, out_before,
+        "a refused OpenStand must not write a booth packet",
+    );
+    assert!(
+        navs.lock().unwrap()["native-v2"].route.is_some(),
+        "a refused OpenStand must keep the armed v2 walk",
+    );
+
+    post(2, neighbor, &snap);
+    let requests = iso.drain_interacts();
+    assert!(
+        matches!(
+            requests.as_slice(),
+            [script::shim::InteractReq::OpenStand {
+                x,
+                z,
+                level,
+                kind,
+                name,
+                stand_op: Some(2),
+                choose: None,
+            }] if *x == booth.x
+                && *z == booth.z
+                && *level == booth.level
+                && kind == "booth"
+                && name.as_deref() == Some("Bank booth")
+        ),
+        "v2 must open the booth from the operable neighboring tile: {requests:?}",
+    );
+    let out_before = c.out.pos;
+    assert!(dispatch_script_interact(
+        &mut c,
+        &snap,
+        None,
+        Some((neighbor.x, neighbor.z, neighbor.level)),
+        &navs,
+        &world_opt,
+        Some(WorldState::empty()),
+        "native-v2",
+        requests,
+    ));
+    assert!(
+        c.out.pos > out_before,
+        "the accepted OpenStand must dispatch the booth operation",
+    );
+
+    let out_after_open = c.out.pos;
+    let reach = {
+        let flood = api::query::SceneQuery::new(snap.scene(), Some(neighbor)).flood_reach();
+        Arc::new(api::query::pack_reach_query(snap.scene(), flood.as_ref()))
+    };
+    step_nav_bot(
+        &mut c,
+        "native-v2",
+        Some((neighbor.x, neighbor.z, neighbor.level)),
+        &snap,
+        &navs,
+        &statuses,
+        Some(world.as_ref()),
+        false,
+        false,
+        || Arc::clone(&reach),
+    );
+    assert_eq!(
+        c.out.pos, out_after_open,
+        "accepted OpenStand must abort the armed v2 walk before a follow re-issues movement",
+    );
+    assert!(
+        navs.lock().unwrap()["native-v2"].route.is_none(),
+        "accepted OpenStand must clear the v2 route",
+    );
+    iso.join();
+}
+
+#[test]
 fn script_observe_walk_arms_route_and_pump_steps_follow() {
     let NavRig {
         scripts,
