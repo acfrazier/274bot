@@ -709,6 +709,110 @@ fn observe_dispatch_refuses_requests_after_stop_race() {
     );
 }
 
+/// A retired slot can be replaced under the same profile name while an old
+/// worker is between drain and dispatch. Matching epoch numbers on different
+/// slot objects must not authorize the old batch against the replacement.
+#[test]
+fn observe_dispatch_refuses_requests_after_slot_replacement() {
+    let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
+    let cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>> =
+        Arc::new(Mutex::new(HashMap::new()));
+    let navs: Arc<Mutex<HashMap<String, NavBot>>> = Arc::new(Mutex::new(HashMap::new()));
+    let world: Option<Arc<NavWorld>> = None;
+    script_slot_or_insert(&scripts, "alice")
+        .lock()
+        .unwrap()
+        .start_compiled(Box::new(QueueMove), None)
+        .expect("the original compiled script starts");
+    let client = puzzle_move_client();
+    let cache = Arc::clone(&client.cache);
+    let mut snap = GameSnapshot::new();
+    snap.rebuild(&client);
+    let names = Arc::new(api::obj_names::ObjNames::from_objs(&client.cache.objs));
+    let barrier = DispatchBarrier::new();
+    install_dispatch_barrier(Arc::clone(&barrier));
+
+    let scripts_for_thread = Arc::clone(&scripts);
+    let cheats_for_thread = Arc::clone(&cheats);
+    let navs_for_thread = Arc::clone(&navs);
+    let cache_for_thread = Arc::clone(&cache);
+    let names_for_thread = Arc::clone(&names);
+    let barrier_for_thread = Arc::clone(&barrier);
+    let thread = std::thread::spawn(move || {
+        barrier_for_thread.arm_for_current_thread();
+        let mut rec = MenuRec::default();
+        observe_puzzle_frame(
+            &mut rec,
+            &scripts_for_thread,
+            &cheats_for_thread,
+            &navs_for_thread,
+            &world,
+            &snap,
+            &cache_for_thread,
+            &names_for_thread,
+            true,
+        );
+        rec
+    });
+
+    barrier.wait_entered();
+    scripts.lock().unwrap().remove("alice");
+    script_slot_or_insert(&scripts, "alice")
+        .lock()
+        .unwrap()
+        .start_compiled(Box::new(QueueMove), None)
+        .expect("the replacement compiled script starts");
+    barrier.release();
+    let rec = thread.join().expect("observe thread completes");
+    assert!(
+        rec.menus.is_empty() && rec.actions.is_empty(),
+        "an old slot must not dispatch through its replacement: {:?} {:?}",
+        rec.menus,
+        rec.actions
+    );
+}
+
+#[test]
+fn observe_treats_a_poisoned_script_slot_as_retiring() {
+    let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
+    let slot = script_slot_or_insert(&scripts, "alice");
+    slot.lock()
+        .unwrap()
+        .start_compiled(Box::new(QueueMove), None)
+        .expect("the compiled script starts");
+    let poisoner = {
+        let slot = Arc::clone(&slot);
+        std::thread::spawn(move || {
+            let _slot = slot.lock().unwrap();
+            panic!("synthetic script worker panic");
+        })
+    };
+    assert!(poisoner.join().is_err());
+
+    let client = puzzle_move_client();
+    let cache = Arc::clone(&client.cache);
+    let mut snap = GameSnapshot::new();
+    snap.rebuild(&client);
+    let names = Arc::new(api::obj_names::ObjNames::from_objs(&client.cache.objs));
+    let mut rec = MenuRec::default();
+    observe_puzzle_frame(
+        &mut rec,
+        &scripts,
+        &Arc::new(Mutex::new(HashMap::new())),
+        &Arc::new(Mutex::new(HashMap::new())),
+        &None,
+        &snap,
+        &cache,
+        &names,
+        true,
+    );
+    assert!(rec.menus.is_empty() && rec.actions.is_empty());
+    assert!(
+        slot.is_poisoned(),
+        "observe must not repair a lock owned by the reaper"
+    );
+}
+
 /// A Pause that wins the final dispatch fence preserves the drained batch.
 /// Nothing sends while paused; Resume dispatches that exact batch once.
 #[test]

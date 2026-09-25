@@ -168,20 +168,20 @@ pub(crate) fn slot_arrival_reach(
     world: Option<&NavWorld>,
     canlight: Option<&[u64]>,
 ) -> Arc<api::query::ReachQueryView> {
-    match script_slot(scripts, name) {
-        Some(slot) => {
-            let mut slot = slot.lock().unwrap();
-            pack_cached_reach(
-                slot.reach_pack_cache(),
-                Some(snapshot),
-                here,
-                world,
-                canlight,
-            )
-            .view
-        }
-        None => Arc::new(api::query::ReachQueryView::unavailable()),
-    }
+    let Some(slot) = script_slot(scripts, name) else {
+        return Arc::new(api::query::ReachQueryView::unavailable());
+    };
+    let Ok(mut slot) = slot.lock() else {
+        return Arc::new(api::query::ReachQueryView::unavailable());
+    };
+    pack_cached_reach(
+        slot.reach_pack_cache(),
+        Some(snapshot),
+        here,
+        world,
+        canlight,
+    )
+    .view
 }
 
 #[cfg(test)]

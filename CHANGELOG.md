@@ -177,15 +177,16 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
 - The obsolete clue-verb JSON adapter is removed; the clue machine emits typed
   interact requests directly.
 - Script startup, tick interruption and `onStop` now share one serialized
-  lifetime: Stop cannot leak a tick interrupt into the hook, Pause interrupts
-  only the execution actually running, and hostile startup/validation is
-  bounded and reclaimed.
+  lifetime: Stop cannot leak a tick interrupt into the hook, Pause blocks new
+  entries while in-budget work finishes, and a per-execution deadline interrupts
+  only a runaway. Hostile startup/validation is bounded and reclaimed.
 - Reload and catalog validation now run off the panel UI thread. A Pause that
   wins the final host dispatch fence preserves the drained script actions for
   Resume instead of silently losing them.
-- Active tick errors clear only after a successful loop in the same session;
-  held frames, reconnects and cancelled ticks no longer manufacture recovery,
-  while explicit Stop clears the active status and retains diagnostic history.
+- Active tick errors clear only after a completed successful loop; held frames
+  and cancelled ticks no longer manufacture recovery, while a clean loop after
+  reconnect and explicit Stop clear the active status and retain diagnostic
+  history.
 
 ## [0.1.8.1] — 2026-09-24 — Alpha 3 patch
 

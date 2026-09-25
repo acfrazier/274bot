@@ -630,13 +630,65 @@ impl Runner {
             None => is_loop,
         }
     }
+
+    /// A V8 terminate can discard the continuation that owned this promise.
+    /// Drop that single-flight so Resume/the next fresh tick can start again.
+    /// A cut-off onStart is retried; it is never silently treated as started.
+    fn recover_interrupted(&mut self, compat: bool) -> Option<&'static str> {
+        match self.phase {
+            Phase::Starting(_) | Phase::StartFailed => {
+                self.phase = Phase::Unstarted;
+                self.start_ok = false;
+                Some("onStart")
+            }
+            Phase::Running(_) => {
+                self.phase = Phase::Idle;
+                Some(if compat { "loop" } else { "tick" })
+            }
+            Phase::Unstarted | Phase::Idle => None,
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)] // exact runtime, runner, shape, owner and tick attribution
+fn recover_interrupted_execution(
+    runtime: &mut Runtime,
+    runner: &mut Runner,
+    v2_native: bool,
+    compat: bool,
+    interrupt: Option<ExecutionInterrupt>,
+    out: &Sender<ThreadMsg>,
+    tick: u64,
+    generation: u64,
+) {
+    let Some(interrupt) = interrupt else {
+        return;
+    };
+    let continuation = if v2_native {
+        let pending = global_flag(runtime, "__rs_v2_tick_pending");
+        let _ = runtime.eval::<()>("globalThis.__rs_v2_tick_pending = false");
+        pending.then_some("tick")
+    } else {
+        runner.recover_interrupted(compat)
+    };
+    let work = continuation.unwrap_or("execution");
+    let owner = match interrupt {
+        ExecutionInterrupt::Watchdog => "watchdog",
+        ExecutionInterrupt::Pause => "Pause deadline",
+    };
+    let _ = out.send(ThreadMsg::TickError {
+        tick,
+        generation,
+        message: format!("runaway {work} interrupted by {owner}"),
+    });
 }
 
 /// One eligible non-v2 tick, in the phase order the isolate owns (the
 /// tick is already recorded and machines stepped): tick listeners, wait
 /// settle, `onStart` once (compat), native events once started, then
 /// `loop()`/`tick` when nothing is in flight. Sets `loop_settled` when a
-/// compat `loop()` settle is observed here.
+/// compat `loop()` settle is observed here and `iteration_completed` for
+/// every clean loop/native-tick completion.
 ///
 /// A running `loop()` is polled before any of these phases' JS runs: one
 /// whose wait settles in this tick's pump (continuations run as each
@@ -654,9 +706,12 @@ fn run_tick_phases(
     events_consumed: bool,
     out: &Sender<ThreadMsg>,
     loop_settled: &mut bool,
+    iteration_completed: &mut bool,
     teardown: &Mutex<TeardownState>,
 ) -> Result<(), rustyscript::Error> {
-    *loop_settled |= runner.poll(runtime, out, n, generation) && compat;
+    let settled = runner.poll(runtime, out, n, generation);
+    *iteration_completed |= settled;
+    *loop_settled |= settled && compat;
     if let Phase::StartFailed = runner.phase {
         runner.phase = Phase::Idle;
     }
@@ -684,8 +739,11 @@ fn run_tick_phases(
             // onStart is invoked exactly once: a failed call counts as a
             // failed onStart.
             runner.phase = Phase::StartFailed;
-            let start: Settle =
-                runtime.call_function_immediate(None, "__rs2b0t_compat_on_start", json_args!())?;
+            set_execution_stage(teardown, ExecutionStage::OnStart);
+            let start =
+                runtime.call_function_immediate(None, "__rs2b0t_compat_on_start", json_args!());
+            set_execution_stage(teardown, ExecutionStage::Other);
+            let start: Settle = start?;
             runner.phase = Phase::Starting(start);
             // Microtasks run as the call returns, so a synchronous
             // onStart has settled here.
@@ -704,15 +762,18 @@ fn run_tick_phases(
         return Ok(());
     }
     if let Phase::Idle = runner.phase {
+        set_execution_stage(teardown, ExecutionStage::Loop);
         if compat {
-            let run: Settle =
-                runtime.call_function_immediate(None, "__rs2b0t_compat_loop", json_args!())?;
-            runner.phase = Phase::Running(run);
+            let run = runtime.call_function_immediate(None, "__rs2b0t_compat_loop", json_args!());
+            set_execution_stage(teardown, ExecutionStage::Other);
+            runner.phase = Phase::Running(run?);
         } else {
-            let run: Option<Settle> =
-                runtime.call_function_immediate(None, "__rs_tick", json_args!(n))?;
-            if let Some(run) = run {
+            let run = runtime.call_function_immediate(None, "__rs_tick", json_args!(n));
+            set_execution_stage(teardown, ExecutionStage::Other);
+            if let Some(run) = run? {
                 runner.phase = Phase::Running(run);
+            } else {
+                *iteration_completed = true;
             }
         }
     }
@@ -1049,11 +1110,21 @@ fn tick_loop(
                 // command loop, so it cannot leak into Resume or onStop.
                 if machines_halted(&teardown) {
                     let interrupt = finish_interruptible_execution(&mut runtime, &teardown);
+                    recover_interrupted_execution(
+                        &mut runtime,
+                        &mut runner,
+                        v2_native,
+                        compat,
+                        interrupt,
+                        &out,
+                        n,
+                        generation,
+                    );
                     let _ = out.send(ThreadMsg::Completed {
                         tick: n,
                         generation,
                         successful: false,
-                        report_errors: interrupt != Some(ExecutionInterrupt::Pause),
+                        report_errors: true,
                     });
                     continue;
                 }
@@ -1136,6 +1207,16 @@ fn tick_loop(
                         lifecycle.push(crate::shim::InteractReq::LoopSettled);
                     }
                     let interrupt = finish_interruptible_execution(&mut runtime, &teardown);
+                    recover_interrupted_execution(
+                        &mut runtime,
+                        &mut runner,
+                        v2_native,
+                        compat,
+                        interrupt,
+                        &out,
+                        n,
+                        generation,
+                    );
                     if !lifecycle.is_empty() {
                         let _ = out.send(ThreadMsg::Interact {
                             bytes: ipc.encode_interact_batch(&lifecycle),
@@ -1160,7 +1241,7 @@ fn tick_loop(
                         // A guardian-held frame painted but did not run the
                         // script loop, so it cannot clear an active error.
                         successful: false,
-                        report_errors: interrupt != Some(ExecutionInterrupt::Pause),
+                        report_errors: true,
                     });
                     continue;
                 }
@@ -1170,6 +1251,7 @@ fn tick_loop(
                 // runs through the Rust `Runner`. Onward work lands in
                 // the drain below.
                 let mut loop_settled = false;
+                let mut iteration_completed = false;
                 let result: Result<(), rustyscript::Error> = if machines_halted(&teardown) {
                     // A callback or operator action claimed this execution:
                     // no later user phase may start through that boundary.
@@ -1184,7 +1266,11 @@ fn tick_loop(
                     let ticked = if v2_pending || machines_halted(&teardown) {
                         Ok(())
                     } else {
-                        runtime.call_function_immediate(None, "__rs_tick", json_args!(n))
+                        set_execution_stage(&teardown, ExecutionStage::Loop);
+                        let ticked =
+                            runtime.call_function_immediate(None, "__rs_tick", json_args!(n));
+                        set_execution_stage(&teardown, ExecutionStage::Other);
+                        ticked
                     };
                     pumped.and(ticked)
                 } else {
@@ -1197,6 +1283,7 @@ fn tick_loop(
                         events_consumed,
                         &out,
                         &mut loop_settled,
+                        &mut iteration_completed,
                         &teardown,
                     )
                 };
@@ -1224,18 +1311,14 @@ fn tick_loop(
                 if !v2_native && !machines_halted(&teardown) {
                     // A loop that finished in the drain frees the
                     // single-flight for the next tick.
-                    loop_settled |= runner.poll(&mut runtime, &out, n, generation) && compat;
+                    let settled = runner.poll(&mut runtime, &out, n, generation);
+                    iteration_completed |= settled;
+                    loop_settled |= settled && compat;
                 }
                 let elapsed = start.elapsed();
                 #[cfg(feature = "memory-profile")]
                 counters.tick(elapsed);
-                if let Err(e) = result {
-                    let _ = out.send(ThreadMsg::TickError {
-                        tick: n,
-                        generation,
-                        message: e.to_string(),
-                    });
-                }
+                let result_error = result.err().map(|error| error.to_string());
                 // Forward the tick's shim interact queue (Bank/Banking
                 // requests written to `__rs2b0t_host.interact`) to the
                 // host, cleared in the same call. The queue is taken only
@@ -1253,6 +1336,13 @@ fn tick_loop(
                 let mut reqs = crate::machine::merge_ops(taken.rows);
                 stamp_mouse_gesture_identities(&mut reqs, input_identity, &mut mouse_gestures);
                 crate::inspect_wait::filter_public_inspect_wire(&mut reqs);
+                if v2_native
+                    && reqs
+                        .iter()
+                        .any(|req| matches!(req, crate::shim::InteractReq::LoopSettled))
+                {
+                    iteration_completed = true;
+                }
                 if loop_settled {
                     reqs.push(crate::shim::InteractReq::LoopSettled);
                 }
@@ -1285,6 +1375,25 @@ fn tick_loop(
                     &mut last_ignored_randoms,
                 );
                 let interrupt = finish_interruptible_execution(&mut runtime, &teardown);
+                if interrupt.is_none() {
+                    if let Some(message) = result_error {
+                        let _ = out.send(ThreadMsg::TickError {
+                            tick: n,
+                            generation,
+                            message,
+                        });
+                    }
+                }
+                recover_interrupted_execution(
+                    &mut runtime,
+                    &mut runner,
+                    v2_native,
+                    compat,
+                    interrupt,
+                    &out,
+                    n,
+                    generation,
+                );
                 // ScriptRunner.stop signal: the script flags the host
                 // handle. Fold the completed tick, log the stop, run
                 // exactly-once onStop under the isolate-owned 50 ms
@@ -1302,7 +1411,7 @@ fn tick_loop(
                     break;
                 }
                 let mut latest = n;
-                if elapsed > SLOW_TICK && interrupt != Some(ExecutionInterrupt::Pause) {
+                if elapsed > SLOW_TICK {
                     let _ = out.send(ThreadMsg::Log(format!("slow tick {n}: {elapsed:?}")));
                     // Skip stale queued ticks, but complete the tick that
                     // actually produced diagnostics. A separate in-flight
@@ -1335,8 +1444,8 @@ fn tick_loop(
                 let _ = out.send(ThreadMsg::Completed {
                     tick: n,
                     generation,
-                    successful: interrupt.is_none(),
-                    report_errors: interrupt != Some(ExecutionInterrupt::Pause),
+                    successful: iteration_completed && interrupt.is_none(),
+                    report_errors: true,
                 });
                 if latest != n {
                     let _ = out.send(ThreadMsg::InFlightDone {

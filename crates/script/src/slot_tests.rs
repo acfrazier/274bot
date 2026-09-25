@@ -157,7 +157,7 @@ export function tick() {
 
 #[cfg(feature = "load")]
 #[test]
-fn reconnect_success_does_not_clear_the_previous_sessions_error() {
+fn reconnect_clean_loop_clears_the_previous_sessions_active_error() {
     let source = r#"
 export function tick() {
     globalThis.__ticks = (globalThis.__ticks || 0) + 1;
@@ -171,10 +171,12 @@ export function tick() {
     slot.load.as_ref().unwrap().on_game_tick(1);
     slot.load.as_ref().unwrap().probe("true").unwrap();
     let _ = slot.drain_logs();
-    let first_error = slot
-        .last_error()
-        .expect("active first-session error")
-        .to_string();
+    assert!(
+        slot.last_error()
+            .is_some_and(|error| error.contains("session-one failure")),
+        "{:?}",
+        slot.last_error()
+    );
 
     slot.reset_session_work();
     slot.on_is_up(true);
@@ -190,8 +192,51 @@ export function tick() {
     let _ = slot.drain_logs();
     assert_eq!(
         slot.last_error(),
-        Some(first_error.as_str()),
-        "a success from the new work generation cannot recover an old-session diagnostic"
+        None,
+        "the first completed clean loop in the new session recovers the active diagnostic"
+    );
+    slot.stop();
+}
+
+#[cfg(feature = "load")]
+#[test]
+fn parked_async_iteration_does_not_clear_an_active_error() {
+    let source = r#"
+import { Execution } from '../../api/execution/Execution.js';
+export default class T extends LoopingBot {
+    async loop() {
+        globalThis.__loops = (globalThis.__loops || 0) + 1;
+        await Execution.delayTicks(1);
+        throw new Error('async iteration failure');
+    }
+}
+"#;
+    let mut slot = SlotScript::new();
+    slot.start_load_with_loadouts(source.into(), LoadShape::CompatClass, vec![], &[])
+        .unwrap();
+    wait_state(&mut slot, RunState::Running);
+
+    slot.load.as_ref().unwrap().on_game_tick(1);
+    slot.load.as_ref().unwrap().probe("true").unwrap();
+    let _ = slot.drain_logs();
+    slot.load.as_ref().unwrap().on_game_tick(2);
+    slot.load.as_ref().unwrap().probe("true").unwrap();
+    let _ = slot.drain_logs();
+    assert!(
+        slot.last_error()
+            .is_some_and(|error| error.contains("async iteration failure")),
+        "{:?}",
+        slot.last_error()
+    );
+
+    slot.load.as_ref().unwrap().on_game_tick(3);
+    slot.load.as_ref().unwrap().probe("true").unwrap();
+    let _ = slot.drain_logs();
+    assert!(
+        slot.last_error()
+            .is_some_and(|error| error.contains("async iteration failure")),
+        "starting and parking the next async iteration is not a completed success: {:?}",
+        slot.last_error()
     );
     slot.stop();
 }

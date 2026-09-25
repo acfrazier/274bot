@@ -9,7 +9,7 @@ pub(crate) fn script_paint_of(
     scripts: &ScriptWall,
     name: &str,
 ) -> Option<std::sync::Arc<script::shim::ScriptPaint>> {
-    script_slot(scripts, name).and_then(|s| s.lock().unwrap().paint())
+    script_slot(scripts, name).and_then(|slot| slot.lock().ok().and_then(|slot| slot.paint()))
 }
 
 /// Publish `paint` onto `status.script_paint`, sharing the frame the isolate

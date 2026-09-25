@@ -733,7 +733,9 @@ fn spawn_slot_thread(
                     let Some(slot) = script_slot(&knock_scripts, &knock_name) else {
                         return RandomClaim::Host;
                     };
-                    let mut slot = slot.lock().unwrap();
+                    let Ok(mut slot) = slot.lock() else {
+                        return RandomClaim::Host;
+                    };
                     slot.on_random(ev)
                 };
                 let run_policy_override = slot_script.lock().unwrap().run_policy_override_cell();
@@ -839,7 +841,9 @@ fn spawn_slot_thread(
                                 session_boundary,
                                 || {
                                     script_slot(&slot_scripts, name).and_then(|slot| {
-                                        slot.lock().unwrap().lifecycle_receipt()
+                                        slot.lock()
+                                            .ok()
+                                            .and_then(|slot| slot.lifecycle_receipt())
                                     })
                                 },
                                 || bounded_guardian_fact(status),

@@ -512,6 +512,236 @@ fn isolate_pause_ignores_ticks_and_resume_continues() {
     iso.join();
 }
 
+fn pause_after_execution_entry(iso: &LoadIsolate) {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !iso.execution_active() {
+        assert!(Instant::now() < deadline, "tick never entered execution");
+        thread::yield_now();
+    }
+    thread::sleep(Duration::from_millis(15));
+    iso.pause();
+    iso.probe("true")
+        .expect("Pause settles the active execution");
+}
+
+#[test]
+fn pause_allows_an_in_budget_sync_tick_to_finish() {
+    let iso = spawn_ready(
+        "export function tick() {
+            globalThis.__entered = (globalThis.__entered || 0) + 1;
+            const start = Date.now();
+            while (Date.now() - start < 30) {}
+            globalThis.__finished = (globalThis.__finished || 0) + 1;
+        }"
+        .into(),
+        LoadShape::NativeTick,
+        vec![],
+    );
+    iso.on_game_tick(1);
+    pause_after_execution_entry(&iso);
+    assert_eq!(iso.probe("__finished || 0").unwrap(), 1);
+    iso.resume();
+    iso.probe("true").unwrap();
+    iso.on_game_tick(2);
+    assert_eq!(iso.probe("__finished || 0").unwrap(), 2);
+    iso.join();
+}
+
+#[test]
+fn pause_allows_an_in_budget_async_compat_loop_to_resume() {
+    let iso = spawn_ready(
+        "export default class T extends LoopingBot {
+            async loop() {
+                globalThis.__loops = (globalThis.__loops || 0) + 1;
+                await Promise.resolve();
+                globalThis.__continued = (globalThis.__continued || 0) + 1;
+                const start = Date.now();
+                while (Date.now() - start < 30) {}
+                globalThis.__done = (globalThis.__done || 0) + 1;
+            }
+        }"
+        .into(),
+        LoadShape::CompatClass,
+        vec![],
+    );
+    iso.on_game_tick(1);
+    pause_after_execution_entry(&iso);
+    assert_eq!(iso.probe("__done || 0").unwrap(), 1);
+    iso.resume();
+    iso.probe("true").unwrap();
+    iso.on_game_tick(2);
+    assert_eq!(iso.probe("__done || 0").unwrap(), 2);
+    iso.join();
+}
+
+#[test]
+fn pause_allows_an_in_budget_async_native_tick_to_resume() {
+    let iso = spawn_ready(
+        "export async function tick() {
+            globalThis.__ticks = (globalThis.__ticks || 0) + 1;
+            await Promise.resolve();
+            globalThis.__continued = (globalThis.__continued || 0) + 1;
+            const start = Date.now();
+            while (Date.now() - start < 30) {}
+            globalThis.__done = (globalThis.__done || 0) + 1;
+        }"
+        .into(),
+        LoadShape::NativeTick,
+        vec![],
+    );
+    iso.on_game_tick(1);
+    pause_after_execution_entry(&iso);
+    assert_eq!(iso.probe("__done || 0").unwrap(), 1);
+    iso.resume();
+    iso.probe("true").unwrap();
+    iso.on_game_tick(2);
+    assert_eq!(iso.probe("__done || 0").unwrap(), 2);
+    iso.join();
+}
+
+fn assert_pause_recovers_terminated_async_continuation(source: &str, shape: LoadShape) {
+    let iso = spawn_ready(source.to_string(), shape, vec![]);
+    iso.on_game_tick(1);
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !iso.loop_execution_active() {
+        assert!(
+            Instant::now() < deadline,
+            "async continuation never entered"
+        );
+        thread::yield_now();
+    }
+    iso.pause();
+    iso.probe("true")
+        .expect("Pause must settle the terminated continuation");
+    iso.resume();
+    iso.probe("true").expect("Resume must be observed");
+    iso.on_game_tick(2);
+    assert_eq!(iso.probe("__loops || 0").unwrap(), 2);
+    assert_eq!(
+        iso.probe("__done || 0").unwrap(),
+        1,
+        "the terminated continuation must not poison the next loop"
+    );
+    iso.join();
+}
+
+#[test]
+fn pause_resets_a_terminated_compat_async_continuation() {
+    assert_pause_recovers_terminated_async_continuation(
+        "export default class T extends LoopingBot {
+            async loop() {
+                globalThis.__loops = (globalThis.__loops || 0) + 1;
+                if (globalThis.__loops === 1) {
+                    await Promise.resolve();
+                    for (;;) {}
+                }
+                globalThis.__done = (globalThis.__done || 0) + 1;
+            }
+        }",
+        LoadShape::CompatClass,
+    );
+}
+
+#[test]
+fn pause_resets_a_terminated_v2_async_continuation() {
+    assert_pause_recovers_terminated_async_continuation(
+        "export const apiVersion = 2;
+        export async function tick() {
+            globalThis.__loops = (globalThis.__loops || 0) + 1;
+            if (globalThis.__loops === 1) {
+                await Promise.resolve();
+                for (;;) {}
+            }
+            globalThis.__done = (globalThis.__done || 0) + 1;
+        }",
+        LoadShape::NativeTick,
+    );
+}
+
+fn assert_watchdog_recovers_terminated_async_continuation(source: &str, shape: LoadShape) {
+    let iso = spawn_ready(source.to_string(), shape, vec![]);
+    iso.on_game_tick(1);
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !iso.loop_execution_active() {
+        assert!(
+            Instant::now() < deadline,
+            "async continuation never entered"
+        );
+        thread::yield_now();
+    }
+    thread::sleep(Duration::from_millis(60));
+    iso.on_game_tick(2);
+    iso.probe("true")
+        .expect("watchdog must settle the terminated continuation");
+    iso.on_game_tick(3);
+    assert_eq!(iso.probe("__loops || 0").unwrap(), 2);
+    assert_eq!(
+        iso.probe("__done || 0").unwrap(),
+        1,
+        "the watchdog-terminated continuation must not poison the next loop"
+    );
+    iso.join();
+}
+
+#[test]
+fn watchdog_resets_a_terminated_compat_async_continuation() {
+    assert_watchdog_recovers_terminated_async_continuation(
+        "export default class T extends LoopingBot {
+            async loop() {
+                globalThis.__loops = (globalThis.__loops || 0) + 1;
+                if (globalThis.__loops === 1) {
+                    await Promise.resolve();
+                    for (;;) {}
+                }
+                globalThis.__done = (globalThis.__done || 0) + 1;
+            }
+        }",
+        LoadShape::CompatClass,
+    );
+}
+
+#[test]
+fn watchdog_resets_a_terminated_v2_async_continuation() {
+    assert_watchdog_recovers_terminated_async_continuation(
+        "export const apiVersion = 2;
+        export async function tick() {
+            globalThis.__loops = (globalThis.__loops || 0) + 1;
+            if (globalThis.__loops === 1) {
+                await Promise.resolve();
+                for (;;) {}
+            }
+            globalThis.__done = (globalThis.__done || 0) + 1;
+        }",
+        LoadShape::NativeTick,
+    );
+}
+#[test]
+fn pause_does_not_cut_off_an_in_budget_on_start() {
+    let iso = spawn_ready(
+        "export default class T extends LoopingBot {
+            onStart() {
+                globalThis.__startEntered = (globalThis.__startEntered || 0) + 1;
+                const start = Date.now();
+                while (Date.now() - start < 30) {}
+                globalThis.__startDone = (globalThis.__startDone || 0) + 1;
+            }
+            loop() { globalThis.__loops = (globalThis.__loops || 0) + 1; }
+        }"
+        .into(),
+        LoadShape::CompatClass,
+        vec![],
+    );
+    iso.on_game_tick(1);
+    pause_after_execution_entry(&iso);
+    assert_eq!(iso.probe("__startDone || 0").unwrap(), 1);
+    iso.resume();
+    iso.probe("true").unwrap();
+    iso.on_game_tick(2);
+    assert_eq!(iso.probe("__startDone || 0").unwrap(), 1);
+    assert!(iso.probe("__loops || 0").unwrap().as_u64().unwrap_or(0) >= 1);
+    iso.join();
+}
+
 // (5d) A second spawn after join works (isolate lifecycle is not one-shot).
 #[test]
 fn isolate_join_returns_and_isolates_are_reusable() {
@@ -813,6 +1043,11 @@ export function tick() {
         logs.iter()
             .all(|line| !(line.starts_with("tick 3:") && line.contains("slow-one"))),
         "the newest skipped tick must not steal tick 1's diagnostic: {logs:?}"
+    );
+    assert_eq!(
+        iso.pending_tick_error_count(),
+        0,
+        "the executed tick's completion must consume its diagnostic key"
     );
     snapshot.tick = 4;
     post_snapshot_input(&iso, &snapshot);

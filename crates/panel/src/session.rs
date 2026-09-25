@@ -129,6 +129,13 @@ fn start_stashed_catalog_card(
     }
 }
 
+struct ExternalReloadPending {
+    path: PathBuf,
+    source_before: String,
+    source_after: String,
+    compiled_before: String,
+}
+
 /// Owned inputs captured on the UI thread and consumed by the sequential
 /// profile/template preparation worker.
 pub(crate) struct ProfilePreparation {
@@ -1123,6 +1130,10 @@ pub struct Session {
     pub reload_generation: u64,
     /// Worker-owned V8 validation for an operator reload/catalog preview.
     pub(crate) reload_validation: Option<crate::profile_script::ReloadValidationJob>,
+    /// Terminal result of the latest asynchronous reload/catalog operation.
+    /// Test and harness callers consume it after the worker settles.
+    pub(crate) reload_outcome: Option<crate::profile_script::ReloadOutcome>,
+    external_reload_pending: Option<ExternalReloadPending>,
     /// Test-only: fail replacement Start for this profile after it passed
     /// eligibility and was stopped. Not a cancellation fixture.
     #[cfg(test)]
@@ -1441,6 +1452,8 @@ impl Session {
             catalog_refresh_report: None,
             reload_generation: 0,
             reload_validation: None,
+            reload_outcome: None,
+            external_reload_pending: None,
             #[cfg(test)]
             fail_reload_start_for: None,
             #[cfg(test)]
@@ -1725,40 +1738,65 @@ impl Session {
                     }
                 }
             }
-            Some(Operation::ReloadUnchanged) => match self.script_reload_clicked() {
-                crate::profile_script::ReloadOutcome::NothingChanged => {
-                    watch.note_reload_unchanged(host_play::external_loader::NOTHING_CHANGED);
-                }
-                other => watch.fail(format!("unchanged reload: {other:?}")),
-            },
-            Some(Operation::ReloadChanged) => {
-                let path = watch.source_path();
-                let before_bytes = match std::fs::read(&path) {
-                    Ok(bytes) => bytes,
-                    Err(error) => {
-                        watch.fail(format!("changed reload read {}: {error}", path.display()));
-                        return;
-                    }
-                };
-                let source_before = source_sha256(&before_bytes);
-                let compiled_before = self
-                    .js
-                    .get(script::ScriptSource::File, &path.display().to_string())
-                    .map(|c| c.sha256.clone())
-                    .unwrap_or_default();
-                if let Err(error) = apply_harmless_whitespace(&path) {
-                    watch.fail(error);
+            Some(Operation::ReloadUnchanged) => {
+                self.begin_script_reload_clicked();
+                if self.reload_validation_pending() {
                     return;
                 }
-                let after_bytes = match std::fs::read(&path) {
-                    Ok(bytes) => bytes,
-                    Err(error) => {
-                        watch.fail(format!("changed reload reread {}: {error}", path.display()));
+                match self.take_reload_outcome() {
+                    Some(crate::profile_script::ReloadOutcome::NothingChanged) => {
+                        watch.note_reload_unchanged(host_play::external_loader::NOTHING_CHANGED);
+                    }
+                    Some(other) => watch.fail(format!("unchanged reload: {other:?}")),
+                    None => {}
+                }
+            }
+            Some(Operation::ReloadChanged) => {
+                if self.external_reload_pending.is_none() {
+                    let path = watch.source_path();
+                    let before_bytes = match std::fs::read(&path) {
+                        Ok(bytes) => bytes,
+                        Err(error) => {
+                            watch.fail(format!("changed reload read {}: {error}", path.display()));
+                            return;
+                        }
+                    };
+                    let source_before = source_sha256(&before_bytes);
+                    let compiled_before = self
+                        .js
+                        .get(script::ScriptSource::File, &path.display().to_string())
+                        .map(|card| card.sha256.clone())
+                        .unwrap_or_default();
+                    if let Err(error) = apply_harmless_whitespace(&path) {
+                        watch.fail(error);
                         return;
                     }
+                    let after_bytes = match std::fs::read(&path) {
+                        Ok(bytes) => bytes,
+                        Err(error) => {
+                            watch
+                                .fail(format!("changed reload reread {}: {error}", path.display()));
+                            return;
+                        }
+                    };
+                    self.external_reload_pending = Some(ExternalReloadPending {
+                        path,
+                        source_before,
+                        source_after: source_sha256(&after_bytes),
+                        compiled_before,
+                    });
+                    self.begin_script_reload_clicked();
+                }
+                if self.reload_validation_pending() {
+                    return;
+                }
+                let Some(outcome) = self.take_reload_outcome() else {
+                    return;
                 };
-                let source_after = source_sha256(&after_bytes);
-                let outcome = self.script_reload(true);
+                let pending = self
+                    .external_reload_pending
+                    .take()
+                    .expect("changed reload owns its source hashes");
                 let (applied, nothing_changed) = match &outcome {
                     crate::profile_script::ReloadOutcome::Applied { .. } => (true, false),
                     crate::profile_script::ReloadOutcome::NothingChanged => (false, true),
@@ -1771,10 +1809,10 @@ impl Session {
                         return;
                     }
                 };
-                let Some(card) = self
-                    .js
-                    .get(script::ScriptSource::File, &path.display().to_string())
-                else {
+                let Some(card) = self.js.get(
+                    script::ScriptSource::File,
+                    &pending.path.display().to_string(),
+                ) else {
                     watch.fail("external loader changed reload lost the File card");
                     return;
                 };
@@ -1782,9 +1820,10 @@ impl Session {
                     .js
                     .cards()
                     .iter()
-                    .filter(|c| {
-                        c.source == script::ScriptSource::File
-                            && (c.identity_key() == card.identity_key() || c.name == SCRIPT_NAME)
+                    .filter(|candidate| {
+                        candidate.source == script::ScriptSource::File
+                            && (candidate.identity_key() == card.identity_key()
+                                || candidate.name == SCRIPT_NAME)
                     })
                     .count();
                 let want =
@@ -1800,9 +1839,9 @@ impl Session {
                     nothing_changed,
                     &card.path,
                     &card.identity_key(),
-                    &source_before,
-                    &source_after,
-                    &compiled_before,
+                    &pending.source_before,
+                    &pending.source_after,
+                    &pending.compiled_before,
                     &card.sha256,
                     selected,
                     running,

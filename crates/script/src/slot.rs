@@ -905,16 +905,16 @@ impl SlotScript {
         }
         #[cfg(feature = "load")]
         {
+            let carried_error = self.active_tick_error_generation.is_some();
             if let Some(isolate) = &self.load {
-                isolate.reset_session_work();
+                let generation = isolate.reset_session_work();
+                self.active_tick_error_generation = carried_error.then_some(generation);
+            } else {
+                self.active_tick_error_generation = None;
             }
             self.last_snapshot = None;
             self.last_world_id = None;
             self.reach_cache.clear();
-            // A connection boundary starts a new isolate work generation.
-            // Keep the historical diagnostic visible, but do not let a
-            // success from the new session clear its old ownership.
-            self.active_tick_error_generation = None;
 
             let abort = self.watchdog.abort_owned_recovery();
             let reset = self.watchdog.on_session_reset(Instant::now());

@@ -19,6 +19,13 @@ pub(super) enum ExecutionInterrupt {
     Pause,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum ExecutionStage {
+    Other,
+    OnStart,
+    Loop,
+}
+
 /// Phase, Hook-entry deadline, and at-most-one interrupt. Finish and the
 /// one-shot worker decide under this same mutex.
 pub(super) struct TeardownState {
@@ -35,11 +42,18 @@ pub(super) struct TeardownState {
     /// Unit-test-only wider budget for success-path hook assertions.
     #[cfg(test)]
     pub(super) test_hook_timeout: Option<Duration>,
-    /// An interruptible tick/recovery eval is currently inside V8. Pause and
-    /// the watchdog may terminate only while this is true.
+    /// An interruptible tick/recovery eval is currently inside V8. Stop and
+    /// the budget owners may terminate only while this is true.
     pub(super) execution_active: bool,
-    /// Pause intent published synchronously by the host. The isolate clears
-    /// it when it consumes Pause/Resume; a queued eval cannot start through it.
+    /// Identity and start time of the active execution. A Pause deadline
+    /// captures the identity so it cannot terminate later work.
+    pub(super) execution_id: u64,
+    pub(super) execution_started: Option<Instant>,
+    /// Pause intent published synchronously by the host. It blocks the next
+    /// entry but does not halt healthy work that already owns execution.
+    /// Narrow stage seam used to distinguish loop entry from setup/tick
+    /// bookkeeping in lifecycle proofs.
+    pub(super) execution_stage: ExecutionStage,
     pub(super) pause_requested: bool,
     /// A terminate armed for the active eval and not yet cancelled by the
     /// isolate thread.
@@ -58,7 +72,10 @@ impl TeardownState {
             #[cfg(test)]
             test_hook_timeout: None,
             execution_active: false,
+            execution_id: 0,
+            execution_started: None,
             pause_requested: false,
+            execution_stage: ExecutionStage::Other,
             execution_interrupt: None,
         }
     }
@@ -127,13 +144,17 @@ impl Drop for TickLoopFinish {
     }
 }
 
-/// A machine pass must stop driving once teardown or Pause has claimed the
-/// execution, or an interrupt has been armed for it.
+/// A machine pass must stop driving once teardown or a budget interrupt has
+/// claimed the active execution. Pause intent alone blocks only the next
+/// execution; healthy in-budget work already running is allowed to finish.
 pub(super) fn machines_halted(teardown: &Mutex<TeardownState>) -> bool {
     let st = teardown.lock().unwrap();
-    st.phase != TeardownPhase::Running || st.pause_requested || st.execution_interrupt.is_some()
+    st.phase != TeardownPhase::Running || st.execution_interrupt.is_some()
 }
 
+pub(super) fn set_execution_stage(teardown: &Mutex<TeardownState>, stage: ExecutionStage) {
+    teardown.lock().unwrap().execution_stage = stage;
+}
 /// Claim the next tick/recovery eval. This closes the race where Pause sees no
 /// active eval immediately before the isolate thread enters a queued one.
 pub(super) fn begin_interruptible_execution(teardown: &Mutex<TeardownState>) -> bool {
@@ -141,6 +162,8 @@ pub(super) fn begin_interruptible_execution(teardown: &Mutex<TeardownState>) -> 
     if st.phase != TeardownPhase::Running || st.pause_requested {
         return false;
     }
+    st.execution_id = st.execution_id.wrapping_add(1);
+    st.execution_started = Some(Instant::now());
     st.execution_active = true;
     true
 }
@@ -154,6 +177,8 @@ pub(super) fn finish_interruptible_execution(
 ) -> Option<ExecutionInterrupt> {
     let mut st = teardown.lock().unwrap();
     st.execution_active = false;
+    st.execution_started = None;
+    st.execution_stage = ExecutionStage::Other;
     let interrupt = st.execution_interrupt.take();
     runtime
         .deno_runtime()

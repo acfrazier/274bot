@@ -400,10 +400,11 @@ impl Play {
         slot.paint_select(key, select_name);
     }
 
-    /// `name`'s script lifecycle state; `Idle` when the slot has none.
+    /// `name`'s script lifecycle state; `Idle` when the slot has none or its
+    /// retiring worker poisoned the slot lock.
     pub fn script_state(&self, name: &str) -> script::RunState {
         script_slot(&self.scripts, name)
-            .map(|slot| slot.lock().unwrap().state())
+            .and_then(|slot| slot.lock().ok().map(|slot| slot.state()))
             .unwrap_or(script::RunState::Idle)
     }
 
@@ -442,26 +443,32 @@ impl Play {
 
     #[cfg(feature = "memory-profile")]
     pub fn memory_script_metrics(&self, name: &str) -> Option<serde_json::Value> {
-        script_slot(&self.scripts, name).and_then(|slot| slot.lock().unwrap().memory_metrics())
+        script_slot(&self.scripts, name)
+            .and_then(|slot| slot.lock().ok().and_then(|slot| slot.memory_metrics()))
     }
 
     #[cfg(feature = "memory-profile")]
     pub fn memory_script_progress(&self, name: &str) -> serde_json::Value {
         script_slot(&self.scripts, name)
-            .map(|slot| slot.lock().unwrap().memory_progress())
+            .and_then(|slot| slot.lock().ok().map(|slot| slot.memory_progress()))
             .unwrap_or(serde_json::Value::Null)
     }
 
-    /// `name`'s script `last_error`; `None` when the slot has none.
+    /// `name`'s script `last_error`; `None` when the slot has none or is
+    /// retiring after poisoning its lock.
     pub fn script_last_error(&self, name: &str) -> Option<String> {
-        script_slot(&self.scripts, name)
-            .and_then(|slot| slot.lock().unwrap().last_error().map(str::to_string))
+        script_slot(&self.scripts, name).and_then(|slot| {
+            slot.lock()
+                .ok()
+                .and_then(|slot| slot.last_error().map(str::to_string))
+        })
     }
 
     /// Latest bounded ScriptRunner.stop receipt. This is non-consuming and
     /// independent of [`Self::script_take_pending_logs`].
     pub fn script_lifecycle_receipt(&self, name: &str) -> Option<script::ScriptLifecycleReceipt> {
-        script_slot(&self.scripts, name).and_then(|slot| slot.lock().unwrap().lifecycle_receipt())
+        script_slot(&self.scripts, name)
+            .and_then(|slot| slot.lock().ok().and_then(|slot| slot.lifecycle_receipt()))
     }
 
     /// Isolate log lines staged since the last take (panel log pane).
@@ -469,12 +476,14 @@ impl Play {
         let Some(slot) = script_slot(&self.scripts, name) else {
             return Vec::new();
         };
-        // A slot its own thread holds keeps its lines for the next frame;
-        // a poisoned slot is a bug and still panics, as `lock` did.
+        // A slot its own thread holds keeps its lines for the next frame.
+        // A poisoned lock belongs to a retiring worker; the reaper owns
+        // removal, while UI readers treat it as absent.
         let mut slot = match slot.try_lock() {
             Ok(slot) => slot,
-            Err(std::sync::TryLockError::WouldBlock) => return Vec::new(),
-            Err(std::sync::TryLockError::Poisoned(e)) => panic!("script slot poisoned: {e}"),
+            Err(std::sync::TryLockError::WouldBlock | std::sync::TryLockError::Poisoned(_)) => {
+                return Vec::new();
+            }
         };
         slot.take_pending_logs()
     }

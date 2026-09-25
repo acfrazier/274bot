@@ -22,6 +22,20 @@ fn settle(s: &mut Session) {
     assert!(s.pending_starts.is_empty(), "script Start did not settle");
 }
 
+fn reload(s: &mut Session) -> ReloadOutcome {
+    s.begin_script_reload_clicked();
+    settle(s);
+    s.take_reload_outcome()
+        .expect("reload operation must publish an outcome")
+}
+
+fn refresh_catalog(s: &mut Session, root: &std::path::Path) -> ReloadOutcome {
+    s.begin_refresh_catalog_at(root);
+    settle(s);
+    s.take_reload_outcome()
+        .expect("catalog refresh must publish an outcome")
+}
+
 /// Pump `name`'s lifecycle until it reaches `want` (Stop returns
 /// before the reap).
 fn wait_state(s: &Session, name: &str, want: script::RunState) {
@@ -501,8 +515,7 @@ fn load_js_selects_without_auto_start_and_same_path_does_not_duplicate() {
     s.script_start_selected();
     settle(&mut s);
     s.play.as_ref().unwrap().script_stop("alice");
-    assert_eq!(s.script_reload_clicked(), ReloadOutcome::NothingChanged);
-    settle(&mut s);
+    assert_eq!(reload(&mut s), ReloadOutcome::NothingChanged);
 }
 
 #[test]
@@ -513,7 +526,7 @@ fn reload_unchanged_reports_exact_string() {
     s.script_start_selected();
     settle(&mut s);
     assert_eq!(s.error, None, "{:?}", s.error);
-    let out = s.script_reload_clicked();
+    let out = reload(&mut s);
     settle(&mut s);
     assert_eq!(out, ReloadOutcome::NothingChanged);
     assert_eq!(s.error.as_deref(), Some(script::NOTHING_CHANGED_RELOAD));
@@ -578,6 +591,67 @@ fn ui_reload_validation_keeps_the_control_thread_responsive() {
 }
 
 #[test]
+fn catalog_validation_keeps_the_control_thread_responsive() {
+    let (mut session, dir) = session_with_play(&["alice"]);
+    let root = dir.join("catalog-worker");
+    fake_catalog(&root, &[("RunawayBot", BOT_TS)]);
+    session
+        .js
+        .register_rs2b0t(&root, &dir.join("rs2b0t-path"))
+        .unwrap();
+    session
+        .js
+        .ensure_js(script::ScriptSource::Catalog, "RunawayBot")
+        .unwrap();
+    let old_js = session
+        .js
+        .get(script::ScriptSource::Catalog, "RunawayBot")
+        .expect("loaded card")
+        .js
+        .clone();
+    fs::write(
+        root.join("src/bot/scripts/RunawayBot/RunawayBot.ts"),
+        "while (true) {}\nexport default class T extends LoopingBot { override loop() {} }\n",
+    )
+    .unwrap();
+
+    let started = Instant::now();
+    session.begin_refresh_catalog_at(&root);
+    assert!(
+        started.elapsed() < Duration::from_millis(500),
+        "catalog refresh must not wait for hostile module evaluation"
+    );
+    assert!(
+        session.reload_validation_pending(),
+        "catalog validation belongs to the worker"
+    );
+    assert_eq!(session.focused_name().as_deref(), Some("alice"));
+
+    settle(&mut session);
+    assert!(matches!(
+        session.take_reload_outcome(),
+        Some(ReloadOutcome::Applied { .. })
+    ));
+    assert_eq!(
+        session
+            .js
+            .get(script::ScriptSource::Catalog, "RunawayBot")
+            .expect("old card remains installed")
+            .js,
+        old_js,
+        "failed worker validation cannot replace the live catalog card"
+    );
+    assert!(
+        session
+            .catalog_refresh_report
+            .as_deref()
+            .is_some_and(|report| report.contains("failed")),
+        "{:?}",
+        session.catalog_refresh_report
+    );
+}
+
+#[test]
 fn reload_clicked_warns_before_replacing_running() {
     let (mut s, dir) = session_with_play(&["alice"]);
     let path = write_bot(&dir, "run.ts", BOT_TS);
@@ -591,7 +665,7 @@ fn reload_clicked_warns_before_replacing_running() {
             .js
             .clone();
     fs::write(&path, format!("{BOT_TS}// changed\n")).unwrap();
-    let first = s.script_reload_clicked();
+    let first = reload(&mut s);
     assert_eq!(first, ReloadOutcome::NeedsConfirm);
     assert!(
         s.error.as_deref().unwrap_or("").contains("running"),
@@ -619,7 +693,8 @@ fn reload_commit_gates_pause_during_prep() {
     s.script_start_selected();
     settle(&mut s);
     fs::write(&path, format!("{BOT_TS}// changed\n")).unwrap();
-    assert_eq!(s.script_reload(false), ReloadOutcome::NeedsConfirm);
+    s.begin_script_reload_clicked();
+    assert!(s.reload_validation_pending());
     s.play.as_ref().unwrap().script_pause("alice");
     assert_eq!(
         s.play.as_ref().unwrap().script_state("alice"),
@@ -630,9 +705,8 @@ fn reload_commit_gates_pause_during_prep() {
             .unwrap()
             .js
             .clone();
-    let commit = s.script_reload(true);
     settle(&mut s);
-    assert_eq!(commit, ReloadOutcome::NeedsConfirm);
+    assert_eq!(s.take_reload_outcome(), Some(ReloadOutcome::NeedsConfirm));
     assert!(
         s.error
             .as_deref()
@@ -666,7 +740,7 @@ fn prepare_failure_preserves_old_instance() {
             .unwrap()
             .clone();
     fs::write(&path, "const x = 1;\n").unwrap();
-    let out = s.script_reload(true);
+    let out = reload(&mut s);
     settle(&mut s);
     match out {
         ReloadOutcome::Failed(e) => assert!(
@@ -762,7 +836,7 @@ fn catalog_prepare_failure_does_not_mutate_or_block_valid() {
         "import x from '../../event/webwalk/Something.js';\nexport default class T extends LoopingBot { override loop() {} }\n",
     )
     .unwrap();
-    s.refresh_catalog_at(&root);
+    refresh_catalog(&mut s, &root);
     settle(&mut s);
     let good = s.js.get(script::ScriptSource::Catalog, "GoodBot").unwrap();
     assert!(!good.js.is_empty(), "successful prepare must keep js");
@@ -822,7 +896,7 @@ fn catalog_mixed_batch_keeps_two_failures_after_success() {
         "import x from '../../event/webwalk/Something.js';\nexport default class T extends LoopingBot { override loop() {} }\n",
     )
     .unwrap();
-    s.refresh_catalog_at(&root);
+    refresh_catalog(&mut s, &root);
     settle(&mut s);
     let names: Vec<_> =
         s.js.load_failures()
@@ -874,7 +948,7 @@ fn catalog_refresh_warns_before_stopping_running() {
         format!("{BOT_TS}// changed\n"),
     )
     .unwrap();
-    s.refresh_catalog_at(&root);
+    refresh_catalog(&mut s, &root);
     settle(&mut s);
     assert_eq!(
         s.play.as_ref().unwrap().script_state("alice"),
@@ -911,8 +985,7 @@ fn start_file_on(s: &mut Session, profile: &str, path: &std::path::Path) {
 fn warn_shared_reload(s: &mut Session, path: &std::path::Path) {
     fs::write(path, format!("{BOT_TS}// changed\n")).unwrap();
     focus_profile(s, "alice");
-    assert_eq!(s.script_reload_clicked(), ReloadOutcome::NeedsConfirm);
-    settle(s);
+    assert_eq!(reload(s), ReloadOutcome::NeedsConfirm);
 }
 
 fn assert_applied(out: ReloadOutcome, restarted: usize, failed: usize) {
@@ -968,8 +1041,7 @@ fn cancel_reload_preserves_running_and_paused_executions() {
         old_js
     );
     // A later click must prepare and warn again, never reuse cancelled consent.
-    assert_eq!(s.script_reload_clicked(), ReloadOutcome::NeedsConfirm);
-    settle(&mut s);
+    assert_eq!(reload(&mut s), ReloadOutcome::NeedsConfirm);
     s.play.as_ref().unwrap().script_stop("alice");
     s.play.as_ref().unwrap().script_stop("bob");
 }
@@ -997,8 +1069,7 @@ fn reload_confirm_does_not_authorize_switched_selection() {
     fs::write(&path_a, format!("{BOT_TS}// a changed\n")).unwrap();
     fs::write(&path_b, format!("{BOT_TS}// b changed\n")).unwrap();
     focus_profile(&mut s, "alice");
-    assert_eq!(s.script_reload_clicked(), ReloadOutcome::NeedsConfirm);
-    settle(&mut s);
+    assert_eq!(reload(&mut s), ReloadOutcome::NeedsConfirm);
     assert!(
         s.reload_warning
             .as_ref()
@@ -1007,7 +1078,7 @@ fn reload_confirm_does_not_authorize_switched_selection() {
         s.reload_warning.as_ref().map(|w| &w.running)
     );
     focus_profile(&mut s, "bob");
-    let second = s.script_reload_clicked();
+    let second = reload(&mut s);
     settle(&mut s);
     assert_eq!(
         second,
@@ -1041,8 +1112,7 @@ fn reload_warn_survives_focus_only() {
     s.load_js(&path_b);
     fs::write(&path_a, format!("{BOT_TS}// changed\n")).unwrap();
     focus_profile(&mut s, "alice");
-    assert_eq!(s.script_reload_clicked(), ReloadOutcome::NeedsConfirm);
-    settle(&mut s);
+    assert_eq!(reload(&mut s), ReloadOutcome::NeedsConfirm);
     let warned = s.reload_warning.as_ref().unwrap().lookup.clone();
     focus_profile(&mut s, "bob");
     assert!(
@@ -1051,7 +1121,7 @@ fn reload_warn_survives_focus_only() {
     );
     assert_eq!(s.reload_warning.as_ref().unwrap().lookup, warned);
     focus_profile(&mut s, "alice");
-    let out = s.script_reload_clicked();
+    let out = reload(&mut s);
     settle(&mut s);
     match out {
         ReloadOutcome::Applied { restarted, .. } => assert_eq!(restarted, 1),
@@ -1099,14 +1169,14 @@ fn catalog_confirm_gates_newly_paused() {
         format!("{BOT_TS}// changed\n"),
     )
     .unwrap();
-    s.refresh_catalog_at(&root);
+    refresh_catalog(&mut s, &root);
     settle(&mut s);
     assert_eq!(
         s.play.as_ref().unwrap().script_state("alice"),
         script::RunState::Running
     );
     s.play.as_ref().unwrap().script_pause("alice");
-    s.refresh_catalog_at(&root);
+    refresh_catalog(&mut s, &root);
     settle(&mut s);
     assert_eq!(
         s.play.as_ref().unwrap().script_state("alice"),
@@ -1151,7 +1221,7 @@ fn reload_toplevel_throw_fails_before_replacement() {
         "throw new Error('prep boom');\nexport default class T extends LoopingBot { override loop() {} }\n",
     )
     .unwrap();
-    let out = s.script_reload_clicked();
+    let out = reload(&mut s);
     settle(&mut s);
     match out {
         ReloadOutcome::Failed(e) => assert!(
@@ -1189,7 +1259,7 @@ fn reload_missing_named_export_fails_before_replacement() {
             .unwrap()
             .clone();
     fs::write(&path, src).unwrap();
-    let out = s.script_reload_clicked();
+    let out = reload(&mut s);
     settle(&mut s);
     match out {
         ReloadOutcome::Failed(e) => assert!(
@@ -1241,14 +1311,14 @@ fn catalog_disk_change_after_warn_does_not_start_stale_prepared() {
             .clone();
     let bot = root.join("src/bot/scripts/StaleBot/StaleBot.ts");
     fs::write(&bot, format!("{BOT_TS}// first\n")).unwrap();
-    s.refresh_catalog_at(&root);
+    refresh_catalog(&mut s, &root);
     settle(&mut s);
     assert_eq!(
         s.play.as_ref().unwrap().script_state("alice"),
         script::RunState::Running
     );
     fs::write(&bot, format!("{BOT_TS}// second\n")).unwrap();
-    s.refresh_catalog_at(&root);
+    refresh_catalog(&mut s, &root);
     settle(&mut s);
     assert_eq!(
         s.play.as_ref().unwrap().script_state("alice"),
@@ -1269,7 +1339,7 @@ fn reload_removal_skips_target_and_reloads_peer() {
     start_file_on(&mut s, "bob", &path);
     warn_shared_reload(&mut s, &path);
     s.play.as_mut().unwrap().stop_slot("bob");
-    let out = s.script_reload_clicked();
+    let out = reload(&mut s);
     settle(&mut s);
     assert_applied(out, 1, 0);
     assert!(
@@ -1293,7 +1363,7 @@ fn reload_reports_true_startup_failure_without_aborting_peer() {
     start_file_on(&mut s, "bob", &path);
     warn_shared_reload(&mut s, &path);
     s.fail_reload_start_for = Some("bob".into());
-    let out = s.script_reload_clicked();
+    let out = reload(&mut s);
     settle(&mut s);
     assert_applied(out, 1, 1);
     assert!(
@@ -1319,7 +1389,7 @@ fn reload_native_stop_skips_target_and_reloads_peer() {
     start_file_on(&mut s, "bob", &path);
     warn_shared_reload(&mut s, &path);
     s.play.as_ref().unwrap().script_stop("bob");
-    let out = s.script_reload_clicked();
+    let out = reload(&mut s);
     settle(&mut s);
     assert_applied(out, 1, 0);
     wait_state(&s, "bob", script::RunState::Idle);
@@ -1347,7 +1417,7 @@ fn reload_session_stop_skips_target_and_reloads_peer() {
     focus_profile(&mut s, "bob");
     s.script_stop();
     focus_profile(&mut s, "alice");
-    let out = s.script_reload_clicked();
+    let out = reload(&mut s);
     settle(&mut s);
     assert_applied(out, 1, 0);
     wait_state(&s, "bob", script::RunState::Idle);
@@ -1382,7 +1452,7 @@ fn reload_logout_skips_target_and_reloads_peer() {
     warn_shared_reload(&mut s, &path);
     let bob_gen = s.play.as_ref().unwrap().script_runtime_generation("bob");
     s.logout("bob");
-    let out = s.script_reload_clicked();
+    let out = reload(&mut s);
     settle(&mut s);
     assert_applied(out, 1, 0);
     assert_eq!(
@@ -1413,7 +1483,7 @@ fn reload_logout_all_skips_replacement() {
     let alice_gen = s.play.as_ref().unwrap().script_runtime_generation("alice");
     let bob_gen = s.play.as_ref().unwrap().script_runtime_generation("bob");
     s.logout_all();
-    let out = s.script_reload_clicked();
+    let out = reload(&mut s);
     settle(&mut s);
     assert_applied(out, 0, 0);
     assert_eq!(
@@ -1447,7 +1517,7 @@ fn reload_reassignment_skips_target_and_reloads_peer() {
             unavailable: None,
         },
     );
-    let out = s.script_reload_clicked();
+    let out = reload(&mut s);
     settle(&mut s);
     assert_applied(out, 1, 0);
     assert_eq!(
@@ -1486,7 +1556,7 @@ fn reload_new_start_after_stop_is_not_consumed() {
     );
     let bob_gen = s.play.as_ref().unwrap().script_runtime_generation("bob");
     focus_profile(&mut s, "alice");
-    let out = s.script_reload_clicked();
+    let out = reload(&mut s);
     settle(&mut s);
     assert_applied(out, 1, 0);
     assert_eq!(
@@ -1513,8 +1583,8 @@ fn reload_of_a_running_script_restarts_it() {
     let identity = play.script_source_identity("alice").unwrap();
     let before = play.script_runtime_generation("alice").unwrap();
     fs::write(&path, format!("{BOT_TS}// changed\n")).unwrap();
-    assert_eq!(s.script_reload_clicked(), ReloadOutcome::NeedsConfirm);
-    assert_applied(s.script_reload_clicked(), 1, 0);
+    assert_eq!(reload(&mut s), ReloadOutcome::NeedsConfirm);
+    assert_applied(reload(&mut s), 1, 0);
     // The old isolate is still reaping; the restart is queued behind it.
     settle(&mut s);
     let play = s.play.as_ref().unwrap();
@@ -1597,14 +1667,14 @@ fn catalog_native_stop_skips_target_and_reloads_peer() {
         format!("{BOT_TS}// changed\n"),
     )
     .unwrap();
-    s.refresh_catalog_at(&root);
+    refresh_catalog(&mut s, &root);
     settle(&mut s);
     assert_eq!(
         s.play.as_ref().unwrap().script_state("alice"),
         script::RunState::Running
     );
     s.play.as_ref().unwrap().script_stop("bob");
-    s.refresh_catalog_at(&root);
+    refresh_catalog(&mut s, &root);
     settle(&mut s);
     wait_state(&s, "bob", script::RunState::Idle);
     assert_eq!(

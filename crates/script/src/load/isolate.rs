@@ -396,24 +396,15 @@ impl LoadIsolate {
         shape: LoadShape,
         siblings: &[(String, String)],
     ) -> Result<(), String> {
-        let source = js.to_owned();
-        let siblings = siblings.to_vec();
-        std::thread::Builder::new()
-            .name("js-validate".into())
-            .spawn(move || {
-                let isolate = Self::spawn(source, shape, siblings)?;
-                let result = isolate.resolve_setup(Some(Instant::now() + VALIDATION_TIMEOUT));
-                let result = match result {
-                    Ready::Ready => Ok(()),
-                    Ready::Failed(error) => Err(error),
-                    Ready::Pending => unreachable!("bounded setup wait cannot remain pending"),
-                };
-                let _ = isolate.join_without_hook();
-                result
-            })
-            .map_err(|e| format!("js validation thread: {e}"))?
-            .join()
-            .map_err(|_| "js validation thread panicked".to_string())?
+        let isolate = Self::spawn(js.to_owned(), shape, siblings.to_vec())?;
+        let result = isolate.resolve_setup(Some(Instant::now() + VALIDATION_TIMEOUT));
+        let result = match result {
+            Ready::Ready => Ok(()),
+            Ready::Failed(error) => Err(error),
+            Ready::Pending => unreachable!("bounded setup wait cannot remain pending"),
+        };
+        let _ = isolate.join_without_hook();
+        result
     }
 
     fn spawn_inner(
@@ -661,24 +652,57 @@ impl LoadIsolate {
             "in_flight":self.in_flight.lock().unwrap().as_ref().map(|(_,tick,t)|(*tick,t.elapsed().as_millis()))})
     }
 
-    /// Park tick dispatch. Pause publishes intent under the execution lock,
-    /// terminating only the eval that is actually active. A queued eval sees
-    /// the intent before entry; a completed eval cannot be terminated after
-    /// its isolate-side cancel.
+    /// Park future tick dispatch. Pause intent shares the execution lock with
+    /// entry, so a queued tick cannot enter after this call. Healthy work that
+    /// already owns execution is allowed to finish; a one-shot bound tied to
+    /// that exact execution terminates it only if it exceeds the tick budget.
     pub fn pause(&self) {
         let ready = self.poll_ready() == Ready::Ready;
         self.pump_logs();
         self.interrupt_slow_execution(ready);
-        {
+        let deadline = {
             let mut st = self.teardown.lock().unwrap();
-            if st.phase == TeardownPhase::Running {
+            if st.phase != TeardownPhase::Running {
+                None
+            } else {
                 st.pause_requested = true;
-                if st.execution_active
-                    && st.execution_interrupt != Some(teardown::ExecutionInterrupt::Watchdog)
-                {
-                    st.execution_interrupt = Some(teardown::ExecutionInterrupt::Pause);
-                    self.fire_terminate();
+                match (
+                    st.execution_active,
+                    st.execution_interrupt,
+                    st.execution_started,
+                    self.terminate.get(),
+                ) {
+                    (true, None, Some(started), Some(handle)) => Some((
+                        st.execution_id,
+                        SLOW_TICK.saturating_sub(started.elapsed()),
+                        handle.clone(),
+                    )),
+                    _ => None,
                 }
+            }
+        };
+        if let Some((execution_id, delay, terminate)) = deadline {
+            let teardown = std::sync::Arc::clone(&self.teardown);
+            if let Err(error) = std::thread::Builder::new()
+                .name("script-pause-deadline".into())
+                .spawn(move || {
+                    std::thread::sleep(delay);
+                    let mut st = teardown.lock().unwrap();
+                    if st.phase == TeardownPhase::Running
+                        && st.pause_requested
+                        && st.execution_active
+                        && st.execution_id == execution_id
+                        && st.execution_interrupt.is_none()
+                    {
+                        st.execution_interrupt = Some(teardown::ExecutionInterrupt::Pause);
+                        terminate.terminate_execution();
+                    }
+                })
+            {
+                self.logs
+                    .lock()
+                    .unwrap()
+                    .push(format!("pause deadline worker: {error}"));
             }
         }
         self.send(IsolateCmd::Pause);
@@ -809,12 +833,25 @@ impl LoadIsolate {
         self.proof.clone()
     }
 
-    /// Whether the isolate thread currently owns an interruptible user
-    /// execution phase. Tests use this as a scheduling barrier rather than
-    /// guessing with a sleep.
+    /// Whether the isolate thread owns the current interruptible tick phase.
     #[doc(hidden)]
     pub fn execution_active(&self) -> bool {
         self.teardown.lock().unwrap().execution_active
+    }
+
+    /// Number of per-tick diagnostics still awaiting their matching
+    /// completion. Lifecycle regression seam; steady state is zero.
+    #[doc(hidden)]
+    pub fn pending_tick_error_count(&self) -> usize {
+        self.pump_logs();
+        self.tick_errors.lock().unwrap().len()
+    }
+
+    /// Whether the isolate is inside the script's loop/native tick call,
+    /// excluding record/onStart/paint bookkeeping.
+    #[doc(hidden)]
+    pub fn loop_execution_active(&self) -> bool {
+        self.teardown.lock().unwrap().execution_stage == teardown::ExecutionStage::Loop
     }
 
     /// Isolate-scoped seam: delay after the deadline owner is armed and
@@ -875,20 +912,27 @@ impl LoadIsolate {
     /// Discard work from the previous connection, including batches that
     /// an already running tick has not forwarded yet. Script state and
     /// parked waits survive; the next snapshot is posted before a new tick.
-    pub fn reset_session_work(&self) {
-        {
+    /// Returns the new work generation. An active error transfers to that
+    /// generation so the first completed clean loop can recover it.
+    pub fn reset_session_work(&self) -> u64 {
+        let had_active_error = self.tick_outcome_error_generation.lock().unwrap().is_some();
+        let generation = {
             let mut interacts = self.interacts.lock().unwrap();
-            self.work_generation
-                .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+            let generation = self
+                .work_generation
+                .fetch_add(1, std::sync::atomic::Ordering::AcqRel)
+                .wrapping_add(1);
             self.paint_generation.store(
                 NEXT_PAINT_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
                 std::sync::atomic::Ordering::Release,
             );
             interacts.clear();
             self.lifecycle.lock().unwrap().clear();
-        }
+            generation
+        };
         self.tick_errors.lock().unwrap().clear();
-        *self.tick_outcome_error_generation.lock().unwrap() = None;
+        *self.tick_outcome_error_generation.lock().unwrap() =
+            had_active_error.then_some(generation);
         self.tick_outcomes.lock().unwrap().clear();
         {
             // Re-stamp the held frame with the new generation: an overlay that
@@ -907,6 +951,7 @@ impl LoadIsolate {
         }
         *self.in_flight.lock().unwrap() = None;
         self.send(IsolateCmd::ResetSession);
+        generation
     }
 
     /// The latest recorded paint frame (the tick thread forwards the
@@ -1012,7 +1057,10 @@ impl LoadIsolate {
     /// lock, so no terminate can leak into a later tick or `onStop`.
     fn fire_execution_interrupt(&self, owner: teardown::ExecutionInterrupt) -> bool {
         let mut st = self.teardown.lock().unwrap();
-        if st.phase != TeardownPhase::Running || !st.execution_active {
+        if st.phase != TeardownPhase::Running
+            || !st.execution_active
+            || st.execution_interrupt.is_some()
+        {
             return false;
         }
         st.execution_interrupt = Some(owner);

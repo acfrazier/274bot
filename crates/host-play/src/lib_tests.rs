@@ -5237,6 +5237,42 @@ fn script_control_is_noop_for_unknown_slot_and_state_defaults_idle() {
 }
 
 #[test]
+fn poisoned_script_slot_reads_as_retiring_until_reaped() {
+    let play = run_with_io(
+        &PlayOptions {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            lowmem: true,
+            mainland: false,
+        },
+        vec![],
+        |_| (None, None),
+        |_, _, _| {},
+    );
+    let slot = script_slot_or_insert(&play.scripts, "alice");
+    let poisoner = {
+        let slot = Arc::clone(&slot);
+        thread::spawn(move || {
+            let _slot = slot.lock().unwrap();
+            panic!("synthetic script worker panic");
+        })
+    };
+    assert!(poisoner.join().is_err());
+    assert!(slot.is_poisoned());
+
+    assert_eq!(play.script_state("alice"), script::RunState::Idle);
+    assert_eq!(play.script_poll_start("alice"), script::StartPoll::NotOwed);
+    assert!(play.script_take_pending_logs("alice").is_empty());
+    assert_eq!(play.script_last_error("alice"), None);
+    assert_eq!(play.script_lifecycle_receipt("alice"), None);
+    assert!(
+        slot.is_poisoned(),
+        "readers must leave retirement and poison repair to the reaper"
+    );
+}
+
+#[test]
 fn queue_wire_lands_on_the_named_slots_queue() {
     let mut play = run_with_io(
         &PlayOptions {

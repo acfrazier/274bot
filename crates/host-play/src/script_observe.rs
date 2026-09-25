@@ -239,9 +239,15 @@ pub(crate) fn script_observe_cached(
     let mut interact = Vec::new();
     let mut pending_withdraw_x_active = false;
     let mut pending_bank_op_active = false;
+    let observed_slot = script_slot(scripts, name);
     let mut slot_work_epoch = None;
-    if let Some(slot) = script_slot(scripts, name) {
-        let mut slot = slot.lock().unwrap();
+    'script_slot: {
+        let Some(slot) = observed_slot.as_ref() else {
+            break 'script_slot;
+        };
+        let Ok(mut slot) = slot.lock() else {
+            break 'script_slot;
+        };
         slot.observe_lifecycle();
         // Reap a script-requested Stop before advancing host continuations.
         emit_script_debug_logs(&mut slot, name);
@@ -763,8 +769,14 @@ pub(crate) fn script_observe_cached(
             #[cfg(test)]
             wait_dispatch_barrier();
             if let Some(dispatch_slot) = script_slot(scripts, name) {
-                let mut slot = dispatch_slot.lock().unwrap();
-                if slot.state() == script::RunState::Running
+                let same_lifetime = observed_slot
+                    .as_ref()
+                    .is_some_and(|observed| Arc::ptr_eq(observed, &dispatch_slot));
+                let Ok(mut slot) = dispatch_slot.lock() else {
+                    return wrote;
+                };
+                if same_lifetime
+                    && slot.state() == script::RunState::Running
                     && Some(slot.work_epoch()) == slot_work_epoch
                 {
                     let mut dispatchable = Vec::with_capacity(interact.len());
@@ -999,7 +1011,8 @@ pub(crate) fn script_observe_cached(
                             }
                         }
                     }
-                } else if slot.state() == script::RunState::Paused
+                } else if same_lifetime
+                    && slot.state() == script::RunState::Paused
                     && Some(slot.work_epoch()) == slot_work_epoch
                 {
                     slot.restore_interacts(interact);
@@ -1026,8 +1039,13 @@ pub(crate) fn script_observe_cached(
                 .count();
             if rejected_x != 0 || rejected_load != 0 || rejected_bank != 0 {
                 if let Some(slot) = script_slot(scripts, name) {
-                    let mut slot = slot.lock().unwrap();
-                    if Some(slot.work_epoch()) == slot_work_epoch {
+                    let same_lifetime = observed_slot
+                        .as_ref()
+                        .is_some_and(|observed| Arc::ptr_eq(observed, &slot));
+                    let Ok(mut slot) = slot.lock() else {
+                        return wrote;
+                    };
+                    if same_lifetime && Some(slot.work_epoch()) == slot_work_epoch {
                         for _ in 0..rejected_x {
                             slot.complete_withdraw_x(false);
                         }
@@ -1062,8 +1080,13 @@ pub(crate) fn script_observe_cached(
             .count();
         if rejected_x != 0 || rejected_load != 0 || rejected_bank != 0 {
             if let Some(slot) = script_slot(scripts, name) {
-                let mut slot = slot.lock().unwrap();
-                if Some(slot.work_epoch()) == slot_work_epoch {
+                let same_lifetime = observed_slot
+                    .as_ref()
+                    .is_some_and(|observed| Arc::ptr_eq(observed, &slot));
+                let Ok(mut slot) = slot.lock() else {
+                    return wrote;
+                };
+                if same_lifetime && Some(slot.work_epoch()) == slot_work_epoch {
                     for _ in 0..rejected_x {
                         slot.complete_withdraw_x(false);
                     }
@@ -1200,8 +1223,9 @@ where
         return None;
     }
     let consumes_snapshot = script_slot(scripts, name).is_some_and(|slot| {
-        let slot = slot.lock().unwrap();
-        slot.state() == script::RunState::Running && slot.load_active()
+        slot.lock()
+            .ok()
+            .is_some_and(|slot| slot.state() == script::RunState::Running && slot.load_active())
     });
     if consumes_snapshot {
         project()

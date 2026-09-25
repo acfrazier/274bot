@@ -76,10 +76,13 @@ pub(super) fn script_slot_or_insert(wall: &ScriptWall, name: &str) -> ScriptSlot
 /// Resolve `name`'s lifecycle and read its latest Start under one lock; a
 /// slot that no longer exists owes nothing.
 pub(super) fn poll_start(wall: &ScriptWall, name: &str) -> script::StartPoll {
-    match script_slot(wall, name) {
-        Some(slot) => slot.lock().unwrap().poll_start(),
-        None => script::StartPoll::NotOwed,
-    }
+    let Some(slot) = script_slot(wall, name) else {
+        return script::StartPoll::NotOwed;
+    };
+    let Ok(mut slot) = slot.lock() else {
+        return script::StartPoll::NotOwed;
+    };
+    slot.poll_start()
 }
 
 /// Test-only Start that waits (bounded) for the isolate to settle through
@@ -149,7 +152,8 @@ impl SettledStart for SlotScript {
 /// the per-observe inventory view (the observe re-checks the gate inside).
 pub(super) fn script_running(scripts: &ScriptWall, name: &str) -> bool {
     script_slot(scripts, name)
-        .is_some_and(|s| s.lock().unwrap().state() == script::RunState::Running)
+        .and_then(|slot| slot.lock().ok().map(|slot| slot.state()))
+        .is_some_and(|state| state == script::RunState::Running)
 }
 
 /// Puzzle-board post tests: the production observe path

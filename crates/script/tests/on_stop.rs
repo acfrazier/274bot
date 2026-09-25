@@ -408,8 +408,8 @@ fn interrupted_running_loop_then_normal_hook() {
     );
     iso.on_game_tick(1);
     assert!(
-        wait_until(Duration::from_secs(2), || iso.execution_active()),
-        "runaway loop never entered interruptible execution"
+        wait_until(Duration::from_secs(2), || iso.loop_execution_active()),
+        "runaway loop never entered its script call"
     );
     let t0 = Instant::now();
     let logs = iso.join();
