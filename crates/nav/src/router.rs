@@ -24,7 +24,7 @@
 //! fail closed).
 
 use std::cmp::Ordering;
-use std::collections::{BinaryHeap, HashMap, HashSet};
+use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
 use std::time::Instant;
 
 use api::snapshot::WorldTile;
@@ -285,7 +285,6 @@ pub fn find_with_avoid_bounded(
         opts.allow_wilderness,
         state,
         opts.essence.as_ref(),
-        false,
         avoid,
     )
 }
@@ -293,11 +292,20 @@ pub fn find_with_avoid_bounded(
 /// Native bank-search cap: 500,000 non-goal expansions precede an accepted
 /// goal, which has 1-based settle ordinal 500,001.
 pub const BANK_TARGET_BUDGET: usize = 500_001;
-/// First-goal searches serve targets already visible in the current scene.
-/// Keep their worst-case scratch bounded while leaving a wide margin over
-/// the measured packed-booth maximum (11,700 settled nodes). Callers can
-/// fall back to their broader destination policy on [`RouteError::BudgetExhausted`].
-pub const FIRST_TARGET_BUDGET: usize = 32 * 1024;
+/// Settles a first-goal search may spend while its backward proof has not
+/// shown any goal reachable. A proof of reachability lifts the search to
+/// [`NODE_BUDGET`]; a proof of unreachability stops it at once. Only a goal
+/// set unreachable from a large region whose own backward region is also
+/// large spends all of it: on the 289 bake, stands fed through ladders by
+/// the unstamped upper planes. Measured reachable in-scene stands need at
+/// most ~347,000 settles (a 598-tick Wilderness detour; ~279,000 with every
+/// teleport usable), and 2^19 settles hold about 90 MB of search tables.
+pub const FIRST_TARGET_BUDGET: usize = 1 << 19;
+/// Tiles the backward proof may admit before it leaves the answer to the
+/// forward search alone. It takes one step per settled node, so this only
+/// caps its own set (a 12-byte tile each, plus hash-table overhead) when
+/// the forward budget is larger.
+const REVERSE_PROOF_BUDGET: usize = 1 << 18;
 
 /// A target's exact shortest-path cost and 1-based shared settle ordinal.
 /// An origin shortcut has ordinal zero.
@@ -307,15 +315,40 @@ pub struct TargetCost {
     pub settled_at: usize,
 }
 
-/// Allocated entry capacities for this request's Dijkstra scratch at stop.
+/// Allocated entry capacities for this request's search scratch at stop.
 /// HashMap/heap capacities never shrink during the flood; these are their
 /// peak allocated entry capacities, not retained per worker or pack bytes.
+/// `reverse` and `reverse_queue` are the backward proof's set and queue
+/// (zero when no proof ran); they are dropped as soon as the proof decides.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SearchCapacities {
     pub distances: usize,
     pub predecessors: usize,
     pub settled: usize,
     pub heap: usize,
+    pub reverse: usize,
+    pub reverse_queue: usize,
+}
+
+/// How the backward proof beside a goal search ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ReverseProof {
+    /// No proof ran: an empty goal set, an origin shortcut, or a search
+    /// kind that does not carry one.
+    #[default]
+    NotRun,
+    /// Undecided when the forward search settled a goal or hit its budget.
+    Open,
+    /// The backward region met the origin, or the landing of a teleport the
+    /// origin can take: a goal is reachable, and the forward search keeps
+    /// its full budget to find the cheapest.
+    Reachable,
+    /// A teleport usable elsewhere lands in the backward region (every tile
+    /// may then precede it), or the region outgrew the proof's cap; the
+    /// forward search decides within its budget.
+    Abandoned,
+    /// The backward region closed without the origin: no goal is reachable.
+    Unreachable,
 }
 
 /// One first-settled-target search. Dijkstra settles nodes in increasing
@@ -325,6 +358,7 @@ pub struct FirstRouteSearch {
     route: Result<Route, RouteError>,
     settled: usize,
     capacities: SearchCapacities,
+    proof: ReverseProof,
 }
 
 impl FirstRouteSearch {
@@ -336,21 +370,32 @@ impl FirstRouteSearch {
         self.route
     }
 
+    /// Forward nodes settled (the backward proof's tiles are not counted).
     pub fn settled(&self) -> usize {
         self.settled
     }
 
-    /// Peak scratch entry capacities at the point the first target settled.
+    /// Peak scratch entry capacities at the point the search stopped.
     pub fn scratch_capacities(&self) -> SearchCapacities {
         self.capacities
     }
+
+    pub fn proof(&self) -> ReverseProof {
+        self.proof
+    }
 }
 
-/// Search until the cheapest reachable target settles. The search uses the
-/// same native gates as [`find_with`], but a scene-local node cap prevents an
-/// unreachable goal set from flooding the whole world. Small goal sets are
-/// scanned inline without allocation; larger fallback sets build one
-/// membership map instead of scanning every target for every settled node.
+/// Search until the cheapest reachable target settles, under the same
+/// native gates as [`find_with`]. Dijkstra alone reports an unreachable goal
+/// set only after flooding everything reachable from `from`, so a backward
+/// closure from the targets ([`ReverseProof`]) runs one step per settled
+/// node: a goal set sealed in a small region (a dead-end pocket, a gated
+/// room) is proven unreachable after about twice that region's size. The
+/// search spends at most [`FIRST_TARGET_BUDGET`] settles unless the closure
+/// proves a goal reachable, and then keeps [`find_with`]'s full budget.
+/// Small goal sets are scanned inline without allocation; larger fallback
+/// sets build one membership map instead of scanning every target for every
+/// settled node.
 pub fn find_first_with(
     collision: &WorldCollision,
     graph: &TransportGraph,
@@ -359,11 +404,44 @@ pub fn find_first_with(
     opts: FindOptions,
     state: &WorldState,
 ) -> FirstRouteSearch {
+    first_search(
+        collision,
+        graph,
+        from,
+        targets,
+        opts,
+        state,
+        false,
+        &[],
+        FIRST_TARGET_BUDGET,
+        NODE_BUDGET,
+    )
+}
+
+/// The proof-carrying goal search behind [`find_first_with`] (strict gates)
+/// and the BankBudget diagnoses (`relax_carry_worn`). The backward closure
+/// honors the same gates as the forward search, so a strict proof never
+/// hides a relaxed route. `budget` holds until the proof shows a goal
+/// reachable, then `reachable_budget` applies.
+#[allow(clippy::too_many_arguments)] // search surface plus relaxation/avoid/budgets
+fn first_search(
+    collision: &WorldCollision,
+    graph: &TransportGraph,
+    from: WorldTile,
+    targets: &[WorldTile],
+    opts: FindOptions,
+    state: &WorldState,
+    relax_carry_worn: bool,
+    avoid: &[AvoidRect],
+    budget: usize,
+    reachable_budget: usize,
+) -> FirstRouteSearch {
     if targets.is_empty() {
         return FirstRouteSearch {
             route: Err(RouteError::NoPath),
             settled: 0,
             capacities: SearchCapacities::default(),
+            proof: ReverseProof::NotRun,
         };
     }
     if targets.contains(&from) {
@@ -375,6 +453,7 @@ pub fn find_first_with(
             }),
             settled: 0,
             capacities: SearchCapacities::default(),
+            proof: ReverseProof::NotRun,
         };
     }
 
@@ -387,14 +466,18 @@ pub fn find_first_with(
         graph,
         from,
         CostModel::running(),
-        FIRST_TARGET_BUDGET,
+        budget,
         opts.allow_teleports,
         opts.allow_wilderness,
         state,
         opts.essence.as_ref(),
-        false,
-        &[],
+        relax_carry_worn,
+        avoid,
         &mut goals,
+        Some(ProofRequest {
+            seeds: targets,
+            reachable_budget,
+        }),
         None,
     );
     let route = match goals {
@@ -419,6 +502,7 @@ pub fn find_first_with(
         route,
         settled: search.settled,
         capacities: search.capacities,
+        proof: search.proof,
     }
 }
 
@@ -564,6 +648,7 @@ pub fn find_many_with_avoid_bounded_until<'a>(
             false,
             avoid,
             &mut goals,
+            None,
             deadline,
         )
     };
@@ -595,7 +680,8 @@ pub fn find_many_with_avoid_bounded_until<'a>(
 /// A missing `item_req`/`worn_req` fact the BankBudget session must
 /// supply before a strict [`find_with`] can route: an `item_req` stack
 /// count the state cannot prove, or a `worn_req` list (any-of) with no
-/// worn alternative. [`find_missing_item_reqs`] is the only producer —
+/// worn alternative. [`find_missing_item_reqs`] and
+/// [`find_first_missing_item_reqs`] are the only producers —
 /// [`find`]/[`find_with`] never relax an edge.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum MissingReq {
@@ -614,7 +700,10 @@ pub enum MissingReq {
 /// can help. This is the BankBudget session's diagnosis arm
 /// ([`crate::bank_fetch::plan_bank_fetch`]); [`find`] and [`find_with`]
 /// themselves never ignore an item gate — missing facts still fail
-/// closed.
+/// closed. The relaxed search carries the backward [`ReverseProof`], so an
+/// unreachable diagnosis target (a solid tile no transport lands on, a
+/// sealed pocket) costs about its own backward region instead of a relaxed
+/// flood of everything reachable from `from`.
 pub fn find_missing_item_reqs(
     collision: &WorldCollision,
     graph: &TransportGraph,
@@ -662,21 +751,91 @@ pub fn find_missing_item_reqs_with_avoid_bounded(
     avoid: &[AvoidRect],
     budget: usize,
 ) -> Option<Vec<MissingReq>> {
-    let route = find_bounded_impl(
+    let route = first_search(
         collision,
         graph,
         from,
-        to,
-        CostModel::running(),
-        budget,
-        opts.allow_teleports,
-        opts.allow_wilderness,
+        std::slice::from_ref(&to),
+        opts,
         state,
-        opts.essence.as_ref(),
         true,
         avoid,
+        budget,
+        budget,
     )
+    .into_route()
     .ok()?;
+    Some(missing_item_reqs(&route, state))
+}
+
+/// The BankBudget diagnosis of a failed [`find_first_with`] over the same
+/// targets.
+pub struct FirstMissingItemSearch {
+    found: Option<(WorldTile, Vec<MissingReq>)>,
+    settled: usize,
+    capacities: SearchCapacities,
+    proof: ReverseProof,
+}
+
+impl FirstMissingItemSearch {
+    /// The cheapest target the relaxed search reaches, and the facts its
+    /// relaxed route needs that the state cannot prove.
+    pub fn found(&self) -> Option<(WorldTile, &[MissingReq])> {
+        self.found
+            .as_ref()
+            .map(|(target, missing)| (*target, missing.as_slice()))
+    }
+
+    pub fn settled(&self) -> usize {
+        self.settled
+    }
+
+    pub fn scratch_capacities(&self) -> SearchCapacities {
+        self.capacities
+    }
+
+    pub fn proof(&self) -> ReverseProof {
+        self.proof
+    }
+}
+
+/// [`find_missing_item_reqs`] for a whole goal set: one relaxed first-goal
+/// search with [`find_first_with`]'s budgets and backward proof, instead of
+/// one relaxed flood per target.
+pub fn find_first_missing_item_reqs(
+    collision: &WorldCollision,
+    graph: &TransportGraph,
+    from: WorldTile,
+    targets: &[WorldTile],
+    opts: FindOptions,
+    state: &WorldState,
+) -> FirstMissingItemSearch {
+    let search = first_search(
+        collision,
+        graph,
+        from,
+        targets,
+        opts,
+        state,
+        true,
+        &[],
+        FIRST_TARGET_BUDGET,
+        NODE_BUDGET,
+    );
+    FirstMissingItemSearch {
+        found: search
+            .route()
+            .ok()
+            .map(|route| (route.dest, missing_item_reqs(route, state))),
+        settled: search.settled,
+        capacities: search.capacities,
+        proof: search.proof,
+    }
+}
+
+/// Every `item_req`/`worn_req` fact on a relaxed route that `state` cannot
+/// prove, sorted and deduplicated.
+fn missing_item_reqs(route: &Route, state: &WorldState) -> Vec<MissingReq> {
     let mut missing = Vec::new();
     for leg in &route.legs {
         let Leg::Transport { edge } = leg else {
@@ -701,7 +860,7 @@ pub fn find_missing_item_reqs_with_avoid_bounded(
         MissingReq::WearAny { ids } => (ids.first().copied().unwrap_or(0), 1),
     });
     missing.dedup();
-    Some(missing)
+    missing
 }
 
 /// [`find`] with an explicit per-search cost model (the run-vs-walk rate).
@@ -723,7 +882,6 @@ pub fn find_with_model(
         false,
         &WorldState::empty(),
         None,
-        false,
         &[],
     )
 }
@@ -776,7 +934,6 @@ pub fn find_allow_teleports_with_model(
         false,
         state,
         None,
-        false,
         &[],
     )
 }
@@ -806,7 +963,6 @@ fn find_bounded(
         false,
         &WorldState::empty(),
         None,
-        false,
         &[],
     )
 }
@@ -904,6 +1060,7 @@ struct SearchOutcome {
     settled: usize,
     stop: SearchStop,
     capacities: SearchCapacities,
+    proof: ReverseProof,
 }
 
 impl SearchOutcome {
@@ -913,9 +1070,11 @@ impl SearchOutcome {
             settled: 0,
             stop: SearchStop::Completed,
             capacities: SearchCapacities::default(),
+            proof: ReverseProof::NotRun,
         }
     }
 
+    #[allow(clippy::too_many_arguments)] // the kernel's scratch tables plus its stop facts
     fn finish(
         came_from: HashMap<WorldTile, Back>,
         dist: &HashMap<WorldTile, f64>,
@@ -924,6 +1083,7 @@ impl SearchOutcome {
         settled: usize,
         stop: SearchStop,
         record_capacities: bool,
+        reverse: ReverseReport,
     ) -> Self {
         let capacities = if record_capacities {
             SearchCapacities {
@@ -931,6 +1091,8 @@ impl SearchOutcome {
                 predecessors: came_from.capacity(),
                 settled: done.capacity(),
                 heap: heap.capacity(),
+                reverse: reverse.seen,
+                reverse_queue: reverse.queue,
             }
         } else {
             SearchCapacities::default()
@@ -940,21 +1102,252 @@ impl SearchOutcome {
             settled,
             stop,
             capacities,
+            proof: reverse.proof,
         }
     }
 }
 
-/// The shared Dijkstra; `use_teleports` unions the any-tile teleport layer
-/// into the relaxation from every settled node. Transport edges are relaxed
-/// from any standable tile within [`INTERACT_RADIUS`] of their `at` (never
-/// from `at` itself when it is blocked); walk steps are the strict
-/// directional [`step_ok`] test throughout. `allow_wilderness` gates
-/// stepping into (or landing in) the wilderness zone; `state` gates every
-/// transport edge (walked or teleported) on its requirements — an edge
-/// the state cannot prove is not relaxed. `relax_carry_worn` is the
-/// BankBudget diagnosis arm only: it drops the `item_req`/`worn_req`
-/// gates so the session can tell a missing-item failure from a
-/// skill/quest/varp gate. Every production entry point passes `false`.
+/// Whether `state` proves `edge`'s requirements; the BankBudget diagnosis
+/// (`relax_carry_worn`) ignores only its `item_req`/`worn_req` gates.
+fn edge_allowed(state: &WorldState, edge: &TransportEdge, relax_carry_worn: bool) -> bool {
+    if relax_carry_worn {
+        state.allows_without_carry_worn(edge)
+    } else {
+        state.allows(edge)
+    }
+}
+
+/// The outcome and peak scratch of one search's backward proof.
+#[derive(Clone, Copy, Default)]
+struct ReverseReport {
+    proof: ReverseProof,
+    seen: usize,
+    queue: usize,
+}
+
+/// The backward proof inside one goal search: live closure scratch until the
+/// proof decides, then only its report.
+#[derive(Default)]
+struct ReverseRun<'a> {
+    closure: Option<ReverseClosure<'a>>,
+    report: ReverseReport,
+}
+
+impl<'a> ReverseRun<'a> {
+    fn begin(&mut self, mut closure: ReverseClosure<'a>, seeds: &[WorldTile]) {
+        for &seed in seeds {
+            if let Some(proof) = closure.admit(seed) {
+                self.report = closure.report(proof);
+                return;
+            }
+        }
+        self.closure = Some(closure);
+    }
+
+    /// One backward step, taken per forward settle. A decision drops the
+    /// closure's scratch and is returned once.
+    fn step(&mut self) -> Option<ReverseProof> {
+        let proof = self.closure.as_mut()?.step()?;
+        if let Some(closure) = self.closure.take() {
+            self.report = closure.report(proof);
+        }
+        Some(proof)
+    }
+
+    /// The final report; a closure still running when the forward search
+    /// stops is [`ReverseProof::Open`].
+    fn finish(&mut self) -> ReverseReport {
+        if let Some(closure) = self.closure.take() {
+            self.report = closure.report(ReverseProof::Open);
+        }
+        self.report
+    }
+}
+
+/// Backward closure of a goal set over a superset of the forward search's
+/// moves. Walk predecessors are exact: `p` precedes `q` when the forward
+/// [`step_ok`] and wilderness entry gate admit the step `p -> q`. Transport
+/// and essence-return predecessors (the standable take-offs within
+/// [`INTERACT_RADIUS`] of each usable edge landing in the closure) are added
+/// whenever the walk frontier empties, by one scan of the packed edge list (a
+/// few thousand edges) rather than a per-search index. Avoidance rectangles
+/// only remove forward moves and are ignored.
+///
+/// Admitting the origin, or the landing of a teleport the forward search can
+/// take from the origin, proves a goal reachable. Any other usable teleport
+/// landing in the closure makes every tile a potential predecessor, so a
+/// closure holding one cannot prove anything unreachable. Otherwise a closure
+/// that empties without meeting the origin is closed under every forward
+/// predecessor, so no forward path reaches the goal set.
+struct ReverseClosure<'a> {
+    collision: &'a WorldCollision,
+    graph: &'a TransportGraph,
+    state: &'a WorldState,
+    essence: Option<&'a EssenceSession>,
+    from: WorldTile,
+    use_teleports: bool,
+    allow_wilderness: bool,
+    relax_carry_worn: bool,
+    /// Landings of the gated teleports usable from `from` itself.
+    landings: HashSet<WorldTile>,
+    seen: HashSet<WorldTile>,
+    queue: VecDeque<WorldTile>,
+}
+
+impl<'a> ReverseClosure<'a> {
+    #[allow(clippy::too_many_arguments)] // the kernel's gates, borrowed as-is
+    fn new(
+        collision: &'a WorldCollision,
+        graph: &'a TransportGraph,
+        state: &'a WorldState,
+        essence: Option<&'a EssenceSession>,
+        from: WorldTile,
+        use_teleports: bool,
+        allow_wilderness: bool,
+        relax_carry_worn: bool,
+    ) -> Self {
+        let landings = if use_teleports {
+            let level = graph.wilderness.level(from);
+            graph
+                .teleports
+                .iter()
+                .filter(|edge| {
+                    edge_allowed(state, edge, relax_carry_worn)
+                        && TransportGraph::teleport_legal_at_level(level, edge)
+                        && wildy_step_ok(graph, from, edge.to, allow_wilderness)
+                })
+                .map(|edge| edge.to)
+                .collect()
+        } else {
+            HashSet::new()
+        };
+        Self {
+            collision,
+            graph,
+            state,
+            essence,
+            from,
+            use_teleports,
+            allow_wilderness,
+            relax_carry_worn,
+            landings,
+            seen: HashSet::new(),
+            queue: VecDeque::new(),
+        }
+    }
+
+    fn report(&self, proof: ReverseProof) -> ReverseReport {
+        ReverseReport {
+            proof,
+            seen: self.seen.capacity(),
+            queue: self.queue.capacity(),
+        }
+    }
+
+    /// Admit a predecessor. `Some` ends the proof: the origin (or a teleport
+    /// landing it can reach directly) precedes the goals, or the closure
+    /// outgrew [`REVERSE_PROOF_BUDGET`].
+    fn admit(&mut self, tile: WorldTile) -> Option<ReverseProof> {
+        if !self.seen.insert(tile) {
+            return None;
+        }
+        if tile == self.from || (!self.landings.is_empty() && self.landings.contains(&tile)) {
+            return Some(ReverseProof::Reachable);
+        }
+        if self.seen.len() > REVERSE_PROOF_BUDGET {
+            return Some(ReverseProof::Abandoned);
+        }
+        self.queue.push_back(tile);
+        None
+    }
+
+    /// Expand the oldest frontier tile's walk predecessors, or cross
+    /// transports once the walk frontier is empty.
+    fn step(&mut self) -> Option<ReverseProof> {
+        let Some(tile) = self.queue.pop_front() else {
+            return self.cross_transports();
+        };
+        for d in STEPS {
+            let before = WorldTile {
+                x: tile.x - d.0,
+                z: tile.z - d.1,
+                level: tile.level,
+            };
+            if step_ok(self.collision, before, d)
+                && wildy_step_ok(self.graph, before, tile, self.allow_wilderness)
+            {
+                if let Some(proof) = self.admit(before) {
+                    return Some(proof);
+                }
+            }
+        }
+        None
+    }
+
+    /// Admit every transport and essence-return take-off whose landing is in
+    /// the closure. Nothing new means the closure is complete.
+    fn cross_transports(&mut self) -> Option<ReverseProof> {
+        let graph = self.graph;
+        let state = self.state;
+        if self.use_teleports
+            && graph.teleports.iter().any(|edge| {
+                self.seen.contains(&edge.to) && edge_allowed(state, edge, self.relax_carry_worn)
+            })
+        {
+            return Some(ReverseProof::Abandoned);
+        }
+        let admitted = self.seen.len();
+        for edge in &graph.edges {
+            if self.seen.contains(&edge.to) && edge_allowed(state, edge, self.relax_carry_worn) {
+                if let Some(proof) = self.admit_takeoffs(edge.at, edge.to) {
+                    return Some(proof);
+                }
+            }
+        }
+        if let Some(session) = self.essence {
+            if self.seen.contains(&session.return_tile) {
+                for &portal in ESSENCE_MINE_PORTALS {
+                    if let Some(proof) = self.admit_takeoffs(portal, session.return_tile) {
+                        return Some(proof);
+                    }
+                }
+            }
+        }
+        (self.seen.len() == admitted).then_some(ReverseProof::Unreachable)
+    }
+
+    /// The forward search takes an edge at `at` from any standable tile
+    /// within [`INTERACT_RADIUS`] on `at`'s level.
+    fn admit_takeoffs(&mut self, at: WorldTile, to: WorldTile) -> Option<ReverseProof> {
+        for dx in -INTERACT_RADIUS..=INTERACT_RADIUS {
+            for dz in -INTERACT_RADIUS..=INTERACT_RADIUS {
+                let takeoff = WorldTile {
+                    x: at.x + dx,
+                    z: at.z + dz,
+                    level: at.level,
+                };
+                if self.collision.standable(takeoff)
+                    && wildy_step_ok(self.graph, takeoff, to, self.allow_wilderness)
+                {
+                    if let Some(proof) = self.admit(takeoff) {
+                        return Some(proof);
+                    }
+                }
+            }
+        }
+        None
+    }
+}
+
+/// The shared single-target Dijkstra behind [`find`]/[`find_with`]:
+/// `use_teleports` unions the any-tile teleport layer into the relaxation
+/// from every settled node. Transport edges are relaxed from any standable
+/// tile within [`INTERACT_RADIUS`] of their `at` (never from `at` itself
+/// when it is blocked); walk steps are the strict directional [`step_ok`]
+/// test throughout. `allow_wilderness` gates stepping into (or landing in)
+/// the wilderness zone; `state` gates every transport edge (walked or
+/// teleported) on its requirements — an edge the state cannot prove is not
+/// relaxed.
 #[allow(clippy::too_many_arguments)]
 fn find_bounded_impl(
     collision: &WorldCollision,
@@ -967,7 +1360,6 @@ fn find_bounded_impl(
     allow_wilderness: bool,
     state: &WorldState,
     essence: Option<&EssenceSession>,
-    relax_carry_worn: bool,
     avoid: &[AvoidRect],
 ) -> Result<Route, RouteError> {
     if from == to {
@@ -989,9 +1381,10 @@ fn find_bounded_impl(
         allow_wilderness,
         state,
         essence,
-        relax_carry_worn,
+        false,
         avoid,
         &mut goals,
+        None,
         None,
     );
     match goals {
@@ -1011,13 +1404,28 @@ fn find_bounded_impl(
     }
 }
 
+/// A goal search's backward proof: the goal tiles, and the node budget the
+/// forward search may use once the proof shows a goal reachable.
+#[derive(Clone, Copy)]
+struct ProofRequest<'a> {
+    seeds: &'a [WorldTile],
+    reachable_budget: usize,
+}
+
+/// The Dijkstra kernel shared by every search shape. `relax_carry_worn` is
+/// the BankBudget diagnosis arm only: it drops the `item_req`/`worn_req`
+/// gates so the session can tell a missing-item failure from a
+/// skill/quest/varp gate. A `proof` runs the backward [`ReverseClosure`]
+/// from its goal tiles one step per settled node: the search stops as
+/// [`SearchStop::Exhausted`] once no goal can be reachable, and `budget`
+/// rises to the proof's `reachable_budget` once one provably is.
 #[allow(clippy::too_many_arguments)]
 fn search_kernel(
     collision: &WorldCollision,
     graph: &TransportGraph,
     from: WorldTile,
     model: CostModel,
-    budget: usize,
+    mut budget: usize,
     use_teleports: bool,
     allow_wilderness: bool,
     state: &WorldState,
@@ -1025,9 +1433,30 @@ fn search_kernel(
     relax_carry_worn: bool,
     avoid: &[AvoidRect],
     goals: &mut Goals<'_>,
+    proof: Option<ProofRequest<'_>>,
     deadline: Option<Instant>,
 ) -> SearchOutcome {
-    let record_capacities = matches!(goals, Goals::First { .. } | Goals::Many { .. });
+    let record_capacities =
+        proof.is_some() || matches!(goals, Goals::First { .. } | Goals::Many { .. });
+    let mut reverse = ReverseRun::default();
+    if let Some(proof) = proof {
+        reverse.begin(
+            ReverseClosure::new(
+                collision,
+                graph,
+                state,
+                essence,
+                from,
+                use_teleports,
+                allow_wilderness,
+                relax_carry_worn,
+            ),
+            proof.seeds,
+        );
+        if reverse.report.proof == ReverseProof::Reachable {
+            budget = budget.max(proof.reachable_budget);
+        }
+    }
     let mut dist: HashMap<WorldTile, f64> = HashMap::new();
     let mut came_from: HashMap<WorldTile, Back> = HashMap::new();
     let mut heap: BinaryHeap<HeapNode> = BinaryHeap::new();
@@ -1052,6 +1481,7 @@ fn search_kernel(
                 expanded,
                 SearchStop::Deadline,
                 record_capacities,
+                reverse.finish(),
             );
         }
         heap_pops += 1;
@@ -1079,6 +1509,7 @@ fn search_kernel(
                     SearchStop::Budget
                 },
                 record_capacities,
+                reverse.finish(),
             );
         }
         if goals.accept(cur, n.cost, expanded) {
@@ -1094,7 +1525,28 @@ fn search_kernel(
                     SearchStop::Completed
                 },
                 record_capacities,
+                reverse.finish(),
             );
+        }
+        match reverse.step() {
+            Some(ReverseProof::Unreachable) => {
+                return SearchOutcome::finish(
+                    came_from,
+                    &dist,
+                    &done,
+                    &heap,
+                    expanded,
+                    SearchStop::Exhausted,
+                    record_capacities,
+                    reverse.finish(),
+                );
+            }
+            Some(ReverseProof::Reachable) => {
+                if let Some(proof) = proof {
+                    budget = budget.max(proof.reachable_budget);
+                }
+            }
+            _ => {}
         }
 
         let escaping = !avoid.is_empty() && tile_in_any_avoid(cur, avoid);
@@ -1140,12 +1592,7 @@ fn search_kernel(
                     };
                     for &ei in idxs {
                         let edge = &graph.edges[ei];
-                        let gate_ok = if relax_carry_worn {
-                            state.allows_without_carry_worn(edge)
-                        } else {
-                            state.allows(edge)
-                        };
-                        if !gate_ok {
+                        if !edge_allowed(state, edge, relax_carry_worn) {
                             continue;
                         }
                         if !avoid.is_empty() && !escaping && tile_in_any_avoid(edge.to, avoid) {
@@ -1213,12 +1660,7 @@ fn search_kernel(
         if use_teleports {
             let wildy_level = graph.wilderness.level(cur);
             for (ti, edge) in graph.teleports.iter().enumerate() {
-                let gate_ok = if relax_carry_worn {
-                    state.allows_without_carry_worn(edge)
-                } else {
-                    state.allows(edge)
-                };
-                if !gate_ok {
+                if !edge_allowed(state, edge, relax_carry_worn) {
                     continue;
                 }
                 if !avoid.is_empty() && !escaping && tile_in_any_avoid(edge.to, avoid) {
@@ -1260,6 +1702,7 @@ fn search_kernel(
             SearchStop::Exhausted
         },
         record_capacities,
+        reverse.finish(),
     )
 }
 

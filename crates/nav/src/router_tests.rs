@@ -11,12 +11,12 @@ use std::time::{Duration, Instant};
 use crate::collision::{bake_from_maps, WorldCollision};
 use crate::grid::StepGrid;
 use crate::router::{
-    find, find_allow_teleports, find_bounded, find_first_with, find_many_with,
-    find_many_with_avoid_bounded, find_many_with_avoid_bounded_until, find_missing_item_reqs,
-    find_missing_item_reqs_with_avoid, find_on_grid, find_with, find_with_avoid,
-    find_with_avoid_bounded, find_with_model, local_step_component, step_ok, AvoidRect, CostModel,
-    FindOptions, GridLeg, Leg, MissingReq, RouteError, TargetError, BANK_TARGET_BUDGET,
-    FIRST_TARGET_BUDGET, PER_STEP_WALK,
+    find, find_allow_teleports, find_bounded, find_first_missing_item_reqs, find_first_with,
+    find_many_with, find_many_with_avoid_bounded, find_many_with_avoid_bounded_until,
+    find_missing_item_reqs, find_missing_item_reqs_with_avoid, find_on_grid, find_with,
+    find_with_avoid, find_with_avoid_bounded, find_with_model, local_step_component, step_ok,
+    AvoidRect, CostModel, FindOptions, GridLeg, Leg, MissingReq, ReverseProof, RouteError,
+    TargetError, BANK_TARGET_BUDGET, FIRST_TARGET_BUDGET, PER_STEP_WALK,
 };
 use crate::tile::Tile;
 use crate::transport::{
@@ -831,35 +831,194 @@ fn first_target_search_stops_before_an_unreachable_sibling_floods_the_map() {
     assert!(scratch.heap < 16);
 }
 
+/// A goal whose only route needs more settles than the old scene-sized
+/// first-goal cap (32,768) still routes.
 #[test]
-fn first_target_search_bounds_unreachable_stands() {
-    const EXPECTED_BUDGET: usize = FIRST_TARGET_BUDGET;
-    const WALL_X: i32 = 40_000;
-    let wc = bake(
-        WALL_X as usize + 2,
-        1,
-        &[
-            (WALL_X, 0, CollisionFlag::W_E as u32),
-            (WALL_X + 1, 0, CollisionFlag::W_W as u32),
-        ],
-    );
-    let targets = [tile(WALL_X + 1, 0, 0)];
+fn first_target_search_routes_a_goal_past_the_old_scene_cap() {
+    const LEN: i32 = 40_002;
+    let wc = bake(LEN as usize, 1, &[]);
+    let goal = tile(LEN - 1, 0, 0);
     let search = find_first_with(
         &wc,
         &TransportGraph::default(),
         tile(0, 0, 0),
-        &targets,
+        &[goal],
         FindOptions::default(),
         &WorldState::empty(),
     );
 
-    assert!(matches!(search.route(), Err(RouteError::BudgetExhausted)));
-    assert_eq!(search.settled(), EXPECTED_BUDGET);
+    let route = search.route().expect("the corridor end is reachable");
+    assert_eq!(route.dest, goal);
+    assert_eq!(route.ticks, f64::from(LEN - 1) * 0.5);
+}
+
+/// A 3x3 room (x, z in 200..=202) sealed by a ring of blocked tiles in an
+/// open 256x256 plane. With `door`, a worn-gated door (obj 2) at the ring
+/// tile (199, 201) lands on (200, 201) from the west.
+fn sealed_room(door: bool) -> (WorldCollision, TransportGraph) {
+    let mut ring = Vec::new();
+    for x in 199..=203 {
+        for z in 199..=203 {
+            if x == 199 || x == 203 || z == 199 || z == 203 {
+                ring.push((x, z, CollisionFlag::SQ_BLOCKED as u32));
+            }
+        }
+    }
+    let mut graph = TransportGraph::default();
+    if door {
+        let at = tile(199, 201, 0);
+        graph.at.entry(at).or_default().push(0);
+        graph.edges.push(TransportEdge {
+            kind: TransportKind::Door,
+            at,
+            to: tile(200, 201, 0),
+            loc_id: 1,
+            option: 1,
+            ticks: 2,
+            dir: None,
+            open_loc_id: None,
+            skill_req: vec![],
+            item_req: vec![],
+            quest_req: vec![],
+            varp_req: vec![],
+            worn_req: vec![2],
+            members_req: false,
+            wildy_cap: None,
+        });
+    }
+    (bake(256, 256, &ring), graph)
+}
+
+/// Stands sealed in a small room are proven unreachable from their own
+/// backward region instead of by flooding the 65,536-tile plane, for the
+/// strict search and for its BankBudget diagnosis alike.
+#[test]
+fn first_target_search_proves_sealed_stands_unreachable_without_flooding() {
+    let (wc, graph) = sealed_room(false);
+    let from = tile(20, 20, 0);
+    let stands = [tile(200, 201, 0), tile(201, 202, 0)];
+    let opts = FindOptions {
+        allow_bank_fetch: true,
+        ..FindOptions::default()
+    };
+    let state = WorldState::empty();
+
+    let strict = find_first_with(&wc, &graph, from, &stands, opts, &state);
+    assert_eq!(strict.route().err(), Some(RouteError::NoPath));
+    assert_eq!(strict.proof(), ReverseProof::Unreachable);
+    assert!(
+        strict.settled() < 64,
+        "the room and its ring decide, not the plane: {}",
+        strict.settled()
+    );
+    let diagnosis = find_first_missing_item_reqs(&wc, &graph, from, &stands, opts, &state);
+    assert!(diagnosis.found().is_none());
+    assert_eq!(diagnosis.proof(), ReverseProof::Unreachable);
+    assert!(diagnosis.settled() < 64, "{}", diagnosis.settled());
+}
+
+/// The strict proof honors the door's worn gate, so it closes at once; the
+/// relaxed diagnosis of the same stands crosses the door and names the
+/// missing worn item.
+#[test]
+fn worn_gated_room_is_proven_strictly_then_diagnosed_as_one_goal_set() {
+    let (wc, graph) = sealed_room(true);
+    let from = tile(20, 20, 0);
+    let stands = [tile(202, 201, 0), tile(201, 202, 0)];
+    let opts = FindOptions {
+        allow_bank_fetch: true,
+        ..FindOptions::default()
+    };
+    let state = WorldState::empty();
+
+    let strict = find_first_with(&wc, &graph, from, &stands, opts, &state);
+    assert_eq!(strict.route().err(), Some(RouteError::NoPath));
+    assert_eq!(strict.proof(), ReverseProof::Unreachable);
+    assert!(strict.settled() < 64, "{}", strict.settled());
+
+    let diagnosis = find_first_missing_item_reqs(&wc, &graph, from, &stands, opts, &state);
+    let (target, missing) = diagnosis.found().expect("the relaxed door reaches a stand");
+    assert!(stands.contains(&target));
+    assert_eq!(missing, &[MissingReq::WearAny { ids: vec![2] }]);
+    assert_eq!(
+        find_missing_item_reqs(&wc, &graph, from, target, opts, &state).as_deref(),
+        Some(missing),
+        "one relaxed first-goal search names what the per-target diagnosis names"
+    );
+}
+
+/// Neither side decides: the start's corridor and the stand's backward
+/// corridor are disjoint and longer than both budgets, as on the 289 bake
+/// when a stand is fed by the unstamped upper planes. The search stops at
+/// its budget instead of flooding the start's corridor.
+#[test]
+fn first_target_search_stops_at_its_budget_when_the_proof_cannot_decide() {
+    let len = FIRST_TARGET_BUDGET + FIRST_TARGET_BUDGET / 4;
+    let walls: Vec<_> = (0..len as i32)
+        .flat_map(|x| {
+            [
+                (x, 0, CollisionFlag::W_N as u32),
+                (x, 1, CollisionFlag::W_S as u32),
+            ]
+        })
+        .collect();
+    let wc = bake(len, 2, &walls);
+    let search = find_first_with(
+        &wc,
+        &TransportGraph::default(),
+        tile(0, 0, 0),
+        &[tile(len as i32 - 1, 1, 0)],
+        FindOptions::default(),
+        &WorldState::empty(),
+    );
+
+    assert_eq!(search.route().err(), Some(RouteError::BudgetExhausted));
+    assert_eq!(search.proof(), ReverseProof::Abandoned);
+    assert!(
+        search.settled() < len,
+        "the budget must stop the search before it floods the {len}-tile corridor"
+    );
     let scratch = search.scratch_capacities();
-    assert!(scratch.distances <= EXPECTED_BUDGET * 2);
-    assert!(scratch.predecessors <= EXPECTED_BUDGET * 2);
-    assert!(scratch.settled <= EXPECTED_BUDGET * 2);
-    assert!(scratch.heap < 16);
+    assert!(scratch.reverse < len, "{scratch:?}");
+}
+
+/// A backward proof that meets a teleport landing usable from the origin
+/// lifts the unproven budget: the teleport costs more than walking the
+/// whole plane, so Dijkstra settles the plane before taking it.
+#[test]
+fn first_target_proof_of_reachability_lifts_the_unproven_budget() {
+    let (wc, _) = sealed_room(false);
+    let graph = teleport(tile(200, 200, 0), 1_000, vec![], vec![]);
+    let from = tile(20, 20, 0);
+    let stands = [tile(202, 202, 0)];
+    let opts = FindOptions {
+        allow_teleports: true,
+        ..FindOptions::default()
+    };
+    let state = WorldState::empty();
+    let search = |reachable_budget| {
+        super::first_search(
+            &wc,
+            &graph,
+            from,
+            &stands,
+            opts,
+            &state,
+            false,
+            &[],
+            64,
+            reachable_budget,
+        )
+    };
+
+    let lifted = search(super::NODE_BUDGET);
+    assert_eq!(lifted.proof(), ReverseProof::Reachable);
+    let route = lifted
+        .route()
+        .expect("the teleport reaches the sealed stand");
+    assert_eq!(route.dest, stands[0]);
+    assert!(lifted.settled() > 64);
+    assert_eq!(search(64).route().err(), Some(RouteError::BudgetExhausted));
 }
 
 #[test]
@@ -1346,6 +1505,121 @@ fn first_target_rc_booth_stays_in_the_frozen_search_ballpark_on_real_289_pack() 
         scratch.distances + scratch.predecessors + scratch.settled + scratch.heap < 16_384,
         "first-goal scratch must stay near the short route, got {scratch:?}"
     );
+}
+
+fn real_members_state() -> WorldState {
+    WorldState {
+        map_members: true,
+        ..WorldState::empty()
+    }
+}
+
+/// Members with every skill at 99, so only item/worn gates can block.
+fn real_maxed_state() -> WorldState {
+    WorldState {
+        stats: (0..25).map(|skill| (skill, 99)).collect(),
+        ..real_members_state()
+    }
+}
+
+fn real_resilient_opts() -> FindOptions {
+    FindOptions {
+        allow_wilderness: true,
+        allow_bank_fetch: true,
+        ..FindOptions::default()
+    }
+}
+
+/// Reachable in-scene stands past the old 32,768-settle cap route to the
+/// stand: Falador's west-wall bank from outside the wall (a detour through
+/// the city gate) and a Wilderness web's far side (a 598-tick detour).
+#[test]
+fn first_target_stands_past_the_old_scene_cap_route_on_real_289_pack() {
+    let Some(world) = crate::world::NavWorld::load_default_pack_or_skip() else {
+        return;
+    };
+    let state = real_members_state();
+    let falador = [
+        tile(2944, 3367, 0),
+        tile(2945, 3366, 0),
+        tile(2945, 3368, 0),
+    ];
+    for (from, ticks) in [(tile(2929, 3365, 0), 94.5), (tile(2930, 3351, 0), 97.5)] {
+        for opts in [real_resilient_opts(), FindOptions::default()] {
+            let search =
+                find_first_with(&world.collision, &world.graph, from, &falador, opts, &state);
+            let route = search.route().expect("the Falador booth stand routes");
+            assert_eq!(route.dest, tile(2945, 3368, 0));
+            assert_eq!(route.ticks, ticks);
+            assert!(search.settled() > 32_768, "{}", search.settled());
+        }
+    }
+    let web = [tile(3157, 3950, 0), tile(3156, 3949, 0)];
+    let search = find_first_with(
+        &world.collision,
+        &world.graph,
+        tile(3148, 3943, 0),
+        &web,
+        real_resilient_opts(),
+        &real_maxed_state(),
+    );
+    let route = search.route().expect("the web's far-side stand routes");
+    assert_eq!(route.dest, tile(3156, 3949, 0));
+    assert_eq!(route.ticks, 598.0);
+}
+
+/// Tree Gnome Stronghold middle booth: its south stand is an 11-tile pocket,
+/// proven unreachable at once; its north stand's backward region climbs
+/// ladders into the unstamped upper planes, so the budget alone bounds the
+/// pair, far below the 2,901,702-node flood of everything reachable.
+#[test]
+fn stronghold_middle_booth_search_is_bounded_on_real_289_pack() {
+    let Some(world) = crate::world::NavWorld::load_default_pack_or_skip() else {
+        return;
+    };
+    let state = real_members_state();
+    let opts = real_resilient_opts();
+    let from = tile(2452, 3481, 1);
+    let south = tile(2449, 3480, 1);
+    let north = tile(2449, 3482, 1);
+
+    let pocket = find_first_with(&world.collision, &world.graph, from, &[south], opts, &state);
+    assert_eq!(pocket.route().err(), Some(RouteError::NoPath));
+    assert_eq!(pocket.proof(), ReverseProof::Unreachable);
+    assert!(pocket.settled() < 64, "{}", pocket.settled());
+
+    let stands = [south, north];
+    let search = find_first_with(&world.collision, &world.graph, from, &stands, opts, &state);
+    assert_eq!(search.route().err(), Some(RouteError::BudgetExhausted));
+    assert!(search.settled() <= FIRST_TARGET_BUDGET);
+    let diagnosis =
+        find_first_missing_item_reqs(&world.collision, &world.graph, from, &stands, opts, &state);
+    assert!(diagnosis.found().is_none());
+    assert!(diagnosis.settled() <= FIRST_TARGET_BUDGET);
+}
+
+/// The Varrock-sewer web: the strict search proves the stands behind the web
+/// unreachable from their small backward region, and one relaxed search names
+/// the knife the web needs.
+#[test]
+fn sewer_web_stands_are_proven_then_diagnosed_on_real_289_pack() {
+    let Some(world) = crate::world::NavWorld::load_default_pack_or_skip() else {
+        return;
+    };
+    let state = real_maxed_state();
+    let opts = real_resilient_opts();
+    let from = tile(3202, 9909, 0);
+    let stands = [tile(3209, 9891, 0), tile(3210, 9892, 0)];
+
+    let strict = find_first_with(&world.collision, &world.graph, from, &stands, opts, &state);
+    assert_eq!(strict.route().err(), Some(RouteError::NoPath));
+    assert_eq!(strict.proof(), ReverseProof::Unreachable);
+    assert!(strict.settled() < 2_000, "{}", strict.settled());
+    let diagnosis =
+        find_first_missing_item_reqs(&world.collision, &world.graph, from, &stands, opts, &state);
+    let (target, missing) = diagnosis.found().expect("the knife opens the web");
+    assert!(stands.contains(&target));
+    assert_eq!(missing, &[MissingReq::Carry { id: 946, count: 1 }]);
 }
 
 fn validate_real_route(

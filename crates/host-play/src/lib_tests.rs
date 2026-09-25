@@ -10509,14 +10509,13 @@ fn solid_target_first_goal_no_path_goes_straight_to_bank_fetch_diagnosis() {
         .get("alice")
         .and_then(|bot| bot.bank_fetch.as_ref())
         .expect("missing worn knife plans a bank session after the shared strict NoPath");
-    assert_eq!(
-        fetch.dest,
-        WorldTile {
-            x: 3,
-            z: 4,
-            level: 0,
-        },
-        "the in-scene first-goal diagnosis must use the target-cardinal stand"
+    // (3,4) and (4,3) tie at 3.5 ticks through the door; the radius
+    // fallback's diagonal (3,3) is cheaper but cannot operate the target.
+    let cardinal = [(3, 4), (4, 3)].map(|(x, z)| WorldTile { x, z, level: 0 });
+    assert!(
+        cardinal.contains(&fetch.dest),
+        "the in-scene first-goal diagnosis must use a target-cardinal stand, got {:?}",
+        fetch.dest
     );
     assert_eq!(fetch.final_route.dest, fetch.dest);
 }
@@ -16494,6 +16493,269 @@ fn empty_or_unroutable_solid_target_goals_fall_back_to_radius_policy() {
         route.dest, from,
         "unroutable corrected goals fall back to the old in-radius route"
     );
+}
+
+/// A level-0 world over raw client `flags` (row-major, `size` wide).
+fn raw_flags_world(
+    flags: &[u32],
+    size: usize,
+    graph: TransportGraph,
+    banks: Vec<nav::pack::BankStand>,
+) -> NavWorld {
+    let (walk, blocked) = nav::collision::pack_walk(flags);
+    NavWorld::from_parts(
+        nav::collision::WorldCollision {
+            origin: WorldTile {
+                x: 0,
+                z: 0,
+                level: 0,
+            },
+            width: size,
+            height: size,
+            walk,
+            blocked,
+            flags: None,
+        },
+        graph,
+        banks,
+    )
+}
+
+/// The client scene over the same raw `flags`, 104x104 from `base`, with the
+/// player at `from`.
+fn raw_flags_scene(flags: &[u32], size: usize, base: (i32, i32), from: WorldTile) -> GameSnapshot {
+    let mut client = nav_client();
+    client.map_build_base_x = base.0;
+    client.map_build_base_z = base.1;
+    for lx in 0..104i32 {
+        for lz in 0..104i32 {
+            let (x, z) = (base.0 + lx, base.1 + lz);
+            if (0..size as i32).contains(&x) && (0..size as i32).contains(&z) {
+                client.collision[0].flags[lx as usize][lz as usize] |=
+                    flags[z as usize * size + x as usize] as i32;
+            }
+        }
+    }
+    let mut snapshot = GameSnapshot::new();
+    nav_snapshot_at(&mut client, &mut snapshot, from.x - base.0, from.z - base.1);
+    snapshot
+}
+
+/// Arm one radius walk and wait for its worker; returns the bot's route and
+/// latched BankBudget session.
+#[allow(clippy::too_many_arguments)] // world, scene, request and the state it gates on
+fn arm_route_outcome(
+    world: Arc<NavWorld>,
+    snapshot: &GameSnapshot,
+    from: WorldTile,
+    to: WorldTile,
+    radius: i32,
+    opts: FindOptions,
+    state: Option<WorldState>,
+    bank: Vec<(i32, i32)>,
+) -> (Option<nav::router::Route>, Option<PendingBankFetch>) {
+    let navs: Arc<Mutex<HashMap<String, NavBot>>> = Arc::new(Mutex::new(HashMap::new()));
+    let arm = ScriptWalkArm {
+        here: Some((from.x, from.z, from.level)),
+        world: Some(world),
+        navs: Arc::clone(&navs),
+        name: "alice".into(),
+        state,
+        bank,
+    };
+    arm.queue_route_in_snapshot_synced(snapshot, to.x, to.z, to.level, opts, radius, true, 43)
+        .expect("route worker spawned")
+        .recv_timeout(Duration::from_secs(60))
+        .expect("route worker completed");
+    let all = navs.lock().unwrap();
+    let bot = &all["alice"];
+    (bot.route.clone(), bot.bank_fetch.clone())
+}
+
+/// Falador's west-wall bank in miniature: the booth's stands lie behind a
+/// wall that opens only at its far north end, so the cheapest stand needs
+/// more settles than the old 32,768-node first-goal cap. A nearest-bank walk
+/// (radius 1, default options) and a resilient radius-3 walk both route to a
+/// stand.
+#[test]
+fn solid_target_stands_past_a_long_detour_route_to_a_stand() {
+    use client::dash3d::CollisionFlag;
+
+    const SIZE: usize = 256;
+    let booth = WorldTile {
+        x: 138,
+        z: 128,
+        level: 0,
+    };
+    let from = WorldTile {
+        x: 118,
+        z: 128,
+        level: 0,
+    };
+    let mut flags = vec![0u32; SIZE * SIZE];
+    for z in 0..SIZE - 1 {
+        flags[z * SIZE + 127] |= CollisionFlag::W_E as u32;
+        flags[z * SIZE + 128] |= CollisionFlag::W_W as u32;
+    }
+    flags[booth.z as usize * SIZE + booth.x as usize] |= CollisionFlag::SQ_BLOCKED as u32;
+    let world = Arc::new(raw_flags_world(
+        &flags,
+        SIZE,
+        TransportGraph::default(),
+        Vec::new(),
+    ));
+    let snapshot = raw_flags_scene(&flags, SIZE, (booth.x - 52, booth.z - 52), from);
+    let stands = [(-1, 0), (1, 0), (0, -1), (0, 1)].map(|(dx, dz)| WorldTile {
+        x: booth.x + dx,
+        z: booth.z + dz,
+        level: 0,
+    });
+
+    for (radius, opts) in [
+        (1, FindOptions::default()),
+        (
+            3,
+            FindOptions {
+                allow_wilderness: true,
+                allow_bank_fetch: true,
+                ..FindOptions::default()
+            },
+        ),
+    ] {
+        let (route, session) = arm_route_outcome(
+            Arc::clone(&world),
+            &snapshot,
+            from,
+            booth,
+            radius,
+            opts,
+            None,
+            Vec::new(),
+        );
+        let route = route.expect("the detour reaches a stand");
+        assert!(session.is_none());
+        assert!(
+            stands.contains(&route.dest),
+            "r={radius} must end on a booth stand, got {:?}",
+            route.dest
+        );
+    }
+}
+
+/// The Varrock-sewer web in miniature, in a 256x256 world larger than the
+/// old 32,768-node cap: a solid target inside a 5x5 room entered only by a
+/// door gated on wearing obj 2, with the obj in the bank. The strict stands
+/// are proven unreachable and one relaxed diagnosis plans the session to an
+/// in-room stand.
+#[test]
+fn solid_target_behind_worn_gate_in_a_large_world_plans_a_bank_session() {
+    use client::dash3d::CollisionFlag;
+
+    const SIZE: usize = 256;
+    let target = WorldTile {
+        x: 62,
+        z: 50,
+        level: 0,
+    };
+    let from = WorldTile {
+        x: 40,
+        z: 50,
+        level: 0,
+    };
+    let mut flags = vec![0u32; SIZE * SIZE];
+    {
+        let mut mark = |x: usize, z: usize, flag: i32| flags[z * SIZE + x] |= flag as u32;
+        for z in 48..=52 {
+            mark(59, z, CollisionFlag::W_E);
+            mark(60, z, CollisionFlag::W_W);
+            mark(64, z, CollisionFlag::W_E);
+            mark(65, z, CollisionFlag::W_W);
+        }
+        for x in 60..=64 {
+            mark(x, 47, CollisionFlag::W_N);
+            mark(x, 48, CollisionFlag::W_S);
+            mark(x, 52, CollisionFlag::W_N);
+            mark(x, 53, CollisionFlag::W_S);
+        }
+        mark(62, 50, CollisionFlag::SQ_BLOCKED);
+    }
+    let door = TransportEdge {
+        kind: TransportKind::Door,
+        at: WorldTile {
+            x: 59,
+            z: 50,
+            level: 0,
+        },
+        to: WorldTile {
+            x: 60,
+            z: 50,
+            level: 0,
+        },
+        loc_id: 2882,
+        option: 1,
+        ticks: 2,
+        dir: None,
+        open_loc_id: None,
+        skill_req: vec![],
+        item_req: vec![],
+        quest_req: vec![],
+        varp_req: vec![],
+        worn_req: vec![2],
+        members_req: false,
+        wildy_cap: None,
+    };
+    let mut graph = TransportGraph::default();
+    graph.at.entry(door.at).or_default().push(0);
+    graph.edges.push(door);
+    let world = Arc::new(raw_flags_world(
+        &flags,
+        SIZE,
+        graph,
+        vec![nav::pack::BankStand {
+            name: "Bank booth".into(),
+            tile: WorldTile {
+                x: 30,
+                z: 50,
+                level: 0,
+            },
+            access: nav::pack::BankAccess::Booth { op: 2 },
+        }],
+    ));
+    let snapshot = raw_flags_scene(&flags, SIZE, (0, 0), from);
+    // Knife in the open bank, junk in the backpack, nothing worn.
+    let mut bank_snapshot = GameSnapshot::new();
+    bank_snapshot.rebuild(&bank_fetch_client());
+    let state = WorldState::from_snapshot(&bank_snapshot);
+    let bank: Vec<(i32, i32)> = bank_snapshot
+        .bank()
+        .iter()
+        .map(|item| (item.def.id, item.count))
+        .collect();
+    let stand = WorldTile {
+        x: 61,
+        z: 50,
+        level: 0,
+    };
+
+    for radius in [1, 2] {
+        let (route, session) = arm_route_outcome(
+            Arc::clone(&world),
+            &snapshot,
+            from,
+            target,
+            radius,
+            FindOptions {
+                allow_bank_fetch: true,
+                ..FindOptions::default()
+            },
+            Some(state.clone()),
+            bank.clone(),
+        );
+        let session = session.expect("the banked worn obj plans a session");
+        assert_eq!(session.dest, stand, "r={radius}");
+        assert_eq!(session.final_route.dest, stand);
+        assert!(route.is_some());
+    }
 }
 
 /// AR-1 / frozen `'closest'` (`WalkExecutor.ts:316-325`): an r=12 WalkNear

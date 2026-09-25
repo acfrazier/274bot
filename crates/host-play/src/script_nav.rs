@@ -4,16 +4,14 @@ use std::thread;
 use std::time::Instant;
 
 use api::snapshot::{GameSnapshot, WorldTile};
-use nav::router::{
-    find_first_with, find_missing_item_reqs, FindOptions, MissingReq, Route, RouteError,
-};
+use nav::router::{find_first_with, find_missing_item_reqs, FindOptions, MissingReq, Route};
 use nav::traveller::Traveller;
 use nav::world::NavWorld;
 use nav::WorldState;
 
 use super::{
-    bank_fetch_after_no_path, debug_enabled, route_inspect, route_or_bank_fetch, PendingBankFetch,
-    RouteOutcome,
+    bank_fetch_after_first_no_path, debug_enabled, route_inspect, route_or_bank_fetch,
+    PendingBankFetch, RouteOutcome,
 };
 #[derive(Default)]
 pub(crate) struct RouteCompletion {
@@ -738,27 +736,45 @@ impl ScriptRouteRequest {
             log_walk_arm(&slot, || {
                 format!(
                     "{label} first end candidates={} settled={} scratch={}/{}/{}/{} \
-                     elapsed_ms={elapsed_ms} routed={}",
+                     reverse={}/{} proof={:?} elapsed_ms={elapsed_ms} routed={}",
                     candidates.len(),
                     search.settled(),
                     scratch.distances,
                     scratch.predecessors,
                     scratch.settled,
                     scratch.heap,
+                    scratch.reverse,
+                    scratch.reverse_queue,
+                    search.proof(),
                     search.route().is_ok()
                 )
             });
         }
-        match search.into_route() {
-            Ok(route) => RouteOutcome::Routed(route),
-            Err(RouteError::NoPath) => {
-                // The shared strict search already exhausted every reachable
-                // node. BankBudget may run its relaxed missing-item diagnosis,
-                // but must not repeat that strict flood once per candidate.
-                self.calculate_in_order(candidates, state, label, true)
-            }
-            Err(RouteError::BudgetExhausted) => RouteOutcome::NoPath,
+        if let Ok(route) = search.into_route() {
+            return RouteOutcome::Routed(route);
         }
+        // Everything reachable is settled, the goals are proven
+        // unreachable, or the budget is spent: BankBudget diagnoses the
+        // same goals with one relaxed first-goal search.
+        let started = debug.then(Instant::now);
+        let outcome = bank_fetch_after_first_no_path(
+            &self.world,
+            self.from,
+            candidates,
+            self.opts,
+            state,
+            &self.bank,
+        );
+        if debug {
+            let elapsed_ms = started.unwrap().elapsed().as_millis();
+            log_walk_arm(&slot, || {
+                format!(
+                    "{label} bank diagnosis elapsed_ms={elapsed_ms} outcome={}",
+                    walk_arm_outcome_tag(&outcome)
+                )
+            });
+        }
+        outcome
     }
 
     fn calculate_in_order(
@@ -766,7 +782,6 @@ impl ScriptRouteRequest {
         candidates: &[WorldTile],
         state: &WorldState,
         label: &str,
-        strict_failed: bool,
     ) -> RouteOutcome {
         let debug = debug_enabled();
         let slot = walk_arm_worker_slot();
@@ -780,18 +795,8 @@ impl ScriptRouteRequest {
                 });
             }
             let started = debug.then(Instant::now);
-            let outcome = if strict_failed {
-                bank_fetch_after_no_path(
-                    &self.world,
-                    self.from,
-                    target,
-                    self.opts,
-                    state,
-                    &self.bank,
-                )
-            } else {
-                route_or_bank_fetch(&self.world, self.from, target, self.opts, state, &self.bank)
-            };
+            let outcome =
+                route_or_bank_fetch(&self.world, self.from, target, self.opts, state, &self.bank);
             if debug {
                 let elapsed_ms = started.unwrap().elapsed().as_millis();
                 log_walk_arm(&slot, || {
@@ -861,7 +866,7 @@ impl ScriptRouteRequest {
         if corrected_solid_target {
             self.calculate_first(&generated, state, "approach fallback")
         } else {
-            self.calculate_in_order(&generated, state, "approach fallback", false)
+            self.calculate_in_order(&generated, state, "approach fallback")
         }
     }
 }
