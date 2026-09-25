@@ -603,6 +603,170 @@ fn walkto_footer_labels(local: bool) -> &'static [&'static str] {
 /// Combo width on the Level/Zoom toolbar so they do not eat the row
 /// (default item width is the remaining content region).
 const TOOLBAR_COMBO_W: f32 = 140.0;
+/// Search field shrinks to this before wrapping onto the next header row.
+const TOOLBAR_SEARCH_MIN_W: f32 = 120.0;
+
+/// Space left on the current widget row after the last item (screen space).
+fn remaining_on_row(ui: &Ui) -> f32 {
+    let spacing = ui.clone_style().item_spacing()[0];
+    let right = ui.cursor_screen_pos()[0] + ui.content_region_avail()[0];
+    (right - ui.item_rect_max()[0] - spacing).max(0.0)
+}
+
+/// Keep the next toolbar widget on this row when `next_w` still fits.
+fn toolbar_continue(ui: &Ui, next_w: f32) {
+    if remaining_on_row(ui) >= next_w {
+        ui.same_line();
+    }
+}
+
+/// ImGui checkbox width: square + inner gap + label.
+fn checkbox_w(ui: &Ui, label: &str) -> f32 {
+    let inner = ui.clone_style().item_inner_spacing()[0];
+    let text = ui
+        .current_font()
+        .calc_text_size(ui.current_font_size(), f32::MAX, 0.0, label)[0];
+    ui.frame_height() + inner + text
+}
+
+/// Footer is one status/action row plus the gap under the canvas child.
+fn map_footer_reserve(ui: &Ui) -> f32 {
+    ui.frame_height() + ui.clone_style().item_spacing()[1]
+}
+
+struct ToolbarGeom {
+    header_max_x: f32,
+    search_max_x: f32,
+}
+
+fn note_toolbar_item(geom: &mut ToolbarGeom, ui: &Ui) {
+    geom.header_max_x = geom.header_max_x.max(ui.item_rect_max()[0]);
+}
+
+/// Plane, zoom, search, then wrapping layer checkboxes.
+fn draw_walkto_toolbar(
+    ui: &Ui,
+    session: &mut Session,
+    map: &mut WalkMapRenderer,
+    world: &NavWorld,
+    levels: &[i32],
+    lvl_idx: &mut usize,
+) -> ToolbarGeom {
+    let mut geom = ToolbarGeom {
+        header_max_x: 0.0,
+        search_max_x: 0.0,
+    };
+    ui.set_next_item_width(TOOLBAR_COMBO_W);
+    if ui.combo("##walkto-level", lvl_idx, levels, |l: &i32| {
+        Cow::Owned(format!("level {l}"))
+    }) {
+        LEVEL.store(levels[*lvl_idx], Ordering::Relaxed);
+        if let Ok(plane) = u8::try_from(levels[*lvl_idx]) {
+            session.map_model.set_plane(plane);
+        }
+    }
+    note_toolbar_item(&mut geom, ui);
+    toolbar_continue(ui, TOOLBAR_COMBO_W);
+    let mut zoom = ZOOM
+        .load(Ordering::Relaxed)
+        .clamp(0, ZOOMS.len() as i32 - 1) as usize;
+    ui.set_next_item_width(TOOLBAR_COMBO_W);
+    if ui.combo("##walkto-zoom", &mut zoom, &ZOOMS, |z: &f32| {
+        Cow::Owned(if *z < 1.0 {
+            format!("{z}px/tile")
+        } else {
+            format!("{z:.0}px/tile")
+        })
+    }) {
+        ZOOM.store(zoom as i32, Ordering::Relaxed);
+    }
+    note_toolbar_item(&mut geom, ui);
+    let search_remain = remaining_on_row(ui);
+    if search_remain >= TOOLBAR_SEARCH_MIN_W {
+        ui.same_line();
+        ui.set_next_item_width(search_remain);
+    } else {
+        ui.set_next_item_width(ui.content_region_avail()[0].max(TOOLBAR_SEARCH_MIN_W));
+    }
+    ui.input_text("##walkto-search", &mut map.search)
+        .hint("search / x,z,plane")
+        .build();
+    geom.search_max_x = ui.item_rect_max()[0];
+    note_toolbar_item(&mut geom, ui);
+    if ui.is_item_focused() && ui.is_key_pressed(Key::Enter) {
+        apply_search_jump(session, map, world);
+    }
+    let toggles: [(&str, &mut bool); 6] = [
+        ("basemap", &mut map.show_basemap),
+        ("grid", &mut map.show_grid),
+        ("reach", &mut map.show_reach),
+        ("collision", &mut map.show_collision),
+        ("nsew", &mut map.show_nsew),
+        ("flood", &mut map.show_flood),
+    ];
+    for (i, (label, flag)) in toggles.into_iter().enumerate() {
+        if i > 0 {
+            toolbar_continue(ui, checkbox_w(ui, label));
+        }
+        ui.checkbox(label, flag);
+        note_toolbar_item(&mut geom, ui);
+    }
+    geom
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug)]
+struct PickerLayout {
+    content_max: [f32; 2],
+    header_max_x: f32,
+    search_max_x: f32,
+    canvas_inner_min: [f32; 2],
+    canvas_inner_max: [f32; 2],
+    canvas_item_max: [f32; 2],
+    footer_max: [f32; 2],
+    footer_reserve: f32,
+}
+
+#[cfg(test)]
+static LAST_PICKER_LAYOUT: Mutex<Option<PickerLayout>> = Mutex::new(None);
+
+fn record_picker_layout(
+    ui: &Ui,
+    toolbar: &ToolbarGeom,
+    canvas_inner: Option<([f32; 2], [f32; 2])>,
+    canvas_item_max: [f32; 2],
+    footer_reserve: f32,
+) {
+    #[cfg(test)]
+    {
+        let pad = ui.clone_style().window_padding();
+        let pos = ui.window_pos();
+        let size = ui.window_size();
+        let (inner_min, inner_max) = canvas_inner.unwrap_or(([0.0, 0.0], [0.0, 0.0]));
+        *LAST_PICKER_LAYOUT.lock().unwrap() = Some(PickerLayout {
+            content_max: [pos[0] + size[0] - pad[0], pos[1] + size[1] - pad[1]],
+            header_max_x: toolbar.header_max_x,
+            search_max_x: toolbar.search_max_x,
+            canvas_inner_min: inner_min,
+            canvas_inner_max: inner_max,
+            canvas_item_max,
+            footer_max: ui.item_rect_max(),
+            footer_reserve,
+        });
+    }
+    #[cfg(not(test))]
+    {
+        let _ = (ui, toolbar, canvas_inner, canvas_item_max, footer_reserve);
+    }
+}
+
+#[cfg(test)]
+fn last_picker_layout() -> PickerLayout {
+    LAST_PICKER_LAYOUT
+        .lock()
+        .unwrap()
+        .expect("picker_map_body records layout")
+}
 
 /// The width a text-only button of `label` occupies under the current style,
 /// for right-aligning a button against the content region edge.
@@ -807,6 +971,40 @@ fn picker_map_window(
         });
 }
 
+/// WalkTo nested in a Game pane, matching production [`draw_picker`].
+#[cfg(test)]
+fn picker_nested_in_game(
+    ui: &Ui,
+    session: &mut Session,
+    world: &NavWorld,
+    map: &mut WalkMapRenderer,
+    game_size: [f32; 2],
+) {
+    let _ = ui
+        .window("Game")
+        .flags(
+            WindowFlags::NO_COLLAPSE
+                | WindowFlags::NO_SCROLLBAR
+                | WindowFlags::NO_SCROLL_WITH_MOUSE
+                | WindowFlags::NO_RESIZE,
+        )
+        .position([0.0, 0.0], Condition::Always)
+        .size(game_size, Condition::Always)
+        .build(|| {
+            let pos = ui.cursor_screen_pos();
+            let avail = ui.content_region_avail();
+            let mut open = true;
+            ui.window("WalkTo")
+                .opened(&mut open)
+                .flags(walkto_window_flags() | WindowFlags::NO_MOVE | WindowFlags::NO_RESIZE)
+                .position(pos, Condition::Always)
+                .size(avail, Condition::Always)
+                .build(|| {
+                    picker_map_body(ui, None, session, map, world);
+                });
+        });
+}
+
 /// Toolbar, canvas, and footer. Used inside the Game pane and the test window.
 fn picker_map_body(
     ui: &Ui,
@@ -830,49 +1028,7 @@ fn picker_map_body(
         .iter()
         .position(|l| *l == LEVEL.load(Ordering::Relaxed))
         .unwrap_or(0);
-    ui.set_next_item_width(TOOLBAR_COMBO_W);
-    if ui.combo("##walkto-level", &mut lvl_idx, &levels, |l: &i32| {
-        Cow::Owned(format!("level {l}"))
-    }) {
-        LEVEL.store(levels[lvl_idx], Ordering::Relaxed);
-        if let Ok(plane) = u8::try_from(levels[lvl_idx]) {
-            session.map_model.set_plane(plane);
-        }
-    }
-    ui.same_line();
-    let mut zoom = ZOOM
-        .load(Ordering::Relaxed)
-        .clamp(0, ZOOMS.len() as i32 - 1) as usize;
-    ui.set_next_item_width(TOOLBAR_COMBO_W);
-    if ui.combo("##walkto-zoom", &mut zoom, &ZOOMS, |z: &f32| {
-        Cow::Owned(if *z < 1.0 {
-            format!("{z}px/tile")
-        } else {
-            format!("{z:.0}px/tile")
-        })
-    }) {
-        ZOOM.store(zoom as i32, Ordering::Relaxed);
-    }
-    ui.same_line();
-    ui.checkbox("basemap", &mut map.show_basemap);
-    ui.same_line();
-    ui.checkbox("grid", &mut map.show_grid);
-    ui.same_line();
-    ui.checkbox("reach", &mut map.show_reach);
-    ui.same_line();
-    ui.checkbox("collision", &mut map.show_collision);
-    ui.same_line();
-    ui.checkbox("nsew", &mut map.show_nsew);
-    ui.same_line();
-    ui.checkbox("flood", &mut map.show_flood);
-    ui.same_line();
-    ui.set_next_item_width(160.0);
-    ui.input_text("##walkto-search", &mut map.search)
-        .hint("search / x,z,plane")
-        .build();
-    if ui.is_item_focused() && ui.is_key_pressed(Key::Enter) {
-        apply_search_jump(session, map, world);
-    }
+    let toolbar = draw_walkto_toolbar(ui, session, map, world, &levels, &mut lvl_idx);
     if !map.search.trim().is_empty() {
         if let Ok(coord) = MapModel::parse_coordinates(map.search.trim()) {
             ui.text_disabled(format!("coord {} {} {}", coord.x, coord.z, coord.level));
@@ -882,11 +1038,12 @@ fn picker_map_body(
             draw_search_hits(ui, session, map, world);
         }
     }
-    let footer_h = ui.frame_height() * 2.0 + ui.clone_style().item_spacing()[1];
+    let footer_h = map_footer_reserve(ui);
     let avail = ui.content_region_avail();
     let canvas_h = (avail[1] - footer_h).max(120.0);
     let mut overlay_zoom_in = false;
-    draw_canvas(ui, gpu, session, map, world, canvas_h, &mut overlay_zoom_in);
+    let canvas_inner = draw_canvas(ui, gpu, session, map, world, canvas_h, &mut overlay_zoom_in);
+    let canvas_item_max = ui.item_rect_max();
     let status = if overlay_zoom_in {
         "zoom in for tile layers"
     } else {
@@ -929,6 +1086,7 @@ fn picker_map_body(
             session.map_model.close();
         }
     }
+    record_picker_layout(ui, &toolbar, canvas_inner, canvas_item_max, footer_h);
 }
 
 fn draw_search_hits(ui: &Ui, session: &mut Session, map: &mut WalkMapRenderer, world: &NavWorld) {
@@ -1035,7 +1193,7 @@ fn draw_canvas(
     world: &NavWorld,
     height: f32,
     overlay_zoom_in: &mut bool,
-) {
+) -> Option<([f32; 2], [f32; 2])> {
     let mut rect: Option<([f32; 2], [f32; 2])> = None;
     let mut pick: Option<[f32; 2]> = None;
     let mut hovered = false;
@@ -1133,9 +1291,7 @@ fn draw_canvas(
                 overlay_zoom_in,
             );
         });
-    let Some((min, max)) = rect else {
-        return;
-    };
+    let (min, max) = rect?;
     let scale = ZOOMS[ZOOM
         .load(Ordering::Relaxed)
         .clamp(0, ZOOMS.len() as i32 - 1) as usize];
@@ -1159,10 +1315,10 @@ fn draw_canvas(
         ) {
             session.select_picker_tile(world, requested);
         }
-        return;
+        return Some((min, max));
     }
     if !hovered {
-        return;
+        return Some((min, max));
     }
     if ui.is_mouse_dragging_with_threshold(MouseButton::Left, 5.0) {
         let delta = ui.io().mouse_delta();
@@ -1183,7 +1339,7 @@ fn draw_canvas(
         CENTRE_Z.store(centre.1, Ordering::Relaxed);
         PAN_REM_X.store((rem.0 * 1000.0) as i32, Ordering::Relaxed);
         PAN_REM_Z.store((rem.1 * 1000.0) as i32, Ordering::Relaxed);
-        return;
+        return Some((min, max));
     }
     // Vertical wheel zooms toward the cursor. Horizontal wheel still pans.
     let wheel = ui.io().mouse_wheel();
@@ -1240,6 +1396,7 @@ fn draw_canvas(
         PAN_REM_X.store((rem.0 * 1000.0) as i32, Ordering::Relaxed);
         PAN_REM_Z.store((rem.1 * 1000.0) as i32, Ordering::Relaxed);
     }
+    Some((min, max))
 }
 
 #[cfg(test)]

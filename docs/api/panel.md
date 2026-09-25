@@ -330,7 +330,9 @@ grid and `map imagery unavailable — cache not bound` until D binds cache)
 plus optional map-owned overlay toggles (not per-tile quads), vector route
 and destination, wheel-zoom toward
 the cursor, click-to-pick uses the canvas rect (`is_mouse_hovering_rect`),
-footer **Recentre** / **Walk**, and **Teleport** (local-engine, guarded by
+header plane/zoom/search/layer controls that wrap at the default Game pane
+and narrower widths, footer **Recentre** / **Walk**, and **Teleport**
+(local-engine, guarded by
 `host_play::walk_map`). Walk/Teleport consume the pending `MapModel`
 selection once; missing origin, stale focus, or an unwalkable tile refuse
 instead of storing a later login dest. Status `walk` mirrors the armed dest.

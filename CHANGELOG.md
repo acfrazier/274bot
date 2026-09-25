@@ -26,7 +26,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   and GPU/CPU pixel release on close. Reach uses a bound `.navreach` sidecar
   or shows `reach unavailable`; the map never runs a whole-world BFS.
   Basemap defaults on; grid dots default off. `BOT_CPU=1` uses the same map
-  path.
+  path. Header plane/zoom/search and layer toggles wrap inside the Game pane
+  at the default window and at narrower widths; the footer reserves the one
+  status/action row that is drawn.
 - Added a shared host map catalogue and search API that merges revision-bound
   client POIs, authenticated `navpois` service/place facts and borrowed navigation
   transports. Access anchors, annotations, adjacent walk stands and teleport

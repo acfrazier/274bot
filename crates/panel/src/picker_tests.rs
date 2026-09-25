@@ -9,13 +9,16 @@ use std::sync::Arc;
 
 use super::{
     available_levels, click_to_tile, decode_sidecar_file, drop_flags_sidecar, ensure_flags_sidecar,
-    flags_content_hash_count, flags_sidecar_for, flags_sidecar_state, map_reach_bitset, pack,
-    pan_by, picker_map_window, reach_bitset, reset_flags_content_hash_count, right_align_x,
-    set_navflags_binding, set_pack, set_reach_binding, sidecar_for_grid, snap, walkto_canvas_flags,
-    walkto_footer_labels, walkto_window_flags, zoom_toward, FlagSidecar, FlagsSidecarState,
+    flags_content_hash_count, flags_sidecar_for, flags_sidecar_state, last_picker_layout,
+    map_reach_bitset, pack, pan_by, picker_map_window, picker_nested_in_game, reach_bitset,
+    reset_flags_content_hash_count, right_align_x, set_navflags_binding, set_pack,
+    set_reach_binding, sidecar_for_grid, snap, walkto_canvas_flags, walkto_footer_labels,
+    walkto_window_flags, zoom_toward, FlagSidecar, FlagsSidecarState,
 };
+use crate::rail::{BASE_WINDOW_H, BASE_WINDOW_W};
 use crate::session::Session;
 use crate::test_support::TestDir;
+use crate::theme::PANEL_WIDTH;
 use crate::walk_map::WalkMapRenderer;
 use dear_imgui_rs::WindowFlags;
 use std::sync::Mutex as StdMutex;
@@ -328,10 +331,12 @@ fn picker_click_selects_a_walkable_tile() {
         click_to_tile(&world, (3220, 3220), 2.0, [100.0, 100.0], [200.0, 200.0], 0).is_some(),
         "lumbridge-centred 3x3 must be snappable"
     );
-    // Canvas origin is ~[8,50] with size ~[704,460]; centre is (360,280),
-    // which is the only click that stays inside radius-16 of (3220,3220)
-    // at 2px/tile.
-    let mouse = [360.0, 280.0];
+    picker_click_frame(&mut ctx, &mut s, &world, [0.0, 0.0], false);
+    let layout = last_picker_layout();
+    let mouse = [
+        (layout.canvas_inner_min[0] + layout.canvas_inner_max[0]) * 0.5,
+        (layout.canvas_inner_min[1] + layout.canvas_inner_max[1]) * 0.5,
+    ];
     picker_click_frame(&mut ctx, &mut s, &world, mouse, false);
     picker_click_frame(&mut ctx, &mut s, &world, mouse, true);
     picker_click_frame(&mut ctx, &mut s, &world, mouse, false);
@@ -778,4 +783,62 @@ fn external_reach_floods_once_and_reuses_the_arc() {
         2,
         "set_pack drops the computed cache"
     );
+}
+
+fn default_game_pane_size() -> [f32; 2] {
+    [BASE_WINDOW_W - PANEL_WIDTH, BASE_WINDOW_H]
+}
+
+fn assert_walkto_layout_fits(label: &str, layout: super::PickerLayout) {
+    assert!(
+        layout.header_max_x <= layout.content_max[0] + 0.5,
+        "{label}: header widgets overflow WalkTo inner width (max_x={} content_max={})",
+        layout.header_max_x,
+        layout.content_max[0]
+    );
+    assert!(
+        layout.search_max_x <= layout.content_max[0] + 0.5,
+        "{label}: search box overflow WalkTo inner width (max_x={} content_max={})",
+        layout.search_max_x,
+        layout.content_max[0]
+    );
+    let slack = layout.content_max[1] - layout.footer_max[1];
+    assert!(
+        (-1.0..2.5).contains(&slack),
+        "{label}: footer must sit on the last content row (slack={slack}, reserve={})",
+        layout.footer_reserve
+    );
+    let drawn = layout.footer_max[1] - layout.canvas_item_max[1];
+    assert!(
+        (drawn - layout.footer_reserve).abs() < 2.5,
+        "{label}: footer reserve {res} must match drawn footer {drawn}",
+        res = layout.footer_reserve,
+        drawn = drawn
+    );
+}
+
+fn measure_nested_walkto(game_size: [f32; 2], display: [f32; 2]) -> super::PickerLayout {
+    super::note_closed();
+    let mut ctx = dear_imgui_rs::Context::create();
+    ctx.prepare_frame(
+        dear_imgui_rs::FramePrepareOptions::new(display, 1.0 / 60.0).renderer_has_textures(),
+    );
+    {
+        let ui = ctx.frame();
+        let mut s = Session::new();
+        s.walkto_open = true;
+        let mut map = WalkMapRenderer::new();
+        picker_nested_in_game(ui, &mut s, &open_world(3, 3), &mut map, game_size);
+    }
+    ctx.render();
+    last_picker_layout()
+}
+
+#[test]
+fn walkto_header_and_footer_fit_default_and_narrow_game_pane() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let default = measure_nested_walkto(default_game_pane_size(), [BASE_WINDOW_W, BASE_WINDOW_H]);
+    assert_walkto_layout_fits("default 1120x580 game pane", default);
+    let narrow = measure_nested_walkto([520.0, 480.0], [BASE_WINDOW_W, BASE_WINDOW_H]);
+    assert_walkto_layout_fits("narrow 520x480 game pane", narrow);
 }
