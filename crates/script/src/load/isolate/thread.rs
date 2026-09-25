@@ -111,7 +111,7 @@ pub(super) fn isolate_main(
     run_policy_override: std::sync::Arc<api::run_policy::RunPolicyOverrideCell>,
     cmds: CmdQueue,
     out: Sender<ThreadMsg>,
-    setup: Sender<Result<v8::IsolateHandle, String>>,
+    setup: Sender<SetupMessage>,
     work_generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
     paint_generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
     teardown: std::sync::Arc<Mutex<TeardownState>>,
@@ -127,10 +127,16 @@ pub(super) fn isolate_main(
     }) {
         Ok(runtime) => runtime,
         Err(e) => {
-            let _ = setup.send(Err(format!("js engine init: {e}")));
+            let _ = setup.send(SetupMessage::Ready(Err(format!("js engine init: {e}"))));
             return;
         }
     };
+    let terminate = runtime.deno_runtime().v8_isolate().thread_safe_handle();
+    let setup_handle = terminate.clone();
+    let setup_failed = setup.send(SetupMessage::Interrupt(terminate)).is_err();
+    if setup_failed || teardown.lock().unwrap().phase != TeardownPhase::Running {
+        setup_handle.terminate_execution();
+    }
     // Declared after `runtime`, so a failed wire (whose module code may
     // have started a machine) drops the rows before the isolate.
     let _machines = MachinesStop;
@@ -147,7 +153,7 @@ pub(super) fn isolate_main(
         named_banks,
         run_policy_override,
     ) {
-        let _ = setup.send(Err(e));
+        let _ = setup.send(SetupMessage::Ready(Err(e)));
         return;
     }
     // The native-event consumer ships only with the compat runner
@@ -167,8 +173,7 @@ pub(super) fn isolate_main(
             Ok(Some(2))
         );
     let _ = runtime.eval::<serde_json::Value>(INSTALL_HOST_HOOKS);
-    let terminate = runtime.deno_runtime().v8_isolate().thread_safe_handle();
-    let _ = setup.send(Ok(terminate));
+    let _ = setup.send(SetupMessage::Ready(Ok(())));
     tick_loop(
         runtime,
         cmds,

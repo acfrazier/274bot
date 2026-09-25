@@ -60,12 +60,15 @@ const SLOW_TICK: Duration = Duration::from_millis(50);
 const RECOVERY_ANCHOR_TICK: u64 = u64::MAX;
 /// Hard stop for yielding JS (rustyscript `RuntimeOptions.timeout`).
 const RUNTIME_TIMEOUT: Duration = Duration::from_millis(50);
+/// How long setup waits for V8 creation and startup evaluation before the
+/// owning isolate handle interrupts it.
+const SETUP_TIMEOUT: Duration = Duration::from_secs(10);
+/// Validation uses a shorter independent deadline because it is a
+/// throwaway candidate check, not a live Start.
+const VALIDATION_TIMEOUT: Duration = Duration::from_secs(2);
 /// How long `join` waits for the isolate thread after Stop + terminate
 /// before abandoning it: a stuck isolate must never freeze the caller.
 const JOIN_TIMEOUT: Duration = Duration::from_secs(2);
-/// How long `poll_ready` waits for V8 creation, prelude, content eval
-/// and module load before reporting the same timeout spawn used to.
-const SETUP_TIMEOUT: Duration = Duration::from_secs(10);
 /// Heap cap for the isolate (~64 MB, the brief's number).
 const MAX_HEAP: usize = 64 * 1024 * 1024;
 /// Bounded native pairing metadata for mouse gestures produced by one
@@ -268,9 +271,17 @@ pub enum Ready {
     Failed(String),
 }
 
+enum SetupMessage {
+    /// Published immediately after Runtime creation, before any
+    /// user-influenced startup evaluation.
+    Interrupt(v8::IsolateHandle),
+    /// Final setup result after wiring the runtime and loading the module.
+    Ready(Result<(), String>),
+}
+
 enum SetupState {
     Pending {
-        rx: Receiver<Result<v8::IsolateHandle, String>>,
+        rx: Receiver<SetupMessage>,
         deadline: Instant,
     },
     Ready,
@@ -344,22 +355,24 @@ impl LoadIsolate {
         shape: LoadShape,
         siblings: &[(String, String)],
     ) -> Result<(), String> {
-        ensure_platform();
-        let mut runtime = Runtime::new(RuntimeOptions {
-            timeout: RUNTIME_TIMEOUT,
-            max_heap_size: Some(MAX_HEAP),
-            ..Default::default()
-        })
-        .map_err(|e| format!("js engine init: {e}"))?;
-        wire_runtime(
-            &mut runtime,
-            js,
-            shape,
-            siblings,
-            None,
-            std::sync::Arc::new(api::named_banks::NamedBankFacts::empty()),
-            std::sync::Arc::new(api::run_policy::RunPolicyOverrideCell::new()),
-        )
+        let source = js.to_owned();
+        let siblings = siblings.to_vec();
+        std::thread::Builder::new()
+            .name("js-validate".into())
+            .spawn(move || {
+                let isolate = Self::spawn(source, shape, siblings)?;
+                let result = isolate.resolve_setup(Some(Instant::now() + VALIDATION_TIMEOUT));
+                let result = match result {
+                    Ready::Ready => Ok(()),
+                    Ready::Failed(error) => Err(error),
+                    Ready::Pending => unreachable!("bounded setup wait cannot remain pending"),
+                };
+                let _ = isolate.join_without_hook();
+                result
+            })
+            .map_err(|e| format!("js validation thread: {e}"))?
+            .join()
+            .map_err(|_| "js validation thread panicked".to_string())?
     }
 
     fn spawn_inner(
@@ -372,8 +385,8 @@ impl LoadIsolate {
     ) -> Result<Self, String> {
         ensure_platform();
         let (tx, rx) = mpsc::channel::<IsolateCmd>();
+        let (setup_tx, setup_rx) = mpsc::channel::<SetupMessage>();
         let (msg_tx, msg_rx) = mpsc::channel::<ThreadMsg>();
-        let (setup_tx, setup_rx) = mpsc::channel::<Result<v8::IsolateHandle, String>>();
         #[cfg(feature = "memory-profile")]
         let counters = crate::memory_profile::registered();
         #[cfg(feature = "memory-profile")]
@@ -840,37 +853,56 @@ impl LoadIsolate {
             SetupState::Failed(e) => return Ready::Failed(e.clone()),
             SetupState::Pending { rx, deadline } => (rx, *deadline),
         };
-        // `Err(true)` is a disconnected channel; `Err(false)` nothing yet.
-        let received = match block_until {
-            None => rx
-                .try_recv()
-                .map_err(|e| matches!(e, mpsc::TryRecvError::Disconnected)),
-            Some(until) => rx
-                .recv_timeout(
-                    until
-                        .min(deadline)
-                        .saturating_duration_since(Instant::now()),
-                )
-                .map_err(|e| matches!(e, mpsc::RecvTimeoutError::Disconnected)),
-        };
-        let outcome = match received {
-            Ok(Ok(handle)) => {
-                let _ = self.terminate.set(handle);
-                // A tick queued before setup finished starts running now:
-                // its slow-tick budget is measured from here, not its send.
-                if let Some(entry) = self.in_flight.lock().unwrap().as_mut() {
-                    entry.2 = Instant::now();
+        let outcome = loop {
+            let received = match block_until {
+                None => rx
+                    .try_recv()
+                    .map_err(|e| matches!(e, mpsc::TryRecvError::Disconnected)),
+                Some(until) => rx
+                    .recv_timeout(
+                        until
+                            .min(deadline)
+                            .saturating_duration_since(Instant::now()),
+                    )
+                    .map_err(|e| matches!(e, mpsc::RecvTimeoutError::Disconnected)),
+            };
+            match received {
+                Ok(SetupMessage::Interrupt(handle)) => {
+                    // Setup owns this handle independently of the final
+                    // Ready/Failed result. A startup eval can now be
+                    // interrupted even if it never returns to send Ready.
+                    let _ = self.terminate.set(handle);
+                    if self.teardown.lock().unwrap().phase != TeardownPhase::Running {
+                        self.fire_terminate();
+                    }
                 }
-                Ready::Ready
-            }
-            Ok(Err(e)) => Ready::Failed(e),
-            Err(true) => Ready::Failed(format!(
-                "isolate init: {}",
-                mpsc::RecvTimeoutError::Disconnected
-            )),
-            Err(false) if Instant::now() < deadline => return Ready::Pending,
-            Err(false) => {
-                Ready::Failed(format!("isolate init: {}", mpsc::RecvTimeoutError::Timeout))
+                Ok(SetupMessage::Ready(Ok(()))) => {
+                    // A tick queued before setup finished starts running
+                    // now: measure its budget from actual V8 readiness, not
+                    // from the send time.
+                    if let Some(entry) = self.in_flight.lock().unwrap().as_mut() {
+                        entry.2 = Instant::now();
+                    }
+                    break Ready::Ready;
+                }
+                Ok(SetupMessage::Ready(Err(e))) => break Ready::Failed(e),
+                Err(true) => {
+                    break Ready::Failed(format!(
+                        "isolate init: {}",
+                        mpsc::RecvTimeoutError::Disconnected
+                    ));
+                }
+                Err(false) => {
+                    let timed_out = Instant::now() >= deadline
+                        || block_until.is_some_and(|until| Instant::now() >= until);
+                    if !timed_out {
+                        return Ready::Pending;
+                    }
+                    break Ready::Failed(format!(
+                        "isolate init: {}",
+                        mpsc::RecvTimeoutError::Timeout
+                    ));
+                }
             }
         };
         *setup = match &outcome {
@@ -878,6 +910,12 @@ impl LoadIsolate {
             Ready::Failed(e) => SetupState::Failed(e.clone()),
             Ready::Pending => unreachable!("pending returns above"),
         };
+        drop(setup);
+        if matches!(outcome, Ready::Failed(_)) {
+            // A setup deadline or wire failure is still an owned runtime:
+            // interrupt it before the caller forgets the setup result.
+            self.fire_terminate();
+        }
         outcome
     }
 
@@ -918,16 +956,26 @@ impl LoadIsolate {
     /// A join during setup first waits (bounded by the setup deadline) for
     /// the terminate handle, so a tick queued before Ready can still be
     /// interrupted; the reaper, never the UI, owns that wait.
-    pub fn join(mut self) -> Vec<String> {
-        self.send(IsolateCmd::Stop { invoke_hook: true });
-        let _ = self.resolve_setup(Some(Instant::now() + SETUP_TIMEOUT));
+    pub fn join(self) -> Vec<String> {
+        self.join_inner(true)
+    }
+
+    /// Validation owns a throwaway isolate but must not invoke user
+    /// `onStop`; it only needs the runtime to finish and release.
+    fn join_without_hook(self) -> Vec<String> {
+        self.join_inner(false)
+    }
+
+    fn join_inner(mut self, invoke_hook: bool) -> Vec<String> {
         {
             let mut st = self.teardown.lock().unwrap();
             if st.phase == TeardownPhase::Running {
                 st.phase = TeardownPhase::UnwindingTick;
-                self.fire_terminate();
             }
         }
+        self.send(IsolateCmd::Stop { invoke_hook });
+        let _ = self.resolve_setup(Some(Instant::now() + SETUP_TIMEOUT));
+        self.fire_terminate();
         if let Some(handle) = self.handle.take() {
             let deadline = Instant::now() + JOIN_TIMEOUT;
             while !handle.is_finished() && Instant::now() < deadline {
@@ -1061,18 +1109,19 @@ impl Drop for LoadIsolate {
         // and no cancel — the thread clears the terminate once the tick
         // has returned). After a successful join the hook is Done: do
         // not re-interrupt a completed teardown.
-        let _ = self.poll_ready();
-        self.send(IsolateCmd::Stop { invoke_hook: false });
-        let mut st = self.teardown.lock().unwrap();
-        match st.phase {
-            TeardownPhase::Done => {}
-            TeardownPhase::Running | TeardownPhase::UnwindingTick | TeardownPhase::Hook => {
-                st.phase = TeardownPhase::Done;
-                st.cancel.take();
-                self.fire_terminate();
+        {
+            let mut st = self.teardown.lock().unwrap();
+            match st.phase {
+                TeardownPhase::Done => {}
+                TeardownPhase::Running | TeardownPhase::UnwindingTick | TeardownPhase::Hook => {
+                    st.phase = TeardownPhase::Done;
+                    st.cancel.take();
+                }
             }
         }
-        drop(st);
+        let _ = self.poll_ready();
+        self.send(IsolateCmd::Stop { invoke_hook: false });
+        self.fire_terminate();
         if let Some(handle) = self.handle.take() {
             if handle.is_finished() {
                 let _ = handle.join();

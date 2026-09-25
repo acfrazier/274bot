@@ -1,6 +1,59 @@
 use super::*;
 
 #[test]
+fn startup_non_yielding_module_has_bounded_join() {
+    let isolate = LoadIsolate::spawn(
+        "while (true) {}".into(),
+        LoadShape::NativeTick,
+        vec![],
+    )
+    .unwrap();
+    let started = Instant::now();
+    isolate.join();
+    assert!(
+        started.elapsed() < Duration::from_secs(3),
+        "startup evaluation outlived its owner: {:?}",
+        started.elapsed()
+    );
+}
+
+#[test]
+fn validate_non_yielding_module_is_bounded() {
+    const CHILD: &str = "SCRIPT_VALIDATE_CHILD";
+    if std::env::var_os(CHILD).is_some() {
+        let result = LoadIsolate::validate_source(
+            "while (true) {}".into(),
+            LoadShape::NativeTick,
+            &[],
+        );
+        assert!(result.is_err(), "non-yielding source must be rejected");
+        return;
+    }
+
+    let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "load::isolate::tests::validate_non_yielding_module_is_bounded",
+            "--nocapture",
+        ])
+        .env(CHILD, "1")
+        .spawn()
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            assert!(status.success(), "validation child failed: {status}");
+            break;
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            panic!("validation child did not return before the deadline");
+        }
+        std::thread::yield_now();
+    }
+}
+
+#[test]
 fn reset_rejects_a_tick_queued_with_the_previous_session_generation() {
     let iso = LoadIsolate::spawn(
         "export function tick(api) { globalThis.n = (globalThis.n || 0) + 1; }".into(),
