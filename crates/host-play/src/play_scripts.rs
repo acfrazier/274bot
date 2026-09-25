@@ -63,7 +63,9 @@ impl ScriptStartHandle {
             eprintln!("[script {name}] start load");
         }
         let slot = script_slot_or_insert(&self.scripts, name);
-        let mut slot = slot.lock().unwrap();
+        let mut slot = slot
+            .lock()
+            .map_err(|_| format!("script slot retiring: {name}"))?;
         let result = slot.start_load_with_settings_and_game_data(
             source,
             shape,
@@ -98,7 +100,9 @@ impl ScriptStartHandle {
             eprintln!("[script {name}] start load");
         }
         let slot = script_slot_or_insert(&self.scripts, name);
-        let mut slot = slot.lock().unwrap();
+        let mut slot = slot
+            .lock()
+            .map_err(|_| format!("script slot retiring: {name}"))?;
         let result = slot.start_load_with_loadouts_and_game_data(
             source,
             shape,
@@ -128,7 +132,9 @@ impl ScriptStartHandle {
         }
         let make = script::factory(id).ok_or_else(|| format!("not ported: {}", id.0))?;
         let slot = script_slot_or_insert(&self.scripts, name);
-        let mut slot = slot.lock().unwrap();
+        let mut slot = slot
+            .lock()
+            .map_err(|_| format!("script slot retiring: {name}"))?;
         let result = slot.start_compiled(make(), self.game_data.clone());
         if result.is_ok() {
             invalidate_bank_pick(&self.navs, name);
@@ -184,7 +190,9 @@ impl Play {
         }
         let make = script::factory(id).ok_or_else(|| format!("not ported: {}", id.0))?;
         let slot = script_slot_or_insert(&self.scripts, name);
-        let mut slot = slot.lock().unwrap();
+        let mut slot = slot
+            .lock()
+            .map_err(|_| format!("script slot retiring: {name}"))?;
         slot.start_compiled(make(), self.game_data.clone())?;
         invalidate_bank_pick(&self.navs, name);
         drop(slot);
@@ -223,7 +231,9 @@ impl Play {
             eprintln!("[script {name}] start load");
         }
         let slot = script_slot_or_insert(&self.scripts, name);
-        let mut slot = slot.lock().unwrap();
+        let mut slot = slot.lock().map_err(|_| {
+            script::StartLoadError::Refused(format!("script slot retiring: {name}"))
+        })?;
         let result = slot.start_load_with_settings_and_game_data_typed(
             source,
             shape,
@@ -257,8 +267,10 @@ impl Play {
     /// Resume re-arms it). No-op when the slot has no script.
     pub fn script_pause(&self, name: &str) {
         if let Some(slot) = script_slot(&self.scripts, name) {
-            let abort = slot.lock().unwrap().pause();
-            if abort {
+            let Ok(mut slot) = slot.lock() else {
+                return;
+            };
+            if slot.pause() {
                 abort_script_walk(&self.navs, name);
             }
         }
@@ -268,7 +280,10 @@ impl Play {
     /// Resume `name`'s script; the next `on_is_up` re-gates it.
     pub fn script_resume(&self, name: &str) {
         if let Some(slot) = script_slot(&self.scripts, name) {
-            slot.lock().unwrap().resume();
+            let Ok(mut slot) = slot.lock() else {
+                return;
+            };
+            slot.resume();
         }
         self.wake(name);
     }
@@ -277,7 +292,14 @@ impl Play {
     /// published paint even while the client is offline.
     pub fn script_stop(&self, name: &str) {
         let slot = script_slot(&self.scripts, name);
-        let mut guard = slot.as_ref().map(|slot| slot.lock().unwrap());
+        let mut guard = if let Some(slot) = slot.as_ref() {
+            let Ok(guard) = slot.lock() else {
+                return;
+            };
+            Some(guard)
+        } else {
+            None
+        };
         if let Some(slot) = guard.as_mut() {
             slot.stop();
         }
@@ -302,7 +324,9 @@ impl Play {
             return false;
         };
         {
-            let mut slot = slot.lock().unwrap();
+            let Ok(mut slot) = slot.lock() else {
+                return false;
+            };
             if slot.source_identity() != Some(identity) || slot.runtime_generation() != generation {
                 return false;
             }
@@ -316,17 +340,23 @@ impl Play {
 
     pub fn script_attach_identity(&self, name: &str, identity: impl Into<String>) {
         if let Some(slot) = script_slot(&self.scripts, name) {
-            slot.lock().unwrap().attach_source_identity(identity);
+            if let Ok(mut slot) = slot.lock() {
+                slot.attach_source_identity(identity);
+            }
         }
     }
 
     pub fn script_runtime_generation(&self, name: &str) -> Option<u64> {
-        script_slot(&self.scripts, name).map(|slot| slot.lock().unwrap().runtime_generation())
+        script_slot(&self.scripts, name)
+            .and_then(|slot| slot.lock().ok().map(|slot| slot.runtime_generation()))
     }
 
     pub fn script_source_identity(&self, name: &str) -> Option<String> {
-        script_slot(&self.scripts, name)
-            .and_then(|slot| slot.lock().unwrap().source_identity().map(str::to_string))
+        script_slot(&self.scripts, name).and_then(|slot| {
+            slot.lock()
+                .ok()
+                .and_then(|slot| slot.source_identity().map(str::to_string))
+        })
     }
 
     pub fn script_post_settings_fenced(
@@ -339,11 +369,9 @@ impl Play {
         let Some(slot) = script_slot(&self.scripts, name) else {
             return false;
         };
-        let accepted = slot
-            .lock()
-            .unwrap()
-            .post_settings_bag_fenced(bag, identity, generation);
-        accepted
+        slot.lock()
+            .ok()
+            .is_some_and(|mut slot| slot.post_settings_bag_fenced(bag, identity, generation))
     }
 
     /// One-shot script-local paint button for `name`. No-op when there is
@@ -357,7 +385,9 @@ impl Play {
         let Some(slot) = script_slot(&self.scripts, name) else {
             return;
         };
-        let slot = slot.lock().unwrap();
+        let Ok(slot) = slot.lock() else {
+            return;
+        };
         if slot.state() != script::RunState::Running {
             return;
         }
@@ -384,7 +414,9 @@ impl Play {
         let Some(slot) = script_slot(&self.scripts, name) else {
             return;
         };
-        let slot = slot.lock().unwrap();
+        let Ok(slot) = slot.lock() else {
+            return;
+        };
         if slot.state() != script::RunState::Running {
             return;
         }

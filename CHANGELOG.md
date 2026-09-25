@@ -120,10 +120,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   and valid tile.
 - Disconnect clears session byte/run counters but retains paused script paint;
   Stop and unload clear published paint even offline. Status-lock poison from
-  a panicked worker is recovered at every access, and script-slot poison is
-  contained at terminal retirement. Welcome dismissal keeps its spaced attempt
-  bound and reports a visible failure after 10 eligible seconds; the window
-  restarts while the scene cannot accept a close.
+  a panicked worker is recovered at every access, while poisoned script slots
+  fail UI reads, starts and controls closed until terminal retirement reaps
+  them.
+- Welcome dismissal keeps its spaced attempt bound and reports a visible
+  failure after 10 eligible seconds; the window restarts while the scene
+  cannot accept a close.
 
 ### Random-event guardian
 
@@ -179,7 +181,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
 - Script startup, tick interruption and `onStop` now share one serialized
   lifetime: Stop cannot leak a tick interrupt into the hook, Pause blocks new
   entries while in-budget work finishes, and a per-execution deadline interrupts
-  only a runaway. Hostile startup/validation is bounded and reclaimed.
+  only a runaway. Interrupt recovery resets only the `onStart`, loop or tick
+  continuation that the terminate actually cut, so a slow paint or tick listener
+  cannot duplicate parked work. A final queued Pause also remains authoritative
+  over older Pause/Resume commands. Hostile startup/validation is bounded and
+  reclaimed.
 - Reload and catalog validation now run off the panel UI thread. A Pause that
   wins the final host dispatch fence preserves the drained script actions for
   Resume instead of silently losing them.

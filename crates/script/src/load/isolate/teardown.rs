@@ -22,8 +22,16 @@ pub(super) enum ExecutionInterrupt {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum ExecutionStage {
     Other,
+    TickListener,
     OnStart,
     Loop,
+    Paint,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) struct InterruptedExecution {
+    pub(super) owner: ExecutionInterrupt,
+    pub(super) stage: ExecutionStage,
 }
 
 /// Phase, Hook-entry deadline, and at-most-one interrupt. Finish and the
@@ -49,15 +57,15 @@ pub(super) struct TeardownState {
     /// captures the identity so it cannot terminate later work.
     pub(super) execution_id: u64,
     pub(super) execution_started: Option<Instant>,
+    /// Narrow stage seam used to distinguish lifecycle continuations from
+    /// paint, listeners, and tick bookkeeping in interruption recovery.
+    pub(super) execution_stage: ExecutionStage,
     /// Pause intent published synchronously by the host. It blocks the next
     /// entry but does not halt healthy work that already owns execution.
-    /// Narrow stage seam used to distinguish loop entry from setup/tick
-    /// bookkeeping in lifecycle proofs.
-    pub(super) execution_stage: ExecutionStage,
     pub(super) pause_requested: bool,
     /// A terminate armed for the active eval and not yet cancelled by the
-    /// isolate thread.
-    pub(super) execution_interrupt: Option<ExecutionInterrupt>,
+    /// isolate thread, including the stage it targeted at the instant it fired.
+    pub(super) execution_interrupt: Option<InterruptedExecution>,
 }
 
 impl TeardownState {
@@ -165,6 +173,7 @@ pub(super) fn begin_interruptible_execution(teardown: &Mutex<TeardownState>) -> 
     st.execution_id = st.execution_id.wrapping_add(1);
     st.execution_started = Some(Instant::now());
     st.execution_active = true;
+    st.execution_stage = ExecutionStage::Other;
     true
 }
 
@@ -174,7 +183,7 @@ pub(super) fn begin_interruptible_execution(teardown: &Mutex<TeardownState>) -> 
 pub(super) fn finish_interruptible_execution(
     runtime: &mut Runtime,
     teardown: &Mutex<TeardownState>,
-) -> Option<ExecutionInterrupt> {
+) -> Option<InterruptedExecution> {
     let mut st = teardown.lock().unwrap();
     st.execution_active = false;
     st.execution_started = None;

@@ -129,11 +129,14 @@ fn start_stashed_catalog_card(
     }
 }
 
-struct ExternalReloadPending {
-    path: PathBuf,
-    source_before: String,
-    source_after: String,
-    compiled_before: String,
+enum ExternalReloadPending {
+    Unchanged,
+    Changed {
+        path: PathBuf,
+        source_before: String,
+        source_after: String,
+        compiled_before: String,
+    },
 }
 
 /// Owned inputs captured on the UI thread and consumed by the sequential
@@ -1739,16 +1742,33 @@ impl Session {
                 }
             }
             Some(Operation::ReloadUnchanged) => {
-                self.begin_script_reload_clicked();
+                match self.external_reload_pending.as_ref() {
+                    None => {
+                        self.external_reload_pending = Some(ExternalReloadPending::Unchanged);
+                        self.begin_script_reload_clicked();
+                    }
+                    Some(ExternalReloadPending::Unchanged) => {}
+                    Some(ExternalReloadPending::Changed { .. }) => {
+                        watch.fail("external loader reload operation changed while pending");
+                        return;
+                    }
+                }
                 if self.reload_validation_pending() {
                     return;
                 }
-                match self.take_reload_outcome() {
-                    Some(crate::profile_script::ReloadOutcome::NothingChanged) => {
+                let Some(outcome) = self.take_reload_outcome() else {
+                    return;
+                };
+                let pending = self.external_reload_pending.take();
+                if !matches!(pending, Some(ExternalReloadPending::Unchanged)) {
+                    watch.fail("external loader unchanged reload lost its pending operation");
+                    return;
+                }
+                match outcome {
+                    crate::profile_script::ReloadOutcome::NothingChanged => {
                         watch.note_reload_unchanged(host_play::external_loader::NOTHING_CHANGED);
                     }
-                    Some(other) => watch.fail(format!("unchanged reload: {other:?}")),
-                    None => {}
+                    other => watch.fail(format!("unchanged reload: {other:?}")),
                 }
             }
             Some(Operation::ReloadChanged) => {
@@ -1779,7 +1799,7 @@ impl Session {
                             return;
                         }
                     };
-                    self.external_reload_pending = Some(ExternalReloadPending {
+                    self.external_reload_pending = Some(ExternalReloadPending::Changed {
                         path,
                         source_before,
                         source_after: source_sha256(&after_bytes),
@@ -1793,10 +1813,16 @@ impl Session {
                 let Some(outcome) = self.take_reload_outcome() else {
                     return;
                 };
-                let pending = self
-                    .external_reload_pending
-                    .take()
-                    .expect("changed reload owns its source hashes");
+                let Some(ExternalReloadPending::Changed {
+                    path,
+                    source_before,
+                    source_after,
+                    compiled_before,
+                }) = self.external_reload_pending.take()
+                else {
+                    watch.fail("external loader changed reload lost its pending operation");
+                    return;
+                };
                 let (applied, nothing_changed) = match &outcome {
                     crate::profile_script::ReloadOutcome::Applied { .. } => (true, false),
                     crate::profile_script::ReloadOutcome::NothingChanged => (false, true),
@@ -1809,10 +1835,10 @@ impl Session {
                         return;
                     }
                 };
-                let Some(card) = self.js.get(
-                    script::ScriptSource::File,
-                    &pending.path.display().to_string(),
-                ) else {
+                let Some(card) = self
+                    .js
+                    .get(script::ScriptSource::File, &path.display().to_string())
+                else {
                     watch.fail("external loader changed reload lost the File card");
                     return;
                 };
@@ -1839,9 +1865,9 @@ impl Session {
                     nothing_changed,
                     &card.path,
                     &card.identity_key(),
-                    &pending.source_before,
-                    &pending.source_after,
-                    &pending.compiled_before,
+                    &source_before,
+                    &source_after,
+                    &compiled_before,
                     &card.sha256,
                     selected,
                     running,

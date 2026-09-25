@@ -5238,7 +5238,7 @@ fn script_control_is_noop_for_unknown_slot_and_state_defaults_idle() {
 
 #[test]
 fn poisoned_script_slot_reads_as_retiring_until_reaped() {
-    let play = run_with_io(
+    let mut play = run_with_io(
         &PlayOptions {
             host: "127.0.0.1".into(),
             port: 43594,
@@ -5250,6 +5250,7 @@ fn poisoned_script_slot_reads_as_retiring_until_reaped() {
         |_| (None, None),
         |_, _, _| {},
     );
+    play.spawned.insert("alice".into());
     let slot = script_slot_or_insert(&play.scripts, "alice");
     let poisoner = {
         let slot = Arc::clone(&slot);
@@ -5269,6 +5270,67 @@ fn poisoned_script_slot_reads_as_retiring_until_reaped() {
     assert!(
         slot.is_poisoned(),
         "readers must leave retirement and poison repair to the reaper"
+    );
+    assert_eq!(play.script_runtime_generation("alice"), None);
+    assert_eq!(play.script_source_identity("alice"), None);
+
+    let settings = serde_json::Map::new();
+    assert!(play
+        .script_start("alice", script::CompiledId("Sherlock"))
+        .is_err());
+    assert!(play
+        .script_start_load(
+            "alice",
+            "export function tick() {}".into(),
+            script::LoadShape::NativeTick,
+            None,
+            Vec::new(),
+        )
+        .is_err());
+    assert!(play
+        .script_start_load_typed(
+            "alice",
+            "export function tick() {}".into(),
+            script::LoadShape::NativeTick,
+            None,
+            Vec::new(),
+        )
+        .is_err());
+    let start = play.script_start_handle();
+    assert!(start
+        .start_load(
+            "alice",
+            "export function tick() {}".into(),
+            script::LoadShape::NativeTick,
+            None,
+            Vec::new(),
+        )
+        .is_err());
+    assert!(start
+        .start_load_with_loadouts(
+            "alice",
+            "export function tick() {}".into(),
+            script::LoadShape::NativeTick,
+            None,
+            Vec::new(),
+            &[],
+        )
+        .is_err());
+    assert!(start
+        .start_compiled("alice", script::CompiledId("Sherlock"))
+        .is_err());
+
+    play.script_pause("alice");
+    play.script_resume("alice");
+    play.script_stop("alice");
+    assert!(!play.script_stop_if_identity_generation("alice", "file:any", 0));
+    play.script_attach_identity("alice", "file:any");
+    assert!(!play.script_post_settings_fenced("alice", &settings, "file:any", 0));
+    play.script_paint_click("alice", "button", 1);
+    play.script_paint_select("alice", "tabs", "tab", 1);
+    assert!(
+        slot.is_poisoned(),
+        "refused readers and mutators leave poison repair to the reaper"
     );
 }
 

@@ -602,11 +602,17 @@ fn pause_allows_an_in_budget_async_native_tick_to_resume() {
 fn assert_pause_recovers_terminated_async_continuation(source: &str, shape: LoadShape) {
     let iso = spawn_ready(source.to_string(), shape, vec![]);
     iso.on_game_tick(1);
+    iso.probe("true")
+        .expect("first tick parks on its host wait");
+    assert_eq!(iso.probe("__loops || 0").unwrap(), 1);
+    assert_eq!(iso.probe("globalThis.__done || 0").unwrap(), 0);
+
+    iso.on_game_tick(2);
     let deadline = Instant::now() + Duration::from_secs(2);
     while !iso.loop_execution_active() {
         assert!(
             Instant::now() < deadline,
-            "async continuation never entered"
+            "host-resolved continuation never entered"
         );
         thread::yield_now();
     }
@@ -615,7 +621,7 @@ fn assert_pause_recovers_terminated_async_continuation(source: &str, shape: Load
         .expect("Pause must settle the terminated continuation");
     iso.resume();
     iso.probe("true").expect("Resume must be observed");
-    iso.on_game_tick(2);
+    iso.on_game_tick(3);
     assert_eq!(iso.probe("__loops || 0").unwrap(), 2);
     assert_eq!(
         iso.probe("__done || 0").unwrap(),
@@ -628,11 +634,12 @@ fn assert_pause_recovers_terminated_async_continuation(source: &str, shape: Load
 #[test]
 fn pause_resets_a_terminated_compat_async_continuation() {
     assert_pause_recovers_terminated_async_continuation(
-        "export default class T extends LoopingBot {
+        "import { Execution } from '../../api/execution/Execution.js';
+        export default class T extends LoopingBot {
             async loop() {
                 globalThis.__loops = (globalThis.__loops || 0) + 1;
                 if (globalThis.__loops === 1) {
-                    await Promise.resolve();
+                    await Execution.delayTicks(1);
                     for (;;) {}
                 }
                 globalThis.__done = (globalThis.__done || 0) + 1;
@@ -645,11 +652,12 @@ fn pause_resets_a_terminated_compat_async_continuation() {
 #[test]
 fn pause_resets_a_terminated_v2_async_continuation() {
     assert_pause_recovers_terminated_async_continuation(
-        "export const apiVersion = 2;
+        "import { Execution } from '../../api/execution/Execution.js';
+        export const apiVersion = 2;
         export async function tick() {
             globalThis.__loops = (globalThis.__loops || 0) + 1;
             if (globalThis.__loops === 1) {
-                await Promise.resolve();
+                await Execution.delayTicks(1);
                 for (;;) {}
             }
             globalThis.__done = (globalThis.__done || 0) + 1;
@@ -661,19 +669,25 @@ fn pause_resets_a_terminated_v2_async_continuation() {
 fn assert_watchdog_recovers_terminated_async_continuation(source: &str, shape: LoadShape) {
     let iso = spawn_ready(source.to_string(), shape, vec![]);
     iso.on_game_tick(1);
+    iso.probe("true")
+        .expect("first tick parks on its host wait");
+    assert_eq!(iso.probe("__loops || 0").unwrap(), 1);
+    assert_eq!(iso.probe("globalThis.__done || 0").unwrap(), 0);
+
+    iso.on_game_tick(2);
     let deadline = Instant::now() + Duration::from_secs(2);
     while !iso.loop_execution_active() {
         assert!(
             Instant::now() < deadline,
-            "async continuation never entered"
+            "host-resolved continuation never entered"
         );
         thread::yield_now();
     }
     thread::sleep(Duration::from_millis(60));
-    iso.on_game_tick(2);
+    iso.on_game_tick(3);
     iso.probe("true")
         .expect("watchdog must settle the terminated continuation");
-    iso.on_game_tick(3);
+    iso.on_game_tick(4);
     assert_eq!(iso.probe("__loops || 0").unwrap(), 2);
     assert_eq!(
         iso.probe("__done || 0").unwrap(),
@@ -686,11 +700,12 @@ fn assert_watchdog_recovers_terminated_async_continuation(source: &str, shape: L
 #[test]
 fn watchdog_resets_a_terminated_compat_async_continuation() {
     assert_watchdog_recovers_terminated_async_continuation(
-        "export default class T extends LoopingBot {
+        "import { Execution } from '../../api/execution/Execution.js';
+        export default class T extends LoopingBot {
             async loop() {
                 globalThis.__loops = (globalThis.__loops || 0) + 1;
                 if (globalThis.__loops === 1) {
-                    await Promise.resolve();
+                    await Execution.delayTicks(1);
                     for (;;) {}
                 }
                 globalThis.__done = (globalThis.__done || 0) + 1;
@@ -703,11 +718,12 @@ fn watchdog_resets_a_terminated_compat_async_continuation() {
 #[test]
 fn watchdog_resets_a_terminated_v2_async_continuation() {
     assert_watchdog_recovers_terminated_async_continuation(
-        "export const apiVersion = 2;
+        "import { Execution } from '../../api/execution/Execution.js';
+        export const apiVersion = 2;
         export async function tick() {
             globalThis.__loops = (globalThis.__loops || 0) + 1;
             if (globalThis.__loops === 1) {
-                await Promise.resolve();
+                await Execution.delayTicks(1);
                 for (;;) {}
             }
             globalThis.__done = (globalThis.__done || 0) + 1;
@@ -715,6 +731,209 @@ fn watchdog_resets_a_terminated_v2_async_continuation() {
         LoadShape::NativeTick,
     );
 }
+fn assert_interrupt_in_paint_keeps_native_single_flight(pause: bool) {
+    let iso = spawn_ready(
+        r#"
+import { Execution } from '../../api/execution/Execution.js';
+const paint = globalThis.__rs2b0t_call_on_paint;
+globalThis.__rs2b0t_call_on_paint = (...args) => {
+    if (globalThis.__rs2b0t_host.tick === 2) {
+        const start = Date.now();
+        while (Date.now() - start < 300) {}
+    }
+    return paint(...args);
+};
+export async function tick() {
+    const entry = (globalThis.__entries = (globalThis.__entries || 0) + 1);
+    globalThis.__active = (globalThis.__active || 0) + 1;
+    globalThis.__maxActive = Math.max(globalThis.__maxActive || 0, globalThis.__active);
+    if (entry === 1) await Execution.delayTicks(3);
+    globalThis.__done = (globalThis.__done || 0) + 1;
+    globalThis.__active -= 1;
+}
+"#
+        .into(),
+        LoadShape::NativeTick,
+        vec![],
+    );
+    iso.on_game_tick(1);
+    iso.probe("true").expect("first native tick parks");
+    assert_eq!(iso.probe("__entries").unwrap(), 1);
+
+    iso.on_game_tick(2);
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !iso.execution_active() {
+        assert!(Instant::now() < deadline, "paint tick never entered");
+        thread::yield_now();
+    }
+    if pause {
+        iso.pause();
+        iso.probe("true")
+            .expect("Pause must settle the interrupted paint");
+        iso.resume();
+        iso.probe("true").expect("Resume must be observed");
+        iso.on_game_tick(3);
+        iso.probe("true").unwrap();
+    } else {
+        thread::sleep(Duration::from_millis(60));
+        iso.on_game_tick(3);
+        iso.probe("true")
+            .expect("watchdog must settle the interrupted paint");
+    }
+    for tick in 4..=5 {
+        iso.on_game_tick(tick);
+        iso.probe("true").unwrap();
+    }
+
+    assert_eq!(
+        iso.probe("__entries").unwrap(),
+        2,
+        "paint interruption must not reset the parked tick"
+    );
+    assert_eq!(iso.probe("__done").unwrap(), 2);
+    assert_eq!(
+        iso.probe("__maxActive").unwrap(),
+        1,
+        "the parked tick must remain single-flight"
+    );
+    let logs = iso.drain_logs();
+    assert!(
+        logs.iter()
+            .any(|line| line.contains("runaway execution interrupted")),
+        "{logs:?}"
+    );
+    assert!(
+        logs.iter()
+            .all(|line| !line.contains("runaway tick interrupted")),
+        "paint must not be attributed to the parked tick: {logs:?}"
+    );
+    iso.join();
+}
+
+#[test]
+fn pause_interrupt_in_paint_keeps_native_tick_single_flight() {
+    assert_interrupt_in_paint_keeps_native_single_flight(true);
+}
+
+#[test]
+fn watchdog_interrupt_in_paint_keeps_native_tick_single_flight() {
+    assert_interrupt_in_paint_keeps_native_single_flight(false);
+}
+
+#[test]
+fn pause_interrupt_in_tick_listener_does_not_restart_pending_on_start() {
+    let iso = spawn_ready(
+        r#"
+import { BotHost } from '../../runtime/BotHost.js';
+import { Execution } from '../../api/execution/Execution.js';
+export default class T extends LoopingBot {
+    async onStart() {
+        globalThis.__startBegan = (globalThis.__startBegan || 0) + 1;
+        BotHost.addTickListener(() => {
+            if (globalThis.__rs2b0t_host.tick === 2) {
+                const start = Date.now();
+                while (Date.now() - start < 300) {}
+            }
+        });
+        await Execution.delayTicks(3);
+        globalThis.__started = (globalThis.__started || 0) + 1;
+    }
+    loop() { globalThis.__loops = (globalThis.__loops || 0) + 1; }
+}
+"#
+        .into(),
+        LoadShape::CompatClass,
+        vec![],
+    );
+    iso.on_game_tick(1);
+    iso.probe("true").expect("onStart parks on its host wait");
+    assert_eq!(iso.probe("__startBegan").unwrap(), 1);
+
+    iso.on_game_tick(2);
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !iso.execution_active() {
+        assert!(Instant::now() < deadline, "listener tick never entered");
+        thread::yield_now();
+    }
+    iso.pause();
+    iso.probe("true")
+        .expect("Pause must settle the interrupted listener");
+    iso.resume();
+    iso.probe("true").expect("Resume must be observed");
+    for tick in 3..=5 {
+        iso.on_game_tick(tick);
+        iso.probe("true").unwrap();
+    }
+
+    assert_eq!(
+        iso.probe("__startBegan").unwrap(),
+        1,
+        "listener interruption must not invoke onStart twice"
+    );
+    assert_eq!(iso.probe("__started").unwrap(), 1);
+    assert!(
+        iso.probe("__loops || 0").unwrap().as_u64().unwrap_or(0) >= 1,
+        "loop must run after the original onStart settles"
+    );
+    let logs = iso.drain_logs();
+    assert!(
+        logs.iter()
+            .any(|line| line.contains("runaway execution interrupted")),
+        "{logs:?}"
+    );
+    assert!(
+        logs.iter()
+            .all(|line| !line.contains("runaway onStart interrupted")),
+        "listener must not be attributed to onStart: {logs:?}"
+    );
+    iso.join();
+}
+
+#[test]
+fn queued_pause_resume_tick_pause_keeps_final_pause_intent() {
+    let iso = spawn_ready(
+        "export function tick() {
+            globalThis.__entries = (globalThis.__entries || 0) + 1;
+            if (globalThis.__entries === 1) {
+                const start = Date.now();
+                while (Date.now() - start < 35) {}
+            } else {
+                for (;;) {}
+            }
+        }"
+        .into(),
+        LoadShape::NativeTick,
+        vec![],
+    );
+    iso.on_game_tick(1);
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !iso.loop_execution_active() {
+        assert!(Instant::now() < deadline, "first tick never entered");
+        thread::yield_now();
+    }
+    iso.pause();
+    iso.resume();
+    iso.on_game_tick(2);
+    iso.pause();
+    assert!(
+        iso.execution_active(),
+        "fixture tick ended before the command interleaving was queued"
+    );
+
+    thread::sleep(Duration::from_millis(120));
+    assert!(
+        !iso.execution_active(),
+        "the queued tick entered despite the final Pause intent"
+    );
+    iso.resume();
+    assert_eq!(
+        iso.probe("__entries").unwrap(),
+        1,
+        "the runaway second tick must have been refused"
+    );
+    iso.join();
+}
+
 #[test]
 fn pause_does_not_cut_off_an_in_budget_on_start() {
     let iso = spawn_ready(

@@ -458,12 +458,15 @@ fn finish_tick(
     run_paint: bool,
     script_paint: bool,
     claimed: bool,
+    teardown: &Mutex<TeardownState>,
     last_paint: &mut Option<std::sync::Arc<crate::shim::ScriptPaint>>,
     paint_generation: &std::sync::atomic::AtomicU64,
     last_ignored: &mut Vec<String>,
 ) -> Option<String> {
     if run_paint {
+        set_execution_stage(teardown, ExecutionStage::Paint);
         let _ = runtime.call_function_immediate::<()>(None, "__rs2b0t_call_on_paint", json_args!());
+        set_execution_stage(teardown, ExecutionStage::Other);
         pump_event_loop(runtime, out, n, generation);
     }
     let after: Result<AfterTick, rustyscript::Error> = runtime.call_function_immediate(
@@ -591,6 +594,14 @@ impl Runner {
     fn started(&self) -> bool {
         matches!(self.phase, Phase::Idle | Phase::Running(_))
     }
+    /// Lifecycle continuation that a host wait settlement may resume.
+    fn pending_stage(&self) -> ExecutionStage {
+        match self.phase {
+            Phase::Starting(_) => ExecutionStage::OnStart,
+            Phase::Running(_) => ExecutionStage::Loop,
+            Phase::Unstarted | Phase::StartFailed | Phase::Idle => ExecutionStage::Other,
+        }
+    }
 
     /// Observe the in-flight promise; on settle log its error and go
     /// idle (`StartFailed` for a failed `onStart`). `true` when a
@@ -631,21 +642,22 @@ impl Runner {
         }
     }
 
-    /// A V8 terminate can discard the continuation that owned this promise.
-    /// Drop that single-flight so Resume/the next fresh tick can start again.
+    /// A V8 terminate can discard the lifecycle continuation it targeted.
+    /// Drop only that matching single-flight: an interrupt in paint, a tick
+    /// listener, or other bookkeeping leaves a parked lifecycle promise live.
     /// A cut-off onStart is retried; it is never silently treated as started.
-    fn recover_interrupted(&mut self, compat: bool) -> Option<&'static str> {
-        match self.phase {
-            Phase::Starting(_) | Phase::StartFailed => {
+    fn recover_interrupted(&mut self, compat: bool, stage: ExecutionStage) -> Option<&'static str> {
+        match (&self.phase, stage) {
+            (Phase::Starting(_) | Phase::StartFailed, ExecutionStage::OnStart) => {
                 self.phase = Phase::Unstarted;
                 self.start_ok = false;
                 Some("onStart")
             }
-            Phase::Running(_) => {
+            (Phase::Running(_), ExecutionStage::Loop) => {
                 self.phase = Phase::Idle;
                 Some(if compat { "loop" } else { "tick" })
             }
-            Phase::Unstarted | Phase::Idle => None,
+            _ => None,
         }
     }
 }
@@ -656,7 +668,7 @@ fn recover_interrupted_execution(
     runner: &mut Runner,
     v2_native: bool,
     compat: bool,
-    interrupt: Option<ExecutionInterrupt>,
+    interrupt: Option<InterruptedExecution>,
     out: &Sender<ThreadMsg>,
     tick: u64,
     generation: u64,
@@ -665,14 +677,17 @@ fn recover_interrupted_execution(
         return;
     };
     let continuation = if v2_native {
-        let pending = global_flag(runtime, "__rs_v2_tick_pending");
-        let _ = runtime.eval::<()>("globalThis.__rs_v2_tick_pending = false");
-        pending.then_some("tick")
+        if interrupt.stage == ExecutionStage::Loop {
+            let _ = runtime.eval::<()>("globalThis.__rs_v2_tick_pending = false");
+            Some("tick")
+        } else {
+            None
+        }
     } else {
-        runner.recover_interrupted(compat)
+        runner.recover_interrupted(compat, interrupt.stage)
     };
     let work = continuation.unwrap_or("execution");
-    let owner = match interrupt {
+    let owner = match interrupt.owner {
         ExecutionInterrupt::Watchdog => "watchdog",
         ExecutionInterrupt::Pause => "Pause deadline",
     };
@@ -720,12 +735,18 @@ fn run_tick_phases(
     if machines_halted(teardown) {
         return Ok(());
     }
-    let _ =
+    set_execution_stage(teardown, ExecutionStage::TickListener);
+    let listener =
         runtime.call_function_immediate::<()>(None, "__rs2b0t_fire_tick_listeners", json_args!());
+    set_execution_stage(teardown, ExecutionStage::Other);
+    let _ = listener;
     if machines_halted(teardown) {
         return Ok(());
     }
-    runtime.call_function_immediate::<()>(None, "__rs2b0t_pump", json_args!(n))?;
+    set_execution_stage(teardown, runner.pending_stage());
+    let pumped = runtime.call_function_immediate::<()>(None, "__rs2b0t_pump", json_args!(n));
+    set_execution_stage(teardown, ExecutionStage::Other);
+    pumped?;
     if machines_halted(teardown) {
         return Ok(());
     }
@@ -1151,11 +1172,13 @@ fn tick_loop(
                     let halted = machines_halted(&teardown);
                     let script_paint = !compat || compat_may_paint(&runner);
                     if !v2_native && script_paint && !halted {
+                        set_execution_stage(&teardown, ExecutionStage::Paint);
                         let _ = runtime.call_function_immediate::<()>(
                             None,
                             "__rs2b0t_call_on_paint",
                             json_args!(),
                         );
+                        set_execution_stage(&teardown, ExecutionStage::Other);
                         pump_event_loop(&mut runtime, &out, n, generation);
                     }
                     if events_consumed && runner.started() && !halted {
@@ -1181,6 +1204,7 @@ fn tick_loop(
                         false,
                         script_paint,
                         machines_halted(&teardown),
+                        &teardown,
                         &mut last_forwarded_paint,
                         &paint_generation,
                         &mut last_ignored_randoms,
@@ -1257,8 +1281,16 @@ fn tick_loop(
                     // no later user phase may start through that boundary.
                     Ok(())
                 } else if v2_native {
+                    let pending_before_pump = global_flag(&mut runtime, "__rs_v2_tick_pending");
+                    let pump_stage = if pending_before_pump {
+                        ExecutionStage::Loop
+                    } else {
+                        ExecutionStage::Other
+                    };
+                    set_execution_stage(&teardown, pump_stage);
                     let pumped =
                         runtime.call_function_immediate::<()>(None, "__rs2b0t_pump", json_args!(n));
+                    set_execution_stage(&teardown, ExecutionStage::Other);
                     // Do not re-enter tick while a previous returned
                     // Promise is pending. Snapshot posts still merge;
                     // this only skips tick.
@@ -1295,12 +1327,33 @@ fn tick_loop(
                     drain_event_loop(&mut runtime, &out, n, generation);
                 }
                 // A machine callback whose promise the pump (or the drain)
-                // settled resumes its row in this tick, and a row that ends
-                // here settles its await in this tick too.
+                // settled resumes its row in this tick. Callback JS is
+                // unrelated to the lifecycle single-flight.
                 if !machines_halted(&teardown) {
-                    if let Err(e) =
-                        super::machine_v8::resume(&mut runtime, &|| machines_halted(&teardown))
-                    {
+                    set_execution_stage(&teardown, ExecutionStage::Other);
+                    super::machine_v8::resume_callbacks(&mut runtime, &|| {
+                        machines_halted(&teardown)
+                    });
+                }
+                // A row that ended here settles its machine wait in this tick.
+                // That host-resolved await may resume the lifecycle promise,
+                // so expose its exact pending stage to an interrupt.
+                if !machines_halted(&teardown) {
+                    let stage = if v2_native {
+                        if global_flag(&mut runtime, "__rs_v2_tick_pending") {
+                            ExecutionStage::Loop
+                        } else {
+                            ExecutionStage::Other
+                        }
+                    } else {
+                        runner.pending_stage()
+                    };
+                    set_execution_stage(&teardown, stage);
+                    let settled = super::machine_v8::settle_waits(&mut runtime, &|| {
+                        machines_halted(&teardown)
+                    });
+                    set_execution_stage(&teardown, ExecutionStage::Other);
+                    if let Err(e) = settled {
                         let _ = out.send(ThreadMsg::TickError {
                             tick: n,
                             generation,
@@ -1370,6 +1423,7 @@ fn tick_loop(
                     !v2_native && script_paint && !halted,
                     script_paint,
                     halted,
+                    &teardown,
                     &mut last_forwarded_paint,
                     &paint_generation,
                     &mut last_ignored_randoms,
@@ -1510,7 +1564,6 @@ fn tick_loop(
             }
             IsolateCmd::Pause => {
                 paused = true;
-                teardown.lock().unwrap().pause_requested = false;
                 let _ = event_producer.set_paused(true);
                 crate::periodic_bank::on_pause();
                 crate::cake_stall::on_pause();
@@ -1529,7 +1582,6 @@ fn tick_loop(
             }
             IsolateCmd::Resume => {
                 paused = false;
-                teardown.lock().unwrap().pause_requested = false;
                 let _ = event_producer.set_paused(false);
                 crate::periodic_bank::on_resume();
                 crate::cake_stall::on_resume();
@@ -1596,13 +1648,15 @@ fn tick_loop(
                     None => crate::shim::InteractReq::RecoveryAnchorNone,
                 };
                 let interrupt = finish_interruptible_execution(&mut runtime, &teardown);
-                if start.elapsed() > SLOW_TICK && interrupt != Some(ExecutionInterrupt::Pause) {
+                let pause_interrupted =
+                    interrupt.is_some_and(|interrupt| interrupt.owner == ExecutionInterrupt::Pause);
+                if start.elapsed() > SLOW_TICK && !pause_interrupted {
                     let _ = out.send(ThreadMsg::Log(format!(
                         "slow recoveryAnchor: {:?}",
                         start.elapsed()
                     )));
                 }
-                if interrupt != Some(ExecutionInterrupt::Pause)
+                if !pause_interrupted
                     && generation == work_generation.load(std::sync::atomic::Ordering::Acquire)
                 {
                     let _ = out.send(ThreadMsg::Interact {

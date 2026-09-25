@@ -652,6 +652,82 @@ fn catalog_validation_keeps_the_control_thread_responsive() {
 }
 
 #[test]
+fn external_unchanged_reload_dispatches_validation_once() {
+    let (mut session, dir) = session_with_play(&["alice"]);
+    let path = write_bot(&dir, "ExampleBot.ts", BOT_TS);
+    session.load_js(&path);
+    let card = session
+        .js
+        .get(script::ScriptSource::File, &path.to_string_lossy())
+        .expect("loaded File card")
+        .clone();
+
+    let watch = host_play::external_loader::ExternalWatch::default();
+    let now = Instant::now();
+    watch.configure("alice", path.clone(), card.sha256.clone());
+    watch.note_scene(true, 2);
+    watch.note_inventory(now, "alice", host_play::external_loader::BONES_COUNT, 0);
+    watch.note_prereq_passed();
+    watch.note_load(
+        1,
+        host_play::external_loader::SCRIPT_NAME,
+        &path,
+        &card.identity_key(),
+        &card.sha256,
+        true,
+        false,
+    );
+    watch.begin_start(now).unwrap();
+
+    session.script_start_selected();
+    settle(&mut session);
+    assert_eq!(session.error, None, "{:?}", session.error);
+
+    let burial_logs = (1..=host_play::external_loader::BONES_COUNT)
+        .map(|n| format!("script: Buried bones #{n}"))
+        .collect::<Vec<_>>();
+    watch.note_logs(now + Duration::from_millis(1), "alice", &burial_logs);
+    watch.note_inventory(now + Duration::from_millis(1), "alice", 12, 45);
+    watch.request_stop(now + Duration::from_millis(2));
+    session.script_stop();
+    wait_state(&session, "alice", script::RunState::Idle);
+    watch.note_logs(
+        now + Duration::from_millis(2),
+        "alice",
+        &["script: BoneBurier stopped — 10 buried, +45 prayer xp".into()],
+    );
+    watch.note_stop(now + Duration::from_millis(2), true, false);
+    assert_eq!(
+        watch.requested_operation(),
+        Some(host_play::external_loader::Operation::ReloadUnchanged)
+    );
+
+    fs::write(&path, format!("{BOT_TS}// unexpected external change\n")).unwrap();
+
+    session.install_external_core_watch(Some(watch.clone()));
+    session.pump_external_loader();
+    assert!(
+        session.reload_validation_pending(),
+        "first dispatch must launch asynchronous validation"
+    );
+    settle(&mut session);
+    session.pump_external_loader();
+
+    assert_eq!(
+        watch.status(),
+        host_play::external_loader::ExternalWatchStatus::Failed
+    );
+    assert!(
+        watch
+            .failure()
+            .as_deref()
+            .is_some_and(|failure| failure.contains("unchanged reload")),
+        "{:?}",
+        watch.failure()
+    );
+}
+
+#[test]
 fn reload_clicked_warns_before_replacing_running() {
     let (mut s, dir) = session_with_play(&["alice"]);
     let path = write_bot(&dir, "run.ts", BOT_TS);

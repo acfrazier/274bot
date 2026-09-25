@@ -624,22 +624,6 @@ impl JsLibrary {
         Ok(self.fingerprints.get(&key).map(String::as_str) != Some(now.as_str()))
     }
 
-    /// Transpile and validate a candidate without replacing the live card.
-    /// Old isolates keep the previous registration until
-    /// [`JsLibrary::commit_prepared`].
-    pub fn prepare_card(
-        &mut self,
-        source: ScriptSource,
-        name: &str,
-    ) -> Result<PreparedCard, String> {
-        let prepared = self.prepare_card_unvalidated(source, name)?;
-        if let Err(error) = prepared.validate() {
-            self.record_prepared_failure(&prepared, &error);
-            return Err(error);
-        }
-        Ok(prepared)
-    }
-
     /// Build a candidate without creating a V8 runtime. UI callers use this
     /// finite disk/transpile phase, then move [`PreparedCard::validate`] to a
     /// worker so hostile module evaluation never owns the UI thread.
@@ -668,7 +652,7 @@ impl JsLibrary {
     /// Retain a worker-side validation failure against the exact bytes that
     /// were validated.
     pub fn record_prepared_failure(&mut self, prepared: &PreparedCard, diagnostic: &str) {
-        self.note_err(
+        let mut failure = LoadFailure::capture(
             prepared.card.source,
             &prepared.card.path,
             &prepared.card.name,
@@ -676,6 +660,10 @@ impl JsLibrary {
             Some(&prepared.card.origin),
             Some(prepared.card.api_family),
         );
+        // PreparedCard::validate is the typed runtime boundary; diagnostic
+        // wording does not decide whether this was a transpile failure.
+        failure.stage = LoadStage::RuntimeLoad;
+        self.record_failure(failure);
     }
 
     fn prepare_card_unvalidated_unrecorded(

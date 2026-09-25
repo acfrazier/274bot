@@ -694,7 +694,11 @@ impl LoadIsolate {
                         && st.execution_id == execution_id
                         && st.execution_interrupt.is_none()
                     {
-                        st.execution_interrupt = Some(teardown::ExecutionInterrupt::Pause);
+                        let stage = st.execution_stage;
+                        st.execution_interrupt = Some(teardown::InterruptedExecution {
+                            owner: teardown::ExecutionInterrupt::Pause,
+                            stage,
+                        });
                         terminate.terminate_execution();
                     }
                 })
@@ -710,6 +714,7 @@ impl LoadIsolate {
 
     /// Re-arm tick dispatch after [`LoadIsolate::pause`].
     pub fn resume(&self) {
+        self.teardown.lock().unwrap().pause_requested = false;
         self.send(IsolateCmd::Resume);
     }
 
@@ -1063,7 +1068,8 @@ impl LoadIsolate {
         {
             return false;
         }
-        st.execution_interrupt = Some(owner);
+        let stage = st.execution_stage;
+        st.execution_interrupt = Some(teardown::InterruptedExecution { owner, stage });
         self.fire_terminate();
         true
     }
