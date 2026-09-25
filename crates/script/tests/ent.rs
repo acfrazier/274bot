@@ -290,7 +290,7 @@ export default class T extends LoopingBot {
 }
 
 #[test]
-fn within_of_preserves_the_origin_and_entity_levels() {
+fn within_of_is_a_planar_chebyshev_disk() {
     let src = r#"
 import EntityQuery from '../../api/query/Query.js';
 export default class T extends LoopingBot {
@@ -312,8 +312,8 @@ export default class T extends LoopingBot {
     let probe = probe_loop(&iso, &base_snapshot());
     assert_eq!(
         probe,
-        serde_json::json!(["same-floor-edge"]),
-        "an entity at the same x/z on another level is outside the disk"
+        serde_json::json!(["same-floor-edge", "other-floor"]),
+        "withinOf ignores level and filters only the x/z Chebyshev disk"
     );
     iso.join();
 }
