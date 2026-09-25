@@ -3003,19 +3003,23 @@ impl Session {
             .pending_slot_removals
             .iter()
             .map(|(name, pending)| {
-                let owns_current_lifetime = self
-                    .play
+                let current_arm = self.play.as_ref().and_then(|play| play.arm(name));
+                let owns_current_lifetime = current_arm
                     .as_ref()
-                    .and_then(|play| play.arm(name))
-                    .is_some_and(|arm| Arc::ptr_eq(&arm, &pending.arm));
+                    .is_some_and(|arm| Arc::ptr_eq(arm, &pending.arm));
                 let disconnected = !statuses
                     .iter()
                     .any(|status| status.username == name.as_str() && status.connected);
                 let timed_out =
                     now.saturating_duration_since(pending.started) >= SLOT_REMOVE_TIMEOUT;
+                // A missing arm means the pending lifetime ended by itself;
+                // retire its preserved terminal row. A different arm is a
+                // replacement and must only cause the stale pending entry to
+                // be dropped, never stop the replacement.
                 (
                     name.clone(),
-                    owns_current_lifetime && (disconnected || timed_out),
+                    current_arm.is_none()
+                        || (owns_current_lifetime && (disconnected || timed_out)),
                 )
             })
             .collect();

@@ -5296,6 +5296,58 @@ fn rail_removal_pump_stops_its_lifetime_on_disconnect_or_timeout() {
 }
 
 #[test]
+fn removal_pump_retires_terminal_row_after_owner_arm_disappears() {
+    let started = Instant::now();
+    let (mut session, _) = connected_removal_session("rail-remove-terminal-owner.vault");
+    session.rail_remove_at("alice", started);
+    {
+        let play = session.play.as_mut().unwrap();
+        play.begin_stop_slot("alice");
+        play.statuses.lock().unwrap().push(SlotStatus {
+            username: "alice".into(),
+            startup_phase: StartupPhase::Error,
+            worker_terminal: Some(host_play::WorkerTerminal::Failed),
+            ..SlotStatus::default()
+        });
+    }
+    assert!(session.pending_slot_removals.contains_key("alice"));
+
+    session.pump_slot_removals_at(started);
+
+    assert!(session.pending_slot_removals.is_empty());
+    assert!(
+        session
+            .play
+            .as_ref()
+            .unwrap()
+            .statuses()
+            .iter()
+            .all(|status| status.username != "alice"),
+        "an off-wall terminal lifetime must not leave a ghost status row"
+    );
+
+    let (mut replaced, _) = connected_removal_session("rail-remove-replaced-owner.vault");
+    replaced.rail_remove_at("alice", started);
+    let replacement = SlotArm::new(42, true);
+    replaced
+        .play
+        .as_mut()
+        .unwrap()
+        .attach_arm("alice", Arc::clone(&replacement));
+    replaced.play.as_ref().unwrap().statuses.lock().unwrap()[0].connected = false;
+
+    replaced.pump_slot_removals_at(started + super::SLOT_REMOVE_TIMEOUT);
+
+    let current = replaced.play.as_ref().unwrap().arm("alice").unwrap();
+    assert!(Arc::ptr_eq(&current, &replacement));
+    assert!(
+        !replacement.stop.load(Ordering::Relaxed),
+        "a stale removal must not stop a replacement lifetime"
+    );
+    assert!(replaced.pending_slot_removals.is_empty());
+}
+
+#[test]
 fn set_multibox_on_syncs_focus_wall() {
     let mut s = Session::new();
     s.set_multibox(true);
