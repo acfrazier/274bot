@@ -62,9 +62,13 @@ pub fn live_runtime_count() -> usize {
     LIVE_RUNTIMES.load(std::sync::atomic::Ordering::Acquire)
 }
 
-/// Per-tick budget: ticks taking longer than this are interrupted and
-/// logged, and stale ticks are skipped.
-const SLOW_TICK: Duration = Duration::from_millis(50);
+/// Runaway bound shared by the dispatch watchdog and Pause's one-shot.
+/// One normal game tick lets legitimate slow work finish while still
+/// bounding a non-yielding execution when Pause stops future dispatch.
+const EXECUTION_WATCHDOG_HORIZON: Duration = Duration::from_millis(600);
+/// The exactly-once onStop getter/body/log drain keeps its independent,
+/// deliberately short teardown budget.
+const ON_STOP_DEADLINE: Duration = Duration::from_millis(50);
 /// `in_flight` tick id for a live `recoveryAnchor` eval (not a game tick).
 const RECOVERY_ANCHOR_TICK: u64 = u64::MAX;
 /// Hard stop for yielding JS (rustyscript `RuntimeOptions.timeout`).
@@ -131,7 +135,8 @@ enum IsolateCmd {
         generation: u64,
     },
     /// Generation-bound recoveryAnchor sample. Evaluated on this
-    /// thread with the 50 ms budget; the reply is a FlatBuffer interact.
+    /// thread with the shared one-game-tick runaway bound; the reply is a
+    /// FlatBuffer interact.
     RecoveryAnchor {
         generation: u64,
     },
@@ -560,9 +565,9 @@ impl LoadIsolate {
     }
 
     /// Dispatch one observed game tick to the isolate. The previous
-    /// tick is checked against the budget: still running past
-    /// [`SLOW_TICK`] is interrupted and logged, and its stale ticks are
-    /// skipped.
+    /// tick is checked against [`EXECUTION_WATCHDOG_HORIZON`]: an execution
+    /// still running past it is interrupted and logged, and its stale ticks
+    /// are skipped.
     pub fn on_game_tick(&self, snap_tick: u64) {
         self.on_game_tick_at(snap_tick, 0);
     }
@@ -618,7 +623,7 @@ impl LoadIsolate {
             .lock()
             .unwrap()
             .as_ref()
-            .filter(|(_, _, started)| started.elapsed() > SLOW_TICK)
+            .filter(|(_, _, started)| started.elapsed() > EXECUTION_WATCHDOG_HORIZON)
             .map(|(_, tick, started)| (*tick, started.elapsed()));
         let Some((tick, elapsed)) = over else {
             return;
@@ -630,6 +635,66 @@ impl LoadIsolate {
                 format!("interrupted slow tick {tick} ({elapsed:?})")
             };
             self.logs.lock().unwrap().push(line);
+        }
+    }
+
+    /// Keep the runaway budget alive when dispatch stops producing the calls
+    /// that normally drive [`LoadIsolate::interrupt_slow_execution`]. The
+    /// execution id fences the sleeper from every later V8 entry.
+    fn arm_active_execution_deadline(&self, owner: teardown::ExecutionInterrupt) {
+        let deadline = {
+            let st = self.teardown.lock().unwrap();
+            match (
+                st.phase,
+                st.execution_active,
+                st.execution_interrupt,
+                st.execution_started,
+                self.terminate.get(),
+            ) {
+                (TeardownPhase::Running, true, None, Some(started), Some(handle)) => Some((
+                    st.execution_id,
+                    EXECUTION_WATCHDOG_HORIZON.saturating_sub(started.elapsed()),
+                    handle.clone(),
+                )),
+                _ => None,
+            }
+        };
+        let Some((execution_id, delay, terminate)) = deadline else {
+            return;
+        };
+        let (thread_name, log_name, require_pause) = match owner {
+            teardown::ExecutionInterrupt::Watchdog => {
+                ("script-watchdog-deadline", "watchdog", false)
+            }
+            teardown::ExecutionInterrupt::Pause => ("script-pause-deadline", "pause", true),
+            teardown::ExecutionInterrupt::SessionReset => {
+                ("script-session-deadline", "session reset", false)
+            }
+        };
+        let teardown = std::sync::Arc::clone(&self.teardown);
+        if let Err(error) = std::thread::Builder::new()
+            .name(thread_name.into())
+            .spawn(move || {
+                std::thread::sleep(delay);
+                let mut st = teardown.lock().unwrap();
+                if st.phase == TeardownPhase::Running
+                    && (!require_pause || st.pause_requested)
+                    && st.execution_active
+                    && st.execution_id == execution_id
+                    && st.execution_interrupt.is_none()
+                {
+                    st.execution_interrupt = Some(teardown::InterruptedExecution {
+                        owner,
+                        stage: teardown::ExecutionStage::Other,
+                    });
+                    terminate.terminate_execution();
+                }
+            })
+        {
+            self.logs
+                .lock()
+                .unwrap()
+                .push(format!("{log_name} deadline worker: {error}"));
         }
     }
 
@@ -660,55 +725,13 @@ impl LoadIsolate {
         let ready = self.poll_ready() == Ready::Ready;
         self.pump_logs();
         self.interrupt_slow_execution(ready);
-        let deadline = {
+        {
             let mut st = self.teardown.lock().unwrap();
-            if st.phase != TeardownPhase::Running {
-                None
-            } else {
+            if st.phase == TeardownPhase::Running {
                 st.pause_requested = true;
-                match (
-                    st.execution_active,
-                    st.execution_interrupt,
-                    st.execution_started,
-                    self.terminate.get(),
-                ) {
-                    (true, None, Some(started), Some(handle)) => Some((
-                        st.execution_id,
-                        SLOW_TICK.saturating_sub(started.elapsed()),
-                        handle.clone(),
-                    )),
-                    _ => None,
-                }
-            }
-        };
-        if let Some((execution_id, delay, terminate)) = deadline {
-            let teardown = std::sync::Arc::clone(&self.teardown);
-            if let Err(error) = std::thread::Builder::new()
-                .name("script-pause-deadline".into())
-                .spawn(move || {
-                    std::thread::sleep(delay);
-                    let mut st = teardown.lock().unwrap();
-                    if st.phase == TeardownPhase::Running
-                        && st.pause_requested
-                        && st.execution_active
-                        && st.execution_id == execution_id
-                        && st.execution_interrupt.is_none()
-                    {
-                        let stage = st.execution_stage;
-                        st.execution_interrupt = Some(teardown::InterruptedExecution {
-                            owner: teardown::ExecutionInterrupt::Pause,
-                            stage,
-                        });
-                        terminate.terminate_execution();
-                    }
-                })
-            {
-                self.logs
-                    .lock()
-                    .unwrap()
-                    .push(format!("pause deadline worker: {error}"));
             }
         }
+        self.arm_active_execution_deadline(teardown::ExecutionInterrupt::Pause);
         self.send(IsolateCmd::Pause);
     }
 
@@ -768,7 +791,7 @@ impl LoadIsolate {
             let mut in_flight = self.in_flight.lock().unwrap();
             let over = in_flight
                 .as_ref()
-                .filter(|(_, _, started)| ready && started.elapsed() > SLOW_TICK)
+                .filter(|(_, _, started)| ready && started.elapsed() > EXECUTION_WATCHDOG_HORIZON)
                 .map(|(_, tick, started)| (*tick, started.elapsed()));
             *in_flight = Some((generation, RECOVERY_ANCHOR_TICK, Instant::now()));
             over
@@ -920,6 +943,9 @@ impl LoadIsolate {
     /// Returns the new work generation. An active error transfers to that
     /// generation so the first completed clean loop can recover it.
     pub fn reset_session_work(&self) -> u64 {
+        // No game ticks arrive while disconnected, so preserve the active
+        // execution's existing runaway horizon before clearing `in_flight`.
+        self.arm_active_execution_deadline(teardown::ExecutionInterrupt::SessionReset);
         let had_active_error = self.tick_outcome_error_generation.lock().unwrap().is_some();
         let generation = {
             let mut interacts = self.interacts.lock().unwrap();
@@ -1068,8 +1094,10 @@ impl LoadIsolate {
         {
             return false;
         }
-        let stage = st.execution_stage;
-        st.execution_interrupt = Some(teardown::InterruptedExecution { owner, stage });
+        st.execution_interrupt = Some(teardown::InterruptedExecution {
+            owner,
+            stage: teardown::ExecutionStage::Other,
+        });
         self.fire_terminate();
         true
     }

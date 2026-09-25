@@ -586,7 +586,7 @@ export default class T extends LoopingBot {
 }
 
 #[test]
-fn runaway_callback_uses_existing_50ms_interrupt() {
+fn runaway_callback_uses_shared_pause_deadline() {
     let src = r#"
 export default class T extends LoopingBot {
     onStart() {
@@ -609,6 +609,8 @@ export default class T extends LoopingBot {
     iso.on_game_tick(2);
     std::thread::sleep(std::time::Duration::from_millis(80));
     iso.pause();
+    iso.probe("true")
+        .expect("Pause must settle the runaway callback");
     iso.resume();
     iso.on_game_tick(3);
     let n = iso
@@ -924,7 +926,7 @@ export default class T extends LoopingBot {
     snap.tick = 2;
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(2);
-    std::thread::sleep(std::time::Duration::from_millis(80));
+    std::thread::sleep(std::time::Duration::from_millis(650));
     snap.hold = false;
     snap.tick = 3;
     post_snapshot_input(&iso, &snap);

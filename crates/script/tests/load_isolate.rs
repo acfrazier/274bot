@@ -530,7 +530,7 @@ fn pause_allows_an_in_budget_sync_tick_to_finish() {
         "export function tick() {
             globalThis.__entered = (globalThis.__entered || 0) + 1;
             const start = Date.now();
-            while (Date.now() - start < 30) {}
+            while (Date.now() - start < 300) {}
             globalThis.__finished = (globalThis.__finished || 0) + 1;
         }"
         .into(),
@@ -556,7 +556,7 @@ fn pause_allows_an_in_budget_async_compat_loop_to_resume() {
                 await Promise.resolve();
                 globalThis.__continued = (globalThis.__continued || 0) + 1;
                 const start = Date.now();
-                while (Date.now() - start < 30) {}
+                while (Date.now() - start < 300) {}
                 globalThis.__done = (globalThis.__done || 0) + 1;
             }
         }"
@@ -582,7 +582,7 @@ fn pause_allows_an_in_budget_async_native_tick_to_resume() {
             await Promise.resolve();
             globalThis.__continued = (globalThis.__continued || 0) + 1;
             const start = Date.now();
-            while (Date.now() - start < 30) {}
+            while (Date.now() - start < 300) {}
             globalThis.__done = (globalThis.__done || 0) + 1;
         }"
         .into(),
@@ -622,7 +622,9 @@ fn assert_pause_recovers_terminated_async_continuation(source: &str, shape: Load
     iso.resume();
     iso.probe("true").expect("Resume must be observed");
     iso.on_game_tick(3);
-    assert_eq!(iso.probe("__loops || 0").unwrap(), 2);
+    let loops = iso.probe("__loops || 0").unwrap();
+    let logs = iso.drain_logs();
+    assert_eq!(loops, 2, "interruption logs: {logs:?}");
     assert_eq!(
         iso.probe("__done || 0").unwrap(),
         1,
@@ -683,12 +685,14 @@ fn assert_watchdog_recovers_terminated_async_continuation(source: &str, shape: L
         );
         thread::yield_now();
     }
-    thread::sleep(Duration::from_millis(60));
+    thread::sleep(Duration::from_millis(650));
     iso.on_game_tick(3);
     iso.probe("true")
         .expect("watchdog must settle the terminated continuation");
     iso.on_game_tick(4);
-    assert_eq!(iso.probe("__loops || 0").unwrap(), 2);
+    let loops = iso.probe("__loops || 0").unwrap();
+    let logs = iso.drain_logs();
+    assert_eq!(loops, 2, "interruption logs: {logs:?}");
     assert_eq!(
         iso.probe("__done || 0").unwrap(),
         1,
@@ -731,6 +735,167 @@ fn watchdog_resets_a_terminated_v2_async_continuation() {
         LoadShape::NativeTick,
     );
 }
+// P17/P17b: when an unrelated host wait resumes and is interrupted while a
+// lifecycle future is still parked, the cut is ambiguous. It must be reported,
+// but must not reset the parked lifecycle runner and admit a second flight.
+fn assert_side_continuation_interrupt_keeps_lifecycle_single_flight(
+    source: &str,
+    shape: LoadShape,
+    pause: bool,
+) {
+    let iso = spawn_ready(source.to_string(), shape, vec![]);
+    iso.on_game_tick(1);
+    iso.probe("true")
+        .expect("first lifecycle call parks on its long wait");
+    assert_eq!(iso.probe("__entries").unwrap(), 1);
+
+    // Tick 2 settles only the side wait. Its continuation runs long enough
+    // for either Pause's shared runaway bound or the dispatch watchdog.
+    iso.on_game_tick(2);
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !iso.execution_active() {
+        assert!(
+            Instant::now() < deadline,
+            "side continuation never entered execution"
+        );
+        thread::yield_now();
+    }
+    thread::sleep(Duration::from_millis(20));
+    if pause {
+        iso.pause();
+        iso.probe("true")
+            .expect("Pause must settle the ambiguous interruption");
+        iso.resume();
+        iso.probe("true").expect("Resume must be observed");
+    } else {
+        thread::sleep(Duration::from_millis(650));
+        iso.on_game_tick(3);
+        iso.probe("true")
+            .expect("watchdog must settle the ambiguous interruption");
+    }
+
+    let first = if pause { 3 } else { 4 };
+    for tick in first..=7 {
+        iso.on_game_tick(tick);
+        iso.probe("true").unwrap();
+    }
+    assert_eq!(
+        iso.probe("__maxActive").unwrap(),
+        1,
+        "an ambiguous cut must not reset the parked lifecycle flight"
+    );
+    assert_eq!(
+        iso.probe("__entries").unwrap(),
+        2,
+        "the next lifecycle call starts only after the original settles"
+    );
+    assert_eq!(iso.probe("__done").unwrap(), 1);
+    let logs = iso.drain_logs();
+    assert!(
+        logs.iter()
+            .any(|line| line.contains("runaway execution interrupted")),
+        "{logs:?}"
+    );
+    assert!(
+        logs.iter().all(|line| {
+            !line.contains("runaway loop interrupted") && !line.contains("runaway tick interrupted")
+        }),
+        "the side continuation must not inherit lifecycle ownership: {logs:?}"
+    );
+    iso.join();
+}
+
+fn side_continuation_compat_source() -> &'static str {
+    r#"
+import { BotHost } from '../../runtime/BotHost.js';
+import { Execution } from '../../api/execution/Execution.js';
+export default class T extends LoopingBot {
+    onStart() {
+        BotHost.addTickListener(() => {
+            if (globalThis.__rs2b0t_host.tick !== 2 || globalThis.__sideStarted) return;
+            globalThis.__sideStarted = true;
+            (async () => {
+                await Execution.delayTicks(0);
+                const start = Date.now();
+                while (Date.now() - start < 900) {}
+                globalThis.__sideDone = true;
+            })();
+        });
+    }
+    async loop() {
+        const entry = (globalThis.__entries = (globalThis.__entries || 0) + 1);
+        globalThis.__active = (globalThis.__active || 0) + 1;
+        globalThis.__maxActive = Math.max(globalThis.__maxActive || 0, globalThis.__active);
+        if (entry === 1) await Execution.delayTicks(5);
+        else await Execution.delayTicks(10);
+        globalThis.__active -= 1;
+        globalThis.__done = (globalThis.__done || 0) + 1;
+    }
+}
+"#
+}
+
+fn side_continuation_v2_source() -> &'static str {
+    r#"
+import { Execution } from '../../api/execution/Execution.js';
+export const apiVersion = 2;
+export async function tick() {
+    const entry = (globalThis.__entries = (globalThis.__entries || 0) + 1);
+    globalThis.__active = (globalThis.__active || 0) + 1;
+    globalThis.__maxActive = Math.max(globalThis.__maxActive || 0, globalThis.__active);
+    if (entry === 1) {
+        (async () => {
+            await Execution.delayTicks(1);
+            const start = Date.now();
+            while (Date.now() - start < 900) {}
+            globalThis.__sideDone = true;
+        })();
+        await Execution.delayTicks(5);
+    } else {
+        await Execution.delayTicks(10);
+    }
+    globalThis.__active -= 1;
+    globalThis.__done = (globalThis.__done || 0) + 1;
+}
+"#
+}
+
+#[test]
+fn pause_interrupt_in_side_wait_keeps_compat_loop_single_flight() {
+    assert_side_continuation_interrupt_keeps_lifecycle_single_flight(
+        side_continuation_compat_source(),
+        LoadShape::CompatClass,
+        true,
+    );
+}
+
+#[test]
+fn watchdog_interrupt_in_side_wait_keeps_compat_loop_single_flight() {
+    assert_side_continuation_interrupt_keeps_lifecycle_single_flight(
+        side_continuation_compat_source(),
+        LoadShape::CompatClass,
+        false,
+    );
+}
+
+#[test]
+fn pause_interrupt_in_side_wait_keeps_v2_tick_single_flight() {
+    assert_side_continuation_interrupt_keeps_lifecycle_single_flight(
+        side_continuation_v2_source(),
+        LoadShape::NativeTick,
+        true,
+    );
+}
+
+#[test]
+fn watchdog_interrupt_in_side_wait_keeps_v2_tick_single_flight() {
+    assert_side_continuation_interrupt_keeps_lifecycle_single_flight(
+        side_continuation_v2_source(),
+        LoadShape::NativeTick,
+        false,
+    );
+}
+
 fn assert_interrupt_in_paint_keeps_native_single_flight(pause: bool) {
     let iso = spawn_ready(
         r#"
@@ -739,7 +904,7 @@ const paint = globalThis.__rs2b0t_call_on_paint;
 globalThis.__rs2b0t_call_on_paint = (...args) => {
     if (globalThis.__rs2b0t_host.tick === 2) {
         const start = Date.now();
-        while (Date.now() - start < 300) {}
+        while (Date.now() - start < 900) {}
     }
     return paint(...args);
 };
@@ -775,7 +940,7 @@ export async function tick() {
         iso.on_game_tick(3);
         iso.probe("true").unwrap();
     } else {
-        thread::sleep(Duration::from_millis(60));
+        thread::sleep(Duration::from_millis(650));
         iso.on_game_tick(3);
         iso.probe("true")
             .expect("watchdog must settle the interrupted paint");
@@ -832,7 +997,7 @@ export default class T extends LoopingBot {
         BotHost.addTickListener(() => {
             if (globalThis.__rs2b0t_host.tick === 2) {
                 const start = Date.now();
-                while (Date.now() - start < 300) {}
+                while (Date.now() - start < 900) {}
             }
         });
         await Execution.delayTicks(3);
@@ -941,7 +1106,7 @@ fn pause_does_not_cut_off_an_in_budget_on_start() {
             onStart() {
                 globalThis.__startEntered = (globalThis.__startEntered || 0) + 1;
                 const start = Date.now();
-                while (Date.now() - start < 30) {}
+                while (Date.now() - start < 300) {}
                 globalThis.__startDone = (globalThis.__startDone || 0) + 1;
             }
             loop() { globalThis.__loops = (globalThis.__loops || 0) + 1; }
@@ -1186,6 +1351,65 @@ fn slow_tick_is_interrupted_and_isolate_survives() {
     iso.join();
 }
 
+// A disconnect removes `in_flight` and no further PLAYER_INFO ticks arrive.
+// The connection boundary must therefore carry the active execution's
+// original runaway horizon instead of relying on a later dispatch watchdog.
+#[test]
+fn session_reset_keeps_the_active_runaway_deadline() {
+    let iso = spawn_ready(
+        "export function tick() {
+            if (!globalThis.__started) {
+                globalThis.__started = true;
+                return;
+            }
+            globalThis.__entered = true;
+            for (;;) {}
+        }"
+        .into(),
+        LoadShape::NativeTick,
+        vec![],
+    );
+    iso.on_game_tick(1);
+    assert_eq!(iso.probe("__started").unwrap(), true);
+    iso.on_game_tick(2);
+    let entry_deadline = Instant::now() + Duration::from_secs(2);
+    while !iso.loop_execution_active() {
+        assert!(
+            Instant::now() < entry_deadline,
+            "runaway tick never entered execution"
+        );
+        thread::yield_now();
+    }
+    thread::sleep(Duration::from_millis(20));
+
+    let reset_at = Instant::now();
+    iso.reset_session_work();
+    let deadline = reset_at + Duration::from_secs(2);
+    while iso.execution_active() && Instant::now() < deadline {
+        thread::yield_now();
+    }
+    if iso.execution_active() {
+        iso.join();
+        panic!("session reset dropped the active execution's runaway deadline");
+    }
+    assert!(
+        reset_at.elapsed() < Duration::from_secs(2),
+        "session-reset deadline exceeded its generous test guard"
+    );
+    assert_eq!(
+        iso.probe("__entered").unwrap(),
+        true,
+        "the reset cut the runaway that was active at the boundary"
+    );
+    let logs = iso.drain_logs();
+    assert!(
+        logs.iter()
+            .any(|line| line.contains("session-reset deadline")),
+        "{logs:?}"
+    );
+    iso.join();
+}
+
 /// The first tick's JS runs past the budget, spinning `ms` milliseconds.
 fn slow_first_tick(ms: u32) -> String {
     format!(
@@ -1199,7 +1423,7 @@ fn slow_first_tick(ms: u32) -> String {
 // and skip every queued tick, not stop at the first non-Tick command.
 #[test]
 fn slow_tick_skips_queued_ticks_past_their_snapshots() {
-    let iso = spawn_ready(slow_first_tick(150), LoadShape::NativeTick, vec![]);
+    let iso = spawn_ready(slow_first_tick(700), LoadShape::NativeTick, vec![]);
     let mut snap = base_snapshot();
     for tick in 1..=3 {
         snap.tick = tick;
@@ -1235,7 +1459,7 @@ export function tick() {
     globalThis.__runs = (globalThis.__runs || 0) + 1;
     if (globalThis.__runs === 1) {
         const started = Date.now();
-        while (Date.now() - started < 120) {}
+        while (Date.now() - started < 700) {}
         throw new Error('slow-one');
     }
 }
@@ -1329,7 +1553,7 @@ fn tick_after_a_refused_snapshot_is_refused_and_not_left_in_flight() {
         "the tick paired with the refused snapshot never ran"
     );
     // A refused tick left in flight would now be past the budget.
-    thread::sleep(Duration::from_millis(80));
+    thread::sleep(Duration::from_millis(650));
     assert!(iso.post_snapshot(bytes));
     iso.on_game_tick(3);
     assert_eq!(iso.probe("__rs_n").unwrap(), 2, "the next paired tick runs");
@@ -1353,7 +1577,7 @@ fn stale_window_ends_at_operator_commands() {
         ("recovery anchor", |iso| iso.request_recovery_anchor()),
     ];
     for (name, close) in closers {
-        let iso = spawn_ready(slow_first_tick(150), LoadShape::NativeTick, vec![]);
+        let iso = spawn_ready(slow_first_tick(700), LoadShape::NativeTick, vec![]);
         let mut snap = base_snapshot();
         iso.on_game_tick(1);
         thread::sleep(Duration::from_millis(20));
@@ -1468,6 +1692,8 @@ fn join_bounds_a_runaway_tick() {
         std::thread::yield_now();
     }
     iso.pause();
+    iso.probe("true")
+        .expect("Pause must settle the runaway tick before Resume");
     iso.resume();
     iso.on_game_tick(3);
     let deadline = Instant::now() + Duration::from_secs(5);

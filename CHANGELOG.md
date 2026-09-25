@@ -180,12 +180,15 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   interact requests directly.
 - Script startup, tick interruption and `onStop` now share one serialized
   lifetime: Stop cannot leak a tick interrupt into the hook, Pause blocks new
-  entries while in-budget work finishes, and a per-execution deadline interrupts
-  only a runaway. Interrupt recovery resets only the `onStart`, loop or tick
-  continuation that the terminate actually cut, so a slow paint or tick listener
-  cannot duplicate parked work. A final queued Pause also remains authoritative
-  over older Pause/Resume commands. Hostile startup/validation is bounded and
-  reclaimed.
+  entries while legitimate slow work finishes, and Pause shares the watchdog's
+  one-game-tick runaway horizon instead of cutting work after 50 ms. Interrupt
+  recovery resets only the `onStart`, loop or tick continuation that the
+  terminate provably cut; mixed host waits are reported without resetting a
+  parked runner, so a slow paint, listener or side continuation cannot duplicate
+  work. Disconnect carries an active execution's same deadline across the
+  session reset, even though no logged-out ticks remain to drive the watchdog.
+  A final queued Pause also remains authoritative over older Pause/Resume
+  commands. Hostile startup/validation is bounded and reclaimed.
 - Reload and catalog validation now run off the panel UI thread. A Pause that
   wins the final host dispatch fence preserves the drained script actions for
   Resume instead of silently losing them.

@@ -12,11 +12,13 @@ pub(super) enum TeardownPhase {
 }
 
 /// Owner of a terminate request aimed at the current tick/recovery eval.
-/// Pause cancellation is not a script failure; the budget watchdog is.
+/// Pause cancellation and a connection boundary are not script failures;
+/// the dispatch watchdog is.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum ExecutionInterrupt {
     Watchdog,
     Pause,
+    SessionReset,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -50,11 +52,12 @@ pub(super) struct TeardownState {
     /// Unit-test-only wider budget for success-path hook assertions.
     #[cfg(test)]
     pub(super) test_hook_timeout: Option<Duration>,
-    /// An interruptible tick/recovery eval is currently inside V8. Stop and
-    /// the budget owners may terminate only while this is true.
+    /// An interruptible tick/recovery eval is currently inside V8. Stop,
+    /// Pause, connection reset, and the dispatch watchdog may terminate only
+    /// while this is true.
     pub(super) execution_active: bool,
-    /// Identity and start time of the active execution. A Pause deadline
-    /// captures the identity so it cannot terminate later work.
+    /// Identity and start time of the active execution. One-shot deadlines
+    /// capture the identity so they cannot terminate later work.
     pub(super) execution_id: u64,
     pub(super) execution_started: Option<Instant>,
     /// Narrow stage seam used to distinguish lifecycle continuations from
@@ -64,7 +67,8 @@ pub(super) struct TeardownState {
     /// entry but does not halt healthy work that already owns execution.
     pub(super) pause_requested: bool,
     /// A terminate armed for the active eval and not yet cancelled by the
-    /// isolate thread, including the stage it targeted at the instant it fired.
+    /// isolate thread. Its recovery stage is written only when V8 reports
+    /// that this exact call consumed the termination.
     pub(super) execution_interrupt: Option<InterruptedExecution>,
 }
 
@@ -203,9 +207,9 @@ pub(super) fn enter_teardown_hook(teardown: &std::sync::Arc<Mutex<TeardownState>
         TeardownPhase::Running | TeardownPhase::UnwindingTick => {
             st.phase = TeardownPhase::Hook;
             #[cfg(test)]
-            let hook_timeout = st.test_hook_timeout.unwrap_or(SLOW_TICK);
+            let hook_timeout = st.test_hook_timeout.unwrap_or(ON_STOP_DEADLINE);
             #[cfg(not(test))]
-            let hook_timeout = SLOW_TICK;
+            let hook_timeout = ON_STOP_DEADLINE;
             st.deadline = Some(Instant::now() + hook_timeout);
             st.interrupt_issued = false;
             true
@@ -261,7 +265,8 @@ pub(super) fn arm_hook_deadline(
             return None;
         }
         st.cancel = Some(cancel_tx);
-        st.deadline.unwrap_or_else(|| Instant::now() + SLOW_TICK)
+        st.deadline
+            .unwrap_or_else(|| Instant::now() + ON_STOP_DEADLINE)
     };
     let wd_teardown = teardown.clone();
     let wd_proof = proof.clone();

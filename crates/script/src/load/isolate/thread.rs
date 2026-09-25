@@ -90,6 +90,30 @@ fn global_flag(runtime: &mut Runtime, name: &str) -> bool {
         .is_some_and(|value| value.boolean_value(scope))
 }
 
+/// Current values of the scheduler's per-tick enqueue/settle counters.
+/// Read through V8 without invoking script: the tick output resets the same
+/// two numeric fields after forwarding their lifecycle facts.
+fn host_wait_counts(runtime: &mut Runtime) -> Option<(u32, u32)> {
+    let scope = &mut runtime.deno_runtime().handle_scope();
+    let global = scope.get_current_context().global(scope);
+    let host_key = key_string(scope, "__rs2b0t_host").ok()?;
+    let host = global.get(scope, host_key.into())?.to_object(scope)?;
+    let enqueues_key = key_string(scope, "waitEnqueues").ok()?;
+    let settles_key = key_string(scope, "waitSettles").ok()?;
+    let enqueues = host.get(scope, enqueues_key.into())?;
+    let settles = host.get(scope, settles_key.into())?;
+    let count = |scope: &mut v8::HandleScope, value: v8::Local<v8::Value>| {
+        if !value.is_number() {
+            return 0;
+        }
+        value
+            .number_value(scope)
+            .filter(|n| n.is_finite() && *n > 0.0)
+            .map_or(0, |n| n.min(u32::MAX as f64) as u32)
+    };
+    Some((count(scope, enqueues), count(scope, settles)))
+}
+
 /// Drops every machine row when the tick loop ends (Stop, script stop).
 struct MachinesStop;
 impl Drop for MachinesStop {
@@ -464,9 +488,9 @@ fn finish_tick(
     last_ignored: &mut Vec<String>,
 ) -> Option<String> {
     if run_paint {
-        set_execution_stage(teardown, ExecutionStage::Paint);
-        let _ = runtime.call_function_immediate::<()>(None, "__rs2b0t_call_on_paint", json_args!());
-        set_execution_stage(teardown, ExecutionStage::Other);
+        let _ = call_in_execution_stage(runtime, teardown, ExecutionStage::Paint, |runtime| {
+            runtime.call_function_immediate::<()>(None, "__rs2b0t_call_on_paint", json_args!())
+        });
         pump_event_loop(runtime, out, n, generation);
     }
     let after: Result<AfterTick, rustyscript::Error> = runtime.call_function_immediate(
@@ -552,6 +576,204 @@ fn requested_stop(runtime: &mut Runtime) -> Option<String> {
 /// fulfils `null` on success or the error text, and never rejects.
 type Settle = rustyscript::js_value::Promise<Option<String>>;
 
+/// One exact lifecycle invocation. The serial distinguishes a new `loop()`
+/// from an older fire-and-forget wait created by a loop that already settled.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+struct LifecycleOwner {
+    stage: ExecutionStage,
+    serial: u64,
+}
+
+/// Ownership of the Execution waits still parked in the scheduler. Once
+/// different owners share a pump, attribution stays ambiguous until every
+/// wait from that group has settled: guessing which one settled could start
+/// a second lifecycle iteration while the first remains live.
+enum WaitOwners {
+    Empty,
+    Known {
+        owner: Option<LifecycleOwner>,
+        count: u32,
+    },
+    Ambiguous {
+        count: u32,
+    },
+    Unknown,
+}
+
+struct WaitAttribution {
+    owners: WaitOwners,
+    observed_enqueues: u32,
+    observed_settles: u32,
+    next_serial: u64,
+}
+
+impl WaitAttribution {
+    fn new() -> Self {
+        Self {
+            owners: WaitOwners::Empty,
+            observed_enqueues: 0,
+            observed_settles: 0,
+            next_serial: 0,
+        }
+    }
+
+    fn next_owner(&mut self, stage: ExecutionStage) -> LifecycleOwner {
+        self.next_serial = self.next_serial.wrapping_add(1);
+        LifecycleOwner {
+            stage,
+            serial: self.next_serial,
+        }
+    }
+
+    /// Fold counter changes produced by one known call. `None` means the call
+    /// may have resumed listeners, callbacks, events, or fire-and-forget work.
+    fn observe(&mut self, runtime: &mut Runtime, owner: Option<LifecycleOwner>) {
+        let Some((enqueues, settles)) = host_wait_counts(runtime) else {
+            self.owners = WaitOwners::Unknown;
+            return;
+        };
+        if enqueues < self.observed_enqueues || settles < self.observed_settles {
+            self.owners = WaitOwners::Unknown;
+            self.observed_enqueues = enqueues;
+            self.observed_settles = settles;
+            return;
+        }
+        let newly_enqueued = enqueues - self.observed_enqueues;
+        let newly_settled = settles - self.observed_settles;
+        self.observed_enqueues = enqueues;
+        self.observed_settles = settles;
+        // Calls can enqueue and settle a zero-delay wait in one event-loop
+        // turn. Add the call's ownership before removing its settlements so
+        // a balanced batch returns to Empty instead of poisoning attribution.
+        // Mixed ownership remains Ambiguous until the whole group drains.
+        self.enqueue(owner, newly_enqueued);
+        self.settle(newly_settled);
+    }
+
+    fn settle(&mut self, settled: u32) {
+        if settled == 0 {
+            return;
+        }
+        self.owners = match self.owners {
+            WaitOwners::Known { owner, count } if settled < count => WaitOwners::Known {
+                owner,
+                count: count - settled,
+            },
+            WaitOwners::Ambiguous { count } if settled < count => WaitOwners::Ambiguous {
+                count: count - settled,
+            },
+            WaitOwners::Known { count, .. } | WaitOwners::Ambiguous { count }
+                if settled == count =>
+            {
+                WaitOwners::Empty
+            }
+            WaitOwners::Empty | WaitOwners::Known { .. } | WaitOwners::Ambiguous { .. } => {
+                WaitOwners::Unknown
+            }
+            WaitOwners::Unknown => WaitOwners::Unknown,
+        };
+    }
+
+    fn enqueue(&mut self, owner: Option<LifecycleOwner>, enqueued: u32) {
+        if enqueued == 0 {
+            return;
+        }
+        self.owners = match self.owners {
+            WaitOwners::Empty if owner.is_some() && enqueued > 1 => {
+                WaitOwners::Ambiguous { count: enqueued }
+            }
+            WaitOwners::Empty => WaitOwners::Known {
+                owner,
+                count: enqueued,
+            },
+            WaitOwners::Known {
+                owner: existing,
+                count,
+            } => match count.checked_add(enqueued) {
+                Some(count) if existing == owner && enqueued == 1 => WaitOwners::Known {
+                    owner: existing,
+                    count,
+                },
+                Some(count) => WaitOwners::Ambiguous { count },
+                None => WaitOwners::Unknown,
+            },
+            WaitOwners::Ambiguous { count } => match count.checked_add(enqueued) {
+                Some(count) => WaitOwners::Ambiguous { count },
+                None => WaitOwners::Unknown,
+            },
+            WaitOwners::Unknown => WaitOwners::Unknown,
+        };
+    }
+
+    /// A lifecycle promise that settled or failed no longer owns waits it
+    /// happened to launch. They remain scheduler work, but never authorize a
+    /// single-flight reset.
+    fn abandon(&mut self, finished: LifecycleOwner) {
+        if let WaitOwners::Known { owner, .. } = &mut self.owners {
+            if *owner == Some(finished) {
+                *owner = None;
+            }
+        }
+    }
+
+    fn pump_owner(&mut self, pending: Option<LifecycleOwner>) -> Option<LifecycleOwner> {
+        if let WaitOwners::Known { owner, .. } = &mut self.owners {
+            if owner.is_some() && *owner != pending {
+                *owner = None;
+            }
+            if *owner == pending {
+                return *owner;
+            }
+        }
+        None
+    }
+
+    /// `__rs2b0t_take_tick_output(true)` reset both observed counters.
+    fn counters_reset(&mut self) {
+        self.observed_enqueues = 0;
+        self.observed_settles = 0;
+    }
+}
+
+/// Establish whether this call, rather than a later V8 entry, consumed the
+/// active `TerminateExecution`. rustyscript may return `Ok` after unwinding an
+/// interrupted event-loop drive and may also cancel V8's termination flag.
+/// In that case a no-op entry is the fence: it succeeds only when the prior
+/// call already consumed the request. If the host fired after the call
+/// returned, the no-op consumes the pending request and this call stays
+/// unattributed.
+fn call_in_execution_stage<T>(
+    runtime: &mut Runtime,
+    teardown: &Mutex<TeardownState>,
+    stage: ExecutionStage,
+    call: impl FnOnce(&mut Runtime) -> Result<T, rustyscript::Error>,
+) -> Result<T, rustyscript::Error> {
+    set_execution_stage(teardown, stage);
+    let result = call(runtime);
+    let direct_termination = runtime
+        .deno_runtime()
+        .v8_isolate()
+        .is_execution_terminating();
+    let interrupted = {
+        let mut state = teardown.lock().unwrap();
+        state.execution_stage = ExecutionStage::Other;
+        state.execution_interrupt.is_some()
+    };
+    let consumed_here = interrupted && (direct_termination || runtime.eval::<()>("void 0").is_ok());
+    if consumed_here {
+        let mut state = teardown.lock().unwrap();
+        if let Some(interrupt) = &mut state.execution_interrupt {
+            interrupt.stage = stage;
+        }
+    }
+    result
+}
+
+struct PendingLifecycle {
+    promise: Settle,
+    owner: LifecycleOwner,
+}
+
 /// Rust-owned single-flight for every non-v2 shape. Compat `onStart`
 /// runs once and gates `loop()`; `loop()` (or a v1 native tick that
 /// returned a promise) is never re-entered while its promise is pending.
@@ -568,14 +790,14 @@ enum Phase {
     /// Compat card whose `onStart` has not been invoked.
     Unstarted,
     /// Compat `onStart` in flight.
-    Starting(Settle),
+    Starting(PendingLifecycle),
     /// `onStart` failed during this tick. The first `loop()` waits for
     /// the next eligible tick, as the pre-F02 runner did.
     StartFailed,
     /// Nothing in flight: the next eligible tick invokes `loop()`/tick.
     Idle,
     /// `loop()` or the native tick in flight.
-    Running(Settle),
+    Running(PendingLifecycle),
 }
 
 impl Runner {
@@ -594,12 +816,11 @@ impl Runner {
     fn started(&self) -> bool {
         matches!(self.phase, Phase::Idle | Phase::Running(_))
     }
-    /// Lifecycle continuation that a host wait settlement may resume.
-    fn pending_stage(&self) -> ExecutionStage {
-        match self.phase {
-            Phase::Starting(_) => ExecutionStage::OnStart,
-            Phase::Running(_) => ExecutionStage::Loop,
-            Phase::Unstarted | Phase::StartFailed | Phase::Idle => ExecutionStage::Other,
+
+    fn pending_owner(&self) -> Option<LifecycleOwner> {
+        match &self.phase {
+            Phase::Starting(pending) | Phase::Running(pending) => Some(pending.owner),
+            Phase::Unstarted | Phase::StartFailed | Phase::Idle => None,
         }
     }
 
@@ -614,8 +835,8 @@ impl Runner {
         generation: u64,
     ) -> bool {
         let (state, is_loop) = match &self.phase {
-            Phase::Starting(p) => (p.poll_promise(runtime), false),
-            Phase::Running(p) => (p.poll_promise(runtime), true),
+            Phase::Starting(pending) => (pending.promise.poll_promise(runtime), false),
+            Phase::Running(pending) => (pending.promise.poll_promise(runtime), true),
             Phase::Unstarted | Phase::StartFailed | Phase::Idle => return false,
         };
         let err = match state {
@@ -690,6 +911,7 @@ fn recover_interrupted_execution(
     let owner = match interrupt.owner {
         ExecutionInterrupt::Watchdog => "watchdog",
         ExecutionInterrupt::Pause => "Pause deadline",
+        ExecutionInterrupt::SessionReset => "session-reset deadline",
     };
     let _ = out.send(ThreadMsg::TickError {
         tick,
@@ -715,6 +937,7 @@ fn recover_interrupted_execution(
 fn run_tick_phases(
     runtime: &mut Runtime,
     runner: &mut Runner,
+    waits: &mut WaitAttribution,
     n: u64,
     generation: u64,
     compat: bool,
@@ -722,9 +945,17 @@ fn run_tick_phases(
     out: &Sender<ThreadMsg>,
     loop_settled: &mut bool,
     iteration_completed: &mut bool,
+    drain_owner: &mut Option<LifecycleOwner>,
     teardown: &Mutex<TeardownState>,
 ) -> Result<(), rustyscript::Error> {
+    waits.observe(runtime, None);
+    let pending_before_poll = runner.pending_owner();
     let settled = runner.poll(runtime, out, n, generation);
+    if runner.pending_owner() != pending_before_poll {
+        if let Some(owner) = pending_before_poll {
+            waits.abandon(owner);
+        }
+    }
     *iteration_completed |= settled;
     *loop_settled |= settled && compat;
     if let Phase::StartFailed = runner.phase {
@@ -735,17 +966,27 @@ fn run_tick_phases(
     if machines_halted(teardown) {
         return Ok(());
     }
-    set_execution_stage(teardown, ExecutionStage::TickListener);
     let listener =
-        runtime.call_function_immediate::<()>(None, "__rs2b0t_fire_tick_listeners", json_args!());
-    set_execution_stage(teardown, ExecutionStage::Other);
+        call_in_execution_stage(runtime, teardown, ExecutionStage::TickListener, |runtime| {
+            runtime.call_function_immediate::<()>(
+                None,
+                "__rs2b0t_fire_tick_listeners",
+                json_args!(),
+            )?;
+            runtime.advance_event_loop(rustyscript::deno_core::PollEventLoopOptions::default())
+        });
+    waits.observe(runtime, None);
     let _ = listener;
     if machines_halted(teardown) {
         return Ok(());
     }
-    set_execution_stage(teardown, runner.pending_stage());
-    let pumped = runtime.call_function_immediate::<()>(None, "__rs2b0t_pump", json_args!(n));
-    set_execution_stage(teardown, ExecutionStage::Other);
+    let pump_owner = waits.pump_owner(runner.pending_owner());
+    *drain_owner = pump_owner;
+    let pump_stage = pump_owner.map_or(ExecutionStage::Other, |owner| owner.stage);
+    let pumped = call_in_execution_stage(runtime, teardown, pump_stage, |runtime| {
+        runtime.call_function_immediate::<()>(None, "__rs2b0t_pump", json_args!(n))
+    });
+    waits.observe(runtime, pump_owner);
     pumped?;
     if machines_halted(teardown) {
         return Ok(());
@@ -754,47 +995,91 @@ fn run_tick_phases(
         // An onStart a listener or a settled wait just finished lets the
         // first `loop()` run on this tick.
         Phase::Starting(_) => {
+            let owner = runner.pending_owner();
             runner.poll(runtime, out, n, generation);
+            if runner.pending_owner() != owner {
+                if let Some(owner) = owner {
+                    waits.abandon(owner);
+                }
+            }
         }
         Phase::Unstarted => {
             // onStart is invoked exactly once: a failed call counts as a
             // failed onStart.
             runner.phase = Phase::StartFailed;
-            set_execution_stage(teardown, ExecutionStage::OnStart);
-            let start =
-                runtime.call_function_immediate(None, "__rs2b0t_compat_on_start", json_args!());
-            set_execution_stage(teardown, ExecutionStage::Other);
-            let start: Settle = start?;
-            runner.phase = Phase::Starting(start);
+            let owner = waits.next_owner(ExecutionStage::OnStart);
+            let start: Result<Settle, rustyscript::Error> =
+                call_in_execution_stage(runtime, teardown, ExecutionStage::OnStart, |runtime| {
+                    runtime.call_function_immediate(None, "__rs2b0t_compat_on_start", json_args!())
+                });
+            waits.observe(runtime, Some(owner));
+            let start = match start {
+                Ok(start) => start,
+                Err(error) => {
+                    waits.abandon(owner);
+                    return Err(error);
+                }
+            };
+            runner.phase = Phase::Starting(PendingLifecycle {
+                promise: start,
+                owner,
+            });
             // Microtasks run as the call returns, so a synchronous
             // onStart has settled here.
             runner.poll(runtime, out, n, generation);
+            if runner.pending_owner() != Some(owner) {
+                waits.abandon(owner);
+            }
         }
         Phase::StartFailed | Phase::Idle | Phase::Running(_) => {}
     }
     if events_consumed && runner.started() && !machines_halted(teardown) {
-        runtime.call_function_immediate::<()>(
+        let flushed = runtime.call_function_immediate::<()>(
             None,
             "__rs2b0t_flush_native_events",
             json_args!(),
-        )?;
+        );
+        waits.observe(runtime, None);
+        flushed?;
     }
     if machines_halted(teardown) {
         return Ok(());
     }
     if let Phase::Idle = runner.phase {
-        set_execution_stage(teardown, ExecutionStage::Loop);
+        let owner = waits.next_owner(ExecutionStage::Loop);
         if compat {
-            let run = runtime.call_function_immediate(None, "__rs2b0t_compat_loop", json_args!());
-            set_execution_stage(teardown, ExecutionStage::Other);
-            runner.phase = Phase::Running(run?);
+            let run: Result<Settle, rustyscript::Error> =
+                call_in_execution_stage(runtime, teardown, ExecutionStage::Loop, |runtime| {
+                    runtime.call_function_immediate(None, "__rs2b0t_compat_loop", json_args!())
+                });
+            waits.observe(runtime, Some(owner));
+            match run {
+                Ok(promise) => {
+                    runner.phase = Phase::Running(PendingLifecycle { promise, owner });
+                }
+                Err(error) => {
+                    waits.abandon(owner);
+                    return Err(error);
+                }
+            }
         } else {
-            let run = runtime.call_function_immediate(None, "__rs_tick", json_args!(n));
-            set_execution_stage(teardown, ExecutionStage::Other);
-            if let Some(run) = run? {
-                runner.phase = Phase::Running(run);
-            } else {
-                *iteration_completed = true;
+            let run: Result<Option<Settle>, rustyscript::Error> =
+                call_in_execution_stage(runtime, teardown, ExecutionStage::Loop, |runtime| {
+                    runtime.call_function_immediate(None, "__rs_tick", json_args!(n))
+                });
+            waits.observe(runtime, Some(owner));
+            match run {
+                Ok(Some(promise)) => {
+                    runner.phase = Phase::Running(PendingLifecycle { promise, owner });
+                }
+                Ok(None) => {
+                    waits.abandon(owner);
+                    *iteration_completed = true;
+                }
+                Err(error) => {
+                    waits.abandon(owner);
+                    return Err(error);
+                }
             }
         }
     }
@@ -1002,6 +1287,8 @@ fn tick_loop(
     let mut last_ignored_randoms: Vec<String> = Vec::new();
     let mut mouse_gestures = MouseGestureIdentities::default();
     let mut runner = Runner::new(compat);
+    let mut waits = WaitAttribution::new();
+    let mut v2_owner = None::<LifecycleOwner>;
     loop {
         #[cfg(feature = "memory-profile")]
         if last_heap_sample.is_none_or(|t| t.elapsed() >= Duration::from_secs(1)) {
@@ -1172,13 +1459,18 @@ fn tick_loop(
                     let halted = machines_halted(&teardown);
                     let script_paint = !compat || compat_may_paint(&runner);
                     if !v2_native && script_paint && !halted {
-                        set_execution_stage(&teardown, ExecutionStage::Paint);
-                        let _ = runtime.call_function_immediate::<()>(
-                            None,
-                            "__rs2b0t_call_on_paint",
-                            json_args!(),
+                        let _ = call_in_execution_stage(
+                            &mut runtime,
+                            &teardown,
+                            ExecutionStage::Paint,
+                            |runtime| {
+                                runtime.call_function_immediate::<()>(
+                                    None,
+                                    "__rs2b0t_call_on_paint",
+                                    json_args!(),
+                                )
+                            },
                         );
-                        set_execution_stage(&teardown, ExecutionStage::Other);
                         pump_event_loop(&mut runtime, &out, n, generation);
                     }
                     if events_consumed && runner.started() && !halted {
@@ -1187,6 +1479,12 @@ fn tick_loop(
                             "__rs2b0t_flush_native_events",
                             json_args!(),
                         );
+                    }
+                    waits.observe(&mut runtime, None);
+                    if v2_native && !global_flag(&mut runtime, "__rs_v2_tick_pending") {
+                        if let Some(owner) = v2_owner.take() {
+                            waits.abandon(owner);
+                        }
                     }
                     if !halted {
                         drain_event_loop(&mut runtime, &out, n, generation);
@@ -1227,8 +1525,14 @@ fn tick_loop(
                     } else {
                         Vec::new()
                     };
+                    let pending_owner = runner.pending_owner();
                     if !v2_native && runner.poll(&mut runtime, &out, n, generation) && compat {
                         lifecycle.push(crate::shim::InteractReq::LoopSettled);
+                    }
+                    if runner.pending_owner() != pending_owner {
+                        if let Some(owner) = pending_owner {
+                            waits.abandon(owner);
+                        }
                     }
                     let interrupt = finish_interruptible_execution(&mut runtime, &teardown);
                     recover_interrupted_execution(
@@ -1276,32 +1580,63 @@ fn tick_loop(
                 // the drain below.
                 let mut loop_settled = false;
                 let mut iteration_completed = false;
-                let result: Result<(), rustyscript::Error> = if machines_halted(&teardown) {
+                let mut drain_owner = None;
+                let mut result: Result<(), rustyscript::Error> = if machines_halted(&teardown) {
                     // A callback or operator action claimed this execution:
                     // no later user phase may start through that boundary.
                     Ok(())
                 } else if v2_native {
                     let pending_before_pump = global_flag(&mut runtime, "__rs_v2_tick_pending");
-                    let pump_stage = if pending_before_pump {
-                        ExecutionStage::Loop
-                    } else {
-                        ExecutionStage::Other
-                    };
-                    set_execution_stage(&teardown, pump_stage);
+                    if !pending_before_pump {
+                        if let Some(owner) = v2_owner.take() {
+                            waits.abandon(owner);
+                        }
+                    }
+                    waits.observe(&mut runtime, None);
+                    let pending_owner = pending_before_pump.then_some(v2_owner).flatten();
+                    let pump_owner = waits.pump_owner(pending_owner);
+                    drain_owner = pump_owner;
+                    let pump_stage = pump_owner.map_or(ExecutionStage::Other, |owner| owner.stage);
                     let pumped =
-                        runtime.call_function_immediate::<()>(None, "__rs2b0t_pump", json_args!(n));
-                    set_execution_stage(&teardown, ExecutionStage::Other);
+                        call_in_execution_stage(&mut runtime, &teardown, pump_stage, |runtime| {
+                            runtime.call_function_immediate::<()>(
+                                None,
+                                "__rs2b0t_pump",
+                                json_args!(n),
+                            )
+                        });
+                    waits.observe(&mut runtime, pump_owner);
                     // Do not re-enter tick while a previous returned
                     // Promise is pending. Snapshot posts still merge;
                     // this only skips tick.
-                    let v2_pending = global_flag(&mut runtime, "__rs_v2_tick_pending");
-                    let ticked = if v2_pending || machines_halted(&teardown) {
+                    let pending_after_pump = global_flag(&mut runtime, "__rs_v2_tick_pending");
+                    if !pending_after_pump {
+                        if let Some(owner) = v2_owner.take() {
+                            waits.abandon(owner);
+                        }
+                    }
+                    let ticked = if pending_after_pump || machines_halted(&teardown) {
                         Ok(())
                     } else {
-                        set_execution_stage(&teardown, ExecutionStage::Loop);
-                        let ticked =
-                            runtime.call_function_immediate(None, "__rs_tick", json_args!(n));
-                        set_execution_stage(&teardown, ExecutionStage::Other);
+                        let owner = waits.next_owner(ExecutionStage::Loop);
+                        let ticked = call_in_execution_stage(
+                            &mut runtime,
+                            &teardown,
+                            ExecutionStage::Loop,
+                            |runtime| {
+                                runtime.call_function_immediate::<()>(
+                                    None,
+                                    "__rs_tick",
+                                    json_args!(n),
+                                )
+                            },
+                        );
+                        waits.observe(&mut runtime, Some(owner));
+                        if ticked.is_ok() && global_flag(&mut runtime, "__rs_v2_tick_pending") {
+                            v2_owner = Some(owner);
+                        } else {
+                            waits.abandon(owner);
+                        }
                         ticked
                     };
                     pumped.and(ticked)
@@ -1309,6 +1644,7 @@ fn tick_loop(
                     run_tick_phases(
                         &mut runtime,
                         &mut runner,
+                        &mut waits,
                         n,
                         generation,
                         compat,
@@ -1316,6 +1652,7 @@ fn tick_loop(
                         &out,
                         &mut loop_settled,
                         &mut iteration_completed,
+                        &mut drain_owner,
                         &teardown,
                     )
                 };
@@ -1324,35 +1661,54 @@ fn tick_loop(
                 // the teardown mutex, so a stale host `in_flight` sample
                 // cannot arm termination for the next tick.
                 if !machines_halted(&teardown) {
-                    drain_event_loop(&mut runtime, &out, n, generation);
+                    let drain_stage =
+                        drain_owner.map_or(ExecutionStage::Other, |owner| owner.stage);
+                    let drained =
+                        call_in_execution_stage(&mut runtime, &teardown, drain_stage, |runtime| {
+                            runtime.block_on_event_loop(
+                                rustyscript::deno_core::PollEventLoopOptions::default(),
+                                Some(Duration::from_millis(10)),
+                            )
+                        });
+                    waits.observe(&mut runtime, drain_owner);
+                    if result.is_ok() {
+                        result = drained;
+                    }
                 }
                 // A machine callback whose promise the pump (or the drain)
                 // settled resumes its row in this tick. Callback JS is
                 // unrelated to the lifecycle single-flight.
                 if !machines_halted(&teardown) {
-                    set_execution_stage(&teardown, ExecutionStage::Other);
                     super::machine_v8::resume_callbacks(&mut runtime, &|| {
                         machines_halted(&teardown)
                     });
+                    waits.observe(&mut runtime, None);
                 }
                 // A row that ended here settles its machine wait in this tick.
-                // That host-resolved await may resume the lifecycle promise,
-                // so expose its exact pending stage to an interrupt.
+                // Only a homogeneous group owned by the exact pending
+                // lifecycle continuation may authorize its recovery.
                 if !machines_halted(&teardown) {
-                    let stage = if v2_native {
-                        if global_flag(&mut runtime, "__rs_v2_tick_pending") {
-                            ExecutionStage::Loop
-                        } else {
-                            ExecutionStage::Other
-                        }
+                    let pending_owner = if v2_native {
+                        global_flag(&mut runtime, "__rs_v2_tick_pending")
+                            .then_some(v2_owner)
+                            .flatten()
                     } else {
-                        runner.pending_stage()
+                        runner.pending_owner()
                     };
-                    set_execution_stage(&teardown, stage);
-                    let settled = super::machine_v8::settle_waits(&mut runtime, &|| {
-                        machines_halted(&teardown)
-                    });
-                    set_execution_stage(&teardown, ExecutionStage::Other);
+                    let settle_owner = waits.pump_owner(pending_owner);
+                    let settle_stage =
+                        settle_owner.map_or(ExecutionStage::Other, |owner| owner.stage);
+                    let settled =
+                        call_in_execution_stage(&mut runtime, &teardown, settle_stage, |runtime| {
+                            super::machine_v8::settle_waits(runtime, &|| {
+                                machines_halted(&teardown)
+                            })?;
+                            runtime.block_on_event_loop(
+                                rustyscript::deno_core::PollEventLoopOptions::default(),
+                                Some(Duration::from_millis(10)),
+                            )
+                        });
+                    waits.observe(&mut runtime, settle_owner);
                     if let Err(e) = settled {
                         let _ = out.send(ThreadMsg::TickError {
                             tick: n,
@@ -1361,10 +1717,21 @@ fn tick_loop(
                         });
                     }
                 }
+                if v2_native && !global_flag(&mut runtime, "__rs_v2_tick_pending") {
+                    if let Some(owner) = v2_owner.take() {
+                        waits.abandon(owner);
+                    }
+                }
                 if !v2_native && !machines_halted(&teardown) {
                     // A loop that finished in the drain frees the
                     // single-flight for the next tick.
+                    let pending_owner = runner.pending_owner();
                     let settled = runner.poll(&mut runtime, &out, n, generation);
+                    if runner.pending_owner() != pending_owner {
+                        if let Some(owner) = pending_owner {
+                            waits.abandon(owner);
+                        }
+                    }
                     iteration_completed |= settled;
                     loop_settled |= settled && compat;
                 }
@@ -1384,7 +1751,9 @@ fn tick_loop(
                 // mouse object cannot drop a sibling key.
                 // Machine-emitted ops join the batch in Rust at the JS
                 // queue position where they were emitted.
+                waits.observe(&mut runtime, None);
                 let taken = take_tick_output(&mut runtime, &out, n, generation, true);
+                waits.counters_reset();
                 taken.log_rejected(&out, n, generation);
                 let mut reqs = crate::machine::merge_ops(taken.rows);
                 stamp_mouse_gesture_identities(&mut reqs, input_identity, &mut mouse_gestures);
@@ -1465,7 +1834,7 @@ fn tick_loop(
                     break;
                 }
                 let mut latest = n;
-                if elapsed > SLOW_TICK {
+                if elapsed > EXECUTION_WATCHDOG_HORIZON {
                     let _ = out.send(ThreadMsg::Log(format!("slow tick {n}: {elapsed:?}")));
                     // Skip stale queued ticks, but complete the tick that
                     // actually produced diagnostics. A separate in-flight
@@ -1650,7 +2019,7 @@ fn tick_loop(
                 let interrupt = finish_interruptible_execution(&mut runtime, &teardown);
                 let pause_interrupted =
                     interrupt.is_some_and(|interrupt| interrupt.owner == ExecutionInterrupt::Pause);
-                if start.elapsed() > SLOW_TICK && !pause_interrupted {
+                if start.elapsed() > EXECUTION_WATCHDOG_HORIZON && !pause_interrupted {
                     let _ = out.send(ThreadMsg::Log(format!(
                         "slow recoveryAnchor: {:?}",
                         start.elapsed()

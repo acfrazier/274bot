@@ -119,7 +119,7 @@ fn wait_for_recovery_entry(iso: &LoadIsolate) -> bool {
     iso.drain_lifecycle();
     iso.resume();
     iso.request_recovery_anchor();
-    let trigger_at = Instant::now() + Duration::from_millis(60);
+    let trigger_at = Instant::now() + Duration::from_millis(650);
     while Instant::now() < trigger_at {
         std::thread::yield_now();
     }

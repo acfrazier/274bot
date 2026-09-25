@@ -249,7 +249,7 @@ export function tick() {
     globalThis.__ticks = (globalThis.__ticks || 0) + 1;
     if (globalThis.__ticks === 1) throw new Error('transient failure');
     const started = Date.now();
-    while (Date.now() - started < 80) {}
+    while (Date.now() - started < 700) {}
 }
 "#;
     let mut slot = SlotScript::new();

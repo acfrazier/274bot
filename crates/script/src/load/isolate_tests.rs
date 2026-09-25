@@ -1386,7 +1386,7 @@ fn machines_step_normally_again_after_a_watchdog_fire() {
     );
     machine_tick(&iso, 1);
     iso.on_game_tick(2);
-    std::thread::sleep(Duration::from_millis(200));
+    std::thread::sleep(Duration::from_millis(650));
     machine_tick(&iso, 3);
     assert_eq!(
         iso.probe("globalThis.__first").unwrap(),
