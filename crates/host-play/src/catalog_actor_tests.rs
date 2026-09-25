@@ -1,4 +1,5 @@
     use super::*;
+    use super::actor::choose_actor_observation_npc;
     use api::snapshot::{NpcView, WorldTile};
 
     fn npc(index: usize, distance: i32, size: i32, name: &str) -> NpcView {

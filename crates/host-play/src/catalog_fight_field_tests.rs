@@ -1,4 +1,5 @@
     use super::*;
+    use super::fight_field::choose_fight_field_npc;
     use api::snapshot::{NpcView, WorldTile};
 
     fn npc(index: usize, distance: i32, size: i32) -> NpcView {
