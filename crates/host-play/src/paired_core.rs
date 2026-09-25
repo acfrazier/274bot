@@ -36,43 +36,6 @@ pub use duel::*;
 mod watch;
 pub use watch::*;
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 pub fn pair_settings(
     case: PairCase,
     schema: &[script::SettingDef],
@@ -95,9 +58,3 @@ pub fn pair_settings(
         )),
     }
 }
-
-
-
-
-
-

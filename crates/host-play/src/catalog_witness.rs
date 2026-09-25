@@ -670,7 +670,10 @@ impl CoreWitness {
         }
     }
 
-    pub(super) fn swarm_stopped_without_recovery(&self, observation: &Observation) -> Option<String> {
+    pub(super) fn swarm_stopped_without_recovery(
+        &self,
+        observation: &Observation,
+    ) -> Option<String> {
         if self.case != CoreCase::AlcherSwarmDrain || self.qualified() {
             return None;
         }

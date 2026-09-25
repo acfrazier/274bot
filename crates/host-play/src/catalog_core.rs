@@ -52,8 +52,8 @@ pub use case::*;
 
 #[path = "catalog_observation.rs"]
 mod observation;
-pub use observation::*;
 use observation::empty_worn;
+pub use observation::*;
 #[path = "catalog_inspect.rs"]
 mod inspect;
 pub use inspect::*;
@@ -147,52 +147,6 @@ pub use witness::*;
 #[path = "catalog_watch.rs"]
 mod watch;
 pub use watch::*;
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 #[cfg(test)]
 #[path = "catalog_actor_tests.rs"]

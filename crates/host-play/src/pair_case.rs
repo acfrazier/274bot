@@ -228,7 +228,10 @@ pub(super) fn account_identity_eq(left: &str, right: &str) -> bool {
 pub fn in_temple(tile: Option<(i32, i32, i32)>) -> bool {
     tile.is_some_and(|tile| tile.1 > TEMPLE_Z)
 }
-pub(super) fn stat<'a>(snapshot: &'a GameSnapshot, name: &str) -> Option<&'a api::snapshot::StatView> {
+pub(super) fn stat<'a>(
+    snapshot: &'a GameSnapshot,
+    name: &str,
+) -> Option<&'a api::snapshot::StatView> {
     snapshot
         .stats()
         .iter()
