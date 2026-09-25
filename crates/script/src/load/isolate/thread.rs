@@ -964,6 +964,18 @@ fn tick_loop(
                 // completion settles in this tick's pump. Join's claim is
                 // re-checked between callbacks: one may absorb its terminate.
                 super::machine_v8::step(&mut runtime, &|| machines_halted(&teardown));
+                // Pause can arm the watchdog before this command reaches
+                // user JS. Do not spend the terminate on a bookkeeping
+                // eval and then enter the runaway tick; cancel it only
+                // after publishing the skipped tick's completion.
+                if machines_halted(&teardown) {
+                    cancel_terminate(&mut runtime, &teardown);
+                    let _ = out.send(ThreadMsg::Completed {
+                        tick: n,
+                        generation,
+                    });
+                    continue;
+                }
                 if events_consumed {
                     let observed = event_producer.take_eligible();
                     if let Some(diag) = observed.diagnostic {

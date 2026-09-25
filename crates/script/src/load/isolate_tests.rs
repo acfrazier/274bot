@@ -54,6 +54,68 @@ fn validate_non_yielding_module_is_bounded() {
 }
 
 #[test]
+fn pause_interrupts_a_newly_started_runaway_tick() {
+    const CHILD: &str = "SCRIPT_PAUSE_CHILD";
+    if std::env::var_os(CHILD).is_some() {
+        let iso = LoadIsolate::spawn(
+            "export function tick() { while (true) {} }".into(),
+            LoadShape::NativeTick,
+            vec![],
+        )
+        .unwrap();
+        let ready_deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            match iso.poll_ready() {
+                Ready::Pending => {
+                    assert!(Instant::now() < ready_deadline, "isolate setup did not settle");
+                    std::thread::yield_now();
+                }
+                Ready::Ready => break,
+                Ready::Failed(error) => panic!("isolate setup failed: {error}"),
+            }
+        }
+        iso.on_game_tick(1);
+        iso.pause();
+        let finish_deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            let _ = iso.drain_logs();
+            if iso.in_flight.lock().unwrap().is_none() {
+                iso.join();
+                return;
+            }
+            assert!(
+                Instant::now() < finish_deadline,
+                "Pause did not terminate the active tick"
+            );
+            std::thread::yield_now();
+        }
+    }
+
+    let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "load::isolate::tests::pause_interrupts_a_newly_started_runaway_tick",
+            "--nocapture",
+        ])
+        .env(CHILD, "1")
+        .spawn()
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            assert!(status.success(), "pause child failed: {status}");
+            break;
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            panic!("pause child did not return before the deadline");
+        }
+        std::thread::yield_now();
+    }
+}
+
+
+#[test]
 fn reset_rejects_a_tick_queued_with_the_previous_session_generation() {
     let iso = LoadIsolate::spawn(
         "export function tick(api) { globalThis.n = (globalThis.n || 0) + 1; }".into(),

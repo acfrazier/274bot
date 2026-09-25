@@ -616,21 +616,16 @@ impl LoadIsolate {
     /// Park tick dispatch. A runaway tick is interrupted first so the
     /// thread returns to the command loop.
     pub fn pause(&self) {
-        let ready = self.poll_ready() == Ready::Ready;
         self.pump_logs();
         if self.teardown_blocks_dispatch() {
             self.send(IsolateCmd::Pause);
             return;
         }
-        let over = self
-            .in_flight
-            .lock()
-            .unwrap()
-            .map(|(_, _, started)| ready && started.elapsed() > SLOW_TICK)
-            .unwrap_or(false);
-        if over {
-            // No cancel here: the isolate thread clears the terminate
-            // itself once it has returned from the interrupted tick.
+        let in_flight = self.in_flight.lock().unwrap().is_some();
+        if in_flight {
+            // Pause must own cancellation of an active execution even when
+            // it is younger than the normal slow-tick threshold: after this
+            // command is queued, no later game tick is guaranteed to arrive.
             self.fire_watchdog();
         }
         self.send(IsolateCmd::Pause);
