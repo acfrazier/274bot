@@ -247,18 +247,18 @@ Example: `crates/script/examples/quest_facts_v2.ts`.
 
 ## Clue helpers
 
-Five sync `HelperResult` fact reads and one owned-session pump. `row` and
-`heldStep` read the selected pin's landed trail membership family; `packPlan`
-is pure slot arithmetic over the caller's own numbers and reads nothing at all;
-`hardKit` is a pure hard-clue kit status over the caller's own facts and reads
-nothing at all; `keep` is the pure bank-stop keep predicate over the caller's
-own names and reads nothing at all. `begin` / `next` are the isolate machine:
-one token per isolate, the landed held-step identify over the posted pack page,
-and its own search and casket-open steps onto the interact drain. None is a
-Promise and none is a `request()` op; the five fact reads push no `h.interact`.
-`row`, `heldStep` and the machine read `trails()` only: not `items()`, and not
-the challenge answers. `api.clue` holds `row`, `heldStep`, `packPlan`, `hardKit`,
-`keep`, `begin`, and `next`, in that order, and nothing else.
+Five sync `HelperResult` fact reads and one owned session with a synchronous
+`begin` plus one awaited `run`. `row` and `heldStep` read the selected pin's
+landed trail membership family; `packPlan` is pure slot arithmetic over the
+caller's own numbers and reads nothing at all; `hardKit` is a pure hard-clue kit
+status over the caller's own facts and reads nothing at all; `keep` is the pure
+bank-stop keep predicate over the caller's own names and reads nothing at all.
+The Rust `clue` machine owns the token's continuation loop, callback answers,
+kind dispatch and interact enqueue. Only `run` is a Promise and none is a
+`request()` op; the five fact reads push no `h.interact`. `row`, `heldStep` and
+the machine read `trails()` only: not `items()`, and not the challenge answers.
+`api.clue` holds `row`, `heldStep`, `packPlan`, `hardKit`, `keep`, `begin`,
+`run`, and `retry`, in that order, and nothing else.
 
 | Method | OK | Errors |
 | --- | --- | --- |
@@ -267,8 +267,8 @@ the challenge answers. `api.clue` holds `row`, `heldStep`, `packPlan`, `hardKit`
 | `clue.packPlan(input)` | the published pack targets | `invalid-args`, `no-room` |
 | `clue.hardKit(input)` | `{ status: 'ready' }` | `invalid-args`, `attack`, `lost-city`, `dds`, `superantipoison`, `sharks` |
 | `clue.keep(input)` | `{ keep: boolean }` | `invalid-args` |
-| `clue.begin(input?)` | `{ token }` | `missing-selected-data`, `family-unavailable:trails`, `none-held` |
-| `clue.next({ token, resume? })` | one continue step | `invalid-args`, `missing-selected-data`, `family-unavailable:trails`, `none-held`, `stale`, `aborted` |
+| `clue.begin(input?)` | `{ token }` | `missing-selected-data`, `family-unavailable:trails`, `none-held`, `constrained`, `abandoned` |
+| `await clue.run({ token }, hooks?)` | one `ClueOutcome` settlement | `invalid-args`, `stale`, or a host abort |
 
 `clue.row` takes exactly one of `id` or `alias`. Neither, both, a non-object, an
 array, or a non-string `alias` is `invalid-args`, and `api.clue.row()` and
@@ -503,24 +503,26 @@ Example: `crates/script/examples/clue_facts_v2.ts` (row),
 `crates/script/examples/clue_hard_kit_v2.ts` (hard-kit status), and
 `crates/script/examples/clue_keep_v2.ts` (keep predicate).
 
-### `clue.begin` / `clue.next`
+### `clue.begin` / `clue.run`
 
-One machine per isolate, over the landed held-step identify. It is sync, it is
-not a Promise, and it is not a `request()` op: it is the search, casket-open,
+One machine per isolate, over the landed held-step identify. `begin` is a
+synchronous `HelperResult`; `run` is one Promise that lets the Rust family own
+every continuation, callback reply, wait and verb mapping until settlement.
+Neither is a `request()` op. The machine is the search, casket-open,
 unguarded-dig, guarded-dig encounter, coordinate-trio acquire, held-puzzle-box,
-talk-step, key-keeper and trail-end collect slice of a later clue trail, not
-the whole dispatcher. It emits search, the held Open, the unguarded Dig, the
-guarded walk/Dig/Attack/redig, the acquire chain's walk, Talk-to, one selected
-option answer and its continue, the held puzzle box's own Open, one planned
-`puzzle-move` and the close that
-follows a solved board, the talk step's walk and Talk-to, the challenge scroll's
-selected count answer, the key-keeper hunt's walk, Attack and key Take, the
-collect that follows the last casket, the Entrana strip's unequip, deposit and
-restore verbs, and the machine's own `retry()` latch clear — and it finishes
-that collect on its own completion envelope: the exact
-`'clue solved'` status, then the live-token `grind-ready` continue, then the
-`done` the token dies on. `kind: 'done'` is this machine's own kind and is not
-hunt's `status: 'done'`; `status` stays `'continue'` on every one of them.
+talk-step, key-keeper and trail-end collect slice of a later clue trail, not the
+whole dispatcher. It emits search, the held Open, the unguarded Dig, the guarded
+walk/Dig/Attack/redig, the acquire chain's walk, Talk-to, one selected option
+answer and its continue, the held puzzle box's own Open, one planned
+`puzzle-move` and the close that follows a solved board, the talk step's walk
+and Talk-to, the challenge scroll's selected count answer, the key-keeper hunt's
+walk, Attack and key Take, the collect that follows the last casket, the Entrana
+strip's unequip, deposit and restore verbs, and the machine's own `retry()` latch
+clear. It finishes that collect with the exact `'clue solved'` status, the
+live-token `grind-ready` transition, and the inner `done` that kills the token.
+The Promise then settles as `{ kind: 'done', value: { kind: 'done', ... } }`;
+the outer kind is the machine-host outcome and the inner kind is the clue
+runtime terminal.
 
 The one gear arm is the Entrana strip and its restore, and it is the identified
 row's own selected decode: a row whose `trail_coord` decodes inside the cap box
@@ -584,24 +586,30 @@ refused with `abandoned` while it is still the one held, so the leave-in-pack
 latch is a false validate and not a stolen tick. A second `begin` aborts the
 previous token and emits nothing for it.
 
-`clue.next({ token, resume? })` takes an object argument, not
-`(token, resume)`. `resume` is the callback return and is the only answer slot:
-`reply` is not read, and a non-boolean `resume` is `invalid-args` (as is a
-missing or non-integer `token`, or a non-object argument). The step is
-`{ ok: true, status: 'continue', token, kind, … }` or `{ ok: false, error }`;
-a dead token is the error object, never `undefined` and never a continue kind.
-Every page is read at call time: along with the pack, `here`, loc, ground, npc,
-main-modal, chat and board slots, the acquire chain's own posted
-`chat_options` — each row a text with its 1-based slot — and `chat_continue`
-are posted only when the page carried them, so an unobserved list is not an
-empty one and an unobserved slot is never a close.
+`clue.run({ token }, hooks?)` takes one token object, not a positional token.
+A missing, negative, non-integer or otherwise unsafe token settles
+`{ kind: 'refused', reason: 'invalid-args' }`. The optional frozen hooks are
+`enabled()`, `log(message)` and `setStatus(message)`; Rust invokes and awaits
+them at the corresponding machine transitions. A thrown hook rejects the
+Promise with that value. A dead token settles as `refused` with `stale`; a host
+reset, supersession or termination settles with the corresponding outer
+`aborted` outcome.
+
+Every snapshot page is read on the machine pass that consumes it: along with
+the pack, `here`, loc, ground, npc, main-modal, chat and board slots, the acquire
+chain's own posted `chat_options` — each row a text with its 1-based slot — and
+`chat_continue` are posted only when the page carried them, so an unobserved
+list is not an empty one and an unobserved slot is never a close.
+
+The following are Rust-internal step kinds. JavaScript does not receive and
+redispatch them; only terminal kinds appear inside a successful run outcome.
 
 | `kind` | Meaning |
 | --- | --- |
-| `wait` | nothing this tick: frozen by pause/hold, or the session idled after `resume: false`, or the identified step was already reported, or — while collecting — the pages are still empty inside the reward window, or the posted pack page carried no `inv_size`; a dig row that has not arrived waits the same way, and so does the guarded encounter with no wizard of the row family posted on the npc page — no spawn posted is no click and no Attack |
-| `callback.enabled` | re-read the script's `enabled()` and answer with `resume` on the next `next` |
-| `callback.log` | perform `log(message)` |
-| `callback.setStatus` | perform `setStatus(message)`: the identified step's progress line, and — on a finished collect — the exact `'clue solved'` string, which the machine posts and no adapter invents |
+| `wait` | nothing this tick: frozen by pause/hold, or the session idled after `enabled()` returned false, or the identified step was already reported, or — while collecting — the pages are still empty inside the reward window, or the posted pack page carried no `inv_size`; a dig row that has not arrived waits the same way, and so does the guarded encounter with no wizard of the row family posted on the npc page — no spawn posted is no click and no Attack |
+| `callback.enabled` | invoke and await the frozen `enabled()` hook; an absent hook answers false |
+| `callback.log` | invoke and await `log(message)` when supplied |
+| `callback.setStatus` | invoke and await `setStatus(message)` when supplied: the identified step's progress line, and — on a finished collect — the exact `'clue solved'` string, which the machine posts and no adapter invents |
 | `walk` | a search row, an unguarded dig row, a guarded row, a talk step or a key-keeper row that has not arrived: walk to `{ x, z, level }` — the decoded `trail_coord`, the talk step's own target tile, or the key keeper's published spawn with its `plane` as the `level` |
 | `loc` | a search row that has arrived: interact with the picked loc, `{ x, z, level, action, id }` |
 | `npc` | a guarded row that has arrived and Dig its spawn: interact with the posted npc, `{ name, action: 'Attack', index }` — the posted scene index it was observed with. A talk step that has arrived is the same kind with the posted row's own `talk_op` and posted scene index, `{ name, action: 'Talk-to', index }`, and a key-keeper row that has arrived is the same kind with the frozen `Attack` on a posted npc of the keeper's packed type standing on the published spawn, `{ name, action: 'Attack', index }` |
@@ -630,12 +638,12 @@ empty one and an unobserved slot is never a close.
 
 The precedence on a live token is frozen clock → `wait`, else posted
 `hold || ours` → `yield`, else a posted `hitpoints <= 0` → `dead`, else the
-identify, else `callback.*`. A frozen call
-burns nothing: the pending `enabled` question is still open after the thaw.
-`resume: false` idles the session with its token live — it is not `abandon`,
-not `done`, and not a completion — and the next gate re-reads instead of
-replaying that answer. `none-held` on a live session aborts it: the held
-membership went away, so the old token is dead. There are two exceptions. The
+identify, else `callback.*`. A frozen pass burns nothing: the pending `enabled`
+question is still open after the thaw. An `enabled()` result of false idles the
+session with its token live — it is not `abandon`, not `done`, and not a
+completion — and the next gate re-reads instead of replaying that answer.
+`none-held` on a live session aborts it: the held membership went away, so the
+old token is dead. There are two exceptions. The
 trail-end collect below: a `Steady` step whose casket `Open` was already
 dispatched survives `none-held` as `Collecting`, and that collect's own end is
 the `done` above rather than the `none-held` abort. And the challenge scroll: a
@@ -689,18 +697,18 @@ an off-contract token is never rounded into an invented coordinate.
 `trail_coord` is never published on `clue.row`.
 
 Once the search row has been reported — after its `callback.log` and
-`callback.setStatus` — `walk` and `loc` replace the idle `wait`. The wrapper
-marshals the posted `here` tile and the posted loc page at `next` call time,
-so the machine caches no world copy and `api.snapshot.locs` stays hidden.
-`walk` repeats until `here` is on the decoded tile's level and within Chebyshev
-1 of it; then the picker takes posted loc rows on that level, within Chebyshev
-1 of the decoded tile (not of `here`), whose actions match `Search` then `Open`
+`callback.setStatus` — `walk` and `loc` replace the idle `wait`. Each Rust
+machine pass reads the posted `here` tile and posted loc page, so the machine
+caches no world copy and `api.snapshot.locs` stays hidden. `walk` repeats until
+`here` is on the decoded tile's level and within Chebyshev 1 of it; then the
+picker takes posted loc rows on that level, within Chebyshev 1 of the decoded
+tile (not of `here`), whose actions match `Search` then `Open`
 case-insensitively — nearest first, then rank, then posted order. The `loc`
 step carries the picked row's own tile and its posted scene id, always, so the
 host refuses a stale id rather than falling back to a co-located row. Neither
-kind is a `V2_OPS` verb: `next` enqueues them onto the interact drain the way
-the quest journal enqueues its modal clicks, `api.request({ op: 'loc' })` stays
-`not impl`, and the step is still returned as `status: 'continue'`.
+kind is a `V2_OPS` author verb: the Rust clue family enqueues both directly,
+`api.request({ op: 'loc' })` stays `not impl`, and JavaScript never redispatches
+the step.
 
 Arrived with nothing to search this tick — an unloaded scene, an empty page, or
 a loc id the host refused — is `wait`: the token stays live and the pick is
@@ -798,7 +806,7 @@ intercept:
 | buy one | a `shop-button` click — `kind: 'buy'`, `chunk: 1` — on the short's own posted stock row: its `id`, the display name the host resolves, and the `slot` and `component` its presence check matches |
 | close | the landed `close-modal` once the posted pack page holds the short, and once per trip |
 
-`shop-button` is the landed host op and never a `V2_OPS` verb: `api.request({ op: 'shop-button' })` stays `not impl`, the step is its own `next` kind and never a `kind: 'ops'` list, and the `shop.rs` module's own batch is not nested here. The posted interface (`shop_open`, `shop_stock`) and the walk outcome's `walk_missing_carry` are marshalled onto the call at call time and only when the page carried them, so an unobserved interface is neither a closed one nor an open one.
+`shop-button` is the landed host op and never a `V2_OPS` verb: `api.request({ op: 'shop-button' })` stays `not impl`, the Rust machine dispatches the step directly and the `shop.rs` module's own batch is not nested here. The posted interface (`shop_open`, `shop_stock`) and the walk outcome's `walk_missing_carry` are read on the pass that consumes them and only when the page carried them, so an unobserved interface is neither a closed one nor an open one.
 
 After the posted buy — or after the trip gives up — the exit walks the original
 dest back, and that is the end of the slice: the row's own arm resumes, the
@@ -880,12 +888,12 @@ that posted no hitpoints is not a zero. The encounter survives `yield` and idle
 waits on its
 live token the way the casket `Open` does; a different held row, an abort and a
 reset drop it, so the row's next `Steady` walks and Digs its spawn again. All
-of those pages are this call's own marshalling of `host().snapshot` — the
-posted npc page, the local-player slot and its posted target pair, the posted
-overlay varp and the posted stat rows — so the machine caches no world copy,
-`api.snapshot.npcs` is never scanned, and `api.snapshot.self_slot` and
+of those pages are read by the Rust machine on the pass that consumes them —
+the posted npc page, the local-player slot and its posted target pair, the
+posted overlay varp and the posted stat rows — so the machine caches no world
+copy, `api.snapshot.npcs` is never scanned, and `api.snapshot.self_slot` and
 `api.snapshot.varps` stay hidden. `npc`, `answer-count` and `if-button` are not
-`V2_OPS` verbs — `next` enqueues them onto the interact drain directly, so
+`V2_OPS` author verbs — the Rust clue family enqueues them directly, so
 `api.request({ op: 'npc' })`, `api.request({ op: 'answer-count' })` and
 `api.request({ op: 'if-button' })` stay `not impl` — and the guarded row emits
 no completion of its own: its only ends are `guardian-lost`, the `dead` any
@@ -1005,9 +1013,9 @@ marshals at call time:
    spends nothing.
 
 The frozen cap names — board unreadable, unsolvable-as-read, stalled — are
-evidence for those exits and not tokens: this arm publishes no new error, logs
-no new line and never aborts the token for them, so `clue.next` still refuses
-only with the identify family's own errors. The solved-or-attempted latch
+evidence for those exits and not refusal reasons: this arm publishes no new
+error, logs no new line and never aborts the token for them. The
+solved-or-attempted latch
 belongs to the step, so a still-held box is never opened or closed twice: after
 the exit the step falls through with its token live, and the re-talk is the
 row's own `Steady` arms below it. A different held row, `clear_step`, reset and
@@ -1029,10 +1037,9 @@ of its own identity, and no match, no `here` or an open chat is a `wait` — and
 every other latched row idles. The trigger is that latch and never an id list:
 no new kind, no new host op and no new session field. `closing` stays set after
 the close window ends, so it is never what decides the fall-through.
-`puzzle-move` is not a `V2_OPS` verb of its author
-API: `next` enqueues it onto the interact drain the way it enqueues `loc` and
-the others, and `api.request({ op: 'puzzle-move' })` stays the OPHELD send gate
-it already was.
+`puzzle-move` is not a `V2_OPS` verb of its author API: the Rust clue family
+enqueues it directly like `loc` and the other internal kinds, and
+`api.request({ op: 'puzzle-move' })` stays the OPHELD send gate it already was.
 
 ### Trail-end collect
 

@@ -697,8 +697,8 @@ export interface NativeApi {
   questIdentity(input: { name: string } | { id: string }): HelperResult<QuestIdentityRow>;
   /** Sync seed-id requirements read. A name field is not a key. Not a Promise and not a request op. */
   questPrereqs(input: { id: string; name?: string }): HelperResult<QuestRequirements>;
-  /** Sync landed trail-row read, pure pack arithmetic, pure hard-kit status, the pure keep predicate over caller facts, and the clue machine's own begin / next / retry. None is a Promise and none is a request op; `packPlan`, `hardKit`, and `keep` read no snapshot, inventory, or family, and `retry` is the machine's latch clear — never a connection-boundary reset and never a token abort. */
-  clue: { row(input: { id: number } | { alias: string }): HelperResult<ClueRow>; heldStep(): HelperResult<ClueRow>; packPlan(input: PackPlanInput): HelperResult<PackPlanTargets>; hardKit(input: { attack: number; lostCity: boolean; items: { id: number; count: number }[] }): HelperResult<{ status: 'ready' }>; keep(input: { name: string; extra?: string[] }): HelperResult<{ keep: boolean }>; begin(input?: object): HelperResult<{ token: number }>; next(input: { token: number; resume?: boolean }): ClueStep; retry(): HelperResult<{ cleared: true }> };
+  /** Sync landed trail-row read, pure pack arithmetic, pure hard-kit status, the pure keep predicate over caller facts, and the clue machine's begin / one awaited run / retry. `run` is the only Promise and none is a request op; `packPlan`, `hardKit`, and `keep` read no snapshot, inventory, or family, and `retry` is the machine's latch clear — never a connection-boundary reset and never a token abort. */
+  clue: { row(input: { id: number } | { alias: string }): HelperResult<ClueRow>; heldStep(): HelperResult<ClueRow>; packPlan(input: PackPlanInput): HelperResult<PackPlanTargets>; hardKit(input: { attack: number; lostCity: boolean; items: { id: number; count: number }[] }): HelperResult<{ status: 'ready' }>; keep(input: { name: string; extra?: string[] }): HelperResult<{ keep: boolean }>; begin(input?: object): HelperResult<{ token: number }>; run(input: { token: number }, hooks?: ClueHooks): Promise<ClueOutcome>; retry(): HelperResult<{ cleared: true }> };
   /** Sync posted-loc copy. Historical copy, not live. Not a Promise and not a request op. */
   sceneLocs(input: { ids: number[]; limit: number; region?: SceneRegionInput }): HelperResult<SceneProjection>;
   /** Sync posted-npc copy. actions is required: omitted is not match-any. Historical copy, not live. Not a Promise and not a request op. */
@@ -834,22 +834,17 @@ export type HuntOutcome<T> =
   | { kind: 'done'; value: T }
   | { kind: 'refused'; reason: string }
   | { kind: 'aborted'; reason: 'reset' | 'superseded' | 'terminated' | 'unknown' };
-export type ClueStep =
-  | { ok: true; status: 'continue'; token: number; kind: 'wait' | 'yield' | 'callback.enabled' }
-  | { ok: true; status: 'continue'; token: number; kind: 'callback.log' | 'callback.setStatus'; message: string }
-  | { ok: true; status: 'continue'; token: number; kind: 'held'; name: string; action: string }
-  | { ok: true; status: 'continue'; token: number; kind: 'walk'; x: number; z: number; level: number }
-  | { ok: true; status: 'continue'; token: number; kind: 'loc'; x: number; z: number; level: number; action: string; id: number }
-  | { ok: true; status: 'continue'; token: number; kind: 'npc'; name: string; action: string; index: number }
-  | { ok: true; status: 'continue'; token: number; kind: 'answer-count'; value: number }
-  | { ok: true; status: 'continue'; token: number; kind: 'if-button'; component_id: number }
-  | { ok: true; status: 'continue'; token: number; kind: 'close-modal' }
-  | { ok: true; status: 'continue'; token: number; kind: 'obj'; x: number; z: number; level: number; name: string | null; action: string }
-  | { ok: true; status: 'continue'; token: number; kind: 'puzzle-move'; id: number; slot: number; component: number; generation: number }
-  | { ok: true; status: 'continue'; token: number; kind: 'continue' | 'answer'; option?: number }
-  | { ok: true; status: 'continue'; token: number; kind: 'shop-button'; name: string; id: number; slot: number; component: number; chunk: number }
-  | { ok: true; status: 'continue'; token: number; kind: 'unequip' | 'wear' | 'deposit'; name: string }
-  | { ok: true; status: 'continue'; token: number; kind: 'withdraw'; name: string; action: string }
-  | { ok: true; status: 'continue'; token: number; kind: 'walk-nearest-bank' | 'close' }
-  | { ok: true; status: 'continue'; token: number; kind: 'open-booth'; x: number; z: number; level: number; id: number; name?: string; action?: string }
-  | { ok: false; error: string };
+/** Callbacks frozen for one clue run. Rust awaits each returned promise before advancing the machine. */
+export interface ClueHooks {
+  enabled?(): boolean | Promise<boolean>;
+  log?(message: string): void | Promise<void>;
+  setStatus?(message: string): void | Promise<void>;
+}
+export type ClueRunValue =
+  | { kind: 'yield' | 'done' | 'dead' | 'abandon' | 'guardian-lost'; token: number }
+  | { kind: 'aborted'; token: number; reason: string };
+/** One clue run's settlement. A hook that throws rejects the promise with that value. */
+export type ClueOutcome =
+  | { kind: 'done'; value: ClueRunValue }
+  | { kind: 'refused'; reason: string }
+  | { kind: 'aborted'; reason: 'reset' | 'superseded' | 'terminated' | 'unknown' };

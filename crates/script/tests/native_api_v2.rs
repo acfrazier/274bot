@@ -1235,13 +1235,14 @@ export function tick(api) {
 }
 
 #[test]
-fn v2_clue_row_is_a_named_sync_helper_result_not_a_request_op() {
+fn v2_clue_row_and_run_are_named_methods_not_request_ops() {
     let src = r#"
 export const apiVersion = 2;
-export function tick(api) {
+export async function tick(api) {
   const row = api.clue.row({ id: 3554 });
   const begin = api.clue.begin();
-  const dead = api.clue.next({ token: 1 });
+  const pending = api.clue.run({ token: 1 });
+  const dead = await pending;
   let requested = null;
   try { api.request({ op: 'clue.row' }); requested = 'ok'; }
   catch (e) { requested = String(e && (e.message || e)); }
@@ -1256,9 +1257,9 @@ export function tick(api) {
     beginOk: begin.ok,
     beginError: begin.error,
     beginThen: typeof begin.then,
-    nextOk: dead.ok,
-    nextError: dead.error,
-    nextThen: typeof dead.then,
+    runKind: dead.kind,
+    runReason: dead.reason,
+    runThen: typeof pending.then,
     flat: typeof api.clueRow,
     quest: api.quest,
     requested,
@@ -1280,18 +1281,18 @@ export function tick(api) {
     assert_eq!(
         probe["keys"],
         serde_json::json!([
-            "row", "heldStep", "packPlan", "hardKit", "keep", "begin", "next", "retry"
+            "row", "heldStep", "packPlan", "hardKit", "keep", "begin", "run", "retry"
         ]),
         "{probe:?}"
     );
     // An empty posted page is `none-held`, and a refused begin leaves no live
-    // token: the dead-token step is a step object, never `undefined`.
+    // token: one awaited run on an invented token refuses as stale.
     assert_eq!(probe["beginOk"], false, "{probe:?}");
     assert_eq!(probe["beginError"], "none-held", "{probe:?}");
     assert_eq!(probe["beginThen"], "undefined", "{probe:?}");
-    assert_eq!(probe["nextOk"], false, "{probe:?}");
-    assert_eq!(probe["nextError"], "stale", "{probe:?}");
-    assert_eq!(probe["nextThen"], "undefined", "{probe:?}");
+    assert_eq!(probe["runKind"], "refused", "{probe:?}");
+    assert_eq!(probe["runReason"], "stale", "{probe:?}");
+    assert_eq!(probe["runThen"], "function", "{probe:?}");
     assert_eq!(probe["flat"], "undefined", "{probe:?}");
     assert!(probe["quest"].is_null(), "{probe:?}");
     assert!(

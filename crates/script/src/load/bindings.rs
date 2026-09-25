@@ -1080,17 +1080,6 @@ function clueKeepV2(input) {
 function clueCall(payload) {
   return globalThis.rustyscript.functions.__rs2b0t_clue(payload);
 }
-// Continue envelope and begin/next error mapping. Scene pages are read in
-// Rust; verbs are mapped by `__rs2b0t_clue_verb` (never a loc fall-through).
-function clueStep(step) {
-  return { ok: true, status: 'continue', token: step.token, ...step };
-}
-function clueStepError(reason) {
-  if (reason === 'aborted' || reason === 'constrained') return reason;
-  if (reason === 'missing-selected-data' || reason === 'family-unavailable:trails'
-      || reason === 'none-held') return reason;
-  return 'stale';
-}
 function clueBeginError(reason) {
   if (reason === 'constrained' || reason === 'abandoned') return reason;
   if (reason === 'missing-selected-data' || reason === 'family-unavailable:trails'
@@ -1162,46 +1151,17 @@ api.clue = {
     if (step.kind === 'aborted') return helperErr(clueBeginError(step.reason));
     return helperErr('stale');
   },
-  // One step. `resume` is the callback return. Rust reads the isolate scene;
-  // this helper never echoes snapshot pages. A verb is enqueued by the Rust
-  // mapper (`__rs2b0t_clue_verb`); an unknown kind is not a loc.
-  next: function (input) {
-    if (arguments.length === 0) return helperErr('invalid-args');
-    if (input == null || typeof input !== 'object' || Array.isArray(input)) {
-      return helperErr('invalid-args');
+  // One awaited Rust run owns callback replies, verb mapping, waits and
+  // terminal-kind dispatch. The shim passes only the token and frozen hooks.
+  run: function (input, hooks) {
+    if (arguments.length === 0 || input == null
+        || typeof input !== 'object' || Array.isArray(input)
+        || !Number.isSafeInteger(input.token) || input.token < 0) {
+      return Promise.resolve({ kind: 'refused', reason: 'invalid-args' });
     }
-    if (!Number.isInteger(input.token)) return helperErr('invalid-args');
-    const hasResume = Object.prototype.hasOwnProperty.call(input, 'resume');
-    if (hasResume && typeof input.resume !== 'boolean') return helperErr('invalid-args');
-    const generation = lifecycleGeneration;
-    const payload = {
-      op: 'next',
-      token: input.token,
-      generation: generation,
-    };
-    if (hasResume) payload.resume = input.resume;
-    const step = clueCall(payload);
-    if (!step || typeof step !== 'object') return helperErr('stale');
-    if (step.kind === 'aborted') return helperErr(clueStepError(step.reason));
-    if (generation !== lifecycleGeneration) return helperErr('stale');
-    const req = globalThis.rustyscript.functions.__rs2b0t_clue_verb(step);
-    if (req && typeof req === 'object' && typeof req.op === 'string') {
-      const h = host();
-      h.interact = h.interact || [];
-      h.interact.push(req);
-    }
-    if (step.kind === 'wait' || step.kind === 'yield'
-        || step.kind === 'callback.enabled' || step.kind === 'callback.log'
-        || step.kind === 'callback.setStatus'
-        || step.kind === 'grind-ready' || step.kind === 'supplies-needed'
-        || step.kind === 'no-shop' || step.kind === 'done' || step.kind === 'dead'
-        || step.kind === 'abandon' || step.kind === 'guardian-lost'
-        || req && typeof req === 'object' && typeof req.op === 'string') {
-      return clueStep(step);
-    }
-    return helperErr('stale');
+    return runMachine('clue', { token: input.token }, hooks || {});
   },
-    retry: function () {
+  retry: function () {
     const step = clueCall({ op: 'retry' });
     if (!step || typeof step !== 'object' || step.kind !== 'retry') {
       return helperErr('stale');

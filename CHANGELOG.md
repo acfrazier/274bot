@@ -92,6 +92,8 @@ best-effort and untested in this release.
   light fire, shop, chat dialog (make/makeX/makeFromPanel/chooseOption), dialog,
   reach (npcDialog/entityOp), walkWithHops, walkResilient, trade, partner trade,
   clue/Sherlock and every hunt family run on it.
+- The v2 clue session is begin plus one awaited run; Rust now owns its
+  continuation table, callbacks, waits and verb mapping.
 - The v2 hunt family is begin plus one awaited run with typed `.d.ts` inputs;
   the nine v2 hunt examples are rewritten to that contract.
 - Paint: canvas ops record on a tape and flush once per pass; paint frames are
@@ -162,10 +164,9 @@ best-effort and untested in this release.
   their fights on 289 (each eat clears the attack); the prepared cells are the
   representatives. `moss_giant_bank`, `ardy_fighter_bank` and the earned-loot
   step of `rock_crab_bank` depend on the frozen Fight hold or drop RNG.
-- Fence residuals for 0.1.9: `cake_stall.js` still pumps a Rust begin/next
-  driver instead of one machine await; the v2 clue and quest-journal APIs are
-  still begin/next; several in-isolate helpers still take untyped JSON
-  arguments (no additional host wire).
+- Fence residuals for 0.1.9: the v2 quest-journal API is still begin/next;
+  several in-isolate helpers still take untyped JSON arguments (no additional
+  host wire).
 - Lumbridge fountain banding on the GPU path needs a vertex-format change
   (0.1.9). Measurement-only performance claims are deferred to 0.1.9.
 

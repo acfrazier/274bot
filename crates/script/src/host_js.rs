@@ -536,8 +536,8 @@ fn render_native_v2(out: &mut String) {
     out.push_str(
         "  questPrereqs(input: { id: string; name?: string }): HelperResult<QuestRequirements>;\n",
     );
-    out.push_str("  /** Sync landed trail-row read, pure pack arithmetic, pure hard-kit status, the pure keep predicate over caller facts, and the clue machine's own begin / next / retry. None is a Promise and none is a request op; `packPlan`, `hardKit`, and `keep` read no snapshot, inventory, or family, and `retry` is the machine's latch clear — never a connection-boundary reset and never a token abort. */\n");
-    out.push_str("  clue: { row(input: { id: number } | { alias: string }): HelperResult<ClueRow>; heldStep(): HelperResult<ClueRow>; packPlan(input: PackPlanInput): HelperResult<PackPlanTargets>; hardKit(input: { attack: number; lostCity: boolean; items: { id: number; count: number }[] }): HelperResult<{ status: 'ready' }>; keep(input: { name: string; extra?: string[] }): HelperResult<{ keep: boolean }>; begin(input?: object): HelperResult<{ token: number }>; next(input: { token: number; resume?: boolean }): ClueStep; retry(): HelperResult<{ cleared: true }> };\n");
+    out.push_str("  /** Sync landed trail-row read, pure pack arithmetic, pure hard-kit status, the pure keep predicate over caller facts, and the clue machine's begin / one awaited run / retry. `run` is the only Promise and none is a request op; `packPlan`, `hardKit`, and `keep` read no snapshot, inventory, or family, and `retry` is the machine's latch clear — never a connection-boundary reset and never a token abort. */\n");
+    out.push_str("  clue: { row(input: { id: number } | { alias: string }): HelperResult<ClueRow>; heldStep(): HelperResult<ClueRow>; packPlan(input: PackPlanInput): HelperResult<PackPlanTargets>; hardKit(input: { attack: number; lostCity: boolean; items: { id: number; count: number }[] }): HelperResult<{ status: 'ready' }>; keep(input: { name: string; extra?: string[] }): HelperResult<{ keep: boolean }>; begin(input?: object): HelperResult<{ token: number }>; run(input: { token: number }, hooks?: ClueHooks): Promise<ClueOutcome>; retry(): HelperResult<{ cleared: true }> };\n");
     out.push_str("  /** Sync posted-loc copy. Historical copy, not live. Not a Promise and not a request op. */\n");
     out.push_str("  sceneLocs(input: { ids: number[]; limit: number; region?: SceneRegionInput }): HelperResult<SceneProjection>;\n");
     out.push_str("  /** Sync posted-npc copy. actions is required: omitted is not match-any. Historical copy, not live. Not a Promise and not a request op. */\n");
@@ -696,25 +696,20 @@ fn render_native_v2(out: &mut String) {
     out.push_str(
         "  | { kind: 'aborted'; reason: 'reset' | 'superseded' | 'terminated' | 'unknown' };\n",
     );
-    out.push_str("export type ClueStep =\n");
-    out.push_str("  | { ok: true; status: 'continue'; token: number; kind: 'wait' | 'yield' | 'callback.enabled' }\n");
-    out.push_str("  | { ok: true; status: 'continue'; token: number; kind: 'callback.log' | 'callback.setStatus'; message: string }\n");
-    out.push_str("  | { ok: true; status: 'continue'; token: number; kind: 'held'; name: string; action: string }\n");
-    out.push_str("  | { ok: true; status: 'continue'; token: number; kind: 'walk'; x: number; z: number; level: number }\n");
-    out.push_str("  | { ok: true; status: 'continue'; token: number; kind: 'loc'; x: number; z: number; level: number; action: string; id: number }\n");
-    out.push_str("  | { ok: true; status: 'continue'; token: number; kind: 'npc'; name: string; action: string; index: number }\n");
-    out.push_str("  | { ok: true; status: 'continue'; token: number; kind: 'answer-count'; value: number }\n");
-    out.push_str("  | { ok: true; status: 'continue'; token: number; kind: 'if-button'; component_id: number }\n");
-    out.push_str("  | { ok: true; status: 'continue'; token: number; kind: 'close-modal' }\n");
-    out.push_str("  | { ok: true; status: 'continue'; token: number; kind: 'obj'; x: number; z: number; level: number; name: string | null; action: string }\n");
-    out.push_str("  | { ok: true; status: 'continue'; token: number; kind: 'puzzle-move'; id: number; slot: number; component: number; generation: number }\n");
-    out.push_str("  | { ok: true; status: 'continue'; token: number; kind: 'continue' | 'answer'; option?: number }\n");
-    out.push_str("  | { ok: true; status: 'continue'; token: number; kind: 'shop-button'; name: string; id: number; slot: number; component: number; chunk: number }\n");
-    out.push_str("  | { ok: true; status: 'continue'; token: number; kind: 'unequip' | 'wear' | 'deposit'; name: string }\n");
-    out.push_str("  | { ok: true; status: 'continue'; token: number; kind: 'withdraw'; name: string; action: string }\n");
-    out.push_str("  | { ok: true; status: 'continue'; token: number; kind: 'walk-nearest-bank' | 'close' }\n");
-    out.push_str("  | { ok: true; status: 'continue'; token: number; kind: 'open-booth'; x: number; z: number; level: number; id: number; name?: string; action?: string }\n");
-    out.push_str("  | { ok: false; error: string };\n");
+    out.push_str("/** Callbacks frozen for one clue run. Rust awaits each returned promise before advancing the machine. */\n");
+    out.push_str("export interface ClueHooks {\n");
+    out.push_str("  enabled?(): boolean | Promise<boolean>;\n");
+    out.push_str("  log?(message: string): void | Promise<void>;\n");
+    out.push_str("  setStatus?(message: string): void | Promise<void>;\n");
+    out.push_str("}\n");
+    out.push_str("export type ClueRunValue =\n");
+    out.push_str("  | { kind: 'yield' | 'done' | 'dead' | 'abandon' | 'guardian-lost'; token: number }\n");
+    out.push_str("  | { kind: 'aborted'; token: number; reason: string };\n");
+    out.push_str("/** One clue run's settlement. A hook that throws rejects the promise with that value. */\n");
+    out.push_str("export type ClueOutcome =\n");
+    out.push_str("  | { kind: 'done'; value: ClueRunValue }\n");
+    out.push_str("  | { kind: 'refused'; reason: string }\n");
+    out.push_str("  | { kind: 'aborted'; reason: 'reset' | 'superseded' | 'terminated' | 'unknown' };\n");
 }
 
 const SUPPORTING_INTERFACES: &[TsInterface] = &[
