@@ -35,7 +35,7 @@ use crate::script_runtime::{
     nav_world_state_for_observe, observe_script_inv, project_npc_boxes_for_isolate_snapshot,
     projected_npc_boxes, publish_script_paint, reset_script_nav, script_observe_cached,
     script_paint_of, script_running, script_slot, script_slot_or_insert, slot_arrival_reach,
-    step_nav_bot, NavBot, ScriptWall,
+    step_nav_bot, NavBot, ScriptSlot, ScriptWall,
 };
 use crate::{
     catalog_core, debug_enabled, login_readiness, paired_core, public_worlds, Play, RandomClaim,
@@ -64,7 +64,8 @@ impl Play {
     /// countdown adds at most its one-second tick. Do **not** abort the TCP
     /// link here — the caller sends a clean IF logout before calling this.
     pub fn stop_slot(&mut self, name: &str) {
-        if let Some(arm) = self.arms.get(name) {
+        let arm = self.arms.get(name).cloned();
+        if let Some(arm) = arm.as_ref() {
             arm.stop.store(true, Ordering::Relaxed);
             arm.notify_retry_wait();
             let mut queue = self.queue.lock();
@@ -80,6 +81,10 @@ impl Play {
         }
         self.cheats.lock().unwrap().remove(name);
         self.wires.lock().unwrap().remove(name);
+        #[cfg(test)]
+        if let Some(arm) = arm.as_ref() {
+            arm.signal_stop_cleanup_for_test();
+        }
         if self.focused.as_deref() == Some(name) {
             self.focused = None;
             self.queue.lock().set_preferred_owner(None);
@@ -172,11 +177,45 @@ impl Play {
         // focus/draw/stop/spawn changes; the slot thread polls the park end.
         let (wake, park) = wake_channel();
         self.wakes.insert(profile.username.clone(), wake);
+        // A slot lifetime owns exactly one row/script/command set. Publish
+        // every entry synchronously before the worker can run; each lock is
+        // released before the next is acquired, so this adds no lock-order edge.
+        let username = profile.username.clone();
+        let slot_input = input.unwrap_or_else(SlotInput::new);
+        let slot_script = script_slot_or_insert(&self.scripts, &username);
+        slot_script
+            .lock()
+            .unwrap()
+            .bind_native_input(slot_input.authority());
+        self.cheats
+            .lock()
+            .unwrap()
+            .entry(username.clone())
+            .or_default();
+        self.wires
+            .lock()
+            .unwrap()
+            .entry(username.clone())
+            .or_default();
+        let world = world_round.as_ref().and_then(|round| {
+            self.connection
+                .profile()
+                .and_then(|profile| profile.public_worlds())
+                .map(|worlds| worlds.worlds[round.index].number)
+        });
+        let mut statuses = self.statuses.lock().unwrap();
+        statuses.retain(|status| status.username != username);
+        statuses.push(SlotStatus {
+            username,
+            world,
+            ..SlotStatus::default()
+        });
+        drop(statuses);
         spawn_slot_thread(
             &self.connection,
             profile,
             world_round,
-            input,
+            slot_input,
             mailbox,
             Some(park),
             arm,
@@ -186,6 +225,7 @@ impl Play {
             Arc::clone(&self.queue),
             Arc::clone(&self.statuses),
             Arc::clone(&self.scripts),
+            slot_script,
             Arc::clone(&self.cheats),
             Arc::clone(&self.wires),
             Arc::clone(&self.navs),
@@ -296,7 +336,7 @@ fn spawn_slot_thread(
     connection: &PlayConnection,
     profile: Profile,
     mut world_round: Option<public_worlds::WorldRound>,
-    slot_input: Option<Arc<SlotInput>>,
+    slot_input: Arc<SlotInput>,
     slot_mailbox: Option<Arc<FrameBuf>>,
     park: Option<SlotPark>,
     arm: Arc<SlotArm>,
@@ -306,6 +346,7 @@ fn spawn_slot_thread(
     slot_queue: SharedLoginQueue,
     slot_statuses: Arc<Mutex<Vec<SlotStatus>>>,
     slot_scripts: ScriptWall,
+    slot_script: ScriptSlot,
     slot_cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>>,
     slot_wires: Arc<Mutex<HashMap<String, VecDeque<WireCmd>>>>,
     slot_navs: Arc<Mutex<HashMap<String, NavBot>>>,
@@ -331,41 +372,18 @@ fn spawn_slot_thread(
             .name(username.clone())
             .stack_size(THREAD_STACK)
             .spawn(move || {
+            #[cfg(test)]
+            let startup_entries_published = arm.wait_worker_start_for_test();
             let _queue_retirement = QueuePlaceRetirement {
                 queue: &slot_queue,
                 statuses: &slot_statuses,
                 username: &username,
                 arm: &arm,
             };
-            {
-                // Publish the row before `prepare_client`/`maininit`
-                // (a slow cache fetch can stall for seconds), so the
-                // queue card shows the slot while it loads.
-                let mut all = slot_statuses.lock().unwrap();
-                all.push(SlotStatus {
-                    username: username.clone(),
-                    world: world_round.as_ref().and_then(|round| connection.profile()
-                        .and_then(|p| p.public_worlds())
-                        .map(|worlds| worlds.worlds[round.index].number)),
-                    ..SlotStatus::default()
-                });
+            #[cfg(test)]
+            if let Some(published) = startup_entries_published {
+                published.send(()).unwrap();
             }
-            let slot_script = script_slot_or_insert(&slot_scripts, &username);
-            let slot_input = slot_input.unwrap_or_else(SlotInput::new);
-            {
-                let mut slot_script = slot_script.lock().unwrap();
-                slot_script.bind_native_input(slot_input.authority());
-            }
-            slot_cheats
-                .lock()
-                .unwrap()
-                .entry(username.clone())
-                .or_default();
-            slot_wires
-                .lock()
-                .unwrap()
-                .entry(username.clone())
-                .or_default();
             // Preparation has no determinate client percentage, but publish
             // a phase immediately so a slow cache fetch is visibly active.
             publish_startup_phase(&slot_statuses, &username, "Preparing client");

@@ -60,6 +60,17 @@ pub struct SlotArm {
     /// login queue, after unrelated asset initialization.
     #[cfg(test)]
     pub(crate) bypass_asset_startup: AtomicBool,
+    /// Deterministic worker-entry gate for lifecycle race regressions.
+    #[cfg(test)]
+    worker_start_gate: parking_lot::Mutex<
+        Option<(
+            std::sync::mpsc::Sender<()>,
+            std::sync::mpsc::Receiver<()>,
+            std::sync::mpsc::Sender<()>,
+        )>,
+    >,
+    #[cfg(test)]
+    stop_cleanup_signal: parking_lot::Mutex<Option<std::sync::mpsc::Sender<()>>>,
 }
 
 impl SlotArm {
@@ -83,6 +94,10 @@ impl SlotArm {
             retry_wake: parking_lot::Condvar::new(),
             #[cfg(test)]
             bypass_asset_startup: AtomicBool::new(false),
+            #[cfg(test)]
+            worker_start_gate: parking_lot::Mutex::new(None),
+            #[cfg(test)]
+            stop_cleanup_signal: parking_lot::Mutex::new(None),
         })
     }
     /// Enter the spawned worker at the queue/login seam. Production slots
@@ -90,6 +105,45 @@ impl SlotArm {
     #[cfg(test)]
     pub(crate) fn bypass_asset_startup_for_test(&self) {
         self.bypass_asset_startup.store(true, Ordering::Relaxed);
+    }
+
+    /// Pause a spawned worker before it may publish lifetime-owned entries.
+    /// Returns entry/publication receivers and the release sender.
+    #[cfg(test)]
+    pub(crate) fn hold_worker_start_for_test(
+        &self,
+    ) -> (
+        std::sync::mpsc::Receiver<()>,
+        std::sync::mpsc::Sender<()>,
+        std::sync::mpsc::Receiver<()>,
+    ) {
+        let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let (published_tx, published_rx) = std::sync::mpsc::channel();
+        *self.worker_start_gate.lock() = Some((entered_tx, release_rx, published_tx));
+        (entered_rx, release_tx, published_rx)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn wait_worker_start_for_test(&self) -> Option<std::sync::mpsc::Sender<()>> {
+        let (entered, release, published) = self.worker_start_gate.lock().take()?;
+        entered.send(()).unwrap();
+        release.recv().unwrap();
+        Some(published)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn hold_stop_cleanup_for_test(&self) -> std::sync::mpsc::Receiver<()> {
+        let (sent, received) = std::sync::mpsc::channel();
+        *self.stop_cleanup_signal.lock() = Some(sent);
+        received
+    }
+
+    #[cfg(test)]
+    pub(crate) fn signal_stop_cleanup_for_test(&self) {
+        if let Some(signal) = self.stop_cleanup_signal.lock().take() {
+            signal.send(()).unwrap();
+        }
     }
 
     /// Arm an operator-requested one-shot login independently of auto-login.

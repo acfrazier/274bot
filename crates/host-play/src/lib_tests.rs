@@ -1074,6 +1074,88 @@ fn stop_slot_sets_stop_and_forgets_name() {
 }
 
 #[test]
+fn stop_before_worker_start_retires_entries_and_respawn_has_one_row() {
+    let mut play = run_with_io(
+        &PlayOptions {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            lowmem: true,
+            mainland: false,
+        },
+        vec![],
+        |_| (None, None),
+        |_, _, _| {},
+    );
+    let profile = Profile {
+        username: "alice".into(),
+        password: "pw".into(),
+        uid: 7,
+        settings: ProfileSettings::default(),
+    };
+    let arm = SlotArm::new(7, true);
+    arm.bypass_asset_startup_for_test();
+    let (entered, release, published) = arm.hold_worker_start_for_test();
+    let cleaned = arm.hold_stop_cleanup_for_test();
+    play.spawn_slot(
+        profile.clone(),
+        None,
+        None,
+        Some(Arc::clone(&arm)),
+    );
+    entered
+        .recv_timeout(Duration::from_secs(2))
+        .expect("worker did not reach the startup gate");
+
+    let stopper = thread::spawn(move || {
+        play.stop_slot("alice");
+        play
+    });
+    cleaned
+        .recv_timeout(Duration::from_secs(2))
+        .expect("stop did not retire lifetime entries before joining");
+    release.send(()).unwrap();
+    published
+        .recv_timeout(Duration::from_secs(2))
+        .expect("worker did not pass lifetime-entry publication");
+    let mut play = stopper.join().unwrap();
+
+    assert!(!play.spawned.contains("alice"));
+    assert!(!play.arms.contains_key("alice"));
+    assert!(!play.handles.contains_key("alice"));
+    assert!(!play.scripts.lock().unwrap().contains_key("alice"));
+    assert!(!play.cheats.lock().unwrap().contains_key("alice"));
+    assert!(!play.wires.lock().unwrap().contains_key("alice"));
+    assert!(
+        play.statuses()
+            .iter()
+            .all(|status| status.username != "alice"),
+        "a stopped worker must not publish a ghost row after cleanup"
+    );
+
+    let replacement = SlotArm::new(8, false);
+    replacement.bypass_asset_startup_for_test();
+    let (entered, release, published) = replacement.hold_worker_start_for_test();
+    play.spawn_slot(profile, None, None, Some(Arc::clone(&replacement)));
+    entered
+        .recv_timeout(Duration::from_secs(2))
+        .expect("replacement worker did not reach the startup gate");
+    release.send(()).unwrap();
+    published
+        .recv_timeout(Duration::from_secs(2))
+        .expect("replacement did not publish its lifetime entries");
+    assert_eq!(
+        play.statuses()
+            .iter()
+            .filter(|status| status.username == "alice")
+            .count(),
+        1,
+        "a replacement lifetime owns exactly one status row"
+    );
+    play.stop_slot("alice");
+}
+
+#[test]
 fn stop_slot_wakes_a_parked_thread_before_joining() {
     let mut play = run_with_io(
         &PlayOptions {
