@@ -249,6 +249,7 @@ export default class T extends LoopingBot {
         const pending = DirectNavigator.walkTo({ x: 3222, z: 3295, level: 0 }, 0, 10000);
         ScriptRunner.stop('abort walkTo');
         globalThis.__ok = await pending;
+        this.log('walk-result:' + String(globalThis.__ok));
     }
 }
 "#;
@@ -257,29 +258,30 @@ export default class T extends LoopingBot {
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(1);
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-    let logs = loop {
-        let logs = iso.drain_logs();
-        if logs.iter().any(|l| l.contains("stop")) || std::time::Instant::now() > deadline {
-            break logs;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    };
-    assert!(
-        logs.iter().any(|l| l.contains("stop")),
-        "ScriptRunner.stop must log while walkTo is parked: {logs:?}"
-    );
-    loop {
-        if iso.probe("1 + 1").is_err() {
-            break;
+    let receipt = loop {
+        if let Some(receipt) = iso.script_stop_receipt() {
+            break receipt;
         }
         assert!(
             std::time::Instant::now() < deadline,
-            "Stop must end the isolate without resolving walkTo true"
+            "ScriptRunner.stop did not terminate the parked walkTo"
         );
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
-    assert!(iso.stopped());
-    iso.join();
+        std::thread::yield_now();
+    };
+    assert_eq!(receipt.reason, "abort walkTo");
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    iso.join_detached(done_tx);
+    let logs = done_rx
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .expect("walkTo stop join exceeded the generous hang guard");
+    assert!(
+        logs.iter().any(|l| l.contains("script requested stop")),
+        "ScriptRunner.stop must log while walkTo is parked: {logs:?}"
+    );
+    assert!(
+        !logs.iter().any(|l| l == "walk-result:true"),
+        "Stop must end the isolate without resolving walkTo true: {logs:?}"
+    );
 }
 
 #[test]

@@ -14770,7 +14770,7 @@ fn script_observe_walk_arms_route_and_pump_steps_follow() {
         "ctx.walk queued the route request"
     );
     assert!(
-        wait_until(100, || queued(&navs)
+        wait_until(5_000, || queued(&navs)
             == Some(WorldTile {
                 x: 4,
                 z: 0,

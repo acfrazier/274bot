@@ -115,6 +115,40 @@ fn tick(iso: &LoadIsolate, n: u64, hold: bool) {
     iso.on_game_tick(n);
     let _ = iso.probe("true");
 }
+fn wait_for_recovery_entry(iso: &LoadIsolate) -> bool {
+    iso.drain_lifecycle();
+    iso.resume();
+    iso.request_recovery_anchor();
+    let trigger_at = Instant::now() + Duration::from_millis(60);
+    while Instant::now() < trigger_at {
+        std::thread::yield_now();
+    }
+    iso.on_game_tick(3);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut interrupted = false;
+    let mut completed = false;
+    while Instant::now() < deadline {
+        interrupted |= iso
+            .drain_logs()
+            .iter()
+            .any(|line| line.contains("interrupted slow recoveryAnchor"));
+        completed |= iso
+            .drain_lifecycle()
+            .iter()
+            .any(|req| matches!(req, InteractReq::RecoveryAnchorNone));
+        if interrupted && completed {
+            break;
+        }
+        std::thread::yield_now();
+    }
+    if !interrupted || !completed {
+        return false;
+    }
+    iso.resume();
+    iso.probe("globalThis.__anchor_entered === true")
+        .ok()
+        .is_some_and(|value| value == true)
+}
 
 #[test]
 fn note_progress_queues_lifecycle_op_and_is_noop_without_host() {
@@ -591,29 +625,50 @@ export default class T extends LoopingBot {
 fn hostile_recovery_anchor_is_interrupted_and_isolate_survives() {
     let src = r#"
 export default class T extends LoopingBot {
-    recoveryAnchor() { while(true){} }
+    recoveryAnchor() {
+        if (!globalThis.__anchor_started) {
+            globalThis.__anchor_started = true;
+            return { x: 2655, z: 3298, level: 0 };
+        }
+        globalThis.__anchor_entered = true;
+        for(;;){}
+    }
     loop() { globalThis.__n = (globalThis.__n || 0) + 1; }
 }
 "#;
     let iso = spawn(src);
     tick(&iso, 1, false);
     iso.request_recovery_anchor();
-    std::thread::sleep(std::time::Duration::from_millis(80));
-    iso.pause();
+    assert_eq!(
+        iso.probe("globalThis.__anchor_started").unwrap(),
+        true,
+        "first recoveryAnchor call must publish the start handshake"
+    );
+    let first = iso.drain_lifecycle();
+    assert!(
+        first
+            .iter()
+            .any(|req| matches!(req, InteractReq::RecoveryAnchor { .. })),
+        "first recoveryAnchor reply must be drained before the hostile call"
+    );
+    tick(&iso, 2, false);
+    assert!(
+        wait_for_recovery_entry(&iso),
+        "recoveryAnchor interrupt ack did not return an entered body"
+    );
     iso.resume();
+    assert_eq!(
+        iso.probe("globalThis.__anchor_entered").unwrap(),
+        true,
+        "interrupt ack must publish entry before it spins"
+    );
     iso.on_game_tick(2);
     let n = iso
         .probe("__n")
-        .expect("isolate must stay usable after an interrupted recoveryAnchor");
+        .expect("isolate must stay usable after interrupted recoveryAnchor");
     assert!(
         n.as_i64().unwrap() >= 1,
         "post-interrupt tick reached JS: {n}"
-    );
-    let logs = iso.drain_logs();
-    assert!(
-        logs.iter()
-            .any(|l| l.contains("interrupted") || l.contains("slow recoveryAnchor")),
-        "recoveryAnchor must use the terminate path: {logs:?}"
     );
     iso.join();
 }
@@ -622,20 +677,34 @@ export default class T extends LoopingBot {
 fn join_bounds_a_hostile_recovery_anchor() {
     let src = r#"
 export default class T extends LoopingBot {
-    recoveryAnchor() { while(true){} }
+    recoveryAnchor() {
+        if (!globalThis.__anchor_started) {
+            globalThis.__anchor_started = true;
+            return { x: 2655, z: 3298, level: 0 };
+        }
+        while(true){}
+    }
     loop() {}
 }
 "#;
     let iso = spawn(src);
     tick(&iso, 1, false);
     iso.request_recovery_anchor();
-    std::thread::sleep(std::time::Duration::from_millis(80));
-    let t0 = std::time::Instant::now();
-    iso.join();
-    assert!(
-        t0.elapsed() < std::time::Duration::from_secs(10),
-        "join must be bounded on a hostile recoveryAnchor"
+    assert_eq!(
+        iso.probe("globalThis.__anchor_started").unwrap(),
+        true,
+        "first recoveryAnchor call must publish the start handshake"
     );
+    iso.request_recovery_anchor();
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    let joiner = std::thread::spawn(move || {
+        iso.join();
+        done_tx.send(()).unwrap();
+    });
+    done_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("hostile recoveryAnchor join exceeded the generous hang guard");
+    joiner.join().unwrap();
 }
 
 #[test]

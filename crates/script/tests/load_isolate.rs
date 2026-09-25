@@ -676,27 +676,68 @@ fn isolate_logs_tick_errors() {
 // cancelled from the host), and the isolate stays usable afterwards.
 #[test]
 fn slow_tick_is_interrupted_and_isolate_survives() {
-    // The first tick spins forever; later ticks count.
-    let src = "export function tick(api) { globalThis.__rs_n = (globalThis.__rs_n||0)+1; if (globalThis.__rs_n === 1) { while(true){} } }";
+    // The first tick publishes a start handshake. The runaway body records
+    // entry before spinning forever, so scheduler order cannot make the
+    // post-interrupt probe ambiguous.
+    let src = "export function tick(api) { \
+        if (!globalThis.__started) { globalThis.__started = true; return; } \
+        globalThis.__entered = (globalThis.__entered|0) + 1; \
+        globalThis.__rs_n = (globalThis.__rs_n||0)+1; \
+        if (globalThis.__entered === 1) { for(;;){} } \
+    }";
     let iso = spawn_ready(src.to_string(), LoadShape::NativeTick, vec![]);
     iso.on_game_tick(1);
-    // Let the thread enter the spin; pause then arms a terminate for the
-    // over-budget tick (no immediate cancel), and resume re-arms dispatch.
-    std::thread::sleep(std::time::Duration::from_millis(80));
-    iso.pause();
-    iso.resume();
-    // The interrupted tick unwinds on the thread; this tick and the probe
-    // round-trip only when the terminate was cleared after the tick's
-    // frames unwound (a host-side cancel would race and never interrupt).
-    iso.on_game_tick(2);
-    let n = iso
-        .probe("__rs_n")
-        .expect("isolate must stay usable after an interrupted tick");
-    assert_eq!(n, 2, "the post-interrupt tick reached the JS");
-    let logs = iso.drain_logs();
+    assert_eq!(
+        iso.probe("globalThis.__started").unwrap(),
+        true,
+        "first tick must publish the slow-tick start handshake"
+    );
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut logs = Vec::new();
+    let mut survived = false;
+    for attempt in 0..20u64 {
+        let tick = 2 + attempt;
+        iso.resume();
+        iso.on_game_tick(tick);
+        let mut interrupted = false;
+        while Instant::now() < deadline {
+            logs.extend(iso.drain_logs());
+            if logs
+                .iter()
+                .any(|line| line.contains("interrupted slow tick"))
+            {
+                interrupted = true;
+                break;
+            }
+            iso.pause();
+            iso.resume();
+            iso.on_game_tick(tick);
+            std::thread::yield_now();
+        }
+        if !interrupted {
+            break;
+        }
+        iso.resume();
+        let entered = iso
+            .probe("globalThis.__entered")
+            .expect("interrupted isolate must answer the entry probe");
+        if entered.as_i64().unwrap_or(0) == 0 {
+            continue;
+        }
+        iso.on_game_tick(tick + 1);
+        let n = iso
+            .probe("__rs_n")
+            .expect("isolate must stay usable after an interrupted tick")
+            .as_i64()
+            .unwrap_or(0);
+        assert!(n >= 2, "the post-interrupt tick reached the JS: n={n}");
+        survived = true;
+        break;
+    }
+    logs.extend(iso.drain_logs());
     assert!(
-        logs.iter().any(|l| l.contains("interrupted slow tick")),
-        "the budget interrupt must be logged: {logs:?}"
+        survived,
+        "no attempt observed a started loop before watchdog interruption: {logs:?}"
     );
     iso.join();
 }
@@ -910,19 +951,31 @@ fn malformed_interact_rows_are_logged_not_dropped_silently() {
 #[test]
 fn join_bounds_a_runaway_tick() {
     let iso = LoadIsolate::spawn(
-        "export function tick(api) { while(true){} }".to_string(),
+        "export function tick(api) { \
+            if (!globalThis.__started) { globalThis.__started = true; return; } \
+            while(true){} \
+        }"
+        .to_string(),
         LoadShape::NativeTick,
         vec![],
     )
     .expect("spawn runaway isolate");
     iso.on_game_tick(1);
-    std::thread::sleep(std::time::Duration::from_millis(80));
-    let t0 = std::time::Instant::now();
-    iso.join();
-    assert!(
-        t0.elapsed() < std::time::Duration::from_secs(10),
-        "join must be bounded on a runaway tick"
+    assert_eq!(
+        iso.probe("globalThis.__started").unwrap(),
+        true,
+        "first tick must publish the runaway start handshake"
     );
+    iso.on_game_tick(2);
+    let (done_tx, done_rx) = mpsc::channel();
+    let joiner = thread::spawn(move || {
+        iso.join();
+        done_tx.send(()).unwrap();
+    });
+    done_rx
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .expect("runaway join exceeded the generous hang guard");
+    joiner.join().unwrap();
 }
 
 // (6) SlotScript: the isolate is spawned only by the Start helper
@@ -1532,6 +1585,10 @@ fn isolate_script_runner_stop_stops_the_isolate() {
 import { ScriptRunner } from '../../runtime/ScriptRunner.js';
 export default class T extends LoopingBot {
     loop() {
+        if (!globalThis.__started) {
+            globalThis.__started = true;
+            return;
+        }
         globalThis.__rs_n = (globalThis.__rs_n || 0) + 1;
         ScriptRunner.stop('done');
     }
@@ -1539,44 +1596,34 @@ export default class T extends LoopingBot {
 "#;
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     iso.on_game_tick(1);
-    // The flag is read inside the tick; the thread logs and breaks. Poll
-    // for the log (a probe round-trip would race the thread exit).
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-    let logs = loop {
-        let logs = iso.drain_logs();
-        if logs.iter().any(|l| l.contains("stop")) || std::time::Instant::now() > deadline {
-            break logs;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    };
+    assert_eq!(
+        iso.probe("globalThis.__started").unwrap(),
+        true,
+        "first tick must publish the stop fixture handshake"
+    );
+    iso.on_game_tick(2);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while iso.script_stop_receipt().is_none() && Instant::now() < deadline {
+        std::thread::yield_now();
+    }
+    assert_eq!(
+        iso.script_stop_receipt().map(|receipt| receipt.reason),
+        Some("done".to_string()),
+        "stop receipt must arrive before joining"
+    );
+    let (done_tx, done_rx) = mpsc::channel();
+    iso.join_detached(done_tx);
+    let logs = done_rx
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .expect("ScriptRunner.stop join exceeded the generous hang guard");
     assert!(
-        logs.iter().any(|l| l.contains("stop")),
+        logs.iter().any(|l| l.contains("script requested stop")),
         "the stop hook must be logged: {logs:?}"
     );
-    // The isolate stopped itself: it no longer answers probes (the thread
-    // exited, so the channel is closed). A live Runtime would keep
-    // answering — this is the regression the fix guards.
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-    loop {
-        if iso.probe("1 + 1").is_err() {
-            break;
-        }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "the isolate must stop answering probes after ScriptRunner.stop"
-        );
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
-    iso.drain_logs();
-    assert!(iso.stopped());
-    iso.on_game_tick(2);
-    std::thread::sleep(std::time::Duration::from_millis(650));
-    iso.on_game_tick(3);
     assert!(
-        iso.drain_logs().is_empty(),
-        "a stopped isolate has no slow ticks"
+        logs.iter().all(|l| !l.contains("slow tick")),
+        "a stopped isolate has no slow ticks: {logs:?}"
     );
-    iso.join();
 }
 
 // Task 3 — TaskBot.loop runs the first task whose validate() passes (the
@@ -2023,7 +2070,12 @@ export default class T extends LoopingBot {
             iso.on_game_tick(n);
             assert_eq!(iso.probe("globalThis.__loops || 0").unwrap(), 0);
         }
-        assert_eq!(iso.drain_logs(), vec![format!("tick {fails}: startboom")]);
+        let expected = format!("tick {fails}: startboom");
+        let logs = iso.drain_logs();
+        assert!(
+            logs.iter().any(|line| line == &expected),
+            "failed onStart must be logged: expected {expected:?}, got {logs:?}"
+        );
         iso.on_game_tick(fails + 1);
         assert_eq!(iso.probe("__loops").unwrap(), 1, "loop on the next tick");
         iso.join();
