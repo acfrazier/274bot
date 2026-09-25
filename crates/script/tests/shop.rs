@@ -381,7 +381,8 @@ export default class T extends LoopingBot {
             globalThis.__ok = await Shop.sell('Rune essence', globalThis.__qty, (i) => {
                 globalThis.__asked.push(i);
                 if (globalThis.__throw) throw new Error('pick broke');
-                return i.id !== 1436;
+                const picked = i.id !== 1436;
+                return globalThis.__promise ? Promise.resolve(picked) : picked;
             });
         } catch (e) {
             globalThis.__ok = String(e.message || e);
@@ -456,6 +457,45 @@ fn sell_with_pick_sells_the_row_pick_accepts_and_asks_again_per_batch() {
     post(&iso, &snap, Some(&player));
     tick(&iso, 5);
     assert_eq!(iso.probe("__ok").unwrap(), Value::from(55));
+    iso.join();
+}
+
+#[test]
+fn sell_treats_a_promise_returning_pick_as_sync_truthy() {
+    let iso = spawn(SELL_PICK);
+    let player = [
+        row("Rune essence", 1436, 2, 3823, 0),
+        row("Rune essence", 1437, 2, 3823, 3),
+    ];
+    let held = [
+        row("Rune essence", 1436, 2, 0, 0),
+        row("Rune essence", 1437, 2, 0, 3),
+    ];
+    let sold = [
+        row("Rune essence", 1436, 1, 0, 0),
+        row("Rune essence", 1437, 2, 0, 3),
+    ];
+    let mut snap = base();
+    snap.shop_open = true;
+    snap.inv = &held;
+    let _ = iso.probe("globalThis.__qty = 1; globalThis.__promise = true");
+    post(&iso, &snap, Some(&player));
+    tick(&iso, 1);
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![shop_button("sell", "Rune essence", 1436, 0, 3823, 1)],
+        "frozen Array.find sees the Promise object as truthy without awaiting it"
+    );
+    assert_eq!(iso.probe("__asked.length").unwrap(), 1);
+
+    snap.tick = 2;
+    snap.inv = &sold;
+    post(&iso, &snap, Some(&player));
+    tick(&iso, 2);
+    snap.tick = 3;
+    post(&iso, &snap, Some(&player));
+    tick(&iso, 3);
+    assert_eq!(iso.probe("__ok").unwrap(), Value::from(1));
     iso.join();
 }
 
