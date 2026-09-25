@@ -18,8 +18,8 @@ use super::poi::{
 use super::{Rows, Text};
 use client::config::{LocType, NpcType};
 use sha2::{Digest as _, Sha256};
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
-use std::path::Path;
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::path::{Path, PathBuf};
 
 /// Baker sources whose bytes join the navpois generator identity. Pack/flags
 /// bytes do not depend on these files.
@@ -107,12 +107,13 @@ fn build_document(
 ) -> Result<ServicePois, String> {
     let npc_ids = pack_ids(request.content_root, "npc.pack");
     let loc_ids = pack_ids(request.content_root, "loc.pack");
-    let mut npc_cfg = parse_named_configs(request.content_root, "npc");
-    let mut loc_cfg = parse_named_configs(request.content_root, "loc");
+    let tree = load_script_tree(request.content_root)?;
+    let mut npc_cfg = tree.npc_cfg;
+    let mut loc_cfg = tree.loc_cfg;
     bind_pack_ids(&mut npc_cfg, &npc_ids);
     bind_pack_ids(&mut loc_cfg, &loc_ids);
-    let scripts = load_scripts(request.content_root)?;
-    let analysis = analyse_bank_handlers(&scripts, &npc_ids, &loc_ids, &npc_cfg, &loc_cfg);
+    let analysis = analyse_bank_handlers(&tree.files, &npc_ids, &loc_ids, &npc_cfg, &loc_cfg);
+    drop(tree.files);
 
     let mut interesting_npcs: HashSet<i32> = HashSet::new();
     for npc in request.npcs {
@@ -731,19 +732,6 @@ struct NamedConfig {
     packed_id: Option<i32>,
 }
 
-fn parse_named_configs(content_root: &Path, ext: &str) -> HashMap<String, NamedConfig> {
-    let mut out = HashMap::new();
-    visit_files(
-        content_root,
-        &content_root.join("scripts"),
-        ext,
-        &mut |_rel, text| {
-            ingest_named_config(&text, &mut out);
-        },
-    );
-    out
-}
-
 fn ingest_named_config(text: &str, out: &mut HashMap<String, NamedConfig>) {
     let mut header: Option<String> = None;
     let mut cur = NamedConfig {
@@ -812,26 +800,60 @@ struct ScriptBlock {
     kind: String,
     name: String,
     params: Vec<String>,
-    body: String,
+    labels: Vec<String>,
+    proc_calls: Vec<(String, Vec<String>)>,
+    loc_changes: Vec<String>,
+    mentions_openbank: bool,
+    has_dialogue: bool,
+    has_members: bool,
 }
 
-fn load_scripts(content_root: &Path) -> Result<Vec<ScriptFile>, String> {
+struct ScriptTree {
+    npc_cfg: HashMap<String, NamedConfig>,
+    loc_cfg: HashMap<String, NamedConfig>,
+    files: Vec<ScriptFile>,
+}
+
+fn load_script_tree(content_root: &Path) -> Result<ScriptTree, String> {
+    let mut npc_cfg = HashMap::new();
+    let mut loc_cfg = HashMap::new();
     let mut files = Vec::new();
-    visit_files(
+    visit_script_tree(
         content_root,
         &content_root.join("scripts"),
-        "rs2",
-        &mut |rel, text| {
-            files.push(ScriptFile {
-                digest: Digest::of(text.as_bytes()),
-                restricted: rel.contains("/tutorial/"),
-                blocks: parse_rs2_blocks(&text),
-                rel,
-            });
+        &mut |rel, path| {
+            let ext = path.extension().and_then(|s| s.to_str());
+            match ext {
+                Some("npc") => {
+                    if let Ok(text) = std::fs::read_to_string(&path) {
+                        ingest_named_config(&text, &mut npc_cfg);
+                    }
+                }
+                Some("loc") => {
+                    if let Ok(text) = std::fs::read_to_string(&path) {
+                        ingest_named_config(&text, &mut loc_cfg);
+                    }
+                }
+                Some("rs2") => {
+                    if let Ok(text) = std::fs::read_to_string(&path) {
+                        files.push(ScriptFile {
+                            digest: Digest::of(text.as_bytes()),
+                            restricted: rel.contains("/tutorial/"),
+                            blocks: parse_rs2_blocks(&text),
+                            rel,
+                        });
+                    }
+                }
+                _ => {}
+            }
         },
     );
     files.sort_by(|a, b| a.rel.cmp(&b.rel));
-    Ok(files)
+    Ok(ScriptTree {
+        npc_cfg,
+        loc_cfg,
+        files,
+    })
 }
 
 fn parse_rs2_blocks(text: &str) -> Vec<ScriptBlock> {
@@ -842,12 +864,7 @@ fn parse_rs2_blocks(text: &str) -> Vec<ScriptBlock> {
                  body: &mut String,
                  blocks: &mut Vec<ScriptBlock>| {
         if let Some((kind, name, params)) = header.take() {
-            blocks.push(ScriptBlock {
-                kind,
-                name,
-                params,
-                body: std::mem::take(body),
-            });
+            blocks.push(compact_block(kind, name, params, &std::mem::take(body)));
         }
     };
     for raw in text.lines() {
@@ -873,6 +890,25 @@ fn parse_rs2_blocks(text: &str) -> Vec<ScriptBlock> {
     }
     flush(&mut header, &mut body, &mut blocks);
     blocks
+}
+
+fn compact_block(kind: String, name: String, params: Vec<String>, body: &str) -> ScriptBlock {
+    let mut labels = at_names(body);
+    labels.extend(multi_labels(body));
+    ScriptBlock {
+        kind,
+        name,
+        params,
+        labels,
+        proc_calls: extract_proc_calls(body),
+        loc_changes: all_call_args(body, "loc_change")
+            .into_iter()
+            .filter_map(|args| args.into_iter().next())
+            .collect(),
+        mentions_openbank: body_mentions_openbank(body),
+        has_dialogue: body_has_dialogue(body),
+        has_members: body_has_members(body),
+    }
 }
 
 fn split_signature(rest: &str) -> (Vec<String>, &str) {
@@ -948,11 +984,11 @@ fn analyse_bank_handlers(
     npc_cfg: &HashMap<String, NamedConfig>,
     loc_cfg: &HashMap<String, NamedConfig>,
 ) -> BankAnalysis {
-    let mut blocks: HashMap<(String, String), Vec<(&ScriptFile, &ScriptBlock)>> = HashMap::new();
+    let mut blocks: HashMap<(&str, &str), Vec<(&ScriptFile, &ScriptBlock)>> = HashMap::new();
     for file in scripts {
         for block in &file.blocks {
             blocks
-                .entry((block.kind.clone(), block.name.clone()))
+                .entry((block.kind.as_str(), block.name.as_str()))
                 .or_default()
                 .push((file, block));
         }
@@ -968,21 +1004,20 @@ fn analyse_bank_handlers(
         unresolved: BTreeMap::new(),
         file_digest: HashMap::new(),
     };
+    let mut openbank_memo = HashMap::new();
     for file in scripts {
         analysis.file_digest.insert(file.rel.clone(), file.digest);
         for block in &file.blocks {
             if let Some(slot) = op_slot(&block.kind) {
-                if reaches_openbank(block, &blocks) {
+                if reaches_openbank(block, &blocks, &mut openbank_memo) {
                     let eligibility = if file.restricted {
                         Eligibility::Restricted
-                    } else if body_has_dialogue(&block.body) || body_has_members(&block.body) {
+                    } else if block.has_dialogue || block.has_members {
                         Eligibility::Conditional
                     } else {
                         Eligibility::Unknown
                     };
-                    let trigger = if eligibility == Eligibility::Conditional
-                        && body_has_dialogue(&block.body)
-                    {
+                    let trigger = if eligibility == Eligibility::Conditional && block.has_dialogue {
                         ServiceTrigger::Dialogue
                     } else {
                         ServiceTrigger::Operation {
@@ -1083,11 +1118,11 @@ fn resolve_targets(
     Vec::new()
 }
 
-fn record_transitions(
-    file: &ScriptFile,
-    block: &ScriptBlock,
+fn record_transitions<'a>(
+    file: &'a ScriptFile,
+    block: &'a ScriptBlock,
     loc_ids: &HashMap<String, i32>,
-    blocks: &HashMap<(String, String), Vec<(&ScriptFile, &ScriptBlock)>>,
+    blocks: &HashMap<(&'a str, &'a str), Vec<(&'a ScriptFile, &'a ScriptBlock)>>,
     analysis: &mut BankAnalysis,
 ) {
     if !block.kind.starts_with("oploc") && !block.kind.starts_with("aploc") {
@@ -1121,56 +1156,42 @@ fn record_transitions(
     }
 }
 
-fn loc_change_targets(
-    block: &ScriptBlock,
+fn loc_change_targets<'a>(
+    block: &'a ScriptBlock,
     bindings: &HashMap<String, String>,
-    blocks: &HashMap<(String, String), Vec<(&ScriptFile, &ScriptBlock)>>,
+    blocks: &HashMap<(&'a str, &'a str), Vec<(&'a ScriptFile, &'a ScriptBlock)>>,
     follow_procs: bool,
-    seen: &mut HashSet<(String, String)>,
+    seen: &mut HashSet<(&'a str, &'a str)>,
 ) -> Vec<String> {
-    if !seen.insert((block.kind.clone(), block.name.clone())) {
+    if !seen.insert((block.kind.as_str(), block.name.as_str())) {
         return Vec::new();
     }
     let mut targets = Vec::new();
-    for args in all_call_args(&block.body, "loc_change") {
-        if let Some(first) = args.first() {
-            targets.push(substitute(first, bindings));
-        }
+    for raw in &block.loc_changes {
+        targets.push(substitute(raw, bindings));
     }
-    for label in at_names(&block.body)
-        .into_iter()
-        .chain(multi_labels(&block.body))
-    {
-        if let Some(next) = blocks.get(&("label".into(), label)) {
+    for label in &block.labels {
+        if let Some(next) = blocks.get(&("label", label.as_str())) {
             for (_, nested) in next {
                 targets.extend(loc_change_targets(nested, bindings, blocks, false, seen));
             }
         }
     }
     if follow_procs {
-        for proc in proc_names(&block.body) {
-            let calls = all_call_args(&block.body, &proc);
-            if let Some(next) = blocks.get(&("proc".into(), proc)) {
-                for (_, nested) in next {
-                    let arg_sets: Vec<Vec<String>> = if calls.is_empty() {
-                        vec![Vec::new()]
-                    } else {
-                        calls
-                            .iter()
-                            .map(|args| args.iter().map(|arg| substitute(arg, bindings)).collect())
-                            .collect()
-                    };
-                    for args in arg_sets {
-                        let nested_bindings = bind_params(&nested.params, &args);
-                        targets.extend(loc_change_targets(
-                            nested,
-                            &nested_bindings,
-                            blocks,
-                            false,
-                            seen,
-                        ));
-                    }
-                }
+        for (proc, args) in &block.proc_calls {
+            let Some(next) = blocks.get(&("proc", proc.as_str())) else {
+                continue;
+            };
+            for (_, nested) in next {
+                let bound: Vec<String> = args.iter().map(|arg| substitute(arg, bindings)).collect();
+                let nested_bindings = bind_params(&nested.params, &bound);
+                targets.extend(loc_change_targets(
+                    nested,
+                    &nested_bindings,
+                    blocks,
+                    false,
+                    seen,
+                ));
             }
         }
     }
@@ -1219,40 +1240,39 @@ fn resolve_loc_name(name: &str, loc_ids: &HashMap<String, i32>) -> Option<i32> {
         .filter(|id| loc_ids.values().any(|packed| packed == id))
 }
 
-fn reaches_openbank(
-    start: &ScriptBlock,
-    blocks: &HashMap<(String, String), Vec<(&ScriptFile, &ScriptBlock)>>,
+fn reaches_openbank<'a>(
+    start: &'a ScriptBlock,
+    blocks: &HashMap<(&'a str, &'a str), Vec<(&'a ScriptFile, &'a ScriptBlock)>>,
+    memo: &mut HashMap<(&'a str, &'a str), bool>,
 ) -> bool {
-    let mut seen = HashSet::new();
-    let mut queue = VecDeque::new();
-    queue.push_back((
-        start.kind.as_str(),
-        start.name.as_str(),
-        start.body.as_str(),
-    ));
-    while let Some((kind, name, body)) = queue.pop_front() {
-        if !seen.insert((kind.to_string(), name.to_string())) {
-            continue;
-        }
-        if kind == "label" && name == "openbank" || body_mentions_openbank(body) {
-            return true;
-        }
-        for label in at_names(body) {
-            if let Some(next) = blocks.get(&("label".into(), label.clone())) {
-                for (_, block) in next {
-                    queue.push_back(("label", block.name.as_str(), block.body.as_str()));
-                }
-            }
-        }
-        for label in multi_labels(body) {
-            if let Some(next) = blocks.get(&("label".into(), label.clone())) {
-                for (_, block) in next {
-                    queue.push_back(("label", block.name.as_str(), block.body.as_str()));
-                }
-            }
-        }
+    reaches_openbank_inner(start, blocks, memo, &mut HashSet::new())
+}
+
+fn reaches_openbank_inner<'a>(
+    block: &'a ScriptBlock,
+    blocks: &HashMap<(&'a str, &'a str), Vec<(&'a ScriptFile, &'a ScriptBlock)>>,
+    memo: &mut HashMap<(&'a str, &'a str), bool>,
+    visiting: &mut HashSet<(&'a str, &'a str)>,
+) -> bool {
+    let key = (block.kind.as_str(), block.name.as_str());
+    if let Some(hit) = memo.get(&key) {
+        return *hit;
     }
-    false
+    if !visiting.insert(key) {
+        return false;
+    }
+    let hit = (block.kind == "label" && block.name == "openbank")
+        || block.mentions_openbank
+        || block.labels.iter().any(|label| {
+            blocks
+                .get(&("label", label.as_str()))
+                .into_iter()
+                .flatten()
+                .any(|(_, nested)| reaches_openbank_inner(nested, blocks, memo, visiting))
+        });
+    visiting.remove(&key);
+    memo.insert(key, hit);
+    hit
 }
 
 fn body_mentions_openbank(body: &str) -> bool {
@@ -1302,8 +1322,8 @@ fn at_names(body: &str) -> Vec<String> {
     names
 }
 
-fn proc_names(body: &str) -> Vec<String> {
-    let mut names = Vec::new();
+fn extract_proc_calls(body: &str) -> Vec<(String, Vec<String>)> {
+    let mut calls = Vec::new();
     let bytes = body.as_bytes();
     let mut i = 0;
     while i < bytes.len() {
@@ -1314,14 +1334,16 @@ fn proc_names(body: &str) -> Vec<String> {
                 end += 1;
             }
             if end > start && end < bytes.len() && bytes[end] == b'(' {
-                names.push(body[start..end].to_string());
+                let name = body[start..end].to_string();
+                let args = parse_args(&body[end + 1..]).unwrap_or_default();
+                calls.push((name, args));
             }
             i = end;
         } else {
             i += 1;
         }
     }
-    names
+    calls
 }
 
 fn multi_labels(body: &str) -> Vec<String> {
@@ -1459,8 +1481,9 @@ fn collect_hits_from_map(
     npc_hits: &mut BTreeMap<i32, Vec<NpcHit>>,
     loc_hits: &mut BTreeMap<i32, Vec<LocHit>>,
 ) {
-    let link_below = link_below_tiles(text);
     let mut section = None;
+    let mut link_below = [0u64; 64];
+    let mut pending_locs = Vec::new();
     for raw in text.lines() {
         let line = raw.trim();
         if line.is_empty() {
@@ -1471,6 +1494,17 @@ fn collect_hits_from_map(
             continue;
         }
         match section {
+            Some("MAP") => {
+                if interesting_locs.is_empty() || line.as_bytes().first() != Some(&b'1') {
+                    continue;
+                }
+                let Some((level, x, z, flags)) = crate::pack::parse_map_line(line) else {
+                    continue;
+                };
+                if level == 1 && flags & 2 != 0 && x < 64 && z < 64 {
+                    link_below[z] |= 1u64 << x;
+                }
+            }
             Some("NPC") => {
                 let Some((plane, lx, lz, id)) = parse_npc_line(line) else {
                     continue;
@@ -1484,58 +1518,54 @@ fn collect_hits_from_map(
                 }
             }
             Some("LOC") => {
-                let Some((plane, lx, lz, id, shape, rotation)) = parse_loc_line(line) else {
+                if interesting_locs.is_empty() {
+                    continue;
+                }
+                let Some(id) = loc_line_id(line) else {
                     continue;
                 };
                 if !interesting_locs.contains(&id) {
                     continue;
                 }
-                let linked = link_below.contains(&(lx as usize, lz as usize));
-                if crate::collision::game_plane(i32::from(plane), linked).is_none() {
+                let Some((plane, lx, lz, id, shape, rotation)) = parse_loc_line(line) else {
                     continue;
-                }
-                loc_hits.entry(id).or_default().push(LocHit {
-                    x: mx * 64 + lx,
-                    z: mz * 64 + lz,
-                    plane,
-                    shape,
-                    rotation,
-                    link_below: linked,
-                });
+                };
+                pending_locs.push((plane, lx, lz, id, shape, rotation));
             }
             _ => {}
         }
     }
+    for (plane, lx, lz, id, shape, rotation) in pending_locs {
+        let linked = (lx as usize) < 64
+            && (lz as usize) < 64
+            && link_below[lz as usize] & (1u64 << lx as usize) != 0;
+        if crate::collision::game_plane(i32::from(plane), linked).is_none() {
+            continue;
+        }
+        loc_hits.entry(id).or_default().push(LocHit {
+            x: mx * 64 + lx,
+            z: mz * 64 + lz,
+            plane,
+            shape,
+            rotation,
+            link_below: linked,
+        });
+    }
+}
+
+fn loc_line_id(line: &str) -> Option<i32> {
+    line.split_once(':')?
+        .1
+        .split_whitespace()
+        .next()?
+        .parse()
+        .ok()
 }
 
 fn mapsquare_coords(name: &str) -> Option<(i32, i32)> {
     let rest = name.strip_prefix('m')?.strip_suffix(".jm2")?;
     let (x, z) = rest.split_once('_')?;
     Some((x.parse().ok()?, z.parse().ok()?))
-}
-
-fn link_below_tiles(text: &str) -> HashSet<(usize, usize)> {
-    let mut tiles = HashSet::new();
-    let mut in_map = false;
-    for raw in text.lines() {
-        let line = raw.trim();
-        if line.is_empty() {
-            continue;
-        }
-        if let Some(section) = section_name(line) {
-            in_map = section == "MAP";
-            continue;
-        }
-        if !in_map {
-            continue;
-        }
-        if let Some((level, x, z, flags)) = crate::pack::parse_map_line(line) {
-            if level == 1 && flags & 2 != 0 {
-                tiles.insert((x, z));
-            }
-        }
-    }
-    tiles
 }
 
 fn section_name(line: &str) -> Option<&str> {
@@ -1584,7 +1614,7 @@ fn parse_loc_line(line: &str) -> Option<(u8, i32, i32, i32, u8, u8)> {
     ))
 }
 
-fn visit_files(root: &Path, dir: &Path, ext: &str, cb: &mut impl FnMut(String, String)) {
+fn visit_script_tree(root: &Path, dir: &Path, cb: &mut impl FnMut(String, PathBuf)) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
@@ -1598,11 +1628,12 @@ fn visit_files(root: &Path, dir: &Path, ext: &str, cb: &mut impl FnMut(String, S
             if name == "_test" || name == "_unpack" || name == ".git" {
                 continue;
             }
-            visit_files(root, &path, ext, cb);
-        } else if path.extension().and_then(|s| s.to_str()) == Some(ext) {
-            if let Ok(text) = std::fs::read_to_string(&path) {
-                cb(relative(root, &path), text);
-            }
+            visit_script_tree(root, &path, cb);
+        } else if matches!(
+            path.extension().and_then(|s| s.to_str()),
+            Some("npc" | "loc" | "rs2")
+        ) {
+            cb(relative(root, &path), path);
         }
     }
 }
