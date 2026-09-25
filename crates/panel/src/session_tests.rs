@@ -4089,6 +4089,47 @@ fn explicit_login_recreates_terminal_worker_and_reuses_slot_io() {
 }
 
 #[test]
+fn login_all_recreates_terminal_worker_and_reuses_slot_io() {
+    let path = tmp_vault("terminal-worker-login-all.vault");
+    let mut session = Session::new();
+    let mut vault = Vault::create(&path, "bot").unwrap();
+    vault.upsert(profile("alice", "pw", 42)).unwrap();
+    session.vault = Some(vault);
+    session.skip_slot_spawn = true;
+    let play = empty_play();
+    play.statuses.lock().unwrap().push(SlotStatus {
+        username: "alice".into(),
+        startup_phase: StartupPhase::Error,
+        worker_terminal: Some(host_play::WorkerTerminal::Panicked),
+        ..SlotStatus::default()
+    });
+    session.play = Some(play);
+    session.wall.load("alice");
+    let input = SlotInput::new();
+    session.slots.insert(
+        "alice".into(),
+        SlotIo {
+            input: Arc::clone(&input),
+            pixels: FrameBuf::new(),
+        },
+    );
+    assert!(session.play.as_ref().unwrap().arm("alice").is_none());
+
+    session.login_all();
+
+    let replacement = session
+        .play
+        .as_ref()
+        .and_then(|play| play.arm("alice"))
+        .expect("Login all recreates the terminal worker arm");
+    assert!(replacement.wants_login());
+    assert!(Arc::ptr_eq(
+        &session.slots.get("alice").unwrap().input,
+        &input
+    ));
+}
+
+#[test]
 fn selecting_a_terminal_member_preserves_its_failure_until_explicit_login() {
     let path = tmp_vault("terminal-worker-select.vault");
     let mut session = Session::new();

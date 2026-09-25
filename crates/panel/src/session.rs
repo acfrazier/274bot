@@ -3978,22 +3978,36 @@ impl Session {
         }
     }
 
-    /// Log in every wall member: clear their latches and arm a login so
-    /// title-screen slots handshake. One-shot unless the profile's
-    /// auto-login is set (which keeps the arm armed after the handshake).
-    /// Queue membership follows worker arrival at Queueing; the focused slot
-    /// is the sole priority exception.
+    /// Log in every wall member: clear their latches, cancel pending removal,
+    /// and arm a login so title-screen slots handshake. A finished worker is
+    /// reaped and recreated with its retained IO, matching explicit Log in.
+    /// One-shot unless the profile's auto-login is set (which keeps the arm
+    /// armed after the handshake). Queue membership follows worker arrival at
+    /// Queueing; the focused slot is the sole priority exception.
     pub fn login_all(&mut self) {
-        if let (Some(play), Some(head)) = (self.play.as_ref(), self.tv_name()) {
-            play.prefer_login(&head);
+        let names = self.wall.members.clone();
+        for name in &names {
+            self.cancel_slot_removal(name);
+            self.wall.clear_latch(name);
         }
-        for name in self.wall.members.clone() {
-            self.wall.clear_latch(&name);
-            if let Some(arm) = self.play.as_ref().and_then(|play| play.arm(&name)) {
+        if let Some(play) = self.play.as_mut() {
+            play.reap_finished_workers();
+        }
+        for name in &names {
+            if let Some(arm) = self.play.as_ref().and_then(|play| play.arm(name)) {
                 arm.arm_explicit_login();
+            } else {
+                let arm = self.arm_for_profile(name);
+                if let Some(arm) = arm.as_ref() {
+                    arm.arm_explicit_login();
+                }
+                self.ensure_slot(name, arm, true);
             }
         }
-        if let Some(play) = self.play.as_ref() {
+        if let (Some(play), Some(head)) = (self.play.as_ref(), self.tv_name()) {
+            play.prefer_login(&head);
+            play.wake_all();
+        } else if let Some(play) = self.play.as_ref() {
             play.wake_all();
         }
     }
