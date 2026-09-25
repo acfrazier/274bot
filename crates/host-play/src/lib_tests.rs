@@ -9334,9 +9334,28 @@ fn dispatch_script_interact_walk_forwards_allow_teleports() {
     );
 }
 
+/// A 5×12 open strip straddling the surface wilderness edge (z 3520),
+/// with the content zone packed on the graph: routing gates wilderness
+/// entry on `graph.wilderness`, so a fixture without zones gates nothing.
 fn wilderness_entry_world() -> NavWorld {
     let flags = vec![0u32; 5 * 12];
     let (walk, blocked) = nav::collision::pack_walk(&flags);
+    let graph = TransportGraph {
+        wilderness: nav::transport::WildernessRules {
+            zones: vec![nav::transport::WildernessZone {
+                x1: 2944,
+                z1: 3520,
+                x2: 3391,
+                z2: 6399,
+                level1: 0,
+                level2: 3,
+                origin_z: 3520,
+            }],
+            divisor: 8,
+            offset: 1,
+        },
+        ..TransportGraph::default()
+    };
     NavWorld::from_parts(
         WorldCollision {
             origin: WorldTile {
@@ -9350,7 +9369,7 @@ fn wilderness_entry_world() -> NavWorld {
             blocked,
             flags: None,
         },
-        TransportGraph::default(),
+        graph,
         Vec::new(),
     )
 }
