@@ -7026,6 +7026,342 @@ fn a_different_held_step_drops_the_key_hunt() {
     assert_eq!(reborn["action"], ATTACK, "{reborn}");
     assert_eq!(reborn["index"], 21, "{reborn}");
 }
+// ── the gate-toll shop trip ──
+
+/// A posted navigator short for the selected Shantay pass.
+fn shantay_short(data: &SelectedGameData) -> Value {
+    let pass = data
+        .item_by_alias(SHANTAY_PASS)
+        .expect("selected Shantay pass");
+    json!([{ "id": pass.id, "name": pass.name, "count": 1 }])
+}
+
+/// A posted Shantay row at the selected spawn, with the action the toll trip
+/// is allowed to dispatch.
+fn shantay_keeper() -> Value {
+    json!({
+        "index": 12,
+        "id": SHANTAY_NPC_ID,
+        "name": SHANTAY_NAME,
+        "x": SHANTAY_X,
+        "z": SHANTAY_Z,
+        "level": SHANTAY_LEVEL,
+        "distance": 1,
+        "actions": [TRADE],
+    })
+}
+
+/// The failed search walk is intercepted once, shops exactly the nominated
+/// pass, closes the posted shop and resumes the original destination.
+#[test]
+fn gate_toll_buys_the_named_pass_once_and_walks_the_original_dest_back() {
+    on_reset();
+    let data = selected();
+    let pass = data
+        .item_by_alias(SHANTAY_PASS)
+        .expect("selected Shantay pass");
+    let page = json!([[SEARCH, 1]]);
+    let packed = json!([[SEARCH, 1], [pass.id, 1]]);
+    let short = shantay_short(&data);
+    let away = here(3200, 3218, 1);
+    let spawn = here(SHANTAY_X, SHANTAY_Z, SHANTAY_LEVEL);
+    let token = steady(&data, SEARCH);
+
+    let original = call(
+        &data,
+        token,
+        page.clone(),
+        json!({ "here": away, "walk_missing_carry": short }),
+    );
+    assert_eq!(original["kind"], "walk", "{original}");
+    assert_eq!(
+        (&original["x"], &original["z"], &original["level"]),
+        (&json!(3209), &json!(3218), &json!(1)),
+        "{original}"
+    );
+
+    let to_shop = call(
+        &data,
+        token,
+        page.clone(),
+        json!({ "here": away, "walk_missing_carry": short }),
+    );
+    assert_eq!(to_shop["kind"], "walk", "{to_shop}");
+    assert_eq!(
+        (&to_shop["x"], &to_shop["z"], &to_shop["level"]),
+        (&json!(SHANTAY_X), &json!(SHANTAY_Z), &json!(SHANTAY_LEVEL)),
+        "{to_shop}"
+    );
+
+    let trade = call(
+        &data,
+        token,
+        page.clone(),
+        json!({
+            "here": spawn,
+            "npcs": [shantay_keeper()],
+            "walk_missing_carry": short,
+        }),
+    );
+    assert_eq!(trade["kind"], "npc", "{trade}");
+    assert_eq!(trade["name"], SHANTAY_NAME, "{trade}");
+    assert_eq!(trade["action"], TRADE, "{trade}");
+    assert_eq!(trade["index"], 12, "{trade}");
+
+    let buy = call(
+        &data,
+        token,
+        page.clone(),
+        json!({
+            "here": spawn,
+            "shop_open": true,
+            "shop_stock": [{
+                "id": pass.id,
+                "name": pass.name,
+                "slot": 16,
+                "component": 3900,
+            }],
+            "walk_missing_carry": short,
+        }),
+    );
+    assert_eq!(buy["kind"], "shop-button", "{buy}");
+    assert_eq!(buy["shop"], BUY, "{buy}");
+    assert_eq!(
+        buy["name"],
+        pass.name.as_deref().expect("selected pass name"),
+        "{buy}"
+    );
+    assert_eq!(buy["id"], pass.id, "{buy}");
+    assert_eq!(buy["slot"], 16, "{buy}");
+    assert_eq!(buy["component"], 3900, "{buy}");
+    assert_eq!(buy["chunk"], 1, "{buy}");
+
+    let close = call(
+        &data,
+        token,
+        packed.clone(),
+        json!({
+            "here": spawn,
+            "shop_open": true,
+            "walk_missing_carry": short,
+        }),
+    );
+    assert_eq!(close["kind"], "close-modal", "{close}");
+
+    let resumed = call(
+        &data,
+        token,
+        packed,
+        json!({
+            "here": spawn,
+            "shop_open": false,
+            "walk_missing_carry": short,
+        }),
+    );
+    assert_eq!(resumed["kind"], "walk", "{resumed}");
+    assert_eq!(
+        (&resumed["x"], &resumed["z"], &resumed["level"]),
+        (&json!(3209), &json!(3218), &json!(1)),
+        "{resumed}"
+    );
+
+    // The once-per-token latch survives the trip: the same named failure falls
+    // through to the search arm instead of starting another shop trip.
+    let latched = call(
+        &data,
+        token,
+        page,
+        json!({ "here": spawn, "walk_missing_carry": short }),
+    );
+    assert_eq!(latched["kind"], "walk", "{latched}");
+    assert_eq!(
+        (&latched["x"], &latched["z"], &latched["level"]),
+        (&json!(3209), &json!(3218), &json!(1)),
+        "{latched}"
+    );
+    on_reset();
+}
+
+/// Missing-short diagnostics that do not name an absent Shantay pass — and a
+/// pass already held — never enter the shop trip.
+#[test]
+fn gate_toll_never_shops_an_unnamed_or_different_short_or_a_held_pass() {
+    let data = selected();
+    let pass = data
+        .item_by_alias(SHANTAY_PASS)
+        .expect("selected Shantay pass");
+    let page = json!([[SEARCH, 1]]);
+    let packed = json!([[SEARCH, 1], [pass.id, 1]]);
+    let named = shantay_short(&data);
+    let coins = json!([{ "id": 995, "name": "Coins", "count": 10 }]);
+    let away = here(3200, 3218, 1);
+
+    for (case, held, short) in [
+        ("unnamed", page.clone(), json!([])),
+        ("coins", page.clone(), coins),
+        ("already-held", packed, named),
+    ] {
+        on_reset();
+        let token = steady(&data, SEARCH);
+        let first = call(
+            &data,
+            token,
+            held.clone(),
+            json!({ "here": away, "walk_missing_carry": short }),
+        );
+        assert_eq!(first["kind"], "walk", "{case}: {first}");
+        let again = call(
+            &data,
+            token,
+            held,
+            json!({ "here": away, "walk_missing_carry": short }),
+        );
+        assert_eq!(again["kind"], "walk", "{case}: {again}");
+        assert_eq!(
+            (&again["x"], &again["z"], &again["level"]),
+            (&json!(3209), &json!(3218), &json!(1)),
+            "{case}: {again}"
+        );
+    }
+    on_reset();
+}
+
+/// The machine envelope is read before an armed shop trip: cooperative yield
+/// pauses it without advancing, while posted death ends the token.
+#[test]
+fn gate_toll_yield_and_death_precede_every_shop_verb() {
+    let data = selected();
+    let page = json!([[SEARCH, 1]]);
+    let short = shantay_short(&data);
+    let away = here(3200, 3218, 1);
+
+    on_reset();
+    let yielded_token = steady(&data, SEARCH);
+    let first = call(
+        &data,
+        yielded_token,
+        page.clone(),
+        json!({ "here": away, "walk_missing_carry": short }),
+    );
+    assert_eq!(first["kind"], "walk", "{first}");
+    let yielded = call(
+        &data,
+        yielded_token,
+        page.clone(),
+        json!({
+            "here": away,
+            "hold": true,
+            "walk_missing_carry": short,
+        }),
+    );
+    assert_eq!(yielded["kind"], "yield", "{yielded}");
+    let thawed = call(
+        &data,
+        yielded_token,
+        page.clone(),
+        json!({ "here": away, "walk_missing_carry": short }),
+    );
+    assert_eq!(thawed["kind"], "walk", "{thawed}");
+    assert_eq!(
+        (&thawed["x"], &thawed["z"], &thawed["level"]),
+        (&json!(SHANTAY_X), &json!(SHANTAY_Z), &json!(SHANTAY_LEVEL)),
+        "{thawed}"
+    );
+
+    on_reset();
+    let dead_token = steady(&data, SEARCH);
+    let first = call(
+        &data,
+        dead_token,
+        page.clone(),
+        json!({ "here": away, "walk_missing_carry": short }),
+    );
+    assert_eq!(first["kind"], "walk", "{first}");
+    let dead = call(
+        &data,
+        dead_token,
+        page,
+        json!({
+            "here": away,
+            "hitpoints": 0,
+            "walk_missing_carry": short,
+        }),
+    );
+    assert_eq!(dead["kind"], "dead", "{dead}");
+    let stale = call(&data, dead_token, json!([[SEARCH, 1]]), json!({}));
+    assert_eq!(stale["kind"], "aborted", "{stale}");
+    assert_eq!(stale["reason"], "stale", "{stale}");
+    on_reset();
+}
+
+/// A trip whose keeper never appears gives up with `no-shop`, keeps the live
+/// token, and resumes the original destination without retrying the shop.
+#[test]
+fn gate_toll_no_shop_keeps_the_token_and_resumes_the_original_walk() {
+    on_reset();
+    let data = selected();
+    let page = json!([[SEARCH, 1]]);
+    let short = shantay_short(&data);
+    let away = here(3200, 3218, 1);
+    let spawn = here(SHANTAY_X, SHANTAY_Z, SHANTAY_LEVEL);
+    let token = steady(&data, SEARCH);
+
+    let first = call(
+        &data,
+        token,
+        page.clone(),
+        json!({ "here": away, "walk_missing_carry": short }),
+    );
+    assert_eq!(first["kind"], "walk", "{first}");
+    let to_shop = call(
+        &data,
+        token,
+        page.clone(),
+        json!({ "here": away, "walk_missing_carry": short }),
+    );
+    assert_eq!(to_shop["kind"], "walk", "{to_shop}");
+
+    let waiting = call(
+        &data,
+        token,
+        page.clone(),
+        json!({ "here": spawn, "walk_missing_carry": short }),
+    );
+    assert_eq!(waiting["kind"], "wait", "{waiting}");
+    force_bound();
+    let failed = call(
+        &data,
+        token,
+        page.clone(),
+        json!({ "here": spawn, "walk_missing_carry": short }),
+    );
+    assert_eq!(failed["kind"], NO_SHOP, "{failed}");
+    assert_eq!(failed["token"], token, "{failed}");
+
+    let resumed = call(
+        &data,
+        token,
+        page.clone(),
+        json!({ "here": spawn, "walk_missing_carry": short }),
+    );
+    assert_eq!(resumed["kind"], "walk", "{resumed}");
+    assert_eq!(resumed["token"], token, "{resumed}");
+    assert_eq!(
+        (&resumed["x"], &resumed["z"], &resumed["level"]),
+        (&json!(3209), &json!(3218), &json!(1)),
+        "{resumed}"
+    );
+    let latched = call(
+        &data,
+        token,
+        page,
+        json!({ "here": spawn, "walk_missing_carry": short }),
+    );
+    assert_eq!(latched["kind"], "walk", "{latched}");
+    assert_eq!(latched["x"], 3209, "{latched}");
+    on_reset();
+}
+
 
 // ── the Entrana strip, its restore and the abandon latch ──
 
@@ -7728,6 +8064,43 @@ fn owns_equipment_reads_the_list_and_retry_clears_only_the_latch() {
     assert_eq!(live["kind"], "walk-nearest-bank", "{live}");
     on_reset();
 }
+/// An abandoned row remains refused across repeated begins until `retry`, while
+/// identifying a different row clears the latch on the way past.
+#[test]
+fn an_abandoned_row_is_refused_until_retry_or_a_different_row() {
+    on_stop();
+    let data = selected();
+    let search = json!([[SEARCH, 1]]);
+    let other = json!([[MAP_EMPTY, 1]]);
+
+    let token = token_of(&begin(&data, search.clone()));
+    let left = dispatch(Some(&data), &json!({ "op": "abandon" }));
+    assert_eq!(left["kind"], ABANDON, "{left}");
+    assert_ne!(left["token"], token, "{left}");
+
+    for _ in 0..2 {
+        let refused = begin(&data, search.clone());
+        assert_eq!(refused["kind"], "aborted", "{refused}");
+        assert_eq!(refused["reason"], ABANDONED, "{refused}");
+    }
+
+    let retried = dispatch(Some(&data), &json!({ "op": "retry" }));
+    assert_eq!(retried["kind"], "retry", "{retried}");
+    let accepted = begin(&data, search.clone());
+    assert_eq!(accepted["kind"], "token", "{accepted}");
+
+    // Latch the same row again, then identify another selected row. That begin
+    // is accepted and clears the old latch; returning to the first row is also
+    // accepted rather than refused.
+    let left_again = dispatch(Some(&data), &json!({ "op": "abandon" }));
+    assert_eq!(left_again["kind"], ABANDON, "{left_again}");
+    let different = begin(&data, other);
+    assert_eq!(different["kind"], "token", "{different}");
+    let back = begin(&data, search);
+    assert_eq!(back["kind"], "token", "{back}");
+    on_stop();
+}
+
 
 /// A connection boundary keeps the session's own strip list: `on_reset`
 /// drops the live step and its token and nothing else, so the reclaim the

@@ -1,7 +1,8 @@
-//! Clue row over the landed schema-4 trail membership family. Not a tool table.
-//! Not a clue machine and not a solve: the row read is the whole method.
+//! Clue rows over the landed schema-4 trail membership family, plus the v2
+//! clue machine's live host path over posted snapshots.
 use api::clue_facts::CluePin;
 use client::io::ClientRevision;
+use script::shim::InteractReq;
 use script::{LoadIsolate, LoadShape};
 
 fn facts(revision: ClientRevision) -> api::game_data::TrailFacts {
@@ -317,6 +318,39 @@ impl Default for Scene<'_> {
         }
     }
 }
+/// One posted loc row with the tile, id and actions the native snapshot
+/// carries into the clue machine.
+fn scene_loc<'a>(
+    id: i32,
+    x: i32,
+    z: i32,
+    level: i32,
+    actions: &'a [String],
+) -> script::isolate_fb::SceneEntityInput<'a> {
+    script::isolate_fb::SceneEntityInput {
+        index: 7,
+        id,
+        name: None,
+        x,
+        z,
+        level,
+        distance: 1,
+        health: 0,
+        max_health: 0,
+        in_combat: false,
+        animating: false,
+        actions,
+        reachable: true,
+        reachable_adj: true,
+        combat_level: 0,
+        target_kind: 0,
+        target_index: -1,
+        size: 1,
+        nx: x,
+        nz: z,
+    }
+}
+
 
 /// Selected coordinate-tool rows added to fixtures that exercise trio-owned steps.
 const TRIO_ITEMS: [(i32, &str); 3] = [(2574, "Sextant"), (2575, "Watch"), (2576, "Chart")];
@@ -941,6 +975,171 @@ export async function tick(api) {
         },
     );
     iso.on_game_tick(2);
+    let out = iso.probe("globalThis.__out").unwrap();
+    assert_eq!(out["kind"], "done", "{out:?}");
+    assert_eq!(out["value"]["kind"], "yield", "{out:?}");
+    assert!(iso.probe("globalThis.__error").unwrap().is_null());
+    assert!(iso.drain_interacts().is_empty());
+    iso.join();
+}
+/// The awaited public runner owns the callback replies and maps Rust verbs over
+/// live snapshots. Missing observations remain pending waits; a terminal kind
+/// settles the one promise.
+#[test]
+fn v2_clue_run_invokes_hooks_and_maps_wait_walk_loc_and_terminal_yield() {
+    let src = r#"
+export const apiVersion = 2;
+let started = false;
+export async function tick(api) {
+  if (started) return;
+  started = true;
+  const begin = api.clue.begin();
+  globalThis.__begin = begin;
+  globalThis.__events = [];
+  globalThis.__out = null;
+  globalThis.__error = null;
+  const hooks = {
+    enabled() {
+      globalThis.__events.push(['enabled', this === hooks]);
+      return true;
+    },
+    log(message) {
+      globalThis.__events.push(['log', message, this === hooks]);
+    },
+    setStatus(message) {
+      globalThis.__events.push(['setStatus', message, this === hooks]);
+    },
+  };
+  try {
+    globalThis.__out = await api.clue.run(begin.value, hooks);
+  } catch (error) {
+    globalThis.__error = String(error && error.message ? error.message : error);
+  }
+}
+"#;
+    let data = api::game_data::for_revision(ClientRevision::R274).unwrap();
+    let iso =
+        LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data).unwrap();
+    let page = [(2677, 1)];
+
+    // No posted player tile: all three hooks answer in order, then the search
+    // arm waits with no verb and the run stays pending.
+    post_page(&iso, 1, &page);
+    iso.on_game_tick(1);
+    assert_eq!(iso.probe("globalThis.__begin.ok").unwrap(), true);
+    let events = iso.probe("globalThis.__events").unwrap();
+    let events = events.as_array().expect("hook events");
+    assert_eq!(events.len(), 3, "{events:?}");
+    assert_eq!(events[0], serde_json::json!(["enabled", true]));
+    assert_eq!(events[1][0], "log", "{events:?}");
+    assert_eq!(events[1][2], true, "{events:?}");
+    assert!(
+        events[1][1]
+            .as_str()
+            .unwrap_or("")
+            .contains("trail_clue_easy_simple001"),
+        "{events:?}"
+    );
+    assert_eq!(events[2][0], "setStatus", "{events:?}");
+    assert_eq!(events[2][2], true, "{events:?}");
+    assert!(iso.probe("globalThis.__out").unwrap().is_null());
+    assert!(iso.probe("globalThis.__error").unwrap().is_null());
+    assert!(iso.drain_interacts().is_empty());
+
+    // A posted tile away from the decoded destination maps the machine's walk
+    // into the host interact queue.
+    post_scene(
+        &iso,
+        2,
+        &page,
+        &Scene {
+            here: Some(script::isolate_fb::TileInput {
+                x: 3200,
+                z: 3218,
+                level: 1,
+            }),
+            ..Scene::default()
+        },
+    );
+    iso.on_game_tick(2);
+    assert!(iso.probe("true").is_ok());
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::Walk {
+            x: 3209,
+            z: 3218,
+            level: 1,
+            allow_teleports: false,
+            allow_wilderness: false,
+            allow_bank_fetch: false,
+            request_id: 0,
+        }]
+    );
+    assert!(iso.probe("globalThis.__out").unwrap().is_null());
+
+    // Arrived with one posted searchable loc: the exact posted row is mapped.
+    let search = vec!["Search".to_string()];
+    let locs = [scene_loc(25, 3210, 3217, 1, &search)];
+    post_scene(
+        &iso,
+        3,
+        &page,
+        &Scene {
+            here: Some(script::isolate_fb::TileInput {
+                x: 3209,
+                z: 3218,
+                level: 1,
+            }),
+            locs: &locs,
+            ..Scene::default()
+        },
+    );
+    iso.on_game_tick(3);
+    assert!(iso.probe("true").is_ok());
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![InteractReq::Loc {
+            x: 3210,
+            z: 3217,
+            level: 1,
+            action: "Search".to_string(),
+            id: Some(25),
+        }]
+    );
+    assert!(iso.probe("globalThis.__out").unwrap().is_null());
+
+    // Arrived with no searchable loc: another pending wait, not an invented
+    // interaction or a terminal.
+    post_scene(
+        &iso,
+        4,
+        &page,
+        &Scene {
+            here: Some(script::isolate_fb::TileInput {
+                x: 3209,
+                z: 3218,
+                level: 1,
+            }),
+            ..Scene::default()
+        },
+    );
+    iso.on_game_tick(4);
+    assert!(iso.probe("true").is_ok());
+    assert!(iso.drain_interacts().is_empty());
+    assert!(iso.probe("globalThis.__out").unwrap().is_null());
+
+    // The posted cooperative interrupt is the terminal machine kind and
+    // settles the public run envelope.
+    post_scene(
+        &iso,
+        5,
+        &page,
+        &Scene {
+            ours: true,
+            ..Scene::default()
+        },
+    );
+    iso.on_game_tick(5);
     let out = iso.probe("globalThis.__out").unwrap();
     assert_eq!(out["kind"], "done", "{out:?}");
     assert_eq!(out["value"]["kind"], "yield", "{out:?}");
