@@ -1,9 +1,9 @@
 use std::mem::size_of;
 use std::sync::Arc;
 
+use crate::map_cache::ReadyCatalogue;
 use api::snapshot::WorldTile;
 use client::dash3d::CollisionFlag;
-use nav::map::cache::ReadyCatalogue;
 use nav::map::formats::{ClientPois, Coverage, ServiceIdentity, ServicePois, MAX_POIS};
 use nav::map::identity::{CatalogueIdentity, Digest};
 use nav::map::poi::{CapabilityEvidence, Eligibility, EntityKind, PoiKind, PoiRecord, SourceSpace};

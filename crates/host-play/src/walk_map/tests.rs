@@ -743,15 +743,16 @@ fn bound_host_walk_arms_and_rejects_a_foreign_nav_without_replacing_the_route() 
 
 #[test]
 fn ready_catalogue_retains_searchable_normalized_access_and_rejects_foreign_identity() {
-    use nav::map::cache::ReadyCatalogue;
+    use crate::map_cache::{MapCacheRoot, ReadyMap};
     use nav::map::formats::{CatalogueManifest, PayloadReceipt};
 
     let world = Arc::new(world(t(0, 0, 0), 8, &[(3, 3, 0)]));
     let fixture = MapFixture::new(&world, "local-289");
     let identity = identity();
     let key = identity.key().unwrap();
-    let directory = fixture.root.join(key.0.to_string());
-    std::fs::create_dir(&directory).unwrap();
+    let cache_root = MapCacheRoot::from_root(fixture.root.join("map-cache"));
+    let directory = cache_root.catalogue_dir(identity).unwrap();
+    std::fs::create_dir_all(&directory).unwrap();
     let document = ClientPois {
         schema: 1,
         identity,
@@ -786,7 +787,11 @@ fn ready_catalogue_retains_searchable_normalized_access_and_rejects_foreign_iden
         serde_json::to_vec(&receipt).unwrap(),
     )
     .unwrap();
-    let ready = Arc::new(ReadyCatalogue::open(&directory, identity).unwrap());
+    let ready = cache_root.open_catalogue(identity).unwrap().unwrap();
+    let ready_map = ReadyMap {
+        catalogue: Arc::clone(&ready),
+        images: None,
+    };
     assert!(matches!(
         Catalogue::from_ready(
             Arc::clone(&world),
@@ -795,7 +800,7 @@ fn ready_catalogue_retains_searchable_normalized_access_and_rejects_foreign_iden
                 ..identity
             },
             digest(8),
-            Some(Arc::clone(&ready)),
+            Some(Arc::clone(&ready_map.catalogue)),
             None,
         ),
         Err(nav::map::MapError::Identity)
@@ -804,10 +809,11 @@ fn ready_catalogue_retains_searchable_normalized_access_and_rejects_foreign_iden
         Arc::clone(&world),
         identity,
         digest(8),
-        Some(Arc::clone(&ready)),
+        Some(Arc::clone(&ready_map.catalogue)),
         None,
     )
     .unwrap();
+    drop(ready_map);
     drop(ready);
     let mut search = Search::default();
     search.update(&catalogue, "BRIDGE BANK").unwrap();

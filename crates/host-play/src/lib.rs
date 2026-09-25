@@ -9,6 +9,7 @@ pub mod cache;
 pub mod catalog_core;
 pub mod external_loader;
 pub mod login_readiness;
+pub mod map_cache;
 pub mod nav_identity;
 pub mod paired_core;
 pub mod profile;
