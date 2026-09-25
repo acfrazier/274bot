@@ -1310,15 +1310,8 @@ fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
             true,
             &state.session.ui.rail_preview,
         );
-        let (cap_select, cap_remove, cap_fold) = rail_cap(
-            ui,
-            name,
-            status.and_then(|s| s.world),
-            light,
-            focused.as_deref(),
-            cw,
-            preview,
-        );
+        let (cap_select, cap_remove, cap_fold) =
+            rail_cap(ui, name, status, light, focused.as_deref(), cw, preview);
         let mut body_clicked = false;
         if preview {
             let after = ui.cursor_pos();
@@ -3782,15 +3775,8 @@ fn rail_tiles(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
             false,
             &state.session.ui.rail_preview,
         );
-        let (cap_select, cap_remove, cap_fold) = rail_cap(
-            ui,
-            name,
-            status.and_then(|s| s.world),
-            light,
-            focused.as_deref(),
-            avail,
-            preview,
-        );
+        let (cap_select, cap_remove, cap_fold) =
+            rail_cap(ui, name, status, light, focused.as_deref(), avail, preview);
         let body_clicked = if preview {
             rail_body(ui, gpu, state, name, draw)
         } else {
@@ -3816,7 +3802,7 @@ fn rail_tiles(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
 fn rail_cap(
     ui: &Ui,
     name: &str,
-    world: Option<u16>,
+    status: Option<&host_play::SlotStatus>,
     light: Light,
     focused: Option<&str>,
     width: f32,
@@ -3825,7 +3811,7 @@ fn rail_cap(
     const BTN: f32 = 28.0;
     const DOT_W: f32 = 18.0;
     let marker_x = ui.cursor_pos_x();
-    match world {
+    match status.and_then(|s| s.world) {
         Some(number) => {
             world_marker(ui, number, light, DOT_W);
             ui.set_item_tooltip(format!("w{number} · {}", light.brief()));
@@ -3836,7 +3822,7 @@ fn rail_cap(
     let selected = focused == Some(name);
     let name_w = (width - BTN * 2.0 - DOT_W - BUTTON_GAP * 3.0).max(10.0);
     let clicked = ui
-        .selectable_config(cap_title(name, light))
+        .selectable_config(cap_title(name, light, status))
         .selected(selected)
         .size([name_w, 0.0])
         .build();
