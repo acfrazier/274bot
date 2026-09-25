@@ -452,9 +452,8 @@ mod tests {
         display_category, format_mtime, move_category, name_matches_search,
         needs_rs2b0t_catalog_prompt, resolve_category_order, rs2b0t_root_has_index, sidebar_places,
         sort_dialog_rows, DialogMode, DialogRow, DialogSort, LoadBrowseEntry, CARD_GAP, CARD_MIN_W,
-        CHIP_PAD_Y, FILE_DIALOG_FIRST_H, FILE_DIALOG_FIRST_W, GLYPH_CHEVRON, GLYPH_DESKTOP,
-        GLYPH_DOCUMENTS, GLYPH_DOWNLOADS, GLYPH_FILE, GLYPH_FOLDER, GLYPH_HOME, SCRIPTS_FIRST_H,
-        SCRIPTS_FIRST_W, UNCATEGORIZED,
+        CHIP_PAD_Y, GLYPH_CHEVRON, GLYPH_DESKTOP, GLYPH_DOCUMENTS, GLYPH_DOWNLOADS, GLYPH_FILE,
+        GLYPH_FOLDER, GLYPH_HOME, UNCATEGORIZED,
     };
     use std::path::{Path, PathBuf};
     use std::time::{Duration, UNIX_EPOCH};
@@ -629,12 +628,6 @@ mod tests {
         assert_eq!(dialog_date_color(true, true), crate::theme::TEXT_DIM);
         assert_eq!(dialog_date_color(true, false), crate::theme::TEXT_DIM);
         assert_eq!(dialog_date_color(false, false), crate::theme::TEXT_DIM);
-    }
-
-    #[test]
-    fn scripts_window_first_size_is_walkto() {
-        assert_eq!((SCRIPTS_FIRST_W, SCRIPTS_FIRST_H), (720.0, 560.0));
-        assert_eq!((FILE_DIALOG_FIRST_W, FILE_DIALOG_FIRST_H), (640.0, 480.0));
     }
 
     #[test]
