@@ -5,8 +5,8 @@ use super::{
     decode, decode_canlight_sidecar, decode_flags_sidecar, decode_grid, decode_reach_sidecar,
     derive_banks, encode, encode_canlight_sidecar, encode_flags_sidecar, encode_grid,
     encode_reach_sidecar, merge_squares, parse_door_config, parse_door_config_ids,
-    parse_door_open_ids, parse_mapsquare_text, parse_passable_locs, sha256_hex, walkable_dots,
-    BankAccess, BankStand, Mapsquare, FORMAT_ID, MAGIC, SQUARE, VERSION,
+    parse_door_open_ids, parse_mapsquare_text, parse_passable_locs, read_flags_sidecar, sha256_hex,
+    walkable_dots, BankAccess, BankStand, Mapsquare, FORMAT_ID, MAGIC, SQUARE, VERSION,
 };
 use crate::collision::{derive_walkable, pack_walk, walk_word_from_parts, WorldCollision};
 use crate::grid::StepGrid;
@@ -290,6 +290,45 @@ fn flags_sidecar_bulk_matches_scalar_on_errors_and_roundtrip() {
         format!("{:?}", decode_flags_sidecar(&partial)),
         format!("{:?}", decode_flags_sidecar_scalar_ref(&partial))
     );
+}
+
+#[test]
+fn read_flags_sidecar_streams_one_payload_allocation() {
+    let origin = WorldTile {
+        x: 3200,
+        z: 3200,
+        level: 0,
+    };
+    // 256 Ki words = 1 MiB payload: large enough to expose a triple-copy peak.
+    let words: Vec<u32> = (0..256 * 1024).map(|i| i as u32).collect();
+    let bytes = encode_flags_sidecar(origin, 512, 512, &words);
+    let path = std::env::temp_dir().join(format!(
+        "274bot-flags-stream-{}.navflags",
+        std::process::id()
+    ));
+    std::fs::write(&path, &bytes).unwrap();
+    let expected = crate::manifest::hash_bytes(&bytes);
+
+    let loaded = read_flags_sidecar(&path, true).expect("stream load");
+    assert_eq!(loaded.origin, origin);
+    assert_eq!((loaded.width, loaded.height), (512, 512));
+    assert_eq!(loaded.flags.as_slice(), words.as_slice());
+    assert_eq!(loaded.content_sha256.as_deref(), Some(expected.as_str()));
+    // Sole payload owner on the load result: Arc strong count 1, exact cap.
+    assert_eq!(std::sync::Arc::strong_count(&loaded.flags), 1);
+    assert_eq!(loaded.flags.len(), words.len());
+    assert_eq!(
+        loaded.flags.capacity(),
+        words.len(),
+        "stream path must not over-allocate past the word count"
+    );
+    let (_, _, _, decoded) = decode_flags_sidecar(&bytes).unwrap();
+    assert_eq!(decoded.as_slice(), loaded.flags.as_slice());
+    // Trusted/bundled path must not allocate a digest at all.
+    let trusted = read_flags_sidecar(&path, false).expect("no-hash load");
+    let _ = std::fs::remove_file(&path);
+    assert_eq!(trusted.flags.as_slice(), words.as_slice());
+    assert!(trusted.content_sha256.is_none());
 }
 
 #[test]

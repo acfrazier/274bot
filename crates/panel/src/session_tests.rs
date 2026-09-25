@@ -1113,6 +1113,7 @@ fn focused_slot_publishes_scene_collision_for_loaded_map() {
         click,
         &layers,
         true,
+        true,
     );
     let paint = c.nav_debug_paint().expect("focused drawing slot publishes");
     assert!(
@@ -1161,6 +1162,7 @@ fn focused_slot_publishes_scene_collision_for_loaded_map() {
 
 #[test]
 fn publish_nav_debug_carries_reach_from_the_bitset() {
+    let _guard = crate::picker::lock_nav_statics();
     let mut c = paint_client();
     // A 65×65 world (a distinct grid from `walled_world`, so the cached
     // reach bake belongs to this graph): a sealed 1×1 courtyard floor
@@ -1218,7 +1220,18 @@ fn publish_nav_debug_carries_reach_from_the_bitset() {
         nsew_labels: true,
         ..NavSettings::default()
     };
-    publish_nav_debug(&mut c, &world, None, None, &[], false, None, &layers, true);
+    publish_nav_debug(
+        &mut c,
+        &world,
+        None,
+        None,
+        &[],
+        false,
+        None,
+        &layers,
+        true,
+        true,
+    );
     let paint = c.nav_debug_paint().expect("focused drawing slot publishes");
     // The blocked door loc is a reach seed: reached despite the ground
     // block, so the client keeps its collision fill.
@@ -1257,14 +1270,189 @@ fn unfocused_slot_clears_nav_debug_paint() {
     let mut c = paint_client();
     let world = walled_world();
     let layers = effective(&NavSettings::default(), true);
-    publish_nav_debug(&mut c, &world, None, None, &[], false, None, &layers, true);
+    publish_nav_debug(
+        &mut c,
+        &world,
+        None,
+        None,
+        &[],
+        false,
+        None,
+        &layers,
+        true,
+        true,
+    );
     assert!(c.nav_debug_paint().is_some());
     // Unfocused / skip-paint / renderer-off slots must not linger on a
     // stale paint.
-    publish_nav_debug(&mut c, &world, None, None, &[], false, None, &layers, false);
+    publish_nav_debug(
+        &mut c,
+        &world,
+        None,
+        None,
+        &[],
+        false,
+        None,
+        &layers,
+        false,
+        false,
+    );
     assert!(
         c.nav_debug_paint().is_none(),
         "a non-drawing slot stores None"
+    );
+}
+
+#[test]
+fn saved_collision_prefs_without_drawing_do_not_load_navflags() {
+    // Saved collision/NSEW paint preferences must not pull the flags
+    // sidecar until a surface actually draws them.
+    let _guard = crate::picker::lock_nav_statics();
+    let dir = TestDir::new("flags-draw-gate");
+    let path = dir.join("flags.navflags");
+    let origin = WorldTile {
+        x: 3200,
+        z: 3200,
+        level: 0,
+    };
+    let flags = vec![0u32, 0, 0, 0];
+    let bytes = nav::pack::encode_flags_sidecar(origin, 1, 1, &flags);
+    std::fs::write(&path, &bytes).unwrap();
+    let digest = nav::manifest::hash_bytes(&bytes);
+
+    crate::picker::drop_flags_sidecar();
+    crate::picker::reset_flags_load_count();
+    crate::picker::set_navflags_binding(path, Some(digest), true);
+
+    let mut c = paint_client();
+    let world = walled_world();
+    let layers = NavSettings {
+        collision_fill: true,
+        nsew_labels: true,
+        ..NavSettings::default()
+    };
+
+    // Boot-like: prefs on, no drawing surface.
+    publish_nav_debug(
+        &mut c,
+        &world,
+        None,
+        None,
+        &[],
+        false,
+        None,
+        &layers,
+        false,
+        true, // focused owner, but not drawing
+    );
+    assert_eq!(
+        crate::picker::flags_load_count(),
+        0,
+        "saved prefs without drawing must not load navflags"
+    );
+    assert_eq!(
+        crate::picker::flags_sidecar_state(),
+        crate::picker::FlagsSidecarState::Unloaded
+    );
+    assert!(c.nav_debug_paint().is_none());
+
+    // Enabling a drawn layer loads exactly once.
+    publish_nav_debug(
+        &mut c,
+        &world,
+        None,
+        None,
+        &[],
+        false,
+        None,
+        &layers,
+        true,
+        true,
+    );
+    assert_eq!(crate::picker::flags_load_count(), 1);
+    assert_eq!(
+        crate::picker::flags_sidecar_state(),
+        crate::picker::FlagsSidecarState::Applied
+    );
+    assert!(c.nav_debug_paint().is_some());
+
+    // Second drawn frame does not reload.
+    publish_nav_debug(
+        &mut c,
+        &world,
+        None,
+        None,
+        &[],
+        false,
+        None,
+        &layers,
+        true,
+        true,
+    );
+    assert_eq!(crate::picker::flags_load_count(), 1);
+
+    // Last drawer off releases ownership.
+    publish_nav_debug(
+        &mut c,
+        &world,
+        None,
+        None,
+        &[],
+        false,
+        None,
+        &layers,
+        false,
+        true,
+    );
+    assert_eq!(
+        crate::picker::flags_sidecar_state(),
+        crate::picker::FlagsSidecarState::Unloaded
+    );
+    assert!(c.nav_debug_paint().is_none());
+    crate::picker::drop_flags_sidecar();
+}
+
+#[test]
+fn remove_only_focused_drawing_slot_releases_flags() {
+    // When the last focused slot is rail-removed, no remaining drawer publishes
+    // publish_nav_debug — the remove path must drop the flags sidecar.
+    let _guard = crate::picker::lock_nav_statics();
+    let dir = TestDir::new("flags-last-slot-remove");
+    let path = dir.join("flags.navflags");
+    let origin = WorldTile {
+        x: 3200,
+        z: 3200,
+        level: 0,
+    };
+    let flags = vec![0u32, 0, 0, 0];
+    let bytes = nav::pack::encode_flags_sidecar(origin, 1, 1, &flags);
+    std::fs::write(&path, &bytes).unwrap();
+    let digest = nav::manifest::hash_bytes(&bytes);
+
+    crate::picker::drop_flags_sidecar();
+    crate::picker::set_navflags_binding(path, Some(digest), true);
+    crate::picker::ensure_flags_sidecar();
+    assert_eq!(
+        crate::picker::flags_sidecar_state(),
+        crate::picker::FlagsSidecarState::Applied
+    );
+
+    let vault_path = tmp_vault("flags-last-slot-remove.vault");
+    let mut s = Session::new();
+    s.vault = Some(Vault::create(&vault_path, "bot").unwrap());
+    s.vault
+        .as_mut()
+        .unwrap()
+        .upsert(profile("alice", "pw", 42))
+        .unwrap();
+    s.load("alice");
+    assert_eq!(s.focused_name().as_deref(), Some("alice"));
+    s.rail_remove("alice");
+    assert!(s.focused_name().is_none());
+    assert_eq!(
+        crate::picker::flags_sidecar_state(),
+        crate::picker::FlagsSidecarState::Unloaded,
+        "removing the only focused slot must release the flags sidecar"
     );
 }
 
@@ -1305,6 +1493,7 @@ fn focused_slot_publishes_client_trail_tones() {
         true,
         None,
         &layers,
+        true,
         true,
     );
     let paint = c.nav_debug_paint().expect("focused drawing slot publishes");
@@ -1350,6 +1539,7 @@ fn live_client_trail_retires_after_arrival_so_offpath_cannot_resurrect() {
         None,
         &layers,
         true,
+        true,
     );
     let paint = c.nav_debug_paint().expect("arrival still publishes");
     assert!(
@@ -1385,6 +1575,7 @@ fn live_client_trail_retires_after_arrival_so_offpath_cannot_resurrect() {
         false,
         None,
         &layers,
+        true,
         true,
     );
     let paint = c.nav_debug_paint().expect("off-path still publishes");
@@ -1507,7 +1698,18 @@ fn face_only_cells_publish_with_fill_without_labels() {
         nsew_labels: false,
         ..NavSettings::default()
     };
-    publish_nav_debug(&mut c, &world, None, None, &[], false, None, &layers, true);
+    publish_nav_debug(
+        &mut c,
+        &world,
+        None,
+        None,
+        &[],
+        false,
+        None,
+        &layers,
+        true,
+        true,
+    );
     let paint = c.nav_debug_paint().expect("focused drawing slot publishes");
     let face_only = paint
         .collision
@@ -1567,6 +1769,7 @@ fn show_nav_path_masters_hulls_click_and_trail() {
         click,
         &layers,
         true,
+        true,
     );
     let paint = c.nav_debug_paint().unwrap();
     assert!(
@@ -1596,6 +1799,7 @@ fn show_nav_path_masters_hulls_click_and_trail() {
         false,
         click,
         &layers,
+        true,
         true,
     );
     let paint = c.nav_debug_paint().unwrap();
@@ -1629,6 +1833,7 @@ fn show_nav_path_masters_hulls_click_and_trail() {
         true,
         click,
         &layers,
+        true,
         true,
     );
     let paint = c.nav_debug_paint().unwrap();
@@ -1707,6 +1912,7 @@ fn nav_path_subsamples_to_the_draw_budget_keeping_hops() {
         false,
         None,
         &layers,
+        true,
         true,
     );
     let paint = c.nav_debug_paint().unwrap();

@@ -5,6 +5,16 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
 
 ## [0.1.9] — 2026-09-24
 
+### Memory
+
+- Raw collision/NSEW navflags load only when a drawing surface needs them, stream
+  into one resident `Arc<Vec<u32>>` (no full-file byte buffer retained beside the
+  decoded words; peak owned payload ≈ one copy of the sidecar), skip the 260 MB
+  content hash for trusted bundled flags, and release when the last drawer stops
+  or the only focused slot is removed. Bundled reach binding clears on
+  session/pack detach; flood cache keys use Weak/`Arc` world identity and empty
+  demand releases ownership (WalkTo close still uses `release_map_leases`).
+
 ### Navigation
 
 - Radius walks to a solid in-scene target now route to one of its wall-valid

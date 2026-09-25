@@ -3733,6 +3733,7 @@ dependencies = [
  "host-play",
  "libc",
  "nav",
+ "parking_lot",
  "png",
  "pollster",
  "scenario",

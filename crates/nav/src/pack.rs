@@ -79,9 +79,9 @@ pub(crate) use mapsquare::{parse_loc_fields, parse_map_line, section};
 #[cfg(test)]
 use mapsquare::{parse_mapsquare_text, SQUARE};
 pub use sidecars::{
-    decode_canlight_sidecar, decode_flags_sidecar, decode_reach_sidecar, encode_canlight_sidecar,
-    encode_flags_sidecar, encode_reach_sidecar, sha256_from_hex, sha256_hex, CanlightSidecar,
-    ReachSidecar,
+    decode_canlight_sidecar, decode_flags_sidecar, decode_flags_sidecar_arc, decode_reach_sidecar,
+    encode_canlight_sidecar, encode_flags_sidecar, encode_reach_sidecar, read_flags_sidecar,
+    sha256_from_hex, sha256_hex, CanlightSidecar, FlagsSidecarLoad, ReachSidecar, FLAGS_HEADER_LEN,
 };
 #[cfg(test)]
 use sidecars::{MAGIC_FLAGS, VERSION_FLAGS};

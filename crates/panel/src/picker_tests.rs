@@ -9,12 +9,13 @@ use std::sync::Arc;
 
 use super::{
     available_levels, click_to_tile, decode_sidecar_file, drop_flags_sidecar, ensure_flags_sidecar,
-    flags_content_hash_count, flags_sidecar_for, flags_sidecar_state, format_walkto_status,
-    last_picker_layout, map_reach_bitset, pack, pan_by, picker_map_window, picker_nested_in_game,
-    reach_bitset, reset_flags_content_hash_count, right_align_x, set_navflags_binding, set_pack,
-    set_reach_binding, sidecar_for_grid, snap, walkto_actions_enabled, walkto_canvas_flags,
-    walkto_footer_labels, walkto_selection_caption, walkto_window_flags, zoom_toward, FlagSidecar,
-    FlagsSidecarState, WalktoCaption,
+    flags_content_hash_count, flags_load_count, flags_sidecar_for, flags_sidecar_state,
+    flood_cache_occupied, format_walkto_status, last_picker_layout, map_reach_bitset, pack, pan_by,
+    picker_map_window, picker_nested_in_game, reach_binding_occupied, reach_bitset,
+    reset_flags_content_hash_count, reset_flags_load_count, right_align_x, set_navflags_binding,
+    set_pack, set_reach_binding, sidecar_for_grid, snap, walkto_actions_enabled,
+    walkto_canvas_flags, walkto_footer_labels, walkto_selection_caption, walkto_window_flags,
+    zoom_toward, FlagSidecar, FlagsSidecarState, WalktoCaption,
 };
 use crate::rail::{BASE_WINDOW_H, BASE_WINDOW_W};
 use crate::session::Session;
@@ -23,12 +24,10 @@ use crate::theme::PANEL_WIDTH;
 use crate::walk_map::WalkMapRenderer;
 use dear_imgui_rs::WindowFlags;
 use host_play::walk_map::MapModel;
-use std::sync::Mutex as StdMutex;
 
-/// Process-global flags binding/hash counters; serialize tests that touch them.
-static FLAGS_TEST_LOCK: StdMutex<()> = StdMutex::new(());
-/// Process-global reach binding; serialize tests that touch it.
-static REACH_TEST_LOCK: StdMutex<()> = StdMutex::new(());
+// REACH/FLOOD/FLAGS/PACK share FLAGS_TEST_LOCK — one process-global lock for
+// every test that mutates picker statics (incl. Session drop → set_pack(None)).
+// Do not reintroduce separate REACH_TEST_LOCK / FLOOD_TEST_LOCK; they raced.
 
 /// A `w`×`h` all-walkable level-0 world at `origin`.
 fn open_world_at(origin: (i32, i32), w: usize, h: usize) -> NavWorld {
@@ -466,7 +465,8 @@ fn pack_map_flood_report_line_reports_each_arm() {
 
 #[test]
 fn pack_map_flood_report_sizes_from_cached_sets() {
-    let world = disconnected_world();
+    let _guard = super::lock_nav_statics();
+    let world = Arc::new(disconnected_world());
     let player = WorldTile {
         x: 0,
         z: 0,
@@ -524,7 +524,7 @@ fn sidecar_file_roundtrips_and_rejects_garbage() {
         }
     );
     assert_eq!((s.width, s.height), (1, 1));
-    assert_eq!(&*s.flags, &flags[..]);
+    assert_eq!(s.flags.as_slice(), &flags[..]);
     // Garbage and missing files fall back to the walk word, never panic.
     std::fs::write(&path, b"not a sidecar").unwrap();
     assert!(decode_sidecar_file(&path).is_none());
@@ -542,7 +542,7 @@ fn sidecar_flags_only_apply_to_the_matching_grid() {
         },
         width: 64,
         height: 64,
-        flags: vec![0u32; 4 * 64 * 64].into(),
+        flags: Arc::new(vec![0u32; 4 * 64 * 64]),
     };
     assert!(
         sidecar_for_grid(
@@ -587,6 +587,7 @@ fn sidecar_flags_only_apply_to_the_matching_grid() {
 
 #[test]
 fn picker_pack_uses_injected_arc_not_a_second_decode() {
+    let _guard = super::lock_nav_statics();
     let world = Arc::new(bake_world(1, 1, &[]));
     set_pack(Some(Arc::clone(&world)));
     let p = pack().expect("injected");
@@ -601,7 +602,7 @@ fn picker_pack_uses_injected_arc_not_a_second_decode() {
 
 #[test]
 fn flags_sidecar_requires_exact_identity_and_drops_on_toggle_off() {
-    let _guard = crate::test_support::lock_unpoisoned(&FLAGS_TEST_LOCK);
+    let _guard = super::lock_nav_statics();
     let dir = TestDir::new("flags-identity");
     let path = dir.join("flags.navflags");
     let origin = WorldTile {
@@ -639,7 +640,9 @@ fn flags_sidecar_requires_exact_identity_and_drops_on_toggle_off() {
     ensure_flags_sidecar();
     assert_eq!(flags_sidecar_state(), FlagsSidecarState::Applied);
     assert_eq!(
-        flags_sidecar_for(origin, 1, 1).as_deref(),
+        flags_sidecar_for(origin, 1, 1)
+            .as_ref()
+            .map(|v| v.as_slice()),
         Some(flags.as_slice())
     );
     assert_eq!(flags_content_hash_count(), 2);
@@ -650,7 +653,7 @@ fn flags_sidecar_requires_exact_identity_and_drops_on_toggle_off() {
 
 #[test]
 fn bundled_flags_decode_without_content_hash_and_reuse_sidecar() {
-    let _guard = crate::test_support::lock_unpoisoned(&FLAGS_TEST_LOCK);
+    let _guard = super::lock_nav_statics();
     let dir = TestDir::new("flags-bundled");
     let path = dir.join("flags.navflags");
     let origin = WorldTile {
@@ -669,7 +672,9 @@ fn bundled_flags_decode_without_content_hash_and_reuse_sidecar() {
     ensure_flags_sidecar();
     assert_eq!(flags_sidecar_state(), FlagsSidecarState::Applied);
     assert_eq!(
-        flags_sidecar_for(origin, 1, 1).as_deref(),
+        flags_sidecar_for(origin, 1, 1)
+            .as_ref()
+            .map(|v| v.as_slice()),
         Some(flags.as_slice())
     );
     assert_eq!(
@@ -682,7 +687,9 @@ fn bundled_flags_decode_without_content_hash_and_reuse_sidecar() {
     ensure_flags_sidecar();
     assert_eq!(flags_content_hash_count(), 0);
     assert_eq!(
-        flags_sidecar_for(origin, 1, 1).as_deref(),
+        flags_sidecar_for(origin, 1, 1)
+            .as_ref()
+            .map(|v| v.as_slice()),
         Some(flags.as_slice())
     );
 
@@ -720,7 +727,7 @@ fn bundled_flags_decode_without_content_hash_and_reuse_sidecar() {
 
 #[test]
 fn bundled_reach_is_shared_without_flood_on_first_or_second_paint() {
-    let _guard = crate::test_support::lock_unpoisoned(&REACH_TEST_LOCK);
+    let _guard = super::lock_nav_statics();
     let mut world = bake_world(3, 3, &[]);
     world.collision.origin.x = 7777;
     let origin = world.collision.origin;
@@ -750,7 +757,7 @@ fn bundled_reach_is_shared_without_flood_on_first_or_second_paint() {
 
 #[test]
 fn unbound_reach_is_unavailable_and_does_not_bake() {
-    let _guard = crate::test_support::lock_unpoisoned(&REACH_TEST_LOCK);
+    let _guard = super::lock_nav_statics();
     set_reach_binding(
         None,
         WorldTile {
@@ -772,9 +779,11 @@ fn unbound_reach_is_unavailable_and_does_not_bake() {
 
 #[test]
 fn map_owned_collision_does_not_load_flags_sidecar() {
-    let _guard = crate::test_support::lock_unpoisoned(&FLAGS_TEST_LOCK);
-    drop_flags_sidecar();
+    // Lock order everywhere: imgui context guard, then nav statics (imgui
+    // tests reach the nav lock through note_closed / Session drop).
     let _imgui = crate::test_support::imgui_context_guard();
+    let _guard = super::lock_nav_statics();
+    drop_flags_sidecar();
     let mut ctx = dear_imgui_rs::Context::create();
     ctx.prepare_frame(
         dear_imgui_rs::FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0).renderer_has_textures(),
@@ -798,7 +807,7 @@ fn map_owned_collision_does_not_load_flags_sidecar() {
 
 #[test]
 fn external_reach_floods_once_and_reuses_the_arc() {
-    let _guard = crate::test_support::lock_unpoisoned(&REACH_TEST_LOCK);
+    let _guard = super::lock_nav_statics();
     set_reach_binding(
         None,
         WorldTile {
@@ -881,4 +890,119 @@ fn walkto_header_and_footer_fit_default_and_narrow_game_pane() {
     assert_walkto_layout_fits("default 1120x580 game pane", default);
     let narrow = measure_nested_walkto([520.0, 480.0], [BASE_WINDOW_W, BASE_WINDOW_H]);
     assert_walkto_layout_fits("narrow 520x480 game pane", narrow);
+}
+
+#[test]
+fn flags_load_once_on_ensure_and_drop_releases() {
+    let _guard = super::lock_nav_statics();
+    let dir = TestDir::new("flags-load-once");
+    let path = dir.join("flags.navflags");
+    let origin = WorldTile {
+        x: 3200,
+        z: 3200,
+        level: 0,
+    };
+    let flags = vec![CollisionFlag::W_N as u32, 0, 0, 0];
+    let bytes = nav::pack::encode_flags_sidecar(origin, 1, 1, &flags);
+    std::fs::write(&path, &bytes).unwrap();
+    let digest = nav::manifest::hash_bytes(&bytes);
+
+    drop_flags_sidecar();
+    reset_flags_load_count();
+    set_navflags_binding(path.clone(), Some(digest), true);
+    assert_eq!(flags_load_count(), 0);
+    assert_eq!(flags_sidecar_state(), FlagsSidecarState::Unloaded);
+
+    // First demand loads exactly once.
+    ensure_flags_sidecar();
+    assert_eq!(flags_load_count(), 1);
+    assert_eq!(flags_sidecar_state(), FlagsSidecarState::Applied);
+    assert_eq!(
+        flags_sidecar_for(origin, 1, 1)
+            .as_ref()
+            .map(|v| v.as_slice()),
+        Some(flags.as_slice())
+    );
+
+    // Re-ensure does not touch disk again.
+    ensure_flags_sidecar();
+    assert_eq!(flags_load_count(), 1);
+
+    // Last drawer / toggle-off releases ownership.
+    drop_flags_sidecar();
+    assert_eq!(flags_sidecar_state(), FlagsSidecarState::Unloaded);
+    assert!(flags_sidecar_for(origin, 1, 1).is_none());
+}
+
+#[test]
+fn flood_cache_clears_on_empty_demand_and_rejects_foreign_same_geometry() {
+    // One lock for every process-static nav debug binding (flags/reach/flood/pack).
+    let _guard = super::lock_nav_statics();
+    let world_a = Arc::new(bake_world(3, 3, &[]));
+    let seed = WorldTile {
+        x: 0,
+        z: 0,
+        level: 0,
+    };
+    let first = super::flood_sets_for(&world_a, &[seed]);
+    assert_eq!(first.len(), 1);
+    assert!(flood_cache_occupied(), "first flood populates the cache");
+
+    // Same world + seeds reuses the Arc set.
+    let again = super::flood_sets_for(&world_a, &[seed]);
+    assert!(Arc::ptr_eq(&first[0], &again[0]));
+
+    // A different world with identical geometry must not reuse stale results.
+    let world_b = Arc::new(bake_world(3, 3, &[]));
+    assert!(!Arc::ptr_eq(&world_a, &world_b));
+    let other = super::flood_sets_for(&world_b, &[seed]);
+    assert!(
+        !Arc::ptr_eq(&first[0], &other[0]),
+        "same-geometry foreign world must not share flood Arc"
+    );
+
+    // Last demand off releases ownership.
+    let empty = super::flood_sets_for(&world_b, &[]);
+    assert!(empty.is_empty());
+    assert!(
+        !flood_cache_occupied(),
+        "empty demand must drop the process-static flood cache"
+    );
+}
+
+#[test]
+fn session_pack_detach_clears_flood_and_reach_binding() {
+    let _guard = super::lock_nav_statics();
+    let world = Arc::new(bake_world(3, 3, &[]));
+    let origin = world.collision.origin;
+    let width = world.collision.width;
+    let height = world.collision.height;
+    let bits: Arc<[u64]> = nav::paint::bake_reach(&world.collision, &world.graph).into();
+    set_reach_binding(Some(Arc::clone(&bits)), origin, width, height, true);
+    assert!(reach_binding_occupied());
+
+    let seed = WorldTile {
+        x: 0,
+        z: 0,
+        level: 0,
+    };
+    let _ = super::flood_sets_for(&world, &[seed]);
+    assert!(flood_cache_occupied());
+
+    set_pack(Some(Arc::new(bake_world(1, 1, &[]))));
+    assert!(!flood_cache_occupied(), "set_pack always drops flood state");
+    assert!(
+        reach_binding_occupied(),
+        "attaching a pack must not clear the bundled reach binding"
+    );
+
+    // Re-seed flood and detach: session teardown path.
+    let _ = super::flood_sets_for(&world, &[seed]);
+    assert!(flood_cache_occupied());
+    set_pack(None);
+    assert!(!flood_cache_occupied());
+    assert!(
+        !reach_binding_occupied(),
+        "set_pack(None) must detach the bundled reach binding"
+    );
 }

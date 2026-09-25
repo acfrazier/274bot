@@ -768,16 +768,24 @@ fn publish_nav_debug(
     click: Option<WorldTile>,
     settings: &NavSettings,
     drawing: bool,
+    // True when this call may ensure/drop the shared sidecar: the focused
+    // drawer owns demand so a non-drawing peer cannot drop under it; when
+    // focus is None any remaining slot (or the remove path) may release.
+    flags_owner: bool,
 ) {
-    // Flags sidecar lifecycle: decoded once while a collision paint
-    // toggle is on (the paint prefers the raw flags — visibility bits
-    // the packed walk u16 drops — when the sidecar is mapped), dropped
-    // when both toggles go off. Never opened for a pack the session only
-    // walks.
-    if settings.collision_fill || settings.nsew_labels {
-        crate::picker::ensure_flags_sidecar();
-    } else {
-        crate::picker::drop_flags_sidecar();
+    // Flags sidecar lifecycle: decoded once while a collision paint toggle
+    // is on **and** a surface actually draws it (the paint prefers the raw
+    // flags — visibility bits the packed walk word drops — when the sidecar
+    // is mapped). Saved prefs alone never load. The owner drops the sidecar
+    // when it stops drawing or both toggles go off so the last drawer
+    // releases ownership — including when focus is cleared and no slot
+    // draws. Never opened for a pack the session only walks.
+    if flags_owner {
+        if drawing && (settings.collision_fill || settings.nsew_labels) {
+            crate::picker::ensure_flags_sidecar();
+        } else {
+            crate::picker::drop_flags_sidecar();
+        }
     }
     if !drawing {
         client.set_nav_debug_paint(None);
@@ -822,6 +830,7 @@ fn publish_nav_debug(
             world.collision.width,
             world.collision.height,
         );
+        let side = side.as_ref().map(|v| v.as_slice());
         // The paint-only reach bitset, baked once per world. A missing
         // bitset defaults every cell to reached — no unreached tint.
         let reach_bits = crate::picker::reach_bitset(world);
@@ -833,7 +842,7 @@ fn publish_nav_debug(
                     continue;
                 }
                 let wt = WorldTile { x, z, level };
-                let fb = collision_at_with(&world.collision, wt, side.as_deref());
+                let fb = collision_at_with(&world.collision, wt, side);
                 let mut bits = 0u8;
                 if fb.n {
                     bits |= FACE_N;
@@ -2842,9 +2851,12 @@ impl Session {
             c.set_draw(draw);
             // Nav-debug scene paint: only the focused drawing slot
             // publishes; a slot that stops drawing stores None so a
-            // stale paint cannot linger.
+            // stale paint cannot linger. Flags demand is owned solely by
+            // the focused slot so a non-drawing peer never loads or drops
+            // the shared sidecar out from under the drawer.
             let layers = nav_publish.lock().unwrap().settings.clone();
-            let drawing = focused.as_deref() == Some(name) && draw;
+            let is_focused = focused.as_deref() == Some(name);
+            let drawing = is_focused && draw;
             let walk = match travellers.lock().unwrap().get(name).cloned() {
                 Some(arm) => {
                     let arm = arm.lock().unwrap();
@@ -2880,6 +2892,9 @@ impl Session {
                     // not the entity walk buffer (capped at 9) or the
                     // MOVE waypoint list (capped at 25).
                     let trail_world = live_client_trail(c, here);
+                    // Focused drawer owns ensure/drop; when focus is None every remaining
+                    // slot may release so a cleared focus cannot leak the sidecar.
+                    let flags_owner = is_focused || focused.is_none();
                     publish_nav_debug(
                         c,
                         &world,
@@ -2890,6 +2905,7 @@ impl Session {
                         click,
                         &layers,
                         drawing,
+                        flags_owner,
                     );
                     if drawing && layers.camera_follow {
                         apply_path_camera(c, route.as_ref(), here);
@@ -4369,6 +4385,9 @@ impl Session {
                 None => {
                     self.focus.lock().unwrap().focused = None;
                     self.capture_tx = None;
+                    // Last focused slot gone and no neighbour: no remaining
+                    // drawer will publish, so release the flags sidecar here.
+                    crate::picker::drop_flags_sidecar();
                 }
             }
         }

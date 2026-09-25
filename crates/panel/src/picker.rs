@@ -65,10 +65,17 @@ static PREV_OPEN: AtomicBool = AtomicBool::new(false);
 /// new world's grid instead of indexing stale geometry. The reach bake is
 /// dropped too — it answers the new world's transport network.
 pub fn set_pack(world: Option<Arc<NavWorld>>) {
+    let _nav = lock_nav_statics();
+    let detaching = world.is_none();
     *PACK.lock().unwrap() = world;
     drop_flags_sidecar();
     *REACH.lock().unwrap() = None;
+    // Map-owned flood leases clear here and on WalkTo close via release_map_leases.
     release_map_leases();
+    if detaching {
+        // Session/pack teardown must not leak the process-static bundled reach Arc.
+        *REACH_BINDING.lock().unwrap() = ReachBinding::Unbound;
+    }
 }
 
 /// The attached nav world; `None` when no play world is set. The returned
@@ -80,16 +87,16 @@ pub(crate) fn pack() -> Option<Arc<NavWorld>> {
 
 /// The raw baked collision flags decoded from the `.navflags` sidecar,
 /// plus the grid header they were decoded for. Loaded once while a
-/// collision paint toggle (`collision_fill`/`nsew_labels`) is on and
-/// dropped when both go off; the paint only applies them to a
-/// `WorldCollision` with the same geometry. A side table so the shared
-/// [`NavWorld`] `Arc` stays immutable for the router and the walk grid
-/// is never cloned.
+/// collision paint toggle (`collision_fill`/`nsew_labels`) is on **and** a
+/// surface actually draws them; dropped when the last drawer stops or both
+/// toggles go off. The paint only applies them to a `WorldCollision` with
+/// the same geometry. A side table so the shared [`NavWorld`] `Arc` stays
+/// immutable for the router and the walk grid is never cloned.
 struct FlagSidecar {
     origin: WorldTile,
     width: usize,
     height: usize,
-    flags: Arc<[u32]>,
+    flags: Arc<Vec<u32>>,
 }
 
 /// The session's decoded flags sidecar; `Unloaded` until paint-on.
@@ -115,6 +122,37 @@ static FLAGS_TRUSTED_BUNDLED: AtomicBool = AtomicBool::new(false);
 /// Content-hash attempts while loading the flags sidecar. Tests assert the
 /// bundled fast path never increments this; external overrides always do.
 static FLAGS_CONTENT_HASHES: AtomicU32 = AtomicU32::new(0);
+/// Successful or attempted disk loads of the flags sidecar (from `Unloaded`).
+/// Drawing-gated activation tests assert boot prefs do not bump this.
+static FLAGS_LOADS: AtomicU32 = AtomicU32::new(0);
+
+/// Serialize every test (and every cfg(test) mutator) that touches
+/// process-static picker nav debug state: flags binding/slot, reach binding,
+/// flood cache, pack. Reentrant so tests may hold the lock across ensure/drop
+/// while the APIs themselves also take it (Session drop → set_pack included).
+#[cfg(test)]
+pub(crate) static FLAGS_TEST_LOCK: parking_lot::ReentrantMutex<()> =
+    parking_lot::ReentrantMutex::new(());
+
+/// RAII holder for the process-global nav-statics lock (tests only).
+/// The guard field is only held so Drop releases the mutex; it is never read.
+pub(crate) struct NavStaticsGuard(
+    #[cfg(test)]
+    #[allow(dead_code)]
+    parking_lot::ReentrantMutexGuard<'static, ()>,
+);
+
+/// Take the process-global nav-statics lock. No-op outside tests.
+#[cfg(test)]
+pub(crate) fn lock_nav_statics() -> NavStaticsGuard {
+    NavStaticsGuard(FLAGS_TEST_LOCK.lock())
+}
+
+#[cfg(not(test))]
+#[inline]
+fn lock_nav_statics() -> NavStaticsGuard {
+    NavStaticsGuard()
+}
 
 /// Bind the process-profile flags path, expected digest, and provenance.
 /// `trusted_bundled` is true only for the build-stamped sibling of a bundled
@@ -125,6 +163,7 @@ pub(crate) fn set_navflags_binding(
     flags_sha256: Option<String>,
     trusted_bundled: bool,
 ) {
+    let _nav = lock_nav_statics();
     *BOUND_NAV_FLAGS.lock().unwrap() = Some(path);
     *EXPECTED_FLAGS_SHA256.lock().unwrap() = flags_sha256;
     FLAGS_TRUSTED_BUNDLED.store(trusted_bundled, Ordering::Relaxed);
@@ -144,13 +183,15 @@ pub(crate) fn navflags_path() -> PathBuf {
 }
 
 /// Decode sidecar bytes into a [`FlagSidecar`]; `None` when decode fails.
+#[cfg(test)]
+#[allow(dead_code)] // kept for in-memory fixtures alongside decode_sidecar_file
 fn decode_sidecar_bytes(bytes: &[u8]) -> Option<FlagSidecar> {
-    let (origin, width, height, flags) = nav::pack::decode_flags_sidecar(bytes).ok()?;
+    let (origin, width, height, flags) = nav::pack::decode_flags_sidecar_arc(bytes).ok()?;
     Some(FlagSidecar {
         origin,
         width,
         height,
-        flags: flags.into(),
+        flags,
     })
 }
 
@@ -158,41 +199,59 @@ fn decode_sidecar_bytes(bytes: &[u8]) -> Option<FlagSidecar> {
 /// the file is missing or fails the sidecar decode (the paint then falls
 /// back to the walk word).
 #[cfg(test)]
-fn decode_sidecar_file(path: &PathBuf) -> Option<FlagSidecar> {
-    let bytes = std::fs::read(path).ok()?;
-    decode_sidecar_bytes(&bytes)
+fn decode_sidecar_file(path: &std::path::Path) -> Option<FlagSidecar> {
+    // Tests decode fixtures without identity hashing.
+    let loaded = nav::pack::read_flags_sidecar(path, false).ok()?;
+    Some(FlagSidecar {
+        origin: loaded.origin,
+        width: loaded.width,
+        height: loaded.height,
+        flags: loaded.flags,
+    })
 }
 
-/// Decode the flags sidecar once while a collision paint is on; no-op
-/// when already attempted for this paint-on. Missing, unknown, or
-/// mismatched identity falls back to the walk word and is not retried
-/// until the sidecar is dropped. Build-stamped bundled flags skip the
-/// content hash; external overrides always validate against the digest.
+/// Decode the flags sidecar once while a collision paint is on **and** a
+/// surface is actually drawing it; no-op when already attempted for this
+/// paint-on. Missing, unknown, or mismatched identity falls back to the
+/// walk word and is not retried until the sidecar is dropped. Build-stamped
+/// bundled flags skip the content hash; external overrides always validate
+/// against the digest. Disk load streams into one resident `Arc<Vec<u32>>` so
+/// the raw file buffer is never retained beside the decoded words.
 pub(crate) fn ensure_flags_sidecar() {
+    let _nav = lock_nav_statics();
     if !matches!(*FLAGS.lock().unwrap(), FlagsSlot::Unloaded) {
         return;
     }
     let expected = EXPECTED_FLAGS_SHA256.lock().unwrap().clone();
     let path = navflags_path();
     let trusted_bundled = FLAGS_TRUSTED_BUNDLED.load(Ordering::Relaxed);
+    FLAGS_LOADS.fetch_add(1, Ordering::Relaxed);
+    // Hash only when identity must be checked. The counter lives next to the
+    // actual digest so trusted bundled never bills a 260 MB SHA-256.
+    let hash = !trusted_bundled;
     let slot = match expected {
         None => FlagsSlot::Refused("flags identity is unknown"),
-        Some(expected) => match std::fs::read(&path) {
-            Err(_) => FlagsSlot::Missing,
-            Ok(bytes) => {
+        Some(expected) => match nav::pack::read_flags_sidecar(&path, hash) {
+            Err(nav::pack::PackError::Io(err)) if err.kind() == std::io::ErrorKind::NotFound => {
+                FlagsSlot::Missing
+            }
+            Err(_) => FlagsSlot::Refused("flags sidecar is unreadable"),
+            Ok(loaded) => {
                 let identity_ok = if trusted_bundled {
                     true
                 } else {
                     FLAGS_CONTENT_HASHES.fetch_add(1, Ordering::Relaxed);
-                    nav::manifest::hash_bytes(&bytes) == expected
+                    loaded.content_sha256.as_deref() == Some(expected.as_str())
                 };
                 if !identity_ok {
                     FlagsSlot::Refused("flags sidecar hash mismatch")
                 } else {
-                    match decode_sidecar_bytes(&bytes) {
-                        Some(sidecar) => FlagsSlot::Loaded(sidecar),
-                        None => FlagsSlot::Refused("flags sidecar is unreadable"),
-                    }
+                    FlagsSlot::Loaded(FlagSidecar {
+                        origin: loaded.origin,
+                        width: loaded.width,
+                        height: loaded.height,
+                        flags: loaded.flags,
+                    })
                 }
             }
         },
@@ -206,17 +265,32 @@ pub(crate) fn ensure_flags_sidecar() {
 /// Drop the decoded sidecar (both collision toggles off); the next
 /// paint-on re-decodes.
 pub(crate) fn drop_flags_sidecar() {
+    let _nav = lock_nav_statics();
     *FLAGS.lock().unwrap() = FlagsSlot::Unloaded;
 }
 
 #[cfg(test)]
 pub(crate) fn flags_content_hash_count() -> u32 {
+    let _nav = lock_nav_statics();
     FLAGS_CONTENT_HASHES.load(Ordering::Relaxed)
 }
 
 #[cfg(test)]
 pub(crate) fn reset_flags_content_hash_count() {
+    let _nav = lock_nav_statics();
     FLAGS_CONTENT_HASHES.store(0, Ordering::Relaxed);
+}
+
+#[cfg(test)]
+pub(crate) fn flags_load_count() -> u32 {
+    let _nav = lock_nav_statics();
+    FLAGS_LOADS.load(Ordering::Relaxed)
+}
+
+#[cfg(test)]
+pub(crate) fn reset_flags_load_count() {
+    let _nav = lock_nav_statics();
+    FLAGS_LOADS.store(0, Ordering::Relaxed);
 }
 
 #[cfg(test)]
@@ -230,6 +304,7 @@ pub(crate) enum FlagsSidecarState {
 
 #[cfg(test)]
 pub(crate) fn flags_sidecar_state() -> FlagsSidecarState {
+    let _nav = lock_nav_statics();
     match &*FLAGS.lock().unwrap() {
         FlagsSlot::Unloaded => FlagsSidecarState::Unloaded,
         FlagsSlot::Missing => FlagsSidecarState::Missing,
@@ -244,7 +319,7 @@ pub(crate) fn flags_sidecar_for(
     origin: WorldTile,
     width: usize,
     height: usize,
-) -> Option<Arc<[u32]>> {
+) -> Option<Arc<Vec<u32>>> {
     let guard = FLAGS.lock().unwrap();
     match &*guard {
         FlagsSlot::Loaded(s) => sidecar_for_grid(s, origin, width, height),
@@ -259,7 +334,7 @@ fn sidecar_for_grid(
     origin: WorldTile,
     width: usize,
     height: usize,
-) -> Option<Arc<[u32]>> {
+) -> Option<Arc<Vec<u32>>> {
     (s.origin == origin && s.width == width && s.height == height).then(|| Arc::clone(&s.flags))
 }
 
@@ -291,6 +366,7 @@ pub(crate) fn set_reach_binding(
     height: usize,
     trusted_bundled: bool,
 ) {
+    let _nav = lock_nav_statics();
     *REACH_BINDING.lock().unwrap() = match (trusted_bundled, bits) {
         (true, Some(bits)) => ReachBinding::Bundled {
             bits,
@@ -326,6 +402,7 @@ fn reach_binding_is_bundled() -> bool {
 /// Bound `.navreach` bits matching `world`, or `None` (the map then shows
 /// "reach unavailable"). Never floods the world.
 pub(crate) fn map_reach_bitset(world: &NavWorld) -> Option<Arc<[u64]>> {
+    let _nav = lock_nav_statics();
     bound_reach(world)
 }
 
@@ -333,6 +410,7 @@ pub(crate) fn map_reach_bitset(world: &NavWorld) -> Option<Arc<[u64]>> {
 /// external path. A bundled sidecar for a different world is not replaced
 /// by a runtime flood. The map must not call this.
 pub(crate) fn reach_bitset(world: &NavWorld) -> Option<Arc<[u64]>> {
+    let _nav = lock_nav_statics();
     if let Some(bits) = bound_reach(world) {
         return Some(bits);
     }
@@ -835,9 +913,14 @@ fn button_w(ui: &Ui, label: &str) -> f32 {
 
 /// Cached flood components for a seed pair. The whole-world BFS spans
 /// hundreds of thousands of tiles on the real pack (~20 ms per component),
-/// so a picker frame must never re-flood; only a changed seed pair
-/// recomputes.
+/// so a picker frame must never re-flood; only a changed seed pair or world
+/// recomputes. Geometry alone is not identity — a different pack with the
+/// same origin/size must not reuse stale components.
 struct FloodCache {
+    /// Weak identity of the `NavWorld` the sets were flooded on. Distinct
+    /// Arc allocations never share a cache entry even when origin/dims match;
+    /// a dropped world fails the upgrade check and forces a recompute.
+    world: std::sync::Weak<NavWorld>,
     /// The collision grid the sets were computed from (origin + dims).
     key: (i32, i32, usize, usize),
     seeds: Vec<WorldTile>,
@@ -846,27 +929,41 @@ struct FloodCache {
 
 static FLOOD_CACHE: Mutex<Option<FloodCache>> = Mutex::new(None);
 
-/// Drop this consumer's flood cache. Reach stays the bound `.navreach` sidecar.
+/// Drop this consumer's flood cache. Reach stays the bound `.navreach` sidecar
+/// until pack detach clears `REACH_BINDING`.
 pub fn release_map_leases() {
+    let _nav = lock_nav_statics();
     *FLOOD_CACHE.lock().unwrap() = None;
     *FLOOD_REPORT.lock().unwrap() = None;
 }
 
 /// The step-ok reachable sets for `seeds`, computed once per seed pair and
-/// cached; a cache hit only bumps `Arc` refcounts.
-fn flood_sets_for(world: &NavWorld, seeds: &[WorldTile]) -> Vec<Arc<HashSet<WorldTile>>> {
+/// world identity and cached; a cache hit only bumps `Arc` refcounts. Empty
+/// demand clears the cache so turning component-flood off releases ownership
+/// without waiting for WalkTo close.
+fn flood_sets_for(world: &Arc<NavWorld>, seeds: &[WorldTile]) -> Vec<Arc<HashSet<WorldTile>>> {
+    let _nav = lock_nav_statics();
+    if seeds.is_empty() {
+        release_map_leases();
+        return Vec::new();
+    }
     let c = &world.collision;
     let key = (c.origin.x, c.origin.z, c.width, c.height);
     let mut cache = FLOOD_CACHE.lock().unwrap();
-    let fresh = cache
-        .as_ref()
-        .is_some_and(|f| f.key == key && f.seeds.as_slice() == seeds);
+    let fresh = cache.as_ref().is_some_and(|f| {
+        f.world
+            .upgrade()
+            .is_some_and(|cached| Arc::ptr_eq(&cached, world))
+            && f.key == key
+            && f.seeds.as_slice() == seeds
+    });
     if !fresh {
         let components: Vec<Arc<HashSet<WorldTile>>> = flood_components(c, seeds)
             .into_iter()
             .map(Arc::new)
             .collect();
         *cache = Some(FloodCache {
+            world: Arc::downgrade(world),
             key,
             seeds: seeds.to_vec(),
             components: components.clone(),
@@ -875,6 +972,32 @@ fn flood_sets_for(world: &NavWorld, seeds: &[WorldTile]) -> Vec<Arc<HashSet<Worl
     } else {
         cache.as_ref().unwrap().components.clone()
     }
+}
+
+/// Resolve flood sets for a borrowed world: prefer the bound pack `Arc` so
+/// identity is Weak-stable; otherwise compute uncached (no pack Arc to pin).
+fn flood_sets_for_ref(world: &NavWorld, seeds: &[WorldTile]) -> Vec<Arc<HashSet<WorldTile>>> {
+    if let Some(arc) = pack().filter(|a| std::ptr::eq(a.as_ref(), world)) {
+        return flood_sets_for(&arc, seeds);
+    }
+    if seeds.is_empty() {
+        release_map_leases();
+        return Vec::new();
+    }
+    flood_components(&world.collision, seeds)
+        .into_iter()
+        .map(Arc::new)
+        .collect()
+}
+
+#[cfg(test)]
+pub(crate) fn flood_cache_occupied() -> bool {
+    FLOOD_CACHE.lock().unwrap().is_some()
+}
+
+#[cfg(test)]
+pub(crate) fn reach_binding_occupied() -> bool {
+    !matches!(*REACH_BINDING.lock().unwrap(), ReachBinding::Unbound)
 }
 
 /// Last `nav-flood` line reported on stderr, keyed by the arm generation
@@ -918,7 +1041,7 @@ fn flood_report_sizes(comps: &[Arc<HashSet<WorldTile>>], dest: WorldTile) -> (us
 /// component sizes change. The sizes come from the cached flood sets, so
 /// an arm never runs a second world BFS.
 fn report_flood_sizes(world: &NavWorld, player: WorldTile, dest: WorldTile, arm_gen: u64) {
-    let comps = flood_sets_for(world, &[player, dest]);
+    let comps = flood_sets_for_ref(world, &[player, dest]);
     let (n, m) = flood_report_sizes(&comps, dest);
     let mut last = FLOOD_REPORT.lock().unwrap();
     if let Some(line) = flood_report_line(*last, arm_gen, player, dest, n, m) {
@@ -1381,11 +1504,9 @@ fn draw_canvas(
             } else {
                 Vec::new()
             };
-            let floods = if seeds.is_empty() {
-                Vec::new()
-            } else {
-                flood_sets_for(world, &seeds)
-            };
+            // Empty demand (layer off or no seeds) releases the process-static
+            // flood cache via flood_sets_for; close still uses release_map_leases.
+            let floods = flood_sets_for_ref(world, &seeds);
             if layers.flood {
                 if let (Some(h), Some(d)) = (here, dest) {
                     report_flood_sizes(world, h, d, session.route_gen());

@@ -35,6 +35,8 @@ path = "src/main.rs"
 [features]
 render-diagnostics = ["client/render-diagnostics", "host/render-diagnostics"]
 memory-profile = ["host-play/memory-profile"]
-
 # CPU diagnostic: use System directly, report allocator metrics unavailable.
 memory-profile-no-alloc = ["memory-profile", "host-play/memory-profile-no-alloc"]
+
+[dev-dependencies]
+parking_lot = "0.12"
