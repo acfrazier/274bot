@@ -3910,8 +3910,6 @@ impl Session {
                     // A clean logout requested solely for a cancelled rail
                     // removal must not hold an auto-login profile parked.
                     arm.arm_explicit_login();
-                } else if !want_login {
-                    arm.withdraw_login();
                 }
             } else {
                 self.ensure_slot(name, self.arm_for_profile(name), false);

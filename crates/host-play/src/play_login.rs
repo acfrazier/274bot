@@ -18,9 +18,10 @@ pub(super) type SharedLoginQueue = Arc<QueueMutex<LoginQueue>>;
 static NEXT_QUEUE_OWNER: AtomicU64 = AtomicU64::new(1);
 
 /// Login/logout controller state. Every operator command advances one
-/// generation under this lock; worker acknowledgements may only mutate the
-/// generation they consumed. The intent lock is never held with queue,
-/// status, or script locks.
+/// generation under this lock. A worker acknowledgement from an older
+/// generation applies only when the current intent still requests the same
+/// outcome; agreeing refreshes do not create another one-shot command. The
+/// intent lock is never held with queue, status, or script locks.
 struct SlotIntent {
     generation: u64,
     want_login: bool,
@@ -351,7 +352,7 @@ impl SlotArm {
 
     pub(super) fn acknowledge_logout(&self, command: IntentCommand) {
         let mut intent = self.intent.lock();
-        if intent.generation != command.generation {
+        if intent.generation != command.generation && !intent.want_logout {
             return;
         }
         intent.want_logout = false;
@@ -374,7 +375,9 @@ impl SlotArm {
 
     fn acknowledge_login(&self, command: IntentCommand) {
         let mut intent = self.intent.lock();
-        if intent.generation != command.generation {
+        if intent.generation != command.generation
+            && (!intent.want_login || intent.login_latched || intent.want_logout)
+        {
             return;
         }
         let keep = self.auto_login.load(Ordering::Relaxed) && !intent.login_latched;

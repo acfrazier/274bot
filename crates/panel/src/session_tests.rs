@@ -3997,6 +3997,27 @@ fn login_after_logout_rearms_handshake_on_fake_arm() {
 }
 
 #[test]
+fn load_refresh_keeps_an_explicit_non_auto_login() {
+    let path = tmp_vault("load-refresh-explicit-login.vault");
+    let mut session = Session::new();
+    let mut vault = Vault::create(&path, "bot").unwrap();
+    vault.upsert(profile("alice", "pw", 42)).unwrap();
+    session.vault = Some(vault);
+    let mut play = empty_play();
+    let arm = SlotArm::new(42, false);
+    arm.arm_explicit_login();
+    play.attach_arm("alice", Arc::clone(&arm));
+    session.play = Some(play);
+    session.wall.load("alice");
+
+    assert!(!session.load("alice"));
+    assert!(
+        arm.wants_login(),
+        "refreshing a non-auto profile must not withdraw explicit Log in"
+    );
+}
+
+#[test]
 fn explicit_login_recreates_terminal_worker_and_reuses_slot_io() {
     let path = tmp_vault("terminal-worker-login.vault");
     let mut session = Session::new();

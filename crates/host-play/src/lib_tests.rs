@@ -1776,6 +1776,25 @@ fn login_success_keeps_auto_login_armed_but_disarms_one_shot() {
     assert!(!should_handshake(&arm, false));
 }
 
+#[test]
+fn successful_login_consumes_one_shot_after_non_conflicting_updates() {
+    let arm = SlotArm::new(0, false);
+    arm.arm_explicit_login();
+    let claimed = arm.login_command(false).unwrap();
+
+    // Repeated Log in / Login all and a profile auto-policy refresh agree
+    // with the claimed handshake; neither creates a second one-shot login.
+    arm.arm_explicit_login();
+    arm.set_auto_login(false);
+    on_login_success(&arm, claimed);
+
+    assert!(
+        !arm.wants_login(),
+        "the successful handshake must consume the explicit one-shot"
+    );
+    assert!(!should_handshake(&arm, false));
+}
+
 fn client_after_observed_idle_logout() -> Client {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
