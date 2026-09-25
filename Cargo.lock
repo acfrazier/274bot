@@ -2993,6 +2993,7 @@ version = "0.1.8"
 dependencies = [
  "api",
  "client",
+ "png",
  "serde",
  "serde_json",
  "sha2",

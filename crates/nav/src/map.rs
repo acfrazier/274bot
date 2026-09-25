@@ -5,9 +5,13 @@
 //! at disk boundaries. Image identity is independent of nav/service facts.
 
 pub mod cache;
+mod catalogue;
+mod client_cache;
 pub mod formats;
 pub mod identity;
 pub mod poi;
+pub mod producer;
+pub mod raster;
 pub mod records;
 pub mod services;
 pub mod spatial;
