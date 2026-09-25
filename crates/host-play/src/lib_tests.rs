@@ -831,6 +831,8 @@ fn running_slot_profile_world_change_reseats_next_login_handshake() {
             rsa_exponent: client::PROD_LOGIN_RSAE.into(),
             expected_crc: Some([0; 9]),
             content_id: "world-edit-login-fixture".into(),
+            file_store_dir: None,
+            ondemand_persist_dir: None,
         })
         .unwrap(),
     );

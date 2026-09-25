@@ -88,6 +88,14 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
 - Logged-out title-screen brazier flames animate again on CPU and GPU. Full-rate
   views follow the 35 ms flame clock, 1 fps rail tiles catch up when painted,
   and draw-off bot slots remain raster-free.
+- Region changes reuse one identity-checked local map store instead of fetching
+  every square over ondemand; completed maps are kept under that content
+  identity. The 289 ondemand worker no longer sends the legacy Java keepalive
+  (`00 00 00 0a`) that this engine family closes on; 274 still does. A closed
+  update socket reconnects and resends immediately after a network completion,
+  while accept-then-close reconnects back off instead of spinning. A closed
+  game socket is noticed on the next frame via EOF peek instead of waiting the
+  15 s silence watchdog.
 
 ### Slot lifecycle
 

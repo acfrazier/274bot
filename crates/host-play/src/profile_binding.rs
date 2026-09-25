@@ -407,6 +407,8 @@ impl ProfileSelection {
             rsa_exponent,
             expected_crc: Some(crcs),
             content_id: cache_id.clone(),
+            file_store_dir: runtime_cache.as_ref().and_then(|p| p.store_dir.clone()),
+            ondemand_persist_dir: runtime_cache.as_ref().map(|p| p.persist_dir.clone()),
         })?);
         let game_data = if self.supported_server || (runtime && self.target() == BotTarget::Prod) {
             api::game_data::for_optional_profile(self.revision(), &cache_id)?.filter(|data| {
