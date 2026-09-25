@@ -948,13 +948,24 @@ impl SlotScript {
         if self.runtime_generation != generation {
             return false;
         }
-        match self.state {
-            RunState::Running | RunState::Paused | RunState::Starting => {}
-            _ => return false,
-        }
         let fp = settings_fp(bag);
         if self.last_settings_fp.as_deref() == Some(fp.as_str()) {
             return false;
+        }
+        if self.state == RunState::Stopping {
+            if !matches!(self.after_stop, AfterStop::Start | AfterStop::Restart) {
+                return false;
+            }
+            let Some(load_identity) = &mut self.load_identity else {
+                return false;
+            };
+            load_identity.settings_bag = Some(Arc::new(bag.clone()));
+            self.last_settings_fp = Some(fp);
+            return true;
+        }
+        match self.state {
+            RunState::Running | RunState::Paused | RunState::Starting => {}
+            _ => return false,
         }
         self.post_settings_bag(bag);
         true

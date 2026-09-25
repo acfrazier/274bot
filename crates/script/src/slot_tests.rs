@@ -649,6 +649,28 @@ fn fenced_settings_reject_stale_identity_generation_and_unchanged_bag() {
     assert!(!slot.post_settings_bag_fenced(&bag, "catalog:ChickenKiller", gen));
 }
 
+#[cfg(feature = "load")]
+#[test]
+fn settings_update_reaches_start_queued_behind_reap() {
+    let mut slot = SlotScript::new();
+    let source = "export function tick() {}".to_string();
+    slot.start_load_with_loadouts(source.clone(), LoadShape::NativeTick, vec![], &[])
+        .unwrap();
+    slot.stop();
+    slot.start_load_with_loadouts(source, LoadShape::NativeTick, vec![], &[])
+        .unwrap();
+    slot.attach_source_identity("catalog:Example");
+    let generation = slot.runtime_generation();
+    let bag = serde_json::Map::from_iter([("amount".to_string(), serde_json::json!(9))]);
+    assert!(slot.post_settings_bag_fenced(&bag, "catalog:Example", generation));
+    assert_eq!(
+        slot.load_identity
+            .as_ref()
+            .and_then(|identity| identity.settings_bag.as_deref()),
+        Some(&bag)
+    );
+}
+
 #[test]
 fn stop_clears_identity_and_bumps_runtime_generation() {
     let mut slot = SlotScript::new();
