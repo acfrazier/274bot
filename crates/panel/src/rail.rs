@@ -51,19 +51,20 @@ pub const FOLD_GLYPH: &str = "\u{2582}";
 /// Unfold the rail blit (raise the head).
 pub const UNFOLD_GLYPH: &str = "\u{2585}";
 
-/// Cap dot state: error red wins, then not-ingame grey (logged out),
-/// then running green, else idle yellow. A FIFO-queued login slot is not
-/// ingame, so it is grey.
+/// Cap dot state: error red wins, then disconnected grey, then running
+/// green, else connected-idle yellow. A FIFO-queued or preparing slot is
+/// disconnected and grey; an authenticated slot stays yellow while its
+/// scene is still loading.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Light {
-    /// Unknown / logged out — not ingame and no error.
+    /// Unknown / logged out / reconnecting — disconnected and no error.
     Grey,
     /// Login or runtime error.
     Red,
-    /// Idle — ingame and nothing running (paused/stopping scripts, the
-    /// run orb).
+    /// Connected but not running a script or nav task. This includes scene
+    /// loading plus paused/stopping scripts and the run orb.
     Yellow,
-    /// Running — ingame and a script is Running or nav is queued.
+    /// Connected with a Running script or queued nav task.
     Green,
 }
 
