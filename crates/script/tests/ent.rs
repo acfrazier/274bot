@@ -288,3 +288,32 @@ export default class T extends LoopingBot {
         iso.join();
     }
 }
+
+#[test]
+fn within_of_preserves_the_origin_and_entity_levels() {
+    let src = r#"
+import EntityQuery from '../../api/query/Query.js';
+export default class T extends LoopingBot {
+    loop() {
+        const rows = [
+            { name: 'same-floor-edge', x: 101, z: 100, level: 1 },
+            { name: 'same-floor-far', x: 102, z: 100, level: 1 },
+            { name: 'other-floor', x: 100, z: 100, level: 2 },
+        ];
+        globalThis.__probe = EntityQuery
+            .fromSnapshots(() => rows, (row) => row)
+            .withinOf({ x: 100, z: 100, level: 1 }, 1)
+            .results()
+            .map((row) => row.name);
+    }
+}
+"#;
+    let iso = spawn(src);
+    let probe = probe_loop(&iso, &base_snapshot());
+    assert_eq!(
+        probe,
+        serde_json::json!(["same-floor-edge"]),
+        "an entity at the same x/z on another level is outside the disk"
+    );
+    iso.join();
+}

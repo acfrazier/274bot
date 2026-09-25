@@ -43,13 +43,7 @@ export default class EntityQuery {
 
     withinOf(origin, dist) {
         const r = Math.max(0, Math.floor(dist));
-        this.snapFilters.push((s) => {
-            const t = s.tile;
-            return distanceTo(
-                { x: origin.x, z: origin.z, level: 0 },
-                { x: t.x, z: t.z, level: 0 },
-            ) <= r;
-        });
+        this.snapFilters.push((s) => distanceTo(origin, s.tile) <= r);
         return this;
     }
 
