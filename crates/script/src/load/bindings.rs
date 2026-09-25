@@ -901,11 +901,6 @@ function prayerCall(payload) {
 }
 function helperOk(value) { return { ok: true, value: value }; }
 function helperErr(error) { return { ok: false, error: String(error) }; }
-function enqueueIfButton(component_id) {
-  const h = host();
-  h.interact = h.interact || [];
-  h.interact.push({ op: 'if-button', component_id: component_id });
-}
 // One Rust step machine per Set/Clear: Rust owns the click, the wait, the
 // clock and the admission. This surface admits one prayer operation at a
 // time, so a second call settles `busy` from Rust before it begins or
@@ -1178,23 +1173,14 @@ api.sceneNpcs = function (input) {
 api.questStatus = function (input) {
   return globalThis.__rs2b0t_quest_status(input);
 };
-// Owned-root quest journal. One token per isolate. The machine reads the
-// isolate scene; these three only coerce args, one native call, and enqueue.
+// Owned-root quest journal: sync begin plus one awaited Rust machine. The
+// wrapper only coerces arguments and passes the admitted token.
 function questJournalCall(payload) {
   return globalThis.rustyscript.functions.__rs2b0t_quest_journal(payload);
-}
-function enqueueCloseModal() {
-  const h = host();
-  h.interact = h.interact || [];
-  h.interact.push({ op: 'close-modal' });
 }
 function questJournalBeginError(reason) {
   if (reason === 'busy' || reason === 'main-modal-occupied') return reason;
   if (reason === 'snapshot-unavailable' || reason === 'quest-tab-unbound' || reason === 'unknown-quest') return reason;
-  return 'stale';
-}
-function questJournalStepError(reason) {
-  if (reason === 'snapshot-unavailable' || reason === 'modal-timeout') return reason;
   return 'stale';
 }
 api.questJournalBegin = function (input) {
@@ -1205,68 +1191,23 @@ api.questJournalBegin = function (input) {
   if (typeof input.name !== 'string') return helperErr('invalid-args');
   if (Object.prototype.hasOwnProperty.call(input, 'id')) return helperErr('invalid-args');
   if (input.name.trim() === '') return helperErr('invalid-args');
-  const generation = lifecycleGeneration;
   const step = questJournalCall({
     op: 'begin',
     name: input.name,
-    generation: generation,
-  });
-  if (!step || typeof step !== 'object') return helperErr('stale');
-  if (step.kind === 'if-button') {
-    if (generation !== lifecycleGeneration) return helperErr('stale');
-    enqueueIfButton(step.component_id);
-    return helperOk({ token: step.token });
-  }
-  if (step.kind === 'aborted') return helperErr(questJournalBeginError(step.reason));
-  return helperErr('stale');
-};
-api.questJournalNext = function (input) {
-  if (arguments.length === 0) return helperErr('invalid-args');
-  if (input == null || typeof input !== 'object' || Array.isArray(input)) {
-    return helperErr('invalid-args');
-  }
-  if (!Number.isInteger(input.token)) return helperErr('invalid-args');
-  const step = questJournalCall({
-    op: 'next',
-    token: input.token,
     generation: lifecycleGeneration,
   });
   if (!step || typeof step !== 'object') return helperErr('stale');
-  if (step.kind === 'wait') return { pending: true };
-  if (step.kind === 'done') {
-    return helperOk({
-      lines: step.lines,
-      root: step.root,
-      as_of_sequence: step.as_of_sequence,
-    });
-  }
-  if (step.kind === 'aborted') return helperErr(questJournalStepError(step.reason));
+  if (step.kind === 'token') return helperOk({ token: step.token });
+  if (step.kind === 'aborted') return helperErr(questJournalBeginError(step.reason));
   return helperErr('stale');
 };
-api.questJournalClose = function (input) {
-  if (arguments.length === 0) return helperErr('invalid-args');
-  if (input == null || typeof input !== 'object' || Array.isArray(input)) {
-    return helperErr('invalid-args');
+api.questJournalRun = function (input) {
+  if (arguments.length === 0 || input == null
+      || typeof input !== 'object' || Array.isArray(input)
+      || !Number.isSafeInteger(input.token) || input.token < 0) {
+    return Promise.resolve({ kind: 'refused', reason: 'invalid-args' });
   }
-  if (!Number.isInteger(input.token)) return helperErr('invalid-args');
-  const generation = lifecycleGeneration;
-  const step = questJournalCall({
-    op: 'close',
-    token: input.token,
-    generation: generation,
-  });
-  if (!step || typeof step !== 'object') return helperErr('stale');
-  if (step.kind === 'close-modal') {
-    if (generation !== lifecycleGeneration) return helperErr('stale');
-    enqueueCloseModal();
-    return { pending: true };
-  }
-  if (step.kind === 'wait') return { pending: true };
-  if (step.kind === 'done') {
-    return helperOk({ closed: true, as_of_sequence: step.as_of_sequence });
-  }
-  if (step.kind === 'aborted') return helperErr(questJournalStepError(step.reason));
-  return helperErr('stale');
+  return runMachine('quest-journal', { token: input.token }, {});
 };
 function loadoutV2(op, input) {
   return globalThis.__rs2b0t_loadout_v2(op, input);

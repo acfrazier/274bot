@@ -512,6 +512,7 @@ const FAMILIES: &[Entry] = &[
     entry::<crate::hunt::TeleportOut>(),
     entry::<crate::hunt::Acquire>(),
     entry::<crate::clue::Clue>(),
+    entry::<crate::quest_journal::QuestJournal>(),
     entry::<crate::reach_entity::EntityOp>(),
     entry::<crate::reach_entity::WalkHops>(),
     entry::<crate::walk::WalkResilient>(),

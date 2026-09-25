@@ -544,14 +544,14 @@ fn render_native_v2(out: &mut String) {
     out.push_str("  sceneNpcs(input: { types: number[]; actions: string[]; limit: number; region?: SceneRegionInput }): HelperResult<SceneProjection>;\n");
     out.push_str("  /** Sync posted-tab status copy. A missing page is snapshot-unavailable and a null tab is quest-tab-unbound. Not a Promise and not a request op. */\n");
     out.push_str("  questStatus(input: { name: string }): HelperResult<{ status: 'notStarted' | 'inProgress' | 'complete' | 'unknown'; as_of_sequence: number }>;\n");
-    out.push_str("  /** Sync owned-root begin. One `if-button` per token on the posted row id, enqueued synchronously after a generation check. Not a Promise and not a request op; a refusal is `{ ok: false, error }`. */\n");
+    out.push_str("  /** Sync owned-root begin. Admits one posted quest row and returns its token without clicking; a refusal is `{ ok: false, error }`. */\n");
     out.push_str(
         "  questJournalBegin(input: { name: string }): HelperResult<{ token: number }>;\n",
     );
-    out.push_str("  /** Sync owned-root next. Not-done is `{ pending: true }` (no `ok` field) — not empty lines. Not a Promise. */\n");
-    out.push_str("  questJournalNext(input: { token: number }): HelperResult<{ lines: string[]; root: number; as_of_sequence: number }>;\n");
-    out.push_str("  /** Sync owned-root close. One `close-modal` only while the latest pair is still the acquired root and texts. Not-done is `{ pending: true }` (no `ok` field). Not a Promise; never returns journal lines. */\n");
-    out.push_str("  questJournalClose(input: { token: number }): HelperResult<{ closed: true; as_of_sequence: number }>;\n");
+    out.push_str("  /** One awaited run. Rust clicks the admitted row, acquires its exact modal, returns its lines, and closes only that modal. */\n");
+    out.push_str(
+        "  questJournalRun(input: { token: number }): Promise<QuestJournalOutcome>;\n",
+    );
     out.push_str("  foodOf(input: { loadout: LoadoutInput | null; fallback: string }): HelperResult<string>;\n");
     out.push_str("  gearOf(input: { loadout: LoadoutInput | null }): HelperResult<string[]>;\n");
     out.push_str("  suppliesOf(input: { loadout: LoadoutInput | null }): HelperResult<Array<{ item: string; qty: number }>>;\n");
@@ -708,6 +708,14 @@ fn render_native_v2(out: &mut String) {
     out.push_str("/** One clue run's settlement. A hook that throws rejects the promise with that value. */\n");
     out.push_str("export type ClueOutcome =\n");
     out.push_str("  | { kind: 'done'; value: ClueRunValue }\n");
+    out.push_str("  | { kind: 'refused'; reason: string }\n");
+    out.push_str("  | { kind: 'aborted'; reason: 'reset' | 'superseded' | 'terminated' | 'unknown' };\n");
+    out.push_str("/** The journal machine's terminal value. `as_of_sequence` observed the acquired lines; `closed_as_of_sequence` later proved that exact modal closed. */\n");
+    out.push_str("export type QuestJournalRunValue =\n");
+    out.push_str("  | { kind: 'done'; token: number; lines: string[]; root: number; as_of_sequence: number; closed_as_of_sequence: number }\n");
+    out.push_str("  | { kind: 'aborted'; token: number; reason: string };\n");
+    out.push_str("export type QuestJournalOutcome =\n");
+    out.push_str("  | { kind: 'done'; value: QuestJournalRunValue }\n");
     out.push_str("  | { kind: 'refused'; reason: string }\n");
     out.push_str("  | { kind: 'aborted'; reason: 'reset' | 'superseded' | 'terminated' | 'unknown' };\n");
 }

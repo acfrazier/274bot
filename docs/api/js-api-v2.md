@@ -245,6 +245,34 @@ and `unknown_as_satisfied: false`. Items stay script aliases.
 
 Example: `crates/script/examples/quest_facts_v2.ts`.
 
+## Quest journal
+
+`questJournalBegin({ name })` is a synchronous `HelperResult<{ token }>` and
+`await questJournalRun({ token })` is the token's one machine await. Begin
+selects the first posted journal row whose name matches after trim and ASCII
+folding, but does not click it. The Rust `quest-journal` machine owns the
+selected row's `if-button`, the acquisition window, the exact root/text pair,
+its single `close-modal`, and the wait for an explicit closed pair.
+
+| Method | OK | Errors |
+| --- | --- | --- |
+| `questJournalBegin({ name })` | `{ token }` | `invalid-args`, `snapshot-unavailable`, `quest-tab-unbound`, `unknown-quest`, `main-modal-occupied`, `busy`, `stale` |
+| `await questJournalRun({ token })` | one `QuestJournalOutcome` settlement | `invalid-args`, `stale`, or a host abort |
+
+A successful machine settlement is outer `{ kind: 'done', value }`, where
+`value.kind === 'done'` carries `lines`, `root`, the acquisition
+`as_of_sequence`, and the later `closed_as_of_sequence`. A page failure,
+replacement modal or acquisition timeout is an outer done with inner
+`{ kind: 'aborted', reason }`; reset, supersession and termination remain outer
+machine aborts. A still-closed pair waits rather than returning empty lines.
+
+Only the explicit `{ root: -1, texts: [] }` pair is free or closed. An omitted
+pair is `snapshot-unavailable`; a positive root is occupied at begin; root
+`-1` with non-empty texts is unusable. After acquisition, the same root with
+different texts or a different positive root is stale and is never closed.
+Pause and hold freeze the 3-second acquisition window. The journal pages remain
+private isolate scene data and are not exposed on `api.snapshot`.
+
 ## Clue helpers
 
 Five sync `HelperResult` fact reads and one owned session with a synchronous

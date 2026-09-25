@@ -705,12 +705,10 @@ export interface NativeApi {
   sceneNpcs(input: { types: number[]; actions: string[]; limit: number; region?: SceneRegionInput }): HelperResult<SceneProjection>;
   /** Sync posted-tab status copy. A missing page is snapshot-unavailable and a null tab is quest-tab-unbound. Not a Promise and not a request op. */
   questStatus(input: { name: string }): HelperResult<{ status: 'notStarted' | 'inProgress' | 'complete' | 'unknown'; as_of_sequence: number }>;
-  /** Sync owned-root begin. One `if-button` per token on the posted row id, enqueued synchronously after a generation check. Not a Promise and not a request op; a refusal is `{ ok: false, error }`. */
+  /** Sync owned-root begin. Admits one posted quest row and returns its token without clicking; a refusal is `{ ok: false, error }`. */
   questJournalBegin(input: { name: string }): HelperResult<{ token: number }>;
-  /** Sync owned-root next. Not-done is `{ pending: true }` (no `ok` field) — not empty lines. Not a Promise. */
-  questJournalNext(input: { token: number }): HelperResult<{ lines: string[]; root: number; as_of_sequence: number }>;
-  /** Sync owned-root close. One `close-modal` only while the latest pair is still the acquired root and texts. Not-done is `{ pending: true }` (no `ok` field). Not a Promise; never returns journal lines. */
-  questJournalClose(input: { token: number }): HelperResult<{ closed: true; as_of_sequence: number }>;
+  /** One awaited run. Rust clicks the admitted row, acquires its exact modal, returns its lines, and closes only that modal. */
+  questJournalRun(input: { token: number }): Promise<QuestJournalOutcome>;
   foodOf(input: { loadout: LoadoutInput | null; fallback: string }): HelperResult<string>;
   gearOf(input: { loadout: LoadoutInput | null }): HelperResult<string[]>;
   suppliesOf(input: { loadout: LoadoutInput | null }): HelperResult<Array<{ item: string; qty: number }>>;
@@ -846,5 +844,13 @@ export type ClueRunValue =
 /** One clue run's settlement. A hook that throws rejects the promise with that value. */
 export type ClueOutcome =
   | { kind: 'done'; value: ClueRunValue }
+  | { kind: 'refused'; reason: string }
+  | { kind: 'aborted'; reason: 'reset' | 'superseded' | 'terminated' | 'unknown' };
+/** The journal machine's terminal value. `as_of_sequence` observed the acquired lines; `closed_as_of_sequence` later proved that exact modal closed. */
+export type QuestJournalRunValue =
+  | { kind: 'done'; token: number; lines: string[]; root: number; as_of_sequence: number; closed_as_of_sequence: number }
+  | { kind: 'aborted'; token: number; reason: string };
+export type QuestJournalOutcome =
+  | { kind: 'done'; value: QuestJournalRunValue }
   | { kind: 'refused'; reason: string }
   | { kind: 'aborted'; reason: 'reset' | 'superseded' | 'terminated' | 'unknown' };
