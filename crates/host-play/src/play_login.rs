@@ -40,6 +40,12 @@ type WorkerStartGate = (
     std::sync::mpsc::Receiver<()>,
     std::sync::mpsc::Sender<()>,
 );
+#[cfg(test)]
+type RetryRaceGate = (
+    std::sync::mpsc::Sender<()>,
+    std::sync::mpsc::Receiver<()>,
+);
+
 
 /// Per-slot control arm. The panel flips these to make a slot sit on the
 /// title screen (no handshake) until login is armed, request a clean IF
@@ -82,6 +88,11 @@ pub struct SlotArm {
     /// Deterministic worker-entry gate for lifecycle race regressions.
     #[cfg(test)]
     worker_start_gate: parking_lot::Mutex<Option<WorkerStartGate>>,
+    /// One-shot gates around the retry-wait race boundary.
+    #[cfg(test)]
+    retry_wait_gate: parking_lot::Mutex<Option<RetryRaceGate>>,
+    #[cfg(test)]
+    retry_notify_gate: parking_lot::Mutex<Option<RetryRaceGate>>,
     #[cfg(test)]
     stop_cleanup_signal: parking_lot::Mutex<Option<std::sync::mpsc::Sender<()>>>,
 }
@@ -111,6 +122,10 @@ impl SlotArm {
             bypass_asset_startup: AtomicBool::new(false),
             #[cfg(test)]
             worker_start_gate: parking_lot::Mutex::new(None),
+            #[cfg(test)]
+            retry_wait_gate: parking_lot::Mutex::new(None),
+            #[cfg(test)]
+            retry_notify_gate: parking_lot::Mutex::new(None),
             #[cfg(test)]
             stop_cleanup_signal: parking_lot::Mutex::new(None),
         })
@@ -158,6 +173,40 @@ impl SlotArm {
     pub(crate) fn signal_stop_cleanup_for_test(&self) {
         if let Some(signal) = self.stop_cleanup_signal.lock().take() {
             signal.send(()).unwrap();
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn hold_retry_wait_before_park_for_test(
+        &self,
+    ) -> (
+        std::sync::mpsc::Receiver<()>,
+        std::sync::mpsc::Sender<()>,
+    ) {
+        let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        *self.retry_wait_gate.lock() = Some((entered_tx, release_rx));
+        (entered_rx, release_tx)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn hold_retry_notify_before_lock_for_test(
+        &self,
+    ) -> (
+        std::sync::mpsc::Receiver<()>,
+        std::sync::mpsc::Sender<()>,
+    ) {
+        let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        *self.retry_notify_gate.lock() = Some((entered_tx, release_rx));
+        (entered_rx, release_tx)
+    }
+
+    #[cfg(test)]
+    fn wait_at_retry_race_gate(gate: &parking_lot::Mutex<Option<RetryRaceGate>>) {
+        if let Some((entered, release)) = gate.lock().take() {
+            entered.send(()).unwrap();
+            release.recv().unwrap();
         }
     }
 
@@ -240,8 +289,13 @@ impl SlotArm {
         self.retry_wake.notify_all();
     }
 
-    /// Wake a retry/backoff wait after non-intent control changes.
+    /// Wake a retry/backoff wait after non-intent control changes. Taking the
+    /// predicate lock closes the gap between a waiter's final check and its
+    /// atomic unlock-and-park in `Condvar::wait_for`.
     pub(super) fn notify_retry_wait(&self) {
+        #[cfg(test)]
+        Self::wait_at_retry_race_gate(&self.retry_notify_gate);
+        let _intent = self.intent.lock();
         self.retry_wake.notify_all();
     }
 
@@ -275,6 +329,8 @@ impl SlotArm {
             if left.is_zero() {
                 return true;
             }
+            #[cfg(test)]
+            Self::wait_at_retry_race_gate(&self.retry_wait_gate);
             self.retry_wake.wait_for(&mut intent, left);
         }
     }

@@ -1320,6 +1320,40 @@ fn stop_slot_interrupts_login_backoff() {
 }
 
 #[test]
+fn retry_notification_serializes_with_waiter_park() {
+    let arm = SlotArm::new(9, true);
+    let (waiter_entered, release_waiter) = arm.hold_retry_wait_before_park_for_test();
+    let (notify_entered, release_notify) = arm.hold_retry_notify_before_lock_for_test();
+
+    let waiting_arm = Arc::clone(&arm);
+    let waiter = thread::spawn(move || {
+        waiting_arm.wait_for_retry(Duration::from_millis(40))
+    });
+    waiter_entered.recv().unwrap();
+
+    let notifying_arm = Arc::clone(&arm);
+    let (notify_returned, observe_notify_returned) = std::sync::mpsc::channel();
+    let notifier = thread::spawn(move || {
+        notifying_arm.stop.store(true, Ordering::Relaxed);
+        notifying_arm.notify_retry_wait();
+        notify_returned.send(()).unwrap();
+    });
+    notify_entered.recv().unwrap();
+    release_notify.send(()).unwrap();
+
+    let returned_while_waiter_held = observe_notify_returned
+        .recv_timeout(Duration::from_millis(100))
+        .is_ok();
+    release_waiter.send(()).unwrap();
+    assert!(!waiter.join().unwrap(), "Stop cancels the retry wait");
+    notifier.join().unwrap();
+    assert!(
+        !returned_while_waiter_held,
+        "the notifier must serialize with the predicate lock until the waiter parks"
+    );
+}
+
+#[test]
 fn generic_wake_does_not_shorten_login_backoff() {
     let mut play = run_with_io(
         &PlayOptions {
