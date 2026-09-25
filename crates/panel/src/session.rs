@@ -2977,6 +2977,7 @@ impl Session {
     /// the bounded clean-logout window before Stop is signalled.
     fn pump_slot_removals(&mut self) {
         if let Some(play) = self.play.as_mut() {
+            play.reap_finished_workers();
             play.reap_stopped_slots();
         }
         if self.pending_slot_removals.is_empty() {
@@ -3544,14 +3545,14 @@ impl Session {
     /// own input + framebuffer (no lean channel, no render-all guard — a
     /// headless member just has its draw off).
     fn ensure_slot(&mut self, username: &str, arm: Option<Arc<SlotArm>>) {
-        if self.slots.contains_key(username) {
-            return;
-        }
         if self
             .play
             .as_ref()
-            .is_some_and(|p| p.arm(username).is_some())
+            .is_some_and(|play| play.arm(username).is_some())
         {
+            return;
+        }
+        if self.play.is_none() && self.slots.contains_key(username) {
             return;
         }
         let Some(profile) = self.vault.as_ref().and_then(|v| v.get(username)).cloned() else {
@@ -3566,7 +3567,11 @@ impl Session {
         ) {
             self.walk_dest = None;
         }
-        let input = SlotInput::new();
+        let existing_io = self
+            .slots
+            .get(username)
+            .map(|slot| (Arc::clone(&slot.input), Arc::clone(&slot.pixels)));
+        let (input, pixels) = existing_io.unwrap_or_else(|| (SlotInput::new(), FrameBuf::new()));
         // Raster comes from the vault profile (the same source as
         // `bot_client_config`); a focus change never re-roles a live slot.
         let raster = profile.settings.raster;
@@ -3580,7 +3585,6 @@ impl Session {
             f.renderer_by
                 .insert(username.to_string(), raster != vault::RasterMode::Off);
         }
-        let pixels = FrameBuf::new();
         self.audio.set_music(username, !lowmem);
         #[cfg(test)]
         if self.skip_slot_spawn {
@@ -3610,10 +3614,17 @@ impl Session {
     /// handshake, then select (spawn if needed).
     pub fn login(&mut self, name: &str) {
         self.wall.clear_latch(name);
-        if let Some(play) = self.play.as_ref() {
-            if let Some(arm) = play.arm(name) {
+        if let Some(play) = self.play.as_mut() {
+            play.reap_finished_workers();
+        }
+        if let Some(arm) = self.play.as_ref().and_then(|play| play.arm(name)) {
+            arm.arm_explicit_login();
+        } else if self.slots.contains_key(name) {
+            let arm = self.arm_for_profile(name);
+            if let Some(arm) = arm.as_ref() {
                 arm.arm_explicit_login();
             }
+            self.ensure_slot(name, arm);
         }
         self.select(name);
     }

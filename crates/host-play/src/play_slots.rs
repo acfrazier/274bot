@@ -1,4 +1,5 @@
 use std::collections::{HashMap, VecDeque};
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -28,7 +29,8 @@ use crate::play_login::{
 use crate::play_status::{
     apply_startup_phase, clear_startup_progress, copy_stream_bytes, mark_login_started,
     publish_session_boundary_status, publish_slot_disconnected, publish_startup_phase,
-    publish_startup_progress, record_login_error, set_startup_phase, SlotStatus, StartupPhase,
+    publish_startup_progress, publish_worker_terminal, record_login_error, set_startup_phase,
+    SlotStatus, StartupPhase, WorkerTerminal,
 };
 use crate::play_wires::{dispatch_wires, WireCmd};
 use crate::script_runtime::{
@@ -100,9 +102,45 @@ impl Play {
         handle
     }
 
+    /// Retire workers that ended without Stop while preserving their terminal
+    /// status row for the operator. Joins are non-blocking because every
+    /// selected handle has already finished. Registry locks remain unnested
+    /// except for the established script-wall -> script-slot order.
+    pub fn reap_finished_workers(&mut self) -> Vec<String> {
+        let finished: Vec<String> = self
+            .handles
+            .iter()
+            .filter(|(_, handle)| handle.is_finished())
+            .map(|(name, _)| name.clone())
+            .collect();
+        for name in &finished {
+            let arm = self.arms.remove(name);
+            if let Some(arm) = arm.as_ref() {
+                self.queue.lock().leave_owner(arm.queue_owner);
+            }
+            self.spawned.remove(name);
+            if let Some(slot) = self.scripts.lock().unwrap().remove(name) {
+                slot.lock().unwrap().stop();
+            }
+            self.cheats.lock().unwrap().remove(name);
+            self.wires.lock().unwrap().remove(name);
+            self.navs.lock().unwrap().remove(name);
+            self.wakes.remove(name);
+            if self.focused.as_deref() == Some(name.as_str()) {
+                self.focused = None;
+                self.queue.lock().set_preferred_owner(None);
+            }
+            if let Some(handle) = self.handles.remove(name) {
+                let _ = handle.join();
+            }
+        }
+        finished
+    }
+
     /// Stop and retire a slot without joining its worker on the caller.
     /// [`Play::reap_stopped_slots`] joins only handles already known finished.
     pub fn begin_stop_slot(&mut self, name: &str) {
+        self.reap_finished_workers();
         self.reap_stopped_slots();
         if self.retiring.contains_key(name) {
             return;
@@ -171,6 +209,7 @@ impl Play {
         arm: Option<Arc<SlotArm>>,
     ) -> Result<(), String> {
         self.connection.require_bot_operation()?;
+        self.reap_finished_workers();
         if self
             .retiring
             .get(&profile.username)
@@ -405,6 +444,7 @@ fn spawn_slot_thread(
             .name(username.clone())
             .stack_size(THREAD_STACK)
             .spawn(move || {
+            let worker_outcome = catch_unwind(AssertUnwindSafe(|| {
             #[cfg(test)]
             let startup_entries_published = arm.wait_worker_start_for_test();
             let _queue_retirement = QueuePlaceRetirement {
@@ -1000,6 +1040,30 @@ fn spawn_slot_thread(
                 );
                 if arm.stop.load(Ordering::Relaxed) {
                     return;
+                }
+            }
+            }));
+            if !arm.stop.load(Ordering::Relaxed) {
+                match worker_outcome {
+                    Ok(()) => publish_worker_terminal(
+                        &slot_statuses,
+                        &username,
+                        WorkerTerminal::Failed,
+                        None,
+                    ),
+                    Err(payload) => {
+                        let detail = payload
+                            .downcast_ref::<&str>()
+                            .map(|message| (*message).to_string())
+                            .or_else(|| payload.downcast_ref::<String>().cloned())
+                            .unwrap_or_else(|| "unknown panic payload".to_string());
+                        publish_worker_terminal(
+                            &slot_statuses,
+                            &username,
+                            WorkerTerminal::Panicked,
+                            Some(format!("slot worker panicked: {detail}")),
+                        );
+                    }
                 }
             }
             })

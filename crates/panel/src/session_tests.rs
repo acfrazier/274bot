@@ -4002,6 +4002,53 @@ fn login_after_logout_rearms_handshake_on_fake_arm() {
 }
 
 #[test]
+fn explicit_login_recreates_terminal_worker_and_reuses_slot_io() {
+    let path = tmp_vault("terminal-worker-login.vault");
+    let mut session = Session::new();
+    session.vault = Some(Vault::create(&path, "bot").unwrap());
+    session
+        .vault
+        .as_mut()
+        .unwrap()
+        .upsert(profile("alice", "pw", 42))
+        .unwrap();
+    session.skip_slot_spawn = true;
+    session.play = Some(host_play::run_with_io(
+        &host_play::PlayOptions {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            lowmem: true,
+            mainland: false,
+        },
+        vec![],
+        |_| (None, None),
+        |_, _, _| {},
+    ));
+    let input = SlotInput::new();
+    session.slots.insert(
+        "alice".into(),
+        SlotIo {
+            input: Arc::clone(&input),
+            pixels: FrameBuf::new(),
+        },
+    );
+
+    session.login("alice");
+
+    let replacement = session
+        .play
+        .as_ref()
+        .and_then(|play| play.arm("alice"))
+        .expect("explicit login recreates the terminal worker arm");
+    assert!(replacement.want_login.load(Ordering::Relaxed));
+    assert!(Arc::ptr_eq(
+        &session.slots.get("alice").unwrap().input,
+        &input
+    ));
+}
+
+#[test]
 fn arm_login_all_cancels_pending_logout() {
     // A title-screen member keeps want_logout=true (the slot body only
     // clears it when it observes ingame); Login all must cancel it or

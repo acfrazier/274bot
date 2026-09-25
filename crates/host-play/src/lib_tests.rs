@@ -2062,7 +2062,6 @@ fn panicking_spawned_worker_retires_its_place_and_unblocks_follower() {
             .is_some_and(thread::JoinHandle::is_finished)),
         "the real worker must unwind through its retirement guard"
     );
-    assert!(play.handles.remove("dead").unwrap().join().is_err());
     assert!(play.queue.lock().status_owner(dead_owner).is_none());
     {
         let rows = play
@@ -2071,6 +2070,14 @@ fn panicking_spawned_worker_retires_its_place_and_unblocks_follower() {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let dead_row = rows.iter().find(|row| row.username == "dead").unwrap();
         assert_eq!((dead_row.queue_position, dead_row.queue_total), (-1, -1));
+        assert_eq!(dead_row.worker_terminal, Some(WorkerTerminal::Panicked));
+        assert!(
+            dead_row
+                .error
+                .as_deref()
+                .is_some_and(|error| error.starts_with("slot worker panicked:")),
+            "caught unwind must leave a terminal operator message"
+        );
     }
     assert_eq!(
         request_shared(&play.queue, 8, window_started + Duration::from_secs(61)),
@@ -2082,9 +2089,71 @@ fn panicking_spawned_worker_retires_its_place_and_unblocks_follower() {
         .acknowledge_login_return(8, window_started + Duration::from_secs(61)));
 
     play.statuses.clear_poison();
+    assert_eq!(play.reap_finished_workers(), vec!["dead"]);
+    assert!(play.arm("dead").is_none());
+    assert!(!play.spawned.contains("dead"));
+    assert!(play.handles.get("dead").is_none());
+}
 
+#[test]
+fn finished_worker_is_reaped_before_explicit_respawn() {
+    let mut play = run_with_io(
+        &PlayOptions {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            lowmem: true,
+            mainland: false,
+        },
+        vec![],
+        |_| (None, None),
+        |_, _, _| {},
+    );
+    let stale = SlotArm::new(7, false);
+    play.arms.insert("dead".into(), Arc::clone(&stale));
+    play.spawned.insert("dead".into());
+    play.statuses.lock().unwrap().push(SlotStatus {
+        username: "dead".into(),
+        startup_phase: StartupPhase::Error,
+        error: Some("bound preparation failed".into()),
+        ..SlotStatus::default()
+    });
+    let (exiting, observed) = std::sync::mpsc::channel();
+    play.handles.insert(
+        "dead".into(),
+        thread::spawn(move || {
+            exiting.send(()).unwrap();
+        }),
+    );
+    observed.recv().unwrap();
+    for _ in 0..10_000 {
+        if play.handles["dead"].is_finished() {
+            break;
+        }
+        thread::yield_now();
+    }
+    assert!(play.handles["dead"].is_finished());
+
+    let replacement = SlotArm::new(8, false);
+    replacement.bypass_asset_startup_for_test();
+    let (entered, release, _) = replacement.hold_worker_start_for_test();
+    play.try_spawn_slot(
+        profile("dead", 8),
+        None,
+        None,
+        Some(Arc::clone(&replacement)),
+    )
+    .unwrap();
+
+    assert!(
+        Arc::ptr_eq(&play.arm("dead").unwrap(), &replacement),
+        "an explicit restart must replace the finished worker's stale arm"
+    );
+    entered
+        .recv_timeout(Duration::from_secs(2))
+        .expect("replacement worker did not start");
+    release.send(()).unwrap();
     play.stop_slot("dead");
-    assert!(play.queue.lock().status_owner(dead_owner).is_none());
 }
 
 #[test]

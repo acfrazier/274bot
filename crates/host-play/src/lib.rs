@@ -116,7 +116,7 @@ use play_status::{
 };
 pub use play_status::{
     copy_stream_bytes, owned_terminal_startup_error, player_here_tile, player_world_tile,
-    SlotStatus, StartupPhase,
+    SlotStatus, StartupPhase, WorkerTerminal,
 };
 #[cfg(test)]
 use play_wires::dispatch_wires;

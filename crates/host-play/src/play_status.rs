@@ -25,6 +25,9 @@ pub struct SlotStatus {
     pub scene_state: i32,
     /// Last login error (code + message); cleared after a successful login.
     pub error: Option<String>,
+    /// Terminal outcome of this worker lifetime. Login errors leave this
+    /// `None`; explicit restart replaces the whole status row.
+    pub worker_terminal: Option<WorkerTerminal>,
     pub runenergy: i32,
     /// Accepted auto-run `set_run(true)` sends this slot has made.
     pub run_sends: u32,
@@ -87,6 +90,12 @@ pub enum StartupPhase {
     Error,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkerTerminal {
+    Failed,
+    Panicked,
+}
+
 impl SlotStatus {
     /// Wall member is online: every slot is a full `Client` now (no lean
     /// special case), so a slot is up when the scene is built.
@@ -101,9 +110,10 @@ impl SlotStatus {
         if self.startup_phase != StartupPhase::Error {
             return None;
         }
-        self.error
-            .as_deref()
-            .filter(|error| error.starts_with("profile asset initialization failed:"))
+        self.error.as_deref().filter(|error| {
+            self.worker_terminal.is_some()
+                || error.starts_with("profile asset initialization failed:")
+        })
     }
 }
 
@@ -164,6 +174,7 @@ impl Default for SlotStatus {
             ingame: false,
             scene_state: 0,
             error: None,
+            worker_terminal: None,
             runenergy: 0,
             run_sends: 0,
             tile_x: 0,
@@ -386,6 +397,37 @@ pub(super) fn publish_slot_disconnected(statuses: &Arc<Mutex<Vec<SlotStatus>>>, 
                 );
             }
         }
+    }
+}
+
+/// Publish a terminal worker outcome after every normal early return or
+/// caught unwind. The status mutex may itself be poisoned by the unwind; the
+/// boundary owns that row and can safely close its observation gate.
+pub(super) fn publish_worker_terminal(
+    statuses: &Arc<Mutex<Vec<SlotStatus>>>,
+    name: &str,
+    terminal: WorkerTerminal,
+    detail: Option<String>,
+) {
+    let mut rows = statuses
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some(status) = rows.iter_mut().find(|status| status.username == name) else {
+        return;
+    };
+    reset_slot_observation(status);
+    status.login_started = None;
+    status.queue_position = -1;
+    status.queue_total = -1;
+    status.startup_phase = StartupPhase::Error;
+    status.startup_phase_started = Instant::now();
+    status.startup_progress_percent = None;
+    status.startup_progress_message.clear();
+    status.worker_terminal = Some(terminal);
+    if let Some(detail) = detail {
+        status.error = Some(detail);
+    } else if status.error.is_none() {
+        status.error = Some("slot worker exited unexpectedly".to_string());
     }
 }
 
