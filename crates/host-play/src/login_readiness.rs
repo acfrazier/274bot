@@ -194,6 +194,10 @@ impl LoginReadiness {
         }
 
         if !obs.allow_close {
+            // Scene/session rebuilding is outside the elapsed close window.
+            // Keep the attempt count so eligibility flapping cannot bypass
+            // the independent MAX_CLOSE_ATTEMPTS bound.
+            self.episode_started = None;
             return self.emit(
                 true,
                 WelcomeAction::None,
@@ -649,6 +653,106 @@ mod tests {
         assert!(
             settled.failure.is_none(),
             "closure clears the episode failure"
+        );
+    }
+
+    #[test]
+    fn losing_close_eligibility_pauses_time_but_not_attempt_budget() {
+        let started = Instant::now();
+        let mut readiness = LoginReadiness {
+            session_epoch: 1,
+            ..Default::default()
+        };
+        let mut first = open_at(1, 42);
+        first.now = started;
+        let mut attempts = 0;
+        let refused = readiness.step(&first, || {
+            attempts += 1;
+            CloseAttempt::Refused(SendReason::SceneUnavailable)
+        });
+        assert!(refused.failure.is_none());
+
+        let rebuilding = WelcomeObservation {
+            tick: 3,
+            now: started + Duration::from_secs(12),
+            allow_close: false,
+            scene_state: 1,
+            ..first
+        };
+        let waiting = readiness.step(&rebuilding, || panic!("scene rebuild cannot close"));
+        assert!(
+            waiting.failure.is_none(),
+            "time outside close eligibility must not spend the episode bound"
+        );
+
+        let resumed = WelcomeObservation {
+            tick: 5,
+            allow_close: true,
+            scene_state: 2,
+            ..rebuilding
+        };
+        let retried = readiness.step(&resumed, || {
+            attempts += 1;
+            CloseAttempt::Refused(SendReason::SceneUnavailable)
+        });
+        assert!(
+            retried.failure.is_none(),
+            "eligibility must start a fresh elapsed-time window"
+        );
+
+        let deadline = WelcomeObservation {
+            tick: 7,
+            now: resumed.now + WELCOME_DISMISS_TIMEOUT,
+            ..resumed
+        };
+        let timed_out = readiness.step(&deadline, || {
+            attempts += 1;
+            CloseAttempt::Sent
+        });
+        assert!(
+            timed_out
+                .failure
+                .as_deref()
+                .is_some_and(|failure| failure.contains("timed out")),
+            "{:?}",
+            timed_out.failure
+        );
+        assert_eq!(attempts, 2, "the exact elapsed deadline sends no close");
+
+        let mut bounded = LoginReadiness {
+            session_epoch: 1,
+            ..Default::default()
+        };
+        let mut bounded_attempts = 0;
+        let mut last = None;
+        for index in 0..MAX_CLOSE_ATTEMPTS {
+            let eligible = WelcomeObservation {
+                tick: u64::from(index) * 3 + 1,
+                now: started + Duration::from_secs(u64::from(index) * 12),
+                ..open_at(1, 42)
+            };
+            last = Some(bounded.step(&eligible, || {
+                bounded_attempts += 1;
+                CloseAttempt::Refused(SendReason::SceneUnavailable)
+            }));
+            if index + 1 < MAX_CLOSE_ATTEMPTS {
+                let rebuilding = WelcomeObservation {
+                    tick: eligible.tick + 1,
+                    now: eligible.now + Duration::from_secs(11),
+                    allow_close: false,
+                    scene_state: 1,
+                    ..eligible
+                };
+                let _ = bounded.step(&rebuilding, || panic!("scene rebuild cannot close"));
+            }
+        }
+        assert_eq!(bounded_attempts, MAX_CLOSE_ATTEMPTS);
+        assert!(
+            last.unwrap()
+                .failure
+                .as_deref()
+                .is_some_and(|failure| failure.contains("close refused")),
+            "eligibility gaps must not reset the attempt budget"
         );
     }
 
