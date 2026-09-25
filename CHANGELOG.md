@@ -15,19 +15,24 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
 
 - Slot startup, stop and restart now have one owned lifetime: per-slot
   registries are published before the worker starts, stopped and crashed
-  workers release their queue place, and explicit Log in recreates a terminal
-  worker. Panel rail removal waits and reaps asynchronously instead of joining
-  a worker on the UI thread.
+  workers release their queue place, and only explicit Log in recreates a
+  terminal worker. Panel rail removal waits and reaps asynchronously instead
+  of joining a worker on the UI thread; re-adding or logging in during that
+  window cancels only the matching lifetime's removal and restores its IO.
 - Login and logout commands are serialized by generation, so completion of an
-  old logout cannot erase a newer Login all. Logout latches at the command
-  boundary, including while a slot is preparing or parked.
+  old logout cannot erase a newer Login all while a successful compatible
+  handshake still consumes its one-shot intent. Retry notifications serialize
+  with the wait predicate, and Logout latches at the command boundary,
+  including while a slot is preparing or parked.
 - Connected session state is distinct from scene/player readiness. Connection
-  lights, Logout and clean removal remain correct while a scene loads, while
-  game actions and routing still require a current player and valid tile.
+  lights, loading labels, Logout and clean removal remain correct while a
+  scene loads, while game actions and routing still require a current player
+  and valid tile.
 - Disconnect clears session byte/run counters but retains paused script paint;
-  Stop and unload clear published paint even offline. Welcome dismissal keeps
-  its spaced attempt bound and now also reports a visible failure after a
-  10-second elapsed deadline.
+  Stop and unload clear published paint even offline. Panicked worker status
+  and script-slot poison are contained at terminal retirement. Welcome
+  dismissal keeps its spaced attempt bound and reports a visible failure
+  10 seconds after dismissal first becomes eligible.
 
 ### Script host
 

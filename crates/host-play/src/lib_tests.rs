@@ -363,7 +363,10 @@ fn connected_session_boundary_keeps_the_connection_published() {
         row.connected,
         "a new authenticated session must not transiently publish disconnected"
     );
-    assert!(!row.ingame, "the new session still closes the producer gate");
+    assert!(
+        !row.ingame,
+        "the new session still closes the producer gate"
+    );
     assert_eq!(row.bytes_in, 0);
 }
 
@@ -1349,9 +1352,7 @@ fn retry_notification_serializes_with_waiter_park() {
     let (notify_entered, release_notify) = arm.hold_retry_notify_before_lock_for_test();
 
     let waiting_arm = Arc::clone(&arm);
-    let waiter = thread::spawn(move || {
-        waiting_arm.wait_for_retry(Duration::from_millis(40))
-    });
+    let waiter = thread::spawn(move || waiting_arm.wait_for_retry(Duration::from_millis(40)));
     waiter_entered.recv().unwrap();
 
     let notifying_arm = Arc::clone(&arm);
@@ -2213,7 +2214,6 @@ fn panicking_spawned_worker_retires_its_place_and_unblocks_follower() {
         panic!("synthetic script slot panic");
     });
     assert!(script_poisoner.join().is_err());
-
 
     let statuses = Arc::clone(&play.statuses);
     let poisoner = thread::spawn(move || {

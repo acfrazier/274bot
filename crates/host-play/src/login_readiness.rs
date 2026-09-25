@@ -628,8 +628,7 @@ mod tests {
         assert!(first_attempt.failure.is_none());
 
         eligible.now = eligible_started + WELCOME_DISMISS_TIMEOUT;
-        let timed_out =
-            readiness.step(&eligible, || panic!("tick spacing blocks another close"));
+        let timed_out = readiness.step(&eligible, || panic!("tick spacing blocks another close"));
         assert!(timed_out.hold);
         assert!(
             timed_out

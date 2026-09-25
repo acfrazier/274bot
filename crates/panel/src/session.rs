@@ -626,7 +626,6 @@ struct PendingSlotRemoval {
     io: Option<SlotIo>,
 }
 
-
 /// Combo highlight: `None` when nothing is focused so the widget cannot
 /// display index 0 as selected.
 pub fn combo_index(focused: Option<&str>, names: &[String]) -> Option<usize> {
@@ -3014,7 +3013,10 @@ impl Session {
                     .any(|status| status.username == name.as_str() && status.connected);
                 let timed_out =
                     now.saturating_duration_since(pending.started) >= SLOT_REMOVE_TIMEOUT;
-                (name.clone(), owns_current_lifetime && (disconnected || timed_out))
+                (
+                    name.clone(),
+                    owns_current_lifetime && (disconnected || timed_out),
+                )
             })
             .collect();
         for (name, stop) in ready {
@@ -3596,12 +3598,7 @@ impl Session {
     /// Flat model: every profile spawns **one** full `Client` slot with its
     /// own input + framebuffer (no lean channel, no render-all guard — a
     /// headless member just has its draw off).
-    fn ensure_slot(
-        &mut self,
-        username: &str,
-        arm: Option<Arc<SlotArm>>,
-        restart_terminal: bool,
-    ) {
+    fn ensure_slot(&mut self, username: &str, arm: Option<Arc<SlotArm>>, restart_terminal: bool) {
         if self
             .play
             .as_ref()

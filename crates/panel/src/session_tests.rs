@@ -4100,8 +4100,14 @@ fn selecting_a_terminal_member_preserves_its_failure_until_explicit_login() {
         "focus alone must not replace a terminal worker"
     );
     let row = &session.play.as_ref().unwrap().statuses()[0];
-    assert_eq!(row.worker_terminal, Some(host_play::WorkerTerminal::Panicked));
-    assert_eq!(row.error.as_deref(), Some("slot worker panicked: synthetic"));
+    assert_eq!(
+        row.worker_terminal,
+        Some(host_play::WorkerTerminal::Panicked)
+    );
+    assert_eq!(
+        row.error.as_deref(),
+        Some("slot worker panicked: synthetic")
+    );
 }
 
 #[test]
@@ -5141,14 +5147,7 @@ fn readd_during_rail_removal_cancels_the_old_lifetime() {
         "re-adding must restore the running lifetime's IO"
     );
 
-    session
-        .play
-        .as_ref()
-        .unwrap()
-        .statuses
-        .lock()
-        .unwrap()[0]
-        .connected = false;
+    session.play.as_ref().unwrap().statuses.lock().unwrap()[0].connected = false;
     session.pump_slot_removals_at(started + super::SLOT_REMOVE_TIMEOUT);
 
     let current = session.play.as_ref().unwrap().arm("alice").unwrap();
@@ -5169,7 +5168,10 @@ fn login_during_rail_removal_cancels_the_old_timeout() {
 
     let current = session.play.as_ref().unwrap().arm("alice").unwrap();
     assert!(Arc::ptr_eq(&current, &arm));
-    assert!(arm.wants_login(), "Log in must survive the cancelled removal");
+    assert!(
+        arm.wants_login(),
+        "Log in must survive the cancelled removal"
+    );
     assert!(
         session.slots.contains_key("alice"),
         "Log in must restore the running lifetime's IO"
@@ -5182,25 +5184,15 @@ fn rail_removal_pump_stops_its_lifetime_on_disconnect_or_timeout() {
     let (mut disconnected, disconnected_arm) =
         connected_removal_session("rail-remove-disconnect.vault");
     disconnected.rail_remove_at("alice", started);
-    disconnected
-        .play
-        .as_ref()
-        .unwrap()
-        .statuses
-        .lock()
-        .unwrap()[0]
-        .connected = false;
+    disconnected.play.as_ref().unwrap().statuses.lock().unwrap()[0].connected = false;
     disconnected.pump_slot_removals_at(started);
     assert!(disconnected_arm.stop.load(Ordering::Relaxed));
     assert!(disconnected.play.as_ref().unwrap().arm("alice").is_none());
     assert!(disconnected.pending_slot_removals.is_empty());
 
-    let (mut timed_out, timed_out_arm) =
-        connected_removal_session("rail-remove-timeout.vault");
+    let (mut timed_out, timed_out_arm) = connected_removal_session("rail-remove-timeout.vault");
     timed_out.rail_remove_at("alice", started);
-    timed_out.pump_slot_removals_at(
-        started + super::SLOT_REMOVE_TIMEOUT - Duration::from_nanos(1),
-    );
+    timed_out.pump_slot_removals_at(started + super::SLOT_REMOVE_TIMEOUT - Duration::from_nanos(1));
     assert!(!timed_out_arm.stop.load(Ordering::Relaxed));
     assert!(timed_out.play.as_ref().unwrap().arm("alice").is_some());
     timed_out.pump_slot_removals_at(started + super::SLOT_REMOVE_TIMEOUT);

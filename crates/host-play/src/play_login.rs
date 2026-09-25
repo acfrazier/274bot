@@ -42,11 +42,7 @@ type WorkerStartGate = (
     std::sync::mpsc::Sender<()>,
 );
 #[cfg(test)]
-type RetryRaceGate = (
-    std::sync::mpsc::Sender<()>,
-    std::sync::mpsc::Receiver<()>,
-);
-
+type RetryRaceGate = (std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>);
 
 /// Per-slot control arm. The panel flips these to make a slot sit on the
 /// title screen (no handshake) until login is armed, request a clean IF
@@ -180,10 +176,7 @@ impl SlotArm {
     #[cfg(test)]
     pub(crate) fn hold_retry_wait_before_park_for_test(
         &self,
-    ) -> (
-        std::sync::mpsc::Receiver<()>,
-        std::sync::mpsc::Sender<()>,
-    ) {
+    ) -> (std::sync::mpsc::Receiver<()>, std::sync::mpsc::Sender<()>) {
         let (entered_tx, entered_rx) = std::sync::mpsc::channel();
         let (release_tx, release_rx) = std::sync::mpsc::channel();
         *self.retry_wait_gate.lock() = Some((entered_tx, release_rx));
@@ -193,10 +186,7 @@ impl SlotArm {
     #[cfg(test)]
     pub(crate) fn hold_retry_notify_before_lock_for_test(
         &self,
-    ) -> (
-        std::sync::mpsc::Receiver<()>,
-        std::sync::mpsc::Sender<()>,
-    ) {
+    ) -> (std::sync::mpsc::Receiver<()>, std::sync::mpsc::Sender<()>) {
         let (entered_tx, entered_rx) = std::sync::mpsc::channel();
         let (release_tx, release_rx) = std::sync::mpsc::channel();
         *self.retry_notify_gate.lock() = Some((entered_tx, release_rx));
