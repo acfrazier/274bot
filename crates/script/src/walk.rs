@@ -11,12 +11,12 @@
 //!   when set (`Traversal.ts:149`).
 //! - A closer Chebyshev rebakes and resets no-progress (`walkLadder.ts:55–59`).
 //! - Frozen WalkExecutor returns true at `'closest'` (`WalkExecutor.ts:316-321`)
-//!   even when `isArrived` is false. If that terminal is inside `radius`
-//!   (unwalkable booth dest), the walk succeeded: a stale flood origin can
-//!   make `is_arrived` fail-close. Out-of-radius closest is not success.
-//! - No-progress after baked: frozen goes scene → unstick (`Traversal.ts:176–189`,
-//!   `walkLadder.ts:73–81`). This host has no scene/unstick walker; the closest
-//!   honest equivalent is one pass then backoff (`walkLadder.ts:82–86`).
+//!   even when `isArrived` is false. The resilient layer does not promote that
+//!   low-level settlement to arrival; it continues `walkLadder`.
+//! - No-progress after baked goes to the same-scene `DirectNavigator` step
+//!   (`Traversal.ts:176–178`, `walkLadder.ts:73–77`). This host emits that
+//!   scene click and waits its frozen 6-second bound. It still has no door /
+//!   nearby-step unstick primitive, so that following phase counts one pass.
 //! - `UNREACHABLE_PASSES` (3) then verify (`walkLadder.ts:33, 83–84`). No
 //!   `WalkExecutor.probeDest` here, so verify is fail-closed as probe-dead
 //!   (`walkLadder.ts:66–68`).
@@ -39,6 +39,8 @@ use std::collections::VecDeque;
 
 /// Frozen `opts.timeoutMs ?? 90000` (`Traversal.ts:107`).
 pub(crate) const BAKED_TIMEOUT_MS: u64 = 90_000;
+/// Frozen `SCENE_TIMEOUT_MS` (`Traversal.ts:37,176–178`).
+const SCENE_TIMEOUT_MS: u64 = 6_000;
 /// Frozen `walkWithHops` / hop approach `attempts: 3`.
 pub(crate) const HOP_ATTEMPTS: u32 = 3;
 /// Frozen `UNREACHABLE_PASSES` (`walkLadder.ts:33`).
@@ -212,6 +214,7 @@ impl Walk {
 enum Phase {
     NeedWalk,
     Walking(Walk),
+    Scene,
     Backoff,
 }
 
@@ -300,6 +303,14 @@ impl Resilient {
         }
         match std::mem::replace(&mut self.phase, Phase::NeedWalk) {
             Phase::NeedWalk => self.kick_walk(cx),
+            Phase::Scene => {
+                if arrived(self.dest, self.radius.saturating_add(1)) || cx.clock().bound_reached() {
+                    self.after_scene(cx)
+                } else {
+                    self.phase = Phase::Scene;
+                    None
+                }
+            }
             Phase::Backoff => {
                 if self.delay_left > 1 {
                     self.delay_left -= 1;
@@ -310,13 +321,17 @@ impl Resilient {
                     self.kick_walk(cx)
                 }
             }
-            Phase::Walking(walk) => match walk.step(cx) {
-                None => {
-                    self.phase = Phase::Walking(walk);
-                    None
+            Phase::Walking(walk) => {
+                let owns_wait = walk_wait::owns(walk.token);
+                match walk.step(cx) {
+                    None => {
+                        self.phase = Phase::Walking(walk);
+                        None
+                    }
+                    Some(ok) if owns_wait => self.after_baked(cx, ok),
+                    Some(_) => self.after_displaced_walk(),
                 }
-                Some(ok) => self.after_baked(cx, ok),
-            },
+            }
         }
     }
 
@@ -336,7 +351,22 @@ impl Resilient {
         }
     }
 
-    fn after_baked(&mut self, cx: &mut Cx<'_>, closest: bool) -> Option<bool> {
+    fn kick_scene(&mut self, cx: &mut Cx<'_>) -> Option<bool> {
+        let scene_radius = self.radius.saturating_add(1);
+        if arrived(self.dest, scene_radius) {
+            return self.after_scene(cx);
+        }
+        cx.emit(InteractReq::WalkTo {
+            x: self.dest.x,
+            z: self.dest.z,
+            level: self.dest.level,
+        });
+        cx.clock().arm(SCENE_TIMEOUT_MS);
+        self.phase = Phase::Scene;
+        None
+    }
+
+    fn after_baked(&mut self, cx: &mut Cx<'_>, _settled: bool) -> Option<bool> {
         // Frozen next-loop order: pending, then withinRadius (N5/N6).
         if interrupted() {
             self.logs
@@ -350,21 +380,45 @@ impl Resilient {
             return Some(false);
         };
         let cur = walk_chebyshev(here, self.dest);
-        // Frozen WalkExecutor returns true at the path terminal even when
-        // `isArrived` is false (`WalkExecutor.ts:316-321`, `'closest'`).
-        // An unwalkable booth dest is reached at Chebyshev radius; the
-        // cached flood may still be from another tile, so `is_arrived`
-        // fail-closes. In-radius closest is the walk succeeding.
-        if closest && here.level == self.dest.level && cur <= self.radius {
-            return Some(true);
-        }
         if cur < self.best_dist {
             self.best_dist = cur;
             self.no_progress = 0;
             return self.kick_walk(cx);
         }
-        // Frozen: baked → scene → unstick, then passes++. No scene/unstick
-        // on this host (Traversal.ts:176–189); count one pass.
+        // A low-level settled route may be frozen `'closest'`
+        // (`WalkExecutor.ts:316–325`), but frozen resilient arrival is only
+        // `isArrived` (`Traversal.ts:118–142`). With no progress,
+        // `walkLadder.ts:73–77` advances baked → scene.
+        self.kick_scene(cx)
+    }
+
+    fn after_scene(&mut self, cx: &mut Cx<'_>) -> Option<bool> {
+        let Some(here) = here() else {
+            return Some(false);
+        };
+        let cur = walk_chebyshev(here, self.dest);
+        if cur < self.best_dist {
+            self.best_dist = cur;
+            self.no_progress = 0;
+            return self.kick_walk(cx);
+        }
+
+        // Frozen follows scene with a door / nearby-step unstick
+        // (`Traversal.ts:179–189`, `walkLadder.ts:79–86`). The host has no
+        // corresponding primitive, so preserve its existing fail-closed
+        // approximation from this point: count the completed no-progress pass.
+        self.after_no_progress_pass()
+    }
+
+    fn after_displaced_walk(&mut self) -> Option<bool> {
+        // Another native walk replaced this wait before its deadline. The
+        // timed-out Walk already emitted its fenced AbortWalk, but the scene
+        // action has no request token. Do not let the stale ladder overwrite
+        // the new owner; retain the prior fail-closed pass/backoff behavior.
+        self.after_no_progress_pass()
+    }
+
+    fn after_no_progress_pass(&mut self) -> Option<bool> {
         self.no_progress += 1;
         if let Some(max) = self.attempts {
             if self.no_progress >= max {
@@ -610,9 +664,20 @@ mod tests {
         let token = walk_token();
         fail_walk(1, token, 0, 0, true);
         machine::step(&mut NoJs);
+        assert_eq!(
+            machine::merge_ops(Vec::new()),
+            vec![InteractReq::WalkTo {
+                x: 10,
+                z: 0,
+                level: 0,
+            }],
+            "no-progress baked failure advances to the frozen scene step"
+        );
+        machine::age(h, SCENE_TIMEOUT_MS + 1);
+        machine::step(&mut NoJs);
         assert!(
             machine::merge_ops(Vec::new()).is_empty(),
-            "undefined attempts backoffs (walkLadder.ts:86), does not one-shot"
+            "the completed scene pass backoffs instead of ending"
         );
         assert_eq!(machine::take(h), Take::Pending);
     }
@@ -626,6 +691,16 @@ mod tests {
             machine::step(&mut NoJs);
             let token = walk_token();
             fail_walk(seq, token, 0, 0, true);
+            machine::step(&mut NoJs);
+            assert_eq!(
+                machine::merge_ops(Vec::new()),
+                vec![InteractReq::WalkTo {
+                    x: 10,
+                    z: 0,
+                    level: 0,
+                }]
+            );
+            machine::age(h, SCENE_TIMEOUT_MS + 1);
             machine::step(&mut NoJs);
             if pass + 1 < UNREACHABLE_PASSES {
                 let ticks = backoff_ticks(pass + 1);
@@ -666,108 +741,176 @@ mod tests {
             Take::Pending,
             "N1: isArrived, not wait true"
         );
+        assert_eq!(
+            machine::merge_ops(Vec::new()),
+            vec![InteractReq::WalkTo {
+                x: 10,
+                z: 0,
+                level: 0,
+            }]
+        );
     }
 
-    /// Live auto_fighter_bank: WalkNear r=3 to an unwalkable booth, player
-    /// ends 3 tiles away. Nav publishes closest; `is_arrived` fail-closes
-    /// when the flood is not from `me`. Frozen WalkExecutor returns true.
+    fn blocked_booth_across_long_wall(
+    ) -> (api::snapshot::SceneView, WorldTile, WorldTile, WorldTile) {
+        use client::dash3d::CollisionFlag;
+
+        let mut scene = api::snapshot::SceneView {
+            available: true,
+            base_x: 0,
+            base_z: 0,
+            level: 0,
+            width: 64,
+            height: 64,
+            collision_flags: vec![0; 64 * 64],
+        };
+        for z in 8..=55 {
+            scene.collision_flags[(31 * 64 + z) as usize] |= CollisionFlag::W_E;
+            scene.collision_flags[(32 * 64 + z) as usize] |= CollisionFlag::W_W;
+        }
+        let dest = WorldTile {
+            x: 34,
+            z: 32,
+            level: 0,
+        };
+        scene.collision_flags[(dest.x * 64 + dest.z) as usize] |= CollisionFlag::SQ_BLOCKED;
+        (
+            scene,
+            dest,
+            WorldTile {
+                x: 31,
+                z: 32,
+                level: 0,
+            },
+            WorldTile {
+                x: 33,
+                z: 32,
+                level: 0,
+            },
+        )
+    }
+
     #[test]
-    fn closest_in_radius_of_unwalkable_booth_is_success() {
+    fn walk_resilient_closest_with_fresh_negative_reach_does_not_arrive() {
         use crate::isolate_fb::{
             encode_snapshot_with_native, NativeFactsInput, ReachViewInput, SnapshotReader,
             TileInput,
         };
-        use api::snapshot::SceneView;
-        use client::dash3d::CollisionFlag;
 
         reset();
-        post_here(0, 0);
+        post_here(30, 28);
+        let (scene, dest, outside, inside) = blocked_booth_across_long_wall();
         let args = json!({
-            "tile": { "x": 10, "z": 0, "level": 0 },
+            "tile": { "x": dest.x, "z": dest.z, "level": dest.level },
             "opts": { "radius": 3 },
         });
         let Started::Running(h) = machine::start("walk-resilient", args, Vec::new(), 0) else {
             panic!("walk-resilient runs");
         };
+        let take_walk_token = || match machine::merge_ops(Vec::new()).as_slice() {
+            [InteractReq::WalkNear {
+                x,
+                z,
+                level,
+                radius: 3,
+                request_id,
+                ..
+            }] if (*x, *z, *level) == (dest.x, dest.z, dest.level) => *request_id,
+            other => panic!("expected the fixture walk, got {other:?}"),
+        };
         machine::step(&mut NoJs);
-        let token = walk_token();
+        let first_token = take_walk_token();
 
-        let dest = WorldTile {
-            x: 10,
-            z: 0,
-            level: 0,
+        let post = |post_number: u64,
+                    here: WorldTile,
+                    outcome: Option<(u64, u64)>|
+         -> api::query::ReachQueryView {
+            let flood = api::query::SceneQuery::new(&scene, Some(here))
+                .flood_reach()
+                .expect("fixture origin is in-scene");
+            let view = api::query::pack_reach_query(&scene, Some(&flood));
+            let here_index =
+                ((here.x - scene.base_x) * scene.height + here.z - scene.base_z) as usize;
+            assert_eq!(
+                view.exact_rank[here_index], 0,
+                "the posted reach must be fresh for here"
+            );
+
+            let mut input = crate::isolate_fb::tests::empty_input(post_number);
+            input.here = Some(TileInput {
+                x: here.x,
+                z: here.z,
+                level: here.level,
+            });
+            input.reach = ReachViewInput {
+                available: view.available,
+                base_x: view.base_x,
+                base_z: view.base_z,
+                level: view.level,
+                width: view.width,
+                height: view.height,
+                walkable: &view.walkable,
+                reachable: &view.reachable,
+                reachable_adj: &view.reachable_adj,
+                exact_rank: &view.exact_rank,
+                adjacent_rank: &view.adjacent_rank,
+                step: &view.step,
+                canlight: &view.canlight,
+                stamp: post_number,
+            };
+            let native =
+                outcome.map_or_else(NativeFactsInput::default, |(seq, token)| NativeFactsInput {
+                    walk_outcome_seq: seq,
+                    walk_outcome_request_id: token,
+                    walk_outcome_failed: false,
+                    walk_outcome_x: dest.x,
+                    walk_outcome_z: dest.z,
+                    walk_outcome_level: dest.level,
+                    walk_outcome_radius: 3,
+                    walk_outcome_allow_teleports: false,
+                    ..Default::default()
+                });
+            let bytes = encode_snapshot_with_native(&input, native);
+            let snap = SnapshotReader::from_bytes(&bytes).expect("snapshot");
+            observed::apply(&snap);
+            crate::load::reach_query::apply(&snap);
+            walk_wait::on_snapshot(&snap);
+            view
         };
-        let stand = WorldTile {
-            x: 7,
-            z: 0,
-            level: 0,
-        };
-        let mut scene = SceneView {
-            available: true,
-            base_x: 5,
-            base_z: -5,
-            level: 0,
-            width: 11,
-            height: 11,
-            collision_flags: vec![0; 121],
-        };
-        let lx = dest.x - scene.base_x;
-        let lz = dest.z - scene.base_z;
-        scene.collision_flags[(lx * 11 + lz) as usize] = CollisionFlag::SQ_BLOCKED;
-        // Flood from the booth, not the stand: origin guard makes is_arrived
-        // false even though Chebyshev 3 <= radius 3 and an adjacent tile is open.
-        let flood = api::query::SceneQuery::new(&scene, Some(dest)).flood_reach();
-        let view = api::query::pack_reach_query(&scene, flood.as_ref());
+
+        let outside_view = post(2, outside, Some((1, first_token)));
         assert!(
-            !api::query::is_arrived(stand, dest, 3, || &view),
-            "stale flood must not answer is_arrived for the stand"
+            !api::query::is_arrived(outside, dest, 3, || &outside_view),
+            "the fresh bounded probe cannot reach around the long wall"
         );
-
-        let mut input = crate::isolate_fb::tests::empty_input(2);
-        input.here = Some(TileInput {
-            x: stand.x,
-            z: stand.z,
-            level: 0,
-        });
-        input.reach = ReachViewInput {
-            available: view.available,
-            base_x: view.base_x,
-            base_z: view.base_z,
-            level: view.level,
-            width: view.width,
-            height: view.height,
-            walkable: &view.walkable,
-            reachable: &view.reachable,
-            reachable_adj: &view.reachable_adj,
-            exact_rank: &view.exact_rank,
-            adjacent_rank: &view.adjacent_rank,
-            step: &view.step,
-            canlight: &view.canlight,
-            stamp: 2,
-        };
-        let native = NativeFactsInput {
-            walk_outcome_seq: 1,
-            walk_outcome_request_id: token,
-            walk_outcome_failed: false,
-            walk_outcome_x: dest.x,
-            walk_outcome_z: dest.z,
-            walk_outcome_level: 0,
-            walk_outcome_radius: 3,
-            walk_outcome_allow_teleports: false,
-            ..Default::default()
-        };
-        let bytes = encode_snapshot_with_native(&input, native);
-        let snap = SnapshotReader::from_bytes(&bytes).expect("snap");
-        observed::apply(&snap);
-        crate::load::reach_query::apply(&snap);
-        walk_wait::on_snapshot(&snap);
-
         machine::step(&mut NoJs);
         assert_eq!(
             machine::take(h),
-            Take::Settled(Outcome::Done(json!(true))),
-            "closest in radius of an unwalkable booth is success"
+            Take::Pending,
+            "a matched closest route end settles the low-level wait, not resilient arrival"
         );
+
+        let retry_token = take_walk_token();
+        post(3, outside, Some((2, retry_token)));
+        machine::step(&mut NoJs);
+        assert_eq!(
+            machine::merge_ops(Vec::new()),
+            vec![InteractReq::WalkTo {
+                x: dest.x,
+                z: dest.z,
+                level: dest.level,
+            }],
+            "a no-progress baked closest follows the frozen ladder's scene step"
+        );
+        assert_eq!(machine::take(h), Take::Pending);
+
+        let inside_view = post(4, inside, None);
+        assert!(
+            api::query::is_arrived(inside, dest, 3, || &inside_view),
+            "the destination-side stand is arrival-capable"
+        );
+        machine::step(&mut NoJs);
+        assert_eq!(machine::take(h), Take::Settled(Outcome::Done(json!(true))));
     }
 
     #[test]
@@ -831,9 +974,17 @@ mod tests {
         machine::step(&mut NoJs);
         assert_eq!(
             machine::merge_ops(Vec::new()),
-            vec![InteractReq::AbortWalk {
-                request_id: walk_token
-            }],
+            vec![
+                InteractReq::AbortWalk {
+                    request_id: walk_token
+                },
+                InteractReq::WalkTo {
+                    x: 10,
+                    z: 0,
+                    level: 0,
+                },
+            ],
+            "the timed-out baked route is stopped before the scene ladder step",
         );
         assert_eq!(machine::take(h), Take::Pending);
     }

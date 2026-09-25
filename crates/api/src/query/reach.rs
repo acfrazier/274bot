@@ -20,6 +20,7 @@ const DIRS: [(i32, i32); 8] = [
     (-1, 1),
     (1, 1),
 ];
+const ORTHO: [(i32, i32); 4] = [(-1, 0), (1, 0), (0, -1), (0, 1)];
 
 fn step_dir_bit(dx: i32, dz: i32) -> Option<u32> {
     DIRS.iter().position(|&d| d == (dx, dz)).map(|i| i as u32)
@@ -239,6 +240,26 @@ impl<'a> SceneQuery<'a> {
             .is_some_and(|flags| flags & CollisionFlag::SQ_BLOCKED == 0)
     }
 
+    /// Walkable orthogonal stands whose edge into `destination` is not
+    /// closed by the destination's wall mask. This is the same stop rule
+    /// as an `adjacent_ok` reach probe, exposed as a zero-allocation
+    /// iterator for route-goal selection.
+    pub fn arrival_stands(&self, destination: WorldTile) -> impl Iterator<Item = WorldTile> + '_ {
+        let destination_local = self.to_local(destination);
+        ORTHO.into_iter().filter_map(move |(stand_dx, stand_dz)| {
+            let to = destination_local?;
+            let stand = WorldTile {
+                x: destination.x + stand_dx,
+                z: destination.z + stand_dz,
+                level: destination.level,
+            };
+            let flags = |lx: i32, lz: i32| self.collision_at_local(LocalTile { lx, lz });
+            (self.walkable(stand)
+                && can_reach_adjacent_tile(&flags, to.lx, to.lz, -stand_dx, -stand_dz))
+            .then_some(stand)
+        })
+    }
+
     /// Whether one adjacent step from `from` to `to` is clear (level and
     /// adjacency checked; diagonal steps need both orthogonal legs).
     pub fn can_step(&self, from: WorldTile, to: WorldTile) -> bool {
@@ -364,7 +385,6 @@ impl<'a> SceneQuery<'a> {
         }
         reachable_adj.copy_from_slice(&reachable);
         let mut adjacent_rank = exact_rank.clone();
-        const ORTHO: [(i32, i32); 4] = [(-1, 0), (1, 0), (0, -1), (0, 1)];
         for (rank, &(lx, lz)) in queue.iter().enumerate() {
             for (dx, dz) in ORTHO {
                 let nx = lx + dx;

@@ -258,7 +258,8 @@ pub(crate) fn dispatch_script_interact_cached(
                         .map(|it| (it.def.id, it.count))
                         .collect(),
                 };
-                let queued = arm.queue_route(
+                let queued = arm.queue_route_in_snapshot(
+                    snapshot,
                     x,
                     z,
                     level,

@@ -238,6 +238,20 @@ pub(crate) fn on_resume() {}
 
 pub(crate) fn on_hold(_held: bool) {}
 
+/// Whether `token` still owns the isolate's single native-walk wait.
+///
+/// This is an internal ownership probe, not a shim operation: a timed-out
+/// resilient walk must not send a tokenless scene click after another walk
+/// has replaced its wait.
+pub(crate) fn owns(token: u64) -> bool {
+    SLOT.with(|slot| {
+        slot.borrow()
+            .wait
+            .as_ref()
+            .is_some_and(|wait| wait.token == token)
+    })
+}
+
 pub(crate) fn dispatch(input: &Value) -> Value {
     let op = input.get("op").and_then(Value::as_str).unwrap_or("");
     SLOT.with(|slot| {

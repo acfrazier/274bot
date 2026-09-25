@@ -3819,6 +3819,8 @@ fn same_key_pending_route_refuses_distinct_id() {
                 opts: FindOptions::default(),
                 state: None,
                 bank: vec![],
+                live_candidates: None,
+                completion: Default::default(),
             }),
             requested_route: Some(native_requested(dest, 1, false)),
             walk_request_id: 7,
@@ -4344,6 +4346,8 @@ fn radius_calculate_keeps_first_connected_open_floor_approach() {
         opts: FindOptions::default(),
         state: None,
         bank: vec![],
+        live_candidates: None,
+        completion: Default::default(),
     };
     let RouteOutcome::Routed(route) = request.calculate() else {
         panic!("open floor should route");
@@ -4387,6 +4391,8 @@ fn radius_calculate_drops_wall_separated_candidate() {
         opts: FindOptions::default(),
         state: None,
         bank: vec![],
+        live_candidates: None,
+        completion: Default::default(),
     };
     let RouteOutcome::Routed(route) = request.calculate() else {
         panic!("same-room approach should route");
@@ -4435,6 +4441,8 @@ fn radius_calculate_uses_occupied_target_approach_candidates() {
         opts: FindOptions::default(),
         state: None,
         bank: vec![],
+        live_candidates: None,
+        completion: Default::default(),
     };
     let RouteOutcome::Routed(route) = request.calculate() else {
         panic!("occupied target should route to a neighbour");
@@ -4483,6 +4491,8 @@ fn radius_calculate_respects_wall_l_diagonal_geometry() {
         opts: FindOptions::default(),
         state: None,
         bank: vec![],
+        live_candidates: None,
+        completion: Default::default(),
     };
     let component = nav::router::local_step_component(&request.world.collision, target, 1);
     let same_side = WorldTile {
@@ -4534,6 +4544,8 @@ fn radius_calculate_drops_detour_outside_radius() {
         opts: FindOptions::default(),
         state: None,
         bank: vec![],
+        live_candidates: None,
+        completion: Default::default(),
     };
     let component = nav::router::local_step_component(&request.world.collision, target, 1);
     assert!(!component.contains(&WorldTile {
@@ -4583,6 +4595,8 @@ fn actual_289_radius_arrival_stays_out_of_horvik() {
         opts: FindOptions::default(),
         state: None,
         bank: vec![],
+        live_candidates: None,
+        completion: Default::default(),
     };
     let RouteOutcome::Routed(route) = request.calculate() else {
         panic!("actual 289 route should exist");
@@ -15926,6 +15940,140 @@ fn walk_near_follow_does_not_end_through_a_closed_wall() {
     step(&mut d, &snap, (10, 13, 0), &|| walled_reach(10, 13));
     assert_eq!(d.walked, None, "no hop after arrival");
     assert_eq!(queued(&navs), None, "reachable in-radius arrival clears");
+}
+
+#[test]
+fn walk_near_blocked_target_routes_to_an_arrival_capable_stand() {
+    use client::dash3d::CollisionFlag;
+
+    const SIZE: usize = 64;
+    let mut flags = vec![0u32; SIZE * SIZE];
+    for z in 8..=55usize {
+        flags[z * SIZE + 31] |= CollisionFlag::W_E as u32;
+        flags[z * SIZE + 32] |= CollisionFlag::W_W as u32;
+    }
+    let dest = WorldTile {
+        x: 34,
+        z: 32,
+        level: 0,
+    };
+    let outside = WorldTile {
+        x: 31,
+        z: 32,
+        level: 0,
+    };
+    let inside = WorldTile {
+        x: 33,
+        z: 32,
+        level: 0,
+    };
+    flags[dest.z as usize * SIZE + dest.x as usize] |= CollisionFlag::SQ_BLOCKED as u32;
+    let (walk, blocked) = nav::collision::pack_walk(&flags);
+    let world = Arc::new(NavWorld::from_parts(
+        nav::collision::WorldCollision {
+            origin: WorldTile {
+                x: 0,
+                z: 0,
+                level: 0,
+            },
+            width: SIZE,
+            height: SIZE,
+            walk,
+            blocked,
+            flags: None,
+        },
+        nav::transport::TransportGraph::default(),
+        Vec::new(),
+    ));
+
+    let mut client = nav_client();
+    for z in 8..=55usize {
+        client.collision[0].flags[31][z] |= CollisionFlag::W_E;
+        client.collision[0].flags[32][z] |= CollisionFlag::W_W;
+    }
+    client.collision[0].flags[dest.x as usize][dest.z as usize] |= CollisionFlag::SQ_BLOCKED;
+    let mut snapshot = GameSnapshot::new();
+    nav_snapshot_at(&mut client, &mut snapshot, outside.x, outside.z);
+
+    let navs: Arc<Mutex<HashMap<String, NavBot>>> = Arc::new(Mutex::new(HashMap::new()));
+    let statuses: Arc<Mutex<Vec<SlotStatus>>> = Arc::new(Mutex::new(vec![SlotStatus {
+        username: "alice".into(),
+        ..SlotStatus::default()
+    }]));
+    let arm = ScriptWalkArm {
+        here: Some((outside.x, outside.z, outside.level)),
+        world: Some(Arc::clone(&world)),
+        navs: Arc::clone(&navs),
+        name: "alice".into(),
+        state: None,
+        bank: Vec::new(),
+    };
+    let worker_done = arm
+        .queue_route_in_snapshot_synced(
+            &snapshot,
+            dest.x,
+            dest.z,
+            dest.level,
+            FindOptions::default(),
+            3,
+            true,
+            17,
+        )
+        .expect("route worker spawned");
+    worker_done
+        .recv_timeout(Duration::from_secs(2))
+        .expect("route worker completed");
+    let route = navs.lock().unwrap()["alice"].route.clone().expect("route");
+    assert_eq!(
+        route.dest, inside,
+        "the route crosses around the wall to the legal destination-side stand"
+    );
+    assert!(
+        route.ticks > 0.0,
+        "the route must not settle where it started"
+    );
+
+    let outside_flood = api::query::SceneQuery::new(snapshot.scene(), Some(outside))
+        .flood_reach()
+        .expect("fresh outside flood");
+    let outside_view = api::query::pack_reach_query(snapshot.scene(), Some(&outside_flood));
+    assert!(
+        !api::query::is_arrived(outside, dest, 3, || &outside_view),
+        "the premature in-radius stand is not arrival-capable"
+    );
+
+    nav_snapshot_at(&mut client, &mut snapshot, inside.x, inside.z);
+    let inside_flood = api::query::SceneQuery::new(snapshot.scene(), Some(inside))
+        .flood_reach()
+        .expect("fresh inside flood");
+    let inside_view = Arc::new(api::query::pack_reach_query(
+        snapshot.scene(),
+        Some(&inside_flood),
+    ));
+    assert!(api::query::is_arrived(inside, dest, 3, || {
+        Arc::clone(&inside_view)
+    }));
+
+    let mut driver = NavRec::default();
+    step_nav_bot(
+        &mut driver,
+        "alice",
+        Some((inside.x, inside.z, inside.level)),
+        &snapshot,
+        &navs,
+        &statuses,
+        Some(world.as_ref()),
+        false,
+        false,
+        || Arc::clone(&inside_view),
+    );
+    let all = navs.lock().unwrap();
+    let bot = &all["alice"];
+    assert!(bot.route.is_none(), "fresh arrival clears the route");
+    assert_eq!(
+        bot.walk_outcome_seq, 0,
+        "arrival, not route-terminal settlement, completed this walk"
+    );
 }
 
 /// AR-1 / frozen `'closest'` (`WalkExecutor.ts:316-325`): an r=12 WalkNear

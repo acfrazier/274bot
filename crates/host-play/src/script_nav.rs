@@ -3,13 +3,38 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Instant;
 
-use api::snapshot::WorldTile;
+use api::snapshot::{GameSnapshot, WorldTile};
 use nav::router::{find_missing_item_reqs, FindOptions, MissingReq, Route};
 use nav::traveller::Traveller;
 use nav::world::NavWorld;
 use nav::WorldState;
 
 use super::{debug_enabled, route_inspect, route_or_bank_fetch, PendingBankFetch, RouteOutcome};
+#[derive(Default)]
+pub(crate) struct RouteCompletion {
+    #[cfg(test)]
+    sender: Option<std::sync::mpsc::Sender<()>>,
+}
+
+impl RouteCompletion {
+    #[cfg(test)]
+    fn channel() -> (Self, std::sync::mpsc::Receiver<()>) {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        (
+            Self {
+                sender: Some(sender),
+            },
+            receiver,
+        )
+    }
+
+    fn signal(self) {
+        #[cfg(test)]
+        if let Some(sender) = self.sender {
+            let _ = sender.send(());
+        }
+    }
+}
 
 /// Host-published walk outcome copied onto the isolate snapshot.
 #[derive(Clone, Copy, Default)]
@@ -148,6 +173,7 @@ impl ScriptWalkArm {
     /// Explicit WalkNear, including radius 0. Unlike [`Self::route`], an
     /// armed or in-flight route is replaced through the existing generation /
     /// pending-route coalescing path. A latched bank-fetch session still refuses.
+    #[cfg(test)]
     pub(crate) fn route_with_radius(
         &self,
         x: i32,
@@ -177,10 +203,89 @@ impl ScriptWalkArm {
         x: i32,
         z: i32,
         level: i32,
+        opts: FindOptions,
+        radius: i32,
+        retarget: bool,
+        request_id: u64,
+    ) -> bool {
+        self.queue_route_impl(
+            x,
+            z,
+            level,
+            opts,
+            radius,
+            retarget,
+            request_id,
+            None,
+            RouteCompletion::default(),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)] // plus the borrowed arm-time scene
+    pub(crate) fn queue_route_in_snapshot(
+        &self,
+        snapshot: &GameSnapshot,
+        x: i32,
+        z: i32,
+        level: i32,
+        opts: FindOptions,
+        radius: i32,
+        retarget: bool,
+        request_id: u64,
+    ) -> bool {
+        self.queue_route_impl(
+            x,
+            z,
+            level,
+            opts,
+            radius,
+            retarget,
+            request_id,
+            Some(snapshot),
+            RouteCompletion::default(),
+        )
+    }
+
+    #[cfg(test)]
+    #[allow(clippy::too_many_arguments)] // deterministic worker seam for route tests
+    pub(crate) fn queue_route_in_snapshot_synced(
+        &self,
+        snapshot: &GameSnapshot,
+        x: i32,
+        z: i32,
+        level: i32,
+        opts: FindOptions,
+        radius: i32,
+        retarget: bool,
+        request_id: u64,
+    ) -> Option<std::sync::mpsc::Receiver<()>> {
+        let (completion, receiver) = RouteCompletion::channel();
+        self.queue_route_impl(
+            x,
+            z,
+            level,
+            opts,
+            radius,
+            retarget,
+            request_id,
+            Some(snapshot),
+            completion,
+        )
+        .then_some(receiver)
+    }
+
+    #[allow(clippy::too_many_arguments)] // queue state plus borrowed arm-time scene
+    fn queue_route_impl(
+        &self,
+        x: i32,
+        z: i32,
+        level: i32,
         mut opts: FindOptions,
         radius: i32,
         retarget: bool,
         request_id: u64,
+        snapshot: Option<&GameSnapshot>,
+        completion: RouteCompletion,
     ) -> bool {
         let to = WorldTile { x, z, level };
         let Some((hx, hz, hl)) = self.here else {
@@ -205,6 +310,13 @@ impl ScriptWalkArm {
             x: hx,
             z: hz,
             level: hl,
+        };
+        // Resolve live-scene geometry synchronously while the snapshot is
+        // borrowed. The detached worker receives only owned coordinates.
+        let live_candidates = if radius > 0 {
+            snapshot.and_then(|snapshot| solid_target_approach_tiles(snapshot, from, to))
+        } else {
+            None
         };
         let token = {
             let mut navs = self.navs.lock().unwrap();
@@ -287,6 +399,8 @@ impl ScriptWalkArm {
                 opts,
                 state: self.state.clone(),
                 bank: self.bank.clone(),
+                live_candidates,
+                completion,
             });
             if bot.route_worker.is_some() {
                 log_walk_arm(&self.name, || {
@@ -396,6 +510,7 @@ impl ScriptWalkArm {
                 // another failure. A discarded publish (stale generation)
                 // leaves the list it did not name cleared.
                 bot.note_missing_carry(request.generation, request.request_id, missing);
+                request.completion.signal();
             })
             .is_ok();
         if !spawned {
@@ -425,6 +540,93 @@ impl ScriptWalkArm {
         }
         spawned
     }
+}
+
+const MAX_LIVE_CANDIDATES: usize = 4;
+
+/// Fixed-capacity arm-time goals. A solid tile has at most four orthogonal
+/// arrival stands, so transferring them to the worker needs no heap allocation.
+#[derive(Clone, Copy)]
+pub(crate) struct LiveCandidates {
+    tiles: [WorldTile; MAX_LIVE_CANDIDATES],
+    len: usize,
+}
+
+impl LiveCandidates {
+    fn empty(fill: WorldTile) -> Self {
+        Self {
+            tiles: [fill; MAX_LIVE_CANDIDATES],
+            len: 0,
+        }
+    }
+
+    fn one(tile: WorldTile) -> Self {
+        let mut candidates = Self::empty(tile);
+        candidates.push(tile);
+        candidates
+    }
+
+    fn push(&mut self, tile: WorldTile) {
+        debug_assert!(self.len < MAX_LIVE_CANDIDATES);
+        self.tiles[self.len] = tile;
+        self.len += 1;
+    }
+
+    fn as_slice(&self) -> &[WorldTile] {
+        &self.tiles[..self.len]
+    }
+}
+
+/// For an in-scene solid destination, select only stands that can actually
+/// satisfy the destination's arrival/interaction geometry. `None` preserves
+/// the existing off-scene and standable-target radius policy. `Some(empty)`
+/// means the live scene proved that no legal stand is available.
+fn solid_target_approach_tiles(
+    snapshot: &GameSnapshot,
+    from: WorldTile,
+    to: WorldTile,
+) -> Option<LiveCandidates> {
+    let scene = snapshot.scene();
+    let query = api::query::SceneQuery::new(scene, Some(from));
+    if !query.contains(to) || query.walkable(to) {
+        return None;
+    }
+
+    let mut matching_locs = snapshot
+        .locs()
+        .iter()
+        .filter(|loc| loc.tile == to)
+        .peekable();
+    if matching_locs.peek().is_some() {
+        if let Some(flood) = query.flood_reach() {
+            let mut modeled = false;
+            for loc in matching_locs {
+                let Some(approach) = query.booth_approach(loc, &flood) else {
+                    continue;
+                };
+                modeled = true;
+                if let Some(dest) = approach.dest {
+                    return Some(LiveCandidates::one(dest));
+                }
+            }
+            if modeled {
+                return Some(LiveCandidates::empty(to));
+            }
+        }
+    }
+
+    let mut candidates = LiveCandidates::empty(to);
+    for tile in query.arrival_stands(to) {
+        candidates.push(tile);
+    }
+    candidates.tiles[..candidates.len].sort_unstable_by_key(|tile| {
+        (
+            (tile.x - from.x).abs().max((tile.z - from.z).abs()),
+            tile.x,
+            tile.z,
+        )
+    });
+    Some(candidates)
 }
 
 /// Candidate destinations for an explicit radius request. Exact walks retain
@@ -474,6 +676,10 @@ pub(crate) struct ScriptRouteRequest {
     pub(crate) opts: FindOptions,
     pub(crate) state: Option<WorldState>,
     pub(crate) bank: Vec<(i32, i32)>,
+    /// Arm-time goals derived from the borrowed live scene. `None` means
+    /// preserve the baked/off-scene radius enumeration.
+    pub(crate) live_candidates: Option<LiveCandidates>,
+    pub(crate) completion: RouteCompletion,
 }
 impl ScriptRouteRequest {
     /// The navigator-named gate shorts of a failed walk: the strict find's own
@@ -521,7 +727,13 @@ impl ScriptRouteRequest {
                 &self.bank,
             );
         }
-        let candidates = approach_tiles(&self.world, self.from, self.to, self.radius);
+        let generated;
+        let candidates = if let Some(candidates) = self.live_candidates.as_ref() {
+            candidates.as_slice()
+        } else {
+            generated = approach_tiles(&self.world, self.from, self.to, self.radius);
+            &generated
+        };
         let debug = debug_enabled();
         let slot = walk_arm_worker_slot();
         if debug {
@@ -534,7 +746,7 @@ impl ScriptRouteRequest {
                 )
             });
         }
-        for (idx, target) in candidates.into_iter().enumerate() {
+        for (idx, &target) in candidates.iter().enumerate() {
             if debug {
                 log_walk_arm(&slot, || {
                     format!(

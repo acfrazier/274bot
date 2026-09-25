@@ -64,12 +64,15 @@ pub(super) fn apply_watchdog_nav_action(
                     .map(|item| (item.def.id, item.count))
                     .collect(),
             };
-            let armed = arm.route_with_radius(
+            let armed = arm.queue_route_in_snapshot(
+                snapshot,
                 x,
                 z,
                 level,
                 FindOptions::default(),
                 script::watchdog::WALK_RADIUS,
+                true,
+                0,
             );
             if !armed {
                 abort_script_walk(navs, name);
