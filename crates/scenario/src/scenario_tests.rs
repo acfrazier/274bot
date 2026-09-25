@@ -2336,6 +2336,13 @@ fn hazard_camp_cells_register_their_cards_injects_and_watch_chain() {
     assert!(seeded.steps[..seeded_start].iter().any(|step| {
         step.wait.arm
             == Proof::ItemId {
+                id: LOBSTER_ID,
+                count: ROCK_CRAB_FOOD,
+            }
+    }));
+    assert!(seeded.steps[..seeded_start].iter().any(|step| {
+        step.wait.arm
+            == Proof::ItemId {
                 id: UNCUT_SAPPHIRE_ID,
                 count: 1,
             }
@@ -2344,6 +2351,38 @@ fn hazard_camp_cells_register_their_cards_injects_and_watch_chain() {
         .iter()
         .map(|step| step.wait.arm)
         .collect::<Vec<_>>();
+    let seeded_route_steps = &seeded.steps[seeded_start + 1..];
+    let deposit_index = seeded_route_steps
+        .iter()
+        .position(|step| step.name == "watch seeded Sapphire enter a fresh Seers bank")
+        .expect("seeded PeriodicBank deposit proof");
+    let arrival_index = seeded_route_steps
+        .iter()
+        .position(|step| {
+            step.name == "watch seeded RockCrab cargo reach the Seers bank after deposit"
+        })
+        .expect("seeded Seers arrival proof");
+    assert!(deposit_index < arrival_index);
+    assert_eq!(seeded_route_steps[arrival_index].wait.budget_ticks, 320);
+    let return_index = seeded_route_steps
+        .iter()
+        .position(|step| {
+            step.name == "watch return toward the nearest RockCrab spot after seeded banking"
+        })
+        .expect("seeded RockCrab return proof");
+    let fresh_xp_index = seeded_route_steps
+        .iter()
+        .position(|step| step.name == "watch fresh Strength XP after the seeded bank return")
+        .expect("seeded fresh Strength XP proof");
+    assert!(return_index < fresh_xp_index);
+    assert!(matches!(
+        seeded_route_steps[fresh_xp_index].wait.arm,
+        Proof::FreshStatXpGain {
+            id: STRENGTH_STAT,
+            min: 1
+        }
+    ));
+    assert_eq!(seeded_route_steps[return_index].wait.budget_ticks, 320);
     assert!(seeded_watch.contains(&Proof::ArrivedNear {
         x: 2725,
         z: 3491,
@@ -3083,6 +3122,10 @@ fn bank_cells_seed_the_weapon_they_acknowledge_and_only_real_bank_windows() {
     assert!(
         seeded.contains("give uncut_sapphire 1"),
         "rock_crab_bank_seeded seeds the PeriodicBank trigger cargo: {seeded}"
+    );
+    assert!(
+        seeded.contains("give lobster 8"),
+        "rock_crab_bank_seeded keeps food in the pack so PeriodicBank owns the trip: {seeded}"
     );
     assert!(
         !seeded.contains("givebank"),

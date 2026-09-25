@@ -116,14 +116,14 @@ pub(crate) const ROCK_CRAB_BANK_DEPOSIT: [i32; 2] = [UNCUT_SAPPHIRE_ID, CASKET_I
 /// Seeded-cargo route windows use the measured runner calibration in
 /// `bank-cell-windows.md`: 1.25 dirty increments per 0.6-second engine tick.
 /// The hostile RockCrab spot `(2704, 3726)` to Seers `(2725, 3491)` is
-/// 235 Chebyshev tiles, so `235 * 1.25 = 293.75` dirty increments. Reusing
-/// the measured 100-dirty one-way bank/route allowance used by
-/// `moss_giant_bank` gives `ceil(293.75) + 100 = 394`, rounded to 400 for
-/// each travel arm.
-const ROCK_CRAB_BANK_ROUTE_WATCH_TICKS: u32 = 400;
-/// Two 235-tile walks at 0.6 seconds/tile take 282 seconds; 360 seconds
-/// leaves 78 seconds for seed/start, booth interaction, and close/return
-/// evidence without pretending the earned-drop cell has a longer RNG budget.
+/// 235 Chebyshev tiles. MossGiant's measured 74-tile one-way envelope is
+/// 100 dirty increments including its booth interaction, so its inferred
+/// interaction component is `100 - (74 * 1.25) = 7.5`; RockCrab is
+/// `235 * 1.25 + 7.5 = 301.25`, rounded to 320 for each travel arm.
+const ROCK_CRAB_BANK_ROUTE_WATCH_TICKS: u32 = 320;
+/// Two 235-tile walks at 0.6 seconds/tile take 282 seconds; the 360-second
+/// deadline leaves 78 seconds for seed/start, the same booth interaction,
+/// and close/return evidence without expanding the earned-drop RNG witness.
 const ROCK_CRAB_BANK_SEEDED_DEADLINE: Duration = Duration::from_secs(360);
 
 /// RockCrab default melee/strength at spot 1. Ordinary bank policy Off.
@@ -296,7 +296,7 @@ pub(crate) fn rock_crab_bank_seeded_scenario() -> Scenario {
         2,
         "lobster",
         LOBSTER_ID,
-        0,
+        ROCK_CRAB_FOOD,
         "adamant_scimitar",
         COMBAT_SCIMITAR_ID,
         &[("uncut_sapphire", UNCUT_SAPPHIRE_ID, 1)],
@@ -306,15 +306,6 @@ pub(crate) fn rock_crab_bank_seeded_scenario() -> Scenario {
         "",
         0,
         &[
-            (
-                "watch seeded RockCrab cargo reach the Seers bank",
-                Proof::ArrivedNear {
-                    x: SEERS_BANK.x,
-                    z: SEERS_BANK.z,
-                    level: SEERS_BANK.level,
-                    radius: 6,
-                },
-            ),
             (
                 "watch seeded Sapphire leave the backpack after PeriodicBank deposit",
                 Proof::ItemIdAtMost {
@@ -327,6 +318,15 @@ pub(crate) fn rock_crab_bank_seeded_scenario() -> Scenario {
                 Proof::BankItemId {
                     id: UNCUT_SAPPHIRE_ID,
                     count: 1,
+                },
+            ),
+            (
+                "watch seeded RockCrab cargo reach the Seers bank after deposit",
+                Proof::ArrivedNear {
+                    x: SEERS_BANK.x,
+                    z: SEERS_BANK.z,
+                    level: SEERS_BANK.level,
+                    radius: 6,
                 },
             ),
             (
@@ -355,7 +355,7 @@ pub(crate) fn rock_crab_bank_seeded_scenario() -> Scenario {
     acknowledge_dormant_rocks_before_start(&mut scenario);
     scenario.settings.fixture_loadouts = Some(ROCK_CRAB_FIXTURE_LOADOUTS);
     for step in &mut scenario.steps {
-        if step.name == "watch seeded RockCrab cargo reach the Seers bank"
+        if step.name == "watch seeded RockCrab cargo reach the Seers bank after deposit"
             || step.name == "watch return toward the nearest RockCrab spot after seeded banking"
         {
             step.wait.budget_ticks = ROCK_CRAB_BANK_ROUTE_WATCH_TICKS;
