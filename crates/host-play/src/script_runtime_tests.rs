@@ -204,7 +204,10 @@ use client::client::MiniMenuAction;
 use client::config::{Cache, ObjType};
 use nav::world::NavWorld;
 
-use super::{script_observe_cached, script_slot, script_slot_or_insert, NavBot, ScriptWall};
+use super::{
+    clear_dispatch_barrier, install_dispatch_barrier, script_observe_cached, script_slot,
+    script_slot_or_insert, DispatchBarrier, NavBot, ScriptWall,
+};
 
 /// The puzzle fixture's component ids in push order (an empty iface table
 /// takes the push index as the id): the bank withdraw component, the
@@ -224,6 +227,26 @@ const PIECE_MOVE: i32 = 2749;
 const PIECE_SPARE: i32 = 2750;
 const PIECE_INDEX_FIVE: i32 = 2751;
 const PIECE_NO_OPS: i32 = 2752;
+struct QueueMove;
+
+impl script::Script for QueueMove {
+    fn name(&self) -> &str {
+        "queue-move"
+    }
+
+    fn tick(&mut self, ctx: &mut script::ScriptCtx<'_>) {
+        ctx.compiled
+            .interacts
+            .as_mut()
+            .expect("compiled tick queue")
+            .push(script::shim::InteractReq::PuzzleMove {
+                id: PIECE_MOVE,
+                slot: 0,
+                component: MOVE_BOARD as i32,
+                generation: 1,
+            });
+    }
+}
 
 /// A v2 script that queues the exact board click beside four stale or
 /// forged shapes in the same frame, and reports the posted board.
@@ -625,7 +648,72 @@ fn puzzle_move_drains_as_opheld_on_the_posted_board() {
         MiniMenuAction::INV_BUTTON5,
         "a board click must never be the component family"
     );
+
     assert_eq!(rec.actions, vec![0], "one menu action, no count answer");
+}
+/// A stop racing the handoff from the slot's first lock to interaction
+/// dispatch must invalidate the drained requests before any Driver call.
+#[test]
+fn observe_dispatch_refuses_requests_after_stop_race() {
+    let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
+    let cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>> =
+        Arc::new(Mutex::new(HashMap::new()));
+    let navs: Arc<Mutex<HashMap<String, NavBot>>> = Arc::new(Mutex::new(HashMap::new()));
+    let world: Option<Arc<NavWorld>> = None;
+    script_slot_or_insert(&scripts, "alice")
+        .lock()
+        .unwrap()
+        .start_compiled(Box::new(QueueMove), None)
+        .expect("the compiled script starts");
+    let client = puzzle_move_client();
+    let cache = Arc::clone(&client.cache);
+    let mut snap = GameSnapshot::new();
+    snap.rebuild(&client);
+    let names = Arc::new(api::obj_names::ObjNames::from_objs(&client.cache.objs));
+    let barrier = DispatchBarrier::new();
+    install_dispatch_barrier(Arc::clone(&barrier));
+    struct BarrierReset;
+    impl Drop for BarrierReset {
+        fn drop(&mut self) {
+            clear_dispatch_barrier();
+        }
+    }
+    let _reset = BarrierReset;
+
+    let scripts_for_thread = Arc::clone(&scripts);
+    let cheats_for_thread = Arc::clone(&cheats);
+    let navs_for_thread = Arc::clone(&navs);
+    let cache_for_thread = Arc::clone(&cache);
+    let names_for_thread = Arc::clone(&names);
+    let barrier_for_thread = Arc::clone(&barrier);
+    let thread = std::thread::spawn(move || {
+        barrier_for_thread.arm_for_current_thread();
+        let mut rec = MenuRec::default();
+        observe_puzzle_frame(
+            &mut rec,
+            &scripts_for_thread,
+            &cheats_for_thread,
+            &navs_for_thread,
+            &world,
+            &snap,
+            &cache_for_thread,
+            &names_for_thread,
+            true,
+        );
+        rec
+    });
+
+    barrier.wait_entered();
+    let slot = script_slot(&scripts, "alice").expect("slot remains addressable");
+    slot.lock().unwrap().stop();
+    barrier.release();
+    let rec = thread.join().expect("observe thread completes");
+    assert!(
+        rec.menus.is_empty() && rec.actions.is_empty(),
+        "a stopped generation must not reach the Driver: {:?} {:?}",
+        rec.menus,
+        rec.actions
+    );
 }
 
 /// Every stale or forged shape refuses with no send: closed board, stale

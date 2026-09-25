@@ -53,6 +53,7 @@ pub(super) use script_observe::{
 #[cfg(test)]
 pub(super) use script_observe::{
     post_script_snapshot, script_observe, script_observe_with_npc_boxes, take_script_interacts,
+    DispatchBarrier, clear_dispatch_barrier, install_dispatch_barrier,
 };
 /// Per-uid script cell on the wall. Encode/post/drain take the slot lock
 /// only — the wall map lock is held briefly for lookup/insert.

@@ -21,6 +21,89 @@ use super::{
 use crate::debug_enabled;
 #[cfg(feature = "memory-profile")]
 use crate::memory_diagnostics;
+#[cfg(test)]
+use std::sync::{Condvar, LazyLock};
+
+#[cfg(test)]
+pub(crate) struct DispatchBarrier {
+    entered: (Mutex<bool>, Condvar),
+    release: (Mutex<bool>, Condvar),
+    target: Mutex<Option<std::thread::ThreadId>>,
+}
+#[cfg(test)]
+impl DispatchBarrier {
+    pub(crate) fn new() -> Arc<Self> {
+        Arc::new(Self {
+            entered: (Mutex::new(false), Condvar::new()),
+            release: (Mutex::new(false), Condvar::new()),
+            target: Mutex::new(None),
+        })
+    }
+
+    pub(crate) fn wait_entered(&self) {
+        let (lock, signal) = &self.entered;
+        let mut entered = lock.lock().unwrap();
+        while !*entered {
+            entered = signal.wait(entered).unwrap();
+        }
+    }
+
+    pub(crate) fn release(&self) {
+        let (lock, signal) = &self.release;
+        *lock.lock().unwrap() = true;
+        signal.notify_all();
+    }
+
+    fn wait_release(&self) {
+        let (lock, signal) = &self.release;
+        let mut released = lock.lock().unwrap();
+        while !*released {
+            released = signal.wait(released).unwrap();
+        }
+    }
+
+    pub(crate) fn arm_for_current_thread(&self) {
+        *self.target.lock().unwrap() = Some(std::thread::current().id());
+    }
+
+    fn enter(&self) {
+        if *self.target.lock().unwrap() != Some(std::thread::current().id()) {
+            return;
+        }
+        let (lock, signal) = &self.entered;
+        *lock.lock().unwrap() = true;
+        signal.notify_all();
+        self.wait_release();
+    }
+}
+
+#[cfg(test)]
+static DISPATCH_BARRIER: LazyLock<Mutex<Option<Arc<DispatchBarrier>>>> =
+    LazyLock::new(|| Mutex::new(None));
+
+#[cfg(test)]
+fn dispatch_barrier_cell() -> &'static Mutex<Option<Arc<DispatchBarrier>>> {
+    &DISPATCH_BARRIER
+}
+
+#[cfg(test)]
+pub(crate) fn install_dispatch_barrier(barrier: Arc<DispatchBarrier>) {
+    *dispatch_barrier_cell().lock().unwrap() = Some(barrier);
+}
+
+#[cfg(test)]
+pub(crate) fn clear_dispatch_barrier() {
+    *dispatch_barrier_cell().lock().unwrap() = None;
+}
+
+#[cfg(test)]
+fn wait_dispatch_barrier() {
+    let barrier = dispatch_barrier_cell().lock().unwrap().clone();
+    if let Some(barrier) = barrier {
+        barrier.enter();
+    }
+}
+
 /// Post the slot's snapshot. Only a post the isolate accepted counts as the
 /// isolate having seen the walk outcome it carries (`walk_seq`), so only
 /// then is the live refusal guard released. A refused post leaves the guard
@@ -667,6 +750,13 @@ pub(crate) fn script_observe_cached(
     // frozen, and a later retry re-queues what still matters.
     if up && !hold && !interact.is_empty() {
         if let Some(snapshot) = snapshot {
+            #[cfg(test)]
+            wait_dispatch_barrier();
+            if let Some(dispatch_slot) = script_slot(scripts, name) {
+                let mut slot = dispatch_slot.lock().unwrap();
+            if slot.state() == script::RunState::Running
+                && Some(slot.work_epoch()) == slot_work_epoch
+            {
             let mut dispatchable = Vec::with_capacity(interact.len());
             let mut armed = None;
             let mut armed_bank_op = None;
@@ -862,42 +952,41 @@ pub(crate) fn script_observe_cached(
                 || rejected_withdraw_load != 0
                 || rejected_bank_op != 0
             {
-                if let Some(slot) = script_slot(scripts, name) {
-                    let mut slot = slot.lock().unwrap();
-                    if Some(slot.work_epoch()) == slot_work_epoch {
-                        for _ in 0..rejected_withdraw_x {
-                            slot.complete_withdraw_x(false);
-                        }
-                        for _ in 0..rejected_withdraw_load {
-                            slot.complete_withdraw_load(false);
-                        }
-                        for _ in 0..rejected_bank_op {
-                            slot.complete_bank_op(false);
-                        }
-                        if let Some(pending) = armed_bank_op {
-                            if matches!(
-                                slot.state(),
-                                script::RunState::Running | script::RunState::Paused
-                            ) {
-                                slot.set_pending_bank_op(Some(pending));
-                                if slot.state() == script::RunState::Paused {
-                                    slot.freeze_pending_bank_op();
-                                }
+                if Some(slot.work_epoch()) == slot_work_epoch {
+                    for _ in 0..rejected_withdraw_x {
+                        slot.complete_withdraw_x(false);
+                    }
+                    for _ in 0..rejected_withdraw_load {
+                        slot.complete_withdraw_load(false);
+                    }
+                    for _ in 0..rejected_bank_op {
+                        slot.complete_bank_op(false);
+                    }
+                    if let Some(pending) = armed_bank_op {
+                        if matches!(
+                            slot.state(),
+                            script::RunState::Running | script::RunState::Paused
+                        ) {
+                            slot.set_pending_bank_op(Some(pending));
+                            if slot.state() == script::RunState::Paused {
+                                slot.freeze_pending_bank_op();
                             }
                         }
-                        if let Some(pending) = armed {
-                            if matches!(
-                                slot.state(),
-                                script::RunState::Running | script::RunState::Paused
-                            ) {
-                                slot.set_pending_withdraw_x(Some(pending));
-                                if slot.state() == script::RunState::Paused {
-                                    slot.freeze_pending_withdraw_x();
-                                }
+                    }
+                    if let Some(pending) = armed {
+                        if matches!(
+                            slot.state(),
+                            script::RunState::Running | script::RunState::Paused
+                        ) {
+                            slot.set_pending_withdraw_x(Some(pending));
+                            if slot.state() == script::RunState::Paused {
+                                slot.freeze_pending_withdraw_x();
                             }
                         }
                     }
                 }
+            }
+            }
             }
         } else {
             let rejected_x = interact
