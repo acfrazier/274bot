@@ -13,7 +13,14 @@ use serde::{Deserialize, Serialize};
 
 pub const MAX_JSON_BYTES: usize = 1024 * 1024;
 pub const MAX_POIS: usize = 4096;
-pub const MAX_IMAGE_TILES: usize = 8192;
+// A terrain checkpoint unit needs at most 192 JSON bytes including its array
+// comma (signed tile coordinates, payload length, and hex digest). Reserve
+// 4 KiB for either document's identity/bounds/stage wrapper. This keeps both
+// the checkpoint and image manifest inside MAX_JSON_BYTES at the type limit.
+const MAX_IMAGE_DOCUMENT_OVERHEAD_BYTES: usize = 4 * 1024;
+const MAX_CHECKPOINT_UNIT_JSON_BYTES: usize = 192;
+pub const MAX_IMAGE_TILES: usize =
+    (MAX_JSON_BYTES - MAX_IMAGE_DOCUMENT_OVERHEAD_BYTES) / MAX_CHECKPOINT_UNIT_JSON_BYTES;
 pub const MAX_PNG_BYTES: u32 = 512 * 1024;
 pub const MAX_IMAGE_BYTES: u64 = 128 * 1024 * 1024;
 pub const NAVPOIS_MAGIC: &[u8; 4] = b"274P";

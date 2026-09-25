@@ -583,6 +583,81 @@ fn bounded_sequences_refuse_extra_elements_before_decoding_them() {
     assert!(error.to_string().contains("record count limit"));
 }
 #[test]
+fn maximum_image_documents_fit_the_json_contract() {
+    const START: i32 = -33_000_000;
+    assert_eq!(MAX_IMAGE_TILES, 5_440);
+    let west = START * 64;
+    let east = (START + MAX_IMAGE_TILES as i32) * 64;
+    let south = START * 64;
+    let north = south + 64;
+    let bounds = WorldBounds {
+        west,
+        south,
+        east,
+        north,
+    };
+    let receipts: Vec<_> = (0..MAX_IMAGE_TILES)
+        .map(|index| TileReceipt {
+            key: TileKey {
+                plane: 0,
+                lod: 0,
+                x: START + index as i32,
+                z: START,
+            },
+            // 255 maximum PNGs plus one byte for every remaining tile stays
+            // below MAX_IMAGE_BYTES while exercising both receipt widths.
+            payload: PayloadReceipt {
+                bytes: if index < 255 { MAX_PNG_BYTES } else { 1 },
+                sha256: Digest([0xff; 32]),
+            },
+        })
+        .collect();
+    let manifest = ImageManifest {
+        schema: IMAGE_SCHEMA,
+        identity: image_identity(),
+        key: image_identity().key().unwrap(),
+        extent: bounds,
+        planes: Rows::new(vec![PlaneBounds { plane: 0, bounds }]).unwrap(),
+        max_lod: 0,
+        interior: TILE_INTERIOR,
+        gutter: TILE_GUTTER,
+        color: ColorFormat::Rgba8Unorm,
+        tiles: Rows::new(receipts.clone()).unwrap(),
+    };
+    let manifest_bytes = manifest.encode().unwrap();
+    assert!(
+        manifest_bytes.len() <= MAX_JSON_BYTES,
+        "{}-byte maximum image manifest exceeds {} bytes",
+        manifest_bytes.len(),
+        MAX_JSON_BYTES
+    );
+
+    let checkpoint = Checkpoint {
+        schema: CHECKPOINT_SCHEMA,
+        identity: ArtifactIdentity::Image(image_identity()),
+        stage: BakeStage::Publishing,
+        planned_units: MAX_IMAGE_TILES as u32,
+        completed: Rows::new(
+            receipts
+                .into_iter()
+                .map(|receipt| CompletedUnit {
+                    key: UnitKey::Terrain { tile: receipt.key },
+                    payload: receipt.payload,
+                })
+                .collect(),
+        )
+        .unwrap(),
+    };
+    let checkpoint_bytes = checkpoint.encode().unwrap();
+    assert!(
+        checkpoint_bytes.len() <= MAX_JSON_BYTES,
+        "{}-byte maximum checkpoint exceeds {} bytes",
+        checkpoint_bytes.len(),
+        MAX_JSON_BYTES
+    );
+}
+
+#[test]
 fn image_header_rejects_pixel_bombs_before_tile_deserialization() {
     let mut value = serde_json::to_value(image_manifest(b"png")).unwrap();
     value["interior"] = u32::MAX.into();
