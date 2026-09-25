@@ -2178,6 +2178,20 @@ fn panicking_spawned_worker_retires_its_place_and_unblocks_follower() {
         "the spawned worker must reach its blocked FIFO wait"
     );
 
+    let script = play
+        .scripts
+        .lock()
+        .unwrap()
+        .get("dead")
+        .cloned()
+        .expect("spawn registers its script slot");
+    let script_poisoner = thread::spawn(move || {
+        let _script = script.lock().unwrap();
+        panic!("synthetic script slot panic");
+    });
+    assert!(script_poisoner.join().is_err());
+
+
     let statuses = Arc::clone(&play.statuses);
     let poisoner = thread::spawn(move || {
         let _statuses = statuses.lock().unwrap();
@@ -2193,10 +2207,7 @@ fn panicking_spawned_worker_retires_its_place_and_unblocks_follower() {
     );
     assert!(play.queue.lock().status_owner(dead_owner).is_none());
     {
-        let rows = play
-            .statuses
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let rows = play.statuses();
         let dead_row = rows.iter().find(|row| row.username == "dead").unwrap();
         assert_eq!((dead_row.queue_position, dead_row.queue_total), (-1, -1));
         assert_eq!(dead_row.worker_terminal, Some(WorkerTerminal::Panicked));
@@ -2217,11 +2228,11 @@ fn panicking_spawned_worker_retires_its_place_and_unblocks_follower() {
         .lock()
         .acknowledge_login_return(8, window_started + Duration::from_secs(61)));
 
-    play.statuses.clear_poison();
     assert_eq!(play.reap_finished_workers(), vec!["dead"]);
     assert!(play.arm("dead").is_none());
     assert!(!play.spawned.contains("dead"));
     assert!(!play.handles.contains_key("dead"));
+    assert!(!play.scripts.lock().unwrap().contains_key("dead"));
 }
 
 #[test]

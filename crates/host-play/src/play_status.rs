@@ -411,34 +411,37 @@ pub(super) fn publish_slot_disconnected(statuses: &Arc<Mutex<Vec<SlotStatus>>>, 
 }
 
 /// Publish a terminal worker outcome after every normal early return or
-/// caught unwind. The status mutex may itself be poisoned by the unwind; the
-/// boundary owns that row and can safely close its observation gate.
+/// caught unwind. Status updates are field assignments with no cross-row
+/// invariant; after replacing the failed lifetime's row, the boundary clears
+/// poison so UI snapshots cannot replay the worker panic.
 pub(super) fn publish_worker_terminal(
     statuses: &Arc<Mutex<Vec<SlotStatus>>>,
     name: &str,
     terminal: WorkerTerminal,
     detail: Option<String>,
 ) {
-    let mut rows = statuses
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let Some(status) = rows.iter_mut().find(|status| status.username == name) else {
-        return;
-    };
-    reset_slot_observation(status);
-    status.script_paint = None;
-    status.login_started = None;
-    status.queue_position = -1;
-    status.queue_total = -1;
-    status.startup_phase = StartupPhase::Error;
-    status.startup_phase_started = Instant::now();
-    status.startup_progress_percent = None;
-    status.startup_progress_message.clear();
-    status.worker_terminal = Some(terminal);
-    if let Some(detail) = detail {
-        status.error = Some(detail);
-    } else if status.error.is_none() {
-        status.error = Some("slot worker exited unexpectedly".to_string());
+    {
+        let mut rows = statuses
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(status) = rows.iter_mut().find(|status| status.username == name) {
+            reset_slot_observation(status);
+            status.script_paint = None;
+            status.login_started = None;
+            status.queue_position = -1;
+            status.queue_total = -1;
+            status.startup_phase = StartupPhase::Error;
+            status.startup_phase_started = Instant::now();
+            status.startup_progress_percent = None;
+            status.startup_progress_message.clear();
+            status.worker_terminal = Some(terminal);
+            if let Some(detail) = detail {
+                status.error = Some(detail);
+            } else if status.error.is_none() {
+                status.error = Some("slot worker exited unexpectedly".to_string());
+            }
+        }
+        statuses.clear_poison();
     }
 }
 

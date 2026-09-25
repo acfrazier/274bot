@@ -56,6 +56,23 @@ const THREAD_STACK: usize = 1024 * 1024;
 /// hop is sent once per server tick, not every 20 ms frame (panel
 /// `tick_latch`).
 type NavStepKey = (u64, Option<(i32, i32, i32)>);
+/// Retire one failed lifetime's script state without replaying its poisoned
+/// mutex on the UI thread. `stop` is still attempted to tear down a usable
+/// isolate; a second cleanup panic is contained because the slot has already
+/// been removed from the wall and cannot be observed again.
+fn stop_retired_script(slot: ScriptSlot) {
+    let stopped = catch_unwind(AssertUnwindSafe(|| {
+        let mut script = slot
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        script.stop();
+    }))
+    .is_ok();
+    if stopped {
+        slot.clear_poison();
+    }
+}
+
 impl Play {
     /// Publish Stop before any join. The queue lock is taken only after the
     /// arm control lock has been released by `notify_retry_wait`; no shared
@@ -83,7 +100,7 @@ impl Play {
         self.arms.remove(name);
         let removed = self.scripts.lock().unwrap().remove(name);
         if let Some(slot) = removed {
-            slot.lock().unwrap().stop();
+            stop_retired_script(slot);
         }
         self.cheats.lock().unwrap().remove(name);
         self.wires.lock().unwrap().remove(name);
@@ -121,7 +138,7 @@ impl Play {
             }
             self.spawned.remove(name);
             if let Some(slot) = self.scripts.lock().unwrap().remove(name) {
-                slot.lock().unwrap().stop();
+                stop_retired_script(slot);
             }
             self.cheats.lock().unwrap().remove(name);
             self.wires.lock().unwrap().remove(name);
