@@ -17,6 +17,23 @@ pub(super) type SharedLoginQueue = Arc<QueueMutex<LoginQueue>>;
 
 static NEXT_QUEUE_OWNER: AtomicU64 = AtomicU64::new(1);
 
+/// Login/logout controller state. Every operator command advances one
+/// generation under this lock; worker acknowledgements may only mutate the
+/// generation they consumed. The intent lock is never held with queue,
+/// status, or script locks.
+struct SlotIntent {
+    generation: u64,
+    want_login: bool,
+    want_logout: bool,
+    login_latched: bool,
+    auto_intent: bool,
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct IntentCommand {
+    generation: u64,
+}
+
 /// Per-slot control arm. The panel flips these to make a slot sit on the
 /// title screen (no handshake) until login is armed, request a clean IF
 /// logout, or stop the thread. A `None` arm at spawn means CLI/e2e: the
@@ -28,16 +45,12 @@ pub struct SlotArm {
     /// Process-unique FIFO identity. Device UIDs are not unique account
     /// identities and are used only for server throttle accounting.
     pub(super) queue_owner: u64,
-    pub want_login: Arc<AtomicBool>,
-    pub want_logout: Arc<AtomicBool>,
+    intent: parking_lot::Mutex<SlotIntent>,
     pub stop: Arc<AtomicBool>,
-    pub latch: Arc<AtomicBool>,
     /// The spawn-time auto-login intent (CLI `new(uid, true)` stays armed
     /// so an unexpected DC re-handshakes; a panel one-shot arm disarms
     /// after the handshake unless the profile's auto_login was on).
     pub auto_login: Arc<AtomicBool>,
-    /// True only when the current `want_login` was derived from auto-login.
-    auto_intent: AtomicBool,
     /// Live guardian toggle (`ProfileSettings.random_events`). Mirrored
     /// from the vault on spawn and by panel/TUI settings writes so a
     /// toggle-off never acts/holds without a respawn.
@@ -54,7 +67,6 @@ pub struct SlotArm {
     /// Next handshake is opcode 18 (lost_con reconnect). First-ever online
     /// is 16; after a grant this is true.
     pub reconnect: Arc<AtomicBool>,
-    retry_wait: parking_lot::Mutex<()>,
     retry_wake: parking_lot::Condvar,
     /// Test seam for worker lifecycle cases whose subject starts at the
     /// login queue, after unrelated asset initialization.
@@ -78,19 +90,21 @@ impl SlotArm {
         Arc::new(Self {
             uid: AtomicI32::new(uid),
             queue_owner: NEXT_QUEUE_OWNER.fetch_add(1, Ordering::Relaxed),
-            want_login: Arc::new(AtomicBool::new(want_login)),
-            want_logout: Arc::new(AtomicBool::new(false)),
+            intent: parking_lot::Mutex::new(SlotIntent {
+                generation: 0,
+                want_login,
+                want_logout: false,
+                login_latched: false,
+                auto_intent: want_login,
+            }),
             stop: Arc::new(AtomicBool::new(false)),
-            latch: Arc::new(AtomicBool::new(false)),
             auto_login: Arc::new(AtomicBool::new(want_login)),
-            auto_intent: AtomicBool::new(want_login),
             random_events: Arc::new(AtomicBool::new(true)),
             lamp_auto: Arc::new(AtomicBool::new(true)),
             lamp_skill: Arc::new(Mutex::new("strength".to_string())),
             world: Arc::new(parking_lot::Mutex::new(None)),
             world_generation: AtomicU64::new(0),
             reconnect: Arc::new(AtomicBool::new(false)),
-            retry_wait: parking_lot::Mutex::new(()),
             retry_wake: parking_lot::Condvar::new(),
             #[cfg(test)]
             bypass_asset_startup: AtomicBool::new(false),
@@ -148,42 +162,71 @@ impl SlotArm {
 
     /// Arm an operator-requested one-shot login independently of auto-login.
     pub fn arm_explicit_login(&self) {
-        let _guard = self.retry_wait.lock();
-        self.latch.store(false, Ordering::Relaxed);
-        self.want_login.store(true, Ordering::Relaxed);
-        self.auto_intent.store(false, Ordering::Relaxed);
-        self.want_logout.store(false, Ordering::Relaxed);
+        let mut intent = self.intent.lock();
+        intent.generation = intent.generation.wrapping_add(1);
+        intent.login_latched = false;
+        intent.want_login = true;
+        intent.auto_intent = false;
+        intent.want_logout = false;
+        drop(intent);
         self.retry_wake.notify_all();
+    }
+
+    /// Arm an operator-requested clean logout and withdraw any login intent.
+    pub fn request_logout(&self) {
+        let mut intent = self.intent.lock();
+        intent.generation = intent.generation.wrapping_add(1);
+        intent.want_logout = true;
+        intent.want_login = false;
+        intent.auto_intent = false;
+        drop(intent);
+        self.retry_wake.notify_all();
+    }
+
+    pub fn wants_login(&self) -> bool {
+        self.intent.lock().want_login
+    }
+
+    pub fn wants_logout(&self) -> bool {
+        self.intent.lock().want_logout
+    }
+
+    pub fn login_latched(&self) -> bool {
+        self.intent.lock().login_latched
     }
 
     /// Apply the live auto-login policy. Disabling it withdraws only an
     /// auto-derived intent; enabling it arms an unlatched parked slot.
     pub fn set_auto_login(&self, enabled: bool) {
-        let _guard = self.retry_wait.lock();
         self.auto_login.store(enabled, Ordering::Relaxed);
+        let mut intent = self.intent.lock();
+        intent.generation = intent.generation.wrapping_add(1);
         if enabled {
-            if !self.latch.load(Ordering::Relaxed) && !self.want_login.load(Ordering::Relaxed) {
-                self.want_login.store(true, Ordering::Relaxed);
-                self.auto_intent.store(true, Ordering::Relaxed);
+            if !intent.login_latched && !intent.want_login {
+                intent.want_login = true;
+                intent.auto_intent = true;
             }
-        } else if self.auto_intent.swap(false, Ordering::Relaxed) {
-            self.want_login.store(false, Ordering::Relaxed);
+        } else if intent.auto_intent {
+            intent.auto_intent = false;
+            intent.want_login = false;
         }
+        drop(intent);
         self.retry_wake.notify_all();
     }
 
     /// Withdraw the active login intent without changing the saved
     /// auto-login policy.
     pub fn withdraw_login(&self) {
-        let _guard = self.retry_wait.lock();
-        self.want_login.store(false, Ordering::Relaxed);
-        self.auto_intent.store(false, Ordering::Relaxed);
+        let mut intent = self.intent.lock();
+        intent.generation = intent.generation.wrapping_add(1);
+        intent.want_login = false;
+        intent.auto_intent = false;
+        drop(intent);
         self.retry_wake.notify_all();
     }
 
-    /// Wake a retry/backoff wait after control intent changes.
+    /// Wake a retry/backoff wait after non-intent control changes.
     pub(super) fn notify_retry_wait(&self) {
-        let _guard = self.retry_wait.lock();
         self.retry_wake.notify_all();
     }
 
@@ -201,13 +244,13 @@ impl SlotArm {
     }
 
     fn wait_for_retry_inner(&self, timeout: Duration, interrupt_on_world_change: bool) -> bool {
-        let mut guard = self.retry_wait.lock();
+        let mut intent = self.intent.lock();
         let world_generation = self.world_generation.load(Ordering::Relaxed);
         let deadline = Instant::now() + timeout;
         loop {
             if self.stop.load(Ordering::Relaxed)
-                || !self.want_login.load(Ordering::Relaxed)
-                || self.latch.load(Ordering::Relaxed)
+                || !intent.want_login
+                || intent.login_latched
             {
                 return false;
             }
@@ -220,8 +263,55 @@ impl SlotArm {
             if left.is_zero() {
                 return true;
             }
-            self.retry_wake.wait_for(&mut guard, left);
+            self.retry_wake.wait_for(&mut intent, left);
         }
+    }
+
+    pub(super) fn login_command(&self, ingame: bool) -> Option<IntentCommand> {
+        let intent = self.intent.lock();
+        (!ingame && intent.want_login && !intent.login_latched).then_some(IntentCommand {
+            generation: intent.generation,
+        })
+    }
+
+    pub(super) fn logout_command(&self, ingame: bool) -> Option<IntentCommand> {
+        let intent = self.intent.lock();
+        (ingame && intent.want_logout).then_some(IntentCommand {
+            generation: intent.generation,
+        })
+    }
+
+    pub(super) fn acknowledge_logout(&self, command: IntentCommand) {
+        let mut intent = self.intent.lock();
+        if intent.generation != command.generation {
+            return;
+        }
+        intent.want_logout = false;
+        intent.login_latched = true;
+        intent.want_login = false;
+        intent.auto_intent = false;
+    }
+
+    fn acknowledge_observed_idle_logout(&self) {
+        let mut intent = self.intent.lock();
+        // An explicit Login issued after the idle request is the newest
+        // command and must survive the delayed server acknowledgement.
+        if intent.want_login && !intent.auto_intent && !intent.want_logout {
+            return;
+        }
+        intent.login_latched = true;
+        intent.want_login = false;
+        intent.auto_intent = false;
+    }
+
+    fn acknowledge_login(&self, command: IntentCommand) {
+        let mut intent = self.intent.lock();
+        if intent.generation != command.generation {
+            return;
+        }
+        let keep = self.auto_login.load(Ordering::Relaxed) && !intent.login_latched;
+        intent.want_login = keep;
+        intent.auto_intent = keep;
     }
 }
 
@@ -247,24 +337,27 @@ pub(super) fn sync_profile_arm(arm: &SlotArm, profile: &Profile) {
 /// Whether the slot may start a login handshake: on the title (not ingame)
 /// and the arm wants a login that is not latched by an intentional logout.
 pub(super) fn should_handshake(arm: &SlotArm, ingame: bool) -> bool {
-    !ingame && arm.want_login.load(Ordering::Relaxed) && !arm.latch.load(Ordering::Relaxed)
+    arm.login_command(ingame).is_some()
 }
 
 /// Claim the boundary between a granted reservation and `client.login`.
-/// Cancellation or stop observed here abandons only this unused permit; once
-/// this returns true, the caller must acknowledge the login return instead.
+/// Cancellation or stop observed here abandons only this unused permit; a
+/// returned generation must be acknowledged after the login call.
 pub(super) fn granted_permit_may_start_login(
     queue: &SharedLoginQueue,
     uid: i32,
     arm: &SlotArm,
     ingame: bool,
-) -> bool {
-    if !arm.stop.load(Ordering::Relaxed) && should_handshake(arm, ingame) {
-        return true;
+) -> Option<IntentCommand> {
+    let command = (!arm.stop.load(Ordering::Relaxed))
+        .then(|| arm.login_command(ingame))
+        .flatten();
+    if command.is_some() {
+        return command;
     }
     let abandoned = queue.lock().abandon_permit(uid);
     debug_assert!(abandoned, "granted permit must be abandoned exactly once");
-    false
+    None
 }
 
 /// A profile edit can land while this slot waits in the FIFO. Abandon that
@@ -350,11 +443,9 @@ pub(super) fn login_and_acknowledge_permit<T, E>(
 }
 
 /// After a successful handshake, keep an unlatched slot armed exactly when
-/// its saved auto-login policy is enabled.
-pub(super) fn on_login_success(arm: &SlotArm) {
-    let keep = arm.auto_login.load(Ordering::Relaxed) && !arm.latch.load(Ordering::Relaxed);
-    arm.want_login.store(keep, Ordering::Relaxed);
-    arm.auto_intent.store(keep, Ordering::Relaxed);
+/// its saved auto-login policy is enabled. A newer command generation wins.
+pub(super) fn on_login_success(arm: &SlotArm, command: IntentCommand) {
+    arm.acknowledge_login(command);
     // A later DC / tune / park is opcode 18, not a cold 16.
     arm.reconnect.store(true, Ordering::Relaxed);
 }
@@ -373,19 +464,16 @@ pub(super) fn tick_flags(
     if let Some(SessionExitObservation::ServerLogoutAfterLocalIdleRequest) =
         client.take_session_exit_observation()
     {
-        arm.latch.store(true, Ordering::Relaxed);
-        arm.withdraw_login();
+        arm.acknowledge_observed_idle_logout();
     }
-    if arm.want_logout.load(Ordering::Relaxed) && client.ingame {
+    if let Some(command) = arm.logout_command(client.ingame) {
         if !api::interact::logout(client, ifaces) {
             // Missing/refused IF is still pending. A removal deadline may set
             // Stop, in which case fall back to a dirty disconnect rather than
             // reporting a logout that was never sent.
             return arm.stop.load(Ordering::Relaxed);
         }
-        arm.want_logout.store(false, Ordering::Relaxed);
-        arm.latch.store(true, Ordering::Relaxed);
-        arm.withdraw_login();
+        arm.acknowledge_logout(command);
         // Do not honor `stop` on the same probe as the logout press — the
         // body must keep running until the client leaves the game.
         return false;
@@ -507,7 +595,7 @@ pub(super) fn publish_login_latched_from_arm(
     name: &str,
     arm: &SlotArm,
 ) {
-    publish_login_latched(statuses, name, arm.latch.load(Ordering::Relaxed));
+    publish_login_latched(statuses, name, arm.login_latched());
 }
 
 pub(super) fn apply_queue_wait(rows: &mut [SlotStatus], name: &str, pos: Option<QueuePos>) {
@@ -602,10 +690,11 @@ impl Drop for QueuePlaceRetirement<'_> {
 /// Intent provenance lives on the arm, so turning auto-login off is still
 /// observed even when it happens before the first queue poll.
 pub(super) fn permit_wait_cancelled(arm: &SlotArm) -> bool {
+    let intent = arm.intent.lock();
     arm.stop.load(Ordering::Relaxed)
-        || !arm.want_login.load(Ordering::Relaxed)
-        || arm.latch.load(Ordering::Relaxed)
-        || (arm.auto_intent.load(Ordering::Relaxed) && !arm.auto_login.load(Ordering::Relaxed))
+        || !intent.want_login
+        || intent.login_latched
+        || (intent.auto_intent && !arm.auto_login.load(Ordering::Relaxed))
 }
 
 /// Block until the already-enqueued slot owner receives a handshake permit,

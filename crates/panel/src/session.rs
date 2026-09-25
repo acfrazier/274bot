@@ -3636,8 +3636,7 @@ impl Session {
     pub fn logout(&mut self, name: &str) {
         self.wall.latch_logout(name);
         if let Some(arm) = self.play.as_ref().and_then(|p| p.arm(name)) {
-            arm.withdraw_login();
-            arm.want_logout.store(true, Ordering::Relaxed);
+            arm.request_logout();
         }
         // The logout press lives in the probe (per-tick); kick a parked
         // slot so the clean logout goes out within a frame.
@@ -3954,8 +3953,7 @@ impl Session {
         for name in names {
             self.wall.latch_logout(&name);
             if let Some(arm) = self.play.as_ref().and_then(|p| p.arm(&name)) {
-                arm.want_logout.store(true, Ordering::Relaxed);
-                arm.withdraw_login();
+                arm.request_logout();
             }
         }
         if let Some(play) = self.play.as_ref() {
@@ -4036,7 +4034,7 @@ impl Session {
             if let Some(play) = self.play.as_ref() {
                 if let Some(arm) = play.arm(name) {
                     // Clean logout only — Stop follows disconnect or timeout.
-                    arm.want_logout.store(true, Ordering::Relaxed);
+                    arm.request_logout();
                 }
                 play.wake(name);
             }

@@ -1597,11 +1597,32 @@ fn publish_login_latched_projects_arm_latch_onto_slot_row() {
 #[test]
 fn explicit_login_rearm_clears_latch_and_allows_handshake() {
     let arm = SlotArm::new(0, true);
-    arm.latch.store(true, Ordering::Relaxed);
+    arm.request_logout();
+    let logout = arm.logout_command(true).unwrap();
+    arm.acknowledge_logout(logout);
     assert!(!should_handshake(&arm, false));
-    arm.latch.store(false, Ordering::Relaxed);
-    arm.want_login.store(true, Ordering::Relaxed);
+    arm.arm_explicit_login();
     assert!(should_handshake(&arm, false));
+}
+
+#[test]
+fn newer_login_survives_older_logout_completion() {
+    let arm = SlotArm::new(0, false);
+    arm.request_logout();
+
+    // Pause the worker after consuming Logout, then issue the newer command.
+    let worker_logout = arm.logout_command(true).unwrap();
+    arm.arm_explicit_login();
+
+    // Acknowledging the consumed generation must not overwrite newer intent.
+    arm.acknowledge_logout(worker_logout);
+
+    assert!(
+        should_handshake(&arm, false),
+        "the latest explicit Login must remain armed after an old Logout completes"
+    );
+    assert!(!arm.login_latched());
+    assert!(!arm.wants_logout());
 }
 
 #[test]
@@ -1613,13 +1634,13 @@ fn title_handshake_boundary_publishes_cleared_latch_before_queue_wait() {
         ..Default::default()
     }]));
     let arm = SlotArm::new(0, false);
-    arm.latch.store(true, Ordering::Relaxed);
+    arm.request_logout();
+    let logout = arm.logout_command(true).unwrap();
+    arm.acknowledge_logout(logout);
     publish_login_latched_from_arm(&statuses, "alice", &arm);
     assert!(statuses.lock().unwrap()[0].login_latched);
 
-    // Explicit Log in / Login all: same arm flags, then production handoff.
-    arm.latch.store(false, Ordering::Relaxed);
-    arm.want_login.store(true, Ordering::Relaxed);
+    arm.arm_explicit_login();
     assert!(should_handshake(&arm, false));
     publish_login_latched_from_arm(&statuses, "alice", &arm);
 
@@ -1635,11 +1656,11 @@ fn title_handshake_boundary_publishes_cleared_latch_before_queue_wait() {
 fn spawn_without_auto_login_does_not_handshake() {
     let arm = SlotArm::new(0, false);
     assert!(!should_handshake(&arm, false));
-    arm.want_login.store(true, Ordering::Relaxed);
+    arm.arm_explicit_login();
     assert!(should_handshake(&arm, false));
-    arm.latch.store(true, Ordering::Relaxed);
+    arm.request_logout();
     assert!(!should_handshake(&arm, false));
-    arm.latch.store(false, Ordering::Relaxed);
+    arm.arm_explicit_login();
     assert!(should_handshake(&arm, false));
     assert!(!should_handshake(&arm, true));
 }
@@ -1649,20 +1670,25 @@ fn login_success_keeps_auto_login_armed_but_disarms_one_shot() {
     // CLI: `new(uid, true)` (auto_login true) stays armed so an unexpected
     // DC re-handshakes.
     let arm = SlotArm::new(0, true);
-    on_login_success(&arm);
+    let login = arm.login_command(false).unwrap();
+    on_login_success(&arm, login);
     assert!(should_handshake(&arm, false));
 
     // Panel Log in / Login all: armed explicitly, then disarmed after
     // the handshake — a DC sits on the title.
     let arm = SlotArm::new(0, false);
-    arm.want_login.store(true, Ordering::Relaxed);
-    on_login_success(&arm);
+    arm.arm_explicit_login();
+    let login = arm.login_command(false).unwrap();
+    on_login_success(&arm, login);
     assert!(!should_handshake(&arm, false));
 
-    // The intentional-logout latch blocks even an auto-login slot.
+    // A newer intentional logout wins over completion of an old login.
     let arm = SlotArm::new(0, true);
-    arm.latch.store(true, Ordering::Relaxed);
-    on_login_success(&arm);
+    let login = arm.login_command(false).unwrap();
+    arm.request_logout();
+    let logout = arm.logout_command(true).unwrap();
+    arm.acknowledge_logout(logout);
+    on_login_success(&arm, login);
     assert!(!should_handshake(&arm, false));
 }
 
@@ -1704,14 +1730,14 @@ fn tick_flags_latches_an_observed_idle_logout_without_changing_saved_intent() {
     let mut client = client_after_observed_idle_logout();
     let arm = SlotArm::new(7, true);
     arm.reconnect.store(true, Ordering::Relaxed);
-    arm.want_logout.store(true, Ordering::Relaxed);
+    arm.request_logout();
 
     assert!(!tick_flags(&mut client, &[], &arm));
-    assert!(arm.latch.load(Ordering::Relaxed));
-    assert!(!arm.want_login.load(Ordering::Relaxed));
+    assert!(arm.login_latched());
+    assert!(!arm.wants_login());
     assert!(arm.auto_login.load(Ordering::Relaxed));
     assert!(arm.reconnect.load(Ordering::Relaxed));
-    assert!(arm.want_logout.load(Ordering::Relaxed));
+    assert!(arm.wants_logout());
     assert!(!should_handshake(&arm, false));
     assert_eq!(client.take_session_exit_observation(), None);
 }
@@ -1733,8 +1759,8 @@ fn unclassified_server_logout_leaves_auto_login_armed() {
     let arm = SlotArm::new(7, true);
 
     assert!(!tick_flags(&mut client, &[], &arm));
-    assert!(!arm.latch.load(Ordering::Relaxed));
-    assert!(arm.want_login.load(Ordering::Relaxed));
+    assert!(!arm.login_latched());
+    assert!(arm.wants_login());
     assert!(arm.auto_login.load(Ordering::Relaxed));
     assert!(should_handshake(&arm, false));
 }
@@ -1763,15 +1789,15 @@ fn tick_flags_presses_logout_when_ingame_and_reports_stop() {
     );
     client.ingame = true;
     let arm = SlotArm::new(0, false);
-    arm.want_logout.store(true, Ordering::Relaxed);
+    arm.request_logout();
     // Even with stop already set, the logout probe must return false so
     // the body keeps running until !ingame (no dirty disconnect).
     arm.stop.store(true, Ordering::Relaxed);
 
     assert!(!tick_flags(&mut client, &ifaces, &arm));
-    assert!(!arm.want_logout.load(Ordering::Relaxed));
-    assert!(arm.latch.load(Ordering::Relaxed));
-    assert!(!arm.want_login.load(Ordering::Relaxed));
+    assert!(!arm.wants_logout());
+    assert!(arm.login_latched());
+    assert!(!arm.wants_login());
     assert_eq!(
         client.out.data()[0],
         client::io::ClientProt::IF_BUTTON.id as u8
@@ -1782,10 +1808,10 @@ fn tick_flags_presses_logout_when_ingame_and_reports_stop() {
 
     // A title slot never presses; `stop` still reports.
     client.ingame = false;
-    arm.want_logout.store(true, Ordering::Relaxed);
+    arm.request_logout();
     assert!(tick_flags(&mut client, &ifaces, &arm));
     assert!(
-        arm.want_logout.load(Ordering::Relaxed),
+        arm.wants_logout(),
         "no CC_LOGOUT press on the title; the flag stays for the panel"
     );
 }
@@ -1801,15 +1827,15 @@ fn refused_logout_stays_pending_instead_of_latching_success() {
     });
     client.ingame = true;
     let arm = SlotArm::new(0, false);
-    arm.want_logout.store(true, Ordering::Relaxed);
+    arm.request_logout();
 
     assert!(!tick_flags(&mut client, &[], &arm));
     assert!(
-        arm.want_logout.load(Ordering::Relaxed),
+        arm.wants_logout(),
         "missing logout interface must leave the request pending"
     );
     assert!(
-        !arm.latch.load(Ordering::Relaxed),
+        !arm.login_latched(),
         "a refused send is not a completed logout"
     );
 }
@@ -1925,8 +1951,8 @@ fn cancellation_after_grant_before_login_abandons_the_unused_permit() {
         PermitWait::Granted
     );
 
-    arm.want_login.store(false, Ordering::Relaxed);
-    assert!(!granted_permit_may_start_login(&queue, 7, &arm, false));
+    arm.withdraw_login();
+    assert!(granted_permit_may_start_login(&queue, 7, &arm, false).is_none());
     assert_eq!(
         request_shared(&queue, 8, Instant::now()),
         Permit::Grant,
@@ -1949,7 +1975,7 @@ fn stop_after_grant_before_login_abandons_the_unused_permit() {
     );
 
     arm.stop.store(true, Ordering::Relaxed);
-    assert!(!granted_permit_may_start_login(&queue, 7, &arm, false));
+    assert!(granted_permit_may_start_login(&queue, 7, &arm, false).is_none());
     assert_eq!(
         request_shared(&queue, 8, Instant::now()),
         Permit::Grant,
@@ -2161,14 +2187,14 @@ fn auto_off_before_first_wait_withdraws_auto_intent() {
     let arm = SlotArm::new(7, true);
     arm.set_auto_login(false);
     assert!(permit_wait_cancelled(&arm));
-    assert!(!arm.want_login.load(Ordering::Relaxed));
+    assert!(!arm.wants_login());
 }
 
 #[test]
 fn auto_on_arms_an_unlatched_parked_slot() {
     let arm = SlotArm::new(7, false);
     arm.set_auto_login(true);
-    assert!(arm.want_login.load(Ordering::Relaxed));
+    assert!(arm.wants_login());
     assert!(!permit_wait_cancelled(&arm));
 }
 
@@ -2193,12 +2219,12 @@ fn waiting_slot_withdraws_when_auto_login_is_cleared() {
         row_queue(&statuses, "alice")
     );
 
-    arm.auto_login.store(false, Ordering::Relaxed);
+    arm.set_auto_login(false);
 
     assert_eq!(waiter.join().unwrap(), PermitWait::Cancelled);
     assert!(queue.lock().status_owner(arm.queue_owner).is_none());
     assert!(
-        !arm.want_login.load(Ordering::Relaxed),
+        !arm.wants_login(),
         "a withdrawn intent must not handshake on the next loop"
     );
     assert_eq!(row_queue(&statuses, "alice"), (-1, -1));
@@ -2213,7 +2239,7 @@ fn explicit_login_intent_survives_auto_on_then_off() {
     arm.set_auto_login(true);
     arm.set_auto_login(false);
     assert!(
-        arm.want_login.load(Ordering::Relaxed),
+        arm.wants_login(),
         "auto toggles must not relabel and withdraw explicit intent"
     );
     assert_eq!(
@@ -2254,10 +2280,8 @@ fn waiting_slot_withdraws_on_intentional_logout_and_frees_the_head() {
         row_queue(&statuses, "alice")
     );
 
-    // Credentials Logout: latch, drop the intent, arm the IF logout.
-    alice.want_login.store(false, Ordering::Relaxed);
-    alice.latch.store(true, Ordering::Relaxed);
-    alice.want_logout.store(true, Ordering::Relaxed);
+    // Credentials Logout withdraws login and arms the IF logout atomically.
+    alice.request_logout();
 
     assert_eq!(waiter.join().unwrap(), PermitWait::Cancelled);
     assert!(queue.lock().status_owner(alice.queue_owner).is_none());
@@ -2360,6 +2384,7 @@ fn login_all_during_loading_scene_grants_every_parked_owner() {
 
     // Alice owns a granted reservation and is between client.login and the
     // first ready observation when Login all lands.
+    let alice_login = alice.login_command(false).unwrap();
     assert_eq!(
         wait_for_permit(&play.queue, &play.statuses, "alice", 1, &alice),
         PermitWait::Granted
@@ -2368,7 +2393,7 @@ fn login_all_during_loading_scene_grants_every_parked_owner() {
         .queue
         .lock()
         .acknowledge_login_return(1, Instant::now()));
-    on_login_success(&alice);
+    on_login_success(&alice, alice_login);
     set_startup_phase(&play.statuses, "alice", StartupPhase::LoadingScene);
 
     play.prefer_login("alice");

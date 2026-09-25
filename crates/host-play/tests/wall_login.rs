@@ -44,8 +44,8 @@ fn wall_login_fifo_logout_all() {
     // while the other may flash `queue_position == 1` for a 20 ms poll
     // (a 2-of-2 only appears if both enqueue before the first grant), so
     // poll until one slot shows either, then both must reach scene 2.
-    arm_a.want_login.store(true, Ordering::Relaxed);
-    arm_b.want_login.store(true, Ordering::Relaxed);
+    arm_a.arm_explicit_login();
+    arm_b.arm_explicit_login();
     let fifo_deadline = std::time::Instant::now() + Duration::from_secs(60);
     loop {
         let statuses = play.statuses();
@@ -69,16 +69,14 @@ fn wall_login_fifo_logout_all() {
     // Logout all: both arms press the clean IF logout. The slot threads
     // record the title state as soon as the 20 ms body exits; a slot
     // still ingame after 30 s means the logout never completed.
-    arm_a.want_logout.store(true, Ordering::Relaxed);
-    arm_b.want_logout.store(true, Ordering::Relaxed);
+    arm_a.request_logout();
+    arm_b.request_logout();
     wait_logged_out(&play, 2, Duration::from_secs(30), "wall_login");
 
     // Login all again: the logout latched both arms, so clear the latches
     // and re-arm. Both re-enter the FIFO and reach scene 2 again.
-    arm_a.latch.store(false, Ordering::Relaxed);
-    arm_b.latch.store(false, Ordering::Relaxed);
-    arm_a.want_login.store(true, Ordering::Relaxed);
-    arm_b.want_login.store(true, Ordering::Relaxed);
+    arm_a.arm_explicit_login();
+    arm_b.arm_explicit_login();
     wait_ingame(&play, 2, Duration::from_secs(120), "wall_login");
 
     // Stop both slot threads so the process can exit cleanly.

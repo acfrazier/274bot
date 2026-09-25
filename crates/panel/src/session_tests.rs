@@ -3054,8 +3054,7 @@ fn logout_all_arms_every_wall_member() {
             .unwrap()
             .arm("alice")
             .unwrap()
-            .want_logout
-            .load(Ordering::Relaxed),
+            .wants_logout(),
         "the focused member must logout"
     );
     assert!(
@@ -3064,8 +3063,7 @@ fn logout_all_arms_every_wall_member() {
             .unwrap()
             .arm("bob")
             .unwrap()
-            .want_logout
-            .load(Ordering::Relaxed),
+            .wants_logout(),
         "every wall member must logout"
     );
 }
@@ -3098,8 +3096,7 @@ fn headed_stress_spawns_every_member_prefers_and_arms_s00() {
             .unwrap()
             .arm("s00")
             .unwrap()
-            .want_login
-            .load(Ordering::Relaxed),
+            .wants_login(),
         "the focused slot arms immediately"
     );
     assert!(
@@ -3130,8 +3127,7 @@ fn login_all_arms_every_wall_member() {
             .unwrap()
             .arm("s01")
             .unwrap()
-            .want_login
-            .load(Ordering::Relaxed),
+            .wants_login(),
         "login all arms every member immediately (the FIFO serializes)"
     );
 }
@@ -3219,7 +3215,7 @@ fn live_prepare_script_boots_the_seed_profile_and_installs_runner() {
     assert_ne!(name, "test", "live must not log in `test`");
     let play = s.play.as_ref().expect("play started");
     assert!(
-        play.arm(&name).unwrap().want_login.load(Ordering::Relaxed),
+        play.arm(&name).unwrap().wants_login(),
         "login all arms the minted profile's handshake"
     );
     let runner = s.scenario.lock().unwrap();
@@ -3983,9 +3979,6 @@ fn login_after_logout_rearms_handshake_on_fake_arm() {
         |_, _, _| {},
     );
     let arm = SlotArm::new(7, false);
-    arm.latch.store(true, Ordering::Relaxed);
-    arm.want_login.store(false, Ordering::Relaxed);
-    arm.want_logout.store(true, Ordering::Relaxed);
     play.attach_arm("alice", Arc::clone(&arm));
     s.play = Some(play);
     s.wall.load("alice");
@@ -3994,9 +3987,9 @@ fn login_after_logout_rearms_handshake_on_fake_arm() {
 
     s.login("alice");
 
-    assert!(arm.want_login.load(Ordering::Relaxed));
-    assert!(!arm.want_logout.load(Ordering::Relaxed));
-    assert!(!arm.latch.load(Ordering::Relaxed));
+    assert!(arm.wants_login());
+    assert!(!arm.wants_logout());
+    assert!(!arm.login_latched());
     assert!(!s.wall.latch.contains("alice"));
     assert_eq!(s.focused_name().as_deref(), Some("alice"));
 }
@@ -4041,7 +4034,7 @@ fn explicit_login_recreates_terminal_worker_and_reuses_slot_io() {
         .as_ref()
         .and_then(|play| play.arm("alice"))
         .expect("explicit login recreates the terminal worker arm");
-    assert!(replacement.want_login.load(Ordering::Relaxed));
+    assert!(replacement.wants_login());
     assert!(Arc::ptr_eq(
         &session.slots.get("alice").unwrap().input,
         &input
@@ -4054,12 +4047,11 @@ fn arm_login_all_cancels_pending_logout() {
     // clears it when it observes ingame); Login all must cancel it or
     // the handshake would be undone on the first ingame frame.
     let arm = SlotArm::new(7, false);
-    arm.latch.store(true, Ordering::Relaxed);
-    arm.want_logout.store(true, Ordering::Relaxed);
+    arm.request_logout();
     arm.arm_explicit_login();
-    assert!(arm.want_login.load(Ordering::Relaxed));
-    assert!(!arm.want_logout.load(Ordering::Relaxed));
-    assert!(!arm.latch.load(Ordering::Relaxed));
+    assert!(arm.wants_login());
+    assert!(!arm.wants_logout());
+    assert!(!arm.login_latched());
 }
 
 #[test]
@@ -4793,14 +4785,11 @@ fn arm_for_profile_respects_auto_login_and_latch() {
     p.settings.auto_login = true;
     s.vault.as_mut().unwrap().upsert(p).unwrap();
     let arm = s.arm_for_profile("alice").expect("arm");
-    assert!(arm.want_login.load(Ordering::Relaxed));
+    assert!(arm.wants_login());
     assert!(arm.auto_login.load(Ordering::Relaxed));
     s.wall.latch_logout("alice");
     let arm = s.arm_for_profile("alice").expect("arm");
-    assert!(
-        !arm.want_login.load(Ordering::Relaxed),
-        "latch blocks handshake"
-    );
+    assert!(!arm.wants_login(), "latch blocks handshake");
     assert!(
         arm.auto_login.load(Ordering::Relaxed),
         "profile auto_login stays on the arm"
@@ -4866,8 +4855,8 @@ fn login_all_during_loading_scene_publishes_no_control_owned_place() {
 
     s.login_all();
 
-    assert!(alice.want_login.load(Ordering::Relaxed));
-    assert!(bob.want_login.load(Ordering::Relaxed));
+    assert!(alice.wants_login());
+    assert!(bob.wants_login());
     assert!(
         s.play.as_ref().unwrap().login_queue_uids().is_empty(),
         "only worker Queueing transitions create FIFO membership"

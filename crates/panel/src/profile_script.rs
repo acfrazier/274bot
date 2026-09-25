@@ -913,7 +913,7 @@ impl Session {
         self.play
             .as_ref()
             .and_then(|p| p.arm(name))
-            .is_some_and(|arm| arm.want_logout.load(Ordering::Relaxed))
+            .is_some_and(|arm| arm.wants_logout())
     }
 
     fn slots_with_identity(&self, key: &str) -> (Vec<String>, Vec<String>) {

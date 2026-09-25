@@ -72,6 +72,7 @@ impl Play {
     /// joining it. Locks are acquired and released one at a time except for
     /// the established script-wall -> script-slot order.
     fn take_slot_for_stop(&mut self, name: &str) -> Option<thread::JoinHandle<()>> {
+        #[cfg(test)]
         let arm = self.arms.get(name).cloned();
         self.signal_slot_stop(name);
         self.spawned.remove(name);
@@ -629,17 +630,17 @@ fn spawn_slot_thread(
                     }
                     // A withdrawal or stop that lands after the granting poll
                     // releases the unused reservation before any login call.
-                    if !granted_permit_may_start_login(
+                    let Some(login_command) = granted_permit_may_start_login(
                         &slot_queue,
                         uid,
                         &arm,
                         client.ingame,
-                    ) {
+                    ) else {
                         if arm.stop.load(Ordering::Relaxed) {
                             return;
                         }
                         continue;
-                    }
+                    };
                     let mut permit = GrantedReservation::new(&slot_queue, uid);
                     mark_login_started(&slot_statuses, &username);
                     let reconnect = arm.reconnect.load(Ordering::Relaxed);
@@ -656,7 +657,7 @@ fn spawn_slot_thread(
                             backoff.reset();
                             if let Some(round) = world_round.as_mut() { round.reset(); }
                             key_refreshed = false;
-                            on_login_success(&arm);
+                            on_login_success(&arm, login_command);
                             set_startup_phase(&slot_statuses, &username, StartupPhase::LoadingScene);
                             if debug_enabled() {
                                 eprintln!("[host-play] slot {username}: handshake ok");
@@ -878,8 +879,7 @@ fn spawn_slot_thread(
                                         // player observation can authorize game actions.
                                         s.ingame = ready;
                                         s.scene_state = nav_snapshot.scene_state();
-                                        s.login_latched =
-                                            arm_latch_obs.latch.load(Ordering::Relaxed);
+                                        s.login_latched = arm_latch_obs.login_latched();
                                         apply_startup_phase(s, name, ready, c.ingame);
                                         s.runenergy = if ready { c.runenergy } else { 0 };
                                         s.run_sends = run_sends;
