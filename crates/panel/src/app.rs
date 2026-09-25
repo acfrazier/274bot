@@ -2375,16 +2375,25 @@ fn browse_window_body(ui: &Ui, session: &mut Session) {
     }
     let named_failures = session.js.named_failure_output();
     if !named_failures.is_empty() {
-        ui.text_colored(
-            ERROR,
-            format!("{} failed", session.js.load_failures().len()),
+        // Collapsed by default: the list is long (dim catalog cards are
+        // expected misses) and pushes the script browser off screen.
+        let red = ui.push_style_color(StyleColor::Text, ERROR);
+        let open = ui.collapsing_header(
+            format!(
+                "{} failed###script-failures",
+                session.js.load_failures().len()
+            ),
+            TreeNodeFlags::NONE,
         );
-        if ui.button("Copy failures") {
-            if let Ok(mut clip) = arboard::Clipboard::new() {
-                let _ = clip.set_text(&named_failures);
+        red.pop();
+        if open {
+            if ui.button("Copy failures") {
+                if let Ok(mut clip) = arboard::Clipboard::new() {
+                    let _ = clip.set_text(&named_failures);
+                }
             }
+            ui.text_wrapped(&named_failures);
         }
-        ui.text_wrapped(&named_failures);
         ui.spacing();
     }
     ui.child_window("##script-list")
