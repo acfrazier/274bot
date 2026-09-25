@@ -9,9 +9,7 @@ use nav::traveller::Traveller;
 use nav::world::NavWorld;
 use nav::WorldState;
 
-use super::{
-    debug_enabled, route_inspect, route_or_bank_fetch, PendingBankFetch, RouteOutcome,
-};
+use super::{debug_enabled, route_inspect, route_or_bank_fetch, PendingBankFetch, RouteOutcome};
 
 /// Host-published walk outcome copied onto the isolate snapshot.
 #[derive(Clone, Copy, Default)]

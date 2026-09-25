@@ -234,7 +234,12 @@ pub(super) fn deposit_all_backpack<D: Driver>(driver: &mut D, snapshot: &GameSna
     wrote
 }
 
-pub(super) fn withdraw_id<D: Driver>(driver: &mut D, snapshot: &GameSnapshot, id: i32, count: i32) -> bool {
+pub(super) fn withdraw_id<D: Driver>(
+    driver: &mut D,
+    snapshot: &GameSnapshot,
+    id: i32,
+    count: i32,
+) -> bool {
     use api::interact::{ActionSpec, OpTarget, SendResult};
     let mut ix = api::interact::Interactions::new(snapshot, driver);
     let Some(item) = snapshot.bank().iter().find(|it| it.def.id == id) else {

@@ -32,12 +32,10 @@ pub use options::{
     parse_profile_args, parse_revision, ProfileEnvironment, ProfileOptions, ServerSelection,
     WorldMembersFact, WorldMembersSource,
 };
-#[path = "profile_selection.rs"]
-mod selection;
 #[path = "profile_binding.rs"]
 mod binding;
-
-
+#[path = "profile_selection.rs"]
+mod selection;
 
 /// Launch selection, still changeable before a session is bound. It contains
 /// paths and captured key inputs, but loads no cache and opens no socket.
@@ -65,7 +63,6 @@ pub struct ProfileSelection {
     public_worlds: Option<Arc<PublicWorlds>>,
     supported_server: bool,
 }
-
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NavAvailability {
@@ -101,7 +98,6 @@ pub struct ServerProfile {
     public_worlds: Option<Arc<PublicWorlds>>,
 }
 
-
 #[derive(Clone)]
 struct SharedWorld(Option<Arc<NavWorld>>);
 
@@ -112,7 +108,6 @@ impl std::fmt::Debug for SharedWorld {
             .finish()
     }
 }
-
 
 impl ServerProfile {
     pub fn selection(&self) -> ServerSelection {
@@ -241,7 +236,6 @@ impl ServerProfile {
         Ok(())
     }
 }
-
 
 fn require_bot_operation(revision: ClientRevision) -> Result<(), String> {
     match revision {

@@ -220,7 +220,11 @@ pub(super) fn mark_login_started(statuses: &Arc<Mutex<Vec<SlotStatus>>>, name: &
     }
 }
 
-pub(super) fn publish_startup_phase(statuses: &Arc<Mutex<Vec<SlotStatus>>>, name: &str, message: &str) {
+pub(super) fn publish_startup_phase(
+    statuses: &Arc<Mutex<Vec<SlotStatus>>>,
+    name: &str,
+    message: &str,
+) {
     let mut all = statuses.lock().unwrap();
     if let Some(s) = all.iter_mut().find(|s| s.username == name) {
         s.startup_phase = StartupPhase::Preparing;
@@ -253,7 +257,11 @@ pub(super) fn clear_startup_progress(statuses: &Arc<Mutex<Vec<SlotStatus>>>, nam
     }
 }
 
-pub(super) fn set_startup_phase(statuses: &Arc<Mutex<Vec<SlotStatus>>>, name: &str, phase: StartupPhase) {
+pub(super) fn set_startup_phase(
+    statuses: &Arc<Mutex<Vec<SlotStatus>>>,
+    name: &str,
+    phase: StartupPhase,
+) {
     let mut all = statuses.lock().unwrap();
     if let Some(s) = all.iter_mut().find(|s| s.username == name) {
         if s.startup_phase != phase {
@@ -284,7 +292,12 @@ pub(super) fn startup_phase_after_observation(
     })
 }
 
-pub(super) fn apply_startup_phase(s: &mut SlotStatus, name: &str, ready: bool, client_ingame: bool) {
+pub(super) fn apply_startup_phase(
+    s: &mut SlotStatus,
+    name: &str,
+    ready: bool,
+    client_ingame: bool,
+) {
     if let Some(next_phase) = startup_phase_after_observation(s.startup_phase, ready, client_ingame)
     {
         if s.startup_phase != next_phase {
@@ -297,7 +310,11 @@ pub(super) fn apply_startup_phase(s: &mut SlotStatus, name: &str, ready: bool, c
     }
 }
 
-pub(super) fn record_login_error(statuses: &Arc<Mutex<Vec<SlotStatus>>>, name: &str, e: &LoginError) {
+pub(super) fn record_login_error(
+    statuses: &Arc<Mutex<Vec<SlotStatus>>>,
+    name: &str,
+    e: &LoginError,
+) {
     let msg = format!("code {}: {}", e.code, e.mes2);
     if debug_enabled() {
         eprintln!("[host-play] slot {name}: login {msg}");
@@ -314,7 +331,6 @@ pub(super) fn record_login_error(statuses: &Arc<Mutex<Vec<SlotStatus>>>, name: &
         s.error = Some(msg);
     }
 }
-
 
 /// Drop producer-gated observation without changing the display phase.
 /// A successful login/reconnect (`Pump` session gen) must reset snapshot

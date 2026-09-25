@@ -8,14 +8,14 @@ use nav::router::FindOptions;
 use nav::world::NavWorld;
 use nav::WorldState;
 
-use crate::catalog_core::ScriptAct;
-use crate::debug_enabled;
-#[cfg(feature = "memory-profile")]
-use crate::memory_diagnostics;
 use super::{
     abort_script_walk, action_slot, all_slot, nearest_bank_booth, route_inspect, NavBot,
     ScriptWalkArm,
 };
+use crate::catalog_core::ScriptAct;
+use crate::debug_enabled;
+#[cfg(feature = "memory-profile")]
+use crate::memory_diagnostics;
 fn act_tile(x: i32, z: i32, level: i32) -> crate::catalog_core::LineOfSightTile {
     crate::catalog_core::LineOfSightTile { x, z, level }
 }
@@ -996,7 +996,6 @@ fn dispatch_puzzle_move(
     };
     matches!(ix.interact(target, action), SendResult::Sent { .. })
 }
-
 
 #[allow(clippy::too_many_arguments)]
 fn resolve_op_target<'a>(

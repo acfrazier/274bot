@@ -21,7 +21,6 @@ pub enum WireCmd {
     Walk { x: i32, z: i32, level: i32 },
 }
 
-
 /// Run the queued [`WireCmd`]s through `Interactions` on the slot's own
 /// Driver. `hold` freezes WASD walks (the guardian's hold freezes the
 /// follow too); chat sends still go out so the operator can unstick a
@@ -94,5 +93,4 @@ impl Play {
         drop(statuses);
         self.wake(user);
     }
-
 }

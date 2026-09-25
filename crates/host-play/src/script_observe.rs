@@ -12,15 +12,15 @@ use nav::world::NavWorld;
 use nav::WorldState;
 use script::{ScriptCtx, SlotScript};
 
-use crate::debug_enabled;
-#[cfg(feature = "memory-profile")]
-use crate::memory_diagnostics;
 use super::{
     abort_script_walk, action_slot, apply_watchdog_nav_action, dispatch_observed_bank_op,
     dispatch_script_interact_cached, fill_withdraw_action, pack_cached_reach, recovery_walk_idle,
     route_inspect, script_slot, with_script_snapshot_input_shorts, NavBot, PostedWalkOutcome,
     ScriptWalkArm, ScriptWall,
 };
+use crate::debug_enabled;
+#[cfg(feature = "memory-profile")]
+use crate::memory_diagnostics;
 /// Post the slot's snapshot. Only a post the isolate accepted counts as the
 /// isolate having seen the walk outcome it carries (`walk_seq`), so only
 /// then is the live refusal guard released. A refused post leaves the guard

@@ -1,7 +1,6 @@
 //! Per-slot script observe/dispatch/hold transaction and script navigation continuation.
 
 use super::*;
-use crate::catalog_core::ScriptAct;
 #[path = "script_bank.rs"]
 mod bank;
 use bank::{
@@ -12,17 +11,17 @@ pub(super) use bank::{fill_withdraw_action, nearest_bank_booth};
 #[path = "script_nav.rs"]
 mod script_nav;
 use script_nav::log_walk_arm_bot;
-pub(super) use script_nav::{
-    approach_tiles, reset_script_nav, MissingCarry, NavBot, PostedWalkOutcome, ScriptRouteRequest,
-    ScriptWalkArm,
-};
+#[cfg(test)]
+pub(super) use script_nav::{approach_tiles, ScriptRouteRequest};
+pub(super) use script_nav::{reset_script_nav, NavBot, PostedWalkOutcome, ScriptWalkArm};
 #[path = "script_walk.rs"]
 mod script_walk;
-use script_walk::{apply_watchdog_nav_action, recovery_walk_idle};
+#[cfg(test)]
+pub(super) use script_walk::apply_nav_follow_outcome;
 pub(super) use script_walk::{
-    abort_script_walk, apply_nav_follow_outcome, bank_fetch_freezes_follow,
-    step_bank_fetch_on_bot, step_nav_bot,
+    abort_script_walk, bank_fetch_freezes_follow, step_bank_fetch_on_bot, step_nav_bot,
 };
+use script_walk::{apply_watchdog_nav_action, recovery_walk_idle};
 #[path = "script_snapshot.rs"]
 mod script_snapshot;
 use script_snapshot::pack_cached_reach;
@@ -47,12 +46,13 @@ pub(super) use route_inspect::PostedInspect;
 
 #[path = "script_observe.rs"]
 mod script_observe;
-#[cfg(test)]
-pub(super) use script_observe::{script_observe, script_observe_with_npc_boxes};
 pub(super) use script_observe::{
-    nav_world_state_for_observe, observe_script_inv, post_script_snapshot,
-    project_npc_boxes_for_isolate_snapshot, projected_npc_boxes, script_observe_cached,
-    take_script_interacts,
+    nav_world_state_for_observe, observe_script_inv, project_npc_boxes_for_isolate_snapshot,
+    projected_npc_boxes, script_observe_cached,
+};
+#[cfg(test)]
+pub(super) use script_observe::{
+    post_script_snapshot, script_observe, script_observe_with_npc_boxes, take_script_interacts,
 };
 /// Per-uid script cell on the wall. Encode/post/drain take the slot lock
 /// only — the wall map lock is held briefly for lookup/insert.
@@ -145,24 +145,11 @@ impl SettledStart for SlotScript {
     }
 }
 
-
-
-
-
-
-
-
 /// the per-observe inventory view (the observe re-checks the gate inside).
 pub(super) fn script_running(scripts: &ScriptWall, name: &str) -> bool {
     script_slot(scripts, name)
         .is_some_and(|s| s.lock().unwrap().state() == script::RunState::Running)
 }
-
-
-
-
-
-
 
 /// Puzzle-board post tests: the production observe path
 /// ([`with_script_snapshot_input`] via [`script_snapshot_fb`]) over a

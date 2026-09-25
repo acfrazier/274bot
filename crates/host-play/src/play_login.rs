@@ -3,8 +3,8 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use client::client::{Client, LoginError};
 use client::client::client::SessionExitObservation;
+use client::client::{Client, LoginError};
 use client::config::IfType;
 use client::BotTarget;
 use host::login_queue::{LoginBackoff, LoginQueue, Permit, QueuePos};
@@ -299,7 +299,11 @@ pub(super) fn on_login_success(arm: &SlotArm) {
 /// (keep running until `!ingame`); only then may `stop` end the body. The
 /// press is the only place a clean logout can go out while the slot is
 /// inside [`Host::run_client`].
-pub(super) fn tick_flags(client: &mut Client, ifaces: &[Option<Box<IfType>>], arm: &SlotArm) -> bool {
+pub(super) fn tick_flags(
+    client: &mut Client,
+    ifaces: &[Option<Box<IfType>>],
+    arm: &SlotArm,
+) -> bool {
     if let Some(SessionExitObservation::ServerLogoutAfterLocalIdleRequest) =
         client.take_session_exit_observation()
     {
@@ -412,7 +416,11 @@ pub(super) fn login_retry_wait(backoff: &mut LoginBackoff, code: i32) -> Duratio
 
 /// Copy a login-queue snapshot onto every `SlotStatus` row named `name`;
 /// `None` (granted or not queued) clears both fields back to -1.
-pub(super) fn publish_login_latched(statuses: &Arc<Mutex<Vec<SlotStatus>>>, name: &str, latched: bool) {
+pub(super) fn publish_login_latched(
+    statuses: &Arc<Mutex<Vec<SlotStatus>>>,
+    name: &str,
+    latched: bool,
+) {
     if let Some(s) = statuses
         .lock()
         .unwrap()

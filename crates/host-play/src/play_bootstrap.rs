@@ -396,7 +396,6 @@ impl Play {
             wakes: HashMap::new(),
         }
     }
-
 }
 
 /// Spawn one slot thread per profile. Each slot waits for a login-queue
@@ -625,4 +624,3 @@ fn load_template(cache_dir: &str) -> IfaceTables {
     };
     (cache, ifaces, ifaces_mut)
 }
-
