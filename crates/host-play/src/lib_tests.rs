@@ -2291,6 +2291,13 @@ fn finished_worker_is_reaped_before_explicit_respawn() {
         }),
     );
     observe_exit.recv().unwrap();
+    // The send is the worker's final action, but JoinHandle publishes
+    // `is_finished` only after the closure and captures are fully dropped.
+    // Wait without an arbitrary iteration/time budget: this worker has no
+    // remaining blocking operation after the explicit exit handshake.
+    while !play.handles["dead"].is_finished() {
+        thread::yield_now();
+    }
 
     let replacement = SlotArm::new(8, false);
     replacement.bypass_asset_startup_for_test();
