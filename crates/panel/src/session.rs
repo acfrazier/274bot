@@ -3505,9 +3505,9 @@ impl Session {
         self.capture_tx = None;
     }
 
-    /// Control arm for a vault profile: `SlotArm::new(uid, auto_login)` with
-    /// `want_login` cleared when the wall logout latch blocks auto-login,
-    /// and `random_events` seeded from the profile.
+    /// Control arm for a vault profile: auto-login remains a saved policy,
+    /// while a persisted wall logout latch starts the worker in an explicit
+    /// logged-out hold.
     fn arm_for_profile(&self, name: &str) -> Option<Arc<SlotArm>> {
         let profile = self.vault.as_ref().and_then(|v| v.get(name))?;
         let auto_login = profile.settings.auto_login;
@@ -3517,8 +3517,8 @@ impl Session {
         arm.lamp_auto
             .store(profile.settings.lamp_auto, Ordering::Relaxed);
         *arm.lamp_skill.lock().unwrap() = profile.settings.lamp_skill.clone();
-        if !self.wall.should_auto_login(name, auto_login) {
-            arm.withdraw_login();
+        if self.wall.latch.contains(name) {
+            arm.hold_logged_out();
         }
         Some(arm)
     }

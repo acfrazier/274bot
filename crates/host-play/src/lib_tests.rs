@@ -1626,6 +1626,28 @@ fn newer_login_survives_older_logout_completion() {
 }
 
 #[test]
+fn logout_latches_before_worker_tick_and_clears_retry_activity() {
+    let statuses = Arc::new(Mutex::new(vec![SlotStatus {
+        username: "alice".into(),
+        startup_phase: StartupPhase::Queueing,
+        error: Some("old retry error".into()),
+        ..Default::default()
+    }]));
+    let arm = SlotArm::new(0, false);
+
+    arm.request_logout();
+    publish_login_latched_from_arm(&statuses, "alice", &arm);
+
+    assert!(
+        arm.login_latched(),
+        "controller command owns the latch before any worker tick"
+    );
+    let rows = statuses.lock().unwrap();
+    assert!(rows[0].login_latched);
+    assert_eq!(rows[0].error, None, "latched park is current activity");
+}
+
+#[test]
 fn title_handshake_boundary_publishes_cleared_latch_before_queue_wait() {
     let statuses = Arc::new(Mutex::new(vec![SlotStatus {
         username: "alice".into(),
@@ -1817,7 +1839,7 @@ fn tick_flags_presses_logout_when_ingame_and_reports_stop() {
 }
 
 #[test]
-fn refused_logout_stays_pending_instead_of_latching_success() {
+fn refused_logout_stays_pending_with_command_latch() {
     let mut client = Client::new(ClientConfig {
         host: "127.0.0.1".into(),
         port: 43594,
@@ -1835,8 +1857,8 @@ fn refused_logout_stays_pending_instead_of_latching_success() {
         "missing logout interface must leave the request pending"
     );
     assert!(
-        !arm.login_latched(),
-        "a refused send is not a completed logout"
+        arm.login_latched(),
+        "the controller latch records intent before the packet succeeds"
     );
 }
 

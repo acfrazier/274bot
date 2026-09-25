@@ -1485,11 +1485,11 @@ fn loading_text(phase: ProgressPhase, progress: &ProfileProgress) -> LoadingText
 /// Startup banner text for one slot row. The second flag is whether to append
 /// an elapsed timer (Preparing and in-flight login phases; not errors/latched).
 pub(crate) fn slot_startup_banner_line(status: &host_play::SlotStatus) -> Option<(String, bool)> {
+    if status.login_latched && !status.ingame && status.worker_terminal.is_none() {
+        return Some(("Logged out — select Log in to reconnect".to_string(), false));
+    }
     if let Some(error) = status.error.as_deref() {
         return Some((error.to_string(), false));
-    }
-    if status.login_latched && !status.ingame {
-        return Some(("Logged out — select Log in to reconnect".to_string(), false));
     }
     let message = match status.startup_phase {
         host_play::StartupPhase::Preparing => {

@@ -176,8 +176,22 @@ impl SlotArm {
     pub fn request_logout(&self) {
         let mut intent = self.intent.lock();
         intent.generation = intent.generation.wrapping_add(1);
+        intent.login_latched = true;
         intent.want_logout = true;
         intent.want_login = false;
+        intent.auto_intent = false;
+        drop(intent);
+        self.retry_wake.notify_all();
+    }
+
+    /// Restore a persisted logged-out hold without requesting an IF logout
+    /// from a fresh title-screen client.
+    pub fn hold_logged_out(&self) {
+        let mut intent = self.intent.lock();
+        intent.generation = intent.generation.wrapping_add(1);
+        intent.login_latched = true;
+        intent.want_login = false;
+        intent.want_logout = false;
         intent.auto_intent = false;
         drop(intent);
         self.retry_wake.notify_all();
@@ -587,6 +601,14 @@ pub(super) fn publish_login_latched(
         .find(|s| s.username == name)
     {
         s.login_latched = latched;
+        if latched {
+            s.error = None;
+            s.login_started = None;
+            s.queue_position = -1;
+            s.queue_total = -1;
+            s.startup_progress_percent = None;
+            s.startup_progress_message.clear();
+        }
     }
 }
 

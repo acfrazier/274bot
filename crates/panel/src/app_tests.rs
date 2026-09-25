@@ -2941,11 +2941,12 @@ fn preparing_startup_banner_keeps_elapsed_timer() {
 }
 
 #[test]
-fn stale_latched_flag_still_overrides_connect_wait_banner() {
+fn latched_logout_overrides_stale_retry_error() {
     let status = host_play::SlotStatus {
         username: "alice".into(),
         startup_phase: host_play::StartupPhase::Queueing,
         login_latched: true,
+        error: Some("old retry error".into()),
         ..Default::default()
     };
     let (message, show_elapsed) = slot_startup_banner_line(&status).expect("latched overrides");
