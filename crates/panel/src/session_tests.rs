@@ -5067,7 +5067,6 @@ fn rail_remove_treats_loading_session_as_connected_without_blocking() {
         ingame: false,
         ..SlotStatus::default()
     });
-    let statuses = Arc::clone(&play.statuses);
     s.play = Some(play);
     s.wall.load("alice");
     s.focus.lock().unwrap().focused = Some("alice".into());
@@ -5079,31 +5078,26 @@ fn rail_remove_treats_loading_session_as_connected_without_blocking() {
         },
     );
 
-    let (returned, observe_return) = std::sync::mpsc::channel();
-    let release = thread::spawn(move || {
-        let returned_before_release = observe_return
-            .recv_timeout(Duration::from_millis(250))
-            .is_ok();
-        if let Some(status) = statuses
-            .lock()
-            .unwrap()
-            .iter_mut()
-            .find(|status| status.username == "alice")
-        {
-            status.connected = false;
-        }
-        returned_before_release
-    });
-
-    s.rail_remove("alice");
+    let started = Instant::now();
+    s.rail_remove_at("alice", started);
     assert!(
         arm.wants_logout(),
         "a connected loading session must receive clean Logout"
     );
-    let _ = returned.send(());
     assert!(
-        release.join().unwrap(),
-        "rail removal must return before clean logout settles"
+        s.pending_slot_removals.contains_key("alice"),
+        "clean removal remains pending until a later UI pump"
+    );
+    assert!(
+        !arm.stop.load(Ordering::Relaxed),
+        "rail removal must return without stopping the connected worker"
+    );
+
+    s.play.as_ref().unwrap().statuses.lock().unwrap()[0].connected = false;
+    s.pump_slot_removals_at(started);
+    assert!(
+        arm.stop.load(Ordering::Relaxed),
+        "the later pump stops the lifetime after disconnect"
     );
 }
 

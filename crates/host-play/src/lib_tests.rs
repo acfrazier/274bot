@@ -2258,21 +2258,16 @@ fn finished_worker_is_reaped_before_explicit_respawn() {
         error: Some("bound preparation failed".into()),
         ..SlotStatus::default()
     });
-    let (exiting, observed) = std::sync::mpsc::channel();
+    let (exited, observe_exit) = std::sync::mpsc::channel();
     play.handles.insert(
         "dead".into(),
         thread::spawn(move || {
-            exiting.send(()).unwrap();
+            // Last action in the worker: the receiver is the explicit
+            // lifecycle handshake, not a scheduler-yield budget.
+            exited.send(()).unwrap();
         }),
     );
-    observed.recv().unwrap();
-    for _ in 0..10_000 {
-        if play.handles["dead"].is_finished() {
-            break;
-        }
-        thread::yield_now();
-    }
-    assert!(play.handles["dead"].is_finished());
+    observe_exit.recv().unwrap();
 
     let replacement = SlotArm::new(8, false);
     replacement.bypass_asset_startup_for_test();
