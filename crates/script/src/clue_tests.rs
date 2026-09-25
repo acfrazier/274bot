@@ -7362,7 +7362,6 @@ fn gate_toll_no_shop_keeps_the_token_and_resumes_the_original_walk() {
     on_reset();
 }
 
-
 // ── the Entrana strip, its restore and the abandon latch ──
 
 /// `trail_clue_hard_riddle027`: the sole selected row whose own decode lands
@@ -8100,7 +8099,6 @@ fn an_abandoned_row_is_refused_until_retry_or_a_different_row() {
     assert_eq!(back["kind"], "token", "{back}");
     on_stop();
 }
-
 
 /// A connection boundary keeps the session's own strip list: `on_reset`
 /// drops the live step and its token and nothing else, so the reclaim the

@@ -351,7 +351,6 @@ fn scene_loc<'a>(
     }
 }
 
-
 /// Selected coordinate-tool rows added to fixtures that exercise trio-owned steps.
 const TRIO_ITEMS: [(i32, &str); 3] = [(2574, "Sextant"), (2575, "Watch"), (2576, "Chart")];
 

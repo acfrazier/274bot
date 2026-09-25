@@ -512,10 +512,7 @@ fn a_frozen_begin_starts_no_token_or_click_then_thaws_normally() {
     let rows = [row("Cook's Assistant", "notStarted", Some(1234))];
     j.post(Post::at(1).rows(&rows).closed_pair());
     j.iso.pause();
-    assert_helper_error(
-        &j.begin(json!({ "name": "Cook's Assistant" })),
-        "frozen",
-    );
+    assert_helper_error(&j.begin(json!({ "name": "Cook's Assistant" })), "frozen");
     assert!(j.iso.drain_interacts().is_empty());
 
     j.iso.resume();
@@ -531,7 +528,6 @@ fn a_frozen_begin_starts_no_token_or_click_then_thaws_normally() {
     j.tick(3);
     j.iso.join();
 }
-
 
 #[test]
 fn replacement_modal_aborts_without_a_second_close() {

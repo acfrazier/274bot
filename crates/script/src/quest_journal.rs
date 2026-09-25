@@ -721,5 +721,4 @@ mod tests {
         );
         assert_eq!(call("next", token, 1)["reason"], "stale");
     }
-
 }
