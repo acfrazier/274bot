@@ -699,6 +699,7 @@ fn join_detached_returns_immediately_and_delivers_onstop_logs() {
     )
     .unwrap();
     wait_ready(&iso);
+    iso.set_onstop_timeout_for_test(Duration::from_secs(1));
     iso.on_game_tick(1);
     let _ = iso.probe("1");
     let (tx, rx) = mpsc::channel();
@@ -1195,15 +1196,31 @@ fn machines_step_normally_again_after_a_watchdog_fire() {
         iso.probe("globalThis.__first").unwrap(),
         serde_json::json!({ "kind": "aborted", "reason": "terminated" })
     );
-    let started: u64 =
-        serde_json::from_value(iso.probe("globalThis.__startedAt").unwrap()).unwrap();
-    assert_eq!(iso.drain_interacts(), vec![if_button(10)]);
-    machine_tick(&iso, started + 1);
-    assert_eq!(
-        iso.drain_interacts(),
-        vec![if_button(11)],
-        "the first tick after the start steps the machine"
-    );
+    let (started, observed): (u64, u64) = serde_json::from_value(
+        iso.probe("[globalThis.__startedAt, globalThis.__rs2b0t_host.tick]")
+            .unwrap(),
+    )
+    .unwrap();
+    let first_batch = iso.drain_interacts();
+    match first_batch.as_slice() {
+        [begin] if *begin == if_button(10) => {
+            assert_eq!(observed, started, "the probe observed the start tick");
+            machine_tick(&iso, started + 1);
+            assert_eq!(
+                iso.drain_interacts(),
+                vec![if_button(11)],
+                "the first tick after the start steps the machine"
+            );
+        }
+        [begin, step] if *begin == if_button(10) && *step == if_button(11) => {
+            assert_eq!(
+                observed,
+                started + 1,
+                "the second interaction must come from an extra observed tick"
+            );
+        }
+        _ => panic!("the recovered machine must start once and step at most once: {first_batch:?}"),
+    }
     machine_tick(&iso, started + 2);
     assert_eq!(
         iso.probe("globalThis.__out").unwrap(),

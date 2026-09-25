@@ -24,6 +24,9 @@ pub(super) struct TeardownState {
     pub(super) hook_entry_delay: Option<Duration>,
     /// Isolate-scoped test seam: pretend deadline-thread spawn failed.
     pub(super) fail_deadline_spawn: bool,
+    /// Unit-test-only wider budget for success-path hook assertions.
+    #[cfg(test)]
+    pub(super) test_hook_timeout: Option<Duration>,
     /// The slow-tick watchdog armed a terminate the isolate thread has not
     /// cancelled yet. Set with the terminate, cleared with the cancel.
     pub(super) watchdog_fired: bool,
@@ -38,6 +41,8 @@ impl TeardownState {
             cancel: None,
             hook_entry_delay: None,
             fail_deadline_spawn: false,
+            #[cfg(test)]
+            test_hook_timeout: None,
             watchdog_fired: false,
         }
     }
@@ -141,7 +146,11 @@ pub(super) fn enter_teardown_hook(teardown: &std::sync::Arc<Mutex<TeardownState>
         TeardownPhase::Hook | TeardownPhase::Done => false,
         TeardownPhase::Running | TeardownPhase::UnwindingTick => {
             st.phase = TeardownPhase::Hook;
-            st.deadline = Some(Instant::now() + SLOW_TICK);
+            #[cfg(test)]
+            let hook_timeout = st.test_hook_timeout.unwrap_or(SLOW_TICK);
+            #[cfg(not(test))]
+            let hook_timeout = SLOW_TICK;
+            st.deadline = Some(Instant::now() + hook_timeout);
             st.interrupt_issued = false;
             true
         }

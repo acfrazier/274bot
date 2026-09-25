@@ -21,6 +21,14 @@ fn wait_state(slot: &mut SlotScript, want: RunState) {
 }
 
 #[cfg(feature = "load")]
+fn allow_onstop_completion(slot: &SlotScript) {
+    slot.load
+        .as_ref()
+        .expect("load isolate")
+        .set_onstop_timeout_for_test(Duration::from_secs(1));
+}
+
+#[cfg(feature = "load")]
 #[test]
 fn run_manager_override_is_session_scoped_and_last_call_replaces_snapshot() {
     let source = r#"
@@ -183,6 +191,7 @@ export default class Old extends LoopingBot {
     slot.start_load(old_source.into(), LoadShape::CompatClass, vec![])
         .unwrap();
     wait_state(&mut slot, RunState::Running);
+    allow_onstop_completion(&slot);
     slot.stop();
     wait_state(&mut slot, RunState::Idle);
     assert!(
@@ -196,6 +205,7 @@ export default class Old extends LoopingBot {
     slot.start_load(old_source.into(), LoadShape::CompatClass, vec![])
         .unwrap();
     wait_state(&mut slot, RunState::Running);
+    allow_onstop_completion(&slot);
     slot.stop();
     slot.start_load(
         "export default class New extends LoopingBot { loop() {} }".into(),
@@ -671,6 +681,7 @@ fn slot_stop_delivers_final_logs_exactly_once() {
     .unwrap();
     slot.load.as_ref().unwrap().on_game_tick(1);
     let _ = slot.probe("1");
+    allow_onstop_completion(&slot);
     slot.stop();
     wait_state(&mut slot, RunState::Idle);
     let logs = slot.take_pending_logs();
@@ -701,6 +712,7 @@ export default class T extends LoopingBot {
         vec![],
     )
     .unwrap();
+    allow_onstop_completion(&slot);
     slot.load.as_ref().unwrap().on_game_tick(1);
     let deadline = Instant::now() + Duration::from_secs(5);
     while matches!(
@@ -741,6 +753,7 @@ fn watchdog_restart_folds_onstop_logs_into_pending() {
     .unwrap();
     slot.load.as_ref().unwrap().on_game_tick(1);
     let _ = slot.probe("1");
+    allow_onstop_completion(&slot);
     slot.restart_load_from_identity(Instant::now())
         .expect("restart from identity");
     wait_state(&mut slot, RunState::Starting);
@@ -884,6 +897,7 @@ fn stop_returns_immediately_and_second_start_waits_for_reap() {
     slot.start_load(src.into(), LoadShape::CompatClass, vec![])
         .unwrap();
     wait_state(&mut slot, RunState::Running);
+    allow_onstop_completion(&slot);
     let t0 = Instant::now();
     slot.stop();
     assert!(

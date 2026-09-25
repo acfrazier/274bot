@@ -753,6 +753,13 @@ impl LoadIsolate {
         self.teardown.lock().unwrap().fail_deadline_spawn = true;
     }
 
+    /// Give a success-path unit test enough scheduling headroom while
+    /// retaining a bounded hook deadline.
+    #[cfg(test)]
+    pub(crate) fn set_onstop_timeout_for_test(&self, timeout: Duration) {
+        self.teardown.lock().unwrap().test_hook_timeout = Some(timeout);
+    }
+
     /// Drain the interact requests the tick's shim queued
     /// (`__rs2b0t_host.interact`), forwarded by the tick thread in
     /// tick order. The host dispatches them through the slot Driver;
