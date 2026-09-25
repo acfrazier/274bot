@@ -113,6 +113,19 @@ const ROCK_CRAB_LOOT_EMPTY: &[i32] = &[
     NOTED_CASKET_ID,
 ];
 pub(crate) const ROCK_CRAB_BANK_DEPOSIT: [i32; 2] = [UNCUT_SAPPHIRE_ID, CASKET_ID];
+/// Seeded-cargo route windows use the measured runner calibration in
+/// `bank-cell-windows.md`: 1.25 dirty increments per 0.6-second engine tick.
+/// The hostile RockCrab spot `(2704, 3726)` to Seers `(2725, 3491)` is
+/// 235 Chebyshev tiles, so `235 * 1.25 = 293.75` dirty increments. Reusing
+/// the measured 100-dirty one-way bank/route allowance used by
+/// `moss_giant_bank` gives `ceil(293.75) + 100 = 394`, rounded to 400 for
+/// each travel arm.
+const ROCK_CRAB_BANK_ROUTE_WATCH_TICKS: u32 = 400;
+/// Two 235-tile walks at 0.6 seconds/tile take 282 seconds; 360 seconds
+/// leaves 78 seconds for seed/start, booth interaction, and close/return
+/// evidence without pretending the earned-drop cell has a longer RNG budget.
+const ROCK_CRAB_BANK_SEEDED_DEADLINE: Duration = Duration::from_secs(360);
+
 /// RockCrab default melee/strength at spot 1. Ordinary bank policy Off.
 /// Catalog requires native Rocks activation into Rock Crab, and the melee
 /// fixture arrives already wearing the scoped scimitar: the frozen card's own
@@ -211,6 +224,9 @@ fn acknowledge_dormant_rocks_before_start(scenario: &mut Scenario) {
 /// The `Scenario Rock Crab food` loadout pins `scriptFood` to those eight
 /// Lobster: unpinned, the card takes the operator's first saved loadout
 /// (Swordfish here), counts zero food and walks to Seers before any fight.
+/// **Disposition:** the earned Sapphire/Casket step remains pending because
+/// its random-drop witness is impractical in this cell's wall; the seeded
+/// `rock_crab_bank_seeded` sibling is the accepted route/PeriodicBank proof.
 pub(crate) fn rock_crab_bank_scenario() -> Scenario {
     let mut scenario = combat_bank_scenario(
         "rock_crab_bank",
@@ -266,5 +282,84 @@ pub(crate) fn rock_crab_bank_scenario() -> Scenario {
     );
     acknowledge_dormant_rocks_before_start(&mut scenario);
     scenario.settings.fixture_loadouts = Some(ROCK_CRAB_FIXTURE_LOADOUTS);
+    scenario
+}
+/// RockCrab startup PeriodicBank witness. An uncut Sapphire is seeded in the
+/// backpack so the frozen card walks from the field to Seers immediately,
+/// deposits that cargo, closes the bank, and returns toward the crabs. The
+/// earned-drop `rock_crab_bank` cell remains unchanged and dispositioned.
+pub(crate) fn rock_crab_bank_seeded_scenario() -> Scenario {
+    let mut scenario = combat_bank_scenario(
+        "rock_crab_bank_seeded",
+        "RockCrab",
+        ROCK_CRAB_SAFE_STAND,
+        2,
+        "lobster",
+        LOBSTER_ID,
+        0,
+        "adamant_scimitar",
+        COMBAT_SCIMITAR_ID,
+        &[("uncut_sapphire", UNCUT_SAPPHIRE_ID, 1)],
+        &[NOTED_UNCUT_SAPPHIRE_ID, NOTED_CASKET_ID],
+        ROCK_CRAB_BANK_INJECT,
+        0,
+        "",
+        0,
+        &[
+            (
+                "watch seeded RockCrab cargo reach the Seers bank",
+                Proof::ArrivedNear {
+                    x: SEERS_BANK.x,
+                    z: SEERS_BANK.z,
+                    level: SEERS_BANK.level,
+                    radius: 6,
+                },
+            ),
+            (
+                "watch seeded Sapphire leave the backpack after PeriodicBank deposit",
+                Proof::ItemIdAtMost {
+                    id: UNCUT_SAPPHIRE_ID,
+                    count: 0,
+                },
+            ),
+            (
+                "watch seeded Sapphire enter a fresh Seers bank",
+                Proof::BankItemId {
+                    id: UNCUT_SAPPHIRE_ID,
+                    count: 1,
+                },
+            ),
+            (
+                "watch seeded RockCrab PeriodicBank close",
+                Proof::BankClosed,
+            ),
+            (
+                "watch return toward the nearest RockCrab spot after seeded banking",
+                Proof::ArrivedNear {
+                    x: ROCK_CRAB_BANK_RET.x,
+                    z: ROCK_CRAB_BANK_RET.z,
+                    level: ROCK_CRAB_BANK_RET.level,
+                    radius: 6,
+                },
+            ),
+            (
+                "watch fresh Strength XP after the seeded bank return",
+                Proof::FreshStatXpGain {
+                    id: STRENGTH_STAT,
+                    min: 1,
+                },
+            ),
+        ],
+    );
+    scenario.settings.deadline = ROCK_CRAB_BANK_SEEDED_DEADLINE;
+    acknowledge_dormant_rocks_before_start(&mut scenario);
+    scenario.settings.fixture_loadouts = Some(ROCK_CRAB_FIXTURE_LOADOUTS);
+    for step in &mut scenario.steps {
+        if step.name == "watch seeded RockCrab cargo reach the Seers bank"
+            || step.name == "watch return toward the nearest RockCrab spot after seeded banking"
+        {
+            step.wait.budget_ticks = ROCK_CRAB_BANK_ROUTE_WATCH_TICKS;
+        }
+    }
     scenario
 }

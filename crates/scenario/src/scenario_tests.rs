@@ -2131,6 +2131,11 @@ fn bank_cells_register_their_cards_injects_and_watch_chain() {
         ("moss_giant_bank", "MossGiant", SCRIPT_GOLD_DEADLINE),
         ("moss_giant_bank_start", "MossGiant", SCRIPT_GOLD_DEADLINE),
         ("hill_giant_bank", "HillGiant", SCRIPT_GOLD_DEADLINE),
+        (
+            "rock_crab_bank_seeded",
+            "RockCrab",
+            Duration::from_secs(360),
+        ),
         // The frozen trip reaches the field ~128s in (two banks).
         (
             "chaos_druid_bank",
@@ -2320,6 +2325,46 @@ fn hazard_camp_cells_register_their_cards_injects_and_watch_chain() {
         count: 1,
     }));
     assert!(watch.contains(&Proof::BankClosed));
+    let seeded = get("rock_crab_bank_seeded").expect("rock_crab_bank_seeded registered");
+    assert_eq!(seeded.settings.start_script, Some("RockCrab"));
+    assert_eq!(seeded.settings.deadline, Duration::from_secs(360));
+    let seeded_start = seeded
+        .steps
+        .iter()
+        .position(|step| matches!(step.kind, StepKind::StartScript))
+        .unwrap();
+    assert!(seeded.steps[..seeded_start].iter().any(|step| {
+        step.wait.arm
+            == Proof::ItemId {
+                id: UNCUT_SAPPHIRE_ID,
+                count: 1,
+            }
+    }));
+    let seeded_watch = seeded.steps[seeded_start + 1..]
+        .iter()
+        .map(|step| step.wait.arm)
+        .collect::<Vec<_>>();
+    assert!(seeded_watch.contains(&Proof::ArrivedNear {
+        x: 2725,
+        z: 3491,
+        level: 0,
+        radius: 6,
+    }));
+    assert!(seeded_watch.contains(&Proof::ItemIdAtMost {
+        id: UNCUT_SAPPHIRE_ID,
+        count: 0,
+    }));
+    assert!(seeded_watch.contains(&Proof::BankItemId {
+        id: UNCUT_SAPPHIRE_ID,
+        count: 1,
+    }));
+    assert!(seeded_watch.contains(&Proof::BankClosed));
+    assert!(seeded_watch.contains(&Proof::ArrivedNear {
+        x: 2710,
+        z: 3717,
+        level: 0,
+        radius: 6,
+    }));
 
     let dragon = get("green_dragon_bank").expect("green_dragon_bank registered");
     assert_eq!(dragon.settings.start_script, Some("GreenDragon"));
@@ -2966,11 +3011,11 @@ fn prepared_remaining_combat_cells_use_source_derived_profiles_and_long_budgets(
 /// step 12). The loot-count RockCrab cell also draws nothing from the
 /// bank: its PeriodicBank trip deposits and returns, so no bank window is
 /// seeded there while the restocking cells keep theirs.
+
 #[test]
 fn bank_cells_seed_the_weapon_they_acknowledge_and_only_real_bank_windows() {
     use client::client::{Client, ClientConfig};
     use client::dash3d::ClientPlayer;
-
     let mut client = Client::new(ClientConfig {
         host: "127.0.0.1".into(),
         port: 43594,
@@ -3010,6 +3055,7 @@ fn bank_cells_seed_the_weapon_they_acknowledge_and_only_real_bank_windows() {
         ("chaos_druid_bank", "adamant_scimitar"),
         ("ardy_fighter_bank", "adamant_scimitar"),
         ("rock_crab_bank", "adamant_scimitar"),
+        ("rock_crab_bank_seeded", "adamant_scimitar"),
         ("green_dragon_bank", "rune_scimitar"),
         ("green_dragon_bank_default_prepared", "rune_scimitar"),
         ("green_dragon_tele", "rune_scimitar"),
@@ -3032,6 +3078,15 @@ fn bank_cells_seed_the_weapon_they_acknowledge_and_only_real_bank_windows() {
     assert!(
         !rock.contains("givebank"),
         "rock_crab_bank's PeriodicBank trip restocks nothing: {rock}"
+    );
+    let seeded = seed("rock_crab_bank_seeded");
+    assert!(
+        seeded.contains("give uncut_sapphire 1"),
+        "rock_crab_bank_seeded seeds the PeriodicBank trigger cargo: {seeded}"
+    );
+    assert!(
+        !seeded.contains("givebank"),
+        "rock_crab_bank_seeded's PeriodicBank trip restocks nothing: {seeded}"
     );
     let dragon = seed("green_dragon_bank");
     assert!(

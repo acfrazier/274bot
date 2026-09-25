@@ -46,7 +46,8 @@ pub(crate) use combat::{
     hill_giant_bank_prepared_scenario, hill_giant_bank_scenario, hill_giant_loot_deposit_scenario,
     hill_giant_scenario, moss_giant_bank_scenario, moss_giant_bank_start_scenario,
     moss_giant_dart_scenario, moss_giant_prepared_scenario, moss_giant_scenario,
-    rock_crab_bank_scenario, rock_crab_range_scenario, rock_crab_scenario,
+    rock_crab_bank_scenario, rock_crab_bank_seeded_scenario, rock_crab_range_scenario,
+    rock_crab_scenario,
 };
 pub(crate) use enter_lair::enter_lair_v2_scenario;
 pub(crate) use fight_field::fight_field_v2_scenario;
