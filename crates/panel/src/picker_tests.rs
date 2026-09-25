@@ -2,23 +2,22 @@ use api::snapshot::WorldTile;
 use client::dash3d::CollisionFlag;
 use nav::collision::WorldCollision;
 use nav::tile::Tile;
-use nav::transport::{TransportEdge, TransportGraph, TransportKind};
+use nav::transport::TransportGraph;
 use nav::world::NavWorld;
 
 use std::sync::Arc;
 
 use super::{
     available_levels, click_to_tile, decode_sidecar_file, drop_flags_sidecar, ensure_flags_sidecar,
-    flags_content_hash_count, flags_sidecar_for, flags_sidecar_state, pack, pack_map_tiles, pan_by,
-    picker_map_window, reach_bitset, reset_flags_content_hash_count, right_align_x,
+    flags_content_hash_count, flags_sidecar_for, flags_sidecar_state, map_reach_bitset, pack,
+    pan_by, picker_map_window, reach_bitset, reset_flags_content_hash_count, right_align_x,
     set_navflags_binding, set_pack, set_reach_binding, sidecar_for_grid, snap, walkto_canvas_flags,
-    walkto_footer_labels, walkto_window_flags, FlagSidecar, FlagsSidecarState, PackView,
+    walkto_footer_labels, walkto_window_flags, zoom_toward, FlagSidecar, FlagsSidecarState,
 };
-use crate::nav_settings::NavSettings;
 use crate::session::Session;
 use crate::test_support::TestDir;
+use crate::walk_map::WalkMapRenderer;
 use dear_imgui_rs::WindowFlags;
-use nav::router::{Leg, Route};
 use std::sync::Mutex as StdMutex;
 
 /// Process-global flags binding/hash counters; serialize tests that touch them.
@@ -26,13 +25,13 @@ static FLAGS_TEST_LOCK: StdMutex<()> = StdMutex::new(());
 /// Process-global reach binding; serialize tests that touch it.
 static REACH_TEST_LOCK: StdMutex<()> = StdMutex::new(());
 
-/// A `w`×`h` all-walkable level-0 world at (0,0).
-fn open_world(w: usize, h: usize) -> NavWorld {
+/// A `w`×`h` all-walkable level-0 world at `origin`.
+fn open_world_at(origin: (i32, i32), w: usize, h: usize) -> NavWorld {
     NavWorld::from_parts(
         WorldCollision {
             origin: WorldTile {
-                x: 0,
-                z: 0,
+                x: origin.0,
+                z: origin.1,
                 level: 0,
             },
             width: w,
@@ -44,6 +43,11 @@ fn open_world(w: usize, h: usize) -> NavWorld {
         TransportGraph::default(),
         Vec::new(),
     )
+}
+
+/// A `w`×`h` all-walkable level-0 world at (0,0).
+fn open_world(w: usize, h: usize) -> NavWorld {
+    open_world_at((0, 0), w, h)
 }
 
 #[test]
@@ -98,6 +102,56 @@ fn snap_wall_click_lands_on_nearest_walkable() {
 fn snap_returns_none_on_level_without_walkables() {
     let w = open_world(3, 3);
     assert_eq!(snap(&w, 1.4, 1.4, 1), None);
+}
+
+#[test]
+fn snap_returns_none_when_walkable_is_outside_radius_16() {
+    // 40-wide open row with a hole of blocked tiles except x=0. A click at
+    // x=20 is Chebyshev 20 from the only walkable, so radius-16 snap misses
+    // instead of scanning the whole plane.
+    let mut flags = vec![CollisionFlag::WALK_BLOCK_FLAGS as u32; 40];
+    flags[0] = 0;
+    let (walk, blocked) = nav::collision::pack_walk(&flags);
+    let w = NavWorld::from_parts(
+        WorldCollision {
+            origin: WorldTile {
+                x: 0,
+                z: 0,
+                level: 0,
+            },
+            width: 40,
+            height: 1,
+            walk,
+            blocked,
+            flags: None,
+        },
+        TransportGraph::default(),
+        Vec::new(),
+    );
+    assert_eq!(snap(&w, 20.2, 0.1, 0), None);
+    assert_eq!(
+        snap(&w, 4.2, 0.1, 0).unwrap(),
+        Tile {
+            x: 0,
+            z: 0,
+            level: 0
+        }
+    );
+}
+
+#[test]
+fn zoom_toward_keeps_the_world_point_under_the_cursor() {
+    let size = [100.0, 100.0];
+    let click = [50.0, 50.0];
+    let (c, rem) = zoom_toward((3220, 3220), (0.0, 0.0), 2.0, 4.0, size, click);
+    assert_eq!(c, (3220, 3220));
+    assert!(rem.0.abs() < 1e-4 && rem.1.abs() < 1e-4);
+    let click = [75.0, 50.0];
+    let ((cx, cz), rem) = zoom_toward((3220, 3220), (0.0, 0.0), 2.0, 4.0, size, click);
+    // World x under the cursor is 3220 + 25/2 = 3232.5; at 4px/tile the same
+    // click is 6.25 tiles right of centre, so centre.x + rem.x = 3232.5 - 6.25.
+    let world = cx as f32 + rem.0 + (75.0 - 50.0) / 4.0;
+    assert!((world - 3232.5).abs() < 1e-3, "world={world} cz={cz}");
 }
 
 #[test]
@@ -196,7 +250,7 @@ fn walkto_window_flags_capture_wheel_on_the_canvas() {
     );
     assert!(
         w.contains(WindowFlags::NO_SCROLL_WITH_MOUSE),
-        "wheel over WalkTo must pan the map, not scroll the window"
+        "wheel over WalkTo must zoom the map, not scroll the window"
     );
     let c = walkto_canvas_flags();
     assert!(c.contains(WindowFlags::NO_SCROLLBAR));
@@ -229,7 +283,8 @@ fn picker_map_window_builds_headless() {
     let mut s = Session::new();
     s.walkto_open = true;
     let mut open = true;
-    picker_map_window(ui, &mut s, &open_world(3, 3), &mut open);
+    let mut map = WalkMapRenderer::new();
+    picker_map_window(ui, &mut s, &open_world(3, 3), &mut open, None, &mut map);
     ctx.render();
     assert!(open, "the window must stay open until Walk is confirmed");
 }
@@ -250,7 +305,8 @@ fn picker_click_frame(
     {
         let ui = ctx.frame();
         let mut open = true;
-        picker_map_window(ui, session, world, &mut open);
+        let mut map = WalkMapRenderer::new();
+        picker_map_window(ui, session, world, &mut open, None, &mut map);
     }
     ctx.render();
 }
@@ -260,20 +316,38 @@ fn picker_click_selects_a_walkable_tile() {
     let _guard = crate::test_support::imgui_context_guard();
     super::note_closed();
     let mut ctx = dear_imgui_rs::Context::create();
-    let world = open_world(3, 3);
+    // Default open recentres on Lumbridge (3220,3220); the bake must cover
+    // that so radius-16 snap can succeed (it no longer scans the whole plane).
+    let world = open_world_at((3219, 3219), 3, 3);
     let mut s = Session::new();
     s.walkto_open = true;
     // FirstUseEver WalkTo is 720×560 at the default imgui origin; the
     // canvas sits under the toolbar. A click in the window interior
-    // must set picker_sel — not pan, not miss the hit target.
-    let mouse = [360.0, 320.0];
+    // must select through MapModel — not pan, not miss the hit target.
+    assert!(
+        click_to_tile(&world, (3220, 3220), 2.0, [100.0, 100.0], [200.0, 200.0], 0).is_some(),
+        "lumbridge-centred 3x3 must be snappable"
+    );
+    // Canvas origin is ~[8,50] with size ~[704,460]; centre is (360,280),
+    // which is the only click that stays inside radius-16 of (3220,3220)
+    // at 2px/tile.
+    let mouse = [360.0, 280.0];
     picker_click_frame(&mut ctx, &mut s, &world, mouse, false);
     picker_click_frame(&mut ctx, &mut s, &world, mouse, true);
     picker_click_frame(&mut ctx, &mut s, &world, mouse, false);
+    let pending = s
+        .map_model
+        .pending()
+        .and_then(|sel| sel.target)
+        .expect("click on the WalkTo canvas must snap a tile");
+    assert_eq!(pending.level, 0);
     assert!(
-        s.picker_sel.is_some(),
-        "click on the WalkTo canvas must snap a tile, got {:?}",
-        s.picker_sel
+        !s.confirm_picker_walk(&world),
+        "no observed origin must refuse Walk"
+    );
+    assert!(
+        s.map_model.pending().is_none(),
+        "refused Walk must consume the pending selection"
     );
 }
 
@@ -315,224 +389,6 @@ fn disconnected_world() -> NavWorld {
         }
     }
     bake_world(7, 7, &extras)
-}
-
-#[test]
-fn pack_map_collision_only_in_viewport() {
-    // A 5-wide bake with a WR_GRND wall at x=2; the small view covers
-    // the wall and its open neighbour.
-    let world = bake_world(5, 1, &[(2, 0, CollisionFlag::WR_GRND as u32)]);
-    let view = PackView {
-        x0: 1,
-        z0: 0,
-        width: 2,
-        height: 1,
-    };
-    let layers = NavSettings {
-        collision_fill: true,
-        ..Default::default()
-    };
-    let tiles = pack_map_tiles(&world, view, None, None, None, &layers, 0);
-    let in_view = |t: super::Tile| {
-        t.x >= view.x0
-            && t.x < view.x0 + view.width
-            && t.z >= view.z0
-            && t.z < view.z0 + view.height
-    };
-    assert!(tiles.iter().all(|t| in_view(t.tile)));
-    assert!(tiles.iter().any(|t| t.blocked));
-}
-
-#[test]
-fn pack_map_paints_the_selected_plane() {
-    // A 3x3 two-plane world: level 0 is open, level 1 carries a WR_GRND
-    // wall at (1,1). Painting must read the passed level, not the bake's
-    // origin plane.
-    let mut flags = vec![0u32; 2 * 9];
-    flags[9 + 3 + 1] = CollisionFlag::WR_GRND as u32;
-    let (walk, blocked) = nav::collision::pack_walk(&flags);
-    let world = NavWorld::from_parts(
-        WorldCollision {
-            origin: WorldTile {
-                x: 0,
-                z: 0,
-                level: 0,
-            },
-            width: 3,
-            height: 3,
-            walk,
-            blocked,
-            flags: None,
-        },
-        TransportGraph::default(),
-        Vec::new(),
-    );
-    let view = PackView {
-        x0: 0,
-        z0: 0,
-        width: 3,
-        height: 3,
-    };
-    let layers = NavSettings {
-        collision_fill: true,
-        ..Default::default()
-    };
-    let tiles = pack_map_tiles(&world, view, None, None, None, &layers, 1);
-    assert!(
-        tiles.iter().all(|p| p.tile.level == 1),
-        "paints live on the selected plane, not the bake's origin plane"
-    );
-    assert!(
-        tiles
-            .iter()
-            .any(|p| p.blocked && p.tile.x == 1 && p.tile.z == 1),
-        "the level-1 wall blocks its own plane"
-    );
-}
-
-#[test]
-fn pack_map_flood_marks_two_components() {
-    let layers = NavSettings {
-        component_flood: true,
-        ..Default::default()
-    };
-    let tiles = pack_map_tiles(
-        &disconnected_world(),
-        PackView {
-            x0: 0,
-            z0: 0,
-            width: 7,
-            height: 7,
-        },
-        None,
-        Some(WorldTile {
-            x: 0,
-            z: 0,
-            level: 0,
-        }),
-        Some(WorldTile {
-            x: 5,
-            z: 5,
-            level: 0,
-        }),
-        &layers,
-        0,
-    );
-    let ids: std::collections::HashSet<_> = tiles.iter().filter_map(|t| t.flood).collect();
-    assert_eq!(ids.len(), 2, "the player and dest components both flood");
-}
-
-#[test]
-fn pack_map_marks_walkable_unreached_puddle() {
-    let _guard = crate::test_support::lock_unpoisoned(&REACH_TEST_LOCK);
-    set_reach_binding(
-        None,
-        WorldTile {
-            x: 0,
-            z: 0,
-            level: 0,
-        },
-        0,
-        0,
-        false,
-    );
-    // 5×5 with a sealed 1×1 courtyard at (2,2) (all W_* faces) and one
-    // door edge outside it: the reach BFS floods the open ground but
-    // never the courtyard, so only the courtyard tile paints
-    // walkable-unreached.
-    let base = bake_world(5, 5, &[(2, 2, CollisionFlag::WALK_BLOCK_FLAGS as u32)]);
-    let banks = base.banks().to_vec();
-    let world = NavWorld::from_parts(
-        base.collision,
-        TransportGraph {
-            edges: vec![TransportEdge {
-                kind: TransportKind::Door,
-                at: WorldTile {
-                    x: 0,
-                    z: 0,
-                    level: 0,
-                },
-                to: WorldTile {
-                    x: 4,
-                    z: 4,
-                    level: 0,
-                },
-                loc_id: 1530,
-                option: 1,
-                ticks: 1,
-                dir: None,
-                open_loc_id: None,
-                skill_req: vec![],
-                item_req: vec![],
-                quest_req: vec![],
-                varp_req: vec![],
-                worn_req: vec![],
-                members_req: false,
-                wildy_cap: None,
-            }],
-            ..Default::default()
-        },
-        banks,
-    );
-    let view = PackView {
-        x0: 0,
-        z0: 0,
-        width: 5,
-        height: 5,
-    };
-    let tiles = pack_map_tiles(&world, view, None, None, None, &NavSettings::default(), 0);
-    let courtyard = tiles
-        .iter()
-        .find(|t| t.tile.x == 2 && t.tile.z == 2)
-        .expect("the sealed courtyard paints unreached");
-    assert!(
-        courtyard.unreached,
-        "the puddle floor is walkable-unreached"
-    );
-    assert!(
-        !courtyard.blocked && !courtyard.path && courtyard.flood.is_none(),
-        "the puddle is a plain unreached tile"
-    );
-    assert!(
-        tiles
-            .iter()
-            .all(|t| (t.tile.x == 2 && t.tile.z == 2) || !t.unreached),
-        "only the sealed courtyard is unreached"
-    );
-    assert!(
-        !tiles.iter().any(|t| t.tile.x == 0 && t.tile.z == 0),
-        "reached ground stays off the reach layer"
-    );
-}
-
-#[test]
-fn pack_map_marks_remaining_path_in_view() {
-    let world = bake_world(5, 1, &[]);
-    let tiles: Vec<WorldTile> = (0..5).map(|x| WorldTile { x, z: 0, level: 0 }).collect();
-    let route = Route {
-        dest: tiles[4],
-        legs: vec![Leg::Walk {
-            tiles: tiles.clone(),
-        }],
-        ticks: 0.0,
-    };
-    let layers = NavSettings {
-        show_nav_path: true,
-        ..Default::default()
-    };
-    let view = PackView {
-        x0: 0,
-        z0: 0,
-        width: 5,
-        height: 1,
-    };
-    let marks = pack_map_tiles(&world, view, Some(&route), None, None, &layers, 0);
-    let path: Vec<i32> = marks.iter().filter(|t| t.path).map(|t| t.tile.x).collect();
-    assert_eq!(path, vec![0, 1, 2, 3, 4]);
-    assert!(
-        marks.iter().all(|t| !t.transport),
-        "a walk-only route has no hops"
-    );
 }
 
 #[test]
@@ -845,6 +701,54 @@ fn bundled_reach_is_shared_without_flood_on_first_or_second_paint() {
     );
     assert_eq!(nav::paint::bake_reach_calls(), 0);
     set_reach_binding(None, origin, 0, 0, false);
+}
+
+#[test]
+fn unbound_reach_is_unavailable_and_does_not_bake() {
+    let _guard = crate::test_support::lock_unpoisoned(&REACH_TEST_LOCK);
+    set_reach_binding(
+        None,
+        WorldTile {
+            x: 0,
+            z: 0,
+            level: 0,
+        },
+        0,
+        0,
+        false,
+    );
+    let world = bake_world(3, 3, &[]);
+    nav::paint::reset_bake_reach_calls();
+    assert!(map_reach_bitset(&world).is_none());
+    set_pack(None);
+    assert!(map_reach_bitset(&world).is_none());
+    assert_eq!(nav::paint::bake_reach_calls(), 0);
+}
+
+#[test]
+fn map_owned_collision_does_not_load_flags_sidecar() {
+    let _guard = crate::test_support::lock_unpoisoned(&FLAGS_TEST_LOCK);
+    drop_flags_sidecar();
+    let _imgui = crate::test_support::imgui_context_guard();
+    let mut ctx = dear_imgui_rs::Context::create();
+    ctx.prepare_frame(
+        dear_imgui_rs::FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0).renderer_has_textures(),
+    );
+    let ui = ctx.frame();
+    let mut s = Session::new();
+    s.walkto_open = true;
+    let mut open = true;
+    let mut map = WalkMapRenderer::new();
+    map.show_collision = true;
+    map.show_nsew = true;
+    map.show_flood = true;
+    picker_map_window(ui, &mut s, &open_world(3, 3), &mut open, None, &mut map);
+    ctx.render();
+    assert_eq!(
+        flags_sidecar_state(),
+        FlagsSidecarState::Unloaded,
+        "map diagnostic toggles must not decode the 260 MB flags sidecar"
+    );
 }
 
 #[test]

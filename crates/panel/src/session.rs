@@ -588,11 +588,6 @@ pub fn debug_maxme_cheats() -> &'static [&'static str] {
     api::interact::MAXME_SETSTATS
 }
 
-/// Engine `::tele` body for a WalkTo tile.
-pub fn walkto_tele_cmd(tile: Tile) -> String {
-    api::interact::tele_args(tile.level, tile.x, tile.z)
-}
-
 /// Cooldown between cpal open retries after a device failure: a machine
 /// without an audio device must not re-open (and re-log) every 20 ms frame.
 const AUDIO_OPEN_RETRY: Duration = Duration::from_secs(5);
@@ -681,10 +676,9 @@ const SCENE_TILES: i32 = 104;
 /// the client only projects the locs inside its loaded scene anyway.
 const HULL_WINDOW: usize = 48;
 
-/// Prefer the live-scenario Follow/Walk route when this slot is the
-/// driven client. Else a catalog `walk` Traveller (Play NavBot). WalkTo's
-/// `WalkArm` is the last fallback — a script walk never writes that map,
-/// so painting from it alone drops the packed path even with the toggle on.
+/// Shared route-owner precedence with the map overlay: driven live, then
+/// script, then manual WalkTo. A script walk never writes the WalkArm map,
+/// so painting from that arm alone would drop the packed path.
 fn live_or_walk_paint(
     driven: bool,
     live: (Option<Route>, Option<WorldTile>),
@@ -1042,8 +1036,6 @@ pub struct Session {
     tick_latch: Arc<Mutex<HashMap<String, (u64, Tile)>>>,
     /// WalkTo picker open flag; the picker window lands in Task 10.
     pub walkto_open: bool,
-    /// Current renderer's highlight; removed with the map renderer cutover.
-    pub picker_sel: Option<Tile>,
     /// One application-owned map view/catalogue, never a copy on each bot.
     pub map_model: host_play::walk_map::MapModel,
     pub map_catalogue: Option<Arc<host_play::walk_map::Catalogue>>,
@@ -1416,7 +1408,6 @@ impl Session {
             walk_clear: Arc::new(AtomicBool::new(false)),
             tick_latch: Arc::new(Mutex::new(HashMap::new())),
             walkto_open: false,
-            picker_sel: None,
             map_model: host_play::walk_map::MapModel::default(),
             map_catalogue: None,
             nav_settings_open: false,
@@ -1877,7 +1868,6 @@ impl Session {
         let profile = Arc::clone(template.profile());
         self.map_model.close();
         self.map_catalogue = None;
-        self.picker_sel = None;
         crate::picker::set_navflags_binding(
             profile.nav_flags().to_path_buf(),
             profile
@@ -3385,7 +3375,6 @@ impl Session {
         let capture = focus.capture;
         drop(focus);
         self.map_model.clear_selection();
-        self.picker_sel = None;
         // Mirror onto the play: which slot the panel samples (host-play
         // keeps it as pure bookkeeping — no socket adopt/park).
         if let Some(play) = self.play.as_mut() {
@@ -4212,24 +4201,34 @@ impl Session {
             .unwrap_or_default()
     }
 
-    /// Current map command binding. Legacy/grid-only views use the profile
-    /// generation, never a pointer address or a client/content compatibility proof.
-    pub fn picker_context(&self, world: &NavWorld) -> host_play::walk_map::MapContext {
-        use host_play::walk_map::MapContext;
+    pub fn map_nav_digest(&self) -> nav::map::identity::Digest {
+        self.map_nav_digest_for(None)
+    }
+
+    fn map_nav_digest_for(&self, world: Option<&NavWorld>) -> nav::map::identity::Digest {
         use nav::map::identity::Digest;
-        let name = self.focused_name();
-        let nav = self
-            .server_profile
+        self.server_profile
             .as_ref()
             .and_then(|p| p.nav_identity())
             .and_then(|id| Digest::from_hex(&id.nav_sha256).ok())
             .or_else(|| {
-                self.map_catalogue
-                    .as_ref()
-                    .filter(|c| std::ptr::eq(c.world().as_ref(), world))
-                    .map(|c| c.nav_identity())
+                self.map_catalogue.as_ref().and_then(|c| {
+                    if world.is_some_and(|w| !std::ptr::eq(c.world().as_ref(), w)) {
+                        None
+                    } else {
+                        Some(c.nav_identity())
+                    }
+                })
             })
-            .unwrap_or_else(|| Digest::of(&self.profile_generation.to_be_bytes()));
+            .unwrap_or_else(|| Digest::of(&self.profile_generation.to_be_bytes()))
+    }
+
+    /// Current map command binding. Legacy/grid-only views use the profile
+    /// generation, never a pointer address or a client/content compatibility proof.
+    pub fn picker_context(&self, world: &NavWorld) -> host_play::walk_map::MapContext {
+        use host_play::walk_map::MapContext;
+        let name = self.focused_name();
+        let nav = self.map_nav_digest_for(Some(world));
         let session = name
             .as_ref()
             .and_then(|name| {
@@ -4253,9 +4252,7 @@ impl Session {
     pub fn select_picker_tile(&mut self, world: &NavWorld, requested: Tile) -> Option<Tile> {
         let context = self.picker_context(world);
         self.map_model.bind(context);
-        let selected = self.map_model.select_tile(world, requested);
-        self.picker_sel = selected;
-        selected
+        self.map_model.select_tile(world, requested)
     }
 
     pub fn select_picker_poi(&mut self, index: usize) -> bool {
@@ -4265,10 +4262,7 @@ impl Session {
         let context = self.picker_context(catalogue.world());
         self.map_model.bind(context);
         match self.map_model.select_poi(&catalogue, index) {
-            Ok(()) => {
-                self.picker_sel = self.map_model.pending().and_then(|p| p.target);
-                true
-            }
+            Ok(()) => true,
             Err(error) => {
                 self.error = Some(error.to_string());
                 false
@@ -4291,7 +4285,6 @@ impl Session {
     /// refusal, never an arm stored for a future login.
     pub fn confirm_picker_walk(&mut self, world: &NavWorld) -> bool {
         use host_play::walk_map::{ActionError, ActionKind};
-        self.picker_sel = None;
         let context = self.picker_context(world);
         let origin = self
             .focused_tile()
@@ -4333,7 +4326,6 @@ impl Session {
 
     pub fn confirm_picker_teleport(&mut self, world: &NavWorld) -> bool {
         use host_play::walk_map::{ActionError, ActionKind};
-        self.picker_sel = None;
         let context = self.picker_context(world);
         let origin = self
             .focused_tile()

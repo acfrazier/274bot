@@ -268,13 +268,22 @@ never latches a bank session, and never changes ordinary walk policies.
 ## WalkTo picker
 
 The panel's main-chrome **WalkTo** button fills the Game pane
-(`crates/panel/src/picker.rs`): north-up walkable tiles from
-`NavWorld.collision` as amber dots, drag/wheel to pan, click (canvas rect,
-`is_mouse_hovering_rect`) highlights the nearest walkable tile, footer
-**Recentre** / **Walk** arms `find` and the panel drives `follow` on the
-focused slot's pump. Local engines also get **Teleport** (cheat to the
-pick). `walk_status_text` mirrors the armed dest and clears on any
-terminal outcome.
+(`crates/panel/src/picker.rs` + `walk_map.rs`). One application-owned
+renderer draws at most 24 terrain tiles (258×258, A's `select_lod`) plus
+one viewport overlay for optional map-owned grid/collision/NSEW/reach/flood
+layers — not a per-tile ImGui quad mesh. Until D binds an image cache the
+map shows a grid and `map imagery unavailable — cache not bound` with no
+POIs. Route and destination are vector markers. Reach uses bound
+`.navreach` or `reach unavailable`. Wheel zooms toward the cursor; click
+selects through
+`host_play::walk_map::MapModel` (radius-16 walkable query, blocked clicks
+stay view-only). Footer **Recentre** / **Walk** consume that pending
+selection once via `Play::map_walk`; a missing origin or stale focus
+refuses instead of storing a later login dest. Local engines also get
+**Teleport** (`Play::map_teleport`, loopback-guarded). Close/hide
+unregisters textures and drops CPU pixels. `BOT_CPU=1` still uses this
+map path (panel UI GPU). `walk_status_text` mirrors the armed dest and
+clears on any terminal outcome.
 
 ## Live tests
 

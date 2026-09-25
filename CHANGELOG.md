@@ -11,13 +11,22 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   checked manifests and data-only service records, resumable partial-entry
   validation, bounded map-record reads and 24-texture LOD selection. Raw visual
   bridge-plane conversion now shares collision's implementation; server NPC
-  coordinates are not shifted. This does not yet replace either WalkTo UI or
-  change frozen catalog-facing bank selection.
+  coordinates are not shifted. Frozen catalog-facing bank selection is unchanged.
 - Nav bake now emits a data-only `274bot.navpois` sidecar (`274P`/1) with
   revision NPC placements, bounded `@openbank` / `loc_change` bank evidence,
   and place labels. Missing navpois invalidates a warm stamp once. Frozen
   `BANK_CATALOG` / named-bank APIs are unchanged; 274V10 routing bytes are
   unchanged.
+- Replaced the WalkTo per-tile collision-dot mesh with an application-owned
+  native map renderer: at most 24 terrain textures (none until the local map
+  image cache is bound — the map shows a grid and `map imagery unavailable —
+  cache not bound`, with no POIs), one viewport overlay for optional map-owned
+  grid/collision/NSEW/reach/flood toggles, vector route and destination
+  markers in the default view, radius-16 snap, wheel-zoom toward the cursor,
+  and GPU/CPU pixel release on close. Reach uses a bound `.navreach` sidecar
+  or shows `reach unavailable`; the map never runs a whole-world BFS.
+  Basemap defaults on; grid dots default off. `BOT_CPU=1` uses the same map
+  path.
 - Added a shared host map catalogue and search API that merges revision-bound
   client POIs, authenticated `navpois` service/place facts and borrowed navigation
   transports. Access anchors, annotations, adjacent walk stands and teleport
@@ -25,12 +34,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   explicit; tellers and place labels are unavailable without the supplement.
 - The shared selection model provides a radius-16 query (at most 33×33 cells),
   ordered by Chebyshev distance, Manhattan distance, x, then z. A miss has no
-  action target; place-label anchors remain view jumps. Replacing the existing
-  panel/TUI pixel/cell picking is part of their separate renderer integration.
+  action target; place-label anchors remain view jumps.
 - Shared map confirmations consume the selection once, preserving its captured
   slot lifetime/world/nav binding and taking routing options at confirmation.
-  Panel adapters use the existing host walk arm, refuse a missing observed
-  player, and check debug Teleport against the bound local loopback target.
+  Panel adapters walk through `Play::map_walk`, refuse a missing observed
+  player, and send debug Teleport only through `Play::map_teleport`.
   The replacement picker supplies selection-time binding; confirmation does
   not rebind an old click to a new slot or profile.
 - The shared route projection borrows actual routes with driven-live, script,

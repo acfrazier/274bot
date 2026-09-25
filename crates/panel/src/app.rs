@@ -33,6 +33,7 @@ use crate::script_picker::{
     CARD_GAP, CARD_MIN_W, FILE_DIALOG_FIRST_H, FILE_DIALOG_FIRST_W, GLYPH_CHEVRON, GLYPH_FILE,
     GLYPH_FOLDER, SCRIPTS_FIRST_H, SCRIPTS_FIRST_W,
 };
+use crate::walk_map::WalkMapRenderer;
 use crate::window::{self, Gpu, RedrawMode, ShotStatus, Theme};
 use dear_imgui_rs::internal::RawWrapper;
 use dear_imgui_rs::{
@@ -165,6 +166,8 @@ struct PanelState {
     /// `--live script_*` run starts or lazily on the first write (the
     /// interactive F12 capture has no run start to hook).
     shot_dir: Option<PathBuf>,
+    /// One application-owned WalkTo map renderer (not per bot).
+    walk_map: WalkMapRenderer,
 }
 
 /// Deferred boot work for [`run_panel`]. The unlock / live-harness flows
@@ -614,6 +617,7 @@ impl Default for PanelState {
             os_window: None,
             shot_state: Arc::new(Mutex::new(crate::window::ShotState::default())),
             shot_dir: None,
+            walk_map: WalkMapRenderer::new(),
         }
     }
 }
@@ -1141,14 +1145,11 @@ fn game_window(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, title: &str) {
     let built = ui.window(title).flags(game_window_flags()).build(|| {
         let avail = ui.content_region_avail();
         if state.session.walkto_open {
-            picker::draw_picker(ui, &mut state.session);
+            picker::draw_picker(ui, Some(gpu), &mut state.session, &mut state.walk_map);
+        } else if state.session.multibox && state.session.wall.grid {
+            grid_pane(ui, gpu, state, avail);
         } else {
-            picker::note_closed();
-            if state.session.multibox && state.session.wall.grid {
-                grid_pane(ui, gpu, state, avail);
-            } else {
-                game_pane(ui, gpu, state, avail);
-            }
+            game_pane(ui, gpu, state, avail);
         }
     });
     state.session.set_game_pane_open(built.is_some());
@@ -1851,7 +1852,7 @@ fn login_logout_row(ui: &Ui, session: &mut Session) {
     }
 }
 
-/// WalkTo: main-chrome button that opens the collision-dot tile picker.
+/// WalkTo: main-chrome button that opens the native map tile picker.
 fn walkto_button(ui: &Ui, session: &mut Session) {
     let w = ui.content_region_avail()[0];
     if ui.button_with_size("WalkTo", [w, 0.0]) {
@@ -4715,6 +4716,25 @@ fn ui_frame(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, progress: Option<Sta
     ui.set_next_window_class(&panel_class);
     panel_window(ui, &mut state.session, progress);
     ui.set_next_window_class(&game_class);
+    // Frame owner: identity replacement and close-release happen outside
+    // the Game window build closure so a rebind cannot keep stale buffers.
+    let nav = state.session.map_nav_digest();
+    let geom = picker::pack().map(|world| {
+        (
+            world.collision.origin.x,
+            world.collision.origin.z,
+            world.collision.width as u32,
+            world.collision.height as u32,
+        )
+    });
+    state.walk_map.sync_identity(nav, geom, Some(gpu));
+    if !state.session.walkto_open {
+        picker::note_closed();
+        state.session.map_model.close();
+        if state.walk_map.is_open() {
+            state.walk_map.release(Some(gpu));
+        }
+    }
     game_window(ui, gpu, state, &title);
     if state.session.multibox && !state.session.wall.grid {
         ui.set_next_window_class(&rail_window_class());

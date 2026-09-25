@@ -336,6 +336,7 @@ atomic publication, cancellation and quotas. Renderer/UI integration is separate
 | `route_inspect.rs` | inspect off-pump job | admission, calculation, publication |
 | `login_readiness.rs` | login-readiness gate | welcome-modal settle before script work |
 | `nav_identity.rs` | bundled nav identities | build-published table plus checked-in rows |
+| `walk_map.rs` | shared WalkTo map model | catalogue, selection, guarded Walk/Teleport, live/script/manual routes |
 | `bundled-nav-identities.json`, `known-cache-identities.json` | checked-in identity rows | data, not code |
 | `external_loader.rs` | external loader smoke witness | proof infrastructure, disabled by default |
 | `memory.rs` | opt-in memory harness | `BOT_MEMORY_N` only |
@@ -383,7 +384,10 @@ atomic publication, cancellation and quotas. Renderer/UI integration is separate
 | `window.rs` | GPU and winit shell | config, surface, errors |
 | `game_view.rs` | game image texture | mailbox frames to texture |
 | `input_capture.rs` | game input capture | keyboard queue and mouse streaming |
-| `picker.rs` | WalkTo picker map | walkable dots, snap, arm walk |
+| `picker.rs` | WalkTo picker chrome | pan/zoom/plane/search; Walk/Teleport/selection via `host_play::walk_map` |
+| `walk_map.rs` | app-owned WalkTo renderer | ≤24 terrain slots, one overlay, vector route, close lifecycle |
+| `walk_map/overlay.rs` | viewport grid/collision overlay | one RGBA image, 768×512 / 1.5 MiB cap, never per-tile quads |
+| `walk_map/fixtures.rs` | small PNG/POI fixtures | Lumbridge stand-in until image cache |
 | `grid.rs` | MultiBox grid layout | cell geometry |
 | `rail.rs` | sidecar rail chrome | geometry and status dot |
 | `chrome.rs` | app chrome | menus and banners |
@@ -402,7 +406,7 @@ atomic publication, cancellation and quotas. Renderer/UI integration is separate
 | `resource.rs` | resource formatters and sampler | pure formatters plus sampler |
 | `wall.rs` | wall membership model | chooser, logout latch, bulk login state |
 | `srgb_present.rs` | present-path test helper | test-only |
-| `app_tests.rs`, `session_tests.rs`, `input_capture_tests.rs` | test bodies | grouped, logical `<owner>::tests` |
+| `app_tests.rs`, `session_tests.rs`, `input_capture_tests.rs`, `picker_tests.rs`, `walk_map_tests.rs` | test bodies | grouped, logical `<owner>::tests` |
 
 ### tui
 

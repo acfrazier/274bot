@@ -558,6 +558,30 @@ fn local_loopback_teleport_consumes_selection_and_queues_exact_coordinates_once(
 }
 
 #[test]
+fn local_loopback_teleport_without_spawned_queue_is_no_focus() {
+    let fixture = MapFixture::new(&world(t(3200, 3200, 0), 8, &[]), "local-289");
+    let origin = t(3201, 3201, 0);
+    let play = fixture.play(origin);
+    let ctx = bound_context(&play);
+    let mut model = MapModel::default();
+    model.bind(ctx);
+    model.select_tile(&play.world().unwrap(), t(3203, 3204, 2));
+    let command = model
+        .confirm(
+            ActionKind::Teleport,
+            &ctx,
+            Some(origin),
+            FindOptions::default(),
+        )
+        .unwrap();
+    assert_eq!(play.map_teleport(command, &ctx), Err(ActionError::NoFocus));
+    assert!(
+        !play.cheats.lock().unwrap().contains_key("alice"),
+        "a missing spawn_slot queue must stay missing"
+    );
+}
+
+#[test]
 fn bound_host_walk_arms_and_rejects_a_foreign_nav_without_replacing_the_route() {
     let fixture = MapFixture::new(&world(t(3200, 3200, 0), 8, &[]), "local-289");
     let origin = t(3201, 3201, 0);

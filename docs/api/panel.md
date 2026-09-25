@@ -325,10 +325,15 @@ is a live toggle), dim **build line** (`alpha 3 ·` git short SHA,
 commit + built time), banner, profile, **debug** (loopback), and status
 key/value rows (including **mem**: highmem/lowmem) fill out the strip.
 
-**WalkTo** (title row) fills the Game pane: north-up collision dots,
-click-to-pick uses the canvas rect (`is_mouse_hovering_rect`), footer
-**Recentre** / **Walk**, and **Teleport** (local-engine cheat to the
-highlighted tile). Status `walk` mirrors the armed dest.
+**WalkTo** (title row) fills the Game pane: north-up terrain tiles (or a
+grid and `map imagery unavailable — cache not bound` until D binds cache)
+plus optional map-owned overlay toggles (not per-tile quads), vector route
+and destination, wheel-zoom toward
+the cursor, click-to-pick uses the canvas rect (`is_mouse_hovering_rect`),
+footer **Recentre** / **Walk**, and **Teleport** (local-engine, guarded by
+`host_play::walk_map`). Walk/Teleport consume the pending `MapModel`
+selection once; missing origin, stale focus, or an unwalkable tile refuse
+instead of storing a later login dest. Status `walk` mirrors the armed dest.
 
 ## Headless proof
 

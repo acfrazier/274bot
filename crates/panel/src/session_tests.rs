@@ -2041,7 +2041,6 @@ fn picker_select_then_confirm_arms_once_and_advances_route_generation() {
     assert_eq!(s.walk_dest, Some(dest));
     assert!(s.error.is_none());
     assert!(s.map_model.pending().is_none());
-    assert_eq!(s.picker_sel, None);
     let armed_generation = s.route_gen();
     assert_ne!(armed_generation, generation);
     assert_eq!(
@@ -2115,9 +2114,35 @@ fn picker_teleport_consumes_the_selection_and_checks_the_bound_target() {
     assert!(!s.confirm_picker_teleport(&world));
     assert_eq!(s.error, Some(ActionError::Unauthorized.to_string()));
     assert!(s.map_model.pending().is_none());
-    assert_eq!(s.picker_sel, None);
     assert!(!s.confirm_picker_teleport(&world));
     assert_eq!(s.error, Some(ActionError::NoSelection.to_string()));
+}
+
+#[test]
+fn picker_teleport_without_spawned_queue_is_no_focus() {
+    use host_play::walk_map::ActionError;
+    let mut s = Session::new();
+    let world = open_world(3, 3);
+    let origin = Tile {
+        x: 0,
+        z: 1,
+        level: 0,
+    };
+    let dest = Tile {
+        x: 2,
+        z: 2,
+        level: 0,
+    };
+    let fixture = MapFixture::new(&world, "local-289");
+    let play = fixture.play(origin);
+    s.server_profile = Some(Arc::clone(fixture.template.profile()));
+    s.statuses = play.statuses();
+    s.focus.lock().unwrap().focused = Some("alice".into());
+    s.play = Some(play);
+    assert_eq!(s.select_picker_tile(&world, dest), Some(dest));
+    assert!(!s.confirm_picker_teleport(&world));
+    assert_eq!(s.error, Some(ActionError::NoFocus.to_string()));
+    assert!(s.map_model.pending().is_none());
 }
 
 /// Both endpoints are real standable map cells; the mine remains an island.
