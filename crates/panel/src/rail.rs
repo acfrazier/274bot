@@ -89,9 +89,25 @@ impl Light {
     }
 }
 
-/// The cap head title: member name plus the light's brief status.
-pub fn cap_title(name: &str, light: Light) -> String {
-    format!("{name}: {}", light.brief())
+/// The cap head title: member name plus a brief status. A grey (not ingame,
+/// no error) member names the login step it is in, so a slot that is still
+/// starting or loading does not read "logged out" until it is ready.
+pub fn cap_title(name: &str, light: Light, status: Option<&host_play::SlotStatus>) -> String {
+    use host_play::StartupPhase;
+    let step = status
+        .filter(|_| light == Light::Grey)
+        .and_then(|s| match s.startup_phase {
+            StartupPhase::Preparing => Some("starting".to_string()),
+            StartupPhase::Queueing
+                if s.queue_position >= 1 && s.queue_position <= s.queue_total =>
+            {
+                Some(format!("queued {}/{}", s.queue_position, s.queue_total))
+            }
+            StartupPhase::Connecting => Some("logging in".to_string()),
+            StartupPhase::LoadingScene => Some("loading".to_string()),
+            _ => None,
+        });
+    format!("{name}: {}", step.as_deref().unwrap_or(light.brief()))
 }
 
 /// Whether this rail/grid tile shows its blit. Sidecar + `only_selected` stays
@@ -298,10 +314,53 @@ mod tests {
 
     #[test]
     fn cap_title_renders_name_and_brief() {
-        assert_eq!(cap_title("bob", Light::Grey), "bob: logged out");
-        assert_eq!(cap_title("bob", Light::Red), "bob: error");
-        assert_eq!(cap_title("bob", Light::Yellow), "bob: idle");
-        assert_eq!(cap_title("bob", Light::Green), "bob: running");
+        assert_eq!(cap_title("bob", Light::Grey, None), "bob: logged out");
+        assert_eq!(cap_title("bob", Light::Red, None), "bob: error");
+        assert_eq!(cap_title("bob", Light::Yellow, None), "bob: idle");
+        assert_eq!(cap_title("bob", Light::Green, None), "bob: running");
+    }
+
+    #[test]
+    fn grey_cap_names_the_login_step_until_ready() {
+        use host_play::{SlotStatus, StartupPhase};
+        let at = |phase, queue: (i32, i32)| SlotStatus {
+            username: "bob".into(),
+            startup_phase: phase,
+            queue_position: queue.0,
+            queue_total: queue.1,
+            ..Default::default()
+        };
+        let title = |s: &SlotStatus| cap_title("bob", Light::Grey, Some(s));
+        assert_eq!(
+            title(&at(StartupPhase::Preparing, (-1, -1))),
+            "bob: starting"
+        );
+        assert_eq!(
+            title(&at(StartupPhase::Queueing, (2, 5))),
+            "bob: queued 2/5"
+        );
+        assert_eq!(
+            title(&at(StartupPhase::Queueing, (-1, -1))),
+            "bob: logged out",
+            "a parked title-screen slot with no queue place is logged out"
+        );
+        assert_eq!(
+            title(&at(StartupPhase::Connecting, (-1, -1))),
+            "bob: logging in"
+        );
+        assert_eq!(
+            title(&at(StartupPhase::LoadingScene, (-1, -1))),
+            "bob: loading"
+        );
+        assert_eq!(
+            cap_title(
+                "bob",
+                Light::Red,
+                Some(&at(StartupPhase::Connecting, (-1, -1)))
+            ),
+            "bob: error",
+            "an error outranks the login step"
+        );
     }
 
     #[test]
