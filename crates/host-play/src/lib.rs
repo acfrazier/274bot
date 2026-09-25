@@ -56,6 +56,9 @@ mod play_bootstrap;
 mod play_login;
 mod play_status;
 mod play_wires;
+mod walk_plan;
+pub use walk_plan::PendingBankFetch;
+use walk_plan::{route_or_bank_fetch, RouteOutcome};
 pub use play_bootstrap::{
     default_pack_path, default_vault_path, default_vault_path_for, default_vault_rel,
     default_world_host, is_loopback_host, live_vault_passphrase, live_vault_passphrase_for,
@@ -115,20 +118,6 @@ const THREAD_STACK: usize = 1024 * 1024;
 
 
 
-/// A latched BankBudget session: remaining [`BankStep`]s plus the dest
-/// the arm re-finds after the session lands. Follow freezes only for
-/// Open / Deposit / Withdraw / Wear / Close; [`BankStep::Walk`] follows
-/// the stand sub-route. Wear-from-inv and bank-trip deposit/withdraw
-/// both pump through the same path. `final_route` is the post-session
-/// route (status row + follow once steps clear); a Walk-to-stand may
-/// temporarily replace `WalkArm::route` / `NavBot::route`.
-#[derive(Debug, Clone)]
-pub struct PendingBankFetch {
-    pub steps: VecDeque<BankStep>,
-    pub dest: WorldTile,
-    pub opts: FindOptions,
-    pub final_route: Route,
-}
 
 /// Per-username WalkTo arm: the whole-world [`Traveller`] plus the
 /// [`Route`] it is following. [`arm_walk_on`] stores the route (found
@@ -261,71 +250,6 @@ pub fn arm_walk_on(
     }
 }
 
-/// Outcome of a walk-arm route attempt: a direct route, a BankBudget
-/// session plus the post-session route, or no path.
-enum RouteOutcome {
-    Routed(Route),
-    BankSession {
-        pending: PendingBankFetch,
-        route: Route,
-    },
-    NoPath,
-}
-
-/// Strict `find_with`, then — only when `allow_bank_fetch` is on and the
-/// failure is solely missing item/worn reqs — plan a BankBudget session
-/// and re-find against the session's post state. Never inserts a virtual
-/// bank edge into Dijkstra.
-fn route_or_bank_fetch(
-    world: &NavWorld,
-    from: WorldTile,
-    to: WorldTile,
-    opts: FindOptions,
-    state: &WorldState,
-    bank: &[(i32, i32)],
-) -> RouteOutcome {
-    match find_with(&world.collision, &world.graph, from, to, opts, state) {
-        Ok(route) => RouteOutcome::Routed(route),
-        Err(_) if opts.allow_bank_fetch => {
-            let Some(missing) =
-                find_missing_item_reqs(&world.collision, &world.graph, from, to, opts, state)
-            else {
-                return RouteOutcome::NoPath;
-            };
-            let Some(fetch) = plan_bank_fetch(&missing, state, bank, world.banks(), from) else {
-                return RouteOutcome::NoPath;
-            };
-            // Re-find against the post-session state (ADR 0005: find itself
-            // stayed fail-closed; the session is what unblocks).
-            let Ok(route) = find_with(
-                &world.collision,
-                &world.graph,
-                from,
-                to,
-                FindOptions {
-                    allow_bank_fetch: false,
-                    ..opts
-                },
-                &fetch.state,
-            ) else {
-                return RouteOutcome::NoPath;
-            };
-            RouteOutcome::BankSession {
-                pending: PendingBankFetch {
-                    steps: fetch.steps.into(),
-                    dest: to,
-                    opts: FindOptions {
-                        allow_bank_fetch: false,
-                        ..opts
-                    },
-                    final_route: route.clone(),
-                },
-                route,
-            }
-        }
-        Err(_) => RouteOutcome::NoPath,
-    }
-}
 
 
 
