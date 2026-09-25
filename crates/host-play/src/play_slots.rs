@@ -153,11 +153,18 @@ impl Play {
         finished
     }
 
+    /// Join workers whose threads have already finished, including
+    /// asynchronous Stop. Frontends call this once per UI pump before
+    /// sampling live arms.
+    pub fn pump_worker_reaps(&mut self) {
+        self.reap_finished_workers();
+        self.reap_stopped_slots();
+    }
+
     /// Stop and retire a slot without joining its worker on the caller.
     /// [`Play::reap_stopped_slots`] joins only handles already known finished.
     pub fn begin_stop_slot(&mut self, name: &str) {
-        self.reap_finished_workers();
-        self.reap_stopped_slots();
+        self.pump_worker_reaps();
         if self.retiring.contains_key(name) {
             return;
         }
@@ -198,6 +205,25 @@ impl Play {
     /// tests that drive login/logout flags through [`Play::arm`]).
     pub fn attach_arm(&mut self, name: &str, arm: Arc<SlotArm>) {
         self.arms.insert(name.to_string(), arm);
+    }
+
+    /// Arm plus an already-finished join handle. UI pumps must reap this
+    /// before treating the name as a live background bot.
+    #[cfg(feature = "test-support")]
+    pub fn attach_finished_worker_for_test(&mut self, name: &str, arm: Arc<SlotArm>) {
+        self.attach_arm(name, arm);
+        self.spawned.insert(name.to_string());
+        let (exited, observe_exit) = std::sync::mpsc::channel();
+        self.handles.insert(
+            name.to_string(),
+            thread::spawn(move || {
+                let _ = exited.send(());
+            }),
+        );
+        observe_exit.recv().unwrap();
+        while !self.handles[name].is_finished() {
+            thread::yield_now();
+        }
     }
 
     /// Spawn one more slot on this play's FIFO. No-op if `username` is

@@ -109,6 +109,34 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   pass, and Play construction does not recapture archives already checked at
   template load.
 
+
+### Panel and TUI
+
+- The main panel shows a collapsible **resource** section whenever MultiBox is
+  off, using the same 1 Hz sampler as the rail card (bots N (M running), cpu,
+  ram peak, traffic) plus a background-bot count. The TUI status pane shows the
+  same rows.
+- Switching profile in single-bot mode, or turning MultiBox off, still leaves
+  other bots running. A one-time acknowledgement names how many live workers
+  remain and the live meter cost, points at the resource section, and **Got it,
+  don't show again** sets `background_bots_ack` in `~/.274bot/panel-ui.json`
+  (the TUI uses the same key). A failed write keeps the notice visible and
+  reports the error; a later successful write clears only that error. The TUI
+  shows the same sentence; Esc with no map selection dismisses it. Live/harness
+  boots do not show or persist the notice. The TUI pump reaps finished workers
+  before counting background bots, matching the panel.
+- Interactive panel-play and tui-play take an OS advisory lock on
+  `~/.274bot/instance.lock` before prefs load, vault unlock, or slot spawn.
+  The holder (`panel|tui` + pid) is published to `~/.274bot/instance.holder`
+  (tmp + fsync + rename) after the lock is taken so a second instance can
+  read it on Windows, where `LockFileEx` is mandatory, and is removed on a
+  clean lock drop. A second instance warns and offers Exit (default) or
+  Continue anyway; it accepts only a complete newline-terminated marker
+  whose pid is still alive, otherwise retries briefly and warns
+  (`pid unknown`) instead of failing startup. `--live` / memory / stress /
+  harness boots skip the lock. `File::try_lock` is cfg-free
+  (POSIX `flock` / Windows `LockFileEx`).
+
 ### Slot lifecycle
 
 - Forwarded local engine endpoints retain verified game data when their connect

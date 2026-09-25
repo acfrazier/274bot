@@ -48,7 +48,7 @@ use host_play::progress::{
 
 use crate::input_capture::{capture_keys, discard_unconsumed_native_capture, stream_capture};
 use crate::resource::{
-    cpu_from_delta, format_bots, format_rss_caption, sample_process, traffic_from_samples, Metric,
+    background_ack_text, format_background, format_bots, metric_text, ResourceSampler, ResourceView,
 };
 use crate::session::{
     debug_dest_cheats, debug_main_buttons_for, debug_maxme_cheats, script_active,
@@ -138,18 +138,8 @@ struct PanelState {
     paint: PaintOverlay,
     /// One cached tile texture per wall member (blitted at TILE_W×TILE_H).
     views: HashMap<String, TileView>,
-    /// Last 1 Hz process sample `(instant, cpu secs)`; `None` before the
-    /// first sample or after a sampler failure (CPU then re-measures).
-    last_proc: Option<(Instant, f64)>,
-    /// Cached 1 Hz CPU metric for the resource card.
-    res_cpu: Metric,
-    /// Cached 1 Hz RAM metric for the resource card.
-    res_ram: Metric,
-    /// Cached 1 Hz traffic metric for the resource card.
-    res_traffic: Metric,
-    /// Last traffic sample `(instant, sum, n_slots)`; `None` until the
-    /// first 1 Hz pass (first rate needs two samples).
-    last_traffic: Option<(Instant, u64, usize)>,
+    /// Shared 1 Hz process/traffic sampler (rail + main-panel resource section).
+    resource_sampler: ResourceSampler,
     /// Headed `--live` watch (`null_raster`, `stress50`, `stress50_full`,
     /// `script_<name>`) or `--smoke`; `None` interactive.
     live: Option<LiveHarness>,
@@ -519,83 +509,12 @@ fn dispose_idle_views(
 }
 
 impl PanelState {
-    /// 1 Hz process + stream-byte sample for the resource card. CPU needs
-    /// a wall+CPU delta, so the first sample is [`Metric::Measuring`]; RAM
-    /// is available from the start. Traffic needs two samples of summed
-    /// `bytes_in+bytes_out`; zero slots stay Measuring (never fake 0 B/s).
-    /// A process-sampler failure flips CPU/RAM to [`Metric::Error`] and
-    /// re-baselines them, but traffic still samples from statuses.
-    fn sample_resources(&mut self) {
-        let now = Instant::now();
-        // Prefer last_proc for the 1 Hz gate; if the process sampler failed
-        // and cleared it, fall back to last_traffic so we keep sampling
-        // stream bytes without spinning every frame.
-        let due = match &self.last_proc {
-            Some((t, _)) => now.duration_since(*t).as_secs_f64() >= 1.0,
-            None => match &self.last_traffic {
-                Some((t, ..)) => now.duration_since(*t).as_secs_f64() >= 1.0,
-                None => true,
-            },
-        };
-        if !due {
-            return;
-        }
-
-        let statuses = self.session.statuses();
-        let n = statuses.len();
-        let sum: u64 = statuses
-            .iter()
-            .map(|s| s.bytes_in.wrapping_add(s.bytes_out))
-            .sum();
-        match self.last_traffic {
-            Some((t0, sum0, n_prev)) => {
-                let dt = now.duration_since(t0).as_secs_f64();
-                self.res_traffic = traffic_from_samples(sum, sum0, dt, n, n_prev);
-            }
-            None => self.res_traffic = Metric::Measuring,
-        }
-        self.last_traffic = Some((now, sum, n));
-
-        let (rss, cpu) = sample_process();
-        if debug_enabled() {
-            eprintln!("[panel] rss={} traffic_sum={}", rss, sum);
-            if let Some(view) = self.game_view.as_ref() {
-                let s = view.present_stats;
-                eprintln!(
-                    "[panel] present pixmap={} tex={} bind_noop={} bind_rereg={}",
-                    s.pixmap, s.tex, s.bind_noop, s.bind_rereg
-                );
-            }
-        }
-        if rss == 0 && cpu == 0.0 {
-            self.res_cpu = Metric::Error("process sample failed".into());
-            self.res_ram = Metric::Error("process sample failed".into());
-            self.last_proc = None;
-            return;
-        }
-        match self.last_proc {
-            Some((t0, cpu0)) => {
-                let wall = now.duration_since(t0).as_secs_f64();
-                let ncpu = std::thread::available_parallelism()
-                    .map(|n| n.get() as u32)
-                    .unwrap_or(1)
-                    .max(1);
-                self.res_cpu = cpu_from_delta(cpu - cpu0, wall, ncpu);
-            }
-            None => self.res_cpu = Metric::Measuring,
-        }
-        self.res_ram = Metric::Available(format_rss_caption(rss));
-        self.last_proc = Some((now, cpu));
-    }
-}
-
-impl Default for PanelState {
-    fn default() -> Self {
+    fn with_session(session: Session, shot_state: Arc<Mutex<crate::window::ShotState>>) -> Self {
         Self {
             #[cfg(feature = "memory-profile")]
             memory: None,
             game_view: None,
-            session: Session::new(),
+            session,
             dock_inited: false,
             dock_layout: None,
             game_dock_node: None,
@@ -607,18 +526,56 @@ impl Default for PanelState {
             overlay: PathOverlay::new(),
             paint: PaintOverlay::new(),
             views: HashMap::new(),
-            last_proc: None,
-            res_cpu: Metric::Measuring,
-            res_ram: Metric::Measuring,
-            res_traffic: Metric::Measuring,
-            last_traffic: None,
+            resource_sampler: ResourceSampler::default(),
             live: None,
             dock_size: None,
             os_window: None,
-            shot_state: Arc::new(Mutex::new(crate::window::ShotState::default())),
+            shot_state,
             shot_dir: None,
             walk_map: WalkMapRenderer::new(),
         }
+    }
+
+    /// 1 Hz process + stream-byte sample. The due check does not clone
+    /// statuses; the cached view is borrowed by both panel surfaces.
+    fn sample_resources(&mut self) {
+        let now = Instant::now();
+        if !self.resource_sampler.due(now) {
+            return;
+        }
+        let focused = self.session.focused_name();
+        match self.session.play.as_ref() {
+            Some(play) => self
+                .resource_sampler
+                .sample_play(now, play, focused.as_deref()),
+            None => self
+                .resource_sampler
+                .sample(now, focused.as_deref(), std::iter::empty()),
+        }
+        if debug_enabled() {
+            eprintln!(
+                "[panel] rss={} bots={}",
+                self.resource_sampler.last_rss(),
+                self.resource_sampler.view().bots
+            );
+            if let Some(view) = self.game_view.as_ref() {
+                let s = view.present_stats;
+                eprintln!(
+                    "[panel] present pixmap={} tex={} bind_noop={} bind_rereg={}",
+                    s.pixmap, s.tex, s.bind_noop, s.bind_rereg
+                );
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+impl Default for PanelState {
+    fn default() -> Self {
+        Self::with_session(
+            Session::new(),
+            Arc::new(Mutex::new(crate::window::ShotState::default())),
+        )
     }
 }
 
@@ -1369,7 +1326,12 @@ fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
 
 /// Right panel: rs2b0t chrome squished into the 330px strip. Vertical scroll
 /// only — wrap/clip, never a horizontal bar.
-fn panel_window(ui: &Ui, session: &mut Session, progress: Option<StartupProgressView>) {
+fn panel_window(
+    ui: &Ui,
+    session: &mut Session,
+    progress: Option<StartupProgressView>,
+    resources: &ResourceView,
+) {
     // The ### suffix preserves the existing docking identity across revisions.
     ui.window(format!("{}###{PANEL_WINDOW}", session.app_title()))
         .flags(WindowFlags::NO_RESIZE | WindowFlags::NO_COLLAPSE)
@@ -1390,6 +1352,11 @@ fn panel_window(ui: &Ui, session: &mut Session, progress: Option<StartupProgress
                 }
                 match id.as_str() {
                     "status" => status_section(ui, session),
+                    "resource" => {
+                        if !session.multibox {
+                            resource_section(ui, session, resources);
+                        }
+                    }
                     "profile" => profile_section(ui, session),
                     "script" => script_section(ui, session),
                     "debug" => debug_section(ui, session),
@@ -1651,6 +1618,16 @@ fn kv_row(ui: &Ui, key: &str, value: &str) {
     ui.text_disabled(key);
     ui.same_line();
     ui.text_wrapped(value);
+}
+
+fn draw_resource_rows(ui: &Ui, view: &ResourceView, show_background: bool) {
+    kv_row(ui, "bots", &format_bots(view.bots, view.ingame));
+    if show_background && view.background > 0 {
+        kv_row(ui, "background", &format_background(view.background));
+    }
+    kv_row(ui, "cpu", metric_text(&view.cpu));
+    kv_row(ui, "ram", metric_text(&view.ram));
+    kv_row(ui, "traffic", metric_text(&view.traffic));
 }
 
 /// Same-line gap that matches [`equal_button_width`]'s `BUTTON_GAP`.
@@ -3268,6 +3245,13 @@ fn status_section(ui: &Ui, session: &mut Session) {
     );
 }
 
+fn resource_section(ui: &Ui, session: &mut Session, view: &ResourceView) {
+    if !section_open(ui, session, "resource") {
+        return;
+    }
+    draw_resource_rows(ui, view, true);
+}
+
 /// Stick to the bottom of the log when the last frame was already there
 /// (1 px slack for float layout). Scrolling up to read history stays put.
 fn log_follow_bottom(scroll_y: f32, scroll_max_y: f32) -> bool {
@@ -3582,7 +3566,6 @@ fn slot_capture_section(ui: &Ui, session: &mut Session) {
 /// only-render-selected, else cap + 1 fps body or renderer-off
 /// placeholder), `+ add bot`, and the 1 Hz resource card.
 fn rail_window(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
-    state.sample_resources();
     let mut open = true;
     ui.window(format!(
         "{}-rail###{RAIL_WINDOW}",
@@ -3594,7 +3577,7 @@ fn rail_window(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
         rail_bulk_row(ui, state);
         rail_tiles(ui, gpu, state);
         add_bot_button(ui, state);
-        resource_card(ui, state);
+        resource_card(ui, state.resource_sampler.view());
     });
     if !open {
         state.session.set_multibox(false);
@@ -3762,6 +3745,34 @@ fn render_all_warn_window(ui: &Ui, session: &mut Session) {
     }
     if !session.wall.render_all_warn_open {
         session.wall.render_all_understood = false;
+    }
+}
+
+fn background_ack_window(ui: &Ui, session: &mut Session, view: &ResourceView) {
+    if session.background_ack_open && session.background_bot_count() == 0 {
+        session.dismiss_background_ack();
+    }
+    if !session.background_ack_open {
+        return;
+    }
+    let mut open = true;
+    let others = session.background_bot_count();
+    let body = background_ack_text(others, view);
+    ui.window("Other profiles keep running")
+        .opened(&mut open)
+        .flags(WindowFlags::NO_COLLAPSE | WindowFlags::ALWAYS_AUTO_RESIZE)
+        .size_constraints([DIALOG_W, 80.0], [DIALOG_W, 720.0])
+        .build(|| {
+            let _wrap = ui.push_text_wrap_pos(DIALOG_W - 16.0);
+            ui.text_wrapped(&body);
+            ui.spacing();
+            let w = ui.content_region_avail()[0];
+            if ui.button_with_size("Got it, don't show again", [w, 0.0]) {
+                session.ack_background_bots();
+            }
+        });
+    if !open {
+        session.dismiss_background_ack();
     }
 }
 
@@ -3980,31 +3991,11 @@ fn add_bot_button(ui: &Ui, state: &mut PanelState) {
 /// "measuring…"; a failed process sampler shows error for CPU/RAM only.
 /// The draw/paint counters moved off the slot status row (M2 Task 1), so
 /// the draw row is gone until Task 4's per-slot renderer metrics.
-fn resource_card(ui: &Ui, state: &mut PanelState) {
+fn resource_card(ui: &Ui, view: &ResourceView) {
     ui.spacing();
     ui.text_disabled("resource");
     ui.separator();
-    let statuses = state.session.statuses();
-    let ingame = statuses.iter().filter(|s| s.ingame).count();
-    kv_row(ui, "bots", &format_bots(statuses.len(), ingame));
-    match &state.res_cpu {
-        Metric::Measuring => kv_row(ui, "cpu", "measuring…"),
-        Metric::Available(s) => kv_row(ui, "cpu", s),
-        Metric::Unavailable(r) => kv_row(ui, "cpu", r),
-        Metric::Error(e) => kv_row(ui, "cpu", e),
-    }
-    match &state.res_ram {
-        Metric::Measuring => kv_row(ui, "ram", "measuring…"),
-        Metric::Available(s) => kv_row(ui, "ram", s),
-        Metric::Unavailable(r) => kv_row(ui, "ram", r),
-        Metric::Error(e) => kv_row(ui, "ram", e),
-    }
-    match &state.res_traffic {
-        Metric::Measuring => kv_row(ui, "traffic", "measuring…"),
-        Metric::Available(s) => kv_row(ui, "traffic", s),
-        Metric::Unavailable(r) => kv_row(ui, "traffic", r),
-        Metric::Error(e) => kv_row(ui, "traffic", e),
-    }
+    draw_resource_rows(ui, view, false);
 }
 
 /// Rising-edge helper: `(open_popup, new_prev)`. `open_popup` is true only
@@ -4368,26 +4359,18 @@ fn run_offline_prepare_fixture(args: &PanelArgs, scenario: &str) -> Result<(), S
     Ok(())
 }
 
-/// Open the 274bot panel window. Call after the vault has been started.
-/// `args.mode` selects the normal interactive panel, a `--live NAME` harness,
-/// or `--smoke` (temp `test` vault, one whole-window shot at scene 2,
-/// exit 0). `--prepare-fixture` is offline-only and never opens a window.
-pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
-    if let Some(scenario) = args.mode.prepare_fixture_name() {
-        return run_offline_prepare_fixture(&args, scenario).map_err(|e| {
-            eprintln!("FAIL: {e}");
-            std::process::exit(1);
-        });
-    }
-    let scale = Arc::new(AtomicU32::new(1.0f32.to_bits()));
-    let frame_scale = Arc::clone(&scale);
-    let mut state = PanelState::default();
+fn init_panel_running(
+    args: &PanelArgs,
+    shot_state: Arc<Mutex<crate::window::ShotState>>,
+    permit: host_play::InstancePermit,
+) -> Result<(PanelState, StartupPreparation), window::PanelError> {
+    let mut state = PanelState::with_session(Session::with_instance(permit), shot_state);
     state.session.set_memory_override(args.memory_override);
     state.session.set_nav_paints_override(args.nav_paints);
     state.session.set_catalog_core_enabled(args.catalog_core);
     state.session.set_pair_core_enabled(args.pair_core);
     state.session.set_external_core_enabled(args.external_core);
-    state.session.set_external_ts(args.external_ts);
+    state.session.set_external_ts(args.external_ts.clone());
     let fixture_mode = if args.run_prepared {
         scenario::FixtureMode::RunPrepared
     } else {
@@ -4398,18 +4381,9 @@ pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
         .set_fixture_boot(fixture_mode, args.fixture_path.clone());
     state
         .session
-        .configure_profile(args.profile)
+        .configure_profile(args.profile.clone())
         .map_err(window::PanelError::ServerProfile)?;
-    let mode = args.mode;
-
-    // Deferred boot: unlock / live-harness spawn slot threads, and a slot
-    // renderer is built lazily at its first paint — spawning before GPU
-    // init would let a slot construct its own wgpu device ahead of
-    // `on_gpu_init`'s `inject_device`. The first UI frame presents an
-    // empty panel (so the OS window actually appears); preparation starts
-    // on the next frame, after that present. Slot `maininit` (snapshot /
-    // maps) must not sit on the first-present path.
-    let boot = boot_for(&mode, std::env::var("BOT_VAULT_PASS").ok().as_deref());
+    let boot = boot_for(&args.mode, std::env::var("BOT_VAULT_PASS").ok().as_deref());
     #[cfg(feature = "memory-profile")]
     let boot = match host_play::memory::Config::from_env() {
         Ok(Some(config)) => {
@@ -4426,11 +4400,82 @@ pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
             std::process::exit(1);
         }
     };
-    let mut startup = StartupPreparation::new(boot);
+    Ok((state, StartupPreparation::new(boot)))
+}
+
+/// `Some(true)` continue, `Some(false)` exit, `None` still open.
+fn instance_conflict_choice(ui: &Ui, holder: &host_play::InstanceHolder) -> Option<bool> {
+    let mut open = true;
+    let mut choice = None;
+    ui.window("Another 274bot is running")
+        .opened(&mut open)
+        .flags(WindowFlags::NO_COLLAPSE | WindowFlags::ALWAYS_AUTO_RESIZE)
+        .size_constraints([DIALOG_W, 80.0], [DIALOG_W, 720.0])
+        .build(|| {
+            let _wrap = ui.push_text_wrap_pos(DIALOG_W - 16.0);
+            ui.text_wrapped(host_play::instance_conflict_message(holder));
+            ui.spacing();
+            let avail = ui.content_region_avail()[0];
+            let (w, stack) = button_row_layout(avail, 2);
+            if ui.button_with_size("Exit", [w, 0.0]) {
+                choice = Some(false);
+            }
+            if !stack {
+                ui.same_line();
+            }
+            if ui.button_with_size("Continue anyway", [w, 0.0]) {
+                choice = Some(true);
+            }
+        });
+    if !open {
+        Some(false)
+    } else {
+        choice
+    }
+}
+
+/// Open the 274bot panel window. Call after the vault has been started.
+/// `args.mode` selects the normal interactive panel, a `--live NAME` harness,
+/// or `--smoke` (temp `test` vault, one whole-window shot at scene 2,
+/// exit 0). `--prepare-fixture` is offline-only and never opens a window.
+pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
+    if let Some(scenario) = args.mode.prepare_fixture_name() {
+        return run_offline_prepare_fixture(&args, scenario).map_err(|e| {
+            eprintln!("FAIL: {e}");
+            std::process::exit(1);
+        });
+    }
+    let skip_lock = !matches!(args.mode, RunMode::Interactive);
+    #[cfg(feature = "memory-profile")]
+    let skip_lock = skip_lock
+        || host_play::memory::Config::from_env()
+            .ok()
+            .flatten()
+            .is_some();
+    let scale = Arc::new(AtomicU32::new(1.0f32.to_bits()));
+    let frame_scale = Arc::clone(&scale);
+    let shot_state = Arc::new(Mutex::new(crate::window::ShotState::default()));
+    let mut instance_prompt = None;
+    let mut running = None;
+    match host_play::resolve_instance_permit(host_play::InstanceKind::Panel, skip_lock) {
+        Ok(host_play::InstancePermitOutcome::Ready(permit)) => {
+            running = Some(init_panel_running(&args, Arc::clone(&shot_state), permit)?);
+        }
+        Ok(host_play::InstancePermitOutcome::NeedsConfirm(holder)) => {
+            instance_prompt = Some(holder);
+        }
+        Err(e) => {
+            eprintln!("panel: instance lock: {e}");
+            std::process::exit(1);
+        }
+    }
     let mut presented = false;
 
     let mut cfg = runner_config();
-    let mut window_title = state.session.app_title();
+    let mut window_title = running
+        .as_ref()
+        .map(|(state, _)| state.session.app_title())
+        .unwrap_or_else(|| "274bot".into());
     cfg.window_title.clone_from(&window_title);
     let os_window: Arc<Mutex<Option<Arc<winit::window::Window>>>> = Arc::new(Mutex::new(None));
     let os_window_init = Arc::clone(&os_window);
@@ -4438,25 +4483,41 @@ pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
         cfg,
         amber_style,
         move |window, device, queue, _| {
-            // The shared-device seam: seed the client's process-wide GPU
-            // context with the panel's device before any slot renderer can
-            // construct (slots spawn on the first frame, after this).
             client::render::backend::inject_device(device.clone(), queue.clone());
-            // Observed only: HiDpiMode::Default already maps logical
-            // pixels. Applying ScaleAllSizes here would double Retina.
             scale.store(
                 integer_ui_scale(window.scale_factor() as f32).to_bits(),
                 Ordering::Relaxed,
             );
             *os_window_init.lock().unwrap() = Some(Arc::clone(window));
         },
-        Arc::clone(&state.shot_state),
+        Arc::clone(&shot_state),
         move |ui, gpu| {
             let _profile_draw = client::profiling::UI_DRAW.start();
-            // Frame 0 presents chrome with no slots. Frame 1+ polls worker
-            // preparation; Play and slots remain deferred until validation.
+            if let Some(holder) = instance_prompt.as_ref() {
+                match instance_conflict_choice(ui, holder) {
+                    None => return,
+                    Some(false) => std::process::exit(0),
+                    Some(true) => {
+                        instance_prompt = None;
+                        match init_panel_running(
+                            &args,
+                            Arc::clone(&shot_state),
+                            host_play::InstancePermit::skip(),
+                        ) {
+                            Ok(ready) => running = Some(ready),
+                            Err(e) => {
+                                eprintln!("panel: {e}");
+                                std::process::exit(1);
+                            }
+                        }
+                    }
+                }
+            }
+            let Some((state, startup)) = running.as_mut() else {
+                return;
+            };
             if presented {
-                drive_startup(&mut state, &mut startup);
+                drive_startup(state, startup);
             }
             presented = true;
             if state.os_window.is_none() {
@@ -4475,8 +4536,8 @@ pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
                 }
             }
             let _scale = f32::from_bits(frame_scale.load(Ordering::Relaxed));
-            let progress = startup_progress(&startup, state.session.profile_generation());
-            ui_frame(ui, gpu, &mut state, progress);
+            let progress = startup_progress(startup, state.session.profile_generation());
+            ui_frame(ui, gpu, state, progress);
         },
     )
 }
@@ -4732,10 +4793,14 @@ fn ui_frame(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, progress: Option<Sta
     }
     let title = game_window_title(state.session.focused_name().as_deref());
     dock_host(ui, state, &title);
+    state.sample_resources();
     let game_class = game_window_class();
     let panel_class = panel_window_class();
     ui.set_next_window_class(&panel_class);
-    panel_window(ui, &mut state.session, progress);
+    {
+        let resources = state.resource_sampler.view();
+        panel_window(ui, &mut state.session, progress, resources);
+    }
     ui.set_next_window_class(&game_class);
     // Frame owner: identity replacement and close-release happen outside
     // the Game window build closure so a rebind cannot keep stale buffers.
@@ -4770,6 +4835,10 @@ fn ui_frame(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, progress: Option<Sta
     script_prefs_window(ui, &mut state.session, state.panel_dock_node);
     crate::loadouts::window(ui, &mut state.session);
     render_all_warn_window(ui, &mut state.session);
+    {
+        let resources = state.resource_sampler.view();
+        background_ack_window(ui, &mut state.session, resources);
+    }
     discard_unconsumed_native_capture();
 }
 

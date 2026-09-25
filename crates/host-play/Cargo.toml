@@ -50,3 +50,7 @@ memory-profile = ["script/memory-profile", "dep:scenario"]
 
 # CPU diagnostic: use System directly, report allocator metrics unavailable.
 memory-profile-no-alloc = ["memory-profile"]
+
+# Test-only Play fixtures. Enabled from frontend dev-dependencies, never
+# production builds.
+test-support = []

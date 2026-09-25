@@ -1525,3 +1525,148 @@ fn follow_tick_pumps_bank_budget_step() {
         c.out.pos
     );
 }
+
+fn empty_play() -> Play {
+    run_with_io(&dummy_options(), vec![], |_| (None, None), |_, _, _| {})
+}
+
+fn two_arm_play() -> Play {
+    let mut play = empty_play();
+    play.attach_arm("alice", SlotArm::new(1, false));
+    play.attach_arm("bob", SlotArm::new(2, false));
+    play
+}
+
+fn pump_two_slots(session: &mut TuiSession) -> TuiApp {
+    session.inject_play(two_arm_play());
+    session.names = vec!["alice".into(), "bob".into()];
+    let mut app = TuiApp::new("tui");
+    app.names = session.names.clone();
+    app.focused = Some(0);
+    session.pump(&mut app);
+    app
+}
+
+#[test]
+fn tui_live_mode_does_not_show_or_persist_background_notice() {
+    let iso = IsolatedEnv::enter("tui-live-ack");
+    let mut session = TuiSession::new(dummy_options());
+    session.persist_ui = false;
+    let app = pump_two_slots(&mut session);
+    assert!(app.background_notice.is_none());
+    let mut app = app;
+    session.ack_background_bots(&mut app);
+    assert!(!host_play::background_bots_acked());
+    let _iso = iso;
+}
+
+#[test]
+fn tui_notice_uses_shared_ack_file() {
+    let iso = IsolatedEnv::enter("tui-shared-ack");
+    let mut session = TuiSession::new(dummy_options());
+    let app = pump_two_slots(&mut session);
+    assert!(app.background_notice.is_some());
+    host_play::persist_background_bots_ack().unwrap();
+    let mut app = TuiApp::new("tui");
+    app.names = vec!["alice".into(), "bob".into()];
+    app.focused = Some(0);
+    session.expire_ack_cache();
+    session.pump(&mut app);
+    assert!(app.background_notice.is_none());
+    let _iso = iso;
+}
+
+#[test]
+fn tui_pump_reaps_finished_workers_logged_out_arms_still_count() {
+    let iso = IsolatedEnv::enter("tui-reap-finished");
+    let mut play = empty_play();
+    play.attach_arm("alice", SlotArm::new(1, false));
+    play.attach_finished_worker_for_test("bob", SlotArm::new(2, false));
+    play.attach_arm("carol", SlotArm::new(3, false));
+    play.statuses.lock().unwrap().extend([
+        host_play::SlotStatus {
+            username: "alice".into(),
+            ingame: true,
+            connected: true,
+            ..host_play::SlotStatus::default()
+        },
+        host_play::SlotStatus {
+            username: "bob".into(),
+            worker_terminal: Some(host_play::WorkerTerminal::Failed),
+            ..host_play::SlotStatus::default()
+        },
+        host_play::SlotStatus {
+            username: "carol".into(),
+            login_latched: true,
+            ..host_play::SlotStatus::default()
+        },
+    ]);
+    assert_eq!(
+        play.background_bot_count(Some("alice")),
+        2,
+        "unreaped finished worker still has an arm"
+    );
+    let mut session = TuiSession::new(dummy_options());
+    session.inject_play(play);
+    session.names = vec!["alice".into(), "bob".into(), "carol".into()];
+    let mut app = TuiApp::new("tui");
+    app.names = session.names.clone();
+    app.focused = Some(0);
+    session.pump(&mut app);
+    let play = session.play.as_ref().unwrap();
+    assert!(
+        play.arm("bob").is_none(),
+        "pump must reap the finished worker"
+    );
+    assert!(
+        play.arm("carol").is_some(),
+        "logged-out active arms stay live"
+    );
+    assert_eq!(play.background_bot_count(Some("alice")), 1);
+    assert!(app.background_notice.is_some());
+    let _iso = iso;
+}
+
+#[test]
+fn tui_failed_ack_persist_then_success_clears_only_that_error() {
+    let iso = IsolatedEnv::enter("tui-ack-fail");
+    let mut session = TuiSession::new(dummy_options());
+    let mut app = pump_two_slots(&mut session);
+    assert!(app.background_notice.is_some());
+    let parent = host_play::panel_ui_path().parent().unwrap().to_path_buf();
+    let _ = std::fs::remove_dir_all(&parent);
+    std::fs::write(&parent, b"not-a-dir").unwrap();
+    app.error = None;
+    session.ack_background_bots(&mut app);
+    assert!(
+        app.background_notice.is_some(),
+        "persist failure must keep the notice"
+    );
+    assert!(
+        app.error
+            .as_deref()
+            .is_some_and(|e| e.starts_with("background bots:")),
+        "got {:?}",
+        app.error
+    );
+    assert!(!host_play::background_bots_acked());
+    std::fs::remove_file(&parent).unwrap();
+    session.ack_background_bots(&mut app);
+    assert!(app.background_notice.is_none());
+    assert!(app.error.is_none(), "got {:?}", app.error);
+    assert!(host_play::background_bots_acked());
+    let _iso = iso;
+}
+
+#[test]
+fn tui_successful_ack_preserves_unrelated_error() {
+    let iso = IsolatedEnv::enter("tui-ack-unrelated");
+    let mut session = TuiSession::new(dummy_options());
+    let mut app = pump_two_slots(&mut session);
+    app.error = Some("script: no focused profile".into());
+    session.ack_background_bots(&mut app);
+    assert!(app.background_notice.is_none());
+    assert_eq!(app.error.as_deref(), Some("script: no focused profile"));
+    assert!(host_play::background_bots_acked());
+    let _iso = iso;
+}

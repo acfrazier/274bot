@@ -51,6 +51,9 @@ pub struct PanelUiState {
     /// General config collapsible rows closed. Absent = open.
     #[serde(default)]
     pub config_collapsed: HashMap<String, bool>,
+    /// Operator acknowledged that other profiles keep running in the background.
+    #[serde(default)]
+    pub background_bots_ack: bool,
     /// Panel CRT palette (named theme consts). Absent = amber defaults.
     #[serde(default)]
     pub chrome: crate::theme::ChromeColors,
@@ -58,8 +61,15 @@ pub struct PanelUiState {
 
 /// Panel subsection ids in General config (parameters shares
 /// [`PanelUiState::show_parameters_rail`]).
-pub const PANEL_SECTION_IDS: &[&str] =
-    &["status", "profile", "script", "debug", "log", "parameters"];
+pub const PANEL_SECTION_IDS: &[&str] = &[
+    "status",
+    "resource",
+    "profile",
+    "script",
+    "debug",
+    "log",
+    "parameters",
+];
 
 /// Whether a panel strip heading should draw in [`crate::app::panel_window`].
 pub fn panel_section_visible(state: &PanelUiState, id: &str) -> bool {
@@ -105,6 +115,7 @@ impl Default for PanelUiState {
             capture: true,
             panel_sections: HashMap::new(),
             config_collapsed: HashMap::new(),
+            background_bots_ack: false,
             chrome: crate::theme::ChromeColors::default(),
         }
     }
@@ -361,6 +372,7 @@ mod tests {
         assert!(!default_section_closed("profile"));
         assert!(!default_section_closed("credentials"));
         assert!(!default_section_closed("status"));
+        assert!(!default_section_closed("resource"));
         assert!(!default_section_closed("log"));
         assert!(!default_section_closed("rendering"));
         assert!(!default_section_closed("input"));
@@ -373,6 +385,16 @@ mod tests {
         let back: PanelUiState =
             serde_json::from_str(r#"{"last_focus":null,"collapsed":{}}"#).unwrap();
         assert!(back.capture, "missing capture key defaults on");
+    }
+
+    #[test]
+    fn background_bots_ack_defaults_off() {
+        let back: PanelUiState =
+            serde_json::from_str(r#"{"last_focus":null,"collapsed":{}}"#).unwrap();
+        assert!(
+            !back.background_bots_ack,
+            "missing background ack defaults to show the notice"
+        );
     }
 
     #[test]

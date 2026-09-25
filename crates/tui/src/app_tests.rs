@@ -837,3 +837,17 @@ fn chat_pane_shows_script_paint_instead_of_the_game_chat() {
         "the paint is hidden while toggled off: {text:?}"
     );
 }
+
+#[test]
+fn esc_acks_background_notice_when_map_has_no_selection() {
+    let mut app = TuiApp::new("274bot headless");
+    app.background_notice = Some("other profiles keep running".into());
+    assert_eq!(app.on_key(key(KeyCode::Esc)), AppAction::AckBackground);
+    app.map.selection = Some(tile(1, 1));
+    app.background_notice = Some("other profiles keep running".into());
+    assert_ne!(
+        app.on_key(key(KeyCode::Esc)),
+        AppAction::AckBackground,
+        "Esc still clears a map selection first"
+    );
+}

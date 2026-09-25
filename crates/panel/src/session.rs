@@ -1287,10 +1287,15 @@ pub struct Session {
     /// `Session::new`; every `live_prepare_*` flips it off so an ephemeral
     /// live boot never touches the operator's `last_focus`.
     pub persist_ui: bool,
+    /// One-time notice that other profiles keep running after MultiBox off
+    /// or a single-mode switch.
+    pub background_ack_open: bool,
     /// Explicit PREPARE / RUN-PREPARED fixture path (default live is unchanged).
     pub fixture_mode: scenario::FixtureMode,
     /// Optional identity receipt path; default `~/.274bot/fixtures/<scenario>.json`.
     pub fixture_path: Option<PathBuf>,
+    /// Process-lifetime instance lock, or skip for harness / Continue anyway.
+    _instance: host_play::InstancePermit,
 }
 
 /// Keep each per-name panel log bounded.
@@ -1366,6 +1371,7 @@ pub(crate) fn external_loader_fixture() -> scenario::Scenario {
     }
 }
 
+#[cfg(test)]
 impl Default for Session {
     fn default() -> Self {
         Self::new()
@@ -1435,9 +1441,15 @@ fn publish_frontend_slot(
 }
 
 impl Session {
-    /// Empty session: no vault, no slots, default `PlayOptions` (same engine
-    /// defaults as the host-play CLI). Unlock via [`Session::unlock`].
+    /// Empty session for tests. Product startup uses [`Self::with_instance`].
+    #[cfg(test)]
     pub fn new() -> Self {
+        Self::with_instance(host_play::InstancePermit::SkipLock)
+    }
+
+    /// Interactive startup must pass the lock outcome so prefs/vault cannot
+    /// load without a decision. Harness boots pass [`InstancePermit::SkipLock`].
+    pub fn with_instance(_instance: host_play::InstancePermit) -> Self {
         #[cfg(test)]
         script::IsolatedEnv::ensure_thread();
         let ui = crate::ui_state::load();
@@ -1563,6 +1575,7 @@ impl Session {
             external_ts: None,
             audio: Arc::new(AudioGate::new()),
             persist_ui: true,
+            background_ack_open: false,
             fixture_mode: scenario::FixtureMode::Default,
             fixture_path: None,
             options: {
@@ -1585,6 +1598,7 @@ impl Session {
             profile_preparing: false,
             requested_unlock: None,
             validated_template: None,
+            _instance,
         }
     }
 
@@ -3118,8 +3132,7 @@ impl Session {
 
     fn pump_slot_removals_at(&mut self, now: Instant) {
         if let Some(play) = self.play.as_mut() {
-            play.reap_finished_workers();
-            play.reap_stopped_slots();
+            play.pump_worker_reaps();
         }
         if self.pending_slot_removals.is_empty() {
             return;
@@ -3196,6 +3209,9 @@ impl Session {
     /// login errors, ingame, scene changes). Call once per UI frame.
     pub fn pump_status(&mut self) {
         self.pump_slot_removals();
+        if self.background_ack_open && self.background_bot_count() == 0 {
+            self.background_ack_open = false;
+        }
         // Per-frame mirrors that must not lag a focus/renderer/wall change:
         // the sidecar-50 cadence latch, and the speaker teardown when the
         // owning slot is no longer running.
@@ -3498,6 +3514,48 @@ impl Session {
         self.ensure_slot(name, arm, false);
         self.apply_focus(name);
         self.restore_script_heading(name);
+        if !self.multibox {
+            self.maybe_offer_background_ack();
+        }
+    }
+
+    pub fn background_bot_count(&self) -> usize {
+        self.play
+            .as_ref()
+            .map(|play| play.background_bot_count(self.focused_name().as_deref()))
+            .unwrap_or(0)
+    }
+
+    fn maybe_offer_background_ack(&mut self) {
+        if !self.persist_ui || self.ui.background_bots_ack || host_play::background_bots_acked() {
+            return;
+        }
+        if self.background_bot_count() == 0 {
+            return;
+        }
+        self.background_ack_open = true;
+    }
+
+    /// Persist "Got it, don't show again" for the background-bots notice.
+    pub fn ack_background_bots(&mut self) {
+        if self.persist_ui {
+            match host_play::persist_background_bots_ack() {
+                Ok(()) => {
+                    self.background_ack_open = false;
+                    self.ui.background_bots_ack = true;
+                    crate::ui_state::save(&self.ui);
+                    host_play::clear_background_bots_ack_error(&mut self.error);
+                }
+                Err(e) => self.error = Some(host_play::background_bots_ack_error(&e)),
+            }
+        } else {
+            self.background_ack_open = false;
+        }
+    }
+
+    /// Dismiss the notice this time; it can appear again on the next trigger.
+    pub fn dismiss_background_ack(&mut self) {
+        self.background_ack_open = false;
     }
 
     fn apply_focus(&mut self, name: &str) {
@@ -4189,6 +4247,7 @@ impl Session {
     /// Off: clear the grid and any open chooser and stop extra rasters
     /// (`wall_open = false`) without logging anyone out.
     pub fn set_multibox(&mut self, on: bool) {
+        let turning_off = self.multibox && !on;
         self.multibox = on;
         if on {
             let running: Vec<String> = self
@@ -4233,6 +4292,9 @@ impl Session {
         // so parked threads re-read it within a frame.
         if let Some(play) = self.play.as_ref() {
             play.wake_all();
+        }
+        if turning_off {
+            self.maybe_offer_background_ack();
         }
     }
 

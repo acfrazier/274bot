@@ -5987,3 +5987,241 @@ fn select_script_card_skips_queue_on_cache_hit() {
     s.select_script_card(script::ScriptSource::Catalog, "BoneBurier");
     assert!(s.transpile_queue.is_empty());
 }
+
+fn two_live_session(label: &str) -> (Session, script::IsolatedEnv) {
+    let iso = script::IsolatedEnv::enter(label);
+    let path = tmp_vault(label);
+    let mut s = Session::new();
+    s.skip_slot_spawn = true;
+    s.play = Some(empty_play());
+    s.vault = Some(Vault::create(&path, "bot").unwrap());
+    s.vault
+        .as_mut()
+        .unwrap()
+        .upsert(profile("alice", "pw", 42))
+        .unwrap();
+    s.vault
+        .as_mut()
+        .unwrap()
+        .upsert(profile("bob", "pw", 43))
+        .unwrap();
+    (s, iso)
+}
+
+#[test]
+fn single_mode_select_offers_background_ack_until_persisted() {
+    let (mut s, _iso) = two_live_session("bg-ack-select");
+    s.select("alice");
+    assert!(
+        !s.background_ack_open,
+        "one live slot is not a background fleet"
+    );
+    s.select("bob");
+    assert_eq!(s.background_bot_count(), 1);
+    assert!(s.background_ack_open);
+    s.dismiss_background_ack();
+    assert!(!s.background_ack_open);
+    s.select("alice");
+    assert!(
+        s.background_ack_open,
+        "dismiss without ack shows the notice again"
+    );
+    s.ack_background_bots();
+    assert!(!s.background_ack_open);
+    assert!(host_play::background_bots_acked());
+    s.select("bob");
+    assert!(!s.background_ack_open);
+}
+
+#[test]
+fn panel_sees_ack_file_written_outside_session() {
+    let (mut s, iso) = two_live_session("bg-ack-shared");
+    host_play::persist_background_bots_ack().unwrap();
+    s.select("alice");
+    s.select("bob");
+    assert!(!s.background_ack_open);
+    let _iso = iso;
+}
+
+#[test]
+fn background_ack_survives_session_restart() {
+    let (mut s, iso) = two_live_session("bg-ack-restart");
+    s.select("alice");
+    s.select("bob");
+    assert!(s.background_ack_open);
+    s.ack_background_bots();
+    drop(s);
+    let mut s2 = Session::new();
+    s2.skip_slot_spawn = true;
+    s2.play = Some(empty_play());
+    s2.vault = Some(Vault::create(&tmp_vault("bg-ack-restart-2"), "bot").unwrap());
+    s2.vault
+        .as_mut()
+        .unwrap()
+        .upsert(profile("alice", "pw", 42))
+        .unwrap();
+    s2.vault
+        .as_mut()
+        .unwrap()
+        .upsert(profile("bob", "pw", 43))
+        .unwrap();
+    s2.select("alice");
+    s2.select("bob");
+    assert!(
+        !s2.background_ack_open,
+        "reconstructed session must see the ack file"
+    );
+    let _iso = iso;
+}
+
+#[test]
+fn multibox_off_offers_background_ack_when_others_keep_running() {
+    let (mut s, _iso) = two_live_session("bg-ack-off");
+    s.set_multibox(true);
+    s.load("alice");
+    s.load("bob");
+    assert!(!s.background_ack_open);
+    s.set_multibox(false);
+    assert!(!s.multibox);
+    assert!(s.background_ack_open);
+}
+
+#[test]
+fn multibox_on_select_does_not_offer_background_ack() {
+    let (mut s, _iso) = two_live_session("bg-ack-mb");
+    s.set_multibox(true);
+    s.load("alice");
+    s.load("bob");
+    s.select("alice");
+    assert!(!s.background_ack_open);
+}
+
+#[test]
+fn live_persist_off_skips_background_ack() {
+    let (mut s, _iso) = two_live_session("bg-ack-live");
+    s.persist_ui = false;
+    s.select("alice");
+    s.select("bob");
+    assert!(!s.background_ack_open);
+    s.ack_background_bots();
+    assert!(!host_play::background_bots_acked());
+}
+
+#[test]
+fn failed_ack_persist_then_success_clears_only_that_error() {
+    let (mut s, iso) = two_live_session("bg-ack-fail");
+    s.select("alice");
+    s.select("bob");
+    assert!(s.background_ack_open);
+    let parent = host_play::panel_ui_path().parent().unwrap().to_path_buf();
+    let _ = std::fs::remove_dir_all(&parent);
+    std::fs::write(&parent, b"not-a-dir").unwrap();
+    s.error = None;
+    s.ack_background_bots();
+    assert!(
+        s.background_ack_open,
+        "persist failure must keep the acknowledgement visible"
+    );
+    assert!(
+        s.error
+            .as_deref()
+            .is_some_and(|e| e.starts_with("background bots:")),
+        "got {:?}",
+        s.error
+    );
+    assert!(!host_play::background_bots_acked());
+    std::fs::remove_file(&parent).unwrap();
+    s.ack_background_bots();
+    assert!(!s.background_ack_open);
+    assert!(s.error.is_none(), "got {:?}", s.error);
+    assert!(host_play::background_bots_acked());
+    let _iso = iso;
+}
+
+#[test]
+fn successful_ack_preserves_unrelated_error() {
+    let (mut s, _iso) = two_live_session("bg-ack-unrelated");
+    s.select("alice");
+    s.select("bob");
+    s.error = Some("chooser: vault locked".into());
+    s.ack_background_bots();
+    assert!(!s.background_ack_open);
+    assert_eq!(s.error.as_deref(), Some("chooser: vault locked"));
+    assert!(host_play::background_bots_acked());
+}
+
+#[test]
+fn background_ack_closes_when_the_last_other_bot_retires() {
+    let (mut s, _iso) = two_live_session("bg-ack-retire");
+    s.select("alice");
+    s.select("bob");
+    assert!(s.background_ack_open);
+    assert_eq!(s.background_bot_count(), 1);
+    s.select("alice");
+    let mut play = empty_play();
+    play.attach_arm("alice", host_play::SlotArm::new(1, false));
+    s.play = Some(play);
+    s.pump_status();
+    assert_eq!(s.background_bot_count(), 0);
+    assert!(
+        !s.background_ack_open,
+        "zero live others must dismiss the acknowledgement"
+    );
+}
+
+#[test]
+fn skip_lock_session_does_not_create_instance_lock() {
+    let iso = script::IsolatedEnv::enter("session-skip-lock");
+    let permit =
+        match host_play::resolve_instance_permit(host_play::InstanceKind::Panel, true).unwrap() {
+            host_play::InstancePermitOutcome::Ready(p) => p,
+            host_play::InstancePermitOutcome::NeedsConfirm(_) => panic!("skip must be ready"),
+        };
+    let _s = Session::with_instance(permit);
+    assert!(!host_play::instance_lock_path().exists());
+    let _iso = iso;
+}
+
+#[test]
+fn locked_session_releases_the_instance_lock_on_drop() {
+    let iso = script::IsolatedEnv::enter("session-hold-lock");
+    let permit =
+        match host_play::resolve_instance_permit(host_play::InstanceKind::Panel, false).unwrap() {
+            host_play::InstancePermitOutcome::Ready(p) => p,
+            host_play::InstancePermitOutcome::NeedsConfirm(h) => panic!("expected acquire {h:?}"),
+        };
+    let session = Session::with_instance(permit);
+    drop(session);
+    match host_play::try_acquire_instance_lock(host_play::InstanceKind::Tui).unwrap() {
+        host_play::InstanceLockResult::Acquired(_) => {}
+        host_play::InstanceLockResult::Contested(h) => panic!("session drop left the lock: {h:?}"),
+    }
+    let _iso = iso;
+}
+
+#[test]
+fn background_count_ignores_terminal_status_rows() {
+    let iso = script::IsolatedEnv::enter("bg-ack-terminal");
+    let mut s = Session::new();
+    s.skip_slot_spawn = true;
+    let mut play = empty_play();
+    play.attach_arm("alice", host_play::SlotArm::new(1, false));
+    play.statuses.lock().unwrap().extend([
+        SlotStatus {
+            username: "alice".into(),
+            ingame: true,
+            connected: true,
+            ..SlotStatus::default()
+        },
+        SlotStatus {
+            username: "bob".into(),
+            ingame: false,
+            worker_terminal: Some(host_play::WorkerTerminal::Failed),
+            ..SlotStatus::default()
+        },
+    ]);
+    s.play = Some(play);
+    s.focus.lock().unwrap().focused = Some("alice".into());
+    assert_eq!(s.background_bot_count(), 0);
+    let _iso = iso;
+}

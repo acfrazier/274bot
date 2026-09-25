@@ -14,7 +14,7 @@ use ratatui::widgets::{Block, Borders, Paragraph, Widget, Wrap};
 use ratatui::Frame;
 
 use api::snapshot::{ChatLineView, ChatOptionView, WorldTile};
-use host_play::SlotStatus;
+use host_play::{ResourceView, SlotStatus};
 use nav::router::{FindOptions, Route};
 use nav::tile::Tile;
 use nav::world::NavWorld;
@@ -92,6 +92,8 @@ pub enum AppAction {
     ScriptUseCatalog,
     /// Load the JS bot at `path` into the library and select it.
     ScriptLoad(std::path::PathBuf),
+    /// Persist the background-bots notice ("Got it, don't show again").
+    AckBackground,
     /// Nothing to dispatch.
     None,
 }
@@ -254,6 +256,10 @@ pub struct TuiApp {
     pub quit: bool,
     /// The last walk/settings error shown in the strip.
     pub error: Option<String>,
+    /// Process resource snapshot (same sampler as the panel resource card).
+    pub resources: ResourceView,
+    /// One-line background-bots notice until the operator acks it.
+    pub background_notice: Option<String>,
     /// Last draw rects for click hit-testing.
     pub chat_area: Rect,
     pub script_area: Rect,
@@ -299,6 +305,8 @@ impl TuiApp {
             params_state: ParamsState::default(),
             quit: false,
             error: None,
+            resources: ResourceView::default(),
+            background_notice: None,
             chat_area: Rect::default(),
             script_area: Rect::default(),
         }
@@ -500,6 +508,12 @@ impl TuiApp {
             if let Some((x, z, level)) = wasd_target((here.x, here.z, here.level), key.code) {
                 return AppAction::WalkTile(Tile { x, z, level });
             }
+        }
+        if key.code == KeyCode::Esc
+            && self.background_notice.is_some()
+            && self.map.selection.is_none()
+        {
+            return AppAction::AckBackground;
         }
         self.map_on_key(key)
     }
@@ -1095,7 +1109,9 @@ impl TuiApp {
         } else {
             "highmem"
         };
-        let pane = StatusPane::new(self.focused_status(), &walk, mem);
+        let pane = StatusPane::new(self.focused_status(), &walk, mem)
+            .resources(&self.resources)
+            .notice(self.background_notice.as_deref());
         frame.render_widget(pane, area);
     }
 

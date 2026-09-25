@@ -18,6 +18,7 @@ vault = { path = "../vault" }
 
 [dev-dependencies]
 host = { path = "../host" }
+host-play = { path = "../host-play", features = ["test-support"] }
 
 [[bin]]
 name = "tui-play"

@@ -54,10 +54,12 @@ pub use host::Host;
 pub use host::{RandomClaim, RandomStatus};
 #[cfg(test)]
 use parking_lot::Mutex as QueueMutex;
+mod instance_lock;
 mod play_bootstrap;
 mod play_login;
 mod play_status;
 mod play_wires;
+mod resource_view;
 mod rss;
 mod scatter;
 mod script_runtime;
@@ -75,6 +77,11 @@ use api::snapshot::{GameSnapshot, WorldTile};
 #[cfg(test)]
 use host::{wake_channel, DetectedRandom, Pump};
 use host::{FrameBuf, SlotInput, SlotWake};
+pub use instance_lock::{
+    instance_conflict_message, instance_lock_path, resolve_instance_permit,
+    try_acquire_instance_lock, InstanceHolder, InstanceKind, InstanceLock, InstanceLockResult,
+    InstancePermit, InstancePermitOutcome,
+};
 #[cfg(test)]
 use nav::bank_fetch::BankStep;
 #[cfg(test)]
@@ -123,6 +130,12 @@ pub use play_status::{
 #[cfg(test)]
 use play_wires::dispatch_wires;
 pub use play_wires::WireCmd;
+pub use resource_view::{
+    background_ack_text, background_bot_count, background_bots_ack_error, background_bots_acked,
+    clear_background_bots_ack_error, cpu_from_delta, format_background, format_bots, format_rss,
+    format_rss_caption, metric_text, panel_ui_path, persist_background_bots_ack,
+    traffic_from_delta, traffic_from_samples, LiveSlot, Metric, ResourceSampler, ResourceView,
+};
 pub use rss::{count_tcp_to, current_resident_bytes, parse_lsof_established, sample_process};
 pub use scatter::{scatter_tile_for, tele_args};
 use script_runtime::*;

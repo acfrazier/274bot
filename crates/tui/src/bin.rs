@@ -30,10 +30,12 @@ use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
 use host_play::{
-    arm_walk_on, live_vault_passphrase_for, mint_live_entries_for_target, mint_live_names,
-    open_vault, parse_profile_args, player_here_tile, profile_password_for, run_with_io,
-    run_with_template, step_walk_arm_bank_fetch, walk_arm_bank_fetch_freezes_follow, Play,
-    PlayOptions, ProfileOptions, ServerProfile, SharedClientTemplate, SlotArm, WalkArm, WireCmd,
+    arm_walk_on, background_ack_text, background_bots_ack_error, background_bots_acked,
+    clear_background_bots_ack_error, live_vault_passphrase_for, mint_live_entries_for_target,
+    mint_live_names, open_vault, parse_profile_args, persist_background_bots_ack, player_here_tile,
+    profile_password_for, run_with_io, run_with_template, step_walk_arm_bank_fetch,
+    walk_arm_bank_fetch_freezes_follow, Play, PlayOptions, ProfileOptions, ResourceSampler,
+    ResourceView, ServerProfile, SharedClientTemplate, SlotArm, WalkArm, WireCmd,
 };
 use nav::tile::Tile;
 use nav::traveller::{TravelOptions, TravelOutcome};
@@ -488,6 +490,12 @@ pub struct TuiSession {
     /// returns before V8 setup, so the card's load diagnostic is recorded
     /// or cleared when [`TuiSession::settle_script_starts`] observes it.
     pending_starts: HashMap<String, script::JsCard>,
+    resource_sampler: ResourceSampler,
+    persist_ui: bool,
+    background_bots_acked: bool,
+    ack_checked_at: Option<Instant>,
+    notice_sig: Option<(usize, ResourceView)>,
+    _instance: host_play::InstancePermit,
 }
 
 #[cfg(test)]
@@ -496,11 +504,20 @@ impl TuiSession {
     fn inject_play(&mut self, play: Play) {
         self.play = Some(play);
     }
+
+    fn expire_ack_cache(&mut self) {
+        self.ack_checked_at = None;
+    }
 }
 
 impl TuiSession {
     /// Empty session over the default engine options.
+    #[cfg(test)]
     fn new(options: PlayOptions) -> Self {
+        Self::with_instance(options, host_play::InstancePermit::SkipLock)
+    }
+
+    fn with_instance(options: PlayOptions, _instance: host_play::InstancePermit) -> Self {
         #[cfg(test)]
         script::IsolatedEnv::ensure_thread();
         let mut js = script::JsLibrary::new(script::default_js_store());
@@ -544,18 +561,27 @@ impl TuiSession {
             script_settings_inject: None,
             script_load_last_dir: None,
             pending_starts: HashMap::new(),
+            resource_sampler: ResourceSampler::default(),
+            persist_ui: true,
+            background_bots_acked: background_bots_acked(),
+            ack_checked_at: Some(Instant::now()),
+            notice_sig: None,
+            _instance,
         }
     }
 
-    fn new_bound(template: Arc<SharedClientTemplate>) -> Self {
+    fn new_bound(template: Arc<SharedClientTemplate>, permit: host_play::InstancePermit) -> Self {
         let profile = Arc::clone(template.profile());
-        let mut session = Self::new(PlayOptions {
-            host: profile.client().game_host().to_string(),
-            port: profile.client().game_port(),
-            cache_dir: profile.client().cache_dir().display().to_string(),
-            lowmem: true,
-            mainland: false,
-        });
+        let mut session = Self::with_instance(
+            PlayOptions {
+                host: profile.client().game_host().to_string(),
+                port: profile.client().game_port(),
+                cache_dir: profile.client().cache_dir().display().to_string(),
+                lowmem: true,
+                mainland: false,
+            },
+            permit,
+        );
         session.template = Some(template);
         session.server_profile = Some(profile);
         session
@@ -831,6 +857,7 @@ impl TuiSession {
 
     /// `--live script_*` boot: minted ephemeral vault + spawn + runner.
     fn live_prepare_script(&mut self, scenario: scenario::Scenario) -> Result<(), String> {
+        self.persist_ui = false;
         let name = scenario.name.to_string();
         let start_script = scenario.settings.start_script;
         let start_file = scenario.settings.start_file;
@@ -1379,7 +1406,8 @@ impl TuiSession {
         // Start/Stop return before the isolate is up or reaped. A slot that
         // is offline or queued for login has no observe of its own, so the
         // pump resolves every slot, then commits the Starts that settled.
-        if let Some(play) = &self.play {
+        if let Some(play) = self.play.as_mut() {
+            play.pump_worker_reaps();
             play.pump_script_lifecycles();
         }
         self.settle_script_starts(app);
@@ -1395,6 +1423,21 @@ impl TuiSession {
         }
         app.names = names;
         app.statuses = statuses;
+        let now = Instant::now();
+        let sampled = self.resource_sampler.due(now);
+        if sampled {
+            let focused = app.focused_name();
+            match self.play.as_ref() {
+                Some(play) => self
+                    .resource_sampler
+                    .sample_play(now, play, focused.as_deref()),
+                None => self
+                    .resource_sampler
+                    .sample(now, focused.as_deref(), std::iter::empty()),
+            }
+            app.resources.clone_from(self.resource_sampler.view());
+        }
+        self.refresh_background_notice(app, now);
         // The script pane's Browse picker lists library cards with registry fields.
         app.script_cards = self.js.cards().iter().map(BrowseCard::from).collect();
         let present = categories_present(&app.script_cards);
@@ -1605,6 +1648,61 @@ impl TuiSession {
         let statuses = self.play.as_ref()?.statuses();
         host_play::owned_terminal_startup_error(&statuses, &owned)
     }
+
+    fn ack_background_bots(&mut self, app: &mut TuiApp) {
+        if self.persist_ui {
+            match persist_background_bots_ack() {
+                Ok(()) => {
+                    self.background_bots_acked = true;
+                    self.notice_sig = None;
+                    app.background_notice = None;
+                    clear_background_bots_ack_error(&mut app.error);
+                }
+                Err(e) => app.error = Some(background_bots_ack_error(&e)),
+            }
+        } else {
+            self.notice_sig = None;
+            app.background_notice = None;
+        }
+    }
+
+    fn refresh_ack_cache(&mut self, now: Instant) {
+        if self
+            .ack_checked_at
+            .is_none_or(|t| now.duration_since(t) >= Duration::from_secs(1))
+        {
+            self.background_bots_acked = background_bots_acked();
+            self.ack_checked_at = Some(now);
+        }
+    }
+
+    fn refresh_background_notice(&mut self, app: &mut TuiApp, now: Instant) {
+        if !self.persist_ui {
+            self.notice_sig = None;
+            app.background_notice = None;
+            return;
+        }
+        self.refresh_ack_cache(now);
+        let focused = app.focused_name();
+        let background = self
+            .play
+            .as_ref()
+            .map(|play| play.background_bot_count(focused.as_deref()))
+            .unwrap_or(0);
+        if self.background_bots_acked || background == 0 {
+            self.notice_sig = None;
+            app.background_notice = None;
+            return;
+        }
+        let view = self.resource_sampler.view();
+        match &self.notice_sig {
+            Some((n, v)) if *n == background && v == view => {}
+            _ => {
+                app.background_notice = Some(background_ack_text(background, view));
+                self.notice_sig = Some((background, view.clone()));
+            }
+        }
+    }
 }
 
 /// One machine-readable `--live` proof line. PASS stays on stdout for
@@ -1680,8 +1778,44 @@ fn chat_data_from(s: &api::snapshot::GameSnapshot) -> ChatData {
     }
 }
 
+fn prompt_instance_conflict(holder: &host_play::InstanceHolder) -> bool {
+    eprintln!("{}", host_play::instance_conflict_message(holder));
+    eprint!("Exit (default) or Continue anyway [E/c]: ");
+    let _ = std::io::Write::flush(&mut std::io::stderr());
+    let mut line = String::new();
+    let _ = std::io::stdin().read_line(&mut line);
+    matches!(
+        line.trim(),
+        "c" | "C" | "continue" | "Continue" | "Continue anyway"
+    )
+}
+
 /// Run the interactive (or `--live`) TUI: unlock, spawn, event loop.
 fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
+    let memory = {
+        #[cfg(feature = "memory-profile")]
+        {
+            host_play::memory::Config::from_env()
+                .ok()
+                .flatten()
+                .is_some()
+        }
+        #[cfg(not(feature = "memory-profile"))]
+        {
+            false
+        }
+    };
+    let skip_lock = !matches!(mode, RunMode::Interactive) || memory;
+    let permit = match host_play::resolve_instance_permit(host_play::InstanceKind::Tui, skip_lock) {
+        Ok(host_play::InstancePermitOutcome::Ready(permit)) => permit,
+        Ok(host_play::InstancePermitOutcome::NeedsConfirm(holder)) => {
+            if !prompt_instance_conflict(&holder) {
+                return Ok(0);
+            }
+            host_play::InstancePermit::skip()
+        }
+        Err(e) => return Err(format!("instance lock: {e}")),
+    };
     let selection = args.profile.resolve(None)?;
     if let Some(number) = args.world {
         let worlds = selection
@@ -1693,10 +1827,8 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
             ));
         }
     }
-    // Runtime startup must prepare the selected cache before constructing the
-    // shared template; fixture tests intentionally use bind/load below.
     let template = selection.prepare_template()?;
-    let mut session = TuiSession::new_bound(template);
+    let mut session = TuiSession::new_bound(template, permit);
     session.auto_world = args.world;
     session
         .server_profile
@@ -1707,6 +1839,7 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
     #[cfg(feature = "memory-profile")]
     if let Some(config) = host_play::memory::Config::from_env()? {
         host_play::memory::require_live_benchmark()?;
+        session.persist_ui = false;
         // Vault/card first; unlock constructs Play once (single load_pack).
         let run = host_play::memory::Run::prepare_unseeded(config, "tui")?;
         session.options.mainland = true;
@@ -1983,6 +2116,7 @@ fn dispatch(session: &mut TuiSession, app: &mut TuiApp, action: AppAction) {
         }
         AppAction::ScriptLoad(path) => session.script_load(app, &path),
         AppAction::ScriptParams => app.open_script_params(&session.script_settings),
+        AppAction::AckBackground => session.ack_background_bots(app),
         AppAction::None => {}
     }
 }
