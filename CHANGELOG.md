@@ -3,6 +3,62 @@
 All notable public changes to 274bot. Host workspace crate versions are `0.1.8` and
 `publish = false` (not on crates.io). Git tags are `0.1.0`, `0.1.1`, …
 
+## [0.1.8.1] — 2026-09-24 — Alpha 3 patch
+
+A patch on 0.1.8: a public-289 crash, both public worlds, the login queue and
+three rendering bugs. Crate versions stay `0.1.8`; the tag and packages are
+`0.1.8.1`.
+
+### Crash
+
+- Fixed an abort on public-289 when a queued account retried after its login
+  cooldown had already expired (a negative duration in the login queue).
+
+### Public worlds
+
+- Public 289 world endpoints come from editable `~/.274bot/worlds.json`
+  (w1/w2 defaults); account settings can pin a world or choose auto, and
+  panel edits apply to an already-running slot at its next login handshake.
+- Auto accounts move to the next world on a full-world login response, with
+  a pause after all worlds report full. Panel and TUI show the world used by
+  the current connection; `tui-play --world N` sets the default for auto
+  accounts. The panel rail marks each member with its world number.
+- Public login fetches the world's RSA modulus at runtime with a baked-key
+  fallback and refreshes after a wrong-key response. The shared cache tries
+  the next listed asset world if the first cannot be reached.
+- Login response 21 (just left another world) shows the server's transfer
+  countdown and then logs in again on the same world, instead of failing as
+  an unexpected response.
+
+### Login queue
+
+- The queue is first come, first served in the order bots are ready to log
+  in, with the focused bot moved to the front. Only a bot that is actually
+  waiting holds a place, so an online or still-loading bot can no longer
+  block everyone behind it (Login all could previously stall with
+  "1 of n, 0 in front"). A bot that stops or crashes gives up its place.
+- Each bot draws its own queue card ("k of n") on its own view; it appears
+  only while that bot is held in the queue and clears on login.
+- Every login attempt counts toward the server's per-address and per-account
+  limits, a server "too many attempts" reply pauses all bots together, and
+  retry waits are not cut short by clicks, focus changes or Login all.
+- Turning auto-login off and on keeps an explicit Log in.
+
+### Panel
+
+- Rail and grid labels name the login step (starting, queued k/n, logging in,
+  loading) instead of "logged out" until the bot is in game.
+- The game view is centred horizontally in its pane.
+- The script load-failure list is collapsed by default.
+
+### Rendering
+
+- Players and NPCs behind a wall are no longer drawn through it (Fishing
+  Guild bank parapet, CPU and GPU): the scene painter completes each tile's
+  back pass like the Java client.
+- Walls sharing lighting with their neighbours no longer turn black when a
+  ground item or a wall/floor decoration on the same tile changes or animates.
+
 ## [0.1.8] — 2026-09-24 — Alpha 3
 
 JS API v1 compatibility with the frozen rs2b0t catalog on revision 289, and the

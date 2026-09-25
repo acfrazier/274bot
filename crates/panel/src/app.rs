@@ -16,7 +16,7 @@ use crate::chrome::{
 use crate::focus::{draw_for_slot, should_capture, should_draw};
 use crate::game_view::GameView;
 use crate::grid::grid_cells;
-use crate::overlay::{draw_focused_queue_card, PathOverlay};
+use crate::overlay::{draw_queue_card_for, PathOverlay};
 use crate::paint::PaintOverlay;
 use crate::picker;
 use crate::queue_card::queue_k_of_n;
@@ -1224,8 +1224,9 @@ fn game_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
         }
         // Queue-card overlay: the armed route's remaining tiles are
         // painted by the client's 3D renderer and on the pack map, so the
-        // Image only carries the focused slot's queue card.
-        state.overlay.frame(ui, &state.session, min, size);
+        // Image only carries the displayed slot's own queue card.
+        let queue = state.session.queue_for(&name);
+        state.overlay.frame(ui, queue, min, size);
         // Script-paint overlay: the focused slot's paint renders in an
         // ImGui window over the chatbox rect — never on the game texture.
         let statuses = state.session.statuses();
@@ -1310,7 +1311,7 @@ fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
             &state.session.ui.rail_preview,
         );
         let (cap_select, cap_remove, cap_fold) =
-            rail_cap(ui, name, light, focused.as_deref(), cw, preview);
+            rail_cap(ui, name, status, light, focused.as_deref(), cw, preview);
         let mut body_clicked = false;
         if preview {
             let after = ui.cursor_pos();
@@ -1322,9 +1323,10 @@ fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
             ]);
             let draw = draw_for_slot(&state.session.focus.lock().unwrap(), name);
             body_clicked = cell_body(ui, gpu, state, name, size, draw);
+            let image_min = ui.item_rect_min();
             if is_focused && capture && ui.is_item_hovered() {
                 let mouse = ui.io().mouse_pos();
-                let min = ui.item_rect_min();
+                let min = image_min;
                 stream_capture(
                     &state.session.capture_tx,
                     mouse[0] - min[0],
@@ -1338,8 +1340,8 @@ fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
                     &capture_keys(ui),
                 );
             }
+            draw_queue_card_for(ui, state.session.queue_for(name), image_min);
             if is_focused {
-                draw_focused_queue_card(ui, &state.session, ui.item_rect_min());
                 overlay_script_paint(
                     ui,
                     gpu,
@@ -1509,20 +1511,29 @@ pub(crate) fn slot_startup_banner_line(status: &host_play::SlotStatus) -> Option
                 "Waiting to connect".to_string()
             }
         }
-        host_play::StartupPhase::Connecting => "Logging in".to_string(),
-        host_play::StartupPhase::LoadingScene => "Loading first scene".to_string(),
+        host_play::StartupPhase::Connecting => {
+            if status.startup_progress_message.is_empty() {
+                "Logging in".to_string()
+            } else {
+                status.startup_progress_message.clone()
+            }
+        }
+        host_play::StartupPhase::LoadingScene => "Loading scene".to_string(),
         host_play::StartupPhase::Ready | host_play::StartupPhase::Error => String::new(),
     };
     if message.is_empty() {
         None
     } else {
-        let show_elapsed = matches!(
-            status.startup_phase,
+        // A host-published Connecting message is the server's own countdown
+        // (response 21 transfer), so a rising elapsed timer beside it would
+        // contradict it.
+        let show_elapsed = match status.startup_phase {
+            host_play::StartupPhase::Connecting => status.startup_progress_message.is_empty(),
             host_play::StartupPhase::Preparing
-                | host_play::StartupPhase::Queueing
-                | host_play::StartupPhase::Connecting
-                | host_play::StartupPhase::LoadingScene
-        );
+            | host_play::StartupPhase::Queueing
+            | host_play::StartupPhase::LoadingScene => true,
+            host_play::StartupPhase::Ready | host_play::StartupPhase::Error => false,
+        };
         Some((message, show_elapsed))
     }
 }
@@ -1793,7 +1804,10 @@ fn login_logout_row(ui: &Ui, session: &mut Session) {
     let vault_open = session.vault.is_some();
     let focused = session.focused_name();
     let can_login = vault_open && focused.is_some();
-    let focused_queued = session.focused_queue().is_some();
+    let focused_queued = focused
+        .as_deref()
+        .and_then(|name| session.queue_for(name))
+        .is_some();
     let can_logout = logout_enabled(
         vault_open,
         focused.is_some(),
@@ -2361,16 +2375,25 @@ fn browse_window_body(ui: &Ui, session: &mut Session) {
     }
     let named_failures = session.js.named_failure_output();
     if !named_failures.is_empty() {
-        ui.text_colored(
-            ERROR,
-            format!("{} failed", session.js.load_failures().len()),
+        // Collapsed by default: the list is long (dim catalog cards are
+        // expected misses) and pushes the script browser off screen.
+        let red = ui.push_style_color(StyleColor::Text, ERROR);
+        let open = ui.collapsing_header(
+            format!(
+                "{} failed###script-failures",
+                session.js.load_failures().len()
+            ),
+            TreeNodeFlags::NONE,
         );
-        if ui.button("Copy failures") {
-            if let Ok(mut clip) = arboard::Clipboard::new() {
-                let _ = clip.set_text(&named_failures);
+        red.pop();
+        if open {
+            if ui.button("Copy failures") {
+                if let Ok(mut clip) = arboard::Clipboard::new() {
+                    let _ = clip.set_text(&named_failures);
+                }
             }
+            ui.text_wrapped(&named_failures);
         }
-        ui.text_wrapped(&named_failures);
         ui.spacing();
     }
     ui.child_window("##script-list")
@@ -3198,6 +3221,9 @@ fn status_section(ui: &Ui, session: &mut Session) {
     };
     kv_row(ui, "state", &state);
     kv_row(ui, "player", player);
+    if let Some(world) = s.world {
+        kv_row(ui, "world", &format!("w{world}"));
+    }
     kv_row(ui, "tile", &format!("{} {}", s.tile_x, s.tile_z));
     kv_row(ui, "walk", &session.walk_status_text());
     let queue = queue_k_of_n(s.queue_position, s.queue_total).unwrap_or_else(|| "—".into());
@@ -3492,6 +3518,37 @@ fn slot_capture_section(ui: &Ui, session: &mut Session) {
             session.set_auto_login(&name, auto_cur);
         }
     }
+    if let Some(worlds) = session
+        .server_profile
+        .as_ref()
+        .and_then(|p| p.public_worlds())
+    {
+        let preview = session
+            .cred_settings
+            .world
+            .map_or_else(|| "auto".to_string(), |number| format!("w{number}"));
+        ui.text_disabled("world (next slot start)");
+        ui.set_next_item_width(-1.0);
+        if let Some(_open) = ui.begin_combo("##account-world", &preview) {
+            if ui
+                .selectable_config("auto")
+                .selected(session.cred_settings.world.is_none())
+                .build()
+            {
+                session.cred_settings.world = None;
+            }
+            for world in &worlds.worlds {
+                let label = format!("w{}", world.number);
+                if ui
+                    .selectable_config(&label)
+                    .selected(session.cred_settings.world == Some(world.number))
+                    .build()
+                {
+                    session.cred_settings.world = Some(world.number);
+                }
+            }
+        }
+    }
     ui.text_wrapped("this profile; handshake on spawn unless latched out");
 }
 
@@ -3684,13 +3741,13 @@ fn render_all_warn_window(ui: &Ui, session: &mut Session) {
     }
 }
 
-/// One tile per wall member, in wall order: cap (traffic-light dot,
-/// name + brief, ✗) then a `TILE_W`×`TILE_H` body. The body blits the
-/// slot's `FrameBuf` when `draw_for_slot` says this member paints, else
-/// the renderer-off placeholder. While `only_render_selected` is on (the
-/// safe default) the strip is collapsed: cap only, no body. Clicking the
-/// name or the body focuses the member; the ✗ (a sibling button, never
-/// part of the name click) removes it.
+/// One tile per wall member, in wall order: cap (world number or local
+/// traffic-light dot, name + brief, ✗) then a `TILE_W`×`TILE_H` body. The
+/// body blits the slot's `FrameBuf` when `draw_for_slot` says this member
+/// paints; otherwise it shows the renderer-off placeholder. While
+/// `only_render_selected` is on (the safe default) the strip is collapsed:
+/// cap only, no body. Clicking the name or body focuses the member; the ✗
+/// (a sibling button, never part of the name click) removes it.
 fn rail_tiles(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
     ui.spacing();
     let members = state.session.wall.members.clone();
@@ -3728,7 +3785,7 @@ fn rail_tiles(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
             &state.session.ui.rail_preview,
         );
         let (cap_select, cap_remove, cap_fold) =
-            rail_cap(ui, name, light, focused.as_deref(), avail, preview);
+            rail_cap(ui, name, status, light, focused.as_deref(), avail, preview);
         let body_clicked = if preview {
             rail_body(ui, gpu, state, name, draw)
         } else {
@@ -3747,13 +3804,14 @@ fn rail_tiles(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
     }
 }
 
-/// Cap row: the traffic-light dot, the member's name plus brief status
-/// (click selects), and a small red ✗ (rail remove: logout arm then
-/// `stop_slot`, never `vault`). `width` is the strip the row must fit
-/// (rail avail or grid cell width). Returns `(selected, removed)`.
+/// Cap row: the active public-world number (or a traffic-light dot for local
+/// profiles), the member's name plus brief status (click selects), and a small
+/// red ✗ (rail remove: logout arm then `stop_slot`, never `vault`). `width` is
+/// the strip the row must fit (rail avail or grid cell width).
 fn rail_cap(
     ui: &Ui,
     name: &str,
+    status: Option<&host_play::SlotStatus>,
     light: Light,
     focused: Option<&str>,
     width: f32,
@@ -3761,12 +3819,19 @@ fn rail_cap(
 ) -> (bool, bool, bool) {
     const BTN: f32 = 28.0;
     const DOT_W: f32 = 18.0;
-    ui.text_colored(light.rgb(), STATUS_GLYPH);
-    gap_line(ui);
+    let marker_x = ui.cursor_pos_x();
+    match status.and_then(|s| s.world) {
+        Some(number) => {
+            world_marker(ui, number, light, DOT_W);
+            ui.set_item_tooltip(format!("w{number} · {}", light.brief()));
+        }
+        None => ui.text_colored(light.rgb(), STATUS_GLYPH),
+    }
+    ui.same_line_with_pos(marker_x + DOT_W + BUTTON_GAP);
     let selected = focused == Some(name);
     let name_w = (width - BTN * 2.0 - DOT_W - BUTTON_GAP * 3.0).max(10.0);
     let clicked = ui
-        .selectable_config(cap_title(name, light))
+        .selectable_config(cap_title(name, light, status))
         .selected(selected)
         .size([name_w, 0.0])
         .build();
@@ -3784,6 +3849,36 @@ fn rail_cap(
     ui.set_item_tooltip("drop from the wall — does not delete the vault profile");
     red.pop();
     (clicked, removed, folded)
+}
+
+/// Public world marker: a disc in the status colour, centred in the
+/// `width`-wide status cell and on the text line, with the world number
+/// knocked out in the background colour. Drawn as geometry so the digit is
+/// the rail's own font and the disc size does not depend on glyph metrics.
+/// Occupies one text line, like the status glyph it replaces.
+fn world_marker(ui: &Ui, number: u16, light: Light, width: f32) {
+    let line_h = ui.text_line_height();
+    let [x, y] = ui.cursor_screen_pos();
+    let center = [x + width * 0.5, y + line_h * 0.5];
+    let radius = (line_h * 0.5 + 1.5).min(width * 0.5);
+    let label = number.to_string();
+    let [text_w, text_h] =
+        ui.current_font()
+            .calc_text_size(ui.current_font_size(), f32::MAX, 0.0, &label);
+    let dl = ui.get_window_draw_list();
+    dl.add_circle(center, radius, light.rgb())
+        .filled(true)
+        .build();
+    dl.add_text(
+        [
+            (center[0] - text_w * 0.5).round(),
+            (center[1] - text_h * 0.5).round(),
+        ],
+        crate::theme::BG,
+        &label,
+    );
+    drop(dl);
+    ui.dummy([width, line_h]);
 }
 
 /// Tile body: the member's `FrameBuf` blitted into a `size` box via a

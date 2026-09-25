@@ -17,7 +17,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
 
-/// Permit outcome of [`LoginQueue::request_permit`].
+/// Permit outcome of [`LoginQueue::poll_owner`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Permit {
     /// Login handshake may start now.
@@ -45,22 +45,30 @@ pub struct QueuePos {
 }
 
 /// Login FIFO with focused-slot priority when that slot requests a permit.
-/// Production profiles are expected to have unique UIDs because FIFO
-/// membership is keyed by UID, not slot. If duplicate UIDs are configured,
-/// their in-flight reservations remain conservative fungible counts, but
-/// they do not gain distinct FIFO identities.
+///
+/// FIFO identity is a slot-owner token, not a device UID: two configured
+/// accounts may share the same UID and must still own two independently
+/// pollable places. Rate accounting remains keyed by UID because that is the
+/// server's device limit.
 #[derive(Debug)]
 pub struct LoginQueue {
     spacing: Duration,
     ip_cap: usize,
     ip_window: Duration,
-    queue: VecDeque<i32>,
-    preferred: Option<i32>,
+    queue: VecDeque<QueueEntry>,
+    preferred: Option<u64>,
     last_grant: Option<Instant>,
     ip_count: usize,
     ip_pending: usize,
     ip_last: Option<Instant>,
+    throttle_until: Option<Instant>,
     by_uid: HashMap<i32, UidState>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct QueueEntry {
+    owner: u64,
+    uid: i32,
 }
 
 #[derive(Debug)]
@@ -76,6 +84,7 @@ impl LoginQueue {
     /// pending reservations; a full `ip_window` starts at the latest login
     /// return only after no reservation remains in flight.
     pub fn new(spacing: Duration, ip_cap: usize, ip_window: Duration) -> Self {
+        assert!(ip_cap > 0, "ip_cap must be positive");
         Self {
             spacing,
             ip_cap,
@@ -86,53 +95,81 @@ impl LoginQueue {
             ip_count: 0,
             ip_pending: 0,
             ip_last: None,
+            throttle_until: None,
             by_uid: HashMap::new(),
         }
     }
 
-    /// FIFO permit request: only the head of the queue can be granted, and
-    /// only when spacing, the per-IP window, and the per-uid rule all pass.
-    /// A blocked caller retries after the returned wait.
-    pub fn request_permit(&mut self, uid: i32, now: Instant) -> Permit {
-        self.prune_uid(now);
-        if !self.queue.contains(&uid) {
-            if self.preferred == Some(uid) {
-                self.queue.push_front(uid);
-            } else {
-                self.queue.push_back(uid);
-            }
+    /// Enter one slot owner into the FIFO exactly once at its Queueing
+    /// transition. Worker arrival is FIFO; the currently preferred owner is
+    /// the sole exception and enters at the front.
+    pub fn enqueue_owner(&mut self, owner: u64, uid: i32) {
+        if self.queue.iter().any(|entry| entry.owner == owner) {
+            return;
         }
-        if self.queue.front() != Some(&uid) {
+        let entry = QueueEntry { owner, uid };
+        if self.preferred == Some(owner) {
+            self.queue.push_front(entry);
+        } else {
+            self.queue.push_back(entry);
+        }
+    }
+
+    /// Poll a slot-owner place already entered through
+    /// [`Self::enqueue_owner`].
+    pub fn poll_owner(&mut self, owner: u64, uid: i32, now: Instant) -> Permit {
+        self.prune_uid(now);
+        if self.queue.front().map(|entry| entry.owner) != Some(owner) {
             return Permit::Wait(QUEUE_POLL.max(self.spacing));
         }
+        debug_assert_eq!(self.queue.front().map(|entry| entry.uid), Some(uid));
         match self.blocked_for(uid, now) {
             Some(wait) => Permit::Wait(wait),
             None => {
-                self.grant(uid, now);
+                self.grant(owner, uid, now);
                 Permit::Grant
             }
         }
     }
 
-    /// Where `uid` sits in the queue. `position` is 1-based; a granted uid
-    /// is popped and no longer present.
-    pub fn status(&self, uid: i32) -> Option<QueuePos> {
-        let i = self.queue.iter().position(|&u| u == uid)?;
+    /// Where a slot owner sits in the queue. `position` is 1-based; a
+    /// granted owner is popped and no longer present.
+    pub fn status_owner(&self, owner: u64) -> Option<QueuePos> {
+        let i = self.queue.iter().position(|entry| entry.owner == owner)?;
         Some(QueuePos {
             position: (i as u32) + 1,
             total: self.queue.len() as u32,
         })
     }
 
-    /// Drop `uid` from the queue (rail ✕ while queued, a withdrawn login
-    /// intent, or a stale reservation from `Play::prefer_login`). Returns
-    /// whether a place was really held: the caller clears the published
-    /// `k of n` only on `true`, so a slot that never queued does not blank
-    /// another member's card. No-op for an absent uid.
-    pub fn leave(&mut self, uid: i32) -> bool {
+    /// Drop one slot owner's place. Other owners with the same device UID
+    /// remain queued.
+    pub fn leave_owner(&mut self, owner: u64) -> bool {
         let before = self.queue.len();
-        self.queue.retain(|&u| u != uid);
+        self.queue.retain(|entry| entry.owner != owner);
         self.queue.len() != before
+    }
+
+    /// Give one slot owner focused priority without manufacturing membership.
+    pub fn prefer_owner(&mut self, owner: u64) {
+        self.set_preferred_owner(Some(owner));
+    }
+
+    /// Remember the focused slot owner for subsequent handshakes.
+    pub fn set_preferred_owner(&mut self, owner: Option<u64>) {
+        self.preferred = owner;
+        if let Some(owner) = owner {
+            if self.queue.iter().any(|entry| entry.owner == owner) {
+                let entry = self
+                    .queue
+                    .iter()
+                    .find(|entry| entry.owner == owner)
+                    .copied()
+                    .expect("queued owner exists");
+                self.queue.retain(|entry| entry.owner != owner);
+                self.queue.push_front(entry);
+            }
+        }
     }
 
     /// Record completion of one granted `uid` login call. Success and error
@@ -183,30 +220,19 @@ impl LoginQueue {
         true
     }
 
-    /// Put `uid` at the front of the FIFO (TV head logs in first). If it
-    /// was already queued, it is moved; if not, it is inserted. Priority
-    /// persists for later requests until focus changes.
-    pub fn prefer(&mut self, uid: i32) {
-        self.preferred = Some(uid);
-        self.queue.retain(|&u| u != uid);
-        self.queue.push_front(uid);
-    }
-
-    /// Remember the focused uid for subsequent handshakes. An online or
-    /// unarmed slot must not reserve a FIFO entry and block other logins.
-    pub fn set_preferred(&mut self, uid: Option<i32>) {
-        self.preferred = uid;
-        if let Some(uid) = uid {
-            if self.queue.contains(&uid) {
-                self.queue.retain(|&queued| queued != uid);
-                self.queue.push_front(uid);
-            }
-        }
-    }
-
-    /// Front-first copy of the FIFO (tests / panel TV-first assert).
+    /// Front-first copy of queued device UIDs (tests / panel diagnostics).
     pub fn queued_uids(&self) -> Vec<i32> {
-        self.queue.iter().copied().collect()
+        self.queue.iter().map(|entry| entry.uid).collect()
+    }
+
+    /// Pause all sibling attempts after the server reports an address/device
+    /// login throttle. Repeated reports may extend, but never shorten, it.
+    pub fn hold_for(&mut self, now: Instant, duration: Duration) {
+        let deadline = now + duration;
+        self.throttle_until = Some(
+            self.throttle_until
+                .map_or(deadline, |old| old.max(deadline)),
+        );
     }
 
     /// Longest unmet constraint for granting `uid` at `now`.
@@ -220,6 +246,14 @@ impl LoginQueue {
             }
         }
 
+        if let Some(until) = self.throttle_until {
+            let left = until.saturating_duration_since(now);
+            if left.is_zero() {
+                self.throttle_until = None;
+            } else {
+                wait = Some(wait.map_or(left, |w| w.max(left)));
+            }
+        }
         if self.ip_pending == 0
             && self
                 .ip_last
@@ -261,8 +295,11 @@ impl LoginQueue {
         wait
     }
 
-    fn grant(&mut self, uid: i32, now: Instant) {
-        debug_assert_eq!(self.queue.front(), Some(&uid));
+    fn grant(&mut self, owner: u64, uid: i32, now: Instant) {
+        debug_assert_eq!(
+            self.queue.front().map(|entry| (entry.owner, entry.uid)),
+            Some((owner, uid))
+        );
         self.queue.pop_front();
         self.last_grant = Some(now);
         self.ip_count += 1;
@@ -283,29 +320,17 @@ impl LoginQueue {
         state.pending += 1;
     }
 
-    /// Drop uid cooldown entries whose 15 s window elapsed and who are not
-    /// queued, so a long-lived host does not keep one map slot per uid ever
-    /// seen.
+    /// Drop every uid accounting row after 15 s idle when it has no pending
+    /// permit. Queue identity is stored separately, so an expired waiting uid
+    /// keeps its FIFO place while its partial counter resets.
     fn prune_uid(&mut self, now: Instant) {
-        let queued = &self.queue;
-        self.by_uid.retain(|uid, state| {
-            if queued.contains(uid) {
-                return true;
-            }
-            if state.pending > 0 {
-                return true;
-            }
-            if state.count >= UID_GRANT_CAP {
-                match state.last {
-                    Some(last) => now.saturating_duration_since(last) < UID_COOLDOWN,
-                    None => false,
-                }
-            } else {
-                true
-            }
+        self.by_uid.retain(|_, state| {
+            state.pending > 0
+                || state
+                    .last
+                    .is_some_and(|last| now.saturating_duration_since(last) < UID_COOLDOWN)
         });
     }
-
     #[cfg(test)]
     fn tracks(&self, uid: i32) -> bool {
         self.by_uid.contains_key(&uid)
@@ -347,6 +372,21 @@ impl LoginBackoff {
 mod tests {
     use super::*;
 
+    const TEST_OWNER_NAMESPACE: u64 = 1 << 63;
+
+    fn test_owner(uid: i32) -> u64 {
+        TEST_OWNER_NAMESPACE | u64::from(uid as u32)
+    }
+
+    fn request(q: &mut LoginQueue, uid: i32, now: Instant) -> Permit {
+        request_owner(q, test_owner(uid), uid, now)
+    }
+
+    fn request_owner(q: &mut LoginQueue, owner: u64, uid: i32, now: Instant) -> Permit {
+        q.enqueue_owner(owner, uid);
+        q.poll_owner(owner, uid, now)
+    }
+
     fn max_grants_in_60s(grant_times: &[Instant]) -> usize {
         grant_times
             .iter()
@@ -363,59 +403,94 @@ mod tests {
     }
 
     #[test]
-    fn preferred_uid_retains_priority_after_first_login() {
+    fn preferred_owner_retains_priority_after_first_login() {
         let now = Instant::now();
         let mut q = LoginQueue::new(Duration::from_secs(1), 30, Duration::from_secs(60));
-        q.prefer(1);
-        assert_eq!(q.request_permit(1, now), Permit::Grant);
+        q.prefer_owner(test_owner(1));
+        assert_eq!(request(&mut q, 1, now), Permit::Grant);
         assert!(q.queued_uids().is_empty());
-        assert!(matches!(q.request_permit(2, now), Permit::Wait(_)));
-        assert!(matches!(q.request_permit(1, now), Permit::Wait(_)));
+        assert!(matches!(request(&mut q, 2, now), Permit::Wait(_)));
+        assert!(matches!(request(&mut q, 1, now), Permit::Wait(_)));
         assert_eq!(q.queued_uids(), vec![1, 2]);
         assert_eq!(
-            q.request_permit(1, now + Duration::from_secs(1)),
+            request(&mut q, 1, now + Duration::from_secs(1)),
             Permit::Grant
         );
         assert_eq!(
-            q.request_permit(2, now + Duration::from_secs(2)),
+            request(&mut q, 2, now + Duration::from_secs(2)),
             Permit::Grant
         );
+    }
+
+    #[test]
+    fn duplicate_uids_keep_independent_fifo_owners() {
+        let now = Instant::now();
+        let mut q = LoginQueue::default();
+        q.enqueue_owner(11, 7);
+        q.enqueue_owner(22, 7);
+        assert_eq!(q.queued_uids(), vec![7, 7]);
+
+        assert_eq!(q.poll_owner(11, 7, now), Permit::Grant);
+        assert!(q.acknowledge_login_return(7, now));
+        assert_eq!(
+            q.status_owner(22),
+            Some(QueuePos {
+                position: 1,
+                total: 1,
+            })
+        );
+        assert_eq!(q.poll_owner(22, 7, now), Permit::Grant);
+        assert!(q.acknowledge_login_return(7, now));
+        assert!(q.queued_uids().is_empty());
+    }
+
+    #[test]
+    fn worker_arrival_order_has_no_missing_owner_gate() {
+        let now = Instant::now();
+        let mut q = LoginQueue::default();
+        q.enqueue_owner(22, 2);
+        q.enqueue_owner(11, 1);
+        assert_eq!(q.queued_uids(), vec![2, 1]);
+        assert_eq!(q.poll_owner(22, 2, now), Permit::Grant);
+        assert!(q.acknowledge_login_return(2, now));
+        assert_eq!(q.poll_owner(11, 1, now), Permit::Grant);
+        assert!(q.acknowledge_login_return(1, now));
     }
 
     #[test]
     fn focus_changes_do_not_reserve_online_slots_or_bypass_limits() {
         let now = Instant::now();
         let mut q = LoginQueue::new(Duration::from_secs(1), 1, Duration::from_secs(60));
-        q.set_preferred(Some(1));
+        q.set_preferred_owner(Some(test_owner(1)));
         assert!(q.queued_uids().is_empty());
-        assert_eq!(q.request_permit(2, now), Permit::Grant);
-        assert!(matches!(q.request_permit(3, now), Permit::Wait(_)));
-        assert!(matches!(q.request_permit(1, now), Permit::Wait(_)));
-        q.set_preferred(Some(3));
+        assert_eq!(request(&mut q, 2, now), Permit::Grant);
+        assert!(matches!(request(&mut q, 3, now), Permit::Wait(_)));
+        assert!(matches!(request(&mut q, 1, now), Permit::Wait(_)));
+        q.set_preferred_owner(Some(test_owner(3)));
         assert_eq!(q.queued_uids(), vec![3, 1]);
         assert!(matches!(
-            q.request_permit(3, now + Duration::from_secs(1)),
+            request(&mut q, 3, now + Duration::from_secs(1)),
             Permit::Wait(_)
         ));
-        q.leave(3);
-        q.leave(1);
-        q.set_preferred(None);
-        assert!(matches!(q.request_permit(2, now), Permit::Wait(_)));
-        assert!(matches!(q.request_permit(3, now), Permit::Wait(_)));
+        q.leave_owner(test_owner(3));
+        q.leave_owner(test_owner(1));
+        q.set_preferred_owner(None);
+        assert!(matches!(request(&mut q, 2, now), Permit::Wait(_)));
+        assert!(matches!(request(&mut q, 3, now), Permit::Wait(_)));
         assert_eq!(q.queued_uids(), vec![2, 3]);
     }
 
     #[test]
-    fn prefer_moves_uid_to_the_front() {
+    fn prefer_moves_owner_to_the_front() {
         // Long spacing so only the first grant lands; the rest stay queued.
         let mut q = LoginQueue::new(Duration::from_secs(60), 30, Duration::from_secs(60));
         let now = Instant::now();
-        assert!(matches!(q.request_permit(2, now), Permit::Grant));
-        assert!(matches!(q.request_permit(3, now), Permit::Wait(_)));
-        assert!(matches!(q.request_permit(1, now), Permit::Wait(_)));
-        q.prefer(1);
-        assert_eq!(q.queue.front(), Some(&1));
-        assert_eq!(q.status(1).unwrap().position, 1);
+        assert!(matches!(request(&mut q, 2, now), Permit::Grant));
+        assert!(matches!(request(&mut q, 3, now), Permit::Wait(_)));
+        assert!(matches!(request(&mut q, 1, now), Permit::Wait(_)));
+        q.prefer_owner(test_owner(1));
+        assert_eq!(q.queue.front().map(|entry| entry.uid), Some(1));
+        assert_eq!(q.status_owner(test_owner(1)).unwrap().position, 1);
     }
 
     #[test]
@@ -424,7 +499,7 @@ mod tests {
         let mut q = LoginQueue::default();
         let mut grants = Vec::new();
         for i in 0..50 {
-            if let Permit::Grant = q.request_permit(i, base) {
+            if let Permit::Grant = request(&mut q, i, base) {
                 grants.push(base);
             }
         }
@@ -435,11 +510,11 @@ mod tests {
         for i in 0..29 {
             assert!(q.acknowledge_login_return(i, base));
         }
-        assert!(matches!(q.request_permit(29, base), Permit::Wait(_)));
+        assert!(matches!(request(&mut q, 29, base), Permit::Wait(_)));
 
         let now = base + Duration::from_secs(60);
         for i in 29..50 {
-            assert!(matches!(q.request_permit(i, now), Permit::Grant));
+            assert!(matches!(request(&mut q, i, now), Permit::Grant));
             grants.push(now);
             assert!(q.acknowledge_login_return(i, now));
         }
@@ -454,7 +529,7 @@ mod tests {
         let mut now = base;
         let mut grants = Vec::new();
         for i in 0..50 {
-            if let Permit::Grant = q.request_permit(i, now) {
+            if let Permit::Grant = request(&mut q, i, now) {
                 grants.push(now);
                 assert!(q.acknowledge_login_return(i, now));
             }
@@ -465,7 +540,7 @@ mod tests {
 
         now = base + Duration::from_secs(61);
         for i in 29..50 {
-            assert!(matches!(q.request_permit(i, now), Permit::Grant));
+            assert!(matches!(request(&mut q, i, now), Permit::Grant));
             grants.push(now);
             assert!(q.acknowledge_login_return(i, now));
             now += Duration::from_millis(1);
@@ -478,30 +553,30 @@ mod tests {
     fn address_ttl_renews_from_latest_ack_then_resets_after_idle() {
         let base = Instant::now();
         let mut q = LoginQueue::new(Duration::ZERO, 2, Duration::from_secs(60));
-        assert_eq!(q.request_permit(1, base), Permit::Grant);
+        assert_eq!(request(&mut q, 1, base), Permit::Grant);
         assert!(q.acknowledge_login_return(1, base));
         assert_eq!(
-            q.request_permit(2, base + Duration::from_secs(30)),
+            request(&mut q, 2, base + Duration::from_secs(30)),
             Permit::Grant
         );
         assert!(q.acknowledge_login_return(2, base + Duration::from_secs(30)));
 
-        match q.request_permit(3, base + Duration::from_secs(60)) {
+        match request(&mut q, 3, base + Duration::from_secs(60)) {
             Permit::Wait(wait) => assert_eq!(wait, Duration::from_secs(30)),
             Permit::Grant => panic!("oldest + TTL must not release the refreshed address key"),
         }
         assert!(matches!(
-            q.request_permit(4, base + Duration::from_secs(60)),
+            request(&mut q, 4, base + Duration::from_secs(60)),
             Permit::Wait(_)
         ));
         assert_eq!(q.queued_uids(), vec![3, 4], "blocked callers remain FIFO");
 
         assert_eq!(
-            q.request_permit(3, base + Duration::from_secs(90)),
+            request(&mut q, 3, base + Duration::from_secs(90)),
             Permit::Grant
         );
         assert_eq!(
-            q.request_permit(4, base + Duration::from_secs(90)),
+            request(&mut q, 4, base + Duration::from_secs(90)),
             Permit::Grant
         );
     }
@@ -510,11 +585,11 @@ mod tests {
     fn unacked_reservation_does_not_expire_without_a_server_attempt_clock() {
         let base = Instant::now();
         let mut q = LoginQueue::new(Duration::ZERO, 1, Duration::from_secs(60));
-        assert_eq!(q.request_permit(1, base), Permit::Grant);
+        assert_eq!(request(&mut q, 1, base), Permit::Grant);
 
         assert!(
             matches!(
-                q.request_permit(2, base + Duration::from_secs(120)),
+                request(&mut q, 2, base + Duration::from_secs(120)),
                 Permit::Wait(_)
             ),
             "a delayed in-flight attempt can still refresh the server TTL"
@@ -525,17 +600,17 @@ mod tests {
     fn reordered_login_returns_keep_the_latest_monotonic_ack_clock() {
         let base = Instant::now();
         let mut q = LoginQueue::new(Duration::ZERO, 2, Duration::from_secs(60));
-        assert_eq!(q.request_permit(1, base), Permit::Grant);
-        assert_eq!(q.request_permit(2, base), Permit::Grant);
+        assert_eq!(request(&mut q, 1, base), Permit::Grant);
+        assert_eq!(request(&mut q, 2, base), Permit::Grant);
 
         assert!(q.acknowledge_login_return(2, base + Duration::from_secs(120)));
         assert!(q.acknowledge_login_return(1, base + Duration::from_secs(61)));
-        match q.request_permit(3, base + Duration::from_secs(121)) {
+        match request(&mut q, 3, base + Duration::from_secs(121)) {
             Permit::Wait(wait) => assert_eq!(wait, Duration::from_secs(59)),
             Permit::Grant => panic!("an older completion must not move the ack clock backward"),
         }
         assert_eq!(
-            q.request_permit(3, base + Duration::from_secs(180)),
+            request(&mut q, 3, base + Duration::from_secs(180)),
             Permit::Grant
         );
     }
@@ -544,24 +619,24 @@ mod tests {
     fn one_old_ack_cannot_reset_count_while_another_attempt_is_pending() {
         let base = Instant::now();
         let mut q = LoginQueue::new(Duration::ZERO, 2, Duration::from_secs(60));
-        assert_eq!(q.request_permit(1, base), Permit::Grant);
-        assert_eq!(q.request_permit(2, base), Permit::Grant);
+        assert_eq!(request(&mut q, 1, base), Permit::Grant);
+        assert_eq!(request(&mut q, 2, base), Permit::Grant);
         assert!(q.acknowledge_login_return(1, base));
 
         assert!(
             matches!(
-                q.request_permit(3, base + Duration::from_secs(120)),
+                request(&mut q, 3, base + Duration::from_secs(120)),
                 Permit::Wait(_)
             ),
             "the pending attempt can still refresh all address accounting"
         );
         assert!(q.acknowledge_login_return(2, base + Duration::from_secs(130)));
         assert!(matches!(
-            q.request_permit(3, base + Duration::from_secs(189)),
+            request(&mut q, 3, base + Duration::from_secs(189)),
             Permit::Wait(_)
         ));
         assert_eq!(
-            q.request_permit(3, base + Duration::from_secs(190)),
+            request(&mut q, 3, base + Duration::from_secs(190)),
             Permit::Grant
         );
     }
@@ -570,24 +645,24 @@ mod tests {
     fn abandoning_unused_permit_releases_reservation_without_starting_ttl() {
         let base = Instant::now();
         let mut q = LoginQueue::new(Duration::ZERO, 1, Duration::from_secs(60));
-        assert_eq!(q.request_permit(1, base), Permit::Grant);
+        assert_eq!(request(&mut q, 1, base), Permit::Grant);
         assert!(q.abandon_permit(1));
         assert!(!q.abandon_permit(1), "cleanup is exactly once");
-        assert_eq!(q.request_permit(2, base), Permit::Grant);
+        assert_eq!(request(&mut q, 2, base), Permit::Grant);
     }
 
     #[test]
     fn duplicate_uid_reservations_are_cleaned_up_one_at_a_time() {
         let base = Instant::now();
         let mut q = LoginQueue::new(Duration::ZERO, 2, Duration::from_secs(60));
-        assert_eq!(q.request_permit(7, base), Permit::Grant);
-        assert_eq!(q.request_permit(7, base), Permit::Grant);
+        assert_eq!(request(&mut q, 7, base), Permit::Grant);
+        assert_eq!(request(&mut q, 7, base), Permit::Grant);
 
         assert!(q.acknowledge_login_return(7, base + Duration::from_secs(10)));
         assert!(q.abandon_permit(7));
         assert!(!q.abandon_permit(7), "both pending grants were resolved");
         assert_eq!(
-            q.request_permit(8, base + Duration::from_secs(10)),
+            request(&mut q, 8, base + Duration::from_secs(10)),
             Permit::Grant,
             "abandoning one duplicate must preserve only the acknowledged attempt"
         );
@@ -598,10 +673,10 @@ mod tests {
         let base = Instant::now();
         let mut q = LoginQueue::new(Duration::ZERO, 10, Duration::from_secs(60));
         for _ in 0..UID_GRANT_CAP {
-            assert_eq!(q.request_permit(7, base), Permit::Grant);
+            assert_eq!(request(&mut q, 7, base), Permit::Grant);
         }
         assert!(matches!(
-            q.request_permit(7, base + Duration::from_secs(120)),
+            request(&mut q, 7, base + Duration::from_secs(120)),
             Permit::Wait(_)
         ));
 
@@ -609,7 +684,7 @@ mod tests {
             assert!(q.abandon_permit(7));
         }
         assert_eq!(
-            q.request_permit(7, base + Duration::from_secs(120)),
+            request(&mut q, 7, base + Duration::from_secs(120)),
             Permit::Grant
         );
     }
@@ -619,20 +694,20 @@ mod tests {
         let base = Instant::now();
         let mut q = LoginQueue::default();
         for _ in 0..4 {
-            assert!(matches!(q.request_permit(7, base), Permit::Grant));
+            assert!(matches!(request(&mut q, 7, base), Permit::Grant));
             assert!(q.acknowledge_login_return(7, base));
         }
-        match q.request_permit(7, base) {
+        match request(&mut q, 7, base) {
             Permit::Wait(d) => assert_eq!(d, Duration::from_secs(15), "fifth wait {d:?}"),
             Permit::Grant => panic!("fifth same-uid request must wait"),
         }
         let later = base + Duration::from_secs(10);
-        match q.request_permit(7, later) {
+        match request(&mut q, 7, later) {
             Permit::Wait(d) => assert_eq!(d, Duration::from_secs(5), "remaining {d:?}"),
             Permit::Grant => panic!("still inside the 15 s device TTL"),
         }
         assert!(matches!(
-            q.request_permit(7, base + Duration::from_secs(15)),
+            request(&mut q, 7, base + Duration::from_secs(15)),
             Permit::Grant
         ));
     }
@@ -645,12 +720,12 @@ mod tests {
         let base = Instant::now();
         let mut q = LoginQueue::default();
         for _ in 0..4 {
-            assert!(matches!(q.request_permit(7, base), Permit::Grant));
+            assert!(matches!(request(&mut q, 7, base), Permit::Grant));
             assert!(q.acknowledge_login_return(7, base));
         }
-        assert!(matches!(q.request_permit(7, base), Permit::Wait(_)));
+        assert!(matches!(request(&mut q, 7, base), Permit::Wait(_)));
         let retry = base + UID_COOLDOWN + Duration::from_millis(3);
-        assert!(matches!(q.request_permit(7, retry), Permit::Grant));
+        assert!(matches!(request(&mut q, 7, retry), Permit::Grant));
     }
 
     #[test]
@@ -658,17 +733,17 @@ mod tests {
         let mut q = LoginQueue::default();
         let now = Instant::now();
         for i in 0..29 {
-            assert!(matches!(q.request_permit(i, now), Permit::Grant));
+            assert!(matches!(request(&mut q, i, now), Permit::Grant));
             assert!(q.acknowledge_login_return(i, now));
         }
-        match q.request_permit(29, now) {
+        match request(&mut q, 29, now) {
             Permit::Wait(d) => assert!(
                 d >= Duration::from_secs(59),
                 "head waits out the address idle TTL, got {d:?}"
             ),
             other => panic!("head should wait the 60 s address idle TTL, got {other:?}"),
         }
-        match q.request_permit(30, now) {
+        match request(&mut q, 30, now) {
             Permit::Wait(d) => assert_eq!(
                 d,
                 Duration::from_millis(20),
@@ -683,12 +758,12 @@ mod tests {
         let mut q = LoginQueue::default();
         let now = Instant::now();
         for _ in 0..4 {
-            assert!(matches!(q.request_permit(7, now), Permit::Grant));
+            assert!(matches!(request(&mut q, 7, now), Permit::Grant));
             assert!(q.acknowledge_login_return(7, now));
         }
         assert!(q.tracks(7));
         let now = now + UID_COOLDOWN;
-        assert!(matches!(q.request_permit(8, now), Permit::Grant));
+        assert!(matches!(request(&mut q, 8, now), Permit::Grant));
         assert!(
             !q.tracks(7),
             "cooldown-elapsed uid 7 is not queued and must drop"
@@ -700,52 +775,93 @@ mod tests {
     fn status_is_k_of_n_and_grant_clears() {
         let mut q = LoginQueue::new(Duration::from_secs(60), 30, Duration::from_secs(60));
         let now = Instant::now();
-        assert!(q.status(1).is_none());
-        assert!(matches!(q.request_permit(1, now), Permit::Grant));
-        assert!(q.status(1).is_none());
-        assert!(matches!(q.request_permit(2, now), Permit::Wait(_)));
-        assert!(matches!(q.request_permit(3, now), Permit::Wait(_)));
-        let s2 = q.status(2).unwrap();
-        let s3 = q.status(3).unwrap();
+        assert!(q.status_owner(test_owner(1)).is_none());
+        assert!(matches!(request(&mut q, 1, now), Permit::Grant));
+        assert!(q.status_owner(test_owner(1)).is_none());
+        assert!(matches!(request(&mut q, 2, now), Permit::Wait(_)));
+        assert!(matches!(request(&mut q, 3, now), Permit::Wait(_)));
+        let s2 = q.status_owner(test_owner(2)).unwrap();
+        let s3 = q.status_owner(test_owner(3)).unwrap();
         assert_eq!((s2.position, s2.total), (1, 2));
         assert_eq!((s3.position, s3.total), (2, 2));
-        q.leave(2);
-        let s3 = q.status(3).unwrap();
+        q.leave_owner(test_owner(2));
+        let s3 = q.status_owner(test_owner(3)).unwrap();
         assert_eq!((s3.position, s3.total), (1, 1));
-        assert!(q.status(2).is_none());
+        assert!(q.status_owner(test_owner(2)).is_none());
+    }
+
+    #[test]
+    fn partial_uid_count_expires_after_idle() {
+        let base = Instant::now();
+        let mut q = LoginQueue::default();
+        for _ in 0..3 {
+            assert_eq!(request(&mut q, 7, base), Permit::Grant);
+            assert!(q.acknowledge_login_return(7, base));
+        }
+        let fresh = base + Duration::from_secs(100);
+        assert_eq!(request(&mut q, 7, fresh), Permit::Grant);
+        assert!(q.acknowledge_login_return(7, fresh));
+        assert_eq!(request(&mut q, 7, fresh), Permit::Grant);
+    }
+
+    #[test]
+    fn response_throttle_holds_sibling_attempts() {
+        let base = Instant::now();
+        let mut q = LoginQueue::default();
+        q.hold_for(base, Duration::from_secs(20));
+        assert!(
+            matches!(request(&mut q, 8, base), Permit::Wait(wait) if wait == Duration::from_secs(20))
+        );
+        assert_eq!(
+            request(&mut q, 8, base + Duration::from_secs(20)),
+            Permit::Grant
+        );
     }
 
     #[test]
     fn two_uids_enqueue_in_order() {
         let mut q = LoginQueue::new(Duration::from_secs(60), 30, Duration::from_secs(60));
         let now = Instant::now();
-        let _ = q.request_permit(10, now); // grant
-        let _ = q.request_permit(11, now);
-        let _ = q.request_permit(12, now);
-        assert_eq!(q.status(11).unwrap().position, 1);
-        assert_eq!(q.status(12).unwrap().position, 2);
-        assert_eq!(q.status(12).unwrap().total, 2);
+        let _ = request(&mut q, 10, now); // grant
+        let _ = request(&mut q, 11, now);
+        let _ = request(&mut q, 12, now);
+        assert_eq!(q.status_owner(test_owner(11)).unwrap().position, 1);
+        assert_eq!(q.status_owner(test_owner(12)).unwrap().position, 2);
+        assert_eq!(q.status_owner(test_owner(12)).unwrap().total, 2);
     }
 
     #[test]
-    fn leave_reports_removal_and_unblocks_the_head() {
-        // A reservation (`prefer`, e.g. `Play::prefer_login` for the TV head
-        // before that slot's thread asks) holds the front for a uid that is
-        // not waiting. It must not strand a real waiter behind it, and
-        // `leave` must report whether a real place was dropped so the caller
-        // only clears the published `k of n` it actually owned.
+    fn enqueue_order_wins_request_lock_race() {
+        let base = Instant::now();
+        let mut q = LoginQueue::default();
+        q.enqueue_owner(10, 10);
+        q.enqueue_owner(11, 11);
+        assert!(matches!(q.poll_owner(11, 11, base), Permit::Wait(_)));
+        assert_eq!(q.poll_owner(10, 10, base), Permit::Grant);
+        assert_eq!(q.poll_owner(11, 11, base), Permit::Grant);
+    }
+
+    #[test]
+    fn preferred_owner_that_is_not_waiting_cannot_block_followers() {
         let mut q = LoginQueue::new(Duration::from_secs(60), 30, Duration::from_secs(60));
         let base = Instant::now();
-        q.prefer(7);
-        assert!(matches!(q.request_permit(8, base), Permit::Wait(_)));
-        let s8 = q.status(8).unwrap();
-        assert_eq!((s8.position, s8.total), (2, 2));
+        q.prefer_owner(test_owner(7));
+        assert!(
+            q.queued_uids().is_empty(),
+            "preference alone is not waiting membership"
+        );
+        assert_eq!(
+            request(&mut q, 8, base),
+            Permit::Grant,
+            "a terminal preferred owner cannot become a phantom head"
+        );
+        assert!(q.status_owner(test_owner(7)).is_none());
+    }
 
-        assert!(q.leave(7), "the reserved front place was held");
-        assert!(!q.leave(7), "no place left to drop");
-        let s8 = q.status(8).unwrap();
-        assert_eq!((s8.position, s8.total), (1, 1));
-        assert_eq!(q.request_permit(8, base), Permit::Grant);
+    #[test]
+    #[should_panic(expected = "ip_cap must be positive")]
+    fn zero_cap_is_rejected_at_construction() {
+        let _ = LoginQueue::new(Duration::ZERO, 0, Duration::from_secs(60));
     }
 
     #[test]

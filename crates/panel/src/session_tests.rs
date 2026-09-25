@@ -1,11 +1,11 @@
 use super::{
-    arm_login_all, combo_index, debug_dest_cheats, debug_main_buttons_for, debug_maxme_cheats,
-    is_local_engine, live_client_trail, live_or_walk_paint, load_live_example_card,
-    nav_snapshot_for_follow, null_raster_live_entries_for_target, parse_getvar_line,
-    publish_frontend_slot, publish_nav_debug, reset_frontend_slot_lifetime, script_active,
-    script_pause_enabled, script_self_stop_observed, script_status_text, script_stop_enabled,
-    seed_on_first_world, start_catalog_with_core, stress_live_entries_for_target,
-    temp_live_vault_from, walkto_tele_cmd, ProfilePreparationCompletion, Session, SlotIo, WalkArm,
+    combo_index, debug_dest_cheats, debug_main_buttons_for, debug_maxme_cheats, is_local_engine,
+    live_client_trail, live_or_walk_paint, load_live_example_card, nav_snapshot_for_follow,
+    null_raster_live_entries_for_target, parse_getvar_line, publish_frontend_slot,
+    publish_nav_debug, reset_frontend_slot_lifetime, script_active, script_pause_enabled,
+    script_self_stop_observed, script_status_text, script_stop_enabled, seed_on_first_world,
+    start_catalog_with_core, stress_live_entries_for_target, temp_live_vault_from, walkto_tele_cmd,
+    ProfilePreparationCompletion, Session, SlotIo, WalkArm,
 };
 use crate::focus::draw_for_slot;
 use api::snapshot::{GameSnapshot, WorldTile};
@@ -16,7 +16,7 @@ use client::io::{Packet, ServerProt};
 use client::render::nav_debug::{CORNER_NE, FACE_N, FACE_S};
 use host::{FrameBuf, SlotInput};
 use host_play::profile::ProfileEnvironment;
-use host_play::{ProfileOptions, SlotArm, SlotStatus};
+use host_play::{ProfileOptions, SlotArm, SlotStatus, StartupPhase};
 use nav::collision::WorldCollision;
 use nav::paint::{MAX_DRAW_TILES, NEAR_FULL_DENSITY};
 use nav::router::{Leg, Route};
@@ -466,10 +466,15 @@ fn prod_default_ignores_the_saved_local_revision() {
             ..ProfileOptions::default()
         })
         .unwrap();
-    session.profile_environment = Some(ProfileEnvironment::default());
+    let home = std::env::temp_dir().join(format!("274bot-panel-public-{}", std::process::id()));
+    session.profile_environment = Some(ProfileEnvironment {
+        home: Some(home.clone()),
+        ..ProfileEnvironment::default()
+    });
     let selection = session.resolve_profile().unwrap();
     assert_eq!(selection.revision(), client::io::ClientRevision::R289);
     assert_eq!(selection.target(), client::BotTarget::Prod);
+    std::fs::remove_dir_all(home).unwrap();
 }
 
 #[test]
@@ -3069,7 +3074,7 @@ fn logout_all_arms_every_wall_member() {
 }
 
 #[test]
-fn headed_stress_spawns_every_member_and_focuses_s00() {
+fn headed_stress_spawns_every_member_prefers_and_arms_s00() {
     crate::ui_state::save(&crate::ui_state::PanelUiState {
         last_focus: Some("s02".into()),
         ..Default::default()
@@ -3090,12 +3095,6 @@ fn headed_stress_spawns_every_member_and_focuses_s00() {
         "focused slot must be s00, not last_focus s02"
     );
     assert_eq!(s.tv_name().as_deref(), Some("s00"));
-    let front = s.play.as_ref().unwrap().login_queue_uids();
-    assert_eq!(
-        front.first().copied(),
-        Some(274_000_100),
-        "s00 uid must be FIFO head, got {front:?}"
-    );
     assert!(
         s.play
             .as_ref()
@@ -3902,33 +3901,15 @@ fn live_full_rate_sync_raises_focus_and_members() {
 }
 
 #[test]
-fn queue_place_falls_back_to_fifo_head_when_focus_already_granted() {
+fn queue_for_rejects_invalid_queue_tuple() {
     let mut s = Session::new();
-    s.focus.lock().unwrap().focused = Some("s00".into());
     s.statuses.push(SlotStatus {
         username: "s00".into(),
-        queue_position: -1,
-        queue_total: -1,
+        queue_position: 3,
+        queue_total: 0,
         ..SlotStatus::default()
     });
-    s.statuses.push(SlotStatus {
-        username: "s01".into(),
-        queue_position: 1,
-        queue_total: 49,
-        ..SlotStatus::default()
-    });
-    s.statuses.push(SlotStatus {
-        username: "s02".into(),
-        queue_position: 2,
-        queue_total: 49,
-        ..SlotStatus::default()
-    });
-    assert_eq!(s.focused_queue(), None);
-    assert_eq!(
-        s.queue_place(),
-        Some((1, 49)),
-        "Game pane still shows k of n"
-    );
+    assert_eq!(s.queue_for("s00"), None);
 }
 
 #[test]
@@ -4037,7 +4018,7 @@ fn arm_login_all_cancels_pending_logout() {
     let arm = SlotArm::new(7, false);
     arm.latch.store(true, Ordering::Relaxed);
     arm.want_logout.store(true, Ordering::Relaxed);
-    arm_login_all(&arm);
+    arm.arm_explicit_login();
     assert!(arm.want_login.load(Ordering::Relaxed));
     assert!(!arm.want_logout.load(Ordering::Relaxed));
     assert!(!arm.latch.load(Ordering::Relaxed));
@@ -4077,6 +4058,70 @@ fn save_credentials_upserts_under_username_key_keeping_uid() {
     let p = s.vault.as_ref().unwrap().get("alice").unwrap();
     assert_eq!(p.password, "newpass");
     assert_eq!(p.uid, 42, "save must keep the existing uid");
+}
+
+#[test]
+fn chooser_world_edit_persists_and_updates_running_slot() {
+    let path = tmp_vault("world-choice.vault");
+    let mut session = Session::new();
+    session.vault = Some(Vault::create(&path, "bot").unwrap());
+    session
+        .vault
+        .as_mut()
+        .unwrap()
+        .upsert(profile("alice", "pw", 42))
+        .unwrap();
+    let mut play = host_play::run_with_io(
+        &host_play::PlayOptions {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            lowmem: true,
+            mainland: false,
+        },
+        vec![],
+        |_| (None, None),
+        |_, _, _| {},
+    );
+    let arm = SlotArm::new(42, false);
+    play.attach_arm("alice", Arc::clone(&arm));
+    session.play = Some(play);
+    session.begin_edit_profile(Some("alice"));
+    assert_eq!(session.cred_settings.world, None);
+    session.cred_settings.world = Some(2);
+    assert!(session.save_credentials());
+    assert_eq!(
+        Vault::unlock(&path, "bot")
+            .unwrap()
+            .get("alice")
+            .unwrap()
+            .settings
+            .world,
+        Some(2)
+    );
+    assert_eq!(
+        *arm.world.lock(),
+        Some(2),
+        "the profile-save path must update a running slot's next handshake"
+    );
+    session.cred_settings.world = None;
+    session.cred_pass = "updated".into();
+    assert!(session.save_credentials());
+    assert_eq!(
+        Vault::unlock(&path, "bot")
+            .unwrap()
+            .get("alice")
+            .unwrap()
+            .settings
+            .world,
+        Some(2),
+        "a credentials save outside the editor must not unpin an account"
+    );
+    assert_eq!(
+        *arm.world.lock(),
+        Some(2),
+        "a non-editor save must preserve the running slot's pin"
+    );
 }
 
 #[test]
@@ -4191,6 +4236,10 @@ fn save_credentials_upsert_error_surfaces_on_session_error() {
     use std::os::unix::fs::PermissionsExt;
 
     let dir = std::env::temp_dir().join(format!("274bot-panel-save-err-{}", std::process::id()));
+    if dir.exists() {
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("vault.vault");
     let mut s = Session::new();
@@ -4206,6 +4255,8 @@ fn save_credentials_upsert_error_surfaces_on_session_error() {
         "upsert failure must land on session.error, got {:?}",
         s.error
     );
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 #[test]
@@ -4749,6 +4800,49 @@ fn logout_latches_member_until_login_all() {
 }
 
 #[test]
+fn login_all_during_loading_scene_publishes_no_control_owned_place() {
+    let mut s = Session::new();
+    let mut play = empty_play();
+    let alice = SlotArm::new(1, false);
+    let bob = SlotArm::new(2, false);
+    play.attach_arm("alice", Arc::clone(&alice));
+    play.attach_arm("bob", Arc::clone(&bob));
+    play.statuses.lock().unwrap().extend([
+        SlotStatus {
+            username: "alice".into(),
+            startup_phase: StartupPhase::LoadingScene,
+            ingame: false,
+            ..SlotStatus::default()
+        },
+        SlotStatus {
+            username: "bob".into(),
+            ..SlotStatus::default()
+        },
+    ]);
+    for name in ["alice", "bob"] {
+        s.wall.load(name);
+        s.slots.insert(
+            name.into(),
+            SlotIo {
+                input: SlotInput::new(),
+                pixels: FrameBuf::new(),
+            },
+        );
+    }
+    s.focus.lock().unwrap().focused = Some("alice".into());
+    s.play = Some(play);
+
+    s.login_all();
+
+    assert!(alice.want_login.load(Ordering::Relaxed));
+    assert!(bob.want_login.load(Ordering::Relaxed));
+    assert!(
+        s.play.as_ref().unwrap().login_queue_uids().is_empty(),
+        "only worker Queueing transitions create FIFO membership"
+    );
+}
+
+#[test]
 fn focused_ingame_is_false_without_status() {
     let mut s = Session::new();
     s.focus.lock().unwrap().focused = Some("alice".into());
@@ -4762,28 +4856,28 @@ fn focused_ingame_is_false_without_status() {
 }
 
 #[test]
-fn focused_queue_tracks_the_focused_status_row() {
+fn queue_for_tracks_each_named_status_independent_of_focus() {
     let mut s = Session::new();
     s.focus.lock().unwrap().focused = Some("alice".into());
-    assert_eq!(s.focused_queue(), None, "not queued by default");
+    assert_eq!(s.queue_for("alice"), None, "not queued by default");
     s.statuses.push(SlotStatus {
         username: "alice".into(),
         queue_position: 2,
         queue_total: 3,
         ..SlotStatus::default()
     });
-    assert_eq!(s.focused_queue(), Some((2, 3)));
-
-    // A queued non-focused slot does not surface on another focus.
-    let mut s2 = Session::new();
-    s2.focus.lock().unwrap().focused = Some("bob".into());
-    s2.statuses.push(SlotStatus {
-        username: "alice".into(),
+    s.statuses.push(SlotStatus {
+        username: "bob".into(),
         queue_position: 1,
         queue_total: 2,
         ..SlotStatus::default()
     });
-    assert_eq!(s2.focused_queue(), None);
+    assert_eq!(s.queue_for("alice"), Some((2, 3)));
+    assert_eq!(s.queue_for("bob"), Some((1, 2)));
+
+    s.focus.lock().unwrap().focused = Some("bob".into());
+    assert_eq!(s.queue_for("alice"), Some((2, 3)));
+    assert_eq!(s.queue_for("bob"), Some((1, 2)));
 }
 
 #[test]

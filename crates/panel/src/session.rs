@@ -3470,7 +3470,7 @@ impl Session {
             .store(profile.settings.lamp_auto, Ordering::Relaxed);
         *arm.lamp_skill.lock().unwrap() = profile.settings.lamp_skill.clone();
         if !self.wall.should_auto_login(name, auto_login) {
-            arm.want_login.store(false, Ordering::Relaxed);
+            arm.withdraw_login();
         }
         Some(arm)
     }
@@ -3550,12 +3550,14 @@ impl Session {
             .insert(username.to_string(), SlotIo { input, pixels });
     }
 
-    /// Credentials Log in: clear the logout latch, arm a handshake the same
-    /// way as Login all (`arm_login_all`), then select (spawn if needed).
+    /// Credentials Log in: clear the logout latch, arm an explicit one-shot
+    /// handshake, then select (spawn if needed).
     pub fn login(&mut self, name: &str) {
         self.wall.clear_latch(name);
-        if let Some(arm) = self.play.as_ref().and_then(|p| p.arm(name)) {
-            arm_login_all(&arm);
+        if let Some(play) = self.play.as_ref() {
+            if let Some(arm) = play.arm(name) {
+                arm.arm_explicit_login();
+            }
         }
         self.select(name);
     }
@@ -3567,7 +3569,7 @@ impl Session {
     pub fn logout(&mut self, name: &str) {
         self.wall.latch_logout(name);
         if let Some(arm) = self.play.as_ref().and_then(|p| p.arm(name)) {
-            arm.want_login.store(false, Ordering::Relaxed);
+            arm.withdraw_login();
             arm.want_logout.store(true, Ordering::Relaxed);
         }
         // The logout press lives in the probe (per-tick); kick a parked
@@ -3597,8 +3599,13 @@ impl Session {
                 return false;
             }
         }
-        if let Some(arm) = self.play.as_ref().and_then(|p| p.arm(name)) {
-            arm.auto_login.store(on, Ordering::Relaxed);
+        if let Some(play) = self.play.as_ref() {
+            if let Some(arm) = play.arm(name) {
+                arm.set_auto_login(on);
+            }
+        }
+        if let Some(play) = self.play.as_ref() {
+            play.wake(name);
         }
         true
     }
@@ -3769,11 +3776,17 @@ impl Session {
             .map(|p| p.settings.auto_login)
             .unwrap_or(false);
         let want_login = self.wall.should_auto_login(name, auto_login);
-        if let Some(arm) = self.play.as_ref().and_then(|p| p.arm(name)) {
-            // Already running (re-click): re-apply the login intent so a
-            // latched logout stays on the title.
-            arm.want_login.store(want_login, Ordering::Relaxed);
-            arm.auto_login.store(auto_login, Ordering::Relaxed);
+        if let Some(play) = self.play.as_ref() {
+            // Already running (re-click): re-apply saved auto intent while a
+            // latched logout remains parked.
+            if let Some(arm) = play.arm(name) {
+                arm.set_auto_login(auto_login);
+                if !want_login {
+                    arm.withdraw_login();
+                }
+            } else {
+                self.ensure_slot(name, self.arm_for_profile(name));
+            }
         } else {
             self.ensure_slot(name, self.arm_for_profile(name));
         }
@@ -3841,27 +3854,16 @@ impl Session {
     /// Log in every wall member: clear their latches and arm a login so
     /// title-screen slots handshake. One-shot unless the profile's
     /// auto-login is set (which keeps the arm armed after the handshake).
-    /// The focused slot is moved to the front of the login FIFO so it is
-    /// not stuck behind members that queued first.
+    /// Queue membership follows worker arrival at Queueing; the focused slot
+    /// is the sole priority exception.
     pub fn login_all(&mut self) {
-        // Prefer the focused SlotIo (pixels), not the status row: the
-        // focused slot can still be inside `maininit` when Login all runs,
-        // so the status row is missing and prefer would be skipped.
-        let head = self.tv_name();
-        if let (Some(play), Some(h)) = (self.play.as_ref(), head.as_ref()) {
-            if let Some(arm) = play.arm(h) {
-                play.prefer_login(arm.uid.load(Ordering::Relaxed));
-            }
+        if let (Some(play), Some(head)) = (self.play.as_ref(), self.tv_name()) {
+            play.prefer_login(&head);
         }
-        let mut names = self.wall.members.clone();
-        if let Some(h) = &head {
-            names.retain(|n| n != h);
-            names.insert(0, h.clone());
-        }
-        for name in names {
+        for name in self.wall.members.clone() {
             self.wall.clear_latch(&name);
-            if let Some(arm) = self.play.as_ref().and_then(|p| p.arm(&name)) {
-                arm_login_all(&arm);
+            if let Some(arm) = self.play.as_ref().and_then(|play| play.arm(&name)) {
+                arm.arm_explicit_login();
             }
         }
         if let Some(play) = self.play.as_ref() {
@@ -3886,7 +3888,7 @@ impl Session {
             self.wall.latch_logout(&name);
             if let Some(arm) = self.play.as_ref().and_then(|p| p.arm(&name)) {
                 arm.want_logout.store(true, Ordering::Relaxed);
-                arm.want_login.store(false, Ordering::Relaxed);
+                arm.withdraw_login();
             }
         }
         if let Some(play) = self.play.as_ref() {
@@ -4128,29 +4130,16 @@ impl Session {
             .map(|s| (s.tile_x, s.tile_z, s.tile_level))
     }
 
-    /// The focused slot's login-FIFO place `(position, total)` while it
-    /// waits for a permit (`position >= 1`), else `None`. The status row
-    /// and the queue card read this; grant clears it to `None`.
-    pub fn focused_queue(&self) -> Option<(i32, i32)> {
-        let name = self.focused_name()?;
-        self.statuses()
-            .iter()
-            .find(|s| s.username == name)
-            .filter(|s| s.queue_position >= 1)
-            .map(|s| (s.queue_position, s.queue_total))
-    }
-
-    /// Queue card place: the focused slot if it is waiting, else the FIFO
-    /// head among every waiting wall member. Keeps showing *k of n* once
-    /// the focused slot has granted and later members remain queued.
-    pub fn queue_place(&self) -> Option<(i32, i32)> {
-        if let Some(q) = self.focused_queue() {
-            return Some(q);
-        }
+    /// The named slot's valid login-FIFO place `(position, total)` while
+    /// it waits for a permit, else `None`. A grant, missing row, or malformed
+    /// producer tuple clears that slot's overlay.
+    pub fn queue_for(&self, name: &str) -> Option<(i32, i32)> {
         self.statuses
             .iter()
-            .filter(|s| s.queue_position >= 1)
-            .min_by_key(|s| s.queue_position)
+            .find(|s| s.username == name)
+            .filter(|s| {
+                s.queue_position >= 1 && s.queue_total >= 1 && s.queue_position <= s.queue_total
+            })
             .map(|s| (s.queue_position, s.queue_total))
     }
 
@@ -4422,17 +4411,6 @@ fn warn_stress50_debug() {
 /// (host-play assigns uids from the same 274M base range).
 fn fresh_uid(vault: &Vault) -> i32 {
     vault.profiles().map(|p| p.uid).max().unwrap_or(274_000_000) + 1
-}
-
-/// The flags `login_all` applies to a member's arm: clear the logout latch,
-/// arm a login, and cancel any pending logout. `want_logout` only clears
-/// inside the slot body when it observes the member ingame, so a
-/// title-screen member keeps a stale logout that would otherwise fire on
-/// the first ingame frame after Login all handshakes it back in.
-fn arm_login_all(arm: &SlotArm) {
-    arm.latch.store(false, Ordering::Relaxed);
-    arm.want_login.store(true, Ordering::Relaxed);
-    arm.want_logout.store(false, Ordering::Relaxed);
 }
 
 /// Copy a traveller dest into `SlotStatus.walk_*`; −1 when idle.

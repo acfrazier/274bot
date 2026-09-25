@@ -205,6 +205,40 @@ fn public_289_defaults_and_named_profile_override_lower_priority_inputs() {
 }
 
 #[test]
+fn public_world_file_selects_endpoint_and_rejects_unlisted_host() {
+    let fixture = Fixture::new();
+    let path = fixture.0.join(".274bot/worlds.json");
+    let (mut options, _) = parse_profile_args(["--profile", "public-289"]).unwrap();
+    let selected = options.resolve_with_env(None, &fixture.env()).unwrap();
+    assert_eq!(selected.public_worlds().unwrap().worlds[1].node_id, 11);
+    assert!(path.exists());
+    std::fs::write(&path, r#"{"schema_version":1,"worlds":[{"number":2,"host":"w2.rs2b2t.com","port":443,"node_id":11},{"number":1,"host":"w1.rs2b2t.com","port":443,"node_id":10}]}"#).unwrap();
+    let selected = options.resolve_with_env(None, &fixture.env()).unwrap();
+    assert_eq!(
+        (selected.game_host(), selected.game_port()),
+        ("w2.rs2b2t.com", 443)
+    );
+    options.host = Some("attacker.example".into());
+    assert!(options
+        .resolve_with_env(None, &fixture.env())
+        .unwrap_err()
+        .contains("worlds.json"));
+    options.host = Some("w1.rs2b2t.com".into());
+    assert_eq!(
+        options
+            .resolve_with_env(None, &fixture.env())
+            .unwrap()
+            .game_host(),
+        "w1.rs2b2t.com"
+    );
+    std::fs::write(&path, "not json").unwrap();
+    assert!(options
+        .resolve_with_env(None, &fixture.env())
+        .unwrap_err()
+        .contains(path.to_str().unwrap()));
+}
+
+#[test]
 fn invalid_revision_public_pairing_and_conflicts_fail_before_vault_access() {
     let fixture = Fixture::new();
     for args in [
@@ -247,7 +281,10 @@ fn invalid_revision_public_pairing_and_conflicts_fail_before_vault_access() {
     .resolve_with_env(None, &public_env_274)
     .unwrap_err();
     assert!(error.contains("public revision 274 is unavailable"));
-    assert!(!fixture.0.join(".274bot").exists());
+    assert!(
+        !fixture.0.join(".274bot/vault-prod").exists(),
+        "resolving public worlds may create worlds.json but must not open a vault"
+    );
 }
 
 #[test]
@@ -1550,12 +1587,73 @@ fn public_endpoint_overrides_do_not_inherit_local_world_facts() {
     ])
     .unwrap();
     let selected = options.resolve_with_env(None, &fixture.env()).unwrap();
-    assert!(!selected.supported_server());
+    assert!(selected.supported_server());
     assert_eq!(
         selected.world_members(),
         &host_play::WorldMembersFact::Unknown
     );
+}
+
+#[test]
+fn operator_listed_endpoint_requires_bound_content_identity_for_builtin_facts() {
+    let fixture = Fixture::new();
+    let config_dir = fixture.0.join(".274bot");
+    std::fs::create_dir_all(&config_dir).unwrap();
+    std::fs::write(
+        config_dir.join("worlds.json"),
+        r#"{"schema_version":1,"worlds":[{"number":13,"host":"custom.example","port":443,"node_id":42}]}"#,
+    )
+    .unwrap();
+    let mut options = fixture.options(289);
+    options.prod = true;
+    let selected = options.resolve_with_env(None, &fixture.env()).unwrap();
+    assert!(!selected.supported_server());
     assert!(selected.bind().unwrap().game_data().is_none());
+}
+
+#[test]
+fn runtime_asset_connection_falls_back_to_next_listed_world() {
+    use std::time::{Duration, Instant};
+
+    let fixture = Fixture::new();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let dead = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let dead_port = dead.local_addr().unwrap().port();
+    drop(dead);
+    let config_dir = fixture.0.join(".274bot");
+    std::fs::create_dir_all(&config_dir).unwrap();
+    std::fs::write(
+        config_dir.join("worlds.json"),
+        format!(
+            r#"{{"schema_version":1,"worlds":[{{"number":13,"host":"127.0.0.1","port":{dead_port},"node_id":42}},{{"number":14,"host":"localhost","port":{port},"node_id":43}}]}}"#
+        ),
+    )
+    .unwrap();
+    let server = std::thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            match listener.accept() {
+                Ok((_socket, _)) => return true,
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    if Instant::now() >= deadline {
+                        return false;
+                    }
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Err(error) => panic!("unexpected listener failure: {error}"),
+            }
+        }
+    });
+    let mut options = fixture.options(289);
+    options.prod = true;
+    let selected = options.resolve_with_env(None, &fixture.env()).unwrap();
+    let error = selected.bind_runtime().unwrap_err();
+    assert!(
+        server.join().unwrap(),
+        "the second asset world was not contacted: {error}"
+    );
 }
 
 #[test]

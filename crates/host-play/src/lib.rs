@@ -13,6 +13,7 @@ pub mod nav_identity;
 pub mod paired_core;
 pub mod profile;
 pub mod progress;
+pub mod public_worlds;
 pub use nav_identity::{
     bundled_nav_identities, install_resource_root, BundledNavIdentity, NavFlagsOrigin,
     NavLoadCounters, NavOrigin,
@@ -25,7 +26,7 @@ pub use profile::{
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::panic::AssertUnwindSafe;
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -40,6 +41,8 @@ use client::io::JagFile;
 use client::BotTarget;
 pub use host::debug_enabled;
 use host::login_queue::{LoginBackoff, LoginQueue, Permit, QueuePos};
+use parking_lot::Mutex as QueueMutex;
+type SharedLoginQueue = Arc<QueueMutex<LoginQueue>>;
 use host::prepare_client;
 pub use host::set_debug;
 pub use host::Host;
@@ -370,6 +373,8 @@ impl PlayConnection {
 #[derive(Debug, Clone)]
 pub struct SlotStatus {
     pub username: String,
+    /// Active public world number, absent for local profiles.
+    pub world: Option<u16>,
     /// Native lifecycle phase; `ingame` is producer-gated and cannot
     /// distinguish login from a scene rebuild.
     pub startup_phase: StartupPhase,
@@ -756,6 +761,7 @@ impl Default for SlotStatus {
     fn default() -> Self {
         Self {
             username: String::new(),
+            world: None,
             startup_phase: StartupPhase::Preparing,
             startup_phase_started: Instant::now(),
             startup_progress_percent: None,
@@ -910,15 +916,19 @@ fn inventory_from_ifaces(client: &Client) -> Option<Vec<(i32, i32)>> {
     )
 }
 
+static NEXT_QUEUE_OWNER: AtomicU64 = AtomicU64::new(1);
+
 /// Per-slot control arm. The panel flips these to make a slot sit on the
 /// title screen (no handshake) until login is armed, request a clean IF
 /// logout, or stop the thread. A `None` arm at spawn means CLI/e2e: the
 /// slot logs in immediately.
 pub struct SlotArm {
-    /// The profile uid this arm controls; `stop_slot` uses it to drop the
-    /// slot's login-FIFO place before the thread exits. Atomic so spawn
-    /// can force it from the profile even while callers hold clones.
+    /// The profile uid this arm controls. Device UIDs are throttle keys, not
+    /// queue identities; each worker gets a process-unique owner below.
     pub uid: AtomicI32,
+    /// Process-unique FIFO identity. Device UIDs are not unique account
+    /// identities and are used only for server throttle accounting.
+    queue_owner: u64,
     pub want_login: Arc<AtomicBool>,
     pub want_logout: Arc<AtomicBool>,
     pub stop: Arc<AtomicBool>,
@@ -927,6 +937,8 @@ pub struct SlotArm {
     /// so an unexpected DC re-handshakes; a panel one-shot arm disarms
     /// after the handshake unless the profile's auto_login was on).
     pub auto_login: Arc<AtomicBool>,
+    /// True only when the current `want_login` was derived from auto-login.
+    auto_intent: AtomicBool,
     /// Live guardian toggle (`ProfileSettings.random_events`). Mirrored
     /// from the vault on spawn and by panel/TUI settings writes so a
     /// toggle-off never acts/holds without a respawn.
@@ -935,25 +947,135 @@ pub struct SlotArm {
     pub lamp_auto: Arc<AtomicBool>,
     /// Live lamp skill choice (`ProfileSettings.lamp_skill`).
     pub lamp_skill: Arc<Mutex<String>>,
+    /// Operator-selected world for the next login handshake. `None` keeps
+    /// automatic fallback; panel profile saves update this shared value
+    /// without disturbing an online connection.
+    pub world: Arc<parking_lot::Mutex<Option<u16>>>,
+    world_generation: AtomicU64,
     /// Next handshake is opcode 18 (lost_con reconnect). First-ever online
     /// is 16; after a grant this is true.
     pub reconnect: Arc<AtomicBool>,
+    retry_wait: parking_lot::Mutex<()>,
+    retry_wake: parking_lot::Condvar,
 }
 
 impl SlotArm {
     pub fn new(uid: i32, want_login: bool) -> Arc<Self> {
         Arc::new(Self {
             uid: AtomicI32::new(uid),
+            queue_owner: NEXT_QUEUE_OWNER.fetch_add(1, Ordering::Relaxed),
             want_login: Arc::new(AtomicBool::new(want_login)),
             want_logout: Arc::new(AtomicBool::new(false)),
             stop: Arc::new(AtomicBool::new(false)),
             latch: Arc::new(AtomicBool::new(false)),
             auto_login: Arc::new(AtomicBool::new(want_login)),
+            auto_intent: AtomicBool::new(want_login),
             random_events: Arc::new(AtomicBool::new(true)),
             lamp_auto: Arc::new(AtomicBool::new(true)),
             lamp_skill: Arc::new(Mutex::new("strength".to_string())),
+            world: Arc::new(parking_lot::Mutex::new(None)),
+            world_generation: AtomicU64::new(0),
             reconnect: Arc::new(AtomicBool::new(false)),
+            retry_wait: parking_lot::Mutex::new(()),
+            retry_wake: parking_lot::Condvar::new(),
         })
+    }
+
+    /// Arm an operator-requested one-shot login independently of auto-login.
+    pub fn arm_explicit_login(&self) {
+        let _guard = self.retry_wait.lock();
+        self.latch.store(false, Ordering::Relaxed);
+        self.want_login.store(true, Ordering::Relaxed);
+        self.auto_intent.store(false, Ordering::Relaxed);
+        self.want_logout.store(false, Ordering::Relaxed);
+        self.retry_wake.notify_all();
+    }
+
+    /// Apply the live auto-login policy. Disabling it withdraws only an
+    /// auto-derived intent; enabling it arms an unlatched parked slot.
+    pub fn set_auto_login(&self, enabled: bool) {
+        let _guard = self.retry_wait.lock();
+        self.auto_login.store(enabled, Ordering::Relaxed);
+        if enabled {
+            if !self.latch.load(Ordering::Relaxed) && !self.want_login.load(Ordering::Relaxed) {
+                self.want_login.store(true, Ordering::Relaxed);
+                self.auto_intent.store(true, Ordering::Relaxed);
+            }
+        } else if self.auto_intent.swap(false, Ordering::Relaxed) {
+            self.want_login.store(false, Ordering::Relaxed);
+        }
+        self.retry_wake.notify_all();
+    }
+
+    /// Withdraw the active login intent without changing the saved
+    /// auto-login policy.
+    pub fn withdraw_login(&self) {
+        let _guard = self.retry_wait.lock();
+        self.want_login.store(false, Ordering::Relaxed);
+        self.auto_intent.store(false, Ordering::Relaxed);
+        self.retry_wake.notify_all();
+    }
+
+    /// Wake a retry/backoff wait after control intent changes.
+    fn notify_retry_wait(&self) {
+        let _guard = self.retry_wait.lock();
+        self.retry_wake.notify_all();
+    }
+
+    /// Wait to a retry deadline. Notifications only re-check Stop,
+    /// withdrawal, latch, and optionally world selection; generic UI wakes
+    /// use a separate channel and cannot spend another login attempt.
+    fn wait_for_retry(&self, timeout: Duration) -> bool {
+        self.wait_for_retry_inner(timeout, true)
+    }
+
+    /// Response 21 is tied to the same server-selected world. A profile world
+    /// edit must not turn the transfer cooldown into an early retry/switch.
+    fn wait_for_transfer(&self, timeout: Duration) -> bool {
+        self.wait_for_retry_inner(timeout, false)
+    }
+
+    fn wait_for_retry_inner(&self, timeout: Duration, interrupt_on_world_change: bool) -> bool {
+        let mut guard = self.retry_wait.lock();
+        let world_generation = self.world_generation.load(Ordering::Relaxed);
+        let deadline = Instant::now() + timeout;
+        loop {
+            if self.stop.load(Ordering::Relaxed)
+                || !self.want_login.load(Ordering::Relaxed)
+                || self.latch.load(Ordering::Relaxed)
+            {
+                return false;
+            }
+            if interrupt_on_world_change
+                && self.world_generation.load(Ordering::Relaxed) != world_generation
+            {
+                return true;
+            }
+            let left = deadline.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                return true;
+            }
+            self.retry_wake.wait_for(&mut guard, left);
+        }
+    }
+}
+
+fn sync_profile_arm(arm: &SlotArm, profile: &Profile) {
+    arm.uid.store(profile.uid, Ordering::Relaxed);
+    arm.random_events
+        .store(profile.settings.random_events, Ordering::Relaxed);
+    arm.lamp_auto
+        .store(profile.settings.lamp_auto, Ordering::Relaxed);
+    *arm.lamp_skill.lock().unwrap() = profile.settings.lamp_skill.clone();
+    let world_changed = {
+        let mut world = arm.world.lock();
+        let changed = *world != profile.settings.world;
+        *world = profile.settings.world;
+        changed
+    };
+    if world_changed {
+        arm.world_generation.fetch_add(1, Ordering::Relaxed);
+        arm.notify_retry_wait();
     }
 }
 
@@ -967,7 +1089,7 @@ fn should_handshake(arm: &SlotArm, ingame: bool) -> bool {
 /// Cancellation or stop observed here abandons only this unused permit; once
 /// this returns true, the caller must acknowledge the login return instead.
 fn granted_permit_may_start_login(
-    queue: &Arc<Mutex<LoginQueue>>,
+    queue: &SharedLoginQueue,
     uid: i32,
     arm: &SlotArm,
     ingame: bool,
@@ -975,39 +1097,99 @@ fn granted_permit_may_start_login(
     if !arm.stop.load(Ordering::Relaxed) && should_handshake(arm, ingame) {
         return true;
     }
-    let abandoned = queue.lock().unwrap().abandon_permit(uid);
+    let abandoned = queue.lock().abandon_permit(uid);
     debug_assert!(abandoned, "granted permit must be abandoned exactly once");
     false
 }
 
-/// Run the login call that owns a granted permit, then acknowledge its return
-/// before success/error handling can branch. Errors are counted deliberately:
-/// the client may have sent the attempt before returning either result.
-fn login_and_acknowledge_permit<T, E>(
-    queue: &Arc<Mutex<LoginQueue>>,
+/// A profile edit can land while this slot waits in the FIFO. Abandon that
+/// unused grant so the next pass can configure the new endpoint before the
+/// socket handshake starts.
+fn granted_permit_world_is_current(
+    queue: &SharedLoginQueue,
     uid: i32,
-    login: impl FnOnce() -> Result<T, E>,
-) -> Result<T, E> {
-    let result = login();
-    let acknowledged = queue
-        .lock()
-        .unwrap()
-        .acknowledge_login_return(uid, Instant::now());
-    debug_assert!(
-        acknowledged,
-        "each client.login return acknowledges one granted permit"
-    );
-    result
+    round: Option<&public_worlds::WorldRound>,
+    arm: &SlotArm,
+) -> bool {
+    if round.is_none_or(|round| round.preference() == *arm.world.lock()) {
+        return true;
+    }
+    let abandoned = queue.lock().abandon_permit(uid);
+    debug_assert!(abandoned, "granted permit must be abandoned exactly once");
+    false
 }
 
-/// After a successful handshake: stay armed only when this slot was spawned
-/// with auto-login (an unexpected DC re-handshakes); a one-shot Log in /
-/// Login all disarms until the next explicit arm.
+/// Unwind-safe ownership for one granted reservation. Until the socket call
+/// begins, Drop abandons it; once attempted, Drop conservatively acknowledges
+/// it. Thus neither preparation panics nor `client.login` panics leak capacity.
+struct GrantedReservation<'a> {
+    queue: &'a QueueMutex<LoginQueue>,
+    uid: i32,
+    state: ReservationState,
+}
+
+#[derive(Clone, Copy)]
+enum ReservationState {
+    Unused,
+    Attempted,
+    Resolved,
+}
+
+impl<'a> GrantedReservation<'a> {
+    fn new(queue: &'a SharedLoginQueue, uid: i32) -> Self {
+        Self {
+            queue,
+            uid,
+            state: ReservationState::Unused,
+        }
+    }
+
+    fn attempt<T, E>(&mut self, login: impl FnOnce() -> Result<T, E>) -> Result<T, E> {
+        self.state = ReservationState::Attempted;
+        let result = login();
+        let acknowledged = self
+            .queue
+            .lock()
+            .acknowledge_login_return(self.uid, Instant::now());
+        debug_assert!(
+            acknowledged,
+            "each client.login return acknowledges one granted permit"
+        );
+        self.state = ReservationState::Resolved;
+        result
+    }
+}
+
+impl Drop for GrantedReservation<'_> {
+    fn drop(&mut self) {
+        match self.state {
+            ReservationState::Unused => {
+                let _ = self.queue.lock().abandon_permit(self.uid);
+            }
+            ReservationState::Attempted => {
+                let _ = self
+                    .queue
+                    .lock()
+                    .acknowledge_login_return(self.uid, Instant::now());
+            }
+            ReservationState::Resolved => {}
+        }
+    }
+}
+
+fn login_and_acknowledge_permit<T, E>(
+    permit: &mut GrantedReservation<'_>,
+    login: impl FnOnce() -> Result<T, E>,
+) -> Result<T, E> {
+    permit.attempt(login)
+}
+
+/// After a successful handshake, keep an unlatched slot armed exactly when
+/// its saved auto-login policy is enabled.
 fn on_login_success(arm: &SlotArm) {
-    arm.want_login.store(
-        arm.auto_login.load(Ordering::Relaxed) && !arm.latch.load(Ordering::Relaxed),
-        Ordering::Relaxed,
-    );
+    let keep = arm.auto_login.load(Ordering::Relaxed) && !arm.latch.load(Ordering::Relaxed);
+    arm.want_login.store(keep, Ordering::Relaxed);
+    arm.auto_intent.store(keep, Ordering::Relaxed);
     // A later DC / tune / park is opcode 18, not a cold 16.
     arm.reconnect.store(true, Ordering::Relaxed);
 }
@@ -1023,13 +1205,13 @@ fn tick_flags(client: &mut Client, ifaces: &[Option<Box<IfType>>], arm: &SlotArm
         client.take_session_exit_observation()
     {
         arm.latch.store(true, Ordering::Relaxed);
-        arm.want_login.store(false, Ordering::Relaxed);
+        arm.withdraw_login();
     }
     if arm.want_logout.load(Ordering::Relaxed) && client.ingame {
         api::interact::logout(client, ifaces);
         arm.want_logout.store(false, Ordering::Relaxed);
         arm.latch.store(true, Ordering::Relaxed);
-        arm.want_login.store(false, Ordering::Relaxed);
+        arm.withdraw_login();
         // Do not honor `stop` on the same probe as the logout press — the
         // body must keep running until the client leaves the game.
         return false;
@@ -1071,6 +1253,7 @@ pub struct Play {
     pub statuses: Arc<Mutex<Vec<SlotStatus>>>,
     handles: HashMap<String, thread::JoinHandle<()>>,
     connection: PlayConnection,
+    auto_world: Option<u16>,
     /// Generated facts only when the profile cache matches a checked-in asset.
     game_data: Option<Arc<api::game_data::SelectedGameData>>,
     /// Bound-world named bank aliases, resolved once with the nav world and
@@ -1087,7 +1270,7 @@ pub struct Play {
     paired_core: paired_core::PairWatch,
     ifaces: Arc<Vec<Option<Box<IfType>>>>,
     ifaces_mut_template: Arc<Vec<Option<Arc<IfTypeMut>>>>,
-    queue: Arc<Mutex<LoginQueue>>,
+    queue: SharedLoginQueue,
     per_frame: SlotFrame,
     spawned: HashSet<String>,
     arms: HashMap<String, Arc<SlotArm>>,
@@ -1278,6 +1461,7 @@ impl Play {
         );
         Play {
             statuses: Arc::new(Mutex::new(Vec::new())),
+            auto_world: None,
             handles: HashMap::new(),
             connection,
             game_data,
@@ -1288,7 +1472,7 @@ impl Play {
             paired_core: paired_core::PairWatch::default(),
             ifaces,
             ifaces_mut_template,
-            queue: Arc::new(Mutex::new(LoginQueue::default())),
+            queue: Arc::new(QueueMutex::new(LoginQueue::default())),
             per_frame: Arc::new(|_: &mut Client, _: &str, _hold: bool| {}),
             spawned: HashSet::new(),
             arms: HashMap::new(),
@@ -1325,11 +1509,8 @@ impl Play {
     /// `set_draw` on the next tick).
     pub fn focus(&mut self, name: &str) {
         self.focused = Some(name.to_string());
-        let uid = self
-            .arms
-            .get(name)
-            .map(|arm| arm.uid.load(Ordering::Relaxed));
-        self.queue.lock().unwrap().set_preferred(uid);
+        let owner = self.arms.get(name).map(|arm| arm.queue_owner);
+        self.queue.lock().set_preferred_owner(owner);
         self.wake(name);
     }
 
@@ -1361,10 +1542,8 @@ impl Play {
         }
     }
 
-    /// Kick one slot's parked thread (a no-op when the name is not a
-    /// running slot or the thread is already awake). The panel/host-play
-    /// call this whenever a shared-state change must take effect within a
-    /// frame instead of at the next game-tick park timeout.
+    /// Kick one slot's parked frame loop. Generic UI/script wakes do not
+    /// shorten protocol retry deadlines.
     pub fn wake(&self, name: &str) {
         if let Some(w) = self.wakes.get(name) {
             w.wake();
@@ -1377,6 +1556,22 @@ impl Play {
         for w in self.wakes.values() {
             w.wake();
         }
+    }
+
+    /// CLI-only preference for accounts whose stored world is auto.
+    pub fn set_auto_world(&mut self, number: u16) -> Result<(), String> {
+        let worlds = self
+            .connection
+            .profile()
+            .and_then(|p| p.public_worlds())
+            .ok_or("--world requires public-289")?;
+        if worlds.by_number(number).is_none() {
+            return Err(format!(
+                "world {number} is not in the configured public worlds"
+            ));
+        }
+        self.auto_world = Some(number);
+        Ok(())
     }
 
     /// Snapshot of every slot's status.
@@ -1415,62 +1610,31 @@ impl Play {
         self.arms.get(name).cloned()
     }
 
-    /// Keep vault credentials for a later [`Play::spawn_slot`] /
-    /// reconnect.
+    /// Keep vault credentials for a later [`Play::spawn_slot`] / reconnect,
+    /// and publish handshake-time settings to an already-running slot.
     pub fn remember_profile(&mut self, profile: Profile) {
+        if let Some(arm) = self.arms.get(&profile.username) {
+            sync_profile_arm(arm, &profile);
+        }
         self.profiles.insert(profile.username.clone(), profile);
     }
 
-    /// Move `uid` to the front of the login FIFO so the TV head handshakes
-    /// before slots that already queued. Mirrors the place onto the status row
-    /// so the queue card can show *k of n* during maininit (the slot has not
-    /// entered [`wait_for_permit`] yet). A slot that cannot wait — already
-    /// ingame, or a thread that already returned — only gets the precedence
-    /// remembered: reserving a place for it would be an orphan FIFO entry that
-    /// strands real waiters behind a phantom and publishes *k of n* for a
-    /// running bot.
-    pub fn prefer_login(&self, uid: i32) {
-        let name = self
-            .arms
-            .iter()
-            .find(|(_, arm)| arm.uid.load(Ordering::Relaxed) == uid)
-            .map(|(n, _)| n.clone());
-        let reserve = name.as_deref().is_some_and(|name| self.slot_can_wait(name));
-        let mut q = self.queue.lock().unwrap();
-        if reserve {
-            q.prefer(uid);
-            let pos = q.status(uid);
-            drop(q);
-            if let Some(name) = name {
-                apply_queue_wait(&mut self.statuses.lock().unwrap(), &name, pos);
-            }
+    /// Give `name` focused priority. Existing membership moves to the front;
+    /// otherwise the preference is remembered until this worker reaches
+    /// Queueing and creates its own place.
+    pub fn prefer_login(&self, name: &str) {
+        let Some(arm) = self.arms.get(name) else {
             return;
-        }
-        // Keep the head's precedence without a place: `request_permit`
-        // pushes a preferred uid to the front when it really asks.
-        q.set_preferred(Some(uid));
-        q.leave(uid);
-        drop(q);
-        if let Some(name) = name {
-            apply_queue_wait(&mut self.statuses.lock().unwrap(), &name, None);
-        }
+        };
+        let mut q = self.queue.lock();
+        q.prefer_owner(arm.queue_owner);
+        let pos = q.status_owner(arm.queue_owner);
+        apply_queue_wait(&mut self.statuses.lock().unwrap(), name, pos);
     }
 
-    /// Whether `name`'s slot thread can still enter [`wait_for_permit`]: a
-    /// starting slot (its row is published by the thread before maininit) or
-    /// a title-screen slot. An ingame slot waits for a disconnect first, and a
-    /// slot whose prepare/login gave up has no thread left to ask.
-    fn slot_can_wait(&self, name: &str) -> bool {
-        let all = self.statuses.lock().unwrap();
-        match all.iter().find(|s| s.username == name) {
-            None => true,
-            Some(row) => !row.ingame && row.startup_phase != StartupPhase::Error,
-        }
-    }
-
-    /// Snapshot of the login FIFO (front first). Panel tests pin TV-first.
+    /// Snapshot of the worker-owned login FIFO (front first).
     pub fn login_queue_uids(&self) -> Vec<i32> {
-        self.queue.lock().unwrap().queued_uids()
+        self.queue.lock().queued_uids()
     }
 
     /// Whether `name` is a slot this play controls (spawned or armed), so
@@ -1805,10 +1969,9 @@ impl Play {
     pub fn stop_slot(&mut self, name: &str) {
         if let Some(arm) = self.arms.get(name) {
             arm.stop.store(true, Ordering::Relaxed);
-            self.queue
-                .lock()
-                .unwrap()
-                .leave(arm.uid.load(Ordering::Relaxed));
+            arm.notify_retry_wait();
+            let mut queue = self.queue.lock();
+            queue.leave_owner(arm.queue_owner);
         }
         self.spawned.remove(name);
         self.statuses.lock().unwrap().retain(|s| s.username != name);
@@ -1822,7 +1985,7 @@ impl Play {
         self.wires.lock().unwrap().remove(name);
         if self.focused.as_deref() == Some(name) {
             self.focused = None;
-            self.queue.lock().unwrap().set_preferred(None);
+            self.queue.lock().set_preferred_owner(None);
         }
         // Wake a parked thread so its next probe sees `stop`; the wake end
         // stays alive (removed after the join) so the poll cannot miss it.
@@ -1883,23 +2046,30 @@ impl Play {
         arm: Option<Arc<SlotArm>>,
     ) -> Result<(), String> {
         self.connection.require_bot_operation()?;
+        let world_round = self
+            .connection
+            .profile()
+            .and_then(|p| p.public_worlds().map(|worlds| (p, worlds)))
+            .map(|(bound, worlds)| {
+                let default = self.auto_world.or_else(|| {
+                    worlds
+                        .by_endpoint(bound.client().game_host(), bound.client().game_port())
+                        .map(|world| world.number)
+                });
+                public_worlds::WorldRound::new(worlds, profile.settings.world, default)
+            })
+            .transpose()?;
         // Keep the vault credentials on the wall for later spawns and
-        // DC-reconnect re-handshakes.
-        self.profiles
-            .insert(profile.username.clone(), profile.clone());
+        // publish a changed world preference to an existing slot before
+        // the already-spawned early return.
+        self.remember_profile(profile.clone());
         if !self.spawned.insert(profile.username.clone()) {
             return Ok(());
         }
         let arm = arm.unwrap_or_else(|| SlotArm::new(profile.uid, true));
-        // `stop_slot` leaves the FIFO by `arm.uid`; force it from the
-        // profile at spawn. The store goes through the shared inner field
-        // so a caller's own clone cannot keep a stale uid.
-        arm.uid.store(profile.uid, Ordering::Relaxed);
-        arm.random_events
-            .store(profile.settings.random_events, Ordering::Relaxed);
-        arm.lamp_auto
-            .store(profile.settings.lamp_auto, Ordering::Relaxed);
-        *arm.lamp_skill.lock().unwrap() = profile.settings.lamp_skill.clone();
+        // Store through the shared inner fields so a caller's own clone
+        // cannot retain stale profile settings.
+        sync_profile_arm(&arm, &profile);
         self.arms.insert(profile.username.clone(), Arc::clone(&arm));
         // The control wake: `Play::wake` kicks the parked slot thread on
         // focus/draw/stop/spawn changes; the slot thread polls the park end.
@@ -1908,6 +2078,7 @@ impl Play {
         spawn_slot_thread(
             &self.connection,
             profile,
+            world_round,
             input,
             mailbox,
             Some(park),
@@ -2045,13 +2216,13 @@ pub fn run_with_profile(
 /// whether the first profile gets the login-FIFO front.
 pub fn run_channels(options: &PlayOptions, profiles: Vec<Profile>, heads: usize) -> Play {
     let mut play = Play::new(options);
-    let tv_uid = profiles.first().map(|p| p.uid);
+    let tv_name = profiles.first().map(|p| p.username.clone());
     for profile in profiles {
         play.spawn_slot(profile, None, None, None);
     }
     if heads >= 1 {
-        if let Some(uid) = tv_uid {
-            play.prefer_login(uid);
+        if let Some(name) = tv_name {
+            play.prefer_login(&name);
         }
     }
     play
@@ -2164,6 +2335,11 @@ fn record_login_error(statuses: &Arc<Mutex<Vec<SlotStatus>>>, name: &str, e: &Lo
     if debug_enabled() {
         eprintln!("[host-play] slot {name}: login {msg}");
     }
+    // Response 1 is a transient protocol retry owned by this host. Keep the
+    // slot in Connecting rather than publishing a terminal-looking Error.
+    if e.code == 1 {
+        return;
+    }
     let mut all = statuses.lock().unwrap();
     if let Some(s) = all.iter_mut().find(|s| s.username == name) {
         s.startup_phase = StartupPhase::Error;
@@ -2172,8 +2348,74 @@ fn record_login_error(statuses: &Arc<Mutex<Vec<SlotStatus>>>, name: &str, e: &Lo
     }
 }
 
+fn publish_transfer_countdown(statuses: &Arc<Mutex<Vec<SlotStatus>>>, name: &str, remaining: u64) {
+    let mut all = statuses.lock().unwrap();
+    if let Some(s) = all.iter_mut().find(|s| s.username == name) {
+        s.startup_phase = StartupPhase::Connecting;
+        s.startup_phase_started = Instant::now();
+        s.error = None;
+        s.startup_progress_percent = None;
+        s.startup_progress_message =
+            format!("Your profile will be transferred in: {remaining} seconds");
+    }
+}
+
+/// Handle a typed response-21 cooldown before generic world/error policy.
+/// `Some` means the response was consumed and the caller must retry the same
+/// endpoint; `None` leaves non-21 or malformed errors to normal handling.
+fn wait_for_transfer_response(
+    error: &LoginError,
+    arm: &SlotArm,
+    statuses: &Arc<Mutex<Vec<SlotStatus>>>,
+    name: &str,
+) -> Option<bool> {
+    if error.code != 21 {
+        return None;
+    }
+    let delay = error.retry_after?;
+    let mut remaining = delay.as_secs();
+    loop {
+        publish_transfer_countdown(statuses, name, remaining);
+        if !arm.wait_for_transfer(Duration::from_secs(1)) {
+            clear_startup_progress(statuses, name);
+            return Some(false);
+        }
+        if remaining == 0 {
+            break;
+        }
+        remaining -= 1;
+    }
+    clear_startup_progress(statuses, name);
+    Some(true)
+}
+
+fn refresh_slot_world_preference(
+    round: &mut public_worlds::WorldRound,
+    worlds: &public_worlds::PublicWorlds,
+    arm: &SlotArm,
+) -> Result<bool, String> {
+    let choice = *arm.world.lock();
+    round.reselect_if_changed(worlds, choice)
+}
+
+fn configure_slot_world(
+    client: &mut Client,
+    world: &public_worlds::PublicWorld,
+    refresh: bool,
+    stop: &AtomicBool,
+) -> Result<(), String> {
+    let modulus = public_worlds::modulus_for(world, refresh, |host, port| {
+        Client::fetch_login_modulus_for(BotTarget::Prod, host, port)
+    });
+    if stop.load(Ordering::Relaxed) {
+        return Ok(());
+    }
+    client.set_public_world(&world.host, world.port, world.node_id, &modulus)
+}
+
 fn login_retry_wait(backoff: &mut LoginBackoff, code: i32) -> Duration {
     match code {
+        1 => Duration::from_secs(2),
         16 => backoff.delay(),
         5 => Duration::from_secs(60),
         _ => Duration::from_secs(5),
@@ -2354,6 +2596,7 @@ fn publish_session_boundary_status(
 fn spawn_slot_thread(
     connection: &PlayConnection,
     profile: Profile,
+    mut world_round: Option<public_worlds::WorldRound>,
     slot_input: Option<Arc<SlotInput>>,
     slot_mailbox: Option<Arc<FrameBuf>>,
     park: Option<SlotPark>,
@@ -2361,7 +2604,7 @@ fn spawn_slot_thread(
     slot_cache: Arc<Cache>,
     ifaces_template: Arc<Vec<Option<Box<IfType>>>>,
     ifaces_mut_template: Arc<Vec<Option<Arc<IfTypeMut>>>>,
-    slot_queue: Arc<Mutex<LoginQueue>>,
+    slot_queue: SharedLoginQueue,
     slot_statuses: Arc<Mutex<Vec<SlotStatus>>>,
     slot_scripts: ScriptWall,
     slot_cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>>,
@@ -2389,6 +2632,12 @@ fn spawn_slot_thread(
             .name(username.clone())
             .stack_size(THREAD_STACK)
             .spawn(move || {
+            let _queue_retirement = QueuePlaceRetirement {
+                queue: &slot_queue,
+                statuses: &slot_statuses,
+                username: &username,
+                arm: &arm,
+            };
             {
                 // Publish the row before `prepare_client`/`maininit`
                 // (a slow cache fetch can stall for seconds), so the
@@ -2396,6 +2645,9 @@ fn spawn_slot_thread(
                 let mut all = slot_statuses.lock().unwrap();
                 all.push(SlotStatus {
                     username: username.clone(),
+                    world: world_round.as_ref().and_then(|round| connection.profile()
+                        .and_then(|p| p.public_worlds())
+                        .map(|worlds| worlds.worlds[round.index].number)),
                     ..SlotStatus::default()
                 });
             }
@@ -2439,6 +2691,9 @@ fn spawn_slot_thread(
                     }
                 },
             };
+            // The host owns every reconnect attempt so each fresh socket
+            // returns through the shared FIFO and reservation accounting.
+            client.set_external_reconnect_owner(true);
             #[cfg(test)]
             {
                 // Unit tests spawn slots with no web server on :80; shrink
@@ -2474,20 +2729,25 @@ fn spawn_slot_thread(
             }
 
             let mut backoff = LoginBackoff::new();
+            let mut world_dirty = world_round.is_some();
+            let mut refresh_key = false;
+            let mut key_refreshed = false;
             let mut script_tick: u64 = 0;
             loop {
                 if arm.stop.load(Ordering::Relaxed) {
-                    slot_queue.lock().unwrap().leave(uid);
                     return;
                 }
                 if !client.ingame {
                     if !should_handshake(&arm, client.ingame) {
-                        // No pending intent (title hold, latched logout, a
+                        // No pending intent (title hold, latched logout, or a
                         // withdrawn wait): a parked slot holds no FIFO place
-                        // and publishes no `k of n`, so a reservation
-                        // (`Play::prefer_login` for the TV head) that
-                        // outlived its intent cannot strand later members.
-                        drop_queue_place(&slot_queue, &slot_statuses, &username, uid);
+                        // and publishes no `k of n`.
+                        drop_queue_place(
+                            &slot_queue,
+                            &slot_statuses,
+                            &username,
+                            arm.queue_owner,
+                        );
                         publish_login_latched_from_arm(&slot_statuses, &username, &arm);
                         thread::sleep(Duration::from_millis(20));
                         continue;
@@ -2496,12 +2756,82 @@ fn spawn_slot_thread(
                     // arm so an explicit Log in cannot keep a stale TRUE from
                     // the last park publish through queue/connect.
                     publish_login_latched_from_arm(&slot_statuses, &username, &arm);
+                    enqueue_queue_place(&slot_queue, &slot_statuses, &username, uid, &arm);
+                    if let Some(round) = world_round.as_mut() {
+                        let worlds = connection
+                            .profile()
+                            .and_then(|p| p.public_worlds())
+                            .expect("public world round requires bound public worlds");
+                        match refresh_slot_world_preference(round, worlds, &arm) {
+                            Ok(true) => {
+                                world_dirty = true;
+                                refresh_key = false;
+                                key_refreshed = false;
+                            }
+                            Ok(false) => {}
+                            Err(error) => {
+                                if let Some(row) = slot_statuses
+                                    .lock()
+                                    .unwrap()
+                                    .iter_mut()
+                                    .find(|s| s.username == username)
+                                {
+                                    row.startup_phase = StartupPhase::Error;
+                                    row.startup_phase_started = Instant::now();
+                                    row.error = Some(format!(
+                                        "public world preference failed: {error}"
+                                    ));
+                                }
+                                arm.withdraw_login();
+                                continue;
+                            }
+                        }
+                    }
+                    if world_dirty {
+                        let round = world_round.as_ref().expect("public world round");
+                        let worlds = connection.profile().and_then(|p| p.public_worlds())
+                            .expect("bound public worlds");
+                        let world = &worlds.worlds[round.index];
+                        if let Err(error) = configure_slot_world(&mut client, world, refresh_key, &arm.stop) {
+                            if arm.stop.load(Ordering::Relaxed) {
+                                return;
+                            }
+                            if let Some(row) = slot_statuses.lock().unwrap().iter_mut().find(|s| s.username == username) {
+                                row.startup_phase = StartupPhase::Error;
+                                row.startup_phase_started = Instant::now();
+                                row.error = Some(format!("public world login configuration failed: {error}"));
+                            }
+                            clear_startup_progress(&slot_statuses, &username);
+                            return;
+                        }
+                        if arm.stop.load(Ordering::Relaxed) {
+                            return;
+                        }
+                        if let Some(row) = slot_statuses.lock().unwrap().iter_mut().find(|s| s.username == username) {
+                            row.world = Some(world.number);
+                        }
+                        if debug_enabled() {
+                            eprintln!(
+                                "[host-play] slot {username}: world w{} {}:{} node {}",
+                                world.number, world.host, world.port, world.node_id
+                            );
+                        }
+                        world_dirty = false;
+                        refresh_key = false;
+                    }
                     let wait = wait_for_permit(&slot_queue, &slot_statuses, &username, uid, &arm);
                     if wait == PermitWait::Cancelled {
                         if arm.stop.load(Ordering::Relaxed) {
-                            slot_queue.lock().unwrap().leave(uid);
                             return;
                         }
+                        continue;
+                    }
+                    if !granted_permit_world_is_current(
+                        &slot_queue,
+                        uid,
+                        world_round.as_ref(),
+                        &arm,
+                    ) {
                         continue;
                     }
                     // A withdrawal or stop that lands after the granting poll
@@ -2513,11 +2843,11 @@ fn spawn_slot_thread(
                         client.ingame,
                     ) {
                         if arm.stop.load(Ordering::Relaxed) {
-                            slot_queue.lock().unwrap().leave(uid);
                             return;
                         }
                         continue;
                     }
+                    let mut permit = GrantedReservation::new(&slot_queue, uid);
                     mark_login_started(&slot_statuses, &username);
                     let reconnect = arm.reconnect.load(Ordering::Relaxed);
                     if debug_enabled() {
@@ -2525,12 +2855,14 @@ fn spawn_slot_thread(
                             "[host-play] slot {username}: handshake begin reconnect={reconnect}"
                         );
                     }
-                    let login = login_and_acknowledge_permit(&slot_queue, uid, || {
+                    let login = login_and_acknowledge_permit(&mut permit, || {
                         client.login(&username, &password, reconnect)
                     });
                     match login {
                         Ok(()) => {
                             backoff.reset();
+                            if let Some(round) = world_round.as_mut() { round.reset(); }
+                            key_refreshed = false;
                             on_login_success(&arm);
                             set_startup_phase(&slot_statuses, &username, StartupPhase::LoadingScene);
                             if debug_enabled() {
@@ -2538,8 +2870,45 @@ fn spawn_slot_thread(
                             }
                         }
                         Err(e) => {
+                            if wait_for_transfer_response(
+                                &e,
+                                &arm,
+                                &slot_statuses,
+                                &username,
+                            )
+                            .is_some()
+                            {
+                                continue;
+                            }
                             record_login_error(&slot_statuses, &username, &e);
-                            thread::sleep(login_retry_wait(&mut backoff, e.code));
+                            let decision = world_round.as_mut().map(|round| {
+                                let count = connection.profile().and_then(|p| p.public_worlds())
+                                    .expect("bound public worlds").worlds.len();
+                                round.on_login_error(e.code, count)
+                            });
+                            match decision {
+                                Some(public_worlds::WorldErrorStep::SwitchNow) => {
+                                    world_dirty = true;
+                                    key_refreshed = false;
+                                    continue;
+                                }
+                                Some(public_worlds::WorldErrorStep::SwitchAfterWait) => {
+                                    world_dirty = true;
+                                    key_refreshed = false;
+                                }
+                                _ => {}
+                            }
+                            if world_round.is_some()
+                                && public_worlds::refresh_after_login_error(e.code, &mut key_refreshed)
+                            {
+                                refresh_key = true;
+                                world_dirty = true;
+                            }
+                            let retry = login_retry_wait(&mut backoff, e.code);
+                            if e.code == 16 {
+                                slot_queue.lock().hold_for(Instant::now(), retry);
+                            }
+                            arm.wait_for_retry(retry);
                             continue;
                         }
                     }
@@ -2877,7 +3246,6 @@ fn spawn_slot_thread(
                     &slot_navs,
                 );
                 if arm.stop.load(Ordering::Relaxed) {
-                    slot_queue.lock().unwrap().leave(uid);
                     return;
                 }
             }
@@ -3009,10 +3377,11 @@ fn publish_login_latched_from_arm(
 }
 
 fn apply_queue_wait(rows: &mut [SlotStatus], name: &str, pos: Option<QueuePos>) {
-    let (position, total) = match pos {
-        Some(p) => (p.position as i32, p.total as i32),
-        None => (-1, -1),
-    };
+    let (position, total) =
+        match pos.filter(|p| p.position >= 1 && p.total >= 1 && p.position <= p.total) {
+            Some(p) => (p.position as i32, p.total as i32),
+            None => (-1, -1),
+        };
     for s in rows.iter_mut().filter(|s| s.username == name) {
         s.queue_position = position;
         s.queue_total = total;
@@ -3036,103 +3405,120 @@ enum PermitWait {
     Cancelled,
 }
 
-/// Drop `uid`'s login-FIFO place and the slot's published `k of n`.
-/// [`LoginQueue::leave`] reports whether a place was really held, so a slot
-/// that never queued leaves its row alone. Guessing here would blank a card
-/// the panel legitimately shows through its FIFO-head fallback.
-fn drop_queue_place(
-    queue: &Arc<Mutex<LoginQueue>>,
+/// Enter this slot owner once and publish its authoritative place while the
+/// queue lock prevents a concurrent grant/leave from overtaking the row
+/// update.
+fn enqueue_queue_place(
+    queue: &SharedLoginQueue,
     statuses: &Arc<Mutex<Vec<SlotStatus>>>,
     username: &str,
     uid: i32,
+    arm: &SlotArm,
 ) {
-    let removed = queue.lock().unwrap().leave(uid);
-    if removed {
-        apply_queue_wait(&mut statuses.lock().unwrap(), username, None);
+    let mut q = queue.lock();
+    q.enqueue_owner(arm.queue_owner, uid);
+    let pos = q.status_owner(arm.queue_owner);
+    apply_queue_wait(&mut statuses.lock().unwrap(), username, pos);
+}
+
+/// Drop one slot owner's login-FIFO place and always clear this slot's
+/// published `k of n`.
+fn drop_queue_place(
+    queue: &SharedLoginQueue,
+    statuses: &Arc<Mutex<Vec<SlotStatus>>>,
+    username: &str,
+    owner: u64,
+) {
+    let mut q = queue.lock();
+    q.leave_owner(owner);
+    apply_queue_wait(&mut statuses.lock().unwrap(), username, None);
+}
+
+/// Retire a slot owner's queue eligibility and published place. This is
+/// idempotent so explicit Stop cleanup and the worker exit guard may race.
+fn retire_queue_place(
+    queue: &SharedLoginQueue,
+    statuses: &Arc<Mutex<Vec<SlotStatus>>>,
+    username: &str,
+    arm: &SlotArm,
+) {
+    queue.lock().leave_owner(arm.queue_owner);
+    let mut rows = statuses
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    apply_queue_wait(&mut rows, username, None);
+}
+
+/// Worker-scope guard: every return and unwind retires this worker's FIFO
+/// owner, including panics in preparation, maininit, and permit waiting.
+struct QueuePlaceRetirement<'a> {
+    queue: &'a SharedLoginQueue,
+    statuses: &'a Arc<Mutex<Vec<SlotStatus>>>,
+    username: &'a str,
+    arm: &'a SlotArm,
+}
+
+impl Drop for QueuePlaceRetirement<'_> {
+    fn drop(&mut self) {
+        retire_queue_place(self.queue, self.statuses, self.username, self.arm);
     }
 }
 
-/// Whether a pending permit wait must be withdrawn before any handshake:
-/// `stop` (rail ✕ / slot removal), the intent itself (`want_login` cleared by
-/// an intentional logout or by the wall re-applying auto-login), the logout
-/// latch, or the auto-login checkbox that armed the intent being cleared.
-/// `auto_sourced` latches once the pending intent is observed armed by
-/// auto-login — [`SlotArm::new`] seeds `want_login = auto_login`, so clearing
-/// the checkbox withdraws the wait it armed, while an explicit Log in /
-/// Login all intent (armed with auto-login off) survives the same toggle.
-fn permit_wait_cancelled(arm: &SlotArm, auto_sourced: &mut bool) -> bool {
-    let want = arm.want_login.load(Ordering::Relaxed);
-    let auto = arm.auto_login.load(Ordering::Relaxed);
-    if want && auto {
-        *auto_sourced = true;
-    }
+/// Whether a pending permit wait must be withdrawn before any handshake.
+/// Intent provenance lives on the arm, so turning auto-login off is still
+/// observed even when it happens before the first queue poll.
+fn permit_wait_cancelled(arm: &SlotArm) -> bool {
     arm.stop.load(Ordering::Relaxed)
-        || !want
+        || !arm.want_login.load(Ordering::Relaxed)
         || arm.latch.load(Ordering::Relaxed)
-        || (*auto_sourced && !auto)
+        || (arm.auto_intent.load(Ordering::Relaxed) && !arm.auto_login.load(Ordering::Relaxed))
 }
 
-/// Block until the login queue grants `uid` a handshake permit, mirroring
-/// the queue position onto the slot's status row while it waits. Every
-/// withdrawal is observed each poll **before** `request_permit`, so a `leave`
-/// from [`Play::stop_slot`] or a cancelled login intent is never undone by a
-/// re-enqueue; a withdrawn wait also clears `want_login` so the caller's loop
-/// does not re-enter the queue for an intent the operator dropped.
+/// Block until the already-enqueued slot owner receives a handshake permit,
+/// mirroring the queue position onto the slot's status row while it waits.
+/// Withdrawal is observed before every poll, so a dropped place is never
+/// recreated by this waiter.
 fn wait_for_permit(
-    queue: &Arc<Mutex<LoginQueue>>,
+    queue: &SharedLoginQueue,
     statuses: &Arc<Mutex<Vec<SlotStatus>>>,
     username: &str,
     uid: i32,
     arm: &SlotArm,
 ) -> PermitWait {
-    let mut auto_sourced = false;
-    // Withdraw a dead request: clear `want_login` so the caller's loop does
-    // not re-enter the queue for an intent the operator dropped, drop the
-    // FIFO place and clear the published `k of n`.
     let withdraw = || {
-        arm.want_login.store(false, Ordering::Relaxed);
-        drop_queue_place(queue, statuses, username, uid);
+        arm.withdraw_login();
+        drop_queue_place(queue, statuses, username, arm.queue_owner);
         if debug_enabled() {
             eprintln!("[host-play] slot {username}: permit wait withdrawn");
         }
     };
     loop {
-        // Before `request_permit`: it enqueues, so a place dropped by
-        // `stop_slot` (or by a withdrawn intent) must not be recreated.
-        if permit_wait_cancelled(arm, &mut auto_sourced) {
+        if permit_wait_cancelled(arm) {
             withdraw();
             return PermitWait::Cancelled;
         }
         let wait = {
-            let mut q = queue.lock().unwrap();
-            match q.request_permit(uid, Instant::now()) {
+            let mut q = queue.lock();
+            match q.poll_owner(arm.queue_owner, uid, Instant::now()) {
                 Permit::Grant => {
-                    drop(q);
-                    let mut all = statuses.lock().unwrap();
-                    apply_queue_wait(&mut all, username, None);
+                    apply_queue_wait(&mut statuses.lock().unwrap(), username, None);
                     return PermitWait::Granted;
                 }
                 Permit::Wait(wait) => {
-                    let pos = q.status(uid);
-                    drop(q);
-                    let mut all = statuses.lock().unwrap();
-                    apply_queue_wait(&mut all, username, pos);
-                    drop(all);
+                    let pos = q.status_owner(arm.queue_owner);
+                    apply_queue_wait(&mut statuses.lock().unwrap(), username, pos);
                     wait
                 }
             }
         };
-        // Interruptible sleep: a withdrawal must not wait out a 60 s address
-        // deadline, and the published `k of n` must not freeze for that long
-        // either — a window-blocked head sleeping its deadline would not show
-        // members that queue behind it. This is a read-only re-read of the
-        // place (no `request_permit`), so no grant can happen here.
+        // A window-blocked head can sleep a whole deadline. Wake in short
+        // intervals for cancellation and refresh its published place.
         let deadline = Instant::now() + wait;
         let mut next_publish = Instant::now() + QUEUE_PUBLISH;
-        while Instant::now() < deadline && !permit_wait_cancelled(arm, &mut auto_sourced) {
+        while Instant::now() < deadline && !permit_wait_cancelled(arm) {
             let now = Instant::now();
             if now >= next_publish {
-                let pos = queue.lock().unwrap().status(uid);
+                let pos = queue.lock().status_owner(arm.queue_owner);
                 apply_queue_wait(&mut statuses.lock().unwrap(), username, pos);
                 next_publish = now + QUEUE_PUBLISH;
             }

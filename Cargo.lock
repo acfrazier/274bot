@@ -2359,6 +2359,7 @@ dependencies = [
  "host",
  "libc",
  "nav",
+ "parking_lot",
  "rand_core",
  "scenario",
  "script",

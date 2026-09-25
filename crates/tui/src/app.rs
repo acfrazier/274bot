@@ -1037,9 +1037,23 @@ impl TuiApp {
 
     fn draw_strip(&mut self, frame: &mut Frame<'_>, area: Rect) {
         let focused = self.focused_name().unwrap_or_else(|| "_".into());
+        let mut members = String::new();
+        for name in &self.names {
+            if !members.is_empty() {
+                members.push(' ');
+            }
+            members.push_str(name);
+            if let Some(number) = self
+                .statuses
+                .iter()
+                .find(|s| &s.username == name)
+                .and_then(|s| s.world)
+            {
+                members.push_str(&format!("(w{number})"));
+            }
+        }
         let mut text = format!(
-            "[{}]  focused: {focused}   {}   q quit · o options · l loadouts · Tab focus",
-            self.names.join(" "),
+            "[{members}]  focused: {focused}   {}   q quit · o options · l loadouts · Tab focus",
             self.title
         );
         if let Some(err) = &self.error {

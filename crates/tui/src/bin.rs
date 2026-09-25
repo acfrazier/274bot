@@ -63,6 +63,7 @@ pub struct Args {
     pub pass: Option<String>,
     pub users: Vec<String>,
     pub live: Option<String>,
+    pub world: Option<u16>,
     pub profile: ProfileOptions,
 }
 
@@ -72,7 +73,7 @@ fn usage() -> ! {
          [--prod] [--host HOST] [--port PORT] [--asset-host HOST] [--http-port PORT] \
          [--engine DIR] [--cache DIR] [--unpack DIR] [--nav-pack PATH] [--nav-flags PATH] \
          [--content DIR] [--vault PATH] [--catalog DIR] [--cache-manifest PATH] [--vault-pass PASS] \
-         [--live script_<name>] [--user USER]... (default user: first vault profile)"
+         [--world N] [--live script_<name>] [--user USER]... (default user: first vault profile)"
     );
     std::process::exit(2);
 }
@@ -106,6 +107,7 @@ pub fn parse_args_from(args: impl IntoIterator<Item = impl AsRef<str>>) -> Resul
     let (profile, rest) = parse_profile_args(args).map_err(|e| format!("tui-play: {e}"))?;
     let mut parsed = Args {
         pass: env::var("BOT_VAULT_PASS").ok(),
+        world: None,
         users: Vec::new(),
         live: env::var("BOT_LIVE").ok().filter(|s| !s.is_empty()),
         profile,
@@ -115,6 +117,12 @@ pub fn parse_args_from(args: impl IntoIterator<Item = impl AsRef<str>>) -> Resul
         match arg.as_ref() {
             "--vault-pass" => parsed.pass = Some(need_value(&mut it, "--vault-pass")?),
             "--user" => parsed.users.push(need_value(&mut it, "--user")?),
+            "--world" => {
+                let value = need_value(&mut it, "--world")?;
+                parsed.world = Some(value.parse::<u16>().ok().filter(|n| *n != 0).ok_or_else(
+                    || "tui-play: --world needs a positive world number".to_string(),
+                )?);
+            }
             "--live" => parsed.live = Some(need_value(&mut it, "--live")?),
             "--help" | "-h" => return Err("usage".into()),
             other => return Err(format!("tui-play: unknown {other}")),
@@ -407,6 +415,7 @@ pub struct TuiSession {
     #[cfg(feature = "memory-profile")]
     memory: Option<host_play::memory::Run>,
     play: Option<Play>,
+    auto_world: Option<u16>,
     #[cfg(test)]
     suppress_slot_spawn: bool,
     vault: Option<Vault>,
@@ -500,6 +509,7 @@ impl TuiSession {
             #[cfg(feature = "memory-profile")]
             memory: None,
             play: None,
+            auto_world: None,
             #[cfg(test)]
             suppress_slot_spawn: false,
             vault: None,
@@ -714,7 +724,7 @@ impl TuiSession {
                 walk_clear.store(true, Ordering::Relaxed);
             }
         };
-        let play = match self.template.clone() {
+        let mut play = match self.template.clone() {
             Some(template) => run_with_template(
                 template,
                 host_options.mainland,
@@ -724,6 +734,9 @@ impl TuiSession {
             )?,
             None => run_with_io(&host_options, Vec::new(), |_| (None, None), per_frame),
         };
+        if let Some(number) = self.auto_world {
+            play.set_auto_world(number)?;
+        }
         self.nav_world.lock().unwrap().clone_from(&play.world());
         if std::env::var_os("BOT_DEBUG").is_some() {
             let game_data = play.game_data();
@@ -760,8 +773,9 @@ impl TuiSession {
         };
         profile.settings.raster = vault::RasterMode::Off;
         let auto_login = profile.settings.auto_login;
-        let arm = SlotArm::new(profile.uid, true);
-        arm.auto_login.store(auto_login, Ordering::Relaxed);
+        let arm = SlotArm::new(profile.uid, false);
+        arm.set_auto_login(auto_login);
+        arm.arm_explicit_login();
         arm.random_events
             .store(profile.settings.random_events, Ordering::Relaxed);
         arm.lamp_auto
@@ -1669,10 +1683,21 @@ fn chat_data_from(s: &api::snapshot::GameSnapshot) -> ChatData {
 /// Run the interactive (or `--live`) TUI: unlock, spawn, event loop.
 fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
     let selection = args.profile.resolve(None)?;
+    if let Some(number) = args.world {
+        let worlds = selection
+            .public_worlds()
+            .ok_or("--world requires public-289")?;
+        if worlds.by_number(number).is_none() {
+            return Err(format!(
+                "world {number} is not in the configured public worlds"
+            ));
+        }
+    }
     // Runtime startup must prepare the selected cache before constructing the
     // shared template; fixture tests intentionally use bind/load below.
     let template = selection.prepare_template()?;
     let mut session = TuiSession::new_bound(template);
+    session.auto_world = args.world;
     session
         .server_profile
         .as_ref()
@@ -2500,12 +2525,29 @@ mod tests {
         let args = parse_args_from(["--prod"]).expect("prod is a known flag");
         assert!(args.profile.prod);
         assert!(args.live.is_none());
+        let home = std::env::temp_dir().join(format!("274bot-tui-public-{}", std::process::id()));
         let selection = args
             .profile
-            .resolve_with_env(Some(274), &ProfileEnvironment::default())
+            .resolve_with_env(
+                Some(274),
+                &ProfileEnvironment {
+                    home: Some(home.clone()),
+                    ..ProfileEnvironment::default()
+                },
+            )
             .unwrap();
         assert_eq!(selection.revision(), client::io::ClientRevision::R289);
         assert_eq!(selection.target(), client::BotTarget::Prod);
+        assert_eq!(selection.public_worlds().unwrap().worlds.len(), 2);
+        std::fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn world_flag_selects_auto_default_and_rejects_invalid_number() {
+        let args = parse_args_from(["--profile", "public-289", "--world", "2"]).unwrap();
+        assert_eq!(args.world, Some(2));
+        assert!(parse_args_from(["--world", "0"]).is_err());
+        assert!(parse_args_from(["--world", "not-a-number"]).is_err());
     }
 
     #[test]

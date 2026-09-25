@@ -1,9 +1,13 @@
 # Login: FIFO throttle numbers
 
 `crates/host/src/login_queue.rs` stays under Lost City's **production**
-login rate limits. `LoginQueue::request_permit(uid, now)` returns
-`Permit::Grant` or `Permit::Wait(duration)` — retry after `duration`. Only
-the FIFO head may be granted.
+login rate limits. FIFO identity is a process-unique slot owner, while device
+rate accounting remains keyed by UID. Only a slot thread creates membership
+when it reaches Queueing. Workers enter in arrival order; the focused/preferred
+owner is the sole exception, entering at the front or moving there if already
+queued. Login all, Log in, and auto-login changes only arm intent and wake
+workers. They create no membership, record no order hints, and no absent owner
+can gate the head.
 
 A process binds one **server profile** (`local-274`, `local-289`,
 `public-289`) before sockets open. Profile defaults (ports, vault path,
@@ -31,30 +35,52 @@ gap was invented (rs2b0t used 1 s); it is not a server default.
 | Rule | Value | Meaning |
 | --- | --- | --- |
 | spacing | **0** | engine has none; not-head polls every **20 ms** |
-| per-IP window | **30 grants / 60 s** | production `rateLimitAddressLogin` + address TTL |
-| per-uid cap | **4 grants, then remaining of 15 s** | production device cap is 5 (`>= 5` rejects); stay under with 4, cooldown = device TTL from the latest grant |
-| backoff (response 16, world full) | **20 s + 45 s per prior hit** | `LoginBackoff::delay()` escalates; `reset()` clears |
+| per-IP window | **29 attempts / 60 s idle** | production threshold is 30 and rejects the attempt that reaches it; pending reservations count |
+| per-uid cap | **4 attempts, then remaining of 15 s idle** | production device threshold is 5 (`>= 5` rejects); partial counts expire after the same idle TTL |
+| backoff (response 16, attempts exceeded) | **20 s + 45 s per prior hit** | shared across the wall; `LoginBackoff::reset()` clears per-slot escalation |
 
 Defaults are `LoginQueue::default()`; `new(spacing, ip_cap, ip_window)`
-exists for tests. A blocked requester waits the longest unmet constraint:
-the per-IP window roll-off or the per-uid cooldown.
+exists for tests and rejects a zero address cap. A requester waits when another
+owner is ahead of it or for the longest unmet spacing, shared-throttle, per-IP,
+or per-uid constraint. There is no separate hint wait.
 
 ## Backoff
 
-`LoginBackoff` delays retries after a response-16 (world full) rejection:
-first retry 20 s, then 65 s, 110 s, … (`20 + 45·hits`). Call `reset()` on
-any successful login.
+`LoginBackoff` delays generic retries after response 16 (“Login attempts
+exceeded”): first retry 20 s, then 65 s, 110 s, … (`20 + 45·hits`). A
+response-16 hold is also published to the shared queue so sibling slots pause.
+These generic retry waits run to their deadline and exit early only for Stop,
+login withdrawal, an intentional-logout latch, or a changed world selection.
+Generic focus, render, script, and panel wakes do not shorten them. Any
+successful login resets the slot's escalation.
+
+## Response 21 transfer cooldown
+
+Response 21 carries a countdown truncated to a single unsigned seconds byte.
+For a byte `N`, Java-compatible behavior displays `N, N-1, …, 0` and waits one
+second after every display, so the next attempt begins after **N + 1 seconds**;
+even a zero byte waits one second. The retry uses the same endpoint and bypasses
+generic world-error switching, key refresh, and escalating backoff.
+
+The completed handshake attempt is acknowledged before this wait. The worker
+holds neither a FIFO place nor a pending reservation during the countdown, so a
+later worker may be granted. Stop, login withdrawal, or an intentional-logout
+latch interrupts the countdown. World-selection edits and their wakeups do not;
+the selected world is reconsidered only after the server-owned delay expires.
 
 ## Queue position and leaving
 
-While a slot waits it sits on the FIFO. `LoginQueue::status(uid)` returns
-its place as `Option<QueuePos { position: u32, total: u32 }>` — the **k of n**
-snapshot (1-based; a granted uid is popped and no longer present). host-play
-mirrors that onto `SlotStatus.queue_position` / `queue_total` while the slot
-waits; the panel renders it as **"k of n"** in the status row and as the
-queue card over the focused slot. `LoginQueue::leave(uid)` drops a queued
-uid (no-op if absent) — the panel's rail ✕ and `stop_slot` call it so a
-removed slot does not sit in the FIFO.
+While a slot waits it sits on the FIFO. `LoginQueue::status_owner(owner)`
+returns its place as `Option<QueuePos { position: u32, total: u32 }>` — the
+**k of n** snapshot (1-based; a granted owner is popped and no longer
+present). Two slots with the same UID therefore keep independent places while
+sharing conservative device-attempt accounting. host-play publishes both
+fields atomically with owner membership; an absent owner always clears its
+own row. Each visible Game image renders only its displayed slot's valid
+`1 <= position <= total` tuple, so connected and neighboring previews never
+inherit another slot's card. Rail tiles do not draw queue cards. Withdrawal,
+terminal startup failure, worker unwind, rail removal, and Stop clear both
+owner membership and status.
 
 ## Mainland hop (tutorial skip)
 
@@ -78,17 +104,21 @@ If you rotated the engine key, login reads the public half from
 `$ENGINE_DIR/data/config/private.pem` (rs2b0t `deploy-local-key.sh`
 layout), or from `LOGIN_RSAN` / `LOGIN_RSAE`.
 
-## Public world (`public-289` / `w1.rs2b2t.com:443`)
+## Public worlds (`public-289`)
 
 `BOT_TARGET=prod` (alias `live`), `host-play --prod`, or
-`--profile public-289` switches the login host to **`w1.rs2b2t.com:443`**
-(WSS game + HTTPS assets on **443**) and uses the **baked public RSA** —
-no `LOGIN_RSAN`/`LOGIN_RSAE`, no `private.pem`. This is a client
-`bot_target.rs` + host profile world switch (Cargo `TARGET` remains the
-rustc triple), not a hosted wall and not public-world CI. Alpha's tested
-path is the local engine for `local-274` / `local-289`; the public world is
-built in for a later bin, and the login FIFO stays under the production
-throttle numbers above either way.
+`--profile public-289` uses the ordered endpoints in `~/.274bot/worlds.json`
+(created with w1 and w2 on port 443 when absent). An invalid file or a
+public endpoint outside that list fails closed. The shared cache is fetched
+from the first reachable configured asset world. Each vault account stores
+an optional world number: auto rotates on response 7, waits after all
+worlds report full, and pinned accounts stay on their chosen world.
+The client uses the selected world's node id and fetches its login RSA
+modulus from `/client/client.js` (successful fetches cached per host, refreshed
+on response 6); a failed fetch uses the baked public modulus without caching
+the fallback. The local engine key path above is unchanged. Login and
+cache transport remain WSS/HTTPS for public worlds; Cargo `TARGET` remains the
+rustc triple.
 
 `$ENGINE_DIR` defaults depend on revision (274:
 `$HOME/experiments/Server/engine`; 289:
@@ -98,10 +128,14 @@ the rustc triple, not a world switch.
 
 ## Wiring
 
-`api::interact::login` routes the handshake through the driver
-(`Client::login`), which opens a fresh stream per attempt and blocks until
-the server responds. The FIFO sits ahead of that handshake: request a permit,
-wait the returned `Duration` when throttled, then send.
+Every host-owned socket attempt is preceded by a shared permit, including
+opcode-18 reconnects and a retry after response 1. In external-ownership mode
+the embedded client returns those intents to host-play instead of reconnecting
+or recursively retrying internally; standalone clients retain their
+Java-compatible response-1 retry. A granted attempt is acknowledged on
+success, error, or unwind; an unused grant is abandoned before any socket
+call. Host-play keeps transient response 1 in Connecting rather than
+publishing phase Error.
 
 
 ## Panel: Login all vs auto-login
@@ -114,7 +148,9 @@ The panel arms logins through `SlotArm` flags (host-play), not
   lands the arm disarms, so an unexpected DC leaves the slot on the title
   until the next explicit arm.
 - **Auto-login** (General config → **slot**, **auto-login on title**, backed
-  by `ProfileSettings.auto_login`, default **off**) keeps the arm armed
-  after a successful handshake, so a DC re-handshakes. An explicit
-  **Logout / Logout all** latches the member, which blocks even an
-  auto-login slot until the next **Login all** clears the latch.
+  by `ProfileSettings.auto_login`, default **off**) records the intent's
+  provenance. Turning it on arms an unlatched parked slot only when no
+  explicit intent is already active; turning it off withdraws only
+  auto-derived intent, including during preparation/backoff. An explicit
+  **Log in** survives an auto on→off toggle. An explicit **Logout / Logout
+  all** latches the member until the next **Login all** clears it.
