@@ -9,19 +9,27 @@ use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, Paragraph, Widget, Wrap};
 
 use api::RandomKind;
-use host_play::SlotStatus;
+use host_play::{SlotStatus, StartupPhase};
 
-/// The state cell: `ingame scene N`, a login error, `logging in…`, or
-/// `waiting`.
+/// The state cell follows the explicit lifecycle phase; `ingame` remains the
+/// stricter game-action readiness gate.
 pub fn state_text(s: &SlotStatus) -> String {
     if s.ingame {
-        format!("ingame scene {}", s.scene_state)
-    } else if let Some(err) = &s.error {
-        format!("login {err}")
-    } else if s.login_started.is_some() {
-        "logging in…".to_string()
-    } else {
-        "waiting".to_string()
+        return format!("ingame scene {}", s.scene_state);
+    }
+    if let Some(err) = &s.error {
+        return format!("login {err}");
+    }
+    if s.login_latched && !s.connected {
+        return "logged out".to_string();
+    }
+    match s.startup_phase {
+        StartupPhase::Preparing => "preparing".to_string(),
+        StartupPhase::Queueing => "waiting".to_string(),
+        StartupPhase::Connecting => "logging in…".to_string(),
+        StartupPhase::LoadingScene => "loading scene…".to_string(),
+        StartupPhase::Ready => "connected".to_string(),
+        StartupPhase::Error => "login error".to_string(),
     }
 }
 
@@ -174,12 +182,20 @@ mod tests {
 
     #[test]
     fn status_shows_ingame_scene_2_and_player() {
+
         let s = status(true, 2);
         assert_eq!(state_text(&s), "ingame scene 2");
         let text = render(StatusPane::new(Some(&s), "10 11 0", "lowmem"), 40, 12);
         assert!(text.contains("ingame scene 2"), "state row: {text:?}");
         assert!(text.contains("tile: 10 11"), "tile row: {text:?}");
         assert!(text.contains("walk: 10 11 0"), "walk row: {text:?}");
+    }
+    #[test]
+    fn connected_loading_scene_is_not_reported_as_logged_out() {
+        let mut slot = status(false, 1);
+        slot.connected = true;
+        slot.startup_phase = host_play::StartupPhase::LoadingScene;
+        assert_eq!(state_text(&slot), "loading scene…");
     }
 
     #[test]

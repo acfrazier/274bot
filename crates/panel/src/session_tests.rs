@@ -4898,16 +4898,20 @@ fn login_all_during_loading_scene_publishes_no_control_owned_place() {
 }
 
 #[test]
-fn focused_ingame_is_false_without_status() {
+fn focused_connection_is_distinct_from_game_readiness() {
     let mut s = Session::new();
     s.focus.lock().unwrap().focused = Some("alice".into());
+    assert!(!s.focused_connected());
     assert!(!s.focused_ingame());
     s.statuses.push(SlotStatus {
         username: "alice".into(),
-        ingame: true,
+        connected: true,
+        ingame: false,
+        startup_phase: StartupPhase::LoadingScene,
         ..SlotStatus::default()
     });
-    assert!(s.focused_ingame());
+    assert!(s.focused_connected());
+    assert!(!s.focused_ingame());
 }
 
 #[test]
@@ -4989,13 +4993,15 @@ fn rail_remove_clears_focus_when_last_member() {
 }
 
 #[test]
-fn rail_remove_returns_before_connected_logout_settles() {
+fn rail_remove_treats_loading_session_as_connected_without_blocking() {
     let mut s = Session::new();
     let mut play = empty_play();
-    play.attach_arm("alice", SlotArm::new(7, false));
+    let arm = SlotArm::new(7, false);
+    play.attach_arm("alice", Arc::clone(&arm));
     play.statuses.lock().unwrap().push(SlotStatus {
         username: "alice".into(),
-        ingame: true,
+        connected: true,
+        ingame: false,
         ..SlotStatus::default()
     });
     let statuses = Arc::clone(&play.statuses);
@@ -5021,12 +5027,16 @@ fn rail_remove_returns_before_connected_logout_settles() {
             .iter_mut()
             .find(|status| status.username == "alice")
         {
-            status.ingame = false;
+            status.connected = false;
         }
         returned_before_release
     });
 
     s.rail_remove("alice");
+    assert!(
+        arm.wants_logout(),
+        "a connected loading session must receive clean Logout"
+    );
     let _ = returned.send(());
     assert!(
         release.join().unwrap(),

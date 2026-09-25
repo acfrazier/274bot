@@ -137,11 +137,11 @@ pub fn rail_preview_open(
 }
 
 /// Map a slot's status to its tile's traffic light: error red wins, then
-/// not-ingame → grey, then running → green, else idle yellow.
-pub fn traffic_light(ingame: bool, error: bool, running: bool) -> Light {
+/// disconnected → grey, then running → green, else connected-idle yellow.
+pub fn traffic_light(connected: bool, error: bool, running: bool) -> Light {
     if error {
         Light::Red
-    } else if !ingame {
+    } else if !connected {
         Light::Grey
     } else if running {
         Light::Green

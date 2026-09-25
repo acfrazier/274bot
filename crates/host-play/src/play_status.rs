@@ -11,8 +11,6 @@ pub struct SlotStatus {
     pub username: String,
     /// Active public world number, absent for local profiles.
     pub world: Option<u16>,
-    /// Native lifecycle phase; `ingame` is producer-gated and cannot
-    /// distinguish login from a scene rebuild.
     pub startup_phase: StartupPhase,
     /// Monotonic instant at which `startup_phase` began.
     pub startup_phase_started: Instant,
@@ -21,6 +19,10 @@ pub struct SlotStatus {
     pub startup_progress_message: String,
     /// When the slot's first login handshake started (after its permit).
     pub login_started: Option<Instant>,
+    /// Native client session state, independent of scene/player readiness.
+    pub connected: bool,
+    /// Producer readiness gate for game actions: connected, scene 2, and a
+    /// current local-player observation.
     pub ingame: bool,
     pub scene_state: i32,
     /// Last login error (code + message); cleared after a successful login.
@@ -171,6 +173,7 @@ impl Default for SlotStatus {
             startup_progress_percent: None,
             startup_progress_message: String::new(),
             login_started: None,
+            connected: false,
             ingame: false,
             scene_state: 0,
             error: None,
@@ -275,6 +278,7 @@ pub(super) fn set_startup_phase(
 ) {
     let mut all = statuses.lock().unwrap();
     if let Some(s) = all.iter_mut().find(|s| s.username == name) {
+        s.connected = matches!(phase, StartupPhase::LoadingScene | StartupPhase::Ready);
         if s.startup_phase != phase {
             s.startup_phase = phase;
             s.startup_phase_started = Instant::now();
@@ -309,6 +313,7 @@ pub(super) fn apply_startup_phase(
     ready: bool,
     client_ingame: bool,
 ) {
+    s.connected = client_ingame;
     if let Some(next_phase) = startup_phase_after_observation(s.startup_phase, ready, client_ingame)
     {
         if s.startup_phase != next_phase {
@@ -347,6 +352,7 @@ pub(super) fn record_login_error(
 /// A successful login/reconnect (`Pump` session gen) must reset snapshot
 /// fields without mislabeling the new session as a queue wait.
 pub(super) fn reset_slot_observation(s: &mut SlotStatus) {
+    s.connected = false;
     s.ingame = false;
     s.scene_state = 0;
     s.runenergy = 0;

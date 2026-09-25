@@ -262,6 +262,7 @@ fn startup_observe_keeps_loading_scene_across_initial_session_generation() {
     {
         let rows = statuses.lock().unwrap();
         assert_eq!(rows[0].startup_phase, StartupPhase::LoadingScene);
+        assert!(rows[0].connected, "authenticated session is connected");
         assert!(
             !rows[0].ingame,
             "producer gate stays closed until a current player"
@@ -282,6 +283,7 @@ fn startup_observe_keeps_loading_scene_across_initial_session_generation() {
             "stale actor tables must not authorize Ready"
         );
         assert!(!rows[0].ingame);
+        assert!(rows[0].connected);
         assert!(snapshot.local_player().is_none());
     }
 
@@ -292,6 +294,7 @@ fn startup_observe_keeps_loading_scene_across_initial_session_generation() {
         let rows = statuses.lock().unwrap();
         assert_eq!(rows[0].startup_phase, StartupPhase::Ready);
         assert!(rows[0].ingame);
+        assert!(rows[0].connected);
         assert!(snapshot.local_player().is_some());
         assert_eq!(rows[1].startup_phase, StartupPhase::Preparing);
     }
@@ -302,6 +305,7 @@ fn startup_observe_keeps_loading_scene_across_initial_session_generation() {
         let rows = statuses.lock().unwrap();
         assert_eq!(rows[0].startup_phase, StartupPhase::Queueing);
         assert!(!rows[0].ingame);
+        assert!(!rows[0].connected);
         assert!(rows[0].login_started.is_none());
     }
 
@@ -316,6 +320,7 @@ fn startup_observe_keeps_loading_scene_across_initial_session_generation() {
         let rows = statuses.lock().unwrap();
         assert_eq!(rows[0].startup_phase, StartupPhase::LoadingScene);
         assert!(!rows[0].ingame);
+        assert!(rows[0].connected);
         assert!(rows[0].login_started.is_some());
     }
 

@@ -1299,7 +1299,7 @@ fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
                 .as_ref()
                 .is_some_and(|p| p.script_state(name) == script::RunState::Running);
         let light = traffic_light(
-            status.is_some_and(|s| s.ingame),
+            status.is_some_and(|s| s.connected),
             status.is_some_and(|s| s.error.is_some()),
             running,
         );
@@ -1485,7 +1485,7 @@ fn loading_text(phase: ProgressPhase, progress: &ProfileProgress) -> LoadingText
 /// Startup banner text for one slot row. The second flag is whether to append
 /// an elapsed timer (Preparing and in-flight login phases; not errors/latched).
 pub(crate) fn slot_startup_banner_line(status: &host_play::SlotStatus) -> Option<(String, bool)> {
-    if status.login_latched && !status.ingame && status.worker_terminal.is_none() {
+    if status.login_latched && !status.connected && status.worker_terminal.is_none() {
         return Some(("Logged out — select Log in to reconnect".to_string(), false));
     }
     if let Some(error) = status.error.as_deref() {
@@ -1791,8 +1791,8 @@ fn paint_inverse_combo_arrow(ui: &Ui) {
     .build();
 }
 
-fn logout_enabled(vault_open: bool, focused: bool, ingame: bool, queued: bool) -> bool {
-    vault_open && focused && (ingame || queued)
+fn logout_enabled(vault_open: bool, focused: bool, connected: bool, queued: bool) -> bool {
+    vault_open && focused && (connected || queued)
 }
 
 /// Log in / Logout above WalkTo. Always drawn; disabled while the vault
@@ -1811,7 +1811,7 @@ fn login_logout_row(ui: &Ui, session: &mut Session) {
     let can_logout = logout_enabled(
         vault_open,
         focused.is_some(),
-        session.focused_ingame(),
+        session.focused_connected(),
         focused_queued,
     );
     {
@@ -3207,8 +3207,10 @@ fn status_section(ui: &Ui, session: &mut Session) {
         } else {
             s.startup_progress_message.clone()
         }
-    } else if s.login_started.is_some() {
+    } else if s.startup_phase == host_play::StartupPhase::Connecting {
         "logging in…".to_string()
+    } else if s.startup_phase == host_play::StartupPhase::LoadingScene {
+        "loading scene…".to_string()
     } else if s.login_latched {
         "logged out".to_string()
     } else {
@@ -3768,7 +3770,7 @@ fn rail_tiles(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
                 .as_ref()
                 .is_some_and(|p| p.script_state(name) == script::RunState::Running);
         let light = traffic_light(
-            status.is_some_and(|s| s.ingame),
+            status.is_some_and(|s| s.connected),
             status.is_some_and(|s| s.error.is_some()),
             running,
         );

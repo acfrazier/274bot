@@ -2995,7 +2995,7 @@ impl Session {
             .filter(|(name, started)| {
                 !statuses
                     .iter()
-                    .any(|status| status.username == name.as_str() && status.ingame)
+                    .any(|status| status.username == name.as_str() && status.connected)
                     || now.saturating_duration_since(**started) >= SLOT_REMOVE_TIMEOUT
             })
             .map(|(name, _)| name.clone())
@@ -4028,7 +4028,7 @@ impl Session {
         let connected = self.play.as_ref().is_some_and(|play| {
             play.statuses()
                 .iter()
-                .any(|status| status.username == name && status.ingame)
+                .any(|status| status.username == name && status.connected)
         });
         if connected {
             if let Some(play) = self.play.as_ref() {
@@ -4209,8 +4209,19 @@ impl Session {
             .map(|s| (s.queue_position, s.queue_total))
     }
 
-    /// Whether the focused slot is ingame — the Logout button's enable
-    /// gate (a queued or title-screen slot has nothing to log out).
+    /// Whether the focused slot has an authenticated client session. Control
+    /// actions such as Logout use this rather than the game-action gate.
+    pub fn focused_connected(&self) -> bool {
+        let Some(name) = self.focused_name() else {
+            return false;
+        };
+        self.statuses()
+            .iter()
+            .any(|s| s.username == name && s.connected)
+    }
+
+    /// Whether the focused slot has a scene/player observation safe for game
+    /// actions.
     pub fn focused_ingame(&self) -> bool {
         let Some(name) = self.focused_name() else {
             return false;
