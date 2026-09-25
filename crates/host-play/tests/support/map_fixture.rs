@@ -78,6 +78,7 @@ impl MapFixture {
             flags_sha256: None,
             reach_sha256: None,
             canlight_sha256: None,
+            pois_sha256: None,
         };
         std::fs::write(
             map_host::profile::nav_manifest_path(&pack),
