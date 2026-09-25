@@ -4,7 +4,7 @@ use super::{
     null_raster_live_entries_for_target, parse_getvar_line, publish_frontend_slot,
     publish_nav_debug, reset_frontend_slot_lifetime, script_active, script_pause_enabled,
     script_self_stop_observed, script_status_text, script_stop_enabled, seed_on_first_world,
-    start_catalog_with_core, stress_live_entries_for_target, temp_live_vault_from, walkto_tele_cmd,
+    start_catalog_with_core, stress_live_entries_for_target, temp_live_vault_from,
     ProfilePreparationCompletion, Session, SlotIo, WalkArm,
 };
 use crate::focus::draw_for_slot;
@@ -697,16 +697,6 @@ fn debug_dest_greenland_tooltip_is_the_script_comment() {
         "hover must say where this is, got {:?}",
         g.tooltip
     );
-}
-
-#[test]
-fn walkto_tele_cmd_is_engine_tele_args() {
-    let t = Tile {
-        x: 3253,
-        z: 3266,
-        level: 0,
-    };
-    assert_eq!(walkto_tele_cmd(t), "tele 0,50,51,53,2");
 }
 
 #[test]
@@ -2011,75 +2001,23 @@ fn walk_status_is_dash_when_no_route() {
 }
 
 #[test]
-fn confirm_picker_walk_uses_player_plane_not_dest_level() {
+fn picker_without_observed_origin_refuses_and_consumes_selection() {
     let mut s = Session::new();
-    s.focus.lock().unwrap().focused = Some("alice".into());
-    s.statuses.push(SlotStatus {
-        username: "alice".into(),
-        ingame: true,
-        tile_x: 5,
-        tile_z: 5,
-        tile_level: 1,
-        ..SlotStatus::default()
-    });
-    assert_eq!(s.focused_tile(), Some((5, 5, 1)));
-    let world = open_world_four_planes(10, 10);
-    s.picker_sel = Some(Tile {
-        x: 2,
-        z: 2,
-        level: 0,
-    });
-    assert!(s.confirm_picker_walk(&world));
-    assert!(
-        s.error.is_some(),
-        "upstairs origin must not masquerade as the dest plane"
-    );
-    assert!(
-        s.travellers
-            .lock()
-            .unwrap()
-            .get("alice")
-            .is_none_or(|a| a.lock().unwrap().route.is_none()),
-        "a wrong-plane route must not arm"
-    );
-}
-
-/// Like [`open_world`] but allocates all four level planes so routing
-/// from an upstairs origin does not index past the walk bake.
-fn open_world_four_planes(w: usize, h: usize) -> NavWorld {
-    let cells = w * h * 4;
-    NavWorld::from_parts(
-        WorldCollision {
-            origin: WorldTile {
-                x: 0,
-                z: 0,
-                level: 0,
-            },
-            width: w,
-            height: h,
-            walk: vec![0u8; cells],
-            blocked: vec![0u64; cells.div_ceil(64)],
-            flags: None,
+    let world = open_world(3, 3);
+    s.select_picker_tile(
+        &world,
+        Tile {
+            x: 2,
+            z: 2,
+            level: 0,
         },
-        TransportGraph::default(),
-        Vec::new(),
-    )
-}
-
-#[test]
-fn picker_select_does_not_arm_until_confirm() {
-    let mut s = Session::new();
-    let dest = Tile {
-        x: 2,
-        z: 2,
-        level: 0,
-    };
-    s.picker_sel = Some(dest);
-    assert_eq!(s.walk_status_text(), "—");
-    assert!(s.confirm_picker_walk(&open_world(3, 3)));
-    assert!(s.walk_status_text().contains("2"));
-    assert!(s.picker_sel.is_none());
-    assert!(!s.confirm_picker_walk(&open_world(3, 3)));
+    );
+    assert_eq!(s.walk_dest, None);
+    assert!(!s.confirm_picker_walk(&world));
+    assert_eq!(s.walk_dest, None);
+    assert!(s.travellers.lock().unwrap().is_empty());
+    assert!(s.map_model.pending().is_none());
+    assert!(!s.confirm_picker_walk(&world));
 }
 
 #[test]
@@ -2143,6 +2081,7 @@ fn arm_walk_on_feeds_the_focused_slots_latched_essence_session() {
             },
             route: None,
             bank_fetch: None,
+            ..Default::default()
         })),
     );
     let world = mine_world();

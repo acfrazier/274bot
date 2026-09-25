@@ -1039,8 +1039,11 @@ pub struct Session {
     tick_latch: Arc<Mutex<HashMap<String, (u64, Tile)>>>,
     /// WalkTo picker open flag; the picker window lands in Task 10.
     pub walkto_open: bool,
-    /// Tile highlighted in the WalkTo picker; armed only on confirm.
+    /// Current renderer's highlight; removed with the map renderer cutover.
     pub picker_sel: Option<Tile>,
+    /// One application-owned map view/catalogue, never a copy on each bot.
+    pub map_model: host_play::walk_map::MapModel,
+    pub map_catalogue: Option<Arc<host_play::walk_map::Catalogue>>,
     /// Nav config window open flag (non-modal, same as General config).
     pub nav_settings_open: bool,
     /// Non-modal settings window (renderer / capture / mem).
@@ -1411,6 +1414,8 @@ impl Session {
             tick_latch: Arc::new(Mutex::new(HashMap::new())),
             walkto_open: false,
             picker_sel: None,
+            map_model: host_play::walk_map::MapModel::default(),
+            map_catalogue: None,
             nav_settings_open: false,
             global_settings_open: false,
             tutorial_getvar_sent: HashSet::new(),
@@ -1867,6 +1872,8 @@ impl Session {
 
     fn install_prepared_template(&mut self, template: Arc<SharedClientTemplate>) {
         let profile = Arc::clone(template.profile());
+        self.map_model.close();
+        self.map_catalogue = None;
         crate::picker::set_navflags_binding(
             profile.nav_flags().to_path_buf(),
             profile
@@ -3373,6 +3380,8 @@ impl Session {
         focus.focused = Some(name.to_string());
         let capture = focus.capture;
         drop(focus);
+        self.map_model.clear_selection();
+        self.picker_sel = None;
         // Mirror onto the play: which slot the panel samples (host-play
         // keeps it as pure bookkeeping — no socket adopt/park).
         if let Some(play) = self.play.as_mut() {
@@ -4261,25 +4270,157 @@ impl Session {
         }
     }
 
-    /// Arm the current [`Session::picker_sel`] on `world`. Returns false
-    /// when nothing is selected. Clears the selection either way so a
-    /// second confirm does not re-fire.
-    pub fn confirm_picker_walk(&mut self, world: &NavWorld) -> bool {
-        let Some(tile) = self.picker_sel.take() else {
+    /// Current map command binding. Legacy/grid-only views use an ephemeral
+    /// world-instance identity, never a made-up client/content compatibility proof.
+    pub fn picker_context(&self, world: &NavWorld) -> host_play::walk_map::MapContext {
+        use host_play::walk_map::MapContext;
+        use nav::map::identity::Digest;
+        let name = self.focused_name();
+        let nav = self
+            .server_profile
+            .as_ref()
+            .and_then(|p| p.nav_identity())
+            .and_then(|id| Digest::from_hex(&id.nav_sha256).ok())
+            .or_else(|| {
+                self.map_catalogue
+                    .as_ref()
+                    .filter(|c| std::ptr::eq(c.world().as_ref(), world))
+                    .map(|c| c.nav_identity())
+            })
+            .unwrap_or_else(|| Digest::of(&(world as *const NavWorld as usize).to_ne_bytes()));
+        let session = name
+            .as_ref()
+            .and_then(|name| {
+                self.frontend_gens
+                    .lock()
+                    .unwrap()
+                    .get(name)
+                    .map(|g| g.session)
+            })
+            .unwrap_or(0);
+        MapContext {
+            focus: name
+                .as_deref()
+                .and_then(|name| self.play.as_ref()?.map_focus(name)),
+            nav,
+            overlay: self.map_catalogue.as_ref().map(|c| c.key()),
+            generation: self.profile_generation.wrapping_add(session),
+        }
+    }
+
+    pub fn select_picker_tile(&mut self, world: &NavWorld, requested: Tile) -> Option<Tile> {
+        let context = self.picker_context(world);
+        self.map_model.bind(context);
+        self.map_model.select_tile(world, requested)
+    }
+
+    pub fn select_picker_poi(&mut self, index: usize) -> bool {
+        let Some(catalogue) = self.map_catalogue.as_ref().cloned() else {
             return false;
         };
-        match self.focused_tile() {
-            Some((fx, fz, fl)) => {
-                let from = Tile {
-                    x: fx,
-                    z: fz,
-                    level: fl,
-                };
-                self.arm_walk_on(world, from, tile);
+        let context = self.picker_context(catalogue.world());
+        self.map_model.bind(context);
+        match self.map_model.select_poi(&catalogue, index) {
+            Ok(()) => true,
+            Err(error) => {
+                self.error = Some(error.to_string());
+                false
             }
-            None => self.arm_walk(tile),
         }
-        true
+    }
+
+    pub fn picker_action_available(
+        &self,
+        world: &NavWorld,
+    ) -> Result<Tile, host_play::walk_map::ActionError> {
+        let origin = self
+            .focused_tile()
+            .map(|(x, z, level)| Tile { x, z, level });
+        self.map_model
+            .availability(&self.picker_context(world), origin)
+    }
+
+    /// Consume a pending selection once. Missing player/focus is an explicit
+    /// refusal, never an arm stored for a future login.
+    pub fn confirm_picker_walk(&mut self, world: &NavWorld) -> bool {
+        use host_play::walk_map::{ActionError, ActionKind};
+        if let Some(requested) = self.picker_sel.take() {
+            self.select_picker_tile(world, requested);
+        }
+        let context = self.picker_context(world);
+        let origin = self
+            .focused_tile()
+            .map(|(x, z, level)| Tile { x, z, level });
+        let command = self.map_model.confirm(
+            ActionKind::Walk,
+            &context,
+            origin,
+            FindOptions {
+                allow_teleports: self.ui.nav.allow_teleports,
+                allow_wilderness: self.ui.nav.allow_wilderness,
+                allow_bank_fetch: self.ui.nav.allow_bank_fetch,
+                ..Default::default()
+            },
+        );
+        let result = command.and_then(|command| {
+            let play = self.play.as_ref().ok_or(ActionError::NoFocus)?;
+            self.walk_dest = Some(command.destination());
+            let state = self.focused_walk_state();
+            let bank = self.focused_walk_bank();
+            play.map_walk(command, &context, &state, &bank, &self.travellers)
+        });
+        match result {
+            Ok(_) => {
+                self.walk_clear.store(false, Ordering::Relaxed);
+                if let Some(name) = self.focused_name() {
+                    self.tick_latch.lock().unwrap().remove(&name);
+                }
+                self.route_gen = self.route_gen.wrapping_add(1);
+                self.error = None;
+                true
+            }
+            Err(error) => {
+                self.error = Some(error.to_string());
+                false
+            }
+        }
+    }
+
+    pub fn confirm_picker_teleport(&mut self) -> bool {
+        use host_play::walk_map::{ActionError, ActionKind};
+        let Some(world) = crate::picker::pack() else {
+            self.map_model.clear_selection();
+            self.error = Some(ActionError::NoNavigation.to_string());
+            return false;
+        };
+        let context = self.picker_context(&world);
+        let origin = self
+            .focused_tile()
+            .map(|(x, z, level)| Tile { x, z, level });
+        let result = self
+            .map_model
+            .confirm(
+                ActionKind::Teleport,
+                &context,
+                origin,
+                FindOptions::default(),
+            )
+            .and_then(|command| {
+                self.play
+                    .as_ref()
+                    .ok_or(ActionError::NoFocus)?
+                    .map_teleport(command, &context)
+            });
+        match result {
+            Ok(()) => {
+                self.error = None;
+                true
+            }
+            Err(error) => {
+                self.error = Some(error.to_string());
+                false
+            }
+        }
     }
 
     /// The focused slot's valid observed tile `(x, z, level)`. A disconnected

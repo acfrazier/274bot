@@ -141,6 +141,22 @@ fn edge(kind: TransportKind, at: WorldTile, to: WorldTile) -> TransportEdge {
     }
 }
 
+fn offline_play(world: NavWorld) -> crate::Play {
+    let mut play = crate::Play::new(&crate::PlayOptions {
+        host: "example.invalid".into(),
+        port: 43594,
+        cache_dir: concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../target/walk-map-empty-cache"
+        )
+        .into(),
+        lowmem: true,
+        mainland: false,
+    });
+    play.world = Some(Arc::new(world));
+    play
+}
+
 #[test]
 fn merged_bridge_access_annotation_and_label_remain_distinct() {
     let world = Arc::new(world(
@@ -407,7 +423,7 @@ fn confirmations_capture_once_and_expire_on_focus_identity_or_origin_loss() {
 }
 
 #[test]
-fn debug_authority_checks_target_and_actual_host_and_encodes_plane() {
+fn debug_authority_requires_local_target_and_loopback_host() {
     use client::BotTarget;
     assert_eq!(
         super::actions::debug_authorized(BotTarget::Prod, "localhost"),
@@ -421,14 +437,64 @@ fn debug_authority_checks_target_and_actual_host_and_encodes_plane() {
         super::actions::debug_authorized(BotTarget::Local, "127.0.0.1"),
         Ok(())
     );
-    assert_eq!(
-        super::actions::teleport_command(t(3253, 3266, 2)).unwrap(),
-        "tele 2,50,51,53,2"
-    );
 }
 
 #[test]
-fn borrowed_script_route_is_visible_when_manual_idle_and_live_has_precedence() {
+fn host_rejects_remote_teleport_and_expired_slot_before_queueing() {
+    let mut play = offline_play(world(t(3200, 3200, 0), 8, &[]));
+    play.focused = Some("alice".into());
+    play.arms
+        .insert("alice".into(), crate::SlotArm::new(1, false));
+    play.cheats
+        .lock()
+        .unwrap()
+        .insert("alice".into(), Default::default());
+    play.statuses.lock().unwrap().push(crate::SlotStatus {
+        username: "alice".into(),
+        ingame: true,
+        tile_x: 3201,
+        tile_z: 3201,
+        tile_level: 0,
+        ..Default::default()
+    });
+    let ctx = MapContext {
+        focus: play.map_focus("alice"),
+        ..context()
+    };
+    let mut model = MapModel::default();
+    model.bind(ctx);
+    model.select_tile(play.world.as_deref().unwrap(), t(3203, 3204, 2));
+    let command = model
+        .confirm(
+            ActionKind::Teleport,
+            &ctx,
+            Some(t(3201, 3201, 0)),
+            FindOptions::default(),
+        )
+        .unwrap();
+    assert_eq!(
+        play.map_teleport(command, &ctx),
+        Err(ActionError::Unauthorized)
+    );
+    assert!(play.cheats.lock().unwrap()["alice"].is_empty());
+    model.select_tile(play.world.as_deref().unwrap(), t(3203, 3204, 2));
+    let command = model
+        .confirm(
+            ActionKind::Teleport,
+            &ctx,
+            Some(t(3201, 3201, 0)),
+            FindOptions::default(),
+        )
+        .unwrap();
+    // Same username and uid do not preserve the old slot's authority.
+    play.arms
+        .insert("alice".into(), crate::SlotArm::new(1, false));
+    assert_eq!(play.map_teleport(command, &ctx), Err(ActionError::Stale));
+    assert!(play.cheats.lock().unwrap()["alice"].is_empty());
+}
+
+#[test]
+fn actual_route_projection_follows_live_manual_script_precedence_and_focus() {
     let world = world(t(0, 0, 0), 5, &[]);
     let route = nav::router::find_with(
         &world.collision,
@@ -439,24 +505,51 @@ fn borrowed_script_route_is_visible_when_manual_idle_and_live_has_precedence() {
         &WorldState::empty(),
     )
     .unwrap();
-    let navs = Arc::new(Mutex::new(HashMap::from([(
+    let play = offline_play(world);
+    play.navs.lock().unwrap().insert(
         "alice".into(),
         crate::script_runtime::NavBot {
             route: Some(route.clone()),
             map_route_generation: 7,
             ..Default::default()
         },
-    )])));
-    let paint = crate::ScriptNavPaint { navs };
-    paint.with_map_route("alice", |p| {
-        let p = p.unwrap();
-        assert_eq!(p.stamp.source, RouteSource::Script);
-        assert_eq!(p.stamp.generation, 7);
-        assert_eq!(p.route.dest, wt(3, 3, 0));
-    });
+    );
+    let mut manual = crate::WalkArm::default();
+    let read = |projection: Option<RouteProjection<'_>>| {
+        projection.map(|p| (p.stamp.source, p.stamp.generation, p.route.dest))
+    };
     assert_eq!(
-        RouteProjection::live(&route, 9, None).stamp.source,
-        RouteSource::Live
+        play.with_map_route("alice", Some(&manual), None, read),
+        Some((RouteSource::Script, 7, wt(3, 3, 0)))
+    );
+    assert_eq!(play.with_map_route("bob", Some(&manual), None, read), None);
+    manual.route = Some(nav::router::Route {
+        dest: wt(2, 3, 0),
+        ..route.clone()
+    });
+    manual.route_generation = 8;
+    assert_eq!(
+        play.with_map_route("alice", Some(&manual), None, read),
+        Some((RouteSource::Manual, 8, wt(2, 3, 0)))
+    );
+    let live = nav::router::Route {
+        dest: wt(4, 3, 0),
+        ..route
+    };
+    assert_eq!(
+        play.with_map_route(
+            "alice",
+            Some(&manual),
+            Some(RouteProjection::live(&live, 9, None)),
+            read
+        ),
+        Some((RouteSource::Live, 9, wt(4, 3, 0)))
+    );
+    manual.route = None;
+    play.navs.lock().unwrap().remove("alice");
+    assert_eq!(
+        play.with_map_route("alice", Some(&manual), None, read),
+        None
     );
 }
 
@@ -492,4 +585,184 @@ fn validated_stand_is_never_shifted_twice() {
     let e = catalogue.entries().next().unwrap();
     assert_eq!(e.walk_target(), Some(t(2, 3, 0)));
     assert!(e.approach_known());
+}
+
+#[test]
+fn observed_services_expire_with_snapshot_or_focus_and_keep_real_plane_and_slot() {
+    use api::snapshot::GameSnapshot;
+    use client::client::{Client, ClientConfig, ClientNpc};
+    use client::config::{Cache, NpcType};
+    use client::dash3d::ClientPlayer;
+    use client::io::ClientRevision;
+
+    let cache = Cache {
+        npcs: vec![NpcType {
+            name: "Banker".into(),
+            op: vec![Some("Talk-to".into()), None, Some("Bank".into())],
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    let mut client = Client::from_shared_with_revision(
+        ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir: concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../target/walk-map-empty-cache"
+            )
+            .into(),
+            members: true,
+            lowmem: true,
+        },
+        Arc::new(cache),
+        Arc::new(vec![]),
+        Arc::new(vec![]),
+        ClientRevision::R289,
+    );
+    client.ingame = true;
+    client.scene_state = 2;
+    client.map_build_base_x = 3200;
+    client.map_build_base_z = 3200;
+    client.minusedlevel = 1;
+    client.local_player = Some(ClientPlayer::at(20, 12));
+    for i in 0..=MAX_OBSERVED_SERVICES {
+        let mut npc = ClientNpc {
+            r#type: Some(0),
+            ..Default::default()
+        };
+        npc.entity.x = 20 * 128 + 64;
+        npc.entity.z = 13 * 128 + 64;
+        client.npc[i + 7] = Some(Box::new(npc));
+        client.npc_ids[i] = (i + 7) as i32;
+    }
+    client.npc_count = (MAX_OBSERVED_SERVICES + 1) as i32;
+    client.gens.npc = 1;
+    client.gens.player = 1;
+    client.gens.scene = 1;
+    client.gens.session = 1;
+    let mut snapshot = GameSnapshot::new();
+    snapshot.rebuild(&client);
+    let ctx = context();
+    let observed = observed_services(&snapshot, ctx, ctx, 289).unwrap();
+    assert_eq!(observed.len(), MAX_OBSERVED_SERVICES);
+    assert_eq!(observed.first().unwrap().npc_index, 7);
+    assert_eq!(
+        observed.last().unwrap().npc_index,
+        MAX_OBSERVED_SERVICES + 6
+    );
+    for p in observed {
+        assert_eq!(
+            (p.kind, p.tile, p.evidence, p.context),
+            (
+                PoiKind::Bank,
+                t(3220, 3213, 1),
+                CapabilityEvidence::ClientOperation {
+                    capability: Capability::Bank,
+                    slot: OperationSlot::new(3).unwrap(),
+                },
+                ctx
+            )
+        );
+    }
+    let replaced = context();
+    assert!(matches!(
+        observed_services(&snapshot, ctx, replaced, 289),
+        Err(ActionError::Stale)
+    ));
+    snapshot.reset_session(client.gens);
+    assert!(matches!(
+        observed_services(&snapshot, ctx, ctx, 289),
+        Err(ActionError::NoOrigin)
+    ));
+}
+
+#[test]
+fn selected_spell_names_match_only_bound_spell_landings() {
+    let mut world = world(t(0, 0, 0), 12, &[]);
+    let mut spell = edge(TransportKind::Teleport, wt(0, 0, 0), wt(8, 9, 0));
+    spell.loc_id = 0;
+    world.graph.teleports = vec![
+        spell,
+        edge(TransportKind::Teleport, wt(0, 0, 0), wt(9, 9, 0)),
+    ];
+    let data =
+        |content: Digest| -> Arc<api::game_data::SelectedGameData> {
+            Arc::new(serde_json::from_value(serde_json::json!({
+            "schema_version": 4, "revision": 289,
+            "provenance": {
+                "cache_identity": { "cache_id": "fixture", "content_id": content.to_string() },
+                "inputs": [], "content_inputs": [], "decoder_sources": []
+            },
+            "items": [], "consumption": [], "pickpocket": [],
+            "teleports": [{
+                "name": "Harbour teleport", "source_row": "harbour", "spell": "harbour",
+                "component_id": 42, "members": false, "level": 1, "runes": [],
+                "experience": 1, "tele_coord": "0_0_0_8_9", "x": 8, "z": 9, "plane": 0
+            }, {
+                "name": "Unrelated spell", "source_row": "elsewhere", "spell": "elsewhere",
+                "component_id": 43, "members": false, "level": 1, "runes": [],
+                "experience": 1, "tele_coord": "0_0_0_9_9", "x": 9, "z": 9, "plane": 0
+            }]
+        })).unwrap())
+        };
+    let world = Arc::new(world);
+    assert!(matches!(
+        Catalogue::new(Arc::clone(&world), identity(), digest(8), None, None)
+            .unwrap()
+            .with_game_data(data(digest(9))),
+        Err(nav::map::MapError::Identity)
+    ));
+    let catalogue = Catalogue::new(world, identity(), digest(8), None, None)
+        .unwrap()
+        .with_game_data(data(identity().content))
+        .unwrap();
+    let mut search = Search::default();
+    search.update(&catalogue, "HARBOUR").unwrap();
+    let names: Vec<_> = search
+        .results()
+        .iter()
+        .map(|&i| {
+            let e = catalogue.entry(i).unwrap();
+            (e.name(), e.anchor(), e.meaning())
+        })
+        .collect();
+    assert_eq!(
+        names,
+        vec![("Harbour teleport", t(8, 9, 0), Meaning::TeleportLanding)]
+    );
+    search.update(&catalogue, "Unrelated spell").unwrap();
+    assert!(
+        search.results().is_empty(),
+        "an item/NPC transport is not a spell with the same landing"
+    );
+}
+
+#[test]
+fn replacing_a_manual_arm_cannot_reuse_a_cached_route_stamp() {
+    let world = world(t(0, 0, 0), 5, &[]);
+    let arms = Arc::new(Mutex::new(HashMap::new()));
+    let arm_route = |from| {
+        crate::arm_walk_on(
+            &world,
+            from,
+            t(3, 3, 0),
+            FindOptions::default(),
+            &WorldState::empty(),
+            &[],
+            &arms,
+            Some("alice"),
+        )
+        .unwrap();
+        let all = arms.lock().unwrap();
+        let arm = all["alice"].lock().unwrap();
+        RouteProjection::manual(&arm).unwrap().stamp
+    };
+    let first = arm_route(t(0, 0, 0));
+    arms.lock().unwrap().clear();
+    let replacement = arm_route(t(4, 0, 0));
+    assert_ne!(
+        first, replacement,
+        "same destination but a different route after arm replacement"
+    );
 }

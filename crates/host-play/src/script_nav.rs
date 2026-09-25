@@ -767,7 +767,7 @@ impl NavBot {
         };
         self.traveller.clear();
         self.route = Some(route);
-        self.map_route_generation = self.map_route_generation.wrapping_add(1);
+        self.map_route_generation = crate::walk_map::next_map_route_generation();
         self.route_request_id = request_id;
         self.bank_fetch = pending;
         self.allow_teleports = allow_teleports;

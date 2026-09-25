@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use api::snapshot::WorldTile;
 use client::dash3d::CollisionFlag;
+use nav::map::cache::ReadyCatalogue;
 use nav::map::formats::{ClientPois, Coverage, ServiceIdentity, ServicePois, MAX_POIS};
 use nav::map::identity::{CatalogueIdentity, Digest};
 use nav::map::poi::{CapabilityEvidence, Eligibility, EntityKind, PoiKind, PoiRecord, SourceSpace};
@@ -66,10 +67,31 @@ enum Origin {
         teleport: bool,
     },
 }
+#[derive(Clone, Copy)]
+enum NameRef {
+    Source,
+    Entry(u32),
+    Spell(u32),
+}
 struct Indexed {
     origin: Origin,
+    name: NameRef,
     target: Option<Tile>,
     search: Box<str>,
+}
+
+enum ClientInput {
+    Fixture(Arc<ClientPois>),
+    Ready(Arc<ReadyCatalogue>),
+}
+impl std::ops::Deref for ClientInput {
+    type Target = ClientPois;
+    fn deref(&self) -> &ClientPois {
+        match self {
+            Self::Fixture(pois) => pois,
+            Self::Ready(ready) => ready.pois(),
+        }
+    }
 }
 
 /// One shared instance per open map, holding Arcs to inputs and tiny reference
@@ -79,8 +101,9 @@ pub struct Catalogue {
     identity: CatalogueIdentity,
     nav: Digest,
     key: Digest,
-    client: Option<Arc<ClientPois>>,
+    client: Option<ClientInput>,
     services: Option<AuthenticatedServices>,
+    game_data: Option<Arc<api::game_data::SelectedGameData>>,
     entries: Vec<Indexed>,
     edges: Vec<u32>,
 }
@@ -90,6 +113,39 @@ impl Catalogue {
         identity: CatalogueIdentity,
         nav: Digest,
         client: Option<Arc<ClientPois>>,
+        services: Option<AuthenticatedServices>,
+    ) -> Result<Self, MapError> {
+        Self::build(
+            world,
+            identity,
+            nav,
+            client.map(ClientInput::Fixture),
+            services,
+        )
+    }
+
+    /// Retain D's ready owner rather than cloning its decoded POI payload.
+    pub fn from_ready(
+        world: Arc<NavWorld>,
+        identity: CatalogueIdentity,
+        nav: Digest,
+        client: Option<Arc<ReadyCatalogue>>,
+        services: Option<AuthenticatedServices>,
+    ) -> Result<Self, MapError> {
+        Self::build(
+            world,
+            identity,
+            nav,
+            client.map(ClientInput::Ready),
+            services,
+        )
+    }
+
+    fn build(
+        world: Arc<NavWorld>,
+        identity: CatalogueIdentity,
+        nav: Digest,
+        client: Option<ClientInput>,
         services: Option<AuthenticatedServices>,
     ) -> Result<Self, MapError> {
         identity.key()?;
@@ -127,6 +183,7 @@ impl Catalogue {
             key: Digest::of(&generation),
             client,
             services,
+            game_data: None,
             entries: Vec::new(),
             edges: Vec::with_capacity(count),
         };
@@ -139,6 +196,57 @@ impl Catalogue {
             return Err(MapError::Limit("map search/index bytes"));
         }
         Ok(result)
+    }
+    /// Optional display names from the already bound selected game facts. No
+    /// spell/item name or destination roster is invented when these are absent.
+    pub fn with_game_data(
+        mut self,
+        data: Arc<api::game_data::SelectedGameData>,
+    ) -> Result<Self, MapError> {
+        if data.revision() != i32::from(self.identity.revision)
+            || data.content_id().and_then(|id| Digest::from_hex(id).ok())
+                != Some(self.identity.content)
+        {
+            return Err(MapError::Identity);
+        }
+        for indexed in &mut self.entries {
+            let Origin::Edges {
+                start,
+                count,
+                teleport: true,
+            } = indexed.origin
+            else {
+                continue;
+            };
+            let edges = &self.edges[start as usize..(start + count) as usize];
+            if let Some((i, spell)) = data.teleports().iter().enumerate().find(|(_, spell)| {
+                edges.iter().any(|&j| {
+                    let edge = &self.world.graph.teleports[j as usize];
+                    edge.loc_id == 0
+                        && edge.to
+                            == WorldTile {
+                                x: spell.x,
+                                z: spell.z,
+                                level: spell.plane,
+                            }
+                })
+            }) {
+                indexed.name = NameRef::Spell(i as u32);
+                let mut search = normalize(&spell.name);
+                search.push(' ');
+                search.push_str(&indexed.search);
+                indexed.search = search.into_boxed_str();
+            }
+        }
+        self.game_data = Some(data);
+        let mut generation = [0u8; 33];
+        generation[..32].copy_from_slice(&self.key.0);
+        generation[32] = 1;
+        self.key = Digest::of(&generation);
+        if self.index_bytes() > INDEX_BUDGET {
+            return Err(MapError::Limit("map search/index bytes"));
+        }
+        Ok(self)
     }
     pub fn key(&self) -> Digest {
         self.key
@@ -278,17 +386,15 @@ impl Catalogue {
                 let anchor = anchor_tile(first);
                 safe_standable(&self.world, world_tile(anchor)).then_some(anchor)
             };
-            let name = self
-                .records(origin)
-                .into_iter()
-                .flatten()
-                .map(|r| r.name.as_str())
-                .collect::<Vec<_>>()
-                .join(" ");
+            let mut search = String::new();
+            for r in self.records(origin).into_iter().flatten() {
+                normalize_into(&mut search, r.name.as_str());
+            }
             self.entries.push(Indexed {
                 origin,
+                name: NameRef::Source,
                 target,
-                search: normalize(&name).into_boxed_str(),
+                search: search.into_boxed_str(),
             });
             i = end;
         }
@@ -323,24 +429,24 @@ impl Catalogue {
             let label = transport_name(edge.kind);
             // Cache/service names are matched by actual definition+placement,
             // not a town-radius join. Unknown nav labels remain honest kinds/IDs.
-            let name = self
-                .entries
-                .iter()
-                .filter_map(|e| self.records(e.origin).into_iter().flatten().next())
-                .find(|r| {
+            let matched = self.entries.iter().position(|e| {
+                self.records(e.origin).into_iter().flatten().any(|r| {
                     r.key.id as i64 == i64::from(edge.loc_id)
                         && r.key.x == anchor.x
                         && r.key.z == anchor.z
                         && i32::from(r.effective_plane) == anchor.level
                 })
-                .map(|r| r.name.as_str())
-                .unwrap_or(label);
+            });
+            let name = matched
+                .and_then(|i| self.entry(i))
+                .map_or(label, |e| e.name());
             let search = normalize(&format!(
                 "{name} {label} {} {} {} {}",
                 edge.loc_id, anchor.x, anchor.z, anchor.level
             ))
             .into_boxed_str();
             self.entries.push(Indexed {
+                name: matched.map_or(NameRef::Source, |i| NameRef::Entry(i as u32)),
                 origin: Origin::Edges {
                     start: at as u32,
                     count: (end - at) as u32,
@@ -372,6 +478,13 @@ impl<'a> Entry<'a> {
             .flatten()
     }
     pub fn name(self) -> &'a str {
+        match self.data().name {
+            NameRef::Entry(i) => return self.catalogue.entry(i as usize).unwrap().name(),
+            NameRef::Spell(i) => {
+                return &self.catalogue.game_data.as_ref().unwrap().teleports()[i as usize].name
+            }
+            NameRef::Source => {}
+        }
         self.records()
             .last()
             .map(|r| r.name.as_str())
@@ -527,11 +640,17 @@ impl Search {
     }
 }
 fn normalize(s: &str) -> String {
-    s.split(['/', '\n', '\r'])
-        .flat_map(str::split_whitespace)
-        .collect::<Vec<_>>()
-        .join(" ")
-        .to_lowercase()
+    let mut result = String::with_capacity(s.len());
+    normalize_into(&mut result, s);
+    result
+}
+fn normalize_into(result: &mut String, s: &str) {
+    for word in s.split('/').flat_map(str::split_whitespace) {
+        if !result.is_empty() {
+            result.push(' ');
+        }
+        result.extend(word.chars().flat_map(char::to_lowercase));
+    }
 }
 fn placement(r: &PoiRecord) -> (EntityKind, u32, i32, i32, u8, u8, u8) {
     (
@@ -594,11 +713,19 @@ pub(super) fn safe_standable(world: &NavWorld, t: WorldTile) -> bool {
     // supplied map clicks before entering them, including i32::MIN/MAX.
     let dx = i64::from(t.x) - i64::from(world.collision.origin.x);
     let dz = i64::from(t.z) - i64::from(world.collision.origin.z);
-    (0..4).contains(&t.level)
-        && dx >= 0
-        && dz >= 0
-        && dx < world.collision.width as i64
-        && dz < world.collision.height as i64
+    if !(0..4).contains(&t.level)
+        || dx < 0
+        || dz < 0
+        || dx >= world.collision.width as i64
+        || dz >= world.collision.height as i64
+    {
+        return false;
+    }
+    let index = t.level as usize * world.collision.width * world.collision.height
+        + dz as usize * world.collision.width
+        + dx as usize;
+    index < world.collision.walk.len()
+        && index / 64 < world.collision.blocked.len()
         && world.collision.standable(t)
 }
 fn adjacent_stand(world: &NavWorld, r: &PoiRecord) -> Option<Tile> {

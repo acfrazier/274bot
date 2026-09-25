@@ -326,7 +326,7 @@ pub(crate) fn step_bank_fetch_on_bot<D: Driver>(
                 });
                 // Restore the post-session route for follow / status.
                 bot.route = Some(pending.final_route.clone());
-                bot.map_route_generation = bot.map_route_generation.wrapping_add(1);
+                bot.map_route_generation = crate::walk_map::next_map_route_generation();
                 false
             } else if bot
                 .route
@@ -356,7 +356,7 @@ pub(crate) fn step_bank_fetch_on_bot<D: Driver>(
                     Ok(route) => {
                         log_walk_arm_bot(|| format!("bank_fetch Walk armed sub-route dest={to:?}"));
                         bot.route = Some(route);
-                        bot.map_route_generation = bot.map_route_generation.wrapping_add(1);
+                        bot.map_route_generation = crate::walk_map::next_map_route_generation();
                         false
                     }
                     Err(_) => {

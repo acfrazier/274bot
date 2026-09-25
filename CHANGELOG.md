@@ -18,6 +18,29 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   and place labels. Missing navpois invalidates a warm stamp once. Frozen
   `BANK_CATALOG` / named-bank APIs are unchanged; 274V10 routing bytes are
   unchanged.
+- WalkTo's shared panel/TUI model merges revision-bound client POIs, authenticated
+  `navpois` service/place facts and borrowed navigation transports. Local search
+  preserves access anchors, annotations, adjacent walk stands and teleport
+  **landings** as different facts. Missing client data or `navpois` is explicit;
+  tellers and place labels are unavailable without the supplement.
+- **Intentional snapping change:** the panel previously searched an entire plane
+  for the nearest walkable tile; the TUI searched radius 16 but returned the
+  unwalkable requested tile on a miss. Both now use one radius-16 query (at most
+  33×33 cells), ordered by Chebyshev distance, Manhattan distance, x, then z.
+  A miss has no action target. Blocked place-label anchors remain view jumps.
+- Map confirmation consumes the pending selection once, captures the slot
+  lifetime/world/nav binding and routing options, and uses the existing host
+  walk arm. A missing observed player now refuses the action instead of storing
+  a destination for a later login. Focus, identity and plane changes invalidate
+  selection; debug Teleport checks the actual local loopback target in the host.
+- Shared route overlays borrow the actual live, manual or script route instead
+  of cloning route payloads for map reads. Their cache generation changes across
+  arm replacement, including a new path to the same destination.
+- Map banks are labelled **Map-discovered bank**, distinct from the **Frozen bank
+  API roster**. Canifis can appear at its normalized bridge plane 0 while
+  `nearestBank` still omits it; the frozen bank APIs are unchanged. A geometric,
+  collision-valid adjacent stand proves only a walking destination, not banking
+  eligibility or the permitted interaction side (v1 POIs omit `forceapproach`).
 
 ### Rendering and client
 

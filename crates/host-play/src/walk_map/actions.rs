@@ -439,12 +439,5 @@ pub(super) fn teleport_command(t: Tile) -> Result<String, ActionError> {
     if !(0..4).contains(&t.level) || t.x < 0 || t.z < 0 {
         return Err(ActionError::InvalidCoordinates);
     }
-    Ok(format!(
-        "tele {},{},{},{},{}",
-        t.level,
-        t.x / 64,
-        t.z / 64,
-        t.x % 64,
-        t.z % 64
-    ))
+    Ok(api::interact::tele_args(t.level, t.x, t.z))
 }

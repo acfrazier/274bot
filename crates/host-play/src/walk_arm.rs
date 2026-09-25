@@ -122,7 +122,7 @@ pub fn arm_walk_on(
                 arm.traveller.clear();
                 arm.bank_fetch = None;
                 arm.route = Some(route.clone());
-                arm.route_generation = arm.route_generation.wrapping_add(1);
+                arm.route_generation = crate::walk_map::next_map_route_generation();
             }
             Ok(route)
         }
@@ -138,7 +138,7 @@ pub fn arm_walk_on(
                 arm.traveller.clear();
                 arm.bank_fetch = Some(pending);
                 arm.route = Some(route.clone());
-                arm.route_generation = arm.route_generation.wrapping_add(1);
+                arm.route_generation = crate::walk_map::next_map_route_generation();
             }
             Ok(route)
         }
@@ -173,7 +173,7 @@ pub fn step_walk_arm_bank_fetch<D: Driver>(
     } else if let Some(r) = bot.route {
         arm.route = Some(r);
         if bot.map_route_generation != 0 {
-            arm.route_generation = arm.route_generation.wrapping_add(1);
+            arm.route_generation = bot.map_route_generation;
         }
     }
     wrote
