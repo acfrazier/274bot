@@ -3044,19 +3044,23 @@ impl Session {
     /// Cancel a pending rail removal in response to an operator action.
     /// The retained IO is reusable only when no replacement arm exists or
     /// when the current arm is the exact lifetime that owned the removal.
-    fn cancel_slot_removal(&mut self, name: &str) {
+    /// Returns true only when the current arm also owns the cancelled
+    /// removal, so callers may undo that removal's clean-logout latch.
+    fn cancel_slot_removal(&mut self, name: &str) -> bool {
         let Some(mut pending) = self.pending_slot_removals.remove(name) else {
-            return;
+            return false;
         };
         let current = self.play.as_ref().and_then(|play| play.arm(name));
-        let may_restore_io = current
+        let owns_cancelled_removal = current
             .as_ref()
-            .is_none_or(|arm| Arc::ptr_eq(arm, &pending.arm));
+            .is_some_and(|arm| Arc::ptr_eq(arm, &pending.arm));
+        let may_restore_io = current.as_ref().is_none_or(|_| owns_cancelled_removal);
         if may_restore_io {
             if let Some(io) = pending.io.take() {
                 self.slots.entry(name.to_string()).or_insert(io);
             }
         }
+        owns_cancelled_removal
     }
 
     /// Poll slot statuses and append log lines for transitions (slot up,
@@ -3889,7 +3893,7 @@ impl Session {
     /// spawned holding the title screen until [`Session::login_all`].
     /// Returns whether the name was newly added to the wall.
     pub fn load(&mut self, name: &str) -> bool {
-        self.cancel_slot_removal(name);
+        let cancelled_removal = self.cancel_slot_removal(name);
         let newly = self.wall.load(name);
         let auto_login = self
             .vault
@@ -3899,13 +3903,12 @@ impl Session {
             .unwrap_or(false);
         let want_login = self.wall.should_auto_login(name, auto_login);
         if let Some(play) = self.play.as_ref() {
-            // Already running (re-click): re-apply saved auto intent while a
-            // latched logout remains parked.
+            // Already running (re-click): refresh saved auto intent. Only a
+            // cancelled removal may reverse the clean logout it requested;
+            // unrelated client-idle and operator latches remain parked.
             if let Some(arm) = play.arm(name) {
                 arm.set_auto_login(auto_login);
-                if want_login && arm.login_latched() {
-                    // A clean logout requested solely for a cancelled rail
-                    // removal must not hold an auto-login profile parked.
+                if cancelled_removal && want_login && arm.login_latched() {
                     arm.arm_explicit_login();
                 }
             } else {

@@ -4018,6 +4018,30 @@ fn load_refresh_keeps_an_explicit_non_auto_login() {
 }
 
 #[test]
+fn load_keeps_an_idle_timeout_latched_auto_member_logged_out() {
+    let path = tmp_vault("load-idle-latched-auto.vault");
+    let mut session = Session::new();
+    let mut vault = Vault::create(&path, "bot").unwrap();
+    let mut alice = profile("alice", "pw", 42);
+    alice.settings.auto_login = true;
+    vault.upsert(alice).unwrap();
+    session.vault = Some(vault);
+    let mut play = empty_play();
+    let arm = SlotArm::new(42, true);
+    arm.hold_logged_out();
+    play.attach_arm("alice", Arc::clone(&arm));
+    session.play = Some(play);
+    session.wall.load("alice");
+
+    assert!(!session.load("alice"));
+    assert!(arm.login_latched());
+    assert!(
+        !arm.wants_login(),
+        "Load must not undo a client idle-timeout latch"
+    );
+}
+
+#[test]
 fn explicit_login_recreates_terminal_worker_and_reuses_slot_io() {
     let path = tmp_vault("terminal-worker-login.vault");
     let mut session = Session::new();
