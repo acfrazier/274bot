@@ -102,6 +102,13 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   game socket is noticed on the next frame via EOF peek instead of waiting the
   15 s silence watchdog.
 
+### Startup
+
+- Faster startup: fewer redundant cache and content re-checks. Local binds no
+  longer re-hash the whole content tree, login CRCs share the cache capture
+  pass, and Play construction does not recapture archives already checked at
+  template load.
+
 ### Slot lifecycle
 
 - Forwarded local engine endpoints retain verified game data when their connect

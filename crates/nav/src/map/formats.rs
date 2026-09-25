@@ -454,17 +454,9 @@ impl ServicePois {
         if bytes[13..45] != expected.binding()?.0 {
             return Err(MapError::Identity);
         }
-        if Digest::of(bytes) != expected_file_sha256 || bytes[45..77] != Digest::of(&bytes[77..]).0
-        {
+        if Digest::of(bytes) != expected_file_sha256 {
             return Err(MapError::Digest);
         }
-        super::preflight(
-            &bytes[77..],
-            MAX_JSON_BYTES,
-            expected,
-            "navpois",
-            NAVPOIS_VERSION,
-        )?;
         let document: Self = super::json(&bytes[77..], MAX_JSON_BYTES)?;
         document.validate(expected)?;
         if document.records.as_slice().len() != count {

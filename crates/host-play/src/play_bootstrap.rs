@@ -178,9 +178,9 @@ pub struct SharedClientTemplate {
     scatter: std::sync::OnceLock<Vec<WorldTile>>,
 }
 
-/// One-use proof that the template's frozen resource identities were checked
-/// immediately before Play construction. Private fields prevent callers from
-/// bypassing [`ServerProfile::validate_resources`].
+/// One-use ordering ticket for Play construction. Resource identities are
+/// checked when the template is loaded; this type only proves handoff order.
+/// Private fields prevent callers from constructing Play without the ticket.
 pub struct ValidatedTemplate {
     template: Arc<SharedClientTemplate>,
 }
@@ -237,9 +237,9 @@ impl SharedClientTemplate {
         self.world.clone()
     }
 
-    /// Revalidate the selected cache identity and return the consuming
-    /// handoff required by [`run_prepared_template`]. Navigation is the
-    /// already-loaded world; a post-load disk edit does not replace it.
+    /// Return the consuming handoff required by [`run_prepared_template`].
+    /// Navigation is the already-loaded world; a post-load disk edit does not
+    /// replace it. Cache identity was checked at load; this does not re-hash.
     pub fn validate_for_play(self: &Arc<Self>) -> Result<ValidatedTemplate, String> {
         self.validate_for_play_with_progress(&progress::ProfileProgressObserver::default())
     }
@@ -248,7 +248,6 @@ impl SharedClientTemplate {
         self: &Arc<Self>,
         observer: &progress::ProfileProgressObserver,
     ) -> Result<ValidatedTemplate, String> {
-        self.profile.validate_resources_with_progress(observer)?;
         observer.report(progress::ProfileProgress::steps(
             progress::ProfileProgressStage::FinalChecks,
             1,
@@ -462,9 +461,9 @@ where
     run_prepared_template(validated, mainland, profiles, per_slot, per_frame)
 }
 
-/// Construct Play from a just-validated, one-use template handoff. The public
-/// checked convenience entry remains [`run_with_template`]; callers cannot
-/// construct this function's ticket without running the final validation.
+/// Construct Play from a one-use template handoff. The public checked
+/// convenience entry remains [`run_with_template`]; callers cannot construct
+/// this function's ticket except through [`SharedClientTemplate::validate_for_play`].
 pub fn run_prepared_template<F, G>(
     validated: ValidatedTemplate,
     mainland: bool,

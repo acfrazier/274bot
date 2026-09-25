@@ -854,7 +854,7 @@ fn navigation_and_scatter_use_the_selected_shared_world_and_keep_it_after_disk_e
 }
 
 #[test]
-fn checked_play_entry_revalidates_while_a_consuming_ticket_does_not_hash_again() {
+fn consuming_ticket_does_not_rehash_cache() {
     let fixture = Fixture::new();
     let profile = fixture
         .options(274)
@@ -864,22 +864,6 @@ fn checked_play_entry_revalidates_while_a_consuming_ticket_does_not_hash_again()
         .unwrap();
     let template = SharedClientTemplate::load(Arc::clone(&profile)).unwrap();
     let config = fixture.0.join("config");
-    let original = std::fs::read(&config).unwrap();
-
-    std::fs::write(&config, b"changed before checked play").unwrap();
-    let error = match host_play::run_with_template(
-        Arc::clone(&template),
-        false,
-        vec![],
-        |_| (None, None),
-        |_, _, _| {},
-    ) {
-        Ok(_) => panic!("checked play must refuse a changed cache"),
-        Err(error) => error,
-    };
-    assert!(error.contains("cache changed"));
-
-    std::fs::write(&config, &original).unwrap();
     let ticket = template.validate_for_play().unwrap();
     std::fs::write(&config, b"changed after the final validation").unwrap();
     let play =
@@ -1960,5 +1944,68 @@ fn named_local_matching_isolated_ports_attach_lobster_heal12() {
     assert!(
         mismatch.game_data().is_none(),
         "source mismatch must keep facts closed"
+    );
+}
+
+/// Size-only source matching is not identity: equal-length different bytes
+/// must not attach generated facts.
+#[test]
+fn equal_size_different_bytes_sources_do_not_attach_game_data() {
+    let home = PathBuf::from(std::env::var_os("HOME").unwrap());
+    let engine = home.join("experiments/lostcity-289/engine");
+    let content = home.join("experiments/lostcity-289/content");
+    let cache = engine.join("data/pack/client");
+    assert!(
+        cache.join("config").is_file() && content.join("scripts").is_dir(),
+        "real local-289 engine/content required"
+    );
+    let fixture = Fixture::new();
+    let overlay = fixture.0.join("content");
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let mut mutated = None;
+    for (is_content, input) in data.source_inputs() {
+        if !is_content {
+            continue;
+        }
+        let src = content.join(&input.path);
+        let dst = overlay.join(&input.path);
+        std::fs::create_dir_all(dst.parent().unwrap()).unwrap();
+        std::fs::copy(&src, &dst).unwrap();
+        if mutated.is_none() {
+            mutated = Some(dst);
+        }
+    }
+    let mutated = mutated.expect("289 facts list content inputs");
+    let mut bytes = std::fs::read(&mutated).unwrap();
+    assert!(!bytes.is_empty());
+    bytes[0] ^= 0xff;
+    std::fs::write(&mutated, bytes).unwrap();
+
+    let manifest = CacheManifest::capture(289, &cache).unwrap();
+    let manifest_path = fixture.0.join("real-289-manifest.json");
+    std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    let (options, _) = parse_profile_args([
+        "--profile",
+        "local-289",
+        "--engine",
+        engine.to_str().unwrap(),
+        "--cache",
+        cache.to_str().unwrap(),
+        "--content",
+        overlay.to_str().unwrap(),
+        "--cache-manifest",
+        manifest_path.to_str().unwrap(),
+        "--nav-pack",
+        fixture.0.join("missing.navpack").to_str().unwrap(),
+        "--unpack",
+        fixture.0.join("unpack").to_str().unwrap(),
+    ])
+    .unwrap();
+    let selected = options.resolve_with_env(None, &fixture.env()).unwrap();
+    assert!(selected.supported_server());
+    let profile = selected.bind().unwrap();
+    assert!(
+        profile.game_data().is_none(),
+        "equal-size different-bytes sources must keep facts closed"
     );
 }
