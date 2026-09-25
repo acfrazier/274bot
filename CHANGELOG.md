@@ -3,12 +3,6 @@
 All notable public changes to 274bot. Host workspace crate versions are `0.1.8` and
 `publish = false` (not on crates.io). Git tags are `0.1.0`, `0.1.1`, …
 
-## [0.1.9] — Unreleased
-
-- Forwarded local engine endpoints retain verified game data when their connect
-  ports differ from the engine's `world.json` ports; missing verified content
-  reports the profile/engine settings remedy.
-
 ## [0.1.9] — 2026-09-24
 
 ### Navigation
@@ -28,6 +22,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
 
 ### Slot lifecycle
 
+- Forwarded local engine endpoints retain verified game data when their connect
+  ports differ from the engine's `world.json` ports; missing verified content
+  reports the profile/engine settings remedy.
 - Slot startup, stop and restart now have one owned lifetime: per-slot
   registries are published before the worker starts, stopped and crashed
   workers release their queue place, and Log in or Login all recreates a
