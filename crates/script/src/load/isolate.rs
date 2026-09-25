@@ -802,8 +802,10 @@ impl LoadIsolate {
             let mut interacts = self.interacts.lock().unwrap();
             self.work_generation
                 .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
-            self.paint_generation
-                .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+            self.paint_generation.store(
+                NEXT_PAINT_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+                std::sync::atomic::Ordering::Release,
+            );
             interacts.clear();
             self.lifecycle.lock().unwrap().clear();
         }

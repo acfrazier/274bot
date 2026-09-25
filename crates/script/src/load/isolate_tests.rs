@@ -113,6 +113,59 @@ fn pause_interrupts_a_newly_started_runaway_tick() {
         std::thread::yield_now();
     }
 }
+#[test]
+fn paint_generation_allocator_separates_reset_and_replacement() {
+    const CHILD: &str = "SCRIPT_PAINT_GENERATION_CHILD";
+    if std::env::var_os(CHILD).is_some() {
+        let old =
+            LoadIsolate::spawn("export function tick() {}".into(), LoadShape::NativeTick, vec![])
+                .unwrap();
+        let initial = old
+            .paint_generation
+            .load(std::sync::atomic::Ordering::Acquire);
+        old.reset_session_work();
+        let after_reset = old
+            .paint_generation
+            .load(std::sync::atomic::Ordering::Acquire);
+        let replacement =
+            LoadIsolate::spawn("export function tick() {}".into(), LoadShape::NativeTick, vec![])
+                .unwrap();
+        let replacement_generation = replacement
+            .paint_generation
+            .load(std::sync::atomic::Ordering::Acquire);
+        assert_ne!(initial, after_reset);
+        assert_ne!(
+            after_reset, replacement_generation,
+            "paint epochs must not collide across isolate lifetimes"
+        );
+        old.join();
+        replacement.join();
+        return;
+    }
+
+    let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "load::isolate::tests::paint_generation_allocator_separates_reset_and_replacement",
+            "--nocapture",
+        ])
+        .env(CHILD, "1")
+        .spawn()
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            assert!(status.success(), "paint-generation child failed: {status}");
+            break;
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            panic!("paint-generation child did not return before the deadline");
+        }
+        std::thread::yield_now();
+    }
+}
+
 
 
 #[test]
