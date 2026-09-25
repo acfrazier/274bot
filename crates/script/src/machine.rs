@@ -487,6 +487,7 @@ const FAMILIES: &[Entry] = &[
     entry::<crate::special::Special>(),
     entry::<crate::modals::Modals>(),
     entry::<crate::bank_open::BankOpen>(),
+    entry::<crate::banking_open::BankingOpen>(),
     entry::<crate::bank_select::SelectBank>(),
     entry::<crate::fire::LightFire>(),
     entry::<crate::shop::Shop>(),

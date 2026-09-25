@@ -103,6 +103,8 @@ mod bank_op;
 #[cfg(feature = "load")]
 mod bank_open;
 #[cfg(feature = "load")]
+mod banking_open;
+#[cfg(feature = "load")]
 mod bank_select;
 #[cfg(feature = "load")]
 mod bank_withdraw;

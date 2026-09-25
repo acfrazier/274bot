@@ -43,7 +43,6 @@ struct ApproachFact {
 enum Mode {
     Booth,
     Nearest,
-    NearestWorld,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -51,7 +50,6 @@ enum Mode {
 enum Phase {
     WaitStand,
     WaitSelected,
-    WaitNearest,
     WaitReady,
     WaitFresh,
 }
@@ -72,7 +70,6 @@ struct Observation {
     nearest_booth: Option<Booth>,
     locs: Vec<Booth>,
     locs_populated: bool,
-    has_booth_stands: bool,
     approaches: Vec<ApproachFact>,
 }
 
@@ -104,7 +101,6 @@ impl Observation {
                 .map(|rows| rows.iter().filter_map(bank_candidate).collect())
                 .unwrap_or_default(),
             locs_populated: session.locs().is_some(),
-            has_booth_stands: session.has_booth_stands().unwrap_or(false),
             approaches: session
                 .bank_approaches()
                 .map(|rows| {
@@ -189,6 +185,7 @@ pub(crate) struct BankOpen {
     wanted_action: Option<String>,
     open_generation: u64,
     last_approach_dest: Option<Tile>,
+    world: Option<Box<crate::banking_open::BankingOpen>>,
 }
 
 impl BankOpen {
@@ -202,8 +199,24 @@ impl BankOpen {
             wanted_action,
             open_generation: 0,
             last_approach_dest: None,
+            world: None,
         }
     }
+    pub(crate) fn at_stand(
+        stand: api::snapshot::WorldTile,
+        name: String,
+        action: String,
+        cx: &mut Cx<'_>,
+    ) -> Begin<Self> {
+        let obs = observed::with(Observation::from_scene);
+        let stand = Tile { x: stand.x, z: stand.z, level: stand.level };
+        let mut open = Self::new(Mode::Booth, Some(name), Some(action));
+        match open.begin_sequence(Some(stand), false, &obs, cx) {
+            Decision::Running => Begin::Run(open),
+            Decision::Done(ok) => Begin::Done(ok),
+        }
+    }
+
 
     fn wait_ready(&mut self, cx: &mut Cx<'_>) {
         self.phase = Phase::WaitReady;
@@ -278,21 +291,6 @@ impl BankOpen {
                 };
                 self.selected = Some(selected);
                 self.approach_or_open(obs, cx)
-            }
-            Mode::NearestWorld => {
-                if let Some(booth) = obs.nearest_booth.clone() {
-                    if near(obs.here, booth.tile) {
-                        self.selected = Some(unnamed(booth));
-                        return self.approach_or_open(obs, cx);
-                    }
-                }
-                if obs.here.is_none() || !obs.has_booth_stands {
-                    return Decision::Done(false);
-                }
-                self.phase = Phase::WaitNearest;
-                cx.clock().arm(WALK_BOUND_MS);
-                cx.emit(InteractReq::WalkNearestBank);
-                Decision::Running
             }
         }
     }
@@ -444,27 +442,6 @@ impl BankOpen {
                     },
                 }
             }
-            Phase::WaitNearest if obs.bank_open => {
-                if obs.bank_loaded {
-                    Decision::Done(true)
-                } else {
-                    self.wait_ready(cx);
-                    Decision::Running
-                }
-            }
-            Phase::WaitNearest => {
-                if let Some(booth) = obs.nearest_booth.clone() {
-                    if near(obs.here, booth.tile) {
-                        self.selected = Some(unnamed(booth));
-                        return self.approach_or_open(obs, cx);
-                    }
-                }
-                if cx.clock().bound_reached() {
-                    Decision::Done(false)
-                } else {
-                    Decision::Running
-                }
-            }
             Phase::WaitReady | Phase::WaitFresh | Phase::WaitStand => {
                 if cx.clock().bound_reached() {
                     Decision::Done(false)
@@ -487,6 +464,17 @@ impl Family for BankOpen {
     type Output = bool;
 
     fn begin(args: BankOpenArgs, cx: &mut Cx<'_>) -> Begin<Self> {
+        if args.mode == "open-nearest-world" {
+            let mut world = crate::banking_open::BankingOpen::for_destination(None, None);
+            match world.run(cx) {
+                Step::Done(ok) => return Begin::Done(ok),
+                Step::Fail(thrown) => return Begin::Refuse(thrown.message().into()),
+                Step::Wait | Step::Call(_) => {}
+            }
+            let mut open = Self::new(Mode::Booth, None, None);
+            open.world = Some(Box::new(world));
+            return Begin::Run(open);
+        }
         let obs = observed::with(Observation::from_scene);
         let stand = read_tile(args.stand.as_ref());
         let stand_invalid =
@@ -499,6 +487,7 @@ impl Family for BankOpen {
     }
 
     fn step(&mut self, cx: &mut Cx<'_>) -> Step<bool> {
+        if let Some(world) = &mut self.world { return world.run(cx); }
         let obs = observed::with(Observation::from_scene);
         match self.step_phase(&obs, cx) {
             Decision::Running => Step::Wait,
@@ -551,7 +540,6 @@ fn same_optional_text(a: Option<&str>, b: Option<&str>) -> bool {
 fn parse_mode(mode: &str) -> Mode {
     match mode {
         "open-nearest" => Mode::Nearest,
-        "open-nearest-world" => Mode::NearestWorld,
         _ => Mode::Booth,
     }
 }
@@ -958,59 +946,4 @@ mod tests {
         assert!(drain().is_empty(), "no second walk after the bound");
     }
 
-    #[test]
-    fn world_mode_walks_through_the_native_verb_then_opens() {
-        reset();
-        observed::post(0, |post| {
-            post.session(true)
-                .here(observed::Tile {
-                    x: 3000,
-                    z: 3000,
-                    level: 0,
-                })
-                .bank_generation(7)
-                .has_booth_stands(true);
-        });
-        let handle = running(start(json!({ "mode": "open-nearest-world" })));
-        assert_eq!(drain(), vec![InteractReq::WalkNearestBank]);
-
-        observed::post(0, |post| {
-            post.here(observed::Tile {
-                x: 3011,
-                z: 3353,
-                level: 0,
-            })
-            .nearest_booth(observed::NearestBooth {
-                tile: observed::Tile {
-                    x: 3011,
-                    z: 3354,
-                    level: 0,
-                },
-                id: 2213,
-                name: None,
-                op: None,
-            })
-            .bank_approaches(vec![approach(
-                2213,
-                3011,
-                3354,
-                true,
-                Some((3011, 3353)),
-            )]);
-        });
-        tick();
-        assert_eq!(
-            drain(),
-            vec![InteractReq::OpenBooth {
-                x: 3011,
-                z: 3354,
-                level: 0,
-                id: 2213,
-                name: None,
-                action: None,
-            }],
-            "the world walk opens the unnamed nearest booth"
-        );
-        assert_eq!(machine::take(handle), Take::Pending);
-    }
 }

@@ -73,21 +73,23 @@ pub(crate) fn bank_value(bank: &NamedBank) -> Value {
     value
 }
 
+pub(crate) fn selected_bank(index: i32) -> Option<NamedBank> {
+    BANKS.with(|banks| usize::try_from(index).ok()
+        .and_then(|index| banks.borrow().banks().get(index).copied()))
+}
+
 pub(crate) fn selected(index: i32) -> Value {
-    BANKS.with(|banks| {
-        usize::try_from(index).ok()
-            .and_then(|index| banks.borrow().banks().get(index).map(bank_value))
-            .unwrap_or(Value::Null)
-    })
+    selected_bank(index).as_ref().map(bank_value).unwrap_or(Value::Null)
+}
+
+pub(crate) fn nearest_bank(from: WorldTile) -> Option<NamedBank> {
+    BANKS.with(|banks| banks.borrow().banks().iter()
+        .filter(|bank| eligible(bank))
+        .min_by_key(|bank| air_distance_squared(from, bank.air_tile())).copied())
 }
 
 pub(crate) fn nearest(from: WorldTile) -> Value {
-    BANKS.with(|banks| {
-        banks.borrow().banks().iter()
-            .filter(|bank| eligible(bank))
-            .min_by_key(|bank| air_distance_squared(from, bank.air_tile()))
-            .map(bank_value).unwrap_or(Value::Null)
-    })
+    nearest_bank(from).as_ref().map(bank_value).unwrap_or(Value::Null)
 }
 
 pub(crate) fn ranked(from: WorldTile) -> Vec<NamedBank> {
@@ -146,12 +148,16 @@ impl SelectBank {
         Some(Self { request_id })
     }
 
-    pub(crate) fn result(&self) -> Option<Value> {
+    pub(crate) fn result_bank(&self) -> Option<Option<NamedBank>> {
         observed::with(|scene| {
             let result = scene.since_login().bank_selection()?;
             (result.request_id == self.request_id && result.kind != 0)
-                .then(|| selected(result.bank_index))
+                .then(|| selected_bank(result.bank_index))
         })
+    }
+
+    pub(crate) fn result(&self) -> Option<Value> {
+        self.result_bank().map(|bank| bank.as_ref().map(bank_value).unwrap_or(Value::Null))
     }
 }
 

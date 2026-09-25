@@ -2,7 +2,7 @@
 //! then posts the same named OpenBooth identity when `can_operate`.
 
 use script::isolate_fb::{
-    encode_snapshot_with_native, BankApproachInput, BankStandInput, ChatOptionInput, IsolateBuf,
+    encode_snapshot_with_native, BankApproachInput, ChatOptionInput, IsolateBuf,
     NativeFactsInput, NearestBoothInput, ReachViewInput, SceneEntityInput, SnapshotFingerprint,
     SnapshotInput, TileInput,
 };
@@ -227,16 +227,6 @@ export default class T extends LoopingBot {
 }
 "#;
 
-const OPEN_WORLD: &str = r#"
-import { Bank } from '../../api/bank/Bank.js';
-export default class T extends LoopingBot {
-    async loop() {
-        if (globalThis.__did) return;
-        globalThis.__did = true;
-        globalThis.__ok = await Bank.openNearestWorld();
-    }
-}
-"#;
 
 fn east_booth<'a>(actions: &'a [String]) -> SceneEntityInput<'a> {
     loc_row(2213, Some("Bank booth"), 3011, 3354, 2, actions)
@@ -406,43 +396,6 @@ fn named_open_nearest_replaced_loc_after_approach_sends_no_click() {
     iso.join();
 }
 
-#[test]
-fn unnamed_banking_open_from_distance_walks_producer_dest() {
-    let iso = LoadIsolate::spawn(BANKING_OPEN.to_string(), LoadShape::CompatClass, vec![]).unwrap();
-    let mut snap = base_snapshot();
-    snap.here = Some(tile(100, 100));
-    snap.booths = &[TileInput {
-        x: 200,
-        z: 100,
-        level: 0,
-    }];
-    snap.nearest_booth = Some(NearestBoothInput {
-        x: 200,
-        z: 100,
-        level: 0,
-        id: 2213,
-        name: "Bank booth",
-        op: "Use-quickly",
-    });
-    let approaches = [approach_row(2213, 200, 100, false, Some((199, 100)))];
-    post_snapshot_native(&iso, &snap, &approaches);
-    tick(&iso, 1);
-    assert_eq!(
-        iso.drain_interacts(),
-        vec![InteractReq::WalkNear {
-            x: 199,
-            z: 100,
-            level: 0,
-            radius: 0,
-            allow_teleports: false,
-            allow_wilderness: true,
-            allow_bank_fetch: true,
-            request_id: 0,
-        }],
-        "unnamed Banking.open walks producer dest radius 0"
-    );
-    iso.join();
-}
 
 #[test]
 fn unnamed_banking_open_continues_through_omitted_locs_to_fresh_bank() {
@@ -657,51 +610,6 @@ fn supplied_stand_walks_then_delivers_fresh_bank_result() {
     iso.join();
 }
 
-#[test]
-fn world_open_walks_with_native_verb_then_opens_observed_booth() {
-    let iso = LoadIsolate::spawn(OPEN_WORLD.to_string(), LoadShape::CompatClass, vec![]).unwrap();
-    let stands = [BankStandInput {
-        name: "Bank booth",
-        x: 3011,
-        z: 3354,
-        level: 0,
-        kind: "booth",
-        op: 1,
-        choose: None,
-    }];
-    let mut snap = base_snapshot();
-    snap.here = Some(tile(3000, 3340));
-    snap.banks = &stands;
-    post_snapshot_input(&iso, &snap);
-    tick(&iso, 1);
-    assert_eq!(iso.drain_interacts(), vec![InteractReq::WalkNearestBank]);
-
-    snap.tick = 2;
-    snap.here = Some(tile(3011, 3353));
-    snap.nearest_booth = Some(NearestBoothInput {
-        x: 3011,
-        z: 3354,
-        level: 0,
-        id: 2213,
-        name: "Bank booth",
-        op: "Use-quickly",
-    });
-    let ready = [east_approach(true, Some((3011, 3353)))];
-    post_snapshot_native(&iso, &snap, &ready);
-    tick(&iso, 2);
-    assert_eq!(
-        iso.drain_interacts(),
-        vec![InteractReq::OpenBooth {
-            x: 3011,
-            z: 3354,
-            level: 0,
-            id: 2213,
-            name: None,
-            action: None,
-        }]
-    );
-    iso.join();
-}
 
 /// A chest access row (Shantay: `Shantay chest` / `Open`) interacts with the
 /// named loc, then answers the frozen `openedReady` once the list posts.

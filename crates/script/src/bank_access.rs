@@ -270,18 +270,18 @@ fn bank_stand(loc: WorldTile) -> Option<WorldTile> {
 
 #[derive(Clone, Deserialize)]
 pub(crate) struct Opener {
-    name: String,
-    op: String,
+    pub(crate) name: String,
+    pub(crate) op: String,
 }
 
 /// `BankObjectAccess`: the shim passes `open_first`, a bank destination
 /// row carries `openFirst`.
 #[derive(Clone, Deserialize)]
 pub(crate) struct AccessArgs {
-    name: String,
-    op: String,
+    pub(crate) name: String,
+    pub(crate) op: String,
     #[serde(default, alias = "openFirst")]
-    open_first: Option<Opener>,
+    pub(crate) open_first: Option<Opener>,
 }
 
 /// Where a failed object-dialogue continue leaves the `openNearest` loop.
@@ -700,9 +700,10 @@ impl Family for BankAccess {
 
 #[derive(Clone, Deserialize)]
 pub(crate) struct NpcAccessArgs {
-    name: String,
-    op: String,
-    choose: String,
+    pub(crate) name: String,
+    pub(crate) op: String,
+    #[serde(default)]
+    pub(crate) choose: String,
 }
 
 enum NpcPhase {
@@ -866,7 +867,7 @@ impl NpcAccess {
                 let option = chat
                     .options
                     .iter()
-                    .position(|option| option.to_lowercase().contains(&choose));
+                    .position(|option| !choose.is_empty() && option.to_lowercase().contains(&choose));
                 let press = match option {
                     Some(index) => Press::send(
                         InteractReq::Answer {

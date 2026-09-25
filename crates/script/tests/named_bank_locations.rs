@@ -173,3 +173,93 @@ fn air_ties_keep_catalog_order_across_planes_without_isolate_leakage() {
     a.join();
     b.join();
 }
+
+/// The selected identity controls opening, not a later nearest-booth snapshot.
+/// A selection (including an air fallback) is not a successful bank session.
+#[test]
+fn reachable_bank_continuations_open_npc_access_and_wait_for_loaded_stock() {
+    use script::isolate_fb::{BankSelectionInput, SceneEntityInput};
+    use script::shim::InteractReq;
+    for (call, after) in [
+        ("Banking.open()", 0),
+        ("Bank.openNearestWorld()", 0),
+        ("Banking.bankNearest({deposit: () => false, afterDeposit() { globalThis.__after++; }})", 1),
+    ] {
+        let source = format!(r#"
+import {{ Bank }} from '../../api/bank/Bank.js';
+import {{ Banking }} from '../../api/bank/Banking.js';
+globalThis.__after = 0; globalThis.__ok = null;
+export default class T extends LoopingBot {{
+    async loop() {{
+        if (globalThis.__did) return;
+        globalThis.__did = true;
+        globalThis.__ok = await {call};
+    }}
+}}"#);
+        let facts = catalog();
+        let index = facts.banks().iter().position(|bank| bank.name == "Shilo Village").unwrap();
+        let stand = facts.banks()[index].tile;
+        let iso = spawn(&source, facts);
+        let quests = [QuestStatusInput { name: "Shilo Village", status: "complete", component_id: None }];
+        let mut snapshot = base_snapshot();
+        let mut native = NativeFactsInput { quest_statuses: Some(&quests), ..Default::default() };
+        let tick = |snapshot: &SnapshotInput<'_>, native: NativeFactsInput<'_>| {
+            iso.post_snapshot(script::isolate_fb::encode_snapshot_with_native(snapshot, native));
+            iso.on_game_tick(snapshot.tick);
+            iso.probe("true").unwrap();
+        };
+        tick(&snapshot, native);
+        let requests = iso.drain_interacts();
+        let [InteractReq::SelectBank { request_id, .. }] = requests.as_slice() else {
+            panic!("{call}: expected an off-scene bank selection, got {requests:?}");
+        };
+        snapshot.tick = 2;
+        native.bank_selection = BankSelectionInput { request_id: request_id + 1, generation: 1, bank_index: index as i32, kind: 2 };
+        tick(&snapshot, native);
+        assert!(iso.drain_interacts().is_empty(), "a stale identity must not start a walk");
+        snapshot.tick = 3;
+        native.bank_selection.request_id = *request_id;
+        native.bank_selection.kind = if after == 1 { 3 } else { 2 };
+        tick(&snapshot, native);
+        assert!(matches!(iso.drain_interacts().as_slice(), [InteractReq::WalkNear { x, z, radius: 4, .. }]
+            if (*x, *z) == (stand.x, stand.z)), "{call} must approach the selected stand");
+        snapshot.tick = 4;
+        snapshot.here = Some(TileInput { x: stand.x, z: stand.z, level: stand.level });
+        snapshot.reach = ReachViewInput { available: true, base_x: stand.x, base_z: stand.z, level: stand.level,
+            width: 1, height: 1, walkable: &[1], reachable: &[1], reachable_adj: &[1],
+            exact_rank: &[0], adjacent_rank: &[0], step: &[0], canlight: &[0], stamp: 1 };
+        let actions = ["Bank".to_string()];
+        let npcs = [SceneEntityInput { index: 42, id: 499, name: Some("Banker"), x: stand.x + 1, z: stand.z,
+            level: stand.level, distance: 1, health: 1, max_health: 1, in_combat: false, animating: false,
+            actions: &actions, reachable: true, reachable_adj: true, combat_level: 0,
+            target_kind: 0, target_index: -1, size: 1, nx: stand.x + 1, nz: stand.z }];
+        snapshot.npcs = &npcs;
+        tick(&snapshot, native);
+        assert_eq!(iso.drain_interacts(), vec![InteractReq::Npc {
+            name: "Banker".into(), action: "Bank".into(), index: Some(42),
+        }], "{call}: NPC access must not wait for a booth or require a dialogue choice");
+        snapshot.tick = 5;
+        let choices = [script::isolate_fb::ChatOptionInput { text: "Tell me about this village." }];
+        snapshot.chat_open = true;
+        snapshot.chat_options = &choices;
+        tick(&snapshot, native);
+        assert!(iso.drain_interacts().is_empty(), "absent npcAccess.choose must not select an unrelated first option");
+        assert_eq!(iso.probe("[__ok,__after]").unwrap(), serde_json::json!([null, 0]));
+        snapshot.tick = 6;
+        snapshot.chat_open = false;
+        snapshot.chat_options = &[];
+        snapshot.bank_open = true;
+        snapshot.bank_generation = 1;
+        tick(&snapshot, native);
+        assert_eq!(iso.probe("[__ok,__after]").unwrap(), serde_json::json!([null, 0]));
+        snapshot.bank_loaded = true;
+        let side = [script::isolate_fb::ItemRowInput {
+            name: Some("Coins"), count: 1, id: 995, ops: &[], noted: false,
+            cert: -1, component_id: 1, slot: 0,
+        }];
+        snapshot.bank_side = &side;
+        for n in 7..=9 { snapshot.tick = n; tick(&snapshot, native); }
+        assert_eq!(iso.probe("[__ok,__after]").unwrap(), serde_json::json!([true, after]), "{call}");
+        iso.join();
+    }
+}

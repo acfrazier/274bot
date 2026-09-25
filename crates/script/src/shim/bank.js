@@ -248,7 +248,7 @@ export const Bank = new Proxy(
         async openNpcAccess(access, log) {
             const out = await runMachine(
                 'bank_npc_access',
-                { name: String(access.name), op: String(access.op), choose: String(access.choose) },
+                { name: String(access.name), op: String(access.op), choose: String(access.choose ?? '') },
                 { log: typeof log === 'function' ? log : undefined },
             );
             return out.kind === 'done' && out.value === true;

@@ -24,6 +24,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
   content stays a gated air fallback rather than an invented reachable bank.
   Stand resolution retains usable counter-side floor tiles with directional
   wall faces (including Varrock West), while still excluding blocked footprints.
+- `Banking.open`, periodic banking and world bank opens now share a Rust-owned
+  select/walk/access continuation. Nearby banks still beat distant presets;
+  explicit destinations remain the no-scene fallback. NPC and object access
+  metadata survive selection, and deposit callbacks wait for loaded bank stock.
+  An NPC bank without a dialogue choice never selects an unrelated first option.
 
 - Baker-stall restocking now awaits one Rust step machine; Rust owns selected
   stall facts, callback polling, waits, steal verbs, stand swaps and lockout

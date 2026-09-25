@@ -1,8 +1,5 @@
-// Our Banking module: `open()` is a thin name onto the host's nearest
-// Use-quickly loc interact (same plane; none fails closed). Deposit helpers
-// stay here. Missing members throw `not impl`. rs2b0t's Banking.ts / webwalk
-// are never executed.
-import { Bank } from './Bank.js';
+// Rust owns opening precedence, reachable selection and the bank-trip
+// continuation. JavaScript only maps the catalog names and await plumbing.
 import { runMachine } from '../../shim/_kernel.js';
 
 const notImpl = (name, reason) =>
@@ -68,13 +65,16 @@ export const Banking = new Proxy(
     {
         async open(opts = {}) {
             opts = opts || {};
-            const supported = new Set(['stand', 'boothName', 'boothOp', 'log']);
-            for (const name of Object.keys(opts)) {
-                if (!supported.has(name) && opts[name] !== undefined) {
-                    throw notImpl('Banking.open', name);
-                }
-            }
-            return Bank.openBooth(opts.stand, opts.boothName, opts.boothOp, opts.log);
+            const out = await runMachine('banking_open', {
+                stand: opts.stand ?? null,
+                destination: opts.destination ?? null,
+                boothName: opts.boothName,
+                boothOp: opts.boothOp,
+                preferNearby: opts.preferNearby,
+                nearbyRadius: opts.nearbyRadius,
+                obstacles: opts.obstacles ?? [],
+            }, { log: opts.log });
+            return out.kind === 'done' && out.value === true;
         },
 
         // Rust runs the frozen open → deposit → afterDeposit → return trip.
@@ -85,6 +85,8 @@ export const Banking = new Proxy(
                 'bank_nearest',
                 {
                     destination: opts.destination ?? null,
+                    booth_name: opts.boothName,
+                    booth_op: opts.boothOp,
                     return_to: opts.returnTo ?? null,
                     deposit_all: !!deposit && typeof deposit !== 'function',
                     common_junk: !!(opts.commonJunk ?? true),

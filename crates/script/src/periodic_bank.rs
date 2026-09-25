@@ -1,9 +1,9 @@
 //! Rust-owned PeriodicBank and `Banking.bankNearest`.
 //!
-//! - [`Run`] is one frozen `bankNearest`: reach and open a bank (a supplied
-//!   destination's booth, object or NPC access, else the nearest booth,
-//!   gated on the host's approach facts), deposit through the caller's
-//!   matcher ([`crate::bank_deposit`]), run `afterDeposit`, wait a tick,
+//! - [`Run`] is one frozen `bankNearest`: share [`crate::banking_open`]'s
+//!   local/preset/reachable selection and object/NPC access continuation,
+//!   deposit through the caller's matcher ([`crate::bank_deposit`]), run
+//!   `afterDeposit`, wait a tick,
 //!   and walk back to `returnTo` (the bank left open, as frozen). It is the
 //!   `bank_nearest` [`crate::machine`] family, and the body of
 //!   `periodic_bank`.
@@ -18,12 +18,11 @@
 //! Scene facts come from the isolate scene; script callbacks go through the
 //! machine's callback path.
 
-use crate::bank_access::{AccessArgs, BankAccess, NpcAccess, NpcAccessArgs};
+use crate::banking_open::{read_dest, read_tile, BankingOpen, Dest};
 use crate::bank_deposit::{truthy, Deposit, Matcher};
-use crate::bank_op::BankView;
 use crate::load::reach_query::arrived;
 use crate::machine::{Begin, Call, Cx, Family, Reply, Step};
-use crate::observed::{self, Scene};
+use crate::observed;
 use crate::shim::InteractReq;
 use api::snapshot::WorldTile as Tile;
 use serde::Deserialize;
@@ -31,14 +30,9 @@ use serde_json::{json, Value};
 use std::cell::RefCell;
 use std::time::{Duration, Instant};
 
-pub const WALK_BOUND_MS: u64 = 60_000;
-pub const BANK_WAIT_MS: u64 = 4_000;
 /// Frozen `walkResilient(returnTo, { timeoutMs: 120_000 })`.
 pub const RETURN_WALK_MS: u64 = 120_000;
 pub const FAILURE_BACKOFF_MS: u64 = 180_000;
-pub const ACCESS_RADIUS: i32 = 1;
-/// Frozen walk to an access destination (`radius: 4`).
-pub const ACCESS_WALK_RADIUS: i32 = 4;
 pub const RETURN_RADIUS: i32 = 6;
 /// Frozen `delayTicks(3)` after a failed run.
 const FAIL_TICKS: u64 = 3;
@@ -179,135 +173,6 @@ pub fn on_hold(held: bool) {
     });
 }
 
-fn tile(t: observed::Tile) -> Tile {
-    Tile {
-        x: t.x,
-        z: t.z,
-        level: t.level,
-    }
-}
-
-fn chebyshev(a: Tile, b: Tile) -> i32 {
-    if a.level != b.level {
-        return i32::MAX;
-    }
-    i32::try_from(a.x.abs_diff(b.x).max(a.z.abs_diff(b.z))).unwrap_or(i32::MAX)
-}
-
-#[derive(Debug, Clone)]
-struct Booth {
-    tile: Tile,
-    id: i32,
-    name: Option<String>,
-    action: Option<String>,
-}
-
-#[derive(Debug, Clone, Copy)]
-struct ApproachFact {
-    loc_id: i32,
-    tile: Tile,
-    can_operate: bool,
-    dest: Option<Tile>,
-}
-
-/// The posted facts one decision reads.
-struct Obs {
-    here: Option<Tile>,
-    bank: BankView,
-    nearest_booth: Option<Booth>,
-    has_booth_stands: bool,
-    approaches: Vec<ApproachFact>,
-}
-
-impl Obs {
-    fn now() -> Self {
-        let bank = BankView::now();
-        observed::with(|scene: &Scene| {
-            let session = scene.since_login();
-            let text = |t: &Option<observed::Text>| {
-                t.as_deref().filter(|s| !s.is_empty()).map(str::to_string)
-            };
-            Self {
-                here: session.here().map(tile),
-                bank,
-                nearest_booth: session.nearest_booth().map(|booth| Booth {
-                    tile: tile(booth.tile),
-                    id: booth.id,
-                    name: text(&booth.name),
-                    action: text(&booth.op),
-                }),
-                has_booth_stands: session.has_booth_stands().unwrap_or(false),
-                approaches: session
-                    .bank_approaches()
-                    .map(|rows| {
-                        rows.iter()
-                            .map(|row| ApproachFact {
-                                loc_id: row.loc_id,
-                                tile: tile(row.tile),
-                                can_operate: row.can_operate,
-                                dest: row.dest.map(tile),
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default(),
-            }
-        })
-    }
-
-    fn snapshot_ready(&self) -> bool {
-        self.bank.open && self.bank.loaded
-    }
-
-    fn approach(&self, booth: &Booth) -> Option<ApproachFact> {
-        self.approaches
-            .iter()
-            .find(|row| row.loc_id == booth.id && row.tile == booth.tile)
-            .copied()
-    }
-}
-
-/// A bank the caller named: its tile and, for a chest or banker, how to
-/// open it.
-pub(crate) struct Dest {
-    tile: Tile,
-    access: Option<Access>,
-}
-
-enum Access {
-    Object(AccessArgs),
-    Npc(NpcAccessArgs),
-}
-
-/// A `BankDestination` (`{ tile, access?, npcAccess? }`) or a bare tile.
-fn read_dest(value: &Value) -> Option<Dest> {
-    let tile = read_tile(value)?;
-    let access = match (value.get("npcAccess"), value.get("access")) {
-        (Some(npc), _) if !npc.is_null() => {
-            serde_json::from_value(npc.clone()).ok().map(Access::Npc)
-        }
-        (_, Some(object)) if !object.is_null() => serde_json::from_value(object.clone())
-            .ok()
-            .map(Access::Object),
-        _ => None,
-    };
-    Some(Dest { tile, access })
-}
-
-fn read_tile(value: &Value) -> Option<Tile> {
-    if value.is_null() {
-        return None;
-    }
-    let tile = value.get("tile").unwrap_or(value);
-    Some(Tile {
-        x: i32::try_from(tile.get("x")?.as_i64()?).ok()?,
-        z: i32::try_from(tile.get("z")?.as_i64()?).ok()?,
-        level: tile
-            .get("level")
-            .and_then(Value::as_i64)
-            .and_then(|l| i32::try_from(l).ok())
-            .unwrap_or(0),
-    })
-}
 
 /// What the run deposits.
 pub(crate) enum DepositPlan {
@@ -321,31 +186,9 @@ pub(crate) enum DepositPlan {
     Hook { hook: usize, common: bool },
 }
 
-/// Where a finished walk goes next.
-#[derive(Clone, Copy)]
-enum AfterWalk {
-    Access,
-    WaitApproach,
-    Opener,
-}
-
-enum Opener {
-    Object(Box<BankAccess>),
-    Npc(Box<NpcAccess>),
-}
 
 enum RunPhase {
-    Access,
-    Walk {
-        tile: Tile,
-        radius: i32,
-        then: AfterWalk,
-    },
-    WalkNearestBank,
-    WaitApproach,
     Open,
-    WaitReady,
-    Opener(Opener),
     Deposit(Deposit),
     AfterDeposit {
         asked: bool,
@@ -357,17 +200,11 @@ enum RunPhase {
 
 /// One frozen `Banking.bankNearest`.
 pub(crate) struct Run {
-    dest: Option<Dest>,
+    open: BankingOpen,
     return_to: Option<Tile>,
     deposit: Option<DepositPlan>,
     after_hook: Option<usize>,
-    log_hook: Option<usize>,
     phase: RunPhase,
-    open_generation: u64,
-    last_approach_dest: Option<Tile>,
-    /// A decision is waiting on the host (approach readiness, a fresh
-    /// list): its 4 s window is armed.
-    waiting: bool,
 }
 
 /// One decision: keep deciding, wait for the next tick, or end the step.
@@ -386,15 +223,11 @@ impl Run {
         log_hook: Option<usize>,
     ) -> Self {
         Self {
-            dest,
+            open: BankingOpen::for_destination(dest, log_hook),
             return_to,
             deposit: Some(deposit),
             after_hook,
-            log_hook,
-            phase: RunPhase::Access,
-            open_generation: 0,
-            last_approach_dest: None,
-            waiting: false,
+            phase: RunPhase::Open,
         }
     }
 
@@ -408,201 +241,22 @@ impl Run {
         }
     }
 
-    fn walk(&mut self, tile: Tile, radius: i32, then: AfterWalk, cx: &mut Cx<'_>) -> Next {
-        self.waiting = false;
-        cx.clock().arm(WALK_BOUND_MS);
-        cx.emit(walk_near(tile, radius));
-        self.phase = RunPhase::Walk { tile, radius, then };
-        Next::Wait
-    }
-
-    /// Wait for the host inside the frozen 4 s window; past it the run
-    /// fails.
-    fn hold_on(&mut self, cx: &mut Cx<'_>) -> Next {
-        if !self.waiting {
-            self.waiting = true;
-            cx.clock().arm(BANK_WAIT_MS);
-            return Next::Wait;
-        }
-        if cx.clock().bound_reached() {
-            return Next::Out(Step::Done(false));
-        }
-        Next::Wait
-    }
 
     fn to(&mut self, phase: RunPhase) -> Next {
-        self.waiting = false;
         self.phase = phase;
         Next::Decide
     }
 
-    /// The booth next to the supplied destination, when there is one.
-    fn access_booth(&self, obs: &Obs) -> Option<Booth> {
-        let booth = obs.nearest_booth.clone()?;
-        match &self.dest {
-            Some(dest) if chebyshev(dest.tile, booth.tile) > ACCESS_RADIUS => None,
-            _ => Some(booth),
-        }
-    }
-
-    /// The host's approach fact for `booth` decides: open, walk its
-    /// approach tile, or wait for it.
-    fn via_approach(&mut self, obs: &Obs, booth: &Booth, cx: &mut Cx<'_>) -> Next {
-        match obs.approach(booth) {
-            None => Next::Out(Step::Done(false)),
-            Some(row) if row.can_operate => self.to(RunPhase::Open),
-            Some(row) => match row.dest {
-                None => Next::Out(Step::Done(false)),
-                Some(dest) if self.last_approach_dest == Some(dest) => {
-                    self.phase = RunPhase::WaitApproach;
-                    self.hold_on(cx)
-                }
-                Some(dest) => {
-                    self.last_approach_dest = Some(dest);
-                    self.walk(dest, 0, AfterWalk::WaitApproach, cx)
-                }
-            },
-        }
-    }
 
     fn decide(&mut self, cx: &mut Cx<'_>) -> Next {
         let phase = std::mem::replace(&mut self.phase, RunPhase::Return);
         match phase {
-            RunPhase::Access => {
-                let obs = Obs::now();
-                self.phase = RunPhase::Access;
-                if obs.snapshot_ready() {
-                    return self.deposit_phase();
-                }
-                if obs.here.is_none() {
-                    return Next::Out(Step::Done(false));
-                }
-                if let Some(dest) = &self.dest {
-                    let dest_tile = dest.tile;
-                    if let Some(access) = &dest.access {
-                        if !arrived(dest_tile, ACCESS_WALK_RADIUS) {
-                            return self.walk(dest_tile, ACCESS_WALK_RADIUS, AfterWalk::Opener, cx);
-                        }
-                        let opener = match access {
-                            Access::Object(args) => Opener::Object(Box::new(BankAccess::new(
-                                args.clone(),
-                                self.log_hook,
-                            ))),
-                            Access::Npc(args) => {
-                                Opener::Npc(Box::new(NpcAccess::new(args.clone(), self.log_hook)))
-                            }
-                        };
-                        return self.to(RunPhase::Opener(opener));
-                    }
-                    if !arrived(dest_tile, ACCESS_RADIUS) {
-                        return self.walk(dest_tile, ACCESS_RADIUS, AfterWalk::Access, cx);
-                    }
-                    let Some(booth) = self.access_booth(&obs) else {
-                        return Next::Out(Step::Done(false));
-                    };
-                    return self.via_approach(&obs, &booth, cx);
-                }
-                if let Some(booth) = obs.nearest_booth.clone() {
-                    if arrived(booth.tile, ACCESS_RADIUS) {
-                        return self.via_approach(&obs, &booth, cx);
-                    }
-                }
-                if obs.nearest_booth.is_some() || obs.has_booth_stands {
-                    self.waiting = false;
-                    cx.clock().arm(WALK_BOUND_MS);
-                    cx.emit(InteractReq::WalkNearestBank);
-                    self.phase = RunPhase::WalkNearestBank;
-                    return Next::Wait;
-                }
-                Next::Out(Step::Done(false))
-            }
-            RunPhase::Walk { tile, radius, then } => {
-                if arrived(tile, radius) {
-                    return self.to(match then {
-                        AfterWalk::Access | AfterWalk::Opener => RunPhase::Access,
-                        AfterWalk::WaitApproach => RunPhase::WaitApproach,
-                    });
-                }
-                if cx.clock().bound_reached() {
-                    return Next::Out(Step::Done(false));
-                }
-                self.phase = RunPhase::Walk { tile, radius, then };
-                Next::Wait
-            }
-            RunPhase::WalkNearestBank => {
-                let obs = Obs::now();
-                if obs
-                    .nearest_booth
-                    .as_ref()
-                    .is_some_and(|booth| arrived(booth.tile, ACCESS_RADIUS))
-                {
-                    return self.to(RunPhase::Access);
-                }
-                if cx.clock().bound_reached() {
-                    return Next::Out(Step::Done(false));
-                }
-                self.phase = RunPhase::WalkNearestBank;
-                Next::Wait
-            }
-            RunPhase::WaitApproach => {
-                let obs = Obs::now();
-                self.phase = RunPhase::WaitApproach;
-                if obs.snapshot_ready() {
-                    return self.deposit_phase();
-                }
-                let Some(booth) = self.access_booth(&obs) else {
-                    return Next::Out(Step::Done(false));
-                };
-                self.via_approach(&obs, &booth, cx)
-            }
             RunPhase::Open => {
-                let obs = Obs::now();
-                if obs.snapshot_ready() {
-                    return self.deposit_phase();
-                }
-                let Some(booth) = self.access_booth(&obs) else {
-                    return Next::Out(Step::Done(false));
-                };
-                match obs.approach(&booth).map(|row| row.can_operate) {
-                    None => Next::Out(Step::Done(false)),
-                    Some(false) => self.to(RunPhase::WaitApproach),
-                    Some(true) => {
-                        self.open_generation = obs.bank.generation;
-                        self.waiting = true;
-                        cx.clock().arm(BANK_WAIT_MS);
-                        cx.emit(InteractReq::OpenBooth {
-                            x: booth.tile.x,
-                            z: booth.tile.z,
-                            level: booth.tile.level,
-                            id: booth.id,
-                            name: booth.name,
-                            action: booth.action,
-                        });
-                        self.phase = RunPhase::WaitReady;
-                        Next::Wait
-                    }
-                }
-            }
-            RunPhase::WaitReady => {
-                let obs = Obs::now();
-                self.phase = RunPhase::WaitReady;
-                if obs.snapshot_ready() && obs.bank.generation > self.open_generation {
-                    return self.deposit_phase();
-                }
-                self.hold_on(cx)
-            }
-            RunPhase::Opener(mut opener) => {
-                let step = match &mut opener {
-                    Opener::Object(open) => open.run(cx),
-                    Opener::Npc(open) => open.run(cx),
-                };
-                match step {
+                self.phase = RunPhase::Open;
+                match self.open.run(cx) {
                     Step::Done(true) => self.deposit_phase(),
                     Step::Done(false) => Next::Out(Step::Done(false)),
-                    other => {
-                        self.phase = RunPhase::Opener(opener);
-                        Next::Out(other)
-                    }
+                    other => Next::Out(other),
                 }
             }
             RunPhase::Deposit(mut deposit) => match deposit.step(cx) {
@@ -707,6 +361,10 @@ pub(crate) struct BankNearestArgs {
     #[serde(default)]
     destination: Value,
     #[serde(default)]
+    booth_name: Option<String>,
+    #[serde(default)]
+    booth_op: Option<String>,
+    #[serde(default)]
     return_to: Value,
     #[serde(default)]
     deposit_all: bool,
@@ -747,13 +405,15 @@ impl Family for BankNearest {
         } else {
             DepositPlan::None
         };
-        Begin::Run(Self(Run::new(
+        let mut run = Run::new(
             read_dest(&args.destination),
             read_tile(&args.return_to),
             deposit,
             Some(NEAREST_AFTER_DEPOSIT),
             Some(NEAREST_LOG),
-        )))
+        );
+        run.open.booth(args.booth_name, args.booth_op);
+        Begin::Run(Self(run))
     }
 
     fn step(&mut self, cx: &mut Cx<'_>) -> Step<bool> {
@@ -986,26 +646,4 @@ mod tests {
         );
     }
 
-    #[test]
-    fn destination_rows_carry_their_access() {
-        let chest = read_dest(&json!({
-            "name": "Shantay Pass",
-            "tile": { "x": 3308, "z": 3120, "level": 0 },
-            "access": { "name": "Shantay chest", "op": "Open" },
-        }))
-        .unwrap();
-        assert_eq!((chest.tile.x, chest.tile.z), (3308, 3120));
-        assert!(matches!(chest.access, Some(Access::Object(_))));
-        let npc = read_dest(&json!({
-            "tile": { "x": 2852, "z": 2954 },
-            "npcAccess": { "name": "Banker", "op": "Bank", "choose": "access" },
-        }))
-        .unwrap();
-        assert!(matches!(npc.access, Some(Access::Npc(_))));
-        assert!(read_dest(&json!({ "x": 1, "z": 2 }))
-            .unwrap()
-            .access
-            .is_none());
-        assert!(read_dest(&Value::Null).is_none());
-    }
 }
