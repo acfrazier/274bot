@@ -4044,6 +4044,46 @@ fn explicit_login_recreates_terminal_worker_and_reuses_slot_io() {
 }
 
 #[test]
+fn selecting_a_terminal_member_preserves_its_failure_until_explicit_login() {
+    let path = tmp_vault("terminal-worker-select.vault");
+    let mut session = Session::new();
+    session.vault = Some(Vault::create(&path, "bot").unwrap());
+    session
+        .vault
+        .as_mut()
+        .unwrap()
+        .upsert(profile("alice", "pw", 42))
+        .unwrap();
+    session.skip_slot_spawn = true;
+    let play = empty_play();
+    play.statuses.lock().unwrap().push(SlotStatus {
+        username: "alice".into(),
+        worker_terminal: Some(host_play::WorkerTerminal::Panicked),
+        error: Some("slot worker panicked: synthetic".into()),
+        ..SlotStatus::default()
+    });
+    session.play = Some(play);
+    session.wall.load("alice");
+    session.slots.insert(
+        "alice".into(),
+        SlotIo {
+            input: SlotInput::new(),
+            pixels: FrameBuf::new(),
+        },
+    );
+
+    session.select("alice");
+
+    assert!(
+        session.play.as_ref().unwrap().arm("alice").is_none(),
+        "focus alone must not replace a terminal worker"
+    );
+    let row = &session.play.as_ref().unwrap().statuses()[0];
+    assert_eq!(row.worker_terminal, Some(host_play::WorkerTerminal::Panicked));
+    assert_eq!(row.error.as_deref(), Some("slot worker panicked: synthetic"));
+}
+
+#[test]
 fn explicit_login_arms_a_fresh_non_auto_profile() {
     let path = tmp_vault("fresh-explicit-login.vault");
     let mut session = Session::new();

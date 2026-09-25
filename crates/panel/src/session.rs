@@ -2218,7 +2218,7 @@ impl Session {
         self.set_multibox(true);
         for name in &run.names {
             let _ = self.wall.load(name);
-            self.ensure_slot(name, self.arm_for_profile(name));
+            self.ensure_slot(name, self.arm_for_profile(name), false);
         }
         self.sync_wall_focus();
         self.wall.chooser_open = false;
@@ -2309,7 +2309,7 @@ impl Session {
         // s00 is focused last so it is FIFO head.
         for (name, _) in &names {
             let _ = self.wall.load(name);
-            self.ensure_slot(name, self.arm_for_profile(name));
+            self.ensure_slot(name, self.arm_for_profile(name), false);
         }
         self.sync_wall_focus();
         self.wall.chooser_open = false;
@@ -3343,7 +3343,7 @@ impl Session {
     pub fn select(&mut self, name: &str) {
         self.cancel_slot_removal(name);
         let arm = self.arm_for_profile(name);
-        self.ensure_slot(name, arm);
+        self.ensure_slot(name, arm, false);
         self.apply_focus(name);
         self.restore_script_heading(name);
     }
@@ -3590,11 +3590,18 @@ impl Session {
     /// filled so focus can attach. `arm` carries the spawn's login intent:
     /// `None` logs in immediately (CLI/e2e); panel paths pass
     /// [`Session::arm_for_profile`] so auto-login / latch are respected.
+    /// Existing IO with no arm is a preserved terminal lifetime and restarts
+    /// only when `restart_terminal` is true for explicit Log in.
     ///
     /// Flat model: every profile spawns **one** full `Client` slot with its
     /// own input + framebuffer (no lean channel, no render-all guard — a
     /// headless member just has its draw off).
-    fn ensure_slot(&mut self, username: &str, arm: Option<Arc<SlotArm>>) {
+    fn ensure_slot(
+        &mut self,
+        username: &str,
+        arm: Option<Arc<SlotArm>>,
+        restart_terminal: bool,
+    ) {
         if self
             .play
             .as_ref()
@@ -3602,7 +3609,7 @@ impl Session {
         {
             return;
         }
-        if self.play.is_none() && self.slots.contains_key(username) {
+        if self.slots.contains_key(username) && (self.play.is_none() || !restart_terminal) {
             return;
         }
         let Some(profile) = self.vault.as_ref().and_then(|v| v.get(username)).cloned() else {
@@ -3675,7 +3682,7 @@ impl Session {
             if let Some(arm) = arm.as_ref() {
                 arm.arm_explicit_login();
             }
-            self.ensure_slot(name, arm);
+            self.ensure_slot(name, arm, true);
         }
         self.select(name);
     }
@@ -3907,10 +3914,10 @@ impl Session {
                     arm.withdraw_login();
                 }
             } else {
-                self.ensure_slot(name, self.arm_for_profile(name));
+                self.ensure_slot(name, self.arm_for_profile(name), false);
             }
         } else {
-            self.ensure_slot(name, self.arm_for_profile(name));
+            self.ensure_slot(name, self.arm_for_profile(name), false);
         }
         // Load all / chooser rows spawn onto the rail and focus the member
         // (the flat model's "click" — the Game pane samples this slot).
