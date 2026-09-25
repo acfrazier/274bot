@@ -925,33 +925,71 @@ fn many_targets_share_admitted_teleports_and_essence_returns() {
 
 #[test]
 fn bank_targets_match_independent_find_with_on_real_289_pack() {
-    let Some(world) = crate::world::NavWorld::load_default_pack_or_skip() else { return; };
+    let Some(world) = crate::world::NavWorld::load_default_pack_or_skip() else {
+        return;
+    };
     let data = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
     world.bind_named_bank_facts(&data).unwrap();
     let facts = world.named_bank_facts().unwrap();
     let placements = &data.bank_placements().unwrap().rows;
     for bank in facts.banks().iter().filter(|bank| bank.routable) {
-        assert!(world.collision.standable(bank.tile), "blocked stand: {}", bank.name);
-        assert!(placements.iter().any(|p| {
-            if p.name != bank.name || p.level != bank.tile.level { return false; }
-            let dx = (p.x - bank.tile.x).max(bank.tile.x - (p.x + p.width - 1)).max(0);
-            let dz = (p.z - bank.tile.z).max(bank.tile.z - (p.z + p.length - 1)).max(0);
-            dx.max(dz) == 1
-        }), "{} needs a real adjacent selected-content access", bank.name);
+        assert!(
+            world.collision.standable(bank.tile),
+            "blocked stand: {}",
+            bank.name
+        );
+        assert!(
+            placements.iter().any(|p| {
+                if p.name != bank.name || p.level != bank.tile.level {
+                    return false;
+                }
+                let dx = (p.x - bank.tile.x)
+                    .max(bank.tile.x - (p.x + p.width - 1))
+                    .max(0);
+                let dz = (p.z - bank.tile.z)
+                    .max(bank.tile.z - (p.z + p.length - 1))
+                    .max(0);
+                dx.max(dz) == 1
+            }),
+            "{} needs a real adjacent selected-content access",
+            bank.name
+        );
     }
-    let named = |name: &str| facts.banks().iter().find(|bank| bank.name == name).unwrap().tile;
+    let named = |name: &str| {
+        facts
+            .banks()
+            .iter()
+            .find(|bank| bank.name == name)
+            .unwrap()
+            .tile
+    };
     assert_eq!(named("Varrock West"), tile(3185, 3440, 0));
-    assert_ne!(world.collision.walkable_word(3185, 3440, 0) & CollisionFlag::W_S as u32, 0);
-    assert_eq!(named("Ardougne East"), tile(2655, 3283, 0), "customer side, not the bankers' aisle");
+    assert_ne!(
+        world.collision.walkable_word(3185, 3440, 0) & CollisionFlag::W_S as u32,
+        0
+    );
+    assert_eq!(
+        named("Ardougne East"),
+        tile(2655, 3283, 0),
+        "customer side, not the bankers' aisle"
+    );
     let raw: Vec<_> = world.banks().iter().map(|bank| bank.tile).collect();
-    assert!(raw.len() >= 64, "289 pack must contain the 64-bank workload");
+    assert!(
+        raw.len() >= 64,
+        "289 pack must contain the 64-bank workload"
+    );
     let resolved: Vec<_> = facts.banks().iter().filter(|bank| bank.routable).collect();
     let mut targets = raw.clone();
     targets.extend(resolved.iter().map(|bank| bank.tile));
     let empty = WorldState::empty();
     let members = WorldState {
         map_members: true,
-        quests: HashSet::from(["Prince Ali Rescue".into(), "Rune Mysteries".into(), "Lost City".into(), "Shilo Village".into()]),
+        quests: HashSet::from([
+            "Prince Ali Rescue".into(),
+            "Rune Mysteries".into(),
+            "Lost City".into(),
+            "Shilo Village".into(),
+        ]),
         inv: HashMap::from([(995, 10000), (554, 1000), (556, 1000), (563, 1000)]),
         stats: HashMap::from([(6, 99), (10, 99)]),
         ..WorldState::empty()
@@ -962,47 +1000,184 @@ fn bank_targets_match_independent_find_with_on_real_289_pack() {
     ] {
         // Unbounded no-avoid rows compare directly to native find_with, not a
         // differently capped search. Raw booths and actual C1 stands coexist.
-        let costs = compare_real_bank_targets(&world, label, from, &targets,
-            FindOptions::default(), state, &[], None);
+        let costs = compare_real_bank_targets(
+            &world,
+            label,
+            from,
+            &targets,
+            FindOptions::default(),
+            state,
+            &[],
+            None,
+        );
         for name in ["Varrock West", "Edgeville", "Falador East"] {
             let index = resolved.iter().position(|bank| bank.name == name).unwrap();
-            assert!(costs[raw.len() + index].is_ok(), "{label}: {name} must be a reachable C1 stand");
+            assert!(
+                costs[raw.len() + index].is_ok(),
+                "{label}: {name} must be a reachable C1 stand"
+            );
         }
         if label == "dwarven_mine" {
-            let cost = |name| costs[raw.len() + resolved.iter().position(|bank| bank.name == name).unwrap()].unwrap();
-            assert!(cost("Falador East") < cost("Edgeville"), "recorded dungeon witness must prefer walking over air proximity");
-            eprintln!("dungeon witness: Falador East={} Edgeville={}", cost("Falador East"), cost("Edgeville"));
+            let cost = |name| {
+                costs[raw.len() + resolved.iter().position(|bank| bank.name == name).unwrap()]
+                    .unwrap()
+            };
+            assert!(
+                cost("Falador East") < cost("Edgeville"),
+                "recorded dungeon witness must prefer walking over air proximity"
+            );
+            eprintln!(
+                "dungeon witness: Falador East={} Edgeville={}",
+                cost("Falador East"),
+                cost("Edgeville")
+            );
         }
     }
-    let probes = [named("Falador East"), named("Varrock West"), named("Edgeville"), named("Shilo Village"), named("Zanaris")];
-    let inside_avoid = [AvoidRect { min_x: 3015, max_x: 3017, min_z: 9839, max_z: 9841, level: Some(0) }];
-    let outside_avoid = [AvoidRect { min_x: 3223, max_x: 3226, min_z: 3215, max_z: 3221, level: Some(0) }];
+    let probes = [
+        named("Falador East"),
+        named("Varrock West"),
+        named("Edgeville"),
+        named("Shilo Village"),
+        named("Zanaris"),
+    ];
+    let inside_avoid = [AvoidRect {
+        min_x: 3015,
+        max_x: 3017,
+        min_z: 9839,
+        max_z: 9841,
+        level: Some(0),
+    }];
+    let outside_avoid = [AvoidRect {
+        min_x: 3223,
+        max_x: 3226,
+        min_z: 3215,
+        max_z: 3221,
+        level: Some(0),
+    }];
     let essence = crate::essence::essence_session_for_wizard(553);
     for (label, from, state, opts, avoid, budget) in [
-        ("empty", tile(3016,9840,0), &empty, FindOptions::default(), &[][..], BANK_TARGET_BUDGET),
-        ("members-wilderness", tile(3016,9840,0), &members, FindOptions { allow_wilderness:true, ..Default::default() }, &[][..], BANK_TARGET_BUDGET),
-        ("origin-inside-avoid", tile(3016,9840,0), &members, FindOptions::default(), &inside_avoid[..], BANK_TARGET_BUDGET),
-        ("origin-outside-avoid", tile(3222,3218,0), &members, FindOptions::default(), &outside_avoid[..], BANK_TARGET_BUDGET),
-        ("teleports", tile(3222,3218,0), &members, FindOptions { allow_teleports:true, ..Default::default() }, &[][..], BANK_TARGET_BUDGET),
-        ("essence-no-return", tile(2912,4833,0), &members, FindOptions::default(), &[][..], BANK_TARGET_BUDGET),
-        ("essence-return", tile(2912,4833,0), &members, FindOptions { essence, ..Default::default() }, &[][..], BANK_TARGET_BUDGET),
-        ("budget", tile(3222,3218,0), &empty, FindOptions::default(), &[][..], 50),
+        (
+            "empty",
+            tile(3016, 9840, 0),
+            &empty,
+            FindOptions::default(),
+            &[][..],
+            BANK_TARGET_BUDGET,
+        ),
+        (
+            "members-wilderness",
+            tile(3016, 9840, 0),
+            &members,
+            FindOptions {
+                allow_wilderness: true,
+                ..Default::default()
+            },
+            &[][..],
+            BANK_TARGET_BUDGET,
+        ),
+        (
+            "origin-inside-avoid",
+            tile(3016, 9840, 0),
+            &members,
+            FindOptions::default(),
+            &inside_avoid[..],
+            BANK_TARGET_BUDGET,
+        ),
+        (
+            "origin-outside-avoid",
+            tile(3222, 3218, 0),
+            &members,
+            FindOptions::default(),
+            &outside_avoid[..],
+            BANK_TARGET_BUDGET,
+        ),
+        (
+            "teleports",
+            tile(3222, 3218, 0),
+            &members,
+            FindOptions {
+                allow_teleports: true,
+                ..Default::default()
+            },
+            &[][..],
+            BANK_TARGET_BUDGET,
+        ),
+        (
+            "essence-no-return",
+            tile(2912, 4833, 0),
+            &members,
+            FindOptions::default(),
+            &[][..],
+            BANK_TARGET_BUDGET,
+        ),
+        (
+            "essence-return",
+            tile(2912, 4833, 0),
+            &members,
+            FindOptions {
+                essence,
+                ..Default::default()
+            },
+            &[][..],
+            BANK_TARGET_BUDGET,
+        ),
+        (
+            "budget",
+            tile(3222, 3218, 0),
+            &empty,
+            FindOptions::default(),
+            &[][..],
+            50,
+        ),
     ] {
-        let costs = compare_real_bank_targets(&world, label, from, &probes, opts, state, avoid, Some(budget));
-        if label == "budget" { assert!(costs.contains(&Err(TargetError::BudgetExhausted))); }
-        if label == "essence-no-return" { assert!(costs.iter().all(Result::is_err)); }
-        if label == "essence-return" { assert!(costs[1].is_ok(), "captured Aubury return must reach Varrock West"); }
+        let costs = compare_real_bank_targets(
+            &world,
+            label,
+            from,
+            &probes,
+            opts,
+            state,
+            avoid,
+            Some(budget),
+        );
+        if label == "budget" {
+            assert!(costs.contains(&Err(TargetError::BudgetExhausted)));
+        }
+        if label == "essence-no-return" {
+            assert!(costs.iter().all(Result::is_err));
+        }
+        if label == "essence-return" {
+            assert!(
+                costs[1].is_ok(),
+                "captured Aubury return must reach Varrock West"
+            );
+        }
     }
 }
 
 #[allow(clippy::too_many_arguments)]
 fn compare_real_bank_targets(
-    world: &crate::world::NavWorld, label: &str, from: WorldTile, targets: &[WorldTile],
-    opts: FindOptions, state: &WorldState, avoid: &[AvoidRect], budget: Option<usize>,
+    world: &crate::world::NavWorld,
+    label: &str,
+    from: WorldTile,
+    targets: &[WorldTile],
+    opts: FindOptions,
+    state: &WorldState,
+    avoid: &[AvoidRect],
+    budget: Option<usize>,
 ) -> Vec<Result<f64, TargetError>> {
     let started = Instant::now();
     let many = match budget {
-        Some(budget) => find_many_with_avoid_bounded(&world.collision, &world.graph, from, targets, opts, state, avoid, budget),
+        Some(budget) => find_many_with_avoid_bounded(
+            &world.collision,
+            &world.graph,
+            from,
+            targets,
+            opts,
+            state,
+            avoid,
+            budget,
+        ),
         None => find_many_with(&world.collision, &world.graph, from, targets, opts, state),
     };
     let shared = started.elapsed();
@@ -1012,12 +1187,30 @@ fn compare_real_bank_targets(
     let mut returned = false;
     for (index, &target) in targets.iter().enumerate() {
         let independent = match budget {
-            Some(budget) => find_with_avoid_bounded(&world.collision, &world.graph, from, target, opts, state, avoid, budget),
+            Some(budget) => find_with_avoid_bounded(
+                &world.collision,
+                &world.graph,
+                from,
+                target,
+                opts,
+                state,
+                avoid,
+                budget,
+            ),
             None => find_with(&world.collision, &world.graph, from, target, opts, state),
         };
-        let cost = independent.as_ref().map(|route| route.ticks).map_err(|&error| error.into());
-        assert_eq!(many.results()[index].as_ref().map(|cost| cost.ticks).map_err(|&error| error),
-            cost, "{label}: target {index} {target:?}");
+        let cost = independent
+            .as_ref()
+            .map(|route| route.ticks)
+            .map_err(|&error| error.into());
+        assert_eq!(
+            many.results()[index]
+                .as_ref()
+                .map(|cost| cost.ticks)
+                .map_err(|&error| error),
+            cost,
+            "{label}: target {index} {target:?}"
+        );
         if independent.is_ok() {
             let actual = many.route(index).unwrap();
             assert_eq!(actual.dest, target);
@@ -1027,10 +1220,23 @@ fn compare_real_bank_targets(
         }
         costs.push(cost);
     }
-    if label == "teleports" { assert!(teleported, "matrix must actually use an admitted native teleport"); }
-    if label == "essence-return" { assert!(returned, "matrix must actually use the captured return"); }
-    eprintln!("bank real 289 {label}: targets={} successes={} settled={} shared={:?} independent={:?}",
-        targets.len(), costs.iter().filter(|cost| cost.is_ok()).count(), many.settled(), shared, started.elapsed());
+    if label == "teleports" {
+        assert!(
+            teleported,
+            "matrix must actually use an admitted native teleport"
+        );
+    }
+    if label == "essence-return" {
+        assert!(returned, "matrix must actually use the captured return");
+    }
+    eprintln!(
+        "bank real 289 {label}: targets={} successes={} settled={} shared={:?} independent={:?}",
+        targets.len(),
+        costs.iter().filter(|cost| cost.is_ok()).count(),
+        many.settled(),
+        shared,
+        started.elapsed()
+    );
     costs
 }
 
@@ -1075,11 +1281,17 @@ fn validate_real_route(
                         assert!(opts.allow_teleports && graph.teleports.contains(edge));
                     }
                     TransportKind::EssenceExit => {
-                        let session = opts.essence.as_ref().expect("return must use captured entry wizard");
+                        let session = opts
+                            .essence
+                            .as_ref()
+                            .expect("return must use captured entry wizard");
                         assert!(crate::essence::ESSENCE_MINE_PORTALS.contains(&edge.at));
                         assert_eq!(*edge, crate::essence::essence_return_edge(edge.at, session));
                     }
-                    _ => assert!(graph.edges.contains(edge), "transport must belong to the bound graph"),
+                    _ => assert!(
+                        graph.edges.contains(edge),
+                        "transport must belong to the bound graph"
+                    ),
                 }
                 if edge.kind != TransportKind::Teleport {
                     assert!(collision.standable(previous));

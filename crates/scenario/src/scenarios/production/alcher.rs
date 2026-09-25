@@ -1323,47 +1323,107 @@ pub(crate) fn alcher_scenario() -> Scenario {
 /// The measured native winner for this members, teleport-off route is Falador
 /// East. Every action after Start belongs to Alcher; the cell only observes.
 pub(crate) fn alcher_dwarven_mine_scenario() -> Scenario {
-    let origin = WorldTile { x: 3016, z: 9840, level: 0 };
-    let xp = Proof::FreshStatXpGain { id: MAGIC_STAT, min: HIGH_ALCH_MAGIC_XP };
+    let origin = WorldTile {
+        x: 3016,
+        z: 9840,
+        level: 0,
+    };
+    let xp = Proof::FreshStatXpGain {
+        id: MAGIC_STAT,
+        min: HIGH_ALCH_MAGIC_XP,
+    };
     let watch = |name, arm| Step {
-        name, kind: StepKind::Perform { send: Box::new(|_, _| true) },
-        wait: Wait { arm, budget_ticks: 240 },
+        name,
+        kind: StepKind::Perform {
+            send: Box::new(|_, _| true),
+        },
+        wait: Wait {
+            arm,
+            budget_ticks: 240,
+        },
     };
     let mut steps = script_live_seed_steps();
     steps.push(Step {
         name: "seed bank-only alchemy supplies and enter the Dwarven Mine before Start",
-        kind: StepKind::Perform { send: Box::new(move |c, _| {
-            cheat(c, "setstat magic 55");
-            cheat(c, "givebank rune_chainbody 30");
-            cheat(c, "givebank naturerune 200");
-            cheat(c, "givebank staff_of_fire 1");
-            cheat(c, &tele_args(origin.level, origin.x, origin.z));
-            true
-        }) },
+        kind: StepKind::Perform {
+            send: Box::new(move |c, _| {
+                cheat(c, "setstat magic 55");
+                cheat(c, "givebank rune_chainbody 30");
+                cheat(c, "givebank naturerune 200");
+                cheat(c, "givebank staff_of_fire 1");
+                cheat(c, &tele_args(origin.level, origin.x, origin.z));
+                true
+            }),
+        },
         wait: Wait {
-            arm: Proof::ArrivedNear { x: origin.x, z: origin.z, level: origin.level, radius: 0 },
+            arm: Proof::ArrivedNear {
+                x: origin.x,
+                z: origin.z,
+                level: origin.level,
+                radius: 0,
+            },
             budget_ticks: 200,
         },
     });
-    steps.push(watch("confirm Magic 55 before Start", Proof::Stat { id: MAGIC_STAT, min: 55 }));
+    steps.push(watch(
+        "confirm Magic 55 before Start",
+        Proof::Stat {
+            id: MAGIC_STAT,
+            min: 55,
+        },
+    ));
     steps.push(start_catalog_step());
-    steps.push(watch("watch Alcher leave the mine and reach the walk-cost winner",
-        Proof::ArrivedNear { x: 3013, z: 3355, level: 0, radius: 4 }));
-    steps.push(watch("watch Alcher open the stocked Falador East bank",
-        Proof::BankItem { name: "Rune chainbody", count: 30 }));
-    steps.push(watch("watch Alcher withdraw its bank-only fodder",
-        Proof::Item { name: "Rune chainbody", count: 1 }));
-    steps.push(watch("watch the bank stock decrease through real withdrawal",
-        Proof::BankItemAtMost { name: "Rune chainbody", count: 29 }));
-    steps.push(watch("watch fresh High Alchemy after the dungeon bank trip", xp));
+    steps.push(watch(
+        "watch Alcher leave the mine and reach the walk-cost winner",
+        Proof::ArrivedNear {
+            x: 3013,
+            z: 3355,
+            level: 0,
+            radius: 4,
+        },
+    ));
+    steps.push(watch(
+        "watch Alcher open the stocked Falador East bank",
+        Proof::BankItem {
+            name: "Rune chainbody",
+            count: 30,
+        },
+    ));
+    steps.push(watch(
+        "watch Alcher withdraw its bank-only fodder",
+        Proof::Item {
+            name: "Rune chainbody",
+            count: 1,
+        },
+    ));
+    steps.push(watch(
+        "watch the bank stock decrease through real withdrawal",
+        Proof::BankItemAtMost {
+            name: "Rune chainbody",
+            count: 29,
+        },
+    ));
+    steps.push(watch(
+        "watch fresh High Alchemy after the dungeon bank trip",
+        xp,
+    ));
     Scenario {
         name: "alcher_dwarven_mine",
-        seed: Seed { profiles: vec![("test", "test")], mainland: true },
-        steps, proof: xp, companions: vec![],
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: true,
+        },
+        steps,
+        proof: xp,
+        companions: vec![],
         settings: ScenarioSettings {
-            full_rate: true, require_mainland_base: true, deadline: SCRIPT_GOLD_DEADLINE,
-            start_script: Some("Alcher"), script_settings_inject: Some(ALCHER_INJECT),
-            terminal_shot: Some("alcher_dwarven_mine"), nav: gold_script_nav(),
+            full_rate: true,
+            require_mainland_base: true,
+            deadline: SCRIPT_GOLD_DEADLINE,
+            start_script: Some("Alcher"),
+            script_settings_inject: Some(ALCHER_INJECT),
+            terminal_shot: Some("alcher_dwarven_mine"),
+            nav: gold_script_nav(),
             ..Default::default()
         },
     }

@@ -3205,10 +3205,24 @@ fn real_bone_burier_without_bones_queues_host_bank_route() {
     let source = std::fs::read_to_string(&path).expect("read captured BoneBurier.ts");
     let shape = script::detect_shape(&source);
     let js = script::transpile_ts(&source).expect("transpile captured BoneBurier.ts");
-    let iso = LoadIsolate::spawn_with_content(js, shape, vec![], None,
+    let iso = LoadIsolate::spawn_with_content(
+        js,
+        shape,
+        vec![],
+        None,
         std::sync::Arc::new(api::named_banks::NamedBankFacts::from_banks(vec![
-            api::named_banks::NamedBank::new("Chosen bank", api::snapshot::WorldTile { x: 3300, z: 3300, level: 0 }),
-        ])), std::sync::Arc::new(api::run_policy::RunPolicyOverrideCell::new())).unwrap();
+            api::named_banks::NamedBank::new(
+                "Chosen bank",
+                api::snapshot::WorldTile {
+                    x: 3300,
+                    z: 3300,
+                    level: 0,
+                },
+            ),
+        ])),
+        std::sync::Arc::new(api::run_policy::RunPolicyOverrideCell::new()),
+    )
+    .unwrap();
     let mut snap = base_snapshot();
     snap.ingame = true;
     snap.here = Some(script::isolate_fb::TileInput {
@@ -3253,17 +3267,29 @@ fn real_bone_burier_without_bones_queues_host_bank_route() {
     };
     // The selected bank, not the unrelated packed booth at 3210,3210, owns
     // this trip. No walk or withdrawal was admitted while selection waited.
-    iso.post_snapshot(script::isolate_fb::encode_snapshot_with_native(&snap,
+    iso.post_snapshot(script::isolate_fb::encode_snapshot_with_native(
+        &snap,
         script::isolate_fb::NativeFactsInput {
             bank_selection: script::isolate_fb::BankSelectionInput {
-                request_id: *request_id, generation: 1, bank_index: 0, kind: 2,
+                request_id: *request_id,
+                generation: 1,
+                bank_index: 0,
+                kind: 2,
             },
             ..Default::default()
-        }));
+        },
+    ));
     iso.on_game_tick(9);
     iso.probe("true").unwrap();
-    assert!(matches!(iso.drain_interacts().as_slice(),
-        [script::shim::InteractReq::WalkNear { x: 3300, z: 3300, radius: 4, .. }]));
+    assert!(matches!(
+        iso.drain_interacts().as_slice(),
+        [script::shim::InteractReq::WalkNear {
+            x: 3300,
+            z: 3300,
+            radius: 4,
+            ..
+        }]
+    ));
     iso.join();
 }
 
@@ -3498,9 +3524,18 @@ export default class T extends LoopingBot {
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(1);
     let _ = iso.probe("1 + 1");
-    assert!(matches!(iso.drain_interacts().as_slice(),
-        [script::shim::InteractReq::WalkNear { x: 150, z: 150, radius: 2, .. }]),
-        "the preset uses the frozen radius-two approach");
+    assert!(
+        matches!(
+            iso.drain_interacts().as_slice(),
+            [script::shim::InteractReq::WalkNear {
+                x: 150,
+                z: 150,
+                radius: 2,
+                ..
+            }]
+        ),
+        "the preset uses the frozen radius-two approach"
+    );
 
     snap.tick = 2;
     snap.here = Some(script::isolate_fb::TileInput {
@@ -3528,7 +3563,10 @@ export default class T extends LoopingBot {
     snap.bank_generation = 1;
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(3);
-    assert!(iso.probe("globalThis.__ok").unwrap().is_null(), "open without stock is not ready");
+    assert!(
+        iso.probe("globalThis.__ok").unwrap().is_null(),
+        "open without stock is not ready"
+    );
     snap.bank_loaded = true;
     post_snapshot_input(&iso, &snap);
     iso.on_game_tick(4);
@@ -3548,10 +3586,24 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    let iso = LoadIsolate::spawn_with_content(src.to_string(), LoadShape::CompatClass, vec![], None,
+    let iso = LoadIsolate::spawn_with_content(
+        src.to_string(),
+        LoadShape::CompatClass,
+        vec![],
+        None,
         std::sync::Arc::new(api::named_banks::NamedBankFacts::from_banks(vec![
-            api::named_banks::NamedBank::new("Selected bank", api::snapshot::WorldTile { x: 299, z: 400, level: 0 }),
-        ])), std::sync::Arc::new(api::run_policy::RunPolicyOverrideCell::new())).unwrap();
+            api::named_banks::NamedBank::new(
+                "Selected bank",
+                api::snapshot::WorldTile {
+                    x: 299,
+                    z: 400,
+                    level: 0,
+                },
+            ),
+        ])),
+        std::sync::Arc::new(api::run_policy::RunPolicyOverrideCell::new()),
+    )
+    .unwrap();
     let stands = [script::isolate_fb::BankStandInput {
         name: "Falador east bank",
         x: 300,
@@ -3575,17 +3627,29 @@ export default class T extends LoopingBot {
     let [script::shim::InteractReq::SelectBank { request_id, .. }] = requests.as_slice() else {
         panic!("bankNearest must await selection, got {requests:?}");
     };
-    iso.post_snapshot(script::isolate_fb::encode_snapshot_with_native(&snap,
+    iso.post_snapshot(script::isolate_fb::encode_snapshot_with_native(
+        &snap,
         script::isolate_fb::NativeFactsInput {
             bank_selection: script::isolate_fb::BankSelectionInput {
-                request_id: *request_id, generation: 1, bank_index: 0, kind: 2,
+                request_id: *request_id,
+                generation: 1,
+                bank_index: 0,
+                kind: 2,
             },
             ..Default::default()
-        }));
+        },
+    ));
     iso.on_game_tick(2);
     iso.probe("true").unwrap();
-    assert!(matches!(iso.drain_interacts().as_slice(),
-        [script::shim::InteractReq::WalkNear { x: 299, z: 400, radius: 4, .. }]));
+    assert!(matches!(
+        iso.drain_interacts().as_slice(),
+        [script::shim::InteractReq::WalkNear {
+            x: 299,
+            z: 400,
+            radius: 4,
+            ..
+        }]
+    ));
 
     snap.tick = 2;
     snap.here = Some(script::isolate_fb::TileInput {
@@ -3603,18 +3667,44 @@ export default class T extends LoopingBot {
     });
     let actions = ["Use-quickly".to_string()];
     let locs = [script::isolate_fb::SceneEntityInput {
-        index: 0, id: 2213, name: Some("Bank booth"), x: 300, z: 400, level: 0,
-        distance: 1, health: -1, max_health: -1, in_combat: false, animating: false,
-        actions: &actions, reachable: true, reachable_adj: true, combat_level: 0,
-        target_kind: 0, target_index: -1, size: 1, nx: 300, nz: 400,
+        index: 0,
+        id: 2213,
+        name: Some("Bank booth"),
+        x: 300,
+        z: 400,
+        level: 0,
+        distance: 1,
+        health: -1,
+        max_health: -1,
+        in_combat: false,
+        animating: false,
+        actions: &actions,
+        reachable: true,
+        reachable_adj: true,
+        combat_level: 0,
+        target_kind: 0,
+        target_index: -1,
+        size: 1,
+        nx: 300,
+        nz: 400,
     }];
     snap.locs = &locs;
     post_operable_bank_snapshot(&iso, &snap, 2213, 300, 400);
     iso.on_game_tick(3);
     let _ = iso.probe("true");
-    assert!(matches!(iso.drain_interacts().as_slice(),
-        [script::shim::InteractReq::OpenBooth { x: 300, z: 400, level: 0, id: 2213, .. }]),
-        "the run must open the live selected booth identity");
+    assert!(
+        matches!(
+            iso.drain_interacts().as_slice(),
+            [script::shim::InteractReq::OpenBooth {
+                x: 300,
+                z: 400,
+                level: 0,
+                id: 2213,
+                ..
+            }]
+        ),
+        "the run must open the live selected booth identity"
+    );
 
     snap.tick = 3;
     snap.bank_open = true;
@@ -3657,13 +3747,18 @@ export default class T extends LoopingBot {
         panic!("bankNearest must await selection, got {requests:?}");
     };
     assert!(iso.probe("globalThis.__bank_result").unwrap().is_null());
-    iso.post_snapshot(script::isolate_fb::encode_snapshot_with_native(&snap,
+    iso.post_snapshot(script::isolate_fb::encode_snapshot_with_native(
+        &snap,
         script::isolate_fb::NativeFactsInput {
             bank_selection: script::isolate_fb::BankSelectionInput {
-                request_id: *request_id, generation: 1, bank_index: -1, kind: 4,
+                request_id: *request_id,
+                generation: 1,
+                bank_index: -1,
+                kind: 4,
             },
             ..Default::default()
-        }));
+        },
+    ));
     iso.on_game_tick(2);
     iso.probe("true").unwrap();
     assert!(iso.drain_interacts().is_empty());
@@ -4892,23 +4987,43 @@ fn nearest_bank_isolate() -> LoadIsolate {
 import { nearestBank } from '../../api/bank/BankLocations.js';
 globalThis.pick = origin => nearestBank(origin)?.name ?? null;
 export default class T extends LoopingBot { loop() {} }
-"#.to_string(),
+"#
+        .to_string(),
         LoadShape::CompatClass,
         vec![],
         None,
         std::sync::Arc::new(NamedBankFacts::from_banks(vec![
-            NamedBank::new("West", WorldTile { x: 100, z: 100, level: 0 }),
-            NamedBank::new("East", WorldTile { x: 120, z: 100, level: 0 }),
+            NamedBank::new(
+                "West",
+                WorldTile {
+                    x: 100,
+                    z: 100,
+                    level: 0,
+                },
+            ),
+            NamedBank::new(
+                "East",
+                WorldTile {
+                    x: 120,
+                    z: 100,
+                    level: 0,
+                },
+            ),
         ])),
         std::sync::Arc::new(api::run_policy::RunPolicyOverrideCell::new()),
-    ).unwrap()
+    )
+    .unwrap()
 }
 
 #[test]
 fn isolate_nearest_bank_uses_the_supplied_origin_not_the_player_or_scene_booth() {
     let iso = nearest_bank_isolate();
     let mut snap = base_snapshot();
-    snap.here = Some(script::isolate_fb::TileInput { x: 100, z: 100, level: 0 });
+    snap.here = Some(script::isolate_fb::TileInput {
+        x: 100,
+        z: 100,
+        level: 0,
+    });
     snap.nearest_booth = Some(nearest_booth_input(101, 100, 0, "Bank booth"));
     post_snapshot_input(&iso, &snap);
     assert_eq!(iso.probe("pick({x:119,z:100,level:0})").unwrap(), "East");
@@ -4931,7 +5046,11 @@ fn isolate_nearest_bank_requires_an_origin_even_when_player_and_booth_are_known(
     let mut snap = base_snapshot();
     snap.nearest_booth = Some(nearest_booth_input(100, 100, 0, "Bank booth"));
     post_snapshot_input(&iso, &snap);
-    assert_eq!(iso.probe("(() => { try { pick(); return false; } catch (_) { return true; } })()").unwrap(), true);
+    assert_eq!(
+        iso.probe("(() => { try { pick(); return false; } catch (_) { return true; } })()")
+            .unwrap(),
+        true
+    );
     iso.join();
 }
 

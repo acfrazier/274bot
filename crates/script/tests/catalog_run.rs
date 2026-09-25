@@ -177,8 +177,22 @@ fn bank_picker_import_links_and_awaits_host_selection() {
     use script::{LoadIsolate, LoadShape};
     use std::sync::Arc;
     let banks = Arc::new(NamedBankFacts::from_banks(vec![
-        NamedBank::new("Air near", WorldTile { x: 3224, z: 3218, level: 0 }),
-        NamedBank::new("Walk near", WorldTile { x: 3200, z: 3210, level: 0 }),
+        NamedBank::new(
+            "Air near",
+            WorldTile {
+                x: 3224,
+                z: 3218,
+                level: 0,
+            },
+        ),
+        NamedBank::new(
+            "Walk near",
+            WorldTile {
+                x: 3200,
+                z: 3210,
+                level: 0,
+            },
+        ),
     ]));
     let iso = LoadIsolate::spawn_with_content(
         r#"
@@ -189,29 +203,55 @@ export default class Probe extends LoopingBot {
         globalThis.picked = await nearestBankReachable({ x: 3222, z: 3218, level: 0 }, Navigator);
     }
 }
-"#.into(), LoadShape::CompatClass, vec![], None, banks,
+"#
+        .into(),
+        LoadShape::CompatClass,
+        vec![],
+        None,
+        banks,
         Arc::new(api::run_policy::RunPolicyOverrideCell::new()),
-    ).expect("Alcher/LeatherCrafter bank imports must link");
+    )
+    .expect("Alcher/LeatherCrafter bank imports must link");
     let mut snapshot = common::ingame_snapshot();
     common::post_snapshot_input(&iso, &snapshot);
     iso.on_game_tick(1);
     let _ = iso.probe("true");
-    let request_id = iso.drain_interacts().into_iter().find_map(|req| match req {
-        script::shim::InteractReq::SelectBank { request_id, .. } => Some(request_id),
-        _ => None,
-    }).expect("reachable picker starts its native selection");
+    let request_id = iso
+        .drain_interacts()
+        .into_iter()
+        .find_map(|req| match req {
+            script::shim::InteractReq::SelectBank { request_id, .. } => Some(request_id),
+            _ => None,
+        })
+        .expect("reachable picker starts its native selection");
     for (tick, id) in [(2, request_id - 1), (3, request_id)] {
         snapshot.tick = tick;
-        iso.post_snapshot(script::isolate_fb::encode_snapshot_with_native(&snapshot, NativeFactsInput {
-            bank_selection: BankSelectionInput { request_id: id, generation: 1, bank_index: 1, kind: 2 },
-            ..Default::default()
-        }));
+        iso.post_snapshot(script::isolate_fb::encode_snapshot_with_native(
+            &snapshot,
+            NativeFactsInput {
+                bank_selection: BankSelectionInput {
+                    request_id: id,
+                    generation: 1,
+                    bank_index: 1,
+                    kind: 2,
+                },
+                ..Default::default()
+            },
+        ));
         iso.on_game_tick(tick);
         let actual = iso.probe("typeof picked === 'undefined' ? null : [picked.name, picked.tile.x, picked.tile.z, picked.tile.level]").unwrap();
         if tick == 2 {
-            assert_eq!(actual, serde_json::Value::Null, "a stale completion cannot settle the current selection");
+            assert_eq!(
+                actual,
+                serde_json::Value::Null,
+                "a stale completion cannot settle the current selection"
+            );
         } else {
-            assert_eq!(actual, serde_json::json!(["Walk near", 3200, 3210, 0]), "the awaited result is the host's reachable bank, not a JS air-nearest substitute");
+            assert_eq!(
+                actual,
+                serde_json::json!(["Walk near", 3200, 3210, 0]),
+                "the awaited result is the host's reachable bank, not a JS air-nearest substitute"
+            );
         }
     }
     iso.join();
@@ -219,29 +259,53 @@ export default class Probe extends LoopingBot {
 
 /// Link with the selected content just like Start. `prepare_card` alone
 /// validates with no content and would turn drop-db consumers into false gaps.
-fn catalog_graphs(root: &std::path::Path, label: &str) -> std::collections::BTreeMap<String, Result<(), String>> {
+fn catalog_graphs(
+    root: &std::path::Path,
+    label: &str,
+) -> std::collections::BTreeMap<String, Result<(), String>> {
     let dir = scratch(label);
     let mut lib = JsLibrary::with_cache(dir.join("js-scripts.json"), dir.join("js-cache"));
-    lib.register_rs2b0t(root, &dir.join("rs2b0t-path")).expect("catalog register");
-    let names: Vec<_> = lib.cards().iter()
-        .filter(|card| card.source == ScriptSource::Catalog
-            && !script::is_catalog_dim(&card.name)
-            && !card.unloadable.as_deref().is_some_and(|reason| reason.starts_with("dim:")))
-        .map(|card| card.name.clone()).collect();
+    lib.register_rs2b0t(root, &dir.join("rs2b0t-path"))
+        .expect("catalog register");
+    let names: Vec<_> = lib
+        .cards()
+        .iter()
+        .filter(|card| {
+            card.source == ScriptSource::Catalog
+                && !script::is_catalog_dim(&card.name)
+                && !card
+                    .unloadable
+                    .as_deref()
+                    .is_some_and(|reason| reason.starts_with("dim:"))
+        })
+        .map(|card| card.name.clone())
+        .collect();
     let content = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
     let mut results = std::collections::BTreeMap::new();
     for name in names {
         let result = (|| {
             lib.ensure_js(ScriptSource::Catalog, &name)?;
             let card = lib.get(ScriptSource::Catalog, &name).unwrap();
-            if let Some(reason) = &card.unloadable { return Err(reason.clone()); }
+            if let Some(reason) = &card.unloadable {
+                return Err(reason.clone());
+            }
             let siblings = script::resolve_sibling_modules(
-                &card.path, &card.origin, lib.cache(), script::CacheMeta {
-                    kind: script::ScriptKind::Compat, source: ScriptSource::Catalog,
-                    shape: Some(format!("{:?}", card.shape)), api_family: None,
+                &card.path,
+                &card.origin,
+                lib.cache(),
+                script::CacheMeta {
+                    kind: script::ScriptKind::Compat,
+                    source: ScriptSource::Catalog,
+                    shape: Some(format!("{:?}", card.shape)),
+                    api_family: None,
                 },
             )?;
-            let iso = script::LoadIsolate::spawn_with_game_data(card.js.clone(), card.shape, siblings, content.clone())?;
+            let iso = script::LoadIsolate::spawn_with_game_data(
+                card.js.clone(),
+                card.shape,
+                siblings,
+                content.clone(),
+            )?;
             // Spawn returns before V8 setup. Probe is a command-queue barrier,
             // not a tick: no gameplay runs just to establish LOAD.
             let probe = iso.probe("true");
@@ -257,8 +321,21 @@ fn catalog_graphs(root: &std::path::Path, label: &str) -> std::collections::BTre
     }
     std::fs::remove_dir_all(dir).unwrap();
     assert!(!results.is_empty(), "frozen catalog has no bright cards");
-    let failures: Vec<_> = results.iter().filter_map(|(name, result)| result.as_ref().err().map(|error| format!("{name}: {error}"))).collect();
-    eprintln!("catalog {label} at {}: {} linked; failures:\n{}", root.display(), results.len() - failures.len(), failures.join("\n"));
+    let failures: Vec<_> = results
+        .iter()
+        .filter_map(|(name, result)| {
+            result
+                .as_ref()
+                .err()
+                .map(|error| format!("{name}: {error}"))
+        })
+        .collect();
+    eprintln!(
+        "catalog {label} at {}: {} linked; failures:\n{}",
+        root.display(),
+        results.len() - failures.len(),
+        failures.join("\n")
+    );
     results
 }
 
@@ -272,18 +349,29 @@ fn frozen_catalog_module_graphs_load() {
     };
     let current = catalog_graphs(&root, "current-linked-graphs");
     for name in ["Alcher", "LeatherCrafter"] {
-        assert_eq!(current.get(name), Some(&Ok(())), "{name} must load at the selected pin");
+        assert_eq!(
+            current.get(name),
+            Some(&Ok(())),
+            "{name} must load at the selected pin"
+        );
     }
     let Some(baseline) = std::env::var_os("RS2B0T_BASELINE") else {
         eprintln!("SKIP old/new load differential: RS2B0T_BASELINE is not configured");
         return;
     };
     let previous = catalog_graphs(std::path::Path::new(&baseline), "previous-linked-graphs");
-    let regressions: Vec<_> = previous.iter().filter(|(_, result)| result.is_ok())
+    let regressions: Vec<_> = previous
+        .iter()
+        .filter(|(_, result)| result.is_ok())
         .filter_map(|(name, _)| match current.get(name) {
             Some(Ok(())) => None,
             Some(Err(error)) => Some(format!("{name}: {error}")),
             None => Some(format!("{name}: missing or newly dim")),
-        }).collect();
-    assert!(regressions.is_empty(), "old-pin loadable cards regressed:\n{}", regressions.join("\n"));
+        })
+        .collect();
+    assert!(
+        regressions.is_empty(),
+        "old-pin loadable cards regressed:\n{}",
+        regressions.join("\n")
+    );
 }

@@ -981,7 +981,11 @@ impl SelectedGameData {
             ));
         }
         if let Some(facts) = &data.bank_placements {
-            if facts.rows.iter().any(|row| row.width < 1 || row.length < 1 || !(0..4).contains(&row.level)) {
+            if facts
+                .rows
+                .iter()
+                .any(|row| row.width < 1 || row.length < 1 || !(0..4).contains(&row.level))
+            {
                 return Err("bank_placements invalid access footprint".to_string());
             }
         }

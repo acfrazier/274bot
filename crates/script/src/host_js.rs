@@ -489,7 +489,9 @@ fn render_native_v2(out: &mut String) {
     out.push_str("export interface BankLocation {\n");
     out.push_str("  name: string;\n  tile: WorldTile;\n  approach?: WorldTile;\n");
     out.push_str("  requires?: { skill?: { name: string; level: number }; quest?: string; setting?: string };\n");
-    out.push_str("  access?: { name: string; op: string; openFirst?: { name: string; op: string } };\n");
+    out.push_str(
+        "  access?: { name: string; op: string; openFirst?: { name: string; op: string } };\n",
+    );
     out.push_str("  npcAccess?: { name: string; op: string; choose?: string };\n}\n\n");
     out.push_str("/** Public JS API v2 handle. Explicit `export const apiVersion = 2` only. */\n");
     out.push_str("export interface NativeApi {\n");

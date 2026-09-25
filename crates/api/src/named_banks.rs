@@ -41,7 +41,8 @@ impl BankDefinition {
         quest_complete: impl Fn(&str) -> bool,
         preferences: BankPreferences,
     ) -> bool {
-        self.skill.is_none_or(|(id, minimum)| skill(id).is_some_and(|level| level >= minimum))
+        self.skill
+            .is_none_or(|(id, minimum)| skill(id).is_some_and(|level| level >= minimum))
             && self.quest.is_none_or(quest_complete)
             && self.setting.is_none_or(|setting| match setting {
                 "useMageBank" => preferences.use_mage_bank,
@@ -88,11 +89,18 @@ pub struct NamedBank {
 
 impl NamedBank {
     pub const fn new(name: &'static str, tile: WorldTile) -> Self {
-        Self { name, tile, definition: None, routable: true }
+        Self {
+            name,
+            tile,
+            definition: None,
+            routable: true,
+        }
     }
 
     pub fn air_tile(&self) -> WorldTile {
-        self.definition.and_then(|definition| definition.approach).unwrap_or(self.tile)
+        self.definition
+            .and_then(|definition| definition.approach)
+            .unwrap_or(self.tile)
     }
 
     pub fn eligible(
@@ -101,7 +109,8 @@ impl NamedBank {
         quest_complete: impl Fn(&str) -> bool,
         preferences: BankPreferences,
     ) -> bool {
-        self.definition.is_none_or(|definition| definition.eligible(skill, quest_complete, preferences))
+        self.definition
+            .is_none_or(|definition| definition.eligible(skill, quest_complete, preferences))
     }
 }
 

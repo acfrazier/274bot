@@ -209,14 +209,17 @@ impl BankOpen {
         cx: &mut Cx<'_>,
     ) -> Begin<Self> {
         let obs = observed::with(Observation::from_scene);
-        let stand = Tile { x: stand.x, z: stand.z, level: stand.level };
+        let stand = Tile {
+            x: stand.x,
+            z: stand.z,
+            level: stand.level,
+        };
         let mut open = Self::new(Mode::Booth, Some(name), Some(action));
         match open.begin_sequence(Some(stand), false, &obs, cx) {
             Decision::Running => Begin::Run(open),
             Decision::Done(ok) => Begin::Done(ok),
         }
     }
-
 
     fn wait_ready(&mut self, cx: &mut Cx<'_>) {
         self.phase = Phase::WaitReady;
@@ -487,7 +490,9 @@ impl Family for BankOpen {
     }
 
     fn step(&mut self, cx: &mut Cx<'_>) -> Step<bool> {
-        if let Some(world) = &mut self.world { return world.run(cx); }
+        if let Some(world) = &mut self.world {
+            return world.run(cx);
+        }
         let obs = observed::with(Observation::from_scene);
         match self.step_phase(&obs, cx) {
             Decision::Running => Step::Wait,
@@ -945,5 +950,4 @@ mod tests {
         );
         assert!(drain().is_empty(), "no second walk after the bound");
     }
-
 }

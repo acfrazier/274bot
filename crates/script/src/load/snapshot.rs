@@ -314,7 +314,8 @@ pub(super) fn materialize_snapshot(
                 "bank": crate::bank_select::selected(selection.bank_index),
             })
         };
-        let value = rustyscript::deno_core::serde_v8::to_v8(&mut scope, value).map_err(|e| e.to_string())?;
+        let value = rustyscript::deno_core::serde_v8::to_v8(&mut scope, value)
+            .map_err(|e| e.to_string())?;
         set(&mut scope, obj, "bank_selection", value)?;
     } else if !had {
         set(&mut scope, obj, "bank_selection", none)?;

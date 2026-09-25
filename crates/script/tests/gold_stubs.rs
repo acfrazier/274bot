@@ -645,4 +645,3 @@ export default class T extends LoopingBot {
     assert!(iso.drain_interacts().iter().any(|r| matches!(r,script::shim::InteractReq::Held{name,action} if name=="Lobster" && action=="Eat")));
     iso.join();
 }
-

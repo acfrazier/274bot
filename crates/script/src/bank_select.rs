@@ -22,8 +22,14 @@ pub(crate) fn install(facts: Arc<NamedBankFacts>) {
 
 pub(crate) fn settings(bag: &serde_json::Map<String, Value>) {
     PREFERENCES.set(BankPreferences {
-        use_mage_bank: bag.get("useMageBank").and_then(Value::as_bool).unwrap_or(false),
-        use_zanaris_bank: bag.get("useZanarisBank").and_then(Value::as_bool).unwrap_or(false),
+        use_mage_bank: bag
+            .get("useMageBank")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        use_zanaris_bank: bag
+            .get("useZanarisBank")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
     });
 }
 
@@ -44,8 +50,13 @@ fn eligible(bank: &NamedBank, preferences: BankPreferences) -> bool {
 }
 
 pub(crate) fn unlocked(name: &str, tile: WorldTile) -> bool {
-    BANKS.with(|banks| banks.borrow().banks().iter()
-        .any(|bank| bank.name == name && bank.tile == tile && eligible(bank, PREFERENCES.get())))
+    BANKS.with(|banks| {
+        banks
+            .borrow()
+            .banks()
+            .iter()
+            .any(|bank| bank.name == name && bank.tile == tile && eligible(bank, PREFERENCES.get()))
+    })
 }
 
 pub(crate) fn bank_value(bank: &NamedBank) -> Value {
@@ -56,30 +67,45 @@ pub(crate) fn bank_value(bank: &NamedBank) -> Value {
         }
         if let Some(npc) = definition.npc {
             value["npcAccess"] = json!({"name": npc.name, "op": npc.op});
-            if let Some(choose) = definition.choose { value["npcAccess"]["choose"] = json!(choose); }
+            if let Some(choose) = definition.choose {
+                value["npcAccess"]["choose"] = json!(choose);
+            }
         } else if let Some(object) = definition.object {
             value["access"] = json!({"name": object.name, "op": object.op});
             if let Some(open) = definition.open_first {
                 value["access"]["openFirst"] = json!({"name": open.name, "op": open.op});
             }
         }
-        if definition.skill.is_some() || definition.quest.is_some() || definition.setting.is_some() {
+        if definition.skill.is_some() || definition.quest.is_some() || definition.setting.is_some()
+        {
             value["requires"] = json!({});
-            if let Some((_, level)) = definition.skill { value["requires"]["skill"] = json!({"name": "fishing", "level": level}); }
-            if let Some(quest) = definition.quest { value["requires"]["quest"] = json!(quest); }
-            if let Some(setting) = definition.setting { value["requires"]["setting"] = json!(setting); }
+            if let Some((_, level)) = definition.skill {
+                value["requires"]["skill"] = json!({"name": "fishing", "level": level});
+            }
+            if let Some(quest) = definition.quest {
+                value["requires"]["quest"] = json!(quest);
+            }
+            if let Some(setting) = definition.setting {
+                value["requires"]["setting"] = json!(setting);
+            }
         }
     }
     value
 }
 
 pub(crate) fn selected_bank(index: i32) -> Option<NamedBank> {
-    BANKS.with(|banks| usize::try_from(index).ok()
-        .and_then(|index| banks.borrow().banks().get(index).copied()))
+    BANKS.with(|banks| {
+        usize::try_from(index)
+            .ok()
+            .and_then(|index| banks.borrow().banks().get(index).copied())
+    })
 }
 
 pub(crate) fn selected(index: i32) -> Value {
-    selected_bank(index).as_ref().map(bank_value).unwrap_or(Value::Null)
+    selected_bank(index)
+        .as_ref()
+        .map(bank_value)
+        .unwrap_or(Value::Null)
 }
 
 pub(crate) fn nearest_bank(from: WorldTile) -> Option<NamedBank> {
@@ -87,13 +113,22 @@ pub(crate) fn nearest_bank(from: WorldTile) -> Option<NamedBank> {
 }
 
 fn nearest_with_preferences(from: WorldTile, preferences: BankPreferences) -> Option<NamedBank> {
-    BANKS.with(|banks| banks.borrow().banks().iter()
-        .filter(|bank| eligible(bank, preferences))
-        .min_by_key(|bank| air_distance_squared(from, bank.air_tile())).copied())
+    BANKS.with(|banks| {
+        banks
+            .borrow()
+            .banks()
+            .iter()
+            .filter(|bank| eligible(bank, preferences))
+            .min_by_key(|bank| air_distance_squared(from, bank.air_tile()))
+            .copied()
+    })
 }
 
 pub(crate) fn nearest(from: WorldTile) -> Value {
-    nearest_bank(from).as_ref().map(bank_value).unwrap_or(Value::Null)
+    nearest_bank(from)
+        .as_ref()
+        .map(bank_value)
+        .unwrap_or(Value::Null)
 }
 
 pub(crate) fn ranked(from: WorldTile) -> Vec<NamedBank> {
@@ -136,10 +171,19 @@ pub(crate) struct SelectBank {
 
 impl SelectBank {
     pub(crate) fn start(args: SelectArgs, cx: &mut Cx<'_>) -> Option<Self> {
-        let from = args.from.or_else(|| observed::with(|scene| {
-            scene.since_login().here().map(|t| FromTile { x: t.x, z: t.z, level: t.level })
-        }))?;
-        if !(0..4).contains(&from.level) || !(0..=16383).contains(&from.x) || !(0..=16383).contains(&from.z) {
+        let from = args.from.or_else(|| {
+            observed::with(|scene| {
+                scene.since_login().here().map(|t| FromTile {
+                    x: t.x,
+                    z: t.z,
+                    level: t.level,
+                })
+            })
+        })?;
+        if !(0..4).contains(&from.level)
+            || !(0..=16383).contains(&from.x)
+            || !(0..=16383).contains(&from.z)
+        {
             return None;
         }
         let request_id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
@@ -149,23 +193,36 @@ impl SelectBank {
             use_zanaris_bank: args.use_zanaris_bank.unwrap_or(defaults.use_zanaris_bank),
         };
         let fallback = nearest_with_preferences(
-            WorldTile { x: from.x, z: from.z, level: from.level }, preferences,
+            WorldTile {
+                x: from.x,
+                z: from.z,
+                level: from.level,
+            },
+            preferences,
         );
         // Start before host admission: a held/drained request must still end.
         // The machine clock preserves the normal pause/hold freeze contract.
         cx.clock().arm(5000);
         cx.emit(InteractReq::SelectBank {
-            x: from.x, z: from.z, level: from.level,
-            allow_wilderness: args.allow_wilderness, request_id,
+            x: from.x,
+            z: from.z,
+            level: from.level,
+            allow_wilderness: args.allow_wilderness,
+            request_id,
             use_mage_bank: preferences.use_mage_bank,
             use_zanaris_bank: preferences.use_zanaris_bank,
         });
-        Some(Self { request_id, fallback })
+        Some(Self {
+            request_id,
+            fallback,
+        })
     }
 
     pub(crate) fn result_bank(&self, cx: &mut Cx<'_>) -> Option<Option<NamedBank>> {
         // Reject even a matching late worker result once this window ends.
-        if cx.clock().bound_reached() { return Some(self.fallback); }
+        if cx.clock().bound_reached() {
+            return Some(self.fallback);
+        }
         observed::with(|scene| {
             let result = scene.since_login().bank_selection()?;
             (result.request_id == self.request_id && result.kind != 0)
@@ -174,7 +231,8 @@ impl SelectBank {
     }
 
     pub(crate) fn result(&self, cx: &mut Cx<'_>) -> Option<Value> {
-        self.result_bank(cx).map(|bank| bank.as_ref().map(bank_value).unwrap_or(Value::Null))
+        self.result_bank(cx)
+            .map(|bank| bank.as_ref().map(bank_value).unwrap_or(Value::Null))
     }
 }
 
@@ -205,34 +263,64 @@ mod tests {
     fn dropped_bank_selection_settles_at_its_clock_bound_with_captured_eligible_air_fallback() {
         observed::on_reset();
         settings(&serde_json::Map::new());
-        let mage = api::named_banks::BANK_CATALOG.iter().find(|bank| bank.name == "Mage Arena").unwrap();
+        let mage = api::named_banks::BANK_CATALOG
+            .iter()
+            .find(|bank| bank.name == "Mage Arena")
+            .unwrap();
         let origin = mage.approach.unwrap();
-        let public = NamedBank::new("Public", WorldTile { x: origin.x + 1, ..origin });
+        let public = NamedBank::new(
+            "Public",
+            WorldTile {
+                x: origin.x + 1,
+                ..origin
+            },
+        );
         install(Arc::new(NamedBankFacts::from_banks(vec![
-            NamedBank { name: mage.name, tile: mage.tile, definition: Some(mage), routable: true },
+            NamedBank {
+                name: mage.name,
+                tile: mage.tile,
+                definition: Some(mage),
+                routable: true,
+            },
             public,
         ])));
-        observed::post(0, |post| { post.session(true); });
+        observed::post(0, |post| {
+            post.session(true);
+        });
         for opt_in in [false, true] {
             let mut ops = Vec::new();
             let mut clock = InstantTaskClock::new();
             clock.set_freeze(false, true);
             let started = clock.now();
-            let mut row = SelectBank::start(SelectArgs {
-                from: Some(FromTile { x: origin.x, z: origin.z, level: origin.level }),
-                use_mage_bank: Some(opt_in),
-                ..Default::default()
-            }, &mut Cx::test(&mut ops, &mut clock, None)).unwrap();
+            let mut row = SelectBank::start(
+                SelectArgs {
+                    from: Some(FromTile {
+                        x: origin.x,
+                        z: origin.z,
+                        level: origin.level,
+                    }),
+                    use_mage_bank: Some(opt_in),
+                    ..Default::default()
+                },
+                &mut Cx::test(&mut ops, &mut clock, None),
+            )
+            .unwrap();
             // Host admission never sees the emitted request.
             ops.clear();
             clock.frozen_at = Some(started + Duration::from_millis(4999));
-            assert!(matches!(row.step(&mut Cx::test(&mut ops, &mut clock, None)), Step::Wait));
+            assert!(matches!(
+                row.step(&mut Cx::test(&mut ops, &mut clock, None)),
+                Step::Wait
+            ));
             clock.frozen_at = Some(started + Duration::from_millis(5000));
             let Step::Done(value) = row.step(&mut Cx::test(&mut ops, &mut clock, None)) else {
                 panic!("a dropped selection must settle at its five-second machine-clock bound");
             };
             assert_eq!(value["name"], if opt_in { "Mage Arena" } else { "Public" });
-            assert!(ops.is_empty(), "a timeout must not move or restart a dropped request");
+            assert!(
+                ops.is_empty(),
+                "a timeout must not move or restart a dropped request"
+            );
         }
         install(Arc::new(NamedBankFacts::empty()));
         settings(&serde_json::Map::new());

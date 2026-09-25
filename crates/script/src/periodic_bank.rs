@@ -18,8 +18,8 @@
 //! Scene facts come from the isolate scene; script callbacks go through the
 //! machine's callback path.
 
-use crate::banking_open::{read_dest, read_tile, BankingOpen, Dest};
 use crate::bank_deposit::{truthy, Deposit, Matcher};
+use crate::banking_open::{read_dest, read_tile, BankingOpen, Dest};
 use crate::load::reach_query::arrived;
 use crate::machine::{Begin, Call, Cx, Family, Reply, Step};
 use crate::observed;
@@ -173,7 +173,6 @@ pub fn on_hold(held: bool) {
     });
 }
 
-
 /// What the run deposits.
 pub(crate) enum DepositPlan {
     /// No deposit (the shim's falsy `deposit`).
@@ -186,13 +185,10 @@ pub(crate) enum DepositPlan {
     Hook { hook: usize, common: bool },
 }
 
-
 enum RunPhase {
     Open,
     Deposit(Deposit),
-    AfterDeposit {
-        asked: bool,
-    },
+    AfterDeposit { asked: bool },
     Settle(u64),
     Return,
     ReturnWalk(Tile),
@@ -241,12 +237,10 @@ impl Run {
         }
     }
 
-
     fn to(&mut self, phase: RunPhase) -> Next {
         self.phase = phase;
         Next::Decide
     }
-
 
     fn decide(&mut self, cx: &mut Cx<'_>) -> Next {
         let phase = std::mem::replace(&mut self.phase, RunPhase::Return);
@@ -645,5 +639,4 @@ mod tests {
             "the paused span does not count as banking minutes"
         );
     }
-
 }

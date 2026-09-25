@@ -1,8 +1,6 @@
 /// Host-owned policy plus optional selected-revision generated facts, posted
 /// once onto `__rs2b0t_host.content` before catalog modules evaluate.
-pub(crate) fn content_json(
-    game_data: Option<&api::game_data::SelectedGameData>,
-) -> String {
+pub(crate) fn content_json(game_data: Option<&api::game_data::SelectedGameData>) -> String {
     use crate::content::{COOK_STANDS, FIRE_PLOTS, LOG_LEVELS, RUNE_ROUTES};
     use api::cake_stall::{BAKER_STALL, CAKE_ITEM_NAMES};
     use api::content::ROCK_TYPE_NAMES;

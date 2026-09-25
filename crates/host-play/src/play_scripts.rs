@@ -64,14 +64,16 @@ impl ScriptStartHandle {
         let slot = script_slot_or_insert(&self.scripts, name);
         let mut slot = slot.lock().unwrap();
         let result = slot.start_load_with_settings_and_game_data(
-                source,
-                shape,
-                settings_bag.as_ref(),
-                siblings,
-                self.game_data.clone(),
-                Arc::clone(&self.named_banks),
-            );
-        if result.is_ok() { invalidate_bank_pick(&self.navs, name); }
+            source,
+            shape,
+            settings_bag.as_ref(),
+            siblings,
+            self.game_data.clone(),
+            Arc::clone(&self.named_banks),
+        );
+        if result.is_ok() {
+            invalidate_bank_pick(&self.navs, name);
+        }
         if let Err(e) = &result {
             eprintln!("[script {name}] start failed: {e}");
         }
@@ -127,7 +129,9 @@ impl ScriptStartHandle {
         let slot = script_slot_or_insert(&self.scripts, name);
         let mut slot = slot.lock().unwrap();
         let result = slot.start_compiled(make(), self.game_data.clone());
-        if result.is_ok() { invalidate_bank_pick(&self.navs, name); }
+        if result.is_ok() {
+            invalidate_bank_pick(&self.navs, name);
+        }
         if let Err(e) = &result {
             eprintln!("[script {name}] start failed: {e}");
         }
@@ -207,13 +211,13 @@ impl Play {
         let slot = script_slot_or_insert(&self.scripts, name);
         let mut slot = slot.lock().unwrap();
         let result = slot.start_load_with_settings_and_game_data_typed(
-                source,
-                shape,
-                settings_bag.as_ref(),
-                siblings,
-                self.game_data.clone(),
-                Arc::clone(&self.named_banks),
-            );
+            source,
+            shape,
+            settings_bag.as_ref(),
+            siblings,
+            self.game_data.clone(),
+            Arc::clone(&self.named_banks),
+        );
         if let Err(e) = &result {
             eprintln!("[script {name}] start failed: {e}");
         }
@@ -259,7 +263,9 @@ impl Play {
     pub fn script_stop(&self, name: &str) {
         let slot = script_slot(&self.scripts, name);
         let mut guard = slot.as_ref().map(|slot| slot.lock().unwrap());
-        if let Some(slot) = guard.as_mut() { slot.stop(); }
+        if let Some(slot) = guard.as_mut() {
+            slot.stop();
+        }
         // Keep the script admission lock until its bank epoch is invalidated.
         // A previously dequeued worker can no longer publish or arm a route.
         invalidate_bank_pick(&self.navs, name);

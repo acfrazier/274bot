@@ -2,7 +2,6 @@
 
 use script::{LoadIsolate, LoadShape};
 
-
 fn spawn(src: &str) -> LoadIsolate {
     LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap()
 }

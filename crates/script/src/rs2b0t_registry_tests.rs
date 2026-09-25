@@ -867,4 +867,3 @@ fn frozen_catalog_settings_audit() {
     assert_eq!(empty, 0, "all 24 audited option rows must recover");
     assert_eq!(recovered, 24);
 }
-

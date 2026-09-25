@@ -54,13 +54,18 @@ impl NavWorld {
         &self,
         data: &api::game_data::SelectedGameData,
     ) -> Result<(), &'static str> {
-        if self.named_banks.get().is_some() { return Err("bank facts already bound"); }
+        if self.named_banks.get().is_some() {
+            return Err("bank facts already bound");
+        }
         let facts = Arc::new(crate::named_banks::resolve(
             api::named_banks::BANK_CATALOG,
-            data.bank_placements().map_or(&[], |facts| facts.rows.as_slice()),
+            data.bank_placements()
+                .map_or(&[], |facts| facts.rows.as_slice()),
             |tile| self.collision.standable(tile),
         ));
-        self.named_banks.set(facts).map_err(|_| "bank facts already bound")
+        self.named_banks
+            .set(facts)
+            .map_err(|_| "bank facts already bound")
     }
 
     /// Decode already-read pack bytes into the router's world. Whole-world

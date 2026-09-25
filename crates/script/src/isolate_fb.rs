@@ -790,7 +790,12 @@ pub struct BankSelectionInput {
 
 impl Default for BankSelectionInput {
     fn default() -> Self {
-        Self { request_id: 0, generation: 0, bank_index: -1, kind: 0 }
+        Self {
+            request_id: 0,
+            generation: 0,
+            bank_index: -1,
+            kind: 0,
+        }
     }
 }
 
@@ -1904,8 +1909,16 @@ impl Verifiable for SnapshotReader<'_> {
                 VT_SNAP_WALK_MISSING_CARRY,
                 false,
             )?
-            .visit_field::<u64>("bank_selection_request_id", VT_SNAP_BANK_SELECTION_REQUEST_ID, false)?
-            .visit_field::<u64>("bank_selection_generation", VT_SNAP_BANK_SELECTION_GENERATION, false)?
+            .visit_field::<u64>(
+                "bank_selection_request_id",
+                VT_SNAP_BANK_SELECTION_REQUEST_ID,
+                false,
+            )?
+            .visit_field::<u64>(
+                "bank_selection_generation",
+                VT_SNAP_BANK_SELECTION_GENERATION,
+                false,
+            )?
             .visit_field::<i32>("bank_selection_index", VT_SNAP_BANK_SELECTION_INDEX, false)?
             .visit_field::<u8>("bank_selection_kind", VT_SNAP_BANK_SELECTION_KIND, false)?
             .finish();
@@ -1922,10 +1935,21 @@ impl SnapshotReader<'_> {
     pub fn bank_selection(&self) -> Option<BankSelectionInput> {
         unsafe {
             Some(BankSelectionInput {
-                request_id: self.tab.get::<u64>(VT_SNAP_BANK_SELECTION_REQUEST_ID, None)?,
-                generation: self.tab.get::<u64>(VT_SNAP_BANK_SELECTION_GENERATION, Some(0)).unwrap_or(0),
-                bank_index: self.tab.get::<i32>(VT_SNAP_BANK_SELECTION_INDEX, Some(-1)).unwrap_or(-1),
-                kind: self.tab.get::<u8>(VT_SNAP_BANK_SELECTION_KIND, Some(0)).unwrap_or(0),
+                request_id: self
+                    .tab
+                    .get::<u64>(VT_SNAP_BANK_SELECTION_REQUEST_ID, None)?,
+                generation: self
+                    .tab
+                    .get::<u64>(VT_SNAP_BANK_SELECTION_GENERATION, Some(0))
+                    .unwrap_or(0),
+                bank_index: self
+                    .tab
+                    .get::<i32>(VT_SNAP_BANK_SELECTION_INDEX, Some(-1))
+                    .unwrap_or(-1),
+                kind: self
+                    .tab
+                    .get::<u8>(VT_SNAP_BANK_SELECTION_KIND, Some(0))
+                    .unwrap_or(0),
             })
         }
     }
@@ -4598,9 +4622,18 @@ fn encode_snapshot_masked_into(
         b.push_slot_always(VT_SNAP_WIDGETS, widgets_off.expect("mask checked"));
     }
     if mask.bank_selection {
-        b.push_slot_always(VT_SNAP_BANK_SELECTION_REQUEST_ID, native.bank_selection.request_id);
-        b.push_slot_always(VT_SNAP_BANK_SELECTION_GENERATION, native.bank_selection.generation);
-        b.push_slot_always(VT_SNAP_BANK_SELECTION_INDEX, native.bank_selection.bank_index);
+        b.push_slot_always(
+            VT_SNAP_BANK_SELECTION_REQUEST_ID,
+            native.bank_selection.request_id,
+        );
+        b.push_slot_always(
+            VT_SNAP_BANK_SELECTION_GENERATION,
+            native.bank_selection.generation,
+        );
+        b.push_slot_always(
+            VT_SNAP_BANK_SELECTION_INDEX,
+            native.bank_selection.bank_index,
+        );
         b.push_slot_always(VT_SNAP_BANK_SELECTION_KIND, native.bank_selection.kind);
     }
     if mask.self_chat {
@@ -6093,7 +6126,9 @@ pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>
             }),
             "walk-nearest-bank" => out.push(crate::shim::InteractReq::WalkNearestBank),
             "select-bank" => out.push(crate::shim::InteractReq::SelectBank {
-                x: row.x(), z: row.z(), level: row.level(),
+                x: row.x(),
+                z: row.z(),
+                level: row.level(),
                 allow_wilderness: row.allow_wilderness(),
                 use_mage_bank: row.use_mage_bank(),
                 use_zanaris_bank: row.use_zanaris_bank(),
@@ -6611,7 +6646,15 @@ fn interact_off<'b>(
             }
         }
         InteractReq::WalkNearestBank => {}
-        InteractReq::SelectBank { x, z, level, allow_wilderness, use_mage_bank, use_zanaris_bank, request_id } => {
+        InteractReq::SelectBank {
+            x,
+            z,
+            level,
+            allow_wilderness,
+            use_mage_bank,
+            use_zanaris_bank,
+            request_id,
+        } => {
             b.push_slot_always(VT_IN_X, *x);
             b.push_slot_always(VT_IN_Z, *z);
             b.push_slot_always(VT_IN_LEVEL, *level);

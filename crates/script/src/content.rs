@@ -315,7 +315,6 @@ pub fn pickpocket_spot(target: &str) -> Option<&'static PickpocketSpot> {
         .or_else(|| PICKPOCKET_SPOTS.first())
 }
 
-
 /// Frozen Fight/Flee attacker names. Exact display-name match only.
 pub const HOSTILE_ATTACKER_NAMES: &[&str] = &["Guard", "Knight of Ardougne", "Paladin", "Hero"];
 
@@ -427,7 +426,6 @@ mod tests {
             .expect("Guard");
         assert_eq!((guard.x, guard.z, guard.level), (2661, 3306, 0));
     }
-
 
     #[test]
     fn hostile_attacker_requires_every_frozen_fact() {

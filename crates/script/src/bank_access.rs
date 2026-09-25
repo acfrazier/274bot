@@ -864,10 +864,9 @@ impl NpcAccess {
                 }
                 let chat = Chat::now();
                 let choose = self.choose.to_lowercase();
-                let option = chat
-                    .options
-                    .iter()
-                    .position(|option| !choose.is_empty() && option.to_lowercase().contains(&choose));
+                let option = chat.options.iter().position(|option| {
+                    !choose.is_empty() && option.to_lowercase().contains(&choose)
+                });
                 let press = match option {
                     Some(index) => Press::send(
                         InteractReq::Answer {

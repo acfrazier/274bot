@@ -2338,7 +2338,6 @@ fn open_world(w: usize, h: usize) -> NavWorld {
     )
 }
 
-
 #[test]
 fn route_publication_rejects_stale_results_and_preserves_route_on_failure() {
     let old = Route {

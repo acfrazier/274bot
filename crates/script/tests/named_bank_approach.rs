@@ -2,9 +2,9 @@
 //! then posts the same named OpenBooth identity when `can_operate`.
 
 use script::isolate_fb::{
-    encode_snapshot_with_native, BankApproachInput, ChatOptionInput, IsolateBuf,
-    NativeFactsInput, NearestBoothInput, ReachViewInput, SceneEntityInput, SnapshotFingerprint,
-    SnapshotInput, TileInput,
+    encode_snapshot_with_native, BankApproachInput, ChatOptionInput, IsolateBuf, NativeFactsInput,
+    NearestBoothInput, ReachViewInput, SceneEntityInput, SnapshotFingerprint, SnapshotInput,
+    TileInput,
 };
 use script::shim::InteractReq;
 use script::{LoadIsolate, LoadShape};
@@ -227,7 +227,6 @@ export default class T extends LoopingBot {
 }
 "#;
 
-
 fn east_booth<'a>(actions: &'a [String]) -> SceneEntityInput<'a> {
     loc_row(2213, Some("Bank booth"), 3011, 3354, 2, actions)
 }
@@ -395,7 +394,6 @@ fn named_open_nearest_replaced_loc_after_approach_sends_no_click() {
     assert_eq!(iso.probe("__ok").unwrap(), false);
     iso.join();
 }
-
 
 #[test]
 fn unnamed_banking_open_continues_through_omitted_locs_to_fresh_bank() {
@@ -609,7 +607,6 @@ fn supplied_stand_walks_then_delivers_fresh_bank_result() {
     assert_eq!(iso.probe("__ok").unwrap(), true);
     iso.join();
 }
-
 
 /// A chest access row (Shantay: `Shantay chest` / `Open`) interacts with the
 /// named loc, then answers the frozen `openedReady` once the list posts.
