@@ -35,6 +35,18 @@ Generated types live in `crates/script/host-js/index.d.ts` (`NativeApi`,
 - `stop(reason?)`
 - `paint.begin().title().row().gap().end()`
 - `request(op)` — enqueue one supported op; **returns void**
+- `bankNearestReachable({from?, allow_wilderness?})` — awaited select-only
+  `HelperResult<{name, tile} | null>`. The origin defaults to the observed
+  player; native wilderness admission defaults to false. A same-plane
+  air-nearest stand within four tiles bypasses routing. Otherwise one
+  off-thread native search ranks resolved candidates by walk cost, with
+  stable air-order ties. No route, budget exhaustion without a winner, or
+  an incomplete five-second window falls back to air-nearest; a bank result
+  does not by itself prove reachability. Selection does not replace a walk,
+  move, or open a bank.
+- `snapshot.bank_selection` — latest select-only completion, with request
+  identity, generation, bank and `near` / `reachable` / `fallback` / `none`
+  disposition. Stop, reset and replacement requests reject stale results.
 
 Do not import rs2b0t modules or touch `__rs2b0t_host`. Unsupported
 `request` ops throw `not impl: request.<op>`.

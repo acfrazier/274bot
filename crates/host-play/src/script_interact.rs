@@ -297,6 +297,12 @@ pub(crate) fn dispatch_script_interact_cached(
                     abort_script_walk(navs, name);
                 }
             }
+            InteractReq::SelectBank { x, z, level, allow_wilderness, request_id } => {
+                super::bank::queue_bank_pick(
+                    navs, name, world, state.clone(), WorldTile { x, z, level },
+                    allow_wilderness, request_id,
+                );
+            }
             InteractReq::WalkNearestBank => {
                 if let (Some((hx, hz, hl)), Some(nav_world)) = (here, world.as_deref()) {
                     if let Some(tile) = nearest_bank_booth(nav_world, (hx, hz, hl)) {

@@ -609,6 +609,8 @@ pub(super) fn wire_runtime(
     super::fire_v8::install(runtime).map_err(|e| format!("fire v8: {e}"))?;
     super::combat_style_v8::install(runtime).map_err(|e| format!("combat style v8: {e}"))?;
     super::machine_v8::install(runtime).map_err(|e| format!("machine v8: {e}"))?;
+    crate::bank_select::install(std::sync::Arc::clone(&named_banks));
+    super::bank_locations_v8::install(runtime)?;
     super::bank_tasks_v8::install(runtime).map_err(|e| format!("bank tasks v8: {e}"))?;
     super::hunt_v8::install(runtime).map_err(|e| format!("hunt v8: {e}"))?;
     super::dialog_v8::install(runtime).map_err(|e| format!("dialog v8: {e}"))?;
@@ -909,6 +911,13 @@ async function prayerMachine(payload) {
   }
   return out.kind === 'refused' ? helperErr(out.reason) : helperErr('aborted');
 }
+api.bankNearestReachable = async function (input = {}) {
+  const out = await runMachine('bank_select', {
+    from: input.from ?? null,
+    allow_wilderness: !!input.allow_wilderness,
+  });
+  return out.kind === 'done' ? helperOk(out.value) : helperErr(out.reason || 'aborted');
+};
 api.prayerPoints = function () { return prayerCall({ op: 'points' }); };
 api.prayerMax = function () { return prayerCall({ op: 'max' }); };
 api.prayerFull = function () { return prayerCall({ op: 'full' }); };

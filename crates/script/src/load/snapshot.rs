@@ -298,6 +298,27 @@ pub(super) fn materialize_snapshot(
         set(&mut scope, obj, "route_inspect_refused_id_3", zero)?;
         set(&mut scope, obj, "route_inspect_unobserved", zero)?;
     }
+    if let Some(selection) = snap.bank_selection() {
+        let value = if selection.kind == 0 {
+            serde_json::Value::Null
+        } else {
+            serde_json::json!({
+                "request_id": selection.request_id,
+                "generation": selection.generation,
+                "kind": match selection.kind {
+                    1 => "near",
+                    2 => "reachable",
+                    3 => "fallback",
+                    _ => "none",
+                },
+                "bank": crate::bank_select::selected(selection.bank_index),
+            })
+        };
+        let value = rustyscript::deno_core::serde_v8::to_v8(&mut scope, value).map_err(|e| e.to_string())?;
+        set(&mut scope, obj, "bank_selection", value)?;
+    } else if !had {
+        set(&mut scope, obj, "bank_selection", none)?;
+    }
     if snap.has_count_dialog_open() {
         let count_dialog_open = v8::Boolean::new(&mut scope, snap.count_dialog_open());
         set(

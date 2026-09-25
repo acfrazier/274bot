@@ -80,6 +80,7 @@ pub(crate) struct NavBot {
     /// is, so a list can never outlive the failure it belongs to.
     pub(crate) walk_missing_carry: Vec<MissingCarry>,
     pub(crate) inspect: route_inspect::InspectNav,
+    pub(crate) bank_pick: super::bank::BankPickState,
     /// The game requests this slot's script sent, as dispatched here. Host
     /// data the catalog hunt watch reads; not an isolate wire.
     pub(crate) acts: crate::catalog_core::ScriptActLedger,
@@ -783,5 +784,6 @@ pub(crate) fn reset_script_nav(navs: &Arc<Mutex<HashMap<String, NavBot>>>, name:
         nav.walk_request_id = 0;
         nav.clear_walk_outcome();
         route_inspect::reset_inspect(nav);
+        nav.bank_pick.reset();
     }
 }

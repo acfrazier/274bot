@@ -224,6 +224,10 @@ const VT_SNAP_MAIN_MODAL_TEXTS: VOffsetT = 248;
 const VT_SNAP_PUZZLE_BOARD: VOffsetT = 250;
 const VT_SNAP_PUZZLE_BOARD_GENERATION: VOffsetT = 252;
 const VT_SNAP_WALK_MISSING_CARRY: VOffsetT = 254;
+const VT_SNAP_BANK_SELECTION_REQUEST_ID: VOffsetT = 256;
+const VT_SNAP_BANK_SELECTION_GENERATION: VOffsetT = 258;
+const VT_SNAP_BANK_SELECTION_INDEX: VOffsetT = 260;
+const VT_SNAP_BANK_SELECTION_KIND: VOffsetT = 262;
 
 // Carry: { id, count, name }
 const VT_CARRY_ID: VOffsetT = 4;
@@ -769,6 +773,23 @@ pub struct NativeFactsInput<'a> {
     /// Posted collision family. `None` omits the table (old callers / first
     /// post without Collision). `Some(UNAVAILABLE)` posts a clear.
     pub collision: Option<CollisionViewInput<'a>>,
+    pub bank_selection: BankSelectionInput,
+}
+
+/// A terminal select-only result. Its ordinal is resolved against Start's
+/// immutable bank facts, never a JS-supplied bank object.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BankSelectionInput {
+    pub request_id: u64,
+    pub generation: u64,
+    pub bank_index: i32,
+    pub kind: u8,
+}
+
+impl Default for BankSelectionInput {
+    fn default() -> Self {
+        Self { request_id: 0, generation: 0, bank_index: -1, kind: 0 }
+    }
 }
 
 /// Host-published inspect family on the snapshot. All-zero is omitted / old buffer.
@@ -1881,6 +1902,10 @@ impl Verifiable for SnapshotReader<'_> {
                 VT_SNAP_WALK_MISSING_CARRY,
                 false,
             )?
+            .visit_field::<u64>("bank_selection_request_id", VT_SNAP_BANK_SELECTION_REQUEST_ID, false)?
+            .visit_field::<u64>("bank_selection_generation", VT_SNAP_BANK_SELECTION_GENERATION, false)?
+            .visit_field::<i32>("bank_selection_index", VT_SNAP_BANK_SELECTION_INDEX, false)?
+            .visit_field::<u8>("bank_selection_kind", VT_SNAP_BANK_SELECTION_KIND, false)?
             .finish();
         Ok(())
     }
@@ -1890,6 +1915,17 @@ impl SnapshotReader<'_> {
     /// Interpret `buf` as a root-`Snapshot` FlatBuffer after verification.
     pub fn from_bytes(buf: &[u8]) -> Result<SnapshotReader<'_>, String> {
         verified_root::<SnapshotReader>(buf)
+    }
+
+    pub fn bank_selection(&self) -> Option<BankSelectionInput> {
+        unsafe {
+            Some(BankSelectionInput {
+                request_id: self.tab.get::<u64>(VT_SNAP_BANK_SELECTION_REQUEST_ID, None)?,
+                generation: self.tab.get::<u64>(VT_SNAP_BANK_SELECTION_GENERATION, Some(0)).unwrap_or(0),
+                bank_index: self.tab.get::<i32>(VT_SNAP_BANK_SELECTION_INDEX, Some(-1)).unwrap_or(-1),
+                kind: self.tab.get::<u8>(VT_SNAP_BANK_SELECTION_KIND, Some(0)).unwrap_or(0),
+            })
+        }
     }
 
     pub fn tick(&self) -> u64 {
@@ -3147,6 +3183,7 @@ pub struct SnapshotFingerprint {
     pub walk_missing_carry: Vec<CarryFp>,
     pub route_inspect: RouteInspectFp,
     pub collision: CollisionViewFp,
+    pub bank_selection: BankSelectionInput,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
@@ -3427,6 +3464,7 @@ impl SnapshotFingerprint {
                 .collect(),
             route_inspect: route_inspect_fp(&native.route_inspect),
             collision: collision_fp(None, native.collision),
+            bank_selection: native.bank_selection,
         }
     }
 }
@@ -3574,6 +3612,7 @@ pub struct DeltaMask {
     /// buffer. Never set for the generation alone — the generation is not
     /// a field of its own.
     pub puzzle_board: bool,
+    pub bank_selection: bool,
 }
 
 impl DeltaMask {
@@ -3662,6 +3701,7 @@ impl DeltaMask {
             collision: true,
             main_modal_texts: true,
             puzzle_board: true,
+            bank_selection: true,
         }
     }
 
@@ -3772,6 +3812,7 @@ impl DeltaMask {
             // The generation rides inside the board row, so one comparison
             // covers both slots.
             puzzle_board: next.puzzle_board != last.puzzle_board,
+            bank_selection: next.bank_selection != last.bank_selection,
         }
     }
 }
@@ -4553,6 +4594,12 @@ fn encode_snapshot_masked_into(
     }
     if mask.widgets {
         b.push_slot_always(VT_SNAP_WIDGETS, widgets_off.expect("mask checked"));
+    }
+    if mask.bank_selection {
+        b.push_slot_always(VT_SNAP_BANK_SELECTION_REQUEST_ID, native.bank_selection.request_id);
+        b.push_slot_always(VT_SNAP_BANK_SELECTION_GENERATION, native.bank_selection.generation);
+        b.push_slot_always(VT_SNAP_BANK_SELECTION_INDEX, native.bank_selection.bank_index);
+        b.push_slot_always(VT_SNAP_BANK_SELECTION_KIND, native.bank_selection.kind);
     }
     if mask.self_chat {
         b.push_slot_always(VT_SNAP_SELF_CHAT, self_chat_off.expect("mask checked"));
@@ -6035,6 +6082,11 @@ pub fn decode_interact_batch(buf: &[u8]) -> Result<Vec<crate::shim::InteractReq>
                 request_id: row.request_id(),
             }),
             "walk-nearest-bank" => out.push(crate::shim::InteractReq::WalkNearestBank),
+            "select-bank" => out.push(crate::shim::InteractReq::SelectBank {
+                x: row.x(), z: row.z(), level: row.level(),
+                allow_wilderness: row.allow_wilderness(),
+                request_id: row.request_id(),
+            }),
             "abort-walk" => out.push(crate::shim::InteractReq::AbortWalk {
                 request_id: row.request_id(),
             }),
@@ -6345,6 +6397,7 @@ fn interact_off<'b>(
         InteractReq::Walk { .. } => "walk",
         InteractReq::WalkNear { .. } => "walk-near",
         InteractReq::WalkNearestBank => "walk-nearest-bank",
+        InteractReq::SelectBank { .. } => "select-bank",
         InteractReq::AbortWalk { .. } => "abort-walk",
         InteractReq::InspectRoute { .. } => "inspect-route",
         InteractReq::InspectAck { .. } => "inspect-ack",
@@ -6546,6 +6599,13 @@ fn interact_off<'b>(
             }
         }
         InteractReq::WalkNearestBank => {}
+        InteractReq::SelectBank { x, z, level, allow_wilderness, request_id } => {
+            b.push_slot_always(VT_IN_X, *x);
+            b.push_slot_always(VT_IN_Z, *z);
+            b.push_slot_always(VT_IN_LEVEL, *level);
+            b.push_slot_always(VT_IN_ALLOW_WILDERNESS, *allow_wilderness);
+            b.push_slot_always(VT_IN_REQUEST_ID, *request_id);
+        }
         InteractReq::AbortWalk { request_id } => {
             b.push_slot_always(VT_IN_REQUEST_ID, *request_id);
         }

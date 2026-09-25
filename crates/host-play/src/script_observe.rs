@@ -374,6 +374,7 @@ pub(crate) fn script_observe_cached(
                     walk_allow_teleports,
                     walk_missing_carry,
                     inspect_posted,
+                    bank_selection,
                 ) = {
                     let mut all = navs.lock().unwrap();
                     match all.get_mut(name) {
@@ -391,6 +392,7 @@ pub(crate) fn script_observe_cached(
                                 b.walk_outcome_allow_teleports,
                                 b.walk_missing_carry.clone(),
                                 b.inspect.posted(),
+                                b.bank_pick.poll(std::time::Instant::now()),
                             );
                             // The live refusal guard is released only once
                             // the isolate accepts the snapshot carrying this
@@ -410,6 +412,7 @@ pub(crate) fn script_observe_cached(
                             false,
                             Vec::new(),
                             route_inspect::PostedInspect::default(),
+                            script::isolate_fb::BankSelectionInput::default(),
                         ),
                     }
                 };
@@ -472,7 +475,8 @@ pub(crate) fn script_observe_cached(
                     Some(packed.view.as_ref()),
                     packed.flood.as_deref(),
                     packed.stamp,
-                    |input, native| {
+                    |input, mut native| {
+                        native.bank_selection = bank_selection;
                         slot.encode_snapshot_delta_with_native(input, native, force_banks)
                     },
                 );

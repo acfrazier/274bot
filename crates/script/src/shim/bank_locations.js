@@ -1,7 +1,7 @@
 import Tile from '../../geometry/Tile.js';
-import { host, snap } from '../../shim/_kernel.js';
+import { host, runMachine } from '../../shim/_kernel.js';
 
-/** Host-posted named stands; nearestBank stays the live path. */
+/** Immutable host-resolved catalog stands. */
 export const BANK_LOCATIONS = ((host().content && host().content.named_banks) || []).map((b) => ({
     name: b.name,
     tile: new Tile(b.x, b.z, b.level ?? 0),
@@ -34,18 +34,14 @@ export function bankUnlocked(bank) {
     });
 }
 
-/** Host-posted nearest Use-quickly booth on the player's plane. No booth → null. */
-export function nearestBank(_hint) {
-    const row = snap().nearest_booth;
-    if (!row) {
-        return null;
-    }
-    const name = row.name || 'Bank booth';
-    const op = row.op || 'Use-quickly';
-    return {
-        tile: new Tile(row.x, row.z, row.level ?? 0),
-        name,
-        op,
-        access: { name, op },
-    };
+/** Air ranking is synchronous; only the reachable selector asks the worker. */
+export function nearestBank(here) {
+    const bank = globalThis.__rs2b0t_nearest_bank(here);
+    return bank ? { ...bank, tile: Tile.from(bank.tile) } : null;
+}
+
+export async function nearestBankReachable(here, _navigator) {
+    const out = await runMachine('bank_select', { from: here, allow_wilderness: true });
+    const bank = out.kind === 'done' ? out.value : null;
+    return bank ? { ...bank, tile: Tile.from(bank.tile) } : null;
 }

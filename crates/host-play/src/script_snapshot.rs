@@ -1483,6 +1483,7 @@ pub(crate) fn with_script_snapshot_input_shorts<R>(
             unobserved: inspect.unobserved,
         },
         collision,
+        bank_selection: Default::default(),
     };
     f(&input, native)
 }

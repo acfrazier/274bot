@@ -1,6 +1,202 @@
 use api::interact::Driver;
 use api::snapshot::{GameSnapshot, WorldTile};
 use nav::world::NavWorld;
+use api::named_banks::NamedBankFacts;
+use nav::router::{find_many_with_avoid_bounded, FindOptions, BANK_TARGET_BUDGET};
+use nav::WorldState;
+use script::isolate_fb::BankSelectionInput;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
+const BANK_SELECTION_WINDOW: Duration = Duration::from_secs(5);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PickKind {
+    NearShortcut = 1,
+    Reachable = 2,
+    AirFallback = 3,
+    NoCandidate = 4,
+}
+
+/// Separate completion identity from movement. Reset invalidates a running
+/// capture but retains its worker, so replacements cannot grow worker count.
+#[derive(Default)]
+pub(crate) struct BankPickState {
+    generation: u64,
+    last_id: u64,
+    worker: Option<Arc<()>>,
+    pending: Option<BankPickRequest>,
+    current: Option<(Instant, BankSelectionInput)>,
+    pub(crate) posted: BankSelectionInput,
+    facts: Option<Arc<NamedBankFacts>>,
+}
+
+impl BankPickState {
+    pub(crate) fn reset(&mut self) {
+        self.generation = self.generation.wrapping_add(1);
+        self.current = None;
+        self.pending = None;
+        self.last_id = 0;
+        self.posted = BankSelectionInput::default();
+    }
+
+    pub(crate) fn poll(&mut self, now: Instant) -> BankSelectionInput {
+        if self.current.is_some_and(|(deadline, _)| now >= deadline) {
+            self.posted = self.current.take().unwrap().1;
+            self.pending = None;
+            self.generation = self.generation.wrapping_add(1);
+        }
+        self.posted
+    }
+
+    fn complete(&mut self, request: &BankPickRequest, index: Option<usize>, kind: PickKind, now: Instant) {
+        self.poll(now);
+        if self.generation != request.generation || self.last_id != request.request_id || self.current.is_none() {
+            return;
+        }
+        self.posted = request.result(index, kind);
+        self.current = None;
+    }
+}
+
+struct BankPickRequest {
+    generation: u64,
+    request_id: u64,
+    world: Arc<NavWorld>,
+    facts: Arc<NamedBankFacts>,
+    from: WorldTile,
+    opts: FindOptions,
+    state: WorldState,
+    order: Vec<usize>,
+    #[cfg(test)]
+    test_gate: Option<Arc<tests::Gate>>,
+}
+
+impl BankPickRequest {
+    fn result(&self, index: Option<usize>, kind: PickKind) -> BankSelectionInput {
+        BankSelectionInput {
+            generation: self.generation, request_id: self.request_id,
+            bank_index: index.map_or(-1, |i| i as i32), kind: kind as u8,
+        }
+    }
+
+    fn calculate(&self) -> (Option<usize>, PickKind) {
+        let targets: Vec<_> = self.order.iter().map(|&i| self.facts.banks()[i].tile).collect();
+        let routes = find_many_with_avoid_bounded(
+            &self.world.collision, &self.world.graph, self.from, &targets,
+            self.opts, &self.state, &[], BANK_TARGET_BUDGET,
+        );
+        let mut best = None;
+        let mut cost = f64::INFINITY;
+        for (i, result) in routes.results().iter().enumerate() {
+            if let Ok(result) = result {
+                if result.ticks < cost {
+                    cost = result.ticks;
+                    best = Some(self.order[i]);
+                }
+            }
+        }
+        match best {
+            Some(index) => (Some(index), PickKind::Reachable),
+            None => (self.order.first().copied(), PickKind::AirFallback),
+        }
+    }
+}
+
+fn bank_air_distance(from: WorldTile, to: WorldTile) -> i64 {
+    let dx = i64::from(from.x) - i64::from(to.x);
+    let dz = i64::from(from.z) - i64::from(to.z);
+    dx * dx + dz * dz
+}
+
+fn near_bank(from: WorldTile, bank: WorldTile) -> bool {
+    from.level == bank.level && from.x.abs_diff(bank.x).max(from.z.abs_diff(bank.z)) <= 4
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn queue_bank_pick(
+    navs: &Arc<Mutex<HashMap<String, super::NavBot>>>,
+    name: &str,
+    world: &Option<Arc<NavWorld>>,
+    state: Option<WorldState>,
+    from: WorldTile,
+    allow_wilderness: bool,
+    request_id: u64,
+) {
+    let now = Instant::now();
+    let mut all = navs.lock().unwrap();
+    let bot = all.entry(name.to_string()).or_default();
+    let pick = &mut bot.bank_pick;
+    if request_id == 0 || request_id <= pick.last_id {
+        return;
+    }
+    pick.generation = pick.generation.wrapping_add(1);
+    pick.last_id = request_id;
+    pick.pending = None;
+    pick.current = None;
+    let Some(world) = world else {
+        pick.posted = BankSelectionInput { request_id, generation: pick.generation, kind: PickKind::NoCandidate as u8, ..Default::default() };
+        return;
+    };
+    let facts = Arc::clone(pick.facts.get_or_insert_with(|| Arc::new(world.named_bank_facts(script::content::BANK_ALIASES))));
+    let mut order: Vec<_> = (0..facts.banks().len()).collect();
+    order.sort_by_key(|&i| bank_air_distance(from, facts.banks()[i].tile));
+    let request = BankPickRequest {
+        generation: pick.generation, request_id, world: Arc::clone(world), facts, from,
+        opts: FindOptions { allow_wilderness, essence: bot.traveller.essence(), ..Default::default() },
+        state: state.unwrap_or_default(), order,
+        #[cfg(test)]
+        test_gate: tests::capture_gate(),
+    };
+    let first = request.order.first().copied();
+    if first.is_none() || first.is_some_and(|i| near_bank(from, request.facts.banks()[i].tile)) {
+        pick.posted = request.result(first, if first.is_some() { PickKind::NearShortcut } else { PickKind::NoCandidate });
+        return;
+    }
+    pick.current = Some((now + BANK_SELECTION_WINDOW, request.result(first, PickKind::AirFallback)));
+    pick.pending = Some(request);
+    if pick.worker.is_some() {
+        return;
+    }
+    let token = Arc::new(());
+    pick.worker = Some(Arc::clone(&token));
+    drop(all);
+    let worker_navs = Arc::clone(navs);
+    let worker_name = name.to_string();
+    let spawned = std::thread::Builder::new().name(format!("bank-pick-{name}")).spawn(move || {
+        loop {
+            let request = {
+                let mut all = worker_navs.lock().unwrap();
+                let Some(bot) = all.get_mut(&worker_name) else { return };
+                let pick = &mut bot.bank_pick;
+                if !pick.worker.as_ref().is_some_and(|live| Arc::ptr_eq(live, &token)) { return; }
+                pick.poll(Instant::now());
+                match pick.pending.take() {
+                    Some(request) => request,
+                    None => { pick.worker = None; return; }
+                }
+            };
+            // Every flood, and the search tree's destruction, is off the slot lock.
+            #[cfg(test)]
+            if let Some(gate) = &request.test_gate { gate.enter(); }
+            let (index, kind) = request.calculate();
+            if let Some(bot) = worker_navs.lock().unwrap().get_mut(&worker_name) {
+                bot.bank_pick.complete(&request, index, kind, Instant::now());
+            }
+            #[cfg(test)]
+            if let Some(gate) = &request.test_gate { gate.finished(); }
+        }
+    });
+    if spawned.is_err() {
+        if let Some(bot) = navs.lock().unwrap().get_mut(name) {
+            let pick = &mut bot.bank_pick;
+            pick.worker = None;
+            pick.pending = None;
+            if let Some((_, fallback)) = pick.current.take() { pick.posted = fallback; }
+        }
+    }
+}
 
 pub(super) fn dispatch_observed_bank_op(
     driver: &mut dyn Driver,
@@ -262,3 +458,7 @@ pub(super) fn withdraw_id<D: Driver>(
     }
     false
 }
+
+#[cfg(test)]
+#[path = "script_bank_tests.rs"]
+mod tests;

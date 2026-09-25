@@ -428,6 +428,13 @@ table Snapshot {
   // short and is never packed here. Dest geometry is not a shopping list:
   // only this vector names one.
   walk_missing_carry: [Carry];
+  // Select-only result, distinct from walk/inspect. Index names the immutable
+  // selected-world bank catalog supplied to this isolate at Start.
+  bank_selection_request_id: ulong = 0;
+  bank_selection_generation: ulong = 0;
+  bank_selection_index: int = -1;
+  // 0 absent, 1 near shortcut, 2 reachable, 3 air fallback, 4 no candidate.
+  bank_selection_kind: ubyte = 0;
 }
 
 table Collision {
@@ -473,7 +480,7 @@ table AvoidRect {
 // | "wear" | "unequip" | "set-run" | "set-retaliate" | "set-note-mode" | "set-camera-yaw"
 // | "note-progress" | "loop-settled" | "wait-enqueued" | "wait-settled"
 // | "recovery-anchor" | "recovery-anchor-none" | "key" | "mouse"
-// | "inspect-route".
+// | "inspect-route" | "select-bank".
 // "key": action=DOM key, kind=code (optional), index=1 down / 0 up.
 // "mouse": xf/yf=client coordinates as doubles, level=DOM button, index=1 down / 0 up.
 // input_identity is the native permit at production (0 when absent).

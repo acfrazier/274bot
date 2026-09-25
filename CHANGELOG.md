@@ -13,6 +13,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
 
 ### Script host
 
+- Alcher and LeatherCrafter can load their reachable-bank selector again.
+  Selection runs one bounded native multi-target search off the slot pump,
+  keeps the same-plane radius-four shortcut, and falls back to air-nearest
+  on an unavailable route or a five-second completion timeout. A typed v2
+  `bankNearestReachable` helper exposes the same select-only capability.
+
 - Baker-stall restocking now awaits one Rust step machine; Rust owns selected
   stall facts, callback polling, waits, steal verbs, stand swaps and lockout
   sequencing while callbacks retain the options object as their receiver.

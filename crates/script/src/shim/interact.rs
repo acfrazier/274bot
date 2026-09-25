@@ -67,6 +67,16 @@ pub enum InteractReq {
         #[serde(default)]
         request_id: u64,
     },
+    /// Read-only, bounded native bank selection; never arms movement.
+    #[serde(rename = "select-bank")]
+    SelectBank {
+        x: i32,
+        z: i32,
+        level: i32,
+        #[serde(default)]
+        allow_wilderness: bool,
+        request_id: u64,
+    },
     /// Select the nearest packed booth stand in Rust and route within one tile.
     #[serde(rename = "walk-nearest-bank")]
     WalkNearestBank,

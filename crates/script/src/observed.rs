@@ -582,6 +582,7 @@ scene_pages! {
         trade_decline_id: i32,
         shop_open: bool,
         walk_outcome: WalkOutcome,
+        bank_selection: crate::isolate_fb::BankSelectionInput,
         /// The posted root of side tab 0, or `-1` when a posted side-tab
         /// table has no row for it.
         combat_tab_root: i32,
@@ -1013,6 +1014,9 @@ impl Scene {
                     })
                     .collect(),
             );
+        }
+        if let Some(result) = snap.bank_selection() {
+            p.bank_selection(result);
         }
         if let Some(pair) = snap.main_modal_texts() {
             p.main_modal_texts(ModalTexts {

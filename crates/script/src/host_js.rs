@@ -517,6 +517,8 @@ fn render_native_v2(out: &mut String) {
     );
     out.push_str("  /** Completes the 15-row walk. timed_out may be nonzero; LIVE later requires all off. Same busy refuse as prayerSet. */\n");
     out.push_str("  prayerClear(): Promise<HelperResult<PrayerClearCounts>>;\n");
+    out.push_str("  /** Select without moving. Native wilderness defaults false; an air fallback does not prove reachability. */\n");
+    out.push_str("  bankNearestReachable(input?: { from?: WorldTile; allow_wilderness?: boolean }): Promise<HelperResult<{ name: string; tile: WorldTile } | null>>;\n");
     out.push_str(
         "  foodCount(input: { items: ItemRow[]; foodName: string }): HelperResult<number>;\n",
     );
@@ -2691,6 +2693,7 @@ const NATIVE_SNAPSHOT_FIELDS: &[TsField] = &[
     TsField { name: "walk_outcome_radius", ty: "number", optional: false, doc: None },
     TsField { name: "walk_outcome_allow_teleports", ty: "boolean", optional: false, doc: None },
     TsField { name: "walk_outcome_request_id", ty: "number", optional: false, doc: None },
+    TsField { name: "bank_selection", ty: "{ request_id: number; generation: number; kind: 'near' | 'reachable' | 'fallback' | 'none'; bank: { name: string; tile: WorldTile } | null } | null", optional: false, doc: Some("Latest select-only completion; fallback is not a reachability proof.") },
     TsField { name: "route_inspect_seq", ty: "number", optional: false, doc: None },
     TsField { name: "route_inspect_generation", ty: "number", optional: false, doc: None },
     TsField { name: "route_inspect_request_id", ty: "number", optional: false, doc: None },
