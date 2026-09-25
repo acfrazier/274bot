@@ -14,6 +14,8 @@
 //! bankable, or the relaxed diagnosis shows a skill/quest/varp gate) is
 //! `None`: the caller reports `NoPath`.
 
+use std::collections::HashSet;
+
 use api::snapshot::WorldTile;
 
 use crate::pack::BankStand;
@@ -52,7 +54,9 @@ pub struct BankFetch {
 }
 
 /// Plan a BankBudget session for a strict [`find_with`] `NoPath` whose
-/// diagnosis is `missing` ([`crate::router::find_missing_item_reqs`]).
+/// diagnosis is `missing` ([`crate::router::find_missing_item_reqs`], or
+/// [`crate::router::missing_item_reqs`] of a route found under
+/// [`fetchable_state`]).
 /// `state` is the search's gating facts; `bank` is the open bank's rows
 /// (obj id, count) from the live snapshot; `stands` is the packed bank
 /// stand table ([`crate::world::NavWorld::banks`]); `from` is the
@@ -179,6 +183,41 @@ pub fn plan_bank_fetch(
     }
     steps.push(BankStep::Close);
     Some(BankFetch { steps, state: post })
+}
+
+/// The facts a BankBudget session can establish from `state`, whichever
+/// route it serves: exactly the supply [`plan_bank_fetch`] checks. Every
+/// carried obj can be worn in place; with a bank stand to walk to, every
+/// obj in the open bank's rows (an obj's first row, as the planner reads
+/// it) plus the backpack can be carried at their combined count, and worn.
+/// A strict search under this state reaches only goals whose
+/// `item_req`/`worn_req` gates a session can meet, and [`plan_bank_fetch`]
+/// plans every such route's missing facts, so a goal behind an obj the
+/// session cannot get never hides one it can (frozen `virtualizeWithItems`
+/// likewise searches with the bank's objs assumed held).
+pub fn fetchable_state(
+    state: &WorldState,
+    bank: &[(i32, i32)],
+    stands: &[BankStand],
+) -> WorldState {
+    let mut fetchable = state.clone();
+    fetchable.worn.extend(
+        state
+            .inv
+            .iter()
+            .filter(|&(_, &n)| n >= 1)
+            .map(|(&id, _)| id),
+    );
+    if !stands.is_empty() {
+        let mut read = HashSet::new();
+        for &(id, count) in bank {
+            if read.insert(id) && count >= 1 {
+                *fetchable.inv.entry(id).or_insert(0) += count;
+                fetchable.worn.insert(id);
+            }
+        }
+    }
+    fetchable
 }
 
 #[cfg(test)]

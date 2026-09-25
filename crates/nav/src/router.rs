@@ -352,11 +352,29 @@ pub enum ReverseProof {
     Unreachable,
 }
 
+/// What a first-goal search established about its fallback goal set.
+#[derive(Debug, Clone, PartialEq)]
+pub enum FallbackRoute {
+    /// The cheapest fallback goal, settled on the way.
+    Routed(Route),
+    /// No fallback goal settles within this search: everything reachable
+    /// settled ([`RouteError::NoPath`]) or the budget was spent
+    /// ([`RouteError::BudgetExhausted`]).
+    Failed(RouteError),
+    /// The preferred goals were proven unreachable before the search
+    /// reached any fallback goal; a search over the fallback set alone
+    /// decides it.
+    Undecided,
+}
+
 /// One first-settled-target search. Dijkstra settles nodes in increasing
 /// route cost, so the route is the cheapest reachable input target without
-/// paying to prove whether every other target is reachable.
+/// paying to prove whether every other target is reachable. A search with a
+/// fallback goal set ([`find_first_with_fallback`]) also reports what it
+/// established about that set when no preferred goal routes.
 pub struct FirstRouteSearch {
     route: Result<Route, RouteError>,
+    fallback: Option<FallbackRoute>,
     settled: usize,
     capacities: SearchCapacities,
     proof: ReverseProof,
@@ -367,8 +385,19 @@ impl FirstRouteSearch {
         self.route.as_ref().map_err(|error| *error)
     }
 
+    /// The fallback set's answer, when no preferred goal routed and the
+    /// search had a fallback set; `None` otherwise.
+    pub fn fallback(&self) -> Option<&FallbackRoute> {
+        self.fallback.as_ref()
+    }
+
     pub fn into_route(self) -> Result<Route, RouteError> {
         self.route
+    }
+
+    /// The preferred route and, as for [`Self::fallback`], the fallback's.
+    pub fn into_routes(self) -> (Result<Route, RouteError>, Option<FallbackRoute>) {
+        (self.route, self.fallback)
     }
 
     /// Forward nodes settled (the backward proof's tiles are not counted).
@@ -381,6 +410,7 @@ impl FirstRouteSearch {
         self.capacities
     }
 
+    /// The preferred goals' backward proof.
     pub fn proof(&self) -> ReverseProof {
         self.proof
     }
@@ -405,11 +435,33 @@ pub fn find_first_with(
     opts: FindOptions,
     state: &WorldState,
 ) -> FirstRouteSearch {
+    find_first_with_fallback(collision, graph, from, targets, &[], opts, state)
+}
+
+/// [`find_first_with`] over preferred `targets` with a `fallback` goal set,
+/// sharing one search: the cheapest reachable preferred goal wins even over
+/// a cheaper fallback goal, and the search records the first fallback goal
+/// it settles on the way ([`FallbackRoute`]). When the budget stops the
+/// search, the fallback set gets no budget of its own: a fallback goal had
+/// to settle within the settles already spent. When the preferred proof
+/// stops it early, the fallback set is [`FallbackRoute::Undecided`] for the
+/// caller to search alone, and that search is then the only one of the two
+/// that can be budget-limited.
+pub fn find_first_with_fallback(
+    collision: &WorldCollision,
+    graph: &TransportGraph,
+    from: WorldTile,
+    targets: &[WorldTile],
+    fallback: &[WorldTile],
+    opts: FindOptions,
+    state: &WorldState,
+) -> FirstRouteSearch {
     first_search(
         collision,
         graph,
         from,
         targets,
+        fallback,
         opts,
         state,
         false,
@@ -419,17 +471,19 @@ pub fn find_first_with(
     )
 }
 
-/// The proof-carrying goal search behind [`find_first_with`] (strict gates)
-/// and the BankBudget diagnoses (`relax_carry_worn`). The backward closure
-/// honors the same gates as the forward search, so a strict proof never
-/// hides a relaxed route. `budget` holds until the proof shows a goal
-/// reachable, then `reachable_budget` applies.
+/// The proof-carrying goal search behind [`find_first_with_fallback`]
+/// (strict gates) and the single-target BankBudget diagnosis
+/// (`relax_carry_worn`). The backward closure honors the same gates as the
+/// forward search, so a strict proof never hides a relaxed route. `budget`
+/// holds until the proof shows a goal reachable, then `reachable_budget`
+/// applies.
 #[allow(clippy::too_many_arguments)] // search surface plus relaxation/avoid/budgets
 fn first_search(
     collision: &WorldCollision,
     graph: &TransportGraph,
     from: WorldTile,
     targets: &[WorldTile],
+    fallback: &[WorldTile],
     opts: FindOptions,
     state: &WorldState,
     relax_carry_worn: bool,
@@ -440,6 +494,7 @@ fn first_search(
     if targets.is_empty() {
         return FirstRouteSearch {
             route: Err(RouteError::NoPath),
+            fallback: (!fallback.is_empty()).then_some(FallbackRoute::Undecided),
             settled: 0,
             capacities: SearchCapacities::default(),
             proof: ReverseProof::NotRun,
@@ -452,6 +507,7 @@ fn first_search(
                 dest: from,
                 ticks: 0.0,
             }),
+            fallback: None,
             settled: 0,
             capacities: SearchCapacities::default(),
             proof: ReverseProof::NotRun,
@@ -460,7 +516,9 @@ fn first_search(
 
     let mut goals = Goals::First {
         targets: FirstTargets::new(targets),
+        fallback: FirstTargets::new(fallback),
         found: None,
+        fallback_found: None,
     };
     let search = search_kernel(
         collision,
@@ -481,26 +539,45 @@ fn first_search(
         }),
         None,
     );
-    let route = match goals {
-        Goals::First {
-            found: Some((dest, cost)),
-            ..
-        } => {
-            let (legs, ticks) = reconstruct(
-                dest,
-                &search.came_from,
-                graph,
-                CostModel::running(),
-                opts.essence.as_ref(),
-            );
-            debug_assert_eq!(ticks, cost.ticks);
-            Ok(Route { legs, dest, ticks })
-        }
-        _ if search.stop == SearchStop::Budget => Err(RouteError::BudgetExhausted),
-        _ => Err(RouteError::NoPath),
+    let Goals::First {
+        found,
+        fallback_found,
+        ..
+    } = goals
+    else {
+        unreachable!("a first-goal search keeps its goals");
+    };
+    let route_to = |(dest, cost): (WorldTile, TargetCost)| {
+        let (legs, ticks) = reconstruct(
+            dest,
+            &search.came_from,
+            graph,
+            CostModel::running(),
+            opts.essence.as_ref(),
+        );
+        debug_assert_eq!(ticks, cost.ticks);
+        Route { legs, dest, ticks }
+    };
+    let route = match found {
+        Some(goal) => Ok(route_to(goal)),
+        None if search.stop == SearchStop::Budget => Err(RouteError::BudgetExhausted),
+        None => Err(RouteError::NoPath),
+    };
+    let fallback_route = if route.is_ok() || fallback.is_empty() {
+        None
+    } else {
+        Some(match fallback_found {
+            Some(goal) => FallbackRoute::Routed(route_to(goal)),
+            None if search.stop == SearchStop::Budget => {
+                FallbackRoute::Failed(RouteError::BudgetExhausted)
+            }
+            None if search.proof == ReverseProof::Unreachable => FallbackRoute::Undecided,
+            None => FallbackRoute::Failed(RouteError::NoPath),
+        })
     };
     FirstRouteSearch {
         route,
+        fallback: fallback_route,
         settled: search.settled,
         capacities: search.capacities,
         proof: search.proof,
@@ -681,8 +758,7 @@ pub fn find_many_with_avoid_bounded_until<'a>(
 /// A missing `item_req`/`worn_req` fact the BankBudget session must
 /// supply before a strict [`find_with`] can route: an `item_req` stack
 /// count the state cannot prove, or a `worn_req` list (any-of) with no
-/// worn alternative. [`find_missing_item_reqs`] and
-/// [`find_first_missing_item_reqs`] are the only producers —
+/// worn alternative. [`missing_item_reqs`] names them for a route;
 /// [`find`]/[`find_with`] never relax an edge.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum MissingReq {
@@ -757,6 +833,7 @@ pub fn find_missing_item_reqs_with_avoid_bounded(
         graph,
         from,
         std::slice::from_ref(&to),
+        &[],
         opts,
         state,
         true,
@@ -769,74 +846,10 @@ pub fn find_missing_item_reqs_with_avoid_bounded(
     Some(missing_item_reqs(&route, state))
 }
 
-/// The BankBudget diagnosis of a failed [`find_first_with`] over the same
-/// targets.
-pub struct FirstMissingItemSearch {
-    found: Option<(WorldTile, Vec<MissingReq>)>,
-    settled: usize,
-    capacities: SearchCapacities,
-    proof: ReverseProof,
-}
-
-impl FirstMissingItemSearch {
-    /// The cheapest target the relaxed search reaches, and the facts its
-    /// relaxed route needs that the state cannot prove.
-    pub fn found(&self) -> Option<(WorldTile, &[MissingReq])> {
-        self.found
-            .as_ref()
-            .map(|(target, missing)| (*target, missing.as_slice()))
-    }
-
-    pub fn settled(&self) -> usize {
-        self.settled
-    }
-
-    pub fn scratch_capacities(&self) -> SearchCapacities {
-        self.capacities
-    }
-
-    pub fn proof(&self) -> ReverseProof {
-        self.proof
-    }
-}
-
-/// [`find_missing_item_reqs`] for a whole goal set: one relaxed first-goal
-/// search with [`find_first_with`]'s budgets and backward proof, instead of
-/// one relaxed flood per target.
-pub fn find_first_missing_item_reqs(
-    collision: &WorldCollision,
-    graph: &TransportGraph,
-    from: WorldTile,
-    targets: &[WorldTile],
-    opts: FindOptions,
-    state: &WorldState,
-) -> FirstMissingItemSearch {
-    let search = first_search(
-        collision,
-        graph,
-        from,
-        targets,
-        opts,
-        state,
-        true,
-        &[],
-        FIRST_TARGET_BUDGET,
-        NODE_BUDGET,
-    );
-    FirstMissingItemSearch {
-        found: search
-            .route()
-            .ok()
-            .map(|route| (route.dest, missing_item_reqs(route, state))),
-        settled: search.settled,
-        capacities: search.capacities,
-        proof: search.proof,
-    }
-}
-
-/// Every `item_req`/`worn_req` fact on a relaxed route that `state` cannot
-/// prove, sorted and deduplicated.
-fn missing_item_reqs(route: &Route, state: &WorldState) -> Vec<MissingReq> {
+/// Every `item_req`/`worn_req` fact on `route` that `state` cannot prove,
+/// sorted and deduplicated: what a BankBudget session must supply before
+/// `state` allows the route ([`crate::bank_fetch::plan_bank_fetch`]).
+pub fn missing_item_reqs(route: &Route, state: &WorldState) -> Vec<MissingReq> {
     let mut missing = Vec::new();
     for leg in &route.legs {
         let Leg::Transport { edge } = leg else {
@@ -1000,9 +1013,13 @@ enum Goals<'a> {
         to: WorldTile,
         cost: Option<TargetCost>,
     },
+    /// The first preferred goal to settle ends the search; the first
+    /// fallback goal to settle is only recorded.
     First {
         targets: FirstTargets<'a>,
+        fallback: FirstTargets<'a>,
         found: Option<(WorldTile, TargetCost)>,
+        fallback_found: Option<(WorldTile, TargetCost)>,
     },
     Many {
         unique: &'a HashMap<WorldTile, usize>,
@@ -1023,13 +1040,20 @@ impl Goals<'_> {
                     false
                 }
             }
-            Goals::First { targets, found } => {
+            Goals::First {
+                targets,
+                fallback,
+                found,
+                fallback_found,
+            } => {
                 if targets.contains(&tile) {
                     *found = Some((tile, cost));
-                    true
-                } else {
-                    false
+                    return true;
                 }
+                if fallback_found.is_none() && fallback.contains(&tile) {
+                    *fallback_found = Some((tile, cost));
+                }
+                false
             }
             Goals::Many {
                 unique,

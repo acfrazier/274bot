@@ -8,15 +8,18 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+use crate::bank_fetch::fetchable_state;
 use crate::collision::{bake_from_maps, WorldCollision};
 use crate::grid::StepGrid;
+use crate::pack::{BankAccess, BankStand};
 use crate::router::{
-    find, find_allow_teleports, find_bounded, find_first_missing_item_reqs, find_first_with,
+    find, find_allow_teleports, find_bounded, find_first_with, find_first_with_fallback,
     find_many_with, find_many_with_avoid_bounded, find_many_with_avoid_bounded_until,
     find_missing_item_reqs, find_missing_item_reqs_with_avoid, find_on_grid, find_with,
-    find_with_avoid, find_with_avoid_bounded, find_with_model, local_step_component, step_ok,
-    AvoidRect, CostModel, FindOptions, GridLeg, Leg, MissingReq, ReverseProof, RouteError,
-    TargetError, BANK_TARGET_BUDGET, FIRST_TARGET_BUDGET, PER_STEP_WALK,
+    find_with_avoid, find_with_avoid_bounded, find_with_model, local_step_component,
+    missing_item_reqs, step_ok, AvoidRect, CostModel, FallbackRoute, FindOptions, GridLeg, Leg,
+    MissingReq, ReverseProof, RouteError, TargetError, BANK_TARGET_BUDGET, FIRST_TARGET_BUDGET,
+    PER_STEP_WALK,
 };
 use crate::tile::Tile;
 use crate::transport::{
@@ -891,7 +894,7 @@ fn sealed_room(door: bool) -> (WorldCollision, TransportGraph) {
 
 /// Stands sealed in a small room are proven unreachable from their own
 /// backward region instead of by flooding the 65,536-tile plane, for the
-/// strict search and for its BankBudget diagnosis alike.
+/// strict search and for the relaxed BankBudget diagnosis alike.
 #[test]
 fn first_target_search_proves_sealed_stands_unreachable_without_flooding() {
     let (wc, graph) = sealed_room(false);
@@ -911,17 +914,33 @@ fn first_target_search_proves_sealed_stands_unreachable_without_flooding() {
         "the room and its ring decide, not the plane: {}",
         strict.settled()
     );
-    let diagnosis = find_first_missing_item_reqs(&wc, &graph, from, &stands, opts, &state);
-    assert!(diagnosis.found().is_none());
-    assert_eq!(diagnosis.proof(), ReverseProof::Unreachable);
-    assert!(diagnosis.settled() < 64, "{}", diagnosis.settled());
+    assert_eq!(
+        find_missing_item_reqs(&wc, &graph, from, stands[0], opts, &state),
+        None
+    );
+    let relaxed = super::first_search(
+        &wc,
+        &graph,
+        from,
+        &stands[..1],
+        &[],
+        opts,
+        &state,
+        true,
+        &[],
+        super::NODE_BUDGET,
+        super::NODE_BUDGET,
+    );
+    assert_eq!(relaxed.proof(), ReverseProof::Unreachable);
+    assert!(relaxed.settled() < 64, "{}", relaxed.settled());
 }
 
 /// The strict proof honors the door's worn gate, so it closes at once; the
-/// relaxed diagnosis of the same stands crosses the door and names the
-/// missing worn item.
+/// relaxed diagnosis crosses the door and names the missing worn obj; and a
+/// search under what a session can fetch crosses it only when the obj is
+/// banked, proving the room closed at once when it is not.
 #[test]
-fn worn_gated_room_is_proven_strictly_then_diagnosed_as_one_goal_set() {
+fn worn_gated_room_is_proven_strictly_and_reached_only_with_the_obj_fetchable() {
     let (wc, graph) = sealed_room(true);
     let from = tile(20, 20, 0);
     let stands = [tile(202, 201, 0), tile(201, 202, 0)];
@@ -935,22 +954,37 @@ fn worn_gated_room_is_proven_strictly_then_diagnosed_as_one_goal_set() {
     assert_eq!(strict.route().err(), Some(RouteError::NoPath));
     assert_eq!(strict.proof(), ReverseProof::Unreachable);
     assert!(strict.settled() < 64, "{}", strict.settled());
-
-    let diagnosis = find_first_missing_item_reqs(&wc, &graph, from, &stands, opts, &state);
-    let (target, missing) = diagnosis.found().expect("the relaxed door reaches a stand");
-    assert!(stands.contains(&target));
-    assert_eq!(missing, &[MissingReq::WearAny { ids: vec![2] }]);
     assert_eq!(
-        find_missing_item_reqs(&wc, &graph, from, target, opts, &state).as_deref(),
-        Some(missing),
-        "one relaxed first-goal search names what the per-target diagnosis names"
+        find_missing_item_reqs(&wc, &graph, from, stands[0], opts, &state),
+        Some(vec![MissingReq::WearAny { ids: vec![2] }])
     );
+
+    let booth = [BankStand {
+        name: "Bank booth".into(),
+        tile: tile(10, 10, 0),
+        access: BankAccess::Booth { op: 2 },
+    }];
+    let banked = fetchable_state(&state, &[(2, 1)], &booth);
+    let search = find_first_with(&wc, &graph, from, &stands, opts, &banked);
+    let route = search.route().expect("the banked obj opens the door");
+    assert!(stands.contains(&route.dest));
+    assert_eq!(
+        missing_item_reqs(route, &state),
+        vec![MissingReq::WearAny { ids: vec![2] }]
+    );
+
+    let elsewhere = fetchable_state(&state, &[(3, 1)], &booth);
+    let search = find_first_with(&wc, &graph, from, &stands, opts, &elsewhere);
+    assert_eq!(search.route().err(), Some(RouteError::NoPath));
+    assert_eq!(search.proof(), ReverseProof::Unreachable);
+    assert!(search.settled() < 64, "{}", search.settled());
 }
 
 /// Neither side decides: the start's corridor and the stand's backward
 /// corridor are disjoint and longer than both budgets, as on the 289 bake
 /// when a stand is fed by the unstamped upper planes. The search stops at
-/// its budget instead of flooding the start's corridor.
+/// its budget instead of flooding the start's corridor, and a fallback goal
+/// out of reach gets no second budget-limited search.
 #[test]
 fn first_target_search_stops_at_its_budget_when_the_proof_cannot_decide() {
     let len = FIRST_TARGET_BUDGET + FIRST_TARGET_BUDGET / 4;
@@ -963,11 +997,12 @@ fn first_target_search_stops_at_its_budget_when_the_proof_cannot_decide() {
         })
         .collect();
     let wc = bake(len, 2, &walls);
-    let search = find_first_with(
+    let search = find_first_with_fallback(
         &wc,
         &TransportGraph::default(),
         tile(0, 0, 0),
         &[tile(len as i32 - 1, 1, 0)],
+        &[tile(len as i32 - 2, 1, 0)],
         FindOptions::default(),
         &WorldState::empty(),
     );
@@ -978,8 +1013,72 @@ fn first_target_search_stops_at_its_budget_when_the_proof_cannot_decide() {
         search.settled() < len,
         "the budget must stop the search before it floods the {len}-tile corridor"
     );
+    assert_eq!(
+        search.fallback(),
+        Some(&FallbackRoute::Failed(RouteError::BudgetExhausted))
+    );
+    assert!(search.settled() <= FIRST_TARGET_BUDGET);
     let scratch = search.scratch_capacities();
     assert!(scratch.reverse < len, "{scratch:?}");
+}
+
+/// A reachable preferred goal wins over a cheaper fallback goal, and the
+/// fallback set answers only when no preferred goal routes.
+#[test]
+fn preferred_goal_beats_a_cheaper_fallback_goal() {
+    let wc = bake(24, 1, &[]);
+    let search = find_first_with_fallback(
+        &wc,
+        &TransportGraph::default(),
+        tile(0, 0, 0),
+        &[tile(20, 0, 0)],
+        &[tile(1, 0, 0)],
+        FindOptions::default(),
+        &WorldState::empty(),
+    );
+
+    assert_eq!(search.route().map(|route| route.dest), Ok(tile(20, 0, 0)));
+    assert!(search.fallback().is_none());
+}
+
+/// Preferred goals sealed in a room: a fallback goal the search settled on
+/// the way answers at once. One past where the proof stopped the search is
+/// left undecided, and a search over the fallback set alone finds it.
+#[test]
+fn sealed_preferred_goals_fall_back_to_the_cheapest_fallback_goal() {
+    let (wc, graph) = sealed_room(false);
+    let from = tile(20, 20, 0);
+    let stands = [tile(200, 201, 0), tile(201, 202, 0)];
+    let state = WorldState::empty();
+    let opts = FindOptions::default();
+
+    let near = find_first_with_fallback(
+        &wc,
+        &graph,
+        from,
+        &stands,
+        &[tile(150, 150, 0), tile(21, 20, 0)],
+        opts,
+        &state,
+    );
+    assert_eq!(near.route().err(), Some(RouteError::NoPath));
+    assert_eq!(near.proof(), ReverseProof::Unreachable);
+    let Some(FallbackRoute::Routed(route)) = near.fallback() else {
+        panic!(
+            "the adjacent fallback goal settled first: {:?}",
+            near.fallback()
+        );
+    };
+    assert_eq!(route.dest, tile(21, 20, 0));
+    assert!(near.settled() < 64, "{}", near.settled());
+
+    let fallback = [tile(150, 150, 0)];
+    let far = find_first_with_fallback(&wc, &graph, from, &stands, &fallback, opts, &state);
+    assert_eq!(far.route().err(), Some(RouteError::NoPath));
+    assert_eq!(far.fallback(), Some(&FallbackRoute::Undecided));
+    assert!(far.settled() < 64, "{}", far.settled());
+    let alone = find_first_with(&wc, &graph, from, &fallback, opts, &state);
+    assert_eq!(alone.route().map(|route| route.dest), Ok(fallback[0]));
 }
 
 /// A backward proof that meets a teleport landing usable from the origin
@@ -1002,6 +1101,7 @@ fn first_target_proof_of_reachability_lifts_the_unproven_budget() {
             &graph,
             from,
             &stands,
+            &[],
             opts,
             &state,
             false,
@@ -1592,17 +1692,13 @@ fn stronghold_middle_booth_search_is_bounded_on_real_289_pack() {
     let search = find_first_with(&world.collision, &world.graph, from, &stands, opts, &state);
     assert_eq!(search.route().err(), Some(RouteError::BudgetExhausted));
     assert!(search.settled() <= FIRST_TARGET_BUDGET);
-    let diagnosis =
-        find_first_missing_item_reqs(&world.collision, &world.graph, from, &stands, opts, &state);
-    assert!(diagnosis.found().is_none());
-    assert!(diagnosis.settled() <= FIRST_TARGET_BUDGET);
 }
 
 /// The Varrock-sewer web: the strict search proves the stands behind the web
-/// unreachable from their small backward region, and one relaxed search names
-/// the knife the web needs.
+/// unreachable from their small backward region, and with the knife banked a
+/// search under what a session can fetch reaches a stand needing only it.
 #[test]
-fn sewer_web_stands_are_proven_then_diagnosed_on_real_289_pack() {
+fn sewer_web_stands_are_proven_then_reached_with_the_banked_knife_on_real_289_pack() {
     let Some(world) = crate::world::NavWorld::load_default_pack_or_skip() else {
         return;
     };
@@ -1615,11 +1711,21 @@ fn sewer_web_stands_are_proven_then_diagnosed_on_real_289_pack() {
     assert_eq!(strict.route().err(), Some(RouteError::NoPath));
     assert_eq!(strict.proof(), ReverseProof::Unreachable);
     assert!(strict.settled() < 2_000, "{}", strict.settled());
-    let diagnosis =
-        find_first_missing_item_reqs(&world.collision, &world.graph, from, &stands, opts, &state);
-    let (target, missing) = diagnosis.found().expect("the knife opens the web");
-    assert!(stands.contains(&target));
-    assert_eq!(missing, &[MissingReq::Carry { id: 946, count: 1 }]);
+    let fetchable = fetchable_state(&state, &[(946, 1)], world.banks());
+    let search = find_first_with(
+        &world.collision,
+        &world.graph,
+        from,
+        &stands,
+        opts,
+        &fetchable,
+    );
+    let route = search.route().expect("the banked knife opens the web");
+    assert!(stands.contains(&route.dest));
+    assert_eq!(
+        missing_item_reqs(route, &state),
+        vec![MissingReq::Carry { id: 946, count: 1 }]
+    );
 }
 
 fn validate_real_route(

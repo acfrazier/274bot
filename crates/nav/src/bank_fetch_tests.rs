@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use api::snapshot::WorldTile;
 use client::dash3d::CollisionFlag;
 
-use super::{plan_bank_fetch, BankStep};
+use super::{fetchable_state, plan_bank_fetch, BankStep};
 use crate::collision::{pack_walk, WorldCollision};
 use crate::pack::{BankAccess, BankStand};
 use crate::router::{find_missing_item_reqs, find_with, FindOptions, MissingReq, RouteError};
@@ -465,4 +465,84 @@ fn bank_trip_keeps_worn_and_skill_facts() {
     assert_eq!(fetch.state.stats.get(&6), Some(&25), "skills survive");
     assert_eq!(fetch.state.inv.get(&995), Some(&10));
     assert!(!fetch.state.inv.contains_key(&1), "the junk is deposited");
+}
+
+/// The fetchable facts open exactly the gates a session can meet, and the
+/// planner plans each one's missing fact: a carried obj is worn in place
+/// without a stand; banked rows count only with a stand to walk to, and
+/// then add to the carried stack; an obj held nowhere stays refused.
+#[test]
+fn fetchable_state_opens_exactly_the_gates_a_session_can_meet() {
+    let door = |item_req: Vec<(i32, i32)>, worn_req: Vec<i32>| TransportEdge {
+        item_req,
+        worn_req,
+        ..knife_graph().edges[0].clone()
+    };
+    let state = WorldState {
+        inv: HashMap::from([(KNIFE, 1), (995, 4)]),
+        ..WorldState::default()
+    };
+    let bank = [(995, 6), (1277, 1)];
+    let cases = [
+        (
+            door(vec![], vec![KNIFE]),
+            MissingReq::WearAny { ids: vec![KNIFE] },
+            true,
+            true,
+        ),
+        (
+            door(vec![], vec![1277]),
+            MissingReq::WearAny { ids: vec![1277] },
+            false,
+            true,
+        ),
+        (
+            door(vec![(995, 10)], vec![]),
+            MissingReq::Carry { id: 995, count: 10 },
+            false,
+            true,
+        ),
+        (
+            door(vec![(995, 11)], vec![]),
+            MissingReq::Carry { id: 995, count: 11 },
+            false,
+            false,
+        ),
+        (
+            door(vec![], vec![2]),
+            MissingReq::WearAny { ids: vec![2] },
+            false,
+            false,
+        ),
+    ];
+    for stands in [Vec::new(), vec![stand(4, 0)]] {
+        let fetchable = fetchable_state(&state, &bank, &stands);
+        for (edge, missing, without_stand, with_stand) in &cases {
+            let expected = if stands.is_empty() {
+                *without_stand
+            } else {
+                *with_stand
+            };
+            assert!(!state.allows(edge));
+            assert_eq!(
+                fetchable.allows(edge),
+                expected,
+                "{missing:?} stands={}",
+                stands.len()
+            );
+            assert_eq!(
+                plan_bank_fetch(
+                    std::slice::from_ref(missing),
+                    &state,
+                    &bank,
+                    &stands,
+                    tile(0, 0, 0)
+                )
+                .is_some(),
+                expected,
+                "the planner agrees on {missing:?} stands={}",
+                stands.len()
+            );
+        }
+    }
 }

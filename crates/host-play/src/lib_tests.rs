@@ -16645,8 +16645,9 @@ fn solid_target_stands_past_a_long_detour_route_to_a_stand() {
 /// The Varrock-sewer web in miniature, in a 256x256 world larger than the
 /// old 32,768-node cap: a solid target inside a 5x5 room entered only by a
 /// door gated on wearing obj 2, with the obj in the bank. The strict stands
-/// are proven unreachable and one relaxed diagnosis plans the session to an
-/// in-room stand.
+/// are proven unreachable and the fetchable search plans the session to an
+/// in-room stand. At radius 3 the radius tiles outside the room route
+/// strictly, and the session to the stand still wins over them.
 #[test]
 fn solid_target_behind_worn_gate_in_a_large_world_plans_a_bank_session() {
     use client::dash3d::CollisionFlag;
@@ -16737,7 +16738,7 @@ fn solid_target_behind_worn_gate_in_a_large_world_plans_a_bank_session() {
         level: 0,
     };
 
-    for radius in [1, 2] {
+    for radius in [1, 2, 3] {
         let (route, session) = arm_route_outcome(
             Arc::clone(&world),
             &snapshot,
@@ -16754,6 +16755,114 @@ fn solid_target_behind_worn_gate_in_a_large_world_plans_a_bank_session() {
         let session = session.expect("the banked worn obj plans a session");
         assert_eq!(session.dest, stand, "r={radius}");
         assert_eq!(session.final_route.dest, stand);
+        assert!(route.is_some());
+    }
+}
+
+/// A stand behind an obj the session cannot get must not hide one it can.
+/// Only the start and the target's three stands are walkable; a door from
+/// the start reaches each. The two cheaper stands need worn obj 2, held
+/// nowhere; the third needs worn obj 3, carried (worn in place) or banked
+/// (a trip to the stand). Either way the arm plans that stand's session.
+#[test]
+fn unfetchable_stands_do_not_hide_a_fetchable_one() {
+    use client::dash3d::CollisionFlag;
+    use nav::bank_fetch::BankStep;
+
+    const SIZE: usize = 32;
+    let from = WorldTile {
+        x: 2,
+        z: 2,
+        level: 0,
+    };
+    let target = WorldTile {
+        x: 10,
+        z: 10,
+        level: 0,
+    };
+    let stands = [(9, 10), (10, 9), (11, 10)].map(|(x, z)| WorldTile { x, z, level: 0 });
+    let mut flags = vec![CollisionFlag::SQ_BLOCKED as u32; SIZE * SIZE];
+    for tile in std::iter::once(from).chain(stands) {
+        flags[tile.z as usize * SIZE + tile.x as usize] = 0;
+    }
+    let graph = || {
+        let mut graph = TransportGraph::default();
+        for (index, (stand, worn)) in stands.into_iter().zip([2, 2, 3]).enumerate() {
+            graph.at.entry(from).or_default().push(index);
+            graph.edges.push(TransportEdge {
+                kind: TransportKind::Door,
+                at: from,
+                to: stand,
+                loc_id: 1,
+                option: 1,
+                ticks: 2 + index as i32,
+                dir: None,
+                open_loc_id: None,
+                skill_req: vec![],
+                item_req: vec![],
+                quest_req: vec![],
+                varp_req: vec![],
+                worn_req: vec![worn],
+                members_req: false,
+                wildy_cap: None,
+            });
+        }
+        graph
+    };
+    let snapshot = raw_flags_scene(&flags, SIZE, (0, 0), from);
+    let booth = nav::pack::BankStand {
+        name: "Bank booth".into(),
+        tile: from,
+        access: nav::pack::BankAccess::Booth { op: 2 },
+    };
+    let carried = WorldState {
+        inv: HashMap::from([(3, 1)]),
+        ..WorldState::empty()
+    };
+    let cases = [
+        (
+            carried,
+            Vec::new(),
+            Vec::new(),
+            vec![BankStep::Wear { id: 3 }],
+        ),
+        (
+            WorldState::empty(),
+            vec![(3, 1)],
+            vec![booth],
+            vec![
+                BankStep::Walk {
+                    x: from.x,
+                    z: from.z,
+                    level: from.level,
+                },
+                BankStep::Open,
+                BankStep::DepositAll,
+                BankStep::Withdraw { id: 3, count: 1 },
+                BankStep::Wear { id: 3 },
+                BankStep::Close,
+            ],
+        ),
+    ];
+    for (state, bank, banks, steps) in cases {
+        let world = Arc::new(raw_flags_world(&flags, SIZE, graph(), banks));
+        let (route, session) = arm_route_outcome(
+            world,
+            &snapshot,
+            from,
+            target,
+            1,
+            FindOptions {
+                allow_bank_fetch: true,
+                ..FindOptions::default()
+            },
+            Some(state),
+            bank,
+        );
+        let session = session.expect("obj 3 opens the third stand");
+        assert_eq!(session.dest, stands[2]);
+        assert_eq!(session.final_route.dest, stands[2]);
+        assert_eq!(Vec::from(session.steps), steps);
         assert!(route.is_some());
     }
 }

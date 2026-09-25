@@ -4,14 +4,17 @@ use std::thread;
 use std::time::Instant;
 
 use api::snapshot::{GameSnapshot, WorldTile};
-use nav::router::{find_first_with, find_missing_item_reqs, FindOptions, MissingReq, Route};
+use nav::router::{
+    find_first_with, find_first_with_fallback, find_missing_item_reqs, FallbackRoute, FindOptions,
+    MissingReq, Route,
+};
 use nav::traveller::Traveller;
 use nav::world::NavWorld;
 use nav::WorldState;
 
 use super::{
-    bank_fetch_after_first_no_path, debug_enabled, route_inspect, route_or_bank_fetch,
-    PendingBankFetch, RouteOutcome,
+    debug_enabled, fetch_stand, fetch_tile, fetchable_facts, route_inspect, route_or_bank_fetch,
+    PendingBankFetch, RouteOutcome, StandFetch,
 };
 #[derive(Default)]
 pub(crate) struct RouteCompletion {
@@ -593,9 +596,10 @@ impl LiveCandidates {
 ///
 /// This deliberately does not filter by the current-scene flood: a shut door,
 /// gate, scene edge, or transport can separate `from` from a legal stand while
-/// the baked graph can still route there. `None` preserves the existing
-/// off-scene and standable-target policy; an empty or unroutable `Some` falls
-/// back to that policy in [`ScriptRouteRequest::calculate`].
+/// the baked graph can still route there. `None` keeps the sequential
+/// off-scene and standable-target policy; an empty or unroutable `Some`
+/// falls back to the same radius goal set in
+/// [`ScriptRouteRequest::calculate_solid`].
 fn solid_target_approach_tiles(snapshot: &GameSnapshot, to: WorldTile) -> Option<LiveCandidates> {
     let scene = snapshot.scene();
     let query = api::query::SceneQuery::new(scene, None);
@@ -672,8 +676,8 @@ pub(crate) struct ScriptRouteRequest {
     pub(crate) state: Option<WorldState>,
     pub(crate) bank: Vec<(i32, i32)>,
     /// Arm-time target-cardinal goals derived from the borrowed live scene.
-    /// `None` means preserve the baked/off-scene radius enumeration; empty
-    /// or unroutable goals explicitly fall back to the same enumeration.
+    /// `None` keeps the sequential radius policy; with `Some`, the radius
+    /// goal set is the fallback when no stand routes.
     pub(crate) live_candidates: Option<LiveCandidates>,
     pub(crate) completion: RouteCompletion,
 }
@@ -710,23 +714,32 @@ impl ScriptRouteRequest {
             .collect()
     }
 
-    fn calculate_first(
+    /// A solid in-scene target: its arrival stands, then the radius goal set
+    /// frozen PathFinder falls back to, in order: a strict route to a stand,
+    /// a BankBudget session to a stand, a strict route to a radius tile, a
+    /// session to a radius tile. The strict search for the stands records
+    /// the cheapest tile it passes ([`find_first_with_fallback`]), and so
+    /// does the search under what a session can fetch; a search over the
+    /// tiles alone runs only when its stand search was stopped early by the
+    /// stands' proof. The arm therefore spends at most two budget-limited
+    /// searches, one strict and one fetchable, plus one fetchable search for
+    /// each planned session whose post-state re-find refuses its goal (the
+    /// trip deposits a carried obj the route still needs).
+    fn calculate_solid(
         &self,
-        candidates: &[WorldTile],
+        stands: &[WorldTile],
+        tiles: &[WorldTile],
         state: &WorldState,
-        label: &str,
     ) -> RouteOutcome {
-        if candidates.is_empty() {
-            return RouteOutcome::NoPath;
-        }
         let debug = debug_enabled();
         let slot = walk_arm_worker_slot();
         let started = debug.then(Instant::now);
-        let search = find_first_with(
+        let search = find_first_with_fallback(
             &self.world.collision,
             &self.world.graph,
             self.from,
-            candidates,
+            stands,
+            tiles,
             self.opts,
             state,
         );
@@ -735,9 +748,13 @@ impl ScriptRouteRequest {
             let scratch = search.scratch_capacities();
             log_walk_arm(&slot, || {
                 format!(
-                    "{label} first end candidates={} settled={} scratch={}/{}/{}/{} \
-                     reverse={}/{} proof={:?} elapsed_ms={elapsed_ms} routed={}",
-                    candidates.len(),
+                    "approach solid dest={:?} r={} stands={} tiles={} settled={} \
+                     scratch={}/{}/{}/{} reverse={}/{} proof={:?} elapsed_ms={elapsed_ms} \
+                     stand={} tile={:?}",
+                    self.to,
+                    self.radius,
+                    stands.len(),
+                    tiles.len(),
                     search.settled(),
                     scratch.distances,
                     scratch.predecessors,
@@ -746,30 +763,80 @@ impl ScriptRouteRequest {
                     scratch.reverse,
                     scratch.reverse_queue,
                     search.proof(),
-                    search.route().is_ok()
+                    search.route().is_ok(),
+                    search.fallback().map(|tile| match tile {
+                        FallbackRoute::Routed(route) => Ok(route.dest),
+                        other => Err(other.clone()),
+                    })
                 )
             });
         }
-        if let Ok(route) = search.into_route() {
+        let strict_tile = match search.into_routes() {
+            (Ok(route), _) => return RouteOutcome::Routed(route),
+            (Err(_), tile) => tile,
+        };
+
+        let fetchable = fetchable_facts(&self.world, self.opts, state, &self.bank);
+        let mut fetch_tiles = None;
+        if let Some(fetchable) = &fetchable {
+            // A strict route to a tile beats a session to one, so a routed
+            // strict tile leaves the stands alone to search.
+            let tiles = match strict_tile {
+                Some(FallbackRoute::Routed(_)) => &[][..],
+                _ => tiles,
+            };
+            match fetch_stand(
+                &self.world,
+                self.from,
+                stands,
+                tiles,
+                self.opts,
+                state,
+                fetchable,
+                &self.bank,
+            ) {
+                StandFetch::Outcome(outcome) => return outcome,
+                StandFetch::Tiles(known) => fetch_tiles = known,
+            }
+        }
+
+        let strict_tile = match strict_tile {
+            Some(FallbackRoute::Routed(route)) => Some(route),
+            Some(FallbackRoute::Undecided) => find_first_with(
+                &self.world.collision,
+                &self.world.graph,
+                self.from,
+                tiles,
+                self.opts,
+                state,
+            )
+            .into_route()
+            .ok(),
+            Some(FallbackRoute::Failed(_)) | None => None,
+        };
+        if let Some(route) = strict_tile {
             return RouteOutcome::Routed(route);
         }
-        // Everything reachable is settled, the goals are proven
-        // unreachable, or the budget is spent: BankBudget diagnoses the
-        // same goals with one relaxed first-goal search.
-        let started = debug.then(Instant::now);
-        let outcome = bank_fetch_after_first_no_path(
-            &self.world,
-            self.from,
-            candidates,
-            self.opts,
-            state,
-            &self.bank,
-        );
+
+        let outcome = match &fetchable {
+            Some(fetchable) => fetch_tile(
+                &self.world,
+                self.from,
+                tiles,
+                fetch_tiles,
+                self.opts,
+                state,
+                fetchable,
+                &self.bank,
+            ),
+            None => RouteOutcome::NoPath,
+        };
         if debug {
             let elapsed_ms = started.unwrap().elapsed().as_millis();
             log_walk_arm(&slot, || {
                 format!(
-                    "{label} bank diagnosis elapsed_ms={elapsed_ms} outcome={}",
+                    "approach solid end elapsed_ms={elapsed_ms} fetchable={} outcome={}",
+                    fetchable.is_some(),
                     walk_arm_outcome_tag(&outcome)
                 )
             });
@@ -827,46 +894,26 @@ impl ScriptRouteRequest {
             );
         }
 
-        let corrected_solid_target = self.live_candidates.is_some();
-        if let Some(candidates) = self.live_candidates.as_ref() {
-            let candidates = candidates.as_slice();
-            if debug_enabled() {
-                let slot = walk_arm_worker_slot();
-                log_walk_arm(&slot, || {
-                    format!(
-                        "approach primary dest={:?} r={} candidates={}",
-                        self.to,
-                        self.radius,
-                        candidates.len()
-                    )
-                });
-            }
-            let outcome = self.calculate_first(candidates, state, "approach primary");
-            if !matches!(outcome, RouteOutcome::NoPath) {
-                return outcome;
-            }
-        }
-
-        // Frozen PathFinder falls back after target-cardinal goals fail.
-        // Preserve this host's radius goal set for empty or unroutable
-        // corrected goals, and the full old sequential policy for
-        // standable/off-scene destinations.
+        // Frozen PathFinder falls back to the radius goal set after the
+        // target-cardinal goals fail. Standable and off-scene destinations
+        // keep the old sequential policy over the same set.
         let generated = approach_tiles(&self.world, self.from, self.to, self.radius);
-        if debug_enabled() {
-            let slot = walk_arm_worker_slot();
-            log_walk_arm(&slot, || {
-                format!(
-                    "approach fallback dest={:?} r={} candidates={}",
-                    self.to,
-                    self.radius,
-                    generated.len()
-                )
-            });
-        }
-        if corrected_solid_target {
-            self.calculate_first(&generated, state, "approach fallback")
-        } else {
-            self.calculate_in_order(&generated, state, "approach fallback")
+        match self.live_candidates.as_ref() {
+            Some(stands) => self.calculate_solid(stands.as_slice(), &generated, state),
+            None => {
+                if debug_enabled() {
+                    let slot = walk_arm_worker_slot();
+                    log_walk_arm(&slot, || {
+                        format!(
+                            "approach fallback dest={:?} r={} candidates={}",
+                            self.to,
+                            self.radius,
+                            generated.len()
+                        )
+                    });
+                }
+                self.calculate_in_order(&generated, state, "approach fallback")
+            }
         }
     }
 }
