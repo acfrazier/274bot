@@ -13,8 +13,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.1.8` 
 
 ### Script host
 
-- Baker-stall restocking now awaits one Rust step machine; Rust owns callback
-  polling, waits, steal verbs, stand swaps and lockout sequencing.
+- Baker-stall restocking now awaits one Rust step machine; Rust owns selected
+  stall facts, callback polling, waits, steal verbs, stand swaps and lockout
+  sequencing while callbacks retain the options object as their receiver.
 - Entity-query `withinOf` again follows the frozen planar x/z Chebyshev
   distance, independent of storey.
 

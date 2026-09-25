@@ -139,6 +139,7 @@ import { STALL_TILE, STAND, STAND_ALT, FLEE_TILE, STALL_NAME, STALL_OP, CAKE_ITE
 
 globalThis.__stolen = 0;
 globalThis.__reset = 0;
+globalThis.__receivers = [];
 globalThis.__result = null;
 globalThis.__pins = {
     stall: STALL_TILE ? [STALL_TILE.x, STALL_TILE.z, STALL_TILE.level] : null,
@@ -165,22 +166,40 @@ export default class T extends LoopingBot {
         }
         globalThis.__carried = carriedCakes();
         globalThis.__need = needsCakeRestock(globalThis.__needTarget);
-        globalThis.__result = await stealCakes({
+        const opts = {
             fillTo: globalThis.__fillTo,
-            abort: () => globalThis.__abort === true,
-            shouldEat: () => globalThis.__eat === true,
-            lockedOutUntil: () => globalThis.__lockUntil ?? 0,
-            setStatus: (s) => { (globalThis.__events ||= []).push(['status', s]); },
-            log: (m) => {
+            abort() {
+                globalThis.__receivers.push(['abort', this === opts]);
+                return globalThis.__abort === true;
+            },
+            shouldEat() {
+                globalThis.__receivers.push(['shouldEat', this === opts]);
+                return globalThis.__eat === true;
+            },
+            lockedOutUntil() {
+                globalThis.__receivers.push(['lockedOutUntil', this === opts]);
+                return globalThis.__lockUntil ?? 0;
+            },
+            setStatus(s) {
+                globalThis.__receivers.push(['setStatus', this === opts]);
+                (globalThis.__events ||= []).push(['status', s]);
+            },
+            log(m) {
+                globalThis.__receivers.push(['log', this === opts]);
                 (globalThis.__logs ||= []).push(m);
                 (globalThis.__events ||= []).push(['log', m]);
             },
-            onSteal: () => { globalThis.__stolen += 1; },
-            onReset: () => {
+            onSteal() {
+                globalThis.__receivers.push(['onSteal', this === opts]);
+                globalThis.__stolen += 1;
+            },
+            onReset() {
+                globalThis.__receivers.push(['onReset', this === opts]);
                 globalThis.__reset += 1;
                 (globalThis.__events ||= []).push(['reset']);
             },
-        });
+        };
+        globalThis.__result = await stealCakes(opts);
         globalThis.__returns = (globalThis.__returns ?? 0) + 1;
     }
 }
@@ -292,7 +311,7 @@ fn native_cake_stall_does_not_roundtrip_js_snapshot_collections() {
 }
 
 #[test]
-fn other_stall_depleted_wrong_op_and_missing_facts_queue_nothing() {
+fn rust_selected_facts_outlive_js_content_and_invalid_stalls_queue_nothing() {
     let steal = ["Steal from".to_string()];
     let examine = ["Examine".to_string()];
     let open = ["Open".to_string()];
@@ -361,8 +380,9 @@ fn other_stall_depleted_wrong_op_and_missing_facts_queue_nothing() {
     snap.locs = &locs;
     post_snapshot_input(&iso, &snap);
     tick(&iso, 1);
-    assert!(iso.drain_interacts().is_empty());
-    assert_eq!(wait_result(&iso), "no-progress");
+    assert_eq!(iso.drain_interacts(), vec![steal_loc()]);
+    iso.probe("globalThis.__abort = true").unwrap();
+    assert_eq!(wait_result(&iso), "aborted");
     iso.join();
 }
 
@@ -457,8 +477,9 @@ fn gates_skip_dispatch_and_walk_revalidates() {
     snap.tick = 2;
     post_snapshot_input(&iso, &snap);
     tick(&iso, 2);
-    assert!(iso.drain_interacts().is_empty());
-    assert_eq!(wait_result(&iso), "no-progress");
+    assert_eq!(iso.drain_interacts(), vec![steal_loc()]);
+    iso.probe("globalThis.__abort = true").unwrap();
+    assert_eq!(wait_result(&iso), "aborted");
     iso.join();
 }
 
@@ -493,6 +514,13 @@ fn food_delta_calls_onsteal_once_and_partial_is_not_stocked() {
     iso.probe("globalThis.__abort = true").unwrap();
     assert_eq!(wait_result(&iso), "aborted");
     assert_eq!(iso.probe("__stolen").unwrap(), 1);
+    let receivers: Vec<serde_json::Value> =
+        serde_json::from_value(iso.probe("globalThis.__receivers").unwrap()).unwrap();
+    assert!(
+        receivers.contains(&serde_json::json!(["onSteal", true]))
+            && receivers.iter().all(|row| row[1] == true),
+        "{receivers:?}"
+    );
     iso.join();
 
     let iso = spawn();
@@ -605,6 +633,15 @@ fn watched_stand_swaps_after_three_refused_steals() {
         ],
         "{events:?}"
     );
+    let receivers: Vec<serde_json::Value> =
+        serde_json::from_value(iso.probe("globalThis.__receivers").unwrap()).unwrap();
+    for name in ["setStatus", "log", "onReset"] {
+        assert!(
+            receivers.contains(&serde_json::json!([name, true])),
+            "{name}: {receivers:?}"
+        );
+    }
+    assert!(receivers.iter().all(|row| row[1] == true), "{receivers:?}");
     iso.join();
 }
 

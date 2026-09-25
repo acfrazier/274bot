@@ -40,12 +40,11 @@ const LOCKOUT_LINE: &str = "can't steal from the market stall during combat";
 
 const ABORT: usize = 0;
 const SHOULD_EAT: usize = 1;
-const FACTS_VALID: usize = 2;
-const LOCKED_OUT_UNTIL: usize = 3;
-const SET_STATUS: usize = 4;
-const LOG: usize = 5;
-const ON_STEAL: usize = 6;
-const ON_RESET: usize = 7;
+const LOCKED_OUT_UNTIL: usize = 2;
+const SET_STATUS: usize = 3;
+const LOG: usize = 4;
+const ON_STEAL: usize = 5;
+const ON_RESET: usize = 6;
 
 #[derive(Deserialize)]
 pub(crate) struct CakeStallArgs {
@@ -73,7 +72,6 @@ enum DriverPhase {
 enum ObserveStage {
     Abort,
     ShouldEat,
-    Facts,
     Lockout,
     Dispatch,
 }
@@ -81,7 +79,6 @@ enum ObserveStage {
 #[derive(Clone, Copy)]
 enum PendingHook {
     Abort,
-    Facts,
     ShouldEat,
     Lockout,
     Notify,
@@ -95,7 +92,6 @@ pub(crate) struct CakeStall {
     phase: DriverPhase,
     pending: Option<PendingHook>,
     poll_callbacks: bool,
-    facts_valid: bool,
     abort: bool,
     should_eat: bool,
     locked_out_until: i64,
@@ -130,7 +126,6 @@ struct Observation {
     inv_size: i32,
     inv_len: usize,
     carried: i32,
-    facts_valid: bool,
     stall: Option<SelectedLoc>,
     locked_out_until: Option<i64>,
     chat_max_seq: i32,
@@ -209,10 +204,6 @@ impl NativeObservation {
             inv_size: self.inv_size,
             inv_len: self.inv_len,
             carried: self.carried,
-            facts_valid: input
-                .get("facts_valid")
-                .and_then(Value::as_bool)
-                .unwrap_or(false),
             stall: self.stall,
             locked_out_until: input.get("locked_out_until").and_then(Value::as_i64),
             chat_max_seq: self.chat_max_seq,
@@ -440,10 +431,6 @@ impl CakeStallRuntime {
                 None,
             );
         }
-        // No posted pins: nothing here may be trusted to steal from.
-        if !obs.facts_valid {
-            return self.done("no-progress", None);
-        }
         let stand = self.stand();
         if obs.here.is_some_and(|here| here != stand) {
             self.phase = Phase::WaitStand;
@@ -487,9 +474,6 @@ impl CakeStallRuntime {
     }
 
     fn try_steal(&mut self, obs: &Observation) -> Value {
-        if !obs.facts_valid {
-            return self.done("no-progress", None);
-        }
         let Some(loc) = obs.stall else {
             return self.pause(
                 Phase::WaitRestock,
@@ -657,7 +641,6 @@ impl CakeStall {
     fn begin_observe(&mut self, callbacks: bool, lockout: bool) {
         self.abort = false;
         self.should_eat = false;
-        self.facts_valid = false;
         self.locked_out_until = 0;
         self.phase = DriverPhase::Observe {
             callbacks,
@@ -682,9 +665,6 @@ impl CakeStall {
                     Some(PendingHook::Abort) => {
                         self.abort = crate::bank_deposit::truthy(&value);
                     }
-                    Some(PendingHook::Facts) => {
-                        self.facts_valid = crate::bank_deposit::truthy(&value);
-                    }
                     Some(PendingHook::ShouldEat) => {
                         self.should_eat = crate::bank_deposit::truthy(&value);
                     }
@@ -702,7 +682,6 @@ impl CakeStall {
         let mut input = json!({
             "abort": self.abort,
             "should_eat": self.should_eat,
-            "facts_valid": self.facts_valid,
         });
         if lockout {
             input["locked_out_until"] = json!(self.locked_out_until);
@@ -752,7 +731,6 @@ impl Family for CakeStall {
     const CALLBACKS: &'static [&'static str] = &[
         "abort",
         "shouldEat",
-        "factsValid",
         "lockedOutUntil",
         "setStatus",
         "log",
@@ -764,7 +742,6 @@ impl Family for CakeStall {
     const SYNC_HOOKS: &'static [usize] = &[
         ABORT,
         SHOULD_EAT,
-        FACTS_VALID,
         LOCKED_OUT_UNTIL,
         SET_STATUS,
         LOG,
@@ -786,7 +763,6 @@ impl Family for CakeStall {
             phase: DriverPhase::ReportStatus,
             pending: None,
             poll_callbacks: false,
-            facts_valid: false,
             abort: false,
             should_eat: false,
             locked_out_until: 0,
@@ -891,20 +867,10 @@ impl Family for CakeStall {
                         self.phase = DriverPhase::Observe {
                             callbacks,
                             lockout,
-                            stage: ObserveStage::Facts,
+                            stage: ObserveStage::Lockout,
                         };
                         if callbacks && !self.abort && cx.has(SHOULD_EAT) {
                             return self.call(SHOULD_EAT, PendingHook::ShouldEat, Vec::new());
-                        }
-                    }
-                    ObserveStage::Facts => {
-                        self.phase = DriverPhase::Observe {
-                            callbacks,
-                            lockout,
-                            stage: ObserveStage::Lockout,
-                        };
-                        if cx.has(FACTS_VALID) {
-                            return self.call(FACTS_VALID, PendingHook::Facts, Vec::new());
                         }
                     }
                     ObserveStage::Lockout => {
@@ -1058,7 +1024,6 @@ mod tests {
             inv_size: 28,
             inv_len: 0,
             carried: 0,
-            facts_valid: true,
             stall: Some(SelectedLoc {
                 id: BAKER_STALL.loc_id,
                 x: BAKER_STALL.stall.x,
