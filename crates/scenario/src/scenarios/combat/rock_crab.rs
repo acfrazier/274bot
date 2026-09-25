@@ -355,7 +355,8 @@ pub(crate) fn rock_crab_bank_seeded_scenario() -> Scenario {
     acknowledge_dormant_rocks_before_start(&mut scenario);
     scenario.settings.fixture_loadouts = Some(ROCK_CRAB_FIXTURE_LOADOUTS);
     for step in &mut scenario.steps {
-        if step.name == "watch seeded RockCrab cargo reach the Seers bank after deposit"
+        if step.name == "watch seeded Sapphire leave the backpack after PeriodicBank deposit"
+            || step.name == "watch seeded RockCrab cargo reach the Seers bank after deposit"
             || step.name == "watch return toward the nearest RockCrab spot after seeded banking"
         {
             step.wait.budget_ticks = ROCK_CRAB_BANK_ROUTE_WATCH_TICKS;

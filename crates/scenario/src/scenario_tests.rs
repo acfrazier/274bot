@@ -2352,6 +2352,13 @@ fn hazard_camp_cells_register_their_cards_injects_and_watch_chain() {
         .map(|step| step.wait.arm)
         .collect::<Vec<_>>();
     let seeded_route_steps = &seeded.steps[seeded_start + 1..];
+    let walk_index = seeded_route_steps
+        .iter()
+        .position(|step| {
+            step.name == "watch seeded Sapphire leave the backpack after PeriodicBank deposit"
+        })
+        .expect("seeded PeriodicBank walk/deposit proof");
+    assert_eq!(seeded_route_steps[walk_index].wait.budget_ticks, 320);
     let deposit_index = seeded_route_steps
         .iter()
         .position(|step| step.name == "watch seeded Sapphire enter a fresh Seers bank")
@@ -2362,6 +2369,7 @@ fn hazard_camp_cells_register_their_cards_injects_and_watch_chain() {
             step.name == "watch seeded RockCrab cargo reach the Seers bank after deposit"
         })
         .expect("seeded Seers arrival proof");
+    assert!(walk_index < deposit_index);
     assert!(deposit_index < arrival_index);
     assert_eq!(seeded_route_steps[arrival_index].wait.budget_ticks, 320);
     let return_index = seeded_route_steps
