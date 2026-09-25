@@ -31,7 +31,8 @@ pub struct SlotStatus {
     /// `None`; explicit restart replaces the whole status row.
     pub worker_terminal: Option<WorkerTerminal>,
     pub runenergy: i32,
-    /// Accepted auto-run `set_run(true)` sends this slot has made.
+    /// Accepted auto-run sends in the current connected session; reset on
+    /// every session boundary.
     pub run_sends: u32,
     /// Local-player tile (filled from `local_player` in observe).
     pub tile_x: i32,
@@ -60,10 +61,11 @@ pub struct SlotStatus {
     /// the `walk_*` fields).
     pub queue_position: i32,
     pub queue_total: i32,
-    /// Intentional logout latch ([`SlotArm::latch`]): the slot is parked on
-    /// the title until the operator explicitly arms login again.
+    /// Intentional logout latch ([`SlotArm::login_latched`]): the slot is
+    /// parked on the title until the operator explicitly arms login again.
     pub login_latched: bool,
-    /// Payload bytes from `Client.stream` (0 when no stream).
+    /// Payload bytes from the current `Client.stream`; reset to zero whenever
+    /// the connected session ends.
     pub bytes_in: u64,
     pub bytes_out: u64,
     /// Newest `MESSAGE_GAME` / chat-ring head (`chat_text[0]`). Used to
@@ -75,10 +77,9 @@ pub struct SlotStatus {
     /// panel and the TUI bind.
     pub random: RandomStatus,
     /// The slot script's latest recorded paint frame (the Load isolate
-    /// forwards it after every tick that painted); `None` when the slot
-    /// has no script or the script has not painted. The frame is shared,
-    /// not copied: the status holds the same one the isolate recorder
-    /// built — the TUI shows it in the chat pane in place of the game chat.
+    /// forwards it after every tick that painted). Disconnect and Pause retain
+    /// this shared frame; Stop or slot unload clears it from the lifecycle
+    /// owner even when no online observe runs. `None` means no current paint.
     pub script_paint: Option<std::sync::Arc<script::shim::ScriptPaint>>,
 }
 
@@ -356,6 +357,9 @@ pub(super) fn reset_slot_observation(s: &mut SlotStatus) {
     s.ingame = false;
     s.scene_state = 0;
     s.runenergy = 0;
+    s.run_sends = 0;
+    s.bytes_in = 0;
+    s.bytes_out = 0;
     s.main_modal_id = -1;
     s.welcome_hold = false;
     s.welcome_failure = None;
@@ -422,6 +426,7 @@ pub(super) fn publish_worker_terminal(
         return;
     };
     reset_slot_observation(status);
+    status.script_paint = None;
     status.login_started = None;
     status.queue_position = -1;
     status.queue_total = -1;

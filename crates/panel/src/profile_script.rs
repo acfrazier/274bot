@@ -887,7 +887,13 @@ impl Session {
             let state = play.script_state(&slot_name);
             match state {
                 script::RunState::Running | script::RunState::Starting => {
-                    play.script_stop(&slot_name);
+                    if !play.script_stop_if_identity_generation(
+                        &slot_name,
+                        &live_key,
+                        warned_gen,
+                    ) {
+                        continue;
+                    }
                     match self.script_start_prepared(&slot_name, prepared_card) {
                         Ok(()) => restarted += 1,
                         Err(e) => {
@@ -897,8 +903,13 @@ impl Session {
                     }
                 }
                 script::RunState::Paused => {
-                    play.script_stop(&slot_name);
-                    stopped_paused += 1;
+                    if play.script_stop_if_identity_generation(
+                        &slot_name,
+                        &live_key,
+                        warned_gen,
+                    ) {
+                        stopped_paused += 1;
+                    }
                 }
                 _ => {}
             }

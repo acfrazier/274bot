@@ -345,6 +345,34 @@ fn startup_observe_keeps_loading_scene_across_initial_session_generation() {
 }
 
 #[test]
+fn disconnected_row_drops_session_counters_but_retains_script_paint() {
+    let paint = Arc::new(script::shim::ScriptPaint::default());
+    let statuses = Arc::new(Mutex::new(vec![SlotStatus {
+        username: "alice".into(),
+        connected: true,
+        ingame: true,
+        bytes_in: 123,
+        bytes_out: 456,
+        run_sends: 7,
+        script_paint: Some(Arc::clone(&paint)),
+        ..SlotStatus::default()
+    }]));
+
+    crate::play_status::publish_slot_disconnected(&statuses, "alice");
+
+    let rows = statuses.lock().unwrap();
+    assert_eq!((rows[0].bytes_in, rows[0].bytes_out), (0, 0));
+    assert_eq!(rows[0].run_sends, 0);
+    assert!(
+        rows[0]
+            .script_paint
+            .as_ref()
+            .is_some_and(|retained| Arc::ptr_eq(retained, &paint)),
+        "disconnect retains the paused script's shared paint frame"
+    );
+}
+
+#[test]
 fn projected_npc_boxes_follow_the_live_clients_bounded_npc_list() {
     let mut client = Client::new(ClientConfig {
         host: "127.0.0.1".into(),
@@ -4610,6 +4638,88 @@ fn grant_login(s: &mut std::net::TcpStream, log: &Mutex<Vec<u8>>, code: u8) {
 }
 
 // --- Task 5: per-uid compiled scripts ---
+
+#[test]
+fn script_stop_clears_offline_published_paint() {
+    let play = run_with_io(
+        &PlayOptions {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            lowmem: true,
+            mainland: false,
+        },
+        vec![],
+        |_| (None, None),
+        |_, _, _| {},
+    );
+    script_slot_or_insert(&play.scripts, "alice");
+    play.statuses.lock().unwrap().push(SlotStatus {
+        username: "alice".into(),
+        script_paint: Some(Arc::new(script::shim::ScriptPaint::default())),
+        ..SlotStatus::default()
+    });
+
+    play.script_pause("alice");
+    assert!(
+        play.statuses.lock().unwrap()[0].script_paint.is_some(),
+        "Pause retains the offline paint frame"
+    );
+
+    play.script_stop("alice");
+
+    assert!(
+        play.statuses.lock().unwrap()[0].script_paint.is_none(),
+        "script lifecycle owner clears paint without an online observe"
+    );
+}
+
+#[test]
+fn fenced_script_stop_requires_same_identity_and_generation() {
+    let mut play = run_with_io(
+        &PlayOptions {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            lowmem: true,
+            mainland: false,
+        },
+        vec![],
+        |_| (None, None),
+        |_, _, _| {},
+    );
+    play.attach_arm("alice", SlotArm::new(7, false));
+    play.script_start_load(
+        "alice",
+        "export function tick(api) {}".into(),
+        script::LoadShape::NativeTick,
+        None,
+        vec![],
+    )
+    .unwrap();
+    wait_script_state(&play, "alice", script::RunState::Running);
+    play.script_attach_identity("alice", "card:a");
+    let generation = play.script_runtime_generation("alice").unwrap();
+
+    assert!(!play.script_stop_if_identity_generation(
+        "alice",
+        "card:b",
+        generation
+    ));
+    assert!(!play.script_stop_if_identity_generation(
+        "alice",
+        "card:a",
+        generation.wrapping_add(1)
+    ));
+    assert_eq!(play.script_state("alice"), script::RunState::Running);
+
+    assert!(play.script_stop_if_identity_generation(
+        "alice",
+        "card:a",
+        generation
+    ));
+    wait_script_state(&play, "alice", script::RunState::Idle);
+}
 
 #[test]
 fn script_start_unknown_compiled_id_errors_without_v8() {

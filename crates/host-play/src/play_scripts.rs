@@ -157,6 +157,22 @@ impl Play {
         self.spawned.contains(name) || self.arms.contains_key(name)
     }
 
+    /// Paint is status-owned once published. Script lifecycle commands clear
+    /// it directly because a disconnected slot has no observe pass. Call only
+    /// after releasing the script-slot guard: script -> status is the sole
+    /// permitted nesting order, and this path does not need to nest them.
+    fn clear_script_paint_status(&self, name: &str) {
+        if let Some(status) = self
+            .statuses
+            .lock()
+            .unwrap()
+            .iter_mut()
+            .find(|status| status.username == name)
+        {
+            status.script_paint = None;
+        }
+    }
+
     /// Start a compiled script on `name`'s slot. `Err("no slot: {name}")`
     /// when no running slot owns that name, `Err("not ported: {id}")` when
     /// the picker id has no ported script yet, or `Err` when the slot
@@ -259,7 +275,8 @@ impl Play {
         self.wake(name);
     }
 
-    /// Stop `name`'s script: teardown hook, instance dropped, Idle.
+    /// Stop `name`'s script: teardown hook, instance dropped, Idle. Clear its
+    /// published paint even while the client is offline.
     pub fn script_stop(&self, name: &str) {
         let slot = script_slot(&self.scripts, name);
         let mut guard = slot.as_ref().map(|slot| slot.lock().unwrap());
@@ -270,7 +287,35 @@ impl Play {
         // A previously dequeued worker can no longer publish or arm a route.
         invalidate_bank_pick(&self.navs, name);
         drop(guard);
+        self.clear_script_paint_status(name);
         self.wake(name);
+    }
+
+    /// Stop only the exact script lifetime inspected by a reload warning.
+    /// Identity, generation, and Stop are one slot-lock transaction; a newer
+    /// script can never be stopped by an older confirmation.
+    pub fn script_stop_if_identity_generation(
+        &self,
+        name: &str,
+        identity: &str,
+        generation: u64,
+    ) -> bool {
+        let Some(slot) = script_slot(&self.scripts, name) else {
+            return false;
+        };
+        {
+            let mut slot = slot.lock().unwrap();
+            if slot.source_identity() != Some(identity)
+                || slot.runtime_generation() != generation
+            {
+                return false;
+            }
+            slot.stop();
+            invalidate_bank_pick(&self.navs, name);
+        }
+        self.clear_script_paint_status(name);
+        self.wake(name);
+        true
     }
 
     pub fn script_attach_identity(&self, name: &str, identity: impl Into<String>) {
