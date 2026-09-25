@@ -1,5 +1,5 @@
-//! Isolate-owned clue-session machine: `api.clue.begin` / `next`, the v1
-//! SolveClue execute family, and Sherlock.
+//! Isolate-owned clue-session machine: `api.clue.begin` plus one awaited
+//! `api.clue.run`, the v1 SolveClue execute family, and Sherlock.
 //!
 //! One token per isolate over the landed held-step identify. Callers that
 //! omit marshalled pages are filled from the isolate scene
@@ -24,9 +24,9 @@
 //! row that is a selected search
 //! membership — a selected `trail_loc=^true` **and** a decodable selected
 //! `trail_coord` on the same row — walks to its decoded tile and then
-//! dispatches the Search/Open picker over the posted loc page; both verbs are
-//! enqueued by the wrapper as `InteractReq::Walk` / `InteractReq::Loc`. The
-//! picker is the frozen one, minus its `walkLeg`: nearest then action rank,
+//! dispatches the Search/Open picker over the posted loc page; the machine
+//! family enqueues both verbs as `InteractReq::Walk` / `InteractReq::Loc`.
+//! The picker is the frozen one, minus its `walkLeg`: nearest then action rank,
 //! always at the row's own posted tile and id.
 //!
 //! The sibling of that pin is the unguarded dig: a decodable selected

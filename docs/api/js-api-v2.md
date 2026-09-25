@@ -657,8 +657,8 @@ redispatch them; only terminal kinds appear inside a successful run outcome.
 | `open-booth` | the bank trip's `open-booth`: the posted `nearest_booth`'s own identity, `{ x, z, level, id, name?, action? }`, exactly as the landed bank helpers queue it |
 | `close` | the bank interface's own close, after the strip's deposit or the restore's claim |
 | `supplies-needed` | an arrived dig — unguarded or the guarded first Dig — whose posted pack page carries no `Spade`: a named wait-class, not a terminal. The token stays live, nothing is fetched and no `no-spade` error is published |
-| `grind-ready` | the finished collect's continue: the trail is solved and no gear restore is pending, so the token stays live with no verb and the next call is `done` |
-| `done` | the finished collect's own end: the token is dead and the next call with it is `stale`. Never a hunt `status: 'done'` |
+| `grind-ready` | the finished collect's continue: the trail is solved and no gear restore is pending, so the token stays live with no verb and the run advances to `done` |
+| `done` | the finished collect's own end: the token is dead; a later run with that token is refused as `stale`. Never a hunt `status: 'done'` |
 | `dead` | any live call whose posted effective `hitpoints` is some and at or below zero: the token dies with the player, nothing posts `'clue solved'`, and a page that posted no stat is not a zero |
 | `abandon` | a terminal kind with **no production trigger** yet: the machine emits it nowhere on its own, and the latch it sets — the frozen leave-in-pack `abandonedClueId`, with its `retry()` clear — is wired and observable. When it is emitted the token dies and nothing posts `'clue solved'` |
 | `guardian-lost` | the wizard this token Attacked left the posted npc page outside the freeze-aware grace without ever being seen at zero health: the encounter is lost, the token dies and nothing redigs. A disappearance without an Attack stays `wait` |

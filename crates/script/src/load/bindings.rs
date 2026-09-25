@@ -1068,12 +1068,6 @@ function clueKeepV2(input) {
 function clueCall(payload) {
   return globalThis.rustyscript.functions.__rs2b0t_clue(payload);
 }
-function clueBeginError(reason) {
-  if (reason === 'constrained' || reason === 'abandoned') return reason;
-  if (reason === 'missing-selected-data' || reason === 'family-unavailable:trails'
-      || reason === 'none-held') return reason;
-  return 'stale';
-}
 api.clue = {
   row: function (input) {
     if (arguments.length === 0) return helperErr('invalid-args');
@@ -1136,7 +1130,9 @@ api.clue = {
     });
     if (!step || typeof step !== 'object') return helperErr('stale');
     if (step.kind === 'token') return helperOk({ token: step.token });
-    if (step.kind === 'aborted') return helperErr(clueBeginError(step.reason));
+    if (step.kind === 'aborted') {
+      return helperErr(typeof step.reason === 'string' ? step.reason : 'stale');
+    }
     return helperErr('stale');
   },
   // One awaited Rust run owns callback replies, verb mapping, waits and

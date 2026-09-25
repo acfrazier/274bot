@@ -900,3 +900,51 @@ fn example_clue_held_step_v2_is_one_read_only_held_step_call() {
     assert_eq!(step["error"], "none-held", "{step:?}");
     assert!(step.get("value").is_none(), "{step:?}");
 }
+
+#[test]
+fn v2_clue_run_without_hooks_defaults_enabled_false_until_a_terminal() {
+    let src = r#"
+export const apiVersion = 2;
+let started = false;
+export async function tick(api) {
+  if (started) return;
+  started = true;
+  const begin = api.clue.begin();
+  globalThis.__begin = begin;
+  globalThis.__out = null;
+  globalThis.__error = null;
+  try {
+    globalThis.__out = await api.clue.run(begin.value);
+  } catch (error) {
+    globalThis.__error = String(error && error.message ? error.message : error);
+  }
+}
+"#;
+    let data = api::game_data::for_revision(ClientRevision::R274).unwrap();
+    let iso =
+        LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data).unwrap();
+
+    post_page(&iso, 1, &[(2677, 1)]);
+    iso.on_game_tick(1);
+    assert_eq!(iso.probe("globalThis.__begin.ok").unwrap(), true);
+    assert!(iso.probe("globalThis.__out").unwrap().is_null());
+    assert!(iso.probe("globalThis.__error").unwrap().is_null());
+    assert!(iso.drain_interacts().is_empty());
+
+    post_scene(
+        &iso,
+        2,
+        &[(2677, 1)],
+        &Scene {
+            ours: true,
+            ..Scene::default()
+        },
+    );
+    iso.on_game_tick(2);
+    let out = iso.probe("globalThis.__out").unwrap();
+    assert_eq!(out["kind"], "done", "{out:?}");
+    assert_eq!(out["value"]["kind"], "yield", "{out:?}");
+    assert!(iso.probe("globalThis.__error").unwrap().is_null());
+    assert!(iso.drain_interacts().is_empty());
+    iso.join();
+}

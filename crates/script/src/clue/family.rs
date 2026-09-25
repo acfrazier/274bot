@@ -64,6 +64,10 @@ impl Family for Clue {
             let kind = step.get("kind").and_then(Value::as_str).unwrap_or("");
             match kind {
                 "callback.enabled" => {
+                    if !cx.has(HOOK_ENABLED) {
+                        self.resume = Some(false);
+                        continue;
+                    }
                     self.last_hook = Some(HOOK_ENABLED);
                     return Step::Call(Call {
                         hook: HOOK_ENABLED,
