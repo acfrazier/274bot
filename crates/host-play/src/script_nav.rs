@@ -4,7 +4,7 @@ use std::thread;
 use std::time::Instant;
 
 use api::snapshot::{GameSnapshot, WorldTile};
-use nav::router::{find_missing_item_reqs, FindOptions, MissingReq, Route};
+use nav::router::{find_many_with, find_missing_item_reqs, FindOptions, MissingReq, Route};
 use nav::traveller::Traveller;
 use nav::world::NavWorld;
 use nav::WorldState;
@@ -311,13 +311,6 @@ impl ScriptWalkArm {
             z: hz,
             level: hl,
         };
-        // Resolve live-scene geometry synchronously while the snapshot is
-        // borrowed. The detached worker receives only owned coordinates.
-        let live_candidates = if radius > 0 {
-            snapshot.and_then(|snapshot| solid_target_approach_tiles(snapshot, from, to))
-        } else {
-            None
-        };
         let token = {
             let mut navs = self.navs.lock().unwrap();
             let bot = navs.entry(self.name.clone()).or_default();
@@ -383,6 +376,14 @@ impl ScriptWalkArm {
                 });
                 return true;
             }
+            // Resolve live-scene geometry only after this request wins the
+            // refusal/coalescing gates. The detached worker receives owned
+            // coordinates, never the borrowed snapshot.
+            let live_candidates = if radius > 0 {
+                snapshot.and_then(|snapshot| solid_target_approach_tiles(snapshot, to))
+            } else {
+                None
+            };
             if let Some(ess) = bot.traveller.essence() {
                 opts.essence = Some(ess);
             }
@@ -544,8 +545,8 @@ impl ScriptWalkArm {
 
 const MAX_LIVE_CANDIDATES: usize = 4;
 
-/// Fixed-capacity arm-time goals. A solid tile has at most four orthogonal
-/// arrival stands, so transferring them to the worker needs no heap allocation.
+/// Fixed-capacity arm-time goals. The destination tile has at most four
+/// orthogonal arrival stands, so the worker receives only inline coordinates.
 #[derive(Clone, Copy)]
 pub(crate) struct LiveCandidates {
     tiles: [WorldTile; MAX_LIVE_CANDIDATES],
@@ -560,13 +561,10 @@ impl LiveCandidates {
         }
     }
 
-    fn one(tile: WorldTile) -> Self {
-        let mut candidates = Self::empty(tile);
-        candidates.push(tile);
-        candidates
-    }
-
-    fn push(&mut self, tile: WorldTile) {
+    fn push_unique(&mut self, tile: WorldTile) {
+        if self.as_slice().contains(&tile) {
+            return;
+        }
         debug_assert!(self.len < MAX_LIVE_CANDIDATES);
         self.tiles[self.len] = tile;
         self.len += 1;
@@ -577,56 +575,41 @@ impl LiveCandidates {
     }
 }
 
-/// For an in-scene solid destination, select only stands that can actually
-/// satisfy the destination's arrival/interaction geometry. `None` preserves
-/// the existing off-scene and standable-target radius policy. `Some(empty)`
-/// means the live scene proved that no legal stand is available.
-fn solid_target_approach_tiles(
-    snapshot: &GameSnapshot,
-    from: WorldTile,
-    to: WorldTile,
-) -> Option<LiveCandidates> {
+/// For an in-scene solid destination, capture the target tile's own legal
+/// cardinal sides. A modeled footprint loc additionally requires an operable
+/// side, so a 2x2 loc cannot send a radius-1 walk to its far perimeter.
+///
+/// This deliberately does not filter by the current-scene flood: a shut door,
+/// gate, scene edge, or transport can separate `from` from a legal stand while
+/// the baked graph can still route there. `None` preserves the existing
+/// off-scene and standable-target policy; an empty or unroutable `Some` falls
+/// back to that policy in [`ScriptRouteRequest::calculate`].
+fn solid_target_approach_tiles(snapshot: &GameSnapshot, to: WorldTile) -> Option<LiveCandidates> {
     let scene = snapshot.scene();
-    let query = api::query::SceneQuery::new(scene, Some(from));
+    let query = api::query::SceneQuery::new(scene, None);
     if !query.contains(to) || query.walkable(to) {
         return None;
     }
 
-    let mut matching_locs = snapshot
-        .locs()
-        .iter()
-        .filter(|loc| loc.tile == to)
-        .peekable();
-    if matching_locs.peek().is_some() {
-        if let Some(flood) = query.flood_reach() {
-            let mut modeled = false;
-            for loc in matching_locs {
-                let Some(approach) = query.booth_approach(loc, &flood) else {
-                    continue;
-                };
-                modeled = true;
-                if let Some(dest) = approach.dest {
-                    return Some(LiveCandidates::one(dest));
-                }
-            }
-            if modeled {
-                return Some(LiveCandidates::empty(to));
+    let mut cardinal = LiveCandidates::empty(to);
+    for tile in query.arrival_stands(to) {
+        cardinal.push_unique(tile);
+    }
+
+    let mut modeled = false;
+    let mut operable_cardinal = LiveCandidates::empty(to);
+    for loc in snapshot.locs().iter().filter(|loc| loc.tile == to) {
+        let Some(operable) = query.operable_tiles(loc) else {
+            continue;
+        };
+        modeled = true;
+        for &tile in cardinal.as_slice() {
+            if operable.contains(&tile) {
+                operable_cardinal.push_unique(tile);
             }
         }
     }
-
-    let mut candidates = LiveCandidates::empty(to);
-    for tile in query.arrival_stands(to) {
-        candidates.push(tile);
-    }
-    candidates.tiles[..candidates.len].sort_unstable_by_key(|tile| {
-        (
-            (tile.x - from.x).abs().max((tile.z - from.z).abs()),
-            tile.x,
-            tile.z,
-        )
-    });
-    Some(candidates)
+    Some(if modeled { operable_cardinal } else { cardinal })
 }
 
 /// Candidate destinations for an explicit radius request. Exact walks retain
@@ -676,8 +659,9 @@ pub(crate) struct ScriptRouteRequest {
     pub(crate) opts: FindOptions,
     pub(crate) state: Option<WorldState>,
     pub(crate) bank: Vec<(i32, i32)>,
-    /// Arm-time goals derived from the borrowed live scene. `None` means
-    /// preserve the baked/off-scene radius enumeration.
+    /// Arm-time target-cardinal goals derived from the borrowed live scene.
+    /// `None` means preserve the baked/off-scene radius enumeration; empty
+    /// or unroutable goals explicitly fall back to the same enumeration.
     pub(crate) live_candidates: Option<LiveCandidates>,
     pub(crate) completion: RouteCompletion,
 }
@@ -714,6 +698,94 @@ impl ScriptRouteRequest {
             .collect()
     }
 
+    fn calculate_many(&self, candidates: &[WorldTile], state: &WorldState) -> RouteOutcome {
+        if candidates.is_empty() {
+            return RouteOutcome::NoPath;
+        }
+        let debug = debug_enabled();
+        let slot = walk_arm_worker_slot();
+        let started = debug.then(Instant::now);
+        let routes = find_many_with(
+            &self.world.collision,
+            &self.world.graph,
+            self.from,
+            candidates,
+            self.opts,
+            state,
+        );
+        let best = routes
+            .results()
+            .iter()
+            .enumerate()
+            .filter_map(|(index, result)| result.as_ref().ok().map(|cost| (index, cost.ticks)))
+            .min_by(|left, right| {
+                left.1
+                    .total_cmp(&right.1)
+                    .then_with(|| left.0.cmp(&right.0))
+            });
+        if debug {
+            let elapsed_ms = started.unwrap().elapsed().as_millis();
+            log_walk_arm(&slot, || {
+                format!(
+                    "approach multi end candidates={} settled={} elapsed_ms={elapsed_ms} routed={}",
+                    candidates.len(),
+                    routes.settled(),
+                    best.is_some()
+                )
+            });
+        }
+        if let Some((index, _)) = best {
+            return match routes.route(index) {
+                Ok(route) => RouteOutcome::Routed(route),
+                Err(_) => RouteOutcome::NoPath,
+            };
+        }
+
+        // BankBudget remains a host policy above the strict router. Only
+        // after the shared strict search found no target can a candidate's
+        // missing-item diagnosis produce a session.
+        if self.opts.allow_bank_fetch {
+            return self.calculate_in_order(candidates, state, "approach bank");
+        }
+        RouteOutcome::NoPath
+    }
+
+    fn calculate_in_order(
+        &self,
+        candidates: &[WorldTile],
+        state: &WorldState,
+        label: &str,
+    ) -> RouteOutcome {
+        let debug = debug_enabled();
+        let slot = walk_arm_worker_slot();
+        for (idx, &target) in candidates.iter().enumerate() {
+            if debug {
+                log_walk_arm(&slot, || {
+                    format!(
+                        "{label} begin idx={idx} target={target:?} generation={} request_id={}",
+                        self.generation, self.request_id
+                    )
+                });
+            }
+            let started = debug.then(Instant::now);
+            let outcome =
+                route_or_bank_fetch(&self.world, self.from, target, self.opts, state, &self.bank);
+            if debug {
+                let elapsed_ms = started.unwrap().elapsed().as_millis();
+                log_walk_arm(&slot, || {
+                    format!(
+                        "{label} end idx={idx} target={target:?} elapsed_ms={elapsed_ms} outcome={}",
+                        walk_arm_outcome_tag(&outcome)
+                    )
+                });
+            }
+            if !matches!(outcome, RouteOutcome::NoPath) {
+                return outcome;
+            }
+        }
+        RouteOutcome::NoPath
+    }
+
     pub(crate) fn calculate(&self) -> RouteOutcome {
         let empty = WorldState::empty();
         let state = self.state.as_ref().unwrap_or(&empty);
@@ -727,52 +799,42 @@ impl ScriptRouteRequest {
                 &self.bank,
             );
         }
-        let generated;
-        let candidates = if let Some(candidates) = self.live_candidates.as_ref() {
-            candidates.as_slice()
-        } else {
-            generated = approach_tiles(&self.world, self.from, self.to, self.radius);
-            &generated
-        };
-        let debug = debug_enabled();
-        let slot = walk_arm_worker_slot();
-        if debug {
-            log_walk_arm(&slot, || {
-                format!(
-                    "approach enumerate dest={:?} r={} candidates={}",
-                    self.to,
-                    self.radius,
-                    candidates.len()
-                )
-            });
-        }
-        for (idx, &target) in candidates.iter().enumerate() {
-            if debug {
+
+        if let Some(candidates) = self.live_candidates.as_ref() {
+            let candidates = candidates.as_slice();
+            if debug_enabled() {
+                let slot = walk_arm_worker_slot();
                 log_walk_arm(&slot, || {
                     format!(
-                        "approach begin idx={idx} target={target:?} generation={} request_id={}",
-                        self.generation, self.request_id
+                        "approach primary dest={:?} r={} candidates={}",
+                        self.to,
+                        self.radius,
+                        candidates.len()
                     )
                 });
             }
-            let started = debug.then(Instant::now);
-            let outcome =
-                route_or_bank_fetch(&self.world, self.from, target, self.opts, state, &self.bank);
-            if debug {
-                let elapsed_ms = started.unwrap().elapsed().as_millis();
-                log_walk_arm(&slot, || {
-                    format!(
-                        "approach end idx={idx} target={target:?} elapsed_ms={elapsed_ms} \
-                         outcome={}",
-                        walk_arm_outcome_tag(&outcome)
-                    )
-                });
-            }
+            let outcome = self.calculate_many(candidates, state);
             if !matches!(outcome, RouteOutcome::NoPath) {
                 return outcome;
             }
         }
-        RouteOutcome::NoPath
+
+        // Frozen PathFinder falls back after target-cardinal goals fail.
+        // Preserve this host's previous radius policy for empty or unroutable
+        // corrected goals, and for standable/off-scene destinations.
+        let generated = approach_tiles(&self.world, self.from, self.to, self.radius);
+        if debug_enabled() {
+            let slot = walk_arm_worker_slot();
+            log_walk_arm(&slot, || {
+                format!(
+                    "approach fallback dest={:?} r={} candidates={}",
+                    self.to,
+                    self.radius,
+                    generated.len()
+                )
+            });
+        }
+        self.calculate_in_order(&generated, state, "approach fallback")
     }
 }
 impl NavBot {

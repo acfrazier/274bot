@@ -34,8 +34,9 @@ fn record_script_act(navs: &Arc<Mutex<HashMap<String, NavBot>>>, slot: &str, act
 /// closed with no send. `walk` / `walk-near` route through the shared
 /// [`ScriptWalkArm`] with the request's three FindOptions bits (serde/old
 /// wire default off). `walk-to` (scene `DirectNavigator`) is the
-/// [`Interactions::walk`] packet. Returns whether the driver's out buffer
-/// was written.
+/// [`Interactions::walk_nearest`] packet, matching frozen
+/// `ClientAdapter.walkTo(... tryNearest=true)`. Returns whether the driver's
+/// out buffer was written.
 #[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn dispatch_script_interact(
@@ -349,7 +350,10 @@ pub(crate) fn dispatch_script_interact_cached(
                 }
             }
             InteractReq::WalkTo { x, z, level } => {
-                let sent = matches!(ix.walk(WorldTile { x, z, level }), SendResult::Sent { .. });
+                let sent = matches!(
+                    ix.walk_nearest(WorldTile { x, z, level }),
+                    SendResult::Sent { .. }
+                );
                 if sent {
                     record_script_act(
                         navs,

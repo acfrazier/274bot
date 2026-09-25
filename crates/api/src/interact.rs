@@ -65,6 +65,10 @@ pub enum WireCommand<'a> {
     Walk {
         tile: WorldTile,
     },
+    /// Scene walk that lets the client settle at its nearest reachable tile.
+    WalkNearest {
+        tile: WorldTile,
+    },
     DoorStep {
         tile: WorldTile,
     },
@@ -859,7 +863,18 @@ impl<'a> Interactions<'a> {
         )
     }
 
+    /// Exact scene walk used by packed-route hops.
     pub fn walk<'t>(&mut self, tile: WorldTile) -> SendResult<'t> {
+        self.walk_with_nearest(tile, false)
+    }
+
+    /// Frozen `DirectNavigator` scene walk: permit the client's nearest
+    /// reachable fallback when `tile` itself is solid.
+    pub fn walk_nearest<'t>(&mut self, tile: WorldTile) -> SendResult<'t> {
+        self.walk_with_nearest(tile, true)
+    }
+
+    fn walk_with_nearest<'t>(&mut self, tile: WorldTile, nearest: bool) -> SendResult<'t> {
         let snapshot = self.snapshot;
         if let Some(reason) = self.precondition(snapshot, false) {
             return refuse(snapshot, reason);
@@ -870,11 +885,12 @@ impl<'a> Interactions<'a> {
         if outside_scene(snapshot.scene(), tile) {
             return refuse(snapshot, SendReason::OffScene);
         }
-        self.dispatch_with(
-            WireCommand::Walk { tile },
-            snapshot.tick() as u64,
-            SendReason::Unreachable,
-        )
+        let command = if nearest {
+            WireCommand::WalkNearest { tile }
+        } else {
+            WireCommand::Walk { tile }
+        };
+        self.dispatch_with(command, snapshot.tick() as u64, SendReason::Unreachable)
     }
 
     /// Queue only an adjacent cardinal step after a door Open. This bypasses
@@ -1133,6 +1149,9 @@ impl<'a> Interactions<'a> {
             }
             WireCommand::Count { value } => answer_count(&mut *self.driver, *value),
             WireCommand::Walk { tile } => walk(&mut *self.driver, tile.x, tile.z),
+            WireCommand::WalkNearest { tile } => {
+                driver::walk_nearest(&mut *self.driver, tile.x, tile.z)
+            }
             WireCommand::DoorStep { tile } => {
                 let revision = self.driver.revision();
                 crate::prot::WalkStep {
@@ -1230,6 +1249,7 @@ fn counts_as_input_activity(command: &WireCommand<'_>) -> bool {
         | WireCommand::ClearLocalModal { .. }
         | WireCommand::Count { .. }
         | WireCommand::Walk { .. }
+        | WireCommand::WalkNearest { .. }
         | WireCommand::DoorStep { .. } => true,
         WireCommand::SideTab { .. } | WireCommand::Login { .. } => false,
     }

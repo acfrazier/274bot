@@ -14,9 +14,10 @@
 //!   even when `isArrived` is false. The resilient layer does not promote that
 //!   low-level settlement to arrival; it continues `walkLadder`.
 //! - No-progress after baked goes to the same-scene `DirectNavigator` step
-//!   (`Traversal.ts:176–178`, `walkLadder.ts:73–77`). This host emits that
-//!   scene click and waits its frozen 6-second bound. It still has no door /
-//!   nearby-step unstick primitive, so that following phase counts one pass.
+//!   (`Traversal.ts:176–178`, `walkLadder.ts:73–77`). Its scene click clamps
+//!   to 48 tiles, accepts the client's nearest reachable stand, and is
+//!   reconsidered every two ticks / reissued after 2400 ms or a stall
+//!   (`DirectNavigator.ts:15–25,28–51`; `ClientAdapter.ts:1739–1745`).
 //! - `UNREACHABLE_PASSES` (3) then verify (`walkLadder.ts:33, 83–84`). No
 //!   `WalkExecutor.probeDest` here, so verify is fail-closed as probe-dead
 //!   (`walkLadder.ts:66–68`).
@@ -36,11 +37,16 @@ use api::snapshot::WorldTile;
 use serde::Deserialize;
 use serde_json::json;
 use std::collections::VecDeque;
+use std::time::{Duration, Instant};
 
 /// Frozen `opts.timeoutMs ?? 90000` (`Traversal.ts:107`).
 pub(crate) const BAKED_TIMEOUT_MS: u64 = 90_000;
 /// Frozen `SCENE_TIMEOUT_MS` (`Traversal.ts:37,176–178`).
 const SCENE_TIMEOUT_MS: u64 = 6_000;
+/// Frozen direct-scene re-click interval (`DirectNavigator.ts:43–47`).
+const SCENE_RECLICK_MS: u64 = 2_400;
+const SCENE_CHECK_TICKS: u8 = 2;
+const SCENE_CLAMP_TILES: i32 = 48;
 /// Frozen `walkWithHops` / hop approach `attempts: 3`.
 pub(crate) const HOP_ATTEMPTS: u32 = 3;
 /// Frozen `UNREACHABLE_PASSES` (`walkLadder.ts:33`).
@@ -211,10 +217,16 @@ impl Walk {
     }
 }
 
+struct SceneStep {
+    last_issued: Instant,
+    last_tile: WorldTile,
+    delay_left: u8,
+}
+
 enum Phase {
     NeedWalk,
     Walking(Walk),
-    Scene,
+    Scene(SceneStep),
     Backoff,
 }
 
@@ -303,11 +315,28 @@ impl Resilient {
         }
         match std::mem::replace(&mut self.phase, Phase::NeedWalk) {
             Phase::NeedWalk => self.kick_walk(cx),
-            Phase::Scene => {
+            Phase::Scene(mut scene) => {
                 if arrived(self.dest, self.radius.saturating_add(1)) || cx.clock().bound_reached() {
                     self.after_scene(cx)
+                } else if scene.delay_left > 1 {
+                    scene.delay_left -= 1;
+                    self.phase = Phase::Scene(scene);
+                    None
                 } else {
-                    self.phase = Phase::Scene;
+                    let Some(current) = here() else {
+                        return Some(false);
+                    };
+                    let now = cx.clock().now();
+                    let stalled = current == scene.last_tile;
+                    let reclick_due = now.saturating_duration_since(scene.last_issued)
+                        >= Duration::from_millis(SCENE_RECLICK_MS);
+                    if stalled || reclick_due {
+                        self.emit_scene_walk(current, cx);
+                        scene.last_issued = now;
+                    }
+                    scene.last_tile = current;
+                    scene.delay_left = SCENE_CHECK_TICKS;
+                    self.phase = Phase::Scene(scene);
                     None
                 }
             }
@@ -328,7 +357,7 @@ impl Resilient {
                         self.phase = Phase::Walking(walk);
                         None
                     }
-                    Some(ok) if owns_wait => self.after_baked(cx, ok),
+                    Some(_) if owns_wait => self.after_baked(cx),
                     Some(_) => self.after_displaced_walk(),
                 }
             }
@@ -351,22 +380,49 @@ impl Resilient {
         }
     }
 
+    fn scene_walk_target(&self, current: WorldTile) -> WorldTile {
+        let clamp = |value: i32, around: i32| {
+            value.clamp(
+                around.saturating_sub(SCENE_CLAMP_TILES),
+                around.saturating_add(SCENE_CLAMP_TILES),
+            )
+        };
+        WorldTile {
+            x: clamp(self.dest.x, current.x),
+            z: clamp(self.dest.z, current.z),
+            level: current.level,
+        }
+    }
+
+    fn emit_scene_walk(&self, current: WorldTile, cx: &mut Cx<'_>) {
+        let target = self.scene_walk_target(current);
+        cx.emit(InteractReq::WalkTo {
+            x: target.x,
+            z: target.z,
+            level: target.level,
+        });
+    }
+
     fn kick_scene(&mut self, cx: &mut Cx<'_>) -> Option<bool> {
         let scene_radius = self.radius.saturating_add(1);
         if arrived(self.dest, scene_radius) {
             return self.after_scene(cx);
         }
-        cx.emit(InteractReq::WalkTo {
-            x: self.dest.x,
-            z: self.dest.z,
-            level: self.dest.level,
-        });
+        let Some(current) = here() else {
+            return Some(false);
+        };
+        self.emit_scene_walk(current, cx);
+        let last_issued = cx.clock().now();
         cx.clock().arm(SCENE_TIMEOUT_MS);
-        self.phase = Phase::Scene;
+        self.phase = Phase::Scene(SceneStep {
+            last_issued,
+            last_tile: current,
+            delay_left: SCENE_CHECK_TICKS,
+        });
         None
     }
 
-    fn after_baked(&mut self, cx: &mut Cx<'_>, _settled: bool) -> Option<bool> {
+    fn after_baked(&mut self, cx: &mut Cx<'_>) -> Option<bool> {
         // Frozen next-loop order: pending, then withinRadius (N5/N6).
         if interrupted() {
             self.logs
@@ -412,9 +468,9 @@ impl Resilient {
 
     fn after_displaced_walk(&mut self) -> Option<bool> {
         // Another native walk replaced this wait before its deadline. The
-        // timed-out Walk already emitted its fenced AbortWalk, but the scene
-        // action has no request token. Do not let the stale ladder overwrite
-        // the new owner; retain the prior fail-closed pass/backoff behavior.
+        // timed-out Walk emitted only its fenced AbortWalk; skip the unfenced
+        // scene click for this pass. The legacy pass/backoff behavior below
+        // may later re-arm, exactly as it did before this scene phase existed.
         self.after_no_progress_pass()
     }
 
@@ -672,6 +728,21 @@ mod tests {
                 level: 0,
             }],
             "no-progress baked failure advances to the frozen scene step"
+        );
+        machine::step(&mut NoJs);
+        assert!(
+            machine::merge_ops(Vec::new()).is_empty(),
+            "DirectNavigator waits two ticks between scene checks"
+        );
+        machine::step(&mut NoJs);
+        assert_eq!(
+            machine::merge_ops(Vec::new()),
+            vec![InteractReq::WalkTo {
+                x: 10,
+                z: 0,
+                level: 0,
+            }],
+            "a stalled DirectNavigator reissues its nearest scene click"
         );
         machine::age(h, SCENE_TIMEOUT_MS + 1);
         machine::step(&mut NoJs);
