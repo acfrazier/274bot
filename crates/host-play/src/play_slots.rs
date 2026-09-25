@@ -27,10 +27,10 @@ use crate::play_login::{
     GrantedReservation, PermitWait, QueuePlaceRetirement, SharedLoginQueue, SlotArm,
 };
 use crate::play_status::{
-    apply_startup_phase, clear_startup_progress, copy_stream_bytes, mark_login_started,
-    publish_session_boundary_status, publish_slot_disconnected, publish_startup_phase,
-    publish_startup_progress, publish_worker_terminal, record_login_error, set_startup_phase,
-    SlotStatus, StartupPhase, WorkerTerminal,
+    apply_startup_phase, clear_startup_progress, copy_stream_bytes, lock_statuses,
+    mark_login_started, publish_session_boundary_status, publish_slot_disconnected,
+    publish_startup_phase, publish_startup_progress, publish_worker_terminal, record_login_error,
+    set_startup_phase, SlotStatus, StartupPhase, WorkerTerminal,
 };
 use crate::play_wires::{dispatch_wires, WireCmd};
 use crate::script_runtime::{
@@ -93,9 +93,7 @@ impl Play {
         let arm = self.arms.get(name).cloned();
         self.signal_slot_stop(name);
         self.spawned.remove(name);
-        self.statuses
-            .lock()
-            .unwrap()
+        lock_statuses(&self.statuses)
             .retain(|status| status.username != name);
         self.arms.remove(name);
         let removed = self.scripts.lock().unwrap().remove(name);
@@ -292,7 +290,7 @@ impl Play {
                 .and_then(|profile| profile.public_worlds())
                 .map(|worlds| worlds.worlds[round.index].number)
         });
-        let mut statuses = self.statuses.lock().unwrap();
+        let mut statuses = lock_statuses(&self.statuses);
         statuses.retain(|status| status.username != username);
         statuses.push(SlotStatus {
             username,
@@ -488,7 +486,7 @@ fn spawn_slot_thread(
                 PlayConnection::Bound { template, .. } => match template.prepare_client(uid, profile.settings.lowmem) {
                     Ok(client) => client,
                     Err(error) => {
-                        if let Some(row) = slot_statuses.lock().unwrap().iter_mut().find(|s| s.username == username) {
+                        if let Some(row) = lock_statuses(&slot_statuses).iter_mut().find(|s| s.username == username) {
                             row.startup_phase = StartupPhase::Error;
                             row.startup_phase_started = Instant::now();
                             row.error = Some(error);
@@ -524,7 +522,7 @@ fn spawn_slot_thread(
                 }));
             }
             if client.error_loading && connection.profile().is_some() {
-                if let Some(row) = slot_statuses.lock().unwrap().iter_mut().find(|s| s.username == username) {
+                if let Some(row) = lock_statuses(&slot_statuses).iter_mut().find(|s| s.username == username) {
                     row.startup_phase = StartupPhase::Error;
                     row.startup_phase_started = Instant::now();
                     row.error = Some(format!("profile asset initialization failed: {}", client.last_progress_message));
@@ -580,9 +578,7 @@ fn spawn_slot_thread(
                             }
                             Ok(false) => {}
                             Err(error) => {
-                                if let Some(row) = slot_statuses
-                                    .lock()
-                                    .unwrap()
+                                if let Some(row) = lock_statuses(&slot_statuses)
                                     .iter_mut()
                                     .find(|s| s.username == username)
                                 {
@@ -606,7 +602,7 @@ fn spawn_slot_thread(
                             if arm.stop.load(Ordering::Relaxed) {
                                 return;
                             }
-                            if let Some(row) = slot_statuses.lock().unwrap().iter_mut().find(|s| s.username == username) {
+                            if let Some(row) = lock_statuses(&slot_statuses).iter_mut().find(|s| s.username == username) {
                                 row.startup_phase = StartupPhase::Error;
                                 row.startup_phase_started = Instant::now();
                                 row.error = Some(format!("public world login configuration failed: {error}"));
@@ -617,7 +613,7 @@ fn spawn_slot_thread(
                         if arm.stop.load(Ordering::Relaxed) {
                             return;
                         }
-                        if let Some(row) = slot_statuses.lock().unwrap().iter_mut().find(|s| s.username == username) {
+                        if let Some(row) = lock_statuses(&slot_statuses).iter_mut().find(|s| s.username == username) {
                             row.world = Some(world.number);
                         }
                         if debug_enabled() {
@@ -888,7 +884,7 @@ fn spawn_slot_thread(
                             let paint = script_paint_of(&slot_scripts, name);
                             let login_latched = arm_latch_obs.login_latched();
                             let (up, here) = {
-                                let mut all = slot_statuses.lock().unwrap();
+                                let mut all = lock_statuses(&slot_statuses);
                                 let mut up = false;
                                 let mut here = None;
                                 for s in all.iter_mut() {

@@ -1,4 +1,4 @@
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Instant;
 
 use client::client::{Client, LoginError};
@@ -81,6 +81,25 @@ pub struct SlotStatus {
     /// this shared frame; Stop or slot unload clears it from the lifecycle
     /// owner even when no online observe runs. `None` means no current paint.
     pub script_paint: Option<std::sync::Arc<script::shim::ScriptPaint>>,
+}
+
+/// Status rows are display observations, not a transactional data structure:
+/// each update is a sequence of independent field assignments. If a worker
+/// unwinds while holding the mutex, the first reader may therefore recover
+/// the rows and clear poison while still holding the guard. This prevents one
+/// failed slot from cascading through the UI and unrelated workers before its
+/// terminal publisher runs.
+pub(super) fn lock_statuses(
+    statuses: &Mutex<Vec<SlotStatus>>,
+) -> MutexGuard<'_, Vec<SlotStatus>> {
+    match statuses.lock() {
+        Ok(rows) => rows,
+        Err(poisoned) => {
+            let rows = poisoned.into_inner();
+            statuses.clear_poison();
+            rows
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -235,7 +254,7 @@ pub fn copy_stream_bytes(c: &Client, s: &mut SlotStatus) {
 }
 
 pub(super) fn mark_login_started(statuses: &Arc<Mutex<Vec<SlotStatus>>>, name: &str) {
-    let mut all = statuses.lock().unwrap();
+    let mut all = lock_statuses(statuses);
     if let Some(s) = all.iter_mut().find(|s| s.username == name) {
         if s.login_started.is_none() {
             s.login_started = Some(Instant::now());
@@ -251,7 +270,7 @@ pub(super) fn publish_startup_phase(
     name: &str,
     message: &str,
 ) {
-    let mut all = statuses.lock().unwrap();
+    let mut all = lock_statuses(statuses);
     if let Some(s) = all.iter_mut().find(|s| s.username == name) {
         s.startup_phase = StartupPhase::Preparing;
         s.startup_phase_started = Instant::now();
@@ -267,7 +286,7 @@ pub(super) fn publish_startup_progress(
     message: &str,
     percent: i32,
 ) {
-    let mut all = statuses.lock().unwrap();
+    let mut all = lock_statuses(statuses);
     if let Some(s) = all.iter_mut().find(|s| s.username == name) {
         s.startup_progress_percent = Some(percent.clamp(0, 100));
         s.startup_progress_message.clear();
@@ -276,7 +295,7 @@ pub(super) fn publish_startup_progress(
 }
 
 pub(super) fn clear_startup_progress(statuses: &Arc<Mutex<Vec<SlotStatus>>>, name: &str) {
-    let mut all = statuses.lock().unwrap();
+    let mut all = lock_statuses(statuses);
     if let Some(s) = all.iter_mut().find(|s| s.username == name) {
         s.startup_progress_percent = None;
         s.startup_progress_message.clear();
@@ -288,7 +307,7 @@ pub(super) fn set_startup_phase(
     name: &str,
     phase: StartupPhase,
 ) {
-    let mut all = statuses.lock().unwrap();
+    let mut all = lock_statuses(statuses);
     if let Some(s) = all.iter_mut().find(|s| s.username == name) {
         s.connected = matches!(phase, StartupPhase::LoadingScene | StartupPhase::Ready);
         if s.startup_phase != phase {
@@ -352,7 +371,7 @@ pub(super) fn record_login_error(
     if e.code == 1 {
         return;
     }
-    let mut all = statuses.lock().unwrap();
+    let mut all = lock_statuses(statuses);
     if let Some(s) = all.iter_mut().find(|s| s.username == name) {
         s.startup_phase = StartupPhase::Error;
         s.startup_phase_started = Instant::now();
@@ -387,9 +406,7 @@ pub(super) fn reset_slot_observation(s: &mut SlotStatus) {
 }
 
 pub(super) fn publish_slot_observation_reset(statuses: &Arc<Mutex<Vec<SlotStatus>>>, name: &str) {
-    if let Some(s) = statuses
-        .lock()
-        .unwrap()
+    if let Some(s) = lock_statuses(statuses)
         .iter_mut()
         .find(|s| s.username == name)
     {
@@ -401,9 +418,7 @@ pub(super) fn publish_slot_observation_reset(statuses: &Arc<Mutex<Vec<SlotStatus
 /// Close the producer gate before clearing any queued work. Never hold this
 /// lock while locking a script: script -> statuses is the established order.
 pub(super) fn publish_slot_disconnected(statuses: &Arc<Mutex<Vec<SlotStatus>>>, name: &str) {
-    if let Some(s) = statuses
-        .lock()
-        .unwrap()
+    if let Some(s) = lock_statuses(statuses)
         .iter_mut()
         .find(|s| s.username == name)
     {
@@ -423,37 +438,32 @@ pub(super) fn publish_slot_disconnected(statuses: &Arc<Mutex<Vec<SlotStatus>>>, 
 }
 
 /// Publish a terminal worker outcome after every normal early return or
-/// caught unwind. Status updates are field assignments with no cross-row
-/// invariant; after replacing the failed lifetime's row, the boundary clears
-/// poison so UI snapshots cannot replay the worker panic.
+/// caught unwind. The shared guard recovers poison before mutating this
+/// lifetime's row, so UI snapshots and unrelated workers remain live even
+/// before terminal publication reaches this boundary.
 pub(super) fn publish_worker_terminal(
     statuses: &Arc<Mutex<Vec<SlotStatus>>>,
     name: &str,
     terminal: WorkerTerminal,
     detail: Option<String>,
 ) {
-    {
-        let mut rows = statuses
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Some(status) = rows.iter_mut().find(|status| status.username == name) {
-            reset_slot_observation(status);
-            status.script_paint = None;
-            status.login_started = None;
-            status.queue_position = -1;
-            status.queue_total = -1;
-            status.startup_phase = StartupPhase::Error;
-            status.startup_phase_started = Instant::now();
-            status.startup_progress_percent = None;
-            status.startup_progress_message.clear();
-            status.worker_terminal = Some(terminal);
-            if let Some(detail) = detail {
-                status.error = Some(detail);
-            } else if status.error.is_none() {
-                status.error = Some("slot worker exited unexpectedly".to_string());
-            }
+    let mut rows = lock_statuses(statuses);
+    if let Some(status) = rows.iter_mut().find(|status| status.username == name) {
+        reset_slot_observation(status);
+        status.script_paint = None;
+        status.login_started = None;
+        status.queue_position = -1;
+        status.queue_total = -1;
+        status.startup_phase = StartupPhase::Error;
+        status.startup_phase_started = Instant::now();
+        status.startup_progress_percent = None;
+        status.startup_progress_message.clear();
+        status.worker_terminal = Some(terminal);
+        if let Some(detail) = detail {
+            status.error = Some(detail);
+        } else if status.error.is_none() {
+            status.error = Some("slot worker exited unexpectedly".to_string());
         }
-        statuses.clear_poison();
     }
 }
 

@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex};
 use api::snapshot::WorldTile;
 use nav::router::Route;
 
+use crate::play_status::lock_statuses;
 use crate::script_runtime;
 use crate::script_runtime::{
     abort_script_walk, poll_start, script_slot, script_slot_or_insert, NavBot, ScriptWall,
@@ -162,10 +163,7 @@ impl Play {
     /// after releasing the script-slot guard: script -> status is the sole
     /// permitted nesting order, and this path does not need to nest them.
     fn clear_script_paint_status(&self, name: &str) {
-        if let Some(status) = self
-            .statuses
-            .lock()
-            .unwrap()
+        if let Some(status) = lock_statuses(&self.statuses)
             .iter_mut()
             .find(|status| status.username == name)
         {

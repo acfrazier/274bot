@@ -2175,6 +2175,45 @@ fn login_queue_mutex_survives_panicking_owner() {
 }
 
 #[test]
+fn status_readers_recover_before_terminal_publication() {
+    let play = run_with_io(
+        &PlayOptions {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            lowmem: true,
+            mainland: false,
+        },
+        vec![],
+        |_| (None, None),
+        |_, _, _| {},
+    );
+    play.statuses.lock().unwrap().push(SlotStatus {
+        username: "alice".into(),
+        ..SlotStatus::default()
+    });
+
+    let statuses = Arc::clone(&play.statuses);
+    let poisoner = thread::spawn(move || {
+        let _rows = statuses.lock().unwrap();
+        panic!("synthetic in-flight status panic");
+    });
+    assert!(poisoner.join().is_err());
+    assert!(play.statuses.is_poisoned());
+
+    let snapshot = play.statuses();
+    assert_eq!(snapshot.len(), 1);
+    assert_eq!(snapshot[0].username, "alice");
+    assert!(
+        !play.statuses.is_poisoned(),
+        "the first reader repairs poison before another worker can cascade"
+    );
+
+    set_startup_phase(&play.statuses, "alice", StartupPhase::Connecting);
+    assert_eq!(play.statuses()[0].startup_phase, StartupPhase::Connecting);
+}
+
+#[test]
 fn panicking_spawned_worker_retires_its_place_and_unblocks_follower() {
     let mut play = run_with_io(
         &PlayOptions {

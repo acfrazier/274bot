@@ -1,5 +1,6 @@
 use api::interact::Driver;
 use api::snapshot::{GameSnapshot, WorldTile};
+use crate::play_status::lock_statuses;
 
 use super::Play;
 
@@ -59,7 +60,7 @@ impl Play {
         {
             return;
         }
-        let statuses = self.statuses.lock().unwrap();
+        let statuses = lock_statuses(&self.statuses);
         if !statuses
             .iter()
             .any(|status| status.username == user && status.ingame)
@@ -80,7 +81,7 @@ impl Play {
         if self.connection.require_bot_operation().is_err() {
             return;
         }
-        let statuses = self.statuses.lock().unwrap();
+        let statuses = lock_statuses(&self.statuses);
         if !statuses
             .iter()
             .any(|status| status.username == user && status.ingame)

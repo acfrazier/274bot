@@ -107,7 +107,7 @@ use play_login::{
 use play_slots::SlotFrame;
 #[cfg(test)]
 use play_slots::{observe_slot_catalog_and_paired, reset_slot_session_work};
-use play_status::clear_startup_progress;
+use play_status::{clear_startup_progress, lock_statuses};
 #[cfg(test)]
 use play_status::{
     apply_startup_phase, mark_login_started, publish_session_boundary_status,
@@ -298,7 +298,7 @@ impl Play {
 
     /// Snapshot of every slot's status.
     pub fn statuses(&self) -> Vec<SlotStatus> {
-        self.statuses.lock().unwrap().clone()
+        lock_statuses(&self.statuses).clone()
     }
 
     /// The shared obj-id → name table (built from the cache once per
@@ -351,7 +351,7 @@ impl Play {
         let mut q = self.queue.lock();
         q.prefer_owner(arm.queue_owner);
         let pos = q.status_owner(arm.queue_owner);
-        apply_queue_wait(&mut self.statuses.lock().unwrap(), name, pos);
+        apply_queue_wait(&mut lock_statuses(&self.statuses), name, pos);
     }
 
     /// Snapshot of the worker-owned login FIFO (front first).

@@ -11,7 +11,10 @@ use host::login_queue::{LoginBackoff, LoginQueue, Permit, QueuePos};
 use parking_lot::Mutex as QueueMutex;
 use vault::Profile;
 
-use super::{clear_startup_progress, debug_enabled, public_worlds, Play, SlotStatus, StartupPhase};
+use super::{
+    clear_startup_progress, debug_enabled, lock_statuses, public_worlds, Play, SlotStatus,
+    StartupPhase,
+};
 
 pub(super) type SharedLoginQueue = Arc<QueueMutex<LoginQueue>>;
 
@@ -561,7 +564,7 @@ impl Play {
 }
 
 fn publish_transfer_countdown(statuses: &Arc<Mutex<Vec<SlotStatus>>>, name: &str, remaining: u64) {
-    let mut all = statuses.lock().unwrap();
+    let mut all = lock_statuses(statuses);
     if let Some(s) = all.iter_mut().find(|s| s.username == name) {
         s.startup_phase = StartupPhase::Connecting;
         s.startup_phase_started = Instant::now();
@@ -641,9 +644,7 @@ pub(super) fn publish_login_latched(
     name: &str,
     latched: bool,
 ) {
-    if let Some(s) = statuses
-        .lock()
-        .unwrap()
+    if let Some(s) = lock_statuses(statuses)
         .iter_mut()
         .find(|s| s.username == name)
     {
@@ -709,7 +710,7 @@ pub(super) fn enqueue_queue_place(
     let mut q = queue.lock();
     q.enqueue_owner(arm.queue_owner, uid);
     let pos = q.status_owner(arm.queue_owner);
-    apply_queue_wait(&mut statuses.lock().unwrap(), username, pos);
+    apply_queue_wait(&mut lock_statuses(statuses), username, pos);
 }
 
 /// Drop one slot owner's login-FIFO place and always clear this slot's
@@ -722,7 +723,7 @@ pub(super) fn drop_queue_place(
 ) {
     let mut q = queue.lock();
     q.leave_owner(owner);
-    apply_queue_wait(&mut statuses.lock().unwrap(), username, None);
+    apply_queue_wait(&mut lock_statuses(statuses), username, None);
 }
 
 /// Retire a slot owner's queue eligibility and published place. This is
@@ -734,9 +735,7 @@ pub(super) fn retire_queue_place(
     arm: &SlotArm,
 ) {
     queue.lock().leave_owner(arm.queue_owner);
-    let mut rows = statuses
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut rows = lock_statuses(statuses);
     apply_queue_wait(&mut rows, username, None);
 }
 
@@ -793,12 +792,12 @@ pub(super) fn wait_for_permit(
             let mut q = queue.lock();
             match q.poll_owner(arm.queue_owner, uid, Instant::now()) {
                 Permit::Grant => {
-                    apply_queue_wait(&mut statuses.lock().unwrap(), username, None);
+                    apply_queue_wait(&mut lock_statuses(statuses), username, None);
                     return PermitWait::Granted;
                 }
                 Permit::Wait(wait) => {
                     let pos = q.status_owner(arm.queue_owner);
-                    apply_queue_wait(&mut statuses.lock().unwrap(), username, pos);
+                    apply_queue_wait(&mut lock_statuses(statuses), username, pos);
                     wait
                 }
             }
@@ -811,7 +810,7 @@ pub(super) fn wait_for_permit(
             let now = Instant::now();
             if now >= next_publish {
                 let pos = queue.lock().status_owner(arm.queue_owner);
-                apply_queue_wait(&mut statuses.lock().unwrap(), username, pos);
+                apply_queue_wait(&mut lock_statuses(statuses), username, pos);
                 next_publish = now + QUEUE_PUBLISH;
             }
             let left = deadline.saturating_duration_since(Instant::now());
