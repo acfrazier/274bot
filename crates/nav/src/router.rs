@@ -294,12 +294,13 @@ pub fn find_with_avoid_bounded(
 pub const BANK_TARGET_BUDGET: usize = 500_001;
 /// Settles a first-goal search may spend while its backward proof has not
 /// shown any goal reachable. A proof of reachability lifts the search to
-/// [`NODE_BUDGET`]; a proof of unreachability stops it at once. Only a goal
-/// set unreachable from a large region whose own backward region is also
-/// large spends all of it: on the 289 bake, stands fed through ladders by
-/// the unstamped upper planes. Measured reachable in-scene stands need at
-/// most ~347,000 settles (a 598-tick Wilderness detour; ~279,000 with every
-/// teleport usable), and 2^19 settles hold about 90 MB of search tables.
+/// [`find_with`]'s full budget; a proof of unreachability stops it at once.
+/// Only a goal set unreachable from a large region whose own backward region
+/// is also large spends all of it: on the 289 bake, stands fed through
+/// ladders by the unstamped upper planes. Measured reachable in-scene stands
+/// need at most ~347,000 settles (a 598-tick Wilderness detour; ~279,000
+/// with every teleport usable), and 2^19 settles hold about 90 MB of search
+/// tables.
 pub const FIRST_TARGET_BUDGET: usize = 1 << 19;
 /// Tiles the backward proof may admit before it leaves the answer to the
 /// forward search alone. It takes one step per settled node, so this only
